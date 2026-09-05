@@ -5,9 +5,9 @@
 .mirrorview {
   flex: 1;
   min-width: 0;
-  /* Inline-size container (like .termview) so the head's fork / ターミナル⇄チャット
-     controls can collapse to icon-only when the pane is narrow (mobile or a slim
-     split), via the @container paneview rules below. */
+  /* Inline-size container (like .termview) so the head's fork / terminal-chat
+     switch controls can collapse to icon-only when the pane is narrow (mobile or
+     a slim split), via the @container paneview rules below. */
   container: paneview / inline-size;
   /* min-height:0 lets the viewer shrink to its flex track in .pane (column,
      overflow:hidden) instead of overflowing it. Without it a body sub-view that

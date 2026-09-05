@@ -1,5 +1,6 @@
-/* プランレビュー（DocView）: 引用ハイライト・コメント入力ポップ・コメント控え。
-   ハイライトは番号バッジ付きで、カード側の一覧の番号と対応する。 */
+/* Plan review (DocView): quote highlights, the comment-entry popover, and the comment
+   list. Each highlight carries a number badge matching the numbering of the list on the
+   card side. */
 .markdown mark.quote-mark {
   background: color-mix(in srgb, var(--chat-accent, #4c8dff) 26%, transparent);
   color: inherit;
@@ -55,7 +56,8 @@
   justify-content: flex-end;
   gap: 6px;
 }
-/* 控え: 本文の下に畳める帯として置く（送信はミラー側なのでここには出さない）。 */
+/* The comment list is a collapsible strip below the body; sending happens on the mirror
+   side, so no send control belongs here. */
 .doc-comments {
   flex: none;
   max-height: 40%;
@@ -90,8 +92,9 @@
   display: flex;
   flex-direction: column;
   gap: 5px;
-  /* 5件ぶんで打ち切ってスクロール。行の高さはコメントの長さで変わるので、実際の高さは
-     DocView が6件目の位置から実測して max-height を上書きする。この値はその前の保険。 */
+  /* Cut off after five entries and scroll. Row height varies with comment length, so
+     DocView measures the position of the sixth entry and overrides max-height; this
+     value is only the fallback until it does. */
   max-height: 40vh;
   overflow-y: auto;
 }
@@ -115,7 +118,8 @@
   font-size: 10px;
   background: color-mix(in srgb, var(--chat-accent, #4c8dff) 30%, transparent);
 }
-/* 行そのものが「全文表示」のトグル。既定は引用1行＋本文2行で畳む。 */
+/* The row itself is the "show full text" toggle; collapsed it shows one quote line plus
+   two body lines. */
 .doc-comment-main {
   min-width: 0;
   flex: 1;

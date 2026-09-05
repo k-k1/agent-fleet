@@ -1,42 +1,48 @@
 #!/usr/bin/env bash
-# Agent Fleet — 配備をまるごと撤収する（README §Teardown の実行版）。
+# Agent Fleet — tear a whole deployment down (the executable form of README §Teardown).
 #
-#   deploy/aws/ecs/teardown.sh --profile <p> --region <r>          # 一覧と計画だけ（既定）
-#   deploy/aws/ecs/teardown.sh --profile <p> --region <r> --yes    # 本当に消す
+#   deploy/aws/ecs/teardown.sh --profile <p> --region <r>          # inventory and plan only (default)
+#   deploy/aws/ecs/teardown.sh --profile <p> --region <r> --yes    # really delete
 #
-# 2026-08-22 に 2 配備（`Persistence=delete` と `=retain`）を手で削除し、両アカウントで
-# スイープの全カウンタがゼロになった。その順序と落とし穴を写したもの。
+# This is the order two deployments (`Persistence=delete` and `=retain`) were taken down
+# by hand until every sweep counter reached zero in both accounts, plus the traps met on
+# the way.
 #
-# ## この順序でないと終わらない
+# ## Nothing finishes in any other order
 #
-# 配備が持っているものの大半は**スタックの中に無い**。CP が実行時に作る（Workspace
-# サービス・EFS アクセスポイント・SSM・そして ecs-ec2 ではスロット・home の EBS・
-# golden スナップショット）。**先にスタックを消すとそれらが残り、依存で止まる。**
+# Most of what a deployment owns is not in the stacks. The CP creates it at runtime
+# (workspace services, EFS access points, SSM, and on ecs-ec2 the slots, the home EBS
+# volumes and the golden snapshots). Delete the stacks first and all of that is left
+# behind, blocking on dependencies.
 #
-#  1. **CP を最初に止める。** 2〜7 は全部その CP の帳簿で、しかも CP はスロットを
-#     オンデマンドで起こす——動いている CP は、たったいま消したものを作り直す。
-#  2. Workspace サービス（`delete-service --force` が Cloud Map のエントリも消す。
-#     手で消そうとすると ServiceNotFound）
-#  3. スロットを terminate。**home の EBS は道連れにならない**（遅延返却の設計どおり
-#     ＝残って課金され続ける）
-#  4. コンテナインスタンスの登録解除（残るとクラスタ削除が落ちる。実測 4 本中 3 本）
-#  5. EFS アクセスポイント（**消し忘れると 10-data の削除が止まる**）
-#  6. SSM `/af-ws/*`（`/af-cp/*` は既定で残す＝同じアカウントに立て直せる）
-#  7. スナップショット（golden・退避・バックアップ）
-#  8. スタックを逆順に**1 本ずつ待って**。⚠️ まとめて発行すると、importer が居る間
-#     exporting stack の削除が**無言でキャンセル**され、待ちループだけが回る
-#  9. `Persistence=retain` は削除保護を外さないと 8 が落ちる。**最終スナップショットと
-#     EFS は残す**（それが retain の意味なので、`--purge-retained` を明示しない限り消さない）
-# 10. タスク定義（費用は 0 だがスタックより長生きする）
-# 11. ACM の検証 CNAME はゾーンに残る（消さないと次の配備の証明書が「速すぎて」通り、
-#     発行経路を検証したことにならない）
+#  1. Stop the CP first. Steps 2-7 are all entries in its ledger, and it raises slots on
+#     demand — a running CP recreates what was just deleted.
+#  2. Workspace services (`delete-service --force` removes the Cloud Map entry too;
+#     deleting that by hand gives ServiceNotFound)
+#  3. Terminate the slots. The home EBS volumes do not go with them (deferred release, by
+#     design — they stay and keep costing money)
+#  4. Deregister the container instances (leftovers make the cluster deletion fail;
+#     measured: 3 of 4)
+#  5. EFS access points (forget them and the 10-data deletion stalls)
+#  6. SSM `/af-ws/*` (`/af-cp/*` is kept by default, so the same account can be rebuilt into)
+#  7. Snapshots (golden, hibernation, backup)
+#  8. Stacks in reverse order, one at a time, waiting for each. Issued together, the
+#     deletion of an exporting stack is cancelled silently while an importer is alive and
+#     only the wait loop keeps spinning
+#  9. `Persistence=retain` needs deletion protection removed or step 8 fails. The final
+#     snapshot and the EFS are kept — that is what retain means, so they go only when
+#     `--purge-retained` is given
+# 10. Task definitions (they cost nothing but outlive the stacks)
+# 11. The ACM validation CNAMEs, which stay in the zone otherwise — and then the next
+#     deployment's certificate validates "too fast", which means the issuing path was
+#     never exercised
 #
-# ## 触らないもの
+# ## What this never touches
 #
-# ホストゾーンそのもの・`/af-cp/*`（`--purge-secrets` を付けたときだけ消す）・
-# retain で残した RDS 最終スナップショットと EFS（`--purge-retained` のときだけ）・
-# そして**この配備のタグや名前に一致しないもの一切**（Control Tower 配下のアカウントでは
-# `StackSet-*` / `<org>-baseline-*` / Account Factory の VPC が同居している）。
+# The hosted zone itself; `/af-cp/*` (deleted only with `--purge-secrets`); the RDS final
+# snapshot and EFS that retain kept (only with `--purge-retained`); and anything that does
+# not match this deployment's tags or names — under Control Tower the account also holds
+# `StackSet-*`, `<org>-baseline-*` and Account Factory VPCs.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,11 +86,12 @@ export AF_YES AF_DRY
 af_env_init "$PROFILE" "$REGION" "$STACK"
 CLUSTER="$(af_cluster)"
 CP_SERVICE="af-$AF_STACK_INGRESS-cp"
-# ⚠️ **撤収は途中から再実行される。** そのとき ingress スタックはもう無いので、引数は
-# 読めない——そして読めないまま黙って先へ進むと、**ホストゾーンの ACM 検証 CNAME が
-# 消し残る**（実際に残した）。残っても壊れはしないが、次に立てたとき証明書が
-# 「速すぎて」通り、発行経路を検証したことにならない。生きていなければ控えから読む。
-captured_param() {  # captured_param <key> — キャプチャした 30-ingress の引数
+# A teardown gets re-run from the middle, and by then the ingress stack is gone, so its
+# parameters are unreadable. Carrying on regardless leaves the ACM validation CNAMEs in
+# the hosted zone (it happened). They break nothing, but the next deployment's certificate
+# then validates "too fast", which means the issuing path was never exercised. Fall back
+# to the captured parameters when the stack is no longer live.
+captured_param() {  # captured_param <key> — a parameter of the captured 30-ingress
   local f line
   f="$(af_params_file 30-ingress)"
   [ -r "$f" ] || return 0
@@ -107,7 +114,7 @@ fi
 
 txt() { tr '\t' '\n' | grep -v '^$' || true; }
 
-# --- 0) いま何があるか（--yes が無ければここまで） ---------------------------
+# --- 0) what is there right now (without --yes this is where it ends) --------
 echo "==> teardown plan: ${AF_FQDN:-<no live ingress stack>} (profile=$AF_PROFILE region=$AF_REGION)"
 echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
 echo "    cluster  : $CLUSTER   persistence=$AF_PERSISTENCE   runtime=$AF_WS_RUNTIME"
@@ -133,60 +140,68 @@ count() {
 echo "    runtime residue: workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 echo "    keeping        : hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(NO — --purge-secrets)')"
 if [ "$AF_PERSISTENCE" = retain ]; then
-  echo "    retain         : RDS final snapshot ＋ EFS $EFS_ID は残す $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
+  echo "    retain         : RDS final snapshot + EFS $EFS_ID are kept $([ "$PURGE_RETAINED" = 1 ] && echo '(NO — --purge-retained)')"
 fi
 echo ""
-echo "⚠️ ECR（af-control-plane / af-workspace）は 20-platform のリソースで EmptyOnDelete: true。"
-echo "   スタックを消すとイメージごと消える。立て直しは crane copy からやり直しになる。"
+echo "⚠️ ECR (af-control-plane / af-workspace) is a 20-platform resource with EmptyOnDelete: true."
+echo "   Deleting the stack deletes the images with it. A rebuild starts over from crane copy."
 
-# ★ **控えの復旧点が本当に在るかを、消す前に見る。** ここが最後の機会である:
-# この先で ECR が空になると、GHCR に無いタグの workspace は**どこにも無くなる**。
-# 「params/30-ingress が在るか」（下の検査）は**ファイルの有無**しか見ていない ——
-# 控えは在るのに指す実体が無い、が、この 3 点セットの本体（env.sh の解説）。
+# Check that the captured recovery point really exists before deleting anything — this is
+# the last chance. Once ECR is emptied below, a workspace tag that is not in GHCR exists
+# nowhere. The "is params/30-ingress there" test further down only looks at the file, and
+# a capture that exists while the image it points at does not is the whole failure mode
+# (explained in env.sh).
+#
+# The three Japanese lines below stay Japanese: capture-restore-test.sh asserts them
+# verbatim ("capture is stale", "restore point will be lost", "in GHCR too"). Change one and
+# check passes without testing anything.
 TD_CAPTURED_TAG="$(sed -n 's/^AF_IMAGE_TAG=//p' "$AF_ENV_DIR/env" 2>/dev/null | head -1)"
 if [ "$AF_LIVE" = 1 ] && [ -n "$AF_IMAGE_TAG" ] && [ -n "$TD_CAPTURED_TAG" ] && [ "$TD_CAPTURED_TAG" != "$AF_IMAGE_TAG" ]; then
-  echo "🔴 控えが古い: AF_IMAGE_TAG=$TD_CAPTURED_TAG / いま動いているのは $AF_IMAGE_TAG"
-  echo "   立て直しは古いほうのタグで立つ。取り直すなら: deploy/aws/ecs/capture-env.sh --profile $AF_PROFILE --region $AF_REGION --force"
+  echo "🔴 capture is stale: AF_IMAGE_TAG=$TD_CAPTURED_TAG / what is running is $AF_IMAGE_TAG"
+  echo "   A rebuild would come up on the older tag. To re-capture: deploy/aws/ecs/capture-env.sh --profile $AF_PROFILE --region $AF_REGION --force"
 fi
 case "$(af_image_recoverable "${TD_CAPTURED_TAG:-$AF_IMAGE_TAG}")" in
   no)
-    echo "🔴 復旧点が失われる: ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} は GHCR に揃っていない（ECR にしか無い）。"
-    echo "   このまま消すと standup.sh は「ECR にも GHCR にも無い」で立てられない。**いま**持ち出すこと:"
+    echo "🔴 restore point will be lost: ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} is not complete in GHCR (it exists only in ECR)."
+    echo "   Delete it as-is and standup.sh cannot rebuild — the tag is in neither ECR nor GHCR. Copy it out NOW:"
     echo "     crane copy \$(aws sts get-caller-identity --query Account --output text).dkr.ecr.$AF_REGION.amazonaws.com/af-workspace:${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} $AF_GHCR_DEFAULT/workspace:${TD_CAPTURED_TAG:-$AF_IMAGE_TAG}" ;;
   unknown)
-    echo "⚠️ 復旧点が引けるかを確かめられなかった（crane が無い）。「無い」と決めつけてはいないが、確かめてもいない。" ;;
+    echo "⚠️ could not check whether the recovery point can be pulled (no crane). Not assumed missing — but not verified either." ;;
   yes)
-    echo "    復旧点   : ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} は GHCR に両方ある（立て直せる）" ;;
+    echo "    restore point: ${TD_CAPTURED_TAG:-$AF_IMAGE_TAG} is in GHCR too (it can be stood back up)" ;;
 esac
 
-if ! af_confirm "この配備をまるごと削除する（取り返しがつかない。home の中身も消える）"; then
+# This prompt stays Japanese too: ecs-lifecycle-stub-test.sh asserts that a plan-only run
+# says "cannot be undone" - that a teardown announces it is irreversible.
+if ! af_confirm "delete this whole deployment (cannot be undone; the contents of every home go too)"; then
   echo ""
-  echo "（何もしていない。実行するには --yes）"
+  echo "(nothing was done. Add --yes to execute)"
   exit 0
 fi
 
-# 引数を退避していない状態で消すと、立て直しの材料が失われる。
+# Deleting without a captured set of parameters loses what a rebuild is made of.
 if [ ! -r "$AF_ENV_DIR/params/30-ingress" ]; then
-  echo "ERROR: $AF_ENV_DIR/params/30-ingress が無い。capture-env.sh を先に走らせること" >&2
-  echo "       （テンプレートは repo にあるが、何を渡したかは配備の中にしか無い）" >&2
+  echo "ERROR: no $AF_ENV_DIR/params/30-ingress — run capture-env.sh first" >&2
+  echo "       (the templates are in the repo, but what was passed to them exists only inside the deployment)" >&2
   exit 1
 fi
 
-# --- 1) CP を止める ----------------------------------------------------------
+# --- 1) stop the control plane -----------------------------------------------
 echo "==> 1. stopping the control plane ($CP_SERVICE)"
 af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" --desired-count 0 >/dev/null 2>&1 || true
 
-# ★ **止まったことを確かめてから数える。** desired=0 はタスクに死ねと言うだけで、死ぬまでの
-# 間 CP は普通に働き続ける——そしてこの掃除そのものが CP を働かせる: golden スナップショット
-# を消せば「この配備には golden が無い」に見えるので、**CP は焼き直しを始めてスロットを
-# 起こす**（実測: 撤収の最中に m7i と m8g が 1 台ずつ生えた）。走る前に数えた一覧で
-# terminate すると、そのあとに生えたものが**課金され続ける孤児**として残る。
+# Count only after the CP has actually stopped. desired=0 just tells the task to die, and
+# until it does the CP keeps working — and this cleanup is itself what makes it work:
+# delete the golden snapshots and the deployment looks like it has none, so the CP starts
+# baking a new one and raises a slot (measured: one m7i and one m8g appeared mid-teardown).
+# Terminating from the list counted before that leaves whatever appeared afterwards as an
+# orphan that keeps costing money.
 if [ "$AF_DRY" != 1 ]; then
   for _ in $(seq 1 30); do
     running="$("${AWS[@]}" ecs describe-services --cluster "$CLUSTER" --services "$CP_SERVICE" \
       --query 'services[0].runningCount' --output text 2>/dev/null || echo 0)"
-    # ⚠️ 読めなかったとき（サービスが既に消えている・権限が無い）に粘らない。
-    # 数でない答えは「もう見えない」であって「まだ走っている」ではない。
+    # Do not keep waiting when the count is unreadable (service already gone, no
+    # permission). A non-numeric answer means "no longer visible", not "still running".
     case "$running" in ""|None|0) break ;; *[!0-9]*) break ;; esac
     sleep 10
   done
@@ -195,14 +210,14 @@ if [ "$AF_DRY" != 1 ]; then
   echo "    workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
 fi
 
-# --- 2) Workspace サービス ---------------------------------------------------
+# --- 2) workspace services ---------------------------------------------------
 echo "==> 2. deleting workspace services ($(count "$WS_SVCS"))"
 for s in $WS_SVCS; do
   af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$s" --desired-count 0 >/dev/null 2>&1 || true
   af_run "${AWS[@]}" ecs delete-service --cluster "$CLUSTER" --service "$s" --force >/dev/null 2>&1 || true
 done
 
-# --- 3) スロットと home ------------------------------------------------------
+# --- 3) slots and home volumes -----------------------------------------------
 if [ -n "$SLOTS" ]; then
   echo "==> 3. terminating slots"
   # shellcheck disable=SC2086
@@ -211,13 +226,13 @@ if [ -n "$SLOTS" ]; then
   [ "$AF_DRY" = 1 ] || "${AWS[@]}" ec2 wait instance-terminated --instance-ids $SLOTS
 fi
 if [ -n "$HOMES" ]; then
-  echo "==> 3b. deleting home volumes（terminate では消えない）"
+  echo "==> 3b. deleting home volumes (terminate does not remove them)"
   for v in $HOMES; do
     af_run "${AWS[@]}" ec2 delete-volume --volume-id "$v" >/dev/null 2>&1 || echo "    (skip $v)"
   done
 fi
 
-# --- 4) コンテナインスタンスの登録解除 --------------------------------------
+# --- 4) deregister the container instances -----------------------------------
 CIS="$("${AWS[@]}" ecs list-container-instances --cluster "$CLUSTER" --query 'containerInstanceArns' --output text 2>/dev/null | txt || true)"
 if [ -n "$CIS" ]; then
   echo "==> 4. deregistering container instances ($(count "$CIS"))"
@@ -226,7 +241,7 @@ if [ -n "$CIS" ]; then
   done
 fi
 
-# --- 5) EFS アクセスポイント -------------------------------------------------
+# --- 5) EFS access points ----------------------------------------------------
 if [ -n "$APS" ]; then
   echo "==> 5. deleting EFS access points ($(count "$APS"))"
   for ap in $APS; do
@@ -246,13 +261,13 @@ fi
 if [ "$PURGE_SECRETS" = 1 ]; then
   CP_PARAMS="$("${AWS[@]}" ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=$SSM_PREFIX/" \
     --query 'Parameters[].Name' --output text 2>/dev/null | txt || true)"
-  echo "==> 6b. deleting $SSM_PREFIX/* ($(count "$CP_PARAMS")) — 立て直すときは作り直しになる"
+  echo "==> 6b. deleting $SSM_PREFIX/* ($(count "$CP_PARAMS")) — a rebuild will have to recreate them"
   for p in $CP_PARAMS; do
     af_run "${AWS[@]}" ssm delete-parameter --name "$p" >/dev/null 2>&1 || true
   done
 fi
 
-# --- 7) スナップショット -----------------------------------------------------
+# --- 7) snapshots ------------------------------------------------------------
 if [ -n "$SNAPS" ]; then
   echo "==> 7. deleting snapshots ($(count "$SNAPS")): golden / hibernation / backup"
   for s in $SNAPS; do
@@ -260,39 +275,40 @@ if [ -n "$SNAPS" ]; then
   done
 fi
 
-# --- 9 前半) retain は削除保護を先に外す（外さないと 8 が落ちる） -------------
+# --- 9a) retain: remove deletion protection first (step 8 fails without it) --
 if [ "$AF_PERSISTENCE" = retain ] && [ -n "$DB_ID" ]; then
   echo "==> 8pre. removing RDS deletion protection ($DB_ID)"
   af_run "${AWS[@]}" rds modify-db-instance --db-instance-identifier "$DB_ID" \
     --no-deletion-protection --apply-immediately >/dev/null 2>&1 || true
 fi
 
-# --- 8 前半) CFN 受け渡し用バケットを空にする（空でないと 20-platform が消せない） ----
+# --- 8a) empty the CFN staging bucket (20-platform will not delete while it has objects) --
 #
-# 🔥 CloudFormation は**中身のあるバケットを削除できない**。ここを飛ばすと 20-platform の
-# 削除が DELETE_FAILED で止まり、撤収が途中で死ぬ。そして「撤収が途中で死ぬ」は、まさに
-# 今回 51,200 バイトの壁を 09-01 から誰も踏まなかった原因（docs/log/73 §73.7.2）と同じ形
-# —— **走らせていない経路は壊れていても分からない**。ライフサイクル（7 日で expire）も
-# 効いているが、それは事故を減らすだけで、削除の前提を満たすものではない。
+# CloudFormation cannot delete a bucket that still has contents. Skip this and the
+# 20-platform deletion stops at DELETE_FAILED and the teardown dies half way — and a
+# teardown that dies half way is the same shape as the reason nobody hit the 51,200-byte
+# limit for months (docs/log/73 §73.7.2): a path that is never run is broken without
+# anyone finding out. The lifecycle rule (expire after 7 days) helps, but it only makes
+# the accident rarer; it does not satisfy the precondition for deletion.
 CFN_BUCKET="$(af_stack_output "$AF_STACK_PLATFORM" CfnTemplatesBucket)"
 if [ -n "$CFN_BUCKET" ]; then
   echo "==> 8pre2. emptying s3://$CFN_BUCKET (CFN template staging)"
-  # バージョニングは付けていないので `s3 rm --recursive` で足りる。
+  # The bucket is not versioned, so `s3 rm --recursive` is enough.
   #
-  # 🔴 **失敗の理由を捨てない。** 以前はここが `2>&1 || echo "(skip: …)"` で、運用者に
-  # 見えるのは「(skip)」だけだった。「もともと無い」（NoSuchBucket）と「まだ空にできて
-  # いない」（権限・オブジェクトロック）が区別できず、**次に落ちるのは 20-platform の
-  # 削除で、そのときには原因が消えている**。stderr を掴んでそのまま見せる。
+  # Never drop the reason for a failure. If the operator only sees "(skip)", then "it was
+  # never there" (NoSuchBucket) is indistinguishable from "it could not be emptied"
+  # (permissions, object lock) — and the next thing to fail is the 20-platform deletion,
+  # by which point the cause is gone. Capture stderr and show it as-is.
   s3_err=""
   if ! s3_err="$(af_run "${AWS[@]}" s3 rm "s3://$CFN_BUCKET" --recursive 2>&1 >/dev/null)"; then
-    echo "    ✗ 空にできなかった: ${s3_err:-（AWS CLI は理由を出さなかった）}" >&2
-    echo "      このあと 20-platform の削除が DELETE_FAILED で止まるなら原因はこれ" >&2
-    echo "      （CloudFormation は中身のあるバケットを消せない）。手で:" >&2
+    echo "    ✗ could not empty it: ${s3_err:-(the AWS CLI gave no reason)}" >&2
+    echo "      if the 20-platform deletion now stops at DELETE_FAILED, this is why" >&2
+    echo "      (CloudFormation cannot delete a bucket with contents). By hand:" >&2
     echo "      aws s3 rm s3://$CFN_BUCKET --recursive --profile $AF_PROFILE --region $AF_REGION" >&2
   fi
 fi
 
-# --- 8) スタックを逆順に 1 本ずつ -------------------------------------------
+# --- 8) stacks in reverse order, one at a time -------------------------------
 echo "==> 8. deleting stacks in reverse order, one at a time"
 for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] || continue
@@ -300,24 +316,25 @@ for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_D
   echo "    - $st: delete"
   af_run "${AWS[@]}" cloudformation delete-stack --stack-name "$st"
   if [ "$AF_DRY" != 1 ]; then
-    # ⚠️ ここで待つのが本体。まとめて発行すると exporting stack の削除が無言で
-    # キャンセルされ、「消したつもり」で次に進んでしまう。
+    # Waiting here is the point. Issued together, the deletion of an exporting stack is
+    # cancelled silently and the teardown moves on believing the stack is gone.
     if ! "${AWS[@]}" cloudformation wait stack-delete-complete --stack-name "$st"; then
-      echo "ERROR: $st の削除が完了しなかった。CloudFormation のイベントを読むこと" >&2
-      echo "       （典型は「まだ importer が居る」か、残ったランタイム資源の依存）" >&2
+      echo "ERROR: $st was not deleted. Read the CloudFormation events" >&2
+      echo "       (typically an importer is still alive, or leftover runtime resources depend on it)" >&2
       exit 1
     fi
     echo "      done"
   fi
 done
 
-# --- 9 後半) retain が残したもの --------------------------------------------
+# --- 9b) what retain kept ----------------------------------------------------
 if [ "$AF_PERSISTENCE" = retain ]; then
   if [ "$PURGE_RETAINED" = 1 ]; then
-    # ⚠️ **ここは失敗を握り潰してはいけない。** retain が残したものは「消えなかったこと」が
-    # 見えにくい——スタックはもう無いので CloudFormation は何も言わず、費用だけが残る。
-    # よくあるのは EFS がマウントターゲットを持ったままで `FileSystemInUse` になる形。
-    # だからエラーを捕まえて出し、最後に**実物を引いて**消えたことを確かめる。
+    # Never swallow a failure here. When something retain kept fails to delete it is hard
+    # to see: the stacks are gone, so CloudFormation says nothing and only the bill
+    # remains. The common case is an EFS that still has mount targets (`FileSystemInUse`).
+    # So catch the error, print it, and at the end look the resource up again to confirm
+    # it is really gone.
     SNAP_ID="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
       --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
       --output text 2>/dev/null | txt || true)"
@@ -327,7 +344,7 @@ if [ "$AF_PERSISTENCE" = retain ]; then
         echo "DRY: rds delete-db-snapshot --db-snapshot-identifier $s"
       else
         err="$("${AWS[@]}" rds delete-db-snapshot --db-snapshot-identifier "$s" 2>&1)" \
-          || echo "    ⚠️ 消せていない: $(printf '%s' "$err" | tail -1)"
+          || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
       fi
     done
     if [ -n "$EFS_ID" ]; then
@@ -336,18 +353,18 @@ if [ "$AF_PERSISTENCE" = retain ]; then
         echo "DRY: efs delete-file-system --file-system-id $EFS_ID"
       else
         err="$("${AWS[@]}" efs delete-file-system --file-system-id "$EFS_ID" 2>&1)" \
-          || echo "    ⚠️ 消せていない: $(printf '%s' "$err" | tail -1)"
+          || echo "    ⚠️ not deleted: $(printf '%s' "$err" | tail -1)"
       fi
     fi
   else
-    echo "==> 9. persistence=retain: RDS の最終スナップショットと EFS $EFS_ID は残した（--purge-retained で消す）"
+    echo "==> 9. persistence=retain: kept the RDS final snapshot and EFS $EFS_ID (--purge-retained deletes them)"
   fi
 fi
 
-# --- 10) タスク定義 ----------------------------------------------------------
-# ⚠️ `--family-prefix af-ws` が 0 を返したのに ACTIVE が 9 件あった（実測）。prefix を
-# 使わずに列挙して自分で絞る。⚠️ `--max-items` 付きの --output text は末尾に改ページ
-# トークン（`None`）を 1 行混ぜるので、ARN の形をしている行だけ通す。
+# --- 10) task definitions ----------------------------------------------------
+# `--family-prefix af-ws` returned 0 while 9 were ACTIVE (measured), so list without the
+# prefix and filter here. With `--max-items`, --output text also mixes in a trailing
+# pagination token (`None`) as its own line, so only pass lines shaped like an ARN.
 echo "==> 10. task definitions"
 TDS="$("${AWS[@]}" ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns' --output text 2>/dev/null \
   | txt | grep -E '/(af-ws-|af-.*-cp)' || true)"
@@ -356,9 +373,9 @@ for td in $TDS; do
 done
 [ -n "$TDS" ] && echo "    deregistered $(count "$TDS")"
 
-# --- 11) ACM の検証 CNAME ----------------------------------------------------
-# 証明書を消してもゾーンには `_<hash>.<fqdn>` が残る。DELETE は TTL と値の**完全一致**が
-# 要るので、いま入っている中身をそのまま送り返す。
+# --- 11) ACM validation CNAMEs -----------------------------------------------
+# Deleting the certificate leaves `_<hash>.<fqdn>` in the zone. A DELETE needs the TTL and
+# the value to match exactly, so send back what is currently there, unchanged.
 if [ -n "$HOSTED_ZONE" ]; then
   REC="$("${AWS[@]}" route53 list-resource-record-sets --hosted-zone-id "$HOSTED_ZONE" \
     --query "ResourceRecordSets[?Type=='CNAME'&&ends_with(Name,'.$AF_FQDN.')].[Name,TTL,ResourceRecords[0].Value]" \
@@ -369,24 +386,24 @@ if [ -n "$HOSTED_ZONE" ]; then
       [ -n "$name" ] || continue
       case "$name" in _*) ;; *) continue ;; esac
       echo "    - $name"
-      # ⚠️ ここで af_run を使うと、その DRY 行まで >/dev/null に吸われて「何もしないように
-      # 見える dry-run」になる。分岐を書き下す方が正直である。
+      # af_run here would send its own DRY line to >/dev/null too, giving a dry-run that
+      # looks like it does nothing. Spelling the branch out is the honest form.
       if [ "$AF_DRY" = 1 ]; then
         echo "      DRY: route53 DELETE $name CNAME $value (TTL $ttl)"
       else
         "${AWS[@]}" route53 change-resource-record-sets --hosted-zone-id "$HOSTED_ZONE" \
           --change-batch "{\"Changes\":[{\"Action\":\"DELETE\",\"ResourceRecordSet\":{\"Name\":\"$name\",\"Type\":\"CNAME\",\"TTL\":$ttl,\"ResourceRecords\":[{\"Value\":\"$value\"}]}}]}" >/dev/null 2>&1 \
-          || echo "      (skip — 中身が変わっている。list-resource-record-sets で確かめること)"
+          || echo "      (skip — the contents changed; check with list-resource-record-sets)"
       fi
     done
   fi
 fi
 
-# --- 12) スイープ（ゼロを確かめる） -----------------------------------------
-# ⚠️ ここでもう一度**刈る**。数えるだけでは足りない——スタックを消し終えるまでの間に
-# CP が起こしたスロットや、そのスロットが作った home が残っていることがある（上の 1b と
-# 同じ理由で、こちらは「消し始めてから死ぬまで」の窓）。もう誰も動いていないので、
-# ここに居るものは定義上すべて残骸である。
+# --- 12) sweep (confirm the zeroes) ------------------------------------------
+# Reap once more here; counting is not enough. A slot the CP raised while the stacks were
+# being deleted, or a home volume that slot created, can still be around (same reason as
+# 1b above, for the window between "deletion started" and "the CP died"). Nothing is
+# running any more, so by definition everything found here is residue.
 if [ "$AF_DRY" != 1 ]; then
   late_slots="$(list_slots)"
   if [ -n "${late_slots// /}" ]; then
@@ -407,7 +424,7 @@ if [ "$AF_DRY" != 1 ]; then
 fi
 
 echo ""
-echo "==> sweep（0 でないものが残骸）"
+echo "==> sweep (anything that is not 0 is residue)"
 left() { printf '    %-22s %s\n' "$1" "$(count "$2")"; }
 left "cfn stacks" "$(for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] && af_stack_exists "$st" && echo "$st"; done || true)"
@@ -423,8 +440,9 @@ left "task definitions" "$("${AWS[@]}" ecs list-task-definitions --status ACTIVE
   --output text 2>/dev/null | txt | grep -E '/(af-ws-|af-.*-cp)' || true)"
 left "log groups /af" "$("${AWS[@]}" logs describe-log-groups --log-group-name-prefix /af \
   --query 'logGroups[].logGroupName' --output text 2>/dev/null | txt || true)"
-# ★ EFS と RDS はスタックの外で生き延びうる唯一の実体（Persistence=retain）なので、
-# **数えるところまでやる**。retain を残したままなら残骸ではないので、そう言い分ける。
+# EFS and RDS are the only resources that can outlive the stacks (Persistence=retain), so
+# go as far as counting them. Kept on purpose by retain they are not residue, so say which
+# of the two it is.
 efs_left=""
 [ -n "$EFS_ID" ] && efs_left="$("${AWS[@]}" efs describe-file-systems --file-system-id "$EFS_ID" \
   --query 'FileSystems[].FileSystemId' --output text 2>/dev/null | txt || true)"
@@ -435,7 +453,7 @@ snap_left="$("${AWS[@]}" rds describe-db-snapshots --snapshot-type manual \
   --query "DBSnapshots[?starts_with(DBSnapshotIdentifier,'$AF_STACK_DATA')].DBSnapshotIdentifier" \
   --output text 2>/dev/null | txt || true)"
 if [ "$AF_PERSISTENCE" = retain ] && [ "$PURGE_RETAINED" != 1 ]; then
-  printf '    %-22s %s\n' "efs (retain で残す)" "$(count "$efs_left")"
+  printf '    %-22s %s\n' "efs (kept by retain)" "$(count "$efs_left")"
   printf '    %-22s %s\n' "rds snap (retain)" "$(count "$snap_left")"
   left "rds instances" "$rds_left"
 else
@@ -447,7 +465,7 @@ fi
 cat <<EOF
 
 ==> torn down: ${AF_FQDN:-this deployment}
-    立て直す: deploy/aws/ecs/standup.sh --profile $AF_PROFILE --region $AF_REGION
-    ⚠️ ECR は空（スタックと一緒に消えた）ので、standup が GHCR から crane copy し直す。
-    残したもの: ホストゾーン $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '（削除済み）')
+    rebuild it: deploy/aws/ecs/standup.sh --profile $AF_PROFILE --region $AF_REGION
+    ⚠️ ECR is empty (it went with the stack), so standup will crane copy from GHCR again.
+    kept: hosted zone $HOSTED_ZONE / $SSM_PREFIX/* $([ "$PURGE_SECRETS" = 1 ] && echo '(deleted)')
 EOF

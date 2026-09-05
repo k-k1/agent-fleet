@@ -23,20 +23,21 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { Choice, OnOff, Row, Slider } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-// TtsTab — 音声読み上げ（TTS, docs/log/24 + ADR0013）の設定タブ。もとは AgentsTab から分離した
-// 1 セクションだったが、項目が増えて関心事（声の選択・読むタイミング・テキスト加工・性能）が
-// フラットに混在したため、「声＝何で読むか」「自動読み上げ＝いつ読むか」「読み方＝どう読むか」
-// 「詳細」のグループに分けている。すべてクライアント側の設定（settings store）なので、
-// ワークスペースの起動状態に依らず表示・変更できる。
-// 「音声通知」だけは読み上げ本体（ttsEnabled）と独立に効くため、トグルの外＝最後に置く。
+// TtsTab — the settings tab for text-to-speech (TTS, docs/log/24 + ADR0013). The items are
+// grouped by concern rather than left flat: voice (what reads), auto-read (when it reads),
+// pronunciation (how it reads) and advanced. Everything is a client-side setting (the settings
+// store), so it can be shown and changed regardless of whether the workspace is running.
+// Audio notification is the one setting that works independently of ttsEnabled, so it sits
+// outside that toggle, at the end.
 export function TtsTab() {
   const s = useSettings();
   const tr = useT();
   const confirm = useConfirm();
-  // VOICEVOX エンジンを持たないデプロイ（ECS の既定構成など）では、ずんだもん系の設定は
-  // 並んでいても一切効かない — 話者もキャラクターも感情スタイルも VOICEVOX 専用で、auto は
-  // 日本語まで含めて Polly に落ちる。選べるのに効かない設定は出さない。
-  // 分かるまで（取得前・取得失敗）は従来どおり全部出す＝判断材料が無いときに隠さない。
+  // On a deployment without a VOICEVOX engine (the default ECS configuration, for one), the
+  // VOICEVOX settings have no effect at all even when listed: speaker, character and emotion
+  // style are VOICEVOX-only, and auto falls back to Polly even for Japanese. Do not show a
+  // setting that can be chosen but does nothing. Until it is known (before the fetch, or when
+  // it fails) show everything: nothing is hidden on the basis of no evidence.
   const [engines, setEngines] = useState(ttsStatusCache());
   useEffect(() => {
     let alive = true;
@@ -46,22 +47,24 @@ export function TtsTab() {
     };
   }, []);
   const noVv = voicevoxAvailable(engines) === false;
-  // Polly が無い配備（CP に region 未設定）。voicevox と対称に扱う: 選択肢から落とし、
-  // 読み上げ言語の注記も「English にしても Polly では読まない」に切り替える。
-  // 見ないままだと、CP が chooseTTSProvider で voicevox へ落としているのに UI だけが
-  // Polly を約束する（docs/log/84 §84.7）。
+  // A deployment without Polly (no region configured on the CP), handled symmetrically with
+  // voicevox: drop it from the options and switch the reading-language note to say that
+  // choosing English still will not be read by Polly. Without this check the CP falls back to
+  // voicevox in chooseTTSProvider while the UI alone promises Polly (docs/log/84 §84.7).
   const noPolly = pollyAvailable(engines) === false;
-  // エンジン選択から落とす。ただし現在値がそれのときだけは残す — 選択肢から消すと
-  // 現在値が表示できず、壊れた設定のまま黙って隠れてしまう（下で警告も出す）。
+  // Drop it from the engine choices, except when it is the current value: removing the current
+  // value leaves it undisplayable, and a broken setting then hides silently (a warning is also
+  // shown below).
   const engineOptions = TTS_PROVIDERS.filter(
     ([id]) =>
       (!noVv || id !== "voicevox" || s.ttsProvider === "voicevox") &&
       (!noPolly || id !== "polly" || s.ttsProvider === "polly"),
   );
-  // リセット＝音声読み上げ設定を「初期状態」(TTS_RESET = DEFAULTS の TTS キー) に戻す。キャラは
-  // ttsVoicePool: {} ＝標準 14 キャラのスタートで、新規ユーザーの初期状態と揃う。読み仮名辞書は
-  // ユーザーが打ち込んだ内容なので消さない（TTS_RESET に含めていない）。多数のキーを一度に書くため
-  // setSettings（バッチ）で 1 レンダー・1 保存にまとめる。
+  // Reset returns the TTS settings to their initial state (TTS_RESET = the TTS keys of
+  // DEFAULTS). Characters go back to ttsVoicePool: {}, i.e. the standard 14, matching what a
+  // new user starts with. The reading dictionary is the user's own input and is not cleared
+  // (it is not part of TTS_RESET). Many keys are written at once, so setSettings (batched)
+  // keeps it to one render and one save.
   const resetTts = async () => {
     if (!(await confirm({
       title: tr("tts.reset_title"),
@@ -112,9 +115,10 @@ export function TtsTab() {
             </Row>
             <p className="muted ds-note">{noVv ? tr("tts.note_no_voicevox") : tr("tts.note_engine")}</p>
             {noVv && s.ttsProvider === "voicevox" && <p className="form-err">{tr("tts.warn_voicevox_missing")}</p>}
-            {/* 読み上げ言語（docs/log/84）。エンジンが「自動」のときの振り分け（en → Polly）と
-                Polly の既定の声を決める。以前は アシスタントの「回答言語」を借りていたので、
-                チャットの回答を English にしただけでミラーの読み上げまで声が変わっていた。 */}
+            {/* Reading language (docs/log/84). It decides the routing when the engine is set
+                to auto (en → Polly) and Polly's default voice. It is its own setting rather
+                than the assistant's answer language: sharing that one made switching the chat
+                answers to English change the voice of the mirror's reading too. */}
             <Row label={tr("tts.lang")}>
               <Choice
                 value={s.ttsLang}
@@ -160,7 +164,7 @@ export function TtsTab() {
                 <p className="muted ds-note">{tr("tts.note_characters")}</p>
               </>
             )}
-            {/* 感情スタイルは VOICEVOX の話者バリアント差し替え（emotionOpts）なので Polly には効かない */}
+            {/* Emotion style swaps VOICEVOX speaker variants (emotionOpts), so it does nothing on Polly */}
             {!noVv && (
               <>
                 <Row label={tr("tts.emotion")}>
@@ -215,8 +219,9 @@ export function TtsTab() {
               <OnOff value={s.ttsAbbrevCode} onChange={(v) => setSetting("ttsAbbrevCode", v)} />
             </Row>
             <p className="muted ds-note">{tr("tts.note_abbrev_code")}</p>
-            {/* 助詞の小休止も英語カタカナ読みも VOICEVOX 経路だけの前処理（CP は voicevox に
-                決まったときしか適用しない）。エンジンが無ければ出さない。 */}
+            {/* Both the particle pause and the katakana reading of English are preprocessing
+                on the VOICEVOX path only (the CP applies them only once voicevox is chosen),
+                so they are not shown without that engine. */}
             {!noVv && (
               <>
                 <Row label={tr("tts.particle_pause")}>
@@ -261,9 +266,10 @@ export function TtsTab() {
   );
 }
 
-// CharList — キャラクター設定（docs/log/24）。使用の ON/OFF・基準スタイル・キャラ別速度・試聴。
-// 一覧はエンジン実カタログ（GET /api/tts/speakers）駆動で、取得できるまで（エンジン停止中
-// 含む）は既定 14 キャラの静的フォールバックを表示する（スタイルはノーマルのみ）。
+// CharList — character settings (docs/log/24): use on/off, base style, per-character speed and
+// preview. The list is driven by the engine's real catalog (GET /api/tts/speakers); until that
+// can be fetched (including while the engine is stopped) it shows a static fallback of the
+// default 14 characters, with the normal style only.
 function CharList() {
   const s = useSettings();
   const tr = useT();
@@ -276,7 +282,7 @@ function CharList() {
     };
   }, []);
   const chars = voiceCharacters();
-  const live = !!speakersCatalog(); // エンジン実カタログか（false = 静的フォールバック）
+  const live = !!speakersCatalog(); // from the engine's real catalog (false = static fallback)
   const pool = s.ttsVoicePool || {};
   const patch = (name: string, p: TtsCharConf) => setSetting("ttsVoicePool", { ...pool, [name]: { ...pool[name], ...p } });
   return (

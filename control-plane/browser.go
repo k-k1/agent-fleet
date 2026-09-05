@@ -376,9 +376,9 @@ func (v *browserViewer) setVisible(visible bool) {
 	}
 	v.active = visible
 	if visible {
-		// attention=false（無条件の在席）: ブラウザペインは**見えている間だけ**この接続を
-		// 張る（非表示になれば下の doneConn で外れる）ので、端末のような「開いたまま
-		// 忘れられる」形にならない。可視性そのものが在席の合図になっている。
+		// attention=false, i.e. unconditional presence: the browser pane holds this
+		// connection only while it is visible, so it cannot be left open and forgotten the
+		// way a terminal can. Visibility is itself the signal that someone is there.
 		v.registry.addConn(v.wsID, "", false)
 	} else {
 		v.registry.doneConn(v.wsID, "", false)

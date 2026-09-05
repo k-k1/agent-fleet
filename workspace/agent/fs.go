@@ -14,7 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// Read-only file browser for the Console explorer (docs/17 P3-5 段2). Rooted at
+// Read-only file browser for the Console explorer (docs/17 P3-5 stage 2). Rooted at
 // the browse root (default = home) with a denylist so sensitive state is never
 // listed or read. Plaintext Claude state lives outside the browse root via
 // CLAUDE_CONFIG_DIR; the encrypted secrets store stays in home but is denylisted.
@@ -123,11 +123,11 @@ var fsDeny = map[string]bool{
 	".local/share/opencode": true, // opencode auth.json (API keys) + session db
 	".codex":                true, // codex auth.json (tokens) + sessions + helper bins
 	".gemini":               true, // agy OAuth token (plaintext) + conversation DBs
-	".copilot":              true, // copilot auth token (キーチェーン無しでは平文) + session store
+	".copilot":              true, // copilot auth token (plaintext without a keychain) + session store
 	".cursor":               true, // cursor chats/store.db + transcripts + hooks/cli config
-	".config/cursor":        true, // cursor auth.json (accessToken/refreshToken 平文)
+	".config/cursor":        true, // cursor auth.json (accessToken/refreshToken in plaintext)
 	".kiro":                 true, // kiro settings + v2 session store (sessions/cli)
-	".local/share/kiro-cli": true, // kiro auth (data.sqlite3 auth_kv・平文相当) + classic store
+	".local/share/kiro-cli": true, // kiro auth (data.sqlite3 auth_kv, effectively plaintext) + classic store
 	".aws":                  true, // SSM login: SSO token cache + generated configs
 }
 
@@ -290,7 +290,7 @@ func handleFSTree(w http.ResponseWriter, r *http.Request) {
 		return out[i].Name < out[j].Name
 	})
 	// root: the absolute browse root, so the Console can build an absolute path for a
-	// row ("パスをコピー"). It's the same for every entry, so it rides on the response.
+	// row ("Copy path"). It's the same for every entry, so it rides on the response.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"path": rel, "entries": out, "root": browseRoot()})
 }
 

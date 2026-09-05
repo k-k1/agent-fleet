@@ -14,23 +14,23 @@ import (
 func TestScanSlashSkills(t *testing.T) {
 	project := t.TempDir()
 	user := t.TempDir()
-	// project skill: frontmatter 完備（argument-hint / user-invocable も読む）
+	// project skill with complete frontmatter (argument-hint / user-invocable are read too)
 	writeFile(t, filepath.Join(project, "skills", "proofread", "SKILL.md"),
 		"---\nname: proofread\ndescription: 原稿の形式整備\nargument-hint: \"<章番号>\"\n---\nbody")
-	// user-invocable: false は除外
+	// user-invocable: false is excluded
 	writeFile(t, filepath.Join(project, "skills", "internal-only", "SKILL.md"),
 		"---\nname: internal-only\nuser-invocable: false\n---\nbody")
-	// name 無し → ディレクトリ名でフォールバック
+	// no name: fall back to the directory name
 	writeFile(t, filepath.Join(project, "skills", "ledger", "SKILL.md"), "no frontmatter")
-	// project command: サブディレクトリはスラッシュ名に入らない（ファイル名が起動名）
+	// project command: a subdirectory is not part of the slash name (the file name is the invocation name)
 	writeFile(t, filepath.Join(project, "commands", "git", "commit.md"),
 		"---\ndescription: ステージ済みをコミット\nargument-hint: \"[message]\"\n---\nbody")
-	// user skill: project と同名 → project 勝ち / 別名 → 生き残る
+	// user skill: same name as a project one loses to it; a different name survives
 	writeFile(t, filepath.Join(user, "skills", "proofread", "SKILL.md"),
 		"---\nname: proofread\ndescription: user 側の同名（負けるべき）\n---\nbody")
 	writeFile(t, filepath.Join(user, "skills", "handoff", "SKILL.md"),
 		"---\nname: handoff\ndescription: 引き継ぎ\n---\nbody")
-	// 同一ルート内では skill が command に勝つ
+	// within one root, a skill beats a command
 	writeFile(t, filepath.Join(project, "commands", "proofread.md"), "command twin")
 
 	got := scanSlashSkills(project, user)
@@ -58,7 +58,7 @@ func TestScanSlashSkills(t *testing.T) {
 			t.Errorf("argument-hint not parsed: %#v", sk)
 		}
 	}
-	// ソート済み（name 昇順）・invoke はスラッシュ形であること
+	// sorted by name ascending, and invoke must be the slash form
 	for i := 1; i < len(got); i++ {
 		if got[i-1].Name > got[i].Name {
 			t.Errorf("not sorted: %s > %s", got[i-1].Name, got[i].Name)
@@ -71,8 +71,9 @@ func TestScanSlashSkills(t *testing.T) {
 	}
 }
 
-// codex: SKILL.md 規約は claude 互換だが起動は "$name" メンション。同梱 .system は
-// source "cli"、project .codex/skills > user $CODEX_HOME/skills の先勝ち。
+// codex: the SKILL.md convention is claude-compatible but invocation is a "$name" mention.
+// The bundled .system entries get source "cli"; project .codex/skills wins over user
+// $CODEX_HOME/skills, first one wins.
 func TestCodexSkills(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
@@ -105,7 +106,8 @@ func TestCodexSkills(t *testing.T) {
 	}
 }
 
-// opencode: command md（単複両ディレクトリ名）を project > user で列挙。
+// opencode: enumerates command md files (both the singular and plural directory names),
+// project before user.
 func TestOpencodeSkills(t *testing.T) {
 	dir := t.TempDir()
 	home := t.TempDir()
@@ -134,8 +136,8 @@ func TestOpencodeSkills(t *testing.T) {
 	}
 }
 
-// cursor: ACP 広告リストが最優先（builtin+global+project 全部入り）、無ければ
-// project の .cursor/commands + .cursor/skills へフォールバック。
+// cursor: the ACP advertised list wins (it holds builtin + global + project together);
+// without it, fall back to the project's .cursor/commands + .cursor/skills.
 func TestCursorSkills(t *testing.T) {
 	dir := t.TempDir()
 	meta := session.Meta{Name: "sk_cursor_scan", Dir: dir, Kind: session.KindCursor}
@@ -143,13 +145,14 @@ func TestCursorSkills(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".cursor", "skills", "helper", "SKILL.md"),
 		"---\nname: helper\ndescription: 補助\n---\nbody")
 
-	// 広告リスト未着 → FS フォールバック
+	// advertised list has not arrived: fall back to the filesystem
 	got := cursorSkills(meta)
 	if len(got) != 2 || got[0].Name != "helper" || got[1].Name != "probe" {
 		t.Fatalf("fallback = %#v", got)
 	}
 
-	// 広告リスト到着後はそちらが正（先頭スラッシュは publish 側で剥がされている前提の素の名前）
+	// once the advertised list arrives it is authoritative (bare names, on the assumption
+	// the publisher already stripped the leading slash)
 	agents.PublishCommands(meta.Name, []agents.AdvertisedCommand{
 		{Name: "simplify", Description: "Find cleanups (global)"},
 		{Name: "probe", Description: "AF probe (project)"},
@@ -170,7 +173,7 @@ func TestHandleSessionSkills(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "scout", "SKILL.md"),
 		"---\nname: scout\ndescription: 調査\n---\nbody")
-	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // user ルートは空
+	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the user root is empty
 
 	get := func(name string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/skills", nil)
@@ -180,14 +183,14 @@ func TestHandleSessionSkills(t *testing.T) {
 		return rec
 	}
 
-	// claude セッション → worktree のスキルが出る
+	// a claude session lists the worktree's skills
 	session.WriteMeta(session.Meta{Name: "sk_claude", Dir: dir, Kind: session.KindClaude})
 	rec := get("sk_claude")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
 	var resp struct{ Skills []sessionSkill }
-	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
+	resp.Skills = nil // reset so an omitempty field cannot inherit the previous element's value
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -195,8 +198,9 @@ func TestHandleSessionSkills(t *testing.T) {
 		t.Fatalf("skills = %#v", resp.Skills)
 	}
 
-	// codex セッション → ネイティブ（.codex/skills を "$name" 起動）＋ foreign
-	// （.claude/skills の scout — 注入候補として path/origin 付き・invoke 空）
+	// a codex session lists the native ones (.codex/skills, invoked as "$name") plus the
+	// foreign ones (scout from .claude/skills — an injection candidate, so it carries
+	// path/origin and an empty invoke)
 	t.Setenv("CODEX_HOME", t.TempDir())
 	writeFile(t, filepath.Join(dir, ".codex", "skills", "probe", "SKILL.md"),
 		"---\nname: probe\ndescription: 検証\n---\nbody")
@@ -205,7 +209,7 @@ func TestHandleSessionSkills(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("codex status = %d", rec.Code)
 	}
-	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
+	resp.Skills = nil // reset so an omitempty field cannot inherit the previous element's value
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -227,14 +231,14 @@ func TestHandleSessionSkills(t *testing.T) {
 		}
 	}
 
-	// kiro セッション → ネイティブ無し・foreign のみ（注入方式は kind 不問）
+	// a kiro session has no native skills, only foreign ones (injection works for any kind)
 	session.WriteMeta(session.Meta{Name: "sk_kiro", Dir: dir, Kind: session.KindKiro})
 	rec = get("sk_kiro")
-	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
+	resp.Skills = nil // reset so an omitempty field cannot inherit the previous element's value
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Skills) != 2 { // .claude/scout + .codex/probe（どちらも foreign）
+	if len(resp.Skills) != 2 { // .claude/scout + .codex/probe, both foreign
 		t.Fatalf("kiro skills = %#v", resp.Skills)
 	}
 	for _, sk := range resp.Skills {
@@ -243,13 +247,13 @@ func TestHandleSessionSkills(t *testing.T) {
 		}
 	}
 
-	// 未対応 kind（shell）→ エラーでなく空（前方互換な契約）
+	// an unsupported kind (shell) yields empty rather than an error: a forward-compatible contract
 	session.WriteMeta(session.Meta{Name: "sk_shell", Dir: dir, Kind: session.KindShell})
 	rec = get("sk_shell")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("shell status = %d", rec.Code)
 	}
-	resp.Skills = nil // omitempty フィールドが前回要素の値を引き継がないようリセット
+	resp.Skills = nil // reset so an omitempty field cannot inherit the previous element's value
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -257,14 +261,14 @@ func TestHandleSessionSkills(t *testing.T) {
 		t.Fatalf("shell skills should be empty: %#v", resp.Skills)
 	}
 
-	// 未知セッション → 404
+	// unknown session: 404
 	if rec := get("sk_nope"); rec.Code != http.StatusNotFound {
 		t.Fatalf("missing session status = %d", rec.Code)
 	}
 }
 
-// CP 側の登録漏れは control-plane 側のテストで拾う（session_skills_routes 同型）。
-// こちらは Agent 側の実ルート表への登録を固定する。
+// A missing registration on the CP side is caught by the control-plane test of the same
+// shape (session_skills_routes). This one pins the registration in the Agent's own route table.
 func TestSessionSkillsRouteRegistered(t *testing.T) {
 	mux := buildMux()
 	req := httptest.NewRequest(http.MethodGet, "/sessions/x/skills", nil)

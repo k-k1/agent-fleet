@@ -13,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Showback (docs/roadmap.md P3-9 運用の成熟). The infra cost worth attributing in
+// Showback (docs/roadmap.md P3-9, operational maturity). The infra cost worth attributing in
 // the BYO model is *workspace occupancy* — Claude usage is each user's own
 // subscription and not counted; what costs the operator RAM/CPU (or Fargate hours
 // on AWS) is how long each workspace runs. A background sampler credits every
@@ -71,7 +71,7 @@ func (u *usageSampler) run(ctx context.Context) {
 // that starts or stops mid-interval is over/under-counted by at most that much) —
 // acceptable for internal showback with no external billing.
 //
-// The same pass fills the hourly bucket behind the 稼働時間 heatmap (docs/log/83). It
+// The same pass fills the hourly bucket behind the uptime heatmap (docs/log/83). It
 // rides here rather than on a timer of its own on purpose: this sweep already resolves
 // every tenant's workspaces and asks each runtime for its state, and a second resident
 // ticker doing the same walk is how this host has run out of memory before (docs/log/26).
@@ -87,7 +87,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 		log.Printf("showback: list tenants: %v", err)
 		return
 	}
-	// ⚠️ A sweep that could not enumerate everything must not claim the hour was
+	// A sweep that could not enumerate everything must not claim the hour was
 	// observed. The heartbeat is what makes an empty cell mean "stopped" rather than
 	// "unknown", so writing it after a partial walk would paint grey over workspaces
 	// this pass never reached — a confident answer produced by a failure.
@@ -124,7 +124,7 @@ func (u *usageSampler) sample(ctx context.Context) {
 
 // counters turns one running workspace into this sample's contribution.
 //
-// ⚠️ An unreachable Agent leaves MeasuredSecs at 0 rather than recording zero sessions.
+// An unreachable Agent leaves MeasuredSecs at 0 rather than recording zero sessions.
 // A workspace mid-start, or one whose Agent is wedged, is exactly the case where the
 // count is unknown, and "0 sessions" would draw a cold cell over a busy hour — the same
 // 0-vs-unmeasured confusion the usage ledger keeps re-teaching.
@@ -142,11 +142,12 @@ func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs in
 			continue
 		}
 		alive++
-		// ★ 「動いている」の定義は sessionActivity ただ一つ（session_activity.go）。
-		// reaper が「この Workspace を止めてはならない」と判断する集合とヒートマップの
-		// 濃い色が同じものを指す、というのがこの指標の意味であって、述語をここへ写すと
-		// 状態が増えたときに片方だけ古くなる。keepAwake のピンが machineBusy に入るのも
-		// 意図どおり — 週末ずっと濃いまま残るピンこそ、この画面が見せたい浪費である。
+		// sessionActivity (session_activity.go) is the ONE definition of "running". The
+		// point of this metric is that the set the reaper reads as "do not stop this
+		// workspace" and the dark cells of the heatmap mean the same thing; copying the
+		// predicate here leaves one of the two stale the next time a state is added. A
+		// keepAwake pin counting as machineBusy is intended — a pin left dark all weekend
+		// is exactly the waste this screen exists to show.
 		if sessionActivity(s) == activityMachineBusy {
 			busy++
 		}
@@ -163,8 +164,9 @@ func (u *usageSampler) counters(ctx context.Context, rt runtime.Runtime, secs in
 // every sweep (the delete is cheap, but twelve identical no-op deletes an hour are
 // twelve write locks nobody needs).
 func (u *usageSampler) prune(ctx context.Context, now time.Time) {
-	// ⚠️ 下限 1 分。素直に interval.Minutes() で割ると、30 秒間隔の設定で窓が 0 分幅に
-	// なって条件が常に真になり、毎スイープ削除が走る。
+	// Floor of one minute: a plain interval.Minutes() makes the window 0 minutes wide
+	// on a 30-second interval, the condition is then always true, and the delete runs on
+	// every sweep.
 	window := int(u.interval.Minutes())
 	if window < 1 {
 		window = 1
@@ -290,9 +292,10 @@ func (a adminAPI) usage(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// 予約テナントの稼働は人の稼働ではない（system_tenant.go）。テナント一覧から
-	// 消しておきながらここに「af-golden / af-golden-seed」の行が残ると、隠した意味が
-	// 無くなる。サンプラは記録し続ける（台帳は素のまま）ので、消すのは見せ方だけ。
+	// A reserved tenant's occupancy is not a person's (system_tenant.go). Hiding those
+	// tenants from the tenant list while af-golden / af-golden-seed rows stay here defeats
+	// the point. The sampler keeps recording them — the ledger stays raw — so only the
+	// presentation drops them.
 	rows = withoutSystemTenants(rows)
 	if r.URL.Query().Get("format") == "csv" {
 		writeUsageCSV(w, rows)

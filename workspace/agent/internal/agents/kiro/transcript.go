@@ -1,19 +1,20 @@
 package kiro
 
-// v2 JSONL セッションストア → transcript.Turn 正規化（read 正本、docs/log/43）。実測
-// （2.14.1）の行形式（1 行 1 レコード・append-only）:
+// Normalizing the v2 JSONL session store into transcript.Turn (the read source of truth,
+// docs/log/43). The measured (2.14.1) row format, one record per line, append-only:
 //
 //	{"version":"v1","kind":"Prompt","data":{"message_id":"…","content":[{"kind":"text","data":"…"}],"meta":{"timestamp":1784869360}}}
 //	{"version":"v1","kind":"AssistantMessage","data":{"message_id":"…","content":[{"kind":"text","data":"…"},{"kind":"toolUse","data":{"toolUseId":"…","name":"shell","input":{"command":"…","__tool_use_purpose":"…"}}}]}}
 //	{"version":"v1","kind":"ToolResults","data":{"message_id":"…","content":[{"kind":"toolResult","data":{"toolUseId":"…","content":[{"kind":"json","data":{"exit_status":"exit status: 0","stdout":"…","stderr":""}}],"status":"success"}}]}}
 //
-// cursor と違い turn_ended マーカーは無い（状態検出は TUI 文字列契約＝state.go に置く）。
-// ターン境界は Prompt レコードで区切る: 1 Prompt = 1 user turn、続く AssistantMessage
-// 群（toolUse を挟み得る）を 1 assistant turn に畳む。ToolResults は toolUseId で対応
-// する tool パートに出力を貼る（cursor では取れなかったツール出力がここでは載る）。
-// content の `data` は text では文字列・toolUse/toolResult ではオブジェクトなので
-// RawMessage で受けて kind 別にデコードする。Turn.Idx は行番号由来の単調増加
-// （Console の pendingEcho/MirrorView は idx 単調前提 — agy 7354916 の教訓）。
+// Unlike cursor there is no turn_ended marker (state detection lives in the TUI string
+// contract, state.go). Turn boundaries come from the Prompt records: 1 Prompt = 1 user turn,
+// and the AssistantMessage rows that follow (possibly with toolUse between them) fold into
+// one assistant turn. ToolResults pastes its output onto the tool part that matches by
+// toolUseId (tool output that could not be obtained for cursor is available here). A content
+// block's `data` is a string for text and an object for toolUse/toolResult, so it is taken
+// as RawMessage and decoded per kind. Turn.Idx increases monotonically from the line number
+// (the Console's pendingEcho/MirrorView assume a monotonic idx — the lesson of agy 7354916).
 
 import (
 	"bufio"
@@ -28,10 +29,10 @@ import (
 )
 
 func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
-	// managed（ACP）: 生きた handle があれば driver が session/update から組んだメモリ転写を
-	// 返す（ライブストリーミング）。停止中は下の fileTranscript にフォールバックする——kiro の
-	// acp は転写を v2 JSONL へ persist するので、cursor と違い停止中でも履歴を出せる
-	// （driver.go managedTranscript）。
+	// managed (ACP): with a live handle, the driver returns the in-memory transcript it built
+	// from session/update (live streaming). While stopped it falls back to fileTranscript
+	// below — kiro's acp persists the transcript into the v2 JSONL, so unlike cursor the
+	// history is still available when stopped (driver.go managedTranscript).
 	if m.DriverKind() == session.DriverManaged {
 		return managedTranscript(m), true
 	}
@@ -44,12 +45,13 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 func fileTranscript(m session.Meta) agents.TranscriptData {
 	sid := resolveSid(m)
 	if sid == "" {
-		return agents.TranscriptData{} // まだ会話なし（起動前）— 空ミラー
+		return agents.TranscriptData{} // no conversation yet (before launch) — an empty mirror
 	}
 	path := transcriptPath(sid)
 	td := agents.TranscriptData{Path: path, Turns: parseTranscript(path), Mode: modeOf(m)}
-	// v2 JSONL はモデルを assistant レコードに書かない（実測）ので、起動モデル
-	// （セッション固定）を各 assistant ターンにスタンプしてミラーのモデルバッジに出す。
+	// The v2 JSONL does not write the model onto an assistant record (measured), so the launch
+	// model (fixed for the session) is stamped on every assistant turn to feed the mirror's
+	// model badge.
 	stampModel(td.Turns, displayModel(m.Model))
 	return td
 }
@@ -65,7 +67,8 @@ func modeOf(m session.Meta) string {
 }
 
 // displayModel normalizes a kiro model id for the mirror's per-response badge. kiro
-// ids are plain（"claude-sonnet-4.5" / "auto"）; "auto"（既定・1M ctx）は "Auto" に寄せる。
+// ids are plain ("claude-sonnet-4.5" / "auto"); "auto" (the default, 1M ctx) is folded
+// into "Auto".
 func displayModel(id string) string {
 	switch strings.ToLower(strings.TrimSpace(id)) {
 	case "", "auto", "default":
@@ -75,7 +78,7 @@ func displayModel(id string) string {
 }
 
 // stampModel labels every assistant turn with the session's (fixed) model so the
-// mirror renders a per-response model badge. 既に値があるターンは尊重する。
+// mirror renders a per-response model badge. A turn that already has one is left alone.
 func stampModel(turns []transcript.Turn, model string) {
 	if model == "" {
 		return
@@ -230,7 +233,7 @@ func parseTranscript(path string) []transcript.Turn {
 			}
 		case "ToolResults":
 			if cur == nil {
-				continue // 出力だけ孤立（通常あり得ない — 全文読みなので）
+				continue // an orphaned result (normally impossible, since the whole file is read)
 			}
 			for _, b := range r.Data.Content {
 				if b.Kind != "toolResult" {

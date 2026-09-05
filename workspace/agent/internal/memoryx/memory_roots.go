@@ -1,15 +1,17 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 / ADR 0022）— ルート宣言と live→staging コピー。
+// Version control for agent memory (docs/log/39 / ADR 0022) — root declarations and the
+// live→staging copy.
 //
-// 「エージェントメモリ」の版管理対象になるローカル実体は 2 つだけで（docs/log/39 の棚卸し）、
-// ここではそれを宣言テーブルとして持つ。将来 opencode などが上流でメモリを実装したら
-// memoryRoots() に 1 行足すだけで snapshot / rollback / export の全機能が付く。
+// Only two local trees are subject to "agent memory" versioning (the docs/log/39 inventory),
+// and this file holds them as a declaration table. Once opencode or another agent implements
+// memory upstream, one extra line in memoryRoots() gives it snapshot, rollback and export.
 //
-// ★1（巻き込み事故）の要: 対象は allowlist の glob だけで決まる。deny 方式にしない。
-// live ツリー（transcript 883MB・.credentials.json・settings.json・codex の派生状態
-// sqlite / 自前 .git）を repo に入れる経路をコード上作らないのがこのファイルの責務で、
-// memory_snapshot_test.go がそれを実データ配置で検証する。
+// The core of ★1 (collateral capture): scope is decided by the allowlist globs alone. Never
+// invert this into a denylist. This file's responsibility is that no code path exists by
+// which the live tree (883MB of transcripts, .credentials.json, settings.json, codex's
+// derived sqlite state and its own .git) can enter the repo, and memory_snapshot_test.go
+// verifies that against a real data layout.
 
 import (
 	"fmt"
@@ -26,32 +28,36 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 )
 
-// memoryRoot は版管理する 1 つのメモリルートの宣言。
+// memoryRoot declares one version-controlled memory root.
 type memoryRoot struct {
-	Kind string // "claude" | "codex" — セッション kind と一致させる（busy 判定が引く）
-	// Label は Console 表示名。i18n はフロント側なので、ここは種別名そのもの。
+	Kind string // "claude" | "codex" — must match the session kind (the busy check reads it)
+	// Label is the Console display name. i18n lives on the front end, so this is the plain
+	// kind name.
 	Label string
-	// Dir は live の絶対パス（呼び出しの都度解決する — テストが HOME / CLAUDE_CONFIG_DIR
-	// を差し替えるためキャッシュしない）。
+	// Dir is the absolute live path, resolved on every call: tests swap HOME /
+	// CLAUDE_CONFIG_DIR, so it must not be cached.
 	Dir string
-	// RepoPrefix は bare repo 内での名前空間。kind ごとに分ける（docs/log/39 ①）。
+	// RepoPrefix is the namespace inside the bare repo, kept separate per kind
+	// (docs/log/39 item 1).
 	RepoPrefix string
-	// Include は Dir からの相対パスに対する allowlist glob。`**` は 0 個以上のセグメントに
-	// マッチする。これに合致しないファイルは決して読まない。
+	// Include is the allowlist of globs matched against the path relative to Dir. `**`
+	// matches zero or more segments. A file that does not match is never read.
 	Include []string
-	// Exclude は Include 内の除外。codex の自前 .git（統合パイプラインの差分ベースライン）は
-	// 絶対に触らない・repo にも入れない。
+	// Exclude narrows Include. Codex's own .git (the diff baseline of its integration
+	// pipeline) must never be touched, and never enters the repo.
 	Exclude []string
-	// Scopes はディレクトリ粒度の部分ロールバックが可能か（claude=true, codex=false）。
-	// codex はプロジェクト区分がファイル**内**のエントリなのでディレクトリ粒度が存在しない。
+	// Scopes says whether directory-grained partial rollback is possible (claude=true,
+	// codex=false). For codex the project split is an entry INSIDE a file, so there is no
+	// directory granularity to roll back to.
 	Scopes bool
-	// RequireDir が true のルートは live dir が存在するときだけ有効になる。codex の
-	// memories 機能は既定 OFF なので、有効化されていない環境ではルート自体が現れない。
+	// RequireDir makes a root active only while its live dir exists. Codex's memories
+	// feature is off by default, so on an environment where it was never enabled the root
+	// itself does not appear.
 	RequireDir bool
 }
 
-// memoryRootDecls は宣言テーブルそのもの（存在検知の前）。テストが全件を見られるよう
-// memoryRoots() と分けてある。
+// memoryRootDecls is the declaration table itself, before existence detection. Kept separate
+// from memoryRoots() so tests can see every entry.
 func memoryRootDecls() []memoryRoot {
 	return []memoryRoot{
 		{
@@ -59,22 +65,25 @@ func memoryRootDecls() []memoryRoot {
 			Label:      "Claude Code",
 			Dir:        filepath.Join(claude.ConfigDir(), "projects"),
 			RepoPrefix: "claude/projects",
-			// projects/<slug>/memory/** だけ。同じ階層に転がっている <sid>.jsonl
-			// （transcript）と、親の .credentials.json / settings.json は構造的に外れる。
+			// projects/<slug>/memory/** only. The <sid>.jsonl transcripts sitting at the
+			// same level, and .credentials.json / settings.json in the parent, are
+			// structurally out of scope.
 			Include: []string{"*/memory/**"},
 			Scopes:  true,
 		},
 		{
 			Kind:  "codex",
 			Label: "Codex",
-			// 有効化配線（codex.setMemories）と同じ定義を使う。ここがズレると
-			// 「有効化したのにルートが現れない」という追いにくい壊れ方をする。
+			// Use the same definition as the enabling path (codex.setMemories). If the two
+			// drift apart it breaks as "enabled, yet the root never appears", which is hard
+			// to trace.
 			Dir:        codex.MemoriesDir(),
 			RepoPrefix: "codex",
 			Include:    []string{"**"},
-			// .git は codex の統合パイプラインが差分ベースラインに使う（上流 PR #18982）。
-			// phase2_workspace_diff.md は統合の中間生成物。memories_1.sqlite は Dir の
-			// 外（~/.codex/）なので構造的に対象外だが、将来の移動に備えて明示しておく。
+			// Codex's integration pipeline uses .git as its diff baseline (upstream PR
+			// #18982), and phase2_workspace_diff.md is an intermediate product of that
+			// integration. memories_1.sqlite lives outside Dir (in ~/.codex/) and is
+			// therefore already out of scope, but is listed in case it ever moves.
 			Exclude:    []string{".git/**", "phase2_workspace_diff.md", "*.sqlite", "*.sqlite-*"},
 			Scopes:     false,
 			RequireDir: true,
@@ -82,7 +91,8 @@ func memoryRootDecls() []memoryRoot {
 	}
 }
 
-// memoryRoots は今この環境で有効なルートを返す（RequireDir のものは live dir 存在時のみ）。
+// memoryRoots returns the roots active in this environment (a RequireDir one only while its
+// live dir exists).
 func memoryRoots() []memoryRoot {
 	var out []memoryRoot
 	for _, r := range memoryRootDecls() {
@@ -96,19 +106,20 @@ func memoryRoots() []memoryRoot {
 	return out
 }
 
-// memoryInactiveRoot は「宣言はされているが今この環境では有効でない」ルートの説明
-// （docs/log/39 P4）。RequireDir のルートを黙って落とすと、Console 側は「codex のメモリが
-// 出てこない」理由を示せず、利用者は有効化の導線にも辿り着けない。
+// memoryInactiveRoot describes a root that is declared but not active in this environment
+// (docs/log/39 P4). Dropping a RequireDir root silently would leave the Console unable to say
+// why codex memory is missing, and the user with no route to the switch that enables it.
 type memoryInactiveRoot struct {
 	Kind   string `json:"kind"`
 	Label  string `json:"label"`
 	Reason string `json:"reason"` // "codex_memories_disabled" | "codex_memories_pending" | "absent"
-	// Toggleable は Console から有効化/無効化できるか。true のとき Enabled が現在値。
+	// Toggleable says whether the Console can enable/disable it. When true, Enabled carries
+	// the current value.
 	Toggleable bool `json:"toggleable"`
 	Enabled    bool `json:"enabled"`
 }
 
-// memoryInactiveRoots は memoryRoots() が落としたルートを理由付きで返す。
+// memoryInactiveRoots returns the roots memoryRoots() dropped, each with its reason.
 func memoryInactiveRoots() []memoryInactiveRoot {
 	active := map[string]bool{}
 	for _, r := range memoryRoots() {
@@ -123,8 +134,9 @@ func memoryInactiveRoots() []memoryInactiveRoot {
 		if r.Kind == "codex" {
 			v.Toggleable = true
 			v.Enabled = codex.MemoriesEnabled()
-			// 有効化しても ~/.codex/memories は次に codex が走るまで生えない。
-			// 「設定が効いていない」と「まだ作られていない」は別物なので区別する。
+			// Even once enabled, ~/.codex/memories does not appear until codex next runs.
+			// "the setting did not take" and "not created yet" are different states, so
+			// they are reported apart.
 			if v.Enabled {
 				v.Reason = "codex_memories_pending"
 			} else {
@@ -136,7 +148,7 @@ func memoryInactiveRoots() []memoryInactiveRoot {
 	return out
 }
 
-// memoryRootByKind は kind でルートを引く（REST の scope 解決用）。
+// memoryRootByKind looks a root up by kind (for scope resolution in the REST layer).
 func memoryRootByKind(kind string) (memoryRoot, bool) {
 	for _, r := range memoryRoots() {
 		if r.Kind == kind {
@@ -146,8 +158,8 @@ func memoryRootByKind(kind string) (memoryRoot, bool) {
 	return memoryRoot{}, false
 }
 
-// memoryAllowed は Dir からの相対パス rel（スラッシュ区切り）が版管理対象かを返す。
-// allowlist が唯一の判定で、Exclude は Include 内の絞り込みにしか使わない。
+// memoryAllowed reports whether rel — the slash-separated path relative to Dir — is under
+// version control. The allowlist is the only decision; Exclude only narrows within Include.
 func memoryAllowed(r memoryRoot, rel string) bool {
 	rel = filepath.ToSlash(rel)
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || rel == ".." {
@@ -171,9 +183,9 @@ func memoryAllowed(r memoryRoot, rel string) bool {
 	return true
 }
 
-// memoryGlobMatch は `**`（0 個以上のセグメント）を解する glob マッチ。セグメント内の
-// ワイルドカードは path.Match に委ねる。path/filepath の Match は `**` を扱えず、
-// `*` がセパレータを跨がないため、この薄いラッパを持つ。
+// memoryGlobMatch is a glob match that understands `**` (zero or more segments), delegating
+// wildcards within a segment to path.Match. This thin wrapper exists because path/filepath's
+// Match cannot handle `**` and its `*` does not cross a separator.
 func memoryGlobMatch(pattern, name string) bool {
 	return memoryGlobSegs(strings.Split(pattern, "/"), strings.Split(name, "/"))
 }
@@ -181,7 +193,7 @@ func memoryGlobMatch(pattern, name string) bool {
 func memoryGlobSegs(pat, seg []string) bool {
 	for len(pat) > 0 {
 		if pat[0] == "**" {
-			// `**` は 0 個以上のセグメントを飲む。末尾なら残り全部にマッチ。
+			// `**` swallows zero or more segments; at the end it matches all that is left.
 			if len(pat) == 1 {
 				return true
 			}
@@ -204,23 +216,24 @@ func memoryGlobSegs(pat, seg []string) bool {
 	return len(seg) == 0
 }
 
-// memoryFile は収集した 1 ファイルの座標（一覧 API とコピーの両方が使う）。
+// memoryFile is the coordinate of one collected file, used by both the listing API and the
+// copy.
 type memoryFile struct {
-	Rel   string // root.Dir からの相対パス（スラッシュ区切り）
+	Rel   string // path relative to root.Dir (slash-separated)
 	Abs   string
 	Size  int64
-	MTime int64 // Unix 秒
+	MTime int64 // Unix seconds
 }
 
-// memoryCollect は root 配下の allowlist 合致ファイルを列挙する。シンボリックリンクは
-// 追わない — allowlist の外（transcript や資格情報）へ抜ける経路を塞ぐため、リンクは
-// ファイルとしてもディレクトリとしても無視する（★1）。
+// memoryCollect enumerates the allowlist-matching files under root. Symlinks are not
+// followed: to close every route out of the allowlist (transcripts, credentials), a link is
+// ignored whether it points at a file or a directory (★1).
 func memoryCollect(r memoryRoot) []memoryFile {
 	var out []memoryFile
 	root := r.Dir
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
-			// 読めない枝は黙って飛ばす（live は他プロセスが書き換え続けている）。
+			// Skip an unreadable branch silently (other processes keep rewriting live).
 			if d != nil && d.IsDir() {
 				return fs.SkipDir
 			}
@@ -234,7 +247,7 @@ func memoryCollect(r memoryRoot) []memoryFile {
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
-		// シンボリックリンクは種別を問わず不採用（リンク先が allowlist 外でも辿れてしまう）。
+		// Reject symlinks of any kind (a target outside the allowlist would be reachable).
 		if d.Type()&fs.ModeSymlink != 0 {
 			if d.IsDir() {
 				return fs.SkipDir
@@ -242,8 +255,8 @@ func memoryCollect(r memoryRoot) []memoryFile {
 			return nil
 		}
 		if d.IsDir() {
-			// 配下ごと除外されるディレクトリ（codex の .git）は降りる前に刈る。
-			// "<dir>/**" 形式の Exclude を、その dir 自体にマッチさせて判定する。
+			// Prune a directory excluded together with everything under it (codex's .git)
+			// before descending, by matching a "<dir>/**" Exclude against the dir itself.
 			for _, ex := range r.Exclude {
 				if base, ok := strings.CutSuffix(ex, "/**"); ok && memoryGlobMatch(base, rel) {
 					return fs.SkipDir
@@ -268,9 +281,9 @@ func memoryCollect(r memoryRoot) []memoryFile {
 	return out
 }
 
-// memorySyncToStaging は root の allowlist 合致ファイルを staging/<RepoPrefix>/ 以下へ
-// 複製する。live 側を消したファイルが snapshot に残らないよう、先に prefix ごと消して
-// から書き直す（対象は数百 KB なので実質無料・docs/log/39）。
+// memorySyncToStaging copies root's allowlist-matching files under staging/<RepoPrefix>/. So
+// that a file deleted on the live side does not linger in the snapshot, the whole prefix is
+// removed first and then rewritten (a few hundred KB, so effectively free; docs/log/39).
 func memorySyncToStaging(r memoryRoot, stagingRoot string) (int, error) {
 	dst := filepath.Join(stagingRoot, filepath.FromSlash(r.RepoPrefix))
 	if err := os.RemoveAll(dst); err != nil {
@@ -286,7 +299,7 @@ func memorySyncToStaging(r memoryRoot, stagingRoot string) (int, error) {
 			return 0, err
 		}
 		if err := memoryCopyFile(f.Abs, out); err != nil {
-			// live は動いているので、消えた/読めなくなったファイルは飛ばす。
+			// Live keeps moving, so skip a file that vanished or became unreadable.
 			continue
 		}
 	}
@@ -310,8 +323,8 @@ func memoryCopyFile(src, dst string) error {
 	return out.Close()
 }
 
-// memoryScopeSlug は claude の repo 内パス（claude/projects/<slug>/memory/...）から
-// プロジェクト slug を取り出す。scope を持たないルートのパスでは ok=false。
+// memoryScopeSlug extracts the project slug from a claude in-repo path
+// (claude/projects/<slug>/memory/...). For a path of a root without scopes, ok=false.
 func memoryScopeSlug(repoPath string) (string, bool) {
 	const prefix = "claude/projects/"
 	if !strings.HasPrefix(repoPath, prefix) {
@@ -325,9 +338,9 @@ func memoryScopeSlug(repoPath string) (string, bool) {
 	return slug, true
 }
 
-// memorySlugDisplay は claude の slug（絶対パスの "/" を "-" に潰したもの）を人が読める
-// 名前へ整形する（★6）。~/repos 配下の実ディレクトリから逆引きできれば確実なので
-// まずそれを試し、駄目なら "-repos-" 以降を採る。
+// memorySlugDisplay turns a claude slug (an absolute path with "/" flattened to "-") into a
+// human-readable name (★6). Reverse-mapping it to a real directory under ~/repos is the
+// reliable route, so that is tried first; failing that, the part after "-repos-" is used.
 func memorySlugDisplay(slug string) string {
 	root := gitx.ReposRoot()
 	if ents, err := os.ReadDir(root); err == nil {

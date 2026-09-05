@@ -9,12 +9,12 @@ import (
 // randUUID returns a random RFC-4122 v4 UUID. newBrowserHandoffID takes 10 hex
 // digits out of it for the ledger row id.
 //
-// ⚠️ package main の chat_store.go にある同名関数と同じ実装の**写し**である。移送
-// (ADR 0067 WP-A3) の時点で本体は所有外のファイルに在り、動かせなかった。関数変数で
-// package main から借りる形も採らなかった: それだと browserx 単体のテストバイナリで
-// nil になり、id を作るだけのテストが「結線されていない」という理由で落ちる——乱数
-// 8 行のためにテストの実行条件を分ける価値がない。
-// 重複はエイリアス回収のウェーブで畳むこと（共通の util パッケージへ 1 本化する）。
+// This is a copy of the identically named function in package main's chat_store.go: the
+// original sits in a file this package does not own, so it could not be moved. Borrowing
+// it through a function variable was rejected too — it would be nil in browserx's own
+// test binary, so a test that merely mints an id would fail for being "not wired up",
+// and eight lines of randomness do not justify special-casing how the tests run.
+// Fold the duplicate into a shared util package when the aliases are reclaimed.
 func randUUID() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])

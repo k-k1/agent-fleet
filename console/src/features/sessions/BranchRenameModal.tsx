@@ -1,4 +1,4 @@
-// BranchRenameModal — rename a worktree SESSION's branch (⋯ → ブランチ名を変更).
+// BranchRenameModal — rename a worktree SESSION's branch (⋯ → "rename branch").
 // Session-scoped so the AI suggestion summarizes THIS session's conversation.
 // Save runs `git branch -m` on the session's working copy (folder = session id
 // untouched); every session in that dir has its start branch follow, so the
@@ -122,8 +122,8 @@ export function BranchRenameModal({ name, branch, onClose, onSaved }: BranchRena
             </button>
           ))}
         </div>
-        {/* 設定 > AI補助「ブランチ名の提案」。かつてはセッションのタイトル提案の
-            設定に相乗りしていて、しかも off でもボタンは出ていた。 */}
+        {/* Settings > AI assistance > "branch name suggestions": its own switch, and the
+            button is hidden when it is off. */}
         {branchSuggest && (
           <div>
             <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>

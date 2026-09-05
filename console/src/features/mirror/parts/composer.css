@@ -1,12 +1,13 @@
-/* コンポーサーの器と、その上に載る 2 段: 添付チップの帯と返信サジェストのチップ行。
-末尾は ＋ 添付ボタン
+/* The composer shell and the two rows above it: the attachment-chip band and the reply-suggestion
+chip row, ending with the + attach button
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 .mirror-compose {
-  position: relative; /* スキルピッカー (.mirror-skills) の絶対配置アンカー */
+  position: relative; /* absolute-positioning anchor for the skill picker (.mirror-skills) */
   display: flex;
   flex-wrap: wrap; /* pasted-image strip (full width) wraps above the input row */
   gap: 8px;
@@ -23,21 +24,21 @@
   align-items: center;
   gap: 8px;
 }
-/* 返信サジェストのチップ行（コンポーサー入力の上・全幅）。折り返さず必ず1行に収め、あふれた分は
-   左右スクロール（タッチ=スワイプはネイティブ、マウス=ドラッグは useDragScroll）。スクロールバーは
-   隠す（行が細く、出ると窮屈なため）。 */
+/* Reply-suggestion chip row (full width, above the composer input). Never wraps: it stays on one
+   line and the overflow scrolls horizontally (touch swipe is native, mouse drag is
+   useDragScroll). The scrollbar is hidden because the row is thin and it crowds it. */
 .mirror-suggest {
   flex: 0 0 100%;
-  min-width: 0; /* flex-basis 100% でも収縮できるように（これが無いと overflow が効かない） */
+  min-width: 0; /* allow shrinking even at flex-basis 100%; without it overflow has no effect */
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
   gap: 6px;
   overflow-x: auto;
   overflow-y: hidden;
-  overscroll-behavior-x: contain; /* 端まで来ても親ペイン/ページを動かさない */
-  /* ドラッグでテキスト選択にならないように。長タップがメニュー（SuggestChipMenu）に届くよう、
-     iOS の callout もここで抑える（app-rail の行と同じ作法）。 */
+  overscroll-behavior-x: contain; /* reaching the edge must not scroll the parent pane or page */
+  /* Keep a drag from turning into a text selection, and suppress the iOS callout so a long press
+     reaches the menu (SuggestChipMenu) — same treatment as the app-rail rows. */
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -47,10 +48,10 @@
 .mirror-suggest::-webkit-scrollbar {
   display: none;
 }
-/* 候補チップ。削除とピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）へ
-   集約したので、以前あったチップ内の×とその入れ物・常時確保していた右余白は無い。 */
+/* Suggestion chip. Delete and pin live in the right-click / long-press / Menu-key menu
+   (SuggestChipMenu), so the chip has no in-chip close button and no reserved right padding. */
 .mirror-suggest-chip {
-  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  flex: 0 0 auto; /* single scrolling row, so never shrink */
   max-width: 100%;
   display: inline-flex;
   align-items: center;
@@ -71,18 +72,19 @@
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
 }
-/* v2: LLM 生成候補は accent 寄りの見た目で学習候補と区別。 */
+/* LLM-generated suggestions lean on the accent so they are distinguishable from learned ones. */
 .mirror-suggest-chip.llm {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
-/* ピン留め（常に表示）した候補。ランキングに関係なく先頭に固定で並ぶ列なので、📌 と
-   実線寄りの枠で「自分で固定した側」だと分かるようにする。 */
+/* Pinned (always shown) suggestions. They sit at the head of the row regardless of ranking, so a
+   pin glyph and a more solid border mark them as user-pinned. */
 .mirror-suggest-chip.pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
-/* Tab 補完でいま入力欄に入っている候補。フォーカスは入力欄に残したまま「どれを見ているか」を
-   示す必要があるので、フォーカスリング（:focus-visible）とは別に塗りで強調する。 */
+/* The suggestion currently filled into the input by Tab completion. Focus stays in the input, so
+   which one is being previewed has to be shown by fill rather than a focus ring
+   (:focus-visible). */
 .mirror-suggest-chip.cycling {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, var(--bg));
@@ -91,9 +93,9 @@
   font-size: 11px;
   color: var(--accent);
 }
-/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+/* Trigger button that fetches LLM suggestions on demand. */
 .mirror-suggest-ai {
-  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  flex: 0 0 auto; /* single scrolling row, so never shrink */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -153,7 +155,7 @@
   font-size: 12px;
   color: var(--muted);
 }
-/* Non-image attachment chip (drag&drop / ＋): icon + name instead of a thumbnail. */
+/* Non-image attachment chip (drag&drop / +): icon + name instead of a thumbnail. */
 .ma-chip.ma-file {
   width: auto;
   max-width: 240px;
@@ -172,7 +174,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* ＋ attach button, left of the composer (all pointer types — phones foremost). */
+/* + attach button, left of the composer (all pointer types — phones foremost). */
 .mirror-attach-btn {
   flex: none;
   align-self: stretch;

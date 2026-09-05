@@ -25,8 +25,9 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 			http.Error(w, "no text", http.StatusBadRequest)
 			return
 		}
-		// accent_phrases に pause_mora を 1 つ含める（読点相当）ので scalePauseMoras の
-		// 注入をテストできる。null の pause_mora（区切りなし）も混ぜて無視されることを見る。
+		// accent_phrases carries one pause_mora (the comma equivalent) so that
+		// scalePauseMoras' injection is testable, plus a null pause_mora (no break)
+		// that has to be ignored.
 		writeJSON(w, http.StatusOK, map[string]any{
 			"speedScale": 1.0,
 			"kana":       "テスト",
@@ -42,7 +43,7 @@ func fakeVoicevox(t *testing.T) (*httptest.Server, *string) {
 		ss, _ := m["speedScale"].(float64)
 		pre, _ := m["prePhonemeLength"].(float64)
 		post, _ := m["postPhonemeLength"].(float64)
-		pauseLen := -1.0 // -1 = pause_mora が見当たらない（テスト用の番兵）
+		pauseLen := -1.0 // -1 is the test sentinel for "no pause_mora found"
 		if phrases, ok := m["accent_phrases"].([]any); ok {
 			for _, p := range phrases {
 				if phrase, ok := p.(map[string]any); ok {
@@ -91,8 +92,9 @@ func TestVoicevoxSynthesize(t *testing.T) {
 	if *gotSpeaker != "3" {
 		t.Errorf("speaker = %q, want 3", *gotSpeaker)
 	}
-	// speedScale の注入と、前後無音の短縮（文間の待機対策）の両方が synthesis へ届くこと。
-	// particlePause=false なので pause_mora.vowel_length はエンジンの値（0.2）のまま。
+	// Both the speedScale override and the trimmed leading/trailing silence (which is what
+	// keeps the wait between sentences bearable) must reach /synthesis. With
+	// particlePause=false, pause_mora.vowel_length stays at the engine's own 0.2.
 	if got := string(wav); got != "WAVspeed=1.25,pre=0.02,post=0.05,pause=0.2" {
 		t.Errorf("wav = %q, want WAVspeed=1.25,pre=0.02,post=0.05,pause=0.2 (param override not injected?)", got)
 	}
@@ -110,7 +112,7 @@ func TestVoicevoxSynthesize(t *testing.T) {
 		t.Errorf("wav = %q, want WAVspeed=1,pre=0.02,post=0.05,pause=0.2", got)
 	}
 
-	// particlePause=true → pause_mora.vowel_length は particlePauseScale (0.6) 倍に詰まる。
+	// particlePause=true tightens pause_mora.vowel_length by particlePauseScale (0.6).
 	wav, aerr = voicevoxSynthesize(t.Context(), srv.URL, "神は細部に。", "3", 1, true)
 	if aerr != nil {
 		t.Fatalf("particle-pause synthesize: %+v", aerr)
@@ -122,16 +124,16 @@ func TestVoicevoxSynthesize(t *testing.T) {
 
 func TestCollapseJaSpaces(t *testing.T) {
 	cases := []struct{ in, want string }{
-		{"submit 時に", "submit時に"},                // 英単語→日本語
-		{"green です。", "greenです。"},                // 英単語→日本語（文末）
-		{"設定 tts_engine を見る", "設定tts_engineを見る"}, // 日本語→英単語→日本語
-		{"tsc / vitest", "tsc / vitest"},         // 英単語同士は残す
-		{"This is a pen", "This is a pen"},       // 英文はそのまま
-		{"submit   時に", "submit時に"},              // 連続スペースも除去
-		{"a  b", "a b"},                          // 英単語間の連続は 1 つに正規化
-		{"それは　いい", "それは　いい"},                     // 全角スペースは意図した間として残す
-		{"「code です」", "「codeです」"},                // 和文記号にも隣接扱いが効く
-		{"67件 まで OK です", "67件までOKです"},            // 数字+助数詞は和文側
+		{"submit 時に", "submit時に"},                // latin word -> Japanese
+		{"green です。", "greenです。"},                // latin word -> Japanese, sentence end
+		{"設定 tts_engine を見る", "設定tts_engineを見る"}, // Japanese -> latin word -> Japanese
+		{"tsc / vitest", "tsc / vitest"},         // space between latin words is kept
+		{"This is a pen", "This is a pen"},       // an all-latin sentence is untouched
+		{"submit   時に", "submit時に"},              // a run of spaces is removed too
+		{"a  b", "a b"},                          // a run between latin words collapses to one
+		{"それは　いい", "それは　いい"},                     // a full-width space is a deliberate pause; kept
+		{"「code です」", "「codeです」"},                // Japanese punctuation counts as adjacency too
+		{"67件 まで OK です", "67件までOKです"},            // digits + counter belong to the Japanese side
 	}
 	for _, c := range cases {
 		if got := collapseJaSpaces(c.in); got != c.want {
@@ -215,8 +217,8 @@ func TestTTSRoutes(t *testing.T) {
 	}
 }
 
-// TestTTSAutoFallsBackToUnreachableVoicevox: auto+日本語で engine 不在・polly 不在なら
-// voicevox の 502 がそのまま返る（受け皿がいないケースの明示）。
+// TestTTSAutoNoProviders — with auto + Japanese and neither the engine nor polly present,
+// voicevox's 502 comes back unchanged: the case where nothing is left to catch the request.
 func TestTTSAutoNoProviders(t *testing.T) {
 	clearTTSEnv(t)
 	mux := http.NewServeMux()
@@ -231,7 +233,7 @@ func TestTTSAutoNoProviders(t *testing.T) {
 	}
 }
 
-// chooseTTSProvider — docs/log/24 の使い分け表の純関数テスト。
+// TestChooseTTSProvider is the pure-function test of the selection table in docs/log/24.
 func TestChooseTTSProvider(t *testing.T) {
 	cases := []struct {
 		name                        string
@@ -257,10 +259,11 @@ func TestChooseTTSProvider(t *testing.T) {
 	}
 }
 
-// auto+日本語で engine 停止中でも、Polly が設定されていれば「フォールバック先が polly に
-// なる」ことをルート越しに確認する（Polly 実呼び出しは行わない: 偽の region を与えると
-// SDK が実 AWS へ出て行ってしまうため、chooseTTSProvider の単体テストと status の
-// enabled/managed 表示で代替する）。ここでは admin トグル off → 表示に反映を見る。
+// TestTTSAdminToggleSetting checks through the route that with auto + Japanese and the
+// engine stopped, the fallback lands on polly when Polly is configured. Polly is never
+// actually called: a fake region sends the SDK out to real AWS, so the unit test of
+// chooseTTSProvider and the enabled/managed fields of status stand in for it. Here the
+// admin toggle goes off and status has to reflect it.
 func TestTTSAdminToggleSetting(t *testing.T) {
 	clearTTSEnv(t)
 	srv, _ := fakeVoicevox(t)
@@ -276,8 +279,8 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 	mux := http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: srv.URL, mgr: mgr})
 
-	// setting を直接 off にして（PUT は super_admin 認証が要るため store 経由）、
-	// status の enabled が落ちること＝ルーティングの engineOff 判定が効くことを見る。
+	// Flip the setting off directly (PUT needs super_admin auth, so go through the store)
+	// and watch status.enabled drop, i.e. the engineOff branch of routing takes effect.
 	if err := st.SetSetting(t.Context(), ttsEngineSetting, "off"); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
@@ -299,8 +302,8 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 		t.Error("readiness probe should still see the engine")
 	}
 
-	// engine 無効 + polly 不在 → auto は voicevox に落ちて合成自体は通る（受け皿なしの
-	// 最後の砦。ready なエンジンがいるので音は出る）。
+	// Engine disabled and no polly: auto still falls to voicevox and synthesis succeeds.
+	// It is the last resort, and a ready engine means sound still comes out.
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。"}`)))
 	if rec.Code != http.StatusOK {
@@ -308,13 +311,14 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 	}
 }
 
-// テナント共通の読み仮名辞書: setting に置いた値が GET /api/tts/dict（全ユーザー用）で
-// 読めること（PUT /api/admin/tts/dict は super_admin 認証が要るため store 経由で書く。
-// admin トグルのテストと同じ流儀）。store 無し構成では空文字が返る。
+// TestTTSDict — the tenant-wide reading dictionary: what is stored in the setting must be
+// readable through GET /api/tts/dict, which is open to every user. PUT /api/admin/tts/dict
+// needs super_admin auth, so the value is written through the store, as in the admin-toggle
+// test. A configuration with no store returns an empty string.
 func TestTTSDict(t *testing.T) {
 	clearTTSEnv(t)
 
-	// store 無し（テスト構成）→ 空の辞書。
+	// No store (test configuration): an empty dictionary.
 	mux := http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
 	rec := httptest.NewRecorder()
@@ -327,7 +331,7 @@ func TestTTSDict(t *testing.T) {
 		t.Errorf("dict without store = %q, want empty", got.Dict)
 	}
 
-	// store あり → setting の中身がそのまま返る。
+	// With a store, the setting's contents come back verbatim.
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -352,9 +356,10 @@ func TestTTSDict(t *testing.T) {
 	}
 }
 
-// キャラ一覧プロキシ: エンジンの /speakers をキャラ名＋トーク用スタイル（speaker 番号は
-// 文字列化）へ変換して返すこと。歌唱系スタイル（type != "talk"）は除き、トークスタイルの
-// 無いキャラは落とす。2 回目はキャッシュ（エンジンを再度叩かない）。エンジン不在は 502。
+// TestTTSSpeakers — the character-list proxy: the engine's /speakers is converted into
+// character names plus their talk styles, with speaker numbers stringified. Singing styles
+// (type != "talk") are excluded, and a character left with no talk style is dropped. The
+// second call is served from cache without touching the engine; no engine is a 502.
 func TestTTSSpeakers(t *testing.T) {
 	clearTTSEnv(t)
 
@@ -392,14 +397,14 @@ func TestTTSSpeakers(t *testing.T) {
 		t.Errorf("speakers = %+v, want %+v", got.Speakers, want)
 	}
 
-	// 2 回目はキャッシュから（エンジンを叩かない）。
+	// The second call comes from the cache and does not hit the engine.
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
 	if rec.Code != http.StatusOK || hits != 1 {
 		t.Errorf("cached speakers: code=%d hits=%d, want 200 / 1", rec.Code, hits)
 	}
 
-	// エンジン不在 → 502。
+	// No engine: 502.
 	mux = http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
 	rec = httptest.NewRecorder()

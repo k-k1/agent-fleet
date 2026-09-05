@@ -9,22 +9,23 @@ import (
 	"testing"
 )
 
-// TestMigrationSeriesDeclareTheSameSchema は 2 つのマイグレーション系列を **SQL のまま
-// 読んで**比べる。TestSchemaDialectParity と目的は同じだが、決定的に違うのは
-// **Postgres サーバが要らない**こと。
+// TestMigrationSeriesDeclareTheSameSchema compares the two migration series by reading the
+// SQL as written. Same purpose as TestSchemaDialectParity, with one decisive difference: it
+// needs no Postgres server.
 //
-// 🔥 なぜ要るか（2026-09-01 に本番で踏んだ）。パリティ検査は既にあったのに
-// `AF_TEST_DATABASE_URL` が無ければ skip する作りで、CI に Postgres が無い以上
-// **一度も走っていなかった**。走らない検査は無いのと同じで、その隙間に
-// `workspace.settings`（`migrations/0009`）が **Postgres 側へ写されないまま**残った。
+// Why it is needed: the parity check already existed, but it skipped itself without
+// `AF_TEST_DATABASE_URL`, and with no Postgres in CI it had never run once. A check that
+// does not run is no check at all, and through that gap `workspace.settings`
+// (`migrations/0009`) stayed uncopied to the Postgres side.
 //
-// 症状の出方が最悪だった: 読み出しは `GetWorkspaceSettings` のエラーを握りつぶすので
-// **全部の設定が既定値に見え**、書き込みだけが 500。つまり Postgres のデプロイでは
-// 「ワークスペース設定を変えても保存できない」が、**画面上はいつも既定値**という形で
-// 何週間も残っていた（プレビューの設定を触ろうとして初めて表に出た）。
+// The failure mode was the worst kind: reads swallow the error from `GetWorkspaceSettings`,
+// so every setting looked like its default and only writes were 500. On a Postgres
+// deployment "workspace settings cannot be saved" therefore survived for weeks behind a
+// screen that always showed defaults.
 //
-// ★ 型は比べない。SQLite の宣言型と Postgres の型は文字列として一致しないし、守りたい
-// のは「片方にしか無い」——実際に起きた壊れ方はそれだけである。
+// Types are not compared. A SQLite declared type and a Postgres type do not match as
+// strings, and what needs protecting is "present on one side only" — the only way this has
+// actually broken.
 func TestMigrationSeriesDeclareTheSameSchema(t *testing.T) {
 	lite := declaredSchema(t, "migrations")
 	pg := declaredSchema(t, "migrations-pg")
@@ -45,8 +46,8 @@ func TestMigrationSeriesDeclareTheSameSchema(t *testing.T) {
 // SQL (store_sqlite.go: migrateMemberships + legacyHook). Each entry needs a reason —
 // an exemption without one is how a genuine miss gets waved through.
 //
-// ⚠️ 新しい行を足す前に「本当に Go 側で埋まるのか」を確かめること。ここに書けば検査は
-// 黙るので、**この表が検査そのものより弱い場所**になる。
+// Confirm that the Go side really does fill it in before adding a row. Anything written
+// here silences the check, which makes this table the weakest point in it.
 var declaredSchemaExempt = map[string]string{
 	"app_user":                "sqlite だけに残る membership 導入前の表。migrateMemberships が identity/membership へ畳んで捨てる",
 	"workspace_new":           "0002 が作る過渡的な表。legacyHook が DROP workspace → RENAME workspace_new TO workspace で入れ替える",
@@ -61,8 +62,9 @@ func exemptKeyOf(diff string) string {
 	if len(f) < 2 || f[0] != "table" {
 		return diff
 	}
-	// ★ 「表ごと無い」と「列が足りない」はどちらも "table X is …" で始まる。
-	// column(s) の有無で分けないと、列の差分が**表ごとの免除に化ける**。
+	// "the whole table is missing" and "a column is missing" both start with "table X is …".
+	// Without splitting on the presence of column(s), a column diff turns into a whole-table
+	// exemption.
 	if !strings.Contains(diff, "column(s)") {
 		return f[1]
 	}
@@ -73,7 +75,7 @@ func exemptKeyOf(diff string) string {
 	}
 	cols := strings.Fields(strings.ReplaceAll(diff[open+1:close], ",", " "))
 	if len(cols) != 1 {
-		return diff // 複数まとめては免除しない（1 つずつ理由を書かせる）
+		return diff // no bulk exemption: one reason per entry
 	}
 	return table + "." + cols[0]
 }
@@ -87,9 +89,10 @@ var (
 
 // declaredSchema replays one migration directory on paper: table -> column set.
 //
-// ⚠️ 実際に流して比べる TestSchemaDialectParity と違い、こちらは**書いてあるとおり**を
-// 読む。Go 側の legacyHook（sqlite で workspace を作り直すやつ）のような、SQL の外で
-// 起きる細工は見えない —— そこは repairWorkspaceColumns と、その回帰テストの担当。
+// Unlike TestSchemaDialectParity, which actually runs them and compares, this reads exactly
+// what is written. Sleight of hand outside the SQL — the Go-side legacyHook that rebuilds
+// workspace on sqlite, say — is invisible here; that belongs to repairWorkspaceColumns and
+// its own regression test.
 func declaredSchema(t *testing.T, dir string) map[string]map[string]bool {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
@@ -102,7 +105,7 @@ func declaredSchema(t *testing.T, dir string) map[string]map[string]bool {
 			files = append(files, e.Name())
 		}
 	}
-	sort.Strings(files) // 番号順 = 適用順
+	sort.Strings(files) // numeric order = apply order
 	out := map[string]map[string]bool{}
 	for _, name := range files {
 		raw, err := os.ReadFile(filepath.Join(dir, name))
@@ -140,9 +143,9 @@ func declaredSchema(t *testing.T, dir string) map[string]map[string]bool {
 	return out
 }
 
-// columnsOf splits a CREATE TABLE body at top-level commas and keeps the ones that
-// name a column. テーブル制約（PRIMARY KEY (...) / UNIQUE (...) / CHECK (...) …）は
-// 同じ形で並ぶので、先頭の語で落とす。
+// columnsOf splits a CREATE TABLE body at top-level commas and keeps the ones that name a
+// column. Table constraints (PRIMARY KEY (...) / UNIQUE (...) / CHECK (...) …) line up in
+// the same shape, so they are dropped by their leading word.
 func columnsOf(body string) []string {
 	var out []string
 	depth, start := 0, 0

@@ -1,17 +1,17 @@
-// 稼働時間ヒートマップ — 縦 24 時間 × 横 日付（docs/log/83）。
+// Uptime heatmap — 24 hours down, dates across (docs/log/83).
 //
-// なぜこれが要るか: 「稼働時間」も「クラウド費用」も 1 日 1 つの数字しか持たない。だから
-// 「金曜だけ高い」までは分かっても、**止め忘れなのか働いていたのか**が分からない。マスを
-// 時間まで割ると、その 2 つは形で見分けがつく（夜通し薄いオレンジが続く＝止め忘れ、
-// 昼だけ濃い＝働いていた）。
+// Why it exists: uptime and cloud cost each carry one number per day, which is enough to see
+// "Fridays are high" but not whether someone left a workspace running or was actually working.
+// Splitting the cells down to the hour makes the two distinguishable by shape (a faint orange
+// band all night = left running; dark only during the day = working).
 //
-// ⚠️ **金額は塗らない。** 実費（Cost Explorer）は日単位でしか取れないので、時間別の金額は
-// 「秒 × 誰かが一度打ち込んだ単価」＝見積にしかならず、ADR 0048 決定 2 がそれを否定して
-// いる。ここが「クラウド費用」ではなく「稼働時間」の面である理由でもある。
+// Never paint money here. Real cost (Cost Explorer) is only available per day, so an hourly
+// amount could only be seconds times a unit price someone typed in once — an estimate, which ADR
+// 0048 decision 2 rejects. That is also why this is the uptime view and not the cloud cost view.
 //
-// ⚠️ マスは **3 値**（未観測 / 停止 / 稼働）。灰色は「止まっていた」で、空白は
-// 「CP が見ていなかった」。ここを 2 値に潰すと、CP が落ちていた日が「誰も働かなかった日」
-// として自信たっぷりに表示される。
+// A cell has three states, not two: unobserved / stopped / running. Grey means "it was stopped",
+// blank means "the CP was not watching". Collapsing that to two makes a day when the CP was down
+// display confidently as a day when nobody worked.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
@@ -41,8 +41,8 @@ const METRICS: [UptimeMetric, MsgKey][] = [
 
 const DEFAULT_DAYS = 14;
 
-// 既定の期間はローカルの直近 14 日。30 日 × 24 段は横に詰まりすぎて、日付ラベルが
-// 「08-1708-18」と連結する（クラウド費用の棒グラフで実際に踏んだ）。
+// The default range is the last 14 local days. 30 days x 24 rows packs the columns so tightly
+// that the date labels run together as "08-1708-18", as the cloud cost bar chart did.
 function defaultRange(): { from: string; to: string } {
   const now = new Date();
   return {
@@ -51,28 +51,29 @@ function defaultRange(): { from: string; to: string } {
   };
 }
 
-/** 値の表示。凡例・読み出し・表の 3 か所で同じ関数を通す（同じ数字が場所によって違う
- * 形で出るのを防ぐ）。
+/** Value formatting. The legend, the readout and the table all go through this one function so
+ * the same number never appears in two shapes.
  *
- * ⚠️ 1 人ぶんの稼働率は 100% で頭打ちにする。スイープが途中で失敗した時間はメンバーの
- * samples がハートビートを上回りうるので、素直に割ると「103% 稼働」が出る。 */
+ * A single member's running ratio is capped at 100%: in an hour where the sweep failed part way
+ * through, a member's samples can exceed the heartbeat count, and dividing straight through
+ * reports "103% running". */
 function fmtValue(v: number, metric: UptimeMetric, aggregate: boolean): string {
   if (metric !== "running") return v.toFixed(1);
   if (aggregate) return v.toFixed(1);
   return Math.round(Math.min(1, v) * 100) + "%";
 }
 
-// 日付ラベルの間引き。
+// Thinning of the date labels.
 //
-// ⚠️ 下限が 2 なのは列幅の問題で、本数の問題ではない。「08-19」は約 45px あるのに列は
-// 22px しかないので、3 日ぶんを選ぶと stride 1 になって隣とくっつく（クラウド費用の
-// 棒グラフが「08-1708-18」になったのと同じ壊れ方）。
+// The floor of 2 is about column width, not about how many labels there are: "08-19" is about
+// 45px wide while a column is only 22px, so a three-day range would give stride 1 and the labels
+// would touch — the same break as the cloud cost bar chart's "08-1708-18".
 function labelStride(n: number): number {
   return Math.max(2, Math.ceil(n / 8));
 }
 
-/** 期間つきのデータ取得。費用の面と同じく「適用」でしか取り直さない（日付入力は
- * 1 文字ごとに変わるので、依存に入れると打っている最中に取得が走る）。 */
+/** Range-scoped fetch. As in the cost view, only Apply refetches: a date input changes on every
+ * keystroke, so putting it in the dependencies fires a request while the user is still typing. */
 function useUptime(endpoint: string, tenant?: string) {
   const tr = useT();
   const [range, setRange] = useState(defaultRange);
@@ -86,11 +87,11 @@ function useUptime(endpoint: string, tenant?: string) {
       setLoading(true);
       setErr("");
       try {
-        // ⚠️ サーバは UTC 日で切る。ローカルの端のマスを埋めるには前後 1 日ぶん余分に
-        // 貰う必要がある（+09:00 なら UTC の 15:00 がローカルの翌日 0 時のマス）。
+        // The server cuts on UTC days, so filling the cells at the local edges needs one extra
+        // day on each side (at +09:00, 15:00 UTC is the local next-day 00:00 cell).
         const w = widenForTimezone(win.from, win.to);
-        // ⚠️ クエリの組み立てはここ 1 か所。呼び出し側が endpoint に `?tenant=` を
-        // 足す形にすると `?tenant=x?from=y` という壊れた URL が黙って通る。
+        // The query is assembled here and nowhere else. If callers appended `?tenant=` to
+        // endpoint instead, a broken `?tenant=x?from=y` URL would pass silently.
         const p = new URLSearchParams({ from: w.from, to: w.to });
         if (tenant) p.set("tenant", tenant);
         const d = await api(`${endpoint}?${p.toString()}`);
@@ -111,8 +112,8 @@ function useUptime(endpoint: string, tenant?: string) {
     [endpoint, tenant, tr],
   );
 
-  // ⚠️ 期間は「適用」でしか取り直さない（日付入力は 1 文字ごとに変わる）。テナントの
-  // 切り替えは選んだ瞬間に取り直す — あちらは確定した選択である。
+  // Only Apply refetches on a range change, because a date input changes per keystroke. Switching
+  // tenant refetches immediately: that one is a settled choice.
   useEffect(() => {
     load(defaultRange());
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -121,8 +122,9 @@ function useUptime(endpoint: string, tenant?: string) {
   return { range, setRange, applied, data, err, loading, apply: () => load(range) };
 }
 
-/** ホバー / フォーカスの読み出し。値が先、ラベルが後（読み手は場所を知っていて数字が
- * 欲しい）。⚠️ tooltip は補助であって唯一の経路にしない — 同じ内容が表ビューにもある。 */
+/** Hover / focus readout. Value first, label second: the reader already knows where they are and
+ * wants the number. The tooltip is a supplement, never the only path — the table view carries the
+ * same content. */
 function CellReadout({
   cell,
   day,
@@ -190,8 +192,8 @@ function CellReadout({
   );
 }
 
-/** 凡例。⚠️ 2 つ以上の意味を色で分けている以上、凡例は常に出す（色だけで意味を
- * 運ばないための最低限）。 */
+/** Legend. As soon as colour distinguishes more than one meaning the legend is always shown; it
+ * is the minimum needed so that colour is never the only carrier of meaning. */
 function Legend({ max, metric, aggregate }: { max: number; metric: UptimeMetric; aggregate: boolean }) {
   const tr = useT();
   const zeroFloor = metric !== "running";
@@ -223,8 +225,8 @@ function Legend({ max, metric, aggregate }: { max: number; metric: UptimeMetric;
   );
 }
 
-/** 表ビュー。⚠️ 色だけで値を運ばないための逃げ道であって、おまけではない
- * （凡例・読み出し・この表の 3 つで、色を見分けられない読み手にも全部届く）。 */
+/** Table view. It is the escape from carrying values in colour alone, not a nicety: the legend,
+ * the readout and this table together reach a reader who cannot tell the colours apart. */
 function UptimeTable({
   grid,
   days,
@@ -275,11 +277,13 @@ function UptimeTable({
   );
 }
 
-/** ヒートマップ本体。データ取得は呼び出し側（3 つの入口で同じ形の応答が来る）。
+/** The heatmap itself. Fetching is the caller's job; all three entry points return the same
+ * response shape.
  *
- * aggregate=true は管理の合算。マスの値は「その時間に平均で何台動いていたか」になり、
- * 内訳はホバーに出る。合算そのものではなくメンバー別の系列を受け取って**ここで積む**ので、
- * 合計と内訳が別の API から来て食い違う、ということが起きない。 */
+ * aggregate=true is the admin roll-up: a cell's value becomes the average number of workspaces
+ * running in that hour, with the breakdown on hover. It takes the per-member series and sums them
+ * here rather than taking a pre-summed total, so the total and its breakdown cannot come from two
+ * APIs and disagree. */
 export function UptimeHeatmap({
   data,
   from,
@@ -332,8 +336,9 @@ export function UptimeHeatmap({
         <>
           <div
             className="uh-grid"
-            // ⚠️ 1fr にしない。14 列を横いっぱいに伸ばすと 1 マスが横棒になって
-            // ヒートマップに見えなくなる（headless で実測）。上限つきで左寄せする。
+            // Not 1fr: stretching 14 columns across the full width turns each cell into a
+            // horizontal bar and it stops reading as a heatmap (measured headless). Cap the
+            // width and align left instead.
             style={{
               gridTemplateColumns: `var(--uh-gutter) repeat(${days.length}, minmax(8px, var(--uh-cell-w)))`,
             }}
@@ -375,8 +380,8 @@ export function UptimeHeatmap({
         </>
       )}
 
-      {/* ⚠️ 但し書きは脚注にしない。「サンプル間隔ぶんの粗さ」と「30 分ずれる時間帯」は
-          どちらもマスの読み方そのものを変える。 */}
+      {/* These caveats are not footnotes: both the sampling-interval coarseness and the
+          half-hour-offset timezones change how a cell must be read. */}
       <p className="muted uh-note">
         {tr("uptime.note_sampling").replace("{n}", String(Math.round((data?.interval_secs || 0) / 60)))}
         {!timezoneAlignsToHours() && " " + tr("uptime.note_halfhour")}
@@ -418,8 +423,8 @@ function Row({
             ? "uh-cell uh-stopped"
             : "uh-cell uh-lv-" + cellLevel(cellValue(c, metric), max, zeroFloor) +
               (isUnmeasured(c, metric) ? " uh-unmeasured" : "");
-        // ⚠️ 状態は色だけで運ばない。aria-label に日時と状態を書いておくと、
-        // 読み上げでも「9/1 10 時 停止」と読める。
+        // State is never carried by colour alone: putting the timestamp and state in aria-label
+        // lets a screen reader announce "9/1 10:00 stopped".
         const state = !observed
           ? tr("uptime.state_unobserved")
           : !running
@@ -443,7 +448,7 @@ function Row({
   );
 }
 
-/** 期間の入力。費用の面と同じ並び（日付 → 適用）。 */
+/** Range inputs, in the same order as the cost view: dates, then Apply. */
 function UptimeRangeBar({
   range,
   setRange,
@@ -484,9 +489,9 @@ function UptimeRangeBar({
   );
 }
 
-/** MyUptimeView — 本人の設定の「稼働時間」タブ。
+/** MyUptimeView — the uptime tab in the user's own settings.
  *
- * ⚠️ 本人向けの面に他人の稼働は 1 件も来ない（CP が本人のぶんだけ返す）。 */
+ * Not one other person's uptime reaches this view; the CP returns only the caller's own. */
 export function MyUptimeView() {
   const tr = useT();
   const { range, setRange, applied, data, err, loading, apply } = useUptime("api/usage/me/hourly");
@@ -505,10 +510,10 @@ export function MyUptimeView() {
   );
 }
 
-/** MemberUptimePanel — 管理のメンバー詳細に差す 1 枚。
+/** MemberUptimePanel — the panel embedded in the admin member detail view.
  *
- * 隣に「ワークスペースを強制停止」と「ディスク上限」が並んでいる面なので、
- * 「夜通し薄いオレンジ」＝止め忘れ、はそのままその操作の根拠になる。 */
+ * It sits next to force-stop workspace and the disk quota, so "a faint orange band all night",
+ * i.e. left running, is directly the justification for those actions. */
 export function MemberUptimePanel({ slug, userKey }: { slug: string; userKey: string }) {
   const tr = useT();
   const endpoint = `api/admin/tenants/${encodeURIComponent(slug)}/members/${encodeURIComponent(userKey)}/usage-hourly`;
@@ -524,8 +529,8 @@ export function MemberUptimePanel({ slug, userKey }: { slug: string; userKey: st
   );
 }
 
-/** UptimeAdminView — 管理の「稼働時間」に出す合算 1 枚。tenant はテナント選択の slug
- * （空 = デプロイ全体・super_admin のみ）。 */
+/** UptimeAdminView — the roll-up panel on the admin uptime view. `tenant` is the slug of the
+ * tenant selection (empty = the whole deployment, super_admin only). */
 export function UptimeAdminView({ tenant, children }: { tenant?: string; children?: ReactNode }) {
   const tr = useT();
   const { range, setRange, applied, data, err, loading, apply } = useUptime(

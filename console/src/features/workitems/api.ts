@@ -10,18 +10,19 @@ export function workItemList(): Promise<unknown> {
   return api("api/work-items");
 }
 
-/** 更新 button: forced and synchronous on the CP side, so the response already carries
+/** The refresh button: forced and synchronous on the CP side, so the response already carries
  * the new rows (a button that answers with the same stale list reads as broken). */
 export function workItemRefresh(): Promise<unknown> {
   return apiJSON("api/work-items/refresh", "POST");
 }
 
-/** Bitbucket の「どこを見るか」の候補（docs/log/80 §80.22）。クローン用のリポジトリ一覧と
- *  同じ経路で、トークンを持つ Agent が答える。
+/** Candidate targets for a Bitbucket query, i.e. where to look (docs/log/80 §80.22). Same route
+ *  as the repository list used for cloning: the Agent, which holds the token, answers it.
  *
- *  ⚠️ **Workspace が停止中だと取れない**（レール本体は CP のキャッシュなので停止中でも
- *  開ける）。呼び手は取れなかったら手書きのクエリ欄に落ちること —— ここで詰まらせると、
- *  「停止中の Workspace をチケットから起こす」という機能の芯を、設定側で塞ぐことになる。 */
+ *  Unavailable while the Workspace is stopped (the rail itself still opens, because it reads the
+ *  CP cache). A caller that gets nothing must fall back to the free-text query field: blocking
+ *  here would let the settings side shut off the point of the feature, which is waking a stopped
+ *  Workspace from a ticket. */
 export function bitbucketRepoList(): Promise<unknown> {
   return api("api/connections/git/bitbucket.org/repos");
 }

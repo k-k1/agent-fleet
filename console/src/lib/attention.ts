@@ -1,28 +1,28 @@
-// 操作ビーコン（docs/log/75 P3）— 「人が今 Console を触っている」を Workspace のアイドル
-// 時計へ伝える。
+// Interaction beacon (docs/log/75 P3): tells the Workspace's idle clock that a person is using
+// the Console right now.
 //
-// なぜ要るか: アイドル自動停止の在席判定は端末の**打鍵**に絞ってある（開きっぱなしの
-// タブが永久に Workspace を温めるのを止めるため）。その結果、打鍵も送信もせずミラーで
-// 過去ログを読み続けている人が「不在」に見える。読んでいる最中にコンテナが止まると
-// Agent ごと落ちるので、転写すら取れなくなる（ミラーが「停止中は履歴を取得できません」
-// に変わる）。
+// Why it is needed: idle auto-stop decides presence from terminal keystrokes alone, so that a tab
+// left open cannot keep a Workspace warm forever. That makes someone reading back through the
+// mirror without typing or sending look absent, and if the container stops mid-read the Agent
+// goes with it, so even the transcript becomes unavailable.
 //
-// ★送るのは「タブが開いている」ではなく「人が操作した」。この 2 つを取り違えると、
-// P3 が消したはずの「開いたまま忘れられたタブが課金し続ける」がそのまま戻る。だから:
-//   - document が**可視**のときだけ（裏のタブ・別ウィンドウの裏は送らない）
-//   - **実操作**のときだけ（isTrusted・プログラム的な合成イベントは数えない）
-//   - **60 秒に 1 回**まで（スクロール 1 回ごとに POST しない）
-// 逆に、スクロールとクリックを数えるのは意図的: 読むという行為は打鍵を伴わない。
+// What is sent is "a person acted", never "a tab is open". Confusing the two brings back exactly
+// what P3 removed: a forgotten open tab billing forever. Hence:
+//   - only while the document is visible (never a background tab or a window behind another)
+//   - only on real interaction (isTrusted; synthetic, programmatic events do not count)
+//   - at most once per 60 seconds (no POST per scroll)
+// Counting scroll and click is deliberate the other way round: reading involves no keystrokes.
 import { workspaceAttention } from "../core/api/client.ts";
 
-/** ビーコンの最小間隔。CP 側でも 5 秒に畳まれるが、無駄な往復は手前で止める。 */
+/** Minimum interval between beacons. The CP folds them to 5 s anyway, but pointless round trips
+ *  are stopped here. */
 export const ATTENTION_INTERVAL_MS = 60_000;
 
-/** 人の操作と見なすイベント。keydown はここに要る — 端末の外（コンポーザ、検索、
- *  モーダル）で打つキーは端末 WS を通らないので、打鍵判定には現れない。 */
+/** Events counted as human interaction. keydown belongs here: keys typed outside the terminal
+ *  (composer, search, modals) never cross the terminal WS, so the keystroke check misses them. */
 const GESTURES = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
 
-/** shouldBeacon は「今このイベントで送ってよいか」の純関数。テストで固定する。 */
+/** shouldBeacon is the pure predicate for "may this event send now", pinned by tests. */
 export function shouldBeacon(
   trusted: boolean,
   visible: boolean,
@@ -30,28 +30,28 @@ export function shouldBeacon(
   lastSent: number,
   interval = ATTENTION_INTERVAL_MS,
 ): boolean {
-  if (!trusted) return false; // 合成イベント（自動テスト・拡張・自前の dispatch）
-  if (!visible) return false; // 裏のタブは「見ていない」
+  if (!trusted) return false; // synthetic event (automated tests, extensions, our own dispatch)
+  if (!visible) return false; // a background tab is not being looked at
   return now - lastSent >= interval;
 }
 
 /** wireAttentionBeacon installs the listeners; returns the unsubscribe.
  *
- * requireTrusted はテスト用の継ぎ目。jsdom の dispatchEvent が作るイベントは
- * isTrusted=false で固定（own かつ non-configurable なので偽装できない）ため、
- * 「送る側」の配線を確かめるにはここを開けるしかない。既定は true で、本番の
- * 呼び出し側（App のブート）は引数を渡さない — 合成イベントを数えないことは
- * 別のテストで固定してある。 */
+ * requireTrusted is a seam for tests. Events made by jsdom's dispatchEvent are always
+ * isTrusted=false (own and non-configurable, so it cannot be faked), and opening this seam is
+ * the only way to exercise the sending side. The default is true and production callers (the App
+ * boot) pass no argument; that synthetic events are not counted is pinned by a separate test. */
 export function wireAttentionBeacon({ requireTrusted = true } = {}): () => void {
-  // 起動直後は送らない（0 ではなく now）: 画面を開いただけで在席を主張しない。
-  // 最初の操作から数え始める — 開いたまま放置されたタブは 1 回も送らない。
+  // Do not beacon right after boot (now, not 0): merely opening the screen must not claim
+  // presence. Counting starts at the first interaction, so a tab left open never sends once.
   let lastSent = Date.now();
   const onGesture = (e: Event) => {
     const trusted = e.isTrusted || !requireTrusted;
     if (!shouldBeacon(trusted, document.visibilityState === "visible", Date.now(), lastSent)) return;
     lastSent = Date.now();
-    // 応答は見ない。停止処理と競合したときの 409 は「在席の記録が 1 回落ちた」だけで、
-    // 次の操作でまた届く。ここでトーストを出すと、無関係な操作に無関係なエラーが出る。
+    // The response is ignored. A 409 racing a stop only means one presence record was dropped,
+    // and the next interaction sends again; a toast here would surface an unrelated error on an
+    // unrelated action.
     void workspaceAttention();
   };
   for (const type of GESTURES) {

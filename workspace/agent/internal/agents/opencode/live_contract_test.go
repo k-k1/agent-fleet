@@ -204,7 +204,7 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 
 	// The production resolver runs over the real store (it refuses unknown / sidechain
 	// ids), so map the slot to this conversation the way the sid store does.
-	// Driver=managed: 分岐点を渡せる口は serve API 側だけなので、resolver が経路も見る。
+	// Driver=managed: only the serve API accepts a fork point, so the resolver looks at the route too.
 	m := session.Meta{Dir: dir, Name: "forkat", Kind: session.KindOpencode, Driver: session.DriverManaged}
 	sids.Write(session.UUID(dir, "forkat"), ses)
 	resolved, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchor})
@@ -249,16 +249,17 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 		t.Errorf("branch is missing the turn BEFORE the anchor on opencode %s — the cut is too early", ver)
 	}
 
-	// 「この発言の続きから」（Include）を実物で確かめる。追加のターン消費は無い。
-	// (a) 1 番目の発言を「続きから」= 2 番目の発言の手前まで ⇒ 上の排他分岐と同じ形になる。
-	//     翻訳（次のプロンプトを探す）が実ストアの id 並びで成立することの確認。
+	// Check "continue from this message" (Include) against the real thing. It costs no extra turns.
+	// (a) Continuing from the 1st message = up to just before the 2nd message, which is the same
+	//     shape as the exclusive branch above: the translation (find the next prompt) holds against
+	//     the id ordering of the real store.
 	incAt, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: users[0].AnchorID, Include: true})
 	if err != nil {
 		t.Fatalf("ResolveForkAt(first, include): %v", err)
 	}
 	if incAt != anchor {
 		t.Fatalf("include on the first exchange resolved to %q, want the next prompt %q — "+
-			"「続きから」と「次をやり直す」は同じ地点でなければならない", incAt, anchor)
+			"\"continue from here\" and \"redo the next one\" must land on the same point", incAt, anchor)
 	}
 	incFork, err := serveForkSession(addr, ses, dir, incAt)
 	if err != nil {
@@ -276,10 +277,10 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 		}
 	}
 	if incUsers != 1 || !sawIncAlpha {
-		t.Errorf("「続きから」の分岐が %d user turns / ALPHA=%v（1 / true を期待）on opencode %s",
+		t.Errorf("the \"continue from here\" branch has %d user turns / ALPHA=%v (want 1 / true) on opencode %s",
 			incUsers, sawIncAlpha, ver)
 	}
-	// (b) 最後のやり取りを「続きから」= 全部残す ⇒ 表現は "" （会話まるごと）。
+	// (b) Continuing from the LAST exchange = keep everything, expressed as "" (the whole conversation).
 	lastInc, err := (agentImpl{}).ResolveForkAt(m, agents.ForkPoint{Anchor: anchor, Include: true})
 	if err != nil {
 		t.Fatalf("ResolveForkAt(last, include): %v", err)
@@ -305,8 +306,8 @@ func TestContractLiveForkAtMessage(t *testing.T) {
 }
 
 // TestContractLiveOAuthReadyWindow pins the startup race behind the 500 we hit in the
-// wild（ref=err_91d98832, `OAuth method not found: opencode/device`, 起動 85ms 後の
-// click）: /global/health answers before the plugin that registers the device method has
+// wild (ref=err_91d98832, `OAuth method not found: opencode/device`, a click 85ms after
+// startup): /global/health answers before the plugin that registers the device method has
 // loaded, so the auth call must wait for the METHOD, not for health. Starts a private
 // serve on its own port so the workspace's shared daemon is untouched.
 //
@@ -317,7 +318,7 @@ func TestContractLiveOAuthReadyWindow(t *testing.T) {
 	cmd := exec.Command("opencode", "serve", "--hostname", "127.0.0.1", "--port", "7803")
 	cmd.Env = os.Environ()
 	if err := cmd.Start(); err != nil {
-		t.Skipf("opencode serve を起動できない: %v", err)
+		t.Skipf("cannot start opencode serve: %v", err)
 	}
 	defer func() {
 		_ = cmd.Process.Kill()
@@ -328,7 +329,7 @@ func TestContractLiveOAuthReadyWindow(t *testing.T) {
 	deadline := time.Now().Add(30 * time.Second)
 	for !healthy(addr) {
 		if time.Now().After(deadline) {
-			t.Fatal("serve が起動しなかった")
+			t.Fatal("serve never came up")
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -336,21 +337,21 @@ func TestContractLiveOAuthReadyWindow(t *testing.T) {
 	ready := deviceMethodReady(addr)
 
 	if err := waitOAuthMethod(addr, 30*time.Second); err != nil {
-		t.Fatalf("device メソッドが現れない: %v", err)
+		t.Fatalf("the device method never appeared: %v", err)
 	}
-	t.Logf("health 到達時点で device メソッドあり=%v / メソッド確認まで health から %s", ready, time.Since(healthAt).Round(time.Millisecond))
+	t.Logf("device method present when health went up=%v / %s from health until the method was confirmed", ready, time.Since(healthAt).Round(time.Millisecond))
 
-	// そして実際に開始できること（attempt は作るだけ・承認しないので資格情報は変わらない）。
+	// And that it can actually start: the attempt is only created, never approved, so no credentials change.
 	var env envelope[attemptInfo]
 	body := map[string]any{"methodID": oauthMethodID, "inputs": map[string]string{}}
 	if err := daemonJSON("POST", addr, "/api/integration/"+oauthIntegrationID+"/connect/oauth", body, &env); err != nil {
 		t.Fatalf("connect/oauth: %v", err)
 	}
 	if env.Data.AttemptID == "" || env.Data.URL == "" || env.Data.Mode != "auto" {
-		t.Fatalf("attempt の形が変わった: %+v", env.Data)
+		t.Fatalf("the attempt shape changed: %+v", env.Data)
 	}
 	if code := userCode(env.Data.URL, env.Data.Instructions); code == "" {
-		t.Errorf("ユーザーコードを取り出せない: url=%q instructions=%q", env.Data.URL, env.Data.Instructions)
+		t.Errorf("cannot extract the user code: url=%q instructions=%q", env.Data.URL, env.Data.Instructions)
 	}
 	_ = daemonJSON[struct{}]("DELETE", addr, "/api/integration/attempt/"+env.Data.AttemptID, nil, nil)
 }

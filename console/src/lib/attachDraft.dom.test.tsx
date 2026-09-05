@@ -1,5 +1,5 @@
 // useAttachDraft — the composer's side of the attachment draft: what the user sees after
-// closing 作業を始める and reopening it, or after switching the mirror to another session
+// closing the Start working dialog and reopening it, or after switching the mirror to another session
 // and back. The store next door (attachDraft.test.ts) proves the bytes round-trip; this
 // proves the wiring around it, which is where the two orderings that can eat a draft live:
 // the write that must not run before hydration (it would delete what it is loading), and
@@ -26,7 +26,7 @@ function Composer({ dkey }: { dkey: string | null }) {
       <button className="add-uploaded" onClick={() => attach.add([makeAttachment(new File(["LOG"], "server.log", { type: "text/plain" }), { name: "paste-2-server.log", path: "/p/paste-2-server.log" })])} />
       <button className="rm" onClick={() => attach.remove(0)} />
       <button className="clear" onClick={() => attach.clear()} />
-      {/* 送信の型: 押した瞬間に手放し、セッションに断られたら戻す（MirrorView.send）。 */}
+      {/* The send shape: release on press, put back if the session refuses it (MirrorView.send). */}
       <button
         className="fail-send"
         onClick={() => {
@@ -188,11 +188,12 @@ describe("useAttachDraft", () => {
     const before = chips()[0].getAttribute("data-url");
     await click(".fail-send");
     expect(names()).toEqual(["shot.png"]);
-    // 戻すときは URL を作り直す — 手放した時点で revoke 済みで、そのままでは画像が割れる。
+    // Putting one back mints a fresh URL: the old one was revoked on release, and reusing it
+    // leaves a broken image.
     expect(revoke).toHaveBeenCalledWith(before);
     expect(chips()[0].getAttribute("data-url")).not.toBe(before);
     expect(chips()[0].getAttribute("data-has-file")).toBe("1");
-    await reopen(); // 戻したぶんも下書きに書かれている
+    await reopen(); // what was put back is written to the draft too
     expect(names()).toEqual(["shot.png"]);
   });
 

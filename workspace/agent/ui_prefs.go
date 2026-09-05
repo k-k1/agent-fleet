@@ -1,9 +1,9 @@
 package main
 
-// ui-prefs のうち、**main の機能側**（chatProviders / defaultAutoTurns / modelHidden /
-// materializeMCPAll / agentOf）に依存するアクセサと HTTP ハンドラだけがここに残る。
-// prefs そのものの読み書きと、何にも依存しないアクセサは internal/uiprefs を直接呼ぶ
-// （ウェーブ B の別名 alias_uiprefs.go は RECLAIM-B で回収済み）。
+// Only the ui-prefs accessors that depend on main's own feature code (chatProviders /
+// defaultAutoTurns / modelHidden / materializeMCPAll / agentOf), plus the HTTP handlers, live
+// here. Reading and writing the prefs themselves, and every accessor that depends on nothing,
+// call internal/uiprefs directly.
 
 import (
 	"encoding/json"
@@ -24,20 +24,21 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
-// skipPermissionsPref は per-kind の既定「権限確認をスキップする」（設定 >
-// エージェント > 各カード、ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/log/76）。
-// ok=false は「その kind に設定が無い」で、既定値そのものは agents.SkipPermissions が
-// 持つ（従来どおり true）。
+// skipPermissionsPref is the per-kind default for "skip the permission prompt" (Settings >
+// Agents > each card, ui-prefs agentLaunchDefaults[<kind>].skipPermissions — docs/log/76).
+// ok=false means "no setting for that kind"; the default value itself belongs to
+// agents.SkipPermissions (true, as before).
 //
-// HTTP ではなくプロセス内で読むのは、Console 以外の起動経路 — MCP の create_session、
-// 定時実行、停止セッションの再起動、fork/recreate — にも同じ既定を効かせるため。ここを
-// Console 側だけの解決にすると「設定でオフにしたのに、定時実行で立ったセッションだけ
-// bypass で走る」が起きる。
+// Read in-process rather than over HTTP so the same default applies to the launch paths that
+// are not the Console — MCP's create_session, scheduled execution, restarting a stopped
+// session, fork/recreate. Resolving it on the Console side alone produces "I turned it off in
+// the settings, yet the session the schedule started runs with bypass".
 func skipPermissionsPref(kind string) (bool, bool) {
 	k := sessionx.NormalizeKind(kind)
-	// 承認待ちを Console から答えられない kind（codex / opencode）は選択の対象外。
-	// 古い/壊れた prefs がその kind に false を書いていても、ここで落として従来どおり
-	// bypass で起動する — 答えようのない承認ダイアログで固まるより確実に良い。
+	// Kinds whose pending approvals cannot be answered from the Console (codex / opencode) are
+	// not eligible for the choice. Even if an old or corrupt prefs file wrote false for such a
+	// kind, drop it here and launch with bypass as before — reliably better than wedging on an
+	// approval dialog nobody can answer.
 	if !sessionx.AgentOf(k).Caps().PermissionChoice {
 		return false, false
 	}
@@ -53,8 +54,8 @@ func skipPermissionsPref(kind string) (bool, bool) {
 	return v, ok
 }
 
-// internal/agents は main の設定ファイルを自分で読まない方針なので、opencode.UsagePref /
-// mcpreg.PeerMessagingEnabled と同じくフックで渡す。
+// internal/agents does not read main's settings files itself, so this is handed over as a hook,
+// the same way opencode.UsagePref and mcpreg.PeerMessagingEnabled are.
 func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 
 // agentOrderPref normalizes a stored priority list into a TOTAL order: unknown kinds
@@ -64,9 +65,9 @@ func init() { agents.SkipPermissionsPref = skipPermissionsPref }
 // chatOutputLanguage) so a change applies to the next conversation / one-shot without
 // a restart.
 //
-// keys は先勝ちのフォールバック鎖（新キー → 旧キー）。ここが 1 本のリストではなく鎖に
-// なっているのは、チャットと AI 補助生成で優先順位を分けたとき（docs/log/84）に、旧
-// 単一リストしか持たない prefs から補助生成側を引き継ぐため。
+// keys is a first-wins fallback chain (new key → old key). It is a chain rather than a single
+// list so that, once chat and AI-assist generation got separate priorities (docs/log/84), the
+// assist side still inherits from a prefs file that only has the old single list.
 func agentOrderPref(keys ...string) []string {
 	prefs := uiprefs.Read()
 	out := make([]string, 0, len(chatx.DefaultHeadlessOrder))
@@ -104,11 +105,11 @@ func agentOrderPref(keys ...string) []string {
 }
 
 // assistantAgentOrderPref is the priority for assistant-CHAT conversations
-// (AssistantTab 並べ替え UI, ui-prefs assistantAgentOrder).
+// (the AssistantTab reordering UI, ui-prefs assistantAgentOrder).
 func assistantAgentOrderPref() []string { return agentOrderPref("assistantAgentOrder") }
 
-// aiAssistOrderPref is the priority for the AI 補助生成 one-shots — titles, branch
-// names, reply chips, edit suggestions, plan updates (設定 > AI補助, ui-prefs
+// aiAssistOrderPref is the priority for the AI-assist one-shots — titles, branch
+// names, reply chips, edit suggestions, plan updates (Settings > AI assist, ui-prefs
 // aiAssistOrder). Separate from the chat because the two want opposite things: the
 // chat wants the strongest CLI, these run constantly and want the cheapest that
 // works. Falls back to assistantAgentOrder, which is where both used to live.
@@ -127,9 +128,10 @@ func assistantModelPref(key, kind string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	// 「使わないモデル」で除外された値が設定に残っていても採用しない（model_deny.go）。
-	// 未設定扱いに落とすことで、呼び出し側は推奨／CLI 既定へ退避する。
-	// "recommended" は実モデル id ではない番兵なのでそのまま通す。
+	// A value hidden by "models not to use" is never adopted, even if it is still in the prefs
+	// (model_deny.go). Dropping it to "unset" makes the caller fall back to the recommended
+	// model or the CLI default. "recommended" is a sentinel rather than a real model id, so it
+	// passes through untouched.
 	if v != chatx.AssistantRecommendedModel && sessionx.ModelHidden(kind, v) {
 		return "", false
 	}
@@ -140,14 +142,15 @@ func assistantChatModelPref(kind string) (string, bool) {
 	return assistantModelPref("assistantModels", kind)
 }
 
-// aiShortModelPref / aiProseModelPref — AI 補助生成のモデルを用途で 2 系統に分けたもの
-// （設定 > AI補助・docs/log/84）。short は短いラベル（タイトル・ブランチ名・返信候補）、
-// prose は人が読んで採用する文章（ファイル編集の提案・計画の更新）。
+// aiShortModelPref / aiProseModelPref split the AI-assist model in two by purpose
+// (Settings > AI assist, docs/log/84): short is for short labels (titles, branch names, reply
+// suggestions), prose is for text a person reads and adopts (file edit suggestions, plan
+// updates).
 //
-// 分ける前は assistantUtilityModels 1 つが両方を兼ねており、「タイトル・サジェストの
-// モデル」という名前のまま prose 側の既定（sonnet 級）まで置き換えていた。**両方**が
-// その旧キーを引き継ぐ — 旧キーは実際に両方へ効いていたので、これが分割時点の挙動を
-// そのまま持ち越す初期値になる。分けた意味は、この先それぞれ独立に変えられること。
+// BOTH inherit from the old assistantUtilityModels key, which covered the two at once and,
+// under a name that only spoke of titles and suggestions, also replaced the prose-side default
+// (sonnet class). Inheriting it on both sides is what carries the pre-split behaviour over
+// unchanged; the point of the split is that the two can now move independently.
 func aiShortModelPref(kind string) (string, bool) {
 	return aiModelPref("aiShortModels", kind)
 }
@@ -164,7 +167,7 @@ func aiModelPref(key, kind string) (string, bool) {
 }
 
 // chatAutoTurnLimit is the per-conversation ceiling on unattended auto turns
-// (docs/log/30, 設定 > アシスタント「自動応答の上限回数」). Missing/invalid ⇒
+// (docs/log/30, Settings > Assistant, "auto-reply limit"). Missing/invalid ⇒
 // defaultAutoTurns; always clamped to [1, maxAutoTurnLimit] — there is no
 // unlimited mode, the clamp is the runaway stop.
 func chatAutoTurnLimit() int {
@@ -183,15 +186,15 @@ func chatAutoTurnLimit() int {
 }
 
 // chatAutoTurnModel is the dedicated model for the operator's automatic turns
-// (設定 > アシスタント「自動応答のモデル」). 空 = 会話のモデルのまま。報告の確認・
-// 要約は定型作業なので軽量モデル（haiku 等）へ逃がせる — 自動ターンはユーザー
-// ターンより回数が多く(実測 121 vs 107/5日)、ここの単価がそのまま費用に効く。
-// 適用は claude の会話のみ（codex/opencode は c.Model 直参照で上書き口が無い —
-// runReportAutoTurn 側でゲート）。
+// (Settings > Assistant, "auto-reply model"). Empty = keep the conversation's model. Checking
+// and summarising a report is routine work, so it can be moved to a light model (haiku and
+// the like) — auto turns outnumber user turns (measured: 121 vs 107 over 5 days), so the unit
+// price here goes straight to the bill. Applies to claude conversations only (codex/opencode
+// read c.Model directly and have no override point — gated in runReportAutoTurn).
 func chatAutoTurnModel() string {
 	v, _ := uiprefs.Read()["assistantAutoTurnModel"].(string)
-	// claude 専用の設定なので claude の除外リストで判定する。除外されていれば空＝
-	// 会話のモデルのまま（model_deny.go）。
+	// A claude-only setting, so it is judged against claude's hidden-model list. Hidden ⇒ empty,
+	// i.e. keep the conversation's model (model_deny.go).
 	return sessionx.VisibleModel(session.KindClaude, strings.TrimSpace(v))
 }
 
@@ -219,8 +222,9 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "mkdir_failed", err.Error())
 		return
 	}
-	// 累積データが痩せる書き込みだけ、直前の版を退避してから置き換える。毎回退避しないのは
-	// 「復元したい版」が最後の 1 回で流れてしまうから — 事故の直前を残すことに意味がある。
+	// Only a write that shrinks accumulated data keeps a copy of the previous version before
+	// replacing it. Copying on every write would flush the version worth restoring on the very
+	// next one — what matters is holding on to the state just before the accident.
 	if lost := uiprefs.ShrunkKeys(uiprefs.Read(), obj); len(lost) > 0 {
 		if old, err := os.ReadFile(uiprefs.Path()); err == nil && len(old) > 0 {
 			if err := os.WriteFile(uiprefs.BackupPath(), old, 0o600); err != nil {
@@ -236,16 +240,17 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
 	}
-	// セッション間メッセージ（docs/log/58）の ON/OFF は、セッション側 af サーバーの起動引数
-	// （--peer-messaging）を変える。各 CLI のネイティブ MCP 設定は materialize 時に書かれる
-	// ので、ここで書き直さないと「トグルしたのに何も起きない」になる。既に起動している
-	// セッションは自分の設定を読み込み済みなので、効くのは次に起動するセッションから
-	// （UI の説明文もそう書いてある）。
+	// Toggling peer messaging (docs/log/58) changes the launch argument of the session-side af
+	// server (--peer-messaging). Each CLI's native MCP config is written at materialize time, so
+	// without rewriting it here the toggle does nothing at all. Sessions already running have
+	// read their config, so it takes effect from the next session launched (which is what the UI
+	// text says too).
 	if uiprefs.PeerMessaging() != peerBefore {
 		mcpx.MaterializeAll()
 	}
-	// 枠の切替は注入する env を変える（無料枠は OPENCODE_API_KEY を落とす）。鍵の
-	// 変更と同じ扱いで、動いている serve を作り直さないと古い環境のまま残る。
+	// Switching the tier changes the env that is injected (the free tier drops
+	// OPENCODE_API_KEY). Treated like a key change: without recreating the running serve, it
+	// keeps the old environment.
 	if after := uiprefs.OpencodeCatalog(); after != before {
 		opencode.ApplyUsageChange(before + " → " + after)
 	}

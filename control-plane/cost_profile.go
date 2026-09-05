@@ -1,11 +1,11 @@
 // cost_profile.go — does this deployment HAVE an AWS bill, and what of it can be
-// attributed to a person (docs/log/67 §67.8, ADR 0048 決定 9).
+// attributed to a person (docs/log/67 §67.8, ADR 0048 decision 9).
 //
 // Same shape as workspace_sizing.go, for the same reason: the Console must stop
 // describing every deployment as if it were the AWS one. A docker or native deployment
 // has no invoice at all, and a cost screen there would be worse than missing — it would
 // be a screen full of zeros that looks like a bug, or worse, like "you cost nothing".
-// "効かない項目を画面に出すのは嘘に近い" (ADR 0045 決定 21).
+// Showing a figure that means nothing here is close to lying (ADR 0045 decision 21).
 package main
 
 import (
@@ -15,9 +15,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// ⚠️ runtime.CostProfile は adapters 側が宣言する。この file はかつて 4 つの factory 型に
-// CostProfile() メソッドを生やしており、Go はそれを宣言元パッケージでしか許さない
-// （internal/runtime/profiles.go）。
+// runtime.CostProfile is declared alongside the adapters in internal/runtime/profiles.go:
+// the CostProfile() methods hang off the factory types, and Go only allows that in their
+// own package.
 
 // costProfiler is the optional RuntimeFactory capability, like sizingProfiler.
 type costProfiler interface {

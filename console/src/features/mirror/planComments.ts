@@ -1,54 +1,58 @@
-// プランへのコメント（VSCode のプランレビュー相当）— 溜める側の一次ストア。
+// Comments on a plan (the equivalent of VSCode's plan review) - the primary store on the
+// collecting side.
 //
-// 体験の分割:
-//   - ためる: プランを開いた doc ペイン（DocView）で本文を選択 → コメントを追加。
-//   - 送る:   ミラーのプランカードで一覧を確認してから1操作で送信。
-// この分割のおかげで「承認待ちのあいだ」に限定されない — 却下したあとでも、plan モードの
-// まま入力待ちに戻ったセッションへ追加のコメントを送れる（送信経路はミラー側が状態で選ぶ）。
+// The experience is split in two:
+//   - collect: select text in the doc pane showing the plan (DocView) and add a comment.
+//   - send:    review the list on the mirror's plan card and send it in one action.
+// Because of that split it is not limited to "while approval is pending": even after a rejection,
+// more comments can be sent to a session that went back to waiting for input while still in plan
+// mode (the mirror picks the delivery route from the state).
 //
-// 束ねる鍵（planKey）は「セッション名 + プラン本文のハッシュ」。承認待ちのプランには
-// tool_use id が無く（ペイロードは本文だけ）、履歴カードの id も Console 側では引き回して
-// いないので、本文そのものが唯一の安定した同一性になる。改訂されたプランは別の鍵になり、
-// 古いコメントは当時のカードに残る（消えない）ぶん、改訂後の本文に古い指摘が紛れ込まない。
+// The grouping key (planKey) is "session name + hash of the plan text". A plan awaiting approval
+// has no tool_use id (the payload is only the text), and the Console does not carry the history
+// card's id around either, so the text itself is the only stable identity. A revised plan gets a
+// different key, and the old comments stay on the card they were written against, so stale
+// remarks cannot leak into the revised text.
 //
-// アンカーは「引用文字列 + その出現番号」。プラン Markdown はレンダリング後の DOM しか
-// 手元に無いので、オフセットではなく **描画後テキスト上の n 番目の一致** で位置を復元する
-// （W3C Web Annotation の TextQuoteSelector 相当）。本文が変われば一致しなくなるだけで、
-// 誤った箇所へハイライトが付くことはない。
+// The anchor is "quoted string + which occurrence it is". Only the rendered DOM of the plan
+// Markdown is available, so the position is restored by the nth match in the rendered text rather
+// than by an offset (the equivalent of W3C Web Annotation's TextQuoteSelector). If the text
+// changes the match is simply lost; a highlight is never attached to the wrong place.
 //
-// 保存は localStorage 1本。サーバを持たない代わりに `storage` イベントを購読して、
-// 切り離した別タブ（ペインの別タブ表示）で付けたコメントも元タブのミラーへ届く。
-// キーは `af` プレフィックスなのでログアウト時の clearLocalState が掃除する。
+// Storage is a single localStorage entry. With no server behind it, the `storage` event is
+// subscribed to so that comments added in a detached tab (a pane shown in another tab) reach the
+// mirror in the original tab. The key carries the `af` prefix, so clearLocalState cleans it up at
+// logout.
 import { useSyncExternalStore } from "react";
 import { t } from "../../lib/i18n/index.ts";
 
 export interface PlanComment {
   id: string;
-  /** 選択されたプラン本文の抜粋（描画後テキスト）。 */
+  /** The selected excerpt of the plan text (as rendered). */
   quote: string;
-  /** quote が本文中で何番目の出現か（0 始まり）。同じ語が複数あるときの取り違え防止。 */
+  /** Which occurrence of quote this is in the text (0-based); prevents mixing up repeated words. */
   nth: number;
-  /** 利用者が書いた指摘。 */
+  /** The remark the user wrote. */
   body: string;
   ts: number;
-  /** 送信済みになった時刻（消さずに畳んで残す — 何を送ったかが履歴になる）。 */
+  /** When it became sent (kept, folded rather than deleted - what was sent becomes the history). */
   sentAt?: number;
 }
 
 type Store = Record<string, PlanComment[]>;
 
 const LS_KEY = "af.plan-comments";
-/** 保存する束の上限（古い鍵から捨てる）。localStorage を無制限に太らせない。 */
+/** Maximum number of stored groups (oldest key evicted first), so localStorage cannot grow without bound. */
 const MAX_KEYS = 30;
-/** 1つのプランに付けられるコメント数の上限。 */
+/** Maximum number of comments on one plan. */
 export const MAX_COMMENTS = 50;
-/** 引用の保存長。長すぎる選択は先頭だけ残す（アンカーとしては十分で、表示も潰れない）。 */
+/** Stored quote length. An over-long selection keeps only its head - enough as an anchor, and it does not wreck the layout. */
 export const MAX_QUOTE = 300;
 
 let store: Store = load();
 const listeners = new Set<() => void>();
-// useSyncExternalStore は getSnapshot の参照同一性で再描画を決めるので、
-// 変更のたびに差し替わるオブジェクトを1つ持つ（配列を都度作らない）。
+// useSyncExternalStore decides on re-render by the reference identity of getSnapshot, so keep one
+// object that is swapped on every change (never build a fresh array per call).
 let snapshot = store;
 
 function load(): Store {
@@ -65,7 +69,7 @@ function load(): Store {
     }
     return out;
   } catch {
-    return {}; // private mode / 壊れた JSON — コメントは補助機能なので黙って空から始める
+    return {}; // private mode / corrupt JSON - comments are auxiliary, so start empty in silence
   }
 }
 
@@ -79,13 +83,13 @@ function persist() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(store));
   } catch {
-    /* quota / private mode: メモリ上の状態は生きているので続行 */
+    /* quota / private mode: the in-memory state is still valid, so carry on */
   }
   for (const l of listeners) l();
 }
 
 function commit(next: Store) {
-  // 上限を超えたら「最後に触ったコメントが古い」束から捨てる。
+  // Over the limit, evict the groups whose most recently touched comment is the oldest.
   const keys = Object.keys(next);
   if (keys.length > MAX_KEYS) {
     const lastTouch = (k: string) => Math.max(0, ...next[k].map((c) => c.ts));
@@ -97,23 +101,25 @@ function commit(next: Store) {
   persist();
 }
 
-// 別タブ（切り離したペイン）での追加を取り込む。storage イベントは自タブには飛ばない
-// 仕様なので、自タブの更新は commit() 側の通知でまかなう（二重に走らない）。
+// Pick up additions made in another tab (a detached pane). The storage event is by specification
+// not delivered to the originating tab, so this tab's own updates are covered by commit()'s
+// notification instead - the two never run twice for one change.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (e) => {
-    if (e.key !== null && e.key !== LS_KEY) return; // null = clear()（ログアウト）
+    if (e.key !== null && e.key !== LS_KEY) return; // null = clear() (logout)
     store = load();
     snapshot = store;
     for (const l of listeners) l();
   });
 }
 
-/** planKey は「どのセッションの、どの本文のプランか」を束ねる鍵。 */
+/** planKey groups by "which session, and which plan text". */
 export function planKey(session: string, plan: string): string {
   return session + ":" + hash(normalizePlan(plan));
 }
 
-// 前後の空白と行末空白だけ均す。中身の差（改訂）は別の鍵にしたいので、それ以上は正規化しない。
+// Normalise only surrounding and trailing whitespace. A difference in content (a revision) must
+// produce a different key, so do not normalise any further than that.
 function normalizePlan(plan: string): string {
   return (plan || "")
     .split("\n")
@@ -122,7 +128,8 @@ function normalizePlan(plan: string): string {
     .trim();
 }
 
-// FNV-1a（32bit）— 衝突耐性より安定性と短さが要る用途（鍵はセッション名で既に分かれる）。
+// FNV-1a (32-bit) - this use needs stability and brevity more than collision resistance (keys are
+// already separated by session name).
 function hash(s: string): string {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
@@ -137,7 +144,7 @@ export function getPlanComments(key: string): PlanComment[] {
 }
 const EMPTY: PlanComment[] = [];
 
-/** 未送信のコメントだけ（送信ボタンの活性と本文組み立てに使う）。 */
+/** Unsent comments only (drives the send button's enabled state and builds the body). */
 export const unsentComments = (list: PlanComment[]): PlanComment[] => list.filter((c) => !c.sentAt);
 
 export function addPlanComment(key: string, c: { quote: string; nth: number; body: string }): void {
@@ -165,7 +172,7 @@ export function removePlanComment(key: string, id: string): void {
   commit(copy);
 }
 
-/** 送信できたぶんだけ「送信済み」にする。届かなかったときは呼ばない（打ち直せるように）。 */
+/** Mark as sent only what was actually sent. Never call this on failure, so the user can retry. */
 export function markPlanCommentsSent(key: string, ids: string[]): void {
   const list = store[key];
   if (!list) return;
@@ -184,17 +191,18 @@ function subscribe(l: () => void): () => void {
   return () => listeners.delete(l);
 }
 
-/** テスト用: モジュール状態を捨てて localStorage から読み直す。 */
+/** For tests: drop the module state and re-read it from localStorage. */
 export function resetPlanCommentsForTest(): void {
   store = load();
   snapshot = store;
 }
 
-// formatPlanFeedback は溜めたコメントを1本のフィードバック文へ組む。ワイヤ上コメントは
-// 構造を持てない（CLI の承認ダイアログが受け取れるのは feedback 文字列1本だけ。VSCode
-// 拡張も同じく引用＋本文を1本に畳んで渡している）ので、ここが唯一の表現になる。
-// 引用は blockquote、指摘はその直下。エージェントが読むと同時にミラーの発話としても
-// 表示される文なので、Console の表示言語に合わせる（docs/ADR0033 の「誰が読む文字列か」）。
+// formatPlanFeedback builds the collected comments into a single feedback message. Comments have
+// no structure on the wire (the CLI's approval dialog accepts exactly one feedback string; the
+// VSCode extension likewise folds quote + body into one), so this is the only representation
+// available. The quote goes in a blockquote with the remark directly below it. The agent reads
+// this text and it is also shown as an utterance in the mirror, so it follows the Console's
+// display language (docs/ADR0033, "who reads this string").
 export function formatPlanFeedback(comments: PlanComment[], note?: string): string {
   const items = comments.filter((c) => c.body.trim());
   const extra = (note || "").trim();
@@ -213,20 +221,21 @@ export function formatPlanFeedback(comments: PlanComment[], note?: string): stri
   return extra ? `${head}\n\n${body}\n\n${extra}` : `${head}\n\n${body}`;
 }
 
-// deliverPlanComments は「溜めたコメントをどう届け、いつ送信済みにするか」の判断だけを
-// 持つ。送信そのもの（respond = /plan-respond の reject、say = 普通の発話）は呼び出し側
-// から注入するので、ここは MirrorView を描画せずに検証できる — その MirrorView が
-// 巨大すぎてレンダリングテストを持てないことが、この判断のバグ（下記）を素通しにした。
+// deliverPlanComments holds only the decision of how to deliver the collected comments and when to
+// mark them sent. Delivery itself (respond = /plan-respond's reject, say = an ordinary utterance)
+// is injected by the caller, so this can be verified without rendering MirrorView.
 //
-// 経路は「押した瞬間の状態」で決まる:
-//   pending  → respond。承認ダイアログが開いたまま自由文を送ると本文がモーダルに飲まれ
-//     Enter が承認になるため、Escape で閉じてから投入する経路でしか安全に届かない。
-//   それ以外（却下後・plan モードで入力待ち／実行中） → say（普通の発話）。
-//   pending のつもりが既に判断済みだった（no_plan）→ say へ落とす。
+// The route is decided by the state at the moment the button is pressed:
+//   pending  -> respond. Sending free text while the approval dialog is open lets the modal
+//     swallow the body and turns Enter into an approval, so it can only arrive safely via the
+//     route that closes the dialog with Escape first.
+//   otherwise (after a rejection, waiting for input or running in plan mode) -> say (an ordinary
+//     utterance).
+//   believed pending but already decided (no_plan) -> fall back to say.
 //
-// 送信済みの印は「実際に届いた」ときだけ付ける。届かなかったコメントを畳むと unsent が
-// 0 になって送信ボタンごと消え、利用者は打ち直せない（2026-08-10 の実障害: say の失敗を
-// 見ずに畳んでいたため、エラートーストと「送信済み」が同時に出ていた）。
+// Mark as sent only when delivery actually happened. Folding away comments that never arrived
+// takes unsent to 0, which removes the send button entirely and leaves the user unable to retype
+// them (that also produced an error toast and "sent" at the same time).
 export interface PlanRespondLike {
   ok: boolean;
   code?: string;
@@ -234,15 +243,17 @@ export interface PlanRespondLike {
   message?: string;
 }
 
-// 失敗の reason は「誰が利用者に伝えるか」も決める:
-//   say         — 発話経路が拒否された。say（＝sendPrompt）が理由を通知済みなので、
-//                 呼び出し側が重ねて出すと汎用文言が具体的な理由に被さる。
-//   respond     — /plan-respond が断った。message をそのまま見せる。
-//   undelivered — 却下は通ったが本文が入らなかった（コンポーザ復帰を確認できず）。
+// The failure reason also decides who tells the user:
+//   say         - the utterance route was refused. say (= sendPrompt) has already reported the
+//                 reason, so reporting again from the caller buries the specific reason under a
+//                 generic message.
+//   respond     - /plan-respond refused. Show its message verbatim.
+//   undelivered - the rejection went through but the body did not land (the composer could not be
+//                 confirmed as back).
 export type PlanDeliveryResult =
-  /** 届いた＝コメントは畳み済み。via は経路、feedback は実際に送った本文（エコー用）。 */
+  /** Delivered = the comments are folded. via is the route, feedback the text actually sent (for the echo). */
   | { ok: true; via: "reject" | "prompt"; feedback: string }
-  /** 届かなかった＝何も畳んでいない。 */
+  /** Not delivered = nothing was folded. */
   | { ok: false; reason: "say" | "respond" | "undelivered"; message?: string };
 
 export async function deliverPlanComments(
@@ -254,10 +265,11 @@ export async function deliverPlanComments(
   },
 ): Promise<PlanDeliveryResult | null> {
   const list = unsentComments(getPlanComments(key));
-  if (!list.length) return null; // 送るものが無い（ボタンも出ない状態）
+  if (!list.length) return null; // nothing to send (the button is not shown in this state)
   const feedback = formatPlanFeedback(list);
   const ids = list.map((c) => c.id);
-  // 発話経路。say の戻り値を見ずに畳んだのが実障害の正体なので、ここが唯一の分岐点。
+  // The utterance route. Folding without checking say's return value is exactly the failure mode
+  // described above, so this return value is the single branch point.
   const bySaying = async (): Promise<PlanDeliveryResult> => {
     if (!(await deps.say(feedback))) return { ok: false, reason: "say" };
     markPlanCommentsSent(key, ids);
@@ -266,11 +278,11 @@ export async function deliverPlanComments(
   if (!deps.pending) return bySaying();
   const res = await deps.respond(feedback);
   if (!res.ok) {
-    // すでに別経路で判断済み（no_plan）なら、ただの発話として届ける。
+    // Already decided through another route (no_plan): deliver it as a plain utterance.
     if (res.code === "no_plan") return bySaying();
     return { ok: false, reason: "respond", message: res.message };
   }
-  // 却下は通ったがフィードバックは届いていない（コンポーザ復帰を確認できず）。
+  // The rejection went through but the feedback did not arrive (composer recovery unconfirmed).
   if (!res.delivered) return { ok: false, reason: "undelivered", message: res.message };
   markPlanCommentsSent(key, ids);
   return { ok: true, via: "reject", feedback };

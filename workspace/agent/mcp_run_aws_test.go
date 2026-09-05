@@ -8,12 +8,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// AWS MCP（Agent Toolkit for AWS — docs/log/25 §AWS MCP）の起動引数。
-// 落とすと静かに壊れるのは 2 つで、どちらも「壊れた」ようには見えない:
-//   - --read-only が抜けると、接続しただけのつもりの利用者に call_aws（AWS API 約
-//     15,000 アクション）と run_script（任意コード）が生えている。
-//   - エンドポイントのリージョンは URL と SigV4 の署名リージョンの両方に効くので、
-//     取り違えても「MCP サーバーが繋がらない」としか見えない。
+// The launch arguments for AWS MCP (Agent Toolkit for AWS — docs/log/25 §AWS MCP).
+// Two of them break silently when dropped, and neither looks like breakage:
+//   - Without --read-only, a user who believes they merely connected has grown call_aws
+//     (some 15,000 AWS API actions) and run_script (arbitrary code).
+//   - The endpoint region feeds both the URL and the SigV4 signing region, so getting it
+//     wrong only ever looks like "the MCP server won't connect".
 func TestAWSMCPArgs(t *testing.T) {
 	cases := []struct {
 		name string
@@ -21,12 +21,12 @@ func TestAWSMCPArgs(t *testing.T) {
 		want []string
 	}{
 		{
-			name: "既定は読み取り専用・既定エンドポイント",
+			name: "default is read-only on the default endpoint",
 			conn: secrets.AWSConn{},
 			want: []string{"https://aws-mcp.us-east-1.api.aws/mcp", "--retries", "3", "--read-only"},
 		},
 		{
-			name: "リソースリージョンは metadata で渡す（署名リージョンではない）",
+			name: "resource region is passed as metadata, not the signing region",
 			conn: secrets.AWSConn{
 				AWSProfileRef: secrets.AWSProfileRef{Region: "ap-northeast-1"},
 				Endpoint:      "eu-central-1",
@@ -37,7 +37,7 @@ func TestAWSMCPArgs(t *testing.T) {
 			},
 		},
 		{
-			name: "write opt-in で --read-only が外れる",
+			name: "write opt-in drops --read-only",
 			conn: secrets.AWSConn{Write: true},
 			want: []string{"https://aws-mcp.us-east-1.api.aws/mcp", "--retries", "3"},
 		},
@@ -51,15 +51,15 @@ func TestAWSMCPArgs(t *testing.T) {
 	}
 }
 
-// エンドポイントは AWS が公開している 2 リージョンだけ。未知の値やゴミは既定へ丸める
-// — ホスト名にも署名リージョンにも入る値なので、そのまま通すと接続エラーになるだけで
-// 理由がどこにも出ない。
+// The endpoint may only be one of the two regions AWS publishes; anything unknown or garbage
+// is rounded to the default. The value goes into both the hostname and the signing region, so
+// letting it through yields a connection error whose reason appears nowhere.
 func TestAWSMCPEndpointNormalizes(t *testing.T) {
 	for in, want := range map[string]string{
 		"":               "us-east-1",
 		"us-east-1":      "us-east-1",
 		"eu-central-1":   "eu-central-1",
-		"ap-northeast-1": "us-east-1", // 公開されていないリージョン
+		"ap-northeast-1": "us-east-1", // not a published region
 		"'; rm -rf /":    "us-east-1",
 	} {
 		if got := awsMCPEndpoint(in); got != want {

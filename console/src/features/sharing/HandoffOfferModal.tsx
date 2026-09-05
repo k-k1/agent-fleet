@@ -1,10 +1,13 @@
-// HandoffOfferModal — 所有者が「この続きを共有先の誰かに」差し出す面（docs/log/77 / ADR 0057）。
+// HandoffOfferModal is where an owner offers "carry this on" to one of the people they
+// share with (docs/log/77 / ADR 0057).
 //
-// 宛先候補は**共有 ACL の逆引き**で、テナント名簿は引かない。だから ShareCreateModal のような
-// 検索コンボボックスではなく、素の選択肢になる（既に「この人に見せる」と決めた相手しか出ない）。
+// The recipient candidates come from a reverse lookup of the share ACL, never the tenant
+// directory — hence a plain select rather than the search combobox of ShareCreateModal:
+// only people already chosen to see this session can appear.
 //
-// push ゲートは CP が所有者 Agent に聞いた事実で、ここでは表示するだけ。判定をこちらで組み立て
-// 直すと、送信時のサーバ判定と条件が 2 か所に分かれて必ずずれる（docs/log/77 §77.5）。
+// The push gate is a fact the CP obtained from the owner's Agent and is only displayed
+// here. Recomputing the decision client-side would split the condition across two places
+// and it would drift from the server's check at send time (docs/log/77 §77.5).
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -23,7 +26,8 @@ interface RecipientCandidate {
   email: string;
 }
 
-/** CP がそのまま中継する Agent の判定（workspace/agent/session_handoff_context.go）。 */
+/** The Agent's verdict, relayed unchanged by the CP
+ *  (workspace/agent/session_handoff_context.go). */
 interface HandoffContext {
   repo?: string;
   vcs?: string;
@@ -36,7 +40,8 @@ interface HandoffContext {
   warning?: string;
 }
 
-/** ゲートの理由は機械トークンで来る。文言はここで解決する（サーバに日本語を持たせない）。 */
+/** The gate reason arrives as a machine token; the wording is resolved here so the server
+ *  carries no display text. */
 const BLOCKED_KEYS = {
   unpushed_commits: "handoff.blocked_unpushed",
   no_upstream: "handoff.blocked_no_upstream",
@@ -67,8 +72,9 @@ export function HandoffOfferModal({
   const [ctx, setCtx] = useState<HandoffContext | null>(null);
   const [loadErr, setLoadErr] = useState("");
   const [recipient, setRecipient] = useState("");
-  // 相手のワークスペースでそのままセッション名になるので、差し出す時点で作成 API の
-  // 規則へ詰める（長い名前のまま送ると、失敗するのは受け取った**相手側**になる）。
+  // This becomes the session name verbatim in the recipient's workspace, so clamp it to
+  // the creation API's rules when offering: sending an over-long name makes the failure
+  // land on the recipient.
   const [title, setTitle] = useState(() => clampSessionTitle(initialTitle || ""));
   const [prompt, setPrompt] = useState(initialPrompt);
   const [ackWarning, setAckWarning] = useState(false);
@@ -112,8 +118,9 @@ export function HandoffOfferModal({
     setSending(false);
     if (d?.error) {
       toast(errText(d.error));
-      // ゲートに当たった／既に未処理がある、はここで初めて分かることがある（開いてから
-      // commit した等）。最新の判定を取り直して画面を合わせる。
+      // Hitting the gate, or an offer already pending, can first become true here (a
+      // commit landed after the modal opened). Refetch the verdict and match the screen
+      // to it.
       load();
       return;
     }
@@ -140,8 +147,9 @@ export function HandoffOfferModal({
             <p className="ui-field-hint handoff-blocked">{loadErr}</p>
           ) : members.length === 0 ? (
             <>
-              {/* 共有していない相手には渡せない（ADR 0057 決定 2）。ここで行き止まりに
-                  しないよう、共有を張る導線をその場に置く。 */}
+              {/* A handoff cannot go to someone the session is not shared with (ADR 0057
+                  decision 2), so the way to create that share is offered right here rather
+                  than leaving a dead end. */}
               <p className="ui-field-hint handoff-blocked">{tr("handoff.not_shared")}</p>
               <Button variant="ghost" onClick={() => setShareOpen(true)}>
                 <Icon name="broadcast" /> {tr("handoff.share_first")}
@@ -159,8 +167,8 @@ export function HandoffOfferModal({
                   ))}
                 </select>
               </label>
-              {/* 座標。B のディスクに所有者の未コミット変更は無いので、どの commit を
-                  引き継ぐのかを送る側にも見せる。 */}
+              {/* The coordinates. The recipient's disk has none of the owner's uncommitted
+                  changes, so the sender is shown which commit is being handed over. */}
               {ctx?.branch && (
                 <p className="ui-field-hint">
                   {tr("handoff.coordinates", {
@@ -190,7 +198,8 @@ export function HandoffOfferModal({
                   onChange={(e) => setPrompt(e.target.value)}
                 />
               </label>
-              {/* 送信後の本文は凍結される（ADR 0057 決定 7）。黙って効かないのが一番悪いので言う。 */}
+              {/* The prompt is frozen once sent (ADR 0057 decision 7). Say so: silently
+                  having no effect is the worst outcome. */}
               <p className="ui-field-hint">{tr("handoff.frozen_hint")}</p>
             </>
           )}

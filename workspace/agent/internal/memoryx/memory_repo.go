@@ -1,15 +1,18 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 / ADR 0022）— bare repo とその git 実行環境。
+// Version control for agent memory (docs/log/39 / ADR 0022) — the bare repo and the git
+// environment it runs in.
 //
-// repo は claude 専用マウント内の bare（/var/lib/af/claude/af-memory.git）。このマウントは
-// recreate / clean-home を生き残る最も強い保証を持つため、codex 分の履歴も同居させる。
-// live ツリーには .git を置かない（エージェント自身に repo を見せない・claude のメモリ
-// 列挙に .git を混ぜない）。staging も同じマウントに置く — EFS 越しのクロスデバイス
-// コピーを避け、bare repo の index と staging の内容が食い違わないようにするため。
+// The repo is a bare one inside the claude-only mount (/var/lib/af/claude/af-memory.git). That
+// mount has the strongest guarantee of surviving recreate / clean-home, so codex's history
+// lives alongside it. The live tree gets no .git: the agent itself must not see the repo, and
+// claude's memory enumeration must not pick .git up. Staging goes on the same mount, to avoid a
+// cross-device copy over EFS and to keep the bare repo's index consistent with what staging
+// holds.
 //
-// ★5: ユーザーの ~/.gitconfig（署名設定等）を一切継がない。GIT_CONFIG_GLOBAL /
-// GIT_CONFIG_SYSTEM を /dev/null に落とし、identity は専用のものを env で固定する。
+// ★5: inherit nothing from the user's ~/.gitconfig (signing settings and the like).
+// GIT_CONFIG_GLOBAL / GIT_CONFIG_SYSTEM are pointed at /dev/null and a dedicated identity is
+// pinned through the environment.
 
 import (
 	"errors"
@@ -24,23 +27,24 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 )
 
-// memoryBranch は snapshot を積む唯一のブランチ。import は refs/imports/<ts>（P3）へ
-// 独立系譜として入るので、ここを見れば「この環境の履歴」だけが並ぶ。
+// memoryBranch is the only branch snapshots are stacked on. Imports land under
+// refs/imports/<ts> (P3) as an independent lineage, so this branch shows this environment's
+// history and nothing else.
 const memoryBranch = "main"
 
 func memoryRepoDir() string    { return filepath.Join(claude.ConfigDir(), "af-memory.git") }
 func memoryStagingDir() string { return filepath.Join(claude.ConfigDir(), "af-memory.staging") }
 
-// memoryGit は repo 専用の git コマンドを組む。work-tree は staging 固定で、cwd も
-// そこに置く — pathspec を渡さない `git add -A` が staging 全体だけを見るようにするため。
+// memoryGit builds a git command bound to the repo. The work tree is always staging and cwd is
+// put there too, so that a `git add -A` with no pathspec sees staging and nothing else.
 func memoryGit(args ...string) *exec.Cmd {
-	_ = os.MkdirAll(memoryStagingDir(), 0o700) // cwd に使うので読み取り系でも要る
+	_ = os.MkdirAll(memoryStagingDir(), 0o700) // used as cwd, so even read-only calls need it
 	cmd := exec.Command("git", args...)
 	cmd.Dir = memoryStagingDir()
 	cmd.Env = append(os.Environ(),
 		"GIT_DIR="+memoryRepoDir(),
 		"GIT_WORK_TREE="+memoryStagingDir(),
-		// ユーザー設定を継がない（署名・hooksPath・core.autocrlf 等の巻き添えを断つ）。
+		// Inherit no user config (cuts out signing, hooksPath, core.autocrlf and friends).
 		"GIT_CONFIG_GLOBAL=/dev/null",
 		"GIT_CONFIG_SYSTEM=/dev/null",
 		"GIT_TERMINAL_PROMPT=0",
@@ -52,8 +56,9 @@ func memoryGit(args ...string) *exec.Cmd {
 	return cmd
 }
 
-// memoryGitRun は git を実行し、trim した stdout を返す。失敗時は stderr を error に畳む
-// （gitx.Run と同じ流儀だが、こちらは GIT_DIR 隔離環境を使うため独立している）。
+// memoryGitRun runs git and returns the trimmed stdout, folding stderr into the error on
+// failure. Same style as gitx.Run, kept separate because this one uses the isolated GIT_DIR
+// environment.
 func memoryGitRun(args ...string) (string, error) {
 	out, err := memoryGit(args...).Output()
 	s := strings.TrimSpace(string(out))
@@ -68,7 +73,7 @@ func memoryGitRun(args ...string) (string, error) {
 	return s, err
 }
 
-// memoryEnsureRepo は bare repo と staging を用意する（冪等）。
+// memoryEnsureRepo prepares the bare repo and staging (idempotent).
 func memoryEnsureRepo() error {
 	if err := os.MkdirAll(memoryStagingDir(), 0o700); err != nil {
 		return err
@@ -80,7 +85,7 @@ func memoryEnsureRepo() error {
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
 		return err
 	}
-	// init だけは GIT_DIR/GIT_WORK_TREE を効かせず、パス指定で作る。
+	// init alone runs without GIT_DIR/GIT_WORK_TREE, creating the repo by path.
 	cmd := exec.Command("git", "init", "--bare", "--quiet", "-b", memoryBranch, dir)
 	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null", "GIT_TERMINAL_PROMPT=0")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -89,41 +94,43 @@ func memoryEnsureRepo() error {
 	return nil
 }
 
-// memoryHasCommits は HEAD が指す commit が既にあるか（初回 snapshot 前は false）。
+// memoryHasCommits reports whether HEAD already points at a commit (false before the first
+// snapshot).
 func memoryHasCommits() bool {
 	_, err := memoryGitRun("rev-parse", "--verify", "--quiet", memoryBranch+"^{commit}")
 	return err == nil
 }
 
-// memoryProjectRef は claude のプロジェクト 1 件（slug と ★6 の整形表示名）。
+// memoryProjectRef is one claude project: its slug and the formatted display name of ★6.
 type memoryProjectRef struct {
 	Slug    string `json:"slug"`
 	Display string `json:"display"`
 }
 
-// memorySnapshotInfo は 1 件の snapshot（= commit）の要約。一覧 API がそのまま返す形。
+// memorySnapshotInfo summarises one snapshot (= commit). The list API returns this shape as is.
 type memorySnapshotInfo struct {
 	Rev      string             `json:"rev"`
 	Short    string             `json:"short"`
-	At       string             `json:"at"`       // RFC3339（author date）
-	Subject  string             `json:"subject"`  // 1 行目
+	At       string             `json:"at"`       // RFC3339 (author date)
+	Subject  string             `json:"subject"`  // first line
 	Trigger  string             `json:"trigger"`  // auto | manual | pre-restore | restore | import
-	Kinds    []string           `json:"kinds"`    // 変更のあった kind（claude / codex）
-	Projects []memoryProjectRef `json:"projects"` // 変更のあった claude プロジェクト
-	Files    int                `json:"files"`    // 変更ファイル数
+	Kinds    []string           `json:"kinds"`    // kinds that changed (claude / codex)
+	Projects []memoryProjectRef `json:"projects"` // claude projects that changed
+	Files    int                `json:"files"`    // number of changed files
 }
 
-// git log の解析用セパレータ。レコード境界に \x1e、フィールド境界に \x1f を使い、
-// メモリ本文（md）に現れ得ない制御文字で確実に割る。
+// Separators for parsing git log output: \x1e between records, \x1f between fields. Both are
+// control characters that cannot occur in a memory body (md), so the split is unambiguous.
 const (
 	memoryRecSep = "\x1e"
 	memoryFldSep = "\x1f"
 )
 
-// memoryListSnapshots は新しい順に snapshot を返す。before が非空なら、その RFC3339
-// 時刻「以前」の直近から並べる（日時指定 UI の下敷き）。
+// memoryListSnapshots returns snapshots newest first. A non-empty before starts the list at the
+// most recent snapshot at or before that RFC3339 time (what the date-picker UI rests on).
 func memoryListSnapshots(limit int, before string) ([]memorySnapshotInfo, error) {
-	// 入力検証は repo の有無より先に行う（履歴ゼロでも不正な before は 400 で返す）。
+	// Validate input before checking for the repo, so a malformed before is a 400 even with no
+	// history at all.
 	if before != "" {
 		if _, err := time.Parse(time.RFC3339, before); err != nil {
 			return nil, fmt.Errorf("before must be RFC3339")
@@ -169,7 +176,7 @@ func memoryListSnapshots(limit int, before string) ([]memorySnapshotInfo, error)
 	return list, nil
 }
 
-// memorySummarizePaths は変更パス列を「kind 一覧 / claude プロジェクト一覧 / 件数」へ畳む。
+// memorySummarizePaths folds a list of changed paths into kinds / claude projects / a count.
 func memorySummarizePaths(paths []string) (kinds []string, projects []memoryProjectRef, files int) {
 	projects = []memoryProjectRef{}
 	kinds = []string{}
@@ -192,7 +199,7 @@ func memorySummarizePaths(paths []string) (kinds []string, projects []memoryProj
 	return kinds, projects, files
 }
 
-// memoryHeadTime は最新 snapshot の author 時刻（commit が無ければゼロ値）。
+// memoryHeadTime is the author time of the newest snapshot (zero value when there is no commit).
 func memoryHeadTime() time.Time {
 	out, err := memoryGitRun("log", "-1", "--pretty=format:%aI", memoryBranch)
 	if err != nil || out == "" {
@@ -205,8 +212,9 @@ func memoryHeadTime() time.Time {
 	return t
 }
 
-// memoryResolveRev は rev（sha / ref）または at（RFC3339）を snapshot の sha に解決する。
-// at は「その時刻以前の直近 snapshot」— 日時指定ロールバックの意味論（docs/log/39 ③）。
+// memoryResolveRev resolves rev (a sha or ref) or at (RFC3339) to a snapshot sha. at means "the
+// most recent snapshot at or before that time" — the semantics of a rollback by date
+// (docs/log/39 item 3).
 func memoryResolveRev(rev, at string) (string, error) {
 	switch {
 	case rev != "":
@@ -231,8 +239,9 @@ func memoryResolveRev(rev, at string) (string, error) {
 	return "", fmt.Errorf("rev or at required")
 }
 
-// memoryRevSafe は rev 文字列がオプション注入やパス脱出に使えない形かを見る。
-// git のリビジョン指定は表現力が高いので、受け口を英数と限られた記号に絞る。
+// memoryRevSafe checks that a rev string cannot be used for option injection or path escape.
+// Git's revision syntax is expressive, so the accepted alphabet is narrowed to alphanumerics
+// and a few symbols.
 func memoryRevSafe(rev string) bool {
 	if rev == "" || len(rev) > 200 || strings.HasPrefix(rev, "-") {
 		return false
@@ -248,10 +257,11 @@ func memoryRevSafe(rev string) bool {
 	return !strings.Contains(rev, "..")
 }
 
-// memoryPathSafe は diff / restore のパススコープが repo 内の宣言済み prefix に収まるか。
+// memoryPathSafe reports whether a diff / restore path scope stays within a declared prefix of
+// the repo.
 func memoryPathSafe(p string) bool {
 	if p == "" {
-		return true // 省略 = 全体
+		return true // omitted = the whole tree
 	}
 	if strings.HasPrefix(p, "-") || strings.Contains(p, "..") || filepath.IsAbs(p) {
 		return false
@@ -264,12 +274,14 @@ func memoryPathSafe(p string) bool {
 	return false
 }
 
-// memoryDiff は 2 時点間の unified diff を返す。from が空なら「その commit が入れた
-// 変更」= 親との差分（初回 snapshot は親が無いので空ツリーとの差分）。
+// memoryDiff returns a unified diff between two points. An empty from means "the change this
+// commit introduced" = the diff against its parent (the first snapshot has no parent, so it is
+// diffed against the empty tree).
 //
-// 比較の両端は必ず commit を明示する。`git diff <rev>` は「rev と作業ツリー」の差分に
-// なってしまい、staging の中身（= live の現在）が混ざる — 履歴閲覧としては誤りなので、
-// `<rev>^!` のような親依存の略記も使わない。
+// Both ends are always named as explicit commits. `git diff <rev>` would diff rev against the
+// working tree and mix in the staging contents (= the current live state), which is wrong for
+// browsing history; parent-dependent shorthands such as `<rev>^!` are avoided for the same
+// reason.
 func memoryDiff(from, to, path string) (string, error) {
 	if !memoryPathSafe(path) {
 		return "", fmt.Errorf("invalid path scope")
@@ -278,7 +290,7 @@ func memoryDiff(from, to, path string) (string, error) {
 	if base == "" {
 		parent, err := memoryGitRun("rev-parse", "--verify", "--quiet", to+"^{commit}^")
 		if err != nil || parent == "" {
-			// 親なし（初回 snapshot）— 空ツリーを相手にする。
+			// No parent (the first snapshot) — diff against the empty tree.
 			empty, eerr := memoryGitRun("hash-object", "-t", "tree", "/dev/null")
 			if eerr != nil || empty == "" {
 				return "", fmt.Errorf("resolve empty tree: %v", eerr)

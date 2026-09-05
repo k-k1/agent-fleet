@@ -10,12 +10,12 @@ const approvalWith = (plan: string) =>
   "## Approved Plan:\n" +
   plan;
 
-// Regression guard for the 2026-07-22 bug: clicking 却下 on a plan actually APPROVED it,
-// yet the card stayed badged 却下 (optimistic). Two separate defects, both covered here:
+// Regression guard: clicking reject on a plan actually APPROVED it, while the card stayed badged
+// Reject (optimistic). Two separate defects, both covered here:
 //   1. reject drove claude's ExitPlanMode menu by a fixed keystroke offset (Down×3),
 //      which wraps onto a "Yes" row on shorter CLI menus. Reject is now interrupt-based;
 //      approve is the layout-independent "Enter = accept the highlighted default".
-//   2. the badge never reconciled the optimistic 却下 mark against the real outcome.
+//   2. the badge never reconciled the optimistic reject mark against the real outcome.
 
 describe("plan approve/reject strategy", () => {
   it("approves with Enter only — never a positional Down offset", () => {
@@ -37,8 +37,8 @@ describe("isApproved / isRejected", () => {
     expect(isRejected("却下")).toBe(true);
   });
 
-  // 2026-08-31 regression: the CLI began embedding the approved plan in the tool_result,
-  // so the keyword match started reading the PLAN's prose instead of the verdict.
+  // Regression guard: the CLI embeds the approved plan in the tool_result, so a keyword match
+  // over the whole text reads the PLAN's prose instead of the verdict.
   it("ignores the approved plan the CLI embeds in the result", () => {
     const plan =
       "# フロービルダー UI の移植\n\n## 非目標\n- 既存 API の作り直しはしない（前回の案は却下）。\n" +
@@ -58,19 +58,19 @@ describe("isApproved / isRejected", () => {
 });
 
 describe("planOutcome reconciliation", () => {
-  it("shows 却下 optimistically before the outcome lands", () => {
+  it("shows Reject optimistically before the outcome lands", () => {
     // User just clicked reject; the tool_result is a poll or two behind.
     expect(planOutcome(undefined, true)).toBe("rejected");
     expect(planOutcome("", true)).toBe("rejected");
   });
 
-  it("keeps 却下 once the real interrupt result lands", () => {
+  it("keeps Reject once the real interrupt result lands", () => {
     expect(planOutcome("[Request interrupted by user for tool use]", true)).toBe("rejected");
   });
 
-  it("a definitive approval overrides a stale optimistic 却下 (the reported symptom)", () => {
+  it("a definitive approval overrides a stale optimistic Reject (the reported symptom)", () => {
     // The exact screenshot case: optimistic reject flag set, but the transcript says the
-    // plan was approved. The badge must correct itself to 承認, not lie as 却下.
+    // plan was approved. The badge must correct itself to Approved, not lie as Reject.
     expect(planOutcome("User approved the plan and started coding", true)).toBe("approved");
   });
 
@@ -79,7 +79,7 @@ describe("planOutcome reconciliation", () => {
     expect(planOutcome("not approved, keep planning", false)).toBe("rejected");
   });
 
-  it("stays neutral (決定済み) when the outcome is unknown and nothing was optimistically rejected", () => {
+  it("stays neutral (decided) when the outcome is unknown and nothing was optimistically rejected", () => {
     expect(planOutcome("", false)).toBe("decided");
     expect(planOutcome(undefined, false)).toBe("decided");
   });

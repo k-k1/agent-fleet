@@ -16,14 +16,14 @@ import (
 )
 
 // Linking a SECOND sign-in method to an account, with the account owner's consent
-// (docs/log/61 §61.16 + ADR0043 決定 37).
+// (docs/log/61 §61.16 + ADR0043 decision 37).
 //
 // The problem it closes: two different IdPs asserting the SAME address are refused
-// (決定 32 / rule 2'), and rule 1.5 only joins two buttons onto ONE IdP. So the
+// (decision 32 / rule 2'), and rule 1.5 only joins two buttons onto ONE IdP. So the
 // person who signs in at head office with Google and is also in a subsidiary's
 // GitHub org cannot reach one account from both doors. Opening it by matching the
 // email would let a subsidiary's administrator take over an account created by a
-// different authority, which is exactly what 決定 32 refuses.
+// different authority, which is exactly what decision 32 refuses.
 //
 // What makes this safe is WHO asks. The flow starts from a session that already
 // proves the account, and the second method is proven by its own IdP in the usual
@@ -34,15 +34,15 @@ import (
 //     logged out and back in as somebody else in between);
 //   - the method's own gate must pass — Allowed() runs exactly as at login, so the
 //     org / domain rules are not bypassed by linking (a link is not a side door);
-//   - the address the IdP asserts must be the account's own (決定 37). Two DIFFERENT
+//   - the address the IdP asserts must be the account's own (decision 37). Two DIFFERENT
 //     addresses are still never joined: that is a merge, and §61.5 says a merge
 //     cannot be undone;
 //   - the IdP account must not already belong to anybody (AttachProvider), and
-//   - no deployment role is granted or refreshed (決定 31): AttachProvider does not
+//   - no deployment role is granted or refreshed (decision 31): AttachProvider does not
 //     touch the identity row at all, so a linked method cannot be a path to
 //     super_admin the way roleHint would be.
 //
-// ★ /oauth2/ is auth-EXEMPT (routes.go), so this handler owns its own session gate.
+// /oauth2/ is auth-EXEMPT (routes.go), so this handler owns its own session gate.
 // authGate never runs the "is there a session" check for this path — it only strips
 // the inbound identity header — and a missing check here would be an unauthenticated
 // endpoint that writes identity rows.
@@ -65,7 +65,7 @@ const (
 // handleOAuthLink starts a link flow: same authorization code round trip as a
 // login, with the state cookie marked so the callback attaches instead of issuing
 // a session. The redirect_uri stays /oauth2/callback — an IdP would otherwise need
-// a second registered URI per provider (決定 8 の理由と同じ).
+// a second registered URI per provider (same reason as decision 8).
 func (c config) handleOAuthLink(w http.ResponseWriter, r *http.Request) {
 	if !c.oauthConfigured() {
 		http.Error(w, "oauth not configured", http.StatusServiceUnavailable)
@@ -130,7 +130,7 @@ func (c config) linkCaller(r *http.Request, claims sessionClaims) (store.Identit
 // all. Env providers are the deployment's own doors and open to everyone who can
 // sign in; a TENANT-defined one is offered only to a member of that tenant, for the
 // same reason its button is absent from the generic login page — the list of them is
-// a directory of the group's subsidiaries (決定 32-4). It is not the authorization
+// a directory of the group's subsidiaries (decision 32-4). It is not the authorization
 // (Allowed() still runs at the callback), it is what this person is shown and may
 // probe.
 func (c config) linkableFor(ctx context.Context, ident store.Identity, providerID string) bool {
@@ -193,17 +193,17 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		c.writeLinkResult(w, r, linkErrGate, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
-	// ★ Same stamp as the login callback, from the provider object — never from the
+	// Same stamp as the login callback, from the provider object — never from the
 	// exchange and never from a tenant's row (docs/log/61 §61.15).
 	pr.Realm = auth.ProviderRealm(p)
-	// ★ The method's own gate. Linking must not be a way past the org membership or
+	// The method's own gate. Linking must not be a way past the org membership or
 	// the allowed domains: someone who cannot sign in with a method cannot link it.
 	allowed, err := p.Allowed(r.Context(), pr)
 	if err != nil || !allowed {
 		c.writeLinkResult(w, r, linkErrGate, p.Label(auth.PreferredUILang(r)), next)
 		return
 	}
-	// ★ 決定 37: the same address only. A different one would join two addresses into
+	// Decision 37: the same address only. A different one would join two addresses into
 	// one account, which §61.5 refuses whichever direction it is done from — being
 	// able to sign in to both proves control of both, not that they are one person.
 	if !strings.EqualFold(strings.TrimSpace(pr.Email), strings.TrimSpace(ident.Email)) {
@@ -224,7 +224,7 @@ func (c config) finishLink(w http.ResponseWriter, r *http.Request, st oauthState
 		return
 	}
 	log.Printf("oauth: linked %s to identity %s", pr.Provider, ident.ID)
-	// ★ Both directions are in the ledger (§61.16.4). A link is a NEW door into a
+	// Both directions are in the ledger (§61.16.4). A link is a NEW door into a
 	// workspace, and an audit that only records removals cannot answer "since when
 	// could that account also be reached with the subsidiary's GitHub".
 	_ = c.mgr.store.InsertAudit(r.Context(), store.AuditLog{
@@ -292,9 +292,9 @@ func newAccountAPI(cfg config) accountAPI {
 
 // loginMethods (GET /api/me/login-methods).
 //
-// ★ The linkable list is narrowed to the caller's own tenants for tenant-defined
+// The linkable list is narrowed to the caller's own tenants for tenant-defined
 // providers (linkableFor), and the endpoint that starts the flow applies the SAME
-// rule — the list is a view, never the gate (決定 14).
+// rule — the list is a view, never the gate (decision 14).
 func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	linked, err := a.mgr.store.ListLinkedProviders(r.Context(), ident.ID)
 	if err != nil {
@@ -308,7 +308,7 @@ func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident s
 		have[lp.Provider] = true
 		row := map[string]any{
 			"provider": lp.Provider,
-			// ★ subject is what identifies the ROW. One provider can hold two of them
+			// subject is what identifies the ROW. One provider can hold two of them
 			// (the same button pressed as two IdP accounts is refused today, but rows
 			// written before that guard, or by two adapters sharing an id, are not
 			// impossible), and without it "remove this one" has nothing to name.
@@ -316,8 +316,8 @@ func (a accountAPI) loginMethods(w http.ResponseWriter, r *http.Request, ident s
 			"email":         lp.Email,
 			"last_login_at": lp.LastLoginAt,
 			"current":       hasCur && currentMethod(cur, lp.Provider, lp.Subject),
-			// ★ Whether it CAN be removed is answered here, by the server, for the same
-			// reason the list is a view and not the gate (決定 14): the Console only
+			// Whether it CAN be removed is answered here, by the server, for the same
+			// reason the list is a view and not the gate (decision 14): the Console only
 			// mirrors it, and detach re-checks both rules itself.
 			"removable": len(linked) > 1 && !(hasCur && currentMethod(cur, lp.Provider, lp.Subject)),
 		}
@@ -355,7 +355,7 @@ func currentMethod(cur loginRef, provider, subject string) bool {
 // detachLoginMethod (DELETE /api/me/login-methods?provider=…&subject=…) removes one
 // sign-in method from the caller's OWN account (docs/log/61 §61.16.4).
 //
-// ★ provider and subject arrive as QUERY parameters, not path segments: a
+// provider and subject arrive as QUERY parameters, not path segments: a
 // tenant-defined provider id is "t:<slug>:<name>" and the colons make it a poor path
 // component — encoded, it is at the mercy of every proxy in front of CP, and
 // unencoded it silently splits into segments that never match the route.
@@ -375,7 +375,7 @@ func (a accountAPI) detachLoginMethod(w http.ResponseWriter, r *http.Request, id
 			"provider and subject are required"})
 		return
 	}
-	// ★ The method that minted THIS session. Checked here rather than in the store
+	// The method that minted THIS session. Checked here rather than in the store
 	// because the store has no session — and it is checked at all because "sign in
 	// with the other method first, then remove this one" is a step people skip.
 	if cur, ok := sessionLoginRef(r.Context()); ok && currentMethod(cur, provider, subject) {

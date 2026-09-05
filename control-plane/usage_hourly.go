@@ -7,28 +7,29 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// 稼働時間ヒートマップの API（docs/log/83）。縦 24 時間 × 横 日付のマスを描くための、
-// 1 時間 1 バケットの占有データを返す。
+// Uptime heatmap API (docs/log/83). Returns one-hour buckets of occupancy, enough to draw
+// a grid of 24 hours (vertical) by date (horizontal).
 //
-// ⚠️ **これは金額ではない。** 実費（Cost Explorer）は日単位でしか取れないので、時間別の
-// 金額は「秒 × 誰かが一度打ち込んだ単価」＝見積にしかならず、ADR 0048 決定 2 がまさに
-// それを否定している。ヒートマップは請求書の 1 日を **説明する**（何時に何本動いていたか）
-// のであって、値段を付けない。だから置き場所も「クラウド費用」ではなく「稼働時間」。
+// This is not money. Real spend (Cost Explorer) is only available per day, so an hourly
+// amount could only be "seconds x a unit price somebody typed in once" — an estimate, which
+// is exactly what ADR 0048 decision 2 rejects. The heatmap explains a day on the invoice
+// (how many sessions ran at what hour); it does not price it. Hence it lives under "uptime"
+// rather than "cloud cost".
 //
-// ⚠️ 応答の形は 3 つの入口で同一（本人・テナント合算・メンバー詳細）。クラウド費用が
-// `/api/cost/me` と管理側で同じ形にして部品を 1 つで済ませたのと同じ理由で、DTO を
-// 増やさない — 形が 2 つあると、片方だけ直った日から静かに食い違う。
+// The response shape is identical at all three entry points (own, tenant aggregate, member
+// detail), for the same reason /api/cost/me and the admin side share one shape and one
+// component: two shapes drift silently from the day only one of them is fixed.
 
-// usageHourWindow は要求された日付範囲を UTC の時バケット境界へ広げる。
+// usageHourWindow widens the requested date range to UTC hour-bucket boundaries.
 //
-// ⚠️ 引数は日付（YYYY-MM-DD, UTC）で、返すのは [from T00, to T23]。**ローカル時刻へ
-// ずらすのは描画側**なので、クライアントは見せたい範囲より前後 1 日ぶん広く要求する
-// 必要がある（+09:00 なら UTC の 15:00 が翌日 00:00 のマスになる）。ここでずらさないのは、
-// 時計を持っているのがブラウザだけだからで、サーバが推測したタイムゾーンで刻んだ
-// バケットは「誰の時計でも合っていない」表になる。
+// The arguments are dates (YYYY-MM-DD, UTC) and the result is [from T00, to T23]. Shifting
+// to local time is the renderer's job, so a client must request one day more on each side
+// than it means to show (at +09:00, UTC 15:00 lands in the next day's cell). Nothing shifts
+// here because only the browser holds the clock: buckets cut on a timezone the server
+// guessed match nobody's clock.
 func usageHourWindow(r *http.Request, now time.Time) (fromDay, toDay, fromHour, toHour string, aerr *apiError) {
-	// 既定は 14 日。usageRange の 30 日を借りないのは、30 列 × 24 段だと日付ラベルが
-	// 重なって読めなくなるから（クラウド費用の棒グラフで実際に踏んだ・docs/log/67）。
+	// Default is 14 days. Not usageRange's 30: 30 columns x 24 rows overlaps the date labels
+	// into illegibility (measured on the cloud-cost bar chart, docs/log/67).
 	fromDay = now.AddDate(0, 0, -(usageHourlyDefaultDays - 1)).Format(usageDayFmt)
 	toDay = now.Format(usageDayFmt)
 	for _, p := range []struct {
@@ -50,15 +51,16 @@ func usageHourWindow(r *http.Request, now time.Time) (fromDay, toDay, fromHour, 
 	return fromDay, toDay, fromDay + "T00", toDay + "T23", nil
 }
 
-// usageHourPoint は 1 メンバーの 1 時間。ゼロ値は omitempty で落とす — 720 マスぶんの
-// 密な配列を返す設計ではないが、止まっていた時間まで数値 7 個で埋めると応答が無駄に太る。
+// usageHourPoint is one hour of one member. Zero values are dropped by omitempty — this is
+// not meant to be a dense array of 720 cells, and padding idle hours with seven numbers
+// each only fattens the response.
 type usageHourPoint struct {
 	Hour string `json:"hour"` // YYYY-MM-DDTHH (UTC)
 	store.UsageHourCounters
 }
 
-// usageHourMember は 1 メンバーの系列。**時間の行は稼働していた時間だけ**入る
-// （止まっていた時間は行が無い）。「観測していない」との区別は下の Observed が持つ。
+// usageHourMember is one member's series. Only hours with activity get a row (an idle hour
+// has none); telling those apart from "not observed" is Observed's job below.
 type usageHourMember struct {
 	Tenant  string           `json:"tenant"`
 	UserKey string           `json:"user_key"`
@@ -66,16 +68,17 @@ type usageHourMember struct {
 	Hours   []usageHourPoint `json:"hours"`
 }
 
-// usageHourlyResponse は 3 つの入口すべての応答。
+// usageHourlyResponse is the response of all three entry points.
 //
-// ⚠️ Observed が**この API の要**。マスは 3 値（停止 / 稼働 / 未観測）で、
-// 「サンプラが動いていた時間」を別に持たないと、CP が落ちていた日と誰も働かなかった日が
-// 同じ灰色になる。Members に行が無い時間は、Observed に載っていれば「止まっていた」、
-// 載っていなければ「分からない」。
-// ⚠️ Observed は時刻の一覧ではなく**点**である。samples を載せるのは、それがマスの
-// **分母**だから: 1 時間まるごとを 3600 秒と決め打つと、まだ途中の「今の時間」が必ず
-// 薄くなるし、CP が途中で落ちた時間も薄くなる。「見ていた時間のうちどれだけ動いていたか」
-// でなければ、色は稼働ではなく観測の欠けを表してしまう。
+// Observed is the crux of this API. A cell is three-valued (idle / running / unobserved),
+// and without a separate record of when the sampler was alive, a day the CP was down and a
+// day nobody worked come out the same grey. An hour with no row in Members means "idle" if
+// it appears in Observed and "unknown" if it does not.
+//
+// Observed carries points, not a list of timestamps, because samples is the cell's
+// denominator: hard-coding an hour as 3600 seconds always washes out the hour still in
+// progress, and any hour the CP died partway through. Unless the ratio is "of the time we
+// watched, how much was running", the colour shows gaps in observation rather than uptime.
 type usageHourlyResponse struct {
 	From         string            `json:"from"`
 	To           string            `json:"to"`
@@ -84,11 +87,11 @@ type usageHourlyResponse struct {
 	Members      []usageHourMember `json:"members"`
 }
 
-// buildUsageHourly は store の行を応答へ畳む。純関数 — サンプラの都合も HTTP の都合も
-// 入れない（テストがここだけを撃てる）。
+// buildUsageHourly folds store rows into the response. Pure — no sampler and no HTTP
+// concerns belong here, so a test can aim at this alone.
 //
-// ⚠️ membership_id=="" の行はメンバーではなくサンプラのハートビート。Members へ混ぜると
-// 「名前の無いメンバー」が全テナントの一覧に現れる。
+// A row with membership_id=="" is the sampler's heartbeat, not a member. Mixing it into
+// Members puts a nameless member in every tenant's list.
 func buildUsageHourly(rows []store.UsageHourRow, from, to string, intervalSecs int) usageHourlyResponse {
 	out := usageHourlyResponse{
 		From: from, To: to, IntervalSecs: intervalSecs,
@@ -101,8 +104,9 @@ func buildUsageHourly(rows []store.UsageHourRow, from, to string, intervalSecs i
 				usageHourPoint{Hour: r.Hour, UsageHourCounters: store.UsageHourCounters{Samples: r.Samples}})
 			continue
 		}
-		// 予約テナント（af-golden など）の稼働は人の稼働ではない。一覧から隠しておいて
-		// ヒートマップにだけ現れると、隠した意味が無くなる（usage.go の同じ判断）。
+		// Uptime of a reserved tenant (af-golden and the like) is not a person's uptime.
+		// Hiding them from the list is pointless if they still surface in the heatmap
+		// (the same call as usage.go).
 		if isSystemTenantSlug(r.TenantSlug) {
 			continue
 		}
@@ -120,16 +124,16 @@ func buildUsageHourly(rows []store.UsageHourRow, from, to string, intervalSecs i
 	return out
 }
 
-// usageSampleInterval は 1 サンプルが表す秒数。マスの「その時間のうち何割動いていたか」は
-// running_secs ÷ (samples × interval) で出すので、クライアントが分母を組み立てられるよう
-// 応答に載せる。⚠️ 運用者が AF_USAGE_SAMPLE_INTERVAL を変えれば変わる値なので、
-// Console 側に定数として写さない。
+// usageSampleInterval is how many seconds one sample stands for. A cell's "what fraction of
+// the hour was running" is running_secs / (samples x interval), so the response carries this
+// for the client to build the denominator. An operator can change it through
+// AF_USAGE_SAMPLE_INTERVAL, so never copy it into the Console as a constant.
 func (a adminAPI) usageSampleInterval() int {
 	return int(a.mgr.usageInterval.Seconds())
 }
 
-// usageHourlyFor は 3 つの入口の共通部分。tenantID=="" は全テナント、
-// membershipID!="" は 1 人だけに絞る。
+// usageHourlyFor is the part the three entry points share. tenantID=="" means every tenant;
+// membershipID!="" narrows to one person.
 func (a adminAPI) usageHourlyFor(w http.ResponseWriter, r *http.Request, tenantID, membershipID string) {
 	fromDay, toDay, fromHour, toHour, aerr := usageHourWindow(r, time.Now().UTC())
 	if aerr != nil {
@@ -144,8 +148,8 @@ func (a adminAPI) usageHourlyFor(w http.ResponseWriter, r *http.Request, tenantI
 	if membershipID != "" {
 		kept := rows[:0:0]
 		for _, row := range rows {
-			// ハートビート行は誰の物でもないので残す — 1 人ぶんの画面でも
-			// 「観測していない時間」は同じように空白でなければならない。
+			// Heartbeat rows belong to nobody, so keep them — even a single-person view
+			// has to leave unobserved hours blank in the same way.
 			if row.MembershipID == "" || row.MembershipID == membershipID {
 				kept = append(kept, row)
 			}
@@ -155,20 +159,24 @@ func (a adminAPI) usageHourlyFor(w http.ResponseWriter, r *http.Request, tenantI
 	writeJSON(w, http.StatusOK, buildUsageHourly(rows, fromDay, toDay, a.usageSampleInterval()))
 }
 
-// myUsageHourly (GET /api/usage/me/hourly?from=&to=) — 本人の稼働だけ。
+// myUsageHourly (GET /api/usage/me/hourly?from=&to=) — the caller's own uptime only.
 //
-// ⚠️ 他人の合計を引き算で復元できる値を返さない（/api/cost/me と同じ作法）。返すのは
-// 本人の行とハートビートだけで、デプロイ全体の合計はどこにも入っていない。
+// Never return a value from which someone else's total can be recovered by subtraction (the
+// same discipline as /api/cost/me): only the caller's rows and the heartbeat go out, and no
+// deployment-wide total appears anywhere.
 func (a adminAPI) myUsageHourly(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
-	// ⚠️ テナントで絞らない。破棄済みワークスペースの行も本人のものであり、
-	// 絞ると「自信たっぷりの空っぽ」を本人に見せることになる（docs/log/67 §67.15 と同型）。
+	// Deliberately not scoped by tenant. Rows from destroyed workspaces are still the
+	// caller's own, and filtering them shows the caller a confidently empty screen (the
+	// same shape as docs/log/67 §67.15).
 	a.usageHourlyFor(w, r, "", mv.MembershipID)
 }
 
-// adminUsageHourly (GET /api/admin/usage/hourly?tenant=&from=&to=) — 管理の合算ヒートマップ。
+// adminUsageHourly (GET /api/admin/usage/hourly?tenant=&from=&to=) — the admin's aggregate
+// heatmap.
 //
-// 合算そのものではなく**メンバー別の系列**を返し、合計はクライアントで積む。ホバーの内訳が
-// 同じデータから出る（別 API を叩かない）＝「合計と内訳が食い違う」が原理的に起きない。
+// Returns per-member series rather than the aggregate itself; the client sums them. The
+// hover breakdown then comes out of the same data (no second API call), so "total disagrees
+// with breakdown" cannot arise.
 func (a adminAPI) adminUsageHourly(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
@@ -177,12 +185,13 @@ func (a adminAPI) adminUsageHourly(w http.ResponseWriter, r *http.Request) {
 	a.usageHourlyFor(w, r, tenantID, "")
 }
 
-// memberUsageHourly (GET /api/admin/tenants/{slug}/members/{key}/usage-hourly) —
-// メンバー詳細の 1 枚。強制停止・ディスク上限のボタンが並ぶ面に置く（費用と同じ理由で、
-// 「週末も動きっぱなし」がそのまま隣のボタンの根拠になる）。
+// memberUsageHourly (GET /api/admin/tenants/{slug}/members/{key}/usage-hourly) — the single
+// pane on member detail. It sits on the surface holding the force-stop and disk-quota
+// buttons for the same reason cost does: "ran all weekend" is itself the case for pressing
+// the button next to it.
 //
-// ⚠️ 費用と同じく **membership だけで引く**。所属は tenantAdminFor + resolveMember が
-// 証明済みで、テナントでも絞ると破棄済みワークスペースぶんが落ちる。
+// As with cost, look it up by membership alone. tenantAdminFor + resolveMember have already
+// proved the affiliation, and scoping by tenant as well drops destroyed workspaces.
 func (a adminAPI) memberUsageHourly(w http.ResponseWriter, r *http.Request) {
 	if _, _, ok := a.tenantAdminFor(w, r, r.PathValue("slug")); !ok {
 		return
@@ -195,6 +204,6 @@ func (a adminAPI) memberUsageHourly(w http.ResponseWriter, r *http.Request) {
 	a.usageHourlyFor(w, r, "", mem.ID)
 }
 
-// usageHourlyDefaultDays は既定の窓。30 日 × 24 段は横に長すぎて日付ラベルが潰れる
-// （クラウド費用の棒グラフで実際に踏んだ）ので、ヒートマップの既定は 14 日にする。
+// usageHourlyDefaultDays is the default window. 30 days x 24 rows is too wide and crushes
+// the date labels (measured on the cloud-cost bar chart), so the heatmap defaults to 14.
 const usageHourlyDefaultDays = 14

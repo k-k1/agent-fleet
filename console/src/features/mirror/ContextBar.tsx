@@ -52,7 +52,7 @@ export function ContextBar({ read, create, fresh, model, window: windowOverride,
   const tr = useT();
   const used = read + create + fresh;
   // Prefer the agent-reported window (exact); fall back to the model-name guess.
-  // （ctxWindow: グローバル window を隠さない名前にしている）
+  // (Named ctxWindow so it does not shadow the global `window`.)
   const ctxWindow = windowOverride && windowOverride > 0 ? windowOverride : contextWindow(model, used);
   const pct = Math.min(100, (used / ctxWindow) * 100);
   const w = (n: number) => (n / ctxWindow) * 100 + "%";

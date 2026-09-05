@@ -1,21 +1,23 @@
-// コンポーザーの textarea を内容の高さに合わせる（頭打ちは CSS の max-height、その先は
-// textarea の内部スクロール）。ミラー / アシスタントチャット / メモキューの 3 つの入力欄が使う。
+// Sizes the composer's textarea to its content (the cap is the CSS max-height; past it the
+// textarea scrolls internally). Used by three inputs: the mirror, the assistant chat and the memo
+// queue.
 //
-// 素直に書くと「height:auto にする → scrollHeight を読む → その値を height に入れる」だが、
-// この “計測のあいだだけ rows 相当（2 行）まで縮む” が外へ漏れる。ミラーのコンポーザーは
-// 転写（.mirror-body・flex:1）の兄弟なので、縮んだ瞬間だけ転写の clientHeight が入力欄の
-// ぶん伸び、末尾に貼りついていたビューの scrollTop がブラウザに切り詰められる。高さを戻して
-// も scrollTop は戻らない ＝ 1 打鍵ごとに末尾から浮く。浮く量は「入力欄の高さ − 2 行」なので、
-// 入力欄が縦に伸びているときほど大きい（実測 154px で「最新へ」まで出た）。
+// The naive form - set height:auto, read scrollHeight, write it back into height - leaks the
+// shrink to two rows that happens while measuring. The mirror composer is a sibling of the
+// transcript (.mirror-body, flex:1), so for that instant the transcript's clientHeight grows by
+// the input's height and the browser clamps the scrollTop of a view pinned to the bottom.
+// Restoring the height does not restore scrollTop, so the view drifts off the bottom on every
+// keystroke, by "input height - 2 rows": the taller the input, the larger the drift (measured:
+// 154px, enough for the jump-to-latest control to appear).
 //
-// Chromium ではスクロールアンカリングがこの切り詰めを打ち消すので表に出ない — が、それは
-// たまたまであって仕様ではない。アンカリングを持たない / 抑止されたエンジンでは素通しで出る
-// （実測: .mirror-body に overflow-anchor:none を当てると 1 打鍵目で gap=154px・
-// scripts/mirror-scroll の typing シナリオはこの条件で見る）。
+// Chromium's scroll anchoring cancels the clamp, so it stays invisible there, but that is luck,
+// not a guarantee: an engine without anchoring, or with it suppressed, shows it directly
+// (measured: with overflow-anchor:none on .mirror-body the first keystroke gives gap=154px, and
+// the scripts/mirror-scroll typing scenario runs under exactly that condition).
 //
-// なので計測のあいだは入力欄の親（コンポーザーの行）を min-height で止め、縮みが外へ出ない
-// ようにする。“縮ませない” だけなので、border-box の値を渡す誤差で数 px 大きく見積もっても
-// 害はない — 容器が縮む向きに scrollTop の切り詰めは起きない。
+// So while measuring, the input's parent (the composer row) is pinned with min-height and the
+// shrink cannot escape. It only prevents shrinking, so overestimating by a few px by passing the
+// border-box value is harmless: scrollTop is never clamped in the direction of a shrinking box.
 export function autoGrowTextarea(el: HTMLTextAreaElement | null): void {
   if (!el) return;
   const row = el.parentElement;

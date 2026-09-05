@@ -1,20 +1,20 @@
 package copilot
 
-// copilot の managed driver（docs/log/36 Track A2）— per-session child 方式。
-// セッション毎に `copilot --acp`（Agent Client Protocol、stdio JSON-RPC）を子
-// プロセスとして抱え、session/new・session/load（クロスプロセス resume、実測）・
-// session/prompt（blocking）・session/cancel・session/set_mode に turn 状態機械
-// （§4）・Interaction（§5）・reconciliation（§6）をマッピングする。
+// The managed copilot driver (docs/log/36 Track A2) — a per-session child. Each session holds
+// one `copilot --acp` (Agent Client Protocol, stdio JSON-RPC) child process, and session/new,
+// session/load (cross-process resume, measured), session/prompt (blocking), session/cancel and
+// session/set_mode are mapped onto the turn state machine (§4), Interaction (§5) and
+// reconciliation (§6).
 //
-// per-session child を選ぶ理由（docs/log/36 契約）: ACP に per-session のモデル指定が
-// 無く（configOptions は mode/allow_all のみ — 実測）、子プロセス毎の --model /
-// --effort フラグで固定するのが唯一の確実な経路。メモリは TUI pane と同等で、
-// exit/OOM 記録は子の cmd.Wait() で per-session に正確化される。
+// Why a per-session child (the docs/log/36 contract): ACP has no per-session model selection
+// (configOptions carries only mode/allow_all — measured), so pinning it with the --model /
+// --effort flags of each child process is the only reliable path. Memory use matches a TUI
+// pane, and the child's cmd.Wait() makes the exit/OOM record accurate per session.
 //
-// 権限（session/request_permission）は --allow-all 運転では発生しないが、plan
-// モード起動では allow-all を外すため到達しうる。「UI に出ないから発生しない」を
-// 信用せず（agy df996e4 の教訓）、常に Interaction(question) へ写像して Console の
-// 質問カード（/respond）で答えさせる。
+// Permission requests (session/request_permission) never arrive while running with
+// --allow-all, but a plan-mode launch drops allow-all, so they are reachable. Do not trust "it
+// does not show in the UI, so it cannot happen": they are always mapped to an
+// Interaction(question) and answered through the Console's question card (/respond).
 
 import (
 	"encoding/json"
@@ -34,11 +34,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// ledger は ClientMessageID の永続台帳（§9.5 — 再送・reconnect の二重投入を
-// プロセス跨ぎで冪等化）。
+// ledger is the persistent ClientMessageID ledger (§9.5): it makes a resend or a reconnect's
+// double submission idempotent across processes.
 var ledger = agents.NewMsgLedger("copilot-msgledger")
 
-// ACP session-mode ids（v1.0.73 実測）。AF 語彙 "plan"/"normal" と相互変換する。
+// ACP session-mode ids (measured on v1.0.73), converted to and from the AF vocabulary
+// "plan"/"normal".
 const (
 	acpModeAgent     = "https://agentclientprotocol.com/protocol/session-modes#agent"
 	acpModePlan      = "https://agentclientprotocol.com/protocol/session-modes#plan"
@@ -63,15 +64,16 @@ func modeFromACP(id string) string {
 	}
 }
 
-// NewDriver returns the managed copilot Driver（driverOf が /turn・/respond から
-// 引く）。read 層は agentImpl をそのまま埋め込んで温存する。
+// NewDriver returns the managed copilot Driver, which driverOf looks up from /turn and
+// /respond. The read layer is preserved by embedding agentImpl as is.
 func NewDriver() agents.Driver { return managedDriver{} }
 
 type managedDriver struct{ agentImpl }
 
-// Capabilities（§3.1・docs/log/36 契約）。Steer は driver 内キュー（ACP に mid-turn
-// 注入の口が無い — opencode と同じ意味論）。DynamicModel/Effort は false: 子の
-// 起動フラグで固定（変更はセッション再作成）。Mode は session/set_mode がネイティブ。
+// Capabilities (§3.1, the docs/log/36 contract). Steer is a driver-held queue because ACP has
+// no opening for mid-turn injection (the same semantics as opencode). DynamicModel/Effort are
+// false: they are pinned by the child's launch flags, and changing them means re-creating the
+// session. Mode is native, through session/set_mode.
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel: "per-session-child",
@@ -82,8 +84,8 @@ func (managedDriver) Capabilities() agents.Capabilities {
 }
 
 // Resume returns the session's ThreadHandle, spawning the child runtime and
-// creating/loading the copilot session when needed（Driver IF: 無ければ新規
-// start。§6 の reconciliation 共通手順を兼ねる）。
+// creating/loading the copilot session when needed (the Driver interface: start a new one when
+// there is none). It doubles as the shared §6 reconciliation procedure.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCopilot {
 		return nil, errors.New("copilot driver は copilot セッション専用です")
@@ -105,9 +107,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
-	// spawn を handle 単位で直列化する（kiro A2-4 と同型）: boot の ReconcileManaged と
-	// 直後の /turn が並行に Resume すると check-then-spawn が非直列で二重 spawn し、
-	// 先発の子プロセスが孤児化する。ロック取得後に liveness を再確認する。
+	// Serialize spawns per handle (the same shape as kiro A2-4): when boot's ReconcileManaged
+	// and a /turn right after it Resume concurrently, the check-then-spawn is not serial, two
+	// children are spawned and the earlier one is orphaned. Re-check liveness after taking the
+	// lock.
 	h.spawnMu.Lock()
 	defer h.spawnMu.Unlock()
 
@@ -116,7 +119,8 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		h.mu.Unlock()
 		return h, nil
 	}
-	// 起動時の設定既定は meta から（mode の動的変更は UpdateSettings が上書き）。
+	// Launch-time settings default to meta (a dynamic mode change is overwritten by
+	// UpdateSettings).
 	if h.settings.Model == "" {
 		h.settings.Model = m.Model
 	}
@@ -126,9 +130,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
-	// 権限確認をスキップするか（docs/log/76）は meta と ui-prefs から毎 Resume 解決する。
-	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
-	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
+	// Whether to skip permission prompts (docs/log/76) is resolved from meta and ui-prefs on
+	// every Resume. It is not carried on ThreadSettings because that is for dynamic updates
+	// where "empty = leave unchanged", and a bool cannot be three-valued — a re-spawn after a
+	// settings change picks up the value resolved here.
 	h.bypass = agents.SkipPermissions(m)
 	st := h.settings
 	h.mu.Unlock()
@@ -152,7 +157,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		return nil, err
 	}
 
-	// exit recording の baseline（tui の startSessionTmux と同じ役割）。
+	// The baseline for exit recording (the same role as tui's startSessionTmux).
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
@@ -187,7 +192,7 @@ func liveHandles() []*threadHandle {
 // DropHandle detaches a managed session from its runtime (stop/halt/archive):
 // interrupt any running turn, terminate the child, forget the handle. The
 // conversation stays in $COPILOT_HOME/session-state — a later Resume re-spawns
-// and session/load reattaches（実測: 履歴リプレイ＋文脈保持）。
+// and session/load reattaches (measured: history replay plus context retention).
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -207,8 +212,8 @@ func DropHandle(name string) {
 	stopChild(cmd)
 }
 
-// RemoveLedger drops the ClientMessageID ledger（/stop — スロットの
-// アイデンティティごと破棄する時だけ。halt/archive は再開があるので残す）。
+// RemoveLedger drops the ClientMessageID ledger. Only for /stop, which discards the slot's
+// identity along with it; halt/archive keep it because they can be resumed.
 func RemoveLedger(name string) { ledger.Remove(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle.
@@ -222,7 +227,7 @@ func ManagedAlive(name string) bool {
 	return h.alive
 }
 
-// ManagedBusy reports a turn is running or queued (graceful shutdown の待ち条件).
+// ManagedBusy reports a turn is running or queued (the wait condition of a graceful shutdown).
 func ManagedBusy(name string) bool {
 	h := handleFor(name)
 	if h == nil {
@@ -233,8 +238,8 @@ func ManagedBusy(name string) bool {
 	return h.running || len(h.queue) > 0
 }
 
-// AbortManaged interrupts every running managed turn（graceful shutdown の
-// per-pane Ctrl-C 相当）。
+// AbortManaged interrupts every running managed turn (the equivalent of a graceful shutdown's
+// per-pane Ctrl-C).
 func AbortManaged() {
 	for _, h := range liveHandles() {
 		h.mu.Lock()
@@ -246,8 +251,8 @@ func AbortManaged() {
 	}
 }
 
-// Shutdown terminates every managed child（agent 終了時。会話正本は copilot 側の
-// ストアに残り、次回 boot の ReconcileManaged が再接続する）。
+// Shutdown terminates every managed child, at agent exit. The conversation of record stays in
+// copilot's own store and the next boot's ReconcileManaged reconnects to it.
 func Shutdown() {
 	handlesMu.Lock()
 	var cmds []*exec.Cmd
@@ -264,8 +269,8 @@ func Shutdown() {
 }
 
 // ReconcileManaged re-attaches managed copilot sessions after an Agent boot or
-// child death（§6）。対象は「停止扱いになっていない」managed メタ全部。失敗しても
-// セッションは 停止中 として残り、ユーザーの 再開 クリックで再試行される。
+// child death (§6). It covers every managed meta not counted as stopped. On failure the
+// session simply stays stopped, and the user's Resume click retries it.
 func ReconcileManaged(reason string) {
 	d := managedDriver{}
 	for _, m := range session.ListMetas() {
@@ -281,9 +286,9 @@ func ReconcileManaged(reason string) {
 	}
 }
 
-// stopChild terminates a child process: SIGTERM（copilot は graceful に
-// session.shutdown を刻む）→ 猶予後に SIGKILL。reap は spawn 時の watch
-// goroutine（cmd.Wait）が担う — 独自 spawn 経路の全数 reap（dev/04 §4.3）。
+// stopChild terminates a child process: SIGTERM (copilot gracefully records session.shutdown),
+// then SIGKILL after a grace period. Reaping is done by the watch goroutine started at spawn
+// (cmd.Wait) — every custom spawn path reaps its children (dev/04 §4.3).
 func stopChild(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
@@ -302,11 +307,11 @@ type threadHandle struct {
 	dir     string
 	slotSid string
 
-	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
+	spawnMu sync.Mutex // serializes spawns for this handle (no double spawn from a concurrent Resume; same shape as kiro A2-4)
 
-	// bypass は「権限確認をスキップする」か（docs/log/76）。Resume が meta から解決して
-	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
-	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
+	// bypass is the "skip permission prompts" choice (docs/log/76). Resume resolves it from meta
+	// and puts it here because spawn has no meta of its own. plan is read from spawn's st.Mode
+	// rather than at Resume time, since a mode change while running triggers a re-spawn.
 	bypass bool
 
 	mu       sync.Mutex
@@ -320,14 +325,14 @@ type threadHandle struct {
 	queue    []agents.TurnInput
 	settings agents.ThreadSettings
 	inter    *agents.Interaction
-	permID   json.RawMessage // pending session/request_permission の JSON-RPC id
-	permOpts []string        // Interaction の選択肢 index → ACP optionId
+	permID   json.RawMessage // JSON-RPC id of the pending session/request_permission
+	permOpts []string        // Interaction choice index → ACP optionId
 	events   chan agents.Event
 }
 
 // spawn starts the child runtime, initializes ACP and loads/creates the copilot
 // session. Caller must NOT hold h.mu.
-// bypassNow reports the resolved「権限確認をスキップする」choice (docs/log/76). Resume writes
+// bypassNow reports the resolved "skip permission prompts" choice (docs/log/76). Resume writes
 // it under h.mu; spawn runs without the lock, so read it through here.
 func (h *threadHandle) bypassNow() bool {
 	h.mu.Lock()
@@ -338,8 +343,8 @@ func (h *threadHandle) bypassNow() bool {
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	args := []string{"--acp", "--no-remote", "--no-remote-export"}
 	if h.bypassNow() && st.Mode != "plan" {
-		// fleet 既定の bypass。plan 起動と、利用者が権限確認を選んだとき（docs/log/76）は
-		// 外す — 承認は Interaction として表面化させる。
+		// The fleet default is bypass. It is dropped for a plan launch and when the user chose
+		// permission prompts (docs/log/76), so approvals surface as an Interaction.
 		args = append(args, "--allow-all")
 	}
 	concreteModel := st.Model != "" && st.Model != "auto"
@@ -360,8 +365,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	cmd.Dir = h.dir
 	env := append(os.Environ(), "COPILOT_AUTO_UPDATE=false")
 	if tok := Token(); tok != "" {
-		// gh 透過認証のトークンを明示注入（ambient フォールバックは実測で動くが
-		// 公式未文書 — 子プロセスの env は決定的にできるのでこちらを正とする）。
+		// Inject the gh transparent-auth token explicitly. The ambient fallback does work
+		// (measured) but is undocumented, and a child process's env can be made deterministic,
+		// so this is the path of record.
 		env = append(env, "COPILOT_GITHUB_TOKEN="+tok)
 	}
 	cmd.Env = env
@@ -378,8 +384,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("copilot runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
-	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	// Capture this cl in the closure: during the first spawn the readLoop can run while h.cl is
+	// still unassigned, so reading h.cl would panic on a nil dereference when replying to an
+	// unknown method.
 	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
@@ -398,17 +405,18 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	}
 	mode := ""
 	if sid != "" {
-		// クロスプロセス resume（実測: 履歴リプレイ＋文脈保持）。リプレイは会話長に
-		// 比例するので余裕を持つ。
+		// Cross-process resume (measured: history replay plus context retention). The replay is
+		// proportional to the conversation's length, so allow plenty of time.
 		res, err := cl.call("session/load", map[string]any{
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
 		if err != nil {
-			// session/new へ落ちてよいのは sid のローカルストア（session-state/<sid>）が
-			// 実際に消えている＝会話が削除済みのときだけ（kiro A2-1 と同型）。ストア健在の
-			// 一時失敗で new すると生きた会話を無言で切り離し sid を上書きしてしまう。
+			// Falling back to session/new is allowed only when sid's local store
+			// (session-state/<sid>) is actually gone, i.e. the conversation was deleted (the
+			// same shape as kiro A2-1). Doing it on a transient failure with the store intact
+			// would silently detach a live conversation and overwrite its sid.
 			if _, statErr := os.Stat(sessionStateDir(sid)); statErr != nil {
-				log.Printf("copilot managed: session/load %s: store gone (%v) — 新規セッションで再開", h.name, err)
+				log.Printf("copilot managed: session/load %s: store gone (%v) — restarting with a new session", h.name, err)
 				sid = ""
 			} else {
 				stopChild(cmd)
@@ -440,7 +448,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	h.mu.Lock()
 	h.cmd, h.cl, h.sid, h.alive = cmd, cl, sid, true
-	h.state = agents.TurnCompleted // 子は生まれたて — 走行中 turn は存在しない
+	h.state = agents.TurnCompleted // the child is newborn — no turn can be running
 	h.inter, h.permID, h.permOpts = nil, nil, nil
 	if m := modeFromACP(mode); m != "" {
 		h.settings.Mode = m
@@ -448,8 +456,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	wantMode := h.settings.Mode
 	h.mu.Unlock()
 
-	// meta の希望モードが runtime の現在モードと違えば再表明（resume 後の既定戻り
-	// 対策 — codex の approvalPolicy 再表明と同じ理屈。best-effort）。
+	// Re-assert meta's wanted mode when it differs from the runtime's current mode, against a
+	// fall back to the default after a resume (the same reasoning as codex's approvalPolicy
+	// re-assertion; best effort).
 	if wantMode != "" && wantMode != modeFromACP(mode) {
 		_, _ = cl.call("session/set_mode", map[string]any{
 			"sessionId": sid, "modeId": acpModeID(wantMode),
@@ -458,7 +467,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	return nil
 }
 
-// currentModeOf extracts modes.currentModeId from a session/new・load result.
+// currentModeOf extracts modes.currentModeId from a session/new or session/load result.
 func currentModeOf(res json.RawMessage) string {
 	var out struct {
 		Modes struct {
@@ -469,9 +478,10 @@ func currentModeOf(res json.RawMessage) string {
 	return out.Modes.CurrentModeID
 }
 
-// watch reaps the child and records its exit（record-exit の managed 対応 —
-// per-session child なので daemon supervisor と違い帰属が正確）。SIGTERM 由来
-// （DropHandle/Shutdown）は "stopped" になり Console は通常の 停止中 を出す。
+// watch reaps the child and records its exit (record-exit for managed sessions; with a
+// per-session child the attribution is exact, unlike a daemon supervisor's). An exit from
+// SIGTERM (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped
+// state.
 func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
 	err := cmd.Wait()
 	_ = err
@@ -500,7 +510,7 @@ func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
 	})
 	cl.markClosed()
 	h.mu.Lock()
-	stale := h.cl != cl // 既に新しい子へ差し替わっている（respawn 後の旧 watch）
+	stale := h.cl != cl // already replaced by a new child (an old watch after a respawn)
 	h.mu.Unlock()
 	if !stale {
 		h.runtimeLost()
@@ -529,7 +539,7 @@ func (h *threadHandle) currentState() agents.TurnState {
 	return h.state
 }
 
-// runtimeLost drops the handle to unknown（§6-1: 切断時の正直な状態）。
+// runtimeLost drops the handle to unknown (§6-1: the honest state on a disconnect).
 func (h *threadHandle) runtimeLost() {
 	h.mu.Lock()
 	h.alive = false
@@ -543,8 +553,8 @@ func (h *threadHandle) runtimeLost() {
 
 func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
 
-// Steer は driver 内キュー（ACP に mid-turn 注入の口が無い — 完走後に次 turn
-// として投入、opencode と同じ意味論）。
+// Steer is a driver-held queue: ACP has no opening for mid-turn injection, so the input is
+// submitted as the next turn once the current one finishes (the same semantics as opencode).
 func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
 
 func (h *threadHandle) accept(in agents.TurnInput) error {
@@ -561,8 +571,9 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
-	// 再送の冪等化（台帳・§4）は pump の実行開始時に行う — キュー投入前に永続記録すると、
-	// クラッシュでキューが失われた後の再送が「既知」として無言破棄される。
+	// Making a resend idempotent (the ledger, §4) happens when pump starts executing: recording
+	// it persistently before the queue push would make a resend after a crash that lost the
+	// queue count as "already seen" and be discarded silently.
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -578,7 +589,7 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	return nil
 }
 
-// pump processes the queue serially（子は排他なので waitIdle は不要）。
+// pump processes the queue serially (the child is exclusive, so no waitIdle is needed).
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
@@ -591,7 +602,7 @@ func (h *threadHandle) pump() {
 		h.queue = h.queue[1:]
 		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 			h.mu.Unlock()
-			continue // 再送 — 台帳（永続、プロセス跨ぎ）が実行開始時に冪等化（§4）
+			continue // a resend; the persistent cross-process ledger makes it idempotent at start (§4)
 		}
 		h.running = true
 		h.mu.Unlock()
@@ -605,8 +616,8 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// turn 境界の MarkTurnStart/End が status ストアと docs/log/30 の完了報告を駆動する
-// （notify seam — f3e63f6/eb3eb31 の教訓）。
+// The turn-boundary MarkTurnStart/End drive the status store and the docs/log/30 completion
+// report (the notify seam).
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
@@ -625,13 +636,13 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}, 0) // no timeout — a turn runs as long as it runs
 	h.mu.Lock()
 	interrupted := h.state == agents.TurnInterrupting
-	h.inter, h.permID, h.permOpts = nil, nil, nil // turn が終わった＝待ちは無い
+	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended = nothing is waiting
 	h.mu.Unlock()
 	if err != nil {
 		if interrupted {
 			h.setState(agents.TurnCancelled)
 		} else {
-			// transport 断 = 子の喪失: 正直に unknown へ落とし §6 に委ねる。
+			// A broken transport = the child is lost: drop honestly to unknown and leave it to §6.
 			h.setState(agents.TurnUnknown)
 		}
 		return
@@ -650,8 +661,8 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 }
 
-// Interrupt cancels the running turn and clears the queued 追撃（停止の意思表示は
-// キューにも及ぶ）。
+// Interrupt cancels the running turn and clears the queued follow-ups: an expressed intent to
+// stop reaches the queue too.
 func (h *threadHandle) Interrupt() error {
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
@@ -668,10 +679,10 @@ func (h *threadHandle) Interrupt() error {
 	return cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
 }
 
-// UpdateSettings applies dynamic settings. Mode は session/set_mode がネイティブ
-// （実測）。Model/Effort は子の起動フラグ固定なので動的変更不可 — Capabilities が
-// DynamicModel/Effort:false を表明しており Console は UI を出さないが、防御的に
-// 明示エラーを返す。
+// UpdateSettings applies dynamic settings. Mode is native, through session/set_mode
+// (measured). Model/Effort are pinned by the child's launch flags and cannot change
+// dynamically: Capabilities declares DynamicModel/Effort:false and the Console shows no UI for
+// them, but an explicit error is returned defensively.
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if s.Model != "" || s.ClearModel || s.Effort != "" || s.ClearEffort {
 		return errors.New("copilot はモデル/effort の稼働中変更に未対応です（セッションを作り直してください）")
@@ -698,9 +709,9 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	return nil
 }
 
-// Respond answers the pending Interaction（§5）— copilot では
-// session/request_permission への応答。answer/allow は選択肢 index を ACP の
-// optionId へ変換、deny は reject 系 optionId、cancel は outcome:"cancelled"。
+// Respond answers the pending Interaction (§5), which for copilot is a reply to
+// session/request_permission. answer/allow converts the choice index into an ACP optionId,
+// deny picks a reject-family optionId, and cancel sends outcome:"cancelled".
 func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	h.mu.Lock()
 	inter, permID, permOpts, cl := h.inter, h.permID, h.permOpts, h.cl
@@ -748,14 +759,14 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Unlock()
 	if running {
-		// turn が走っていない時に偽の「実行中」を購読側へ流さない。
+		// Never push a false "running" to subscribers while no turn is running.
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	}
 	return nil
 }
 
-// findOption returns the first optionId containing the substring ("allow" /
-// "reject" — 実測の語彙: allow_once / allow_always / reject_once)。
+// findOption returns the first optionId containing the substring ("allow" / "reject"; the
+// measured vocabulary is allow_once / allow_always / reject_once).
 func findOption(opts []string, sub string) string {
 	for _, o := range opts {
 		if strings.Contains(o, sub) {
@@ -782,7 +793,8 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 // via Respond → cl.respond.
 func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
-		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
+		// An unknown server-initiated request wedges the turn unless it is answered, so reply
+		// with an error.
 		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
@@ -833,7 +845,7 @@ func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method
 	h.emit(agents.Event{Kind: "interaction", TurnState: agents.TurnWaitingInteraction, Interaction: inter})
 }
 
-// queuedPrompts surfaces the driver-held queue for the mirror's キュー済み badge.
+// queuedPrompts surfaces the driver-held queue for the mirror's queued badge.
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -846,10 +858,10 @@ func (h *threadHandle) queuedPrompts() []string {
 	return out
 }
 
-// managedEnrich folds the driver-side state into the read layer's TranscriptData
-// （transcript.go から呼ばれる）: pending permission へ Interaction id を載せ、
-// driver 内キューを キュー済み へ、driver 設定の mode を chip へ合流する。tui
-// セッション（handle 無し）には何もしない。
+// managedEnrich folds the driver-side state into the read layer's TranscriptData (called from
+// transcript.go): it puts the Interaction id on a pending permission, merges the driver-held
+// queue into the queued list and the driver's mode setting into the chip. It does nothing for a
+// tui session, which has no handle.
 func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	if m.DriverKind() != session.DriverManaged {
 		return
@@ -876,7 +888,7 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	}
 }
 
-// normalizeMsgID mirrors the other drivers' convention: empty → driver 採番。
+// normalizeMsgID mirrors the other drivers' convention: empty → the driver mints one.
 func normalizeMsgID(id string) string {
 	if id != "" {
 		return id

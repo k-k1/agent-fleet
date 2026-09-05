@@ -65,9 +65,10 @@ func planTurns() []transcript.Turn {
 	}
 }
 
-// 承認待ちのプランは、転写の tool_use（ASK 時点で書かれる）と hook が捕まえた保留
-// ペイロードの二重になる。片方＝インラインを落とし、その行までカーソルを戻して
-// 「決まったあとに出し直せる」ことまでを見る。
+// A plan awaiting approval exists twice: as the transcript's tool_use (written when it asks)
+// and as the pending payload the hook captured. One of the two — the inline one — is dropped,
+// and the cursor is rewound to that line, so this also covers that it can be shown again once
+// the plan is decided.
 func TestHidePendingInteractionPlan(t *testing.T) {
 	pending := map[string]any{"pendingPlan": testPlan}
 	turns, hold := hidePendingInteraction(planTurns(), pending, map[string]claude.InteractionAnswer{})
@@ -83,8 +84,9 @@ func TestHidePendingInteractionPlan(t *testing.T) {
 	}
 }
 
-// 決着済みなのに保留ペイロードが残っている（hook が消し損ねた）ときは逆 — 履歴では
-// なくゴーストのカードを引っ込める。履歴を消すとカーソルが永久に戻ってしまう。
+// The reverse when the payload is still pending although the plan was decided (the hook
+// failed to clear it): withdraw the ghost card, not the history. Removing the history would
+// rewind the cursor for ever.
 func TestHidePendingInteractionStalePayload(t *testing.T) {
 	pending := map[string]any{"pendingPlan": testPlan}
 	answers := map[string]claude.InteractionAnswer{"toolu_1": {Text: "approved"}}
@@ -97,12 +99,12 @@ func TestHidePendingInteractionStalePayload(t *testing.T) {
 		t.Errorf("turns = %d, want 3 (history untouched)", len(turns))
 	}
 	if _, ok := pending["pendingPlan"]; ok {
-		t.Error("stale pendingPlan survived — it would show a 承認待ち card for a decided plan")
+		t.Error("stale pendingPlan survived — it would show an awaiting-approval card for a decided plan")
 	}
 }
 
-// 却下されたプランは同じ Markdown のまま出し直されることがある。保留に当たるのは
-// 常に最後の提示で、決着済みの古いカードは履歴に残さなければならない。
+// A rejected plan may be presented again with the very same Markdown. What is pending is
+// always the last presentation, and the older, decided card has to stay in the history.
 func TestHidePendingInteractionRepresentedPlan(t *testing.T) {
 	turns := append(planTurns(), transcript.Turn{
 		Role: "assistant", Idx: 20,
@@ -119,8 +121,8 @@ func TestHidePendingInteractionRepresentedPlan(t *testing.T) {
 	}
 }
 
-// AUQ も同じ二重になる。保留ペイロードは tool_input.questions そのものなので、
-// パース後の形どうしで突き合わせる（hook 側に tool_use id が無いため）。
+// An AUQ is duplicated the same way. The pending payload is tool_input.questions itself, so
+// the two are matched in their parsed form (the hook side has no tool_use id).
 func TestHidePendingInteractionQuestion(t *testing.T) {
 	raw := json.RawMessage(`[{"header":"方式","question":"どれにしますか？","options":[{"label":"案A"},{"label":"案B"}]}]`)
 	var qs []transcript.Question
@@ -145,14 +147,16 @@ func TestHidePendingInteractionQuestion(t *testing.T) {
 	if _, ok := pending["pendingQuestions"]; !ok {
 		t.Error("pendingQuestions was withdrawn — the answerable card must survive")
 	}
-	// 質問の直前の地の文は、質問の tool_use が転写に出ている時点で転写にも出ている
-	// （claude は地の文のメッセージを先に書く）。カードにも重ねると同じ段落が2回出る。
+	// The prose right before the question is already in the transcript by the time the
+	// question's tool_use is (claude writes the prose message first). Stacking it on the card
+	// as well shows the same paragraph twice.
 	if _, ok := pending["pendingText"]; ok {
 		t.Error("pendingText survived — the same prose is already inline")
 	}
 }
 
-// 別の質問が保留のときに、たまたま近くにある別の question part を巻き添えで消さない。
+// While a different question is pending, an unrelated question part that happens to be nearby
+// must not be caught in the sweep.
 func TestHidePendingInteractionNoMatch(t *testing.T) {
 	turns := planTurns()
 	pending := map[string]any{"pendingPlan": "# 別の計画"}
@@ -163,29 +167,32 @@ func TestHidePendingInteractionNoMatch(t *testing.T) {
 	}
 }
 
-// TestSweepSettledPending は、モーダルがもう無い保留ペイロードが掃除されること、
-// そして**まだ出ているモーダル**は掃除されないことを固定する。
+// TestSweepSettledPending pins that a pending payload whose modal is gone gets swept, and
+// that a modal still on screen does not.
 //
-// 実バグ（2026-08-31 利用者報告「AUQ をキャンセルしても何度も聞かれる」）: キャンセルは
-// ツールの却下なので AskUserQuestion の PostToolUse が鳴らず、pending-question が残る。
-// 決着した行が窓から出た次のポーリングで、それが**生きた回答フォーム付きカード**として
-// 出し直され、答えてもキャンセルしても無反応になる。
+// The real bug (user report 2026-08-31, "a cancelled AUQ keeps being asked again"): a cancel
+// is a tool rejection, so AskUserQuestion's PostToolUse never fires and the pending-question
+// stays. On the next poll after the settled line leaves the window, it is offered again as a
+// live card with an answer form, which then responds to neither answering nor cancelling.
 func TestSweepSettledPending(t *testing.T) {
 	const sid = "sid-sweep"
 	ask := []byte(`{"type":"assistant","timestamp":"2026-08-31T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]}}]}}`)
-	// キャンセルの実文言（実転写から採取）。回答ではなく「ツールが却下された」形で来る。
+	// The real wording of a cancel, taken from a live transcript: it arrives as "the tool was
+	// rejected", not as an answer.
 	decided := []byte(`{"type":"user","timestamp":"2026-08-31T12:05:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"q1","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]}}`)
 	raw := json.RawMessage(`[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]`)
 
-	t.Run("決着より前に捕まえた保留は掃除される", func(t *testing.T) {
+	t.Run("a payload captured before the decision is swept", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
 		status.AppendPendingText(sid, "前置き")
-		// ペイロードは質問が出た時点＝決着より前に書かれたもの、という関係を作る。
+		// Set up the relation that the payload was written when the question appeared, i.e.
+		// before the decision.
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
 
-		// 掃除は surfacePendingPayloads の中で走る（出す経路と同じ場所）ので、
-		// ここも「出す側」を呼んで、消えることと出ないことを一度に固定する。
+		// The sweep runs inside surfacePendingPayloads (the same place as the surfacing
+		// path), so the surfacing side is called here too, pinning at once that the payload
+		// is removed and that it is not surfaced.
 		resp := map[string]any{}
 		surfacePendingPayloads(resp, sid, "question", [][]byte{ask, decided})
 
@@ -200,11 +207,12 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
-	t.Run("決着より後に捕まえた保留は残す", func(t *testing.T) {
+	t.Run("a payload captured after the decision is kept", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
-		// フックが先に書き、tool_use の行はまだ flush されていない状態（実測 106〜122ms）。
-		// 転写に見えている決着は**ひとつ前の**モーダルのもので、生きた質問を消してはならない。
+		// The hook wrote first and the tool_use line is not flushed yet (measured 106-122ms).
+		// The decision visible in the transcript belongs to the PREVIOUS modal, and a live
+		// question must not be removed because of it.
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:05:00.100Z")
 
 		resp := map[string]any{}
@@ -218,11 +226,12 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
-	// AUQ は自分自身の permission_prompt を Pre/PostToolUse の間に鳴らす（実測: 質問の
-	// 6 秒後に state=permission）。その許可ペイロードは「質問が保留である」ことだけを
-	// 理由に伏せられていたので、質問を掃除したら一緒に捨てないと、キャンセルした直後に
-	// **決着済みのツールの承認ダイアログ**が出る（利用者報告・掃除を入れた直後の回帰）。
-	t.Run("質問が伏せていた許可も道連れにする", func(t *testing.T) {
+	// An AUQ fires its own permission_prompt between Pre- and PostToolUse (measured:
+	// state=permission 6 seconds after the question). That permission payload was hidden for
+	// one reason only, that a question is pending, so unless it is dropped together with the
+	// question, a permission dialog for an already-decided tool pops up right after a cancel
+	// (user report; a regression introduced together with the sweep).
+	t.Run("a permission the question was hiding goes with it", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
 		status.WritePendingPermission(sid, "Claude needs your permission")
@@ -233,15 +242,16 @@ func TestSweepSettledPending(t *testing.T) {
 		surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, decided})
 
 		if _, ok := resp["pendingPermission"]; ok {
-			t.Error("a permission prompt for an already-decided tool was surfaced — the 承認ダイアログ pops right after キャンセル")
+			t.Error("a permission prompt for an already-decided tool was surfaced — the dialog pops right after a cancel")
 		}
 		if _, ok := status.ReadPendingPermission(sid); ok {
 			t.Error("stale permission payload survived; the next poll pops the dialog again")
 		}
 	})
 
-	// 逆向き: 決着より**後**に来た許可は本物（Edit/Bash の承認待ち）。掃除してはならない。
-	t.Run("決着より後の許可は本物なので残す", func(t *testing.T) {
+	// The other direction: a permission that arrived AFTER the decision is genuine (an Edit or
+	// Bash awaiting approval) and must not be swept.
+	t.Run("a permission after the decision is genuine, so keep it", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:09:00.000Z")
@@ -254,15 +264,16 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
-	// ペイロードを消したら state も消す。片方だけだと「決めるカードが無いのに送信を断る」
-	// が残る（利用者報告 2026-09-04「AUQ をキャンセルしたあと、メッセージが送信できなく
-	// なる」）。カード（表示）と state（判定）は同じ決着で同時に畳む。
-	t.Run("伏せていた許可状態も掃除される", func(t *testing.T) {
+	// Removing the payload removes the state as well. Doing only one of the two leaves
+	// "sending is refused although there is no card left to decide on" (user report
+	// 2026-09-04: "after cancelling an AUQ, messages can no longer be sent"). The card
+	// (display) and the state (decision) are folded up together by the same decision.
+	t.Run("the permission state that was hidden is swept too", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
 		status.WritePendingPermission(sid, "Claude needs your permission")
-		// AUQ 自身の permission_prompt が state を permission に上書きした形（実測: 質問の
-		// 6 秒後）。キャンセルは PostToolUse を鳴らさないので、これを書き直す者はいない。
+		// The AUQ's own permission_prompt has overwritten the state with permission (measured:
+		// 6 seconds after the question). A cancel fires no PostToolUse, so nobody rewrites it.
 		status.Persist(sid, "permission")
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-perm", sid+".txt"), "2026-08-31T12:00:06.000Z")
@@ -271,16 +282,17 @@ func TestSweepSettledPending(t *testing.T) {
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
 		if st, ok := status.Read(sid); ok {
-			t.Errorf("state %q survived the sweep — 送信は permission_pending で断られるのに、決めるカードはもう無い", st.State)
+			t.Errorf("state %q survived the sweep — sending is refused with permission_pending while no card is left to decide on", st.State)
 		}
 		if got := status.LiveState(sid); got != "idle" {
-			t.Errorf("LiveState = %q, want idle（走っていれば次の poll の reverse-heal が working へ戻す）", got)
+			t.Errorf("LiveState = %q, want idle (if it is running, the next poll's reverse-heal puts it back to working)", got)
 		}
 	})
 
-	// 逆向き: 生きた許可（決着より後に捕まえた本物の Edit/Bash 承認）が残っているなら、
-	// state にも断ってもらわないと自由文が許可メニューに飲まれて Enter が「許可」を押す。
-	t.Run("生きた許可が残っているなら state も残す", func(t *testing.T) {
+	// The other direction: while a live permission is still there (a genuine Edit/Bash
+	// approval captured after the decision), the state has to keep refusing too, or free text
+	// is swallowed by the permission menu and Enter presses "allow".
+	t.Run("keep the state while a live permission remains", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingPermission(sid, "Edit · /tmp/a.go")
 		status.Persist(sid, "permission")
@@ -290,13 +302,13 @@ func TestSweepSettledPending(t *testing.T) {
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
 		if st, ok := status.Read(sid); !ok || st.State != "permission" {
-			t.Errorf("state = %q/%v, want permission（生きた承認ダイアログの前で送信を通してはならない）", st.State, ok)
+			t.Errorf("state = %q/%v, want permission (sending must not be let through in front of a live approval dialog)", st.State, ok)
 		}
 	})
 
-	// 決着の**後**に書かれた state は新しいモーダルのもの（フックが先、tool_use の flush が
-	// 後、の 106〜122ms を含む）。掃除してはならない。
-	t.Run("決着より後の state は残す", func(t *testing.T) {
+	// A state written AFTER the decision belongs to a new modal (including the 106-122ms in
+	// which the hook writes first and the tool_use is flushed later). It must not be swept.
+	t.Run("a state after the decision is kept", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.Persist(sid, "permission")
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:05:00.100Z")
@@ -304,13 +316,14 @@ func TestSweepSettledPending(t *testing.T) {
 		surfacePendingPayloads(map[string]any{}, sid, "permission", [][]byte{ask, decided})
 
 		if st, ok := status.Read(sid); !ok || st.State != "permission" {
-			t.Errorf("state = %q/%v, want permission（決着より後に立ったモーダル）", st.State, ok)
+			t.Errorf("state = %q/%v, want permission (a modal raised after the decision)", st.State, ok)
 		}
 	})
 
-	// working / idle は掃除の管轄外 — ターンの話であってモーダルの話ではない。ここを
-	// 消すと、答えた直後（PostToolUse→working）のターンが 入力待ち を名乗る。
-	t.Run("モーダルでない state は触らない", func(t *testing.T) {
+	// working / idle are out of the sweep's jurisdiction — they are about the turn, not about
+	// a modal. Clearing them makes the turn right after an answer (PostToolUse→working) claim
+	// to be waiting for input.
+	t.Run("a state that is not a modal is left alone", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.Persist(sid, "working")
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "session-status", sid+".json"), "2026-08-31T12:00:06.000Z")
@@ -322,7 +335,7 @@ func TestSweepSettledPending(t *testing.T) {
 		}
 	})
 
-	t.Run("決着がひとつも無ければ触らない", func(t *testing.T) {
+	t.Run("nothing is touched when there is no decision at all", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		status.WritePendingQuestion(sid, raw)
 		backdate(t, filepath.Join(paths.AgentConfigDir(), "pending-question", sid+".json"), "2026-08-31T12:00:00.100Z")
@@ -335,9 +348,10 @@ func TestSweepSettledPending(t *testing.T) {
 	})
 }
 
-// 層をまたいで固定する: 掃除（表示側）を通ったあと、送信のガード（判定側）が実際に
-// 開いていること。片方だけのテストでは、この 2 つが食い違ったこと自体を見逃す — 実バグ
-// （2026-09-04）は「カードは消えたのに送信は permission_pending で断られる」だった。
+// Pinned across the layers: after the sweep (the display side) has run, the send guard (the
+// decision side) is actually open. A test on only one side misses the very fact that the two
+// disagreed — the real bug (2026-09-04) was "the card is gone, yet sending is refused with
+// permission_pending".
 func TestCancelledInteractionFreesComposer(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "auq_cancel"
@@ -348,8 +362,8 @@ func TestCancelledInteractionFreesComposer(t *testing.T) {
 	ask := []byte(`{"type":"assistant","timestamp":"2026-09-04T12:00:00.000Z","message":{"content":[{"type":"tool_use","id":"q1","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]}}]}}`)
 	cancelled := []byte(`{"type":"user","timestamp":"2026-09-04T12:05:00.000Z","message":{"content":[{"type":"tool_result","tool_use_id":"q1","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected"}]}}`)
 
-	// キャンセル直前の姿: 質問ペイロード＋それが伏せていた許可ペイロード＋
-	// AUQ 自身の permission_prompt が書いた state。
+	// The state just before the cancel: the question payload, the permission payload it was
+	// hiding, and the state written by the AUQ's own permission_prompt.
 	status.WritePendingQuestion(sid, json.RawMessage(`[{"header":"方式","question":"どれ？","options":[{"label":"A"}]}]`))
 	status.WritePendingPermission(sid, "Claude needs your permission")
 	status.Persist(sid, "permission")
@@ -361,22 +375,22 @@ func TestCancelledInteractionFreesComposer(t *testing.T) {
 		backdate(t, path, ts)
 	}
 	if got := promptBlocker(name); got != "question" {
-		t.Fatalf("キャンセル前は質問カードへ誘導するはず: promptBlocker = %q", got)
+		t.Fatalf("before the cancel it must steer to the question card: promptBlocker = %q", got)
 	}
 
 	resp := map[string]any{}
 	surfacePendingPayloads(resp, sid, "permission", [][]byte{ask, cancelled})
 
 	if len(resp) != 0 {
-		t.Fatalf("決着済みのモーダルが出た: %v", resp)
+		t.Fatalf("an already-decided modal was surfaced: %v", resp)
 	}
 	if got := promptBlocker(name); got != "" {
-		t.Fatalf("promptBlocker = %q — 決めるカードが 1 枚も無いのに送信を断っている", got)
+		t.Fatalf("promptBlocker = %q — sending is refused although not one card is left to decide on", got)
 	}
 }
 
-// backdate は保留ペイロードの mtime を「いつ捕まえたか」に合わせる。掃除の判定材料は
-// 中身ではなく捕捉時刻なので、テストもそこだけを作る。
+// backdate sets a pending payload's mtime to when it was captured. The sweep decides on the
+// capture time rather than the contents, so that is all the test sets up.
 func backdate(t *testing.T, path, ts string) {
 	t.Helper()
 	at, err := time.Parse(time.RFC3339, ts)

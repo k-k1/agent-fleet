@@ -1,15 +1,15 @@
-// タブ付きグリッドで「ファイル → セッション（ミラー）」へタブを切り替えたとき、
-// 生の TUI が一瞬だけ見えてからミラーに変わる回帰を押さえる。
+// Regression guard for switching a tab from a file to a mirrored session in a tabbed grid: the
+// raw TUI must not flash before the mirror appears.
 //
-// タブ表示では 1 セル = 1 つの Pane インスタンスが使い回され、タブを選び直しても
-// pane プロパティが差し替わるだけで remount されない（PaneHost は key={cell.id}）。
-// ミラーを出すか否かは Pane のローカル state なので、これを effect で追従させると
-// 「古い state のまま 1 フレーム commit → ブラウザが描画 → effect が直す」となり、
-// その 1 フレームに素の TerminalView が見えてしまう。
+// In the tabbed profile one cell reuses one Pane instance, so selecting another tab only swaps
+// the pane props and never remounts (PaneHost keys on cell.id). Whether the mirror is shown is
+// Pane's local state, so making it follow via an effect means "commit one frame with the stale
+// state -> the browser paints -> the effect corrects it", and the bare TerminalView is visible
+// for that frame.
 //
-// jsdom にレイアウトは無いので「見えたか」は測れない。代わりに commit の履歴を
-// MutationObserver で見る: 端末を包む .view が **hidden 無しで挿入されてから後で
-// hidden を付けられた** 記録が残っていれば、それが素通しの 1 フレームそのもの。
+// jsdom has no layout, so visibility cannot be measured. Instead the commit history is read with
+// a MutationObserver: a record of the .view wrapping the terminal being inserted without hidden
+// and only later given hidden is exactly that one bare frame.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,8 +18,8 @@ import { useSessionsStore } from "../sessions/store.ts";
 import type { Cell, PaneView } from "../../layout/types.ts";
 import type { Session } from "../../types/session.ts";
 
-// 端末・ミラー・ファイルの中身はこのテストの関心事ではない（実物は PTY / SSE /
-// fetch を張る）。どれが mount されたかだけ分かれば足りる。
+// The contents of terminal / mirror / file are not this test's concern (the real ones open a
+// PTY / SSE / fetch); knowing which of them mounted is enough.
 vi.mock("../terminal/TerminalView.tsx", () => ({
   TerminalView: () => <div className="term-stub" />,
 }));
@@ -29,8 +29,8 @@ vi.mock("../mirror/MirrorView.tsx", () => ({
 vi.mock("../viewer/FileView.tsx", () => ({
   FileView: () => <div className="file-stub" />,
 }));
-// セッション操作メニューは Confirm/Toast プロバイダを要求する（タブの右クリック用で、
-// ここでは開かない）。
+// The session action menu requires the Confirm/Toast providers; it is for right-clicking a tab
+// and is never opened here.
 vi.mock("../sessions/useSessionActions.tsx", () => ({
   useSessionActions: () => ({}),
 }));
@@ -75,7 +75,7 @@ describe("tabbed pane: file tab → mirrored session tab", () => {
     });
     expect(host.querySelector(".file-stub")).not.toBeNull();
 
-    // ここからがタブ切替。以後 DOM に起きたことを全部記録する。
+    // The tab switch starts here; record everything that happens to the DOM from now on.
     const seen: MutationRecord[] = [];
     const obs = new MutationObserver((rs) => seen.push(...rs));
     obs.observe(host, { childList: true, subtree: true, attributes: true, attributeOldValue: true });
@@ -98,16 +98,16 @@ describe("tabbed pane: file tab → mirrored session tab", () => {
     const records = seen;
     obs.disconnect();
 
-    // 落ち着いた先はミラー。端末はマウントされたまま（PTY とスクロールバックの保持）
-    // 隠れている。
+    // It settles on the mirror. The terminal stays mounted, to keep the PTY and the scrollback,
+    // but hidden.
     const view = host.querySelector(".view") as HTMLElement | null;
     expect(host.querySelector(".mirror-stub")).not.toBeNull();
     expect(view).not.toBeNull();
     expect(view!.querySelector(".term-stub")).not.toBeNull();
     expect(view!.hasAttribute("hidden")).toBe(true);
 
-    // 途中経過: .view の hidden は「挿入時から付いていた」のでなければならない。
-    // 後から付けられた記録＝素の端末が見えていた commit がある、ということ。
+    // What happened in between: .view's hidden must have been present from insertion. A record
+    // of it being added later means there was a commit in which the bare terminal was visible.
     const lateHide = records.filter(
       (r) =>
         r.type === "attributes" &&

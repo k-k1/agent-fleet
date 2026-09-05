@@ -40,8 +40,8 @@ func TestIdleGrace(t *testing.T) {
 	}
 }
 
-// grace<=0 は「自動停止しない」の意味なので、監視自体を張らずに即戻ること。
-// ここが回ってしまうと、無効化したはずのワークスペースで daemon が畳まれる。
+// grace<=0 means "never auto-stop", so no watch is set up at all and the call returns at once.
+// If this loop ran anyway, the daemon would be torn down in a workspace that disabled it.
 func TestWatchIdleDisabledReturnsImmediately(t *testing.T) {
 	var stopped atomic.Bool
 	done := make(chan struct{})
@@ -66,11 +66,12 @@ func TestWatchIdleStopsAfterGrace(t *testing.T) {
 	select {
 	case <-stopped:
 	case <-time.After(2 * time.Second):
-		t.Fatal("需要ゼロが続いても停止しなかった")
+		t.Fatal("did not stop even though demand stayed at zero")
 	}
 }
 
-// 需要が戻ったら猶予は数え直し: 「一度ゼロを見た」だけで畳んではいけない。
+// Demand coming back restarts the grace period: having seen zero once is not enough to tear
+// anything down.
 func TestWatchIdleResetsWhileNeeded(t *testing.T) {
 	fastIdleTick(t)
 	var needs atomic.Int64
@@ -80,20 +81,21 @@ func TestWatchIdleResetsWhileNeeded(t *testing.T) {
 		func() bool { stopped.Store(true); return true }, 20*time.Millisecond)
 	time.Sleep(200 * time.Millisecond)
 	if stopped.Load() {
-		t.Fatal("需要が在るのに停止した")
+		t.Fatal("stopped while there was still demand")
 	}
 	needs.Store(0)
 	deadline := time.Now().Add(2 * time.Second)
 	for !stopped.Load() {
 		if time.Now().After(deadline) {
-			t.Fatal("需要が消えたのに停止しなかった")
+			t.Fatal("did not stop after demand went away")
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
 }
 
-// stopIfIdle の false は「ロック内の再確認で需要が復活していた」— 監視を降りずに
-// 数え直すこと。ここで降りると、その後どれだけ暇になっても二度と畳まれない。
+// A false from stopIfIdle means the re-check under the lock found demand again — keep
+// watching and restart the count. Giving up here would mean the daemon is never torn down
+// again, no matter how idle it later becomes.
 func TestWatchIdleKeepsWatchingWhenStopRefuses(t *testing.T) {
 	fastIdleTick(t)
 	var mu sync.Mutex
@@ -115,6 +117,6 @@ func TestWatchIdleKeepsWatchingWhenStopRefuses(t *testing.T) {
 		mu.Lock()
 		got := calls
 		mu.Unlock()
-		t.Fatalf("停止拒否のあと監視が続かなかった（stopIfIdle 呼び出し %d 回）", got)
+		t.Fatalf("the watch did not continue after a refused stop (%d stopIfIdle calls)", got)
 	}
 }

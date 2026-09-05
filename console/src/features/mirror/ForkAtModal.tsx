@@ -1,10 +1,11 @@
-// ForkAtModal — 「ここから分岐」の確認ダイアログ（docs/log/55）。ミラーの過去のユーザー発言から、
-// そこまでの文脈を引き継いだ新セッションを起こす。
+// ForkAtModal — the confirmation dialog for "fork from here" (docs/log/55). It starts a new
+// session from a past user message in the mirror, carrying the context up to that point.
 //
-// 引き継ぎ（HandoffModal）とは別物で、そこが分かれ目なので本文で言い切る: 引き継ぎは会話を
-// LLM に要約させて別エージェントへ渡し、分岐は同じエージェントで会話をそのまま複製する。
-// 「元は残る」ことも明示する — 分岐が破壊的だと思われると、いちばん使ってほしい場面
-// （方針を間違えた直後）で押してもらえない。
+// This is not a handoff (HandoffModal), and the body says so outright because that is the
+// distinction users get wrong: a handoff has an LLM summarize the conversation for another
+// agent, a fork duplicates the conversation as-is on the same agent. The body also states
+// that the original survives — if a fork looks destructive, nobody presses it in the
+// situation it exists for (right after a wrong turn).
 import { useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -12,19 +13,22 @@ import { apiJSON, errText } from "../../core/api/client.ts";
 import type { ApiError } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
-// 確認画面に出す分岐点のプレビュー。全文はミラーで読めるので、どの発言か分かる長さで足りる。
+// Preview of the fork point shown in the dialog. The full text is readable in the mirror, so
+// enough to identify the message is enough.
 const PREVIEW_CHARS = 240;
 
 export interface ForkAtTarget {
   anchorId: string;
   text: string;
-  // このセッションの会話で、分岐先へ引き継がれるユーザー発言の数（分岐点は含まない）。
+  // Number of user messages in this conversation carried into the fork (the fork point
+  // itself is not counted).
   carried: number;
 }
 
-// 分岐の 2 通り。同じ操作が 1 往復ずれているだけなので、モーダルの中で切り替える。
-//  redo    … この発言の直前まで（＝この発言を打ち直す）。既定。
-//  continue… この発言と、それが得た回答まで引き継ぐ（＝続きから別方向へ）。
+// The two ways to fork. They differ by one round trip only, so the choice lives inside the
+// modal.
+//  redo     … up to just before this message (i.e. retype it). The default.
+//  continue … carry this message and the reply it got (i.e. continue in another direction).
 type ForkMode = "redo" | "continue";
 
 export function ForkAtModal({
@@ -35,8 +39,8 @@ export function ForkAtModal({
 }: {
   session: string;
   target: ForkAtTarget;
-  // 分岐に成功したとき、生まれたセッション名とモードを渡す（ペインを開き、下書きを入れるかを
-  // 決めるのは呼び出し側の仕事）。
+  // On a successful fork, hands over the new session name and the draft; opening the pane
+  // and deciding what to do with the draft is the caller's job.
   onDone: (name: string, opts: { draft: string }) => void;
   onClose: () => void;
 }) {
@@ -56,18 +60,19 @@ export function ForkAtModal({
         at: target.anchorId,
         include: mode === "continue",
       });
-      // api() は失敗しても throw せず {error:{code,message}} を返す（client.ts）。ここで
-      // 先に見ないと、サーバが返した理由（分岐点が使えない・上限・起動方式）が全部下の
-      // 汎用メッセージに化け、失敗しても原因が分からない画面になる。
+      // api() does not throw on failure; it returns {error:{code,message}} (client.ts).
+      // Without checking that first, every server-supplied reason (unusable fork point,
+      // a limit, the execution method) collapses into the generic message below.
       if (d?.error) throw d.error as ApiError;
       if (!d?.name) throw new Error("no session in fork response");
-      // 下書きを入れるのは「打ち直す」ときだけ。「続きから」ではその発言は分岐先に残って
-      // いるので、入力欄に同じ文が現れたら二重に見える。
+      // Only "redo" seeds the draft. In "continue" the message is still in the forked
+      // conversation, so the same text in the composer would read as a duplicate.
       onDone(d.name as string, { draft: mode === "redo" ? target.text : "" });
       onClose();
     } catch (e) {
-      // 失敗しても閉じない: 分岐点が古い（ミラーを再読込すれば直る）ことも、この経路では
-      // そもそもできない（fork_at_unsupported）こともあるので、理由を出して判断させる。
+      // Stay open on failure: the fork point may just be stale (reloading the mirror fixes
+      // it) or the path may not support forking at all (fork_at_unsupported), so show the
+      // reason and let the reader decide.
       setErr(errText(e as ApiError) || tr("mirror.fork_at_failed"));
     } finally {
       setBusy(false);
@@ -86,8 +91,9 @@ export function ForkAtModal({
 
         <div className="ui-field">
           <span className="ui-field-label">{tr("mirror.fork_at_mode")}</span>
-          {/* 同じ操作が 1 往復ずれているだけなので、並べて選ばせる。既定は「打ち直す」——
-              方針を間違えた直後がいちばん多い用途で、そこでは分岐点の発言も捨てたい。 */}
+          {/* The two modes differ by one round trip, so offer them side by side. "redo" is
+              the default: the commonest use is right after a wrong turn, where the fork
+              point's own message should go too. */}
           <div className="ui-seg big" role="radiogroup" aria-label={tr("mirror.fork_at_mode")}>
             {(["redo", "continue"] as const).map((k) => (
               <button

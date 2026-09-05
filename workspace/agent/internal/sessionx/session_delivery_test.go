@@ -1,6 +1,7 @@
 package sessionx
 
-// 配達検証の純粋部分: コンポーザ下書き検出（Enter 再送 vs 全文再タイプの分岐材料）。
+// The pure part of delivery verification: detecting a draft left in the composer, which is
+// what decides between re-sending Enter and retyping the whole prompt.
 
 import "testing"
 
@@ -13,12 +14,13 @@ func TestPromptDraftVisible(t *testing.T) {
 	if !promptDraftVisible(captured, "/scout") {
 		t.Fatal("draft sitting in the composer must be detected")
 	}
-	// 提出済み（コンポーザ空）なら false → 再タイプ側に分岐する。
+	// Already submitted (empty composer) is false, so the caller branches to retyping.
 	submitted := "…transcript…\n❯ \n  ⏵⏵ bypass permissions on (shift+tab to cycle)\n"
 	if promptDraftVisible(submitted, "/scout") {
 		t.Fatal("an empty composer must not read as a draft")
 	}
-	// 長い/複数行プロンプトは先頭行の頭 12 ルーンで照合される（rune 安全・折り返し耐性）。
+	// A long or multi-line prompt matches on the first 12 runes of its first line (rune-safe
+	// and tolerant of wrapping).
 	long := "セッションの定時レビューを開始してください。対象は昨日の差分すべてで、結果はレポートにまとめること。"
 	capturedLong := "❯ セッションの定時レビューを開\nください。…（折り返し）\n⏵⏵ bypass permissions on\n"
 	if !promptDraftVisible(capturedLong, long+"\n二行目") {

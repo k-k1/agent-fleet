@@ -44,7 +44,7 @@ const layoutStore = () => useLayoutStore.getState();
 
 // Minimal pop-out tabs run a reduced command set: pane splitting/navigation,
 // rail and new-session commands are gated off (the tab has one pane and no
-// rail by design — 展開 restores everything). In-pane commands stay.
+// rail by design — expand (「展開」) restores everything). In-pane commands stay.
 const notMinimalPopout = () => popoutMode() !== "popout";
 // The active pane can be torn off into its own tab (leader p t / p f).
 const canPopoutActive = () => {
@@ -68,11 +68,12 @@ const focusDir = (dir: Dir) => focusPane(neighborPane(getLayout(), dir));
 
 const tabbedMode = () => getLayout().mode === "tabs";
 
-/** 「いま見えているもの」を閉じる。閉じる対象は **ビュー（＝タブ）** であって、セルでは
- * ない —— タブモードで activeCellId を渡すと `ops.closePane` は closeCell 分岐に入り、
- * 同じセルのタブが黙って全部消える（タブの × ボタンは view id を渡すので挙動が食い違う）。
- * 分割モードは 1 セル 1 ビューなので、view id 経由でも従来どおりペインが空になる。
- * ビューを持たない空セルだけは cell id を渡してセルごと畳む。 */
+/** Close whatever is currently visible. What closes is the view (i.e. the tab), never the
+ * cell: passing activeCellId in tabs mode sends `ops.closePane` down its closeCell branch
+ * and every tab in that cell silently disappears, which also disagrees with the tab's own
+ * close button (it passes a view id). Split mode has one view per cell, so going through
+ * the view id still empties the pane as before. Only an empty cell with no view is closed
+ * by cell id, folding the cell away. */
 function closeActiveView(): void {
   const l = getLayout();
   const view = activePane(l);
@@ -94,12 +95,14 @@ function focusTab(delta: number): void {
 // the key flows to the terminal (same rule as Alt+N for a missing pane).
 const canCycleTabs = () => notMinimalPopout() && cycleTab(getLayout(), 1) != null;
 
-/** レールの絞り込み欄へ。畳んであるレールは開いてから（描画された次のフレームで）狙う。 */
+/** Focus the rail's filter field, opening a collapsed rail first and aiming on the frame
+ * after it renders. */
 function openRailFilter(): void {
   useLeftRail.getState().ensureOpen();
   requestAnimationFrame(focusRailFilter);
 }
-// ProjectTree（＝絞り込み欄）はワークスペース起動中しか描画されない。停止中は握らない。
+// ProjectTree, and with it the filter field, only renders while the workspace is running,
+// so do not claim the key while it is stopped.
 const canFilterRail = () => notMinimalPopout() && useWorkspaceStore.getState().state === "running";
 
 const REGION_CYCLE: Region[] = ["rail", "main", "bars"];
@@ -126,9 +129,10 @@ function toggleMarkdownMode(): void {
   if (p) paneViewActions(p.id)?.toggleMdMode?.();
 }
 // A markdown file is showing in the active pane (gates the preview/source toggle).
-// drawio の図も同じコマンドで図 ↔ ソースを行き来する（docs/log/65 §65.4）。ここは
-// 拡張子だけで判定する —— 中身を見ないと分からない `.xml` はコマンドの対象外で
-// よく、ペイン内のボタンで切り替えられる。
+// drawio diagrams use the same command to move between diagram and source (docs/log/65
+// §65.4). The decision is made on the extension alone: `.xml`, which cannot be classified
+// without reading the content, is deliberately out of the command's reach and is switched
+// with the in-pane button instead.
 function activeIsMarkdown(): boolean {
   const c = activePane(getLayout())?.content;
   if (!c || c.kind !== "file") return false;
@@ -140,7 +144,7 @@ function activeCanRead(): boolean {
   const c = activePane(getLayout())?.content;
   if (!c) return false;
   if (c.kind === "read") return true;
-  // 図（.drawio）は読み上げる本文を持たない。画像と同じく対象外にする。
+  // A diagram (.drawio) has no body to read aloud, so it is excluded like an image.
   return c.kind === "file" && !imageFormat(c.filePath) && !isDrawioFile(c.filePath);
 }
 // Toggle the active pane in place between the file view and the read-aloud view,
@@ -151,10 +155,11 @@ function toggleReader(): void {
   if (c.kind === "read") layoutStore().openTarget({ content: { kind: "file", filePath: c.filePath } });
   else if (c.kind === "file") layoutStore().openTarget({ content: { kind: "read", filePath: c.filePath } });
 }
-// 文字サイズの拡大 / 縮小 / 既定へ。対象は「アクティブなペインが属する面」の設定
-// （端末＝termSize、ミラー/チャット＝chatSize、朗読＝readerSize、それ以外のビューア＝
-// viewerSize）。文字組みを持たない面（ブラウザ・画像）では null が返り、`when` が閉じて
-// キーは端末へ素通しする。docs/log/29 §5.7。
+// Font size bigger / smaller / back to default. The target is the setting for the surface
+// the active pane belongs to (terminal = termSize, mirror/chat = chatSize, read-aloud =
+// readerSize, any other viewer = viewerSize). Surfaces with no text layout (browser,
+// image) return null, which closes `when` and lets the key pass through to the terminal.
+// docs/log/29 §5.7.
 const fontTarget = (): FontSetting | null => fontSettingFor(activePane(getLayout())?.content);
 const bumpFont = (delta: number) => {
   const key = fontTarget();
@@ -179,8 +184,9 @@ function toggleTheme(): void {
   setSetting("theme", getSettings().theme === "light" ? "dark" : "light");
 }
 
-// 作業グループ (docs/log/52): すべて → 各グループ → すべて を巡回。レールが畳まれて
-// いても効くよう、切替先をトーストで知らせる。グループ未作成時はその旨だけ伝える。
+// Working sets (docs/log/52): cycle all -> each group -> all. The destination is toasted
+// so the command still means something with the rail collapsed. With no group created,
+// only that fact is reported.
 function cycleWorkingSet(): void {
   if (workingSetList(getSettings()).length === 0) {
     toast(t("wset.none_hint"), { kind: "info" });
@@ -212,8 +218,9 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
     fullText: !!st.fullText,
     mirrorInput: st.mirrorInput !== false,
     mentionUserId: st.mentionUserId || "",
-    // lang は非ポインタ扱いで、省略すると保存値が既定（日本語）へ戻る — 接続カードと
-    // 同じく現ロケールを毎回載せる（通知言語は Console の表示言語に追随する仕様）。
+    // lang is treated as a non-pointer: omitting it resets the stored value to the
+    // default (Japanese). Like the connection card, send the current locale every time,
+    // since notification language follows the Console's display language.
     lang: getLocale(),
     notifyOff: wasOn, // flip: on → off, off → on
   });
@@ -225,20 +232,22 @@ async function toggleChatNotify(kind: "discord" | "slack"): Promise<void> {
   // whether notifications are now on or off.
   toast(t(wasOn ? "keys.toast.notifyOff" : "keys.toast.notifyOn", { name }), { kind: "success" });
 }
-// run から fire-and-forget で呼ぶ入口。api() はネットワーク断で reject するので、ここで
-// catch しないと unhandled rejection のまま何も表示されない — 失敗はトーストで知らせる。
+// The entry point `run` calls fire-and-forget. api() rejects when the network is down, so
+// without this catch the failure stays an unhandled rejection and nothing is shown; a
+// toast reports it instead.
 const runChatNotify = (kind: "discord" | "slack") =>
   void toggleChatNotify(kind).catch(() => toast(t("err.network")));
 
 // Toggle the per-session voice notification (docs/log/24) from the keyboard — the same setting
-// as Settings › Notifications' セッションの音声通知. Toasts the resulting on/off state.
+// as the session voice notification in Settings › Notifications. Toasts the resulting
+// on/off state.
 function toggleTtsSessionNotify(): void {
   const next = !getSettings().ttsSessionNotify;
   setSetting("ttsSessionNotify", next);
   toast(t(next ? "keys.toast.ttsSessionOn" : "keys.toast.ttsSessionOff"), { kind: "success" });
 }
 
-// Toggle the limit-reset voice notification (Settings › Notifications' 制限リセットの通知).
+// Toggle the limit-reset voice notification (Settings › Notifications).
 function toggleUsageResetNotify(): void {
   const next = !getSettings().usageResetNotify;
   setSetting("usageResetNotify", next);
@@ -275,11 +284,12 @@ export const ALL_COMMANDS: Command[] = [
   // ---- Pane / layout (leader p, + Alt accelerators) ----
   { id: "pane.splitRight", title: "keys.cmd.splitRight", seq: "p r", when: notMinimalPopout, run: () => layoutStore().splitRight() },
   { id: "pane.splitDown", title: "keys.cmd.splitDown", seq: "p d", when: notMinimalPopout, run: () => layoutStore().splitDown(getLayout().activeCellId) },
-  // Alt+W = ブラウザのタブを閉じる慣習に合わせた「いま見えているタブ／ペインを閉じる」。
+  // Alt+W closes the visible tab/pane, matching the browser convention for closing a tab.
   { id: "pane.close", title: "keys.cmd.close", keys: ["alt+w"], seq: "p w", run: closeActiveView },
-  // タブモードだけの上位動作＝セルごと（＝そのペインの全タブ）閉じる。分割モードでは
-  // pane.close と同義になるので出さない。タブ UI にはセルを畳むボタンが無いので、これが
-  // タブモードでセルを減らす唯一の導線になる。
+  // A tabs-mode-only escalation: close the whole cell, i.e. every tab in that pane. In
+  // split mode it would be the same as pane.close, so it is not offered there. The tab UI
+  // has no button for folding a cell away, so this is the only way to reduce cells in tabs
+  // mode.
   { id: "pane.closeCell", title: "keys.cmd.closeCell", seq: "p c", when: () => notMinimalPopout() && tabbedMode(), run: () => layoutStore().closePane(getLayout().activeCellId) },
   { id: "pane.closeAll", title: "keys.cmd.closeAll", keys: ["alt+shift+w"], seq: "p a", when: notMinimalPopout, run: () => layoutStore().resetToTerminal() },
   { id: "pane.wrap", title: "keys.cmd.wrap", seq: "p \\", run: toggleWrap },
@@ -292,8 +302,9 @@ export const ALL_COMMANDS: Command[] = [
   ...paneOrdinalCommands,
   { id: "pane.next", title: "keys.cmd.next", keys: ["alt+]"], seq: "p ]", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), 1)) },
   { id: "pane.prev", title: "keys.cmd.prev", keys: ["alt+["], seq: "p [", when: notMinimalPopout, run: () => focusPane(cyclePane(getLayout(), -1)) },
-  // タブ巡回はペイン巡回（Alt+[ ]）とは別の軸なので別キーに分ける。Alt+PageUp/PageDown は
-  // ブラウザのタブ切替（Ctrl+PageUp/Down）に近い並びで、かつどのブラウザにも予約が無い。
+  // Cycling tabs is a different axis from cycling panes (Alt+[ ]), so it gets its own keys.
+  // Alt+PageUp/PageDown sits close to the browser's own tab switching (Ctrl+PageUp/Down)
+  // and is reserved by no browser.
   { id: "tab.next", title: "keys.cmd.tabNext", keys: ["alt+pagedown"], seq: "p n", when: canCycleTabs, run: () => focusTab(1) },
   { id: "tab.prev", title: "keys.cmd.tabPrev", keys: ["alt+pageup"], seq: "p p", when: canCycleTabs, run: () => focusTab(-1) },
 
@@ -310,7 +321,7 @@ export const ALL_COMMANDS: Command[] = [
   {
     id: "memo.add",
     title: "keys.cmd.memoAdd",
-    // Alt+M は Markdown 表示切替が持っているので、直キーは A（＝Add）を当てる。
+    // Alt+M belongs to the Markdown view toggle, so the direct key is A (for Add).
     keys: ["alt+a"],
     seq: "m",
     when: notMinimalPopout,
@@ -327,11 +338,12 @@ export const ALL_COMMANDS: Command[] = [
   { id: "workspace.fullscreen", title: "keys.cmd.fullscreen", seq: "w f", run: toggleFullscreen },
   { id: "workspace.theme", title: "keys.cmd.theme", seq: "w t", run: toggleTheme },
   { id: "workspace.workingSet", title: "keys.cmd.wsetCycle", keys: ["alt+g"], seq: "w w", when: notMinimalPopout, run: cycleWorkingSet },
-  // レールの絞り込み欄へ飛ぶ（レールが畳んであれば開いてから）。
+  // Jump to the rail's filter field, opening the rail first if it is collapsed.
   { id: "rail.filter", title: "keys.cmd.railFilter", keys: ["alt+/"], seq: "w /", when: canFilterRail, run: openRailFilter },
 
   // ---- Top-level leader actions ----
-  // Alt+, ＝ VS Code の Ctrl+, 相当。Ctrl は端末の制御コードとぶつかるので Alt 側に置く。
+  // Alt+, is the equivalent of VS Code's Ctrl+,. Ctrl collides with the terminal's control
+  // codes, so it lives on Alt.
   { id: "settings.open", title: "keys.cmd.settingsOpen", keys: ["alt+,"], seq: ",", run: () => useSettingsUI.getState().openSettings() },
   // Palette is normally on its own accelerator (Ctrl/⌘+P), but a leader path keeps it
   // reachable when terminal-input priority suppresses that accelerator in the terminal —
@@ -357,7 +369,7 @@ export const ALL_COMMANDS: Command[] = [
   // master. n m = mute (shares TopBar's stop+OFF logic); n a = session voice notification;
   // n r = limit-reset notification; n s / n d flip Slack / Discord notifications. All match
   // Settings › Notifications and toast their result. ----
-  // Alt+Q（Quiet）＝鳴っている読み上げを即黙らせる。Alt+M は Markdown が持っている。
+  // Alt+Q (Quiet) silences an in-progress read-aloud at once; Alt+M belongs to Markdown.
   { id: "tts.toggle", title: "keys.cmd.ttsToggle", keys: ["alt+q"], seq: "n m", run: toggleTtsPlayback },
   { id: "notify.ttsSession", title: "keys.cmd.ttsSessionToggle", seq: "n a", run: toggleTtsSessionNotify },
   { id: "notify.usageReset", title: "keys.cmd.usageResetToggle", seq: "n r", run: toggleUsageResetNotify },
@@ -370,17 +382,19 @@ export const ALL_COMMANDS: Command[] = [
   // accelerator namespace here (matches Alt+1..8 / Alt+[ ] and VS Code's Alt+Z for wrap). ----
   // Markdown preview ⇄ source (Marp cycles slides too); only active on a Markdown file.
   { id: "viewer.mdMode", title: "keys.cmd.mdMode", keys: ["alt+m"], seq: "v p", when: activeIsMarkdown, run: toggleMarkdownMode },
-  // 朗読モード（縦書き閲覧＋読み上げ）へ切替／解除。テキストファイルまたは朗読ビューで有効。
+  // Enter or leave read-aloud mode (vertical reading plus speech). Active on a text file
+  // or when already in the reader view.
   { id: "viewer.reader", title: "keys.cmd.reader", keys: ["alt+r"], seq: "v r", when: activeCanRead, run: toggleReader },
   // Line-wrap toggle — the same action as `p \`, mirrored into the view group (so every
   // per-view toggle lives under one leader) with a direct Alt+Z (VS Code parity). Unified
   // across every text view.
   { id: "viewer.wrap", title: "keys.cmd.wrap", keys: ["alt+z"], seq: "v w", run: toggleWrap },
-  // 文字サイズ。US 配列の「+」は Shift+= なので `alt+=` と `alt+shift+=` の両方を持つ
-  // （どちらのつもりで押しても拡大になる）。テンキーも同じ扱い。JIS の `=` は物理的に
-  // `^` キーだが、ディスパッチャの「e.key を先に、無ければ e.code」の候補順で alt+= に
-  // 落ちるので同じく効く（Alt+[ ] の JIS 対応と同じ経路）。Ctrl 側は端末がブラウザズーム
-  // へ通す約束なので使えない（terminal/term.ts の NO_GRAB）。
+  // Font size. On a US layout "+" is Shift+=, so both `alt+=` and `alt+shift+=` are bound
+  // and either intent enlarges; the numpad is treated the same way. On a JIS layout `=` is
+  // physically the `^` key, but the dispatcher's candidate order (e.key first, e.code as a
+  // fallback) still lands on alt+=, the same path that makes Alt+[ ] work on JIS. Ctrl is
+  // unusable here because the terminal passes it through to browser zoom (NO_GRAB in
+  // terminal/term.ts).
   {
     id: "viewer.fontBigger",
     title: "keys.cmd.fontBigger",

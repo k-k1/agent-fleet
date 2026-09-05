@@ -1,9 +1,10 @@
 package chatx
 
-// 会話の途中でバックエンド（CLI）を切り替える経路のテスト（docs/log/19）。切替そのものは
-// ピン留めの差し替えだが、①新しい CLI 基準でモデルを解決し直す ②未知の履歴は次の送信で
-// 再生される、の2点が守られていないと「別 CLI に他社モデル id を渡す」「新エージェントが
-// 会話を知らないまま答える」という静かな壊れ方をする。
+// The route that switches the backend (CLI) mid-conversation (docs/log/19). The switch itself
+// only replaces the pin, but unless (1) the model is resolved again against the new CLI and
+// (2) history the new backend does not know is replayed on the next send, it breaks quietly:
+// another vendor's model id is handed to a different CLI, or the new agent answers without
+// knowing the conversation.
 
 import (
 	"context"
@@ -25,8 +26,9 @@ func patchConv(t *testing.T, id string, body string) *httptest.ResponseRecorder 
 	return rec
 }
 
-// TestChatModelForResolvesPerActualBackend: 会話の Model は作成時エージェント基準の
-// 1本しかないので、別バックエンドが回すターンではその CLI の設定から解決し直す。
+// TestChatModelForResolvesPerActualBackend: a conversation carries a single Model, resolved
+// against the agent it was created with, so a turn run by another backend resolves it again
+// from that CLI's settings.
 func TestChatModelForResolvesPerActualBackend(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom","claude":"opus"}}`)
 	c := &ChatConversation{Agent: session.KindClaude, Model: "sonnet"}
@@ -34,27 +36,28 @@ func TestChatModelForResolvesPerActualBackend(t *testing.T) {
 	if got := chatModelFor(c, session.KindClaude); got != "sonnet" {
 		t.Fatalf("pinned backend model = %q, want the conversation's own pin", got)
 	}
-	// 認証フォールバック／途中切替で codex が回すターン: claude の "sonnet" を -m に
-	// 渡してはならない。
+	// A turn run by codex after an auth fallback or a mid-conversation switch: claude's
+	// "sonnet" must not be passed to -m.
 	if got := chatModelFor(c, session.KindCodex); got != "gpt-custom" {
-		t.Fatalf("foreign backend model = %q, want the codex row from 設定", got)
+		t.Fatalf("foreign backend model = %q, want the codex row from the settings", got)
 	}
-	// 自動ターン専用モデル（claude 限定）は従来どおり最優先。
+	// The model reserved for automatic turns (claude only) still wins over everything.
 	c.modelOverride = "haiku"
 	if got := chatModelFor(c, session.KindClaude); got != "haiku" {
 		t.Fatalf("override = %q", got)
 	}
 	c.modelOverride = ""
-	// Agent 未設定の旧レコードは従来の素通し（kind 判定の材料が無い）。
+	// An old record with no Agent passes through as before; there is nothing to judge the kind
+	// from.
 	legacy := &ChatConversation{Model: "gpt-5.6"}
 	if got := chatModelFor(legacy, session.KindCodex); got != "gpt-5.6" {
 		t.Fatalf("legacy conversation model = %q", got)
 	}
 }
 
-// TestSwitchChatAgentRepinsAndKeepsResumeHandles: 切替は「ピン留め＋モデル」を差し替え、
-// バックエンド毎の resume ハンドル／カーソルには触らない（元へ戻したとき、その CLI の
-// native セッションを続きから使えるように）。
+// TestSwitchChatAgentRepinsAndKeepsResumeHandles: a switch replaces the pin and the model and
+// leaves the per-backend resume handles and cursors alone, so switching back can carry on with
+// that CLI's native session.
 func TestSwitchChatAgentRepinsAndKeepsResumeHandles(t *testing.T) {
 	writeUIPrefs(t, `{"assistantModels":{"codex":"gpt-custom"}}`)
 	c := &ChatConversation{
@@ -84,7 +87,7 @@ func TestSwitchChatAgentRepinsAndKeepsResumeHandles(t *testing.T) {
 		t.Fatal("notice has no source-language fallback content")
 	}
 
-	// 同じエージェントの再選択は何も起こさない（notice も増えない）。
+	// Re-selecting the current agent does nothing, not even append a notice.
 	n := len(c.Messages)
 	switchChatAgent(c, session.KindCodex)
 	if len(c.Messages) != n {
@@ -92,8 +95,8 @@ func TestSwitchChatAgentRepinsAndKeepsResumeHandles(t *testing.T) {
 	}
 }
 
-// TestSwitchedAgentGetsHistoryOnNextTurn: 切替後の初回送信で、新バックエンドがまだ
-// 知らない履歴が再生される（認証フォールバックと同じ経路）。
+// TestSwitchedAgentGetsHistoryOnNextTurn: on the first send after a switch, the history the
+// new backend does not know yet is replayed (the same route as the auth fallback).
 func TestSwitchedAgentGetsHistoryOnNextTurn(t *testing.T) {
 	c := &ChatConversation{
 		Agent: session.KindClaude, ClaudeSessionID: "claude-sess",
@@ -142,7 +145,7 @@ func TestHandleChatPatchAgent(t *testing.T) {
 		t.Fatalf("title clobbered by an agent-only patch: %q", c.Title)
 	}
 
-	// 改名は従来どおり（既存クライアントは {title} だけを送る）。
+	// Renaming behaves as before; existing clients send {title} alone.
 	if rec := patchConv(t, conv.ID, `{"title":"新しいタイトル"}`); rec.Code != http.StatusOK {
 		t.Fatalf("rename status = %d, body = %s", rec.Code, rec.Body.String())
 	}
@@ -150,7 +153,7 @@ func TestHandleChatPatchAgent(t *testing.T) {
 		t.Fatalf("rename result = %q / agent %q (agent must survive a title-only patch)", c.Title, c.Agent)
 	}
 
-	// headless チャットに載らない kind は拒否（tmux 専用 kind を含む）。
+	// A kind that headless chat does not carry is rejected, tmux-only kinds included.
 	for _, body := range []string{`{"agent":"kiro"}`, `{"agent":"shell"}`, `{"agent":""}`} {
 		if rec := patchConv(t, conv.ID, body); rec.Code != http.StatusBadRequest {
 			t.Fatalf("patch %s status = %d, want 400", body, rec.Code)
@@ -161,9 +164,9 @@ func TestHandleChatPatchAgent(t *testing.T) {
 	}
 }
 
-// TestHandleChatPatchAgentRejectsWhileTurnInFlight: 走っているターンの裏でピン留めを
-// 差し替えると、実行中プロバイダと保存内容が食い違う。ロック待ちで数分ぶら下がるのも
-// 困るので、削除と同じく 409 で先に止めてもらう。
+// TestHandleChatPatchAgentRejectsWhileTurnInFlight: replacing the pin behind a running turn
+// leaves the stored content disagreeing with the provider actually executing. Hanging for
+// minutes on a lock is no better, so, as with deletion, it is refused up front with a 409.
 func TestHandleChatPatchAgentRejectsWhileTurnInFlight(t *testing.T) {
 	withTempHome(t)
 	conv := &ChatConversation{ID: RandUUID(), Slug: NewConvSlug(), Agent: session.KindClaude}

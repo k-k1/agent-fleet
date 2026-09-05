@@ -1,12 +1,13 @@
-// scrollMark（ミラーの表示位置をセッション単位で覚える）の単体テスト。
+// Unit tests for scrollMark (remembering the mirror's scroll position per session).
 //
-// jsdom にはレイアウトが無いので、スクロール容器とターンの矩形は「スクロール位置の関数」
-// として自前で作る（domSetup.ts の注記どおり、実寸そのものは本物のブラウザでしか測れない —
-// ここで検証するのは矩形から scrollTop を出す計算のほう）。
+// jsdom has no layout, so the rectangles of the scroll container and the turns are built here as
+// functions of the scroll position (as domSetup.ts notes, real measurements are only possible in a
+// real browser - what is verified here is the arithmetic that turns rectangles into a scrollTop).
 import { describe, it, expect, beforeEach } from "vitest";
 import { applyMark, captureMark, clearMarks, saveMark, scrollTopForTurn, loadMark } from "./scrollMark.ts";
 
-/** ターン列を持つスクロール容器。矩形は content 座標 − el.scrollTop で作る＝ブラウザと同じ。 */
+/** A scroll container holding a row of turns. Rectangles are content coordinates minus
+ * el.scrollTop, exactly as a browser computes them. */
 function fixture(turns: { idx: number; top: number; h: number }[], view = 100, content = 1000): HTMLElement {
   const el = document.createElement("div");
   Object.defineProperty(el, "clientHeight", { value: view, configurable: true });
@@ -35,51 +36,51 @@ beforeEach(() => {
 });
 
 describe("captureMark", () => {
-  it("上端に掛かっているターンと、そのズレを採る", () => {
+  it("captures the turn overlapping the top edge and its offset", () => {
     const el = fixture(TURNS);
-    el.scrollTop = 250; // ターン2 の 50px 目
+    el.scrollTop = 250; // 50px into turn 2
     expect(captureMark(el, false)).toEqual({ atBottom: false, idx: 2, offset: -50 });
   });
 
-  it("ちょうど境目ならその下のターン（上のターンは 1px も見えていない）", () => {
+  it("picks the lower turn exactly on a boundary, since not one px of the upper one is visible", () => {
     const el = fixture(TURNS);
     el.scrollTop = 200;
     expect(captureMark(el, false)).toEqual({ atBottom: false, idx: 2, offset: 0 });
   });
 
-  it("末尾追従していたかをそのまま持つ — 復元するかどうかの判断は呼び手", () => {
+  it("carries whether the view was tail-following; whether to restore is the caller's call", () => {
     const el = fixture(TURNS);
     expect(captureMark(el, true)?.atBottom).toBe(true);
   });
 
-  it("合成ターン（楽観エコー / キュー済み）はアンカーにしない", () => {
+  it("never anchors on a synthetic turn (optimistic echo / queued prompt)", () => {
     const el = fixture([{ idx: 1e9 + 3, top: 0, h: 100 }]);
     expect(captureMark(el, false)).toBeNull();
   });
 
-  it("ターンが無ければ null（容器が無いときも）", () => {
+  it("returns null when there are no turns, and when there is no container", () => {
     expect(captureMark(fixture([]), false)).toBeNull();
     expect(captureMark(null, false)).toBeNull();
   });
 });
 
 describe("applyMark", () => {
-  it("採った位置へ戻す — 往復して同じ scrollTop", () => {
+  it("restores the captured position: a round trip gives the same scrollTop", () => {
     const el = fixture(TURNS);
     el.scrollTop = 250;
     const mark = captureMark(el, false)!;
-    el.scrollTop = 0; // セッションを持ち替えて戻ってきた直後の状態
+    el.scrollTop = 0; // the state right after switching away and coming back
     expect(applyMark(el, mark)).toBe(true);
     expect(el.scrollTop).toBe(250);
   });
 
-  it("アンカーのターンが載っていなければ false（呼び手は末尾へ落とす）", () => {
+  it("returns false when the anchor turn is not mounted, so the caller falls back to the tail", () => {
     const el = fixture(TURNS);
     expect(applyMark(el, { atBottom: false, idx: 99, offset: 0 })).toBe(false);
     expect(el.scrollTop).toBe(0);
   });
 
-  it("スクロール範囲を超えない", () => {
+  it("never goes outside the scrollable range", () => {
     const el = fixture(TURNS, 100, 1000);
     expect(applyMark(el, { atBottom: false, idx: 3, offset: -5000 })).toBe(true);
     expect(el.scrollTop).toBe(900); // scrollHeight - clientHeight
@@ -89,30 +90,30 @@ describe("applyMark", () => {
 });
 
 describe("scrollTopForTurn", () => {
-  it("そのターンの上端が画面上端に来る位置を返す（余白ぶん引ける）", () => {
+  it("returns the position that puts the turn's top edge at the top of the view, less any offset", () => {
     const el = fixture(TURNS);
-    el.scrollTop = 850; // 末尾のあたりから頭出しする
+    el.scrollTop = 850; // scrolling back up from near the tail
     expect(scrollTopForTurn(el, 3)).toBe(600);
     expect(scrollTopForTurn(el, 3, 8)).toBe(592);
   });
 
-  it("載っていないターンは null", () => {
+  it("returns null for a turn that is not mounted", () => {
     expect(scrollTopForTurn(fixture(TURNS), 42)).toBeNull();
     expect(scrollTopForTurn(null, 1)).toBeNull();
   });
 });
 
-describe("マークの持ち回り", () => {
-  it("セッションごとに独立して覚え、null で消える", () => {
+describe("carrying marks around", () => {
+  it("remembers per session independently, and null clears it", () => {
     const a = { atBottom: false, idx: 2, offset: -50 };
     saveMark("s-a", a);
     expect(loadMark("s-a")).toEqual(a);
-    expect(loadMark("s-b")).toBeNull(); // 他のセッションへは漏れない
+    expect(loadMark("s-b")).toBeNull(); // never leaks into another session
     saveMark("s-a", null);
     expect(loadMark("s-a")).toBeNull();
   });
 
-  it("セッション名が空なら何もしない（起動直後のペイン）", () => {
+  it("does nothing when the session name is empty (a pane right after launch)", () => {
     saveMark("", { atBottom: false, idx: 1, offset: 0 });
     expect(loadMark("")).toBeNull();
   });

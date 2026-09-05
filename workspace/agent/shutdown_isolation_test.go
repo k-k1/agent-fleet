@@ -1,9 +1,9 @@
 package main
 
-// shutdown の対象選定の回帰テスト（docs/log/32 M1 E2E インシデントの恒久対応）:
-// 停止処理が触ってよいのは「自メタ ∩ live」だけで、同じ tmux サーバに同居する
-// 他インスタンスのセッション（＝自分のメタが無い live セッション）は対象外である
-// ことを、AF_TMUX_SOCKET で隔離した専用サーバ上の実 tmux で確認する。
+// Regression test for what shutdown selects (docs/log/32 M1, the permanent fix after the E2E
+// incident): shutdown may touch only "own meta ∩ live", never another instance's sessions
+// sharing the same tmux server (live sessions with no meta of ours). Checked against a real
+// tmux on a dedicated server isolated with AF_TMUX_SOCKET.
 
 import (
 	"os/exec"
@@ -14,8 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/tmuxx"
 )
 
-// TestTmuxCmdSocketScope: AF_TMUX_SOCKET が全 tmux 呼び出しに -L として乗ること
-// （サーバ不要の argv 検査）。
+// TestTmuxCmdSocketScope: AF_TMUX_SOCKET rides along as -L on every tmux call (an argv
+// check, no server needed).
 func TestTmuxCmdSocketScope(t *testing.T) {
 	t.Setenv("AF_TMUX_SOCKET", "af-test-sock")
 	got := tmuxx.Cmd("list-sessions").Args
@@ -29,24 +29,25 @@ func TestTmuxCmdSocketScope(t *testing.T) {
 	}
 }
 
-// TestOwnedLiveSessionsScopedToOwnMetas: 隔離ソケット上に「自メタ有り」と
-// 「自メタ無し（他インスタンス相当）」の 2 セッションを並べ、shutdown の対象選定が
-// 前者だけを返すこと。
+// TestOwnedLiveSessionsScopedToOwnMetas puts two sessions on the isolated socket, one with
+// our own meta and one without (standing in for another instance), and checks that
+// shutdown's selection returns only the former.
 func TestOwnedLiveSessionsScopedToOwnMetas(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not installed")
 	}
-	// 🔥 **ソケット名を固定しない。** ここは `af-test-<pid>` を自前で組んでいたので、
-	// pid はプロセス内で不変 ＝ `-count=N` の**前の周回**（と、同じ名前を使っていた他の
-	// テスト）と 1 つの tmux サーバを共有していた。各周回の Cleanup が `kill-server` を
-	// 撃つが、**tmux はコマンドを受け取った時点で返り、サーバの終了は非同期**なので、
-	// 次の `new-session` が死にかけのサーバへ繋がって `server exited unexpectedly` で
-	// 落ちる。実測 2026-09-02（無負荷・`-count=30`）: **11/30 失敗 → 0/30**。
-	// 名前の作り方は session_rate_limit_state_test.go の isolatedTmuxSocket に 1 本化した。
+	// Never pin the socket name. This used to build `af-test-<pid>` itself, and a pid is
+	// constant within a process, so it shared one tmux server with the previous iteration
+	// of `-count=N` (and with any other test using the same name). Each iteration's
+	// Cleanup fires `kill-server`, but tmux returns as soon as it accepts the command and
+	// the server exits asynchronously, so the next `new-session` reaches a dying server
+	// and fails with `server exited unexpectedly`. Measured 2026-09-02 (idle, `-count=30`):
+	// 11/30 failures → 0/30. Name construction is centralized in isolatedTmuxSocket
+	// (session_rate_limit_state_test.go).
 	sock := isolatedTmuxSocket()
 	t.Setenv("AF_TMUX_SOCKET", sock)
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
-	// 専用ソケットに対してのみ kill-server が許される（dev/04 §4.11）。
+	// kill-server is allowed only against a dedicated socket (dev/04 §4.11).
 	t.Cleanup(func() { _ = tmuxx.Cmd("kill-server").Run() })
 
 	for _, name := range []string{"owned1", "foreign1"} {
@@ -56,7 +57,7 @@ func TestOwnedLiveSessionsScopedToOwnMetas(t *testing.T) {
 		}
 	}
 	session.WriteMeta(session.Meta{Name: "owned1", Dir: t.TempDir(), Kind: session.KindShell})
-	// live だがメタ無しの stopped も混ぜる: メタだけあって pane の無いものは対象外。
+	// Also mix in a stopped one: a meta with no pane is out of scope too.
 	session.WriteMeta(session.Meta{Name: "stopped1", Dir: t.TempDir(), Kind: session.KindShell})
 
 	owned := ownedLiveSessions()

@@ -7,20 +7,19 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/resources"
 )
 
-// handleWorkspaceStats（GET /workspace/stats）は **この Workspace 自身の**
-// メモリ / CPU / ディスクを返す（docs/log/63 §63.9）。
+// handleWorkspaceStats (GET /workspace/stats) returns memory / CPU / disk for *this
+// Workspace itself* (docs/log/63 §63.9).
 //
-// CP はまずホスト側の cgroup を直接読もうとし（docker / native 構成でだけ成立
-// する）、読めなかったときにここへ落ちてくる。ECS（Fargate / `ecs-ec2`）では
-// 常にこちらが答える経路になる。
+// The CP first tries to read the host-side cgroup directly (which only works on the docker
+// and native profiles) and falls through to here when it cannot. On ECS (Fargate and
+// `ecs-ec2`) this is always the route that answers.
 //
-// 読めなかった軸はキーごと落ちる。CP は返ってきたキーだけを載せるので、
-// 「測れない」は Console のタイルで「–」のまま残る——0 として描かれない。
+// An axis that could not be read is omitted key and all. The CP forwards only the keys it
+// got back, so "cannot measure" stays a "-" in the Console tile - it is never drawn as 0.
 //
-// ⚠️ 呼び出し元は CP だけ（`/api/workspace/stats` と `/api/events` の stats
-// ストリーム、および管理者のメンバー詳細）。Console からの直叩き用に
-// control-plane 側の proxy 許可リストへ足す必要は無い——CP 側の 2 つの口が
-// 自分でこれを呼ぶ形になっている。
+// The only caller is the CP (`/api/workspace/stats`, the stats stream on `/api/events`, and
+// the admin member detail). It does not need adding to the control-plane proxy allowlist for
+// direct Console calls: both CP entry points call this themselves.
 func handleWorkspaceStats(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resources.Read())
 }

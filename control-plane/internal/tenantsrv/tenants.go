@@ -12,9 +12,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Tenants serves the caller-facing tenant picker（docs/log/23 残③: CP の解決 +
-// TenantStore の narrow view。登録側で withIdentity に包む）。CP 側の受け皿は
-// control-plane/tenant_wiring.go の tenantAPI で、そちらが memberAuth を埋め込む。
+// Tenants serves the caller-facing tenant picker: the CP's resolution plus a narrow
+// TenantStore view, wrapped in withIdentity where the routes are registered. Its counterpart
+// on the CP side is tenantAPI (control-plane/tenant_wiring.go), which embeds memberAuth.
 type Tenants struct {
 	cp    CP
 	store store.TenantStore
@@ -29,14 +29,14 @@ func (a Tenants) List(w http.ResponseWriter, r *http.Request, ident store.Identi
 	isSuper := ident.Role == "super_admin"
 	ms, aerr := a.cp.MembershipsFor(r.Context(), ident)
 	if aerr != nil {
-		// ★ A super_admin with no membership still gets an answer (docs/log/61 §61.10.2
-		// + 決定 23). Bootstrapping a deployment with AF_PROVISION=invite used to
-		// dead-end right here: this endpoint 403'd, the Console's error branch left
-		// superAdmin false, and the admin menu — whose condition is
-		// `superAdmin || tenant_admin` — never appeared, so the one person entitled
-		// to create the first tenant could not reach the screen that creates it.
-		// The admin API itself was always reachable (it gates on identityFor), so
-		// this only ever blocked the UI; it is still not a workable procedure.
+		// A super_admin with no membership still gets an answer (docs/log/61 §61.10.2
+		// + decision 23). Otherwise bootstrapping a deployment with
+		// AF_PROVISION=invite dead-ends right here: this endpoint 403s, the Console's
+		// error branch leaves superAdmin false, and the admin menu — whose condition
+		// is `superAdmin || tenant_admin` — never appears, so the one person entitled
+		// to create the first tenant cannot reach the screen that creates it. Only
+		// the UI is blocked (the admin API gates on identityFor and stays reachable),
+		// but that is not a procedure anyone can follow.
 		if aerr.Code == "not_provisioned" && isSuper {
 			writeJSON(w, http.StatusOK, map[string]any{"tenants": []any{}, "super_admin": true})
 			return
@@ -66,7 +66,7 @@ func (a Tenants) List(w http.ResponseWriter, r *http.Request, ident store.Identi
 	writeJSON(w, http.StatusOK, map[string]any{"tenants": out, "super_admin": isSuper})
 }
 
-// Admin is the tenant/membership admin handler set（docs/log/23 残③）: tenant
+// Admin is the tenant/membership admin handler set: tenant
 // CRUD, memberships, quotas, the tenant's own network rule and machine class. The
 // handlers span most sub-stores (tenant / identity / membership / workspace /
 // quota / usage / audit / session index), so no narrow view — they reach the
@@ -74,7 +74,7 @@ func (a Tenants) List(w http.ResponseWriter, r *http.Request, ident store.Identi
 // withSuperAdmin; per-tenant ones gate mid-handler via CP.TenantAdminFor
 // (slug comes from the path on some routes and the body on others).
 //
-// ⚠️ The CP's own adminAPI (control-plane/tenant_wiring.go) carries MORE than this:
+// The CP's own adminAPI (control-plane/tenant_wiring.go) carries more than this:
 // the deployment-wide admin views (usage.go, audit.go, admin_sessions.go,
 // admin_stats.go, metrics.go hostStats, cloudcost.go) are still its methods and
 // stayed in package main. Only the tenant family moved here.
@@ -87,12 +87,13 @@ func NewAdmin(cp CP) Admin { return Admin{cp} }
 // administer. The super_admin flag lets the Console hide deployment-wide controls
 // (create tenant, tenant quotas, clean-home, role grants) for tenant_admins.
 //
-// ★ 予約テナント（system_tenant.go）はここで落とす。落とすのが**この API 層**であって
-// `store.ListTenants` ではないのは意図的で、その store 呼び出しには監査ビューの
-// tenant_id → slug 解決（audit.go）と費用ポーラーの membership → tenant 解決
-// （cloudcost.go）が乗っている。store で消すと、そちらが「テナントの分からない行」を
-// 作りはじめる。Console は横断ビュー（セッション/稼働時間/費用/監査/MCP）のテナント
-// フィルタにもこの一覧を渡しているので、ここ 1 か所で全部の面から消える。
+// The reserved tenant (system_tenant.go) is filtered out here, in the API layer, and
+// deliberately not in `store.ListTenants`: that store call also backs the audit view's
+// tenant_id → slug resolution (audit.go) and the cost poller's membership → tenant
+// resolution (cloudcost.go), both of which would start producing rows with no tenant if it
+// disappeared underneath them. The Console also feeds this list to the tenant filter of
+// every cross-cutting view (sessions / uptime / cost / audit / MCP), so filtering in this
+// one place removes it everywhere.
 func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	isSuper := ident.Role == "super_admin"
 
@@ -161,7 +162,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 // rules (docs/log/61 §61.9.7). super_admin only, deliberately: two of the three fields
 // reach past the tenant. auto_join_domains widens the DEPLOYMENT's entry gate — a
 // whole email domain gets in — and allowed_providers decides which IdP is trusted
-// to say who someone is. Those are the operator's calls (決定 24/25), while what a
+// to say who someone is. Those are the operator's calls (decisions 24/25), while what a
 // tenant_admin owns is the roster inside their own tenant.
 func (a Admin) SetTenantLogin(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var body struct {
@@ -191,15 +192,15 @@ func (a Admin) SetTenantLogin(w http.ResponseWriter, r *http.Request, ident stor
 	// Naming a provider the deployment does not have would silently produce a login
 	// page with no buttons, so refuse it here rather than at 3am.
 	//
-	// ★ A "t:<slug>:<name>" id is one of the tenant's OWN sign-in methods (docs/log/61
+	// A "t:<slug>:<name>" id is one of the tenant's own sign-in methods (docs/log/61
 	// §61.11), which is how a subsidiary says "only our Entra, please". It is checked
 	// against that tenant's rows instead of knownProviderIDs (which holds env ids
 	// only), and the slug must be this tenant's: naming another tenant's method would
 	// produce a button nobody here can use, since the tenant gate pins such a session
-	// to its own tenant anyway (決定 32-3).
+	// to its own tenant anyway (decision 32-3).
 	var ownIdP map[string]bool
 	known := a.cp.KnownProviderIDs()
-	// ★ hidden_providers is validated by the same rule, and for the same reason: a
+	// hidden_providers is validated by the same rule, and for the same reason: a
 	// typo there is silent (the button simply keeps appearing) and nothing else in
 	// the system will ever mention it. It is checked TOGETHER with allowed_providers
 	// so both halves of "which methods does this tenant know about" stay one rule
@@ -303,10 +304,12 @@ func (a Admin) ListMembers(w http.ResponseWriter, r *http.Request) {
 				"container":   container, "state": state,
 				"status": status,
 			}
-			// 自動停止の見通し（docs/log/75 P4）: reaper が最後に観測した「いつ止まるか /
-			// 誰が止めているか」。ここで再計算しないのが要点で、画面が自前で導出すると
-			// reaper が実際に見ているもの（在席・ピン・背景作業）とズレて、調べるための
-			// 画面が別の答えを出す。稼働中の Workspace にしか意味が無い。
+			// The idle forecast (docs/log/75 P4): the reaper's last observation of
+			// when this stops and who is holding it open. The point is that nothing
+			// is recomputed here — a screen that derived it itself would drift from
+			// what the reaper actually looks at (presence, pins, background work),
+			// and the screen you go to in order to investigate would give a
+			// different answer. Only meaningful for a running workspace.
 			if wsRow, ok, _ := a.cp.Store().GetWorkspaceByMembership(r.Context(), m.MembershipID); ok {
 				if f, has := a.cp.IdleForecastFor(wsRow.ID); has && state == "running" {
 					row["idle"] = f
@@ -370,15 +373,14 @@ func (a Admin) StopWorkspace(w http.ResponseWriter, r *http.Request) {
 // member's workspace home except auth/connection state. Same target resolution as
 // stop-workspace; the container is stopped first.
 //
-// ★ tenant_admin, not super_admin (docs/log/61 §61.10.6 + 決定 26). The offboarding
-// sequence is "deactivate the membership → stop the workspace → wipe the home",
-// and the department is who knows that somebody left. Leaving only this last step
-// with the operator meant every leaver became a ticket to IT. The gate is
-// tenantAdminFor, exactly as stopWorkspace already does it, so a tenant_admin can
-// only reach their OWN members' homes.
+// tenant_admin, not super_admin (docs/log/61 §61.10.6 + decision 26). The offboarding
+// sequence is "deactivate the membership → stop the workspace → wipe the home", and the
+// department is who knows that somebody left; leaving only this last step with the operator
+// turned every leaver into a ticket for IT. The gate is tenantAdminFor, exactly as
+// stopWorkspace already does it, so a tenant_admin only ever reaches their own members'
+// homes.
 //
-// ★ This widens a permission, so it is audited: who wiped whose home in which
-// tenant, always.
+// This widens a permission, so it is always audited: who wiped whose home in which tenant.
 func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		UserKey    string `json:"user_key"`
@@ -423,18 +425,18 @@ func (a Admin) CleanHome(w http.ResponseWriter, r *http.Request) {
 
 // DestroyWorkspace (DELETE /api/admin/workspaces {tenant_slug,user_key}) is the
 // irreversible one: it deletes the home and every per-membership resource the runtime
-// created, then the DB row. ADR 0045 決定 13-2.
+// created, then the DB row. ADR 0045 decision 13-2.
 //
-// ★ It is a SEPARATE operation from removing the membership on purpose. Offboarding is a
+// It is a separate operation from removing the membership on purpose. Offboarding is a
 // logical delete that keeps the home so a returning member is just a re-invite
 // (docs/log/61 §61.10.6); destroying is the second, deliberate step you take later — when the
 // EBS volume behind a long-gone member is still being billed for. Doing both at once is
 // possible (removeMembership's purge flag) but never the default.
 //
-// ★ Only an INACTIVE membership can be destroyed. In the admin UI this operation sits one
+// Only an inactive membership can be destroyed. In the admin UI this operation sits one
 // misclick away from a member who is at their desk, and there is no undo.
 //
-// ★ It overrides the deletion locks of ADR 0028 and cannot do otherwise: the locks live
+// It overrides the deletion locks of ADR 0028 and cannot do otherwise: the locks live
 // inside the home, which is unreadable while the workspace is stopped
 // (docs/log/64 §64.18.1). The Console has to say so.
 //
@@ -641,7 +643,7 @@ func (a Admin) checkInviteDomain(r *http.Request, t store.Tenant, email, key str
 // the entry gate (§61.9.6), being unable to remove a row means being unable to
 // offboard at all. A signed session cookie is valid for up to AF_SESSION_TTL
 // (7 days by default) and cannot be revoked individually, so without this the
-// person keeps their access for a week after they leave (決定 22/27).
+// person keeps their access for a week after they leave (decisions 22/27).
 //
 // The delete is LOGICAL (status='inactive'): the workspace, its home and its
 // encrypted secrets survive, and every resolution path already requires an active
@@ -655,7 +657,7 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 		UserKey    string `json:"user_key"`
 		TenantSlug string `json:"tenant_slug"`
 		// Purge additionally destroys the workspace — home, and every per-membership
-		// resource the runtime created (ADR 0045 決定 13-2). Default false: the logical
+		// resource the runtime created (ADR 0045 decision 13-2). Default false: the logical
 		// delete above is what offboarding means, and this is a second, irreversible
 		// thing that happens to be convenient to do in the same click. It runs AFTER
 		// the membership is deactivated, so a failure here still leaves the person
@@ -758,26 +760,23 @@ func (a Admin) RemoveMembership(w http.ResponseWriter, r *http.Request) {
 // DeleteMembership (DELETE /api/admin/tenants/{slug}/members/{key}) removes the row
 // itself — the third and last step of the clean-up sequence (docs/log/61 §61.18):
 //
-//	メンバーを外す → Workspace を破棄 → メンバーを完全に削除
+//	remove the member → destroy the workspace → delete the member for good
 //
-// ★ Why this exists at all. `SetMembershipStatus` used to say hard deletion was
-// "deliberately not offered — schedules, audit rows and shares reference the membership
-// id". Two thirds of that turned out not to be a reason: the schedules and shares ARE
-// this person's and go with them. What the sentence was really protecting is the
-// HISTORY, and that is what is kept: audit_log (which never referenced a membership —
-// its actor is an identity), cloud_cost_daily and usage_daily. An offboarding that could
-// erase its own audit trail, or change last month's invoice total, would be a worse
-// product than one that leaves a dead row.
+// What a hard delete must not take with it is the HISTORY, and that is what is kept:
+// audit_log (which never referenced a membership — its actor is an identity),
+// cloud_cost_daily and usage_daily. Schedules and shares are this person's and go with
+// them. An offboarding able to erase its own audit trail, or to change last month's
+// invoice total, would be worse than one that leaves a dead row behind.
 //
-// ★ The two refusals are the same line ADR 0045 決定 13-2 draws, for the same reason.
-// An ACTIVE member is somebody at their desk. A membership whose workspace row is still
-// there owns a home, an EBS volume and EFS access points; deleting the row would leave
-// them billing with nothing in the database pointing at them — the exact leak
-// DestroyWorkspace exists to close.
+// The two refusals are the same line ADR 0045 decision 13-2 draws, for the same reason. An
+// active member is somebody at their desk. A membership whose workspace row is still there
+// owns a home, an EBS volume and EFS access points; deleting the row would leave those
+// billing with nothing in the database pointing at them — the exact leak DestroyWorkspace
+// exists to close.
 //
-// ★ And a reserved membership is refused outright (system_tenant.go): the golden baker
-// recreates the seed and the probe on its next tick, so deleting them mid-bake only
-// strands the slot they are holding.
+// A reserved membership is refused outright (system_tenant.go): the golden baker recreates
+// the seed and the probe on its next tick, so deleting them mid-bake only strands the slot
+// they hold.
 //
 // tenant_admin (their own tenant) or super_admin — the same gate as destroyWorkspace,
 // which is what has to have happened first.
@@ -941,9 +940,10 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		// P3-9 idle-stop: duration strings ("30m"); "" => deployment default,
 		// "0" => disabled for this tenant.
 		SessionIdleTimeout string `json:"session_idle_timeout"`
-		// tier-1 の 2 本目の時計: 人の判断待ち（質問・プラン承認・許可・上限メニュー・
-		// 認証切れ）で止まっているセッション（docs/log/75 §75.5）。"" => テナントの
-		// session_idle_timeout、それも無ければデプロイ既定。
+		// Tier 1's second clock, for a session parked on a human decision — a
+		// question, plan approval, a permission prompt, the rate-limit menu, expired
+		// auth (docs/log/75 §75.5). "" => the tenant's session_idle_timeout, and the
+		// deployment default if that is unset too.
 		InteractionIdleTimeout string `json:"interaction_idle_timeout"`
 		WSIdleTimeout          string `json:"ws_idle_timeout"`
 		// Tier-3 home hibernation (ecs-ec2 only): "" => deployment default, "0" => never.
@@ -1080,7 +1080,7 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 		// response echoes the effective (post-clamp) value so the admin sees it.
 		MemLimit int64 `json:"mem_limit"`
 		// CPULimit is the per-workspace CPU cap in Fargate CPU units (1024 = 1 vCPU),
-		// independent of MemLimit. 0 = unset (ADR 0044 決定 1).
+		// independent of MemLimit. 0 = unset (ADR 0044 decision 1).
 		CPULimit int `json:"cpu_limit"`
 		// SlotClass is which machine class this member lands on ("" = the tenant
 		// default). Not a size — the three numbers above still decide that (docs/log/70).
@@ -1213,18 +1213,19 @@ func (a Admin) PoolStatus(w http.ResponseWriter, r *http.Request, _ store.Identi
 	writeJSON(w, http.StatusOK, st)
 }
 
-// tenantLoginWire — PUT /api/admin/tenants/{slug}/login の応答
-// （Console の `TenantLoginFields`、console/src/features/settings/tenant/tenantLoginTypes.ts）。
+// tenantLoginWire is the reply to PUT /api/admin/tenants/{slug}/login (the Console's
+// `TenantLoginFields`, console/src/features/settings/tenant/tenantLoginTypes.ts).
 //
-// 旧: map[string]any{"tenant":…, "allowed_providers":…, "auto_join_domains":…,
+// was: map[string]any{"tenant":…, "allowed_providers":…, "auto_join_domains":…,
 //
 //	"allowed_domains":…, "hidden_providers":…}
 //
-// 5 キーとも無条件なので **omitempty は付けない**。CSV は空文字を取りうる
-// （＝制限なし）ので、付けるとキーごと消えて「制限なし」と「未設定」が区別できなくなる。
+// All five keys are unconditional, so none of them takes omitempty. A CSV field is legally
+// the empty string (meaning no restriction); with omitempty the key would vanish and "no
+// restriction" would become indistinguishable from "unset".
 //
-// ⚠️ tenant は Console が prop で持つ slug の echo。`TenantLoginFields` は宣言して
-// いないが**読んでもいない**。
+// tenant echoes back the slug the Console already holds as a prop. `TenantLoginFields` does
+// not declare it — and does not read it either.
 type tenantLoginWire struct {
 	Tenant           string `json:"tenant"`
 	AllowedProviders string `json:"allowed_providers"`

@@ -1,25 +1,27 @@
 //go:build drift
 
-// プロジェクトローカル MCP スコープの契約（docs/log/48 §8.4）。**実エージェント CLI に
-// 当てる**テストで、`go test ./...` からは build tag `drift` で除外される。
+// The contract of project-local MCP scopes (docs/log/48 §8.4). It runs against the REAL
+// agent CLIs, so the `drift` build tag keeps it out of `go test ./...`.
 //
-// なぜ要るか: af が書くのは各 CLI の **user/global スコープ 1 箇所だけ**で、リポジトリ側の
-// プロジェクトスコープ（`.mcp.json` / `.cursor/mcp.json` / `opencode.json` / …）は利用者の
-// ものとして触らない。この住み分けは 2 つの前提の上に立っている:
+// Why it is needed: af writes exactly one place in each CLI, its user/global scope, and
+// leaves the repository's project scope (`.mcp.json` / `.cursor/mcp.json` / `opencode.json`
+// / …) alone as the user's. That division rests on two premises:
 //
-//  1. **両者はマージされる** — af のサーバがプロジェクト設定のあるリポジトリで消えない。
-//  2. **同名衝突の勝者が分かっている** — `af` という名前を偶然（あるいは故意に）プロジェクト
-//     設定が定義したとき、af 自身のサーバ（自己申告・引き継ぎ提案・Chromium attach）が
-//     乗っ取られるかどうかが決まる。`reservedNames` は AF レジストリ側でしか効かないので、
-//     プロジェクトファイルは止められない。
+//  1. The two are merged — af's server does not disappear in a repository that has its own
+//     project config.
+//  2. The winner of a name collision is known — it decides whether af's own server (self
+//     reporting, handoff proposals, Chromium attach) gets taken over when a project config
+//     happens to define, or deliberately defines, the name `af`. `reservedNames` only works
+//     inside the AF registry, so a project file cannot be stopped that way.
 //
-// どちらも CLI 側の実装依存で、版が変われば黙って変わる。ここが赤くなったら docs/log/48 §8.4 の
-// 表を更新すること。
+// Both depend on CLI-side implementation and can change silently with a release. When this
+// goes red, update the table in docs/log/48 §8.4.
 //
-// 認証不要: `mcp list` は設定ファイルを読んで接続を試すだけ。プローブは /bin/true などで、
-// ハンドシェイクは失敗してよい（名前と由来が一覧に出ることだけが観測対象）。
-// kiro は `mcp` サブコマンド全部がログインを要求するため未検証、agy はこのホストで起動でき
-// ない（RDRAND 非対応）うえ **MCP 設定が global 専用でプロジェクトスコープを持たない**。
+// No authentication: `mcp list` only reads the config files and tries to connect. The probes
+// are things like /bin/true and the handshake may fail — only the name and its origin
+// appearing in the listing is being observed. kiro is unverified because every `mcp`
+// subcommand demands a login; agy cannot start on this host (no RDRAND) and its MCP config
+// is global-only, with no project scope at all.
 package mcpreg
 
 import (
@@ -150,9 +152,9 @@ func TestDriftMCPScopesMerge(t *testing.T) {
 			out := runScopeList(t, sp, map[string]string{"afdrift_proj": "/bin/true"})
 			for _, want := range []string{"af", "afdrift_proj"} {
 				if !strings.Contains(out, want) {
-					t.Fatalf("%s: %q が一覧に無い — user スコープとプロジェクトスコープが"+
-						"マージされなくなった。af のサーバがプロジェクト設定のあるリポジトリで"+
-						"消える（docs/log/48 §8.4）\n%s", sp.kind, want, out)
+					t.Fatalf("%s: %q is not in the listing — the user scope and the project "+
+						"scope are no longer merged, so af's server disappears in any repository "+
+						"that has a project config (docs/log/48 §8.4)\n%s", sp.kind, want, out)
 				}
 			}
 		})
@@ -168,11 +170,12 @@ func TestDriftMCPScopeCollisionWinner(t *testing.T) {
 			out := runScopeList(t, sp, map[string]string{"af": scopeProjectCmd})
 			got := sp.winner(out)
 			if got == "" {
-				t.Fatalf("%s: 一覧から勝者を読み取れなかった（出力形が変わった）:\n%s", sp.kind, out)
+				t.Fatalf("%s: could not read the winner out of the listing (the output shape changed):\n%s", sp.kind, out)
 			}
 			if got != sp.wantWinner {
-				t.Fatalf("%s: 同名衝突の勝者が %q → %q に変わった。docs/log/48 §8.4 の表と、"+
-					"「プロジェクト設定が af のサーバを乗っ取れるか」の判断が古くなっている:\n%s",
+				t.Fatalf("%s: the winner of a name collision changed from %q to %q, so the table "+
+					"in docs/log/48 §8.4 and the answer to \"can a project config take over af's "+
+					"server\" are both out of date:\n%s",
 					sp.kind, sp.wantWinner, got, out)
 			}
 			t.Logf("%s: collision winner = %s", sp.kind, got)

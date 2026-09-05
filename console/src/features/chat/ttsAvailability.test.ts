@@ -4,27 +4,28 @@ import { voicevoxAvailable, pollyAvailable, type TtsStatus } from "./ttsAvailabi
 const st = (voicevox: TtsStatus["voicevox"]): TtsStatus => ({ voicevox, polly: { ready: true } });
 
 describe("voicevoxAvailable", () => {
-  it("未取得は判断しない（null）", () => {
-    // 取得前・取得失敗で「無い」と決めつけると、一瞬だけ設定が消えてから戻る。
+  it("does not decide before the status arrives (null)", () => {
+    // Concluding "absent" before the fetch, or on a failed one, makes the setting vanish for a
+    // moment and then come back.
     expect(voicevoxAvailable(null)).toBe(null);
   });
 
-  it("到達できるなら在る", () => {
+  it("present when the engine is reachable", () => {
     expect(voicevoxAvailable(st({ ready: true, enabled: true }))).toBe(true);
   });
 
-  it("ECS 管理下なら、いま停止していても在る", () => {
-    // 管理者がトグルで起動できる＝このデプロイにずんだもんは存在する。
+  it("present under ECS management even while stopped", () => {
+    // An admin can start it from the toggle, so Zundamon does exist on this deployment.
     expect(voicevoxAvailable(st({ ready: false, enabled: false, managed: true, state: "stopped" }))).toBe(true);
   });
 
-  it("管理外で到達できないなら無い", () => {
-    // ECS の既定構成（AF_TTS_ECS_SERVICE 未設定）がこれ。auto は日本語も Polly へ落ちる。
+  it("absent when unmanaged and unreachable", () => {
+    // This is the ECS default (AF_TTS_ECS_SERVICE unset); on auto even Japanese falls back to Polly.
     expect(voicevoxAvailable(st({ ready: false, enabled: true }))).toBe(false);
   });
 
-  it("管理者トグルが off でも「無い」とは言わない", () => {
-    // enabled は「今は使わない」であって「存在しない」ではない（設定は隠さない）。
+  it("does not report absent just because the admin toggle is off", () => {
+    // enabled means "not right now", not "does not exist", so the setting stays visible.
     expect(voicevoxAvailable(st({ ready: true, enabled: false }))).toBe(true);
   });
 });
@@ -32,18 +33,18 @@ describe("voicevoxAvailable", () => {
 describe("pollyAvailable", () => {
   const withPolly = (ready: boolean): TtsStatus => ({ voicevox: { ready: true }, polly: { ready } });
 
-  it("未取得は判断しない（null）", () => {
+  it("does not decide before the status arrives (null)", () => {
     expect(pollyAvailable(null)).toBe(null);
   });
 
-  it("CP にリージョン設定があれば在る", () => {
+  it("present when the CP has a region configured", () => {
     expect(pollyAvailable(withPolly(true))).toBe(true);
   });
 
-  // ★ 無い配備で English を選んでも、CP の chooseTTSProvider が voicevox へ落とす。
-  // UI 側はこれを見て、選択肢から Polly を外し、読み上げ言語の注記も切り替える
-  // （見ないと「Polly の声で読む」と書いてあるのにずんだもんが鳴る）。
-  it("無ければ無い（voicevox と違い managed の概念が無い）", () => {
+  // On a deployment without Polly, choosing English still falls back to voicevox in the CP's
+  // chooseTTSProvider. The UI reads this flag to drop Polly from the engine choices and switch the
+  // reading-language note; without it the note promises a Polly voice while Zundamon speaks.
+  it("absent when not configured - unlike voicevox there is no managed notion", () => {
     expect(pollyAvailable(withPolly(false))).toBe(false);
   });
 });

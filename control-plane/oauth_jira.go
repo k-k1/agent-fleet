@@ -119,9 +119,9 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 		bbCallbackPage(w, t.tokenExchangeFailed+err.Error())
 		return
 	}
-	// ★ The CP forwards and forgets. It does not resolve the cloud id, does not call the
+	// The CP forwards and forgets. It does not resolve the cloud id, does not call the
 	// Jira API, and stores none of this — the Agent does all of that, because that is
-	// where the member's token is allowed to live (ADR 0061 決定 2).
+	// where the member's token is allowed to live (ADR 0061 decision 2).
 	payload, _ := json.Marshal(map[string]any{
 		"access_token": tok.AccessToken, "refresh_token": tok.RefreshToken, "expires_in": tok.ExpiresIn,
 	})
@@ -144,8 +144,9 @@ func (c config) handleJiraOAuthCallback(w http.ResponseWriter, r *http.Request) 
 	if aresp.StatusCode != http.StatusOK {
 		b, _ := io.ReadAll(io.LimitReader(aresp.Body, 1<<16))
 		if aresp.StatusCode == http.StatusNotFound {
-			// フリート再ビルド前の Agent にはこのルートが無い。「設定の誤り」ではないと
-			// 分かる言い方にする（Bitbucket の staleAgent と同じ配慮）。
+			// An Agent from before the fleet rebuild has no such route. Word it so the
+			// member can tell this is not a misconfiguration, as Bitbucket's staleAgent
+			// does.
 			bbCallbackPage(w, t.staleAgent)
 			return
 		}

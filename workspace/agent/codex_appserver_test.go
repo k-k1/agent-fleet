@@ -341,11 +341,12 @@ func TestCodexObserverAttachesBeforeObservingThreadEvents(t *testing.T) {
 	}
 }
 
-// アンロード（thread/closed を伴わない notLoaded broadcast — TUI 切断・アイドル退避）
-// で requested を忘れること。残っていると、後で再ロードされた時に attach が早期
-// return し続け、そのスレッドの観測が観測ソケットの再接続まで復活しない。
+// An unload — a notLoaded broadcast with no thread/closed, from a TUI disconnect or an idle
+// eviction — must make requested forget the thread. If the entry survives, attach keeps
+// returning early once the thread is reloaded, and observation of it stays dead until the
+// observing socket reconnects.
 func TestCodexObserverForgetsUnloadedThread(t *testing.T) {
-	obs := newCodexObserver(nil) // forget 経路は conn に触れない
+	obs := newCodexObserver(nil) // the forget path never touches conn
 	obs.requested["thr-unload"] = true
 	obs.observeThreadLifecycle(codexAppServerMessage{
 		Method: "thread/status/changed",

@@ -8,7 +8,7 @@
 //  2. .session-state carries `margin-left:auto` for the left-rail rows (sessions.css),
 //     and the assistant-chat head is the one band that renders it as a DIRECT child —
 //     two auto-margined children make flex split the free space EVENLY, stranding
-//     待機中/作業計画 mid-row.
+//     the idle state and the work-plan button (「待機中」/「作業計画」) mid-row.
 //
 // The tabbed pane below carries BOTH `pane tabbed` and a .pane-tabs child, because
 // that is what Pane.tsx renders: the tabbed rules key on the .tabbed class, not on
@@ -110,7 +110,7 @@ function switchOrder(file) {
 // kind → [view root class, header markup]. `head` must contain exactly one
 // .tab-pane-actions; everything before it is that view's own header content.
 const VIEWS = {
-  // MirrorView.tsx / TerminalView.tsx — chip + the チャット/ターミナル switch.
+  // MirrorView.tsx / TerminalView.tsx — chip + the chat/terminal (「チャット」/「ターミナル」) switch.
   mirror: ["mirrorview", `<header class="view-head">${SESSION_CHIP}<span class="view-head-actions">${switchOrder("features/mirror/MirrorView.tsx")}</span></header>`],
   terminal: ["termview", `<header class="view-head view-head-term">${SESSION_CHIP}<span class="view-head-actions">${switchOrder("features/terminal/TerminalView.tsx")}</span></header>`],
   // ChatView.tsx — the one head that renders .session-state as a DIRECT child.
@@ -196,7 +196,7 @@ ${kinds
 
 // Measured per header. `holes` are the gaps between consecutive header children. ONE
 // big hole is the legitimate title→buttons gap — note it is not necessarily the last
-// one, since the pinned group can be several elements wide (待機中/作業計画/cluster).
+// one, since the pinned group can be several elements wide (state / work-plan button / cluster).
 // TWO big holes is the signature of a second `margin-left:auto`: flex splits the free
 // space evenly between the auto margins and strands whatever sits between them.
 const PROBE = `(() => {

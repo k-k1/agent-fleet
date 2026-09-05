@@ -1,13 +1,14 @@
-// 名簿の行に「何で動いているか」を出す（docs/log/70 §70.14.7）。
+// The roster row states what each member is running on (docs/log/70 §70.14.7).
 //
-// ⚠️ スロット型のランタイムでは「箱」を、それ以外では「数値」を出す —— 別の主張だから
-// である。ecs-ec2 のメモリは上限ではなく「載る箱を選ぶ要求」で、本人はその箱を丸ごと
-// 使う。だから "8192 MB" は半分しか言っておらず、"m6i.large · 2 vCPU / 8 GiB" が答え。
-// ⚠️ CPU はメンバー詳細と同じ規則で、cpu_effective=false のときは出さない（効かない
-// 数字を画面に出すのは、無い欄より悪い）。
-// ⚠️ 未設定の扱いは軸で違う。数値の軸（ディスク・セッション）は黙る——全行が 0 で埋まった
-// 列は読まれなくなる。**箱は黙らない**: ecs-ec2 のメモリ 0 は「既定」ではなく最小の段に
-// 載ることなので、伏せる方が嘘になる。
+// A slot runtime shows the instance, everything else shows the numbers, because they are
+// different claims: on ecs-ec2 the memory figure is not a cap but a request that selects the
+// instance the member then gets in full, so "8192 MB" says only half of it and
+// "m6i.large · 2 vCPU / 8 GiB" is the answer.
+// CPU follows the same rule as the member detail: with cpu_effective=false it is not shown, as
+// printing a number that has no effect is worse than omitting the field.
+// "Unset" is handled per axis. The numeric axes (disk, sessions) stay silent, because a column
+// of zeros stops being read. The instance does not stay silent: memory 0 on ecs-ec2 means
+// landing on the smallest step, not "the default", so hiding it would be the lie.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -91,44 +92,45 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("メンバー名簿に稼働している大きさを出す", () => {
-  it("スロット型では「乗る箱」を出し、クラスに応じて別の箱になる", async () => {
+describe("member roster shows the size actually in effect", () => {
+  it("shows the instance on a slot runtime, and a different one per class", async () => {
     await mountRoster(SIZING_CLASSES);
-    // arm クラスの 8 GiB は m7g.large。
+    // 8 GiB in the arm class is an m7g.large.
     expect(rowText(0)).toContain("m7g.large");
     expect(rowText(0)).toContain("2 vCPU / 8 GiB");
     expect(rowText(0)).toContain("s≤3");
-    // クラス未指定 = 既定（standard）の 4 GiB は m7i.large に載る。
+    // No class means the default (standard), where 4 GiB lands on an m7i.large.
     expect(rowText(1)).toContain("m7i.large");
   });
 
-  it("cpu_effective=false のとき CPU の数値は出さない", async () => {
+  it("does not print a CPU number when cpu_effective=false", async () => {
     await mountRoster(SIZING_CLASSES);
-    // 行に出てよい vCPU は「箱の仕様」だけ。cpu_limit=2048 由来の "2 vCPU" 単独は出ない。
+    // The only vCPU allowed on the row is the instance's spec; a bare "2 vCPU" derived from
+    // cpu_limit=2048 must not appear.
     const sizes = Array.from(document.querySelectorAll(".member-row .mr-size")).map((e) => e.textContent || "");
     expect(sizes.some((t) => t === "2 vCPU")).toBe(false);
     expect(sizes.some((t) => t.includes("2 vCPU / 8 GiB"))).toBe(true);
   });
 
-  // ⚠️ スロット型では「未設定」でも箱は出す。ecs-ec2 のメモリ 0 は「デプロイ既定」では
-  // なく **最小の段に載る**（slotTypeFor(0)）ので、箱を伏せる方が嘘になる——メンバー詳細
-  // が `admin.ws_slot_zero` で同じことを言っている。「未設定なら黙る」規則が効くのは
-  // 数値の軸（ディスク・セッション）の方だけである。
-  it("未設定でも箱は出す。ただし数値の軸は 0 を並べない", async () => {
+  // On a slot runtime the instance is shown even when unset: memory 0 on ecs-ec2 is not "the
+  // deployment default" but landing on the smallest step (slotTypeFor(0)), so hiding it would
+  // be the lie — the member detail says the same via `admin.ws_slot_zero`. The "stay silent
+  // when unset" rule applies only to the numeric axes (disk, sessions).
+  it("shows the instance even when unset, but prints no zeros on the numeric axes", async () => {
     await mountRoster(SIZING_CLASSES);
-    expect(rowText(2)).toContain("m7i.large"); // 最小の段に載る、が事実
+    expect(rowText(2)).toContain("m7i.large"); // it does land on the smallest step
     expect(rowText(2)).not.toContain("s≤");
     expect(rowText(2)).not.toContain("ディスク");
   });
 
-  it("スロットの無いランタイムでは、未設定の行に数値を並べない", async () => {
+  it("prints no numbers on an unset row when the runtime has no slots", async () => {
     await mountRoster({ runtime: "local", cpu_effective: true, mem_meaning: "limit", disk_meaning: "quota" });
     expect(rowText(2)).not.toContain("GiB");
     expect(rowText(2)).not.toContain("vCPU");
     expect(rowText(2)).not.toContain("s≤");
   });
 
-  it("スロットが無いランタイムでは箱ではなく数値を出す", async () => {
+  it("shows the numbers rather than an instance when the runtime has no slots", async () => {
     await mountRoster({ runtime: "local", cpu_effective: true, mem_meaning: "limit", disk_meaning: "quota" });
     expect(rowText(0)).not.toContain("m7g");
     expect(rowText(0)).toContain("8 GiB");

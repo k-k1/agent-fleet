@@ -12,54 +12,53 @@ import {
 } from "./model.ts";
 import type { Turn } from "./types.ts";
 
-// このパイプラインはミラーと共有セッションビューの両方が通る唯一の描画経路なので、
-// ここが崩れると「所有者と受信者で会話の見え方が違う」という形で表面化する。
-// MirrorView.tsx に埋もれていた頃はテストが1本も無かった。
+// This pipeline is the one render path both the mirror and the shared-session view go through,
+// so a break here surfaces as the owner and the recipient seeing different conversations.
 
 const user = (text: string, extra: Partial<Turn> = {}): Turn => ({ role: "user", text, ...extra });
 const asst = (text: string, extra: Partial<Turn> = {}): Turn => ({ role: "assistant", text, ...extra });
 
 describe("isNoise", () => {
-  it("システムが差し込んだ user 行を落とし、本物の発話は残す", () => {
+  it("drops system-injected user rows and keeps real utterances", () => {
     expect(isNoise(user("<system-reminder>foo"))).toBe(true);
-    expect(isNoise(user("  <bash-input>ls</bash-input>"))).toBe(true); // 先頭空白は無視
+    expect(isNoise(user("  <bash-input>ls</bash-input>"))).toBe(true); // leading whitespace is ignored
     expect(isNoise(user("[Request interrupted by user for tool use]"))).toBe(true);
     expect(isNoise(user("これは普通の指示です"))).toBe(false);
   });
 
-  it("assistant 側は何であれノイズ扱いしない", () => {
+  it("never treats anything on the assistant side as noise", () => {
     expect(isNoise(asst("<system-reminder>これは本文の一部"))).toBe(false);
   });
 });
 
 describe("coalesceUserActions", () => {
-  it("`!`実行を bash ブロックにし、対になる出力ターンを吸収する", () => {
+  it("turns a `!` run into a bash block, absorbing its paired output turn", () => {
     const out = coalesceUserActions([
       user("<bash-input>ls -la</bash-input>"),
       user("<bash-stdout>a.txt\nb.txt</bash-stdout><bash-stderr>warn</bash-stderr>"),
       asst("見ました"),
     ]);
-    expect(out).toHaveLength(2); // 出力ターンは消費されている
+    expect(out).toHaveLength(2); // the output turn has been consumed
     expect(out[0].bash).toBe(true);
-    expect(out[0].text).toBe("$ ls -la"); // コピー用の平文
+    expect(out[0].text).toBe("$ ls -la"); // plain text, for copying
     expect(out[0].parts).toEqual([{ kind: "bash", text: "ls -la", output: "a.txt\nb.txt", stderr: "warn" }]);
   });
 
-  it("出力ターンが無い `!`実行も bash ブロックとして残す", () => {
+  it("keeps a `!` run as a bash block even with no output turn", () => {
     const out = coalesceUserActions([user("<bash-input>pwd</bash-input>")]);
     expect(out).toHaveLength(1);
     expect(out[0].parts?.[0]).toEqual({ kind: "bash", text: "pwd", output: "", stderr: "" });
   });
 
-  it("`/`実行を cmd チップにする", () => {
+  it("turns a `/` run into a cmd chip", () => {
     const out = coalesceUserActions([user("<command-name>/scout</command-name><command-args>--deep</command-args>")]);
     expect(out[0].cmd).toBe(true);
     expect(out[0].parts).toEqual([{ kind: "cmd", text: "/scout", info: "--deep" }]);
   });
 
-  it("スキル起動のようにタグ順が逆でも名前を拾う（順序を固定しない）", () => {
-    // 名前が先頭に来ることを要求していた頃、この形は解析できずノイズとして丸ごと
-    // 消え、user ターンの境目が失われて以降の返信が1ブロックに融合していた。
+  it("reads the name whatever the tag order, as a skill invocation logs it", () => {
+    // Requiring the name first left this shape unparseable: isNoise dropped the turn whole, the
+    // user-turn boundary went with it, and every following reply merged into one block.
     const t = user("<command-message>scout is running…</command-message><command-name>/scout</command-name>");
     expect(parseCommand(t)).toEqual({ name: "/scout", args: "" });
     expect(coalesceUserActions([t])[0].cmd).toBe(true);
@@ -67,24 +66,24 @@ describe("coalesceUserActions", () => {
 });
 
 describe("groupTurns", () => {
-  it("同じ role の連続ターンを1ブロックに畳み、本文とトークンをまとめる", () => {
+  it("folds consecutive same-role turns into one block, merging text and tokens", () => {
     const groups = groupTurns([
       asst("前半", { ts: "2026-08-13T10:00:00Z", outTok: 10, idx: 1 }),
       asst("後半", { ts: "2026-08-13T10:05:00Z", outTok: 5, inTok: 100, cacheRead: 20 }),
     ]);
     expect(groups).toHaveLength(1);
     expect(groups[0].text).toBe("前半\n\n後半");
-    expect(groups[0].outTok).toBe(15); // 出力は合算
-    expect(groups[0].inTok).toBe(100); // 入力/キャッシュは最後の値
-    expect(groups[0].ts).toBe("2026-08-13T10:00:00Z"); // 並び順は開始時刻
-    expect(groups[0].endTs).toBe("2026-08-13T10:05:00Z"); // フッタは終了時刻
+    expect(groups[0].outTok).toBe(15); // output tokens are summed
+    expect(groups[0].inTok).toBe(100); // input/cache take the last value
+    expect(groups[0].ts).toBe("2026-08-13T10:00:00Z"); // ordering uses the start
+    expect(groups[0].endTs).toBe("2026-08-13T10:05:00Z"); // the footer uses the end
   });
 
-  it("role が変われば別ブロックになる", () => {
+  it("starts a new block whenever the role changes", () => {
     expect(groupTurns([user("お願い"), asst("はい"), user("もう一度")])).toHaveLength(3);
   });
 
-  it("compact/bash/cmd は単独ブロックで、隣とマージしない", () => {
+  it("keeps compact/bash/cmd blocks standalone, never merged with a neighbour", () => {
     for (const flag of ["compact", "bash", "cmd"] as const) {
       const groups = groupTurns([
         asst("前", { parts: [{ kind: "text", text: "前" }] }),
@@ -95,24 +94,24 @@ describe("groupTurns", () => {
     }
   });
 
-  it("ノイズと sidechain は落とす（委譲はカードで表現するため）", () => {
+  it("drops noise and sidechain turns (delegation is shown as a card instead)", () => {
     const groups = groupTurns([user("<system-reminder>x"), asst("子の作業", { sidechain: true }), asst("答え")]);
     expect(groups).toHaveLength(1);
     expect(groups[0].text).toBe("答え");
   });
 
-  it("parts を持たない旧 Agent のターンは text から1つ合成する", () => {
+  it("synthesises one part from the text of an old Agent turn that has none", () => {
     expect(groupTurns([asst("本文だけ")])[0].parts).toEqual([{ kind: "text", text: "本文だけ" }]);
   });
 
-  it("operator 由来などの source は同 role マージを跨いで残る", () => {
+  it("keeps a source such as operator across a same-role merge", () => {
     const groups = groupTurns([user("一言目"), user("二言目", { source: "operator" })]);
     expect(groups[0].source).toBe("operator");
   });
 });
 
 describe("foldParts", () => {
-  it("連続するツールを1つの toolrun にまとめ、他は素通しする", () => {
+  it("groups consecutive tools into one toolrun and passes everything else through", () => {
     const items = foldParts([
       { kind: "text", text: "始めます" },
       { kind: "tool", tool: "Edit" },
@@ -122,11 +121,11 @@ describe("foldParts", () => {
     ]);
     expect(items.map((i) => i.kind)).toEqual(["part", "toolrun", "part", "toolrun"]);
     expect(items[1].kind === "toolrun" && items[1].tools).toHaveLength(2);
-    // 単独のツールも toolrun になる（呼び出し側の分岐を2通りに保つため）
+    // A lone tool becomes a toolrun too, so the caller only ever branches two ways.
     expect(items[3].kind === "toolrun" && items[3].tools).toHaveLength(1);
   });
 
-  it("元の並び順を index で保持する", () => {
+  it("preserves the original ordering as an index", () => {
     const items = foldParts([{ kind: "tool" }, { kind: "text", text: "x" }]);
     expect(items[0].kind === "toolrun" && items[0].tools[0].i).toBe(0);
     expect(items[1].kind === "part" && items[1].i).toBe(1);
@@ -134,7 +133,7 @@ describe("foldParts", () => {
 });
 
 describe("latestContext", () => {
-  it("使用量を持つ最新の assistant ブロックを返す", () => {
+  it("returns the newest assistant block that carries usage", () => {
     const groups = groupTurns([
       asst("古い", { inTok: 10, cacheRead: 1, ctxWindow: 200000, model: "old" }),
       user("次"),
@@ -143,20 +142,20 @@ describe("latestContext", () => {
     expect(latestContext(groups)).toMatchObject({ fresh: 50, read: 5, create: 2, model: "new" });
   });
 
-  it("使用量の記録が無ければ null", () => {
+  it("is null when nothing recorded usage", () => {
     expect(latestContext(groupTurns([asst("記録なし")]))).toBeNull();
   });
 });
 
 describe("peerSenderOf", () => {
-  it("peer 封筒から送信元セッション名を読む", () => {
+  it("reads the sending session name out of a peer envelope", () => {
     expect(peerSenderOf("[agent-fleet:peer from=build-api] お願い")).toBe("build-api");
     expect(peerSenderOf("ふつうの発話")).toBeNull();
   });
 
-  it("封筒に語が増えても名前を読み落とさない", () => {
-    // 名前の直後を "]" に固定していたため、intent/reply が乗った時点でバッジが
-    // 無言で「別のセッション」に劣化した（docs/log/58 §58.14）。以後の追加にも耐える形。
+  it("still reads the name when the envelope grows more words", () => {
+    // Pinning "]" straight after the name silently degraded the badge to the unnamed one the
+    // moment intent/reply were added (docs/log/58 §58.14). This shape survives further additions.
     expect(
       peerSenderOf("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
     ).toBe("build-api");
@@ -164,7 +163,7 @@ describe("peerSenderOf", () => {
 });
 
 describe("peerIntentOf", () => {
-  it("種別を読む / 未知と非 peer は null", () => {
+  it("reads the kind; unknown values and non-peer text give null", () => {
     expect(peerIntentOf("[agent-fleet:peer from=a intent=notice reply=none] 出た")).toBe("notice");
     expect(peerIntentOf("[agent-fleet:peer from=a intent=request reply=only-if-blocked] 直して")).toBe(
       "request",
@@ -176,34 +175,34 @@ describe("peerIntentOf", () => {
 });
 
 describe("mergeTurns", () => {
-  it("同じ idx の再送は積まずに置き換える", () => {
-    // opencode/codex は伸びている最中の assistant ターンを毎ポーリング送り直す。
-    // 素朴に append すると同じ回答が何度も並ぶ(共有ビューで実際に起きた)。
+  it("replaces rather than stacks a resend of the same idx", () => {
+    // opencode/codex re-send the assistant turn still growing on every poll, so a naive append
+    // lines the same answer up over and over (seen in the shared view).
     const held = [user("お願い", { idx: 1 }), asst("考え中", { idx: 2 })];
     const merged = mergeTurns(held, [asst("考え中… できました", { idx: 2 })]);
     expect(merged).toHaveLength(2);
     expect(merged[1].text).toBe("考え中… できました");
   });
 
-  it("重なりのない増分は追加する", () => {
+  it("appends a non-overlapping increment", () => {
     const merged = mergeTurns([user("A", { idx: 1 })], [asst("B", { idx: 2 })]);
     expect(merged.map((t) => t.text)).toEqual(["A", "B"]);
   });
 
-  it("前方ページを重ねても idx 昇順に整う(以前の会話を読み込む)", () => {
+  it("still sorts by ascending idx when a backward page overlaps (loading earlier messages)", () => {
     const held = [user("新しい", { idx: 10 }), asst("新しい返事", { idx: 11 })];
     const older = [user("古い", { idx: 4 }), asst("古い返事", { idx: 5 }), user("新しい", { idx: 10 })];
     const merged = mergeTurns(older, held);
     expect(merged.map((t) => t.idx)).toEqual([4, 5, 10, 11]);
   });
 
-  it("何も変わらなければ同じ配列を返す(再レンダーを起こさない)", () => {
+  it("returns the same array when nothing changed, so no re-render happens", () => {
     const held = [user("A", { idx: 1 })];
     expect(mergeTurns(held, [])).toBe(held);
     expect(mergeTurns(held, [user("A", { idx: 1 })])).toBe(held);
   });
 
-  it("idx を持たない(旧 Agent の)ターンは到着順のまま", () => {
+  it("leaves turns without an idx (an old Agent) in arrival order", () => {
     const merged = mergeTurns([user("A")], [asst("B")]);
     expect(merged.map((t) => t.text)).toEqual(["A", "B"]);
   });

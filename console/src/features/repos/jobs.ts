@@ -1,13 +1,15 @@
-// リポジトリ取り込みジョブ（docs/log/78）。`git clone` / `svn checkout` は Agent 側で
-// バックグラウンドのジョブになり、Console は GET /api/repo-jobs でその**実際の**進行を
-// 見る。以前は POST の応答を待つだけで、応答が返らなかった（= 上流のプロキシが 60 秒で
-// 諦めた）ときに「フォルダができているから成功」と読み替えていたため、走行中の作業コピーを
-// 取り込み済みとして並べていた。
+// Repository import jobs (docs/log/78). `git clone` / `svn checkout` run as background
+// jobs on the Agent, and the Console watches their ACTUAL progress through
+// GET /api/repo-jobs. Waiting on the POST response alone meant that when no response came
+// back (the upstream proxy gave up at 60 seconds) a folder on disk was read as success, so
+// a still-running working copy was listed as imported.
 //
-// この層が持つ性質:
-//   - **タブを閉じても消えない**。進行はサーバにあるので、再読み込みしても別タブでも同じ行が出る。
-//   - **終端は既読にするまで残る**（失敗・中断）。結末を見る前に消えると「黙って失敗した」に戻る。
-//   - 走行中だけポーリングを速める（2 秒）。何も走っていなければリポジトリ一覧と同じ 60 秒。
+// Properties this layer holds:
+//   - Closing the tab does not lose a job: the progress lives on the server, so the same row
+//     shows up after a reload and in another tab.
+//   - A settled job stays until it is acknowledged (failed, interrupted). Dropping it before
+//     the outcome is seen puts us back at "it failed silently".
+//   - Polling speeds up only while something runs (2s); otherwise 60s, like the repo list.
 import { create } from "zustand";
 import { api, isTransientErr, raw } from "../../core/api/client.ts";
 import { useWorkspaceStore, wsRunning } from "../../core/store/workspace.ts";
@@ -22,12 +24,13 @@ export interface RepoJob {
   path?: string;
   url?: string;
   state: RepoJobState;
-  /** 最後に見えた出力行（svn の "A path" / git の "Receiving objects: …"）。 */
+  /** Last output line seen (svn's "A path" / git's "Receiving objects: …"). */
   progress?: string;
-  /** 取得した行数。総数は svn も git も事前に教えてくれないので、割合にはできない。 */
+  /** Lines fetched. Neither svn nor git announces a total up front, so this cannot be a
+   *  percentage. */
   items?: number;
   error?: string;
-  /** 失敗したが作業コピーは残っている（svn なら 更新 で続きから取れる）。 */
+  /** Failed, but the working copy survives (for svn, refresh resumes from where it stopped). */
   kept?: boolean;
   startedAt: string;
   endedAt?: string;
@@ -40,16 +43,17 @@ const IDLE_POLL_MS = 60000;
 
 interface RepoJobsStore {
   jobs: RepoJob[];
-  /** 一覧を取り直す。過渡的失敗（起動直後の 502）では前の内容を残す。 */
+  /** Re-fetch the list. A transient failure (the 502 right after a start) keeps the previous
+   *  contents. */
   refresh(): Promise<RepoJob[]>;
-  /** 走行中なら中止、終端済みなら既読（どちらも DELETE /api/repo-jobs/{id}）。 */
+  /** Cancel while running, acknowledge once settled (both DELETE /api/repo-jobs/{id}). */
   remove(id: string): Promise<void>;
-  /** id が走行中でなくなるまで待つ。消えていた場合は null。 */
+  /** Wait until id is no longer running. null when the job is gone. */
   wait(id: string): Promise<RepoJob | null>;
 }
 
-// 同時に飛んだ refresh を 1 本にまとめる。取り込み中は表示のポーラーと wait() の両方が
-// 見に来るので、まとめないと同じ GET が二重に出る。
+// Collapse concurrent refreshes into one: during an import both the display poller and
+// wait() come looking, and without this the same GET goes out twice.
 let inflight: Promise<RepoJob[]> | null = null;
 
 export const useRepoJobsStore = create<RepoJobsStore>((set, get) => ({
@@ -69,8 +73,9 @@ export const useRepoJobsStore = create<RepoJobsStore>((set, get) => ({
       const jobs = Array.isArray(d.jobs) ? d.jobs : [];
       const before = get().jobs;
       set({ jobs });
-      // 終端に落ちた瞬間、そのフォルダは「取り込み中」から本物の作業コピーになる
-      // （Agent は走行中のものを GET /repos に出さない）。一覧を取り直して行を出す。
+      // The moment a job settles, its folder stops being "importing" and becomes a real
+      // working copy (the Agent does not list running ones under GET /repos). Re-fetch the
+      // list so the row appears.
       const settled = before.some((b) => isRepoJobRunning(b) && !jobs.some((j) => j.id === b.id && isRepoJobRunning(j)));
       if (settled) void useReposStore.getState().refresh();
       return jobs;
@@ -86,14 +91,14 @@ export const useRepoJobsStore = create<RepoJobsStore>((set, get) => ({
     for (;;) {
       const jobs = await get().refresh();
       const j = jobs.find((x) => x.id === id);
-      if (!j) return null; // 別タブで既読にされた / Agent が忘れた
+      if (!j) return null; // acknowledged in another tab / forgotten by the Agent
       if (!isRepoJobRunning(j)) return j;
       await new Promise((r) => setTimeout(r, FAST_POLL_MS));
     }
   },
 }));
 
-/** 走行中は 2 秒、そうでなければ 60 秒でポーリングする。返り値は停止関数（StrictMode 対応）。 */
+/** Poll every 2s while a job runs, every 60s otherwise. Returns a stop function (for StrictMode). */
 export function startRepoJobsPolling(): () => void {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | undefined;

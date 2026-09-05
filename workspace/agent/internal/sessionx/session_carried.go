@@ -1,14 +1,16 @@
 package sessionx
 
-// 保留中の対話の持ち越し（docs/log/75 §75.6）。
+// Carrying over a pending interaction (docs/log/75 §75.6).
 //
-// モーダルを出したまま畳まれたセッションの「意図」を持ち越し、再開後に**文章として**
-// 配達する。モーダルそのものは戻せない — claude を --resume しても未応答の tool_use は
-// 親ポインタで迂回され、会話木から外れる（docs/log/75 §75.10 A で実測）。
+// Carries over the intent of a session that was folded with a modal still open and delivers it
+// as PROSE once the session resumes. The modal itself cannot be restored: even with
+// `claude --resume`, an unanswered tool_use is bypassed via the parent pointer and drops out
+// of the conversation tree (measured, docs/log/75 §75.10 A).
 //
-// ここが持つのは 3 つ: 昇格（pending-* → carried）、配達文面の組み立て、配達の入口。
-// 文面はテスト可能な純関数に切ってある — 実測（§75.10 C）で分かったとおり、この文面は
-// 飾りではなく**機能そのもの**で、「質問し直すな」の 1 行が無いと claude は質問し直す。
+// Three things live here: promotion (pending-* → carried), building the delivery text, and the
+// delivery entry point. The text is split out as a testable pure function because, as §75.10 C
+// measured, it is not decoration but the feature itself: without the "do not ask again" line,
+// claude asks again.
 
 import (
 	"encoding/json"
@@ -24,25 +26,26 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// PromoteCarriedFor は畳まれようとしている（あるいは既に畳まれた）セッションの
-// 保留中の対話を持ち越しへ昇格させる。
+// PromoteCarriedFor promotes the pending interaction of a session that is about to be folded
+// (or already has been) into a carried entry.
 //
-// 保留の在処が kind で違うので、入口は 2 つある:
+// Where the pending state lives differs by kind, so there are two entry points:
 //
-//   - claude — hooks が ask 時点で pending-question / pending-plan / pending-perm を
-//     ディスクへ書いているので、それを読むだけでよい（プロセスが死んだ後でも残る）。
-//   - それ以外 — 保留は会話 DB・events.jsonl・ペインのフッタ・runtime handle の
-//     Interaction のいずれかにあり、kind 自身に訊く（agents.ModalReporter）。
-//     このうちペインと handle は**プロセスと一緒に消える**ので、畳む前に呼ぶこと。
+//   - claude — the hooks wrote pending-question / pending-plan / pending-perm to disk at ask
+//     time, so reading them is enough (they remain after the process dies).
+//   - anything else — the pending state sits in the conversation DB, events.jsonl, the pane's
+//     footer or the runtime handle's Interaction, so the kind itself is asked
+//     (agents.ModalReporter). Of these, the pane and the handle die with the process, so call
+//     this before folding.
 //
-// ★ tier1 の門は kind ではなく「halt が resumable か」になっている（tier1Foldable・
-// docs/log/75 P5）。つまり claude 以外も畳まれる以上、claude 以外の持ち越しが無いと
-// ADR 0055 決定 2（畳んでよいのは失われないときだけ）が成立しない。
+// The tier1 gate is not the kind but whether the halt is resumable (tier1Foldable,
+// docs/log/75 P5). Since kinds other than claude get folded too, ADR 0055 decision 2 (fold
+// only when nothing is lost) does not hold unless they can be carried over as well.
 func PromoteCarriedFor(m session.Meta) bool {
 	promoted := false
 	if NormalizeKind(m.Kind) == session.KindClaude {
-		// まだ生きている＝これから halt が殺すところ。既に死んでいる＝ Workspace 停止 /
-		// クラッシュ / 利用者の /exit を一覧が見つけたところ。
+		// Still alive = the halt is about to kill it. Already dead = the listing just found
+		// a workspace stop, a crash, or the user's own /exit.
 		reason := "stopped"
 		if SessionAlive(m) {
 			reason = "halt"
@@ -57,12 +60,14 @@ func PromoteCarriedFor(m session.Meta) bool {
 	return promoted
 }
 
-// notifyCarried は「答えを待っていた対話を抱えたまま畳んだ」を通知センターへ流す。
+// notifyCarried pushes "folded while still holding an interaction that awaited an answer" to
+// the notification center.
 //
-// 畳むことそのものは無害（持ち越してあるので失われない）が、**利用者はそれを知らない**。
-// 一覧のバッジは Console を開いている人にしか見えず、質問が出たときの通知は「答えて
-// ください」としか言っていない。畳んだ側から 1 通出しておかないと、答えたつもりの無い
-// 質問が静かに保留のまま残る。
+// Folding itself is harmless (the interaction is carried, so nothing is lost), but the user
+// does not know it happened. The badge in the list is visible only to someone with the Console
+// open, and the notification raised when the question appeared says no more than "please
+// answer". Without one message from the folding side, a question the user never realised was
+// theirs to answer stays pending silently.
 func notifyCarried(m session.Meta) {
 	c, ok := status.ReadCarried(session.UUID(m.Dir, m.Name))
 	if !ok {
@@ -74,11 +79,12 @@ func notifyCarried(m session.Meta) {
 	_ = notice.Put(ev)
 }
 
-// oneLine は TUI へ打鍵する文字列を 1 行へ畳む。
+// oneLine folds a string that will be typed into the TUI onto a single line.
 //
-// ★これは飾りではない: {t} は tmux send-keys -l でバイト列がそのままペインに載るので、
-// 改行は LF としてペインに届き Enter として作用する（docs/build/92）。複数行の配達文は
-// 途中で送信され、残りが次のプロンプトや別のモーダルへ落ちる。
+// Not cosmetic: {t} goes through tmux send-keys -l, which puts the bytes on the pane as they
+// are, so a newline arrives as an LF and acts as Enter (docs/build/92). A multi-line delivery
+// text would be submitted partway through, and the rest would land in the next prompt or in
+// another modal.
 func oneLine(s string) string {
 	r := strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ")
 	return strings.Join(strings.Fields(r.Replace(s)), " ")
@@ -91,13 +97,14 @@ type CarriedAnswer struct {
 	Notes  string   `json:"notes,omitempty"`
 }
 
-// carriedPreamble は配達文の頭。**実測で効くことを確認した文言**（§75.10 C）:
-// これが無いと claude は「質問しろ」という元の指示が未達だと解釈して質問し直す。
+// carriedPreamble is the head of the delivery text. The wording was measured to work
+// (§75.10 C): without it, claude reads the original "ask the user" instruction as unfulfilled
+// and asks again.
 const carriedPreamble = "（停止前に未回答だった質問への回答です。質問し直さず、この回答を使って作業を続けてください）"
 
 // buildCarriedQuestionPrompt renders the carried answer as the single line typed into
-// the resumed TUI. 質問文を必ず一緒に運ぶのは、その質問が**会話から消えている**ため —
-// 回答だけ送っても claude には何への回答か分からない。
+// the resumed TUI. The question text always travels with it because the question is GONE from
+// the conversation: sent on its own, the answer tells claude nothing about what it answers.
 func buildCarriedQuestionPrompt(qs []transcript.Question, answers []CarriedAnswer) string {
 	parts := make([]string, 0, len(answers))
 	for i, a := range answers {
@@ -114,8 +121,9 @@ func buildCarriedQuestionPrompt(qs []transcript.Question, answers []CarriedAnswe
 				labels = append(labels, l)
 			}
 		}
-		// 選択も自由入力も無い質問は**丸ごと落とす**。「選ばれていません」と送っても
-		// claude 側にその質問の記憶は無いので、意味を持たない 1 文が増えるだけ。
+		// A question with neither a selection nor free text is dropped whole. Sending
+		// "nothing was selected" is meaningless to claude, which has no memory of that
+		// question — it would only add one sentence that carries nothing.
 		seg := ""
 		if len(labels) > 0 {
 			seg = strings.Join(labels, "・")
@@ -144,9 +152,9 @@ func buildCarriedQuestionPrompt(qs []transcript.Question, answers []CarriedAnswe
 
 // buildCarriedPlanPrompt renders the carried plan decision.
 //
-// ★承認は「承認」ではなく**実行の指示**である（§75.10 E の実測）。文章で承認を送ると
-// claude は ExitPlanMode を出し直さずそのまま実行するので、呼び出し側（Console）は
-// これを取り消せない決定として扱うこと。
+// An approval here is not "approval" but an INSTRUCTION TO EXECUTE (measured, §75.10 E). Given
+// an approval in prose, claude proceeds without re-emitting ExitPlanMode, so the caller (the
+// Console) must treat this as a decision it cannot take back.
 func buildCarriedPlanPrompt(approve bool, feedback string) string {
 	Fb := oneLine(feedback)
 	if approve {
@@ -163,8 +171,8 @@ func buildCarriedPlanPrompt(approve bool, feedback string) string {
 	return s + "計画を見直して、あらためて提示してください。"
 }
 
-// buildCarriedPermissionPrompt renders the permission case. 許可の答えは死んだツール
-// 呼び出しには届かないので、運ぶのは**事実**だけ — 「続けろ」と、何を訊かれていたか。
+// buildCarriedPermissionPrompt renders the permission case. A permission answer cannot reach
+// the dead tool call, so all that travels is the FACTS: keep going, and what was being asked.
 func buildCarriedPermissionPrompt(detail string) string {
 	d := oneLine(detail)
 	s := "（停止前に許可を求めていた操作がありましたが、セッションが停止したため回答は届いていません"
@@ -190,8 +198,9 @@ func carriedQuestions(c status.Carried) []transcript.Question {
 // interaction: it resumes the session if needed and delivers the decision as ordinary
 // prose, then drops the carried entry.
 //
-// キー列は 1 つも送らない。持ち越しは「モーダルが出ていない」状態なので、Down/Enter は
-// 行き先を持たず、生きたペインに当たれば別のものを決めてしまう（AUQ 誤配達クラス）。
+// Not one key sequence is sent. A carried interaction means no modal is on screen, so
+// Down/Enter have no destination and would decide something else if they hit a live pane (the
+// AUQ misdelivery class).
 func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -218,7 +227,7 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_carried", "this session has no carried interaction")
 		return
 	}
-	// 破棄はセッションを起こさない — カードを消すだけ。
+	// Discarding does not wake the session; it only removes the card.
 	if req.Decision == "discard" {
 		status.RemoveCarried(sid)
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"discarded": true})
@@ -245,8 +254,8 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_answers", "nothing to deliver")
 		return
 	}
-	// 生きているセッションに新しいモーダルが出ているなら送らない。持ち越しの文章が
-	// そのモーダルの選択操作に化ける（docs/build/92 の誤配達クラス）。
+	// Do not send while a live session has a new modal up: the carried prose turns into a
+	// selection in that modal (the misdelivery class in docs/build/92).
 	if SessionAlive(m) {
 		if blocked := promptBlocker(name); blocked != "" {
 			writeBlockedErr(w, blocked)
@@ -256,17 +265,18 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "start_failed", err.Error())
 		return
 	}
-	// 持ち越しはここで消す: 配達は非同期（CLI の起動待ちがある）なので、応答を待つ
-	// あいだにカードが二重に押されるのを防ぐ。配達に失敗しても復活はさせない —
-	// 会話は転写に残っており、利用者はコンポーザから同じことを言える。
+	// The carried entry is dropped here: delivery is asynchronous (there is a CLI boot to
+	// wait for), so this keeps the card from being pressed twice while the response is
+	// pending. It is not restored when delivery fails — the conversation is in the
+	// transcript, and the user can say the same thing from the composer.
 	status.RemoveCarried(sid)
-	// バッジは付けない（recordInjection しない）: これは利用者自身の決定で、Console の
-	// 質問カードから答えた場合と同じ「ふつうの user 発言」である。オペレーターや peer の
-	// 注入と混ぜると、誰の指示かの区別が壊れる。
+	// No badge (no recordInjection): this is the user's own decision, the same ordinary user
+	// utterance as answering from the Console's question card. Mixing it with operator or
+	// peer injections destroys the distinction of whose instruction it was.
 	if m.DriverKind() == session.DriverManaged {
-		// managed には打鍵する pane が無い。thread へ直接 1 ターン送る（create の
-		// initial_prompt と同じ経路）。ここは既に ensureSessionTmux（managed では
-		// Resume）を通っているので handle は生きている。
+		// managed has no pane to type into. Send one turn straight to the thread (the same
+		// path as create's initial_prompt). We already went through ensureSessionTmux
+		// (Resume for managed), so the handle is live.
 		if err := sendManagedPrompt(m, prompt); err != nil {
 			writeRuntimeErr(w, err)
 			return
@@ -280,23 +290,25 @@ func HandleSessionCarriedAnswer(w http.ResponseWriter, r *http.Request) {
 }
 
 // promoteCarriedOther copies a NON-claude session's live pending modal into the
-// carried store, before whatever holds it goes away（docs/log/75 P5）。
+// carried store, before whatever holds it goes away (docs/log/75 P5).
 //
-// claude だけが保留をディスク（pending-question / pending-plan / pending-perm）に
-// 持っている。他の kind の保留は会話 DB・events.jsonl・ペインのフッタ・runtime handle の
-// Interaction のいずれかにあり、どれかは kind 自身しか知らない。だから訊く相手は
-// agents.ModalReporter 1 つに寄せてある — 畳む側は kind ごとの事情を持たない。
+// Only claude keeps its pending state on disk (pending-question / pending-plan /
+// pending-perm). For other kinds it sits in the conversation DB, events.jsonl, the pane's
+// footer or the runtime handle's Interaction, and only the kind itself knows which. So there
+// is a single place to ask, agents.ModalReporter — the folding side holds no per-kind
+// knowledge.
 //
-// ★**ハンドルもペインも起こし直さない**: ここは halt / shutdown の直前であり、既に
-// 死んでいるものを Resume すると、畳もうとしている thread をわざわざ立ち上げてしまう。
-// ModalReporter の実装はどれも「今あるものを覗く」だけで、無ければ false を返す。
+// Neither the handle nor the pane is woken back up: this runs right before halt/shutdown, and
+// resuming something already dead would start up the very thread being folded. Every
+// ModalReporter implementation merely peeks at what is there and returns false when there is
+// nothing.
 //
-// 取れないもの（コンテナごと SIGKILL された後の ACP / ペイン）は素直に失われる。
-// 取れないものを取れたことにはしない。
+// What cannot be obtained (an ACP or a pane after the container was SIGKILLed) is simply lost.
+// We never pretend otherwise.
 func promoteCarriedOther(m session.Meta) bool {
 	mr, ok := AgentOf(m.Kind).(agents.ModalReporter)
 	if !ok {
-		return false // 保留という概念を持たない kind（shell / ssm）
+		return false // kinds with no notion of a pending interaction (shell / ssm)
 	}
 	pm, ok := mr.PendingModal(m)
 	if !ok {

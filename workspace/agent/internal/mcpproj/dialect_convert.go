@@ -1,7 +1,8 @@
 package mcpproj
 
 // dialect_convert.go — the write-side counterpart to dialect.go's detection:
-// docs/log/56 §5 "マージは利用者が決める…ただし方言変換の候補は AF が計算して見せる" /
+// docs/log/56 §5 "the user decides the merge … but AF computes and shows the
+// dialect-conversion candidates" /
 // §9.2's copy panel (as-is / translate / expand). AF never picks FOR the user
 // (§5), but it computes what "translate" would produce so choosing it is not a
 // manual rewrite.
@@ -70,7 +71,8 @@ func translateValue(v, dst string) string {
 }
 
 // expandValue replaces every placeholder reference in v with ITS OWN resolved
-// environment value (docs/log/56 §9.2's non-recommended "実値へ展開して書く" — bakes a
+// environment value (docs/log/56 §9.2's non-recommended "write out the expanded real
+// value" — bakes a
 // host-specific value into a file that will be committed).
 func expandValue(v string) string {
 	return rewritePlaceholders(v, os.Getenv)

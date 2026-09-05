@@ -14,13 +14,14 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/61 P1 — 同一人物の判定。何を固定しているか:
-//   - 既存 Google デプロイの初回ログインが (google, sub) 行を現 identity に書き、
-//     user_key を動かさないこと（移行ゼロ）
-//   - IdP 側で email が変わっても identity が増えず、表示用の email だけ変わること
-//   - 別 IdP でも email が同じなら同じ identity（同じ workspace / home / secrets）
-//   - email が一致しなければ新規 identity で、それが本人に見えること
-//   - AUTH=proxy / AUTH=dev は何も変わらないこと（IdP subject が無いモード）
+// docs/log/61 P1 — deciding that two logins are the same person. What is pinned here:
+//   - the first login on an existing Google deployment writes the (google, sub) row against
+//     the current identity without moving user_key (zero migration)
+//   - an email change at the IdP adds no identity; only the displayed email changes
+//   - the same email from a different IdP is the same identity (same workspace / home /
+//     secrets)
+//   - an email that does not match becomes a new identity, and the user is told so
+//   - AUTH=proxy / AUTH=dev change in no way (no IdP subject in those modes)
 
 func newLinkStore(t *testing.T) *store.SQL {
 	t.Helper()
@@ -44,9 +45,9 @@ func countRows(t *testing.T, st *store.SQL, table string) int {
 	return n
 }
 
-// linkOf は「realm を持たない、ごく普通のログイン 1 回」。realm（規則 1.5・
-// docs/log/61 §61.15）を試すテストは IdentityLink を直に組み立てる — 既定で空にして
-// あるのは、realm 無しの行が従来どおりに振る舞うことこそ移行の要件だから。
+// linkOf is one perfectly ordinary login with no realm. Tests that exercise realm
+// (rule 1.5, docs/log/61 §61.15) build an IdentityLink directly; the default is empty here
+// because rows without a realm behaving exactly as before is the migration requirement.
 func linkOf(provider, subject, email string, emailJoin bool) store.IdentityLink {
 	return store.IdentityLink{
 		Provider: provider, Subject: subject, Email: email,
@@ -54,14 +55,15 @@ func linkOf(provider, subject, email string, emailJoin bool) store.IdentityLink 
 	}
 }
 
-// ★ 受入条件 6 の移行面: Google 専用で動いてきたデプロイの人が、アップグレード後の
-// 初回ログインで別人にならないこと。そして IdP 側の姓変更（email 変更）でも
-// user_key＝home ディレクトリ名が動かないこと。
+// TestLinkIdentityKeepsUserKeyAcrossEmailChange covers the migration face of acceptance
+// criterion 6: someone on a deployment that has run Google-only must not become a different
+// person at the first login after the upgrade, and a surname change at the IdP (a new
+// email) must not move user_key, which is the home directory name.
 func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
 
-	// P1 より前に存在していた行（email から作られた identity）。
+	// A row that predates P1: an identity built from the email.
 	seed, err := st.UpsertIdentity(ctx, email, sanitizeUser(email), "")
 	if err != nil {
 		t.Fatalf("seed: %v", err)
@@ -72,7 +74,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("first login: %v", err)
 	}
 	if isNew {
-		t.Fatal("既存デプロイの初回ログインが新規アカウント扱いになっている")
+		t.Fatal("the first login on an existing deployment is treated as a new account")
 	}
 	if got.ID != seed.ID || got.UserKey != seed.UserKey {
 		t.Fatalf("identity moved: %+v want id=%s key=%s", got, seed.ID, seed.UserKey)
@@ -81,7 +83,7 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("identity_provider rows = %d, want 1", n)
 	}
 
-	// 同じ (provider, subject) の再ログインで identity は増えない。
+	// Re-login with the same (provider, subject) must not add an identity.
 	again, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-sub-1", email, true))
 	if err != nil || isNew || again.ID != seed.ID {
 		t.Fatalf("re-login: id=%s isNew=%v err=%v", again.ID, isNew, err)
@@ -90,8 +92,8 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 		t.Fatalf("identity rows after re-login = %d, want 1", n)
 	}
 
-	// IdP 側で email が変わった（姓変更・ドメイン統合）。同じ人のまま、
-	// user_key は据え置き、表示用の email だけ新しくなる。
+	// The email changed at the IdP (surname change, domain merge). Still the same person:
+	// user_key stays put and only the displayed email is new.
 	const renamed = "yamada-hanako@acme.co.jp"
 	moved, isNew, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-sub-1", renamed, true))
 	if err != nil {
@@ -99,21 +101,22 @@ func TestLinkIdentityKeepsUserKeyAcrossEmailChange(t *testing.T) {
 	}
 	switch {
 	case isNew:
-		t.Fatal("email 変更で新規アカウントになっている")
+		t.Fatal("an email change created a new account")
 	case moved.ID != seed.ID:
-		t.Fatalf("email 変更で identity が変わった: %s -> %s", seed.ID, moved.ID)
+		t.Fatalf("an email change moved the identity: %s -> %s", seed.ID, moved.ID)
 	case moved.UserKey != seed.UserKey:
-		t.Fatalf("user_key が動いた: %q -> %q（home ディレクトリ名なので不変が要件）", seed.UserKey, moved.UserKey)
+		t.Fatalf("user_key moved: %q -> %q (it is the home directory name, so staying put is the requirement)", seed.UserKey, moved.UserKey)
 	case moved.Email != renamed:
-		t.Fatalf("表示用 email が更新されていない: %q", moved.Email)
+		t.Fatalf("the displayed email was not updated: %q", moved.Email)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows after rename = %d, want 1", n)
 	}
 }
 
-// 別の IdP から入っても email が同じなら同じ人 — 押したボタンで workspace が
-// 変わらないこと（§61.5 の 2 行目）。
+// TestLinkIdentityJoinsSameEmailFromAnotherProvider — entering from another IdP with the
+// same email is the same person: which button was pressed must not change the workspace
+// (§61.5, second line).
 func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
@@ -127,7 +130,7 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 		t.Fatalf("entra: %v", err)
 	}
 	if isNew || second.ID != first.ID || second.UserKey != first.UserKey {
-		t.Fatalf("別 IdP・同 email が別人になった: %+v want %+v (isNew=%v)", second, first, isNew)
+		t.Fatalf("a different IdP with the same email became a different person: %+v want %+v (isNew=%v)", second, first, isNew)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows = %d, want 1", n)
@@ -137,9 +140,10 @@ func TestLinkIdentityJoinsSameEmailFromAnotherProvider(t *testing.T) {
 	}
 }
 
-// email が一致しなければ新規 identity。isNew はログイン直後の通知の唯一の根拠なので
-// ここで固定する（受入条件 3）。招待で先に作られた行を本人が引き取るのは「新規」では
-// ないことも合わせて固定する。
+// TestLinkIdentityNewAccountWhenEmailIsUnknown — an email that does not match becomes a new
+// identity. isNew is the only basis for the notice shown right after login, so it is pinned
+// here (acceptance criterion 3), together with the fact that claiming a row an invitation
+// created earlier is not "new".
 func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const known = "yamada@acme.co.jp"
@@ -154,10 +158,10 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 		t.Fatalf("new person: %v", err)
 	}
 	if !isNew {
-		t.Fatal("未知の email が新規アカウントとして報告されていない")
+		t.Fatal("an unknown email is not reported as a new account")
 	}
 	if got.ID == first.ID {
-		t.Fatal("別 email が既存 identity に合流した（結合はしない設計）")
+		t.Fatal("a different email joined an existing identity (by design there is no join)")
 	}
 	if got.UserKey != sanitizeUser(other) {
 		t.Fatalf("user_key = %q, want %q", got.UserKey, sanitizeUser(other))
@@ -166,8 +170,8 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 		t.Fatalf("identity rows = %d, want 2", n)
 	}
 
-	// 管理者が email 未確定のまま user_key で作った招待行（tenants.go）を
-	// 本人が初ログインで引き取るのは、新規アカウントではない。
+	// A row an admin created by user_key while the email was still unknown (tenants.go),
+	// then claimed by its owner at first login, is not a new account.
 	const invited = "suzuki@acme.co.jp"
 	inv, err := st.UpsertIdentity(ctx, "", sanitizeUser(invited), "")
 	if err != nil {
@@ -178,13 +182,13 @@ func TestLinkIdentityNewAccountWhenEmailIsUnknown(t *testing.T) {
 		t.Fatalf("claim: %v", err)
 	}
 	if isNew || claimed.ID != inv.ID {
-		t.Fatalf("招待行の引き取り: id=%s want %s isNew=%v", claimed.ID, inv.ID, isNew)
+		t.Fatalf("claiming an invited row: id=%s want %s isNew=%v", claimed.ID, inv.ID, isNew)
 	}
 }
 
-// ★ AUTH=proxy と AUTH=dev には provider も subject も無い。P1 はそこでは何もせず、
-// email だけで解決する現行の契約を保つ（ここで fail-closed に倒すと既存の proxy
-// デプロイと dev が壊れる）。
+// TestIdentityResolutionUnchangedWithoutAnIdPSubject — AUTH=proxy and AUTH=dev have neither
+// provider nor subject. P1 does nothing there and keeps the current contract of resolving
+// by email alone; failing closed here would break existing proxy deployments and dev.
 func TestIdentityResolutionUnchangedWithoutAnIdPSubject(t *testing.T) {
 	st := newLinkStore(t)
 	const email = "yamada@acme.co.jp"
@@ -209,14 +213,14 @@ func TestIdentityResolutionUnchangedWithoutAnIdPSubject(t *testing.T) {
 		t.Fatalf("dev user_key = %q, want dev", ident.UserKey)
 	}
 	if n := countRows(t, st, "identity_provider"); n != 0 {
-		t.Fatalf("subject の無いモードで identity_provider に %d 行書かれている", n)
+		t.Fatalf("%d identity_provider rows were written in a mode that has no subject", n)
 	}
 }
 
-// ★ authGate が prov/sub を下流へ渡していること。P0 では email ヘッダしか渡って
-// おらず、resolveIdentity はそれだけを読んでいた — 渡し損ねると email 変更で
-// home が変わる（この経路が壊れても email が同じ間はテストが通ってしまうので、
-// 改名後に何が返るかで判定する）。
+// TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution — authGate must carry prov/sub
+// downstream; drop them and an email change moves the home. The judgement is made on what
+// comes back after a rename, because as long as the email stays the same this path can be
+// broken and the test still passes.
 func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
@@ -255,10 +259,10 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	if got := call(email); got != seed.UserKey {
 		t.Fatalf("user_key = %q, want %q", got, seed.UserKey)
 	}
-	// 同じ subject・違う email。email 由来のキーに落ちたら home が変わっている。
+	// Same subject, different email. Falling back to the email-derived key moves the home.
 	const renamed = "yamada-hanako@acme.co.jp"
 	if got := call(renamed); got != seed.UserKey {
-		t.Fatalf("改名後の user_key = %q, want %q（%q に落ちていれば prov/sub が届いていない）",
+		t.Fatalf("user_key after the rename = %q, want %q (falling back to %q means prov/sub never arrived)",
 			got, seed.UserKey, sanitizeUser(renamed))
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
@@ -266,9 +270,10 @@ func TestAuthGateCarriesTheIdPSubjectIntoIdentityResolution(t *testing.T) {
 	}
 }
 
-// 新規アカウントは本人に見える形で示す（受入条件 3: 黙って 2 つ目の workspace を
-// 作らない）。IdP が 1 つだけのデプロイでは新規＝新しい同僚でしかないので、
-// 既存デプロイの体験は変えない。
+// TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments — a new account is surfaced to its
+// owner (acceptance criterion 3: never silently create a second workspace). On a deployment
+// with a single IdP, "new" only ever means a new colleague, so the existing experience is
+// left as it was.
 func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	st := newLinkStore(t)
 	newcomer := func(t *testing.T, email string) *stubIdP {
@@ -286,29 +291,29 @@ func TestNewAccountNoticeIsShownOnceOnMultiIdPDeployments(t *testing.T) {
 	st1, au := startLogin(t, cfg, "?provider=okta&next=%2Fsessions")
 	w := callback(t, cfg, st1, "code", au.Query().Get("state"))
 	if w.Code != http.StatusOK {
-		t.Fatalf("新規アカウントで通知が出ていない: %d -> %s", w.Code, w.Header().Get("Location"))
+		t.Fatalf("no notice is shown for a new account: %d -> %s", w.Code, w.Header().Get("Location"))
 	}
 	page := w.Body.String()
 	if !strings.Contains(page, "新しいワークスペース") || !strings.Contains(page, "tanaka@acme.co.jp") {
-		t.Fatalf("通知の中身:\n%s", page)
+		t.Fatalf("notice body:\n%s", page)
 	}
 	if sessionCookieOf(t, w) == nil {
-		t.Fatal("通知を出すために session を落としてはいけない")
+		t.Fatal("the session must not be dropped in order to show the notice")
 	}
 
-	// 2 回目は同じ (provider, subject) なので新規ではない — 素通りする。
+	// The second time the (provider, subject) is the same, so it is not new: pass through.
 	st2, au := startLogin(t, cfg, "?provider=okta&next=%2Fsessions")
 	w = callback(t, cfg, st2, "code", au.Query().Get("state"))
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/sessions" {
-		t.Fatalf("再ログイン: %d -> %q", w.Code, w.Header().Get("Location"))
+		t.Fatalf("re-login: %d -> %q", w.Code, w.Header().Get("Location"))
 	}
 
-	// IdP が 1 つだけのデプロイ（＝既存の Google 専用）は、新しい人でも素通り。
+	// A deployment with a single IdP passes through even for someone new.
 	single := oauthTestConfig(t, stubProvider(auth.GoogleProviderID, newcomer(t, "sato@acme.co.jp"), auth.TrustEmailVerified))
 	single.mgr.store = st
 	st3, au := startLogin(t, single, "?next=%2Fsessions")
 	w = callback(t, single, st3, "code", au.Query().Get("state"))
 	if w.Code != http.StatusFound || w.Header().Get("Location") != "/sessions" {
-		t.Fatalf("単一 IdP デプロイ: %d -> %q", w.Code, w.Header().Get("Location"))
+		t.Fatalf("single-IdP deployment: %d -> %q", w.Code, w.Header().Get("Location"))
 	}
 }

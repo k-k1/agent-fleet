@@ -1,5 +1,6 @@
-/* コンテキストバー右端の「圧縮」ボタン（docs/log/33 第2段・要約引き継ぎ）。ContextBar の
-   action スロットに乗る小型ボタンで、バー行の 11.5px スケールに合わせる。 */
+/* The "compact" button (「圧縮」) at the right end of the context bar (docs/log/33 stage 2,
+   summary carry-forward). A small button that rides ContextBar's action slot, sized to the
+   bar row's 11.5px scale. */
 .cb-action {
   flex: none;
   display: inline-flex;

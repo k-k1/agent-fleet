@@ -28,11 +28,10 @@ import type { SuggestChip } from "./SuggestRow.tsx";
 const q = encodeURIComponent;
 
 /**
- * 返信サジェスト（lib/quickReplies ＋ v2 の LLM 候補）。チップ列そのもの・そのキーボード
- * リング・学習の増減（消す/ピン留め）・✨の on-demand 取得をまとめて持つ。
+ * Reply suggestions (lib/quickReplies plus the v2 LLM candidates): the chip row itself, its
+ * keyboard ring, the learning edits (forget / pin) and the on-demand ✨ fetch.
  *
- * 呼び出しは `lastReplyText` が確定したあと（候補の文脈がそれなので）。MirrorView から
- * そのまま移送したもので、判断は 1 つも変えていない。
+ * Call it after `lastReplyText` has settled — that is the context the candidates come from.
  */
 export function useReplySuggest({
   session,
@@ -55,30 +54,32 @@ export function useReplySuggest({
   setHistIdx: (v: number | null) => void;
   inputRef: RefObject<HTMLTextAreaElement | null>;
   composerLocked: boolean;
-  /** Ctrl/⌘+Enter で送信する設定か（チップ上の Enter の役割をこれに合わせる）。 */
+  /** Is the send key configured as Ctrl/⌘+Enter? Enter on a chip follows the same setting. */
   modSend: boolean;
   lastReplyText: string;
   send: (override?: string) => Promise<void>;
   toast: (m: string) => void;
-  /** Workspace が停止していれば true を返し、トーストも出す（副作用つき）。 */
+  /** Returns true if the Workspace is stopped, and shows a toast as a side effect. */
   wsDown: () => boolean;
 }) {
-  // 返信サジェスト v2: ✨ボタンで取得した LLM 文脈候補（Layer A のチップ列にマージ）と取得中フラグ。
+  // Reply suggestions v2: the contextual LLM candidates fetched by the ✨ button (merged into the
+  // Layer A chip row) and the in-flight flag.
   const [llmSuggestions, setLlmSuggestions] = useState<string[]>([]);
   const [suggesting, setSuggesting] = useState(false);
-  // 入力途中の Tab 補完サイクル（lib/suggestCycle）。null = サイクル中でない。
+  // The Tab completion cycle while typing (lib/suggestCycle). null = not cycling.
   const [cycle, setCycle] = useState<SuggestCycle | null>(null);
-  const suggestRef = useRef<HTMLDivElement>(null); // チップ行（Tab でここへフォーカスを移す）
-  // 1行に収めた候補列をマウスのドラッグ/縦ホイールで左右スクロール（スワイプは既定動作）。
-  // 返り値をチップ行の ref に渡す — この行は条件付きレンダーで出入りするので、ref オブジェクト
-  // 任せだと戻ってきた要素にリスナーが付かない（dragScroll.ts の注記）。
+  const suggestRef = useRef<HTMLDivElement>(null); // the chip row (Tab moves focus here)
+  // Scroll the single-line candidate row horizontally with a mouse drag or a vertical wheel; a
+  // swipe keeps its default behaviour. The return value goes on the chip row's ref: the row comes
+  // and goes with a conditional render, so a plain ref object would leave a returning element
+  // without listeners (see the note in dragScroll.ts).
   const attachSuggestRow = useDragScroll(suggestRef);
-  // チップの右クリック / 長タップ / Menu キーで開くメニュー（ピン留め・削除）。
+  // The menu opened by right-click / long tap / the Menu key on a chip (pin, delete).
   const chipMenu = useChipMenu();
 
 
-  // 返信サジェストのチップ: 通常クリックはコンポーサーへ差し込み（編集してから Enter）、
-  // ⌥/Alt 併用で即送信。差し込み時はキャレットを末尾に置いてフォーカスする。
+  // A suggestion chip: an ordinary click inserts it into the composer (edit, then Enter), and
+  // ⌥/Alt-click sends immediately. On insertion the caret goes to the end and takes focus.
   const applySuggestion = (text: string, immediate: boolean) => {
     if (composerLocked) return;
     if (immediate) {
@@ -87,10 +88,11 @@ export function useReplySuggest({
     }
     setDraft(text);
     setHistIdx(null);
-    // スマホ: チップ差し込みで textarea にフォーカスすると GBoard が開いて画面を覆う。タッチ端末では
-    // フォーカスしない（キーボードを出さない）— ユーザーは送信 or タップして編集を選べる。
+    // On a phone, focusing the textarea after a chip insertion opens GBoard and covers the
+    // screen. On touch devices we do not focus (no keyboard), leaving the user free to send or to
+    // tap and edit.
     if (coarsePointer()) {
-      inputRef.current?.blur(); // 既に開いていたキーボードも畳む
+      inputRef.current?.blur(); // fold away a keyboard that was already open
       return;
     }
     requestAnimationFrame(() => {
@@ -102,9 +104,9 @@ export function useReplySuggest({
     });
   };
 
-  // メニューの「この候補を消す」: 学習を消し、かつ隠しリストへ積む（消すだけではシード/再学習で
-  // 戻ってくる）。ピン留めしていたなら当然そのピンも外す。LLM 候補（✨）は学習物ではないので、
-  // その場の候補列から外すだけでよい。
+  // The menu's "forget this suggestion": clear the learning AND push it onto the hidden list,
+  // because deleting alone lets seeding or re-learning bring it back. A pin on it is removed too.
+  // An LLM candidate (✨) is not learned, so dropping it from the current row is enough.
   const forgetSuggestion = (text: string, llm: boolean) => {
     if (llm) {
       setLlmSuggestions((prev) => prev.filter((s) => s !== text));
@@ -115,9 +117,10 @@ export function useReplySuggest({
     setSetting("quickRepliesPinned", unpinQuickReply(settings.quickRepliesPinned || [], text));
   };
 
-  // メニューの「常に表示（ピン留め）」/「ピン留めを解除」。ピンは隠しより強い意思表示なので、
-  // ピンするときは隠しも外す（以前に消した文をピンし直せる）。✨の候補もそのままピンできる
-  // ——「この一文はこれから常用する」と決めた時点で、学習を待つ理由がない。
+  // The menu's pin / unpin. A pin is a stronger statement of intent than hiding, so pinning also
+  // unhides, which lets a previously forgotten line be pinned again. An ✨ candidate can be pinned
+  // as-is: once the user has decided they will keep using that line, there is no reason to wait
+  // for the learning to catch up.
   const togglePin = (text: string) => {
     const pinned = settings.quickRepliesPinned || [];
     if (isQuickReplyPinned(pinned, text)) {
@@ -128,42 +131,46 @@ export function useReplySuggest({
     setSetting("quickRepliesHidden", unhideQuickReply(settings.quickRepliesHidden || [], text));
   };
 
-  // v2: ✨ボタン — 直近の会話ログを一発ヘッドレス LLM に渡し、文脈に沿った返信候補を取得して
-  // チップ列にマージする（session_suggest_reply.go）。押した時だけトークンを使う on-demand。
+  // v2: the ✨ button — hand the recent conversation log to a one-shot headless LLM, fetch reply
+  // candidates that fit the context and merge them into the chip row (session_suggest_reply.go).
+  // On-demand: tokens are spent only when it is pressed.
   const fetchLlmSuggestions = async () => {
     if (!session || suggesting || wsDown()) return;
     setSuggesting(true);
     try {
       const j = await apiJSON(`api/sessions/${q(session)}/suggest-replies`, "POST", {});
       const list = Array.isArray(j?.suggestions) ? (j.suggestions as unknown[]).filter((x): x is string => typeof x === "string") : [];
-      // LLM が同文を重複して返すことがある — チップの React key は本文由来なので畳んでおく。
+      // The LLM sometimes returns the same line twice, and a chip's React key is derived from its
+      // text, so fold the duplicates.
       setLlmSuggestions([...new Set(list)]);
-      // 候補ゼロ = バックエンド不在（claude/codex/opencode いずれも無い）か会話が浅い。無反応だと
-      // 壊れて見えるので一言知らせる（Layer A のチップはそのまま残る）。
+      // Zero candidates means either no backend (none of claude/codex/opencode) or too little
+      // conversation. Silence would look broken, so say so; the Layer A chips stay as they are.
       if (!list.length) toast(tr("mirror.suggest_none"));
     } catch {
-      toast(tr("mirror.suggest_failed")); // 生成失敗（機能OFF含む）— 学習チップはそのまま
+      toast(tr("mirror.suggest_failed")); // generation failed (including the feature being off) — learned chips stay
     } finally {
       setSuggesting(false);
     }
   };
 
-  // 返信サジェストのフォーカスリング = ✨ボタン＋候補チップ（DOM 順）。✨も候補の一員として
-  // 巡回に含める（Enter はボタン既定の click ＝ LLM 候補取得がそのまま走る）。
+  // The focus ring for the suggestions = the ✨ button plus the candidate chips, in DOM order. ✨
+  // is part of the cycle; Enter on it is the button's default click, i.e. the LLM fetch.
   const suggestRing = (): HTMLButtonElement[] =>
     Array.from(suggestRef.current?.querySelectorAll<HTMLButtonElement>("button") ?? []);
 
-  // チップ行は1行スクロール（はみ出した候補は画面外）。キー移動のフォーカス先が隠れないよう
-  // 横だけ最小限スクロールして追従させる。focus 既定のスクロールは縦にも効いて本文が飛ぶので
-  // preventScroll で殺し、inline/block:nearest の scrollIntoView で必要分だけ動かす。
+  // The chip row scrolls on one line, so candidates past the edge are off screen. Keyboard
+  // movement therefore scrolls horizontally by the minimum needed to keep the focus target
+  // visible. focus()'s default scrolling also moves vertically and jumps the transcript, so it is
+  // killed with preventScroll and replaced by scrollIntoView at inline/block:nearest.
   const focusRingItem = (el: HTMLButtonElement) => {
     el.focus({ preventScroll: true });
     el.scrollIntoView({ block: "nearest", inline: "nearest" });
   };
 
-  // リング内の移動。Tab/Shift+Tab は「候補＋入力欄」を一巡（端まで来たら入力欄へ戻る＝
-  // 入力欄→候補1→候補2→入力欄…のループ）。←/→ は候補内だけで循環。Escape で入力欄へ。
-  // 処理したら true を返し、呼び出し側はそこで打ち切る。
+  // Movement inside the ring. Tab/Shift+Tab cycles through "candidates + input": past either end
+  // it returns to the input, i.e. input -> chip 1 -> chip 2 -> input. Left/Right cycles among the
+  // candidates only, and Escape goes to the input. Returns true when handled, and the caller then
+  // stops.
   const onSuggestNav = (e: RKeyboardEvent<HTMLButtonElement>): boolean => {
     if (e.nativeEvent.isComposing) return false;
     if (e.key === "Escape") {
@@ -177,36 +184,37 @@ export function useReplySuggest({
     if (e.key === "Tab") {
       e.preventDefault();
       const next = e.shiftKey ? i - 1 : i + 1;
-      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // 端 → 入力欄へ戻る
+      if (next < 0 || next >= ring.length) inputRef.current?.focus(); // past an end: back to the input
       else focusRingItem(ring[next]);
       return true;
     }
     if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
       e.preventDefault();
       const d = e.key === "ArrowRight" ? 1 : -1;
-      focusRingItem(ring[(i + d + ring.length) % ring.length]); // ←/→ は候補内で循環
+      focusRingItem(ring[(i + d + ring.length) % ring.length]); // Left/Right wraps within the candidates
       return true;
     }
     return false;
   };
 
-  // チップ上のキー操作。移動系は onSuggestNav に委ね、Enter/Ctrl(⌘)+Enter の役割はコンポーサーの
-  // 送信キー設定に合わせる: modSend（Ctrl+Enter で送信）なら mod+Enter=送信・素の Enter=差し込み、
-  // enter モード（Enter で送信）なら逆。
+  // Keys on a chip. Movement is delegated to onSuggestNav; Enter and Ctrl(⌘)+Enter follow the
+  // composer's send-key setting: under modSend (Ctrl+Enter sends) mod+Enter sends and plain Enter
+  // inserts, and under enter mode (Enter sends) it is the other way round.
   const onSuggestKeyDown = (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => {
     if (onSuggestNav(e)) return;
-    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu キー / Shift+F10 → ピン留め・削除メニュー
+    if (chipMenu.onKeyDown(e, text, llm)) return; // Menu key / Shift+F10 opens the pin/delete menu
     if (e.key !== "Enter" || e.nativeEvent.isComposing) return;
     const mod = e.ctrlKey || e.metaKey;
-    e.preventDefault(); // ボタン既定の click（＝差し込み）と二重発火させない
+    e.preventDefault(); // do not double-fire with the button's default click, which inserts
     applySuggestion(text, modSend ? mod : !mod);
   };
 
-  // 入力欄での Tab（チップ行への入場／補完サイクル）。処理したら true を返す。
+  // Tab in the input: enter the chip row, or run the completion cycle. Returns true when handled.
   const handleKeyDown = (e: RKeyboardEvent): boolean => {
-    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
-    // 素の Tab は最初の「候補チップ」から始める（先頭の✨は飛ばす／Shift+Tab で戻れる）。
-    // Shift+Tab は逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
+    // With an empty input, Tab enters the suggestions (input -> chip 1 -> chip 2 -> input). Plain
+    // Tab starts at the first candidate CHIP, skipping the leading ✨, which Shift+Tab can still
+    // reach. Shift+Tab runs backwards, so it enters at the end of the ring. With text present,
+    // Tab keeps its normal behaviour.
     if (e.key === "Tab" && !e.nativeEvent.isComposing && draft === "") {
       const ring = suggestRing();
       const target = e.shiftKey
@@ -218,9 +226,10 @@ export function useReplySuggest({
         return true;
       }
     }
-    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
-    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
-    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
+    // Tab while typing runs a shell-style completion cycle over the candidates: the ones that
+    // prefix-match what was typed — the same ones visible in the chip row — are put into the input
+    // in turn, and after a full lap it returns to what the user actually typed. Shift+Tab goes
+    // backwards. With nothing to complete it does nothing and falls through to a normal Tab.
     if (e.key === "Tab" && !e.nativeEvent.isComposing && draft !== "" && !composerLocked) {
       const next = stepSuggestCycle(cycle, draft, suggestChips.map((c) => c.text), e.shiftKey);
       if (next) {
@@ -228,7 +237,8 @@ export function useReplySuggest({
         setCycle(next);
         setDraft(next.text);
         setHistIdx(null);
-        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
+        // Some browsers move the caret (leaving it at the start) when the value is replaced, so
+        // put it back at the end.
         requestAnimationFrame(() => {
           const el = inputRef.current;
           if (el) el.setSelectionRange(el.value.length, el.value.length);
@@ -239,12 +249,13 @@ export function useReplySuggest({
     return false;
   };
 
-  // 返信サジェスト（lib/quickReplies）。直近回答の最終テキストを B-1 ヒューリスティックの
-  // 文脈に、頻度学習（settings.quickReplies）と合わせて候補化する。
-  // Tab 補完サイクル中は、絞り込みキーを「ユーザーが打った文字」に凍結する（入力欄は補完で
-  // 候補そのものに変わっているので、そのまま渡すとチップ列が1件に痩せてサイクルが崩れる）。
+  // Reply suggestions (lib/quickReplies): the final text of the latest answer is the context for
+  // the B-1 heuristic, combined with the frequency learning (settings.quickReplies).
+  // During a Tab completion cycle the filter key is frozen to what the USER typed: completion has
+  // already replaced the input with a candidate, so passing that through would shrink the chip row
+  // to one entry and break the cycle.
   const suggestDraft = suggestFilterDraft(cycle, draft);
-  const cycledText = cycledSuggestion(cycle, draft); // いま入力欄に入っている候補（強調用）
+  const cycledText = cycledSuggestion(cycle, draft); // the candidate currently in the input, for emphasis
   const learned = settings.quickRepliesEnabled
     ? rankQuickReplies(settings.quickReplies || {}, {
         draft: suggestDraft,
@@ -252,29 +263,33 @@ export function useReplySuggest({
         locale: settings.locale,
         hidden: settings.quickRepliesHidden || [],
         pinned: settings.quickRepliesPinned || [],
-        limit: 20, // チップ行は横スクロールなので、画面幅に収まらない分は流して見せる（ピンは別枠）
+        limit: 20, // the chip row scrolls horizontally, so what does not fit is still reachable (pins are separate)
       })
     : [];
-  // v2 の LLM 候補を先頭に、Layer A の学習候補を後ろにマージ（重複は畳む）。llm フラグで見た目を分ける。
-  // 重複判定は学習キーと同じ畳み方（大小・空白に加えて全角半角）で行う。
+  // Merge the v2 LLM candidates first and the Layer A learned ones after, folding duplicates; the
+  // llm flag drives the different appearance. Duplicates are decided with the same folding as the
+  // learning key: case and whitespace, plus full-width vs half-width.
   const llmSet = new Set(llmSuggestions.map((s) => quickReplyKey(s)));
   const suggestChips: SuggestChip[] = [
     ...llmSuggestions.map((text) => ({ text, llm: true })),
     ...learned.filter((s) => !llmSet.has(quickReplyKey(s))).map((text) => ({ text, llm: false })),
   ];
-  // Tab 補完でたどっている候補が、1行スクロールのチップ行からはみ出していたら見える位置へ。
-  // 入力欄のフォーカスは動かさないので scrollIntoView だけ（横方向の最小限）。
+  // Bring the candidate being walked by Tab completion into view if it is off the end of the
+  // single-line chip row. Focus stays in the input, so this is scrollIntoView only, horizontally
+  // and by the minimum.
   useEffect(() => {
     if (!cycledText) return;
     const el = suggestRef.current?.querySelector<HTMLElement>(".mirror-suggest-chip.cycling");
-    // scrollIntoView は Chrome 150 で Promise を返す — 暗黙 return にすると effect の
-    // クリーンアップ扱いで落ちるので、必ずブロック本体で捨てる（effect-implicit-return）。
+    // In Chrome 150 scrollIntoView returns a Promise, and an implicit return would hand it to
+    // React as the effect's cleanup and crash. Always discard it inside a block body
+    // (effect-implicit-return).
     if (el) {
       el.scrollIntoView({ block: "nearest", inline: "nearest" });
     }
   }, [cycledText]);
-  // 会話が進む（新しい回答が来る）と古い LLM 候補は文脈遅れになるので、直近回答の変化とセッション
-  // 切替で捨てる。lastReplyText 確定後に置くことで依存の TDZ を避ける。
+  // As the conversation moves on (a new answer arrives) old LLM candidates fall behind the
+  // context, so they are dropped on a change of latest answer and on a session switch. Placed
+  // after lastReplyText settles to avoid a TDZ on the dependency.
   useEffect(() => {
     setLlmSuggestions([]);
   }, [session, lastReplyText]);

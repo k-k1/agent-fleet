@@ -42,8 +42,9 @@ export function ChatSuggestRow({
   const tr = useT();
   return (
     <>
-      {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨の LLM 候補（v2）。
-          クリックで差し込み・⌥で即送信。 */}
+      {/* Reply suggestions: frequently used short phrases, candidates derived from the latest
+          answer (Layer A), and the sparkle button's LLM candidates (v2). Click inserts;
+          Option-click sends immediately. */}
       {show && (
         <div className="chat-suggest" ref={attachSuggestRow}>
           {showAiButton && (
@@ -53,13 +54,14 @@ export function ChatSuggestRow({
               title={tr("chat.suggest_ai")}
               disabled={suggesting}
               onClick={onFetchLlmSuggestions}
-              onKeyDown={onSuggestNav} // Enter は既定の click（＝候補取得）に任せる
+              onKeyDown={onSuggestNav} // leave Enter to the default click (fetching candidates)
             >
               <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
             </button>
           )}
           {suggestChips.map((sg) => (
-            // ピン留めは先頭固定＋📌。削除/ピンは右クリック・長タップ・Menu キーのメニューから。
+            // Pinned suggestions are held at the front and marked with a pin. Delete/pin
+            // live in the right-click, long-press and Menu-key menu.
             <button
               key={(sg.llm ? "l:" : "a:") + sg.text}
               type="button"
@@ -67,12 +69,12 @@ export function ChatSuggestRow({
                 "chat-suggest-chip" +
                 (sg.llm ? " llm" : "") +
                 (isQuickReplyPinned(pinnedList, sg.text) ? " pinned" : "") +
-                (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
+                (sg.text === cycledText ? " cycling" : "") // the candidate Tab has put in the box
               }
               aria-current={sg.text === cycledText ? "true" : undefined}
               title={tr("mirror.suggest_hint")}
               onClick={(e) => {
-                if (chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                if (chipMenu.clickSwallowed()) return; // release of the long-press that opened the menu
                 onApply(sg.text, e.ctrlKey || e.altKey || e.metaKey);
               }}
               onKeyDown={(e) => onSuggestKeyDown(e, sg.text, sg.llm)}

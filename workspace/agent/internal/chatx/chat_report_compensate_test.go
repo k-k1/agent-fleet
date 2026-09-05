@@ -1,16 +1,18 @@
 package chatx
 
-// 補償 reopen と自己申告ファストパス（docs/log/51 Phase 3 / ADR 0035 決定4・5）のテスト。
+// Tests for the compensation reopen and the self-report fast path (docs/log/51 Phase 3 /
+// ADR 0035 decisions 4 and 5).
 //
-// 二層の分け方は Phase 1・2 と同じ:
-//   - 候補選び（instrReopenCandidates）と復帰の証拠（evalReportResumed）は純関数なので、
-//     grace の境界・「新指示があれば補償しない」・「報告より前の証拠は数えない」を
-//     テーブルで固定する。
-//   - 補償の本体（compensate）は**単発観測**なのでデバウンスの時間軸を持たない。tick
-//     ループに載せず直接呼ぶ: そうしないと fake clock（決定的な固定時刻）と status
-//     マーカー（実時刻）の突き合わせになり、テストが実行時刻に依存する。
-//   - ファストパスは「2 tick が 1 tick になる」性質そのものなので、fake clock の
-//     tick 駆動で測る。
+// The two layers are split as in Phase 1 and 2:
+//   - Candidate selection (instrReopenCandidates) and the resume evidence (evalReportResumed)
+//     are pure functions, so the grace boundary, "no compensation once a new instruction
+//     arrived" and "evidence older than the report does not count" are pinned by table.
+//   - The compensation itself (compensate) is a SINGLE observation, so it has no debounce time
+//     axis. It is called directly instead of through the tick loop: otherwise a fake clock (a
+//     deterministic fixed time) would be matched against status markers (real time) and the
+//     test would depend on when it runs.
+//   - The fast path is exactly the property "2 ticks become 1 tick", so it is measured by
+//     driving the fake clock's ticks.
 
 import (
 	"net/http"
@@ -23,7 +25,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// --- 純関数 ---------------------------------------------------------------------
+// --- Pure functions -------------------------------------------------------------
 
 // TestInstrReopenCandidates pins WHICH reported rows stay under compensation watch.
 func TestInstrReopenCandidates(t *testing.T) {
@@ -40,22 +42,22 @@ func TestInstrReopenCandidates(t *testing.T) {
 		rows []instrRow
 		want int
 	}{
-		{"grace 内の reported 行は監視対象", []instrRow{row(func(*instrRow) {})}, 1},
-		{"grace を過ぎた報告はもう補償しない",
+		{"a reported row inside the grace window is watched", []instrRow{row(func(*instrRow) {})}, 1},
+		{"a report past the grace window is no longer compensated",
 			[]instrRow{row(func(r *instrRow) { r.ReportedAt = at(-11 * time.Minute) })}, 0},
-		{"まだ開いている行は補償の対象ではない",
+		{"a still-open row is not a compensation target",
 			[]instrRow{row(func(r *instrRow) { r.State = instrPending; r.ReportedAt = "" })}, 0},
-		{"取り消された行も対象外",
+		{"a cancelled row is out of scope too",
 			[]instrRow{row(func(r *instrRow) { r.State = instrCancelled })}, 0},
-		{"報告時刻が読めない行は監視できない（grace の始点が無い）",
+		{"a row with an unparsable report time cannot be watched (no start for the grace)",
 			[]instrRow{row(func(r *instrRow) { r.ReportedAt = "???" })}, 0},
-		{"報告のあとに新しい指示が来ていれば補償しない（busy の説明が付く）",
+		{"no compensation when a new instruction arrived after the report (busy is explained)",
 			[]instrRow{
 				row(func(*instrRow) {}),
 				{ID: "i-2", Conv: "c", DeliveredAt: at(-30 * time.Second),
 					Cursor: instrCursor{At: at(-30 * time.Second)}, State: instrPending},
 			}, 0},
-		{"報告より前に投入された行は「新しい指示」ではない",
+		{"a row delivered before the report is not a new instruction",
 			[]instrRow{
 				row(func(*instrRow) {}),
 				{ID: "i-2", Conv: "c", DeliveredAt: at(-5 * time.Minute),
@@ -65,45 +67,46 @@ func TestInstrReopenCandidates(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := instrReopenCandidates(tc.rows, now, reportReopenGrace); len(got) != tc.want {
-				t.Fatalf("候補 = %d 件 (%+v), want %d", len(got), got, tc.want)
+				t.Fatalf("candidates = %d (%+v), want %d", len(got), got, tc.want)
 			}
 		})
 	}
 }
 
-// TestReportResumedEvidence pins the compensation predicate. settle 述語との違いは
-// 「報告より後か」を要求する点で、そこが抜けると報告直後の残り香（前のターンの working
-// マーカー）で毎回 reopen する。
+// TestReportResumedEvidence pins the compensation predicate. It differs from the settle
+// predicate by requiring "is it after the report"; without that, the afterglow right after a
+// report (the previous turn's working marker) reopens the row every time.
 func TestReportResumedEvidence(t *testing.T) {
 	cases := []struct {
 		name string
 		sig  reportSignals
 		want bool
 	}{
-		{"報告後に working へ戻った", reportSignals{MarkerState: "working", MarkerAfterArm: true}, true},
-		{"報告より前の working マーカーは数えない", reportSignals{MarkerState: "working"}, false},
-		{"報告後に質問で止まった", reportSignals{MarkerState: "question", MarkerAfterArm: true}, true},
-		{"終端 idle のままなら復帰していない",
+		{"back to working after the report", reportSignals{MarkerState: "working", MarkerAfterArm: true}, true},
+		{"a working marker older than the report does not count", reportSignals{MarkerState: "working"}, false},
+		{"stopped on a question after the report", reportSignals{MarkerState: "question", MarkerAfterArm: true}, true},
+		{"still at terminal idle means it has not resumed",
 			reportSignals{MarkerState: "idle", MarkerTurnEnd: true, MarkerAfterArm: true}, false},
-		{"BG サブエージェントが動き出した", reportSignals{SubagentBusy: true}, true},
-		{"転写が伸びた（マーカーより後の追記）", reportSignals{TranscriptBusy: true}, true},
-		{"ペインに中断アフォーダンス", reportSignals{PaneBusy: true}, true},
-		{"未回答の質問が残っている", reportSignals{PendingQuestion: true}, true},
-		// 完了の遅着（報告の直後に本物のターン終端が書かれる）を「再開」と読むと、
-		// 嘘の訂正＋同内容の再報告になる（2026-07-30 sannme2）。終端の証拠があるときは
-		// 鮮度の証拠を無視する。
-		{"報告後に終端 idle が来た＝完了の遅着（鮮度が残っていても再開ではない）",
+		{"a background subagent started running", reportSignals{SubagentBusy: true}, true},
+		{"the transcript grew (appended after the marker)", reportSignals{TranscriptBusy: true}, true},
+		{"the pane shows an interrupt affordance", reportSignals{PaneBusy: true}, true},
+		{"an unanswered question is still pending", reportSignals{PendingQuestion: true}, true},
+		// Reading a late completion (the real turn terminus written just after the report) as a
+		// "resume" produces a false correction plus a re-report of the same content. When there
+		// is terminus evidence, ignore the freshness evidence.
+		{"terminal idle after the report = a late completion (freshness left over is not a resume)",
 			reportSignals{MarkerState: "idle", MarkerTurnEnd: true, MarkerAfterArm: true,
 				TranscriptBusy: true, PaneBusy: true}, false},
-		{"報告後にそのターンが中断で終わった＝再開ではない",
+		{"the turn ended in an abort after the report = not a resume",
 			reportSignals{Abort: true, TailAborted: true, AbortReason: ReportReasonTurnAborted,
 				TranscriptBusy: true}, false},
-		// 報告が中断より**後**に出るのは自動再開（docs/log/47 §4-6）の普通の姿: 再送を 2 回
-		// 試してから打ち切って報告するので、中断レコードは報告時刻より古い。時刻の下限で
-		// 落として鮮度だけを見ると「報告のあとに働き出した」と読み、嘘の訂正を配ってしまう。
-		{"報告より古い中断でも再開ではない（自動再開ののちの打ち切り報告）",
+		// A report coming out AFTER an abort is the ordinary shape of auto-resume (docs/log/47
+		// §4-6): it retries twice, then gives up and reports, so the abort record is older than
+		// the report time. Dropping it on the time lower bound and looking only at freshness
+		// reads it as "started working after the report" and delivers a false correction.
+		{"an abort older than the report is still not a resume (a give-up report after auto-resume)",
 			reportSignals{TailAborted: true, TranscriptBusy: true}, false},
-		{"何も無い", reportSignals{}, false},
+		{"nothing at all", reportSignals{}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,10 +118,10 @@ func TestReportResumedEvidence(t *testing.T) {
 	}
 }
 
-// --- 補償の本体 -------------------------------------------------------------------
+// --- The compensation itself ------------------------------------------------------
 
-// reportedFixture builds a session whose single instruction has already been reported
-// `ago` before now — 補償の出発点（誤「完了」が出たあとの状態）。
+// reportedFixture builds a session whose single instruction has already been reported `ago`
+// before now — the starting point for compensation (the state after a wrong "completion").
 func reportedFixture(t *testing.T, name string, ago time.Duration) (session.Meta, string, string, string) {
 	t.Helper()
 	m, sid, conv := ledgerFixture(t, name)
@@ -127,8 +130,8 @@ func reportedFixture(t *testing.T, name string, ago time.Duration) (session.Meta
 	return m, sid, conv, id
 }
 
-// stillReported re-closes the row so the next round of compensation has a candidate
-// again（本完了ではなく「また早計な報告が出た」状況の再現）。
+// stillReported re-closes the row so the next round of compensation has a candidate again
+// (reproducing "another premature report came out", not a real completion).
 func stillReported(t *testing.T, name, id string, ago time.Duration) {
 	t.Helper()
 	markInstrReported(name, []string{id}, time.Now().Add(-ago))
@@ -141,52 +144,54 @@ func rowByID(t *testing.T, name, id string) instrRow {
 			return r
 		}
 	}
-	t.Fatalf("行 %s が台帳に無い", id)
+	t.Fatalf("row %s is not in the ledger", id)
 	return instrRow{}
 }
 
-// newIdleReconciler builds a reconciler that is NOT running its loop — compensate を
-// 直接呼ぶテスト用（tick は要らない）。
+// newIdleReconciler builds a reconciler that is NOT running its loop — for tests that call
+// compensate directly (no ticks needed).
 func newIdleReconciler(sink reportSink) *reportReconciler {
 	rc := newReportReconciler(reportTickDefault)
 	rc.sink = sink
 	return rc
 }
 
-// TestReportCompensationReopensOnBusyReturn は ADR 0035 決定4 の本体。v1 では誤って
-// arm を消費したら回復不能だった（誤消費＝報告の永久消失）。台帳では報告は行の状態
-// でしかないので、grace の間に busy へ戻ったら訂正を配って行を開き直せる。
+// TestReportCompensationReopensOnBusyReturn is the body of ADR 0035 decision 4. In v1,
+// consuming the arm by mistake was unrecoverable (a wrong consume = the report lost forever).
+// In the ledger a report is only a row state, so going busy again within the grace window lets
+// the correction be delivered and the row re-opened.
 func TestReportCompensationReopensOnBusyReturn(t *testing.T) {
 	m, sid, _, id := reportedFixture(t, "slot70", 30*time.Second)
 	var cs countingSink
 	rc := newIdleReconciler(cs.sink)
 
-	status.Persist(sid, "working") // 報告のあとにセッションが動き出した
+	status.Persist(sid, "working") // the session started running after the report
 
 	rc.compensate(m.Name, time.Now())
 	if got := cs.callsSnapshot(); len(got) != 1 || got[0] != reportKindReopened+":" {
-		t.Fatalf("訂正が配送されていない: %v", got)
+		t.Fatalf("correction was not delivered: %v", got)
 	}
 	r := rowByID(t, m.Name, id)
 	if r.State != instrReopened || r.ReopenCount != 1 {
-		t.Fatalf("行が開き直されていない: %+v", r)
+		t.Fatalf("row was not re-opened: %+v", r)
 	}
 	if r.ReportedAt != "" {
-		t.Fatalf("reopen した行に報告時刻が残っている: %q", r.ReportedAt)
+		t.Fatalf("re-opened row still carries a report time: %q", r.ReportedAt)
 	}
 	if !SessionReportPending(m.Name) {
-		t.Fatal("開き直した行は未報告として扱われるべき（本完了で改めて報告する）")
+		t.Fatal("a re-opened row must count as unreported (the real completion is reported again)")
 	}
-	// 開き直しは1回だけ。行は reopened なので、次の観測ではもう候補にならない。
+	// Re-opening happens once only. The row is reopened, so the next observation no longer
+	// sees it as a candidate.
 	rc.compensate(m.Name, time.Now())
 	if got := cs.callsSnapshot(); len(got) != 1 {
-		t.Fatalf("同じ報告を二度訂正した: %v", got)
+		t.Fatalf("corrected the same report twice: %v", got)
 	}
 }
 
-// TestReportCompensationSkipsWhenNewInstruction: 報告のあとに新しい指示が入っていれば、
-// busy はその指示で説明が付く。ここを見落とすと、キュー投入のたびに直前の**正しい**
-// 報告を訂正して回ることになる。
+// TestReportCompensationSkipsWhenNewInstruction: when a new instruction arrived after the
+// report, that instruction explains the busy state. Missing this means correcting the
+// preceding, CORRECT report on every queued instruction.
 func TestReportCompensationSkipsWhenNewInstruction(t *testing.T) {
 	m, sid, conv, id := reportedFixture(t, "slot71", 30*time.Second)
 	var cs countingSink
@@ -197,16 +202,16 @@ func TestReportCompensationSkipsWhenNewInstruction(t *testing.T) {
 
 	rc.compensate(m.Name, time.Now())
 	if got := cs.callsSnapshot(); len(got) != 0 {
-		t.Fatalf("新指示で走っているセッションを誤報告扱いにした: %v", got)
+		t.Fatalf("treated a session running on a new instruction as a wrong report: %v", got)
 	}
 	if r := rowByID(t, m.Name, id); r.State != instrReported {
-		t.Fatalf("行を開き直してしまった: %+v", r)
+		t.Fatalf("row was re-opened: %+v", r)
 	}
 }
 
-// TestReportCompensationStopsAtCap: 開き直しは行あたり instrReopenMax 回まで。上限に
-// 達したら黙って諦めず、「判定が振動している」事実を1回だけ報告して打ち切る
-// （docs/log/47 の自動再開上限と同じイディオム）。
+// TestReportCompensationStopsAtCap: re-opening is capped at instrReopenMax per row. At the cap
+// it does not give up silently but reports the fact that the decision is oscillating exactly
+// once, then stops (the same idiom as the auto-resume cap in docs/log/47).
 func TestReportCompensationStopsAtCap(t *testing.T) {
 	m, sid, _, id := reportedFixture(t, "slot72", 30*time.Second)
 	var cs countingSink
@@ -216,64 +221,67 @@ func TestReportCompensationStopsAtCap(t *testing.T) {
 		status.Persist(sid, "working")
 		rc.compensate(m.Name, time.Now())
 		if r := rowByID(t, m.Name, id); r.ReopenCount != i {
-			t.Fatalf("%d 回目の reopen で ReopenCount = %d", i, r.ReopenCount)
+			t.Fatalf("reopen #%d: ReopenCount = %d", i, r.ReopenCount)
 		}
-		stillReported(t, m.Name, id, 30*time.Second) // また早計な報告が出た
+		stillReported(t, m.Name, id, 30*time.Second) // another premature report came out
 	}
 	if got := cs.callsSnapshot(); len(got) != instrReopenMax {
-		t.Fatalf("訂正の回数 = %d, want %d: %v", len(got), instrReopenMax, got)
+		t.Fatalf("corrections = %d, want %d: %v", len(got), instrReopenMax, got)
 	}
 
 	status.Persist(sid, "working")
 	rc.compensate(m.Name, time.Now())
 	got := cs.callsSnapshot()
 	if len(got) != instrReopenMax+1 || got[instrReopenMax] != reportKindReopened+":"+reportReasonReopenCapped {
-		t.Fatalf("上限到達が利用者へ報告されていない: %v", got)
+		t.Fatalf("hitting the cap was not reported to the user: %v", got)
 	}
 	r := rowByID(t, m.Name, id)
 	if r.State != instrReported || r.ReopenCount != instrReopenMax {
-		t.Fatalf("上限を超えて開き直した: %+v", r)
+		t.Fatalf("re-opened past the cap: %+v", r)
 	}
 	if SessionReportPending(m.Name) {
-		t.Fatal("打ち切った行が未報告のまま残っている")
+		t.Fatal("the row that was given up on is still left unreported")
 	}
 }
 
-// TestReportCompensationCorrectionIsIdempotent: 訂正も完了報告と同じく**行ID＋reopen
-// 世代**で冪等化される（申し送り②）。訂正を配ってから行を開き直すので、その間に落ちる
-// 窓が構造的にあり、再試行が二重投稿になってはいけない。同時に、鍵の名前空間が完了報告と
-// 分かれていること — 分けないと、開き直した行の**本完了**の報告が「配送済み」と誤判定
-// されて握り潰される。
+// TestReportCompensationCorrectionIsIdempotent: like the completion report, the correction is
+// made idempotent by ROW ID + REOPEN GENERATION (handover item 2). The correction is delivered
+// before the row is re-opened, so there is a window to crash in by construction and a retry must
+// not double-post. At the same time the key namespace must stay separate from the completion
+// report's — without that, the REAL completion report of a re-opened row is read as "already
+// delivered" and swallowed.
 func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 	m, sid, conv, id := reportedFixture(t, "slot73", 30*time.Second)
 	rc := newIdleReconciler(deliverReportCard)
 
-	// 先に「早計だった完了報告」を会話へ置く（訂正はこれを指す）。
+	// Put the premature completion report into the conversation first (the correction points
+	// at it).
 	first := ReadInstrRows(m.Name)
 	if res := deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", first); res != reportSinkOK {
-		t.Fatalf("完了報告の配送 = %v", res)
+		t.Fatalf("completion report delivery = %v", res)
 	}
 	status.Persist(sid, "working")
 
 	rc.compensate(m.Name, time.Now())
 	if n := countReportCards(t, conv); n != 2 {
-		t.Fatalf("訂正カード込みで 2 枚のはず: %d", n)
+		t.Fatalf("expected 2 cards including the correction: %d", n)
 	}
-	// 訂正は「どの報告の訂正か」を会話メッセージ側の時刻で名指しする（申し送り①）。
-	// 台帳の ReportedAt はこの時点で既に消えているので、そこから取っていたら空になる。
+	// The correction names WHICH report it corrects by the time on the conversation message
+	// (handover item 1). The ledger's ReportedAt is already cleared at this point, so taking it
+	// from there would come out empty.
 	if r := rowByID(t, m.Name, id); r.ReportedAt != "" {
-		t.Fatalf("reopen 後も ReportedAt が残っている: %+v", r)
+		t.Fatalf("ReportedAt is still set after the reopen: %+v", r)
 	}
 	body := lastReportCard(t, conv)
 	if !strings.Contains(body, "早計") || !strings.Contains(body, "訂正の対象:") {
-		t.Fatalf("訂正カード = %q", body)
+		t.Fatalf("correction card = %q", body)
 	}
 
-	// 訂正は配ったが reopen する前に落ちた、を再現して再試行する。
+	// Reproduce "the correction was delivered but it crashed before the reopen" and retry.
 	stillReported(t, m.Name, id, 30*time.Second)
 	rows := ReadInstrRows(m.Name)
 	for i := range rows {
-		rows[i].ReopenCount = 0 // 世代も巻き戻す＝完全な再試行
+		rows[i].ReopenCount = 0 // rewind the generation too = a full retry
 	}
 	unlock := lockInstr(m.Name)
 	writeInstrRows(m.Name, rows)
@@ -281,19 +289,20 @@ func TestReportCompensationCorrectionIsIdempotent(t *testing.T) {
 
 	rc.compensate(m.Name, time.Now())
 	if n := countReportCards(t, conv); n != 2 {
-		t.Fatalf("訂正が二重投稿された: %d 枚", n)
+		t.Fatalf("correction was double-posted: %d cards", n)
 	}
 
-	// 開き直した行の本完了は、同じ行IDでも改めて報告される（鍵の名前空間が別）。
+	// The real completion of a re-opened row is reported again even under the same row id
+	// (separate key namespace).
 	reopened := openInstrRows(m.Name)
 	if len(reopened) != 1 {
-		t.Fatalf("開き直した行が1件ではない: %+v", reopened)
+		t.Fatalf("expected exactly 1 re-opened row: %+v", reopened)
 	}
 	if res := deliverReportCard(m.Name, conv, ReportKindAnswerReady, "", reopened); res != reportSinkOK {
-		t.Fatalf("本完了の配送 = %v", res)
+		t.Fatalf("real completion delivery = %v", res)
 	}
 	if n := countReportCards(t, conv); n != 3 {
-		t.Fatalf("本完了の報告が握り潰された: %d 枚", n)
+		t.Fatalf("the real completion report was swallowed: %d cards", n)
 	}
 }
 
@@ -311,20 +320,21 @@ func lastReportCard(t *testing.T, convID string) string {
 			return c.Messages[i].Content
 		}
 	}
-	t.Fatal("報告カードが無い")
+	t.Fatal("no report card in the conversation")
 	return ""
 }
 
-// --- 自己申告ファストパス -----------------------------------------------------------
+// --- Self-report fast path ----------------------------------------------------------
 
 // awaitSinkCalls waits until the sink has recorded exactly n deliveries and returns the
 // locked snapshot.
 //
-// **sweep の回数を数えて assert してはいけない**。`swept` は容量1の「1回終わった」通知で
-// しかなく、どの sweep のものかを運ばない — 自己申告は `nudge` で起床を1つ積むので、
-// 直前の起床が残した通知を掴んで、狙った状態を観測する前に読んでしまう窓がある
-// （フレークと、goroutine が書いている最中のスライスを読む -race 検出の両方の原因）。
-// 待ちたいのは sweep ではなく**配送**なので、配送そのものをロック越しに待つ。
+// Never count sweeps and assert on that number. `swept` is a capacity-1 "one finished"
+// notification that does not carry which sweep it came from — a self-report pushes one extra
+// wake-up through `nudge`, so there is a window where the notification left by the previous
+// wake-up is picked up and read before the intended state is observed (the cause both of flakes
+// and of -race reports from reading a slice while a goroutine writes it). What we want to wait
+// for is the delivery, not the sweep, so wait on the delivery itself under the lock.
 func awaitSinkCalls(t *testing.T, cs *countingSink, n int) []string {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
@@ -334,28 +344,29 @@ func awaitSinkCalls(t *testing.T, cs *countingSink, n int) []string {
 			return got
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("配送が %d 件に届かなかった: %v", n, got)
+			t.Fatalf("deliveries did not reach %d: %v", n, got)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-// expectSinkQuiet asserts the sink stays at n over a bounded window — 「配送されない
-// こと」は待っても確定しないので、時間を区切って観測するしかない。失敗方向は安全側
-// （本当に配送されたときだけ落ちる）。
+// expectSinkQuiet asserts the sink stays at n over a bounded window — "nothing is delivered"
+// never becomes certain by waiting, so it can only be observed over a bounded time. The failure
+// direction is the safe one (it fails only when something really was delivered).
 func expectSinkQuiet(t *testing.T, cs *countingSink, n int, why string) {
 	t.Helper()
 	deadline := time.Now().Add(300 * time.Millisecond)
 	for time.Now().Before(deadline) {
 		if got := cs.callsSnapshot(); len(got) != n {
-			t.Fatalf("%s: 配送 = %v, want %d 件", why, got, n)
+			t.Fatalf("%s: deliveries = %v, want %d", why, got, n)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-// TestSelfReportKickWiresHintSeam: MCP ツールの受信口は既存の kick（POST /chat/report）
-// —— 自己申告はそこに乗る「ヒント＋証拠1つ」であって、独自の配送経路ではない。
+// TestSelfReportKickWiresHintSeam: the MCP tool's entry point is the existing kick (POST
+// /chat/report) — the self-report rides on it as "a hint plus one piece of evidence", not as
+// its own delivery path.
 func TestSelfReportKickWiresHintSeam(t *testing.T) {
 	m, _, _ := armedFixture(t, "slot74")
 	rc := newIdleReconciler(nil)
@@ -371,91 +382,96 @@ func TestSelfReportKickWiresHintSeam(t *testing.T) {
 		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
 	}
 	if strings.Contains(rec.Body.String(), `"reported":true`) {
-		t.Fatalf("申告そのものが報告として配送された: %s", rec.Body.String())
+		t.Fatalf("the self-report itself was delivered as a report: %s", rec.Body.String())
 	}
 	if rc.selfReportFor(m.Name) == "" {
-		t.Fatal("自己申告が記録されていない（hint seam に繋がっていない）")
+		t.Fatal("the self-report was not recorded (not wired to the hint seam)")
 	}
 }
 
-// TestSelfReportSettlesInOneTick は ADR 0035 決定5 の効能そのもの: 意味的完了を直接
-// 測れる唯一のシグナルなので、機械的 idle に課している 2 tick の裏取りを 1 tick に縮める。
+// TestSelfReportSettlesInOneTick is exactly what ADR 0035 decision 5 buys: the self-report is
+// the only signal that measures semantic completion directly, so it shortens the 2-tick
+// confirmation required of mechanical idle to 1 tick.
 func TestSelfReportSettlesInOneTick(t *testing.T) {
 	m, sid, _ := armedFixture(t, "slot75")
 	var cs countingSink
 	rc, _ := newFakeReconciler(t, reportTickDefault, cs.sink)
 
 	status.PersistTurnEnd(sid, "idle")
-	rc.selfReport(m.Name, time.Now()) // ツール呼出 → ヒント起床
+	rc.selfReport(m.Name, time.Now()) // tool call → hint wake-up
 
-	// tick を1つも進めずに配送されること＝2 tick のデバウンスを踏んでいないこと
-	// （TestNoSelfReportStillSettles が同じ土俵で 2 tick かかることを示す）。
+	// Delivered without advancing a single tick = the 2-tick debounce was not paid
+	// (TestNoSelfReportStillSettles shows the same setup taking 2 ticks).
 	awaitSinkCalls(t, &cs, 1)
-	awaitReported(t, m.Name) // 台帳が進むのは配送が返ったあと
+	awaitReported(t, m.Name) // the ledger advances only after the delivery returns
 }
 
-// TestNoSelfReportStillSettles: 申告が来なくても、リコンサイラが従来どおり settle で
-// 拾う（ファストパスは backbone ではない — ADR 0035 §捨てた案）。同じ土俵で 2 tick。
+// TestNoSelfReportStillSettles: even with no self-report the reconciler picks it up at settle
+// as before (the fast path is not the backbone — ADR 0035 §rejected alternatives). 2 ticks on
+// the same setup.
 func TestNoSelfReportStillSettles(t *testing.T) {
 	m, sid, _ := armedFixture(t, "slot76")
 	var cs countingSink
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
-	status.PersistTurnEnd(sid, "idle") // 申告は無い
+	status.PersistTurnEnd(sid, "idle") // no self-report
 
 	clock.advance(t, rc, reportTickDefault)
-	expectSinkQuiet(t, &cs, 0, "申告なしの 1 tick 目")
+	expectSinkQuiet(t, &cs, 0, "tick 1 with no self-report")
 	clock.advance(t, rc, reportTickDefault)
 	awaitSinkCalls(t, &cs, 1)
 	awaitReported(t, m.Name)
 }
 
-// TestSelfReportTooEarlyIsHeld: 早呼び（まだ走っているのに申告した）は busy 証拠に
-// 止められる。申告は busy より強くない、というのがファストパスを backbone にしない
-// 判断の実装そのもの。止まっている間も申告は捨てない — 捨てると「最後の1トークンの
-// 直後に呼んだときだけ効く」ものになる。
+// TestSelfReportTooEarlyIsHeld: calling too early (self-reporting while still running) is held
+// back by the busy evidence. "A self-report is not stronger than busy" is the implementation of
+// the decision not to make the fast path the backbone. The self-report is not discarded while it
+// is held — discarding it would make it work only when called right after the last token.
 func TestSelfReportTooEarlyIsHeld(t *testing.T) {
 	m, sid, _ := armedFixture(t, "slot77")
 	var cs countingSink
 	rc, clock := newFakeReconciler(t, reportTickDefault, cs.sink)
 
-	status.Persist(sid, "working") // まだターンの途中
+	status.Persist(sid, "working") // still mid-turn
 	rc.selfReport(m.Name, time.Now())
-	expectSinkQuiet(t, &cs, 0, "早呼び（起床直後）")
+	expectSinkQuiet(t, &cs, 0, "called too early (right after the wake-up)")
 	clock.advance(t, rc, reportTickDefault)
-	expectSinkQuiet(t, &cs, 0, "busy のまま 1 tick")
+	expectSinkQuiet(t, &cs, 0, "1 tick while still busy")
 
-	status.PersistTurnEnd(sid, "idle") // 本当に終わった
+	status.PersistTurnEnd(sid, "idle") // really finished now
 	clock.advance(t, rc, reportTickDefault)
-	// 申告が生きているので、busy が晴れた最初の tick で配送される（2 tick 待たない）。
+	// The self-report is still alive, so it is delivered on the first tick after busy clears
+	// (no 2-tick wait).
 	awaitSinkCalls(t, &cs, 1)
 	awaitReported(t, m.Name)
 }
 
-// TestSelfReportIsIdleEvidenceWithoutMarker: マーカーを持たない kind（TUI ポーリング系）
-// でも申告そのものが idle 証拠になる。証拠の時刻は申告時刻なので、申告より後に投入された
-// 指示は巻き込まれない。
+// TestSelfReportIsIdleEvidenceWithoutMarker: for kinds with no marker (the TUI polling ones)
+// the self-report itself counts as idle evidence. Its evidence time is the self-report time, so
+// instructions delivered after it are not caught in the crossfire.
 func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 	m, _, conv := ledgerFixture(t, "slot78")
-	// 台帳は**リコンサイラを起こす前に**組む。addInstruction は判定をやり直させる
-	// （forget）ので、間に申告を挟むと申告が捨てられ、起床も指示の数だけ増えて
-	// 「どの sweep を待てばよいか」が決まらなくなる。申告の時刻は引数で作れるので、
-	// 呼び出し順ではなくタイムスタンプで前後関係を組めばよい。
-	// 申告**だけ**で settle するには「申告から selfReportSettleDelay 以上経っている」
-	// ことが要る（早呼び対策）。ここは申告が唯一の証拠になる筋なので、十分に古い申告で組む。
+	// Build the ledger BEFORE waking the reconciler. AddInstruction makes the decision start
+	// over (forget), so a self-report placed in between is discarded, and the wake-ups grow with
+	// the number of instructions, leaving "which sweep to wait for" undefined. The self-report
+	// time is an argument, so build the ordering from timestamps rather than from call order.
+	// Settling on the self-report ALONE requires at least selfReportSettleDelay to have passed
+	// since it (the guard against calling too early). This is the path where the self-report is
+	// the only evidence, so build it with a sufficiently old one.
 	selfAt := time.Now().Add(-selfReportSettleDelay - time.Minute)
 	id1 := addInstructionAt(m.Name, conv, "operator", selfAt.Add(-60*time.Second))
 	id2 := addInstructionAt(m.Name, conv, "operator", selfAt.Add(2*time.Second))
 
 	var cs countingSink
 	rc, _ := newFakeReconciler(t, reportTickDefault, cs.sink)
-	rc.selfReport(m.Name, selfAt) // 起床はこの1回だけ
+	rc.selfReport(m.Name, selfAt) // the only wake-up
 
-	awaitSinkCalls(t, &cs, 1) // マーカーが無くても申告だけで settle する
+	awaitSinkCalls(t, &cs, 1) // settles on the self-report alone, with no marker
 	if got := cs.rowIDs(0); len(got) != 1 || got[0] != id1 {
-		t.Fatalf("報告が畳んだ行 = %v, want [%s]（申告より後の指示を巻き込んだ）", got, id1)
+		t.Fatalf("rows folded into the report = %v, want [%s] (an instruction newer than the self-report was caught)",
+			got, id1)
 	}
-	// 指示1の行が閉じるまで待ってから、残っているのが指示2だけであることを見る。
+	// Wait until instruction 1's row closes, then check that only instruction 2 remains.
 	var open []instrRow
 	for i := 0; i < 150; i++ {
 		if open = openInstrRows(m.Name); len(open) == 1 {
@@ -464,14 +480,15 @@ func TestSelfReportIsIdleEvidenceWithoutMarker(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	if len(open) != 1 || open[0].ID != id2 {
-		t.Fatalf("後行指示の行だけが残るべき: %+v", open)
+		t.Fatalf("only the later instruction's row should remain: %+v", open)
 	}
-	expectSinkQuiet(t, &cs, 1, "申告より後に投入された指示")
+	expectSinkQuiet(t, &cs, 1, "an instruction delivered after the self-report")
 }
 
-// TestAutoResumeCountsSessionEventsNotConversations: 自動再開のカウンタ（docs/log/47）は
-// セッションの中断イベントを数える。1つの静穏を2つのオペレーター会話へ配ったときに
-// 会話数ぶん加算すると、2会話から指示されているセッションは中断1回で上限に届いてしまう。
+// TestAutoResumeCountsSessionEventsNotConversations: the auto-resume counter (docs/log/47)
+// counts the session's abort events. Incrementing once per conversation when one quiet period
+// is delivered to two operator conversations means a session instructed from two conversations
+// hits the cap after a single abort.
 func TestAutoResumeCountsSessionEventsNotConversations(t *testing.T) {
 	m, sid, conv1 := ledgerFixture(t, "slot79")
 	conv2 := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
@@ -486,13 +503,13 @@ func TestAutoResumeCountsSessionEventsNotConversations(t *testing.T) {
 	addInstructionAt(m.Name, conv2.ID, "operator", past)
 	status.PersistTurnEnd(sid, "idle")
 	rc.hint(m.Name, ReportKindAnswerReady, ReportReasonTurnAborted)
-	clock.waitSweep(t, rc) // 静穏 1 回目
+	clock.waitSweep(t, rc) // first quiet period
 	clock.advance(t, rc, reportTickDefault)
 
 	if got := cs.callsSnapshot(); len(got) != 2 {
-		t.Fatalf("会話ごとに1通配るべき: %v", got)
+		t.Fatalf("one message per conversation is expected: %v", got)
 	}
 	if n := AutoResumeAttempts(m.Name); n != 1 {
-		t.Fatalf("自動再開カウンタ = %d, want 1（会話数ぶん加算している）", n)
+		t.Fatalf("auto-resume counter = %d, want 1 (incremented per conversation)", n)
 	}
 }

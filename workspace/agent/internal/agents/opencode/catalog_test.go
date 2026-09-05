@@ -1,15 +1,17 @@
 package opencode
 
-// カタログ整形（catalog.go）。実測の並び（Zen 61 件のあとに Go 18 件が続き、うち何件かは
-// 同名）を縮めた固定入力で、枠ごとの絞り込み・並び順・退避条件を固定する。
+// Catalog shaping (catalog.go). A shrunk fixed input, modelled on a measured ordering
+// (61 Zen entries followed by 18 Go ones, some sharing a name), pins the per-plan filtering,
+// the ordering, and the fallback conditions.
 
 import (
 	"strings"
 	"testing"
 )
 
-// live は実測カタログの縮小版: Zen 側に無料モデルと Go と同名の twin と Go に無いモデル、
-// Go 側に twin と Go 専用、加えてユーザーが直結した別プロバイダ。
+// live is a shrunk version of a measured catalog: on the Zen side a free model, a twin
+// sharing its name with a Go one, and a model Go does not have; on the Go side that twin and
+// a Go-only model; plus another provider the user connected directly.
 var live = []string{
 	"opencode/deepseek-v4-flash-free",
 	"opencode/claude-opus-5",
@@ -51,8 +53,9 @@ func withFreeIDs(t *testing.T, free ...string) {
 	})
 }
 
-// Zen: opencode.ai 側は絞らない（Go を併用していれば両方出る）。Go を先頭へ寄せるが
-// 捨てず、群の中は id 昇順に正規化する（取得元の並びは持ち込まない）。
+// Zen does not filter the opencode.ai side: with Go also in use, both appear. Go is moved to
+// the front but nothing is dropped, and within each group the order is normalized to
+// ascending id, so the source's own ordering is never carried through.
 func TestCatalogZenKeepsBothRoutesGoFirst(t *testing.T) {
 	got := ids(t, UsageZen)
 	want := []string{
@@ -65,11 +68,12 @@ func TestCatalogZenKeepsBothRoutesGoFirst(t *testing.T) {
 	}
 }
 
-// 「時々並びが乱れる」の再現と固定: 同じカタログでも daemon（GET /api/model = 上流の
-// 生の並び）と CLI（opencode models = id 昇順）で入力順が違う。整形後は同一でなければ
-// ならない — 利用者から見て「起動モーダルを開き直したら並びが変わった」になるため。
+// Reproduces and pins the "the order is sometimes scrambled" report: for the same catalog
+// the input order differs between the daemon (GET /api/model, the upstream's raw order) and
+// the CLI (opencode models, ascending id). After shaping they must be identical, otherwise
+// the user sees the order change just by reopening the launch modal.
 func TestCatalogOrderIsIndependentOfSource(t *testing.T) {
-	// daemon 実測（2026-08-31）の並びを縮めたもの: 名前順でもプロバイダ順でもない。
+	// A shrunk copy of a measured daemon ordering: neither by name nor by provider.
 	fromDaemon := []string{
 		"opencode-go/kimi-k3",
 		"opencode/deepseek-v4-flash-free",
@@ -81,20 +85,21 @@ func TestCatalogOrderIsIndependentOfSource(t *testing.T) {
 		"opencode/deepseek-v4-pro",
 	}
 	for _, pref := range []string{UsageZen, UsageGo} {
-		a, b := Catalog(fromDaemon, pref), Catalog(live, pref) // live = CLI 相当（別順）
+		a, b := Catalog(fromDaemon, pref), Catalog(live, pref) // live stands in for the CLI (different order)
 		if len(a) != len(b) {
-			t.Fatalf("%s: 件数が違う: %d vs %d", pref, len(a), len(b))
+			t.Fatalf("%s: different counts: %d vs %d", pref, len(a), len(b))
 		}
 		for i := range a {
 			if a[i].ID != b[i].ID {
-				t.Fatalf("%s: 取得元で並びが変わる: %d 番目 %q vs %q", pref, i, a[i].ID, b[i].ID)
+				t.Fatalf("%s: order depends on the source: entry %d is %q vs %q", pref, i, a[i].ID, b[i].ID)
 			}
 		}
 	}
 }
 
-// Go のみ: 落とすのは従量の opencode/… だけ。ユーザーが自分で繋いだ直結プロバイダ
-// （anthropic/… 等）まで消すと、自分の鍵が使えなくなる。
+// Go-only drops just the metered opencode/... ids. Dropping the directly connected
+// providers the user wired up themselves (anthropic/... and so on) would make their own keys
+// unusable.
 func TestCatalogGoDropsOnlyMeteredIDs(t *testing.T) {
 	got := ids(t, UsageGo)
 	want := []string{
@@ -106,7 +111,8 @@ func TestCatalogGoDropsOnlyMeteredIDs(t *testing.T) {
 	}
 }
 
-// 無料枠: opencode.ai 側は無料モデルだけ。ここでも直結プロバイダは別課金なので残す。
+// On the free plan the opencode.ai side is limited to free models. Directly connected
+// providers are billed separately, so they are kept here too.
 func TestCatalogFreeKeepsZeroCostAndDirectProviders(t *testing.T) {
 	withFreeIDs(t, "opencode/deepseek-v4-flash-free")
 	got := ids(t, UsageFree)
@@ -116,18 +122,19 @@ func TestCatalogFreeKeepsZeroCostAndDirectProviders(t *testing.T) {
 	}
 }
 
-// 価格を知らない（CLI 由来で freeIDs が空）ときは素通し。無料枠では
-// OPENCODE_API_KEY を注入しないので、その CLI が返す opencode.ai の一覧は
-// もともと無料枠のものだけになる（実測）。ここで全部落とすと空になってしまう。
+// With no price data (a CLI-sourced catalog leaves freeIDs empty) everything passes through.
+// The free plan injects no OPENCODE_API_KEY, so the opencode.ai list that CLI returns
+// already contains only free-plan models (measured); dropping everything here would leave
+// the picker empty.
 func TestCatalogFreeWithoutCostDataPassesThrough(t *testing.T) {
-	withFreeIDs(t) // 空 = 未知
+	withFreeIDs(t) // empty means unknown
 	if got := ids(t, UsageFree); len(got) != len(live) {
-		t.Errorf("free(価格不明) = %v, want すべて素通し", got)
+		t.Errorf("free(no price data) = %v, want everything passed through", got)
 	}
 }
 
-// Go 契約が無いアカウント（opencode-go/… が 1 件も無い）で Go のみ を選んでも、
-// ピッカーを空にはしない — 起動不能になるくらいなら設定を無視する。
+// An account with no Go contract (not a single opencode-go/... id) that selects Go-only must
+// still not end up with an empty picker: ignoring the setting beats being unable to launch.
 func TestCatalogFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
 	zenOnly := []string{"opencode/deepseek-v4-pro", "opencode/glm-5.2"}
 	if got := Catalog(zenOnly, UsageGo); len(got) != 2 {
@@ -139,8 +146,9 @@ func TestCatalogFallsBackWhenItWouldEmptyThePicker(t *testing.T) {
 	}
 }
 
-// 旧値からの移行: 「Zen を隠す」は Go だけ見たいという意思、「Go 優先」「すべて表示」は
-// 両方見たいという意思。未設定/不明は明示的に選ぶまで無効（Off）に倒す。
+// Migration from the legacy values: "hide zen" expressed wanting to see only Go, while "go
+// first" and "show all" expressed wanting both. Unset or unknown falls back to Off until
+// something is chosen explicitly.
 func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
 	for v, want := range map[string]string{
 		"hide-zen": UsageGo,
@@ -160,17 +168,19 @@ func TestCatalogPrefMigratesLegacyValues(t *testing.T) {
 	}
 }
 
-// off は「一切使わない」の明示的な宣言なので、Catalog の空ピッカー救済（本来
-// 起動不能を避けるための Zen フォールバック）の対象外 — 空のままが正しい。他社
-// プロバイダの id（opencode.ai 経由でない）も含め、何も出さない。
+// off is an explicit declaration of "do not use this at all", so it is exempt from Catalog's
+// empty-picker rescue (the Zen fallback that exists to avoid being unable to launch): staying
+// empty is correct. Nothing is offered, including ids of other providers that do not go
+// through opencode.ai.
 func TestCatalogOffStaysEmpty(t *testing.T) {
 	ids := []string{"opencode/deepseek-v4-pro", "opencode-go/glm-5.2", "anthropic/claude-opus-5"}
 	if got := Catalog(ids, UsageOff); len(got) != 0 {
-		t.Errorf("off = %+v, want 空", got)
+		t.Errorf("off = %+v, want empty", got)
 	}
 }
 
-// 空カタログ（CLI 不在 / オフライン）は空のまま返す — 呼び出し側は「既定のみ」を出す。
+// An empty catalog (no CLI, or offline) is returned empty; the caller then offers only the
+// default.
 func TestCatalogEmptyStaysEmpty(t *testing.T) {
 	if got := Catalog(nil, UsageGo); len(got) != 0 {
 		t.Errorf("got %+v", got)

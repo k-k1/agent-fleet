@@ -1,6 +1,5 @@
 // profiles.go — the two optional capabilities every adapter answers for itself:
-// what the three size axes MEAN here (workspace_sizing.go 由来) and whether there is
-// an AWS bill to show at all (cost_profile.go 由来).
+// what the three size axes MEAN here, and whether there is an AWS bill to show at all.
 //
 // Both used to live next to the CP's handlers, with methods hung on the adapter types
 // from the outside. That stopped being possible when the adapters moved into this
@@ -59,7 +58,7 @@ type WorkspaceSizing struct {
 //
 // Label is the operator's words, not a generated one. The Console shows THIS, and
 // `m7g.xlarge` only as the "you land on" detail — a tenant admin is choosing
-// "省コスト（Arm）", not an EC2 instance family (docs/log/70 §70.10).
+// a label like "low cost (Arm)", not an EC2 instance family (docs/log/70 §70.10).
 type WorkspaceSlotClass struct {
 	ID    string          `json:"id"`
 	Label string          `json:"label"`
@@ -75,7 +74,7 @@ type WorkspaceSlot struct {
 	MemMiB       int64  `json:"mem_mib"`
 	VCPU         int    `json:"vcpu,omitempty"`
 	// UsableMemMiB is what the WORKSPACE gets, as opposed to what the box has: the
-	// rung less the reserve held back for the box's own daemons (ADR 0045 決定 28).
+	// rung less the reserve held back for the box's own daemons (ADR 0045 decision 28).
 	//
 	// It exists because the two stopped being the same number. While the container was
 	// uncapped, "8 GiB" described both the machine and the workspace and one figure was
@@ -161,7 +160,7 @@ type CostProfile struct {
 	// Attributable lists what actually carries `af-membership`, so the Console can name
 	// what a member's number covers instead of implying it covers everything. Measured
 	// on the reference deployment: what CAN be attributed is about a fifth of the bill
-	// (docs/log/67 §67.3), and the rest is shared — never divided (ADR 0048 決定 4).
+	// (docs/log/67 §67.3), and the rest is shared — never divided (ADR 0048 decision 4).
 	Attributable []string `json:"attributable,omitempty"`
 	// Shared lists the big cost centres that belong to nobody. Shown only to a
 	// super_admin, but declared here so the member-facing hint can say what is EXCLUDED
@@ -199,8 +198,8 @@ func (f *dockerFactory) CostProfile() CostProfile { return CostProfile{Runtime: 
 func (f *nativeFactory) CostProfile() CostProfile { return CostProfile{Runtime: "native"} }
 
 // CostProfile — Fargate. The task is the billed unit and it now inherits af-membership
-// from its service, but ⚠️ this has never run against real Fargate: the deployment this
-// was developed on is ecs-ec2 (ADR 0048 決定 9). Reported as unverified rather than
+// from its service, but this has never run against real Fargate: the deployment this
+// was developed on is ecs-ec2 (ADR 0048 decision 9). Reported as unverified rather than
 // quietly claimed.
 func (f *ecsFactory) CostProfile() CostProfile {
 	return CostProfile{
@@ -212,7 +211,7 @@ func (f *ecsFactory) CostProfile() CostProfile {
 }
 
 // CostProfile — the EC2 slot pool, the one that has been measured end to end. A slot is
-// used by exactly one person while their home is attached (ADR 0045 決定 8), which is
+// used by exactly one person while their home is attached (ADR 0045 decision 8), which is
 // what makes instance-hours attributable at all; an unclaimed warm slot is shared, and
 // showing that is the point rather than a caveat (it is the price of the pool size).
 func (f *ecsEC2Factory) CostProfile() CostProfile {

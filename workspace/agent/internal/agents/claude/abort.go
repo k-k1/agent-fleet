@@ -1,17 +1,19 @@
 package claude
 
-// 中断ターンの検知（docs/log/47）。
+// Aborted-turn detection (docs/log/47).
 //
-// claude は API エラーでターンが落ちたとき Stop hook を鳴らさない。よって
-// working→idle の遷移が誰にも記録されず、ペインだけが待機プロンプトに戻る。その後
-// 自己修復（driveState / WireLive）が「非 idle なのにプロンプトへ戻っている」を見て
-// 状態ファイルを黙って消していたため、応答あり通知も docs/log/30 の完了報告も生まれず、
-// 報告の arm が未消費のまま残っていた（実測: セッション ssiw5kb / 2026-07-26）。
+// claude does not fire the Stop hook when a turn dies on an API error. The working→idle
+// transition is therefore recorded nowhere and only the pane returns to the ready prompt.
+// The self-heal path (driveState / WireLive) then saw "not idle, yet back at the prompt"
+// and silently removed the state file, so neither the response notification nor the
+// docs/log/30 completion report was produced and the report arm stayed unconsumed
+// (measured: session ssiw5kb, 2026-07-26).
 //
-// 落ちたことは transcript に残る: type=assistant かつ isApiErrorMessage=true の
-// 合成レコードが 1 行書かれ、以降そのターンには実レコードが続かない。ここではその
-// 末尾形だけを見て「中断で終わったか」を判定し、原因を「再送で直る中断」と「原因が
-// 解消するまで再送しても同じ失敗」に分ける。前者だけが自動再開の対象になる。
+// The failure does survive in the transcript: one synthetic record with type=assistant and
+// isApiErrorMessage=true is written, and no real record follows it in that turn. Only that
+// tail shape decides whether the turn ended in an abort, and the cause is split into "an
+// abort a re-send fixes" and "re-sending fails the same way until the cause is gone". Only
+// the former is eligible for auto-resume.
 
 import (
 	"encoding/json"
@@ -30,16 +32,17 @@ type abortRecord struct {
 	Status      int    `json:"apiErrorStatus"`
 	Timestamp   string `json:"timestamp"`
 	// Error is claude's own MACHINE-READABLE cause ("server_error" / "rate_limit" /
-	// "invalid_request" — 実測 2026-08-05). 英文言と違ってこれは版ごとに書き換わらない
-	// ので、文言に無い形が来たときの最後の手掛かりになる（docs/log/47 §5「次の一手」）。
+	// "invalid_request" — measured 2026-08-05). Unlike the English prose it is not reworded
+	// from release to release, so it is the last clue left when a shape the text does not
+	// cover arrives (docs/log/47 §5).
 	Error string `json:"error"`
 }
 
 // Abort is a detected turn cut-off, with everything a caller needs to report it.
 type Abort struct {
 	Msg       string    // the error text (rides the report / chat bridge as the reason)
-	Retryable bool      // 再送で直る（自動再開の対象）か、原因を直すまで無意味か
-	At        time.Time // 中断が記録された時刻。ゼロ値 = レコードに時刻が無い
+	Retryable bool      // a re-send fixes it (auto-resume eligible) vs pointless until fixed
+	At        time.Time // when the abort was recorded; zero = the record carried no timestamp
 }
 
 // retryableOverrides are texts where claude ITSELF says the error is not the user's
@@ -53,72 +56,78 @@ var retryableOverrides = []string{
 }
 
 // blockedMarkers are error texts whose cause does NOT clear on its own: re-sending the
-// same turn reproduces the same error, so the operator must fix the cause first (残高
-// /上限・プロンプト長超過・認証)。実測コーパス（docs/log/47 §2）由来。
+// same turn reproduces the same error, so the operator must fix the cause first (balance or
+// limit, over-long prompt, authentication). From the measured corpus (docs/log/47 §2).
 var blockedMarkers = []string{
 	"reached your",       // "You've reached your <model> limit. Run /usage-credits …"
-	"usage limit",        // 別表現の上限（overrides で「上限ではない」旨を先に除外済み）
+	"usage limit",        // another wording of the limit ("not a limit" already excluded by overrides)
 	"session limit",      // "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
-	"weekly limit",       // "You've hit your weekly limit · resets 9am (Asia/Tokyo)"（実測コーパス）
+	"weekly limit",       // "You've hit your weekly limit · resets 9am (Asia/Tokyo)" (measured corpus)
 	"spend limit",        // "You've hit your org's monthly spend limit · run /usage-credits …"
-	"prompt is too long", // 会話が長すぎる — /compact なしの再送は無意味
+	"prompt is too long", // conversation too long — re-sending without /compact is pointless
 	"credit balance",
 	"invalid api key",
 	"authentication",
 	"unauthorized",
-	// 実測の認証切れ（2026-08-06 / apiErrorStatus 401 / error:"authentication_failed"）:
+	// Measured expiry (2026-08-06 / apiErrorStatus 401 / error:"authentication_failed"):
 	// "Please run /login · API Error: 401 OAuth access token has expired. Re-authenticate
-	// to continue." — 上の "authentication" には**当たらない**（本文にあるのは
-	// "Re-authenticate"）。401 なので既定の blocked に落ちて結果は正しかったが、
-	// 偶然そうなっていただけなので語幹で明示する。
+	// to continue." — that does NOT hit "authentication" above (the text carries
+	// "Re-authenticate"). Being a 401 it fell to the blocked default and the verdict was
+	// right by accident, so name the stems explicitly.
 	"re-authenticate",
 	"run /login",
 }
 
 // limitMarkers are the blockedMarkers that specifically mean A USAGE LIMIT — a quota that
-// lifts on its own schedule — as opposed to the other blocked causes (長すぎるプロンプト・
-// 残高・認証) which never lift by waiting. 上限エピソード（rate_limit_resume.go）は
-// blockedMarkers 全体ではなくこの部分集合だけを入口にする: プロンプト超過や認証エラーで
-// 「利用上限に達しました」と通知したら、利用者は来ないリセットを待つことになる。
+// lifts on its own schedule — as opposed to the other blocked causes (over-long prompt,
+// balance, authentication) which never lift by waiting. A limit episode
+// (rate_limit_resume.go) is entered from this subset only, not from blockedMarkers as a
+// whole: notifying "usage limit reached" for a prompt-length or authentication error leaves
+// the user waiting for a reset that never comes.
 var limitMarkers = []string{
-	// モデル別の上限。メニューを出さず 1 行のエラーでターンを畳む形（実測 2026-08-05
-	// s6no6jv / claude 2.1.x）— "You've reached your Fable 5 limit. Run /usage-credits …"
+	// Per-model limit. Shows no menu and folds the turn with a one-line error (measured
+	// 2026-08-05 s6no6jv / claude 2.1.x) — "You've reached your Fable 5 limit. Run
+	// /usage-credits …"
 	"reached your",
 	"usage limit",
-	// アカウントの窓。/rate-limit-options メニューを伴う形（実測 2026-07-31 s5jjqv4）—
-	// "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
+	// Account window. Comes with the /rate-limit-options menu (measured 2026-07-31
+	// s5jjqv4) — "You've hit your session limit · resets 7:50pm (Asia/Tokyo)"
 	"session limit",
-	// 週次の窓（実測コーパス 2026-08-20）— "You've hit your weekly limit · resets 9am
-	// (Asia/Tokyo)"。上の 3 語のどれにも当たらないので、**週次だけがエピソードを開けず**
-	// 通知も再開予約もチップも出ていなかった（既定の blocked に落ちて分類だけ正しかった）。
+	// Weekly window (measured corpus 2026-08-20) — "You've hit your weekly limit · resets
+	// 9am (Asia/Tokyo)". It matches none of the three above, so the weekly one alone opened
+	// no episode: no notification, no resume booking, no chip (it fell to the blocked
+	// default, so only the classification was right).
 	"weekly limit",
 }
 
-// LimitKind splits「上限で終わったターン」into the two kinds whose next move is opposite.
-// docs/log/47 §4-10。どちらも 429 / `error:"rate_limit"` で届くので、コードでは分けられない。
+// LimitKind splits a turn that ended on a limit into the two kinds whose next move is
+// opposite. Both arrive as 429 / `error:"rate_limit"`, so code alone cannot tell them apart
+// (docs/log/47 §4-10).
 type LimitKind string
 
 const (
-	// LimitWindow は時間の窓（5時間 / 週次 / モデル別）。待てば解ける＝自動再開の対象。
+	// LimitWindow is a window of time (5-hour / weekly / per-model). Waiting clears it, so
+	// it is eligible for auto-resume.
 	LimitWindow LimitKind = "window"
-	// LimitSpend は支出・残高の上限。**待っても解けない** — 増枠かクレジットの追加という
-	// 課金側の判断が要るので、自動再開は仕込まないし「制限解除待ち」とも名乗らない。
+	// LimitSpend is a spend or balance cap. Waiting never clears it — raising the cap or
+	// adding credit is a billing decision — so no auto-resume is armed and it must not call
+	// itself "waiting for the limit to lift".
 	LimitSpend LimitKind = "spend"
 )
 
-// spendMarkers are the usage-limit texts that mean 金額側の上限。実測（2026-08-20・
-// 利用者報告のスクリーンショット）:
+// spendMarkers are the usage-limit texts that mean a cap on money. Measured (2026-08-20,
+// from a user-reported screenshot):
 //
 //	You've hit your org's monthly spend limit · run /usage-credits to raise it,
 //	or visit claude.ai/admin-settings/usage
 //
-// **"/usage-credits" を材料にしてはいけない**: モデル別の窓の上限（"You've reached your
-// Fable 5 limit. Run /usage-credits to continue or switch models…"）も同じコマンドを案内
-// するので、両方に当たって窓の上限まで「増枠が必要」に化ける。金額そのものを名指す語
-// （spend limit / credit balance）だけを持つ。
+// Do not key on "/usage-credits": the per-model window limit ("You've reached your Fable 5
+// limit. Run /usage-credits to continue or switch models…") points at the same command, so
+// it would match both and turn a window limit into "a bigger cap is needed". Hold only the
+// words that name the money itself (spend limit / credit balance).
 var spendMarkers = []string{
 	"spend limit",
-	"credit balance", // "Your credit balance is too low …"（blockedMarkers の実測由来）
+	"credit balance", // "Your credit balance is too low …" (measured, via blockedMarkers)
 }
 
 // retryableMarkers are error texts that clear by themselves: the turn was cut off by a
@@ -126,52 +135,55 @@ var spendMarkers = []string{
 var retryableMarkers = []string{
 	"connection closed",
 	"connection error",
-	"temporarily limiting requests", // 429 だが利用上限ではない（本文が明示している）
+	"temporarily limiting requests", // a 429 that is not a usage limit (the text says so)
 	"overloaded",
 	"timed out",
 	"timeout",
-	// "server error" は "internal server error" を含む広い形。実測 sp2qemx (2026-07-30)
-	// の "API Error: Server error mid-response. The response above may be incomplete."
-	// はこの語しか手掛かりが無い — apiErrorStatus フィールドごと欠けているので下の
-	// 5xx フォールバックにも掛からず、blocked（＝自動再開しない）に倒れていた。
+	// "server error" is the broad form that also covers "internal server error". Measured
+	// sp2qemx (2026-07-30): "API Error: Server error mid-response. The response above may
+	// be incomplete." offers no other clue — the apiErrorStatus field is missing entirely,
+	// so the 5xx fallback below misses it too and it fell to blocked (no auto-resume).
 	"server error",
 	"service unavailable",
 	"bad gateway",
-	// ストリームの番犬（claude 2.1.x の内部リトライを使い切った形）。実測 2026-08-05:
-	// "API Error: Stream idle timeout - no chunks received"。上の "timed out"/"timeout"
-	// でも当たるが、既知の形として明示しておく — 文言が「no chunks received」側へ
-	// 寄っても拾えるように、語幹（stream idle）で持つ。
+	// Stream watchdog (claude 2.1.x once its internal retries are used up). Measured
+	// 2026-08-05: "API Error: Stream idle timeout - no chunks received". "timed out" /
+	// "timeout" above already match it, but name the known shape explicitly, keyed on the
+	// stem (stream idle) so it still lands if the wording drifts toward "no chunks
+	// received".
 	"stream idle",
 }
 
-// retryableErrorKinds maps claude's own `error` field onto 再送で直る側。文言に無い形が
-// 来たときの受け皿で、**文言判定のあと**に見る（文言は「上限ではない」といった否定を
-// 表現できるが、このフィールドは分類までしか言わない）。
+// retryableErrorKinds maps claude's own `error` field onto the retryable side. It catches the
+// shapes the message text does not cover and is consulted AFTER the text (the text can
+// express a negation such as "not a usage limit"; this field only classifies).
 //
-// ここに "rate_limit" は入れない: 429 は利用上限（blocked）と一時的なレート制限
-// （retryable）が同居する軸で、どちらかは文言でしか分からないから（docs/log/47 §2）。
-// 実測で見えた値だけを載せる — 未知の値は既定どおり blocked に倒れる（判定不能は
-// 自動再開しない方が安全側）ので、憶測の項目を足して穴を広げない。
+// "rate_limit" is deliberately absent: 429 is the axis where a usage limit (blocked) and a
+// temporary rate limit (retryable) coexist, and only the text tells them apart (docs/log/47
+// §2). Only values seen in practice are listed — an unknown value falls to the blocked
+// default (not auto-resuming is the safe side when the verdict is unclear), so do not widen
+// the hole with guessed entries.
 var retryableErrorKinds = map[string]bool{
-	"server_error": true, // 実測: 529 Overloaded / Connection closed / Server error mid-response
+	"server_error": true, // measured: 529 Overloaded / Connection closed / Server error mid-response
 }
 
-// blockedErrorKinds are the `error` values whose cause never clears by re-sending
-// (プロンプト超過・不正なリクエスト・認証). 既定が blocked なので分類結果は同じだが、
-// 意図した判定として明示しておく（"偶然だけ正解している" 状態を残さない）。
+// blockedErrorKinds are the `error` values whose cause never clears by re-sending (over-long
+// prompt, invalid request, authentication). blocked is the default so the verdict is
+// unchanged, but state it as an intended one rather than one that is only right by accident.
 var blockedErrorKinds = map[string]bool{
-	"invalid_request":       true, // 実測: Prompt is too long
-	"authentication_failed": true, // 実測: 401 OAuth access token has expired（再ログインするまで同じ）
+	"invalid_request":       true, // measured: Prompt is too long
+	"authentication_failed": true, // measured: 401 OAuth access token has expired (same until re-login)
 }
 
-// classifyAbort splits an API error message into 再送で直る (true) か 原因を直すまで
-// 無意味 (false) か。判定不能は false に倒す — 自動再開はしない方が安全側。
-// blocked を先に見るのは、利用上限も 429 で届くため（"You've reached your … limit"）
-// ステータスコードだけでは一時的なレート制限と区別できないから。
+// classifyAbort splits an API error message into fixed by a re-send (true) and pointless
+// until the cause is fixed (false). An unclear verdict falls to false — not auto-resuming is
+// the safe side. blocked is checked first because a usage limit also arrives as a 429
+// ("You've reached your … limit"), so the status code alone cannot tell it from a temporary
+// rate limit.
 //
-// 順序は 文言 → `error` → ステータス。文言が主なのは、それだけが「上限ではない」と
-// いった否定を表現できるから（retryableOverrides）。`error` を status より先に見るのは、
-// 合成レコードでは apiErrorStatus ごと欠けることがある一方、`error` は残っているため。
+// The order is text → `error` → status. The text leads because only it can express a negation
+// such as "not a usage limit" (retryableOverrides). `error` comes before status because a
+// synthetic record sometimes lacks apiErrorStatus entirely while `error` survives.
 func classifyAbort(msg string, status int, errKind string) bool {
 	low := strings.ToLower(msg)
 	for _, m := range retryableOverrides {
@@ -202,14 +214,16 @@ func classifyAbort(msg string, status int, errKind string) bool {
 // last turn was cut off and no Stop hook ever fired. msg is the error text (it rides the
 // report / chat bridge as the reason), retryable says whether a plain re-run should work.
 //
-// 実レコード（type=user / assistant）だけを終端の判定材料にする。custom-title・mode・
-// last-prompt・file-history-* ・system(turn_duration) といった記帳レコードは中断後にも
-// 書かれ、種類も版ごとに増減するので、除外リストではなく「user/assistant 以外は無視」
-// の許可リストで受ける（版差に強い）。サブエージェント（isSidechain）のエラーは本体の
-// ターンの終端ではないので同じく無視する。
+// Only real records (type=user / assistant) decide the tail. Bookkeeping records —
+// custom-title, mode, last-prompt, file-history-*, system(turn_duration) — are written after
+// an abort as well and their kinds come and go between releases, so they are filtered by an
+// allow-list ("ignore anything that is not user/assistant") rather than a deny-list, which
+// survives version drift. A subagent error (isSidechain) does not end the main turn and is
+// ignored the same way.
 //
-// ユーザーが手で再開した後は末尾が user/assistant に変わるため、この関数は自然に
-// false へ戻る（＝一度中断を報告したセッションが再開後にもう一度報告されることはない）。
+// Once the user resumes by hand the tail becomes user/assistant again, so this function
+// returns to false on its own: a session whose abort was reported once is never reported
+// again after it resumes.
 func AbortedTurn(sid string) (msg string, retryable, ok bool) {
 	a, ok := AbortInfo(sid)
 	return a.Msg, a.Retryable, ok
@@ -226,7 +240,7 @@ func AbortInfo(sid string) (Abort, bool) {
 	for _, p := range jsonlByMtime(sid) {
 		line, found := lastLineWhere(p, func(l []byte) bool { _, ok := terminalRecord(l); return ok })
 		if !found {
-			continue // この転写には終端の判定材料が無い（stub 等）— 次の候補へ
+			continue // nothing in this transcript can end a turn (a stub, say) — try the next
 		}
 		r, _ := terminalRecord(line)
 		return abortFrom(line, r)
@@ -240,7 +254,7 @@ func abortedTurnFrom(lines [][]byte) (msg string, retryable, ok bool) {
 	for i := len(lines) - 1; i >= 0; i-- {
 		r, isTerminal := terminalRecord(lines[i])
 		if !isTerminal {
-			continue // 記帳レコード / サブエージェント — 終端の判定材料にしない
+			continue // bookkeeping record / subagent — cannot end a turn
 		}
 		a, ok := abortFrom(lines[i], r)
 		return a.Msg, a.Retryable, ok
@@ -249,8 +263,8 @@ func abortedTurnFrom(lines [][]byte) (msg string, retryable, ok bool) {
 }
 
 // terminalRecord parses a line and reports whether it can END a turn: a real record
-// (user/assistant) that is not a subagent's. 除外リストではなく許可リストで受けるのは
-// 記帳レコードの種類が版ごとに増減するから（docs/log/47）。
+// (user/assistant) that is not a subagent's. An allow-list rather than a deny-list, because
+// the set of bookkeeping record kinds grows and shrinks between releases (docs/log/47).
 func terminalRecord(line []byte) (abortRecord, bool) {
 	var r abortRecord
 	if json.Unmarshal(line, &r) != nil {
@@ -265,7 +279,7 @@ func terminalRecord(line []byte) (abortRecord, bool) {
 // abortFrom is the verdict for one terminal record.
 func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 	if r.Type != "assistant" || !r.IsAPIError {
-		return Abort{}, false // 直近の実レコードが通常のターン — 中断ではない
+		return Abort{}, false // the latest real record is an ordinary turn — not an abort
 	}
 	a := Abort{Msg: strings.TrimSpace(AssistantText(line))}
 	a.Retryable = classifyAbort(a.Msg, r.Status, r.Error)
@@ -275,23 +289,24 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 	return a, true
 }
 
-// UsageLimitAbort is AbortInfo narrowed to「利用上限で終わったターン」。ok=true のときだけ
-// 上限エピソード（rate_limit_resume.go）を開いてよい。
+// UsageLimitAbort is AbortInfo narrowed to a turn that ended on a usage limit. Only when
+// ok=true may a limit episode (rate_limit_resume.go) be opened.
 //
-// なぜ転写側にもこの判定が要るか: 上限の形はひとつではない。アカウントの窓に当たると
-// claude は /rate-limit-options メニューを出してキー入力待ちで止まる（ペインから読める）が、
-// モデル別の上限は**メニューを出さず**、1 行のエラーを書いてターンを完了として畳み、普通の
-// 入力欄へ戻る。後者はペインに手掛かりが残らない（画面のエラー行は転写テキストなので、
-// その後もずっと残る＝いつの話か言えない — isCodexUpdateMenu の罠と同じ）ので、
-// 「今どうなっているか」を答えられるのは転写の末尾だけになる。
+// Why the transcript needs this verdict too: a limit has more than one shape. On an account
+// window claude puts up the /rate-limit-options menu and waits for a keystroke (readable from
+// the pane), but a per-model limit shows NO menu: it writes a one-line error, folds the turn
+// as complete and returns to the ordinary composer. The latter leaves no clue in the pane
+// (the error line on screen is transcript text, so it stays there forever and cannot say when
+// it happened — the same trap as isCodexUpdateMenu), so only the tail of the transcript can
+// answer what the state is right now.
 //
-// retryable な中断（接続断・一時的なレート制限）は上限ではないので落とす。retryableOverrides
-// が classifyAbort で先に効くため、"(not your usage limit)" と自称するレコードがここの
-// "usage limit" に当たることはない。
+// A retryable abort (dropped connection, temporary rate limit) is not a limit and is dropped.
+// retryableOverrides runs first inside classifyAbort, so a record that calls itself "(not
+// your usage limit)" never reaches the "usage limit" marker here.
 //
-// kind は**待てば解けるか**を分ける（docs/log/47 §4-10）。同じ 429 / `error:"rate_limit"` で
-// 届くのに、窓（時間）と支出（金額）はその後の一手が正反対になる — 前者は待つ、後者は
-// 待っても永久に解けず、増枠かクレジットの追加が要る。
+// kind splits on whether waiting clears it (docs/log/47 §4-10). Both arrive as the same 429 /
+// `error:"rate_limit"`, yet a window (time) and a spend cap (money) call for opposite next
+// moves: wait for the first; the second never clears, and needs a raised cap or added credit.
 func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
 	a, ok := AbortInfo(sid)
 	if !ok || a.Retryable {
@@ -300,12 +315,14 @@ func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
 	return limitKindOf(a.Msg, a)
 }
 
-// limitKindOf is the pure form (コーパステスト用): 文言から上限の種別を決める。
+// limitKindOf is the pure form (for the corpus tests): it decides the kind of limit from the
+// message text.
 //
-// **支出側を先に見る。** 両方に読める文言（"…spend limit… run /usage-credits…"）が来たら、
-// 待てば解ける方に倒すのが一番高い誤りになる: 利用者は来ないリセットを待ち、自動再開は
-// 同じ 429 を踏み続ける。逆向きの誤り（窓の上限を「増枠が要る」と言う）は、待てば直る
-// ものを人が見に来るだけで済む。
+// Spend is checked first. When a text reads as both ("…spend limit… run /usage-credits…"),
+// falling to the side that clears by waiting is the costlier error: the user waits for a
+// reset that never comes and auto-resume keeps hitting the same 429. The opposite error
+// (calling a window limit "needs a bigger cap") only costs someone a look at something that
+// would have fixed itself.
 func limitKindOf(msg string, a Abort) (Abort, LimitKind, bool) {
 	low := strings.ToLower(msg)
 	for _, m := range spendMarkers {
@@ -324,9 +341,10 @@ func limitKindOf(msg string, a Abort) (Abort, LimitKind, bool) {
 // HealIdle is what the pane-based self-heal does once it has decided the session is
 // really back at its ready prompt. It replaces the bare status.Remove that used to sit
 // at both heal sites: if the transcript says the turn was CUT OFF, the turn end is a
-// real terminal event and has to go through the shared notifier (通知＋docs/log/30 報告)
-// — dropping it on the floor is exactly the bug docs/log/47 fixes. Anything else (killed+
-// resumed, rejected permission, abandoned question) stays a silent heal as before.
+// real terminal event and has to go through the shared notifier (notification plus the
+// docs/log/30 report) — dropping it on the floor is exactly the bug docs/log/47 fixes.
+// Anything else (killed+resumed, rejected permission, abandoned question) stays a silent
+// heal as before.
 //
 // MarkTurnEndErr persists idle rather than removing the marker, so the heal condition
 // (state != "idle") no longer holds afterwards and a second poll cannot re-report the
@@ -334,7 +352,7 @@ func limitKindOf(msg string, a Abort) (Abort, LimitKind, bool) {
 // disarm.
 func HealIdle(sid string) {
 	if msg, retryable, ok := AbortedTurn(sid); ok {
-		st := agents.TurnFailed // 原因が解消するまで再送しても同じ — 既存の失敗文言へ
+		st := agents.TurnFailed // re-sending repeats the failure until the cause is fixed
 		if retryable {
 			st = agents.TurnAborted
 		}

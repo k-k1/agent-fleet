@@ -1,16 +1,20 @@
 package mcpx
 
-// MCP レジストリの REST 面（docs/log/48 P0 / ADR0031）。ユーザースコープの CRUD と接続テスト。
-// テナント配布（CP 由来）と組み込み連携は読み取り専用で一覧に混ざり、無効化だけができる。
+// The REST face of the MCP registry (docs/log/48 P0 / ADR0031): user-scoped CRUD plus a
+// connection test. Tenant-distributed entries (from the CP) and built-in integrations mix
+// into the listing read-only, and can only be disabled.
 //
-// 秘密（env / ヘッダの値）は決して外へ返さない: GET は常にマスクし、PUT がマスク値を
-// そのまま返してきたら保存済みの値を維持する（connections の既存作法と同じ）。
+// Secrets (env and header values) are never returned outward: GET always masks, and when a
+// PUT sends a masked value straight back the stored value is kept (the same practice
+// connections already follows).
 //
-// ⚠️ ここに足したパスは control-plane/routes.go にも登録が要る（CP は明示許可リスト方式）。
+// A path added here also needs registering in control-plane/routes.go: the CP uses an
+// explicit allowlist.
 //
-// 変更のたびに MaterializeAll() を呼ぶ（docs/log/48 §8.3）。セッション起動時にも書くので
-// 冗長に見えるが、こちらが「登録した瞬間に各 CLI の設定へ反映される」を担保する — 利用者が
-// Console を閉じて手でターミナルから CLI を叩く経路には起動フックが無い。
+// Call MaterializeAll() on every change (docs/log/48 §8.3). Session launch writes the
+// config too, so this looks redundant, but it is what guarantees "registering it takes
+// effect in each CLI's config immediately": there is no launch hook on the path where the
+// user closes the Console and runs a CLI from a terminal by hand.
 
 import (
 	"context"
@@ -23,7 +27,8 @@ import (
 
 // Wire error codes. The per-rule validation codes live in mcpreg (ValidationError.Code)
 // so the reason survives to the Console; these three are the store-level outcomes.
-// 追加・改名時は console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も同時に。
+// Adding or renaming one means updating "err.<code>" in
+// console/src/lib/i18n/locales/{ja,en}/errors.ts at the same time.
 const (
 	errCodeMCPNotFound = "mcp_not_found"
 	errCodeMCPReadOnly = "mcp_read_only"
@@ -137,7 +142,7 @@ func HandleServerEnabled(w http.ResponseWriter, r *http.Request) {
 //
 // A stdio probe spawns the given command. That is not an escalation: this route is
 // behind the CP↔Agent token and only the member's own workspace is reachable through
-// it, and the member already has a terminal in that container (ADR0031 決定 2 — what
+// it, and the member already has a terminal in that container (ADR0031 decision 2 — what
 // must never be possible is a TENANT-distributed command, which the store refuses).
 func HandleServerTest(w http.ResponseWriter, r *http.Request) {
 	var in mcpreg.ServerDef
@@ -190,14 +195,15 @@ func writeMCPErr(w http.ResponseWriter, err error) {
 	}
 }
 
-// mcpRegistryWire — GET /mcp/servers のレスポンス（Console の `Registry`、
-// console/src/features/settings/mcp/mcpWire.ts）。
+// mcpRegistryWire is the GET /mcp/servers response (the Console's `Registry`,
+// console/src/features/settings/mcp/mcpWire.ts).
 //
-// 旧: map[string]any{"servers":…, "tenantFetchedAt":…, "shadowed":…}
-// 🔴 3 キーとも**無条件に**入っていたので omitempty は付けない。
-// とくに mcpreg.Registry 側の同名フィールドは `omitempty` 付きだが、**それは別の型の
-// 別の経路**であって、ここの map は 0 でも nil でもキーを出していた。**写してはいけない。**
-// Shadowed は nil を取りうる（＝`null`）。空スライスへ正規化すると `[]` になり別物。
+// was: map[string]any{"servers":…, "tenantFetchedAt":…, "shadowed":…}
+// No omitempty on any of the three: all three keys were emitted unconditionally, at 0 and
+// at nil alike. The same-named fields on mcpreg.Registry do carry `omitempty`, but that is
+// a different type on a different path and must not be copied here. Shadowed can be nil
+// (i.e. `null`); normalizing it to an empty slice would emit `[]`, which is not the same
+// value.
 type mcpRegistryWire struct {
 	Servers         []mcpServerWire `json:"servers"`
 	TenantFetchedAt int64           `json:"tenantFetchedAt"`

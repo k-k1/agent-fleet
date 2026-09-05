@@ -1,14 +1,15 @@
 package agents
 
-// MsgLedger は ClientMessageID の永続台帳（docs/log/27 §4・§9.5 — 会話内容を含まない
-// 運用メタデータ）。driver の accept が「この ID は投入済みか」を引き、再送・
-// reconnect 後の二重投入を冪等化する。P2 は handle 生存中の in-memory 台帳だけ
-// だった（§12.2-3 の将来課題）— P3 でプロセス跨ぎ（Agent 再起動・daemon 再起動を
-// 挟んだ Console の再送）にも効くようファイルへ永続化した。
+// MsgLedger is the persistent ledger of ClientMessageIDs (docs/log/27 §4, §9.5 — operational
+// metadata that carries no conversation content). A driver's accept asks it whether an id was
+// already submitted, which makes a resend, or a resubmission after a reconnect, idempotent.
+// It lives on disk rather than in memory so it still holds across processes: the Console
+// resending over an Agent or daemon restart.
 //
-// 1 セッション = 1 JSON ファイル（<AgentConfigDir>/<subdir>/<name>.json、直近
-// ledgerCap 件のリングで肥大しない）。読み書きはセッション毎に直列（package 単位の
-// mutex — 頻度は人間の送信なので競合コストは無視できる）。
+// One session = one JSON file (<AgentConfigDir>/<subdir>/<name>.json, a ring of the most
+// recent ledgerCap entries so it cannot grow without bound). Reads and writes are serialized
+// per session by a package-wide mutex — the traffic is a human sending messages, so the
+// contention costs nothing.
 
 import (
 	"crypto/rand"
@@ -62,8 +63,8 @@ func (l *MsgLedger) Remove(name string) {
 }
 
 // ErrQuestionPending is the driver-agnostic "answer the question first" guard.
-// /turn ハンドラが question_pending のワイヤエラー（tui の submitPromptTUI と同じ
-// 契約）へ写像する。各 driver の accept が返す。
+// The /turn handler maps it to the question_pending wire error (the same contract as the
+// TUI's submitPromptTUI). Every driver's accept returns it.
 var ErrQuestionPending = errQuestionPending{}
 
 type errQuestionPending struct{}
@@ -71,7 +72,8 @@ type errQuestionPending struct{}
 func (errQuestionPending) Error() string { return "question pending" }
 
 // NormalizeMsgID fills in an AF-issued ClientMessageID when the wire didn't carry
-// one（§4: 採番者は AF）。opencode 側は "msg" prefix の追加正規化を重ねる。
+// one (§4: AF is the issuer). The opencode side layers an extra "msg"-prefix normalization on
+// top of this.
 func NormalizeMsgID(id string) string {
 	id = strings.TrimSpace(id)
 	if id != "" {

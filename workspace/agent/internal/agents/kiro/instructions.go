@@ -1,19 +1,20 @@
 package kiro
 
-// ユーザー指示（docs/log/60）の kiro 側 artifact。
+// The kiro-side artifact of the user instructions layer (docs/log/60).
 //
-// kiro の永続コンテキストは **steering**（markdown のディレクトリ）で、ワークスペース側
-// `.kiro/steering/`（リポジトリの中＝プロジェクト層）とは別に、**global な
-// `~/.kiro/steering/*.md`** がある。後者がユーザー層に当たる。
+// kiro's persistent context is steering: a directory of markdown. Besides the workspace-side
+// `.kiro/steering/` (inside the repository, i.e. the project layer) there is a global
+// `~/.kiro/steering/*.md`, and that one is the user layer.
 //
-// 実測（2026-08-13・kiro 2.16.0、行動カナリア）: `~/.kiro/steering/` に置いた md の
-// 指示どおりに `kiro-cli chat --no-interactive` が応答した（プロジェクト側に .kiro が
-// 無いディレクトリで確認）。front-matter は不要で、素の markdown が読まれる。
+// Measured (2026-08-13, kiro 2.16.0, behavioural canary): `kiro-cli chat --no-interactive`
+// answered as instructed by a md file placed in `~/.kiro/steering/` (confirmed from a
+// directory with no project-side .kiro). No front-matter is needed; plain markdown is read.
 //
-// AF 専用の名前のファイルを持つ（copilot と同じ形）— ユーザー指示とフリート方針で
-// **1 本ずつ**。ディレクトリ内の他の steering は利用者やチームのものなので、列挙も
-// 削除もしない。名前は "guide" < "user" の順に並ぶようにしてあるが、読み込み順は
-// 保証されていないので優先順位は本文側にも書いてある（docs/log/60 §60.5-4）。
+// AF keeps files under names of its own (the same shape as copilot) — one for the user
+// instructions and one for the fleet policy. Any other steering in the directory belongs to
+// the user or the team, so AF neither enumerates nor deletes it. The names sort "guide" before
+// "user", but load order is not guaranteed, so the precedence is also spelled out in the body
+// (docs/log/60 §60.5-4).
 
 import (
 	"os"

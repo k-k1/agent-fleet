@@ -1,20 +1,20 @@
 package cursor
 
-// transcriptBuf は managed（ACP）セッションの転写をメモリ上で組み立てるアキュムレータ
-// （docs/log/40 Track A2）。cursor の ACP はローカル痕跡を書かない（TUI/-p の JSONL も出ない）
-// ため、driver が `session/update` 通知から転写を構築する唯一の口。live turn と
-// `session/load` リプレイの両方を同じ状態機械で扱う:
+// transcriptBuf accumulates the transcript of a managed (ACP) session in memory
+// (docs/log/40 Track A2). cursor's ACP leaves no local trace - not even the JSONL that TUI/-p
+// write - so building the transcript from `session/update` notifications is the driver's only
+// way in. One state machine handles both a live turn and a `session/load` replay:
 //
-//   - live turn: driver が runTurn 冒頭で addUserTurn(prompt) を呼び、以後の
-//     agent_message_chunk / agent_thought_chunk / tool_call を開いた assistant ターンへ
-//     積む。turn 終端（session/prompt 応答）で flushAsst。ACP は live で
-//     user_message_chunk を出さない（実測）。
-//   - replay: setLoading(true) 中は user_message_chunk が新しい user ターンを開き、続く
-//     agent_* が assistant ターンを作る。setLoading(false) で最後を flush。
+//   - live turn: the driver calls addUserTurn(prompt) at the top of runTurn, then piles the
+//     following agent_message_chunk / agent_thought_chunk / tool_call onto the open assistant
+//     turn, and flushAsst at the end of the turn (the session/prompt response). ACP emits no
+//     user_message_chunk while live (measured).
+//   - replay: while setLoading(true), a user_message_chunk opens a new user turn and the
+//     following agent_* build an assistant turn. setLoading(false) flushes the last one.
 //
-// Turn.Idx は単調増加（Console の pendingEcho/MirrorView は idx 単調前提 — agy 7354916 の
-// 教訓）。tool_result（rawOutput）はツール Part の Output に載せる（TUI JSONL には無い分の
-// 追加情報 — ACP の利点）。
+// Turn.Idx increases monotonically: the Console's pendingEcho/MirrorView require it (agy 7354916).
+// tool_result (rawOutput) goes into the tool Part's Output, extra information the TUI JSONL does
+// not carry - an advantage of ACP.
 
 import (
 	"sync"

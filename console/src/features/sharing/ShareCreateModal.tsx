@@ -1,7 +1,8 @@
-// ShareCreateModal — 共有作成フォーム。右クリック(セッション/リポジトリ行)から開くと
-// initialTarget で対象が固定され picker は隠れる。左ペインの共有一覧(ShareListModal)の
-// 「+ 新規共有」からは initialTarget なしで開き、対象を自分で選ぶ。他の作成フォーム
-// (NewRepoModal 等)と同じ as="form" + ui-field/ui-seg + ui-modal-foot の型に合わせる。
+// ShareCreateModal is the share-creation form. Opened from the context menu of a session
+// or repository row it receives initialTarget, so the target is fixed and the picker is
+// hidden; opened from "new share" in the share list (ShareListModal) it has no
+// initialTarget and the target is chosen here. It follows the same as="form" +
+// ui-field/ui-seg + ui-modal-foot shape as the other creation forms (NewRepoModal, …).
 import { useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Modal } from "../../ui/Modal.tsx";
@@ -24,7 +25,7 @@ interface RecipientCandidate {
 
 interface ShareCreateModalProps {
   /** "session:<name>" | "repo:<workingCopyId>" | "worktree:<workingCopyId>" — when set
-   * (右クリック起点), the target is fixed and the picker is hidden. */
+   * (opened from a context menu), the target is fixed and the picker is hidden. */
   initialTarget?: string;
   onClose: () => void;
   onCreated?: () => void;
@@ -45,7 +46,7 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
   const locked = !!initialTarget;
   const debouncedQuery = useDebounced(recipientQuery, 250);
   useEffect(() => {
-    // 選択済みなら検索候補は不要(チップ表示に切り替わっている)。
+    // Once a recipient is picked the suggestions are pointless (the field shows a chip).
     if (recipientPick) return;
     let alive = true;
     setSearching(true);
@@ -55,8 +56,8 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
       .finally(() => { if (alive) setSearching(false); });
     return () => { alive = false; };
   }, [debouncedQuery, recipientPick]);
-  // アーカイブ済みは候補に出さない: 共有先の一覧からも外れる(docs/log/59 §1)ので、
-  // 選べても相手には何も見えない。
+  // Archived sessions are not offered: they drop out of the recipient's list too
+  // (docs/log/59 §1), so sharing one would show the recipient nothing.
   const candidates = useMemo(() => [
     ...sessions.filter((s) => agentOf(s.kind).caps.transcript).map((s) => ({
       value: `session:${s.name}`, label: `${tr("share.session_scope")}: ${s.title || s.label || s.name}`,
@@ -89,9 +90,9 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
     <Modal title={tr("share.create_title")} onClose={onClose} as="form" onSubmit={submit} lockClose={saving} className="share-create-modal">
       <div className="ui-modal-body">
         <p className="ui-field-hint">{tr("share.exposure_warning")}</p>
-        {/* ⚠️ マーカー（docs/log/69 / ADR 0050 決定 6）。作成者名を出すのは「誰が引いたか分かる」
-            という要件のためだが、共有先どうしが互いの login id を知るのは新しい露出なので、
-            伏せずにここで言う。 */}
+        {/* Marks (docs/log/69 / ADR 0050 decision 6). Showing the author's name is required
+            so that it is clear who drew a mark, but recipients learning each other's login
+            id is a new exposure, so it is stated here rather than hidden. */}
         <p className="ui-field-hint">{tr("share.marks_warning")}</p>
         {locked ? (
           <div className="ui-field">
@@ -106,8 +107,8 @@ export function ShareCreateModal({ initialTarget, onClose, onCreated }: ShareCre
             </select>
           </label>
         )}
-        {/* repo 共有はプロジェクト全体(ベース＋配下 worktree)に効く(docs/log/59 §1)。
-            どこまで見えるかは共有前に明示する。 */}
+        {/* Sharing a repo covers the whole project: the base and every worktree under it
+            (docs/log/59 §1). State how far the exposure reaches before sharing. */}
         {target.startsWith("repo:") && <p className="ui-field-hint">{tr("share.repo_scope_hint")}</p>}
         <div className="ui-field share-recipient-field">
           <span className="ui-field-label">{tr("share.recipient")}</span>

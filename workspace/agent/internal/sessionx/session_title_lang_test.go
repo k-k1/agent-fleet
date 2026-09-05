@@ -1,8 +1,9 @@
 package sessionx
 
-// 件名の生成言語は Console の表示言語（ui-prefs "locale"）に従う。
-// 「生成時の言語で作り、後から表示言語を切り替えても作り直さない」＝ titleLang() を
-// 生成のたびに読むだけで、保存済みタイトルには一切触れない、という契約をここで固定する。
+// A subject line is generated in the Console's display language (ui-prefs "locale").
+// Pins the contract: generate in the language current at generation time and never
+// regenerate when the display language changes later, i.e. read titleLang() on every
+// generation and never touch an already stored title.
 
 import (
 	"strings"
@@ -12,7 +13,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// writeUIPrefs（一時 HOME に ui-prefs を書く）は ui_prefs_test.go のものを共用。
+// writeUIPrefs (writes ui-prefs into a temporary HOME) is shared from ui_prefs_test.go.
 
 func TestTitleLangFollowsUILocale(t *testing.T) {
 	cases := []struct {
@@ -20,11 +21,11 @@ func TestTitleLangFollowsUILocale(t *testing.T) {
 		prefs string
 		want  string
 	}{
-		{"英語", `{"locale":"en"}`, "en"},
-		{"日本語", `{"locale":"ja"}`, "ja"},
-		{"未設定は日本語", `{}`, "ja"},
-		{"未知のロケールは日本語", `{"locale":"fr"}`, "ja"},
-		{"壊れた prefs は日本語", `{`, "ja"},
+		{"english", `{"locale":"en"}`, "en"},
+		{"japanese", `{"locale":"ja"}`, "ja"},
+		{"unset falls back to japanese", `{}`, "ja"},
+		{"unknown locale falls back to japanese", `{"locale":"fr"}`, "ja"},
+		{"broken prefs fall back to japanese", `{`, "ja"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -36,8 +37,9 @@ func TestTitleLangFollowsUILocale(t *testing.T) {
 	}
 }
 
-// 英語ロケールでは persona もプロンプトも英語一色になること（日本語指示が混ざると
-// モデルへの言語シグナルが割れる — chat.go の langRuleJA/EN と同じ理由）。
+// Under the English locale both the persona and the prompt must be English throughout:
+// mixing in a Japanese instruction splits the language signal the model gets, the same
+// reason chat.go keeps langRuleJA/EN apart.
 func TestTitleSuggestPromptLanguage(t *testing.T) {
 	turns := []transcript.Turn{
 		{Role: "user", Text: "使用量のグラフを作りたい"},
@@ -46,31 +48,32 @@ func TestTitleSuggestPromptLanguage(t *testing.T) {
 
 	en := TitleSuggestPersona("en") + "\n" + titleSuggestPrompt(turns, "en")
 	if !strings.Contains(en, "subject line") || !strings.Contains(en, "conversation log") {
-		t.Fatalf("英語プロンプトに英語指示が無い:\n%s", en)
+		t.Fatalf("the English prompt carries no English instructions:\n%s", en)
 	}
 	for _, ja := range []string{"件名", "会話ログ", "悪い例"} {
 		if strings.Contains(TitleSuggestInstructions("en"), ja) || strings.Contains(TitleSuggestPersona("en"), ja) {
-			t.Fatalf("英語指示に日本語 %q が混入している", ja)
+			t.Fatalf("Japanese %q leaked into the English instructions", ja)
 		}
 	}
-	// 会話ログ本文は原文のまま渡す（翻訳するのはモデルの仕事）。
+	// The conversation log body is passed through verbatim; translating it is the model's job.
 	if !strings.Contains(en, "使用量のグラフを作りたい") {
-		t.Fatalf("会話ログ本文が落ちている:\n%s", en)
+		t.Fatalf("the conversation log body was dropped:\n%s", en)
 	}
 
 	jaPrompt := TitleSuggestPersona("ja") + "\n" + titleSuggestPrompt(turns, "ja")
 	if !strings.Contains(jaPrompt, "件名") || strings.Contains(jaPrompt, "subject line") {
-		t.Fatalf("日本語プロンプトが従来形でない:\n%s", jaPrompt)
+		t.Fatalf("the Japanese prompt is not in its established form:\n%s", jaPrompt)
 	}
 }
 
-// アシスタントチャットの件名も同じ指示ブロックを共有する（片方だけ英語化しない）。
+// The assistant chat's subject line shares the same instruction block; neither side may go
+// English on its own.
 func TestChatTitleSuggestPromptLanguage(t *testing.T) {
 	msgs := []chatx.ChatMessage{{Role: "user", Content: "使用量のグラフを作りたい"}}
 	if got := chatx.ChatTitleSuggestPrompt(msgs, "en"); !strings.Contains(got, "conversation log") {
-		t.Fatalf("チャット件名の英語プロンプトが英語でない:\n%s", got)
+		t.Fatalf("the English prompt for a chat subject line is not in English:\n%s", got)
 	}
 	if got := chatx.ChatTitleSuggestPrompt(msgs, "ja"); !strings.Contains(got, "会話ログ") {
-		t.Fatalf("チャット件名の日本語プロンプトが従来形でない:\n%s", got)
+		t.Fatalf("the Japanese prompt for a chat subject line is not in its established form:\n%s", got)
 	}
 }

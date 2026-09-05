@@ -1,14 +1,15 @@
-// preview_host_serve.go — ホスト方式プレビューの経路（docs/log/81 §6・§7 / ADR 0062）。
+// preview_host_serve.go — the host-mode preview path (docs/log/81 §6, §7 / ADR 0062).
 //
-//	ブラウザ → {slug}-{port}.{AF_PREVIEW_DOMAIN} → CP（この層）→ Agent /proxy/{port}/… → 127.0.0.1:{port}
+//	browser → {slug}-{port}.{AF_PREVIEW_DOMAIN} → CP (this layer) → Agent /proxy/{port}/… → 127.0.0.1:{port}
 //
-// ★ この層は authGate の外側・gzip / etag の外側に置く（決定 8）。プレビューのホストは
-// Console とは別の認証（下のハンドシェイク）を持ち、中身は CP の JSON ではない。
+// This layer sits OUTSIDE authGate and outside gzip / etag (decision 8): a preview host has
+// its own authentication (the handshake below), separate from the Console's, and what it
+// serves is not the CP's JSON.
 //
-// ★ プレビューのホストでは CP の API も Console も一切出さない。応答するのは
-// __af/preview-auth とプロキシ本体だけで、それ以外は 404。同じプロセスが両方を持って
-// いるので、ここを緩めると「プレビューのオリジンから CP を叩ける」という、別オリジンに
-// したことで閉じたはずの穴が裏口から開く。
+// A preview host exposes neither the CP API nor the Console. It answers only
+// __af/preview-auth and the proxy itself; everything else is a 404. One process holds both,
+// so loosening this re-opens from the back door exactly what the separate origin closed:
+// reaching the CP from the preview's origin.
 package main
 
 import (
@@ -39,7 +40,7 @@ const previewAuthCallbackPath = "/__af/preview-auth"
 // so an unauthenticated visitor lands on the normal login first).
 const previewHandshakePath = "/preview-auth"
 
-// previewOpenPath is the STABLE link people paste (docs/log/81 §14.6 / ADR 0062 決定 17).
+// previewOpenPath is the STABLE link people paste (docs/log/81 §14.6 / ADR 0062 decision 17).
 // The preview hostname changes at every workspace start, so a raw URL always rots —
 // and it rots as a 404, the least legible failure there is. This one names the owner
 // and the port instead, and resolves the current slug on each visit.
@@ -95,19 +96,19 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		http.Error(w, "preview lookup failed", http.StatusInternalServerError)
 		return
 	}
-	// 停止中の Workspace は slug を持たないので、ここで落ちる。★ 「停止中です」と
-	// 答え分けない —— 存在する slug と存在しない slug を外から区別させない。
+	// A stopped workspace has no slug, so it fails here. Do not answer "it is stopped":
+	// a slug that exists must be indistinguishable from one that does not.
 	if !ok {
 		previewNotFound(w)
 		return
 	}
 	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
 	if !previewPortAllowed(st, ph.port) {
-		previewNotFound(w) // 許可外のポートは「存在しない」（決定 6）
+		previewNotFound(w) // a port off the allowlist "does not exist" (decision 6)
 		return
 	}
-	// テナントのネットワーク制限は公開モードでも効かせる（決定 12）。テナントが自分の
-	// ネットワークを絞っているなら、プレビューも絞られている側にある。
+	// The tenant's network restriction applies even in public mode (decision 12): if a
+	// tenant has narrowed its network, its previews are on the narrowed side too.
 	if !a.mgr.tenantLogin.networkAllowed(ctx, ws.TenantID, clientIPFrom(ctx)) {
 		http.Error(w, "not allowed from this network", http.StatusForbidden)
 		return
@@ -116,12 +117,13 @@ func (a previewHostAPI) serve(w http.ResponseWriter, r *http.Request, ph preview
 		a.acceptToken(w, r, ph, st)
 		return
 	}
-	// 兄弟オリジン（同じ slug の別ポート）からの呼び出し（docs/log/81 §2.4・決定 11）。
-	// opt-in のときだけ、CP が preflight に答え、応答に CORS を足す。
+	// Calls from a sibling origin — the same slug on another port (docs/log/81 §2.4,
+	// decision 11). Only when opted in does the CP answer the preflight and add CORS.
 	allowOrigin := a.siblingOrigin(r, ph, st)
 	if allowOrigin != "" && r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != "" {
-		// ★ preflight はアプリへ渡さない。素の dev サーバや Spring は OPTIONS に 403 /
-		// 405 を返すのが普通で、そこで落ちると「CORS を許可したのに通らない」になる。
+		// Never pass the preflight through to the app. A plain dev server or Spring
+		// normally answers OPTIONS with 403 / 405, and failing there reads as "CORS is
+		// allowed and still does not work".
 		writePreviewCORS(w.Header(), allowOrigin)
 		w.Header().Set("Access-Control-Allow-Methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS")
 		if h := r.Header.Get("Access-Control-Request-Headers"); h != "" {
@@ -167,10 +169,10 @@ func previewNotFound(w http.ResponseWriter) {
 // when the store cannot answer, because refusing to serve a preview over a settings
 // read is worse than serving it with the defaults.
 //
-// 🔥 ただし **黙って落とさない**（2026-09-01）。`workspace.settings` が Postgres 側の
-// マイグレーションに無いまま何週間も動いていたとき、この握りつぶしのせいで症状は
-// 「設定が全部既定値に見える」だけになり、**書き込みの 500 を誰かが踏むまで**表に
-// 出なかった。フォールバックは残すが、痕跡は残す。
+// It must never fall back silently: while `workspace.settings` was missing from the Postgres
+// migration, swallowing the error reduced the symptom to "every setting looks like its
+// default" and nothing surfaced until someone hit a 500 on a write. Keep the fallback, keep
+// the trace.
 func mustSettings(ctx context.Context, m *manager, wsID string) string {
 	raw, err := m.store.GetWorkspaceSettings(ctx, wsID)
 	if err != nil {
@@ -184,9 +186,10 @@ func mustSettings(ctx context.Context, m *manager, wsID string) string {
 // THIS host (slug + port both checked — a cookie is host-scoped by the browser, but we
 // do not rely on that alone) AND whether the person it names may still open it.
 //
-// ★ cookie が言えるのは「誰か」までで、「見てよいか」は毎リクエスト引き直す
-// （previewViewerAllowed / ADR 0062 決定 15）。cookie の寿命は 12 時間あるので、
-// ここに権限を焼くと、共有を切ってもテナントから外しても cookie だけが生き残る。
+// A cookie can only say WHO; whether they may look is re-resolved on every request
+// (previewViewerAllowed / ADR 0062 decision 15). The cookie lives 12 hours, so baking the
+// permission into it would keep it alive after sharing is switched off or the person is
+// removed from the tenant.
 func (a previewHostAPI) authorized(ctx context.Context, r *http.Request, ph previewHost, ws store.Workspace, st wsSettings) bool {
 	c, err := r.Cookie(previewAuthCookie)
 	if err != nil || c.Value == "" {
@@ -280,9 +283,9 @@ func previewCookieSameSite(st wsSettings) http.SameSite {
 // us". It allows exactly one shape: the opt-in is on, and the caller is a preview host
 // of the SAME workspace start (same slug) on a port that workspace also allows.
 //
-// ★ slug が一致することを条件にしているので、他人の Workspace のプレビューからは決して
-// 通らない。ポートの許可も見るのは、列挙から外したポートを「呼び出し元としてなら使える」
-// 状態にしないため。
+// Requiring the slug to match is what keeps another person's workspace preview from ever
+// getting through. The port allowlist is checked too, so that a port taken off the list
+// cannot still be usable "as a caller".
 func (a previewHostAPI) siblingOrigin(r *http.Request, ph previewHost, st wsSettings) string {
 	if !st.PreviewCrossOrigin {
 		return ""
@@ -354,19 +357,17 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 	// allowed network — the same three checks every normal API call makes, because it
 	// is the same resolver.
 	//
-	// ★ resolveMembership であって resolveFull ではない。以前は「呼び手の Workspace が
-	// 対象と同じか」で所有者を判定していたので Workspace を建てる必要があったが、いまは
-	// membership を previewViewerAllowed に渡すだけで足りる。閲覧者のために相手の
-	// ランタイムを組み立てる理由は無い。
+	// resolveMembership, not resolveFull: handing the membership to previewViewerAllowed is
+	// enough, and there is no reason to build the other side's runtime for a viewer.
 	_, mv, aerr := a.mgr.resolveMembership(ctx, id.key, id.email, ws.TenantID)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
 	st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
-	// 所有者本人か、その Workspace が同じテナントへ共有しているか（docs/log/81 §14.3）。
-	// どちらでもなければ、未知の slug と同じ 404 —— 「存在するが他人のもの」と告げる
-	// こと自体が、他人の Workspace についての情報である。
+	// Either the owner themselves, or a workspace shared with the same tenant
+	// (docs/log/81 §14.3). Neither one gets the same 404 as an unknown slug: saying "it
+	// exists but belongs to someone else" is itself information about that workspace.
 	if !previewViewerAllowed(ctx, a.mgr, ws, st, mv.MembershipID) {
 		previewNotFound(w)
 		return
@@ -375,9 +376,9 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 		previewNotFound(w)
 		return
 	}
-	// ★ 焼くのは呼び手自身の membership（所有者のものではない）。閲覧者の cookie は
-	// 「この slug/port を、この人が開こうとしている」だけを言い、権限は毎リクエスト
-	// 引き直される（決定 15）。所有者にとっては今までと同じ値になる。
+	// What gets baked in is the CALLER's own membership, never the owner's. A viewer's
+	// cookie says only "this person is opening this slug/port"; the permission is
+	// re-resolved on every request (decision 15).
 	tok := a.sign(previewClaims{
 		Slug: slug, Port: port, MembershipID: mv.MembershipID,
 		Exp: time.Now().Add(previewTokenTTL).Unix(),
@@ -393,9 +394,9 @@ func (a previewHostAPI) handshake(w http.ResponseWriter, r *http.Request) {
 // openStable (GET /preview-open?owner={userKey}&port={n}[&next=/path]) runs on the
 // CONSOLE origin and answers "where is that person's preview right now?".
 //
-// ★ 認証の判断はここに持たせない —— ACL を通したら **今の slug** を入れて
-// /preview-auth へ渡すだけで、token を発行するのは最後まで 1 か所である（決定 17）。
-// authGate の中にあるので、未ログインの人はまず通常のログインに出会う。
+// No authentication decision lives here: once the ACL passes, it fills in the CURRENT slug
+// and hands off to /preview-auth, so tokens are minted in exactly one place (decision 17).
+// It sits inside authGate, so a signed-out visitor meets the normal login first.
 func (a previewHostAPI) openStable(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	owner := strings.TrimSpace(r.URL.Query().Get("owner"))
@@ -409,8 +410,8 @@ func (a previewHostAPI) openStable(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "no gateway identity"})
 		return
 	}
-	// 呼び手の**現在のテナント**で解決する（Workspace は建てない）。所有者を探すのは
-	// その中だけなので、テナントをまたいで他人を指すことはこの時点で不可能になる。
+	// Resolve in the caller's CURRENT tenant (no workspace is built). The owner is only
+	// looked for inside it, which makes pointing at someone across tenants impossible here.
 	_, mv, aerr := a.mgr.resolveMembership(ctx, id.key, id.email, tenantSel(r))
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -440,10 +441,13 @@ func (a previewHostAPI) openStable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if ws.PreviewSlug == "" {
-		// ★ ここだけは「停止中」と答え分けてよい —— 呼び手が同じテナントの認証済み
-		// メンバーで、その Workspace を見てよい人だと**確定した後**だからである。
-		// 存在を答えない規則（§7）は、そこに至っていない相手に対するもの。
-		// ⚠️ 起動はしない（決定 16）: 他人の課金で他人のコンテナを起こすことになる。
+		// This is the one place that may answer "stopped" distinctly, because it is only
+		// reached after the caller is established as an authenticated member of the same
+		// tenant who is allowed to see this workspace. The rule against confirming
+		// existence (§7) is for callers who have not got that far.
+		//
+		// Do not start it (decision 16): that would wake someone else's container on
+		// someone else's bill.
 		http.Error(w, "that workspace is not running — its preview URL is issued at start",
 			http.StatusConflict)
 		return
@@ -479,8 +483,8 @@ var previewProxyTransport = newAgentTransport()
 
 // relayPreview proxies one request to the workspace Agent's /proxy/{port}{path} with
 // httputil.ReverseProxy — which is what makes WebSocket (Vite / Next HMR, Spring STOMP)
-// and streaming responses work at all (ADR 0062 決定 10). The old hand-rolled
-// http.Client round trip could do neither.
+// and streaming responses work at all (ADR 0062 decision 10). A hand-rolled http.Client
+// round trip can do neither.
 func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o previewRelayOptions) {
 	target, err := url.Parse(rt.Endpoint())
 	if err != nil || target.Host == "" {
@@ -507,32 +511,34 @@ func relayPreview(w http.ResponseWriter, r *http.Request, rt runtime.Runtime, o 
 			if tok := rt.Token(); tok != "" {
 				pr.Out.Header.Set("Authorization", "Bearer "+tok) // CP↔Agent auth
 			}
-			// ★ Rewrite モードでは Out から X-Forwarded-* が削除済みなので、公開名は
-			// ここで明示的に入れ直す（Agent 側も同じ理由で入れ直している）。これが
-			// Next.js の Server Actions が 403 にならない条件そのもの（決定 9）。
+			// Rewrite mode strips X-Forwarded-* from Out, so the public name has to be
+			// put back explicitly here (the Agent re-adds it for the same reason). This
+			// is precisely the condition for Next.js Server Actions not to 403
+			// (decision 9).
 			pr.Out.Header.Set("X-Forwarded-Host", o.publicHost)
 			pr.Out.Header.Set("X-Forwarded-Proto", o.proto)
 			if o.prefix != "" {
 				pr.Out.Header.Set("X-Forwarded-Prefix", o.prefix)
 			} else {
-				// ホスト方式ではアプリはルート直下に居る。prefix を送ると
-				// 「間違った前置き」になる。
+				// In host mode the app sits at the root, so sending a prefix would
+				// give it a wrong one.
 				pr.Out.Header.Del("X-Forwarded-Prefix")
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			stripAppLoginCookies(resp)
 			if o.allowOrigin != "" {
-				// アプリが自前で付けた分は捨ててから上書きする。2 つ並ぶと
-				// ブラウザは「不正なヘッダ」として両方を無視するので、
-				// 「アプリ側でも許可しているのに通らない」という一番分かりにくい
-				// 壊れ方になる。
+				// Drop whatever the app set before overwriting: with two of them
+				// present the browser treats the header as invalid and ignores both,
+				// which fails as "the app allows it too and it still does not work" —
+				// the least legible breakage of the lot.
 				resp.Header.Del("Access-Control-Allow-Origin")
 				resp.Header.Del("Access-Control-Allow-Credentials")
 				writePreviewCORS(resp.Header, o.allowOrigin)
 			}
 			if o.public {
-				// 公開中の画面が検索結果に載るのは事故なので、常に付ける。
+				// A publicly served screen turning up in search results is an
+				// accident, so always set it.
 				resp.Header.Set("X-Robots-Tag", "noindex, nofollow")
 			}
 			return nil

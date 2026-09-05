@@ -1,25 +1,28 @@
 package cursor
 
-// cursor の managed driver（docs/log/40 Track A2）— per-session child 方式。セッション毎に
-// `cursor-agent acp` を子プロセスとして抱え、session/new・session/load（クロスプロセス
-// resume、実測）・session/prompt（blocking）・session/cancel・session/set_mode に turn
-// 状態機械・Interaction・reconciliation をマッピングする。copilot の driver.go（docs/log/36）
-// と同じ骨格で、cursor 固有の差分は 1 点だけ:
+// The managed cursor driver (docs/log/40 Track A2), one child process per session: each
+// session holds a `cursor-agent acp` child and maps session/new, session/load
+// (cross-process resume, measured), session/prompt (blocking), session/cancel and
+// session/set_mode onto the turn state machine, Interaction and reconciliation. Same
+// skeleton as copilot's driver.go (docs/log/36), with a single cursor-specific difference:
 //
-//   **cursor の ACP はローカル痕跡を一切書かない**（TUI/-p が書く JSONL 転写も、hooks も
-//   ACP 経路では出ない — 履歴はサーバ側。docs/log/40 §プローブ）。copilot は全経路で
-//   events.jsonl を書くので managed の転写もファイルから読めたが、cursor はそれが無い。
-//   よって転写は driver が `session/update` 通知（agent_message_chunk / agent_thought_chunk
-//   / tool_call / tool_call_update）から**メモリ上に構築**し、`session/load` の全量リプレイ
-//   （user_message_chunk から再生 — 実測）で復元する。managedTranscript() が read 層
-//   （transcript.go）へ供給する。停止中の managed セッションは handle が無い＝転写も無い
-//   （resume で session/load リプレイが再構築する。ローカル正本が無い設計の帰結）。
+//   cursor's ACP writes no local trace at all — neither the JSONL transcript the TUI/-p
+//   path writes nor hooks appear on the ACP path, because the history lives on the server
+//   (docs/log/40 §probe). copilot writes events.jsonl on every path, so a managed
+//   transcript could still be read from a file; cursor has nothing to read. The driver
+//   therefore builds the transcript in memory from `session/update` notifications
+//   (agent_message_chunk / agent_thought_chunk / tool_call / tool_call_update) and
+//   restores it from session/load's full replay (replayed from user_message_chunk,
+//   measured). managedTranscript() feeds the read layer (transcript.go). A stopped managed
+//   session has no handle and hence no transcript — resume rebuilds it from the
+//   session/load replay, which is the consequence of having no local source of truth.
 //
-// per-session child を選ぶ理由: ACP に per-session のモデル指定が無く（session/new 応答の
-// models は列挙のみ）、子プロセス毎の `--model` フラグで固定するのが確実。権限
-// （session/request_permission）は --force 運転では発生しない（実測: echo が確認なしで
-// 実行された）が、plan 起動では --force を外すため到達しうる。「UI に出ないから発生
-// しない」を信用せず（agy df996e4 の教訓）、常に Interaction(question) へ写像する。
+// Why one child per session: ACP has no per-session model selection (the models in a
+// session/new response are an enumeration only), so pinning it with a per-child `--model`
+// flag is the reliable route. Permission requests (session/request_permission) do not
+// happen under --force (measured: echo ran without a confirmation), but plan mode drops
+// --force and can therefore reach them. Never trust "it does not appear in the UI, so it
+// cannot happen" (the agy df996e4 lesson): always map it to an Interaction(question).
 
 import (
 	"encoding/json"
@@ -39,11 +42,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// ledger は ClientMessageID の永続台帳（再送・reconnect の二重投入をプロセス跨ぎで冪等化）。
+// ledger is the persistent ClientMessageID ledger: it makes a re-send or a reconnect
+// idempotent across processes.
 var ledger = agents.NewMsgLedger("cursor-msgledger")
 
-// ACP のモード id は素の "agent"/"plan"/"ask"（実測 — copilot の URL 形式とは異なる）。
-// AF 語彙 "plan"/"normal" と相互変換する。
+// acpModeID converts the AF vocabulary ("plan" / "normal") to an ACP mode id. Those ids are
+// the bare "agent" / "plan" / "ask" (measured — unlike copilot's URL form).
 func acpModeID(mode string) string {
 	if mode == "plan" {
 		return "plan"
@@ -62,15 +66,16 @@ func modeFromACP(id string) string {
 	}
 }
 
-// NewDriver returns the managed cursor Driver（driverOf が /turn・/respond から引く）。
-// read 層は agentImpl をそのまま埋め込んで温存する。
+// NewDriver returns the managed cursor Driver, which driverOf looks up from /turn and
+// /respond. The read layer is preserved by embedding agentImpl as is.
 func NewDriver() agents.Driver { return managedDriver{} }
 
 type managedDriver struct{ agentImpl }
 
-// Capabilities。Steer は driver 内キュー（ACP に mid-turn 注入の口が無い — copilot/
-// opencode と同じ意味論）。DynamicModel は false: 子の起動フラグで固定（変更はセッション
-// 再作成）。Mode は session/set_mode がネイティブ（実測: {} 応答＋current_mode_update 通知）。
+// Capabilities. Steer is a driver-side queue: ACP has no mid-turn injection point (same
+// semantics as copilot/opencode). DynamicModel is false because the model is pinned by the
+// child's launch flag, so changing it means recreating the session. Mode is native through
+// session/set_mode (measured: a {} response plus a current_mode_update notification).
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel: "per-session-child",
@@ -81,8 +86,8 @@ func (managedDriver) Capabilities() agents.Capabilities {
 }
 
 // Resume returns the session's ThreadHandle, spawning the child runtime and
-// creating/loading the cursor session when needed（Driver IF: 無ければ新規 start。
-// reconciliation の共通手順を兼ねる）。
+// creating/loading the cursor session when needed (Driver interface: start a new one if
+// there is none). This doubles as the shared procedure for reconciliation.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCursor {
 		return nil, errors.New("cursor driver は cursor セッション専用です")
@@ -104,9 +109,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	handlesMu.Unlock()
 
-	// spawn を handle 単位で直列化する（kiro A2-4 と同型）: boot の ReconcileManaged と
-	// 直後の /turn が並行に Resume すると check-then-spawn が非直列で二重 spawn し、
-	// 先発の子プロセスが孤児化する。ロック取得後に liveness を再確認する。
+	// Serialize spawns per handle (same shape as kiro A2-4): if boot's ReconcileManaged and
+	// a /turn right after it call Resume concurrently, check-then-spawn interleaves, two
+	// children are spawned and the earlier one is orphaned. Re-check liveness after taking
+	// the lock.
 	h.spawnMu.Lock()
 	defer h.spawnMu.Unlock()
 
@@ -121,9 +127,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if h.settings.Mode == "" {
 		h.settings.Mode = m.Mode
 	}
-	// 権限確認をスキップするか（docs/log/76）は meta と ui-prefs から毎 Resume 解決する。
-	// ThreadSettings に載せないのは、あちらが「空 = 変更しない」の動的更新用で bool を
-	// 3 値にできないから — 設定変更後の再 spawn でも、ここで解決し直した値が効く。
+	// Whether to skip permission prompts (docs/log/76) is resolved from meta and ui-prefs on
+	// every Resume. It does not live in ThreadSettings because that struct is a dynamic
+	// update where "empty = leave unchanged", which cannot express three states for a bool.
+	// A re-spawn after a settings change therefore uses the value resolved here.
 	h.bypass = agents.SkipPermissions(m)
 	st := h.settings
 	h.mu.Unlock()
@@ -132,7 +139,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		return nil, err
 	}
 
-	// exit recording の baseline（tui の startSessionTmux と同じ役割）。
+	// Baseline for exit recording (the same role as the TUI's startSessionTmux).
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
@@ -167,7 +174,7 @@ func liveHandles() []*threadHandle {
 // DropHandle detaches a managed session from its runtime (stop/halt/archive):
 // interrupt any running turn, terminate the child, forget the handle. The
 // conversation stays on cursor's server — a later Resume re-spawns and
-// session/load reattaches（実測: 履歴リプレイ＋文脈保持）。
+// session/load reattaches (measured: the history is replayed and the context kept).
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -187,8 +194,8 @@ func DropHandle(name string) {
 	stopChild(cmd)
 }
 
-// RemoveLedger drops the ClientMessageID ledger（/stop — スロットのアイデンティティごと
-// 破棄する時だけ。halt/archive は再開があるので残す）。
+// RemoveLedger drops the ClientMessageID ledger. Only for /stop, which discards the slot's
+// identity as well; halt/archive keep it because those sessions can resume.
 func RemoveLedger(name string) { ledger.Remove(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle.
@@ -202,7 +209,8 @@ func ManagedAlive(name string) bool {
 	return h.alive
 }
 
-// ManagedBusy reports a turn is running or queued (graceful shutdown の待ち条件).
+// ManagedBusy reports a turn is running or queued (the wait condition for a graceful
+// shutdown).
 func ManagedBusy(name string) bool {
 	h := handleFor(name)
 	if h == nil {
@@ -213,8 +221,8 @@ func ManagedBusy(name string) bool {
 	return h.running || len(h.queue) > 0
 }
 
-// AbortManaged interrupts every running managed turn（graceful shutdown の per-pane
-// Ctrl-C 相当）。
+// AbortManaged interrupts every running managed turn (the equivalent of graceful
+// shutdown's per-pane Ctrl-C).
 func AbortManaged() {
 	for _, h := range liveHandles() {
 		h.mu.Lock()
@@ -226,8 +234,9 @@ func AbortManaged() {
 	}
 }
 
-// Shutdown terminates every managed child（agent 終了時。会話正本は cursor 側のサーバに
-// 残り、次回 boot の ReconcileManaged が session/load で再接続する）。
+// Shutdown terminates every managed child when the agent exits. The source of truth for
+// the conversation stays on cursor's server, and the next boot's ReconcileManaged
+// reattaches through session/load.
 func Shutdown() {
 	handlesMu.Lock()
 	var cmds []*exec.Cmd
@@ -244,8 +253,8 @@ func Shutdown() {
 }
 
 // ReconcileManaged re-attaches managed cursor sessions after an Agent boot or child
-// death。対象は「停止扱いになっていない」managed メタ全部。失敗してもセッションは
-// 停止中 として残り、ユーザーの 再開 クリックで再試行される。
+// death. It covers every managed meta that is not marked as stopped. On failure the
+// session simply stays stopped and the user's Resume click retries it.
 func ReconcileManaged(reason string) {
 	d := managedDriver{}
 	for _, m := range session.ListMetas() {
@@ -261,23 +270,23 @@ func ReconcileManaged(reason string) {
 	}
 }
 
-// stopChild terminates a child process group: SIGTERM → 猶予後に SIGKILL。cursor は
-// ターン後に worker-server 常駐プロセスを残す（実測 — docs/log/40）ので、プロセス「グループ」
-// を落とすのが要点（spawn は Setpgid でグループを分けている）。reap は spawn 時の watch
-// goroutine（cmd.Wait）が担う。
+// stopChild terminates a child process group: SIGTERM, then SIGKILL after a grace period.
+// cursor leaves a resident worker-server process behind after a turn (measured —
+// docs/log/40), so killing the process GROUP is the point (spawn puts the child in its own
+// group with Setpgid). Reaping is done by the watch goroutine started at spawn (cmd.Wait).
 func stopChild(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
 	pid := cmd.Process.Pid
-	// プロセスグループ全体へ（-pid）。worker-server の取り残しを防ぐ。
+	// To the whole process group (-pid), so no worker-server is left behind.
 	if syscall.Kill(-pid, syscall.SIGTERM) != nil {
 		return // already gone
 	}
 	time.AfterFunc(3*time.Second, func() {
-		// 子が回収済みなら pid（グループ）は再利用され得る — 生の -pid SIGKILL を
-		// 無関係プロセスへ飛ばさないよう本体の生存を確認する（Wait 済みの Process への
-		// Signal は ErrProcessDone を返す・レース安全）。
+		// Once the child has been reaped the pid (and the group) can be reused, so check the
+		// process is still alive before firing a raw -pid SIGKILL at an unrelated process.
+		// Signal on an already-waited Process returns ErrProcessDone, so this is race-safe.
 		if cmd.Process.Signal(syscall.Signal(0)) == nil {
 			_ = syscall.Kill(-pid, syscall.SIGKILL)
 		}
@@ -291,18 +300,19 @@ type threadHandle struct {
 	dir     string
 	slotSid string
 
-	spawnMu sync.Mutex // serializes spawns for this handle（並行 Resume の二重 spawn 防止・kiro A2-4 と同型）
+	spawnMu sync.Mutex // serializes spawns for this handle (no double spawn from a concurrent Resume; kiro A2-4)
 
-	// bypass は「権限確認をスキップする」か（docs/log/76）。Resume が meta から解決して
-	// 置く — spawn は meta を持たないので、ここに載せて渡す。plan は Resume 時点では
-	// なく spawn の st.Mode で見る（稼働中のモード変更で再 spawn されるため）。
+	// bypass is the resolved "skip permission prompts" choice (docs/log/76). Resume resolves
+	// it from meta and stores it here because spawn has no meta of its own. Plan mode is not
+	// read at Resume time but from spawn's st.Mode, since a mode change while running
+	// re-spawns the child.
 	bypass bool
 
 	mu       sync.Mutex
 	cmd      *exec.Cmd
 	cl       *acpClient
 	sid      string // cursor session UUID
-	model    string // ACP currentModelId（モデルバッジ用・Auto は default[]）
+	model    string // ACP currentModelId (for the model badge; Auto comes back as default[])
 	alive    bool
 	state    agents.TurnState
 	running  bool
@@ -310,16 +320,14 @@ type threadHandle struct {
 	queue    []agents.TurnInput
 	settings agents.ThreadSettings
 	inter    *agents.Interaction
-	permID   json.RawMessage // pending session/request_permission の JSON-RPC id
-	permOpts []string        // Interaction の選択肢 index → ACP optionId
+	permID   json.RawMessage // JSON-RPC id of the pending session/request_permission
+	permOpts []string        // Interaction option index -> ACP optionId
 	events   chan agents.Event
 
-	buf transcriptBuf // ACP session/update から構築する転写（別ロックで保護）
+	buf transcriptBuf // transcript built from ACP session/update (guarded by its own lock)
 }
 
-// spawn starts the child runtime, initializes ACP and loads/creates the cursor
-// session. Caller must NOT hold h.mu.
-// bypassNow reports the resolved「権限確認をスキップする」choice (docs/log/76). Resume writes
+// bypassNow reports the resolved "skip permission prompts" choice (docs/log/76). Resume writes
 // it under h.mu; spawn runs without the lock, so read it through here.
 func (h *threadHandle) bypassNow() bool {
 	h.mu.Lock()
@@ -327,24 +335,28 @@ func (h *threadHandle) bypassNow() bool {
 	return h.bypass
 }
 
+// spawn starts the child runtime, initializes ACP and loads/creates the cursor session.
+// Caller must NOT hold h.mu.
 func (h *threadHandle) spawn(st agents.ThreadSettings) error {
-	// base: 背景自己更新の封殺（root option なので acp の前に必須 — 実測）＋ acp サブ
-	// コマンド ＋ workspace trust スキップ（実測: --trust が無いと ACP でも trust
-	// プロンプトで固まる）。plan では --force を外し、承認を Interaction として表面化。
+	// Base args: suppress the background self-update (a root option, so it must come before
+	// acp — measured), the acp subcommand, and skipping workspace trust (measured: without
+	// --trust even ACP hangs on the trust prompt). Plan mode drops --force so approvals
+	// surface as Interactions.
 	args := []string{disableAutoUpdateFlag, "acp", "--trust"}
 	if h.bypassNow() && st.Mode != "plan" {
-		args = append(args, "--force") // fleet 既定の bypass（"unless explicitly denied"）
+		args = append(args, "--force") // the fleet default bypass ("unless explicitly denied")
 	}
 	if st.Model != "" && st.Model != "auto" {
-		// per-session child のモデル固定。ACP に per-session の指定口が無いための起動フラグ。
+		// Pin the model for this per-session child: a launch flag, because ACP has no
+		// per-session way to select one.
 		args = append(args, "--model", st.Model)
 	}
 	cmd := exec.Command(bin(), args...)
 	cmd.Dir = h.dir
-	// worker-server の取り残しをグループごと落とせるよう、専用プロセスグループにする。
+	// Own process group, so a left-over worker-server can be killed along with the group.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	// 認証は ambient（~/.config/cursor/auth.json を CLI 自身が拾う — 実測: env 注入なしで完走）。
-	// CI だけは外す（ci_env.go）。
+	// Authentication is ambient: the CLI picks up ~/.config/cursor/auth.json itself
+	// (measured: a turn completes with no env injection). Only CI is stripped (ci_env.go).
 	cmd.Env = EnvWithoutCI(os.Environ())
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -359,8 +371,9 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 		return fmt.Errorf("cursor runtime を起動できません: %w", err)
 	}
 	cl := newACPClient(stdin, stdout)
-	// クロージャで当該 cl を捕捉する: 初回 spawn 中は h.cl が未代入のまま readLoop が
-	// 走り得るので、h.cl 参照だと未知メソッド応答で nil デリファレンス panic になる。
+	// Capture this cl in the closure: during the first spawn readLoop can already run while
+	// h.cl is still unassigned, so going through h.cl would panic on a nil dereference when
+	// answering an unknown method.
 	cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(cl, id, method, params)
 	}
@@ -381,19 +394,21 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	mode := ""
 	modelID := ""
 	if sid != "" {
-		// クロスプロセス resume（実測: session/update リプレイで履歴＋文脈を復元）。
-		// リプレイ通知が buf を再構築するので、その前に空にする（二重計上防止）。
+		// Cross-process resume (measured: the session/update replay restores both history and
+		// context). The replay notifications rebuild buf, so empty it first or the content is
+		// counted twice.
 		h.buf.reset()
 		h.buf.setLoading(true)
 		res, err := cl.call("session/load", map[string]any{
 			"sessionId": sid, "cwd": h.dir, "mcpServers": []any{},
 		}, 180*time.Second)
-		h.buf.setLoading(false) // 最後の assistant ターンを flush
+		h.buf.setLoading(false) // flush the last assistant turn
 		if err != nil {
-			// kiro A2-1 と同じ理屈: 一時失敗（timeout・lock 競合等）で session/new に
-			// 落ちると、生きた会話を無言で切り離し slot の sid を空の新会話で上書き
-			// してしまう。cursor はローカルストアが無く「会話が本当に消えた」を決定的に
-			// 判定できないため、失敗は再試行可能なエラーとして返し停止中のままにする。
+			// Same reasoning as kiro A2-1: falling back to session/new on a transient failure
+			// (timeout, lock contention, ...) silently detaches a live conversation and
+			// overwrites the slot's sid with an empty new one. cursor has no local store, so
+			// "the conversation really is gone" cannot be decided here; return a retryable
+			// error and leave the session stopped instead.
 			h.buf.reset()
 			stopChild(cmd)
 			return fmt.Errorf("cursor セッションを読み込めませんでした（時間をおいて再開してください）: %w", err)
@@ -425,8 +440,8 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 
 	h.mu.Lock()
 	h.cmd, h.cl, h.sid, h.alive = cmd, cl, sid, true
-	h.state = agents.TurnCompleted // 子は生まれたて — 走行中 turn は存在しない
-	h.model = modelID              // ACP currentModelId（Auto は default[]）— モデルバッジ用
+	h.state = agents.TurnCompleted // the child is brand new, so no turn is running
+	h.model = modelID              // ACP currentModelId (Auto is default[]) for the model badge
 	h.inter, h.permID, h.permOpts = nil, nil, nil
 	if m := modeFromACP(mode); m != "" {
 		h.settings.Mode = m
@@ -434,8 +449,8 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	wantMode := h.settings.Mode
 	h.mu.Unlock()
 
-	// meta の希望モードが runtime の現在モードと違えば再表明（resume 後の既定戻り対策・
-	// best-effort）。
+	// Re-assert the mode when meta's wanted mode differs from the runtime's current one,
+	// which guards against falling back to the default after a resume (best-effort).
 	if wantMode != "" && wantMode != modeFromACP(mode) {
 		_, _ = cl.call("session/set_mode", map[string]any{
 			"sessionId": sid, "modeId": acpModeID(wantMode),
@@ -444,7 +459,7 @@ func (h *threadHandle) spawn(st agents.ThreadSettings) error {
 	return nil
 }
 
-// currentModeOf extracts modes.currentModeId from a session/new・load result.
+// currentModeOf extracts modes.currentModeId from a session/new or session/load result.
 func currentModeOf(res json.RawMessage) string {
 	var out struct {
 		Modes struct {
@@ -455,8 +470,9 @@ func currentModeOf(res json.RawMessage) string {
 	return out.Modes.CurrentModeID
 }
 
-// currentModelOf extracts models.currentModelId from a session/new・load result
-// （Auto は `default[]`・明示指定は bracket 形式で返る — 実測。docs/log/40 §モデル表示）。
+// currentModelOf extracts models.currentModelId from a session/new or session/load result.
+// Auto comes back as `default[]` and an explicit choice in bracket form (measured;
+// docs/log/40 §model display).
 func currentModelOf(res json.RawMessage) string {
 	var out struct {
 		Models struct {
@@ -467,9 +483,9 @@ func currentModelOf(res json.RawMessage) string {
 	return out.Models.CurrentModelID
 }
 
-// watch reaps the child and records its exit（per-session child なので daemon supervisor
-// と違い帰属が正確）。SIGTERM 由来（DropHandle/Shutdown）は "stopped" になり Console は
-// 通常の 停止中 を出す。
+// watch reaps the child and records its exit. With one child per session the exit can be
+// attributed exactly, unlike a daemon supervisor. An exit caused by SIGTERM
+// (DropHandle/Shutdown) becomes "stopped" and the Console shows the ordinary stopped state.
 func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
 	_ = cmd.Wait()
 	code, sig := 0, 0
@@ -497,7 +513,7 @@ func (h *threadHandle) watch(cmd *exec.Cmd, cl *acpClient) {
 	})
 	cl.markClosed()
 	h.mu.Lock()
-	stale := h.cl != cl // 既に新しい子へ差し替わっている（respawn 後の旧 watch）
+	stale := h.cl != cl // already replaced by a newer child: this is an old watch after a respawn
 	h.mu.Unlock()
 	if !stale {
 		h.runtimeLost()
@@ -525,7 +541,7 @@ func (h *threadHandle) currentState() agents.TurnState {
 	return h.state
 }
 
-// runtimeLost drops the handle to unknown（切断時の正直な状態）。
+// runtimeLost drops the handle to unknown, the honest state once the child is gone.
 func (h *threadHandle) runtimeLost() {
 	h.mu.Lock()
 	h.alive = false
@@ -539,7 +555,8 @@ func (h *threadHandle) runtimeLost() {
 
 func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
 
-// Steer は driver 内キュー（ACP に mid-turn 注入の口が無い — 完走後に次 turn として投入）。
+// Steer is a driver-side queue: ACP has no mid-turn injection point, so the input is
+// submitted as the next turn once the current one finishes.
 func (h *threadHandle) Steer(in agents.TurnInput) error { return h.accept(in) }
 
 func (h *threadHandle) accept(in agents.TurnInput) error {
@@ -556,8 +573,9 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
-	// 再送の冪等化（台帳）は pump の実行開始時に行う — キュー投入前に永続記録すると、
-	// クラッシュでキューが失われた後の再送が「既知」として無言破棄される。
+	// The ledger makes a re-send idempotent when pump starts executing it, not here:
+	// recording it persistently before it is queued would make a re-send after a crash that
+	// lost the queue look "already seen" and be dropped silently.
 	h.queue = append(h.queue, in)
 	start := !h.pumping
 	if start {
@@ -573,7 +591,7 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 	return nil
 }
 
-// pump processes the queue serially（子は排他なので waitIdle は不要）。
+// pump processes the queue serially. The child is exclusive, so no waitIdle is needed.
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
@@ -586,7 +604,7 @@ func (h *threadHandle) pump() {
 		h.queue = h.queue[1:]
 		if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 			h.mu.Unlock()
-			continue // 再送 — 台帳（永続、プロセス跨ぎ）が実行開始時に冪等化
+			continue // re-send: the persistent, cross-process ledger dedupes it at execution time
 		}
 		h.running = true
 		h.mu.Unlock()
@@ -600,7 +618,8 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE blocking session/prompt and lands the terminal state.
-// turn 境界の MarkTurnStart/End が status ストアと docs/log/30 の完了報告を駆動する。
+// MarkTurnStart/End at the turn boundary drive the status store and the completion report
+// of docs/log/30.
 func (h *threadHandle) runTurn(in agents.TurnInput) {
 	agents.MarkTurnStart(h.slotSid)
 	defer func() { agents.MarkTurnEnd(h.slotSid, h.currentState()) }()
@@ -612,24 +631,25 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 		h.setState(agents.TurnFailed)
 		return
 	}
-	// ACP は live turn では user_message_chunk を出さない（実測）ので、ユーザーターンは
-	// ここで転写へ確定させる（replay の user_message_chunk とは経路が分かれる）。
+	// ACP emits no user_message_chunk during a live turn (measured), so the user turn is
+	// committed to the transcript here — a separate path from the replay's
+	// user_message_chunk.
 	h.buf.addUserTurn(in.Prompt)
 	h.setState(agents.TurnRunning)
 	res, err := cl.call("session/prompt", map[string]any{
 		"sessionId": sid,
 		"prompt":    []map[string]any{{"type": "text", "text": in.Prompt}},
 	}, 0) // no timeout — a turn runs as long as it runs
-	h.buf.flushAsst() // turn 終端で開いた assistant ターンを確定（ACP に turn_ended 通知は無い）
+	h.buf.flushAsst() // close the open assistant turn: ACP has no turn_ended notification
 	h.mu.Lock()
 	interrupted := h.state == agents.TurnInterrupting
-	h.inter, h.permID, h.permOpts = nil, nil, nil // turn が終わった＝待ちは無い
+	h.inter, h.permID, h.permOpts = nil, nil, nil // the turn ended, so nothing is pending
 	h.mu.Unlock()
 	if err != nil {
 		if interrupted {
 			h.setState(agents.TurnCancelled)
 		} else {
-			// transport 断 = 子の喪失: 正直に unknown へ落とす。
+			// A broken transport means the child is gone: fall back to unknown honestly.
 			h.setState(agents.TurnUnknown)
 		}
 		return
@@ -648,7 +668,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput) {
 	}
 }
 
-// Interrupt cancels the running turn and clears the queued 追撃。
+// Interrupt cancels the running turn and clears the queued follow-ups.
 func (h *threadHandle) Interrupt() error {
 	h.mu.Lock()
 	cl, sid := h.cl, h.sid
@@ -665,9 +685,10 @@ func (h *threadHandle) Interrupt() error {
 	return cl.notifyPeer("session/cancel", map[string]any{"sessionId": sid})
 }
 
-// UpdateSettings applies dynamic settings. Mode は session/set_mode がネイティブ（実測）。
-// Model は子の起動フラグ固定なので動的変更不可 — Capabilities が DynamicModel:false を
-// 表明しており Console は UI を出さないが、防御的に明示エラーを返す。
+// UpdateSettings applies dynamic settings. Mode is native through session/set_mode
+// (measured). Model is pinned by the child's launch flag and cannot be changed while
+// running: Capabilities declares DynamicModel:false and the Console shows no UI for it, but
+// an explicit error is returned defensively.
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if s.Model != "" || s.ClearModel || s.Effort != "" || s.ClearEffort {
 		return errors.New("cursor はモデルの稼働中変更に未対応です（セッションを作り直してください）")
@@ -694,9 +715,9 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	return nil
 }
 
-// Respond answers the pending Interaction — cursor では session/request_permission への
-// 応答。answer/allow は選択肢 index を ACP の optionId へ変換、deny は reject 系 optionId、
-// cancel は outcome:"cancelled"。
+// Respond answers the pending Interaction, which for cursor is a reply to
+// session/request_permission: answer/allow maps the option index to an ACP optionId, deny
+// picks a reject option and cancel sends outcome:"cancelled".
 func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	h.mu.Lock()
 	inter, permID, permOpts, cl := h.inter, h.permID, h.permOpts, h.cl
@@ -744,14 +765,14 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	}
 	h.mu.Unlock()
 	if running {
-		// turn が走っていない時に偽の「実行中」を購読側へ流さない。
+		// Never push a false "running" to subscribers while no turn is running.
 		h.emit(agents.Event{Kind: "turn_state", TurnState: agents.TurnRunning})
 	}
 	return nil
 }
 
 // findOption returns the first optionId containing the substring ("allow" / "reject" —
-// ACP 語彙の allow_once / allow_always / reject_once)。
+// the ACP vocabulary is allow_once / allow_always / reject_once).
 func findOption(opts []string, sub string) string {
 	for _, o := range opts {
 		if strings.Contains(o, sub) {
@@ -802,9 +823,9 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 			} `json:"locations"`
 			// current_mode_update
 			CurrentModeID string `json:"currentModeId"`
-			// available_commands_update — CLI 広告のスキル/コマンド一覧
-			// （builtin skill ＋ global ＋ project 全部入り。実測 2026-07-28:
-			// {name:"simplify", description:"…(global)"} 形・先頭スラッシュ無し）。
+			// available_commands_update: the skills/commands the CLI advertises (builtin
+			// skills plus global plus project). Measured: {name:"simplify",
+			// description:"…(global)"} shape, with no leading slash.
 			AvailableCommands []struct {
 				Name        string `json:"name"`
 				Description string `json:"description"`
@@ -817,7 +838,8 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	u := p.Update
 	switch u.SessionUpdate {
 	case "available_commands_update":
-		// スキルピッカー（docs/log/50 v2）へ publish。map store 1 回なので readLoop を塞がない。
+		// Publish to the skill picker (docs/log/50 v2). One map store, so readLoop is not
+		// blocked.
 		cmds := make([]agents.AdvertisedCommand, 0, len(u.AvailableCommands))
 		for _, c := range u.AvailableCommands {
 			cmds = append(cmds, agents.AdvertisedCommand{
@@ -873,7 +895,8 @@ func (h *threadHandle) onNotify(method string, params json.RawMessage) {
 	}
 }
 
-// toolInfo extracts a short label from a tool_call rawInput（command が最も情報量が高い）。
+// toolInfo extracts a short label from a tool_call rawInput (command carries the most
+// information).
 func toolInfo(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -896,7 +919,8 @@ func toolInfo(raw json.RawMessage) string {
 	return ""
 }
 
-// toolOutput renders a tool_call_update rawOutput（shell の exitCode/stdout/stderr — 実測）。
+// toolOutput renders a tool_call_update rawOutput (a shell's exitCode/stdout/stderr,
+// measured).
 func toolOutput(raw json.RawMessage) string {
 	if len(raw) == 0 {
 		return ""
@@ -924,10 +948,11 @@ func toolOutput(raw json.RawMessage) string {
 
 // onServerRequest handles server-initiated requests on the readLoop goroutine —
 // MUST NOT block: record the Interaction and return; the answer goes back later via
-// Respond → cl.respond. --force 運転では発生しないが、plan 起動では到達しうる。
+// Respond -> cl.respond. It does not happen under --force, but plan mode can reach it.
 func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method string, params json.RawMessage) {
 	if method != "session/request_permission" {
-		// 未知のサーバー発リクエストは応答しないと turn が固まる — エラーで返す。
+		// An unknown server-initiated request wedges the turn if it goes unanswered, so
+		// return an error.
 		_ = cl.write(map[string]any{
 			"jsonrpc": "2.0", "id": id,
 			"error": map[string]any{"code": -32601, "message": "unsupported request: " + method},
@@ -973,8 +998,8 @@ func (h *threadHandle) onServerRequest(cl *acpClient, id json.RawMessage, method
 	h.emit(agents.Event{Kind: "interaction", TurnState: agents.TurnWaitingInteraction, Interaction: inter})
 }
 
-// pendingPermission は保留中の ACP `session/request_permission` を「何を訊かれて
-// いたか」の 1 行へ畳む（docs/log/75 P5）。保留が無ければ ""。
+// pendingPermission folds a pending ACP `session/request_permission` into one line saying
+// what was being asked (docs/log/75 P5). Empty when nothing is pending.
 func (h *threadHandle) pendingPermission() string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -987,21 +1012,23 @@ func (h *threadHandle) pendingPermission() string {
 	return h.inter.Prompt
 }
 
-// managedLiveState は managed ルートの live 状態（state.go の LiveState が読む）。
+// managedLiveState is the live state of the managed route, read by state.go's LiveState.
 //
-// なぜ要るか: ACP はローカル転写を書かないので JSONL 末尾分類は managed では常に空を
-// 返し、**一覧のチップも reaper の分類材料も無いまま**だった。結果、承認待ちで固まった
-// managed セッションは「状態不明」に落ち、tier1 が畳むことも tier2 が起こし続けることも
-// 無い（docs/log/75 の分類でいう unknown）。turn 状態機械が唯一の情報源なので、そこから供給する。
+// Why it exists: ACP writes no local transcript, so the JSONL tail classification always
+// returns empty for managed sessions, leaving both the list chip and the reaper's
+// classification input blank. A managed session stuck waiting for an approval then fell to
+// "unknown" (in docs/log/75's vocabulary), where tier 1 never folds it and tier 2 never
+// keeps it awake. The turn state machine is the only source of truth, so it feeds this.
 //
-// 承認待ちを **question** と名乗るのは、ミラーが描く許可カード（td.Pending）と語彙を
-// 揃えるため — 一覧のバッジと本文のチップが食い違うと、どちらが本当か利用者に分からない
-// （EffectiveModal の教訓と同じ）。持ち越しの Kind が permission なのは別の軸の話で、
-// あちらは「再開後に何を配達できるか」を決めている。
+// Waiting for an approval is called question to match the vocabulary of the permission card
+// the mirror draws (td.Pending): when the badge in the list and the chip in the body
+// disagree, the user cannot tell which is true (the same lesson as EffectiveModal). The
+// carry-over Kind being permission is a different axis, deciding what can be delivered
+// after a resume.
 func managedLiveState(m session.Meta) string {
 	h := handleFor(m.Name)
 	if h == nil {
-		return "" // 停止中 / 未接続 — 状態については意見を持たない
+		return "" // stopped or not attached: hold no opinion about the state
 	}
 	switch h.currentState() {
 	case agents.TurnWaitingInteraction:
@@ -1012,7 +1039,7 @@ func managedLiveState(m session.Meta) string {
 	return "idle"
 }
 
-// queuedPrompts surfaces the driver-held queue for the mirror's キュー済み badge.
+// queuedPrompts surfaces the driver-held queue for the mirror's "queued" badge.
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -1026,8 +1053,9 @@ func (h *threadHandle) queuedPrompts() []string {
 }
 
 // managedTranscript builds the read-layer TranscriptData for a managed cursor session
-// entirely from the driver's in-memory accumulator（transcript.go から呼ばれる）:
-// ACP はローカル転写を書かないので、これが唯一のミラー源。停止中（handle 無し）は空。
+// entirely from the driver's in-memory accumulator; it is called from transcript.go. ACP
+// writes no local transcript, so this is the only source the mirror has. A stopped session
+// (no handle) is empty.
 func managedTranscript(m session.Meta) agents.TranscriptData {
 	h := handleFor(m.Name)
 	if h == nil {
@@ -1037,8 +1065,9 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 	h.mu.Lock()
 	inter := h.inter
 	modeSet := h.settings.Mode
-	// モデルバッジ: ユーザーが明示選択したモデル（settings.Model・ピッカーの dash 形式）を
-	// 優先し、Auto/未指定なら ACP の currentModelId（default[]）を使う（docs/log/40 §モデル表示）。
+	// Model badge: prefer the model the user picked explicitly (settings.Model, the picker's
+	// dash form); for Auto or no choice fall back to ACP's currentModelId, which is
+	// default[] (docs/log/40 §model display).
 	modelID := h.settings.Model
 	if modelID == "" || modelID == "auto" {
 		modelID = h.model
@@ -1060,7 +1089,7 @@ func managedTranscript(m session.Meta) agents.TranscriptData {
 	return td
 }
 
-// normalizeMsgID mirrors the other drivers' convention: empty → driver 採番。
+// normalizeMsgID mirrors the other drivers' convention: empty means the driver assigns one.
 func normalizeMsgID(id string) string {
 	if id != "" {
 		return id

@@ -94,14 +94,14 @@ func TestReconcileDeliversToEverySupportedKind(t *testing.T) {
 			t.Fatalf("%s: user text missing from %s:\n%s", tc.name, tc.path, got)
 		}
 	}
-	// opencode は AGENTS.md を触らず、設定の instructions から参照する。
+	// opencode leaves AGENTS.md alone and references the file from its config instructions.
 	if strings.Contains(read(t, opencode.AgentsPath()), "Always report in Japanese.") {
 		t.Fatal("opencode: user text must not be composed into AGENTS.md")
 	}
 	if !opencodeRefers(instrOpencodeFile()) {
 		t.Fatalf("opencode: config does not reference the AF file:\n%s", read(t, opencode.ConfigPath()))
 	}
-	// claude の managed policy 側は別レイヤ。AF は user memory にだけ書く。
+	// claude's managed policy is a separate layer; AF only ever writes to user memory.
 	if !strings.Contains(read(t, claude.UserInstructionsPath()), "workspace guide wins") {
 		t.Fatal("claude: precedence sentence missing")
 	}
@@ -121,8 +121,9 @@ func TestReconcileComposesFleetGuideForCodexAndOpencode(t *testing.T) {
 	}
 }
 
-// ★ 実害②の回帰: agy / copilot / kiro はワークスペースの運用方針を一切読んでいなかった。
-// フリート方針はオペレーター所有なので、ユーザー指示が空でも・適用先を全部外しても配る。
+// Regression for docs/log/60 damage 2: agy, copilot and kiro read the workspace operating
+// policy not at all. The fleet policy is the operator's, so it is delivered even when the
+// user instructions are empty and every target is unticked.
 func TestFleetGuideReachesTheKindsThatHadNone(t *testing.T) {
 	instrEnv(t)
 	off := false
@@ -142,13 +143,13 @@ func TestFleetGuideReachesTheKindsThatHadNone(t *testing.T) {
 	if !strings.Contains(read(t, agy.AgentsPath()), "do not delete other sessions' work") {
 		t.Fatal("agy: fleet guide missing")
 	}
-	// ユーザー指示は切ってあるので、そちらの artifact は無いままであること。
+	// User instructions are switched off, so their artifacts must stay absent.
 	if read(t, copilot.UserInstructionsPath()) != "" || read(t, kiro.UserInstructionsPath()) != "" {
 		t.Fatal("user artifacts must not appear while the master switch is off")
 	}
 }
 
-// agy の 1 ファイルに fleet / user / rtk が同居しても、順序と個数が壊れないこと。
+// fleet, user and rtk share agy's single file without breaking their order or their count.
 func TestAgyFileHoldsFleetUserAndRTKInOrder(t *testing.T) {
 	instrEnv(t)
 	stubRTKOnPath(t)
@@ -157,7 +158,7 @@ func TestAgyFileHoldsFleetUserAndRTKInOrder(t *testing.T) {
 	}
 	agy.ApplyRTK(true)
 	reconcileAgentInstructions()
-	reconcileAgentInstructions() // 冪等
+	reconcileAgentInstructions() // idempotent
 	got := read(t, agy.AgentsPath())
 	fleet := strings.Index(got, "<!-- agent-fleet:fleet -->")
 	user := strings.Index(got, "<!-- agent-fleet:user-notes -->")
@@ -170,7 +171,8 @@ func TestAgyFileHoldsFleetUserAndRTKInOrder(t *testing.T) {
 	}
 }
 
-// ★ 実害①の回帰: 利用者が AGENTS.md へ書き足した文章を、起動のたびに消さない。
+// Regression for docs/log/60 damage 1: text the user added to AGENTS.md is not wiped on
+// every start.
 func TestReconcilePreservesUserWrittenTextInAgentsFile(t *testing.T) {
 	instrEnv(t)
 	path := codex.AgentsPath()
@@ -181,7 +183,7 @@ func TestReconcilePreservesUserWrittenTextInAgentsFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	reconcileAgentInstructions()
-	reconcileAgentInstructions() // 2 回目も同じ（冪等）
+	reconcileAgentInstructions() // the second call does the same thing (idempotent)
 	got := read(t, path)
 	if !strings.Contains(got, "prefer table output") {
 		t.Fatalf("hand-written text was destroyed:\n%s", got)
@@ -191,7 +193,8 @@ func TestReconcilePreservesUserWrittenTextInAgentsFile(t *testing.T) {
 	}
 }
 
-// ★ 移行の回帰: cp -f 時代の生のフリート方針は 1 度だけ剥がし、二重に積まない。
+// Migration regression: the unmarked fleet policy of the cp -f era is stripped exactly once
+// and never stacked twice.
 func TestReconcileMigratesLegacyCopiedGuide(t *testing.T) {
 	instrEnv(t)
 	path := codex.AgentsPath()
@@ -229,7 +232,7 @@ func TestCodexFileOrderIsFleetThenUserThenRTK(t *testing.T) {
 	}
 }
 
-// 適用先を外したら残骸を残さない（「外したのにまだ効いている」を作らない）。
+// Unticking a target leaves no remains behind, so "unticked but still in effect" cannot happen.
 func TestUntickingATargetRemovesItsArtifact(t *testing.T) {
 	instrEnv(t)
 	if err := userinstr.SaveText("hello\n"); err != nil {
@@ -250,7 +253,7 @@ func TestUntickingATargetRemovesItsArtifact(t *testing.T) {
 	if read(t, claude.UserInstructionsPath()) == "" {
 		t.Fatal("unticking one kind must not affect the others")
 	}
-	// opencode 側は設定の参照も外れること。
+	// On the opencode side the config reference has to come off as well.
 	if err := userinstr.SavePrefs(userinstr.Prefs{Targets: map[string]*bool{"opencode": &off}}); err != nil {
 		t.Fatal(err)
 	}
@@ -260,7 +263,8 @@ func TestUntickingATargetRemovesItsArtifact(t *testing.T) {
 	}
 }
 
-// 読めない設定は触らない（整形し直して利用者の記述を壊さない）。効かないことは申告する。
+// A config that cannot be read is left alone, so reformatting never destroys what the user
+// wrote; that it is not in effect is reported.
 func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 	instrEnv(t)
 	cfg := opencode.ConfigPath()
@@ -289,7 +293,7 @@ func TestUnreadableOpencodeConfigIsLeftAloneAndReported(t *testing.T) {
 	}
 }
 
-// agy は rtk と同じ ~/.gemini/AGENTS.md を共有する。両方が並び、互いを消さないこと。
+// agy shares ~/.gemini/AGENTS.md with rtk. Both blocks sit there and neither erases the other.
 func TestAgyUserBlockCoexistsWithRTKBlock(t *testing.T) {
 	instrEnv(t)
 	stubRTKOnPath(t)
@@ -310,7 +314,8 @@ func TestAgyUserBlockCoexistsWithRTKBlock(t *testing.T) {
 	}
 }
 
-// kiro は global steering ディレクトリに AF 専用の 1 本を置く。他人の steering は触らない。
+// kiro gets one AF-owned file in the global steering directory; other steering files are
+// left untouched.
 func TestKiroLeavesOtherSteeringFilesAlone(t *testing.T) {
 	instrEnv(t)
 	mine := filepath.Join(filepath.Dir(kiro.UserInstructionsPath()), "team-conventions.md")
@@ -342,7 +347,8 @@ func TestKiroLeavesOtherSteeringFilesAlone(t *testing.T) {
 func TestStateListsUnsupportedKindsWithReasons(t *testing.T) {
 	instrEnv(t)
 	targets := instrState().Targets
-	// cursor だけは実装待ちではなく**構造的に配れない**（ローカルに user 層が無い）。
+	// cursor alone is not awaiting implementation: it is structurally undeliverable, because
+	// there is no local user layer.
 	want := map[string]string{"cursor": "no_user_scope"}
 	for _, tgt := range targets {
 		if reason, ok := want[tgt.Kind]; ok {

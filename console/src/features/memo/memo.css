@@ -2,7 +2,7 @@
    styles.css (regions 8510–8543, 8610–8823) for pixel parity (docs/log/22 P6c).
    Trimmed at P8. */
 
-/* "送信しました" toast: display name + color-matched pane-ordinal badge(s). */
+/* "sent" toast (「送信しました」): display name + color-matched pane-ordinal badge(s). */
 .toast-sent {
   display: inline-flex;
   align-items: center;
@@ -340,7 +340,8 @@
   width: 14px;
   margin: 0 -3px;
 }
-/* 未分類's grip is a spacer only — no drag handle, so never reveal it on hover. */
+/* The uncategorized group's grip is a spacer only — no drag handle, so never reveal it
+   on hover. */
 .memo-cat-grip.placeholder {
   cursor: default;
 }
@@ -418,7 +419,7 @@
     color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
   border-radius: 8px;
 }
-/* ＋カテゴリ pill. Tight vertical margins so it sits close under the last category. */
+/* "add category" pill. Tight vertical margins so it sits close under the last category. */
 .memo-addcat {
   display: inline-flex;
   align-items: center;
@@ -441,7 +442,7 @@
 .memo-repo:last-of-type {
   margin-bottom: 2px;
 }
-/* Memo primary actions (composer 追加 / inline 保存 / selection 送信…) follow the
+/* Memo primary actions (composer add / inline save / selection send) follow the
    left-pane accent so they match the themed checkboxes/spine instead of the app blue. */
 .memo-add .ui-btn-primary,
 .memo-edit-row .ui-btn-primary,
@@ -449,7 +450,7 @@
   background: var(--lp-accent, var(--accent));
   border-color: transparent;
 }
-/* "選択を解除" as a quiet ghost, not a loud accent link. */
+/* "clear selection" as a quiet ghost, not a loud accent link. */
 .memo-selbar-clear {
   color: var(--muted);
 }
@@ -562,7 +563,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Send-memo modal (docs/log/21 UI刷新) -------------------------------------------- */
+/* --- Send-memo modal (docs/log/21 UI overhaul) -------------------------------------------- */
 .memo-send-hint {
   font-weight: 400;
   letter-spacing: 0;
@@ -671,7 +672,7 @@
   background: color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-/* --- Image attachments (docs/log/21 画像添付) ---------------------------------------- */
+/* --- Image attachments (docs/log/21 image attachments) ---------------------------------------- */
 /* Composer preview strip + in-row thumbnails. Small square previews with a hover
    remove chip; clicking opens a full-size lightbox (MemoImageThumb). */
 .memo-add-thumbs,

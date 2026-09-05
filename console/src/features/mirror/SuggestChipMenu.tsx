@@ -1,14 +1,15 @@
-// 返信サジェストのチップに付くコンテキストメニュー（右クリック / 長タップ / Menu キー）。
-// MirrorView と ChatView が同じ挙動で使う（チップ行の見た目だけ各 CSS が持つ）。
+// Context menu on a reply-suggestion chip (right click / long press / Menu key). MirrorView and
+// ChatView share the behaviour; only the chip row's appearance lives in their own CSS.
 //
-// 以前はチップ内の × が唯一の削除導線だった。× は @media (hover: hover) 限定＝タッチでは
-// 出せず（誤タップで候補が消える）、常時 20px の余白を取るためチップも太っていた。削除は
-// 「たまにやる操作」なので、ポインタ/タッチどちらからも同じメニューに集約する:
-//   - 右クリック（contextmenu）… マウス
-//   - 長タップ（500ms）… タッチ。Android は同じ押下で native contextmenu も飛ばすが、
-//     どちらが先でも開くのは同じメニューなので実害はない（開いた後は timer を止める）。
-//   - Menu キー / Shift+F10 … キーボード（rail の行と同じ contextMenuKey.ts の作法）
-// 長タップで開いたときは、指を離したときの click（＝コンポーサーへ差し込み）を1回だけ捨てる。
+// Delete and pin are rare actions, so they are collected into one menu reachable from every
+// input type rather than an in-chip close button (which only works under @media (hover: hover),
+// is mistap-prone on touch, and costs 20px of permanent chip padding):
+//   - contextmenu event ... mouse right click
+//   - long press (500ms) ... touch. Android may also fire a native contextmenu for the same
+//     press; either order opens the same menu, and the timer is cancelled once it is open.
+//   - Menu key / Shift+F10 ... keyboard, via the same contextMenuKey.ts convention as the rail.
+// When opened by long press, the click fired on lift (which would insert into the composer) is
+// swallowed exactly once.
 import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent as RKeyboardEvent, MouseEvent as RMouseEvent, TouchEvent as RTouchEvent } from "react";
@@ -19,9 +20,10 @@ import { placeFixed } from "../../lib/placeFixed.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { isContextMenuKey, menuAnchor } from "../project/contextMenuKey.ts";
 
-// 長タップと判定するまでの時間。ブラウザ既定の長押し（選択・callout）と同じ 500ms。
+// How long a press must last to count as a long press: 500ms, matching the browser's own
+// long-press (selection / callout).
 const LONG_PRESS_MS = 500;
-// この距離を超えて動いたら長タップではなくチップ行の横スクロール（スワイプ）。
+// Moving further than this makes it a horizontal scroll (swipe) of the chip row, not a long press.
 const MOVE_TOL = 10;
 
 export type ChipMenuState = { text: string; llm: boolean; x: number; y: number };
@@ -36,14 +38,15 @@ export type ChipMenuHandlers = {
 };
 
 export type ChipMenu = {
-  /** 開いているメニュー（null = 閉じている）。<SuggestChipMenu menu={…}> へ渡す。 */
+  /** The open menu, or null when closed. Pass it to <SuggestChipMenu menu={…}>. */
   menu: ChipMenuState | null;
   close: () => void;
-  /** チップ <button> に展開するイベントハンドラ一式。 */
+  /** The event handlers to spread onto the chip <button>. */
   chipProps: (text: string, llm: boolean) => ChipMenuHandlers;
-  /** Menu キー / Shift+F10 をチップの onKeyDown で処理する。処理したら true。 */
+  /** Handles the Menu key / Shift+F10 from the chip onKeyDown; returns true when handled. */
   onKeyDown: (e: RKeyboardEvent<HTMLButtonElement>, text: string, llm: boolean) => boolean;
-  /** 直前の長タップで開いた分の click か（true なら差し込みを行わない・フラグは消費される）。 */
+  /** Whether this click came from the long press that opened the menu. True means do not insert;
+   *  the flag is consumed by the call. */
   clickSwallowed: () => boolean;
 };
 
@@ -68,15 +71,15 @@ export function useChipMenu(): ChipMenu {
 
   const chipProps = (text: string, llm: boolean): ChipMenuHandlers => ({
     onContextMenu: (e) => {
-      e.preventDefault(); // ブラウザ既定のメニュー / iOS の callout を出さない
-      // Android の長押しはこちら（native contextmenu）が先に飛ぶことがある。指を離したときの
-      // click を捨てる必要があるのはタッチ由来のときだけなので、pointerType で見分ける
-      // （マウスの右クリックに click は続かない＝ここで立てると次の左クリックを食べてしまう）。
+      e.preventDefault(); // suppress the browser's own menu and the iOS callout
+      // On Android a long press may deliver this native contextmenu first. Only a touch-derived
+      // one needs the lift click swallowed, hence the pointerType check: a mouse right click is
+      // not followed by a click, so setting the flag here would eat the next left click.
       if ((e.nativeEvent as PointerEvent).pointerType === "touch") swallow.current = true;
       open(text, llm, e.clientX, e.clientY);
     },
-    // マウス操作が始まったら、右クリックで立った古い swallow を必ず落とす（右クリックの後に
-    // click は来ないので、ここで消さないと次の左クリックを1回食べてしまう）。
+    // Clear a stale swallow flag as soon as a mouse interaction starts: no click follows a right
+    // click, so leaving it set would eat the next left click.
     onMouseDown: () => {
       swallow.current = false;
     },
@@ -88,7 +91,7 @@ export function useChipMenu(): ChipMenu {
       origin.current = { x: t.clientX, y: t.clientY };
       const { clientX, clientY } = t;
       timer.current = window.setTimeout(() => {
-        swallow.current = true; // 指を離したときの click（差し込み）を捨てる
+        swallow.current = true; // drop the click fired on lift, which would insert the text
         open(text, llm, clientX, clientY);
       }, LONG_PRESS_MS);
     },
@@ -98,10 +101,11 @@ export function useChipMenu(): ChipMenu {
       if (!t || !o) return;
       if (Math.abs(t.clientX - o.x) > MOVE_TOL || Math.abs(t.clientY - o.y) > MOVE_TOL) cancelTimer();
     },
-    // 長タップが成立していたら touchend を preventDefault して、互換 click / mousedown の合成を
-    // 止める。合成 mousedown はメニューの外側判定（useDismiss）に当たるので、これを止めないと
-    // 指を離した瞬間にメニューが閉じる。効かないブラウザに備えて swallow フラグも残す
-    // （次の操作の touchstart / mousedown で必ず落ちるので、居残って click を食べることはない）。
+    // Once the long press has fired, preventDefault on touchend so no compatibility click /
+    // mousedown is synthesised. A synthesised mousedown counts as an outside press for useDismiss
+    // and would close the menu the moment the finger lifts. The swallow flag is kept as a fallback
+    // for browsers that ignore this; the next touchstart / mousedown always clears it, so it can
+    // never linger and eat a click.
     onTouchEnd: (e) => {
       if (swallow.current && e.cancelable) e.preventDefault();
       cancelTimer();
@@ -135,21 +139,21 @@ export function useChipMenu(): ChipMenu {
 
 interface SuggestChipMenuProps {
   menu: ChipMenuState;
-  /** この候補がピン留め済みか（ラベルとアイコンを切り替える）。 */
+  /** Whether this suggestion is pinned; switches the label and the icon. */
   pinned: boolean;
   onClose: () => void;
   onTogglePin: (text: string) => void;
   onForget: (text: string, llm: boolean) => void;
 }
 
-/** チップのメニュー本体（カーソル位置に fixed で出す・画面外にははみ出さない）。 */
+/** The chip menu itself: fixed at the pointer position, clamped to stay on screen. */
 export function SuggestChipMenu({ menu, pinned, onClose, onTogglePin, onForget }: SuggestChipMenuProps) {
   const tr = useT();
   const ref = useRef<HTMLUListElement>(null);
   useDismiss([ref], true, onClose);
   useMenuRoving(ref, true);
-  // 位置決めは毎レンダー・描画前に（親はポーリングで再レンダーし、その度に生の座標が
-  // inline style として戻るので、一度きりのクランプでは画面外へ押し出される）。
+  // Reposition on every render, before paint: the parent re-renders on a poll and each time
+  // restores the raw coordinates as an inline style, so a one-shot clamp would be pushed off screen.
   useLayoutEffect(() => {
     if (ref.current) placeFixed(ref.current, menu.x, menu.y);
   });

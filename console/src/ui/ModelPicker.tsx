@@ -36,9 +36,10 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
     if (!options || kind === "claude") return options;
     // A stored last-used model can be missing from the fetched list (deprecated /
     // provider since disconnected, or the list hasn't loaded yet): keep it in the
-    // full catalog rather than showing 既定 while actually sending it. EXCEPT when the
-    // user excluded it in settings — 消えた と 隠した は別物で、足し戻すと隠したはずの
-    // モデルが復活する（起動は Agent 側ガードで断られるので、選べても嘘になる）。
+    // full catalog rather than showing "default" while actually sending it. EXCEPT when the
+    // user excluded it in settings — "gone" and "hidden" are different things, and adding it
+    // back would resurrect a model the user hid (launching it is refused by the Agent's own
+    // guard anyway, so offering the choice would be a lie).
     if (hidden) return options;
     return options.some(([v]) => v === model) ? options : [...options, [model, model] as ModelOption];
   }, [kind, model, options, hidden]);
@@ -50,11 +51,11 @@ export function ModelPicker({ kind, model, onChange }: ModelPickerProps) {
   if (!options) return null;
   if (kind !== "claude") {
     const selectedVisible = filtered.some(([v]) => v === model);
-    // 取得が決着したのに 既定 しか無い＝このアカウント/プラン/設定では選べるモデルが無い。
-    // 黙って「既定」だけを出すと、利用者からは読み込み中と見分けが付かない（実機で
-    // 「モデルが選べない」として報告された形）。⚠️ 原因は書かない — 未ログイン・
-    // プロバイダ不達・プランが既定のみ（Copilot Free）・設定で全部除外、を Console は
-    // 区別できない。dynamicOptions は除外フィルタ後なので、設定で全部隠した場合も真。
+    // The fetch has settled and only "default" is left = this account/plan/settings offers no
+    // selectable model. Silently showing just "default" is indistinguishable from still
+    // loading. Do not state a cause: the Console cannot tell not-signed-in, provider
+    // unreachable, a plan that only has the default (Copilot Free) and everything excluded in
+    // settings apart. dynamicOptions is post-exclusion, so this is true for the last case too.
     const onlyDefault = settled && (dynamicOptions?.length ?? 0) <= 1;
     const selectValue = selectedVisible ? model : "__filtered_selection__";
     return (

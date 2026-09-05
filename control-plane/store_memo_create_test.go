@@ -1,10 +1,8 @@
 package main
 
-// 移送で main 側に残した 1 本（ADR 0067 / CP-STORE）。memoCreateFor は memo.go の
-// API 層ヘルパで store ではない。移送前は internal/store/store_sqlite_test.go の
-// TestSQLiteMemo の中に 6 行だけ紛れていた——store の CRUD を検査するテストの
-// 途中で、1 箇所だけ API 層を呼んでいた。切断面の内側に memo.go を引きずり込む
-// 理由は無いので、その 1 件分をここへ出した。
+// This test stays on the main side (ADR 0067 / CP-STORE) because memoCreateFor is an
+// API-layer helper in memo.go, not a store one: covering it from inside internal/store
+// would drag memo.go across the seam.
 
 import (
 	"context"
@@ -14,8 +12,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// 新規メモは、API が position を省いてきても repo/category グループの末尾に付く
-// （ゼロ値の 0 をそのまま採らない）。
+// A new memo lands at the end of its repo/category group even when the API omits
+// position — the zero value must not be taken as "first".
 func TestMemoCreateForAppendsToItsGroup(t *testing.T) {
 	ctx := context.Background()
 	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))

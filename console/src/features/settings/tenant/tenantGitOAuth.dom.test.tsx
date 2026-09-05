@@ -1,11 +1,11 @@
-// テナントの git プロバイダ OAuth の面（docs/log/71・ADR 0052）。押さえるのは 3 点:
-//   ① client_secret は書き込み専用。保存済みの値は返らないので、空のまま保存したら
-//      「変えない」の意味で PUT する —— でないと client_id を直すたびに secret が
-//      黙って消え、次の接続が invalid_client で落ちる。
-//   ② secret を持たないプロバイダ（GitHub = デバイスフロー）には欄を出さない。
-//      何を入れる欄か分からないものを置かない。
-//   ③ コールバック URL を画面に出す。プロバイダ側の登録に貼るものなので、出さないと
-//      管理者は登録を完了できない。
+// The tenant git provider OAuth surface (docs/log/71, ADR 0052). Three things are pinned:
+//   1. client_secret is write-only. The stored value is never returned, so saving with the
+//      field empty PUTs it as "leave unchanged" — otherwise every edit of client_id would
+//      silently wipe the secret and the next connection would fail with invalid_client.
+//   2. Providers with no secret (GitHub, device flow) get no field at all. Never show a field
+//      whose contents nobody can guess.
+//   3. The callback URL is shown, because it is what the admin pastes into the provider's own
+//      registration; without it the registration cannot be completed.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -81,8 +81,8 @@ afterEach(() => {
   host = null;
 });
 
-describe("git プロバイダ OAuth", () => {
-  it("secret 欄は必要なプロバイダにだけ出し、コールバック URL を見せる", async () => {
+describe("git provider OAuth", () => {
+  it("shows the secret field only where it is needed, and shows the callback URL", async () => {
     api.mockResolvedValue(LISTED);
     await mount();
     expect(api).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth");
@@ -91,35 +91,35 @@ describe("git プロバイダ OAuth", () => {
     expect(document.body.textContent).toContain("https://af.example/api/oauth/bitbucket/callback");
   });
 
-  it("secret を空のまま保存しても、保存済みの値を消しに行かない", async () => {
+  it("does not clear the stored secret when saving with the field left empty", async () => {
     api.mockResolvedValue(LISTED);
     apiJSON.mockResolvedValue({ provider: "bitbucket", client_id: "key-2", has_secret: true });
     await mount();
     const bb = groupFor("Bitbucket");
     await typeInto(bb.querySelector<HTMLInputElement>('input[type="text"]')!, "key-2");
     await act(async () => buttonIn(bb, "保存").click());
-    // client_secret は空文字で送る = サーバ契約の「保存済みを保つ」。
+    // Sending client_secret as the empty string is the server contract for "keep what is stored".
     expect(apiJSON).toHaveBeenCalledWith("api/admin/tenants/acme/git-oauth/bitbucket", "PUT", {
       client_id: "key-2",
       client_secret: "",
     });
   });
 
-  it("client_id が空なら保存させない（空の行を作らない）", async () => {
+  it("blocks the save when client_id is empty, so no empty row is created", async () => {
     api.mockResolvedValue({
       providers: [{ provider: "github", client_id: "", has_secret: false, needs_secret: false }],
     });
     await mount();
     expect(buttonIn(groupFor("GitHub"), "保存").disabled).toBe(true);
-    // 未登録の行に「削除」は出さない。
+    // An unregistered row gets no delete button (「削除」).
     expect(
       Array.from(document.querySelectorAll("button")).some((b) => (b.textContent || "").includes("削除")),
     ).toBe(false);
   });
 
-  it("コールバックが要るのに URL が無いとき、原因（PUBLIC_BASE_URL 未設定）を出す", async () => {
-    // ★ ここで黙ると「登録したのに OAuth が失敗する」で止まる。直せるのは運用者で、
-    //    テナント管理者が設定を入れ直しても何も変わらない。
+  it("names the cause (PUBLIC_BASE_URL unset) when a callback is required but there is no URL", async () => {
+    // Staying silent here leaves "registered it, but OAuth fails". Only the operator can fix
+    // it; a tenant admin re-entering the settings changes nothing.
     api.mockResolvedValue({
       providers: [{ provider: "bitbucket", client_id: "key-1", has_secret: true, needs_secret: true }],
     });
@@ -128,7 +128,7 @@ describe("git プロバイダ OAuth", () => {
     expect(document.body.textContent).toContain("PUBLIC_BASE_URL");
   });
 
-  it("削除は DELETE を投げて読み直す", async () => {
+  it("sends DELETE and reloads on delete", async () => {
     api.mockResolvedValue(LISTED);
     raw.mockResolvedValue({});
     await mount();

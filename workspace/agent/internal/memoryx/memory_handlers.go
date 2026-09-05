@@ -1,10 +1,10 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 / ADR 0022）— REST
-// （P1: roots / snapshots / diff、P2: tree / restore / settings、P3: export / import）。
+// Version management for agent memory (docs/log/39 / ADR 0022) — the REST side
+// (P1: roots / snapshots / diff, P2: tree / restore / settings, P3: export / import).
 //
-// ⚠️ ここに足したパスは control-plane/routes.go にも同じものを登録する（CP は明示許可
-// リスト方式で、片側漏れ = Console から 404）。
+// A path added here must be registered in control-plane/routes.go as well: the CP works from
+// an explicit allowlist, so missing one side means a 404 from the Console.
 
 import (
 	"errors"
@@ -20,26 +20,27 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// memoryRootView は roots API が返す 1 ルート分。
+// memoryRootView is one root as returned by the roots API.
 type memoryRootView struct {
 	Kind     string             `json:"kind"`
 	Label    string             `json:"label"`
-	Scopes   bool               `json:"scopes"` // プロジェクト粒度の部分ロールバックが可能か
+	Scopes   bool               `json:"scopes"` // can it be rolled back per project
 	Files    int                `json:"files"`
 	Bytes    int64              `json:"bytes"`
-	Modified string             `json:"modified,omitempty"` // 最新 mtime（RFC3339）
-	Busy     bool               `json:"busy"`               // この kind に実行中セッションがある
-	Projects []memoryProjectRef `json:"projects"`           // claude のみ（scopes=false は空）
-	// Toggleable / Enabled は「エージェント側がメモリを書くこと」の ON/OFF（docs/log/39 P4）。
-	// 有効なルートにも載せる — codex が一度ワークスペースを作ると inactive から消えるので、
-	// ここに無いと有効化した後に切り戻す導線が UI から失われる。
+	Modified string             `json:"modified,omitempty"` // newest mtime (RFC3339)
+	Busy     bool               `json:"busy"`               // this kind has a running session
+	Projects []memoryProjectRef `json:"projects"`           // claude only (empty when scopes=false)
+	// Toggleable / Enabled is the ON/OFF of the agent writing memory at all (docs/log/39 P4).
+	// Carried on active roots too: once codex has created a workspace it drops out of
+	// inactive, so without it here the UI loses the way back to turning it off again.
 	Toggleable bool `json:"toggleable,omitempty"`
 	Enabled    bool `json:"enabled,omitempty"`
 }
 
-// memoryWriteErr は memoryUserErr（入力起因の失敗）を安定コードへ、それ以外を
-// fallback（500）へ写す。500 側はログにも残す — 応答の message は Console の i18n が
-// 汎用文言へ畳んでしまうので、現地で起きた失敗を後から追える場所がここしかない。
+// memoryWriteErr maps a memoryUserErr (a failure caused by the input) to a stable code and
+// everything else to fallback (500). The 500 side is logged as well: the Console's i18n folds
+// the response message into generic wording, so the log is the only place the failure that
+// actually happened here can be traced afterwards.
 func memoryWriteErr(w http.ResponseWriter, err error, fallback string) {
 	var ue *memoryUserErr
 	if errors.As(err, &ue) {
@@ -50,8 +51,9 @@ func memoryWriteErr(w http.ResponseWriter, err error, fallback string) {
 	httpx.WriteErr(w, http.StatusInternalServerError, fallback, err.Error())
 }
 
-// HandleMemoryRoots はこの環境で有効なメモリルートと、その中身の概況を返す。
-// codex は ~/.codex/memories が存在するときだけ現れる（memories 機能は既定 OFF）。
+// HandleMemoryRoots returns the memory roots active in this environment and a summary of what
+// is in them. codex appears only when ~/.codex/memories exists (the memories feature is off by
+// default).
 func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	roots := memoryRoots()
 	busy := memoryBusyKinds()
@@ -62,8 +64,9 @@ func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 			Busy: busy[root.Kind], Projects: []memoryProjectRef{},
 		}
 		if root.Kind == "codex" {
-			// 無効にしても既存の md は残り、版管理の対象からは外れない
-			// （codex が更新しなくなるだけ）。履歴が欠けないのが正しい。
+			// Turning it off leaves the existing md in place and still under version
+			// management (codex just stops updating it). A history with no gap in it is
+			// the correct outcome.
 			v.Toggleable, v.Enabled = true, codex.MemoriesEnabled()
 		}
 		var newest time.Time
@@ -89,12 +92,12 @@ func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	}
 	out := memoryRootsWire{
 		Roots: views,
-		// 宣言はあるが今は有効でないルート（codex memories が未有効 等）を理由付きで
-		// 返す。黙って落とすと Console が「なぜ出てこないか」も「どう有効化するか」も
-		// 示せない（docs/log/39 P4）。
+		// Roots that are declared but not currently active (codex memories not enabled,
+		// and so on), each with its reason. Dropping them silently leaves the Console
+		// unable to show either why one is missing or how to enable it (docs/log/39 P4).
 		Inactive: memoryInactiveRoots(),
 		Auto:     memoryAutoEnabled(),
-		// locked = 運用側が AF_MEMORY_SNAPSHOT で止めている（UI トグルでは戻せない）。
+		// locked = operations stopped it via AF_MEMORY_SNAPSHOT (the UI toggle cannot undo that).
 		AutoLocked: memoryAutoLocked(),
 	}
 	if head := memoryHeadTime(); !head.IsZero() {
@@ -103,8 +106,8 @@ func HandleMemoryRoots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
-// HandleMemorySettings は自動 snapshot の ON/OFF トグル（docs/log/39 決着 #1）。
-// 環境変数による強制 OFF は上書きできない。
+// HandleMemorySettings is the ON/OFF toggle for automatic snapshots (docs/log/39 resolution #1).
+// A forced OFF from the environment variable cannot be overridden.
 func HandleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Auto *bool `json:"auto"`
@@ -123,7 +126,7 @@ func HandleMemorySettings(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"auto": memoryAutoEnabled(), "autoLocked": memoryAutoLocked()})
 }
 
-// HandleMemorySnapshots は snapshot 履歴を新しい順に返す（?limit=&before=）。
+// HandleMemorySnapshots returns the snapshot history, newest first (?limit=&before=).
 func HandleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 	limit := 50
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -142,8 +145,8 @@ func HandleMemorySnapshots(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"snapshots": list})
 }
 
-// HandleMemorySnapshotCreate は手動 snapshot（docs/log/39 ②）。変更が無ければ committed=false
-// を返すだけで、空コミットは積まない。
+// HandleMemorySnapshotCreate is the manual snapshot (docs/log/39 item 2). With nothing changed
+// it just returns committed=false; no empty commit is stacked.
 func HandleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Trigger string `json:"trigger"`
@@ -151,7 +154,8 @@ func HandleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	if r.ContentLength > 0 && !httpx.DecodeJSON(w, r, &body) {
 		return
 	}
-	// 契機は API から任意の文字列を刻ませない（履歴の意味が壊れる）。手動経路は manual 固定。
+	// The trigger is not an arbitrary string the API may stamp in (that would destroy what the
+	// history means). The manual path is fixed to manual.
 	if body.Trigger != "" && body.Trigger != memoryTriggerManual {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, "trigger must be \"manual\"")
 		return
@@ -164,8 +168,9 @@ func HandleMemorySnapshotCreate(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// HandleMemoryDiff は 2 時点間の unified diff を返す（?from=&to=&at=&path=）。
-// from 省略で「to が入れた変更」、path 省略で全体。at は「その時刻以前の直近 snapshot」。
+// HandleMemoryDiff returns the unified diff between two points in time (?from=&to=&at=&path=).
+// Omitting from means "the change to introduced", omitting path means the whole tree, and at
+// means "the latest snapshot at or before that time".
 func HandleMemoryDiff(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	if !memoryHasCommits() {
@@ -197,14 +202,15 @@ func HandleMemoryDiff(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"from": from, "to": to, "path": path, "diff": diff})
 }
 
-// HandleMemoryTree は「その時点に何が入っていたか」を返す（?rev=|at=）。restore の
-// スコープ選択はこれを見る — 現在の roots を選択肢にすると、既に消えたプロジェクトを
-// 選べず「誤って消したメモリを戻す」という本命が成立しないため（memory_restore.go）。
+// HandleMemoryTree returns what was in there at a given point (?rev=|at=). The scope picker of
+// a restore reads this: offering today's roots as the choices would leave an already-deleted
+// project unselectable, and "put back the memory I deleted by mistake" — the whole point — would
+// not work (memory_restore.go).
 func HandleMemoryTree(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	rev := q.Get("rev")
 	if rev == "" {
-		rev = q.Get("to") // diff API と同じ綴りでも受ける
+		rev = q.Get("to") // also accept the diff API's spelling
 	}
 	sha, kinds, projects, err := memoryTreeAt(rev, q.Get("at"))
 	if err != nil {
@@ -214,8 +220,9 @@ func HandleMemoryTree(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"rev": sha, "kinds": kinds, "projects": projects})
 }
 
-// HandleMemoryRestore は指定時点への巻き戻し（docs/log/39 ④）。履歴は書き換えず、
-// pre-restore snapshot → live へ適用 → restore commit の 3 つを積む。
+// HandleMemoryRestore rolls back to a given point (docs/log/39 item 4). The history is not
+// rewritten: it stacks three things — a pre-restore snapshot, the application to live, and the
+// restore commit.
 func HandleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Rev   string             `json:"rev"`
@@ -233,9 +240,9 @@ func HandleMemoryRestore(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// HandleMemoryImport は bundle / tar.gz を受領し、refs/imports/<id> へ独立系譜として
-// 取り込んで preview を返す（docs/log/39 ⑤）。この時点では live に一切触れない — 何を
-// 適用するかは利用者が preview を見て決める。
+// HandleMemoryImport takes in a bundle / tar.gz, imports it into refs/imports/<id> as an
+// independent lineage and returns a preview (docs/log/39 item 5). At this point live is not
+// touched at all — what gets applied is the user's decision, made from the preview.
 func HandleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	if err := memoryEnsureRepo(); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, err.Error())
@@ -245,7 +252,8 @@ func HandleMemoryImport(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, errCodeMemoryImportFailed, err.Error())
 		return
 	}
-	// 受領はストリームで行い、メモリに丸ごと載せない（★3 サイズ上限もここで効かせる）。
+	// Take it in as a stream rather than loading the whole thing into memory (the ★3 size
+	// limit is enforced here too).
 	mr, err := r.MultipartReader()
 	if err != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeMemoryBadRequest, "expected multipart/form-data")
@@ -298,11 +306,12 @@ func HandleMemoryImport(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, pv)
 }
 
-// HandleMemoryImportApply は取り込んだ系譜から、選んだプロジェクト / kind だけを live へ
-// 適用する（置き換え = 新しい commit。3-way merge はしない — ADR 0022 決定 5）。
-// mode="migrate" は移設 = 内容に加えて**履歴も**取り込んだ系譜へ入れ替える（範囲は全体固定）。
-// 経路を増やさず 1 キーで分けるのは、REST を足すと CP 側の許可リスト登録漏れという既知の
-// 罠（memory_handlers.go 冒頭の ⚠️）を踏むため。
+// HandleMemoryImportApply applies only the chosen projects / kinds of an imported lineage to
+// live (replacement = a new commit; no 3-way merge, ADR 0022 decision 5).
+// mode="migrate" is a relocation: not just the content but the HISTORY too is swapped for the
+// imported lineage (always over the whole scope). The two are split by one key instead of a
+// second route because adding a REST path walks into the known trap of forgetting to register
+// it in the CP's allowlist (the note at the top of this file).
 func HandleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ImportID string             `json:"importId"`
@@ -326,18 +335,17 @@ func HandleMemoryImportApply(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, res)
 }
 
-// memoryRootsWire — GET /memory/roots のレスポンス（Console の `RootsPayload`、
-// console/src/features/settings/memory/memoryTypes.ts）。
+// memoryRootsWire — the GET /memory/roots response (the Console's `RootsPayload`,
+// console/src/features/settings/memory/memoryTypes.ts).
 //
-// 旧: map[string]any{"roots":…, "inactive":…, "auto":…, "autoLocked":…} ＋
+// was: map[string]any{"roots":…, "inactive":…, "auto":…, "autoLocked":…} plus "lastSnapshot",
+// which was added only when head was non-zero.
 //
-//	head が非ゼロのときだけ "lastSnapshot" を足す。
-//
-// 🔴 **lastSnapshot だけが条件付きキー**なので、そこだけ omitempty を付ける。
-// これが忠実なのは、**値が RFC3339 の書式で必ず非空**だから——「在って空文字」という
-// 状態を取れないので、omitempty が消すのは「無い」場合だけになる。
-// （値が空文字を取りうるキーに omitempty を付けると、**在るのに消える**。）
-// 他の 4 キーは無条件なので付けない。
+// lastSnapshot is the only conditional key, so it is the only one that carries omitempty. That
+// is faithful because the value is always a non-empty RFC3339 string: "present but empty" is a
+// state it cannot reach, so omitempty can only drop the "absent" case. (Put omitempty on a key
+// whose value can be the empty string and it disappears while present.) The other four keys are
+// unconditional and get none.
 type memoryRootsWire struct {
 	Roots        []memoryRootView     `json:"roots"`
 	Inactive     []memoryInactiveRoot `json:"inactive"`

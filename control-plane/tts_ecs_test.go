@@ -72,7 +72,8 @@ func TestTTSEngineECSSetEnabled(t *testing.T) {
 	}
 }
 
-// newTTSEngineFromEnv: AF_TTS_ECS_SERVICE 未設定 → nil（管理外）。
+// With AF_TTS_ECS_SERVICE unset, newTTSEngineFromEnv returns nil: the engine is not
+// ours to manage.
 func TestTTSEngineFromEnvUnset(t *testing.T) {
 	t.Setenv("AF_TTS_ECS_SERVICE", "")
 	if eng := newTTSEngineFromEnv(); eng != nil {

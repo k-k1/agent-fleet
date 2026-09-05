@@ -1,9 +1,10 @@
 package kiro
 
-// ライブ検証（KIRO_LIVE=1 のときだけ走る・codex live_drift_test.go / opencode
-// live_contract_test.go と同型）。実バイナリ＋実 v2 ストア＋実 tmux ペインに対して、
-// read 層の契約（発見・パース・状態分類・models）が版ドリフトに耐えるかを実測で確かめる。
-// CI では走らせない（環境依存）。実行例:
+// Live verification, run only with KIRO_LIVE=1 (same shape as codex live_drift_test.go and
+// opencode live_contract_test.go). Against the real binary, a real v2 store and a real tmux
+// pane, it measures whether the read layer's contract (discovery, parsing, state
+// classification, models) survives version drift. Not run in CI: it depends on the
+// environment. For example:
 //
 //	KIRO_LIVE=1 go test ./internal/agents/kiro/ -run Live -v
 

@@ -1,8 +1,9 @@
 package opencode
 
-// managed driver（docs/log/27 P2）のユニットテスト。serve は httptest でモックし、
-// turn 状態機械（Send→completed / busy 中の queue / interrupt→cancelled / 台帳の
-// 冪等化）と Interaction 応答（ラベル変換・reject）・SSE dispatch を検証する。
+// Unit tests for the managed driver (docs/log/27 P2). serve is mocked with httptest, and the
+// tests cover the turn state machine (Send → completed, queueing while busy, interrupt →
+// cancelled, ledger idempotency), Interaction replies (label conversion, reject) and SSE
+// dispatch.
 
 import (
 	"encoding/json"
@@ -37,7 +38,7 @@ func TestSplitModel(t *testing.T) {
 	if p, m, ok := splitModel("anthropic/claude-sonnet-5"); !ok || p != "anthropic" || m != "claude-sonnet-5" {
 		t.Errorf("got %q %q %v", p, m, ok)
 	}
-	// openrouter 形式はモデル id 側にも / を含む — 最初の / だけで割る。
+	// The openrouter form carries a / in the model id too, so split on the first / only.
 	if p, m, ok := splitModel("openrouter/anthropic/claude"); !ok || p != "openrouter" || m != "anthropic/claude" {
 		t.Errorf("got %q %q %v", p, m, ok)
 	}
@@ -122,7 +123,7 @@ func TestAnswersToLabels(t *testing.T) {
 type mockServe struct {
 	mu        sync.Mutex
 	turns     []string // received prompt texts, in order
-	clientIDs []string // messageIDs received (must stay empty — serve 採番に任せる)
+	clientIDs []string // messageIDs received (must stay empty - serve assigns them)
 	busy      bool
 	turnGate  chan struct{} // closed per-turn by abort or timer
 	replies   []string      // question reply bodies
@@ -148,8 +149,8 @@ func newMockServe(t *testing.T) (*mockServe, *httptest.Server) {
 		w.Write([]byte(`{}`))
 	})
 	mux.HandleFunc("POST /session/ses_test/message", func(w http.ResponseWriter, r *http.Request) {
-		// messageID は送らない（serve 採番 — driver.go の実測コメント参照）ので、
-		// turn の識別はプロンプト本文で行う。
+		// No messageID is sent (serve assigns it; see the measured comment in driver.go),
+		// so a turn is identified by its prompt text.
 		var body struct {
 			MessageID string           `json:"messageID"`
 			Parts     []map[string]any `json:"parts"`
@@ -229,32 +230,33 @@ func jsonCopy(dst *strings.Builder, r *http.Request) (int64, error) {
 }
 
 func newTestHandle(t *testing.T, srv *httptest.Server) *threadHandle {
-	t.Setenv("HOME", t.TempDir()) // status.Persist の書き先をテスト内に隔離
-	// sid はテスト毎に別にする。turn は pump の goroutine で走り、テストが終わっても
-	// 止まらない（TestQuestionFlow / TestRespondRejectOnCancel は turnDelay=2s の turn を
-	// 走らせたまま返る）ので、固定 sid だと**後続テストの中で前のテストの turn が終端**し、
-	// プロセス共有の状態通知 seam（agents.SetStateNotifier）へ同じ sid の遷移を流し込む。
-	// 実測: 負荷時に TestManagedTurnNotifiesCompletion が
-	// `transition = [sid-test idle idle]` / `[sid-test  idle]` で落ちる（8 反復に 1 回程度）。
+	t.Setenv("HOME", t.TempDir()) // isolate where status.Persist writes
+	// Give every test its own sid. A turn runs in the pump goroutine and does not stop when
+	// the test returns (TestQuestionFlow and TestRespondRejectOnCancel return with a
+	// turnDelay=2s turn still running), so with a fixed sid the previous test's turn ends
+	// inside a later one and feeds a transition for the same sid into the process-wide state
+	// notification seam (agents.SetStateNotifier). Measured: under load
+	// TestManagedTurnNotifiesCompletion fails with `transition = [sid-test idle idle]` or
+	// `[sid-test  idle]`, roughly once in 8 runs.
 	h := &threadHandle{
 		name: "slot-test", dir: "/tmp", ocSid: "sid-" + t.Name(),
 		addr: srv.URL, ses: "ses_test", alive: true, gen: 1,
 		events: make(chan agents.Event, 64),
 	}
-	// 🔥 上の隔離は「待って初めて」成立する。テストが turn を走らせたまま返ると、HOME が
-	// **復帰したあと**に pump の MarkTurnEnd → status.Persist が走り、書き先は
-	// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に
-	// `sid-TestQuestionFlow.json` と `sid-TestRespondRejectOnCancel.json` が残っていた）。
-	// t.Cleanup は LIFO なので、**t.Setenv の後**に積んだこの待ちが HOME 復帰より先に走る
-	// （前に積むと復帰の後＝手遅れ）。mock サーバの Close も newMockServe 側で先に積まれて
-	// いるので、待っている間はまだ生きている。
+	// The isolation above only holds if we wait. When a test returns with a turn still
+	// running, the pump's MarkTurnEnd → status.Persist runs AFTER HOME is restored and writes
+	// to the real `~/.config/agent-fleet` (measured: `sid-TestQuestionFlow.json` and
+	// `sid-TestRespondRejectOnCancel.json` were left in the user's session-status/).
+	// t.Cleanup is LIFO, so this wait, pushed after t.Setenv, runs before HOME is restored
+	// (pushed before, it would run after - too late). The mock server's Close was pushed
+	// earlier still in newMockServe, so it is alive while we wait.
 	t.Cleanup(func() { waitPumpIdle(t, h) })
 	return h
 }
 
-// waitPumpIdle blocks until the handle's pump has drained: キューに残りが無く
-// （pumping=false）、走っている turn も無い（running=false）状態。落ちる方向は安全側 —
-// 待てないまま抜けると実 HOME を汚すので、黙って諦めずに失敗させる。
+// waitPumpIdle blocks until the handle's pump has drained: nothing left in the queue
+// (pumping=false) and no turn running (running=false). Failing is the safe direction -
+// leaving without the wait dirties the real HOME, so give up loudly rather than silently.
 func waitPumpIdle(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -267,7 +269,7 @@ func waitPumpIdle(t *testing.T, h *threadHandle) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Error("pump がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
+	t.Error("pump is still running after the test: restoring HOME now would write to the real ~/.config/agent-fleet")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
@@ -301,7 +303,7 @@ func TestSendCompletesTurn(t *testing.T) {
 		t.Errorf("turns = %v", m.turns)
 	}
 	if len(m.clientIDs) != 0 {
-		t.Errorf("messageID must not be sent to serve (sortable-id 制約) — got %v", m.clientIDs)
+		t.Errorf("messageID must not be sent to serve (sortable-id constraint) - got %v", m.clientIDs)
 	}
 }
 
@@ -315,7 +317,7 @@ func TestLedgerDedupesResend(t *testing.T) {
 		}
 	}
 	waitState(t, h, agents.TurnCompleted)
-	time.Sleep(100 * time.Millisecond) // 追加 turn が走っていないことを確かめる猶予
+	time.Sleep(100 * time.Millisecond) // grace to confirm no extra turn started
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.turns) != 1 {
@@ -337,7 +339,7 @@ func TestSteerQueuesBehindRunningTurn(t *testing.T) {
 	if got := h.queuedPrompts(); len(got) != 1 || got[0] != "second" {
 		t.Errorf("queuedPrompts = %v", got)
 	}
-	// 両 turn が順に流れる。
+	// Both turns run, in order.
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		m.mu.Lock()
@@ -358,7 +360,7 @@ func TestSteerQueuesBehindRunningTurn(t *testing.T) {
 
 func TestInterruptCancelsAndClearsQueue(t *testing.T) {
 	m, srv := newMockServe(t)
-	m.turnDelay = 5 * time.Second // abort が来るまで返らない turn
+	m.turnDelay = 5 * time.Second // a turn that does not return until abort arrives
 	h := newTestHandle(t, srv)
 	if err := h.Send(agents.TurnInput{Prompt: "long", ClientMessageID: "msg_long"}); err != nil {
 		t.Fatal(err)
@@ -378,7 +380,7 @@ func TestInterruptCancelsAndClearsQueue(t *testing.T) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if len(m.turns) != 1 {
-		t.Errorf("queued追撃 must not run after interrupt — turns = %v", m.turns)
+		t.Errorf("a queued steer must not run after interrupt - turns = %v", m.turns)
 	}
 }
 
@@ -392,12 +394,13 @@ func TestQuestionFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitState(t, h, agents.TurnRunning)
-	// SSE の question.asked が届いた体で dispatch する — /global/event の
-	// {"payload": {...}} 包み形（実測の本番形）で。
+	// Dispatch as if an SSE question.asked had arrived, in /global/event's
+	// {"payload": {...}} wrapper (the measured production shape).
 	handleServeEvent([]byte(`{"payload":{"type":"question.asked","properties":{"id":"que_1","sessionID":"ses_test","questions":[{"question":"color?","header":"Color","options":[{"label":"red","description":"r"},{"label":"blue","description":"b"}],"multiple":false,"custom":true}]}}}`))
 	waitState(t, h, agents.TurnWaitingInteraction)
 
-	// 質問待ち中の自由文送信は question_pending で拒否される（/input のガードと同型）。
+	// Free text sent while a question is pending is refused with question_pending, the same
+	// shape as /input's guard.
 	if err := h.Send(agents.TurnInput{Prompt: "stray", ClientMessageID: "msg_stray"}); !ErrQuestionPending(err) {
 		t.Errorf("send during question = %v, want question_pending", err)
 	}
@@ -416,7 +419,7 @@ func TestQuestionFlow(t *testing.T) {
 	if len(replies) != 1 || !strings.Contains(replies[0], `[["blue"]]`) {
 		t.Errorf("replies = %v", replies)
 	}
-	waitState(t, h, agents.TurnRunning) // 回答後は turn が続く
+	waitState(t, h, agents.TurnRunning) // the turn continues once answered
 }
 
 func TestRespondRejectOnCancel(t *testing.T) {
@@ -440,7 +443,7 @@ func TestRespondRejectOnCancel(t *testing.T) {
 	}
 }
 
-// registerTestHandle puts h into the package registry (handleBySes の解決先) and
+// registerTestHandle puts h into the package registry (what handleBySes resolves against) and
 // removes it on cleanup so tests don't leak into each other.
 func registerTestHandle(t *testing.T, h *threadHandle) {
 	handlesMu.Lock()
@@ -453,9 +456,10 @@ func registerTestHandle(t *testing.T, h *threadHandle) {
 	})
 }
 
-// managedEnrich が driver の runtime 状態を read 層の TranscriptData に合流させる:
-// pending 質問へ Interaction id（/respond の宛先）、driver 内キューを キュー済み へ、
-// driver 設定のモード（＝次 turn が使う値）を mode chip（§10.2-5）へ。
+// TestManagedEnrich checks that managedEnrich merges the driver's runtime state into the read
+// layer's TranscriptData: the Interaction id (the address /respond takes) onto pending
+// questions, the driver's own queue into the queued list, and the mode from the driver's
+// settings (the value the next turn will use) into the mode chip (§10.2-5).
 func TestManagedEnrich(t *testing.T) {
 	_, srv := newMockServe(t)
 	h := newTestHandle(t, srv)
@@ -469,7 +473,7 @@ func TestManagedEnrich(t *testing.T) {
 
 	m := session.Meta{Name: h.name, Dir: h.dir, Kind: session.KindOpencode, Driver: session.DriverManaged}
 	td := agents.TranscriptData{
-		Pending: []transcript.Question{{Question: "q1"}}, // db 由来（id なし）は上書きされる
+		Pending: []transcript.Question{{Question: "q1"}}, // db-sourced (no id) gets overwritten
 		Queued:  []string{"store queued"},
 		Mode:    "normal",
 	}
@@ -481,10 +485,10 @@ func TestManagedEnrich(t *testing.T) {
 		t.Errorf("Queued = %v, want store queued + driver queue", td.Queued)
 	}
 	if td.Mode != "plan" {
-		t.Errorf("Mode = %q, want plan (driver 設定が db 値より優先)", td.Mode)
+		t.Errorf("Mode = %q, want plan (driver settings win over the db value)", td.Mode)
 	}
 
-	// tui メタ（driver なし）は無変更。
+	// tui meta (no driver) is left untouched.
 	td2 := agents.TranscriptData{Mode: "normal"}
 	managedEnrich(session.Meta{Name: h.name, Kind: session.KindOpencode}, &td2)
 	if td2.Mode != "normal" || td2.Pending != nil {
@@ -492,18 +496,20 @@ func TestManagedEnrich(t *testing.T) {
 	}
 }
 
-// codex 側と同じ回帰: managed セッションの turn 完了が状態通知 seam
-// （agents.SetStateNotifier → package main の recordSessionNotification）へ届くこと。
-// hook を持たない managed driver は status を直接書いて誰にも知らせず、docs/log/30 の
-// 【セッション報告】が構造的に飛ばなかった。
+// TestManagedTurnNotifiesCompletion is the same regression as on the codex side: a managed
+// session's turn completion must reach the state notification seam (agents.SetStateNotifier →
+// package main's recordSessionNotification). A managed driver has no hooks, so it used to
+// write status directly and tell nobody, which structurally suppressed the session report of
+// docs/log/30.
 func TestManagedTurnNotifiesCompletion(t *testing.T) {
 	m, srv := newMockServe(t)
 	m.turnDelay = 20 * time.Millisecond
 	h := newTestHandle(t, srv)
 
 	got := make(chan [3]string, 8)
-	// 通知 seam はプロセス共有。前のテストが走らせたままの turn（newTestHandle のコメント）
-	// がこの窓で終端すると、その遷移がここへ届く — 自分の sid の分だけ拾う。
+	// The notification seam is process-wide. If a turn an earlier test left running (see the
+	// comment in newTestHandle) ends inside this window, its transition arrives here too, so
+	// take only the ones for our own sid.
 	agents.SetStateNotifier(func(sid, previous, state, excerpt string) {
 		if sid != h.ocSid {
 			return
@@ -523,6 +529,6 @@ func TestManagedTurnNotifiesCompletion(t *testing.T) {
 			t.Fatalf("transition = %v, want %s working→idle", tr, h.ocSid)
 		}
 	case <-time.After(3 * time.Second):
-		t.Fatal("turn completed without notifying the state seam — 報告が飛ばない")
+		t.Fatal("turn completed without notifying the state seam - no report is sent")
 	}
 }

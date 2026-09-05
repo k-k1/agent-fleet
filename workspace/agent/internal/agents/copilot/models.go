@@ -1,18 +1,21 @@
 package copilot
 
-// copilot の起動時モデルカタログ — プラン連動のライブ取得（docs/log/36 追補）。
+// copilot's launch-time model catalog — fetched live, since it depends on the plan
+// (docs/log/36 addendum).
 //
-// copilot CLI に列挙口が無く（/model は TUI 専用・ACP configOptions にも model は
-// 無い — 実測）、しかも**モデルの可否はプラン依存**（Copilot Free は Auto のみで、
-// 正しい ID でも --model は "not available" で起動失敗 — 実測）。静的リストは
-// Free プランで「選べるのに必ず失敗する」選択肢を並べてしまうため、TUI /model
-// ピッカーを PTY でスクレイプして**そのアカウントで実際に選べる一覧**を返す:
-//   - Free 系バナー（"currently includes only Auto"）→ 空リスト＝ピッカーは
-//     既定（auto ルーティング）だけを出す
-//   - バナー無し → ピッカーの行がそのままカタログ（プラン反映済み）
-// agy の /usage スクレイプと同じ agents.Flow 基盤・キャッシュ（stale-if-error）。
-// プローブは使い捨ての COPILOT_HOME で行うので実セッション一覧を汚さない。
-// 認証は gh 由来トークンの明示注入（隔離 HOME では ambient 認証が切れる — 実測）。
+// The copilot CLI has no enumeration endpoint (/model is TUI-only and ACP's configOptions
+// carries no model either — measured), and which models are available depends on the plan
+// (Copilot Free offers Auto alone, and even a correct id makes --model fail at launch with
+// "not available" — measured). A static list would offer Free-plan users choices that are
+// selectable but always fail, so the TUI /model picker is scraped over a PTY to return the
+// models this account can actually select:
+//   - a Free-family banner ("currently includes only Auto") → empty list, i.e. the picker
+//     offers only the default (auto routing)
+//   - no banner → the picker's rows are the catalog (the plan is already reflected in them)
+// Same agents.Flow foundation and cache (stale-if-error) as agy's /usage scrape. The probe
+// runs in a throwaway COPILOT_HOME so it does not pollute the real session list.
+// Authentication injects the gh-derived token explicitly (ambient auth is lost in an
+// isolated HOME — measured).
 
 import (
 	"os"
@@ -25,17 +28,17 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
-// Efforts は `--effort` の CLI 受理値（v1.0.73 --help）。DefaultEffort は空 =
-// CLI 既定に任せる。
+// copilotEfforts are the values `--effort` accepts (v1.0.73 --help). An empty default effort
+// means leaving it to the CLI's own default.
 var copilotEfforts = []string{"minimal", "low", "medium", "high", "xhigh", "max"}
 
-// modelsTTL: ピッカーは起動モーダルを開くたびに叩かれるが、プローブは TUI 起動
-// 込みで数秒かかる。プランやカタログの変化は稀なので長めに持つ。
+// modelsTTL is long because the picker is hit every time the launch modal opens while the
+// probe takes seconds (it starts a TUI), and plans and catalogs rarely change.
 const modelsTTL = 10 * time.Minute
 
 var modelsMu sync.Mutex
 var modelsAt time.Time
-var modelsList []agents.ModelChoice // nil = 未取得/失敗, 非nil空 = Auto のみ（確定）
+var modelsList []agents.ModelChoice // nil = not fetched / failed, non-nil empty = Auto only (settled)
 
 func Models() []agents.ModelChoice {
 	modelsMu.Lock()
@@ -45,7 +48,7 @@ func Models() []agents.ModelChoice {
 	}
 	list, err := probeModels()
 	if err != nil {
-		return modelsList // stale-if-error: 失敗時は前回値（無ければ nil = 既定のみ）
+		return modelsList // stale-if-error: the previous value (nil = the default only)
 	}
 	modelsList = list
 	modelsAt = time.Now()
@@ -69,7 +72,7 @@ func probeModels() ([]agents.ModelChoice, error) {
 		return nil, err
 	}
 	defer os.RemoveAll(work)
-	// 事前 trust: 使い捨て HOME なので trust ダイアログが必ず出る側。
+	// Trust up front: a throwaway HOME always raises the trust dialog.
 	ensureFolderTrustedIn(home, work)
 
 	bin := os.Getenv("AGENT_COPILOT_BIN")
@@ -90,12 +93,13 @@ func probeModels() ([]agents.ModelChoice, error) {
 	}
 	defer f.Close()
 
-	// コンポーザ描画待ち（フッタ "/ commands" — paneMode と同じ readiness 信号）。
+	// Wait for the composer to be drawn (the "/ commands" footer — the same readiness signal
+	// paneMode uses).
 	if !waitFor(f, "/ commands", 30*time.Second) {
 		return nil, errProbeTimeout
 	}
-	// スラッシュメニューの確定は入力と Enter を別 write に（実測: 同時だと
-	// ペースト折り畳みに食われる — TUI 経路と同じ癖）。
+	// Confirm the slash menu with the text and the Enter in separate writes (measured:
+	// together they are swallowed by paste folding — the same quirk as the TUI path).
 	if _, err := f.Ptmx.Write([]byte("/model")); err != nil {
 		return nil, err
 	}
@@ -106,13 +110,13 @@ func probeModels() ([]agents.ModelChoice, error) {
 	if !waitFor(f, "Search models", 15*time.Second) {
 		return nil, errProbeTimeout
 	}
-	// 描画が落ち着くのを一拍待ってから最終フレームを解析する。
+	// Give the drawing a beat to settle before parsing the final frame.
 	time.Sleep(500 * time.Millisecond)
 	return parseModelPicker(f.Clean()), nil
 }
 
-var errNoAuth = errStr("copilot models: GitHub 連携が無くプローブできません")
-var errProbeTimeout = errStr("copilot models: /model ピッカーの描画を検出できません")
+var errNoAuth = errStr("copilot models: cannot probe without a GitHub connection")
+var errProbeTimeout = errStr("copilot models: the /model picker was never drawn")
 
 type errStr string
 
@@ -130,19 +134,19 @@ func waitFor(f *agents.Flow, marker string, timeout time.Duration) bool {
 }
 
 // freePlanRe matches the /model banner shown when explicit model selection is
-// plan-gated（実測 v1.0.73: "Your Copilot Free plan currently includes only
-// Auto, which automatically selects ..."）。将来の文言微修正に備えプラン名は
-// 固定しない。
+// plan-gated (measured on v1.0.73: "Your Copilot Free plan currently includes only Auto,
+// which automatically selects ..."). The plan name is left out so a small rewording upstream
+// still matches.
 var freePlanRe = regexp.MustCompile(`plan currently includes only Auto`)
 
-// modelRowRe matches one picker row's model id（実測の語彙: gpt-5.6-sol /
-// claude-sonnet-4.6 / gemini-3.1-pro-preview / kimi-k2.7-code …）。ピッカーの
-// 装飾（❯ / ✓ / 罫線）を除いた行が完全に id 形であることを要求し、会話文や
-// フッタの混入を防ぐ。
+// modelRowRe matches one picker row's model id (measured vocabulary: gpt-5.6-sol /
+// claude-sonnet-4.6 / gemini-3.1-pro-preview / kimi-k2.7-code …). A row stripped of the
+// picker's decoration (❯ / ✓ / rules) must match the id shape entirely, which keeps prose
+// and footer lines out.
 var modelRowRe = regexp.MustCompile(`^[a-z][a-z0-9]*(?:[.-][a-z0-9]+)*$`)
 
 // parseModelPicker extracts the selectable model list from the cleaned PTY
-// stream. Free 系バナーがあれば「Auto のみ」＝空リスト（非 nil）を返す。
+// stream. With a Free-family banner it returns "Auto only", i.e. an empty (non-nil) list.
 func parseModelPicker(clean string) []agents.ModelChoice {
 	if freePlanRe.MatchString(clean) {
 		return []agents.ModelChoice{}
@@ -151,7 +155,8 @@ func parseModelPicker(clean string) []agents.ModelChoice {
 	var list []agents.ModelChoice
 	for _, ln := range strings.Split(clean, "\n") {
 		t := strings.TrimSpace(ln)
-		// 行頭のカーソル/選択マーカーと行末の選択チェック・スクロールバー描画を剥がす。
+		// Strip the leading cursor/selection marker and the trailing check mark and
+		// scrollbar glyphs.
 		t = strings.TrimPrefix(t, "❯")
 		t = strings.TrimSuffix(t, "✓")
 		for _, glyph := range []string{"█", "┃", "│"} {
@@ -168,9 +173,10 @@ func parseModelPicker(clean string) []agents.ModelChoice {
 		list = append(list, agents.ModelChoice{ID: t, Label: t, Efforts: copilotEfforts})
 	}
 	if list == nil {
-		// バナーも行も取れなかった（ピッカーは出たが解析空振り＝描画ドリフト）。
-		// 空リストを返す — ピッカーが 既定（auto）だけになる安全側で、誤った
-		// 選択肢を出すよりよい。live テストがドリフトの一次検知。
+		// Neither a banner nor a row was found: the picker appeared but parsing came up
+		// empty, i.e. the drawing drifted. Return an empty list — the picker then offers
+		// only the default (auto), which is safer than offering wrong choices. The live
+		// test is the primary detector of such a drift.
 		return []agents.ModelChoice{}
 	}
 	return list

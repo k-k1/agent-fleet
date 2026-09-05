@@ -1,16 +1,16 @@
 package sessionx
 
-// 削除ロック（docs/log/45）の作業コピー側レジストリ。
+// The working-copy side of the deletion-lock registry (docs/log/45).
 //
-// セッション（session.Meta.Locked）と会話（chatConversation.Locked）は自分の JSON を
-// 持っているのでそこにフラグを置けるが、作業コピー（clone / worktree）は AF が所有する
-// メタファイルを持たない — ディレクトリそのものが実体で、中に印を書けば git status を
-// 汚し、.git に置けば worktree 削除で一緒に消える。そこでロックは外の小さな台帳
-// （~/.config/agent-fleet/locks.json）に、作業コピーの絶対パスをキーとして持つ。
+// Sessions (session.Meta.Locked) and conversations (chatConversation.Locked) have their own
+// JSON to carry the flag, but a working copy (clone / worktree) has no AF-owned metadata
+// file — the directory itself is the object, a marker inside it would dirty git status, and
+// one under .git would go away with the worktree. So the lock lives in a small ledger next
+// to them (~/.config/agent-fleet/locks.json), keyed by the working copy's absolute path.
 //
-// パスをキーにするのは、自動 prune（maybePruneWorktree）が name ではなく dir しか
-// 知らないため。削除された作業コピーのエントリは読み出し時に掃除する（stale が
-// 残っても実害はないが、再 clone で同名パスが復活したときに幽霊ロックが効かないように）。
+// The key is the path because the automatic prune (maybePruneWorktree) knows only dir, not
+// name. Entries whose working copy is gone are dropped on read: a stale one is harmless in
+// itself, but a re-clone reviving the same path must not inherit a ghost lock.
 
 import (
 	"encoding/json"
@@ -125,7 +125,7 @@ type lockReq struct {
 
 // HandleSessionLock (POST /sessions/{name}/lock) pins/unpins a session against
 // deletion. Locking a live session is fine — the lock only refuses removal, not
-// stopping it into 停止中 (/halt) nor archiving it (reversible).
+// stopping it (/halt) nor archiving it (reversible).
 func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -153,9 +153,9 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 // to overwrite the user's newer lock choice. Callers must use this rather than
 // session.WriteMeta when they started from a listed meta.
 //
-// 停止しないピン（KeepAwakeUntil）も同じ扱い: 一覧のポーリングは秒単位で走るので、
-// その最中に押されたピンを古いスナップショットが巻き戻すと、利用者から見て
-// 「押したのに効いていない」になる（ロックで一度踏んだのと同じ穴）。
+// The keep-awake pin (KeepAwakeUntil) gets the same treatment: the list is polled every few
+// seconds, so an older snapshot rolling back a pin pressed meanwhile looks to the user like
+// a button that did nothing — the same trap the lock already fell into once.
 func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
@@ -167,16 +167,17 @@ func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 	return m
 }
 
-// keepAwakeMaxHours は 1 回のピンで延ばせる上限。延長は押し直せばよく、上限があることで
-// 「押しっぱなしで永久に課金」が構造的に起きない（docs/log/75 §75.5 の原則 3 と同じ理由）。
+// keepAwakeMaxHours caps how far one pin can extend. Extending is just pressing again, and
+// the cap makes "pinned forever, billed forever" structurally impossible (the same reason as
+// principle 3 in docs/log/75 §75.5).
 const keepAwakeMaxHours = 24
 
 // HandleSessionKeepAwake (POST /sessions/{name}/keep-awake) pins a session against the
-// idle-stop reaper for a bounded window. Body: {"hours": 4} — 0 以下で解除。
+// idle-stop reaper for a bounded window. Body: {"hours": 4} — 0 or less clears the pin.
 //
-// これは shell / ssm のための逃げ道である（docs/log/75）: 走行中のジョブを af 側から
-// 見分ける手段が無いので、推測でコンテナを守る代わりに、利用者に宣言してもらう。
-// claude セッションにも同じように効く（長い自動走行を止めたくないとき）。
+// This is the escape hatch for shell / ssm (docs/log/75): af has no way to tell a running
+// job apart from an idle shell, so instead of guarding the container on a guess, the user
+// declares it. It works the same for a claude session on a long unattended run.
 func HandleSessionKeepAwake(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {

@@ -1,20 +1,22 @@
 package kiro
 
-// チャットミラーの ContextBar 用のセッションレベル context 充填率（Track D — docs/log/43 §10）。
-// kiro の v2 JSONL 転写には per-turn のトークン数が無い（claude/codex と違う）ので、
-// claude 型の転写由来 ContextBar は出せない。代わりに managed（ACP）driver が
-// `_kiro.dev/metadata` 通知で運ぶライブの contextUsagePercentage を使う。agy が /context を
-// PTY スクレイプするのと同じ agents.ContextReporter seam だが、kiro は値が生きた handle に
-// インメモリで載っているので サブプロセス不要・非ブロッキングで即返せる。
+// Session-level context fill for the chat mirror's ContextBar (Track D, docs/log/43 §10).
+// kiro's v2 JSONL transcript carries no per-turn token counts (unlike claude/codex), so the
+// claude-style transcript-derived ContextBar is impossible. Instead we use the live
+// contextUsagePercentage the managed (ACP) driver carries in `_kiro.dev/metadata` notifications.
+// It is the same agents.ContextReporter seam agy uses to PTY-scrape /context, but kiro keeps the
+// value in memory on the live handle, so it answers immediately with no subprocess and no block.
 //
-// %→token 変換: kiro は % を直接くれるが、既存の ContextBar はトークン数ベース（read/
-// create/fresh を window に対して描く）。そこで % をモデルの実 context window（カタログ由来）
-// に対するトークン数へ変換して単一セグメントとして載せる。window を明示で渡すため、フロント
-// 側が tokens/window から % を再計算しても元の % に厳密に一致する（丸め誤差のみ）。managed の
-// paneless セッションはミラーが唯一のビューなので、ここがライブ context の主表示になる。
+// Percent-to-token conversion: kiro hands us a percentage, while the existing ContextBar is token
+// based (it draws read/create/fresh against the window). So the percentage is converted into a
+// token count against the model's real context window (from the catalogue) and shown as a single
+// segment. The window is passed explicitly, so a percentage the frontend recomputes from
+// tokens/window matches the original exactly, up to rounding. A managed paneless session has the
+// mirror as its only view, which makes this the primary display of live context.
 //
-// TUI（Terminal 実行）や metadata 未受信の段階では ManagedContext が ok=false を返し、この
-// 関数も nil を返す＝ContextBar は出ない（pct のソースが無いので正直に非表示）。
+// On TUI (Terminal execution) or before any metadata has arrived, ManagedContext returns ok=false
+// and this function returns nil, so no ContextBar is drawn - with no source for the percentage,
+// hiding it is the honest answer.
 
 import (
 	"math"

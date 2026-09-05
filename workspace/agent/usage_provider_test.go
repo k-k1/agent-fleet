@@ -1,9 +1,11 @@
 package main
 
-// プロバイダ層での使用量捕捉の回帰（docs/log/46 §3-a のレビュー P2-7 / P3-11）。
+// Regression cover for capturing usage at the provider layer (docs/log/46 §3-a, review P2-7 /
+// P3-11).
 //
-// ここで守るのは1つ: **撃った分は必ず台帳に残る**。modelUsage が来なかった（停止・異常
-// 終了）から 0 トークン、リトライしたから1回分、では配分の絵が狂う。
+// One rule is defended here: every call that was fired leaves a row in the ledger. Reporting 0
+// tokens because no modelUsage arrived (stop, abnormal exit), or one call's worth because a
+// retry happened, distorts the spend picture.
 
 import (
 	"context"
@@ -21,44 +23,45 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// 停止操作や result 前の異常終了では modelUsage が来ない。assistant イベントで見た
-// スナップショットを partial として残す（0 トークン・measured=none にしない）。
+// A stop, or an abnormal exit before result, delivers no modelUsage. The snapshot seen on the
+// assistant events is kept as partial (never 0 tokens / measured=none).
 func TestFallbackTotalsKeepsStoppedTurnTokens(t *testing.T) {
-	// 1) result が来なかった: スナップショットを partial で採る。
+	// 1) No result arrived: take the snapshot as partial.
 	stopped := usagex.Call{Kind: session.KindClaude}
 	snap := chatx.ClaudeUsage{InputTokens: 12, OutputTokens: 34, CacheReadInputTokens: 5600, CacheCreationInputTokens: 78}
 	stopped.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
 	if stopped.Totals.In != 12 || stopped.Totals.Out != 34 ||
 		stopped.Totals.CacheRead != 5600 || stopped.Totals.CacheCreate != 78 {
-		t.Fatalf("停止時のトークンを落とした: %+v", stopped.Totals)
+		t.Fatalf("tokens from the stopped turn were dropped: %+v", stopped.Totals)
 	}
 	if got := stopped.MeasuredOr(stopped.Totals); got != usagex.MeasuredPartial {
-		t.Fatalf("measured = %q, want partial（途中のスナップショットは exact ではない）", got)
+		t.Fatalf("measured = %q, want partial (a mid-turn snapshot is not exact)", got)
 	}
 
-	// 2) modelUsage が来た呼び出しは触らない（モデル別の内訳の方が正）。
+	// 2) A call that did get modelUsage is left alone (the per-model breakdown is the truer one).
 	full := usagex.Call{Kind: session.KindClaude, Models: chatx.UsageModelRows(map[string]chatx.ClaudeModelUsage{
 		"claude-haiku-4-5-20251001": {InputTokens: 1, OutputTokens: 2, CanonicalModel: "claude-haiku-4-5"},
 	})}
 	full.FallbackTotals(snap.LedgerTokens(), usagex.MeasuredPartial)
 	if full.Totals.Any() || full.Measured != "" {
-		t.Fatalf("modelUsage のある呼び出しを縮退で上書きした: %+v", full)
+		t.Fatalf("the fallback overwrote a call that has modelUsage: %+v", full)
 	}
 
-	// 3) 何も取れていない呼び出しは none のまま（0 を「消費 0」と偽らない）。
+	// 3) A call with nothing captured stays none (never pass 0 off as "spent nothing").
 	empty := usagex.Call{Kind: session.KindClaude}
 	empty.FallbackTotals(chatx.ClaudeUsage{}.LedgerTokens(), usagex.MeasuredPartial)
 	if empty.Measured != "" || empty.MeasuredOr(empty.Totals) != usagex.MeasuredNone {
-		t.Fatalf("トークンが1つも無いのに partial を名乗った: %+v", empty)
+		t.Fatalf("claimed partial with not a single token: %+v", empty)
 	}
 }
 
-// 実際に claude を「result を出す前に落ちる」形で撃って、消費が台帳に残ることを見る。
-// stub CLI を PATH の先頭に置くだけなので認証も課金も要らない（実 CLI は live テスト側）。
+// Fire claude for real in the shape "dies before emitting result" and check the spend lands in
+// the ledger. Only a stub CLI at the head of PATH, so no auth and no billing (the real CLI is
+// exercised by the live tests).
 func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 	useIsolatedUsageDir(t)
 	bin := t.TempDir()
-	// assistant イベントを1つ吐いてから result を出さずに死ぬ（＝利用者の停止・OOM の形）。
+	// Emit one assistant event, then die without a result (the shape of a user stop or an OOM).
 	stub := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '" +
 		`{"type":"assistant","message":{"model":"claude-haiku-4-5","usage":` +
 		`{"input_tokens":12,"output_tokens":34,"cache_read_input_tokens":5600,"cache_creation_input_tokens":78}}}` +
@@ -73,28 +76,28 @@ func TestClaudeStreamRecordsTokensWhenKilledBeforeResult(t *testing.T) {
 		Feature: usagex.FeatureAssistantChat, Trigger: usagex.TriggerUser, Ref: c.ID,
 	})
 	if _, _, err := (chatx.ClaudeChat{}).SendStream(ctx, c, "hi", func(chatx.ChatStreamEvent) {}); err == nil {
-		t.Fatal("result 前に死んだのに成功扱いになった")
+		t.Fatal("died before result, yet the call was treated as a success")
 	}
 
 	rows := usagex.ReadRows()
 	if len(rows) != 1 {
-		t.Fatalf("台帳 = %d 行, want 1（失敗経路でも1行残る）", len(rows))
+		t.Fatalf("ledger = %d rows, want 1 (the failure path still leaves one row)", len(rows))
 	}
 	r := rows[0]
 	if r.Spend != 12+78+34 {
-		t.Fatalf("spend = %d, want 124（停止時のスナップショットを採れていない）: %+v", r.Spend, r)
+		t.Fatalf("spend = %d, want 124 (the snapshot at the stop was not captured): %+v", r.Spend, r)
 	}
 	if r.Measured != usagex.MeasuredPartial {
-		t.Fatalf("measured = %q, want partial（result 前なので exact ではない）", r.Measured)
+		t.Fatalf("measured = %q, want partial (no result yet, so not exact)", r.Measured)
 	}
 	if r.OK {
-		t.Fatalf("失敗した呼び出しが ok=true: %+v", r)
+		t.Fatalf("a failed call recorded ok=true: %+v", r)
 	}
 }
 
-// claude の usage 解析地点はどれも「modelUsage が空なら usage から採る」を伴うこと。
-// 新しい経路（別の CLI 版・別のサブコマンド）を足した時に縮退を書き忘れると、その経路の
-// 停止・異常終了が丸ごと measured=none で埋まるので、AST で見張る。
+// Every place claude usage is parsed must carry the "fall back to usage when modelUsage is
+// empty" step. Forgetting it on a newly added path (another CLI version, another subcommand)
+// fills that path's stops and abnormal exits entirely with measured=none, so the AST is watched.
 func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 	fset := token.NewFileSet()
 	f, err := parser.ParseFile(fset, "internal/chatx/chat_providers.go", nil, 0)
@@ -115,11 +118,11 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			}
 			switch fun := call.Fun.(type) {
 			case *ast.Ident:
-				if fun.Name == "UsageModelRows" { // 移送で公開名になった
+				if fun.Name == "UsageModelRows" {
 					uses = true
 				}
 			case *ast.SelectorExpr:
-				if fun.Sel.Name == "FallbackTotals" { // 移送でメソッドが公開名になった
+				if fun.Sel.Name == "FallbackTotals" {
 					falls = true
 				}
 			}
@@ -129,28 +132,28 @@ func TestClaudeUsageSitesHaveTokenFallback(t *testing.T) {
 			sites++
 		}
 		if uses && !falls {
-			t.Errorf("%s: chatx.UsageModelRows を使っているのに fallbackTotals が無い"+
-				"（modelUsage の来ない停止・異常終了で消費が 0 になる）", fn.Name.Name)
+			t.Errorf("%s: uses chatx.UsageModelRows but has no fallbackTotals"+
+				" (a stop or abnormal exit with no modelUsage records 0 spend)", fn.Name.Name)
 		}
 	}
-	// 🔥 走査対象が 1 件も見つからないなら、この検査は「何も見ていない」。
-	// usageModelRows が素の識別子でなくなる（例: usagex へ移して usagex.ModelRows になる）と
-	// uses が永久に false になり、**縮退を全部消しても緑のまま通る**。
-	// 守っているのは「modelUsage の来ない停止・異常終了で消費が 0 になる」＝課金の取りこぼし。
+	// If the scan matches nothing, this check is looking at nothing. Once usageModelRows stops
+	// being a bare identifier (say it moves to usagex and becomes usagex.ModelRows), uses is
+	// false forever and deleting every fallback still passes green. What is guarded is the
+	// billing that goes missing when a stop or abnormal exit records 0 spend.
 	if sites == 0 {
-		t.Fatal("chatx.UsageModelRows を呼ぶ関数が 1 つも見つからない＝この検査が無言化している" +
-			"（識別子が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
+		t.Fatal("not one function calling chatx.UsageModelRows was found = this check has gone silent" +
+			" (if the identifier changed or moved, fix this check's scan condition with it)")
 	}
 }
 
-// 自前ピクの小型モデルで失敗 → モデルを外して撃ち直し、の2回分を合算する。
-// 上書きしていた頃は「最も高くつく経路」が1回分に見えていた。
+// A failure on a self-picked small model, then a re-fire with the model dropped: the two calls
+// are summed. While the second overwrote the first, the most expensive path looked like one call.
 func TestCodexOneShotRetryAccumulatesTokens(t *testing.T) {
 	calls := 0
 	run := func(_ context.Context, args []string, _ string) (string, chatx.CodexUsage, error) {
 		calls++
 		if calls == 1 {
-			// 1回目: 撃って（＝課金されて）から失敗した。
+			// First call: fired (and therefore billed), then failed.
 			return "", chatx.CodexUsage{InputTokens: 100, OutputTokens: 10}, errors.New("model not available")
 		}
 		return "ok", chatx.CodexUsage{InputTokens: 300, OutputTokens: 30}, nil
@@ -161,27 +164,28 @@ func TestCodexOneShotRetryAccumulatesTokens(t *testing.T) {
 		t.Fatalf("reply=%q calls=%d err=%v", reply, calls, err)
 	}
 	if tok.In != 400 || tok.Out != 40 {
-		t.Fatalf("トークン = %+v, want in 400 / out 40（1回目 100/10 + 2回目 300/30）", tok)
+		t.Fatalf("tokens = %+v, want in 400 / out 40 (first 100/10 + second 300/30)", tok)
 	}
-	// 撃ち直した側が答えを出したので、要求値はモデル無し（＝CLI 既定）を載せる。
+	// The re-fire is what produced the answer, so the requested model is recorded as none
+	// (i.e. the CLI default).
 	if modelReq != "" {
-		t.Fatalf("model_req = %q, want \"\"（モデルを外して撃ち直した）", modelReq)
+		t.Fatalf("model_req = %q, want \"\" (the re-fire dropped the model)", modelReq)
 	}
 
-	// 自前ピクでない（利用者が明示した）失敗は撃ち直さない — 1回分だけ残る。
+	// A failure on a model the user named explicitly is not re-fired — only one call is left.
 	calls = 0
 	_, tok, modelReq, err = chatx.CodexOneShotWithRetry(context.Background(),
 		[]string{"exec", "-m", "gpt-5.4-mini", "-"}, false, "p", run)
 	if err == nil || calls != 1 || tok.In != 100 {
-		t.Fatalf("明示モデルの失敗で撃ち直した: calls=%d tok=%+v err=%v", calls, tok, err)
+		t.Fatalf("re-fired after a failure on an explicitly named model: calls=%d tok=%+v err=%v", calls, tok, err)
 	}
 	if modelReq != "gpt-5.4-mini" {
 		t.Fatalf("model_req = %q, want gpt-5.4-mini", modelReq)
 	}
 }
 
-// ledgerTokens は「この呼び出しで課金された量」を採る（コンテキスト占有＝iterations 末尾の
-// スナップショットとは別の量）。
+// ledgerTokens takes the amount billed for THIS call, which is a different quantity from the
+// context occupancy (the snapshot at the tail of iterations).
 func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 	u := chatx.ClaudeUsage{
 		InputTokens: 9, OutputTokens: 533, CacheCreationInputTokens: 10015, CacheReadInputTokens: 6002,
@@ -192,15 +196,14 @@ func TestClaudeLedgerTokensUsesCallTotals(t *testing.T) {
 		t.Fatalf("ledgerTokens = %+v", got)
 	}
 	if s := usagex.Spend(got.In, got.CacheCreate, got.Out); s != 10557 {
-		t.Fatalf("spend = %d, want 10557（cache_read を含めない）", s)
+		t.Fatalf("spend = %d, want 10557 (cache_read must not be counted)", s)
 	}
 }
 
-// 台帳の行に本文が混ざらないことの番人（非交渉の原則）。usageRecord のフィールド名に
-// 本文らしきものが増えていないかを見る。
+// Guard that no message body ever mixes into a ledger row (a non-negotiable rule): watch the
+// field names of the ledger record for anything body-shaped.
 func TestUsageRecordHasNoContentFields(t *testing.T) {
 	fset := token.NewFileSet()
-	// 台帳は internal/usagex へ移送済み（型名も usageRecord → Record）。
 	f, err := parser.ParseFile(fset, "internal/usagex/ledger.go", nil, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -221,18 +224,18 @@ func TestUsageRecordHasNoContentFields(t *testing.T) {
 			for _, nm := range fld.Names {
 				for _, b := range banned {
 					if strings.Contains(strings.ToLower(nm.Name), b) {
-						t.Errorf("台帳に本文らしきフィールドが増えている: %s", nm.Name)
+						t.Errorf("a body-shaped field has appeared in the ledger: %s", nm.Name)
 					}
 				}
 			}
 		}
 		return false
 	})
-	// 🔥 パスの誤りは ParseFile の t.Fatal で捕まるが、**型名の誤りは捕まらない**
-	// （見つからないまま静かに緑になる）。移送で usageRecord → Record になった時に
-	// 気付けたのは検査が赤くなったからで、次に名前が変わったときは同じ幸運を当てにできない。
+	// A wrong path is caught by ParseFile's t.Fatal, but a wrong TYPE NAME is not: it simply
+	// matches nothing and goes quietly green. The last rename was noticed only because the check
+	// went red, and the next one cannot count on the same luck.
 	if !found {
-		t.Fatal("台帳の行の型が見つからない＝この検査が無言化している" +
-			"（型名が変わった / 移送された場合は、この検査の走査条件も一緒に直すこと）")
+		t.Fatal("the ledger row type was not found = this check has gone silent" +
+			" (if the type was renamed or moved, fix this check's scan condition with it)")
 	}
 }

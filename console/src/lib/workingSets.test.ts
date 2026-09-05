@@ -1,4 +1,4 @@
-// 作業グループ (docs/log/52) — membership predicates + the normalize fail-safe.
+// Working sets (docs/log/52) — membership predicates + the normalize fail-safe.
 // Pure derivation only: the settings-backed mutations are thin setSetting wrappers.
 import { describe, expect, it } from "vitest";
 import {

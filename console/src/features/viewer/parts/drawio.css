@@ -1,6 +1,6 @@
-/* drawio の図の面（docs/log/65）。フレームはペインいっぱいに置く —— 図の収まりは
-   フレームの中のビューアが自分で計算するので、こちら側は寸法を与えるだけ。
-   畳むときは display:none（外さない）—— 作り直すと 4MB のビューアを読み直す。 */
+/* drawio diagram surface (docs/log/65). The frame fills the pane: the viewer inside the
+   frame computes the fit itself, so this side only supplies the dimensions. Collapse with
+   display:none rather than unmounting — rebuilding reloads the 4MB viewer. */
 .file-diagram-shell[hidden] {
   display: none;
 }
@@ -25,8 +25,8 @@
   display: block;
   background: var(--bg);
 }
-/* 読み込み中・読めなかったときの一行。図の上に重ねる（フレームは残したままにして
-   おきたい —— 作り直すと 4MB のビューアを読み直すことになる）。 */
+/* The one-line loading / failed-to-load notice, overlaid on the diagram so the frame can
+   stay mounted — rebuilding it reloads the 4MB viewer. */
 .drawio-note {
   position: absolute;
   left: 50%;

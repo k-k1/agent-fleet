@@ -7,7 +7,7 @@ import (
 
 // rootedDataDir must re-base a workspace's on-disk root onto the CURRENT dataRoot
 // so a restore/move to a different DATA_DIR (or a changed WS_DATA) keeps mounting
-// the right home instead of silently creating an empty one. See P3-10 段3 /
+// the right home instead of silently creating an empty one. See P3-10 stage 3 /
 // docs/log/p3-10-packaging.md §20.3(B).
 func TestRootedDataDir(t *testing.T) {
 	m := &manager{dataRoot: "/srv/agent-fleet/data", defaultTenantID: "T-default"}

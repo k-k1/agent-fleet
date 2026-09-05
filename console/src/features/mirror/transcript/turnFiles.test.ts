@@ -1,4 +1,4 @@
-// ターン末尾のファイルチップ（docs/log/68 P1）の畳み方。
+// How the file chips at the end of a turn (docs/log/68 P1) are folded.
 import { describe, it, expect } from "vitest";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Part } from "./types.ts";
@@ -6,7 +6,7 @@ import type { Part } from "./types.ts";
 const tool = (over: Partial<Part>): Part => ({ kind: "tool", tool: "Edit", ...over });
 
 describe("turnFiles", () => {
-  it("編集していないパートは拾わない", () => {
+  it("ignores parts that edited nothing", () => {
     expect(
       turnFiles([
         { kind: "text", text: "やります" },
@@ -16,24 +16,24 @@ describe("turnFiles", () => {
     ).toEqual([]);
   });
 
-  it("同じファイルへの複数回の編集を 1 つに畳み、差分は連結する", () => {
+  it("folds repeated edits of one file into one chip, concatenating the diffs", () => {
     const got = turnFiles([
       tool({ file: "/r/a.ts", edits: [{ old: "1", new: "2" }] }),
       tool({ file: "/r/b.ts", edits: [{ old: "x", new: "y" }] }),
       tool({ file: "/r/a.ts", edits: [{ old: "3", new: "4" }] }),
     ]);
-    expect(got.map((f) => f.name)).toEqual(["a.ts", "b.ts"]); // 最初に触った順
+    expect(got.map((f) => f.name)).toEqual(["a.ts", "b.ts"]); // order of first touch
     expect(got[0].edits).toHaveLength(2);
   });
 
-  it("差分本体が無くても座標としては拾う（削除・差分を運ばない kind）", () => {
+  it("still records a file with no diff body (a delete, or a kind that carries no diffs)", () => {
     const got = turnFiles([tool({ tool: "apply_patch", file: "/r/gone.ts", verb: "delete" })]);
     expect(got).toHaveLength(1);
     expect(got[0].verb).toBe("delete");
     expect(got[0].edits).toEqual([]);
   });
 
-  it("最後の呼び出しが今のそのファイル（書いてから消したら削除）", () => {
+  it("takes the last call as what the file is now (written then deleted = deleted)", () => {
     const got = turnFiles([
       tool({ file: "/r/a.ts", verb: "add", edits: [{ old: "", new: "x" }] }),
       tool({ file: "/r/a.ts", verb: "delete" }),
@@ -41,7 +41,7 @@ describe("turnFiles", () => {
     expect(got[0].verb).toBe("delete");
   });
 
-  it("チップが差分ペインへ渡す形", () => {
+  it("shapes what a chip hands to the diff pane", () => {
     const [f] = turnFiles([tool({ tool: "Write", file: "/r/a.ts", edits: [{ old: "", new: "x" }] })]);
     expect(chipPart(f)).toEqual({ kind: "tool", tool: "Write", file: "/r/a.ts", edits: [{ old: "", new: "x" }] });
   });

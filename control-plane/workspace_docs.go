@@ -11,7 +11,7 @@
 // the image in the first place (deploy/release/stage-docs.sh), so no container can
 // receive it and no request can ask for it.
 //
-// ⚠️ This USED to be cut by the reader's role: a member got use/ + ref/, a tenant admin
+// This USED to be cut by the reader's role: a member got use/ + ref/, a tenant admin
 // added admin/, a deployment admin added operate/ + build/. That was dropped because it
 // was never a permission boundary — the comment justifying it said so itself ("not a
 // leak (the repository is public) but it is noise") — and the noise it was actually
@@ -62,8 +62,8 @@ var guideShelves = []string{"member", "admin", "operate", "ref", "assets"}
 
 // guideRootFiles are the files at the TOP of the guide tree that ship next to the
 // shelves. The tree's own README is the entry point — the page that branches by reader
-// — and it is what the Console's 「利用ガイド」 opens (console/src/app/TopBar.tsx). Ship
-// only the shelves and that button opens nothing at all, with the pane's
+// — and it is what the Console's user-guide button opens (console/src/app/TopBar.tsx).
+// Ship only the shelves and that button opens nothing at all, with the pane's
 // "(target is not an existing regular file)" as the only explanation on screen.
 //
 // Enumerated one by one for the same reason guideShelves is: with AF_DOCS_DIR pointed

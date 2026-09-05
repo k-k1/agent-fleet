@@ -14,7 +14,7 @@ import (
 // because judging it means reaching the per-subject membership cache — which stays
 // unexported so the mutex's invariant does not leak (docs/log/61 §61.7).
 //
-// ★ This test used to live in control-plane/oauth_github_test.go and reached
+// This test used to live in control-plane/oauth_github_test.go and reached
 // p.cache directly. When the adapter moved here it briefly became "set Grace to 0"
 // instead, which takes the same branch but is NOT the same test: Grace == 0 makes
 // the comparison false whichever timestamp it reads, so mistaking lastOK ("when
@@ -97,8 +97,8 @@ func stubGitHubAdapter(gh *stubGitHubAPI) *GitHubProvider {
 	}
 }
 
-// GitHub 障害で全員が締め出されるのも、いつまでも通り続けるのも避ける — 最後の
-// 肯定結果を猶予期間だけ延命する（§61.7）。
+// A GitHub outage must neither lock everybody out nor let everybody through forever: the
+// last positive answer is kept alive for the grace window and no longer (§61.7).
 func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) {
 	gh := newStubGitHubAPI(t)
 	p := stubGitHubAdapter(gh)
@@ -107,22 +107,23 @@ func TestGitHubOutageHonorsTheLastPositiveAnswerForTheGraceWindow(t *testing.T) 
 		t.Fatalf("login: %v", err)
 	}
 
-	p.TTL = 0 // 毎回 stale 扱いにして再判定へ入れる
+	p.TTL = 0 // treat every read as stale, so re-evaluation is entered
 	gh.apiDown = true
 	if ok, err := p.Allowed(t.Context(), pr); !ok || err != nil {
-		t.Fatalf("猶予期間内なのに拒否された: ok=%v err=%v", ok, err)
+		t.Fatalf("rejected although still inside the grace window: ok=%v err=%v", ok, err)
 	}
 
-	// 猶予を超えたら閉じる。
+	// Past the grace window it closes.
 	//
-	// ★ 猶予は既定（1h）のままにして、**最後に肯定された時刻だけ**を巻き戻す。
-	// 直前の再判定で at は「たった今」に更新されているので、猶予の起点を lastOK から
-	// at に取り違えると、ここが通ってしまう＝障害の間ずっと開きっぱなしになる。
-	// Grace を 0 にする駆動ではどちらの時刻でも偽になり、その取り違えを捕まえられない。
+	// The grace stays at its default (1h) and only the last-positive timestamp is wound
+	// back. The re-evaluation just above set at to "now", so taking at rather than
+	// lastOK as the start of the window would let this pass — the door would stay open
+	// for the whole outage. Driving it by setting Grace to 0 would be false for either
+	// timestamp and could not catch that mix-up.
 	p.mu.Lock()
 	p.cache["4242"].lastOK = time.Now().Add(-2 * time.Hour)
 	p.mu.Unlock()
 	if ok, _ := p.Allowed(t.Context(), pr); ok {
-		t.Fatal("猶予期間を過ぎても通り続けている")
+		t.Fatal("still let through after the grace window expired")
 	}
 }

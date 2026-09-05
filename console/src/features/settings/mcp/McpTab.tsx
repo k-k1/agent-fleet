@@ -26,7 +26,7 @@ import { SecretsForm, ServerForm } from "./mcpServerForm.tsx";
 //   tenant  … read-only, but locally disableable (the member's escape hatch when a
 //             distributed server breaks their session launches)
 //   builtin … the ops integrations (PagerDuty / Grafana / CloudWatch / AWS), configured on
-//             the 運用・監視 tab — shown so the list isn't lying by omission.
+//             the ops monitoring tab — shown so the list isn't lying by omission.
 //
 // Secrets (env / header VALUES) never come back from the agent: they arrive as "***"
 // and are sent back unchanged to keep the stored value (mcpreg.MergeSecrets). So the
@@ -181,9 +181,9 @@ export function McpTab() {
   return (
     <div className="mcp-tab">
       <Hint>{tr("mcp.intro")}</Hint>
-      {/* プロジェクトスコープ（リポジトリの .mcp.json 等）は別軸（docs/log/56 P0）— この
-          タブは実効レジストリ（user/tenant/builtin）だけを扱う。行き止まりにしない
-          よう導線だけ 1 行置く（docs/log/57 §3）。 */}
+      {/* Project scope (a repository's .mcp.json and friends) is a separate axis (docs/log/56
+          P0); this tab covers only the effective registry (user/tenant/builtin). One line of
+          signposting so the tab is not a dead end (docs/log/57 §3). */}
       <p className="ps-note">{tr("mcp.project_scope_note")}</p>
       {shadowed.length > 0 && (
         <p className="ps-note ps-note-warn">{tr("mcp.shadowed", { names: shadowed.join(", ") })}</p>

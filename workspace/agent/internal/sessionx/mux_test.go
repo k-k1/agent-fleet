@@ -1,17 +1,16 @@
 package sessionx
 
-// mux_test.go — この家系の HTTP 契約テストが使う mux（移送で main から見えなくなった
-// `buildMux` の置き換え）。
+// mux_test.go holds the mux this family's HTTP contract tests run against, replacing the
+// `buildMux` of package main that is no longer visible from here.
 //
-// 移送前、これらのテストは package main の `buildMux()`（routes.go・228 本の全ルート）を
-// 組んでいた。sessionx から routes.go は見えない（逆向きの import になる）ので、
-// session 家系の 47 本だけを**同じパターン文字列で**登録する mux をここに置く。
-// パターン文字列をそのまま使うのは、`mux.Handler(req)` が返すパターンを見る検査と、
-// ハンドラが読む `r.PathValue` が移送前と同じに保たれるため。
+// routes.go is not visible from sessionx (that would be an import the wrong way round), so this
+// registers only the session family's 47 routes, under the same pattern strings. Reusing the
+// pattern strings verbatim keeps both the checks that read the pattern `mux.Handler(req)`
+// returns and the `r.PathValue` the handlers read identical to what they were.
 //
-// 🔥 **写しは黙って腐る。** ここの 47 本は routes.go の写しなので、
-// TestSessionRoutesMatchAgentRouteTable が **本物の mux から撮られた routes.golden** と
-// 突き合わせる（browserx / memoryx が mux_test.go で採った形と同じ）。
+// A copy rots silently, and these 47 lines are a copy of routes.go, so
+// TestSessionRoutesMatchAgentRouteTable compares them against routes.golden, which is captured
+// from the real mux (the same shape browserx and memoryx use in their own mux_test.go).
 
 import (
 	"bufio"
@@ -23,7 +22,8 @@ import (
 	"testing"
 )
 
-// sessionTestRoutes は routes.go の session 節（47 本）と同じ (method, path) → ハンドラ。
+// sessionTestRoutes is the same (method, path) → handler map as the session section of
+// routes.go (47 routes).
 var sessionTestRoutes = map[string]http.HandlerFunc{
 	"GET /sessions":                              HandleListSessions,
 	"GET /sessions/catalog":                      HandleSessionCatalog,
@@ -82,17 +82,17 @@ func buildMux() *http.ServeMux {
 	return mux
 }
 
-// TestSessionRoutesMatchAgentRouteTable は、上の写しが本物のルート表と一致していることを
-// 見る。**ゴールデンは本物の mux から撮られている**ので、routes.go 側でパターンが変わったのに
-// ここを直し忘れると落ちる。
+// TestSessionRoutesMatchAgentRouteTable checks that the copy above matches the real route
+// table. The golden is captured from the real mux, so changing a pattern in routes.go without
+// updating this file fails here.
 //
-// 🔥 **一致の向きは「写し ⊆ ゴールデン」**。逆（ゴールデン ⊆ 写し）は成り立たない
-// （agent には session 以外のルートもある）。だから**本数の下限も見る** ——
-// 写しが空になっても「部分集合である」は真になってしまう（#320 の型）。
+// The direction of the match is "copy ⊆ golden"; the reverse does not hold, because the agent
+// has routes outside the session family. That is why the count is checked too: an empty copy
+// would satisfy "is a subset" on its own.
 func TestSessionRoutesMatchAgentRouteTable(t *testing.T) {
 	f, err := os.Open(filepath.Join("..", "..", "testdata", "routes.golden"))
 	if err != nil {
-		t.Fatalf("routes.golden が読めない: %v（移送で相対パスの深さが変わっていないか）", err)
+		t.Fatalf("cannot read routes.golden: %v (did the relative path depth change?)", err)
 	}
 	defer f.Close()
 
@@ -109,7 +109,7 @@ func TestSessionRoutesMatchAgentRouteTable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(golden) < 200 {
-		t.Fatalf("routes.golden から %d 本しか読めていない＝この検査が無言化している", len(golden))
+		t.Fatalf("only %d routes read from routes.golden = this check has gone silent", len(golden))
 	}
 
 	var missing []string
@@ -120,10 +120,10 @@ func TestSessionRoutesMatchAgentRouteTable(t *testing.T) {
 	}
 	sort.Strings(missing)
 	if len(missing) > 0 {
-		t.Errorf("写しのルートが本物のルート表に無い（routes.go 側で変わった？）: %v", missing)
+		t.Errorf("copied routes missing from the real route table (changed in routes.go?): %v", missing)
 	}
 	if len(sessionTestRoutes) != 47 {
-		t.Fatalf("写しのルートが %d 本（want 47）＝写しが痩せると上の部分集合検査が空回りする",
+		t.Fatalf("copy has %d routes (want 47) = a thinning copy makes the subset check above measure nothing",
 			len(sessionTestRoutes))
 	}
 }

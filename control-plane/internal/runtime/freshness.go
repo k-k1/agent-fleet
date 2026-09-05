@@ -1,8 +1,8 @@
-// freshness.go — the adapters' image-probe memo (workspace_stale.go 由来).
+// freshness.go — the adapters' image-probe memo.
 //
-// It moved here with the four Stale() probes that are its only writers and readers.
-// The CP no longer declares it: a second variable on that side could be reassigned
-// (its tests used to do exactly that) while the adapters kept reading this one.
+// It lives with the four Stale() probes that are its only writers and readers. The CP
+// must not declare a second one: that variable could be reassigned (its tests used to do
+// exactly that) while the adapters kept reading this one.
 package runtime
 
 import (

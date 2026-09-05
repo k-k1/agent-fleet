@@ -1,15 +1,17 @@
-// Package copilot は GitHub Copilot CLI（`copilot`, npm @github/copilot）種別の
-// 縦割りパッケージ（docs/log/36 Track A）。read 層（Agent 実装・events.jsonl の
-// transcript/状態読み）と managed driver（--acp: Agent Client Protocol JSON-RPC
-// over stdio、per-session child — driver.go/acp.go）を種別内に閉じる。
+// Package copilot is the vertical package for the GitHub Copilot CLI kind (`copilot`, npm
+// @github/copilot; docs/log/36 Track A). It keeps inside the kind both the read layer (the
+// Agent implementation, the transcript and state read from events.jsonl) and the managed
+// driver (--acp: Agent Client Protocol JSON-RPC over stdio, a per-session child -
+// driver.go/acp.go).
 //
-// セッション同一性は AF 側で外部採番した UUID（`--session-id <uuid v4>`、TUI と
-// ACP の session/load で共通）— agy の「resume UUID が取れない」問題（docs/log/32
-// 202e439）は構造的に発生しない。read 正本は $COPILOT_HOME/session-state/<sid>/
-// events.jsonl（TUI・-p・ACP 全経路で同一形式・ライブ追記 — docs/log/36 実測記録）。
-// 認証は GitHub 連携相乗り（gh 透過認証の OAuth トークン。Copilot CLI は
-// COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN と gh CLI アプリのトークンを
-// 公式サポート）で、専用の Connections フローは持たない。
+// Session identity is a UUID minted by AF (`--session-id <uuid v4>`, shared by the TUI and by
+// ACP's session/load), so agy's "the resume UUID cannot be obtained" problem (docs/log/32
+// 202e439) cannot arise here by construction. The read source of truth is
+// $COPILOT_HOME/session-state/<sid>/events.jsonl - one format across the TUI, -p and ACP,
+// appended live (measured in docs/log/36). Auth rides on the GitHub integration (the OAuth
+// token of gh's transparent auth; the Copilot CLI officially supports COPILOT_GITHUB_TOKEN >
+// GH_TOKEN > GITHUB_TOKEN and the gh CLI app's token), so there is no Connections flow of its
+// own.
 package copilot
 
 import (
@@ -38,7 +40,7 @@ func (agentImpl) Kind() string { return session.KindCopilot }
 // The chat mirror IS supported: transcript.go reads session-state/<sid>/events.jsonl,
 // which copilot appends live in every mode. CanFork/CanForkAt: copilot exposes no fork
 // affordance of its own, so both are done by copying the session-state directory and
-// truncating events.jsonl (forkat.go) — events.jsonl is the restore source (実測,
+// truncating events.jsonl (forkat.go) - events.jsonl is the restore source (measured,
 // docs/log/55 §55.5). No display label.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanTranscript: true, CanFork: true, CanForkAt: true, PermissionChoice: true}
@@ -78,7 +80,7 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 			return "", err
 		}
 		if next == "" {
-			return "", nil // 最後のやり取り = 全部残す（会話まるごとの経路へ）
+			return "", nil // the last exchange = keep everything (falls to the whole-conversation path)
 		}
 		anchor = next
 	}
@@ -93,13 +95,13 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	if !session.DirExists(m.Dir) {
 		return agents.LaunchPlan{}, agents.DirGoneErr(m.Dir)
 	}
-	// Pre-trust the launch dir so the TUI doesn't stall on its "Confirm folder
-	// trust" dialog (実測: config.json trustedFolders への事前追記でスキップ)。
-	// 起動毎に再固定する（agy 00dacc5 の教訓 — 一回きりの固定は後で剥がれる）。
+	// Pre-trust the launch dir so the TUI doesn't stall on its "Confirm folder trust" dialog
+	// (measured: appending to config.json trustedFolders beforehand skips it). Re-applied on
+	// every launch - the agy 00dacc5 lesson that a one-time fix peels off later.
 	EnsureFolderTrusted(m.Dir)
-	// 押し付けた id を copilot が使わなくなっていたら、起動前に拾い直す（sid.go）。
-	// ここで直さないと `--session-id <使われていない id>` を渡し続け、ユーザーの会話は
-	// どこからも参照されないまま取り残される。
+	// If copilot stopped using the id we imposed, pick the real one up before launching
+	// (sid.go). Without that fix here we keep passing `--session-id <an id nobody uses>` and
+	// the user's conversation is left behind, referenced from nowhere.
 	sid := resolveSid(m)
 	if sid == "" {
 		var err error
@@ -121,12 +123,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
-	// copilot has no status hooks; working/idle/question is derived from the
-	// events.jsonl tail (state.go) — TUI 文字列非依存（false-idle 教訓に合致）。
+	// copilot has no status hooks; working/idle/question is derived from the events.jsonl
+	// tail (state.go), independent of TUI strings as the false-idle lesson requires.
 	li := agents.LiveInfo{Resumable: true}
 	if alive {
-		// 生存ポーリングがドリフトの検知点（copilot に hook は無い）。resolveSid は
-		// 台帳を直すので、以降の SessionID 読みが新しい会話を指す（sid.go）。
+		// The liveness poll is where drift is detected (copilot has no hook). resolveSid
+		// repairs the ledger, so later SessionID reads point at the new conversation (sid.go).
 		resolveSid(m)
 		if st := LiveState(m); st != "" {
 			li.State = st
@@ -138,15 +140,16 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 	return li
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
+// PendingModal hands the human-wait that existed just before shutdown to the carry-over
+// (docs/log/75 P5).
 //
-// copilot の人待ちは許可要求だけで、TUI ルートも managed（ACP）も**同じ
-// events.jsonl** に `permission.requested` を刻む（state.go）ので、経路を分けずに
-// 1 本で読める。ファイルなのでプロセスが死んだ後でも残り、halt より遅い契機でも拾える。
+// copilot only ever waits on a permission request, and both the TUI route and the managed (ACP)
+// one record `permission.requested` in the SAME events.jsonl (state.go), so one read covers
+// both. Being a file, it survives the process, and can still be picked up later than halt.
 //
-// Kind は **permission**: 可否の宛先（TUI のメニュー / ACP の JSON-RPC id）は
-// プロセスと一緒に消えるので、持ち越せるのは事実だけ（docs/log/75 §75.6.4）。対象名は
-// events.jsonl のスキーマ次第で取れないことがあり、そのときは事実だけを述べる。
+// Kind is permission: the destination for the answer (the TUI menu, the ACP JSON-RPC id) dies
+// with the process, so only the fact carries over (docs/log/75 §75.6.4). The subject may be
+// unreadable depending on the events.jsonl schema, and then the card states the fact alone.
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	detail, pending := PendingPermission(m)
 	if !pending {
@@ -160,8 +163,8 @@ func (agentImpl) ClearResume(sid string) { sids.Remove(sid) }
 // SessionID returns the slot's copilot session UUID ("" when none allocated yet).
 func SessionID(m session.Meta) string { return sids.Read(session.UUID(m.Dir, m.Name)) }
 
-// newSessionID generates an RFC4122 v4 UUID. copilot VALIDATES the version/variant
-// bits of --session-id (実測: 非 v4 は "The value is not a valid UUID" で起動失敗)。
+// newSessionID generates an RFC4122 v4 UUID. copilot VALIDATES the version/variant bits of
+// --session-id (measured: a non-v4 value fails to launch with "The value is not a valid UUID").
 func newSessionID() (string, error) {
 	var b [16]byte
 	if _, err := rand.Read(b[:]); err != nil {

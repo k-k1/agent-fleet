@@ -58,7 +58,7 @@ func readCapturedUsage() (*capturedUsage, time.Time) {
 //
 // used_percentage is claude's `utilization * 100`, and utilization comes straight from
 // the `anthropic-ratelimit-unified-{5h,7d}-utilization` response headers, which the
-// server reports to **two decimals** (2026-09-02 実測: 0.03 / 0.01 — read back from
+// server reports to two decimals (measured 2026-09-02: 0.03 / 0.01 — read back from
 // `claude -p --output-format stream-json`'s rate_limit_event.unifiedWindows). So the
 // percent we capture is a whole number, and a weekly window under 0.5% arrives as a
 // flat 0 — "0%" here means "below 0.5%", not "nothing used". Don't read a stuck 0 as a

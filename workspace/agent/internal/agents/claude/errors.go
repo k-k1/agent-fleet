@@ -1,19 +1,19 @@
 package claude
 
-// API エラーで畳まれたターンの表示形。
+// How a turn collapsed by an API error is presented.
 //
-// claude は失敗を**合成 assistant レコード**として転写に書く（type=assistant・
-// model=`<synthetic>`・`isApiErrorMessage:true`）。その中身はただの text ブロックなので、
-// ミラーではこれまで**普通の回答と同じ吹き出し**として描かれていた — 認証切れで落ちた
-// ターンが「エージェントがそう答えた」ようにしか見えず、しかも本文は CLI 向けの
-// 「Please run /login」で、Console の利用者にはどこを触ればいいのか分からなかった。
+// claude writes a failure into the transcript as a synthetic assistant record (type=assistant,
+// model=`<synthetic>`, `isApiErrorMessage:true`). Its content is a plain text block, so the
+// mirror used to draw it in the same bubble as an ordinary answer: a turn that died on expired
+// credentials looked exactly like something the agent had said, and its body was the CLI-facing
+// "Please run /login", which tells a Console user nothing about where to go.
 //
-// codex / opencode は同じ失敗を `kind="error"` の part として出しており（各 errors.go）、
-// Console の ErrorBlock（.mirror-error）がそれを常時展開の赤いブロックで描く。claude も
-// 同じ語彙へ寄せる。ここは docs/log/47 の分類（再送で直るか）とは別軸で、**画面に何をどう
-// 出すか**だけを決める。
+// codex and opencode emit the same failure as a `kind="error"` part (their own errors.go), and
+// the Console's ErrorBlock (.mirror-error) draws that as an always-expanded red block. claude
+// is brought to the same vocabulary. This is a separate axis from docs/log/47's classification
+// (does a resend fix it) and decides only what appears on screen and how.
 //
-// 実測レコード（2026-08-06 22:12 UTC / 認証切れ・転写コーパス）:
+// Measured record (expired credentials, transcript corpus):
 //
 //	{"type":"assistant","isApiErrorMessage":true,"apiErrorStatus":401,
 //	 "error":"authentication_failed",
@@ -27,32 +27,35 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// causeAuth は「認証をやり直せば直る」失敗の印。Console はこれを見たときだけ再認証への
-// 導線（設定 > エージェント）を出す。値は**機械可読な合図**であって表示文ではない
-// （文面と言語は Console の i18n が持つ）。
+// causeAuth marks a failure that clears by authenticating again. Only when the Console sees
+// this does it offer the re-authentication route (Settings > Agents). The value is a
+// machine-readable signal, not display text (the wording and language belong to the Console's
+// i18n).
 //
-// 現状 auth だけを立てる: 他の原因（上限・プロンプト超過・サーバ側）は Console 側に
-// 対応する操作が無く、印を増やしても使い道が無いため。増やすときはここに足す。
+// Only auth is raised today: the other causes (usage limit, prompt overflow, server side) have
+// no corresponding action in the Console, so more marks would have no use. Add them here when
+// they do.
 const causeAuth = "auth"
 
 // apiError is one synthetic API-error record, normalized to the same label+detail shape
 // codex/opencode use so all three render identically downstream.
 type apiError struct {
-	msg    string // 本文（claude の英文言。版ごとに書き換わる前提で扱う）
-	kind   string // `error` フィールド: authentication_failed / rate_limit / server_error / invalid_request
-	status int    // apiErrorStatus。合成レコードでは欠けることがある（docs/log/47 §2）
+	msg    string // body (claude's English wording; assume it is rewritten between versions)
+	kind   string // the `error` field: authentication_failed / rate_limit / server_error / invalid_request
+	status int    // apiErrorStatus; can be missing on a synthetic record (docs/log/47 §2)
 }
 
-// authKinds are claude's own machine-readable causes that mean「ログインし直せ」。文言と
-// 違ってこのフィールドは版ごとに書き換わらないので、判定の主にする（docs/log/47 と同じ方針）。
+// authKinds are claude's own machine-readable causes that mean "sign in again". Unlike the
+// wording, this field is not rewritten between versions, so it leads the decision (the same
+// policy as docs/log/47).
 var authKinds = map[string]bool{
 	"authentication_failed": true,
-	"authentication_error":  true, // API 側の type 名がそのまま載る形への備え
+	"authentication_error":  true, // in case the API's own type name is carried through as is
 }
 
-// authMarkers are the texts that say the same thing when `error` は空 / 未知の値だった
-// とき用。実測文言（"Please run /login · API Error: 401 OAuth access token has expired.
-// Re-authenticate to continue."）を含め、語幹で持つ。
+// authMarkers are the texts that say the same thing, for when `error` is empty or an unknown
+// value. Held as stems, covering the measured wording ("Please run /login · API Error: 401
+// OAuth access token has expired. Re-authenticate to continue.").
 var authMarkers = []string{
 	"run /login",
 	"re-authenticate",
@@ -61,9 +64,10 @@ var authMarkers = []string{
 	"unauthorized",
 }
 
-// isAuth reports whether this failure clears by signing in again. status 401 も入口に
-// するが、403（権限）や 400（残高・プロンプト超過）は含めない — 再認証しても直らない
-// 失敗で「再認証しろ」と出すのは、来ないリセットを待たせるのと同じ実害になる。
+// isAuth reports whether this failure clears by signing in again. status 401 is also an entry
+// point, but 403 (permission) and 400 (balance, prompt overflow) are not: telling someone to
+// re-authenticate for a failure that re-authenticating does not fix does the same real harm as
+// making them wait for a reset that never comes.
 func (e apiError) isAuth() bool {
 	if authKinds[strings.ToLower(strings.TrimSpace(e.kind))] {
 		return true
@@ -80,7 +84,7 @@ func (e apiError) isAuth() bool {
 	return false
 }
 
-// cause is the machine-readable hint the Console keys its guidance off. "" = 導線なし。
+// cause is the machine-readable hint the Console keys its guidance off. "" = no route.
 func (e apiError) cause() string {
 	if e.isAuth() {
 		return causeAuth
@@ -100,8 +104,9 @@ func (e apiError) label() string {
 	return name
 }
 
-// detail is the human-facing message. claude の文面をそのまま渡す（Console は verbatim
-// で描く）。本文が空のレコードでも見出しだけは残るように label へ落とす。
+// detail is the human-facing message. claude's wording is passed through as is (the Console
+// draws it verbatim). A record with an empty body falls back to label so at least the heading
+// survives.
 func (e apiError) detail() string {
 	if m := strings.TrimSpace(e.msg); m != "" {
 		return m
@@ -109,9 +114,9 @@ func (e apiError) detail() string {
 	return e.label()
 }
 
-// summary is the one-line form used where a turn is flattened to text: コピー・
-// get_session_output・チャットブリッジ。opencode/codex と同じ `[error] ` タグを付けて、
-// 読み手（人でもオペレーターでも）がエージェントの地の文と区別できるようにする。
+// summary is the one-line form used where a turn is flattened to text: copy,
+// get_session_output, the chat bridge. It carries the same `[error] ` tag opencode/codex use
+// so a reader (human or operator) can tell it apart from the agent's own prose.
 func (e apiError) summary() string {
 	d := e.detail()
 	if d == e.label() {

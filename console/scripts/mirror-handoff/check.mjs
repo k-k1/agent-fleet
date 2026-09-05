@@ -4,7 +4,7 @@
 // as the transcript scroller's last child. A card that never goes away then owns the
 // mirror's landing position forever — auto-follow scrolls to the bottom, lands on the
 // card, and the message you just sent plus the reply streaming in are pushed off-screen.
-// It reads as "送信しても何も出ない" even though the send, the transcript and /messages are
+// It reads as "I send something and nothing appears" even though the send, the transcript and /messages are
 // all fine. The fix places the card at the moment it was proposed, so it is last only
 // until the next turn arrives.
 //
@@ -90,9 +90,11 @@ const OPEN_SESSION = `(() => {
   return "ok";
 })()`;
 
-// 共有セッション(受信側)の同じカード。共有ビューは所有者の転写とは別ストアにある提案を
-// 出せていなかった — 会話に残るのはツール行と定型の完了文だけなので、「引き継いだらしい」
-// ことしか読めなかった。ここでは中身が出ること、かつ押せない操作要素が出ないことを見る。
+// The same card on a shared session (the receiving side). The shared view could not render a
+// proposal that lives in a different store from the owner's transcript, so all that remained in
+// the conversation were tool rows and the boilerplate completion text - the reader could only tell
+// that a handoff had apparently happened. Here we check that the body is rendered, and that no
+// controls the reader cannot use are shown.
 const OPEN_SHARED = `(() => {
   const b = document.querySelector(".shared-rail-row");
   if (!b) return "no-row";
@@ -126,9 +128,9 @@ const probeIn = (scroller) => `(() => {
     // Visible = the newest turn overlaps the scroller's visible rect at all.
     newestVisible: lastBox.bottom > view.top + 4 && lastBox.top < view.bottom - 4,
     launchedBadge: !!card.querySelector(".mirror-handoff-done"),
-    // 本文が実際に読めているか(タイトルだけ出て中身が空、を通さない)。
+    // Is the body actually readable (do not pass a card that shows only a title and no content).
     prompt: (card.querySelector(".mirror-handoff-prompt")?.textContent || "").trim().slice(0, 12),
-    // 能力が無い面に操作要素を出していないか(共有側は編集・破棄・起動ができない)。
+    // No controls on a surface that lacks the capability (the shared side cannot edit, discard or launch).
     controls: card.querySelectorAll("button, textarea, input").length,
     gap,
   };
@@ -220,8 +222,9 @@ try {
   console.log(`[mirror-handoff] launched ${doneOK ? "OK " : "NG "} ${JSON.stringify(done)}`);
   if (!doneOK) failed++;
 
-  // 4) 共有先(受信側)も同じ中身が読める。転写だけでは「引き継いだこと」しか分からない
-  //    ので、カードが出て本文が読めること — そして押せない操作要素が無いこと。
+  // 4) The receiving side of a share reads the same content. The transcript alone only says that
+  //    a handoff happened, so the card must appear with a readable body - and with no controls
+  //    the reader cannot use.
   const shared = await run("mid", { shared: true });
   const sharedOK = !shared.err && shared.prompt.length > 0 && shared.controls === 0 && shared.turnsBelowCard;
   console.log(`[mirror-handoff] shared   ${sharedOK ? "OK " : "NG "} ${JSON.stringify(shared)}`);

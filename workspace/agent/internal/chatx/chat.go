@@ -12,8 +12,9 @@ package chatx
 // auth (no new credentials, ToS-clean). One PaneKind renders any conversation;
 // the agent kind only selects the backend + presentation.
 //
-// このファイルは会話モデルとペルソナ/言語/ツールポリシーのみを持つ。永続化は chat_store.go、
-// プロバイダ実装は chat_providers.go、HTTP ハンドラは chat_handlers.go（docs/log/23 残②で分割）。
+// This file holds only the conversation model and the persona / language / tool policy.
+// Persistence lives in chat_store.go, the provider implementations in chat_providers.go and
+// the HTTP handlers in chat_handlers.go.
 
 import (
 	"os"
@@ -28,19 +29,19 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// chatStep is one "作業過程" item of an assistant turn (docs/log/19): the narration the model
-// emitted right before it called a tool. On a tool-using answer claude produces several
+// chatStep is one "working step" item of an assistant turn (docs/log/19): the narration the
+// model emitted right before it called a tool. On a tool-using answer claude produces several
 // assistant messages — each ending in a tool call (stop_reason=tool_use) is a working step,
 // and only the last (stop_reason=end_turn) is the final answer. We keep the steps so the UI
-// can show the process separately from — but alongside — the final reply (保持).
+// can show the process separately from — but alongside — the final reply.
 type chatStep struct {
 	Text  string   `json:"text,omitempty"`  // narration before the tool call(s)
 	Tools []string `json:"tools,omitempty"` // tool name(s) invoked in this step
 }
 
-// chatMessage is one turn in a conversation.
+// ChatMessage is one turn in a conversation.
 type ChatMessage struct {
-	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/log/30 セッション報告) | "notice" (システム通知)
+	Role    string `json:"role"` // "user" | "assistant" | "report" (docs/log/30 session report) | "notice" (system notice)
 	Content string `json:"content"`
 	TS      int64  `json:"ts"` // unix millis
 	// Agent is the backend that actually generated this assistant turn. It may differ
@@ -62,7 +63,8 @@ type ChatMessage struct {
 	Session string `json:"session,omitempty"`
 	// Instr lists the instruction-ledger row ids this completion report covers
 	// (docs/log/51 Phase 2). It is the DELIVERY IDEMPOTENCY key: a retry after a crash
-	// between「追記成功」and「台帳更新」finds its own ids here and appends nothing.
+	// between "append succeeded" and "ledger updated" finds its own ids here and appends
+	// nothing.
 	// Empty for interim reports (question / plan-approval), which are non-consuming
 	// and may legitimately repeat within one instruction.
 	Instr []string `json:"instr,omitempty"`
@@ -88,7 +90,7 @@ type ChatMessage struct {
 	ReportReason string `json:"report_reason,omitempty"`
 }
 
-// chatConversation is the persisted record (one JSON file per conversation).
+// ChatConversation is the persisted record (one JSON file per conversation).
 type ChatConversation struct {
 	ID string `json:"id"`
 	// Slug is the conversation's short addressable identity ("a"+6 base32 — the
@@ -157,7 +159,7 @@ type ChatConversation struct {
 	// SeedVerb records the ad-hoc Files verb that created this thread ("translate" |
 	// "summarize"), when the chat was opened without a standing assistant (docs/log/30 ②).
 	// It drives the persona-embedded verb behaviour — notably the translate language
-	// exemption below — so deleting the old 翻訳/汎用 builtins costs no capability.
+	// exemption below — so deleting the old translate/generic builtins costs no capability.
 	SeedVerb string `json:"seed_verb,omitempty"`
 	// InProgress is a transient flag set only by handleChatGet when an assistant turn is
 	// still running for this conversation (chat_live.go). It lets a client that reloaded
@@ -168,7 +170,7 @@ type ChatConversation struct {
 	// the user's last message (docs/log/30). Capped at maxAutoTurns; reset on every user
 	// send — the structural stop for an unattended follow-up loop.
 	AutoTurns int `json:"auto_turns,omitempty"`
-	// AutoPausedNotified marks that the "自動応答の上限に達しました" pause notice has
+	// AutoPausedNotified marks that the "auto-reply limit reached" pause notice has
 	// already been appended for the CURRENT cap-reach, so the user is told exactly once
 	// per unattended run instead of on every further report while capped. Reset with
 	// AutoTurns on every user send.
@@ -182,41 +184,42 @@ type ChatConversation struct {
 	// appended for the CURRENT crossing; reset when usage falls back under the
 	// threshold (e.g. the provider compacted) so a later re-crossing warns again.
 	CtxWarned bool `json:"ctx_warned,omitempty"`
-	// PendingHandoff is the compaction summary (docs/log/33 第2段) waiting to ride the
+	// PendingHandoff is the compaction summary (docs/log/33 stage 2) waiting to ride the
 	// next prompt as a preamble — the new provider session's seed context. Cleared
 	// only after that turn succeeds (injectHandoff / chat_compact.go).
 	PendingHandoff string `json:"pending_handoff,omitempty"`
-	// Plan is the conversation's standing work plan (docs/log/33 第5段), carried into every
+	// Plan is the conversation's standing work plan (docs/log/33 stage 5), carried into every
 	// fresh provider session **verbatim** — unlike PendingHandoff it is never summarized
 	// and never consumed, so repeated compaction cannot erode it. Written by compaction
-	// (差分更新), the 計画を更新 button and hand editing; see chat_plan.go.
+	// (incremental update), by the Update plan button and by hand editing; see chat_plan.go.
 	Plan          string `json:"plan,omitempty"`
 	PlanUpdatedAt int64  `json:"plan_updated_at,omitempty"`
 	// turnModel carries the model of the turn currently running, from the provider
 	// (which alone knows what it passed / what the CLI reported) to the caller that
 	// appends the assistant message. Unexported = never persisted and never sent to the
-	// Console: it is scratch for one turn, while chatMessage.Model is the record.
+	// Console: it is scratch for one turn, while ChatMessage.Model is the record.
 	// Every provider clears it on entry and sets it only on success, so a failed or
 	// non-answering call can never lend its model to the next appended message.
-	TurnModel string `json:"-"` // 🔥 公開名にしたので **明示的に永続化から外す**（未公開の頃は自動で外れていた）
+	TurnModel string `json:"-"` // exported, so it must be kept out of persistence explicitly
 	// modelOverride swaps the model for the NEXT provider call only (unexported =
-	// never persisted). 自動ターン専用モデル（設定 > アシスタント）が使う: 報告処理の
-	// 定型ターンだけを軽量モデルで回し、利用者ターン・圧縮の要約ターンは会話本来の
-	// モデルのまま。呼び出し側（runReportAutoTurn）が send の直前に立てて直後に
-	// 倒す。claude のみ（chatModel 経由 — codex/opencode は c.Model を直接読む）。
-	// 注意: prompt cache はモデル毎に別なので、上書きターンは会話モデルのキャッシュ
-	// に乗らない — 自動ターンは散発的でどのみち冷えている（実測）ため、単価差の
-	// 利得が支配的という判断。
+	// never persisted). Used by the auto-turn model (Settings > Assistant): only the
+	// boilerplate turns that process a report run on a lightweight model, while user turns
+	// and compaction summary turns keep the conversation's own model. The caller
+	// (runReportAutoTurn) sets it right before send and clears it right after. claude only
+	// (via chatModel — codex/opencode read c.Model directly).
+	// Note: the prompt cache is per model, so an overridden turn does not ride the
+	// conversation model's cache — auto turns are sporadic and cold anyway (measured), so
+	// the unit-price gain dominates.
 	modelOverride string
 }
 
-// startTurn resets the per-turn scratch state. Called at the top of every provider
+// StartTurn resets the per-turn scratch state. Called at the top of every provider
 // send/sendStream — including the ones that end up not reporting a model at all, so a
 // previous call in the same request (an auto-compaction turn, a retry after recovery)
 // cannot leak its model into this turn's message.
 func (c *ChatConversation) StartTurn() { c.TurnModel = "" }
 
-// noteTurnModel records the model that actually drove this turn. Providers call it at
+// NoteTurnModel records the model that actually drove this turn. Providers call it at
 // their success point only.
 func (c *ChatConversation) NoteTurnModel(model string) { c.TurnModel = strings.TrimSpace(model) }
 
@@ -234,7 +237,7 @@ func (c *ChatConversation) afToolsEnabled() bool {
 	}
 }
 
-// afWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
+// AFWriteEnabled reports whether the write tools (send_to_session …) are exposed to this
 // chat — only when the assistant granted af_write (docs/log/19 Q2 opt-in).
 func (c *ChatConversation) AFWriteEnabled() bool { return c.Tools == assistants.ToolsAFWrite }
 
@@ -273,8 +276,8 @@ const (
 // languageRule returns the forced-output-language directive for this conversation, or ""
 // to leave language to the input/persona. Translation is exempt: its whole job is
 // auto-detecting direction (JA↔EN), which a forced language would break. That is now the
-// ad-hoc "translate" verb (docs/log/30 ②); the AssistantID check keeps threads created by the
-// old 翻訳 builtin exempt too.
+// ad-hoc "translate" verb (docs/log/30 item 2); the AssistantID check keeps threads created
+// by the old translate builtin exempt too.
 //
 // "auto" is symmetric again (docs/log/28 P6). It used to fall back to the display language
 // for "en" only: the personas and the output rule were written in Japanese, so with no
@@ -286,7 +289,8 @@ const (
 // That is also the better behaviour for the case the patch got wrong: on an English
 // Console, "translate this into Japanese" or "summarize this Japanese article in
 // Japanese" no longer fights a forced-English directive. Whoever wants the reply pinned
-// regardless of input still has 設定 > 回答言語 (ja / en), which wins over everything here.
+// regardless of input still has Settings > reply language (ja / en), which wins over
+// everything here.
 func (c *ChatConversation) languageRule() string {
 	if c.SeedVerb == "translate" || c.AssistantID == "translate" {
 		return ""
@@ -346,7 +350,7 @@ func (c *ChatConversation) knowledgeDirs() []string {
 // chatMeta is the light shape returned by the list endpoint (no message bodies).
 type chatMeta struct {
 	ID           string               `json:"id"`
-	Slug         string               `json:"slug,omitempty"` // short addressable id ("a…", see chatConversation.Slug)
+	Slug         string               `json:"slug,omitempty"` // short addressable id ("a…", see ChatConversation.Slug)
 	Agent        string               `json:"agent"`
 	ActiveAgent  string               `json:"active_agent,omitempty"`
 	AssistantID  string               `json:"assistant_id,omitempty"` // which assistant backs this thread (Q2)
@@ -356,13 +360,14 @@ type chatMeta struct {
 	UpdatedAt    int64                `json:"updated_at"`
 	MessageCount int                  `json:"message_count"`
 	Context      *usagex.ContextUsage `json:"context,omitempty"` // current context fill (chat_usage.go)
-	Locked       bool                 `json:"locked,omitempty"`  // 削除ロック（docs/log/45）: true の間 DELETE は拒否
+	Locked       bool                 `json:"locked,omitempty"`  // deletion lock (docs/log/45): DELETE is refused while true
 }
 
-// chatPersona keeps the headless agent in plain conversational mode (translate,
-// summarize, answer) rather than reaching for file edits or bash on its own.
-// docs/log/28 P6: 表示言語で書く（アシスタントを選ばない会話の唯一のペルソナなので、ここが
-// 日本語のままだと英語 Console でも回答が日本語に倒れる）。
+// ChatPersonaFor keeps the headless agent in plain conversational mode (translate,
+// summarize, answer) rather than reaching for file edits or bash on its own. It is written
+// in the display language (docs/log/28 P6): this is the only persona for a conversation
+// that picks no assistant, so a Japanese-only text would tip answers toward Japanese even
+// on an English Console.
 func ChatPersonaFor(lang string) string {
 	if lang == "en" {
 		return "You assist an Agent Fleet user with their work. " +
@@ -410,8 +415,9 @@ func recommendedCatalogModel(ids []string, target, fallback string) string {
 // recommendedAssistantModel resolves the safe product recommendation against the
 // live catalog. OpenCode Go ids are selected only when this account actually lists
 // them; a non-Go account keeps the universally available Nemotron fallback.
-// 「使わないモデル」（model_deny.go）で除外された候補は推奨としても選ばない — 空を
-// 返して CLI 自身の既定へ委ねる。カタログ由来の候補は絞ったカタログから選び直す。
+// A candidate excluded by "Models to exclude" (model_deny.go) is not recommended
+// either — return empty and leave it to the CLI's own default. Catalog-derived candidates
+// are re-picked from the filtered catalog.
 func recommendedAssistantModel(agent string) string {
 	switch agent {
 	case session.KindClaude:
@@ -428,7 +434,7 @@ func recommendedAssistantModel(agent string) string {
 	return "" // cursor: Auto is the only entitlement-safe recommendation
 }
 
-// resolveChatModel applies an agent-specific default only when the assistant did not
+// ResolveChatModel applies an agent-specific default only when the assistant did not
 // pin a model. The resolved value is snapshotted onto a new conversation, so an
 // existing thread keeps its prior model selection.
 func ResolveChatModel(agent, model string) string {
@@ -444,9 +450,9 @@ func ResolveChatModel(agent, model string) string {
 	return recommendedAssistantModel(agent)
 }
 
-// chatModel resolves the --model for a conversation: a per-call override first
-// (自動ターン専用モデル — modelOverride のコメント参照), then its own model if set,
-// else the deployment default (AF_CHAT_MODEL or defaultChatModel).
+// chatModel resolves the --model for a conversation: a per-call override first (the
+// auto-turn model — see the modelOverride comment), then its own model if set, else the
+// deployment default (AF_CHAT_MODEL or defaultChatModel).
 func chatModel(c *ChatConversation) string {
 	if c.modelOverride != "" {
 		return c.modelOverride
@@ -458,23 +464,23 @@ func chatModel(c *ChatConversation) string {
 }
 
 // chatModelFor resolves the --model for the backend that is ACTUALLY driving this turn.
-// 会話が持つ Model はピン留めされたエージェント基準の1本しかないので、認証フォールバック
-// （chatProviderFor）や利用者による途中切替で別バックエンドが回すターンにそのまま渡すと、
-// その CLI に他 CLI のモデル id を食わせることになる（codex に "sonnet" 等）。別バックエンドの
-// ターンでは設定「アシスタントのモデル」の当該 CLI 行から解決し直す — 設定画面の説明
-// （「優先順位で別の CLI に切り替わった場合も、その CLI の行で選んだモデルを使います」）が
-// 実装上の契約。プロバイダは自分の kind を渡すだけでよい。
+// A conversation's Model is a single value pinned against one agent, so passing it as is to
+// a turn another backend runs — after an auth fallback (chatProviderFor) or a switch by the
+// user — would feed one CLI another CLI's model id ("sonnet" to codex, say). For a turn on
+// another backend, resolve again from that CLI's row in Settings > Assistant models: the
+// contract implemented here is what the settings screen promises ("If priority falls back to
+// another CLI, that CLI uses its row's model"). A provider only has to pass its own kind.
 func chatModelFor(c *ChatConversation, kind string) string {
 	if c.modelOverride != "" {
-		return c.modelOverride // 自動ターン専用モデル（呼び出し側が claude ターンだけに立てる）
+		return c.modelOverride // auto-turn model (the caller sets it on claude turns only)
 	}
 	if c.Agent != "" && kind != c.Agent {
 		return ResolveChatModel(kind, "")
 	}
 	if kind == session.KindClaude {
-		return chatModel(c) // 旧来の AF_CHAT_MODEL 既定を保つ
+		return chatModel(c) // keep the historical AF_CHAT_MODEL default
 	}
-	return c.Model // 空 = その CLI 自身の既定に委ねる（--model を渡さない）
+	return c.Model // empty = leave it to that CLI's own default (pass no --model)
 }
 
 // chatTimeout bounds a single CLI turn so a hung process can't wedge the request.

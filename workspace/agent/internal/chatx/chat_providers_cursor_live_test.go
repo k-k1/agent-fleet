@@ -1,12 +1,14 @@
 package chatx
 
-// 実バイナリ契約テスト（opt-in）: AF_CURSOR_CHAT_LIVE=1 のときだけ実 cursor-agent を
-// 起動し、cursorChat.send のヘッドレスチャット経路が実 CLI で成立することを検証する。
-// 認証は環境の Cursor ログイン（~/.config/cursor/auth.json のアンビエント認証）前提。
-// 実行例: AF_CURSOR_CHAT_LIVE=1 go test -run TestCursorChatLive -v .
+// Contract test against the real binary (opt-in): only with AF_CURSOR_CHAT_LIVE=1 does this
+// launch a real cursor-agent and check that cursorChat.send's headless chat route holds
+// against the actual CLI. Auth is the environment's own Cursor login (the ambient
+// ~/.config/cursor/auth.json). Run it with:
 //
-// 週次リリースの CLI なので、これが -p 契約（result 形状・--resume 文脈保持・
-// --mode ask の read-only 強制）のドリフト検知線になる。
+//	AF_CURSOR_CHAT_LIVE=1 go test -run TestCursorChatLive -v .
+//
+// The CLI ships weekly, so this is the line that catches drift in the -p contract: the
+// result shape, --resume keeping context, and --mode ask enforcing read-only.
 
 import (
 	"context"
@@ -20,7 +22,7 @@ import (
 func cursorChatLiveGate(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AF_CURSOR_CHAT_LIVE") != "1" {
-		t.Skip("AF_CURSOR_CHAT_LIVE=1 で実 cursor チャット契約テストを有効化")
+		t.Skip("set AF_CURSOR_CHAT_LIVE=1 to run the live cursor chat contract test")
 	}
 }
 
@@ -29,7 +31,8 @@ func TestCursorChatLive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	// 1) 第1ターン: 純テキスト回答が返り、resume ハンドルと usage が捕捉される。
+	// 1) First turn: a plain-text answer comes back, and the resume handle and usage are
+	//    captured.
 	c := &ChatConversation{ID: "cursor-live", Agent: "cursor"}
 	reply, err := cursorChat{}.Send(ctx, c, "Reply with exactly the single word: PONG")
 	if err != nil {
@@ -46,7 +49,8 @@ func TestCursorChatLive(t *testing.T) {
 	}
 	firstSID := c.CursorSessionID
 
-	// 2) 第2ターン: 同じ会話を --resume で継続し、文脈（前ターンの語）が残る。
+	// 2) Second turn: --resume continues the same conversation and the context (the word
+	//    from the previous turn) survives.
 	reply2, err := cursorChat{}.Send(ctx, c, "What exact single word did I ask you to reply with a moment ago? Answer with just that word.")
 	if err != nil {
 		t.Fatalf("send #2 (resume): %v", err)
@@ -58,8 +62,9 @@ func TestCursorChatLive(t *testing.T) {
 		t.Fatalf("resume changed session id: %q → %q", firstSID, c.CursorSessionID)
 	}
 
-	// 3) read-only 強制: 書込を頼んでも --mode ask なのでファイルは作られず、
-	//    プロセスは hang せずクリーンな応答で返る（チャット契約＝ホスト非改変）。
+	// 3) read-only is enforced: asked to write, --mode ask creates no file and the process
+	//    returns a clean answer instead of hanging (the chat contract is: leave the host
+	//    untouched).
 	probe := filepath.Join(chatWorkdir(), "livetest_probe.txt")
 	_ = os.Remove(probe)
 	c3 := &ChatConversation{ID: "cursor-live-ro", Agent: "cursor"}

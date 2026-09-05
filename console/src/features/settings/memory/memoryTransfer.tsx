@@ -7,17 +7,19 @@ import { fmtDateTime, DATETIME_FULL } from "../../../lib/intl.ts";
 import { humanSize } from "../../../lib/filemeta.ts";
 import type { SecretFinding, ImportPreview } from "./memoryTypes.ts";
 
-// TransferSection — 環境間の持ち出し / 取り込み（docs/log/39 ⑤ P3）。
+// TransferSection — export / import between environments (docs/log/39 item 5, P3).
 //
-// 持ち出しは既定が **bundle（全履歴）**。受け側で `git bundle verify` が通り、履歴ごと
-// 移せる。tar.gz は「最新だけ軽く持ち出す」用の併設。
+// Export defaults to a bundle (full history): the receiving side can run `git bundle verify`
+// and the history moves with it. tar.gz sits alongside it for taking just the latest state.
 //
-// 書き出しは Agent 側の secret スキャン（★4）を必ず通る。検出時は 409 が返るので、
-// **何が引っかかったかを見せてから** ack 付きで叩き直す。ここで確認を省いて自動 ack
-// すると、防御が実質無効になる（値そのものは Agent がマスクしており表示もしない）。
+// Every export goes through the Agent's secret scan (★4). A hit returns 409, so the findings
+// are shown FIRST and only then is the call repeated with ack. Skipping that confirmation and
+// acking automatically would disable the guard (the values themselves are masked by the Agent
+// and never displayed).
 //
-// 取り込みは受領（refs/imports へ独立系譜として保持）と適用（選択置き換え）を分ける。
-// 受領だけでは live に触れないので、中身を見てから範囲を決められる。
+// Import separates receiving (kept in refs/imports as an independent lineage) from applying
+// (replacing the selected scope). Receiving alone does not touch live, so the scope can be
+// chosen after looking at the contents.
 export function TransferSection({
   busy,
   setBusy,
@@ -33,13 +35,14 @@ export function TransferSection({
   const [format, setFormat] = useState<"bundle" | "tar">("bundle");
   const [preview, setPreview] = useState<ImportPreview | null>(null);
   const [picked, setPicked] = useState<Record<string, boolean>>({});
-  // 適用のしかた。replace = 選んだ範囲の内容だけ採る（既定）。migrate = 履歴ごと入れ替える。
-  // 移設は bundle（履歴を運ぶ形式）でしか意味を持たないので tar では選ばせない。
+  // How to apply. replace = take only the contents of the chosen scope (default);
+  // migrate = swap in the history as well. Migration only means anything for a bundle (the
+  // format that carries history), so it is not offered for tar.
   const [mode, setMode] = useState<"replace" | "migrate">("replace");
   const fileRef = useRef<HTMLInputElement>(null);
 
-  // 保存は fetch → Blob → 一時 URL。素のリンク遷移にしないのは、409（secret 検出）を
-  // JSON として受け取って確認ダイアログに回す必要があるため。
+  // Saving goes fetch -> Blob -> temporary URL rather than a plain link navigation, because a
+  // 409 (secrets detected) has to be read as JSON and routed to the confirm dialog.
   const saveBlob = async (res: Response) => {
     const blob = await res.blob();
     const cd = res.headers.get("Content-Disposition") ?? "";
@@ -112,18 +115,20 @@ export function TransferSection({
       setPreview(body as ImportPreview);
     } finally {
       setBusy(false);
-      if (fileRef.current) fileRef.current.value = ""; // 同じファイルを選び直せるように
+      if (fileRef.current) fileRef.current.value = ""; // so the same file can be picked again
     }
   };
 
-  // 適用できるのは「この環境に受け皿があるルート」だけ（codex memories 未有効の環境等）。
+  // Only a root this environment has somewhere to put can be applied (e.g. codex memories
+  // are not enabled here).
   const available = (preview?.kinds ?? []).filter((k) => !(preview?.unavailable ?? []).includes(k.kind));
   const wholeKinds = available.filter((k) => !k.scopes);
   const projects = preview?.projects ?? [];
   const pickedProjects = projects.filter((p) => picked["project:" + p.slug]).map((p) => p.slug);
   const pickedKinds = wholeKinds.filter((k) => picked["kind:" + k.kind]).map((k) => k.kind);
-  // 移設は「全体を履歴ごと入れ替える」操作なので、範囲の選択は要らない（サーバ側でも
-  // 全体固定にしている — 一部だけ入れ替えると履歴と live が食い違うため）。
+  // Migration swaps in everything including the history, so there is no scope to choose. The
+  // server pins it to the whole tree too: replacing only part of it would leave the history
+  // and live disagreeing.
   const migrating = mode === "migrate";
   const canApply = !!preview && (migrating || pickedProjects.length > 0 || pickedKinds.length > 0);
 
@@ -152,7 +157,7 @@ export function TransferSection({
     if (!ok) return;
     setBusy(true);
     try {
-      // importId はクエリにも載せる（CP の監査台帳は URL からしか target を採らない）。
+      // importId also goes in the query: the CP audit ledger takes its target from the URL only.
       const res = await apiJSON(
         "api/agents/memory/import/apply?importId=" + encodeURIComponent(preview.importId),
         "POST",
@@ -190,7 +195,7 @@ export function TransferSection({
         <h3>{tr("mem.transfer_title")}</h3>
       </div>
 
-      {/* 持ち出し */}
+      {/* Export */}
       <div className="mem-transfer">
         <div className="mem-scope">
           <label>
@@ -212,7 +217,7 @@ export function TransferSection({
         <p className="muted ds-hint">{tr("mem.export_note")}</p>
       </div>
 
-      {/* 取り込み */}
+      {/* Import */}
       <div className="mem-transfer">
         <div className="mem-scope">
           <input
@@ -242,10 +247,10 @@ export function TransferSection({
           {preview.secrets.length > 0 && (
             <p className="mem-warn">{tr("mem.import_secrets", { n: preview.secrets.length })}</p>
           )}
-          {/* 🔴 スキャンが失敗したときは「秘密 0 件」と読める画面にしない。走査できなかったのは
-              「検出なし」より弱い保証で、Go 側も `SecretScanFailed = true // 失敗を「検出なし」に
-              見せない` と明示している（internal/memoryx/memory_import.go）。旗が無いと
-              secrets が [] になるだけで、警告が 1 つも出ずに「見つからなかった」と同じ画面になる。 */}
+          {/* A failed scan must never render as a screen that reads "0 secrets": not having been able
+              to scan is a weaker guarantee than "none found", which is why the Go side flags it
+              explicitly (internal/memoryx/memory_import.go). Without the flag `secrets` is merely
+              [], so not one warning appears and the screen is identical to "nothing found". */}
           {preview.secretScanFailed && (
             <p className="mem-warn">{tr("mem.import_secret_scan_failed")}</p>
           )}
@@ -259,8 +264,9 @@ export function TransferSection({
               {tr("mem.import_rejected", { n: preview.rejected.length })}
             </p>
           )}
-          {/* 適用のしかた。移設は履歴を運ぶ bundle でしか意味を持たない（tar は 1 世代
-              しか無いので、選ばせると「履歴を捨てるだけ」の選択肢になる）。 */}
+          {/* How to apply it. Migration only means anything for a bundle, which carries the history;
+              a tar holds a single generation, so offering the choice there would just be an
+              option that throws the history away. */}
           {preview.format === "bundle" && (
             <div className="mem-scope">
               <span className="muted">{tr("mem.import_mode_label")}</span>

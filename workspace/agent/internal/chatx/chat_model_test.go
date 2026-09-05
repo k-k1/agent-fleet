@@ -9,11 +9,12 @@ import (
 
 func TestResolveChatModel(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	// opencode の推奨は「カタログに Go モデルがあればそれ、無ければ無料の既定」。
-	// HOME 隔離で鍵は消えるが、カタログはもう一つ外の世界＝稼働中の
-	// `opencode serve` からも読む（docs/log/54）。開発機ではそれが鍵付きで動いている
-	// ため、潰さないと期待値が Go モデルに変わる。届かないアドレスを指して、
-	// この検査を「認証なし」の世界に固定する。
+	// opencode recommends the Go model when the catalogue has one and the free default
+	// otherwise. Isolating HOME drops the credentials, but the catalogue is also read from
+	// one world further out — a running `opencode serve` (docs/log/54). On a dev machine
+	// that one runs with credentials, so unless it is shut out the expected value turns
+	// into the Go model. Pointing at an unreachable address pins this check to the
+	// unauthenticated world.
 	t.Setenv("AF_OPENCODE_SERVE_ADDR", "http://127.0.0.1:1")
 	tests := []struct {
 		agent string
@@ -87,11 +88,12 @@ func (p modelChatProv) Send(_ context.Context, c *ChatConversation, _ string) (s
 	return p.reply, nil
 }
 
-// TestTurnModelRecordedPerMessage: the assistant message keeps the model of the turn
-// that produced it, so a later model/backend change cannot rewrite history.
-// TestChatModelOverride pins the per-call override (自動ターン専用モデル): 立って
-// いる間だけ会話のモデルより優先され、倒せば元に戻る。unexported なので永続化されない
-// ことは型が保証する（JSON タグ無しの小文字フィールド）。
+// TestChatModelOverride pins the per-call override (the auto-turn-only model): while it is
+// set it takes precedence over the conversation's model, and clearing it restores the
+// original. Being unexported, the field cannot be persisted at all — the type guarantees it
+// (a lowercase field with no JSON tag). The sibling case that an assistant message keeps the
+// model of the turn that produced it lives in package main
+// (TestTurnModelRecordedPerMessage).
 func TestChatModelOverride(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := &ChatConversation{Model: "sonnet"}

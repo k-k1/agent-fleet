@@ -1,35 +1,40 @@
 #!/usr/bin/env python3
-"""文書ツリーの構造検査。CI（.github/workflows/docs.yml）とローカルの両方で走る。
+"""Structural checks over the documentation trees. Runs in CI
+(.github/workflows/docs.yml) and locally with the same command.
 
-文書は読者で 3 つに分かれる（ADR 0064）。① プロダクト紹介＝ルートの README、
-② 開発者向け＝`docs/`、③ 利用ガイド＝`guide/`。**`guide/` だけがコンテナへ配られる**
-ので、ディレクトリの境界がそのまま配布の境界である。境界が崩れると読者の手元で
-黙ってリンクが切れるので、規約は人間のレビューではなくここで機械検査する。
+The documentation splits by reader (ADR 0064): the product introduction is the root
+README, `docs/` is for developers, `guide/` is the user guide. Only `guide/` is shipped
+into containers, so the directory boundary *is* the distribution boundary. When that
+boundary erodes, links break silently in the reader's copy, so the conventions are
+machine-checked here rather than left to human review.
 
-検査は 12 本:
+Twelve checks:
 
-  links      相対リンクの実在（アンカーは無視）
-  anchors    #fragment が指す見出しが在る（Console の slug 規則で照合）
-  closure    guide/ から外を指すリンクが無い＝配布物が自己完結している
-  chapters   章番号がファイル名と一致し、相互参照のラベルとも一致する
-  lang       二言語の閉包（en は .md へ、ja は .ja.md へ）と対訳の存在
-  header     現役の棚の全ファイルに front matter（audience / source_of_truth / updated）
-  vocab      利用者向けの棚に実装用語（AF_* / kind= / /api/）が漏れていない
-  frozen     現役の棚から docs/log/（凍結アーカイブ）へリンクしていない
-  ref        ref/ の表がコードの一次情報と一致し、かつ対訳と ✓ の立ち方が揃っている
-  settings   設定タブの解説（member/12-settings）がタブの一覧（ref/settings）を覆っている
-  features   機能カタログのメンバー向けの行が、利用者の棚（member/）の手順を指している
-  knowledge  アシスタント知識が機能カタログのメンバー向けの行を覆っている
-  notes      全コンテナへ配る運用ポリシーが、配られる棚だけを指している
+  links      relative links resolve (anchors ignored)
+  anchors    a #fragment points at a heading that exists (matched with Console's slug rule)
+  closure    no link out of guide/ — the shipped tree is self-contained
+  chapters   chapter numbers agree with the file name and with cross-reference labels
+  lang       bilingual closure (en links to .md, ja to .ja.md) and the counterpart exists
+  header     every file on a living shelf has front matter (audience / source_of_truth / updated)
+  vocab      no implementation vocabulary (AF_* / kind= / /api/) on reader-facing shelves
+  frozen     no link from a living shelf into docs/log/ (the frozen archive)
+  ref        ref/ tables agree with the source of truth in code, and the ✓ marks match the
+             translation
+  settings   the settings-tab chapter (member/12-settings) covers the tab list (ref/settings)
+  features   member rows of the feature catalogue point at a procedure on the member/ shelf
+  knowledge  the assistant knowledge covers the member rows of the feature catalogue
+  notes      the operating policy shipped to every container points only at shipped shelves
 
-ref は 3 段階で見る。(a) 軸の網羅: エージェントの列がセッション種別の定数を、
-デプロイの行が runtime のプロファイルを覆っているか。(b) 行の一致: Caps() で
-表現されている能力は**完全一致**（⊇ ではない——立っていない capability を ✓ に
-するのが最悪の嘘）。(c) 対訳の一致: 表の ✓ の立ち方が en と ja で同じか。
-対訳の存在だけ見ても「中身がずれた訳」は止まらず、能力表で片方だけ古いのは
-表が 2 つあるのと同じ害になる。
+ref is checked at three levels. (a) Axis coverage: the agent columns cover the session
+kind constants, the deployment rows cover the runtime profiles. (b) Row agreement:
+capabilities expressed by Caps() must match exactly (not ⊇ — marking a capability ✓ that
+is not set is the worst kind of lie). (c) Translation agreement: the ✓ marks are in the
+same places in en and ja. Checking only that a translation exists does not stop a
+translation whose content has drifted, and a capability table that is stale on one side
+does the same harm as having two tables.
 
-`--strict` で warn を error に格上げする（移行中の棚を段階的に締めるため）。
+`--strict` promotes warnings to errors, so shelves still being migrated can be tightened
+in stages.
 """
 
 from __future__ import annotations
@@ -43,34 +48,40 @@ from dataclasses import dataclass, field
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# --- 2 つのツリー -------------------------------------------------------------
-# 文書は読者で 3 つに分かれる（ADR 0064）。① プロダクト紹介はルートの README、
-# 残る 2 つがここで検査するツリーである。
+# --- the two trees ------------------------------------------------------------
+# The documentation splits by reader (ADR 0064). The product introduction is the root
+# README; the other two are the trees checked here.
 #
-#   guide/ … ③ 利用ガイド。**コンテナへ配る唯一のツリー**で、全員が同じものを受け取る。
-#   docs/  … ② 開発者向け。**誰にも配らない**（decisions / log / build / 規範）。
+#   guide/ … the user guide. The only tree shipped into containers, and everyone gets
+#            the same copy.
+#   docs/  … for developers. Shipped to nobody (decisions / log / build / conventions).
 #
-# 配布の境界がディレクトリの境界と一致していることが、この分割の全部である。
-# guide/ から docs/ を指すリンクは、読者の手元では必ず切れる（check_closure）。
+# The whole point of the split is that the distribution boundary coincides with the
+# directory boundary. A link from guide/ into docs/ is always broken in the reader's
+# copy (check_closure).
 DOCS = os.path.join(ROOT, "docs")
 GUIDE = os.path.join(ROOT, "guide")
 TREES = (GUIDE, DOCS)
 
-# --- 棚の分類 -----------------------------------------------------------------
-# 現役 = 規範（header / lang / vocab / frozen / anchors）が全部かかる棚。
-# 棚の名前は 2 ツリーを通して一意なので、どちらに在るかを言わなくても棚は決まる。
+# --- shelf classification -----------------------------------------------------
+# Living = shelves that all the conventions apply to (header / lang / vocab / frozen /
+# anchors). Shelf names are unique across both trees, so a shelf is identified without
+# saying which tree it is in.
 LIVING = ("member", "admin", "operate", "ref", "build")
-# 利用者向け = 実装用語を書いてはいけない棚。operate/ は端末の前の読者向けなので
-# コマンド・パス・変数を使ってよく、ref/ は「画面欄は Console・実装欄はコード」と
-# 対応表そのものを載せる棚なので、どちらもここには入らない（CONVENTIONS §4）。
+# Reader-facing = shelves that must not use implementation vocabulary. operate/ is
+# written for a reader at a terminal, so commands, paths and variables are fine there,
+# and ref/ is the shelf that carries the mapping table itself (screen column = Console,
+# implementation column = code); neither belongs here (CONVENTIONS §4).
 READER_FACING = ("member", "admin")
-# guide/ ツリーの棚＝コンテナへ配られるもの。ロールでは切らない（ADR 0064）。
+# Shelves of the guide/ tree, i.e. what is shipped into containers. Not cut by role
+# (ADR 0064).
 GUIDE_SHELVES = ("member", "admin", "operate", "ref")
-# 二言語 = 英語が正（X.md）、日本語が併記（X.ja.md）。
-# decisions/ は LIVING ではない（ADR は不変なので Updated: を持たない）が、二言語では
-# ある——読者で切った棚と同じで、英語だけ読む人が決定の理由に届かないのは同じ欠損。
+# Bilingual = English is authoritative (X.md), Japanese accompanies it (X.ja.md).
+# decisions/ is not LIVING (an ADR is immutable, so it carries no Updated:) but it is
+# bilingual: as with the reader-based shelves, an English-only reader who cannot reach
+# the reasoning behind a decision is the same gap.
 BILINGUAL = LIVING + ("decisions",)
-# 日本語のみ = 二言語検査の対象外。log/ は凍結アーカイブ。
+# Japanese-only = out of scope for the bilingual checks. log/ is the frozen archive.
 JA_ONLY_DIRS = ("log",)
 JA_ONLY_FILES = (
     "docs/HANDOFF.md",
@@ -78,25 +89,27 @@ JA_ONLY_FILES = (
     "docs/roadmap.md",
 )
 
-# log/ への参照が許される現役ファイル。
+# Living files that are allowed to reference log/.
 FROZEN_REF_ALLOWLIST: set[str] = {
     "docs/log/README.md",
 }
 
 LINK_RE = re.compile(r"(?<!!)\[([^\]]*)\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
-# front matter（--- で囲んだ YAML）。値は必ず二重引用符で書く——`Source of truth` の
-# 値には「コマンドは deploy/ 配下のスクリプト、…」のようにコロンや読点が入る。
+# Front matter (YAML fenced by ---). Values must always be double-quoted: a
+# `Source of truth` value contains colons and commas, e.g. "the commands are the scripts
+# under deploy/, …".
 FM_RE = re.compile(r"^---\n(.*?)\n---\s*\n", re.S)
 FM_KEY_RE = re.compile(r'^([a-z_]+):\s*"(.*)"\s*$', re.M)
 FM_KEYS = ("audience", "source_of_truth", "updated")
 UPDATED_RE = re.compile(r"^\d{4}-\d{2}$")
 
-# 利用者向けの棚に出てはいけない実装用語。画面の名前で書くための歯止め。
+# Implementation vocabulary that must not appear on reader-facing shelves. The brake
+# that keeps those shelves written in the names shown on screen.
 VOCAB_BANNED = (
-    (re.compile(r"\bAF_[A-Z][A-Z0-9_]+"), "env 変数名"),
-    (re.compile(r"\bkind=[a-z]"), "内部の種別識別子"),
-    (re.compile(r"(?<![\w/])/api/[a-z]"), "API パス"),
-    (re.compile(r"(?<![\w/])/internal/[a-z]"), "内部 API パス"),
+    (re.compile(r"\bAF_[A-Z][A-Z0-9_]+"), "an env variable name"),
+    (re.compile(r"\bkind=[a-z]"), "an internal kind identifier"),
+    (re.compile(r"(?<![\w/])/api/[a-z]"), "an API path"),
+    (re.compile(r"(?<![\w/])/internal/[a-z]"), "an internal API path"),
 )
 
 
@@ -113,21 +126,22 @@ class Findings:
 
 
 def rel(path: str) -> str:
-    """リポジトリ相対のパス（`guide/member/01-first-day.md`）。
+    """Repository-relative path (`guide/member/01-first-day.md`).
 
-    2 ツリーになったので、棚だけを返すと `README.md` がどちらのものか分からない。
-    エラー文はそのまま `git` に渡せる形にしておく。
+    With two trees, returning only the shelf leaves `README.md` ambiguous about which
+    tree it belongs to. Error messages stay in a form that can be handed straight to
+    `git`.
     """
     return os.path.relpath(path, ROOT).replace(os.sep, "/")
 
 
 def tree(relpath: str) -> str:
-    """`guide` か `docs`。配布されるかどうかがこれで決まる。"""
+    """`guide` or `docs`. This is what decides whether a file is shipped."""
     return relpath.split("/", 1)[0]
 
 
 def shelf(relpath: str) -> str:
-    """棚の名前（`member` / `build` / `log` …）。ツリー直下のファイルは空文字。"""
+    """Shelf name (`member` / `build` / `log` …). Empty for a file directly in a tree."""
     parts = relpath.split("/")
     return parts[1] if len(parts) > 2 else ""
 
@@ -137,7 +151,7 @@ def is_ja(relpath: str) -> bool:
 
 
 def counterpart(relpath: str) -> str:
-    """en <-> ja のファイル名を入れ替える。"""
+    """Swap between the en and ja file names."""
     if is_ja(relpath):
         return relpath[: -len(".ja.md")] + ".md"
     return relpath[: -len(".md")] + ".ja.md"
@@ -158,12 +172,12 @@ def bilingual_scope(relpath: str) -> bool:
     s = shelf(relpath)
     if s in JA_ONLY_DIRS or relpath in JA_ONLY_FILES:
         return False
-    if not s:  # ツリー直下: README / CONVENTIONS だけ二言語
+    if not s:  # directly in a tree: only README / CONVENTIONS are bilingual
         return os.path.basename(relpath).split(".")[0] in ("README", "CONVENTIONS")
     return s in BILINGUAL
 
 
-# --- 検査 ---------------------------------------------------------------------
+# --- checks -------------------------------------------------------------------
 
 
 def check_links(files: list[str], f: Findings) -> None:
@@ -172,8 +186,8 @@ def check_links(files: list[str], f: Findings) -> None:
         body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
             target = m.group(2)
-            # 先頭 "/" はサイト絶対 URL（Console が返す open link の例示など）で、
-            # リポジトリ内のパスではない。
+            # A leading "/" is a site-absolute URL (e.g. an example of the open link
+            # the Console returns), not a path inside the repository.
             if target.startswith(("http://", "https://", "mailto:", "#", "/")):
                 continue
             target = target.split("#", 1)[0]
@@ -182,16 +196,17 @@ def check_links(files: list[str], f: Findings) -> None:
             resolved = os.path.normpath(
                 os.path.join(os.path.dirname(path), target)
             )
-            # docs の外（../../deploy/... など）も同じ規則で実在を見る。
+            # Targets outside docs (../../deploy/... and the like) are resolved by the
+            # same rule.
             if os.path.exists(resolved):
                 continue
-            f.error(f"{src}: リンク切れ -> {m.group(2)}")
+            f.error(f"{src}: broken link -> {m.group(2)}")
 
 
-# --- アンカー -----------------------------------------------------------------
+# --- anchors ------------------------------------------------------------------
 
 INLINE_MARKUP = (
-    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # リンクは表示文字だけ残る
+    (re.compile(r"\[([^\]]*)\]\([^)]*\)"), r"\1"),  # a link keeps only its visible text
     (re.compile(r"`([^`]*)`"), r"\1"),
     (re.compile(r"\*\*([^*]*)\*\*"), r"\1"),
     (re.compile(r"\*([^*]*)\*"), r"\1"),
@@ -200,25 +215,28 @@ HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$", re.M)
 
 
 def heading_text(raw: str) -> str:
-    """見出し行から、ブラウザが `textContent` で見るのと同じ文字列を作る。"""
+    """Build, from a heading line, the same string a browser sees as `textContent`."""
     for pattern, repl in INLINE_MARKUP:
         raw = pattern.sub(repl, raw)
     return raw
 
 
 def console_slug(text: str) -> str:
-    """Console が見出しに振る id。**GitHub の規則ではない。**
+    """The id the Console assigns to a heading. This is not GitHub's rule.
 
-    正は `console/src/lib/filemeta.ts` の `slug()`——小文字化して trim、
-    文字・数字・空白・ハイフン以外を捨て、**連続する空白を 1 個の**ハイフンにする。
+    The source of truth is `slug()` in `console/src/lib/filemeta.ts`: lowercase and trim,
+    drop everything that is not a letter, digit, space or hyphen, and collapse a *run* of
+    spaces into a single hyphen.
 
-    GitHub（github-slugger）は空白 1 個につきハイフン 1 個なので、`—` や `/` のように
-    **空白に挟まれた記号**を含む見出しで 2 つの規則は食い違う（`a — b` は Console で
-    `a-b`、GitHub で `a--b`）。全角括弧はさらに逆で、Console は捨て GitHub は残す。
+    GitHub (github-slugger) emits one hyphen per space, so the two rules disagree on any
+    heading containing a symbol surrounded by spaces, such as `—` or `/` (`a — b` is
+    `a-b` in the Console and `a--b` on GitHub). Fullwidth parentheses go the other way:
+    the Console drops them, GitHub keeps them.
 
-    どちらを正にするかは実測で決めた: リポジトリ全体で Console 規則でしか解決しない
-    リンクが 52 本、GitHub 規則でしかないものが 10 本。**読者がガイドを開くのは
-    Console** でもあり（`Source of truth` は Console）、多数派でもあるのでこちらを採る。
+    Which rule wins was decided by measurement: across the repository, 52 links resolve
+    only under the Console rule and 10 only under GitHub's. The Console is also where
+    readers open the guide (`Source of truth` is the Console), so it takes both the
+    majority and the reader.
     """
     t = text.lower().strip()
     t = "".join(
@@ -227,8 +245,9 @@ def console_slug(text: str) -> str:
     return re.sub(r"\s+", "-", t)
 
 
-# github-slugger: 小文字化して trim、句読点類（`—` を含む  -⁯ と ASCII 記号）を
-# 捨て、**空白 1 個につきハイフン 1 個**。`-` と `_` と全角括弧は残る。
+# github-slugger: lowercase and trim, drop punctuation (the general-punctuation range,
+# which includes `—`, plus the supplemental-punctuation range and ASCII symbols),
+# and emit one hyphen per space. `-`, `_` and fullwidth parentheses survive.
 GITHUB_PUNCT_RE = re.compile(
     "[ -⁯⸀-⹿\\\\'!\"#$%&()*+,./:;<=>?@\\[\\]^`{|}~]"
 )
@@ -239,13 +258,13 @@ def github_slug(text: str) -> str:
 
 
 def heading_slugs(path: str) -> set[str]:
-    """`path` を描画する側の規則で作った、その文書の見出し id の集合。
+    """The document's heading ids, built with the rule of whatever renders `path`.
 
-    **規則は行き先のツリーで決まる。** `guide/` は読者がコンテナの Console で開く
-    ものなので Console の `slug()`、`docs/` とリポジトリ直下（CONTRIBUTING.md など）は
-    GitHub でしか読まれないので github-slugger。ここを一律にすると、
-    `CONTRIBUTING.md#commits--prs` のような **GitHub では正しいアンカー**を
-    「壊れている」と報告してしまう（実際にそうなった）。
+    The rule is decided by the destination tree. `guide/` is opened by readers in the
+    container's Console, so it uses the Console's `slug()`; `docs/` and files at the
+    repository root (CONTRIBUTING.md and the like) are only ever read on GitHub, so they
+    use github-slugger. Applying one rule to both reports anchors that are correct on
+    GitHub, such as `CONTRIBUTING.md#commits--prs`, as broken — which is what happened.
     """
     rule = (
         console_slug
@@ -259,11 +278,11 @@ def heading_slugs(path: str) -> set[str]:
 
 
 def check_anchors(files: list[str], f: Findings) -> None:
-    """`#fragment` が、その先のファイルに実在する見出しを指しているか。
+    """Does a `#fragment` point at a heading that exists in the destination file?
 
-    `check_links` はファイルの実在しか見ておらず、**アンカーは無視していた**。
-    だから「ページは開くが、そこではない場所に飛ぶ」——読者から見れば切れたリンクと
-    同じもの——が検査を素通りしていた。
+    `check_links` only checks that the file exists and ignores the anchor, so "the page
+    opens but lands somewhere else" — indistinguishable from a broken link to the reader
+    — used to pass unnoticed.
     """
     for path in files:
         src = rel(path)
@@ -284,31 +303,33 @@ def check_anchors(files: list[str], f: Findings) -> None:
                 else os.path.normpath(os.path.join(os.path.dirname(path), p))
             )
             if not dest.endswith(".md") or not os.path.exists(dest):
-                continue  # 実在しないファイルは check_links の担当
+                continue  # a missing file is check_links' business
             if frag in heading_slugs(dest):
                 continue
             who = "Console" if dest.startswith(GUIDE + os.sep) else "GitHub"
             f.error(
-                f"{src}: 見出しの無いアンカー -> {target}"
-                f"（{who} が振る id と一致していない）"
+                f"{src}: anchor with no matching heading -> {target}"
+                f" (does not match the id {who} assigns)"
             )
 
 
-# --- 配布物の閉包 -------------------------------------------------------------
+# --- closure of the shipped tree ----------------------------------------------
 
-# guide/ から外を指してよいリンク（プレフィックス -> 理由）。
-# ⚠️ 理由つきで明示する。ここに足す前に「読者はコンテナの中でそこへ辿り着けるのか」を
-# 確かめること——辿り着けないなら、それは例外ではなく直すべきリンクである。
+# Links that may point out of guide/ (prefix -> reason).
+# State the reason explicitly. Before adding one, confirm that the reader can actually
+# reach the target from inside the container; if they cannot, it is not an exception but
+# a link to fix.
 _RUNBOOK_REASON = (
-    "runbook は操作する対象の隣に置いてあり、リリースバンドルの中身そのもの。"
-    "deploy/release/stage-docs.sh が配布時に operate/runbooks/ へ複製し、"
-    "同時にこのリンクをそちらへ書き換えるので、GitHub では deploy/、"
-    "コンテナでは runbooks/ と、両方で生きたリンクになる"
+    "a runbook sits next to what it operates and is part of the release bundle itself. "
+    "deploy/release/stage-docs.sh copies it into operate/runbooks/ when shipping and "
+    "rewrites this link to point there, so it stays live both ways: deploy/ on GitHub, "
+    "runbooks/ in the container"
 )
-# ⚠️ 個別のパスで持つ。以前ここは `deploy/` というプレフィックスだった——書き換えの
-# 対象は runbook 5 本だけなのに、`deploy/compose/.env.example` への 6 本まで一緒に
-# 免除してしまい、**配布物の中では死んでいるリンクが緑のまま**だった。
-# 例外は「なぜ届くのか」を 1 本ずつ説明できる形でしか持たない。
+# Listed as individual paths. This used to be the prefix `deploy/`, which exempted the
+# six links to `deploy/compose/.env.example` along with the five runbooks that are
+# actually rewritten, leaving links that are dead inside the shipped tree reported as
+# green. An exception is only kept in a form that explains, one by one, why the target
+# is reachable.
 CLOSURE_EXEMPT: dict[str, str] = {
     "deploy/compose/README.md": _RUNBOOK_REASON,
     "deploy/native/README.md": _RUNBOOK_REASON,
@@ -319,15 +340,17 @@ CLOSURE_EXEMPT: dict[str, str] = {
 
 
 def check_closure(files: list[str], f: Findings) -> None:
-    """配布物（guide/）が自己完結しているか——外を指すリンクが 1 本も無いこと。
+    """Is the shipped tree (guide/) self-contained — not one link pointing outside it?
 
-    これが利用者の「リンク切れが多い」の正体だった。`check_links` は**リポジトリ上の
-    実在**しか見ないので、`guide/` から開発者向けの `docs/` を指すリンクは緑のまま
-    通る。しかし読者が開くのはコンテナへ配られたツリーで、そこに `docs/` は無い。
-    リポジトリでは在るのに読者の手元では必ず切れる、という一群がこうして残っていた。
+    This was the real cause of readers reporting "lots of broken links". `check_links`
+    only checks existence in the repository, so a link from `guide/` into the developer
+    tree `docs/` passes green. But what the reader opens is the tree shipped into the
+    container, and `docs/` is not there. A whole family of links that exist in the
+    repository yet always break in the reader's copy survived that way.
 
-    散文での言及は対象外。**リンクだけを見る**——「仕組みは開発者向けの資料にあります」
-    と書くのは正しく、それをクリックできるようにするのが誤りである。
+    Prose mentions are out of scope: only links are checked. Writing "the mechanism is
+    described in the developer documentation" is correct; making it clickable is the
+    error.
     """
     for path in files:
         src = rel(path)
@@ -347,15 +370,16 @@ def check_closure(files: list[str], f: Findings) -> None:
             if out in CLOSURE_EXEMPT:
                 continue
             f.error(
-                f"{src}: 配布物の外を指している -> {target}（{out}）"
-                "——コンテナへ配られるのは guide/ だけなので、読者の手元では切れる"
+                f"{src}: points outside the shipped tree -> {target} ({out})"
+                " — only guide/ is shipped into containers, so this breaks for the reader"
             )
 
 
-# --- 章番号 -------------------------------------------------------------------
+# --- chapter numbers ----------------------------------------------------------
 
 CHAPTER_FILE_RE = re.compile(r"^(\d{2})-")
-# H1 の「NN.」と、本文の相互参照ラベルの「NN 章名」。どちらも同じ番号を指すべき。
+# The "NN." of an H1, and the "NN <chapter name>" of a cross-reference label in the body.
+# Both must give the same number.
 H1_NUM_RE = re.compile(r"^#\s+(\d{1,2})\.\s")
 LABEL_NUM_RE = re.compile(r"^(\d{1,2})[.\s]")
 
@@ -366,13 +390,14 @@ def chapter_of(relpath: str) -> str | None:
 
 
 def check_chapters(files: list[str], f: Findings) -> None:
-    """章番号が 1 つに揃っているか。
+    """Do the chapter numbers agree with each other?
 
-    番号付きのファイルには番号付きの H1 があり、他の章から「NN 章名」と呼ばれる。
-    3 つが揃っていないと、読者は索引で「11 困ったとき」と読み、開いた先で
-    「09. 困ったとき」を見ることになる——実際そうなっていて、しかも
-    `09-collaboration` と `11-troubleshooting` が**両方 09 を名乗っていた**。
-    番号は目次であって飾りではないので、ファイル名を正として機械で揃える。
+    A numbered file has a numbered H1 and is referred to from other chapters as
+    "NN <chapter name>". When the three disagree, the reader sees "11 Troubleshooting"
+    in the index and "09. Troubleshooting" on the page — which happened, with
+    `09-collaboration` and `11-troubleshooting` both claiming 09. The numbers are the
+    table of contents, not decoration, so they are reconciled mechanically with the file
+    name as the source of truth.
     """
     numbers = {rel(p): chapter_of(rel(p)) for p in files}
     for path in files:
@@ -381,21 +406,22 @@ def check_chapters(files: list[str], f: Findings) -> None:
             continue
         want = numbers[src]
         body = read(path)
-        # front matter を挟むので、H1 は「最初の行」ではなく「最初の `# ` 行」。
+        # Front matter comes first, so the H1 is the first `# ` line, not the first line.
         h1 = next((ln for ln in body.splitlines() if ln.startswith("# ")), "")
         got = H1_NUM_RE.match(h1)
         if want and not got:
-            f.error(f"{src}: H1 に章番号が無い（「# {want}. …」で始めること）")
+            f.error(f"{src}: H1 has no chapter number (start it with \"# {want}. …\")")
         elif want and got.group(1).zfill(2) != want:
             f.error(
-                f"{src}: H1 の章番号がファイル名と違う"
-                f"（H1={got.group(1)} / ファイル名={want}）"
+                f"{src}: H1 chapter number differs from the file name"
+                f" (H1={got.group(1)} / file name={want})"
             )
         elif not want and got:
             f.error(
-                f"{src}: 番号の無いファイルに章番号が付いている（H1={got.group(1)}）"
+                f"{src}: unnumbered file carries a chapter number (H1={got.group(1)})"
             )
-        # 相互参照のラベル「NN 章名」が、指す先の番号と一致しているか。
+        # Does the cross-reference label "NN <chapter name>" match the number of the
+        # chapter it points at?
         for m in LINK_RE.finditer(strip_code(body)):
             label, target = m.group(1), m.group(2).split("#", 1)[0]
             lm = LABEL_NUM_RE.match(label.strip())
@@ -403,12 +429,12 @@ def check_chapters(files: list[str], f: Findings) -> None:
                 continue
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if not os.path.exists(dest):
-                continue  # check_links の担当
+                continue  # check_links' business
             dest_num = chapter_of(rel(dest))
             if dest_num and lm.group(1).zfill(2) != dest_num:
                 f.error(
-                    f"{src}: 相互参照の章番号が違う -> [{label}]({target})"
-                    f"（指し先は {dest_num}）"
+                    f"{src}: wrong chapter number in a cross-reference"
+                    f" -> [{label}]({target}) (the target is {dest_num})"
                 )
 
 
@@ -420,7 +446,7 @@ def check_lang(files: list[str], f: Findings) -> None:
             continue
         mate = counterpart(src)
         if mate not in present:
-            f.error(f"{src}: 対訳が無い（{mate} が必要）")
+            f.error(f"{src}: no translation ({mate} is required)")
         body = strip_code(read(path))
         for m in LINK_RE.finditer(body):
             target = m.group(2).split("#", 1)[0]
@@ -430,25 +456,28 @@ def check_lang(files: list[str], f: Findings) -> None:
                 continue
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if not any(dest.startswith(b + os.sep) for b in TREES):
-                continue  # 2 ツリーの外（deploy/ など）は言語を持たない
+                continue  # outside both trees (deploy/ etc.) there is no language
             dest_rel = rel(dest)
             if not bilingual_scope(dest_rel):
-                continue  # 日本語のみの棚へは両言語から同じターゲットを指す
+                continue  # both languages point at the same target on a ja-only shelf
+            # The language switcher right after the H1 is the one legitimate
+            # cross-language link.
             if dest_rel == mate:
-                continue  # H1 直後の言語スイッチャ行。唯一の正当な言語またぎ
+                continue
             if is_ja(src) != is_ja(dest_rel):
                 want = counterpart(dest_rel)
                 f.error(
-                    f"{src}: 言語をまたぐリンク -> {target}（{want} を指すこと）"
+                    f"{src}: link crosses languages -> {target} (point at {want})"
                 )
 
 
 def front_matter(path: str) -> dict[str, str] | None:
-    """先頭の YAML front matter を key -> value で返す。無ければ None。
+    """The leading YAML front matter as key -> value, or None if there is none.
 
-    Console は front matter を本文と切り分けてメタデータ枠に描く
-    （`console/src/features/viewer/MarkdownView.tsx` の `splitYamlFrontMatter`）ので、
-    機械のための行が地の文に混ざらない。ここも文字列一致ではなく構造として読む。
+    The Console splits front matter off from the body and renders it in a metadata frame
+    (`splitYamlFrontMatter` in `console/src/features/viewer/MarkdownView.tsx`), so the
+    lines meant for machines never mix into the prose. This reads it as structure too,
+    not by string matching.
     """
     m = FM_RE.match(read(path))
     if m is None:
@@ -461,13 +490,14 @@ def is_shelf_readme(relpath: str) -> bool:
 
 
 def check_header(files: list[str], f: Findings, strict: bool) -> None:
-    """現役の棚の全ファイルに front matter が在るか。
+    """Does every file on a living shelf have front matter?
 
-    `source_of_truth` だけは**棚の README から継承してよい**。`guide/member/` の 16 枚と
-    `guide/admin/` の 6 枚は値が一字句同じで、同じ一文が 22 回並んでいた——読者にとっては
-    情報量ゼロの定型である。値が棚ごとに違う `guide/ref/`（10 枚すべて違う）や
-    `guide/operate/` では、これは矛盾に出会った読者がどちらを信じるかを決める本物の
-    情報なので、各ファイルに書く。
+    `source_of_truth` alone may be inherited from the shelf README. The 16 files of
+    `guide/member/` and the 6 of `guide/admin/` carry a value that is word-for-word
+    identical, so the same sentence appeared 22 times — boilerplate carrying no
+    information for the reader. Where the value differs per file, as in `guide/ref/`
+    (all 10 differ) and `guide/operate/`, it is what tells a reader who meets a
+    contradiction which side to believe, so it is written in each file.
     """
     defaults: dict[tuple[str, bool], dict[str, str]] = {}
     for path in files:
@@ -482,8 +512,8 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
         fm = front_matter(path)
         if fm is None:
             f.error(
-                f"{src}: 冒頭に front matter が無い"
-                "（--- で囲んで audience / source_of_truth / updated）"
+                f"{src}: no front matter at the top of the file"
+                " (fence it with --- and give audience / source_of_truth / updated)"
             )
             continue
         inherited = (
@@ -494,10 +524,10 @@ def check_header(files: list[str], f: Findings, strict: bool) -> None:
             if key in fm:
                 continue
             if key == "source_of_truth" and key in inherited:
-                continue  # 棚の README が代表して宣言している
-            f.error(f"{src}: front matter に {key} が無い")
+                continue  # the shelf README declares it on their behalf
+            f.error(f"{src}: front matter has no {key}")
         if "updated" in fm and not UPDATED_RE.match(fm["updated"]):
-            f.error(f"{src}: updated は YYYY-MM 形式で書く（いまは {fm['updated']!r}）")
+            f.error(f"{src}: updated must be YYYY-MM (currently {fm['updated']!r})")
 
 
 def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
@@ -509,7 +539,10 @@ def check_vocab(files: list[str], f: Findings, strict: bool) -> None:
         for pattern, label in VOCAB_BANNED:
             hit = pattern.search(body)
             if hit:
-                msg = f"{src}: 利用者向けの棚に{label}が出ている（{hit.group(0)}）"
+                msg = (
+                    f"{src}: {label} appears on a reader-facing shelf"
+                    f" ({hit.group(0)})"
+                )
                 (f.error if strict else f.warn)(msg)
 
 
@@ -525,12 +558,12 @@ def check_frozen(files: list[str], f: Findings) -> None:
             dest = os.path.normpath(os.path.join(os.path.dirname(path), target))
             if dest.startswith(os.path.join(DOCS, "log")):
                 f.error(
-                    f"{src}: 凍結アーカイブ log/ を参照している -> {target}"
-                    "（事実は新しい文書へ転記すること）"
+                    f"{src}: references the frozen archive log/ -> {target}"
+                    " (copy the fact into a current document instead)"
                 )
 
 
-# --- ref/ の軸をコードの一次情報と突き合わせる --------------------------------
+# --- check the ref/ axes against the source of truth in code -------------------
 
 
 def source_kinds() -> set[str]:
@@ -542,11 +575,11 @@ def source_kinds() -> set[str]:
 
 
 def source_caps() -> dict[str, set[str]]:
-    """kind -> その Caps() が true にしているフィールド名の集合。
+    """kind -> the set of field names its Caps() sets to true.
 
-    workspace/agent/internal/agents/<kind>/ の Caps() メソッド本体だけを見る。
-    ここが「この種別に何ができるか」の実装側の一次情報で、ref/agents.md の
-    該当行はこれと一致していなければならない。
+    Only the body of the Caps() method under workspace/agent/internal/agents/<kind>/ is
+    read. That is the implementation's source of truth for what a kind can do, and the
+    corresponding row of ref/agents.md must agree with it.
     """
     base = os.path.join(ROOT, "workspace", "agent", "internal", "agents")
     out: dict[str, set[str]] = {}
@@ -562,8 +595,8 @@ def source_caps() -> dict[str, set[str]]:
                 continue
             body = read(os.path.join(d, name))
             for m in re.finditer(r"\)\s*Caps\(\)\s*(?:agents\.)?Caps\s*\{", body):
-                # メソッド本体は最初の "\n}" まで。Caps は素の構造体リテラルを
-                # 返すだけなので、これで十分かつ誤爆しない。
+                # The method body runs to the first "\n}". Caps only returns a plain
+                # struct literal, so that is both sufficient and free of false hits.
                 end = body.find("\n}", m.end())
                 blk = body[m.end() : end if end > 0 else len(body)]
                 fields |= set(re.findall(r"(\w+)\s*:\s*true", blk))
@@ -573,7 +606,7 @@ def source_caps() -> dict[str, set[str]]:
 
 
 def table_check_marks(path: str, row_label: str) -> set[str] | None:
-    """表の行 row_label で ✓ が立っている列名の集合。行が無ければ None。"""
+    """Column names marked ✓ in the table row row_label, or None if the row is absent."""
     header: list[str] = []
     for line in read(path).splitlines():
         line = line.strip()
@@ -592,10 +625,10 @@ def table_check_marks(path: str, row_label: str) -> set[str] | None:
     return None
 
 
-# ランタイム形態の switch が在るファイルと関数名。**置き場は移送で動く** ——
-# ADR 0067 のエイリアス移送で control-plane/runtime.go の newRuntimeFactory は
-# control-plane/internal/runtime/runtime.go の NewFactory へ移り、main 側に残ったのは
-# runtime.NewFactory を呼ぶだけの薄い包みになった。新しい方から順に当たる。
+# File and function name holding the switch over runtime forms. The location moves when
+# code is relocated: the alias relocation of ADR 0067 moved newRuntimeFactory from
+# control-plane/runtime.go to NewFactory in control-plane/internal/runtime/runtime.go,
+# leaving a thin wrapper in main that only calls runtime.NewFactory. Tried newest first.
 RUNTIME_FACTORY_SOURCES = (
     (("control-plane", "internal", "runtime", "runtime.go"), "func NewFactory("),
     (("control-plane", "runtime.go"), "func newRuntimeFactory("),
@@ -603,16 +636,17 @@ RUNTIME_FACTORY_SOURCES = (
 
 
 def source_runtime_groups() -> list[set[str]]:
-    """デプロイ形態を「別名の組」として返す。
+    """Deployment forms, returned as groups of aliases.
 
-    ランタイム工場の switch は 1 つのアダプタに複数の綴りを許している
-    （local=docker / ecs=aws / native=wsl）。表がどの綴りを採っていても
-    通したいので、組のどれか 1 つが在れば満たしたとみなす。組の一覧は
-    その switch から、必須の集合は同じ関数の「want ...」エラー文から取る。
+    The runtime factory's switch allows several spellings for one adapter (local=docker /
+    ecs=aws / native=wsl). Whichever spelling the table picked should pass, so a group
+    counts as satisfied when any one of its members is present. The groups come from that
+    switch, the required set from the "want ..." error message in the same function.
 
-    見つからないときは**落とす**。ここで [] を返すと deploy-targets.md の検査だけが
-    黙って消え、表が腐っても緑のままになる（移送でファイルが動いた時こそ壊れる検査
-    なので、静かに無効化されるのが最も高くつく）。
+    Fail hard when it cannot be found. Returning [] here silently removes just the
+    deploy-targets.md check, leaving a rotten table green — and since this check is
+    exactly the one that breaks when files are relocated, being quietly disabled is the
+    most expensive outcome.
     """
     for parts, fn in RUNTIME_FACTORY_SOURCES:
         path = os.path.join(ROOT, *parts)
@@ -624,10 +658,11 @@ def source_runtime_groups() -> list[set[str]]:
             break
     else:
         raise SystemExit(
-            "docs-check: ランタイム形態の switch が見つからない。移送で置き場が"
-            "変わったなら scripts/docs-check.py の RUNTIME_FACTORY_SOURCES に足すこと（探した先: "
-            + ", ".join("/".join(p) + " の " + f for p, f in RUNTIME_FACTORY_SOURCES)
-            + "）"
+            "docs-check: cannot find the switch over runtime forms. If it was relocated,"
+            " add the new location to RUNTIME_FACTORY_SOURCES in scripts/docs-check.py"
+            " (looked in: "
+            + ", ".join(f + " in " + "/".join(p) for p, f in RUNTIME_FACTORY_SOURCES)
+            + ")"
         )
     end = body.find("\nfunc ", start + 1)
     scope = body[start : end if end > 0 else len(body)]
@@ -638,12 +673,12 @@ def source_runtime_groups() -> list[set[str]]:
     groups = [{a for a in g if a} for g in groups]
     want = re.search(r"want ([a-z0-9|-]+)", scope)
     required = set(want.group(1).split("|")) if want else set()
-    # 必須集合に触れている組だけを検査対象にする。
+    # Only groups that touch the required set are checked.
     return [g for g in groups if g & required]
 
 
 def table_columns(path: str) -> set[str]:
-    """先頭の表のヘッダ行からセル（1列目を除く）を取り出す。"""
+    """Cells of the first table's header row, excluding the first column."""
     for line in read(path).splitlines():
         line = line.strip()
         if line.startswith("|") and line.count("|") >= 3:
@@ -665,10 +700,10 @@ def table_first_column(path: str) -> set[str]:
 
 
 def source_setting_tabs(locale: str) -> dict[str, str]:
-    """Console の設定タブのラベル（キー -> 表示文字列）。
+    """Console settings tab labels (key -> displayed string).
 
-    利用者が探すのは画面に出ている名前なので、ref/settings.md の行は
-    **Console のラベルそのもの**でなければならない。タブが増えたら行が増える。
+    A user looks for the name shown on screen, so a row of ref/settings.md must be the
+    Console label verbatim. A new tab means a new row.
     """
     path = os.path.join(
         ROOT, "console", "src", "lib", "i18n", "locales", f"{locale}.ts"
@@ -684,10 +719,11 @@ def source_setting_tabs(locale: str) -> dict[str, str]:
 
 
 def table_mark_shape(path: str) -> list[tuple[str, ...]]:
-    """ファイル内の全表を「印だけ」に潰した形。行の順序も保つ。
+    """Every table in the file flattened to marks only, preserving row order.
 
-    セルは ✓ / — / それ以外（散文）の 3 値にする。訳文の言い回しは無視して、
-    **どこに ✓ が立っているか**だけを比べるための正規化。
+    Each cell becomes one of three values: ✓, — or "." (prose). The normalisation exists
+    so that comparison ignores the wording of a translation and looks only at where the
+    ✓ marks are.
     """
     shape: list[tuple[str, ...]] = []
     for line in read(path).splitlines():
@@ -705,20 +741,21 @@ def table_mark_shape(path: str) -> list[tuple[str, ...]]:
 
 
 def check_knowledge(f: Findings) -> None:
-    """アシスタント知識が機能カタログのメンバー向けの行を覆っているか。
+    """Does the assistant knowledge cover the member rows of the feature catalogue?
 
-    `workspace/agent/knowledge/af-usage.md` は `docs/use/` の要約で、//go:embed で
-    エージェントのバイナリに焼かれる。生成物にはできない——エージェントのイメージの
-    ビルド文脈は `workspace/agent/` だけなので `docs/` が見えないし、あれは散文を
-    連結したものではなく「読ませる順」に畳んだプロンプトである。
+    `workspace/agent/knowledge/af-usage.md` summarises `docs/use/` and is baked into the
+    agent binary with //go:embed. It cannot be generated: the agent image's build context
+    is only `workspace/agent/`, so `docs/` is not visible, and the file is not
+    concatenated prose but a prompt folded into the order it should be read in.
 
-    手写しである以上は必ず遅れるので、遅れたことが分かるようにする。突き合わせるのは
-    ref/features.ja.md の**メンバー向けの行**（管理者・運用者向けの行は、読者が違うので
-    このアシスタントの守備範囲ではない）。
+    Being hand-copied it will always lag, so make the lag visible. What it is checked
+    against are the member rows of ref/features.ja.md; admin and operator rows have a
+    different reader and are outside this assistant's remit.
 
-    ⚠️ 検査できるのは「その機能について書くと決めた記録が在るか」までで、書いた中身が
-    正しいかではない。台帳が「覆った」と言っているだけの可能性は消せない——消せるのは
-    「カタログに増えた行を誰も見なかった」の方だけである。
+    What can be checked is only whether a record exists saying someone decided to write
+    about a feature, not whether what they wrote is correct. The possibility that the
+    ledger merely claims coverage cannot be ruled out — what can be ruled out is a new
+    catalogue row that nobody looked at.
     """
     cat = os.path.join(GUIDE, "ref", "features.ja.md")
     doc = os.path.join(ROOT, "workspace", "agent", "knowledge", "af-usage.md")
@@ -726,7 +763,8 @@ def check_knowledge(f: Findings) -> None:
     if not (os.path.exists(cat) and os.path.exists(doc) and os.path.exists(led)):
         return
 
-    # カタログのメンバー向けの行（「誰が」列が「メンバー」で始まるもの）。
+    # Member rows of the catalogue: the "who" column starts with the Japanese word
+    # for member (「メンバー」), which is what the catalogue is written in.
     wanted: list[str] = []
     for line in read(cat).splitlines():
         line = line.strip()
@@ -743,7 +781,7 @@ def check_knowledge(f: Findings) -> None:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if "\t" not in line:
-            f.error(f"af-usage.coverage.tsv:{i}: タブ区切りでない -> {line!r}")
+            f.error(f"af-usage.coverage.tsv:{i}: not tab-separated -> {line!r}")
             continue
         name, where = line.split("\t", 1)
         ledger[name.strip()] = where.strip()
@@ -753,36 +791,38 @@ def check_knowledge(f: Findings) -> None:
     for name in wanted:
         if name not in ledger:
             f.error(
-                f"af-usage.coverage.tsv: 機能カタログの行が台帳に無い -> 「{name}」"
-                "（アシスタント知識に書くか、書かない理由を `-` で添えること）"
+                f"af-usage.coverage.tsv: feature catalogue row missing from the ledger"
+                f" -> '{name}'"
+                " (write it into the assistant knowledge, or give the reason for not"
+                " writing it after a `-`)"
             )
             continue
         where = ledger[name]
         if where.startswith("-"):
             if not where[1:].strip():
                 f.error(
-                    f"af-usage.coverage.tsv:「{name}」を対象外にするなら理由を書く"
+                    f"af-usage.coverage.tsv: give a reason for excluding '{name}'"
                 )
         elif where not in sections:
             f.error(
-                f"af-usage.coverage.tsv:「{name}」が af-usage.md に無い章を指している"
-                f" -> {where}"
+                f"af-usage.coverage.tsv: '{name}' points at a section that does not"
+                f" exist in af-usage.md -> {where}"
             )
 
     for name in ledger:
         if name not in wanted:
             f.error(
-                f"af-usage.coverage.tsv: 機能カタログに無い行が残っている -> 「{name}」"
-                "（カタログ側で消えたか名前が変わった）"
+                f"af-usage.coverage.tsv: ledger row absent from the feature catalogue"
+                f" -> '{name}' (it was removed or renamed in the catalogue)"
             )
 
 
 def table_first_column_under(path: str, heading: str) -> list[str]:
-    """`## <heading>` の節の中にある表の 1 列目（ヘッダ行を除く・出現順）。
+    """First column of the table inside the `## <heading>` section, in order, no header.
 
-    ref/settings.md には表が 3 つある（個人設定 / テナント設定 / 配備の変数）ので、
-    ファイル全体から拾うと**テナント設定のタブまで use/ に要求してしまう**。
-    あちらは admin/ の担当で、読者が違う。
+    ref/settings.md holds three tables (personal settings / tenant settings / deployment
+    variables), so collecting from the whole file would demand that use/ also cover the
+    tenant settings tabs. Those belong to admin/ and have a different reader.
     """
     rows: list[str] = []
     inside = False
@@ -799,7 +839,7 @@ def table_first_column_under(path: str, heading: str) -> list[str]:
         if set(s) <= set("|-: "):
             continue
         cell = s.strip("|").split("|")[0].strip()
-        if not header_seen:  # 表の見出し行
+        if not header_seen:  # the table's header row
             header_seen = True
             continue
         if cell:
@@ -808,9 +848,10 @@ def table_first_column_under(path: str, heading: str) -> list[str]:
 
 
 def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
-    """グループ見出し（`## <groups のどれか>`）の下にある `###` を出現順に返す。
+    """The `###` headings under a group heading (`## <one of groups>`), in order.
 
-    グループの外の `###`（「いつ反映されるか」など）はタブではないので拾わない。
+    A `###` outside a group (such as "when it takes effect") is not a tab, so it is not
+    collected.
     """
     out: list[str] = []
     inside = False
@@ -824,30 +865,35 @@ def heading3_under(path: str, groups: tuple[str, ...]) -> list[str]:
     return out
 
 
-# ref/settings.ja.md の個人設定タブのうち、use/12-settings.ja.md に節を持たなくてよいもの
-# （タブ名 -> 理由）。⚠️ 除外は必ず理由つきで明示する。理由なしで足せる除外リストは、
-# 「落ちたから消す」で埋まって素通りする検査に戻る。いまは 1 件も無い。
+# Personal settings tabs of ref/settings.ja.md that need no section in
+# use/12-settings.ja.md (tab name -> reason). Every exemption states its reason: an
+# exemption list that can be extended without one fills up with "it failed, so I removed
+# it" and the check goes back to passing everything. Currently empty.
 USE_SETTINGS_EXEMPT: dict[str, str] = {}
 
+# Group headings matched in the documents, so these stay in the documents' own language.
 USE_SETTINGS_GROUPS_JA = ("個人設定", "接続", "ワークスペース")
 USE_SETTINGS_GROUPS_EN = ("Personal", "Connections", "Workspace")
 
 
 def check_use_settings(f: Findings) -> None:
-    """設定タブの解説（use/12-settings）が、タブの一覧（ref/settings）を覆っているか。
+    """Does the settings-tab chapter (use/12-settings) cover the tab list (ref/settings)?
 
-    ref/settings の行は check_ref が Console のラベルと突き合わせているので、**画面が
-    増えれば ref/ には必ず行が増える**。しかし use/ を見る検査が無かったため、ref/ が
-    正しいまま use/ だけ穴が開いても全部緑のままだった（実際、課題管理とクラウド費用の
-    2 タブが**両言語とも**欠けていて、しかも ref/features が「意味は 12 設定」と
-    その空席を指していた）。ここはその 1 段を足す。
+    check_ref already matches the rows of ref/settings against the Console labels, so a
+    new screen always adds a row to ref/. Nothing checked use/, though, so ref/ could be
+    correct while use/ had a hole and everything still passed — in practice the work-item
+    and cloud-cost tabs were missing in both languages, while ref/features pointed at
+    those empty seats as "see 12 Settings". This adds that missing step.
 
-    突き合わせるのは**日本語版どうし**。英語の ref/settings.md の行は Console の英語
-    ラベル（Keyboard / Read aloud …）で、use/12-settings.md の節見出し（Keys / Speech …）
-    とは一字一句同じではなく、名前で突き合わせられるのは ja 側だけである。英語版は
-    **節の数が対訳と同じか**で見る——片方の言語にだけ節を足した、はこれで捕まる。
+    The name-to-name comparison is between the Japanese versions. The rows of the English
+    ref/settings.md are the English Console labels (Keyboard / Read aloud …) and are not
+    word-for-word the section headings of use/12-settings.md (Keys / Speech …), so only
+    the ja side can be matched by name. The English version is checked by whether it has
+    the same number of sections as its translation, which catches a section added in only
+    one language.
 
-    ⚠️ 見るのは ref/settings.ja.md の**個人設定の表だけ**（`table_first_column_under`）。
+    Only the personal settings table of ref/settings.ja.md is read
+    (`table_first_column_under`).
     """
     ref = os.path.join(GUIDE, "ref", "settings.ja.md")
     use_ja = os.path.join(GUIDE, "member", "12-settings.ja.md")
@@ -857,7 +903,10 @@ def check_use_settings(f: Findings) -> None:
 
     tabs = table_first_column_under(ref, "個人設定")
     if not tabs:
-        f.error("ref/settings.ja.md: 個人設定の表が読めない（見出しか表の形が変わった）")
+        f.error(
+            "ref/settings.ja.md: cannot read the personal settings table"
+            " (the heading or the table's shape changed)"
+        )
         return
     sections = heading3_under(use_ja, USE_SETTINGS_GROUPS_JA)
 
@@ -866,31 +915,33 @@ def check_use_settings(f: Findings) -> None:
             continue
         if tab not in sections:
             f.error(
-                f"use/12-settings.ja.md: 設定タブの節が無い -> 「### {tab}」"
-                "（ref/settings.ja.md に在るタブは、両言語に節を書くこと）"
+                f"use/12-settings.ja.md: no section for a settings tab -> '### {tab}'"
+                " (a tab present in ref/settings.ja.md needs a section in both languages)"
             )
     for name in sections:
         if name not in tabs:
             f.error(
-                f"use/12-settings.ja.md: タブに無い節が残っている -> 「### {name}」"
-                "（Console でタブが消えたか改名された）"
+                f"use/12-settings.ja.md: section left behind with no tab"
+                f" -> '### {name}' (the tab was removed or renamed in the Console)"
             )
 
     en = heading3_under(use_en, USE_SETTINGS_GROUPS_EN)
     if len(en) != len(sections):
         f.error(
-            "use/12-settings.md: タブの節の数が対訳と違う"
-            f"（en={len(en)} / ja={len(sections)}）"
+            "use/12-settings.md: number of tab sections differs from the translation"
+            f" (en={len(en)} / ja={len(sections)})"
         )
 
 
-# 機能カタログのメンバー向けの行のうち、詳細列が use/ を指さなくてよいもの
-# （機能名 -> 理由）。⚠️ 理由つきで明示する。ここに足す前に「読者は本当に手順へ
-# 辿り着けるのか」を確かめること——`use/` を指していないのに例外にした行が、
-# まさに課題管理が 1 章も持たないまま緑だった形である。
+# Member rows of the feature catalogue whose Details column need not point at use/
+# (feature name -> reason). State the reason explicitly, and before adding one confirm
+# that the reader really can reach the procedure: a row exempted while pointing nowhere
+# near `use/` is exactly the shape in which the work-item inbox stayed green without a
+# single chapter.
 FEATURES_EXEMPT: dict[str, str] = {}
 
-# 詳細列の見出し（ロケール -> (ファイル名, 見出し語, メンバーを表す語)）。
+# The Details column heading (locale -> (file name, heading word, word meaning member)).
+# All three are matched against the documents, so they stay in the document's language.
 FEATURES_FILES = (
     ("features.ja.md", "詳細", "メンバー"),
     ("features.md", "Details", "member"),
@@ -898,20 +949,22 @@ FEATURES_FILES = (
 
 
 def check_features(f: Findings) -> None:
-    """機能カタログのメンバー向けの行が、利用者の棚（member/）の手順を指しているか。
+    """Do member rows of the feature catalogue point at a procedure on the member shelf?
 
-    `ref/features` は「在るか・誰が使えるか」の索引で、**どうやるかはリンク先**だと
-    自分で宣言している。だから詳細列が能力表（`agents.md` / `repos.md`）しか指して
-    いない行は、読者にとっては行き止まりである——実際、作業項目の受信箱の行は
-    `repos.md`（どのプロバイダが何を出すか）だけを指しており、**機能そのものを書いた
-    章が use/ に 1 つも無いまま**カタログは埋まって見えていた。
+    `ref/features` declares itself an index of what exists and who can use it, with how
+    to do it living behind the link. A row whose Details column only points at a
+    capability table (`agents.md` / `repos.md`) is therefore a dead end for the reader —
+    the work-item inbox row pointed only at `repos.md` (which provider surfaces what)
+    while use/ had no chapter about the feature at all, and the catalogue still looked
+    complete.
 
-    見るのは**メンバー向けの行だけ**。管理者・運用者の行は読者が違い、行き先は
-    `admin/` `operate/` `ref/` になる。詳細列を持たない表（自分の設定）は、節の
-    前文が棚を指す形なので対象外——表の見出しに「詳細」が無いことで自動的に外れる。
+    Only member rows are checked. Admin and operator rows have a different reader and
+    lead into `admin/`, `operate/` and `ref/`. A table with no Details column (personal
+    settings) is out of scope because its section preamble points at the shelf instead —
+    it drops out automatically by having no Details heading.
 
-    ⚠️ 両言語それぞれを見る。`check_ref_parity` が見ているのは表の ✓ の形だけなので、
-    **片方の言語の行き先だけが古い**のはそこでは止まらない。
+    Both languages are checked. `check_ref_parity` only looks at the shape of the ✓
+    marks, so a destination that is stale in one language alone is not caught there.
     """
     for name, details_head, member in FEATURES_FILES:
         path = os.path.join(GUIDE, "ref", name)
@@ -923,7 +976,7 @@ def check_features(f: Findings) -> None:
             if not s.startswith("|") or set(s) <= set("|-: "):
                 continue
             cells = [c.strip() for c in s.strip("|").split("|")]
-            if details_head in cells:  # 表の見出し行
+            if details_head in cells:  # the table's header row
                 header = cells
                 continue
             if not header or len(cells) != len(header):
@@ -937,27 +990,29 @@ def check_features(f: Findings) -> None:
             details = cells[header.index(details_head)]
             if "../member/" not in details:
                 f.error(
-                    f"guide/ref/{name}:「{feature}」の詳細が member/ を指していない"
-                    f"（{details or '空'}）"
-                    "——メンバー向けの行は、やり方が読める章を必ず 1 つ指すこと"
+                    f"guide/ref/{name}: Details of '{feature}' does not point at"
+                    f" member/ ({details or 'empty'})"
+                    " — a member row must point at exactly one chapter that explains how"
                 )
 
 
 def check_notes(f: Findings) -> None:
-    """全コンテナへ配る運用ポリシーが、コンテナに実在する棚だけを指しているか。
+    """Does the operating policy shipped to every container name only existing shelves?
 
-    `workspace/workspace-notes.md` はイメージに焼かれ、**すべてのエージェントが
-    起動時に読む**。ツリーを並べ替えたときここが取り残されると、1 か所の腐りが
-    全コンテナの全セッションを同時に誤誘導する——しかも読み手は指示に従うだけなので、
-    誰も異常だと気づかない（実際 P4 の棚の付け替えで `dev/93-…` が残っていた）。
+    `workspace/workspace-notes.md` is baked into the image and read by every agent at
+    startup. If it is left behind when the tree is rearranged, one stale spot misdirects
+    every session in every container at once — and since readers simply follow the
+    instructions, nobody notices anything is wrong (the P4 shelf rearrangement left
+    `dev/93-…` behind).
 
-    規則は 1 つ: **名指しするなら `guide/` の棚**。コンテナへ配られるのはそのツリーだけで、
-    `docs/`（開発者向け）は誰のコンテナにも無い。
+    One rule: if it names a shelf, it must be a `guide/` shelf. That is the only tree
+    shipped into containers; `docs/` (for developers) is in nobody's container.
 
-    ⚠️ かつてここには「保証されない棚を指すなら同じ段落に『may be absent』と断れ」という
-    規則があった。mount が**役割別**で、member は use/ と ref/ しか受け取らなかったからである。
-    ロール別配布をやめた（ADR 0064）ので、断り書きで逃げる余地も必要も無くなった——
-    指せるか指せないかの 2 つに 1 つで、指せないものは書き換える。
+    There used to be a rule that pointing at a shelf which is not guaranteed required a
+    "may be absent" caveat in the same paragraph, because the mount was per-role and a
+    member received only use/ and ref/. Role-scoped distribution was dropped (ADR 0064),
+    so there is no room and no need to escape via a caveat: a shelf can either be pointed
+    at or not, and what cannot be pointed at gets rewritten.
     """
     notes = os.path.join(ROOT, "workspace", "workspace-notes.md")
     if not os.path.exists(notes):
@@ -966,10 +1021,11 @@ def check_notes(f: Findings) -> None:
     ref_re = re.compile(
         r"`(" + "|".join(shelves) + r")/([A-Za-z0-9._-]+\.md)`"
     )
-    # 断り書きは**段落**の中で探す。行で探すと、折り返しただけで落ちる
-    # ——「同じ行に書け」は書式の制約であって、意味の制約ではない。
+    # Search within a paragraph, not a line: searching by line fails on nothing more than
+    # a wrap, and "write it on the same line" is a formatting constraint, not a semantic
+    # one.
     lines = read(notes).splitlines()
-    blocks: list[tuple[int, str]] = []  # (先頭行番号, 段落)
+    blocks: list[tuple[int, str]] = []  # (first line number, paragraph)
     start, buf = 1, []
     for i, line in enumerate(lines, 1):
         if line.strip():
@@ -987,24 +1043,26 @@ def check_notes(f: Findings) -> None:
             name, fname = m.group(1), m.group(2)
             if name not in GUIDE_SHELVES:
                 f.error(
-                    f"workspace-notes.md:{lineno}: 配られない棚を指している"
+                    f"workspace-notes.md:{lineno}: points at a shelf that is not shipped"
                     f" -> {name}/{fname}"
-                    "（コンテナに在るのは guide/ だけ。guide/ の棚を指すこと）"
+                    " (only guide/ is in the container; point at a guide/ shelf)"
                 )
                 continue
             if not os.path.exists(os.path.join(GUIDE, name, fname)):
                 f.error(
-                    f"workspace-notes.md:{lineno}: 無い棚のファイルを指している"
-                    f" -> {name}/{fname}"
-                    "（全エージェントが読む指示なので、腐ると全員が誤誘導される）"
+                    f"workspace-notes.md:{lineno}: points at a file that does not exist"
+                    f" on that shelf -> {name}/{fname}"
+                    " (every agent reads these instructions, so a stale pointer"
+                    " misdirects all of them)"
                 )
 
 
 def check_ref_parity(f: Findings) -> None:
-    """ref/ の表は、英語版と日本語版で ✓ の立ち方が一致していること。
+    """ref/ tables must have their ✓ marks in the same places in English and Japanese.
 
-    対訳の存在は lang 検査が見るが、それだけでは**中身がずれた訳**を止められない。
-    能力表で片方だけ古いのは、表が 2 つあるのと同じ害になる。
+    The lang check confirms a translation exists, but that alone does not stop a
+    translation whose content has drifted. A capability table that is stale on one side
+    does the same harm as having two tables.
     """
     refdir = os.path.join(GUIDE, "ref")
     if not os.path.isdir(refdir):
@@ -1014,20 +1072,20 @@ def check_ref_parity(f: Findings) -> None:
             continue
         ja = os.path.join(refdir, name[: -len(".md")] + ".ja.md")
         if not os.path.exists(ja):
-            continue  # lang 検査が別途報告する
+            continue  # the lang check reports this separately
         en_shape = table_mark_shape(os.path.join(refdir, name))
         ja_shape = table_mark_shape(ja)
         if len(en_shape) != len(ja_shape):
             f.error(
-                f"ref/{name}: 表の行数が対訳と違う"
-                f"（en={len(en_shape)} / ja={len(ja_shape)}）"
+                f"ref/{name}: table row count differs from the translation"
+                f" (en={len(en_shape)} / ja={len(ja_shape)})"
             )
             continue
         for i, (a, b) in enumerate(zip(en_shape, ja_shape)):
             if a != b:
                 f.error(
-                    f"ref/{name}: 表の {i + 1} 行目で ✓ の立ち方が対訳と違う"
-                    f"（en={''.join(a)} / ja={''.join(b)}）"
+                    f"ref/{name}: row {i + 1} has ✓ marks in different places from the"
+                    f" translation (en={''.join(a)} / ja={''.join(b)})"
                 )
                 break
 
@@ -1039,11 +1097,11 @@ def check_ref(f: Findings) -> None:
         missing = source_kinds() - cols
         if missing:
             f.error(
-                "ref/agents.md: コードにある種別が表に無い -> "
+                "ref/agents.md: kinds present in code are missing from the table -> "
                 + ", ".join(sorted(missing))
             )
-    # Caps() で表現されている行は、実装と 1:1 で一致していなければならない
-    # （⊇ ではなく完全一致 — 立っていない capability を ✓ にするのが最悪の嘘）。
+    # Rows expressed by Caps() must match the implementation 1:1 (exact match, not ⊇ —
+    # marking a capability ✓ that is not set is the worst kind of lie).
     if os.path.exists(agents):
         caps = source_caps()
         for row, field in (
@@ -1053,17 +1111,18 @@ def check_ref(f: Findings) -> None:
         ):
             marked = table_check_marks(agents, row)
             if marked is None:
-                f.error(f"ref/agents.md: 行が見つからない -> 「{row}」")
+                f.error(f"ref/agents.md: row not found -> '{row}'")
                 continue
             want = {k for k, fields in caps.items() if field in fields}
             if marked != want:
                 f.error(
-                    f"ref/agents.md「{row}」が実装の {field} と食い違う"
-                    f"（表={sorted(marked)} / コード={sorted(want)}）"
+                    f"ref/agents.md: '{row}' disagrees with {field} in the"
+                    f" implementation (table={sorted(marked)} / code={sorted(want)})"
                 )
 
-    # 設定タブは Console のラベルが正。増えた画面が黙って未記載にならないよう、
-    # 両言語それぞれを自分のロケールのラベルと突き合わせる。
+    # The Console labels are the source of truth for the settings tabs. Each language is
+    # matched against the labels of its own locale, so a new screen cannot end up
+    # silently undocumented.
     for locale, name in (("en", "settings.md"), ("ja", "settings.ja.md")):
         path = os.path.join(GUIDE, "ref", name)
         tabs = source_setting_tabs(locale)
@@ -1073,12 +1132,13 @@ def check_ref(f: Findings) -> None:
         missing = sorted({v for v in tabs.values()} - rows)
         if missing:
             f.error(
-                f"ref/{name}: Console にある設定タブが表に無い -> "
-                + ", ".join(missing)
+                f"ref/{name}: settings tabs present in the Console are missing from the"
+                " table -> " + ", ".join(missing)
             )
 
-    # ⚠️ 両言語をまわす。英語版だけを見ていた頃は、`.ja.md` の表を壊しても緑だった
-    # （10 行上の設定タブ検査は最初からループしている——同じ形に揃えただけ）。
+    # Loop over both languages. While only the English version was checked, breaking the
+    # table in `.ja.md` still passed. (The settings tab check ten lines above always
+    # looped; this only brings the two into the same shape.)
     for name in ("deploy-targets.md", "deploy-targets.ja.md"):
         targets = os.path.join(GUIDE, "ref", name)
         if not os.path.exists(targets):
@@ -1087,7 +1147,7 @@ def check_ref(f: Findings) -> None:
         for group in source_runtime_groups():
             if not (group & rows):
                 f.error(
-                    f"ref/{name}: コードにある形態が表に無い -> "
+                    f"ref/{name}: a form present in code is missing from the table -> "
                     + "|".join(sorted(group))
                 )
 
@@ -1099,11 +1159,11 @@ INLINE_RE = re.compile(r"`[^`\n]*`")
 
 
 def strip_code(body: str) -> str:
-    """語彙検査はコードブロックとインラインコードを見ない。
+    """The vocabulary check ignores code blocks and inline code.
 
-    利用者向けの文章でも、設定ファイルの実例や env の一覧を「引用として」
-    載せることはある。禁じたいのは地の文で実装用語を使うことなので、
-    コードとして明示された部分は対象外にする。
+    Even reader-facing prose sometimes quotes a real config file or a list of env
+    variables. What is forbidden is using implementation vocabulary in the running text,
+    so anything explicitly marked as code is out of scope.
     """
     return INLINE_RE.sub("", FENCE_RE.sub("", body))
 
@@ -1121,15 +1181,15 @@ def read(path: str) -> str:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--strict", action="store_true", help="warn を error に格上げする"
+        "--strict", action="store_true", help="promote warnings to errors"
     )
     ap.add_argument(
         "--only",
         default="",
         help=(
-            "検査名をカンマ区切りで指定"
-            "（links,anchors,closure,chapters,lang,header,vocab,frozen,"
-            "ref,settings,features,knowledge,notes）"
+            "comma-separated check names "
+            "(links,anchors,closure,chapters,lang,header,vocab,frozen,"
+            "ref,settings,features,knowledge,notes)"
         ),
     )
     args = ap.parse_args()

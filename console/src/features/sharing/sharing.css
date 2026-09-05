@@ -1,5 +1,6 @@
-/* 共有セッションの面。背景は表示設定の「共有セッションの背景」(--chat-bg をインラインで
-   受ける)→ ファイルビューアの面 → テーマ既定、とミラー(.mirrorview)と同じ順で落ちる。 */
+/* The shared-session surface. Its background falls back in the same order as the mirror
+   (.mirrorview): the display setting for the shared-session background (「共有セッションの背景」,
+   received inline as --chat-bg), then the file viewer surface, then the theme default. */
 .shared-view {
   height: 100%;
   min-height: 0;
@@ -14,11 +15,11 @@
    panes.css) lands flush right of them instead of splitting the row 3 ways. */
 .shared-view-info { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex: 1; min-width: 0; }
 .shared-view-head small { color: var(--muted); }
-/* 会話本文はミラーと同じブロック(features/mirror/transcript)で描く。mirror.css は
-   main.tsx でグローバルに読み込まれ、.mirror-turn 系はミラー限定の祖先にスコープされて
-   いないので、そのまま使えばテーマ・余白・折りたたみの見え方が完全に一致する。
-   .mirror-turn 自身が padding と全幅の区切り線を持つため、ここでは padding を持たない
-   (ミラーの .mirror-body と同じ)。 */
+/* The conversation body is drawn by the same block as the mirror (features/mirror/transcript).
+   mirror.css is loaded globally from main.tsx and the .mirror-turn rules are not scoped to a
+   mirror-only ancestor, so reusing them matches the theme, spacing and collapsed look exactly.
+   .mirror-turn carries its own padding and full-width separator, so this element has none (same
+   as the mirror's .mirror-body). */
 .shared-view-body { flex: 1; min-height: 0; overflow: auto; padding: 0; }
 .shared-view-empty, .shared-view-notice { padding: 20px; color: var(--muted); }
 .shared-propose { border-top: 1px solid var(--border); padding: 10px 14px; display: grid; grid-template-columns: 1fr auto; gap: 8px; }
@@ -32,8 +33,8 @@
 .share-proposal-card p { white-space: pre-wrap; }
 
 .share-create-modal { width: min(480px, calc(100vw - 24px)); }
-/* 右クリック起点(initialTarget固定)の対象表示 — .ui-field 内の input/select と同じ
-   見た目の非活性ボックス。 */
+/* Target display when the modal was opened from a context menu (initialTarget is fixed) — an
+   inert box styled like the input/select inside .ui-field. */
 .share-target-fixed {
   display: flex;
   align-items: center;
@@ -45,9 +46,9 @@
   border-radius: 4px;
   color: var(--fg);
 }
-/* 共有先の検索欄 — 候補リストは入力欄の直下に絶対配置する。モーダルは中央寄せの
-   固定サイズなので、右クリックメニュー(SessionRow/RepoRow)の placeFixed のような
-   viewport 端クランプは不要。 */
+/* Recipient search box — the suggestion list is absolutely positioned right under the input.
+   The modal is centred and fixed-size, so it needs no viewport-edge clamping like placeFixed in
+   the context menus (SessionRow/RepoRow). */
 .share-recipient-field { position: relative; }
 .share-recipient-suggest {
   position: absolute;
@@ -81,14 +82,14 @@
 .share-recipient { color: var(--muted); font-size: 12px; flex: none; }
 .share-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 
-/* 受信側「共有セッション」のプロジェクト/worktreeツリー — project.css の
-   .proj-node/.proj-children/.proj-node-body(所有者側のツリー)をそのまま流用し、
-   ここでは見出し2種だけ足す。 */
+/* Project/worktree tree of the recipient's shared sessions — it reuses project.css's
+   .proj-node/.proj-children/.proj-node-body (the owner-side tree) as is and only adds the two
+   kinds of heading here. */
 .shared-project-group { list-style: none; margin: 0 0 4px; }
 
-/* 見出し2種はどちらも「押すと畳む」ボタン。高さを固定値で決めているのは、下の
-   sticky 段(worktree 見出しがプロジェクト見出しの真下に留まる)がこの高さに依存
-   するため — 行の高さが変わると帯が重なるか隙間が開く。 */
+/* Both headings are buttons that collapse their node. The height is a fixed value because the
+   sticky offsets below (a worktree heading parks directly under the project heading) depend on
+   it — change the row height and the bands either overlap or leave a gap. */
 .shared-project-head,
 .shared-node-toggle {
   display: flex;
@@ -112,13 +113,13 @@
 .shared-node-toggle small { color: var(--muted); }
 .shared-project-head .shared-project-owner { margin-left: auto; }
 .shared-copy-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* プロジェクト名も長ければ縮む(ブランチと畳んだときの件数を押し出さない)。 */
+/* A long project name shrinks too, so it never pushes out the branch or the collapsed count. */
 .shared-project-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 畳んだときのセッション数は右端へ。 */
+/* The collapsed session count goes to the far right. */
 .shared-project-head > small:last-child,
 .shared-node-toggle > small:last-child { margin-left: auto; }
-/* このツリーの caret は行全体のボタンの中にあるので、project.css のボタン用
-   スタイル(高さ伸長・上寄せ)ではなくアイコンとして並べる。 */
+/* In this tree the caret sits inside a button that spans the whole row, so lay it out as an icon
+   rather than with project.css's button styling (full-height, top-aligned). */
 .shared-project-head .proj-node-caret,
 .shared-node-toggle .proj-node-caret {
   align-self: center;
@@ -127,23 +128,23 @@
 }
 .shared-node-toggle { padding-left: 0; }
 
-/* sticky の段組み。所有者側ツリー(project.css)の見出しは絞り込みバーの分だけ
-   下げてあるが、共有セクションにその帯は無い — その offset のまま置くと見出しが
-   自分のノードから離れて無関係な行の上に浮く(実際に崩れて見えていた)。ここで
-   セクション見出し(top:0/z:3)→プロジェクト見出し→working copy 見出し、と
-   段と z を張り直す(内側ほど手前にしない＝押し上げられた側が下に潜る)。 */
+/* The sticky tiers. Headings in the owner-side tree (project.css) are offset by the height of the
+   filter bar, but the sharing section has no such bar — keeping that offset floats a heading away
+   from its own node and over unrelated rows. So the tiers and z-indexes are restated here:
+   section heading (top:0/z:3) -> project heading -> working copy heading. Inner levels must not
+   sit in front, so the one being pushed up slides underneath. */
 .shared-project-head {
   position: sticky;
   top: var(--sec-head-h, 34px);
   z-index: 2;
   background: var(--leftpane-bg);
 }
-/* worktree ノード側は詳細度を1段上げる(`.wt` を明示する)。project.css の
-   `.proj-node.wt > .proj-node-head` は所有者側ツリー用に絞り込みバー分だけ下げた段
-   (--sec-head-h + 69px)を持ち、共有ツリーの worktree ノードにも同じ詳細度(0,3,0)で
-   当たる。同値なら勝敗は束ねられた順で決まり、実際のバンドルでは project.css が後ろに
-   来て負ける — worktree 見出しだけ 43px 低い位置に貼り付き、プロジェクト見出しとの間に
-   空帯ができて、そこをセッション行が素通りしていた(見出しが行に重なって見える)。 */
+/* The worktree node needs one more step of specificity (spell out `.wt`). project.css's
+   `.proj-node.wt > .proj-node-head` carries the owner-side tier that allows for the filter bar
+   (--sec-head-h + 69px) and matches worktree nodes in the shared tree at the same specificity
+   (0,3,0). On a tie the later rule in the bundle wins, and there project.css comes last — the
+   worktree heading then sticks 43px lower, leaving an empty band under the project heading that
+   session rows scroll straight through. */
 .shared-project-group .proj-node.wt > .proj-node-head,
 .shared-project-group .proj-node > .proj-node-head {
   position: sticky;
@@ -152,7 +153,7 @@
   background: var(--leftpane-bg);
 }
 
-/* メンバーへの引き継ぎ（docs/log/77 / ADR 0057）。 */
+/* Handoff to another member (docs/log/77 / ADR 0057). */
 .handoff-blocked {
   color: var(--danger, #d33);
 }
@@ -187,8 +188,9 @@
   gap: 0.5rem;
   justify-content: flex-end;
 }
-/* 共有ビューの「自分宛の引き継ぎが届いている」帯。ヘッド直下に固定で、本文と一緒には
-   流さない（転写は末尾に追従するので、流すと届いているのに画面外になる）。 */
+/* The shared view's "a handoff is waiting for you" band. Pinned right under the head and never
+   scrolled with the body: the transcript follows its tail, so scrolling it would push a waiting
+   handoff off screen. */
 .shared-view-handoff {
   display: flex;
   align-items: center;
@@ -212,7 +214,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 未処理の在庫を示す行バッジ。既読では消さない（§77.10）ので、通知とは別の色域を使う。 */
+/* Row badge for the undecided backlog. It is not cleared by "read" (§77.10), so it uses a
+   different colour range than notifications. */
 .shared-rail-handoff {
   color: var(--accent, #6aa9ff);
   display: inline-flex;

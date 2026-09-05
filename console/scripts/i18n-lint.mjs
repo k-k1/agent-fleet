@@ -1,23 +1,25 @@
 #!/usr/bin/env node
-// i18n 回帰防止チェック（docs/log/28-i18n.md P5）。JSX テキスト・文字列/テンプレートリテラルの中に
-// 生の日本語（CJK）が残っていないかを TypeScript の AST で検出する。コメントは AST ノードでは
-// ないので自動的に対象外＝「表示に出る文言」だけを拾える（正規表現よりも誤検出が少ない）。
+// i18n regression guard (docs/log/28-i18n.md P5). Detects raw Japanese (CJK) left inside JSX text
+// and string/template literals via the TypeScript AST. Comments are not AST nodes, so they are
+// excluded automatically and only text that reaches the screen is picked up (fewer false
+// positives than a regex).
 //
-// 使い方:
-//   node scripts/i18n-lint.mjs           … 違反があれば非ゼロ終了（CI ゲート）
-//   node scripts/i18n-lint.mjs --list     … ファイル別の棚卸しサマリ（pending 含む）
-//   node scripts/i18n-lint.mjs --pending  … 現状の全違反ファイルで pending リストを再生成
+// Usage:
+//   node scripts/i18n-lint.mjs           - exit non-zero on any violation (the CI gate)
+//   node scripts/i18n-lint.mjs --list     - per-file inventory summary (pending included)
+//   node scripts/i18n-lint.mjs --pending  - regenerate the pending list from every current offender
 //
-// 段階移行（ratchet）: 二次画面はまだ裸和文が残る。`i18n-lint-pending.json` に列挙した
-// ファイルの違反は「移行待ち（backlog）」として非致命で報告し、**それ以外**のファイルの違反
-// だけを CI 落とし条件にする。移行してゼロになったファイルは pending から外す（＝二度と戻れない）。
+// Ratchet: secondary screens still carry bare Japanese. Violations in files listed in
+// `i18n-lint-pending.json` are reported as backlog and are not fatal; only violations in OTHER
+// files fail CI. A file that reaches zero is dropped from pending, so it can never regress.
 //
-// 除外の仕組み（翻訳しないと決めた文言＝docs/log/28 §4/§6.4 の LLM プロンプト・TTS 読み辞書・
-// 回答判定の正規表現・固有名詞など。pending と違い「恒久的に翻訳しない」意思表示）:
-//   * 行末 or 直前コメント行の  // i18n-exempt[: 理由]          … その 1 ノード
-//   * // i18n-exempt-start 〜 // i18n-exempt-end で囲む            … 範囲（LLM プロンプト塊など）
-//   * ファイル内に // i18n-exempt-file[: 理由]                    … そのファイル全体
-//   * ALLOW_FILES（下記）… カタログ本体や読み辞書など丸ごと対象外
+// Exemptions (text deliberately never translated: the LLM prompts of docs/log/28 §4/§6.4, the TTS
+// reading dictionary, answer-matching regexes, proper nouns. Unlike pending, this states "never
+// translate this"):
+//   * // i18n-exempt[: reason] at end of line or on the line above  - that one node
+//   * // i18n-exempt-start ... // i18n-exempt-end                   - a range (an LLM prompt block)
+//   * // i18n-exempt-file[: reason] anywhere in the file            - the whole file
+//   * ALLOW_FILES (below)                                           - catalogues, reading dictionaries
 
 import ts from "typescript";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
@@ -29,28 +31,29 @@ const ROOT = join(HERE, "..");
 const SRC = join(ROOT, "src");
 const PENDING_FILE = join(HERE, "i18n-lint-pending.json");
 
-// CJK 文字（ひらがな・カタカナ・漢字）。ASCII のみの文字列は素通し。
+// CJK characters (hiragana, katakana, kanji). ASCII-only strings pass straight through.
 const HAS_LETTER = /[぀-ヿ㐀-鿿]/;
 
-// 丸ごと対象外にするディレクトリ（src/ 起点）。カタログは CJK が中身そのもの。
-// ⚠️ ここは接頭辞一致にしてある: カタログはドメイン別（locales/ja/*.ts, locales/en/*.ts）に
-// 分かれており（ADR 0067 決定 4）、ファイル名を 1 つずつ列挙すると**新しいドメインを足した
-// 瞬間に lint がそのファイルを裸和文まみれと報告する**。
+// Directories exempted wholesale (relative to src/). In the catalogues, CJK is the content itself.
+// This is a prefix match on purpose: the catalogues are split per domain (locales/ja/*.ts,
+// locales/en/*.ts, ADR 0067 decision 4), and listing file names one by one means the lint reports
+// a new domain file as full of bare Japanese the moment it is added.
 const ALLOW_DIRS = ["lib/i18n/locales/"];
 
-// 丸ごと対象外にするファイル（src/ 起点）。翻訳ではなくロジック/データのもの。
+// Files exempted wholesale (relative to src/). Logic/data rather than translatable text.
 const ALLOW_FILES = new Set([
-  "features/chat/ttsText.ts", // TTS 読み変換の内部（発音辞書ロジック・docs/log/28 §4）
-  // ⚠️ ここは ALLOW_DIRS と違って**完全一致**（下の ALLOW_FILES.has(rel)）。ファイルを割ると
-  // 割った先が免除から外れるので、面ごとに分けたら 1 枚ずつここへ足す。接頭辞にはしない —
-  // parts/ には今後 UI のファイルも入るので、接頭辞だと新規が黙って免除される（カタログの
-  // ALLOW_DIRS が接頭辞なのは「新規も必ず CJK」だからで、ここは逆の性質）。
-  "features/chat/parts/ttsVoices.ts", // VOICEVOX 話者名・感情スタイル名（§6.4 未翻訳）
-  "features/chat/parts/ttsAudio.ts", // 出力音量のキャラ分岐（話者名で判定）
-  "features/chat/parts/ttsPlay.ts", // 試聴の定型文（キャラが読む日本語サンプル）
-  "features/chat/parts/ttsAbbrev.ts", // 省略読みのフィラー語
-  "features/chat/parts/ttsReadings.ts", // 組み込みの読み補正の表
-  "features/viewer/readerText.ts", // なろうルビ解析ロジック（《》｜ は構文文字）
+  "features/chat/ttsText.ts", // internals of TTS reading conversion (pronunciation dictionary logic, docs/log/28 §4)
+  // Unlike ALLOW_DIRS this is an exact match (ALLOW_FILES.has(rel) below). Splitting a file takes
+  // the split-off part out of the exemption, so add each new file here one by one. Do not make it
+  // a prefix: parts/ will also hold UI files in future, and a prefix would silently exempt them
+  // (ALLOW_DIRS can be a prefix because every new catalogue file is guaranteed to be CJK; here the
+  // property is the opposite).
+  "features/chat/parts/ttsVoices.ts", // VOICEVOX speaker and emotion style names (§6.4, untranslated)
+  "features/chat/parts/ttsAudio.ts", // per-character output volume (keyed on the speaker name)
+  "features/chat/parts/ttsPlay.ts", // preview boilerplate (the Japanese sample a character reads)
+  "features/chat/parts/ttsAbbrev.ts", // filler words for abbreviated readings
+  "features/chat/parts/ttsReadings.ts", // built-in reading-correction table
+  "features/viewer/readerText.ts", // Narou ruby parsing logic (《》｜ are syntax characters)
 ]);
 
 function walkFiles(dir, out = []) {
@@ -65,8 +68,8 @@ function walkFiles(dir, out = []) {
 
 const isTest = (rel) => /\.test\.tsx?$/.test(rel) || rel.includes("/__tests__/");
 
-// 各ファイルの「除外行」集合を作る（1-indexed）。i18n-exempt 行、その直後の 1 ノード用に
-// 直前コメント行、そして start/end で囲まれた範囲。
+// Build the set of exempt lines for a file (1-indexed): the i18n-exempt line itself, the line
+// after a comment-only marker (which targets the next node), and any start/end range.
 function exemptLines(lines) {
   const set = new Set();
   let blockOpen = false;
@@ -79,8 +82,8 @@ function exemptLines(lines) {
       continue;
     }
     if (/i18n-exempt\b/.test(ln) && !/i18n-exempt-(file|start|end)/.test(ln)) {
-      set.add(i + 1); // この行のノード
-      // 直前が「コメントだけの i18n-exempt 行」なら、次の実コード行を狙ったものとみなす
+      set.add(i + 1); // the node on this line
+      // A comment-only i18n-exempt line is taken to target the next line of real code.
       if (ln.trim().startsWith("//")) set.add(i + 2);
     }
   }
@@ -132,7 +135,7 @@ for (const abs of walkFiles(SRC)) {
 findings.sort((a, b) => a.rel.localeCompare(b.rel) || a.line - b.line);
 const offenders = new Set(findings.map((f) => f.rel));
 
-// --pending: 現状の違反ファイル一覧を pending リストとして出力（初期生成・棚卸し用）。
+// --pending: print the current offender files as a pending list (for seeding and stocktaking).
 if (process.argv.includes("--pending")) {
   console.log(JSON.stringify([...offenders].sort(), null, 2));
   process.exit(0);
@@ -141,7 +144,7 @@ if (process.argv.includes("--pending")) {
 const blocking = findings.filter((f) => !pending.has(f.rel));
 const backlog = findings.filter((f) => pending.has(f.rel));
 
-// --all: pending 状態に関係なく全違反を line:col で出力（移行作業のブリーフィング用）。
+// --all: print every violation as line:col regardless of pending state (briefing for migration).
 if (process.argv.includes("--all")) {
   for (const f of findings) console.log(`${f.rel}:${f.line}:${f.col}  [${f.kind}]  ${f.snippet}`);
   process.exit(0);
@@ -151,8 +154,8 @@ if (process.argv.includes("--list")) {
   const byFile = new Map();
   for (const f of findings) byFile.set(f.rel, (byFile.get(f.rel) || 0) + 1);
   const rows = [...byFile.entries()].sort((a, b) => b[1] - a[1]);
-  console.log(`# i18n 裸和文リテラル棚卸し（計 ${findings.length} 件 / ${rows.length} ファイル）`);
-  console.log(`#   backlog(pending): ${backlog.length} 件 / blocking(新規): ${blocking.length} 件\n`);
+  console.log(`# i18n bare-Japanese literal inventory (${findings.length} total / ${rows.length} files)`);
+  console.log(`#   backlog(pending): ${backlog.length} / blocking(new): ${blocking.length}\n`);
   for (const [file, n] of rows) {
     const tag = pending.has(file) ? "backlog" : "BLOCK  ";
     console.log(`${tag} ${String(n).padStart(4)}  ${file}`);
@@ -160,23 +163,23 @@ if (process.argv.includes("--list")) {
   process.exit(0);
 }
 
-// backlog は情報として要約表示（非致命）。
+// The backlog is summarised for information only (not fatal).
 if (backlog.length > 0) {
   const files = new Set(backlog.map((f) => f.rel)).size;
-  console.log(`ℹ 移行待ち(backlog): ${backlog.length} 件 / ${files} ファイル（i18n-lint-pending.json 記載）。`);
+  console.log(`ℹ backlog: ${backlog.length} in ${files} files (listed in i18n-lint-pending.json).`);
 }
 
-// pending に載っているが今はゼロのファイル＝移行完了。リストから外すよう促す（非致命）。
+// A file listed in pending that is now at zero has finished migrating; nudge to drop it (not fatal).
 const cleaned = [...pending].filter((p) => !offenders.has(p));
 if (cleaned.length > 0) {
-  console.log(`✎ 移行完了につき i18n-lint-pending.json から削除してください: ${cleaned.join(", ")}`);
+  console.log(`✎ migration complete, please remove from i18n-lint-pending.json: ${cleaned.join(", ")}`);
 }
 
 if (blocking.length > 0) {
   for (const f of blocking) console.error(`${f.rel}:${f.line}:${f.col}  [${f.kind}]  ${f.snippet}`);
-  console.error(`\n✖ ${blocking.length} 件の裸和文リテラル（pending 外）が見つかりました。`);
-  console.error(`  t()/useT() でカタログ化するか、翻訳対象外なら // i18n-exempt を付けてください。`);
-  console.error(`  棚卸し全体は: node scripts/i18n-lint.mjs --list`);
+  console.error(`\n✖ found ${blocking.length} bare Japanese literals outside pending.`);
+  console.error(`  Move them into the catalogue with t()/useT(), or mark them // i18n-exempt if they are not to be translated.`);
+  console.error(`  Full inventory: node scripts/i18n-lint.mjs --list`);
   process.exit(1);
 }
-console.log("✓ pending 外に裸和文リテラルはありません。");
+console.log("✓ no bare Japanese literals outside pending.");

@@ -1,5 +1,5 @@
-// メンバー詳細（1 人ぶんの面）— 稼働・費用・サイズ・ロール・退出の一式。
-// 名簿側（tenantMembers.tsx）から選ばれた 1 人を描く。
+// Member detail: one person's surface — uptime, cost, size, role and removal in one place.
+// Renders whoever was selected on the roster (tenantMembers.tsx).
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -37,15 +37,15 @@ export function MemberView({
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmDestroy, setConfirmDestroy] = useState(false);
   const [confirmPurgeRow, setConfirmPurgeRow] = useState(false);
-  // 退職処理のついでに破棄するかどうか。既定 false のまま出す——現行の契約
-  // （home を残し、戻ってきたら再招待するだけ）を、チェックしない限り変えない。
+  // Whether removal also destroys the workspace. Shown unchecked, so the current contract
+  // (keep the home, and just re-invite if they come back) holds unless it is ticked.
   const [purge, setPurge] = useState(false);
   const [busy, setBusy] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
   const [limit, setLimit] = useState<number | string>(member.max_sessions ?? 0);
   // The three workspace size axes. Memory is stored in bytes and edited in MB, CPU in
   // Fargate units (1024 = 1 vCPU) and disk in GiB — 0 means "unset → deployment default"
-  // on every axis. They are independent on purpose (ADR 0044 決定 1): the presets below
+  // on every axis. They are independent on purpose (ADR 0044 decision 1): the presets below
   // just fill all three at once with a combination Fargate accepts.
   const [memMb, setMemMb] = useState<number | string>(member.mem_limit ? Math.round(member.mem_limit / 1048576) : 0);
   const [cpuUnits, setCpuUnits] = useState<number | string>(member.cpu_limit ?? 0);
@@ -54,7 +54,7 @@ export function MemberView({
   // tenant default, which is a real value here and not "unset means smallest": there
   // is no numeric fallback for a class.
   const [slotClass, setSlotClass] = useState<string>(member.slot_class ?? "");
-  // ⚠️ `member` is a SNAPSHOT taken when its row was clicked. The parent
+  // `member` is a SNAPSHOT taken when its row was clicked. The parent
   // (TenantDialog / AdminTab) holds it in useState and `onChanged` reloads the tenant
   // LIST, not the selection — so the prop never reflects anything saved from here.
   // Re-seeding the editor from it after a save therefore shows the values from BEFORE
@@ -67,7 +67,7 @@ export function MemberView({
   // input (an unknown class is refused, a number is clamped).
   const [savedLimits, setSavedLimits] = useState<Partial<Member> | null>(null);
   const cur = { ...member, ...(savedLimits ?? {}) };
-  // What those three numbers actually DO on this deployment's runtime (ADR 0045 決定 21).
+  // What those three numbers actually DO on this deployment's runtime (ADR 0045 decision 21).
   // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
   // the EC2 slot pool, and it used to describe all four as Fargate.
   const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
@@ -131,14 +131,15 @@ export function MemberView({
 
   const running = stats?.running;
   const memRatio = stats?.mem_max ? stats.mem_used / stats.mem_max : null;
-  // ディスクの分母は実測（disk_total = home が載る FS の容量）を優先し、無ければ
-  // 設定値の上限（disk_quota）に落ちる。ecs-ec2 では disk_gb は作成時にしか効かない
-  // ので、後から数字だけ変えられた場合に「設定値」を分母にすると割合が嘘になる
-  // ——実測が取れているならそちらが真である（docs/log/63 §63.9）。
+  // The disk denominator prefers the measured value (disk_total = the capacity of the FS the
+  // home sits on) and falls back to the configured cap (disk_quota). On ecs-ec2 disk_gb only
+  // takes effect at creation, so if the number alone is changed later, using the configured
+  // value as the denominator makes the ratio a lie — where a measurement exists, it is the
+  // truth (docs/log/63 §63.9).
   const diskTotal = stats?.disk_total ?? stats?.disk_quota ?? null;
   const diskRatio = diskTotal && stats?.disk_used != null ? stats.disk_used / diskTotal : null;
 
-  // --- how to describe the three size axes on THIS runtime (ADR 0045 決定 21) ------
+  // --- how to describe the three size axes on THIS runtime (ADR 0045 decision 21) ------
   // A ladder exists only on the EC2 slot pool; everywhere else the memory number is a
   // cap and keeps the wording it has always had.
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
@@ -162,7 +163,7 @@ export function MemberView({
       : tr("admin.zero_deploy_default")
     : +memMb > 0
       ? tr("admin.ws_slot_lands", { type: landed.instance_type, spec: slotSpec(landed) })
-      : // ⚠️ 0 is NOT "deployment default" here: slotTypeFor(0) lands on the smallest rung.
+      : // 0 is NOT "deployment default" here: slotTypeFor(0) lands on the smallest rung.
         tr("admin.ws_slot_zero", { type: landed.instance_type });
   const diskDefault = sizing.disk_default_gb ?? 0;
   const diskHint =
@@ -244,12 +245,12 @@ export function MemberView({
       setBusy(false);
     }
   };
-  // Workspace の破棄（ADR 0045 決定 13）。退職処理とは別の 2 段目で、対象は
-  // 「すでに外したメンバー」だけ——在席中の人の home を管理画面の 1 クリック隣で
-  // 消せないようにするため（サーバ側も 409 で拒む）。
+  // Destroying the workspace (ADR 0045 decision 13). A second step, separate from removal, and
+  // it applies only to members already removed — so that a current member's home is never one
+  // click away in the admin screen (the server refuses with 409 as well).
   //
-  // leftovers は「消せなかったもの」。Fargate では EFS のディレクトリが残り、課金も
-  // 残る。成功したことにして黙らせると、運用者は「消えた」と思い込む。
+  // leftovers is what could not be deleted. On Fargate the EFS directory survives, and so does
+  // the billing; reporting success and staying quiet leaves the operator believing it is gone.
   const destroyWorkspace = async () => {
     setBusy(true);
     try {
@@ -266,11 +267,12 @@ export function MemberView({
       setBusy(false);
     }
   };
-  // 後始末の 3 段目（docs/log/61 §61.18）。除名（論理削除）→ Workspace の破棄 → ここ。
+  // The third cleanup step (docs/log/61 §61.18): removal (a soft delete), then destroying the
+  // Workspace, then this.
   //
-  // ★ 出すのは「Workspace がもう無い」ときだけ。member.state は CP が
-  // workspaceStateByMembership で返しているもので、workspace 行が無ければ "none"。
-  // サーバも 409 で拒むが、押せるのに必ず失敗するボタンを置く理由が無い。
+  // Offered only once the Workspace is gone. member.state is what the CP returns from
+  // workspaceStateByMembership, and is "none" when there is no workspace row. The server also
+  // refuses with 409, but there is no reason to show a button that can only ever fail.
   const deleteMemberRow = async () => {
     setBusy(true);
     try {
@@ -284,7 +286,7 @@ export function MemberView({
         return;
       }
       setConfirmPurgeRow(false);
-      onRemoved(); // 行ごと消えたので、詳細を開いたままにしない
+      onRemoved(); // the row itself is gone, so do not leave the detail open
     } finally {
       setBusy(false);
     }
@@ -318,9 +320,9 @@ export function MemberView({
         {member.email && <span className="mh-email muted">{member.email}</span>}
       </header>
 
-      {/* 自動停止の見通し（docs/log/75 P4）。名簿の行は 1 件しか出せないので、詳細では
-          止めている理由を全部並べる — 「s5 が実行中」と「s3 にピンが掛かっている」は
-          運用者の次の一手が違う（待つ / 外してもらう）。 */}
+      {/* Auto-stop outlook (docs/log/75 P4). A roster row fits only one holder, so the detail
+          lists them all: "s5 is running" and "s3 is pinned" call for different next moves from
+          the operator (wait, or ask for the pin to be released). */}
       <MemberIdleDetail idle={member.idle} state={member.state} />
 
       <section className="admin-panel">
@@ -358,15 +360,17 @@ export function MemberView({
         </div>
       </section>
 
-      {/* リソースの「今」の直後に、費用の「期間」を別のカードで置く。同じカードに
-          しないのは ADR 0048 決定 2（時間と $ を並べない）——上のタイルは 4 秒ごとの
-          実測、こちらは約 24 時間遅れの請求で、読み方が違う。 */}
+      {/* Cost over a period sits right after resources right now, in a separate card. Keeping
+          them apart is ADR 0048 decision 2 (do not put time and dollars side by side): the
+          tiles above are measured every 4 seconds, this is billing roughly 24 hours behind,
+          and they are read differently. */}
       <MemberCostPanel slug={slug} userKey={key} />
 
-      {/* 費用のすぐ下に、同じ期間の占有を時間まで割ったもの（docs/log/83）。並べる意味は
-          「この日だけ高い」の理由がその場で読めること — 夜通しの帯なら止め忘れ、昼だけ
-          濃いなら働いていた。⚠️ 費用と違って能力の確認は要らない（請求の無いデプロイでも
-          占有は在る）。 */}
+      {/* Directly below cost: the same period's uptime broken down by hour (docs/log/83). Side
+          by side, the reason one day is expensive can be read on the spot — a band running all
+          night means someone forgot to stop it, dense only in the daytime means they were
+          working. Unlike cost, this needs no capability check: uptime exists even on a
+          deployment with no billing. */}
       <MemberUptimePanel slug={slug} userKey={key} />
 
       <section className="admin-panel">
@@ -442,7 +446,7 @@ export function MemberView({
           }}>
             <Icon name="settings" /> {tr("admin.set_limits")}
           </button>
-          {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / 決定 26):
+          {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / decision 26):
               the department knows who left, so the whole offboarding sequence
               belongs to it rather than half of it being a ticket to IT. */}
           <button className="danger-btn" onClick={() => setConfirmClean(true)}>
@@ -525,7 +529,7 @@ export function MemberView({
               </label>
             </div>
             {/* Presets are a way to PRESENT valid combinations, not a stored size
-                (ADR 0044 決定 1). On a slot pool the valid set is the ladder itself, so
+                (ADR 0044 decision 1). On a slot pool the valid set is the ladder itself, so
                 the chips become the rungs and touch only the memory axis — offering an
                 in-between value there would just round up silently. */}
             <div className="le-presets">
@@ -562,7 +566,7 @@ export function MemberView({
             </div>
             {!sizing.cpu_effective && <p className="admin-hint">{tr("admin.ws_cpu_na")}</p>}
             {onSlots && <p className="admin-hint">{tr("admin.ws_slot_note")}</p>}
-            {/* ⚠️ The one destructive-ish consequence in this editor. `~` is a volume
+            {/* The one destructive-ish consequence in this editor. `~` is a volume
                 that follows the member, and its ~/.local CLIs, nvm node, Chromium and
                 node_modules are architecture-dependent — a class change across
                 architectures makes the next start reinstall them (docs/log/70 §70.5).

@@ -138,9 +138,9 @@ func TestReusePolicyDefaults(t *testing.T) {
 	}
 }
 
-// reuseSendBody must request delivery confirmation (docs/log/38 配達検証): without
-// confirm the Agent answers 200 on mere keystroke delivery, and a swallowed prompt
-// records a bogus "fired" (the 2026-07-24 sbk7oej recurrence).
+// reuseSendBody must request delivery confirmation (docs/log/38, delivery verification):
+// without confirm the Agent answers 200 on mere keystroke delivery, so a swallowed prompt
+// records a bogus "fired".
 func TestReuseSendBodyRequestsConfirm(t *testing.T) {
 	var body struct {
 		Prompt   string `json:"prompt"`

@@ -6,66 +6,78 @@ import { ttsIsBackground, ttsMasterGain, ttsPanePan } from "../ttsControl.ts";
 import { type TtsOptions } from "./ttsOptions.ts";
 import { voiceCharName } from "./ttsVoices.ts";
 
-// 同時に合成を投げる上限。長文で数十並列にしてエンジン/CP を溢れさせない。
+// Cap on concurrent synthesis requests, so a long text does not fire dozens at once and
+// swamp the engine or CP.
 export const MAX_INFLIGHT = 2;
-// チャンク間に挟む「間」（秒）。素材側の前後無音は CP が短縮している（audio_query の
-// pre/postPhonemeLength 上書き）ため、実際の間隔はほぼこの値＋残り無音（~0.07s）になる。
-// 3 段構え: 改行（段落・行の切れ目）の後は一拍 SENTENCE_GAP、文中の句点（。！？）の後は
-// より短い一拍 SENT_BEAT、読点などでの文中早出しの後は詰める CLAUSE_GAP。
+// Gap inserted between chunks, in seconds. CP shortens the leading/trailing silence of the
+// material itself (overriding audio_query's pre/postPhonemeLength), so the real interval is
+// about this value plus the ~0.07s of silence that remains. Three tiers: after a newline
+// (paragraph or line break) a full SENTENCE_GAP beat; after a sentence-ending mark inside a
+// line the shorter SENT_BEAT; after an early mid-sentence flush at a comma the tight
+// CLAUSE_GAP.
 export const SENTENCE_GAP = 0.3;
 export const CLAUSE_GAP = 0.08;
-// 文中の句点（。！？）の後の短い一拍。ストリーミング（startTts）はチャンク後の間として、
-// 朗読（startNarration）では同一ブロック/行内の文境界の前拍として呼び手（turnTts /
-// readerText 経由）が使う。改行・ブロック頭（SENTENCE_GAP / BLOCK_BEAT = 0.3）より短い。
+// Short beat after a sentence-ending mark within a line. Streaming (startTts) uses it as the
+// gap after a chunk; narration (startNarration) takes it from the caller (via turnTts /
+// readerText) as the lead-in at a sentence boundary inside the same block or line. Shorter
+// than a newline or block head (SENTENCE_GAP / BLOCK_BEAT = 0.3).
 export const SENT_BEAT = 0.15;
-// リスト項目・見出し・引用など「新しいブロックの頭」の前に足す一拍（前拍）。マーカー記号は
-// 読まないので、構造の切れ目を間で表す。ストリーミング（startTts）は通常の間に加算、
-// 朗読（startNarration）は preGaps として呼び手（turnTts / ReaderView）が渡す。
+// Lead-in beat added before the head of a new block: list item, heading, quote. Marker
+// characters are not read aloud, so the structural break is conveyed by the pause instead.
+// Streaming (startTts) adds it to the normal gap; narration (startNarration) receives it as
+// preGaps from the caller (turnTts / ReaderView).
 export const BLOCK_BEAT = 0.3;
-// 行頭の溜め（――・……等・startsTame）の前拍。「一拍おいてから話す」演出なので通常の
-// ブロック頭（BLOCK_BEAT）より長く、はっきり間が空いたと感じる長さにする（実機報告）。
+// Lead-in for a line that opens with a suspension mark (dash, ellipsis; see startsTame). It
+// dramatises "pause, then speak", so it is longer than a normal block head (BLOCK_BEAT) and
+// long enough that the gap is clearly felt (measured on a real device).
 export const TAME_BEAT = 0.6;
-// これ未満の断片は次の文とまとめてから読む（細切れ再生を避ける）。改行/文末では強制フラッシュ。
+// Fragments shorter than this are merged with the next sentence before being read, to avoid
+// choppy playback. A newline or sentence end forces a flush regardless.
 export const MIN_CHUNK = 6;
 
-// 文末・区切りとみなす文字。ここまでを 1 チャンクとして確定する。
+// Characters treated as a sentence end or break; everything up to one of them settles as a
+// chunk.
 export const SENTENCE_END = /[。．！？!?\n]/;
 
-// 単一チャットターンの読み上げを司るコントローラ。send() 開始時に start し、onDelta で
-// push、onDone で flush、stop() で中断する。
-// --- 合成キャッシュ ------------------------------------------------------------
-// 同一文言＋同一合成条件の復号済み AudioBuffer をメモリ内 LRU で持ち、再読み上げ
-// （同じ回答の読み上げボタン再押下、定型 announce、朗読のやり直し等）を合成・
-// ネットワークなしで即再生する。AudioBuffer は再生ごとに AudioBufferSourceNode を
-// 作り直すので使い回して安全。上限は合計再生秒数（設定 ttsCacheSec、0=無効）で管理する
-// （VOICEVOX 24kHz mono float32 の PCM で約 0.1MB/秒）。リロードで消える（永続化しない）。
+// Controller for reading one chat turn: start it when send() begins, push on onDelta, flush
+// on onDone, abort with stop().
+// --- Synthesis cache ------------------------------------------------------------
+// An in-memory LRU of decoded AudioBuffers keyed by text plus synthesis conditions, so a
+// repeat reading (pressing read-aloud on the same answer again, a stock announce, restarting
+// a narration) plays instantly with no synthesis and no network. Reusing an AudioBuffer is
+// safe because each playback builds a fresh AudioBufferSourceNode. The bound is total
+// playback seconds (setting ttsCacheSec, 0 = disabled); VOICEVOX 24kHz mono float32 PCM runs
+// about 0.1MB per second. Not persisted, so a reload clears it.
 
 const synthCache = makeAudioLru<AudioBuffer>(() => getSettings().ttsCacheSec);
 
-// バッファ → それを実際に合成したプロバイダ（レスポンスの X-TTS-Provider）。auto の行き先を
-// 決めるのは CP 側（エンジンの到達性・言語・管理トグル）なので、設定だけを見て「ずんだもんで
-// 鳴っている」と名乗ると嘘になる — VOICEVOX を立てていないデプロイでは日本語も Polly に落ちる。
-// WeakMap にしてあるので LRU から落ちたバッファの分は一緒に回収される。
+// Buffer -> the provider that actually synthesised it (the response's X-TTS-Provider). CP
+// decides where auto goes, based on engine reachability, language and admin toggles, so
+// claiming "this is Zundamon" from the setting alone would be a lie: a deployment without
+// VOICEVOX routes Japanese to Polly too. A WeakMap, so entries evicted from the LRU are
+// collected with their buffers.
 const bufProvider = new WeakMap<AudioBuffer, string>();
 
-// heardProvider は「そのバッファを実際に鳴らしたプロバイダ」。未知（旧 CP・キャッシュ外）は ""。
+// heardProvider returns the provider that actually produced a buffer, or "" when unknown
+// (an older CP, or a buffer from outside the cache).
 export function heardProvider(ab: AudioBuffer | null | undefined): string {
   return (ab && bufProvider.get(ab)) || "";
 }
 
-// キーは合成条件＋テキスト。区切りはテキストに現れない NUL。provider は設定値
-// （auto 含む）で持つため、auto のルーティング先が変わった直後は旧エンジンの声が
-// 再生されうる（エビクトで解消する程度の割り切り）。
+// The key is the synthesis conditions plus the text, separated by NUL, which cannot occur in
+// the text. provider is stored as the configured value (including auto), so right after
+// auto's routing changes the old engine's voice may still play; eviction resolves it, and
+// that is accepted.
 function synthCacheKey(text: string, opts: TtsOptions): string {
   return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", opts.particlePause ? 1 : 0, text].join(
     "\u0000",
   );
 }
 
-// synthToBuffer は 1 文を CP の /api/tts/synthesize で合成し、AudioBuffer へ復号する。
-// キャッシュにあれば即返す。失敗（abort / ネットワーク / 非 200 / 復号失敗）は null
-// （呼び手は当該文をスキップ）。ストリーム読み上げ（startTts）と朗読（startNarration）
-// の両方から使う共通処理。
+// synthToBuffer synthesises one sentence through CP's /api/tts/synthesize and decodes it to
+// an AudioBuffer, returning a cache hit immediately. Failure (abort, network, non-200, decode
+// error) returns null and the caller skips that sentence. Shared by streaming playback
+// (startTts) and narration (startNarration).
 export async function synthToBuffer(
   ctx: AudioContext,
   text: string,
@@ -94,9 +106,9 @@ export async function synthToBuffer(
     if (!res.ok) return null;
     const arr = await res.arrayBuffer();
     const ab = await ctx.decodeAudioData(arr);
-    // 実際に鳴らしたプロバイダ。auto の行き先を決めるのは CP（エンジンの到達性・言語・管理
-    // トグル）なので、設定だけからは分からない。バッファに紐づけて憶えるのは、キャッシュに
-    // 当たった再生でも同じ判定を引き継ぐため（WeakMap なので LRU から落ちれば一緒に消える）。
+    // The provider that actually produced this audio. CP decides where auto goes (engine
+    // reachability, language, admin toggles), so the setting alone cannot tell. Remembering it
+    // per buffer carries the same answer into playback that hits the cache.
     const actual = res.headers.get("X-TTS-Provider");
     if (actual) bufProvider.set(ab, actual);
     synthCache.put(key, ab);
@@ -106,8 +118,9 @@ export async function synthToBuffer(
   }
 }
 
-// AudioContext と最終出力の master gain は 1 つを使い回す。各再生の volume（作業過程の
-// 小声等）を掛けた後、master で背景時の音量を全再生まとめて滑らかに変更する。
+// One shared AudioContext and one master gain for the final output. Each playback's own
+// volume (the quiet work-trace reading, say) is applied first; the master then moves the
+// background volume for every playback at once, smoothly.
 let sharedCtx: AudioContext | null = null;
 let masterGain: GainNode | null = null;
 let backgroundEventsWired = false;
@@ -117,17 +130,19 @@ function masterTarget(): number {
   return ttsMasterGain(getSettings().ttsBackgroundPlayback, ttsIsBackground(hidden, focused), getSettings().ttsBackgroundVolume);
 }
 
-// voiceLoudness は声ごとの出力音量倍率。ずんだもんは他キャラより素の音圧が高いため、設定
-// ttsZundamonVolume で少し下げて他の声・通知音と揃える（実機フィードバック）。Polly や他キャラは 1。
-// heard を見るのはラベルと同じ理由: auto が Polly に落ちているのにずんだもん向けの減衰を
-// 掛けると、鳴っていない声の設定で音量が下がる。
+// voiceLoudness is the per-voice output multiplier. Zundamon is naturally louder than the
+// other characters, so the ttsZundamonVolume setting trims it to match the other voices and
+// the notification sounds (measured on a real device); Polly and every other character get 1.
+// It consults heard for the same reason the label does: applying Zundamon's attenuation while
+// auto has fallen back to Polly would quieten a voice that is not the one playing.
 function voiceLoudness(opts: TtsOptions, heard = ""): number {
   if (voiceCharName(opts, heard) === "ずんだもん") return Math.max(0, Math.min(1, getSettings().ttsZundamonVolume));
   return 1;
 }
 
-// outputVolume は連結する再生ゲイン = 呼び手が指定した volume（作業過程の小声等）× 声ごとの
-// 音量倍率。3 つの connectOutput 呼び出し（ストリーム/朗読/告知）が共通で使う。
+// outputVolume is the playback gain to wire in: the caller's volume (the quiet work-trace
+// reading, say) times the per-voice multiplier. Shared by all three connectOutput call sites
+// (streaming, narration, announcement).
 export function outputVolume(opts: TtsOptions, heard = ""): number {
   return (opts.volume ?? 1) * voiceLoudness(opts, heard);
 }
@@ -142,7 +157,7 @@ function syncMasterGain(immediate = false): void {
     gain.setValueAtTime(target, now);
     return;
   }
-  // 約150msで目標の95%へ到達。瞬時変更によるクリックノイズを避ける。
+  // Reaches 95% of the target in about 150ms, avoiding the click an instant change makes.
   gain.setValueAtTime(gain.value, now);
   gain.setTargetAtTime(target, now, 0.05);
 }
@@ -188,6 +203,7 @@ export function connectOutput(ctx: AudioContext, src: AudioBufferSourceNode, vol
   output.connect(destination);
 }
 
-// 設定画面で切り替えた瞬間にも、再生中の音へ反映する。サーバー同期で設定が更新された場合も
-// 同じ settings subscription を通るため、次の visibilitychange / focus を待たない。
+// Apply a settings change to audio already playing, the moment it is toggled. A settings
+// update arriving from server sync goes through the same subscription, so neither waits for
+// the next visibilitychange or focus.
 subscribeSettings(() => syncMasterGain());

@@ -1,20 +1,20 @@
-// カタログ分割（ADR 0067 決定 4）の不変条件を守るテスト。
+// Guards the invariants of the split catalogue (ADR 0067 decision 4).
 //
-// 分割の狙いは「各フロントセッションが自分のドメインのファイルにだけ追記する＝衝突しない」
-// ことで、それが成立する条件は 3 つある。どれが壊れても **アプリはそれなりに動いてしまう**
-// ので、テストで止めるしかない:
+// The point of the split is that each front-end session only appends to its own domain file and
+// so never collides. Three conditions make that hold, and breaking any of them still leaves the
+// app more or less working, so only a test can stop it:
 //
-//  1. 同じキーが 2 つのドメインファイルに在らないこと。合成は spread なので**後勝ちで
-//     無言に上書き**される —— 2 セッションが同じキーを別ファイルに足すと、片方の文言が
-//     消えたまま緑になる。
-//  2. 1 つの接頭辞（"chat" / "settings" …）は 1 ファイルだけが持つこと。これが崩れると
-//     「自分のドメインのファイル」がどれか決まらなくなり、全員が同じファイルを触る元の
-//     状態に戻る（＝分割した意味が消える）。
-//  3. **ディレクトリに在るドメインが、合成にも入っていること。** これは分割して初めて
-//     生まれた失敗の形で、しかも全ゲートをすり抜ける（下記）。
+//  1. The same key must not exist in two domain files. Composition is a spread, so the later one
+//     silently wins: two sessions adding the same key in different files lose one wording and
+//     stay green.
+//  2. One key prefix ("chat" / "settings" …) belongs to exactly one file. Without that, "my
+//     domain's file" is undefined and everyone edits the same file again, which is the state the
+//     split removed.
+//  3. Every domain present in the directory must also be in the composition. This failure only
+//     became possible with the split, and it slips through every gate (see below).
 //
-// ja と en のファイル構成が一致していること（キーの網羅そのものは tsc と i18n.test.ts が
-// 見ている）もここで確かめる。
+// That ja and en have matching file structures is checked here too; key coverage itself is
+// covered by tsc and i18n.test.ts.
 import { describe, it, expect } from "vitest";
 import { ja } from "./locales/ja.ts";
 import { en } from "./locales/en.ts";
@@ -23,12 +23,12 @@ type Catalog = Record<string, string>;
 const jaModules = import.meta.glob<{ [k: string]: Catalog }>("./locales/ja/*.ts", { eager: true });
 const enModules = import.meta.glob<{ [k: string]: Catalog }>("./locales/en/*.ts", { eager: true });
 
-// 1 ファイル = 1 named export（ドメイン名）という取り決めに従って中身を取り出す。
+// Reads the contents under the convention of one named export (the domain name) per file.
 function catalogsOf(mods: Record<string, { [k: string]: Catalog }>): Map<string, Catalog> {
   const out = new Map<string, Catalog>();
   for (const [path, mod] of Object.entries(mods)) {
     const values = Object.values(mod).filter((v) => v && typeof v === "object");
-    expect(values, `${path} は named export をちょうど 1 つ持つこと`).toHaveLength(1);
+    expect(values, `${path} must have exactly one named export`).toHaveLength(1);
     out.set(path.replace(/^.*\//, "").replace(/\.ts$/, ""), values[0] as Catalog);
   }
   return out;
@@ -37,37 +37,36 @@ function catalogsOf(mods: Record<string, { [k: string]: Catalog }>): Map<string,
 const jaCatalogs = catalogsOf(jaModules);
 const enCatalogs = catalogsOf(enModules);
 
-describe("i18n カタログの分割", () => {
-  it("ドメインファイルが 1 つ以上あり、ja と en で構成が一致する", () => {
+describe("i18n catalogue split", () => {
+  it("has more than one domain file, with matching structure in ja and en", () => {
     expect(jaCatalogs.size).toBeGreaterThan(1);
     expect([...enCatalogs.keys()].sort()).toEqual([...jaCatalogs.keys()].sort());
   });
 
-  // 🔥 ここが無いと、新しいドメインを足したのに ja.ts / en.ts の import と spread を
-  // 忘れても **すべてのゲートが緑のまま通る**（レビュー指摘 R-1・実測で再現済み）:
-  // このファイルの glob はディレクトリを直接読むので「在る」ように見え、tsc も
-  // 未使用ファイルを咎めず、i18n.test.ts の網羅ガードは**合成後の** ja/en どうしを
-  // 突き合わせるので両方足し忘れると差が出ない。t() は画面に生キーを出すだけ。
-  // 新ドメインの追加＝新規 2 ファイル＋合成 2 ファイルなので、後半 2 つを忘れるのが
-  // 最も普通の抜け方で、ウェーブ A 以降は文言追加を伴う＝必ず起きる。
+  // Without this check, adding a new domain while forgetting the import and spread in ja.ts /
+  // en.ts passes every gate green (measured): this file's glob reads the directory directly so
+  // the domain looks present, tsc does not complain about an unused file, and i18n.test.ts
+  // compares ja and en after composition, so forgetting both sides shows no difference. All t()
+  // does then is print the raw key on screen. Adding a domain means two new files plus two
+  // composition files, so forgetting the latter two is the ordinary way to slip.
   //
-  // 逆向き（合成にしか無いキー）も同時に見る。ja.ts / en.ts に直接キーを書くと、
-  // また全員が触る 1 ファイルに戻る＝分割の意味が消えるため。
+  // The reverse direction (a key only in the composition) is checked at the same time: writing
+  // keys directly into ja.ts / en.ts brings back the single file everyone edits.
   it.each([
     ["ja", jaCatalogs, ja as Catalog],
     ["en", enCatalogs, en as Catalog],
-    // ⚠️ タイトルの %s は 1 つだけにする。it.each は残りの引数も順に埋めるので、
-    // 2 つ書くとカタログ Map 全体（4,112 キー）がテスト名に展開される。
-  ] as const)("%s: ドメインファイルと合成ファイルのキー集合が一致する", (locale, catalogs, composed) => {
+    // Use exactly one %s in the title: it.each fills the remaining arguments in order, so a
+    // second one expands the whole catalogue Map (4,112 keys) into the test name.
+  ] as const)("%s: domain files and the composed file hold the same set of keys", (locale, catalogs, composed) => {
     const notComposed: string[] = [];
     for (const [domain, cat] of catalogs) {
       const miss = Object.keys(cat).filter((k) => !(k in composed));
-      // ファイルごとにまとめて報告する。1 ドメイン丸ごと欠けているのか、キーが数個
-      // 落ちているのかで、直す場所（import と spread か、ドメインファイル自身か）が違う。
+      // Report per file: a whole domain missing and a few keys missing are fixed in different
+      // places (the import and spread, versus the domain file itself).
       if (miss.length > 0) {
         notComposed.push(
-          `${locale}/${domain}.ts: ${miss.length}/${Object.keys(cat).length} キーが locales/${locale}.ts に無い` +
-            `（例 ${miss.slice(0, 3).join(", ")}）— import と ...${domain} を足し忘れていないか`,
+          `${locale}/${domain}.ts: ${miss.length}/${Object.keys(cat).length} keys are absent from locales/${locale}.ts` +
+            ` (e.g. ${miss.slice(0, 3).join(", ")}) - check the import and ...${domain} were not forgotten`,
         );
       }
     }
@@ -76,23 +75,23 @@ describe("i18n カタログの分割", () => {
     const fromDomains = new Set<string>();
     for (const cat of catalogs.values()) for (const k of Object.keys(cat)) fromDomains.add(k);
     const onlyComposed = Object.keys(composed).filter((k) => !fromDomains.has(k));
-    expect(onlyComposed, `locales/${locale}.ts に直接書かれたキー（ドメインファイルへ移すこと）`).toEqual([]);
+    expect(onlyComposed, `keys written directly in locales/${locale}.ts (move them to a domain file)`).toEqual([]);
   });
 
-  it.each(["ja", "en"] as const)("%s: 同じキーが 2 つのファイルに存在しない", (locale) => {
+  it.each(["ja", "en"] as const)("%s: no key exists in two files", (locale) => {
     const owner = new Map<string, string>();
     const dup: string[] = [];
     for (const [domain, cat] of locale === "ja" ? jaCatalogs : enCatalogs) {
       for (const key of Object.keys(cat)) {
         const prev = owner.get(key);
-        if (prev) dup.push(`${key}: ${prev} と ${domain}`);
+        if (prev) dup.push(`${key}: ${prev} and ${domain}`);
         else owner.set(key, domain);
       }
     }
     expect(dup).toEqual([]);
   });
 
-  it("1 つのキー接頭辞を持つファイルは 1 つだけ", () => {
+  it("gives each key prefix exactly one file", () => {
     const owner = new Map<string, string>();
     const split: string[] = [];
     for (const [domain, cat] of jaCatalogs) {
@@ -100,16 +99,16 @@ describe("i18n カタログの分割", () => {
         const prefix = key.split(".")[0];
         const prev = owner.get(prefix);
         if (prev === undefined) owner.set(prefix, domain);
-        else if (prev !== domain) split.push(`${prefix}: ${prev} と ${domain}（キー ${key}）`);
+        else if (prev !== domain) split.push(`${prefix}: ${prev} and ${domain} (key ${key})`);
       }
     }
     expect([...new Set(split)]).toEqual([]);
   });
 
-  it("ja と en は同じファイルに同じキーを持つ（片側だけ別ドメインに置かれていない）", () => {
+  it("keeps the same keys in the same file for ja and en (neither side sits in another domain)", () => {
     for (const [domain, jaCat] of jaCatalogs) {
       const enCat = enCatalogs.get(domain);
-      expect(enCat, `en/${domain}.ts が無い`).toBeDefined();
+      expect(enCat, `en/${domain}.ts is missing`).toBeDefined();
       expect(Object.keys(enCat as Catalog).sort()).toEqual(Object.keys(jaCat).sort());
     }
   });

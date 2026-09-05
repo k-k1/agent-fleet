@@ -40,7 +40,7 @@ var (
 // capturing the pane and matching the CLI's on-screen text. Returns:
 //
 //	"resume"     — parked at the startup "Resume from summary / Resume full session /
-//	               Don't ask me again" menu (a chat user who pressed 再開して続ける is
+//	               Don't ask me again" menu (a chat user who pressed "Resume and continue" is
 //	               stuck here; keystrokes go to the menu, not a prompt).
 //	"compacting" — auto-compaction (context compression) is running; the second return
 //	               carries the parsed progress bar (nil for the other states).

@@ -83,7 +83,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
   // Load status + graph. Returns whether the load succeeded. A gateway/empty response
   // while the workspace agent is still booting (WS just started) is resolved by api() as
   // { error } — NOT a throw — so committing it would leave the pane on a "?" branch with
-  // コミットがありません forever; the mount effect retries instead (keepLoadingOnFail keeps
+  // "no commits" forever; the mount effect retries instead (keepLoadingOnFail keeps
   // the spinner up between attempts rather than flashing "no commits").
   const refresh = useCallback(async (keepLoadingOnFail = false) => {
     setLoading(true);
@@ -221,7 +221,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
     bumpFiles();
   };
 
-  // 「このブランチで作業を始める」: a worktree is always spun off the BASE clone (one
+  // "start work on this branch": a worktree is always spun off the BASE clone (one
   // can't hang off another worktree), so from a worktree view the launch targets its
   // parent. Undefined until the repo list has loaded — the menu item hides until then.
   const me = repos.find((x) => x.name === repo);
@@ -379,7 +379,7 @@ export function SourceControlView({ repo, path = "", headerActions }: { repo: st
               .filter((rf) => rf.type === "head")
               .map((rf) => {
                 const holder = occupied[rf.name];
-                // 「作業を始める」creates an isolated worktree; 「切り替え」moves THIS
+                // "start work" creates an isolated worktree; "switch" moves THIS
                 // copy's HEAD. In a worktree (1 copy = 1 task = 1 branch) the isolated
                 // option leads; in the base clone, switching is still the primary act.
                 const items = [

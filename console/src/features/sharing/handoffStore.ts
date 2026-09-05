@@ -1,10 +1,11 @@
-// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）のクライアント状態。
+// Client state for handoffs to another member (docs/log/77 / ADR 0057).
 //
-// 3 つの役割を混ぜないのがこの機能の要（docs/log/77 §77.10）:
-//   通知 = 流れ物（既読で消えてよい）／バッジ = 未処理の在庫／台帳 = 出した側の履歴。
-// ここが持つのは後ろ 2 つで、どちらも CP の DB スナップショットを読むだけ ——
-// **所有者 Workspace が停止していても出る**のが要件そのものなので、共有一覧のように
-// 所有者へ往復する経路には乗せない。
+// Keeping the three roles apart is what makes this feature work (docs/log/77 §77.10):
+//   notification = transient (may vanish once read) / badge = the backlog of undecided offers /
+//   ledger = the sender's own history.
+// Only the last two live here, and both read nothing but the CP's DB snapshot: showing them while
+// the owner's Workspace is stopped is the requirement itself, so never route them through the
+// owner the way the share list does.
 import { create } from "zustand";
 import { api } from "../../core/api/client.ts";
 
@@ -12,9 +13,9 @@ export type HandoffOfferStatus = "pending" | "accepted" | "declined" | "withdraw
 
 export interface HandoffOffer {
   id: string;
-  /** 共有カタログ id（受信側の共有ビューを開く鍵）。 */
+  /** Share catalogue id (the key that opens the recipient's shared view). */
   sessionId: string;
-  /** 引き継ぎ元のセッション名（所有者側の表示・遷移先）。 */
+  /** Name of the source session (what the owner side displays and navigates to). */
   sessionName: string;
   recipientUserKey: string;
   ownerUserKey?: string;
@@ -27,15 +28,15 @@ export interface HandoffOffer {
   expiresAt?: string;
   decidedAt?: string;
   acceptedSessionName?: string;
-  /** 受信箱だけが本文を持つ。受け取るかどうかを決めるのに読む必要があるため。 */
+  /** Only the inbox carries the body: the recipient has to read it to decide whether to accept. */
   prompt?: string;
   sourceSessionKind?: string;
 }
 
 interface HandoffStore {
-  /** 自分が出した引き継ぎ（台帳）。決着済みも含む。 */
+  /** Handoffs I sent (the ledger), including ones already decided. */
   owned: HandoffOffer[];
-  /** 自分が受け取った未処理の引き継ぎ（受信箱）。 */
+  /** Undecided handoffs sent to me (the inbox). */
   received: HandoffOffer[];
   refresh(): Promise<void>;
 }
@@ -55,21 +56,21 @@ export const useHandoffStore = create<HandoffStore>((set) => ({
   },
 }));
 
-/** 未処理の在庫は「既読」では消さない（docs/log/77 §77.10）ので、素の件数がそのままバッジ。 */
+/** The backlog is not cleared by "read" (docs/log/77 §77.10), so the raw count is the badge. */
 export function pendingHandoffCount(offers: HandoffOffer[]): number {
   return offers.filter((o) => o.status === "pending").length;
 }
 
-/** そのセッションについて今どうなっているか。1 セッションにつき未処理は 1 件（ADR 0057
- *  決定 10）なので、pending があればそれが答え。無ければ直近の決着を返す。 */
+/** Where a session stands right now. A session has at most one undecided offer (ADR 0057
+ *  decision 10), so a pending one is the answer; otherwise return the most recent decision. */
 export function offerForSession(offers: HandoffOffer[], sessionName: string): HandoffOffer | undefined {
   const mine = offers.filter((o) => o.sessionName === sessionName);
   return mine.find((o) => o.status === "pending") ?? mine[0];
 }
 
-// ポーリングは**参照カウント**で 1 本に束ねる。呼び手はレールの共有セクションと共有ビュー
-// （通知から直接開かれる面。レールが無い切り離しタブでも自力で在庫を持てるように、面の側でも
-// 呼ぶ）で、素直に window.setInterval を並べると開いているペインの数だけ 2 本の GET が増える。
+// Polling is refcounted down to a single timer. The callers are the rail's sharing section and the
+// shared view (opened straight from a notification; it subscribes itself so a detached tab with no
+// rail still has the backlog), and one window.setInterval each would add two GETs per open pane.
 let pollers = 0;
 let pollTimer = 0;
 
@@ -77,7 +78,7 @@ export function startHandoffPolling(): () => void {
   const load = () => {
     if (!document.hidden) void useHandoffStore.getState().refresh();
   };
-  load(); // 新しい購読者にはその場で最新を（15 秒待たせない）
+  load(); // give a new subscriber current data at once, rather than making it wait 15 seconds
   if (++pollers === 1) pollTimer = window.setInterval(load, 15000);
   let stopped = false;
   return () => {

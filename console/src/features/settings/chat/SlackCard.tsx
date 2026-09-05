@@ -7,8 +7,8 @@ import { useTenantStore } from "../../../core/store/tenant.ts";
 import { getLocale, useT } from "../../../lib/i18n/index.ts";
 import { SettingsPanel, PsRow, CHAT_EVENTS, ALL_EVENTS } from "./chatCardParts.tsx";
 
-// SlackCard — the Socket-Mode twin of DiscordCard (docs/log/37 Slack 追随). Two tokens (bot
-// xoxb- + app-level xapp-) → verify → pick channel → 接続; details auto-save afterward.
+// SlackCard — the Socket-Mode twin of DiscordCard (docs/log/37 Slack follow-up). Two tokens (bot
+// xoxb- + app-level xapp-) → verify → pick channel → connect; details auto-save afterward.
 export function SlackCard({ st, reload }: { st: any; reload: () => void }) {
   const tr = useT();
   const toast = useToast();

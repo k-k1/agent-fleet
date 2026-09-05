@@ -90,10 +90,10 @@ func TestPostgresStore(t *testing.T) {
 	if got, ok, err := st.GetWorkspaceByMembership(ctx, m1.ID); err != nil || !ok || got.State != "running" {
 		t.Fatalf("get ws: ok=%v err=%v %+v", ok, err, got)
 	}
-	// 🔥 ワークスペース設定の往復（2026-09-01 の本番不具合の回帰）。`workspace.settings`
-	// は SQLite にしか無く、Postgres のデプロイでは **PUT /api/env/ws-settings が常に 500**
-	// だった。★ 読み出しは呼び出し側がエラーを握りつぶすので、書けるかどうかを見ない限り
-	// この壊れ方は緑のまま通る —— スキーマのパリティ検査（skip されがち）だけに任せない。
+	// Workspace settings round trip. `workspace.settings` existed only on SQLite, so on a
+	// Postgres deployment PUT /api/env/ws-settings answered 500 every time. The read side
+	// hides it — its callers swallow the error — so nothing catches this unless the test
+	// actually writes; don't leave it to the schema parity check, which is easily skipped.
 	if err := st.SetWorkspaceSettings(ctx, ws.ID, `{"previewPorts":[3000]}`); err != nil {
 		t.Fatalf("set ws settings: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("ssm profile: %v", err)
 	}
 
-	// memo categories (docs/log/21 UI刷新 / migrations-pg/0030). ★ This whole table had
+	// memo categories (docs/log/21 UI overhaul / migrations-pg/0030). This whole table had
 	// only ever existed on SQLite: the mirror migration was never written, so on a
 	// Postgres deployment every category endpoint answered 500 and the Console — which
 	// folds a non-array answer into an empty list — simply showed no categories. The
@@ -254,7 +254,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatalf("egress blocked: %v", err)
 	}
 	// Read side too: the aggregate + ORDER BY is where the dialects differ, and the
-	// admin 通信 page is the only caller. Ordering must put the busiest host first.
+	// admin traffic page is the only caller. Ordering must put the busiest host first.
 	eg, err := st.ListEgress(ctx, "2026-01-01", 100)
 	if err != nil {
 		t.Fatalf("list egress: %v", err)
@@ -440,7 +440,7 @@ func TestPostgresStore(t *testing.T) {
 		t.Fatal("tenant_idp row survived the delete")
 	}
 
-	// super_admin revocation (決定 24): i2 was upgraded above, and dropping it from
+	// super_admin revocation (decision 24): i2 was upgraded above, and dropping it from
 	// the env list must take it away.
 	demoted, err := st.DemoteSuperAdmins(ctx, []string{"someone-else@example.com"})
 	if err != nil {

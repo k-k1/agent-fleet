@@ -1,13 +1,15 @@
 package sessionx
 
-// managed driver（docs/log/27: codex app-server / opencode serve）の完了報告 E2E。
+// End-to-end completion reporting for managed drivers (docs/log/27: codex app-server /
+// opencode serve).
 //
-// 報告（docs/log/30）は hook 経路にしか配線されておらず、hook を持たない managed driver は
-// status を直接書いて誰にも知らせなかった — 完了しても【セッション報告】が構造的に
-// 一切飛ばない、という穴があった（docs/log/30 に既知制限として記載）。driver 側が
-// agents.MarkTurnEnd を通ること自体は各 driver のユニットテストで押さえ、ここでは
-// main が張る配線（agents.SetStateNotifier → RecordSessionNotification）から先を
-// 実 HTTP で通し、報告カードが会話に届くところまでを確かめる。
+// Reporting (docs/log/30) was wired into the hook route only, so a managed driver, which has no
+// hook, wrote status directly and told nobody: a completed turn structurally never sent a
+// session report (【セッション報告】) card at all - recorded as a known limitation in
+// docs/log/30. That each driver goes through agents.MarkTurnEnd is covered by the drivers' own
+// unit tests; here everything from the wiring main puts in place (agents.SetStateNotifier ->
+// RecordSessionNotification) onwards runs over real HTTP, up to the report card arriving in the
+// conversation.
 
 import (
 	"net/http"
@@ -37,8 +39,8 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 		[]byte(`{"assistantAutoTurn":false}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// 消費判定はリコンサイラの tick（docs/log/51 Phase 1）— managed の MarkTurnEnd も
-	// 「起床ヒント＋レベルの証拠」として同じ経路を通る。
+	// Consumption is decided by the reconciler tick (docs/log/51 Phase 1); a managed
+	// MarkTurnEnd travels the same route, as a wake hint plus the evidence for the level.
 	withTestReconciler(t, 20*time.Millisecond)
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /chat/report", chatx.HandleChatReport)
@@ -56,7 +58,7 @@ func managedReportFixture(t *testing.T) (session.Meta, string, string) {
 	}
 	session.WriteMeta(m)
 
-	// main() の配線と同じ — これが無い状態が「報告が飛ばない」バグそのもの。
+	// The same wiring main() does; its absence is exactly the "no report is ever sent" bug.
 	agents.SetStateNotifier(RecordSessionNotification)
 	t.Cleanup(func() { agents.SetStateNotifier(nil) })
 
@@ -85,18 +87,18 @@ func awaitReportCard(t *testing.T, convID string) *chatx.ChatMessage {
 	return nil
 }
 
-// The core regression: a managed turn completing must land a 【セッション報告】 card in
-// the operator's conversation and consume the arm — the same outcome the claude hook
-// route produces, reached without any hook.
+// The core regression: a managed turn completing must land a session report
+// (【セッション報告】) card in the operator's conversation and consume the arm — the same
+// outcome the claude hook route produces, reached without any hook.
 func TestManagedTurnDeliversSessionReport(t *testing.T) {
 	m, sid, convID := managedReportFixture(t)
 
-	agents.MarkTurnStart(sid)                     // driver: turn/start（オペレーターの指示が走り出す）
+	agents.MarkTurnStart(sid)                     // driver: turn/start (the operator instruction starts running)
 	agents.MarkTurnEnd(sid, agents.TurnCompleted) // driver: turn/completed
 
 	got := awaitReportCard(t, convID)
 	if got == nil {
-		t.Fatal("managed セッションの完了がオペレーター会話へ報告されなかった")
+		t.Fatal("the completion of a managed session was not reported to the operator conversation")
 	}
 	if got.Session != m.Name || !strings.Contains(got.Content, "managed検証タスク") ||
 		!strings.Contains(got.Content, "入力待ち") {
@@ -111,16 +113,17 @@ func TestManagedTurnDeliversSessionReport(t *testing.T) {
 // Losing the runtime is NOT a completion: the turn may still be running on the other
 // side, so no report may go out and the arm must survive for the real completion
 // (§6 reconcile resolves it; process death is record-exit's story).
-// レベル判定（docs/log/51）ではここが効く: TurnUnknown も status には idle を書くので、
-// 状態文字列だけを見るリコンサイラは「完了」と読んでしまう。書込みが「ターンの終端」
-// かどうかの 1bit（status.TurnEnd）を立てないことで、不明は不明のまま扱われる。
+// Level determination (docs/log/51) turns on this: TurnUnknown writes idle to status too, so a
+// reconciler that looks only at the state string reads it as a completion. Leaving the one bit
+// that marks a write as the end of a turn (status.TurnEnd) unset keeps unknown treated as
+// unknown.
 func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 	m, sid, convID := managedReportFixture(t)
 
 	agents.MarkTurnStart(sid)
 	agents.MarkTurnEnd(sid, agents.TurnUnknown)
 
-	time.Sleep(200 * time.Millisecond) // 報告が飛ばないことの確認なので猶予を置く
+	time.Sleep(200 * time.Millisecond) // grace: what is being checked is that no report goes out
 	unlock := chatx.LockConv(convID)
 	c, err := chatx.LoadConv(convID)
 	unlock()
@@ -129,21 +132,21 @@ func TestManagedRuntimeLossDoesNotReport(t *testing.T) {
 	}
 	for _, msg := range c.Messages {
 		if msg.Role == "report" {
-			t.Fatalf("runtime 喪失を完了として報告した: %+v", msg)
+			t.Fatalf("a lost runtime was reported as a completion: %+v", msg)
 		}
 	}
 	if !chatx.SessionReportPending(m.Name) {
-		t.Fatal("arm must survive an unknown outcome — 本当の完了が報告されなくなる")
+		t.Fatal("arm must survive an unknown outcome - otherwise the real completion is never reported")
 	}
 	if st, _ := status.Read(sid); st.State != "idle" {
-		t.Fatalf("status = %q, want idle (進行中 に張り付かせない)", st.State)
+		t.Fatalf("status = %q, want idle (must not stick at in progress)", st.State)
 	}
 }
 
 // A turn that FAILED (provider error) is terminal too — the report must fire and consume
-// the arm exactly like a completion — but it must say the turn errored. Reporting
-// 応答が完了 for a turn that produced nothing is what let an exhausted opencode Zen
-// balance look like a finished task to the operator.
+// the arm exactly like a completion — but it must say the turn errored. Reporting a
+// completed response ("応答が完了") for a turn that produced nothing is what let an
+// exhausted opencode Zen balance look like a finished task to the operator.
 func TestManagedTurnFailureReportsAsError(t *testing.T) {
 	m, sid, convID := managedReportFixture(t)
 
@@ -152,10 +155,10 @@ func TestManagedTurnFailureReportsAsError(t *testing.T) {
 
 	got := awaitReportCard(t, convID)
 	if got == nil {
-		t.Fatal("失敗したターンもオペレーターへ報告されなければならない")
+		t.Fatal("a failed turn must be reported to the operator as well")
 	}
 	if strings.Contains(got.Content, "応答が完了") {
-		t.Fatalf("失敗が完了として報告された: %+v", got)
+		t.Fatalf("a failure was reported as a completion: %+v", got)
 	}
 	if !strings.Contains(got.Content, "エラー") {
 		t.Fatalf("report card = %+v", got)

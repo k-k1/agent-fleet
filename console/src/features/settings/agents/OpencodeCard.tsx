@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useSettings, setSettings } from "../../../lib/settings.ts";
@@ -10,11 +10,11 @@ import { usePolling } from "../parts/usePolling.ts";
 import { SettingRow, CardSettings, ThinkingRow, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardParts.tsx";
 
 // opencode: two independent auth paths that coexist (docs/log/54) —
-//   ① opencode アカウント: OAuth device flow through `opencode serve`'s integration
+//   1. opencode account: OAuth device flow through `opencode serve`'s integration
 //      API. Approval happens entirely in the browser (mode="auto", opencode polls the
 //      token itself), so like Cursor there is no code to paste; we show the URL and
 //      poll api/connections/opencode/oauth/poll.
-//   ② provider API keys: stored and injected as env at launch (unchanged).
+//   2. provider API keys: stored and injected as env at launch (unchanged).
 // "Connected" = either path is set up. Plus the RTK and Web UI toggles.
 // [presetId, label, envVar, issueUrl]. issueUrl is the provider's fixed API-key page
 // (empty = none / handled elsewhere — "go" keeps its own opencode.ai/auth hint below).
@@ -59,11 +59,12 @@ function OpencodeUsageRow() {
   );
 }
 
-// 利用枠の導線（docs/log/54 §54.7）。opencode.ai の利用枠ページはブラウザセッション前提で、
-// 数値を取り込む API が無い（実測: ページは /auth/authorize へ 302、console 側 API に
-// usage は無い）。だから Console が持てるのは workspace ID と、そこへのリンクと、上限に
-// 当たったときにエラーが運んできた枠情報だけ。ID は手入力でも、失敗から自動で学習しても
-// 埋まる（学習が手入力を上書きすることはない）。
+// The quota affordance (docs/log/54 §54.7). opencode.ai's quota page assumes a browser session
+// and there is no API to pull the numbers from (measured: the page 302s to /auth/authorize, and
+// the console-side API has no usage endpoint). So all the Console can hold is the workspace ID,
+// a link to that page, and whatever quota information an error carried when a limit was hit.
+// The ID can be typed in or learned automatically from a failure; learning never overwrites a
+// hand-entered value.
 function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -76,7 +77,7 @@ function OpencodeWorkspaceRow({ st, reload }: { st: any; reload: () => void }) {
   const save = async (value: string) => {
     const res = await apiJSON("api/connections/opencode/workspace", "PUT", { id: value });
     if (res && res.error) {
-      toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+      toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
       return;
     }
     setEditing(false);
@@ -166,7 +167,7 @@ export function OpencodeCard({
     try {
       const res = await apiJSON("api/connections/opencode", "PUT", { env: envName, key: key.trim() });
       if (res && res.error) {
-        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+        toast(tr("common.save_failed_msg", { msg: errDetail(res.error) }));
         return;
       }
       setKey("");
@@ -186,7 +187,7 @@ export function OpencodeCard({
     try {
       const res = await api("api/connections/opencode/oauth/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.oc_account_failed", { msg: res?.error?.message ? `: ${res.error.message}` : "" }));
+        toast(tr("agents.oc_account_failed", { msg: res?.error ? `: ${errDetail(res.error)}` : "" }));
         return;
       }
       setFlow({
@@ -212,7 +213,7 @@ export function OpencodeCard({
             reload();
             return { stop: true };
           }
-          // failed / expired は opencode 側で確定した終状態 — 待ち続けても変わらない。
+          // failed / expired are terminal states decided by opencode — waiting changes nothing.
           if (p && (p.status === "failed" || p.status === "expired")) {
             setFlow(null);
             toast(tr("agents.oc_account_denied", { msg: p.message ? `: ${p.message}` : "" }));
@@ -236,7 +237,7 @@ export function OpencodeCard({
     reload();
   };
 
-  const usage = s.opencodeCatalog; // off | free | go | zen（課金経路の選択・docs/log/54）
+  const usage = s.opencodeCatalog; // off | free | go | zen — choice of billing route (docs/log/54)
   const off = usage === "off";
   const pill = [
     off ? tr("agents.oc_usage_off") : usage === "free" ? tr("agents.oc_usage_free") : "",
@@ -286,7 +287,7 @@ export function OpencodeCard({
               <>
                 {/* opencode polls the token itself (mode="auto") and the verification URL
                     already carries the code, so the approval page shows it pre-filled
-                    (実測) — the user compares it and approves, pasting nothing. Hence the
+                    (measured) — the user compares it and approves, pasting nothing. Hence the
                     confirm shape; when the code can't be extracted the steps degrade to
                     just the link. */}
                 <DeviceSteps confirm code={flow.code || undefined} url={flow.url} status={flow.status} />

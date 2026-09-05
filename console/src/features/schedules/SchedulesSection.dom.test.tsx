@@ -1,6 +1,6 @@
 // Render test for the schedules rail section's LOAD-FAILURE branch. api() resolves a CP
 // error as {error} rather than throwing, and the section used to fold that into an empty
-// array — so a 401/5xx rendered as 「定時実行はまだありません」 and the schedule the user
+// array — so a 401/5xx rendered as "no scheduled runs yet" and the schedule the user
 // had just created looked deleted. This fixes the three states apart: real empty, load
 // failed (rows kept), and recovery.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,7 +19,7 @@ vi.mock("./api.ts", () => ({
   scheduleDelete: vi.fn(),
   scheduleUpdate: vi.fn(),
 }));
-// 会話一覧は作業グループの slug 解決にしか要らない — ネットワークを触らせない。
+// The conversation list is only needed to resolve working-set slugs — keep it off the network.
 vi.mock("../chat/api.ts", () => ({ chatList: vi.fn(async () => ({ conversations: [] })) }));
 
 const { SchedulesSection } = await import("./SchedulesSection.tsx");
@@ -88,16 +88,16 @@ describe("SchedulesSection load failures", () => {
 
     scheduleList.mockResolvedValue({ error: { code: "http_502", message: "bad gateway" } });
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(15000); // 次のポーリング
+      await vi.advanceTimersByTimeAsync(15000); // the next poll
     });
     expect(failed()).toBe(true);
-    expect(rows()).toBe(1); // 直前まで見えていた行は消さない
+    expect(rows()).toBe(1); // the rows on screen a moment ago are kept
 
     scheduleList.mockResolvedValue([sched]);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(15000);
     });
-    expect(failed()).toBe(false); // 復帰したら黙って消える
+    expect(failed()).toBe(false); // once it recovers the banner just goes away
     expect(rows()).toBe(1);
   });
 
@@ -119,16 +119,16 @@ describe("SchedulesSection load failures", () => {
   });
 });
 
-// 通知センターからの導線（docs/log/38）。定時実行が落ちたことは通知にしか出ず、
-// 「なぜ動かなかったのか」は行の**実行履歴**にしか無い。だから reveal の行き先は
-// 「行を選ぶ」ではなく「節を開いて履歴を開く」でなければならない。
+// The route in from the notification centre (docs/log/38). A failed scheduled run shows up
+// only in a notification, and WHY it did not run is only in that row's run history — so
+// reveal must open the section and the history, not merely select the row.
 describe("SchedulesSection reveal", () => {
-  it("節が畳まれていても開いて、その行の実行履歴を読み込む", async () => {
-    localStorage.setItem("af-section-schedules", "0"); // 利用者が畳んでいた状態
+  it("opens the section even when collapsed and loads that row's run history", async () => {
+    localStorage.setItem("af-section-schedules", "0"); // the user had it collapsed
     scheduleList.mockResolvedValue([sched]);
     scheduleRuns.mockClear();
     await render();
-    expect(host.querySelector(".sched-list")).toBeNull(); // 畳まれている＝本文は無い
+    expect(host.querySelector(".sched-list")).toBeNull(); // collapsed = no body rendered
 
     const { useSchedulesStore } = await import("./store.ts");
     await act(async () => {

@@ -1,8 +1,9 @@
 package opencode
 
-// 失敗したターンの可視化（errors.go）。実測ボディ（opencode 1.18.5、opencode Zen の
-// 残高切れ）をそのまま食わせて、driver が 200 のまま失敗を取り落とさないこと・read 層が
-// 「parts が空だから」と丸ごと捨てないことを固定する。
+// Surfacing a failed turn (errors.go). Feeds in a measured body (opencode 1.18.5, opencode
+// Zen out of balance) verbatim and pins that the driver does not drop the failure while the
+// status stays 200, and that the read layer does not throw the whole turn away because
+// "parts is empty".
 
 import (
 	"strings"
@@ -12,8 +13,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
-// 実測ボディ（driver が受ける形）。HTTP は 200 で、失敗は info.error にだけ載り
-// parts は空 — status だけ見ていた頃はこれが「正常完了」だった。
+// A measured body, in the shape the driver receives. HTTP is 200, the failure rides on
+// info.error alone and parts is empty — read by status alone this looks like a clean
+// completion.
 const zenCreditsBody = `{"info":{"role":"assistant","modelID":"deepseek-v4-pro","providerID":"opencode",` +
 	`"tokens":{"input":0,"output":0},` +
 	`"error":{"name":"APIError","data":{"statusCode":401,"isRetryable":false,` +
@@ -47,8 +49,8 @@ func TestDecodeTurnErrorKeepsRetryableFlag(t *testing.T) {
 	}
 }
 
-// 転写ストアは info オブジェクトそのものを行に持つ（ラップが無い）— 同じ decoder が
-// 両方の形を受けること。
+// The transcript store keeps the info object itself as the row (no wrapper) — one decoder
+// has to accept both shapes.
 func TestDecodeMessageErrorAcceptsStoreRowShape(t *testing.T) {
 	row := `{"role":"assistant","modelID":"glm-5.2",` +
 		`"error":{"name":"ProviderAuthError","data":{"providerID":"opencode"}}}`
@@ -56,14 +58,15 @@ func TestDecodeMessageErrorAcceptsStoreRowShape(t *testing.T) {
 	if !ok {
 		t.Fatal("store-row error must be detected")
 	}
-	// message が無い名前もある（実測）— providerID へ落ちること。
+	// Some names carry no message (measured) — it must fall back to providerID.
 	if e.label() != "ProviderAuthError" || e.detail() != "provider: opencode" {
 		t.Errorf("label=%q detail=%q", e.label(), e.detail())
 	}
 }
 
-// 中断は失敗ではない: Interrupt が既に cancelled を刻んでおり、部分回答も parts に
-// 残っている。ここでエラー表示を出すと、ユーザー自身の中断が毎回エラーに見える。
+// An abort is not a failure: Interrupt has already recorded cancelled, and the partial
+// answer is still in parts. Showing an error here makes the user's own interrupt look like
+// an error every single time.
 func TestDecodeMessageErrorIgnoresDeliberateAbort(t *testing.T) {
 	if _, ok := decodeMessageError([]byte(`{"error":{"name":"MessageAbortedError","data":{}}}`)); ok {
 		t.Error("a deliberate abort must not be reported as a failure")
@@ -76,8 +79,8 @@ func TestDecodeMessageErrorIgnoresDeliberateAbort(t *testing.T) {
 	}
 }
 
-// 本丸の回帰: 200＋info.error のターンは failed で終わり、失敗の理由が
-// MarkTurnEndErr（＝オペレーター報告とチャットブリッジ）まで届くこと。
+// The core regression: a turn with 200 plus info.error must end failed, and the reason must
+// reach MarkTurnEndErr (that is, the operator report and the chat bridge).
 func TestTurnWith200ErrorBodyLandsFailedAndReportsReason(t *testing.T) {
 	m, srv := newMockServe(t)
 	m.turnBody = zenCreditsBody
@@ -121,15 +124,16 @@ func TestRetryableTurnLandsAbortedWithoutRepostingPrompt(t *testing.T) {
 	}
 }
 
-// read 層の回帰: 失敗したターンは parts が空なので、「表示できる part が無い」判定で
-// 丸ごと捨てられ、ミラーにも get_session_output にも何も出なかった。エラーを 1 part
-// として持ち上げ、Text（= /output・コピー・チャットブリッジ）にも載ること。
+// Read-layer regression: a failed turn has no parts, so a "nothing displayable" verdict threw
+// the whole turn away and neither the mirror nor get_session_output showed anything. The
+// error must be lifted into one part and must also land in Text (= /output, copy, the chat
+// bridge).
 func TestReadSessionKeepsFailedTurnWithErrorPart(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	ses := "ses_e"
 	insMsg(t, db, "m1", ses, 1000, `{"role":"user","time":{"created":1000}}`)
 	insPart(t, db, "p1", "m1", ses, 1, `{"type":"text","text":"やって"}`)
-	// 失敗した assistant ターン: part は 1 件も無く、理由は message 行にだけある。
+	// A failed assistant turn: not a single part, and the reason lives only on the message row.
 	insMsg(t, db, "m2", ses, 1100, `{"role":"assistant","modelID":"deepseek-v4-pro","time":{"created":1100},`+
 		`"error":{"name":"APIError","data":{"statusCode":401,"message":"Insufficient balance."}}}`)
 
@@ -152,8 +156,8 @@ func TestReadSessionKeepsFailedTurnWithErrorPart(t *testing.T) {
 	}
 }
 
-// エラーと部分出力が両方あるケース（ツールまで動いてから落ちた）: 本文は残しつつ
-// エラーを末尾に足す。
+// Both an error and partial output (it ran as far as a tool, then died): keep the body and
+// append the error at the end.
 func TestReadSessionAppendsErrorAfterPartialOutput(t *testing.T) {
 	db := newOpencodeTestDB(t)
 	ses := "ses_p"

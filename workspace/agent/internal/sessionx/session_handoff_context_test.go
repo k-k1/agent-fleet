@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// gitRun は t 用の git 実行（gitInit と同じ env）。
+// gitRun runs git for a test, with the same env as gitInit.
 func gitRun(t *testing.T, dir string, args ...string) {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
@@ -18,9 +18,10 @@ func gitRun(t *testing.T, dir string, args ...string) {
 	}
 }
 
-// TestHandoffContextBlocksBranchNeverPushed が本命。**upstream が無いブランチの ahead は 0**
-// （`# branch.ab` 行そのものが出ない）ので、ahead>0 だけを見るゲートは「一度も push して
-// いないブランチ」を素通しする —— 引き継ぎで一番起きる形をちょうど見逃す。
+// TestHandoffContextBlocksBranchNeverPushed is the one that matters: a branch with no
+// upstream reports ahead 0 (the `# branch.ab` line is absent entirely), so a gate that looks
+// only at ahead>0 lets a never-pushed branch through - exactly the case a handoff hits most
+// often.
 func TestHandoffContextBlocksBranchNeverPushed(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
@@ -58,7 +59,7 @@ func TestHandoffContextUnpushedAndClean(t *testing.T) {
 	gitRun(t, work, "remote", "add", "origin", origin)
 	gitRun(t, work, "push", "-q", "-u", "origin", "main")
 
-	// push 済み・clean → 通す。
+	// Pushed and clean: let it through.
 	c := buildHandoffContext(work)
 	if c.Blocked != "" {
 		t.Fatalf("blocked = %q, want empty for a pushed clean branch", c.Blocked)
@@ -70,7 +71,7 @@ func TestHandoffContextUnpushedAndClean(t *testing.T) {
 		t.Fatalf("coordinates incomplete: %+v", c)
 	}
 
-	// 未コミットは止めない（警告のみ）。意図的に捨てる引き継ぎがあるため。
+	// Uncommitted work only warns, never blocks: some handoffs discard it on purpose.
 	if err := os.WriteFile(filepath.Join(work, "f"), []byte("y"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestHandoffContextUnpushedAndClean(t *testing.T) {
 		t.Fatalf("dirty: blocked=%q warning=%q, want blocked empty and warning %q", c.Blocked, c.Warning, handoffWarnDirty)
 	}
 
-	// 未 push の commit は止める。
+	// Unpushed commits block.
 	gitRun(t, work, "commit", "-qam", "local only")
 	if c = buildHandoffContext(work); c.Blocked != handoffBlockUnpushed {
 		t.Fatalf("blocked = %q, want %q (ahead=%d)", c.Blocked, handoffBlockUnpushed, c.Ahead)
@@ -108,8 +109,8 @@ func TestHandoffContextNonRepoIsNotGated(t *testing.T) {
 	}
 }
 
-// TestSanitizeRemoteURL — offer に載る remote から資格情報を落とす。載ったまま別メンバーへ
-// 渡ると、引き継ぎが**トークンの受け渡し**になる。
+// TestSanitizeRemoteURL: the remote carried in an offer must lose its credentials. Passed on
+// to another member intact, a handoff becomes a token handover.
 func TestSanitizeRemoteURL(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"https://github.com/k-k1/agent-fleet.git", "https://github.com/k-k1/agent-fleet.git"},

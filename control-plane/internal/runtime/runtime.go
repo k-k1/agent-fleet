@@ -21,10 +21,10 @@ type Runtime interface {
 	// ingress idle timeout (docs/log/62 §62.5 — a 90s wait here is exactly what made a
 	// cold ECS Start come back as a 504).
 	//
-	// ★ A readiness overrun is NOT an error. Returning one flips a workspace that is
+	// A readiness overrun is NOT an error. Returning one flips a workspace that is
 	//   merely still booting into "start failed" — a red toast in front of the user,
 	//   a dropped scheduled fire, and a DB row left at "stopped" while the container
-	//   runs (runtime_health.go の冒頭に経緯).
+	//   runs (see the head of runtime_health.go).
 	Start(ctx context.Context) error
 	Stop(ctx context.Context) error
 	// State reports the live container/service state:
@@ -57,7 +57,7 @@ func WorkspaceAlive(state string) bool { return state == "running" || state == "
 //
 // It is a separate port from Runtime on purpose — `Destroy` is irreversible and must not
 // be reachable from a Runtime value by accident. Every adapter implements it (ADR 0045
-// 決定 13-3): a delete button that works on one deployment profile and silently does
+// decision 13-3): a delete button that works on one deployment profile and silently does
 // nothing on another is worse than no button.
 //
 // The []string return is NOT an error channel — it lists resources this adapter KNOWS it
@@ -111,7 +111,7 @@ func AcquireOperationFence(ctx context.Context, rt Runtime) (func(), error) {
 // the same contract. This assertion fails the build if either drifts.
 var _ Runtime = (*dockerRuntime)(nil)
 
-// Every adapter destroys (ADR 0045 決定 13-3). Asserted here rather than next to each
+// Every adapter destroys (ADR 0045 decision 13-3). Asserted here rather than next to each
 // adapter so a new one cannot be added without meeting this list.
 var (
 	_ runtimeDestroyer = (*dockerRuntime)(nil)
@@ -146,13 +146,13 @@ type DocsMounter interface{ mountsStagedDocs() }
 // "" / "local" / "docker" → Docker Engine (compose, the on-prem default); "ecs" /
 // "aws" → AWS ECS on Fargate (P3-7); "ecs-ec2" → the same ECS substrate on the EC2
 // launch type with a pool of slots and a persistent per-user EBS home (docs/log/64,
-// ADR 0045 決定 10); "native" / "wsl" → containerless host processes for
+// ADR 0045 decision 10); "native" / "wsl" → containerless host processes for
 // Docker-less WSL2 / dev hosts (single-user only; docs/log/34). Unknown profiles fail
 // fast at boot rather than silently defaulting to Docker. The docker factory
 // captures the manager's template fields by value, so it MUST be built after
 // those fields are finalized (e.g. extraEnv appends in main.go).
 //
-// ecs and ecs-ec2 are separate profiles ON PURPOSE (ADR 0045 決定 10-1): the EC2 pool
+// ecs and ecs-ec2 are separate profiles ON PURPOSE (ADR 0045 decision 10-1): the EC2 pool
 // trades a proven, two-resource Fargate workspace for a six-resource one on a
 // substrate with no production mileage, so a deployment must opt in and can fall back
 // by editing this one value — not by reverting code.

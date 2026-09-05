@@ -13,7 +13,8 @@ describe("cleanupReasonText (ADR 0033)", () => {
     expect(cleanupReasonText(c)).toBe("Merged and clean (already in the parent)");
   });
 
-  // 版ずれ: Console が知らないキー、またはキーを送らない古い Agent。空欄にはしない。
+  // Version skew: a key this Console does not know, or an old Agent that sends no key.
+  // Never leave the cell blank.
   it("falls back to the Agent's prose for an unknown or absent key", () => {
     setLocale("en");
     expect(cleanupReasonText({ reason_key: "clean.reason.future", reason: "未知の理由" })).toBe("未知の理由");
@@ -21,7 +22,7 @@ describe("cleanupReasonText (ADR 0033)", () => {
   });
 });
 
-describe("cleanupReasonParts (状態バッジ＋補足の分解)", () => {
+describe("cleanupReasonParts (split into state badge + supporting note)", () => {
   beforeEach(() => setLocale("ja"));
   afterEach(() => setLocale("ja"));
 
@@ -32,7 +33,8 @@ describe("cleanupReasonParts (状態バッジ＋補足の分解)", () => {
     expect(cleanupReasonParts(c)).toEqual({ badge: "Merged", text: "Clean; already in the parent" });
   });
 
-  // 版ずれ（Console より新しい Agent が未知の理由キーを送る）: バッジ無しの全文表示に落とす。
+  // Version skew (an Agent newer than the Console sends an unknown reason key): degrade to
+  // the full sentence with no badge.
   it("degrades to the plain sentence when the badge catalog has no entry", () => {
     expect(cleanupReasonParts({ reason_key: "clean.reason.future", reason: "未知の理由" })).toEqual({
       text: "未知の理由",

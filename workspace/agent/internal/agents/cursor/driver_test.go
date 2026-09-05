@@ -1,10 +1,11 @@
 package cursor
 
-// managed driver のユニットテスト。ACP サーバー（cursor-agent acp 相当）を io.Pipe 上の
-// フェイクで模し、turn 状態機械（Send→completed / 実行中 queue / interrupt→cancelled /
-// 台帳の冪等化）と permission→Interaction→Respond の往復、そして cursor 固有の
-// session/update → 転写メモリ構築（agent_message_chunk / tool_call / tool_call_update）
-// を検証する。
+// Unit tests for the managed driver. The ACP server (the equivalent of cursor-agent acp) is
+// stood in for by a fake over io.Pipe, and the tests cover the turn state machine
+// (Send -> completed, queueing while running, interrupt -> cancelled, ledger idempotency),
+// the permission -> Interaction -> Respond round trip, and the cursor-specific construction
+// of the in-memory transcript from session/update (agent_message_chunk / tool_call /
+// tool_call_update).
 
 import (
 	"bufio"
@@ -102,18 +103,19 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
-	// t.Cleanup は LIFO なので、上の t.Setenv("HOME", …) より後に積んだこの待ちが
-	// HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。
+	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", …) above, runs before
+	// HOME is restored (pushed before it, it would run after the restore, which is too late).
 	t.Cleanup(func() { waitPumpIdle(t, h) })
 	h.cl.onNotify = h.onNotify
 	return h, f
 }
 
-// waitPumpIdle blocks until the handle's turn goroutine has drained（キューも走行中の
-// turn も無い状態）。**HOME の隔離は待って初めて成立する**: テストが turn を走らせたまま
-// 返ると、`t.Setenv` の復帰後に MarkTurnEnd → status.Persist が走り、書き先が
-// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に slot-1.json が
-// 残っていた）。落ちる方向は安全側 — 待てないまま抜けると実環境を汚すので失敗させる。
+// waitPumpIdle blocks until the handle's turn goroutine has drained (no queue and no running
+// turn). Isolating HOME only holds once this wait has happened: if a test returns with a turn
+// still running, MarkTurnEnd -> status.Persist runs after `t.Setenv` has restored HOME and
+// writes to the real `~/.config/agent-fleet` (measured: a slot-1.json was left in the user's
+// session-status/). Failing is the safe direction — leaving without the wait pollutes the
+// real environment, so it is reported as a failure.
 func waitPumpIdle(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -126,7 +128,7 @@ func waitPumpIdle(t *testing.T, h *threadHandle) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Error("turn がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
+	t.Error("a turn is still running after the test ended: restoring HOME now would write to the real ~/.config/agent-fleet")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
@@ -149,7 +151,7 @@ func TestSendCompletesTurn(t *testing.T) {
 	waitState(t, h, agents.TurnRunning)
 	f.reply(id, map[string]any{"stopReason": "end_turn"})
 	waitState(t, h, agents.TurnCompleted)
-	// 台帳: 同じ ClientMessageID の再送は no-op（新しい turn を始めない）。
+	// Ledger: resending the same ClientMessageID is a no-op (it starts no new turn).
 	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -249,8 +251,9 @@ func TestUpdateSettingsMode(t *testing.T) {
 	}
 }
 
-// TestManagedTranscriptFromUpdates は cursor 固有の核心: ACP はローカル転写を書かないので、
-// session/update 通知だけから user/assistant/tool の転写が正しく組み上がることを検証する。
+// TestManagedTranscriptFromUpdates covers the cursor-specific core: ACP writes no local
+// transcript, so this checks that the user/assistant/tool transcript is assembled correctly
+// from the session/update notifications alone.
 func TestManagedTranscriptFromUpdates(t *testing.T) {
 	h, f := newTestHandle(t)
 	handlesMu.Lock()
@@ -289,7 +292,7 @@ func TestManagedTranscriptFromUpdates(t *testing.T) {
 	if a.Text != "I'll run it.\n\nDone" {
 		t.Fatalf("coalesced assistant text wrong: %q", a.Text)
 	}
-	// Idx は単調増加
+	// Idx increases monotonically
 	if td.Turns[0].Idx >= td.Turns[1].Idx {
 		t.Fatalf("Idx not monotonic: %d, %d", td.Turns[0].Idx, td.Turns[1].Idx)
 	}

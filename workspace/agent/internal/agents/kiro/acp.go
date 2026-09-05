@@ -1,21 +1,23 @@
 package kiro
 
-// acpClient は `kiro-cli acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、stdio）
-// クライアント（docs/log/43 Track A2・2.14.1 実測）。cursor/copilot の acp.go と同じプロトコル
-// 汎用の骨格で、kiro 固有の差分は driver.go 側（onNotify の session/update 判別・
-// `_kiro.dev/metadata` 通知の扱い）が担う。
-//   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）
-//   - notifyPeer: 通知（session/cancel）
-//   - respond: サーバー発リクエスト（session/request_permission）への応答
-// readLoop が応答/通知/サーバー発リクエストを振り分ける。onRequest / onNotify は
-// readLoop goroutine 上で同期に呼ばれるため、実装はブロックしてはならない
-// （permission はハンドラが Interaction を記録して即 return し、応答は後から
-// respond() で返す。onNotify は転写バッファへ追記するだけで軽い）。
+// acpClient is the JSON-RPC 2.0 client (newline-delimited, over stdio) for the `kiro-cli acp`
+// child process (docs/log/43 Track A2, measured on 2.14.1). It is the same protocol-generic
+// skeleton as cursor's and copilot's acp.go; the kiro-specific parts live in driver.go (the
+// session/update dispatch in onNotify and the handling of `_kiro.dev/metadata` notifications).
+//   - call: allocate an id, write, wait for the response (timeout 0 = forever, for
+//     session/prompt)
+//   - notifyPeer: notifications (session/cancel)
+//   - respond: answers to server-initiated requests (session/request_permission)
 //
-// kiro は session/update（ACP 標準）に加え、`_kiro.dev/*` 名前空間の独自通知
-// （metadata / subagent/list_update / commands/available / session/update=retry_warning）を
-// 流す。これらはすべて id 無しの通知なので onNotify が受け、driver 側で必要なものだけ
-// 拾って残りは黙って捨てる（応答不要）。
+// readLoop routes responses, notifications and server-initiated requests. onRequest and
+// onNotify are called synchronously on the readLoop goroutine, so they must never block:
+// the permission handler records an Interaction and returns immediately, answering later
+// through respond(), and onNotify only appends to the transcript buffer.
+//
+// Besides the standard ACP session/update, kiro emits its own notifications in the
+// `_kiro.dev/*` namespace (metadata / subagent/list_update / commands/available /
+// session/update=retry_warning). They all arrive without an id, so onNotify receives them and
+// the driver keeps the ones it needs and silently drops the rest (no response is expected).
 
 import (
 	"bufio"
@@ -32,8 +34,8 @@ type rpcResult struct {
 }
 
 // rpcError is the JSON-RPC error object. kiro packs the human-useful detail into the
-// `data` field（例: 「Session is active in another process (PID …)」）——lock 競合の判定
-// （isLockBusy）に使うので Error() に畳んで露出する。
+// `data` field (e.g. "Session is active in another process (PID …)"), which isLockBusy needs to
+// spot a lock conflict, so Error() folds it into the message.
 type rpcError struct {
 	Code    int             `json:"code"`
 	Message string          `json:"message"`
@@ -72,9 +74,9 @@ func newACPClient(stdin io.Writer, stdout io.Reader) *acpClient {
 
 var errClientClosed = errors.New("kiro runtime との接続が切れました")
 
-// readLoop dispatches incoming lines until the child's stdout closes. kiro streams a
-// large `_kiro.dev/commands/available`（skill/command 一覧）を 1 行で流すため、バッファは
-// 広く取る（cursor と同じ）。
+// readLoop dispatches incoming lines until the child's stdout closes. kiro streams a large
+// `_kiro.dev/commands/available` (the skill/command list) as a single line, so the buffer is
+// generous, same as cursor's.
 func (c *acpClient) readLoop(stdout io.Reader) {
 	defer c.markClosed()
 	sc := bufio.NewScanner(stdout)
@@ -92,7 +94,7 @@ func (c *acpClient) readLoop(stdout io.Reader) {
 		}
 		switch {
 		case msg.Method != "" && len(msg.ID) > 0:
-			// server-initiated request (session/request_permission など)
+			// server-initiated request (session/request_permission and the like)
 			if c.onRequest != nil {
 				c.onRequest(msg.ID, msg.Method, msg.Params)
 			}
@@ -182,7 +184,7 @@ func (c *acpClient) call(method string, params any, timeout time.Duration) (json
 	case r := <-ch:
 		return r.result, r.err
 	case <-c.closed:
-		// markClosed が pending へ配送済みの場合もあるので回収を試みる。
+		// markClosed may already have delivered to pending, so try to collect it.
 		select {
 		case r := <-ch:
 			return r.result, r.err

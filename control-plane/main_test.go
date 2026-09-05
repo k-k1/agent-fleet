@@ -1,4 +1,4 @@
-// main_test.go — main.go の小さな純関数（env 解決）のテスト。
+// main_test.go — the small pure functions in main.go (env resolution).
 package main
 
 import (

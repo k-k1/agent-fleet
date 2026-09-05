@@ -1,17 +1,20 @@
 package sessionx
 
-// オペレーター（af_write アシスタント）からの AskUserQuestion 回答と
-// ExitPlanMode プラン承認/却下（docs/log/30）。
+// AskUserQuestion answers and ExitPlanMode plan approve/reject coming from the operator
+// (the af_write assistant) (docs/log/30).
 //
-// POST /sessions/{name}/answer-question {choices:[1,2,…]} — 質問順に 1-based の
-// 選択肢番号を1つずつ渡し、フォーム全体を一括で回答する。ブリッジ（docs/log/37 P2b、
-// ボタン1押し=1問の逐次蓄積）と違い、呼び出し元（オペレーターの MCP ツール）は
-// 全質問の回答を一度に決めて渡す。適用はブリッジと同じ経路を共有する:
-//   - TUI claude: hooks が記録した pending 質問を検証し、Console/ブリッジと同じ
-//     単一選択キー列（buildClaudeSingleSelectKeys）で TUI モーダルを駆動する。
-//   - managed: driver の live Interaction を読み直して構造化回答（Respond）。
-// 自由入力（Other）と multiSelect は v1 対象外 — Console へ誘導する
-// （TUI モーダルはタイプ文字を無視するため自由入力は構造的に不可能）。
+// POST /sessions/{name}/answer-question {choices:[1,2,…]} — one 1-based option number per
+// question, in question order, answering the whole form at once. Unlike the bridge
+// (docs/log/37 P2b, one button press = one question, accumulated step by step), the caller
+// (the operator's MCP tool) decides every answer up front and hands them over together.
+// Applying them shares the bridge's paths:
+//   - TUI claude: validate the pending question the hooks recorded, then drive the TUI
+//     modal with the same single-select key sequence (buildClaudeSingleSelectKeys) the
+//     Console and the bridge use.
+//   - managed: re-read the driver's live Interaction and answer structurally (Respond).
+// Free text (Other) and multiSelect are out of scope for v1 — the caller is sent to the
+// Console (the TUI modal ignores typed characters, so free text is structurally
+// impossible there).
 
 import (
 	"encoding/json"
@@ -184,13 +187,16 @@ func HandleSessionAnswerQuestion(w http.ResponseWriter, r *http.Request) {
 // applies the operator's decision to a pending ExitPlanMode approval (claude TUI —
 // plan mode is a claude concept).
 //
-//   - approve: Enter on the approval dialog（ブリッジ planKeys と同じ・オプション先頭が
-//     承認である契約は Console mirror と共通）。
-//   - reject: Escape で承認ダイアログを閉じて中断し、feedback があればコンポーザ復帰を
-//     待ってから修正指示として送信する。位置固定キー（Down×3）での却下は CLI 更新で
-//     承認に化けた実測があるため使わない（中断→通常プロンプトが版に依存しない）。
-//     フィードバックをここで送り切るのは、plan モーダルが開いたまま send_to_session
-//     すると本文がモーダルに食われ Enter が承認になる誤爆経路を閉じるため。
+//   - approve: Enter on the approval dialog (the same as the bridge's planKeys; the
+//     contract that the first option is the approving one is shared with the Console
+//     mirror).
+//   - reject: Escape closes the approval dialog and interrupts, then feedback, if any, is
+//     sent as a correction once the composer is back. Rejecting with position-fixed keys
+//     (Down x3) is not used: measured, a CLI update turned it into an approval, whereas
+//     interrupt then normal prompt does not depend on the version. The feedback is
+//     delivered here to close the misfire path where a send_to_session issued with the
+//     plan modal still open has its text eaten by the modal and its Enter read as an
+//     approval.
 func HandleSessionPlanRespond(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {

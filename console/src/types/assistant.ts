@@ -16,16 +16,18 @@ export interface Assistant {
   icon?: string; // codicon name
   description?: string; // user-facing self-intro (greeting card), distinct from persona
   builtin: boolean;
-  agent: SessionKind; // headless-chat 対応 kind のみ（ASSISTANT_AGENT_KINDS — claude/codex/opencode/cursor/agy）
+  agent: SessionKind; // only kinds that support headless chat (ASSISTANT_AGENT_KINDS — claude/codex/opencode/cursor/agy)
   model?: string;
   persona?: string;
   tools: ToolGrant;
   knowledge?: string[];
-  // このアシスタントのチャットへ接続する MCP サーバーの id（実効レジストリ上の id。
-  // 組み込み連携は "pagerduty" 等の固定 id のまま）。docs/log/48 §7。
+  // Ids of the MCP servers connected to this assistant's chat, as they appear in the
+  // effective registry; built-in integrations keep their fixed id ("pagerduty" and the
+  // like). docs/log/48 §7.
   integrations?: string[];
-  // 読み上げの声（"vv:<speaker>" / "polly:<VoiceId>"。"" = 自動 = キャラプールから割り当て）。
-  // 保存はエージェント側、解決・合成はすべて Console 側（docs/log/24）。
+  // Read-aloud voice ("vv:<speaker>" / "polly:<VoiceId>"; "" means automatic, assigned from
+  // the character pool). Stored on the agent side; resolution and synthesis are entirely the
+  // Console's (docs/log/24).
   voice?: string;
   created_at?: number;
   updated_at?: number;

@@ -1,5 +1,5 @@
 // runtime_docker_grace_test.go — the courtesy health grace the docker adapter waits on
-// after a start (scheduler_wake_test.go 由来).
+// after a start.
 //
 // It reads dockerRuntime's unexported extraEnv, so it belongs beside the adapter.
 package runtime
@@ -40,8 +40,9 @@ func TestStartHealthWaitSelfUpdate(t *testing.T) {
 			}
 		})
 	}
-	// 同期で待つ猶予は、必ず「Agent を要する API が待つ総量」の内側に収める。逆転すると
-	// ensureWorkspaceReady が入口で決めた期限を Start だけで食い潰し、到達待ちが 0 になる。
+	// The synchronous grace must stay inside the total an Agent-dependent API is willing
+	// to wait. Invert the two and Start alone consumes the deadline ensureWorkspaceReady
+	// set at the entrance, leaving no time at all to wait for reachability.
 	if dockerStartGrace >= AgentReadyWait() {
 		t.Fatalf("start grace %v must stay under the ready budget %v", dockerStartGrace, AgentReadyWait())
 	}

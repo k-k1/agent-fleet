@@ -1,12 +1,13 @@
 package agy
 
-// ユーザー指示（docs/log/60）の agy 側 artifact。
+// The agy-side artifact of the user instructions (docs/log/60).
 //
-// codex と同じ形: agy にも「追加の指示ファイルを指す設定」が無いので、rtk ブロックと
-// 同じ ~/.gemini/AGENTS.md をマーカー付きで合成する。このパスが agy の読むグローバル
-// コンテキストの唯一の置き場であることは docs/log/32 Track A の実測どおり
-// （~/.gemini/antigravity-cli/AGENTS.md は読まれず、プロジェクト root の AGENTS.md は
-// 対話モードのみ）。マーカー外は温存するので、利用者が同じファイルへ書いた文章は残る。
+// Same shape as codex: agy has no setting that points at an extra instruction file, so the
+// body is composed into ~/.gemini/AGENTS.md — the same file as the rtk block — between
+// markers. That path is the only place agy reads global context from (measured, docs/log/32
+// Track A: ~/.gemini/antigravity-cli/AGENTS.md is not read, and a project-root AGENTS.md is
+// picked up in interactive mode only). Everything outside the markers is preserved, so
+// whatever the user wrote in the same file survives.
 
 import (
 	"os"

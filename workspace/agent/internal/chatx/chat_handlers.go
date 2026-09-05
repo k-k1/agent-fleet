@@ -1,7 +1,7 @@
 package chatx
 
-// アシスタントチャットの HTTP ハンドラ（一覧・作成・取得・改名・削除・送信・ストリーム・consult）。
-// chat.go からの機械的分割（docs/log/23 残②）。
+// HTTP handlers for assistant chat: list, create, get, rename, delete, send, stream and
+// consult.
 
 import (
 	"context"
@@ -45,14 +45,16 @@ type chatCreateReq struct {
 	SeedVerb   string `json:"seed_verb"` // "translate" | "summarize" | "" (open-ended ask)
 }
 
-// verbPersona is the persona-embedded instruction for an ad-hoc Files verb (docs/log/30 ②).
-// A translate/summarize chat opened from Files carries its own persona instead of pointing
-// at a standing 翻訳/汎用 assistant, so those builtins could be removed with no loss. Any
-// other verb ("") falls through to the generic chatPersona.
+// VerbPersona is the persona-embedded instruction for an ad-hoc Files verb (docs/log/30
+// item 2). A translate/summarize chat opened from Files carries its own persona instead of
+// pointing at a standing translate/general-purpose assistant, so those builtins could be
+// removed with no loss. Any other verb ("") falls through to the generic chatPersona.
 //
-// docs/log/28 P6: 生成物（訳文・要約）を読むのは利用者なので、persona は表示言語で書く。翻訳の
-// 言語ペアは表示言語と無関係に日本語↔英語のままにしてある — 「訳す方向」は入力から決まる話で、
-// Console の表示言語で決めるものではない（languageRule も translate だけ除外している）。
+// docs/log/28 P6: the user is the one reading what comes out (a translation, a summary), so
+// the persona is written in the display language. The translation language pair stays
+// Japanese↔English regardless of the display language: which direction to translate follows
+// from the input, not from the Console's display language (languageRule likewise exempts
+// translate alone).
 func VerbPersona(verb, lang string) string {
 	en := lang == "en"
 	switch verb {
@@ -79,10 +81,10 @@ func VerbPersona(verb, lang string) string {
 	}
 }
 
-// seedFor composes the first-turn prompt for an attached file/dir. The absolute path is
-// used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly.
-// 会話の 1 通目としてそのまま表示される（利用者が自分で打ったように見える）ので、persona と
-// 同じく表示言語で書く。
+// SeedFor composes the first-turn prompt for an attached file/dir. The absolute path is
+// used verbatim so the assistant's Read (scoped by --add-dir) resolves it directly. It is
+// shown as-is as the conversation's first message, looking as though the user typed it, so
+// like the persona it is written in the display language.
 func SeedFor(verb, abs string, isDir bool, lang string) string {
 	if lang == "en" {
 		switch verb {
@@ -110,7 +112,7 @@ func SeedFor(verb, abs string, isDir bool, lang string) string {
 	}
 }
 
-// chatDefaultTitle is the fallback name for a conversation created without one. The
+// ChatDefaultTitle is the fallback name for a conversation created without one. The
 // Console sends its own (catalog "chat.new_title"), so this covers the other creators —
 // MCP / schedules / the bridge — and follows the display language for the same reason.
 func ChatDefaultTitle(lang string) string {
@@ -161,8 +163,9 @@ func HandleChatCreate(w http.ResponseWriter, r *http.Request) {
 		c.Knowledge = a.Knowledge
 		c.Integrations = a.Integrations
 	case VerbPersona(req.SeedVerb, lang) != "":
-		// Ad-hoc persona-embedded verb (docs/log/30 ②): a Files 翻訳/要約 opens a standalone chat
-		// carrying the verb persona directly — no standing 翻訳/汎用 assistant to point at.
+		// Ad-hoc persona-embedded verb (docs/log/30 item 2): a translate/summarize action from
+		// Files opens a standalone chat carrying the verb persona directly - there is no
+		// standing translate/general-purpose assistant to point at.
 		// Read-only (the attached file arrives via knowledge --add-dir below); SeedVerb is
 		// persisted so languageRule() keeps a translate thread language-agnostic.
 		c.Agent = PreferredHeadlessAgent()
@@ -217,7 +220,7 @@ type chatAskReq struct {
 	Prompt    string `json:"prompt"`
 }
 
-// handleChatAsk runs ONE advisory turn with the named assistant and returns its reply
+// HandleChatAsk runs ONE advisory turn with the named assistant and returns its reply
 // text. The consult is stateless and forced tools=none: with no tool grant the sub-turn
 // attaches no MCP, so it cannot write to sessions and cannot itself call ask_assistant —
 // recursion and privilege-escalation are ruled out by construction (single hop, advice
@@ -246,7 +249,8 @@ func HandleChatAsk(w http.ResponseWriter, r *http.Request) {
 	prov := ChatProviderFor(c) // pinned agent, or the available fallback (claude-less WS)
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	// 使用量台帳（ADR 0029 §3）。会話は非永続なので ref は空 — 束ねる先が無い。
+	// Usage ledger (ADR 0029 §3). The conversation is not persisted, so ref stays empty:
+	// there is nothing to attribute it to.
 	ctx = usagex.WithTag(ctx, usagex.Tag{Feature: usagex.FeatureAssistantAsk, Trigger: usagex.TriggerUser})
 	reply, err := prov.Send(ctx, c, prompt)
 	if err != nil {
@@ -267,7 +271,7 @@ func HandleChatGet(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, c)
 }
 
-// handleChatStop cancels a conversation's in-flight assistant turn (the Stop button).
+// HandleChatStop cancels a conversation's in-flight assistant turn (the Stop button).
 // The streaming turn is detached from its request connection, so aborting the SSE fetch
 // no longer stops it — this explicit cancel does. Idempotent: reports whether a running
 // turn was found, but always succeeds.
@@ -288,14 +292,16 @@ type chatPatchReq struct {
 	Agent *string `json:"agent,omitempty"`
 }
 
-// handleChatPatch updates a conversation in place (docs/log/19):
+// HandleChatPatch updates a conversation in place (docs/log/19):
 //   - title: the auto-title from the first message is often not what the user wants once
 //     the thread has a topic.
-//   - agent: switch the backend CLI mid-thread. 設定 > アシスタントの「エージェント優先順位」は
-//     新規会話と one-shot にしか効かない（会話は作成時にエージェントをスナップショットする）
-//     ので、進行中の会話を別 CLI へ移す明示的な入口がここ。切替そのものは会話ファイルの
-//     ピン留めを差し替えるだけで、次の送信で syncProviderPrompt が「新バックエンドがまだ
-//     知らない履歴」を再生する（認証フォールバックと同じ経路 — chat_provider_context.go）。
+//   - agent: switch the backend CLI mid-thread. The agent priority under Settings >
+//     Assistants applies only to new conversations and one-shots, because a conversation
+//     snapshots its agent at creation, so this is the explicit way to move a running
+//     conversation to another CLI. The switch itself only replaces the pin in the
+//     conversation file; on the next send syncProviderPrompt replays the history the new
+//     backend has not seen yet (the same path as the auth fallback,
+//     chat_provider_context.go).
 func HandleChatPatch(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var req chatPatchReq
@@ -320,9 +326,9 @@ func HandleChatPatch(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusBadRequest, errCodeChatAgentUnsupported, "unsupported agent")
 			return
 		}
-		// 実行中のターンは切替の対象外（handleChatDelete と同じ作法）。ストリームは会話
-		// ロックをターン全体で握るので、待たせると数分ブロックしたうえ、走っている
-		// プロバイダと保存されるピン留めが食い違ったまま終わる。
+		// A turn in flight is out of scope for a switch, as in HandleChatDelete. The stream
+		// holds the conversation lock for the whole turn, so waiting blocks for minutes and
+		// still ends with the running provider and the saved pin disagreeing.
 		if TurnInFlight(id) {
 			httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
 				"a turn is in progress — stop it before switching the agent")
@@ -353,12 +359,13 @@ func HandleChatPatch(w http.ResponseWriter, r *http.Request) {
 // switchChatAgent re-pins a conversation to another backend. Idempotent: re-selecting the
 // current agent changes nothing (no notice, no model churn).
 //
-// Model は作成時エージェント基準の1本しか持たないので、切替時に新しい CLI の設定
-// （設定 > アシスタント「アシスタントのモデル」）から解決し直す — 持ち越すと別 CLI に他社の
-// モデル id を渡すことになる。resume ハンドルとバックエンド毎のメッセージカーソルは残す:
-// 元のエージェントへ戻したときに、そのエージェントの native セッションを続きから使え、
-// 空いた分だけが再生される。ActiveAgent も更新して、次のターンを待たずにヘッダが
-// 切替後のエージェントを映すようにする（明示的な選択は最後のターンより新しい事実）。
+// A conversation carries only ONE Model, keyed to the agent it was created with, so on a
+// switch it is re-resolved from the new CLI's setting (the assistant model under Settings >
+// Assistants); carrying it over would hand one CLI another vendor's model id. The resume
+// handle and the per-backend message cursors are kept: switching back lets that agent's
+// native session continue where it left off, replaying only the gap. ActiveAgent is updated
+// too so the header reflects the new agent without waiting for the next turn - an explicit
+// choice is a more recent fact than the last turn.
 func switchChatAgent(c *ChatConversation, kind string) {
 	if c.Agent == kind {
 		return
@@ -376,9 +383,10 @@ func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_request", "invalid id")
 		return
 	}
-	// 実行中ターンと直列化: ロック無しで消すと、ターン末尾の saveConv が削除済み
-	// 会話（と資格情報入りの会話別 MCP config）を再作成してゾンビ化する。実行中は
-	// 数分待たせるより 409 で先に止めてもらう（Stop してから削除）。
+	// Serialize with an in-flight turn: deleting without the lock lets the saveConv at the end
+	// of that turn recreate the deleted conversation (and its per-conversation MCP config,
+	// credentials included) as a zombie. While a turn runs, return 409 and have the user stop
+	// it rather than blocking for minutes.
 	if TurnInFlight(id) {
 		httpx.WriteErr(w, http.StatusConflict, "conversation_busy",
 			"a turn is in progress — stop it before deleting")
@@ -386,8 +394,9 @@ func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 	}
 	unlock := LockConv(id)
 	defer unlock()
-	// 削除ロック（docs/log/45）: ロック中の会話は消さない。読めない会話は素通り
-	// （下の os.Remove が not-exist を許容するのと同じで、掃除は続けたい）。
+	// Deletion lock (docs/log/45): a locked conversation is not deleted. An unreadable one
+	// passes through, for the same reason the os.Remove below tolerates not-exist: cleanup
+	// should still proceed.
 	if c, err := LoadConv(id); err == nil && c.Locked {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
 			"conversation is locked against deletion; unlock it first")
@@ -408,7 +417,7 @@ func HandleChatDelete(w http.ResponseWriter, r *http.Request) {
 	// the attached servers' credentials, so it goes with the thread rather than
 	// lingering until the next container rebuild.
 	removeChatMCPConfig(id)
-	// get_session_output の会話別カーソル（mcp_stdio.go outputCursors）も一緒に落とす。
+	// Drop get_session_output's per-conversation cursor (mcp_stdio.go outputCursors) too.
 	mcpx.OutputCursors.Remove(id)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -441,8 +450,8 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	actualAgent := ChatProviderKind(c, prov)
 
 	c.Messages = append(c.Messages, ChatMessage{Role: "user", Content: content, TS: NowMs()})
-	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（成功
-	// すれば直後の injectHandoff がその要約を乗せる）。
+	// docs/log/33 stage 4: if we would enter a new turn still over the threshold, compact
+	// pre-emptively first; on success the injectHandoff right below carries that summary.
 	MaybeAutoCompact(r.Context(), c, prov)
 	// docs/log/30: reports that never got their own auto turn ride the next prompt, and a
 	// user message resets the unattended auto-turn budget.
@@ -454,11 +463,12 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), chatTimeout)
 	defer cancel()
-	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // usage ledger (ADR 0029 §3)
 	reply, err := prov.Send(ctx, c, prompt)
 	if err != nil && RecoverForRetry(ctx, c, prov, err) {
-		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
-		// リトライ。reports は未配信なので再注入され、要約も前置される。
+		// docs/log/33 stage 3: overflow detected, so summarize and fold the current session
+		// and retry on a new one. The reports are still undelivered, so they are re-injected
+		// and the summary is prepended as well.
 		prompt, pendingReports = InjectPendingReports(c, content)
 		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
@@ -466,7 +476,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
-			NoteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+			NoteContextOverflow(c) // close the black hole (even compaction was impossible)
 		}
 		// Persist the user turn + resume handle even on failure so a retry continues.
 		c.UpdatedAt = NowMs()
@@ -483,7 +493,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
 	MarkProviderSynced(c, actualAgent, len(c.Messages))
-	NoteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）
+	NoteContextPressure(c) // appends a notice when context is tight (chat_usage.go)
 	c.UpdatedAt = NowMs()
 	if err := SaveConv(c); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "chat_save", err.Error())
@@ -492,7 +502,7 @@ func HandleChatSend(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"message": assistant, "conversation": c})
 }
 
-// handleChatStream is the streaming (Phase B) form of send: it runs the provider
+// HandleChatStream is the streaming (Phase B) form of send: it runs the provider
 // with token streaming and forwards deltas as Server-Sent Events. Frames:
 //
 //	data: {"delta":"<text>"}                      — an incremental chunk
@@ -549,7 +559,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	// cancel func (handleChatStop); the bounded chatTimeout caps a runaway turn.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), chatTimeout)
 	defer cancel()
-	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // 使用量台帳（ADR 0029 §3）
+	ctx = usagex.WithTag(ctx, chatTurnUsageTag(c, usagex.TriggerUser)) // usage ledger (ADR 0029 §3)
 	deregister := RegisterLiveTurn(id, cancel)
 	defer deregister()
 
@@ -560,7 +570,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 		if sp, ok := prov.(streamingProvider); ok {
 			reply, steps, err = sp.SendStream(ctx, c, p, func(ev ChatStreamEvent) {
 				if ev.Step != nil {
-					emit(map[string]any{"step": ev.Step}) // a completed 作業過程 item
+					emit(map[string]any{"step": ev.Step}) // a completed work-trail item
 				} else if ev.Delta != "" {
 					emit(map[string]string{"delta": ev.Delta})
 				}
@@ -572,9 +582,10 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	// docs/log/33 第4段: 閾値超過のまま新ターンに入るなら、先に予防的自動圧縮（detached
-	// ctx 上なのでリロードでも中断されない）。成功すれば下の injectHandoff が要約を
-	// 乗せる。プロンプト構築は圧縮の後（PendingHandoff 反映後）でなければならない。
+	// docs/log/33 stage 4: if we would enter a new turn still over the threshold, compact
+	// pre-emptively first; it runs on the detached ctx, so a reload does not abort it, and on
+	// success the injectHandoff below carries the summary. The prompt must be built after the
+	// compaction, i.e. once PendingHandoff is set.
 	MaybeAutoCompact(ctx, c, prov)
 	// docs/log/30: undelivered session reports ride this prompt; docs/log/33: a compaction
 	// summary rides the NEW session's first prompt, outermost.
@@ -583,8 +594,9 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
 	runTurn(prompt)
 	if err != nil && RecoverForRetry(ctx, c, prov, err) {
-		// docs/log/33 第3段: 超過を検知 → 現行セッションを要約して畳み、新セッションで
-		// リトライ。超過エラーは初回送信直後の 400 なので delta 未発火＝二重表示なし。
+		// docs/log/33 stage 3: overflow detected, so summarize and fold the current session
+		// and retry on a new one. The overflow error is a 400 arriving right after the first
+		// send, so no delta has fired yet and nothing is displayed twice.
 		prompt, pendingReports = InjectPendingReports(c, content)
 		prompt, handoff = InjectCarryover(c, actualAgent, prompt)
 		prompt = SyncProviderPrompt(c, actualAgent, prompt, len(c.Messages)-1)
@@ -592,7 +604,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		if IsContextOverflowErr(err) {
-			NoteContextOverflow(c) // black hole を塞ぐ（圧縮も不能だった）
+			NoteContextOverflow(c) // close the black hole (even compaction was impossible)
 		}
 		c.UpdatedAt = NowMs()
 		_ = SaveConv(c) // persist the user turn + resume handle so a retry continues
@@ -608,7 +620,7 @@ func HandleChatStream(w http.ResponseWriter, r *http.Request) {
 	c.Messages = append(c.Messages, assistant)
 	c.ActiveAgent = actualAgent
 	MarkProviderSynced(c, actualAgent, len(c.Messages))
-	NoteContextPressure(c) // 逼迫時は notice を追記（chat_usage.go）— done の conversation で届く
+	NoteContextPressure(c) // appends a notice when context is tight (chat_usage.go); it reaches the client on the done conversation
 	c.UpdatedAt = NowMs()
 	_ = SaveConv(c)
 	emit(map[string]any{"done": true, "message": assistant, "conversation": c})

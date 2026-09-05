@@ -32,7 +32,8 @@ export function keyHint(id: string): string | null {
 
 /** "（<hint>）" for appending to a button title, or "" when the command has no key.
  * The parens follow the locale: full-width（）for Japanese, " (…)" for English —
- * a hardcoded 全角括弧 would leak into English titles like "Toggle…（Ctrl+K W B）". */
+ * hardcoding the full-width pair would leak it into English titles like
+ * "Toggle…（Ctrl+K W B）". */
 export function hintSuffix(id: string): string {
   const h = keyHint(id);
   if (!h) return "";

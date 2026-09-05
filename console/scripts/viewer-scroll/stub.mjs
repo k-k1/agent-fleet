@@ -1,10 +1,11 @@
-// ファイルビュアーの位置記憶ハーネス用のスタブ Control Plane。
+// Stub Control Plane for the file viewer's scroll-memory harness.
 //
-// 隣の scripts/mirror-scroll/stub.mjs と同じ作り —— **本物のバンドル**（console/dist）を
-// 配り、CP の API はブートに要る分だけ返す —— で、違うのは `api/fs/file` を持つことだけ。
-// 何を返すかは**要求されたパスの拡張子**で決まる: `.md` なら Markdown（プレビューの
-// 高さは MarkdownView が innerHTML を書いてから伸びる）、それ以外はコード。位置の復元は
-// その段差を越えないといけないので、ここが検査の素になる。
+// Built like the neighbouring scripts/mirror-scroll/stub.mjs — it serves the real bundle
+// (console/dist) and answers only as much of the CP API as booting needs — and differs only in
+// having `api/fs/file`. What that returns is decided by the extension of the requested path:
+// `.md` gives Markdown, whose preview height grows after MarkdownView writes innerHTML, and
+// anything else gives code. Restoring the position has to survive that jump, which is what makes
+// this the material of the check.
 //
 //   node console/scripts/viewer-scroll/stub.mjs [--port 8793] [--lines 2000] [--editable 1]
 import http from "node:http";
@@ -25,23 +26,24 @@ const arg = (n, d) => {
 const PORT = Number(arg("port", 8793));
 const LOCALE = arg("locale", "ja");
 const LINES = Number(arg("lines", 2000));
-/** 編集できるファイルとして返すか。表示⇄編集タブ（面が hidden になる経路）に要る。 */
+/** Whether to answer as an editable file. Required for the view/edit tabs, the path on which the
+ *  reading surface becomes hidden. */
 const EDITABLE = arg("editable", "0") === "1";
 
 const MIME = {
   ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
-  // .mjs を落とすと pdf.js のワーカーが application/octet-stream で返り、モジュール
-  // ワーカーとして拒否される → 「偽ワーカー」に落ちて解析がメインスレッドを占有する。
+  // Drop .mjs and pdf.js's worker is served as application/octet-stream, is refused as a module
+  // worker, falls back to the fake worker and parses on the main thread.
   ".mjs": "text/javascript; charset=utf-8", ".bcmap": "application/octet-stream",
   ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
   ".svg": "image/svg+xml", ".png": "image/png", ".webp": "image/webp",
   ".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".ico": "image/x-icon",
 };
 
-/** 編集タブの検算（src/features/editor/buffer.ts）と同じ式。 */
+/** The same expression the edit tab verifies with (src/features/editor/buffer.ts). */
 const revisionOf = (content) => "sha256:" + createHash("sha256").update(content, "utf8").digest("hex");
 
-// ---- 配るファイル -------------------------------------------------------------------
+// ---- The files that get served ------------------------------------------------------
 const codeBody = (name) =>
   Array.from({ length: LINES }, (_, i) => `func step${i + 1}() { // ${name} の ${i + 1} 行目`).join("\n") + "\n";
 
@@ -59,9 +61,9 @@ const mdBody = (name) =>
     ].join("\n"),
   ).join("\n");
 
-/** 素の多ページ PDF（base-14 の Helvetica だけ・埋め込みフォント無し）。リポジトリに
- *  バイナリを置かない方針は scripts/pdf/check.mjs と同じで、あちらと違ってページ数だけが
- *  要る（スクロールできる高さがあればよい）ので手で組む。 */
+/** A plain multi-page PDF (base-14 Helvetica only, no embedded fonts). Same policy of keeping no
+ *  binary in the repository as scripts/pdf/check.mjs; unlike that one, only the page count
+ *  matters here, since all this needs is enough height to scroll, so it is assembled by hand. */
 function makePdf(pages = 30) {
   const objs = [];
   const pageIds = Array.from({ length: pages }, (_, i) => 4 + i * 2);
@@ -91,8 +93,8 @@ const PDF = makePdf();
 
 function fileBody(p) {
   const name = p.split("/").pop() || "file";
-  // PDF は「中身を返さない」のが本物の api/fs/file の答え方（binary:true だけ返し、
-  // 実バイトは download から取らせる）。ここを content 付きで返すとビュアーの分岐が変わる。
+  // For a PDF the real api/fs/file returns no content: just binary:true, leaving the bytes to be
+  // fetched from download. Answering with content here would take the viewer down another branch.
   if (name.endsWith(".pdf")) return { path: p, size: PDF.length, binary: true, truncated: false, editable: false };
   const content = name.endsWith(".md") ? mdBody(name) : codeBody(name);
   return {
@@ -103,8 +105,9 @@ function fileBody(p) {
     editable: EDITABLE,
     editabilityReason: EDITABLE ? null : "read_only_root",
     content,
-    // 編集できるファイルは revision（= 中身の sha256）が中身と一致していないと
-    // 編集タブごと出ない。CodeEditor 側の検算と同じ式なので、ここでも本物を渡す。
+    // For an editable file the edit tab does not appear at all unless revision (the sha256 of
+    // the content) matches the content. CodeEditor verifies with the same expression, so pass
+    // the real value here too.
     ...(EDITABLE ? { revision: revisionOf(content) } : {}),
   };
 }
@@ -141,7 +144,7 @@ function apiBody(p, q) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://localhost");
   const p = url.pathname;
-  if (p === "/api/events") return void res.writeHead(404).end(); // REST ポーラへ落とす
+  if (p === "/api/events") return void res.writeHead(404).end(); // fall back to the REST pollers
   if (p === "/api/fs/download") {
     res.writeHead(200, { "content-type": "application/pdf", "cache-control": "no-store" });
     return void res.end(PDF);

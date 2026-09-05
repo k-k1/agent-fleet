@@ -1,16 +1,17 @@
 import { describe, expect, it } from "vitest";
 import { agentOf, nonPlanModeLabel } from "./registry.ts";
 
-// 非 plan 側のモード表示名（docs/log/76）。claude の既定ラベル "Bypass" は「権限確認を
-// スキップして起動したときの状態名」なので、承認ありのセッションでそのまま出すと
-// 起動ダイアログの中で「権限確認: 毎回たずねる」と「開始モード: Bypass」が並ぶ。
+// Mode label on the non-plan side (docs/log/76). Claude's default label "Bypass" names the state
+// of a session launched with permission prompts skipped, so showing it for a session with
+// approvals on puts "permission prompts: ask every time" next to "start mode: Bypass" in the
+// launch dialog.
 describe("nonPlanModeLabel", () => {
   it("keeps the bypass label when approvals are skipped (the default)", () => {
     expect(nonPlanModeLabel("claude", true)).toBe("Bypass");
   });
 
-  // 承認ありの claude は claude 自身の既定モード manual で始まる（実測 2.1.241）。
-  // ミラーのチップも端末を読んで "Manual" と出すので、語を揃える。
+  // With approvals on, claude starts in its own default mode, manual (measured on 2.1.241). The
+  // mirror's chip reads the terminal and also prints "Manual", so keep the wording aligned.
   it("names the mode approvals-on sessions actually start in", () => {
     expect(nonPlanModeLabel("claude", false)).toBe("Manual");
   });

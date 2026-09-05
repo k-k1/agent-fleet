@@ -1,19 +1,23 @@
 package main
 
-// セッション本体の使用量を転写から台帳へ折り込む（docs/log/46 §3-b / ADR0029 §5）。
+// Folds a session's own usage from its transcript into the ledger (docs/log/46 §3-b /
+// ADR0029 §5).
 //
-// セッションの消費は別プロセス（CLI）が出すので、補助呼び出しのように実行時に記録できない。
-// 転写を読んで差分だけを折り込み、watermark で冪等にする。
+// A session's consumption is produced by a separate process (the CLI), so it cannot be
+// recorded at call time the way an auxiliary call is. Instead the transcript is read, only
+// the delta is folded, and a watermark makes that idempotent.
 //
-// 二重計上しない前提が2つある:
-//  1. 折り込み対象は登録済みセッション（session.Meta）だけ。アシスタント会話は claude の
-//     projects ツリーに転写を書くが、Meta を持たないので混ざらない。
-//  2. 「開いている末尾の論理ターン」は折り込まない。折り込んだ後に同じターンへイベントが
-//     追加されると、入力スナップショット（置換セマンティクス）を二重に数えてしまう。
-//     次のユーザーターンで閉じた時か、セッション削除時（includeTrailing）に確定させる。
+// Two preconditions keep it from double counting:
+//  1. Only registered sessions (session.Meta) are folded. The assistant conversation writes
+//     a transcript into claude's projects tree, but has no Meta, so it never mixes in.
+//  2. The open trailing logical turn is not folded. If events are appended to that turn
+//     after it was folded, the input snapshot (replacement semantics) is counted twice.
+//     It is settled when the next user turn closes it, or on session deletion
+//     (includeTrailing).
 //
-// 常駐タイマーは増やさない（メモリ制約ホスト・docs/log/26 の教訓）。契機は GET /sessions/usage
-// を間借りした fold-on-read（60 秒スロットル）と、削除時の確定。
+// No extra resident timer (memory-constrained host, docs/log/26). The triggers are a
+// fold-on-read piggybacked on GET /sessions/usage (throttled to 60s) and the settle on
+// deletion.
 
 import (
 	"encoding/json"
@@ -31,24 +35,25 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// usageFoldMark は1セッション分の watermark。
+// usageFoldMark is the watermark for one session.
 //
-// **件数（Groups）だけでは足りない。** claude は1つの sid に対して兄弟 jsonl を持ちうり
-// （cwd 変更・CLAUDE_CONFIG_DIR 切替・Remote Control のスタブ）、読む1本は **mtime で
-// 選ばれる**（internal/agents/claude/transcript.go）。選択が入れ替わると件数ベースの差分は
-// 二通りに壊れる — 短い方へ入れ替わると `len(rows) <= Groups` で**折り込みが永久に止まり**、
-// 長い方へ入れ替わると別の会話の**先頭ターンを既折り込み扱いで落とす**。そこで
-// **件数と時刻の両方**で「まだ折り込んでいないターン」を判定する（LastTS は診断用ではなく
-// 判定に効く値）。
+// A count (Groups) alone is not enough. claude can hold sibling jsonl files for one sid (a
+// cwd change, a CLAUDE_CONFIG_DIR switch, the Remote Control stub), and the one that gets
+// read is chosen by mtime (internal/agents/claude/transcript.go). When that choice flips,
+// a count-based delta breaks in two ways: flipping to the shorter file makes
+// `len(rows) <= Groups` stop the fold forever, and flipping to the longer one drops
+// another conversation's leading turns as already folded. So an unfolded turn is decided
+// by both the count and the timestamp — LastTS is not diagnostic, it decides.
 type usageFoldMark struct {
-	// Groups は折り込み済みの論理ターン数（＝到達した最大の通し番号）。転写は追記のみなので、
-	// 論理ターンの通し番号は kind に依らず安定。各 kind の Turn.Idx（行番号）を使わないのは、
-	// 番号体系が kind ごとに違って watermark が混ざるから。
+	// Groups is the number of logical turns folded so far, i.e. the highest sequence
+	// number reached. The transcript is append-only, so that sequence is stable across
+	// kinds. Each kind's Turn.Idx (a line number) is not used because the numbering
+	// scheme differs per kind and would mix watermarks.
 	Groups int `json:"groups"`
-	// LastTS は折り込み済みの最大ターン時刻。転写が入れ替わっても「これより新しいターンは
-	// まだ数えていない」が言える。
+	// LastTS is the greatest folded turn timestamp. Even when the transcript is swapped
+	// out, it still says "turns newer than this have not been counted".
 	LastTS string `json:"lastTS,omitempty"`
-	// LastIdx は最後に折り込んだイベントの転写行番号（診断用）。
+	// LastIdx is the transcript line number of the last folded event (diagnostic).
 	LastIdx int `json:"lastIdx,omitempty"`
 }
 
@@ -56,21 +61,23 @@ type usageFoldState struct {
 	Sessions map[string]usageFoldMark `json:"sessions"`
 }
 
-// ロックは3つに分けてある。まとめると fold-on-read を非同期にした意味が消えるため:
+// There are three separate locks. Merging them would undo the point of making
+// fold-on-read asynchronous:
 //
-//   - usageFoldMu は state.json の読み書きと **1セッション分** の折り込みを直列化する。
-//     一括折り込みはセッションの切れ目で必ず手放すので、並行する /usage/series・
-//     /sessions/usage・削除時の確定が待つのは最大でも1セッション分になる。以前はパス
-//     全体（実測 158 セッションで ~20s）を握っていて、Console が1画面で3本撃つ
-//     /usage/series の2本目以降がまるごとブロックされていた。
-//   - usageFoldRunning は多重起動ガード。**ロックを取らずに読める**必要がある — 走行中か
-//     を聞くだけの呼び出しが、走行中の折り込みの後ろに並んではいけない。
-//   - usageFoldGate はスロットル時刻だけを守る極小ロック（保持は数命令）。
+//   - usageFoldMu serializes reads and writes of state.json together with the fold of ONE
+//     session. The bulk fold always releases it at each session boundary, so a concurrent
+//     /usage/series, /sessions/usage or settle-on-delete waits for at most one session.
+//     Holding it for a whole pass (measured ~20s over 158 sessions) blocked the second and
+//     third of the three /usage/series calls the Console fires from a single screen.
+//   - usageFoldRunning is the re-entry guard. It must be readable without taking a lock: a
+//     call that only asks whether a fold is running must not queue behind the running one.
+//   - usageFoldGate is a tiny lock protecting only the throttle timestamp (held for a few
+//     instructions).
 var (
-	usageFoldMu      sync.Mutex  // state.json の読み書きと1セッション分の折り込み
-	usageFoldRunning atomic.Bool // 走行中の一括折り込み（ロック不要で読める多重起動ガード）
-	usageFoldGate    sync.Mutex  // usageFoldedAt 専用
-	usageFoldedAt    time.Time   // 最後の fold-on-read（スロットル用・usageFoldGate 保持で触る）
+	usageFoldMu      sync.Mutex  // state.json reads/writes and the fold of one session
+	usageFoldRunning atomic.Bool // a bulk fold is running (lock-free re-entry guard)
+	usageFoldGate    sync.Mutex  // guards usageFoldedAt only
+	usageFoldedAt    time.Time   // last fold-on-read (throttle; touched under usageFoldGate)
 	usageFoldPeriod  = time.Minute
 )
 
@@ -88,8 +95,9 @@ func readUsageFoldState() usageFoldState {
 	return st
 }
 
-// writeUsageFoldState は watermark を tmp+rename で置き換える。**エラーは握り潰さない** —
-// 書けていないのに成功として進むと、既に追記した行の分だけ次回パスが再追記する（＝二重計上）。
+// writeUsageFoldState replaces the watermark with tmp+rename. Errors are never swallowed:
+// proceeding as if a failed write had succeeded makes the next pass re-append the rows
+// already written, i.e. double counting.
 func writeUsageFoldState(st usageFoldState) error {
 	b, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
@@ -102,26 +110,29 @@ func writeUsageFoldState(st usageFoldState) error {
 	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
 		return err
 	}
-	return os.Rename(tmp, usageStatePath()) // 途中で落ちても壊れた state を残さない
+	return os.Rename(tmp, usageStatePath()) // a crash mid-write must not leave broken state
 }
 
-// usageTurnRow は転写から折り込む論理ターン1件。純関数の出力なので単体テストできる。
+// usageTurnRow is one logical turn folded out of a transcript. It is the output of a pure
+// function, so it can be unit-tested.
 type usageTurnRow struct {
-	Idx       int // 論理ターン通し番号（1始まり）
+	Idx       int // logical turn sequence number (1-based)
 	TS        string
 	Model     string
-	Trigger   string // 直前のユーザーターンの注入元由来
+	Trigger   string // derived from the injection source of the preceding user turn
 	Sidechain bool
 	Tokens    usagex.Tokens
-	LastIdx   int // 最後のイベントの転写行番号（診断用）
+	LastIdx   int // transcript line number of the last event (diagnostic)
 }
 
-// foldTurnRows は転写のイベント列を論理ターンへ畳む。集計の流儀は aggregateUsage
-// （session_usage.go）と同一でなければならない — 出力は加算、入力/キャッシュは各イベントが
-// 毎回コンテキスト全量を再報告するので置換。ここがずれると台帳と get_session_usage が
-// 食い違い、「二つの画面で数字が違う」が起きる。
+// foldTurnRows folds a transcript's event sequence into logical turns. The aggregation
+// must match aggregateUsage (session_usage.go) exactly: output tokens add up, while input
+// and cache replace, because every event re-reports the whole context. A divergence here
+// makes the ledger and get_session_usage disagree, i.e. two screens showing different
+// numbers.
 //
-// includeTrailing=false のとき、最後まで閉じなかったグループは返さない（進行中のターン）。
+// With includeTrailing=false, a group that never closed is not returned (a turn still in
+// progress).
 func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow {
 	var rows []usageTurnRow
 	var cur usageTurnRow
@@ -144,7 +155,7 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 			continue
 		}
 		if t.Sidechain != sidechain {
-			fold() // サブエージェントは自分のコンテキストを報告する — 決して跨いで畳まない
+			fold() // a subagent reports its own context — never fold across the boundary
 			sidechain = t.Sidechain
 		}
 		if !inGroup {
@@ -169,9 +180,9 @@ func foldTurnRows(turns []transcript.Turn, includeTrailing bool) []usageTurnRow 
 	return rows
 }
 
-// usageTriggerFromTurnSource は注入元（transcript.Turn.Source）を台帳の trigger 語彙へ写す。
-// 「人が打ったターン」と「オペレーター/ブリッジ/定時が突っ込んだターン」を消費として
-// 分けるための対応表。
+// usageTriggerFromTurnSource maps the injection source (transcript.Turn.Source) onto the
+// ledger's trigger vocabulary. The table exists to separate consumption by a turn a person
+// typed from one pushed in by the operator, a bridge or the scheduler.
 func usageTriggerFromTurnSource(src string) string {
 	switch src {
 	case sessionx.TurnSourceOperator:
@@ -181,49 +192,52 @@ func usageTriggerFromTurnSource(src string) string {
 	case sessionx.TurnSourceSchedule, sessionx.TurnSourceScheduleManual:
 		return usagex.TriggerSchedule
 	case sessionx.TurnSourceAutoResume:
-		return usagex.TriggerRecovery // 中断からの自動再開（docs/log/47 §4-6）は自己修復の消費
+		// auto-resume after an abort (docs/log/47 §4-6) is self-repair consumption
+		return usagex.TriggerRecovery
 	}
 	return usagex.TriggerUser
 }
 
-// usageMeasuredForKind は kind ごとの計測精度（docs/log/46 §1-c）。トークンを報告しない
-// エージェントの 0 を「消費 0」と読ませないための自己申告で、UI はこれで未計測分を
-// 別枠表示する。
+// usageMeasuredForKind is the measurement accuracy per kind (docs/log/46 §1-c). It is a
+// self-declaration that stops the 0 of an agent that reports no tokens from reading as
+// "consumed nothing"; the UI uses it to show unmeasured consumption separately.
 func usageMeasuredForKind(kind string) string {
 	switch kind {
 	case session.KindClaude, session.KindCodex, session.KindOpencode:
 		return usagex.MeasuredExact
 	case session.KindCopilot:
-		return usagex.MeasuredPartial // 転写に outTok しかない
+		return usagex.MeasuredPartial // the transcript only carries outTok
 	}
-	return usagex.MeasuredNone // kiro / cursor / agy: 転写にトークンが無い
+	return usagex.MeasuredNone // kiro / cursor / agy: no tokens in the transcript
 }
 
-// foldSessionUsage は1セッションの未折り込み分を台帳へ書き、折り込んだ論理ターン数を返す。
-// includeTrailing=true は「転写がもう伸びない」と分かっている時（削除・アーカイブ）だけ。
-// usageFoldMu 保持前提。
+// foldSessionUsageLocked writes one session's unfolded portion to the ledger and returns
+// the number of logical turns folded. includeTrailing=true only when the transcript is
+// known not to grow any further (deletion, archiving). Requires usageFoldMu.
 func foldSessionUsageLocked(m session.Meta, st *usageFoldState, includeTrailing bool) (int, error) {
 	if !sessionx.AgentOf(m.Kind).Caps().CanTranscript {
-		return 0, nil // shell/ssm には転写が無い
+		return 0, nil // shell/ssm have no transcript
 	}
 	return foldSessionUsageWithTurns(m, st, sessionx.UsageTurns(m), includeTrailing)
 }
 
-// foldSessionUsageWithTurns は転写ロードを切り離した本体（実転写なしで冪等性を検証できる）。
-// 戻り値の int は台帳へ追記した行数で、**0 なら st は書き換わっていない**（呼び出し元は
-// watermark を書き直さなくてよい）。
+// foldSessionUsageWithTurns is the body with the transcript load split off, so idempotency
+// can be verified without a real transcript. The returned int is the number of rows
+// appended to the ledger; 0 means st was not modified, so the caller need not rewrite the
+// watermark.
 func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []transcript.Turn, includeTrailing bool) (int, error) {
 	mark := st.Sessions[m.Name]
 	rows := foldTurnRows(turns, includeTrailing)
 	fresh := unfoldedTurnRows(rows, mark)
 	if len(fresh) == 0 {
-		// 転写が縮んだ（アーカイブ復元・手動編集・兄弟 jsonl への入れ替わり）ケースを含む。
-		// watermark は下げない — 下げると同じターンをもう一度数えてしまう。
+		// Includes the case where the transcript shrank (archive restore, a manual edit,
+		// a flip to a sibling jsonl). Never lower the watermark: lowering it counts the
+		// same turns a second time.
 		return 0, nil
 	}
 	if len(rows) < mark.Groups {
-		// 短い転写へ入れ替わった。件数だけで差分を採っていた頃はここで永久に止まっていた。
-		log.Printf("usage: fold %s: 転写が %d → %d 論理ターンへ入れ替わった（時刻で差分を採る）",
+		// Flipped to a shorter transcript. A count-only delta stopped here forever.
+		log.Printf("usage: fold %s: transcript flipped from %d to %d logical turns (taking the delta by timestamp)",
 			m.Name, mark.Groups, len(rows))
 	}
 	origin, originConv := session.OriginOf(m), m.OriginConv
@@ -244,22 +258,25 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 			rec.TS = time.Now().UTC().Format(time.RFC3339)
 		}
 		if r.Model != "" {
-			// 転写が報告したモデルはそのまま実測値。版込みの生 id なので model_raw にも残す。
+			// The model the transcript reported is the measured value. It is a raw id
+			// including the version, so it is kept in model_raw as well.
 			rec.Model, rec.ModelRaw, rec.ModelSrc = r.Model, r.Model, usagex.ModelReported
 		} else {
 			rec.Model, rec.ModelSrc = usagex.ModelFallback(m.Model)
 		}
 		out = append(out, rec)
 	}
-	// 行が書けなかったら watermark は進めない。次回パスで同じターンが差分として出てくるので、
-	// **取りこぼしは復旧後に必ず回収される**（部分的に書けていた分は集計側の (ref, idx)
-	// 重複排除が落とす — usage_dedup.go）。進めてしまうと、この分は次のパスでも差分に出てこず
-	// 二度と台帳へ入らない（台帳側に取りこぼしを拾い直す口は無い）。
+	// If the rows could not be written, do not advance the watermark. The same turns come
+	// back as a delta on the next pass, so what was missed is always recovered once the
+	// write works again (a partially written batch is dropped by the aggregation side's
+	// (ref, idx) deduplication — usage_dedup.go). Advancing it means these turns never
+	// appear as a delta again and never reach the ledger, since the ledger has no way to
+	// pick up what was missed.
 	if err := usagex.AppendRows(out); err != nil {
 		return 0, err
 	}
 	last := fresh[len(fresh)-1]
-	// watermark は上げるだけ（入れ替わった短い転写で下げない）。
+	// The watermark only goes up (a flip to a shorter transcript must not lower it).
 	st.Sessions[m.Name] = usageFoldMark{
 		Groups:  max(mark.Groups, len(rows)),
 		LastTS:  laterUsageTS(mark.LastTS, last.TS),
@@ -268,14 +285,16 @@ func foldSessionUsageWithTurns(m session.Meta, st *usageFoldState, turns []trans
 	return len(out), nil
 }
 
-// unfoldedTurnRows は「まだ折り込んでいない論理ターン」を返す。件数と時刻の **両方** で
-// 判定するのがここの肝（usageFoldMark のコメント）:
+// unfoldedTurnRows returns the logical turns not yet folded. Deciding by both the count
+// and the timestamp is the whole point here (see usageFoldMark):
 //
-//   - 通常（追記のみで転写が伸びた）: 通し番号が watermark を超えた分＝末尾の差分。
-//     従来と同じ結果になる。
-//   - 転写が入れ替わった: 通し番号が重なっていても **watermark より新しい時刻のターンは
-//     まだ数えていない**ので拾う。逆に古い時刻のターンは拾わない（別の会話の焼き直しを
-//     数えない）。取り違えて二重に拾った分は集計側の (ref, idx) 重複排除が受け止める。
+//   - Normal case, the transcript grew by appending: everything whose sequence number is
+//     past the watermark, i.e. the trailing delta.
+//   - The transcript was swapped: even where sequence numbers overlap, a turn with a
+//     timestamp newer than the watermark has not been counted yet, so it is taken. A turn
+//     with an older timestamp is not, so another conversation's rerun is not counted.
+//     Anything taken twice by mistake is absorbed by the aggregation side's (ref, idx)
+//     deduplication.
 func unfoldedTurnRows(rows []usageTurnRow, mark usageFoldMark) []usageTurnRow {
 	var out []usageTurnRow
 	for _, r := range rows {
@@ -286,8 +305,8 @@ func unfoldedTurnRows(rows []usageTurnRow, mark usageFoldMark) []usageTurnRow {
 	return out
 }
 
-// usageTSAfter は a が b より後か。**解けない時刻は「後ではない」に倒す** — 判定できない
-// ものを新しい扱いにすると、転写を読むたびに同じターンを積み増してしまう。
+// usageTSAfter reports whether a is after b. An unparseable timestamp answers "not after":
+// treating what cannot be decided as newer piles the same turn up on every transcript read.
 func usageTSAfter(a, b string) bool {
 	if a == "" || b == "" {
 		return false
@@ -303,7 +322,7 @@ func usageTSAfter(a, b string) bool {
 	return ta.After(tb)
 }
 
-// laterUsageTS は新しい方の時刻を返す（watermark を巻き戻さないため）。
+// laterUsageTS returns the newer of the two timestamps, so the watermark never rewinds.
 func laterUsageTS(cur, next string) string {
 	if usageTSAfter(next, cur) || cur == "" {
 		return next
@@ -311,42 +330,46 @@ func laterUsageTS(cur, next string) string {
 	return cur
 }
 
-// commitSessionUsageFold は1セッション分を「state 読み → 行の追記 → watermark 書き」まで
-// **1つのクリティカルセクションで閉じる**。パス全体を1トランザクションにしない理由は2つ:
+// commitSessionUsageFold closes one session's read state -> append rows -> write watermark
+// inside a single critical section. Two reasons not to make the whole pass one transaction:
 //
-//  1. **二重計上の窓を1セッションに縮める。** 行を追記した後 watermark を書く前に落ちると、
-//     その分は次回パスで再追記される（追記先と watermark は別ファイルで、原子的には
-//     書けない）。全セッション分をパス末尾でまとめて1回書いていた頃は、~20 秒のパスの
-//     どこで落ちても、それまでに畳んだ全セッションが丸ごと重複しえた。窓は消せないので、
-//     **残る1セッション分は集計側が (ref, idx) で落とす**（usage_dedup.go）。
-//  2. **ロックを長時間握らない**（上の usageFoldMu の注記）。
+//  1. It shrinks the double-counting window to one session. A crash after the rows are
+//     appended but before the watermark is written re-appends them on the next pass (the
+//     rows and the watermark are separate files and cannot be written atomically). Writing
+//     every session's watermark once at the end of the pass meant a crash anywhere in the
+//     ~20s pass could duplicate every session folded so far. The window cannot be removed,
+//     so the remaining one session's worth is dropped by the aggregation side's (ref, idx)
+//     deduplication (usage_dedup.go).
+//  2. It never holds the lock for long (see the usageFoldMu note above).
 func commitSessionUsageFold(m session.Meta, includeTrailing bool) (int, error) {
 	usageFoldMu.Lock()
 	defer usageFoldMu.Unlock()
 	st := readUsageFoldState()
 	n, err := foldSessionUsageLocked(m, &st, includeTrailing)
 	if err != nil || n == 0 {
-		return 0, err // n==0 なら st は無傷 — 書き直す必要が無い
+		return 0, err // n==0 leaves st untouched, so there is nothing to rewrite
 	}
 	if err := writeUsageFoldState(st); err != nil {
-		// 行は既にディスクにある。ここで黙って成功にすると、次回パスが同じターンを
-		// もう一度追記したことに誰も気づけない。
+		// The rows are already on disk. Silently reporting success here means nobody
+		// notices when the next pass appends the same turns again.
 		return n, err
 	}
 	return n, nil
 }
 
-// foldAllSessionUsage は全セッションの差分を折り込む。導入直後の1回目は watermark 0 から
-// 走るので、**過去分のセッション消費がそのまま遡って入る**（バックフィルの専用経路は要らない）。
-// アーカイブ済みも対象 — 転写は残っており、消費は実際に起きているので。
+// foldAllSessionUsage folds every session's delta. The first run starts from watermark 0,
+// so past session consumption is picked up retroactively and no dedicated backfill path is
+// needed. Archived sessions are included: their transcripts are still there and the
+// consumption really happened.
 func foldAllSessionUsage() int {
 	if !usagex.Enabled() {
 		return 0
 	}
 	n := 0
 	for _, m := range session.ListMetas() {
-		// 1セッションが失敗しても残りは畳む（1つの壊れた転写でフリート全体の計測が
-		// 止まる方が悪い）。取りこぼしは黙って消さず、必ずログに残す。
+		// Keep folding the rest when one session fails: one broken transcript stopping
+		// measurement for the whole fleet is worse. What is missed is never dropped
+		// silently, it always goes to the log.
 		c, err := commitSessionUsageFold(m, false)
 		if err != nil {
 			log.Printf("usage: fold %s: %v", m.Name, err)
@@ -356,37 +379,42 @@ func foldAllSessionUsage() int {
 	return n
 }
 
-// maybeFoldSessionUsage は fold-on-read。使用量が読まれた時にだけ、最短 60 秒間隔で走る。
+// maybeFoldSessionUsage is the fold-on-read: it runs only when usage is read, at most once
+// every 60 seconds.
 func maybeFoldSessionUsage() { startFoldSessionUsage(false) }
 
-// startFoldSessionUsage は fold-on-read の起動。
+// startFoldSessionUsage starts the fold-on-read.
 //
-// 全セッションの転写を読み直すので実測で十数秒かかる（158 セッションで ~20s）。呼び出し元
-// （GET /sessions/usage）は既に同じ転写を読んでいて重いので、**折り込みは非同期に回して
-// 応答レイテンシを増やさない**。スロットルと走行中フラグで多重起動しない。
+// Re-reading every session's transcript measurably takes over ten seconds (~20s for 158
+// sessions). The caller (GET /sessions/usage) is already reading the same transcripts and
+// is heavy, so the fold runs asynchronously and adds no response latency. The throttle and
+// the running flag keep it from starting twice.
 //
-// force=true は 60 秒スロットルを飛ばす（利用者が明示的に「再取得」を押した時だけ）。
-// 押した直後にもう一度押しても意味が無い状態を作らないため — 押す前に終わったターンは
-// この1回で必ず台帳へ入る。
+// force=true skips the 60 second throttle, and only when the user explicitly pressed
+// refresh: pressing again right after must not be a no-op, so a turn that finished before
+// the press always reaches the ledger in that one run.
 //
-// 戻り値は「**この読み出しの時点で折り込みが走っている**」＝呼び出し元が今から読む値は
-// 直近のターンをまだ含まないかもしれない、の申告。非同期にした代償を黙って利用者に
-// 押し付けない（＝最新になるまで再取得を何度も押させない）ための唯一の手掛かりなので、
-// 応答へ必ず載せること（usage_series.go の folding）。
+// The return value declares that a fold is running as of this read, i.e. the value the
+// caller is about to read may not include the most recent turns yet. It is the only clue
+// that keeps the cost of going asynchronous from being pushed silently onto the user (who
+// would otherwise press refresh repeatedly until it is current), so always put it in the
+// response (folding in usage_series.go).
 func startFoldSessionUsage(force bool) bool {
 	if !usagex.Enabled() {
 		return false
 	}
-	// 走行中の判定に usageFoldMu を使わない。使うと「走っているか?」を聞くだけの呼び出しが
-	// 折り込み本体のロック解放を待つことになり、非同期にした意味が無くなる（Console の
-	// 使用量ビューは1画面で /usage/series を3本撃つので、2本目以降がまるごと待たされていた）。
+	// Do not use usageFoldMu to test whether a fold is running. Doing so makes a call that
+	// only asks "is it running?" wait for the fold itself to release the lock, which undoes
+	// going asynchronous: the Console's usage view fires three /usage/series calls from one
+	// screen, and the second and third waited in full.
 	if usageFoldRunning.Load() {
 		return true
 	}
 	usageFoldGate.Lock()
 	skip := !force && !usageFoldedAt.IsZero() && time.Since(usageFoldedAt) < usageFoldPeriod
 	if !skip {
-		// CAS で勝った1本だけが走る（Load からここまでの隙間で別の呼び出しが起動しうる）。
+		// Only the caller that wins the CAS runs: another call can have started in the
+		// gap between the Load above and here.
 		skip = !usageFoldRunning.CompareAndSwap(false, true)
 	}
 	if !skip {
@@ -394,7 +422,8 @@ func startFoldSessionUsage(force bool) bool {
 	}
 	usageFoldGate.Unlock()
 	if skip {
-		// スロットルで見送った＝走っていない、CAS 負け＝別の1本が走っている。
+		// Skipped by the throttle means nothing is running; losing the CAS means another
+		// call is running.
 		return usageFoldRunning.Load()
 	}
 	go func() {
@@ -404,9 +433,9 @@ func startFoldSessionUsage(force bool) bool {
 	return true
 }
 
-// finalizeSessionUsage は転写が消える直前に呼ぶ確定（fold-on-delete）。末尾の開いた
-// ターンまで含めて折り込む — この後もう転写は伸びないので、二重計上の心配が無い。
-// 呼ばないと「最後の1ターン」が永久に台帳へ入らない。
+// finalizeSessionUsage is the settle (fold-on-delete) called just before the transcript
+// disappears. It folds the open trailing turn too: the transcript will not grow any more,
+// so there is no double-counting risk. Without it the last turn never reaches the ledger.
 func finalizeSessionUsage(m session.Meta) {
 	if !usagex.Enabled() {
 		return
@@ -417,8 +446,8 @@ func finalizeSessionUsage(m session.Meta) {
 	if _, err := foldSessionUsageLocked(m, &st, true); err != nil {
 		log.Printf("usage: finalize %s: %v", m.Name, err)
 	}
-	// 台帳側は ref に焼き込み済みなので、消えたセッションの watermark は持ち続けない
-	// （残すと state.json が「もう存在しないセッション」の分だけ単調に増える）。
+	// The ledger has the ref baked in already, so a deleted session's watermark is not
+	// kept: keeping it grows state.json monotonically with sessions that no longer exist.
 	delete(st.Sessions, m.Name)
 	if err := writeUsageFoldState(st); err != nil {
 		log.Printf("usage: finalize %s: watermark: %v", m.Name, err)

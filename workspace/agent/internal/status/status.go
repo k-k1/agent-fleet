@@ -1,9 +1,9 @@
-// Package status はセッションの live 状態（working/idle/question/…）と pending
-// ペイロード（質問・プラン・許可・ストリーミングテキスト・直近ツール）の per-sid
-// ファイルストア。claude の hooks / opencode プラグイン / codex フック（配線は
-// package main の session_status.go）が書き、sessions リストと /messages が読む。
-// package main からの抽出（docs/log/23 残① Wave A）— ディスク上のレイアウト
-// （~/.config/agent-fleet/…）と JSON タグはバイト同一を維持すること。
+// Package status is the per-sid file store for a session's live state
+// (working/idle/question/…) and its pending payloads (question, plan, permission,
+// streaming text, last tool). The claude hooks, the opencode plugin and the codex hooks
+// (wired in package main's session_status.go) write it; the sessions list and /messages
+// read it. The on-disk layout (~/.config/agent-fleet/…) and the JSON tags must stay
+// byte-identical (docs/log/23 remaining item 1 Wave A).
 package status
 
 import (
@@ -23,10 +23,12 @@ type SessionStatus struct {
 	// TurnEnd marks an idle that was written by a turn's ACTUAL end (Stop hook /
 	// MarkTurnEnd completed|failed|aborted) — as opposed to an idle written because we
 	// do NOT know what is going on: the SessionStart reset, or a managed driver that
-	// lost its runtime handle mid-turn (TurnUnknown). 状態文字列だけでは「終わった」と
-	// 「分からない」が同じ "idle" になり、レベル判定（docs/log/51 のリコンサイラ）は不明を
-	// 完了と読んでしまう。証拠側を positive に倒す1bit — フラグの無い idle は不明として
-	// 扱われ、報告は次の本物の終端まで待つ（取りこぼしは遅延、誤りは誤配送）。
+	// lost its runtime handle mid-turn (TurnUnknown). The state string alone collapses
+	// "it ended" and "we do not know" into the same "idle", and the level-based decision
+	// (the docs/log/51 reconciler) would then read unknown as complete. This is the one
+	// bit that puts the evidence on the positive side: an idle without the flag counts as
+	// unknown and the report waits for the next real end-of-turn (a miss costs a delay, a
+	// wrong answer costs a misdelivered report).
 	TurnEnd bool `json:"turnEnd,omitempty"`
 }
 
@@ -69,19 +71,16 @@ func PersistExit(name string, e ExitInfo)   { _ = exitFiles.Write(name, e) }
 func ReadExit(name string) (ExitInfo, bool) { return exitFiles.Read(name) }
 func RemoveExit(name string)                { exitFiles.Remove(name) }
 
-// OOMKillCount reads the cumulative oom_kill counter from the container's own
-// cgroup v2 memory.events（record_exit.go の containerOOMKill をここへ移設 — docs/log/27
-// §10.2-2 で opencode supervisor も使うため package main から下ろした）。
-//
-// 実装は internal/resources へ二度目の移設をした。あちらが同じ cgroup から
-// メモリ / CPU も読むようになり（docs/log/63 §63.9）、cgroup を読む口が 2 つに割れる
-// のを避けたためで、呼び出し側（各 driver / record_exit / supervisor）から見た
-// 意味は変わらない。ここは互換のための薄い委譲。
+// OOMKillCount reads the cumulative oom_kill counter from the container's own cgroup v2
+// memory.events. The implementation lives in internal/resources, which reads memory and
+// CPU from the same cgroup as well (docs/log/63 §63.9) — one reader of the cgroup rather
+// than two. This is a thin delegation kept for its callers (the drivers, record_exit, the
+// supervisor).
 func OOMKillCount() (uint64, bool) { return resources.OOMKillCount() }
 
-// ExitReasonFor interprets a wait status into a cause the Console can show
-// （record_exit.go の exitReason を移設・共用化 — pane ラッパー（tui）と daemon
-// supervisor（managed、docs/log/27 §10.2-2）が同じ reason enum を書くため）:
+// ExitReasonFor interprets a wait status into a cause the Console can show. It is shared
+// because the pane wrapper (tui) and the daemon supervisor (managed, docs/log/27 §10.2-2)
+// have to write the same reason enum:
 //   - 0                       → exited  (normal quit)
 //   - SIGKILL(9) + OOM        → oom     (memory cgroup / host OOM killer)
 //   - SIGKILL(9) no OOM       → killed  (a SIGKILL from something other than an OOM)
@@ -106,13 +105,14 @@ func ExitReasonFor(code, sig int, oom bool) string {
 }
 
 // Persist writes {state, ts} keyed by sid. Errors are logged (not
-// swallowed): a failed write leaves the Console's 進行中/応答あり badge silently
+// swallowed): a failed write leaves the Console's working / answered badge silently
 // stale, so a log line is the only breadcrumb the write ever failed.
 func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
 
 // PersistTurnEnd is Persist for a write that IS a turn's end (the Stop hook's idle,
-// MarkTurnEnd の completed/failed/aborted)。TurnEnd を立てるのはこの入口だけ — 「今の
-// 状態」を書くだけの Persist と、「ターンが終わった」を主張する書込みを分けておく。
+// MarkTurnEnd's completed/failed/aborted). This is the only entry point that sets
+// TurnEnd: a write that only records "the current state" and a write that claims "the
+// turn ended" stay separate.
 func PersistTurnEnd(sid, state string) { persist(sid, SessionStatus{State: state, TurnEnd: true}) }
 
 func persist(sid string, s SessionStatus) {
@@ -124,14 +124,15 @@ func persist(sid string, s SessionStatus) {
 
 func Read(sid string) (SessionStatus, bool) { return statusFiles.Read(sid) }
 
-// StateAt は「その状態を書いた時刻」（ペイロードの捕捉時刻と同じく mtime）。保留の掃除
-// （sessionx の sweepSettledPending）が、決着より前に書かれた**モーダル状態**を見分ける
-// ために使う — ペイロードだけ消して state を残すと、決めるカードが無いのに送信を断る。
+// StateAt is when that state was written (the mtime, as for a payload's capture time).
+// The pending sweep (sessionx's sweepSettledPending) uses it to spot a modal state
+// written before the settlement: deleting only the payload and leaving the state behind
+// makes the session refuse input with no card left to decide.
 func StateAt(sid string) (time.Time, bool) { return statusFiles.ModTime(sid) }
 
-// ModalState reports whether state CLAIMS a modal is on screen. これらの状態は
-// applyPendingPayloads（唯一の書き手）が必ず対応するペイロードと一緒に書くので、
-// 「モーダル状態なのにペイロードが無い」は決着後の残骸を意味する。
+// ModalState reports whether state CLAIMS a modal is on screen. applyPendingPayloads (the
+// only writer) always writes these states together with the matching payload, so "a modal
+// state with no payload" means leftovers from a modal that has already been settled.
 func ModalState(state string) bool {
 	return state == "question" || state == "plan" || state == "permission"
 }
@@ -162,19 +163,20 @@ func LiveState(sid string) string {
 // state — the truth.
 //
 // EVERY reader has to apply this, display included. Judging by the raw state made
-// /plan-respond answer no_plan for a plan that was plainly pending（2026-08-10 報告）,
-// and left the AUQ 中のセッションのバッジを「許可待ち」と表示させた — 出ているカードは
-// 質問なのにチップだけ許可を名乗る、という食い違い。
+// /plan-respond answer no_plan for a plan that was plainly pending, and badged a session
+// sitting on an AskUserQuestion as "awaiting permission" — the card on screen is a
+// question while the chip alone claims a permission prompt.
 //
-// "working" は同じ理由でもう一つの嘘つき状態である。PostToolUse(*) は完了ツールごとに
-// working を打ち直すハートビート（claude/hooks.go）で、**バックグラウンドのサブエージェント
-// / Workflow の道具も親と同じ session_id でそれを鳴らす**（実測 2026-08-24）。つまり質問
-// モーダルが出たまま裏で BG が回っていると、state だけが working に化ける。ここで拾わないと
-// 一覧もチップも「進行中」を名乗り、promptBlocker のガードも外れて自由文が黙ってモーダルに
-// 吸われる（利用者報告「BG 実行中に AUQ が出ると回答できない」）。
+// "working" is a second lying state, for the same reason. PostToolUse(*) is a heartbeat
+// that rewrites working for every completed tool (claude/hooks.go), and a background
+// sub-agent's or Workflow's tools ring it under the PARENT's session_id (measured). So
+// while a question modal is up and background work is running, the state alone turns into
+// working. Without catching it here the list and the chip both claim "in progress",
+// promptBlocker's guard comes off, and free text is silently swallowed by the modal
+// (reported as "I cannot answer an AskUserQuestion raised during a background run").
 //
-// その他の状態は素通しなので、呼び出し側は従来どおり switch できる。Only the claude/codex
-// hook route writes these payloads, so no other kind can hit the override.
+// Every other state passes through, so callers can still switch on it as before. Only the
+// claude/codex hook route writes these payloads, so no other kind can hit the override.
 func EffectiveModal(sid, state string) string {
 	if state != "permission" && state != "working" {
 		return state
@@ -215,10 +217,10 @@ func ReadPendingQuestion(sid string) (json.RawMessage, bool) {
 
 func RemovePendingQuestion(sid string) { pendingQuestions.Remove(sid) }
 
-// PendingQuestionAt / PendingPlanAt: いつそのペイロードを捕まえたか（＝モーダルが
-// 出た瞬間）。転写に記録された決着より前に捕まえたものは、そのモーダル自身の決着で
-// あり得るので「もう畳まれている」と判定してよい — 保留の掃除（package main の
-// sweepSettledPending）が使う唯一の根拠。
+// PendingQuestionAt / PendingPlanAt: when the payload was captured, i.e. the moment the
+// modal appeared. One captured before a settlement recorded in the transcript may be that
+// modal's own settlement, so it can be judged "already dismissed" — the only evidence the
+// pending sweep (package main's sweepSettledPending) has.
 func PendingQuestionAt(sid string) (time.Time, bool)   { return pendingQuestions.ModTime(sid) }
 func PendingPlanAt(sid string) (time.Time, bool)       { return pendingPlans.ModTime(sid) }
 func PendingPermissionAt(sid string) (time.Time, bool) { return pendingPerms.ModTime(sid) }

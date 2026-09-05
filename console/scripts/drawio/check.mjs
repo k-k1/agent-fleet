@@ -1,53 +1,53 @@
-// `.drawio` ペインの描画ハーネス（docs/log/65）。
+// Rendering harness for the `.drawio` pane (docs/log/65).
 //
-// 守っているもの:
-//  1. **同梱ビューアだけで図が出る**（外部ネットワーク 0 件）。ビューアは既定値として
-//     viewer.diagrams.net を各所に持つので、1 本でも出ていたら「オフラインで動く」は嘘になる。
-//     drawioFrame.ts の dead value 潰しが 1 つ抜けただけでここが赤になる（実測で
-//     DRAW_MATH_URL の取りこぼしを捕まえた）。
-//  2. 圧縮された `<diagram>`（deflate+base64）も開ける。
-//  3. 複数ページを数えて親へ返す（ヘッダの「n / m」表示の材料）。
-//  4. ライト/ダークの双方で描ける。
-//  5. **要求した暗色描画に本当になっているか。** `"dark-mode"` は真偽値では効かず
-//     （isDarkMode() は "dark" / "auto" という文字列と比較する）、true を渡すと黙って
-//     ライト描画のまま暗い背景に載り、既定色のラベルが**黒地に黒**になる。判定は
-//     ビューアの isDarkMode() を返させて突き合わせる —— **画素を数える判定は当てに
-//     ならない**（暗色にならない絵の方が図形の明るい塗りで「明るい画素」が多くなる。
-//     実測 40778 対 2387 で、素朴なしきい値は真逆の答えを出した）。
-//  6. **ジェスチャが効く。** Ctrl＋ホイール / 2 本指ピンチ / ダブルタップ。GraphViewer は
-//     これらを一切配線していない（init は pinchEnabled=false・setPanning(false)）ので、
-//     こちらの実装が生きているかは実ブラウザで押してみるしかない。
-//  7. **テーマを切り替えても図が壊れない。** drawio は 1 つの文書内でのテーマ往復を
-//     想定しておらず、同じフレームに描き直しを頼むと**コンテナ見出しが消え、エッジの
-//     ラベルはライト時の白いピル＋黒文字のまま残る**（実測）。DrawioView はフレームごと
-//     作り直し、見ていた場所（ページ・倍率・位置）を渡して復元する。ここではその
-//     手順どおりに動かし、暗色になっていることと倍率が保たれることを見る。
-//  8. **背景が要求したテーマどおりに塗られている。** 背景色は srcdoc のスタイルシートと
-//     描画時の inline の 2 か所から来る。html だけを inline で上書きしても body の指定が
-//     上に塗るため、**組み立て時のテーマがそのまま残る**（実測: 組み立て dark ＋ 要求
-//     light で背景 #1e1e1e のまま／逆向きは白のまま。利用者が見た症状 2 つはどちらもこれ）。
-//     ここでは**組み立てと要求をわざと食い違わせて**画素で判定する —— 背景色は単色なので
-//     画素で見てよい（コントラストと違い、指標が素直に対応する）。
-//  9. **アセットに認証ゲートがあっても描ける。** サンドボックス iframe はオリジンを
-//     持たないため、そこからの要求は cross-site 扱いで SameSite=Lax のセッション
-//     cookie が付かない。フレームが自分で `<script src>` を取りに行く設計だと CP の
-//     authGate に 401 で弾かれ、実機だけが壊れる（2026-08-16 の不具合）。ここでは
-//     **cookie 無しの要求を 401 で返す配信**を用意し、それでも描けることを判定する
-//     —— ローカルの素の静的配信では絶対に出ない種類の欠陥なので、これが無いと
-//     同じ穴に何度でも落ちる。
+// What it protects:
+//  1. The diagram renders with the bundled viewer alone (zero external network requests). The
+//     viewer carries viewer.diagrams.net as a default in several places, so a single outgoing
+//     request makes "works offline" a lie. One missed dead-value substitution in drawioFrame.ts
+//     is enough to turn this red (measured: it caught a missed DRAW_MATH_URL).
+//  2. A compressed `<diagram>` (deflate+base64) opens too.
+//  3. Multiple pages are counted and handed to the parent (the material for the header's
+//     "n / m" display).
+//  4. Both light and dark render.
+//  5. A requested dark render really is dark. `"dark-mode"` does not take a boolean (isDarkMode()
+//     compares against the strings "dark" / "auto"); passing true silently keeps the light
+//     rendering on a dark background, and default-coloured labels come out black on black. The
+//     verdict comes from asking the viewer for isDarkMode() — counting pixels is unreliable here,
+//     since the non-dark rendering has MORE bright pixels thanks to the shapes' light fills
+//     (measured 40778 vs 2387: a naive threshold answers exactly backwards).
+//  6. Gestures work: Ctrl+wheel / two-finger pinch / double tap. GraphViewer wires none of them
+//     (init sets pinchEnabled=false and setPanning(false)), so whether our own implementation is
+//     alive can only be told by pressing in a real browser.
+//  7. Switching theme does not break the diagram. drawio does not expect a theme round trip
+//     inside one document: asking the same frame to redraw drops container headings and leaves
+//     edge labels as the light theme's white pill with black text (measured). DrawioView rebuilds
+//     the frame and restores the viewport (page, scale, position). Here we follow that procedure
+//     and check that it ends up dark with the scale preserved.
+//  8. The background is painted in the requested theme. The colour comes from two places: the
+//     srcdoc stylesheet and the inline style set at render time. Overriding only html inline
+//     leaves body's rule painting over it, so the theme used at build time survives (measured:
+//     built dark + requested light stayed #1e1e1e, and the reverse stayed white; both symptoms
+//     users reported were this). Here the build and the request are deliberately mismatched and
+//     the verdict is by pixel — a flat background colour maps straight onto the question, unlike
+//     contrast.
+//  9. It renders even when the assets sit behind an auth gate. A sandboxed iframe has no origin,
+//     so its requests count as cross-site and carry no SameSite=Lax session cookie. A design
+//     where the frame fetches its own `<script src>` is rejected with 401 by CP's authGate and
+//     breaks only on a real deployment. Here the server answers cookie-less requests with 401 and
+//     the diagram must still render — a plain local static server can never surface this class of
+//     defect, so without it we fall into the same hole again and again.
 //
-// バンドルも CP も Agent も要らない: フレームは drawioFrame.ts が組み立てる HTML そのもので、
-// 素の CDP（Node の global WebSocket）で headless Chromium に読ませる。
-// ../pane-heads/check.mjs と同じ流儀。
+// No bundle, no CP, no Agent: the frame is exactly the HTML drawioFrame.ts builds, read into
+// headless Chromium over raw CDP (Node's global WebSocket). Same style as ../pane-heads/check.mjs.
 //
 //   npm --prefix console run drawio:check
 //   node console/scripts/drawio/check.mjs --screenshot /tmp/drawio.png
 //
-// **実時間で回す**こと。`--virtual-time-budget` はサンドボックス iframe（別プロセス）を
-// 動かさず、ready の後で時間が止まって「描けない」ように見える —— これはハーネスの罠で
-// あって製品の不具合ではない。ここで丸一日溶かした。
+// Run this in real time. `--virtual-time-budget` does not advance the sandboxed iframe (a
+// separate process): time stops after ready and it looks like nothing renders — that is a harness
+// trap, not a product defect.
 //
-// 終了ステータスが判定: 0 = 全ケース描画・外部通信 0 件。
+// The exit status is the verdict: 0 = every case rendered, zero external requests.
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -84,23 +84,23 @@ const PLAIN = `<mxfile host="app.diagrams.net">
   </root></mxGraphModel></diagram>
 </mxfile>`;
 
-// drawio の圧縮形式: encodeURIComponent → raw deflate → base64。
+// drawio's compressed form: encodeURIComponent -> raw deflate -> base64.
 function compressed(source) {
   const inner = source.match(/<mxGraphModel[\s\S]*?<\/mxGraphModel>/)[0];
   const raw = zlib.deflateRawSync(Buffer.from(encodeURIComponent(inner), "utf8"), { level: 9 });
   return `<mxfile host="app.diagrams.net"><diagram name="圧縮" id="c1">${raw.toString("base64")}</diagram></mxfile>`;
 }
 
-// ペインより明らかに大きい図。fit が効いていれば scale < 1 になる。
+// A diagram clearly larger than the pane. With fit working the scale ends up < 1.
 const BIG = `<mxfile><diagram name="大" id="b1"><mxGraphModel page="1"><root>
   <mxCell id="0"/><mxCell id="1" parent="0"/>
   ${Array.from({ length: 24 }, (_, i) => `<mxCell id="b${i}" value="ノード${i}" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1"><mxGeometry x="${(i % 6) * 420}" y="${Math.floor(i / 6) * 320}" width="360" height="220" as="geometry"/></mxCell>`).join("")}
 </root></mxGraphModel></diagram></mxfile>`;
 
-// ── ステンシル（docs/log/65 §65.5）─────────────────────────────────────────
-// 本物の aws4.xml は 6.2 MB あるので、ハーネスは形だけ同じ最小のセットを配る
-// （バイト列の正しさは CP 側の sha256 照合と台帳のテストが持つ）。図案が付いたか
-// どうかは **path の本数**で見る: ステンシルが無いと枠だけの矩形になる。
+// ── Stencils (docs/log/65 §65.5) ──────────────────────────────────────────
+// The real aws4.xml is 6.2 MB, so the harness serves a minimal set of the same shape (byte-level
+// correctness is owned by CP's sha256 check and the manifest test). Whether the artwork actually
+// landed is judged by the number of paths: without a stencil the shape is a bare rectangle.
 function stencilSet(setName, shapeName) {
   return `<shapes name="mxgraph.${setName}">
   <shape aspect="fixed" h="44" name="${shapeName}" strokewidth="inherit" w="44">
@@ -115,13 +115,13 @@ function stencilSet(setName, shapeName) {
 </shapes>`;
 }
 
-// 台帳の鍵（＝ CP に要求するファイル名）→ 中身。
+// Manifest key (= the file name requested from CP) -> contents.
 const STENCIL_FILES = {
-  // 素直な例: basename "aws4" → "aws4.xml"。
+  // The straightforward case: basename "aws4" -> "aws4.xml".
   "aws4.xml": stencilSet("aws4", "a1 instance"),
-  // **basename とファイル名が違う例**。ビューアの mxStencilRegistry.libraries が
-  // rackGeneral → rack/general.xml に読み替える。basename + ".xml" で組み立てる
-  // 実装はここで 404 になる（この 1 ケースがそれを捕まえる）。
+  // A case where the basename and the file name differ: the viewer's mxStencilRegistry.libraries
+  // rewrites rackGeneral -> rack/general.xml. An implementation that just concatenates
+  // basename + ".xml" gets a 404 here, and this one case is what catches it.
   "rack/general.xml": stencilSet("rackGeneral", "rack unit"),
 };
 
@@ -136,35 +136,37 @@ const RACK = stencilDiagram("mxgraph.rackGeneral.rack_unit", "rack");
 
 const CASES = [
   { name: "plain-light", xml: PLAIN, dark: false, pages: 2, scale: 1, gestures: true },
-  // ベンダーアイコン: フレームが必要なセットを申告し、**親が**取って渡す。
+  // Vendor icons: the frame declares which sets it needs and the PARENT fetches and hands them in.
   { name: "stencil-aws4", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"] },
-  // 圧縮された図でも同じセットに行き着く（生 XML は deflate のままなので、
-  // 割り出しは展開済みのモデルを見ていなければならない）。
+  // A compressed diagram must reach the same set (the raw XML is still deflated, so the lookup
+  // has to run against the inflated model).
   { name: "stencil-compressed", xml: compressed(AWS4), dark: false, pages: 1, stencils: ["aws4.xml"] },
-  // libraries の読み替え（rackGeneral → rack/general.xml）。
+  // The libraries rewrite (rackGeneral -> rack/general.xml).
   { name: "stencil-remap", xml: RACK, dark: false, pages: 1, stencils: ["rack/general.xml"] },
-  // 閉域。取得に失敗しても **図は開いたまま**、エラーも出さない（枠と色だけに落ちる）。
+  // Air-gapped. A failed fetch must leave the diagram open and raise no error (it degrades to
+  // outlines and colour only).
   { name: "stencil-offline", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true },
-  // **瞬断のあとは頼み直せること。** 取れなかったセットを「頼んだ済み」に固定すると、
-  // upstream の 1 回の reset でそのペインの寿命いっぱいアイコンが欠ける（実機で踏んだ）。
+  // After a blip the set must be requested again. Marking a set that could not be fetched as
+  // "already asked for" makes one upstream reset cost that pane its icons for its whole lifetime.
   { name: "stencil-retry", xml: AWS4, dark: false, pages: 1, stencils: ["aws4.xml"], stencilFail: true, retryAfterFail: true },
-  // 暗いテーマは「既定色の文字が読めるか」まで見る（真偽値を渡すと黒地に黒になる）。
+  // The dark theme is checked down to "are default-coloured labels readable" (a boolean here
+  // renders black on black).
   { name: "plain-dark", xml: PLAIN, dark: true, pages: 2, scale: 1 },
   { name: "compressed", xml: compressed(PLAIN), dark: false, pages: 1, scale: 1 },
   { name: "big", xml: BIG, dark: false, pages: 1, maxScale: 0.5 },
-  // 図として読めない XML。ビューアの英語メッセージを黙って出すのではなく、
-  // 親が扱えるイベントとして返ってこなければならない。
+  // XML that is not a readable diagram. Rather than silently showing the viewer's own English
+  // message, it must come back as an event the parent can handle.
   { name: "not-a-diagram", xml: "<foo><bar/></foo>", dark: false, expectError: true },
-  // ライトで開き、ズームしてから、テーマ切り替え（＝フレーム作り直し）を通す。
+  // Open in light, zoom, then go through a theme switch (= frame rebuild).
   { name: "theme-switch", xml: PLAIN, dark: false, pages: 2, themeSwitch: true },
-  // 組み立てと要求を食い違わせる。背景は **要求した側** に従わなければならない。
+  // Mismatch build and request on purpose. The background must follow the REQUEST.
   { name: "bg-follows-request-dark", xml: PLAIN, dark: true, builtDark: false, pages: 2, bg: "#1e1e1e" },
   { name: "bg-follows-request-light", xml: PLAIN, dark: false, builtDark: true, pages: 2, bg: "#ffffff" },
 ];
 
 // ---------------------------------------------------------------- frame html
-// drawioFrame.ts をそのまま使う（ハーネスが自前で HTML を書くと、守っている対象が
-// 製品コードでなくなる）。esbuild は vite の依存として node_modules にある。
+// Use drawioFrame.ts as-is: if the harness wrote its own HTML, what it protects would no longer
+// be the product code. esbuild is present in node_modules as a dependency of vite.
 async function loadFrameBuilder() {
   const out = path.join(os.tmpdir(), `af-drawio-frame-${process.pid}.cjs`);
   const esbuild = path.join(REPO, "console/node_modules/.bin/esbuild");
@@ -177,17 +179,17 @@ async function loadFrameBuilder() {
 }
 
 // ---------------------------------------------------------------- static server
-// CP を模した配信。**`/assets/*` はセッション cookie が無ければ 401**（authGate と
-// 同じ形）。ページ側は Lax cookie を配るので、親の fetch には付き、オリジンを持たない
-// フレームからの要求には付かない —— 実機で起きたことがそのまま再現する。
+// A server that imitates CP: `/assets/*` answers 401 without a session cookie, the same shape as
+// authGate. The page hands out a Lax cookie, so it rides along on the parent's fetch but not on a
+// request from the origin-less frame — exactly what happened on a real deployment.
 function serve(dir, port) {
   return new Promise((resolve) => {
     import("node:http").then(({ createServer }) => {
       const srv = createServer((req, res) => {
         const url = req.url.split("?")[0];
-        // **CP と同じく、ステンシルも認証の内側**。親（cookie を持つ）は通り、
-        // オリジンを持たないフレームからの要求は 401 になる —— これがフレームに
-        // 直接取らせる設計を否決した理由そのものなので、ハーネスでも再現する。
+        // As on CP, stencils sit inside the auth gate too. The parent (which has the cookie) gets
+        // through and a request from the origin-less frame gets 401 — that is precisely why the
+        // design of letting the frame fetch them itself was rejected, so reproduce it here.
         const gated = url.startsWith("/assets/") || url.startsWith("/stencils/");
         if (gated && !(req.headers.cookie || "").includes("af_session=")) {
           unauthorized.push(url);
@@ -199,7 +201,8 @@ function serve(dir, port) {
           stencilAsks.push(name);
           const body = stencilFail ? null : STENCIL_FILES[name];
           if (!body) {
-            // 台帳に無い名前は CP が 404、閉域では 502。どちらも「取れない」。
+            // A name absent from the manifest is 404 on CP, 502 when air-gapped. Either way it
+            // cannot be fetched.
             res.writeHead(STENCIL_FILES[name] ? 502 : 404).end("no");
             return;
           }
@@ -217,7 +220,7 @@ function serve(dir, port) {
           }
           res.writeHead(200, {
             "Content-Type": (file.endsWith(".js") ? "text/javascript" : "text/html") + "; charset=utf-8",
-            // CP と同じ SameSite=Lax。これが無いと欠陥を再現できない。
+            // SameSite=Lax, as on CP. Without it the defect cannot be reproduced.
             "Set-Cookie": "af_session=harness; Path=/; HttpOnly; SameSite=Lax",
           }).end(buf);
         });
@@ -227,13 +230,13 @@ function serve(dir, port) {
   });
 }
 
-/** cookie 無しで拒否した要求（＝フレームが自分で取りに行った証拠）。 */
+/** Requests rejected for having no cookie (= evidence the frame fetched something itself). */
 const unauthorized = [];
-/** 親が CP へ要求したステンシル名。 */
+/** Stencil names the parent requested from CP. */
 const stencilAsks = [];
-/** true の間はステンシルを配らない（閉域の再現）。 */
+/** While true, no stencil is served (reproducing the air-gapped case). */
 let stencilFail = false;
-/** ステンシル関係のケースの画面。取れた絵と取れなかった絵は違っていなければならない。 */
+/** Screenshots of the stencil cases. With and without the stencil must not look identical. */
 const stencilShots = {};
 
 // ---------------------------------------------------------------- CDP
@@ -247,8 +250,8 @@ async function browser() {
       "--no-sandbox",
       "--hide-scrollbars",
       "--remote-debugging-address=127.0.0.1",
-      // 固定ポートは同じコンテナの別セッションの Chromium を掴む事故になる。0 を取り、
-      // 実際に取れたポートは DevToolsActivePort から読む。
+      // A fixed port risks grabbing another session's Chromium in the same container. Take 0 and
+      // read the port actually bound from DevToolsActivePort.
       "--remote-debugging-port=0",
       `--user-data-dir=${dir}`,
       "about:blank",
@@ -294,16 +297,16 @@ const srv = await serve(work, PORT);
 const base = `http://127.0.0.1:${PORT}`;
 const b = await browser();
 await b.call("Page.enable");
-// スクリーンショットは既定ウィンドウ（780px 幅）で切られる。フレームより広く取る。
+// Screenshots are cut off at the default window width (780px). Make it wider than the frame.
 await b.call("Emulation.setDeviceMetricsOverride", { width: 900, height: 600, deviceScaleFactor: 1, mobile: false });
 await b.call("Network.enable");
 
 for (const c of CASES) {
-  // builtDark を指定したケースだけ、組み立て時のテーマを要求とわざとずらす。
+  // Only cases that set builtDark deliberately diverge the build-time theme from the request.
   const srcdoc = drawioFrameSrcdoc({ dark: c.builtDark === undefined ? c.dark : c.builtDark });
-  // 親の手順は DrawioView.tsx と同じにする（ここが実機とずれると、守っている対象が
-  // 製品コードでなくなる）: ready を待つ → 自分が取ったビューア本文を boot で渡す →
-  // booted を待って render。**フレームは 1 本も要求を出さない。**
+  // The parent's procedure mirrors DrawioView.tsx (diverge from the real thing here and what is
+  // protected stops being the product code): wait for ready -> hand the viewer body we fetched
+  // ourselves through boot -> wait for booted, then render. The frame issues no request at all.
   const page = `<!doctype html><html><head><meta charset="utf-8"></head><body style="margin:0;background:${c.dark ? "#1e1e1e" : "#fff"}">
 <iframe id="f" sandbox="allow-scripts" width="860" height="520" style="border:0;display:block" srcdoc="${srcdoc.replace(/&/g, "&amp;").replace(/"/g, "&quot;")}"></iframe>
 <script>
@@ -313,7 +316,8 @@ window.__dark=${c.dark}; window.__restore=null;
 window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-drawio")return; window.__ev.push(d);
   if(d.t==="ready") fetch("/assets/viewer.js",{credentials:"same-origin"}).then(function(r){return r.text()}).then(function(src){ post({t:"boot",src:src}); });
   if(d.t==="booted") post({t:"render",xml:${JSON.stringify(c.xml)},dark:window.__dark,restore:window.__restore?JSON.parse(window.__restore):null});
-  // DrawioView.tsx と同じ: フレームの申告を受けて **親が** 取り、中身を返す。
+  // Same as DrawioView.tsx: the frame declares what it needs, the PARENT fetches it and hands the
+  // contents back.
   if(d.t==="stencils"){ window.__asked=(window.__asked||[]).concat(d.sets);
     Promise.all(d.sets.map(function(n){
       return fetch("/stencils/"+n.split("/").map(encodeURIComponent).join("/"),{credentials:"same-origin"})
@@ -333,7 +337,7 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   stencilAsks.length = 0;
   stencilFail = !!c.stencilFail;
   await b.call("Page.navigate", { url: `${base}/${c.name}.html` });
-  // 実時間で待つ（先頭のコメント参照）。4MB のビューアの読み込み + 描画で十分な余裕。
+  // Wait in real time (see the header). Ample for loading the 4MB viewer plus rendering.
   await sleep(3500);
 
   const got = await b.call("Runtime.evaluate", { expression: "JSON.stringify(window.__ev)", returnByValue: true });
@@ -342,53 +346,54 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   const errors = evs.filter((e) => e.t === "error");
 
   if (c.expectError) {
-    if (!errors.length) fail.push(`${c.name}: エラーとして返ってこなかった (events=${JSON.stringify(evs)})`);
+    if (!errors.length) fail.push(`${c.name}: did not come back as an error (events=${JSON.stringify(evs)})`);
   } else {
-    if (!rendered) fail.push(`${c.name}: 描画されなかった (events=${JSON.stringify(evs)})`);
-    else if (rendered.pages !== c.pages) fail.push(`${c.name}: ページ数 ${rendered.pages} (期待 ${c.pages})`);
-    else if (c.scale && rendered.scale !== c.scale) fail.push(`${c.name}: 倍率 ${rendered.scale} (期待 ${c.scale})`);
-    else if (c.maxScale && !(rendered.scale < c.maxScale)) fail.push(`${c.name}: 縮小されていない (scale=${rendered.scale})`);
-    if (errors.length) fail.push(`${c.name}: エラー ${JSON.stringify(errors)}`);
+    if (!rendered) fail.push(`${c.name}: did not render (events=${JSON.stringify(evs)})`);
+    else if (rendered.pages !== c.pages) fail.push(`${c.name}: ${rendered.pages} pages (expected ${c.pages})`);
+    else if (c.scale && rendered.scale !== c.scale) fail.push(`${c.name}: scale ${rendered.scale} (expected ${c.scale})`);
+    else if (c.maxScale && !(rendered.scale < c.maxScale)) fail.push(`${c.name}: not scaled down (scale=${rendered.scale})`);
+    if (errors.length) fail.push(`${c.name}: error ${JSON.stringify(errors)}`);
   }
 
-  // 外部通信の検査。自分の静的サーバ以外への要求は 1 本も出てはならない。
+  // External traffic. Not one request may go anywhere but our own static server.
   const external = b.events
     .filter((e) => e.method === "Network.requestWillBeSent")
     .map((e) => e.params.request.url)
     .filter((u) => !u.startsWith(base) && !u.startsWith("data:") && !u.startsWith("about:") && !u.startsWith("blob:"));
-  if (external.length) fail.push(`${c.name}: 外部への要求 ${JSON.stringify([...new Set(external)])}`);
-  // cookie の付かない要求 ＝ オリジンを持たないフレームが自分で取りに行った要求。
+  if (external.length) fail.push(`${c.name}: external request ${JSON.stringify([...new Set(external)])}`);
+  // A request without the cookie = a request the origin-less frame issued for itself.
   if (unauthorized.length) {
-    fail.push(`${c.name}: フレームが資格情報無しで取りに行った ${JSON.stringify([...new Set(unauthorized)])}`);
+    fail.push(`${c.name}: the frame fetched without credentials ${JSON.stringify([...new Set(unauthorized)])}`);
   }
 
-  // ── ステンシル（docs/log/65 §65.5）───────────────────────────────────────
+  // ── Stencils (docs/log/65 §65.5) ────────────────────────────────────────
   if (c.stencils) {
     const want = JSON.stringify(c.stencils);
     const asked = JSON.stringify([...new Set(stencilAsks)]);
     if (asked !== want) {
-      fail.push(`${c.name}: 要求したセットが ${asked}（期待 ${want}）—— basename とファイル名の読み替えを外していないか`);
+      fail.push(`${c.name}: requested sets ${asked} (expected ${want}) - is the basename-to-file-name rewrite still in place?`);
     }
-    // 図案が本当に載ったか。フレームは opaque origin なので親からは中を数えられない
-    // —— **描き直しが起きたか**（差し込み後の 2 通目の rendered）と **絵が変わったか**
-    // （画素）の 2 つで見る。要求が飛んだことだけを見る判定は、受け取った XML を
-    // 捨てていても緑になる。
+    // Did the artwork really land? The frame is an opaque origin, so the parent cannot count what
+    // is inside it: judge by whether a redraw happened (a second rendered after the injection) and
+    // whether the picture changed (pixels). A check that only watches the request go out stays
+    // green even when the received XML is thrown away.
     const renders = evs.filter((e) => e.t === "rendered").length;
     if (c.stencilFail) {
-      if (renders !== 1) fail.push(`${c.name}: 取れなかったのに描き直している（rendered ${renders} 通）`);
-      // 閉域は **図は出たまま・エラーは出さない**（枠と色だけに落ちるのが正しい）。
-      if (errors.length) fail.push(`${c.name}: 取得に失敗しただけでエラーにしている`);
+      if (renders !== 1) fail.push(`${c.name}: redrew even though nothing was fetched (rendered ${renders} times)`);
+      // Air-gapped means the diagram stays up and no error is raised (degrading to outlines and
+      // colour is the correct outcome).
+      if (errors.length) fail.push(`${c.name}: turned a failed fetch into an error`);
     } else if (renders < 2) {
-      fail.push(`${c.name}: ステンシルを渡したのに描き直されていない（rendered ${renders} 通）`);
+      fail.push(`${c.name}: stencils were handed in but no redraw happened (rendered ${renders} times)`);
     }
-    // 倍率と位置は差し込みで動いてはいけない（refresh() であって render のやり直しではない）。
+    // Scale and position must not move on injection (it is a refresh(), not a re-render).
     const first = evs.find((e) => e.t === "rendered");
     const last = evs.filter((e) => e.t === "rendered").pop();
     if (first && last && (first.scale !== last.scale || first.tx !== last.tx || first.ty !== last.ty)) {
-      fail.push(`${c.name}: 差し込みで見ていた場所が動いた（${first.scale}@${first.tx},${first.ty} → ${last.scale}@${last.tx},${last.ty}）`);
+      fail.push(`${c.name}: the viewport moved on injection (${first.scale}@${first.tx},${first.ty} -> ${last.scale}@${last.tx},${last.ty})`);
     }
     if (c.retryAfterFail) {
-      // 通じるようにしてから、もう一度描く。**同じセットをもう一度頼まなければならない。**
+      // Restore connectivity and render again. The same set must be requested a second time.
       stencilFail = false;
       stencilAsks.length = 0;
       await b.call("Runtime.evaluate", {
@@ -398,28 +403,28 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
       await sleep(2500);
       const again = [...new Set(stencilAsks)];
       if (JSON.stringify(again) !== JSON.stringify(c.stencils)) {
-        fail.push(`${c.name}: 取得に失敗したセットを頼み直さない（2 回目の要求 ${JSON.stringify(again)}）`);
+        fail.push(`${c.name}: a set that failed to fetch is never requested again (second round ${JSON.stringify(again)})`);
       } else {
-        console.log(`   stencils: 失敗後の再要求 ${JSON.stringify(again)}`);
+        console.log(`   stencils: re-requested after failure ${JSON.stringify(again)}`);
       }
       const evs2 = JSON.parse(
         (await b.call("Runtime.evaluate", { expression: "JSON.stringify(window.__ev)", returnByValue: true })).result?.value || "[]",
       );
-      // 2 回目は届くので、差し込みの描き直しまで行き着く。
+      // The second attempt gets through, so it must reach the redraw from the injection.
       if (evs2.filter((e) => e.t === "rendered").length < 3) {
-        fail.push(`${c.name}: 頼み直したのに図案が載っていない（rendered ${evs2.filter((e) => e.t === "rendered").length} 通）`);
+        fail.push(`${c.name}: re-requested but the artwork never landed (rendered ${evs2.filter((e) => e.t === "rendered").length} times)`);
       }
     }
 
-    // 絵そのもの。同じ図・同じ寸法なので、ステンシルの有無だけが差になる。
+    // The picture itself. Same diagram, same dimensions, so only the stencils can differ.
     const shot = await b.call("Page.captureScreenshot", {});
     stencilShots[c.name] = shot.data;
-    console.log(`   stencils: asked=${asked} rendered=${renders} 通 scale=${last?.scale}`);
+    console.log(`   stencils: asked=${asked} rendered=${renders} times scale=${last?.scale}`);
   }
 
-  // ── 背景（docs/log/65 §65.11-13）──────────────────────────────────────────
+  // ── Background (docs/log/65 §65.11-13) ────────────────────────────────────
   if (c.bg && rendered) {
-    // 図形の載っていない隅を見る（フレームは 860x520・図は中央に収まる）。
+    // Sample a corner with no shape on it (the frame is 860x520 and the diagram fits centred).
     const shot = await b.call("Page.captureScreenshot", { clip: { x: 840, y: 500, width: 8, height: 8, scale: 1 } });
     const px = await b.call("Runtime.evaluate", {
       expression: `(async () => {
@@ -437,17 +442,17 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     });
     const got = px.result?.value;
     if (got !== c.bg) {
-      fail.push(`${c.name}: 背景が ${got}（要求 ${c.bg}）—— 組み立て時のテーマが残っている`);
+      fail.push(`${c.name}: background is ${got} (requested ${c.bg}) - the build-time theme is still there`);
     } else {
       console.log(`   background: ${got}`);
     }
   }
 
-  // ── テーマ切り替え（docs/log/65 §65.11-12）──────────────────────────────────
-  // DrawioView と同じ手順: 拡大しておく → フレームを作り直す（新しい srcdoc）→
-  // ready から boot し直し → 直前の現在地を restore で渡す。
+  // ── Theme switch (docs/log/65 §65.11-12) ──────────────────────────────────
+  // The same procedure as DrawioView: zoom in -> rebuild the frame (a new srcdoc) -> boot again
+  // from ready -> hand the previous viewport back through restore.
   if (c.themeSwitch && rendered) {
-    // まず利用者の操作を模して拡大する（引き継ぎの対象を作る）。
+    // First imitate the user zooming in, to create something that has to carry over.
     await b.call("Input.dispatchMouseEvent", { type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240, modifiers: 2 });
     await sleep(400);
     const before = await b.call("Runtime.evaluate", {
@@ -480,19 +485,19 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
       returnByValue: true,
     });
     const now = JSON.parse(after.result?.value || "null");
-    if (!now) fail.push(`${c.name}: 作り直したフレームが描画しなかった`);
+    if (!now) fail.push(`${c.name}: the rebuilt frame did not render`);
     else {
-      if (!now.darkMode) fail.push(`${c.name}: 作り直し後に暗色になっていない`);
+      if (!now.darkMode) fail.push(`${c.name}: not dark after the rebuild`);
       if (Math.abs(now.scale - kept.scale) > 0.01) {
-        fail.push(`${c.name}: 倍率が引き継がれていない (${kept.scale} → ${now.scale})`);
+        fail.push(`${c.name}: scale was not carried over (${kept.scale} -> ${now.scale})`);
       }
-      if (now.pageId !== kept.pageId) fail.push(`${c.name}: ページが引き継がれていない (${kept.pageId} → ${now.pageId})`);
-      console.log(`   theme-switch: scale ${kept.scale} → ${now.scale} / page ${now.pageId} / darkMode=${now.darkMode}`);
+      if (now.pageId !== kept.pageId) fail.push(`${c.name}: page was not carried over (${kept.pageId} -> ${now.pageId})`);
+      console.log(`   theme-switch: scale ${kept.scale} -> ${now.scale} / page ${now.pageId} / darkMode=${now.darkMode}`);
     }
   }
 
-  // ── ジェスチャ（docs/log/65 §65.12）────────────────────────────────────────
-  // フレームは倍率が変わるたびに rendered を返すので、押した結果は親から観測できる。
+  // ── Gestures (docs/log/65 §65.12) ─────────────────────────────────────────
+  // The frame emits rendered on every scale change, so the parent can observe what a press did.
   if (c.gestures && rendered) {
     const scaleNow = async () => {
       const r = await b.call("Runtime.evaluate", {
@@ -503,21 +508,21 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     };
     const base0 = await scaleNow();
 
-    // Ctrl＋ホイール（modifiers: 2 = Ctrl）。トラックパッドのピンチも同じ経路。
+    // Ctrl+wheel (modifiers: 2 = Ctrl). A trackpad pinch takes the same path.
     await b.call("Input.dispatchMouseEvent", {
       type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240, modifiers: 2,
     });
     await sleep(400);
     const afterWheel = await scaleNow();
-    if (!(afterWheel > base0)) fail.push(`${c.name}: Ctrl+ホイールで拡大しない (${base0} → ${afterWheel})`);
+    if (!(afterWheel > base0)) fail.push(`${c.name}: Ctrl+wheel does not zoom in (${base0} -> ${afterWheel})`);
 
-    // 素のホイールは倍率を変えない（パンのみ）。
+    // A plain wheel must not change the scale (pan only).
     await b.call("Input.dispatchMouseEvent", { type: "mouseWheel", x: 430, y: 260, deltaX: 0, deltaY: -240 });
     await sleep(300);
     const afterPan = await scaleNow();
-    if (afterPan !== afterWheel) fail.push(`${c.name}: 素のホイールで倍率が動いた (${afterWheel} → ${afterPan})`);
+    if (afterPan !== afterWheel) fail.push(`${c.name}: a plain wheel moved the scale (${afterWheel} -> ${afterPan})`);
 
-    // 2 本指ピンチ（広げる = 拡大）。タッチを有効にしてから送る。
+    // Two-finger pinch (spreading = zoom in). Enable touch before dispatching.
     await b.call("Emulation.setTouchEmulationEnabled", { enabled: true, maxTouchPoints: 5 });
     await b.call("Input.dispatchTouchEvent", {
       type: "touchStart", touchPoints: [ { x: 380, y: 260, id: 1 }, { x: 480, y: 260, id: 2 } ],
@@ -532,9 +537,9 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     await b.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await sleep(400);
     const afterPinch = await scaleNow();
-    if (!(afterPinch > afterPan)) fail.push(`${c.name}: ピンチで拡大しない (${afterPan} → ${afterPinch})`);
+    if (!(afterPinch > afterPan)) fail.push(`${c.name}: pinch does not zoom in (${afterPan} -> ${afterPinch})`);
 
-    // ダブルタップ = 収まりへ戻る（拡大している状態なので fit に落ちる）。
+    // Double tap = back to fit (we are zoomed in, so it must drop to fit).
     for (let i = 0; i < 2; i++) {
       await b.call("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: 430, y: 260, id: 3 }] });
       await b.call("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
@@ -542,17 +547,17 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
     }
     await sleep(500);
     const afterTap = await scaleNow();
-    if (!(afterTap < afterPinch)) fail.push(`${c.name}: ダブルタップで収め直さない (${afterPinch} → ${afterTap})`);
+    if (!(afterTap < afterPinch)) fail.push(`${c.name}: double tap does not refit (${afterPinch} -> ${afterTap})`);
     await b.call("Emulation.setTouchEmulationEnabled", { enabled: false });
-    console.log(`   gestures: fit=${base0} → ctrl+wheel=${afterWheel} → pinch=${afterPinch} → dbltap=${afterTap}`);
+    console.log(`   gestures: fit=${base0} -> ctrl+wheel=${afterWheel} -> pinch=${afterPinch} -> dbltap=${afterTap}`);
   }
 
-  // ── コントラスト（docs/log/65 §65.12）────────────────────────────────────
-  // 暗いテーマで「既定色の文字」が背景に溶けていないか。画素を数えて判定する。
+  // ── Contrast (docs/log/65 §65.12) ────────────────────────────────────────
+  // Whether default-coloured text dissolves into the background under the dark theme.
   if (rendered && rendered.darkMode !== c.dark) {
     fail.push(
-      `${c.name}: 要求 dark=${c.dark} に対しビューアは darkMode=${rendered.darkMode}` +
-        `（"dark-mode" に真偽値を渡すと黙ってライト描画になる）`,
+      `${c.name}: requested dark=${c.dark} but the viewer reports darkMode=${rendered.darkMode}` +
+        ` (passing a boolean to "dark-mode" silently falls back to the light rendering)`,
     );
   }
 
@@ -565,13 +570,13 @@ window.addEventListener("message",function(e){ var d=e.data; if(!d||d.af!=="af-d
   console.log(`${fail.length ? "…" : "ok"} ${c.name}: ${JSON.stringify(rendered || null)}`);
 }
 
-// ステンシルが効いた絵と、取れずに落ちた絵。**同じ図なので、違わなければ
-// 「渡した XML を使っていない」ということ**（要求が飛んだかだけ見ていると見逃す）。
+// The picture with the stencil applied against the one that fell back. Same diagram, so if they
+// do not differ the XML we handed in is not being used (watching only for the request misses it).
 if (stencilShots["stencil-aws4"] && stencilShots["stencil-offline"]) {
   if (stencilShots["stencil-aws4"] === stencilShots["stencil-offline"]) {
-    fail.push("stencil-aws4 と stencil-offline の絵が同一 —— 渡したステンシルが描画に効いていない");
+    fail.push("stencil-aws4 and stencil-offline render identically - the stencils handed in have no effect on the drawing");
   } else {
-    console.log("ok stencil-pixels: ステンシル有り／無しで絵が変わっている");
+    console.log("ok stencil-pixels: the picture differs with and without the stencil");
   }
 }
 
@@ -583,4 +588,4 @@ if (fail.length) {
   console.error("\nFAIL:\n - " + fail.join("\n - "));
   process.exit(1);
 }
-console.log("\nall good: 同梱ビューアだけで描画・外部通信 0 件");
+console.log("\nall good: rendered with the bundled viewer alone, zero external requests");

@@ -1,7 +1,7 @@
-// core/store/tts — 音声読み上げ（docs/log/24）のグローバル状態。再生はアプリ全体で 1 本だけ
-// （チャットの回答も FileView の選択範囲も同じ 1 つの再生に集約）。TopBar が speaking を購読して
-// 「読み上げ中＋停止」を出し、停止ボタンは stop() を叩く。エンジン（features/chat/tts.ts）が
-// 非 React から setActive/setSpeaking を呼ぶ。
+// core/store/tts — global state for text-to-speech (docs/log/24). Only one playback exists in
+// the whole app: a chat answer and a FileView selection share the same single playback. TopBar
+// subscribes to `speaking` to show the speaking indicator and its stop button, which calls
+// stop(). The engine (features/chat/tts.ts) calls setActive/setSpeaking from outside React.
 import { create } from "zustand";
 import type { TtsController } from "../../features/chat/tts.ts";
 import { getSettings, setSetting } from "../../lib/settings.ts";
@@ -9,13 +9,13 @@ import { toast } from "../../ui/toast.ts";
 import { t } from "../../lib/i18n/index.ts";
 
 interface TtsStore {
-  speaking: boolean; // 音声を再生中/合成キューに積んでいる間 true
-  preparing: boolean; // 最初の音が鳴る前の合成待ち（TopBar のぐるぐる表示用）
-  source: string; // 何を読み上げているかのラベル（"チャット" / "選択範囲" 等）
-  voice: string; // 読んでいる声のキャラ名（"ずんだもん" 等。セッション別の声の判別用。"" = 非表示）
-  sessionName: string; // 読み上げの発生元セッション名（ID）。左ペインの行アイコン判定用。"" = 非セッション（チャット/選択範囲等）
+  speaking: boolean; // true while audio is playing or queued for synthesis
+  preparing: boolean; // waiting on synthesis before the first sound (drives TopBar's spinner)
+  source: string; // label for what is being read (chat, a selection, ...)
+  voice: string; // character name of the voice, to tell per-session voices apart ("" = hidden)
+  sessionName: string; // session name (id) the reading came from, for the left pane's row icon; "" = not a session (chat, a selection, ...)
   purpose: "reading" | "session-notification" | "usage-notification" | "manual";
-  active: TtsController | null; // 現在の再生コントローラ（内部管理・購読対象外）
+  active: TtsController | null; // current playback controller (internal; not for subscribers)
   setActive(c: TtsController | null, source: string, voice?: string, sessionName?: string, purpose?: TtsStore["purpose"]): void;
   setSpeaking(v: boolean): void;
   setPreparing(v: boolean): void;
@@ -36,10 +36,10 @@ export const useTtsStore = create<TtsStore>((set, get) => ({
   stop: () => get().active?.stop(),
 }));
 
-// 読み上げ ON/OFF トグル（TopBar のスピーカーボタンとキーボードコマンドで共有）。
-// 再生中に押す＝黙らせたい意思として、停止＋その発生源フラグを OFF にする（停止だけだと
-// ttsEnabled が ON のまま残り次の回答でまた鳴る、という主因を避ける）。アイドル時は素直に
-// ttsEnabled をトグル。挙動は TopBar の元 onClick と同一。
+// Speech on/off toggle, shared by TopBar's speaker button and the keyboard command.
+// Pressing it while playing means "silence this", so it stops AND clears the flag of whatever
+// produced the sound: stopping alone would leave ttsEnabled on and the next answer would speak
+// again. While idle it simply toggles ttsEnabled.
 export function toggleTtsPlayback(): void {
   const st = useTtsStore.getState();
   const busy = st.speaking || st.preparing;

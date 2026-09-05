@@ -1,7 +1,7 @@
 package chatx
 
-// アシスタントチャットのプロバイダ実装（claude/codex/opencode/agy/cursor の headless
-// CLI 駆動）と CLI 起動まわりの下回り。chat.go からの機械的分割（docs/log/23 残②）。
+// The assistant chat's provider implementations (claude/codex/opencode/agy/cursor driven
+// through their headless CLIs) and the plumbing around launching those CLIs.
 
 import (
 	"bufio"
@@ -35,7 +35,7 @@ import (
 
 // --- providers ---
 
-// chatProvider drives one agent's CLI in non-interactive mode. send appends the
+// ChatProvider drives one agent's CLI in non-interactive mode. Send appends the
 // assistant reply's text as its return value and may mutate c's resume handles.
 type ChatProvider interface {
 	Send(ctx context.Context, c *ChatConversation, prompt string) (string, error)
@@ -98,10 +98,10 @@ func headlessAgentAvailable(kind string) bool {
 	return v
 }
 
-// defaultHeadlessOrder is the built-in auto-selection order for assistant-chat
+// DefaultHeadlessOrder is the built-in auto-selection order for assistant-chat
 // backends. agy sits last on purpose: its Starter/free quota is tiny (docs/log/32
 // Track D), so out of the box it is only reached in an agy-only workspace. The
-// user can rank the backends themselves in 設定 > エージェント (ui-prefs
+// user can rank the backends themselves in Settings > Agents (ui-prefs
 // assistantAgentOrder — assistantAgentOrderPref normalizes against this list).
 var DefaultHeadlessOrder = []string{session.KindClaude, session.KindCodex, session.KindOpencode, session.KindCursor, session.KindAgy}
 
@@ -118,16 +118,16 @@ func preferredFrom(order []string) string {
 }
 
 // PreferredHeadlessAgent picks the backend for new builtin-assistant CONVERSATIONS
-// (設定 > アシスタント「エージェント優先順位」).
+// (Settings > Assistant, "agent priority").
 func PreferredHeadlessAgent() string { return preferredFrom(assistantAgentOrderPref()) }
 
-// PreferredAssistAgent picks the backend for the AI 補助生成 one-shots
-// (設定 > AI補助「エージェント優先順位」). Ranked separately from the chat on purpose:
+// PreferredAssistAgent picks the backend for the AI-assisted generation one-shots
+// (Settings > AI assist, "agent priority"). Ranked separately from the chat on purpose:
 // the chat wants the strongest CLI, these run constantly and want the cheapest that
 // works (docs/log/84).
 func PreferredAssistAgent() string { return preferredFrom(aiAssistOrderPref()) }
 
-// chatProviderFor resolves the provider driving this conversation: the pinned agent
+// ChatProviderFor resolves the provider driving this conversation: the pinned agent
 // while its CLI is authenticated, else the preferred available backend — so a
 // claude-less (codex-only / opencode-only) workspace still gets working assistants.
 // Each provider keeps its own resume handle on the conversation. The canonical
@@ -143,8 +143,8 @@ func ChatProviderFor(c *ChatConversation) ChatProvider {
 	return ChatProviders[session.KindClaude]
 }
 
-// chatProviderKind returns the concrete backend selected by chatProviderFor. Keeping
-// this out of chatProvider avoids widening every test stub merely for presentation
+// ChatProviderKind returns the concrete backend selected by ChatProviderFor. Keeping
+// this out of ChatProvider avoids widening every test stub merely for presentation
 // metadata. Production providers are the five value types below.
 func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 	switch prov.(type) {
@@ -163,7 +163,7 @@ func ChatProviderKind(c *ChatConversation, prov ChatProvider) string {
 	}
 }
 
-// claudeChat runs `claude -p` (headless), pinning a session id on the first turn
+// ClaudeChat runs `claude -p` (headless), pinning a session id on the first turn
 // and resuming it thereafter so context carries across turns. Auth is the
 // container's existing CLAUDE_CODE_OAUTH_TOKEN / CLAUDE_CONFIG_DIR (subscription).
 type ClaudeChat struct{}
@@ -184,8 +184,9 @@ type claudeResult struct {
 
 func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	// 使用量台帳（ADR 0029 §3）: 呼び出しの開始時点で記録を defer に積む。成功・エラー
-	// result・exec 失敗・パース失敗のどの経路を通っても必ず1回だけ行が残る。
+	// Usage ledger (ADR 0029 §3): the record is deferred at the start of the call, so
+	// exactly one row is left whichever path is taken — success, an error result, a failed
+	// exec or a parse failure.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	args := []string{"-p", "--output-format", "json", "--dangerously-skip-permissions",
@@ -215,9 +216,10 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 		}
 		return "", fmt.Errorf("failed to parse claude response: %v", jerr)
 	}
-	// 失敗した result にも usage は乗る（超過エラーは特に高い）ので、OK 判定より先に採る。
+	// A failed result carries usage too (an overflow error is especially expensive), so take
+	// it before deciding OK.
 	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
-	// modelUsage の無い result（古い CLI・異常終了）でも総量は残す。
+	// Keep the totals even for a result with no modelUsage (an old CLI, an abnormal exit).
 	call.FallbackTotals(r.Usage.LedgerTokens(), "")
 	if r.SessionID != "" {
 		c.ClaudeSessionID = r.SessionID
@@ -235,7 +237,7 @@ func (ClaudeChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 
-// chatStreamEvent is one incremental event a streamingProvider emits: either a text Delta
+// ChatStreamEvent is one incremental event a streamingProvider emits: either a text Delta
 // for the current (tentative) answer, or a completed Step (the model finished a working
 // message that ended in a tool call). Exactly one field is set per emit.
 type ChatStreamEvent struct {
@@ -287,7 +289,7 @@ type streamLine struct {
 
 func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt string, emit func(ChatStreamEvent)) (string, []chatStep, error) {
 	c.StartTurn()
-	// 使用量台帳（ADR 0029 §3）— send と同じく全経路で1回記録する。
+	// Usage ledger (ADR 0029 §3) — as in Send, exactly one record on every path.
 	call := usagex.Call{Kind: session.KindClaude, ModelReq: chatModelFor(c, session.KindClaude)}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// stream-json requires --verbose with -p; --include-partial-messages adds the
@@ -378,10 +380,11 @@ func (ClaudeChat) SendStream(ctx context.Context, c *ChatConversation, prompt st
 		}
 	}
 	waitErr := cmd.Wait()
-	// 利用者の停止操作や result イベント前の異常終了では modelUsage が来ない。assistant
-	// イベントで見た最後のスナップショットを縮退として採る（出力側は途中なので partial）。
-	// 採らないと「トークン 0 / measured=none」の行になり、**止めた回の消費だけが台帳から
-	// 消える** — 止められるのは重いターンほど多いので、そこが欠けると配分の絵が狂う。
+	// A stop by the user, or an abnormal exit before the result event, brings no modelUsage.
+	// Degrade to the last snapshot seen on an assistant event (partial, since the output side
+	// was still in flight). Without it the row would read "0 tokens / measured=none" and the
+	// consumption of exactly the stopped runs would vanish from the ledger — heavy turns are
+	// the ones that get stopped, so losing them distorts the whole breakdown.
 	call.FallbackTotals(ctxTrack.snap.LedgerTokens(), usagex.MeasuredPartial)
 	// An error result (e.g. context overflow) rides the stream's `result` event AND makes
 	// claude exit non-zero. Prefer the parsed message so the overflow self-heal can see
@@ -429,9 +432,9 @@ type codexChat struct{}
 
 func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	// 使用量台帳（ADR 0029 §3）。codex はどのイベントにもモデルを載せない（実測）ので、
-	// -m を渡した時だけ requested、未指定なら default_unknown に縮退する。
-	model := chatModelFor(c, session.KindCodex) // ピン留めが別 kind ならこの CLI の設定から解決
+	// Usage ledger (ADR 0029 §3). Measured: codex puts the model on no event at all, so it is
+	// requested only when -m was passed and degrades to default_unknown otherwise.
+	model := chatModelFor(c, session.KindCodex) // a pin on another kind resolves via this CLI's config
 	call := usagex.Call{Kind: session.KindCodex, ModelReq: model}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	// The default read-only sandbox is exactly the chat contract (no file writes, no
@@ -470,10 +473,10 @@ func (codexChat) Send(ctx context.Context, c *ChatConversation, prompt string) (
 		return "", errors.New("no response from codex")
 	}
 	call.OK = true
-	// codex はモデルを名乗らないので、記録できるのは -m で渡した値だけ（未指定なら
-	// codex 自身の既定＝こちらからは不明なので空のまま）。
+	// codex never names its model, so the only thing recordable is what -m carried (with no
+	// -m it runs codex's own default, which is unknown from here, so this stays empty).
 	c.NoteTurnModel(model)
-	// codex の input_tokens は cached を含む（chat_usage.go）: fresh = input - cached。
+	// codex's input_tokens include the cached ones (chat_usage.go): fresh = input - cached.
 	setChatContext(c, usage.InputTokens-usage.CachedInputTokens, usage.CachedInputTokens,
 		0, 0, chatCtxModelFor(c, session.KindCodex))
 	return reply, nil
@@ -623,8 +626,8 @@ type opencodeChat struct{}
 
 func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	pinned := chatModelFor(c, session.KindOpencode)                   // ピン留めが別 kind ならこの CLI の設定から解決
-	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // 使用量台帳（ADR 0029 §3）
+	pinned := chatModelFor(c, session.KindOpencode)                   // a pin on another kind resolves via this CLI's config
+	call := usagex.Call{Kind: session.KindOpencode, ModelReq: pinned} // usage ledger (ADR 0029 §3)
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	dir := opencodeChatDir(c)
 	args := []string{"run", "--format", "json", "--dir", dir}
@@ -668,8 +671,8 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 		return "", errors.New("no response from opencode")
 	}
 	call.OK = true
-	// opencode はイベントに実モデルを載せる（parseOpencodeRunEvents）。取れなかった
-	// 版では --model に渡した値へ退がる（渡していなければ空＝非表示）。
+	// opencode does put the real model on its events (parseOpencodeRunEvents). On a version
+	// where it cannot be read, fall back to what --model carried (empty = not displayed).
 	if model != "" {
 		c.NoteTurnModel(model)
 	} else {
@@ -685,7 +688,7 @@ func (opencodeChat) Send(ctx context.Context, c *ChatConversation, prompt string
 // back to the shared workdir (no project config) and opencodeChatConfig returns ""
 // without an af grant.
 //
-// 実測 1.18.7（`opencode debug config`、opencode_contract_test.go が固定）: opencode
+// Measured on 1.18.7 (`opencode debug config`, pinned by opencode_contract_test.go): opencode
 // MERGES every config source rather than letting one replace the others, and on a key
 // collision the nearest project config wins — precedence is
 // project(opencode.json) > OPENCODE_CONFIG > global(~/.config/opencode). Carrying the
@@ -698,7 +701,7 @@ func opencodeChatPolicy() map[string]any {
 // opencodeChatDir prepares the working dir for a chat's opencode run, with an
 // opencode.json carrying the chat policy and the attached registry servers
 // (docs/log/48 §7). The dir is opencode's PROJECT: its session store is scoped to it, so
-// the path a conversation runs in is part of its resume identity (実測 1.18.5:
+// the path a conversation runs in is part of its resume identity (measured on 1.18.5:
 // `run --session <id>` from another dir hangs outright rather than erroring). That is
 // why the grant split (none/read/write) stays even though the file itself no longer
 // differs per grant — collapsing it would strand every existing conversation's
@@ -707,15 +710,17 @@ func opencodeChatPolicy() map[string]any {
 // opencode takes this config from the DIR, not per invocation, so conversations that
 // resolve to different server sets must not share one — otherwise a concurrent turn's
 // rewrite decides which servers this turn gets. The dir key is therefore the grant
-// plus a digest of the resolved registry set (docs/log/48 §7 制約), not the grant alone.
+// plus a digest of the resolved registry set (docs/log/48 §7 constraints), not the grant
+// alone.
 //
 // The af MCP server is NOT here, and that is load-bearing rather than tidy: it needs
 // the conversation id (docs/log/30 report_to), which is per conversation, not per grant.
-// opencode merges the config sources and **the project config wins the collision**
-// (実測 1.18.7), so an af entry here would not merely "resurface" — it would BEAT the
-// per-conversation one and strip --conv from every chat, silently killing セッション報告
-// for good. Registry servers are safe to carry here because both files derive them from
-// the same conversation, so the copies never disagree. See opencodeChatConfig.
+// opencode merges the config sources and the project config wins the collision (measured on
+// 1.18.7), so an af entry here would not merely "resurface" — it would BEAT the
+// per-conversation one and strip --conv from every chat, silently killing the session report
+// (【セッション報告】) for good. Registry servers are safe to carry here because both files
+// derive them from the same conversation, so the copies never disagree. See
+// opencodeChatConfig.
 //
 // Falls back to the shared chat workdir when the dir can't be prepared (opencode then
 // runs with its defaults).
@@ -756,9 +761,9 @@ func opencodeChatDir(c *ChatConversation) string {
 // It exists because opencode's config is per FILE and the af MCP server must carry
 // `--conv <id>`: without it mcp-stdio has no conversation to attach report_to to, so
 // create_session / send_to_session arm no report and the operator never gets the
-// 【セッション報告】 it is told to wait for (docs/log/30). claude/codex/agy pass --conv in
-// their own per-conversation config; opencode used to have nowhere to put it because
-// its only config was the per-GRANT project dir shared by every conversation.
+// session report (【セッション報告】) it is told to wait for (docs/log/30). claude/codex/agy
+// pass --conv in their own per-conversation config; opencode has nowhere else to put it,
+// because its only other config is the per-GRANT project dir shared by every conversation.
 //
 // Pointing OPENCODE_CONFIG at a per-conversation file keeps --dir (the session's
 // project identity) untouched, so existing conversations resume normally. Returns ""
@@ -806,15 +811,15 @@ func opencodeChatConfig(c *ChatConversation) string {
 	return p
 }
 
-// opencodeOneShotConfig writes the static read-only policy config for opencode
+// OpencodeOneShotConfig writes the static read-only policy config for opencode
 // one-shots (title / branch / reply / edit-suggestion — oneShotHeadless) and returns
 // its path for OPENCODE_CONFIG. One-shots run in the bare chatWorkdir with no
 // opencode.json, so without this file the run inherited the user's global config —
-// the only backend of oneShotHeadless whose tool posture wasn't pinned read-only
-// (claude --tools "" / codex no tool grant / cursor --mode ask). docs/log/44 §1.3 の
-// read-only 提案生成チャネルはここで閉じる。Returns "" when the file can't be
-// written (the caller then degrades to today's behaviour rather than breaking
-// titles on a broken home).
+// the only backend of OneShotHeadless whose tool posture wasn't pinned read-only
+// (claude --tools "" / codex no tool grant / cursor --mode ask). This is where the
+// read-only suggestion-generation channel of docs/log/44 §1.3 is closed. Returns ""
+// when the file can't be written (the caller then degrades to today's behaviour
+// rather than breaking titles on a broken home).
 func OpencodeOneShotConfig() string {
 	cfg := map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
@@ -873,7 +878,7 @@ func serverSetKey(servers map[string]any) string {
 // rides and degrade to "" (→ requested / default_unknown) rather than guessing a schema.
 //
 // turnErr is the reason a run produced no answer. opencode reports a provider failure
-// as an EVENT on stdout and exits non-zero with an empty stderr (実測 1.18.5):
+// as an EVENT on stdout and exits non-zero with an empty stderr (measured on 1.18.5):
 //
 //	{"type":"error","sessionID":"ses_…","error":{"name":"UnknownError",
 //	 "data":{"message":"Unexpected server error. Check server logs for details.",
@@ -918,12 +923,12 @@ func parseOpencodeRunEvents(out []byte) (reply, sesID, model, turnErr string, us
 		}
 		if ev.Type == "error" {
 			if msg := opencodeErrText(ev.Error.Name, ev.Error.Data.Message, ev.Error.Data.Ref); msg != "" {
-				turnErr = msg // 最後のエラーが正（後続の方が具体的なことが多い）
+				turnErr = msg // the last error wins (later ones tend to be more specific)
 			}
 		}
 		for _, m := range []string{ev.ModelID, ev.Part.ModelID, ev.Message.ModelID} {
 			if m != "" {
-				model = m // 最後に見えたものが正（1 run 内でモデルが変わることは想定しない）
+				model = m // the last one seen wins (the model is not expected to change inside one run)
 			}
 		}
 		if ev.Type == "text" && ev.Part.Type == "text" && strings.TrimSpace(ev.Part.Text) != "" {
@@ -980,8 +985,8 @@ type agyChat struct{}
 
 func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	// 使用量台帳（ADR 0029 §3）: agy は素のテキストしか返さないので measured=none —
-	// トークンは 0 ではなく「未計測」として、回数だけを数える。
+	// Usage ledger (ADR 0029 §3): agy returns plain text only, so measured=none — the tokens
+	// are "not measured" rather than 0, and only the call count is recorded.
 	call := usagex.Call{Kind: session.KindAgy, ModelReq: chatModelFor(c, session.KindAgy), Measured: usagex.MeasuredNone}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	home, wd, err := chatAgyHome(c)
@@ -995,7 +1000,7 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	cmd.Dir = wd
 	cmd.Env = envWith("HOME=" + home)
 	// agy may refresh the OAuth token via tmp+rename, replacing the symlink with a
-	// diverging real file — fold a rotated token back to the shared one (codex 同様).
+	// diverging real file — fold a rotated token back to the shared one (as for codex).
 	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
 	out, err := cmd.Output()
 	if err != nil {
@@ -1012,7 +1017,7 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 		return "", errors.New("no response from agy")
 	}
 	call.OK = true
-	c.NoteTurnModel(model) // 渡した --model のみ（agy は名乗らない）
+	c.NoteTurnModel(model) // only what --model carried (agy names no model)
 	return reply, nil
 }
 
@@ -1108,7 +1113,7 @@ func chatAgyHome(c *ChatConversation) (home, wd string, err error) {
 // file tools (knowledge dirs stay readable) plus `mcp(<server>/*)` per granted
 // server. Everything else — command execution, writes — stays auto-denied by -p,
 // which IS the chat contract. Rule syntax verified live (mcp(af) and bare tool
-// names do NOT match; docs/log/32 headlessChat 節).
+// names do NOT match; docs/log/32 §headlessChat).
 func agyChatAllowRules(c *ChatConversation) []string {
 	allow := []string{"read_file", "list_dir", "grep_search", "find_files", "codebase_search"}
 	for name := range agyChatServers(c) {
@@ -1151,14 +1156,14 @@ func agyChatServers(c *ChatConversation) map[string]any {
 
 // cursorChat runs `cursor-agent -p --output-format json` (headless print mode). The
 // chat UUID is minted on the first turn — cursor's `--resume <uuid>` CREATES a chat
-// under a self-minted valid v4 and resumes it thereafter (実測 docs/log/40 §-p / probe 8)
+// under a self-minted valid v4 and resumes it thereafter (measured, docs/log/40 §-p / probe 8)
 // — so context carries across turns via the same self-UUID identity the TUI/managed
 // routes use (cursor.go). Auth is ambient (~/.config/cursor/auth.json), so no token
 // injection. cursor has no system-prompt flag, so persona/knowledge ride the
 // headlessPrompt preamble.
 //
 // Tool posture: --mode ask ("Q&A style … read-only", cursor's own execution mode —
-// 実測 v2026.07.20). This is BOTH the chat contract (no host mutation: the model can
+// measured on v2026.07.20). This is BOTH the chat contract (no host mutation: the model can
 // read but cannot edit files or run write shell commands) AND the assistant's actual
 // use (conversational Q&A / translation). We do NOT pass --force. Live-verified: a
 // bare `-p` (even without --force) AUTO-EXECUTES write tools in headless mode — it
@@ -1170,13 +1175,13 @@ func agyChatServers(c *ChatConversation) map[string]any {
 // tools are not wired for cursor v1: cursor's MCP config is global (~/.cursor), so
 // per-conversation grants would need the isolated-HOME dance agy uses (docs/log/40 Track D).
 //
-// The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/log/40 §使用量
+// The terminal `result.usage` is the ONLY cursor route carrying tokens (docs/log/40 §usage
 // — ACP/JSONL have none), so it feeds the context-fill snapshot. Fields are additive
 // (fresh input + cache read + cache write), same shape as opencode.
 type cursorChat struct{}
 
 // cursorResult is `cursor-agent -p --output-format json`'s single result object
-// (実測 docs/log/40 probe 9): {"type":"result","subtype":"success","is_error":…,
+// (measured, docs/log/40 probe 9): {"type":"result","subtype":"success","is_error":…,
 // "result":"…","session_id":"…","usage":{inputTokens,outputTokens,cacheReadTokens,
 // cacheWriteTokens}}. --output-format stream-json would be NDJSON; we use the plain
 // json form, so the whole stdout is this one object.
@@ -1195,10 +1200,10 @@ type cursorResult struct {
 
 func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) (string, error) {
 	c.StartTurn()
-	// 使用量台帳（ADR 0029 §3）。cursor は result にモデルを載せない（実測）ので requested
-	// 止まり。"auto" は --model を渡さない＝解決後のモデル不明なので default_unknown。
+	// Usage ledger (ADR 0029 §3). Measured: cursor puts no model on its result, so this stops
+	// at requested. "auto" passes no --model, so the resolved model is unknown = default_unknown.
 	call := usagex.Call{Kind: session.KindCursor}
-	pinned := chatModelFor(c, session.KindCursor) // ピン留めが別 kind ならこの CLI の設定から解決
+	pinned := chatModelFor(c, session.KindCursor) // a pin on another kind resolves via this CLI's config
 	if pinned != "" && pinned != "auto" {
 		call.ModelReq = pinned
 	}
@@ -1213,7 +1218,7 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 	args = append(args, "--resume", c.CursorSessionID)
 	cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
 	cmd.Dir = chatWorkdir()
-	cmd.Env = cursor.EnvWithoutCI(os.Environ()) // CI を渡さない（cursor/ci_env.go）
+	cmd.Env = cursor.EnvWithoutCI(os.Environ()) // do not pass CI through (cursor/ci_env.go)
 	cmd.Stdin = strings.NewReader(headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	out, err := cmd.Output()
 	if err != nil {
@@ -1235,8 +1240,8 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 		return "", errors.New("no response from cursor")
 	}
 	call.OK = true
-	// 台帳の ModelReq と同じ基準: --model を渡した時だけ記録し、auto/未指定は空
-	// （cursor 側で解決されたモデルは result に出ないので推測しない）。
+	// The same rule as the ledger's ModelReq: record only what --model carried, and leave
+	// auto/unset empty (the model cursor resolved is not in the result, so never guess it).
 	c.NoteTurnModel(call.ModelReq)
 	setChatContext(c, r.Usage.InputTokens, r.Usage.CacheReadTokens, r.Usage.CacheWriteTokens, 0,
 		chatCtxModelFor(c, session.KindCursor))
@@ -1245,7 +1250,7 @@ func (cursorChat) Send(ctx context.Context, c *ChatConversation, prompt string) 
 
 // cursorChatBaseArgs is the shared argv prefix for a cursor headless turn:
 // --disable-auto-update (fleet pins the version via image rebuild) precedes the
-// subcommand as a root option (実測: it is rejected after -p), then print-mode JSON,
+// subcommand as a root option (measured: it is rejected after -p), then print-mode JSON,
 // --trust (skip the workspace-trust prompt), and --mode ask (read-only Q&A — the
 // tool posture that keeps a chat turn from mutating the shared host; see cursorChat).
 func cursorChatBaseArgs() []string {
@@ -1253,8 +1258,8 @@ func cursorChatBaseArgs() []string {
 }
 
 // parseCursorResult decodes the -p result object. --output-format json emits one
-// object, but cursor "異常時は整形 JSON なしで終わり得る" (docs/log/40) and may prefix
-// stray lines, so fall back to scanning for the last line that parses as a result.
+// object, but cursor can exit without well-formed JSON on a failure (docs/log/40) and may
+// prefix stray lines, so fall back to scanning for the last line that parses as a result.
 func parseCursorResult(out []byte) (cursorResult, error) {
 	var r cursorResult
 	if json.Unmarshal(bytes.TrimSpace(out), &r) == nil && r.Type == "result" {
@@ -1296,7 +1301,7 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 }
 
 // claudeOneShotArgs is the argv for a claude one-shot (title / branch name / reply
-// candidate). Three deliberate departures from a chat turn (docs/log/46 §1-a-2, 実測
+// candidate). Three deliberate departures from a chat turn (docs/log/46 §1-a-2, measured
 // 2026-07-25) — a one-shot is a pure classification-and-format task, so everything that
 // makes claude a coding agent is dead weight paid on every call:
 //
@@ -1306,7 +1311,7 @@ func headlessPrompt(persona string, knowledge []string, prompt string) string {
 //	                  sent even though the useful ones were disallowed).
 //
 // plus MAX_THINKING_TOKENS=0 (claudeOneShotEnv) — an 18-character title was costing
-// ~500 thinking tokens. Measured on the title prompt: 入力側 16.0k→4.3k / out 533→13 /
+// ~500 thinking tokens. Measured on the title prompt: input 16.0k→4.3k / out 533→13 /
 // 6.2s→1.2s, same answer quality. With no tools there is nothing to permit, so
 // --dangerously-skip-permissions is gone too. --no-session-persistence is claude's
 // --ephemeral analog (print-mode only, no transcript written, no resume): a one-shot
@@ -1372,8 +1377,8 @@ func modelChoiceIDs(list []agents.ModelChoice) []string {
 //	OneShotProse … text a human reads and keeps: File pane edit suggestions, chat
 //	               plan updates. Same tier as the assistant's own replies.
 //
-// 分けている理由がこれ: 以前は 1 つの「ユーティリティ」設定が両方を兼ねており、
-// タイトル用に haiku を選ぶとファイル編集の提案まで haiku に落ちていた。
+// They are separate because a single "utility" setting used to serve both, so choosing haiku
+// for titles dropped the file-edit suggestions to haiku as well.
 type OneShotTier int
 
 const (
@@ -1381,8 +1386,8 @@ const (
 	OneShotProse
 )
 
-// recommendedOneShotModel is the 「推奨」 resolution for a tier — the Console shows the
-// same split (設定 > AI補助 の 短文生成 / 文章生成).
+// recommendedOneShotModel is the "recommended" resolution for a tier — the Console shows the
+// same split (Settings > AI assist, "short text" / "prose").
 func recommendedOneShotModel(kind string, tier OneShotTier) string {
 	if tier == OneShotProse {
 		return recommendedAssistantModel(kind)
@@ -1398,12 +1403,13 @@ func oneShotModelPref(kind string, tier OneShotTier) (string, bool) {
 	return aiShortModelPref(kind)
 }
 
-// recommendedUtilityModel picks the cheap model shown as 「推奨（現在: …）」 for the
-// short tier. The OpenCode Go route is pinned only when the live account catalog
+// recommendedUtilityModel picks the cheap model shown as "recommended (currently: …)" for
+// the short tier. The OpenCode Go route is pinned only when the live account catalog
 // proves it is available; otherwise an empty result deliberately delegates to the
 // CLI default rather than risking a metered/unentitled Zen model.
 func recommendedUtilityModel(kind string) string {
-	// 「使わないモデル」（model_deny.go）で除外された候補は自動選択もしない。
+	// A candidate excluded by the hidden-models setting (model_deny.go) is not auto-selected
+	// either.
 	switch kind {
 	case session.KindClaude:
 		return visibleModel(kind, "haiku")
@@ -1464,8 +1470,8 @@ func codexOneShotArgsNoModel(args []string) []string {
 // runCodexOneShot executes one codex exec argv and returns the reply. codex reports a
 // failure two ways — a non-zero exit AND a turn.failed/error event — so both are folded
 // into err here, which is what makes the caller's single retry cover either shape.
-// usage も返すのは、一発呼び出しを台帳に載せるため（ADR 0029 §3）— 失敗して
-// リトライした場合は「2回撃った」ことが2行として残るのが正しい。
+// usage is returned as well so the one-shot lands in the ledger (ADR 0029 §3): when a call
+// fails and is retried, two rows are the correct record of having fired twice.
 func runCodexOneShot(ctx context.Context, args []string, prompt string) (string, CodexUsage, error) {
 	cmd := chatCodexCmd(ctx, nil, args...)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -1480,20 +1486,23 @@ func runCodexOneShot(ctx context.Context, args []string, prompt string) (string,
 	return reply, usage, nil
 }
 
-// codexOneShotRun は runCodexOneShot の形（テストで差し替える）。
+// codexOneShotRun is the shape of runCodexOneShot (tests substitute their own).
 type codexOneShotRun func(ctx context.Context, args []string, prompt string) (string, CodexUsage, error)
 
-// codexOneShotWithRetry は自前ピクの小型モデルで撃ち、失敗したらモデルを外して1度だけ
-// 撃ち直す。**2回分のトークンを合算して返す**のが台帳側の要点。
+// CodexOneShotWithRetry fires with the small model we picked ourselves and, on a failure,
+// fires once more with the model flag removed. For the ledger the point is that it returns the
+// tokens of BOTH attempts added together.
 //
 // The cheap model came from the catalog, and a catalog entry is not proof the account may
-// run it (実測: opencode lists claude-haiku-4-5 and then 500s on it). Falling back to the
+// run it (measured: opencode lists claude-haiku-4-5 and then 500s on it). Falling back to the
 // configured default once — a title that costs more still beats a title feature that is broken.
 //
-// 1回目の消費は失敗しても発生している。リトライ結果で上書きすると、実際に撃った分が台帳から
-// 消える — 「安いモデルで失敗 → 既定のフラッグシップで撃ち直し」は**最も高くつく経路**なので、
-// そこが1回分に見えるのが一番まずい。要求値（model_req）は「モデルを外して撃ち直した」ことが
-// 分かるようリトライ側で上書きする（行は1本なので、後勝ちで実際に答えを出した方を載せる）。
+// The first attempt's consumption happened even though it failed. Overwriting it with the
+// retry's would erase what was actually spent, and "fail on the cheap model → fire again on
+// the default flagship" is the most expensive path there is, so it is exactly the one that
+// must not look like a single call. The requested value (model_req) is overwritten by the
+// retry so that "re-fired with the model dropped" is visible (there is only one row, so the
+// later value wins and names the attempt that actually answered).
 func CodexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, prompt string,
 	run codexOneShotRun) (reply string, tok usagex.Tokens, modelReq string, err error) {
 	modelReq = argValue(args, "-m")
@@ -1506,18 +1515,19 @@ func CodexOneShotWithRetry(ctx context.Context, args []string, autoPicked bool, 
 	return reply, tok, modelReq, err
 }
 
-// oneShotHeadless runs one prompt through the preferred available backend and returns
+// OneShotHeadless runs one prompt through the preferred available backend and returns
 // the reply text — the backend-agnostic core of the title/branch suggestions. persona
 // is passed natively where possible (claude --system-prompt) and as a prompt preamble
 // otherwise. claudeModel applies to the claude backend only (codex/opencode run their
 // own configured defaults; override via AF_TITLE_MODEL_CODEX/_OPENCODE — docs/log/46 §2-b
 // flags that an unset override means the CLI's own default, usually the flagship).
 func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, claudeModel string) (string, error) {
-	// 使用量台帳（ADR 0029 §3）。この関数は claude → codex → opencode → cursor → agy の
-	// うち「最初に使えるもの」を選ぶので、kind は分岐の中で実行結果として埋める — 要求値を
-	// 書くと claude-less ワークスペースの消費が全部 claude に化ける（docs/log/46 §2）。
-	// oneShotHeadless の戻り値を広げず内部で記録するのは、記録点がここの内側にある以上、
-	// 呼び出し側4箇所を触る理由がないため。
+	// Usage ledger (ADR 0029 §3). This function takes the first usable backend out of
+	// claude → codex → opencode → cursor → agy, so kind is filled in inside the branch, as a
+	// result of what ran: writing the requested value instead would turn all consumption of a
+	// claude-less workspace into claude's (docs/log/46 §2). Recording inside rather than
+	// widening the return value keeps the four call sites untouched, since the recording point
+	// is in here anyway.
 	call := usagex.Call{}
 	defer usagex.RecordCall(ctx, &call, time.Now())
 	kind := PreferredAssistAgent()
@@ -1545,17 +1555,18 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		call.Kind = session.KindOpencode
 		args := []string{"run", "--format", "json", "--dir", chatWorkdir()}
 		env := opencode.Env()
-		// read-only 姿勢（docs/log/44 §1.3）: chat と違い one-shot は素の chatWorkdir で走り
-		// project config（opencode.json）が無いため、OPENCODE_CONFIG の deny が実効になる
-		// （実測 1.18.7 の併合優先度: project > OPENCODE_CONFIG > global — opencodeChatDir 参照）。
-		// 書けなかったときは従来どおり素で走る（title/reply を壊さない）— ホーム破損時の縮退。
+		// read-only posture (docs/log/44 §1.3): unlike a chat, a one-shot runs in the bare
+		// chatWorkdir with no project config (opencode.json), so OPENCODE_CONFIG's deny is the
+		// one that takes effect (merge precedence measured on 1.18.7: project >
+		// OPENCODE_CONFIG > global — see opencodeChatDir). If it cannot be written the run
+		// goes bare as before, degrading on a broken home rather than breaking title/reply.
 		if cfg := OpencodeOneShotConfig(); cfg != "" {
 			env = append(env, "OPENCODE_CONFIG="+cfg)
 		}
 		// NOTE: deliberately NOT auto-picking a cheap model here (docs/log/46 §1-a-2). opencode's
 		// catalog is a LISTING, not an entitlement: `opencode/claude-haiku-4-5` is listed and
 		// selectable, yet running it returns "Unexpected server error" on an account without
-		// it, while the configured default answers fine (実測 2026-07-25). A hard failure of
+		// it, while the configured default answers fine (measured 2026-07-25). A hard failure of
 		// title/branch/reply suggestions is worse than their token cost, so opencode keeps the
 		// user's default unless AF_TITLE_MODEL_OPENCODE names something explicitly.
 		m := selected
@@ -1616,7 +1627,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		}
 		cmd := exec.CommandContext(ctx, cursor.Bin(), args...)
 		cmd.Dir = chatWorkdir()
-		cmd.Env = cursor.EnvWithoutCI(os.Environ()) // CI を渡さない（cursor/ci_env.go）
+		cmd.Env = cursor.EnvWithoutCI(os.Environ()) // do not pass CI through (cursor/ci_env.go)
 		cmd.Stdin = strings.NewReader(headlessPrompt(persona, nil, prompt))
 		out, err := cmd.Output()
 		if err != nil {
@@ -1638,7 +1649,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		// user's real agy state (which would also spawn their own global MCP servers
 		// on every title call). Runs on the cheap Flash default (quota-scarce free
 		// plan) unless overridden.
-		// agy は素のテキスト出力なのでトークンが一切取れない — measured=none で回数だけ数える。
+		// agy outputs plain text, so no tokens can be read at all — measured=none, count only.
 		call.Kind, call.Measured = session.KindAgy, usagex.MeasuredNone
 		home, wdir, err := chatAgyHome(&ChatConversation{ID: "oneshot"})
 		if err != nil {
@@ -1679,11 +1690,12 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 	out, err := cmd.Output()
 	var r claudeResult
 	perr := json.Unmarshal(out, &r)
-	// claude だけはモデル別の実測内訳とコストが返る（docs/log/46 §0）— エラー result でも
-	// 課金は発生しているので、OK 判定より先に採る。exec エラー（停止・非ゼロ終了）でも
-	// claude は構造化 result を吐いていることがあるので、**エラー return より先に**解析する。
+	// claude alone returns a measured per-model breakdown and its cost (docs/log/46 §0). An
+	// error result is billed too, so take them before deciding OK; and claude may still have
+	// printed a structured result on an exec error (a stop, a non-zero exit), so parse before
+	// returning the error.
 	call.Models, call.CostUSD = UsageModelRows(r.ModelUsage), r.TotalCostUSD
-	call.FallbackTotals(r.Usage.LedgerTokens(), "") // modelUsage の無い応答の縮退
+	call.FallbackTotals(r.Usage.LedgerTokens(), "") // degrade for a response with no modelUsage
 	if err != nil {
 		return "", fmt.Errorf("claude execution failed: %s", cliErr(err))
 	}
@@ -1694,8 +1706,9 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 	return strings.TrimRight(r.Result, "\n"), nil
 }
 
-// argValue は argv 中のフラグに続く値を返す（見つからなければ ""）。台帳の model_req に
-// 「結局どのモデルを要求したか」を、引数を組み立てた側の分岐を二重に書かずに載せるため。
+// argValue returns the value following a flag in argv ("" when not found). It puts "which
+// model was requested in the end" into the ledger's model_req without duplicating the
+// branching of the code that built the arguments.
 func argValue(args []string, flag string) string {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag {
@@ -1841,10 +1854,10 @@ func envWith(over ...string) []string {
 // is enforced by Claude Code even under --dangerously-skip-permissions (that flag only skips
 // approval prompts, not deny rules). Read/Glob/Grep/WebFetch and the MCP af tools remain.
 //
-// ListAgents / SendMessage は claude 自前の cross-session チャネル（docs/log/58 §58.17）。
-// ヘッドレスの `-p` はソケットを bind しない＝**受信はできないが送信はできる**ので、
-// 塞がないとアシスタントがワークスペース内のセッションへ AF の外から打ち込める。
-// オペレーター面の投入は af MCP の send_to_session が持っていて、そちらは台帳を通る。
+// ListAgents / SendMessage are claude's own cross-session channel (docs/log/58 §58.17). A
+// headless `-p` binds no socket, so it cannot receive but it CAN send: leave them open and the
+// assistant can type into sessions in this workspace from outside Agent Fleet. Injection on
+// the operator side belongs to the af MCP's send_to_session, which goes through the ledger.
 func chatToolLimits() []string {
 	return []string{"--disallowedTools",
 		"Agent", "Task", "Workflow",

@@ -1,4 +1,4 @@
-// Per-repo recent first-prompt history for the 起動 modal — a lightweight companion to
+// Per-repo recent first-prompt history for the launch modal — a lightweight companion to
 // the .claude/commands / skills / file template sources. Stored in localStorage (like
 // repoLast) so it's instant and survives session archival. Newest first, deduped, capped.
 const KEY = (repo: string) => "af.repo-prompts." + repo;

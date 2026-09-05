@@ -6,9 +6,9 @@ import (
 	"testing"
 )
 
-// writeFile は移送元（package main の repo_prompts_test.go）にあるヘルパの写し。
-// git_submodule_sync_test.go だけが使っており、中身は MkdirAll + WriteFile の
-// 素の 2 行なので、配線するより写す方が読める。
+// writeFile is a copy of the helper in package main's repo_prompts_test.go. Only
+// git_submodule_sync_test.go uses it, and the body is a bare MkdirAll + WriteFile, so copying
+// reads better than wiring the two together.
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

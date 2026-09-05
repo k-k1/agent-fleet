@@ -1,37 +1,37 @@
-// テナントのログイン面（docs/log/61 §61.9 / §61.11・ADR0043 決定 19 / 29-33）。
+// The tenant sign-in surface (docs/log/61 §61.9 / §61.11, ADR0043 decision 19 / 29-33).
 //
-// AdminTab.tsx から切り出した。P3/P4 では「IA 刷新のときにまとめて移す」と決めて
-// 管理モーダルの中に暫定で置いていたが、置き場が 2 つ（デプロイ管理者の管理モーダル /
-// テナント管理者のテナント設定モーダル）に分かれたため、両方から同じ実装を差せる
-// 場所が要る。読み手ごとの出し分けは props（isSuper / 読み取り専用）だけで、
-// ★ 権限そのものは常にサーバ側が持つ:
-//   - ログイン規則の PUT は withSuperAdmin 固定（決定 19）
-//   - サインイン方法の「承認して有効化」は CP の setStatus が super_admin を見る（決定 30）
-// UI の出し分けは案内であって、権限の実装ではない。
+// Two places host it — the deployment admin's admin modal and the tenant admin's tenant
+// settings modal — so both have to be able to mount the same implementation. The only
+// per-reader difference is props (isSuper / read-only); the permission itself always lives on
+// the server:
+//   - PUT of the login rules is fixed to withSuperAdmin (decision 19)
+//   - "approve and enable" for a sign-in method is decided by the CP's setStatus looking at
+//     super_admin (decision 30)
+// What the UI shows is guidance, not the implementation of the permission.
 //
-// この家系は 3 ファイル: ここ（両方が読む型）・tenantLoginRules.tsx（ログイン規則）・
-// tenantSignInMethods.tsx（サインイン方法の一覧 / 編集 / 登録簿）。
+// Three files in this family: here (the types both sides read), tenantLoginRules.tsx (login
+// rules) and tenantSignInMethods.tsx (sign-in method list / editor / registry).
 
-// テナント行のうち、この画面が読む 3 列だけ（docs/log/61 §61.9.7）。管理 API の
-// テナント表現の部分集合なので、呼び出し側の型をそのまま渡せる。
+// Only the three tenant-row columns this surface reads (docs/log/61 §61.9.7). A subset of the
+// admin API's tenant representation, so the caller can pass its own type straight through.
 export interface TenantLoginFields {
   allowed_providers?: string;
   auto_join_domains?: string;
   allowed_domains?: string;
-  // 受け入れるが、このテナントのログイン画面には出さない方式（docs/log/61 §61.15.9）。
-  // ★ 表示だけの欄で、門ではない。
+  // Methods that are accepted but not shown on this tenant's sign-in screen
+  // (docs/log/61 §61.15.9). Display only — this is not a gate.
   hidden_providers?: string;
 }
 
-// テナントが定義したサインイン方法（docs/log/61 §61.11）。client_secret は書き込み専用 —
-// レスポンスには決して載らず、保存済みかどうかは has_secret で分かる。
+// A sign-in method defined by the tenant (docs/log/61 §61.11). client_secret is write-only:
+// it never appears in a response, and has_secret is how you tell whether one is stored.
 export interface TenantIdP {
   id: string;
   name: string;
   label_ja?: string;
   label_en?: string;
-  // kind は「どのアダプタで動くか」＝出す欄そのものを変える（docs/log/61 §61.15）。
-  // 既定は oidc（P4 の行はこの列より古い）。
+  // kind picks the adapter, which changes which fields are shown at all
+  // (docs/log/61 §61.15). Defaults to oidc, since P4 rows predate this column.
   kind?: string;
   issuer: string;
   client_id: string;
@@ -40,8 +40,9 @@ export interface TenantIdP {
   allowed_tids?: string;
   allowed_domains?: string;
   allowed_orgs?: string;
-  // 規則 1.5 を当てるための安定クレーム名（docs/log/61 §61.15.10）。値ではなく「名前」だけ
-  // が設定で、値は必ずトークンから読む。書けるのは CP が許した名前だけ。
+  // The stable claim name rule 1.5 keys on (docs/log/61 §61.15.10). Only the *name* is
+  // configured, never the value: the value is always read from the token. Only names the CP
+  // permits can be written here.
   link_claim?: string;
   provider_id?: string;
   tenant_slug?: string;

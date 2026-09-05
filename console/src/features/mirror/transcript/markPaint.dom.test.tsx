@@ -20,8 +20,9 @@ beforeEach(() => {
 });
 
 describe("paintTurnMarks", () => {
-  // ⚠️ 出現番号は root ひとつの中でだけ数える。ページ全体で数えると、共有側で片方の part が
-  // 落ちたときに別の場所へ印が付く（docs/log/69 §69.3）。
+  // Occurrence numbers are counted inside a single root only. Counting across the page would
+  // land the mark somewhere else whenever the shared side drops one of the parts
+  // (docs/log/69 §69.3).
   it("counts occurrences inside one root only", () => {
     const el = body();
     const byRoot = new Map([["uuid-1#0", [mark({ nth: 1 })]]]);
@@ -32,7 +33,7 @@ describe("paintTurnMarks", () => {
     expect(second.querySelectorAll("mark.tmark")).toHaveLength(0);
     const painted = first.querySelectorAll("mark.tmark");
     expect(painted).toHaveLength(1);
-    // 「2 番目の target」— 前後の文字がそれを裏づける。
+    // The second "target" — the surrounding text is what proves it.
     expect(first.textContent).toBe("a target and a target again");
     expect(painted[0].textContent).toBe("target");
     expect(first.innerHTML).toContain("and a <mark");
@@ -54,7 +55,8 @@ describe("paintTurnMarks", () => {
     expect(el.innerHTML).toBe(before);
   });
 
-  // 本文が作り直されて印が消えた回（テーマ変更など）は、指紋が同じでも塗り直す。
+  // When the body was rebuilt and lost its marks (a theme change, say), repaint even though the
+  // signature is unchanged.
   it("repaints when the body was re-rendered underneath and the marks are gone", () => {
     const el = body();
     const byRoot = new Map([["uuid-1#0", [mark({})]]]);
@@ -62,7 +64,7 @@ describe("paintTurnMarks", () => {
     expect(el.querySelectorAll("mark.tmark")).toHaveLength(1);
 
     const root = el.querySelector<HTMLElement>('[data-mark-root="uuid-1#0"]')!;
-    root.innerHTML = "<p>a target and a target again</p>"; // MarkdownView が描き直した状態
+    root.innerHTML = "<p>a target and a target again</p>"; // as MarkdownView left it after a re-render
     expect(el.querySelectorAll("mark.tmark")).toHaveLength(0);
 
     expect(paintTurnMarks(el, byRoot, () => 0, sig)).toBe(sig);

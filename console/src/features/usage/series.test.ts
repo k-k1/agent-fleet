@@ -37,7 +37,7 @@ const buckets: UsageBucket[] = [
 ];
 
 describe("totalsByKey", () => {
-  it("バケットを跨いで系列ごとに足す", () => {
+  it("sums each series across buckets", () => {
     const m = totalsByKey(buckets);
     expect(m.get("session")?.spend).toBe(3000);
     expect(m.get("session")?.calls).toBe(30);
@@ -46,25 +46,25 @@ describe("totalsByKey", () => {
 });
 
 describe("stackModel", () => {
-  it("バケット合計と縦軸の上端を出す", () => {
+  it("produces the bucket totals and the top of the y axis", () => {
     const s = stackModel(buckets, "feature", "spend");
     expect(s.rows.map((r) => r.total)).toEqual([1350, 2100]);
     expect(s.max).toBe(2100);
   });
 
-  it("セグメントは必ずスロット順（＝隣接ペアが検証済みの並びになる）", () => {
+  it("always orders segments by slot, so the adjacent pairs are the validated ones", () => {
     const s = stackModel(buckets, "feature", "spend");
     // session(1) → compact(4) → title.session(5)
     expect(s.rows[0].segs.map((x) => x.key)).toEqual(["session", "compact", "title.session"]);
   });
 
-  it("凡例はスロット順、値0の系列はそのバケットに出さない", () => {
+  it("orders the legend by slot and omits zero-valued series from a bucket", () => {
     const s = stackModel(buckets, "feature", "spend");
     expect(s.legend.map((l) => l.key)).toEqual(["session", "compact", "title.session"]);
     expect(s.rows[1].segs.map((x) => x.key)).toEqual(["session", "compact"]);
   });
 
-  it("8系列を超えたら「その他」へ畳み、合計は保存される", () => {
+  it("folds past 8 series into other while preserving the total", () => {
     const many: UsageBucket = { t: "2026-07-26T00:00:00Z", series: {} };
     let sum = 0;
     for (let i = 0; i < 14; i++) {
@@ -73,18 +73,18 @@ describe("stackModel", () => {
     }
     const s = stackModel([many], "model", "spend");
     expect(s.legend.some((l) => l.key === OTHER_KEY)).toBe(true);
-    expect(s.legend.length).toBe(9); // 8スロット + その他
-    expect(s.rows[0].total).toBe(sum); // 畳んでも総量は失われない
+    expect(s.legend.length).toBe(9); // 8 slots + other
+    expect(s.rows[0].total).toBe(sum); // folding never loses magnitude
     expect(s.foldedKeys.length).toBe(6);
   });
 
-  it("指標を切り替えると回数でも積める", () => {
+  it("stacks by call count when the metric is switched", () => {
     const s = stackModel(buckets, "feature", "calls");
     expect(s.rows[0].total).toBe(17);
     expect(s.max).toBe(21);
   });
 
-  it("空データでも壊れない", () => {
+  it("survives empty data", () => {
     const s = stackModel([], "feature", "spend");
     expect(s.rows).toEqual([]);
     expect(s.max).toBe(0);
@@ -93,7 +93,7 @@ describe("stackModel", () => {
 });
 
 describe("breakdownRows", () => {
-  it("量の多い順・最大に対する比・全体シェア", () => {
+  it("orders by magnitude and reports the ratio to the largest and the overall share", () => {
     const rows = breakdownRows(totalsByKey(buckets), "feature", "spend");
     expect(rows.map((r) => r.key)).toEqual(["session", "compact", "title.session"]);
     expect(rows[0].frac).toBe(1);
@@ -101,7 +101,7 @@ describe("breakdownRows", () => {
     expect(rows[0].share).toBeCloseTo(3000 / 3450, 5);
   });
 
-  it("色は積み上げ棒と同じ実体固定の色（読み手が2つのグラフを行き来できる）", () => {
+  it("reuses the entity-pinned colours of the stacked bars so a reader can move between charts", () => {
     const rows = breakdownRows(totalsByKey(buckets), "feature", "spend");
     const stack = stackModel(buckets, "feature", "spend");
     const bySession = stack.legend.find((l) => l.key === "session");
@@ -110,7 +110,7 @@ describe("breakdownRows", () => {
 });
 
 describe("matrixRows", () => {
-  it("行は spend 降順、行内のセルも降順、行合計を持つ", () => {
+  it("sorts rows and their cells by descending spend and carries a row total", () => {
     const rows = matrixRows({
       "title.session": { "claude-haiku-4-5": agg(16, 4) },
       session: { "claude-opus-4-8": agg(11_464_050, 461), "claude-fable-5": agg(5_056_597, 201) },
@@ -121,13 +121,13 @@ describe("matrixRows", () => {
     expect(rows[0].total.calls).toBe(662);
   });
 
-  it("matrix 無しは空配列（split を指定しなかった応答）", () => {
+  it("returns an empty array with no matrix, i.e. a response with no split", () => {
     expect(matrixRows(undefined)).toEqual([]);
   });
 });
 
-describe("coverageNotes — 「0」と「未計測」を混同させない", () => {
-  it("トークン完全＋モデル報告なら注記不要、それ以外は注記対象", () => {
+describe("coverageNotes: never confuse zero with unmeasured", () => {
+  it("needs no note for exact tokens plus a reported model, and a note for anything else", () => {
     const notes = coverageNotes({
       claude: { tokens: "exact", model: "reported" },
       copilot: { tokens: "partial", model: "reported" },
@@ -138,23 +138,23 @@ describe("coverageNotes — 「0」と「未計測」を混同させない", () 
     expect(notes.find((n) => n.kind === "cursor")?.complete).toBe(false);
   });
 
-  it("欠けたフィールドは none 扱い（黙って「測れている」に倒さない）", () => {
+  it("treats a missing field as none rather than silently claiming it was measured", () => {
     const notes = coverageNotes({ agy: {} as never });
     expect(notes[0]).toMatchObject({ kind: "agy", tokens: "none", model: "none", complete: false });
   });
 });
 
-describe("指標・期間", () => {
-  it("metricOf はコストの欠損を 0 として扱う", () => {
+describe("metrics and ranges", () => {
+  it("metricOf treats a missing cost as 0", () => {
     expect(metricOf(agg(10), "spend")).toBe(10);
     expect(metricOf(agg(10), "cost_usd")).toBe(0);
     expect(metricOf(agg(10, 1, { cost_usd: 0.02 }), "cost_usd")).toBe(0.02);
     expect(metricOf(undefined, "spend")).toBe(0);
   });
 
-  // 推定額と実測は**別の値**。片方をもう片方の欠損補完に使わない（1つの数字に2つの
-  // 計測法が混ざると、どちらとしても読めなくなる）。
-  it("推定額は実測とは独立に読み書きされる", () => {
+  // The estimate and the measured cost are different values; neither fills in for the other. A
+  // number that mixes two ways of measuring can no longer be read as either.
+  it("reads and writes the estimated amount independently of the measured one", () => {
     expect(metricOf(agg(10, 1, { cost_est_usd: 1.5 }), "cost_est_usd")).toBe(1.5);
     expect(metricOf(agg(10, 1, { cost_est_usd: 1.5 }), "cost_usd")).toBe(0);
     expect(metricOf(agg(10, 1, { cost_usd: 0.02 }), "cost_est_usd")).toBe(0);
@@ -164,17 +164,17 @@ describe("指標・期間", () => {
     expect(sum.cost_est_usd).toBe(3.75);
   });
 
-  it("perCall は calls=0 でも壊れない", () => {
+  it("perCall survives calls=0", () => {
     expect(perCall(agg(100, 4))).toBe(25);
     expect(perCall(agg(100, 0))).toBe(0);
   });
 
-  it("24時間以内は時間粒度、それ以上は日粒度", () => {
+  it("uses hour grain up to 24 hours and day grain beyond", () => {
     expect(bucketFor(24)).toBe("hour");
     expect(bucketFor(24 * 7)).toBe("day");
   });
 
-  it("rangeOf は now を基準に from/to を作る", () => {
+  it("rangeOf builds from/to relative to now", () => {
     const now = new Date("2026-07-26T09:00:00Z");
     const r = rangeOf(24, now);
     expect(r.to).toBe("2026-07-26T09:00:00.000Z");
@@ -183,18 +183,18 @@ describe("指標・期間", () => {
   });
 });
 
-// --- レビュー P2-6: 畳まれた系列（色スロットの無い feature）の扱い ------------------
+// --- How folded series (features with no colour slot) behave -----------------------
 
-describe("その他（畳み込み）の絞り込み", () => {
-  // 凍結 enum 12 個に対して色スロットは 8 つ。溢れた feature は必ずグレーの「その他」に
-  // 入るので、その他が実キーへ展開できないと**グレーの棒だけ中身を確かめられない**。
+describe("filtering on other (the folded series)", () => {
+  // 12 frozen enum values against 8 colour slots: the overflow always lands in the grey other,
+  // so unless other expands to the real keys the grey bar is the one bar nobody can inspect.
   it("expands OTHER into every folded key (same-axis OR)", () => {
     const folded = ["assistant.ask", "title.chat"];
     const on = toggleFoldedFilter([], "feature", folded);
     expect(on.map((f) => f.dim + ":" + f.value).sort()).toEqual(["feature:assistant.ask", "feature:title.chat"]);
     expect(filterParam(on)).toContain("feature:assistant.ask");
     expect(foldedFilterOn(on, "feature", folded)).toBe(true);
-    // もう一度押すと全部外れる（他の軸の絞り込みは残す）。
+    // Pressing again clears them all, keeping filters on other axes.
     const withOther = [...on, { dim: "kind", value: "claude" }];
     const off = toggleFoldedFilter(withOther, "feature", folded);
     expect(off).toEqual([{ dim: "kind", value: "claude" }]);
@@ -214,8 +214,8 @@ describe("その他（畳み込み）の絞り込み", () => {
     expect(foldedFilterOn(cur, "feature", [])).toBe(false);
   });
 
-  // 色スロットを持たない feature（assistant.ask / title.chat / branch.suggest /
-  // suggest.chat）は必ず畳まれる＝凡例に「その他」が要る、を stackModel 側で固定する。
+  // Pins in stackModel that the features with no colour slot (assistant.ask / title.chat /
+  // branch.suggest / suggest.chat) always fold, which is why the legend needs an other entry.
   it("folds the four slot-less features into OTHER", () => {
     const b: UsageBucket[] = [
       {
@@ -235,9 +235,9 @@ describe("その他（畳み込み）の絞り込み", () => {
   });
 });
 
-// P3-9: サーバが空バケットもゼロで返すようになった。位置を保ったまま「棒の無い日」として
-// 描けること（合計 0・セグメント無し）＝時間軸が読める形。
-describe("ゼロ埋めされたバケット", () => {
+// The server returns empty buckets as zeros, and they must keep their position and draw as a
+// day with no bar (total 0, no segments); that is what keeps the time axis readable.
+describe("zero-filled buckets", () => {
   it("keeps empty buckets as gaps instead of collapsing the axis", () => {
     const buckets: UsageBucket[] = [
       { t: "2026-07-24T00:00:00Z", series: { session: agg(100) } },
@@ -248,6 +248,6 @@ describe("ゼロ埋めされたバケット", () => {
     expect(m.rows.map((r) => r.t)).toEqual(buckets.map((b) => b.t));
     expect(m.rows[1].total).toBe(0);
     expect(m.rows[1].segs).toEqual([]);
-    expect(m.max).toBe(300); // 空バケットは縦軸を動かさない
+    expect(m.max).toBe(300); // an empty bucket does not move the y axis
   });
 });

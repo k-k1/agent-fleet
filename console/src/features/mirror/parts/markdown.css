@@ -1,8 +1,9 @@
-/* ターン本文の Markdown（.mirror-turn .markdown）— チャット用の書体と縦のリズム、折り返し
+/* Markdown in the turn body (.mirror-turn .markdown) — chat typography, vertical rhythm, wrapping
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 .mirror-turn .markdown {
   /* MarkdownView is shared with the file viewer, which centers a max-width column
@@ -38,14 +39,14 @@
 .mirror-turn .markdown h4 {
   margin: 0.7em 0 0.35em;
 }
-/* 本文は必ず折り返す。エージェントの転写には折り返し位置を持たない長い文字列
-   （sha256:… / クエリ付き URL / 長い識別子）がふつうに現れ、それが 1 つあるだけで
-   スマホでは転写のスクロール容器（.mirror-body）ごと横へはみ出していた（幅 390px の
-   実測で sw=633/cw=390 等）。読むのに横スクロールが要るのがまず不便で、さらに
-   横スワイプのガード（app/swipeGuard.ts）にも波及していた。
-   対象はテキストブロックだけ — table と pre は自前の overflow を持ち、ここで
-   折り返すと列幅やコードの見え方が変わってしまうので触らない（overflow-wrap は
-   継承するので、段落中の inline code にはこれで効く）。 */
+/* Body text must always wrap. Agent transcripts routinely contain long strings with no break
+   opportunity (sha256:…, URLs with a query, long identifiers), and a single one of them pushes
+   the whole transcript scroller (.mirror-body) sideways on a phone (measured at 390px wide:
+   sw=633 / cw=390). That forces horizontal scrolling to read, and also leaks into the
+   horizontal-swipe guard (app/swipeGuard.ts).
+   Text blocks only — table and pre carry their own overflow, and wrapping them here would
+   change column widths and how code reads (overflow-wrap is inherited, so this still covers
+   inline code inside a paragraph). */
 .mirror-turn .markdown p,
 .mirror-turn .markdown li,
 .mirror-turn .markdown blockquote,

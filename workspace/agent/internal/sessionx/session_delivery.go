@@ -1,26 +1,30 @@
 package sessionx
 
-// 配達検証（docs/log/38 追補・sbk7oej 再発 2026-07-24 の恒久対策）。
+// Delivery verification (docs/log/38 addendum).
 //
-// tmux send-keys の成功は「キーがペインに届いた」ことしか意味しない。CLI 側の一瞬の
-// 受け付け不能 — resume 直後でスラッシュコマンド登録が終わる前・ペースト折り畳みに
-// Enter が食われる・モーダルがタイプ文字を無視する等 — に当たると、タイプ済みの
-// プロンプトは無音で消え、/input は 200 を返す。人が見ている Console 送信なら気付いて
-// 打ち直せるが、無人経路（CP スケジューラの reuse 送信）はこの 200 をもって「fired」を
-// 台帳に刻む — 実行されていないのに成功履歴になる偽陽性の級で、readiness ゲート
-// （sbk7oej 修正第1弾）だけでは塞げなかった穴。
+// A successful tmux send-keys means only that the keys reached the pane. If the CLI happens
+// to be momentarily unable to accept them - right after a resume, before slash commands are
+// registered; Enter swallowed by paste folding; a modal ignoring typed characters - the typed
+// prompt vanishes silently and /input still returns 200. A person watching the Console
+// notices and retypes, but an unattended path (the CP scheduler's reuse send) writes "fired"
+// into its ledger on the strength of that 200: a false success recorded for a turn that never
+// ran, and a gap the readiness gate alone did not close.
 //
-// ここでは成功の定義を「ターンが実際に始まった証拠」に引き上げる:
-//   証拠 = claude の会話 jsonl に user ターンが追記された（提出の一次記録）
-//        ∨ ペインが実行中スピナーを示す（jsonl フラッシュ遅延の保険）
-// 証拠が出るまで待ち、出なければ Enter 再送（下書きが残っている＝Enter だけ食われた）
-// → 全文再タイプ（下書きごと飲まれた）の自己修復を 1 巡試み、それでも出なければ
-// delivery_unconfirmed を返す。CP スケジューラはこれを error: として記録し通知する。
+// So success is redefined here as evidence that a turn actually started:
 //
-// 検証は呼び出し元が confirm を明示したときだけ走る（オプトイン）。/model のような
-// ターンを生まない UI スラッシュコマンドや、人が見ている Console 送信の意味論を
-// 変えないため。検証手段が無い kind（非 claude の TUI）では no-op — 「検証できない」を
-// 「配達失敗」と混同しない。
+//	evidence = a user turn was appended to claude's conversation jsonl (the primary record
+//	           of submission)
+//	         | the pane shows a running spinner (insurance against a delayed jsonl flush)
+//
+// It waits for that evidence, and if none appears it tries one round of self-healing -
+// resend Enter (the draft is still there, so only Enter was eaten), then retype the whole
+// prompt (the draft was swallowed too) - and returns delivery_unconfirmed if evidence is
+// still missing. The CP scheduler records that as error: and notifies.
+//
+// Verification is opt-in, running only when the caller asks to confirm, so that UI slash
+// commands that start no turn (/model) and human-watched Console sends keep their semantics.
+// For a kind with no way to verify (a non-claude TUI) it is a no-op: "cannot verify" must not
+// be confused with "delivery failed".
 
 import (
 	"fmt"
@@ -43,12 +47,12 @@ const (
 	deliveryPoll        = 500 * time.Millisecond
 )
 
-// deliverySnapshot is the pre-typing evidence baseline. logs == nil = この kind には
-// 検証プリミティブが無い（confirmPromptDelivery は no-op で成功扱い）。
+// deliverySnapshot is the pre-typing evidence baseline. logs == nil means this kind has no
+// verification primitive (confirmPromptDelivery is then a no-op and reports success).
 type deliverySnapshot struct {
-	logs      map[string]int64 // 会話 jsonl のサイズ（提出の一次記録を差分で見る）
-	subagents map[string]int64 // BG エージェントの転写（誤配達の検出用）
-	paneBusy  bool             // **打つ前から**ペインが動いていたか
+	logs      map[string]int64 // conversation jsonl sizes (the primary record, read as a delta)
+	subagents map[string]int64 // background agent transcripts (to detect a misdelivery)
+	paneBusy  bool             // was the pane already working before we typed?
 }
 
 // deliveryBaseline snapshots the session's conversation log sizes before typing, so
@@ -56,8 +60,9 @@ type deliverySnapshot struct {
 // TUI kinds have no equally cheap submit ground-truth, and today's unattended senders
 // (the CP scheduler reuse send) target claude sessions.
 //
-// paneBusy も基線に含める: スピナーは「自分のプロンプトでターンが始まった」証拠として
-// 使うものなので、打つ前から回っていた（前のターン・BG エージェント）なら証拠にならない。
+// paneBusy is part of the baseline too: the spinner is used as evidence that OUR prompt
+// started a turn, so it proves nothing if it was already spinning beforehand (a previous
+// turn, or a background agent).
 func deliveryBaseline(m session.Meta) deliverySnapshot {
 	if NormalizeKind(m.Kind) != session.KindClaude {
 		return deliverySnapshot{}
@@ -74,10 +79,10 @@ func deliveryBaseline(m session.Meta) deliverySnapshot {
 // half also catches a turn that already FINISHED between polls (the user line persists)
 // and the queued case (typed mid-turn: claude holds the prompt and replays it later).
 //
-// スピナーは jsonl のフラッシュ遅れを埋める保険としてだけ残す。**基線で既に動いていた
-// 場合は数えない** — その回転は自分のプロンプトとは無関係で、実測ではペインに映っていた
-// のが BG サブエージェントのスピナーだったせいで、メイン会話に届かなかった指示が
-// 「配達済み」と判定されていた（2026-07-30 sannme2）。
+// The spinner is kept only as insurance against a delayed jsonl flush, and does not count
+// when the baseline was already busy: that rotation has nothing to do with our prompt.
+// Measured: the spinner on screen was a background subagent's, and an instruction that never
+// reached the main conversation was judged delivered.
 func deliveryEvidenced(m session.Meta, base deliverySnapshot, prompt string) bool {
 	if claude.PromptAcceptedSince(session.UUID(m.Dir, m.Name), base.logs, prompt) {
 		return true
@@ -107,19 +112,20 @@ func confirmPromptDelivery(m session.Meta, pane, prompt string, base deliverySna
 	if awaitDeliveryEvidence(m, base, prompt, deliveryConfirmWindow) {
 		return nil
 	}
-	// 誤配達の検出: プロンプトが BG エージェントの転写に入っていたら、ペインの入力欄は
-	// メイン会話ではなくそのエージェントに紐づいていた（agents 表示）。ここで自己修復に
-	// 進むと同じ割り込みをもう一度エージェントへ撃ち込むだけなので、再送せずに落とす。
-	// 通常はタイプ前のガード（session_io.go の agents_view）で弾かれるが、レールの表示が
-	// 変わってガードが素通りしたときの最後の砦。
+	// Misdelivery: if the prompt landed in a background agent's transcript, the pane's input
+	// box was bound to that agent rather than to the main conversation (the agents view).
+	// Self-healing from here would only fire the same interruption at the agent again, so fail
+	// without resending. The pre-typing guard (agents_view in session_io.go) normally catches
+	// this; the check here is the last line of defence when a changed rail rendering lets the
+	// guard through.
 	if claude.SubagentReceivedSince(session.UUID(m.Dir, m.Name), base.subagents, prompt) {
 		return fmt.Errorf("prompt was delivered to a background agent, not the session " +
 			"(the pane's input box was bound to an agent); return the pane to the main conversation and resend")
 	}
-	// 自己修復: 下書きがまだコンポーザに見えている＝Enter だけ食われた → Enter 再送
-	// （提出済みなら空コンポーザへの Enter は no-op なので安全）。下書きも消えている
-	// ＝行ごと飲まれた → 全文を再タイプして提出し直す（証拠が無い＝何も提出されて
-	// いないので二重実行にはならない）。
+	// Self-healing. The draft still visible in the composer means only Enter was eaten, so
+	// resend Enter (safe: if it was submitted after all, Enter on an empty composer is a
+	// no-op). The draft gone as well means the whole line was swallowed, so retype and submit
+	// it again - no evidence means nothing was submitted, so this cannot double-execute.
 	if promptDraftVisible(tmuxx.CapturePane(session.TmuxName(m.Name)), prompt) {
 		log.Printf("delivery: %s composer still holds the prompt — resending Enter", m.Name)
 		_ = tmuxx.Cmd("send-keys", "-t", pane, "Enter").Run()

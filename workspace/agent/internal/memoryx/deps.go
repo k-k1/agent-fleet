@@ -1,17 +1,19 @@
 package memoryx
 
-// deps.go — memoryx が呼び出し側（package main）へ伸ばしている手を 1 枚に集めたもの。
+// deps.go collects in one place every hand memoryx reaches out to its caller (package main).
 //
-// この家系の外向き依存は **errcodes.go の安定エラーコード 13 本だけ**である
-// （コンパイラに出させた断面の全件・`go build -gcflags=-e`）。関数も型も 1 つも要らない
-// ——「メモリの版管理」は live ツリーと専用 bare repo で閉じており、他の家系を呼ばない。
+// The whole outward dependency of this family is the 13 stable error codes in errcodes.go
+// (the complete section, as listed by the compiler with `go build -gcflags=-e`). Not one
+// function or type is needed: memory version management is closed over the live tree and its
+// dedicated bare repo, and calls into no other family.
 //
-// コードを memoryx 側で定義し直さない理由は internal/gitx/deps.go と同じ: Console の
-// i18n カタログ（console/src/core/api/client.ts の ERR_TEXT）と対になっている文字列で、
-// **出所が 2 つになると、片方だけ直した日に画面が生のコードを出す**。
+// The codes are not redefined on the memoryx side, for the same reason as
+// internal/gitx/deps.go: they are the strings paired with the Console's i18n catalogue
+// (ERR_TEXT in console/src/core/api/client.ts), and with two sources of truth the screen shows
+// a raw code the day only one of them is fixed.
 //
-// memoryx 単体のテストは main を持たないので、TestMain ではなく init が配線する
-// （deps_test.go 参照）。
+// A memoryx-only test has no main, so init does the wiring rather than TestMain
+// (see deps_test.go).
 
 import (
 	"fmt"
@@ -19,9 +21,9 @@ import (
 	"sort"
 )
 
-// Deps は「memoryx から見た外の世界」。**型は main のものを 1 つも含まない**。
+// Deps is the outside world as memoryx sees it. It holds no type from main.
 type Deps struct {
-	// --- 安定エラーコード（errcodes.go）---
+	// --- stable error codes (errcodes.go) ---
 	ErrCodeBadRequest     string
 	ErrCodeBadRev         string
 	ErrCodeBadPath        string
@@ -39,13 +41,15 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の memory_wiring.go / memoryx のテストの init）。
+// Configure is called exactly once at startup (main's memory_wiring.go, or init in memoryx's
+// own tests).
 //
-// 🔥 **網羅は reflect で取る。手書きの一覧にしない。** ここは**全フィールドが値型（文字列）**
-// なので、未配線が nil 参照で落ちてくれることが無い: 空のまま静かに走り、Console には
-// `""` というコードが届いて i18n が解決できず、生の developer メッセージが露出する。
+// Completeness is taken with reflect, never from a hand-written list. Every field here is a
+// value type (a string), so an unwired one never fails with a nil dereference: it runs on
+// quietly empty, the Console receives `""` as the code, i18n cannot resolve it, and the raw
+// developer message is exposed.
 //
-// 例外を作るときはフィールドに `memoryx:"optional"` と書く（一覧を別に持たない）。
+// To exempt a field, tag it `memoryx:"optional"` rather than keeping a separate list.
 func Configure(d Deps) {
 	var missing []string
 	v := reflect.ValueOf(d)
@@ -61,7 +65,7 @@ func Configure(d Deps) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		panic(fmt.Sprintf("memoryx.Configure: 配線されていない依存がある: %v", missing))
+		panic(fmt.Sprintf("memoryx.Configure: dependencies left unwired: %v", missing))
 	}
 	deps = d
 	errCodeMemoryBadRequest = d.ErrCodeBadRequest
@@ -79,15 +83,16 @@ func Configure(d Deps) {
 	errCodeMemoryTooLarge = d.ErrCodeTooLarge
 }
 
-// Wired は現在の配線を返す。**呼び出し側が「配線が生きているか」を通しで検査する**
-// ための読み出し口で、memoryx 自身は使わない。
+// Wired returns the current wiring. It is the read port for callers that verify end to end
+// that the wiring is live; memoryx itself does not use it.
 //
-// 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**（別のコードを繋いだ）は
-// 捕まえられない。
+// Configure only catches a field left unwired, never one wired to the wrong thing (a
+// different code attached).
 func Wired() Deps { return deps }
 
-// 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。移送してきた 2,951 行を
-// 1 行も触らずに済ませるため、**綴りは移送前の const と同じ**にしてある。
+// What is received by value. Configure writes these once and nothing reads them before that.
+// The spellings match the const names from before the move, so the 2,951 lines that came here
+// needed no edit at all.
 var (
 	errCodeMemoryBadRequest     string
 	errCodeMemoryBadRev         string

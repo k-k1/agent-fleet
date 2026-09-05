@@ -1,9 +1,9 @@
 import { t, type MsgKey } from "../../lib/i18n/index.ts";
 
-// 通知センターの行見出し。⚠️ **wording() が扱う kind はすべてここにも要る** —— 欠けた kind は
-// 訳ではなく生の識別子（`handoff-offer`）がそのまま行に出る（実際に引き継ぎの 3 種と
-// carried-interaction がそうなっていた）。落としても型では気付けないので、隣の wording.test.ts が
-// **このファイルのソースから** `n.kind === "…"` を拾って表と突き合わせている。
+// Row headings for the notification center. Every kind wording() handles must appear here too: a
+// missing kind renders the raw identifier (`handoff-offer`) in the row instead of a translation,
+// and the types cannot catch the omission. wording.test.ts therefore scrapes the kinds out of
+// *this file's source* and checks them against the table.
 export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "answer-ready": "noti.kind_answer_ready",
   question: "noti.kind_question",
@@ -26,16 +26,16 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "arch-residue": "noti.kind_arch_residue",
 };
 
-/** 行見出しの訳。未知の kind（新しい CP と古い Console）だけ生の識別子へ落とす。 */
+/** Translated row heading; only an unknown kind (new CP with an old Console) falls back to the raw identifier. */
 export function notificationKindLabel(kind: string): string {
   const key = NOTIFICATION_KIND_LABELS[kind];
   return key ? t(key) : kind;
 }
 
-// notificationRowSubtitle は通知センターの行の副題。既定は displayName（多くの kind では
-// セッションの表示名）だが、**セッション報告だけは行き先が会話**なので「誰から → どの会話へ」
-// まで出す。payload に会話名が乗っているのに displayName しか出していなかった間、行からは
-// どの会話宛の報告か分からず、押して初めて（消えていれば）分からないまま行き止まった。
+// notificationRowSubtitle is the subtitle of a notification-center row. It defaults to
+// displayName (for most kinds, the session's display name), but a session report's destination is
+// a conversation, so it shows "who -> which conversation". Without the conversation name the row
+// does not say which conversation the report was for, and clicking is the only way to find out.
 export function notificationRowSubtitle(n: NotificationWordingInput): string {
   const conv = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
   if (n.kind === "session-report" && conv) return `${n.displayName} → ${conv}`;
@@ -115,10 +115,11 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "carried-interaction") {
-    // 答えを待っていた対話を抱えたままセッションが畳まれた（docs/log/75）。畳むこと自体は
-    // 無害（持ち越してあるので失われない）が、利用者はそれを知らない — 一覧のバッジは
-    // Console を開いている人にしか見えず、質問時の通知は「答えてください」としか言って
-    // いない。だから「まだ保留のままだ」と、どこで答えられるかを言う。
+    // A session was folded away while still holding an interaction waiting for an answer
+    // (docs/log/75). Folding is harmless in itself (the interaction is carried over, not lost),
+    // but the user does not know that: the list badge is only visible to someone with the Console
+    // open, and the original question notification only said "please answer". So this says the
+    // interaction is still pending, and where it can be answered.
     const kindText =
       n.payload.interaction === "plan"
         ? t("notif.carried.plan")
@@ -132,22 +133,24 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "handoff-offer") {
-    // 別メンバーから引き継ぎが届いた（docs/log/77）。body は引き継ぎの表示名で、遷移先は共有ビュー。
+    // A handoff arrived from another member (docs/log/77); the body is the handoff's display name
+    // and clicking goes to the shared view.
     return { title: t("notif.handoff_offer.title"), body: name, speech: t("notif.handoff_offer.speech") };
   }
   if (n.kind === "handoff-accepted") {
     return { title: t("notif.handoff_accepted.title"), body: name, speech: t("notif.handoff_accepted.speech") };
   }
   if (n.kind === "handoff-expired") {
-    // 受領されないまま失効した。理由は求めない代わりに「宙に浮いた」ことだけは知らせる。
+    // It expired without being accepted. No reason is asked for, but the fact that it is now left
+    // hanging has to be reported.
     return { title: t("notif.handoff_expired.title"), body: name, speech: t("notif.handoff_expired.speech") };
   }
   if (n.kind === "schedule-failed" || n.kind === "schedule-skipped") {
-    // 定時実行が届かなかった（docs/log/38）。⚠️ この分岐が無かった間、schedule-* は末尾の
-    // usage-reset へ落ちていた——通知センターにも OS 通知にも読み上げにも「利用上限が
-    // リセットされました」と出ており、**通知は届いているのに中身が別の出来事**だった。
-    // 未知の kind を最後の分岐へ落とす構造そのものが原因なので、新しい kind を足すときは
-    // ここも足す。
+    // A scheduled run did not happen (docs/log/38). Without this branch, schedule-* fell through
+    // to the usage-reset wording at the end of the function, so the center, the OS notification
+    // and the narration all announced a usage-limit reset: the notification arrived, but about a
+    // different event. Falling through to the last branch is the structure itself, so every new
+    // kind must be added here as well.
     const label = String(n.payload.spec_label || name);
     const reason = scheduleFailureReason(String(n.payload.status || ""));
     const title = n.kind === "schedule-failed" ? t("notif.schedule_failed.title") : t("notif.schedule_skipped.title");
@@ -172,9 +175,10 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
     };
   }
   if (n.kind === "arch-residue") {
-    // CPU の系統が変わり、自動では戻せなかったものが残っている（docs/decisions/0068）。
-    // 対象はセッションではなくワークスペースなので押しても遷移先は無い——行に「何が」を
-    // 出しきることが仕事で、読んだ人がターミナルで直せるだけの情報を入れる。
+    // The CPU architecture changed and some artefacts could not be restored automatically
+    // (docs/decisions/0068). The subject is the workspace, not a session, so clicking leads
+    // nowhere: the row's whole job is to name *what* is left, with enough detail for the reader
+    // to fix it from a terminal.
     const repos = Array.isArray(n.payload.repos) ? (n.payload.repos as unknown[]).map(String) : [];
     const bins = Array.isArray(n.payload.bins) ? (n.payload.bins as unknown[]).map(String) : [];
     const items = [...repos, ...bins];

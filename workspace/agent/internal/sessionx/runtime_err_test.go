@@ -11,14 +11,15 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 )
 
-// managed runtime の起動失敗のうち、**待っても直らない**もの（共有 daemon の認証ゲート）は
-// 一時的な失敗と別のコード・別のステータスで返す。
+// Managed-runtime launch failures that waiting does not fix (the shared daemon's auth gate)
+// are returned with a different code and a different status from transient ones.
 //
-// これを混ぜていた頃、未ログインは 502 runtime_failed になり、Console は
-// 「エージェントを起動できませんでした。しばらく待ってから再試行してください。」と訳した
-// ——待っても直らない原因に「待て」と言い、原因（未ログイン）はどこにも出なかった。
-// 5xx をやめるのは文言のためだけではない: Console の isTransientErr が 5xx を
-// 「再試行してよい失敗」と読むので、5xx のままだと文言を直しても再試行対象に残る。
+// While the two were mixed, not being logged in came back as 502 runtime_failed and the
+// Console rendered it as "the agent could not be started, please wait and retry" - telling
+// the user to wait for a cause waiting never clears, with the actual cause (not logged in)
+// shown nowhere. Dropping the 5xx is not only about wording: the Console's isTransientErr
+// reads any 5xx as "a failure worth retrying", so leaving it a 5xx keeps it in the retry set
+// however the text is fixed.
 func TestWriteRuntimeErrSplitsPermanentFromTransient(t *testing.T) {
 	call := func(err error) (int, string, string) {
 		rec := httptest.NewRecorder()
@@ -39,22 +40,25 @@ func TestWriteRuntimeErrSplitsPermanentFromTransient(t *testing.T) {
 		name string
 		err  error
 	}{
-		{"codex 未ログイン", codex.ErrNotLoggedIn},
-		{"opencode 未接続", opencode.ErrNotConnected},
-		// 途中で包まれても分類は変わらない（driver は %w で包んで返すことがある）。
-		{"包まれた codex 未ログイン", fmt.Errorf("codex thread の作成に失敗しました: %w", codex.ErrNotLoggedIn)},
+		{"codex not logged in", codex.ErrNotLoggedIn},
+		{"opencode not connected", opencode.ErrNotConnected},
+		// Wrapping on the way out does not change the classification (the driver returns
+		// some of these wrapped with %w).
+		{"wrapped codex not logged in", fmt.Errorf("codex thread の作成に失敗しました: %w", codex.ErrNotLoggedIn)},
 	} {
 		status, code, msg := call(tc.err)
 		if status != http.StatusConflict || code != errCodeAgentNotConnected {
 			t.Errorf("%s: status/code = %d/%q, want %d/%q", tc.name, status, code, http.StatusConflict, errCodeAgentNotConnected)
 		}
-		// 原因は汎用コードでは表せない。message に残っていること（Console は errDetail で併記する）。
+		// A generic code cannot carry the cause, so it must survive in message (the Console
+		// shows it alongside as errDetail).
 		if msg == "" {
-			t.Errorf("%s: message が空 — 原因が画面へ届かない", tc.name)
+			t.Errorf("%s: message is empty - the cause never reaches the screen", tc.name)
 		}
 	}
 
-	// それ以外は従来どおり「一時的」。ここを恒久側へ倒すと、起動待ちが再試行不能に見える。
+	// Everything else stays "transient". Tip this to the permanent side and waiting for a
+	// launch looks like a failure that cannot be retried.
 	status, code, msg := call(fmt.Errorf("opencode serve が時間内に起動しませんでした"))
 	if status != http.StatusBadGateway || code != "runtime_failed" {
 		t.Errorf("transient: status/code = %d/%q, want %d/%q", status, code, http.StatusBadGateway, "runtime_failed")

@@ -1,51 +1,55 @@
 package main
 
-// contract_session_test.go — 「契約の型化」の最小 1 本（家系: sessionWire）。
+// contract_session_test.go — the smallest instance of a typed contract (family:
+// sessionWire), the second leg of docs/log/23's "triple manual sync" diagnosis.
 //
-// 何のためか（docs/log/23 の診断「三重の手動同期」の脚②）。
-// Console の `console/src/types/session.ts` は **手書きの TS 型**で、Go の `sessionWire`
-// とは**何の機械的な関係も無い**。片側の json タグを直しても、もう片側は黙ったまま
-// `undefined` を読むだけで、Go のテストも Console のテストも緑のまま通る。
+// The Console's `console/src/types/session.ts` is a HAND-WRITTEN TS type with no
+// mechanical relationship to Go's `sessionWire`. Fix a json tag on one side and the
+// other silently reads `undefined` — and the Go suite and the Console suite both stay
+// green.
 //
-// 既存の安全網との関係（**作り直していない・上に足している**）:
-//   - `routes_golden_test.go` = 窓口が在るか。JSON の形は見ない。
-//   - `wire_golden_test.go`   = json キー・JSON 上の型・omitempty を撮る。**Go 側だけ**で閉じており、
-//     Console の型とは突き合わせない。また **Go のフィールド名を撮っていない**ので、
-//     **同じ型の 2 つの json タグを入れ替えても、キー集合が変わらず緑のまま通る**（下の TestSessionWireFieldBinding が塞ぐ）。
-//   - `session_wire_test.go`  = Agent → CP の往復で drop しないこと。Console 側は見ない。
+// This adds to the existing safety nets rather than replacing them:
+//   - `routes_golden_test.go` = does the endpoint exist. Says nothing about JSON shape.
+//   - `wire_golden_test.go`   = json keys, their JSON types and omitempty. Closed over
+//     the Go side alone, never compared against the Console's type. It also does not
+//     capture Go FIELD names, so swapping the json tags of two same-typed fields leaves
+//     the key set identical and passes green (the binding check below closes that).
+//   - `session_wire_test.go`  = nothing is dropped on the Agent → CP round trip. Does
+//     not look at the Console.
 //
-// ⚠️ **ワイヤは 1 バイトも変えていない。**ここでやっているのは「今のワイヤを書き表す」ことだけ。
+// The wire itself is not changed by any of this: all these tests do is write down the
+// wire as it already is.
 
 import (
 	"reflect"
 )
 
-// consoleSessionTS は Console の手書き型の在り処。
-// 🔴 パターンではなく**解決結果**で存在を見る（この定数を直すときは下の Fatal も見ること）。
+// consoleSessionTS is where the Console's hand-written type lives. Existence is checked
+// by RESOLVING this path, not by matching a pattern (when editing this constant, read the
+// Fatal below too).
 //
-// 🔴 **手元で変異を当てるときは `go test -count=1` を付けること。**
-// この検査は**モジュールの外**（Console の TS）を読む。TS だけを書き換えても
-// テストバイナリは変わらないので、**`go test` のキャッシュに当たって `ok (cached)` が出る**
-// ——**変異を当てたのに緑に見える。**（案 A の家系は全部この性質を持つ。先例の
-// `workspace/agent/errcodes_catalog_test.go` も同じ。）**CI は毎回まっさらなので影響を受けるのは
-// 手元の申告のほうで、「変異を当てたが緑だった」という報告が腐る。
+// Pass `go test -count=1` when applying a mutation by hand. This check reads OUTSIDE the
+// module (the Console's TS), so editing only the TS leaves the test binary unchanged, the
+// result comes back from `go test`'s cache as `ok (cached)`, and the mutation looks green
+// when it is not. Every family of this design has that property (see the precedent,
+// `workspace/agent/errcodes_catalog_test.go`). CI is unaffected — it starts clean — so
+// what rots is the local claim that a mutation was applied and stayed green.
 const consoleSessionTS = "../console/src/types/session.ts"
 
-// --- ① 取り違え検査: Go フィールド ↔ json キーの結び付きを固定する ---
+// --- 1. swap check: pin the Go field ↔ json key BINDING ---
 
-// sessionWireBinding は sessionWire の「Go フィールド名 → json キー」。
+// sessionWireBinding is sessionWire's "Go field name → json key".
 //
-// 🔴 **なぜ json キーの集合ではなく「結び付き」を撮るのか。**
-// 同じ型のフィールド 2 つ（例: Branch / CurrentBranch, ExitReason / Carried）の json タグを
-// 入れ替えると、**ワイヤに出るキーの集合は 1 文字も変わらない**。wire.golden も TS との
-// キー突き合わせも緑のまま通り、画面には「別のブランチ名」が出る。
-// 結び付きを撮ると、この入れ替えが**この表との差分**として出る。
+// The binding, not the set of json keys: swapping the json tags of two same-typed fields
+// (Branch / CurrentBranch, ExitReason / Carried) leaves the key set on the wire byte for
+// byte identical. wire.golden and the TS key comparison both stay green, and the screen
+// shows a different branch's name. Against this table the swap shows up as a diff.
 //
-// 🔴 **フィールド名を撮っても移送で偽の赤にならない。**
-// wire.golden が「Go の型名は撮らない」としたのは、型名が `main` → `internal/x` の移送で
-// 必ず変わるため。**フィールド名は変わらない**——json タグが効くのは公開フィールドだけで、
-// 公開フィールドは移送しても改名されない（実測 2026-09-03・develop: json タグ付きの
-// 非公開フィールドは両モジュール合わせて **0 件** / 公開フィールドは 3,001 件）。
+// Capturing field names does not cause a false red when code is moved between packages.
+// wire.golden deliberately does not capture Go TYPE names because a `main` → `internal/x`
+// move necessarily changes them; field names do not change, because json tags only apply
+// to exported fields and a move does not rename an exported field (measured on develop:
+// json-tagged unexported fields across both modules: 0; exported fields: 3,001).
 var sessionWireBinding = map[string]string{
 	"Name":                 "name",
 	"Kind":                 "kind",
@@ -81,38 +85,41 @@ var sessionWireBinding = map[string]string{
 	"Carried":              "carried",
 }
 
-// --- ② 対応検査に使う免除表（家系の定義は contract_wire_test.go の cpContractFamilies）---
+// --- 2. exemption tables for the correspondence check (the family list itself is
+// cpContractFamilies in contract_wire_test.go) ---
 
-// consoleOnlyExempt は「Console の Session に在るが、Go の sessionWire が出さない」ことが
-// **意図されている**キー。🔴 増やすときは必ず理由を書くこと。
-// **ここは「まだ直していない」を隠す場所ではない。**
+// consoleOnlyExempt holds the keys the Console's Session declares that Go's sessionWire
+// INTENTIONALLY does not emit. Every addition must carry its reason; this is not a place
+// to park "not fixed yet".
 //
-// 🔴 **いま入っている 2 件は「意図された免除」ではなく、この検査が見つけた穴**である。
-// どちらを正にするか（TS の宣言を消すか、Go に足すか）は**ワイヤに関わる設計判断**なので、
-// 第 1 段では触らずに免除し、報告で利用者へ上げている。**塞いだ瞬間に下の逆検査が免除を外させる。**
+// The two entries below are not intended exemptions — they are holes this check found.
+// Which side is right (drop the TS declaration, or add the field in Go) is a design
+// decision about the wire, so they are exempted untouched and raised with the user
+// instead. Closing one forces its exemption out, via the reverse check.
 var consoleOnlyExempt = map[string]string{
-	"model": "【穴】session.ts:51 が `model?: string; // claude model` を宣言しているが、" +
-		"sessionWire にも Agent の session.Session にも該当キーが無い。Console 側の実読みも見つからない＝死んだ宣言の疑い。",
-	"path": "【穴】session.ts:34 が `path?: string; // absolute working dir` を宣言しているが、" +
-		"sessionWire にも Agent の session.Session にも該当キーが無い（実際の作業ディレクトリは dir）。",
+	"model": "[gap] session.ts:51 declares `model?: string; // claude model`, but " +
+		"neither sessionWire nor the Agent's session.Session has such a key. No actual read of it on the Console side either = likely a dead declaration.",
+	"path": "[gap] session.ts:34 declares `path?: string; // absolute working dir`, but " +
+		"neither sessionWire nor the Agent's session.Session has such a key (the actual working directory is dir).",
 }
 
-// goOnlyExempt は「sessionWire が出すが Console の Session 型が宣言していない」ことが
-// **意図されている**キー。同上。
+// goOnlyExempt is the mirror image: keys sessionWire emits that the Console's Session
+// type INTENTIONALLY does not declare. Same rule about reasons.
 //
-// 🔴 3 件とも**穴**。とくに started は、Console が
-// `console/src/features/sessions/ArchivedModal.tsx:19` で
-// `type ArchivedSession = Session & { started?: string };` と**局所的に継ぎ足している**
-// ——共有の型が実際のワイヤに追いついていないことを、機能側が交差型で埋めている実例。
+// All three below are holes. `started` in particular is patched locally by the Console —
+// `console/src/features/sessions/ArchivedModal.tsx:19` declares
+// `type ArchivedSession = Session & { started?: string };` — a feature filling in with an
+// intersection type because the shared type has not caught up with the actual wire.
 var goOnlyExempt = map[string]string{
-	"started":  "【穴】ArchivedModal.tsx:19 が交差型で局所的に足している。共有の Session に載せるのが筋だが、既存の利用箇所の型が変わる。",
-	"display":  "【穴】sessionWire が出しているが Session に宣言が無い。",
-	"archived": "【穴】sessionWire が出しているが Session に宣言が無い。",
+	"started":  "[gap] ArchivedModal.tsx:19 adds it locally with an intersection type. Putting it on the shared Session is the right move, but that changes the type at existing call sites.",
+	"display":  "[gap] sessionWire emits it, but Session has no declaration for it.",
+	"archived": "[gap] sessionWire emits it, but Session has no declaration for it.",
 }
 
-// sessionContractFamily は sessionWire 家系。**検査の中身は contract_wire_test.go の
-// checkContractFamily が持つ**（#343 以降、横展開のため表駆動に畳んだ）。
-// アサーションは #339 のときと同じ——①結び付き ②TS 走査の固定 ③両方向の突き合わせと 4 方向の寿命。
+// sessionContractFamily describes the sessionWire family. The body of the check lives in
+// checkContractFamily (contract_wire_test.go), table-driven so other families reuse it.
+// The assertions are (1) the binding, (2) the pinned TS scan, and (3) the comparison in
+// both directions plus the four-way lifecycle.
 func sessionContractFamily() contractFamily {
 	return contractFamily{
 		name:    "sessionWire",

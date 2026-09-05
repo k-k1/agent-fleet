@@ -1,13 +1,15 @@
-/* ターンに付く帯: 末尾のファイルチップ（.mirror-turn-files / .mtf-*）・変更ファイル
-（.mirror-files / .mfl-*）・ToDo（.mirror-tasks / .mtk-*）・圧縮中の進捗（.mirror-compacting）
+/* Strips attached to a turn: the trailing file chips (.mirror-turn-files / .mtf-*), the changed
+ * files list (.mirror-files / .mfl-*), the ToDo list (.mirror-tasks / .mtk-*) and compaction
+ * progress (.mirror-compacting)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
-/* ターン末尾のファイルチップ (docs/log/68 P1): この返信が直したファイル。畳まれた
-   ToolRun を開かずに「さっき直したのはどれ」に答える。フッターの直前に置き、
-   時刻・トークンと同じ余白に載せる。 */
+/* File chips at the end of a turn (docs/log/68 P1): the files this reply edited. They answer
+   "which one did it just change" without expanding the collapsed ToolRun. Placed right before
+   the footer, on the same margin as the timestamp and token counts. */
 .mirror-turn-files {
   display: flex;
   flex-wrap: wrap;
@@ -41,8 +43,9 @@
   border-color: color-mix(in srgb, var(--fg) 30%, transparent);
   background: color-mix(in srgb, var(--fg) 8%, transparent);
 }
-/* 差分の中身が無いチップ（削除・差分本体を運ばない kind）は座標としてだけ残す。
-   押せないボタンは出さない規約に合わせ、ホバーも反応も付けない。 */
+/* A chip with no diff body behind it (a deletion, or a kind that carries no diff) stays only as
+   a coordinate. Per the rule against showing buttons that cannot be pressed, it gets neither a
+   hover nor a reaction. */
 .mtf-chip:disabled {
   cursor: default;
 }
@@ -61,10 +64,10 @@
   white-space: nowrap;
 }
 
-/* 変更ファイル (docs/log/68): the files this session edited, as a collapsed disclosure in the
+/* Changed files (docs/log/68): the files this session edited, as a collapsed disclosure in the
    same band as the ToDo list. It reuses .mirror-disclosure and the .chg-badge / .dv-add /
-   .dv-del vocabularies (global) so a row reads identically to the rail's 変更 list and to
-   a diff pane's counters. */
+   .dv-del vocabularies (global) so a row reads identically to the rail's changed-files list
+   (「変更」) and to a diff pane's counters. */
 .mirror-files {
   margin: 6px 16px;
   border: 1px solid var(--border);
@@ -203,9 +206,10 @@
 .mfl-sub .codicon {
   font-size: 11px;
 }
-/* コミット済み (docs/log/68 P2): 作業ツリーに差分は無いが、セッション開始以降のコミットに
-   現れた行。「片付いた」ことが読み取れればよいので、まだ手を入れられる行（未ステージ/
-   未追跡）より控えめだが、根拠のない「差分なし」よりは前に出す。 */
+/* Committed (docs/log/68 P2): rows with no diff left in the working tree that did appear in a
+   commit made since the session started. All they have to convey is "this one is settled", so
+   they are quieter than rows still open to editing (unstaged / untracked) but louder than an
+   unsubstantiated "no diff". */
 .chg-badge.st-done {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 12%, transparent);
@@ -268,8 +272,8 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The running task's spinner, shown on the summary so the ぐるぐる stays visible even
-   when the list is collapsed. Accent-colored to read as "work in progress". */
+/* The running task's spinner, shown on the summary so it stays visible even when the list is
+   collapsed. Accent-colored to read as "work in progress". */
 .mtk-active-mark {
   flex: none;
   color: var(--chat-accent);

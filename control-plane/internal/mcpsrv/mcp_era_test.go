@@ -1,8 +1,9 @@
 package mcpsrv
 
-// /mcp の版契約（docs/log/49 + ADR0032）。両 era を同時に serve するので、固定したいのは
-// 「新版の検証が効くこと」と「旧クライアントが従来どおり通ること」の 2 点。
-// dispatchMCPHTTP を直接叩く（PAT 認証は別レイヤで、ここでは版の扱いだけを見る）。
+// The /mcp era contract (docs/log/49 + ADR0032). Both eras are served at once, so two
+// things are pinned here: the new era's validation actually bites, and a legacy client
+// still gets through unchanged. These call dispatchMCPHTTP directly — PAT auth is a
+// separate layer and only era handling is under test.
 
 import (
 	"encoding/base64"
@@ -67,7 +68,7 @@ func TestMCPDiscoverAdvertisesBothEras(t *testing.T) {
 	}
 	res, _ := resp.Result.(map[string]any)
 	if res["resultType"] != "complete" {
-		t.Fatalf("resultType = %v（新版クライアントは必須として読む）", res["resultType"])
+		t.Fatalf("resultType = %v (new-era clients read it as required)", res["resultType"])
 	}
 	vers, _ := res["supportedVersions"].([]string)
 	if len(vers) == 0 || vers[0] != mcpVersionStateless {
@@ -80,19 +81,20 @@ func TestMCPDiscoverAdvertisesBothEras(t *testing.T) {
 		}
 	}
 	if !sawLegacy {
-		t.Fatalf("旧版が広告から消えている: %v（旧クライアントを serve し続ける限り載せる）", vers)
+		t.Fatalf("the legacy version disappeared from the advertisement: %v (keep listing it as long as legacy clients are served)", vers)
 	}
-	// serverInfo は SEP と draft ドキュメントで置き場が食い違うので両方に出す。
+	// SEP and the draft document disagree on where serverInfo belongs, so it goes in both.
 	if _, ok := res["serverInfo"]; !ok {
-		t.Fatal("serverInfo が top-level に無い（SEP-2575 の DiscoverResult 形）")
+		t.Fatal("serverInfo is missing at top level (the SEP-2575 DiscoverResult shape)")
 	}
 	meta, _ := res["_meta"].(map[string]any)
 	if _, ok := meta[metaServerInfo]; !ok {
-		t.Fatal("serverInfo が _meta に無い（draft ドキュメントの形）")
+		t.Fatal("serverInfo is missing from _meta (the draft document shape)")
 	}
 }
 
-// 旧クライアント（_meta 無し）は従来どおり素通り。ヘッダ規則も適用されない。
+// TestMCPLegacyInitializeStillWorks: a legacy client (no _meta) passes through unchanged,
+// and the header rules do not apply to it.
 func TestMCPLegacyInitializeStillWorks(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`
 	resp, status := dispatch(t, body, nil)
@@ -107,10 +109,10 @@ func TestMCPLegacyInitializeStillWorks(t *testing.T) {
 
 func TestMCPHeaderMismatchIs400(t *testing.T) {
 	cases := map[string]map[string]string{
-		"版ヘッダが _meta と食い違う": {"MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "server/discover"},
-		"版ヘッダが無い":           {"Mcp-Method": "server/discover"},
-		"Mcp-Method が無い":    {"MCP-Protocol-Version": mcpVersionStateless},
-		"Mcp-Method が違う":    {"MCP-Protocol-Version": mcpVersionStateless, "Mcp-Method": "tools/list"},
+		"version header disagrees with _meta": {"MCP-Protocol-Version": "2025-06-18", "Mcp-Method": "server/discover"},
+		"version header missing":              {"Mcp-Method": "server/discover"},
+		"Mcp-Method missing":                  {"MCP-Protocol-Version": mcpVersionStateless},
+		"Mcp-Method differs":                  {"MCP-Protocol-Version": mcpVersionStateless, "Mcp-Method": "tools/list"},
 	}
 	for label, hdr := range cases {
 		resp, status := validate(t, statelessBody(1, "server/discover", "", mcpVersionStateless), hdr)
@@ -120,32 +122,34 @@ func TestMCPHeaderMismatchIs400(t *testing.T) {
 	}
 }
 
-// Mcp-Name は params.name を写す。base64 sentinel で来たら復号してから比較する。
+// TestMCPNameHeaderMirrorsBody: Mcp-Name mirrors params.name, decoded first when it
+// arrives as a base64 sentinel.
 func TestMCPNameHeaderMirrorsBody(t *testing.T) {
 	body := statelessBody(1, "tools/call", `"name":"list_my_sessions"`, mcpVersionStateless)
 	hdr := statelessHdr("tools/call")
 
 	hdr["Mcp-Name"] = "list_my_sessions"
 	if resp, _ := validate(t, body, hdr); resp != nil {
-		t.Fatalf("一致しているのに拒否された: %+v", resp.Error)
+		t.Fatalf("rejected even though it matches: %+v", resp.Error)
 	}
 
 	hdr["Mcp-Name"] = "other_tool"
 	resp, status := validate(t, body, hdr)
 	if status != http.StatusBadRequest || resp.Error == nil || resp.Error.Code != rpcHeaderMismatch {
-		t.Fatalf("不一致が通ってしまった: status=%d err=%+v", status, resp.Error)
+		t.Fatalf("a mismatch got through: status=%d err=%+v", status, resp.Error)
 	}
 
-	// 非 ASCII を含む名前は base64 sentinel で運ばれる。
+	// A name with non-ASCII characters travels as a base64 sentinel.
 	jp := "検索"
 	bodyJP := statelessBody(1, "tools/call", `"name":"`+jp+`"`, mcpVersionStateless)
 	hdr["Mcp-Name"] = "=?base64?" + base64.StdEncoding.EncodeToString([]byte(jp)) + "?="
 	if resp, _ := validate(t, bodyJP, hdr); resp != nil {
-		t.Fatalf("base64 sentinel が復号されていない: %+v", resp.Error)
+		t.Fatalf("the base64 sentinel was not decoded: %+v", resp.Error)
 	}
 }
 
-// name を持たないメソッドに Mcp-Name は要らない（server/discover / tools/list）。
+// TestMCPNameNotRequiredWithoutName: a method that carries no name (server/discover,
+// tools/list) does not need Mcp-Name.
 func TestMCPNameNotRequiredWithoutName(t *testing.T) {
 	if _, status := dispatch(t, statelessBody(1, "server/discover", "", mcpVersionStateless),
 		statelessHdr("server/discover")); status != http.StatusOK {
@@ -164,11 +168,12 @@ func TestMCPUnsupportedVersionIs400WithSupportedList(t *testing.T) {
 		t.Fatalf("requested = %v", data["requested"])
 	}
 	if sup, _ := data["supported"].([]string); len(sup) == 0 {
-		t.Fatal("supported 一覧が無いとクライアントは再交渉できない")
+		t.Fatal("without the supported list a client cannot renegotiate")
 	}
 }
 
-// clientInfo / clientCapabilities は毎リクエスト必須。欠けたら malformed。
+// TestMCPMissingRequiredMetaIs400: clientInfo / clientCapabilities are required on every
+// request; without them it is malformed.
 func TestMCPMissingRequiredMetaIs400(t *testing.T) {
 	body := `{"jsonrpc":"2.0","id":1,"method":"server/discover","params":{"_meta":{` +
 		`"io.modelcontextprotocol/protocolVersion":"` + mcpVersionStateless + `"}}}`
@@ -178,8 +183,9 @@ func TestMCPMissingRequiredMetaIs400(t *testing.T) {
 	}
 }
 
-// 新版では未知メソッドが 404。これがあるから、クライアントは本文を読まずとも
-// 「新版サーバーだがそのメソッドが無い」と「旧版サーバー」を区別できる。
+// TestMCPUnknownMethodIs404: in the new era an unknown method is 404, which is what lets a
+// client tell "new-era server without that method" from "legacy server" without reading
+// the body.
 func TestMCPUnknownMethodIs404(t *testing.T) {
 	resp, status := dispatch(t, statelessBody(1, "does/notexist", "", mcpVersionStateless),
 		statelessHdr("does/notexist"))
@@ -188,7 +194,8 @@ func TestMCPUnknownMethodIs404(t *testing.T) {
 	}
 }
 
-// 旧クライアントの未知メソッドは従来どおり 200 + -32601（挙動を変えない）。
+// TestMCPLegacyUnknownMethodStays200: an unknown method from a legacy client keeps its old
+// 200 + -32601 answer.
 func TestMCPLegacyUnknownMethodStays200(t *testing.T) {
 	resp, status := dispatch(t, `{"jsonrpc":"2.0","id":1,"method":"does/notexist"}`, nil)
 	if status != http.StatusOK || resp.Error == nil || resp.Error.Code != rpcMethodNotFound {
@@ -197,7 +204,7 @@ func TestMCPLegacyUnknownMethodStays200(t *testing.T) {
 }
 
 func TestMCPEndpointRejectsRemovedTransportVerbs(t *testing.T) {
-	// 2026-07-28 は GET ストリームと DELETE によるセッション破棄を廃止した。
+	// The 2026-07-28 era dropped the GET stream and DELETE session teardown.
 	for _, m := range []string{http.MethodGet, http.MethodDelete} {
 		w := httptest.NewRecorder()
 		API{}.HandleMCP(w, httptest.NewRequest(m, "/mcp", nil))

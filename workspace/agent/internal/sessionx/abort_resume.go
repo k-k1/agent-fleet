@@ -1,31 +1,34 @@
 package sessionx
 
-// 再送で直る中断（接続断・一時的なレート制限・ストリームの番犬）からの自動再開
-// （docs/log/47 §4-6）。
+// Automatic resume from a cut-off that a re-send fixes: a dropped connection, a transient
+// rate limit, the stream watchdog (docs/log/47 §4-6).
 //
-// docs/log/47 §3-4 の再開はアシスタント主導だった: 中断 → 完了報告 → オペレーターが
-// send_to_session で「続けて」を送る。これには2つの穴がある。
+// The resume of docs/log/47 §3-4 was assistant-driven: cut-off → completion report →
+// the operator sends "continue" with send_to_session. That has two gaps.
 //
-//	① 会話に紐付いていないセッション（Console から直接起動）は再開されない。報告先が
-//	   無いので、中断の通知は出るが誰も再開させないまま止まる（§5 の積み残し）。
-//	② 会話持ちでも、往復のたびにアシスタントのターンが1つ走る。中断は「利用者が既に
-//	   頼んだ作業を走らせ直すだけ」で判断を含まないのに、判断のための LLM を経由する
-//	   ぶんのトークンを毎回払っていた。
+//	1. A session not tied to a conversation (launched straight from the Console) is never
+//	   resumed. There is nowhere to report to, so the cut-off is notified but nobody
+//	   resumes it (the item left over in §5).
+//	2. Even with a conversation, every round trip runs one assistant turn. A cut-off only
+//	   re-runs work the user already asked for and carries no judgement, yet it paid the
+//	   tokens of a judgement-making LLM every time.
 //
-// よって再開の一手目は Agent 自身が直接送る（利用上限が既に例外としてそうしている
-// ように — rate_limit_resume.go）。アシスタントは**打ち切ったときだけ**の受け皿に
-// なる: 上限（maxAutoResumeAttempts）まで再送しても中断が続くなら、それは一時的な
-// 不調ではないので、そこで初めて報告して利用者へエスカレーションする。
+// So the first move of a resume is sent by the Agent itself, as the usage-limit path already
+// does as an exception (rate_limit_resume.go). The assistant only catches what was given up
+// on: if the cut-off persists after re-sending up to the cap (maxAutoResumeAttempts), it is
+// not a transient fault, and only then is it reported and escalated to the user.
 //
-// ADR0030 §3 が Agent 直送を避けた第一の理由「誰が何を送ったか見えなくなる」は、
-// docs/log/37/38 の注入元記録（recordInjection → ミラーのバッジ）で解消済み。再開の
-// プロンプトは注入元 auto-resume として転写に残り、ミラーで見分けられる。
+// ADR0030 §3's first reason for avoiding a direct send from the Agent, "who sent what becomes
+// invisible", is resolved by the injection-source record of docs/log/37/38 (recordInjection →
+// the mirror's badge). The resume prompt stays in the transcript with source auto-resume and
+// is distinguishable in the mirror.
 //
-// **報告の抑止は「中断を握り潰す」ことではない。** 中断の通知（通知センター）は従来
-// どおり出る。抑えるのは会話への報告＝アシスタントのターンだけで、再開後にターンが
-// 完了すれば、その完了報告が指示1件を正しく閉じる（報告が2回から1回に減る）。
-// 抑止の判断は chat_report_reconcile.go の collectAbortSignal / evalReportEvidence が
-// AbortResumeHolds を見て行う。
+// Suppressing the report is not the same as swallowing the cut-off. The cut-off notification
+// (notification centre) appears as before; what is held back is only the report into the
+// conversation, i.e. the assistant turn. Once the resumed turn completes, that completion
+// report closes the one instruction correctly (two reports become one). The suppression is
+// decided by collectAbortSignal / evalReportEvidence in chat_report_reconcile.go, which read
+// AbortResumeHolds.
 
 import (
 	"log"
@@ -42,44 +45,46 @@ import (
 )
 
 const (
-	// abortResumeWatchInterval is the sweep cadence. 上限エピソード（1分）より短いのは、
-	// こちらの相手が「数秒で直っている一時的な不調」だから — 待ち時間はそのまま利用者の
-	// 待ち時間になる。1 sweep のコストは claude セッションごとの転写末尾の読み取り。
+	// abortResumeWatchInterval is the sweep cadence. Shorter than the usage-limit episode
+	// (1 minute) because what it faces here is a transient fault that clears in seconds, and
+	// the wait is the user's wait. One sweep costs a transcript-tail read per claude session.
 	abortResumeWatchInterval = 30 * time.Second
 	// abortResumeFirstDelay is how long to wait after the cut-off before the first
-	// resume. 即時に撃たない理由は 529 / overloaded で、原因が消える前に再送しても
-	// 同じ中断をもう一度引くだけだから（そしてそれは貴重な再試行を1回捨てる）。
+	// resume. Firing immediately is wrong for 529 / overloaded: re-sending before the cause
+	// clears just draws the same cut-off again, and throws away one of the few retries.
 	abortResumeFirstDelay = 30 * time.Second
-	// abortResumeBackoff is the wait before a SECOND resume in the same episode. 1回目が
-	// また中断で終わったということは相手側の不調が続いている。
+	// abortResumeBackoff is the wait before a SECOND resume in the same episode. A first
+	// attempt that also ended in a cut-off means the other side is still unhealthy.
 	abortResumeBackoff = 5 * time.Minute
 	// abortResumeMaxDeliverTries bounds the injection attempts that never reached the
-	// session (ペインが読めない・注入が失敗する)。叩き続けて直る類ではないので、
-	// 打ち切ってアシスタント／利用者へ渡す。
+	// session (the pane cannot be read, the injection fails). Retrying does not fix that
+	// kind of failure, so give up and hand it to the assistant / the user.
 	abortResumeMaxDeliverTries = 3
-	// abortResumeEpisodeTTL retires an episode that stopped making progress. 保険であって
-	// 通常経路ではない（正常時は「転写の末尾が中断でなくなる」でエピソードが閉じる）—
-	// これが無いと、書き込めない状態のファイルが報告を永久に抑止しうる。
+	// abortResumeEpisodeTTL retires an episode that stopped making progress. A safety net,
+	// not the normal path (normally an episode closes when the transcript tail is no longer
+	// a cut-off) — without it, a file stuck in an unwritable state could suppress reports
+	// forever.
 	abortResumeEpisodeTTL = 30 * time.Minute
 )
 
-// 打ち切りの理由（GaveUp）。空 = まだ自動再開が引き受けている。
+// Reasons for giving up (GaveUp). Empty = automatic resume is still taking care of it.
 const (
-	abortGaveUpCapped        = "capped"        // 再送したが中断が続く（連続 maxAutoResumeAttempts 回）
-	abortGaveUpUndeliverable = "undeliverable" // 再開プロンプトをセッションへ届けられない
-	abortGaveUpStale         = "stale"         // エピソードが TTL を過ぎた（進んでいない）
+	abortGaveUpCapped        = "capped"        // re-sent, cut-off persists (maxAutoResumeAttempts in a row)
+	abortGaveUpUndeliverable = "undeliverable" // the resume prompt cannot be delivered to the session
+	abortGaveUpStale         = "stale"         // the episode passed its TTL (no progress)
 )
 
 // abortResumeState is one cut-off episode for one session: it opens when the transcript
-// tail is a retryable abort and closes when the tail is no longer one (＝再開できた／
-// 利用者が自分で進めた／正常に終わった). 専用ファイルなのは rateLimitState と同じ理由。
+// tail is a retryable abort and closes when the tail is no longer one (the resume worked, the
+// user moved on themselves, or the turn ended normally). It lives in its own file for the same
+// reason rateLimitState does.
 type abortResumeState struct {
-	At           string `json:"at"`                     // エピソード開始（中断レコードの時刻、無ければ検知時刻）
-	Msg          string `json:"msg,omitempty"`          // 中断の文言（ログ・打ち切り時の理由）
-	Attempts     int    `json:"attempts,omitempty"`     // 送れた再開プロンプトの数
-	DeliverTries int    `json:"deliverTries,omitempty"` // 届かなかった試行の数
-	LastTry      string `json:"lastTry,omitempty"`      // 直近の試行（成否によらず）
-	GaveUp       string `json:"gaveUp,omitempty"`       // 非空 = 自動再開は手を引いた（報告の抑止も外れる）
+	At           string `json:"at"`                     // episode start (the abort record's time, else the detection time)
+	Msg          string `json:"msg,omitempty"`          // the abort text (for logs and the give-up reason)
+	Attempts     int    `json:"attempts,omitempty"`     // resume prompts actually sent
+	DeliverTries int    `json:"deliverTries,omitempty"` // attempts that never got through
+	LastTry      string `json:"lastTry,omitempty"`      // the latest attempt, successful or not
+	GaveUp       string `json:"gaveUp,omitempty"`       // non-empty = auto-resume stepped back (suppression lifts too)
 }
 
 var abortResumeStates = fstore.JSON[abortResumeState](paths.AgentConfigDir, "session-abort-resume", ".json")
@@ -91,17 +96,18 @@ type managedAbortSignal struct {
 
 var managedAbortSignals = fstore.JSON[managedAbortSignal](paths.AgentConfigDir, "session-managed-abort", ".json")
 
-// 副作用は差し替え可能にしておく（テストは tmux を持たない）。
+// The side effects stay replaceable (tests have no tmux).
 var (
 	abortResumeInject      = injectSessionPrompt
 	abortResumeReadingPane = func(name string) tmuxx.PaneRead { return tmuxx.ReadPane(name) }
 )
 
-// StartAbortResumeWatch runs the sweep in its own loop. 一覧ポーリングに相乗りしない
-// 理由は rate_limit_resume.go と同じ: 誰も画面を見ていないときに効かなければ意味が無い。
+// StartAbortResumeWatch runs the sweep in its own loop. It does not ride on the list polling,
+// for the same reason as rate_limit_resume.go: it is pointless unless it works while nobody is
+// looking at a screen.
 func StartAbortResumeWatch() {
 	go func() {
-		time.Sleep(40 * time.Second) // 起動直後の tmux 立ち上がりを待つ
+		time.Sleep(40 * time.Second) // wait for tmux to come up after a start
 		for {
 			abortResumeTick(time.Now())
 			time.Sleep(abortResumeWatchInterval)
@@ -112,27 +118,29 @@ func StartAbortResumeWatch() {
 // abortResumeTick is one sweep over every session kind whose driver can distinguish a
 // retryable cut-off from a permanent failure.
 //
-// 母集団のゲートは ListMetas だけ（rateLimitTick と同じ）: 会話に紐付いているか・指示
-// 台帳に行があるかは無関係で、Console から直接起動した単独セッションもまったく同じに
-// 扱う。それがこの機能の主目的だから。
+// ListMetas is the only gate on the population (as in rateLimitTick): whether a session is tied
+// to a conversation or has a row in the instruction ledger is irrelevant, and a standalone
+// session launched from the Console is treated exactly the same — that is the point of this
+// feature.
 func abortResumeTick(now time.Time) {
 	for _, m := range session.ListMetas() {
 		st, has := abortResumeStates.Read(m.Name)
 		a, ok := abortInfoFor(m)
 		if !ok || !a.Retryable {
-			// 末尾が中断ではない＝再開できた・利用者が自分で進めた・正常に終わった。
-			// blocked な中断（上限・残高・プロンプト超過）もここで閉じる — そちらは
-			// 従来どおり即座に報告へ流す（抑止しない）。
+			// The tail is not a cut-off: the resume worked, the user moved on themselves,
+			// or the turn ended normally. Blocked aborts (usage limit, balance, prompt too
+			// long) close here as well; those go straight to the report as before, with no
+			// suppression.
 			if has {
 				abortResumeStates.Remove(m.Name)
 			}
 			continue
 		}
 		if !SessionAlive(m) {
-			continue // 死んだセッションは record_exit.go の領分（中断ではなく異常終了）
+			continue // a dead session belongs to record_exit.go (an abnormal exit, not a cut-off)
 		}
 		if !uiprefs.AbortAutoResume() {
-			continue // OFF: エピソードを開かない＝抑止もしない（従来の報告経路のまま）
+			continue // off: no episode is opened, so nothing is suppressed (the old report path)
 		}
 		abortResumeAttempt(m, st, a, now)
 	}
@@ -153,49 +161,52 @@ func abortInfoFor(m session.Meta) (claude.Abort, bool) {
 	return claude.Abort{Msg: s.Msg, Retryable: true, At: at}, true
 }
 
-// abortResumeAttempt advances one open episode: 開始 → バックオフ待ち → 注入 → 打ち切り。
+// abortResumeAttempt advances one open episode: open → wait out the backoff → inject → give up.
 func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now time.Time) {
 	if st.At == "" {
 		st.At = abortEpisodeStart(a, now)
 		st.Msg = a.Msg
-		// 開いた時点で必ず書く。以降の分岐は途中で return するので、ここで永続化しないと
-		// エピソードが毎 tick 生まれ直し、報告の抑止（AbortResumeHolds）もファイルではなく
-		// 「中断が新しいうち」の短い窓にしか乗らない。
+		// Always write on opening. The branches below return early, so without persisting
+		// here the episode would be born again every tick, and the report suppression
+		// (AbortResumeHolds) would rest on the short "the cut-off is still fresh" window
+		// instead of on the file.
 		_ = abortResumeStates.Write(m.Name, st)
-		log.Printf("abort-resume: %s のターンが中断で終わっている（%s）", m.Name, a.Msg)
+		log.Printf("abort-resume: the turn of %s ended in a cut-off (%s)", m.Name, a.Msg)
 	}
 	if st.GaveUp != "" {
-		return // 既に手を引いた episode — 報告経路が引き取っている
+		return // an episode already stepped back from; the report path has taken it over
 	}
 	if abortEpisodeStale(st, now) {
 		st.GaveUp = abortGaveUpStale
-		log.Printf("abort-resume: %s の自動再開を打ち切る（%s）", m.Name, st.GaveUp)
+		log.Printf("abort-resume: giving up on the automatic resume of %s (%s)", m.Name, st.GaveUp)
 		_ = abortResumeStates.Write(m.Name, st)
 		escalateManagedAbort(m, st)
 		return
 	}
 	if st.Attempts >= chatx.MaxAutoResumeAttempts {
-		// 再送しても中断が続く＝一時的な不調ではない。ここから先はアシスタント／利用者の
-		// 領分なので、報告が「上限に達した」文面（reportKeyTurnAbortedCapped）で出るよう
-		// カウンタを合わせてから抑止を外す。
+		// The cut-off survives re-sending, so it is not a transient fault. From here it is
+		// the assistant's / the user's business, so line the counter up first, to make the
+		// report come out with the "cap reached" wording (reportKeyTurnAbortedCapped), and
+		// only then lift the suppression.
 		st.GaveUp = abortGaveUpCapped
 		chatx.SetAutoResumeAttempts(m.Name, st.Attempts)
-		log.Printf("abort-resume: %s の自動再開を打ち切る（%d 回連続で中断）", m.Name, st.Attempts)
+		log.Printf("abort-resume: giving up on the automatic resume of %s (%d cut-offs in a row)", m.Name, st.Attempts)
 		_ = abortResumeStates.Write(m.Name, st)
 		escalateManagedAbort(m, st)
 		return
 	}
 	if !abortResumeDue(st, now) {
-		return // バックオフ中
+		return // inside the backoff
 	}
 	if !abortResumeReady(m.Name) {
-		// 質問／プラン／許可の待ち、モーダル、走行中 — 今は送れない。届かない試行として
-		// 数え、続くようなら打ち切る（人が操作している最中かもしれない）。
+		// A pending question / plan / permission, a modal, a running turn — it cannot be
+		// sent now. Count it as an undelivered attempt and give up if it keeps happening
+		// (a person may be operating the session).
 		st.DeliverTries++
 		st.LastTry = now.Format(time.RFC3339)
 		if st.DeliverTries >= abortResumeMaxDeliverTries {
 			st.GaveUp = abortGaveUpUndeliverable
-			log.Printf("abort-resume: %s へ再開プロンプトを届けられない — 打ち切る", m.Name)
+			log.Printf("abort-resume: cannot deliver the resume prompt to %s, giving up", m.Name)
 		}
 		_ = abortResumeStates.Write(m.Name, st)
 		if st.GaveUp != "" {
@@ -204,8 +215,8 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		return
 	}
 	prompt := abortResumePrompt()
-	// 送る前に記録する: 途中で落ちても回数が巻き戻らないようにして、撃ち続けない
-	// （rateLimitRecover と同じ理由）。
+	// Record before sending, so a crash midway cannot roll the count back and keep firing
+	// (the same reason as rateLimitRecover).
 	st.Attempts++
 	st.LastTry = now.Format(time.RFC3339)
 	_ = abortResumeStates.Write(m.Name, st)
@@ -219,20 +230,21 @@ func abortResumeAttempt(m session.Meta, st abortResumeState, a claude.Abort, now
 		if st.GaveUp != "" {
 			escalateManagedAbort(m, st)
 		}
-		log.Printf("abort-resume: %s へ再開プロンプトを送れなかった: %v", m.Name, err)
+		log.Printf("abort-resume: failed to send the resume prompt to %s: %v", m.Name, err)
 		return
 	}
 	recordInjection(m.Name, prompt, TurnSourceAutoResume)
-	log.Printf("abort-resume: %s を自動再開した（%d/%d 回目）", m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
+	log.Printf("abort-resume: automatically resumed %s (attempt %d/%d)", m.Name, st.Attempts, chatx.MaxAutoResumeAttempts)
 }
 
 // abortResumeReady reports whether a free-text prompt may be typed into the session right
-// now. injectSessionPrompt 自身も待ち状態を弾くが、ここで先に見るのは「送れない理由」を
-// エピソードに数えるため（弾かれ続けるなら打ち切って人へ渡す）。
+// now. injectSessionPrompt rejects a waiting state itself; this check comes first so that the
+// reason it cannot be sent is counted on the episode (if it keeps being rejected, give up and
+// hand it to a person).
 //
-// ペインの busy を弾くのが肝: 中断レコードは転写の末尾に残り続けるので、利用者が既に
-// 手で再開していても末尾は中断のままに見える。走っているターンへ「続けて」を撃つと
-// 割り込みの指示になってしまう。
+// Rejecting a busy pane is the crux: the abort record stays at the tail of the transcript, so
+// the tail still looks like a cut-off even after the user resumed by hand. Firing "continue"
+// at a running turn would turn it into an interrupting instruction.
 func abortResumeReady(name string) bool {
 	if promptBlocker(name) != "" {
 		return false
@@ -251,8 +263,8 @@ func escalateManagedAbort(m session.Meta, st abortResumeState) {
 	RecordSessionNotification(session.UUID(m.Dir, m.Name), "working", agents.StateAborted, st.Msg)
 }
 
-// abortResumeDue applies the backoff: 1回目は中断から abortResumeFirstDelay、2回目以降は
-// 直近の試行から abortResumeBackoff。
+// abortResumeDue applies the backoff: abortResumeFirstDelay after the cut-off for the first
+// attempt, abortResumeBackoff after the latest attempt for the ones after it.
 func abortResumeDue(st abortResumeState, now time.Time) bool {
 	if st.LastTry != "" {
 		t, err := time.Parse(time.RFC3339, st.LastTry)
@@ -262,8 +274,9 @@ func abortResumeDue(st abortResumeState, now time.Time) bool {
 	return err != nil || !now.Before(t.Add(abortResumeFirstDelay))
 }
 
-// abortEpisodeStart is the episode's t0: 中断レコードの時刻（無ければ検知時刻）。
-// レコードの時刻を使うのは、Agent の再起動をまたいでも「いつ止まったか」が動かないから。
+// abortEpisodeStart is the episode's t0: the abort record's time, or the detection time when
+// there is none. The record's time is used so that "when it stopped" does not move across an
+// Agent restart.
 func abortEpisodeStart(a claude.Abort, now time.Time) string {
 	if !a.At.IsZero() {
 		return a.At.Format(time.RFC3339)
@@ -279,10 +292,11 @@ func abortEpisodeStale(st abortResumeState, now time.Time) bool {
 // AbortResumeHolds reports whether the automatic resume has taken responsibility for this
 // cut-off — i.e. the reconciler must NOT deliver an aborted-turn report yet (docs/log/47 §4-6).
 //
-// エピソードのファイルが**まだ無い**場合も抑止する（sweep は 30 秒ごとなので、中断の
-// 直後は必ずこの状態になる）。ただし中断が新しいうちだけ: 時刻が読めないか古い中断で
-// エピソードも無いなら、watcher が動いていない（機能 OFF・Agent が旧版・ループが死んだ）
-// ということなので、抑止せず従来どおり報告する。抑止が片道切符にならないための保険。
+// It also suppresses while the episode's file does not exist yet (the sweep runs every 30s, so
+// this is always the state right after a cut-off), but only while the cut-off is fresh: if the
+// time cannot be read, or the cut-off is old and there is still no episode, the watcher is not
+// running (feature off, an old Agent, a dead loop), so report as before instead of suppressing.
+// That keeps the suppression from becoming a one-way ticket.
 func AbortResumeHolds(name string, a claude.Abort, now time.Time) bool {
 	if !a.Retryable || !uiprefs.AbortAutoResume() {
 		return false
@@ -297,17 +311,19 @@ func AbortResumeHolds(name string, a claude.Abort, now time.Time) bool {
 	return !abortEpisodeStale(st, now)
 }
 
-// abortResumePrompt is the nudge itself — 一語で足りる。中断は数十秒前の出来事で、
-// 会話も作業状態もそのまま残っているので、「続けて」以上の説明は文脈の重複でしかない
-// （利用上限の再開文が長いのは、数時間後・ワークスペース再起動後に届くからで、事情が
-// 違う）。括弧の一語だけ足しているのは2つの理由:
+// abortResumePrompt is the nudge itself, and one word is enough. The cut-off happened seconds
+// ago with the conversation and the work state still intact, so anything beyond "continue" only
+// repeats context. (The usage-limit resume text is long because it arrives hours later, after a
+// workspace restart — a different situation.) The parenthesised word is added for two reasons:
 //
-//	① 利用者が自分で打つ「続けて」と区別できる。注入元の照合キーは本文の完全一致
-//	   （recordInjection）なので、素の一語だと利用者の入力が自動再開に見えてしまう。
-//	② 転写にもミラーにも「これは自己修復であって新しい指示ではない」と残る。
+//  1. It is distinguishable from a "continue" the user typed themselves. The injection
+//     source is matched on the exact body (recordInjection), so a bare word would make the
+//     user's own input look like an automatic resume.
+//  2. Both the transcript and the mirror keep the fact that this is self-healing, not a new
+//     instruction.
 //
-// 言語は表示言語に合わせる（rateLimitResumePrompt と同じ理由 — セッションごとの言語を
-// 持たない以上、その利用者が読み書きしている言語が最良の推定）。
+// The language follows the display language (the same reason as rateLimitResumePrompt: with no
+// per-session language, the language that user reads and writes is the best guess).
 func abortResumePrompt() string { return abortResumePromptFor(uiprefs.Locale()) }
 
 func abortResumePromptFor(locale string) string {

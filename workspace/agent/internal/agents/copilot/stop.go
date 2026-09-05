@@ -1,11 +1,11 @@
 package copilot
 
-// TUI ルートの graceful stop。copilot は events.jsonl をライブ追記するため agy の
-// ような「/exit しないと resume ID を失う」制約は無いが、/exit は inuse ロックの
-// 解放とセッションチェックポイントの確定を伴う（実測: 終了サマリ表示）ので、
-// kill 前に一度だけ試す。保留メニュー（許可/plan）が出ている間の Enter は
-// ハイライト行の**承認を確定**してしまう（agy c639973 の実機実証と同型のリスク）
-// — Escape で棄却してから打つ。
+// Graceful stop for the TUI route. copilot appends to events.jsonl live, so it has none of
+// agy's "lose the resume ID unless you /exit" constraint, but /exit does release the inuse
+// lock and commit the session checkpoint (measured: it prints an exit summary), so it is
+// tried once before the kill. While a pending menu (permission / plan) is up, Enter would
+// CONFIRM the highlighted row — the same risk agy demonstrated on real hardware — so it is
+// dismissed with Escape first.
 
 import (
 	"time"
@@ -26,13 +26,13 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 		return false
 	}
 	if LiveState(m) == "question" {
-		// 許可メニューが開いている: Enter が承認を踏む前に Escape で棄却する。
+		// A permission menu is open: dismiss it with Escape before Enter can approve it.
 		_ = tmuxx.Cmd("send-keys", "-t", pane, "Escape").Run()
 		time.Sleep(300 * time.Millisecond)
 	}
 	// C-u first: a draft in the composer would otherwise be submitted as
-	// "<draft>/exit". Enter は別打鍵（実測: 同一 send-keys の Enter はペースト
-	// 折り畳みに食われて確定しない）。
+	// "<draft>/exit". Enter is a separate keystroke (measured: an Enter in the same send-keys
+	// is swallowed by paste folding and never submits).
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "C-u").Run()
 	_ = tmuxx.Cmd("send-keys", "-t", pane, "-l", "/exit").Run()
 	time.Sleep(300 * time.Millisecond)

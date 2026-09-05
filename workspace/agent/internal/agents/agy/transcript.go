@@ -1,22 +1,21 @@
 package agy
 
-// チャットミラー（generic /messages）用の transcript 読み口。agy は会話ごとに
-// brain/<conversation-uuid>/.system_generated/logs/transcript_full.jsonl を
-// **ターン進行中もライブで** 追記する（実機検証 2026-07-20: 初回プロンプト直後に
-// brain ディレクトリと jsonl が出現し、応答完了時点で PLANNER_RESPONSE 行まで
-// 読めた）。conversation_summaries.db（遅延書込）や会話 DB（steps の payload が
-// 非公開スキーマの protobuf）と違い、素の JSONL なのでこれを唯一の transcript
-// ソースにする。1 行 = 1 step:
+// The transcript reader for the chat mirror (generic /messages). agy appends to
+// brain/<conversation-uuid>/.system_generated/logs/transcript_full.jsonl per conversation,
+// LIVE while a turn is still running (verified on real hardware: the brain directory and
+// the jsonl appear right after the first prompt, and the PLANNER_RESPONSE line is readable
+// by the time the answer completes). Unlike conversation_summaries.db (written lazily) or
+// the conversation DB (whose step payloads are protobuf on an undocumented schema), this is
+// plain JSONL, so it is the single transcript source. One line = one step:
 //
 //	{"step_index":N,"source":"USER_EXPLICIT|MODEL|SYSTEM","type":"USER_INPUT|
 //	 PLANNER_RESPONSE|<TOOL_NAME>|…","status":"DONE","created_at":…,"content":…}
 //
-// マッピング: USER_INPUT → user ターン（<USER_REQUEST> 内側のみ抽出）、
-// MODEL/PLANNER_RESPONSE → assistant テキスト、MODEL/その他 → tool パート
-// （type がそのままツール名: RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY / …）、
-// SYSTEM/ERROR_MESSAGE → tool パートとして表面化、他の SYSTEM 行（
-// CONVERSATION_HISTORY / CHECKPOINT / SYSTEM_MESSAGE = モデル向け文脈補助）は
-// 表示対象外。
+// The mapping: USER_INPUT → a user turn (only the inside of <USER_REQUEST> is extracted);
+// MODEL/PLANNER_RESPONSE → assistant text; MODEL/anything else → a tool part (the type IS
+// the tool name: RUN_COMMAND / VIEW_FILE / LIST_DIRECTORY / …); SYSTEM/ERROR_MESSAGE →
+// surfaced as a tool part. The remaining SYSTEM lines (CONVERSATION_HISTORY / CHECKPOINT /
+// SYSTEM_MESSAGE, context aids meant for the model) are not displayed.
 
 import (
 	"bufio"
@@ -56,9 +55,9 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	}
 	path := transcriptPath(conv)
 	td := agents.TranscriptData{Path: path}
-	// A pending ASK_QUESTION / permission prompt never reaches the jsonl (実測 —
-	// 保留中は無記録), so the interactive card's payload comes from the
-	// conversation-DB probe: real options for questions, a synthesized menu for
+	// A pending ASK_QUESTION / permission prompt never reaches the jsonl (measured:
+	// nothing is recorded while it is pending), so the interactive card's payload
+	// comes from the conversation-DB probe: real options for questions, a synthesized menu for
 	// permissions (pending.go). The generic /messages handler only surfaces
 	// Pending while the session is alive, which gates out a killed session's
 	// stale status=9 row.
@@ -123,7 +122,7 @@ func parseTranscript(f *os.File) []transcript.Turn {
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024) // steps can carry large tool output
 	// Idx is the source line index (codex's semantics): a stable render key that also
 	// has to be strictly increasing — the Console drops polled turns whose idx is not
-	// greater than the newest one it holds, and clears a prompt's 反映待ち echo only on
+	// greater than the newest one it holds, and clears a prompt's pending echo only on
 	// a matching user turn with idx > the idx at send time. Leaving every agy turn at
 	// the zero value stalled both (docs/log/32).
 	line := -1

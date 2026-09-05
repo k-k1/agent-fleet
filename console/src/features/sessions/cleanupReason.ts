@@ -1,5 +1,5 @@
-// The "reason" of a cleanup candidate (掃除モーダルの理由列) is text WE generate for the
-// user to read, so it travels from the Agent as a catalog key (`clean.reason.*`) and is
+// The "reason" of a cleanup candidate (the cleanup modal's reason column) is text WE generate
+// for the user to read, so it travels from the Agent as a catalog key (`clean.reason.*`) and is
 // rendered here — it follows settings.locale instead of being frozen to the Agent's
 // source language (ADR 0033). Before that the Agent sent Japanese prose, which an English
 // Console showed verbatim next to its own English labels.
@@ -17,7 +17,7 @@ export function cleanupReasonText(c: { reason_key?: string; reason: string }): s
 // The reason rendered as a STATE BADGE plus a supporting hint sentence — the row's
 // second line. Split per key in the catalogs (clean.reason_badge.* / clean.reason_hint.*)
 // because a whole reason sentence squeezed into one pill wraps into a mess, while the
-// state alone ("停止中", "マージ済み", "未コミット/未push") is what the eye scans for.
+// state alone ("stopped", "merged", "uncommitted/unpushed") is what the eye scans for.
 // A key without a badge entry (version skew: an Agent newer than this Console) degrades
 // to the full sentence, same as cleanupReasonText.
 export interface CleanupReasonParts {

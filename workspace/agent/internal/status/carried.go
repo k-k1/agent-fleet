@@ -7,64 +7,70 @@ import (
 	"time"
 )
 
-// 持ち越し（carried interaction）— docs/log/75 §75.6。
+// Carried interaction (docs/log/75 §75.6).
 //
-// pending-question / pending-plan / pending-perm は「**今まさにモーダルが出ている**」と
-// いう意味で、Console はそれをキー列（Down/Enter）で答える。セッションが畳まれると
-// そのモーダルは二度と戻らない — claude を --resume しても未応答の tool_use は親ポインタで
-// 迂回され、会話木から外れる（docs/log/75 §75.10 A で実測）。つまり畳んだ後に残せるのは
-// **モーダルではなく意図**だけで、答えは文章として注入するしかない。
+// pending-question / pending-plan / pending-perm mean "a modal is on screen RIGHT NOW",
+// and the Console answers those with key sequences (Down/Enter). Once the session is
+// folded away that modal never comes back — resuming claude routes around an unanswered
+// tool_use through the parent pointer, dropping it out of the conversation tree (measured,
+// docs/log/75 §75.10 A). So what survives folding is the INTENT, not the modal, and the
+// answer can only be injected as prose.
 //
-// だから同じファイルを使い回さない。停止中のカードが生きたペインへ Down/Enter を撃つ
-// 事故（AUQ 誤配達クラス）を型で防ぐため、**別ストア・別 wire キー**にする:
-// pending-* があれば「キーで答えろ」、carried-interaction があれば「文章で答えろ」。
+// Hence a separate store and separate wire keys rather than reusing the same files: it
+// makes the accident of a card from a stopped session firing Down/Enter into a live pane
+// (the misdelivered-AskUserQuestion class) impossible by construction. pending-* means
+// "answer with keys", carried-interaction means "answer with prose".
 type Carried struct {
-	// Kind は "question" | "plan" | "permission"。question が plan に優先する
-	// （EffectiveModal と同じ順序）。
+	// Kind is "question" | "plan" | "permission". A question outranks a plan (the same
+	// order as EffectiveModal).
 	Kind string `json:"kind"`
-	// CapturedAt は畳んだ時刻（RFC3339）。TTL の起点。
+	// CapturedAt is when it was folded away (RFC3339). The TTL counts from here.
 	CapturedAt string `json:"capturedAt"`
-	// Reason は畳まれた経緯: "halt"（tier1 / 利用者の停止）| "stopped"（ペインが
-	// 消えているのを一覧が見つけた＝ Workspace 停止・クラッシュ・利用者の /exit）。
+	// Reason is how it came to be folded: "halt" (tier 1 / the user stopping it) |
+	// "stopped" (the list found the pane gone = workspace stop, crash, or the user's
+	// /exit).
 	Reason string `json:"reason,omitempty"`
-	// Questions は AskUserQuestion の tool_input.questions を生のまま。
+	// Questions is AskUserQuestion's tool_input.questions, raw.
 	Questions json.RawMessage `json:"questions,omitempty"`
-	// Plan は ExitPlanMode の計画本文。★保留中のプランは転写に載らない
-	// （docs/log/75 §75.10 D の実測）ので、これが唯一の記録になる。
+	// Plan is the ExitPlanMode plan body. A pending plan never reaches the transcript
+	// (measured, docs/log/75 §75.10 D), so this is its only record.
 	Plan string `json:"plan,omitempty"`
-	// Permission は許可を求めていたツールの説明（"Bash · npm ci"）。答えは死んだ
-	// ツール呼び出しには届かないので、これは**事実の記録**であって回答対象ではない。
+	// Permission describes the tool that was asking for approval ("Bash · npm ci"). An
+	// answer cannot reach a dead tool call, so this is a record of the fact rather than
+	// something to respond to.
 	Permission string `json:"permission,omitempty"`
-	// Text は質問直前の地の文（pending-text）。カードの文脈。
+	// Text is the prose right before the question (pending-text) — the card's context.
 	Text string `json:"text,omitempty"`
 }
 
-// CarriedTTL は持ち越しの寿命。過ぎたものは PromoteCarried / ReadCarried の入口で捨てる。
+// CarriedTTL is how long a carried interaction lives. Anything older is dropped at the
+// PromoteCarried / ReadCarried entry points.
 //
-// なぜ寿命が要るか: pending-* には寿命が無く、実開発機には 5〜6 週間前の未回答
-// ペイロードが残っていた（docs/log/75 D9）。sid は決定論なので、同じ dir+name の
-// セッションが将来また作られれば亡霊のカードが surface しうる。
+// It needs a lifetime because pending-* has none: a real development machine held
+// unanswered payloads five to six weeks old (docs/log/75 D9). sid is deterministic, so a
+// future session with the same dir+name would surface those as ghost cards.
 const CarriedTTL = 14 * 24 * time.Hour
 
 func carriedFresh(c Carried, now time.Time) bool {
 	t, err := time.Parse(time.RFC3339, c.CapturedAt)
 	if err != nil {
-		return false // 時刻が読めない＝いつのものか言えない。持ち越さない
+		return false // unreadable timestamp = we cannot say how old it is; do not carry it
 	}
 	return now.Sub(t) < CarriedTTL
 }
 
-// PromoteCarried は「モーダルが出たまま畳まれた」を持ち越しへ昇格させる。
-// 昇格したら true。
+// PromoteCarried promotes "folded away while a modal was up" into a carried interaction.
+// Returns true when it promoted one.
 //
-// 呼ばれるのは 3 箇所（docs/log/75 §75.6.3）。halt は status.Remove がペイロードを消す直前、
-// 一覧はペインが消えているのを**初めて見つけた**とき（＝Workspace 停止・クラッシュ・
-// 利用者の /exit をまとめて拾う）、SessionStart(boot) は再開時の消去の直前。3 つ目は
-// 保険で、SIGKILL のように 1 も 2 も走らなかった経路でも消える前に拾える。
+// Three callers (docs/log/75 §75.6.3): halt, just before status.Remove deletes the
+// payloads; the sessions list, the FIRST time it finds the pane gone (which covers
+// workspace stop, crash and the user's /exit at once); and SessionStart(boot), just before
+// the resume clears them. The third is the safety net: it still catches a path where
+// neither of the first two ran, such as a SIGKILL.
 //
-// 冪等ではあるが**上書きはしない**: 既に鮮度のある持ち越しがあるならそれを残す。
-// 再開の boot フックが「消す前に昇格」する都合上、halt で昇格済みのものを
-// 空の pending で上書きしてしまう順序があるため。
+// Idempotent, but it never OVERWRITES: an existing carried interaction that is still fresh
+// wins. Because the resume boot hook promotes before clearing, there is an ordering where
+// an empty set of pending payloads would otherwise overwrite what halt already promoted.
 func PromoteCarried(sid, reason string) bool {
 	if sid == "" {
 		return false
@@ -135,15 +141,16 @@ func SweepCarried() int {
 	return dropped
 }
 
-// PutCarried は「保留ペイロードのファイルを経由せずに」持ち越しを書く入口。
+// PutCarried writes a carried interaction WITHOUT going through the pending payload files.
 //
-// claude 以外の kind のためにある（docs/log/75 P5）: 保留中の対話は pending-question /
-// pending-perm ではなく、会話 DB・events.jsonl・ペインのフッタ・runtime handle の
-// Interaction のいずれかにしか無い。どこから来たかは kind 側（agents.ModalReporter）が
-// 知っており、ここはその結果を受け取るだけ。
+// It exists for the non-claude kinds (docs/log/75 P5): their pending interaction is not in
+// pending-question / pending-perm but in the conversation DB, events.jsonl, the pane
+// footer, or the runtime handle's Interaction. Which one it came from is the kind's
+// business (agents.ModalReporter); this only takes the result.
 //
-// PromoteCarried と同じく**上書きはしない**（既に鮮度のある持ち越しがあるなら残す）。
-// 昇格の契機は複数あり、halt で昇格した後に一覧経路がもう一度呼ぶ順序があるため。
+// Like PromoteCarried it never OVERWRITES (a carried interaction that is still fresh
+// wins), because promotion has several triggers and the list path can call again after
+// halt already promoted.
 func PutCarried(sid string, c Carried, reason string) bool {
 	if sid == "" {
 		return false
@@ -151,7 +158,7 @@ func PutCarried(sid string, c Carried, reason string) bool {
 	switch c.Kind {
 	case "question":
 		if len(c.Questions) == 0 {
-			return false // 回答フォームの無い質問は運んでも押せない
+			return false // a question with no answer form cannot be acted on once carried
 		}
 	case "plan", "permission":
 	default:

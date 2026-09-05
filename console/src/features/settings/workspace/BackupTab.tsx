@@ -1,18 +1,20 @@
-// BackupTab — 設定の書き出し / 取り込み（docs/log/79 / ADR 0060）。
+// BackupTab — settings export / import (docs/log/79 / ADR 0060).
 //
-// その人の設定を 1 個の JSON にまとめて持ち出し、別のデプロイ / 別テナント / 新しい
-// アカウントで読み戻すための面。運ぶのは秘密を含まない 3 層だけ:
-//   個人設定（ui-prefs 同期の対象）/ AWS SSM（プロファイル・ホスト）/ ユーザー指示。
-// 接続のトークン類は **意図的に含めない** ——「設定ファイル」として気軽に共有される
-// 前提の平文なので、1 つでも秘密が混ざると扱いの重さが全体に伝染する。
+// Carries one person's settings out as a single JSON file so they can be read back on
+// another deployment, another tenant or a new account. Only three secret-free layers are
+// carried: personal settings (what ui-prefs sync covers), AWS SSM (profiles and hosts) and
+// the user instructions. Connection tokens are deliberately excluded: the file is plaintext
+// and meant to be shared casually as "just a settings file", and a single secret in it would
+// make the whole artefact something that has to be handled carefully.
 //
-// 取り込みで意識していること:
-//   ① **足すだけ。** 既存のプロファイル / ホストは書き換えない（同名・同一インスタンス
-//      はスキップし、理由を出す）。
-//   ② **累積データを空で潰さない。** 個人設定は現在値へ重ねる（settingsBundle.ts の
-//      mergeImportedPrefs）—— まるごと PUT の同期で全端末の学習が消えた事故と同じ穴を、
-//      取り込みという一発操作で開けないため。
-//   ③ **入らなかった物を黙らせない。** 版違い・型違い・参照先が無いホストは件数で見せる。
+// Import rules:
+//   1. Add only. Existing profiles / hosts are never overwritten (same name or same instance
+//      is skipped, with the reason reported).
+//   2. Never flatten accumulated data with an empty value. Personal settings are merged onto
+//      the current ones (mergeImportedPrefs in settingsBundle.ts), so import cannot reopen the
+//      hole that a whole-object PUT sync did when it wiped every device's learned state.
+//   3. Never silence what did not go in. Version mismatches, type mismatches and hosts whose
+//      referent is missing are surfaced as counts.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, errDetail, rawJSON } from "../../../core/api/client.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -70,8 +72,9 @@ export function BackupTab() {
 
   const reload = useCallback(async () => {
     const [profiles, hosts] = await Promise.all([api("api/ssm/profiles"), api("api/ssm/hosts")]);
-    // ユーザー指示は Agent が持つのでワークスペース起動中だけ読める。停止中は
-    // カテゴリごと落として「入っていない」ことを画面で見せる（黙って空にしない）。
+    // The user instructions live in the Agent, so they are readable only while the workspace
+    // is running. When it is stopped, drop the whole category so the UI can show it is absent
+    // rather than silently exporting it as empty.
     const instructions = running ? await api("api/user-notes") : null;
     setLoaded({
       profiles: Array.isArray(profiles) ? profiles : [],
@@ -118,7 +121,7 @@ export function BackupTab() {
     const s = parsed.bundle.sections;
     setImportPick({ prefs: !!s.prefs, ssm: !!s.ssm, instructions: !!s.instructions });
     setBundle(parsed.bundle);
-    if (fileRef.current) fileRef.current.value = ""; // 同じファイルを選び直せるように
+    if (fileRef.current) fileRef.current.value = ""; // so the same file can be picked again
   };
 
   const applyImport = async () => {
@@ -309,8 +312,8 @@ function Pick({
   );
 }
 
-// importSsm — プロファイルを先に作り、その id でホストを作る。順序が本質なので
-// Promise.all にはしない（ホストは自分の参照先が出来ていないと 400 になる）。
+// importSsm — create the profiles first, then the hosts that reference their ids. The order
+// is essential, so this is not a Promise.all: a host whose referent does not exist yet is a 400.
 async function importSsm(
   section: NonNullable<BundleSections["ssm"]>,
   tr: (k: any, v?: any) => string,

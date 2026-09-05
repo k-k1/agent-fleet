@@ -83,7 +83,7 @@ const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** Make one row safe to render.
  *
- * ★ This exists because of a real white screen: Go marshals a nil slice as JSON `null`,
+ * This exists because of a real white screen: Go marshals a nil slice as JSON `null`,
  * the CP's DTO did that for a ticket with no labels, and `item.labels.slice(0, 2)` in the
  * row took the WHOLE Console down — there is no error boundary, so one null field is not
  * a broken section, it is a blank app. The producers were fixed too; this is the boundary
@@ -119,18 +119,19 @@ export function sortWorkItems(items: WorkItem[]): WorkItem[] {
   });
 }
 
-/** 同じチケットは 1 行にする（docs/log/80 §80.20）。
+/** One row per ticket (docs/log/80 §80.20).
  *
- * ★ 行の重複は「クエリの重複」から来る。同じ JQL を 2 本保存する、あるいは
- * `assignee = currentUser()` と `project = G3M` のように**重なる**クエリを 2 本置く —— どちらも
- * 利用者にとっては普通の使い方で、それで一覧が 41 件から 82 件になり、同じチケットが並ぶ。
- * af は「クエリの結果を並べる棚」ではなく「自分の作業項目の棚」なので、識別子が同じものは
- * 何本のクエリに当たったかに関わらず 1 行である。
+ * Duplicate rows come from overlapping queries: saving the same JQL twice, or keeping both
+ * `assignee = currentUser()` and `project = G3M`. Both are ordinary usage, and they turned a
+ * 41-item list into 82 rows of the same tickets. The rail is a shelf of the user's work items,
+ * not a listing of query results, so the same identifier is one row no matter how many queries
+ * matched it.
  *
- * 残す 1 行の選び方は決定的にする（provider+key ごとに 未完了 → 更新が新しい → queryId 昇順）。
- * CP の `ORDER BY updated_at DESC, item_key` は同着の順を決めないので、ここで決めないと
- * 取得のたびに勝つ行（＝起動先に使う repoHint を持つクエリ）が入れ替わる。
- * key が空の行はまとめない —— 同じでないかもしれないものを消すよりは、出しておく。 */
+ * Which row survives is decided deterministically (per provider+key: still open, then most
+ * recently updated, then lowest queryId). The CP's `ORDER BY updated_at DESC, item_key` leaves
+ * ties unordered, so without this the winning row — and with it the repoHint used as the launch
+ * target — would change from fetch to fetch. Rows with an empty key are never merged: better to
+ * show something twice than to drop what may not be the same item. */
 export function dedupeWorkItems(items: WorkItem[]): WorkItem[] {
   const idOf = (it: WorkItem) => `${it.provider}\u0000${it.key}`;
   const rank = (s: string) => (s === "done" ? 1 : 0);
@@ -152,14 +153,14 @@ function better(a: WorkItem, b: WorkItem, rank: (s: string) => number): boolean 
 /** How many rows the rail draws before folding, and the threshold above which the
  * one-line filter appears (docs/log/80 §80.18.4).
  *
- * ★ The fold is a DISPLAY decision, not a fetch one: the stopped rail draws the CP cache
+ * The fold is a DISPLAY decision, not a fetch one: the stopped rail draws the CP cache
  * and cannot go and get "more" — going would mean waking the Workspace to render a list,
  * which ADR 0061 decision 1 forbids. So the payload stays whole and the section folds. */
 export const RAIL_VISIBLE = 10;
 
 /** Which meta fields carry no information for a given query's rows (docs/log/80 §80.18.2).
  *
- * ★ The bug this fixes: a Jira query of `assignee = currentUser()` put the SAME
+ * The bug this fixes: a Jira query of `assignee = currentUser()` put the SAME
  * `@display name` on all 41 rows — 41 second lines that say one thing, paid for by
  * ellipsising the titles. The rule is not "hide me", it is **a value every row shares is
  * not row information**; that also covers a team query where 40 rows happen to be one
@@ -184,7 +185,7 @@ export function uniformMeta(items: WorkItem[]): Record<string, { repo: boolean; 
 
 /** Rail filter: a substring search over what the row is ABOUT (docs/log/80 §80.18.4).
  *
- * ★ Not a query. It never reaches the provider, is never saved, has no operators and does
+ * Not a query. It never reaches the provider, is never saved, has no operators and does
  * not reorder — it only helps the eye find one row among 41. Assignee and repo are matched
  * even when `uniformMeta` hid them from the row: what was dropped is the rendering, not
  * the data. */
@@ -221,8 +222,8 @@ const RAIL_STALE_MS = 24 * 3600_000;
 
 /** What the row's right edge says about age — "" for anything touched today.
  *
- * ★ Measured, not assumed (docs/log/80 §80.18.2): at the default rail width the title gets
- * ~130px and this chip takes 38px of it. Spending a quarter of the title to say 「3時間前」
+ * Measured, not assumed (docs/log/80 §80.18.2): at the default rail width the title gets
+ * ~130px and this chip takes 38px of it. Spending a quarter of the title to say "3 hours ago"
  * on the freshest rows re-commits the very sin this pass is fixing — and the list is
  * already sorted newest-first, so for the top rows the position says it. What position
  * canNOT say is "this one has been sitting for three months", so the chip appears exactly
@@ -238,8 +239,9 @@ export function railWhen(iso: string, now = Date.now()): string {
 /** Full local stamp for the row's tooltip and the detail modal — `relTime` is deliberately
  * coarse, so the exact value has to stay reachable somewhere.
  *
- * ★ 秒は落とす。素の `toLocaleString()` は "10:49:02 PM" まで書くが、チケットの更新時刻に
- * 秒の意味は無く、詳細では**読む文字列**として出るので桁が増えるだけである（実描画で確認）。 */
+ * Seconds are dropped: a bare `toLocaleString()` writes "10:49:02 PM", but seconds carry no
+ * meaning for a ticket's update time and the detail modal renders this as text to read, so they
+ * only add digits (checked against the real rendering). */
 export function fullLocal(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -285,8 +287,8 @@ export function shortKey(key: string): string {
   return i > 0 ? key.slice(i) : key;
 }
 
-/** Compact local stamp for 最終取得. "" when never fetched, so the caller can say
- * 「まだ取得していません」 instead of rendering an empty clock. */
+/** Compact local stamp for the "last fetched" line. "" when never fetched, so the caller can say
+ * "not fetched yet" instead of rendering an empty clock. */
 export function shortLocal(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);
@@ -318,7 +320,7 @@ export const DEFAULT_BRANCH_TEMPLATE = "feature/{key}";
 
 /** Branch name for a work item, from the user's template (docs/log/80 P2).
  *
- * ⚠️ A template that yields something git would refuse is worse than no template, so the
+ * A template that yields something git would refuse is worse than no template, so the
  * result is sanitised: only [A-Za-z0-9._/-] survives, empty path segments collapse, and
  * an empty `{slug}` (every Japanese title) must not leave a trailing separator behind —
  * "feature/issue-45-" is not a name anyone typed on purpose. */
@@ -340,14 +342,14 @@ export function sanitizeBranch(raw: string): string {
     .map((seg) => seg.replace(/[-.]+$/g, "").replace(/^[-.]+/g, ""))
     .filter(Boolean)
     .join("/");
-  // git は末尾 ".lock"・".." ・"@{" を拒む。ここまで来る形ではまず出ないが、テンプレート
-  // は自由入力なので落としておく。
+  // git refuses a trailing ".lock", "..", and "@{". These barely survive the steps above, but
+  // the template is free text, so strip them anyway.
   return cleaned.replace(/\.\.+/g, ".").replace(/\.lock$/i, "");
 }
 
 /** The first prompt (docs/log/80 §80.9).
  *
- * ★ The body is NOT included by default. A ticket description is written by third
+ * The body is NOT included by default. A ticket description is written by third
  * parties, so pasting it in by default is opening an injection path by default; instead
  * we say where it is and let the agent fetch it with `gh` / the Jira MCP. `withBody`
  * (the dialog's opt-in checkbox) wraps whatever the caller managed to fetch in a quoted
@@ -366,8 +368,9 @@ export function promptForItem(item: WorkItem, body?: string): string {
   return lines.join("\n");
 }
 
-// 本文の読み方は provider ごとに違う道具を指す。★ af が本文を運ばない代わりに、
-// 「どこにあるか」は必ず書く —— これが無いと、エージェントはタイトルだけで作業を始める。
+// How to read the body differs per provider, so each line names a different tool. af never
+// carries the body itself, so it must always say where the body is; without that the agent
+// starts working from the title alone.
 function readLine(item: WorkItem): string {
   switch (item.provider) {
     case "github":
@@ -375,17 +378,18 @@ function readLine(item: WorkItem): string {
     case "jira":
       return t("wi.prompt_read_jira");
     default:
-      // Bitbucket はここ。`gh` にあたるセッション内の道具が無いので、指せるのは URL
-      // だけである（docs/log/80 §80.19.5）。無い道具の名前を書かないのが要点。
+      // Bitbucket lands here. There is no in-session tool equivalent to `gh`, so the URL is all
+      // this can point at (docs/log/80 §80.19.5). The point is not to name a tool that is absent.
       return t("wi.prompt_read_generic");
   }
 }
 
-/** Whether af can post the 報告 comment back to this item's tracker.
+/** Whether af can post the report comment back to this item's tracker.
  *
- * ★ 能力が無い provider には操作要素を出さない。Bitbucket は読み取りだけを足したので
- * （投稿には `pullrequest:write` が要り、テナント管理者の再登録と全員の再認可を伴う —
- * docs/log/80 §80.19.3）、その行に 💬 を出すと押した先で必ず断られる。 */
+ * No control is offered for a provider that lacks the capability. Bitbucket was added read-only
+ * (posting needs `pullrequest:write`, which means the tenant admin re-registering the connection
+ * and everyone re-authorising — docs/log/80 §80.19.3), so a comment button on such a row would
+ * always be refused once pressed. */
 export function canComment(item: WorkItem): boolean {
   return item.provider !== "bitbucket";
 }

@@ -6,50 +6,54 @@ import (
 	"time"
 )
 
-// 「待機プロンプトに見えるフレーム」を「本当に待機している」と読み替えてよいか、を
-// 時間で決める層。単発のフレームでは決められないことが実測で分かったので分けてある。
+// The layer that decides, by time, whether a frame that looks like an idle prompt may be
+// read as "really waiting". A single frame cannot decide it — measured, hence this split.
 //
-// # なぜ 1 フレームでは決められないのか（2026-08-28 実測・claude 2.1.25x）
+// # Why one frame is not enough (measured 2026-08-28, claude 2.1.25x)
 //
-// claude はアシスタントの本文ブロックを描いている間、スピナー行を出さない。その間の
-// ペインはヘッダ・転写・入力欄・モード表示フッタが揃った、待機プロンプトと構造的に
-// まったく同じ絵になる。自分のセッション（claude_scpsygq）を 0.25 秒間隔で採った 150
-// 秒のフレーム列では、本文を描いている 21.4 秒がまるごと spinnerActive=false /
-// atIdlePrompt=true で、その前後だけスピナーが出ていた。つまり本文が TUI に流れている
-// 最中の 20 秒間、ペイン由来の判定は「入力待ち」と言い切る。
+// claude draws no spinner line while it renders an assistant text block. During that time
+// the pane is structurally identical to an idle prompt: header, transcript, input box and
+// mode footer all present. In a 150-second series of frames taken from our own session
+// (claude_scpsygq) at 0.25s intervals, the whole 21.4 seconds spent drawing body text was
+// spinnerActive=false / atIdlePrompt=true, with the spinner showing only before and after.
+// So for those 20 seconds, while the body streams into the TUI, a pane-derived verdict
+// asserts "waiting for input".
 //
-// 差分でも救えない。claude は markdown をブロック単位で描くので、長い段落を生成して
-// いる間はペインが一度も再描画されない。同じ実測でこの 21.4 秒のフレーム 82 枚は 5 種類
-// しかなく、同一バイト列が続いた最長は 11.4 秒だった。数秒間隔のポーリングでは同じ絵を
-// 2 回続けて引くので、「前回と変わっていなければ待機」も同じ穴に落ちる。
+// Diffing does not save it either: claude draws markdown block by block, so the pane is
+// never redrawn while a long paragraph is generated. In the same measurement those 21.4
+// seconds held only 5 distinct frames across 82 captures, and the longest run of identical
+// bytes was 11.4 seconds. Polling every few seconds draws the same frame twice in a row, so
+// "unchanged since last time means idle" falls into the same hole.
 //
-// 救いは非対称性のほうにある: 本当に入力待ちのペインは、次に何かが起きるまで永久に
-// 変わらない（他セッション claude_swovou6 を 1 秒間隔で 47 秒採取して 1 種類）。一方、
-// 本文描画中のペインはブロックの切れ目ごとに必ず書き変わる。よって「待機に見える絵が、
-// 書き変わらないまま idleSettleWindow 以上続いた」を条件にすれば、
+// The asymmetry is what saves it: a pane that really waits for input never changes until
+// something happens (another session, claude_swovou6, sampled every second for 47 seconds,
+// yielded one distinct frame), while a pane drawing body text is rewritten at every block
+// boundary. So require "an idle-looking frame that stayed unchanged for at least
+// idleSettleWindow":
 //
-//   - 本文描画中は各ブロックの再描画が時計を巻き戻すので settled にならない。回答が
-//     どれだけ長くても、1 ブロックが窓を超えない限り誤判定しない。
-//   - 本当の待機は再描画が起きないので、窓のぶんだけ遅れて必ず settled になる。
+//   - While body text is drawn, each block's redraw rewinds the clock, so it never settles.
+//     However long the answer is, nothing is misjudged unless one block exceeds the window.
+//   - A real wait is never redrawn, so it always settles, just delayed by the window.
 //
-// # 窓の値
+// # The window value
 //
-// 実測の最長静止（11.4 秒・長い段落 1 つ）に対して 4 倍の余裕。長くするほど本文描画の
-// 取りこぼしは減るが、フックが鳴かない詰まり方（強制終了して再開した・API エラーで
-// ターンが切れた・モーダルを放棄した）を 進行中 のまま見せる時間も同じだけ伸びる。
-// 誤って「入力待ち」と名乗る害（停止ボタンが消える・完了通知や報告が早撃ちされる・
-// アイドル判定に触れる）のほうが、数十秒バッジが遅れる害より大きいので、余裕を取る側に
-// 倒してある。
+// Four times the margin over the longest measured still period (11.4s, one long paragraph).
+// A longer window loses fewer body-drawing frames, but it lengthens by just as much the time
+// a stall that fires no hook (killed and resumed, a turn cut short by an API error, an
+// abandoned modal) is shown as in progress. Wrongly claiming "waiting for input" does more
+// harm (the stop button disappears, completion notifications and reports fire early, the
+// idle verdict is affected) than a badge lagging by tens of seconds, so this errs on the
+// generous side.
 const idleSettleWindow = 45 * time.Second
 
-// idleSettleNow は時計。テストだけが差し替える。
+// idleSettleNow is the clock. Only tests replace it.
 var idleSettleNow = time.Now
 
-// paneSighting は 1 セッションぶんの「最後にペインの絵が変わった時刻」。
+// paneSighting is one session's "when the pane's frame last changed".
 type paneSighting struct {
 	sig     uint64
-	changed time.Time // この絵になった時刻（＝直前の絵と違って見えた時刻）
-	seen    time.Time // 最後に観測した時刻（掃除用）
+	changed time.Time // when this frame appeared (i.e. when it first differed from the previous one)
+	seen    time.Time // when it was last observed (for eviction)
 }
 
 var (
@@ -57,11 +61,13 @@ var (
 	sights  = map[string]paneSighting{}
 )
 
-// sightingTTL: 消えたセッションの残骸を落とす。ポーリングは数秒間隔なので、これだけ
-// 見えていなければもう存在しない（あるいは一度 settled になり直しても構わない）。
+// sightingTTL drops the leftovers of sessions that are gone. Polling runs every few
+// seconds, so anything unseen for this long no longer exists (and settling again from
+// scratch would be harmless anyway).
 const sightingTTL = 30 * time.Minute
 
-// frameSig は 1 フレームの指紋。中身の比較にしか使わないので衝突耐性は要らない。
+// frameSig fingerprints one frame. Only used to compare contents, so collision resistance
+// is not needed.
 func frameSig(s string) uint64 {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(s))
@@ -73,8 +79,9 @@ func frameSig(s string) uint64 {
 // sit unchanged while it is busy — the thinking spinner does change, but a modal does
 // not, and those are already excluded by atIdlePrompt).
 //
-// 初回観測は「いま変わった」として扱う（保守側に倒す）。エージェント再起動の直後は、
-// 本当に待機しているセッションでも窓のぶんだけ 進行中 のままになるが、逆よりよい。
+// The first observation counts as "just changed", erring on the conservative side: right
+// after an agent restart even a genuinely waiting session stays "in progress" for the
+// length of the window, which is better than the reverse.
 func observeFrame(name, frame string) bool {
 	now := idleSettleNow()
 	sig := frameSig(frame)

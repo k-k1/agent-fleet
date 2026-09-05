@@ -3,8 +3,8 @@
 // the Console's display language at that moment (titleLang). The Console shows it as a
 // dismissible banner; accepting or
 // dismissing latches SuggestedTitleDismissed so a session is offered one at most
-// once (v1 has no re-suggestion loop). Gated globally by the AgentsTab セッション
-// "タイトル自動提案" toggle (autoTitleSuggestEnabled, ui_prefs.go).
+// once (v1 has no re-suggestion loop). Gated globally by the AgentsTab session
+// "auto title suggestion" (タイトル自動提案) toggle (autoTitleSuggestEnabled, ui_prefs.go).
 
 package sessionx
 
@@ -135,19 +135,20 @@ func generateSessionTitle(name string, turns []transcript.Turn) {
 }
 
 // titleLang picks the language the suggested title is WRITTEN in: the Console display
-// language (ui-prefs "locale", 設定 > 表示言語), read live at generation time.
+// language (ui-prefs "locale", Settings > Display language), read live at generation time.
 //
 // A title is stored text read by this one user in their own session list, so per ADR
 // 0033 the deciding axis is "who reads it" — hence the UI language, not the
 // conversation's language (an English speaker debugging a Japanese codebase still wants
 // an English list). Deliberately NOT retroactive: switching the language later leaves
 // existing titles alone (they are the user's data, and re-suggesting is a user action —
-// the rename dialog's 「AIに提案してもらう」 regenerates in the new language on demand).
+// the rename dialog's "ask the AI" (AIに提案してもらう) button regenerates in the new
+// language on demand).
 func titleLang() string { return uiprefs.Locale() }
 
 // TitleSuggestPersona keeps the headless call laser-focused: no preamble, no quoting, a
 // single short line. Third-person topic label, not a sentence: the model is prone to
-// echoing the assistant's own reasoning ("〜が良さそう") if not pinned to "what is this
+// echoing the assistant's own reasoning ("...が良さそう") if not pinned to "what is this
 // session ABOUT" as a noun phrase. Each language's persona is written IN that language
 // so it also steers the output language (same reasoning as langRuleJA/EN in chat.go — a
 // Japanese instruction attached to an English request gives mixed signals).
@@ -244,9 +245,10 @@ func TitleSuggestFooter(lang string) string {
 }
 
 // TitleSuggestInstructions is the instruction block shared by the session and chat
-// title prompts, including the conversation-log header. The 悪い例 / Bad list carries
-// the two shapes actually observed being adopted as titles — a lead-in sentence and a
-// "件名:" label — because the persona's 前置き禁止 alone did not stop them.
+// title prompts, including the conversation-log header. The bad-example list ("悪い例" /
+// "Bad") carries the two shapes actually observed being adopted as titles — a lead-in
+// sentence and a "件名:" label — because the persona's ban on lead-ins alone did not stop
+// them.
 func TitleSuggestInstructions(lang string) string {
 	if lang == "en" {
 		return titleSuggestInstructionsEN
@@ -297,8 +299,8 @@ func writeConversationWindow(b *strings.Builder, real []transcript.Turn) {
 }
 
 // BranchSuggestPrompt builds an ENGLISH prompt for a git branch name. Crucially it does
-// NOT reuse titleSuggestPrompt (which is Japanese and asks for a Japanese 件名 — that
-// steered the model to reply in Japanese, which CleanBranchName then stripped to ""):
+// NOT reuse titleSuggestPrompt (which is Japanese and asks for a Japanese subject line —
+// that steered the model to reply in Japanese, which CleanBranchName then stripped to ""):
 // it instructs an English kebab-case name even when the conversation is Japanese, with
 // English few-shot anchors.
 func BranchSuggestPrompt(turns []transcript.Turn) string {
@@ -325,13 +327,13 @@ func BranchSuggestPrompt(turns []transcript.Turn) string {
 // CleanSuggestedTitle reduces the model's reply to one usable title.
 //
 // It scans lines rather than taking the first one verbatim: the model does not
-// reliably obey "1行のみ" and often emits a lead-in ("会話の内容から、件名をお作りしま
-// す：") or a label ("セッション件名:") first and the real title on a following line —
-// taking line 1 adopted the preamble AS the title (observed on session sicoxqh). Each
-// line is stripped of list/emphasis markers and any "件名:"-style label; pure lead-in
-// lines are dropped, and the first survivor wins. Returns "" when nothing usable
-// remains, which the callers already treat as "no suggestion" (auto path backs off,
-// manual path reports a failure) — better than latching a meaningless title.
+// reliably obey the "one line only" rule and often emits a lead-in
+// ("会話の内容から、件名をお作りします：") or a label ("セッション件名:") first and the real
+// title on a following line — taking line 1 adopted the preamble AS the title (observed
+// in the field). Each line is stripped of list/emphasis markers and any "件名:"-style
+// label; pure lead-in lines are dropped, and the first survivor wins. Returns "" when
+// nothing usable remains, which the callers already treat as "no suggestion" (auto path
+// backs off, manual path reports a failure) — better than latching a meaningless title.
 func CleanSuggestedTitle(s string) string {
 	for i, line := range strings.Split(s, "\n") {
 		if i >= titleReplyScanLines {
@@ -408,12 +410,12 @@ func isWideRune(r rune) bool {
 }
 
 // titleLabelWords mark the text before a colon as a LABEL for the title rather than
-// part of it ("件名: 〜", "セッション件名：〜", "Title: 〜"). Matched on the pre-colon
-// segment only, so a title that merely contains one of these words
-// （例: セッションタイトルの自動提案）survives untouched.
+// part of it ("件名: ...", "セッション件名：...", "Title: ..."). Matched on the pre-colon
+// segment only, so a title that merely contains one of these words (e.g.
+// "セッションタイトルの自動提案") survives untouched.
 var titleLabelWords = []string{"件名", "タイトル", "title", "subject", "見出し"}
 
-// titleAnnounceTails end a sentence ABOUT producing a title ("〜件名をお作りします。").
+// titleAnnounceTails end a sentence ABOUT producing a title ("...件名をお作りします。").
 // Only rejected in combination with a label word, so a plain noun-phrase title is never
 // caught by them.
 var titleAnnounceTails = []string{"ます", "ます。", "です", "です。", "ください", "ください。", "した", "した。"}
@@ -445,7 +447,7 @@ func titleCandidateLine(line string) string {
 		return ""
 	}
 
-	// "…件名: <title>" -> "<title>"; "…件名:" (nothing after) -> preamble, drop the line.
+	// "...件名: <title>" -> "<title>"; "...件名:" (nothing after) -> preamble, drop the line.
 	if head, rest, ok := cutColon(s); ok && containsAnyFold(head, titleLabelWords) {
 		s = strings.Trim(strings.TrimSpace(rest), titleQuoteChars)
 		if s == "" {
@@ -607,7 +609,7 @@ func writeTitleGenErr(w http.ResponseWriter, err error) {
 }
 
 // HandleSuggestTitle previews a title suggestion WITHOUT touching session.Meta —
-// used by the manual rename dialog's "AIに提案してもらう" button, which just fills
+// used by the manual rename dialog's "ask the AI" (AIに提案してもらう) button, which just fills
 // the text field for the user to edit/accept themselves. Works even when the
 // session already has a title (renaming is exactly the case where one already
 // exists) and never drives the accept/dismiss banner flow — the banner is offered
@@ -637,7 +639,7 @@ func HandleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
 }
 
-// HandleSetTitle applies a user-typed title directly (the rename dialog's 保存
+// HandleSetTitle applies a user-typed title directly (the rename dialog's Save
 // button) — the only path that lets the Console set an arbitrary title on an
 // EXISTING session (creation already accepts one; accept/regenerate only ever
 // write an LLM-produced string). An empty title reverts to the auto label and
@@ -733,8 +735,9 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_name", "invalid session name")
 		return
 	}
-	// ブランチ名は自分のトグルで止める（設定 > AI補助「ブランチ名の提案」）。以前は
-	// セッションのタイトル提案と同じキーで、どのラベルにもそう書かれていなかった。
+	// Branch naming is gated by its own toggle (Settings > AI assistance > "branch name
+	// suggestion"), not by the session title suggestion's: sharing one key silenced a
+	// feature no label said it controlled.
 	if !uiprefs.BranchSuggest() {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeTitleFeatureDisabled, "branch name suggestion is turned off")
 		return
@@ -755,8 +758,8 @@ func HandleSessionSuggestBranch(w http.ResponseWriter, r *http.Request) {
 	branch, err := runBranchSuggestLLM(ctx, turns)
 	if err != nil {
 		// Surface the underlying reason (auth/CLI/timeout) instead of a generic string.
-		// 例外的にカタログ化しない: detail（err）を保持したいため developer message を
-		// そのまま表示する（"generation_failed" キーを i18n に足さない）。
+		// Deliberately not catalogued: the developer message is shown as-is to keep the
+		// detail (err), so no "generation_failed" key is added to i18n.
 		httpx.WriteErr(w, http.StatusBadGateway, "generation_failed", "AI title suggestion failed: "+err.Error())
 		return
 	}

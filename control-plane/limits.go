@@ -1,5 +1,4 @@
-// limits.go — テナント limits JSON のパースとアイドルタイムアウト解決。
-// manager.go からの機械的分割（docs/log/23 P2-W2）。
+// limits.go — parsing of the tenant.limits JSON and the resolution of the idle timeouts.
 package main
 
 import (
@@ -43,7 +42,7 @@ type tenantLimits struct {
 	// ceiling above, the tenant's choice below. Empty (the default) = no restriction,
 	// so a deployment that never sets it behaves exactly as before.
 	//
-	// ⚠️ This is a policy, not a cap on a number: an out-of-range memory value can be
+	// This is a policy, not a cap on a number: an out-of-range memory value can be
 	// clamped down to something usable, but a class that is not allowed has no
 	// "smaller" version — resolveSlotClass falls back to the tenant default and SAYS
 	// so, rather than silently running the person somewhere they didn't ask for.
@@ -61,21 +60,23 @@ type tenantLimits struct {
 	//
 	// "" => the tenant's own SessionIdleTimeout when they set one, else the deployment
 	// default (AF_INTERACTION_IDLE_TIMEOUT, itself defaulting to the session default).
-	// "0" => never fold a human-wait session for this tenant. 畳まれた対話は失われない —
-	// 保留ペイロードは持ち越しへ退避され、Console から答えれば再開して届く（docs/log/75 §75.6）。
+	// "0" => never fold a human-wait session for this tenant. Folding one loses nothing:
+	// the pending payload is carried forward, and answering it from the Console resumes
+	// the session and delivers the answer (docs/log/75 §75.6).
 	InteractionIdleTimeout string `json:"interaction_idle_timeout,omitempty"`
 	// HomeHibernateAfter is the third step of the same series and the only one that
 	// touches the user's data: a home nobody has opened for this long is snapshotted and
-	// its volume deleted, and the next Start restores it (ADR 0045 決定 13-2, docs/log/64
-	// §64.18.2). Only the ecs-ec2 runtime can do this; on every other runtime the value
+	// its volume deleted, and the next Start restores it (ADR 0045 decision 13-2,
+	// docs/log/64 §64.18.2). Only the ecs-ec2 runtime can do this; elsewhere the value
 	// is inert. Same resolution as the two timeouts above — "" => deployment default
 	// (AF_ECS_EC2_HIBERNATE_AFTER_SEC), "0" => never hibernate this tenant's homes.
 	HomeHibernateAfter string `json:"home_hibernate_after,omitempty"`
 	// HomeBackupEvery is how often to keep a copy of a home somewhere its Availability
-	// Zone is not (ADR 0045 決定 17). It is the tenant's RPO — how much work they accept
-	// losing — which is why it sits next to the timeouts rather than in the deployment
-	// env; how many copies to pay for is the operator's call (AF_ECS_EC2_BACKUP_KEEP).
-	// ecs-ec2 only; "" => deployment default, "0" => no backups for this tenant.
+	// Zone is not (ADR 0045 decision 17). It is the tenant's RPO — how much work they
+	// accept losing — which is why it sits next to the timeouts rather than in the
+	// deployment env; how many copies to pay for is the operator's call
+	// (AF_ECS_EC2_BACKUP_KEEP). ecs-ec2 only; "" => deployment default, "0" => no
+	// backups for this tenant.
 	HomeBackupEvery string `json:"home_backup_every,omitempty"`
 	// AllowAgentSelfUpdate: the operator gate for member-driven CLI self-update
 	// (claude/opencode/codex). When true the CP injects AF_AGENT_SELF_UPDATE_ALLOWED=1
@@ -99,10 +100,6 @@ func parseLimits(s string) tenantLimits {
 	return l
 }
 
-// idleTimeout resolves a tenant idle-timeout field to a duration and whether
-// idle-stop is enabled. Empty => the deployment default (def); an explicit "0"
-// (or any non-positive value) disables idle-stop for that tenant; a bad string
-// falls back to the default rather than silently disabling.
 // interactionTimeout resolves tier-1's clock for a human-wait session. The fallback
 // chain is deliberate: an admin who set only session_idle_timeout has expressed a
 // tempo for that tenant, and silently running human waits on the DEPLOYMENT default
@@ -117,6 +114,10 @@ func interactionTimeout(lim tenantLimits, sessTO time.Duration, sessOn bool, def
 	return idleTimeout("", def)
 }
 
+// idleTimeout resolves a tenant idle-timeout field to a duration and whether idle-stop
+// is enabled. Empty => the deployment default (def); an explicit "0" (or any non-positive
+// value) disables idle-stop for that tenant; a bad string falls back to the default rather
+// than silently disabling.
 func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled bool) {
 	d = def
 	if tenantVal != "" {
@@ -127,21 +128,23 @@ func idleTimeout(tenantVal string, def time.Duration) (d time.Duration, enabled 
 	return d, d > 0
 }
 
-// --- テナント上限とスロットプールの突き合わせ（docs/log/64 §64.35）---
+// --- Tenant quotas against the slot pool (docs/log/64 §64.35) ---
 //
-// ⚠️ この 2 つは**別の分母を数えている**。混ぜて 1 つの数字にしてはいけない。
+// The two numbers count DIFFERENT denominators and must never be merged into one:
 //
-//   max_workspaces  … そのテナントの**同時に running / starting な Workspace の数**
-//                     （countRunningInTenant）。停止中の WS は数えない。
-//   Ec2MaxSlots     … **存在してよい箱の数**。停止中の WS も、遅延返却で箱を掴んだまま
-//                     なので、こちらには数えられている。
+//   - max_workspaces is how many of the tenant's workspaces may be running or starting
+//     at once (countRunningInTenant). A stopped workspace does not count.
+//   - Ec2MaxSlots is how many boxes may exist. A stopped workspace still holds its box
+//     (the return is deferred), so it DOES count here.
 //
-// 比べられるのは「running な WS はちょうど 1 つの箱を要る」からで、差分は**停止中の WS が
-// 握っている箱**である。したがって Σ ≤ 容量 は**必要条件であって十分条件ではない**：
-// 枠内でも休眠中の箱が上限を埋めて立ち退きが起きうる（`Ec2SlotTerminateAfterSec` を
-// 入れると差分は「最後の N 時間ぶん」に縮むが、0 にはならない）。
+// They can be compared at all only because a running workspace needs exactly one box;
+// the difference between the two is the boxes stopped workspaces are sitting on. So
+// Σ ≤ capacity is a necessary condition, not a sufficient one: even inside quota,
+// dormant boxes can fill the pool and cause an eviction (`Ec2SlotTerminateAfterSec`
+// shrinks the difference to "the last N hours" but never to zero).
 //
-// 画面でも 2 つを 1 つの言葉にしないこと——「同時利用」と「占有スロット」は別物である。
+// The UI must keep them apart too — "concurrent use" and "occupied slots" are not the
+// same thing.
 
 // slotCapacityReporter is implemented by the one runtime whose boxes are a FIXED,
 // deployment-wide pool. Everything else provisions per workspace and has no number to
@@ -151,9 +154,9 @@ type slotCapacityReporter interface {
 	MaxSlots() int
 }
 
-// ⚠️ runtime.PoolBudget は adapters 側（internal/runtime/deps.go）が宣言する。EC2 プールの
-// status DTO がこれを埋め込んでおり、DTO ごとアダプタと一緒に動いた。OK() メソッドも
-// 一緒なのは、Go のエイリアスがメソッドを運べないため。
+// runtime.PoolBudget is declared on the adapter side (internal/runtime/deps.go) because
+// the EC2 pool's status DTO embeds it. Its OK() method lives there too: a Go alias cannot
+// carry methods.
 
 // poolBudget totals the tenants' concurrency quotas against the pool cap.
 //

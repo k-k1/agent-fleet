@@ -97,7 +97,7 @@ func (a gitServerAPI) tree(w http.ResponseWriter, r *http.Request, _ store.Ident
 	cmd := exec.CommandContext(r.Context(), "git", "--git-dir", bareDir, "ls-tree", "--long", "-z", treeish)
 	out, err := cmd.Output()
 	if err != nil {
-		// Unborn branch or path-not-a-tree → empty listing (Console shows "空").
+		// Unborn branch or path-not-a-tree → empty listing (the Console renders it empty).
 		writeJSON(w, http.StatusOK, map[string]any{"ref": ref, "path": path, "entries": []any{}})
 		return
 	}
@@ -199,26 +199,25 @@ func (a gitServerAPI) blob(w http.ResponseWriter, r *http.Request, _ store.Ident
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// gitBlobWire — GET /api/internal-git/repos/{name}/blob のレスポンス
-// （Console の `Blob`、console/src/features/settings/workspace/InternalRepoBrowser.tsx）。
+// gitBlobWire is the response of GET /api/internal-git/repos/{name}/blob (the Console's
+// `Blob`, console/src/features/settings/workspace/InternalRepoBrowser.tsx).
 //
-// 旧: map[string]any{"ref":…, "path":…, "size":…} を resp に置き、4 つの出口が
+// was: map[string]any{"ref":…, "path":…, "size":…} in resp, to which each of the four
+// exits adds too_large / lfs(+lfs_oid) / binary / content. The key set differs per exit,
+// so the optional keys are carried with omitempty.
 //
-//	それぞれ too_large / lfs(+lfs_oid) / binary / content を足して返す。
-//	つまり**出口ごとにキー集合が違う**ので、任意キーは omitempty で表す。
+// Content is the only pointer because it is the one key omitempty cannot represent
+// faithfully: content is `string(content)`, so an empty file gives "" and the wire has to
+// keep `"content": ""`. string + omitempty would drop that empty value, which changes the
+// wire; nil means "no key" and &"" means "emit the empty string".
 //
-// 🔴 Content だけポインタなのは、**omitempty が忠実にならない唯一のキー**だから:
-// content は `string(content)` なので**空ファイルなら ""** になり、旧コードは
-// `"content": ""` を**出す**。string + omitempty だと**その空を消してしまう**
-// （在るのに消える＝ワイヤが変わる）。nil = キー無し / &"" = 空で出す、で区別する。
+// The other optional keys are faithful under omitempty:
+//   - too_large / lfs / binary are only ever assigned true, so false means absent.
+//   - lfs_oid is the `([0-9a-f]{64})` capture (git_gc.go:157), always 64 characters and
+//     never empty.
 //
-// 他の任意キーは omitempty で忠実:
-//   - too_large / lfs / binary は **true しか代入されない**ので、false は「無い」と同義。
-//   - lfs_oid は `([0-9a-f]{64})` の捕獲＝**必ず 64 文字**で、空を取れない
-//     （git_gc.go:157 の正規表現）。
-//
-// ⚠️ ref は Console が自分でクエリに載せて送った値の echo。Console の `Blob` は
-// これを宣言していないが**読んでもいない**ので、型化してもワイヤも画面も変わらない。
+// ref is an echo of the value the Console itself put on the query. The Console's `Blob`
+// neither declares nor reads it, so typing it changes neither the wire nor the screen.
 type gitBlobWire struct {
 	Ref      string  `json:"ref"`
 	Path     string  `json:"path"`

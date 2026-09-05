@@ -1,24 +1,25 @@
 package opencode
 
-// opencode serve の RuntimeSupervisor（docs/log/27 §3・§7、P2）。共有 `opencode serve`
-// （HTTP＋SSE、loopback）を 1 プロセス起動・監視し、managed セッションの runtime を
-// 提供する。責務は「プロセスの生涯」だけ — thread（opencode session）に何をさせるかは
-// driver.go の ThreadHandle が持つ。
+// The RuntimeSupervisor for opencode serve (docs/log/27 §3 / §7, P2). It starts and
+// watches one shared `opencode serve` process (HTTP + SSE on loopback) and provides the
+// runtime for managed sessions. Its only responsibility is the PROCESS LIFETIME — what a
+// thread (an opencode session) is made to do belongs to driver.go's ThreadHandle.
 //
-// 実測（1.17.18、docs/log/27 §12.2）:
-//   - 認証: OPENCODE_SERVER_PASSWORD 未設定なら無認証（起動ログに unsecured 警告）。
-//     コンテナ network namespace 内の loopback 限定なので codex app-server と同じ判断
-//     （§9.1）で無認証運用。TUI アタッチも同条件で素通し。
-//   - provider 鍵は env 注入（auth.go の env()）なので、鍵の変更は再起動が必須＝
-//     generation＋drain（§7）がそのまま反映パス。
-//   - serve は SQLite（message/part）へ v1 フローで書く。read 層（transcript.go）は
-//     無傷のまま managed セッションの正本を読める。
+// Measured (1.17.18, docs/log/27 §12.2):
+//   - Auth: with OPENCODE_SERVER_PASSWORD unset there is none (the startup log carries an
+//     unsecured warning). It listens only on loopback inside the container's network
+//     namespace, so it runs unauthenticated on the same judgement as the codex app-server
+//     (§9.1). A TUI attach passes through under the same condition.
+//   - Provider keys are env-injected (auth.go's env()), so a key change requires a
+//     restart: generation + drain (§7) IS the path that applies it.
+//   - serve writes to SQLite (message/part) through the v1 flow, so the read layer
+//     (transcript.go) can read the canonical record of a managed session untouched.
 //
-// exit recording（docs/log/26・§10.2-2 の supervisor 移設）: daemon は supervisor の
-// 子プロセスなので cmd.Wait() の wait status が直接取れる。予期しない死は
-// (a) generation 履歴としてログへ、(b) thread レベルでは live な managed セッション
-// 全員に status.PersistExit（既存の session-exit ストア・reason enum 共用）で記録し、
-// 復旧（reconcile）が成功したセッションは baseline 書き込みでクリアされる。
+// Exit recording (docs/log/26, §10.2-2): the daemon is the supervisor's child process, so
+// cmd.Wait()'s wait status is available directly. An unexpected death goes (a) to the log
+// as generation history and (b) at thread level to every live managed session via
+// status.PersistExit (sharing the existing session-exit store and reason enum); a session
+// that recovers through reconcile is cleared by the baseline write.
 
 import (
 	"bufio"
@@ -42,40 +43,44 @@ import (
 
 const serveAddrEnv = "AF_OPENCODE_SERVE_ADDR"
 
-// defaultServeAddr は codex app-server（:7798）の隣。コンテナの network namespace
-// 内 loopback なので衝突リスクはこのコンテナ内のプロセスに限る。
+// defaultServeAddr sits next to the codex app-server (:7798). It is loopback inside the
+// container's network namespace, so the collision risk is limited to processes in this
+// container.
 const defaultServeAddr = "http://127.0.0.1:7799"
 
-// serveClient は制御系（create/abort/question/status）用の短タイムアウト HTTP。
-// blocking の /message（turn 実行、時間無制限）だけは driver.go が独自 client を使う。
+// serveClient is the short-timeout HTTP client for the control calls
+// (create/abort/question/status). Only the blocking /message (running a turn, no time
+// limit) uses a client of its own, in driver.go.
 var serveClient = &http.Client{Timeout: 10 * time.Second}
 
 // Supervisor owns the shared `opencode serve` daemon: idempotent start, health,
-// generation counter, drain and restart（docs/log/27 §3 の RuntimeSupervisor）。
+// generation counter, drain and restart (the RuntimeSupervisor of docs/log/27 §3).
 type Supervisor struct {
 	mu   sync.Mutex
 	addr string
-	gen  int       // runtime generation（§7）。Ensure が新プロセスを起こすたび++
-	cmd  *exec.Cmd // 現世代の子プロセス（adopt した既存プロセスなら nil）
+	gen  int       // runtime generation (§7); ++ every time Ensure starts a new process
+	cmd  *exec.Cmd // this generation's child process (nil for an adopted one)
 	up   bool
 	// stopping marks a deliberate teardown (Restart/Shutdown) so the waiter doesn't
 	// record it as a crash or trigger reconciliation.
 	stopping bool
-	// watching: 需要ゼロ監視（agents.WatchIdle、idlestop.go）が 1 本回っている。
+	// watching: one zero-demand watcher (agents.WatchIdle, idlestop.go) is running.
 	watching bool
 }
 
 var supervisor = &Supervisor{}
 
-// dependents は共有 daemon を必要としているものの総数。
+// dependents is the total number of things that need the shared daemon.
 //
-// TUI ルートの opencode は serve を使わない（buildProgram は自前の SQLite ストアに
-// 直接つなぐ）ので、codex と違って数えるのは managed ハンドルだけ。ただし OAuth の
-// device フローだけは「未接続のまま daemon を起こす」唯一の経路なので、その最中は
-// 需要として数えないと、ログインの途中で足元の daemon を畳んでしまう。
+// The TUI route of opencode does not use serve (buildProgram connects directly to its own
+// SQLite store), so unlike codex only managed handles are counted. The OAuth device flow
+// is the one exception: it is the only path that starts the daemon while still
+// unconnected, so unless it counts as demand for its duration, the daemon gets folded up
+// from under a login in progress.
 //
-// live ではなく **登録済み** ハンドル数で数える理由は codex 側と同じ: daemon が死ぬと
-// runtimeLost が alive を落とすので、live だと復旧すべき場面が需要ゼロに見える。
+// Counting REGISTERED rather than live handles is for the same reason as on the codex
+// side: when the daemon dies runtimeLost clears alive, so counting live would make the
+// very situation that needs recovery look like zero demand.
 func dependents() int {
 	handlesMu.Lock()
 	n := len(handles)
@@ -86,9 +91,9 @@ func dependents() int {
 	return n
 }
 
-// idleGraceEnv / defaultIdleGrace: 需要ゼロがこれだけ続いたら daemon を畳む。
-// 0 で自動停止を無効化。serve は実測 RSS 約 305 MB あるので、managed を使っていない
-// 間ずっと居座らせる理由はない。
+// idleGraceEnv / defaultIdleGrace: fold the daemon up after this much continuous zero
+// demand; 0 disables the automatic stop. serve is a measured ~305 MB RSS, so there is no
+// reason to let it sit there for as long as managed goes unused.
 const idleGraceEnv = "AF_OPENCODE_SERVE_IDLE_SEC"
 const defaultIdleGrace = 2 * time.Minute
 
@@ -105,7 +110,7 @@ func serveAddr() string {
 // Disabled reports whether managed opencode is switched off for this workspace.
 func (s *Supervisor) Disabled() bool { return os.Getenv("AF_OPENCODE_SERVE_DISABLE") == "1" }
 
-// Generation returns the current runtime generation（§7）。
+// Generation returns the current runtime generation (§7).
 func (s *Supervisor) Generation() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -130,18 +135,20 @@ func healthy(addr string) bool {
 	return res.StatusCode < 500
 }
 
-// ErrNotConnected: opencode が未接続（鍵も Console ログインも無料枠の明示も無い）
-// なので共有 daemon を起こさない。serve は認証を見ずに listen できてしまうが、
-// 実測 RSS 約 305 MB — 使わないワークスペースでそれを常駐させる理由はない。
+// ErrNotConnected: opencode is not connected (no key, no Console login, no explicit
+// free-tier choice), so the shared daemon is not started. serve would happily listen
+// without looking at auth at all, but at a measured ~305 MB RSS there is no reason to keep
+// it resident in a workspace that does not use it.
 var ErrNotConnected = errors.New("opencode が未接続のため serve を起動しません")
 
 // Ensure starts (or adopts) the shared serve daemon, idempotently. Returns the
 // base URL and the runtime generation the caller should stamp on its handles.
 func (s *Supervisor) Ensure() (string, int, error) { return s.ensure(false) }
 
-// ensure は Ensure の実体。allowUnauthed は OAuth device フロー専用の抜け道:
-// あの経路は「daemon の API を使ってログインする」ので、未接続を理由に起動を
-// 断ると永久にログインできない（鶏と卵）。それ以外の入口は必ず false で入ること。
+// ensure is the body of Ensure. allowUnauthed is an escape hatch for the OAuth device
+// flow only: that path logs in THROUGH the daemon's API, so refusing to start it for being
+// unconnected makes logging in impossible forever (chicken and egg). Every other entry
+// point must pass false.
 func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	if s.Disabled() {
 		return "", 0, errors.New("opencode serve is disabled (AF_OPENCODE_SERVE_DISABLE=1)")
@@ -165,8 +172,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 		log.Printf("opencode serve: adopted running daemon at %s (gen %d)", addr, s.gen)
 		return addr, s.gen, nil
 	}
-	// ここから先は新しいプロセスを起こす＝メモリを新たに払う。未接続なら払わない。
-	// （adopt は既に払われている分なので上で素通し済み。）
+	// Past this point a new process starts, i.e. new memory is paid for. Do not pay
+	// while unconnected. (An adopt is memory already paid for, so it passed above.)
 	if !allowUnauthed && !Connected() {
 		return "", 0, ErrNotConnected
 	}
@@ -176,7 +183,7 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	}
 	cmd := exec.Command("opencode", "serve", "--hostname", host, "--port", port)
 	// Provider keys are env-injected (auth.go) — the same set a TUI launch gets, so
-	// managed turns authenticate identically. Re-keying requires a Restart（§7）.
+	// managed turns authenticate identically. Re-keying requires a Restart (§7).
 	cmd.Env = append(os.Environ(), env()...)
 	cmd.Dir = paths.HomeDir()
 	if err := cmd.Start(); err != nil {
@@ -203,8 +210,8 @@ func (s *Supervisor) ensure(allowUnauthed bool) (string, int, error) {
 	return "", 0, errors.New("opencode serve が時間内に起動しませんでした")
 }
 
-// armIdleWatchLocked starts the "需要ゼロで畳む" watcher, at most one at a time.
-// 呼び出し側は s.mu を保持していること。
+// armIdleWatchLocked starts the "fold up on zero demand" watcher, at most one at a time.
+// The caller must hold s.mu.
 func (s *Supervisor) armIdleWatchLocked() {
 	if s.watching {
 		return
@@ -214,15 +221,16 @@ func (s *Supervisor) armIdleWatchLocked() {
 		agents.IdleGrace(idleGraceEnv, defaultIdleGrace))
 }
 
-// stopIfIdle は需要ゼロを **ロック内で再確認してから** daemon を畳む。監視ループの
-// 判定と停止の間に Resume や OAuth 開始が走ると、動いているものの足元を抜くことに
-// なるので、ここだけは競合を潰す。false = 需要が戻っていた（監視続行）。
+// stopIfIdle re-checks zero demand INSIDE THE LOCK before folding the daemon up. A Resume
+// or an OAuth start landing between the watch loop's decision and the stop would pull the
+// ground out from under something that is running, so this is the one place the race is
+// closed. false = demand came back (keep watching).
 func (s *Supervisor) stopIfIdle() bool {
 	s.mu.Lock()
 	if !s.up {
 		s.watching = false
 		s.mu.Unlock()
-		return true // 既に落ちている（daemon death 等）— 監視は降りる
+		return true // already down (daemon death etc.) — the watcher steps off
 	}
 	if dependents() > 0 {
 		s.mu.Unlock()
@@ -234,19 +242,19 @@ func (s *Supervisor) stopIfIdle() bool {
 	s.mu.Unlock()
 
 	if cmd == nil {
-		// adopt した daemon はプロセスハンドルが無くシグナルを送れない。監視を降りる
-		// だけにして、次に owned で起こし直したときに効かせる。
-		log.Printf("opencode serve: 需要ゼロだが adopt した daemon なので停止できません")
+		// An adopted daemon has no process handle, so it cannot be signalled. Just
+		// step off the watch; it will apply the next time we start an owned one.
+		log.Printf("opencode serve: zero demand, but this daemon was adopted and cannot be stopped")
 	} else {
-		// 需要ゼロ＝走っている managed turn は無いので drain は要らない。
+		// Zero demand means no managed turn is running, so no drain is needed.
 		stopProcess(cmd, addr)
-		log.Printf("opencode serve: 停止しました（需要ゼロ）")
+		log.Printf("opencode serve: stopped (zero demand)")
 	}
 	s.mu.Lock()
 	s.cmd = nil
 	s.mu.Unlock()
-	// stopping は戻さない: 遅れて届く SSE 断（monitorEvents）を「意図しない喪失」と
-	// 読み違えないため。次の Ensure が成功時に false へ戻す。
+	// stopping is deliberately NOT cleared, so a late SSE disconnect (monitorEvents) is
+	// not misread as an unintended loss. The next successful Ensure resets it to false.
 	return true
 }
 
@@ -263,13 +271,15 @@ func splitServeAddr(addr string) (host, port string, err error) {
 	return host, port, nil
 }
 
-// waitDaemon records WHY the owned daemon exited（§10.2-2: pane ラッパー record-exit
-// の supervisor 移設）and kicks reconciliation for the surviving sessions.
+// waitDaemon records WHY the owned daemon exited (§10.2-2: exit recording moved from the
+// pane wrapper's record-exit into the supervisor) and kicks reconciliation for the
+// surviving sessions.
 func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 	err := cmd.Wait()
 	s.mu.Lock()
-	// `s.cmd != cmd`（codex 同型）: Restart は gen を変えずに stopping を戻すので、
-	// gen 比較だけだと意図的停止を「died unexpectedly」に誤記録しうる。
+	// `s.cmd != cmd` (same shape as codex): Restart clears stopping without changing
+	// gen, so comparing gen alone can misrecord a deliberate stop as "died
+	// unexpectedly".
 	deliberate := s.stopping || s.cmd != cmd
 	if s.cmd == cmd {
 		s.up = false
@@ -297,10 +307,10 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 		sig = code - 128
 	}
 	oomNow, okOOM := status.OOMKillCount()
-	// generation 履歴（§9.5 の運用メタデータ）: P2 はログを台帳とする。
+	// Generation history (§9.5 operational metadata): in P2 the log IS the ledger.
 	log.Printf("opencode serve: daemon died unexpectedly (gen %d, code %d, sig %d, oomCount ok=%v)", gen, code, sig, okOOM)
-	// thread レベルの記録: live だった managed セッション全員に。復旧に成功した
-	// セッションは reconcile の baseline 書き込みでクリアされる（tui の再起動と同じ）。
+	// Thread-level record, on every managed session that was live. A session that
+	// recovers is cleared by reconcile's baseline write (same as a tui restart).
 	for _, h := range liveHandles() {
 		base, _ := status.ReadExit(h.name)
 		oom := okOOM && oomNow > base.OOMBase
@@ -315,9 +325,9 @@ func (s *Supervisor) waitDaemon(cmd *exec.Cmd, gen int) {
 	go reconcileAll("daemon death")
 }
 
-// Restart は認証・設定変更の反映パス（§7）: generation++ → drain → 再生成 → 全
-// handle の再 resume。共有 daemon なので drain は workspace 内 opencode managed
-// セッション全体の切替窓になる（仕様、§7）。
+// Restart is the path that applies an auth or config change (§7): generation++ → drain →
+// respawn → re-resume every handle. The daemon is shared, so the drain is a switchover
+// window for every opencode managed session in the workspace at once (by design, §7).
 func (s *Supervisor) Restart(reason string) {
 	s.mu.Lock()
 	if !s.up {
@@ -358,7 +368,7 @@ func (s *Supervisor) Shutdown() {
 }
 
 // drainTimeout bounds how long a drain waits for running turns to finish before
-// aborting them（§7: 完走待ち、タイムアウトで interrupt）.
+// aborting them (§7: wait for completion, interrupt on timeout).
 func drainTimeout() time.Duration {
 	if v := os.Getenv("AF_OPENCODE_DRAIN_TIMEOUT_SEC"); v != "" {
 		if d, err := time.ParseDuration(v + "s"); err == nil && d > 0 {
@@ -387,8 +397,8 @@ func (s *Supervisor) drain(addr string) {
 
 // busyManaged lists the opencode sessions that are (a) busy per the runtime and
 // (b) owned by a managed handle — a TUI-attached user's own experiments outside AF
-// sessions are not ours to wait on. /session/status はプロジェクト（directory）に
-// スコープされる（実測）ので、handle の dir ごとに照会して合成する。
+// sessions are not ours to wait on. Measured: /session/status is scoped to a project
+// (directory), so it is queried per handle dir and the results combined.
 func busyManaged(addr string) []*threadHandle {
 	byDir := map[string][]*threadHandle{}
 	for _, h := range liveHandles() {
@@ -409,7 +419,7 @@ func busyManaged(addr string) []*threadHandle {
 			continue
 		}
 		for _, h := range hs {
-			// /session/status は idle を省略する（実測）ので、載っている＝busy/retry。
+			// Measured: /session/status omits idle, so being listed = busy/retry.
 			if st, ok := m[h.sessionID()]; ok && st.Type != "idle" {
 				out = append(out, h)
 			}
@@ -436,8 +446,8 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 		return
 	}
 	_ = cmd.Process.Signal(syscall.SIGTERM)
-	// Poll health only (codex 同型): cmd.ProcessState は waitDaemon の cmd.Wait() と
-	// データレースになるので触らない。reap は waitDaemon の仕事。
+	// Poll health only (same shape as codex): cmd.ProcessState would data-race with
+	// waitDaemon's cmd.Wait(), so it is left alone. Reaping is waitDaemon's job.
 	deadline := time.Now().Add(6 * time.Second)
 	for time.Now().Before(deadline) {
 		if !healthy(addr) {
@@ -450,12 +460,12 @@ func stopProcess(cmd *exec.Cmd, addr string) {
 
 // --- SSE event monitor ------------------------------------------------------
 
-// monitorEvents subscribes to the serve's cross-project SSE stream（GET
-// /global/event。実測: 素の /event は serve の cwd のプロジェクトにスコープされ、
-// 別ディレクトリのセッションの question.asked 等が届かない — /global/event は
-// {"payload": {...}} に包んで全プロジェクト分を配信する。codex と違いアタッチは
-// 不要）and dispatches to the thread handles. A disconnect while the generation is still current means the
-// daemon is gone or wedged: verify via health and reconcile.
+// monitorEvents subscribes to the serve's cross-project SSE stream (GET /global/event)
+// and dispatches to the thread handles. Measured: a bare /event is scoped to the project
+// of serve's own cwd, so a question.asked from a session in another directory never
+// arrives; /global/event wraps each event in {"payload": {...}} and delivers all projects.
+// Unlike codex, no attach is needed. A disconnect while the generation is still current
+// means the daemon is gone or wedged: verify via health and reconcile.
 func (s *Supervisor) monitorEvents(addr string, gen int) {
 	for {
 		if s.Generation() != gen {
@@ -467,7 +477,7 @@ func (s *Supervisor) monitorEvents(addr string, gen int) {
 		}
 		if !healthy(addr) {
 			// Owned daemon death is recorded by waitDaemon; an ADOPTED daemon's death
-			// is only visible here. Either way handles must fall to unknown（§6-1）.
+			// is only visible here. Either way handles must fall to unknown (§6-1).
 			s.mu.Lock()
 			wasUp := s.up
 			ownerless := s.cmd == nil

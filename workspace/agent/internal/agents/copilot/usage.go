@@ -36,14 +36,15 @@ func planLabel(plan, sku string) string {
 	}
 }
 
-// copilot の使用量（アカウント単位のクレジット残量＋プラン）。agy のように TUI を
-// スクレイプする必要はなく、copilot CLI 自身が使う内部エンドポイント
-// GET https://api.github.com/copilot_internal/user が構造化 JSON を返す（gh 透過認証
-// トークンでそのまま叩ける — 実測: Authorization: token だけで 200）。session 単位の
-// statusLine（ai_used / context%）と違い、これはアカウント単位なので TUI/managed の
-// どちらのセッションでも同じ値が取れる。
+// copilot usage: per-account credit balance plus plan. No TUI scraping as with agy — the
+// internal endpoint the copilot CLI itself uses, GET
+// https://api.github.com/copilot_internal/user, returns structured JSON, and the gh
+// transparent-auth token works against it directly (measured: Authorization: token alone
+// gets a 200). Unlike the per-session statusLine (ai_used / context%), this is per account,
+// so a TUI and a managed session read the same values.
 //
-// レスポンスの要点（実測 access_type_sku=free_limited_copilot 個人プラン）:
+// The parts of the response that matter (measured on a personal plan,
+// access_type_sku=free_limited_copilot):
 //   copilot_plan          "individual"
 //   access_type_sku       "free_limited_copilot"
 //   can_upgrade_plan      true
@@ -51,8 +52,9 @@ func planLabel(plan, sku string) string {
 //   quota_snapshots.{chat,completions,premium_interactions}:
 //       { percent_remaining, remaining, entitlement, unlimited, has_quota, ... }
 //
-// プラン差: individual(Free) は chat/completions に has_quota、premium_interactions は
-// has_quota=false。paid では premium_interactions が主。has_quota=true のものだけ FE へ渡す。
+// Plans differ: on individual (Free) chat/completions carry has_quota while
+// premium_interactions has has_quota=false; on paid plans premium_interactions is the main
+// pool. Only the pools with has_quota=true are passed to the frontend.
 
 const usageURL = "https://api.github.com/copilot_internal/user"
 

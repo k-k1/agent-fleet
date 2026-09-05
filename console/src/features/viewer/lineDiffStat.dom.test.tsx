@@ -1,13 +1,13 @@
-// 変更ファイル帯（docs/log/68）の「+N −M」は Agent が集計する——一覧が全転写ぶんで、
-// ミラーが持っているのは末尾の窓だけだから。つまり同じ数を **Go と TypeScript の
-// 2 箇所**が数えることになり、片方だけ直せば「帯の数字と、その行を開いた差分の中身が
-// 食い違う」という、画面上はもっともらしい壊れ方をする。
+// The "+N -M" on the changed-files band (docs/log/68) is counted by the Agent, because the list
+// covers the whole transcript while the mirror holds only the trailing window. The same number
+// is therefore counted in two places, Go and TypeScript, and fixing only one produces a failure
+// that looks plausible on screen: the band's number disagrees with the diff opened from that row.
 //
-// この表は workspace/agent/internal/transcript/files_test.go の
-// TestEditStatMatchesLineDiff と同一。どちらかを触ったら両方を触ること。
+// This table is identical to TestEditStatMatchesLineDiff in
+// workspace/agent/internal/transcript/files_test.go. Touch one and you must touch the other.
 //
-// 何も mount しないのに .dom.test なのは、DiffView が settings → api/client を辿って
-// localStorage に触るため（node 環境では import 時点で落ちる）。
+// It is a .dom.test despite mounting nothing because DiffView reaches settings → api/client,
+// which touches localStorage and would fail at import time in the node environment.
 import { describe, it, expect } from "vitest";
 import { lineDiff } from "./DiffView.tsx";
 
@@ -19,7 +19,7 @@ const stat = (oldStr: string, newStr: string) => {
   };
 };
 
-describe("lineDiff の増減数（Agent 側 EditStat と対）", () => {
+describe("lineDiff added/removed counts (paired with the Agent's EditStat)", () => {
   const cases: [string, string, string, number, number][] = [
     ["unchanged", "a\nb\nc", "a\nb\nc", 0, 0],
     ["one line replaced", "a\nb\nc", "a\nB\nc", 1, 1],

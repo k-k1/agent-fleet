@@ -1,8 +1,9 @@
-/* AskUserQuestion の回答ブロック（.mq-*）: 選択肢・プレビュー・自由入力・送信行
+/* AskUserQuestion answer block (.mq-*): options, preview, free-text input, send row
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* AskUserQuestion: a prominent, answerable block (not a faint trace). */
 .mt-question {

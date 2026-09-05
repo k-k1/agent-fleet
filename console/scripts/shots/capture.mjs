@@ -61,8 +61,8 @@ const SCENES = [
   {
     name: "mirror",
     sections: FOCUS_TREE,
-    // 変更ファイル帯を開いた状態で撮る（docs/log/68）。既定は畳まれているので、開いて
-    // おかないと「セッションが直したファイル」の面が絵に出ない。
+    // Shoot with the changed-files strip open (docs/log/68). It is collapsed by default, so
+    // without this the "files the session edited" surface never appears in the picture.
     storage: { "af.mirror-files-open.sk4rq2f": "1" },
     width: 1280,
     height: 900,
@@ -97,7 +97,7 @@ const SCENES = [
   },
   {
     // The launch hub: one entry point for every agent CLI. Opened by clicking the
-    // WS bar's はじめる / Start button (.ws-newsession) after boot.
+    // WS bar's Start button (.ws-newsession) after boot.
     name: "launch",
     sections: FOCUS_TREE,
     width: 1400,
@@ -216,10 +216,10 @@ const chrome = spawn(
     "--font-render-hinting=none",
     `--remote-debugging-port=${CDP_PORT}`,
     "--remote-allow-origins=*",
-    // ⚠️ headless は粗いポインタを名乗るので `@media (hover: none)` が当たり、ホバー時
-    // だけ出る操作要素が全行に出た「実際より混んだ絵」になる（docs/log/80 §80.18.7）。
-    // README のスクショ集を変えないよう既定では入れず、デスクトップの見え方を確かめ
-    // たいときだけ SHOTS_DESKTOP_HOVER=1 で付ける。
+    // Headless reports a coarse pointer, so `@media (hover: none)` applies and controls that
+    // should only appear on hover appear on every row — a picture busier than the real thing
+    // (docs/log/80 §80.18.7). Left off by default so the README shot set does not change; pass
+    // SHOTS_DESKTOP_HOVER=1 when checking how it looks on the desktop.
     ...(process.env.SHOTS_DESKTOP_HOVER
       ? ["--blink-settings=primaryHoverType=2,availableHoverTypes=2,primaryPointerType=4,availablePointerTypes=4"]
       : []),
@@ -257,7 +257,7 @@ try {
       .map(([id, v]) => `localStorage.setItem("af-section-${id}", "${v}");`)
       .join("\n        ");
     // Per-scene UI state that is remembered in localStorage rather than in the layout —
-    // e.g. a disclosure the user has opened before (the mirror's 変更ファイル strip).
+    // e.g. a disclosure the user has opened before (the mirror's changed-files strip).
     // Without it a shot can only ever show such a panel in its default state.
     const storage = Object.entries(scene.storage || {})
       .map(([k, v]) => `localStorage.setItem(${JSON.stringify(k)}, ${JSON.stringify(String(v))});`)
@@ -279,9 +279,10 @@ try {
       await cdp.send("Runtime.evaluate", { expression: scene.action, awaitPromise: true });
       await sleep(scene.settle || 800);
     }
-    // ★ 見た目の判断を目で決めない口（docs/log/80 §80.18.7）。scene.measure に式を書くと
-    // その戻りを標準出力に出す —— 余白やタイトル幅が「揃っている」かは感想では決着せず、
-    // getBoundingClientRect() で測るしかない。常設のシーンでは使っていない。
+    // The way to settle a question about appearance without judging it by eye (docs/log/80
+    // §80.18.7): an expression in scene.measure has its result printed to stdout. Whether
+    // paddings or title widths line up is not decided by opinion, only by
+    // getBoundingClientRect(). None of the permanent scenes use it.
     if (scene.measure) {
       const m = await cdp.send("Runtime.evaluate", { expression: scene.measure, returnByValue: true });
       console.log("[measure]", scene.name, m.result?.value);

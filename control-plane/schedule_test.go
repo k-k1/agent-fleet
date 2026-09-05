@@ -67,7 +67,7 @@ func TestScheduleCreateAndList(t *testing.T) {
 		t.Errorf("next_run_local not in tz: %q", dto.NextRunLocal)
 	}
 	if dto.Report {
-		t.Error("report should default to false (報告しない)")
+		t.Error("report should default to false (do not report)")
 	}
 
 	// List returns it; another member sees nothing.

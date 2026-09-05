@@ -18,16 +18,16 @@ import (
 // Work item inbox (docs/log/80 / ADR 0061) — external tickets (GitHub Issue / PR; Jira in
 // P1) listed in the left rail so a session can be started from one.
 //
-// ★ The split that makes this work: the CP owns the saved queries and a cache of
+// The split that makes this work: the CP owns the saved queries and a cache of
 // NON-SECRET metadata, the Workspace Agent owns the provider tokens and does the
 // fetching. The CP hands the queries down to the Agent and gets rows back — the token
 // never leaves the container, and the CP never learns a ticket's description.
 //
-// ★ Why the cache exists at all: picking a ticket happens BEFORE a session is started,
+// Why the cache exists at all: picking a ticket happens BEFORE a session is started,
 // which is when the Workspace is usually stopped. Without the cache the rail is empty
 // exactly when it matters, and the alternative — waking the Workspace to render a list —
 // re-opens the "Workspace never stops" hole docs/log/75 closed. So a stopped Workspace shows
-// the cache with its "last fetched" stamp, and only 始める starts anything.
+// the cache with its "last fetched" stamp, and only the Start button starts anything.
 const (
 	// workItemsRefreshEvery rate-limits provider calls. The SSE tick is 4s; without this
 	// every tick of every open tab would hit the GitHub API.
@@ -115,7 +115,7 @@ func workItemSessionToDTO(s store.WorkItemSession) workItemSessionDTO {
 
 // splitLabels turns the stored comma-separated column into a slice.
 //
-// ⚠️ It returns an EMPTY slice, never nil. A nil slice marshals to JSON `null`, and the
+// It returns an EMPTY slice, never nil. A nil slice marshals to JSON `null`, and the
 // Console then does `item.labels.slice(...)` on it — which took the whole Console to a
 // white screen the first time a ticket without labels reached the rail (there is no
 // error boundary, so one null field kills the app, not just the section).
@@ -132,14 +132,15 @@ func splitLabels(s string) []string {
 	return out
 }
 
-// workItemsPayloadWire — GET /api/workitems（と 更新 ボタンの POST）のレスポンス
-// （Console の `WorkItemPayload`、console/src/features/workitems/read.ts）。
+// workItemsPayloadWire is the response of GET /api/workitems and of the Refresh button's
+// POST (the Console's `WorkItemPayload`, console/src/features/workitems/read.ts).
 //
-// 旧: map[string]any{"items":…, "queries":…, "sessions":…, "fetchedAt":…, "running":…}
-// 5 キーとも無条件なので **omitempty は付けない**。3 つのスライスは呼び出し側で
-// make(…, 0, n) 済み＝**nil にならないので `[]` が出る**（nil なら `null` になり別物）。
-// この形状は 3 サイト（list ×1 / refresh ×2）が共有しているので、
-// ここを 1 つ直すと 3 サイトが同時に型を得る。
+// was: map[string]any{"items":…, "queries":…, "sessions":…, "fetchedAt":…, "running":…}
+//
+// All five keys are unconditional, so none of them takes omitempty. The three slices are
+// built with make(…, 0, n) by the caller and are therefore never nil, so they marshal to
+// `[]` — a nil slice would be `null`, which is a different thing to the Console. Three
+// call sites (list once, refresh twice) share this shape.
 type workItemsPayloadWire struct {
 	Items     []workItemDTO        `json:"items"`
 	Queries   []workItemQueryDTO   `json:"queries"`
@@ -177,8 +178,9 @@ func (a workItemsAPI) workItemsPayload(ctx context.Context, res *resolved, state
 	fetchedAt := ""
 	for _, q := range queries {
 		qOut = append(qOut, workItemQueryToDTO(q))
-		// 「最終取得」は有効なクエリの中で一番古い時刻を採る。新しい方を出すと、
-		// 半分が失敗して古いままの行を「たったいま取った」と言うことになる。
+		// "Last fetched" is the OLDEST time among the enabled queries. Showing the
+		// newest would claim that rows left stale by half the queries failing were
+		// fetched just now.
 		if q.Enabled && (fetchedAt == "" || (q.FetchedAt != "" && q.FetchedAt < fetchedAt)) {
 			fetchedAt = q.FetchedAt
 		}
@@ -206,14 +208,14 @@ func (a workItemsAPI) list(w http.ResponseWriter, r *http.Request, res *resolved
 	writeJSON(w, http.StatusOK, out)
 }
 
-// refresh is the 更新 button: forced (ignores the interval) and SYNCHRONOUS, because a
+// refresh is the Refresh button: forced (ignores the interval) and SYNCHRONOUS, because a
 // button that returns the same stale list reads as broken. The list face stays async.
 func (a workItemsAPI) refresh(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
 	state := res.rt.State(ctx)
 	if state != "running" {
-		// 表示のために Workspace を起こさない（ADR 0061 決定 1）。止まっているなら
-		// キャッシュをそのまま返し、なぜ古いのかは running=false で伝える。
+		// Never wake a Workspace just to render (ADR 0061 decision 1). When it is
+		// stopped, return the cache as-is and let running=false explain why it is old.
 		out, aerr := a.workItemsPayload(ctx, res, state)
 		if aerr != nil {
 			writeAPIErr(w, aerr)
@@ -239,7 +241,7 @@ func (a workItemsAPI) refreshAsync(res *resolved, force bool) {
 	}
 	go func() {
 		defer workItemFetchInFlight.Delete(mid)
-		// 呼び出し元のリクエスト ctx は tick が終われば切れるので使わない。
+		// Not the caller's request ctx: it is cancelled as soon as the tick ends.
 		ctx, cancel := context.WithTimeout(context.Background(), workItemsFetchTimeout)
 		defer cancel()
 		a.refreshNow(ctx, res, force)
@@ -274,8 +276,9 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	rows, errs, err := fetchWorkItemsFromAgent(ctx, res.rt, due)
 	now := store.NowTS()
 	if err != nil {
-		// Agent に届かなかった（停止直後・再起動中）。fetched_at は進めない —
-		// 進めると次の 5 分間、届かなかったことを「取得済み」として黙らせてしまう。
+		// The Agent was unreachable (just stopped, or restarting). Do not advance
+		// fetched_at: doing so would pass the failure off as a fetch and stay quiet
+		// about it for the next five minutes.
 		for _, q := range due {
 			_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, q.FetchedAt, err.Error())
 		}
@@ -285,7 +288,8 @@ func (a workItemsAPI) refreshNow(ctx context.Context, res *resolved, force bool)
 	items := make([]store.WorkItem, 0, 64)
 	for _, q := range due {
 		if msg := errs[q.ID]; msg != "" {
-			// ★ 失敗したクエリの行は消さない。消すと 1 本の 401 で棚が空になる。
+			// Keep a failed query's cached rows. Dropping them empties the rail on a
+			// single 401.
 			_ = a.store.MarkWorkItemQueryFetched(ctx, q.ID, now, msg)
 			continue
 		}
@@ -359,7 +363,8 @@ func fetchWorkItemsFromAgent(ctx context.Context, rt runtime.Runtime, queries []
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		// 404 = フリート再ビルド前の Agent。「未対応」と分かる文言にする。
+		// A 404 means an Agent from before the fleet was rebuilt; say "unsupported"
+		// rather than letting it read as a failure.
 		if resp.StatusCode == http.StatusNotFound {
 			return nil, nil, &httpStatusError{resp.StatusCode, "this workspace agent does not support work items yet"}
 		}
@@ -395,7 +400,7 @@ func (e *httpStatusError) Error() string { return e.msg }
 
 // comment relays a human-approved draft to the Agent, which holds the tokens.
 //
-// ★ Requires a running Workspace and does NOT start one. Everywhere else in this file
+// Requires a running Workspace and does NOT start one. Everywhere else in this file
 // that rule protects the idle clock; here it also keeps the meaning of the button
 // honest — posting is a write against someone else's tracker, so it happens when the
 // user is present and their workspace is up, not as a side effect of pressing a button
@@ -436,8 +441,9 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 		return
 	}
 	defer resp.Body.Close()
-	// Agent の応答（成功も失敗も）をそのまま返す — provider の断り文句が一番の情報で、
-	// CP が言い換えると「権限が無い」のか「課題が無い」のかが消える。
+	// Pass the Agent's response through verbatim, success or failure. The provider's own
+	// refusal is the most informative thing here; rephrasing it in the CP erases whether
+	// the problem was permission or a missing issue.
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(resp.StatusCode)
@@ -462,10 +468,10 @@ func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ stor
 // validateWorkItemQuery normalizes an incoming query. An unknown provider is refused
 // rather than saved as a row that can never fetch.
 //
-// ★ This list is the ONLY place the Control Plane knows a provider exists. Everything
+// This list is the ONLY place the Control Plane knows a provider exists. Everything
 // else here is pass-through — the query text, the rows and the per-query error message
-// all belong to the Agent, which is the only side holding a token (ADR 0061 決定 6.5). So
-// adding Bitbucket cost one line here and nothing else in the CP.
+// all belong to the Agent, which is the only side holding a token (ADR 0061 decision 6.5).
+// So adding Bitbucket cost one line here and nothing else in the CP.
 func validateWorkItemQuery(mv store.MembershipView, in workItemQueryDTO) (store.WorkItemQuery, *apiError) {
 	q := store.WorkItemQuery{
 		MembershipID: mv.MembershipID,

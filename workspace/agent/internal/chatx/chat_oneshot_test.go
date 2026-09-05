@@ -1,12 +1,14 @@
 package chatx
 
-// 一発ヘッドレス（タイトル/ブランチ名/返信候補）の claude 経路の契約テスト（docs/log/46 §1-a-2）。
+// Contract test for the claude route of the one-shot headless calls (title / branch name /
+// reply candidates) (docs/log/46 §1-a-2).
 //
-// この argv は「毎回払う固定オーバーヘッド」を削るためのもので、うっかり元に戻すと
-// 静かにトークンだけが 4 倍に戻る（機能は動くので気づけない）。形をここで固定する。
+// This argv exists to cut the fixed overhead paid on every call. Revert it by accident and the
+// token cost silently goes back to 4x while the feature keeps working, so nobody notices; the
+// shape is pinned here.
 //
-// ライブ側（AF_TITLE_LIVE=1）は実 claude を1回だけ撃ち、削った状態でも実際に件名が
-// 返ることと、実測の削減幅が維持されていることを確認する。
+// The live side (AF_TITLE_LIVE=1) fires the real claude exactly once and confirms that a title
+// still comes back with the trimmed argv and that the measured reduction still holds.
 
 import (
 	"context"
@@ -25,29 +27,29 @@ func TestClaudeOneShotArgs(t *testing.T) {
 	args := claudeOneShotArgs("あなたは件名を付ける専用ツールです。", "haiku")
 	joined := strings.Join(args, " ")
 
-	// 置換であって追記ではない（--append-system-prompt だと既定プロンプトが丸ごと残る）。
+	// Replacement, not append: --append-system-prompt would keep the whole default prompt.
 	if !hasFlagValue(args, "--system-prompt", "あなたは件名を付ける専用ツールです。") {
-		t.Fatalf("--system-prompt にペルソナが乗っていない: %q", joined)
+		t.Fatalf("the persona is not on --system-prompt: %q", joined)
 	}
 	if strings.Contains(joined, "--append-system-prompt") {
-		t.Fatalf("--append-system-prompt は既定プロンプトを残す＝オーバーヘッドの主因: %q", joined)
+		t.Fatalf("--append-system-prompt keeps the default prompt = the main source of overhead: %q", joined)
 	}
 	if !hasFlagValue(args, "--model", "haiku") {
-		t.Fatalf("--model が渡っていない: %q", joined)
+		t.Fatalf("--model was not passed: %q", joined)
 	}
-	// ツールは1つも積まない。ツールが無いので権限スキップも不要。
+	// No tools are loaded at all, and with no tools there is nothing to skip permissions for.
 	if n := len(args); args[n-2] != "--tools" || args[n-1] != "" {
-		t.Fatalf(`--tools "" は可変長引数なので末尾でなければならない: %q`, joined)
+		t.Fatalf(`--tools "" is variadic, so it must come last: %q`, joined)
 	}
 	if strings.Contains(joined, "--disallowedTools") || strings.Contains(joined, "--dangerously-skip-permissions") {
-		t.Fatalf("ツール無しなら disallow も権限スキップも要らない: %q", joined)
+		t.Fatalf("with no tools, neither disallow nor permission-skip is needed: %q", joined)
 	}
-	// 転写を残さない（一発呼び出しは resume しない）。
+	// Leave no transcript: a one-shot call is never resumed.
 	if !hasArg(args, "--no-session-persistence") {
-		t.Fatalf("--no-session-persistence が無い: %q", joined)
+		t.Fatalf("--no-session-persistence is missing: %q", joined)
 	}
 	if !hasFlagValue(args, "--output-format", "json") {
-		t.Fatalf("usage/コストを読むので JSON 出力は必須: %q", joined)
+		t.Fatalf("JSON output is required because usage/cost is read from it: %q", joined)
 	}
 }
 
@@ -60,7 +62,7 @@ func TestClaudeOneShotArgsAllowsCLIDefault(t *testing.T) {
 
 func TestClaudeOneShotEnvCutsThinking(t *testing.T) {
 	if !hasArg(claudeOneShotEnv, "MAX_THINKING_TOKENS=0") {
-		t.Fatalf("18文字の件名に思考トークンは要らない: %v", claudeOneShotEnv)
+		t.Fatalf("an 18-character title needs no thinking tokens: %v", claudeOneShotEnv)
 	}
 }
 
@@ -82,14 +84,16 @@ func hasFlagValue(args []string, flag, val string) bool {
 	return false
 }
 
-// TestTitleSuggestLive は実 claude を撃つ opt-in の契約テスト。日本語ロケールと英語
-// ロケールの両方を1回ずつ通す — 会話ログは同じ日本語のまま、表示言語だけで出力言語が
-// 変わる（英語話者は日本語コードベースの会話でも英語の件名を読む）ことを実測で押さえる。
-// 単体テストはプロンプト文字列しか見られないので、実際に英語で返るかはここでしか分からない。
-// 実行例: AF_TITLE_LIVE=1 go test -run TestTitleSuggestLive -v .
+// TestTitleSuggestLive is an opt-in contract test that fires the real claude. It runs the
+// Japanese and the English locale once each, measuring that the conversation log stays the same
+// Japanese while the display language alone changes the output language (an English speaker
+// reads an English title even for a conversation over a Japanese codebase). A unit test can
+// only inspect the prompt string, so whether it really comes back in English is visible only
+// here.
+// Run with: AF_TITLE_LIVE=1 go test -run TestTitleSuggestLive -v .
 func TestTitleSuggestLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE") != "1" {
-		t.Skip("AF_TITLE_LIVE=1 で実 claude のタイトル提案契約テストを有効化")
+		t.Skip("set AF_TITLE_LIVE=1 to enable the real-claude title suggestion contract test")
 	}
 	const log = "user: 使用量のグラフを作りたい\nassistant: 台帳を設計します"
 	for _, lang := range []string{"ja", "en"} {
@@ -103,19 +107,19 @@ func TestTitleSuggestLive(t *testing.T) {
 			}
 			title := cleanSuggestedTitle(reply)
 			if title == "" {
-				t.Fatalf("件名が空（前置き除去が効きすぎ／システムプロンプトの削りすぎ）: reply=%q", reply)
+				t.Fatalf("empty title (preamble stripping too aggressive / system prompt trimmed too far): reply=%q", reply)
 			}
 			if strings.Contains(title, "\n") {
-				t.Fatalf("件名は1行のはず: %q", title)
+				t.Fatalf("a title must be one line: %q", title)
 			}
 			switch lang {
 			case "en":
 				if hasJapanese(title) {
-					t.Fatalf("英語ロケールなのに日本語の件名: %q (raw=%q)", title, reply)
+					t.Fatalf("Japanese title under the English locale: %q (raw=%q)", title, reply)
 				}
 			case "ja":
 				if !hasJapanese(title) {
-					t.Fatalf("日本語ロケールなのに日本語が無い件名: %q (raw=%q)", title, reply)
+					t.Fatalf("no Japanese in the title under the Japanese locale: %q (raw=%q)", title, reply)
 				}
 			}
 			t.Logf("lang=%s title=%q (raw=%q)", lang, title, reply)
@@ -123,16 +127,17 @@ func TestTitleSuggestLive(t *testing.T) {
 	}
 }
 
-// hasJapanese（仮名・漢字を1文字でも含むか）は prompt_lang_test.go のものを共用する。
-// ロケール判定の実測用: 英語件名に固有名詞としての ASCII が混ざるのは正常なので、判定は
-// 「日本語文字の有無」で行う。
+// hasJapanese (does it contain even one kana or kanji?) is shared with prompt_lang_test.go.
+// It is what the locale assertions measure: ASCII inside an English title (proper nouns) is
+// normal, so the decision is made on the presence of Japanese characters.
 
-// TestUsageLedgerLive は実 claude を1回撃ち、台帳に「実測の1行」が実際に落ちることを
-// 見る opt-in テスト（docs/log/46 P1 完了条件）。単体テストは組み立てた usageCall しか通らない
-// ので、CLI の出力形が変わったこと（modelUsage のキー名・canonicalModel・total_cost_usd）は
-// ここでしか検知できない。
-// 実行例: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
-// liveTurns は3機能に食わせる最小の会話ログ。
+// TestUsageLedgerLive (package main) fires the real claude once and checks that a measured row
+// actually lands in the ledger (docs/log/46 P1 completion criterion). A unit test only sees the
+// usageCall it assembled, so a change in the CLI's output shape (modelUsage key names,
+// canonicalModel, total_cost_usd) is detectable only there.
+// Run with: AF_TITLE_LIVE=1 go test -run TestUsageLedgerLive -v .
+
+// oneShotLiveTurns is the minimal conversation log fed to the three features.
 func oneShotLiveTurns() []transcript.Turn {
 	return []transcript.Turn{
 		{Role: "user", Text: "使用量のグラフを作りたい", TS: "2026-07-25T09:00:00Z"},
@@ -140,25 +145,28 @@ func oneShotLiveTurns() []transcript.Turn {
 	}
 }
 
-// TestBranchSuggestLive / TestReplySuggestLive — oneShotHeadless を共有する残り2機能。
-// 削った argv でもペルソナの指示（kebab-case 1語 / 短い返信候補）が守られることを見る。
+// TestBranchSuggestLive / TestReplySuggestLive (package main) cover the remaining two features
+// that share oneShotHeadless: that the persona's instructions (one kebab-case word / short
+// reply candidates) still hold with the trimmed argv.
+
+// TestCheapOneShotModel checks the small-model pick against a real catalogue.
 func TestCheapOneShotModel(t *testing.T) {
-	// 実カタログ（codex debug models 2026-07-25）: mini だけが小型。
+	// Real catalogue (codex debug models, 2026-07-25): only mini is a small model.
 	got := cheapOneShotModel([]string{"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"})
 	if got != "gpt-5.4-mini" {
-		t.Fatalf("小型モデルを選べていない: %q", got)
+		t.Fatalf("no small model was picked: %q", got)
 	}
-	// 小型が無いカタログでは "" を返し、呼び出し側は -m を渡さない（従来動作へ縮退）。
-	// 存在しない名前を推測するより、今と同じコストを払う方が安全。
+	// A catalogue with no small model returns "" and the caller passes no -m, degrading to the
+	// previous behaviour: paying today's cost is safer than guessing a name that may not exist.
 	if got := cheapOneShotModel([]string{"gpt-5.6-sol", "gpt-5.5"}); got != "" {
-		t.Fatalf("小型が無ければ空を返すべき: %q", got)
+		t.Fatalf("want empty when there is no small model: %q", got)
 	}
 	if got := cheapOneShotModel(nil); got != "" {
-		t.Fatalf("カタログ取得失敗（未ログイン等）でも空: %q", got)
+		t.Fatalf("want empty when the catalogue cannot be fetched (not logged in, ...): %q", got)
 	}
-	// 大文字混じり・他ベンダの語彙でも拾う（カタログのドリフト耐性）。
+	// Mixed case and another vendor's vocabulary are still picked up (catalogue drift tolerance).
 	if got := cheapOneShotModel([]string{"Gemini-3-FLASH"}); got != "Gemini-3-FLASH" {
-		t.Fatalf("marker は大小文字を無視して照合する: %q", got)
+		t.Fatalf("the marker must match case-insensitively: %q", got)
 	}
 }
 
@@ -175,21 +183,21 @@ func TestRecommendedUtilityModelStableBackends(t *testing.T) {
 }
 
 func TestCodexOneShotArgs(t *testing.T) {
-	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini") // カタログ取得（実 CLI）に依存させない
+	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini") // do not depend on a catalogue fetch (real CLI)
 	args, _ := codexOneShotArgs()
 	joined := strings.Join(args, " ")
 
 	if !hasFlagValue(args, "-m", "gpt-5.4-mini") {
-		t.Fatalf("AF_TITLE_MODEL_CODEX が効いていない: %q", joined)
+		t.Fatalf("AF_TITLE_MODEL_CODEX has no effect: %q", joined)
 	}
 	if !hasFlagValue(args, "-c", `model_reasoning_effort="low"`) {
-		t.Fatalf("一発呼び出しに利用者の high 設定を効かせてはいけない: %q", joined)
+		t.Fatalf("the user's high setting must not apply to a one-shot call: %q", joined)
 	}
 	if !hasArg(args, "--ephemeral") {
-		t.Fatalf("一発呼び出しはスレッドを残さない: %q", joined)
+		t.Fatalf("a one-shot call must leave no thread behind: %q", joined)
 	}
 	if args[len(args)-1] != "-" {
-		t.Fatalf("stdin 読みの \"-\" は末尾でなければならない: %q", joined)
+		t.Fatalf("the \"-\" that reads stdin must come last: %q", joined)
 	}
 }
 
@@ -204,12 +212,13 @@ func TestCodexOneShotArgsForSelectedModel(t *testing.T) {
 	}
 }
 
-// TestCodexOneShotLive — 実 codex を1回撃つ opt-in の契約テスト。-c の TOML 構文と、
-// カタログから選んだ小型モデル名が実在することを、実 CLI でしか確かめられない。
-// 実行例: AF_TITLE_LIVE_CODEX=1 go test -run TestCodexOneShotLive -v .
+// TestCodexOneShotLive is an opt-in contract test that fires the real codex once: the TOML
+// syntax of -c, and that the small model name picked from the catalogue actually exists, can
+// only be confirmed against the real CLI.
+// Run with: AF_TITLE_LIVE_CODEX=1 go test -run TestCodexOneShotLive -v .
 func TestCodexOneShotLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE_CODEX") != "1" {
-		t.Skip("AF_TITLE_LIVE_CODEX=1 で実 codex の一発呼び出し契約テストを有効化")
+		t.Skip("set AF_TITLE_LIVE_CODEX=1 to enable the real-codex one-shot contract test")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -221,27 +230,28 @@ func TestCodexOneShotLive(t *testing.T) {
 		"以下の会話に件名を付けてください。\nuser: 使用量のグラフを作りたい\nassistant: 台帳を設計します"))
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("codex 実行失敗（-c 構文かモデル名が実在しない疑い）: %s", cliErr(err))
+		t.Fatalf("codex failed (suspect the -c syntax, or a model name that does not exist): %s", cliErr(err))
 	}
 	reply, _, execErr, _ := parseCodexExecEvents(out)
 	if execErr != "" {
-		t.Fatalf("codex がエラーを返した: %s", execErr)
+		t.Fatalf("codex returned an error: %s", execErr)
 	}
 	if title := cleanSuggestedTitle(reply); title == "" {
-		t.Fatalf("件名が空: reply=%q", reply)
+		t.Fatalf("empty title: reply=%q", reply)
 	} else {
 		t.Logf("title=%q", title)
 	}
 }
 
-// TestOpencodeOneShotLive — opencode は「カタログに載っている＝そのアカウントで使える」
-// ではない、を固定するテスト（実測 2026-07-25: opencode/claude-haiku-4-5 は models に
-// 載っているのに実行すると "Unexpected server error"、--model 無しの既定は正常応答）。
-// なので opencode 側では安価モデルの自動ピンをしない。ここでは既定経路が生きていること
-// だけを実 CLI で確かめる。実行例: AF_TITLE_LIVE_OPENCODE=1 go test -run TestOpencodeOneShotLive -v .
+// TestOpencodeOneShotLive pins that with opencode "listed in the catalogue" does NOT mean
+// "usable on that account" (measured 2026-07-25: opencode/claude-haiku-4-5 is listed in models
+// yet running it returns "Unexpected server error", while the default with no --model answers
+// normally). That is why no cheap model is auto-pinned on the opencode side; this only confirms
+// against the real CLI that the default route is alive.
+// Run with: AF_TITLE_LIVE_OPENCODE=1 go test -run TestOpencodeOneShotLive -v .
 func TestOpencodeOneShotLive(t *testing.T) {
 	if os.Getenv("AF_TITLE_LIVE_OPENCODE") != "1" {
-		t.Skip("AF_TITLE_LIVE_OPENCODE=1 で有効化")
+		t.Skip("set AF_TITLE_LIVE_OPENCODE=1 to enable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -254,26 +264,26 @@ func TestOpencodeOneShotLive(t *testing.T) {
 	cmd.Env = envWith(opencode.Env()...)
 	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("opencode 実行失敗: %s", cliErr(err))
+		t.Fatalf("opencode failed: %s", cliErr(err))
 	}
 	reply, _, _, _, _ := parseOpencodeRunEvents(out)
 	if title := cleanSuggestedTitle(reply); title == "" {
-		t.Fatalf("件名が空: reply=%q", reply)
+		t.Fatalf("empty title: reply=%q", reply)
 	} else {
 		t.Logf("title=%q", title)
 	}
 }
 
 func TestCodexOneShotFallsBackWhenPickIsOurs(t *testing.T) {
-	// 利用者が明示したモデルは尊重（勝手に外さない）。
+	// A model the user named explicitly is respected (never dropped behind their back).
 	t.Setenv("AF_TITLE_MODEL_CODEX", "gpt-5.4-mini")
 	if _, auto := codexOneShotArgs(); auto {
-		t.Fatal("環境変数で明示されたモデルを自前ピク扱いにしてはいけない")
+		t.Fatal("a model named explicitly through the environment must not count as our own pick")
 	}
-	// 自前ピクを外した argv は -m とその値だけが消え、他は不変。
+	// Dropping our own pick removes only -m and its value; everything else is unchanged.
 	got := codexOneShotArgsNoModel([]string{"exec", "-m", "gpt-5.4-mini", "-c", `model_reasoning_effort="low"`, "-"})
 	want := []string{"exec", "-c", `model_reasoning_effort="low"`, "-"}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("-m の対だけを落とすはず: got=%q", got)
+		t.Fatalf("only the -m pair should be dropped: got=%q", got)
 	}
 }

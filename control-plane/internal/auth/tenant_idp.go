@@ -14,24 +14,24 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 決定 29-33).
+// Tenant-defined login providers (docs/log/61 §61.11 + ADR0043 decisions 29-33).
 //
 // P0 built the provider set ONCE, at startup, from the environment. P4 cannot: a
 // subsidiary's IdP is created by its own administrator and activated by the
 // operator, and both have to take effect without restarting CP — that is the whole
-// reason the definition moved out of env (決定 29). So this file holds a second,
+// reason the definition moved out of env (decision 29). So this file holds a second,
 // RUNTIME set of providers, assembled from the database behind the same short-TTL
 // cache the per-tenant login rules use (tenant_login.go).
 //
-// ★ Why here and not in config.providers: config is copied BY VALUE into buildMux
+// Why here and not in config.providers: config is copied BY VALUE into buildMux
 // and every handler, so a set stored there can never change after startup. The
 // registry therefore hangs off the manager (a pointer), exactly like tenantLogin,
 // and config reaches it through c.mgr. env-defined providers keep their startup-fixed
 // home in config.providers; only the database-derived ones are dynamic.
 //
-// ★ Namespace: an env provider is "entra", a tenant-defined one is
+// Namespace: an env provider is "entra", a tenant-defined one is
 // "t:<tenant-slug>:<name>". Without the split, a tenant could create a row named
-// "google" and shadow the deployment's Google button (決定 33). The prefix is also
+// "google" and shadow the deployment's Google button (decision 33). The prefix is also
 // how every gate downstream recognises a tenant-defined session — sessionClaims.prov
 // carries this id, so resolveFull only has to look at the string.
 
@@ -42,7 +42,7 @@ const TenantProviderPrefix = "t:"
 // start (main.go), with id == slug. Since P7 it is also where the DEPLOYMENT's own
 // sign-in methods live (docs/log/61 §61.17): the env providers are read as the default
 // tenant's methods, so "the deployment's rules" and "this tenant's rules" stop being
-// two different layers. ★ Only the DISPLAY and the RULES moved — provider ids keep
+// two different layers. Only the DISPLAY and the RULES moved — provider ids keep
 // their env shape (`google`, not `t:default:google`), because ten places branch on
 // that shape (§61.17.3).
 const DefaultTenantSlug = "default"
@@ -81,7 +81,7 @@ func IsTenantProviderID(id string) bool {
 }
 
 // ValidTenantIdPName keeps the per-tenant half of the id to the same character set
-// env ids use. ★ It is deliberately a SEPARATE function from ValidProviderID rather
+// env ids use. It is deliberately a SEPARATE function from ValidProviderID rather
 // than a relaxation of it: ValidProviderID rejects ":" and must keep doing so, or an
 // env provider could be named into the tenant namespace.
 func ValidTenantIdPName(name string) bool { return ValidProviderID(name) }
@@ -95,7 +95,7 @@ type TenantIdPStoreView interface {
 
 // tenantProviderSnapshot is one consistent read of every ACTIVE tenant provider.
 //
-// ★ LoginProvider, not *OIDCProvider: since §61.15 a row can also be built into the
+// LoginProvider, not *OIDCProvider: since §61.15 a row can also be built into the
 // GitHub adapter, which is not an OIDC client at all (it reads the REST API).
 type tenantProviderSnapshot struct {
 	byID   map[string]LoginProvider
@@ -129,7 +129,7 @@ type TenantIdPRegistry struct {
 // reach a deployment whose admin API is served by another replica (the drop on
 // every admin write only reaches this process).
 //
-// ★ One value serves both caches — this registry and the tenant login-rule cache
+// One value serves both caches — this registry and the tenant login-rule cache
 // in control-plane/tenant_login.go, which reads it back directly.
 // They answer the same operational question ("how long until an admin change is
 // live everywhere"), so they must not be allowed to drift apart.
@@ -144,7 +144,7 @@ func NewTenantIdPRegistry(st TenantIdPStoreView, secret func(context.Context, st
 
 // invalidate drops the cache. Every admin write that can change which providers
 // exist — create, edit, approve, suspend, delete — calls it, so approving a
-// subsidiary's IdP puts its button on the login page immediately (決定 29: no
+// subsidiary's IdP puts its button on the login page immediately (decision 29: no
 // restart), and suspending one takes the button away just as fast.
 func (r *TenantIdPRegistry) Invalidate() {
 	if r == nil {
@@ -207,7 +207,7 @@ func (r *TenantIdPRegistry) snapshot(ctx context.Context) *tenantProviderSnapsho
 				}
 			}
 			if err != nil {
-				// One broken subsidiary must never take the others down (決定 11), so
+				// One broken subsidiary must never take the others down (decision 11), so
 				// the row is dropped rather than fatal — but it is dropped LOUDLY: from
 				// the tenant's point of view an approved IdP that shows no button is
 				// otherwise indistinguishable from one that was never approved.
@@ -243,9 +243,9 @@ func (r *TenantIdPRegistry) ProviderFor(ctx context.Context, id string) LoginPro
 }
 
 // providersForSlug returns a tenant's active providers, for its login page.
-// ★ Only /login/<slug> ever calls this. The generic /login must not show a
-// subsidiary's button: the full set of buttons would be a directory of the group's
-// companies, readable without signing in (決定 32-4).
+// Only /login/<slug> ever calls this. The generic /login must not show a subsidiary's
+// button: the full set of buttons would be a directory of the group's companies,
+// readable without signing in (decision 32-4).
 func (r *TenantIdPRegistry) ProvidersForSlug(ctx context.Context, slug string) []LoginProvider {
 	if r == nil || slug == "" {
 		return nil
@@ -265,7 +265,7 @@ func (r *TenantIdPRegistry) ProvidersForSlug(ctx context.Context, slug string) [
 //
 //	deployAllowed = nil   the deployment-wide allowlist is NOT a fallback. A
 //	                      subsidiary's IdP may admit the subsidiary's people, never
-//	                      "everyone this deployment would have admitted" (決定 32-3).
+//	                      "everyone this deployment would have admitted" (decision 32-3).
 //	dbAllowed     = nil   nor is the deployment-wide roster term (§61.9.6): holding a
 //	                      membership of tenant A is not a reason to be let in by
 //	                      tenant B's issuer.
@@ -275,7 +275,7 @@ func (r *TenantIdPRegistry) ProvidersForSlug(ctx context.Context, slug string) [
 // allowed_tids keeps its P0 meaning and is checked inside Exchange, on a different
 // axis (the token's tenant), so it stays AND-ed.
 //
-// ★ kind picks the adapter (docs/log/61 §61.15 + 決定 34). This function is the RUNTIME
+// kind picks the adapter (docs/log/61 §61.15 + decision 34). This function is the RUNTIME
 // half of the same rules validateTenantIdPBody applies on save, and the two must
 // stay in step: an approved row that only the API accepts would save cleanly and
 // then disappear from the login page with a log line nobody is watching.
@@ -308,7 +308,7 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 	if len(domains) == 0 {
 		return nil, errors.New("allowed_domains is empty, which would admit every address this issuer asserts")
 	}
-	// ★ The runtime half of the link_claim whitelist. Validated here as well as in
+	// The runtime half of the link_claim whitelist. Validated here as well as in
 	// validateTenantIdPBody because those are two different moments: a row saved
 	// before the list changed, or written by an older binary, must not be built into
 	// a provider that joins accounts on a claim this deployment never allowed.
@@ -341,10 +341,10 @@ func BuildTenantProvider(row store.TenantIdP, tn store.TenantRef, secret string)
 }
 
 // TenantLinkClaims is the CLOSED set of claims a tenant row may name for rule 1.5's
-// second key (docs/log/61 §61.15.10 + 決定 38).
+// second key (docs/log/61 §61.15.10 + decision 38).
 //
-// ★ It is a whitelist and not a validity check, and the reason is the whole point of
-// 決定 32. `oid` is a per-directory object id: two app registrations in one Entra
+// It is a whitelist and not a validity check, and the reason is the whole point of
+// decision 32. `oid` is a per-directory object id: two app registrations in one Entra
 // tenant report the same one for the same person, and nobody can choose what it says.
 // `email` / `upn` / `preferred_username` are the opposite — they are asserted, and a
 // tenant that could name one of them would have built an email join INSIDE a shared
@@ -370,11 +370,11 @@ func TenantLinkClaimList() []string {
 //
 // The problem it solves is only visible on /login/<slug>, where the deployment's own
 // buttons and the tenant's own rows are rendered side by side: a tenant row named
-// "github" generated "GitHub でサインイン", which is exactly the env GitHub button's
-// text. Two identical buttons that send you to two different OAuth apps is a place
+// "github" generated exactly the env GitHub button's own "sign in with GitHub" text.
+// Two identical buttons that send you to two different OAuth apps is a place
 // people get stuck, and the stuck person cannot tell them apart by looking.
 //
-// ★ It only ever touches the GENERATED label. A row that filled in label_ja /
+// It only ever touches the GENERATED label. A row that filled in label_ja /
 // label_en wrote what its administrator wants on the button, and appending to that
 // would override a deliberate choice — so the caller applies this to the fallback
 // only, and the existing precedence (row label > generated) is unchanged.

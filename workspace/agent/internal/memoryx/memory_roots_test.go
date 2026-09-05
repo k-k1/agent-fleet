@@ -14,8 +14,9 @@ func memoryMkdirAll(t *testing.T, dir string) {
 	}
 }
 
-// docs/log/39 ★1: allowlist が唯一の判定であることを、ルート宣言そのものに対して固定する。
-// ここが緩むと transcript / 資格情報 / 派生状態が repo へ入る経路が生まれる。
+// docs/log/39 ★1: pins that the allowlist is the only decision, against the root
+// declarations themselves. Loosen it and transcripts / credentials / derived state gain a
+// path into the repo.
 func TestMemoryAllowedAllowlist(t *testing.T) {
 	claudeRoot, codexRoot := memoryRootDecls()[0], memoryRootDecls()[1]
 	if claudeRoot.Kind != "claude" || codexRoot.Kind != "codex" {
@@ -26,16 +27,16 @@ func TestMemoryAllowedAllowlist(t *testing.T) {
 		rel  string
 		want bool
 	}{
-		// claude: projects/<slug>/memory/** だけが対象。
+		// claude: only projects/<slug>/memory/** is in scope.
 		{claudeRoot, "-home-dev-repos-foo/memory/MEMORY.md", true},
 		{claudeRoot, "-home-dev-repos-foo/memory/nested/topic.md", true},
 		{claudeRoot, "-home-dev-repos-foo/abc-def.jsonl", false},           // transcript
 		{claudeRoot, "-home-dev-repos-foo/subagents/agent-1.jsonl", false}, // subagent transcript
-		{claudeRoot, "-home-dev-repos-foo/memoryfoo/x.md", false},          // 前方一致では通さない
-		{claudeRoot, "memory/x.md", false},                                 // slug 階層が要る
+		{claudeRoot, "-home-dev-repos-foo/memoryfoo/x.md", false},          // not matched by prefix
+		{claudeRoot, "memory/x.md", false},                                 // the slug level is required
 		{claudeRoot, "../.credentials.json", false},
 		{claudeRoot, "", false},
-		// codex: memories 配下は全部だが、自前 .git と中間生成物と sqlite は除く。
+		// codex: everything under memories, minus its own .git, the intermediates and sqlite.
 		{codexRoot, "MEMORY.md", true},
 		{codexRoot, "memory_summary.md", true},
 		{codexRoot, "skills/foo/SKILL.md", true},
@@ -63,7 +64,7 @@ func TestMemoryGlobMatch(t *testing.T) {
 		{"*/memory/**", "s/memory/x/y/a.md", true},
 		{"*/memory/**", "s/other/a.md", false},
 		{"*/memory/**", "s/a.md", false},
-		{"*/memory/**", "a/s/memory/a.md", false}, // * はセパレータを跨がない
+		{"*/memory/**", "a/s/memory/a.md", false}, // * does not cross a separator
 		{".git/**", ".git/config", true},
 		{".git/**", "x/.git/config", false},
 		{"*.sqlite", "memories_1.sqlite", true},
@@ -82,7 +83,7 @@ func TestMemoryScopeSlug(t *testing.T) {
 		ok         bool
 	}{
 		{"claude/projects/-home-dev-repos-foo/memory/MEMORY.md", "-home-dev-repos-foo", true},
-		{"claude/projects/-home-dev-repos-foo", "", false}, // slug 単体はスコープにならない
+		{"claude/projects/-home-dev-repos-foo", "", false}, // a bare slug is not a scope
 		{"codex/MEMORY.md", "", false},
 		{"", "", false},
 	}
@@ -94,7 +95,8 @@ func TestMemoryScopeSlug(t *testing.T) {
 	}
 }
 
-// ★6: slug をそのまま見せない。~/repos に実体があればそれを、無ければ "-repos-" 以降を採る。
+// ★6: never show the raw slug. Use the real directory under ~/repos when there is one,
+// otherwise whatever follows "-repos-".
 func TestMemorySlugDisplay(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -111,8 +113,9 @@ func TestMemorySlugDisplay(t *testing.T) {
 	}
 }
 
-// memoryRoots は codex のルートを ~/.codex/memories の存在で出し入れする（memories 機能は
-// 既定 OFF なので、有効化していない環境ではルート自体が現れない — docs/log/39 決着 #4）。
+// memoryRoots adds or drops the codex root according to whether ~/.codex/memories exists
+// (the memories feature is off by default, so on an environment that never enabled it the
+// root itself never appears — docs/log/39 resolution #4).
 func TestMemoryRootsCodexPresenceGated(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -138,9 +141,9 @@ func memoryRootKinds() []string {
 	return out
 }
 
-// docs/log/39 P4: memories を有効化していない環境で codex ルートを黙って落とすと、Console は
-// 「なぜ codex のメモリが出てこないか」も「どう有効化するか」も示せない。inactive が
-// その理由を持つことを固定する。
+// docs/log/39 P4: dropping the codex root silently on an environment that has not enabled
+// memories leaves the Console unable to say either why codex memory is missing or how to
+// turn it on. This pins that inactive carries that reason.
 func TestMemoryInactiveRootsExplainCodex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -157,20 +160,20 @@ func TestMemoryInactiveRootsExplainCodex(t *testing.T) {
 		return memoryInactiveRoot{}
 	}
 
-	// ① 機能 OFF・ワークスペース無し = 有効化を勧められる状態。
+	// 1. Feature off, no workspace = the state where enabling it can be suggested.
 	v := find(t, "codex")
 	if v.Reason != "codex_memories_disabled" || !v.Toggleable || v.Enabled {
 		t.Fatalf("disabled codex root described wrongly: %+v", v)
 	}
 
-	// ② 有効化直後（config は ON だが codex がまだ ~/.codex/memories を作っていない）。
-	// 「設定が効いていない」と混同されると、利用者は無意味に何度も切り替える。
+	// 2. Just enabled (config is on, but codex has not created ~/.codex/memories yet).
+	// Confused with "the setting had no effect", the user toggles it pointlessly over and over.
 	memoryWrite(t, filepath.Join(home, ".codex", "config.toml"), "[features]\nmemories = true\n")
 	if v := find(t, "codex"); v.Reason != "codex_memories_pending" || !v.Enabled {
 		t.Fatalf("enabled-but-unmaterialized codex root described wrongly: %+v", v)
 	}
 
-	// ③ codex がワークスペースを作ったら inactive から消え、通常のルートになる。
+	// 3. Once codex creates the workspace, the root leaves inactive and becomes a normal root.
 	memoryMkdirAll(t, filepath.Join(home, ".codex", "memories"))
 	for _, v := range memoryInactiveRoots() {
 		if v.Kind == "codex" {

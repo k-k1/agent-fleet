@@ -54,9 +54,10 @@ func TestBuildProgramPlanModeKeepsAllowFlagIntact(t *testing.T) {
 	}
 }
 
-// 権限確認あり（docs/log/76: 利用者がスキップをオフにした通常起動）。--dangerously-skip-
-// permissions は --allow-… へ差し替わる（それ自体は何も許可せず、TUI 内 shift+tab で
-// bypass へ入る道だけを残す）。plan ではないので --permission-mode plan は付かない。
+// Permission prompts on (docs/log/76: an ordinary launch by a user who turned skipping
+// off). --dangerously-skip-permissions is swapped for --allow-…, which allows nothing by
+// itself and only leaves the route into bypass via shift+tab inside the TUI. This is not
+// plan, so --permission-mode plan must not be added.
 func TestBuildProgramPermissionsOn(t *testing.T) {
 	os.Unsetenv("AGENT_SESSION_CMD")
 	got := buildProgram("55555555-5555-4555-8555-555555555new", "", "", "", "", "", false)
@@ -71,32 +72,33 @@ func TestBuildProgramPermissionsOn(t *testing.T) {
 	}
 }
 
-// TestBuildProgramBlocksNativePeerChannel — claude 自前の cross-session チャネルを
-// 起動時に塞ぐこと（docs/log/58 §58.17 / ADR 0041 決定1）。
+// TestBuildProgramBlocksNativePeerChannel: claude's own cross-session channel must be
+// blocked at launch (docs/log/58 §58.17, ADR 0041 decision 1).
 //
-// **ここが落ちたら「AF が見えない claude↔claude 経路」が全セッションで開く。** 元は
-// Dockerfile の env が事実上の遮断だったが 2.1.251 で貫通することを実測しており、いま
-// これが唯一の遮断になっている。2つの値は方向が違う（送信側 deny / 受信側 refuse）ので、
-// 片方だけになっていないことも見る。
+// If this goes red, a claude↔claude route AF cannot see is open in every session. The env
+// in the Dockerfile used to be the effective block, but 2.1.251 was measured punching
+// through it, so this is now the only block there is. The two values work in opposite
+// directions (deny on the sending side, refuse on the receiving side), so this also checks
+// that only one of them has not survived.
 func TestBuildProgramBlocksNativePeerChannel(t *testing.T) {
 	os.Unsetenv("AGENT_SESSION_CMD")
 	got := buildProgram("66666666-6666-4666-8666-666666666new", "", "", "", "", "", true)
 	if !strings.Contains(got, "--settings '"+nativePeerSettings+"'") {
-		t.Fatalf("--settings で塞いでいない: %q", got)
+		t.Fatalf("not blocked via --settings: %q", got)
 	}
 	for _, want := range []string{`"deny":["ListAgents","SendMessage"]`, `"crossSessionInbound":"refuse"`} {
 		if !strings.Contains(nativePeerSettings, want) {
-			t.Errorf("設定に %s が無い: %s", want, nativePeerSettings)
+			t.Errorf("the settings lack %s: %s", want, nativePeerSettings)
 		}
 	}
-	// 値はシェルに埋まる。JSON は二重引用符しか含まないので単引用符で包めば安全 —
-	// 単引用符が混ざる形へ育てたらここが気付く。
+	// The value is embedded in a shell command. The JSON contains only double quotes, so
+	// wrapping it in single quotes is safe — and this notices if it ever grows one.
 	if strings.Contains(nativePeerSettings, "'") {
-		t.Errorf("単引用符を含む設定は ShellQuote で壊れる: %s", nativePeerSettings)
+		t.Errorf("settings containing a single quote break under ShellQuote: %s", nativePeerSettings)
 	}
-	// 利用者フラグで上書きされない（後ろに足している）。
+	// A user's own flags cannot override it, since it is appended after them.
 	t.Setenv("AGENT_CLAUDE_FLAGS", "--verbose")
 	if !strings.Contains(buildProgram("77777777-7777-4777-8777-777777777new", "", "", "", "", "", true), "--settings '") {
-		t.Error("AGENT_CLAUDE_FLAGS を指定すると遮断が消える")
+		t.Error("setting AGENT_CLAUDE_FLAGS makes the block disappear")
 	}
 }

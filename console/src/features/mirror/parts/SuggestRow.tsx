@@ -7,8 +7,9 @@ import type { ChipMenuHandlers } from "../SuggestChipMenu.tsx";
 export type SuggestChip = { text: string; llm: boolean };
 
 /**
- * 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
- * クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。
+ * Reply suggestions: frequently used short replies plus candidates derived from the latest answer
+ * (layer A), plus LLM candidates fetched on demand from the sparkle button. A click inserts the
+ * text; Option-click sends it immediately. Full-width flex row (.mirror-suggest) above the input.
  */
 export function SuggestRow({
   rowRef,
@@ -26,9 +27,10 @@ export function SuggestRow({
 }: {
   rowRef: Ref<HTMLDivElement>;
   chips: SuggestChip[];
-  /** 設定に保存されたピン留め済みの文（isQuickReplyPinned に渡す生の配列）。 */
+  /** Pinned replies as stored in settings (the raw array passed to isQuickReplyPinned). */
   pinned: string[] | undefined;
-  /** Tab 補完でいま入力欄に入っている候補（強調用）。null = サイクル中でない。 */
+  /** The candidate Tab completion has currently filled into the input, for highlighting.
+   *  null means no cycling is in progress. */
   cycledText: string | null;
   aiEnabled: boolean;
   suggesting: boolean;
@@ -46,16 +48,17 @@ export function SuggestRow({
           type="button"
           className="mirror-suggest-ai"
           title={tr("mirror.suggest_ai")}
-          disabled={suggesting || !running} // wsDown() はトースト副作用があるのでレンダー中は呼ばない
+          disabled={suggesting || !running} // wsDown() has a toast side effect; never call it during render
           onClick={onFetchLlm}
-          onKeyDown={onNav} // Enter は既定の click（＝候補取得）に任せる
+          onKeyDown={onNav} // leave Enter to the default click (which fetches the candidates)
         >
           <Icon name={suggesting ? "loading" : "sparkle"} spin={suggesting} />
         </button>
       )}
       {chips.map((sg) => (
-        // ピン留めした候補は先頭に固定で並び、📌 を付けて「消えない側」だと分かるようにする。
-        // 削除・ピン留めは右クリック / 長タップ / Menu キーのメニュー（SuggestChipMenu）。
+        // Pinned suggestions are fixed at the head of the row and carry a pin glyph so it is
+        // clear they will not disappear. Delete and pin live in the right-click / long-press /
+        // Menu-key menu (SuggestChipMenu).
         <button
           key={(sg.llm ? "l:" : "a:") + sg.text}
           type="button"
@@ -63,7 +66,7 @@ export function SuggestRow({
             "mirror-suggest-chip" +
             (sg.llm ? " llm" : "") +
             (isQuickReplyPinned(pinned, sg.text) ? " pinned" : "") +
-            (sg.text === cycledText ? " cycling" : "") // Tab でいま入力欄に入れている候補
+            (sg.text === cycledText ? " cycling" : "") // the candidate Tab currently has in the input
           }
           aria-current={sg.text === cycledText ? "true" : undefined}
           title={tr("mirror.suggest_hint")}

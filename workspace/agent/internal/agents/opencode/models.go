@@ -15,7 +15,7 @@ import (
 // bundled opencode/* models; connecting a provider grows it — so it must be read
 // live rather than hardcoded (unlike codex, whose catalog is fixed per CLI release
 // and kept Console-side). Returns nil when the CLI is absent or errors; the launch
-// picker then just offers 既定.
+// picker then just offers the default.
 //
 // Cached briefly: the Console fetches on every launch-modal open, and the CLI call
 // costs ~1s. Failures are not cached, so a transient error heals on the next open.
@@ -62,32 +62,32 @@ func Models() []string {
 	return modelsList
 }
 
-// daemonModel is one entry of GET /api/model（実測 OpenAPI）。
+// daemonModel is one entry of GET /api/model (measured against the live OpenAPI).
 type daemonModel struct {
 	ID         string `json:"id"`
 	ProviderID string `json:"providerID"`
 	Status     string `json:"status"`  // "active" | "deprecated"
-	Enabled    *bool  `json:"enabled"` // ポインタ: 欠落と false を区別する
-	// Cost is the per-tier price table. 無料判定は opencode 自身と同じ規則を借りる
-	// （プラグインは `cost.some(c => c.input > 0)` を「有料」として無認証時に無効化する）。
+	Enabled    *bool  `json:"enabled"` // pointer, so a missing field is distinguishable from false
+	// Cost is the per-tier price table. The free/paid verdict borrows opencode's own rule
+	// (its plugin treats `cost.some(c => c.input > 0)` as paid and disables those without auth).
 	Cost []struct {
 		Input float64 `json:"input"`
 	} `json:"cost"`
 }
 
-// freeIDs is the set of zero-cost model ids from the last daemon read — the 無料枠
-// （UsageFree）の判定材料。CLI 由来の一覧には価格が無いので空のままになる。
+// freeIDs is the set of zero-cost model ids from the last daemon read - the material for the
+// free-tier (UsageFree) verdict. A CLI-derived list carries no prices, so it stays empty.
 var freeIDs map[string]bool
 
 // retiredIDs is the set of ids the last daemon read reported as gone (status
 // "deprecated" / enabled:false). They are dropped from the catalog by
 // filterDaemonModels — opencode's own `opencode models` drops them too — but keeping
-// the NAMES lets a launch that asks for one say why instead of a bare 「利用できません」。
+// the NAMES lets a launch that asks for one say why, instead of a bare "unavailable".
 //
-// 実測（2026-08-27）: deprecated は「一覧から隠れているだけ」ではなく提供終了そのもの。
-// 認証不要の無料モデルで割れた — deprecated の glm-5-free / kimi-k2.5-free /
-// minimax-m3-free は実行するとゲートウェイがサーバエラーを返し、付いていない
-// nemotron-3-ultra-free / mimo-v2.5-free は通った。
+// Measured (2026-08-27): deprecated does not mean "merely hidden from the list", it means the
+// model is gone. The auth-free models split cleanly along that line: running the deprecated
+// glm-5-free / kimi-k2.5-free / minimax-m3-free made the gateway return a server error, while
+// the unmarked nemotron-3-ultra-free / mimo-v2.5-free went through.
 var retiredIDs map[string]bool
 
 // Retired reports whether id was in the live catalog but is no longer usable. Always
@@ -100,10 +100,11 @@ func Retired(id string) bool {
 	return retiredIDs[strings.TrimSpace(id)]
 }
 
-// isFreeModel reports whether id is billed at zero. 価格を知らないとき（daemon から
-// 読めていない＝CLI 由来）は true: 無料枠では OPENCODE_API_KEY を注入しないので、
-// その CLI が返す opencode.ai の一覧はそもそも無料枠のものだけになる（実測）。
-// ここで false を返すと無料枠のメニューが空になり、ガードで全表示に落ちてしまう。
+// isFreeModel reports whether id is billed at zero. When the price is unknown (nothing came
+// from the daemon, i.e. the list is CLI-derived) it answers true: the free tier gets no
+// OPENCODE_API_KEY injected, so the opencode.ai list that CLI returns holds free-tier models
+// only anyway (measured). Answering false here empties the free-tier menu and the guard falls
+// back to showing everything.
 func isFreeModel(id string) bool {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
@@ -126,8 +127,8 @@ func modelsFromDaemon() []string {
 		return nil
 	}
 	ids := filterDaemonModels(env.Data)
-	// Refresh the zero-cost set from the same read, so 無料枠 の判定と一覧が同じ
-	// スナップショットに揃う。
+	// Refresh the zero-cost set from the same read, so the free-tier verdict and the list come
+	// from one snapshot.
 	free := make(map[string]bool, len(ids))
 	retired := make(map[string]bool)
 	for _, m := range env.Data {
@@ -142,12 +143,12 @@ func modelsFromDaemon() []string {
 			retired[id] = true
 		}
 	}
-	// caller (Models) already holds modelsMu — 二重ロックしない
+	// caller (Models) already holds modelsMu - do not lock twice
 	freeIDs, retiredIDs = free, retired
 	return ids
 }
 
-// freeCost mirrors opencode's own rule: 入力単価が 1 つでも 0 より大きければ有料。
+// freeCost mirrors opencode's own rule: paid as soon as one input price is above zero.
 func freeCost(tiers []struct {
 	Input float64 `json:"input"`
 }) bool {
@@ -160,8 +161,8 @@ func freeCost(tiers []struct {
 }
 
 // filterDaemonModels shapes the daemon's raw list into the same "provider/model" ids the
-// CLI prints. 非推奨は落とす: daemon の一覧はそれも含み（実測 110 件中 31 件）、
-// CLI の出力（79 件）と揃えないと起動一覧に廃止済みモデルが並ぶ。
+// CLI prints. Deprecated entries are dropped: the daemon's list includes them (measured, 31 of
+// 110), and without matching the CLI's output (79) the launch list would carry retired models.
 func filterDaemonModels(ms []daemonModel) []string {
 	out := make([]string, 0, len(ms))
 	for _, m := range ms {
@@ -180,7 +181,7 @@ func filterDaemonModels(ms []daemonModel) []string {
 // `opencode models`. The cache key is the injected provider env (auth.go), which a
 // Console OAuth login does NOT change — the credential lands in opencode's own auth
 // store — so an authentication change has to say so explicitly or the launch picker
-// keeps the pre-login catalog for up to a minute（docs/log/54 の反映タイミング）.
+// keeps the pre-login catalog for up to a minute (docs/log/54, when a change takes effect).
 func InvalidateModels() {
 	modelsMu.Lock()
 	modelsAt = time.Time{}

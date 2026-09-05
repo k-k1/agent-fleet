@@ -71,7 +71,7 @@
 .notification-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 14px; border-bottom: 1px solid var(--border); }
 .notification-titles { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
 .notification-titles span { color: var(--muted); font-size: 11px; }
-/* Audio-notification (ttsSessionNotify) quick toggle — mirrors the setting in 設定›音声読み上げ. */
+/* Audio-notification (ttsSessionNotify) quick toggle — mirrors Settings > Text-to-speech. */
 .notification-mute { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; padding: 4px 9px; border: 1px solid var(--border2, var(--border)); border-radius: 999px; background: transparent; color: var(--muted); font-size: 11px; cursor: pointer; }
 .notification-mute .codicon { font-size: 13px; }
 .notification-mute.on { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); }
@@ -99,8 +99,8 @@
 .notification-item small { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .notification-empty { padding: 24px; color: var(--muted); text-align: center; }
 
-/* 音声読み上げピル（docs/log/24）。常時表示：再生中=停止ボタン（パルス＋ラベル）、
-   アイドル=設定 ttsEnabled の ON/OFF トグル（OFF はグレー）。 */
+/* Text-to-speech pill (docs/log/24). Always shown: while speaking it is a stop button
+   (pulse + label); when idle it is the ON/OFF toggle for ttsEnabled (grey when OFF). */
 .tts-status {
   display: inline-flex;
   align-items: center;
@@ -139,13 +139,13 @@
     opacity: 1;
   }
 }
-/* Mobile: ラベルを畳んでアイコンだけに（幅節約）。 */
+/* Mobile: fold the label away and keep the icon, to save width. */
 @media (max-width: 760px) {
   .tts-status-lbl {
     display: none;
   }
 }
-/* テナント選択（アカウントメニュー内）。ラベル＋フル幅 select。 */
+/* Tenant picker inside the account menu: label plus a full-width select. */
 .acct-tenant {
   display: block;
   padding: 6px 10px 8px;
@@ -214,18 +214,19 @@
   width: 100%;
   margin-bottom: 8px;
 }
-/* 幅いっぱいに等分する。`.choice-seg .seg-btn { flex: 0 0 auto }`（下方・同じ詳細度）が
-   後勝ちするので、.acct-menu を足して勝たせる。等分しないとボタンは文字幅のままで、
-   右に残った余白が同色の枠内に見え「押せない領域」に見えてしまう（色見本が 1 行に
-   収まる幅にしてポップが広がったぶん、なおさら目立つ）。 */
+/* Split the full width evenly. `.choice-seg .seg-btn { flex: 0 0 auto }` further down has
+   the same specificity and would win on order, so .acct-menu is added to beat it. Without
+   the even split the buttons keep their text width and the leftover space on the right
+   reads as dead, unclickable area inside the same-colored frame — all the more visible
+   since the popover widened to fit the swatches on one row. */
 .acct-menu .acct-theme-seg .seg-btn {
   flex: 1;
 }
 .acct-swatch-row {
   margin-bottom: 8px;
 }
-/* 色以外のセグメント（言語・メイン領域の配置・テーマ）にも、色見本の段と同じ小さな見出しを付ける。
-   何のセグメントか分かるようにするためで、見た目は .acct-swatch-lbl と揃える。 */
+/* The non-color segments (language, main-area layout, theme) get the same small heading as
+   the swatch rows so it is clear what each segment is; styled to match .acct-swatch-lbl. */
 .acct-swatch-lbl,
 .appr-seg-lbl {
   display: block;
@@ -242,10 +243,11 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 外観 popover: 色見本（11 色）は 1 行に並べる。折り返すと面ごとの段の切れ目が
-   見えなくなり、どの見本がどの面のものか分からなくなるため。幅は中身なりに広げ、
-   色を増やしてもここを直さずに済むよう max-content で追従させる（狭い窓では
-   ビューポート幅で頭打ち。スマホ側の固定配置クランプは下のメディアクエリ）。 */
+/* Appearance popover: the 11 swatches sit on one row. Wrapping hides the break between
+   each surface's row, and then it is no longer clear which swatch belongs to which
+   surface. The width follows the content via max-content so adding colors needs no edit
+   here (capped by the viewport on a narrow window; the phone's fixed-position clamp is in
+   the media query below). */
 .appr-menu {
   width: max-content;
   max-width: calc(100vw - 16px);
@@ -253,7 +255,7 @@
 .appr-menu .swatch-row {
   flex-wrap: nowrap;
 }
-/* 外観 popover header: title left, 詳細 link right */
+/* Appearance popover header: title left, details link right */
 .appr-head {
   display: flex;
   align-items: center;
@@ -354,7 +356,7 @@
   opacity: 1;
 }
 /* Native host self-update nudge (docs/log/42). The account button carries an attention
-   dot when a newer af is staged; the menu row deep-links into 設定 → ツールチェーン. */
+   dot when a newer af is staged; the menu row deep-links into Settings -> Toolchains. */
 .acct-btn.has-update {
   position: relative;
 }
@@ -444,7 +446,7 @@
     max-width: 96px;
   }
   .notification-panel { position: fixed; top: 48px; right: 8px; }
-  /* 外観 popover: the paint button sits mid-bar, so the default right:0 anchoring
+  /* Appearance popover: the paint button sits mid-bar, so the default right:0 anchoring
      (relative to the button) pushes its fixed 232px menu off-screen on a phone. Pin
      it to the viewport top-right and clamp its width/height instead. */
   .appr-menu {

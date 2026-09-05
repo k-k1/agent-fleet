@@ -1,20 +1,23 @@
-// routes_golden_test.go — buildMux が登録する (method, path) を全件ゴールデン化する。
+// routes_golden_test.go turns every (method, path) that buildMux registers into a golden
+// file.
 //
-// なぜ要るか（ADR 0067 決定 6）。並列リファクタの移送は 1 PR で数千行動く。レビュワーは
-// それを読み切れないので、**ワイヤ互換だけは機械に証明させる**。ルート表はワイヤの
-// 半分（もう半分は DTO のキー集合 = wire_golden_test.go）で、ハンドラを internal/ へ
-// 移す途中で register 呼び出しを 1 本落としても、それ以外のテストは全部緑のまま通る
-// ——ここが赤くなる状態を先に作っておく。
+// Why it exists (ADR 0067 decision 6): a parallel-refactor move touches thousands of lines
+// in one PR, more than a reviewer can read, so wire compatibility at least is proved
+// mechanically. The route table is half of the wire — the other half is the DTO key sets in
+// wire_golden_test.go — and dropping a single register call while moving handlers into
+// internal/ leaves every other test green, so this is the check that has to go red.
 //
-// ★ 静的解析（ソースの HandleFunc を grep する）ではなく、**組み上がった mux から**
-// 取る。register 関数が internal/ へ移っても、登録された表そのものを見ているので
-// 偽の赤にならない。代償は net/http の内部表現に触れること（下の muxRoutes 参照）。
+// The table is taken from the assembled mux, not by static analysis grepping HandleFunc out
+// of the source: a register function that moves into internal/ produces no false red,
+// because what is inspected is the registered table itself. The price is touching net/http's
+// internal representation (see muxRoutes below).
 //
-// 更新の仕方（ルートを意図して増減させたとき）:
+// Updating it after a deliberate change in routes:
 //
 //	cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 //
-// 生成された差分は PR に載せること。**差分が意図と違うなら、それが検知したかった事故**。
+// Put the generated diff in the PR. A diff that does not match the intent is exactly the
+// accident this was built to catch.
 package main
 
 import (
@@ -30,15 +33,16 @@ import (
 )
 
 var updateRoutesGolden = flag.Bool("update-routes-golden", false,
-	"testdata/routes.golden を実際のルート表で書き換える（ルートを意図して増減させたときだけ）")
+	"rewrite testdata/routes.golden from the actual route table (only when routes were added or removed on purpose)")
 
 const routesGoldenPath = "testdata/routes.golden"
 
-// TestRouteTableGolden: buildMux の全ルートが testdata/routes.golden と一致すること。
+// TestRouteTableGolden — every route of buildMux must match testdata/routes.golden.
 //
-// AF_MCP_ENABLED は **CP で唯一の env 条件付きルート**（registerMCPRoutes）なので、
-// ゴールデンは「全部入り」を撮るために true で撮る。off のときの差が /mcp の 1 本だけで
-// あることは TestRouteTableMCPIsTheOnlyOptIn が別に固定する。
+// AF_MCP_ENABLED gates the only env-conditional route in the CP (registerMCPRoutes), so the
+// golden is taken with it true in order to capture everything. That the difference when it
+// is off is exactly the one /mcp line is pinned separately by
+// TestRouteTableMCPIsTheOnlyOptIn.
 func TestRouteTableGolden(t *testing.T) {
 	t.Setenv("AF_MCP_ENABLED", "true")
 	_, mux := smokeEnv(t)
@@ -52,9 +56,9 @@ func TestRouteTableGolden(t *testing.T) {
 	assertGoldenLines(t, routesGoldenPath, got)
 }
 
-// TestRouteTableMCPIsTheOnlyOptIn: env で表が変わるのは /mcp だけ。
-// 条件付き登録が増えると「ゴールデンは緑なのに本番の表が違う」が起きるので、
-// **条件付きが増えたこと自体**をここで赤くする。
+// TestRouteTableMCPIsTheOnlyOptIn — /mcp is the only route the env can change. Another
+// conditional registration would let the golden stay green while the production table
+// differs, so the arrival of a second conditional route is itself made red here.
 func TestRouteTableMCPIsTheOnlyOptIn(t *testing.T) {
 	t.Setenv("AF_MCP_ENABLED", "")
 	_, mux := smokeEnv(t)
@@ -67,31 +71,33 @@ func TestRouteTableMCPIsTheOnlyOptIn(t *testing.T) {
 		}
 	}
 	if diff := lineDiff(want, off); diff != "" {
-		t.Errorf("AF_MCP_ENABLED 無効時のルート表がゴールデン−/mcp と一致しない"+
-			"（env で分岐するルートが増えた？）:\n%s", diff)
+		t.Errorf("with AF_MCP_ENABLED off, the route table does not match golden minus /mcp"+
+			" (did another env-conditional route appear?):\n%s", diff)
 	}
 }
 
-// muxRoutes は組み上がった *http.ServeMux から登録済みの (method, path) を取り出す。
+// muxRoutes extracts the registered (method, path) pairs from an assembled *http.ServeMux.
 //
-// ⚠️ net/http の**内部表現**に reflect で触る。公開 API に列挙は無く（Handler() は
-// 1 リクエストぶんの照合しか返さない）、ここだけが「登録された全件」を知る方法である。
-// 内部表現は実際に変わる: Go 1.25 まで在った ServeMux.patterns スライスは 1.26 で
-// 消えており、今は tree（routingNode）を歩くしかない。壊れたときは黙って空を返さず、
-// **何が変わったか分かるメッセージで落とす**こと——0 件のゴールデンほど危険なものはない。
+// It reaches into net/http's internal representation by reflection. The public API offers no
+// enumeration (Handler() answers the match for one request only), so this is the sole way to
+// learn everything that was registered. That representation does change: the
+// ServeMux.patterns slice present up to Go 1.25 is gone in 1.26 and the tree (routingNode)
+// has to be walked instead. When it breaks, do not silently return nothing — fail with a
+// message that says what changed. A golden with zero entries is the most dangerous outcome
+// there is.
 func muxRoutes(t *testing.T, mux *http.ServeMux) []string {
 	t.Helper()
 	root := reflect.ValueOf(mux).Elem().FieldByName("tree")
 	if !root.IsValid() {
-		t.Fatalf("http.ServeMux に tree フィールドが無い: net/http の内部表現が変わった。" +
-			"go/src/net/http/routing_tree.go を読んで muxRoutes を直すこと")
+		t.Fatalf("http.ServeMux has no tree field: net/http's internal representation changed. " +
+			"read go/src/net/http/routing_tree.go and fix muxRoutes")
 	}
 	var raw []string
 	if err := walkRoutingNode(root, &raw); err != nil {
-		t.Fatalf("routingNode の走査に失敗: %v（net/http の内部表現が変わった）", err)
+		t.Fatalf("failed to walk the routingNode: %v (net/http's internal representation changed)", err)
 	}
 	if len(raw) == 0 {
-		t.Fatal("ルートが 1 本も取れなかった: 走査が壊れている（buildMux は必ず登録する）")
+		t.Fatal("not a single route was picked up: the walk is broken (buildMux always registers)")
 	}
 
 	seen := map[string]bool{}
@@ -108,9 +114,10 @@ func muxRoutes(t *testing.T, mux *http.ServeMux) []string {
 	return out
 }
 
-// routeLine は登録文字列（"GET /api/x" / "/api/x/"）を "METHOD PATH" に正規化する。
-// メソッド無し（全メソッド受け）は ANY と書く——空欄だと golden の行頭が揃わず、
-// 「メソッドが消えた」のか「元から無い」のかが読めなくなる。
+// routeLine normalises a registration string ("GET /api/x" / "/api/x/") into "METHOD PATH".
+// A registration with no method (accepting all of them) is written ANY: left blank, the
+// golden's lines no longer align and "the method disappeared" cannot be told apart from
+// "there never was one".
 func routeLine(pattern string) string {
 	method, path, ok := strings.Cut(pattern, " ")
 	if !ok || strings.HasPrefix(pattern, "/") {
@@ -119,8 +126,8 @@ func routeLine(pattern string) string {
 	return method + " " + strings.TrimSpace(path)
 }
 
-// sortRouteLines: パス順 → メソッド順。同じパスのメソッド違いが隣り合うので、
-// 「DELETE だけ落ちた」が diff で 1 行に見える。
+// sortRouteLines orders by path, then by method, so different methods on the same path sit
+// next to each other and "only DELETE went missing" shows up as one line in the diff.
 func sortRouteLines(lines []string) {
 	key := func(s string) (string, string) {
 		m, p, _ := strings.Cut(s, " ")
@@ -136,9 +143,9 @@ func sortRouteLines(lines []string) {
 	})
 }
 
-// walkRoutingNode は net/http の routingNode 木を降りて、葉が持つ pattern.str を集める。
-// 子は children（mapping: 8 件までは slice s、超えると map m に切り替わる — **両方見る**）
-// と multiChild / emptyChild。
+// walkRoutingNode descends net/http's routingNode tree and collects the pattern.str of each
+// leaf. Children live in children (a mapping: the slice s up to 8 entries, switching to the
+// map m beyond that — both must be read) plus multiChild and emptyChild.
 func walkRoutingNode(n reflect.Value, out *[]string) error {
 	if !n.IsValid() {
 		return nil
@@ -150,23 +157,23 @@ func walkRoutingNode(n reflect.Value, out *[]string) error {
 		n = n.Elem()
 	}
 	if n.Kind() != reflect.Struct {
-		return fmt.Errorf("routingNode が struct でない: %s", n.Kind())
+		return fmt.Errorf("routingNode is not a struct: %s", n.Kind())
 	}
 	pat := n.FieldByName("pattern")
 	if !pat.IsValid() {
-		return fmt.Errorf("routingNode に pattern フィールドが無い")
+		return fmt.Errorf("routingNode has no pattern field")
 	}
 	if !pat.IsNil() {
 		str := pat.Elem().FieldByName("str")
 		if !str.IsValid() {
-			return fmt.Errorf("pattern に str フィールドが無い")
+			return fmt.Errorf("pattern has no str field")
 		}
 		*out = append(*out, str.String())
 	}
 	if ch := n.FieldByName("children"); ch.IsValid() {
 		s := ch.FieldByName("s")
 		if !s.IsValid() {
-			return fmt.Errorf("mapping に s フィールドが無い")
+			return fmt.Errorf("mapping has no s field")
 		}
 		for i := 0; i < s.Len(); i++ {
 			if err := walkRoutingNode(s.Index(i).FieldByName("value"), out); err != nil {
@@ -175,7 +182,7 @@ func walkRoutingNode(n reflect.Value, out *[]string) error {
 		}
 		m := ch.FieldByName("m")
 		if !m.IsValid() {
-			return fmt.Errorf("mapping に m フィールドが無い")
+			return fmt.Errorf("mapping has no m field")
 		}
 		if !m.IsNil() {
 			for _, k := range m.MapKeys() {
@@ -191,14 +198,14 @@ func walkRoutingNode(n reflect.Value, out *[]string) error {
 	return walkRoutingNode(n.FieldByName("emptyChild"), out)
 }
 
-// --- golden ファイルの読み書き（このパッケージの他のゴールデンからも使う） ---
+// --- reading and writing golden files (used by this package's other goldens too) ---
 
-// readGoldenLines は `#` 始まりのコメントと空行を捨てて行を返す。
+// readGoldenLines returns the lines, dropping blank ones and comments starting with `#`.
 func readGoldenLines(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("read %s: %v（初回は -update-routes-golden で生成する）", path, err)
+		t.Fatalf("read %s: %v (generate it the first time with -update-routes-golden)", path, err)
 	}
 	var out []string
 	for _, ln := range strings.Split(string(raw), "\n") {
@@ -217,9 +224,9 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# buildMux() が登録する (method, path) の全件。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...\n")
-	b.WriteString("# ANY = メソッド指定なしの登録。AF_MCP_ENABLED=true で撮っている。\n")
+	b.WriteString("# Every (method, path) buildMux() registers. Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...\n")
+	b.WriteString("# ANY = registered without a method. Taken with AF_MCP_ENABLED=true.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)
@@ -233,13 +240,14 @@ func writeRoutesGolden(t *testing.T, path string, lines []string) {
 func assertGoldenLines(t *testing.T, path string, got []string) {
 	t.Helper()
 	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
-		t.Errorf("%s と一致しない:\n%s\n"+
-			"意図した増減なら -update-routes-golden で撮り直す。"+
-			"身に覚えが無いなら、移送でルートを落としている。", path, diff)
+		t.Errorf("does not match %s:\n%s\n"+
+			"if the gain/loss was intended, retake with -update-routes-golden. "+
+			"if you have no memory of it, a move dropped a route.", path, diff)
 	}
 }
 
-// lineDiff は want / got の集合差を "- 消えた行 / + 増えた行" で返す（一致なら空）。
+// lineDiff returns the set difference of want / got as "- lost" and "+ added" lines, or an
+// empty string when they match.
 func lineDiff(want, got []string) string {
 	inWant := map[string]bool{}
 	for _, s := range want {

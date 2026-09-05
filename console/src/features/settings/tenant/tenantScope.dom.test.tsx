@@ -1,10 +1,10 @@
-// テナントを削除する危険操作の置き場を固定する（docs/log/61 §61.18）。
+// Pins where the destructive "delete tenant" action may appear (docs/log/61 §61.18).
 //
-// 押さえるのは 2 点:
-//   ① 出るのは管理モーダル（onDeleted を渡した側）だけ。テナント設定モーダルは
-//      自分のテナントの設定画面なので、そこにそのテナントを消すボタンは要らない。
-//   ② 押した先が DELETE /api/admin/tenants/{slug} で、成功したら呼び出し側へ抜ける
-//      （消えたテナントの中に留まらない）。
+// Two things:
+//   1. It appears only in the admin modal, i.e. the caller that passes onDeleted. The tenant
+//      settings modal is a tenant's own settings screen and has no business deleting it.
+//   2. It calls DELETE /api/admin/tenants/{slug} and, on success, leaves via the caller rather
+//      than staying inside a tenant that no longer exists.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -70,13 +70,13 @@ afterEach(() => {
   host = null;
 });
 
-describe("テナントの削除", () => {
-  it("onDeleted を渡さない面（テナント設定モーダル）には出さない", async () => {
+describe("tenant deletion", () => {
+  it("is absent where no onDeleted is passed (the tenant settings modal)", async () => {
     await mount();
     expect(buttonWith("テナントを削除")).toBeFalsy();
   });
 
-  it("管理モーダルでは上限の節の末尾に出て、DELETE を投げてから抜ける", async () => {
+  it("appears at the end of the limits section in the admin modal, sends DELETE, then exits", async () => {
     const onDeleted = vi.fn();
     await mount(onDeleted);
 
@@ -89,7 +89,7 @@ describe("テナントの削除", () => {
     expect(onDeleted).toHaveBeenCalled();
   });
 
-  it("拒否されたら抜けない（先に片付ける操作が残っている）", async () => {
+  it("does not exit when refused (there is still something to clear up first)", async () => {
     const onDeleted = vi.fn();
     apiJSON.mockResolvedValue({ error: { code: "tenant_not_empty", message: "remove members first" } });
     await mount(onDeleted);

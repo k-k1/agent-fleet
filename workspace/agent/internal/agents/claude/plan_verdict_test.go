@@ -14,12 +14,12 @@ func TestPlanVerdict(t *testing.T) {
 		"You can refer back to it if needed during implementation.\n\n" +
 		"## Approved Plan:\n# フロービルダー UI の移植\n\n- 前回の案は却下。途中で中止はしない。\n"
 	for _, c := range []struct{ name, in, want string }{
-		// 2026-08-31 の症状そのもの: 計画本文に却下語が入った承認結果。
+		// The 2026-08-31 symptom itself: an approval result whose plan body carries a rejection word.
 		{"approval carrying a plan that says 却下", approval, PlanApproved},
 		{"plain approval", "User approved the plan", PlanApproved},
 		{"interrupt = reject", "[Request interrupted by user for tool use]", PlanRejected},
 		{"keep planning", "not approved, keep planning", PlanRejected},
-		// 読めない形＝ドリフトの署名。Console のバッジは「決定済み」に倒れる。
+		// An unreadable shape is the signature of drift; the Console badge falls back to "decided".
 		{"unknown wording", "The plan step has concluded.", PlanUnknown},
 		{"empty", "", PlanUnknown},
 	} {

@@ -64,13 +64,14 @@ func updateStatus(w http.ResponseWriter, _ *http.Request) {
 	})
 }
 
-// hostUpdateStatusWire — GET /api/update/status のレスポンス（Console の
-// `HostUpdateStatus`、console/src/features/settings/hostUpdate.ts）。
+// hostUpdateStatusWire is the GET /api/update/status response, mirrored by the Console's
+// `HostUpdateStatus` (console/src/features/settings/hostUpdate.ts).
 //
-// 旧: map[string]any{"current":…, "installed":…, "restartRequired":…, "systemd":…}
-// 4 キーとも無条件なので **omitempty は付けない**。とくに `installed` は
-// 「staged が無い」を **空文字で**表しており、omitempty を付けるとキーごと消えて
-// Console 側の「更新なし」判定が変わる（キーの有無とゼロ値は別物）。
+// was: map[string]any{"current":…, "installed":…, "restartRequired":…, "systemd":…}
+//
+// All four keys are unconditional, so none of them may take omitempty. `installed`
+// especially: it says "nothing is staged" with an empty string, and dropping the key
+// changes what the Console reads as "no update" — an absent key is not a zero value.
 type hostUpdateStatusWire struct {
 	Current         string `json:"current"`
 	Installed       string `json:"installed"`

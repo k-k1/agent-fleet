@@ -1,24 +1,27 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 ★4 / 先行 OSS 調査の取り込み点 1）— export 時の
-// secret スキャン。
+// Agent memory versioning (docs/log/39 ★4 / adoption point 1 from the prior-art survey) —
+// the secret scan that runs at export time.
 //
-// 決着 #2 で「v1 は平文 DL（暗号化なし）」と決めた代わりに、**このスキャンを v1 の必須
-// 要件へ格上げ**した。持ち出したファイルの保管中の保護（age 等の暗号化）は別レイヤの
-// 話だが、「メモリに書き溜まった資格情報をそうと気づかず外へ持ち出す」は今この経路で
-// 起きうるので、ここで止める。
+// Decision #2 settled on "v1 downloads in the clear (no encryption)" and, in exchange, raised
+// this scan to a v1 requirement. Protecting an exported file at rest (age and the like) is a
+// different layer's problem, but "carrying credentials that piled up in memory out of the
+// workspace without noticing" can happen on this path today, so it is stopped here.
 //
-// 方針:
-//   - 検出は gitleaks 級の**高シグネチャな正規表現**に限る。メモリは自然文の md なので、
-//     エントロピー判定や緩い汎用パターンは偽陽性の海になり、警告が無視されるようになる
-//     （警告疲れは防御の失敗）。
-//   - 検出しても API は「握り潰さず、既定でブロックし、明示の ack で通す」。判断できるのは
-//     本人だけで、機械には「これは実鍵か」の最終判定ができないため。
-//   - **見つけた秘密そのものは決して返さない・ログにも書かない**。返すのは規則名・パス・
-//     行番号・先頭数文字だけのマスク済みヒント。ここで生値を返すと、防御のつもりの機構が
-//     秘密を新しい場所（監査ログ・ブラウザ履歴）へ配る経路に化ける。
-//   - bundle は**全履歴**を運ぶので、走査も HEAD ツリーではなく到達可能な全 blob を見る。
-//     「一度書いて消した鍵」は HEAD には無いが bundle には入っている。
+// Policy:
+//   - Detection is limited to gitleaks-grade high-signature regexps. Memory is prose markdown,
+//     so entropy heuristics and loose generic patterns drown it in false positives until the
+//     warnings get ignored (warning fatigue is a failed defence).
+//   - A detection is never swallowed: the API blocks by default and only an explicit ack lets
+//     it through. Only the owner can judge — a machine cannot make the final call on whether
+//     this is a real key.
+//   - Never return the secret itself, and never write it to a log. What goes back is the rule
+//     name, the path, the line number and a masked hint of the first few characters. Returning
+//     the raw value here would turn a mechanism meant as a defence into a way of spreading the
+//     secret to new places (audit logs, browser history).
+//   - A bundle carries the WHOLE history, so the scan walks every reachable blob rather than the
+//     HEAD tree. A key written once and then deleted is absent from HEAD but present in the
+//     bundle.
 
 import (
 	"bufio"
@@ -30,15 +33,16 @@ import (
 	"strings"
 )
 
-// memorySecretRule は 1 つの検出規則。Name は Console にそのまま出す識別子（i18n せず、
-// gitleaks 等と同じ語彙にしておくと「何が引っかかったか」を利用者が外部知識で照合できる）。
+// memorySecretRule is one detection rule. Name goes to the Console verbatim and is not
+// translated: keeping the same vocabulary gitleaks and friends use lets the owner check what
+// was flagged against knowledge from outside this product.
 type memorySecretRule struct {
 	Name string
 	Re   *regexp.Regexp
 }
 
-// memorySecretRules は高シグネチャな規則だけを並べたもの。追加するときは「メモリの
-// 自然文に偶然現れないか」を基準に判断する。
+// memorySecretRules lists high-signature rules only. Judge an addition by whether it could
+// turn up by accident in the prose a memory is made of.
 var memorySecretRules = []memorySecretRule{
 	{"aws-access-key-id", regexp.MustCompile(`\b(?:A3T[A-Z0-9]|AKIA|ABIA|ACCA|ASIA)[0-9A-Z]{16}\b`)},
 	{"aws-secret-access-key", regexp.MustCompile(`(?i)aws[^\n]{0,24}?secret[^\n]{0,24}?[:=]\s*["'` + "`" + `]?([A-Za-z0-9/+=]{40})`)},
@@ -56,36 +60,37 @@ var memorySecretRules = []memorySecretRule{
 	{"private-key-block", regexp.MustCompile(`-----BEGIN (?:RSA |DSA |EC |OPENSSH |PGP )?PRIVATE KEY(?: BLOCK)?-----`)},
 	{"json-web-token", regexp.MustCompile(`\beyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}`)},
 	{"url-basic-auth", regexp.MustCompile(`\b[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s/:@]+:[^\s/@"']{8,}@[^\s/"']+`)},
-	// 汎用の代入形。引用符と 16 文字以上の非空白値を要求して、散文の「token: 使用量」等を外す。
+	// Generic assignment form. Quotes and a 16-plus-character non-blank value are required so
+	// prose like "token: usage count" does not match.
 	{"generic-secret-assignment", regexp.MustCompile(`(?i)\b(?:api[_\-]?key|secret[_\-]?key|access[_\-]?token|auth[_\-]?token|client[_\-]?secret|password|passwd)\b\s*[:=]\s*["'` + "`" + `]([^"'` + "`" + `\s]{16,})["'` + "`" + `]`)},
 }
 
-// memorySecretPlaceholders は「明らかに例示・伏字」の値を落とすための語。実鍵にこれらが
-// 含まれることはまず無く、逆に手順書や設計メモには頻出する。
+// memorySecretPlaceholders drops values that are plainly examples or redactions. A real key
+// almost never contains one of these, while runbooks and design notes are full of them.
 var memorySecretPlaceholders = []string{
 	"example", "your-", "your_", "yourkey", "xxxx", "aaaa", "0000", "1234567890abcdef",
 	"changeme", "redacted", "placeholder", "dummy", "sample", "<", ">", "...", "***", "…",
 }
 
-// memorySecretFinding は 1 件の検出。**生の秘密は入らない**（Hint はマスク済み）。
+// memorySecretFinding is one detection. It never carries the raw secret (Hint is masked).
 type memorySecretFinding struct {
-	Path    string `json:"path"`              // repo 内パス
-	Line    int    `json:"line"`              // 1 始まり
-	Rule    string `json:"rule"`              // memorySecretRules の Name
-	Hint    string `json:"hint"`              // 先頭数文字だけのマスク済み抜粋
-	History bool   `json:"history,omitempty"` // 現在のツリーには無く、履歴にだけ居る
+	Path    string `json:"path"`              // path inside the repo
+	Line    int    `json:"line"`              // 1-based
+	Rule    string `json:"rule"`              // Name from memorySecretRules
+	Hint    string `json:"hint"`              // masked excerpt, first few characters only
+	History bool   `json:"history,omitempty"` // not in the current tree, only in history
 }
 
 const (
-	memorySecretMaxFindings   = 200       // これ以上は数えるだけ（UI も読めない）
+	memorySecretMaxFindings   = 200       // beyond this we only count (the UI cannot read them either)
 	memorySecretMaxPerFile    = 20        //
-	memorySecretMaxBlobBytes  = 4 << 20   // 1 blob あたりの走査上限
-	memorySecretMaxScanBytes  = 128 << 20 // 全体の走査上限（暴走防止）
+	memorySecretMaxBlobBytes  = 4 << 20   // scan limit per blob
+	memorySecretMaxScanBytes  = 128 << 20 // scan limit overall (runaway guard)
 	memorySecretHintPrefixLen = 4
 )
 
-// memoryMaskSecret はマッチ文字列をマスクする。先頭数文字だけ残す — 「どの鍵か」を
-// 本人が特定するには十分で、値としては役に立たない長さ。
+// memoryMaskSecret masks a matched string, keeping only the first few characters — enough for
+// the owner to tell WHICH key it is, too short to be useful as a value.
 func memoryMaskSecret(s string) string {
 	s = strings.TrimSpace(s)
 	if len(s) <= memorySecretHintPrefixLen {
@@ -94,7 +99,7 @@ func memoryMaskSecret(s string) string {
 	return s[:memorySecretHintPrefixLen] + "…(" + strconv.Itoa(len(s)) + ")"
 }
 
-// memoryLooksPlaceholder は例示・伏字っぽい値か。
+// memoryLooksPlaceholder reports whether the value looks like an example or a redaction.
 func memoryLooksPlaceholder(s string) bool {
 	low := strings.ToLower(s)
 	for _, p := range memorySecretPlaceholders {
@@ -105,8 +110,8 @@ func memoryLooksPlaceholder(s string) bool {
 	return false
 }
 
-// memoryScanContent は 1 ファイル分の中身を走査する。バイナリ（NUL を含む）は対象外
-// （メモリは md であり、バイナリは走査してもノイズにしかならない）。
+// memoryScanContent scans one file's contents. Binary (anything containing a NUL) is skipped:
+// a memory is markdown, and scanning binary produces nothing but noise.
 func memoryScanContent(path string, b []byte) []memorySecretFinding {
 	if bytes.IndexByte(b, 0) >= 0 {
 		return nil
@@ -115,14 +120,14 @@ func memoryScanContent(path string, b []byte) []memorySecretFinding {
 	seen := map[string]bool{}
 	for i, line := range strings.Split(string(b), "\n") {
 		if len(line) > 8192 {
-			line = line[:8192] // 1 行が異常に長いものは頭だけ見る（minified 等）
+			line = line[:8192] // absurdly long line (minified and the like): look at the head only
 		}
 		for _, rule := range memorySecretRules {
 			m := rule.Re.FindStringSubmatch(line)
 			if m == nil {
 				continue
 			}
-			// 捕捉グループがあればその値を、無ければマッチ全体を秘密候補とする。
+			// The capture group when there is one, otherwise the whole match, is the candidate.
 			val := m[0]
 			if len(m) > 1 && m[1] != "" {
 				val = m[1]
@@ -144,13 +149,14 @@ func memoryScanContent(path string, b []byte) []memorySecretFinding {
 	return out
 }
 
-// memoryObjRef は走査対象の 1 オブジェクト（blob 候補）。
+// memoryObjRef is one object to scan (a blob candidate).
 type memoryObjRef struct {
 	SHA  string
 	Path string
 }
 
-// memoryScanRevTree は 1 時点のツリーだけを走査する（tar export 用 — tar は最新しか運ばない）。
+// memoryScanRevTree scans a single point-in-time tree, for the tar export: a tar carries only
+// the latest state.
 func memoryScanRevTree(rev string) ([]memorySecretFinding, error) {
 	out, err := memoryGitRun("ls-tree", "-r", rev)
 	if err != nil {
@@ -171,8 +177,9 @@ func memoryScanRevTree(rev string) ([]memorySecretFinding, error) {
 	return memoryScanObjects(refs, nil)
 }
 
-// memoryScanAllReachable は到達可能な全 blob を走査する（bundle export 用）。bundle は
-// 全履歴を運ぶので、「一度書いて消した鍵」も持ち出される — HEAD だけ見ては不足。
+// memoryScanAllReachable scans every reachable blob, for the bundle export. A bundle carries the
+// whole history, so a key written once and then deleted leaves with it — looking at HEAD alone
+// is not enough.
 func memoryScanAllReachable() ([]memorySecretFinding, error) {
 	out, err := memoryGitRun("rev-list", "--objects", "--all")
 	if err != nil {
@@ -182,13 +189,14 @@ func memoryScanAllReachable() ([]memorySecretFinding, error) {
 	for _, line := range strings.Split(out, "\n") {
 		sha, p, _ := strings.Cut(strings.TrimSpace(line), " ")
 		if len(sha) < 40 || p == "" {
-			continue // commit（パス無し）・空行
+			continue // a commit (no path), or a blank line
 		}
 		refs = append(refs, memoryObjRef{SHA: sha, Path: p})
 	}
-	// 現在のツリーに**その内容のまま**居るものは「履歴だけ」ではない。判定はパスではなく
-	// blob の sha で行う — 同じパスが今も存在していても、鍵を消した後の版なら別 blob で、
-	// 「消したはずの鍵が bundle には残っている」を見落としてしまう。
+	// Anything still present in the current tree WITH THAT EXACT CONTENT is not "history only".
+	// The test is the blob sha, not the path: the same path can still exist while holding the
+	// post-deletion version, which is a different blob, and going by path would miss "the key
+	// you deleted is still in the bundle".
 	head := map[string]bool{}
 	if memoryHasCommits() {
 		if lt, lerr := memoryGitRun("ls-tree", "-r", memoryBranch); lerr == nil {
@@ -206,9 +214,9 @@ func memoryScanAllReachable() ([]memorySecretFinding, error) {
 	return memoryScanObjects(refs, head)
 }
 
-// memoryScanObjects は blob を `git cat-file --batch` で一括して読み、走査する。
-// オブジェクトごとに git を起動すると数百 fork になるため、1 プロセスで流す。
-// headBlobs が非 nil なら、そこに無い blob 由来の検出に History 印を付ける。
+// memoryScanObjects reads the blobs in one batch through `git cat-file --batch` and scans them.
+// Spawning git per object would mean hundreds of forks, so everything streams through a single
+// process. When headBlobs is non-nil, findings from a blob missing there are marked History.
 func memoryScanObjects(refs []memoryObjRef, headBlobs map[string]bool) ([]memorySecretFinding, error) {
 	if len(refs) == 0 {
 		return nil, nil
@@ -244,11 +252,11 @@ func memoryScanObjects(refs []memoryObjRef, headBlobs map[string]bool) ([]memory
 		}
 		fields := strings.Fields(strings.TrimSpace(header))
 		if len(fields) < 3 {
-			continue // "<sha> missing" — 走査対象から外れるだけ
+			continue // "<sha> missing" — it just drops out of the scan
 		}
 		size, perr := strconv.ParseInt(fields[2], 10, 64)
 		if perr != nil {
-			break // 同期が取れないので打ち切る（部分結果は返す）
+			break // out of sync with the stream: stop here and return the partial result
 		}
 		body := make([]byte, 0)
 		if fields[1] == "blob" && size <= memorySecretMaxBlobBytes && scanned < memorySecretMaxScanBytes {
@@ -260,7 +268,7 @@ func memoryScanObjects(refs []memoryObjRef, headBlobs map[string]bool) ([]memory
 		} else if _, derr := io.CopyN(io.Discard, br, size); derr != nil {
 			break
 		}
-		if _, derr := br.Discard(1); derr != nil { // オブジェクト後の改行
+		if _, derr := br.Discard(1); derr != nil { // the newline after the object
 			break
 		}
 		if len(body) == 0 || len(findings) >= memorySecretMaxFindings {
@@ -281,15 +289,15 @@ func memoryScanObjects(refs []memoryObjRef, headBlobs map[string]bool) ([]memory
 	return memoryDedupeFindings(findings), nil
 }
 
-// memoryDedupeFindings は同一 (path, line, rule) を 1 件に畳む。履歴を走査すると同じ
-// 行が版ごとに何度も出るため、これが無いと一覧が読めない。
+// memoryDedupeFindings folds identical (path, line, rule) triples into one. Scanning history
+// reports the same line once per revision, and without this the list is unreadable.
 func memoryDedupeFindings(in []memorySecretFinding) []memorySecretFinding {
 	out := make([]memorySecretFinding, 0, len(in))
 	seen := map[string]int{}
 	for _, f := range in {
 		key := fmt.Sprintf("%s\x00%d\x00%s", f.Path, f.Line, f.Rule)
 		if i, ok := seen[key]; ok {
-			// 現ツリーにも居るなら「履歴だけ」ではない、を優先する。
+			// Present in the current tree too wins: it is then not "history only".
 			if !f.History {
 				out[i].History = false
 			}

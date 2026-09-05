@@ -1,8 +1,9 @@
 package opencode
 
-// 利用枠ページの ID と、上限に当たったときの枠情報（workspaceid.go）。
-// 実測の材料は 2 つ: 残高切れの文面に埋まる billing URL（errors_test.go の固定データと
-// 同じ形）と、Go の上限が運ぶ responseBody / retry-after（opencode 本体が読むのと同じ場所）。
+// The usage page's ID, and the limit info carried when a limit is hit (workspaceid.go).
+// Two measured sources: the billing URL embedded in the out-of-balance message (the same shape
+// as errors_test.go's fixed data), and the responseBody / retry-after a Go limit carries (the
+// same place opencode itself reads).
 
 import (
 	"encoding/json"
@@ -48,7 +49,8 @@ func TestValidWorkspaceID(t *testing.T) {
 	}
 }
 
-// 残高切れ: 文面に billing URL が埋まっている（実測の形）。ここから拾えること。
+// Out of balance: the message embeds a billing URL (the measured shape). It must be picked up
+// from there.
 func TestScanLearnsIDFromBalanceMessage(t *testing.T) {
 	isolate(t)
 	var e messageError
@@ -66,8 +68,8 @@ func TestScanLearnsIDFromBalanceMessage(t *testing.T) {
 	}
 }
 
-// Go の上限: opencode 本体と同じ場所（responseBody の metadata と retry-after）から、
-// どの枠か・いつ戻るかを拾う。
+// The Go limit: which window it was and when it comes back are read from the same place
+// opencode itself reads (responseBody's metadata and retry-after).
 func TestScanReadsLimitWindowAndReset(t *testing.T) {
 	isolate(t)
 	body, _ := json.Marshal(map[string]any{
@@ -89,30 +91,32 @@ func TestScanReadsLimitWindowAndReset(t *testing.T) {
 		t.Fatalf("reset_at = %q: %v", info.ResetAt, err)
 	}
 	if d := time.Until(at); d < 55*time.Minute || d > 65*time.Minute {
-		t.Errorf("reset は約1時間後のはず: %v", d)
+		t.Errorf("reset should be about an hour out: %v", d)
 	}
 	if id, _ := WorkspaceID(); id != sampleWorkspace {
-		t.Errorf("metadata から ID を拾えていない: %q", id)
+		t.Errorf("the ID was not picked up from metadata: %q", id)
 	}
 	if got := LastLimit(); got.Name != "weekly" {
 		t.Errorf("LastLimit = %+v", got)
 	}
 }
 
-// 上限と無関係な失敗では枠情報を作らない（「観測していない」と「上限だった」を混ぜない）。
+// A failure unrelated to a limit must produce no limit info ("not observed" and "was a limit"
+// must never be mixed).
 func TestScanIgnoresUnrelatedFailure(t *testing.T) {
 	isolate(t)
 	var e messageError
 	e.Name = "MessageOutputLengthError"
 	if got := scanFailure(e); got.Name != "" || got.ResetAt != "" {
-		t.Errorf("scanFailure = %+v, want 空", got)
+		t.Errorf("scanFailure = %+v, want empty", got)
 	}
 	if got := LastLimit(); got.Name != "" || got.ResetAt != "" {
-		t.Errorf("LastLimit = %+v, want 空", got)
+		t.Errorf("LastLimit = %+v, want empty", got)
 	}
 }
 
-// 手入力は学習で上書きしない — 利用者が選んだ workspace のほうが意図に近い。
+// Learning must not overwrite a manually entered ID — the workspace the user picked is closer
+// to what they meant.
 func TestManualIDWinsOverLearned(t *testing.T) {
 	isolate(t)
 	if err := SetWorkspaceID(sampleWorkspace); err != nil {
@@ -123,7 +127,7 @@ func TestManualIDWinsOverLearned(t *testing.T) {
 	e.Data.Message = "https://opencode.ai/workspace/" + other + "/billing"
 	scanFailure(e)
 	if id, src := WorkspaceID(); id != sampleWorkspace || src != "manual" {
-		t.Errorf("手入力が上書きされた: %q/%q", id, src)
+		t.Errorf("the manually entered ID was overwritten: %q/%q", id, src)
 	}
 }
 
@@ -138,7 +142,7 @@ func TestHandlePutWorkspaceValidatesAndClears(t *testing.T) {
 		return w.Code, out
 	}
 	if code, out := put(`{"id":"nonsense"}`); code != http.StatusBadRequest {
-		t.Fatalf("不正な ID は 400 のはず: %d %v", code, out)
+		t.Fatalf("an invalid ID should be 400: %d %v", code, out)
 	}
 	code, out := put(`{"id":"` + sampleWorkspace + `"}`)
 	if code != http.StatusOK || out["workspace_id"] != sampleWorkspace {
@@ -148,14 +152,15 @@ func TestHandlePutWorkspaceValidatesAndClears(t *testing.T) {
 		t.Errorf("workspace_url = %v", out["workspace_url"])
 	}
 	if code, _ := put(`{"id":""}`); code != http.StatusOK {
-		t.Fatalf("登録解除 status=%d", code)
+		t.Fatalf("clearing the ID: status=%d", code)
 	}
 	if id, _ := WorkspaceID(); id != "" {
-		t.Errorf("解除できていない: %q", id)
+		t.Errorf("the ID was not cleared: %q", id)
 	}
 }
 
-// 保存は Agent のデータディレクトリ。プロセスをまたいでも読めること（キャッシュを捨てて再読込）。
+// The ID is stored in the Agent's data directory and must be readable across processes (the
+// cache is dropped, then it is read again).
 func TestWorkspaceIDPersists(t *testing.T) {
 	isolate(t)
 	if err := SetWorkspaceID(sampleWorkspace); err != nil {
@@ -165,13 +170,13 @@ func TestWorkspaceIDPersists(t *testing.T) {
 	wsIDCache = nil
 	wsIDMu.Unlock()
 	if id, src := WorkspaceID(); id != sampleWorkspace || src != "manual" {
-		t.Errorf("再読込 = %q/%q", id, src)
+		t.Errorf("re-read = %q/%q", id, src)
 	}
 }
 
-// 実機で踏んだ: 利用枠ページの URL をそのまま貼るのが自然な操作なのに、検証が
-// 「どこかに wrk_ があればOK」だったので URL が丸ごと保存され、リンクが
-// …/workspace/https://…/go/go に化けた。貼られた文字列からは id だけを取り出す。
+// Hit on a real machine: pasting the usage page's URL as-is is the natural thing to do, but the
+// validation only asked for a wrk_ somewhere, so the whole URL was stored and the link turned
+// into …/workspace/https://…/go/go. Extract only the id from whatever was pasted.
 func TestPastedURLIsNormalizedToID(t *testing.T) {
 	isolate(t)
 	url := "https://opencode.ai/workspace/" + sampleWorkspace + "/go"
@@ -186,14 +191,14 @@ func TestPastedURLIsNormalizedToID(t *testing.T) {
 		t.Errorf("WorkspaceURL = %q, want %q", got, url)
 	}
 	if got := NormalizeWorkspaceID("  " + sampleWorkspace + "  "); got != sampleWorkspace {
-		t.Errorf("素の id も通ること: %q", got)
+		t.Errorf("a bare id must pass through too: %q", got)
 	}
 	if got := NormalizeWorkspaceID("wrk_short"); got != "" {
-		t.Errorf("形式外は空: %q", got)
+		t.Errorf("a malformed value must yield empty: %q", got)
 	}
 }
 
-// 正規化前に書かれたファイル（URL 丸ごと）は、読むだけで直ること。
+// A file written before normalization (holding the whole URL) must heal on read alone.
 func TestLegacyURLValueHealsOnRead(t *testing.T) {
 	isolate(t)
 	url := "https://opencode.ai/workspace/" + sampleWorkspace + "/go"
@@ -202,10 +207,10 @@ func TestLegacyURLValueHealsOnRead(t *testing.T) {
 		wsIDMu.Unlock()
 		t.Fatal(err)
 	}
-	wsIDCache = nil // 次の読み出しでファイルから読み直す
+	wsIDCache = nil // the next read goes back to the file
 	wsIDMu.Unlock()
 
 	if id, src := WorkspaceID(); id != sampleWorkspace || src != "manual" {
-		t.Errorf("読み出しで直っていない: %q/%q", id, src)
+		t.Errorf("the read did not heal it: %q/%q", id, src)
 	}
 }

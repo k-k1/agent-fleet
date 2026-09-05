@@ -13,9 +13,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// marksFixture は所有者 1・共有先 1（権限は permission）・部外者 1 の共有を組み立てて、
-// 所有者 Workspace の Agent を stub で置き換える。agentMarks は GET が返す一覧、
-// seen は Agent が実際に受け取った書き込みの記録。
+// marksFixture builds a share with one owner, one recipient (at the given permission) and
+// one stranger, and stubs out the Agent of the owner's workspace. agentMarks is the list
+// a GET returns; seen records the writes the Agent actually received.
 type marksFixture struct {
 	api       sessionShareAPI
 	catalogID string
@@ -143,16 +143,17 @@ func TestSharedMarksRead(t *testing.T) {
 		}
 	}
 
-	// 権限が無い相手には存在すら答えない。
+	// Someone without permission is not even told the share exists.
 	if denied := f.call(http.MethodGet, "", "", f.strangerIdent, f.strangerView); denied.Code != http.StatusNotFound {
 		t.Fatalf("stranger status=%d body=%s", denied.Code, denied.Body.String())
 	}
 }
 
-// ⚠️ 印の quote は位置復元のために共有先へ渡る。ツール行のように共有 DTO が座標を落として
-// いる part の上の印まで中継すると、落としたはずのパスが quote として出て行く
-// （docs/log/69 §69.4）。塗る場所の制限は Console と Agent にも掛かっているが、中継の出口でも
-// 落とす — 片側が緩んだだけでは漏れないように。
+// A mark's quote travels to the recipient so the position can be restored. Relaying a
+// mark that sits on a part whose coordinates the share DTO drops — a tool line, say —
+// sends that supposedly dropped path out as the quote (docs/log/69 §69.4). The Console
+// and the Agent restrict where a mark may be placed as well, but the relay drops them at
+// its own exit too, so one side loosening is not enough to leak.
 func TestSharedMarksDropNonProseKind(t *testing.T) {
 	f := newMarksFixture(t, "ro")
 	f.agentMarks = []any{
@@ -166,13 +167,13 @@ func TestSharedMarksDropNonProseKind(t *testing.T) {
 	}
 	for _, secret := range []string{"mk_bad", "/home/dev/repos/private/secret.ts"} {
 		if strings.Contains(body, secret) {
-			t.Fatalf("非本文の印が中継された（%q）: %s", secret, body)
+			t.Fatalf("a non-prose mark was relayed (%q): %s", secret, body)
 		}
 	}
 }
 
-// RO は読めても書けない。書き込みは docs/log/59 §2 の RW と同じ線で切る（承認フローには
-// 載せないが、権限そのものは同じ）。
+// RO can read but not write. Writes are cut on the same RW line as docs/log/59 §2: not
+// part of the approval flow, but the same permission.
 func TestSharedMarksWriteNeedsRW(t *testing.T) {
 	f := newMarksFixture(t, "ro")
 	body := `{"id":"mk_2","turn":"uuid-1","part":0,"kind":"text","quote":"q","nth":0,"color":"green"}`
@@ -183,11 +184,12 @@ func TestSharedMarksWriteNeedsRW(t *testing.T) {
 		t.Fatalf("RO DELETE status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if f.seenPOST != nil || f.seenDELETE != "" {
-		t.Fatalf("RO の書き込みが Agent へ届いた: post=%+v delete=%q", f.seenPOST, f.seenDELETE)
+		t.Fatalf("an RO write reached the Agent: post=%+v delete=%q", f.seenPOST, f.seenDELETE)
 	}
 }
 
-// ⚠️ author は申告を採らない。採ると共有先が所有者や別の共有先になりすませる。
+// author is never taken from the request: accepting it would let a recipient impersonate
+// the owner or another recipient.
 func TestSharedMarksStampAuthor(t *testing.T) {
 	f := newMarksFixture(t, "rw")
 	body := `{"id":"mk_2","turn":"uuid-1","part":0,"kind":"text","quote":"q","nth":0,"color":"green","author":"owner@example.com"}`
@@ -196,21 +198,21 @@ func TestSharedMarksStampAuthor(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if f.seenPOST["author"] != "recipient@example.com" {
-		t.Fatalf("author が上書きされていない: %+v", f.seenPOST)
+		t.Fatalf("author was not overwritten: %+v", f.seenPOST)
 	}
 	if !strings.Contains(rec.Body.String(), "recipient@example.com") {
-		t.Fatalf("応答に作成者が無い: %s", rec.Body.String())
+		t.Fatalf("the response carries no author: %s", rec.Body.String())
 	}
 
-	// 座標を持つ part の上には、RW でも置けない。
+	// Not even RW may place a mark on a part that carries coordinates.
 	bad := `{"id":"mk_3","turn":"uuid-1","part":1,"kind":"tool","quote":"/private/x.ts","nth":0,"color":"green"}`
 	if r := f.call(http.MethodPost, "", bad, f.recipientIdent, f.recipientView); r.Code != http.StatusBadRequest {
 		t.Fatalf("non-prose POST status=%d body=%s", r.Code, r.Body.String())
 	}
 }
 
-// 消せるのは自分の印だけ。判定そのものは Agent 側だが、CP が author を必ず添えることで
-// 初めて成立する。
+// Only your own marks can be deleted. The Agent makes that call, but it only works
+// because the CP always attaches the author.
 func TestSharedMarksDeleteCarriesAuthor(t *testing.T) {
 	f := newMarksFixture(t, "rw")
 	rec := f.call(http.MethodDelete, "id=mk_9", "", f.recipientIdent, f.recipientView)
@@ -218,6 +220,6 @@ func TestSharedMarksDeleteCarriesAuthor(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(f.seenDELETE, "author=recipient%40example.com") || !strings.Contains(f.seenDELETE, "id=mk_9") {
-		t.Fatalf("Agent へ渡ったクエリ: %q", f.seenDELETE)
+		t.Fatalf("query passed to the Agent: %q", f.seenDELETE)
 	}
 }

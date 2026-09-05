@@ -1,5 +1,5 @@
-// Markdown の描画後に前付き（front matter）と、直した表の注記を差し込む
-// 命令的なパス。本文は sanitize 済みの innerHTML なので React ノードにはできない。
+// Imperative pass that inserts the front matter and the repaired-table notes after the
+// Markdown has rendered. The body is sanitized innerHTML, so it cannot be React nodes.
 import { type TableRepair } from "../../../lib/markdown.ts";
 import { t } from "../../../lib/i18n/index.ts";
 

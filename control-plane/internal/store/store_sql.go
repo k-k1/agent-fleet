@@ -74,11 +74,10 @@ func rebindDollar(q string) string {
 	return b.String()
 }
 
-// DB は移送（ADR 0067 / CP-STORE）で開けた逃がし口である。生 SQL でテーブルを
-// 直接いじる main 側のテスト（reaper_test.go の workspace_activity、
-// limits_test.go の tenant.status など）が、移送前は同一パッケージから
-// `st.db` を触れていた。戻り値の型を非公開のままにしてあるのは意図で、
-// 外からは「返ってきたものの ExecContext を呼ぶ」以上のことができない。
+// DB is the escape hatch for main-side tests that drive tables with raw SQL
+// (workspace_activity in reaper_test.go, tenant.status in limits_test.go). The returned
+// type stays unexported on purpose: a caller outside this package can do nothing with it
+// beyond ExecContext.
 //
-// 製品コードから使わないこと——ダイアレクト差は下の rebind に閉じている。
+// Not for production code — dialect differences are confined to rebind below.
 func (s *SQL) DB() *sqlDB { return s.db }

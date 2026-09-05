@@ -21,7 +21,7 @@ const (
 	shareProposalMaxOpen  = 20
 	shareOwnerLease       = 2 * time.Minute
 	// How long a reconciled owner inventory is trusted before syncing again. Bounds only
-	// deletion-detection (and状態バッジ) lag, never ACL evaluation — see freshCatalog.
+	// deletion-detection (and state badge) lag, never ACL evaluation — see freshCatalog.
 	//
 	// Two tiers, because the two readers want opposite things. Opening a shared session
 	// (authorizeCatalog) is a deliberate act on ONE session and must not serve a session
@@ -67,7 +67,7 @@ func newSessionShareAPI(m *manager) sessionShareAPI {
 // authorizeCatalog still evaluates the share rules against the database on every single
 // request, so revoking a share still takes effect immediately. What can now lag, by at
 // most `ttl`, is noticing that the owner deleted the session or working copy upstream,
-// and how current the per-session 状態 badge is.
+// and how current the per-session state badge is.
 func (a sessionShareAPI) freshCatalog(owner string, ttl time.Duration) bool {
 	a.readMu.Lock()
 	defer a.readMu.Unlock()
@@ -118,9 +118,9 @@ func (a sessionShareAPI) allowRead(key string) bool {
 	return true
 }
 
-// repoInfo は /repos の1行から ACL・表示に必要な分だけを抜いたもの。parentWC は
-// worktree の親(ベース)作業コピーの workingCopyId で、repo 共有がプロジェクト全体を
-// 覆うための鍵になる(docs/log/59 §1)。
+// repoInfo keeps only the parts of a /repos row that ACL evaluation and display need.
+// parentWC is the workingCopyId of a worktree's parent (base) working copy — the key that
+// lets a repo share cover the whole project (docs/log/59 §1).
 type repoInfo struct {
 	worktree bool
 	parent   string
@@ -136,9 +136,10 @@ func (a sessionShareAPI) syncCatalog(ctx context.Context, res *resolved) error {
 	return err
 }
 
-// syncCatalogLocked は在庫を突合し、ついでに読んだ /repos の内容を返す。呼び出し側
-// (put)が共有対象の実在確認で同じ情報を要るため、Agent への往復をもう1回増やさない。
-// 返り値は Agent が /repos を答えられなかった場合 nil(= 在庫不明)。
+// syncCatalogLocked reconciles the inventory and also returns the /repos content it read,
+// because the caller (put) needs the same information to confirm the share target exists —
+// returning it saves another round trip to the Agent. The map is nil when the Agent could
+// not answer /repos (inventory unknown).
 func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (map[string]repoInfo, error) {
 	if res.rt.State(ctx) != "running" {
 		return nil, nil
@@ -153,11 +154,11 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
 		return nil, err
 	}
-	// worktree/parent(受信側のプロジェクト/worktreeツリー表示用、docs/log/59)は working
-	// copy 単位の情報なので /repos から working_copy_id をキーに引く。取得できなくても
-	// (一時的な Agent 到達不可等)catalog 自体の同期は継続する — この付随情報が
-	// 新規行なら空のままになるだけで、下の失効プルーニング(byWorkingCopy==nil)と
-	// 同じ「transient error では何もしない」方針を踏襲する。
+	// worktree/parent (the recipient's project/worktree tree display, docs/log/59) is
+	// per-working-copy, so it is looked up from /repos keyed by working_copy_id. When that
+	// read fails (a momentarily unreachable Agent), the catalog sync still proceeds: the
+	// side information is simply left empty on a new row, following the same "do nothing on
+	// a transient error" rule as the stale-rule pruning below (byWorkingCopy == nil).
 	var byWorkingCopy map[string]repoInfo
 	if reposBody, reposErr := agentText(ctx, res.rt, http.MethodGet, "/repos", nil); reposErr == nil {
 		var inventory struct {
@@ -171,7 +172,7 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 		}
 		if json.Unmarshal([]byte(reposBody), &inventory) == nil {
 			byWorkingCopy = map[string]repoInfo{}
-			// Parent はフォルダ名なので、まず名前→workingCopyId を作ってから引き直す。
+			// Parent is a folder name, so build a name -> workingCopyId map first.
 			wcByName := map[string]string{}
 			for _, repo := range inventory.Repos {
 				if !repo.Worktree {
@@ -190,9 +191,9 @@ func (a sessionShareAPI) syncCatalogLocked(ctx context.Context, res *resolved) (
 	now := store.NowTS()
 	rows := make([]store.SharedSessionCatalog, 0, len(wire.Sessions))
 	for _, s := range wire.Sessions {
-		// state は生存(running/stopped)、activity は Agent の live state(working /
-		// question / …)。停止中に前回の activity を残すと「進行中のまま止まった」ように
-		// 見えるので、生きている間だけ持たせる。
+		// state is liveness (running/stopped), activity is the Agent's live state (working /
+		// question / …). Keeping the last activity on a stopped session would read as "it
+		// stopped mid-turn", so activity is only carried while the session is alive.
 		state, activity := "stopped", ""
 		if s.Alive {
 			state, activity = "running", s.State
@@ -236,10 +237,10 @@ func memberByUserKey(ctx context.Context, st store.Store, tenantID, key string) 
 	return store.MemberInfo{}, false, nil
 }
 
-// searchRecipients — 同一テナントの共有先候補を email/user_key の部分一致で検索する。
-// 一般メンバーが呼べる(withMembership、管理者権限は問わない) — Console の共有作成
-// combobox はここで解決した user_key だけを送るので、利用者は正規化ルール
-// (sanitizeUser)を意識しない。
+// searchRecipients finds share recipients in the same tenant by substring match on email or
+// user_key. Any member may call it (withMembership; no admin right required) — the Console's
+// share combobox only ever sends a user_key resolved here, so the user never has to know the
+// normalization rule (sanitizeUser).
 func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	q := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
 	rows, err := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
@@ -250,7 +251,7 @@ func (a sessionShareAPI) searchRecipients(w http.ResponseWriter, r *http.Request
 	out := make([]map[string]string, 0, 20)
 	for _, m := range rows {
 		if m.MembershipID == mv.MembershipID {
-			continue // 自分自身は候補から除外(share_self を事前に避ける)
+			continue // exclude yourself, so share_self can never be picked
 		}
 		if q != "" && !strings.Contains(strings.ToLower(m.Email), q) && !strings.Contains(strings.ToLower(m.UserKey), q) {
 			continue
@@ -343,7 +344,8 @@ func (a sessionShareAPI) put(w http.ResponseWriter, r *http.Request, res *resolv
 	found := false
 	if in.Scope.Type == "session" {
 		for _, c := range catalog {
-			// アーカイブ済みは共有先に出さない(docs/log/59 §1)ので、共有対象にも選べない。
+			// An archived session is never shown to recipients (docs/log/59 §1), so it
+			// cannot be chosen as a share target either.
 			if c.Name == in.Scope.Key && !c.Archived {
 				found = true
 				break
@@ -450,15 +452,17 @@ func (a sessionShareAPI) delete(w http.ResponseWriter, r *http.Request, ident st
 	writeJSON(w, 200, map[string]any{"deleted": s.ID})
 }
 
-// effectivePermission — この catalog 行に効く最も強い権限("" なら共有されていない)。
+// effectivePermission returns the strongest permission that applies to this catalog row
+// ("" means it is not shared).
 //
-// repo 規則はプロジェクト全体を覆う: ベース作業コピー直下のセッションに加えて、その
-// 配下 linked worktree のセッションにも効く(docs/log/59 §1)。所有者の作業は基本 worktree
-// 側で進むため、ベースだけを対象にすると「リポジトリを共有した」のに共有先には古い
-// セッションしか見えない、という結果になっていた。worktree 規則は従来どおり、その
-// worktree 1つだけの範囲。空の scope_key はここでも弾く: workingCopyId を持てない
-// 作業コピー(marker を作れない)や親不明の行は "" を持つので、万一空の規則が入ると
-// 無関係なセッションまで丸ごと巻き込んでしまう(put も空キーは拒否している)。
+// A repo rule covers the whole project: sessions directly under the base working copy and
+// sessions in the linked worktrees below it (docs/log/59 §1). The owner's work mostly happens
+// on the worktree side, so scoping to the base alone left the recipient of a "shared
+// repository" seeing only stale sessions. A worktree rule stays scoped to that one worktree.
+// An empty scope_key is rejected here as well: a working copy that cannot hold a
+// workingCopyId (no marker could be written) and a row with an unknown parent both carry "",
+// so an empty rule slipping in would sweep in completely unrelated sessions (put rejects an
+// empty key too).
 func effectivePermission(shares []store.SessionShare, c store.SharedSessionCatalog) string {
 	p := ""
 	for _, s := range shares {
@@ -501,47 +505,51 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 	}
 	members, _ := a.mgr.store.ListMembersByTenant(r.Context(), mv.TenantID)
 	ownerKeys := map[string]string{}
-	// 所有者の名乗りはログイン ID(メールアドレス)。user_key は sanitizeUser を通した
-	// 正規化キー(`a@x.com` → `a-x-com`、衝突時は接尾辞付き)で、人が普段名乗っている
-	// 文字列ではない。email が無い identity(管理者が user_key だけで足した場合)は
-	// 空で返し、表示側が user_key へ落とす。
+	// An owner identifies themselves by login ID (email address). user_key is the key
+	// normalized through sanitizeUser (`a@x.com` -> `a-x-com`, with a suffix on collision),
+	// not a string anyone recognizes as their own name. An identity with no email (an admin
+	// added it by user_key alone) is returned empty and the display side falls back to
+	// user_key.
 	ownerEmails := map[string]string{}
 	for _, m := range members {
 		ownerKeys[m.MembershipID] = m.UserKey
 		ownerEmails[m.MembershipID] = m.Email
 	}
-	// ?refresh=1 は「今の状態を取り直す」明示操作(共有セクションのリロードボタン)。
-	// 定期ポーリングの間引きを飛び越えるが、下限(shareForcedCatalogTTL)は残す —
-	// 押しっぱなしが所有者 Workspace への増幅器にならないように。
+	// ?refresh=1 is the explicit "fetch the current state" action (the share section's reload
+	// button). It skips the polling throttle but keeps the floor (shareForcedCatalogTTL), so
+	// a held-down button cannot become an amplifier into the owner's Workspace.
 	ttl := shareListCatalogTTL
 	if r.URL.Query().Get("refresh") == "1" {
 		ttl = shareForcedCatalogTTL
 	}
 	out := []any{}
 	for owner := range owners {
-		// 所有者ごとに1回だけ解決する。State() は docker inspect 相当の外部呼び出しで、
-		// この一覧は受信側のタブごとに5秒間隔で叩かれるため、以前の「解決2回 + State
-		// 2〜3回 + 毎回フル同期」は所有者 Workspace への定常負荷そのものだった。
+		// Resolve each owner exactly once. State() is an external call on the order of a
+		// docker inspect, and this list is polled every 5s from every recipient's tab, so
+		// resolving twice and calling State() two or three times per owner was itself a
+		// standing load on the owner's Workspace.
 		res, e := a.ownerResolved(r.Context(), owner)
 		wsState := "stopped"
 		if e == nil {
 			wsState = res.rt.State(r.Context())
 		}
-		// 在庫の再突合は per-owner throttle に乗せる。同期は所有者の share ロックを
-		// 握ったまま Agent へ2往復するので、5秒ポーリングごとに走らせると共有の
-		// 作成/解除(同じロックを取る)がその裏で待たされていた。ここで遅れるのは
-		// 「所有者が消した/アーカイブしたことに気付く」までと状態バッジの鮮度だけで、
-		// ACL は下の effectivePermission が毎回 DB から評価する。
+		// Put the inventory reconciliation behind the per-owner throttle. A sync makes two
+		// round trips to the Agent while holding the owner's share lock, so running it on
+		// every 5s poll left share creation/removal (which takes the same lock) queued behind
+		// it. All that can lag here is noticing that the owner deleted or archived a session,
+		// and the freshness of the state badge; effectivePermission below still evaluates the
+		// ACL from the database on every request.
 		if e == nil && wsState == "running" && !a.freshCatalog(owner, ttl) {
 			if err := a.syncCatalog(r.Context(), res); err != nil {
-				a.invalidateCatalog(owner) // 失敗を「同期済み」として数えない
+				a.invalidateCatalog(owner) // a failed sync must not count as synced
 			}
 		}
 		catalog, _ := a.mgr.store.ListSharedSessionCatalogByOwner(r.Context(), owner)
 		for _, c := range catalog {
-			// アーカイブ済みは所有者が畳んだ会話。共有規則は残す(復元すればまた見える)が、
-			// 共有先の一覧には出さない — 出し続けると「所有者が消したはずの古いセッションが
-			// 延々と残る」ように見える(docs/log/59 §1)。
+			// An archived session is a conversation the owner has put away. The share rule
+			// stays (unarchiving makes it visible again) but the recipient's list leaves it
+			// out — keeping it there reads as old sessions the owner deleted lingering
+			// forever (docs/log/59 §1).
 			if c.Archived {
 				continue
 			}
@@ -550,9 +558,10 @@ func (a sessionShareAPI) listReceived(w http.ResponseWriter, r *http.Request, _ 
 				continue
 			}
 			out = append(out, map[string]any{"id": c.ID, "ownerUserKey": ownerKeys[owner], "ownerEmail": ownerEmails[owner], "name": c.Name, "kind": c.Kind, "repo": c.Repo, "workingCopyId": c.WorkingCopyID, "title": c.Title, "label": c.Label, "createdAt": c.CreatedAt, "state": c.State, "permission": p, "workspaceState": wsState, "worktree": c.Worktree, "parent": c.Parent, "activity": c.Activity,
-				// ブランチは作業コピーの表示ラベル(所有者側の repo 行と同じ)。転写 DTO が落とす
-				// turn の branch(会話の描画に不要な座標)とは別物で、これが無いと worktree は
-				// ランダム slug のフォルダ名でしか見分けられない。
+				// branch is the working copy's display label (the same one the
+				// owner's repo row shows), not the per-turn branch the transcript
+				// DTO drops as a coordinate. Without it a worktree can only be told
+				// apart by its random-slug folder name.
 				"branch": c.Branch})
 		}
 	}
@@ -596,8 +605,9 @@ func (a sessionShareAPI) authorizeCatalog(ctx context.Context, mv store.Membersh
 	if p == "" || (wantRW && p != "rw") {
 		return c, nil, &apiError{404, "not_found", "shared session not found"}
 	}
-	// アーカイブ中は一覧から外れる(listReceived)ので、直リンクの読みも同じ扱いにする。
-	// 権限判定の後に置く: 権限が無い相手には従来どおり 404 で、存在の有無すら答えない。
+	// An archived session drops out of the list (listReceived), so a direct-link read is
+	// treated the same way. This is placed after the permission check on purpose: someone
+	// without permission still gets 404 and is not told whether the session exists.
 	if c.Archived {
 		return c, nil, &apiError{http.StatusConflict, "owner_session_archived", "the owner archived this session"}
 	}
@@ -632,21 +642,23 @@ func (a sessionShareAPI) messages(w http.ResponseWriter, r *http.Request, _ stor
 	writeJSON(w, status, payload)
 }
 
-// handoffProposals — 共有先にも「引き継ぎ」の中身を見せる。
+// handoffProposals shows the contents of a handoff proposal to recipients too.
 //
-// セッションが propose_session_handoff を呼んでも、転写に残るのはツール行と定型の
-// 完了文だけで、肝心の本文(次セッションの表示名と引き継ぎプロンプト)は所有者
-// Workspace 側の別ストア(session-handoffs)にある。ミラーはそれを会話へ差し込む
-// カードとして描いているので、同じ描画層を通す共有ビュー(docs/log/59 §3)にも同じ素が要る。
-// 転写と同じく本文だけを allowlist で通し、置き場所などの座標は返さない。
+// When a session calls propose_session_handoff, all the transcript keeps is the tool line and
+// a boilerplate completion sentence; the substance (the next session's title and the handoff
+// prompt) lives in a separate store on the owner's Workspace (session-handoffs). The mirror
+// draws that as a card inserted into the conversation, so the shared view — which goes
+// through the same render layer (docs/log/59 §3) — needs the same material. As with the
+// transcript, only the body passes the allowlist; coordinates such as where it is stored
+// do not.
 func (a sessionShareAPI) handoffProposals(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	c, res, e := a.authorizeCatalog(r.Context(), mv, r.PathValue("id"), false)
 	if e != nil {
 		writeAPIErr(w, e)
 		return
 	}
-	// 転写と同じバケツで数える。共有先1人あたりの所有者 Workspace への往復を、
-	// 面ごとに増やさないため。
+	// Counted in the same bucket as the transcript, so adding a surface does not add round
+	// trips into the owner's Workspace per recipient.
 	if !a.allowRead(mv.MembershipID + ":" + c.ID) {
 		writeAPIErr(w, &apiError{http.StatusTooManyRequests, "shared_read_rate_limited", "too many shared transcript reads"})
 		return
@@ -714,8 +726,8 @@ func sharedTranscriptDTO(payload map[string]any) map[string]any {
 			p := map[string]any{}
 			// "declined" is a display flag on kind=question: the tool_result was the agent's
 			// own decline boilerplate (an Escape out of the modal), not a pick. Without it the
-			// recipient's card badges 回答済み and renders the rejection prose as if it were
-			// the chosen answer.
+			// recipient's card badges itself as answered and renders the decline prose as
+			// if it were the chosen answer.
 			copyAllowed(p, part, "kind", "text", "tool", "info", "cause", "output", "prompt", "agentType",
 				"status", "model", "answer", "declined", "plan", "caption", "qid")
 			if raw, ok := part["questions"]; ok {
@@ -735,13 +747,15 @@ func sharedTranscriptDTO(payload map[string]any) map[string]any {
 	return out
 }
 
-// sharedAnswers passes the whole-transcript interaction map (tool_use id → その回答)。
+// sharedAnswers passes the whole-transcript interaction map (tool_use id -> its answer).
 //
-// エージェントは質問の tool_use を**訊いた時点**で転写に書き、その回答は数秒〜分後の別行に
-// 来る。窓がその2行をまたぐと、共有先が持っているのは未回答のカードのままになり、あとから
-// 届く回答は同じターンを再送しない増分には載らない。所有者側はこの map を qid で後追い
-// 適用して直している(patchAnswers)ので、共有先にも同じ素が要る。
-// 通すのは本文と却下フラグだけ。鍵の tool_use id は不透明な識別子で座標を含まない。
+// An agent writes a question's tool_use into the transcript when it ASKS, and the answer
+// arrives seconds or minutes later on a separate line. When the window straddles those two
+// lines, all the recipient holds is an unanswered card, and the answer that arrives later is
+// not carried by an increment that does not resend the same turn. The owner's side fixes this
+// by applying this map after the fact, keyed by qid (patchAnswers), so the recipient needs the
+// same material. Only the body and the decline flag pass; the tool_use id used as the key is
+// an opaque identifier and carries no coordinate.
 func sharedAnswers(raw any) map[string]any {
 	items, _ := raw.(map[string]any)
 	out := make(map[string]any, len(items))
@@ -765,7 +779,7 @@ func sharedAnswers(raw any) map[string]any {
 // once inertly in the transcript and once as the actionable card built from these
 // top-level payloads. Drop them here and the shared view is left with neither: the
 // recipient sees nothing at all for as long as the question is open, which is exactly
-// when they most want to read it ("共有先に AUQ の選択肢が見えない").
+// when they most want to read it.
 //
 // The contents are conversation, not coordinates: the question text, its options (with the
 // preview mockups the choice is about) and the prose the agent streamed just before it.
@@ -778,9 +792,10 @@ func sharePendingInteraction(out, payload map[string]any) {
 	copyAllowed(out, payload, "pendingText", "pendingPlan")
 }
 
-// sharedHandoffDTO — 引き継ぎ提案の allowlist。表示に要るのは本文(title/prompt)と、
-// 会話のどこへ差し込むかの created_at、それに「起動済み」バッジの launched_at だけ。
-// id は React の鍵として持たせる(ランダムな不透明値で、座標を含まない)。
+// sharedHandoffDTO is the allowlist for a handoff proposal. Display needs only the body
+// (title/prompt), created_at to place it in the conversation, and launched_at for the
+// "already launched" badge. id is carried as the React key: a random opaque value with no
+// coordinate in it.
 func sharedHandoffDTO(payload map[string]any) map[string]any {
 	items, _ := payload["proposals"].([]any)
 	out := make([]any, 0, len(items))

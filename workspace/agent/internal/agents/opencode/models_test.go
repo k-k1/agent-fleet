@@ -51,8 +51,9 @@ func TestMergeCommandEnv(t *testing.T) {
 	}
 }
 
-// daemon の一覧は「非推奨」も含む（実測 110 件中 31 件）。CLI の出力（79 件）と
-// 揃うよう落とすこと — 揃えないと起動一覧に廃止済みモデルが並ぶ。
+// The daemon's listing includes deprecated entries (measured: 31 of 110). They must be
+// dropped to line up with the CLI's output (79), otherwise retired models show up in the
+// launch list.
 func TestFilterDaemonModels(t *testing.T) {
 	no, yes := false, true
 	got := filterDaemonModels([]daemonModel{
@@ -69,8 +70,8 @@ func TestFilterDaemonModels(t *testing.T) {
 	}
 }
 
-// 稼働中の daemon があるならそちらが正: 一発起動の `opencode models` は Console
-// アカウントのログインを見ないため（鍵なしで CLI 8 件 / serve 86 件を実測）。
+// A running daemon is authoritative: a one-shot `opencode models` does not see the Console
+// account's login (measured without a key: 8 entries from the CLI, 86 from serve).
 func TestModelsPrefersRunningDaemon(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/model" {
@@ -96,19 +97,20 @@ func TestModelsPrefersRunningDaemon(t *testing.T) {
 	}
 }
 
-// daemon が居なければ従来どおり CLI に落ちる（起動して取りに行ったりはしない）。
+// With no daemon present it falls back to the CLI as before; it never starts one to fetch.
 func TestModelsFallsBackWithoutDaemon(t *testing.T) {
 	orig := oauthProbe
 	oauthProbe = func() (string, bool) { return "", false }
 	defer func() { oauthProbe = orig }()
 	if got := modelsFromDaemon(); got != nil {
-		t.Fatalf("daemon 不在なのに %v", got)
+		t.Fatalf("no daemon present, yet got %v", got)
 	}
 }
 
-// カタログから落とした id は名前だけ覚えておく: 起動ガードが「打ち間違い」と「提供終了」を
-// 区別できないと、利用者は正しい id を疑って再指定を繰り返す（実例: 2026-08-21 公開の
-// opencode-go/ox-alpha-free が 1 週間で deprecated になり、起動が「利用できません」で落ちた）。
+// An id dropped from the catalog keeps its name on record: if the launch guard cannot tell
+// a typo from a retired model, the user doubts a correct id and keeps re-entering it.
+// Measured: opencode-go/ox-alpha-free was published on 2026-08-21, went deprecated within a
+// week, and launches failed with "not available".
 func TestRetiredRemembersDroppedIDs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(`{"location":{},"data":[
@@ -130,14 +132,14 @@ func TestRetiredRemembersDroppedIDs(t *testing.T) {
 		t.Fatalf("Models = %v, want [opencode-go/kimi-k3]", got)
 	}
 	if !Retired("opencode-go/ox-alpha-free") {
-		t.Fatal("deprecated な id を退役として覚えていない")
+		t.Fatal("a deprecated id was not remembered as retired")
 	}
 	if !Retired("opencode/paid-locked") {
-		t.Fatal("enabled:false の id を退役として覚えていない")
+		t.Fatal("an enabled:false id was not remembered as retired")
 	}
-	// 生きている id と、そもそもカタログに無い id は退役ではない — ここを取り違えると
-	// 打ち間違いに「提供終了」と表示してしまう。
+	// A live id, and an id that was never in the catalog at all, are not retired. Getting
+	// this wrong labels a typo as "no longer available".
 	if Retired("opencode-go/kimi-k3") || Retired("opencode-go/typo") {
-		t.Fatal("生きている / 存在しない id を退役と判定した")
+		t.Fatal("a live / nonexistent id was judged retired")
 	}
 }

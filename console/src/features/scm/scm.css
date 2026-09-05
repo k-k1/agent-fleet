@@ -83,8 +83,8 @@
     display: block;
   }
 }
-/* Narrow pane: header action buttons collapse to icons (コミット詳細の
-   全て開く/閉じる/折り返し etc. — the icon + tooltip carry the meaning). */
+/* Narrow pane: header action buttons collapse to icons (the commit detail's expand all /
+   collapse all / wrap etc. — the icon + tooltip carry the meaning). */
 @container (max-width: 520px) {
   .view-head .ui-btn .lbl {
     display: none;
@@ -122,7 +122,7 @@
    for every commit below. The hollow node already marks the commit as off-branch.
    The fade is a colour STEP, not `opacity`: opacity blends toward the surface, which in
    the light theme dropped the subject to 3.6:1 and the author·date·sha line to 2.5:1 —
-   unreadable, and worst exactly where the row matters (未マージのコミット). Stepping each
+   unreadable, and worst exactly where the row matters (an unmerged commit). Stepping each
    line one rung down the fg → muted → muted2 ladder reads as "recessive" just as well
    and keeps every rung ≥4.5:1 in both themes. */
 .cgraph-row.dim .cgraph-subj {

@@ -73,7 +73,7 @@
   min-width: 70px;
 }
 /* Stopped because the container was OOM-killed: flag the state chip so it stands out
-   from a plain 停止 (detail rides the tooltip). */
+   from a plain "stopped" (detail rides the tooltip). */
 .ws-state.warn {
   color: var(--warn);
   font-weight: 600;
@@ -82,12 +82,12 @@
   padding: 3px 12px;
 }
 /* Power toggle glued to the state chip: an icon-only ⏻ that starts/stops the
-   workspace (no label — the adjacent 稼働中/停止 chip states which it is). Tinted by
+   workspace (no label — the adjacent running/stopped chip states which it is). Tinted by
    state (green = powered on / running, muted = off), and on hover flips to the
    intent color of the action it will perform (amber = will stop, green = will
    start). */
 .ws-power {
-  position: relative; /* anchors the 要再起動 dot below */
+  position: relative; /* anchors the "restart required" dot below */
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -169,8 +169,8 @@ button.ws-usage-btn:hover {
 .ws-usage-nums {
   font-variant-numeric: tabular-nums;
 }
-/* Max付近: チップが % ではなくリセット時刻を出しているとき、その値を crit 色にして
-   「詰まっている」ことを一目で示す（枠色のアイコンはそのまま）。 */
+/* Near the cap: when the chip shows a reset time instead of a %, tint that value crit so
+   being blocked reads at a glance (the outlined icon stays as it is). */
 .ws-usage-nums.crit {
   color: var(--del);
   font-weight: 600;
@@ -281,7 +281,7 @@ button.wu-reload {
   gap: 4px;
   font-size: 12px;
 }
-/* Snapshot note (codex): explains the reading isn't live, in place of a 更新 button. */
+/* Snapshot note (codex): explains the reading isn't live, in place of a refresh button. */
 .wu-note {
   margin-top: 8px;
   font-size: 11px;
@@ -301,8 +301,8 @@ button.wu-reload {
 .wu-manage:hover {
   text-decoration: underline;
 }
-/* 「機能別の内訳」= 設定 › 使用量 へのディープリンク。見た目は wu-manage と同じだが
-   ボタン要素なので、素のボタン装飾を消しておく。 */
+/* The per-feature breakdown link deep-links into Settings > Usage. It looks like
+   wu-manage, but it is a button element, so the native button chrome is stripped. */
 button.wu-manage {
   background: none;
   border: 0;
@@ -335,8 +335,8 @@ button.wu-manage {
 .pv-actions {
   justify-content: flex-end;
 }
-/* プレビュー用サブドメインの 1 行（docs/log/81）。左のボタンがポート、右がコピー。
-   ホスト名そのものは title に入れて、popover を広げない。 */
+/* The preview-subdomain row (docs/log/81): the left button is the port, the right one
+   copies. The hostname itself goes in title so the popover does not widen. */
 .pv-host {
   flex: 1;
   min-width: 0;
@@ -348,14 +348,15 @@ button.wu-manage {
   white-space: nowrap;
   text-align: left;
 }
-/* 「公開中」は畳まれていても目に入る必要がある —— この機能の事故は、公開したことを
-   忘れたときにだけ起きる（ADR 0062 決定 12）。 */
+/* The "public" marker must be visible even when the section is collapsed: the accident
+   this feature can cause only happens when you forget you published (ADR 0062,
+   decision 12). */
 .pv-public {
   color: var(--warn);
   font-weight: 600;
 }
-/* 共有されているプレビューの行（docs/log/81 §14.6）は「誰の」＋ポートのボタンなので、
-   名前側を伸ばさずに省略する。メールアドレスは長さが読めない。 */
+/* A shared preview row (docs/log/81 §14.6) is "whose" plus the port button, so the name
+   side is ellipsised rather than stretched — an email address has no predictable length. */
 .pv-shared-owner {
   flex: 1 1 auto;
   min-width: 0;
@@ -365,8 +366,8 @@ button.wu-manage {
   font-size: 12px;
   opacity: 0.85;
 }
-/* ポートのボタンは内容ぶんだけ。★ 既定の .pv-host は flex:1 なので、ここで戻さないと
-   ポートが 2 つ以上ある行で名前が潰れる。 */
+/* The port button takes only its content width. The default .pv-host is flex:1, so
+   without resetting it here the name collapses on a row with two or more ports. */
 .pv-row-shared .pv-host {
   flex: 0 0 auto;
 }
@@ -394,7 +395,7 @@ button.wu-manage {
   gap: 5px;
 }
 /* Split buttons moved here from the pane header — icon + label, label folds away on a
-   narrow bar (like 全て閉じる). Disabled (not hidden) when the split isn't possible. */
+   narrow bar (like "close all"). Disabled (not hidden) when the split isn't possible. */
 .ws-split {
   display: inline-flex;
   align-items: center;
@@ -417,7 +418,7 @@ button.wu-manage {
   }
 }
 
-/* 要再起動 (backend drift): the container runs older code than the deployment.
+/* "Restart required" (backend drift): the container runs older code than the deployment.
    Two coupled affordances — a dot ON the power button (that button IS the fix) and
    a pill beside the state chip that opens the explanation + one-click restart. Warn
    (amber), never red: nothing is broken and nothing is lost, it just isn't applied
@@ -609,8 +610,8 @@ button.wu-manage {
   flex-direction: column;
   gap: 4px;
 }
-/* チップが全て自己非表示（graphs 無し・未ログイン）だと中身ゼロになる — 空のまま
-   残すと popover 内に余白だけが出るので畳む（WsBar 側では判定できない）。 */
+/* When every chip hides itself (no graphs, not logged in) this is empty; leaving it would
+   show nothing but padding inside the popover, so collapse it here — WsBar cannot tell. */
 .ws-more-stats:empty {
   display: none;
 }
@@ -618,13 +619,13 @@ button.wu-manage {
 /* ---- left pane ---- */
 
 /* ---- starting dialog (WsStartingDialog — docs/log/35 §35.9-9) ---- */
-/* 縦並び・間隔・左右の余白は共有の .ui-modal-body が持つ（min-width も要らない —
-   .ui-modal が幅を固定している）。 */
+/* The shared .ui-modal-body owns the column layout, the gaps and the side padding; no
+   min-width is needed either, since .ui-modal fixes the width. */
 .ws-starting-line {
   display: flex;
-  /* ★ center ではなく flex-start。見出しは 1 行に収まる保証が無く（日本語の長い
-     フェーズ名・狭い画面）、2 行になった瞬間に center だとスピナーが行間に浮く。
-     1 行目に乗せるのが正で、行数に依らない。 */
+  /* flex-start, not center. The heading is not guaranteed to fit one line (long phase
+     names, narrow screens), and the moment it wraps, center floats the spinner between
+     the two lines. It belongs on the first line, whatever the line count. */
   align-items: flex-start;
   gap: 10px;
   font-size: 14px;
@@ -634,7 +635,7 @@ button.wu-manage {
   font-size: 16px;
   opacity: 0.85;
   flex: 0 0 auto;
-  /* 16px のアイコンを 21px の行ボックスの中で目の高さに合わせる。 */
+  /* Optically center the 16px icon inside the 21px line box. */
   margin-top: 3px;
 }
 .ws-starting-phase {

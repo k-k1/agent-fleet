@@ -1,5 +1,6 @@
-/* 返信サジェストのチップ行（コンポーサー入力の上）。MirrorView と同じで、折り返さず必ず1行に
-   収め、あふれた分は左右スクロール（タッチ=スワイプ／マウス=ドラッグ）。スクロールバーは隠す。 */
+/* Reply-suggestion chip row, above the composer input. As in MirrorView it never wraps and
+   always stays on one line; the overflow scrolls horizontally (touch = swipe, mouse =
+   drag). The scrollbar is hidden. */
 .chat-suggest {
   min-width: 0;
   display: flex;
@@ -9,7 +10,8 @@
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  /* 長タップがメニューに届くよう選択と iOS callout を抑える（mirror 側と同じ）。 */
+  /* Suppress selection and the iOS callout so a long press reaches the menu (same as
+     mirror). */
   user-select: none;
   -webkit-user-select: none;
   -webkit-touch-callout: none;
@@ -19,9 +21,10 @@
 .chat-suggest::-webkit-scrollbar {
   display: none;
 }
-/* 候補チップ。削除・ピン留めは右クリック / 長タップのメニュー（mirror 側と共有）。 */
+/* Suggestion chip. Delete and pin live in the right-click / long-press menu (shared with
+   mirror). */
 .chat-suggest-chip {
-  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  flex: 0 0 auto; /* single-line scroll: never shrink */
   max-width: 100%;
   display: inline-flex;
   align-items: center;
@@ -42,16 +45,18 @@
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 12%, var(--bg));
 }
-/* v2: LLM 生成候補は accent 寄りで学習候補と区別。 */
+/* v2: LLM-generated suggestions lean on the accent colour to tell them apart from learned
+   ones. */
 .chat-suggest-chip.llm {
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
   background: color-mix(in srgb, var(--accent) 8%, var(--bg));
 }
-/* ピン留め（常に表示）した候補。mirror 側と同じ扱い。 */
+/* Pinned (always shown) suggestions. Same treatment as in mirror. */
 .chat-suggest-chip.pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
-/* Tab 補完でいま入力欄に入っている候補（mirror 側と同じ扱い・入力欄のフォーカスは動かさない）。 */
+/* The suggestion currently placed in the input by Tab completion (same treatment as in
+   mirror; the input's focus is never moved). */
 .chat-suggest-chip.cycling {
   border-color: var(--accent);
   background: color-mix(in srgb, var(--accent) 22%, var(--bg));
@@ -60,9 +65,9 @@
   font-size: 11px;
   color: var(--accent);
 }
-/* v2: ✨ トリガーボタン（on-demand で LLM 候補を取得）。 */
+/* v2: the sparkle trigger button, which fetches LLM suggestions on demand. */
 .chat-suggest-ai {
-  flex: 0 0 auto; /* 1行スクロールなので縮ませない */
+  flex: 0 0 auto; /* single-line scroll: never shrink */
   display: inline-flex;
   align-items: center;
   justify-content: center;

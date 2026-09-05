@@ -1,15 +1,14 @@
-// テナント上限の保存と、スロットプールとの突き合わせ（docs/log/64 §64.35 / ADR 0045 決定 25）。
+// Saving tenant limits, checked against the slot pool (docs/log/64 §64.35, ADR 0045
+// decision 25).
 //
-// この画面の検証は端末履歴の保持日数と時間文字列の書式しか見ておらず、**プール上限を
-// 超える配分が黙って保存できた**。超過は設定画面から最も遠いところ——「枠内なのに起動
-// できない」「他テナントのスロットが立ち退きになる」——でしか表に出ない。
-//
-// 固定したいのは 3 点:
-//   ① 超過は**拒否ではなく警告**であること（保存は通る）。既に超過している配備を
-//      この画面ごと凍らせないため。
-//   ② 打ち間違い（負の数）は**拒否**であること。0 は無制限なので、負は「小さい上限」
-//      ではなく誰も満たせない上限になる。
-//   ③ 収まっているときは何も出さないこと。毎回「大丈夫です」が出ると読まれなくなる。
+// An allocation over the pool limit used to save silently, and the overage only ever surfaced
+// far from this screen: a Workspace inside its quota that will not start, or another tenant's
+// slot being evicted. Three things are pinned:
+//   1. Going over warns, it does not reject — the save still goes through, so a deployment
+//      already over the limit is not frozen out of this screen.
+//   2. A typo (a negative number) is rejected. 0 means unlimited, so a negative is not a small
+//      limit, it is one nobody can satisfy.
+//   3. Nothing is shown when the numbers fit. An "all good" on every save stops being read.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -61,8 +60,8 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe("テナント上限とスロットプールの突き合わせ", () => {
-  it("超過は保存したうえで警告する（拒否しない）", async () => {
+describe("tenant limits checked against the slot pool", () => {
+  it("saves an over-limit allocation and warns, rather than rejecting it", async () => {
     apiJSON.mockResolvedValue({
       tenant: "acme",
       max_workspaces: 50,
@@ -70,25 +69,25 @@ describe("テナント上限とスロットプールの突き合わせ", () => {
     });
     await mount();
     await save();
-    // 保存済みの表示は出る——「保存できなかった」と読ませない。
+    // The saved figures are shown, so this does not read as "the save failed".
     expect(text()).toContain("54");
     expect(text()).toContain("8");
-    // エラートーストではない。
+    // Not an error toast.
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("★分母の違いを、警告と同じ場所で言う", async () => {
+  it("states the difference in denominators in the same place as the warning", async () => {
     apiJSON.mockResolvedValue({
       pool_budget: { max_slots: 10, reserved_slots: 2, capacity: 8, allocated: 54, over: true },
     });
     await mount();
     await save();
-    // 「同時に動いている WS」と「存在している箱」を混ぜて読ませない。停止中の WS は
-    // どのテナント枠にも数えられないまま箱を掴んでいる。
+    // "Workspaces running at once" must not be read as "boxes that exist": a stopped
+    // Workspace still holds a box while counting against no tenant's quota.
     expect(text()).toContain("必要条件であって十分条件ではありません");
   });
 
-  it("収まっていればサーバが何も返さないので、何も出ない", async () => {
+  it("shows nothing when it fits, because the server returns nothing", async () => {
     apiJSON.mockResolvedValue({ tenant: "acme", max_workspaces: 6 });
     await mount();
     await save();
@@ -96,7 +95,7 @@ describe("テナント上限とスロットプールの突き合わせ", () => {
     expect(toast).not.toHaveBeenCalled();
   });
 
-  it("サーバが拒否したときは従来どおりトーストで、警告欄は出さない", async () => {
+  it("uses the usual toast when the server rejects, with no warning panel", async () => {
     apiJSON.mockResolvedValue({ error: { message: "max_workspaces cannot be negative (0 = unlimited)" } });
     await mount();
     await save();
@@ -104,7 +103,7 @@ describe("テナント上限とスロットプールの突き合わせ", () => {
     expect(text()).not.toContain("必要条件");
   });
 
-  it("同時利用の上限であることを欄の隣に書く（占有スロット数ではない）", async () => {
+  it("says next to the field that this is a concurrency limit, not a count of held slots", async () => {
     await mount();
     expect(text()).toContain("同時に動く数");
   });

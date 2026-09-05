@@ -71,8 +71,9 @@ export function DisplayTab() {
             onChange={(v) => setSetting("mirrorTheme", v)}
           />
         </Row>
-        {/* 共有セッション(docs/log/59)は他人の会話を読む面。自分のミラーと別のテーマ/背景に
-            できると、どちらを見ているのかが色で分かる。 */}
+        {/* A shared session (docs/log/59) is a surface for reading someone else's
+            conversation. Letting it take a different theme/background from your own mirror
+            makes the colour say which of the two you are looking at. */}
         <Row label={tr("display.shared_theme")}>
           <Choice
             value={s.sharedTheme}
@@ -90,10 +91,11 @@ export function DisplayTab() {
         ))}
       </section>
 
-      {/* 和文フォントは 1 か所で全面に効く（--mono と fontStack の先頭に入る
-          unicode-range 限定の @font-face）。①②③ のように「欧文フォントも持っている
-          が半角で描いてしまう」文字だけを和文側へ回す指定なので、面ごとのフォント
-          選択より上位に置く。端末だけは対象外（settings.ts の termFontStack 参照）。 */}
+      {/* The Japanese font applies to every surface from this one place (a unicode-range
+          @font-face put at the head of --mono and fontStack). It only routes the characters
+          that a Latin font does have but draws half-width (①②③ and the like) to the Japanese
+          side, so it sits above the per-surface font choice. The terminal is the one exception
+          (see termFontStack in settings.ts). */}
       <section className="ds-group">
         <h4 className="ds-title">{tr("display.cjk_font")}</h4>
         <Row label={tr("display.font")}>
@@ -197,7 +199,7 @@ export function DisplayTab() {
 
 // Generic font names carry a translated display label; brand names (Source Code Pro …)
 // pass through. The stored value stays the raw name so fontStack() keeps matching.
-// i18n-exempt-start: キーは fontStack 突合用の生フォント値（表示は font.* で翻訳・docs/log/28 §2.4）
+// i18n-exempt-start: keys are the raw font values fontStack matches on (the display label comes from font.*, docs/log/28 §2.4)
 const FONT_LABEL_KEYS: Record<string, MsgKey> = {
   "システム等幅": "font.sys_mono",
   "システム": "font.sys",
@@ -260,7 +262,8 @@ function ChipChoice({ value, options, onChange }: ChoiceProps) {
 }
 
 // Stepper keeps font size button-driven but allows any size in range.
-// 範囲は lib/viewFont.ts と共有する（キーボードの Alt+= / Alt+- が同じ上下限で止まる）。
+// The range is shared with lib/viewFont.ts, so the Alt+= / Alt+- shortcuts stop at the same
+// bounds.
 function Stepper({
   value,
   onChange,

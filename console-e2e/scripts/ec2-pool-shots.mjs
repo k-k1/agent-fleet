@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 
-// ec2-pool-shots.mjs — 運用者向けの面（管理 > スロット、および Workspace 破棄の確認）を
-// **実データで**目視するための一回きりの道具。docs/log/64 §64.18.6 / §64.20。
+// ec2-pool-shots.mjs — a one-off tool for eyeballing the operator-facing screens (Admin > Slots,
+// and the Workspace destroy confirmation) against real data. docs/log/64 §64.18.6 / §64.20.
 //
-// 普通の E2E ではない: 相手は sandbox に本当に立っている EC2 スロットプールで、
-// 落ちるかどうかではなく「運用者が何を読めるか」を見るために撮る。だから
-// console-e2e/tests ではなく scripts に置く（chromium-attach-p0.mjs と同じ扱い）。
+// This is not an ordinary E2E: it drives a real EC2 slot pool running in the sandbox, and the
+// shots exist to show what an operator can read, not to pass or fail. Hence scripts/ rather
+// than console-e2e/tests (same treatment as chromium-attach-p0.mjs).
 //
 //   node console-e2e/scripts/ec2-pool-shots.mjs http://127.0.0.1:8899 /tmp/shots
 //
-// 前提: その CP が AUTH=proxy で動いていて、SUPER_ADMIN_EMAILS に下の EMAIL が入っている
-// こと。スロットタブは super_admin にしか出ない（他ランタイムではタブごと出ない）。
-// playwright は console-e2e には入れていない（親クローンの node_modules を読むだけ）。
+// Preconditions: that CP runs with AUTH=proxy and EMAIL below is in SUPER_ADMIN_EMAILS. The
+// slots tab is shown only to super_admin (and only on this runtime). playwright is not a
+// console-e2e dependency; this just reads the parent clone's node_modules.
 import { createRequire } from "node:module";
 const require_ = createRequire(import.meta.url);
 const { chromium } = require_(process.env.AF_PW_CORE || "playwright-core");
@@ -36,7 +36,7 @@ const main = async () => {
   });
   const ctx = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
-    // AUTH=proxy はこのヘッダを信用する。oauth2-proxy の代わり。
+    // AUTH=proxy trusts this header; it stands in for oauth2-proxy.
     extraHTTPHeaders: { "X-Forwarded-Email": EMAIL },
   });
   const page = await ctx.newPage();
@@ -50,7 +50,7 @@ const main = async () => {
   await page.waitForTimeout(3000);
   await shot(page, "00-app");
 
-  // 管理画面はアカウントメニューの中（設定モーダルとは別のダイアログ）。
+  // The admin screen lives in the account menu, as a dialog separate from the settings modal.
   await page.getByText(EMAIL).first().click();
   await page.waitForTimeout(600);
   await shot(page, "01-account-menu");
@@ -58,20 +58,20 @@ const main = async () => {
   await page.waitForTimeout(3000);
   await shot(page, "02-admin");
 
-  // 管理 > スロット（AF_RUNTIME=ecs-ec2 のときだけ出る）
+  // Admin > Slots, shown only when AF_RUNTIME=ecs-ec2.
   const slotTab = page.getByRole("button", { name: /スロット|Slots/ }).first();
   if (await slotTab.count()) {
     await slotTab.click();
-    await page.waitForTimeout(8000); // PoolStatus は毎回 AWS を引くので遅い
+    await page.waitForTimeout(8000); // slow: PoolStatus queries AWS on every load
     await shot(page, "03-pool");
     console.log("--- pool tab text ---");
     console.log(await page.locator(".admin").first().innerText());
   } else {
-    console.log("!! スロットタブが出ていない（super_admin でないか、runtime が ecs-ec2 でない）");
+    console.log("!! no slots tab (not super_admin, or the runtime is not ecs-ec2)");
     console.log(JSON.stringify(await page.locator("button").allTextContents()));
   }
 
-  // テナント詳細 — 退避の設定欄はこのランタイムでだけ出る。
+  // Tenant detail — the hibernation settings only appear on this runtime.
   await page.getByRole("button", { name: /Tenants|テナント/ }).first().click();
   await page.waitForTimeout(1500);
   await page.getByText(/^Default$/).first().click();
@@ -82,7 +82,7 @@ const main = async () => {
     console.log(`${tenantText.includes(key) ? "OK      " : "MISSING "} ${key}`);
   }
 
-  // 外したメンバーの詳細 → Workspace 破棄。ボタンは inactive にだけ出る。
+  // Removed member's detail -> destroy Workspace. The button appears only for inactive members.
   const leaver = page.getByText(/leaver-example-com/).first();
   if (await leaver.count()) {
     await leaver.click();
@@ -96,11 +96,11 @@ const main = async () => {
       console.log("--- destroy dialog ---");
       console.log(await page.locator(".modal, [role=dialog]").last().innerText());
     } else {
-      console.log("!! 破棄ボタンが出ていない");
+      console.log("!! no destroy button");
       console.log(JSON.stringify(await page.locator("button").allTextContents()));
     }
   } else {
-    console.log("!! leaver-example-com が一覧に出ていない（外したメンバーが隠れている）");
+    console.log("!! leaver-example-com is not in the list (removed members are hidden)");
   }
 
   if (errors.length) {

@@ -24,7 +24,7 @@ func TestIsContextOverflowErr(t *testing.T) {
 		"claude execution failed: exit status 1",
 		"failed to parse claude response: unexpected end of JSON",
 		"no response from codex",
-		"context deadline exceeded", // Go の ctx タイムアウト — 超過エラーではない
+		"context deadline exceeded", // Go's ctx timeout — not a context-window overflow
 	}
 	for _, m := range notOverflow {
 		if IsContextOverflowErr(errors.New(m)) {
@@ -38,7 +38,7 @@ func TestIsContextOverflowErr(t *testing.T) {
 
 func TestRecoverForRetryNonOverflowIsNoop(t *testing.T) {
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old"}
-	prov := &stubProvider{reply: "要約"} // 呼ばれないはず
+	prov := &stubProvider{reply: "要約"} // must not be called
 	if RecoverForRetry(context.Background(), c, prov, errors.New("some network blip")) {
 		t.Fatal("non-overflow error triggered recovery")
 	}
@@ -58,7 +58,7 @@ func TestRecoverForRetryCompactsOnOverflow(t *testing.T) {
 	if !RecoverForRetry(context.Background(), c, prov, overflow) {
 		t.Fatal("overflow did not trigger recovery")
 	}
-	// compactConversation が走った証跡: ハンドルクリア＋PendingHandoff。
+	// Evidence that compactConversation ran: the handle is cleared and PendingHandoff is set.
 	if c.ClaudeSessionID != "" || c.PendingHandoff != "引き継ぎ要約" {
 		t.Fatalf("compaction not applied: session=%q handoff=%q", c.ClaudeSessionID, c.PendingHandoff)
 	}
@@ -66,7 +66,7 @@ func TestRecoverForRetryCompactsOnOverflow(t *testing.T) {
 
 func TestRecoverForRetryFailsWhenSummaryAlsoOverflows(t *testing.T) {
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old"}
-	// 既にウィンドウ超過 → 要約ターン自体も失敗するケース。
+	// Already over the window, so the summary turn itself fails too.
 	prov := &stubProvider{err: errors.New("Prompt is too long")}
 	if RecoverForRetry(context.Background(), c, prov, errors.New("Prompt is too long")) {
 		t.Fatal("recovery reported success though the summary turn failed")

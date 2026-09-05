@@ -1,10 +1,10 @@
-// errDetail の契約。`*_failed` のような汎用コードは i18n の定型文しか出さないため、
-// サーバが返した原因（message）が落ちると、利用者の環境でしか再現しない失敗を
-// 追う手がかりが画面から消える（実例: エージェントメモリの取り込み適用が
-// 「取り込みに失敗しました」だけを出して原因を隠した）。
+// The errDetail contract. A generic code such as `*_failed` only produces the i18n boilerplate,
+// so dropping the cause the server returned (message) removes the only on-screen clue to a
+// failure that reproduces on the user's machine alone — agent-memory import showed nothing but
+// "import failed" and hid the reason.
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
-// client.ts は window.fetch を束縛し document.baseURI を読むので、先に stub する。
+// client.ts binds window.fetch and reads document.baseURI at import time, so stub first.
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
@@ -26,7 +26,7 @@ beforeAll(async () => {
 });
 
 describe("errDetail", () => {
-  it("翻訳のあるコードでも、サーバの message を併記する", () => {
+  it("appends the server's message even for a code that has a translation", () => {
     const head = client.errText({ code: "memory_import_failed" });
     const got = client.errDetail({
       code: "memory_import_failed",
@@ -36,18 +36,18 @@ describe("errDetail", () => {
     expect(got).toContain("no such file or directory");
   });
 
-  it("message が無ければ定型文だけ（区切りを付けない）", () => {
+  it("returns the boilerplate alone when there is no message, with no separator", () => {
     const got = client.errDetail({ code: "memory_import_failed" });
     expect(got).toBe(client.errText({ code: "memory_import_failed" }));
     expect(got.endsWith(":")).toBe(false);
   });
 
-  it("未訳コードは errText と同じ（message をそのまま出すので重ねない）", () => {
+  it("matches errText for an untranslated code, which already shows the message verbatim", () => {
     const e = { code: "no_such_code_zzz", message: "boom" };
     expect(client.errDetail(e)).toBe(client.errText(e));
   });
 
-  it("文字列はそのまま", () => {
+  it("passes a plain string through unchanged", () => {
     expect(client.errDetail("plain")).toBe("plain");
   });
 });

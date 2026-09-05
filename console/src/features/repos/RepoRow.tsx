@@ -1,5 +1,5 @@
-// RepoRow — one working-copy row: click the card to open Source Control, 起動 to
-// spawn a session (作業を始める modal / quick ▼ / right-click menu with branch
+// RepoRow — one working-copy row: click the card to open Source Control, launch to
+// spawn a session (start-work modal / quick ▼ / right-click menu with branch
 // switch, fast-forward, delete). Presentational: every handler is a prop, so the
 // same row renders in the flat Repos list AND as each node's header in the project
 // tree (see RepoRowConnected, which wires the handlers from the stores).
@@ -76,13 +76,15 @@ export interface RepoRowProps {
   /** Advances this WT to the parent working copy's HEAD when it is a strict FF. */
   onParentFF?: () => void;
   onDelete?: () => void;
-  /** 停止中のセッション全てアーカイブ（右クリックメニュー）。このフォルダ直下の
-   * セッションのみが対象 — worktree は別フォルダなので、親レポの一括操作には
-   * 含まれない（呼び出し側が sessionsInFolder でスコープ済みの件数/ハンドラを渡す）。 */
+  /** Archive every stopped session (right-click menu). Only sessions directly under this
+   * folder are in scope: a worktree is a separate folder, so it is not swept up by the
+   * parent repo's bulk action (the caller passes a count and handler already scoped with
+   * sessionsInFolder). */
   onArchiveStopped?: () => void;
   stoppedCount?: number;
-  /** 削除ロック（docs/log/45）の切替。ロック中は削除メニューが無効になり、空になった
-   * worktree の自動 prune も止まる（保護の実体は Agent 側の 403）。 */
+  /** Toggle the deletion lock (docs/log/45). While locked the delete menu is disabled and
+   * the automatic prune of an emptied worktree stops too (the protection itself is the
+   * Agent's 403). */
   onToggleLock?: (locked: boolean) => void;
   /** SVN (docs/log/41): update to the latest revision / clear a wedged working-copy lock. */
   onUpdate?: () => void;
@@ -115,7 +117,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
   const menuRef = useRef<HTMLUListElement>(null);
   const toast = useToast();
   const tr = useT();
-  // 作業グループ (docs/log/52): base clones toggle membership from the context menu.
+  // Working sets (docs/log/52): base clones toggle membership from the context menu.
   // Worktrees follow their base (no per-worktree assignment), so they get no block.
   const wsets = workingSetList(useSettings());
   const copyBranch = () => {
@@ -124,8 +126,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
       ok ? toast(tr("repo.branch_copied", { branch: b }), { kind: "success" }) : toast(tr("common.copy_failed")),
     );
   };
-  // 作業コピーは ~/repos の直下にしか作られない（Agent の GetRepos は repos ルートを
-  // 1 階層だけ走査する）ので、フォルダ名がそのまま repos からの相対パス。
+  // A working copy is only ever created directly under ~/repos (the Agent's GetRepos walks
+  // the repos root one level deep), so the folder name IS the path relative to repos.
   const copyDir = () => {
     void copyText(r.name).then((ok) =>
       ok ? toast(tr("repo.dir_copied", { dir: r.name }), { kind: "success" }) : toast(tr("common.copy_failed")),
@@ -139,7 +141,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
     if (menu && menuRef.current)
       placeFixed(menuRef.current, menu.x, menu.y, wrapRef.current?.closest<HTMLElement>(".app-rail"));
   });
-  // The 起動 ▼ quick menu is position:fixed (an absolute dropdown under a row
+  // The launch ▼ quick menu is position:fixed (an absolute dropdown under a row
   // near the rail's foot ran off-screen) — anchor it under the split button,
   // clamped like the context menus.
   const launchMenuRef = useRef<HTMLDivElement>(null);
@@ -173,8 +175,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
         tabIndex={-1}
         title={
           (running ? tr("repo.row_title_running") + "\n" : tr("repo.row_title") + "\n") +
-          // WT 行はブランチ名を名前として出す（identity はブランチ）ので、どの
-          // フォルダなのかが行からは読めない。ツールチップでディレクトリ名を明示する。
+          // A worktree row shows the branch as its name (the branch is the identity), so the
+          // row itself never says which folder it is. Spell the directory out in the tooltip.
           (r.worktree ? tr("repo.dir_line", { dir: r.name }) + "\n" : "") +
           (r.path || "") +
           (isSvn && r.url ? "\n" + r.url : "") +
@@ -200,7 +202,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               line (branch + provider) is gone; the provider lives in the tooltip. */}
           <span className="repo-id">
             <span className="repo-name" title={r.worktree ? tr("repo.dir_line", { dir: r.name }) : undefined}>
-              {/* Folder-flavored icons (shared with the ファイル tree's top level):
+              {/* Folder-flavored icons (shared with the Files tree's top level):
                   base clone = root-folder, worktree = git-branch. */}
               <Icon name={r.worktree ? "git-branch" : "root-folder"} />
               {r.worktree ? r.branch || r.name : r.name}
@@ -215,7 +217,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 r{r.revision}
               </span>
             )}
-            {/* 削除ロック（docs/log/45）: 鍵バッジ。削除メニューが灰色な理由をここで示す。 */}
+            {/* Deletion lock (docs/log/45): the lock badge, which is where the greyed-out
+                delete menu gets its explanation. */}
             {r.locked && <Icon name="lock" className="repo-lock" title={tr("repo.locked_hint")} />}
             {isShared && <Icon name="broadcast" className="repo-shared" title={tr("repo.shared_badge")} />}
           </span>
@@ -234,9 +237,9 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                   {parentSyncLabel(r.integration)}
                 </span>
               )}
-              {/* origin との差分: behind のみ = クリーンに FF 可能 / 両方 = 分岐して
-                  いて要マージ / ahead のみ = 未 push。Agent の auto-fetch が origin
-                  refs を更新し続けるので、押さなくてもここに出る。 */}
+              {/* Distance from origin: behind only = a clean fast-forward is possible / both =
+                  diverged and needs a merge / ahead only = not pushed. The Agent's auto-fetch
+                  keeps the origin refs current, so this appears without pressing anything. */}
               {((r.ahead || r.behind) ?? 0) > 0 && (
                 <span
                   className={"repo-chip ab" + (r.behind ? (r.ahead ? " diverged" : " ff") : "")}
@@ -289,7 +292,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
           {/* Hidden until the row is hovered/focused (kept while the quick menu is
               open); touch devices show it always — see repos.css. */}
           <div className={"launch-wrap" + (showLaunch ? " open" : "")} ref={wrapRef} onClick={(e) => e.stopPropagation()}>
-            {/* Split button: 起動 opens the modal; the ▼ caret opens the quick
+            {/* Split button: launch opens the modal; the ▼ caret opens the quick
                 per-kind dropdown (instant launch, no prompt). */}
             <div className="launch-split">
               <button
@@ -422,16 +425,18 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            {/* プロジェクトスコープの MCP 設定（docs/log/56 P0）— 別モーダル（設定モーダルは
-                workspace 全体＝user スコープの場所なので混ぜない、docs/log/57 §3）。 */}
+            {/* Project-scoped MCP settings (docs/log/56 P0) — a separate modal: the settings
+                modal is the place for workspace-wide (user-scope) settings and the two must
+                not be mixed (docs/log/57 §3). */}
             <li>
               <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setProjectOpen(true); }}>
                 <Icon name="gear" /> {tr("repo.project_settings")}
               </button>
             </li>
-            {/* セッション共有(docs/log/59): read-only/破損等で永続 marker を持てない working
-                copy は workingCopyId が無く、repo/worktree 単位の共有対象にできない
-                (ShareCreateModal の candidates と同じ制約)。 */}
+            {/* Session sharing (docs/log/59): a working copy that cannot hold a persistent
+                marker (read-only, corrupted, …) has no workingCopyId and so cannot be a
+                repo/worktree-level share target (the same constraint as ShareCreateModal's
+                candidates). */}
             {r.workingCopyId && (
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); setShareOpen(true); }}>
@@ -439,8 +444,8 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </button>
               </li>
             )}
-            {/* 起動はモーダル（起動）と ▼ クイックメニューの担当。ここに全種別を並べても
-                同じ導線の重複なので、モーダルに出ない shell だけを残す。 */}
+            {/* Launching belongs to the modal and the ▼ quick menu. Listing every kind here
+                would only duplicate that path, so only shell — which the modal omits — stays. */}
             {kinds.includes("shell") && (
               <>
                 <li className="ui-menu-sep" role="separator" />
@@ -451,7 +456,7 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
                 </li>
               </>
             )}
-            {/* 作業グループ (docs/log/52): membership toggles — base rows only. */}
+            {/* Working sets (docs/log/52): membership toggles — base rows only. */}
             {!r.worktree && wsets.length > 0 && (
               <>
                 <li className="ui-menu-sep" role="separator" />

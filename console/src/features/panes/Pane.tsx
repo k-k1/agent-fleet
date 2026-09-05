@@ -106,11 +106,11 @@ function EmptyPane({ cell, style, active, tabbed, canSplitRight, canSplitDown, c
     >
       {tabbed && <div className="pane-tabs" role="tablist" aria-label={tr("display.pane_layout_tabs")} />}
       {canDrag && <button type="button" className={cx("pane-grip", ordinal ? "pane-ord " + ordClass(ordinal) : "")} draggable onDragStart={(e) => { e.dataTransfer.setData(DND, cell.id); e.dataTransfer.effectAllowed = "move"; }}>{ordinal}</button>}
-      {/* ★ 新規ユーザーが最初に見るのはここ。初期レイアウトは emptyCell（views: []）＝
-          ペインが 1 枚も無い状態なので、TerminalView は一度もマウントされない — 初回の
-          ガイドを端末ペインの空状態だけに置いていたせいで、いちばん見せたい相手にだけ
-          出ていなかった。カード側が「設定済み / あとで / CP 不通」を自分で判定して
-          null を返すので、ここは出す場所を与えるだけでよい。 */}
+      {/* This is what a brand-new user sees first: the initial layout is an emptyCell
+          (views: []), so no pane exists and TerminalView never mounts. Putting the first-run
+          guide only in the terminal pane's empty state hid it from exactly the audience it was
+          for. The card decides for itself whether to render (configured / later / CP
+          unreachable) and returns null, so all this needs to do is give it a place. */}
       <div className="pane-empty">{tr("pane.no_session")}</div>
       {active && <OnboardingCard />}
       {canClose && <div className="pane-controls"><IconButton icon="close" label={tr("ui.close_pane_hint")} onClick={() => onClose(cell.id, true)} /></div>}
@@ -141,7 +141,7 @@ function PopulatedPane({
   const paneRef = useRef<HTMLDivElement>(null);
   const isTerm = pane.content.kind === "terminal";
   // Minimal pop-out tab: hide the pop-out button (the pane already IS its own
-  // tab); reappears after 展開 to full-console mode.
+  // tab); reappears after expanding (「展開」) to full-console mode.
   const popoutTabMode = usePopoutMode();
   // Cross-highlight: glow this pane while its rail row / mini-map cell is
   // hovered (and vice-versa). Keyed by pane id or a shared session name.
@@ -191,7 +191,8 @@ function PopulatedPane({
 
   // Markdown mirror (case-A): a claude session pane can swap its raw terminal for
   // a read-mostly chat view. A stopped session opened as chat starts DETACHED
-  // (read-only history, no resume) — 再開して続ける / the ターミナル toggle attaches.
+  // (read-only history, no resume) — the "resume and continue" (「再開して続ける」) or
+  // terminal (「ターミナル」) toggle attaches.
   const chat = pane.content.kind === "terminal" && pane.content.chat;
   const [mirror, setMirror] = useState(chat === true);
   const [attached, setAttached] = useState(!chat || sessionMeta?.alive === true);
@@ -200,7 +201,7 @@ function PopulatedPane({
   // one Pane instance is reused, only the props swap). Local toggles persist
   // within the same session.
   //
-  // ★ Adjusted DURING RENDER, never from an effect. An effect commits the STALE
+  // Adjusted DURING RENDER, never from an effect. An effect commits the STALE
   // `mirror` first and the browser paints that frame before the effect corrects
   // it — switching from a file tab to a chat-mirror session tab flashed one frame
   // of raw TUI before the mirror appeared. A render-phase update to this same
@@ -219,14 +220,14 @@ function PopulatedPane({
     if (sessionMeta?.alive === true) setAttached(true);
     else if (sessionMeta?.alive === false) setAttached(false);
   }, [sessionMeta?.alive]);
-  // Managed（paneless）セッション（docs/log/27 §10）: tmux pane が存在しないので
-  // ターミナルはマウントせず、ミラー（チャット）を常時の主 UI にする。
+  // A managed (paneless) session (docs/log/27 §10) has no tmux pane, so the terminal is never
+  // mounted and the mirror (chat) is permanently the primary UI.
   const managed = isManagedSession(sessionMeta);
   // The mirror is offered only for agents with the `chat` capability (claude —
   // /messages is claude-only). Guard on loaded sessionMeta.
   const canMirror = isTerm && !!pane.session && !!sessionMeta && agentOf(sessionMeta.kind).caps.chat;
   const showMirror = canMirror && (mirror || managed);
-  // The ターミナル toggle also resumes a stopped session (attach is explicit).
+  // The terminal (「ターミナル」) toggle also resumes a stopped session (attach is explicit).
   const onToggleMirror = (toChat: boolean) => {
     if (toChat) setMirror(true);
     else {
@@ -248,16 +249,16 @@ function PopulatedPane({
   const sharedSessions = useSharedSessionsStore((s) => s.sessions);
   const sharedById = useMemo(() => new Map(sharedSessions.map((s) => [s.id, s] as const)), [sharedSessions]);
   // Same for a chat tab: its title lives in the conversation, not the pane. Only the
-  // SELECTED tab has a mounted ChatView, so the background ones would read "チャット"
+  // SELECTED tab has a mounted ChatView, so the background ones would read "chat" (チャット)
   // forever — pull the list in once for them (the rail may not be mounted at all).
   const chatTitles = useChatTitles();
   const hasChatTab = cell.views.some((v) => v.content.kind === "chat" && v.content.conversationId);
   useEffect(() => {
     if (hasChatTab) void ensureConvs();
   }, [hasChatTab]);
-  // タブの右クリック: 左ペインのセッション行と同じメニューを、カーソル位置に出す。
-  // `open` を落としても要素は残す — メニューが閉じたあとも生き続ける引き継ぎ/共有
-  // ダイアログを SessionMenu が抱えているので、アンマウントすると道連れになる。
+  // Right-click on a tab: the same menu as a session row in the left rail, at the cursor.
+  // Clearing `open` keeps the element mounted — SessionMenu owns the handoff/share dialogs,
+  // which outlive the menu itself, so unmounting it would take them down with it.
   const wsRunning = useWorkspaceStore((s) => s.state) === "running";
   const sessionActions = useSessionActions();
   const [tabMenu, setTabMenu] = useState<{ session: string; x: number; y: number; open: boolean } | null>(null);
@@ -274,7 +275,7 @@ function PopulatedPane({
   // inferred from `attached`. Reading the spinner off `attached` latched: a failed
   // resume left attached=true, and the recovery effect above only fires on a CHANGE
   // of sessionMeta.alive — which a failed resume never produces — so the pane sat on
-  // 再開中… forever with the button gone and no error. Now the spinner ends with the
+  // "resuming" (再開中…) forever with the button gone and no error. Now the spinner ends with the
   // request, and `attached` is only latched when the backend actually accepted.
   const startSession = useSessionsStore((s) => s.start);
   const [resuming, setResuming] = useState(false);
@@ -284,7 +285,7 @@ function PopulatedPane({
         setResuming(true);
         const ok = await startSession(pane.session); // toasts on failure
         setResuming(false);
-        if (!ok) return; // leave the 再開 button armed for a retry
+        if (!ok) return; // leave the resume (再開) button armed for a retry
       }
       setAttached(true);
     })();
@@ -326,7 +327,7 @@ function PopulatedPane({
   };
   // The selected session can be shown either as terminal or chat, so these cell
   // actions live in BOTH headers — they never disappear merely because the user
-  // chose チャット. Each header renders them LAST, i.e. flush right, where the
+  // chose chat (チャット). Each header renders them LAST, i.e. flush right, where the
   // floating cluster sits in a non-tabbed pane (panes.css .tab-pane-actions).
   const tabHeaderActions = tabbed ? (
     <span className="tab-pane-actions">
@@ -447,27 +448,28 @@ function PopulatedPane({
           role="tablist"
           aria-label={tr("display.pane_layout_tabs")}
           onWheel={onTabsWheel}
-          // タブが溢れて strip が実際にスクロール可能になった瞬間だけ、中ボタン
-          // 押下が Chrome の自動スクロール（オートスクロール）を起動し、続く
-          // mouseup はその解除に使われて auxclick が飛ばなくなる＝「横スクロール
-          // バーが出ているときだけ中クリックで閉じられない」。既定動作を止めれば
-          // auxclick は通常どおり発火する。タブ自身ではなく strip に置くのは、
-          // タブの余白や × の上で押した場合も同じ罠を踏むため。
-          // 中ボタン限定なので、左ボタンで始まるタブの drag には影響しない。
+          // Only once the tabs overflow and the strip actually becomes scrollable does a
+          // middle-button press start Chrome's autoscroll; the following mouseup then cancels
+          // it and no auxclick is delivered, i.e. "middle-click close works except when the
+          // horizontal scrollbar is showing". Preventing the default restores the normal
+          // auxclick. It sits on the strip rather than the tab because pressing on tab padding
+          // or on the close (x) hits the same trap. Middle button only, so it does not affect
+          // the left-button tab drag.
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
         >
           {tabInfo.map(({ view, label, state, kic }) => {
-            // セッションのタブだけがメニューを持つ（SCM/ファイルのタブと、停止中の
-            // Workspace は既定動作のまま）。右クリックとメニューキーで同じ 1 つの
-            // 判定を見るため、ここで一度だけ解決する。
+            // Only session tabs get a menu; SCM/file tabs and a stopped workspace keep the
+            // browser default. Resolved once here so right-click and the menu key look at the
+            // same decision.
             const menuSession = wsRunning && view.session && sessionByName.has(view.session) ? view.session : null;
             return (
               <div
                 className={cx("pane-tab", view.id === cell.selectedViewId && "selected")}
                 role="presentation"
                 key={view.id}
-                // 左ペインの行と同じ形: 後続の contextmenu で開く（mousedown 側の
-                // 外側クリック判定に即座に閉じられないため）。× の上でも同じ。
+                // Same shape as a left-rail row: open on the contextmenu event that follows,
+                // because opening on mousedown would be closed at once by the outside-click
+                // check. Same on the close (x).
                 onContextMenu={(e) => {
                   if (!menuSession) return;
                   e.preventDefault();
@@ -512,10 +514,10 @@ function PopulatedPane({
                   onAuxClick={(e) => {
                     if (e.button === 1) { e.preventDefault(); closeTab(view.id); }
                   }}
-                  // メニューキー / Shift+F10 — タブは素の button なので Tab で焦点が
-                  // 来る。rail の行と同じく、native な contextmenu を合成して上の
-                  // onContextMenu をそのまま通す（開き方を 2 本持たない）。メニューを
-                  // 持たないタブでは既定を止めない — ブラウザ本来のメニューを奪わない。
+                  // Menu key / Shift+F10 — a tab is a plain button, so Tab focuses it. As with
+                  // the rail rows, synthesise a native contextmenu and let the onContextMenu
+                  // above handle it, so there is only one way to open the menu. A tab without a
+                  // menu does not prevent the default, leaving the browser's own menu intact.
                   onKeyDown={(e) => {
                     if (!menuSession || !isContextMenuKey(e)) return;
                     e.preventDefault();
@@ -538,13 +540,13 @@ function PopulatedPane({
                 <button
                   type="button"
                   className="pane-tab-close"
-                  // ペインの × とは文言を分ける（タブの × に Ctrl+クリックの意味は無い）。
-                  // 併記するショートカットは同じ pane.close＝Alt+W。
+                  // Different wording from the pane's close: Ctrl+click has no meaning on a
+                  // tab's close. The shortcut shown alongside is the same pane.close = Alt+W.
                   aria-label={tr("ui.close_tab_hint")}
                   title={tr("ui.close_tab_hint") + hintSuffix("pane.close")}
-                  // × はタブ本体のボタンの子ではなく兄弟なので、タブ側の
-                  // onAuxClick までバブリングしてこない。× の上で中クリックした
-                  // ときだけ無反応、を避ける。
+                  // The close (x) is a sibling of the tab button, not a child, so events do not
+                  // bubble to the tab's onAuxClick — without this, middle-click would do nothing
+                  // when it lands on the x.
                   onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); closeTab(view.id); } }}
                   onClick={(e) => { e.stopPropagation(); closeTab(view.id); }}
                 >
@@ -561,7 +563,8 @@ function PopulatedPane({
           actions={sessionActions}
           running={wsRunning}
           open={tabMenu?.open === true}
-          // カーソル位置から。ペイン内ではなくビューポートで畳むので bounds は無し。
+          // Anchored at the cursor; no bounds, since it is clamped to the viewport rather than
+          // to the pane.
           place={(el) => tabMenu && placeFixed(el, tabMenu.x, tabMenu.y)}
           onClose={() => setTabMenu((m) => (m ? { ...m, open: false } : m))}
         />
@@ -599,7 +602,7 @@ function PopulatedPane({
           <IconButton
             icon="close"
             label={tr("ui.close_pane_hint")}
-            // title だけにショートカットを足す（aria-label は読み上げられるので素のまま）。
+            // The shortcut goes on title only; aria-label stays plain because it is spoken.
             title={tr("ui.close_pane_hint") + hintSuffix("pane.close")}
             className="pane-close"
             onMouseDown={(e) => e.button === 1 && e.preventDefault()}
@@ -628,8 +631,9 @@ function PopulatedPane({
           socket + scrollback survive the toggle. Managed sessions have no PTY at
           all — mounting the terminal would just open a dead WS, so skip it. While
           the meta is still loading we can't know the driver yet: a pane opened AS
-          CHAT waits for the meta (今日でもターミナルが一瞬素通しになるだけの区間)
-          instead of flashing a terminal that a managed session doesn't have. */}
+          CHAT waits for the meta (a window in which, even today, the terminal is merely shown
+          bare for an instant) instead of flashing a terminal that a managed session doesn't
+          have. */}
       {isTerm && !managed && !(chat && !sessionMeta) && (
         <div className="view" hidden={showMirror}>
           <TerminalView

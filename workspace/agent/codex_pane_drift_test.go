@@ -1,19 +1,20 @@
 //go:build drift
 
-// codex TUI ペインのドリフト検知（Tier 1）。build tag `drift` で通常の
-// `go test ./...` から除外される（実 codex バイナリ＋実 tmux が要る）。
-// 兄弟: internal/agents/codex/drift_test.go（features / config / hooks）。
+// Drift detection for the codex TUI pane (Tier 1). The `drift` build tag keeps it out of
+// an ordinary `go test ./...`, since it needs the real codex binary and a real tmux.
+// Sibling: internal/agents/codex/drift_test.go (features / config / hooks).
 //
-// ここが埋めるのは paneMode の codex 分岐＝**テストが1つも無かった**箇所。判定は
-// codex のフッタ表示という固定文字列に依存しており（`<model> <effort> · <cwd>` と
-// "Plan mode"）、claude の false-idle と同じ壊れ方（版数でフッタ仕様が変わる）を
-// する場所なのに、fixture すら無い状態だった。
+// What this covers is paneMode's codex branch, which had no test at all. The decision
+// depends on fixed strings in codex's footer (`<model> <effort> · <cwd>` and "Plan mode"),
+// i.e. it breaks the same way claude's false-idle did — the footer spec changes between
+// versions — and there was not even a fixture for it.
 //
-// 認証不要: フッタは起動直後に描画され、モード切替（shift+tab）も TUI 内で完結する
-// ためモデル呼び出しが発生しない。ただし**ダミー auth.json は必要**（実測: 認証情報が
-// 無いと TUI はログイン選択画面を出し、composer もフッタも描画されない）。鍵はダミー
-// なので課金は起きない。ディレクトリ trust ゲートは本番と同じ経路
-// （BuildLaunch → ensureFolderTrusted）で解除される。
+// No authentication needed: the footer is drawn right after launch and the mode switch
+// (shift+tab) is handled entirely inside the TUI, so no model call happens. A dummy
+// auth.json IS required though (measured: with no credential the TUI shows the login
+// chooser and draws neither the composer nor the footer). The key is a dummy, so nothing is
+// billed. The directory-trust gate is cleared through the production path
+// (BuildLaunch → ensureFolderTrusted).
 package main
 
 import (
@@ -67,10 +68,10 @@ func TestDriftCodexPaneMode(t *testing.T) {
 	// HOME must be redirected before BuildLaunch: ensureFolderTrusted writes the
 	// directory-trust section into $HOME/.codex/config.toml.
 	t.Setenv("HOME", home)
-	// TUI route, not --remote. アドレスを空にするだけでは足りない: BuildLaunch は
-	// 共有 app-server を需要で起こす（docs/log/27 §7.1）ので、このコンテナで daemon が
-	// 生きていれば adopt して印を書き、--remote つきの起動になってしまう。
-	// 無効化フラグが「直接起動」の唯一の確実なスイッチ。
+	// TUI route, not --remote. Emptying the address is not enough: BuildLaunch starts the
+	// shared app-server on demand (docs/log/27 §7.1), so if a daemon is alive in this
+	// container it would adopt it, write the marker and launch with --remote. The disable
+	// flag is the only reliable switch for "launch directly".
 	t.Setenv("AF_CODEX_APP_SERVER_DISABLE", "1")
 	t.Setenv("AF_CODEX_APP_SERVER_ADDR", "")
 

@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// readJSONFile は生成された opencode 設定を map で読む（テスト補助）。
+// readJSONFile reads a generated opencode config into a map.
 func readJSONFile(t *testing.T, path string) map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(path)
@@ -23,7 +23,7 @@ func readJSONFile(t *testing.T, path string) map[string]any {
 	return m
 }
 
-// mcpCommand は設定中の mcp.af.command を []string で返す（無ければ nil）。
+// mcpCommand returns the config's mcp.af.command as a []string, or nil when absent.
 func mcpCommand(t *testing.T, cfg map[string]any) []string {
 	t.Helper()
 	mcp, ok := cfg["mcp"].(map[string]any)
@@ -32,7 +32,7 @@ func mcpCommand(t *testing.T, cfg map[string]any) []string {
 	}
 	af, ok := mcp["af"].(map[string]any)
 	if !ok {
-		t.Fatalf("mcp に af が無い: %+v", mcp)
+		t.Fatalf("mcp has no af entry: %+v", mcp)
 	}
 	raw, _ := af["command"].([]any)
 	out := make([]string, 0, len(raw))
@@ -43,9 +43,10 @@ func mcpCommand(t *testing.T, cfg map[string]any) []string {
 	return out
 }
 
-// docs/log/30 の要: af_write の会話が起こしたセッションは、その会話へ完了報告を返す。
-// 報告リンクは mcp-stdio の --conv でしか張れないので、opencode チャットの設定が
-// --conv を落とすと報告は永久に届かない（実際に落ちていた）。
+// The core of docs/log/30: a session started by an af_write conversation reports completion
+// back to that conversation. The report link can only be established through mcp-stdio's
+// --conv, so if the opencode chat config drops --conv, reports never arrive (which is what
+// happened).
 func TestOpencodeChatConfigCarriesConv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const id = "ce4f94b9-2854-44ee-8425-61859128d669"
@@ -53,68 +54,69 @@ func TestOpencodeChatConfigCarriesConv(t *testing.T) {
 
 	path := opencodeChatConfig(c)
 	if path == "" {
-		t.Fatal("af_write の会話で設定が生成されない")
+		t.Fatal("no config generated for an af_write conversation")
 	}
 	if got := filepath.Base(path); got != id+".json" {
-		t.Fatalf("設定ファイル名 = %q, want %q", got, id+".json")
+		t.Fatalf("config file name = %q, want %q", got, id+".json")
 	}
 	cfg := readJSONFile(t, path)
 	cmd := mcpCommand(t, cfg)
 	if len(cmd) == 0 {
-		t.Fatalf("af MCP サーバーが設定されていない: %+v", cfg)
+		t.Fatalf("the af MCP server is not configured: %+v", cfg)
 	}
 	joined := strings.Join(cmd, " ")
 	if !strings.Contains(joined, "--write") || !strings.Contains(joined, "--conv "+id) {
-		t.Fatalf("mcp command = %q, want --write と --conv %s", joined, id)
+		t.Fatalf("mcp command = %q, want --write and --conv %s", joined, id)
 	}
-	// チャット契約（編集・シェル拒否）は会話別設定にも乗せる。opencode が
-	// OPENCODE_CONFIG をプロジェクト設定と併合するか置換するかは未文書のため、
-	// どちらでも姿勢が保たれるようにしてある。
+	// The chat contract (edit and shell denied) is carried by the per-conversation config
+	// too. Whether opencode merges OPENCODE_CONFIG with the project config or replaces it is
+	// undocumented, so the stance holds either way.
 	perm, _ := cfg["permission"].(map[string]any)
 	if perm["edit"] != "deny" || perm["bash"] != "deny" {
 		t.Fatalf("permission = %+v, want edit/bash deny", perm)
 	}
 }
 
-// 読み取り grant には --conv を渡さない（report_to は書き込み側の配線）。
+// A read grant is not given --conv (report_to is wiring on the write side).
 func TestOpencodeChatConfigReadGrantHasNoConv(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFRead}
 	path := opencodeChatConfig(c)
 	if path == "" {
-		t.Fatal("af_read の会話で設定が生成されない")
+		t.Fatal("no config generated for an af_read conversation")
 	}
 	joined := strings.Join(mcpCommand(t, readJSONFile(t, path)), " ")
 	if strings.Contains(joined, "--conv") || strings.Contains(joined, "--write") {
-		t.Fatalf("mcp command = %q, want 読み取り専用", joined)
+		t.Fatalf("mcp command = %q, want read-only", joined)
 	}
 }
 
-// ツール無しの会話には設定を書かない（余計なファイルを残さない）。
+// A conversation without tools gets no config written (no stray files).
 func TestOpencodeChatConfigSkippedWithoutGrant(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsNone}
 	if path := opencodeChatConfig(c); path != "" {
-		t.Fatalf("ツール無しで設定が生成された: %q", path)
+		t.Fatalf("a config was generated without tools: %q", path)
 	}
 }
 
-// プロジェクト側（--dir）の設定には af MCP を書かない。opencode は設定を**併合**し、
-// 衝突時は**プロジェクト設定が勝つ**（1.18.7 実測・TestContractOpencodeConfigPrecedence
-// が固定）ので、ここに af を書くと会話別設定の --conv 付き定義を上書きしてしまい、
-// セッション報告（docs/log/30）が恒久的に届かなくなる。レジストリサーバーは両方の設定が
-// 同じ会話から作るので食い違わず、ここに載っていて構わない。
+// The project-side (--dir) config must not carry the af MCP server. opencode MERGES configs
+// and the PROJECT config wins on a conflict (measured on 1.18.7, pinned by
+// TestContractOpencodeConfigPrecedence), so writing af here would override the
+// per-conversation definition that carries --conv and session reports (docs/log/30) would
+// never arrive again. The registry servers are built from the same conversation in both
+// configs, so they cannot disagree and may stay here.
 func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	c := &ChatConversation{ID: "ce4f94b9-2854-44ee-8425-61859128d669", Tools: assistants.ToolsAFWrite}
 	dir := opencodeChatDir(c)
 	if filepath.Base(dir) != "opencode-write" {
-		t.Fatalf("dir = %q, want …/opencode-write（grant 別の据え置き）", dir)
+		t.Fatalf("dir = %q, want …/opencode-write (one dir per grant, unchanged)", dir)
 	}
 	cfg := readJSONFile(t, filepath.Join(dir, "opencode.json"))
 	if _, ok := cfg["mcp"]; ok {
-		t.Fatalf("プロジェクト設定に mcp が残っている: %+v", cfg)
+		t.Fatalf("mcp is still present in the project config: %+v", cfg)
 	}
 	perm, _ := cfg["permission"].(map[string]any)
 	if perm["edit"] != "deny" || perm["bash"] != "deny" {
@@ -122,23 +124,23 @@ func TestOpencodeChatDirHasNoMCP(t *testing.T) {
 	}
 }
 
-// 会話を消したら会話別設定も消える（handleChatDelete）。
+// Deleting a conversation deletes its per-conversation config too (handleChatDelete).
 func TestChatDeleteRemovesOpencodeConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const id = "ce4f94b9-2854-44ee-8425-61859128d669"
 	path := opencodeChatConfig(&ChatConversation{ID: id, Tools: assistants.ToolsAFWrite})
 	if path == "" {
-		t.Fatal("設定が生成されない")
+		t.Fatal("no config generated")
 	}
 	if err := os.Remove(filepath.Join(homeDir(), ".config", "agent-fleet", "chat-wd",
 		"opencode-conv", id+".json")); err != nil {
-		t.Fatalf("削除経路が指すパスに設定が無い: %v", err)
+		t.Fatalf("no config at the path the delete path points at: %v", err)
 	}
 }
 
-// 失敗ターンの理由を拾う。opencode は失敗を stdout の error イベントで出し、
-// stderr は空のまま非ゼロ終了する（実測 1.18.5）ので、これを読まないと利用者には
-// 「exit status 1」しか出ない。
+// Pick up the reason a turn failed. opencode reports a failure as an error event on stdout
+// and exits non-zero with an empty stderr (measured on 1.18.5), so without reading this the
+// user sees nothing but "exit status 1".
 func TestParseOpencodeRunEventsError(t *testing.T) {
 	out := strings.Join([]string{
 		`{"type":"step_start","sessionID":"ses_1","part":{"id":"p1","type":"step-start"}}`,
@@ -146,17 +148,18 @@ func TestParseOpencodeRunEventsError(t *testing.T) {
 	}, "\n")
 	reply, sesID, _, turnErr, _ := parseOpencodeRunEvents([]byte(out))
 	if reply != "" {
-		t.Fatalf("reply = %q, want 空", reply)
+		t.Fatalf("reply = %q, want empty", reply)
 	}
 	if sesID != "ses_1" {
 		t.Fatalf("sesID = %q", sesID)
 	}
 	if !strings.Contains(turnErr, "Unexpected server error") || !strings.Contains(turnErr, "err_26a07104") {
-		t.Fatalf("turnErr = %q, want メッセージと ref", turnErr)
+		t.Fatalf("turnErr = %q, want the message and the ref", turnErr)
 	}
 }
 
-// message が無いエラーは name で代替する（形が変わっても空文字にしない）。
+// An error without a message falls back to name (never an empty string, even if the shape
+// changes).
 func TestParseOpencodeRunEventsErrorNameOnly(t *testing.T) {
 	out := `{"type":"error","sessionID":"ses_1","error":{"name":"ProviderAuthError"}}`
 	_, _, _, turnErr, _ := parseOpencodeRunEvents([]byte(out))
@@ -165,7 +168,7 @@ func TestParseOpencodeRunEventsErrorNameOnly(t *testing.T) {
 	}
 }
 
-// 正常ターンは turnErr を立てない（回帰よけ）。
+// A successful turn sets no turnErr (regression guard).
 func TestParseOpencodeRunEventsOKHasNoError(t *testing.T) {
 	out := `{"type":"text","sessionID":"ses_1","part":{"id":"p1","type":"text","text":"OK"}}`
 	reply, _, _, turnErr, _ := parseOpencodeRunEvents([]byte(out))

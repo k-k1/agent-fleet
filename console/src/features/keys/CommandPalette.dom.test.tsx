@@ -1,11 +1,14 @@
-// コマンドパレットのセッション欄（Ctrl/⌘+P で最初に出る面）。押さえるのは 3 点で、
-// どれも壊れても画面は出るぶん気づきにくい:
+// The command palette's sessions mode, the surface Ctrl/⌘+P opens on. Three things are
+// pinned here, and each still renders a screen when broken, which makes it hard to notice:
 //
-// ①**開いた瞬間の面がセッション欄で、並びが「最後に入力待ちになった順 → 稼働中 → 停止中」**。
-//   ここが崩れると、Ctrl+P の一番上が「今すぐ答えるべきセッション」でなくなる。
-// ②**開いている間は並びが動かない**。一覧は 4 秒ごとに更新されるので、選択（添字）の下で
-//   行が入れ替わると Enter が別のセッションを開く。バッジだけは生で追随する。
-// ③**行にレポ名・WT 名・状態バッジが出る**。どれが欠けても「どのセッションか」を決められない。
+// 1. It opens on the sessions mode, ordered by most recently waiting for input, then
+//    running, then stopped. Break that and the top of Ctrl+P is no longer the session that
+//    needs an answer right now.
+// 2. The order does not move while it is open. The list refreshes every 4s, and a row
+//    swapping under the selection (an index) makes Enter open a different session. Only
+//    the badges follow the live list.
+// 3. A row carries the repo name, the worktree name and the state chip. Missing any of
+//    them, a reader cannot tell which session a row is.
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -16,8 +19,8 @@ vi.stubGlobal("localStorage", {
   setItem: (key: string, value: string) => values.set(key, value),
   removeItem: (key: string) => values.delete(key),
 });
-// 一覧はストアへ直接積むので、ネットワークは「何も返さない」で十分（開いた直後の
-// repos リフレッシュだけが飛ぶ）。
+// The list is pushed straight into the store, so a network that returns nothing is enough;
+// the only request made is the repos refresh right after opening.
 const fetchMock = vi.fn(async () => new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } }));
 vi.stubGlobal("fetch", fetchMock);
 window.fetch = fetchMock as unknown as typeof window.fetch;
@@ -97,9 +100,9 @@ afterEach(() => {
 });
 
 describe("command palette — sessions mode", () => {
-  it("opens on the sessions tab, newest 入力待ち first and stopped at the foot", () => {
+  it("opens on the sessions tab, newest waiting-for-input first and stopped at the foot", () => {
     mount();
-    // 最初のモードタブがセッションで、それが選ばれている。
+    // The first mode tab is sessions, and it is the selected one.
     const tabs = [...document.querySelectorAll(".cp-mode")];
     expect(tabs[0].getAttribute("aria-selected")).toBe("true");
     expect(titles()).toEqual(["askedLast", "askedFirst", "busy", "stopped"]);
@@ -113,16 +116,17 @@ describe("command palette — sessions mode", () => {
     expect(busy.querySelector(".cp-sess-wt")?.textContent).toBe("checkout");
     expect(busy.querySelector(".session-state")?.textContent?.trim()).toBeTruthy();
     expect(busy.querySelector(".sess-kic")?.className).toContain("kind-claude");
-    // 素のクローンで走っているセッションには WT の欄が出ない（出すと嘘になる）。
+    // A session running in a plain clone shows no worktree field; showing one would lie.
     const stopped = rows.find((r) => r.querySelector(".cp-title")?.textContent === "stopped")!;
     expect(stopped.querySelector(".cp-sess-wt")).toBeNull();
     expect(stopped.className).toContain("cp-stopped");
   });
 
   it("still orders by attention when the list only arrives after it opened", () => {
-    // 起動直後（ポーリング前）にパレットを開いた場合。一覧が空なのでコマンド欄で開き、
-    // セッションは後から届く。順序の材料が無いからといって名前順で固めてしまうと、
-    // 注目度順という約束がその 1 回だけ静かに破れる。
+    // The palette opened right after startup, before the first poll. The list is empty so
+    // it opens in command mode and the sessions arrive later. Settling for name order just
+    // because there was nothing to sort by would silently break the attention-order promise
+    // that one time.
     const list = useSessionsStore.getState().sessions;
     act(() => useSessionsStore.setState({ sessions: [] }));
     mount();
@@ -142,13 +146,13 @@ describe("command palette — sessions mode", () => {
       useSessionsStore.getState().applyList([
         session("stopped", { alive: false }),
         session("askedFirst", { state: "question" }),
-        session("busy", { state: "question", repo: "webshop@checkout", worktree: true }), // 開いている間に質問した
+        session("busy", { state: "question", repo: "webshop@checkout", worktree: true }), // asked while open
         session("askedLast", { state: "permission" }),
       ]);
     });
-    // 並びは動かない（カーソルの下で行が入れ替わらない）…
+    // The order does not move, so no row is swapped under the cursor...
     expect(titles()).toEqual(["askedLast", "askedFirst", "busy", "stopped"]);
-    // …が、バッジは新しい状態を映す。
+    // ...but the badge reflects the new state.
     const busy = [...document.querySelectorAll<HTMLElement>(".cp-item.cp-sess")].find(
       (r) => r.querySelector(".cp-title")?.textContent === "busy",
     )!;

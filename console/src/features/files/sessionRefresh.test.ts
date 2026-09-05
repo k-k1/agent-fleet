@@ -1,22 +1,23 @@
-// 「ターンが終わった」縁の取り方（features/files/sessionRefresh.ts）。
+// How the "turn ended" edge is detected (features/files/sessionRefresh.ts).
 //
-// この検出器が間違うと、症状は 2 方向に出る: 取りこぼせば元の「反映されない」に戻り、
-// 出しすぎれば作業コピー配下を何度も読み直す。どちらも画面上は静かなので、縁の定義は
-// ここで固定しておく。
+// A wrong detector fails in two directions: miss an edge and the tree stops updating
+// again, fire too often and the whole working copy is re-read over and over. Neither is
+// visible on screen, so the definition of the edge is pinned here.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { COALESCE_MS, MIN_GAP_MS, WORKING_TICK_MS } from "./refreshPolicy.ts";
 import type { Session } from "../../types/session.ts";
 
-// 配線側は sessions ストア → api client（localStorage・document.baseURI・fetch）を
-// 引きずるので、先にグローバルを stub してから import する（store.test.ts と同じ流儀）。
-// window.setTimeout は「呼ぶ時点の global」へ委譲する — こうしないと偽タイマーが効かない。
+// The wiring drags in the sessions store and through it the api client (localStorage,
+// document.baseURI, fetch), so the globals are stubbed before importing, the same way
+// store.test.ts does it. window.setTimeout delegates to whatever the global is at call
+// time; without that, fake timers have no effect.
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
   setItem: (key: string, value: string) => values.set(key, value),
   removeItem: (key: string) => values.delete(key),
 });
-let hidden = false; // タブが裏かどうか（低頻度更新のゲート）
+let hidden = false; // whether the tab is in the background (gates the low-frequency refresh)
 vi.stubGlobal("document", {
   baseURI: "http://localhost/",
   get hidden() {
@@ -57,21 +58,21 @@ const s = (over: Partial<Session>): Session => ({
 });
 
 describe("isBusySession", () => {
-  it("走っているのは working / compacting / バックグラウンド作業だけ", () => {
+  it("counts only working / compacting / background work as running", () => {
     expect(isBusySession(s({ state: "working" }))).toBe(true);
     expect(isBusySession(s({ state: "compacting" }))).toBe(true);
-    // hook 上は idle でも run_in_background がまだ書いているかもしれない。
+    // Idle as far as the hook can tell, but run_in_background may still be writing.
     expect(isBusySession(s({ state: "idle", backgroundBusy: true }))).toBe(true);
     expect(isBusySession(s({ state: "idle" }))).toBe(false);
     expect(isBusySession(s({ state: "question" }))).toBe(false);
     expect(isBusySession(s({ state: "" }))).toBe(false);
-    // 停止した行は state が何であれ走っていない。
+    // A stopped row is not running whatever its state says.
     expect(isBusySession(s({ state: "working", alive: false }))).toBe(false);
   });
 });
 
 describe("sessionPrefix", () => {
-  it("作業コピーのフォルダを home 相対に直す（worktree もフォルダ名そのまま）", () => {
+  it("turns the working copy folder into a home-relative path, worktree name and all", () => {
     expect(sessionPrefix({ repo: "agent-fleet" })).toBe("repos/agent-fleet");
     expect(sessionPrefix({ repo: "agent-fleet@wip-a" })).toBe("repos/agent-fleet@wip-a");
     expect(sessionPrefix({ repo: "" })).toBe("");
@@ -80,45 +81,45 @@ describe("sessionPrefix", () => {
 });
 
 describe("createTurnEndDetector", () => {
-  it("初観測では発火しない（リロード直後に全員ぶん走らせない）", () => {
+  it("does not fire on a first observation, so a reload does not refresh every session", () => {
     const detect = createTurnEndDetector();
     expect(detect([s({ state: "idle" })])).toEqual([]);
     expect(detect([s({ state: "question" })])).toEqual([]);
   });
 
-  it("走っていた → 走っていない で、その作業コピーを 1 件返す", () => {
+  it("returns that one working copy on a running -> not-running transition", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "working" })]);
     expect(detect([s({ state: "idle" })])).toEqual(["repos/agent-fleet"]);
   });
 
-  it("人待ち（question / plan / permission）で止まったターンも終わり", () => {
+  it("treats a turn paused on a human (question / plan / permission) as ended", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "working" })]);
     expect(detect([s({ state: "question" })])).toEqual(["repos/agent-fleet"]);
   });
 
-  it("停止した（alive が落ちた）セッションも終わり", () => {
+  it("treats a stopped session (alive dropped) as ended", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "working" })]);
     expect(detect([s({ state: "working", alive: false })])).toEqual(["repos/agent-fleet"]);
   });
 
-  it("idle のまま動かない行では発火しない", () => {
+  it("does not fire for a row that stays idle", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "idle" })]);
     expect(detect([s({ state: "idle" })])).toEqual([]);
     expect(detect([s({ state: "question" })])).toEqual([]);
   });
 
-  it("バックグラウンド作業が残っている間は待ち、外れてから発火する", () => {
+  it("waits while background work remains and fires once it clears", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "working" })]);
     expect(detect([s({ state: "idle", backgroundBusy: true })])).toEqual([]);
     expect(detect([s({ state: "idle" })])).toEqual(["repos/agent-fleet"]);
   });
 
-  it("同じ作業コピーで 2 つ終わっても 1 件に畳む", () => {
+  it("folds two sessions ending in the same working copy into one entry", () => {
     const detect = createTurnEndDetector();
     detect([s({ name: "a", state: "working" }), s({ name: "b", state: "working" })]);
     expect(detect([s({ name: "a", state: "idle" }), s({ name: "b", state: "idle" })])).toEqual([
@@ -126,7 +127,7 @@ describe("createTurnEndDetector", () => {
     ]);
   });
 
-  it("作業コピーが違えば別々に返す", () => {
+  it("returns different working copies separately", () => {
     const detect = createTurnEndDetector();
     detect([s({ name: "a", state: "working" }), s({ name: "b", repo: "other", state: "working" })]);
     expect(
@@ -134,22 +135,24 @@ describe("createTurnEndDetector", () => {
     ).toEqual(["repos/agent-fleet", "repos/other"]);
   });
 
-  it("作業コピーを持たないセッション（home の shell など）は範囲が引けないので発火しない", () => {
+  it("does not fire for a session with no working copy (a shell in home), having no range", () => {
     const detect = createTurnEndDetector();
     detect([s({ repo: null, state: "working" })]);
     expect(detect([s({ repo: null, state: "idle" })])).toEqual([]);
   });
 
-  it("一覧から消えた（削除・アーカイブ）行では発火しない", () => {
+  it("does not fire for a row that vanished from the list (deleted, archived)", () => {
     const detect = createTurnEndDetector();
     detect([s({ state: "working" })]);
     expect(detect([])).toEqual([]);
-    // 台帳からも落ちているので、同じ名前が idle で戻ってきても初観測扱い。
+    // It is dropped from the ledger too, so the same name returning idle counts as a
+    // first observation.
     expect(detect([s({ state: "idle" })])).toEqual([]);
   });
 });
 
-// 配線: セッション一覧の更新 → 合流と最短間隔 → FILES ストアの範囲つき合図。
+// The wiring: session list update -> coalescing and minimum gap -> a scoped signal on the
+// FILES store.
 describe("wireFilesSessionRefresh", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -164,23 +167,23 @@ describe("wireFilesSessionRefresh", () => {
 
   const publish = (list: Session[]) => useSessionsStore.setState({ sessions: list });
 
-  it("ターンが終わったら、その作業コピーを名指しで 1 回だけ合図する", () => {
+  it("signals exactly once, naming that working copy, when a turn ends", () => {
     const un = wireFilesSessionRefresh();
     publish([s({ state: "working" })]);
     publish([s({ state: "idle" })]);
-    expect(useFilesStore.getState().scoped.n).toBe(0); // 合流待ち
+    expect(useFilesStore.getState().scoped.n).toBe(0); // still coalescing
     vi.advanceTimersByTime(500);
     expect(useFilesStore.getState().scoped).toEqual({ prefix: "repos/agent-fleet", n: 1 });
     un();
   });
 
-  it("同じ作業コピーの連投は最短間隔まで待って 1 回に畳む", () => {
+  it("waits out the minimum gap and folds a burst on one working copy into one signal", () => {
     const un = wireFilesSessionRefresh();
     publish([s({ state: "working" })]);
     publish([s({ state: "idle" })]);
     vi.advanceTimersByTime(500);
     expect(useFilesStore.getState().scoped.n).toBe(1);
-    // すぐ次のターンが終わっても、間隔が空くまでは撃たない。
+    // Even if the next turn ends immediately, nothing fires until the gap has elapsed.
     publish([s({ state: "working" })]);
     publish([s({ state: "idle" })]);
     vi.advanceTimersByTime(500);
@@ -190,7 +193,7 @@ describe("wireFilesSessionRefresh", () => {
     un();
   });
 
-  it("解除したら以後は撃たない（予約済みのぶんも取り消す）", () => {
+  it("fires nothing after unsubscribing, cancelling already-scheduled runs too", () => {
     const un = wireFilesSessionRefresh();
     publish([s({ state: "working" })]);
     publish([s({ state: "idle" })]);
@@ -199,8 +202,8 @@ describe("wireFilesSessionRefresh", () => {
     expect(useFilesStore.getState().scoped.n).toBe(0);
   });
 
-  // ターンの途中でも見に行く人のための低頻度更新（WORKING_TICK_MS）。
-  it("走っている間は低頻度で撃ち続け、止まったらタイマーごと畳む", () => {
+  // The low-frequency refresh (WORKING_TICK_MS) for someone looking mid-turn.
+  it("keeps firing at low frequency while running and folds the timer away when it stops", () => {
     const un = wireFilesSessionRefresh();
     publish([s({ state: "working" })]);
     vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
@@ -208,7 +211,7 @@ describe("wireFilesSessionRefresh", () => {
     vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
     expect(useFilesStore.getState().scoped.n).toBe(2);
 
-    // ターンが終わる（ここでもう 1 回撃つ）。以後は走っているものが無いので静か。
+    // The turn ends, firing once more. After that nothing is running, so it stays quiet.
     publish([s({ state: "idle" })]);
     vi.advanceTimersByTime(MIN_GAP_MS + COALESCE_MS);
     expect(useFilesStore.getState().scoped.n).toBe(3);
@@ -217,7 +220,7 @@ describe("wireFilesSessionRefresh", () => {
     un();
   });
 
-  it("タブが裏／WS が停止のときは低頻度更新を撃たない（見ている人のための更新なので）", () => {
+  it("skips the low-frequency refresh with the tab hidden or the workspace stopped, since it refreshes for someone looking", () => {
     const un = wireFilesSessionRefresh();
     publish([s({ state: "working" })]);
 
@@ -230,7 +233,8 @@ describe("wireFilesSessionRefresh", () => {
     vi.advanceTimersByTime(WORKING_TICK_MS * 2 + COALESCE_MS);
     expect(useFilesStore.getState().scoped.n).toBe(0);
 
-    // 表に戻り、WS も動いていれば再開する（タイマーは止めていない）。
+    // Back in the foreground with the workspace running, it resumes; the timer was never
+    // stopped.
     useWorkspaceStore.setState({ state: "running" });
     vi.advanceTimersByTime(WORKING_TICK_MS + COALESCE_MS);
     expect(useFilesStore.getState().scoped.n).toBe(1);

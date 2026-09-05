@@ -64,7 +64,7 @@ func TestSessionMarksRoundTrip(t *testing.T) {
 	}
 
 	// Re-sending the SAME id is a no-op, not a second mark. That is what lets the
-	// caller retry without an Operation-ID ledger (ADR 0050 決定 4).
+	// caller retry without an Operation-ID ledger (ADR 0050 decision 4).
 	if got := marksCall(t, name, http.MethodPost, "", body); got.Code != http.StatusOK {
 		t.Fatalf("replay status=%d body=%s", got.Code, got.Body.String())
 	}
@@ -84,9 +84,9 @@ func TestSessionMarksRoundTrip(t *testing.T) {
 	}
 }
 
-// ⚠️ 共有 DTO が落としている座標（cwd / file / 差分）を Quote が迂回して運び出さないよう、
-// 塗れる kind は保存時に閉じてある（docs/log/69 §69.4）。ここが緩むと、Console 側の描画が
-// 広がっただけでパスが共有先へ渡る。
+// The kinds that can be marked are closed at save time so that Quote cannot smuggle out the
+// coordinates the shared DTO deliberately drops (cwd, file, diff) (docs/log/69 §69.4). Loosen
+// this and merely widening what the Console renders hands paths to the share recipient.
 func TestSessionMarksRejectNonProseKind(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "marks2"
@@ -130,7 +130,7 @@ func TestSessionMarksValidation(t *testing.T) {
 		}
 	}
 
-	// 長すぎる引用は弾かずに切る（アンカーとしては先頭で足りる）。
+	// An overlong quote is truncated rather than rejected; the head is enough of an anchor.
 	long := strings.Repeat("あ", sessionx.MarkQuoteMaxRunes+50)
 	body := `{"id":"mk_00000005","turn":"t","part":0,"kind":"text","quote":"` + long + `","nth":0,"color":"green"}`
 	if got := marksCall(t, name, http.MethodPost, "", body); got.Code != http.StatusOK {
@@ -142,8 +142,8 @@ func TestSessionMarksValidation(t *testing.T) {
 	}
 }
 
-// 共有先は自分の印しか消せない（CP がその login id を author として渡す）。所有者経由の
-// 削除は author を渡さないので、誰の印でも消せる。
+// A share recipient can only delete their own marks (the CP passes their login id as author). A
+// delete through the owner passes no author and can therefore remove anyone's mark.
 func TestSessionMarksDeleteAuthorship(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "marks4"
@@ -157,22 +157,22 @@ func TestSessionMarksDeleteAuthorship(t *testing.T) {
 		}
 	}
 
-	// 別人の印を消そうとしたら 403（共有先経路）。
+	// Deleting someone else's mark is a 403 (the share-recipient route).
 	if got := marksCall(t, name, http.MethodDelete, "id=mk_0000000a&author=b@example.com", ""); got.Code != http.StatusForbidden {
 		t.Fatalf("cross-author delete status=%d body=%s", got.Code, got.Body.String())
 	}
-	// 自分の印は消せる。
+	// Your own mark can be deleted.
 	if got := marksCall(t, name, http.MethodDelete, "id=mk_0000000b&author=b@example.com", ""); got.Code != http.StatusNoContent {
 		t.Fatalf("own delete status=%d body=%s", got.Code, got.Body.String())
 	}
-	// 所有者経路（author なし）は誰の印でも消せる。
+	// The owner route (no author) can delete anyone's mark.
 	if got := marksCall(t, name, http.MethodDelete, "id=mk_0000000a", ""); got.Code != http.StatusNoContent {
 		t.Fatalf("owner delete status=%d body=%s", got.Code, got.Body.String())
 	}
 }
 
-// ⚠️ セッション名はスロット名で再利用される。消し忘れると次にそのスロットへ入った
-// セッションに前のセッションの印と引き継ぎカードが出る。
+// Session names are reused as slot names, so failing to clean up shows the previous session's
+// marks and handover card to whatever session takes that slot next.
 func TestRemoveSessionSideFilesOnDelete(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

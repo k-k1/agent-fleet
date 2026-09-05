@@ -27,7 +27,7 @@ import (
 const ecsAgentPort int32 = 7700
 
 // wsScratchPath is where a workspace finds its TASK-LOCAL working disk — the fast,
-// non-persistent place for regenerable build output and caches (ADR 0044 決定 3).
+// non-persistent place for regenerable build output and caches (ADR 0044 decision 3).
 // It is a plain directory on the task's ephemeral storage in the normal case, and the
 // mount point of an ECS-managed EBS volume when the requested disk exceeds Fargate's
 // 200 GiB ephemeral ceiling; the workspace sees the same path either way.
@@ -68,7 +68,7 @@ type ssmAPI interface {
 	DeleteParameter(context.Context, *ssm.DeleteParameterInput, ...func(*ssm.Options)) (*ssm.DeleteParameterOutput, error)
 }
 
-// ecsRuntime is the `aws` Runtime adapter (P3-7 段2). It maps one per-membership
+// ecsRuntime is the `aws` Runtime adapter (P3-7 stage 2). It maps one per-membership
 // Workspace onto an ECS Service (desiredCount 0/1 = scale-to-zero) with two EFS
 // access points for the persistent home + claude-config, injects the CP↔Agent
 // token and at-rest DEK via SSM SecureString, and reaches the Agent over Service
@@ -81,13 +81,13 @@ type ecsRuntime struct {
 	efs efsAPI
 	ssm ssmAPI
 	// ecr resolves the workspace image tag to its content identity, for the
-	// backend-drift ("要再起動") badge only (runtime_ecs_stale.go). nil = the feature
-	// is simply off, never an error.
+	// backend-drift ("restart required") badge only (runtime_ecs_stale.go). nil = the
+	// feature is simply off, never an error.
 	ecr          ecrAPI
 	name         string // ECS service name / SC dnsName (Workspace.ContainerName)
 	membershipID string // EFS access-point tag key (af-membership)
 	// tenantSlug is stamped as af-tenant on every billable resource this adapter
-	// creates. Read by nothing but the bill (docs/log/67, ADR 0048 決定 3); empty is a
+	// creates. Read by nothing but the bill (docs/log/67, ADR 0048 decision 3); empty is a
 	// valid value and simply means the resource carries no tenant tag.
 	tenantSlug string
 	token      string // CP↔Agent bearer (Workspace.AgentToken)
@@ -99,7 +99,7 @@ type ecsRuntime struct {
 	cpu, memory string
 	// diskGiB is the task's ephemeral storage size, or 0 for "leave the field out"
 	// (Fargate's free 20 GiB default). Above the ephemeral ceiling the request is an
-	// ECS-managed EBS volume instead — see ebsGiB (ADR 0044 決定 2).
+	// ECS-managed EBS volume instead — see ebsGiB (ADR 0044 decision 2).
 	diskGiB int32
 	ebsGiB  int32
 	// waitReady polls the Agent /healthz through Endpoint(); a field so tests can
@@ -248,7 +248,7 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 		// value of 21–200 becomes the task's ephemeral storage.
 		//
 		// The default is ecsDefaultWorkDiskGiB, NOT 0: the relocation of regenerable
-		// caches (ADR 0044 決定 3) only arms itself when the working disk is big enough
+		// caches (ADR 0044 decision 3) only arms itself when the working disk is big enough
 		// to hold them (entrypoint checks AF_WS_SCRATCH_MIN_GB, 30 GiB), and 20 GiB is
 		// not — the free tier also carries the image layers and /tmp. Shipping 0 meant
 		// the feature was inert in every deployment. Set AF_ECS_WS_DISK_GB=0 to go back
@@ -265,9 +265,10 @@ func newECSFactory(mcfg Config) (RuntimeFactory, error) {
 		startTimeout: time.Duration(EnvInt("AF_ECS_START_TIMEOUT_SEC", 300)) * time.Second,
 	}
 	log.Printf("runtime=ecs region=%s cluster=%s namespace=%s efs=%s", cfg.region, cfg.cluster, cfg.namespaceArn, cfg.efsFileSystem)
-	// CP タスクより後に作られたワークスペースは Service Connect の別名で引けない
-	// （タスク起動時に書かれた /etc/hosts にしか載らない）。その取りこぼしを Cloud Map で
-	// 拾う（agent_dial.go）。失敗しても起動は続ける — 従来どおりの挙動に戻るだけ。
+	// A workspace created after the CP task cannot be reached by its Service Connect
+	// alias: the aliases are written into /etc/hosts when the task starts and never
+	// again. Cloud Map picks those up instead (agent_dial.go). A failure here is not
+	// fatal — it only falls back to the alias-only behaviour.
 	initAgentResolver(context.Background(), ac, cfg.namespaceArn)
 	return &ecsFactory{
 		cfg: cfg,
@@ -377,12 +378,12 @@ func (e *ecsRuntime) Stop(ctx context.Context) error {
 // ecsEC2Runtime.Destroy calls it for the same resources (it shares this adapter as a
 // library) after it has released the slot and deleted the EBS home.
 //
-// ⚠️ It CANNOT delete the home itself. The EFS directories the access points pointed at
+// It CANNOT delete the home itself. The EFS directories the access points pointed at
 // (/home/<membership>, /claude-config/<membership>) survive the access points, and EFS
 // keeps billing for them — deleting them needs a mount, i.e. a throwaway task
-// (docs/log/64 §64.18.4, ADR 0045 決定 13-3). They come back as leftovers rather than as an
-// error so the caller can record them; an error here would only make the operator retry
-// a teardown that already did everything it can.
+// (docs/log/64 §64.18.4, ADR 0045 decision 13-3). They come back as leftovers rather
+// than an error so the caller can record them; an error here would only make the operator
+// retry a teardown that already did everything it can.
 //
 // Every step is idempotent (already-gone is success): a partial Destroy must be safe to
 // re-run, which is the normal case after a CP restart mid-teardown.
@@ -523,7 +524,7 @@ func (e *ecsRuntime) Start(ctx context.Context) error {
 // ("starting"), the Console keeps polling GET /api/workspace, and the scheduler's
 // wake has its own tolerant awaitAgentReady after the start. A readiness failure
 // must still NEVER fail Start — that would flip a legitimately starting workspace
-// to "failed" (P3-7 段5 finding A) — which is now structural: nothing reads it.
+// to "failed" (P3-7 stage 5, finding A) — which is now structural: nothing reads it.
 //
 // What is left is the log line, and it is the cheapest instrument we have for the
 // unmeasured ~100s (docs/log/62 §62.7 P0): it records how long the Agent actually took
@@ -627,7 +628,7 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		// The task-local working disk. Injected ONLY here: the docker adapter bind-mounts
 		// a host directory for home, so on-prem has nothing to gain from moving caches
 		// off it. The entrypoint uses this to relocate the small-file caches (ADR 0044
-		// 決定 3); everything it points at is wiped when the task stops.
+		// decision 3); everything it points at is wiped when the task stops.
 		{Name: aws.String("AF_WS_SCRATCH"), Value: aws.String(wsScratchPath)},
 		// Graceful-shutdown budget for the Agent's SIGTERM handler — the container
 		// stopTimeout minus a safety margin (see StopTimeout below).
@@ -658,7 +659,7 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 			{SourceVolume: aws.String("home"), ContainerPath: aws.String("/home/dev")},
 			{SourceVolume: aws.String("claude"), ContainerPath: aws.String("/var/lib/af/claude")},
 		},
-		// Two-stage graceful stop (§20b.7.8 停止改訂): on Stop (desired 0) ECS
+		// Two-stage graceful stop (§20b.7.8, the revised stop): on Stop (desired 0) ECS
 		// delivers SIGTERM, the Agent Ctrl-C's its panes and exits within its
 		// budget, and past stopTimeout ECS SIGKILLs — the built-in second stage.
 		// The ECS analogue of the docker adapter's `docker stop -t`.
@@ -688,7 +689,7 @@ func (e *ecsRuntime) registerTaskDef(ctx context.Context, homeAP, claudeAP strin
 		// ECS-managed EBS volume. The task definition only DECLARES it; the size and
 		// type come from the service's volumeConfigurations at launch, which is what
 		// configuredAtLaunch means. It is created per task and deleted when the task
-		// stops, exactly like ephemeral storage — see ADR 0044 決定 4 for why this is
+		// stops, exactly like ephemeral storage — see ADR 0044 decision 4 for why this is
 		// not a persistence mechanism.
 		volumes = append(volumes, ecstypes.Volume{
 			Name: aws.String(ecsScratchVolume), ConfiguredAtLaunch: aws.Bool(true),
@@ -819,14 +820,14 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 		// this, af-membership exists nowhere on the Fargate path and the compute cannot
 		// be attributed to anyone. EnableECSManagedTags is what makes propagation legal.
 		//
-		// ⚠️ Applies to services created from here on. An ALREADY-EXISTING service is not
+		// Applies to services created from here on. An ALREADY-EXISTING service is not
 		// retagged (CreateService is skipped above), so a deployment that predates this
 		// keeps untagged tasks until the service is recreated — deliberately not "fixed"
 		// with a TagResource call on every start, which would be a write per Start for a
 		// number only the invoice reads.
 		//
-		// ⚠️ NOT verified against real Fargate: the live deployment runs ecs-ec2
-		// (ADR 0048 決定 9).
+		// NOT verified against real Fargate: the live deployment runs ecs-ec2
+		// (ADR 0048 decision 9).
 		EnableECSManagedTags: true,
 		PropagateTags:        ecstypes.PropagateTagsService,
 		Tags: appendECSTenantTag(e.tenantSlug, []ecstypes.Tag{
@@ -860,13 +861,14 @@ func (e *ecsRuntime) upsertService(ctx context.Context, taskDefArn string) error
 func httpHealthz(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない
+		// A canceled ctx must not keep polling until the full timeout elapses.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("agent health wait canceled: %w", err)
 		}
 		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
-		// healthzClient (5s cap): ポーリングは再発行されるので、1 本のハングした probe が
-		// 呼び出し元(scheduler fire の wg.Wait 等)を巻き込んで固まらないようにする。
+		// healthzClient caps a single probe at 5s: the poll is re-issued anyway, and one
+		// hung probe must not drag its caller (the scheduler fire's wg.Wait, say) down
+		// with it.
 		if resp, err := healthzClient.Do(req); err == nil {
 			resp.Body.Close()
 			if resp.StatusCode == http.StatusOK {

@@ -1,18 +1,19 @@
 package main
 
-// 出荷する tmux 設定（workspace/tmux.conf → イメージの /etc/tmux.conf）のうち、
-// **体感遅延に直結する値**を固定する。
+// Pins the values in the shipped tmux config (workspace/tmux.conf, /etc/tmux.conf in the image)
+// that directly decide perceived latency.
 //
-// escape-time は「Esc 単独か、Esc で始まるシーケンス（矢印・F キー）の先頭か」を
-// 見分けるための待ち時間で、tmux 3.3a の既定は 500ms。実測（この worktree の
-// コンテナ内、tmux 3.3a）:
+// escape-time is how long tmux waits to tell a bare Esc from the start of an Esc-prefixed
+// sequence (arrows, F keys); tmux 3.3a defaults to 500ms. Measured (in this worktree's container,
+// tmux 3.3a):
 //
-//	既定 500 → Esc のエコー 501ms / 20 → 20ms
+//	default 500 -> Esc echoes in 501ms / 20 -> 20ms
 //
-// つまり設定を落とすと claude・codex・vim の Esc が必ず 0.5 秒遅れる。ここでの入力元は
-// xterm.js で、1 回の onData = 1 WebSocket フレームとしてシーケンスを分割せず送るため
-// 長い猶予は要らない。設定ごと消える（＝既定に戻る）と、症状は「ターミナルが何となく
-// 遅い」としか現れず、原因に辿り着くまでが遠い — だから値そのものを縛る。
+// So dropping the setting delays every Esc in claude, codex and vim by half a second. The input
+// here comes from xterm.js, which sends one onData as one WebSocket frame without splitting the
+// sequence, so no long grace period is needed. If the setting disappears (falling back to the
+// default) the only symptom is "the terminal feels sluggish", which is a long way from the cause -
+// hence pinning the value itself.
 import (
 	"os"
 	"regexp"
@@ -34,8 +35,8 @@ func TestShippedTmuxConfKeepsEscapeTimeLow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("escape-time is not a number: %q", m[1])
 	}
-	// 0 にはしない: 0 は「待たない」で、フレームが割れた稀なケースで矢印キーが
-	// Esc + "[A" のリテラルに化ける。数十 ms あれば人には気付かれず、割れも吸収する。
+	// Not 0: 0 means "do not wait", and in the rare case a frame is split an arrow key degenerates
+	// into a literal Esc + "[A". A few tens of ms are imperceptible and absorb the split.
 	if ms <= 0 || ms > 50 {
 		t.Fatalf("escape-time = %d ms; want 1..50 (500 = tmux's default and half a second of Esc lag)", ms)
 	}

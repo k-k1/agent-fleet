@@ -1,121 +1,142 @@
-claude TUI ペインの実キャプチャ集（ゴールデンコーパス）
-=======================================================
+Real captures of claude TUI panes (golden corpus)
+=================================================
 
-出所: claude CLI **2.1.212**（2026-07-17 実測）。`tmux capture-pane -p` の生出力を
-そのまま置いている。手打ちの文字列ではなく実物なので、フッタ/スピナーの仕様変更が
-起きたときに「何が変わったか」を diff で読める。
+Source: claude CLI **2.1.212** (measured 2026-07-17). The raw output of
+`tmux capture-pane -p`, kept exactly as it came out. Because these are the real thing
+rather than hand-typed strings, a change in the footer/spinner behaviour can be read off
+as a diff.
 
-なぜ実物が要るか
-----------------
-状態検出（tmuxx.go の spinnerActive / atPromptFooter）は claude の TUI 文字列という
-非契約・無版管理の表示に依存しており、2026-07-17 時点で 3 回壊れている
-（79b582b → deac672 → fce5c5e）。3 回とも単体テストは緑のままだった: 手打ちの固定
-文字列は実 CLI と会話しないので、CLI 側が変わっても何も教えてくれない。このコーパスは
-その手打ちを実測フレームに置き換えたもの。
+Why the real thing is needed
+----------------------------
+State detection (spinnerActive / atPromptFooter in tmuxx.go) depends on claude's TUI
+strings, a display that is neither a contract nor version-managed, and it had broken three
+times as of 2026-07-17 (79b582b -> deac672 -> fce5c5e). All three times the unit tests
+stayed green: hand-typed fixed strings never talk to the real CLI, so they say nothing when
+the CLI changes. This corpus replaces that hand-typing with measured frames.
 
-**限界（重要）**: これ自体はドリフト「検知器」ではなく「ロック」である。CLI が 4 度目の
-ドリフトを起こしてもこのテストは緑のままになる。検知するには実 CLI を実際に走らせて
-このコーパスを取り直し、diff を見る必要がある（P1: TUI フッタ契約プローブ）。
-新しい CLI 版で取り直したら、ここのファイルを差し替えて差分をレビューすること。
+**Limit (important)**: this is a lock, not a drift *detector*. If the CLI drifts a fourth
+time these tests stay green. Detecting that requires actually running the real CLI,
+re-capturing this corpus and reading the diff (P1: the TUI footer contract probe). When you
+re-capture on a new CLI version, replace the files here and review the difference.
 
-取得方法（再取得の手順）
-------------------------
-制御プローブを立てて実ターンを走らせ、ペインを 0.5s 間隔でサンプリングした:
+How they were taken (the re-capture procedure)
+----------------------------------------------
+A control probe was set up, a real turn was run, and the pane was sampled every 0.5s:
 
     tmux new-session -d -s probe -x 200 -y 50 -c <scratch dir> "claude"
-    # フォルダ信頼ダイアログを Enter で抜ける
+    # dismiss the folder-trust dialog with Enter
     (for i in $(seq 1 100); do tmux capture-pane -p -t probe > frame_$i.txt; sleep 0.5; done) &
     tmux send-keys -t probe "<prompt>"; sleep 1; tmux send-keys -t probe Enter
 
-勘所:
-- **サンプラを先に回してからプロンプトを投入する**。go test の起動待ちを挟むと
-  ターンを丸ごと取り逃がす（実際に一度誤って「壊れていない」と誤結論しかけた）。
-- **実フリートのペインを眺めるだけでは不十分**。長い/トークンの多いターンばかりで
-  トークン無しスピナー（下記 busy_thinking_no_tokens）が現れず、真因が隠れる。
-- モードごとにフッタが違うので manual / plan / bypass を個別に取る。
+Points that matter:
+- **Start the sampler before submitting the prompt.** Waiting for go test to start in
+  between loses the whole turn (which once nearly led to the wrong conclusion that nothing
+  was broken).
+- **Watching panes of the live fleet is not enough.** They are all long, token-heavy turns,
+  so the token-less spinner (busy_thinking_no_tokens below) never appears and the real
+  cause stays hidden.
+- The footer differs per mode, so capture manual / plan / bypass separately.
 
-各ファイル
-----------
-busy_thinking_no_tokens.txt    思考中スピナー「✢ Tempering… (6s · thinking with high
-                               effort)」= **トークンセグメント無し**。fce5c5e が直した
-                               回帰そのもの。旧 spinnerRe は tokens 必須だったため、
-                               このフレームを含む 14 秒ターンを 100 フレーム中 0 しか
-                               busy と判定できなかった。
-busy_tokens_early.txt          トークンが乗り始めた直後「✻ Wibbling… (3s · ↓ 28 tokens)」。
-busy_tokens_glyph_asterisk.txt 同じターンの後半。グリフが「*」に変化する例
-                               「* Wibbling… (14s · ↓ 101 tokens)」= グリフは固定でない。
-idle_manual_mode.txt           既定(manual)モードの idle。フッタは「⏸ manual mode on ·
-                               ← for agents」で **(shift+tab to cycle) が無い**。旧
-                               AtIdlePrompt が false を返し続けた回帰そのもの。
-idle_bypass_bg_shell.txt       bypass + バックグラウンド shell 実行中の idle。ヒントが
-                               「· 1 shell ·」に押し出される＝ヒント枠は文脈依存。
-idle_bypass_hint.txt           bypass の idle（ヒントが出ている素直なケース）。
-idle_plan_mode.txt             plan モードの idle。
-idle_post_turn_summary.txt     ターン終了後の要約「✻ Sautéed for 20s」。過去形動詞・
-                               「…」無し・括弧無しで、**どれだけ長いターンでもトークンは
-                               出ない**（13m53s のターンでも確認済）。busy と誤判定しては
-                               ならない。
-modal_plan_approval.txt        プラン承認ダイアログ。**モード表示フッタごと消える**ので、
-                               フッタ不在自体がダイアログ表示中のシグナルになる。なお
-                               「Would you like to proceed」は 80 桁で行折返しするため
-                               実際は「to approve」で拾えている（幅依存の脆さ）。
-modal_folder_trust.txt         起動時のフォルダ信頼ダイアログ（「Esc to cancel」で拾う）。
-agents_rail_main_selected.txt  バックグラウンド・エージェント実行中で、入力欄は **main**
-                               に紐づいている状態。フッタ下に「● main / ◯ <agent>」の
-                               レールが出る。スピナーは「✻ Waiting for N background
-                               agents to finish」＝「…」も括弧タイマーも無いので busy に
-                               ならず、main は素の idle として読める（これ自体が正しい）。
-agents_rail_agent_selected.txt 同じセッションで **エージェント側が選択**されている状態。
-                               レールの丸が反転する（◯ main / ● <agent>）だけで、入力欄も
-                               フッタも同じに見える。この状態で打った文字はメイン会話では
-                               なく**そのエージェントへの割り込み**になる。プローブで実証:
-                               打った直後にレール行へ「1 queued」が付き、本文はエージェント
-                               の転写にだけ入って本体の会話には現れなかった（2026-07-30
-                               sannme2 の誤配達と同じ形）。ペインのスピナーはエージェントの
-                               ものなので IsBusy は true になり、配達検証の「ペインが動いて
-                               いる」証拠を汚染する点もこのフレームで固定している。
-agents_rail_navigating_main.txt   ↓ でレール選択を開いた直後。**モード表示フッタごと
-                               「↑/↓ to select · Enter to view」に差し替わる**ので、フッタを
-                               基準に下端を探す実装はここで盲になる（だから罫線を基準に
-                               している）。カーソルは常に先頭行 = main に立つ。
-agents_rail_navigating_agent.txt  同じレール選択でカーソルをエージェント行へ動かし、Enter で
-                               開いた状態（枠タイトルがエージェント名に変わる）。
-agents_home_screen.txt         会話から ← を押した先の **agents ホーム画面**。入力欄の
-                               プレースホルダが「describe a task for a new session」で、
-                               ここへ打つと**新しいセッションが作られる**。フッタは
-                               「⏵⏵ bypass permissions · enter to return · …」で、モード表示の
-                               "on" が消えるため atPromptFooter も外れる。案内どおり Esc で
-                               会話へ戻る。
-modal_rate_limit.txt           利用上限でターンが切れた後の `/rate-limit-options` メニュー
-                               （claude 2.1.220 / 2026-07-31 実測）。ターンは終わっている
-                               のに人のキー入力待ちで止まり、**メニューは自分では消えない**。
-                               "Esc to cancel" を含みモード表示フッタごと入力欄を置き換える
-                               ので AtIdlePrompt は恒久的に false = 自己修復が永久に空振りし、
-                               セッションが 進行中 に貼り付く（実測 約16時間・docs/log/47 §4-3）。
-                               バナー「You've hit your session limit …」は転写テキストなので
-                               メニューを消しても画面に残る = 判定材料にしてはならない。
-                               **このフレームだけ実フリートのペイン由来**（制御プローブでは
-                               上限を意図的に踏めない）。下記の規約どおり、会話本文は無害な
-                               ダミーへ置換し、リポジトリ名も伏せてある。残しているのは
-                               メニューと罫線とスピナー行という構造部分だけ。
+The files
+---------
+busy_thinking_no_tokens.txt    The thinking spinner "✢ Tempering… (6s · thinking with high
+                               effort)" = **no token segment**. Exactly the regression
+                               fce5c5e fixed. The old spinnerRe required tokens, so of the
+                               100 frames of the 14-second turn containing this frame, 0
+                               were judged busy.
+busy_tokens_early.txt          Just after tokens appear: "✻ Wibbling… (3s · ↓ 28 tokens)".
+busy_tokens_glyph_asterisk.txt Later in the same turn, an example where the glyph changes
+                               to "*": "* Wibbling… (14s · ↓ 101 tokens)" = the glyph is
+                               not fixed.
+idle_manual_mode.txt           Idle in the default (manual) mode. The footer is "⏸ manual
+                               mode on · ← for agents" and **has no (shift+tab to cycle)**.
+                               Exactly the regression where the old AtIdlePrompt kept
+                               returning false.
+idle_bypass_bg_shell.txt       Idle under bypass with a background shell running. The hint
+                               is pushed out by "· 1 shell ·" = the hint slot is
+                               context-dependent.
+idle_bypass_hint.txt           Idle under bypass (the plain case, with the hint showing).
+idle_plan_mode.txt             Idle in plan mode.
+idle_post_turn_summary.txt     The after-the-turn summary "✻ Sautéed for 20s". Past-tense
+                               verb, no "…", no parentheses, and **no tokens however long
+                               the turn was** (confirmed even on a 13m53s turn). Must not
+                               be misjudged as busy.
+modal_plan_approval.txt        The plan approval dialog. **The mode footer disappears with
+                               it**, so the absence of the footer is itself the signal that
+                               a dialog is up. Note that "Would you like to proceed" wraps
+                               at 80 columns, so in practice it is "to approve" that is
+                               matched (a width-dependent fragility).
+modal_folder_trust.txt         The folder-trust dialog at startup (matched on "Esc to
+                               cancel").
+agents_rail_main_selected.txt  A background agent is running and the input box is bound to
+                               **main**. A rail of "● main / ◯ <agent>" appears below the
+                               footer. The spinner is "✻ Waiting for N background agents to
+                               finish" = no "…" and no parenthesised timer, so it does not
+                               read as busy and main reads as plain idle (which is correct
+                               in itself).
+agents_rail_agent_selected.txt The same session with **the agent side selected**. Only the
+                               rail's circles invert (◯ main / ● <agent>); the input box
+                               and the footer look identical. Characters typed in this
+                               state become **an interruption to that agent**, not part of
+                               the main conversation. Demonstrated with the probe: right
+                               after typing, "1 queued" appeared on the rail line and the
+                               text landed only in the agent's transcript, never in the
+                               main conversation (the same shape as the 2026-07-30 sannme2
+                               misdelivery). The pane's spinner belongs to the agent, so
+                               IsBusy becomes true and pollutes the "the pane is moving"
+                               evidence used for delivery verification — this frame pins
+                               that too.
+agents_rail_navigating_main.txt   Right after opening the rail selection with ↓. **The mode
+                               footer is replaced wholesale by "↑/↓ to select · Enter to
+                               view"**, so an implementation that looks for the bottom edge
+                               by the footer goes blind here (which is why the ruled line is
+                               used instead). The cursor always sits on the first row, main.
+agents_rail_navigating_agent.txt  The same rail selection with the cursor moved to the agent
+                               row and opened with Enter (the frame title changes to the
+                               agent name).
+agents_home_screen.txt         The **agents home screen** reached by pressing ← from the
+                               conversation. The input box placeholder is "describe a task
+                               for a new session", and typing here **creates a new session**.
+                               The footer is "⏵⏵ bypass permissions · enter to return · …";
+                               the mode display's "on" is gone, so atPromptFooter comes off
+                               too. Esc returns to the conversation, as the hint says.
+modal_rate_limit.txt           The `/rate-limit-options` menu after a turn was cut off by
+                               the usage limit (claude 2.1.220, measured 2026-07-31). The
+                               turn is over, yet it stops waiting for a human keystroke and
+                               **the menu never goes away by itself**. It contains "Esc to
+                               cancel" and replaces the input box together with the mode
+                               footer, so AtIdlePrompt is permanently false = self-healing
+                               misses forever and the session sticks at "in progress"
+                               (measured at about 16 hours; docs/log/47 §4-3). The banner
+                               "You've hit your session limit …" is transcript text, so it
+                               stays on screen even after the menu is dismissed = it must
+                               not be used as evidence. **This is the only frame taken from
+                               a live fleet pane** (a control probe cannot deliberately hit
+                               the limit). Per the convention below, the conversation body
+                               was replaced with harmless dummy text and the repository name
+                               was masked. Only the structural parts — the menu, the ruled
+                               lines and the spinner row — are kept.
 
-エージェント表示からメイン会話へ戻す手順（実測・LeaveAgentsView が使う）
-------------------------------------------------------------------------
-- レールでエージェントに紐づいている場合: **↓ → Enter → ↑**。↓ でレール選択が開き
-  カーソルは先頭（main）に立つ / Enter で main の表示へ戻る / 先頭行での ↑ がレール選択を
-  閉じる。この後に打った文字がメイン転写へ入ることまで確認済み。
-- agents ホーム画面の場合: **Esc**。
-- 下書きが残っているときは何もしない（レール選択中の Enter は送信ではないと確認済みだが、
-  表示がドリフトしていた場合に人の書きかけを送信する事故は取り返しがつかない）。実測で
-  下書きがあると composerEmpty=false になり、復帰は試みられない。
+Getting back from the agents view to the main conversation (measured; used by LeaveAgentsView)
+----------------------------------------------------------------------------------------------
+- When the rail is bound to an agent: **↓ -> Enter -> ↑**. ↓ opens the rail selection with
+  the cursor on the first row (main) / Enter returns to main's view / ↑ on the first row
+  closes the rail selection. Characters typed afterwards were confirmed to land in the main
+  transcript.
+- On the agents home screen: **Esc**.
+- Do nothing while a draft is left in the box (Enter during rail selection was confirmed not
+  to send, but if the display had drifted, sending something a person was still writing
+  would be unrecoverable). Measured: with a draft present composerEmpty=false and no
+  recovery is attempted.
 
-備考
-----
-- **agents_* の5枚は claude 2.1.220 の制御プローブ**（2026-07-30）。バックグラウンド
-  エージェント（`sleep 150`）を1体走らせ、レール操作・エージェント表示・agents ホームを
-  順に踏んで撮った。レールの丸は U+25CF（選択）/ U+25EF（非選択）、入力欄の行は
-  「❯ + U+00A0」で、TrimSpace 前提の空判定はこの NBSP に依存している。
-- それ以外の取得元も全て**自分で立てた制御プローブ**。実フリートの他セッションのペインは実作業の
-  内容が写るのでコーパスには入れない。
-- ウェルカムボックス内のメールアドレスのみ dev@example.com へ置換した（枠の桁ずれが
-  起きないよう同幅で置換）。それ以外は生のまま。
+Notes
+-----
+- **The five agents_* frames are control probes on claude 2.1.220** (2026-07-30). One
+  background agent (`sleep 150`) was run, and the rail operations, the agent view and the
+  agents home screen were walked through in order. The rail's circles are U+25CF (selected)
+  / U+25EF (unselected), and the input box row is "❯ + U+00A0" — an emptiness test that
+  assumes TrimSpace depends on that NBSP.
+- Everything else was also taken from **a control probe set up for the purpose**. Panes of
+  other sessions in the live fleet show real work, so they are not put into the corpus.
+- Only the email address inside the welcome box was replaced with dev@example.com (replaced
+  with the same width so the frame's columns do not shift). Everything else is raw.

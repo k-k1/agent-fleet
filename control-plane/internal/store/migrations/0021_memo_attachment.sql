@@ -1,4 +1,4 @@
--- Memo image attachments (docs/log/21 画像添付): a memo can carry image files shared from a
+-- Memo image attachments (docs/log/21 image attachments): a memo can carry image files shared from a
 -- phone (Android 共有シート) or dragged into the composer. attachments is a JSON array of
 -- {path,name} objects where path is the in-container absolute path under
 -- ~/.cache/agent-fleet/memo-images and name is the basename. '' means no attachments.

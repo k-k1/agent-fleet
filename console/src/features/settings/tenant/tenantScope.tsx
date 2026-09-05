@@ -1,14 +1,14 @@
-// tenantScope — テナント 1 つ分の面（レールの並び＋本文）。
+// tenantScope — the view of a single tenant (rail order plus body).
 //
-// 同じテナントを 2 人が別の入口から見る: テナント管理者はテナント設定モーダルで
-// 自分のテナントを、デプロイ管理者は管理モーダルでどのテナントでも。中身が同じなのに
-// IA が入口ごとに違うと、案内も操作も 2 通りになるので、レールの並びと本文の
-// 差し分けをここ 1 つに置いて両方から差す（出し分けは props の isSuper だけ・
-// サーバのゲートは触らない）。
+// The same tenant is reached from two entry points: a tenant admin sees their own tenant in
+// the tenant settings modal, a deployment admin sees any tenant in the admin modal. If the
+// information architecture differed per entry point, both the documentation and the operation
+// would have to exist twice, so the rail order and the body switch live here once and are
+// used from both (the only switch is the isSuper prop; server gates are untouched).
 //
-// ★ 権限はサーバが持つ。上限の PUT も、サインイン方式の「承認して有効化」も
-// withSuperAdmin / super_admin 固定（ADR0043 決定 19 / 決定 30）。ここの出し分けは
-// 案内でしかない。
+// Permission is the server's. Both the limits PUT and "approve and enable" for a sign-in
+// method are fixed at withSuperAdmin / super_admin (ADR0043 decision 19 / decision 30); what
+// is switched here is presentation only.
 import { useEffect, useState } from "react";
 import { apiJSON, errText } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -35,17 +35,17 @@ export interface ScopeGroup {
   items: [string, string][];
 }
 
-// レールの並び。項目 = [セクションキー, i18n キー]。ここの順がそのまま表示順。
+// The rail order. An item is [section key, i18n key]; this order is the display order.
 //
-// 「運用」に並ぶ 5 つは、CP がテナント管理者に自テナント分を返す面（GET
-// /api/admin/{sessions,usage,audit} と /api/admin/mcp-servers）。
+// The five under "manage" are the views where the CP returns a tenant admin their own tenant's
+// rows (GET /api/admin/{sessions,usage,audit} and /api/admin/mcp-servers).
 export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
   const manage: [string, string][] = [
     ["members", "tenant.tab_members"],
     ["sessions", "tenant.tab_sessions"],
     ["usage", "tenant.tab_usage"],
-    // クラウド費用は AWS の請求があるデプロイにしかない。レールから外すのでは
-    // なく、そもそも項目を作らない（docs/log/67 §67.8）。
+    // Cloud cost only exists on a deployment with AWS billing: the item is not created at all
+    // rather than being created and then hidden from the rail (docs/log/67 §67.8).
     ...(opts.cost ? ([["cost", "tenant.tab_cost"]] as [string, string][]) : []),
     ["audit", "tenant.tab_audit"],
     ["mcp", "tenant.tab_mcp"],
@@ -54,8 +54,8 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
     {
       key: "tenant",
       label: "tenant.group_tenant",
-      // 上限は「テナントそのもの」の話で、ログインにも運用にも属さない。決めるのは
-      // デプロイ管理者だが、テナント管理者にも読める（読み取り専用で同じ場所）。
+      // Limits are about the tenant itself, so they belong to neither login nor manage. The
+      // deployment admin decides them, but a tenant admin can read them in the same place.
       items: [["limits", "tenant.tab_limits"]],
     },
     {
@@ -64,14 +64,14 @@ export function tenantScopeGroups(opts: { cost: boolean }): ScopeGroup[] {
       items: [
         ["signin", "tenant.tab_signin"],
         ["rules", "tenant.tab_rules"],
-        // 接続元の制限（docs/log/66）。ここだけテナント管理者が「書ける」面で、
-        // 上の 2 つ（読み取り専用 / super_admin 承認）とは持ち主が違う。
+        // Source-address restriction (docs/log/66). This is the one view here a tenant admin
+        // can write; the two above are read-only / super_admin-approved and have another owner.
         ["network", "tenant.tab_network"],
       ],
     },
-    // 連携 = 外部サービス側にテナントが用意した資格情報を、こちらに登録する面。
-    // ログインでも運用でもないので節を分けた（docs/log/71 §71.4）。今は git プロバイダの
-    // OAuth アプリ 1 項目だが、置き場所としてはここが増える側。
+    // Integrations = registering credentials the tenant created on an external service. That is
+    // neither login nor manage, so it is its own group (docs/log/71 §71.4). Today it holds only
+    // the git provider OAuth app, but this is the group that grows.
     {
       key: "integrations",
       label: "tenant.group_integrations",
@@ -85,9 +85,9 @@ export const TENANT_SCOPE_SECTIONS = tenantScopeGroups({ cost: true }).flatMap((
   g.items.map(([k]) => k),
 );
 
-// TenantSummary — テナントそのものの数字（人数・起動中のワークスペース・テナント
-// 全体の上限）を読み取り専用で。決めるのはデプロイ管理者（PUT .../limits は
-// withSuperAdmin 固定）なので、テナント管理者にはこちらを出す。
+// TenantSummary — the tenant's own numbers (members, running workspaces, tenant-wide limits),
+// read-only. The deployment admin decides them (PUT .../limits is fixed at withSuperAdmin), so
+// this is what a tenant admin is shown instead of the editor.
 function TenantSummary({ tenant }: { tenant: Tenant | null }) {
   const tr = useT();
   if (!tenant) return <p className="muted pad">{tr("tenant.none")}</p>;
@@ -112,14 +112,12 @@ function TenantSummary({ tenant }: { tenant: Tenant | null }) {
   );
 }
 
-// TenantLimits — テナント全体の上限とアイドル自動停止（super_admin のみ）。
-// 旧 AdminTab の TenantView からそのまま移した（1 枚の長いテナント詳細を、レールの
-// 節に割った先の 1 つ）。
+// TenantLimits — the tenant-wide limits and idle auto-stop (super_admin only).
 export function TenantLimits({
   slug,
   tenant,
-  // home の休止 / バックアップは EC2 スロットプールのランタイムにしか無い。他では
-  // 何もしない欄になるので、そもそも出さない。
+  // Home hibernate / backup only exist on the EC2 slot-pool runtime; elsewhere the fields
+  // would do nothing, so they are not rendered at all.
   hasPool,
   onChanged,
 }: {
@@ -139,14 +137,15 @@ export function TenantLimits({
   const [maxWsMemMb, setMaxWsMemMb] = useState<number | string>(Math.round((tenant?.max_workspace_mem || 0) / 1048576));
   const [sessIdle, setSessIdle] = useState(tenant?.session_idle_timeout || "");
   const [wsIdle, setWsIdle] = useState(tenant?.ws_idle_timeout || "");
-  // 人の判断待ち（質問・プラン承認・許可…）専用の時計。空 = 上の「セッション halt まで」に従う。
+  // A clock used only while waiting on a human decision (question, plan approval, permission).
+  // Empty means: follow the session-halt timeout above.
   const [interIdle, setInterIdle] = useState(tenant?.interaction_idle_timeout || "");
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
-  // 保存の応答が「テナント上限の合計がプールに収まっていない」と言ってきたときだけ入る。
+  // Set only when the save response reports that the tenant limits no longer fit in the pool.
   const [budget, setBudget] = useState<PoolBudget | null>(null);
 
   useEffect(() => {
@@ -183,9 +182,9 @@ export function TenantLimits({
       toast(errText(res.error));
       return;
     }
-    // 保存は通っている。超過は**拒否ではなく警告**なので（サーバ側 setTenantLimits の
-    // 理由を参照）、保存済みの表示と一緒に、いま打った数字についての注意を残す。
-    // トーストにしないのは、消えると「読まなかった」で終わるから。
+    // The save went through: exceeding the pool is a warning, not a rejection (see the reason
+    // on the server side in setTenantLimits). Keep the note about the numbers just entered
+    // alongside the saved indicator; a toast would disappear and simply go unread.
     setBudget(res?.pool_budget || null);
     setSaved(true);
     setTimeout(() => setSaved(false), 1500);
@@ -200,9 +199,9 @@ export function TenantLimits({
           <label className="admin-fld">
             <span className="af-cap">{tr("admin.max_workspace")}</span>
             <input type="number" min="0" value={maxWs} onChange={(e) => setMaxWs(e.target.value)} />
-            {/* ⚠️ 何を数える上限なのかを欄の隣に置く。スロットプールの配備では、これを
-                「このテナントが占有する箱の数」と読むと必ず外れる——停止中の Workspace は
-                箱を掴んだままここには数えられない。 */}
+            {/* State next to the field what the limit counts. On a slot-pool deployment,
+                reading it as "how many instances this tenant occupies" is always wrong: a
+                stopped workspace still holds its instance but is not counted here. */}
             <span className="af-note">{tr("admin.max_workspace_note")}</span>
           </label>
           <label className="admin-fld">
@@ -272,8 +271,8 @@ export function TenantLimits({
         </div>
       )}
 
-      {/* home が 1 つの AZ に固定されるのはこのランタイムだけなので、AZ ごと失う話も
-          ここにしか無い。他では home はそもそも 1 AZ に縛られていない。 */}
+      {/* Only on this runtime is home pinned to a single AZ, so losing a whole AZ is a concern
+          only here; elsewhere home is not bound to one AZ at all. */}
       {hasPool && (
         <div className="admin-fgroup">
           <h4>{tr("admin.backup_title")}<span className="af-note">{tr("admin.empty_deploy_default")}</span></h4>
@@ -315,21 +314,21 @@ export function TenantLimits({
         <button onClick={saveLimits} className="primary">{tr("common.save")}</button>
         {saved && <span className="saved-note"><Icon name="check" /> {tr("admin.saved")}</span>}
       </div>
-      {/* 保存は済んでいる。「保存できなかった」ではなく「保存したが、この配備のスロットには
-          収まっていない」と読めるよう、保存ボタンの下に出す。 */}
+      {/* The save already happened. Placed below the save button so it reads as "saved, but it
+          does not fit this deployment's slots" rather than "the save failed". */}
       {budget && <PoolBudgetHint budget={budget} />}
     </section>
   );
 }
 
-// TenantDeletePanel — テナントを消す（docs/log/61 §61.18・super_admin のみ）。
+// TenantDeletePanel — delete a tenant (docs/log/61 §61.18, super_admin only).
 //
-// ★ 上限の節の末尾に置く。ここが「テナントそのもの」の節で、メンバーでもログインでも
-// 運用でもないから。管理モーダルからしか出さない（テナント設定モーダルは onDelete を
-// 渡さない）——自分のテナントの設定画面に、そのテナントを消すボタンは要らない。
+// Placed at the end of the limits section, which is the "tenant itself" section rather than
+// members, login or manage. Only reachable from the admin modal (the tenant settings modal
+// passes no onDelete): a tenant's own settings screen has no business offering to delete it.
 //
-// ★ 拒否の理由はサーバの文言をそのまま出す。「先に○○してください」が本文で、
-// どれも「空になっていないものは消せない」の言い換え。
+// The refusal reason is shown verbatim from the server. Each one is a variation of "what is
+// not empty cannot be deleted", phrased as "do X first".
 function TenantDeletePanel({ slug, onDeleted }: { slug: string; onDeleted: () => void }) {
   const tr = useT();
   const toast = useToast();
@@ -377,9 +376,9 @@ function TenantDeletePanel({ slug, onDeleted }: { slug: string; onDeleted: () =>
   );
 }
 
-// TenantScopeBody — 選ばれたセクションの中身。メンバーは「一覧 → 詳細」の 2 段で、
-// 段の状態（member）は呼び出し側が持つ: 端末の戻るをどう積むかは面ごとに違うため
-// （テナント設定は詳細 → レール、管理はさらにテナント一覧まで戻る）。
+// TenantScopeBody — the body of the selected section. Members is two stages, list then detail,
+// and the stage state (member) is owned by the caller because the back stack differs per entry
+// point (tenant settings goes detail -> rail; admin goes on back to the tenant list).
 export function TenantScopeBody({
   slug,
   tenant,
@@ -395,20 +394,21 @@ export function TenantScopeBody({
   slug: string;
   tenant: Tenant | null;
   section: string;
-  /** サーバが返した super_admin。上限の編集・規則の編集・サインイン方式の承認の出し分け。 */
+  /** super_admin as returned by the server. Switches editing limits and rules, and approving
+   *  a sign-in method. */
   isSuper: boolean;
   hasPool?: boolean;
   member: Member | null;
   onOpenMember: (m: Member) => void;
   onCloseMember: () => void;
   onChanged: () => void;
-  /** 渡されたときだけ「テナントを削除」を出す（管理モーダルのみ・docs/log/61 §61.18）。 */
+  /** Delete tenant is shown only when this is passed (admin modal only, docs/log/61 §61.18). */
   onDeleted?: () => void;
 }) {
   const tr = useT();
-  // ★ マシン種別はテナント管理者のものなので、上限そのものと違って isSuper で
-  //   出し分けない（docs/log/70 §70.4.3・PUT は tenantAdminFor で門を張っている）。
-  //   クラスが 1 つしか無いデプロイでは部品自身が何も描かないので、ここに条件は無い。
+  // The machine class belongs to the tenant admin, so unlike the limits themselves it is not
+  // switched on isSuper (docs/log/70 §70.4.3; the PUT is gated by tenantAdminFor). On a
+  // deployment with a single class the component renders nothing, so no condition is needed.
   if (section === "limits") {
     return (
       <>
@@ -418,14 +418,14 @@ export function TenantScopeBody({
           <TenantSummary tenant={tenant} />
         )}
         <TenantMachineView key={slug} slug={slug} />
-        {/* 削除は最後。破壊的な操作を、日常的に触る 2 つの面の上へ持ってこない。 */}
+        {/* Delete goes last: a destructive action never sits above the two everyday views. */}
         {isSuper && onDeleted && <TenantDeletePanel slug={slug} onDeleted={onDeleted} />}
       </>
     );
   }
-  // ★ 規則は「テナント管理者には読み取り専用」（PUT が withSuperAdmin 固定）だが、
-  //   super_admin がこの面に居るときまで読み取り専用にすると、「変更できるのは
-  //   デプロイ管理者だけです」と書いてある画面を当のデプロイ管理者が眺めることになる。
+  // The rules are read-only for a tenant admin (the PUT is fixed at withSuperAdmin), but making
+  // them read-only for a super_admin too would leave the deployment admin staring at a screen
+  // that says only the deployment admin can change this.
   if (section === "rules") {
     return isSuper ? (
       <TenantLoginRules slug={slug} tenant={tenant} onChanged={onChanged} />
@@ -434,8 +434,8 @@ export function TenantScopeBody({
     );
   }
   if (section === "network") return <TenantNetworkView key={slug} slug={slug} />;
-  // ★ isSuper で出し分けない。git プロバイダの OAuth アプリはテナント管理者のもので、
-  //   PUT も tenantAdminFor で門を張っている（ADR 0052 決定 3）。
+  // Not switched on isSuper: the git provider OAuth app belongs to the tenant admin, and its
+  // PUT is gated by tenantAdminFor (ADR 0052 decision 3).
   if (section === "git-oauth") return <TenantGitOAuthView key={slug} slug={slug} />;
   if (section === "members") {
     if (member) {
@@ -458,7 +458,7 @@ export function TenantScopeBody({
             member={member}
             isSuper={isSuper}
             onChanged={onChanged}
-            // 外した人の詳細を開いたままにしない — 一覧へ戻して読み直す。
+            // Never leave a removed member's detail open: go back to the list and reload.
             onRemoved={() => {
               onCloseMember();
               onChanged();
@@ -469,18 +469,18 @@ export function TenantScopeBody({
     }
     return <MembersPanel slug={slug} isSuper={isSuper} onOpenMember={onOpenMember} />;
   }
-  // ★ 運用の面には、この画面が見ているテナント 1 つだけを渡す。isSuper={false} は
-  // 「あなたはデプロイ管理者ではない」ではなく「この面はテナントを跨がない」の意味で、
-  // テナント選択欄を出さないための指定（誰の分が返るかはサーバが決める）。slug を key に
-  // しているのは、テナントを切り替えたらポーリングごと張り直すため。
+  // The manage views get only the single tenant this screen is looking at. isSuper={false} here
+  // does not mean "you are not a deployment admin"; it means "this view does not cross tenants"
+  // and suppresses the tenant selector (the server still decides whose rows come back). slug is
+  // the key so switching tenants re-establishes the polling as well.
   const one = tenant ? [tenant] : [];
   if (section === "sessions") return <AllSessionsView key={slug} tenants={one} isSuper={false} />;
   if (section === "usage") return <UsageView key={slug} tenants={one} isSuper={false} />;
   if (section === "cost") return <CloudCostAdminView key={slug} tenants={one} isSuper={false} />;
   if (section === "audit") return <AuditView key={slug} tenants={one} isSuper={false} />;
   if (section === "mcp") return <McpAdminView key={slug} tenants={one} />;
-  // ★ tenant を渡すのは、この面が「受け入れる／ボタンに出す」の 2 トグルを持つように
-  // なったため（docs/log/61 §61.17.5）。倒せるのは super_admin だけで、規則の PUT は
-  // withSuperAdmin 固定のまま（決定 19）。onChanged で 4 列を読み直す。
+  // tenant is passed because this view carries two toggles, "accept" and "show as a button"
+  // (docs/log/61 §61.17.5). Only a super_admin can flip them, and the rules PUT stays fixed at
+  // withSuperAdmin (decision 19). onChanged reloads the four columns.
   return <TenantSignInMethods slug={slug} isSuper={isSuper} tenant={tenant} onChanged={onChanged} />;
 }

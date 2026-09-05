@@ -1,8 +1,9 @@
-// 「ここから分岐」（docs/log/55）の判定 — ミラーのどのブロックに導線を出すか、そこで分岐したら
-// 何往復が引き継がれるか。MirrorView から切り出してあるのは、この 2 つが**出しすぎると
-// 必ず 400 になり、数え違えると確認ダイアログが嘘をつく**種類のロジックだから。
+// Rules for "fork from here" (docs/log/55): which mirror blocks offer the control, and how many
+// exchanges a fork carries over. Kept out of MirrorView because offering it too widely always
+// ends in a 400, and a miscount makes the confirmation dialog lie.
 
-// 判定に要る形だけを構造的に受ける（MirrorView の Group は非公開で、ここは表示に依存しない）。
+// Structurally typed to just what the decision needs; MirrorView's Group is private and this
+// logic must not depend on rendering.
 export interface BranchableTurn {
   role: string;
   anchorId?: string;
@@ -11,10 +12,11 @@ export interface BranchableTurn {
   queued?: boolean;
 }
 
-// canBranchInSession: このセッションで分岐という操作を出してよいか（ブロック単位の判定は
-// canBranchFrom）。**kind ごとに条件が違う**のがここの肝で、opencode/codex は分岐点を渡せる
-// 口が runtime API にしかないので managed 必須、claude は managed driver 自体が無く自分の
-// 転写を切るので TUI で使える。一律に managed を要求すると claude の導線が永久に出ない。
+// canBranchInSession reports whether forking may be offered in this session at all (per-block
+// is canBranchFrom). The condition differs per agent kind: opencode/codex can only be given a
+// fork point through the runtime API, so they require managed; claude has no managed driver and
+// cuts its own transcript, so it works under the TUI. Requiring managed for everything would
+// hide the control for claude forever.
 export function canBranchInSession(
   caps: { forkAt: boolean; forkAtManagedOnly: boolean },
   opts: { managed: boolean; readOnly: boolean },
@@ -23,18 +25,18 @@ export function canBranchInSession(
   return !caps.forkAtManagedOnly || opts.managed;
 }
 
-// canBranchFrom: このブロックから分岐できるか。
-// - ユーザーの発言であること（エージェントの回答から分岐しても意味が変わる。v1 は打ち直し用）
-// - アンカーがあること（無いブロックを指すと会話まるごと分岐に化ける）
-// - まだ会話に載っていない echo / キュー済みでないこと（アンカーは landed な行にしか無い）
-// - 圧縮サマリでないこと（会話の内容ではなく、その要約という別物）
+// canBranchFrom reports whether this block can be forked from. It must be:
+// - a user message (forking from an agent reply changes the meaning; v1 is for re-typing)
+// - anchored (pointing at an unanchored block forks the whole conversation instead)
+// - neither an unlanded echo nor queued (anchors exist only on landed lines)
+// - not a compaction summary (a summary of the conversation, not the conversation)
 export function canBranchFrom(t: BranchableTurn): boolean {
   return t.role === "user" && !!t.anchorId && !t.pending && !t.queued && !t.compact;
 }
 
-// carriedUserTurns: 分岐先へ引き継がれる「あなたの発言」の数。分岐点そのものは
-// 引き継がれない（打ち直せるように手前で切る）ので数に入れない。確認ダイアログの
-// 「N 件を引き継ぎます」がこれ。
+// carriedUserTurns counts the user messages carried into the fork. The fork point itself is not
+// carried (the cut is made before it so it can be re-typed), so it is excluded. This is the
+// number the confirmation dialog reports.
 export function carriedUserTurns(groups: BranchableTurn[], at: BranchableTurn): number {
   const i = groups.indexOf(at);
   if (i < 0) return 0;

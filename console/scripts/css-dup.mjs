@@ -1,27 +1,28 @@
 #!/usr/bin/env node
-// 同名グローバルクラスの重複検出。
+// Detect global class names defined in more than one file.
 //
-// なぜ要るか。この Console の CSS は**全部グローバル**で、main.tsx が固定の順序で import
-// する（CSS Modules ではない）。だから 2 つのファイルが同じクラス名を定義すると、両者は
-// 衝突として報告されるのではなく **import 順で合成**される —— 後から読まれた側のプロパティ
-// だけが上書きされ、残りは前のファイルのまま残る。実際に「片方のファイルだけ見ても
-// 説明のつかない見た目」になる事故が起きている。
+// Why it exists: every CSS file in this Console is global and main.tsx imports them in a fixed
+// order (these are not CSS Modules). When two files define the same class name, that is not
+// reported as a collision but composed in import order: only the properties from the file read
+// later are overridden, the rest stay as the earlier file left them. This has produced looks
+// that cannot be explained by reading either file on its own.
 //
-// 分割・移設の前に**現状の重複一覧**を取るための道具（ADR 0067 Phase 0）。既定では
-// 列挙するだけで落とさない。CI ゲートにするかは棚卸しのあとの判断。
+// The tool exists to take an inventory of the current duplicates before splitting and moving
+// files (ADR 0067 Phase 0). By default it only lists them and does not fail; whether it becomes
+// a CI gate is a decision for after the inventory.
 //
-// 使い方:
-//   node scripts/css-dup.mjs            … 一覧を出す（常に exit 0）
-//   node scripts/css-dup.mjs --fail     … 重複が 1 件でもあれば exit 1（将来の CI 用）
-//   node scripts/css-dup.mjs --json     … 機械可読
+// Usage:
+//   node scripts/css-dup.mjs            list them (always exit 0)
+//   node scripts/css-dup.mjs --fail     exit 1 if there is any duplicate (for future CI use)
+//   node scripts/css-dup.mjs --json     machine readable
 //
-// 危険度は 1 段だけ分ける。`.parent .active {}` のような**祖先で限定された**同名クラスは
-// 実質そのファイルの中の話だが、セレクタが `.active` 単体（= bare）のものは文字どおり
-// グローバルで、他ファイルの `.active` と直接合成される。bare が 2 ファイル以上にある
-// 名前だけが「いま危ないもの」なので ⚠ を付ける。
+// There is exactly one severity distinction. A same-named class qualified by an ancestor, as in
+// `.parent .active {}`, is effectively local to its file, whereas a selector that is `.active`
+// alone (bare) is literally global and composes directly with another file's `.active`. Only
+// names whose bare form appears in two or more files are dangerous today, and those get a ⚠.
 //
-// 限界（承知の上）: それ以上は判定しない。事故なのか意図した上書き（テーマ差分など）
-// なのかを当てにいくと、一覧そのものが信用されなくなる。
+// Deliberate limit: it judges nothing beyond that. Guessing whether a duplicate is an accident
+// or an intended override (a theme variant, say) would cost the list its credibility.
 
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -31,8 +32,8 @@ const HERE = fileURLToPath(new URL(".", import.meta.url));
 const ROOT = join(HERE, "..");
 const SRC = join(ROOT, "src");
 
-// 対象外: Marp のデッキテーマは Console の DOM に載らない（Marp レンダラ側の独立した
-// スタイルシート）ので、同名クラスがあっても合成されない。
+// Excluded: Marp deck themes never reach the Console's DOM (they are the Marp renderer's own
+// stylesheets), so a shared class name there is never composed.
 const SKIP = [/\/marp-themes\//];
 
 function walk(dir, out = []) {
@@ -44,7 +45,8 @@ function walk(dir, out = []) {
   return out;
 }
 
-// コメントと文字列を潰す（中身の . を拾わないため）。長さは変えない＝行番号が保てる。
+// Blank out comments and strings so a "." inside them is not picked up. The length is preserved
+// so line numbers still hold.
 function blank(css) {
   let out = "";
   for (let i = 0; i < css.length; ) {
@@ -70,12 +72,13 @@ function blank(css) {
   return out;
 }
 
-// 条件付きグループ規則の中身は「宣言」ではなく「規則」なので、掘って中の
-// セレクタも拾う。@keyframes の中は from/to/% でクラス名を含まない（拾っても無害）。
+// The body of a conditional group rule holds rules, not declarations, so descend into it and
+// collect the selectors inside. @keyframes bodies are from/to/% and hold no class names, so
+// descending there would be harmless anyway.
 const NESTED_AT = /^@(media|supports|layer|container|scope|document)\b/;
 
-// セレクタ（{ の直前のテキスト）だけを列挙する。宣言ブロックの中は見ないので、
-// content: ".x" のような値をクラス名と誤認しない。
+// List only the selectors, i.e. the text right before a "{". Declaration blocks are not read, so
+// a value such as content: ".x" is never mistaken for a class name.
 function selectors(css) {
   const s = blank(css);
   const out = [];
@@ -89,12 +92,12 @@ function selectors(css) {
         if (NESTED_AT.test(p)) {
           prelude = "";
           preludeStart = i + 1;
-          continue; // 中身を規則として読み続ける
+          continue; // keep reading the body as rules
         }
       } else if (p) {
         out.push({ text: p, index: preludeStart });
       }
-      // 宣言ブロックは丸ごと飛ばす（ネストがあれば数える）
+      // Skip the whole declaration block, counting nesting on the way
       let depth = 1;
       while (++i < s.length && depth > 0) {
         if (s[i] === "{") depth++;
@@ -117,8 +120,9 @@ function selectors(css) {
 
 const CLASS = /\.(-?[_a-zA-Z][\w-]*)/g;
 
-// セレクタ 1 本（カンマ区切りの 1 つ）が `.name` 単体か。擬似クラス/擬似要素は付いていて
-// よい（`.on:hover` も同じグローバル名を握る）。子孫・結合子が入れば bare ではない。
+// Whether one selector (one comma-separated part) is a bare `.name`. Pseudo-classes and
+// pseudo-elements are allowed, since `.on:hover` holds the same global name; any descendant or
+// combinator makes it not bare.
 function bareClassOf(part) {
   const m = /^\.(-?[_a-zA-Z][\w-]*)(::?[\w-]+(\([^)]*\))?)*$/.exec(part.trim());
   return m ? m[1] : null;
@@ -166,9 +170,9 @@ if (process.argv.includes("--json")) {
     ),
   );
 } else {
-  console.log(`# 同名グローバルクラスの重複（${files.length} ファイル / クラス名 ${byName.size} 種）`);
-  console.log(`#   ${dups.length} 個が 2 ファイル以上で定義されている（import 順で合成される）`);
-  console.log(`#   うち ⚠ ${risky.length} 個は bare（\`.name {}\` 単体）が 2 ファイル以上 = 直接ぶつかる\n`);
+  console.log(`# Duplicate global class names (${files.length} files / ${byName.size} distinct names)`);
+  console.log(`#   ${dups.length} are defined in two or more files (composed in import order)`);
+  console.log(`#   of those, ⚠ ${risky.length} are bare (\`.name {}\` alone) in two or more files = a direct clash\n`);
   for (const [name, per] of dups) {
     const mark = bareFiles(per) > 1 ? "⚠" : " ";
     const where = [...per].map(([f, r]) => `${f}:${r.lines.join(",")}${r.bare ? "(bare)" : ""}`).join("  ");
@@ -176,5 +180,5 @@ if (process.argv.includes("--json")) {
   }
 }
 
-// --fail は将来 CI に載せるとき用。既定は列挙のみ（Phase 0 は棚卸しが目的）。
+// --fail is for putting this on CI later; the default only lists, since Phase 0 is an inventory.
 if (process.argv.includes("--fail") && risky.length > 0) process.exit(1);

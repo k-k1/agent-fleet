@@ -1,9 +1,9 @@
-// 読む側の面（.file-viewer-shell）。ファイルの種別と選ばれたモードから
-// 「どの面を描くか」を 1 本の分岐で決める —— 画像 / PDF / Office 文書 /
-// バイナリ / 大きすぎるテキスト / スライド / Markdown プレビュー / コード。
+// The reading surface (.file-viewer-shell). A single branch decides which surface to render
+// from the file's kind and the selected mode: image / PDF / Office document / binary /
+// oversized text / slides / Markdown preview / code.
 //
-// 順序に意味がある分岐なので、条件は元のまま 1 つの三項演算子の連なりで持つ。
-// フックは持たず、状態はすべて FileView 側にある。
+// The branch order is significant, so the conditions stay as one chain of ternaries. It
+// holds no hooks; all state lives in FileView.
 import { downloadURL } from "../../../core/api/client.ts";
 import { baseName, countLines, humanSize } from "../../../lib/filemeta.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -20,7 +20,7 @@ export interface FileViewerShellProps {
   hidden: boolean;
   filePath: string;
   err: string;
-  /** null = まだ読めていない（…を出す）。 */
+  /** false = not read yet (renders the ellipsis placeholder). */
   loaded: boolean;
   size?: number;
   binary?: boolean;
@@ -45,8 +45,8 @@ export interface FileViewerShellProps {
   marks: LineMarks | null;
   targetLine?: number;
   targetColumn?: number;
-  /** 面ごとの「表示位置の記憶」ref を配る（FileView が持つ）。面が変われば別の
-   *  記憶になるので、分岐ごとに違う名前を引く。 */
+  /** Hands out the scroll-position-memory ref per surface (owned by FileView). A different
+   *  surface means a different memory, so each branch asks for a different name. */
   scrollMemory: ScrollMemoryFactory;
 }
 
@@ -62,8 +62,9 @@ export function FileViewerShell(props: FileViewerShellProps) {
       ) : isImage && (!isText || imgMode === "preview") ? (
         <ImageView src={downloadURL(filePath)} alt={baseName(filePath)} onLoad={props.onImgDims} />
       ) : isPdf ? (
-        // PDF は「バイナリ」の一歩手前で拾う（docs/log/82）。api/fs/file は中身を返さず
-        // binary:true だけを返すので、ここから先は download の生バイトが情報源。
+        // PDF is caught one step before "binary" (docs/log/82). api/fs/file returns no
+        // content, only binary:true, so from here on the raw bytes from download are the
+        // source of truth.
         <PdfView src={downloadURL(filePath)} onMeta={props.onPdfMeta} scrollMemory={props.scrollMemory("pdf")} />
       ) : isDoc ? (
         <DocPreview

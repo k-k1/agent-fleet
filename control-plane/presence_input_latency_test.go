@@ -1,13 +1,14 @@
 package main
 
-// noteInput は端末の**打鍵中継の上**で呼ばれる（proxy.go relay: onInput() を通してから
-// キーを転送する）。したがってここで待った時間は、そのキーがエコーバックされるまでの
-// 遅延にそのまま乗る。以前はここで recordWorkspaceActivity を同期呼び出ししていたので、
-// 畳み込みの切れる 5 秒に 1 回、ある打鍵だけが DB 1 往復ぶん止まっていた。
+// noteInput sits on the terminal keystroke relay (proxy.go relay calls onInput() before
+// forwarding the key), so any time spent here lands directly on the latency before that
+// key echoes back — a synchronous store write on this path stalls one keystroke by a
+// whole DB round trip every time the 5s coalescing window lapses. Recording presence
+// must never make a keystroke wait.
 //
-// 端末は 1 文字の往復で品質が決まる面なので、在席の記録は打鍵を待たせてはいけない。
-// この表が壊っても機能は動いてしまい（在席も記録されるし、キーも届く）、症状は
-// 「ときどき入力が引っかかる」としか出ないので、時間そのものを検査する。
+// Breaking that does not break the feature (presence is still recorded, keys still
+// arrive); it only shows up as "input catches sometimes", so this test measures the time
+// itself.
 import (
 	"context"
 	"sync/atomic"
@@ -17,8 +18,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// slowActivityStore は DB が遅い日を再現する。ほかの Store メソッドは使わないので
-// 埋め込みの nil のまま（呼ばれたら panic して気付ける）。
+// slowActivityStore reproduces a slow-DB day. The other Store methods are unused, so the
+// embedded interface stays nil on purpose: any unexpected call panics and is noticed.
 type slowActivityStore struct {
 	store.Store
 	delay time.Duration
@@ -42,36 +43,37 @@ func TestTerminalNoteInputDoesNotBlockOnTheStore(t *testing.T) {
 	}
 	defer release()
 
-	// アタッチ時の 1 回（force）で 5 秒の畳み込みが張られる。打鍵が実際に書き込みへ
-	// 進む状態を作るため、その保護を明示的に切る。
+	// The forced write at attach time arms the 5s coalescing window. Clear it explicitly
+	// so a keystroke actually reaches the write path.
 	m.mu.Lock()
 	m.activityProtectedUntil[wsID] = time.Time{}
 	m.mu.Unlock()
 	before := st.calls.Load()
 
-	// 連続打鍵。★ここが 1 回でも store の応答時間（300ms）を待ったら、その打鍵は
-	// 300ms 遅れて画面に出る。
+	// A burst of keystrokes. If even one of them waits on the store's response time
+	// (300ms), that key reaches the screen 300ms late.
 	start := time.Now()
 	for i := 0; i < 50; i++ {
 		noteInput()
 	}
 	elapsed := time.Since(start)
 	if elapsed > 50*time.Millisecond {
-		t.Fatalf("50 打鍵の中継に %v かかった（store の 1 往復 = %v）— 打鍵経路で "+
-			"在席の書き込みを待っている", elapsed, st.delay)
+		t.Fatalf("relaying 50 keystrokes took %v (one store round trip = %v) - the keystroke path "+
+			"is waiting on the presence write", elapsed, st.delay)
 	}
 
-	// 待たせないだけでなく、記録は落とさない（畳まれて非同期に 1 回は走る）。
+	// Not blocking is not enough: the record must still be written (coalesced, then run
+	// asynchronously at least once).
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if st.calls.Load() > before {
-			// 在席の in-memory 側は即時であること — reaper の判定はこちらを読む。
+			// The in-memory side of presence must be immediate — the reaper reads it.
 			if !m.conns.watched(wsID, time.Minute, time.Now()) {
-				t.Fatal("打鍵したのに在席と数えられていない")
+				t.Fatal("a keystroke happened but it is not counted as presence")
 			}
 			return
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatal("打鍵しても共有ウォーターマークが一度も進まなかった（非同期化で書き込みごと落ちている）")
+	t.Fatal("keystrokes never advanced the shared watermark (making it asynchronous dropped the write itself)")
 }

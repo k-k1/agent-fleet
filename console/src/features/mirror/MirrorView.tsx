@@ -19,7 +19,7 @@ import {
 import { isQuickReplyCandidate, isQuickReplyPinned, recordQuickReply, unhideQuickReply } from "../../lib/quickReplies.ts";
 import { SuggestChipMenu } from "./SuggestChipMenu.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
-// 失敗ブロックの再認証導線が 設定 > エージェント を開くのに使う（ErrorBlock）。
+// Used by the failure block's re-auth link to open Settings > Agents (ErrorBlock).
 import { useSettingsUI } from "../settings/store.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -59,7 +59,7 @@ import { takeLaunchSeed } from "../../lib/launchSeed.ts";
 import { stateInfo } from "../../lib/sessionview.ts";
 import { ViewHead } from "../../ui/ViewHead.tsx";
 import { PaneSessionChip } from "../panes/PaneSessionChip.tsx";
-// workSplit はターン描画とともに transcript/ へ移った（TranscriptTurn が持つ）。
+// workSplit lives in transcript/ alongside the turn rendering (owned by TranscriptTurn).
 import { awaitingReply, latestWorkPromptIndex, textOfParts } from "./mirrorParts.ts";
 import { echoLanded, echoNeedsResync } from "./pendingEcho.ts";
 import { echoStore, nextEchoId, type SendEcho } from "./parts/sendEcho.ts";
@@ -100,12 +100,12 @@ const WINDOW = 400;
 // interrupt) doesn't leave a phantom spinner. See `finalizing`.
 const FINALIZE_GRACE_MS = 8000;
 
-// MirrorView (user-facing: チャット) is a read-mostly Markdown view of a claude
+// MirrorView (user-facing: "chat") is a read-mostly Markdown view of a claude
 // session, built on the same Agent endpoints the MCP drive tools use: GET
 // /sessions/{name}/messages?since=<cursor> (the jsonl transcript as structured turns
 // — role + Markdown text + timestamp — plus a line cursor and live status) and POST
 // /sessions/{name}/input (tmux send-keys). It overlays the still-mounted terminal
-// (Pane keeps the PTY socket alive), so the user toggles ターミナル⇄チャット freely.
+// (Pane keeps the PTY socket alive), so the user toggles terminal/chat freely.
 //
 // Limits (case-A): the transcript is written per turn, so turns appear per response,
 // not token-by-token. Prompts typed in the raw terminal DO appear (they're logged as
@@ -137,8 +137,8 @@ export function MirrorView({
   // chat affordances (image paste, …) it supports. Defaults to claude for a not-yet
   // loaded meta. codex/opencode reuse the same chat; only these bits differ.
   const agent = agentOf(sessionMeta?.kind);
-  // Managed（paneless）セッション: ターミナルが存在しないので、ミラーが主 UI。
-  // トグルを出さず、質問応答は keys/seq でなく Interaction 応答（/respond）で送る。
+  // Managed (paneless) sessions have no terminal, so the mirror is the primary UI: no toggle
+  // is rendered, and answers go out as Interaction responses (/respond) rather than keys/seq.
   const managed = isManagedSession(sessionMeta);
   const agentName = agent.assistantName;
   const canPasteImage = agent.caps.imagePaste;
@@ -152,7 +152,7 @@ export function MirrorView({
   const wsState = useWorkspaceStore((s) => s.state);
   const toast = useToast();
   useT(); // subscribe: a locale change re-renders MirrorView and its (unmemoized) turn subtree
-  const running = wsState === "running"; // WS down → resume is inert, mirror the terminal 再開
+  const running = wsState === "running"; // WS down → resume is inert, mirror the terminal's resume
   // "mod-enter" (default): Ctrl/⌘+Enter submits, plain Enter newlines (phone-safe).
   // "enter": Enter submits, Shift+Enter newlines.
   const modSend = settings.mirrorSend !== "enter";
@@ -190,7 +190,7 @@ export function MirrorView({
   const updateHandoff = (id: string, next: HandoffProposalT | null) =>
     setHandoffs(next ? handoffs.map((h) => (h.id === id ? next : h)) : handoffs.filter((h) => h.id !== id));
   const [termState, setTermState] = useState(""); // terminal-only state: "resume" | "compacting" | "update" | ""
-  // Compaction progress (parsed from the pane) so the 圧縮中 block shows a bar, not just a spinner.
+  // Compaction progress (parsed from the pane) so the "compacting" block shows a bar, not just a spinner.
   const [compactProg, setCompactProg] = useState<{ pct: number; elapsed?: string } | null>(null);
   const [status, setStatus] = useState("");
   const [bgBusy, setBgBusy] = useState(false); // idle but a run_in_background task lingers
@@ -207,7 +207,7 @@ export function MirrorView({
   // The exchange is still in flight. Everything that reacts to "is a turn running" must use
   // THIS, not the bare polled status: the status alone drops to idle mid-answer (Stop hook /
   // TUI heal) and says nothing about a background run. The typing indicator, the bottom
-  // follow and the 作業過程 fold all read it, so they can't disagree — a fold that flips
+  // follow and the work-steps fold all read it, so they can't disagree — a fold that flips
   // while the spinner is still up is exactly what shifts the text under a reader.
   const busy = status === "working" || bgBusy || finalizing;
   const [tasks, setTasks] = useState<TaskItem[]>([]); // current ToDo list (Task tool calls)
@@ -217,7 +217,7 @@ export function MirrorView({
   const [files, setFiles] = useState<SessionFile[]>([]);
   // Prompts claude reports queued into the RUNNING turn (queue-operation events) — sent
   // mid-run from this composer or typed in the raw terminal, not yet injected. Matching
-  // echoes get a キュー済み badge; the rest render as synthetic queued bubbles.
+  // echoes get a "queued" badge; the rest render as synthetic queued bubbles.
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
   const [alive, setAlive] = useState(!!sessionMeta?.alive); // live session ⇒ composer usable
   // The working dir was removed (repo/worktree deleted): the transcript survives
@@ -228,16 +228,18 @@ export function MirrorView({
   const [pendingText, setPendingText] = useState<string>(""); // prose streamed just before the pending question
   const [pendingPlan, setPendingPlan] = useState<string | null>(null); // ExitPlanMode plan awaiting approval
   const [pendingPerm, setPendingPerm] = useState<string | null>(null); // tool-permission prompt awaiting allow/deny
-  // 持ち越し（docs/log/75）: セッションが畳まれたときに画面に出ていた対話。保留（上の 3 つ）と
-  // 違ってモーダルはもう無いので、答えはキーではなく文章として配達される。サーバは保留が
-  // あるあいだ carried を出さないので、両方が同時に立つことはない。
+  // Carried interaction (docs/log/75): what was on screen when the session was torn down.
+  // Unlike the three pending states above there is no modal left, so the answer is delivered
+  // as prose rather than keys. The server withholds `carried` while anything is pending, so
+  // the two are never set at once.
   const [carried, setCarried] = useState<CarriedInteraction | null>(null);
-  // Plans the user just 却下'd (keyed by plan text). Lets the historical plan badge show
-  // 却下 immediately, before the interrupt tool_result (its real signal) lands a poll or
-  // two later — otherwise it sits at the neutral 決定済み until then.
+  // Plans the user just rejected (keyed by plan text). Lets the historical plan badge read
+  // "rejected" immediately, before the interrupt tool_result (its real signal) lands a poll
+  // or two later — otherwise it sits at the neutral "decided" until then.
   const rejectedPlansRef = useRef<Set<string>>(new Set());
   const [mode, setMode] = useState(""); // session permission mode ("plan" | …)
-  // 直近に端末が名乗った非 plan モード名。plan を抜けたときの楽観ラベルに使う（docs/log/76）。
+  // The last non-plan mode name the terminal reported, used as the optimistic label when
+  // leaving plan mode (docs/log/76).
   const lastNonPlanMode = useRef("");
   // Session-level context fill reported by the agent itself (agy /context scrape) —
   // the ContextBar's fallback when the transcript has no per-turn token usage.
@@ -246,10 +248,10 @@ export function MirrorView({
   const [titleActing, setTitleActing] = useState(false); // accept/dismiss request in flight
   const [managedSettingsOpen, setManagedSettingsOpen] = useState(false);
   const [managedSettings, setManagedSettings] = useState<ManagedThreadSettings | null>(null);
-  // 「ここから分岐」の確認待ち（docs/log/55）。null = 閉じている。
+  // Pending confirmation for "fork from here" (docs/log/55). null = closed.
   const [forkAtTarget, setForkAtTarget] = useState<ForkAtTarget | null>(null);
-  // Composer draft, persisted per session so switching ターミナル⇄チャット (which
-  // unmounts this view) — or a reload — keeps what you were typing. Key by session.
+  // Composer draft, persisted per session so switching terminal/chat (which unmounts this
+  // view) — or a reload — keeps what you were typing. Key by session.
   const draftKey = session ? "af.mirror-draft." + session : null;
   const [draft, setDraft] = useDraft(draftKey);
   const [sending, setSending] = useState(false);
@@ -261,7 +263,7 @@ export function MirrorView({
   // two real POST /turn calls for what was one user action. The duplicate then depends on
   // codex's own handling of an immediate identical resubmission (observed: silently
   // absorbed into nothing), leaving the second optimistic echo with no turn to reconcile
-  // against — stuck at 反映待ち forever. Set/read synchronously, before any state commit.
+  // against — stuck awaiting reconciliation forever. Set/read synchronously, before any state commit.
   const sendingRef = useRef(false);
   // Pasted images awaiting send: {path} is the session-saved absolute path (referenced in
   // the prompt), {url} an object URL for the local chip preview, {name} the basename.
@@ -273,7 +275,7 @@ export function MirrorView({
   const [pasting, setPasting] = useState(false); // an attachment upload is in flight
   const [dragging, setDragging] = useState(false); // an OS file drag is hovering the pane
   const dragDepth = useRef(0); // dragenter/leave nesting counter (leave fires per child)
-  const filePickRef = useRef<HTMLInputElement>(null); // the ＋ button's hidden picker
+  const filePickRef = useRef<HTMLInputElement>(null); // the attach button's hidden picker
   const [lightbox, setLightbox] = useState<string | null>(null); // enlarged image (blob URL) or null
   // Close the enlarged-image lightbox with the device/browser Back button or a back gesture
   // (phones foremost): opening it pushes a throwaway history entry, so Back pops that instead
@@ -283,7 +285,7 @@ export function MirrorView({
   const cursorRef = useRef(0);
   // Backward paging (P2): firstLineRef = oldest jsonl line currently held; hasMore = there
   // is older history above it to page in. loadingOlderRef guards against overlapping loads
-  // （継ぎ足しの前後で視点を保つ高さは useMirrorScroll が持つ）。
+  // (useMirrorScroll owns the height bookkeeping that keeps the viewport across a prepend).
   const firstLineRef = useRef(0);
   const [hasMore, setHasMore] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
@@ -294,14 +296,16 @@ export function MirrorView({
   const bgBusyRef = useRef(false); // mirrors bgBusy for the poll-cadence closure (fast-poll while BG runs)
   const tickRef = useRef<(() => void) | null>(null); // lets send() trigger an immediate refresh
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  // 転写のスクロール位置ぜんぶ（末尾追従・完了時の頭出し・位置復元・浮くピル・古い履歴の
-  // 継ぎ足し）は parts/useMirrorScroll。読み上げが bodyRef を要るのでその手前で呼ぶ。
+  // All transcript scroll positioning (bottom follow, scroll-to-top of a finished turn,
+  // position restore, floating pills, prepending older history) lives in parts/useMirrorScroll.
+  // Called before the TTS hook because that needs bodyRef.
   const scroll = useMirrorScroll();
   const { bodyRef, atBottomRef } = scroll;
 
-  // --- カラオケ朗読（turnTts, docs/log/24） -----------------------------------------
-  // 読み上げ一式（カラオケ・自動読み上げ・作業過程の小声読み・確認の告知・「ここから朗読」）は
-  // parts/useMirrorTts へ。リセットの呼び出し口だけがこの下の 2 箇所に残る。
+  // --- Karaoke read-aloud (turnTts, docs/log/24) -------------------------------------
+  // The whole TTS set (karaoke highlighting, auto read-aloud, the quiet reading of work
+  // steps, confirmation announcements, "read from here") lives in parts/useMirrorTts; only
+  // the two reset call sites below remain here.
   const tts = useMirrorTts({
     session,
     sessionMeta,
@@ -316,8 +320,9 @@ export function MirrorView({
     pendingPlan,
     pendingPerm,
   });
-  // 会話へ引いたマーカー（docs/log/69 / ADR 0050）。ここは所有者なので、誰の印でも消せる側。
-  // ⚠️ ポーリングは増やさない — 転写のロードに合わせて reload() を呼ぶ（下の effect）。
+  // Marks drawn on the conversation (docs/log/69 / ADR 0050). This is the owner's view, so it
+  // may delete anyone's mark. Do not add a poll for them — reload() rides the transcript load
+  // (see the effect below).
   const marks = useMarksController({
     path: session ? `api/sessions/${q(session)}/marks` : "",
     canEdit: true,
@@ -326,7 +331,7 @@ export function MirrorView({
     ownerLabel: tr("chat.you"),
     youLabel: tr("chat.you"),
   });
-  // 転写のポーリング effect は購読を張り直したくないので、最新の reload を ref で渡す。
+  // The transcript poll effect must not re-subscribe, so hand it the latest reload via a ref.
   const marksReloadRef = useRef(marks.reload);
   marksReloadRef.current = marks.reload;
 
@@ -350,7 +355,7 @@ export function MirrorView({
     setTurns([]);
     setPendingSends(echoStore.get(session) ?? []); // restore this session's un-landed echoes
     pendingSendsRef.current = echoStore.get(session) ?? [];
-    rejectedPlansRef.current = new Set(); // optimistic 却下 marks belong to the old session
+    rejectedPlansRef.current = new Set(); // optimistic reject marks belong to the old session
     setLoaded(false);
     setTermState("");
     setStatus("");
@@ -374,15 +379,15 @@ export function MirrorView({
     setHistIdx(null);
     setPasting(false);
     setLightbox(null);
-    // 添付は useAttachDraft が持つ: セッションが変われば鍵ごと切り替わり、前のセッションの
-    // プレビュー URL はそこで解放され、新しいセッションの下書きが読み直される。
-    scroll.resetForSession(session); // 末尾ピン・復元アンカー・浮くピル・完了アンカーの取り直し
-    tts.resetForSession(); // 自動読み上げ・小声読み・確認告知の基準を取り直す（履歴は読まない）
-    // 離脱時（別セッションへの持ち替え・ターミナルへの切替・ペインを閉じる）に、いま見ていた
-    // 位置を控える。cleanup が読む session / DOM は「出ていく側」のもの: React はこの
-    // クリーンアップを、新しい props でのレンダを DOM に反映したあと・次の layout effect
-    // より前に走らせるが、transcript の中身は state（turns）なので、まだ古いセッションの
-    // ターンが載ったままで scrollTop も動いていない。
+    // Attachments belong to useAttachDraft: the key changes with the session, which releases
+    // the old session's preview URLs and reloads the new session's draft.
+    scroll.resetForSession(session); // re-take the bottom pin, restore anchor, pills, done anchor
+    tts.resetForSession(); // re-baseline auto read-aloud / quiet reading / announcements (no history)
+    // On leaving (switching session, switching to the terminal, closing the pane) record the
+    // position being read. The session and DOM this cleanup sees belong to the OUTGOING view:
+    // React runs it after the render with the new props hits the DOM but before the next
+    // layout effect, and the transcript's content is state (turns), so the old session's turns
+    // are still mounted and scrollTop has not moved.
     return () => {
       scroll.saveMarkFor(session);
     };
@@ -412,8 +417,8 @@ export function MirrorView({
           : `api/sessions/${q(session)}/messages?since=${cursorRef.current}`;
         const d = await api(url);
         if (!alive) return;
-        // 印の取り直しは転写のポーリングに相乗りさせる（新しい周期を作らない）。実際の
-        // 往復は useMarksController 側で間引かれる。
+        // Refreshing marks rides the transcript poll rather than adding a cycle of its own;
+        // useMarksController throttles the actual round trips.
         marksReloadRef.current();
         if (d && !d.error) {
           if (typeof d.cursor === "number") cursorRef.current = d.cursor;
@@ -432,7 +437,7 @@ export function MirrorView({
             // whole-file reset from an older server (fork preview still sends one).
             firstLineRef.current = 0;
             setHasMore(false);
-            tts.resetForTranscript(); // 本文 DOM の入れ替え（全体停止にはしない）＋基準の取り直し
+            tts.resetForTranscript(); // body DOM was replaced: re-baseline without stopping playback
           } else if (Array.isArray(d.messages) && d.messages.length) {
             // Idempotent merge: normally a poll only appends turns. Store-backed agents
             // (notably OpenCode) also update the parts of their current assistant turn
@@ -508,9 +513,10 @@ export function MirrorView({
           // Mode comes from the terminal (paneMode) in real time, so trust every poll —
           // the optimistic set on click just gives instant feedback until this confirms.
           const nextMode = typeof d.mode === "string" ? d.mode : "";
-          // 非 plan のときの実際の名前を覚えておく（plan を抜けたときの楽観ラベル用）。
-          // 種別の既定ラベルを使うと、権限確認ありで起動した claude に "Bypass" と出る
-          // （docs/log/76）。端末が名乗った値なら、その取り違えが起こらない。
+          // Remember the real non-plan mode name for the optimistic label when plan mode is
+          // left. Using the kind's default label instead shows "Bypass" for a claude started
+          // with permission prompts on (docs/log/76); the terminal-reported value cannot make
+          // that mistake.
           if (nextMode && nextMode.toLowerCase() !== "plan") lastNonPlanMode.current = nextMode;
           setMode(nextMode);
           setAgentCtx(
@@ -526,7 +532,7 @@ export function MirrorView({
           );
           setSuggestedTitle(typeof d.suggestedTitle === "string" ? d.suggestedTitle : "");
           setLoaded(true); // first (and every) successful fetch: drop the loading spinner
-          // Self-heal a 反映待ち echo that can no longer reconcile because the turn it
+          // Self-heal an unreconciled echo that can no longer land because the turn it
           // should match never reached us (a cursor handed out past a turn we then never
           // asked for again). Only while the session is at rest — a pending echo is
           // normal and expected mid-turn — and once per echo: rewind the cursor so the
@@ -582,12 +588,14 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [turns, status]);
 
-  // 転写が動いたら末尾追従／完了時の頭出し／位置復元を採り直す。判断は
-  // parts/useMirrorScroll.applyFollow が持ち、ここに残るのは deps だけ。
+  // Re-decide bottom follow / scroll-to-top of a finished turn / position restore whenever the
+  // transcript moves. The decision lives in parts/useMirrorScroll.applyFollow; only the deps
+  // stay here.
   //
-  // LAYOUT effect であることが要点（DOM の変更後・描画とスクロールイベントの発火前に走る）。
-  // `groups` と `loaded` は下の deps と一緒に動くのでクロージャは毎回新しく、deps から
-  // 外しておくと無関係な再レンダ（コンポーサーの 1 打鍵ごと）で再発火しない。
+  // Being a LAYOUT effect is the point: it runs after the DOM changes but before paint and
+  // before scroll events fire. `groups` and `loaded` move together with the deps below, so the
+  // closure is fresh each time; leaving them out of the deps keeps unrelated re-renders (every
+  // keystroke in the composer) from re-firing it.
   useLayoutEffect(() => {
     scroll.applyFollow({ groups, loaded, busy, pending, pendingPlan, pendingPerm });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -606,7 +614,7 @@ export function MirrorView({
       const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
-          scroll.capturePrependHeight(); // 継ぎ足しの前後で視点を保つ
+          scroll.capturePrependHeight(); // keep the viewport steady across the prepend
           const older = d.messages;
           setTurns((t) => [...older, ...t]);
         }
@@ -621,7 +629,7 @@ export function MirrorView({
     }
   };
 
-  // 継ぎ足したぶんだけ視点を戻す（本体は useMirrorScroll.applyPrependAdjust）。
+  // Shift the viewport back by exactly what was prepended (useMirrorScroll.applyPrependAdjust).
   useLayoutEffect(() => {
     scroll.applyPrependAdjust();
   }, [turns]);
@@ -645,9 +653,10 @@ export function MirrorView({
 
   // Auto-grow the composer to fit its content (up to ~10 lines via the CSS max-height,
   // then it scrolls). Runs on every draft change, including the per-session draft restored
-  // on mount. 計測のために一瞬 2 行へ縮めると、その隙に転写（この入力欄の兄弟）の
-  // clientHeight が伸びて末尾に貼りついていた scrollTop が切り詰められる — 縮みを外へ
-  // 出さないのは autoGrowTextarea の仕事（lib/autoGrow.ts の注記）。
+  // on mount. Shrinking to two rows to measure would let the transcript (this textarea's
+  // sibling) grow its clientHeight in that instant, clamping a scrollTop that was pinned to
+  // the bottom — keeping that shrink from escaping is autoGrowTextarea's job (see
+  // lib/autoGrow.ts).
   useEffect(() => {
     autoGrowTextarea(inputRef.current);
   }, [draft]);
@@ -661,7 +670,7 @@ export function MirrorView({
     if (active && !coarsePointer()) inputRef.current?.focus();
   }, [active]);
 
-  // After the user hits 再開して続ける, focus the composer the moment it becomes usable
+  // After the user hits resume-and-continue, focus the composer the moment it becomes usable
   // (readOnly clears + the session goes alive + no resume menu in the terminal), so they
   // can type straight away. Flag is set on the resume click so this fires only for a
   // user-initiated resume, not a background one.
@@ -676,9 +685,10 @@ export function MirrorView({
   // Low-level: submit one prompt as a semantic turn op — start when idle, steer when a
   // turn is already running (docs/log/27 §4). The Agent adapts it per driver: tui = the same
   // tmux typing as before (sessionTurn falls back to /input against an old Agent),
-  // managed = the turn/start・turn/steer RPC (P2). The result carries the rejection
+  // managed = the turn/start and turn/steer RPCs (P2). The result carries the rejection
   // reason so the caller can drop its optimistic echo AND tell the user why.
-  // attachments は managed だけが渡す（driver が API 添付へ変換、docs/log/27 §10.2-3）。
+  // Only managed sessions pass attachments; the driver turns them into API attachments
+  // (docs/log/27 §10.2-3).
   const postInput = (text: string, op: "start" | "steer", attachments?: string[]): Promise<TurnResult> =>
     sessionTurn(session, op, text, attachments);
 
@@ -686,8 +696,8 @@ export function MirrorView({
   // it would just 502, and helpers that optimistically flip the UI to "working" would leave
   // that spinner stuck (the poll is frozen while stopped). Every send helper funnels through
   // here: the live composer is already hidden while stopped (the !running branch below), but
-  // the pending 許可/質問/プラン cards and the 停止 button render OUTSIDE that branch, so each
-  // must self-guard. Returns true (and toasts once) when the action must be dropped.
+  // the pending permission/question/plan cards and the stop button render OUTSIDE that branch,
+  // so each must self-guard. Returns true (and toasts once) when the action must be dropped.
   const wsDown = (): boolean => {
     if (running) return false;
     toast(tr("mirror.ws_stopped"));
@@ -718,15 +728,16 @@ export function MirrorView({
 
   // sendPrompt submits one prompt (the composer). Never used to answer an AUQ —
   // the modal ignores typed text, so a text send would confirm option 1 (docs/build/92).
-  // attachments は managed セッションの API 添付（send() が織り込みと使い分ける）。
-  // 戻り値は「セッションに受理されたか」。呼び出し側の大半は投げっぱなしでよいが、
-  // プランコメントの送信済みマークだけはこれを見る必要がある — 失敗をトーストするだけで
-  // void を返していたころ、届かなかったコメントまで畳まれて打ち直せなくなっていた
-  // （permission_pending で弾かれた直後に「送信済み」になる、2026-08-10 報告の症状）。
-  // restoreText: 失敗したときに入力欄へ書き戻す文面。既定は送った文面そのものだが、tui では
-  // それに添付パスの指示文が織り込まれている（buildImagePrompt）ので、コンポーサーからの
-  // 送信だけは「ユーザーが打った文」を渡す — 添付チップも一緒に戻るため、パス入りの文面を
-  // 書き戻すと、押し直したときにパスが二重に載る。
+  // attachments are the API attachments of a managed session (send() chooses between them and
+  // weaving paths into the text). The return value says whether the session accepted the send.
+  // Most callers can ignore it, but the plan-comment "sent" marker must not: returning void and
+  // only toasting the failure folded away comments that never arrived, leaving them impossible
+  // to retype (a comment rejected with permission_pending was immediately marked as sent).
+  // restoreText is what to write back into the composer on failure. It defaults to the text
+  // that was sent, but under tui that text has the attachment-path instructions woven in
+  // (buildImagePrompt), so composer sends pass the text the user actually typed — the
+  // attachment chips come back too, and restoring the path-bearing text would duplicate the
+  // paths on the next attempt.
   const sendPrompt = async (text: string, attachments?: string[], restoreText?: string): Promise<boolean> => {
     const t = (text || "").trim();
     // sendingRef (not the `sending` state alone) guards re-entrancy: two invocations
@@ -739,9 +750,9 @@ export function MirrorView({
     if (wsDown()) return false;
     sendingRef.current = true;
     setSending(true);
-    // start = 新しい turn / steer = 実行中 turn への追撃 — 楽観的に working へ倒す前の
-    // 実状態で決める。tui では同じ型付けに落ちるが、managed の turn/start・turn/steer
-    // （P2）にはこの区別がそのまま効く。
+    // start = a new turn, steer = a follow-up into the running one. Decided from the real
+    // status, before the optimistic flip to "working". Under tui both collapse to the same
+    // typing, but managed's turn/start vs turn/steer (P2) depends on the distinction.
     const op = statusRef.current === "working" ? "steer" : "start";
     statusRef.current = "working";
     setStatus("working");
@@ -755,9 +766,9 @@ export function MirrorView({
     applyEchoes((p) => [...p, { id: echoId, text: t, sinceIdx: newestIdx(), attachmentPaths: attachments, at: Date.now() }]);
     const res = await postInput(t, op, attachments);
     if (!res.ok) {
-      // 送信は受理されていない: echo を残すと「送れたように見える」ので消し、理由を
-      // トーストで示し、（send() が既に消した）下書きを書き戻す。ユーザーが打ち直しを
-      // 始めていたらそれを潰さない。
+      // The send was not accepted: keeping the echo would make it look sent, so drop it,
+      // toast the reason and restore the draft that send() already cleared — without
+      // clobbering anything the user has started retyping.
       applyEchoes((p) => p.filter((e) => e.id !== echoId));
       toast(res.message || tr("mirror.send_failed"));
       setDraft((d) => d || restoreText || t);
@@ -769,7 +780,7 @@ export function MirrorView({
     return res.ok;
   };
 
-  // Launch seed: a session started from 作業を始める carries a first prompt. The mirror no
+  // Launch seed: a session started from "start work" carries a first prompt. The mirror no
   // longer SENDS it — the Agent does, from the create call's initial_prompt (or /input
   // {when_ready} when attachments made the text final only after create; useStartWork.ts).
   // That matters because this view is mounted only while its tab is the selected one:
@@ -777,7 +788,7 @@ export function MirrorView({
   // user came back to it, and then looked as if opening the tab is what sent the message.
   //
   // What is left here is display: show the sent text as an optimistic echo so the chat
-  // isn't empty for the seconds between 起動 and the first turn reaching the transcript.
+  // isn't empty for the seconds between launch and the first turn reaching the transcript.
   // It is dropped by the normal reconciliation once that turn lands.
   //
   // sinceIdx is -1 on purpose. An echo's anchor exists to keep it from matching a turn
@@ -804,9 +815,9 @@ export function MirrorView({
 
   // driveInput posts one modal-driving body ({keys} or {seq}) and — this is the point —
   // does NOT swallow a rejection. api() resolves non-2xx as a value ({error:{code}}), so
-  // the old `try/await/catch {}` here never even ran its catch: a 400 (bad_key, view-nav
+  // a `try/await/catch {}` here would never run its catch: a 400 (bad_key, view-nav
   // guard, rate-limit modal) left the card sitting there with no keystroke delivered and
-  // no message, i.e. "ボタンを押しても無反応". Answering is the one place where silence is
+  // no message — pressing the button appeared to do nothing. Answering is the one place where silence is
   // indistinguishable from success, so failures speak — same treatment as sendRespond's
   // managed path. The optimistic 'working' is rolled back too, or the chip claims a turn
   // that never started until the next poll.
@@ -843,10 +854,10 @@ export function MirrorView({
     await driveInput({ seq });
   };
 
-  // sendInterrupt stops the running turn — turn/interrupt 相当。tui では Escape に
-  // 落ちる（opencode のサブエージェント詳細ビュー特例は /turn のサーバ側が面倒を
-  // 見る）。停止ボタンは working 中か BG 実行中しか出ず、いずれも次ポーリングが実状態へ
-  // 再同期するので楽観的な状態変更は不要。
+  // sendInterrupt stops the running turn — the equivalent of turn/interrupt, which under tui
+  // becomes Escape (opencode's sub-agent detail-view special case is handled server-side in
+  // /turn). The stop button only appears while working or while a background run lingers, and
+  // the next poll resyncs the real state either way, so no optimistic state change is needed.
   const sendInterrupt = async () => {
     if (sending) return;
     if (wsDown()) return; // WS stopped: no live turn to interrupt (also plan-reject / question-cancel)
@@ -864,8 +875,8 @@ export function MirrorView({
   };
 
   // sendRespond answers a MANAGED session's pending question by interaction id —
-  // 構造化回答（docs/log/27 §5）。tui の質問は従来どおり sendKeys/sendSeq で TUI モーダル
-  // をナビゲーション駆動する（サーバも tui への /respond は受け付けない）。
+  // a structured answer (docs/log/27 §5). A tui question is still answered by navigating the
+  // TUI modal with sendKeys/sendSeq; the server rejects /respond for tui anyway.
   const sendRespond = async (id: string, answers: InteractionAnswer[]) => {
     if (sending) return;
     if (wsDown()) return; // WS stopped: the managed session's structured answer can't be delivered
@@ -875,8 +886,9 @@ export function MirrorView({
     setStatus("working");
     const res = await sessionRespond(session, id, answers).catch((): TurnResult => ({ ok: false }));
     if (!res.ok) {
-      // 却下（id 不明・driver 未実装・通信断）を握りつぶさない: 状態を戻して質問
-      // カードを生かしたまま、理由（あれば）を示す。次ポーリングが実状態へ再同期する。
+      // Never swallow a rejection (unknown id, driver not implemented, connection lost):
+      // roll the status back, keep the question card alive and show the reason if there is
+      // one. The next poll resyncs the real state.
       statusRef.current = prev;
       setStatus(prev);
       toast(res.message || tr("mirror.answer_send_failed"));
@@ -886,7 +898,7 @@ export function MirrorView({
   };
 
   // addFiles uploads files to the session and holds each as an attachment chip —
-  // shared by clipboard paste, drag&drop onto the pane, and the ＋ picker. Upload +
+  // shared by clipboard paste, drag&drop onto the pane, and the attach picker. Upload +
   // saved path referenced in the prompt (kind-worded by buildImagePrompt).
   const addFiles = async (files: File[]) => {
     if (!files.length) return;
@@ -930,7 +942,7 @@ export function MirrorView({
   };
 
   const removeAttachment = (i: number) => attach.remove(i);
-  // 送信できた（＝パスがプロンプトへ渡り切った）ときだけ下書きごと捨てる。
+  // Discard the draft only once the send succeeded, i.e. the paths made it into the prompt.
   const clearAttachments = () => attach.clear();
 
   // An AskUserQuestion can't be answered by the composer's free text — verified against
@@ -939,13 +951,13 @@ export function MirrorView({
   // confirms the highlighted (first) option — a silent wrong answer. Digit keys 1-9 even
   // select-and-submit instantly, so stray text is doubly dangerous. Lock the composer for
   // ANY pending question and steer the user to the card — its options key-drive the modal
-  // (Down×i, Enter) and its "または自由入力" row uses the still-working "Type something" path.
-  // 空配列（質問なし）ではロックしない — カードは pending.length > 0 でしか出ないので、
-  // !!pending だけだとカード無しのままコンポーザだけ死ぬ。
+  // (Down×i, Enter) and its free-text row uses the still-working "Type something" path.
+  // An empty array (no questions) must not lock: the card only renders for pending.length > 0,
+  // so `!!pending` alone would kill the composer with no card to answer in.
   const auqLocksComposer = !!pending?.length;
   // A pending plan approval or permission prompt is a menu decision, NOT a free-text turn:
-  // sending would type text + Enter, and that Enter selects the menu's default (= 承認 /
-  // 許可), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
+  // sending would type text + Enter, and that Enter selects the menu's default (approve /
+  // allow), silently confirming it. A mode toggle would likewise mis-key the menu. So lock
   // the composer AND the mode chip while one is pending; act via the card's buttons.
   const decisionPending = !!pendingPlan || !!pendingPerm;
   const composerLocked = auqLocksComposer || decisionPending;
@@ -956,7 +968,7 @@ export function MirrorView({
   // (read-only history) or locked.
   const canDropFiles = canPasteImage && !readOnly && !composerLocked;
   // A memo dragged from the left-pane queue drops its text into the composer — but ONLY
-  // when this session is 入力待ち (alive and idle: not working, no lingering background run,
+  // when this session is awaiting input (alive and idle: not working, no lingering background run,
   // not mid-finalize, composer not locked by an AUQ/plan). A busy session would just queue
   // the text unseen, so we refuse the drop there.
   const sessionIdle = alive && !readOnly && !composerLocked && !busy;
@@ -1017,28 +1029,30 @@ export function MirrorView({
     });
   };
 
-  // override が来たらそのテキストを送る（サジェストチップの⌥即送信）。無ければコンポーサーの draft。
+  // With an override, send that text (a suggestion chip's Alt-click instant send); otherwise
+  // send the composer's draft.
   const send = async (override?: string) => {
     if (composerLocked) return;
     const text = (override ?? draft).trim();
     if (!text && !attachments.length) return;
-    // 短い純テキストは返信サジェストの学習に取り込む（send 経由のみ＝AUQ/plan 応答は自然に除外）。
-    // 一度メニューから消した文でも、自分で送り直したなら「また使う」意思表示なので隠しを解除する。
+    // Short plain text feeds the reply-suggestion learning. Only sends through here count, so
+    // AUQ/plan answers are naturally excluded. Re-sending a phrase that was hidden from the
+    // menu says the user wants it back, so unhide it.
     if (text && isQuickReplyCandidate(text, attachments.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
       const hidden = settings.quickRepliesHidden || [];
       const unhidden = unhideQuickReply(hidden, text);
       if (unhidden !== hidden) setSetting("quickRepliesHidden", unhidden);
     }
-    // このセッションを読み上げている最中にコンポーサーから送信したら、その読み上げを止める。
-    // 割り込み・追撃の意思なので、今さら古い回答（カラオケ・要約アナウンス）を聞かされても
-    // 混乱するだけ。sessionName で判定し、他セッション由来の再生（不一致）はそのまま流す。
+    // Sending from the composer while this session is being read aloud stops that playback:
+    // the user is interrupting or following up, so hearing the old answer out is only
+    // confusing. Matched by sessionName, so playback from another session keeps running.
     const ts = useTtsStore.getState();
     if (ts.active && ts.sessionName === session) ts.stop();
-    const staged = attachments; // 失敗したら戻す（下の revive）
+    const staged = attachments; // restored on failure (revive, below)
     const paths = attachments.map((a) => a.path);
-    // managed はワイヤの attachments で渡し（driver が API 添付へ変換、docs/log/27
-    // §10.2-3）、tui は従来どおりプロンプト本文へパスを織り込む。
+    // managed passes them as wire attachments (the driver converts them into API attachments,
+    // docs/log/27 §10.2-3); tui weaves the paths into the prompt body.
     const prompt = managed ? text : buildImagePrompt(text, paths, agent.id);
     setHistIdx(null);
     setDraft("");
@@ -1047,15 +1061,16 @@ export function MirrorView({
     // turn is sent — the reply is what the user wants to read, not keep typing. Desktop
     // keeps focus (and refocuses below) so typing the next turn needs no extra click.
     if (coarsePointer()) inputRef.current?.blur();
-    // 受理されなかったら添付も戻す。文章だけ戻して添付が消えるのが一番たちが悪い —
-    // 打ち直しの文面は残るので「送り直した」と思い込んだまま、画像の無い turn を送る。
+    // Restore the attachments too when the send is refused. Restoring only the text is the
+    // worst outcome: the message is back, so the user re-sends believing it is the same turn,
+    // and sends one with no images.
     if (!(await sendPrompt(prompt, managed ? paths : undefined, text))) attach.revive(staged);
     if (!coarsePointer()) inputRef.current?.focus();
   };
 
 
-  // --- スキルピッカー（docs/log/50） --- 本体は parts/useSkillPicker（composerLocked を
-  // 見るのでここで呼ぶ）。
+  // --- Skill picker (docs/log/50) --- implemented in parts/useSkillPicker; called here
+  // because it reads composerLocked.
   const skillPicker = useSkillPicker({
     session,
     agent,
@@ -1091,18 +1106,18 @@ export function MirrorView({
     openTargetInNew(target);
   };
 
-  // プランへのコメントを送れない理由（"" = 送れる）。コンポーザは停止中に丸ごと消えるが、
-  // プランカードは履歴として残り続けるので、送信ボタンだけは自前で塞ぐ必要がある。
-  // 停止中でもコメントを溜めること自体は妨げない（再開してから送れる）。
+  // Why plan comments cannot be sent ("" = they can). The composer disappears entirely while
+  // stopped, but the plan card stays in the history, so its send button must block itself.
+  // Collecting comments while stopped is still allowed — they go out after a resume.
   const planSendBlocked = !running
     ? tr("mirror.ws_stopped")
     : !alive || readOnly
       ? tr("plan.send_needs_running")
       : "";
 
-  // 却下 → 修正 → 再提示で本文が差し替わったら、開いているレビュー面も追従させる。
-  // これが無いと、利用者は古い本文を読みながらコメントを付け、送ったあとで「その記述は
-  // もう無い」ことに気づく（doc ペインはスナップショットなので黙って古いまま残る）。
+  // When reject → revise → re-present replaces the plan text, follow it in the open review
+  // pane too. Without this the reader comments against the old text and only discovers after
+  // sending that the passage is gone — a doc pane is a snapshot and stays stale silently.
   useEffect(() => {
     if (!pendingPlan) return;
     const id = findPlanPane(session);
@@ -1115,15 +1130,16 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingPlan, session]);
 
-  // プランへのコメントを届ける。どの経路で送りいつ送信済みにするかの判断は
-  // deliverPlanComments（planComments.ts）が持つ — この巨大コンポーネントは
-  // レンダリングテストを持てないので、判断だけ外に出して単体で固定してある。
-  // ここに残るのは React 側の後始末: 押下ガード、楽観 却下 バッジ、トースト、エコー。
+  // Deliver comments on a plan. Which route to send by, and when to mark them sent, is
+  // decided by deliverPlanComments (planComments.ts): this component is too large to have a
+  // rendering test, so the decision is lifted out and pinned by unit tests. What stays here
+  // is the React housekeeping — press guard, optimistic "rejected" badge, toast, echo.
   const sendPlanComments = async (plan: string) => {
     if (sending) return;
-    // 停止中のセッションには届かない。プランカードは履歴にも出る＝コンポーザと違って
-    // 「停止中は隠れる」という保護が効かないので、ここで明示的に止める（ボタンも
-    // planSendBlocked で無効化してあるが、押下と停止が競っても届かないよう二重にする）。
+    // Nothing reaches a stopped session. The plan card also renders in the history, so it
+    // does not get the composer's "hidden while stopped" protection and must refuse here.
+    // The button is disabled via planSendBlocked too — this is the second layer, for a press
+    // that races the stop.
     if (planSendBlocked) {
       toast(planSendBlocked);
       return;
@@ -1131,11 +1147,12 @@ export function MirrorView({
     if (wsDown()) return;
     const isPending = !!pendingPlan && pendingPlan.trim() === plan.trim();
     if (isPending) {
-      // 却下を伴う経路。送信ボタンを塞ぎ、バッジと「返信待ち」状態を先に倒しておく
-      // （sendPrompt は自前で sending を面倒みるので、発話だけの経路では触らない）。
+      // The route that carries a rejection: block the send button and clear the badge and
+      // awaiting-reply state up front. (sendPrompt manages `sending` itself, so the
+      // speak-only route leaves it alone.)
       setSending(true);
-      rejectedPlansRef.current.add(plan.trim()); // 楽観 却下 バッジ（実 outcome で planOutcome が調停）
-      wasWorkingRef.current = false; // 中断と同じ: 返信を待つ状態ではなくなる
+      rejectedPlansRef.current.add(plan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
+      wasWorkingRef.current = false; // as with an interrupt: no reply is being waited for
       finalizingRef.current = false;
       setFinalizing(false);
     }
@@ -1145,19 +1162,20 @@ export function MirrorView({
       say: (feedback) => sendPrompt(feedback),
     });
     if (isPending) setSending(false);
-    if (!res) return; // 送るものが無い
+    if (!res) return; // nothing to send
     if (!res.ok) {
-      // 届かなかった＝コメントは畳まれていない。理由を出して打ち直せることを伝える
-      // （undelivered = 却下は通ったが本文が入らなかった）。ただし say 経路の失敗は
-      // sendPrompt が具体的な理由（許可待ち・停止中…）を既に出しているので重ねない —
-      // 汎用の「送信できませんでした」がその上に乗ると、何が起きたのか分からなくなる。
+      // Undelivered means the comments were not folded away, so state the reason and make it
+      // clear they can be re-sent (undelivered = the rejection went through but the text did
+      // not). A failure on the say route is not re-toasted: sendPrompt has already given the
+      // concrete reason (awaiting permission, stopped, …) and a generic "send failed" on top
+      // of it would obscure what happened.
       if (res.reason !== "say") {
         toast(res.message || tr(res.reason === "undelivered" ? "plan.feedback_undelivered" : "mirror.send_failed"));
       }
       return;
     }
     if (res.via === "reject") {
-      const echoId = nextEchoId(); // 実ターンが載るまでの楽観エコー（sendPrompt と同じ）
+      const echoId = nextEchoId(); // optimistic echo until the real turn lands (as in sendPrompt)
       applyEchoes((p) => [...p, { id: echoId, text: res.feedback, sinceIdx: newestIdx(), at: Date.now() }]);
       setTimeout(() => tickRef.current?.(), 400);
     }
@@ -1187,14 +1205,14 @@ export function MirrorView({
   };
 
   // Publish the edited-file list for readers outside this pane (the command palette's
-  // このセッションの変更 mode), so they don't have to poll the transcript themselves.
+  // "changes in this session" mode), so they don't have to poll the transcript themselves.
   useEffect(() => {
     if (session) useSessionFilesStore.getState().set(session, files);
   }, [session, files]);
 
-  // Auto-suggested title (session_title.go): 採用 promotes it to the session's real
+  // Auto-suggested title (session_title.go): accepting promotes it to the session's real
   // title (bumpSessions so the left-pane label updates without waiting for its own
-  // poll); 却下 discards it. Either way the server never offers one again.
+  // poll); dismissing discards it. Either way the server never offers one again.
   const acceptTitle = async () => {
     if (!session || titleActing) return;
     if (wsDown()) return; // title accept/dismiss is agent-served (session_title.go) → 502 while stopped
@@ -1261,8 +1279,8 @@ export function MirrorView({
 
 
   const onKeyDown = (e: RKeyboardEvent) => {
-    if (skillPicker.handleKeyDown(e)) return; // スキルピッカーが開いていれば ↑↓/Enter/Tab/Esc を横取り
-    if (suggest.handleKeyDown(e)) return; // Tab: チップ行への入場 / 補完サイクル
+    if (skillPicker.handleKeyDown(e)) return; // while the skill picker is open it takes ↑↓/Enter/Tab/Esc
+    if (suggest.handleKeyDown(e)) return; // Tab: enter the chip row / cycle completions
     // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
     // (and Ctrl/⌘+[ / ]) page, Ctrl/⌘+End snaps to the newest turn and re-arms auto-follow.
     // Checked before history recall so the modified arrows don't get swallowed by the ↑/↓
@@ -1305,7 +1323,7 @@ export function MirrorView({
   // system-injected user lines (bash i/o, task notifications, slash-command echoes).
   // Append any optimistic echoes as synthetic user turns (idx past any real line so keys
   // stay unique and they sort last) — the mirror then shows a just-sent prompt at once.
-  // A queued prompt that matches a pending echo upgrades that echo's badge to キュー済み
+  // A queued prompt that matches a pending echo upgrades that echo's badge to "queued"
   // (no second bubble); whatever remains was typed straight into the terminal, so it gets
   // its own synthetic queued bubble. Multiset take: duplicate texts consume one entry each.
   const queuedLeft = [...queuedPrompts];
@@ -1339,8 +1357,9 @@ export function MirrorView({
   // waiting for the reply even if the session already reads idle.
   const replyPending = awaitingReply(groups);
 
-  // 「ここから分岐」（docs/log/55）。条件は kind ごとに違う（canBranchInSession）— ここで絞らないと、
-  // 押せるのに必ず 400 で返るボタンを出すか、逆に claude で永久に出ないかのどちらかになる。
+  // "Fork from here" (docs/log/55). The conditions differ per kind (canBranchInSession);
+  // without filtering here the button would either be pressable but always 400, or never
+  // appear at all for claude.
   const canForkAt = canBranchInSession(agent.caps, { managed, readOnly });
   const openForkAt = (turn: Group) => {
     if (!canBranchFrom(turn)) return;
@@ -1351,16 +1370,19 @@ export function MirrorView({
     });
   };
 
-  // 返信サジェスト（lib/quickReplies）。直近ユーザー発話の次グループ = 最新の回答。その最終
-  // テキストを B-1 ヒューリスティックの文脈に、頻度学習（settings.quickReplies）と合わせて候補化。
+  // Reply suggestions (lib/quickReplies). The group after the newest user message is the
+  // latest reply; its final text is the context for the B-1 heuristic, combined with the
+  // frequency learning in settings.quickReplies.
   const lastUserGi = latestWorkPromptIndex(groups);
   const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
-  // 「返信を頭から」の対象。レンダ中に ref へ落とすのは、[] で 1 度だけ作られる
-  // ResizeObserver / onScroll のクロージャからも今の値を読ませるため（ttsCaptureRef と同型）。
+  // Target of "reply from the top". Written to a ref during render so the ResizeObserver /
+  // onScroll closures — created once under [] — can read the current value (same shape as
+  // ttsCaptureRef).
   scroll.lastReplyIdxRef.current = replyGroup && replyGroup.role !== "user" ? replyGroup.idx : undefined;
-  // 返信サジェスト（lib/quickReplies ＋ v2 の LLM 候補）。本体は parts/useReplySuggest。
-  // 直近回答の最終テキストが候補の文脈なので、それが確定したここで呼ぶ。
+  // Reply suggestions (lib/quickReplies plus v2's LLM candidates), implemented in
+  // parts/useReplySuggest. Called here because the latest reply's final text is the context
+  // for the candidates and is only settled at this point.
   const suggest = useReplySuggest({
     session,
     settings,
@@ -1418,8 +1440,9 @@ export function MirrorView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, bgBusy, replyPending]);
 
-  // 新しい回答の自動読み上げ（P2）。判断は parts/useMirrorTts の syncAutoRead が持つ。ここに
-  // 残すのは「いつ見直すか」＝ deps だけ（フックの中では turns / groups を購読できない）。
+  // Auto read-aloud of a new reply (P2). The decision lives in parts/useMirrorTts.syncAutoRead;
+  // all that stays here is when to re-evaluate it — the deps, which the hook cannot subscribe
+  // to (turns / groups are not visible inside it).
   useEffect(() => {
     tts.syncAutoRead({ turns, groups, status });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1474,7 +1497,7 @@ export function MirrorView({
 
   // Status chip: prefer the live polled status, fall back to the session meta.
   // rateLimitResumeAt rides along from the meta: the polled status is a bare string, so
-  // without it the 制限解除待ち chip here could not say when the session moves again.
+  // without it the rate-limit-wait chip here could not say when the session moves again.
   const chip = status
     ? stateInfo({
         kind: "claude",
@@ -1519,10 +1542,11 @@ export function MirrorView({
       <ViewHead
         actions={
           <>
-            {/* Managed（paneless）セッションにはターミナルが無い — トグル自体を出さない。 */}
+            {/* A managed (paneless) session has no terminal, so the toggle is not rendered. */}
             {!managed && <MirrorToggle mirror={!!mirror} onToggle={onToggleMirror} running={running} />}
-            {/* 最後＝右端。タブ付きグリッドではセル操作（別タブ／閉じる）がここに入るので、
-                非タブ時に浮いているクラスタと同じ「右上の角」に見えるよう末尾に置く。 */}
+            {/* Last = rightmost. In the tabbed grid the cell actions (pop out / close) go
+                here, so keep them at the end to occupy the same top-right corner as the
+                floating cluster does outside tabbed mode. */}
             {headerActions}
           </>
         }
@@ -1549,11 +1573,12 @@ export function MirrorView({
       </ViewHead>
 
       {ctxUsage && <ContextBar {...ctxUsage} spends={spends} maxSpend={maxSpend} />}
-      {/* 帯の key は「セッション毎に作り直す」ためのもの。★ 兄弟で同じ key を使ってはいけない —
-          持ち替えで key が変わると React は残った旧 fiber を key の Map に集めて消すが、同じ key は
-          後勝ちで上書きされ、前のほう（ToDo）が Map から落ちて **DOM に取り残される**。実測では
-          セッションを持ち替えるたびに前のセッションの ToDo 帯が 1 枚ずつ積み上がった（dev は
-          「two children with the same key」を警告するが、本番ビルドは無言）。だから接頭辞を付ける。 */}
+      {/* These keys exist to rebuild each strip per session, and siblings must never share one.
+          When the key changes, React collects the leftover fibers in a Map keyed by key; a
+          duplicate is overwritten last-wins, so the earlier one (ToDo) falls out of the Map and
+          is left stranded in the DOM. Measured: every session switch stacked up one more of the
+          previous session's ToDo strips (dev warns "two children with the same key", a
+          production build is silent). Hence the prefixes. */}
       {tasks.length > 0 && <TaskChecklist key={"todo-" + session} tasks={tasks} session={session} />}
       <FileChangeStrip key={"files-" + session} session={session} files={files} />
       <MarkStrip key={"marks-" + session} marks={marks} storageKey={session} />
@@ -1574,14 +1599,16 @@ export function MirrorView({
 
       <div
         className="mirror-body"
-        // 転写は「縦へ送って読む面」。折り返せない長い文字列が 1 つ混ざって横へはみ出しても、
-        // それを理由にスマホの横スワイプ（セッションの持ち替え）を殺さない（app/swipeGuard.ts）。
+        // The transcript is a vertically scrolled reading surface: one unwrappable long string
+        // overflowing horizontally must not kill the phone's horizontal swipe between sessions
+        // (app/swipeGuard.ts).
         data-swipe-y=""
         ref={bodyRef}
         onScroll={scroll.onBodyScroll}
         onMouseUp={tts.captureSel}
-        // 位置復元の打ち切り条件（endRestoreOnInput の注記）。ホイールとタッチはここで拾う —
-        // .mirror-scroll の pointerdown/keydown（noteInteraction）はホイールでは出ない。
+        // How position restore is abandoned (see the note on endRestoreOnInput). Wheel and touch
+        // are caught here: .mirror-scroll's pointerdown/keydown (noteInteraction) never fire for
+        // a wheel.
         onWheelCapture={scroll.endRestoreOnInput}
         onTouchStartCapture={scroll.endRestoreOnInput}
       >
@@ -1619,7 +1646,7 @@ export function MirrorView({
         )}
         {!loaded ? (
           running ? (
-            // First fetch in flight (opening a session, or switching ターミナル→チャット):
+            // First fetch in flight (opening a session, or switching terminal → chat):
             // show a spinner instead of flashing the "no conversation yet" text.
             <div className="mirror-empty muted mirror-loading">
               <Icon name="loading" spin /> {tr("chat.ph_loading")}
@@ -1661,8 +1688,9 @@ export function MirrorView({
           />
         )}
         {carried && (
-          // 持ち越し（docs/log/75）。保留カードと違い**キーは 1 つも送らない** — 当てる先の
-          // モーダルはもう無く、回答は Agent が再開してから文章として届ける。
+          // Carried interaction (docs/log/75). Unlike the pending card this sends no keys at
+          // all: there is no modal left to aim at, and the Agent delivers the answer as prose
+          // after resuming.
           <CarriedBlock
             carried={carried}
             session={session}
@@ -1686,18 +1714,20 @@ export function MirrorView({
               // The optimistic marker is keyed by that Markdown (the pending payload has
               // no tool-use id), so it belongs only until the next decision. Clear it
               // before approving the new presentation; its real tool_result still keeps
-              // the older historical card correctly badged 却下.
+              // the older historical card correctly badged as rejected.
               rejectedPlansRef.current.delete(pendingPlan.trim());
               void sendKeys([...PLAN_APPROVE_KEYS]);
             }}
-            // 却下 = 中断（Escape）で keep-planning に倒す。ExitPlanMode メニューの
-            // 選択肢数/順序は claude 版依存で、位置固定キー（旧 Down×3 で「4. Tell Claude
-            // what to change」を狙う実装）は短いラップするメニューでは先頭の「Yes」行へ
-            // 回り込み、却下したのに承認してしまう（2026-07-22 実障害）。中断はレイアウト
-            // 非依存にモーダルを閉じて plan モードへ戻し、composer を解放する。tool_result は
-            // interrupt になり planDecision.isRejected が拾う。詳細は planDecision.ts。
+            // Reject = interrupt (Escape), which falls back to keep-planning. The number and
+            // order of the ExitPlanMode menu's options depend on the claude version, so a
+            // position-fixed key sequence (aiming at "4. Tell Claude what to change" with
+            // Down×3) wraps around to the leading "Yes" row on a shorter menu and approves the
+            // plan the user meant to reject — a real incident. An interrupt closes the modal
+            // independently of layout, returns to plan mode and releases the composer; the
+            // tool_result becomes an interrupt, which planDecision.isRejected picks up. See
+            // planDecision.ts.
             onReject={() => {
-              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic 却下 badge（実 outcome で planOutcome が調停）
+              rejectedPlansRef.current.add(pendingPlan.trim()); // optimistic "rejected" badge; planOutcome reconciles it
               void sendInterrupt();
             }}
           />
@@ -1705,7 +1735,7 @@ export function MirrorView({
         {pendingPerm && !pending && !pendingPlan && (
           // Defense-in-depth: a question/plan always wins over a generic permission
           // dialog (the server already suppresses the permission in that case). This
-          // guards against a poll race ever showing 許可/拒否 over an AskUserQuestion,
+          // guards against a poll race ever showing allow/deny over an AskUserQuestion,
           // whose buttons would send keystrokes that mis-answer the question underneath.
           <PermissionCard
             agentName={agentName}
@@ -1730,10 +1760,10 @@ export function MirrorView({
             onSubmitKeys={sendKeys}
             onSubmitSeq={sendSeq}
             onRespond={
-              // managed は id の有無に関わらず semantic 経路に固定する — keys/seq へ
-              // 落とすと存在しない tmux pane を叩きに行く。id を欠く質問（P2 まで
-              // の過渡・再同期待ち）はサーバが bad_interaction で却下し、sendRespond
-              // がトーストで知らせる。
+              // A managed session is pinned to the semantic route whether or not an id is
+              // present: falling back to keys/seq would drive a tmux pane that does not
+              // exist. A question missing its id (a transitional or resyncing case up to P2)
+              // is rejected server-side with bad_interaction, and sendRespond toasts that.
               managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
             }
             onCancel={() => void sendInterrupt()}
@@ -1788,8 +1818,10 @@ export function MirrorView({
         <ResumingNotice />
       ) : (
         <div className="mirror-compose">
-          {/* 返信サジェスト: 常用短文＋直近回答に沿った候補（Layer A）＋✨で取得する LLM 候補（v2）。
-              クリックで差し込み、⌥で即送信。flex 全幅 (.mirror-suggest) で入力行の上に載る。 */}
+          {/* Reply suggestions: frequently used short replies plus candidates derived from the
+              latest answer (Layer A), plus LLM candidates fetched with ✨ (v2). A click inserts
+              one, ⌥+click sends it immediately. Full-width flex (.mirror-suggest) above the
+              input row. */}
           {!composerLocked && (suggest.chips.length > 0 || settings.replySuggestEnabled) && (
             <SuggestRow
               rowRef={suggest.rowRef}
@@ -1803,7 +1835,7 @@ export function MirrorView({
               onNav={suggest.onNav}
               onChipKeyDown={suggest.onChipKeyDown}
               onChipClick={(e, text) => {
-                if (suggest.chipMenu.clickSwallowed()) return; // 長タップでメニューを出した指離し
+                if (suggest.chipMenu.clickSwallowed()) return; // release of the long-press that opened the menu
                 suggest.applySuggestion(text, e.ctrlKey || e.altKey || e.metaKey);
               }}
               chipProps={suggest.chipMenu.chipProps}
@@ -1825,11 +1857,12 @@ export function MirrorView({
             onPrev={recallPrev}
             onNext={recallNext}
           />
-          {/* スキルピッカー（docs/log/50）: コンポーサー上に浮く補完リスト。マウスは onMouseMove で
-              選択追従＋クリック確定（mousedown は preventDefault でフォーカスを奪わない —
-              CommandPalette と同型）、タップはそのまま確定、キーボードは onKeyDown が駆動。
-              引数入力中（skillArgs）は受動表示 — キーボード選択を持たないので sel も付けず、
-              クリックだけ（引数は残したままコマンドを差し替える）が生きる。 */}
+          {/* Skill picker (docs/log/50): a completion list floating over the composer. The mouse
+              tracks the selection via onMouseMove and commits on click (mousedown calls
+              preventDefault so focus is not stolen — same shape as CommandPalette), a tap commits
+              directly, and the keyboard is driven by onKeyDown. While arguments are being typed
+              (skillArgs) the list is passive: it has no keyboard selection, so no `sel` is set and
+              only clicking works (which swaps the command while keeping the arguments). */}
           {skillPicker.listVisible && (
             <SkillList
               popRef={skillPicker.popRef}
@@ -1852,7 +1885,7 @@ export function MirrorView({
               onToggle={skillPicker.toggleFromButton}
             />
           )}
-          {/* ＋ attach: the drag&drop-less path (phones foremost, handy everywhere).
+          {/* + attach: the drag&drop-less path (phones foremost, handy everywhere).
               Any file type; the same addFiles upload the paste/drop paths use. */}
           {canPasteImage && (
             <>
@@ -1915,17 +1948,17 @@ export function MirrorView({
               // Optimistic label (codex/opencode only report the new mode after a turn);
               // the poll reconciles from the terminal via paneMode.
               setMode(toPlan ? "Plan" : lastNonPlanMode.current || agent.defaultModeLabel);
-              // managed のモード切替は ThreadSettings の更新（POST /settings →
-              // UpdateSettings、docs/log/27 §9.4-3）— 次 turn の agent/mode に効く。
-              // tui は従来どおりキー駆動（planEnterCmd / planCycleKey）。
+              // For a managed session the mode switch is a ThreadSettings update (POST
+              // /settings → UpdateSettings, docs/log/27 §9.4-3), which takes effect on the
+              // next turn's agent/mode. tui stays key-driven (planEnterCmd / planCycleKey).
               if (managed) {
                 void sessionSettings(session, { mode: toPlan ? "plan" : "normal" });
                 return;
               }
               // Low-level sends (no working status / no quick re-poll) so the optimistic
               // label holds until the regular poll reads the real mode.
-              // スラッシュコマンドは turn を始めない（サーバ側 slashCmdRe が
-              // working を付けない）— op は形式上 start で送る。
+              // A slash command starts no turn (the server's slashCmdRe keeps it out of
+              // "working"), so the op is sent as start purely as a formality.
               if (toPlan && agent.planEnterCmd) postInput(agent.planEnterCmd, "start");
               else postKeys([agent.planCycleKey!]);
             }}
@@ -1954,9 +1987,10 @@ export function MirrorView({
           session={session}
           target={forkAtTarget}
           onDone={(name, { draft }) => {
-            // 「打ち直す」分岐では、分岐点の発言を新セッションの下書きに置いてから開く。
-            // 開いた瞬間に打ち直せることが要点で、元発言を探して貼り直させたら意味がない。
-            // 「続きから」では発言が分岐先に残っているので draft は空で来る。
+            // In redo mode, seed the new session's draft with the fork point's message before
+            // opening it: the point is being able to retype straight away, which is lost if the
+            // user has to hunt down the original and paste it back. In continue mode the message
+            // is still in the forked conversation, so the draft arrives empty.
             writeDraft("af.mirror-draft." + name, draft);
             bumpSessions();
             openTargetInNew({ content: { kind: "terminal", chat: true }, session: name });

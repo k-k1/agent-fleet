@@ -1,4 +1,4 @@
-// Working sets (作業グループ, docs/log/52 + ADR 0036) — named groups of { working
+// Working sets (docs/log/52 + ADR 0036) — named groups of { working
 // copies, assistant conversations, repo-less sessions } that scope what the
 // left rail shows. This module owns the vocabulary: the pure membership
 // predicates plus the settings-backed mutations, shared by the rail sections,

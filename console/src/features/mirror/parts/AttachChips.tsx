@@ -3,10 +3,11 @@ import FileIcon from "../../../ui/FileIcon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import type { Attachment } from "../../../lib/attachDraft.ts";
 
-/** 送信待ちの添付。`path` はセッションに保存された絶対パス（プロンプト本文が参照する）。 */
+/** An attachment waiting to be sent. `path` is the absolute path stored in the session, which
+ *  the prompt body refers to. */
 export type { Attachment };
 
-/** 添付チップの列。画像はサムネイル、それ以外はアイコン＋ファイル名。 */
+/** The row of attachment chips: a thumbnail for images, icon plus file name otherwise. */
 export function AttachChips({
   attachments,
   pasting,

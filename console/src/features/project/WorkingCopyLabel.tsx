@@ -3,7 +3,7 @@
 // "<base>@<slug>" (git.go), so a group band titled with it reads as a pile of
 // slugs; the project says what you are looking at and the branch says which line
 // of work — the same handle the rail's repo rows already use for a worktree.
-// Shared by the ファイル section's 変更 view and its recursive-search group bands
+// Shared by the files section's changes view and its recursive-search group bands
 // so both name a working copy the same way.
 //
 // Falls back to the folder name when the branch is unknown — an SVN checkout has

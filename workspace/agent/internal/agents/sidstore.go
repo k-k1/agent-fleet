@@ -6,10 +6,8 @@ import (
 )
 
 // SidStore maps our deterministic slot sid to an agent's own session id, so a slot
-// resumes its OWN conversation (internal/fstore の Store に薄い読み口を被せたもの:
-// Read は ok を潰して "" を返す — 呼び出し側は空文字を「無し」として扱う)。
-// docs/log/23 残① Wave D: package main の sidStore を CLI 縦割りパッケージから使える
-// よう移設・汎用化した。
+// resumes its OWN conversation (a thin read face over internal/fstore's Store: Read
+// swallows the ok flag and returns "" — callers treat the empty string as "none").
 type SidStore struct{ files fstore.Store[string] }
 
 // NewSidStore builds a SidStore persisting under <AgentConfigDir>/<subdir>.

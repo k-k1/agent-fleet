@@ -1,9 +1,11 @@
-/* 1 ターン = 全幅の帯。話者・モデル・注入元バッジ（operator / chat / schedule / peer）・
-サブエージェント・作業過程の畳み込み（.mt-work）・フッタ（時刻 / 消費 / コピー / 分岐）
+/* One turn = one full-width band: speaker, model, injected-origin badges (operator / chat /
+ * schedule / peer), subagents, the work-in-progress disclosure (.mt-work) and the footer
+ * (timestamp / spend / copy / fork)
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* One turn = one full-width band, divided from the next by a hairline. The user's
    turns get a faint tint so the speaker alternation is readable without boxes. */
@@ -62,7 +64,7 @@
   color: var(--success, #4ec97a);
 }
 .mt-delegation-status.failed {
-  /* --danger は未定義（tokens.css に無い）— 危険色は --del に統一。 */
+  /* --danger does not exist (tokens.css defines no such token); --del is the one danger colour. */
   color: var(--del);
 }
 .mt-delegation-meta {
@@ -117,7 +119,7 @@
 }
 /* The model that produced the turn, faint beside the speaker. Colour rather than
    opacity — the .muted variant already carries --muted2, and stacking 0.5 on top of it
-   drove the "質問中" state label to 2:1. */
+   drove the "asking" state label to 2:1. */
 .mt-model {
   margin-left: 6px;
   font-size: 11px;
@@ -141,7 +143,7 @@
   background: var(--surface-2, rgba(127, 127, 127, 0.16));
   color: var(--muted);
 }
-/* キュー済み variant: claude confirmed the prompt is in its mid-run queue (the
+/* Queued variant: claude confirmed the prompt is in its mid-run queue (the
    terminal's dimmed queued line). Same pill, accent tint = "accepted, waiting". */
 .mt-queued {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
@@ -176,7 +178,7 @@
   border-left: 2px solid color-mix(in srgb, var(--accent, #5e9ce0) 55%, var(--border));
 }
 /* Schedule-injected user turn (docs/log/38): the prompt was fired by a schedule — timed
-   ("定時") or a run-now ("手動発火"). Same pill shape, its own (ok/green) hue so the
+   or by a manual run-now. Same pill shape, its own (ok/green) hue so the
    three injected origins (operator / chat / schedule) read apart at a glance. */
 .mt-sched {
   background: color-mix(in srgb, var(--ok, #5ec07a) 18%, transparent);
@@ -196,9 +198,9 @@
 .mirror-turn.user.from-peer {
   border-left: 2px solid color-mix(in srgb, var(--peer, #b48ee0) 55%, var(--border));
 }
-/* Message kind (docs/log/58 §58.14): 依頼 / 質問 / 回答 / 共有, read back from the envelope.
-   Same hue as the sender badge but outlined instead of filled — it qualifies that badge
-   rather than competing with it. Worth showing at all because it is what explains why a
+/* Message kind (docs/log/58 §58.14): request / question / answer / notice, read back from the
+   envelope. Same hue as the sender badge but outlined instead of filled — it qualifies that
+   badge rather than competing with it. Worth showing at all because it is what explains why a
    message did or did not get an answer. */
 .mt-peer-kind {
   margin-left: 4px;
@@ -300,11 +302,12 @@
 .mt-spend .ts-out {
   background: var(--chat-accent);
 }
-/* カラオケ朗読（turnTts, docs/log/24）: いま読んでいる文が属するブロックのハイライト。 */
+/* Karaoke read-aloud (turnTts, docs/log/24): highlights the block the sentence being spoken
+   belongs to. */
 .mirror-turn-body .tts-active {
   background: color-mix(in srgb, var(--chat-accent) 14%, transparent);
   border-radius: 4px;
-  scroll-margin: 64px; /* scrollIntoView(nearest) がヘッダ等に隠れない余白 */
+  scroll-margin: 64px; /* keeps scrollIntoView(nearest) from parking it under the header */
 }
 .mt-copy {
   display: inline-flex;
@@ -314,9 +317,9 @@
   font-size: 12px;
   border-radius: 6px;
   color: var(--muted);
-  /* フッターの控えめな操作。枠と地の消し込みをこの class 自身に持つ — ホスト側の
-     button globals(上の :where)に頼ると、別の面で描いたときだけ主ボタンのように
-     浮き上がる(共有セッションで実際にそう見えていた)。 */
+  /* A quiet footer control. It clears its own border and background rather than relying on the
+     host's button globals (the :where above): leaning on those made it swell into a primary
+     button on some surfaces only — the shared-session view actually rendered it that way. */
   background: transparent;
   border: 0;
 }
@@ -324,9 +327,9 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
-/* 「ここから分岐」（docs/log/55）— コピーと同じフッターの控えめな操作。ホバー/フォーカスまで
-   隠すと、そんな機能があること自体に気づけないので、常に出しておいて色だけ落とす。
-   coarse pointer にはホバーが無いという理由でもある（headless の実測メモ参照）。 */
+/* "Fork from here" (docs/log/55) — a quiet footer control, like copy. Hiding it until hover or
+   focus would mean nobody discovers the feature exists, so it is always present and only dimmed.
+   That also covers coarse pointers, which have no hover at all. */
 .mt-fork {
   display: inline-flex;
   align-items: center;
@@ -341,7 +344,7 @@
   color: var(--fg);
   background: var(--hover-bg);
 }
-/* 分岐確認ダイアログ: 分岐点のプレビューと、起こることの箇条書き。 */
+/* Fork confirmation dialog: a preview of the fork point, and a bullet list of what will happen. */
 .mirror-fork-preview {
   margin: 0;
   padding: 9px 11px;

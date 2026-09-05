@@ -12,7 +12,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// handoffAPIFixture — 所有者 1 人・共有先候補 1 人・Agent スタブ 1 台。
+// handoffAPIFixture is one owner, one candidate recipient and one Agent stub.
 type handoffAPIFixture struct {
 	st        *store.SQL
 	api       sessionHandoffAPI
@@ -59,8 +59,9 @@ func newHandoffAPIFixture(t *testing.T, sessions []map[string]any) handoffAPIFix
 				"headSha": "abcdef1234567890", "ahead": 0, "dirty": false,
 			})
 		default:
-			// 実 Agent と同じ形（JSON のエラー本文）で返す。素の http.NotFound は HTML を
-			// 返すので、CP 側の「上流の応答が壊れている」経路にしか当たらない。
+			// Answer in the shape a real Agent uses (a JSON error body). Plain
+			// http.NotFound returns HTML, which would only ever exercise the CP's
+			// "the upstream reply is malformed" path.
 			w.WriteHeader(http.StatusNotFound)
 			_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]string{"code": "not_found", "message": "no such session"}})
 		}
@@ -90,19 +91,19 @@ var oneSession = []map[string]any{{
 	"name": "session-1", "kind": "claude", "dir": "/home/dev/repos/private", "repo": "private", "workingCopyId": "wc-1",
 }}
 
-// TestHandoffRecipientsUnsharedSessionAnswers — 誰にも共有していないセッションで開いても、
-// 画面が待ち続けないこと。
+// TestHandoffRecipientsUnsharedSessionAnswers: a session shared with nobody must not
+// leave the screen waiting.
 //
-// ⚠️ ここが実際に壊れていた。共有が 1 つも無いと `shared_session_catalog` に行そのものが
-// 無く、`catalogForOwnedSession` は 404 を返していた。UI から見ると「宛先が 0 人」と
-// 「セッションが見つからない」の区別が付かず、しかも本文が英語のまま出るので、利用者には
-// 読み込みが終わらないのと同じに見える。共有していないことは**正常な状態**なので、
-// 200 ＋ 空の候補で答えて「先に共有してください」を UI に出させる。
+// With no share at all there is no `shared_session_catalog` row, and answering 404 from
+// `catalogForOwnedSession` makes "no candidate recipients" indistinguishable from "no
+// such session" in the UI — which reads as a load that never finishes. Being unshared is
+// a NORMAL state, so the answer is 200 with an empty candidate list, and the UI says
+// "share it first".
 func TestHandoffRecipientsUnsharedSessionAnswers(t *testing.T) {
 	f := newHandoffAPIFixture(t, oneSession)
 	rec := f.getRecipients(t, "session-1")
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d body=%s — 共有していないのは正常な状態なので 200 で答えるべき", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d body=%s - being unshared is a normal state, so the answer must be 200", rec.Code, rec.Body.String())
 	}
 	var got struct {
 		Members []map[string]string `json:"members"`
@@ -114,13 +115,14 @@ func TestHandoffRecipientsUnsharedSessionAnswers(t *testing.T) {
 	if len(got.Members) != 0 {
 		t.Fatalf("members=%v, want empty", got.Members)
 	}
-	// 共有していなくても座標は返す（push ゲートは共有の有無と独立に効く）。
+	// The coordinates come back even when nothing is shared: the push gate applies
+	// independently of sharing.
 	if got.Context["branch"] != "main" {
 		t.Fatalf("context=%v, want the working copy's coordinates", got.Context)
 	}
 }
 
-// 実在しないセッションは 404 のまま。「共有していない」と混ぜない。
+// A session that does not exist stays a 404 — never conflated with "not shared".
 func TestHandoffRecipientsUnknownSessionIs404(t *testing.T) {
 	f := newHandoffAPIFixture(t, oneSession)
 	if rec := f.getRecipients(t, "no-such-session"); rec.Code != http.StatusNotFound {
@@ -131,7 +133,7 @@ func TestHandoffRecipientsUnknownSessionIs404(t *testing.T) {
 func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
 	ctx := context.Background()
 	f := newHandoffAPIFixture(t, oneSession)
-	// 共有規則を張ってから同期させる（catalog 行は同期で作られる）。
+	// Put a share rule in place, then sync: the catalog row is created by the sync.
 	if err := f.st.PutSessionShare(ctx, store.SessionShare{ID: "share-1", TenantID: f.tenant.ID,
 		OwnerMembershipID: f.owner.ID, RecipientMembershipID: f.recipient.ID, ScopeType: "session",
 		ScopeKey: "session-1", Permission: "ro", CreatedAt: store.NowTS(), UpdatedAt: store.NowTS()}); err != nil {
@@ -142,16 +144,17 @@ func TestHandoffRecipientsListsSharedMembers(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "recipient@example.com") {
-		t.Fatalf("RO 共有の相手が宛先候補に出ていない: %s", rec.Body.String())
+		t.Fatalf("the RO share recipient is missing from the candidate list: %s", rec.Body.String())
 	}
 }
 
-// TestHandoffRecipientsThrottlesInventorySync — 宛先一覧の**読み**が所有者 Workspace の
-// 在庫同期を毎回走らせないこと。
+// TestHandoffRecipientsThrottlesInventorySync: READING the recipient list must not run
+// the owner Workspace's inventory sync every time.
 //
-// ⚠️ `/repos` は作業コピーごとに git を回すので、worktree が増えるほど重い。モーダルを
-// 開くたびに走らせると「読み込み中」のまま数秒止まって見える（共有の読み取りが
-// `freshCatalog` で間引いているのと同じ理由）。差し出しの瞬間だけは exact に取り直す。
+// `/repos` runs git once per working copy, so it gets heavier with every worktree.
+// Running it on each opening of the modal leaves the modal on "loading" for seconds —
+// the same reason shared reads are thinned through `freshCatalog`. Only the moment an
+// offer is made re-reads it exactly.
 func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 	f := newHandoffAPIFixture(t, oneSession)
 	if rec := f.getRecipients(t, "session-1"); rec.Code != http.StatusOK {
@@ -159,7 +162,7 @@ func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 	}
 	first := f.agentHits["/repos"]
 	if first == 0 {
-		t.Fatal("最初の 1 回は同期するはず")
+		t.Fatal("the very first call must sync")
 	}
 	for i := 0; i < 3; i++ {
 		if rec := f.getRecipients(t, "session-1"); rec.Code != http.StatusOK {
@@ -167,6 +170,6 @@ func TestHandoffRecipientsThrottlesInventorySync(t *testing.T) {
 		}
 	}
 	if got := f.agentHits["/repos"]; got != first {
-		t.Fatalf("/repos hits=%d (first=%d) — TTL 内の再取得で在庫同期が走っている", got, first)
+		t.Fatalf("/repos hits=%d (first=%d) - a re-read within the TTL is running the inventory sync", got, first)
 	}
 }

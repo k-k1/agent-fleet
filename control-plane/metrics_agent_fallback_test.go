@@ -1,8 +1,10 @@
-// metrics_agent_fallback_test.go — ホストの cgroup が読めない構成（ECS 全般）で
-// リソースの実測値が Agent から来ることの契約（docs/log/63 §63.9）。
+// metrics_agent_fallback_test.go — the contract that on a deployment where the host
+// cannot read the cgroup (every ECS profile) the measured resource figures come from the
+// Agent (docs/log/63 §63.9).
 //
-// これが崩れると症状は「稼働中なのにメモリ / CPU / ディスクが 3 つとも –」で、
-// 例外もログも出ない——タイルが空欄なだけなので、壊れたことに誰も気付けない。
+// Break it and the symptom is a running workspace showing "–" for memory, CPU and disk
+// alike, with no exception and no log line: the tiles are simply blank, so nothing tells
+// anyone it broke.
 package main
 
 import (
@@ -15,8 +17,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 )
 
-// agentStatsRuntime は「API 越しに State は分かるが docker からは見えない」という
-// クラウド系アダプタの形に、Agent の口（Endpoint）を足したもの。
+// agentStatsRuntime is the shape of a cloud adapter — State is known through an API but
+// nothing is visible to docker — plus the Agent's endpoint.
 type agentStatsRuntime struct {
 	stubRuntime
 	state string
@@ -33,7 +35,7 @@ func (f agentStatsFactory) New(runtime.Workspace, string, []string) runtime.Runt
 	return agentStatsRuntime{stubRuntime: stubRuntime{endpoint: f.endpoint}, state: f.state}
 }
 
-// statsAgent は GET /workspace/stats だけ答える Agent。body をそのまま返す。
+// statsAgent is an Agent that answers GET /workspace/stats only, with body verbatim.
 func statsAgent(t *testing.T, status int, body string) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -67,8 +69,8 @@ func memberStatsJSON(t *testing.T, mgr *manager) map[string]any {
 	return out
 }
 
-// 本題。docker で見えない Workspace でも、Agent が自分の cgroup から読んだ値が
-// メンバー詳細に載ること。
+// The point of the file: even for a workspace docker cannot see, the values the Agent
+// read from its own cgroup reach the member detail view.
 func TestMemberStatsFallsBackToTheAgentWhenTheHostCannotSeeTheCgroup(t *testing.T) {
 	srv := statsAgent(t, http.StatusOK, `{"mem_used":1073741824,"mem_max":4294967296,"cpu_pct":12.5,"oom_kill_total":0,"disk_used":21474836480,"disk_total":42949672960}`)
 	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
@@ -86,15 +88,16 @@ func TestMemberStatsFallsBackToTheAgentWhenTheHostCannotSeeTheCgroup(t *testing.
 	if out["cpu_pct"] != 12.5 {
 		t.Errorf("cpu_pct = %v, want 12.5", out["cpu_pct"])
 	}
-	// du はこの構成では対象パスが CP に無いので、ディスクは Agent の statfs が出どころ。
-	// 容量まで返るのが `ecs-ec2` の要点（home = 永続 EBS）で、画面はこれを分母に使う。
+	// The CP has no path to du here, so the disk figures come from the Agent's statfs.
+	// Reporting the capacity too is the point on `ecs-ec2` (home is a persistent EBS
+	// volume) — the UI uses it as the denominator.
 	if out["disk_used"] != float64(21474836480) || out["disk_total"] != float64(42949672960) {
 		t.Errorf("disk = %v/%v, want 21474836480/42949672960", out["disk_used"], out["disk_total"])
 	}
 }
 
-// cpu_pct 0 と「CPU が測れない」は**別**。ゼロ値の省略でこれを潰すと、画面は
-// 測れないものを 0% として描いてしまう。
+// A cpu_pct of 0 and "CPU cannot be measured" are different answers. Omitting zero
+// values collapses them, and the UI then draws the unmeasurable as 0%.
 func TestZeroGaugesSurviveTheWire(t *testing.T) {
 	srv := statsAgent(t, http.StatusOK, `{"mem_used":100,"cpu_pct":0,"oom_kill_total":0}`)
 	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
@@ -108,7 +111,8 @@ func TestZeroGaugesSurviveTheWire(t *testing.T) {
 	}
 }
 
-// 測れなかった軸はキーごと落ちる。CP が代わりに 0 を置くと、区別が消える。
+// An axis that could not be measured drops its key entirely. A 0 substituted by the CP
+// would erase that distinction.
 func TestUnmeasuredAxesStayAbsent(t *testing.T) {
 	srv := statsAgent(t, http.StatusOK, `{"mem_used":100}`)
 	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
@@ -121,23 +125,23 @@ func TestUnmeasuredAxesStayAbsent(t *testing.T) {
 	}
 }
 
-// CP がイメージより新しいときは Agent にこのルートが無い（404）。エラー body の
-// フィールドを混ぜず、黙って「測れない」に倒すこと。
+// A CP newer than the image talks to an Agent without this route (404). Never mix fields
+// out of the error body in — degrade silently to "not measurable".
 func TestOlderAgentWithoutTheRouteDegrades(t *testing.T) {
 	srv := statsAgent(t, http.StatusNotFound, `{"error":"not_found"}`)
 	_, mgr, _, _ := destroyFixture(t, agentStatsFactory{endpoint: srv.URL, state: "running"})
 
 	out := memberStatsJSON(t, mgr)
 	if out["running"] != true {
-		t.Errorf("running = %v, want true — 版ずれでも稼働の事実は変わらない", out["running"])
+		t.Errorf("running = %v, want true - a version skew does not change the fact that it is running", out["running"])
 	}
 	if _, ok := out["mem_used"]; ok {
 		t.Errorf("mem_used present (%v) from a 404 body", out["mem_used"])
 	}
 }
 
-// 止まっている Workspace には問い合わせない。届かない相手を毎 tick 叩けば、
-// タイムアウトぶんだけ SSE の tick が遅れる（4 秒周期に 5 秒の待ちが入る）。
+// A stopped workspace is never probed. Hitting an unreachable endpoint every tick delays
+// the SSE tick by the timeout — a 5s wait inside a 4s cycle.
 func TestStoppedWorkspaceIsNotProbed(t *testing.T) {
 	probed := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

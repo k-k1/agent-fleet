@@ -5,7 +5,7 @@
 // button and clamps inside the rail; a tab opens at the cursor), because those
 // are the only two things that actually differ.
 //
-// It stays mounted while closed on purpose: the 引き継ぎ / 共有 dialogs it owns
+// It stays mounted while closed on purpose: the handoff / share dialogs it owns
 // outlive the menu, and unmounting on close would take them down with it.
 import { createPortal } from "react-dom";
 import { useLayoutEffect, useRef, useState } from "react";
@@ -65,8 +65,8 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
     place(el);
   });
   // useMenuRoving pulls focus into the menu on open, so closing it destroys the
-  // focused element and focus falls to <body> — after a keyboard open (メニューキー
-  // → Esc, or activating an item) the user is left nowhere to arrow from. Hand focus
+  // focused element and focus falls to <body> — after a keyboard open (the menu key
+  // then Esc, or activating an item) the user is left nowhere to arrow from. Hand focus
   // back to whatever opened the menu, but only when the menu really still had it: a
   // click that landed on some other control must keep the focus the user chose.
   //
@@ -91,7 +91,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
   };
 
   const dead = !s.alive && s.resumable === false; // dir gone → can't resume
-  // 作業グループ (docs/log/52): direct assignment is for repo-less sessions only —
+  // Working sets (docs/log/52): direct assignment is for repo-less sessions only —
   // a session living in a working copy inherits that repo's membership instead.
   const wsets = workingSetList(useSettings());
   const repos = useReposStore((st) => st.repos);
@@ -119,7 +119,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               </button>
             )}
             {/* Chat-capable kinds (claude/codex/opencode) have no in-menu resume today —
-                opening the row shows the mirror read-only, and its own "再開して続ける"
+                opening the row shows the mirror read-only, and its own "resume and continue"
                 button is the only resume path. This mirrors that same POST /start then
                 opens the chat pane directly. */}
             {!s.alive && !dead && running && agentOf(s.kind).caps.chat && (
@@ -232,8 +232,9 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="git-branch" /> {tr("srow.handoff")}
               </button>
             )}
-            {/* セッション共有: 同一テナントの別ユーザーへ会話を共有する。shell/SSM は
-                transcript が無く共有対象外(docs/log/59)。 */}
+            {/* Session sharing: share the conversation with another user in the same
+                tenant. shell/SSM have no transcript, so they are out of scope
+                (docs/log/59). */}
             {agentOf(s.kind).caps.transcript && (
               <button
                 type="button"
@@ -246,7 +247,7 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 <Icon name="broadcast" /> {tr("srow.share")}
               </button>
             )}
-            {/* 作業グループ (docs/log/52): membership toggles — repo-less rows only. */}
+            {/* Working sets (docs/log/52): membership toggles — repo-less rows only. */}
             {repoLess && wsets.length > 0 && (
               <>
                 <div className="ui-menu-caption">{tr("wset.menu_caption")}</div>
@@ -265,8 +266,9 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 ))}
               </>
             )}
-            {/* 削除ロック（docs/log/45）: この行を削除保護に固定/解除する。保護の実体は
-                Agent 側（403）なので、ここは切替と見た目の抑止だけを担う。 */}
+            {/* Deletion lock (docs/log/45): pin or unpin this row against deletion. The
+                protection itself lives in the Agent (403); this only toggles it and
+                suppresses the affordance. */}
             <button
               type="button"
               className="ui-menu-item"
@@ -278,10 +280,11 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
               <Icon name={s.locked ? "unlock" : "lock"} />{" "}
               {s.locked ? tr("srow.unlock") : tr("srow.lock")}
             </button>
-            {/* 停止しないピン（docs/log/75）: アイドル自動停止からこのセッションと Workspace を
-                期限付きで守る。shell / ssm では「ジョブが走っているか」を af が判定できない
-                （放置された less と実行中のビルドが前景コマンド名で区別できず、ssm は常に
-                aws を張る）ため、推測ではなく宣言に倒した逃げ道。 */}
+            {/* Keep-awake pin (docs/log/75): protects this session and the Workspace from
+                the idle auto-stop for a bounded time. For shell / ssm, af cannot tell
+                whether a job is running — an abandoned less and a running build look the
+                same by foreground command name, and ssm always shows aws — so this is a
+                declaration by the user instead of a guess. */}
             <button
               type="button"
               className="ui-menu-item"

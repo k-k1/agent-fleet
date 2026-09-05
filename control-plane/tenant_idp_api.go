@@ -15,7 +15,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Admin API for tenant-defined login providers (docs/log/61 §61.11.6 + ADR0043 決定 30).
+// Admin API for tenant-defined login providers (docs/log/61 §61.11.6 + ADR0043
+// decision 30).
 //
 // The split of powers IS the feature, so it is worth stating in one place:
 //
@@ -171,12 +172,12 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 	tids := splitCSVLower(b.AllowedTIDs)
 	domains := splitDomainCSV(b.AllowedDomains)
 	orgs := splitCSVLower(b.AllowedOrgs)
-	// ★ github rows do not carry an issuer or a trust rule from the form: there is
+	// github rows do not carry an issuer or a trust rule from the form: there is
 	// exactly one GitHub and its email rule is fixed (trust=api, the verified flag on
 	// /user/emails — docs/log/61 §61.4). Writing them here rather than leaving them blank
 	// keeps every row readable in the register and in the audit line, where "which
 	// identity source" is the question being asked (§61.15).
-	// ★ link_claim goes the same way for a github row: the GitHub adapter's subject is
+	// link_claim goes the same way for a github row: the GitHub adapter's subject is
 	// the account's numeric id, which is already the same for every OAuth App, so rule
 	// 1.5 needs no second key there and a stored value would only be a lie in the
 	// register.
@@ -230,10 +231,11 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	case stored != nil:
-		// ★ Verify the stored value is still readable before carrying it forward. A row
+		// Verify the stored value is still readable before carrying it forward. A row
 		// whose secret cannot be decrypted (the master key changed) would otherwise be
 		// saved back looking healthy and fail at the token endpoint, where the cause is
-		// invisible (§61.11.4 の「復号不能は空にせず明示エラー」).
+		// invisible (§61.11.4: an undecryptable secret is an explicit error, never an
+		// empty one).
 		if _, err := a.mgr.openTenantSecret(r.Context(), stored.SecretEnc, stored.KeyRef); err != nil {
 			writeAPIErr(w, &apiError{http.StatusConflict, "tenant_idp_secret_unreadable",
 				"the stored client secret cannot be decrypted — enter it again"})
@@ -260,9 +262,9 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 		row.CreatedBy, row.CreatedAt = stored.CreatedBy, stored.CreatedAt
 		row.Status, row.ApprovedBy, row.ApprovedAt = stored.Status, stored.ApprovedBy, stored.ApprovedAt
 		if repend(*stored, row) {
-			// ★ The approval was given to THIS issuer, for THESE addresses. Change what
+			// The approval was given to THIS issuer, for THESE addresses. Change what
 			// was approved and the approval no longer applies to what the row now says
-			// (決定 30) — so it goes back to the queue and the button disappears until a
+			// (decision 30) — so it goes back to the queue and the button disappears until a
 			// super_admin looks again.
 			row.Status, row.ApprovedBy, row.ApprovedAt = "pending", "", ""
 		}
@@ -291,12 +293,12 @@ func (a tenantIdPAPI) upsert(w http.ResponseWriter, r *http.Request) {
 // A new client_secret does not re-pend: it is the same issuer and the same app
 // registration, and forcing re-approval on a routine credential rotation would teach
 // people to avoid rotating.
-// ★ For a github row the approval rests on a different pair — (allowed_orgs,
+// For a github row the approval rests on a different pair — (allowed_orgs,
 // allowed_domains) instead of (issuer, allowed_domains) — because github.com is one
-// issuer shared by every tenant (docs/log/61 §61.15 + 決定 34). So ADDING an org repends:
-// the approver said "the members of these organizations", and another organization
-// is another set of people they never saw. Removing one does not, for the same
-// reason narrowing the domains does not.
+// issuer shared by every tenant (docs/log/61 §61.15 + decision 34). So ADDING an org
+// repends: the approver said "the members of these organizations", and another
+// organization is another set of people they never saw. Removing one does not, for the
+// same reason narrowing the domains does not.
 func repend(old, next store.TenantIdP) bool {
 	if old.Status != "active" {
 		return false
@@ -307,7 +309,7 @@ func repend(old, next store.TenantIdP) bool {
 	if old.Kind != next.Kind {
 		return true
 	}
-	// ★ link_claim too (docs/log/61 §61.15.10). It does not change WHO may sign in, so it
+	// link_claim too (docs/log/61 §61.15.10). It does not change WHO may sign in, so it
 	// is easy to read as cosmetic — but it changes WHERE a login LANDS: rule 1.5 joins
 	// on it, so an existing account can be reached through a button that could not
 	// reach it before. That is the approver's business, exactly like the issuer.
@@ -351,7 +353,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 	case "suspended", "pending":
 		// Stopping (and withdrawing an approval) is open to the tenant_admin too.
 	case "active":
-		// ★ Activation is the operator's, and ONLY the operator's (決定 30).
+		// Activation is the operator's, and ONLY the operator's (decision 30).
 		if ident.Role != "super_admin" {
 			writeAPIErr(w, &apiError{http.StatusForbidden, "forbidden",
 				"activating a sign-in method requires a deployment administrator's approval"})
@@ -371,7 +373,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "tenant_idp_not_found", "unknown sign-in method"})
 		return
 	}
-	// ★ Approving a row that cannot be built is refused, not stored. Otherwise the
+	// Approving a row that cannot be built is refused, not stored. Otherwise the
 	// approval is recorded against a definition nobody can use, and the tenant is left
 	// looking at an "approved" row with no button and no reason given.
 	if status == "active" {
@@ -386,13 +388,13 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// ★ Stopping a method that is somebody's ONLY door locks them out (docs/log/61
-	// §61.17.4 の順序). The commonest way to get here is the migration this whole
+	// Stopping a method that is somebody's ONLY door locks them out (the ordering in
+	// docs/log/61 §61.17.4). The commonest way to get here is the migration this whole
 	// section is about: a second app registration goes live, and the old row is
 	// suspended before everyone has linked the new one — and after that they cannot
 	// self-serve, because linking needs a session and their session needs this row.
 	//
-	// ★ It is a 409 the caller can override, NOT a refusal. Suspending is also how a
+	// It is a 409 the caller can override, NOT a refusal. Suspending is also how a
 	// compromised IdP is stopped, and "stopping is always allowed to be faster than
 	// starting" (see the type comment). So this buys one question, not a veto.
 	if status == "suspended" && row.Status == "active" && r.URL.Query().Get("confirm") != "1" {
@@ -402,7 +404,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if n > 0 {
-			// ★ Written by hand rather than through writeAPIErr: the COUNT has to reach
+			// Written by hand rather than through writeAPIErr: the COUNT has to reach
 			// the Console, and only the server can know it. The shared error envelope is
 			// {code, message} — widening it for one response would touch every handler,
 			// so the number rides alongside as its own field. `error` keeps its usual
@@ -433,7 +435,7 @@ func (a tenantIdPAPI) setStatus(w http.ResponseWriter, r *http.Request) {
 
 // remove (DELETE /api/admin/tenants/{slug}/idp/{id}).
 //
-// ★ Deleting the row does NOT undo what people signed in with it already did: the
+// Deleting the row does NOT undo what people signed in with it already did: the
 // identities it created keep their workspaces, and their (provider, subject) rows
 // stay behind so re-creating a provider of the same name reconnects them to the same
 // people rather than to new accounts. What it does end is the ability to sign in,
@@ -470,11 +472,11 @@ func (a tenantIdPAPI) audit(r *http.Request, ident store.Identity, tenantID, act
 
 // checkDomainsUnclaimed refuses a domain another tenant's provider already claims.
 //
-// ★ This is the load-bearing check of the whole feature, and it is not obvious.
+// This is the load-bearing check of the whole feature, and it is not obvious.
 // allowed_domains bounds which addresses an issuer may assert. If two tenants could
 // both claim acme.co.jp, the subsidiary's administrator could assert the parent
 // company's addresses — and since identity is keyed by email deployment-wide, that is
-// the takeover 決定 30 describes, merely one step further along. One domain, one
+// the takeover decision 30 describes, merely one step further along. One domain, one
 // tenant, exactly as auto_join_domains works (§61.9.8) — and refusing on save is the
 // only moment a human is present to read why.
 func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID string, domains []string) *apiError {
@@ -505,27 +507,27 @@ func (a tenantIdPAPI) checkDomainsUnclaimed(r *http.Request, tenantID, rowID str
 
 // checkPairwiseNeedsLinkClaim refuses a SECOND app registration of a directory whose
 // `sub` is pairwise, unless the row says which stable claim identifies the person
-// (docs/log/61 §61.17.4 (b) + 決定 41).
+// (docs/log/61 §61.17.4 (b) + decision 41).
 //
 // The situation it catches: a tenant registers its own Entra app for a directory this
 // deployment already has a door to. Entra mints a per-client `sub`, so the same person
 // arrives with a DIFFERENT subject, rule 1.5 does not join them, and rule 2' refuses
-// the login outright — `email_taken`, with no session. ★ The failure lands on the
+// the login outright — `email_taken`, with no session. The failure lands on the
 // person, at login, weeks later, and reads like a bug. Refusing at save is the only
 // moment anybody who can fix it is present.
 //
 // Three deliberate narrowings:
 //
-//   - ★ pairwise is read from DISCOVERY (`subject_types_supported`), never guessed
+//   - pairwise is read from DISCOVERY (`subject_types_supported`), never guessed
 //     from the issuer's hostname. Measured 2026-08-20: Google public, Entra pairwise.
-//   - ★ It only fires when the issuer is ALREADY in use here. One registration of a
+//   - It only fires when the issuer is ALREADY in use here. One registration of a
 //     pairwise IdP splits nobody, and demanding a claim from every Entra tenant would
 //     be noise on the common case.
-//   - ★ Discovery failing is NOT a refusal. The issuer may be unreachable from the CP
+//   - Discovery failing is NOT a refusal. The issuer may be unreachable from the CP
 //     at this moment (it is fetched lazily everywhere else for the same reason), and a
 //     network blip must not stop an administrator from saving a form.
 //
-// ☆ Why it does not also check that the claim is EMITTED: it cannot. `claims_supported`
+// Why it does not also check that the claim is EMITTED: it cannot. `claims_supported`
 // under-reports — Entra's document does not list `oid` at all, though every v2 token
 // carries it (measured 2026-08-20). And naming a claim the IdP never sends is inert:
 // realm_subject stays empty, and identityIDForRealmClaim refuses an empty subject, so
@@ -581,11 +583,11 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 	switch b.Kind {
 	case auth.TenantIdPKindOIDC:
 	case auth.TenantIdPKindGitHub:
-		// ★ The org list carries the whole weight an issuer carries for OIDC. github.com
+		// The org list carries the whole weight an issuer carries for OIDC. github.com
 		// is one issuer for every tenant on earth, so "which organization vouches for
-		// this person" is what makes the login mean anything (docs/log/61 §61.15 + 決定 34),
-		// and it is the same rule the env path enforces by disabling GitHub outright
-		// when AF_GITHUB_ALLOWED_ORGS is empty (§61.3).
+		// this person" is what makes the login mean anything (docs/log/61 §61.15 +
+		// decision 34), and it is the same rule the env path enforces by disabling
+		// GitHub outright when AF_GITHUB_ALLOWED_ORGS is empty (§61.3).
 		if len(orgs) == 0 {
 			return &apiError{http.StatusBadRequest, "tenant_idp_orgs_required",
 				"list the GitHub organizations whose members may sign in (membership in one of them is what authorizes a GitHub sign-in)"}
@@ -609,7 +611,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "tenant_idp_issuer_invalid",
 			"issuer must be the IdP's https issuer URL (http is accepted only for loopback)"}
 	}
-	// 決定 7, on the DB side: a multi-tenant Entra endpoint accepts every Microsoft
+	// Decision 7, on the DB side: a multi-tenant Entra endpoint accepts every Microsoft
 	// account in the world, and a personal account can rewrite its own email — so the
 	// tenant list is what makes the domain list mean anything at all.
 	if auth.MultiTenantIssuer(b.Issuer) && len(tids) == 0 {
@@ -619,7 +621,7 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 	if b.ClientID == "" {
 		return &apiError{http.StatusBadRequest, "bad_request", "client_id is required"}
 	}
-	// ★ The whitelist, and the save-time half of the pair buildTenantProvider enforces
+	// The whitelist, and the save-time half of the pair buildTenantProvider enforces
 	// at runtime (docs/log/61 §61.15.10). `oid` is a per-directory object id nobody can
 	// choose; `email` / `upn` / `preferred_username` are ASSERTED, and a tenant that
 	// could name one would have an email join inside a shared realm — the takeover
@@ -635,10 +637,10 @@ func validateTenantIdPBody(b tenantIdPBody, domains, tids, orgs []string) *apiEr
 		return &apiError{http.StatusBadRequest, "tenant_idp_trust_invalid",
 			"trust must be " + auth.TrustEmailVerified + " (the IdP asserts email_verified) or " + auth.TrustIssuer + " (the issuer is pinned to one tenant)"}
 	}
-	// ★ allowed_domains is REQUIRED — the answer to docs/log/61 §61.14's open question.
-	// A tenant-defined provider does not fall back to the deployment allowlist (決定
-	// 32-3), so an empty list is not "everyone" but "nobody", and an approval that
-	// admits nobody is worse than a refusal: it looks finished. Requiring it also
+	// allowed_domains is REQUIRED — the answer to docs/log/61 §61.14's open question.
+	// A tenant-defined provider does not fall back to the deployment allowlist
+	// (decision 32-3), so an empty list is not "everyone" but "nobody", and an approval
+	// that admits nobody is worse than a refusal: it looks finished. Requiring it also
 	// bounds which addresses this issuer may assert, which is what makes the
 	// one-domain-one-tenant check above meaningful.
 	if len(domains) == 0 {

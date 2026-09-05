@@ -64,14 +64,15 @@
   --sel-fg-mix: 0%;
   --sel-bg: color-mix(in srgb, var(--sel-accent) var(--sel-bg-mix), var(--bg));
   --sel-fg: color-mix(in srgb, var(--sel-accent) var(--sel-fg-mix), var(--fg));
-  /* 転写のマーカー（docs/log/69 / ADR 0050）。塗りは「利用者が選ぶ意味」の軸で、作成者は
-     別の軸（--mark-author-N の下線）で示す。暗色では彩度を落として本文の可読性を優先し、
-     文字色は据え置き（背景だけを変える）。 */
+  /* Transcript marks (docs/log/69 / ADR 0050). The fill carries the meaning the user picks;
+     the author is shown on a separate axis (the --mark-author-N underline). In dark mode the
+     saturation is lowered so body text stays readable, and only the background changes -
+     the text colour is left alone. */
   --mark-yellow: #6a5a12;
   --mark-green: #1f5133;
   --mark-blue: #1d4468;
   --mark-pink: #62244a;
-  --mark-author-0: #8b95a1; /* 所有者 */
+  --mark-author-0: #8b95a1; /* owner */
   --mark-author-1: #4fb3ff;
   --mark-author-2: #57c98a;
   --mark-author-3: #e0a13c;
@@ -92,13 +93,14 @@
   --hl-del-fg: #ffdcd7;
   --hl-del-bg: #67060c;
   /* region backgrounds — overridable independently of the base theme (Display
-     settings → カラーテーマ). Default to the theme's bar / panel. */
+     settings > color theme). Default to the theme's bar / panel. */
   --topbar-bg: var(--bar);
   --leftpane-bg: var(--panel);
-  /* 先頭の "AF CJK Ambiguous" は settings.ts の applyCjkFont() が張る unicode-range
-     限定の @font-face。①②③ ■ ○ Ⅰ など East Asian Width = Ambiguous の文字だけを
-     和文フォントへ回し、欧文等幅フォントの半角グリフで痩せて見えるのを防ぐ。設定が
-     「欧文優先」のときは規則自体が無くなり、未定義の名前として読み飛ばされる。 */
+  /* The leading "AF CJK Ambiguous" is a unicode-range-limited @font-face installed by
+     applyCjkFont() in settings.ts. It routes only East Asian Width = Ambiguous characters
+     (circled digits, box and circle glyphs, Roman numerals) to a Japanese font, so they are
+     not drawn thin by the half-width glyphs of the Latin monospace face. When the setting
+     prefers Latin the rule is not installed at all and the name is skipped as undefined. */
   --mono: "AF CJK Ambiguous", "Source Code Pro", "SF Mono", Menlo, Consolas,
     "DejaVu Sans Mono", "Noto Sans Mono CJK JP", monospace;
   /* Per-agent kind hues — single source of truth for the color every agent reads
@@ -108,19 +110,19 @@
   --kind-codex: #4ec97a;
   --kind-cursor: #d96ba1; /* rose/magenta — the only warm hue free of the other 7 (docs/log/40) */
   --kind-agy: #4285f4;
-  --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/log/43 §4-1). Kiro brand 紫 */
+  --kind-kiro: #a371f7; /* purple — inherits copilot's former hue (docs/log/43 §4-1). Kiro brand purple */
   --kind-copilot: #7d8590; /* neutral/charcoal grey — moved off purple (docs/log/43). darker than opencode */
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
-  /* Data-viz categorical slots (docs/log/46 P4 — 使用量ビュー). A validated 8-hue
+  /* Data-viz categorical slots (docs/log/46 P4 — the usage view). A validated 8-hue
      categorical palette: fixed slot ORDER is the colorblind-safety mechanism, so
      series are always painted (and stacked) in slot order — never re-ordered by
      rank. Verified with the dataviz validator against this theme's modal surface
      (--panel #181818): lightness band / chroma floor PASS, worst adjacent CVD ΔE
      8.4, normal-vision ΔE 19.3, contrast all ≥3:1. Do NOT hand-tune one slot:
      re-run the validator on the whole set if these ever change.
-     --viz-other is the fold bucket ("その他"): deliberately gray so it never
+     --viz-other is the fold bucket ("Other"): deliberately gray so it never
      impersonates a series, and never assigned to a real entity. */
   --viz-1: #3987e5;
   --viz-2: #d95926;
@@ -131,14 +133,14 @@
   --viz-7: #9085e9;
   --viz-8: #e66767;
   --viz-other: #6e7781;
-  /* Sequential (ORDINAL) ramp for the 稼働時間 heatmap (docs/log/83). One hue, five
+  /* Sequential (ORDINAL) ramp for the uptime heatmap (docs/log/83). One hue, five
      monotone steps — magnitude, not identity, so it is NOT taken from the categorical
      slots above. Warm on purpose: the reader's question is "when was this hot", and
      the idiom carries it without a legend lookup.
      Dark steps run surface→bright as the value rises (the anchor flips in dark mode).
      Verified with the dataviz validator in --ordinal mode against --panel #181818:
      monotone L / adjacent ΔL ≥ 0.06 / low end 2.07:1 vs surface / single hue, all PASS.
-     ⚠️ Do not hand-tune one step — re-run the validator on the whole ramp. */
+     Do not hand-tune one step — re-run the validator on the whole ramp. */
   --uh-1: #7a3a18;
   --uh-2: #a44f1e;
   --uh-3: #c96827;
@@ -165,7 +167,8 @@
   --border: #d2d6dc;
   --border2: #e6e8ec;
   --fg: #1c2024;
-  /* 転写のマーカー — 明色では淡い塗りにする（暗色の値をそのまま使うと本文が読めない）。 */
+  /* Transcript marks — pale fills in light mode; the dark values used as-is make body text
+     unreadable. */
   --mark-yellow: #fff1a8;
   --mark-green: #c8f0d6;
   --mark-blue: #cfe4ff;
@@ -201,7 +204,7 @@
   --btn-h: #dcdfe5;
   --btn-border: #c6cbd2;
   --ok: #146c2e; /* was #1a7f37: 4.0:1 on --active-bg (the running-session dot/badge) */
-  --warn: #8a5b00; /* was #b7791f: 2.9:1 on --active-bg, 3.3:1 on --panel — the 質問あり／未コミット chips */
+  --warn: #8a5b00; /* was #b7791f: 2.9:1 on --active-bg, 3.3:1 on --panel — the has-question / uncommitted chips */
   --del: #a5281c; /* was #c0392b: 4.4:1 for deleted diff lines on their own red tint */
   --peer: #6b21a8; /* purple-800: 6.9:1 on --active-bg (#d7e6fb), 7.2:1 on --btn — the peer-origin badge */
   --active-bg: #d7e6fb;
@@ -210,7 +213,7 @@
      --sel-accent mechanism so region rebinds apply in light too. The text is the accent
      darkened toward --fg (55%/45%), NOT the raw accent: surface accents are tuned for
      dark backgrounds (green #2fb872, warm #e0964a …) and read ~2:1 on the pale --sel-bg
-     tint — the 起動/クローン modal segs were illegible. 55% keeps the hue and puts every
+     tint — the launch/clone modal segs were illegible. 55% keeps the hue and puts every
      surface accent ≥4.8:1 on its own tint. */
   --sel-accent: var(--topbar-accent);
   --sel-bg-mix: 16%;
@@ -252,7 +255,7 @@
      adjacent CVD ΔE 9.1, normal-vision ΔE 19.6). Four slots sit below 3:1 on the
      light surface, which the validator flags as "relief required" — the view ships
      that relief: every series is named in the legend and every value is reachable
-     in the table view (UsageView 表 tab), never color-alone. */
+     in the table view (the UsageView table tab), never color-alone. */
   --viz-1: #2a78d6;
   --viz-2: #eb6834;
   --viz-3: #1baf7a;
@@ -262,7 +265,7 @@
   --viz-7: #4a3aa7;
   --viz-8: #e34948;
   --viz-other: #8a919b;
-  /* The 稼働時間 heatmap ramp, light steps (docs/log/83). Light→dark as the value
+  /* The uptime heatmap ramp, light steps (docs/log/83). Light→dark as the value
      rises; the light end still clears 2:1 on --panel #f4f5f7 so an occupied hour is
      never invisible. Validated with the dataviz validator in --ordinal mode against
      that surface: monotone L / adjacent ΔL ≥ 0.06 / low end 2.09:1 / single hue. */

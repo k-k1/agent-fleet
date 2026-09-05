@@ -1,4 +1,4 @@
-// VS Code 風の見出し追従（.md-scroll の中にいるときだけ）。
+// VS Code-style sticky headings, active only inside .md-scroll.
 
 // setupStickyHeadings pins the heading breadcrumb (# > ## > ###) of the current scroll
 // position to the top of the scroller, VS Code-style. An absolutely-positioned overlay

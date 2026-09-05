@@ -6,8 +6,9 @@ import (
 	"testing"
 )
 
-// realWorkspaceYAML は実機に残る copilot v1.0.73 のセッションからそのまま写した形。
-// 値にコロンを含む name 行と、ミリ秒 + Z の created_at が肝（素朴な分割で壊れやすい）。
+// realWorkspaceYAML is copied verbatim from a copilot v1.0.73 session on disk. The parts
+// that matter are the name line whose value contains a colon and the created_at with
+// milliseconds plus Z: a naive split breaks on both.
 const realWorkspaceYAML = `id: 254e5d40-17fb-4de1-9a29-3db2da0c9c36
 cwd: /tmp/repo
 client_name: github/cli
@@ -32,8 +33,9 @@ func writeSession(t *testing.T, home, sid, yaml string) {
 	}
 }
 
-// workspace.yaml の実形から id / cwd / created_at を取り出せること。ここが読めないと
-// ドリフト回収は候補を一つも作れず、静かに何もしない機能になる。
+// id / cwd / created_at must be readable out of the real workspace.yaml shape. Without
+// that, drift recovery produces no candidates at all and the feature silently does
+// nothing.
 func TestCliSessionsReadsRealWorkspaceYAML(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("COPILOT_HOME", home)
@@ -47,15 +49,16 @@ func TestCliSessionsReadsRealWorkspaceYAML(t *testing.T) {
 		t.Fatalf("id = %q", got[0].ID)
 	}
 	if got[0].Created.IsZero() {
-		t.Fatal("created_at を読めていない — 前任セッションとの区別が付かなくなる")
+		t.Fatal("created_at was not read - the predecessor session can no longer be told apart")
 	}
 	if y, m, d := got[0].Created.Date(); y != 2026 || m != 8 || d != 1 {
 		t.Fatalf("created = %v, want 2026-08-01", got[0].Created)
 	}
 }
 
-// 別 cwd のセッションは候補にしない。copilot の session-state は cwd で分かれておらず
-// 全スロットが同じディレクトリに並ぶので、この絞り込みが唯一の帰属手段。
+// Sessions from another cwd are not candidates. copilot's session-state is not split by
+// cwd - every slot sits in the same directory - so this filter is the only attribution
+// there is.
 func TestCliSessionsFiltersByCwd(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("COPILOT_HOME", home)
@@ -70,12 +73,13 @@ func TestCliSessionsFiltersByCwd(t *testing.T) {
 	}
 }
 
-// workspace.yaml が無い／形が変わって cwd を取れないセッションは候補から外す。
-// 帰属を確かめられないものを拾うのは、他人の会話をミラーに映す事故に直結する。
+// A session with no workspace.yaml, or one whose shape changed so the cwd cannot be read,
+// is dropped. Accepting something whose attribution cannot be confirmed is exactly how
+// someone else's conversation ends up in the mirror.
 func TestCliSessionsSkipsUnattributable(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("COPILOT_HOME", home)
-	writeSession(t, home, "cccccccc-0000-4000-8000-000000000003", "") // workspace.yaml 無し
+	writeSession(t, home, "cccccccc-0000-4000-8000-000000000003", "") // no workspace.yaml
 
 	if got := cliSessions("/tmp/repo"); len(got) != 0 {
 		t.Fatalf("cliSessions = %+v, want none", got)

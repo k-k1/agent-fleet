@@ -1,10 +1,10 @@
-// FileView の情報バー（ViewHead）に並ぶ小さな表示部品たち。どれもフックは useT
-// だけで、状態も ref も FileView が持ったまま —— ここに来るのは「何を出すか」の
-// 分岐と markup で、「いつ変わるか」は呼び出し側の持ち物。
+// The small presentational pieces of FileView's info bar (ViewHead). Their only hook is
+// useT; state and refs stay in FileView, so what lives here is the "what to show" branch and
+// the markup, while "when it changes" belongs to the caller.
 //
-// 分けている単位はコントロール群そのもの（docs/log/44 §1.1）: plain の view/edit
-// タブ列・図の 2 択・Markdown の 3 択＋レンダラ・画像の 2 択は、同時に 2 つ出ては
-// いけない排他の関係にある。
+// The unit of splitting is the control group itself (docs/log/44 §1.1): the plain view/edit
+// tab row, the diagram pair, the Markdown triple plus renderer, and the image pair are
+// mutually exclusive — two of them must never be shown at once.
 import type { KeyboardEvent, RefObject } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
 import FileIcon from "../../../ui/FileIcon.tsx";
@@ -22,7 +22,7 @@ import {
 } from "../fileMode.ts";
 import type { DrawioState } from "../DrawioView.tsx";
 
-/** 名前・種別タグ・大きさ/行数などの読み取り専用の見出し。 */
+/** Read-only heading: name, kind tag, size / line count. */
 export function FileHeadMeta(props: {
   filePath: string;
   size?: number;
@@ -75,7 +75,7 @@ export function FileHeadMeta(props: {
   );
 }
 
-/** 編集できるファイルの操作群: view/edit タブ列（plain のみ）＋保存＋AI 提案。 */
+/** Controls for an editable file: the view/edit tab row (plain only), save, AI suggest. */
 export function FileEditControls(props: {
   showTabs: boolean;
   paneMode: "view" | "edit";
@@ -87,8 +87,9 @@ export function FileEditControls(props: {
   saving: boolean;
   suggestDisabled: boolean;
   suggesting: boolean;
-  /** 設定 > AI補助「ファイル編集の提案」。オフのときはボタンごと出さない —
-      押せるのに断られる（400 feature_disabled）だけの操作要素は置かない。 */
+  /** Settings > AI assist, "File edit suggestions". When off the button is not rendered at
+      all: never offer a control that can be pressed only to be refused (400
+      feature_disabled). */
   suggestEnabled: boolean;
   onSave(): void;
   onSuggest(): void;
@@ -156,7 +157,7 @@ export function FileEditControls(props: {
   );
 }
 
-/** 図（drawio）の 2 択と、図が出ているときのページ/倍率表示。 */
+/** The diagram (drawio) pair, plus the page / zoom readout while a diagram is shown. */
 export function FileDiagramControls(props: {
   fileMode: FileModeState;
   caps: FileModeCaps;
@@ -185,7 +186,7 @@ export function FileDiagramControls(props: {
           >
             {control.mode === "figure"
               ? tr("view.diagram")
-              : // 編集面が無いときは読み取り専用の「ソース」と名乗る
+              : // with no editing surface, call it the read-only Source tab instead
                 control.readOnlySource
                 ? tr("view.source")
                 : tr("editor.mode.edit")}
@@ -204,7 +205,7 @@ export function FileDiagramControls(props: {
   );
 }
 
-/** Markdown の 3 択（プレビュー/分割/ソース・編集）と、その内側のレンダラ切替。 */
+/** The Markdown triple (preview / split / source-edit) and the renderer switch inside it. */
 export function FileMarkdownControls(props: {
   fileMode: FileModeState;
   caps: FileModeCaps;
@@ -261,7 +262,7 @@ export function FileMarkdownControls(props: {
   );
 }
 
-/** テキストでもある画像（SVG 等）のプレビュー/ソース切替。 */
+/** Preview / source switch for images that are also text (SVG and the like). */
 export function FileImageModeToggle(props: {
   mode: "preview" | "source";
   onChange(next: "preview" | "source"): void;
@@ -280,7 +281,7 @@ export function FileImageModeToggle(props: {
   );
 }
 
-/** 朗読ビュー（docs/log/24）を開くボタン。 */
+/** Button that opens the reader view (docs/log/24). */
 export function FileReaderButton({ onOpen }: { onOpen(): void }) {
   const tr = useT();
   return (

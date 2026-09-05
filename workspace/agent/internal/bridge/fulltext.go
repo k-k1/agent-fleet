@@ -1,6 +1,6 @@
 package bridge
 
-// 全文ブリッジ (docs/log/37 将来の方向): the answer-ready push can carry the final
+// Full-text bridge (docs/log/37, the future direction): the answer-ready push can carry the final
 // assistant turn body so the chat is a self-sufficient remote UI when the
 // Console deep link is dead (local-only, externally-unreachable deployment).
 // Two concerns live here and are provider-independent: secret scrubbing (the
@@ -22,8 +22,8 @@ const discordContentLimit = 1990
 // turn can't flood the thread. Overflow past this is dropped with an ellipsis
 // line rather than posted (the full text is always in the Console). Sized so a
 // full turn body (bridgeBodyCap runes, session_status.go) splits cleanly across
-// enough messages that a normal long answer is delivered WHOLE (docs/log/37 Fix ③ —
-// 「うまく分割」), not truncated to the first few chunks.
+// enough messages that a normal long answer is delivered WHOLE (docs/log/37 Fix 3 —
+// "split it properly"), not truncated to the first few chunks.
 const maxBodyChunks = 12
 
 const redactedMark = "[secret redacted]"
@@ -94,7 +94,7 @@ var tokenRe = regexp.MustCompile(`[A-Za-z0-9+/=_.\-]{20,}`)
 
 // ScrubSecrets removes credentials from body text before it reaches a chat wire.
 // It is defense-in-depth over the primary guarantee (own both ends + opt-in,
-// docs/log/37「セキュリティ整合」): known provider token shapes, then UPPERCASE env
+// docs/log/37 §security consistency): known provider token shapes, then UPPERCASE env
 // assignments, then a high-entropy standalone-token fallback. Best-effort — it
 // can over-redact a rare high-entropy prose token, which the user accepted as
 // the safer failure than leaking a key.
@@ -192,7 +192,7 @@ func tablesToCodeBlocks(s string) string {
 
 // chunkMessage splits content into Discord-sized pieces (chunkTo with Discord's
 // per-message limit). Kept as the Discord entry point; Slack calls chunkTo with
-// its own larger limit (docs/log/37 Slack 追随).
+// its own larger limit (docs/log/37 Slack follow-up).
 func chunkMessage(content, firstPrefix string) []string {
 	return chunkTo(content, firstPrefix, discordContentLimit)
 }

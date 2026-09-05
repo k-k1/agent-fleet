@@ -1,25 +1,27 @@
 package main
 
-// 引き継ぎ提案の E2E。**実バイナリの `workspace-agent mcp-stdio` を子プロセスとして
-// 起動し**、実 MCP プロトコル（initialize → tools/call）で叩いて、実 Agent ルートが
-// 実ファイルを正しいセッションの下へ書くところまでを通しで見る。
+// E2E for the handoff proposal. It launches the REAL binary's `workspace-agent mcp-stdio`
+// as a child process, drives it over the real MCP protocol (initialize → tools/call), and
+// follows it all the way to the real Agent route writing a real file under the right
+// session.
 //
-// なぜユニットテストで足りないか: この機能が壊れた実障害（2026-08-09）は
-// mcpOwningSession 単体ではなく「MCP 子プロセスが AF_SESSION_NAME を渡されない」という
-// **プロセス境界**で起きた。呼び出し元を関数呼び出しで模したテストは、その境界を跨がない
-// ので同じ壊れ方を再現できない。ここは env と cwd を本番と同じ形で子へ渡す。
+// Why a unit test is not enough: the real outage that broke this feature was not in
+// mcpOwningSession itself but at the PROCESS BOUNDARY — the MCP child was never handed
+// AF_SESSION_NAME. A test that imitates the caller with a function call never crosses that
+// boundary and so cannot reproduce the same breakage. Here env and cwd are passed to the
+// child exactly the way production does.
 //
-// 3 つの形をそのまま並べている:
-//   - managed codex: thread 単位 config で AF_SESSION_NAME が届く（mcpreg.CodexThreadServers）
-//   - managed opencode / 縮退した codex: 届かないので cwd＋生存で絞る
-//   - 絞れないとき: 取り違えるくらいなら拒否する
+// The three shapes are laid out as they are:
+//   - managed codex: the per-thread config delivers AF_SESSION_NAME (mcpreg.CodexThreadServers)
+//   - managed opencode / degraded codex: it does not arrive, so narrow by cwd + liveness
+//   - when that does not narrow it down: refuse rather than misfile
 //
-// 認証・Docker 不要。このコンテナに Docker は無いので e2e/ モジュール（L2、実コンテナ）
-// ではなくここに置いた。
+// No auth and no Docker needed. This container has no Docker, so it lives here rather than
+// in the e2e/ module (L2, real containers).
 //
-// 制約: セッションの生存判定（sessionAlive）は tmux / managed daemon を見るので、テストが
-// 正直に作れない。/status だけはスタブで、生存は**入力**として与える。検証対象である
-// handoff-proposal 側は本番ハンドラをそのまま載せている。
+// Limit: the liveness test (sessionAlive) consults tmux / the managed daemon, which a test
+// cannot honestly reproduce. Only /status is stubbed, and liveness is given as INPUT. The
+// handoff-proposal side under test mounts the production handler unchanged.
 
 import (
 	"encoding/json"

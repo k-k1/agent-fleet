@@ -1,13 +1,14 @@
-// Package hostcaps はホスト CPU / 実行環境の能力検知。エージェント種別のうち
-// ホスト条件で動かせないものを Console のセレクタから隠す（capability ガード）
-// ための判定を一箇所に集める（docs/log/32 Track B）。
+// Package hostcaps detects host CPU / runtime-environment capabilities. It gathers in one
+// place the checks that hide agent kinds the host cannot run from the Console's selector
+// (the capability guard, docs/log/32 Track B).
 //
-// 現在の対象は agy（Antigravity CLI, kind="agy"）のみ: agy は Go BoringCrypto
-// (FIPS) ビルドで、x86 では FIPS 乱数モジュールが RDRAND 命令を必須とする。
-// RDRAND を提示しないホスト（カーネルマスク / BIOS 無効。実例 = AMD Ryzen
-// Embedded R2514）では起動直後に CRNGT 自己テストが SIGABRT し、ユーザー空間
-// からは回避不可（docs/decisions/0008 PoC）。起動してから死なせるのではなく、
-// 起動前にここで検知して kind ごと非露出にする。
+// The only kind covered so far is agy (Antigravity CLI, kind="agy"): agy is a Go
+// BoringCrypto (FIPS) build whose FIPS random module requires the RDRAND instruction on
+// x86. On a host that does not expose RDRAND (masked by the kernel or disabled in the
+// BIOS; a real example is the AMD Ryzen Embedded R2514) the CRNGT self-test SIGABRTs right
+// after launch and there is no way around it from user space (docs/decisions/0008 PoC).
+// Rather than launching it only to have it die, detect it here beforehand and stop
+// exposing the kind at all.
 package hostcaps
 
 import (
@@ -29,15 +30,17 @@ const cpuinfoPath = "/proc/cpuinfo"
 var RDRAND = sync.OnceValue(func() bool {
 	b, err := os.ReadFile(cpuinfoPath)
 	if err != nil {
-		// cpuinfo が読めない環境で偽陰性にして kind を隠すより、露出して実挙動に
-		// 任せる（読めないのは Linux 外のテスト環境くらいで、フリートでは起きない）。
+		// Better to expose the kind and let real behaviour decide than to hide it on a
+		// false negative where cpuinfo is unreadable — which happens only in non-Linux
+		// test environments, never in the fleet.
 		return true
 	}
 	return rdrandInCPUInfo(string(b))
 })
 
-// rdrandInCPUInfo は /proc/cpuinfo テキストの flags 行に rdrand フラグ（完全一致の
-// 語）があるかを返す。部分一致にしない — フラグ語彙は空白区切りの厳密な集合。
+// rdrandInCPUInfo reports whether the flags line of /proc/cpuinfo text carries the rdrand
+// flag as a whole word. Never a substring match: the flag vocabulary is an exact
+// space-separated set.
 func rdrandInCPUInfo(cpuinfo string) bool {
 	for line := range strings.Lines(cpuinfo) {
 		key, vals, ok := strings.Cut(line, ":")
@@ -57,26 +60,27 @@ func rdrandInCPUInfo(cpuinfo string) bool {
 // machine-readable reason when it is not:
 //
 //	supported=false reason="not_installed" — agy binary absent (image without the
-//	                                         bake; PATH は ~/.local/bin 優先も含む)
+//	                                         bake; PATH prefers ~/.local/bin too)
 //	supported=false reason="no_rdrand"     — x86 host without RDRAND (agy would
 //	                                         SIGABRT at launch)
 //	supported=true  reason=""
 //
-// agy.Status()（GET /connections の "agy" フィールド）はこれをそのまま
-// supported / reason として載せ、Console は supported=false の kind を
-// セレクタに出さない。セッション作成側も同じ判定で拒否する（docs/log/32）。
+// agy.Status() (the "agy" field of GET /connections) carries this through as supported /
+// reason, and the Console leaves a supported=false kind out of the selector. Session
+// creation refuses on the same check (docs/log/32).
 func AgyStatus() (supported bool, reason string) {
 	if _, err := exec.LookPath("agy"); err != nil {
 		return false, "not_installed"
 	}
-	// RDRAND 要件は x86 の FIPS 乱数モジュール固有（0008）。arm64 等では課さない。
+	// The RDRAND requirement is specific to x86's FIPS random module (0008); it is not
+	// imposed on arm64 and the like.
 	//
-	// ✅ 実測で確認済み（2026-08-22・docs/log/70 §70.13）: Graviton 3 世代（m8g=Graviton4 /
-	// m7g=Graviton3 / m6g=Neoverse-N1）の Debian 12 コンテナで `agy --version` と
-	// `agy --help` が終了コード 0。**決め手は m6g** で、`/proc/cpuinfo` に `rng`
-	// （ARMv8.5-RNG＝RNDR。x86 の rdrand に相当）が **無いのに動いた**——つまり arm64 の
-	// BoringCrypto FIPS 乱数は命令ではなくカーネルの getrandom(2) から取る。
-	// この分岐は仮定ではなく測った結果である。
+	// Measured (docs/log/70 §70.13): `agy --version` and `agy --help` exit 0 in a Debian 12
+	// container on three Graviton generations (m8g=Graviton4 / m7g=Graviton3 /
+	// m6g=Neoverse-N1). m6g is the decisive one — it works even though /proc/cpuinfo has no
+	// `rng` (ARMv8.5-RNG, i.e. RNDR, the counterpart of x86's rdrand), so arm64's
+	// BoringCrypto FIPS randomness comes from the kernel's getrandom(2) rather than an
+	// instruction. This branch is a measurement, not an assumption.
 	if runtime.GOARCH == "amd64" && !RDRAND() {
 		return false, "no_rdrand"
 	}

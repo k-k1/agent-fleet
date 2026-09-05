@@ -37,8 +37,8 @@ const MERMAID = Number(arg("mermaid", 0)); // trailing turns that carry a mermai
 // Outstanding handoff proposal: "" none | "mid" proposed a few turns back | "new" just
 // proposed (nothing newer yet) | "launched" already used to start a session.
 const HANDOFF = arg("handoff", "");
-// --shared 1 で「受信した共有セッション」を1件生やす(左ペインの共有セクション)。既定は
-// 0 件 = セクションごと出ないので、ミラー側のハーネスの見え方は変わらない。
+// --shared 1 seeds one received shared session (the shared section of the left pane). The default
+// is zero, which hides the section entirely, so the mirror-side harness sees no difference.
 const SHARED = arg("shared", "0") === "1";
 const SHARED_ID = "cat-1";
 
@@ -127,8 +127,9 @@ const exact = {
   "/api/update/status": () => ({ current: "0.3.0", latest: "0.3.0" }),
   "/api/browser/pages": () => ({ pages: [] }),
   "/api/tts/speakers": () => ({ speakers: [] }),
-  // 受信側の共有セッション(docs/log/59)。所有者と同じ転写・同じ引き継ぎ提案を、共有 API の
-  // 経路で返す — 共有ビューが本文をどう出すかを、実物のバンドルで見るため。
+  // A shared session on the receiving side (docs/log/59). The same transcript and the same handoff
+  // proposal as the owner's, returned through the shared API path, so that how the shared view
+  // renders the body can be observed against the real bundle.
   "/api/shared-sessions": () => ({
     sessions: SHARED
       ? [{
@@ -145,9 +146,10 @@ const exact = {
 // "mid" stamps it 3 turns before the end, so turns exist BELOW it — the shape that used
 // to be impossible, because the card was always the scroller's last child.
 //
-// 形は `{proposals: [...]}`(1ターンから複数の後続へ分岐できる fan-out 後の形)。単数の
-// `{proposal: …}` を返していた頃の名残でこのハーネスは3件とも「カードが出ない」と言い続けて
-// いた — スタブが実物と違う形を返すと、検知したい退行ではなく形の食い違いを見てしまう。
+// The shape is `{proposals: [...]}` - the post-fan-out shape, where one turn can branch into
+// several successors. A stub that returns a different shape from the real thing measures the shape
+// mismatch instead of the regression it is meant to detect: while this returned the singular
+// `{proposal: …}`, the harness reported "no card" for all three cases.
 function handoffProposal() {
   if (!HANDOFF) return { proposals: [] };
   const at = HANDOFF === "new" ? T0 + (TURNS + 5) * 60_000 : T0 + (TURNS - 3) * 60_000 + 1;
@@ -167,8 +169,9 @@ function handoffProposal() {
 const re = [
   [/^\/api\/sessions\/([^/]+)\/messages$/, (m, q) => messages(decodeURIComponent(m[1]), q)],
   [/^\/api\/sessions\/([^/]+)\/handoff-proposal$/, () => handoffProposal()],
-  // 受信側は CP 経由。転写も提案も所有者側と同じ素を返す(CP の allowlist DTO は座標を
-  // 落とすだけで、本文はそのまま通る)。
+  // The receiving side goes through CP. Both the transcript and the proposal return the same raw
+  // material as the owner's side (CP's allowlist DTO only drops the coordinates; the body passes
+  // through unchanged).
   [/^\/api\/shared-sessions\/([^/]+)\/messages$/, (_m, q) => messages("sk4rq2f", q)],
   [/^\/api\/shared-sessions\/([^/]+)\/handoff-proposals$/, () => handoffProposal()],
 ];

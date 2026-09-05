@@ -1,6 +1,7 @@
-// 返信サジェストのチップメニュー（ピン留め / 削除）。× ボタンを廃してここへ集約したので、
-// 「開く経路（右クリック・長タップ・Menu キー）」と「長タップの指離しでチップが誤発火しない」
-// の2点が壊れると、削除もピン留めも到達不能になる。そこだけを jsdom で押さえる。
+// Chip menu for reply suggestions (pin / remove). It is the only way in since the per-chip
+// close button was dropped, so if either the open paths (right-click, long-press, Menu key)
+// or "lifting after a long-press does not fire the chip" breaks, pinning and removing become
+// unreachable. Only those two are pinned here.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -59,7 +60,7 @@ function menuItems() {
   return Array.from(document.querySelectorAll<HTMLButtonElement>(".suggest-menu .ui-menu-item"));
 }
 
-// jsdom には TouchEvent のコンストラクタが無いので、必要な最小限（touches の座標）だけ作る。
+// jsdom has no TouchEvent constructor, so build the bare minimum needed: the touch coordinates.
 function touch(el: HTMLElement, type: string, x = 10, y = 10) {
   const e = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperty(e, "touches", { value: type === "touchend" ? [] : [{ clientX: x, clientY: y }] });
@@ -86,10 +87,10 @@ describe("useChipMenu / SuggestChipMenu", () => {
       chip().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true, clientX: 40, clientY: 60 }));
     });
     const items = menuItems();
-    expect(items).toHaveLength(2); // ピン留め / 削除
+    expect(items).toHaveLength(2); // pin / remove
     act(() => items[0].click());
     expect(pinned).toEqual(["進めて"]);
-    expect(menuItems()).toHaveLength(0); // 実行したら閉じる
+    expect(menuItems()).toHaveLength(0); // closes once an item runs
   });
 
   it("removes the suggestion from the menu", () => {
@@ -118,9 +119,9 @@ describe("useChipMenu / SuggestChipMenu", () => {
     });
     expect(menuItems()).toHaveLength(2);
     touch(chip(), "touchend");
-    act(() => chip().click()); // 合成 click が来ても差し込みは走らない
+    act(() => chip().click()); // a synthesized click must not insert the suggestion
     expect(applied).toEqual([]);
-    // 続く普通のタップは通常どおり差し込む（swallow が居残らない）。
+    // The next ordinary tap inserts as usual — the swallow does not linger.
     touch(chip(), "touchstart");
     touch(chip(), "touchend");
     act(() => chip().click());
@@ -131,7 +132,7 @@ describe("useChipMenu / SuggestChipMenu", () => {
     vi.useFakeTimers();
     mount();
     touch(chip(), "touchstart", 10, 10);
-    touch(chip(), "touchmove", 60, 12); // 指が動いた = 横スクロール
+    touch(chip(), "touchmove", 60, 12); // the finger moved = a horizontal scroll
     act(() => {
       vi.advanceTimersByTime(500);
     });

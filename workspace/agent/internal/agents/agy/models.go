@@ -25,18 +25,18 @@ import (
 // parser has to cope.
 //
 // On the old form the display name IS the id — `agy --model` accepts it verbatim
-// (実機検証 2026-07-20). On the new one it is not, and passing the whole line is what
+// (verified on a real machine 2026-07-20). On the new one it is not, and passing the whole line is what
 // the CLI answered with, on a real workspace (docs/log/70 §70.14.8):
 //
 //	⚠ model gemini-3.5-flash-low    Gemini 3.5 Flash (Low) is not recognized as a
 //	  known model or custom model in settings. Using "Gemini 3.7 Flash (High)" instead.
 //
-// ⚠️ Note what that failure looked like: **the session started and worked**, on a
-// silently different model from the one that was picked. Nothing errored.
+// Note what that failure looked like: the session started and worked, on a silently
+// different model from the one that was picked. Nothing errored.
 //
 // Effort variants are baked into the names (Medium/High/Low), so no separate
 // efforts metadata. Returns nil when the CLI is absent, unauthenticated
-// ("Please sign in"), or on an unsupported host — the picker then offers 既定.
+// ("Please sign in"), or on an unsupported host — the picker then offers the default entry.
 //
 // Cached briefly with stale-if-error, mirroring codex.Models(): the Console
 // fetches on every launch-modal open.

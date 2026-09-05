@@ -1,32 +1,35 @@
 package main
 
-// session_wiring.go — `internal/sessionx` の外向き依存（sessionx → main）を 1 箇所で配線する。
+// session_wiring.go wires `internal/sessionx`'s outward dependencies (sessionx → main) in one
+// place.
 //
-// 逆向き（main → sessionx）は別名として alias_session.go にある。**2 枚に分けてある**のは、
-// エイリアスがウェーブ境界で丸ごと剥がれて消えるのに対し、配線は残るため
-// （sessionx が errcodes.go や fs.go を引く関係そのものは回収しても消えない）。
+// The other direction (main → sessionx) lives in alias_session.go as aliases. They are two
+// files because the aliases are peeled away wholesale at a wave boundary while this wiring
+// stays: sessionx's need for errcodes.go and fs.go outlives the reclamation.
 //
-// 名前は姉妹家系（git_wiring.go / mcp_wiring.go / memory_wiring.go）に揃えて
-// 「家系名＋_wiring」にしてある。移送先が `internal/sessionx` なのは、`internal/session`
-// が**モデルのリーフ**（agents 配下 7 つを含む 16 パッケージが import している）で
-// 合流させると循環するため。配線ファイルの名前は移送先ではなく家系を指す。
+// The name follows the sibling families (git_wiring.go / mcp_wiring.go / memory_wiring.go):
+// family name + _wiring. The destination package is `internal/sessionx` rather than
+// `internal/session` because the latter is a model leaf (16 packages import it, including 7
+// under agents) and merging into it would create a cycle. A wiring file's name names the
+// family, not the destination.
 //
-// 🔥 **配線に既定値を置かない。** 未配線は `sessionx.Configure` が panic で落とす。
-// 零値が一番危ないのは値型で、`MaxUploadBytes` が 0 なら**あらゆるアップロードが
-// 「大きすぎます」で落ち**、11 本のエラーコードが空なら **Console へ `""` が届いて
-// i18n が解決できず、生の developer メッセージが露出する**（静かに壊れる形）。
+// Never give the wiring a default value. Anything left unwired makes `sessionx.Configure`
+// panic. Zero values are worst for value types: `MaxUploadBytes` of 0 rejects every upload as
+// "too large", and an empty error code sends `""` to the Console, where i18n cannot resolve it
+// and the raw developer message is exposed — both fail quietly.
 
 import "github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 
 func init() { sessionx.Configure(sessionDeps()) }
 
-// sessionDeps は本番の配線一式。**sessionx 側の網羅検査（internal/sessionx/deps_test.go）は
-// 作り物を使う**ので、ここが唯一「本物の値」を書く場所である。
+// sessionDeps is the production wiring. The completeness check on the sessionx side
+// (internal/sessionx/deps_test.go) uses fabricated values, so this is the only place the real
+// ones are written.
 //
-// 🔥 だから「入れ替え」を止められるのもここだけである: 11 本のエラーコードは全部
-// `string`、9 本のうち 2 本（BrowseRoot / ToolchainShellPrefix）は同じ `func() string` で、
-// **取り違えても型検査も reflect の網羅検査も鳴らない**。session_wiring_test.go が
-// 本物と 1 本ずつ突き合わせる。
+// It is therefore also the only place a swap can be caught: all 11 error codes are `string`,
+// and 2 of the 9 functions (BrowseRoot / ToolchainShellPrefix) share the type `func() string`,
+// so mixing two up trips neither the type checker nor the reflect-based completeness check.
+// session_wiring_test.go compares each one against the real value.
 func sessionDeps() sessionx.Deps {
 	return sessionx.Deps{
 		EnvOr:            envOr,
@@ -46,9 +49,9 @@ func sessionDeps() sessionx.Deps {
 
 		ToolchainShellPrefix: toolchainShellPrefix,
 
-		// mcpConvID は mcp_wiring.go が実行中に書き換える var なので、
-		// **値ではなく読み取り関数**で渡す（値で渡すと承認プロンプトが
-		// 配線した瞬間の会話 ID で固まる）。
+		// mcpConvID is a var mcp_wiring.go rewrites at run time, so pass a reader
+		// rather than the value: passing the value pins approval prompts to whatever
+		// conversation id existed at wiring time.
 		MCPConvID:       func() string { return mcpConvID },
 		RunOperatorTurn: runOperatorTurn,
 

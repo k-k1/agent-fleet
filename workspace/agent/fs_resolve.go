@@ -1,30 +1,34 @@
 package main
 
-// パス参照の解決（POST /fs/resolve）。
+// Resolving path references (POST /fs/resolve).
 //
-// エージェントの返信は成果物の場所をインラインコードで書く（`docs/log/65.md`、`_act-parts/`、
-// `/home/dev/repos/x/README.md`）。Console のミラーはそれを「実在するときだけ」リンクに
-// するので、描画のたびに「この文字列はどのファイルを指していて、それは在るのか」を
-// 訊きにくる。その 1 問に答えるのがこのハンドラ。
+// An agent's reply writes where its artifacts are in inline code (`docs/log/65.md`,
+// `_act-parts/`, `/home/dev/repos/x/README.md`). The Console's mirror turns those into links
+// only when they really exist, so on every render it asks which file a string points at and
+// whether it is there. This handler answers that one question.
 //
-// なぜ Console 側の fs/tree 総当たりではなくサーバー側で解決するのか:
+// Why resolve on the server rather than brute-forcing fs/tree from the Console:
 //
-//   - 基準が 1 つではない。相対パスは原則そのターンの cwd 基準だが、エージェントは
-//     リポジトリルート基準でも書く（cwd がサブフォルダのとき特に）。「cwd → リポジトリ
-//     ルート」の順に当てるフォールバックは、当たり外れを 1 往復で確定できるここでやる方が
-//     素直で、Console が候補ごとにディレクトリ一覧を引くより遥かに安い。
-//   - リポジトリルートを本当に知っているのはこちら側。Console は cwd の "repos/<名前>"
-//     を正規表現で切り出すしかないが、ここは .git を上へ辿って WT でもサブフォルダ起動でも
-//     正しい根を出せる（.git は WT ではファイル、通常の clone ではディレクトリ）。
-//   - home の外の読める場所（scratch / ロール別 docs マウント）は safeBrowsePath が
-//     すでに知っている。Console にはその知識が無く、絶対パスをリポジトリ相対と読み違える。
-//   - 返すのは当たりだけ。ディレクトリ一覧（node_modules なら数千件）を存在確認のために
-//     ブラウザへ運ばない。
+//   - There is more than one base. A relative path is nominally against that turn's cwd, but
+//     agents write against the repository root as well (especially when cwd is a subfolder). The
+//     "cwd, then repository root" fallback is more natural here, where a hit or a miss is
+//     settled in one round trip, and far cheaper than the Console listing a directory per
+//     candidate.
+//   - This side is what actually knows the repository root. The Console can only carve
+//     "repos/<name>" out of cwd with a regex, while here .git is walked upwards to the right
+//     root for a worktree and for a subfolder launch alike (.git is a file in a worktree and a
+//     directory in a normal clone).
+//   - safeBrowsePath already knows the readable places outside home (scratch, the role-scoped
+//     docs mount). The Console has no such knowledge and misreads an absolute path as
+//     repository-relative.
+//   - Only hits come back. A directory listing (thousands of entries for node_modules) is never
+//     carried to the browser just to confirm existence.
 //
-// 契約: refs は「パスそのもの」。`:12` のような行番号や末尾スラッシュは Console 側が
-// 落としてから送る（行番号はペインを開くのに Console 自身が要る情報でもある）。存在した
-// ものだけが resolved に載り、載らなかった ref は「無い」と読む。path は Console の fs API
-// が使う形（home 配下は browse-root 相対、scratch / docs マウントは絶対）。
+// Contract: a ref is the path itself. A line number such as `:12` and a trailing slash are
+// dropped by the Console before sending (the line number is also what the Console itself needs
+// to open a pane). Only what existed appears in resolved, and a ref that is absent reads as "not
+// there". path is in the shape the Console's fs API uses (browse-root-relative under home,
+// absolute for the scratch / docs mounts).
 
 import (
 	"net/http"
@@ -37,17 +41,18 @@ import (
 
 const (
 	fsResolveMaxBody = 64 * 1024
-	// 1 文書（1 ターンの本文）が挙げてくるパスの上限。これを超える分は黙って捨てる:
-	// リンクが付かないだけで、本文はそのまま読める。
+	// Cap on the paths one document (one turn's body) may cite. Anything past it is dropped
+	// silently: only the links are missing, the body still reads.
 	fsResolveMaxRefs = 64
 	fsResolveMaxRef  = 512
-	// cwd から .git を探して上る段数の上限。browse root で止まるので保険。
+	// Cap on how far up from cwd .git is looked for. The browse root stops the walk anyway, so
+	// this is only belt and braces.
 	fsResolveMaxWalk = 24
 )
 
 type fsResolveRequest struct {
-	Cwd  string   `json:"cwd"`  // そのターンの作業ディレクトリ（絶対でも browse 相対でも可）
-	Refs []string `json:"refs"` // 本文に書かれていたパス文字列
+	Cwd  string   `json:"cwd"`  // that turn's working directory (absolute or browse-relative)
+	Refs []string `json:"refs"` // the path strings written in the body
 }
 
 type fsResolveEntry struct {

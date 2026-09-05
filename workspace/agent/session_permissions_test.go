@@ -1,9 +1,10 @@
 package main
 
-// 「権限確認をスキップする」の kind 毎の既定を ui-prefs から読む層（docs/log/76）。
-// 解決そのものは internal/agents の表テストが持つので、ここが見るのは 2 点だけ:
-// prefs の形（agentLaunchDefaults[kind].skipPermissions）を読めること、そして
-// **承認待ちを Console から答えられない kind では、書いてあっても効かせない**こと。
+// The layer that reads the per-kind default for "skip the permission prompts" out of ui-prefs
+// (docs/log/76). Resolution itself belongs to the table test in internal/agents, so only two
+// things are checked here: that the prefs shape (agentLaunchDefaults[kind].skipPermissions) is
+// readable, and that for a kind whose pending approvals cannot be answered from the Console
+// the setting has no effect even when it is written.
 
 import (
 	"testing"
@@ -21,21 +22,21 @@ func TestSkipPermissionsPref(t *testing.T) {
 	if v, ok := skipPermissionsPref(session.KindClaude); !ok || v {
 		t.Errorf("claude: got (%v,%v), want (false,true)", v, ok)
 	}
-	// 設定はあるが skipPermissions を持たない行 = 未設定（既定に従う）。
+	// A row that exists but carries no skipPermissions counts as unset (the default applies).
 	if _, ok := skipPermissionsPref(session.KindCursor); ok {
 		t.Error("cursor: a row without skipPermissions must read as unset")
 	}
-	// codex は承認導線が無く PermissionChoice を立てていない。prefs に false が
-	// 書かれていても無視する — 答えようのない承認ダイアログで固まるより、従来どおり
-	// bypass で起動する方が確実に良い。
+	// codex has no approval path and does not set PermissionChoice, so a false written in
+	// prefs is ignored: launching with bypass as before is plainly better than hanging on an
+	// approval dialog nobody can answer.
 	if _, ok := skipPermissionsPref(session.KindCodex); ok {
-		t.Error("codex: PermissionChoice を持たない kind の設定は効かせない")
+		t.Error("codex: a setting for a kind without PermissionChoice must not take effect")
 	}
 }
 
 func TestSkipPermissionsPrefMissingFile(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	if _, ok := skipPermissionsPref(session.KindClaude); ok {
-		t.Error("prefs が無いときは未設定を返す（既定 true は agents 側が持つ）")
+		t.Error("with no prefs the result must be unset (the default true lives on the agents side)")
 	}
 }

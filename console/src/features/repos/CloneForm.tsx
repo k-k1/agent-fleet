@@ -1,8 +1,8 @@
-// CloneForm — the clone-source picker shared by「リポジトリを clone」(NewRepoModal)
-// and the はじめる hub's clone-and-continue stage (StartModal, 起動導線 Ph2):
-// 取得元 (接続から選ぶ / URL 手入力) + RepoPicker or URL+branch inputs. It only
-// resolves WHAT to clone — branch forking / folder naming stay with the caller.
-// Was duplicated across NewRepoModal and NewSessionModal (same SOURCE_HELP text).
+// CloneForm — the clone-source picker shared by the "clone a repository" dialog
+// (NewRepoModal) and the Start hub's clone-and-continue stage (StartModal, launch
+// flow Ph2): source (pick from a connection / type a URL) + RepoPicker or
+// URL+branch inputs. It only resolves WHAT to clone — branch forking / folder
+// naming stay with the caller.
 import { useEffect, useState } from "react";
 import { RepoPicker } from "./RepoPicker.tsx";
 import type { RepoSelection } from "./RepoPicker.tsx";

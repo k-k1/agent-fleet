@@ -1,12 +1,12 @@
-// AdminDialog — super_admin の管理面（テナント / メンバー / 上限 / 稼働状況）。
+// AdminDialog — the super_admin surface (tenants / members / quotas / uptime).
 //
-// 器は個人設定・テナント設定と同じ ui/Modal（`settings-modal`）。以前は独自の
-// 全画面サーフェス（.admin-surface）で、閉じる・Esc・端末の戻る・フォームの配色まで
-// 自前だった。中身のナビをレール化したことで大きさ以外に違う理由が無くなったので、
-// 器ごと共通の Modal に寄せた（幅・高さだけ .admin-modal で 1100×900 のまま——
-// テナントのカードとメンバーの表は個人設定より横が要る）。
+// The shell is the same ui/Modal (`settings-modal`) as personal and tenant settings, so close,
+// Esc, device back and form colours all behave identically; only the size differs (.admin-modal
+// keeps 1100x900, because the tenant cards and the member table need more width than personal
+// settings).
 //
-// 個人設定と分けてあるのは変わらない: 管理の操作が個人の設定に紛れないため。
+// It stays a separate modal from personal settings so admin actions never blend into a user's
+// own preferences.
 import { useSettingsUI } from "./store.ts";
 import { AdminTab } from "./admin/AdminTab.tsx";
 import { Icon } from "../../ui/Icon.tsx";

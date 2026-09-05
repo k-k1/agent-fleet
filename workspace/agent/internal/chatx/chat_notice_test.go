@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// 全 notice はカタログキーと引数を刻む（ADR 0033）。Content は正本言語の
-// フォールバックとして残るので、両方が揃っていることを確かめる。
+// Every notice records a catalog key and its arguments (ADR 0033). Content stays as the
+// source-language fallback, so both have to be present.
 func TestNoticesCarryCatalogKeys(t *testing.T) {
 	withTempHome(t)
 
@@ -16,7 +16,7 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 		NoteContextPressure(c)
 		m := lastNotice(t, c)
 		assertNoticeKey(t, m, noticeKeyCtxPressure)
-		// 引数は表示文と同じ値（85% / 170k / 200k）。
+		// The arguments carry the same values as the rendered text (85% / 170k / 200k).
 		if m.NoticeArgs["pct"] != "85" || m.NoticeArgs["tokens"] != "170k" || m.NoticeArgs["window"] != "200k" {
 			t.Fatalf("args = %v", m.NoticeArgs)
 		}
@@ -45,7 +45,7 @@ func TestNoticesCarryCatalogKeys(t *testing.T) {
 			CompactReasonManual:   noticeKeyCompactManual,
 			CompactReasonAuto:     noticeKeyCompactAuto,
 			CompactReasonRecovery: noticeKeyCompactRecovery,
-			"":                    noticeKeyCompactManual, // 未設定は手動扱い
+			"":                    noticeKeyCompactManual, // unset counts as manual
 		} {
 			if got := compactNoticeKey(reason); got != want {
 				t.Fatalf("compactNoticeKey(%q) = %q, want %q", reason, got, want)
@@ -75,17 +75,17 @@ func assertNoticeKey(t *testing.T, m ChatMessage, want string) {
 	}
 }
 
-// Console のカタログに全 notice キーが存在することを確かめる（Go 側でキーを足して
-// 翻訳を忘れると、英語 Console が正本言語のフォールバックに落ちる — 見た目は動くので
-// 気づけない）。console/ を含まない配布物でビルドする場合に備えて、カタログが無ければ
-// スキップする。
+// Every notice key has to exist in the Console catalogs: add a key on the Go side and forget
+// the translation, and the English Console silently falls back to the source-language content,
+// which still looks like it works. Skipped when the catalog is absent, for builds of a
+// distribution that does not include console/.
 func TestNoticeKeysExistInConsoleCatalogs(t *testing.T) {
 	keys := []string{
 		noticeKeyCtxPressure, noticeKeyCtxOverflow,
 		noticeKeyCompactManual, noticeKeyCompactAuto, noticeKeyCompactRecovery,
 		noticeKeyAgentSwitched,
 	}
-	// auto_paused は 3 断片（見出し・保留件数・締め）を Console 側で組み立てる。
+	// auto_paused is assembled Console-side from three fragments (head, pending count, tail).
 	autoPaused := []string{
 		noticeKeyAutoPaused + ".head",
 		noticeKeyAutoPaused + ".pending_other",

@@ -122,7 +122,7 @@ func TestRouteOperatorInbound(t *testing.T) {
 	}
 }
 
-// TestRouteOperatorInboundGate: the operator branch obeys the same sole defense (契約5) —
+// TestRouteOperatorInboundGate: the operator branch obeys the same sole defense (contract 5) —
 // only the bound user's replies run a turn; a stranger's message touches nothing.
 func TestRouteOperatorInboundGate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

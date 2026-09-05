@@ -1,42 +1,41 @@
-// ファイルビュアーの表示位置を「ペイン × ファイル × 面」ごとに覚え、戻ってきた
-// ときに同じ位置へ返す。
+// Remembers the file viewer's reading position per pane x file x surface, and returns to it when
+// the reader comes back.
 //
-// なぜ要るか: タブ表示は 1 セルに選ばれた 1 枚しか描かない（PaneHost の
-// selectedView）。別のタブへ移ると FileView ごと unmount され、戻ってくれば
-// api/fs/file から取り直して組み直す＝先頭からになる。読んでいた位置は React の
-// 中には残らないので、コンポーネントの外に置くしかない。編集⇄表示の切り替えも
-// 同じで、あちらは `hidden`（display:none）で面の箱そのものが消えるため、戻すと
-// ブラウザが scrollTop を 0 に落とす。
+// Why it exists: a tabbed cell renders only the one selected view (PaneHost's selectedView).
+// Switching tabs unmounts FileView entirely, and coming back re-fetches from api/fs/file and
+// rebuilds — that is, starts from the top. The position cannot live inside React, so it lives
+// outside the component. Toggling edit vs. view is the same case: there the surface's box goes
+// away under `hidden` (display:none), and restoring it makes the browser reset scrollTop to 0.
 //
-// px（scrollTop）をそのまま覚える。ミラー（features/mirror/scrollMark.ts）が
-// ターンをアンカーにするのは、戻ってきたときに載っている転写が別物（tail の
-// 取り直し）だからで、ファイルは同じ中身が同じ順で戻ってくるので px で足りる。
-// ただし**高さが決まるのは遅れる**（Markdown プレビューは innerHTML が passive
-// effect、PDF はページ寸法を取ってから）ので、1 回書き戻すだけでは済まない ——
-// 復元の粘りは parts/useScrollMemory.ts が持つ。
+// The stored value is raw px (scrollTop). Mirror (features/mirror/scrollMark.ts) anchors on a
+// turn because the transcript it comes back to is a different one (the tail is re-fetched); a
+// file comes back with the same content in the same order, so px is enough. Height, however,
+// settles late (Markdown preview sets innerHTML in a passive effect, PDF needs page dimensions
+// first), so one write-back is not enough — the retry lives in parts/useScrollMemory.ts.
 //
-// ここはストアだけ。React も DOM も触らないので node プロジェクトで回せる。
+// Store only: it touches neither React nor the DOM, so it runs in the node project.
 
-/** 覚えておく面の数。1 ペイン 1 ファイルにつき数個（コード/プレビュー/…）なので、
- *  これで数十ファイルぶん。溢れたら古い順に捨てる（Map は挿入順）。 */
+/** How many surfaces to remember. A pane/file pair has a few (code, preview, ...), so this is
+ *  worth some tens of files. On overflow the oldest goes first (Map keeps insertion order). */
 const MAX_ENTRIES = 200;
 
-/** キー → 最後に見ていた scrollTop。タブが生きている間だけの記憶で、リロードで
- *  消える＝次回は先頭から（echoStore / scrollMark と同じ、モジュールスコープ）。 */
+/** Key -> last scrollTop. The memory lasts only while the tab lives and is lost on reload, so the
+ *  next visit starts from the top (module scope, like echoStore / scrollMark). */
 const positions = new Map<string, number>();
 
-/** 面ごとのキー。ペインが違えば別の記憶（同じファイルを 2 枚開いて別々の場所を
- *  読める）、ファイルが違えば別の記憶。surface は「コード / プレビュー / PDF …」。 */
+/** Key for one surface. A different pane means a separate memory (the same file can be open twice
+ *  and read at two places), and so does a different file. */
 export function scrollMemoryKey(paneId: string | undefined, filePath: string): string | null {
   if (!filePath) return null;
-  // 区切りはパスに絶対に現れない NUL（生で書くと「バイナリ」扱いになって
-  // grep から消えるので、必ずエスケープで書く: src/test/noRawControlChars.test.ts）。
+  // The separator is NUL, which can never appear in a path. Always write it escaped: a raw
+  // control byte makes the file count as binary and drops it out of grep
+  // (src/test/noRawControlChars.test.ts).
   return `${paneId || "-"}\u0000${filePath}`;
 }
 
 export function saveScrollPos(key: string, top: number): void {
   if (!key) return;
-  positions.delete(key); // 入れ直して「最近使った」順に並べ替える
+  positions.delete(key); // re-insert so the map stays in least-recently-used order
   positions.set(key, top);
   if (positions.size > MAX_ENTRIES) {
     const oldest = positions.keys().next();
@@ -50,7 +49,7 @@ export function loadScrollPos(key: string): number | null {
   return top === undefined ? null : top;
 }
 
-/** テスト用。 */
+/** For tests. */
 export function clearScrollPos(): void {
   positions.clear();
 }

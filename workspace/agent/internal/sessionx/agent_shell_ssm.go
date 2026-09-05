@@ -5,7 +5,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// shellAgent / ssmAgent — shell・ssm 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
+// shellAgent / ssmAgent — the Agent implementations for the shell and ssm kinds.
 
 // --- shell ---------------------------------------------------------------------
 

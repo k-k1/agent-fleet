@@ -1,4 +1,5 @@
-// wiremap_convert_test.go — memoryx で変換した map サイトの等価証明（CONTRACT-MAP / 脚③）。
+// wiremap_convert_test.go — equivalence proofs for the map sites converted in memoryx
+// (CONTRACT-MAP / leg 3).
 package memoryx
 
 import (
@@ -12,7 +13,7 @@ type memoryRootsIn struct {
 	Inactive     []memoryInactiveRoot
 	Auto         bool
 	AutoLocked   bool
-	LastSnapshot string // "" = head がゼロ値（キーごと出ない）
+	LastSnapshot string // "" = head is the zero value (the key is omitted entirely)
 }
 
 func TestWireEquivMemoryRoots(t *testing.T) {
@@ -22,20 +23,21 @@ func TestWireEquivMemoryRoots(t *testing.T) {
 			Inactive:   []memoryInactiveRoot{{Kind: "codex", Reason: "codex_memories_disabled"}},
 			Auto:       true,
 			AutoLocked: false,
-			// 🔴 条件付きキーの「在る」側。
+			// The "present" side of the conditional key.
 			LastSnapshot: "2026-09-03T12:00:00Z",
 		},
 		{
 			Roots:    []memoryRootView{},
 			Inactive: []memoryInactiveRoot{},
-			// 🔴 条件付きキーの「無い」側。旧 map はキーを入れない＝JSON に出ない。
-			// 新 struct は omitempty がそれを再現する。**値が RFC3339 で必ず非空**なので、
-			// omitempty が消すのは「無い」場合だけ——「在って空文字」は起こらない。
+			// The "absent" side of the conditional key: the old map leaves the key out, so it
+			// never reaches the JSON, and omitempty reproduces that on the new struct. The value
+			// is an RFC3339 stamp and therefore never legitimately empty, so omitempty only ever
+			// drops the absent case — "present but empty" cannot happen.
 			LastSnapshot: "",
 		},
 	}
 	got := wiretest.AssertEquiv(t, "HandleMemoryRoots", inputs,
-		func(in memoryRootsIn) any { // 旧（memory_handlers.go の map リテラルの写し）
+		func(in memoryRootsIn) any { // old (a copy of the map literal in memory_handlers.go)
 			m := map[string]any{
 				"roots":      in.Roots,
 				"inactive":   in.Inactive,
@@ -53,5 +55,5 @@ func TestWireEquivMemoryRoots(t *testing.T) {
 				Auto: in.Auto, AutoLocked: in.AutoLocked, LastSnapshot: in.LastSnapshot,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }

@@ -1,15 +1,15 @@
-// TranscriptCaps の中心的な約束 —「能力が無い = その操作要素を出さない」— を jsdom で
-// 押さえる。共有セッションビュー(docs/log/59)は所有者向けの能力をほぼ渡さないので、ここが
-// 崩れると受信者に「押せるのに何も起きないボタン」が並ぶ。それは見た目の粗ではなく、
-// 相手のワークスペースを開こうとする導線を出してしまうということでもある。
+// Pins the central promise of TranscriptCaps in jsdom: an absent capability renders no control.
+// The shared-session view (docs/log/59) hands over almost none of the owner-only capabilities,
+// so a break here lines a recipient's screen with buttons that click and do nothing — and worse
+// than being untidy, those buttons offer to open somebody else's Workspace.
 //
-// あわせて、能力が無いときの代替表示(その場で展開する diff / プラン)が出ることも見る。
-// 押せないボタンを消すだけでは、受信者は変更内容にたどり着けなくなる。
+// Also checks the fallback rendering an absent capability switches to (an inline diff, an inline
+// plan): merely removing the dead button would leave a recipient unable to reach the changes.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-// MarkdownView は remark/rehype を丸ごと引き込むので、ここでは本文が出ることだけ確かめる。
+// MarkdownView pulls in the whole of remark/rehype, so here we only check that the body renders.
 vi.mock("../../viewer/MarkdownView.tsx", () => ({
   MarkdownView: ({ source }: { source?: string }) => <div className="markdown">{source}</div>,
 }));
@@ -33,8 +33,9 @@ function render(turns: Turn[], caps: TranscriptCaps, props: LiveProps = {}) {
   return host;
 }
 
-// 同じ root へ描き直す（React が再マウントせず更新する経路）＝ポーリングで status が
-// 動くたびに実際に起きること。新しい root で描き直すと状態が消えて何も検出できない。
+// Re-render into the SAME root — the path where React updates without remounting, which is what
+// actually happens whenever polling moves the status. Rendering into a new root would wipe the
+// state and detect nothing.
 function rerender(turns: Turn[], caps: TranscriptCaps, props: LiveProps) {
   act(() => root!.render(<TranscriptView groups={groupTurns(turns)} caps={caps} {...props} />));
   return host!;
@@ -54,8 +55,8 @@ const EDIT_TURN: Turn[] = [
     idx: 2,
     ts: "2026-08-13T10:01:00Z",
     parts: [
-      // file は Agent が編集系ツールに必ず載せる座標（docs/log/68）。ここに無いと
-      // 「このターンが直したファイル」のチップが出ない。
+      // `file` is the coordinate the Agent always attaches to an edit-family tool
+      // (docs/log/68). Without it there is no chip for the files this turn changed.
       { kind: "tool", tool: "Edit", info: "app.ts", file: "src/app.ts", edits: [{ old: "const a = 1", new: "const a = 2" }] },
       { kind: "text", text: "直しました" },
     ],
@@ -71,48 +72,48 @@ const OWNER: TranscriptCaps = {
   forkAt: () => {},
   onReauth: () => {},
 };
-// 受信者はこれだけ。共有ビューが実際に渡すものと同じ。
+// All a recipient gets — exactly what the shared view actually passes.
 const RECIPIENT: TranscriptCaps = { agentName: "Claude" };
 
-describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () => {
-  it("所有者には diff ペインを開くボタンと分岐導線が出る", () => {
+describe("TranscriptCaps: no capability, no control", () => {
+  it("gives the owner a button to open the diff pane and a fork route", () => {
     const el = render(EDIT_TURN, OWNER);
     expect(el.querySelector(".mt-tool-diff")).not.toBeNull();
     expect(el.querySelector(".mt-fork")).not.toBeNull();
   });
 
-  it("所有者にはターン末尾に「このターンが直したファイル」のチップが出る（docs/log/68 P1）", () => {
+  it("gives the owner chips at the end of the turn for the files it changed (docs/log/68 P1)", () => {
     const el = render(EDIT_TURN, OWNER);
     const chips = el.querySelectorAll(".mtf-chip");
     expect(chips).toHaveLength(1);
     expect(chips[0].textContent).toContain("app.ts");
   });
 
-  it("受信者にはチップを出さない（共有 DTO はパスを落とすので開く座標が無い）", () => {
+  it("renders no chips for a recipient (the shared DTO drops the paths, so there is nothing to open)", () => {
     expect(render(EDIT_TURN, RECIPIENT).querySelector(".mirror-turn-files")).toBeNull();
   });
 
-  it("受信者には分岐導線が出ない（叩ける相手のセッションが無い）", () => {
+  it("renders no fork route for a recipient (there is no session of theirs to call)", () => {
     const el = render(EDIT_TURN, RECIPIENT);
     expect(el.querySelector(".mt-fork")).toBeNull();
   });
 
-  it("受信者の編集トレースは死んだボタンではなく、その場で展開する diff になる", () => {
+  it("turns a recipient's edit trace into an inline diff rather than a dead button", () => {
     const el = render(EDIT_TURN, RECIPIENT);
-    expect(el.querySelector(".mt-tool-diff")).toBeNull(); // ペインを開くボタンは出さない
+    expect(el.querySelector(".mt-tool-diff")).toBeNull(); // no button to open a pane
     const head = el.querySelector<HTMLButtonElement>(".mt-tool-outhead");
     expect(head).not.toBeNull();
-    expect(el.querySelector(".mt-tool-diff-inline")).toBeNull(); // 既定は畳んだ状態
+    expect(el.querySelector(".mt-tool-diff-inline")).toBeNull(); // collapsed by default
     act(() => head!.click());
     const inline = el.querySelector(".mt-tool-diff-inline");
     expect(inline).not.toBeNull();
-    // diff ペインと同じ lineDiff / dv-* で描くので、追加行と削除行が並ぶ
+    // Rendered with the same lineDiff / dv-* as the diff pane, so added and removed lines pair up
     expect(inline!.querySelectorAll(".dv-row.dv-add").length).toBe(1);
     expect(inline!.querySelectorAll(".dv-row.dv-del").length).toBe(1);
     expect(inline!.textContent).toContain("const a = 2");
   });
 
-  it("受信者のプランはペインではなくその場で全文展開できる", () => {
+  it("lets a recipient expand a plan in full in place, with no pane", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -122,7 +123,7 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     ];
     const owner = render(turns, OWNER);
     expect(owner.querySelector(".mt-plan-open")).not.toBeNull();
-    expect(owner.querySelector(".mt-plan-body")).toBeNull(); // 所有者はペインで開く
+    expect(owner.querySelector(".mt-plan-body")).toBeNull(); // the owner opens it in a pane
     act(() => root?.unmount());
     host?.remove();
 
@@ -133,7 +134,7 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     expect(el.querySelector(".mt-plan-body")?.textContent).toContain("最初に棚卸しする");
   });
 
-  it("受信者には所有者のエージェントを再認証させる導線を出さない", () => {
+  it("offers a recipient no route to re-authenticate the owner's agent", () => {
     const turns: Turn[] = [
       { role: "assistant", idx: 1, parts: [{ kind: "error", info: "OAuthError", text: "Please run /login", cause: "auth" }] },
     ];
@@ -141,11 +142,11 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
     act(() => root?.unmount());
     host?.remove();
     const el = render(turns, RECIPIENT);
-    expect(el.querySelector(".mirror-error")).not.toBeNull(); // 失敗そのものは見える
-    expect(el.querySelector(".mef-action")).toBeNull(); // 直しに行く導線は出さない
+    expect(el.querySelector(".mirror-error")).not.toBeNull(); // the failure itself is visible
+    expect(el.querySelector(".mef-action")).toBeNull(); // but no route to go and fix it
   });
 
-  it("添付ファイルは開く先が無ければパネルごと出さない（パスは DTO で落ちている）", () => {
+  it("hides the attachment panel entirely when there is nowhere to open it (the DTO drops the paths)", () => {
     const turns: Turn[] = [
       { role: "assistant", idx: 1, parts: [{ kind: "userfile", files: ["out/report.md"], caption: "結果" }] },
     ];
@@ -156,8 +157,8 @@ describe("TranscriptCaps: 能力が無ければ操作要素を出さない", () 
   });
 });
 
-describe("共有ビューでもミラーと同じ形で畳まれる", () => {
-  it("連続したツールは1行にまとまり、展開して中身を見られる", () => {
+describe("the shared view folds exactly as the mirror does", () => {
+  it("collapses consecutive tools into one row that expands to show them", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -173,14 +174,14 @@ describe("共有ビューでもミラーと同じ形で畳まれる", () => {
     const el = render(turns, RECIPIENT);
     const runHead = el.querySelector<HTMLButtonElement>(".mt-toolrun-head");
     expect(runHead).not.toBeNull();
-    // 畳んだ状態では個々のツール行は出ていない（旧実装はこれを延々と並べていた）
+    // While collapsed no individual tool row is rendered (the old version listed them all).
     expect(el.querySelectorAll(".mt-toolrun-body .mt-tool").length).toBe(0);
     expect(runHead!.textContent).toContain("Read×2");
     act(() => runHead!.click());
     expect(el.querySelectorAll(".mt-toolrun-body .mt-tool").length).toBe(3);
   });
 
-  it("コンパクション要約は巨大なターンではなく畳んだブロックになる", () => {
+  it("renders a compaction summary as a folded block, not a giant turn", () => {
     const turns: Turn[] = [
       { role: "user", text: "長い要約…", idx: 1, compact: true },
       { role: "assistant", text: "続けます", idx: 2 },
@@ -190,11 +191,11 @@ describe("共有ビューでもミラーと同じ形で畳まれる", () => {
   });
 });
 
-// ミラーの working は生きたポーリング値なので、1 ターンの最中でも往復する（claude の Stop
-// フックで一瞬 idle を拾う／operator・定時実行・peer の新しいプロンプトが転写へ届く前に
-// working が立つ）。そのたびに作業過程が展開⇄畳みで入れ替わると、読んでいる最中に本文の
-// 高さが跳ねて位置がズレる。畳み込みは片道・開閉は読者のもの、を固定する。
-describe("作業過程の畳み込みは往復しない", () => {
+// The mirror's `working` is a live polled value, so it flaps even mid-turn: claude's Stop hook
+// yields a momentary idle, and working goes true before an operator / scheduled / peer prompt
+// reaches the transcript. Swinging the work trace open and shut on each flap jumps the body's
+// height under a reader. Folding is one-way, and open/closed belongs to the reader.
+describe("folding the work trace never flaps back", () => {
   const WORK_TURN: Turn[] = [
     { role: "user", text: "調べて", idx: 1, ts: "2026-08-22T10:00:00Z" },
     {
@@ -213,49 +214,51 @@ describe("作業過程の畳み込みは往復しない", () => {
     return head ? (head.getAttribute("aria-expanded") === "true" ? "open" : "closed") : "unfolded";
   };
 
-  it("完了で畳んだあと status が working へ戻っても開き直さない", () => {
-    // 末尾を追いながら実行中を眺めている：作業過程は畳まずそのまま出ている。
+  it("never re-opens after folding on completion, even when status claims working again", () => {
+    // Following the tail while the turn runs: the work trace is unfolded and fully shown.
     const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: true });
     expect(workState(el)).toBe("unfolded");
-    // 完了 → 畳む（末尾追従中なので閉じた要約になる）。
+    // Completion folds it (following the tail, so it becomes a closed summary).
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
-    // ここで status がまた working を名乗っても、畳んだものは畳んだまま。
+    // Status claiming working again leaves what was folded folded.
     expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
   });
 
-  it("読者が開いた作業過程は、その後の status/追従の変化で閉じない", () => {
+  it("keeps a work trace the reader opened open through later status and tail changes", () => {
     const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
     expect(workState(el)).toBe("closed");
     act(() => el.querySelector<HTMLButtonElement>(".mt-work-head")!.click());
     expect(workState(el)).toBe("open");
-    // 追従が切れた／戻った、実行中に見えた — どれも読者の選択を上書きしない。
+    // Losing the tail, regaining it, appearing to run — none of these overrides the reader.
     expect(workState(rerender(WORK_TURN, OWNER, { working: true, autoCollapseWork: false }))).toBe("open");
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
   });
 
-  it("セッションを持ち替えたら畳み込みは持ち越さない（ミラーは再マウントされない）", () => {
+  it("carries no fold state across a session switch (the mirror is not remounted)", () => {
     const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
     expect(workState(el)).toBe("closed");
-    // 同じ idx を持つ別セッションのターン。React が使い回すと、実行中の作業過程が
-    // 前のセッションの「畳んだ」状態を引き継いで最初から隠れてしまう。
+    // Another session's turn with the same idx. If React reuses the component, a running work
+    // trace inherits the previous session's folded state and starts out hidden.
     const other = rerender(WORK_TURN, { ...OWNER, session: "s2" }, { working: true, autoCollapseWork: true });
     expect(workState(other)).toBe("unfolded");
   });
 
-  it("上へスクロールして読んでいる最中に完了したターンは開いたまま畳まれる", () => {
-    // autoCollapseWork=false ＝末尾から離れて読んでいる。要約行は出すが中身は閉じない。
+  it("folds a turn that completes while the reader scrolled up, but leaves it open", () => {
+    // autoCollapseWork=false means reading away from the tail: show the summary row, keep the
+    // body open.
     const el = render(WORK_TURN, OWNER, { working: true, autoCollapseWork: false });
     expect(workState(el)).toBe("unfolded");
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: false }))).toBe("open");
-    // 途中で末尾へ戻っても、いま読んでいるものを閉じにはいかない。
+    // Returning to the tail must not close what is being read.
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
   });
 });
 
-// 開いた作業過程／思考は画面数枚ぶんの高さになるので、畳む操作が見出しにしか無いと
-// 「読み終えた位置から見出しまで戻る」までたたむ手段が無い。本文の最下部にも同じトグルを置く。
-describe("開いた作業過程・思考は最下部からも閉じられる", () => {
+// An expanded work trace or thinking block runs to several screens, so with the only control in
+// the head there is no way to fold it without scrolling all the way back up from where you
+// finished reading. The same toggle is repeated at the bottom of the body.
+describe("an expanded work trace or thinking block closes from the bottom too", () => {
   const WORK_TURN: Turn[] = [
     { role: "user", text: "調べて", idx: 1 },
     {
@@ -279,7 +282,7 @@ describe("開いた作業過程・思考は最下部からも閉じられる", (
     },
   ];
 
-  it("作業過程：最下部の閉じるで畳む（見出しのトグルと同じ状態になる）", () => {
+  it("work trace: the bottom close folds it, ending in the same state as the head toggle", () => {
     const el = render(WORK_TURN, OWNER, { working: false, autoCollapseWork: true });
     const head = el.querySelector<HTMLButtonElement>(".mt-work-head")!;
     act(() => head.click());
@@ -290,7 +293,7 @@ describe("開いた作業過程・思考は最下部からも閉じられる", (
     expect(head.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("思考：最下部の閉じるで畳む", () => {
+  it("thinking: the bottom close folds it", () => {
     const el = render(THINK_TURN, OWNER);
     const head = el.querySelector<HTMLButtonElement>(".mirror-thinking-head")!;
     act(() => head.click());
@@ -300,31 +303,32 @@ describe("開いた作業過程・思考は最下部からも閉じられる", (
   });
 });
 
-describe("peer 着信の見え方（docs/log/58 §58.14）", () => {
+describe("how an incoming peer message looks (docs/log/58 §58.14)", () => {
   const peerTurn = (text: string): Turn[] => [{ role: "user", text, idx: 1, source: "peer" }];
 
-  it("送信元と種別の2つのチップが出る", () => {
+  it("renders two chips, the sender and the kind", () => {
     const el = render(
       peerTurn("[agent-fleet:peer from=build-api intent=request reply=only-if-blocked] 直して"),
       RECIPIENT,
     );
     expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
     const kind = el.querySelector(".mt-peer-kind");
-    // 文言はロケール依存なので、訳が引けている（キーが素通しされていない）ことを見る。
+    // The wording is locale-dependent, so check the translation resolved (no raw key leaked).
     expect(kind?.textContent?.trim()).toBeTruthy();
     expect(kind?.textContent).not.toContain("mirror.peer_intent");
   });
 
-  it("種別の無い旧い封筒でも送信元バッジは出る（チップだけ消える）", () => {
+  it("still badges the sender for an older envelope with no kind (only the chip disappears)", () => {
     const el = render(peerTurn("[agent-fleet:peer from=build-api] 直して"), RECIPIENT);
     expect(el.querySelector(".mt-peer")?.textContent).toContain("build-api");
     expect(el.querySelector(".mt-peer-kind")).toBeNull();
   });
 
-  // 由来タグが落ちていても封筒があればバッジは出す。タグは別ストア由来で、記録より前に
-  // 取ってきたターン（ミラーは持っているターンを取り直さない）や、上限で押し出された
-  // 古い記録では消える。ここで諦めると、着信の唯一の可視化が黙って無くなる。
-  it("source が落ちていても封筒があればバッジは出る", () => {
+  // An envelope is enough to badge even with the origin tag gone. The tag lives in a separate
+  // store and disappears for a turn fetched before the record was written (the mirror never
+  // refetches a turn it holds) and for old records pushed out past the cap. Giving up here would
+  // silently remove the only visualisation an incoming message has.
+  it("badges from the envelope even when source is missing", () => {
     const el = render(
       [{ role: "user", text: "[agent-fleet:peer from=build-api intent=notice reply=none] 出た", idx: 1 }],
       RECIPIENT,
@@ -333,23 +337,24 @@ describe("peer 着信の見え方（docs/log/58 §58.14）", () => {
     expect(el.querySelector(".mt-peer-kind")?.textContent?.trim()).toBeTruthy();
   });
 
-  it("封筒も由来タグも無い自分の入力にはバッジを出さない", () => {
+  it("adds no badge to the reader's own input, which has neither envelope nor origin tag", () => {
     const el = render([{ role: "user", text: "自分で打った指示", idx: 1 }], RECIPIENT);
     expect(el.querySelector(".mt-peer")).toBeNull();
   });
 
-  // claude 自前の cross-session チャネル(docs/log/58 §58.16)の着信には封筒が無い —— AF を
-  // 通っていないので付けようが無い。名前は Agent が転写の origin から起こして peerFrom に
-  // 載せるので、そこから出す。ここを繋いでいないと「別のセッション」としか出ず、
-  // 利用者もオペレーターも送っていない指示の出どころが辿れない。
-  it("封筒の無いネイティブ着信でも peerFrom から送信元名を出す", () => {
+  // Arrivals over claude's own cross-session channel (docs/log/58 §58.16) carry no envelope —
+  // they never went through AF, so there was nothing to attach one. The Agent recovers the name
+  // from the transcript's origin and puts it in peerFrom, which is where this reads it. Without
+  // that wiring the badge says only "another session", and an instruction neither the user nor
+  // the operator sent cannot be traced to its source.
+  it("names the sender from peerFrom for a native arrival with no envelope", () => {
     const el = render([{ role: "user", text: "資料の不足を申告する", idx: 1, source: "peer", peerFrom: "s6bbilu" }], RECIPIENT);
     expect(el.querySelector(".mt-peer")?.textContent).toContain("s6bbilu");
-    // 封筒が無いので種別チップは出ない（推測しない）。
+    // No envelope, so no kind chip: nothing is guessed.
     expect(el.querySelector(".mt-peer-kind")).toBeNull();
   });
 
-  it("封筒がある場合は封筒の名前が勝つ（サーバが必ず付ける側）", () => {
+  it("prefers the envelope's name when there is one (the server always attaches it)", () => {
     const el = render(
       [{ role: "user", text: "[agent-fleet:peer from=build-api intent=notice reply=none] 出た", idx: 1, source: "peer", peerFrom: "s6bbilu" }],
       RECIPIENT,
@@ -358,11 +363,11 @@ describe("peer 着信の見え方（docs/log/58 §58.14）", () => {
   });
 });
 
-// claude は AskUserQuestion / ExitPlanMode の tool_use を「訊いた時点」で転写に書く。
-// 「転写に出ている＝決着済み」は成り立たないので、決着のバッジは tool_result が来て
-// 初めて出す（これを決め打ちで出していたため、承認待ちのプランが「決定済み」を名乗った）。
-describe("決着していない質問/プランは決定済みを名乗らない", () => {
-  it("回答の無い質問カードに「回答済み」を出さない", () => {
+// claude writes the tool_use for AskUserQuestion / ExitPlanMode at the moment it ASKS, so
+// "present in the transcript" does not mean "decided". The decided badge is shown only once the
+// tool_result arrives; hardcoding it is what made a plan awaiting approval claim it was decided.
+describe("an undecided question or plan never claims it was decided", () => {
+  it("does not badge a question card answered when there is no answer", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -376,11 +381,11 @@ describe("決着していない質問/プランは決定済みを名乗らない
       },
     ];
     const el = render(turns, RECIPIENT);
-    expect(el.querySelector(".mt-question")).not.toBeNull(); // 問い自体は見える
+    expect(el.querySelector(".mt-question")).not.toBeNull(); // the question itself is visible
     expect(el.querySelector(".mq-done")).toBeNull();
   });
 
-  it("tool_result の無いプランカードに「決定済み」を出さない", () => {
+  it("does not badge a plan card decided when there is no tool_result", () => {
     const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画\n\n棚卸しする" }] }];
     const el = render(turns, RECIPIENT);
     expect(el.querySelector(".mt-plan")).not.toBeNull();
@@ -388,7 +393,7 @@ describe("決着していない質問/プランは決定済みを名乗らない
     expect(el.querySelector(".mt-plan.decided")).toBeNull();
   });
 
-  it("却下の楽観マークが付いていれば tool_result より先に「却下」を出す", () => {
+  it("badges it rejected ahead of the tool_result when the optimistic reject mark is set", () => {
     const turns: Turn[] = [{ role: "assistant", idx: 1, parts: [{ kind: "plan", plan: "# 移行計画" }] }];
     const el = render(turns, { ...OWNER, isRejectedPlan: () => true });
     expect(el.querySelector(".mt-plan-badge")?.textContent).toBe(tr("mirror.rejected"));

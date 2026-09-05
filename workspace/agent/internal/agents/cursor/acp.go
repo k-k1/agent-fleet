@@ -1,16 +1,18 @@
 package cursor
 
-// acpClient は `cursor-agent acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、
-// stdio）クライアント（docs/log/40 managed 契約・v2026.07.20 実測）。copilot の acp.go と
-// 同じプロトコル汎用の骨格で、cursor 固有の差分（session/update の sessionUpdate 判別子
-// による転写構築）は driver.go が onNotify で担う。
-//   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）
-//   - notifyPeer: 通知（session/cancel）
-//   - respond: サーバー発リクエスト（session/request_permission）への応答
-// readLoop が応答/通知/サーバー発リクエストを振り分ける。onRequest / onNotify は
-// readLoop goroutine 上で同期に呼ばれるため、実装はブロックしてはならない
-// （permission はハンドラが Interaction を記録して即 return し、応答は後から
-// respond() で返す。onNotify は転写バッファへ追記するだけで軽い）。
+// acpClient is the JSON-RPC 2.0 client (newline-delimited, over stdio) for the
+// `cursor-agent acp` child process (docs/log/40 managed contract, measured on v2026.07.20). It is
+// the same protocol-generic skeleton as copilot's acp.go; the cursor-specific part - building the
+// transcript from session/update's sessionUpdate discriminator - lives in driver.go's onNotify.
+//   - call: assign an id -> write -> wait for the response (timeout 0 = no deadline, for
+//     session/prompt)
+//   - notifyPeer: notifications (session/cancel)
+//   - respond: answers to server-initiated requests (session/request_permission)
+//
+// readLoop dispatches responses, notifications and server-initiated requests. onRequest and
+// onNotify are called synchronously on the readLoop goroutine, so an implementation must never
+// block: the permission handler records an Interaction and returns immediately, answering later
+// via respond(), and onNotify only appends to the transcript buffer.
 
 import (
 	"bufio"
@@ -59,8 +61,8 @@ func newACPClient(stdin io.Writer, stdout io.Reader) *acpClient {
 
 var errClientClosed = errors.New("cursor runtime との接続が切れました")
 
-// readLoop dispatches incoming lines until the child's stdout closes. cursor の ACP は
-// 大きな available_commands_update（skill 一覧）を 1 行で流すため、バッファは広く取る。
+// readLoop dispatches incoming lines until the child's stdout closes. cursor's ACP sends a large
+// available_commands_update (the skill list) as a single line, so keep the buffer generous.
 func (c *acpClient) readLoop(stdout io.Reader) {
 	defer c.markClosed()
 	sc := bufio.NewScanner(stdout)
@@ -169,7 +171,7 @@ func (c *acpClient) call(method string, params any, timeout time.Duration) (json
 	case r := <-ch:
 		return r.result, r.err
 	case <-c.closed:
-		// markClosed が pending へ配送済みの場合もあるので回収を試みる。
+		// markClosed may already have delivered to pending, so try to collect it.
 		select {
 		case r := <-ch:
 			return r.result, r.err

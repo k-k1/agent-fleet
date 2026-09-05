@@ -3,8 +3,9 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { Trans } from "../../../lib/i18n/Trans.tsx";
 
 /**
- * 転写の上に積む「状況の帯」。どれも会話そのものではなく、いま端末側で何が起きていて
- * ユーザーに何ができるかを示す 1 行もの。出る条件は互いに排他ではないので、素直に縦に並べる。
+ * Status bands stacked above the transcript. None of them is part of the conversation: each is a
+ * one-liner saying what the terminal is doing and what the user can do about it. Their conditions
+ * are not mutually exclusive, so they simply stack vertically.
  */
 export function MirrorBanners({
   isPlan,

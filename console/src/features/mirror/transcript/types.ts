@@ -16,7 +16,7 @@ export interface QuestionOption {
 }
 
 export interface Question {
-  id?: string; // managed: 応答先 Interaction の id（docs/log/27 §5）。tui 由来は空
+  id?: string; // managed: id of the Interaction to answer (docs/log/27 §5); empty when tui-sourced
   header?: string;
   question?: string;
   multiSelect?: boolean;
@@ -37,9 +37,10 @@ export interface Part {
   text?: string;
   tool?: string;
   info?: string;
-  // kind=error: なぜ失敗したかの機械可読な軸（"auth" = 再認証で直る、空 = 導線なし）。
-  // info はエージェント自身のエラー名で版ごとに変わるため、文言一致で導線を出しては
-  // いけない — 分類はエージェント側（各 errors.go）が持ち、ここはその印だけを見る。
+  // kind=error: a machine-readable axis for why it failed ("auth" = re-authentication fixes it,
+  // "" = no route to offer). Never derive that route by matching on `info`: it is the agent's own
+  // error name and changes between versions. The classification belongs to the agent side (each
+  // errors.go); this field is the only thing to read here.
   cause?: string;
   output?: string;
   prompt?: string; // kind=delegation: full instruction sent to the child
@@ -84,8 +85,9 @@ export interface Turn {
   queued?: boolean; // sitting in claude's mid-run queue (enqueued, awaiting injection)
   source?: string; // user turn origin: "operator" = fleet-operator injected (docs/log/30 ②), else own input
   // peerFrom: the SESSION that sent a source==="peer" turn, when the Agent could name it.
-  // AF 自身の peer 送信は本文の封筒に名前が載るのでこれは空 — 埋まるのは封筒を持たない
-  // 着信、つまり claude 自前の cross-session チャネル(docs/log/58 §58.16)のときだけ。
+  // Empty for AF's own peer sends, whose envelope already names the sender in the body; it is
+  // filled only for arrivals without an envelope, i.e. claude's own cross-session channel
+  // (docs/log/58 §58.16).
   peerFrom?: string;
   parts?: Part[];
   sidechain?: boolean;
@@ -126,10 +128,10 @@ export interface Group {
   // The FIRST folded turn's anchor — branching "from this block" means branching before
   // everything it shows, so a merged block must not adopt a later turn's anchor.
   anchorId?: string;
-  // origins[i] is the mark root key of parts[i] (docs/log/69 §69.3): "<元ターンの安定キー>#<その
-  // ターン内での part 番号>". It is a PARALLEL array rather than a field on Part because
-  // partsOf() hands back `t.parts` BY REFERENCE — writing to a part here would corrupt the
-  // held turn state. "" = this part cannot carry a mark (pending echo, no anchor and no text).
+  // origins[i] is the mark root key of parts[i] (docs/log/69 §69.3): "<stable key of the source
+  // turn>#<part number within that turn>". It is a PARALLEL array rather than a field on Part
+  // because partsOf() hands back `t.parts` BY REFERENCE — writing to a part here would corrupt
+  // the held turn state. "" = this part cannot carry a mark (pending echo, no anchor, no text).
   origins: string[];
   // bodyRoot is the mark root for a user block's own text (the bubble renders `text`, not
   // its parts). Empty when the block folded MORE THAN ONE turn: `text` is then a
@@ -149,9 +151,9 @@ export type FoldItem =
   | { kind: "toolrun"; tools: { p: Part; i: number }[] }
   | { kind: "part"; p: Part; i: number };
 
-// カラオケ朗読（turnTts, docs/log/24）の配線。いま読み上げ中のターン（transcript の idx）と
-// 操作を TranscriptView 経由で各ターンのフッターへ渡す。ハイライトは turnTts が DOM
-// （classList）側で行い、React はボタンの表示切り替えだけを持つ。
+// Wiring for karaoke read-aloud (turnTts, docs/log/24). Carries the turn currently being read
+// (its transcript idx) and the controls down to each turn's footer through TranscriptView. The
+// highlight itself is done by turnTts on the DOM (classList); React only switches the buttons.
 export interface TurnTtsWiring {
   reading: { idx: number; paused: boolean } | null;
   start: (idx: number, body: HTMLElement) => void;

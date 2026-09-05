@@ -22,8 +22,8 @@ interface TenantStore {
    *  nobody's roster yet (docs/log/61 §61.10.2). It is a normal state on an
    *  invite-run deployment — the default for new installs since P7-2 — not an
    *  error, so App renders a landing screen for it instead of a Console whose
-   *  every request 403s. ★ A super_admin never reaches it: the CP answers 200
-   *  with an empty tenant list so the Admin panel stays reachable (決定 23). */
+   *  every request 403s. A super_admin never reaches it: the CP answers 200
+   *  with an empty tenant list so the Admin panel stays reachable (decision 23). */
   notProvisioned: boolean;
   /** Bumped whenever the layout-scoping identity (setUser) changes — including a
    *  DELAYED whoami resolution after a transient boot failure. App keys its
@@ -39,12 +39,12 @@ interface TenantStore {
   select(slug: string): Promise<void>;
 }
 
-// whoami は本来ブート時の 1 回きりだった。そこにはアイデンティティだけでなく
-// デプロイの capability（scheduler_enabled）も乗っているため、CP が設定変更を
-// 伴って再起動しても、ブラウザをリロードするまで古い値のままだった（定時実行を
-// 有効化したのに左ペインにスケジュールが出ない、の一因）。push ストリームの
-// 再接続を CP 再起動の合図として読み直す — ただしタブの表示/非表示でも再接続
-// するので、最短間隔で間引く。
+// whoami used to be read once at boot. It carries deployment capabilities
+// (scheduler_enabled) as well as the identity, so a CP restarted with changed settings left
+// the browser on stale values until a reload — one reason scheduled execution could be
+// enabled and still show no schedule in the left pane. A push-stream reconnect is read as a
+// signal that the CP restarted; the tab going visible/hidden also reconnects, so re-reads
+// are throttled to a minimum interval.
 const WHOAMI_MIN_INTERVAL_MS = 30000;
 let lastWhoamiAt = 0;
 
@@ -63,10 +63,10 @@ function tenantHintFromURL(): string {
 // tenants / notProvisioned / selection). Returns true on a TERMINAL result (success or a
 // genuine app error — stop), false on a backend failure worth retrying.
 //
-// ★ One code path for the boot read and the reconnect re-read, because these two facts
-// must not drift apart: superAdmin used to be written at boot and never again, so a
-// single failed read left the account menu without 管理 / テナント管理 — with no error
-// shown anywhere — until the person happened to reload.
+// One code path for the boot read and the reconnect re-read, because these two facts must
+// not drift apart: superAdmin used to be written at boot and never again, so a single failed
+// read left the account menu without its Admin / Tenant-admin items (「管理」/「テナント管理」)
+// — with no error shown anywhere — until the person happened to reload.
 //
 // `boot` gates the ?tenant= hint: it is a landing preselection, so re-applying it on
 // every reconnect would yank somebody back out of the tenant they picked afterwards.
@@ -78,7 +78,7 @@ const loadTenants = async (set: (p: Partial<TenantStore>) => void, boot: boolean
     return false; // network drop — retry
   }
   if (data?.error) {
-    // ★ not_provisioned is not a failure — the person is signed in and simply
+    // not_provisioned is not a failure — the person is signed in and simply
     // not on a roster yet. Flag it so App can land them on a page that says so
     // (docs/log/61 §61.10.2); without this they get the full Console with an empty
     // tenant and every subsequent request 403ing one toast at a time.
@@ -105,7 +105,7 @@ const loadTenants = async (set: (p: Partial<TenantStore>) => void, boot: boolean
   // tenant this browser last used. It is only ever a preselection: it is
   // honoured only when the server already listed that tenant among this
   // person's memberships, and every request is authorized server-side
-  // regardless (ADR0043 決定 14).
+  // regardless (ADR0043 decision 14).
   let cur = (boot && tenantHintFromURL()) || getTenant();
   if (!list.some((t) => t.slug === cur)) cur = list[0].slug;
   setTenant(cur);
@@ -193,12 +193,12 @@ export const useTenantStore = create<TenantStore>((set) => ({
         set((s) => ({ identityRev: s.identityRev + 1 }));
       }
     }
-    // ★ Re-read the memberships too — and independently of how whoami went. They carry
-    // the deployment role (super_admin) and the roster, which gate 管理 / テナント管理
-    // in the account menu, and nothing re-read them after boot: a Console that booted
-    // while the CP's database was down kept superAdmin=false for the life of the tab and
-    // dropped both items silently. A reconnect is precisely the moment the answer may
-    // have changed (CP restarted, an administrator edited the roster).
+    // Re-read the memberships too, independently of how whoami went. They carry the
+    // deployment role (super_admin) and the roster, which gate the Admin / Tenant-admin
+    // items (「管理」/「テナント管理」) in the account menu, and nothing re-read them after
+    // boot: a Console that booted while the CP's database was down kept superAdmin=false for
+    // the life of the tab and dropped both items silently. A reconnect is precisely the
+    // moment the answer may have changed (CP restarted, an administrator edited the roster).
     await loadTenants(set, false);
   },
 

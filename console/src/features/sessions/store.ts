@@ -14,9 +14,9 @@ import type { Session } from "../../types/session.ts";
 
 interface SessionsStore {
   sessions: Session[];
-  /** Global "open the はじめる hub" signal (起動導線 Ph2): WS bar はじめる /
-   * onboarding bump this; StartHost — which owns the StartModal — watches it.
-   * (The old openNewSession/newSessionTick went with the NewSessionModal, Ph3.) */
+  /** Global "open the start hub" signal (launch flow Ph2): the WS bar's start button
+   * and onboarding bump this; StartHost — which owns the StartModal —
+   * watches it. */
   startTick: number;
   openStart(): void;
   refresh(): Promise<void>;
@@ -28,7 +28,7 @@ interface SessionsStore {
   setKeepAwake(name: string, keepAwakeUntil: string): void;
   /** Resume/launch a stopped session (POST start). Resolves true when the backend
    * accepted the resume; false (with a toast already shown) when it did not, so the
-   * caller can leave its 再開 affordance armed instead of waiting forever. */
+   * caller can leave its resume affordance armed instead of waiting forever. */
   start(name: string): Promise<boolean>;
 }
 
@@ -40,9 +40,10 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   openStart: () => set((s) => ({ startTick: s.startTick + 1 })),
 
   applyList(list: Session[]) {
-    // 「人待ちに入った瞬間」を観測できるのはここだけ（poll も push も applyList を通る）。
-    // 下の変化比較より前に置くのは、published かどうかとは無関係に**届いた一覧を全部**
-    // 見るため。遷移が無ければ何も書かないので、4 秒ごとの呼び出しでも実質ただの比較。
+    // The only place the moment a session starts waiting on a human can be observed —
+    // both the poll and the push path go through applyList. It sits before the change
+    // comparison below so every arriving list is seen, whether or not it gets published;
+    // with no transition nothing is written, so the 4s calls cost only a comparison.
     noteSessions(list);
     const s = JSON.stringify(list);
     if (s !== ser) {
@@ -57,7 +58,8 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
     set({ sessions: list });
   },
 
-  // 受理された POST が正。次の一覧ポーリングを待たせない（ロックと同じ流儀）。
+  // An accepted POST is authoritative: don't make the UI wait for the next list poll
+  // (same as the lock toggle).
   setKeepAwake(name: string, keepAwakeUntil: string) {
     const list = get().sessions.map((s) => (s.name === name ? { ...s, keepAwakeUntil } : s));
     ser = JSON.stringify(list);
@@ -77,7 +79,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       // failure — most reliably in the 502 window while the workspace agent comes up
       // after a restart — and the rows are what every resume affordance is gated on
       // (a pane resolves its session by name out of this list; not finding it hides
-      // the 再開 button entirely). A stale row is recoverable on the next tick; a
+      // the resume button entirely). A stale row is recoverable on the next tick; a
       // vanished one is a dead end the user can only escape by reloading.
     }
   },

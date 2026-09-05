@@ -6,7 +6,7 @@
 // user's connected providers). Codex is cached once per Console load. OpenCode
 // is refetched on each picker mount because its provider connections can change
 // from Settings during the same Console load (the Agent cheaply caches the CLI
-// call). Until the fetch lands (or when it fails) the picker offers only 既定,
+// call). Until the fetch lands (or when it fails) the picker offers only Default,
 // which launches the CLI on its own default model.
 import { useEffect, useState } from "react";
 import { api } from "../core/api/client.ts";
@@ -24,7 +24,7 @@ interface ModelDescriptor {
   defaultEffort: string;
 }
 
-// Resolved lazily (not a module-level constant) so the "既定" label reflects the
+// Resolved lazily (not a module-level constant) so the "Default" label reflects the
 // current locale and updates on language switch.
 const defaultOnly = (): ModelOption[] => [["", t("ui.default")]];
 const isDynamic = (kind: string) =>
@@ -112,13 +112,14 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
   void version;
   const rows = descriptors.get(kind) || [];
   const selected = rows.find((m) => m.id === model);
-  // copilot の Auto（Free の唯一のモデル / copilot 既定）は --effort を拒否する
-  // （"Model auto does not support reasoning effort configuration"）。concrete な
-  // 非 auto モデルが選ばれるまで effort は既定のみにする（バックエンドの起動ガードと一致）。
+  // copilot's Auto (the only model on Free, and copilot's default) rejects --effort with
+  // "Model auto does not support reasoning effort configuration". Offer the default effort only
+  // until a concrete non-auto model is picked, matching the backend's launch guard.
   const noEffort =
     (kind === "claude" && model === "haiku") ||
     (kind === "copilot" && (model === "" || model === "auto"));
-  // カタログ全体の effort 和集合（選択モデルにメタデータが無いときの次善候補）。
+  // Union of the efforts across the catalog (the fallback when the selected model has no
+  // metadata).
   const catalogEfforts = [...new Set(rows.flatMap((m) => m.efforts))];
   const efforts = noEffort
     ? []
@@ -127,9 +128,9 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
     : catalogEfforts.length
       ? catalogEfforts
       : FALLBACK_EFFORTS[kind] || [];
-  // claude は CLI から per-model の既定 effort を取得できない（catalog を持たない）。
-  // 未指定時は Claude Code の CLI 既定（xhigh）に落ちるので、それを注記する。
-  // codex/opencode はカタログの defaultEffort をそのまま「既定（medium）」等で表示。
+  // claude cannot report a per-model default effort through the CLI (it has no catalog). With
+  // none given it falls back to the Claude Code CLI default (xhigh), so say so. codex/opencode
+  // show the catalog's defaultEffort as-is, e.g. "Default (medium)".
   const def = selected?.defaultEffort || "";
   const defaultLabel = def
     ? t("ui.default_with", { effort: def })
@@ -140,7 +141,7 @@ export function useEffortOptions(kind: string, model: string): EffortOption[] {
 }
 
 // useModelOptions returns the launch model choices for `kind` — null when the kind
-// has no picker (caps.model false). Dynamic kinds resolve asynchronously: 既定-only
+// has no picker (caps.model false). Dynamic kinds resolve asynchronously: Default-only
 // first, the full list once fetched.
 export function useModelOptions(kind: string): ModelOption[] | null {
   const [opts, setOpts] = useState<ModelOption[]>(() => cache.get(kind) || defaultOnly());
@@ -159,10 +160,10 @@ export function useModelOptions(kind: string): ModelOption[] | null {
       alive = false;
     };
   }, [kind, pref]);
-  // 使わないモデル（settings.hiddenModels）を落とす。Agent 側は同じ設定で
-  // /agents/{kind}/models を絞っているが、claude だけは固定リストを Console が
-  // 直接持っていてフェッチを通らない（CLAUDE_MODELS）ので、ここでも掛ける。動的 kind
-  // にも掛けるのは、フェッチ済みキャッシュが設定変更より古いことがあるための保険。
+  // Drop the models the user hides (settings.hiddenModels). The Agent filters
+  // /agents/{kind}/models with the same setting, but claude's fixed list lives in the Console
+  // (CLAUDE_MODELS) and never goes through that fetch, so filter here too. Dynamic kinds are
+  // filtered as well, because a fetched cache can be older than the setting change.
   if (kind === "claude") {
     const custom = s.claudeCustomModels.map((id): ModelOption => [id, id]);
     return visibleModelOptions(s.hiddenModels, kind, [...CLAUDE_MODELS, ...custom]);
@@ -171,15 +172,15 @@ export function useModelOptions(kind: string): ModelOption[] | null {
   return null;
 }
 
-// useModelCatalogSettled は「この kind のカタログ取得が一度決着したか」。静的 kind
-// （claude）は常に true。
+// useModelCatalogSettled answers whether this kind's catalog fetch has settled once. Static kinds
+// (claude) are always true.
 //
-// 「選べるモデルが 1 つも無い」という注記を出すためだけの状態で、**取得中は false** に
-// する必要がある: useModelOptions は解決するまで 既定 だけを返すので、settled を見ずに
-// 「既定のみ」と書くと、開いた直後に必ず一瞬出てから消える。
+// It exists only to gate the "no models available" note, and must be false while the fetch is in
+// flight: useModelOptions returns Default alone until it resolves, so writing "Default only"
+// without checking settled always flashes that note right after opening.
 //
-// fetchModels は cache / inflight で重複を畳むので、useModelOptions と同じ kind で
-// 二重に呼んでも取得は 1 回きり。
+// fetchModels folds duplicates through cache / inflight, so calling it for the same kind as
+// useModelOptions still fetches once.
 export function useModelCatalogSettled(kind: string): boolean {
   const [settled, setSettled] = useState(() => !isDynamic(kind) || cache.has(kind));
   useEffect(() => {
@@ -197,7 +198,8 @@ export function useModelCatalogSettled(kind: string): boolean {
   return settled;
 }
 
-// visibleModelOptions は選択肢から除外モデルを落とす。"" （既定）は id ではないので常に残す。
+// visibleModelOptions drops hidden models from the choices. "" (Default) is not an id, so it
+// always stays.
 function visibleModelOptions(
   hiddenModels: Record<string, string[]> | undefined,
   kind: string,
@@ -209,9 +211,9 @@ function visibleModelOptions(
   return options.filter(([id]) => !id || !hidden.some((h) => modelMatchesHidden(id, h)));
 }
 
-// useHiddenModel は「保存済みの選択値が除外されているか」を問う。カタログから消えた
-// 値を選択肢に足し戻す既存の救済（ModelPicker / AssistantTab）を、除外モデルにだけは
-// 適用しないために使う — 足し戻すと隠したはずのモデルが復活する。
+// useHiddenModel asks whether a stored selection is hidden. It exists so the existing rescue that
+// adds a value missing from the catalog back into the choices (ModelPicker / AssistantTab) is not
+// applied to hidden models: adding one back would resurrect a model the user hid.
 export function useHiddenModel(kind: string, model: string): boolean {
   const hiddenModels = useSettings().hiddenModels;
   const catalog = kind === "claude" ? CLAUDE_MODELS.map(([id]) => id) : undefined;

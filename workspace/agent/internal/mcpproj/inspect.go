@@ -45,7 +45,8 @@ var fileSpecs = []fileSpec{
 
 // kindInfos is the static per-kind facts docs/log/56 §2.1 / §2.2 / §8 measured,
 // independent of what any particular working copy's files contain — every kind
-// appears here even with no file (docs/log/57 憲章「未検証バッジ」/「対象外」の行).
+// appears here even with no file (docs/log/57 charter, the "unverified badge" / "not
+// applicable" rows).
 var kindInfos = []KindInfo{
 	{Kind: session.KindClaude, HasProjectScope: true, GateCode: "approval", Dialects: []string{DialectDollarBrace}},
 	{Kind: session.KindCodex, HasProjectScope: true, GateCode: "trust"},
@@ -96,7 +97,7 @@ func Inspect(dir, repoName string) (Snapshot, error) {
 
 // readProjectFile reads and parses one target file. A missing file is not an error
 // (File.Exists stays false); an unparsable one is reported via File.Note and never
-// touched further (docs/log/57 憲章3) — only a real I/O error (permission, …) short-
+// touched further (docs/log/57 charter 3) — only a real I/O error (permission, …) short-
 // circuits the whole snapshot, since every OTHER file is independently readable.
 func readProjectFile(dir, vcs string, spec fileSpec) (File, map[string]Server, error) {
 	f := File{Path: spec.path, Kinds: spec.kinds}

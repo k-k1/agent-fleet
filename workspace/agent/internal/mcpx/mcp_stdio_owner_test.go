@@ -1,8 +1,8 @@
 package mcpx
 
-// mcpOwningSession の cwd fallback（managed セッションは AF_SESSION_NAME を持てない —
-// 共有 daemon の子として MCP が起動するため）。作業フォルダは複数セッションで共有される
-// のが普通なので、生存でひとつに絞れるかどうかが実用上の分かれ目になる。
+// mcpOwningSession's cwd fallback: a managed session cannot carry AF_SESSION_NAME, because
+// its MCP starts as a child of the shared daemon. A working folder is normally shared by
+// several sessions, so whether liveness narrows it to exactly one is what decides in practice.
 
 import (
 	"fmt"

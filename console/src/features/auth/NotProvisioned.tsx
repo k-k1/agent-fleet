@@ -1,24 +1,23 @@
-// NotProvisioned — 「サインインはできたが、まだどのテナントにも所属していない」の着地面
-// （docs/log/61 §61.10.2・P7-2）。
+// NotProvisioned — the landing page for "signed in fine, but not on any tenant's roster yet"
+// (docs/log/61 §61.10.2, P7-2).
 //
-// ★ これは異常ではなく、招待制デプロイの**正常な最初の一歩**。新規インストールの既定が
-// AF_PROVISION=invite になったので、招待される前の人が最初に見る画面はここになる。
-// それまではこの状態でも通常の Console が開き、以後すべてのリクエストが 403 で
-// 弾かれてトーストが 1 つずつ出るだけだった — 「自分は何をすればいいのか」がどこにも
-// 書かれていない状態。
+// This is not an error but the normal first step on an invite-run deployment: since
+// AF_PROVISION=invite became the default for new installs, this is the first screen someone
+// sees before they are invited. Previously the normal Console opened in this state and every
+// request was rejected with a 403, one toast at a time, with nothing saying what to do.
 //
-// この画面が答えるのは 3 つだけ:
-//   ① 失敗ではない（サインインは通っている）
-//   ② 次にすることは「管理者に依頼する」
-//   ③ ★ そのとき伝えるべき**自分のアドレス**。管理者は名簿にアドレスで人を足すので、
-//      これが読めないと「どのアドレスで入ったか分からない」という往復が必ず 1 回増える。
-//      サインイン方法が複数ある人ほど、自分がどれで入ったのか分かっていない。
+// The page answers exactly three things:
+//   1. this is not a failure (sign-in worked);
+//   2. the next step is to ask an administrator;
+//   3. the address to give them. Administrators add people to the roster by address, so
+//      without it there is always one extra round trip to work out which address was used —
+//      and the more sign-in methods someone has, the less they know which one they used.
 //
-// ★ super_admin はここに来ない。CP は所属ゼロの super_admin にも 200 を返す
-// （tenants.go・決定 23）ので、最初のテナントを作る人が締め出されることはない。
-// ★ ui/Button を使う。.primary / .ghost に見た目があるのは設定モーダルの中だけ
-// （settings.css の :where(.settings-modal) スコープ）で、この面は外なので、素の
-// <button className="primary"> はブラウザ既定のまま出る。
+// A super_admin never reaches this page: the CP answers 200 even for a super_admin with zero
+// memberships (tenants.go, decision 23), so whoever creates the first tenant is not locked out.
+// Use ui/Button: .primary / .ghost only have styling inside the settings modal (scoped by
+// :where(.settings-modal) in settings.css), and this page is outside it, so a bare
+// <button className="primary"> would render with the browser default look.
 import { Button } from "../../ui/Button.tsx";
 import { rel, clearLocalState } from "../../core/api/client.ts";
 import { useTenantStore } from "../../core/store/tenant.ts";
@@ -36,8 +35,8 @@ export function NotProvisioned() {
           <span className="codicon codicon-mail notprov-icon" aria-hidden="true" />
           <h1>{tr("notprov.title")}</h1>
           <p className="notprov-lead">{tr("notprov.lead")}</p>
-          {/* ★ アドレスは選択してコピーできる必要がある（管理者に貼って渡すため）。
-              画像でも省略でもなく、素のテキストで全部出す。 */}
+          {/* The address must be selectable and copyable, to paste to an administrator: plain
+              text, in full, neither an image nor an ellipsis. */}
           {email && (
             <p className="notprov-who">
               {tr("notprov.signed_in_as")} <code>{email}</code>
@@ -45,9 +44,9 @@ export function NotProvisioned() {
           )}
           <p className="notprov-hint">{tr("notprov.hint")}</p>
           <div className="notprov-acts">
-            {/* 再読み込み: 追加された直後の人が、ログアウトせずに入り直せる導線。
-                init() は成功すれば notProvisioned を落とすが、ここは素直に
-                リロードでよい（追加は人の操作なので、ポーリングを足す価値が無い）。 */}
+            {/* Reload: lets someone who has just been added get in without signing out.
+                init() would clear notProvisioned on success, but a plain reload is enough —
+                being added is a human action, so polling for it would not pay. */}
             <Button variant="primary" icon="refresh" onClick={() => location.reload()}>
               {tr("notprov.retry")}
             </Button>
@@ -55,8 +54,8 @@ export function NotProvisioned() {
               variant="ghost"
               icon="sign-out"
               onClick={() => {
-                // ログアウトの作法は TopBar と同じ: 先に手元の状態を捨ててから CP へ。
-                // 別のアカウントでこのブラウザに入る人に、前の人の状態を見せない。
+                // Same sign-out order as TopBar: drop local state first, then go to the CP,
+                // so the next account on this browser never sees the previous person's state.
                 clearLocalState();
                 location.assign(rel("oauth2/logout"));
               }}

@@ -1,11 +1,9 @@
-// capabilities_test.go — どのアダプタがどの任意インタフェースを名乗るか
-// (TestDocsMounterMarker は docs_bridge_test.go 由来).
-//
-// 任意インタフェースは `rt.(X)` / `f.(X)` の成否で分岐するので、**名乗らなくなっても
-// コンパイルは通り、その機能が静かに消えるだけ**。名乗る方向は宣言箇所の
-// `var _ X = (*T)(nil)` が押さえられるが、名乗らない方向はそれでは書けない——
-// ここがその受け皿。未公開のアダプタ型そのものを見るので、実装と同じパッケージにしか
-// 置けない。
+// Which adapter claims which optional interface. Behaviour branches on whether `rt.(X)`
+// / `f.(X)` succeeds, so an adapter that stops claiming one still compiles and simply
+// loses the feature in silence. The claiming direction is pinned at the declaration by
+// `var _ X = (*T)(nil)`; the NOT-claiming direction cannot be written that way, and this
+// is where it lives. It inspects the unexported adapter types, so it can only sit in the
+// same package as the implementation.
 package runtime
 
 import "testing"
@@ -24,13 +22,14 @@ func TestDocsMounterMarker(t *testing.T) {
 	}
 }
 
-// 焼けるのは EC2 スロットプールだけ。GoldenBakePool は共有スナップショットから新しい
-// ホームを作る配備の話で、他のプロファイルには焼く相手も置き場も無い。
+// TestOnlyThePoolAdapterClaimsTheGoldenBake keeps the bake on the EC2 slot pool, the only
+// deployment that seeds new homes from a shared snapshot; the other profiles have neither
+// something to bake nor anywhere to keep it.
 //
-// 名乗る方向は runtime_ecs_ec2_golden.go の `var _ GoldenBakePool = (*ecsEC2Factory)(nil)`
-// が押さえている。こちらは逆で、docker/native が誤って満たしてしまった場合に
-// goldenBakerFor がベイカーを立てはじめる——CP 側からは「なぜか golden を焼こうとする
-// docker 配備」に見え、しかもエラーにはならない。
+// The claiming direction is pinned by runtime_ecs_ec2_golden.go's
+// `var _ GoldenBakePool = (*ecsEC2Factory)(nil)`. This is the reverse: if docker/native
+// ever satisfied it by accident, goldenBakerFor would start a baker — a docker deployment
+// that inexplicably bakes goldens, and no error anywhere.
 func TestOnlyThePoolAdapterClaimsTheGoldenBake(t *testing.T) {
 	for _, c := range []struct {
 		name string

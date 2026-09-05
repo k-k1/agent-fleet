@@ -18,8 +18,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// memoryLiveOrEmpty は live 側のメモリファイルの中身（無ければ ""）。存在の有無自体を
-// 主張したい箇所で使う（memoryReadLive は無いと落ちる）。
+// memoryLiveOrEmpty returns the contents of the live memory file, or "" when there is none.
+// Used where the assertion is about existence itself (memoryReadLive fails when absent).
 func memoryLiveOrEmpty(t *testing.T, p string) string {
 	t.Helper()
 	b, err := os.ReadFile(p)
@@ -29,15 +29,16 @@ func memoryLiveOrEmpty(t *testing.T, p string) string {
 	return string(b)
 }
 
-// import の本命: **別環境の bundle を持ち込み、選んだプロジェクトだけ置き換え、
-// それを restore で元に戻せる**こと（docs/log/39 P3 の出口条件）。
+// What import is for: bring in a bundle from another environment, replace only the chosen
+// projects, and be able to undo that with restore (the docs/log/39 P3 exit condition).
 //
-// 1 テスト内で HOME / CLAUDE_CONFIG_DIR を差し替えて 2 環境を演じる。同じ repo 名なら
-// slug はパス由来で一致する、という前提（docs/log/39 ⑤ slug 互換性）もこの形で確認できる。
+// One test plays two environments by swapping HOME / CLAUDE_CONFIG_DIR. That shape also
+// confirms the assumption that the same repo name gives the same slug, because the slug is
+// derived from the path (docs/log/39 item 5, slug compatibility).
 func TestMemoryImportBundleRoundTrip(t *testing.T) {
-	share := t.TempDir() // 環境をまたいで持ち回るファイル置き場
+	share := t.TempDir() // where files are parked to carry them across environments
 
-	// --- 環境 A: 特徴のある内容で snapshot し、bundle を書き出す ---
+	// --- env A: snapshot distinctive content and write out a bundle ---
 	_, cfgA, slug := memoryTestEnv(t)
 	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "from env A\n")
 	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "only-a.md"), "only in A\n")
@@ -53,7 +54,7 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 		t.Fatalf("stash bundle: %v", err)
 	}
 
-	// --- 環境 B: 別の内容を持つ独立した環境 ---
+	// --- env B: an independent environment holding different content ---
 	_, cfgB, _ := memoryTestEnv(t)
 	memoryWrite(t, memoryProjectMemPath(cfgB, slug, "a.md"), "from env B\n")
 	if res, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil || !res.Committed {
@@ -82,16 +83,16 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	if found == nil {
 		t.Fatalf("imported projects = %+v, want %s", pv.Projects, slug)
 	}
-	// 取り込んだだけでは live に触れない（適用は明示操作）。
+	// Preparing alone must not touch live memory; applying is an explicit action.
 	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "a.md")); got != "from env B\n" {
 		t.Fatalf("prepare must not touch live memory, got %q", got)
 	}
-	// ローカル履歴は main のまま（graft しない）。
+	// The local history stays on main: nothing is grafted onto it.
 	if before := memoryCommitCount(t); before != 1 {
 		t.Fatalf("import added %d commits to the local lineage", before-1)
 	}
 
-	// --- 選択適用: claude のこのプロジェクトだけを置き換える ---
+	// --- selective apply: replace only this one claude project ---
 	res, err := memoryImportApply(pv.ImportID, memoryRestoreScope{Projects: []string{slug}}, time.Now(), memoryApplyOpts{})
 	if err != nil {
 		t.Fatalf("import apply: %v", err)
@@ -105,11 +106,11 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "only-a.md")); got != "only in A\n" {
 		t.Fatalf("only-a.md was not brought in: %q", got)
 	}
-	// scope 外（codex）は 1 バイトも動かない。
+	// Nothing outside the scope (codex) moves by a single byte.
 	if got := memoryLiveOrEmpty(t, filepath.Join(os.Getenv("HOME"), ".codex", "memories", "MEMORY.md")); got != "codex index\n" {
 		t.Fatalf("codex memory touched by a project-scoped import: %q", got)
 	}
-	// 契機が履歴に残る（一覧の先頭が import）。
+	// The trigger is kept in the history: the newest entry is the import.
 	list, err := memoryListSnapshots(10, "")
 	if err != nil || len(list) == 0 {
 		t.Fatalf("list: %v %+v", err, list)
@@ -118,7 +119,7 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 		t.Errorf("newest snapshot trigger = %q, want import", list[0].Trigger)
 	}
 
-	// --- 取り込みも巻き戻せる: pre-restore 時点へ戻すと環境 B の内容に復帰する ---
+	// --- an import is undoable too: going back to the pre-restore point returns env B's content ---
 	back, err := memoryRestore(memoryRestoreScope{Projects: []string{slug}}, res.PreRestore, "", time.Now())
 	if err != nil {
 		t.Fatalf("restore after import: %v", err)
@@ -134,14 +135,15 @@ func TestMemoryImportBundleRoundTrip(t *testing.T) {
 	}
 }
 
-// 取り込み先が**まだ空のワークスペース**でも適用できること。live のルート
-// （<CLAUDE_CONFIG_DIR>/projects）は claude が一度起動して初めて出来るので、
-// 「新しい環境を立てて、真っ先に前の環境のメモリを持ち込む」という本命の使い方では
-// ルート自体が存在しない。ここを作らずに書きに行くと ENOENT で適用だけが失敗する。
+// An import must apply even when the destination workspace is still empty. The live root
+// (<CLAUDE_CONFIG_DIR>/projects) only comes into existence once claude has started at least
+// once, so in the very use case this is for — stand up a new environment and immediately
+// bring the previous one's memory in — the root is not there. Writing without creating it
+// first makes the apply, and only the apply, fail with ENOENT.
 func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
 	share := t.TempDir()
 
-	// --- 環境 A: 持ち出す側 ---
+	// --- env A: the exporting side ---
 	_, cfgA, slug := memoryTestEnv(t)
 	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "from env A\n")
 	if res, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil || !res.Committed {
@@ -156,7 +158,7 @@ func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
 		t.Fatalf("stash bundle: %v", err)
 	}
 
-	// --- 環境 B: 起動直後のワークスペース（projects/ がまだ無い） ---
+	// --- env B: a just-started workspace, with no projects/ yet ---
 	homeB := t.TempDir()
 	cfgB := filepath.Join(homeB, "claude-config")
 	memoryMkdirAll(t, cfgB)
@@ -188,14 +190,15 @@ func TestMemoryImportAppliesWhenLiveRootMissing(t *testing.T) {
 	}
 }
 
-// 移設（mode=migrate）: bundle が運んできた**履歴ごと**この環境の履歴にする。
-// 既定の適用は最新ツリーしか使わないので、相手の過去は refs/imports に埋もれたままだった
-// （10 本を超えると刈られる）。移設後は相手の各 snapshot が履歴一覧に並び、**その途中の
-// 時点へ巻き戻せる**ことまでを見る。入れ替えた元の履歴は退避 ref に残る。
+// Migration (mode=migrate): adopt the history the bundle carries, whole, as this
+// environment's history. A default apply uses only the newest tree, so the other side's past
+// stayed buried in refs/imports (pruned past 10). After a migration each of their snapshots
+// appears in the history list, and this goes as far as checking that a point in the middle of
+// it can be rolled back to. The history that was replaced survives in a stash ref.
 func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 	share := t.TempDir()
 
-	// --- 環境 A: 2 世代の履歴を作って bundle を書き出す ---
+	// --- env A: build two generations of history and write out a bundle ---
 	_, cfgA, slug := memoryTestEnv(t)
 	memoryWrite(t, memoryProjectMemPath(cfgA, slug, "a.md"), "A1\n")
 	if _, err := memorySnapshot(memoryTriggerManual, time.Now().Add(-2*time.Hour)); err != nil {
@@ -218,7 +221,7 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 		t.Fatalf("stash bundle: %v", err)
 	}
 
-	// --- 環境 B: 自分の履歴を 1 つ持つ環境へ移設する ---
+	// --- env B: migrate into an environment that has one snapshot of its own ---
 	_, cfgB, _ := memoryTestEnv(t)
 	memoryWrite(t, memoryProjectMemPath(cfgB, slug, "a.md"), "from env B\n")
 	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
@@ -238,7 +241,7 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	// 系譜が入れ替わり、元の main は退避 ref に残っている（履歴は消さない）。
+	// The lineage is swapped and the original main survives in a stash ref: history is never deleted.
 	if !res.Adopted || res.Replaced != localHead || res.ReplacedRef == "" {
 		t.Fatalf("migrate result = %+v (local head was %s)", res, localHead)
 	}
@@ -248,12 +251,13 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 	if _, err := memoryGitRun("merge-base", "--is-ancestor", pv.Head, memoryBranch); err != nil {
 		t.Fatalf("main does not descend from the imported head: %v", err)
 	}
-	// 入れ替え前の main は新しい系譜には含まれない（内容の混合はしていない）。
+	// The pre-swap main is not part of the new lineage: the two contents are not mixed.
 	if err := memoryGitRun2(t, "merge-base", "--is-ancestor", localHead, memoryBranch); err == nil {
 		t.Errorf("migrate must not graft the local lineage onto main")
 	}
 
-	// 相手の履歴が「この環境の履歴」として一覧に出る（範囲は全体固定なので kind も跨ぐ）。
+	// Their history now lists as this environment's own (the range is fixed to everything, so
+	// it spans kinds too).
 	list, err := memoryListSnapshots(50, "")
 	if err != nil {
 		t.Fatal(err)
@@ -268,8 +272,8 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 		t.Fatalf("live after migrate = %q, want the imported head", got)
 	}
 
-	// **本命**: 相手の履歴の途中（1 世代前）へ巻き戻せる。
-	older := list[len(list)-1].Rev // 取り込んだ系譜の最初の snapshot
+	// The point of the whole thing: roll back to a point inside their history, one generation back.
+	older := list[len(list)-1].Rev // the first snapshot of the imported lineage
 	if _, err := memoryRestore(memoryRestoreScope{All: true}, older, "", time.Now()); err != nil {
 		t.Fatalf("restore to an imported point: %v", err)
 	}
@@ -278,16 +282,17 @@ func TestMemoryImportMigrateAdoptsLineage(t *testing.T) {
 	}
 }
 
-// memoryGitRun2 は「失敗を期待する」git 呼び出し用の薄い包み（t を取るのは呼び出し側の
-// 意図を読みやすくするためだけ）。
+// memoryGitRun2 is a thin wrapper for git calls that are expected to fail; it takes t only to
+// make the caller's intent easier to read.
 func memoryGitRun2(t *testing.T, args ...string) error {
 	t.Helper()
 	_, err := memoryGitRun(args...)
 	return err
 }
 
-// tar.gz の取り込み（★3 外部入力）: traversal・allowlist 外・通常ファイル以外は
-// **書かずに rejected へ落とす**。適用されるのは許可された md だけ。
+// tar.gz import (★3, an import is external input): traversal, entries outside the allowlist
+// and anything that is not a regular file go to rejected without ever being written. Only
+// permitted md files are applied.
 func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
 	share := t.TempDir()
 	_, cfg, slug := memoryTestEnv(t)
@@ -322,7 +327,7 @@ func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
 	if len(pv.Rejected) != 5 {
 		t.Errorf("rejected = %v, want the 5 hostile entries", pv.Rejected)
 	}
-	// 取り込んだツリーは許可された 1 件だけ。
+	// The imported tree holds the one permitted entry and nothing else.
 	files, err := memoryGitRun("ls-tree", "-r", "--name-only", pv.Head)
 	if err != nil {
 		t.Fatal(err)
@@ -341,7 +346,7 @@ func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
 	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfg, slug, "imported.md")); got != "imported\n" {
 		t.Fatalf("imported.md = %q", got)
 	}
-	// 敵対エントリはどこにも書かれていない。
+	// No hostile entry was written anywhere.
 	if _, err := os.Stat(filepath.Join(cfg, ".credentials.json")); err == nil {
 		if b, _ := os.ReadFile(filepath.Join(cfg, ".credentials.json")); !strings.Contains(string(b), `{"token":"SECRET"}`) {
 			t.Error("credentials file was overwritten by the import")
@@ -350,13 +355,15 @@ func TestMemoryImportTarRejectsHostileEntries(t *testing.T) {
 	if _, err := os.Lstat(memoryProjectMemPath(cfg, slug, "link.md")); err == nil {
 		t.Error("a symlink entry was materialised into the live tree")
 	}
-	// 置き換え方式なので、tar に無かった既存メモリは消える（3-way merge をしない帰結）。
+	// Apply replaces, so existing memory the tar did not carry disappears — the consequence
+	// of not doing a 3-way merge.
 	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfg, slug, "a.md")); got != "" {
 		t.Errorf("import should replace the selected project, a.md = %q", got)
 	}
 }
 
-// 形式の判定は中身のマジックで行う（拡張子は信用しない）。壊れた入力は 400。
+// The format is decided by the magic bytes in the content, never by the extension. Broken
+// input is a 400.
 func TestMemoryImportRejectsUnknownFormat(t *testing.T) {
 	share := t.TempDir()
 	memoryTestEnv(t)
@@ -367,14 +374,14 @@ func TestMemoryImportRejectsUnknownFormat(t *testing.T) {
 	if err == nil || !errors.As(err, &ue) || ue.Code != errCodeMemoryBadImport {
 		t.Fatalf("import of junk: err=%v", err)
 	}
-	// apply の importId も検証される（ref 名として git へ渡るため）。
+	// apply validates its importId as well, since it reaches git as a ref name.
 	if _, err := memoryImportApply("../../evil", memoryRestoreScope{All: true}, time.Now(), memoryApplyOpts{}); err == nil {
 		t.Error("apply accepted a traversal-shaped importId")
 	}
 }
 
-// REST 越しの往復（multipart 受領 → preview → apply）。CP は body を素通しするので、
-// ここが通れば Console からの経路も通る。
+// The round trip over REST (multipart receive -> preview -> apply). The CP passes the body
+// through, so once this path works the one from the Console works too.
 func TestMemoryImportAPI(t *testing.T) {
 	share := t.TempDir()
 	_, cfgA, slug := memoryTestEnv(t)
@@ -426,17 +433,17 @@ func TestMemoryImportAPI(t *testing.T) {
 	if got := memoryLiveOrEmpty(t, memoryProjectMemPath(cfgB, slug, "a.md")); got != "from env A\n" {
 		t.Fatalf("a.md after API import = %q", got)
 	}
-	// 不正な importId は 400（ref 名に使う値なので必ず検証する）。
+	// A malformed importId is a 400: the value becomes a ref name, so it is always validated.
 	if w := smokeDo(t, h, "POST", "/agents/memory/import/apply", "smoke-token", `{"importId":"x/../y","scope":{"all":true}}`); w.Code != http.StatusBadRequest {
 		t.Errorf("bad importId: %d %s", w.Code, w.Body.String())
 	}
-	// 中身の無いリクエストは 400。
+	// A request carrying no file is a 400.
 	if w := smokeDo(t, h, "POST", "/agents/memory/import", "smoke-token", ""); w.Code != http.StatusBadRequest {
 		t.Errorf("import without a file: %d %s", w.Code, w.Body.String())
 	}
 }
 
-// memoryTarEntry は組み立てるアーカイブの 1 エントリ（Link 非空 = シンボリックリンク）。
+// memoryTarEntry is one entry of the archive being assembled; a non-empty Link means a symlink.
 type memoryTarEntry struct {
 	Name string
 	Body string

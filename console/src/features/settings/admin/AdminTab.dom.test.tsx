@@ -1,10 +1,10 @@
-// 管理モーダルの左レール（ルート ↔ テナントのドリルダウン）。ここで押さえるのは
-// IA そのもの——「レールが 2 段になっていて、テナントを開くとそのテナントの節に
-// 入れ替わり、出口から一覧へ戻れる」こと。旧実装（横一列のモードタブ＋本文の
-// パンくず）に戻ると落ちる。
+// The admin modal's left rail (root ↔ tenant drill-down). What is pinned here is the
+// information architecture itself: the rail has two levels, opening a tenant swaps it for that
+// tenant's sections, and the exit returns to the list. Reverting to the old shape — a single row
+// of mode tabs plus a breadcrumb in the body — fails this.
 //
-// ★ isSuper は常に GET /api/admin/tenants のレスポンス由来にする（テスト側で
-//   作って渡すと、既定の経路——上限を編集させない——が無検証になる）。
+// isSuper always comes from the GET /api/admin/tenants response; injecting it from the test
+// would leave the default path (quotas not editable) unmeasured.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,8 +19,8 @@ vi.mock("../../../core/api/client.ts", () => ({
   rel: (p: string) => p,
 }));
 vi.mock("../../../ui/ToastProvider.tsx", () => ({ useToast: () => () => {} }));
-// 読み仮名辞書は import しただけで取得しに行く（モジュール初期化時）。ここでは
-// 管理の面だけを見たいので差し替える。
+// The reading dictionary fetches on module initialisation, i.e. from the import alone. Only the
+// admin surface is under test here, so stub it out.
 vi.mock("../../chat/ttsDict.ts", () => ({ setTenantDict: () => {} }));
 
 import { AdminTab } from "./AdminTab.tsx";
@@ -82,8 +82,8 @@ afterEach(() => {
   host = null;
 });
 
-describe("AdminTab のレール", () => {
-  it("ルートは 一覧 / デプロイ全体 / 横断 の 3 グループで、モードタブは無い", async () => {
+describe("AdminTab rail", () => {
+  it("shows three root groups (list / deployment-wide / cross-cutting) and no mode tabs", async () => {
     respond(true);
     await mount();
     expect(host!.querySelector(".admin-modes")).toBeNull();
@@ -92,24 +92,24 @@ describe("AdminTab のレール", () => {
     expect(items).toContain("テナント一覧");
     expect(items).toContain("通信");
     expect(items).toContain("セッション");
-    // ランタイムが申告しない面は項目ごと出さない（スロット / クラウド費用）。
+    // Surfaces the runtime does not declare are omitted entirely (slots / cloud cost).
     expect(items).not.toContain("スロット");
     expect(items).not.toContain("クラウド費用");
   });
 
-  it("テナントを開くとレールがそのテナントの節に入れ替わり、出口から一覧へ戻る", async () => {
+  it("swaps the rail for the tenant's sections on open, and the exit returns to the list", async () => {
     respond(true);
     await mount();
     expect(host!.querySelectorAll(".tenant-card").length).toBe(2);
     await click(byText(".tenant-card", "Acme"));
 
-    // レールはテナントスコープへ（テナント名の見出し＋出口が出る）
+    // The rail moves to tenant scope: the tenant name heading and the exit appear.
     expect(host!.querySelector(".admin-scope-name")?.textContent).toContain("Acme");
     const items = rail();
     expect(items).toContain("上限・自動停止");
     expect(items).toContain("メンバー");
     expect(items).not.toContain("テナント一覧");
-    // super_admin なので上限は編集できる（保存ボタンがある）
+    // A super_admin can edit the quotas, so the save button is present.
     expect(byText(".admin-panel h4", "上限")).toBeTruthy();
 
     await click(host!.querySelector(".admin-rail-back") as HTMLElement);
@@ -117,7 +117,7 @@ describe("AdminTab のレール", () => {
     expect(host!.querySelector(".admin-scope-name")).toBeNull();
   });
 
-  it("super_admin でなければ上限は読み取り専用（テナントの数字だけ）", async () => {
+  it("keeps quotas read-only for a non-super_admin (the tenant's numbers only)", async () => {
     respond(false);
     await mount();
     await click(byText(".tenant-card", "Acme"));

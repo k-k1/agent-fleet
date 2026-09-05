@@ -5,34 +5,37 @@ import (
 	"strings"
 )
 
-// セッションの表示ラベル（claude の `--name` に渡す文字列）の**形の唯一の定義**と、その
-// 読み戻し。組み立ては package main の sessionLabelFor、剥がすのは Display / CP / Console
-// と散っているので、形そのものはここ1か所に置く。
+// The single definition of the SHAPE of a session's display label (the string passed to
+// claude's `--name`), plus the code that reads it back. Building it happens in package
+// main's sessionLabelFor and stripping it is spread across Display / CP / Console, so the
+// shape itself lives in this one place.
 //
-// 形は `[AF:<name>] <title>`。`[AF]` タグは Agent Fleet が起こしたセッションを claude.ai の
-// Remote Control ピッカーで見分けるための印で、`:<name>` はそこに**セッション名**を足した
-// もの（docs/log/58 §58.16）。
+// The shape is `[AF:<name>] <title>`. The `[AF]` tag marks a session Agent Fleet started
+// so it can be told apart in claude.ai's Remote Control picker, and `:<name>` adds the
+// SESSION NAME to it (docs/log/58 §58.16).
 //
-// **足した理由は誤配で、実害が出ている。** claude 自身の cross-session チャネル
-// （ListAgents / SendMessage）は宛先を**このラベル文字列**で指す。AF のセッション名はその
-// 名前空間に無いので `to:"s6bbilu"` は届かず、逆にラベルはタイトルだけだったので、**同じ
-// タイトルのセッションが2つあると送り手には区別が付かない** — 実際に、試走セッションからの
-// 申告が「同名タイトルの旧セッション」へ丸ごと流れた（2026-08-31）。名前を入れておけば
-// 一覧の時点で別物として見える。
+// The name was added because of misdelivery, and the damage was real. claude's own
+// cross-session channel (ListAgents / SendMessage) addresses a target BY THIS LABEL
+// STRING. An AF session name is not in that namespace, so `to:"s6bbilu"` never arrives;
+// and with the label carrying only the title, two sessions with the same title were
+// indistinguishable to the sender — a trial session's report went entirely to an older
+// session with the same title (2026-08-31). With the name in the label they are visibly
+// different already in the listing.
 //
-// 古い `[AF] <title>` も読めること。ラベルは作成時（とタイトル変更時）に確定して meta に
-// 焼かれるので、既存セッションは古い形のまま残る。**新しい形しか剥がせない strip を書くと、
-// アップグレードを跨いだ古い行だけ表示にタグが残る**という、レビューで見つけにくい壊れ方に
-// なる。
+// The old `[AF] <title>` must still parse. The label is fixed at creation (and on title
+// change) and baked into meta, so existing sessions keep the old shape. A strip that only
+// understands the new shape leaves the tag visible on exactly the rows that predate the
+// upgrade — a breakage that is hard to spot in review.
 const labelTag = "[AF]"
 
-// labelRe は先頭のタグに一致する。旧 `[AF] ` と新 `[AF:<name>] ` の両方。名前部分は
-// ValidName と同じ字種に限る（タイトルが `[AF:` で始まっていても名前と誤読しないため）。
+// labelRe matches the leading tag, both the old `[AF] ` and the new `[AF:<name>] `. The
+// name part is restricted to the same character set as ValidName, so a title that itself
+// begins with `[AF:` is not misread as a name.
 var labelRe = regexp.MustCompile(`^\[AF(?::([A-Za-z0-9][A-Za-z0-9_-]*))?\]\s*`)
 
-// LabelPrefix は新しいラベルの先頭に置くタグ（末尾の空白込み）を返す。名前が不正なときは
-// 旧来の `[AF] ` へ落とす — ラベルは表示とピッカーのためのもので、ここで失敗させて起動を
-// 止める価値は無い。
+// LabelPrefix returns the tag to put at the front of a new label (trailing space
+// included). An invalid name falls back to the old `[AF] ` — the label serves display and
+// the picker, and failing here to block a launch is not worth it.
 func LabelPrefix(name string) string {
 	if !ValidName(name) {
 		return labelTag + " "
@@ -40,16 +43,16 @@ func LabelPrefix(name string) string {
 	return "[AF:" + name + "] "
 }
 
-// StripLabel は表示用にタグを取り除く。タグが無ければそのまま返す（他所で付けられた
-// `--name` を持つセッションもあるため）。
+// StripLabel removes the tag for display. Without a tag the input is returned unchanged
+// (some sessions carry a `--name` set elsewhere).
 func StripLabel(label string) string {
 	return strings.TrimSpace(labelRe.ReplaceAllString(label, ""))
 }
 
-// LabelSessionName はラベルからセッション名を読み戻す。"" = タグが無い / 旧形式 / AF の
-// ラベルではない。**推測はしない** — 名前が取れないことと、間違った名前を出すことでは
-// 後者の方がはるかに悪い（ミラーの peer バッジは「誰の仕業か」を辿る唯一の手掛かりで、
-// そこに別セッションの名前が出ると調査が丸ごと逸れる）。
+// LabelSessionName reads the session name back out of a label. "" = no tag, the old
+// shape, or not an AF label. Never guess: reporting no name is far better than reporting
+// the wrong one (the mirror's peer badge is the only trail back to "who did this", and
+// another session's name there sends the whole investigation off course).
 func LabelSessionName(label string) string {
 	m := labelRe.FindStringSubmatch(label)
 	if m == nil {

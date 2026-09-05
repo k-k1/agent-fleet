@@ -14,7 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/61 §61.11 / ADR0043 決定 29-33 (P4). What these pin down is the part of
+// docs/log/61 §61.11 / ADR0043 decisions 29-33 (P4). What these pin down is the part of
 // tenant-defined sign-in methods that is easy to get subtly wrong — and each one is
 // a takeover path if it regresses:
 //
@@ -48,9 +48,9 @@ func seedTenantIdP(t *testing.T, st *store.SQL, tenantID, name, domains, status 
 	return row
 }
 
-// --- the id namespace (決定 33) ----------------------------------------------
+// --- the id namespace (decision 33) ------------------------------------------
 
-// ★ Without the split a tenant creates a row named "google" and the deployment's
+// Without the split a tenant creates a row named "google" and the deployment's
 // Google button is theirs. validProviderID must keep rejecting ":" — relaxing it
 // would let an env provider be named INTO the tenant namespace instead.
 func TestTenantProviderIDNamespaceIsSeparateFromEnv(t *testing.T) {
@@ -77,9 +77,9 @@ func TestTenantProviderIDNamespaceIsSeparateFromEnv(t *testing.T) {
 	}
 }
 
-// --- the entry gate (決定 32-3) -----------------------------------------------
+// --- the entry gate (decision 32-3) ------------------------------------------
 
-// ★ A subsidiary's issuer admits the subsidiary's people. Not "everyone the
+// A subsidiary's issuer admits the subsidiary's people. Not "everyone the
 // deployment would have admitted", and not "anyone who holds a membership
 // somewhere" — either fallback would turn one approved IdP into a deployment-wide
 // door.
@@ -145,7 +145,7 @@ func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 			t.Fatalf("%s: must be refused", label)
 		}
 	}
-	// A multi-tenant issuer is allowed once the tenant ids are pinned (決定 7).
+	// A multi-tenant issuer is allowed once the tenant ids are pinned (decision 7).
 	row := base
 	row.Issuer, row.AllowedTIDs = "https://login.microsoftonline.com/common/v2.0", "guid-a"
 	if _, err := auth.BuildTenantProvider(row, store.TenantRef{Slug: "sub"}, "s"); err != nil {
@@ -153,11 +153,11 @@ func TestBuildTenantProviderRefusesDangerousRows(t *testing.T) {
 	}
 }
 
-// --- approval (決定 30) -------------------------------------------------------
+// --- approval (decision 30) --------------------------------------------------
 
-// ★ The whole feature. A pending row must not resolve to a provider, because that
-// is what the CALLBACK checks — hiding the button is presentation, and presentation
-// is never the enforcement (決定 14).
+// The whole feature. A pending row must not resolve to a provider, because that is
+// what the CALLBACK checks — hiding the button is presentation, and presentation is
+// never the enforcement (decision 14).
 func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -184,7 +184,7 @@ func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 		t.Fatal("a suspended sign-in method must stop resolving")
 	}
 
-	// ★ And the sessions minted with it stop passing the entry gate, which is what
+	// And the sessions minted with it stop passing the entry gate, which is what
 	// makes suspension an offboarding tool rather than a cosmetic switch.
 	cfg := config{mgr: mgr}
 	if ok, code := cfg.sessionAllowed(ctx, sessionClaims{Email: "h@sub.co.jp", Prov: id}); ok || code != "forbidden" {
@@ -194,7 +194,7 @@ func TestOnlyApprovedTenantProvidersResolve(t *testing.T) {
 
 // The approval flow through the API: a tenant_admin writes the row and can stop it,
 // but cannot start it. That single asymmetry is what keeps "tenant_admin" from being
-// "super_admin" (決定 30).
+// "super_admin" (decision 30).
 func TestTenantAdminCannotApproveItsOwnIdP(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -261,7 +261,7 @@ func TestTenantAdminCannotApproveItsOwnIdP(t *testing.T) {
 		t.Fatalf("a tenant_admin must be able to suspend: %d %s", w.Code, w.Body.String())
 	}
 
-	// ★ Editing the issuer withdraws the approval: it was given to an issuer, not to
+	// Editing the issuer withdraws the approval: it was given to an issuer, not to
 	// a row. The same holds for a WIDENED domain list, which lets the issuer assert
 	// addresses the approver never saw.
 	if err := st.SetTenantIdPStatus(ctx, tn.ID, created.ID, "active", "boss", store.NowTS(), store.NowTS()); err != nil {
@@ -322,7 +322,7 @@ func TestTenantIdPSaveTimeValidation(t *testing.T) {
 	if w := post(`{"name":"entra",` + good + `,"trust":"api","allowed_domains":"sub.co.jp"}`); w.Code != http.StatusBadRequest {
 		t.Fatalf("trust=api is the GitHub adapter's rule and must be refused: %d %s", w.Code, w.Body.String())
 	}
-	// ★ One domain, one tenant: otherwise a subsidiary's issuer could assert a
+	// One domain, one tenant: otherwise a subsidiary's issuer could assert a
 	// sibling's addresses, and identity is keyed by email deployment-wide.
 	if w := post(`{"name":"entra",` + good + `,"allowed_domains":"sibling.co.jp"}`); w.Code != http.StatusConflict {
 		t.Fatalf("a domain another tenant claims must be refused: %d %s", w.Code, w.Body.String())
@@ -336,9 +336,9 @@ func TestTenantIdPSaveTimeValidation(t *testing.T) {
 	}
 }
 
-// --- what a tenant-defined session may do (決定 31 / 32) ----------------------
+// --- what a tenant-defined session may do (decisions 31 / 32) ----------------
 
-// ★ 決定 31, and the reason the whole approval model exists: SUPER_ADMIN_EMAILS is
+// Decision 31, and the reason the whole approval model exists: SUPER_ADMIN_EMAILS is
 // matched on the address alone, so without this a subsidiary's administrator asserts
 // the operator's address and is upgraded — permanently, since UpsertIdentity never
 // downgrades.
@@ -367,7 +367,7 @@ func TestTenantProviderCannotReachTheDeploymentRole(t *testing.T) {
 	}
 }
 
-// ★ 決定 32: rule 2 (join by email) is off for a tenant-defined provider, and
+// Decision 32: rule 2 (join by email) is off for a tenant-defined provider, and
 // "off" has to mean REFUSED. Falling through to "create a new identity" would land
 // on the same row anyway — user_key is derived from the same address.
 func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
@@ -417,7 +417,7 @@ func TestTenantProviderRefusesAnAddressThatBelongsToSomebody(t *testing.T) {
 	}
 }
 
-// ★ 決定 32-3: a tenant that names no allowed_providers accepts every provider, so
+// Decision 32-3: a tenant that names no allowed_providers accepts every provider, so
 // without an explicit pin a subsidiary's own issuer would open every such tenant in
 // the deployment.
 func TestTenantProviderSessionIsPinnedToItsOwnTenant(t *testing.T) {
@@ -437,9 +437,9 @@ func TestTenantProviderSessionIsPinnedToItsOwnTenant(t *testing.T) {
 	}
 }
 
-// --- the login page (決定 32-4) -----------------------------------------------
+// --- the login page (decision 32-4) ------------------------------------------
 
-// ★ The generic page must not list the group's subsidiaries: the full set of
+// The generic page must not list the group's subsidiaries: the full set of
 // buttons would be a directory readable without signing in.
 func TestTenantProviderAppearsOnlyOnItsOwnLoginPage(t *testing.T) {
 	ctx := context.Background()

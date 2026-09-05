@@ -1,15 +1,13 @@
 package main
 
-// git_integration_helpers_test.go — `git_worktree_base_test.go` が使う git 実行ヘルパ。
+// git_integration_helpers_test.go holds the git execution helpers `git_worktree_base_test.go`
+// uses. They are verbatim copies of the ones in internal/gitx/git_integration_test.go and
+// internal/gitx/git_ensure_test.go.
 //
-// 元は `git_integration_test.go` / `git_ensure_test.go` の中にあり、移送で
-// `internal/gitx` へ動いた。**ここにあるのは同じ中身の写しである。**
-//
-// なぜ写したか: `git_worktree_base_test.go` は `POST /sessions`（`handleCreateSession`）
-// と tmux まで通す main の統合テストなので、gitx へは移せない。一方ヘルパ 3 本は
-// `exec.Command("git", …)` だけで、gitx にも main にも依存しない純粋な道具である。
-// 「テストを移す」より「3 本を写す」方が、駆動の変わり幅が小さい。
-// 原本は internal/gitx/git_integration_test.go と internal/gitx/git_ensure_test.go。
+// Why copies: `git_worktree_base_test.go` drives `POST /sessions` (`handleCreateSession`) all the
+// way through tmux, so it is a main integration test and cannot move to gitx. The three helpers
+// are nothing but `exec.Command("git", …)` and depend on neither package, so copying them moves
+// less than moving the test would.
 
 import (
 	"os"
@@ -60,12 +58,10 @@ func gitInit(t *testing.T, dir string) {
 	run("branch", "feature")
 }
 
-// gitAt は所有外の `worktree_existing_branch_test.go` が 14 箇所で使っているヘルパの写し
-// （原本は internal/gitx/git_worktree_branches_test.go）。
-//
-// ⚠️ 原本の doc コメントは「このファイルの worktree 占有テスト用」と書いてあるが、
-// 実際には**移送前から他ファイルも使っていた**。所有外のファイルを 1 行も触らずに
-// 済ませるため、こちらへ写して main 側に残す。
+// gitAt is a copy of the helper `worktree_existing_branch_test.go` uses in 14 places (the
+// original is in internal/gitx/git_worktree_branches_test.go). The original's doc comment claims
+// it serves that file's worktree-occupancy tests only, but other files used it as well, so the
+// copy lives here to keep main's side working without touching a file we do not own.
 func gitAt(t *testing.T, dir string, args ...string) string {
 	t.Helper()
 	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)

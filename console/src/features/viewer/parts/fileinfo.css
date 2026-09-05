@@ -1,6 +1,6 @@
 /* file viewer: info bar + line-numbered, highlighted code */
 .fileinfo {
-  /* The controls are all fixed-width (保存 / AI提案 / mode segments — docs/log/44),
+  /* The controls are all fixed-width (Save / AI suggest / mode segments — docs/log/44),
      and the header's right padding only *reserves* room for the pane control
      cluster overlaid at the top-right: fixed items that outgrow the row would
      overflow past that padding and slide under the cluster. Wrap them onto a

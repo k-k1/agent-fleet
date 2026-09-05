@@ -24,7 +24,8 @@ func TestCleanSuggestedReplies(t *testing.T) {
 		{"drops blanks", "\n進めて\n\n\nOK\n", []string{"進めて", "OK"}},
 		{"caps at three", "a\nb\nc\nd\ne", []string{"a", "b", "c"}},
 		{"drops overlong lines", strings.Repeat("x", 60) + "\nOK", []string{"OK"}},
-		// モデルは禁止しても前置きを付ける。見出し行が候補枠を1つ食い、そのままチップに出ていた。
+		// The model prepends a preamble even when told not to, and the header line ate one of the
+		// three slots and reached the chips as-is.
 		{"drops a header line", "ユーザーが次に送る返信の候補：\n1で案内して\n2で頼む", []string{"1で案内して", "2で頼む"}},
 		{"drops an ascii header line", "Suggestions:\nOK\nWait", []string{"OK", "Wait"}},
 		{"strips a label but keeps its content", "候補: 進めて\n返信：OK", []string{"進めて", "OK"}},
@@ -40,8 +41,9 @@ func TestCleanSuggestedReplies(t *testing.T) {
 	}
 }
 
-// 長い回答は「末尾」を残す。返信の手がかり（問いかけ・選択肢の識別子）は発言の終わりにあり、
-// 件名提案と同じ先頭切りをすると、まさにそこが落ちる。切るのは行境界。
+// A long answer keeps its tail. The cues for a reply (the question, the option identifiers) sit
+// at the end of a message, so cutting from the head the way the title suggestion does drops
+// exactly those. The cut is made on a line boundary.
 func TestReplyTailLinesKeepsTail(t *testing.T) {
 	long := strings.Repeat("あ", 300) + "\n1. Aでいく\n2. Bでいく\nどうする?"
 	got := replyTailLines(long, 40)
@@ -50,14 +52,16 @@ func TestReplyTailLinesKeepsTail(t *testing.T) {
 			t.Fatalf("tail lost %q:\n%s", want, got)
 		}
 	}
-	// 予算を食い尽くす先頭行は丸ごと落ちる（行の途中から始まる断片を渡さない）。
+	// A head line that would eat the whole budget is dropped whole: never hand over a fragment
+	// that starts in the middle of a line.
 	if strings.Contains(got, "あ") {
 		t.Fatalf("over-budget head line should be dropped whole:\n%s", got)
 	}
 	if !strings.HasPrefix(got, "…") {
 		t.Fatalf("want a leading ellipsis marking the cut, got %q", got)
 	}
-	// 末尾の1行だけで予算を超えるときは、その行を字数で切ってでも残す。
+	// When the last line alone goes over the budget, keep it anyway by cutting it at a character
+	// count.
 	if one := replyTailLines(strings.Repeat("あ", 100)+"どうする?", 20); !strings.HasSuffix(one, "どうする?") {
 		t.Fatalf("a single over-budget line must still keep its tail, got %q", one)
 	}
@@ -66,9 +70,11 @@ func TestReplyTailLinesKeepsTail(t *testing.T) {
 	}
 }
 
-// ★本命の回帰: 転写の 1 ターン＝1 コンテンツブロックなので、ツールを使う回答は「次に X します。」
-// 級の途中報告が何本も並ぶ。畳まずにターン数で窓を切ると、その途中報告だけで窓が埋まり、
-// 実質的な回答も依頼も 1 文字も渡らない（実測: 会話ログが 22 文字になり候補が「進めて」だけ）。
+// The regression this guards: one transcript turn is one content block, so an answer that uses
+// tools lines up several interim notes of the "next I will do X" kind. Windowing by turn count
+// without folding fills the window with those notes alone, and not one character of the real
+// answer or of the request gets through (measured: the conversation log came to 22 characters
+// and the only suggestion left was a bare "go ahead").
 func TestReplySuggestPromptFoldsFragments(t *testing.T) {
 	turns := []transcript.Turn{
 		{Role: "user", Text: "古い依頼"},
@@ -82,7 +88,8 @@ func TestReplySuggestPromptFoldsFragments(t *testing.T) {
 		{Role: "assistant", Text: "txt を再生成します。"},
 	}
 	got := ReplySuggestPrompt(turns, "ja")
-	// 途中報告は畳まれて 1 発言になり、その手前の「選択肢つきの回答」と「短い返事」まで届く。
+	// The interim notes fold into one message, so the answer carrying the options and the short
+	// reply before it both make it in.
 	for _, want := range []string{
 		"assistant: 2点をトリムします。\ntxt を再生成します。",
 		"user: 1",
@@ -99,7 +106,8 @@ func TestReplySuggestPromptFoldsFragments(t *testing.T) {
 	}
 }
 
-// 予算窓: 長い発言が続けば早く打ち切られ、短い返事はほぼコストゼロで通過する。
+// The budget window: a run of long messages cuts it off early, while short replies pass at
+// almost no cost.
 func TestReplyFoldWindowBudget(t *testing.T) {
 	long := func(n int) string { return strings.Repeat("あ", n) }
 	msgs := []ReplyMsg{
@@ -109,13 +117,14 @@ func TestReplyFoldWindowBudget(t *testing.T) {
 		{"assistant", long(800)},
 	}
 	got := replyFoldWindow(msgs)
-	if len(got) != 3 { // 800(切詰) + "つぎ" + 800(切詰) で予算超過 → そこで停止
+	if len(got) != 3 { // 800 (truncated) + the short turn + 800 (truncated) goes over budget, so it stops there
 		t.Fatalf("window = %d msgs, want 3: %+v", len(got), got)
 	}
 	if got[0].Role != "assistant" || got[len(got)-1].Role != "assistant" {
 		t.Fatalf("window should end at the newest message: %+v", got)
 	}
-	// 発言数の上限も効く（短い発言ばかりでも遡りすぎない）。
+	// The message-count cap applies too: even with nothing but short messages it does not walk
+	// back too far.
 	many := make([]ReplyMsg, 0, 20)
 	for i := 0; i < 20; i++ {
 		many = append(many, ReplyMsg{"user", "あ"}, ReplyMsg{"assistant", "い"})

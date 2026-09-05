@@ -5,8 +5,8 @@
 // Modes (cycle with Tab / Shift+Tab, re-pressing Ctrl/⌘+P, or the mode tabs):
 //   - sessions : the session list — FIRST tab and the mode the palette opens in, because
 //               "go to a session" is what Ctrl+P is reached for most. Ordered by attention
-//               (features/sessions/order.ts): 入力待ち newest-first, then the rest of the
-//               live ones, stopped at the foot. Archived sessions never appear — the list
+//               (features/sessions/order.ts): waiting-for-input newest-first, then the rest
+//               of the live ones, stopped at the foot. Archived sessions never appear — the list
 //               comes from GET /api/sessions, which excludes them.
 //   - command : every available command + the session list (fuzzy, all-locale search).
 //               Sessions stay listed here too: after Tab the one search box still finds
@@ -16,7 +16,7 @@
 //               --files, .gitignore-honouring) → open the file. Unlike command/changed (a
 //               static list client-fuzzed), this queries the backend per keystroke.
 //   - sfiles  : the files the ACTIVE session's agent edited (docs/log/68), joined with the
-//               working tree the same way the mirror's 変更ファイル strip joins them.
+//               working tree the same way the mirror's changed-files strip joins them.
 //               A different axis from `changed`, which is per working copy and cannot
 //               tell two sessions in the same worktree apart. Kept last: it is the most
 //               specialised mode, and it is the one that isn't always offered.
@@ -75,9 +75,9 @@ import {
   type SessionFile,
 } from "../mirror/sessionFiles.ts";
 
-// `sessions` = the session list; `sfiles` = the active session's changed files. The two
-// are one letter apart in the UI wording too (セッション / このセッションの変更), so the
-// mode ids are kept deliberately unalike.
+// `sessions` = the session list; `sfiles` = the active session's changed files. Their UI
+// labels are easy to confuse as well ("sessions" / "this session's changes"), so the mode
+// ids are kept deliberately unalike.
 type Mode = "sessions" | "command" | "changed" | "file" | "sfiles";
 const MODES: Mode[] = ["sessions", "command", "changed", "file", "sfiles"];
 const MODE_LABEL: Record<Mode, MsgKey> = {
@@ -225,9 +225,10 @@ function fileItem(homeRel: string): Item {
   };
 }
 
-// 注目度順に並べた名前の配列 = パレットが開いている間の固定順序。「最後に入力待ちになった
-// 時刻」は、通知台帳（サーバ側・リロードや別端末を跨いで残る）とこの端末で観測した遷移の
-// **新しい方**（features/sessions/{order,waiting}.ts の冒頭にその理由）。
+// Names sorted by attention, frozen for as long as the palette is open. "Last became
+// waiting-for-input" is the newer of the notification ledger (server-side, surviving
+// reloads and other devices) and the transition observed on this device; the reasoning is
+// at the top of features/sessions/{order,waiting}.ts.
 function freezeOrder(list: Session[]): string[] {
   const fromNotifications = waitingAtFromNotifications(useNotificationStore.getState().items);
   const waitingAt = (name: string) => Math.max(fromNotifications[name] || 0, observedWaitingAt(name));
@@ -248,17 +249,19 @@ function sessionItem(s: Session, repos: Repo[], running: boolean): Item {
     id: "session:" + s.name,
     title: name,
     sub: "",
-    // 名前・ID・置き場所・種・状態のどれからでも引けるようにする。state の生トークン
-    // （question / working…）も混ぜてあるので、UI 言語に関係なく英語でも当たる。
+    // Findable by name, id, location, kind or state. The raw state tokens (question,
+    // working, ...) are mixed in too, so an English query hits regardless of UI language.
     search: [name, s.name, project, wt, branch, kindLabel(s.kind), st.text, s.state || ""].join(" "),
     keys: [],
     session: s,
-    // Enter → アクティブなペイン、Ctrl/⌘+Enter → 新しいペイン。稼働/停止/フォルダ消失で
-    // 行き先が変わる規則は左ペインの行と共有（openSessionFromList）。
+    // Enter opens in the active pane, Ctrl/⌘+Enter in a new one. The rules for how the
+    // destination changes with running/stopped/missing-folder are shared with the left
+    // rail's rows (openSessionFromList).
     run: (split) => {
       if (openSessionFromList(s, split, running)) return;
-      // フォルダが消えていて転写も持たない種（shell/ssm）。行自体は残す — 検索で見つかる
-      // ことに意味がある — が、押して何も起きないのは黙った故障に見えるので理由を言う。
+      // The folder is gone and the kind keeps no transcript (shell/ssm). The row is kept —
+      // being findable by search is worth something — but a press that does nothing looks
+      // like a silent failure, so say why.
       toast(t("srow.cant_resume"), { kind: "warn" });
     },
   };
@@ -309,8 +312,8 @@ export function CommandPalette() {
   const layout = useLayoutStore((s) => s.layout);
   const commands = useEffectiveCommands();
   const locale = useLocale(); // re-render + recompute items when the UI language changes
-  // 停止中のセッションの一部（転写を持たない shell/ssm）は、ワークスペースが動いていないと
-  // そもそも開けない。行の run がそれを知っている必要がある。
+  // Some stopped sessions (shell/ssm, which keep no transcript) cannot be opened at all
+  // unless the workspace is running, and a row's run has to know that.
   const running = wsRunning(useWorkspaceStore((s) => s.state));
   const [q, setQ] = useState("");
   const [sel, setSel] = useState(0);
@@ -318,10 +321,11 @@ export function CommandPalette() {
   const [changed, setChanged] = useState<Item[] | null>(null); // null = loading
   const [sessionFiles, setSessionFiles] = useState<Item[] | null>(null); // null = loading
   const [fileHits, setFileHits] = useState<Item[] | null>(null); // null = searching (file mode)
-  // セッション欄の並び順は**開いた瞬間に凍結**する（名前の配列）。開いている間も一覧の
-  // ポーリングは走っていて、誰かが質問状態に変わると並びが変わる — 選択は添字なので、
-  // 手元でカーソルが指していた行が入れ替わり、Enter が別のセッションを開く。バッジは
-  // 生のまま更新し、順番だけ固定する。
+  // The session list's order is frozen (as an array of names) the moment the palette opens.
+  // List polling keeps running while it is open, and one session entering the question
+  // state reorders everything; since the selection is an index, the row under the cursor
+  // would be swapped out and Enter would open a different session. Badges still update
+  // live — only the order is pinned.
   const [order, setOrder] = useState<string[]>([]);
   // The session-files mode needs a session to be about. With none in the active pane the
   // mode is not offered at all rather than offered empty — an empty mode reads as "this
@@ -353,19 +357,19 @@ export function CommandPalette() {
     openerRef.current = (document.activeElement as HTMLElement) ?? null;
     setQ("");
     setSel(0);
-    // セッションが 1 つも無いワークスペースでだけコマンドモードで開く。空のセッション欄で
-    // 出迎えても Tab を 1 回押させるだけなので。
+    // Open in command mode only when the workspace has no sessions at all: greeting the
+    // user with an empty session list just costs them one press of Tab.
     const live = useSessionsStore.getState().sessions;
     setMode(live.length ? "sessions" : "command");
-    setOrder(freezeOrder(live)); // 並び順をここで凍結する（上の order を見よ）
+    setOrder(freezeOrder(live)); // freeze the order here (see `order` above)
     void useReposStore.getState().refresh(); // repos+worktrees are searchable in command mode
     const id = requestAnimationFrame(() => inputRef.current?.focus());
     return () => cancelAnimationFrame(id);
   }, [open]);
 
-  // 起動直後は一覧がまだ届いていないことがある（ポーリングは 4 秒間隔）。その 1 回だけ、
-  // 届いた時点で順序を作る — でないとセッション欄が名前順のまま（＝注目度を無視した並び）に
-  // なる。以後は凍結が効くので、開いている間に並びが動くことはない。
+  // Right after startup the list may not have arrived yet (polling is every 4s). Just that
+  // once, build the order when it does, or the session list stays in name order and ignores
+  // attention entirely. After that the freeze holds and the order never moves while open.
   useEffect(() => {
     if (!open || order.length || !sessions.length) return;
     setOrder(freezeOrder(sessions));
@@ -421,13 +425,14 @@ export function CommandPalette() {
     };
   }, [open, mode, q]);
 
-  // セッション欄。並びは開いた瞬間に凍結した order（名前の配列）に従う。
-  //  - order に無いセッション（開いている間に生まれた）は末尾へ。段の途中に割り込ませると、
-  //    まさに凍結で防いでいる「カーソルの下で行が入れ替わる」が起きる。
-  //  - order にあって一覧から消えたセッション（停止→アーカイブ/削除）は自然に落ちる。
+  // The session list, ordered by the `order` frozen when the palette opened.
+  //  - A session missing from `order` (born while open) goes to the foot. Slotting it into
+  //    the middle would cause exactly the row-swapping-under-the-cursor the freeze prevents.
+  //  - A session in `order` that has left the list (stopped then archived/deleted) simply
+  //    falls away.
   const sessionItems = useMemo<Item[]>(() => {
     if (!open) return [];
-    void locale; // dep: 状態バッジ・種別名は現在の言語で作る
+    void locale; // dep: state badges and kind names are built in the current language
     const rank = new Map(order.map((n, i) => [n, i]));
     const tail = order.length;
     return [...sessions]

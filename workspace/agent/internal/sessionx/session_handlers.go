@@ -1,7 +1,7 @@
 package sessionx
 
-// セッション API の HTTP ハンドラ（一覧/作成/フォーク/停止/中断/アーカイブ/復元/作り直し）。
-// session.go からの機械的分割（docs/log/23 P1-W4）。
+// HTTP handlers for the session API: list / create / fork / stop / halt / archive /
+// restore / recreate.
 
 import (
 	"encoding/json"
@@ -32,7 +32,7 @@ import (
 )
 
 // ManagedAlive reports a managed session's liveness — the runtime-handle
-// counterpart of tmuxx.HasSession（docs/log/27 P2/P3。kind ごとの実装は各縦割りパッケージ）。
+// counterpart of tmuxx.HasSession (docs/log/27 P2/P3; each kind implements it in its own package).
 func ManagedAlive(m session.Meta) bool {
 	switch m.Kind {
 	case session.KindOpencode:
@@ -49,9 +49,10 @@ func ManagedAlive(m session.Meta) bool {
 	return false
 }
 
-// managedBusy reports a managed session has a turn running or queued — 排他切替
-// （/driver）の拒否条件（docs/log/27 §2: 切替は必ず stop→drain→resume 経由。busy の
-// 間は切り替えない＝drain を「idle まで待つのはユーザー」に倒した最小形）。
+// managedBusy reports a managed session has a turn running or queued — the refusal
+// condition for an exclusive driver switch (/driver, docs/log/27 §2: a switch always goes
+// stop -> drain -> resume, and never happens while busy, which leaves the drain to the
+// user waiting for idle).
 func managedBusy(m session.Meta) bool {
 	switch m.Kind {
 	case session.KindOpencode:
@@ -68,9 +69,10 @@ func managedBusy(m session.Meta) bool {
 	return false
 }
 
-// dropManagedRuntime detaches a managed session from its runtime (stop / halt /
-// archive / recreate の tmux kill-session に相当): 実行中 turn を abort し handle を
-// 忘れる。会話の正本（SQLite / rollout）はそのまま残り、再開（Resume）で再接続できる。
+// dropManagedRuntime detaches a managed session from its runtime — the equivalent of the
+// tmux kill-session that stop / halt / archive / recreate do: abort the running turn and
+// forget the handle. The conversation's source of truth (SQLite / rollout) stays intact,
+// so a resume reconnects to it.
 func dropManagedRuntime(m session.Meta) {
 	switch m.Kind {
 	case session.KindOpencode:
@@ -86,8 +88,8 @@ func dropManagedRuntime(m session.Meta) {
 	}
 }
 
-// removeManagedLedger drops the ClientMessageID ledger on /stop（スロットの
-// アイデンティティごと破棄 — halt/archive は再開があるので呼ばない）。
+// removeManagedLedger drops the ClientMessageID ledger on /stop, discarding the slot's
+// identity with it. halt/archive do not call it: those can be resumed.
 func removeManagedLedger(m session.Meta) {
 	switch m.Kind {
 	case session.KindOpencode:
@@ -114,9 +116,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	live := tmuxx.LiveSessionNames()
-	// managed セッション（docs/log/27 P2）は tmux を持たない — 生存は runtime handle が
-	// 基準（daemon 死や Agent 再起動で handle が落ちれば 停止中 に見え、reconcile /
-	// 再開クリックで復帰する。tui の「tmux がある＝生きている」と同型の規約）。
+	// A managed session (docs/log/27 P2) has no tmux — the runtime handle decides liveness.
+	// A dead daemon or an Agent restart drops the handle, so the session shows as stopped
+	// and comes back on reconcile or a resume click; the same rule tui states as "a tmux
+	// session exists => it is alive".
 	for name, m := range metas {
 		if m.DriverKind() == session.DriverManaged && ManagedAlive(m) {
 			live[name] = true
@@ -142,18 +145,18 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 		// Stopped (exited): stamp when first noticed, prune once older than the TTL,
 		// otherwise keep it listed as resumable.
 		if m.StoppedAt == "" {
-			// ここが「ペインが消えているのを af が初めて見つけた」唯一の点で、
-			// Workspace 停止・コンテナの SIGKILL・claude のクラッシュ・利用者の /exit を
-			// まとめて拾う。モーダルを出したまま消えたなら、ここで持ち越しへ昇格させる
-			// （docs/log/75 §75.6.3 の契機 2）。再開の boot フックがペイロードを消す前に
-			// 通る — 停止中のセッションを一覧に出す時点で必ずこちらが先に走るため。
+			// This is the ONLY point where af first notices the pane is gone, and it covers
+			// a workspace stop, a container SIGKILL, a claude crash and a user /exit alike.
+			// A session that vanished with a modal open is promoted to a carry-over here
+			// (docs/log/75 §75.6.3, trigger 2). It runs before the resume boot hook clears
+			// the payload: listing a stopped session always reaches this first.
 			PromoteCarriedFor(m)
 			m.StoppedAt = now.Format(time.RFC3339)
 			m = WriteSessionMetaKeepingLock(m)
 		} else if t, e := time.Parse(time.RFC3339, m.StoppedAt); e == nil && now.Sub(t) > ttl && !m.Locked {
-			// 削除ロック（docs/log/45）は自動削除にも効く — locked な行は TTL を過ぎても
-			// prune せず、停止中のまま一覧に残す。
-			finalizeSessionUsage(m) // 使用量台帳へ確定してから忘れる（docs/log/46 §3-b）
+			// The deletion lock (docs/log/45) applies to automatic deletion too: a locked
+			// row is never pruned past the TTL and stays listed as stopped.
+			finalizeSessionUsage(m) // fold into the usage ledger before forgetting it (docs/log/46 §3-b)
 			status.RemoveCarried(session.UUID(m.Dir, name))
 			session.RemoveMeta(name)
 			gitx.MaybePruneWorktree(m.Dir) // last reference expired → clean up its worktree if clean
@@ -184,10 +187,10 @@ func HandleListSessions(w http.ResponseWriter, r *http.Request) {
 	})
 	// Stable order: newest first by creation time.
 	sort.Slice(sessions, func(i, j int) bool { return sessions[i].CreatedAt > sessions[j].CreatedAt })
-	// repoJobs は「セッションは無いが Workspace は仕事中」を CP に伝える唯一の口
-	// （docs/log/78）。取り込みは分〜時間かかるのに GET のポーリングは活動と数えない規約
-	// なので、これが無いと idle-stop が走行中の clone / checkout を殺す。reaper は
-	// 毎スイープでこの一覧を読むので、専用のリクエストは増やさない。
+	// repoJobs is the only channel telling the CP "no session, but the workspace IS busy"
+	// (docs/log/78). An import takes minutes to hours while GET polling deliberately does
+	// not count as activity, so without this idle-stop kills a running clone / checkout.
+	// The reaper reads this list on every sweep, so it costs no extra request.
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "repoJobs": repoJobsRunning()})
 }
 
@@ -234,18 +237,20 @@ type CreateReq struct {
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
 	Mode           string `json:"mode"` // "plan" | "normal"
-	// SkipPermissions は「権限確認をスキップするか」（docs/log/76）。**3 値**で、未指定(null)は
-	// 「設定 > エージェントの kind 毎の既定に従う」。Console はトグルを触ったときだけ送る。
-	// 未指定を false と同じに畳むと、設定でオンにしている kind まで承認ありで立ってしまう。
+	// SkipPermissions asks whether to skip tool approvals (docs/log/76). It is three-valued:
+	// unset (null) means "follow the per-kind default in Settings > Agents", and the Console
+	// only sends it when the user touched the toggle. Folding unset into false would launch
+	// even the kinds enabled in settings with approvals on.
 	SkipPermissions *bool  `json:"skip_permissions"`
 	Kind            string `json:"kind"` // "claude" (default) | "opencode" | "codex" | "shell"
-	// Driver selects the control route（docs/log/27 §9.2）: "" | "tui"（従来の tmux 内
-	// TUI、既定）| "managed"（共有 runtime＋構造化 RPC・pane なし）。managed の起動は
-	// P2（opencode serve）/ P3（codex app-server）で解禁。未対応 kind は明示拒否する。
+	// Driver selects the control route (docs/log/27 §9.2): "" | "tui" (the default, a TUI
+	// inside tmux) | "managed" (shared runtime + structured RPC, no pane). Managed launches
+	// were opened up in P2 (opencode serve) and P3 (codex app-server); an unsupported kind
+	// is rejected explicitly.
 	Driver string `json:"driver"`
 	// InitialPrompt, when set, is typed into the session once its agent CLI has booted
 	// and then submitted (deliverInitialPrompt) — the server-side launch-task delivery an
-	// orchestrator (フリート・オペレーター / create_session MCP tool) uses to spawn a session
+	// orchestrator (the fleet operator / create_session MCP tool) uses to spawn a session
 	// AND hand it the first task in one call. The Console delivers its own launch prompt
 	// client-side (open.ts) and leaves this empty.
 	InitialPrompt string `json:"initial_prompt"`
@@ -277,7 +282,7 @@ type CreateReq struct {
 	// switched to, so the session starts on a fresh branch. Empty => no new branch.
 	NewBranch string `json:"new_branch"`
 	// Worktree switches to worktree-then-start: instead of cloning, spin a git worktree
-	// off an EXISTING working copy (Dir = the parent, e.g. the main/develop 壁打ち clone)
+	// off an EXISTING working copy (Dir = the parent, e.g. the main/develop brainstorming clone)
 	// at ~/repos/<repo>@<branch> and use it as CWD. Branch is the base, NewBranch (opt)
 	// the fresh branch to create off it. Lets a decided task branch off into its own
 	// directory + session without touching the parent. RemoteURL is ignored when set.
@@ -353,8 +358,9 @@ func resolveLiveModel(requested string, choices []agents.ModelChoice) (string, e
 		requested, joinModelIDs(nearestModels(want, choices), modelSuggestLimit))
 }
 
-// retiredModelError は「id は正しいが提供が終わった」場合の文言。opencode だけが持つ
-// 状況で（カタログに status を持つ唯一の種）、利用者は退役を知らずに再指定を繰り返す。
+// retiredModelError is the wording for "the id is right, but the model is no longer
+// offered". Only opencode can be in that state (the one kind whose catalog carries a
+// status), and without saying so the user keeps re-entering the same id.
 func retiredModelError(requested string, choices []agents.ModelChoice) string {
 	return fmt.Sprintf("モデル %q は提供終了しています（opencode.ai 側で退役）。近い候補: %s。",
 		requested, joinModelIDs(nearestModels(strings.ToLower(requested), choices), modelSuggestLimit))
@@ -363,11 +369,12 @@ func retiredModelError(requested string, choices []agents.ModelChoice) string {
 // Rejection messages are read in a Console toast and in a phone notification, so the
 // id list has to fit there: the live opencode catalog alone runs to ~60 entries, and
 // spelling all of them out pushed the actual reason off the top of the notification
-// （実測: opencode の起動失敗通知が全文モデル名で埋まった）。So name a few ids and say
-// how many were left out — the full list already has a home (起動ダイアログ / list_models).
+// (measured: an opencode launch-failure notification was filled entirely with model
+// names). So name a few ids and say how many were left out — the full list already has a
+// home (the launch dialog / list_models).
 const (
-	modelSuggestLimit   = 5  // 不明なモデル: 近い候補だけ
-	modelAmbiguousLimit = 10 // 曖昧: 利用者はこの中から選ぶので多めに出す
+	modelSuggestLimit   = 5  // unknown model: only the nearest candidates
+	modelAmbiguousLimit = 10 // ambiguous: the user picks from these, so show more
 )
 
 // joinModelIDs renders at most limit ids, appending how many were dropped.
@@ -383,7 +390,7 @@ func joinModelIDs(ids []string, limit int) string {
 // scoring is deliberately crude — shared dot/dash/slash tokens, then a longest-common-
 // prefix tie-break — because it only has to ORDER the list; resolveLiveModel has
 // already decided that nothing here matches. Returns every id (the caller truncates)
-// so the "ほか N 件" count stays the size of the real catalog.
+// so the "N more" count ("ほか %d 件") stays the size of the real catalog.
 func nearestModels(want string, choices []agents.ModelChoice) []string {
 	wanted := make(map[string]bool)
 	for _, tok := range modelTokens(want) {
@@ -417,16 +424,18 @@ func nearestModels(want string, choices []agents.ModelChoice) []string {
 }
 
 // modelTokens splits an id into its comparable parts: "opencode-go/glm-5.2" =>
-// opencode, go, glm, 5, 2。英数字以外はすべて区切り扱い — 種ごとに / - . _ の流儀が
-// 違うので、どれを使っていても同じ粒度に割れるほうが都合がよい。
+// opencode, go, glm, 5, 2. Everything non-alphanumeric is a separator: each kind spells
+// ids with its own mix of / - . _, so splitting them all at the same granularity makes
+// them comparable whichever one an id uses.
 func modelTokens(id string) []string {
 	return strings.FieldsFunc(strings.ToLower(id), func(r rune) bool {
 		return !('a' <= r && r <= 'z') && !('0' <= r && r <= '9')
 	})
 }
 
-// commonPrefixLen is the byte-wise tie-break for nearestModels: 同じ数のトークンを
-// 共有するなら、指定された文字列に長く一致するほうが近い（＝同じ課金経路の id が先に出る）。
+// commonPrefixLen is the byte-wise tie-break for nearestModels: among ids sharing the same
+// number of tokens, the one matching the requested string for longer is nearer, which puts
+// ids on the same billing route first.
 func commonPrefixLen(a, b string) int {
 	n := 0
 	for n < len(a) && n < len(b) && a[n] == b[n] {
@@ -515,25 +524,26 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_mode", `mode must be "plan" or "normal"`)
 		return
 	}
-	// 「権限確認を出す」は承認待ちを Console から答えられる kind でしか受けない（docs/log/76）。
-	// 黙って無視すると、頼んだ側は承認ありで走っていると思い込む — 断る方が正直。
-	// スキップ側（true）は従来の既定なのでどの kind でも通す。
+	// "Ask for tool approval" is only accepted for kinds whose pending approvals can be
+	// answered from the Console (docs/log/76). Ignoring it silently would leave the caller
+	// believing the session runs with approvals on, so refusing is the honest answer.
+	// Skipping (true) is the historical default and stays allowed for every kind.
 	if req.SkipPermissions != nil && !*req.SkipPermissions && !AgentOf(NormalizeKind(req.Kind)).Caps().PermissionChoice {
 		httpx.WriteErr(w, http.StatusBadRequest, "permission_choice_unsupported",
 			"this agent kind cannot surface tool approvals to the Console; skip_permissions must stay true")
 		return
 	}
-	// Driver validation up-front（副作用 — clone / worktree — より前に落とす）。既定の
-	// tui は "" へ正規化して永続化し、既存メタとバイト同一を保つ。
+	// Driver validation up-front, before any side effect (clone / worktree). The default
+	// tui is normalized to "" when persisted, keeping metas byte-identical to existing ones.
 	driver := strings.TrimSpace(req.Driver)
 	switch driver {
 	case "", session.DriverTUI:
 		driver = ""
 	case session.DriverManaged:
-		// docs/log/27 P2/P3: driverOf に登録済みの kind（opencode / codex）だけ。
-		// claude は対象外（ADR 0015）。kind はこの後 NormalizeKind で claude に
-		// 化け得るので、正規化後の値でなく生の req.Kind で判定してはいけない —
-		// ここで normalize して以降もその値を使う。
+		// docs/log/27 P2/P3: only kinds registered in driverOf (opencode / codex); claude
+		// is out of scope (ADR 0015). A raw req.Kind can still turn into claude through
+		// NormalizeKind further down, so never decide on it — normalize here and keep
+		// using the normalized value.
 		if _, ok := managedDrivers[NormalizeKind(req.Kind)]; !ok {
 			httpx.WriteErr(w, http.StatusBadRequest, "driver_unsupported",
 				"managed ドライバはこの kind では利用できません")
@@ -543,17 +553,18 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_driver", "unknown driver: "+req.Driver)
 		return
 	}
-	// 使わないモデル（ui-prefs hiddenModels — model_deny.go）は kind を問わず、副作用
-	// （clone / worktree）より前に断る。ここを通る経路は Console の起動導線だけでなく、
-	// 定時実行（CP scheduler → この create）と MCP create_session も含む — カタログを
-	// 絞るだけでは明示指定が素通りするので、このガードが本体。
+	// Models the user disabled (ui-prefs hiddenModels — model_deny.go) are refused for every
+	// kind, before any side effect (clone / worktree). This create is reached not only from
+	// the Console launch flow but from the schedule (CP scheduler) and MCP create_session,
+	// and narrowing the catalog alone lets an explicit id through, so this guard is the
+	// real one.
 	if kind := NormalizeKind(req.Kind); ModelHidden(kind, req.Model) {
 		httpx.WriteErr(w, http.StatusBadRequest, "model_hidden", hiddenModelError(strings.TrimSpace(req.Model)))
 		return
 	}
-	// ライブカタログの kind は候補集合からも除外しておく。resolveLiveModel は略称を
-	// 一意なら完全 id へ広げるので、絞らないと "fab" のような略称が除外モデルへ
-	// 解決してしまう。
+	// For kinds with a live catalog, drop the hidden models from the candidate set too:
+	// resolveLiveModel expands an unambiguous short name into the full id, so without that
+	// a short name like "fab" would resolve to an excluded model.
 	if NormalizeKind(req.Kind) == session.KindCodex && strings.TrimSpace(req.Model) != "" {
 		model, err := resolveLiveModel(req.Model, FilterVisibleModels(session.KindCodex, codex.Models()))
 		if err != nil {
@@ -576,8 +587,9 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		model, err := resolveLiveModel(req.Model, choices)
 		if err != nil {
-			// 退役したモデルは「打ち間違い」と同じ文言だと原因に辿り着けない — opencode.ai が
-			// 提供をやめただけで、id も課金経路も合っているので、そう言う（models.go Retired）。
+			// A retired model needs its own wording: with the typo message the user never
+			// reaches the cause, since the id and the billing route are both right and
+			// only opencode.ai stopped offering it (models.go Retired).
 			if requested := strings.TrimSpace(req.Model); opencode.Retired(requested) {
 				httpx.WriteErr(w, http.StatusBadRequest, "bad_model", retiredModelError(requested, choices))
 				return
@@ -612,7 +624,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		folderSeg := strings.TrimSpace(req.Folder) // "" => folder derives from the branch
 		if req.UseExisting {
 			// "Work on the existing branch": check out req.Branch (local or DWIM-tracked
-			// remote) into the worktree. Reached from the launch dialog's 既存ブランチ mode
+			// remote) into the worktree. Reached from the launch dialog's existing-branch mode
 			// and from the SCM branch actions, as well as from a name collision.
 			base := strings.TrimSpace(req.Branch)
 			// git holds a branch in one worktree at a time. Refuse BEFORE any directory or
@@ -653,12 +665,14 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			}
 			dir, err = gitx.EnsureWorktree(parent, req.Branch, nb, folderSeg)
 			if err == nil {
-				// 起点を origin の先端に合わせる（既存ブランチ経路の fastForwardWorktree と
-				// 同じ狙い）。base 未指定＝親の HEAD が起点なので、その現在ブランチ名で引く。
+				// Start at origin's tip, the same intent as fastForwardWorktree on the
+				// existing-branch path. An empty base means the parent's HEAD is the start
+				// point, so pull using the parent's current branch name.
 				base := strings.TrimSpace(req.Branch)
 				if base == "" {
-					// gitCurrentBranch は detached を "(detached)" と答えるので、そのときは
-					// 引ける相手が無い＝何もしない（ブランチ名として投げると紛らわしいログが出る）。
+					// GitCurrentBranch answers "(detached)" when detached: there is
+					// nothing to pull from, so do nothing (passing that as a branch name
+					// only produces a confusing log line).
 					if b := gitx.GitCurrentBranch(parent); b != "(detached)" {
 						base = b
 					}
@@ -713,7 +727,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	kind := NormalizeKind(req.Kind)
 	// An SSM session with no client title defaults to "{host alias} @MMDD-HHMM" — a
-	// human-meaningful "接続先＋日時" name (vs the generic {home-basename} @… fallback).
+	// human-meaningful "target + timestamp" name (vs the generic {home-basename} @… fallback).
 	if kind == session.KindSSM && title == "" {
 		title = ssmDefaultTitle(req.SSMAlias, req.SSMTarget, time.Now())
 	}
@@ -744,16 +758,17 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
 	}
-	// docs/log/51 Phase 3 §自己申告ファストパス: 起動タスクにも「終わったら af_report を
-	// 呼べ」を1行足す（report_to 付き＝報告義務のある指示のときだけ）。managed と tui の
-	// 分岐より前に置いて、どちらの起動経路でも同じ1行が乗るようにする。
+	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
+	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
+	// one with report_to. Placed before the managed / tui split so both launch paths carry
+	// the same line.
 	if req.ReportTo != "" {
 		req.InitialPrompt = withSelfReportHint(req.InitialPrompt, meta)
 	}
 	if meta.DriverKind() == session.DriverManaged {
-		// managed（docs/log/27 P2）: tmux pane を作らず、driver が共有 runtime に thread
-		// を起こす。初回プロンプトは boot 画面スクレイプ不要でそのまま Send できる
-		// （§10.2-9 — ClientMessageID で冪等）。
+		// managed (docs/log/27 P2): no tmux pane — the driver opens a thread on the shared
+		// runtime. The first prompt needs no boot-screen scraping and can just be sent
+		// (§10.2-9 — idempotent through ClientMessageID).
 		d, _ := driverOf(meta)
 		h, err := mcpx.StartManagedSession(d, meta)
 		if err != nil {
@@ -768,15 +783,16 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 				markSessionWorking(name)
 			}
 		}
-		// docs/log/51 Phase 2: 指示台帳へ1行追加する（旧 arm の1bit）。managed は
-		// session-status hook を持たないが、完了は notify seam → リコンサイラで拾われる。
+		// docs/log/51 Phase 2: add one row to the instruction ledger (the old one-bit arm).
+		// A managed session has no session-status hook, but completion is picked up through
+		// the notify seam and the reconciler.
 		if req.ReportTo != "" {
 			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
 		} else if s := scheduleInjectionSource(req.Source); s != "" {
-			// 完了報告 OFF の定時実行が作ったセッション: 台帳は立てない（報告先が無い）が、
-			// 最初のプロンプトの由来は覚える — でないと initial_prompt のターンだけ
-			// バッジが落ちる（docs/log/38）。
+			// A session created by a schedule with reporting off: no ledger row (there is
+			// nowhere to report to), but remember where the first prompt came from —
+			// otherwise the initial_prompt turn alone loses its badge (docs/log/38).
 			recordInjection(name, req.InitialPrompt, s)
 		}
 		writeCreated(meta)
@@ -793,15 +809,16 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if strings.TrimSpace(req.InitialPrompt) != "" {
 		go deliverInitialPrompt(name, req.InitialPrompt)
 	}
-	// docs/log/51 Phase 2: 起動元の会話宛に指示行を1件立てる。initial_prompt が無くても立てる
-	// — オペレーターがこの後 send_to_session で手動 steer することがある。
+	// docs/log/51 Phase 2: raise one instruction row addressed to the launching conversation.
+	// Raised even without an initial_prompt: the operator may steer it by hand with
+	// send_to_session afterwards.
 	// The initial_prompt, when present, is an orchestrated injection (docs/log/30 ② /
 	// docs/log/38) — remember it with its origin so the mirror badges its user turn.
 	if req.ReportTo != "" {
 		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
 		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
 	} else if s := scheduleInjectionSource(req.Source); s != "" {
-		recordInjection(name, req.InitialPrompt, s) // 報告 OFF の定時実行（managed 側と同じ）
+		recordInjection(name, req.InitialPrompt, s) // schedule with reporting off (same as the managed path)
 	}
 
 	writeCreated(meta)
@@ -852,8 +869,8 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	// body was ignored is exactly the outcome §55 refuses to produce.
 	var req struct {
 		At string `json:"at"`
-		// include=true は「この発言と、それが得た回答まで引き継ぐ」（続きから）。
-		// 既定（false）は「この発言の直前まで」＝その発言を打ち直せる形。
+		// include=true carries over this message and the answer it got (continue from there).
+		// The default (false) stops just before this message, so it can be retyped.
 		Include bool `json:"include"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
@@ -872,12 +889,14 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkUnsupportedKind, "this session type does not support forking")
 		return
 	}
-	// 「そもそも地点分岐という機能があるか」は要求だけで決まるので、会話の状態を見る前に
-	// 答える。ここを後ろに置くと、対応していない kind へ at を投げたとき「会話がまだ無い」
-	// のような無関係な理由が返り、導線の設計ミスが状態の問題に見えてしまう。
-	// 起動方式（managed か CLI か）まで見るのは kind の仕事 — 条件が kind ごとに違う
-	// （opencode/codex は runtime API 必須、claude は TUI しか無い）ので、ここで一律に
-	// managed を要求すると claude が永久に弾かれる。resolver が ErrForkAtRoute で答える。
+	// "Does point-forking exist at all" depends only on the request, so answer it before
+	// looking at the conversation's state. Later on, an `at` sent to an unsupported kind
+	// would come back with an unrelated reason such as "no conversation to fork yet",
+	// making a design mistake in the flow look like a state problem.
+	// Whether the launch route (managed or CLI) fits is the kind's business: the condition
+	// differs per kind (opencode/codex need the runtime API, claude only has a TUI), so
+	// demanding managed here would reject claude forever. The resolver answers that with
+	// ErrForkAtRoute.
 	resolver, hasResolver := ag.(agents.ForkAtResolver)
 	if req.At != "" && (!hasResolver || !ag.Caps().CanForkAt) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkAtUnsupported,
@@ -888,19 +907,20 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, errCodeForkMissingDir, "cannot fork: the working folder does not exist")
 		return
 	}
-	// 分岐点の解決は ForkSource より前。どの resolver も ForkSource の結果には依存せず
-	// 自分で会話を引くので順番は自由で、**先に答えたほうが理由が具体的になる**: 起動方式が
-	// 合っていない TUI セッションに対して「分岐できる会話がまだありません」と返しても、
-	// ユーザーは会話を増やそうとするだけで永久に直らない。
-	// ここで失敗したら止める — 「地点を指したのに会話まるごと分岐された」は、それらしい
-	// 履歴が付いてくるぶんユーザーが気づけない壊れ方になる。
+	// Resolve the fork point before ForkSource. No resolver depends on ForkSource's result
+	// (each reads the conversation itself), so the order is free, and answering here first
+	// gives a more concrete reason: telling a TUI session on the wrong launch route "there
+	// is no conversation to fork yet" only makes the user add more conversation, and it
+	// never starts working.
+	// Stop when this fails: "asked for a point, got the whole conversation forked" arrives
+	// with plausible-looking history, so the user cannot notice the breakage.
 	var forkAt string
 	if req.At != "" {
 		at, err := resolver.ResolveForkAt(src, agents.ForkPoint{Anchor: req.At, Include: req.Include})
 		if err != nil {
 			code := errCodeForkBadAnchor
 			if errors.Is(err, agents.ErrForkAtRoute) {
-				code = errCodeForkAtUnsupported // 分岐点ではなく起動方式の問題
+				code = errCodeForkAtUnsupported // the launch route, not the fork point, is the problem
 			}
 			httpx.WriteErr(w, http.StatusBadRequest, code, err.Error())
 			return
@@ -914,17 +934,18 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 	}
 	forkName := allocSessionName(src.Dir)
 	title, _ := CleanTitle(forkTitle(src))
-	// Driver は継承する — managed セッションの分岐は managed のまま（runtime の
-	// fork API で複製、docs/log/27 P2）。tui は従来の CLI fork 起動。
+	// The driver is inherited: forking a managed session stays managed (copied through the
+	// runtime's fork API, docs/log/27 P2), while tui keeps the CLI fork launch.
 	meta := session.Meta{
 		Name: forkName, Dir: src.Dir, Subdir: src.Subdir, Model: src.Model, Effort: src.Effort, Mode: src.Mode,
 		Kind: src.Kind, Driver: src.Driver, Title: title, SkipPermissions: src.SkipPermissions,
 		Repo:      filepath.Base(src.Dir),
 		Branch:    gitx.GitCurrentBranch(src.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), ForkFrom: forkFrom, ForkAt: forkAt,
-		// 引き継ぎで生えたセッションは出自 handoff（ADR 0029 §6）。元の出自を継ぐと
-		// 「人が開いた数」に紛れ、引き継ぎで増えた消費が見えなくなる。作成元の会話は
-		// 親から引き継ぐ（オペレーター発のセッションからの引き継ぎも同じ系列で追える）。
+		// A session grown from a handoff has origin=handoff (ADR 0029 §6). Inheriting the
+		// source's origin would blend it into "sessions a human opened" and hide the spend
+		// handoffs add. The originating conversation IS inherited from the parent, so a
+		// handoff from an operator-started session stays traceable in the same chain.
 		Origin: session.OriginHandoff, OriginConv: src.OriginConv,
 	}
 	if ag.Caps().UsesLabel {
@@ -968,7 +989,7 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	// /stop FORGETS the meta — it is the Console's 削除. A locked session (docs/log/45)
+	// /stop FORGETS the meta — it is the Console's delete. A locked session (docs/log/45)
 	// refuses it; stopping without losing the row is /halt, which stays open.
 	if hadMeta && meta.Locked {
 		httpx.WriteErr(w, http.StatusForbidden, errCodeLocked,
@@ -978,7 +999,7 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 	if hadMeta {
 		status.Remove(session.UUID(meta.Dir, name))
 		status.RemoveExit(name)
-		dropManagedRuntime(meta) // managed: 実行中 turn を abort し handle を忘れる
+		dropManagedRuntime(meta) // managed: abort the running turn and forget the handle
 		removeManagedLedger(meta)
 	}
 	if live {
@@ -988,11 +1009,11 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if hadMeta {
-		// fold-on-delete（docs/log/46 §3-b）: /stop は Console の「削除」で、この後 meta を
-		// 忘れる＝ListMetas から消えて二度と折り込まれない（転写が残っていても対象外）。
-		// 通常の折り込みは開いている末尾ターンを残すので、ここで確定させないと最後の
-		// 1ターンが永久に台帳へ入らない。tmux を落とした後に呼ぶのは、終了時に書かれる
-		// 最後のイベントまで転写に乗せてから読むため。
+		// fold-on-delete (docs/log/46 §3-b): /stop is the Console's delete and forgets the
+		// meta right after, so the session leaves ListMetas and is never folded again (even
+		// with its transcript still on disk). The ordinary fold leaves the open trailing turn
+		// alone, so without finalizing here that last turn never reaches the ledger. Called
+		// after killing tmux so the final events written on exit are in the transcript first.
 		finalizeSessionUsage(meta)
 	}
 	status.RemoveCarried(session.UUID(meta.Dir, name))
@@ -1006,7 +1027,7 @@ func HandleStopSession(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"stopped": name})
 }
 
-// HandleHaltSession stops a RUNNING session into the 停止中 (resumable) state: it
+// HandleHaltSession stops a RUNNING session into the stopped (resumable) state: it
 // kills the live tmux but KEEPS the meta visible (Archived stays false), so the row
 // stays listed and the user can resume it later (claude --resume). This is the
 // button counterpart of quitting in the terminal — distinct from /stop (which also
@@ -1035,13 +1056,13 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 		chatx.DisarmSessionReport(name)
 	}
 	if m.DriverKind() == session.DriverManaged {
-		// ★持ち越しは **DropHandle より前**（docs/log/75 P5）。保留中の Interaction は
-		// runtime handle の中にしか無く、handle を落とした瞬間に消える — 後で呼んでも
-		// ManagedAlive が false になって何も取れない。
+		// Promote the carry-over BEFORE DropHandle (docs/log/75 P5): a pending Interaction
+		// lives only inside the runtime handle and is gone the moment it is dropped —
+		// calling later finds ManagedAlive false and gets nothing.
 		PromoteCarriedFor(m)
-		// managed の halt = runtime handle を落とす（daemon は共有なので止めない）。
-		// メタは残るので row は 停止中（再開可能）になる — tui の kill-session と同じ
-		// 意味論。実行中 turn は DropHandle が abort する。
+		// halt on managed means dropping the runtime handle; the daemon is shared, so it
+		// keeps running. The meta stays, so the row reads as stopped (resumable) — the same
+		// semantics as tui's kill-session. DropHandle aborts the running turn.
 		dropManagedRuntime(m)
 		status.Remove(session.UUID(m.Dir, name))
 		m.StoppedAt = time.Now().Format(time.RFC3339)
@@ -1061,10 +1082,10 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// pane, so a later resume's autoconnect registers fresh under the current
 	// title instead of resuming the stale one (see disconnectRemoteControl).
 	disconnectRemoteControl(name, m)
-	// ★持ち越しは **ペインを殺す前**（docs/log/75 P5）。claude の保留はディスク上の
-	// pending-* なので後でも読めるが、kiro の承認パネルは**ペインの文字列にしか無い**
-	// ので kill-session の後には何も残らない。claude 側は冪等で、ここで昇格しても
-	// status.Remove（下）が持ち越しを消すことはない。
+	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5). claude's pending
+	// state is the on-disk pending-* files and can still be read later, but kiro's approval
+	// panel exists only as text in the pane and is gone after kill-session. Promoting is
+	// idempotent for claude, and the status.Remove below does not erase the carry-over.
 	PromoteCarriedFor(m)
 	// Kinds that only flush their resume state on a graceful exit (agy) get a
 	// chance to quit on their own; true = the pane already ended, skip the kill.
@@ -1102,15 +1123,16 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	// ★持ち越しは **ペインを殺す前**（docs/log/75 P5・ADR 0055 決定 12）。アーカイブも
-	// halt と同じく「保留中のモーダルを抱えたまま畳む」経路であり、cursor の ACP 要求・
-	// kiro の承認パネル・managed の Interaction はプロセスの中にしか無いので、
-	// kill-session / DropHandle の後に呼んでも何も取れない（=質問が無言で失われる）。
+	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
+	// Archiving, like halt, folds a session away while it may still hold a pending modal,
+	// and cursor's ACP request, kiro's approval panel and a managed Interaction all live
+	// only inside the process: called after kill-session / DropHandle it gets nothing, and
+	// the question is lost silently.
 	PromoteCarriedFor(m)
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
-	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
+	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	m.Archived = true
@@ -1171,28 +1193,28 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	}
 	// Archive the old identity: kill its tmux, clear the live status cache, hide it from
 	// the active list. Keep the meta + jsonl (and any captured resume id) so it restores.
-	// ★持ち越しは **ペインを殺す前**（docs/log/75 P5・ADR 0055 決定 12）。作り直しは古い
-	// セッションを畳む操作でもあり、保留中の質問 / 承認要求は kill-session /
-	// DropHandle の後には残っていない — 後で呼んでも何も取れない。
+	// Promote the carry-over BEFORE killing the pane (docs/log/75 P5, ADR 0055 decision 12).
+	// Recreating also folds the old session away, and a pending question / approval request
+	// does not survive kill-session / DropHandle — calling later gets nothing.
 	PromoteCarriedFor(m)
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		_ = tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).Run()
 	}
-	dropManagedRuntime(m) // managed: pane の代わりに runtime handle を落とす
+	dropManagedRuntime(m) // managed: drop the runtime handle instead of a pane
 	status.Remove(session.UUID(m.Dir, m.Name))
 	status.RemoveExit(m.Name)
 	m.Archived = true
 	session.WriteMeta(m)
 
 	// Fresh identity, same slot. No ForkFrom — recreate means "start empty", not
-	// "re-copy the fork source". Driver は引き継ぐ（managed で作った枠は managed の
-	// まま作り直す — docs/log/27 P2）。
+	// "re-copy the fork source". The driver is inherited: a slot created managed is
+	// recreated managed (docs/log/27 P2).
 	newMeta := session.Meta{
 		Name: allocSessionName(m.Dir), Dir: m.Dir, Subdir: m.Subdir, Model: m.Model, Effort: m.Effort, Mode: m.Mode,
 		Kind: m.Kind, Driver: m.Driver, SkipPermissions: m.SkipPermissions,
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
-		// recreate は「同じ枠を空で作り直す」なので出自は引き継ぐ（ADR 0029 §6）。
+		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
 		Origin: session.OriginOf(m), OriginConv: m.OriginConv,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
@@ -1201,7 +1223,8 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 	if newMeta.DriverKind() == session.DriverManaged {
 		d, ok := driverOf(newMeta)
 		if !ok {
-			// fork と同じ扱い: driver 不在で起動を黙って飛ばすと alive=true の偽装になる。
+			// Same as fork: silently skipping the launch when the driver is missing would
+			// fake alive=true.
 			m.Archived = false
 			session.WriteMeta(m)
 			httpx.WriteErr(w, http.StatusNotImplemented, "driver_unavailable",

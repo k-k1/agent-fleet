@@ -11,27 +11,27 @@ const sk = (name: string, description = "", type: SessionSkill["type"] = "skill"
 });
 
 describe("slashTokenAt", () => {
-  it("先頭トリガの 1 トークン内でだけ生きる", () => {
+  it("is alive only inside the single token following the leading trigger", () => {
     expect(slashTokenAt("/", 1)).toEqual({ token: "", start: 0, end: 1 });
     expect(slashTokenAt("/pro", 4)).toEqual({ token: "pro", start: 0, end: 4 });
     expect(slashTokenAt("/pro arg", 3)).toEqual({ token: "pro", start: 0, end: 4 });
   });
-  it("対象外は null（非先頭・空文字・トリガより左）", () => {
+  it("returns null out of scope: not at the head, empty text, caret left of the trigger", () => {
     expect(slashTokenAt("", 0)).toBeNull();
     expect(slashTokenAt("hello /x", 8)).toBeNull();
-    expect(slashTokenAt("/pro", 0)).toBeNull(); // キャレットがトリガより左
+    expect(slashTokenAt("/pro", 0)).toBeNull(); // caret is left of the trigger
   });
-  it("引数を書いている間は args=true の受動トークン（トークン範囲は先頭のまま）", () => {
+  it("gives a passive token with args=true while arguments are typed (the range stays the head token)", () => {
     expect(slashTokenAt("/pro arg", 6)).toEqual({ token: "pro", start: 0, end: 4, args: true });
     expect(slashTokenAt("/pro ", 5)).toEqual({ token: "pro", start: 0, end: 4, args: true });
-    expect(slashTokenAt("/pro\narg", 6)).toEqual({ token: "pro", start: 0, end: 4, args: true }); // 改行後も同じ
+    expect(slashTokenAt("/pro\narg", 6)).toEqual({ token: "pro", start: 0, end: 4, args: true }); // same after a newline
   });
-  it("トリガ文字は kind 依存（codex の $ メンション）", () => {
+  it("uses a kind-dependent trigger character (codex's $ mention)", () => {
     expect(slashTokenAt("$ima", 4, "$")).toEqual({ token: "ima", start: 0, end: 4 });
     expect(slashTokenAt("/ima", 4, "$")).toBeNull();
-    expect(slashTokenAt("$ima", 4, "")).toBeNull(); // トリガ無し kind は開かない
+    expect(slashTokenAt("$ima", 4, "")).toBeNull(); // a kind with no trigger never opens
   });
-  it("全角エイリアス（JP IME の ／・＄）でも開く", () => {
+  it("also opens on the full-width aliases a Japanese IME types (／ and ＄)", () => {
     expect(slashTokenAt("／pro", 4, "/")).toEqual({ token: "pro", start: 0, end: 4 });
     expect(slashTokenAt("＄ima", 4, "$")).toEqual({ token: "ima", start: 0, end: 4 });
     expect(hasTriggerHead("／pro", "/")).toBe(true);
@@ -40,28 +40,28 @@ describe("slashTokenAt", () => {
 });
 
 describe("pickerTokenAt", () => {
-  it("allowBare=false は slashTokenAt と同じ（トリガ必須）", () => {
+  it("allowBare=false behaves exactly like slashTokenAt (trigger required)", () => {
     expect(pickerTokenAt("pro", 3, "/")).toBeNull();
     expect(pickerTokenAt("/pro", 4, "/")).toEqual({ token: "pro", start: 0, end: 4 });
   });
-  it("allowBare=true（ボタン起点）はトリガ無しの先頭トークンも拾う", () => {
+  it("allowBare=true (button-initiated) also picks up a leading token with no trigger", () => {
     expect(pickerTokenAt("pro", 3, "/", true)).toEqual({ token: "pro", start: 0, end: 3, bare: true });
     expect(pickerTokenAt("", 0, "/", true)).toEqual({ token: "", start: 0, end: 0, bare: true });
-    // トリガ無し kind（kiro/copilot/agy — ボタンだけが入口）でも絞り込める
+    // Filtering also works for a kind with no trigger (kiro/copilot/agy - the button is the only way in)
     expect(pickerTokenAt("dep", 3, "", true)).toEqual({ token: "dep", start: 0, end: 3, bare: true });
   });
-  it("bare の 2 語目以降＝引数を書いている間は null（全件のまま）", () => {
+  it("returns null past the first bare word, i.e. while arguments are typed, leaving everything listed", () => {
     expect(pickerTokenAt("メモ 書き", 4, "/", true)).toBeNull();
     expect(pickerTokenAt("pro arg", 7, "/", true)).toBeNull();
   });
-  it("トリガ付きの下書きの判断は slashTokenAt に従う（引数位置なら args トークン）", () => {
+  it("defers to slashTokenAt for a draft with a trigger (an args token at the argument position)", () => {
     expect(pickerTokenAt("/pro arg", 6, "/", true)).toEqual({ token: "pro", start: 0, end: 4, args: true });
     expect(pickerTokenAt("/pro arg", 6, "/")).toEqual({ token: "pro", start: 0, end: 4, args: true });
   });
 });
 
 describe("originKind", () => {
-  it("出所規約 dir → kind（.agents は共有 = null）", () => {
+  it("maps the origin convention dir to a kind (.agents is shared = null)", () => {
     expect(originKind(".claude")).toBe("claude");
     expect(originKind(".codex")).toBe("codex");
     expect(originKind(".agents")).toBeNull();
@@ -71,15 +71,15 @@ describe("originKind", () => {
 
 describe("filterSkills", () => {
   const skills = [sk("handoff", "引き継ぎ"), sk("proofread", "原稿の整備"), sk("review", "proof をレビュー")];
-  it("空クエリは全件そのまま", () => {
+  it("returns everything unchanged for an empty query", () => {
     expect(filterSkills(skills, "")).toEqual(skills);
   });
-  it("前方一致 > 名前部分一致 > 説明一致の順", () => {
+  it("orders by prefix match > name substring > description match", () => {
     const got = filterSkills(skills, "proof").map((s) => s.name);
     expect(got).toEqual(["proofread", "review"]);
     expect(filterSkills(skills, "OOF").map((s) => s.name)).toEqual(["proofread", "review"]);
   });
-  it("どこにも当たらなければ落とす", () => {
+  it("drops entries that match nowhere", () => {
     expect(filterSkills(skills, "zzz")).toEqual([]);
   });
 });
@@ -87,11 +87,11 @@ describe("filterSkills", () => {
 describe("exactSkills", () => {
   const foreign: SessionSkill = { name: "shared", source: "project", type: "skill", path: ".agents/shared/SKILL.md" };
   const skills = [sk("handoff", "引き継ぎ"), sk("hand", "別物"), foreign];
-  it("名前が完全一致するネイティブ項目だけ（引数ヒント参照用の 1 件）", () => {
+  it("keeps only the exactly named native item (the one whose argument hint is shown)", () => {
     expect(exactSkills(skills, "handoff").map((s) => s.name)).toEqual(["handoff"]);
     expect(exactSkills(skills, "HANDOFF").map((s) => s.name)).toEqual(["handoff"]);
   });
-  it("部分一致・空クエリ・foreign（invoke 無し）は出さない", () => {
+  it("lists nothing for a partial match, an empty query, or a foreign item with no invoke", () => {
     expect(exactSkills(skills, "hando")).toEqual([]);
     expect(exactSkills(skills, "")).toEqual([]);
     expect(exactSkills(skills, "shared")).toEqual([]);
@@ -99,36 +99,37 @@ describe("exactSkills", () => {
 });
 
 describe("applySkillToDraft", () => {
-  it("入力中のトークンを置換し、既存引数は残す", () => {
+  it("replaces the token being typed and keeps the existing arguments", () => {
     expect(applySkillToDraft("/pro", 4, "/proofread ")).toEqual({ next: "/proofread ", caret: 11 });
     expect(applySkillToDraft("/pro Ph1 01", 4, "/proofread ")).toEqual({
       next: "/proofread Ph1 01",
       caret: 11,
     });
   });
-  it("ボタン起点（トークン外）は下書きを引数として先頭に差し込む", () => {
+  it("button-initiated (outside a token) inserts at the head and keeps the draft as arguments", () => {
     expect(applySkillToDraft("", 0, "/handoff ")).toEqual({ next: "/handoff ", caret: 9 });
     expect(applySkillToDraft("メモ書き", 2, "/handoff ")).toEqual({ next: "/handoff メモ書き", caret: 9 });
-    // 既にトリガで始まる下書きは重ねない（コマンドだけ置き換え・引数は残す）
+    // A draft that already starts with the trigger is not stacked: only the command is replaced,
+    // the arguments stay
     expect(applySkillToDraft("/old args", 9, "/handoff ")).toEqual({ next: "/handoff args", caret: 9 });
   });
-  it("allowBare（ボタン起点で絞り込み中）は、クエリに使った先頭トークンを置換する", () => {
-    // "hand" は候補を絞るために打った文字なので引数に残さない
+  it("allowBare (filtering after opening from the button) replaces the leading token used as the query", () => {
+    // "hand" was typed to narrow the list, so it must not be left behind as an argument
     expect(applySkillToDraft("hand", 4, "/handoff ", "/", true)).toEqual({ next: "/handoff ", caret: 9 });
-    // 2 語目以降は引数扱い（絞り込みに使っていない）ので丸ごと残す
+    // The second word onwards is an argument (it never filtered anything), so keep it whole
     expect(applySkillToDraft("メモ 書き", 5, "/handoff ", "/", true)).toEqual({
       next: "/handoff メモ 書き",
       caret: 9,
     });
   });
-  it("codex の $ メンションでも同じ組み立て", () => {
+  it("builds the same way for codex's $ mention", () => {
     expect(applySkillToDraft("$ima", 4, "$imagegen ", "$")).toEqual({ next: "$imagegen ", caret: 10 });
     expect(applySkillToDraft("ロゴを作って", 3, "$imagegen ", "$")).toEqual({
       next: "$imagegen ロゴを作って",
       caret: 10,
     });
   });
-  it("全角トリガの入力は正しい半角起動形へ置換される", () => {
+  it("replaces a full-width trigger with the correct half-width invocation", () => {
     expect(applySkillToDraft("／pro", 4, "/proofread ")).toEqual({ next: "/proofread ", caret: 11 });
     expect(applySkillToDraft("＄ima", 4, "$imagegen ", "$")).toEqual({ next: "$imagegen ", caret: 10 });
   });

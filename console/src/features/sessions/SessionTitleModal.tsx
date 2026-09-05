@@ -1,4 +1,4 @@
-// SessionTitleModal — manual title edit (⋯ → タイトルを変更). "AIに提案" fetches a
+// SessionTitleModal — manual title edit (⋯ → "rename"). "Suggest with AI" fetches a
 // candidate via the preview-only /title/suggest endpoint and shows it as a
 // proposal the user applies explicitly — it never clobbers what they typed.
 // The suggest button only renders for kinds with a transcript (claude/codex/
@@ -23,8 +23,9 @@ interface SessionTitleModalProps {
 }
 
 export function SessionTitleModal({ name, kind, title, onClose, onSaved }: SessionTitleModalProps) {
-  // 転写を持たない kind では提案できない（能力）。加えて 設定 > AI補助
-  // 「セッションのタイトル提案」がオフならボタンごと出さない（意思）。
+  // A kind without a transcript cannot be suggested for (capability), and with
+  // Settings > AI assistance > "session title suggestions" off the button is not rendered
+  // at all (intent).
   const titleSuggest = useSettings().autoTitleSuggest;
   const canSuggest = agentOf(kind).caps.transcript && titleSuggest;
   const [value, setValue] = useState(title);
@@ -91,7 +92,7 @@ export function SessionTitleModal({ name, kind, title, onClose, onSaved }: Sessi
         </label>
         {canSuggest && (
           <div>
-            {/* AI 提案アイコンは BranchRenameModal / ミラーの✨と同じ sparkle に統一 */}
+            {/* Same sparkle icon for an AI suggestion as BranchRenameModal and the mirror */}
             <Button icon={suggesting ? "loading" : "sparkle"} onClick={suggest} disabled={busy}>
               {tr("sx.ai_suggest")}
             </Button>

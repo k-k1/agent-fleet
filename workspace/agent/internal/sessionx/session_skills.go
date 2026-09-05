@@ -14,38 +14,38 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// セッション単位のスキル一覧（docs/log/50 / ADR0034、v2 でクロスエージェント化）:
-// ミラービューのスキルピッカーが「いま話しているセッション」で呼べる起動可能な
-// スキル/コマンドを列挙する。kind ごとにソースと起動形が違う（全て 2026-07-28 実測、
-// docs/log/50 §7）:
-//   - claude:   .claude/skills + .claude/commands（project = meta.Dir / user = claude.ConfigDir()）→ "/name"
-//   - codex:    .codex/skills（project）+ $CODEX_HOME/skills（user・同梱 .system は cli 扱い）→ "$name" メンション
-//   - opencode: .opencode/command(s)（project）+ ~/.config/opencode/command(s)（user）→ "/name"
-//   - cursor:   ACP 広告リスト（builtin skill ＋ global ＋ project 全部入り）が正。
-//               runtime 不在時は project の .cursor/commands + .cursor/skills へフォールバック → "/name"
-// さらに全 chat kind へ、他規約の SKILL.md ツリーを **foreign（クロススキル注入 — §8）**
-// として足す: CLI が自力で発見しないスキルも「Path を読んで指示に従え」プロンプトで
-// 実行できる（ファイル無書込・kind/ドライバ不問）。shell/ssm は空。
-// 読み取り専用・都度走査（ピッカーを開いた時に 1 回呼ぶだけなのでキャッシュ不要）。
+// Per-session skill list (docs/log/50 / ADR0034, made cross-agent in v2): what the mirror view's
+// skill picker can offer for the session the user is talking to right now. Source and invocation
+// form differ per kind (all measured 2026-07-28, docs/log/50 §7):
+//   - claude:   .claude/skills + .claude/commands (project = meta.Dir / user = claude.ConfigDir()) → "/name"
+//   - codex:    .codex/skills (project) + $CODEX_HOME/skills (user; the bundled .system counts as cli) → "$name" mention
+//   - opencode: .opencode/command(s) (project) + ~/.config/opencode/command(s) (user) → "/name"
+//   - cursor:   the ACP advertised list (builtin skills + global + project, all of it) is authoritative.
+//               With no runtime, fall back to the project's .cursor/commands + .cursor/skills → "/name"
+// On top of that, every chat kind also gets the other conventions' SKILL.md trees as foreign
+// entries (cross-skill injection — §8): a skill the CLI does not discover by itself can still be
+// run through a "read Path and follow its instructions" prompt, which writes no files and cares
+// about neither kind nor driver. shell/ssm come back empty.
+// Read-only and rescanned each time — the picker calls this once on open, so no cache.
 
 type sessionSkill struct {
-	Name         string `json:"name"` // 起動名（"/" や "$" のプレフィックスは含まない）
+	Name         string `json:"name"` // invocation name (without the "/" or "$" prefix)
 	Description  string `json:"description,omitempty"`
-	ArgumentHint string `json:"argumentHint,omitempty"` // frontmatter argument-hint（あれば）
-	Source       string `json:"source"`                 // project | user | cli（同梱/CLI 広告）
+	ArgumentHint string `json:"argumentHint,omitempty"` // frontmatter argument-hint, when present
+	Source       string `json:"source"`                 // project | user | cli (bundled / CLI-advertised)
 	Type         string `json:"type"`                   // skill | command
-	// ネイティブ起動: コンポーザーへ差し込む起動文字列（末尾空白込み。"/name " / "$name "）。
-	// foreign エントリ（下記）では空。
+	// Native invocation: the string to drop into the composer, trailing space included
+	// ("/name " / "$name "). Empty on foreign entries (below).
 	Invoke string `json:"invoke,omitempty"`
-	// クロススキル注入（docs/log/50 §8）: この kind の CLI が自力では発見しない他規約の
-	// スキル。Path は repo 相対の SKILL.md、Origin は規約ディレクトリ（".claude" 等）。
-	// Console はこれを「Path を読んで指示に従え」というプロンプトに組んで差し込む —
-	// ただの指示文なので kind もドライバも選ばない。
+	// Cross-skill injection (docs/log/50 §8): a skill from another convention that this kind's
+	// CLI does not discover by itself. Path is the repo-relative SKILL.md, Origin the convention
+	// directory (".claude" and friends). The Console turns these into a "read Path and follow its
+	// instructions" prompt, which is plain text and so works for any kind and any driver.
 	Path   string `json:"path,omitempty"`
 	Origin string `json:"origin,omitempty"`
 }
 
-const maxSessionSkills = 200 // 全体の上限（repo_prompts の maxPromptItems と同じ発想の安全弁）
+const maxSessionSkills = 200 // overall cap, the same safety valve as repo_prompts' maxPromptItems
 
 func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
@@ -58,9 +58,9 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
-	// ネイティブ列挙（kind の CLI が自力で発見・起動できるもの）に加え、他規約の
-	// SKILL.md ツリーを foreign（注入方式 — §8）として足す。shell/ssm はチャットが
-	// 無いので空。Console 側の caps ゲートが第一防壁。
+	// Native enumeration (what the kind's own CLI can discover and invoke) plus the other
+	// conventions' SKILL.md trees as foreign entries (the injection route — §8). shell/ssm have
+	// no chat, so they come back empty; the Console's caps gate is the first line of defence.
 	skills := []sessionSkill{}
 	var nativeConvs []string
 	switch meta.Kind {
@@ -75,7 +75,7 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	case session.KindCursor:
 		skills = cursorSkills(meta)
 	case session.KindKiro, session.KindCopilot, session.KindAgy:
-		// ネイティブ列挙なし（ユーザー起動可能な機構が未確認/未検証 — §7）。foreign 注入のみ。
+		// No native enumeration: no user-invocable mechanism confirmed yet (§7). Foreign only.
 	default:
 		httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 		return
@@ -84,13 +84,13 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
 }
 
-// foreignConvs — foreign として見に行く repo 内の SKILL.md ツリー規約（§8）。
-// commands 系（本文がプロンプトの md）は v1 対象外。
+// foreignConvs are the in-repo SKILL.md tree conventions consulted as foreign (§8). The commands
+// families (md whose body is the prompt) are out of scope for v1.
 var foreignConvs = []string{".claude/skills", ".codex/skills", ".agents/skills"}
 
-// appendForeignSkills adds skills from OTHER conventions' SKILL.md trees as
-// injection candidates（Invoke 空・Path/Origin 付き）。ネイティブと同名は
-// ネイティブ勝ち。`user-invocable: false` はここでも除外する。
+// appendForeignSkills adds skills from OTHER conventions' SKILL.md trees as injection candidates
+// (empty Invoke, Path/Origin set). A name that also exists natively keeps the native entry, and
+// `user-invocable: false` is excluded here too.
 func appendForeignSkills(native []sessionSkill, dir string, nativeConvs []string) []sessionSkill {
 	seen := map[string]bool{}
 	for _, s := range native {
@@ -153,9 +153,9 @@ type skillRoot struct {
 	form   string // skills | commands
 }
 
-// scanSkillRoots reads roots in order and dedupes by name — 先勝ち。呼び出し側は
-// 「project より user が弱い」「skill が command に勝つ」順で roots を並べる。
-// invokePrefix はその kind の起動形（"/" か "$"）。
+// scanSkillRoots reads roots in order and dedupes by name, first one wins. Callers order the
+// roots so that user ranks below project and a skill beats a command. invokePrefix is the kind's
+// invocation form ("/" or "$").
 func scanSkillRoots(roots []skillRoot, invokePrefix string) []sessionSkill {
 	out := []sessionSkill{}
 	seen := map[string]bool{}
@@ -182,8 +182,8 @@ func scanSkillRoots(roots []skillRoot, invokePrefix string) []sessionSkill {
 	return out
 }
 
-// scanSlashSkills covers claude: project（<worktree>/.claude）→ user（claude.ConfigDir()）、
-// 同一ルート内では skill 優先（claude のスラッシュ名前空間は 1 つ）。
+// scanSlashSkills covers claude: project (<worktree>/.claude) then user (claude.ConfigDir()),
+// skills before commands within one root — claude has a single slash namespace.
 func scanSlashSkills(projectBase, userBase string) []sessionSkill {
 	return scanSkillRoots([]skillRoot{
 		{filepath.Join(projectBase, "skills"), "project", "skills"},
@@ -193,14 +193,14 @@ func scanSlashSkills(projectBase, userBase string) []sessionSkill {
 	}, "/")
 }
 
-// codexSkills: SKILL.md 規約は claude 互換（0.145 実測 — frontmatter name/description、
-// $CODEX_HOME/skills が auto-discover、repo 側は .codex/skills と .agents/skills の両方
-// — `codex exec` でどちらも認識されることを実測）。同梱の .system は user ルートの直下
-// 走査には掛からない（SKILL.md がディレクトリ直下に無い）ので別ルートとして拾い、
-// source "cli" で区別する。起動は "$name" メンション（スラッシュではない — バイナリの
-// システムプロンプト実測「names an available skill (with $SkillName …)」）。
-// .codex/skills にはスキルブリッジ（docs/log/50 §8）が張った claude スキルへのリンクも
-// 含まれる — 通常ファイルと同様に os.ReadFile が辿るので特別扱い不要。
+// codexSkills: the SKILL.md convention is claude-compatible (measured on 0.145 — frontmatter
+// name/description, $CODEX_HOME/skills auto-discovered, and on the repo side both .codex/skills
+// and .agents/skills, both recognized by `codex exec`). The bundled .system does not show up in a
+// flat scan of the user root (its SKILL.md files are not directly below it), so it is picked up
+// as a root of its own and marked with source "cli". Invocation is a "$name" mention, not a slash
+// — measured in the binary's system prompt: "names an available skill (with $SkillName …)".
+// .codex/skills also holds the links the skill bridge (docs/log/50 §8) laid to claude skills;
+// os.ReadFile follows them like any other file, so they need no special case.
 func codexSkills(dir string) []sessionSkill {
 	home := paths.CodexHome()
 	return scanSkillRoots([]skillRoot{
@@ -211,10 +211,11 @@ func codexSkills(dir string) []sessionSkill {
 	}, "$")
 }
 
-// opencodeSkills: コマンド md（本文がプロンプト・frontmatter description）を列挙する。
-// ディレクトリ名は単複両方が実在する（1.18.8 バイナリ実測: .opencode/command/deploy.md と
-// .opencode/commands/ の両文字列）。.opencode/skills は model 起動用でスラッシュ起動が
-// 未検証のため対象外（docs/log/50 §7）。
+// opencodeSkills enumerates command md files (the body is the prompt, the description comes from
+// frontmatter). Both the singular and the plural directory name exist in the wild (measured in
+// the 1.18.8 binary: the strings .opencode/command/deploy.md and .opencode/commands/).
+// .opencode/skills is for model invocation and slash invocation is unverified, so it is out of
+// scope (docs/log/50 §7).
 func opencodeSkills(dir string) []sessionSkill {
 	cfg := paths.OpencodeConfigDir()
 	return scanSkillRoots([]skillRoot{
@@ -225,10 +226,10 @@ func opencodeSkills(dir string) []sessionSkill {
 	}, "/")
 }
 
-// cursorSkills: CLI 広告リスト（ACP available_commands_update — driver が
-// agents.PublishCommands で共有）が唯一の完全ソース（builtin skill ＋ global ＋
-// project の commands/skills 全部入り、2026-07-28 実測）。未着（runtime 未起動・
-// agent 再起動直後）は project の FS 規約へフォールバックする。
+// cursorSkills: the CLI's advertised list (ACP available_commands_update, shared by the driver
+// through agents.PublishCommands) is the only complete source — builtin skills, global, and the
+// project's commands/skills, all of it (measured 2026-07-28). Until it arrives (runtime not
+// started, or just after an agent restart) fall back to the project's filesystem conventions.
 func cursorSkills(meta session.Meta) []sessionSkill {
 	if adv := agents.AdvertisedCommands(meta.Name); len(adv) > 0 {
 		out := make([]sessionSkill, 0, len(adv))
@@ -253,10 +254,11 @@ func cursorSkills(meta session.Meta) []sessionSkill {
 	}, "/")
 }
 
-// readSkillEntries は <root>/*/SKILL.md を読む。frontmatter の name（無ければディレクトリ名）
-// が起動名。`user-invocable: false` のスキルはユーザーから呼べないので除外する
-// （`disable-model-invocation` は「モデルが勝手に呼ばない」の意味で、ユーザー起動は可 —
-// 除外しない。cursor 同梱 review スキル実測）。
+// readSkillEntries reads <root>/*/SKILL.md. The invocation name is the frontmatter name, or the
+// directory name when there is none. `user-invocable: false` is excluded, since the user cannot
+// call it. `disable-model-invocation` is NOT excluded: it only means the model must not reach for
+// the skill on its own, and user invocation stays allowed (measured on cursor's bundled review
+// skill).
 func readSkillEntries(root, source string) []sessionSkill {
 	ents, err := os.ReadDir(root)
 	if err != nil {
@@ -290,8 +292,9 @@ func readSkillEntries(root, source string) []sessionSkill {
 	return out
 }
 
-// readCommandEntries は <root>/**/*.md を読む。起動名はファイル名（拡張子抜き）—
-// サブディレクトリは claude では名前空間表示に使われるだけで起動名には入らない。
+// readCommandEntries reads <root>/**/*.md. The invocation name is the file name without its
+// extension: in claude a subdirectory only shows up as a namespace label and is not part of the
+// name you type.
 func readCommandEntries(root, source string) []sessionSkill {
 	out := []sessionSkill{}
 	_ = filepath.WalkDir(root, func(p string, d os.DirEntry, err error) error {
@@ -322,7 +325,7 @@ func readCommandEntries(root, source string) []sessionSkill {
 	return out
 }
 
-// isNo は frontmatter の否定値（false/no/off/0）を判定する。
+// isNo reports whether a frontmatter value is a negative one (false/no/off/0).
 func isNo(v string) bool {
 	switch strings.ToLower(strings.TrimSpace(v)) {
 	case "false", "no", "off", "0":

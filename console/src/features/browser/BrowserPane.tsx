@@ -26,7 +26,8 @@ export function BrowserPane({ paneId, port, path, headerActions }: BrowserPanePr
   const [snapshot, setSnapshot] = useState<BrowserSnapshot>(controller.snapshot);
   const [portDraft, setPortDraft] = useState(String(port));
   const [pathDraft, setPathDraft] = useState(path);
-  // port / path を別々に検証するので赤枠も別々（port の失敗でパス欄だけ赤くなる誤誘導を避ける）。
+  // port and path are validated separately, so their error outlines are separate too — a bad
+  // port must not misleadingly light up the path field.
   const [portError, setPortError] = useState(false);
   const [pathError, setPathError] = useState(false);
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -55,7 +56,8 @@ export function BrowserPane({ paneId, port, path, headerActions }: BrowserPanePr
     event.preventDefault();
     const port = Number(portDraft);
     const portOk = !!browserTarget(port, "/");
-    // パス単独の妥当性は既知の有効ポートで判定する（port が悪くてもパス欄を巻き込まない）。
+    // Judge the path alone against a known-good port, so a bad port does not drag the path
+    // field down with it.
     const pathOk = !!browserTarget(portOk ? port : 3000, pathDraft);
     setPortError(!portOk);
     setPathError(!pathOk);

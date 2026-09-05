@@ -93,9 +93,9 @@ type LoginStrings struct {
 	// ErrEmailTaken: a tenant-defined provider asserted an address that already
 	// belongs to an account on this deployment (docs/log/61 §61.11 rule 2').
 	ErrEmailTaken string
-	// The new-account notice (docs/log/61 受入条件 3). NewBody takes the email.
+	// The new-account notice. NewBody takes the email.
 	NewTitle, NewBody, NewNote, NewContinue, NewSwitch string
-	// The result page of a link flow (docs/log/61 §61.16 + 決定 37).
+	// The result page of a link flow (docs/log/61 §61.16 + decision 37).
 	LinkTitle, LinkNote, LinkBack          string
 	LinkOK, LinkTaken, LinkEmail, LinkGate string
 	LinkSession, LinkProvider, LinkFailed  string
@@ -185,7 +185,7 @@ var LoginText = map[string]LoginStrings{
 }
 
 // DefaultProviderLabel builds a button label for a provider that declared no
-// AF_OIDC_<ID>_LABEL_*: "<Id> でサインイン" / "Sign in with <Id>".
+// AF_OIDC_<ID>_LABEL_*: the localised "Sign in with <Id>" (LoginText[lang].SigninWith).
 func DefaultProviderLabel(id, lang string) string {
 	t, ok := LoginText[lang]
 	if !ok {

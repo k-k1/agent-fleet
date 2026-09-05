@@ -1,8 +1,8 @@
-// ロケール対応の相対時刻・日時・数値フォーマッタ（docs/log/28 P4 / ADR 0016）。手書きで重複していた
-// relTime(×3) と日時(×4) を Intl.* に一本化し、現ロケール（i18n の getLocale）で描画する。JS の
-// Intl は ja/en とも標準搭載。Intl オブジェクトはロケール×オプションでメモ化する（切替時は
-// getLocale() が変わり別キーで作り直す）。ロケール非依存の集約点なので、非React（WsBar 等）からも
-// そのまま呼べる。
+// Locale-aware relative-time, date-time and number formatters (docs/log/28 P4 / ADR 0016). The
+// hand-written duplicates (relTime x3, date-time x4) are folded into Intl.* and rendered in the
+// current locale (getLocale from i18n); JS ships Intl data for both ja and en. Intl objects are
+// memoized per locale x options, so a locale switch simply builds them under a new key. Nothing
+// here depends on React, so non-React callers (WsBar and friends) can use it directly.
 import { getLocale, t } from "./i18n/index.ts";
 
 const rtfCache = new Map<string, Intl.RelativeTimeFormat>();
@@ -10,7 +10,8 @@ function rtf(): Intl.RelativeTimeFormat {
   const loc = getLocale();
   let f = rtfCache.get(loc);
   if (!f) {
-    // numeric:"always" ＝「昨日/明日」等の語置換を避け、手書き版に近い "N 日前"/"N days ago" を出す。
+    // numeric:"always" avoids word substitutions like "yesterday"/"tomorrow" and keeps the
+    // "N days ago" shape the hand-written version had.
     f = new Intl.RelativeTimeFormat(loc, { numeric: "always" });
     rtfCache.set(loc, f);
   }
@@ -39,7 +40,8 @@ function nf(opts?: Intl.NumberFormatOptions): Intl.NumberFormat {
   return f;
 }
 
-// 入力を epoch ミリ秒へ。number は「ミリ秒」とみなす（unix 秒の呼び出し側は ×1000 して渡す）。
+// Normalize the input to epoch milliseconds. A number is taken as milliseconds; callers holding
+// unix seconds must multiply by 1000 themselves.
 function toMs(when: string | number | Date): number {
   if (when instanceof Date) return when.getTime();
   if (typeof when === "number") return when;
@@ -54,8 +56,9 @@ const REL_UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ["minute", 60],
 ];
 
-// relTime — 過去/未来の相対時刻。<60秒 は "たった今"/"just now"（common.just_now）、以降は
-// Intl.RelativeTimeFormat の梯子（year→minute）。負の差=過去。無効値・null/空は "" を返す。
+// relTime — relative time, past or future. Under 60 seconds renders common.just_now; beyond that
+// it walks the Intl.RelativeTimeFormat ladder (year down to minute). A negative difference is the
+// past. Invalid values, null and "" all return "".
 export function relTime(when: string | number | Date | null | undefined, now: number = Date.now()): string {
   if (when == null || when === "") return "";
   const ms = toMs(when);
@@ -68,8 +71,9 @@ export function relTime(when: string | number | Date | null | undefined, now: nu
   return t("common.just_now");
 }
 
-// 既定の日時フォーマット ＝ "M/D HH:MM"(24h) 相当。hourCycle:"h23" で 00〜23 に固定（hour12:false の
-// 深夜 24:00 表記ゆれを避ける）。粒度を変えたい呼び出しは opts を渡す（TIME_HM / DATETIME_FULL）。
+// Default date-time format, equivalent to "M/D HH:MM" (24h). hourCycle:"h23" pins the hour to
+// 00-23; hour12:false lets midnight render inconsistently as 24:00. Callers wanting another
+// granularity pass opts (TIME_HM / DATETIME_FULL).
 const DATETIME_MD: Intl.DateTimeFormatOptions = {
   month: "numeric",
   day: "numeric",
@@ -77,9 +81,9 @@ const DATETIME_MD: Intl.DateTimeFormatOptions = {
   minute: "2-digit",
   hourCycle: "h23",
 };
-// 時刻のみ "HH:MM"。
+// Time only, "HH:MM".
 export const TIME_HM: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
-// 年月日＋時分秒（旧 Date.toLocaleString 相当）。
+// Full date plus hours, minutes and seconds (what Date.toLocaleString used to give).
 export const DATETIME_FULL: Intl.DateTimeFormatOptions = {
   year: "numeric",
   month: "numeric",
@@ -90,22 +94,25 @@ export const DATETIME_FULL: Intl.DateTimeFormatOptions = {
   hourCycle: "h23",
 };
 
-// fmtDateTime — 絶対日時。無効値は文字列入力ならそのまま、それ以外は "" を返す（旧実装の挙動）。
+// fmtDateTime — absolute date-time. An invalid value is echoed back when the input was a string,
+// otherwise "" (the previous implementation's behaviour).
 export function fmtDateTime(when: string | number | Date, opts: Intl.DateTimeFormatOptions = DATETIME_MD): string {
   const ms = toMs(when);
   if (isNaN(ms)) return typeof when === "string" ? when : "";
   return dtf(opts).format(ms);
 }
 
-// fmtNum — ロケール対応の数値（桁区切り等）。既定は素の toLocaleString 相当だがアプリロケール基準。
+// fmtNum — locale-aware numbers (grouping separators and so on). The default matches plain
+// toLocaleString, except that it uses the app locale rather than the browser's.
 export function fmtNum(n: number, opts?: Intl.NumberFormatOptions): string {
   return nf(opts).format(n);
 }
 
-// compareText — 名前・キーのソート用のロケール対応文字列比較。素の a.localeCompare(b) は暗黙の
-// ブラウザ既定ロケールに依存するため、明示的にアプリロケール（getLocale）で比較する。
-// numeric:true で "repo2 < repo10"（数字を数値として）、sensitivity:"base" で大文字小文字/
-// アクセント差を無視した安定した並び。日付文字列（ISO）にも順序は変わらず安全に使える。
+// compareText — locale-aware string comparison for sorting names and keys. A bare a.localeCompare(b)
+// depends on the browser's implicit default locale, so compare in the app locale (getLocale)
+// explicitly. numeric:true gives "repo2 < repo10" (digits compared as numbers) and
+// sensitivity:"base" ignores case and accent differences for a stable order. Safe on ISO date
+// strings too — it does not change their ordering.
 export function compareText(a: string, b: string): number {
   return a.localeCompare(b, getLocale(), { numeric: true, sensitivity: "base" });
 }

@@ -19,42 +19,44 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// useTempUsageDir は台帳を一時ディレクトリへ向け、prune の節流状態も畳んでおく
-// （プロセス内グローバルなので、テスト間で持ち越すと prune が走らない/走りすぎる）。
+// useTempUsageDir points the ledger at a temp directory and clears the prune throttle state
+// (it is process-global, so carrying it across tests makes prune either not run or run too often).
 //
-// 🔥 **台帳を差し替える前に、走行中の一括折り込みを回収する。** 折り込みは goroutine で
-// 走り、書き込み先（`AF_USAGE_DIR`）を**書く瞬間に env から読む**。env はプロセス全体な
-// ので、前のテストが起動した折り込みが生き残っていると、**このテストの台帳へ書き込む**
-// ——「台帳 = 39 行, want 4」のような、そのテストの中に原因が無い赤になる。
-// 実機では 200 セッションの折り込みが数百 ms〜十数秒かかるので、待たないテストが 1 つでも
-// あると必ず漏れる（CI の HOME は空でセッションが 0 件なので、そこでだけ緑になる）。
+// Collect the running bulk fold before swapping the ledger. The fold runs in a goroutine and
+// reads its destination (`AF_USAGE_DIR`) from the env at the moment it writes; the env is
+// process-wide, so a fold an earlier test started and left alive writes into this test's ledger
+// — a red like "ledger = 39 rows, want 4" whose cause is nowhere inside that test. On a real
+// machine folding 200 sessions takes hundreds of ms to tens of seconds, so a single test that
+// does not wait is enough to leak (CI's HOME is empty and has no sessions, so it is green only
+// there).
 //
-// ここは以前 `usageFoldRunning.Store(false)` で**走行フラグを消していた**。走っている
-// goroutine は止まらないので、これは漏れを直すのではなく**漏れの痕跡を消す**（おまけに
-// 多重起動ガードも外れて 2 本目が走れる）。待つのが正しい。
+// Clearing `usageFoldRunning` instead of waiting does not fix the leak, it erases its traces —
+// the goroutine keeps running, and the double-start guard is dropped so a second one may run.
+// Waiting is the correct fix.
 func useTempUsageDir(t *testing.T) string {
 	t.Helper()
-	waitUsageFoldIdle(t) // 前のテストが起動した折り込みを、台帳を差し替える前に回収する
+	waitUsageFoldIdle(t) // collect a fold an earlier test started, before swapping the ledger
 	dir := t.TempDir()
 	t.Setenv("AF_USAGE_DIR", dir)
-	// ⚠️ この Cleanup は t.TempDir() の**後**に積む。Cleanup は LIFO なので、後に積んだ
-	// これが**一時ディレクトリの削除より先**に走る——順序が逆だと、待っている間に書き手が
-	// 消えたディレクトリへ書くことになる（memory: tempdir-cleanup-lifo-detached-writer）。
+	// Push this Cleanup after t.TempDir(). Cleanup is LIFO, so this one runs before the temp
+	// directory is removed — the other order leaves the writer writing into a directory that
+	// disappeared while we were waiting (memory: tempdir-cleanup-lifo-detached-writer).
 	t.Cleanup(func() { waitUsageFoldIdle(t) })
-	usagex.ResetPruneClock() // 移送で usageMu / usagePrunedAt が usagex の未公開状態になった
+	usagex.ResetPruneClock() // usageMu / usagePrunedAt are unexported state inside usagex
 	usageFoldGate.Lock()
 	usageFoldedAt = time.Time{}
 	usageFoldGate.Unlock()
 	return dir
 }
 
-// useIsolatedUsageDir は台帳に加えて HOME も差し替える。集計 API のテストはハンドラ経由で
-// fold-on-read を踏むので、HOME を分けないと**実ワークスペースのセッションを畳んで**
-// 期待値が実データで壊れる（実際に踏んだ — 合計が数百万トークンになった）。実 CLI を撃つ
-// ライブテストでは使えない（認証が HOME 配下にある）ので、そちらは useTempUsageDir のまま。
-// **HOME だけでは足りない**（memory: ci-runner-xdg-not-home）: 単価カタログは
-// XDG_CACHE_HOME 配下の opencode キャッシュも見るので、そこも差し替えないと
-// 開発機に置かれた実カタログで期待値が動く（＝環境を検査するテストになる）。
+// useIsolatedUsageDir swaps HOME in addition to the ledger. Aggregation API tests go through the
+// handler and hit fold-on-read, so without a separate HOME they fold the real workspace's
+// sessions and the expected values break against real data (hit for real — the total came to
+// millions of tokens). Live tests that fire the real CLI cannot use it (auth lives under HOME),
+// so those stay on useTempUsageDir. HOME alone is not enough (memory: ci-runner-xdg-not-home):
+// the price catalog also reads the opencode cache under XDG_CACHE_HOME, so unless that is swapped
+// too the expected values move with the real catalog on the dev machine (i.e. the test ends up
+// inspecting the environment).
 func useIsolatedUsageDir(t *testing.T) string {
 	t.Helper()
 	dir := useTempUsageDir(t)
@@ -65,8 +67,8 @@ func useIsolatedUsageDir(t *testing.T) string {
 	return dir
 }
 
-// resetUsageCatalogCache はプロセス内キャッシュを捨てる（前のテストのカタログが
-// 次のテストへ漏れない）。前後どちらでも効くように Cleanup にも積む。
+// resetUsageCatalogCache drops the in-process cache so an earlier test's catalog does not leak
+// into the next one. Also registered as a Cleanup so it takes effect on both sides.
 func resetUsageCatalogCache(t *testing.T) {
 	t.Helper()
 	clear := func() {
@@ -102,9 +104,10 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 
 	rows := usagex.ReadRows()
 	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2 (model 毎に1行)", len(rows))
+		t.Fatalf("rows = %d, want 2 (one row per model)", len(rows))
 	}
-	// 1呼び出しが複数モデルに割れても呼び出しは1回 — call が束ねる（集計の calls は distinct call）。
+	// One call split across several models is still one call — the call id ties the rows together
+	// (the aggregate's calls counts distinct calls).
 	if rows[0].Call != rows[1].Call || rows[0].Call == "" {
 		t.Fatalf("call ids = %q / %q, want the same non-empty id", rows[0].Call, rows[1].Call)
 	}
@@ -115,7 +118,7 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	if h.ModelSrc != usagex.ModelReported || h.ModelReq != "haiku" {
 		t.Fatalf("model_src = %q, model_req = %q", h.ModelSrc, h.ModelReq)
 	}
-	// spend = in + ccreate + out（cache_read を含めない）
+	// spend = in + ccreate + out (cache_read excluded)
 	if want := 2 + 4186 + 5; h.Spend != want {
 		t.Fatalf("spend = %d, want %d", h.Spend, want)
 	}
@@ -127,8 +130,9 @@ func TestRecordUsageCallSplitsClaudeModelRows(t *testing.T) {
 	}
 }
 
-// モデルを報告しない CLI は requested / default_unknown へ縮退する。既定モデル
-// （通常フラッグシップ）で補助呼び出しが走っている状態を1列で見えるようにするのが狙い。
+// A CLI that does not report its model degrades to requested / default_unknown. The point is to
+// make it visible in a single column when helper calls run on the default model (usually the
+// flagship).
 func TestRecordUsageCallModelFallback(t *testing.T) {
 	useTempUsageDir(t)
 	for _, tc := range []struct {
@@ -138,8 +142,8 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 		wantSrc    string
 		wantMeasrd string
 	}{
-		{"要求値あり", "gpt-5.4-mini", "gpt-5.4-mini", usagex.ModelRequest, usagex.MeasuredExact},
-		{"CLI 既定に委ねた", "", "", usagex.ModelUnknown, usagex.MeasuredExact},
+		{"requested value given", "gpt-5.4-mini", "gpt-5.4-mini", usagex.ModelRequest, usagex.MeasuredExact},
+		{"left to the CLI default", "", "", usagex.ModelUnknown, usagex.MeasuredExact},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := useTempUsageDir(t)
@@ -154,7 +158,7 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 			if r.Model != tc.wantModel || r.ModelSrc != tc.wantSrc || r.Measured != tc.wantMeasrd {
 				t.Fatalf("row = %+v", r)
 			}
-			// タグの無い呼び出しでも必ず1行残る（無記録＝見えない消費を作らない）。
+			// A call with no tag still leaves one row (nothing unrecorded, i.e. no invisible spend).
 			if r.Feature != usagex.FeatureUnknown {
 				t.Fatalf("feature = %q, want %q", r.Feature, usagex.FeatureUnknown)
 			}
@@ -165,7 +169,8 @@ func TestRecordUsageCallModelFallback(t *testing.T) {
 	}
 }
 
-// トークンを報告しない CLI の 0 は「消費 0」ではない — measured=none で回数だけ数える。
+// A zero from a CLI that does not report tokens is not "spent 0" — measured=none counts only the
+// number of calls.
 func TestRecordUsageCallUnmeasuredCountsTheCall(t *testing.T) {
 	useTempUsageDir(t)
 	call := usagex.Call{Kind: session.KindAgy, Measured: usagex.MeasuredNone, OK: true}
@@ -176,10 +181,11 @@ func TestRecordUsageCallUnmeasuredCountsTheCall(t *testing.T) {
 	}
 }
 
-// 失敗したターンも記録する（ok=false）。エラーで消えると「撃ったのに見えない」が生まれる。
+// Failed turns are recorded too (ok=false). Dropping them on error creates spend that was fired
+// but is invisible.
 func TestRecordUsageCallRecordsFailures(t *testing.T) {
 	useTempUsageDir(t)
-	call := usagex.Call{Kind: session.KindClaude, ModelReq: "haiku"} // OK は false のまま
+	call := usagex.Call{Kind: session.KindClaude, ModelReq: "haiku"} // OK stays false
 	usagex.RecordCall(context.Background(), &call, time.Now())
 	rows := usagex.ReadRows()
 	if len(rows) != 1 || rows[0].OK {
@@ -214,16 +220,16 @@ func TestPruneUsageRawDropsExpiredDays(t *testing.T) {
 	}
 	usagex.PruneRawNow()
 	if _, err := os.Stat(filepath.Join(raw, old)); !os.IsNotExist(err) {
-		t.Fatalf("保持期間を過ぎた %s が残っている", old)
+		t.Fatalf("%s is past the retention window but is still there", old)
 	}
 	for _, keep := range []string{recent, "notes.txt"} {
 		if _, err := os.Stat(filepath.Join(raw, keep)); err != nil {
-			t.Fatalf("%s を消してしまった: %v", keep, err)
+			t.Fatalf("%s was deleted: %v", keep, err)
 		}
 	}
 }
 
-// ---- 折り込み（foldTurnRows）----
+// ---- folding (foldTurnRows) ----
 
 func asst(model string, in, out, read, create int, sidechain bool) transcript.Turn {
 	return transcript.Turn{
@@ -233,37 +239,37 @@ func asst(model string, in, out, read, create int, sidechain bool) transcript.Tu
 }
 
 func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
-	// 同じイベント列を台帳と get_session_usage の両方に通し、spend の合計が一致することを
-	// 見る（二つの画面で数字が食い違わないための回帰）。
+	// Run the same event stream through both the ledger and get_session_usage and check the spend
+	// totals agree (regression against the two views showing different numbers).
 	turns := []transcript.Turn{
 		{Role: "user", Text: "1"},
 		asst("claude-haiku-4-5", 100, 10, 5, 20, false),
-		asst("claude-haiku-4-5", 150, 30, 5, 25, false), // 同一論理ターンの2イベント目
+		asst("claude-haiku-4-5", 150, 30, 5, 25, false), // second event of the same logical turn
 		{Role: "user", Text: "2", Source: sessionx.TurnSourceOperator},
 		asst("claude-haiku-4-5", 200, 40, 10, 0, false),
-		asst("claude-haiku-4-5", 300, 60, 0, 0, true), // サブエージェント（別グループ）
+		asst("claude-haiku-4-5", 300, 60, 0, 0, true), // subagent (separate group)
 		{Role: "user", Text: "3"},
-		asst("claude-haiku-4-5", 400, 80, 0, 0, false), // 末尾＝開いたまま
+		asst("claude-haiku-4-5", 400, 80, 0, 0, false), // trailing turn, still open
 	}
 	rows := foldTurnRows(turns, false)
 	if len(rows) != 3 {
-		t.Fatalf("rows = %d, want 3（末尾の開いたターンは含めない）", len(rows))
+		t.Fatalf("rows = %d, want 3 (the open trailing turn is not included)", len(rows))
 	}
-	// 入力は置換・出力は加算（aggregateUsage と同じ流儀）。
+	// Input replaces, output accumulates (the same rule as aggregateUsage).
 	if rows[0].Tokens.In != 150 || rows[0].Tokens.Out != 40 || rows[0].Tokens.CacheCreate != 25 {
 		t.Fatalf("row0 = %+v", rows[0])
 	}
 	if !rows[2].Sidechain {
-		t.Fatalf("サブエージェントのターンが sidechain で割れていない: %+v", rows[2])
+		t.Fatalf("the subagent turn was not split off as sidechain: %+v", rows[2])
 	}
 	if rows[1].Trigger != usagex.TriggerOperator {
 		t.Fatalf("trigger = %q, want %q", rows[1].Trigger, usagex.TriggerOperator)
 	}
 	if rows[0].Idx != 1 || rows[1].Idx != 2 || rows[2].Idx != 3 {
-		t.Fatalf("idx が通し番号でない: %+v", rows)
+		t.Fatalf("idx is not a running number: %+v", rows)
 	}
 
-	// 末尾まで含めれば cumulative（get_session_usage）の spend と一致する。
+	// Including the trailing turn, the total matches cumulative (get_session_usage) spend.
 	all := foldTurnRows(turns, true)
 	sum := 0
 	for _, r := range all {
@@ -271,14 +277,14 @@ func TestFoldTurnRowsMatchesAggregateUsage(t *testing.T) {
 	}
 	want := sessionx.AggregateUsage(turns).Cumulative.Spend
 	if sum != want {
-		t.Fatalf("台帳 spend 合計 = %d, get_session_usage = %d", sum, want)
+		t.Fatalf("ledger spend total = %d, get_session_usage = %d", sum, want)
 	}
 	if len(all) != sessionx.AggregateUsage(turns).Cumulative.Turns {
-		t.Fatalf("論理ターン数 = %d, get_session_usage = %d", len(all), sessionx.AggregateUsage(turns).Cumulative.Turns)
+		t.Fatalf("logical turns = %d, get_session_usage = %d", len(all), sessionx.AggregateUsage(turns).Cumulative.Turns)
 	}
 }
 
-// 折り込みは (session, idx) で冪等 — 同じ転写を何度読んでも行は増えない。
+// Folding is idempotent on (session, idx) — re-reading the same transcript adds no rows.
 func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 	useTempUsageDir(t)
 	turns := []transcript.Turn{
@@ -287,7 +293,7 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 		{Role: "user", Text: "2"},
 		asst("claude-haiku-4-5", 200, 20, 0, 0, false),
 		{Role: "user", Text: "3"},
-		asst("claude-haiku-4-5", 300, 30, 0, 0, false), // 開いたまま
+		asst("claude-haiku-4-5", 300, 30, 0, 0, false), // still open
 	}
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude, Origin: session.OriginOperator, OriginConv: "a1b2c3d"}
 	fold := func(includeTrailing bool) int {
@@ -297,33 +303,33 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 		st := readUsageFoldState()
 		n, err := foldSessionUsageWithTurns(m, &st, turns, includeTrailing)
 		if err != nil {
-			t.Fatalf("折り込みに失敗: %v", err)
+			t.Fatalf("fold failed: %v", err)
 		}
 		if err := writeUsageFoldState(st); err != nil {
-			t.Fatalf("watermark の書き込みに失敗: %v", err)
+			t.Fatalf("writing the watermark failed: %v", err)
 		}
 		return n
 	}
 	if n := fold(false); n != 2 {
-		t.Fatalf("初回 = %d 行, want 2（末尾は開いている）", n)
+		t.Fatalf("first pass = %d rows, want 2 (the trailing turn is open)", n)
 	}
 	if n := fold(false); n != 0 {
-		t.Fatalf("再読み込みで %d 行増えた（冪等でない）", n)
+		t.Fatalf("re-reading added %d rows (not idempotent)", n)
 	}
-	// 末尾ターンが閉じた（＝新しいユーザーターンが来た）
+	// The trailing turn closed (a new user turn arrived).
 	turns = append(turns, transcript.Turn{Role: "user", Text: "4"})
 	if n := fold(false); n != 1 {
-		t.Fatalf("閉じた末尾ターンの折り込み = %d 行, want 1", n)
+		t.Fatalf("fold of the closed trailing turn = %d rows, want 1", n)
 	}
 	rows := usagex.ReadRows()
 	if len(rows) != 3 {
-		t.Fatalf("台帳 = %d 行, want 3", len(rows))
+		t.Fatalf("ledger = %d rows, want 3", len(rows))
 	}
 	for i, r := range rows {
 		if r.Feature != usagex.FeatureSession || r.Ref != "slot01" || r.Idx != i+1 {
 			t.Fatalf("row%d = %+v", i, r)
 		}
-		// 出自は行へ焼き込む（セッションが消えても集計が壊れない）。
+		// Origin is baked into the row so aggregation survives the session disappearing.
 		if r.Origin != session.OriginOperator || r.OriginConv != "a1b2c3d" {
 			t.Fatalf("row%d origin = %q/%q", i, r.Origin, r.OriginConv)
 		}
@@ -333,14 +339,14 @@ func TestFoldSessionUsageIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestFoldMatchesSessionUsageLive は実ワークスペースの実転写で、台帳へ折り込んだ合計が
-// get_session_usage の cumulative と一致することを見る opt-in テスト（docs/log/46 P2 完了条件）。
-// 合成ターンの単体テストでは、各 kind の実パーサが吐く形（sidechain の付き方・イベントの
-// 刻み方）まではカバーできない。
-// 実行例: AF_USAGE_FOLD_LIVE=1 go test -run TestFoldMatchesSessionUsageLive -v .
+// TestFoldMatchesSessionUsageLive checks against the real transcripts of a real workspace that
+// the total folded into the ledger matches get_session_usage's cumulative (opt-in; docs/log/46
+// P2 completion criterion). Unit tests over synthetic turns cannot cover the shapes each kind's
+// real parser emits (how sidechain is attached, how events are chunked).
+// Example run: AF_USAGE_FOLD_LIVE=1 go test -run TestFoldMatchesSessionUsageLive -v .
 func TestFoldMatchesSessionUsageLive(t *testing.T) {
 	if os.Getenv("AF_USAGE_FOLD_LIVE") != "1" {
-		t.Skip("AF_USAGE_FOLD_LIVE=1 で実転写との突合を有効化")
+		t.Skip("set AF_USAGE_FOLD_LIVE=1 to enable the check against real transcripts")
 	}
 	useTempUsageDir(t)
 	checked := 0
@@ -352,7 +358,8 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 		if len(turns) == 0 {
 			continue
 		}
-		// 末尾まで含めた折り込み＝転写全体。cumulative と同じ範囲を見ていることになる。
+		// Folding with the trailing turn included covers the whole transcript, the same range as
+		// cumulative.
 		rows := foldTurnRows(turns, true)
 		sum := 0
 		for _, r := range rows {
@@ -360,36 +367,37 @@ func TestFoldMatchesSessionUsageLive(t *testing.T) {
 		}
 		cum := sessionx.AggregateUsage(turns).Cumulative
 		if sum != cum.Spend || len(rows) != cum.Turns {
-			t.Errorf("%s(%s): 台帳 spend=%d turns=%d / get_session_usage spend=%d turns=%d",
+			t.Errorf("%s(%s): ledger spend=%d turns=%d / get_session_usage spend=%d turns=%d",
 				m.Name, m.Kind, sum, len(rows), cum.Spend, cum.Turns)
 			continue
 		}
 		checked++
-		t.Logf("%s(%s): turns=%d spend=%d 一致", m.Name, m.Kind, len(rows), cum.Spend)
+		t.Logf("%s(%s): turns=%d spend=%d match", m.Name, m.Kind, len(rows), cum.Spend)
 	}
 	if checked == 0 {
-		t.Skip("転写を持つセッションがこのワークスペースに無い")
+		t.Skip("no session in this workspace has a transcript")
 	}
-	t.Logf("%d セッションで突合一致", checked)
+	t.Logf("matched on %d sessions", checked)
 
-	// 実データでのバックフィルと冪等性: 1回目で過去分がまとめて入り、2回目は増えない。
+	// Backfill and idempotence on real data: the first pass takes the whole history in, the
+	// second adds nothing.
 	n1 := foldAllSessionUsage()
 	rows := usagex.ReadRows()
 	if n1 == 0 || len(rows) != n1 {
-		t.Fatalf("初回バックフィル = %d 行 / 台帳 %d 行", n1, len(rows))
+		t.Fatalf("first backfill = %d rows / ledger %d rows", n1, len(rows))
 	}
 	if n2 := foldAllSessionUsage(); n2 != 0 {
-		t.Fatalf("2回目で %d 行増えた（watermark が効いていない）", n2)
+		t.Fatalf("the second pass added %d rows (the watermark is not working)", n2)
 	}
-	t.Logf("バックフィル %d 行・2回目は 0 行（冪等）", n1)
+	t.Logf("backfill %d rows, second pass 0 rows (idempotent)", n1)
 }
 
 func TestUsageMeasuredForKind(t *testing.T) {
 	for kind, want := range map[string]string{
 		session.KindClaude:  usagex.MeasuredExact,
 		session.KindCodex:   usagex.MeasuredExact,
-		session.KindCopilot: usagex.MeasuredPartial, // 転写に outTok しかない
-		session.KindCursor:  usagex.MeasuredNone,    // 転写にトークンが無い
+		session.KindCopilot: usagex.MeasuredPartial, // only outTok in the transcript
+		session.KindCursor:  usagex.MeasuredNone,    // no tokens in the transcript
 		session.KindKiro:    usagex.MeasuredNone,
 		session.KindAgy:     usagex.MeasuredNone,
 	} {
@@ -399,7 +407,7 @@ func TestUsageMeasuredForKind(t *testing.T) {
 	}
 }
 
-// ---- 出自（origin）----
+// ---- origin ----
 
 func TestCreateOriginResolution(t *testing.T) {
 	for _, tc := range []struct {
@@ -408,13 +416,13 @@ func TestCreateOriginResolution(t *testing.T) {
 		want     string
 		wantConv string
 	}{
-		{"Console（無印）", sessionx.CreateReq{}, session.OriginUser, ""},
+		{"Console (unmarked)", sessionx.CreateReq{}, session.OriginUser, ""},
 		{"MCP create_session", sessionx.CreateReq{Origin: "operator", OriginConv: "conv-1"}, session.OriginOperator, "conv-1"},
-		{"定時実行", sessionx.CreateReq{Source: sessionx.TurnSourceSchedule}, session.OriginSchedule, ""},
-		{"手動発火", sessionx.CreateReq{Source: sessionx.TurnSourceScheduleManual}, session.OriginSchedule, ""},
-		{"未知の値は user へ縮退", sessionx.CreateReq{Origin: "hacked"}, session.OriginUser, ""},
-		// origin=operator 以外では会話 slug に意味が無いので落とす。
-		{"conv は operator の時だけ", sessionx.CreateReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, ""},
+		{"scheduled run", sessionx.CreateReq{Source: sessionx.TurnSourceSchedule}, session.OriginSchedule, ""},
+		{"fired by hand", sessionx.CreateReq{Source: sessionx.TurnSourceScheduleManual}, session.OriginSchedule, ""},
+		{"unknown value degrades to user", sessionx.CreateReq{Origin: "hacked"}, session.OriginUser, ""},
+		// Outside origin=operator the conversation slug carries no meaning, so it is dropped.
+		{"conv only when operator", sessionx.CreateReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, conv := sessionx.CreateOrigin(&tc.req)
@@ -425,7 +433,7 @@ func TestCreateOriginResolution(t *testing.T) {
 	}
 }
 
-// 既存セッション（フィールド無し）は unknown。0 でも user でもない、を守る。
+// Existing sessions (no such field) are unknown — neither 0 nor user.
 func TestOriginOfDefaultsToUnknown(t *testing.T) {
 	if got := session.OriginOf(session.Meta{Name: "old"}); got != session.OriginUnknown {
 		t.Fatalf("origin = %q, want %q", got, session.OriginUnknown)
@@ -462,10 +470,11 @@ func TestCompactTriggerMapping(t *testing.T) {
 	}
 }
 
-// --- 折り込みの耐障害性（レビュー P1 の回帰）--------------------------------------
+// --- fault tolerance of folding (P1 review regressions) ---------------------------
 
-// 行が書けなかったら watermark を進めない。進めてしまうと、その分の消費は次のパスでも
-// 差分に出てこず二度と台帳へ入らない（台帳側に取りこぼしを拾い直す口は無い）。
+// If a row could not be written, the watermark is not advanced. Advancing it keeps that spend out
+// of the diff on every later pass, so it never enters the ledger again (the ledger side has no
+// way to pick up what it missed).
 func TestFoldDoesNotAdvanceWatermarkWhenAppendFails(t *testing.T) {
 	dir := useTempUsageDir(t)
 	turns := []transcript.Turn{
@@ -473,11 +482,11 @@ func TestFoldDoesNotAdvanceWatermarkWhenAppendFails(t *testing.T) {
 		asst("claude-haiku-4-5", 100, 10, 0, 20, false),
 		{Role: "user", Text: "2"},
 		asst("claude-haiku-4-5", 200, 20, 0, 0, false),
-		{Role: "user", Text: "3"}, // 末尾は閉じている＝2ターンとも折り込める
+		{Role: "user", Text: "3"}, // the trailing turn is closed, so both turns can be folded
 	}
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
 
-	// raw/ の場所にファイルを置いて追記を失敗させる（MkdirAll が ENOTDIR で落ちる）。
+	// Put a file where raw/ belongs so the append fails (MkdirAll dies with ENOTDIR).
 	raw := filepath.Join(dir, "raw")
 	if err := os.WriteFile(raw, []byte("not a dir"), 0o600); err != nil {
 		t.Fatal(err)
@@ -485,63 +494,64 @@ func TestFoldDoesNotAdvanceWatermarkWhenAppendFails(t *testing.T) {
 	st := readUsageFoldState()
 	n, err := foldSessionUsageWithTurns(m, &st, turns, false)
 	if err == nil {
-		t.Fatal("追記が失敗したのに error が返っていない")
+		t.Fatal("the append failed but no error was returned")
 	}
 	if n != 0 {
-		t.Fatalf("失敗した折り込みが %d 行を報告した, want 0", n)
+		t.Fatalf("a failed fold reported %d rows, want 0", n)
 	}
 	if mark, ok := st.Sessions[m.Name]; ok {
-		t.Fatalf("追記に失敗したのに watermark が進んだ: %+v", mark)
+		t.Fatalf("the append failed but the watermark advanced: %+v", mark)
 	}
 
-	// 書けるようになったら、取りこぼさず全部入る。
+	// Once writing works again, everything goes in with nothing lost.
 	if err := os.Remove(raw); err != nil {
 		t.Fatal(err)
 	}
 	if n, err = foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
-		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
+		t.Fatalf("fold after recovery = %d rows / err=%v, want 2 / nil", n, err)
 	}
 	if rows := usagex.ReadRows(); len(rows) != 2 {
-		t.Fatalf("台帳 = %d 行, want 2", len(rows))
+		t.Fatalf("ledger = %d rows, want 2", len(rows))
 	}
 	if st.Sessions[m.Name].Groups != 2 {
 		t.Fatalf("watermark = %+v, want groups=2", st.Sessions[m.Name])
 	}
 }
 
-// commitSessionUsageFold はセッション1件ごとに watermark まで書き切る。パス末尾で
-// まとめて1回書いていた頃は、途中で落ちるとそれまでの全セッションが次回パスで重複した。
+// commitSessionUsageFold writes through to the watermark once per session. Writing it once at the
+// end of the pass instead duplicates every session folded so far on the next pass whenever the
+// pass dies partway.
 func TestCommitSessionUsageFoldPersistsWatermarkPerSession(t *testing.T) {
 	useIsolatedUsageDir(t)
-	m := session.Meta{Name: "slot01", Kind: session.KindShell} // 転写を持たない kind
+	m := session.Meta{Name: "slot01", Kind: session.KindShell} // a kind with no transcript
 	session.WriteMeta(m)
 	if _, err := commitSessionUsageFold(m, false); err != nil {
-		t.Fatalf("commit に失敗: %v", err)
+		t.Fatalf("commit failed: %v", err)
 	}
-	// 転写が無いので行も watermark も増えない（空の state を書き散らかさない）。
+	// No transcript, so neither rows nor watermarks grow (no empty state scattered around).
 	if rows := usagex.ReadRows(); len(rows) != 0 {
-		t.Fatalf("台帳 = %d 行, want 0", len(rows))
+		t.Fatalf("ledger = %d rows, want 0", len(rows))
 	}
 
-	// watermark を持つセッションは、その1件を畳んだ時点でディスクに落ちている。
+	// A session that has a watermark has it on disk the moment that one session is folded.
 	usageFoldMu.Lock()
 	st := readUsageFoldState()
 	st.Sessions["slot02"] = usageFoldMark{Groups: 3}
 	if err := writeUsageFoldState(st); err != nil {
-		t.Fatalf("watermark の書き込みに失敗: %v", err)
+		t.Fatalf("writing the watermark failed: %v", err)
 	}
 	usageFoldMu.Unlock()
 	if got := readUsageFoldState().Sessions["slot02"].Groups; got != 3 {
-		t.Fatalf("再読み込みした watermark = %d, want 3", got)
+		t.Fatalf("watermark after re-reading = %d, want 3", got)
 	}
 }
 
-// fold-on-read は「走行中か?」を聞くだけで、折り込み本体のロックを待ってはいけない。
-// 待つと Console の使用量ビュー（1画面で /usage/series を3本撃つ）の2本目以降が、
-// 実測 ~20 秒の一括折り込みが終わるまで丸ごとブロックされる。
+// fold-on-read may only ask "is a pass running?"; it must not wait on the fold's own lock.
+// Waiting blocks the second and later of the three /usage/series requests the Console's usage
+// view fires on one screen, for as long as the bulk fold (measured ~20 s) takes.
 func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 	useIsolatedUsageDir(t)
-	usageFoldMu.Lock() // 走行中の折り込みが握っているロックを模す
+	usageFoldMu.Lock() // stand in for the lock a running fold holds
 	done := make(chan struct{})
 	go func() {
 		maybeFoldSessionUsage()
@@ -552,23 +562,25 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 		usageFoldMu.Unlock()
 	case <-time.After(2 * time.Second):
 		usageFoldMu.Unlock()
-		t.Fatal("fold-on-read が折り込み本体のロックを待ってブロックした")
+		t.Fatal("fold-on-read blocked waiting for the fold's own lock")
 	}
-	// 起動した非同期パスを回収してから抜ける（グローバル状態を次のテストへ持ち越さない）。
-	// 🔥 **ここは 2 秒だけ待って、終わっていなくても黙って抜けていた。** 折り込みは書き込み
-	// 先を書く瞬間に env から読むので、抜けた先で次のテストが `AF_USAGE_DIR` を差し替えると
-	// **次のテストの台帳へ書く**。上限を待ち切れないなら黙って進まず落とすこと。
+	// Collect the async pass we started before leaving (no global state carried into the next
+	// test). Waiting only 2 seconds and leaving silently is not enough: the fold reads its
+	// destination from the env at the moment it writes, so once the next test swaps
+	// `AF_USAGE_DIR` it writes into that test's ledger. If the limit cannot be waited out, fail
+	// rather than move on quietly.
 	waitUsageFoldIdle(t)
 }
 
-// waitUsageFoldIdle は走行中の一括折り込みを回収する。グローバル（走行中フラグ・
-// スロットル時刻・書き込み先の env）を共有するので、跨いで漏らすと次のテストが理由もなく
-// 落ちる／skip される。**待ち切れなかったら黙って進まず落とす** — 待てなかったことを
-// 黙認すると、漏れた書き手が別のテストの台帳へ書き、そのテストが原因不明で赤くなる。
+// waitUsageFoldIdle collects the running bulk fold. It shares globals (the running flag, the
+// throttle timestamp, the destination env), so leaking one across tests makes the next test fail
+// or skip for no reason of its own. If the wait cannot be completed, fail instead of moving on
+// quietly — tolerating it lets the leaked writer write into another test's ledger and turn that
+// test red with no visible cause.
 //
-// 上限は実機（HOME に数百セッションがある開発機）の一括折り込みが収まる長さに採る。
-// 実測 2026-09-02: 転写 1 本ずつの合成セッション 200 件で 0.58 秒。実転写はこれより
-// 桁が大きい（コード側の実測で 158 セッション ~20 秒）。
+// The limit is chosen to cover a bulk fold on a real machine (a dev box with hundreds of sessions
+// in HOME). Measured 2026-09-02: 0.58 s for 200 synthetic sessions of one transcript each. Real
+// transcripts are an order of magnitude larger (measured on the code side: 158 sessions, ~20 s).
 func waitUsageFoldIdle(t *testing.T) {
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
@@ -576,11 +588,11 @@ func waitUsageFoldIdle(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if usageFoldRunning.Load() {
-		t.Fatal("一括折り込みが 60 秒で終わらない（走行中の書き手を残したまま次へ進めない）")
+		t.Fatal("the bulk fold did not finish in 60s (cannot move on leaving a running writer behind)")
 	}
 }
 
-// resetUsageFold は fold-on-read のスロットルを未使用の状態へ戻す（前後とも）。
+// resetUsageFold returns the fold-on-read throttle to its unused state, both before and after.
 func resetUsageFold(t *testing.T) {
 	t.Helper()
 	clear := func() {
@@ -596,9 +608,9 @@ func resetUsageFold(t *testing.T) {
 	})
 }
 
-// seedClaudeSessions は転写を持つ claude セッションを n 件植える（1 セッション = 1 論理
-// ターン）。**折り込みに実際の仕事をさせる**ためのもので、HOME が空の CI では折り込みが
-// 一瞬で終わり「待たない」欠陥が表に出ないことの裏返しでもある。
+// seedClaudeSessions plants n claude sessions that have a transcript (1 session = 1 logical turn),
+// so the fold has real work to do. On CI, where HOME is empty, the fold finishes instantly and a
+// "does not wait" defect never surfaces.
 func seedClaudeSessions(t *testing.T, n int) {
 	t.Helper()
 	home := os.Getenv("HOME")
@@ -610,7 +622,7 @@ func seedClaudeSessions(t *testing.T, n int) {
 	for i := 0; i < n; i++ {
 		m := session.Meta{Name: fmt.Sprintf("slot%03d", i), Dir: t.TempDir(), Kind: session.KindClaude}
 		session.WriteMeta(m)
-		// 末尾のユーザーターンで論理ターンを閉じる（開いたままだと折り込みが拾わない）。
+		// The trailing user turn closes the logical turn (an open one is not picked up).
 		body := `{"type":"user","timestamp":"2026-07-26T01:00:00Z","message":{"content":"go"}}` + "\n" +
 			`{"type":"assistant","timestamp":"2026-07-26T01:00:01Z","message":{"model":"claude-haiku-4-5",` +
 			`"content":[{"type":"text","text":"ok"}],"usage":{"input_tokens":100,"output_tokens":10}}}` + "\n" +
@@ -622,54 +634,57 @@ func seedClaudeSessions(t *testing.T, n int) {
 	}
 }
 
-// 🔥 前のテストが起動した一括折り込みは、次のテストの台帳へ書いてはならない。
+// A bulk fold started by an earlier test must not write into the next test's ledger.
 //
-// 折り込みは goroutine で走り、書き込み先（`AF_USAGE_DIR`）を**書く瞬間に env から読む**。
-// env はプロセス全体なので、走行中のまま次のテストへ進むと、そのテストの中に原因の無い
-// 余分な行が生える（実際に踏んだ症状は「台帳 = 39 行, want 4」＝ 開発機に居たセッションの
-// 数だけ増えていた）。**CI の HOME にはセッションが 1 件も無く折り込みが一瞬で終わる**ので、
-// そこでだけ緑になり、開発機でだけ理由不明に赤くなる。
+// The fold runs in a goroutine and reads its destination (`AF_USAGE_DIR`) from the env at the
+// moment it writes. The env is process-wide, so moving on to the next test while it runs grows
+// extra rows in that test with no cause inside it (the symptom hit for real was "ledger = 39
+// rows, want 4", one extra row per session that happened to be on the dev machine). CI's HOME has
+// no sessions at all and the fold finishes instantly, so it is green only there and red for no
+// apparent reason only on a dev machine.
 //
-// 時間に依存させないため、実機の「200 セッションで数百 ms〜十数秒」はロックで代用する。
+// To keep this off the clock, a lock stands in for the real machine's "hundreds of ms to tens of
+// seconds for 200 sessions".
 func TestFoldDoesNotWriteIntoTheNextTestsLedger(t *testing.T) {
 	const sessions = 5
 	prev := useIsolatedUsageDir(t)
 	seedClaudeSessions(t, sessions)
 
-	// --- 「前のテスト」: fold-on-read を起動し、走行中のまま終わろうとする。
-	usageFoldMu.Lock() // 折り込み本体はここで止まる
+	// --- "the earlier test": start fold-on-read and try to finish while it is still running.
+	usageFoldMu.Lock() // the fold itself stops here
 	if !startFoldSessionUsage(true) {
 		usageFoldMu.Unlock()
-		t.Fatal("fold-on-read が起動しなかった")
+		t.Fatal("fold-on-read did not start")
 	}
 	go func() {
-		time.Sleep(100 * time.Millisecond) // 次のテストが始まった頃に動き出す
+		time.Sleep(100 * time.Millisecond) // gets going about when the next test starts
 		usageFoldMu.Unlock()
 	}()
 
-	// --- 「次のテスト」: 自分の台帳へ差し替える。ここで走行中の書き手を回収していないと、
-	// 折り込みは**この新しいディレクトリ**へ書く。
+	// --- "the next test": swap in its own ledger. Unless the running writer was collected here,
+	// the fold writes into this new directory.
 	next := useTempUsageDir(t)
 
-	// ⚠️ 完了の判定に `usageFoldRunning` を使わない。**この欠陥の直し方を間違えた版では
-	// フラグが消されている**ので、フラグを見ると「もう終わった」と誤読して、書き込みが
-	// 起きる前に検査が通ってしまう（変異試験で実際にすり抜けた）。行が**どちらかの台帳へ**
-	// 現れるまで待ち、そのうえでどちらに現れたかを見る。
+	// Do not use `usageFoldRunning` to decide it is done: a version that fixed this defect the
+	// wrong way clears the flag, so reading it means mistaking "already finished" and the check
+	// passes before any write happens (mutation testing did slip through that way). Wait until a
+	// row appears in either ledger, then look at which one it landed in.
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) && countUsageRowsIn(t, prev)+countUsageRowsIn(t, next) < sessions {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if n := countUsageRowsIn(t, next); n != 0 {
-		t.Fatalf("次のテストの台帳 = %d 行, want 0（前のテストの折り込みが %s へ書いた）", n, next)
+		t.Fatalf("the next test's ledger = %d rows, want 0 (the earlier test's fold wrote into %s)", n, next)
 	}
-	// 空振り防止: 折り込みがそもそも書いていないなら、上の 0 行は何も証明していない。
+	// Guard against a vacuous pass: if the fold wrote nothing at all, the 0 rows above prove
+	// nothing.
 	if n := countUsageRowsIn(t, prev); n != sessions {
-		t.Fatalf("前のテストの台帳 = %d 行, want %d（折り込みが走っておらず、この検査は空振り）", n, sessions)
+		t.Fatalf("the earlier test's ledger = %d rows, want %d (the fold did not run, so this check is vacuous)", n, sessions)
 	}
 }
 
-// countUsageRowsIn は台帳ディレクトリの行数を **env を経由せずに**数える（どちらの台帳へ
-// 書かれたかを見るため）。
+// countUsageRowsIn counts the rows in a ledger directory without going through the env (to see
+// which of the two ledgers was written to).
 func countUsageRowsIn(t *testing.T, dir string) int {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(dir, "raw", "*.jsonl"))
@@ -691,32 +706,32 @@ func countUsageRowsIn(t *testing.T, dir string) int {
 	return n
 }
 
-// 「再取得」はスロットルを飛ばせなければならない。飛ばせないと、押した時点で既に終わって
-// いるターンが最大1分ぶん入ってこず、利用者は最新になるまでボタンを押し続けることになる
-// （＝この画面で実際に起きていた「何度か押すまで最新にならない」）。
+// "Refresh" has to be able to skip the throttle. Without that, turns that had already finished
+// when the button was pressed stay out for up to a minute and the user keeps pressing until it
+// catches up (exactly the "takes a few presses to be up to date" seen on this screen).
 func TestStartFoldSessionUsageForceSkipsThrottle(t *testing.T) {
 	useIsolatedUsageDir(t)
 	resetUsageFold(t)
 
 	if !startFoldSessionUsage(false) {
-		t.Fatal("最初の fold-on-read が起動しなかった")
+		t.Fatal("the first fold-on-read did not start")
 	}
 	waitUsageFoldIdle(t)
 
-	// 直後の通常読み出しはスロットルで見送る。走ってもいないので folding は立てない
-	// （立てると Console が永久に取り直す）。
+	// A normal read right after is skipped by the throttle. Nothing is running, so folding is not
+	// reported (reporting it makes the Console re-fetch forever).
 	if startFoldSessionUsage(false) {
-		t.Fatal("スロットル中の読み出しが「折り込み中」を申告した")
+		t.Fatal("a read during the throttle claimed a fold was in progress")
 	}
-	// force はそのスロットルだけを飛ばす（多重起動ガードは残る）。
+	// force skips that throttle only (the double-start guard stays).
 	if !startFoldSessionUsage(true) {
-		t.Fatal("force がスロットルに当たって起動しなかった")
+		t.Fatal("force hit the throttle and did not start")
 	}
 	waitUsageFoldIdle(t)
 }
 
-// finalizeSessionUsage は消えるセッションの watermark を忘れる。残すと state.json が
-// 「もう存在しないセッション」の分だけ単調に増える。
+// finalizeSessionUsage forgets the watermark of a session that is going away. Keeping it makes
+// state.json grow monotonically by every session that no longer exists.
 func TestFinalizeSessionUsageForgetsWatermark(t *testing.T) {
 	useIsolatedUsageDir(t)
 	m := session.Meta{Name: "slot01", Kind: session.KindShell}
@@ -724,19 +739,19 @@ func TestFinalizeSessionUsageForgetsWatermark(t *testing.T) {
 	st := readUsageFoldState()
 	st.Sessions[m.Name] = usageFoldMark{Groups: 5}
 	if err := writeUsageFoldState(st); err != nil {
-		t.Fatalf("watermark の書き込みに失敗: %v", err)
+		t.Fatalf("writing the watermark failed: %v", err)
 	}
 	usageFoldMu.Unlock()
 
 	finalizeSessionUsage(m)
 	if mark, ok := readUsageFoldState().Sessions[m.Name]; ok {
-		t.Fatalf("削除後も watermark が残っている: %+v", mark)
+		t.Fatalf("the watermark is still there after removal: %+v", mark)
 	}
 }
 
-// meta を忘れる経路は、忘れる前に必ず使用量を確定させること。忘れた瞬間に ListMetas から
-// 外れて二度と折り込まれないので、開いた末尾ターンがここで確定しないと永久に台帳へ入らない。
-// 実際に handleStopSession（Console の「削除」）がこれを落としていた。
+// Every path that forgets a meta must settle usage before forgetting it. The moment it is
+// forgotten the session drops out of ListMetas and is never folded again, so an open trailing turn
+// not settled here never enters the ledger. handleStopSession (the Console's Delete) did miss it.
 func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -780,28 +795,29 @@ func TestMetaRemovalPathsFinalizeUsage(t *testing.T) {
 			}
 			checked++
 			if !finalizes {
-				t.Errorf("%s: %s が session.RemoveMeta を呼ぶのに finalizeSessionUsage を呼んでいない"+
-					"（docs/log/46 §3-b: meta を忘れる前に末尾ターンを確定させる）", name, fd.Name.Name)
+				t.Errorf("%s: %s calls session.RemoveMeta but not finalizeSessionUsage"+
+					" (docs/log/46 §3-b: settle the trailing turn before forgetting the meta)", name, fd.Name.Name)
 			}
 		}
 	}
 	if checked == 0 {
-		t.Fatal("session.RemoveMeta の呼び出しを1つも見つけられなかった（走査が壊れている）")
+		t.Fatal("found no call to session.RemoveMeta at all (the scan is broken)")
 	}
-	t.Logf("meta 削除経路 %d 件を確認", checked)
+	t.Logf("checked %d meta-removal paths", checked)
 }
 
-// asstAt は時刻を指定した assistant イベント（転写の入れ替わりを組み立てるため）。
+// asstAt is an assistant event at a given timestamp (for assembling a transcript switch).
 func asstAt(ts string, in, out int) transcript.Turn {
 	t := asst("claude-haiku-4-5", in, out, 0, 0, false)
 	t.TS = ts
 	return t
 }
 
-// P2-8: claude は1つの sid に兄弟 jsonl を持ちうり、読む1本は mtime で選ばれる
-// （internal/agents/claude/transcript.go）。件数だけで差分を採ると、選択が入れ替わった
-// 瞬間に **折り込みが永久に止まる**（短い方へ）か、**別の会話の先頭ターンを既折り込み扱いで
-// 落とす**（長い方へ）。件数と時刻の両方で判定すること。
+// P2-8: claude can have sibling jsonl files under one sid, and the one that is read is chosen by
+// mtime (internal/agents/claude/transcript.go). Taking the diff by count alone means that the
+// moment the selection switches, folding either stops forever (switch to the shorter file) or
+// drops the leading turns of another conversation as already folded (switch to the longer one).
+// Decide on both count and timestamp.
 func TestFoldSurvivesTranscriptFileSwitch(t *testing.T) {
 	useTempUsageDir(t)
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
@@ -809,13 +825,13 @@ func TestFoldSurvivesTranscriptFileSwitch(t *testing.T) {
 		t.Helper()
 		n, err := foldSessionUsageWithTurns(m, st, turns, false)
 		if err != nil {
-			t.Fatalf("折り込みに失敗: %v", err)
+			t.Fatalf("fold failed: %v", err)
 		}
 		return n
 	}
 	st := readUsageFoldState()
 
-	// 本体の転写: 3論理ターン（末尾のユーザーターンで閉じている）。
+	// The main transcript: 3 logical turns (closed by the trailing user turn).
 	main3 := []transcript.Turn{
 		{Role: "user"}, asstAt("2026-07-26T01:00:00Z", 100, 10),
 		{Role: "user"}, asstAt("2026-07-26T02:00:00Z", 200, 20),
@@ -823,53 +839,56 @@ func TestFoldSurvivesTranscriptFileSwitch(t *testing.T) {
 		{Role: "user"},
 	}
 	if n := fold(main3, &st); n != 3 {
-		t.Fatalf("初回 = %d 行, want 3", n)
+		t.Fatalf("first pass = %d rows, want 3", n)
 	}
 
-	// mtime が兄弟ファイル（短い・**より新しい**）へ振れた。件数ベースだとここで永久に止まる。
+	// mtime swung to the sibling file (shorter, but newer). A count-based diff stops here forever.
 	sibling := []transcript.Turn{
 		{Role: "user"}, asstAt("2026-07-26T04:00:00Z", 400, 40),
 		{Role: "user"}, asstAt("2026-07-26T05:00:00Z", 500, 50),
 		{Role: "user"},
 	}
 	if n := fold(sibling, &st); n != 2 {
-		t.Fatalf("入れ替わった転写の新しいターン = %d 行, want 2（件数だけで見ると 0 になる）", n)
+		t.Fatalf("new turns of the switched transcript = %d rows, want 2 (count alone gives 0)", n)
 	}
 	if got := st.Sessions[m.Name]; got.Groups != 3 || got.LastTS != "2026-07-26T05:00:00Z" {
-		t.Fatalf("watermark = %+v, want groups 3（下げない）/ lastTS 05:00", got)
+		t.Fatalf("watermark = %+v, want groups 3 (never lowered) / lastTS 05:00", got)
 	}
 
-	// 古い兄弟（スタブ）へ振れた時は何も拾わない — 済んだ会話を数え直さない。
+	// A swing to an older sibling (a stub) picks up nothing — a finished conversation is not
+	// recounted.
 	oldStub := []transcript.Turn{
 		{Role: "user"}, asstAt("2026-07-25T01:00:00Z", 900, 90),
 		{Role: "user"},
 	}
 	if n := fold(oldStub, &st); n != 0 {
-		t.Fatalf("古い転写から %d 行を拾った, want 0", n)
+		t.Fatalf("picked up %d rows from the older transcript, want 0", n)
 	}
 
-	// 本体が伸びたら続きだけを拾う（通常の差分折り込みは変わらない）。
+	// When the main file grows, only the continuation is picked up (ordinary incremental folding
+	// is unchanged).
 	grown := append(append([]transcript.Turn{}, main3...),
 		asstAt("2026-07-26T06:00:00Z", 600, 60), transcript.Turn{Role: "user"})
 	if n := fold(grown, &st); n != 1 {
-		t.Fatalf("伸びた本体の続き = %d 行, want 1", n)
+		t.Fatalf("continuation of the grown main file = %d rows, want 1", n)
 	}
 	rows := usagex.ReadRows()
 	if len(rows) != 6 {
-		t.Fatalf("台帳 = %d 行, want 6", len(rows))
+		t.Fatalf("ledger = %d rows, want 6", len(rows))
 	}
 	spend := 0
 	for _, r := range rows {
 		spend += r.Spend
 	}
 	if want := 110 + 220 + 330 + 440 + 550 + 660; spend != want {
-		t.Fatalf("spend 合計 = %d, want %d", spend, want)
+		t.Fatalf("spend total = %d, want %d", spend, want)
 	}
 }
 
-// P3-10: 追記が途中まで書けた状態でプロセスが落ちても、復旧後に **過不足なく** 回収される。
-// watermark を進めないので次回パスが同じターンを再追記し、集計側の (ref, idx) 重複排除が
-// 重なりを落とす — 書き手と読み手の二段構えが噛み合っていることの回帰。
+// P3-10: even if the process dies with an append only partly written, recovery takes everything
+// in with nothing missing and nothing extra. The watermark is not advanced, so the next pass
+// re-appends the same turns and the aggregation side's (ref, idx) dedup drops the overlap — a
+// regression on the writer and the reader meshing as a two-stage defence.
 func TestFoldRecoversAfterPartialAppend(t *testing.T) {
 	useIsolatedUsageDir(t)
 	m := session.Meta{Name: "slot01", Kind: session.KindClaude}
@@ -878,25 +897,26 @@ func TestFoldRecoversAfterPartialAppend(t *testing.T) {
 		{Role: "user"}, asstAt("2026-07-26T02:00:00Z", 200, 20),
 		{Role: "user"},
 	}
-	// 1ターン目だけがディスクに載って落ちた状態を作る（watermark は書かれていない）。
+	// Build the state where only the first turn made it to disk before the crash (no watermark
+	// written).
 	st := readUsageFoldState()
 	partial := usageFoldState{Sessions: map[string]usageFoldMark{}}
 	if _, err := foldSessionUsageWithTurns(m, &partial, turns[:2], true); err != nil {
 		t.Fatal(err)
 	}
 	if n := len(usagex.ReadRows()); n != 1 {
-		t.Fatalf("前提が崩れている: 台帳 = %d 行, want 1", n)
+		t.Fatalf("the premise is broken: ledger = %d rows, want 1", n)
 	}
 
-	// 復旧後のパスは watermark 0 から走るので、1ターン目を再追記する。
+	// The pass after recovery runs from watermark 0, so it re-appends the first turn.
 	if n, err := foldSessionUsageWithTurns(m, &st, turns, false); err != nil || n != 2 {
-		t.Fatalf("復旧後の折り込み = %d 行 / err=%v, want 2 / nil", n, err)
+		t.Fatalf("fold after recovery = %d rows / err=%v, want 2 / nil", n, err)
 	}
 	if n := len(usagex.ReadRows()); n != 3 {
-		t.Fatalf("台帳 = %d 行, want 3（1件は重複として残る）", n)
+		t.Fatalf("ledger = %d rows, want 3 (one stays as a duplicate)", n)
 	}
 	got := getSeries(t, "from=2026-07-26&to=2026-07-26")
 	if want := 110 + 220; got.Totals.Spend != want || got.Totals.Calls != 2 {
-		t.Fatalf("集計 = %+v, want spend %d / calls 2（重複を数えていないか）", got.Totals, want)
+		t.Fatalf("aggregate = %+v, want spend %d / calls 2 (is the duplicate being counted?)", got.Totals, want)
 	}
 }

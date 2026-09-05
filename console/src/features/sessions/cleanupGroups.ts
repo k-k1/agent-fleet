@@ -31,7 +31,7 @@ export interface CleanupCandidate {
   reason: string;
 }
 
-// One working copy: a linked worktree, or the clone itself ("本体", isWorktree false).
+// One working copy: a linked worktree, or the clone itself (the base copy, isWorktree false).
 export interface CleanupCopyGroup {
   key: string; // folder basename; "" = the catch-all for rows with no known working copy
   repo: string; // base repo name (before the "@")

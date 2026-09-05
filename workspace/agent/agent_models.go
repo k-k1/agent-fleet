@@ -30,12 +30,13 @@ import (
 //   - agy: `agy models` — display names, accepted verbatim by `agy --model`
 //
 // An empty list is a valid answer (CLI absent / offline) — the Console picker then
-// offers only 既定.
+// offers only the default entry.
 //
-// 並び順は各 kind の上流の推奨順をそのまま出す（codex の priority 順、cursor / kiro /
-// copilot / agy の列挙順は「新しい順・系列ごと」で意味を持つ）。取得経路が 2 つあって
-// 上流順が一意に決まらない opencode だけ、パッケージ側（catalog.go）で正規化する。
-// ポリシーの説明は agents/modelsort.go。
+// The order is whatever the upstream of each kind recommends, passed through as is
+// (codex's priority order; the enumeration order of cursor / kiro / copilot / agy means
+// "newest first, grouped by family"). Only opencode is normalized in the package itself
+// (catalog.go), because it has two fetch paths and no single upstream order. The policy
+// is explained in agents/modelsort.go.
 func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	var list []agents.ModelChoice
 	switch r.PathValue("kind") {
@@ -54,31 +55,37 @@ func handleAgentModels(w http.ResponseWriter, r *http.Request) {
 	case "codex":
 		list = codex.Models()
 	case "cursor":
-		// `cursor-agent models` の行パース（id - 表示名・アカウント連動 — docs/log/40）。
+		// Line-parsed from `cursor-agent models` (id - display name, tied to the
+		// account — docs/log/40).
 		list = cursor.Models()
 	case "kiro":
-		// `kiro-cli chat --list-models -f json`（完全機械可読・アカウント連動 — docs/log/43）。
+		// `kiro-cli chat --list-models -f json` (fully machine-readable, tied to the
+		// account — docs/log/43).
 		list = kiro.Models()
 	case "opencode":
-		// 一覧の整形だけ（catalog.go）: 1 本のキーが Zen（従量）と Go（サブスク）の
-		// 両プロバイダを開けるので、同名モデルが両方に並ぶ。Zen の表示可否はユーザー設定
-		// （ui-prefs opencodeCatalog）に従い、並びは Go 先頭＋id 昇順に正規化する
-		// （daemon 由来と CLI 由来で上流順が違うため）。モデル指定の検証は
-		// handleCreateSession が整形前の全カタログで行うので、明示指定は握り潰さない。
+		// Shaping of the list only (catalog.go): one key can open both the Zen
+		// (pay-as-you-go) and Go (subscription) providers, so the same model name
+		// appears under both. Whether Zen is shown follows the user setting (ui-prefs
+		// opencodeCatalog), and the order is normalized to Go first then id ascending
+		// (the upstream order differs between the daemon and the CLI path). An
+		// explicit model is never swallowed here: handleCreateSession validates it
+		// against the full, unshaped catalog.
 		list = opencode.Catalog(opencode.Models(), uiprefs.OpencodeCatalog())
 	case "agy":
 		list = agy.Models()
 	case "copilot":
-		// TUI /model ピッカーの PTY スクレイプ（プラン反映ライブ取得 — docs/log/36 追補。
-		// Free は Auto のみ＝空リスト）。未指定は auto ルーティング。
+		// PTY scrape of the TUI /model picker (live, so it reflects the plan —
+		// docs/log/36 addendum; Free offers only Auto, i.e. an empty list).
+		// Unspecified means auto routing.
 		list = copilot.Models()
 	default:
 		httpx.WriteErr(w, http.StatusNotFound, "unknown_kind", "no model catalog for this kind")
 		return
 	}
-	// 使わないモデル（ui-prefs hiddenModels）を最後に落とす。ここが Console の
-	// ピッカーと MCP list_models の合流点なので、1 箇所で両方に効く（opencodeCatalog
-	// と同じ構図）。明示指定は handleCreateSession のガードが別に断る。
+	// Drop the models the user hides (ui-prefs hiddenModels) last. This is where the
+	// Console picker and the MCP list_models meet, so one place covers both (the same
+	// shape as opencodeCatalog). An explicitly named hidden model is refused separately
+	// by the guard in handleCreateSession.
 	list = sessionx.FilterVisibleModels(r.PathValue("kind"), list)
 	if list == nil {
 		list = []agents.ModelChoice{}

@@ -1,12 +1,12 @@
-// タブを切り替えて戻ってきたときに、読んでいた位置へ返ること（scrollMemory）。
+// Returning to the reading position after switching tabs and coming back (scrollMemory).
 //
-// タブ表示は 1 セルに選ばれた 1 枚しか描かない（PaneHost）ので、別のタブへ移ると
-// FileView は **unmount** される。ここで再現しているのはまさにそれ ——「同じ props で
-// 描き直す」ではなく、いったん外して付け直す。
+// A tabbed cell draws only the one selected view (PaneHost), so moving to another tab unmounts
+// FileView. That is exactly what is reproduced here: not "re-render with the same props" but
+// detach and attach again.
 //
-// jsdom にレイアウトは無いので、スクロール容器の寸法だけ器で与える（本物の
-// 高さの積み上がり ——Markdown の innerHTML → ハイライト → 画像 —— は器では
-// 再現できない。あれは実ブラウザでしか見えない・src/test/domSetup.ts）。
+// jsdom has no layout, so only the scroll container's dimensions are stubbed. The real height
+// build-up (Markdown innerHTML, highlighting, images) cannot be stubbed and is visible only in a
+// real browser (src/test/domSetup.ts).
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -42,7 +42,7 @@ const CONTENT_H = 6000;
 let root: Root | null = null;
 let host: HTMLDivElement;
 
-// 器: スクロール容器（.codeview）にだけ「画面より高い中身」を持たせる。
+// Stub: only the scroll container (.codeview) gets content taller than the viewport.
 const scrollable = (el: HTMLElement) => el.classList?.contains("codeview");
 beforeAll(() => {
   Object.defineProperty(HTMLElement.prototype, "clientHeight", {
@@ -87,14 +87,14 @@ async function open(props: { paneId?: string; filePath?: string } = {}): Promise
   return host.querySelector(".codeview") as HTMLElement;
 }
 
-/** 別のタブへ移る＝この面は外される。 */
+/** Moving to another tab, i.e. this view is unmounted. */
 async function leave(): Promise<void> {
   await act(async () => {
     root!.render(<div />);
   });
 }
 
-/** 読み手がそこまで送った、を作る（scroll は容器から上がる）。 */
+/** Simulates the reader scrolling there; the scroll event comes from the container. */
 function scrollTo(el: HTMLElement, top: number): void {
   el.scrollTop = top;
   act(() => {
@@ -102,7 +102,7 @@ function scrollTo(el: HTMLElement, top: number): void {
   });
 }
 
-it("タブを切り替えて戻ると、読んでいた位置に返る", async () => {
+it("returns to the reading position after switching tabs and coming back", async () => {
   const first = await open();
   expect(first).not.toBeNull();
   scrollTo(first, 1800);
@@ -110,11 +110,11 @@ it("タブを切り替えて戻ると、読んでいた位置に返る", async (
   await leave();
   const again = await open();
 
-  expect(again).not.toBe(first); // 本当に付け直している（＝素なら 0 に戻る経路）
+  expect(again).not.toBe(first); // really re-attached, i.e. the path that would otherwise reset to 0
   expect(again.scrollTop).toBe(1800);
 });
 
-it("先頭まで戻して離れた人は、先頭のまま返る", async () => {
+it("someone who scrolled back to the top before leaving comes back to the top", async () => {
   const first = await open();
   scrollTo(first, 1800);
   scrollTo(first, 0);
@@ -123,22 +123,22 @@ it("先頭まで戻して離れた人は、先頭のまま返る", async () => {
   expect((await open()).scrollTop).toBe(0);
 });
 
-it("位置はペインとファイルを跨いで漏れない", async () => {
+it("does not leak the position across panes or files", async () => {
   scrollTo(await open({ paneId: "pane-1", filePath: "repos/x/main.go" }), 1800);
   await leave();
 
-  // 同じファイルを別のペインで
+  // the same file in another pane
   expect((await open({ paneId: "pane-2", filePath: "repos/x/main.go" })).scrollTop).toBe(0);
   await leave();
-  // 同じペインで別のファイルを
+  // another file in the same pane
   expect((await open({ paneId: "pane-1", filePath: "repos/x/other.go" })).scrollTop).toBe(0);
   await leave();
-  // 元の組み合わせは覚えたまま
+  // the original pair is still remembered
   expect((await open({ paneId: "pane-1", filePath: "repos/x/main.go" })).scrollTop).toBe(1800);
 });
 
-it("中身が短くなっていたら、行ける一番下まででやめる", async () => {
-  // 位置は px なので、戻ってきたときにファイルが縮んでいれば目的地は存在しない。
+it("stops at the lowest reachable point when the content has become shorter", async () => {
+  // The position is in px, so if the file shrank while away the target no longer exists.
   const first = await open();
   scrollTo(first, 5000);
   await leave();

@@ -1,7 +1,7 @@
 package sessionx
 
-// docs/log/58 / ADR 0041 — セッション同士のメッセージの「守るべき不変条件」を固定する。
-// ここで落ちるということは、迂回できる穴が開いたということ。
+// docs/log/58 / ADR 0041 — pins the invariants session-to-session messaging has to hold. A
+// failure here means a bypass has opened up.
 
 import (
 	"encoding/json"
@@ -16,8 +16,9 @@ import (
 )
 
 func TestPeerTargetAllowedExcludesShellAndSSM(t *testing.T) {
-	// shell / ssm への送信は任意コマンド実行そのもの（ADR 0041 決定5）。空 Kind も
-	// 弾く: NormalizeKind は未知/空を claude へ倒すので、そこを通すと穴になる。
+	// Sending to shell / ssm is arbitrary command execution outright (ADR 0041 decision 5).
+	// An empty Kind is refused too: NormalizeKind folds unknown/empty into claude, so letting
+	// it through would be a bypass.
 	for _, kind := range []string{session.KindShell, session.KindSSM, "", "nonsense"} {
 		if peerTargetAllowed(kind) {
 			t.Errorf("peerTargetAllowed(%q) = true, want false", kind)
@@ -65,22 +66,25 @@ func TestPeerPolicyRejections(t *testing.T) {
 }
 
 func TestPeerEnvelopeNamesTheSenderAndTheReplyPolicy(t *testing.T) {
-	// 封筒はサーバが必ず付ける。受け取った側が「誰から来たのか」を本文だけで判断できる
-	// 唯一の手掛かりで、workspace-notes の常設ルールがこの目印に紐づく。intent / reply が
-	// 同じ行に乗るのは、返信規律が効くのが着信の瞬間だから（docs/log/58 §58.14）。
+	// The server always attaches the envelope. It is the receiver's only clue to who a message
+	// came from when all it has is the body, and workspace-notes' standing rules hang off that
+	// mark. intent / reply ride on the same line because reply discipline only bites at the
+	// moment the message arrives (docs/log/58 §58.14).
 	got := peerEnvelope("s7abc12", "notice", "none", "  develop を rebase した  ")
 	if got != "[agent-fleet:peer from=s7abc12 intent=notice reply=none] develop を rebase した" {
 		t.Fatalf("peerEnvelope = %q", got)
 	}
-	// ミラーは封筒を正規表現で読み戻す（console/.../transcript/model.ts）。名前の直後に
-	// 語が増えても壊れない形にしてあるが、from= が先頭であることは契約として守る。
+	// The mirror parses the envelope back with a regexp (console/.../transcript/model.ts). Its
+	// shape survives more words being added after the name, but from= coming first is a
+	// contract.
 	if !strings.HasPrefix(got, "[agent-fleet:peer from=s7abc12 ") {
-		t.Fatalf("封筒の先頭が from= でない: %q", got)
+		t.Fatalf("envelope does not start with from=: %q", got)
 	}
 }
 
 func TestPeerResolveIntentDerivesReplyPolicy(t *testing.T) {
-	// 返信方針は送信側に選ばせない（notice なのに「返信を要求する」封筒を作れてしまう）。
+	// The sender does not get to choose the reply policy, or it could build a `notice` whose
+	// envelope requires a reply.
 	for intent, want := range map[string]string{
 		"request": "only-if-blocked", "question": "required", "answer": "none", "notice": "none",
 	} {
@@ -89,11 +93,11 @@ func TestPeerResolveIntentDerivesReplyPolicy(t *testing.T) {
 			t.Errorf("peerResolveIntent(%q) = %q, %v; want %q", intent, got, err, want)
 		}
 	}
-	// 空も未知も既定値へ倒さない。どちらへ倒しても必ず誤る（依頼が黙殺されるか、
-	// 単なる共有に返信が返ってくるか）。
+	// Neither empty nor unknown is defaulted. Any default is wrong: a request gets silently
+	// ignored, or a plain share draws a reply.
 	for _, bad := range []string{"", "  ", "fyi", "REQUEST"} {
 		if _, err := peerResolveIntent(bad); err == nil {
-			t.Errorf("peerResolveIntent(%q) がエラーにならない", bad)
+			t.Errorf("peerResolveIntent(%q) returned no error", bad)
 		}
 	}
 }
@@ -115,8 +119,8 @@ func TestSessionInputRequiresPeerIntent(t *testing.T) {
 }
 
 func TestSessionInputRejectsPeerIntentWithoutPeerFrom(t *testing.T) {
-	// 素の投入に種別だけ載せても封筒は付かない。黙って無視すると、呼び出し元は
-	// 「返信規律を伝えた」つもりのまま普通の割り込みを打つことになる。
+	// A bare input carrying only the intent gets no envelope. Ignoring it silently would leave
+	// the caller sending an ordinary interrupt while believing it conveyed reply discipline.
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	session.WriteMeta(session.Meta{Name: "peerdst", Dir: t.TempDir(), Kind: session.KindClaude})
 
@@ -138,12 +142,12 @@ func TestPeerLimiterDropsDuplicatesAndThrottles(t *testing.T) {
 	if err := l.allow("a", "b", "same", base); err != nil {
 		t.Fatalf("first send rejected: %v", err)
 	}
-	// 同一 (宛先, 本文) の連投 = 往復ループの形。
+	// The same (target, body) sent again is the shape of a ping-pong loop.
 	err := l.allow("a", "b", "same", base.Add(time.Second))
 	if rej, ok := err.(*peerRejection); !ok || rej.Code != "peer_duplicate" {
 		t.Fatalf("duplicate err = %v, want peer_duplicate", err)
 	}
-	// 窓を越えれば同じ文面も通る。
+	// Past the window the same text is allowed through again.
 	if err := l.allow("a", "b", "same", base.Add(peerDuplicateWindow+time.Second)); err != nil {
 		t.Fatalf("after duplicate window: %v", err)
 	}
@@ -158,16 +162,16 @@ func TestPeerLimiterDropsDuplicatesAndThrottles(t *testing.T) {
 	if rej, ok := err.(*peerRejection); !ok || rej.Code != "peer_rate_limited" {
 		t.Fatalf("over-limit err = %v, want peer_rate_limited", err)
 	}
-	// 窓が流れれば回復する（永久 ban ではない）。
+	// Once the window rolls past it recovers; this is not a permanent ban.
 	if err := l2.allow("a", "b", "later", base.Add(peerRateWindow+time.Second)); err != nil {
 		t.Fatalf("after rate window: %v", err)
 	}
 }
 
-// **最重要**: peer メッセージが指示台帳（arm）に載る経路を作らせない。載ると docs/log/51 の
-// リコンサイラが「利用者の新指示」と誤認して早期 settle を起こす。AF の投入は TUI 打鍵で、
-// 受信側 transcript ではネイティブ経路と違い通常入力と区別が付かない（docs/log/58 §58.12）ので、
-// 入口で拒むことが唯一の防御になる。
+// No route may put a peer message on the instruction ledger (arm): docs/log/51's reconciler
+// then reads it as a new instruction from the user and settles early. AF delivers by typing
+// into the TUI, and unlike the native path the receiving transcript cannot tell it apart from
+// ordinary input (docs/log/58 §58.12), so refusing at the entrance is the only defence.
 func TestSessionInputRefusesPeerFromWithReportTo(t *testing.T) {
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	session.WriteMeta(session.Meta{Name: "peersrc", Dir: t.TempDir(), Kind: session.KindClaude})
@@ -188,7 +192,7 @@ func TestSessionInputRefusesPeerFromWithReportTo(t *testing.T) {
 }
 
 func TestSessionInputPeerPolicyIsEnforcedServerSide(t *testing.T) {
-	// MCP 層を差し替えても迂回できないことの確認 — 拒否は /input が行う。
+	// Swapping out the MCP layer must not bypass the policy: /input is what refuses.
 	t.Setenv("AF_SESSIONS_DIR", filepath.Join(t.TempDir(), "sessions"))
 	session.WriteMeta(session.Meta{Name: "peersrc", Dir: t.TempDir(), Kind: session.KindClaude})
 	session.WriteMeta(session.Meta{Name: "peershell", Dir: t.TempDir(), Kind: session.KindShell})
@@ -224,7 +228,8 @@ func TestSessionInputRejectsOversizePeerMessage(t *testing.T) {
 	rec := httptest.NewRecorder()
 	HandleSessionInput(rec, req)
 
-	// 無言で切り詰めない（送ったのに後半が消えている、が最悪の失敗）。
+	// Never a silent truncation: "it was sent, but the second half is gone" is the worst
+	// failure of all.
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "message_too_long") {
 		t.Fatalf("status = %d, body = %s, want 400 message_too_long", rec.Code, rec.Body.String())
 	}

@@ -1,4 +1,4 @@
-// Pop-out descriptor (ペインの別タブ切り離し) — the PURE half: types, eligibility
+// Pop-out descriptor (tearing a pane out into its own tab) — the PURE half: types, eligibility
 // and (de)serialization, kept free of browser/store imports so vitest (node env)
 // can cover it. The DOM glue (window.open, localStorage handoff, boot consume)
 // lives in features/panes/popout.ts.

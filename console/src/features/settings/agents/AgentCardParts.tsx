@@ -10,7 +10,7 @@ import { forgetHiddenRepoModels } from "../../../lib/repoLast.ts";
 import { agentOf, nonPlanModeLabel } from "../../../agents/registry.ts";
 import { Choice, OnOff, Select } from "../parts/controls.tsx";
 
-// A labeled settings row inside a card's 動作設定 group.
+// A labeled settings row inside a card's behavior-settings group.
 export function SettingRow({ label, sub, children }: { label: ReactNode; sub?: ReactNode; children?: ReactNode }) {
   return (
     <div className="ps-row">
@@ -23,7 +23,7 @@ export function SettingRow({ label, sub, children }: { label: ReactNode; sub?: R
   );
 }
 
-// CardSettings: the per-agent 動作設定 disclosure — collapsed by default so the card
+// CardSettings: the per-agent behavior-settings disclosure — collapsed by default so the card
 // reads as "connect" first, with behavior a deliberate second level. Its body is the
 // client launch defaults (always usable) + any container-backed toggles the card passes.
 export function CardSettings({ children }: { children?: ReactNode }) {
@@ -42,9 +42,9 @@ export function CardSettings({ children }: { children?: ReactNode }) {
   );
 }
 
-// ThinkingRow: 「思考を展開して表示」（kind スコープ・既定オフ）。ミラーの「思考」ブロックは
-// 既定で畳んだまま出るので、思考を常に読みたい人だけがここで開いた状態を既定にできる。
-// 思考を出す backend（codex / opencode）のカードにだけ置き、kind ごとに独立して効く。
+// ThinkingRow: "expand thinking" (kind-scoped, off by default). The mirror renders its thinking
+// blocks collapsed, so only people who always want to read them make expanded the default here.
+// Only on the cards of backends that emit thinking (codex / opencode); each kind is independent.
 export function ThinkingRow({ kind }: { kind: string }) {
   const s = useSettings();
   const tr = useT();
@@ -89,7 +89,8 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
   return (
     <>
       <SettingRow label={tr("agents.default_model")}>
-        {/* opencode は候補が数十個になりセグメントだと敷き詰まるため、長いリストは Select に。 */}
+        {/* opencode offers dozens of candidates, which a segmented control cannot fit, so long
+            lists use a Select. */}
         {kind === "claude" ? (
           <ModelPicker kind={kind} model={row.model} onChange={(model) => update({ model, effort: "" })} />
         ) : models.length > 8 ? (
@@ -99,15 +100,17 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
         )}
       </SettingRow>
       {kind === "claude" && <ClaudeCustomModelsRow />}
-      {/* agy は effort 相当がモデル名に織り込まれている（(Medium) 等）ため行ごと出さない。 */}
+      {/* agy bakes the effort equivalent into the model name ("(Medium)" and so on), so the row
+          is omitted entirely. */}
       {desc.caps.effort && (
         <SettingRow label={tr("agents.default_effort")}>
           <Choice value={row.effort} options={efforts} onChange={(effort) => update({ effort })} />
         </SettingRow>
       )}
       <HiddenModelsRow kind={kind} />
-      {/* planMode（チャットの plan トグル）が無くても tuiStartMode（plan 起動）対応なら
-          既定の開始モードを設定できる（cursor/copilot/kiro — 起動 UI のゲートと同型）。 */}
+      {/* A kind without planMode (the chat plan toggle) can still set a default start mode if it
+          supports tuiStartMode, i.e. launching in plan (cursor/copilot/kiro — the same gate as
+          the launch UI). */}
       {(desc.caps.planMode || desc.caps.tuiStartMode) && (
         <SettingRow label={tr("agents.start_mode")}>
           <Choice
@@ -117,9 +120,10 @@ export function LaunchDefaults({ kind }: { kind: "claude" | "codex" | "cursor" |
           />
         </SettingRow>
       )}
-      {/* 権限確認をスキップするか（docs/log/76）。承認待ちを Console から答えられる kind
-          （claude / cursor / copilot / kiro / agy）だけに出す — 答えられない kind で
-          オフにできると、固まったセッションを作れてしまう。 */}
+      {/* Whether to skip permission prompts (docs/log/76). Only shown for kinds whose pending
+          approvals can be answered from the Console (claude / cursor / copilot / kiro / agy):
+          allowing it off for a kind that cannot be answered would let a stuck session be
+          created. */}
       {desc.caps.permissionChoice && (
         <SettingRow label={tr("agents.skip_permissions")} sub={tr("agents.skip_permissions_sub")}>
           <OnOff value={row.skipPermissions} onChange={(skipPermissions) => update({ skipPermissions })} />
@@ -182,21 +186,22 @@ function ClaudeCustomModelsRow() {
   );
 }
 
-// HiddenModelsRow:「使わないモデル」— kind ごとの除外リスト（settings.hiddenModels）。
-// 動機は課金事故の予防で、Claude の Team プランでは Fable が API クレジット扱いになる。
-// 除外すると（Agent が同じ ui-prefs を読むので）Console のピッカーからも MCP の
-// list_models からも消え、除外モデルを指定した起動は Agent 側で断られる。
+// HiddenModelsRow: the per-kind exclusion list (settings.hiddenModels), shown as "models not to
+// use". It exists to prevent billing accidents — on Claude's Team plan, Fable is charged as API
+// credits. An excluded model disappears from the Console picker and from MCP's list_models (the
+// Agent reads the same ui-prefs), and a launch naming one is refused by the Agent.
 //
-// 編集 UI は「現在の除外＝チップ（×で解除）」＋「追加＝残っている候補の select」。
-// 追加側の候補が既に絞り込み済みなので、生カタログを別途持たなくても往復できる。
+// The editor is: current exclusions as chips (x removes) plus a select of the remaining
+// candidates to add. Those candidates are already filtered, so no separate raw catalogue is
+// needed to round-trip.
 function HiddenModelsRow({ kind }: { kind: string }) {
   const tr = useT();
   const s = useSettings();
-  const visible = (useModelOptions(kind) || []).filter(([id]) => id); // 「既定」は id ではない
+  const visible = (useModelOptions(kind) || []).filter(([id]) => id); // the "default" entry has no id
   const hidden = s.hiddenModels?.[kind] || [];
-  // claude は固定4ティアで「既定」の選択肢が無い＝全部隠すと起動できるモデルが消える。
-  // 最後の1つは隠させない（Agent 側にも同じフェイルセーフがあるが、行き止まりの状態を
-  // 作らせない方が親切）。
+  // claude has four fixed tiers and no "default" option, so hiding them all would leave nothing
+  // launchable. Refuse to hide the last one; the Agent has the same failsafe, but not letting a
+  // dead end be created in the first place is kinder.
   const canAdd = visible.length > (kind === "claude" ? 1 : 0);
 
   const apply = (next: string[]) => {
@@ -204,8 +209,9 @@ function HiddenModelsRow({ kind }: { kind: string }) {
       hiddenModels: { ...s.hiddenModels, [kind]: next },
     };
     const isHidden = (m: string) => !!m && next.some((h) => modelMatchesHidden(m, h));
-    // 保存済みの選択値を掃く。放置すると「設定画面には除外と出ているのに起動導線は
-    // 除外モデルを既定に持っている」状態になり、起動のたびに Agent 側ガードで弾かれる。
+    // Sweep the stored selections. Left alone, settings would show a model as excluded while
+    // the launch flow still defaults to it, and every launch would be rejected by the Agent's
+    // guard.
     const row = agentLaunchDefault(s, kind);
     if (isHidden(row.model)) {
       const fallback = kind === "claude" ? CLAUDE_MODELS.find(([id]) => !isHidden(id))?.[0] || "" : "";
@@ -223,7 +229,7 @@ function HiddenModelsRow({ kind }: { kind: string }) {
     }
     if (kind === "claude" && isHidden(s.assistantAutoTurnModel)) patch.assistantAutoTurnModel = "";
     setSettings(patch);
-    forgetHiddenRepoModels(kind, next); // リポジトリごとの「前回使ったモデル」も掃く
+    forgetHiddenRepoModels(kind, next); // sweep the per-repo "last used model" too
   };
 
   return (
@@ -265,7 +271,7 @@ function HiddenModelsRow({ kind }: { kind: string }) {
   );
 }
 
-// RtkRow: the shared "RTK（トークン節約）" settings row — a toggle when the workspace
+// RtkRow: the shared "RTK (token saving)" settings row — a toggle when the workspace
 // has rtk, else an "unavailable" note. Used by all three agent cards.
 export function RtkRow({
   available,

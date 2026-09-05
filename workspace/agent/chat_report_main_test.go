@@ -61,7 +61,7 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 	home := withTempHome(t)
 	withTestReconciler(t, 20*time.Millisecond)
 	// The report's auto turn would call a real provider; the delivery under test is the
-	// report card itself, so pin the toggle off (設定 > エージェント「報告への自動応答」).
+	// report card itself, so pin the toggle off (Settings > Agent, "auto-reply to reports").
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -88,8 +88,9 @@ func TestSessionReportDeliveredAfterHealWipedMarker(t *testing.T) {
 
 	status.Persist(sid, "working") // the operator's instruction starts a turn
 	// A real turn leaves a FRESH main transcript behind (the answer was just written).
-	// 転写の鮮度そのものを常設ゲートにすると、正常完了の報告が毎回 TTL(90s) ぶん遅れる —
-	// 完了の判定は「Stop のマーカーより後にも転写が伸びているか」の相対比較で行う。
+	// Making transcript freshness itself a standing gate would delay every report of a
+	// normal completion by the whole TTL (90s), so completion is decided by the relative
+	// comparison "did the transcript keep growing past the Stop marker?".
 	cfg := t.TempDir()
 	t.Setenv("CLAUDE_CONFIG_DIR", cfg)
 	if err := os.MkdirAll(filepath.Join(cfg, "projects", "p1"), 0o700); err != nil {
@@ -263,9 +264,9 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	if err := os.WriteFile(agLog, []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// The main turn's transcript. 鮮度はファイルの mtime ではなく **実レコードの
-	// timestamp** で決まるので（記帳行の追記を「実行中」と誤読しないため）、テストも
-	// 時刻を持つ user/assistant 行を書いて動かす。
+	// The main turn's transcript. Freshness is decided by the timestamp of a real record,
+	// not by the file's mtime (so appending a bookkeeping line is not misread as running),
+	// so this test writes user/assistant lines that carry a time as well.
 	mainLog := filepath.Join(proj, sid+".jsonl")
 	writeMainAt := func(t *testing.T, at time.Time) {
 		t.Helper()
@@ -325,7 +326,7 @@ func TestSessionReportIgnoresFalseIdle(t *testing.T) {
 	// (the incident's shape: the marker is not the turn's end — the turn is still
 	// appending during a think gap). No delivery.
 	status.PersistTurnEnd(sid, "idle")
-	writeMainAt(t, time.Now().Add(10*time.Second)) // マーカーより後に伸びた実レコード
+	writeMainAt(t, time.Now().Add(10*time.Second)) // a real record that grew past the marker
 	settle()
 	if n := countReports(); n != 0 {
 		t.Fatalf("delivered while the transcript grew past the idle marker (n=%d)", n)

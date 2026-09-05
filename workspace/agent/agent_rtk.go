@@ -82,23 +82,22 @@ func prefOnDefault(p *bool) bool {
 	return *p
 }
 
-// 各エージェント側の適用 artifact は縦割りパッケージへ移設済み: opencode は
-// opencode.ApplyRTK（rtk.ts プラグインの seed/remove、docs/log/23 残① Wave D）、codex
-// は codex.ApplyRTK（AGENTS.md のマーカーブロック、同 Wave E）。
+// The per-agent apply artifacts live in the vertical packages: opencode.ApplyRTK seeds
+// and removes the rtk.ts plugin, codex.ApplyRTK writes the marked block in AGENTS.md.
 
 // reconcileAgentRTK applies the durable prefs to the on-disk artifacts. When rtk is
 // not in the image, all are forced off (any stale artifact is removed).
 //
-// codex / agy の artifact は AGENTS.md のブロックで、同じファイルへユーザー指示と
-// フリート方針も書かれる。だから書き込みは instrMu で直列化し、順序も
-// fleet → user-notes → rtk に固定する（agent_instructions.go）。
+// The codex / agy artifact is a block in AGENTS.md, a file the user's instructions and
+// the fleet policy are written into as well. Writes are therefore serialised through
+// instrMu, with the order fixed at fleet → user-notes → rtk (agent_instructions.go).
 func reconcileAgentRTK() {
 	instrMu.Lock()
 	defer instrMu.Unlock()
 	applyRTKLocked()
 }
 
-// applyRTKLocked は instrMu を保持した状態で呼ぶ本体。
+// applyRTKLocked is the body, to be called while holding instrMu.
 func applyRTKLocked() {
 	avail := claude.RTKAvailable()
 	p := readAgentRTKPrefs()
@@ -158,7 +157,7 @@ func handleAgentRTKPut(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, agentRTKBody())
 }
 
-// handleAgentRTKGain serves GET /agents/rtk/gain for the Console's usage-tab "rtk 効果"
+// handleAgentRTKGain serves GET /agents/rtk/gain for the Console's usage-tab "rtk effect"
 // card. rtk itself keeps the accounting (compaction bytes/tokens per command) in its
 // own history DB under ~/.local/share/rtk; `rtk gain --all --format json` exposes the
 // daily / weekly / monthly series + cumulative summary. We shell out and pass the JSON

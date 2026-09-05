@@ -3,7 +3,7 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
 // A fold broadcast: bump `n` (a nonce) to force every FileDiff block to `open`. Lets a
-// parent add 全て開く / 全て閉じる controls without lifting each file's fold state.
+// parent add "expand all" / "collapse all" controls without lifting each file's fold state.
 export interface FoldSignal {
   n: number;
   open: boolean;
@@ -158,7 +158,7 @@ export function Diff({
 }) {
   const tr = useT();
   // Real diffs carry an @@ hunk or a `diff --git` header; anything else (placeholder
-  // "(差分なし)", error strings, empty) is shown as a plain message, not parsed.
+  // "no diff", error strings, empty) is shown as a plain message, not parsed.
   if (!text || !/(^|\n)(@@ |diff --(git|cc) )/.test(text)) {
     const msg = text && text.trim() ? text : embedded ? tr("scm.no_diff") : tr("scm.diff_placeholder");
     return <pre className="diff muted">{msg}</pre>;
@@ -176,12 +176,12 @@ export function Diff({
 
 // FileDiff: one foldable file block — a sticky header (chevron + path + ±counts)
 // over a line-numbered patch body. Defaults open; click the header to collapse. A
-// `fold` broadcast (from 全て開く / 全て閉じる) forces open/closed when its nonce changes.
+// `fold` broadcast (from "expand all" / "collapse all") forces open/closed when its nonce changes.
 function FileDiff({ file, fold }: { file: DiffFile; fold?: FoldSignal }) {
   const tr = useT();
   const [open, setOpen] = useState(true);
-  // ブロードキャストは「イベント」なので nonce が変わったときだけ適用する。マウント時に
-  // 過去の全て閉じるを適用すると、diff 更新で新しく現れたファイルが閉で出てしまう。
+  // The broadcast is an EVENT, so apply it only when the nonce changes. Applying a past
+  // "collapse all" at mount would show files newly appearing in an updated diff collapsed.
   const seenFold = useRef(fold?.n);
   useEffect(() => {
     if (!fold || fold.n === seenFold.current) return;
@@ -223,7 +223,7 @@ export function CommitDetail({ commit, wrap, fold }: { commit: CommitData | null
   const [bodyOpen, setBodyOpen] = useState(false);
   if (!commit) return <pre className="diff muted">{tr("scm.loading")}</pre>;
   if (commit.error) return <pre className="diff muted">{tr("scm.commit_load_failed")}</pre>;
-  // Show the first 5 lines of the message body; the rest folds behind "さらに表示".
+  // Show the first 5 lines of the message body; the rest folds behind "show more".
   const bodyLines = commit.body ? commit.body.split("\n") : [];
   const clampBody = bodyLines.length > 5 && !bodyOpen;
   return (

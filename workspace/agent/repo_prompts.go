@@ -11,12 +11,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// Prompt templates surfaced in the repo row's 起動 modal (LaunchModal). Aggregated
+// Prompt templates surfaced in the repo row's launch modal (LaunchModal). Aggregated
 // read-only from files already in the working copy, so teams curate them in-repo
 // (committed, versioned) rather than in a separate store:
-//   - .claude/commands/**/*.md  → コマンド   (Claude Code slash commands; the body IS the prompt)
-//   - .claude/skills/*/SKILL.md → スキル     (seed "/name " to invoke it; claude-flavored)
-//   - .agent-fleet/launch-prompts.md → テンプレート (one entry per "## heading" section; agent-neutral)
+//   - .claude/commands/**/*.md       → source "command" (Claude Code slash commands; the body IS the prompt)
+//   - .claude/skills/*/SKILL.md      → source "skill" (seed "/name " to invoke it; claude-flavored)
+//   - .agent-fleet/launch-prompts.md → source "file" (one entry per "## heading" section; agent-neutral)
 //
 // Recent-prompt history is client-side (localStorage), added by the modal — not here.
 // Variable expansion ({{repo}}/{{branch}}/{{path}}) is done client-side too; the bodies

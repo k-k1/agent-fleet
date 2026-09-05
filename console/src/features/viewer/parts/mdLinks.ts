@@ -1,4 +1,4 @@
-// 描画された <a> / <img> の配線: 外部 URL・ページ内アンカー・リポジトリ相対リンク。
+// Wiring for the rendered <a> / <img>: external URLs, in-page anchors, repo-relative links.
 import { dirName, baseName, isExternalUrl, resolveMarkdownFileTarget } from "../../../lib/filemeta.ts";
 import { api, downloadURL } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
@@ -6,7 +6,7 @@ import { browserAttachmentIdFromLink } from "../../../layout/browserAttachmentAc
 import { openBrowserAttachment } from "../../browser/attachmentAction.ts";
 
 // resolveRelPath turns a repo-relative Markdown href/src into a home-relative fs path.
-// marked percent-encodes non-ASCII (日本語 → %E6…), so decode first or the path won't
+// marked percent-encodes non-ASCII (Japanese becomes %E6…), so decode first or the path won't
 // resolve; a literal-% name that isn't valid encoding falls back to the raw string.
 // A leading "/" resolves from the repo root, everything else from the file's own dir.
 function resolveRelPath(ref: string, basePath: string): string {

@@ -1,16 +1,17 @@
-// <Trans> — JSX マークアップ混在の翻訳（docs/log/28-i18n.md §6.3）。カタログ値に番号スロット
-// `<0>…</0>`（対タグ）や `<1/>`（自己終了）を書き、components[n] の React 要素へ差し込む。t() が
-// 先に {vars} を補間するので、動的テキストはプレースホルダで、装飾/改行だけをスロットで渡す。
+// <Trans> — translations that carry JSX markup (docs/log/28-i18n.md §6.3). A catalog value writes
+// numbered slots, either paired (`<0>…</0>`) or self-closing (`<1/>`), which are filled with the
+// React elements in components[n]. t() interpolates {vars} first, so dynamic text goes through
+// placeholders and only decoration and line breaks go through slots.
 //
-//   カタログ: "session.recreate_body": "今の会話は<0>アーカイブに退避</0>し<1/>あとで復帰できます。"
-//   使用    : <Trans k="session.recreate_body" components={[<strong />, <br />]} />
+//   catalog: "session.recreate_body": "The current conversation is <0>moved to the archive</0><1/>and can be restored later."
+//   usage:   <Trans k="session.recreate_body" components={[<strong />, <br />]} />
 //
-// 入れ子スロットは非対応（実利用が浅いネストのみ＝設計どおり最小実装）。未知スロット番号は
-// 素通し（テキストのみ表示）。
+// Nested slots are unsupported: real usage nests shallowly, so this stays a minimal
+// implementation by design. An unknown slot number passes through as its text alone.
 import { Fragment, cloneElement, type ReactElement, type ReactNode } from "react";
 import { useT, type MsgKey } from "./index.ts";
 
-// `<0>…</0>`（グループ1=番号, グループ2=中身）または `<0/>`（グループ3=番号）にマッチ。
+// Matches `<0>…</0>` (group 1 = number, group 2 = content) or `<0/>` (group 3 = number).
 const SLOT_RE = /<(\d+)>([\s\S]*?)<\/\1>|<(\d+)\/>/g;
 
 function render(tpl: string, components: ReactElement[]): ReactNode[] {
@@ -27,7 +28,7 @@ function render(tpl: string, components: ReactElement[]): ReactNode[] {
     if (comp) {
       out.push(inner ? cloneElement(comp, { key: key++ }, inner) : cloneElement(comp, { key: key++ }));
     } else if (inner) {
-      // スロット未提供でも中身のテキストは失わない。
+      // Never lose the inner text, even when no component was supplied for the slot.
       out.push(<Fragment key={key++}>{inner}</Fragment>);
     }
     last = SLOT_RE.lastIndex;
@@ -45,6 +46,6 @@ export function Trans({
   vars?: Record<string, string | number>;
   components?: ReactElement[];
 }): ReactElement {
-  const tr = useT(); // ロケール変更で再レンダー
+  const tr = useT(); // re-renders on a locale change
   return <>{render(tr(k, vars), components)}</>;
 }

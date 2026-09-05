@@ -6,13 +6,15 @@ import (
 	"time"
 )
 
-// ★4 の secret スキャン。見るのは 3 点:
+// The secret scan of docs/log/39 ★4. Three things matter:
 //
-//	① 実鍵の形は捕まえる ② 例示・散文は捕まえない ③ **生値を返さない**。
+//	(1) real key shapes are caught (2) examples and prose are not (3) the raw value is
+//	never returned.
 //
-// ③ が落ちると、防御のつもりの機構が秘密を新しい場所（API 応答・UI・監査）へ配る経路になる。
+// Lose (3) and a mechanism meant as a defence becomes a route that hands secrets to new
+// places - API responses, the UI, the audit log.
 func TestMemoryScanContentDetectsAndMasks(t *testing.T) {
-	// テスト用の偽鍵。形だけ本物に似せた文字列で、実在の資格情報ではない。
+	// Fake keys for the test: strings shaped like the real thing, not live credentials.
 	const fakeAWS = "AKIAQWERTYUIOPASDFGH"
 	const fakeGH = "ghp_" + "zzqqwwrrttyyuuiioopplkjhgfdsamnbvcxz"
 	body := strings.Join([]string{
@@ -29,7 +31,7 @@ func TestMemoryScanContentDetectsAndMasks(t *testing.T) {
 	rules := map[string]bool{}
 	for _, f := range got {
 		rules[f.Rule] = true
-		// ③ 生値がどのフィールドにも出ないこと。
+		// (3) the raw value must not appear in any field.
 		if strings.Contains(f.Hint, fakeAWS) || strings.Contains(f.Hint, fakeGH) {
 			t.Fatalf("finding leaked the raw secret: %+v", f)
 		}
@@ -42,20 +44,21 @@ func TestMemoryScanContentDetectsAndMasks(t *testing.T) {
 			t.Errorf("rule %q did not fire: %+v", want, got)
 		}
 	}
-	// ② 例示（EXAMPLE を含む）と散文・短い値は落ちる。行番号で確認する。
+	// (2) examples (anything with EXAMPLE), prose and short values are dropped, checked by
+	// line number.
 	for _, f := range got {
 		if f.Line == 3 || f.Line == 4 || f.Line == 5 {
 			t.Errorf("false positive on line %d: %+v", f.Line, f)
 		}
 	}
-	// バイナリは走査しない（md 以外はノイズにしかならない）。
+	// Binaries are not scanned - anything but md is pure noise.
 	if n := memoryScanContent("x.bin", []byte("\x00"+fakeAWS)); len(n) != 0 {
 		t.Errorf("binary blob scanned: %+v", n)
 	}
 }
 
-// bundle は全履歴を運ぶので、走査も履歴を見る — 「一度書いて消した鍵」が
-// HEAD には無いのに bundle には入っている、を取りこぼさないこと。
+// A bundle carries the whole history, so the scan reads the history too: a key that was
+// written and then deleted is absent from HEAD but still inside the bundle.
 func TestMemoryScanAllReachableSeesDeletedSecrets(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	const fake = "AKIAQWERTYUIOPASDFGH"
@@ -70,7 +73,7 @@ func TestMemoryScanAllReachableSeesDeletedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// HEAD ツリーだけを見る tar 向けの走査では出ない。
+	// The tar-side scan, which reads only the HEAD tree, does not see it.
 	tree, err := memoryScanRevTree(memoryBranch)
 	if err != nil {
 		t.Fatalf("scan tree: %v", err)
@@ -78,7 +81,7 @@ func TestMemoryScanAllReachableSeesDeletedSecrets(t *testing.T) {
 	if len(tree) != 0 {
 		t.Errorf("HEAD tree should be clean now: %+v", tree)
 	}
-	// 全履歴を見る bundle 向けの走査では出る（History=true）。
+	// The bundle-side scan, which reads the whole history, does (History=true).
 	all, err := memoryScanAllReachable()
 	if err != nil {
 		t.Fatalf("scan all: %v", err)

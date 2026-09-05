@@ -1,9 +1,9 @@
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 
-// Segmented ターミナル/チャット switch, shared by the terminal pane header and the
+// Segmented terminal/chat switch, shared by the terminal pane header and the
 // mirror header so the control looks identical in both (like FileView's md-toggle).
-// "mirror" is the internal name; the user-facing label is チャット. It is a
+// "mirror" is the internal name; the user-facing label is "chat". It is a
 // read-mostly Markdown view of a claude session's assistant output
 // (the same Agent /output + /input the MCP drive tools use), overlaid on the still-
 // mounted terminal so the PTY socket survives switching.
@@ -35,7 +35,7 @@ export function MirrorToggle({ mirror, onToggle, running = true }: MirrorToggleP
         className={"seg-btn" + (!mirror ? " active" : "")}
         // Switching to the terminal attaches (resumes) the session, which needs the
         // workspace running. While it's stopped, disable it — otherwise the resume
-        // mask would spin "再開中…" forever (attach is gated on running).
+        // mask would spin on "resuming…" forever (attach is gated on running).
         title={running ? tr("mgr.terminal") : tr("mgr.terminal_stopped")}
         disabled={!running}
         onClick={() => onToggle?.(false)}

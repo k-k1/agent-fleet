@@ -20,9 +20,8 @@ import (
 // runtimes keyed by membership id. The Agent contract is unchanged.
 type manager struct {
 	// mu guards ONLY the in-memory maps below (runtime/lock/activity caches) — it is
-	// never held across store/docker I/O（docs/log/23 P2-W2、以前は resolve 全体を
-	// この 1 本で直列化していた）。初回解決の I/O は per-membership の
-	// buildLocks で直列化する（buildResolved, resolver.go）。
+	// never held across store/docker I/O (docs/log/23 P2-W2). The I/O of a first resolve
+	// is serialized per membership by buildLocks instead (buildResolved, resolver.go).
 	mu                     sync.Mutex
 	rts                    map[string]cachedRT    // cache keyed by membership id; DB is source of truth
 	buildLocks             map[string]*sync.Mutex // per-membership first-resolve serialization
@@ -32,13 +31,14 @@ type manager struct {
 	activityProtectedUntil map[string]time.Time
 	store                  store.Store
 	conns                  *connRegistry // P3-9: live activity/attachment tracking for idle-stop
-	// idleForecasts は reaper が毎スイープで置いていく「この Workspace はいつ止まるか /
-	// なぜ止まらないか」（docs/log/75 P4）。管理画面はここを読むだけで、判定をやり直さない。
+	// idleForecasts is what the reaper leaves behind on every sweep: when each workspace
+	// stops, or why it does not (docs/log/75 P4). The admin screen only reads it.
 	//
-	// ★再導出しないことが要件そのもの: 画面が自前で計算すると、reaper が実際に見ている
-	// もの（在席・保留中の対話・ピン・共有ウォーターマーク）とズレて、「止まらない理由」を
-	// 調べるための画面が別の答えを出す。それなら無い方がましなので、reaper の**決定を
-	// そのまま**公開する。鮮度はスイープ間隔（既定 60 秒）。
+	// Not re-deriving it is the requirement. A screen that computed its own answer would
+	// drift from what the reaper actually looked at (presence, a pending question, a pin,
+	// the share watermark), and the screen built to explain "why has it not stopped" would
+	// give a different answer than the thing that decided. So the reaper's decision is
+	// published verbatim; it is as fresh as the sweep interval (60s by default).
 	idleForecasts map[string]idleForecast
 
 	// rtFactory is the profile-selected Runtime adapter builder (Docker locally,
@@ -51,7 +51,7 @@ type manager struct {
 	// from "nothing was spent" if it is not shown.
 	costPoller *cloudCostPoller
 
-	// usageInterval is AF_USAGE_SAMPLE_INTERVAL, recorded at boot because the 稼働時間
+	// usageInterval is AF_USAGE_SAMPLE_INTERVAL, recorded at boot because the uptime
 	// heatmap needs it as a DENOMINATOR: an hour's cell is running_secs ÷ (samples ×
 	// interval), and a deployment that samples every minute stores twelve times the
 	// samples for the same occupancy (docs/log/83). 0 when the sampler is switched off,
@@ -117,7 +117,7 @@ type manager struct {
 	// enabled, so the admin API can refuse a tenant rule naming one that does not
 	// exist. nil in AUTH=proxy/dev, where the check is skipped.
 	//
-	// ★ Tenant-defined ids are deliberately absent: they come and go at runtime, and
+	// Tenant-defined ids are deliberately absent: they come and go at runtime, and
 	// tenant.allowed_providers is validated against this set at SAVE time, when a
 	// still-pending provider legitimately has no entry yet. tenantProviderIDsFor
 	// answers that half of the question instead.
@@ -141,7 +141,7 @@ type manager struct {
 	internalGitHost string
 
 	// publicBaseURL is PUBLIC_BASE_URL verbatim (scheme + host). Injected into each
-	// workspace as AF_CP_BASE_URL so the in-container フリート・オペレーター can reach
+	// workspace as AF_CP_BASE_URL so the in-container fleet operator can reach
 	// the CP's /internal/memos bridge over the public hairpin (memo_bridge.go). Empty
 	// (no PUBLIC_BASE_URL) = the memo bridge is not reachable, so it is not injected.
 	publicBaseURL string

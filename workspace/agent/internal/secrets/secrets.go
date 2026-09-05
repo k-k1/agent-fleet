@@ -1,11 +1,9 @@
-// Package secrets は Workspace の暗号化資格情報ストア（docs/log/23 残① Wave B で
-// package main から抽出）。git トークン・Claude OAuth トークン・Bitbucket の
-// リフレッシュ資格情報・opencode の API キーを単一ストアに保持する。
-// ディスク上のフォーマット（secrets.enc / secrets.json）は抽出前と同一。
+// Package secrets is the Workspace's encrypted credential store (secrets.enc /
+// secrets.json on disk).
 //
 // The store is the single encrypted home for every provider credential the
-// Workspace holds: git tokens, the Claude OAuth token, and Bitbucket's refresh
-// creds. It replaces the former plaintext files (~/.git-credentials,
+// Workspace holds: git tokens, the Claude OAuth token, Bitbucket's refresh
+// creds and the opencode API key. It replaces the former plaintext files (~/.git-credentials,
 // claude-oauth-token, bitbucket.json). At rest it is AES-256-GCM sealed with a
 // per-user subkey the Control Plane injects as AF_SECRET_KEY (derived from the
 // deployment master key; CP never stores plaintext). With no key (dev) the same
@@ -189,8 +187,8 @@ type AWSConn struct {
 
 // DiscordCreds is the user's Discord chat-bridge connection (docs/log/37 P1). Token
 // is the user's OWN bot token (private guild + bot — no central shared app,
-// docs/log/37 契約3). Exactly one destination: ChannelID posts to a guild channel;
-// UserID DMs the bound Discord user (the identity binding of docs/log/37 契約5 —
+// docs/log/37 contract 3). Exactly one destination: ChannelID posts to a guild channel;
+// UserID DMs the bound Discord user (the identity binding of docs/log/37 contract 5 —
 // P2's inbound routing will verify against this same ID). DMChannelID caches
 // the DM channel resolved from UserID so sends don't re-resolve every time.
 // Events selects the pushed notification groups (bridge.EventKeys); empty = all.
@@ -214,12 +212,12 @@ type DiscordCreds struct {
 	// WSS connection routes the bound user's thread replies back into the session.
 	// Default off — it needs the MESSAGE_CONTENT privileged intent enabled on the
 	// bot (a one-checkbox step in the Developer Portal for bots in <100 guilds),
-	// and it bounds the daemon's memory to opted-in users only (docs/log/37「メモリ」).
+	// and it bounds the daemon's memory to opted-in users only (docs/log/37 §memory).
 	Receive bool `json:"receive,omitempty"`
-	// FullText opts into the P2 「全文ブリッジ」(docs/log/37 将来の方向): when on, the
+	// FullText opts into the P2 full-text bridge (docs/log/37 §future direction): when on, the
 	// final assistant turn body rides along the answer-ready push so the chat is a
 	// self-sufficient remote UI (the deep link is useless on a local-only,
-	// externally-unreachable deployment). Default off — the chat side is a 写し
+	// externally-unreachable deployment). Default off — the chat side is a mirror
 	// by default; only the owner of both ends opts into posting their own output.
 	// The body is secret-scrubbed and chunked to Discord's 2000-char limit.
 	FullText bool `json:"fullText,omitempty"`
@@ -229,17 +227,18 @@ type DiscordCreds struct {
 	// (absent field = false = on) keep mirroring without a re-save.
 	MirrorInputOff bool `json:"mirrorInputOff,omitempty"`
 	// NotifyOff mutes ALL outbound notifications to this service WITHOUT disconnecting —
-	// a master switch toggled from 個人設定 › 通知 (and the チャット連携 card). Stored
+	// a master switch toggled from Personal settings › Notifications (and the chat-integration
+	// card). Stored
 	// inverted so a pre-existing connection (absent = false) keeps notifying with no re-save.
 	NotifyOff bool `json:"notifyOff,omitempty"`
 }
 
-// SlackCreds is the user's Slack chat-bridge connection (docs/log/37 Slack 追随), the
+// SlackCreds is the user's Slack chat-bridge connection (docs/log/37 Slack follow-up), the
 // Socket-Mode twin of DiscordCreds. It needs TWO of the user's OWN tokens (no central
-// shared app, docs/log/37 契約3): BotToken (xoxb-) drives the Web API (post/react/update),
+// shared app, docs/log/37 contract 3): BotToken (xoxb-) drives the Web API (post/react/update),
 // AppToken (xapp-, connections:write) opens the Socket-Mode WSS for receiving. Exactly one
 // destination: ChannelID posts to a channel; UserID DMs the bound Slack user. UserID is
-// also the identity binding of docs/log/37 契約5 (the receive path verifies replies/clicks
+// also the identity binding of docs/log/37 contract 5 (the receive path verifies replies/clicks
 // against it) AND the @mention target in channel mode — Slack has no guild-owner concept,
 // so one field serves both, unlike Discord's separate MentionUserID.
 //
@@ -261,9 +260,9 @@ type SlackCreds struct {
 	Lang        string   `json:"lang,omitempty"`    // notification language: "en" | "" (=ja)
 	// Receive opts into the Socket-Mode inbound WSS (docs/log/37 P2a): the bound user's thread
 	// replies route back into the session and button clicks are honored. Default off; needs
-	// the AppToken and bounds the daemon's memory to opted-in users only (docs/log/37「メモリ」).
+	// the AppToken and bounds the daemon's memory to opted-in users only (docs/log/37 §memory).
 	Receive bool `json:"receive,omitempty"`
-	// FullText opts into the 全文ブリッジ (docs/log/37): the final assistant turn body rides the
+	// FullText opts into the full-text bridge (docs/log/37): the final assistant turn body rides the
 	// answer-ready push. Default off; secret-scrubbed and chunked to Slack's limit.
 	FullText bool `json:"fullText,omitempty"`
 	// MirrorInputOff opts OUT of echoing Console-typed prompts into the session thread
@@ -355,7 +354,7 @@ type Data struct {
 	CloudWatch     *CloudWatchConn   `json:"cloudwatch,omitempty"` // ops MCP settings (docs/log/25; no secret — AWS cred chain)
 	AWS            *AWSConn          `json:"aws,omitempty"`        // Agent Toolkit for AWS MCP settings (docs/log/25; no secret — AWS cred chain)
 	Discord        *DiscordCreds     `json:"discord,omitempty"`    // chat-bridge connection (docs/log/37)
-	Slack          *SlackCreds       `json:"slack,omitempty"`      // chat-bridge connection (docs/log/37 Slack 追随)
+	Slack          *SlackCreds       `json:"slack,omitempty"`      // chat-bridge connection (docs/log/37 Slack follow-up)
 	SVN            []SVNCred         `json:"svn,omitempty"`        // SVN basic-auth creds by URL prefix (docs/log/41)
 	MCP            []MCPServer       `json:"mcp,omitempty"`        // user-registered MCP servers (docs/log/48)
 	// MCPSecrets holds the member's OWN header values for tenant-distributed servers

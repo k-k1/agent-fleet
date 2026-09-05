@@ -22,8 +22,9 @@ func TestParseCompactOutputSplitsBlocks(t *testing.T) {
 	}
 }
 
-// ★縮退の核心: 区切りを守らなかった出力で、運用中の計画を消してはいけない。plan="" を
-// 返し、呼び出し側（compactConversation）が既存 Plan を温存する。
+// The heart of the degraded path: output that ignored the markers must never wipe the plan
+// in use. parseCompactOutput returns plan="" and the caller (compactConversation) keeps the
+// existing Plan.
 func TestParseCompactOutputMalformedKeepsPlanEmpty(t *testing.T) {
 	for name, out := range map[string]string{
 		"markers missing": "ここまでの要約です。",
@@ -51,7 +52,8 @@ func TestParseCompactOutputStripsFenceAndBlankPlan(t *testing.T) {
 	}
 }
 
-// 要約だけが空の崩れ方でも圧縮そのものは失敗させない（計画を要約にも回す）。
+// A malformation where only the summary is empty must not fail the compaction itself; the
+// plan is reused as the summary.
 func TestParseCompactOutputEmptySummaryFallsBackToPlan(t *testing.T) {
 	plan, summary := parseCompactOutput(planMarker + "\n## これからやること\n- A\n" + summaryMarker + "\n   ")
 	if plan == "" || summary != plan {
@@ -72,7 +74,7 @@ func TestSetPlanReportsChangeOnly(t *testing.T) {
 		t.Fatal("unchanged plan must not bump PlanUpdatedAt")
 	}
 	if !setPlan(c, "") {
-		t.Fatal("clearing is a change (手編集でのクリア)")
+		t.Fatal("clearing is a change (a hand edit clearing the plan)")
 	}
 	if c.Plan != "" {
 		t.Fatalf("plan not cleared: %q", c.Plan)
@@ -88,8 +90,8 @@ func TestClampPlanCaps(t *testing.T) {
 	}
 }
 
-// injectPlan は「新しいネイティブセッションが始まるターン」だけに載せる。resume が
-// 生きているターンで載せると同じ計画の入力トークンを毎回二重に払う。
+// injectPlan rides only on a turn that starts a NEW native session. Riding on a turn whose
+// resume is still live pays the same plan's input tokens twice, every time.
 func TestInjectPlanOnlyOnFreshSession(t *testing.T) {
 	c := &ChatConversation{Plan: "## これからやること\n- Lane A"}
 	p, carried := InjectPlan(c, "claude", "続けて")
@@ -100,7 +102,7 @@ func TestInjectPlanOnlyOnFreshSession(t *testing.T) {
 	if p, carried = InjectPlan(c, "claude", "続けて"); carried || p != "続けて" {
 		t.Fatalf("resumable Session: (%q, %v)", p, carried)
 	}
-	// 別バックエンドへ切り替わるターンは、そちらにとっては新セッション。
+	// A turn that switches to another backend is a new session as far as that backend goes.
 	if _, carried = InjectPlan(c, "codex", "続けて"); !carried {
 		t.Fatal("switching backend must carry the plan")
 	}
@@ -110,7 +112,8 @@ func TestInjectPlanOnlyOnFreshSession(t *testing.T) {
 	}
 }
 
-// 並びは「要約 → 計画 → 本題」。計画は今まさに従わせたい指示なので本題の直前に置く。
+// The order is summary, then plan, then the message itself. The plan is the instruction to
+// be followed right now, so it sits immediately before the message.
 func TestInjectCarryoverOrder(t *testing.T) {
 	c := &ChatConversation{Plan: "計画本文", PendingHandoff: "要約本文"}
 	p, carried := InjectCarryover(c, "claude", "本題")
@@ -123,7 +126,7 @@ func TestInjectCarryoverOrder(t *testing.T) {
 	if iSummary < 0 || iPlan < 0 || iBody < 0 || !(iSummary < iPlan && iPlan < iBody) {
 		t.Fatalf("order wrong (summary=%d plan=%d body=%d): %q", iSummary, iPlan, iBody, p)
 	}
-	// 計画は消費されない（要約と違い、以後のセッションでも運び続ける）。
+	// The plan is not consumed: unlike the summary it keeps being carried into later sessions.
 	if c.Plan == "" {
 		t.Fatal("injectCarryover must not consume the plan")
 	}
@@ -166,7 +169,8 @@ func TestCompactConversationStoresPlanAndNotices(t *testing.T) {
 	}
 }
 
-// 2回目の圧縮で計画が変わらなければ、計画カードは積まない（本当に動いた1枚が埋もれる）。
+// When a second compaction leaves the plan unchanged, no plan card is appended: it would
+// bury the one card that marks a plan that really did move.
 func TestCompactConversationSilentWhenPlanUnchanged(t *testing.T) {
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Plan: "## これからやること\n- Lane A を起こす"}
@@ -182,7 +186,8 @@ func TestCompactConversationSilentWhenPlanUnchanged(t *testing.T) {
 	}
 }
 
-// 崩れた出力で圧縮しても、運用中の計画は生き残る（第5段の最重要縮退）。
+// Compacting on malformed output still leaves the plan in use alive; this is stage 5's most
+// important degraded path.
 func TestCompactConversationKeepsPlanOnMalformedOutput(t *testing.T) {
 	c := &ChatConversation{ID: RandUUID(), Agent: "claude", ClaudeSessionID: "old",
 		Plan: "## これからやること\n- Lane A を起こす"}
@@ -255,7 +260,7 @@ func noticeKeys(c *ChatConversation) []string {
 	return out
 }
 
-// --- HTTP（手編集 / MCP 経由）--------------------------------------------------
+// --- HTTP (hand edit / via MCP) -----------------------------------------------
 
 func planMux() *http.ServeMux {
 	mux := http.NewServeMux()
@@ -285,7 +290,8 @@ func TestHandleChatPlanGetSetRoundTrip(t *testing.T) {
 		t.Fatalf("put: code = %d body = %s", rr.Code, rr.Body.String())
 	}
 
-	// GET は計画だけを返す（会話全文を返すと MCP 経由でモデルへ会話が丸ごと戻る）。
+	// GET returns the plan alone: returning the whole conversation would hand the entire
+	// conversation back to the model through MCP.
 	rr = httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest("GET", "/chat/conversations/"+c.ID+"/plan", nil))
 	var got struct {
@@ -301,8 +307,9 @@ func TestHandleChatPlanGetSetRoundTrip(t *testing.T) {
 	}
 }
 
-// 手編集（Console）は notice を積まない／MCP 経由（notice:true）は必ず積む。
-// 利用者が見ていない間に計画が動く唯一の経路なので、そこだけ痕跡を残す。
+// A hand edit from the Console appends no notice; going through MCP (notice:true) always
+// does. That is the only path on which the plan moves while the user is not watching, so it
+// is the only one that leaves a trace.
 func TestHandleChatPlanSetNoticeOnlyWhenAsked(t *testing.T) {
 	withTempHome(t)
 	mux := planMux()

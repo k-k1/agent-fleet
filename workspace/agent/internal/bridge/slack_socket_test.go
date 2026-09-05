@@ -55,11 +55,12 @@ func TestRouteSlackInboundIdentityGate(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("operator turn was not invoked")
 	}
-	// ★ ターンが呼ばれただけでは終わらない: 返信の post は同じゴルーチンの続きで、
-	// ここで待たないと**次のテスト**が差し替えた slackAPIBase へ飛んで、そちらの記録を
-	// 汚す（TestSlackFlatSend が「1件のはずが2件」で落ちた実測フレークの原因）。
-	// 返信内容そのものは discord 側の twin（TestRouteOperatorInbound）で見ているので、
-	// ここは「スレッドへ返ったこと」だけを確認して書き手を終わらせる。
+	// The turn being invoked is not the end of it: the reply is posted later on the same
+	// goroutine, and without waiting here that post lands on the slackAPIBase the NEXT test
+	// substituted and pollutes its recording (measured: this is why TestSlackFlatSend flaked
+	// with two posts where it wanted one). The reply's content is covered by the Discord twin
+	// (TestRouteOperatorInbound), so all this checks is that it went back into the thread —
+	// enough to let the writer finish.
 	reply := posts.wait(t, 1)[0]
 	if reply.channel != "C1" || reply.threadTS != "root-op" {
 		t.Fatalf("operator reply must go back into the operator thread: %+v", reply)

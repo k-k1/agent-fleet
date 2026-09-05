@@ -88,7 +88,7 @@
    Because the floating cluster is NOT rendered here, the right gutter every head
    reserves for it (--pane-ctl-w, and the per-view extras in scm.css) is dead
    space that pushed the buttons ~64px in from the pane edge — measured 229px
-   from the edge on a mirror head, since the チャット/ターミナル switch sat to
+   from the edge on a mirror head, since the chat/terminal switch sat to
    their right on top of that. Zero the reserve and inset the heads by the 8px
    the floating cluster itself uses, so the buttons land in the SAME spot they
    occupy in a non-tabbed pane. */
@@ -502,7 +502,7 @@ body.row-resizing {
   justify-content: center;
 }
 
-/* ── Pop-out tab (ペインの別タブ切り離し) — minimal chrome ─────────────────
+/* ── Pop-out tab (detaching a pane into its own tab) — minimal chrome ──────
    The shell is just a thin title bar + .app-main (flex column, App.tsx popout
    branch). The pane fills the rest; the ordinal grip / dimming never apply
    (single pane). */

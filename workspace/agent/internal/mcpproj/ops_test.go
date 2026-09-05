@@ -30,7 +30,7 @@ func readF(t *testing.T, dir, rel string) string {
 }
 
 // TestPlanNeverWrites: the single most important invariant of the plan half —
-// docs/log/56 §5 "書かずに結果を計算する".
+// docs/log/56 §5 "compute the result without writing".
 func TestPlanNeverWrites(t *testing.T) {
 	dir := t.TempDir()
 	gitInit(t, dir)

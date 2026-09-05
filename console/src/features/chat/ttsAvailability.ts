@@ -1,40 +1,40 @@
-// features/chat/ttsAvailability — 「このデプロイに VOICEVOX（ずんだもん）があるか」の判定。
+// features/chat/ttsAvailability - decides whether this deployment has VOICEVOX (Zundamon) at all.
 //
-// 取得（ttsStatus.ts）と分けてあるのは、あちらが core/api/client を読み込む＝module scope で
-// localStorage に触れ、node 環境の vitest から import できないため（ttsCache.ts を tts.ts から
-// 分離したのと同じ理由）。判定はここに置いて素でテストする。
+// Kept apart from the fetching side (ttsStatus.ts) because that one pulls in core/api/client, which
+// touches localStorage at module scope and therefore cannot be imported from vitest's node
+// environment. The decision lives here so it can be tested plainly.
 
 export interface TtsProviderStatus {
-  ready: boolean; // いま合成できるか
-  enabled?: boolean; // 管理者トグル（voicevox のみ。false = ルーティング停止）
-  managed?: boolean; // ECS オンデマンド管理下か（voicevox のみ）
-  state?: string; // managed のときの ECS サービス状態（running/starting/stopped）
+  ready: boolean; // can synthesize right now
+  enabled?: boolean; // admin toggle (voicevox only; false = routing stopped)
+  managed?: boolean; // under ECS on-demand management (voicevox only)
+  state?: string; // ECS service state when managed (running/starting/stopped)
 }
 export interface TtsStatus {
   voicevox: TtsProviderStatus;
   polly: TtsProviderStatus;
 }
 
-// voicevoxAvailable は「このデプロイに VOICEVOX エンジンがあるか」。null = まだ分からない。
+// voicevoxAvailable answers whether this deployment has a VOICEVOX engine. null = not known yet.
 //
-// ready ではなく available であることが肝: ECS オンデマンド管理下（managed）なら、いま停止して
-// いても管理者が起動すれば使えるので「ある」。ready も managed も無いのは、エンジンを一台も
-// 用意していないデプロイ＝ずんだもんは今後も鳴らない。
-// 管理者トグルの enabled は見ない（それは「今は使わない」であって「無い」ではない）。
+// The point is that this is availability, not readiness: under ECS on-demand management (managed)
+// the engine counts as present even while stopped, because an admin can start it. Neither ready nor
+// managed means no engine was ever provisioned, so Zundamon will never speak here. The admin toggle
+// (enabled) is deliberately not consulted - that means "not right now", not "absent".
 export function voicevoxAvailable(st: TtsStatus | null): boolean | null {
   if (!st) return null;
   return st.voicevox.ready || st.voicevox.managed === true;
 }
 
-// pollyAvailable は「このデプロイで Polly が使えるか」。null = まだ分からない。
+// pollyAvailable answers whether Polly can be used on this deployment. null = not known yet.
 //
-// voicevox と違い managed（オンデマンド起動）の概念が無く、CP 側の ready はリージョン設定の
-// 有無そのもの（pollyProvider.Ready）なので、ready がそのまま available になる。
+// Unlike voicevox there is no managed (on-demand start) notion, and the CP's ready is exactly
+// whether a region is configured (pollyProvider.Ready), so ready is availability.
 //
-// これを見ないと、Polly の無い配備でもエンジン選択肢に「Polly」が並び、読み上げ言語に
-// English を選べば「Polly の声で読む」と読める注記が出る。実際には CP の
-// chooseTTSProvider が plReady=false を見て voicevox へ落とすので、鳴るのはずんだもんで
-// ある（docs/log/84 §84.7）。
+// Without this check a deployment with no Polly still lists "Polly" among the engines and, with
+// English selected as the reading language, shows a note that reads as "spoken in a Polly voice";
+// in reality the CP's chooseTTSProvider sees plReady=false and falls back to voicevox, so what
+// speaks is Zundamon (docs/log/84 §84.7).
 export function pollyAvailable(st: TtsStatus | null): boolean | null {
   if (!st) return null;
   return st.polly.ready;

@@ -1,15 +1,16 @@
-// ファイルセクションの再帰検索（home スコープ）を、**実 console ビルド + 実ブラウザ**に
-// モックバックエンドで当てる。editor-mock.spec.ts と同じ「dist を静的配信 + /api/** を
-// route で差し替え」方式なので **docker もイメージも要らない** — console.spec.ts（実 CP・
-// 実コンテナ）が回せない手元でも、CI の image ジョブより先にここで落ちる。
+// Exercise the file section's recursive search (home scope) against the real console build in a
+// real browser with a mock backend. Same approach as editor-mock.spec.ts (serve dist statically
+// and replace /api/** with route), so neither docker nor the image is needed: it fails here,
+// before CI's image job, even on a machine that cannot run console.spec.ts (real CP, real
+// container).
 //
-// なぜ要るか: この経路は一度「クエリを打った瞬間に Console 全体が白紙化する」壊れ方を
-// している（ProjectFiles の sticky lineage 用 layout effect が searchMode 突入時に
-// 毎レンダー再実行 → 無ガードの setSticky が毎回新オブジェクトを積む → React
-// "maximum update depth"(#185) で root ごと unmount）。**症状は「行が出ない」ではなく
-// 「アプリが消える」**で、console.spec.ts は `.fsrow` が見つからないとしか言えず、
-// 失敗スクショも真っ黒なので原因が読めなかった。ここでは pageerror と #root の中身を
-// 直接見張り、白紙化を白紙化として報告する。
+// Why it exists: this path once broke by blanking the whole Console the moment a query was
+// typed. ProjectFiles' layout effect for sticky lineage re-ran on every render once searchMode
+// was entered, and an unguarded setSticky pushed a new object each time, so React unmounted the
+// root with "maximum update depth" (#185). The symptom is not "no rows" but "the app is gone",
+// and console.spec.ts could only say `.fsrow` was missing while the failure screenshot was
+// black. Here pageerror and the contents of #root are watched directly, so a blank app is
+// reported as a blank app.
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -20,7 +21,7 @@ const dist = path.join(root, "console", "dist");
 let server: http.Server;
 let origin = "";
 
-// home 直下に置かれた実ファイル相当（repos の外＝home スコープでしか出ない）。
+// Stands for a real file directly under home: outside repos, so it shows up only in home scope.
 const MARKER = "ui-search-mock.txt";
 
 test.beforeAll(async () => {
@@ -47,12 +48,12 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  // beforeAll が listen 前に失敗した場合 server は未生成（editor-mock と同じガード）。
+  // If beforeAll failed before listen, server was never created (same guard as editor-mock).
   if (!server) return;
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-test("ファイル検索: home スコープの再帰検索が行を出し、root を白紙化しない", async ({ page }) => {
+test("file search: recursive search in home scope lists rows and does not blank the root", async ({ page }) => {
   const pageErrors: string[] = [];
   page.on("pageerror", (e) => pageErrors.push(String(e)));
 
@@ -63,18 +64,19 @@ test("ファイル検索: home スコープの再帰検索が行を出し、root
     if (p === "/api/whoami") return route.fulfill({ json: { auth_mode: "dev" } });
     if (p === "/api/tenants") return route.fulfill({ json: { tenants: [] } });
     if (p === "/api/workspace") return route.fulfill({ json: { state: "running" } });
-    // 実 e2e ワークスペースと同じ「repos は空」状態（クローン無し）。
+    // Same "repos is empty" state as the real e2e workspace: nothing cloned.
     if (p === "/api/fs/tree") return route.fulfill({ json: { entries: [] } });
     if (p === "/api/fs/search") {
       searchCalls.push(url.search);
       const q = url.searchParams.get("q") || "";
-      // 実バックエンド（rg）と同じ意味論: home スコープ = path 空、部分一致。
+      // Same semantics as the real backend (rg): home scope = empty path, substring match.
       const hit = url.searchParams.get("path") === "" && q !== "" && MARKER.includes(q);
       return route.fulfill({ json: { results: hit ? [MARKER] : [], truncated: false } });
     }
-    // 明示的にモックした path 以外は握り潰さず abort（editor-mock と同じ理由: モック側/
-    // アプリ側の path タイポや API 変更を、空 200 で緑にせず検知する）。左ペインの
-    // シェルは未知 API が全部 abort でも描画される（実測）。
+    // Abort anything but the explicitly mocked paths rather than swallowing it (same reason as
+    // editor-mock: a path typo in the mock or the app, or an API change, must not stay green
+    // behind an empty 200). Measured: the left pane shell still renders with every unknown API
+    // aborted.
     return route.abort();
   });
 
@@ -85,25 +87,26 @@ test("ファイル検索: home スコープの再帰検索が行を出し、root
   const toggle = files.locator(".ui-section-toggle");
   if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
 
-  // スコープを home へ（既定は repos）。位置指定 nth() ではなく aria-label 由来の
-  // アクセシブル名で引く — ボタンが増減しても意味で当たるように。
+  // Switch the scope to home (repos is the default). Select by the accessible name from
+  // aria-label rather than a positional nth(), so it keeps matching by meaning as buttons come
+  // and go.
   const homeScope = files.getByRole("button", { name: /home から検索|Search from home/ });
   await homeScope.click();
   await expect(homeScope).toHaveAttribute("aria-pressed", "true");
 
   await files.locator(".proj-filter input").fill(MARKER);
 
-  // ヒット行が出る（= 検索が実際に投げられ、フラット結果が描画される）。
+  // A hit row appears, i.e. the search was actually issued and the flat result rendered.
   await expect(files.locator(`.fsrow[data-path="${MARKER}"]`)).toBeVisible({ timeout: 15_000 });
   expect(searchCalls.some((s) => s.includes("path=&"))).toBeTruthy();
 
-  // 白紙化の直接ガード。上の行アサートだけだと、無限ループで root が unmount した
-  // 場合も「要素が無い」で落ちるだけで、原因が「アプリが消えた」ことだと分からない。
+  // Direct guard against blanking. With only the row assertion above, an infinite loop that
+  // unmounts the root also fails as "element not found", hiding that the app disappeared.
   expect(pageErrors).toEqual([]);
   expect((await page.locator("#root").innerHTML()).length).toBeGreaterThan(0);
 
-  // 検索を消したら通常ツリー表示へ戻れる（searchMode の出入りが両方向で安定なこと。
-  // 入る側だけ直して出る側で同じループを踏む、を防ぐ）。
+  // Clearing the query returns to the normal tree view: entering and leaving searchMode must
+  // both be stable, so a fix on the way in cannot leave the same loop on the way out.
   await files.locator(".proj-filter input").fill("");
   await expect(files.locator(".proj-filter input")).toHaveValue("");
   expect(pageErrors).toEqual([]);

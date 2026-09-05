@@ -24,16 +24,17 @@ type slackPost struct {
 
 // slackRecorder collects what the fake server saw.
 //
-// **なぜ mutex と wait があるか（フレーク実測 2026-08-13）**: 受信側の一部経路は
-// わざと非同期で、遅いオペレーターターンを読み取りゴルーチンから外して走らせ、
-// 終わってから返信を post する（slack_socket.go の routeSlackOperator）。テストが
-// 「ターンが呼ばれた」だけを待って終わると、その post は **次のテストが差し替えた
-// slackAPIBase**（パッケージ変数）へ飛び、次のテストの記録に混ざる。実際に
-// TestSlackFlatSend が「投稿1件のはずが2件」で落ちた。加えて、サーバー側の append と
-// テスト側の読み出しが同時に走るので slice 自体もデータ競合になる。
+// Why the mutex and wait exist (flake measured 2026-08-13): some receive paths are
+// deliberately asynchronous, running a slow operator turn off the reading goroutine and
+// posting the reply once it finishes (routeSlackOperator in slack_socket.go). A test that
+// waits only for "the turn was called" and then returns leaves that post to land on the
+// slackAPIBase the next test swapped in — it is a package variable — where it mixes into that
+// test's recording; TestSlackFlatSend failed with two posts where one was expected. On top of
+// that, the server-side append and the test-side read run concurrently, so the slice itself is
+// a data race.
 //
-// よって記録は mutex で守り、非同期 post を伴うテストは wait で**実際に届くまで待つ**
-// （＝ゴルーチンを次のテストへ持ち越さない）。
+// So the recording is guarded by the mutex, and any test with an asynchronous post uses wait
+// to block until it actually arrives, carrying no goroutine into the next test.
 type slackRecorder struct {
 	mu    sync.Mutex
 	posts []slackPost
@@ -45,7 +46,7 @@ func (r *slackRecorder) add(p slackPost) {
 	r.posts = append(r.posts, p)
 }
 
-// all returns a snapshot copy — 呼び出し後にサーバーが書いても手元は壊れない。
+// all returns a snapshot copy, so a server write after the call cannot corrupt it.
 func (r *slackRecorder) all() []slackPost {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -65,7 +66,7 @@ func (r *slackRecorder) reset() {
 }
 
 // wait blocks until at least n posts have arrived, and fails the test if they don't.
-// 非同期 post を待ち切ることが目的なので、成功時にはもう書き手がいない。
+// The point is to wait the asynchronous post out, so on success no writer is left.
 func (r *slackRecorder) wait(t *testing.T, n int) []slackPost {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)

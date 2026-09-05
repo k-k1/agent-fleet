@@ -14,7 +14,7 @@
 # discovered only at release. Bursts are cheap: the concurrency group below cancels a
 # superseded develop run, so a rapid series of merges collapses onto the newest commit.
 #
-# Why pull_request also lists develop (ADR 0067 決定 11): with main alone, a PR aimed at
+# Why pull_request also lists develop (ADR 0067 decision 11): with main alone, a PR aimed at
 # develop got NO checks at all — it went red only after it was merged, on develop's own
 # push trigger. That was survivable while one PR landed at a time; it is not while the
 # parallel refactor keeps ~13 transport PRs in flight, each moving thousands of lines
@@ -40,17 +40,18 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # 資格情報の混入検知。公開リポジトリでは「入った時点で公開」＝取り返しがつかないので、
-  # 差分ではなく毎回**全履歴**を走査する（2436 commit / 64MB で 12 秒。十分安い）。
-  # `-m` は必須: これが無いと gitleaks は merge commit を飛ばし、衝突解決で入った内容
-  # （本リポジトリでは 138 commit 分）が未走査のまま緑になる。
-  # 許可リストと偽陽性の扱いは .gitleaks.toml。
+  # Credential-leak detection. In a public repository "committed" means "published" and
+  # there is no taking it back, so this scans the whole history every time rather than a
+  # diff (12 s for 2436 commits / 64 MB — cheap enough).
+  # `-m` is mandatory: without it gitleaks skips merge commits, and whatever entered while
+  # resolving a conflict (138 commits' worth in this repository) stays unscanned and green.
+  # Allowlist and false-positive handling live in .gitleaks.toml.
   secret-scan:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # 全履歴が要る
+          fetch-depth: 0 # the full history is required
       - name: install gitleaks (version+checksum pinned)
         env:
           VERSION: 8.30.1
@@ -64,10 +65,12 @@ jobs:
       - name: scan full history
         run: /tmp/gitleaks --version && /tmp/gitleaks git --log-opts="--all --full-history -m" --redact --verbose
 
-  # 出荷物の禁止語ゲート（docs/log/35 §35.7.5）の本体検証。実際に成果物を走査するのは
-  # release-gate と publish-dist（ビルドが要る）で、ここでは **仕組みが動くこと** と
-  # **ソースが清白なこと** を毎回確かめる。ユニットテストは架空の語で「検出する／
-  # しない」を両方通すので、台帳の中身を知らなくてもゲートが空振りでないと言える。
+  # Core verification of the forbidden-token gate for shipped artifacts (docs/log/35
+  # §35.7.5). The artifacts themselves are scanned by release-gate and publish-dist (both
+  # need a build); what this job confirms every time is that the mechanism works and that
+  # the source is clean. The unit tests exercise both "detects" and "does not detect" with
+  # invented words, so the gate can be shown not to be a no-op without knowing what is in
+  # the ledger.
   release-scan:
     runs-on: ubuntu-latest
     defaults:
@@ -90,8 +93,9 @@ jobs:
         working-directory: .
         run: |
           set -euo pipefail
-          # git archive（追跡ファイルのみ）を走査する。作業ディレクトリを直接見ると
-          # .git の pack に残る**書き換え前の到達不能オブジェクト**を拾って誤検知する。
+          # Scan a git archive (tracked files only). Looking at the working directory
+          # directly picks up unreachable pre-rewrite objects left in .git's packs and
+          # reports them as false positives.
           git archive --format=tar HEAD > /tmp/src.tar
           deploy/release/scan-forbidden.sh /tmp/src.tar
 
@@ -125,10 +129,11 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
-      # control-plane に build tag 付きファイルは現在 0 件。引数を渡さない = 「無いはず」の
-      # 宣言で、タグが 1 枚でも増えたらここが赤くなる（増えたことに誰かが気付く）。
-      # ⚠️ 「増えたら足す」にしないのは、**増えたことを誰が気付くのか**がこの段の
-      # 存在理由そのものだから。今はタグ 0 件＝vet のループは 0 回でコストもゼロ。
+      # control-plane currently has no build-tagged files. Passing no argument declares
+      # "there should be none", so this goes red as soon as a single tag appears — which is
+      # how anyone notices. Do not turn it into "add the tag when one shows up": who
+      # notices the addition is the whole reason this step exists. With zero tags the vet
+      # loop runs zero times and costs nothing.
       - name: go vet (build tags)
         working-directory: .
         run: cd control-plane && ../scripts/vet-build-tags.sh
@@ -163,36 +168,38 @@ jobs:
         run: go build ./...
       - name: go test
         run: go test ./...
-      # build tag 付きの面は既定ビルドに入らず、上の gofmt / vet / build / test の
-      # どれも触らない（実測 2026-09-02: 回収 PR #322 の不要 import は全ゲート緑で
-      # `go vet -tags clicontract` だけが赤かった）。理由と検査の中身はスクリプト側に書いた。
+      # Build-tagged files are not part of the default build, and none of the gofmt / vet /
+      # build / test steps above touch them (measured: an unused import in tagged code left
+      # every gate green and only `go vet -tags clicontract` red). The reason and what the
+      # check does are written in the script.
       - name: go vet (build tags)
         working-directory: .
         run: cd workspace/agent && ../../scripts/vet-build-tags.sh clicontract drift driftlive tui_contract
-      # entrypoint.sh は Go ではないが、壊れたときに死ぬのはこの job が守っている
-      # Workspace そのものである。identity 退避ブロックは golden snapshot から作った
-      # home で一度**起動不能**を出しているので、その形を回帰で押さえる。
+      # entrypoint.sh is not Go, but what dies when it breaks is the Workspace this job
+      # guards. The identity-relocation block once left a home built from a golden snapshot
+      # unable to boot, so that shape is pinned by a regression check.
       - name: entrypoint.sh syntax + keep-relocation regression
         working-directory: .
         run: |
           bash -n workspace/entrypoint.sh
           ./deploy/local/keep-relocate-test.sh
 
-  # 配備物（deploy/aws/ecs）は **実 AWS でしか全体は動かない**が、動かない理由で
-  # 何も検査しないと、壊れたことに気付くのが「立て直せなかった日」になる。ここでは
-  # `aws` / `crane` を差し替えて踏める分岐＝**控えの復旧点まわり**だけを見る
-  # （何を測っていないかはスクリプトの冒頭に書いてある）。**CFN の作成・削除・更新は 0 回**
-  # ——呼び出し自体は 198 回あるが全部**偽 `aws` 宛の読み取り**（`describe-stacks` 180 ほか）。
+  # The deployment scripts (deploy/aws/ecs) only run in full against real AWS, but if that
+  # is taken as a reason to check nothing, a break is discovered on the day the stack
+  # cannot be rebuilt. This job covers only the branches reachable with `aws` / `crane`
+  # stubbed out — the standby restore point (what is not measured is listed at the top of
+  # the script). Zero CFN create/delete/update calls: there are 198 invocations, but every
+  # one is a read against the fake `aws` (180 `describe-stacks`, among others).
   deploy-scripts:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: capture / teardown の復旧点まわり
+      - name: capture / teardown restore point
         run: ./deploy/aws/ecs/capture-restore-test.sh
-      # ⚠️ この 1 本は**既にある検査**で、いままで release-gate.yml でしか走っていなかった
-      # （＝撤収の順序を壊した PR は、リリースの日まで緑に見える）。同じ偽 aws の上で
-      # 5 秒なので、PR ごとにも回す。**中身は 1 行も変えていない。**
-      - name: 撤収／立ち上げの順序（release-gate と同じ 1 本）
+      # This check also runs in release-gate.yml, and running it only there means a PR that
+      # breaks the teardown order looks green until release day. It takes 5 s on the same
+      # fake `aws`, so it runs per PR as well.
+      - name: teardown / bring-up order (the same check as release-gate)
         run: ./deploy/local/ecs-lifecycle-stub-test.sh
 
   console:
@@ -215,19 +222,20 @@ jobs:
         run: npm run i18n:lint
       - name: vitest
         run: npm test
-      # 実ブラウザの検査（docs/log/82）。**jsdom では原理的に測れない面**をここでだけ見る:
-      # pdf:check は canvas の画素と同梱アセットの配信、doc:check は WASM が実際に
-      # 初期化されて OOXML を変換すること。定義は console/package.json にあったのに
-      # `.github/` からは 1 度も呼ばれていなかった（2026-09-04 まで）。
+      # Real-browser checks (docs/log/82). This is the only place that covers what jsdom
+      # cannot measure in principle: pdf:check looks at canvas pixels and at the serving of
+      # the bundled assets, doc:check at the WASM actually initialising and converting
+      # OOXML.
       #
-      # ブラウザは **ランナー像の /usr/bin/chromium をそのまま使う**。使い捨ての probe を
-      # 1 回流して実測した（2026-09-04・run 33847589713）:
+      # The browser is the runner image's /usr/bin/chromium, used as it comes. Measured
+      # with a throwaway probe:
       #   /usr/bin/chromium = Chromium 151.0.7922.0 / /usr/bin/google-chrome = 151.0.7922.173
-      #   CHROME_BIN=/usr/bin/google-chrome ・ doc:check 13 秒 / pdf:check 4 秒
-      # なので **入れる段も CHROMIUM= も要らない**（headless.mjs が候補から解決し、
-      # 1 本も無ければ探した先を名指しして落ちる）。⚠️ ランナー像に日本語フォントは
-      # **0 件**（`fc-list :lang=ja`）。標本の日本語は豆腐で描かれるが、この 2 本は
-      # 字形ではなく「描かれたか・アセットを配れたか」を見るので判定は変わらない。
+      #   CHROME_BIN=/usr/bin/google-chrome, doc:check 13 s / pdf:check 4 s
+      # so neither an install step nor CHROMIUM= is needed (headless.mjs resolves it from
+      # the candidates and, if none exists, fails naming where it looked). The runner image
+      # carries no Japanese fonts at all (`fc-list :lang=ja`): Japanese in the samples is
+      # drawn as tofu, but these two look at whether something was drawn and whether the
+      # assets could be served, not at glyph shapes, so the verdict does not change.
       - name: pdf:check (real browser)
         run: npm run pdf:check
       - name: doc:check (real browser)

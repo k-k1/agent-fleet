@@ -1,11 +1,12 @@
-// preview_share_e2e_test.go — 同じテナントのメンバーへの共有（docs/log/81 §14 / ADR 0062
-// 決定 14〜17）。newPreviewHostEnv の実ルート表をそのまま叩き、閲覧者を「所有者では
-// ない、同じテナントの人」として通す。
+// preview_share_e2e_test.go — sharing a preview with a member of the same tenant
+// (docs/log/81 §14 / ADR 0062 decisions 14-17). These drive newPreviewHostEnv's real route
+// table and take the viewer through as "someone in the same tenant who is not the owner".
 //
-// ★ 検査の核は 2 つ:
-//   - 許可されているときに**通ること**（ハンドシェイクから中継まで）
-//   - 許可を外した**次のリクエストで閉じること**（cookie は生きているのに）。ここが
-//     壊れると、共有を切ったつもりで 12 時間見え続ける（決定 15）。
+// Two things are being checked:
+//   - that it goes through while sharing is on, from the handshake to the relayed request;
+//   - that it closes on the NEXT request once sharing is turned off, even though the cookie
+//     is still valid (decision 15). Get that wrong and revoking a share leaves the preview
+//     visible for another 12 hours.
 package main
 
 import (
@@ -21,7 +22,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// previewViewer は同じテナントのもう 1 人（所有者ではない）。
+// previewViewer is the second person in the tenant — not the owner.
 type previewViewer struct {
 	userKey      string
 	identityID   string
@@ -29,8 +30,9 @@ type previewViewer struct {
 }
 
 // addViewer creates a second active member of the same tenant, with a workspace of its
-// own (資源を建てさせないため先に作る — resolveFull がそこで createWorkspace を呼ぶと
-// テストがランタイムの都合に引きずられる)。
+// own. The workspace is created up front so nothing has to be provisioned during the test:
+// letting resolveFull reach createWorkspace would tie these cases to whatever the runtime
+// happens to do.
 func (e *previewHostEnv) addViewer(t *testing.T, userKey string) previewViewer {
 	t.Helper()
 	ctx := context.Background()
@@ -51,9 +53,9 @@ func (e *previewHostEnv) addViewer(t *testing.T, userKey string) previewViewer {
 	return previewViewer{userKey: userKey, identityID: ident.ID, membershipID: mem.ID}
 }
 
-// asUser runs fn with the dev-auth identity switched to userKey. AUTH=dev は
-// resolveIdentity が devUser をそのまま返すので、これが「別の人としてアクセスする」
-// 一番短い経路になる。
+// asUser runs fn with the dev-auth identity switched to userKey. Under AUTH=dev,
+// resolveIdentity hands back devUser as is, which makes this the shortest way to arrive as
+// a different person.
 func (e *previewHostEnv) asUser(userKey string, fn func()) {
 	prev := e.mgr.devUser
 	e.mgr.devUser = userKey
@@ -72,7 +74,8 @@ func (e *previewHostEnv) setPreviewSettings(t *testing.T, mut func(*wsSettings))
 	}
 }
 
-// console issues a request against the Console-origin mux (authGate は dev 認証で素通り)。
+// console issues a request against the Console-origin mux; authGate lets it through on dev
+// auth.
 func (e *previewHostEnv) console(t *testing.T, target string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -109,8 +112,9 @@ func (e *previewHostEnv) viewerCookie(t *testing.T, v previewViewer, slug string
 	return nil
 }
 
-// 共有していない Workspace は、同じテナントの他人から見ても「無い」。★ 401 でも 403 でも
-// なく 404 —— 「ログインすれば見えるかもしれない」と読める答えを返さない。
+// A workspace that is not shared does not exist as far as anyone else in the tenant is
+// concerned. 404, not 401 or 403: no answer that reads as "you might see this if you signed
+// in".
 func TestPreviewNotSharedIsNotFoundForAColleague(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	v := e.addViewer(t, "colleague")
@@ -124,7 +128,7 @@ func TestPreviewNotSharedIsNotFoundForAColleague(t *testing.T) {
 	})
 }
 
-// 共有を ON にすると、同じテナントの他人がハンドシェイクを通り、実際に中継される。
+// With sharing on, a colleague clears the handshake and the request is actually relayed.
 func TestPreviewTenantShareLetsAColleagueThrough(t *testing.T) {
 	var seen *http.Request
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -144,7 +148,7 @@ func TestPreviewTenantShareLetsAColleagueThrough(t *testing.T) {
 	if seen == nil {
 		t.Fatal("the Agent never saw the colleague's request")
 	}
-	// ★ 閲覧者の cookie が焼いているのは閲覧者自身の membership（所有者のではない）。
+	// The viewer's cookie carries the viewer's own membership, not the owner's.
 	cl, ok := newPreviewHostAPI(e.cfg).verifyClaims(ck.Value)
 	if !ok {
 		t.Fatal("viewer cookie does not verify")
@@ -154,8 +158,9 @@ func TestPreviewTenantShareLetsAColleagueThrough(t *testing.T) {
 	}
 }
 
-// ★ 共有を切ったら、生きている cookie を持っていても**次のリクエストで**閉じる
-// （決定 15）。ここが cookie に焼かれていると、切ったつもりで 12 時間見え続ける。
+// Revoking the share closes the next request even for a holder of a still-valid cookie
+// (decision 15). Bake the permission into the cookie instead and revoking leaves the
+// preview visible for 12 more hours.
 func TestPreviewShareRevokeClosesTheNextRequest(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -176,15 +181,15 @@ func TestPreviewShareRevokeClosesTheNextRequest(t *testing.T) {
 	if rec.Code == http.StatusOK {
 		t.Fatal("the colleague's cookie still opened the preview after the share was revoked")
 	}
-	// 同じ cookie で所有者は通り続ける（切ったのは共有であって、自分の入口ではない）。
+	// The owner still gets in: what was revoked is the share, not their own way in.
 	owner := e.viewerCookie(t, previewViewer{userKey: e.mgr.devUser, membershipID: e.ws.MembershipID}, slug, 3000)
 	if rec := e.get(t, slug, 3000, "/", owner); rec.Code != http.StatusOK {
 		t.Fatalf("owner lost access when the share was revoked: code=%d", rec.Code)
 	}
 }
 
-// テナントから外された人は、cookie が生きていても閉じる（GetMembershipByID は active
-// 行しか返さない）。
+// Someone removed from the tenant is shut out even with a live cookie: GetMembershipByID
+// only returns active rows.
 func TestPreviewShareInactiveMemberIsClosedOut(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -207,7 +212,8 @@ func TestPreviewShareInactiveMemberIsClosedOut(t *testing.T) {
 	}
 }
 
-// ⚠️ 共有の設定は起動をまたいで残る（決定 14）—— 公開モードとの意図的な違い。
+// The share setting survives a start (decision 14) — a deliberate difference from public
+// mode, which does not.
 func TestPreviewTenantShareSurvivesRestartWhilePublicDoesNot(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	e.setPreviewSettings(t, func(st *wsSettings) { st.PreviewTenantShare = true; st.PreviewPublic = true })
@@ -215,14 +221,15 @@ func TestPreviewTenantShareSurvivesRestartWhilePublicDoesNot(t *testing.T) {
 	raw, _ := e.mgr.store.GetWorkspaceSettings(context.Background(), e.ws.ID)
 	st := parseWSSettings(raw)
 	if st.PreviewPublic {
-		t.Error("public mode survived a start (fail-closed・決定 12)")
+		t.Error("public mode survived a start (fail-closed, decision 12)")
 	}
 	if !st.PreviewTenantShare {
-		t.Error("tenant sharing was reset by a start — 用途が必ず再起動をまたぐので使えなくなる（決定 14）")
+		t.Error("tenant sharing was reset by a start - its use always spans a restart, so this makes it useless (decision 14)")
 	}
 }
 
-// 固定リダイレクタは、起動ごとに変わる slug を毎回引き直す（決定 17）。
+// The stable redirector re-resolves the slug on every request, because the slug rotates on
+// every start (decision 17).
 func TestPreviewOpenFollowsTheCurrentSlug(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	v := e.addViewer(t, "colleague")
@@ -240,7 +247,7 @@ func TestPreviewOpenFollowsTheCurrentSlug(t *testing.T) {
 		}
 	})
 
-	// 再起動 = slug の引き直し。★ 同じリンクが、新しい slug を指す。
+	// A restart rotates the slug, and the same link has to point at the new one.
 	slug2 := e.mintSlug(t)
 	if slug1 == slug2 {
 		t.Fatal("precondition: the slug should have rotated")
@@ -253,8 +260,9 @@ func TestPreviewOpenFollowsTheCurrentSlug(t *testing.T) {
 	})
 }
 
-// 共有していない相手には 404、停止中は「起動していない」。★ 後者を答え分けてよいのは、
-// 呼び手が見てよい人だと確定した後だから（docs/log/81 §14.6）。
+// 404 for someone the preview is not shared with; "not started" for a stopped workspace.
+// The second answer may only be distinguished once the caller is established as someone
+// allowed to see it (docs/log/81 §14.6).
 func TestPreviewOpenRefusals(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	v := e.addViewer(t, "colleague")
@@ -272,7 +280,7 @@ func TestPreviewOpenRefusals(t *testing.T) {
 			t.Fatalf("port outside the allowlist: code=%d, want 404", rec.Code)
 		}
 	})
-	// 停止 = slug の失効。⚠️ ここで自動起動に繋がない（決定 16）。
+	// Stopping expires the slug. This path must never trigger a start (decision 16).
 	if err := e.mgr.store.SetWorkspacePreviewSlug(context.Background(), e.ws.ID, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +291,8 @@ func TestPreviewOpenRefusals(t *testing.T) {
 	})
 }
 
-// 一覧に出るのは opt-in した他人だけ（自分は出さない・共有していない人も出さない）。
+// The list holds only other people who opted in — never yourself, never anyone who has not
+// shared.
 func TestSharedPreviewListShowsOnlyOptedInOthers(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	v := e.addViewer(t, "colleague")
@@ -325,7 +334,7 @@ func TestSharedPreviewListShowsOnlyOptedInOthers(t *testing.T) {
 		t.Errorf("urls[3000]=%v, want the current preview URL", urls["3000"])
 	}
 
-	// 停止すると行は残るが URL は消える（発行されていない URL は見せない）。
+	// A stop keeps the row but drops the URLs: never show a URL that is not issued.
 	if err := e.mgr.store.SetWorkspacePreviewSlug(context.Background(), e.ws.ID, ""); err != nil {
 		t.Fatal(err)
 	}

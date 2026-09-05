@@ -1,11 +1,12 @@
 package kiro
 
-// 起動時モデルカタログ — アカウント連動のライブ取得（docs/log/43 §2.6）。kiro は
-// `kiro-cli chat --list-models -f json` が完全機械可読の JSON を返す（cursor の行
-// スクレイプ不要）。`auto`（既定・1M ctx・フラグ無し）はカタログから外す。**Free
-// プランでも named モデル指定可**（実測）なので cursor のような Free 絞り込みは不要。
-// 10 分キャッシュ・stale-if-error。effort はモデルと独立の別フラグ（--effort）なので
-// ここでは畳まない（program.go が m.Effort をそのまま渡す）。
+// Launch-time model catalog, fetched live against the account (docs/log/43 §2.6).
+// `kiro-cli chat --list-models -f json` returns fully machine-readable JSON, so no line
+// scraping like cursor's is needed. `auto` (the default: 1M ctx, passed as no flag) is
+// kept out of the catalog. Measured: a named model can be selected even on the Free plan,
+// so no cursor-style Free narrowing is needed. Cached for 10 minutes, stale-if-error.
+// Effort is a separate flag independent of the model (--effort) and is not folded in here;
+// program.go passes m.Effort through.
 
 import (
 	"context"
@@ -28,10 +29,10 @@ const kiroDefaultWindow = 200_000
 
 var modelsMu sync.Mutex
 var modelsAt time.Time
-var modelsList []agents.ModelChoice // nil = 未取得/失敗
-var modelWindows map[string]int     // model_id → context_window_tokens（auto 含む・nil=未取得）
+var modelsList []agents.ModelChoice // nil = never fetched, or the fetch failed
+var modelWindows map[string]int     // model_id -> context_window_tokens (auto included; nil = never fetched)
 
-// listModelsOut is the shape of `kiro-cli chat --list-models -f json`（実測 2.14.1）。
+// listModelsOut is the shape of `kiro-cli chat --list-models -f json` (measured on 2.14.1).
 type listModelsOut struct {
 	Models []struct {
 		ModelName           string `json:"model_name"`
@@ -42,8 +43,8 @@ type listModelsOut struct {
 	DefaultModel string `json:"default_model"`
 }
 
-// Models returns the account's selectable launch models (empty ⇒ picker offers 既定
-// [auto] only).
+// Models returns the account's selectable launch models (empty means the picker offers
+// only the default, [auto]).
 func Models() []agents.ModelChoice {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
@@ -51,7 +52,8 @@ func Models() []agents.ModelChoice {
 }
 
 // ModelWindow returns the context-window token count for a model id (incl "auto"), from
-// the cached `--list-models` catalog (Track D — pct→token 変換用)。未取得/不明は 0。
+// the cached `--list-models` catalog (Track D, for the pct-to-token conversion). Never
+// fetched or unknown gives 0.
 func ModelWindow(id string) int {
 	modelsMu.Lock()
 	defer modelsMu.Unlock()
@@ -67,7 +69,7 @@ func ensureCatalogLocked() []agents.ModelChoice {
 	}
 	list, windows, err := probeModels()
 	if err != nil {
-		return modelsList // stale-if-error（windows も前回値を温存）
+		return modelsList // stale-if-error; windows keeps its previous value too
 	}
 	modelsList, modelWindows, modelsAt = list, windows, time.Now()
 	return modelsList
@@ -85,14 +87,14 @@ func probeModels() ([]agents.ModelChoice, map[string]int, error) {
 }
 
 // parseModels extracts the catalog from the --list-models JSON. The picker list drops
-// `auto`（既定＝フラグ無し）; the window map keeps EVERY model incl auto (the pct→token
-// conversion needs auto's 1M window too). Label は description（読みやすさ優先）、無ければ
-// model_name。
+// `auto` (the default, i.e. no flag); the window map keeps EVERY model incl auto (the
+// pct-to-token conversion needs auto's 1M window too). Label is the description, which
+// reads better, falling back to model_name.
 func parseModels(b []byte) ([]agents.ModelChoice, map[string]int) {
 	windows := map[string]int{}
 	var lm listModelsOut
 	if json.Unmarshal(b, &lm) != nil {
-		return []agents.ModelChoice{}, windows // 非 nil 空: 描画ドリフト時も既定のみで安全側
+		return []agents.ModelChoice{}, windows // non-nil empty: on output drift, fall back safely to the default only
 	}
 	seen := map[string]bool{}
 	var list []agents.ModelChoice

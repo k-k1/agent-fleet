@@ -15,8 +15,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
-// Recursive filename search for the Console file browser (FILES 改善): the tree
-// endpoint (handleFSTree) is one level deep, so the rail's 絞り込み could only
+// Recursive filename search for the Console file browser (the FILES improvements): the
+// tree endpoint (handleFSTree) is one level deep, so the rail's filter could only
 // match already-expanded rows. This walks the whole subtree so a query matches
 // every file under the root — not just what's loaded.
 //

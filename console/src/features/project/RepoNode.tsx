@@ -1,11 +1,11 @@
 // RepoNode — one working-copy node in the project tree: a collapsible node whose
 // header is the repo row (RepoRowConnected: launch / SCM / branch / delete) and
 // whose body nests the sessions running in that folder (directly — no
-// "セッション" sub-header: it only duplicated the node's own fold) and, for a
+// "sessions" sub-header: it only duplicated the node's own fold) and, for a
 // base clone, its worktrees as child nodes. Collapsing a node hides the whole
-// project — that's how you focus on one ("畳む＝擬似集中"). The open state
+// project — folding is how you focus on one project. The open state
 // persists per folder (af-proj-<repo>). File browsing lives in the rail-bottom
-// ファイル section (FilesSection), not inside the node.
+// files section (FilesSection), not inside the node.
 import { useEffect } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
@@ -75,9 +75,9 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
   // running inside.
   let sessAlive = mine.filter((s) => s.alive).length;
   let sessTotal = mine.length;
-  // 右クリック「停止中のセッション全てアーカイブ」— このノード自身のフォルダの
-  // セッションだけが対象（mine は sessionsInFolder(r.name) 由来なので、worktree
-  // は別フォルダ名として扱われ、親レポの一括操作には自然と含まれない）。
+  // The right-click "archive all stopped sessions" applies only to the sessions in this node's
+  // own folder: mine comes from sessionsInFolder(r.name), so a worktree counts as a separate
+  // folder name and is naturally excluded from the base repo's bulk action.
   const stoppedMine = mine.filter((s) => !s.alive && !s.locked);
   if (!open && childRepos) {
     for (const c of childRepos) {

@@ -1,4 +1,5 @@
-// AI提案の適用前検証と文脈切り出し（docs/log/44 §4.2 / Phase 4）。
+// Pre-apply validation of AI suggestions and the context windows around them
+// (docs/log/44 §4.2 / Phase 4).
 import { describe, expect, it } from "vitest";
 import { revisionOf } from "./buffer.ts";
 import {
@@ -56,7 +57,7 @@ describe("checkSuggestion (docs/log/44 §4.2)", () => {
     const base = envelope();
     base.suggestion.baseRevision = other;
     expect(checkSuggestion(base, ctx)).toEqual({ ok: false, code: "suggestion_stale" });
-    // 受信後にバッファが進んだ場合: 現在 revision と一致しない。
+    // Buffer moved on after receipt: it no longer matches the current revision.
     const moved = { ...ctx, content: content + "x", bufferRevision: revisionOf(content + "x") };
     expect(checkSuggestion(envelope(), moved)).toEqual({ ok: false, code: "suggestion_stale" });
   });
@@ -76,7 +77,7 @@ describe("checkSuggestion (docs/log/44 §4.2)", () => {
     const emojiCtx = { ...ctx, content: emoji, bufferRevision: revisionOf(emoji) };
     const split = envelope({ sourceRevision: emojiCtx.bufferRevision });
     split.suggestion.baseRevision = emojiCtx.bufferRevision;
-    split.suggestion.range = { from: 2, to: 3 }; // ペアの内側
+    split.suggestion.range = { from: 2, to: 3 }; // inside the surrogate pair
     expect(checkSuggestion(split, emojiCtx)).toEqual({ ok: false, code: "suggestion_invalid" });
   });
 
@@ -124,7 +125,7 @@ describe("suggestWindows", () => {
     const bytes = (s: string) => new TextEncoder().encode(s).byteLength;
     expect(bytes(windows.before)).toBeLessThanOrEqual(SUGGEST_MAX_CONTEXT_BYTES);
     expect(bytes(windows.after)).toBeLessThanOrEqual(SUGGEST_MAX_CONTEXT_BYTES);
-    // 切れた端は行境界へ丸める。
+    // A cut edge is rounded to a line boundary.
     expect(windows.before.startsWith("0")).toBe(true);
     expect(windows.before.endsWith("\n")).toBe(true);
     expect(windows.after.endsWith("\n")).toBe(true);

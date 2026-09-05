@@ -12,10 +12,10 @@ import (
 )
 
 // ssmDefaultTitle builds the default display Title for a kind=ssm session when the client
-// sent no title: "{host alias} @MMDD-HHMM" (接続先＋日時). The stamp uses the same MMDD-HHMM
-// shape as the frontend stamp() and claude's --name. alias is the CP-resolved host bookmark
-// alias (already disambiguated with the profile on collision); it falls back to the raw
-// instance target, and returns "" when neither is known (caller then keeps the generic
+// sent no title: "{host alias} @MMDD-HHMM" (target host + timestamp). The stamp uses the same
+// MMDD-HHMM shape as the frontend stamp() and claude's --name. alias is the CP-resolved host
+// bookmark alias (already disambiguated with the profile on collision); it falls back to the
+// raw instance target, and returns "" when neither is known (caller then keeps the generic
 // {repo} @… fallback). The result stays editable via rename like any other title.
 func ssmDefaultTitle(alias, target string, now time.Time) string {
 	base := strings.TrimSpace(alias)

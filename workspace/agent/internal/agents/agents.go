@@ -1,7 +1,7 @@
-// Package agents は coding-agent 抽象の型層（Agent インターフェイスと入出力型）。
-// docs/log/23 残① Wave C: package main の agent.go からインターフェイス層のみを切り出した。
-// 依存は internal/session・internal/transcript のみ。実装（claude/opencode/codex/
-// shell/ssm）とレジストリは後続 Wave で移すまで main に残る。
+// Package agents is the type layer of the coding-agent abstraction: the Agent interface and
+// its input/output types. It depends on internal/session and internal/transcript only; the
+// implementations (claude/opencode/codex/shell/ssm) and the registry live elsewhere, so every
+// kind can import this package without a cycle.
 package agents
 
 import (
@@ -21,33 +21,35 @@ func DirGoneErr(dir string) error {
 // ErrSSMNoTarget is returned when an ssm session has no connection target recorded.
 var ErrSSMNoTarget = errors.New("SSM セッションの接続先が指定されていません")
 
-// --- 権限確認をスキップするか（docs/log/76） ---------------------------------------
+// --- Whether to skip the permission prompt (docs/log/76) ---------------------------
 //
-// fleet の既定は「スキップする」＝ claude なら --dangerously-skip-permissions、他 kind も
-// 同格のフラグ（cursor --force / copilot --allow-all / kiro --trust-all-tools /
-// agy --dangerously-skip-permissions）。コンテナ自体がサンドボックスで、承認ダイアログで
-// TUI が止まっても Console から答えられない時期があったための判断だった。
-// docs/log/76 でこれを**利用者の選択**にする。既定は変えない（true）。
+// The fleet default is to skip it: --dangerously-skip-permissions for claude, and the
+// equivalent flag for the other kinds (cursor --force / copilot --allow-all / kiro
+// --trust-all-tools / agy --dangerously-skip-permissions). The container is itself a sandbox,
+// and a TUI stopped on an approval dialog could not be answered from the Console at the time.
+// docs/log/76 makes it the USER's choice, with the default unchanged (true).
 //
-// 値は 3 層で解決する。上から順に、最初に決まったものが勝つ:
+// The value resolves through three layers; the first one that decides wins:
 //
-//	① session.Meta.SkipPermissions — 起動時にこのセッションだけ明示した値
-//	② ui-prefs agentLaunchDefaults[kind].skipPermissions — 設定 > エージェントの kind 毎の既定
-//	③ true — 従来どおり
+//	1. session.Meta.SkipPermissions — set for this session alone at launch
+//	2. ui-prefs agentLaunchDefaults[kind].skipPermissions — the per-kind default under
+//	   Settings > Agents
+//	3. true — as before
 //
-// ②を HTTP でなくプロセス内で読むのは、Console 以外の起動経路（MCP の create_session・
-// 定時実行・再起動・fork・recreate）にも同じ既定を効かせるため。ここを Console 側だけの
-// 解決にすると「設定でオフにしたのに定時実行のセッションだけ bypass で走る」が起きる。
+// Layer 2 is read in-process rather than over HTTP so the same default reaches the launch
+// paths that do not come from the Console (MCP create_session, scheduled execution, restart,
+// fork, recreate). Resolving it on the Console side only would give "turned off in the
+// settings, yet the scheduled session alone runs with bypass".
 
-// SkipPermissionsPref is the ui-prefs lookup seam (層②). package main が起動時に
-// 実体（ui_prefs.go の skipPermissionsPref）を差す。ok=false は「その kind に設定が無い」。
-// 既定値がここに書いていないのは、prefs を読めない/持たないビルド（テスト）でも
-// 従来どおりに倒すため — 解決の既定は SkipPermissions が持つ。
+// SkipPermissionsPref is the ui-prefs lookup seam (layer 2); package main plugs the real
+// implementation (ui_prefs.go's skipPermissionsPref) in at startup. ok=false means the kind
+// has no setting. No default value is written here, so that a build which cannot read prefs
+// (tests) still falls the old way — the resolution default belongs to SkipPermissions.
 var SkipPermissionsPref = func(kind string) (v bool, ok bool) { return false, false }
 
-// SkipPermissions resolves the 3 層 for m. 「plan 起動なら承認を出す」は各 kind の
-// buildProgram/spawn 側の判断（plan フラグの付与と対で扱う必要がある）なので、ここでは
-// 見ない — この関数が答えるのは利用者の選択だけ。
+// SkipPermissions resolves the three layers for m. "A plan launch shows the approvals" is
+// each kind's own decision in buildProgram/spawn (it has to be handled together with adding
+// the plan flag), so it is not consulted here — this function answers the user's choice only.
 func SkipPermissions(m session.Meta) bool {
 	if m.SkipPermissions != nil {
 		return *m.SkipPermissions
@@ -58,9 +60,9 @@ func SkipPermissions(m session.Meta) bool {
 	return true
 }
 
-// BypassPermissions folds in plan mode: plan 起動は kind を問わず bypass を外す
-// （全ツールを自動承認しては plan で始める意味が無い）。各 kind の BuildLaunch /
-// Driver.Resume はこれを呼んで「bypass フラグを付けるか」を 1 つの bool で決める。
+// BypassPermissions folds in plan mode: a plan launch drops bypass whatever the kind is
+// (starting in plan is pointless when every tool is auto-approved). Each kind's BuildLaunch /
+// Driver.Resume calls this to decide "add the bypass flag?" from a single bool.
 func BypassPermissions(m session.Meta) bool {
 	return m.Mode != "plan" && SkipPermissions(m)
 }
@@ -81,11 +83,12 @@ type Caps struct {
 	CanFork       bool // POST /fork — copy the conversation into a new session (claude)
 	CanTranscript bool // GET /output & /messages — read the jsonl transcript (claude)
 	UsesLabel     bool // set a claude --name display label at create/recreate (claude)
-	// PermissionChoice: 利用者が「権限確認をスキップするか」を選べる kind（docs/log/76）。
-	// 立てる条件は**承認待ちが Console から答えられること**——フラグを外すだけなら
-	// どの kind でもできるが、ペインしか無い（あるいはペインすら無い managed の）承認
-	// ダイアログで止まったセッションは、利用者から見れば黙って固まったのと同じ。
-	// 実測で導線がある kind にだけ立てる（「未検証の caps を立てない」— 1854d の教訓）。
+	// PermissionChoice marks the kinds where the user may choose whether to skip the
+	// permission prompt (docs/log/76). The condition for setting it is that a pending
+	// approval can be ANSWERED from the Console: dropping the flag works for any kind, but a
+	// session stopped on an approval dialog that exists only in the pane (or not even there,
+	// for managed) is, to the user, silently frozen. Set it only for kinds where that path
+	// was measured — never claim an unverified cap.
 	PermissionChoice bool
 	// CanForkAt narrows CanFork: POST /fork {"at": …} can branch at a PAST turn instead
 	// of copying the whole conversation (docs/log/55). Implies the kind also implements
@@ -153,9 +156,9 @@ type Agent interface {
 // GracefulStopper is an optional Agent capability: a chance for the CLI to
 // exit on its own terms before the pane is hard-killed. agy needs it because
 // v1.1.4 flushes its cwd→conversation map (the resume-UUID source) ONLY on a
-// graceful exit (統合E2E実測 — docs/log/32); kill-session would lose the id for
-// good. Returning true means the tmux session already ended and the caller
-// must skip its own kill.
+// graceful exit (measured in the integration E2E — docs/log/32); kill-session
+// would lose the id for good. Returning true means the tmux session already
+// ended and the caller must skip its own kill.
 type GracefulStopper interface {
 	GracefulStop(m session.Meta) bool
 }
@@ -187,16 +190,16 @@ type TranscriptData struct {
 	Pending []transcript.Question
 	// Queued are prompts typed into the RUNNING turn but not yet injected as a user
 	// message (opencode's session_input rows awaiting promotion) — surfaced as the
-	// mirror's キュー済み badge, like claude's queue-operation reconstruction.
+	// mirror's "queued" badge, like claude's queue-operation reconstruction.
 	Queued []string
 	// Compacting reports the agent is compacting its conversation right now
-	// (opencode session.time_compacting) — surfaced as the mirror's 圧縮中 badge.
+	// (opencode session.time_compacting) — surfaced as the mirror's "compacting" badge.
 	Compacting bool
 }
 
 // ContextReporter is an optional Agent capability: a session-level context-fill
 // reading for agents whose transcript carries no per-turn token usage (agy —
-// transcript_full.jsonl に token 数が一切無い、docs/log/32). Called ONLY from the
+// its transcript_full.jsonl has no token counts at all, docs/log/32). Called ONLY from the
 // /messages handler (the chat mirror's poll), NOT from the bulk /sessions/usage
 // aggregation, so a fleet-wide usage query never triggers the underlying
 // (expensive, PTY-scrape) refresh. nil = no reading yet.
@@ -234,7 +237,7 @@ type ForkPoint struct {
 	// Anchor is the transcript.Turn.AnchorID of the USER turn the user clicked.
 	Anchor string
 	// Include keeps that turn and the reply it got, branching from just AFTER them
-	// ("この発言の続きから") instead of just before them ("この発言をやり直す").
+	// ("continue from this message") instead of just before them ("redo this message").
 	//
 	// Both are the same operation one exchange apart, which is why they share a resolver:
 	// each kind converts (anchor, include) into its own "keep up to here" value, and

@@ -1,7 +1,7 @@
-/* 索引だけのファイル。規則はここに 1 つも置かない。
-   parts/ を下の @import の順に連結すると、分割前の chat.css とバイト単位で一致する
-   （同名グローバルクラスは import 順で合成されるので、順序を動かさないことが保証そのもの）。
-   面の見出しと由来のコメントは、それぞれの parts/*.css の先頭に元のまま残っている。 */
+/* Index only: never put a rule in this file.
+   Concatenating parts/ in the @import order below reproduces the pre-split chat.css byte
+   for byte. Same-named global classes are composed in import order, so not moving the
+   order is the guarantee itself. */
 @import "./parts/shell.css";
 @import "./parts/bubble.css";
 @import "./parts/work.css";

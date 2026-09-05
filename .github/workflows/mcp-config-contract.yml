@@ -1,23 +1,25 @@
-# MCP レジストリの materialize 契約（docs/log/48 §8 / §13）。**認証も課金も不要**。
+# The materialize contract of the MCP registry (docs/log/48 §8 / §13). Needs no
+# authentication and spends no quota.
 #
-# 何を検証するか: af は「各 CLI のグローバル MCP 設定はこういう形だ」という契約の上で
-# 利用者の設定ファイルを書き換えている（claude = $CLAUDE_CONFIG_DIR/.claude.json の
-# mcpServers、codex = $CODEX_HOME/config.toml の [mcp_servers.*]、opencode =
-# ~/.config/opencode/opencode.jsonc の mcp、copilot = $COPILOT_HOME/mcp-config.json、
-# cursor = ~/.cursor/mcp.json）。CLI 側が形を変えても af のユニットテストは緑のまま —
-# 自分の出力を自分で読んでいるだけだからで、気付くのは利用者が「登録したのにツールが
-# 出ない」と言うときになる。ここでは **CLI 自身の `mcp add` に書かせた設定と af の
-# materialize 結果を構造比較**し、`mcp add` を持たない cursor と、ヘッダを `mcp add` で
-# 表現できない codex については **CLI 自身に af の書いたファイルを読み返させて**、
-# 契約が動いたら赤くする。
+# What it verifies: af rewrites the user's config files on the assumption of a contract —
+# "this is the shape of each CLI's global MCP config" (claude = mcpServers in
+# $CLAUDE_CONFIG_DIR/.claude.json, codex = [mcp_servers.*] in $CODEX_HOME/config.toml,
+# opencode = mcp in ~/.config/opencode/opencode.jsonc, copilot =
+# $COPILOT_HOME/mcp-config.json, cursor = ~/.cursor/mcp.json). When a CLI changes that
+# shape, af's unit tests stay green — they only read back af's own output — and the first
+# sign of trouble is a user reporting "I registered it but no tools show up". This job
+# structurally compares the config the CLI's own `mcp add` writes against af's materialize
+# result, and for cursor (no `mcp add`) and codex (headers cannot be expressed through
+# `mcp add`) has the CLI itself read back the file af wrote, so a moved contract goes red.
 #
-# なぜ agent 別ファイルでなく 1 本か: 検証対象は「MCP 設定ファイルの形」という
-# **レジストリ側の 1 つの契約**で、複数 CLI に同時に跨がる。codex-contract.yml は
-# `-run '^TestDriftCodex'` を ./... に当てているので codex 側は変更時に二重に走るが、
-# mcpreg 自体を触った PR を拾うのはこのワークフローの役目。
+# Why one file rather than one per agent: what is verified is a single contract on the
+# registry side — the shape of the MCP config file — and it spans several CLIs at once.
+# codex-contract.yml runs `-run '^TestDriftCodex'` over ./..., so codex is covered twice
+# when it changes, but catching a PR that touches mcpreg itself is this workflow's job.
 #
-# 版マトリクス: pinned = イメージに焼かれる版、latest = self-update を opt-in した
-# Workspace が実際に走らせる版（cli-drift-check.sh の頭にある教訓）。
+# Version matrix: pinned = the version baked into the image, latest = the version a
+# Workspace that opted into self-update actually runs (the lesson at the top of
+# cli-drift-check.sh).
 name: mcp-config-contract
 
 permissions:
@@ -33,7 +35,7 @@ on:
       - ".github/workflows/mcp-config-contract.yml"
       - ".github/actions/setup-agent-cli/action.yml"
   schedule:
-    # 毎週月曜 6:45 JST。codex-contract（21:15 UTC）/ e2e（21:00 UTC）とずらす。
+    # Mondays 6:45 JST, offset from codex-contract (21:15 UTC) and e2e (21:00 UTC).
     - cron: "45 21 * * 0"
   workflow_dispatch:
 
@@ -48,15 +50,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # test = テスト名の接尾辞。drift タグは他エージェントの probe と共有なので、
-        # 名前で自分の分だけに絞る。
+        # test = the test-name suffix. The drift tag is shared with the other agents'
+        # probes, so the name narrows the run down to this agent's own tests.
         #
-        # ここに **kiro と agy が居ない**のは意図的で、どちらも CI で契約を確認できない:
-        #   - kiro は `mcp` サブコマンドが全部ログインを要求する（`mcp add` も `mcp list` も）。
-        #     runner にログインは持ち込めないので、kiro の drift は**ログイン済みの手元**でしか
-        #     走らない（未ログインなら skip する）。
-        #   - agy は FIPS/BoringCrypto ビルドで、RDRAND の無いホストでは起動すらしない。
-        # 落とせない層なので、この 2 つは §8.1 の実測記録が唯一の裏取りになる。
+        # kiro and agy are absent on purpose — neither contract can be confirmed in CI:
+        #   - every kiro `mcp` subcommand requires a login (`mcp add` and `mcp list`
+        #     alike). A login cannot be brought onto the runner, so kiro's drift only runs
+        #     on a logged-in machine locally (it skips when not logged in).
+        #   - agy is a FIPS/BoringCrypto build and will not even start on a host without
+        #     RDRAND.
+        # They cannot be dropped from the layer, so for these two the measurements recorded
+        # in §8.1 are the only backing there is.
         agent: [claude, codex, opencode, copilot, cursor]
         version: [pinned, latest]
         include:
@@ -79,7 +83,7 @@ jobs:
       - name: materialize drift (${{ matrix.agent }}, ${{ matrix.version }})
         working-directory: workspace/agent
         env:
-          # CLI が居ないときは skip ではなく fail（黙った skip は偽の緑）。
+          # Fail rather than skip when the CLI is missing: a silent skip is a false green.
           E2E_REQUIRE: "1"
         run: |
           go test -tags drift -count=1 -v -timeout 10m \

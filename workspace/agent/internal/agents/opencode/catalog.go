@@ -3,10 +3,10 @@ package opencode
 // Launch-model catalog shaping for the two opencode.ai billing routes.
 //
 // One key (OPENCODE_API_KEY) unlocks TWO provider ids, and `opencode models` lists
-// both side by side（実測 2026-07-26）:
+// both side by side (measured 2026-07-26):
 //
-//	opencode/…      opencode Zen — pay-per-request from a prepaid balance（59 件）
-//	opencode-go/…   OpenCode Go — the subscription plan（16 件）
+//	opencode/…      opencode Zen — pay-per-request from a prepaid balance (59 of them)
+//	opencode-go/…   OpenCode Go — the subscription plan (16 of them)
 //
 // 10 of the 16 Go models exist under BOTH prefixes with the SAME suffix
 // (deepseek-v4-pro, glm-5.2, kimi-k2.7-code, …). The ids were the only label, so the
@@ -29,26 +29,29 @@ import (
 )
 
 // Usage preferences (ui-prefs opencodeCatalog) — WHICH opencode.ai billing route this
-// workspace means to use. It shapes the launch menu, and 無料枠 additionally decides
-// that opencode is usable at all without any credential（auth.go の env・Status）。
-// 直接つないだ他プロバイダ（anthropic/…, openrouter/… — 利用者自身の課金）はどの値でも
-// 落とさない。opencode.ai の枠を選ぶ設定であって、他社の鍵を取り上げる設定ではない。
+// workspace means to use. It shapes the launch menu, and the free route additionally decides
+// that opencode is usable at all without any credential (auth.go's env / Status). Other
+// providers connected directly (anthropic/…, openrouter/… — billed to the user themselves) are
+// never dropped for any value: this setting picks an opencode.ai route, it does not take away
+// another vendor's key.
 const (
 	// UsageOff hard-disables opencode regardless of anything else configured: stored
 	// provider keys, an account OAuth login — none of it is honored while this is
-	// selected (auth.go の connected()/env())。「鍵を消し忘れているだけで無料枠/他社課金
-	// に乗ってしまう」を admin が明示的に断てるようにする選択肢。UsageFree（無料枠を
-	// 使いたい）とは別物 — off は「一切使わない」の宣言で、free の対極にある。
+	// selected (auth.go's connected()/env()). It is the choice that lets an admin explicitly
+	// stop "a key nobody remembered to delete puts us on the free route or another vendor's
+	// bill". Not the same thing as UsageFree (wanting the free route) — off declares "do not use
+	// it at all" and is free's opposite.
 	UsageOff = "off"
-	// UsageFree keeps only the zero-auth free models. 認証ゼロで動く枠（実測 8 件・
-	// cost.input が 0）で、混雑（503）と無料枠上限に左右される。
+	// UsageFree keeps only the zero-auth free models — the route that runs with no credential at
+	// all (measured: 8 of them, cost.input 0), at the mercy of congestion (503) and the free
+	// route's own limit.
 	UsageFree = "free"
-	// UsageGo keeps the subscription route only: opencode-go/… 。Go は API キーに
-	// 紐づく（実測: アカウントログインだけでは生えない）。
+	// UsageGo keeps the subscription route only: opencode-go/… . Go is tied to the API key
+	// (measured: an account login alone does not produce it).
 	UsageGo = "go"
 	// UsageZen keeps the pay-per-request route (opencode/…) and, when the account also
-	// has the Go plan, its ids too — 実測どおり両方使える状態をそのまま見せる。並びは
-	// Go を先にする（サブスクで賄える方を上に）。
+	// has the Go plan, its ids too — showing exactly the measured state where both work. Go
+	// comes first in the order (what the subscription covers goes on top).
 	UsageZen = "zen"
 )
 
@@ -71,7 +74,7 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 		out = append(out, agents.ModelChoice{ID: id, Label: id})
 	}
 	// Emptying the picker would be worse than ignoring the preference: an account
-	// without the Go plan that picks Go のみ must still be able to launch. Guard on the
+	// without the Go plan that picks Go-only must still be able to launch. Guard on the
 	// INPUT being non-empty — an already-empty catalog (CLI absent / offline) is not a
 	// preference problem and must not bounce back into this function. UsageOff is
 	// exempt from this rescue: an empty picker IS the intended result of "off".
@@ -84,8 +87,9 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	// two sources, and they disagree — the daemon's /api/model hands back the upstream
 	// catalog's own (meaningless) order while `opencode models` prints it sorted. The
 	// picker's order therefore flipped depending on whether a serve happened to be
-	// running when the modal was opened（実測 2026-08-31・見た目は「時々並びが乱れる」）。
-	// docs/log/54 の取得元切り替えは維持したまま、見え方だけを揃える。
+	// running when the modal was opened (measured 2026-08-31; what it looks like is "the order
+	// is sometimes scrambled"). docs/log/54's source switching stays as it is — only the
+	// appearance is made consistent.
 	return agents.SortGrouped(out, func(m agents.ModelChoice) int {
 		if strings.HasPrefix(m.ID, goPrefix) {
 			return 0
@@ -94,30 +98,30 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	})
 }
 
-// keepForUsage decides whether one id belongs in the menu under pref. opencode.ai の
-// 2 経路だけを判定し、他プロバイダ（利用者自身の鍵）は素通しする。
+// keepForUsage decides whether one id belongs in the menu under pref. Only opencode.ai's two
+// routes are judged; other providers (the user's own key) pass straight through.
 func keepForUsage(id, pref string) bool {
 	if pref == UsageOff {
-		return false // 一切使わない宣言 — 他社プロバイダの id も含め、何も出さない。
+		return false // the "use nothing at all" declaration — no ids, other vendors' included
 	}
 	isGo := strings.HasPrefix(id, goPrefix)
 	isZen := strings.HasPrefix(id, zenPrefix) && !isGo
 	if !isGo && !isZen {
-		return true // anthropic/…, openrouter/… — 別課金なので枠の選択とは無関係
+		return true // anthropic/…, openrouter/… — a separate bill, so the route choice is moot
 	}
 	switch pref {
 	case UsageFree:
 		return isFreeModel(id)
 	case UsageGo:
 		return isGo
-	default: // UsageZen: 課金経路を絞らない（Go を併用していれば両方出る）
+	default: // UsageZen: no billing route is excluded (with Go alongside, both appear)
 		return true
 	}
 }
 
 // CatalogPref normalizes a stored preference value, including the values this setting
-// used to hold（"hide-zen" は Go だけを見たいという意思なので UsageGo、"go-first"/"all"
-// は両方見たいので UsageZen）。未設定/不明は UsageOff ＝ 明示的に選ぶまで無効。
+// used to hold ("hide-zen" means wanting to see Go only, so UsageGo; "go-first"/"all" mean
+// wanting both, so UsageZen). Unset or unknown is UsageOff = disabled until explicitly chosen.
 func CatalogPref(v string) string {
 	switch v {
 	case UsageOff, UsageFree, UsageGo, UsageZen:

@@ -10,27 +10,26 @@ import { CloudCostAdminView, useCostProfile } from "../../cost/CloudCostView.tsx
 import { McpAdminView } from "../mcp/mcpAdmin.tsx";
 import { PoolView } from "../tenant/ec2Pool.tsx";
 import { SignInMethodRegister } from "../tenant/tenantSignInMethods.tsx";
-// テナント 1 つ分の面（レールの並びも本文も）はテナント設定モーダルと共有する。
-// 同じテナントを別の入口から見るだけなので、IA を入口ごとに分けない。
+// The per-tenant surface (both the rail order and the body) is shared with the tenant settings
+// modal: the same tenant seen from a different entry point must not get a different IA.
 import { TenantScopeBody, tenantScopeGroups } from "../tenant/tenantScope.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { TenantsList } from "./adminTenants.tsx";
 
-// AdminTab（super_admin の面）— 個人設定・テナント設定と同じ左レール＋本文の二枚看板。
+// AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
+// tenant settings.
 //
-// レールは 2 段になっている:
-//   ルート  … テナント一覧 / 登録簿・デプロイ全体（通信・読み上げ・スロット）・
-//              横断で見る（セッション・稼働時間・費用・監査・MCP 配布）
-//   テナント… 一覧からテナントを開くとレールごと切り替わり、そのテナントの
-//              上限 / ログイン / 運用の節が並ぶ（テナント設定モーダルと同じ並び）。
-//              メンバーは本文の中でもう 1 段ドリルする。
+// The rail has two levels:
+//   root   … tenant list / sign-in registry, deployment-wide (egress, TTS, slots), and
+//            cross-cutting views (sessions, uptime, cost, audit, MCP distribution)
+//   tenant … opening a tenant from the list swaps the whole rail for that tenant's quota /
+//            login / operations sections, in the same order as the tenant settings modal.
+//            Members drill one more level inside the body.
 //
-// ★ 旧実装は横一列のセグメントタブ 9 個＋その中だけパンくずドリルダウン、という
-// 二重のナビだった。設定モーダルが「タブ 6 超で破綻する」として捨てた形がここに
-// 残っていたもので、スマホでは横スクロールとスワイプの回避策まで要っていた。
-// レール化でその 2 つは不要になり、戻る（端末/ブラウザ）も ui/Modal と同じ
-// useBackClose の層に一本化した（独自 history エントリは撤去）。
+// A rail rather than a row of segmented tabs: a single row does not survive past ~6 tabs, and
+// the old shape needed horizontal scrolling plus a swipe workaround on phones. Device/browser
+// back goes through the same useBackClose layers as ui/Modal — no private history entries.
 
 interface RailGroup {
   key: string;
@@ -45,8 +44,8 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
       label: "admin.group_tenants",
       items: [
         ["tenants", "admin.tenants_list"],
-        // テナントが定義したサインイン方法の登録簿（docs/log/61 §61.11.6）。承認できるのは
-        // デプロイ管理者だけなので、デプロイ管理者にしか無い面。
+        // Registry of the sign-in methods tenants defined (docs/log/61 §61.11.6). Only a
+        // deployment administrator can approve them, so the surface exists only for them.
         ["register", "admin.tab_register"],
       ],
     },
@@ -56,8 +55,8 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
       items: [
         ["egress", "admin.mode_egress"],
         ["tts", "admin.mode_tts"],
-        // スロットプールは 1 つのランタイムにしか無い。Fargate のデプロイに空の
-        // 「スロット」が出ると「自分のスロットが消えた」と読める。
+        // The slot pool exists on one runtime only. An empty "slots" item on a Fargate
+        // deployment reads as "my slots disappeared".
         ...(opts.pool ? ([["pool", "admin.mode_pool"]] as [string, string][]) : []),
       ],
     },
@@ -67,8 +66,8 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
       items: [
         ["sessions", "admin.mode_sessions"],
         ["usage", "admin.mode_usage"],
-        // docker / native には AWS の請求が無い。0 が並ぶ費用の面は「無料」と読める
-        // ので、項目ごと作らない（docs/log/67 §67.8・ADR 0048 決定 9）。
+        // docker / native have no AWS bill, and a cost surface full of zeros reads as "free",
+        // so the item is not created at all (docs/log/67 §67.8, ADR 0048 decision 9).
         ...(opts.cost ? ([["cost", "admin.mode_cost"]] as [string, string][]) : []),
         ["audit", "admin.mode_audit"],
         ["mcp", "admin.mode_mcp"],
@@ -88,24 +87,24 @@ export function AdminTab() {
   // Whether this deployment HAS an AWS bill. Runtime-declared, not configured.
   const costProfile = useCostProfile();
 
-  // scope = 開いているテナントの slug（null＝ルート）。section はレールの現在地で、
-  // ルートとテナントで別々に覚える（テナントを閉じても一覧に戻ってくるだけ）。
+  // scope = the slug of the open tenant (null = root). section is the rail position, remembered
+  // separately for root and tenant so closing a tenant just returns to the list.
   const [scope, setScope] = useState<string | null>(null);
   const [rootSection, setRootSection] = useState("tenants");
   const [scopeSection, setScopeSection] = useState("limits");
   const [member, setMember] = useState<Member | null>(null);
-  // スマホは個人設定と同じドリルダウン（レール → 本文、戻るでレールへ）。
+  // Phones use the same drill-down as personal settings: rail → body, back returns to the rail.
   const [entered, setEntered] = useState(false);
 
-  // 戻るの層は積んだ順に剥がれる（useBackClose の共有スタック）。宣言順＝
-  // レール ↓ テナント ↓ メンバーなので、端末の戻るは メンバー → テナント →
-  // レール → モーダルを閉じる、の順で 1 段ずつ戻る。
+  // Back layers pop in the order they were pushed (useBackClose's shared stack). Declaration
+  // order is rail ↓ tenant ↓ member, so device back steps back one level at a time: member →
+  // tenant → rail → close the modal.
   useBackClose(() => setEntered(false), mobileMatches() && entered);
   const leaveScope = useCallback(() => {
     setScope(null);
     setMember(null);
-    // スマホではテナント一覧（本文）へ戻す。レールに戻してしまうと、どのテナントから
-    // 出てきたのか分からなくなる。
+    // On a phone return to the tenant list in the body; returning to the rail loses which
+    // tenant was just left.
     if (mobileMatches()) setEntered(true);
   }, []);
   useBackClose(leaveScope, !!scope);
@@ -151,7 +150,7 @@ export function AdminTab() {
     setScope(slug);
     setScopeSection("limits");
     setMember(null);
-    // スマホ: テナントを開いたらそのテナントのレールを見せる（次に選ぶのは節）。
+    // Phone: opening a tenant shows that tenant's rail, since a section is picked next.
     if (mobileMatches()) setEntered(false);
   };
 
@@ -175,7 +174,8 @@ export function AdminTab() {
           onOpenMember={setMember}
           onCloseMember={() => setMember(null)}
           onChanged={loadTenants}
-          // テナントが消えたら、その中の面に留まる意味が無い——一覧へ戻して読み直す。
+          // Once the tenant is gone there is nothing to stay inside — return to the list
+          // and reload.
           onDeleted={() => {
             leaveScope();
             loadTenants();
@@ -198,8 +198,8 @@ export function AdminTab() {
   return (
     <div className={"settings-layout" + (entered ? " entered" : "")}>
       <nav className="settings-rail" aria-label={tr("admin.title")}>
-        {/* テナントを開いている間はレールごとそのテナントの中身に入れ替わる。
-            見出しは今どこに居るか（テナント名）、その上が出口。 */}
+        {/* While a tenant is open the whole rail is replaced by that tenant's sections. The
+            heading says where you are (the tenant name); above it is the exit. */}
         {scope && (
           <div className="settings-rail-group admin-scope-head">
             <button type="button" className="admin-rail-back" onClick={leaveScope}>

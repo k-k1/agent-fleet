@@ -1,22 +1,21 @@
-// wiremap_golden_test.go — `map[string]any` を直に返している JSON 書き出し地点の
-// **キー集合**をゴールデン化する（CONTRACT-MAP / 脚③）。`wire.golden` の map 版。
+// wiremap_golden_test.go — goldens the KEY SET of every JSON write site that returns a
+// bare `map[string]any` (CONTRACT-MAP / leg 3). The map counterpart of `wire.golden`.
 //
-// なぜ要るか。`wire.golden` は reflect で**名前付き型**の json タグを撮るので、
-// **map 直返しは定義上ゼロ被覆**——`wire_golden_test.go` 冒頭のコメント自身が
-// 「ここに無い経路が 2 つある。どちらも struct を持たないので撮れない」と書いている。
-// 実測（develop 91faa224・go/ast）: **Agent の JSON 書き出し 285 地点のうち 226（79%）が map 直返し**で、
-// **そのワイヤを変えても鳴る検査が 1 つも無い。**
-// struct 化はその 368 を触る作業なので、**変換より先に「今の形」を固定する**。
+// `wire.golden` snapshots json tags by reflecting over NAMED types, so a bare map return
+// has zero coverage by construction — the header of `wire_golden_test.go` says as much
+// itself. Measured (go/ast): 226 of the Agent's 285 JSON write sites (79%) return a map
+// directly, and not one check fails when their wire changes. Converting them to structs is
+// work on those same 226 sites, so pin the current shape before converting anything.
 //
-// 撮り方は reflect ではなくソースの構文解析。map には型が無く、reflect で辿れる実体が
-// そもそも存在しないため（型が有るものは `wire.golden` の担当）。
+// The scan parses source rather than reflecting: a map carries no type, so there is no
+// entity for reflect to walk (typed payloads are `wire.golden`'s job).
 //
-// 更新の仕方（ワイヤを意図して変えたとき / 変換で map が struct になったとき）:
+// To update (a deliberate wire change, or a map that became a struct):
 //
 //	cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...
 //
-// 🔴 撮り直した PR では**撮り直した理由を必ず書く**（routes.golden / wire.golden と同じ運用）。
-// 「差分 0」より「この差分は意図」のほうが情報が多い。
+// A PR that re-snapshots must state why (same rule as routes.golden / wire.golden):
+// "this diff is intended" carries more information than "no diff".
 package main
 
 import (
@@ -36,54 +35,54 @@ import (
 )
 
 var updateWireMapGolden = flag.Bool("update-wiremap-golden", false,
-	"testdata/wiremap.golden を実際の map 書き出し地点で書き換える（意図して変えたときだけ）")
+	"rewrite testdata/wiremap.golden from the actual map write sites (only when the change was intended)")
 
 const wireMapGoldenPath = "testdata/wiremap.golden"
 
-// wireMapMinSites — 走査が壊れて「0 件だから緑」になるのを防ぐ下限。
-// 🔴 README §4:「0 件」は道具が動いていることを確かめてから採用する。
-// 実測 226（develop 91faa224・Agent）。struct 化が進めば**減る**のが正常なので下限は緩めに置き、
-// 「全部消えた／半分消えた」級の壊れ方だけを捕まえる。
+// wireMapMinSites is the floor that keeps a broken scan from passing as "green because
+// zero sites". README §4: a count of zero is only usable once the tool is known to work.
+// Measured 226; the number is expected to FALL as structs replace maps, so the floor is
+// deliberately loose and only catches "everything / half of it vanished" breakage.
 const wireMapMinSites = 100
 
 func TestWireMapGolden(t *testing.T) {
 	sites := scanWireMapSites(t, ".")
 	if len(sites) < wireMapMinSites {
-		t.Fatalf("map 書き出し地点が %d 件しか取れなかった（下限 %d）。"+
-			"走査が壊れている疑いが濃い——ゴールデンを撮り直す前に道具を疑うこと。",
+		t.Fatalf("only %d map write sites were picked up (floor %d). "+
+			"the scan is very likely broken - suspect the tool before retaking the golden.",
 			len(sites), wireMapMinSites)
 	}
 	got := wireMapLines(sites)
 
 	if *updateWireMapGolden {
 		writeWireMapGolden(t, wireMapGoldenPath, got)
-		t.Logf("wrote %s (%d 行 / %d サイト)", wireMapGoldenPath, len(got), len(sites))
+		t.Logf("wrote %s (%d lines / %d sites)", wireMapGoldenPath, len(got), len(sites))
 		return
 	}
 	assertWireMapGoldenLines(t, wireMapGoldenPath, got)
 }
 
-// assertWireMapGoldenLines — routes/wire 用の assertGoldenLines と同じ突き合わせだが、
-// **直し方の案内をこのゴールデンのものにする**。
-// 共有ヘルパは `-update-routes-golden` を案内するので、そのまま使うと
-// **赤を見た人に間違ったフラグを教える**（しかもそのフラグは何も直さない）。
+// assertWireMapGoldenLines does the same comparison as the routes/wire assertGoldenLines,
+// but points the reader at THIS golden's fix. The shared helper names
+// `-update-routes-golden`, so reusing it as-is would hand whoever sees the failure a flag
+// that repairs nothing here.
 func assertWireMapGoldenLines(t *testing.T, path string, got []string) {
 	t.Helper()
 	if diff := lineDiff(readGoldenLines(t, path), got); diff != "" {
-		t.Errorf("%s と一致しない:\n%s\n"+
-			"意図した増減なら -update-wiremap-golden で撮り直し、**撮り直した理由を PR に書く**。\n"+
-			"  行が消えた = その map サイトが struct になった（変換したなら意図どおり）か、消えた。\n"+
-			"  キーが増減した = ワイヤが変わった可能性そのもの。等価テストで示せていないなら止まること。",
+		t.Errorf("does not match %s:\n%s\n"+
+			"if the gain/loss was intended, retake with -update-wiremap-golden and **state in the PR why it was retaken**.\n"+
+			"  a line disappeared = that map site became a struct (intended, if you converted it), or it is gone.\n"+
+			"  a key was gained or lost = that IS the wire possibly changing. stop unless an equivalence test shows otherwise.",
 			path, diff)
 	}
 }
 
-// TestWireMapGoldenActuallyOpensMaps は「撮れているつもりで空」を防ぐ。
-// 🔴 走査が黙って何も拾わなくなると、ゴールデンは緑のまま何も守らなくなる
-// （`TestWireShapeGoldenCoversSession` と同じ趣旨）。
+// TestWireMapGoldenActuallyOpensMaps guards against "snapshotted, but empty": once the scan
+// silently stops picking anything up, the golden stays green while protecting nothing (same
+// intent as `TestWireShapeGoldenCoversSession`).
 //
-// 選んだ標本は**取りこぼしうる性質**を持つものだけにしてある——
-// リテラル直書きの map は簡単に拾えるので対照にならない。
+// The samples are chosen only for properties the scan could plausibly miss — a map written
+// out as a plain literal is easy to pick up, so it would not be a control.
 func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 	sites := scanWireMapSites(t, ".")
 	byFunc := map[string][]wireMapSite{}
@@ -91,15 +90,16 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 		byFunc[s.Func] = append(byFunc[s.Func], s)
 	}
 
-	t.Run("同一形状が複数サイトあることを数えている", func(t *testing.T) {
-		// 🔴 件数を数えていないと**同じ形状の N サイトのうち 1 つを消しても差分が出ない**
-		//（assertGoldenLines の突き合わせは集合演算なので）。
+	t.Run("counts that one shape occurs at several sites", func(t *testing.T) {
+		// Without the count, deleting one of N identical-shape sites produces no diff at
+		// all (assertGoldenLines diffs as a set operation).
 		//
-		// ⚠️ **標本に「変換対象のサイト」を選んではいけない。**
-		// 最初は handleFSLineMarks を名指ししていたが、**この track がそれを struct 化した
-		// 瞬間にこの保証ごと落ちた**（実測）。**自分の仕事で消える標本は保証にならない。**
-		// 名指しは dyn 印つき（＝構造的に struct 化できない＝消えない）ものから採り、
-		// 併せて「複数サイトを持つ関数が 1 つ以上ある」ことを性質として見る。
+		// Do not take the sample from the sites being converted. This used to name
+		// handleFSLineMarks, and the guarantee died the moment this track turned it into a
+		// struct (measured): what your own work deletes cannot guarantee anything. Names are
+		// taken from sites carrying a dyn mark (structurally unable to become a struct, so
+		// they do not disappear), plus the property "at least one function has several
+		// sites".
 		multi := 0
 		for _, ss := range byFunc {
 			if len(ss) >= 2 {
@@ -107,34 +107,35 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 			}
 		}
 		if multi == 0 {
-			t.Fatal("同一関数から複数サイトを書き出している関数が 1 つも無い＝件数の数え上げが効いていない")
+			t.Fatal("not a single function writes out more than one site = the count of identical shapes is doing nothing")
 		}
-		t.Logf("複数サイトを持つ関数: %d 個", multi)
+		t.Logf("functions with several sites: %d", multi)
 
-		// handleAgentRTKGain は 4 サイトのうち 1 つが dyn（rtk の出力をそのまま中継）で、
-		// **構造的に struct 化できないので変換で消えない。**
+		// One of handleAgentRTKGain's four sites is dyn (it relays rtk's output verbatim),
+		// so it structurally cannot become a struct and the conversion will not delete it.
 		if got := byFunc["handleAgentRTKGain"]; len(got) < 2 {
-			t.Errorf("handleAgentRTKGain の書き出し地点が %d 件しか取れていない（複数あるはず）", len(got))
+			t.Errorf("only %d write sites were picked up for handleAgentRTKGain (there should be several)", len(got))
 		}
 	})
 
-	t.Run("形状関数の戻り値を開けている", func(t *testing.T) {
-		// handlePutSlackConn は writeJSON(w, 200, slackStatus(...)) で、
-		// キーは呼び出し先の本体にしか無い。キー数ではなく**キー名**を要求する
-		//（数だけ見ていると、浅く止まったのに緑になる——CP 側で実際に踏んだ）。
+	t.Run("opens a shape function's return value", func(t *testing.T) {
+		// handlePutSlackConn is writeJSON(w, 200, slackStatus(...)): the keys live only in
+		// the callee's body. Demand the specific key NAMES, not a key count — counting
+		// alone lets a recursion that stopped short still pass green (hit for real on the
+		// control-plane side).
 		got := byFunc["handlePutSlackConn"]
 		if len(got) == 0 {
-			t.Fatal("handlePutSlackConn を拾えていない（形状関数の戻り値を開けていない）")
+			t.Fatal("handlePutSlackConn was not picked up (the shape function's return value is not being opened)")
 		}
 		want := []string{"connected", "mode", "notify", "receive", "operator"}
 		if !wireMapHasAll(got[0].Keys, want) {
-			t.Errorf("slackStatus のキー集合が痩せている: %v\n  %v を含むべき", got[0].Keys, want)
+			t.Errorf("slackStatus's key set has thinned out: %v\n  should contain %v", got[0].Keys, want)
 		}
 	})
 
-	t.Run("条件付きキーを記録している", func(t *testing.T) {
-		// omitempty の要否はここからしか読めない。1 件も記録できていないなら、
-		// ゴールデンは「struct 化してよいか」の判断材料にならない。
+	t.Run("records conditional keys", func(t *testing.T) {
+		// Whether omitempty is needed is readable only from here. With not one recorded,
+		// the golden cannot inform the decision of whether a site may become a struct.
 		n := 0
 		for _, s := range sites {
 			if len(s.CondKeys) > 0 {
@@ -142,28 +143,32 @@ func TestWireMapGoldenActuallyOpensMaps(t *testing.T) {
 			}
 		}
 		if n == 0 {
-			t.Error("条件付きキーを持つサイトが 1 件も無い——" +
-				"条件分岐の追跡が壊れている（omitempty の要否が読めなくなる）")
+			t.Error("not a single site has conditional keys - " +
+				"the conditional tracking is broken (whether omitempty is needed becomes unreadable)")
 		}
-		t.Logf("条件付きキーを持つサイト: %d 件", n)
+		t.Logf("sites with conditional keys: %d", n)
 	})
 }
 
-// TestWireMapScanExclusionsAreJustified — 走査の除外に付けた理由を機械で検査する。
+// TestWireMapScanExclusionsAreJustified checks by machine the reason given for each scan
+// exclusion.
 //
-// 🔴 除外の理由は「製品バイナリの依存グラフに入らない」。**主張ではなく `go list -deps` で示す**
-// （`git grep` では「入らない」は言えない）。**main からも ./... のどこからも辿れないこと**を見る。
-// 誰かが製品コードから import した瞬間にここが赤くなり、除外は取り消される。
+// That reason is "it is not in the product binary's dependency graph", and it is shown with
+// `go list -deps` rather than asserted (`git grep` cannot establish "is not in"): what is
+// checked is that the package is reachable neither from main nor from anywhere under ./....
+// The moment someone imports it from product code this goes red and the exclusion is
+// withdrawn.
 //
-// これは免除の寿命の逆検査（§4）と同じ形——**除外が要らなくなる／許されなくなる道を機械が見張る。**
+// Same shape as the reverse check on an exemption's lifetime (§4): a machine watches the road
+// on which the exclusion stops being needed, or stops being allowed.
 func TestWireMapScanExclusionsAreJustified(t *testing.T) {
 	if len(wireMapScanExcluded) == 0 {
-		t.Skip("除外なし")
+		t.Skip("no exclusions")
 	}
-	// 🔴 go が無ければ Skip ではなく Fatal。Skip に落ちると
-	// 「理由が検査されていない」ことに誰も気付かないまま緑になる。
+	// Fatal, not Skip, when go is missing: a Skip here goes green with nobody noticing that
+	// the reason was never checked.
 	if _, err := exec.LookPath("go"); err != nil {
-		t.Fatalf("go が無いので除外の理由を検査できない: %v", err)
+		t.Fatalf("cannot check the exclusion reasons because go is missing: %v", err)
 	}
 	mod, err := exec.Command("go", "list", "-m").Output()
 	if err != nil {
@@ -171,7 +176,7 @@ func TestWireMapScanExclusionsAreJustified(t *testing.T) {
 	}
 	modPath := strings.TrimSpace(string(mod))
 
-	// 検査 1: 製品バイナリ（main）の依存グラフに入らない。
+	// Check 1: not in the product binary's (main) dependency graph.
 	out, err := exec.Command("go", "list", "-deps", ".").Output()
 	if err != nil {
 		t.Fatalf("go list -deps .: %v", err)
@@ -181,19 +186,19 @@ func TestWireMapScanExclusionsAreJustified(t *testing.T) {
 		full := modPath + "/" + pkg
 		for _, d := range deps {
 			if d == full {
-				t.Errorf("走査から外している %s が `go list -deps .` に出る。\n"+
-					"  外してよい理由は %q だったが、**製品バイナリから辿れるようになっている**。\n"+
-					"  除外を取り消して走査対象に戻すか、import を外すこと。", pkg, why)
+				t.Errorf("%s is excluded from the scan yet shows up in `go list -deps .`.\n"+
+					"  the stated reason was %q, but it IS now reachable from the product binary.\n"+
+					"  withdraw the exclusion and scan it again, or drop the import.", pkg, why)
 			}
 		}
 	}
-	t.Logf("go list -deps .: %d パッケージ（除外対象は不在）", len(deps))
+	t.Logf("go list -deps .: %d packages (no excluded package among them)", len(deps))
 
-	// 検査 2: 非テストの import 元が自分以外に居ない。
-	// 🔴 `go list -deps ./...` は**そのパッケージ自身を必ず含む**ので、
-	// 「出るか出ないか」では判定できない（最初これで書いて偽の赤を出した）。
-	// .Imports は**テストファイルの import を含まない**ので、
-	// 「非テストの誰かが import したか」はここで見るのが正しい。
+	// Check 2: nobody but the package itself imports it from non-test code.
+	// `go list -deps ./...` always contains the package itself, so presence or absence there
+	// cannot decide this (written that way first, and it produced a false red). .Imports
+	// leaves out imports made by test files, which is what makes it the right place to ask
+	// whether a non-test importer exists.
 	lst, err := exec.Command("go", "list", "-f", "{{.ImportPath}} {{join .Imports \" \"}}", "./...").Output()
 	if err != nil {
 		t.Fatalf("go list -f ./...: %v", err)
@@ -209,42 +214,42 @@ func TestWireMapScanExclusionsAreJustified(t *testing.T) {
 		for pkg, why := range wireMapScanExcluded {
 			full := modPath + "/" + pkg
 			if importer == full {
-				continue // 自分自身は数えない
+				continue // the package itself does not count
 			}
 			for _, im := range imports {
 				if im == full {
-					t.Errorf("%s が非テストコードから %s を import している。\n"+
-						"  外してよい理由は %q だった。**テスト専用ではなくなっている。**",
+					t.Errorf("%s imports %s from non-test code.\n"+
+						"  the stated reason was %q. it is no longer test-only.",
 						importer, pkg, why)
 				}
 			}
 		}
 	}
 	if nchecked == 0 {
-		t.Fatal("go list が 1 パッケージも返さなかった（検査が空回りしている）")
+		t.Fatal("go list returned no packages at all (the check is spinning without measuring anything)")
 	}
-	t.Logf("非テスト import を検査したパッケージ: %d", nchecked)
+	t.Logf("packages checked for non-test imports: %d", nchecked)
 }
 
-// TestWireMapScanExclusionsActuallySkip — 除外が**実際に効いている**ことを見る。
-// 🔴 除外表に書いただけで走査側に繋がっていなければ、上の理由検査は
-// 「使われていない表」を検査しているだけになる（#345 で踏んだ「写しを検査していた」と同族）。
+// TestWireMapScanExclusionsActuallySkip checks that an exclusion is actually IN EFFECT. If
+// the table is written but never wired into the scan, the reason check above is only
+// checking a table nobody uses.
 func TestWireMapScanExclusionsActuallySkip(t *testing.T) {
 	for _, s := range scanWireMapSites(t, ".") {
 		dir := filepath.ToSlash(filepath.Dir(s.File))
 		if why, skip := wireMapScanExcluded[dir]; skip {
-			t.Errorf("%s は除外対象（%s）なのに走査結果に出ている＝除外が効いていない", s.File, why)
+			t.Errorf("%s is excluded (%s) yet shows up in the scan result = the exclusion is not in effect", s.File, why)
 		}
 	}
 }
 
-// --- ゴールデンの行 ---
+// --- Golden lines ---
 
-// wireMapLines は 1 行 = 「同じ関数・同じキー集合のサイト群」。
+// wireMapLines renders one line per group of sites sharing a function and a key set.
 //
-// 🔴 行番号は入れない（無関係な編集で全行が動く）。代わりに**同一形状の件数 xN を行に入れる**——
-// `assertGoldenLines` の差分は集合演算なので、件数を行に入れないと
-// **5 サイトのうち 1 つを消しても差分が出ない。**
+// No line numbers: an unrelated edit would move every line. The count of identical shapes
+// (xN) goes on the line instead — `assertGoldenLines` diffs as a set operation, so without
+// it deleting one of five identical sites produces no diff at all.
 func wireMapLines(sites []wireMapSite) []string {
 	type key struct{ file, fn, keys, cond, flags string }
 	count := map[key]int{}
@@ -279,13 +284,13 @@ func writeWireMapGolden(t *testing.T, path string, lines []string) {
 		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
 	}
 	var b strings.Builder
-	b.WriteString("# map[string]any を直に返している JSON 書き出し地点のキー集合。生成物 —— 手で編集しない。\n")
-	b.WriteString("# 更新: cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
-	b.WriteString("# 形式: <ファイル> <関数> x<同一形状の件数> {キー集合} [cond{条件付きキー}] [dyn|partial]\n")
-	b.WriteString("#   cond    = 条件文の中で足されるキー（struct 化するなら omitempty の要否を判断する対象）\n")
-	b.WriteString("#   dyn     = 非リテラルのキーがある（キー集合は静的に確定しない＝struct 化できない）\n")
-	b.WriteString("#   partial = 変数が複数回代入されており、キー集合を開けきれていない\n")
-	b.WriteString("# 🔴 キーが減った/増えた差分は、ワイヤが変わった可能性そのもの。撮り直す理由を PR に書くこと。\n")
+	b.WriteString("# Key sets of the JSON write sites that still return a map[string]any directly.\n# Generated - do not edit by hand.\n")
+	b.WriteString("# Update: cd workspace/agent && go test -run TestWireMapGolden -update-wiremap-golden ./...\n")
+	b.WriteString("# Format: <file> <func> x<count of identical shapes> {key set} [cond{conditional keys}] [dyn|partial]\n")
+	b.WriteString("#   cond    = keys added inside a conditional (decide omitempty for these when converting)\n")
+	b.WriteString("#   partial = the variable is assigned more than once, so the key set is not fully opened\n")
+	b.WriteString("#   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct\n")
+	b.WriteString("# A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.\n")
 	fmt.Fprintf(&b, "# count: %d\n", len(lines))
 	for _, ln := range lines {
 		b.WriteString(ln)
@@ -309,7 +314,7 @@ func wireMapHasAll(got, want []string) bool {
 	return true
 }
 
-// --- 走査（go/ast のみ。型検査をしない）---
+// --- Scan (go/ast only; no type checking) ---
 
 type wireMapSite struct {
 	File     string
@@ -320,19 +325,20 @@ type wireMapSite struct {
 	Partial  bool
 }
 
-// wireMapScanExcluded — 走査から外すパッケージと、**外してよい理由**。
+// wireMapScanExcluded maps a package excluded from the scan to the reason it may be excluded.
 //
-// 🔴 「テスト用だから」を人間の言葉で書いただけでは、次に誰かが internal/ 直下に
-// テスト用でないものを置いたとき一緒に素通りする。**理由そのものを機械で検査する**
-// （TestWireMapScanExclusionsAreJustified）。理由が成り立たなくなったら赤くなる。
+// "It is for tests" written in prose alone lets the next non-test thing someone drops under
+// internal/ slip through with it, so the reason itself is checked by machine
+// (TestWireMapScanExclusionsAreJustified) and goes red once it stops holding.
 //
-// ⚠️ ここは**パッケージの完全一致**で照合する。前方一致にすると
-// `internal/wiretestfoo` のような別物まで巻き込む。
+// Matching is on the FULL package path: a prefix match would drag in unrelated packages such
+// as `internal/wiretestfoo`.
 var wireMapScanExcluded = map[string]string{
-	"internal/wiretest": "テストからしか import されない共有ハーネスで、製品バイナリの依存グラフに入らない",
+	"internal/wiretest": "a shared harness imported only from tests, not in the product binary's dependency graph",
 }
 
-// wireMapHelpers — ヘルパ本体の中の書き出しは数えない（封筒であって DTO ではない）。
+// wireMapHelpers lists the write helpers themselves; writes inside their bodies are not
+// counted (they are the envelope, not the DTO).
 var wireMapHelpers = map[string]bool{
 	"writeJSON": true, "WriteJSON": true, "writeAPIErr": true, "WriteErr": true, "writeErr": true,
 }
@@ -340,7 +346,7 @@ var wireMapHelpers = map[string]bool{
 func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 	t.Helper()
 	var out []wireMapSite
-	funcs := map[string]*ast.FuncDecl{} // 形状関数を引くための索引
+	funcs := map[string]*ast.FuncDecl{} // index for looking up shape functions
 
 	var files []*ast.File
 	var names []string
@@ -361,7 +367,7 @@ func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("走査に失敗: %v", err)
+		t.Fatalf("scan failed: %v", err)
 	}
 
 	for _, f := range files {
@@ -375,9 +381,10 @@ func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 				funcs["."+fd.Name.Name] = fd
 			} else {
 				funcs[fd.Name.Name] = fd
-				// 🔴 パッケージ修飾でも引けるようにする。素の名前だけだと
-				// 別パッケージの同名関数に上書きされ、`uiprefs.Read()` のような
-				// 他パッケージの形状関数が**黙って解決できなくなる**。
+				// Also index under the package qualifier. With the bare name
+				// alone, a same-named function in another package overwrites the
+				// entry and a foreign shape function such as `uiprefs.Read()`
+				// silently stops resolving.
 				funcs[f.Name.Name+"."+fd.Name.Name] = fd
 			}
 		}
@@ -411,9 +418,10 @@ func scanWireMapSites(t *testing.T, root string) []wireMapSite {
 	return out
 }
 
-// wireMapPayload — 書き出し地点かどうかを判定し、payload の式を返す。
-// 🔴 `conn.WriteJSON(v)`（引数 1 個）は **WebSocket のフレーム送信**で HTTP のワイヤではない。
-// 引数 3 個を要求することで落としている（実測 11 件・codex app-server / Discord / Slack 宛）。
+// wireMapPayload decides whether n is a JSON write site and returns the payload expression.
+// `conn.WriteJSON(v)` (one argument) sends a WebSocket frame, not an HTTP wire, and is
+// excluded by requiring three arguments (measured: 11 such calls, to codex app-server /
+// Discord / Slack).
 func wireMapPayload(n ast.Node, env *wireMapEnv) (ast.Expr, bool) {
 	ce, ok := n.(*ast.CallExpr)
 	if !ok {
@@ -440,12 +448,13 @@ func wireMapPayload(n ast.Node, env *wireMapEnv) (ast.Expr, bool) {
 	return nil, false
 }
 
-// wireMapClassify は payload が map かどうかを見て、map ならキー集合を埋める。
-// 戻り値 false = map ではない（名前付き型・スライス・nil など。ここの担当外）。
-// 🔴 depth は「意味の上限」ではなく暴走よけ。浅く切ると**黙ってキーが痩せる**——
-// 実測: 上限 3 だと `workspaceStats → out := containerStats() → out := map{...}` の
-// 4 段目で打ち切られ、8 キーが 3 キーになった（それでも緑に見えた）。
-// 再帰は「関数の入れ子」で消費されるので、循環は visited で止めて深さは余裕を持たせる。
+// wireMapClassify inspects the payload and fills in the key set when it is a map.
+// A false return means "not a map" (named type, slice, nil, …; not this file's business).
+// depth is a runaway guard, not a semantic limit: cut it short and key sets silently thin
+// out — measured, a limit of 3 stopped at the fourth level of
+// `workspaceStats → out := containerStats() → out := map{...}` and turned 8 keys into 3,
+// while still looking green. Recursion is spent on function nesting, so cycles are stopped
+// by visited and the depth is left generous.
 func wireMapClassify(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[string]*ast.FuncDecl, visited map[*ast.FuncDecl]bool, depth int) bool {
 	return wireMapClassifyAt(s, e, env, funcs, visited, 0, depth)
 }
@@ -481,9 +490,9 @@ func wireMapClassifyAt(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[st
 	case *ast.Ident:
 		a, ok := env.assign[v.Name]
 		if !ok {
-			// `var body map[string]any` に json.Unmarshal で詰める中継の形。
-			// キーは実行時にしか決まらないので**キー 0 個＋dyn** が正しい記録
-			// （「キーが無い」ではなく「静的に確定しない」）。
+			// The relay shape: `var body map[string]any` filled by json.Unmarshal.
+			// The keys are only known at run time, so zero keys plus dyn is the
+			// correct record ("not statically determined", not "no keys").
 			if t, ok := env.declType[v.Name]; ok && wireMapIsStringMapType(t) {
 				s.DynKey = true
 				wireMapMergeAdded(s, v.Name, env)
@@ -511,7 +520,7 @@ func wireMapClassifyAt(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[st
 		if !wireMapReturnsStringMapAt(fd, resIdx) {
 			return false
 		}
-		if visited[fd] { // 相互再帰で戻らなくなるのを防ぐ
+		if visited[fd] { // keeps mutual recursion from never returning
 			return false
 		}
 		visited[fd] = true
@@ -538,8 +547,8 @@ func wireMapClassifyAt(s *wireMapSite, e ast.Expr, env *wireMapEnv, funcs map[st
 	return false
 }
 
-// wireMapReturnsStringMapAt は resIdx 番目の戻り値が map[string]… かを見る。
-// 戻り値は名前付き（`(out map[string]any, err error)`）でも無名でも同じに数える。
+// wireMapReturnsStringMapAt reports whether result resIdx is a map[string]…. Named results
+// (`(out map[string]any, err error)`) count the same as unnamed ones.
 func wireMapReturnsStringMapAt(fd *ast.FuncDecl, resIdx int) bool {
 	if fd.Type.Results == nil {
 		return false
@@ -570,7 +579,7 @@ func wireMapLookup(fun ast.Expr, funcs map[string]*ast.FuncDecl) *ast.FuncDecl {
 	case *ast.Ident:
 		return funcs[v.Name]
 	case *ast.SelectorExpr:
-		// pkg.Fn を先に試す（レシーバ経由の a.Fn より確度が高い）
+		// Try pkg.Fn first: more reliable than the receiver-based a.Fn.
 		if id, ok := v.X.(*ast.Ident); ok {
 			if fd, ok := funcs[id.Name+"."+v.Sel.Name]; ok {
 				return fd
@@ -627,14 +636,15 @@ type wireMapEnv struct {
 	added    map[string][]wireMapAdded
 	dynIdx   map[string]bool
 	encoders map[string]bool
-	// 多値代入における左辺の位置（out, err := f() の out は 0）
+	// position on the left-hand side of a multi-value assignment (out in out, err := f() is 0)
 	mvIdx map[string]int
-	// `var x T` の宣言型
+	// declared type of a `var x T`
 	declType map[string]ast.Expr
 }
 
-// wireMapBuildEnv は関数本体を 1 度走って、変数への代入・map への添字代入を集める。
-// **条件文（if / for / switch / select）の中かどうか**も持つ——それが omitempty の要否そのもの。
+// wireMapBuildEnv walks a function body once, collecting assignments to variables and index
+// assignments into maps. It also records whether each sits inside a conditional (if / for /
+// switch / select) — that is exactly what decides whether omitempty is needed.
 func wireMapBuildEnv(body *ast.BlockStmt) *wireMapEnv {
 	e := &wireMapEnv{
 		assign: map[string]ast.Expr{}, nassign: map[string]int{},
@@ -662,9 +672,10 @@ func wireMapBuildEnv(body *ast.BlockStmt) *wireMapEnv {
 				if len(v.Rhs) == len(v.Lhs) {
 					rhs = v.Rhs[i]
 				} else if len(v.Rhs) == 1 {
-					// 🔴 `out, aerr := a.payload(...)` の形。これを開けないと
-					// workitems / notification / memo の書き出し地点が丸ごと落ちる
-					// （＝変換対象そのものがゴールデンから消える）。
+					// The `out, aerr := a.payload(...)` shape. Without opening it
+					// the workitems / notification / memo write sites drop out
+					// entirely — the very sites being converted would vanish
+					// from the golden.
 					if ce, ok := v.Rhs[0].(*ast.CallExpr); ok {
 						rhs = ce
 						if id, ok := lhs.(*ast.Ident); ok {

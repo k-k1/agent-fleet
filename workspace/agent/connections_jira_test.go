@@ -13,8 +13,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// docs/log/80 P1 — Jira 側の写像。実 Jira はこの環境にもアカウントも無いので、
-// 応答の形を固定して「行に何が出るか」を押さえる。
+// docs/log/80 P1 — the Jira-side mapping. There is no real Jira and no account in this
+// environment, so the response shapes are pinned here to fix what ends up in a row.
 
 func TestParseJiraSearchIssues(t *testing.T) {
 	body := []byte(`{"issues":[
@@ -60,12 +60,13 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	if strings.Join(got.Labels, ",") != "bug,checkout" {
 		t.Errorf("labels = %v", got.Labels)
 	}
-	// ★ Jira はリポジトリを持たない。起動先はクエリの repoHint が決めるので、
-	//   ここで何かを推測して埋めてはいけない。
+	// Jira has no repository. The launch target comes from the query's repoHint, so nothing may
+	// be guessed and filled in here.
 	if got.Repo != "" {
 		t.Errorf("repo = %q, want empty (Jira has no repository)", got.Repo)
 	}
-	// Jira の時刻は "+0900" 形式。RFC3339(UTC) に寄せないと行の並びが GitHub と混ざらない。
+	// Jira timestamps come in the "+0900" form. Without normalizing to RFC3339 (UTC), these rows
+	// cannot be ordered together with GitHub's.
 	if got.UpdatedAt != "2026-08-26T01:11:12Z" {
 		t.Errorf("updatedAt = %q, want the UTC RFC3339 form", got.UpdatedAt)
 	}
@@ -75,24 +76,24 @@ func TestParseJiraSearchIssues(t *testing.T) {
 	if rows[2].State != "open" {
 		t.Errorf("row3 = %q, want open", rows[2].State)
 	}
-	// ★ labels を持たない課題でも nil を載せない。nil スライスは JSON の null になり、
-	// 受け手が配列として扱えない（Console を真っ白にした形と同じ）。
+	// An issue without labels must still not carry nil: a nil slice marshals as JSON null, which
+	// the receiver cannot treat as an array (the shape that once blanked the Console).
 	if rows[2].Labels == nil {
 		t.Error("a label-less issue produced a nil slice, which marshals as null")
 	}
 	if enc, _ := json.Marshal(rows[2]); strings.Contains(string(enc), `"labels":null`) {
 		t.Errorf("row wire carries a null array: %s", enc)
 	}
-	// 本文（description）は取りにも行かないし返しもしない（ADR 0061 決定 2）。
+	// The body (description) is neither fetched nor returned (ADR 0061 decision 2).
 	enc, _ := json.Marshal(rows)
 	if strings.Contains(string(enc), `"description"`) {
 		t.Errorf("row JSON leaks a description: %s", enc)
 	}
 }
 
-// ★ ステータス「名前」ではなく「カテゴリ」で判定する。名前はプロジェクトごとに
-// 自由に変えられる（レビュー中 / 検証待ち …）ので、名前で判定すると最初の
-// カスタムワークフローで壊れる。
+// The decision is made on the status CATEGORY, not the status NAME. Names are freely renamed per
+// project ("in review", "awaiting verification", …), so deciding on the name breaks on the first
+// custom workflow.
 func TestNormalizeJiraState(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"new", "open"},
@@ -101,7 +102,7 @@ func TestNormalizeJiraState(t *testing.T) {
 		{"done", "done"},
 		{"DONE", "done"},
 		{"", "other"},
-		{"進行中", "other"}, // 名前が来たら other（カテゴリではないと分かる）
+		{"進行中", "other"}, // a name, not a category: it must fall through to other
 	} {
 		if got := normalizeJiraState(tc.in); got != tc.want {
 			t.Errorf("normalizeJiraState(%q) = %q, want %q", tc.in, got, tc.want)
@@ -116,9 +117,9 @@ func TestNormalizeJiraSite(t *testing.T) {
 	}{
 		{in: "https://example.atlassian.net", want: "https://example.atlassian.net"},
 		{in: " example.atlassian.net ", want: "https://example.atlassian.net"},
-		// 見ていた画面の URL をそのまま貼る人が多い。パスは落とす。
+		// People commonly paste the URL of the page they were looking at, so drop the path.
 		{in: "https://example.atlassian.net/jira/software/projects/PROJ/boards/1", want: "https://example.atlassian.net"},
-		{in: "http://example.atlassian.net", bad: true}, // Basic 認証が平文で飛ぶ
+		{in: "http://example.atlassian.net", bad: true}, // basic auth would travel in the clear
 		{in: "", bad: true},
 		{in: "https://", bad: true},
 	} {
@@ -135,9 +136,9 @@ func TestNormalizeJiraSite(t *testing.T) {
 	}
 }
 
-// ★ 2 つのエンドポイントを順に試す（Atlassian が /search → /search/jql へ移行中で、
-// どちらを答えるかはサイト次第）。新しい方が 404 なら古い方へ落ちること、そして
-// 401 のような**本物のエラーでは落ちない**ことを固定する。
+// The two endpoints are tried in order: Atlassian is migrating /search → /search/jql and which
+// one a site answers on varies. This pins that a 404 on the newer one falls back to the older
+// one, and that a genuine error such as 401 does NOT fall back.
 func TestJiraSearchFallsBackToClassicEndpoint(t *testing.T) {
 	var hits []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,8 +186,9 @@ func TestJiraSearchDoesNotFallBackOnAuthError(t *testing.T) {
 	}
 }
 
-// 保存前に /rest/api/3/myself で検証する。通らない資格情報は**保存しない**
-// （保存してしまうと、最初の異常はレール行のエラーになり「機能が壊れている」と読める）。
+// Credentials are verified against /rest/api/3/myself before being saved, and credentials that
+// fail are NOT saved: once stored, the first symptom is an error on a rail row, which reads as
+// "the feature is broken".
 func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -212,8 +214,8 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 		return w
 	}
 
-	// ⚠️ normalizeJiraSite は https を要求するので、httptest（http）を通すために
-	//    ここでは検証部分だけを直に確かめる。
+	// normalizeJiraSite requires https, so to run against httptest (http) only the verification
+	// part is exercised directly here.
 	if _, err := jiraAccount(&secrets.JiraCreds{Site: bad.URL, Email: "a@example.com", Token: "t"}); err == nil {
 		t.Error("bad credentials were accepted")
 	}
@@ -221,7 +223,7 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	if err != nil || name != "山田 太郎" {
 		t.Errorf("jiraAccount = %q, %v", name, err)
 	}
-	// http:// は入口で弾く（Basic 認証が平文で飛ぶ）。
+	// http:// is rejected at the door (basic auth would travel in the clear).
 	if w := put(bad.URL); w.Code != http.StatusBadRequest {
 		t.Errorf("http site accepted: %d", w.Code)
 	}
@@ -231,10 +233,10 @@ func TestJiraConnectVerifiesBeforeSaving(t *testing.T) {
 	}
 }
 
-// --- OAuth（docs/log/80 §80.17）-------------------------------------------------
+// --- OAuth (docs/log/80 §80.17) ---------------------------------------------------
 
-// ★ 3LO のトークンはサイトのホストでは通らない。API のベースが認証方式で変わることを
-// 固定する —— ここを間違えると症状は 401 になり、「トークンが違う」と読めてしまう。
+// A 3LO token does not work against the site host. This pins that the API base changes with the
+// auth kind: get it wrong and the symptom is a 401, which reads as "the token is wrong".
 func TestJiraAPIBaseSwitchesWithAuthKind(t *testing.T) {
 	tokenAuth := &secrets.JiraCreds{Site: "https://example.atlassian.net", Email: "a@example.com", Token: "t"}
 	if got := jiraAPIBase(tokenAuth); got != "https://example.atlassian.net" {
@@ -244,20 +246,20 @@ func TestJiraAPIBaseSwitchesWithAuthKind(t *testing.T) {
 	if got := jiraAPIBase(oauth); got != "https://api.atlassian.com/ex/jira/cid-1" {
 		t.Errorf("oauth base = %q", got)
 	}
-	// 認証ヘッダも切り替わる。
+	// The auth header switches too.
 	if h := jiraAuthHeader(oauth); h != "Bearer at" {
 		t.Errorf("oauth header = %q", h)
 	}
 	if h := jiraAuthHeader(tokenAuth); !strings.HasPrefix(h, "Basic ") {
 		t.Errorf("token header = %q", h)
 	}
-	// Site は人が見る URL のまま（browse リンクは api.atlassian.com ではない）。
+	// Site stays the URL a human sees: a browse link is not on api.atlassian.com.
 	if oauth.Site != "https://example.atlassian.net" {
 		t.Errorf("oauth site = %q", oauth.Site)
 	}
 }
 
-// 「接続済み」の判定に Token 欄を使うと、OAuth 接続が未接続に見える。
+// Deciding "connected" from the Token field alone makes an OAuth connection look disconnected.
 func TestJiraConnected(t *testing.T) {
 	if jiraConnected(nil) {
 		t.Error("nil is connected")
@@ -271,16 +273,16 @@ func TestJiraConnected(t *testing.T) {
 	if !jiraConnected(&secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at"}) {
 		t.Error("oauth path not recognised")
 	}
-	// アクセストークンが切れていても、更新トークンがあるなら接続は生きている。
+	// An expired access token with a refresh token still in hand is a live connection.
 	if !jiraConnected(&secrets.JiraCreds{AuthKind: "oauth", RefreshToken: "rt"}) {
 		t.Error("an expired-but-refreshable connection reads as disconnected")
 	}
 }
 
-// 認可のあと何が起きるかを丸ごと固定する。★ サイトの解決は「保存の一部」——
-// cloud id が無い 3LO 接続は API を 1 本も叩けないので、トークンだけ保存して
-// あとで解決する形にすると「カードは接続済み・レールは 401」という一番分かりにくい
-// 状態になる。
+// Pins everything that happens after authorization. Resolving the site is PART OF SAVING: a 3LO
+// connection without a cloud id cannot call a single API, so storing just the tokens and
+// resolving later produces the most confusing state there is — the card says connected while the
+// rail returns 401.
 func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var authSeen string
@@ -319,7 +321,7 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 	if len(s.Jira.Sites) != 2 {
 		t.Fatalf("sites = %+v", s.Jira.Sites)
 	}
-	// 既定は先頭。URL の末尾スラッシュは落とす（browse リンクが // になる）。
+	// The first entry is the default. A trailing slash is stripped, or browse links get a "//".
 	if s.Jira.CloudID != "cid-1" || s.Jira.Site != "https://one.atlassian.net" {
 		t.Errorf("default site = %q / %q", s.Jira.CloudID, s.Jira.Site)
 	}
@@ -330,7 +332,7 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 		t.Errorf("expiry not stamped: %d", s.Jira.Expiry)
 	}
 
-	// サイトの切り替え —— 認可に含まれるものだけ。
+	// Switching sites — only to one the authorization covers.
 	w = httptest.NewRecorder()
 	handlePutJiraSite(w, httptest.NewRequest("PUT", "/connections/jira/site", strings.NewReader(`{"cloudId":"cid-2"}`)))
 	if w.Code != http.StatusOK {
@@ -350,7 +352,8 @@ func TestJiraOAuthStoreResolvesSitesAndPicksOne(t *testing.T) {
 	}
 }
 
-// 認可は通ったのにサイトが 0 件 —— スコープ不足かサイト未所属。接続済みにしない。
+// Authorization succeeded but no sites came back — a missing scope, or membership in none of
+// them. Do not record it as connected.
 func TestJiraOAuthStoreRefusesWhenNoSites(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -392,31 +395,32 @@ func TestJiraStatusHidesSecretsAndNamesTheAuthKind(t *testing.T) {
 	if st["cloudId"] != "cid-1" {
 		t.Errorf("cloudId = %v", st["cloudId"])
 	}
-	// ⚠️ OAuth 側にメールは無い。空文字を出すと「メールが消えた」と読める。
+	// The OAuth path has no email. Emitting an empty string reads as "my email disappeared".
 	if _, ok := st["email"]; ok {
 		t.Errorf("oauth status carries an email field: %v", st)
 	}
-	// 旧ストア（authKind 無し）は token 扱いのまま動く。
+	// A legacy store (no authKind) keeps working, treated as the token path.
 	old := &secrets.Data{Jira: &secrets.JiraCreds{Site: "https://x", Email: "a@example.com", Token: "t"}}
 	if got := jiraStatus(old)["authKind"]; got != "token" {
 		t.Errorf("legacy store authKind = %v, want token", got)
 	}
 }
 
-// 期限が近ければ要求の前に更新する。⚠️ 更新の結果は保存する —— Atlassian は更新トークンを
-// ローテートするので、保存を落とすと次の期限で接続が詰む。
+// Refresh before the request when expiry is near, and PERSIST the result: Atlassian rotates the
+// refresh token, so dropping the save wedges the connection at the next expiry.
 func TestJiraEnsureFreshOnlyWhenOAuthAndDue(t *testing.T) {
-	// token 認証は期限を持たないので、何もしない（ブリッジが無くてもエラーにしない）。
+	// Token auth has no expiry, so nothing happens — not even an error when there is no bridge.
 	tokenAuth := &secrets.JiraCreds{Site: "https://x", Token: "t"}
 	if err := jiraEnsureFresh(tokenAuth); err != nil {
 		t.Errorf("token path tried to refresh: %v", err)
 	}
-	// 期限が十分先なら触らない。
+	// An expiry far enough away is left alone.
 	future := &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", Expiry: time.Now().Add(time.Hour).Unix()}
 	if err := jiraEnsureFresh(future); err != nil {
 		t.Errorf("fresh token refreshed anyway: %v", err)
 	}
-	// 期限切れならブリッジを探しに行き、無ければその旨のエラー（黙って古い token で叩かない）。
+	// Once expired it goes looking for the bridge, and errors out when there is none rather than
+	// quietly calling with the stale token.
 	t.Setenv("HOME", t.TempDir())
 	expired := &secrets.JiraCreds{AuthKind: "oauth", AccessToken: "at", RefreshToken: "rt", Expiry: 1}
 	if err := jiraEnsureFresh(expired); err == nil {
@@ -424,14 +428,14 @@ func TestJiraEnsureFreshOnlyWhenOAuthAndDue(t *testing.T) {
 	}
 }
 
-// ★ ローテートする更新トークンは 1 回きり。使い終わったものをもう一度出すのは
-// Atlassian が「盗用」とみなす操作で、認可ごと取り消されうる（＝利用者からは
-// 「Jira が勝手に切れた」に見える）。同時に 2 か所が期限切れに気づいても、交換は
-// 1 回だけ走ることを固定する。
+// A rotating refresh token is single-use. Presenting a spent one again is what Atlassian treats
+// as theft, and it can revoke the whole authorization — which the user sees as "Jira disconnected
+// itself". This pins that the exchange runs exactly once even when two places notice the expiry
+// at the same moment.
 func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	var mu sync.Mutex
-	var seen []string // 受け取った refresh token の並び
+	var seen []string // the refresh tokens received, in order
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
 			RefreshToken string `json:"refresh_token"`
@@ -441,12 +445,12 @@ func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 		seen = append(seen, body.RefreshToken)
 		n := len(seen)
 		mu.Unlock()
-		time.Sleep(20 * time.Millisecond) // 交換に時間がかかる状況を作る
+		time.Sleep(20 * time.Millisecond) // make the exchange take long enough to overlap
 		_, _ = w.Write([]byte(fmt.Sprintf(`{"access_token":"at%d","refresh_token":"rt%d","expires_in":3600}`, n, n)))
 	}))
 	defer srv.Close()
 
-	// ブリッジをストアに置く（CP 経由の更新経路）。
+	// Put the bridge in the store: this is the refresh route that goes through the CP.
 	s, err := secrets.Load()
 	if err != nil {
 		t.Fatal(err)
@@ -458,7 +462,7 @@ func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// レールの取得とコメント投稿が同時に期限切れに気づいた、という形。
+	// The shape where a rail fetch and a comment post notice the expiry at the same time.
 	var wg sync.WaitGroup
 	for i := 0; i < 4; i++ {
 		wg.Add(1)
@@ -491,18 +495,18 @@ func TestJiraRefreshIsSerializedAndNotRepeated(t *testing.T) {
 	}
 }
 
-// docs/log/80 §80.18.6 — 取得は 1 クエリ 50 件で切るので、並び順が無い JQL では
-// 「どの 50 件が残るか」が Jira 任せになる。レールは「新しい順の上位 N 件」を
-// 名乗っているので、そこを不定にしたままにはできない。
+// docs/log/80 §80.18.6 — a fetch is cut at 50 issues per query, so with an unordered JQL it is
+// up to Jira WHICH 50 survive. The rail claims to show "the newest N", and that cannot be left
+// undefined.
 func TestJiraOrderedJQL(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"assignee = currentUser() AND statusCategory != Done",
 			"assignee = currentUser() AND statusCategory != Done ORDER BY updated DESC"},
-		// 利用者が書いた並び順はそのまま（大小文字・空白の揺れも同じ扱い）。
+		// An ordering the user wrote is left alone, case and spacing variants included.
 		{"project = G3M ORDER BY priority DESC", "project = G3M ORDER BY priority DESC"},
 		{"project = G3M order by created", "project = G3M order by created"},
 		{"project = G3M ORDER   BY created", "project = G3M ORDER   BY created"},
-		// 語の一部に order を含むだけの JQL は「並び順あり」ではない。
+		// A JQL that merely contains "order" inside a word does not count as ordered.
 		{`summary ~ "reorder"`, `summary ~ "reorder" ORDER BY updated DESC`},
 		{"  ", ""},
 	}

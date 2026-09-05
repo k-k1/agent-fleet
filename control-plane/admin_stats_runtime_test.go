@@ -30,7 +30,7 @@ func (f stateOnlyFactory) New(runtime.Workspace, string, []string) runtime.Runti
 // exist in a CP running as an ECS task. It therefore answered running:false for a
 // workspace that was plainly up — and the Console disables "force stop" on exactly
 // that field, so a tenant_admin could never stop anyone's workspace on ANY ECS
-// deployment (docs/log/64 §64.27, 齟齬 5). Fall back to the runtime's own State.
+// deployment (docs/log/64 §64.27, discrepancy 5). Fall back to the runtime's own State.
 func TestMemberStatsReportsRunningFromTheRuntimeWhenDockerCannotSee(t *testing.T) {
 	for _, c := range []struct {
 		state        string

@@ -1,20 +1,23 @@
-// 「作業を始める」の最初のプロンプトの下書き — リポジトリ毎に localStorage へ持つ。
-// モーダルを閉じただけでは消さない（場所やブランチを見に行って戻る、別の画面で確認して
-// から書き足す、が普通の使い方で、そのたびに打った文章が消えるのは事故に近い）。消える
-// のは**セッションが実際に起動できたとき**だけで、そこは prompt が新しいセッションへ渡り
-// 切った唯一の地点でもある（履歴には pushPromptHistory が別に残す）。
+// Draft of the first prompt in the "start work" dialog — kept per repository in
+// localStorage. Merely closing the modal does not clear it: stepping away to check a
+// location or a branch and coming back, or confirming something on another screen before
+// adding to the text, is ordinary use, and losing what was typed each time is close to an
+// accident. It is cleared only when a session actually launched, the one point at which
+// the prompt has fully reached the new session (pushPromptHistory keeps the history
+// separately).
 //
-// 端末ローカルなのは launchPrefs と同じ理由で、書きかけの文章は「この端末で開いていた箱の
-// 中身」であって、他の端末の起動ダイアログに勝手に現れてよいものではないため。
+// Device-local for the same reason as launchPrefs: half-written text is the content of the
+// box open on THIS device, not something that should surface in another device's launch
+// dialog.
 import { useEffect, useRef, useState } from "react";
 import type { Dispatch, SetStateAction } from "react";
 import { clearDraft, readDraft } from "../../lib/draft.ts";
 
 const KEY = (repo: string): string | null => (repo ? "af.launch-prompt." + repo : null);
 
-// 添付（貼り付けた画像）の下書きの鍵。文章と同じくリポジトリ毎・同じ寿命だが、置き場は
-// IndexedDB（lib/attachDraft）— localStorage に画像のバイト列を置くと、設定や UI の
-// 覚え書きが同居している 5MB の枠をこれだけで使い切る。
+// Key for the attachment (pasted image) draft. Same per-repository scope and lifetime as
+// the text, but it lives in IndexedDB (lib/attachDraft): image bytes in localStorage would
+// use up the whole 5MB budget they share with settings and UI notes on their own.
 export const launchAttachKey = (repo: string): string | null => (repo ? "af.launch-attach." + repo : null);
 
 export function readLaunchPrompt(repo: string): string {
@@ -25,12 +28,13 @@ export function clearLaunchPrompt(repo: string): void {
   clearDraft(KEY(repo));
 }
 
-// useLaunchPrompt は useState<string> を localStorage で裏打ちしたもの（lib/draft の
-// useDraft と同型）。違いは 2 つ:
-//   - seed（引き継ぎ提案・メモ送信・作業項目が流し込む初期プロンプト）は下書きより強い。
-//     呼び出し側が「この文章で始める」と決めて開いた箱なので、前の書きかけで上書きしない。
-//   - 返り値の clear() は保存済みの下書きを消したうえで、以後の書き戻しを止める。起動成功
-//     から unmount までの間に再描画が挟まっても、消したはずの下書きが蘇らないようにする。
+// useLaunchPrompt is a useState<string> backed by localStorage (the same shape as lib/draft's
+// useDraft). Two differences:
+//   - a seed (the initial prompt pushed in by a handoff proposal, a memo send or a work item)
+//     outranks the draft: the caller opened the box having decided "start from this text", so
+//     an earlier half-written draft must not overwrite it.
+//   - the returned clear() deletes the stored draft and stops any further write-back, so a
+//     re-render between a successful launch and unmount cannot resurrect it.
 export function useLaunchPrompt(
   repo: string,
   seed?: string,
@@ -41,8 +45,9 @@ export function useLaunchPrompt(
   const launchedRef = useRef(false);
   useEffect(() => {
     if (keyRef.current !== key) {
-      // 開いたままリポジトリが変わった（はじめる ハブから別のコピーを選び直した）。
-      // 前のリポジトリの文章を新しい鍵へ書き込まず、そちらの下書きを読み直す。
+      // The repository changed while the dialog stayed open (another copy picked in the
+      // Start hub). Do not write the previous repository's text under the new key; read
+      // the draft belonging to that key instead.
       keyRef.current = key;
       launchedRef.current = false;
       setPrompt(readDraft(key));
@@ -53,7 +58,7 @@ export function useLaunchPrompt(
       if (prompt) localStorage.setItem(key, prompt);
       else localStorage.removeItem(key);
     } catch {
-      /* private mode / quota — 下書きが残らないだけ */
+      /* private mode / quota — the draft simply is not kept */
     }
   }, [prompt, key]);
   const clear = () => {

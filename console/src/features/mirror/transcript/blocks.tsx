@@ -77,7 +77,7 @@ export function DisclosureContent({ open, className, children }: { open: boolean
   );
 }
 
-// DisclosureFoot is the closing edge of an expanded 作業過程 / 思考: the same toggle as the
+// DisclosureFoot is the closing edge of an expanded work trace or thinking block: the same toggle as the
 // head, repeated at the BOTTOM of the body. Without it, folding a long block away means
 // scrolling back up past everything you just read to reach the only control there is.
 //
@@ -103,12 +103,12 @@ export function revealHead(el: HTMLElement | null) {
 // TaskChecklist renders the current ToDo list (reconstructed from Task tool calls) as a
 // collapsed disclosure: a done/total count, the active task on the summary, and the full
 // list on expand. The open/closed choice is remembered per session (localStorage), so it
-// survives ターミナル⇄チャット swaps and reloads; without a stored choice it defaults open
+// survives terminal/chat swaps and reloads; without a stored choice it defaults open
 // while work remains. A ✕ dismisses an abandoned list — the dismissal is keyed to the
 // current task set, so a newly-started ToDo (different task ids) re-appears on its own.
 // The parent re-keys this component by session, so switching sessions re-reads the right
 // per-session state. (See taskIcon: in_progress spins, visible in the summary too so the
-// running task's ぐるぐる shows even while collapsed.)
+// running task's spinner shows even while collapsed.)
 export function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: string }) {
   const done = tasks.filter((t) => t.status === "completed").length;
   const total = tasks.length;
@@ -148,7 +148,7 @@ export function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: 
           </span>
           {active && (
             <span className="mtk-active muted">
-              {/* Spinner rides the summary so the ぐるぐる stays visible even
+              {/* Spinner rides the summary so it stays visible even
                   while the list is collapsed. */}
               <Icon name="loading" spin className="mtk-active-mark" />
               {active.activeForm || active.subject}
@@ -187,7 +187,7 @@ export function TaskChecklist({ tasks, session }: { tasks: TaskItem[]; session: 
 }
 
 // CompactBlock renders claude's auto-compaction summary as a collapsed disclosure —
-// "コンテキストが圧縮されました" — rather than a giant user turn. Closed by default
+// a "context was compacted" row — rather than a giant user turn. Closed by default
 // (native <details>); expand to read the summary that replaced the earlier context.
 export function CompactBlock({
   turn,
@@ -203,7 +203,7 @@ export function CompactBlock({
   onOpenFile?: (path: string, line?: number, column?: number) => void;
 }) {
   // Show the reduction only once both sides are real: `after` is 0 until the first
-  // post-compaction turn's usage lands, so the effect appears a beat after 圧縮完了.
+  // post-compaction turn's usage lands, so the effect appears a beat after compaction finishes.
   const hasEffect = !!before && !!after && before > after;
   const cut = hasEffect ? before! - after! : 0;
   const pct = hasEffect ? Math.round((cut / before!) * 100) : 0;
@@ -246,11 +246,11 @@ export function CompactBlock({
 }
 
 // ThinkingBlock renders an agent's chain-of-thought (codex/opencode reasoning) as a
-// disclosure — "思考" — so it's available without crowding the answer. Collapsed unless
-// defaultOpen: the per-kind 設定 > エージェント >（各カード）動作設定「思考を展開して表示」
-// （既定オフ＝従来どおり畳む）。WorkDisclosure と同じく開閉状態はローカルに持つので、
-// クリックで畳んだ／開いた結果は再描画で巻き戻らない。設定を切り替えたときだけ、開いて
-// いるミラーにも即座に反映されるよう defaultOpen へ再同期する。
+// disclosure — "thinking" — so it's available without crowding the answer. Collapsed unless
+// defaultOpen, which comes from the per-kind behaviour setting "show thinking expanded"
+// (Settings > Agents > each card; off by default). Like WorkDisclosure it holds the open/closed
+// state locally, so a click is never undone by a re-render; only a change to the setting
+// re-syncs to defaultOpen, so an already-open mirror picks it up at once.
 export function ThinkingBlock({
   text,
   defaultOpen,
@@ -298,14 +298,14 @@ export function ThinkingBlock({
 // ErrorBlock renders a turn that ended in a provider-side error instead of an answer
 // (part kind "error"): the agent recorded a failure — an expired login, an exhausted
 // balance, a rate limit — and produced no output. Always expanded and visually distinct:
-// this used to be invisible, so the session just went quiet and read 入力待ち again.
+// this used to be invisible, so the session just went quiet and read as awaiting input again.
 // The message is provider text, not Markdown, so it renders verbatim.
 //
-// When the agent classified the failure as「サインインし直せば直る」(cause="auth") the
-// raw text alone is a dead end: それは CLI 向けの文面（"Please run /login"）で、Console
-// から見ている利用者に効く操作ではない。原文は証拠として残したまま、何が起きたのかと
-// どこで直すのかを添える。onReauth 無し（共有ビュー）ではその導線を出さない — 他人の
-// エージェントに受信者がサインインし直すことはできないので、案内した先が行き止まりになる。
+// When the agent classified the failure as fixable by signing in again (cause="auth"), the raw
+// text alone is a dead end: it is written for the CLI ("Please run /login"), which is not an
+// action a reader in the Console can take. Keep the original as evidence and add what happened
+// and where to fix it. Without onReauth (the shared view) that route is not offered at all — a
+// recipient cannot re-authenticate somebody else's agent, so it would lead nowhere.
 export function ErrorBlock({
   info,
   text,
@@ -348,7 +348,7 @@ function stripAnsi(s: string): string {
 }
 
 // BashBlock renders a `!`-run shell command as a terminal block: the command line always
-// shown ("$ cmd"), its stdout/stderr collapsed by default behind a "出力 (N 行)" toggle
+// shown ("$ cmd"), its stdout/stderr collapsed by default behind an "output (N lines)" toggle
 // (matching the tool-run disclosure). stderr is tinted; an empty result shows no toggle.
 export function BashBlock({ command, stdout, stderr }: { command?: string; stdout?: string; stderr?: string }) {
   const [open, setOpen] = useState(false);
@@ -508,11 +508,12 @@ export function DelegationCard({ p, agentName }: { p: Part; agentName: string })
   );
 }
 
-// TurnTtsButtons — ターンフッターの読み上げ操作（カラオケ朗読）。待機中は「読み上げ」1 つ、
-// このターンを読み上げ中は「一時停止/再開・停止」に切り替わる（ReaderView ヘッダと同構成）。
-// ラベルは付けずアイコンのみ（ペインが狭いとフッターの並びが崩れるため。意味は title で）。
-// ttsEnabled かつ本文があるときだけ表示。ChatView の TtsReadButton（ストリーム型 speakText）
-// とは別物で、ミラーは完結ターンを朗読するのでハイライト・途中再開が付く。
+// TurnTtsButtons — the read-aloud controls in a turn's footer (karaoke read-aloud). Idle shows
+// one "read aloud" button; while this turn is being read it switches to pause/resume and stop
+// (same arrangement as the ReaderView header). Icons only, no labels: a narrow pane breaks the
+// footer's layout, so the meaning lives in the title. Shown only when ttsEnabled and the turn
+// has a body. Distinct from ChatView's TtsReadButton (the streaming speakText): the mirror reads
+// a completed turn, so it can highlight and resume mid-way.
 export function TurnTtsButtons({
   turn,
   tts,
@@ -756,7 +757,7 @@ export function ToolTrace({ p, onOpenDiff }: { p: Part; onOpenDiff?: (p: Part) =
 }
 
 // ToolRun renders a run of consecutive tool traces. A lone tool shows inline as
-// before; two or more collapse (default) into a summary row — "N 件のツール" with a
+// before; two or more collapse (default) into a summary row — "N tools" with a
 // per-tool tally (Edit×3 · Bash×2) — that expands on click to the individual traces,
 // keeping each edit's click-to-diff.
 export function ToolRun({ tools, onOpenDiff }: { tools: { p: Part; i: number }[]; onOpenDiff?: (p: Part) => void }) {
@@ -832,7 +833,7 @@ export function QuestionBlock({
   // declined: the tool_result was claude's own decline boilerplate (an Escape out of
   // the modal — e.g. docs/build/92 §6's preview free-text bug), not a genuine answer.
   // Rendering `answer` as if it were a pick would parse to nothing but still badge
-  // "回答済み" — the exact "answered but not recognized" confusion this fixes.
+  // it answered — the exact "answered but not recognized" confusion this fixes.
   declined?: boolean;
 }) {
   const norm = (answer || "").trim();
@@ -942,7 +943,7 @@ export function PlanBlock({
   sending,
 }: {
   plan?: string;
-  /** コメントの束を引く鍵に使う（レビュー面と同じ planKey）。 */
+  /** Keys the bundle of comments (the same planKey the review surface uses). */
   session?: string;
   pending?: boolean;
   answered?: boolean;
@@ -952,27 +953,28 @@ export function PlanBlock({
   onApprove?: () => void;
   onReject?: () => void;
   onSendComments?: () => void;
-  /** 送信できない理由（"" / 未指定 = 送れる）。停止中セッションでボタンを塞ぐ。 */
+  /** Why sending is blocked ("" or absent = allowed); blocks the button on a stopped session. */
   sendDisabled?: string;
   sending?: boolean;
 }) {
   // A plan in the transcript was presented and resolved — classify its outcome text
   // (best-effort; the exact result text varies). planOutcome reconciles the optimistic
-  // 却下 mark (forceRejected) against the real tool_result: a definitive approval wins so
-  // a card can't stay badged 却下 while claude coded, an interrupt result badges 却下, and
-  // an empty/unknown outcome (the result can lag a poll or two) stays 決定済み. See
+  // reject mark (forceRejected) against the real tool_result: a definitive approval wins so a
+  // card can't stay badged rejected while claude coded, an interrupt result badges it rejected,
+  // and an empty/unknown outcome (the result can lag a poll or two) stays merely decided. See
   // planDecision.ts.
   const kind = planOutcome(outcome, !!forceRejected);
   const approved = kind === "approved";
   const rejected = kind === "rejected";
-  // 決着のバッジを出す条件。answered = tool_result が来た（＝転写に出ているだけでは
-  // 決着ではない。claude は ASK 時点で tool_use を書く）。楽観 却下 マークはそれより
-  // 先に付くので、承認待ちでない限りこれも決着として数える — でないと押した瞬間に
-  // バッジが消え、tool_result が来るまで宙に浮く。
+  // When to show the decided badge. answered = the tool_result arrived; merely appearing in the
+  // transcript is not a decision, since claude writes the tool_use at ASK time. The optimistic
+  // reject mark lands earlier, so it counts as decided too unless the card is still awaiting
+  // approval — otherwise the badge vanishes the instant it is clicked and stays gone until the
+  // tool_result catches up.
   const decided = !!answered || (!pending && !!forceRejected);
-  // レビュー面（doc ペイン）で溜めたコメント。承認待ちに限らず引く — 却下したあとでも
-  // 追加の指摘を送れるようにするため（plan モードのまま入力待ちに戻るので、そのときは
-  // 普通の発話として届く）。
+  // Comments collected on the review surface (the doc pane). Fetched whether or not approval is
+  // pending, so further remarks can be sent after a rejection too: the session returns to
+  // awaiting input still in plan mode, and they arrive as ordinary utterances.
   const commentKey = session && plan ? planKey(session, plan) : null;
   const comments = usePlanComments(commentKey);
   const unsent = unsentComments(comments);
@@ -1038,8 +1040,9 @@ export function PlanBlock({
           </button>
         )}
         {unsent.length > 0 && onSendComments && (
-          // 承認待ちなら「却下して送る」（ダイアログを閉じないと本文が届かないため
-          // 却下と一体）、それ以外は普通に送るだけ。
+          // While approval is pending this is "reject and send": the text cannot arrive until
+          // the dialog is closed, so sending and rejecting are one action. Otherwise it just
+          // sends.
           <button
             type="button"
             className="btn primary mt-plan-send"
@@ -1143,7 +1146,7 @@ export function UserFileBlock({
 // CopyButton copies the turn's RAW Markdown (not the rendered HTML) to the clipboard.
 export function CopyButton({ text }: { text: string }) {
   const [done, setDone] = useState(false);
-  // ✓表示を戻すタイマー。アンマウント後の setDone を避けるため cleanup で clear する。
+  // Timer that clears the tick again; cleared on cleanup to avoid setDone after unmount.
   const timerRef = useRef(0);
   useEffect(() => () => window.clearTimeout(timerRef.current), []);
   const copy = async () => {

@@ -1,8 +1,9 @@
 package agents
 
-// 「権限確認をスキップするか」の 3 層解決（docs/log/76）。ここが崩れると、利用者が設定で
-// オフにしたのに bypass で起動する（＝選択が無かったことになる）か、逆に既定のまま
-// 承認待ちで固まる。どちらも黙って起きるので表で固定する。
+// The three-layer resolution of "skip the permission prompt?" (docs/log/76). Break it and
+// either a launch bypasses permissions the user turned off in settings (their choice never
+// happened), or a default launch stalls waiting for approval. Both fail silently, so the
+// table pins them.
 
 import (
 	"testing"
@@ -16,15 +17,15 @@ func TestSkipPermissionsResolution(t *testing.T) {
 	cases := []struct {
 		name string
 		meta session.Meta
-		pref map[string]bool // kind → ui-prefs の既定（不在＝設定なし）
+		pref map[string]bool // kind -> the ui-prefs default (absent = not configured)
 		want bool
 	}{
-		{"設定も指定も無ければ従来どおり bypass", session.Meta{Kind: session.KindClaude}, nil, true},
-		{"kind 毎の既定でオフ", session.Meta{Kind: session.KindClaude}, map[string]bool{session.KindClaude: false}, false},
-		{"他 kind の既定は混ざらない", session.Meta{Kind: session.KindCursor}, map[string]bool{session.KindClaude: false}, true},
-		{"セッションの明示指定が既定に勝つ（オフ→オン）",
+		{"no setting and no override still bypasses", session.Meta{Kind: session.KindClaude}, nil, true},
+		{"off through the per-kind default", session.Meta{Kind: session.KindClaude}, map[string]bool{session.KindClaude: false}, false},
+		{"another kind's default does not bleed in", session.Meta{Kind: session.KindCursor}, map[string]bool{session.KindClaude: false}, true},
+		{"an explicit session setting beats the default (off -> on)",
 			session.Meta{Kind: session.KindClaude, SkipPermissions: boolp(true)}, map[string]bool{session.KindClaude: false}, true},
-		{"セッションの明示指定が既定に勝つ（オン→オフ）",
+		{"an explicit session setting beats the default (on -> off)",
 			session.Meta{Kind: session.KindClaude, SkipPermissions: boolp(false)}, map[string]bool{session.KindClaude: true}, false},
 	}
 	for _, tc := range cases {
@@ -42,13 +43,14 @@ func TestSkipPermissionsResolution(t *testing.T) {
 	}
 }
 
-// plan 起動は kind を問わず bypass を外す。利用者が「スキップする」を選んでいても、
-// 全ツールを自動承認しては plan で始める意味が無い（各 kind の buildProgram/spawn は
-// この 1 つの bool だけを見るので、ここが plan を折り込む唯一の場所）。
+// A plan launch drops the bypass for every kind: auto-approving every tool defeats the
+// point of starting in plan mode, even when the user chose to skip prompts. Every kind's
+// buildProgram/spawn reads only this one bool, so this is the single place plan is folded
+// in.
 func TestBypassPermissionsFoldsPlanMode(t *testing.T) {
 	orig := SkipPermissionsPref
 	t.Cleanup(func() { SkipPermissionsPref = orig })
-	SkipPermissionsPref = func(string) (bool, bool) { return false, false } // 設定なし＝既定 true
+	SkipPermissionsPref = func(string) (bool, bool) { return false, false } // not configured = default true
 
 	if !BypassPermissions(session.Meta{Kind: session.KindClaude}) {
 		t.Error("normal launch: want bypass")

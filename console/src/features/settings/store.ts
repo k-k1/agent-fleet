@@ -1,18 +1,15 @@
 // Settings/Admin dialog UI store (zustand) — replaces the old God-context slice
 // (settingsOpen/settingsSection/adminOpen + connKey).
 //
-// どのモーダルも close-on-back は共有の ui/Modal（useBackClose）が面倒を見るので、
-// ここに独自の history エントリは無い（Modal 自身のガードの上にもう 1 つ積むと
-// 二重になり、✕/Esc が閉じずに開き直す）。管理モーダルは全画面サーフェス＋独自の
-// ドリルダウン history（tenants→tenant→member）だったため長らく例外だったが、
-// レール化で ui/Modal に載ったので、その独自エントリ（openAdmin の pushState /
-// adminDepthRef / wireSettingsHistory）は撤去した。ドリルの段は AdminTab が
-// useBackClose の層として積む。
+// No modal here owns a history entry: close-on-back is handled by the shared ui/Modal
+// (useBackClose). Stacking one more guard on top of Modal's own doubles it, and then ✕/Esc
+// does not close but reopens. The admin modal's drill-down levels (tenants→tenant→member)
+// are pushed by AdminTab as layers of useBackClose.
 import { create } from "zustand";
 
 // The settings modal remembers the last-opened section in localStorage, so reopening
-// lands where you left off. First-ever open (nothing stored) defaults to 表示
-// (個人設定 › display). Device-local UI state — deliberately NOT server-synced.
+// lands where you left off. First-ever open (nothing stored) defaults to the display
+// section of the personal settings. Device-local UI state — deliberately NOT server-synced.
 const SETTINGS_SECTION_KEY = "af-settings-section";
 const lastSection = (): string => {
   try {
@@ -35,12 +32,13 @@ interface SettingsUIStore {
    * (localStorage), else "display". */
   settingsSection: string;
   adminOpen: boolean;
-  /** テナント設定 modal（テナント管理者の面）。管理モーダル＝デプロイ全体、個人設定
-   *  ＝自分、に対して「自分が管理しているテナント」の設定がここ。 */
+  /** Tenant settings modal (the tenant administrator's surface). The admin modal covers the
+   *  whole deployment and personal settings cover yourself; this covers the tenant you
+   *  administer. */
   tenantOpen: boolean;
-  /** 開くセクション（deep-link）。未指定なら既定の "signin"。 */
+  /** Section to open (deep-link). Defaults to "signin" when unspecified. */
   tenantSection: string;
-  /** はじめかたガイド modal (re-openable first-run checklist — GuideModal). */
+  /** Getting-started guide modal (re-openable first-run checklist — GuideModal). */
   guideOpen: boolean;
   openSettings(section?: string): void;
   closeSettings(): void;
@@ -65,9 +63,9 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
   guideOpen: false,
 
   openSettings(section?: string) {
-    // "connections" is a legacy alias for the merged エージェント tab (the old 接続
+    // "connections" is a legacy alias for the merged agents tab (the old connections
     // tab was folded into it), so any caller asking for connections lands there.
-    // No explicit section → restore the last-opened one (localStorage), else 表示.
+    // No explicit section → restore the last-opened one (localStorage), else display.
     set({
       settingsSection: section === "connections" ? "agents" : section || lastSection() || "display",
       settingsOpen: true,
@@ -78,8 +76,8 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
     set({ settingsOpen: false });
   },
 
-  // 管理モーダルも個人設定と同じ ui/Modal に乗るので、戻るで閉じるのは useBackClose
-  // が面倒を見る（ドリルの段は AdminTab がその上に積む）。
+  // The admin modal rides on the same ui/Modal as the personal settings, so close-on-back is
+  // handled by useBackClose (AdminTab stacks the drill-down levels on top of it).
   openAdmin() {
     set({ adminOpen: true });
   },
@@ -87,10 +85,10 @@ export const useSettingsUI = create<SettingsUIStore>((set) => ({
     set({ adminOpen: false });
   },
 
-  // テナント設定は個人設定と同じ ui/Modal に乗るので、戻るで閉じるのは useBackClose
-  // が面倒を見る（管理モーダルのような独自 history エントリは持たない）。セクション
-  // は呼び出し側の deep-link だけで決め、localStorage には覚えない（面が 2 つしか
-  // なく、開くたびに「前回の続き」より「入口」が欲しい画面のため）。
+  // Tenant settings ride on the same ui/Modal as the personal settings, so close-on-back is
+  // handled by useBackClose (no history entry of its own, unlike the admin modal). The section
+  // comes only from the caller's deep-link and is not remembered in localStorage: there are
+  // only two surfaces, and on each open you want the entrance rather than where you left off.
   openTenantSettings(section?: string) {
     set({ tenantSection: section || "signin", tenantOpen: true });
   },

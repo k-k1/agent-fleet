@@ -12,24 +12,27 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/61 §61.15.10 + ADR0043 決定 38 — 規則 1.5 の 2 本目の鍵（安定クレーム）。
+// docs/log/61 §61.15.10 + ADR0043 decision 38 — rule 1.5's second key (stable claim).
 //
-// 何のためか: Entra の `sub` は (アプリ登録, 人) のペアワイズなので、同じ Entra
-// テナントでもアプリ登録が違えば同じ人が別 subject になる。規則 1.5 は当たらず、
-// テナント定義の行は規則 2' で email_taken に落ちる＝既存利用者が締め出される。
+// Why it exists: Entra's `sub` is pairwise over (app registration, person), so inside one
+// Entra tenant the same person arrives with a different subject from a different app
+// registration. Rule 1.5 misses, a tenant-defined row falls through to rule 2' and
+// email_taken, and an existing user is locked out.
 //
-// ここで固定するのは、その修正が「事故る形」で入っていないこと:
-//   - `subject` は今までどおり `sub` のまま（差し替えると既存行の鍵が変わる）
-//   - 照合にはクレーム名も含む（値がたまたま一致しても、別のクレームなら当たらない）
-//   - テナントが名乗れるのは既知の安定クレームだけ（email を書けたら共有 realm の
-//     中に email 結合を作れる）
-//   - 検証は API 側と実行時側の両方にある（片方だけだと保存できて承認後に落ちる）
-//   - 値はトークンからしか来ない（行から書けるのはクレーム名だけ）
+// What these tests pin down is that the fix is not built in a way that backfires:
+//   - `subject` stays `sub` (replacing it would move the key of every existing row)
+//   - the claim NAME is part of the match (a value that collides under a different
+//     claim must not join)
+//   - a tenant may only name a known stable claim (allowing email would recreate an
+//     email join inside a shared realm)
+//   - validation exists on the API side AND the runtime side (either alone leaves a row
+//     that saves and then fails after approval)
+//   - values come only from the token (a row may name the claim, never its value)
 
 const entraIssuer = "https://login.microsoftonline.com/guid-1/v2.0"
 
-// oidLink は「同じ Entra アカウントを、別のアプリ登録から」を作る。sub は違い、
-// oid は同じ — 実物の Entra がそう振る舞う。
+// oidLink builds "the same Entra account, seen from a different app registration": a
+// different sub, the same oid — which is how real Entra behaves.
 func oidLink(provider, sub, oid, email string, emailJoin bool) store.IdentityLink {
 	return store.IdentityLink{
 		Provider: provider, Subject: sub, Realm: entraIssuer,
@@ -38,7 +41,8 @@ func oidLink(provider, sub, oid, email string, emailJoin bool) store.IdentityLin
 	}
 }
 
-// ★ 本題。アプリ登録が違う 2 つのボタンでも、oid が同じなら同じ人。
+// TestRule15JoinsAcrossAppRegistrationsByStableClaim is the main case: two buttons on
+// different app registrations are still one person when the oid matches.
 func TestRule15JoinsAcrossAppRegistrationsByStableClaim(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
@@ -47,35 +51,38 @@ func TestRule15JoinsAcrossAppRegistrationsByStableClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("head office: %v", err)
 	}
-	// テナント定義の行なので EmailJoin=false — 規則 2 は使えず、規則 1.5 だけが頼り。
+	// A tenant-defined row, so EmailJoin=false: rule 2 is unavailable and rule 1.5 is
+	// the only way through.
 	second, isNew, err := st.LinkIdentity(ctx, oidLink("t:sub:entra", "pairwise-B", "oid-1", email, false))
 	if err != nil {
 		t.Fatalf("subsidiary must not be refused: %v", err)
 	}
 	if isNew || second.ID != first.ID {
-		t.Fatalf("同じ Entra アカウントが別人になった: %+v vs %+v (isNew=%v)", first, second, isNew)
+		t.Fatalf("the same Entra account became a different person: %+v vs %+v (isNew=%v)", first, second, isNew)
 	}
 	if n := countRows(t, st, "identity"); n != 1 {
 		t.Fatalf("identity rows = %d, want 1", n)
 	}
-	// ★ subject は sub のまま。差し替えていたら規則 1（対の一致）が既存行から外れる。
+	// subject stays `sub`. Replacing it would take rule 1 (the pair match) off every
+	// existing row.
 	lp, _ := st.ListLinkedProviders(ctx, first.ID)
 	subs := map[string]bool{}
 	for _, r := range lp {
 		subs[r.Subject] = true
 	}
 	if !subs["pairwise-A"] || !subs["pairwise-B"] {
-		t.Fatalf("subject が sub 以外に書き換わっている: %+v", lp)
+		t.Fatalf("subject has been rewritten to something other than sub: %+v", lp)
 	}
-	// 2 回目のログインは規則 1 で当たる（鍵が動いていないことの裏取り）。
+	// A second login hits rule 1 — the evidence that the key did not move.
 	again, isNew, err := st.LinkIdentity(ctx, oidLink("t:sub:entra", "pairwise-B", "oid-1", email, false))
 	if err != nil || isNew || again.ID != first.ID {
-		t.Fatalf("2 回目のログイン: %+v isNew=%v err=%v", again, isNew, err)
+		t.Fatalf("second login: %+v isNew=%v err=%v", again, isNew, err)
 	}
 }
 
-// ★ 照合にはクレーム名も入る。片方が oid、片方が別のクレームのとき、値が
-// たまたま一致しても当ててはいけない — 同じ問いの答えではないため。
+// TestRule15DoesNotJoinWhenTheClaimNameDiffers pins that the claim name is part of the
+// match. When one side reads oid and the other reads a different claim, a value that
+// happens to collide must not join — the two are not answers to the same question.
 func TestRule15DoesNotJoinWhenTheClaimNameDiffers(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 
@@ -84,18 +91,19 @@ func TestRule15DoesNotJoinWhenTheClaimNameDiffers(t *testing.T) {
 		t.Fatalf("first: %v", err)
 	}
 	other := oidLink("t:sub:entra", "s-2", "shared-value", "suzuki@acme.co.jp", false)
-	other.RealmClaim = "employee_id" // 別のクレームに、たまたま同じ値
+	other.RealmClaim = "employee_id" // a different claim, the same value by coincidence
 	got, _, err := st.LinkIdentity(ctx, other)
 	if err != nil {
 		t.Fatalf("second: %v", err)
 	}
 	if got.ID == me.ID {
-		t.Fatal("クレーム名が違うのに結合した — 値の衝突で他人になる")
+		t.Fatal("joined even though the claim name differs - a colliding value turns two different people into one")
 	}
 }
 
-// 既存行（realm_subject が空）は今までどおり。空が空に当たって全員が 1 人に
-// なる、が一番起こしやすい壊し方。
+// TestRule15IgnoresRowsWithoutAStableClaim: existing rows (empty realm_subject) behave as
+// before. Empty matching empty, folding everybody into one person, is the easiest way to
+// break this.
 func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 
@@ -114,21 +122,21 @@ func TestRule15IgnoresRowsWithoutAStableClaim(t *testing.T) {
 		t.Fatalf("b: %v", err)
 	}
 	if a.ID == b.ID {
-		t.Fatal("realm_claim / realm_subject が空同士で結合した")
+		t.Fatal("two rows with an empty realm_claim / realm_subject were joined")
 	}
-	// realm+subject の従来の規則 1.5 も生きていること（GitHub の経路）。
+	// The original realm+subject form of rule 1.5 still holds (the GitHub path).
 	c, _, err := st.LinkIdentity(ctx, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "s-1", Realm: entraIssuer,
 		Email: "yamada@acme.co.jp", FallbackKey: "yamada-acme-co-jp", EmailJoin: false,
 	})
 	if err != nil || c.ID != a.ID {
-		t.Fatalf("realm+subject の規則 1.5 が壊れた: %+v err=%v", c, err)
+		t.Fatalf("the realm+subject form of rule 1.5 is broken: %+v err=%v", c, err)
 	}
 }
 
-// ★ 紐づけ（§61.16）の拒否条件にも 2 本目の鍵が要る。realm+subject だけ見ていると、
-// ペアワイズ sub のせいで「対は空いている」ように見えて、実際にその方式でサインイン
-// すると他人に着地する。
+// TestAttachRefusesAnAccountFoundByTheStableClaim: attach's refusal (§61.16) needs the
+// second key as well. Looking at realm+subject alone, a pairwise sub makes the pair look
+// unclaimed — and actually signing in that way then lands on somebody else's account.
 func TestAttachRefusesAnAccountFoundByTheStableClaim(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 
@@ -148,10 +156,11 @@ func TestAttachRefusesAnAccountFoundByTheStableClaim(t *testing.T) {
 	}
 }
 
-// --- 行が名乗れるクレーム（ホワイトリスト）------------------------------------
+// --- the claims a row may name (the allowlist) --------------------------------
 
-// ★ 検証は 2 箇所ある。API 側だけ直すと「保存はできたのに承認後に落ちる」行が
-// 作れるし、実行時側だけだと保存できてしまう。
+// TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime: the validation lives in two places.
+// Fixing only the API side still allows a row that saves and then fails after approval;
+// fixing only the runtime side lets such a row be saved at all.
 func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	ctx := context.Background()
 	stt := p3Store(t)
@@ -171,45 +180,47 @@ func TestTenantLinkClaimIsWhitelistedOnSaveAndAtRuntime(t *testing.T) {
 	}
 	const base = `"kind":"oidc","issuer":"https://login.microsoftonline.com/guid-1/v2.0","client_id":"c","client_secret":"s","trust":"issuer","allowed_domains":"@sub.co.jp"`
 
-	// ★ email / upn / preferred_username は「主張されるもの」。共有 realm の中で
-	// これを鍵にできると、別の権威で作られたアカウントに届く（決定 32 の乗っ取り）。
+	// email / upn / preferred_username are ASSERTED values. Keying on one inside a
+	// shared realm reaches an account created by a different authority — the takeover
+	// of decision 32.
 	for _, claim := range []string{"email", "upn", "preferred_username", "name"} {
 		w := post(`{"name":"entra-` + strings.ReplaceAll(claim, "_", "") + `",` + base + `,"link_claim":"` + claim + `"}`)
 		if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "tenant_idp_link_claim_invalid") {
-			t.Fatalf("link_claim=%q は保存できてはいけない: %d %s", claim, w.Code, w.Body.String())
+			t.Fatalf("link_claim=%q must not be savable: %d %s", claim, w.Code, w.Body.String())
 		}
 	}
 	if w := post(`{"name":"entra",` + base + `,"link_claim":"oid"}`); w.Code != http.StatusOK {
-		t.Fatalf("oid は保存できるはず: %d %s", w.Code, w.Body.String())
+		t.Fatalf("oid should be savable: %d %s", w.Code, w.Body.String())
 	}
 	rows, _ := stt.ListTenantIdPs(ctx, tn.ID)
 	if len(rows) != 1 || rows[0].LinkClaim != "oid" {
 		t.Fatalf("rows = %+v", rows)
 	}
-	// 実行時側。API を通さずに書かれた行（古いバイナリ・許可リスト変更後）でも
-	// プロバイダに組まれない。
+	// The runtime side: a row written without going through the API — an older binary,
+	// or one saved before the allowlist changed — still cannot be built into a provider.
 	bad := rows[0]
 	bad.LinkClaim = "email"
 	if _, err := auth.BuildTenantProvider(bad, store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err == nil {
-		t.Fatal("実行時側の検証が無い — 保存できてしまえば承認後に効いてしまう")
+		t.Fatal("the runtime side has no validation - once such a row can be saved, it takes effect after approval")
 	}
 	if _, err := auth.BuildTenantProvider(rows[0], store.TenantRef{Slug: "sub", Name: "子会社"}, "s"); err != nil {
-		t.Fatalf("oid の行は組めるはず: %v", err)
+		t.Fatalf("an oid row should be buildable: %v", err)
 	}
-	// ★ github 行は 2 本目の鍵を持たない（subject が最初から全アプリ共通）。
+	// A github row has no second key: its subject is the same across every app already.
 	if w := post(`{"name":"github","kind":"github","client_id":"c","client_secret":"s","allowed_orgs":"acme-sub","allowed_domains":"@sub2.co.jp","link_claim":"oid"}`); w.Code != http.StatusOK {
-		t.Fatalf("github 行: %d %s", w.Code, w.Body.String())
+		t.Fatalf("github row: %d %s", w.Code, w.Body.String())
 	}
 	rows, _ = stt.ListTenantIdPs(ctx, tn.ID)
 	for _, row := range rows {
 		if row.Kind == auth.TenantIdPKindGitHub && row.LinkClaim != "" {
-			t.Fatalf("github 行に link_claim が残っている: %+v", row)
+			t.Fatalf("link_claim is left on the github row: %+v", row)
 		}
 	}
 }
 
-// ★ link_claim の変更は承認をやり直す。誰が入れるかは変わらないが、誰に着地するか
-// が変わる — 既存アカウントに届くボタンが増えるので、承認者が見るべき変更。
+// TestLinkClaimChangeRepends: changing link_claim sends the row back for approval. Who
+// may get in does not change, but where they land does — it adds a button that reaches
+// existing accounts, which is exactly the change an approver has to see.
 func TestLinkClaimChangeRepends(t *testing.T) {
 	active := store.TenantIdP{
 		Kind: auth.TenantIdPKindOIDC, Status: "active", ClientID: "c", Issuer: entraIssuer,
@@ -218,19 +229,20 @@ func TestLinkClaimChangeRepends(t *testing.T) {
 	next := active
 	next.LinkClaim = "oid"
 	if !repend(active, next) {
-		t.Fatal("link_claim を足したら承認をやり直す")
+		t.Fatal("adding link_claim must send the row back for approval")
 	}
 	back := next
 	back.LinkClaim = ""
 	if !repend(next, back) {
-		t.Fatal("外すのも同じ — 着地先が変わることに変わりはない")
+		t.Fatal("removing it is the same - where people land still changes")
 	}
 }
 
-// --- トークンからしか値は来ない ------------------------------------------------
+// --- values come only from the token --------------------------------------------
 
-// ★ 行（と env）が名乗れるのはクレーム「名」だけで、値は必ずトークンから読む。
-// ここが逆になると、テナントが他人の oid を書けて規則 1.5 が偽造できる。
+// TestLinkClaimValueComesFromTheToken: a row (and env) may name only the claim NAME, and
+// the value is always read from the token. Reversed, a tenant could write somebody else's
+// oid and forge rule 1.5.
 func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{
 		idTokenClaims: map[string]any{
@@ -246,12 +258,13 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr.Subject != "pairwise-A" {
-		t.Fatalf("subject = %q — sub のままでなければ既存行の鍵が変わる", pr.Subject)
+		t.Fatalf("subject = %q - anything but sub moves the key of every existing row", pr.Subject)
 	}
 	if pr.RealmClaim != "oid" || pr.RealmSubject != "oid-1" {
 		t.Fatalf("realm claim = %q / %q", pr.RealmClaim, pr.RealmSubject)
 	}
-	// クレームを出さない IdP では両方空 — 空同士で当たらないための前提。
+	// An IdP that emits no such claim leaves both empty — the precondition for empty
+	// never matching empty.
 	p2 := stubProvider("okta", idp, auth.TrustEmailVerified)
 	p2.LinkClaim = "employee_id"
 	pr2, err := p2.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
@@ -259,15 +272,15 @@ func TestLinkClaimValueComesFromTheToken(t *testing.T) {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr2.RealmClaim != "" || pr2.RealmSubject != "" {
-		t.Fatalf("出ていないクレームで値が入った: %q / %q", pr2.RealmClaim, pr2.RealmSubject)
+		t.Fatalf("a value was filled in from a claim that was never emitted: %q / %q", pr2.RealmClaim, pr2.RealmSubject)
 	}
-	// 名乗らなければ何も読まない。
+	// Name no claim and nothing is read.
 	p3 := stubProvider("plain", idp, auth.TrustEmailVerified)
 	pr3, err := p3.Exchange(t.Context(), "code", "https://af.example.com/oauth2/callback")
 	if err != nil {
 		t.Fatalf("exchange: %v", err)
 	}
 	if pr3.RealmClaim != "" || pr3.RealmSubject != "" {
-		t.Fatalf("link_claim 未設定で値が入った: %q / %q", pr3.RealmClaim, pr3.RealmSubject)
+		t.Fatalf("a value was filled in with link_claim unset: %q / %q", pr3.RealmClaim, pr3.RealmSubject)
 	}
 }

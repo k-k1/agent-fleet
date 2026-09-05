@@ -1,50 +1,45 @@
-// runtime_ecs_stale.go — ECS 系（Fargate = `ecs` / EC2 スロット = `ecs-ec2`）の
-// 「いま停止→起動したら、走るコードが変わるか」判定。workspace_stale.go の
-// staleRuntime 実装で、Console の WS バー「要再起動」バッジと更新トーストの
-// 「BE も更新済み」行はこれが true になって初めて出る。
+// runtime_ecs_stale.go — the staleRuntime implementation (workspace_stale.go)
+// for the ECS profiles, `ecs` (Fargate) and `ecs-ec2` (EC2 slots): would a
+// stop→start right now run different code? The Console's "restart required"
+// badge and the update toast's "backend updated too" line appear only once this
+// answers true. A task definition is re-registered on every Start, so picking up
+// a new image does require the stop→start.
 //
-// docker / native には最初から実装があり、ECS だけが「未実装＝常に false」だった。
-// 結果として ecs / ecs-ec2 のデプロイでは、新しい workspace イメージを出しても
-// 利用者には何も見えず、走り続けているタスクが古いままなのに誰も気づかない
-// （タスク定義は Start のたびに作り直されるので、反映は停止→起動が要る）。
+// One rule, the same one docker and native use:
 //
-// 判定則は docker / native と同じひとつだけ:
+//	compare the image content this workspace actually started from against
+//	the content a Start would use now.
 //
-//	起動時に実際に使った実体と、いま Start したら使う実体を比べる。
+// On ECS each side has a place to live:
 //
-// ECS でこれを成立させるための置き場が二つある。
+//   - Started from: a fingerprint baked into the task-definition revision Start
+//     registered. This adapter keeps no state on the CP side (ADR 0012), so it
+//     needs an equivalent of docker's <dataDir>/image.rootfs-stamp. Start always
+//     registers a fresh revision (registerTaskDef), so a DockerLabel there
+//     corresponds one-to-one with that launch and survives a CP restart.
+//   - Would use now: the AF_ECS_WORKSPACE_IMAGE tag, resolved against ECR.
 //
-//   - 「起動時に使った実体」= Start が登録したタスク定義リビジョンに焼いた指紋。
-//     この adapter は CP 側に状態を持たない（ADR 0012）ので、docker の
-//     <dataDir>/image.rootfs-stamp に当たるものが要る。タスク定義は Start ごとに
-//     必ず新規登録される（registerTaskDef）ので、そこの DockerLabels に載せれば
-//     「そのリビジョンで起動した実体」と一対一で対応し、CP が再起動しても残る。
-//   - 「いま Start したら使う実体」= AF_ECS_WORKSPACE_IMAGE のタグを ECR に
-//     いま問い合わせた結果。
+// Three things this must not do.
 //
-// ★ 版比較は禁じ手（workspace_stale.go の注記）。CP の版と Agent の申告版を
+//   - Never compare versions (see workspace_stale.go). CP and Agent versions
+//     drift on purpose, so comparing them lights the badge permanently in a
+//     healthy deployment.
+//   - Never compare the two sides through different queries. A running task's
+//     containers[].imageDigest and a tag resolved in ECR can be different
+//     representations of the same image — an index digest and a platform
+//     manifest digest — so both sides go through imageFingerprint().
+//   - Never treat a digest itself as the content. A digest is a representation,
+//     and it moves while the content does not: re-pushing provenance alone is
+//     enough (measured on docker), and a multi-platform index is exactly the
+//     layer where that happens. So manifestFingerprint unwraps the index one
+//     level and fingerprints the set of real platform manifest digests, dropping
+//     attestation manifests (platform unknown/unknown, or carrying the
+//     vnd.docker.reference.type annotation). A single manifest's own digest
+//     already hashes config + layers, so it is used as is.
 //
-//	比べると、版が意図的にずれる正常状態で恒久点灯する。ここでも版は見ない。
-//
-// ★ 二辺比較も禁じ手。「走っているタスクの containers[].imageDigest」と
-//
-//	「タグを ECR に引いた digest」は別の問い合わせが返す別表現になり得る
-//	（インデックス digest とプラットフォーム manifest digest）。だから両辺とも
-//	imageFingerprint() という同じ関数の結果にする。
-//
-// ★ そして digest そのものを実体にしてはならない。digest は内容ではなく表現で、
-//
-//	内容が変わらなくても動く（docker では provenance の付け直しで実測）。
-//	マルチプラットフォームのインデックスはまさにそれが起きる層なので、
-//	manifestFingerprint はインデックスを一段ほどいて「実プラットフォームの
-//	manifest digest の集合」を指紋にする。attestation manifest（platform が
-//	unknown/unknown、あるいは vnd.docker.reference.type 注釈つき）は落とすので、
-//	provenance だけ付け直した再 push では指紋が動かない。単一 manifest の場合は
-//	その digest 自身が config + layers の内容ハッシュなのでそのまま使える。
-//
-// 判らないときは必ず false（＝要再起動と言わない）に倒す。ECR ではないレジストリ、
-// 権限不足、まだ指紋を焼いていない古いリビジョン — どれも「不明」であって
-// 「更新された」ではない。
+// When in doubt, answer false (do not claim a restart is needed). A non-ECR
+// registry, missing permissions and a revision registered before the fingerprint
+// existed are all "unknown", not "updated".
 package runtime
 
 import (

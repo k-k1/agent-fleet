@@ -1,13 +1,10 @@
-// tts.go — CP-native な音声読み上げ（TTS）。エージェント回答テキストを VOICEVOX
-// エンジン（ずんだもん等）または AWS Polly で合成し音声バイト列を返す。docs/log/24 + ADR0013。
+// CP-native text-to-speech: agent answer text is synthesized by a VOICEVOX engine or by
+// AWS Polly and returned as audio bytes (docs/log/24 + ADR0013).
 //
-// チャット（docs/log/19）が「Agent が headless CLI を実行 → CP がプロキシ」なのとは責務が
-// 異なり、TTS は CP が外部サービス（VOICEVOX HTTP / Polly SDK）を直接叩くだけ。CP の
-// 外向き通信は egress 制限外（oauth_google.go と同様）なので allowlist 変更は不要。
-// バイナリ応答は git_lfs.go の octet-stream と同じ要領（base64 は使わない）。
-//
-// Phase 2（docs/log/24）: polly プロバイダ（IAM ロール, tts_polly.go）、auto ルーティング
-// （下の chooseTTSProvider）、ECS オンデマンド起動（tts_ecs.go + /api/admin/tts）。
+// Unlike chat (docs/log/19, where the Agent runs a headless CLI and CP only proxies), CP
+// calls the external services (VOICEVOX HTTP / Polly SDK) itself. CP's outbound traffic is
+// outside the egress restriction (as in oauth_google.go), so no allowlist change is needed.
+// The response is raw octet-stream like git_lfs.go — never base64.
 package main
 
 import (
@@ -25,44 +22,46 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// ttsHTTP は VOICEVOX への合成呼び出し用。1 文ずつの合成なので短命だが、コールド時の
-// エンジンを見越して余裕のあるタイムアウトにする。
+// ttsHTTP is the client for synthesis calls to VOICEVOX. Calls are short (one sentence at
+// a time), but the timeout is generous to survive a cold engine.
 var ttsHTTP = &http.Client{Timeout: 30 * time.Second}
 
 type ttsSynthReq struct {
 	Text          string  `json:"text"`
 	Provider      string  `json:"provider"`      // "" | "auto" | "voicevox" | "polly"
-	Voice         string  `json:"voice"`         // voicevox の speaker 番号（例 "3"=ずんだもん）
-	PollyVoice    string  `json:"pollyVoice"`    // Polly の VoiceId（例 "Takumi"）。auto で Polly に落ちた時も使う
-	Speed         float64 `json:"speed"`         // 0.5〜2.0（voicevox speedScale / Polly prosody rate）。0/未指定=1.0
-	Lang          string  `json:"lang"`          // 言語ヒント: "auto" | "ja" | "en"（設定 outputLanguage を再利用）
-	EnKana        bool    `json:"enkana"`        // 英単語をカタカナ英語に前処理してから合成（voicevox のみ, enkana.go）
-	ParticlePause bool    `json:"particlePause"` // 設定 ttsParticlePause（クライアントが挿入した読点の間を詰める。voicevox のみ）
+	Voice         string  `json:"voice"`         // voicevox speaker number (e.g. "3")
+	PollyVoice    string  `json:"pollyVoice"`    // Polly VoiceId (e.g. "Takumi"); also used when auto falls back to Polly
+	Speed         float64 `json:"speed"`         // 0.5-2.0 (voicevox speedScale / Polly prosody rate); 0 or unset = 1.0
+	Lang          string  `json:"lang"`          // language hint "auto" | "ja" | "en" (reuses the outputLanguage setting)
+	EnKana        bool    `json:"enkana"`        // pre-transliterate English words to katakana (voicevox only, enkana.go)
+	ParticlePause bool    `json:"particlePause"` // ttsParticlePause setting: shorten the pauses the client inserted (voicevox only)
 }
 
-// ttsProvider は合成エンジンのプロバイダ抽象（docs/log/24）。chat_providers.go の
-// chatProviders と同型の map dispatch。テキスト前処理（enkana / ユーザー辞書）は
-// プロバイダの外（ハンドラ / クライアント）が担い、ここは「テキスト → 音声」だけ。
+// ttsProvider abstracts a synthesis engine (docs/log/24) — the same map dispatch as
+// chatProviders in chat_providers.go. Text pre-processing (enkana, user dictionary) belongs
+// outside the provider (handler / client); a provider only turns text into audio.
 type ttsProvider interface {
-	// Synthesize は text を合成して音声バイト列と MIME タイプを返す。
+	// Synthesize turns text into audio bytes plus their MIME type.
 	Synthesize(ctx context.Context, text string, o voiceOpts) (audio []byte, mime string, aerr *apiError)
-	// Ready はエンジン到達性（voicevox の /version 等）。Polly は設定の有無で即答。
+	// Ready reports engine reachability (voicevox /version); Polly answers from config alone.
 	Ready(ctx context.Context) bool
 }
 
 type voiceOpts struct {
-	voice         string  // プロバイダ固有の話者 ID
-	speed         float64 // 0.5〜2.0。0/未指定 = 1.0
+	voice         string  // provider-specific speaker ID
+	speed         float64 // 0.5-2.0; 0 or unset = 1.0
 	lang          string  // "auto" | "ja" | "en"
-	particlePause bool    // 助詞の小休止（voicevox のみ）の間を詰める
+	particlePause bool    // shorten the after-particle pauses (voicevox only)
 }
 
-// chooseTTSProvider は auto（既定）の使い分けを決める純関数（docs/log/24 の表）。
-// ずんだもんは日本語専用・要起動、Polly は多言語・常時稼働という非対称を吸収する:
-//   - 明示指定（voicevox / polly）はそのまま。
-//   - 非日本語（lang=en）→ Polly。Polly 不在なら enkana 併用前提で voicevox が受け皿。
-//   - 日本語（ja / auto）→ engine が有効かつ ready なら voicevox、不在（起動中/無効）なら
-//     Polly JP に自動フォールバック（次の文の Ready 復帰で voicevox に戻る）。
+// chooseTTSProvider decides what auto (the default) routes to (the table in docs/log/24).
+// It absorbs the asymmetry between VOICEVOX (Japanese only, must be started) and Polly
+// (multilingual, always up):
+//   - an explicit choice (voicevox / polly) is honoured as-is;
+//   - non-Japanese (lang=en) goes to Polly, falling back to voicevox — which then needs
+//     enkana — when Polly is absent;
+//   - Japanese (ja / auto) goes to voicevox when the engine is enabled and ready, otherwise
+//     to Polly JP (the next sentence returns to voicevox once Ready recovers).
 func chooseTTSProvider(pref, lang string, engineOff, vvReady, plReady bool) string {
 	switch pref {
 	case "voicevox", "polly":
@@ -80,22 +79,22 @@ func chooseTTSProvider(pref, lang string, engineOff, vvReady, plReady bool) stri
 	if plReady {
 		return "polly"
 	}
-	return "voicevox" // 両方不在: voicevox のエラー（502）をそのまま返す
+	return "voicevox" // neither is available: surface voicevox's own 502
 }
 
-// ttsEngineSetting は管理者トグルの設定キー。"off" のときだけ voicevox への
-// ルーティングを止める（"" = 既定で有効。dev の外部管理エンジンは従来どおり動く）。
+// ttsEngineSetting is the setting key behind the admin toggle. Only "off" stops routing to
+// voicevox ("" means enabled, so an externally managed dev engine keeps working).
 const ttsEngineSetting = "tts_engine"
 
-// ttsDictSetting はテナント共通の読み仮名辞書（1 行 "表記=読み"、クライアントの
-// ユーザー辞書と同じ書式）。管理者が /api/admin/tts/dict で編集し、全ユーザーの
-// クライアントが GET /api/tts/dict で取得してユーザー辞書と合成する（同じ表記は
-// ユーザー辞書が勝つ＝上書き）。適用はクライアント側（docs/log/24）。
+// ttsDictSetting holds the tenant-wide reading dictionary (one "spelling=reading" per line,
+// the same format as the client's user dictionary). An admin edits it through
+// /api/admin/tts/dict; every client fetches it with GET /api/tts/dict and merges it with the
+// user dictionary, where an entry for the same spelling wins. Applied client-side.
 const ttsDictSetting = "tts_dict"
 
-// registerTTSRoutes は CP-native TTS のルートを登録する（buildMux から呼ぶ）。認証は
-// 既定の authGate 配下（exempt しない）＝ログイン必須。ワークスペース非依存なので
-// withResolved は使わない。cfg.mgr が nil（一部テスト）でも合成ルートは動く。
+// registerTTSRoutes registers the CP-native TTS routes (called from buildMux). They sit
+// under the default authGate — never exempt, so login is required — and are not
+// workspace-scoped, hence no withResolved. Synthesis still works when cfg.mgr is nil (tests).
 func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	vv := &voicevoxProvider{base: cfg.voicevoxURL}
 	pl := newPollyProvider()
@@ -137,8 +136,8 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		}
 		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang, particlePause: req.ParticlePause}
 		if name == "voicevox" {
-			// 英語をカタカナ英語に前処理（VOICEVOX は英語綴りを読めないため）。Polly は
-			// 英語をそのまま読めるので、voicevox に決まったときだけ適用する。docs/log/24。
+			// VOICEVOX cannot read English spelling, so transliterate it first. Polly
+			// reads English as-is, hence only on the voicevox branch (docs/log/24).
 			if req.EnKana {
 				text = englishToKana(text)
 			}
@@ -151,15 +150,16 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 			return
 		}
 		w.Header().Set("Content-Type", mime)
-		// 実際に使ったプロバイダ。auto のフォールバック発生を UI が表示できるようにする。
+		// The provider actually used, so the UI can show that auto fell back.
 		w.Header().Set("X-TTS-Provider", name)
 		w.Header().Set("Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(audio)
 	})
 
-	// エンジン到達性。フロントはトグルの活性/「準備中」表示に使う。managed（ECS 管理下）の
-	// ときは ECS サービス状態（running/starting/stopped）も添える（readiness ゲートの可視化）。
+	// Engine reachability; the front end drives the toggle's enabled/"starting" state from
+	// it. When the engine is ECS-managed the service state (running/starting/stopped) is
+	// added so the readiness gate is visible.
 	mux.HandleFunc("GET /api/tts/status", func(w http.ResponseWriter, r *http.Request) {
 		vvSt := map[string]any{
 			"ready":   vv.Ready(r.Context()),
@@ -179,11 +179,11 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		})
 	})
 
-	// キャラ一覧（VOICEVOX の /speakers のプロキシ）。設定 UI の「キャラクター」選択が
-	// 実エンジンのデータで選択肢（キャラ名・スタイル・speaker 番号）を出すために使う —
-	// speaker 番号を静的に持つと実エンジンとずれる（docs/log/24）。60s キャッシュで設定画面の
-	// 再描画がエンジンを叩き続けないようにする。エンジン停止中は 502（UI は現在の設定を
-	// 表示するだけの読み取り専用にフォールバック）。
+	// Character list, proxied from VOICEVOX /speakers, so the character picker in settings
+	// offers names, styles and speaker numbers from the live engine — a static table of
+	// speaker numbers drifts away from it (docs/log/24). The 60s cache keeps settings
+	// re-renders off the engine. A stopped engine gives 502, and the UI falls back to
+	// read-only display of the current setting.
 	var spMu sync.Mutex
 	var spCache []ttsSpeaker
 	var spAt time.Time
@@ -205,8 +205,9 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		writeJSON(w, http.StatusOK, map[string]any{"speakers": cached})
 	})
 
-	// テナント共通の読み仮名辞書。全ユーザー（要ログイン）が読める。クライアントは起動時に
-	// 取得してユーザー辞書と合成する（適用はクライアント側なので合成ハンドラは触らない）。
+	// The tenant-wide reading dictionary, readable by every logged-in user. The client
+	// fetches it at startup and merges it with the user dictionary; because it is applied
+	// client-side, the synthesis handler never looks at it.
 	mux.HandleFunc("GET /api/tts/dict", func(w http.ResponseWriter, r *http.Request) {
 		dict := ""
 		if settings != nil {
@@ -215,20 +216,20 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		writeJSON(w, http.StatusOK, map[string]any{"dict": dict})
 	})
 
-	// 管理者トグル（super_admin）: VOICEVOX エンジンの有効/無効。ECS 管理下なら desired
-	// count 0↔1 を切り替え（オンデマンド起動・停止中コスト 0）、常に setting へ意図を記録
-	// する（egress の SettingsStore と同じ流儀）。docs/log/24 Phase 2。
+	// super_admin toggle for the VOICEVOX engine. Under ECS it flips the desired count
+	// between 0 and 1 (on-demand start, zero cost while stopped); the intent is always
+	// recorded in the setting as well, the same way egress does with SettingsStore.
 	adm := ttsAdminAPI{memberAuth{cfg.mgr}, settings, eng, vv, pl}
 	mux.HandleFunc("GET /api/admin/tts", adm.withSuperAdmin(adm.get))
 	mux.HandleFunc("PUT /api/admin/tts", adm.withSuperAdmin(adm.put))
 	mux.HandleFunc("PUT /api/admin/tts/dict", adm.withSuperAdmin(adm.putDict))
 }
 
-// --- voicevox プロバイダ -------------------------------------------------------
+// --- voicevox provider ---------------------------------------------------------
 
-// voicevoxProvider は cfg.voicevoxURL の VOICEVOX エンジンを指すアダプタ。Ready は
-// 短い TTL でキャッシュする（auto ルーティングが文ごとに呼ぶため、毎文 /version を
-// 叩かない。エンジンの起動/停止は数秒粒度で追従できれば十分）。
+// voicevoxProvider adapts the VOICEVOX engine at cfg.voicevoxURL. Ready is cached for a
+// short TTL because auto routing asks once per sentence and must not hit /version that
+// often; tracking the engine coming up or going down to a few seconds is accurate enough.
 type voicevoxProvider struct {
 	base      string
 	mu        sync.Mutex
@@ -261,11 +262,11 @@ func (v *voicevoxProvider) Synthesize(ctx context.Context, text string, o voiceO
 	return wav, "audio/wav", nil
 }
 
-// collapseJaSpaces は和文文字に隣接する半角スペースを除去する。「submit 時に」
-// 「green です」のような英単語と日本語の間の空白は組版上のもので読みの間ではないが、
-// VOICEVOX はスペースをポーズとして合成し読みが途切れる。英単語同士の空白
-// （"tsc / vitest" 等）は語の区切りとして残す（連続分は 1 つに正規化）。
-// 全角スペースは触らない（意図した「間」の表現として使われる）。
+// collapseJaSpaces drops ASCII spaces adjacent to Japanese characters. A space between an
+// English word and Japanese text is typographic, not a pause, but VOICEVOX synthesizes every
+// space as one and the reading breaks up. Spaces between English words ("tsc / vitest") are
+// kept as word separators, with runs normalized to one. Ideographic spaces are left alone —
+// they are used deliberately to mean a pause.
 func collapseJaSpaces(s string) string {
 	runes := []rune(s)
 	var b strings.Builder
@@ -291,27 +292,28 @@ func collapseJaSpaces(s string) string {
 
 func isJaRune(r rune) bool {
 	switch {
-	case r >= 0x3040 && r <= 0x30FF: // ひらがな・カタカナ・ー
+	case r >= 0x3040 && r <= 0x30FF: // hiragana, katakana, prolonged sound mark
 		return true
-	case r >= 0x4E00 && r <= 0x9FFF: // CJK 統合漢字
+	case r >= 0x4E00 && r <= 0x9FFF: // CJK unified ideographs
 		return true
-	case r >= 0x3001 && r <= 0x303F: // 和文記号（、。「」等。全角スペース U+3000 は除く）
+	case r >= 0x3001 && r <= 0x303F: // CJK punctuation (the ideographic space U+3000 is excluded)
 		return true
-	case r >= 0xFF00 && r <= 0xFFEF: // 全角英数・全角記号・半角カナ
+	case r >= 0xFF00 && r <= 0xFFEF: // fullwidth forms and halfwidth katakana
 		return true
 	}
 	return false
 }
 
-// particlePauseScale は「助詞のあとで一呼吸」(ttsParticlePause) ON 時に読点ポーズ
-// （pause_mora.vowel_length）へ掛ける係数。挿入頻度が高い（を・は・で・に・と＋漢字の
-// 境界ごと）ため、句点相当の間だと文全体がもたつく — 6 割程度に詰めて「軽い息継ぎ」に
-// 近づける。地の文にもとから含まれる読点も同じ間になるが、ON 時は全体を詰める方向で
-// 一貫させる（クライアントは区別せずテキストへ「、」を挿し込んでいるため）。
+// particlePauseScale scales the comma pause (pause_mora.vowel_length) while the "breath
+// after a particle" option (ttsParticlePause) is on. The client inserts one at every
+// particle-to-kanji boundary, so at full comma length the whole sentence drags; six tenths
+// turns it into a light breath. Commas already present in the text get the same treatment,
+// which is deliberate — the client inserts its own indistinguishably, so with the option on
+// everything shortens together.
 const particlePauseScale = 0.6
 
-// scalePauseMoras は audio_query の accent_phrases[].pause_mora.vowel_length を
-// scale 倍する（in-place）。pause_mora は読点等の直後にだけ存在する（null のことが多い）。
+// scalePauseMoras multiplies audio_query's accent_phrases[].pause_mora.vowel_length by scale
+// in place. pause_mora exists only right after a comma or similar, and is usually null.
 func scalePauseMoras(m map[string]any, scale float64) {
 	phrases, ok := m["accent_phrases"].([]any)
 	if !ok {
@@ -332,17 +334,17 @@ func scalePauseMoras(m map[string]any, scale float64) {
 	}
 }
 
-// voicevoxSynthesize は VOICEVOX の 2 段 API（audio_query → synthesis）で WAV を得る。
-// speaker=3 がずんだもん・ノーマル。speed は audio_query の speedScale を上書きする。
+// voicevoxSynthesize gets a WAV through VOICEVOX's two-step API (audio_query, then
+// synthesis). speed overrides the speedScale audio_query returned.
 func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed float64, particlePause bool) ([]byte, *apiError) {
 	base = strings.TrimRight(base, "/")
 	text = collapseJaSpaces(text)
 	speaker := strings.TrimSpace(voice)
 	if speaker == "" {
-		speaker = "3" // ずんだもん（ノーマル）
+		speaker = "3" // Zundamon, normal style
 	}
 
-	// 1) audio_query — text と speaker から合成パラメータ JSON を得る。
+	// 1) audio_query — synthesis parameters as JSON, from text and speaker.
 	q := url.Values{}
 	q.Set("speaker", speaker)
 	q.Set("text", text)
@@ -357,10 +359,11 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		return nil, &apiError{http.StatusBadGateway, "tts_engine_error", "voicevox audio_query failed: " + strings.TrimSpace(string(aqBody))}
 	}
 
-	// 2) 合成パラメータを上書き。前後の無音（既定 0.1s ずつ）は文単位の逐次再生では
-	// 文境界ごとに約 0.2s の待機として毎回体感されるため短縮する。文間の「間」は
-	// フロントが再生スケジュール（SENTENCE_GAP）で管理する。speedScale は 0/未指定
-	// なら audio_query の返した値（1.0）のまま。
+	// 2) Override the synthesis parameters. The leading and trailing silence (0.1s each by
+	// default) is felt as roughly 0.2s of waiting at every sentence boundary when sentences
+	// are played back one by one, so shorten it; the gap between sentences is the front
+	// end's job (SENTENCE_GAP in its playback schedule). speedScale keeps whatever
+	// audio_query returned when speed is 0 or unset.
 	var m map[string]any
 	if json.Unmarshal(aqBody, &m) == nil {
 		m["prePhonemeLength"] = 0.02
@@ -376,7 +379,7 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 		}
 	}
 
-	// 3) synthesis — パラメータ JSON を渡して WAV を得る。
+	// 3) synthesis — hand the parameter JSON back and get the WAV.
 	sReq, _ := http.NewRequestWithContext(ctx, http.MethodPost, base+"/synthesis?speaker="+url.QueryEscape(speaker), bytes.NewReader(aqBody))
 	sReq.Header.Set("Content-Type", "application/json")
 	sReq.Header.Set("Accept", "audio/wav")
@@ -397,8 +400,9 @@ func voicevoxSynthesize(ctx context.Context, base, text, voice string, speed flo
 	return wav, nil
 }
 
-// ttsSpeaker は /api/tts/speakers の 1 キャラ。styles の id は speaker 番号（クライアントが
-// 合成リクエストに使う値なので文字列で返す）。
+// ttsSpeakerStyle and ttsSpeaker make up one character of /api/tts/speakers. A style's id is
+// the speaker number, returned as a string because that is the form the client puts into a
+// synthesis request.
 type ttsSpeakerStyle struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -408,9 +412,9 @@ type ttsSpeaker struct {
 	Styles []ttsSpeakerStyle `json:"styles"`
 }
 
-// voicevoxSpeakers はエンジンの GET /speakers をキャラ名＋トーク用スタイル一覧に変換する。
-// 歌唱系スタイル（type が "talk" 以外。0.14 以降の song/humming 等）は読み上げに使えない
-// ので除き、トークスタイルが 1 つも無いキャラは落とす。
+// voicevoxSpeakers turns the engine's GET /speakers into character names plus their talk
+// styles. Singing styles (any type other than "talk", e.g. song/humming) cannot read text
+// aloud, so they are dropped along with any character left without a talk style.
 func voicevoxSpeakers(ctx context.Context, base string) ([]ttsSpeaker, *apiError) {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(base, "/")+"/speakers", nil)
 	resp, err := ttsHTTP.Do(req)
@@ -449,7 +453,7 @@ func voicevoxSpeakers(ctx context.Context, base string) ([]ttsSpeaker, *apiError
 	return out, nil
 }
 
-// voicevoxReady は /version が 200 を返すかで到達性を判定する（短いタイムアウト）。
+// voicevoxReady judges reachability by whether /version answers 200, on a short timeout.
 func voicevoxReady(ctx context.Context, base string) bool {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
@@ -473,19 +477,20 @@ func clampSpeed(s float64) float64 {
 	return s
 }
 
-// --- 管理者トグル（/api/admin/tts） -------------------------------------------
+// --- admin toggle (/api/admin/tts) ---------------------------------------------
 
-// ttsAdminAPI は VOICEVOX エンジンの管理者トグルのハンドラ組。enabled の真実源は
-// ECS 管理下なら desired count（ライブ）、非管理（dev の外部エンジン）なら setting。
+// ttsAdminAPI is the handler set behind the admin toggle for the VOICEVOX engine. The source
+// of truth for enabled is the live desired count under ECS, and the setting otherwise (an
+// externally run dev engine).
 type ttsAdminAPI struct {
 	memberAuth
-	settings store.SettingsStore // nil あり（テスト）
-	eng      *ttsEngineECS       // nil = ECS 管理外
+	settings store.SettingsStore // may be nil (tests)
+	eng      *ttsEngineECS       // nil = not ECS-managed
 	vv       *voicevoxProvider
 	pl       *pollyProvider
 }
 
-// get (GET /api/admin/tts) — トグル状態＋エンジン到達性/ECS 状態。
+// get (GET /api/admin/tts) reports the toggle state plus engine reachability and ECS state.
 func (a ttsAdminAPI) get(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	writeJSON(w, http.StatusOK, a.status(r.Context()))
 }
@@ -501,7 +506,7 @@ func (a ttsAdminAPI) status(ctx context.Context) map[string]any {
 	if managed {
 		if st, desired, err := a.eng.state(ctx); err == nil {
 			engine["state"] = st
-			enabled = desired >= 1 // ECS 管理下は desired count が真実源
+			enabled = desired >= 1 // under ECS the desired count is the source of truth
 		} else {
 			engine["error"] = err.Error()
 		}
@@ -519,8 +524,9 @@ func (a ttsAdminAPI) status(ctx context.Context) map[string]any {
 	}
 }
 
-// put (PUT /api/admin/tts) — body {enabled:bool}。ECS 管理下なら desired 0↔1、
-// あわせて setting に意図を記録（非管理はこれがルーティングの ON/OFF になる）。監査あり。
+// put (PUT /api/admin/tts) takes body {enabled:bool}: under ECS it moves desired between 0
+// and 1, and it always records the intent in the setting, which is what switches routing on
+// and off when the engine is not ECS-managed. Audited.
 func (a ttsAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var b struct{ Enabled bool }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
@@ -552,9 +558,9 @@ func (a ttsAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.Ide
 	writeJSON(w, http.StatusOK, a.status(r.Context()))
 }
 
-// putDict (PUT /api/admin/tts/dict) — body {dict:string}。テナント共通の読み仮名辞書を
-// 丸ごと差し替える（1 行 "表記=読み"、パース規約はクライアントの parseUserDict と同じ）。
-// 監査あり（中身は個票で追えるようサイズだけ記録）。
+// putDict (PUT /api/admin/tts/dict) takes body {dict:string} and replaces the whole
+// tenant-wide reading dictionary (one "spelling=reading" per line, parsed by the same rules
+// as the client's parseUserDict). Audited with the size only, not the content.
 func (a ttsAdminAPI) putDict(w http.ResponseWriter, r *http.Request, ident store.Identity) {
 	var b struct{ Dict string }
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<18)).Decode(&b); err != nil {

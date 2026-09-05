@@ -1,5 +1,5 @@
 // Rail filter — the ProjectTree search box's state (zustand, so the repo tree
-// and the その他のセッション section follow the same query) plus the pure match
+// and the other-sessions section follow the same query) plus the pure match
 // helpers. Matching is a case-insensitive substring test over what identifies a
 // row, displayed or not: for a working copy its folder name, current branch and
 // (SVN) URL; for a session its display name, slug, label, working-copy folder,

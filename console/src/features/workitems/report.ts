@@ -1,6 +1,6 @@
-// Composing the comment that goes back to the ticket (docs/log/80 §80.10 / ADR 0061 決定 6).
+// Composing the comment that goes back to the ticket (docs/log/80 §80.10 / ADR 0061 decision 6).
 //
-// ★ What af drafts and what it does NOT drafts is the whole design here. It assembles the
+// What af drafts and what it does NOT drafts is the whole design here. It assembles the
 // MECHANICAL parts — which branch, which files, which session — because those are tedious
 // to gather by hand and af is the only thing that knows them per session (docs/log/68's
 // transcript × git join). It does NOT write the narrative: there is no summary generated
@@ -29,14 +29,14 @@ export interface ReportDraftInput {
 /** Paths worth naming, de-duplicated and sorted. A file the agent only touched through a
  * subagent still counts — it changed either way.
  *
- * ★ Paths are REPO-RELATIVE, not working-copy-relative. Rendering the draft showed the
+ * Paths are REPO-RELATIVE, not working-copy-relative. Rendering the draft showed the
  * real thing this must not do: a work-item launch creates a worktree, so `repo` is
  * "webshop@checkout-validation" and the comment would have read
  * "webshop@checkout-validation/src/checkout/validate.ts" — a local folder name that means
  * nothing to whoever reads the ticket, and that publishes how this workspace lays out its
  * checkouts. The reader wants the path as it exists in the repository.
  *
- * ⚠️ The one case where the prefix is still needed is a session that touched TWO working
+ * The one case where the prefix is still needed is a session that touched TWO working
  * copies: bare rel paths could then collide ("src/index.ts" twice) and the de-dup would
  * silently drop one. There the base repo name (worktree slug stripped) goes back in
  * front — the base, never the worktree. */

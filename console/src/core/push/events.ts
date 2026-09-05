@@ -1,22 +1,23 @@
-// core/push/events — 統合 push チャネルの受信ハブ（通信量削減 P3）。
+// core/push/events — receive hub for the unified push channel (traffic reduction P3).
 //
-// CP の GET /api/events (SSE) 1 本から workspace / sessions / stats /
-// notifications / workitems のフレームを受け、登録されたハンドラ（wire.ts がストアへ配線）
-// に配る。フレームの data は既存 REST 応答と同一 shape なので、適用ロジックは
-// ポーリング経路と共用できる。
+// A single CP GET /api/events (SSE) carries the workspace / sessions / stats /
+// notifications / workitems frames to the registered handlers (wire.ts wires them to the
+// stores). A frame's data has the same shape as the existing REST response, so the apply
+// logic is shared with the polling path.
 //
-// フォールバック方針: 既存の常時ポーラーは削除しない。各ポーラーは
-// pushHealthy() の間だけ tick をスキップし、ストリームが切れた瞬間（旧 CP の
-// 404 / ネットワーク断 / 非表示化）から従来どおりポーリングが引き継ぐ —
-// 新 Console × 旧 CP の版ずれでも機能が欠けない。
+// Fallback policy: the existing always-on pollers are NOT removed. Each poller skips its
+// tick only while pushHealthy(), and takes over the moment the stream breaks (an old CP's
+// 404, a network drop, the tab going hidden) — so a new Console against an old CP loses no
+// functionality.
 //
-// 受信は EventSource ではなく fetch ストリーム（chat stream と同方式）。
-// fetch ラッパーが cookie 認証・X-AF-Tenant ヘッダ・401→AuthExpiredModal latch
-// を注入してくれるので、WS のような query param 認証の別扱いが要らない。
+// Reception uses a fetch stream rather than EventSource (as the chat stream does). The fetch
+// wrapper injects cookie auth, the X-AF-Tenant header and the 401 → AuthExpiredModal latch,
+// so there is no need for the WS-style query-param auth special case.
 import { rel } from "../api/client.ts";
 
 export type PushStream = "workspace" | "sessions" | "stats" | "notifications" | "workitems";
-// data は stream 毎の REST 応答 shape そのもの。検証は適用側（ストア）の責務。
+// data is exactly the per-stream REST response shape; validating it is the applying side's
+// (the store's) job.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Handler = (data: any) => void;
 
@@ -34,9 +35,9 @@ let healthy = false;
 /** True while the push stream is live — pollers skip their tick then. */
 export const pushHealthy = (): boolean => healthy;
 
-// ストリーム確立ハンドラ。フレームでは運ばれず「起動時に 1 回だけ読む」類の
-// 状態（whoami のデプロイ capability など）を、CP 再起動＝再接続の後に読み直す
-// ためのフック。ここでもストアは import しない（配線は wire.ts の責務）。
+// Stream-established handlers. A hook for re-reading state that no frame carries because it
+// is read once at boot (whoami's deployment capabilities, say) after a CP restart, i.e. a
+// reconnect. No store is imported here either — wiring is wire.ts's job.
 const connectHandlers = new Set<() => void>();
 
 /** Register a callback fired each time the stream (re)connects. Returns the
@@ -48,16 +49,16 @@ export function onPushConnect(h: () => void): () => void {
   };
 }
 
-// stream 毎の受信カウンタ。ポーラーは fetch 前後で比較し、fetch 中に push
-// フレームが適用されていたら自分の（より古いかもしれない）結果を捨てる —
-// 遅いモバイル回線で数秒遅れて届いたポーリング応答が push を上書きして
-// 「次の変化まで古い表示のまま」になる穴を塞ぐ。
+// Per-stream receive counter. A poller compares it before and after its fetch and discards
+// its own (possibly older) result if a push frame was applied meanwhile — otherwise a polling
+// response that arrives seconds late on a slow mobile link overwrites the push and the view
+// stays stale until the next change.
 const stamps = new Map<PushStream, number>();
 export const pushStamp = (stream: PushStream): number => stamps.get(stream) || 0;
 
 const RETRY_MAX = 30000;
-const RETRY_UNSUPPORTED = 300000; // 旧 CP（404/405）: 5 分毎に再確認するだけ
-const WATCHDOG_MS = 45000; // サーバは静穏でも ~20s 毎に ping — 2 回欠けたら死んだ扱い
+const RETRY_UNSUPPORTED = 300000; // old CP (404/405): just re-check every 5 minutes
+const WATCHDOG_MS = 45000; // the server pings ~every 20s even when quiet — 2 misses = dead
 
 let stopped = true;
 let ctrl: AbortController | null = null;
@@ -66,7 +67,7 @@ let watchdogTimer = 0;
 let backoff = 1000;
 
 function dispatch(frame: string): void {
-  // SSE フレーム 1 個（\n\n 区切り済み）。コメント行（": ping"）は無視。
+  // One SSE frame, already split on \n\n. Comment lines (": ping") are ignored.
   const line = frame.startsWith("data:") ? frame.slice(5).trim() : "";
   if (!line) return;
   let obj: { stream?: string; data?: unknown };
@@ -82,7 +83,7 @@ function dispatch(frame: string): void {
     try {
       h(obj.data);
     } catch {
-      /* 1 個のハンドラ例外でストリームを殺さない */
+      /* one handler throwing must not kill the stream */
     }
   }
 }
@@ -103,17 +104,17 @@ async function connect(): Promise<void> {
   let unsupported = false;
   const startedAt = Date.now();
   try {
-    // 接続確立フェーズにも期限を付ける — 無応答プロキシでヘッダが返らないと、
-    // watchdog（read 毎に再武装）に到達できず永久に再接続しない。確立後は従来
-    // どおり read 側の armWatchdog が引き継ぐので、長寿命ストリームは切れない。
+    // The connect phase needs a deadline too: if an unresponsive proxy never returns the
+    // headers we never reach the watchdog (re-armed on every read) and never reconnect.
+    // Once established the read-side armWatchdog takes over, so long streams stay up.
     armWatchdog();
     const res = await fetch(rel("api/events"), { signal: my.signal });
     const ct = res.headers.get("Content-Type") || "";
     if (!res.ok || !ct.startsWith("text/event-stream") || !res.body) {
-      // 旧 CP はこのルートを知らない（404）。エラー表示はしない — ポーラーが
-      // そのまま現役なので機能は落ちず、単に従来の通信量に戻るだけ。
+      // An old CP does not know this route (404). Show no error — the pollers are still
+      // live, so nothing is lost; traffic simply returns to the previous level.
       unsupported = res.status === 404 || res.status === 405;
-      // 読まない body は明示的に解放する（接続をぶら下げたままにしない）。
+      // Release a body we will not read, so the connection is not left dangling.
       void res.body?.cancel().catch(() => {});
       return;
     }
@@ -122,7 +123,7 @@ async function connect(): Promise<void> {
       try {
         h();
       } catch {
-        /* 1 個のハンドラ例外でストリームを殺さない（dispatch と同じ方針） */
+        /* one handler throwing must not kill the stream (same policy as dispatch) */
       }
     }
     armWatchdog();
@@ -138,21 +139,21 @@ async function connect(): Promise<void> {
       while ((idx = buf.indexOf("\n\n")) >= 0) {
         const frame = buf.slice(0, idx);
         buf = buf.slice(idx + 2);
-        // restartPush/非表示化で abort された後の残りフレームは旧テナントの
-        // ものでありうる — 適用しない。
+        // Frames still buffered after an abort (restartPush, tab hidden) may belong to the
+        // previous tenant — do not apply them.
         if (my.signal.aborted) return;
         dispatch(frame);
       }
     }
   } catch {
-    /* abort（非表示化・テナント切替・watchdog）またはネットワーク断 — 下で再接続 */
+    /* abort (hidden tab, tenant switch, watchdog) or a network drop — reconnect below */
   } finally {
     window.clearTimeout(watchdogTimer);
     healthy = false;
     if (ctrl === my) ctrl = null;
     if (!stopped && !document.hidden) {
-      // 30 秒以上生きたストリームの切断は一時的とみなし即再接続、即死は指数
-      // バックオフ（サーバ再起動の嵐を作らない）。
+      // A stream that lived 30s+ counts as a transient drop and reconnects at once; one
+      // that dies immediately backs off exponentially, so a server restart draws no storm.
       if (Date.now() - startedAt > 30000) backoff = 1000;
       const delay = unsupported ? RETRY_UNSUPPORTED : backoff;
       backoff = Math.min(backoff * 2, RETRY_MAX);

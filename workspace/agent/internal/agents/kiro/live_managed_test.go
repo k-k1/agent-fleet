@@ -1,14 +1,16 @@
 package kiro
 
-// managed（ACP）ルートの実バイナリ契約テスト（opt-in・KIRO_LIVE=1）。実 `kiro-cli acp` を
-// 子として起動し、docs/log/43 Track A2 の契約が実 CLI で成立することを検証する:
-// spawn→initialize→session/new→prompt(completed)→転写がメモリ構築される→（別プロセスで）
-// session/load resume→文脈保持＋転写がリプレイから再構築される。read 層の liveGate
-// （live_test.go・KIRO_LIVE＋PATH）を共有する。認証は環境の kiro ログイン（ambient・
-// ~/.local/share/kiro-cli）前提。
+// Real-binary contract test for the managed (ACP) route, opt-in through KIRO_LIVE=1. It
+// starts a real `kiro-cli acp` as a child and verifies that docs/log/43 Track A2's contract
+// holds against the real CLI: spawn, initialize, session/new, prompt (completed), the
+// transcript being built in memory, then a session/load resume from a SEPARATE process with
+// the context kept and the transcript rebuilt from the replay. Shares the read layer's
+// liveGate (live_test.go, KIRO_LIVE plus PATH). Authentication assumes the environment's
+// ambient kiro login (~/.local/share/kiro-cli).
 //
-// 週次更新の CLI なので、これが managed 契約のドリフト検知線（sessionUpdate 判別子・
-// session/load リプレイ形状・.lock の解放・stopReason が変わればここで落ちる）。
+// The CLI updates weekly, so this is the drift detection line for the managed contract: a
+// change to the sessionUpdate discriminator, the session/load replay shape, the release of
+// .lock, or stopReason makes it fail here.
 //   KIRO_LIVE=1 go test -run TestLiveManaged -v ./internal/agents/kiro/
 
 import (
@@ -81,7 +83,7 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 	if err := h.Send(agents.TurnInput{Prompt: "Reply with exactly: LIVE-KIRO-OK", ClientMessageID: "lm1"}); err != nil {
 		t.Fatalf("send: %v", err)
 	}
-	waitState(t, h, agents.TurnRunning) // spawn の初期 Completed を追い越さないよう turn 開始を待つ
+	waitState(t, h, agents.TurnRunning) // wait for the turn to start, so spawn's initial Completed is not overtaken
 	waitCompleted(t, h)
 
 	sid := h.sid
@@ -99,8 +101,9 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 		t.Fatalf("assistant turn missing from in-memory transcript: %+v", turns)
 	}
 
-	// Track D: 実 `_kiro.dev/metadata` から ライブ context% ＋ credits を捕捉できたか。
-	// ContextFill が pct→token 変換で非 nil を返し、window が実カタログ値であることも裏取り。
+	// Track D: was the live context% plus credits captured from the real
+	// `_kiro.dev/metadata`? Also confirms ContextFill returns non-nil through the
+	// pct-to-token conversion and that window is the real catalog value.
 	pct, window, credits, model, ok := ManagedContext("livem1")
 	if !ok {
 		t.Fatalf("ManagedContext: no live usage captured after a completed turn")
@@ -118,24 +121,26 @@ func TestLiveManagedSpawnPromptResume(t *testing.T) {
 		t.Fatalf("ContextFill did not surface the live context: %+v", c)
 	}
 	t.Logf("Track D live usage: pct=%.2f%% window=%d credits=%.4f model=%s", pct, window, credits, model)
-	// kiro は転写を v2 JSONL にも persist する（cursor と違う）— 停止中フォールバックの裏取り。
+	// Unlike cursor, kiro also persists the transcript to the v2 JSONL; this confirms the
+	// stopped-session fallback.
 	if fileTranscript(managedMeta("livem1", work)).Turns == nil {
 		t.Fatalf("kiro should have persisted the ACP turns to the v2 JSONL")
 	}
 
-	// 別プロセスでの resume（session/load）: 子を stdin EOF で正規終了させ（.lock 解放）、
-	// spawn し直して文脈と転写が残ることを実プロンプトで確認する。
+	// Resume from a separate process (session/load): end the child cleanly through stdin EOF
+	// so .lock is released, spawn again, and confirm with a real prompt that the context and
+	// the transcript survived.
 	h.mu.Lock()
 	oldCmd, oldStdin := h.cmd, h.stdin
 	h.alive = false
 	h.mu.Unlock()
 	stopChild(oldCmd, oldStdin)
-	time.Sleep(2 * time.Second) // graceful exit ＋ .lock 解放待ち
+	time.Sleep(2 * time.Second) // wait for the graceful exit and the .lock release
 	if err := h.spawn(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("respawn: %v", err)
 	}
 	if h.sid != sid {
-		t.Fatalf("resume changed sid: %q → %q", sid, h.sid)
+		t.Fatalf("resume changed sid: %q -> %q", sid, h.sid)
 	}
 	replayed := h.buf.snapshot()
 	if len(replayed) == 0 {

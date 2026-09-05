@@ -1,14 +1,16 @@
 package cursor
 
-// JSONL 転写末尾からの live 状態分類（working / idle）。cursor の TUI/-p ルートは
-// user プロンプトで行を書き、応答/ツールを流し、最後に turn_ended を刻む（実測）
-// ので、「開いたターンがあるか」で判定できる（copilot の events.jsonl 分類と同型・
-// TUI 文字列非依存で false-idle 教訓に合致）。managed（ACP）ルートは転写を書かない
-// ため、そちらの状態は driver の runTurn 境界が持つ（Track A2）。
+// Classifying live state (working / idle) from the tail of the JSONL transcript. cursor's
+// TUI/-p route writes a row for the user prompt, streams the response and tool rows, and
+// finally records turn_ended (measured), so "is a turn still open" decides it (the same shape
+// as the copilot events.jsonl classification, and independent of TUI strings, which matches
+// the false-idle lesson). The managed (ACP) route writes no transcript, so its state comes
+// from the driver's runTurn boundaries (Track A2).
 //
-// 許可待ち（TUI の allowlist 外コマンド確認）は JSONL に痕跡が残らないため v1 では
-// "question" を出さない——ターンが開いたまま＝"working" として扱う（ミラーは進行中
-// ＋停止ボタン）。許可カード化は Track D（docs/log/40）。
+// Waiting for permission (the TUI's confirmation for a command outside the allowlist) leaves
+// no trace in the JSONL, so v1 reports no "question" — the turn is still open and is treated
+// as "working" (the mirror shows in-progress plus a stop button). Permission cards are
+// Track D (docs/log/40).
 
 import (
 	"bufio"
@@ -19,15 +21,16 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// tailWindow bounds how much of the JSONL the poll reads. 128KB は数ターン分で
-// 十分（それより古い開マーカーはターン跨ぎで必ず turn_ended により閉じている）。
+// tailWindow bounds how much of the JSONL the poll reads. 128KB covers several turns, which
+// is enough: any older open marker is necessarily closed by a turn_ended within the window.
 const tailWindow = 128 * 1024
 
-// LiveState classifies the session's live state ("" when unknowable —— チャット
-// 未採番／転写ファイル未生成＝起動直後）。
+// LiveState classifies the session's live state ("" when unknowable — no chat id allocated
+// yet, or no transcript file yet, i.e. right after launch).
 func LiveState(m session.Meta) string {
-	// managed（ACP）は転写を書かないので、下の JSONL 分類は常に空を返す。turn 状態機械
-	// から供給しないと一覧のチップも reaper の分類も付かない（driver.go managedLiveState）。
+	// managed (ACP) writes no transcript, so the JSONL classification below always comes back
+	// empty. Without feeding it from the turn state machine, neither the list chip nor the
+	// reaper's classification is set (driver.go managedLiveState).
 	if m.DriverKind() == session.DriverManaged {
 		return managedLiveState(m)
 	}
@@ -42,13 +45,13 @@ func LiveState(m session.Meta) string {
 func liveStateFromFile(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
-		return "" // 未生成 — 不明（呼び出し側は状態なし扱い）
+		return "" // not created yet — unknown (the caller treats it as no state)
 	}
 	defer f.Close()
 	if st, err := f.Stat(); err == nil && st.Size() > tailWindow {
 		if _, err := f.Seek(st.Size()-tailWindow, io.SeekStart); err == nil {
 			br := bufio.NewReader(f)
-			_, _ = br.ReadString('\n') // 途中開始の欠け行を捨てる
+			_, _ = br.ReadString('\n') // discard the partial line the mid-file start produced
 			return classify(br)
 		}
 	}
@@ -56,7 +59,7 @@ func liveStateFromFile(path string) string {
 }
 
 func classify(r io.Reader) string {
-	open := false // role 行以後、turn_ended 前
+	open := false // after a role row, before turn_ended
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	for sc.Scan() {

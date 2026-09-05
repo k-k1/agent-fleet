@@ -14,7 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// writeUsageDay は指定日の raw ファイルを直接作る（時計を進めずに「昨日以前」を作れる）。
+// writeUsageDay writes a given day's raw file directly (so "yesterday or earlier" can be
+// built without moving the clock).
 func writeUsageDay(t *testing.T, day string, rows ...usagex.Record) {
 	t.Helper()
 	dir := usagex.RawDir()
@@ -41,7 +42,7 @@ func row(call, feature, kind, model string, spend int) usagex.Record {
 	}
 }
 
-// at は行の消費時刻を指定日の 12:00 に置く（バケットは ts で刻まれる）。
+// at puts the row's consumption time at 12:00 on the given day (buckets are cut by ts).
 func at(r usagex.Record, day string) usagex.Record {
 	r.TS = day + "T12:00:00Z"
 	return r
@@ -49,17 +50,18 @@ func at(r usagex.Record, day string) usagex.Record {
 
 func daysAgo(n int) string { return time.Now().UTC().AddDate(0, 0, -n).Format("2006-01-02") }
 
-// claude は1呼び出しがモデル別行に割れる。行数で数えると呼び出し回数が水増しされるので、
-// distinct call で数える（docs/log/46 §4）。どの軸で足しても合計が壊れないことまで見る。
+// One claude call splits into per-model rows. Counting rows inflates the number of calls, so
+// they are counted as distinct calls (docs/log/46 §4). This also checks that the total holds
+// along whichever axis it is summed.
 func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
 	rows := []usagex.Record{
 		row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100),
-		row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-sonnet-4-6", 50), // 同じ呼び出しの2モデル目
+		row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-sonnet-4-6", 50), // second model of the same call
 		row("c2", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 20),
 	}
 	agg := aggregateUsageRows(rows, map[string]bool{})
 	if len(agg) != 2 {
-		t.Fatalf("キー数 = %d, want 2（モデル別）", len(agg))
+		t.Fatalf("keys = %d, want 2 (one per model)", len(agg))
 	}
 	total, calls := 0, 0
 	for _, a := range agg {
@@ -67,14 +69,14 @@ func TestAggregateUsageRowsCountsDistinctCalls(t *testing.T) {
 		calls += a.Calls
 	}
 	if total != 170 {
-		t.Fatalf("spend 合計 = %d, want 170", total)
+		t.Fatalf("spend total = %d, want 170", total)
 	}
 	if calls != 2 {
-		t.Fatalf("calls 合計 = %d, want 2（行数 3 ではなく distinct call）", calls)
+		t.Fatalf("calls total = %d, want 2 (distinct calls, not the 3 rows)", calls)
 	}
 }
 
-// 完了した日だけを畳む。当日は行がまだ増えるので raw のまま。
+// Only completed days are folded. Today stays raw, since rows are still being added.
 func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
 	useIsolatedUsageDir(t)
 	yesterday, today := daysAgo(1), daysAgo(0)
@@ -84,22 +86,22 @@ func TestEnsureUsageRollupsOnlyFoldsCompletedDays(t *testing.T) {
 	ensureUsageRollups()
 	m := readUsageRollup(yesterday[:7])
 	if _, ok := m.Days[yesterday]; !ok {
-		t.Fatalf("昨日が畳まれていない: %+v", m.Days)
+		t.Fatalf("yesterday was not folded: %+v", m.Days)
 	}
 	if _, ok := m.Days[today]; ok {
-		t.Fatal("当日を畳んでしまった（まだ行が増える）")
+		t.Fatal("today was folded (rows are still being added to it)")
 	}
 
-	// 冪等: 2回目で内容が変わらない。
+	// Idempotent: a second pass changes nothing.
 	before, _ := json.Marshal(readUsageRollup(yesterday[:7]))
 	ensureUsageRollups()
 	after, _ := json.Marshal(readUsageRollup(yesterday[:7]))
 	if string(before) != string(after) {
-		t.Fatalf("2回目で rollup が変わった:\n%s\n%s", before, after)
+		t.Fatalf("the second pass changed the rollup:\n%s\n%s", before, after)
 	}
 }
 
-// rollup は raw が保持期間で消えた後も残る（無期限・ADR0029 §7-4）。
+// The rollup stays after raw expires out of its retention window (kept forever, ADR0029 §7-4).
 func TestRollupSurvivesRawPrune(t *testing.T) {
 	dir := useIsolatedUsageDir(t)
 	old := daysAgo(2)
@@ -110,25 +112,26 @@ func TestRollupSurvivesRawPrune(t *testing.T) {
 	}
 	entries := readUsageRollup(old[:7]).Days[old].Entries
 	if len(entries) != 1 || entries[0].Agg.Spend != 500 {
-		t.Fatalf("raw 削除後の集計 = %+v", entries)
+		t.Fatalf("aggregate after deleting raw = %+v", entries)
 	}
-	// クエリからも見えること（rollup が正の日は raw を読まない）。
+	// It must be visible through a query too (a day the rollup owns does not read raw).
 	samples, _ := collectUsageSamples(time.Now().UTC().AddDate(0, 0, -3), time.Now().UTC(), "day")
 	sum := 0
 	for _, s := range samples {
 		sum += s.Agg.Spend
 	}
 	if sum != 500 {
-		t.Fatalf("クエリ経由の spend = %d, want 500", sum)
+		t.Fatalf("spend through the query = %d, want 500", sum)
 	}
 }
 
-// 畳んだ日を raw からも二重に読まない（rollup と raw が両方ある状態での回帰）。
+// A folded day is not read from raw as well (regression for the state where both the rollup
+// and raw are present).
 func TestCollectUsageSamplesDoesNotDoubleCount(t *testing.T) {
 	useIsolatedUsageDir(t)
 	yesterday := daysAgo(1)
 	writeUsageDay(t, yesterday, at(row("a", usagex.FeatureTitleSession, session.KindClaude, "haiku", 300), yesterday))
-	ensureUsageRollups() // raw はそのまま残っている
+	ensureUsageRollups() // raw is left in place
 	samples, _ := collectUsageSamples(time.Now().UTC().AddDate(0, 0, -2), time.Now().UTC(), "day")
 	sum, calls := 0, 0
 	for _, s := range samples {
@@ -136,18 +139,19 @@ func TestCollectUsageSamplesDoesNotDoubleCount(t *testing.T) {
 		calls += s.Agg.Calls
 	}
 	if sum != 300 || calls != 1 {
-		t.Fatalf("spend = %d / calls = %d, want 300 / 1（rollup と raw で二重計上していないか）", sum, calls)
+		t.Fatalf("spend = %d / calls = %d, want 300 / 1 (double counted across rollup and raw?)", sum, calls)
 	}
 }
 
-// ★実機で最初に踏んだ穴の回帰。セッション折り込みのバックフィルは、過去数か月分の行を
-// **今日の raw ファイル**へ一度に書く。バケットを追記先のファイル日で刻むと、過去の消費が
-// 全部「導入日」に積み上がって時系列が無意味になる。行の ts で刻むこと。
+// Regression for the first gap hit on a real machine. A session-fold backfill writes months of
+// past rows into today's raw file at once. Cutting buckets by the file day appended to piles
+// every past consumption onto the introduction day and makes the series meaningless. Cut by
+// the row's ts.
 func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 	useIsolatedUsageDir(t)
 	today := daysAgo(0)
 	old1, old2 := daysAgo(40), daysAgo(41)
-	// 3行とも「今日」のファイルに追記されるが、消費が起きたのは別の日。
+	// All three rows are appended to today's file, but the consumption happened on other days.
 	writeUsageDay(t, today,
 		at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 100), old1),
 		at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 200), old2),
@@ -156,11 +160,11 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 	got := getSeries(t, "from="+old2+"&to="+today)
 	hit := nonEmptyBuckets(got)
 	if len(hit) != 3 {
-		t.Fatalf("消費のあるバケット数 = %d, want 3（消費日ごとに分かれるはず）: %+v", len(hit), got.Buckets)
+		t.Fatalf("buckets with consumption = %d, want 3 (they should split per consumption day): %+v", len(hit), got.Buckets)
 	}
-	// 期間はゼロ埋めして返す（41日空いていることが絵から消えない）。
+	// The period comes back zero-filled (the 41 day gap does not vanish from the picture).
 	if len(got.Buckets) != 42 {
-		t.Fatalf("bucket 数 = %d, want 42（%s〜%s のゼロ埋め）", len(got.Buckets), old2, today)
+		t.Fatalf("buckets = %d, want 42 (zero-filled from %s to %s)", len(got.Buckets), old2, today)
 	}
 	want := map[string]int{
 		old2 + "T00:00:00Z":  200,
@@ -177,7 +181,8 @@ func TestUsageSeriesBucketsByConsumptionTimeNotFileDay(t *testing.T) {
 	}
 }
 
-// 上と同じ形で、畳んだ後も消費日が保たれること（rollup のキーが ts の日であること）。
+// The same shape as above: the consumption day survives folding (the rollup key is the day of
+// the row's ts).
 func TestRollupKeysByConsumptionDay(t *testing.T) {
 	useIsolatedUsageDir(t)
 	fileDay, consumed := daysAgo(1), daysAgo(30)
@@ -186,17 +191,17 @@ func TestRollupKeysByConsumptionDay(t *testing.T) {
 	m := readUsageRollup(consumed[:7])
 	day, ok := m.Days[consumed]
 	if !ok {
-		t.Fatalf("消費日 %s のキーが無い: %+v", consumed, m.Days)
+		t.Fatalf("no key for consumption day %s: %+v", consumed, m.Days)
 	}
 	if len(day.Entries) != 1 || day.Entries[0].Agg.Spend != 700 {
 		t.Fatalf("entries = %+v", day.Entries)
 	}
 	if len(day.Src) != 1 || day.Src[0] != fileDay {
-		t.Fatalf("寄与元ファイル日が記録されていない: %+v", day.Src)
+		t.Fatalf("the contributing file day was not recorded: %+v", day.Src)
 	}
-	// やり直しても足し込まない（Src が弾く＝クラッシュ後の再実行が安全）。
+	// A retry does not add again (Src rejects it, so a rerun after a crash is safe).
 	if merged, ok := mergeRollupDay(day, fileDay, map[usageKey]usageAgg{{Kind: "x"}: {Spend: 1}}); ok {
-		t.Fatalf("同じファイル日を二度足してしまった: %+v", merged)
+		t.Fatalf("the same file day was added twice: %+v", merged)
 	}
 }
 
@@ -205,33 +210,34 @@ func TestParseUsageFilter(t *testing.T) {
 	if bad != "" {
 		t.Fatalf("bad = %q", bad)
 	}
-	// 違う軸は AND
+	// different axes are ANDed
 	if !f.match(usageKey{Kind: "claude", Feature: "title.session"}) {
-		t.Fatal("claude かつ title.* が一致しない")
+		t.Fatal("claude AND title.* did not match")
 	}
 	if f.match(usageKey{Kind: "codex", Feature: "title.session"}) {
-		t.Fatal("kind が違うのに一致した")
+		t.Fatal("matched even though the kind differs")
 	}
 	if f.match(usageKey{Kind: "claude", Feature: "compact"}) {
-		t.Fatal("feature が違うのに一致した")
+		t.Fatal("matched even though the feature differs")
 	}
-	// 同じ軸は OR
+	// the same axis is ORed
 	f2, _ := parseUsageFilter("kind:claude,kind:codex")
 	if !f2.match(usageKey{Kind: "codex"}) || !f2.match(usageKey{Kind: "claude"}) {
-		t.Fatal("同じ軸の複数指定が OR になっていない")
+		t.Fatal("several values on one axis are not ORed")
 	}
 	if f2.match(usageKey{Kind: "cursor"}) {
-		t.Fatal("列挙外が一致した")
+		t.Fatal("a value outside the enumeration matched")
 	}
-	// 未知の軸はエラーにする（黙って無視すると「指定したのに効かない」が起きる）
+	// an unknown axis is an error (ignoring it silently gives "I set it and it does nothing")
 	if _, bad := parseUsageFilter("nope:1"); bad != "nope:1" {
-		t.Fatalf("未知の軸を弾いていない: %q", bad)
+		t.Fatalf("an unknown axis was not rejected: %q", bad)
 	}
 }
 
-// nonEmptyBuckets は実データの乗ったバケットだけを返す。応答は要求期間をゼロ埋めする
-// （空バケットを落とすと離れた日が隣接した棒として描かれ、時間軸として読めない）ので、
-// 「何日分の消費があったか」を見るテストはこちらを使う。
+// nonEmptyBuckets returns only the buckets carrying real data. The response zero-fills the
+// requested period (dropping the empty buckets draws days that are far apart as adjacent bars
+// and makes the time axis unreadable), so a test asking "how many days had consumption" uses
+// this.
 func nonEmptyBuckets(r usageSeriesResp) []usageBucketWire {
 	var out []usageBucketWire
 	for _, b := range r.Buckets {
@@ -264,7 +270,7 @@ func TestUsageSeriesAggregation(t *testing.T) {
 		at(row("c1", usagex.FeatureTitleSession, session.KindClaude, "claude-haiku-4-5", 100), day),
 		at(row("c2", usagex.FeatureAssistantChat, session.KindClaude, "claude-sonnet-4-6", 900), day),
 		at(row("c3", usagex.FeatureSession, session.KindCodex, "", 5000), day),
-		// モデルもトークンも報告しない CLI: 回数だけ数える。
+		// a CLI that reports neither model nor tokens: only the number of calls is counted
 		usagex.Record{TS: day + "T12:00:00Z", Call: "c4", Feature: usagex.FeatureTitleSession,
 			Kind: session.KindAgy, ModelSrc: usagex.ModelUnknown, OK: true, Measured: usagex.MeasuredNone},
 	)
@@ -283,11 +289,11 @@ func TestUsageSeriesAggregation(t *testing.T) {
 	if s[usagex.FeatureTitleSession].Calls != 2 { // claude 1 + agy 1
 		t.Fatalf("title.session calls = %d", s[usagex.FeatureTitleSession].Calls)
 	}
-	// 「0」と「未計測」を混同しない。
+	// Do not confuse "0" with "unmeasured".
 	if got.UnmeasuredCalls != 1 {
 		t.Fatalf("unmeasured_calls = %d, want 1", got.UnmeasuredCalls)
 	}
-	// coverage はデータから自動生成する（手書きの表はドリフトする）。
+	// coverage is generated from the data (a hand-written table drifts).
 	if got.Coverage[session.KindClaude].Tokens != usagex.MeasuredExact ||
 		got.Coverage[session.KindClaude].Model != usagex.ModelReported {
 		t.Fatalf("claude coverage = %+v", got.Coverage[session.KindClaude])
@@ -297,7 +303,7 @@ func TestUsageSeriesAggregation(t *testing.T) {
 		t.Fatalf("agy coverage = %+v", got.Coverage[session.KindAgy])
 	}
 
-	// include=aux でセッション本体を外せる（§9-3 の「含めてフィルタで絞る」形）。
+	// include=aux drops the session bodies (§9-3's "include it and narrow with a filter" shape).
 	aux := getSeries(t, "from="+day+"&to="+day+"&include=aux")
 	if aux.Totals.Spend != 1000 {
 		t.Fatalf("include=aux totals = %+v", aux.Totals)
@@ -307,16 +313,16 @@ func TestUsageSeriesAggregation(t *testing.T) {
 		t.Fatalf("include=session totals = %+v", only.Totals)
 	}
 
-	// 「機能 × モデル」の表（本命のビュー）。
+	// The feature x model table (the view this is really for).
 	mx := getSeries(t, "from="+day+"&to="+day+"&by=feature&split=model")
 	if mx.Matrix[usagex.FeatureAssistantChat]["claude-sonnet-4-6"].Spend != 900 {
 		t.Fatalf("matrix = %+v", mx.Matrix)
 	}
 	if _, ok := mx.Matrix[usagex.FeatureTitleSession][""]; !ok {
-		t.Fatalf("モデル不明（agy）の枠が表に出ていない: %+v", mx.Matrix[usagex.FeatureTitleSession])
+		t.Fatalf("the unknown-model (agy) slot is missing from the table: %+v", mx.Matrix[usagex.FeatureTitleSession])
 	}
 
-	// フィルタ（前方一致）。
+	// Filter (prefix match).
 	f := getSeries(t, "from="+day+"&to="+day+"&filter=kind:claude")
 	if f.Totals.Spend != 1000 || len(f.Coverage) != 1 {
 		t.Fatalf("filter=kind:claude → totals %+v coverage %+v", f.Totals, f.Coverage)
@@ -325,7 +331,7 @@ func TestUsageSeriesAggregation(t *testing.T) {
 
 func TestUsageSeriesHourBucket(t *testing.T) {
 	useIsolatedUsageDir(t)
-	day := daysAgo(0) // 当日は raw のまま＝時間粒度が取れる
+	day := daysAgo(0) // today stays raw, so hour granularity is available
 	r1 := row("c1", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 10)
 	r1.TS = day + "T01:30:00Z"
 	r2 := row("c2", usagex.FeatureAssistantChat, session.KindClaude, "haiku", 20)
@@ -337,7 +343,7 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 	got := getSeries(t, "from="+day+"&to="+day+"&bucket=hour")
 	hit := nonEmptyBuckets(got)
 	if len(hit) != 2 {
-		t.Fatalf("消費のあるバケット = %+v", got.Buckets)
+		t.Fatalf("buckets with consumption = %+v", got.Buckets)
 	}
 	if hit[0].T != day+"T01:00:00Z" || hit[0].Series[usagex.FeatureAssistantChat].Spend != 30 {
 		t.Fatalf("bucket0 = %+v", hit[0])
@@ -345,16 +351,17 @@ func TestUsageSeriesHourBucket(t *testing.T) {
 	if hit[1].T != day+"T05:00:00Z" {
 		t.Fatalf("bucket1 = %+v", hit[1])
 	}
-	// 1日分の hour バケットはゼロ埋めして 24 本（空き時間が絵から消えない）。
+	// One day of hour buckets is zero-filled to 24 (the idle hours do not vanish from the picture).
 	if len(got.Buckets) != 24 {
-		t.Fatalf("bucket 数 = %d, want 24（ゼロ埋め）", len(got.Buckets))
+		t.Fatalf("buckets = %d, want 24 (zero-filled)", len(got.Buckets))
 	}
 	if got.Totals.Spend != 70 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 }
 
-// 畳んだ日を hour で要求されたら「消費が無かった」ではなく truncated と言う。
+// Asking for a folded day at hour granularity must say truncated, not "there was no
+// consumption".
 func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
 	dir := useIsolatedUsageDir(t)
 	old := daysAgo(2)
@@ -365,10 +372,10 @@ func TestUsageSeriesHourReportsTruncationAfterPrune(t *testing.T) {
 	}
 	got := getSeries(t, "from="+old+"&to="+old+"&bucket=hour")
 	if !got.Truncated {
-		t.Fatal("raw が消えた期間を hour で要求したのに truncated が立っていない")
+		t.Fatal("asked for hour granularity over a period whose raw is gone, but truncated is not set")
 	}
 	if hit := nonEmptyBuckets(got); len(hit) != 0 {
-		t.Fatalf("消費のあるバケットが出た: %+v", hit)
+		t.Fatalf("buckets with consumption came back: %+v", hit)
 	}
 }
 
@@ -387,8 +394,8 @@ func TestUsageSeriesRejectsBadParams(t *testing.T) {
 	}
 }
 
-// 集計 API は生ログを返さない（本文は元々記録していないが、セッション名や会話 id も
-// バケットの外へ出さない）。
+// The aggregation API returns no raw log. Bodies were never recorded in the first place, and
+// session names and conversation ids do not leave the bucket either.
 func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
@@ -399,52 +406,54 @@ func TestUsageSeriesDoesNotLeakRefs(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handleUsageSeries(rec, req)
 	if body := rec.Body.String(); strings.Contains(body, "slot-secret") {
-		t.Fatalf("ref が応答に漏れている: %s", body)
+		t.Fatalf("the ref leaked into the response: %s", body)
 	}
 }
 
-// セッション本体の折り込みは非同期なので、走っている間の応答は直近ターンを含まない。
-// **その事実を folding で申告する。** 黙って古い数字を返すと、Console は最新のつもりで
-// 描き、利用者は当たるまで「再取得」を連打することになる（実際の苦情がこれ）。
+// The session fold is asynchronous, so a response sent while it runs does not include the most
+// recent turns. That fact is declared through folding. Returning stale numbers silently makes
+// the Console draw them as current, and the user hammers "refresh" until it catches up (this
+// was an actual complaint).
 func TestUsageSeriesReportsFolding(t *testing.T) {
 	useIsolatedUsageDir(t)
 	resetUsageFold(t)
 	day := daysAgo(0)
 
-	// 1本目の読み出しが折り込みを起動する＝この応答は「まだ追いついていない」。
+	// The first read starts the fold, i.e. this response has not caught up yet.
 	if got := getSeries(t, "from="+day+"&to="+day); !got.Folding {
-		t.Fatal("折り込みを起動した応答が folding を立てていない")
+		t.Fatal("the response that started the fold did not set folding")
 	}
 	waitUsageFoldIdle(t)
 
-	// 折り込みが終わった後の読み出しはスロットルに当たる＝走っていない。ここで folding を
-	// 立て続けると Console の自動取り直しが止まらない。
+	// A read after the fold has finished hits the throttle, i.e. nothing is running. Keeping
+	// folding set here never lets the Console stop re-fetching.
 	if got := getSeries(t, "from="+day+"&to="+day); got.Folding {
-		t.Fatal("折り込みが終わっているのに folding が立っている")
+		t.Fatal("folding is set even though the fold has finished")
 	}
 
-	// 明示的な再取得（fold=force）はスロットルを飛ばして必ず走らせる。
+	// An explicit refresh (fold=force) skips the throttle and always runs.
 	if got := getSeries(t, "from="+day+"&to="+day+"&fold=force"); !got.Folding {
-		t.Fatal("fold=force がスロットルに当たって起動しなかった")
+		t.Fatal("fold=force hit the throttle and did not start")
 	}
 	waitUsageFoldIdle(t)
 }
 
-// --- レビュー P2/P3 の回帰 -----------------------------------------------------
+// --- P2/P3 review regressions --------------------------------------------------
 
-// modelRow は claude の「1呼び出しがモデル別行に割れた」1行。
+// modelRow is one row of a claude call that was split into per-model rows.
 func modelRow(call, modelRaw, model string, spend int) usagex.Record {
 	r := row(call, usagex.FeatureAssistantChat, session.KindClaude, model, spend)
 	r.ModelRaw = modelRaw
 	return r
 }
 
-// P2-5: 呼び出し回数は「その call で最も食ったモデル行」に付く。行の並びは生 id の
-// 綴り順でしかないので、先頭行で数えると主力モデルが calls=0 と出る。
+// P2-5: the call count goes on the model row that consumed the most in that call. The order of
+// the rows is only the spelling order of the raw id, so counting the first row shows the
+// dominant model with calls=0.
 func TestCallsGoToTheDominantModelRow(t *testing.T) {
 	day := daysAgo(0)
 	rows := []usagex.Record{
-		// 綴り順では a-model が先、実際に食ったのは z-model。
+		// a-model comes first in spelling order, but z-model is what actually consumed.
 		at(modelRow("c1", "a-model-20260101", "a-model", 100), day),
 		at(modelRow("c1", "z-model-20260101", "z-model", 9000), day),
 	}
@@ -456,12 +465,13 @@ func TestCallsGoToTheDominantModelRow(t *testing.T) {
 		calls += a.Calls
 	}
 	if calls != 1 {
-		t.Fatalf("calls 合計 = %d, want 1（distinct call）", calls)
+		t.Fatalf("calls total = %d, want 1 (distinct call)", calls)
 	}
 	if byModel["z-model"].Calls != 1 || byModel["a-model"].Calls != 0 {
-		t.Fatalf("主力モデルに回数が付いていない: %+v", byModel)
+		t.Fatalf("the count is not attached to the dominant model: %+v", byModel)
 	}
-	// 同点は決定的に決める（同じ入力から同じ帰属＝集計が再現する）。
+	// Ties are decided deterministically (same input, same attribution, so the aggregate
+	// reproduces).
 	tie := []usagex.Record{
 		at(modelRow("c2", "b-raw", "b", 50), day),
 		at(modelRow("c2", "a-raw", "a", 50), day),
@@ -470,13 +480,13 @@ func TestCallsGoToTheDominantModelRow(t *testing.T) {
 		got := aggregateUsageRows(tie, map[string]bool{})
 		for k, a := range got {
 			if a.Calls == 1 && k.Model != "a" {
-				t.Fatalf("同点の代表が model=%q になった（生 id 昇順で決めるはず）", k.Model)
+				t.Fatalf("the tie's representative came out as model=%q (it should be decided by ascending raw id)", k.Model)
 			}
 		}
 	}
 }
 
-// 同じことを API 越しに。`by=model` で主力モデルの calls が 0 に見えないこと。
+// The same thing through the API: with `by=model` the dominant model must not look like calls 0.
 func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
@@ -487,20 +497,21 @@ func TestUsageSeriesCallsFollowDominantModel(t *testing.T) {
 	got := getSeries(t, "from="+day+"&to="+day+"&by=model")
 	series := nonEmptyBuckets(got)[0].Series
 	if series["z-model"].Calls != 1 || series["a-model"].Calls != 0 {
-		t.Fatalf("by=model の calls = %+v", series)
+		t.Fatalf("by=model calls = %+v", series)
 	}
 	if got.Totals.Calls != 1 || got.Totals.Spend != 9100 {
 		t.Fatalf("totals = %+v, want calls 1 / spend 9100", got.Totals)
 	}
 }
 
-// P2-4: 月ファイルが書けなかったら state を進めない。進めると、その月へ寄与するはずだった
-// 消費は「畳み済み」扱いのまま集計から消え、raw が prune された時点で二度と戻らない。
+// P2-4: if a month file could not be written, the state is not advanced. Advancing it leaves
+// the consumption that should have gone into that month marked folded and gone from the
+// aggregate, never to come back once raw is pruned.
 func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(1)
 	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 500), day))
-	// 月ファイルの置き場所をディレクトリで塞ぐ（rename が必ず失敗する）。
+	// Block the month file's path with a directory (the rename then always fails).
 	blocked := usageRollupPath(day[:7])
 	if err := os.MkdirAll(filepath.Join(blocked, "x"), 0o700); err != nil {
 		t.Fatal(err)
@@ -508,25 +519,26 @@ func TestRollupKeepsStateWhenMonthWriteFails(t *testing.T) {
 
 	ensureUsageRollups()
 	if st := readUsageRollupState(); len(st.Rolled) != 0 {
-		t.Fatalf("月ファイルを書けていないのに畳み済みにした: %+v", st.Rolled)
+		t.Fatalf("marked folded even though the month file was not written: %+v", st.Rolled)
 	}
 
-	// 塞ぎを外せば次のパスで畳み直せる（取りこぼしが復旧後に回収される）。
+	// Removing the block lets the next pass fold again (what was missed is recovered).
 	if err := os.RemoveAll(blocked); err != nil {
 		t.Fatal(err)
 	}
 	ensureUsageRollups()
 	entries := readUsageRollup(day[:7]).Days[day].Entries
 	if len(entries) != 1 || entries[0].Agg.Spend != 500 {
-		t.Fatalf("復旧後の集計 = %+v, want spend 500", entries)
+		t.Fatalf("aggregate after recovery = %+v, want spend 500", entries)
 	}
 	if _, ok := readUsageRollupState().Rolled[day]; !ok {
-		t.Fatal("復旧後に畳み済みとして記録されていない")
+		t.Fatal("not recorded as folded after recovery")
 	}
 }
 
-// P3-12: 追記と畳み込みが別ロックなので、UTC 日跨ぎ直前に日を決めた追記が畳み込みの後に
-// 着地しうる。畳む側は usageMu を保持して「その日はもう伸びないか」を確かめてから読む。
+// P3-12: appending and folding hold separate locks, so an append that picked its day just
+// before the UTC date boundary can land after the fold. The folding side holds usageMu and
+// checks that the day can no longer grow before reading it.
 func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
 	useIsolatedUsageDir(t)
 	today, yesterday := daysAgo(0), daysAgo(1)
@@ -534,16 +546,16 @@ func TestRollupRefusesToReadTheOpenDay(t *testing.T) {
 	writeUsageDay(t, yesterday, at(row("c2", usagex.FeatureSession, session.KindClaude, "haiku", 20), yesterday))
 
 	if rows, closed := readUsageDayForRollup(today); closed || len(rows) != 0 {
-		t.Fatalf("当日のファイルを畳み込み対象として読んでしまった（rows=%d closed=%v）", len(rows), closed)
+		t.Fatalf("today's file was read as a fold target (rows=%d closed=%v)", len(rows), closed)
 	}
 	rows, closed := readUsageDayForRollup(yesterday)
 	if !closed || len(rows) != 1 {
-		t.Fatalf("完了した日を読めていない（rows=%d closed=%v）", len(rows), closed)
+		t.Fatalf("a completed day was not read (rows=%d closed=%v)", len(rows), closed)
 	}
 }
 
-// P3-9: 消費の無い日もゼロで埋めて返す。落とすと「離れた2日」が隣り合う棒になり、
-// 空白期間が絵から消える。
+// P3-9: days with no consumption come back zero-filled too. Dropping them turns "two days far
+// apart" into adjacent bars and the empty stretch vanishes from the picture.
 func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 	useIsolatedUsageDir(t)
 	from, gap, to := daysAgo(4), daysAgo(2), daysAgo(0)
@@ -553,10 +565,10 @@ func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 	)
 	got := getSeries(t, "from="+from+"&to="+to)
 	if len(got.Buckets) != 5 {
-		t.Fatalf("bucket 数 = %d, want 5（%s〜%s の全日）", len(got.Buckets), from, to)
+		t.Fatalf("buckets = %d, want 5 (every day from %s to %s)", len(got.Buckets), from, to)
 	}
 	if len(nonEmptyBuckets(got)) != 2 {
-		t.Fatalf("消費のあるバケット = %+v", nonEmptyBuckets(got))
+		t.Fatalf("buckets with consumption = %+v", nonEmptyBuckets(got))
 	}
 	var mid *usageBucketWire
 	for i, b := range got.Buckets {
@@ -565,23 +577,23 @@ func TestUsageSeriesFillsEmptyBuckets(t *testing.T) {
 		}
 	}
 	if mid == nil || len(mid.Series) != 0 {
-		t.Fatalf("空の日が位置として残っていない: %+v", got.Buckets)
+		t.Fatalf("the empty day did not keep its position: %+v", got.Buckets)
 	}
-	// 埋めても合計は動かない。
+	// Filling does not move the totals.
 	if got.Totals.Spend != 300 || got.Totals.Calls != 2 {
 		t.Fatalf("totals = %+v", got.Totals)
 	}
 }
 
-// 埋めるのが無意味な密度（90日 × hour）では埋めない。切り詰めるのではなく埋めるのをやめる
-// ＝実データは必ず全部返る。
+// At a density where filling is pointless (90 days x hour) it is not filled. It stops filling
+// rather than truncating, so all the real data always comes back.
 func TestUsageSeriesDoesNotFillAbsurdRanges(t *testing.T) {
 	useIsolatedUsageDir(t)
 	day := daysAgo(0)
 	writeUsageDay(t, day, at(row("c1", usagex.FeatureSession, session.KindClaude, "haiku", 10), day))
 	got := getSeries(t, "from="+daysAgo(89)+"&to="+day+"&bucket=hour")
 	if len(got.Buckets) != 1 {
-		t.Fatalf("bucket 数 = %d, want 1（上限を超える密度は埋めない）", len(got.Buckets))
+		t.Fatalf("buckets = %d, want 1 (a density past the limit is not filled)", len(got.Buckets))
 	}
 	if got.Totals.Spend != 10 {
 		t.Fatalf("totals = %+v", got.Totals)

@@ -1,8 +1,8 @@
 package sessionx
 
-// tmux まわりのセッションオーケストレーション: 起動/再生成、ディレクトリ配下の
-// セッション判定。純粋な tmux プロービング（存在確認・pane 解決/キャプチャ・
-// 生存一覧・pane 種別）は internal/tmuxx へ移設（docs/log/23 残① Wave A）。
+// Session orchestration around tmux: launching, recreating, and deciding which sessions live
+// under a directory. Pure tmux probing (existence, pane resolution and capture, the live list,
+// pane kind) lives in internal/tmuxx.
 
 import (
 	"fmt"
@@ -19,8 +19,8 @@ import (
 )
 
 // startSessionTmux launches the detached tmux session for m. For claude it builds
-// the resume/new program (claude 縦割りの buildProgram が jsonl の有無で --resume を
-// 選ぶ); for shell it runs a login bash.
+// the resume/new program (the claude-specific buildProgram picks --resume from whether a
+// jsonl exists); for shell it runs a login bash.
 func startSessionTmux(m session.Meta, ssmForce bool) error {
 	// Write the MCP registry into this kind's own config before the CLI reads it
 	// (docs/log/48 §8.3). Doing it here rather than in BuildLaunch keeps it out of the
@@ -75,8 +75,9 @@ func startSessionTmux(m session.Meta, ssmForce bool) error {
 // ensureSessionTmux (re)creates the tmux session from its recorded meta when it is
 // not currently alive — used on attach so a clicked-but-exited session relaunches
 // claude rather than the default shell. nil means the session is now running.
-// managed セッション（docs/log/27 P2）は tmux でなく driver.Resume（runtime handle の
-// 再接続＝§6 の reconciliation）で「起動」する — /start の意味論は両ドライバで同じ。
+// A managed session (docs/log/27 P2) is "launched" not through tmux but through driver.Resume
+// — reattaching the runtime handle, the reconciliation of §6. /start means the same thing on
+// both drivers.
 //
 // Every failure is REPORTED, never swallowed: /start answering {"ok":true} for a
 // launch that never happened is worse than a plain error, because the Console then
@@ -95,8 +96,8 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 			log.Printf("managed resume %s: %v", name, err)
 			return err
 		}
-		// 再開＝停止扱いの解除。次の一覧ポーリングでも clear されるが、/start 応答の
-		// 直後に halt 直前の StoppedAt が残っていると紛らわしいのでここで消す。
+		// Resuming clears the stopped marking. The next list poll would clear it too, but a
+		// pre-halt StoppedAt surviving right after the /start response is confusing.
 		if m.StoppedAt != "" {
 			m.StoppedAt = ""
 			session.WriteMeta(m)
@@ -119,7 +120,7 @@ func ensureSessionTmux(name string, ssmForce bool) error {
 // LiveSessionsInDir returns the display names of running sessions whose cwd is at
 // or under dir. Switching branches in dir would swap the working tree beneath
 // these processes mid-flight (vanished/rewritten files, stale diffs, edits landing
-// on the wrong branch) — the "大惨事" this guards against — so callers refuse the
+// on the wrong branch) — the catastrophe this guards against — so callers refuse the
 // operation while this is non-empty. Only LIVE sessions count: a stopped session
 // has no process to corrupt (branch drift for those is handled elsewhere). Archived
 // sessions are ignored. A subdir cwd still counts because checkout rewrites the

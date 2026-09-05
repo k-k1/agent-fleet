@@ -1,7 +1,7 @@
 // Desktop notifications on claude state arrivals, extracted from SessionsSection so
 // it lives once at the app shell (the flat Sessions section no longer owns the rail).
 // Asks for permission once (best-effort — badges work regardless), then fires when a
-// polled session flips working→idle ("回答が返ってきました") or reaches "question",
+// polled session flips working→idle ("an answer came back") or reaches "question",
 // skipping the session currently on the active pane. Reads the shared stores itself.
 import { useEffect, useRef } from "react";
 import { t } from "../../lib/i18n/index.ts";
@@ -42,17 +42,18 @@ export function useSessionNotifications(enabled = true): void {
       }
       const before = prev[s.name];
       if (before !== undefined && before !== s.state && s.name !== activeSession) {
-        // ブラウザ通知（従来）＋ 音声通知（docs/log/24 Tier1, 有効時）。バックグラウンドのセッション
-        // が回答/質問を返したら、名前を前置きして短くアナウンス（直列キューで割り込まない）。
-        // 全ペイン自動読み上げ（ttsAutoReadAllPanes）でミラーが本文をそのまま読むセッションには
-        // 告知を重ねない（回答は自動朗読、確認は ttsReadPending の読み上げが担当）。
+        // Browser notification plus a spoken one (docs/log/24 Tier1, when enabled): a
+        // background session that answered or asked gets a short announcement prefixed with
+        // its name, through the serial queue so it never interrupts. Sessions whose body the
+        // mirror already reads aloud (ttsAutoReadAllPanes) get no second announcement —
+        // answers are covered by the auto-read, questions by ttsReadPending.
         const st = getSettings();
         const speak = st.ttsSessionNotify;
         const mirrored = st.ttsEnabled && st.ttsAutoReadAllPanes && hasTurnReader(s.name);
         if (s.state === "idle" && before === "working") {
           notify(t("sx.notify_answered_title"), displayName(s));
-          // 声はセッション単位で固定（sessionVoiceOpts）。表示名でなくセッション名で引く
-          // （リネームで声が変わらないように）。
+          // The voice is fixed per session (sessionVoiceOpts), keyed by session name rather
+          // than display name so a rename does not change it.
           if (speak && !(mirrored && st.ttsAutoReadMirror))
             announce(t("sx.notify_answered_body", { name: displayName(s) }), displayName(s), sessionVoiceOpts(s.name), s.name, "session-notification");
         } else if (s.state === "question") {

@@ -4,7 +4,7 @@
 // snapshot, and flag what an operator should worry about before ever reflecting a
 // server from one file to another (P1's plan/apply).
 //
-// It deliberately shares NO type with internal/mcpreg (ADR0040 決定15,
+// It deliberately shares NO type with internal/mcpreg (ADR0040 decision 15,
 // docs/log/56 §4.2). mcpreg.ServerDef means "Agent Fleet distributes this" and its
 // Validate rejects af's own reserved names; this package does the opposite — it
 // must FIND a project file defining "af" or "af_xxxxxxxx" and flag it red (docs/log/56
@@ -47,7 +47,8 @@ type Snapshot struct {
 	Files    []File `json:"files"`
 	// Kinds carries every agent kind's static facts (gate, dialect support, whether
 	// it even has a project scope) regardless of whether that kind's file exists —
-	// docs/log/57 憲章「無いものが消えると、無いのか未対応なのか分からない」.
+	// docs/log/57 charter, "when what is absent simply vanishes, you cannot tell absent from
+	// unsupported".
 	Kinds []KindInfo `json:"kinds"`
 	// Warnings are cross-file findings (e.g. the same server name spelled two
 	// different ways in two files) that do not belong to a single File.
@@ -60,7 +61,7 @@ type File struct {
 	Path             string   `json:"path"`
 	Kinds            []string `json:"kinds"` // agent kinds that read this file
 	Exists           bool     `json:"exists"`
-	Parsable         bool     `json:"parsable"` // false: exists but unreadable as its own format — never touched (docs/log/57 憲章3)
+	Parsable         bool     `json:"parsable"` // false: exists but unreadable as its own format — never touched (docs/log/57 charter 3)
 	Tracked          bool     `json:"tracked"`
 	TrackedUncertain bool     `json:"trackedUncertain,omitempty"` // VCS cannot answer (svn / none) — docs/log/56 §7.2
 	Ignored          bool     `json:"ignored"`
@@ -92,7 +93,7 @@ type Server struct {
 
 // KindInfo is the static, content-independent facts docs/log/56 §8 / §2.1 measured for
 // one agent kind's project scope — shown even when that kind's file is absent, so
-// "no file" and "not supported" never look the same (docs/log/57 憲章「未検証バッジ」).
+// "no file" and "not supported" never look the same (docs/log/57 charter, the unverified badge).
 type KindInfo struct {
 	Kind            string `json:"kind"`
 	HasProjectScope bool   `json:"hasProjectScope"`
@@ -129,7 +130,7 @@ type Warning struct {
 	Dialect  string   `json:"dialect,omitempty"` // "dollar_brace" | "dollar_env_brace" | "env_brace"
 }
 
-// Warning codes (docs/log/56 §10's "1 理由 = 1 コード" extended to these read-side
+// Warning codes (docs/log/56 §10's "one reason = one code" extended to these read-side
 // findings). Unlike a REST rejection these carry several structured params (file /
 // server / kind / dialect), so the Console does NOT resolve them through the flat
 // "err.<code>" catalog — console/src/features/repos/projectMcpWire.ts's

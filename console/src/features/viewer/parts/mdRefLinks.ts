@@ -1,5 +1,5 @@
-// 素のコミットハッシュ・セッション slug・アシスタント会話 slug、および
-// インラインコードで書かれたファイルパスを、それぞれの面へのリンクに変える。
+// Turns bare commit hashes, session slugs, assistant-conversation slugs and file paths
+// written as inline code into links that open the corresponding surface.
 import { pathRefCandidate, type PathRef } from "../../../lib/pathref.ts";
 import { resolvePathRefs, type ResolvedPathRef } from "../pathResolve.ts";
 import { api } from "../../../core/api/client.ts";
@@ -16,7 +16,8 @@ import { openCommit } from "../../scm/open.ts";
 // - commit hash: 7–40 hex chars. Only linkified when a `repo` is known (a hash is
 //   unresolvable without one). Linked optimistically; the click handler verifies the sha
 //   exists in the repo before opening the commit pane, and toasts otherwise — so a hex
-//   token that isn't actually a commit does nothing but tell you so ("存在しない→リンクにしない").
+//   token that isn't actually a commit does nothing but tell you so (it is not silently
+//   suppressed at render time).
 // - session slug: `s` + 6 lowercase base32 chars (Session.name — the shape minted by the
 //   agent's randSlug, e.g. "sukbq4s"). Only linkified when a session with that exact name
 //   currently exists (looked up live in the sessions store); a stale/unknown slug is left
@@ -206,13 +207,13 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
 
 // linkifyPathRefs turns the file paths an agent writes as INLINE CODE — `docs/log/65.md`,
 // `console/src/lib/filemeta.ts:73`, `_act-parts/` — into links that open that file in a
-// pane (a directory reveals in the ファイル rail). Until now those were dead text: the
-// coordinate you most want to follow was the one thing you had to retype.
+// pane (a directory reveals in the Files rail). Otherwise those are dead text: the
+// coordinate you most want to follow is the one thing you have to retype.
 //
 // Existence-gated, like a session slug and unlike a commit hash: a path is linked only
 // when it is really there. That is what keeps it quiet — a generic `package.json` in
 // prose, a `--flag` shaped like a name, a file from another machine's log all stay plain
-// text instead of becoming links that answer a click with "見つかりません".
+// text instead of becoming links that answer a click with "not found".
 //
 // WHICH file a written path names is not decided here. The Console can only guess (it has
 // a cwd string and a regex for "repos/<name>"), while the agent knows the working copy's
@@ -258,7 +259,7 @@ export async function linkifyPathRefs(
   for (const { code, ref } of candidates) {
     const hit = resolved.get(ref.ref);
     if (!hit) continue; // no such file — leave the text exactly as the agent wrote it
-    // A directory opens by revealing it in the ファイル rail, and that tree is rooted at
+    // A directory opens by revealing it in the Files rail, and that tree is rooted at
     // home — so a directory OUTSIDE it (the scratch base, the staged docs mount, both of
     // which the resolver can legitimately place) has nowhere to be revealed. Leave it as
     // text rather than offer a link that scrolls to nothing. Files there open fine.

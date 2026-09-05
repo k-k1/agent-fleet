@@ -1,16 +1,16 @@
 package mcpreg
 
-// docs/log/56（プロジェクトスコープ MCP の管理）の 1 号機は、リポジトリ内のファイルを読む
-// 新パッケージ internal/mcpproj を新設する。型（ServerDef・Origin・Targets・台帳）は
-// 共有しない（ADR0040 決定15）— あちらは「af が配るもの」で予約名を拒否するが、
-// mcpproj は逆に予約名を見つけて警告するのが仕事で、同じ型にすると実効レジストリの
-// 合成に紛れ込みかねない。
+// Project-scoped MCP (docs/log/56) reads files inside a repository from its own package,
+// internal/mcpproj. The types (ServerDef, Origin, Targets, the ledger) are deliberately not
+// shared with it (ADR0040 decision 15): this side describes what af hands out and rejects
+// reserved names, while mcpproj's job is the opposite — find a reserved name and warn about
+// it — and one shared type risks those entries leaking into the effective registry.
 //
-// 一方、**kind ごとの綴り方**（この JSON メンバーが何と呼ばれるか）は共有しないと必ず
-// ドリフトする。このファイルはその 1 本のテーブルで、*Servers ビルダー群
-// （attach.go）と materialize_<kind>.go が既に体現している知識を、mcpproj が読む側
-// として再利用できるように export するだけの小リファクタ（docs/log/56 §4.2）。
-// codex は対象外（TOML テーブルで JSON メンバーではない — CodexServerTableName を使う）。
+// The per-kind spelling (what each JSON member is called) is the one thing that does drift
+// if it is not shared. This file is that single table: the knowledge the *Servers builders
+// (attach.go) and materialize_<kind>.go already embody, exported so the reading side can
+// reuse it (docs/log/56 §4.2). codex is out of scope — it is a TOML table, not a JSON
+// member; use CodexServerTableName.
 
 import (
 	"strings"

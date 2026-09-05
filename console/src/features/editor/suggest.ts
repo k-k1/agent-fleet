@@ -1,9 +1,9 @@
-// AI 変更提案の構造化フォーマットと適用前検証（docs/log/44 §4 / Phase 4）。
-// envelope の identity（paneId/filePath/requestId）と revision の三重一致
-// （sourceRevision === suggestion.baseRevision === 現在の bufferRevision）を
-// 適用境界で検査し、一致しない提案は `suggestion_stale` の UI code として棄却する
-// （HTTP エラーではない — docs/log/44 §3.4）。replacement は単体と適用後全文の両方を
-// 共通 buffer validator（§1.7）に通す。
+// Structured format and pre-apply validation for AI edit suggestions (docs/log/44 §4 /
+// Phase 4). The apply boundary checks the envelope identity (paneId/filePath/requestId)
+// and a three-way revision match (sourceRevision === suggestion.baseRevision === the
+// current bufferRevision); a mismatch is discarded as the UI code `suggestion_stale`,
+// not an HTTP error (docs/log/44 §3.4). The replacement goes through the shared buffer
+// validator (§1.7) twice: on its own, and as the whole applied text.
 
 import { REVISION_RE, validateEditorBuffer, type BufferErrorCode } from "./buffer.ts";
 
@@ -15,12 +15,13 @@ export interface EditRange {
 }
 
 export interface EditSuggestion {
-  /** UIに表示する1〜240 UTF-8 bytesの短い説明。変更命令として解釈しない。 */
+  /** Short description shown in the UI, 1-240 UTF-8 bytes. Never interpreted as an
+   *  edit instruction. */
   summary: string;
-  /** range を replacement に置き換える。空文字列は削除を表す。 */
+  /** Replaces `range`. An empty string means a deletion. */
   replacement: string;
   range: EditRange;
-  /** range を計算した本文の revision。 */
+  /** Revision of the text `range` was computed against. */
   baseRevision: string;
 }
 
@@ -30,19 +31,22 @@ export interface EditSuggestionEnvelope {
   paneId: string;
   filePath: string;
   requestId: string;
-  /** 提案計算時の bufferRevision。suggestion.baseRevision と同値でなければ不正。 */
+  /** bufferRevision at the time the suggestion was computed. Invalid unless equal to
+   *  suggestion.baseRevision. */
   sourceRevision: string;
   suggestion: EditSuggestion;
 }
 
-/** 適用を拒否した理由の安定 UI code。`suggestion_stale` は docs/log/44 §3.4 で固定。 */
+/** Stable UI code for why an apply was refused. `suggestion_stale` is fixed by
+ *  docs/log/44 §3.4. */
 export type SuggestionIssue = "suggestion_stale" | "suggestion_invalid" | BufferErrorCode;
 
 const SUMMARY_MAX_BYTES = 240;
 
 const utf8Bytes = (value: string): number => new TextEncoder().encode(value).byteLength;
 
-/** offset が surrogate pair の内側を指すか（docs/log/44 §4.2: pair の途中は不正）。 */
+/** Whether `offset` points inside a surrogate pair (docs/log/44 §4.2: mid-pair is
+ *  invalid). */
 function splitsSurrogatePair(content: string, offset: number): boolean {
   if (offset <= 0 || offset >= content.length) return false;
   const prev = content.charCodeAt(offset - 1);
@@ -61,8 +65,9 @@ export type SuggestionCheck =
   | { ok: true; applied: string }
   | { ok: false; code: SuggestionIssue };
 
-/** envelope 全体を現在のバッファに対して検査し、適用後全文を返す（docs/log/44 §4.2）。
- *  受信時と適用時の両方で呼ぶ — 受信後にバッファが進めば結果が変わるため。 */
+/** Validates the whole envelope against the current buffer and returns the applied text
+ *  (docs/log/44 §4.2). Called both on receipt and on apply, because the buffer may have
+ *  moved on in between and change the answer. */
 export function checkSuggestion(
   envelope: EditSuggestionEnvelope,
   ctx: SuggestionContext,
@@ -91,18 +96,21 @@ export function checkSuggestion(
   return { ok: true, applied };
 }
 
-// --- 提案リクエストの文脈切り出し（Agent 側 editSuggestMax* と同じ上限） ---
+// --- Context windows for a suggestion request (same limits as the Agent's
+// editSuggestMax*) ---
 
 export const SUGGEST_MAX_SELECTION_BYTES = 256 * 1024;
 export const SUGGEST_MAX_CONTEXT_BYTES = 16 * 1024;
 export const SUGGEST_MAX_INSTRUCTION_BYTES = 4 * 1024;
 
-/** end 側/先頭側から maxBytes に収まるまで切り詰める（code point 境界を守る）。 */
+/** Trims from the end or the start until the value fits maxBytes, keeping code point
+ *  boundaries intact. */
 function clampBytes(value: string, maxBytes: number, keep: "head" | "tail"): string {
   let s = value;
   let bytes = utf8Bytes(s);
   while (bytes > maxBytes && s.length > 0) {
-    // UTF-8 は 1 code unit ≧ 1 byte なので、超過 bytes 以上の unit を落とせば必ず前進する。
+    // In UTF-8 one code unit is at least one byte, so dropping at least as many units as
+    // the overshoot in bytes always makes progress.
     const drop = Math.max(1, Math.ceil((bytes - maxBytes) / 4));
     s = keep === "head" ? s.slice(0, s.length - drop) : s.slice(drop);
     if (keep === "head" && splitsSurrogatePair(value, s.length)) s = s.slice(0, -1);
@@ -121,9 +129,10 @@ export interface SuggestWindows {
   after: string;
 }
 
-/** 選択範囲とその前後の文脈をプロンプト用に切り出す。選択が上限を超える場合は
- *  null（提案対象外 — 黙って切り詰めると range と replacement の対応が壊れる）。
- *  文脈側は切り詰めてよく、切れた端の書きかけ行は行境界まで落とす。 */
+/** Cuts the selection and its surrounding context out for the prompt. Returns null when
+ *  the selection exceeds the limit (not a suggestion candidate: trimming it silently
+ *  would break the correspondence between range and replacement). Context may be
+ *  trimmed, and a partial line at a cut edge is dropped back to a line boundary. */
 export function suggestWindows(content: string, range: EditRange): SuggestWindows | null {
   const selection = content.slice(range.from, range.to);
   if (utf8Bytes(selection) > SUGGEST_MAX_SELECTION_BYTES) return null;

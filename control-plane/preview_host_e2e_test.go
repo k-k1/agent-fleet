@@ -24,8 +24,8 @@ func (f previewHostFactory) New(ws runtime.Workspace, secretKey string, extraEnv
 type previewHostEnv struct {
 	mgr    *manager
 	cfg    config
-	mux    *http.ServeMux // Console オリジン（authGate 相当は dev 認証で素通り）
-	host   http.Handler   // プレビュー用ホストの入口（dispatch）
+	mux    *http.ServeMux // the Console origin (dev auth waves the authGate through)
+	host   http.Handler   // the preview host's entry point (dispatch)
 	ws     store.Workspace
 	domain string
 }
@@ -80,7 +80,7 @@ func newPreviewHostEnv(t *testing.T, agentURL string) *previewHostEnv {
 	}
 	mux := http.NewServeMux()
 	registerTerminalPreviewRoutes(mux, cfg)
-	registerAgentEnvRoutes(mux, cfg) // ws-settings（許可ポート・再発行）も実ルート表から叩く
+	registerAgentEnvRoutes(mux, cfg) // ws-settings (allowed ports, reissue) via the real route table too
 	return &previewHostEnv{
 		mgr: mgr, cfg: cfg, mux: mux,
 		host:   newPreviewHostAPI(cfg).dispatch(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusTeapot) })),
@@ -123,9 +123,9 @@ func (e *previewHostEnv) get(t *testing.T, slug string, port int, path string, c
 	return rec
 }
 
-// TestPreviewHostHandshakeThenProxy は docs/log/81 §6 のハンドシェイクを端から端まで通す:
-// 未認証のプレビュー要求 → Console オリジンへ 302 → ワンタイム token → プレビュー
-// ホスト限定の cookie → 実際の中継、まで。
+// TestPreviewHostHandshakeThenProxy drives the docs/log/81 §6 handshake end to end: an
+// unauthenticated preview request → 302 to the Console origin → one-time token → a cookie
+// scoped to the preview host → the actual relay.
 func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 	var seen *http.Request
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +136,7 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 	e := newPreviewHostEnv(t, agent.URL)
 	slug := e.mintSlug(t)
 
-	// 1) cookie 無しの最初のアクセスは Console オリジンへ跳ぶ。
+	// 1) The first hit without a cookie bounces to the Console origin.
 	rec := e.get(t, slug, 3000, "/dashboard")
 	if rec.Code != http.StatusFound {
 		t.Fatalf("first hit: code=%d, want 302 to the Console origin", rec.Code)
@@ -146,7 +146,8 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 		t.Fatalf("first hit Location=%q, want the Console handshake", loc)
 	}
 
-	// 2) Console オリジン側（認証済み）はワンタイム token を発行して戻す。
+	// 2) The Console origin, where the user is signed in, mints a one-time token and sends
+	// the request back.
 	rec2 := httptest.NewRecorder()
 	e.mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, loc, nil))
 	if rec2.Code != http.StatusFound {
@@ -157,7 +158,7 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 		t.Fatalf("handshake Location=%q, want the preview host callback", back)
 	}
 
-	// 3) コールバックが cookie を発行し、元の場所へ戻す。
+	// 3) The callback mints the cookie and returns to the originally requested path.
 	rec3 := httptest.NewRecorder()
 	req3 := httptest.NewRequest(http.MethodGet, back, nil)
 	req3.Host = previewHostname(slug, 3000, e.domain)
@@ -182,7 +183,7 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 		t.Fatalf("af_pv cookie must be HttpOnly+Secure at Path=/ (got HttpOnly=%v Secure=%v Path=%q)", ck.HttpOnly, ck.Secure, ck.Path)
 	}
 
-	// 4) cookie 付きなら中継される。
+	// 4) With the cookie, the request is relayed.
 	rec4 := e.get(t, slug, 3000, "/dashboard", ck)
 	if rec4.Code != http.StatusOK {
 		t.Fatalf("proxied request: code=%d body=%s", rec4.Code, rec4.Body.String())
@@ -193,29 +194,29 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 	if seen.URL.Path != "/proxy/3000/dashboard" {
 		t.Errorf("Agent path=%q, want /proxy/3000/dashboard", seen.URL.Path)
 	}
-	// ★ 公開名は X-Forwarded-Host で渡す（Next.js の Server Actions が 403 に
-	// ならない条件・決定 9）。
+	// The public name goes over X-Forwarded-Host: it is what keeps Next.js Server Actions
+	// from answering 403 (decision 9).
 	if got := seen.Header.Get("X-Forwarded-Host"); got != previewHostname(slug, 3000, e.domain) {
 		t.Errorf("X-Forwarded-Host=%q, want the public preview host", got)
 	}
 	if got := seen.Header.Get("X-Forwarded-Proto"); got != "https" {
 		t.Errorf("X-Forwarded-Proto=%q, want https", got)
 	}
-	// ★ ホスト方式ではアプリはルート直下に居るので prefix は送らない。
+	// In host mode the app sits at the root, so no prefix is sent.
 	if got := seen.Header.Get("X-Forwarded-Prefix"); got != "" {
 		t.Errorf("X-Forwarded-Prefix=%q, want it absent in host mode", got)
 	}
-	// ★ プレビューの入場券をアプリへ渡さない。
+	// The preview's admission ticket must never reach the app.
 	if strings.Contains(seen.Header.Get("Cookie"), previewAuthCookie) {
 		t.Errorf("af_pv leaked to the previewed app: %q", seen.Header.Get("Cookie"))
 	}
 
-	// 5) 許可していないポートは「存在しない」。
+	// 5) A port that was not allowed does not exist.
 	if rec := e.get(t, slug, 5432, "/", ck); rec.Code != http.StatusNotFound {
 		t.Errorf("disallowed port: code=%d, want 404", rec.Code)
 	}
 
-	// 6) 停止すると slug ごと消える ＝ 前回の URL は死ぬ（決定 3）。
+	// 6) Stopping drops the slug with it, so the previous URL dies (decision 3).
 	if err := e.mgr.store.SetWorkspaceState(context.Background(), e.ws.ID, "stopped"); err != nil {
 		t.Fatal(err)
 	}
@@ -224,8 +225,10 @@ func TestPreviewHostHandshakeThenProxy(t *testing.T) {
 	}
 }
 
-// 起動のたびに引き直され、停止で消える。★ 固定を選んだ Workspace だけは、停止を
-// 挟んでも同じ URL に戻る（docs/log/81 §4.1 — 外部 IdP の redirect URI 登録のため）。
+// TestPreviewSlugRotationAndFixedOptIn: the slug is re-minted on every start and dies on
+// stop. Only a workspace that opted into a fixed slug comes back to the same URL across a
+// stop, which exists so an external IdP's redirect URI can be registered once
+// (docs/log/81 §4.1).
 func TestPreviewSlugRotationAndFixedOptIn(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	ctx := context.Background()
@@ -242,7 +245,7 @@ func TestPreviewSlugRotationAndFixedOptIn(t *testing.T) {
 		t.Fatalf("a stopped workspace still resolves by slug (%s)", ws.ID)
 	}
 
-	// 固定を選ぶ。
+	// Opt into a fixed slug.
 	raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
 	st := parseWSSettings(raw)
 	st.PreviewFixedSlug = true
@@ -258,8 +261,9 @@ func TestPreviewSlugRotationAndFixedOptIn(t *testing.T) {
 	}
 }
 
-// ★ 公開モードは起動のたびに必ず OFF へ戻る（fail-closed・決定 12）。この機能の事故は
-// 「公開のままにしていたのを忘れる」以外にほぼ無い。
+// TestPreviewPublicResetsOnEveryStart pins that public mode always returns to OFF on a
+// start (fail-closed, decision 12). Nearly every accident this feature can cause is
+// someone forgetting they left it public.
 func TestPreviewPublicResetsOnEveryStart(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	ctx := context.Background()
@@ -276,7 +280,8 @@ func TestPreviewPublicResetsOnEveryStart(t *testing.T) {
 	}
 }
 
-// 公開モードなら、cookie もハンドシェイクも無しで中継される（かつ noindex が付く）。
+// TestPreviewPublicModeServesWithoutSignIn: in public mode the request is relayed with no
+// cookie and no handshake, and carries noindex.
 func TestPreviewPublicModeServesWithoutSignIn(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -300,8 +305,9 @@ func TestPreviewPublicModeServesWithoutSignIn(t *testing.T) {
 	}
 }
 
-// 未知の slug は、認証を求めずに 404。★ 「ログインすれば見られるかもしれない」と
-// 誘導しないこと自体が、slug の存在を外から確かめさせない条件になっている。
+// TestPreviewUnknownSlugIsNotFound: an unknown slug is 404 without asking for sign-in.
+// Not hinting that signing in might reveal something is exactly what keeps an outsider
+// from probing which slugs exist.
 func TestPreviewUnknownSlugIsNotFound(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	if rec := e.get(t, "zzzzzzzzzzzzzzzzzzzz", 3000, "/"); rec.Code != http.StatusNotFound {
@@ -309,15 +315,16 @@ func TestPreviewUnknownSlugIsNotFound(t *testing.T) {
 	}
 }
 
-// 兄弟オリジンの opt-in（docs/log/81 §2.4・決定 11）。★ 既定では CP は CORS を一切足さない
-// —— 「クロスオリジンを既定で通す」は、URL を知っている第三者のページから利用者の
-// ブラウザ経由でプレビューを叩ける状態を既定にすること。
+// TestPreviewSiblingOriginOptIn covers the sibling-origin opt-in (docs/log/81 §2.4,
+// decision 11). By default the CP adds no CORS at all: allowing cross-origin by default
+// would mean any third-party page that knows the URL can reach the preview through the
+// user's own browser.
 func TestPreviewSiblingOriginOptIn(t *testing.T) {
 	var appSaw string
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		appSaw = r.Method
-		// アプリが自前で付けた CORS。opt-in のときは CP の値で上書きされる
-		// （2 つ並ぶとブラウザは両方無視する）。
+		// CORS the app set itself. With the opt-in on, the CP's value replaces it: two
+		// headers side by side make the browser ignore both.
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -326,7 +333,7 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 	slug := e.mintSlug(t)
 	ctx := context.Background()
 
-	// 公開モードにして cookie の往復を省く（見たいのは CORS の有無だけ）。
+	// Public mode skips the cookie round trip; only the presence of CORS matters here.
 	setPreview := func(mut func(*wsSettings)) {
 		raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
 		st := parseWSSettings(raw)
@@ -351,7 +358,7 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 		return rec
 	}
 
-	// 既定（OFF）: CP は何も足さない。アプリの `*` はそのまま通る（=アプリの自由）。
+	// Default (OFF): the CP adds nothing, and the app's own `*` passes through untouched.
 	rec := call(http.MethodGet, map[string]string{"Origin": sibling})
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
 		t.Errorf("CORS credentials allowed with the opt-in OFF: %q", got)
@@ -362,8 +369,8 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 
 	setPreview(func(st *wsSettings) { st.PreviewCrossOrigin = true })
 
-	// preflight は CP が答え、アプリには届かない（素の dev サーバは OPTIONS に
-	// 405 を返すのが普通で、そこで落ちると原因が最も分かりにくい）。
+	// The CP answers the preflight and it never reaches the app: a plain dev server usually
+	// answers OPTIONS with 405, and failing there is the hardest kind to diagnose.
 	appSaw = ""
 	rec = call(http.MethodOptions, map[string]string{
 		"Origin":                         sibling,
@@ -383,7 +390,7 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 		t.Errorf("preflight ACAH=%q", got)
 	}
 
-	// 実リクエストには CP の値が 1 つだけ乗る（アプリの `*` は捨てる）。
+	// The real request carries exactly one CP value; the app's `*` is dropped.
 	rec = call(http.MethodGet, map[string]string{"Origin": sibling})
 	if got := rec.Header().Values("Access-Control-Allow-Origin"); len(got) != 1 || got[0] != sibling {
 		t.Errorf("ACAO=%v, want exactly [%s]", got, sibling)
@@ -395,26 +402,27 @@ func TestPreviewSiblingOriginOptIn(t *testing.T) {
 		t.Errorf("Vary=%q, want it to include Origin", got)
 	}
 
-	// ★ 他人の Workspace のプレビューからは通らない（slug が違う）。
+	// Another workspace's preview is not allowed through: its slug differs.
 	rec = call(http.MethodGet, map[string]string{"Origin": "https://zzzzzzzzzzzzzzzzzzzz-3000." + e.domain})
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
 		t.Errorf("a foreign workspace's preview origin was allowed: %q", got)
 	}
-	// 許可していないポートを名乗るオリジンも通らない。
+	// Neither is an origin naming a port that was never allowed.
 	rec = call(http.MethodGet, map[string]string{"Origin": "https://" + previewHostname(slug, 5432, e.domain)})
 	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
 		t.Errorf("a non-allowlisted port was accepted as an origin: %q", got)
 	}
 }
 
-// 再発行（docs/log/81 §4.1）: 配ってしまった URL をその場で捨てられる。
+// TestPreviewReissueKillsTheCurrentURL covers reissue (docs/log/81 §4.1): a URL that has
+// already been handed out can be discarded on the spot.
 func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) }))
 	defer agent.Close()
 	e := newPreviewHostEnv(t, agent.URL)
 	ctx := context.Background()
-	// 固定 ON で予約を作ってから再発行する（予約も捨てないと、次の起動で
-	// 「捨てたはずの URL」が戻ってくる）。
+	// Reissue with the fixed-slug reservation in place: unless the reservation is discarded
+	// too, the supposedly discarded URL comes back at the next start.
 	raw, _ := e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
 	st := parseWSSettings(raw)
 	st.PreviewFixedSlug = true
@@ -422,8 +430,9 @@ func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
 		t.Fatal(err)
 	}
 	old := e.mintSlug(t)
-	// 公開は起動の **あと** に入れる —— 起動のたびに OFF へ戻る（fail-closed）ので、
-	// 先に入れても消える。ここで見たいのは再発行の効きなので、認証の往復は省く。
+	// Public mode has to be set AFTER the start: it is reset to OFF on every start
+	// (fail-closed), so setting it earlier would be wiped. It only stands in for the auth
+	// round trip, which is not what this test is about.
 	raw, _ = e.mgr.store.GetWorkspaceSettings(ctx, e.ws.ID)
 	st = parseWSSettings(raw)
 	st.PreviewPublic = true
@@ -450,20 +459,22 @@ func TestPreviewReissueKillsTheCurrentURL(t *testing.T) {
 	if parseWSSettings(raw).PreviewReservedSlug == old {
 		t.Fatal("the discarded slug is still reserved — it would come back on the next start")
 	}
-	// ★ 「その場で引き直した」ことを応答で言う。Console はこれで文言を分けるので、
-	// 落とすと成功が「押しても無反応」に見える（実際にそう報告された）。
+	// The response has to say that a new slug was actually minted: the Console picks its
+	// wording from this, so dropping it makes a success look like a dead button — which is
+	// how it was reported.
 	if !decodeReissued(t, rec) {
 		t.Error("previewReissued=false although a new slug was minted")
 	}
 }
 
-// 停止中（slug 未発行）の再発行は **成功するが何も起きない**。★ その区別が応答に
-// 出ていることを固定する —— ここが無いと、Console は成功と無反応を言い分けられない。
+// TestPreviewReissueOnStoppedWorkspaceSaysNothingHappened: reissuing while stopped (no slug
+// issued) succeeds but does nothing. The response must carry that distinction, or the
+// Console cannot tell a success apart from a no-op.
 func TestPreviewReissueOnStoppedWorkspaceSaysNothingHappened(t *testing.T) {
 	e := newPreviewHostEnv(t, "http://127.0.0.1:1")
 	ctx := context.Background()
 	e.mintSlug(t)
-	// 停止 = slug の失効。
+	// Stopping expires the slug.
 	if err := e.mgr.store.SetWorkspacePreviewSlug(ctx, e.ws.ID, ""); err != nil {
 		t.Fatal(err)
 	}

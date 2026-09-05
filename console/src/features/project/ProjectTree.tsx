@@ -1,10 +1,10 @@
-// ProjectTree — the rail's main block: the リポジトリ section (same header band
-// as アシスタント / ファイル), whose body lays repos out directly (no group
+// ProjectTree — the rail's main block: the repositories section (same header band
+// as assistant / files), whose body lays repos out directly (no group
 // bands). Each base clone is a top-level collapsible node and its worktrees nest
 // as child nodes inside it, so a project reads as real hierarchy instead of a
 // decorated flat list — and folding the base folds the whole project. The
-// section header carries the repo actions (clone / 更新) and the
-// session-maintenance actions (整理 / アーカイブ).
+// section header carries the repo actions (clone / refresh) and the
+// session-maintenance actions (tidy / archive).
 import { memo, useState } from "react";
 import { useRetryLoad } from "../../lib/retryLoad.ts";
 import { Section } from "../../ui/Section.tsx";
@@ -51,12 +51,13 @@ export const ProjectTree = memo(function ProjectTree() {
   const nq = normQuery(q);
   const rail = useRailRoving();
 
-  // WS 起動直後は agent がまだ不通で、CP が GET /api/repos にプレーンテキストの 502 を返す。
-  // store の refresh() はこれを過渡的失敗として repos を保持したまま false を返すので、running
-  // 中はバックオフ再試行して agent 復帰を待つ（さもないと 60s ポーリングが来るまで
-  // リポジトリがありません のまま固着し、セッションは全て その他のセッション に落ちる）。
-  // 停止中の WS も同じ 502 を返す＝両者は running でしか判別できないため、停止中は空を確定して
-  // 無駄な再試行を避ける（ProjectFiles と同じ形）。
+  // Right after a WS start the agent is still unreachable and the CP answers GET /api/repos with
+  // a plain-text 502. The store's refresh() treats that as a transient failure, keeps repos and
+  // returns false, so while running this retries with backoff until the agent is back — otherwise
+  // the rail sticks on "no repositories" until the 60s poll arrives and every session falls into
+  // the other-sessions section. A stopped WS returns the same 502 and the two can only be told
+  // apart by running, so while stopped the result is settled as empty to avoid pointless retries
+  // (same shape as ProjectFiles).
   useRetryLoad(
     async (signal) => {
       const settled = await refreshRepos();
@@ -69,7 +70,7 @@ export const ProjectTree = memo(function ProjectTree() {
     [refreshRepos, clearRepos, running],
   );
 
-  // 作業グループ (docs/log/52): scope to the active group first — a whole project
+  // Working sets (docs/log/52): scope to the active set first — a whole project
   // (base + its worktrees) is in or out by the base's membership.
   const wset = useActiveWorkingSet();
   const scoped = groupedRepos(repos).filter((g) => !wset || repoInSet(wset, g[0]));
@@ -82,15 +83,16 @@ export const ProjectTree = memo(function ProjectTree() {
     .filter((g) => !nq || g.some(visible))
     .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
 
-  // 取り込みの進行は Agent 側のジョブが正（docs/log/78）。ここは開始して結末を待つだけで、
-  // 「取り込み中」の行は下の RepoJobRow が一覧から描く（タブを閉じても続いている）。
+  // The Agent-side job is the source of truth for import progress (docs/log/78). This only
+  // starts it and awaits the outcome; the "importing" row is rendered from the job list by
+  // RepoJobRow below, and the job continues even if the tab is closed.
   const doImport = async (start: () => Promise<{ ok: boolean; name: string }>, doneKey: "pj.cloned" | "pj.checked_out" | "pj.folder_created") => {
     const res = await start();
-    // グループ選択中の取り込みはそのグループへ自動所属（docs/log/52 §1 — さもないと
-    // 作った直後に絞り込みで見えなくなる）。
+    // An import made while a set is selected joins that set (docs/log/52 §1) — otherwise what
+    // was just created disappears behind the filter.
     if (res.ok && res.name) autoAddToActiveWorkingSet("repos", res.name);
-    // clone-only path: bridge straight into 作業を始める (起動導線 Ph3) so
-    // "clone してから起動" doesn't require hunting for the row's 起動 button.
+    // clone-only path: bridge straight into "start working" (launch flow, phase 3) so that
+    // cloning and then launching doesn't require hunting for the row's start button.
     const repo = res.ok && res.name ? useReposStore.getState().repos.find((r) => r.name === res.name) : undefined;
     if (repo) {
       toast(
@@ -107,8 +109,8 @@ export const ProjectTree = memo(function ProjectTree() {
 
   const doClone = (req: CloneRequest) => doImport(() => cloneRepo(req, toast), "pj.cloned");
   const doSvnCheckout = (req: SvnCheckoutRequest) => doImport(() => svnCheckout(req, toast), "pj.checked_out");
-  // 取り込み元なしの新規フォルダ。ジョブを経由しないだけで、後片付け（グループ所属・
-  // このまま起動）はクローンと同じ道を通る。
+  // A new folder with no import source. It simply skips the job, while the follow-up (set
+  // membership, launch right away) takes the same path as a clone.
   const doInit = (name: string) => doImport(() => initRepo(name, toast), "pj.folder_created");
 
   return (
@@ -137,7 +139,7 @@ export const ProjectTree = memo(function ProjectTree() {
         </>
       }
     >
-      {/* Quick filter: narrows repos + sessions (この木 and その他のセッション).
+      {/* Quick filter: narrows repos + sessions (this tree and the other-sessions section).
           Escape clears. Files are untouched — the tree below is lazy-loaded. */}
       <div className="proj-filter-bar">
         <div className="proj-filter">
@@ -180,8 +182,8 @@ export const ProjectTree = memo(function ProjectTree() {
           nq ? (
             <li className="proj-sub-empty">{tr("pj.no_match", { q: q.trim() })}</li>
           ) : wset && repos.length > 0 ? (
-            // グループで絞った結果の空（リポジトリ自体はある）— 行メニューから
-            // 割り当てられることを示す。真の空（clone 前）とは区別する。
+            // Empty because of the set filter, while repositories do exist: point at the row
+            // menu for assigning one. Distinct from a genuine empty state (nothing cloned yet).
             <li className="proj-sub-empty">{tr("wset.no_repos")}</li>
           ) : (
             <EmptyState icon="repo" title={tr("pj.no_repos")} hint={tr("pj.no_repos_hint")}>

@@ -1,31 +1,32 @@
-// api/connections を「1 回の失敗で確定させない」ための取り直し方針（純ロジック — 実際の
-// fetch と WS 状態の判定は useRepoRail 側が注入する）。
+// Retry policy that keeps a single api/connections failure from being taken as final
+// (pure logic — the actual fetch and the WS-state check are injected by useRepoRail).
 //
-// WS 起動直後は Agent がまだ listen しておらず、この呼び出しは 502 で落ちる。そこで
-// null に確定させると launchKinds が空のまま固定され（connTick が動くまで戻らない）、
-// 起動導線が丸ごと「使用できるエージェントがありません」になる。症状は「モーダルは開くのに
-// エージェントが並ばず、起動ボタンだけが押せない」で、原因が見えないぶん誤診されやすい
-// （2026-08: 引き継ぎカードから開いた 作業を始める モーダルで「引き継ぎ元セッションが
-// 停止中だから押せない」と読まれた実例）。なので成功するまで間隔を空けて取り直す。
+// Right after a WS starts the Agent is not listening yet and this call fails with 502.
+// Settling on null there pins launchKinds empty (it does not recover until connTick
+// fires), so the whole launch flow degrades to "no usable agents". The symptom — the
+// modal opens but lists no agent and the launch button stays disabled — hides its cause
+// and is easily misdiagnosed. So keep re-fetching at growing intervals until it answers.
 import type { ConnectionsStatus } from "../../types/session.ts";
 
-/** 取り直しの間隔（ms）。合計 ~22s ＋ 各試行の所要時間。これで足りない長い起動
- *  （native rootfs の boot-install は分単位）は、WS が running へ移った時点で
- *  useRepoRail が新しいキーで取り直すので、こちらで際限なく粘る必要はない。 */
+/** Retry intervals (ms). ~22s in total plus the time each attempt takes. A boot too slow
+ *  for that (native rootfs boot-install runs for minutes) is picked up when the WS moves
+ *  to running and useRepoRail re-fetches under a new key, so there is no need to keep
+ *  trying here indefinitely. */
 export const CONNS_RETRY_MS = [1500, 3000, 6000, 12000];
 
 const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export interface ConnsRetryDeps {
-  /** 1 回ぶんの取得。失敗（ネットワーク / 非 2xx / error ボディ）は null で返すこと。 */
+  /** One fetch. A failure (network / non-2xx / error body) must be returned as null. */
   once: () => Promise<ConnectionsStatus | null>;
   sleep?: (ms: number) => Promise<void>;
   delays?: number[];
-  /** true を返した時点で取り直しをやめる（WS が止まった / この系列が古くなった）。 */
+  /** Stop retrying as soon as this returns true (the WS stopped / this series went stale). */
   abort: () => boolean;
 }
 
-/** 成功するまで delays の間隔で取り直す。使い切ったら null（＝呼び手は「無い」を表示）。 */
+/** Re-fetch at the delays' intervals until it succeeds. Schedule exhausted -> null (the
+ *  caller then shows "none"). */
 export async function fetchConnsWithRetry({
   once,
   sleep = wait,

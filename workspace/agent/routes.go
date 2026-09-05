@@ -18,15 +18,14 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
 
-// buildMux は Agent の全ルートを登録した mux を返す（docs/log/23 P0-2: main() からの
-// 機械的抽出）。テストが実ルート表を httptest で叩けるようにするための分離で、登録
-// 内容は main() にあったものと同一。httpx.RequireToken / httpx.LogRequests のラップは呼び出し側
-// （main / テスト）の責務。
+// buildMux returns a mux with every Agent route registered (docs/log/23 P0-2). Keeping it
+// out of main() is what lets a test drive the real route table through httptest. Wrapping
+// it in httpx.RequireToken / httpx.LogRequests is the caller's job (main / the test).
 func buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", handleHealth)
-	// Workspace 自身のリソース実測値（docs/log/63 §63.9）。CP がホストの cgroup を
-	// 読めない構成（ECS 全般）で、メモリ / CPU / ディスクの唯一の出どころになる。
+	// The Workspace's own measured resources (docs/log/63 §63.9). Where the CP cannot read
+	// the host's cgroup (ECS in general), this is the only source of memory / CPU / disk.
 	mux.HandleFunc("GET /workspace/stats", handleWorkspaceStats)
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", sessionx.HandleSessionCatalog)
@@ -36,8 +35,8 @@ func buildMux() *http.ServeMux {
 	// rows back. Called by the CP itself (like /notifications), never by the Console,
 	// so it needs no entry in the CP's agent-proxy allowlist.
 	mux.HandleFunc("POST /work-items/fetch", handleWorkItemsFetch)
-	// 唯一の書き戻し（docs/log/80 §80.10）。人が下書きを読んで押したときだけ CP 経由で来る。
-	// MCP ツールは無い＝エージェントからは到達できない。
+	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
+	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
 	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
 	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
@@ -51,8 +50,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/recreate", sessionx.HandleRecreateSession)
 	mux.HandleFunc("GET /sessions/archived", sessionx.HandleListArchived)
 	mux.HandleFunc("GET /sessions/usage", sessionx.HandleSessionsUsage)
-	// 機能別使用量の時系列（docs/log/46 P3 / ADR0029）。サーバ側で集計して返す。
-	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	// Per-feature usage time series (docs/log/46 P3 / ADR0029), aggregated server-side.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /usage/series", handleUsageSeries)
 	mux.HandleFunc("GET /sessions/cleanup", sessionx.HandleSessionsCleanup)
 	mux.HandleFunc("DELETE /sessions/{name}", handleDeleteSession)
@@ -60,38 +59,42 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /cleanup/archives", handleListCleanupArchives)
 	mux.HandleFunc("POST /cleanup/archives/{id}/restore", handleRestoreCleanupArchive)
 	mux.HandleFunc("DELETE /cleanup/archives/{id}", handlePurgeCleanupArchive)
-	// 削除ロック（docs/log/45）: セッションを削除保護に固定/解除する。効くのは削除系
-	// （/stop のメタ忘却・DELETE・TTL 自動 prune・作業コピー削除の巻き添え）だけで、
-	// halt / archive は従来どおり通る。
+	// Deletion lock (docs/log/45): pin a session to delete-protected, or release it. It bites
+	// on deletion only (/stop forgetting the metadata, DELETE, the TTL auto-prune, collateral
+	// from deleting a working copy); halt / archive still go through.
 	mux.HandleFunc("POST /sessions/{name}/lock", sessionx.HandleSessionLock)
-	// 停止しないピン（docs/log/75）: アイドル自動停止からセッションと Workspace を
-	// 期限付きで守る。shell / ssm の走行中ジョブを af 側から見分けられないことへの答え。
+	// Keep-awake pin (docs/log/75): shields the session and the Workspace from idle auto-stop
+	// for a bounded time. The answer to af being unable to tell whether a shell / ssm job is
+	// still running.
 	mux.HandleFunc("POST /sessions/{name}/keep-awake", sessionx.HandleSessionKeepAwake)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).
 	mux.HandleFunc("POST /sessions/{name}/input", sessionx.HandleSessionInput)
-	// Semantic turn ops + Interaction 応答（docs/log/27 P1.5/P2）— driver 抽象の受け口。
-	// tui は tmux 経路へ委譲、managed は ThreadHandle へ（P2: opencode / P3: codex）。
+	// Semantic turn ops + Interaction reply (docs/log/27 P1.5/P2) — the entry point of the
+	// driver abstraction. tui delegates to the tmux path, managed to a ThreadHandle
+	// (P2: opencode / P3: codex).
 	mux.Handle("POST /sessions/{name}/turn", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionTurn)))
 	mux.Handle("POST /sessions/{name}/respond", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionRespond)))
-	// オペレーターの AUQ 回答（docs/log/30）: 質問フォーム全体を choices（1-based）で
-	// 一括回答。TUI claude はキー駆動、managed は Interaction 応答に落ちる。
+	// The operator's AUQ answer (docs/log/30): answers a whole question form at once as
+	// choices (1-based). TUI claude is key-driven, managed falls through to an Interaction
+	// reply.
 	mux.Handle("POST /sessions/{name}/answer-question", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionAnswerQuestion)))
-	// 持ち越した対話への回答（docs/log/75）: 停止時に未応答だった質問/プラン/許可を、
-	// 再開したうえで**文章として**配達する。キー列は 1 つも送らない。
+	// Answer to a carried-over interaction (docs/log/75): a question, plan or permission left
+	// unanswered at stop time is delivered as text after resuming. Not one key sequence is sent.
 	mux.HandleFunc("POST /sessions/{name}/carried-answer", sessionx.HandleSessionCarriedAnswer)
-	// オペレーターのプラン承認/却下（docs/log/30）: approve=Enter、reject=中断＋feedback 送信。
+	// The operator's plan approval / rejection (docs/log/30): approve = Enter, reject =
+	// interrupt plus sending feedback.
 	mux.Handle("POST /sessions/{name}/plan-respond", withShareOperationIdempotency(http.HandlerFunc(sessionx.HandleSessionPlanRespond)))
-	// ThreadSettings の動的更新（docs/log/27 §9.4-3、managed 専用 — 稼働中セッションの
-	// モデル/effort/モード変更）。tui は従来どおり /input のキー操作。
+	// Live ThreadSettings update (docs/log/27 §9.4-3, managed only — model / effort / mode
+	// changes on a running session). tui does it with key input on /input.
 	mux.HandleFunc("GET /sessions/{name}/settings", sessionx.HandleSessionSettingsGet)
 	mux.HandleFunc("POST /sessions/{name}/settings", sessionx.HandleSessionSettings)
-	// ドライバ排他切替（docs/log/27 P3 §2: tui ⇄ managed、stop→drain→resume 経由）。
+	// Exclusive driver switch (docs/log/27 P3 §2: tui ⇄ managed, via stop -> drain -> resume).
 	mux.HandleFunc("POST /sessions/{name}/driver", sessionx.HandleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", sessionx.HandlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", sessionx.HandlePastedImage)
-	// Memo image attachments (docs/log/21 画像添付) — membership-scoped, so keyed to the
+	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)
 	mux.HandleFunc("GET /memos/images/{file}", handleMemoPastedImage)
@@ -108,11 +111,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /sessions/{name}/handoff-proposal", sessionx.HandleSessionHandoffProposal)
 	mux.HandleFunc("POST /sessions/{name}/handoff-proposal", sessionx.HandleSessionHandoffProposal)
 	mux.HandleFunc("DELETE /sessions/{name}/handoff-proposal", sessionx.HandleSessionHandoffProposal)
-	// メンバーへの引き継ぎ（docs/log/77）の座標。CP が offer を作る前にここへ聞く — 引き継ぎ先の
-	// Workspace から所有者のディスクは見えないので、remote / branch / HEAD と「push 済みか」は
-	// git に聞いた事実だけを載せる（モデルにも Console にも書かせない）。
+	// Coordinates for a handoff to another member (docs/log/77). The CP asks here before it
+	// creates the offer: the recipient's Workspace cannot see the owner's disk, so remote /
+	// branch / HEAD and "is it pushed" carry only facts read from git — never anything the
+	// model or the Console wrote.
 	mux.HandleFunc("GET /sessions/{name}/handoff-context", sessionx.HandleSessionHandoffContext)
-	// 転写のマーカー（docs/log/69 / ADR 0050）。所有者の Console と、CP 経由の共有先が読み書きする。
+	// Transcript marks (docs/log/69 / ADR 0050). Read and written by the owner's Console and,
+	// through the CP, by a share recipient.
 	mux.HandleFunc("GET /sessions/{name}/marks", sessionx.HandleSessionMarks)
 	mux.HandleFunc("POST /sessions/{name}/marks", sessionx.HandleSessionMarks)
 	mux.HandleFunc("DELETE /sessions/{name}/marks", sessionx.HandleSessionMarks)
@@ -123,19 +128,21 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/title/suggest", sessionx.HandleSuggestTitle)
 	mux.HandleFunc("POST /sessions/{name}/title/set", sessionx.HandleSetTitle)
 	mux.HandleFunc("POST /sessions/{name}/suggest-branch", sessionx.HandleSessionSuggestBranch)
-	mux.HandleFunc("POST /sessions/{name}/suggest-replies", sessionx.HandleSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
-	// ミラーのスキルピッカー（docs/log/50 / ADR0034）: セッションの worktree ＋ユーザーレベル
-	// .claude/skills・commands を列挙する。
-	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	mux.HandleFunc("POST /sessions/{name}/suggest-replies", sessionx.HandleSuggestReplies) // LLM reply suggestion v2 (preview only)
+	// Mirror skill picker (docs/log/50 / ADR0034): lists the session's worktree plus the
+	// user-level .claude/skills and commands.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /sessions/{name}/skills", sessionx.HandleSessionSkills)
-	// 変更ファイル帯の「コミット済み」判定（docs/log/68 P2）。転写側の一覧とは別に、
-	// セッション開始以降のコミットに現れたパスだけを返す。
+	// The "committed" verdict for the changed-files bar (docs/log/68 P2). Separate from the
+	// transcript's own list: it returns only paths that appeared in a commit made since the
+	// session started.
 	mux.HandleFunc("GET /sessions/{name}/committed", sessionx.HandleSessionCommittedFiles)
 	mux.HandleFunc("POST /sessions/{name}/rename-branch", sessionx.HandleSessionRenameBranch)
 	mux.HandleFunc("GET /ws/pty", handlePTY)
-	// Browser pane と外部所有 Chromium のアタッチ。**表は browserx 側が 1 つだけ持つ**
-	// （internal/browserx/mux.go）—— ここに写しを置くと、片方に足したときもう片方の
-	// テストが緑のまま通ってしまう。登録が落ちていないことは testdata/routes.golden が見る。
+	// Browser pane plus attaching an externally owned Chromium. The table lives in exactly one
+	// place, browserx (internal/browserx/mux.go): a copy here would let an addition to one
+	// side leave the other side's test green. testdata/routes.golden watches that nothing
+	// falls out of the registration.
 	browserx.RegisterRoutes(mux)
 
 	// Assistant chat — headless-CLI LLM chat/translation, separate from tmux
@@ -143,25 +150,26 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /chat/conversations", chatx.HandleChatList)
 	mux.HandleFunc("POST /chat/conversations", chatx.HandleChatCreate)
 	mux.HandleFunc("GET /chat/conversations/{id}", chatx.HandleChatGet)
-	mux.HandleFunc("PATCH /chat/conversations/{id}", chatx.HandleChatPatch) // 改名 / エージェント切替
+	mux.HandleFunc("PATCH /chat/conversations/{id}", chatx.HandleChatPatch) // rename / switch agent
 	mux.HandleFunc("POST /chat/conversations/{id}/title/suggest", chatx.HandleChatSuggestTitle)
-	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM 返信サジェスト v2（preview 専用）
+	mux.HandleFunc("POST /chat/conversations/{id}/suggest-replies", chatx.HandleChatSuggestReplies) // LLM reply suggestion v2 (preview only)
 	mux.HandleFunc("DELETE /chat/conversations/{id}", chatx.HandleChatDelete)
-	mux.HandleFunc("POST /chat/conversations/{id}/lock", sessionx.HandleChatLock) // 削除ロック（docs/log/45）
+	mux.HandleFunc("POST /chat/conversations/{id}/lock", sessionx.HandleChatLock) // deletion lock (docs/log/45)
 	mux.HandleFunc("POST /chat/conversations/{id}/messages", chatx.HandleChatSend)
 	mux.HandleFunc("POST /chat/conversations/{id}/stream", chatx.HandleChatStream)            // SSE (Phase B)
 	mux.HandleFunc("POST /chat/conversations/{id}/stop", chatx.HandleChatStop)                // cancel a detached in-flight turn
-	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // 要約引き継ぎ（docs/log/33 第2段）
-	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // 作業計画の取得（docs/log/33 第5段・MCP 用の軽い口）
-	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // 作業計画の手編集（docs/log/33 第5段）
-	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // 作業計画の明示更新（同）
+	mux.HandleFunc("POST /chat/conversations/{id}/compact", chatx.HandleChatCompact)          // summary carry-forward (docs/log/33 stage 2)
+	mux.HandleFunc("GET /chat/conversations/{id}/plan", chatx.HandleChatPlanGet)              // read the work plan (docs/log/33 stage 5; the light face for MCP)
+	mux.HandleFunc("PUT /chat/conversations/{id}/plan", chatx.HandleChatPlanSet)              // hand-edit the work plan (docs/log/33 stage 5)
+	mux.HandleFunc("POST /chat/conversations/{id}/plan/refresh", chatx.HandleChatPlanRefresh) // explicit work-plan refresh (same)
 	mux.HandleFunc("POST /chat/conversations/{id}/paste-image", sessionx.HandleChatPasteImage)
 	mux.HandleFunc("GET /chat/conversations/{id}/pasted/{file}", sessionx.HandleChatPastedImage)
 	// Assistant-to-assistant consult (docs/log/19): af_write orchestrators' ask_assistant tool
 	// hits this via the local stdio MCP. Internal (Agent REST) only — not proxied by the CP.
 	mux.HandleFunc("POST /chat/ask", chatx.HandleChatAsk)
-	// スケジュール発のアシスタント発火（docs/log/38 session_mode=assistant）: CP スケジューラが
-	// 会話（UUID/slug）へ 1 ターンを同期実行する。runOperatorTurn 委譲（assistant_turn.go）。
+	// Assistant turn fired by a schedule (docs/log/38 session_mode=assistant): the CP
+	// scheduler runs one turn synchronously against a conversation (UUID/slug), delegating
+	// to runOperatorTurn (assistant_turn.go).
 	mux.HandleFunc("POST /assistant-turns", handleAssistantTurn)
 	// Session report kick (docs/log/30): the session-status hook / record-exit process posts
 	// here when an operator-armed session reaches an awaiting-input / abnormal-exit
@@ -183,15 +191,17 @@ func buildMux() *http.ServeMux {
 	// Repository management — git ops on working copies under ~/repos.
 	mux.HandleFunc("GET /repos", gitx.HandleListRepos)
 	mux.HandleFunc("POST /repos", gitx.HandleCloneRepo)
-	// 取り込み元が無いとき: ~/repos/<name> を作って git init するだけの新規作業コピー。
-	// clone / svn checkout と違い同期（ネットワークを触らないのでジョブにする意味がない）。
+	// New working copy with no import source: mkdir ~/repos/<name> and git init, nothing more.
+	// Unlike clone / svn checkout it is synchronous — it touches no network, so making it a
+	// job would buy nothing.
 	mux.HandleFunc("POST /repos/init", gitx.HandleInitRepo)
-	// リポジトリ取り込みジョブ（docs/log/78）。clone / svn checkout は 202 でここへ移り、
-	// 進捗と結末はこの一覧で観測する。DELETE は走行中なら中止、終端済みなら既読。
+	// Repository import jobs (docs/log/78). clone / svn checkout answer 202 and move here;
+	// progress and outcome are observed through this list. DELETE aborts a running job and
+	// marks a finished one as read.
 	mux.HandleFunc("GET /repo-jobs", handleListRepoJobs)
 	mux.HandleFunc("DELETE /repo-jobs/{id}", handleDeleteRepoJob)
 	mux.HandleFunc("DELETE /repos/{name}", gitx.HandleDeleteRepo)
-	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock) // 削除ロック（docs/log/45）
+	mux.HandleFunc("POST /repos/{name}/lock", sessionx.HandleRepoLock) // deletion lock (docs/log/45)
 	mux.HandleFunc("GET /repos/{name}/status", gitx.HandleRepoStatus)
 	mux.HandleFunc("GET /repos/{name}/branches", gitx.HandleRepoBranches)
 	mux.HandleFunc("DELETE /repos/{name}/branch", handleDeleteBranch) // ?branch=<name> (may contain "/")
@@ -204,7 +214,7 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
 	mux.HandleFunc("POST /repos/{name}/svn-update", handleSvnUpdate)
 	mux.HandleFunc("POST /repos/{name}/svn-cleanup", handleSvnCleanup)
-	// Launch prompt templates (repo 起動 modal): .claude/commands, .claude/skills,
+	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
 	// Project-scope MCP servers (docs/log/56 P0): read-only cross-file snapshot of the
@@ -231,15 +241,16 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /repos/{name}/identity", gitx.HandleRepoIdentityPut)
 	mux.HandleFunc("GET /git/identity", gitx.HandleGlobalIdentityGet)
 	mux.HandleFunc("PUT /git/identity", gitx.HandleGlobalIdentityPut)
-	// File browser (docs/17 P3-5 段2 + FILES 改善): read tree/file, download raw,
+	// File browser (docs/17 P3-5 stage 2 + the FILES improvements): read tree/file, download raw,
 	// upload into a dir, git-changes filter + viewer line marks.
 	mux.HandleFunc("GET /fs/tree", handleFSTree)
 	mux.HandleFunc("GET /fs/search", handleFSSearch)
 	mux.HandleFunc("GET /fs/file", handleFSFile)
 	mux.HandleFunc("PUT /fs/file", handleFSFilePut)
-	// ミラー本文のパス参照解決（fs_resolve.go）。読むのは stat だけの read-only。
+	// Resolves path references in mirror text (fs_resolve.go) — read-only, stat only.
 	mux.HandleFunc("POST /fs/resolve", handleFSResolve)
-	// エディタの AI 変更提案（docs/log/44 Phase 4）。fs は触らない read-only 生成チャネル。
+	// The editor's AI edit suggestion (docs/log/44 Phase 4) — a read-only generation channel
+	// that never touches the fs.
 	mux.HandleFunc("POST /fs/suggest-edit", handleFSSuggestEdit)
 	mux.HandleFunc("GET /fs/download", handleFSDownload)
 	mux.HandleFunc("POST /fs/upload", handleFSUpload)
@@ -264,18 +275,19 @@ func buildMux() *http.ServeMux {
 	// codex / opencode rtk toggle (durable pref → on-disk artifacts) — Console.
 	mux.HandleFunc("GET /agents/rtk", handleAgentRTKGet)
 	mux.HandleFunc("PUT /agents/rtk", handleAgentRTKPut)
-	// rtk token-savings history (rtk gain) for the WsBar "rtk 効果" chip.
+	// rtk token-savings history (rtk gain) for the WsBar rtk-effect chip.
 	mux.HandleFunc("GET /agents/rtk/gain", handleAgentRTKGain)
-	// ユーザー指示（docs/log/60）— フリート方針とプロジェクト指示の間の層。
+	// User instructions (docs/log/60) — the layer between fleet policy and project instructions.
 	mux.HandleFunc("GET /user-notes", handleUserNotesGet)
 	mux.HandleFunc("PUT /user-notes", handleUserNotesPut)
 	mux.HandleFunc("GET /user-notes/preview", handleUserNotesPreview)
 	// Live model catalogs (codex: `codex debug models` / opencode: `opencode models`)
 	// for the Console's launch model picker.
 	mux.HandleFunc("GET /agents/{kind}/models", handleAgentModels)
-	// エージェントメモリの版管理（docs/log/39 / ADR 0022 P1〜P3）: claude/codex のメモリ md を
-	// bare repo へ snapshot し、履歴・差分・指定時点への巻き戻し・環境間の移送を提供する。
-	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	// Agent memory version control (docs/log/39 / ADR 0022 P1-P3): snapshots claude/codex
+	// memory md into a bare repo, giving history, diffs, rollback to a chosen point and
+	// transfer between environments.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /agents/memory/roots", memoryx.HandleMemoryRoots)
 	mux.HandleFunc("GET /agents/memory/snapshots", memoryx.HandleMemorySnapshots)
 	mux.HandleFunc("POST /agents/memory/snapshots", memoryx.HandleMemorySnapshotCreate)
@@ -283,8 +295,8 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /agents/memory/tree", memoryx.HandleMemoryTree)
 	mux.HandleFunc("POST /agents/memory/restore", memoryx.HandleMemoryRestore)
 	mux.HandleFunc("PUT /agents/memory/settings", memoryx.HandleMemorySettings)
-	// export は secret スキャン（★4）を通してから DL させる。import は独立系譜として
-	// 受けてから、選んだ範囲だけを live へ適用する（P3）。
+	// export only lets a download through after the secret scan (★4). import is taken in as
+	// an independent lineage first, and only the selected range is then applied to live (P3).
 	mux.HandleFunc("GET /agents/memory/export", memoryx.HandleMemoryExport)
 	mux.HandleFunc("POST /agents/memory/import", memoryx.HandleMemoryImport)
 	mux.HandleFunc("POST /agents/memory/import/apply", memoryx.HandleMemoryImportApply)
@@ -297,27 +309,31 @@ func buildMux() *http.ServeMux {
 	// source of a JDK at all on ECS, where /usr/lib/jvm is empty.
 	mux.HandleFunc("POST /env/jdk-install", handleJDKInstall)
 	mux.HandleFunc("GET /env/jdk-install", handleJDKInstall)
-	// node の同型。⚠️ JDK と同じ穴が node にも開いていた（未導入の版を選ぶと黙って
-	// 何も起きない）——docs/decisions/0068 と node_install.go 冒頭。
+	// The same for node: without this, selecting a version that is not installed silently
+	// does nothing, exactly the gap the JDK had (docs/decisions/0068, and the head of
+	// node_install.go).
 	mux.HandleFunc("POST /env/node-install", handleNodeInstall)
 	mux.HandleFunc("GET /env/node-install", handleNodeInstall)
-	// バンドルツールの版レポート（実効 / 焼き込み / ~/.local override / ビルド時ピン）。
+	// Version report for the bundled tools (effective / baked in / ~/.local override /
+	// build-time pin).
 	mux.HandleFunc("GET /env/tool-versions", handleToolVersions)
 
 	// Per-user UI preferences (Console display settings, synced across browsers).
 	mux.HandleFunc("GET /env/ui-prefs", handleGetUIPrefs)
 	mux.HandleFunc("PUT /env/ui-prefs", handlePutUIPrefs)
 
-	// MCP レジストリ（docs/log/48 P0 / ADR0031）— ユーザー登録 MCP サーバーの CRUD と接続テスト。
-	// テナント配布と組み込み連携は同じ一覧に読み取り専用で混ざる。
-	// ⚠️ control-plane/routes.go にも同じパスの登録が要る（CP は明示許可リスト方式）。
+	// MCP registry (docs/log/48 P0 / ADR0031) — CRUD and a connection test for user-registered
+	// MCP servers. Tenant distribution and built-in integrations blend into the same list,
+	// read-only.
+	// control-plane/routes.go needs the same path registered: the CP is an explicit allowlist.
 	mux.HandleFunc("GET /mcp-servers", mcpx.HandleServersGet)
 	mux.HandleFunc("POST /mcp-servers", mcpx.HandleServerCreate)
 	mux.HandleFunc("POST /mcp-servers/test", mcpx.HandleServerTest)
 	mux.HandleFunc("PUT /mcp-servers/{id}", mcpx.HandleServerUpdate)
 	mux.HandleFunc("POST /mcp-servers/{id}/enabled", mcpx.HandleServerEnabled)
 	mux.HandleFunc("DELETE /mcp-servers/{id}", mcpx.HandleServerDelete)
-	// テナント配布（docs/log/48 P4）— 明示リフレッシュと、user_secret 定義の値入力。
+	// Tenant distribution (docs/log/48 P4) — an explicit refresh, and filling in the values a
+	// user_secret definition declares.
 	mux.HandleFunc("POST /mcp-servers/tenant-refresh", mcpx.HandleTenantRefresh)
 	mux.HandleFunc("PUT /mcp-servers/{id}/secrets", mcpx.HandleServerSecrets)
 
@@ -328,16 +344,17 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /connections/git/{host}", handlePutGitConn)
 	mux.HandleFunc("PUT /connections/git/{host}/identity", gitx.HandleGitProviderIdentityPut)
 	mux.HandleFunc("DELETE /connections/git/{host}", handleDeleteGitConn)
-	// ★ No /connections/git/github/oauth/{start,poll} any more: both providers' OAuth
-	// flows run in the Control Plane since docs/log/71, where the app can be read per
-	// tenant. GitHub's token comes back through PUT /connections/git/github.com above.
+	// There is no /connections/git/github/oauth/{start,poll}: both providers' OAuth flows
+	// run in the Control Plane (docs/log/71), where the app can be read per tenant.
+	// GitHub's token comes back through PUT /connections/git/github.com above.
 	mux.HandleFunc("PUT /connections/git/bitbucket/oauth", gitx.HandleBitbucketStore)
-	// Jira（docs/log/80 P1）: 作業項目の 2 つ目の取得元。site+email+token は保存前に
-	// /rest/api/3/myself で検証する（3 項目あって打ち間違いが起きやすい）。
+	// Jira (docs/log/80 P1): the second source of work items. site+email+token is verified
+	// against /rest/api/3/myself before it is stored — three fields is plenty for a typo.
 	mux.HandleFunc("PUT /connections/jira", handlePutJiraConn)
 	mux.HandleFunc("DELETE /connections/jira", handleDeleteJiraConn)
-	// OAuth（docs/log/80 §80.17）: /oauth は CP がコード交換のあとに叩く（Console は触らない）。
-	// /site は Console → CP プロキシ —— 1 回の認可が複数サイトを含みうる。
+	// OAuth (docs/log/80 §80.17): the CP calls /oauth after the code exchange; the Console
+	// never touches it. /site is a Console -> CP proxy — one authorization may cover several
+	// sites.
 	mux.HandleFunc("PUT /connections/jira/oauth", handleJiraOAuthStore)
 	mux.HandleFunc("PUT /connections/jira/site", handlePutJiraSite)
 	mux.HandleFunc("POST /connections/claude/start", claude.HandleStart)
@@ -345,13 +362,13 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/claude", claude.HandleDisconnect)
 	mux.HandleFunc("PUT /connections/opencode", opencode.HandlePutConn)
 	mux.HandleFunc("DELETE /connections/opencode/{env}", opencode.HandleDeleteConn)
-	// opencode Console アカウント（device flow・docs/log/54）。APIキー方式と併存する。
+	// opencode Console account (device flow, docs/log/54). Coexists with the API-key method.
 	mux.HandleFunc("POST /connections/opencode/oauth/start", opencode.HandleOAuthStart)
 	mux.HandleFunc("POST /connections/opencode/oauth/poll", opencode.HandleOAuthPoll)
 	mux.HandleFunc("POST /connections/opencode/oauth/cancel", opencode.HandleOAuthCancel)
 	mux.HandleFunc("DELETE /connections/opencode/oauth", opencode.HandleOAuthDisconnect)
-	// 利用枠ページ（opencode.ai/workspace/{id}/go）への導線用の ID。手入力と、上限/残高
-	// エラーからの自動学習の両方で埋まる（docs/log/54 §54.7）。
+	// The id behind the link to the quota page (opencode.ai/workspace/{id}/go). Filled either
+	// by hand or learned automatically from a limit / balance error (docs/log/54 §54.7).
 	mux.HandleFunc("PUT /connections/opencode/workspace", opencode.HandlePutWorkspace)
 	// SVN saved basic-auth creds (docs/log/41): saved at checkout time; forget them here.
 	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
@@ -366,19 +383,20 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /connections/agy/start", agy.HandleStart)
 	mux.HandleFunc("POST /connections/agy/complete", agy.HandleComplete)
 	mux.HandleFunc("DELETE /connections/agy", agy.HandleDisconnect)
-	// cursor login（docs/log/40 Track C）: 専用フロー型（claude/agy 同型）。ただしコード
-	// 貼付は無く、ブラウザ承認をポーリングする（codex device-auth 型）ので start→poll。
+	// cursor login (docs/log/40 Track C): a dedicated flow like claude/agy, but with no pasted
+	// code — it polls for browser approval the way codex device-auth does, hence start -> poll.
 	mux.HandleFunc("POST /connections/cursor/start", cursor.HandleStart)
 	mux.HandleFunc("POST /connections/cursor/poll", cursor.HandlePoll)
 	mux.HandleFunc("DELETE /connections/cursor", cursor.HandleDisconnect)
-	// kiro login（docs/log/43 Track C）: device-flow 型（codex/cursor と同じ start→poll）。
-	// kiro-cli 自身が AWS SSO をポーリングし、承認後に資格情報を書く。コード貼付は無く
-	// URL+確認コードを表示するだけ。
+	// kiro login (docs/log/43 Track C): a device flow, start -> poll like codex/cursor.
+	// kiro-cli polls AWS SSO itself and writes the credentials once approved. Nothing is
+	// pasted; it only shows a URL and a verification code.
 	mux.HandleFunc("POST /connections/kiro/start", kiro.HandleStart)
 	mux.HandleFunc("POST /connections/kiro/poll", kiro.HandlePoll)
 	mux.HandleFunc("DELETE /connections/kiro", kiro.HandleDisconnect)
-	// kiro on-demand install（docs/log/43 Track B/C）: lean イメージは ~855MB を焼かないため
-	// 接続カードの「インストール」ボタンが叩く。POST で背景導入を開始、GET で進捗状態。
+	// kiro on-demand install (docs/log/43 Track B/C): the lean image does not bake the ~855MB
+	// bundle, so the connection card's Install button comes here. POST starts a background
+	// install, GET polls its progress.
 	mux.HandleFunc("POST /connections/kiro/install", handleKiroInstall)
 	mux.HandleFunc("GET /connections/kiro/install", handleKiroInstall)
 	mux.HandleFunc("PUT /connections/pagerduty", handlePutPagerDutyConn)
@@ -389,14 +407,15 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /connections/cloudwatch", handleDeleteCloudWatchConn)
 	mux.HandleFunc("PUT /connections/aws", handlePutAWSMCPConn)
 	mux.HandleFunc("DELETE /connections/aws", handleDeleteAWSMCPConn)
-	// チャットブリッジ（docs/log/37 P1）: Discord bot トークン＋宛先。inspect/guilds は
-	// カードのセットアップウィザード（招待リンク生成→チャンネルピッカー）用。
+	// Chat bridge (docs/log/37 P1): the Discord bot token plus its destination.
+	// inspect/guilds serve the card's setup wizard (build an invite link -> channel picker).
 	mux.HandleFunc("PUT /connections/discord", handlePutDiscordConn)
 	mux.HandleFunc("DELETE /connections/discord", handleDeleteDiscordConn)
 	mux.HandleFunc("POST /connections/discord/inspect", handleDiscordInspect)
 	mux.HandleFunc("POST /connections/discord/guilds", handleDiscordGuilds)
-	// チャットブリッジ Slack（docs/log/37 Slack 追随）: bot xoxb- ＋ app-level xapp- トークン＋宛先。
-	// inspect/channels はセットアップウィザード（トークン検証→チャンネルピッカー＋email 解決）用。
+	// Chat bridge Slack (docs/log/37, Slack follow-up): bot xoxb- plus app-level xapp- token,
+	// plus the destination. inspect/channels serve the setup wizard (token validation ->
+	// channel picker + email resolution).
 	mux.HandleFunc("PUT /connections/slack", handlePutSlackConn)
 	mux.HandleFunc("DELETE /connections/slack", handleDeleteSlackConn)
 	mux.HandleFunc("POST /connections/slack/inspect", handleSlackInspect)

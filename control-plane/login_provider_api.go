@@ -15,16 +15,16 @@ import (
 // this endpoint the only way to learn what may be written there was to read the
 // deployment's environment — which the person editing the rule usually cannot.
 //
-// ★ Nothing here is a credential. The response carries the id, the button labels
+// Nothing here is a credential. The response carries the id, the button labels
 // and (for a super_admin) the issuer; client_id and client_secret are deliberately
 // absent — an admin API that "just shows the config" is how secrets end up in a
 // screenshot. The issuer is the one config value the reader actually needs: it says
 // WHICH Entra (or Okta, or Keycloak) the id stands for, which is the same question
 // the sign-in method register answers for tenant-defined rows.
 //
-// ★ Tenant-defined providers ("t:<slug>:<name>", docs/log/61 §61.11) are NOT listed.
+// Tenant-defined providers ("t:<slug>:<name>", docs/log/61 §61.11) are NOT listed.
 // They come and go at runtime, they belong to their tenant, and the generic list
-// of them is a directory of the group's subsidiaries (決定 32-4). A tenant's own
+// of them is a directory of the group's subsidiaries (decision 32-4). A tenant's own
 // rows are already visible on that tenant's sign-in method panel.
 type loginProviderAPI struct {
 	memberAuth
@@ -46,7 +46,7 @@ type providerIssuer interface{ IssuerURL() string }
 
 // list (GET /api/admin/providers) — readable by a super_admin or by ANY tenant's
 // administrator (anyTenantAdminFor); EDITING the rule this list feeds stays
-// super_admin-only (決定 19 は変えていない).
+// super_admin-only (decision 19 is unchanged).
 //
 // It was super_admin-only until P7 (docs/log/61 §61.17.9 ①), which made the deployment's
 // methods the DEFAULT TENANT's methods: every tenant's sign-in method panel now lists
@@ -54,7 +54,7 @@ type providerIssuer interface{ IssuerURL() string }
 // were never secret — they are on the unauthenticated /login, and
 // GET /api/me/login-methods hands the same ids to ordinary members.
 //
-// ★ The ISSUER is the exception, and it is why this is not simply a gate change.
+// The ISSUER is the exception, and it is why this is not simply a gate change.
 // "https://login.microsoftonline.com/<tenant GUID>/v2.0" or "https://acme.okta.com"
 // names the operator's own directory and does NOT appear on /login. A tenant
 // administrator needs to know THAT a method exists, not which directory backs it —

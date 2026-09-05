@@ -8,8 +8,8 @@ import (
 	"testing"
 )
 
-// docs/log/80 §80.10 — 唯一の書き戻し。壊れると「投稿したのに入っていない」か
-// 「入れてはいけないものが入る」のどちらかになるので、境界を固定する。
+// docs/log/80 §80.10 - the one write-back path. Break it and you get either "posted but not
+// there" or "something that must not be posted got posted", so the boundaries are pinned here.
 
 func TestParseGitHubIssueKey(t *testing.T) {
 	for _, tc := range []struct {
@@ -33,8 +33,9 @@ func TestParseGitHubIssueKey(t *testing.T) {
 	}
 }
 
-// ★ Jira v3 のコメントは ADF でないと 400。プレーン文字列を送るのが一番ありがちな壊れ方
-// なので、doc/paragraph の形と、段落・改行の写し方を固定する。
+// A Jira v3 comment is a 400 unless it is ADF, and sending a plain string is the most common
+// way to break it, so the doc/paragraph shape and how paragraphs and line breaks are carried
+// over are pinned here.
 func TestJiraADF(t *testing.T) {
 	adf := jiraADF("一行目\n二行目\n\n次の段落")
 	if adf["type"] != "doc" || adf["version"] != 1 {
@@ -53,11 +54,11 @@ func TestJiraADF(t *testing.T) {
 	if n, _ := nodes[1].(map[string]any); n["type"] != "hardBreak" {
 		t.Errorf("line break did not become a hardBreak: %+v", nodes[1])
 	}
-	// 空文字だけでも doc は空にしない（空の doc は 400）。
+	// An all-blank body must still not produce an empty doc: Jira answers 400 for one.
 	if c, _ := jiraADF("\n\n\n")["content"].([]any); len(c) == 0 {
 		t.Error("an all-blank body produced an empty doc, which Jira rejects")
 	}
-	// JSON にできること（map[string]any の入れ子なので、ここが崩れると送信時に落ちる）。
+	// It must marshal: this is nested map[string]any, so a broken shape fails at send time.
 	if _, err := json.Marshal(adf); err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
@@ -79,21 +80,22 @@ func TestWorkItemsCommentValidation(t *testing.T) {
 	if w := post(`{"provider":"backlog","key":"x#1","body":"y"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("unknown provider = %d", w.Code)
 	}
-	// 未接続は 400（af 側の設定不足）。provider が断ったときの 502 と区別する。
+	// No connection is a 400 (missing configuration on the af side), kept distinct from the
+	// 502 used when the provider refuses.
 	if w := post(`{"provider":"github","key":"acme/web#1","body":"y"}`); w.Code != http.StatusBadRequest {
 		t.Errorf("no connection = %d, want 400", w.Code)
 	}
 }
 
-// 投稿が拒否されたときは provider の文言をそのまま上げる。「再接続してください」と
-// 言い換えると、権限不足（読めるが書けない）や課題のロックが見えなくなる。
+// A refused post surfaces the provider's own wording. Rewriting it as "please reconnect"
+// hides insufficient permissions (readable but not writable) and a locked issue.
 func TestGitHubCommentSurfacesProviderRefusal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 	}))
 	defer srv.Close()
-	// githubPostIssueComment は api.github.com 固定なので、ここでは経路ではなく
-	// キーの検証（不正キーで送信に行かないこと）を確かめる。
+	// githubPostIssueComment is pinned to api.github.com, so what is checked here is the key
+	// validation - that a malformed key never reaches the network - not the route.
 	if _, err := githubPostIssueComment("tok", "not-a-key", "body"); err == nil {
 		t.Error("a malformed key was sent to the API instead of being refused locally")
 	}

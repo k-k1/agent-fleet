@@ -7,9 +7,10 @@ import { PendingQuestions } from "../PendingQuestions.tsx";
 import type { InteractionAnswer } from "../../../core/api/client.ts";
 import type { Question } from "../transcript/types.ts";
 
-// 保留カード（プラン承認 / 許可要求 / 質問）は転写の最後に、ターンと同じ体裁で積む。
-// jsonl に載っていない＝グループにできないので TranscriptView の外で描くが、見た目まで
-// 別物にすると「これは会話ではない」と読めてしまうため、.mirror-turn の殻は共有する。
+// Pending cards (plan approval, permission request, question) stack at the end of the transcript
+// in the same shape as a turn. They are not in the jsonl, so they cannot be grouped and are
+// rendered outside TranscriptView; but making them look different too would read as "this is not
+// part of the conversation", so they share the .mirror-turn shell.
 function PendingTurn({ agentName, note, children }: { agentName: string; note: string; children: ReactNode }) {
   return (
     <div className="mirror-turn assistant">
@@ -22,7 +23,8 @@ function PendingTurn({ agentName, note, children }: { agentName: string; note: s
   );
 }
 
-/** ExitPlanMode の承認待ち。承認/却下の押し方の理由は onApprove / onReject の呼び出し側に書いてある。 */
+/** Waiting for ExitPlanMode approval. Why approve/reject are driven the way they are is
+ *  documented at the onApprove / onReject call site. */
 export function PlanPendingCard({
   agentName,
   plan,
@@ -61,7 +63,8 @@ export function PlanPendingCard({
   );
 }
 
-/** ツール許可の確認。3 択はいずれも TUI モーダルをキー駆動するので、順序がそのまま意味を持つ。 */
+/** Tool permission prompt. All three choices drive the TUI modal by key, so their order is
+ *  itself meaningful. */
 export function PermissionCard({
   agentName,
   message,
@@ -107,7 +110,8 @@ export function PermissionCard({
   );
 }
 
-/** AskUserQuestion の保留。直前に流れたプロンプト本文（pendingText）も一緒に見せる。 */
+/** A pending AskUserQuestion. The prompt body that scrolled past just before (pendingText) is
+ *  shown alongside it. */
 export function QuestionCard({
   agentName,
   questions,
@@ -147,7 +151,7 @@ export function QuestionCard({
         onSubmitKeys={onSubmitKeys}
         onSubmitSeq={onSubmitSeq}
         onRespond={onRespond}
-        // Cancel maps to the same stop primitive as the chat 停止 button: TUI sends
+        // Cancel maps to the same stop primitive as the chat stop button: TUI sends
         // Escape (dismisses the AUQ modal, doesn't mark a turn), managed calls
         // Interrupt. Either way the pending question clears and the composer is free.
         onCancel={onCancel}
@@ -159,7 +163,8 @@ export function QuestionCard({
   );
 }
 
-/** 入力中インジケータ。停止ボタンをここに置く理由はコメントのとおり（コンポーザを動かさない）。 */
+/** Typing indicator. The stop button lives here so it never shifts the composer; see the note
+ *  at the button. */
 export function TypingRow({
   agentName,
   sending,
@@ -178,7 +183,7 @@ export function TypingRow({
         <i />
       </span>
       {/* Stop the running turn (Escape) — lives with the typing indicator so it shows
-          while working OR while a background run (サブエージェント/Workflow) lingers on an
+          while working OR while a background run (subagent / workflow) lingers on an
           otherwise-idle session, and never shifts the composer. */}
       <button type="button" className="ghost mirror-stop" disabled={sending} title={tr("mirror.stop_run")} onClick={onStop}>
         <Icon name="debug-stop" /> {tr("chat.stop")}

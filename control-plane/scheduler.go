@@ -278,8 +278,9 @@ func (sc *scheduler) fireOne(ctx context.Context, sch store.Schedule, now time.T
 	enabled := sch.Enabled && keep
 	nowRFC := now.UTC().Format(time.RFC3339)
 	if err := sc.store.RecordScheduleFire(ctx, sch.ID, nowRFC, status, next, enabled, nowRFC); err != nil {
-		// 台帳が前進しないと次 tick で同じ slot を再発火する。reuse/assistant 経路には
-		// slot 単位の冪等機構が無く、プロンプトの二重配達になり得るので目立たせる。
+		// If the ledger does not advance, the next tick re-fires this slot. The reuse and
+		// assistant paths have no per-slot idempotency, so that means a prompt delivered
+		// twice — loud on purpose.
 		log.Printf("scheduler: WARNING record fire %s failed — ledger did not advance; "+
 			"next tick may re-fire this slot (possible duplicate prompt delivery): %v", sch.ID, err)
 	}
@@ -463,7 +464,7 @@ func parseOnce(spec string) (time.Time, error) {
 	return t, nil
 }
 
-// minIntervalSecs is the frequency floor (docs/log/38 頻度下限): sub-minute schedules are
+// minIntervalSecs is the frequency floor: sub-minute schedules are
 // rejected so a runaway interval cannot hammer the fleet. The scheduler ticks per
 // minute anyway, so anything below this is meaningless.
 const minIntervalSecs = 60

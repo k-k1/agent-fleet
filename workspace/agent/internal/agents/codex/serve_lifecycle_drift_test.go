@@ -1,10 +1,12 @@
 //go:build drift
 
-// 共有 daemon の生涯（docs/log/27 §7.1）を**実 codex バイナリ**で通す Tier 1 ドリフト検知。
-// ターンは消費しない（app-server を起こして畳むだけ）。兄弟: drift_test.go。
+// Tier 1 drift detection that runs the shared daemon's whole life (docs/log/27 §7.1) against the
+// real codex binary. It spends no turn - it only brings the app-server up and back down.
+// Sibling: drift_test.go.
 //
-// ここが埋めるのは「需要で起き、需要ゼロで畳む」の**プロセスまで含めた**確認 —
-// ユニットテストはゲートと数え方しか見ておらず、実際に起動・停止したかは見ていない。
+// What this adds is the process-level confirmation of "start on demand, fold up at zero demand":
+// the unit tests only look at the gate and the counting, never at whether anything actually
+// started or stopped.
 
 package codex
 
@@ -23,11 +25,11 @@ func TestDriftCodexDaemonStartsOnDemandAndStopsWhenIdle(t *testing.T) {
 	if !loggedIn() {
 		t.Skip("codex is not logged in — the auth gate would (correctly) refuse to start")
 	}
-	// 既定ポートは実フリートの daemon が居るかもしれないので避ける。
+	// Avoid the default port; the real fleet's daemon may be sitting on it.
 	const addr = "ws://127.0.0.1:7897"
 	t.Setenv(appServerAddrEnv, addr)
 	if healthy(addr) {
-		t.Fatalf("%s に既に何かが listen している — テスト用ポートを変えること", addr)
+		t.Fatalf("something is already listening on %s — pick another test port", addr)
 	}
 
 	prev := TUIDependents
@@ -36,16 +38,17 @@ func TestDriftCodexDaemonStartsOnDemandAndStopsWhenIdle(t *testing.T) {
 	t.Cleanup(func() { TUIDependents = prev })
 
 	s := &Supervisor{}
-	t.Cleanup(s.Shutdown) // 停止が効かなかったときに daemon を置き去りにしない
+	t.Cleanup(s.Shutdown) // do not strand the daemon if the stop did not take
 
 	if _, _, err := s.Ensure(); err != nil {
 		t.Fatalf("Ensure: %v", err)
 	}
 	if !healthy(addr) {
-		t.Fatal("Ensure が成功したのに daemon が listen していない")
+		t.Fatal("Ensure succeeded but the daemon is not listening")
 	}
 
-	// 需要ゼロ監視を短い猶予で直接回す（armIdleWatchLocked の既定 2 分は待てない）。
+	// Drive the zero-demand watch directly with a short grace period; armIdleWatchLocked's default
+	// of 2 minutes is too long to wait for.
 	prevTick := agents.IdleTickForTest(10 * time.Millisecond)
 	t.Cleanup(func() { agents.IdleTickForTest(prevTick) })
 	stopped := make(chan bool, 1)
@@ -54,22 +57,22 @@ func TestDriftCodexDaemonStartsOnDemandAndStopsWhenIdle(t *testing.T) {
 		stopped <- true
 	}()
 
-	// 需要が在る間は畳まないこと。
+	// It must not fold up while there is demand.
 	time.Sleep(300 * time.Millisecond)
 	if !healthy(addr) {
-		t.Fatal("需要が在るのに daemon が停止した")
+		t.Fatal("the daemon stopped while there was still demand")
 	}
 
 	needs = 0
 	select {
 	case <-stopped:
 	case <-time.After(10 * time.Second):
-		t.Fatal("需要ゼロになっても監視が停止に踏み切らなかった")
+		t.Fatal("demand hit zero but the watch never decided to stop")
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for healthy(addr) {
 		if time.Now().After(deadline) {
-			t.Fatal("停止したはずの daemon がまだ listen している")
+			t.Fatal("the daemon should have stopped but is still listening")
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

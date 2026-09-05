@@ -1,33 +1,34 @@
 package browserx
 
-// browserx が package main から借りるホスト機能。import ではなく関数変数で受けている:
-// 提供側は browserx が依存してはならないファイル（mcp_stdio.go の loopback REST 配達
-// スタック、install_tools.go の chromium ピン解決）に在り、package main を import し返す
-// ことはそもそもできない。
+// The host capabilities browserx borrows from package main. They come in as function
+// variables rather than imports: the providers live in files browserx must not depend on
+// (the loopback REST delivery stack in mcp_stdio.go, the chromium pin resolution in
+// install_tools.go), and importing package main back is impossible anyway.
 //
-// **名前は移送前と同じにしてある**ので、移送されたファイル側の呼び出しは 1 文字も
-// 変わっていない（移送を移送のままに保つ）。結線は package main の alias_browser.go の
-// init で 1 度だけ行う。
+// The names are the same as before the move, so the calls in the moved files did not
+// change by a single character. Wiring happens exactly once, in the init of package main's
+// alias_browser.go.
 //
-// nil のまま呼べば panic する。無害な既定値を置くとテストが「結線し忘れ」を緑で
-// 通してしまうので、結線漏れは黙らせずに落とす。browserx 単体のテストバイナリは
-// deps_test.go の TestMain で明示的に結線している。
+// Calling one while it is still nil panics. A harmless default would let a test pass green
+// with the wiring forgotten, so a missing wire fails loudly instead. The browserx-only
+// test binary wires them explicitly in deps_test.go's TestMain.
 var (
-	// agentSendToSession は loopback の Agent REST でセッションへプロンプトを配達する
-	// （停止中なら再開してから再送）。ハンドオフ台帳の配達段が使う。
+	// agentSendToSession delivers a prompt to a session over the loopback Agent REST
+	// (resuming a stopped one first, then re-sending). Used by the handoff ledger's
+	// delivery stage.
 	agentSendToSession func(name string, body []byte) (out string, resumed bool, err error)
 
-	// chromiumDefaultPin はこのアーキが固定している chromium ビルドを返す。
+	// chromiumDefaultPin returns the chromium build this architecture is pinned to.
 	chromiumDefaultPin func() string
 
-	// chromiumPinnedBinary はピン済み chromium の実行ファイルを返す（未インストールなら ""）。
+	// chromiumPinnedBinary returns the pinned chromium executable ("" when not installed).
 	chromiumPinnedBinary func() string
 
-	// installChromium は指定ピンの chromium を取得して配置する。
+	// installChromium fetches and lays down the chromium of the given pin.
 	installChromium func(pin string) error
 )
 
-// SetDeps はホスト機能を結線する。package main の init から 1 度だけ呼ばれる。
+// SetDeps wires the host capabilities up. Called once, from package main's init.
 func SetDeps(
 	sendToSession func(name string, body []byte) (string, bool, error),
 	defaultPin func() string,

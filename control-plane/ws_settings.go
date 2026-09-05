@@ -21,39 +21,42 @@ type wsSettings struct {
 	// (workspaceExtraEnv only emits AF_AGENT_SELF_UPDATE=1 when the tenant allows it).
 	AgentUpdate bool `json:"agentUpdate"`
 
-	// --- プレビュー用サブドメイン（docs/log/81） --------------------------------
-	// PreviewPorts はホスト方式のプレビューで外に出してよいポート（空 = 既定の
-	// 3000,8080）。列挙に無いポートのサブドメインは 404 —— 「許可されていない」では
-	// なく存在も答えない（許可ポートの有無を外から探らせない・ADR 0062 決定 6）。
+	// --- Preview subdomains (docs/log/81) ---------------------------------------
+	// PreviewPorts are the ports the host-based preview may expose (empty = the default
+	// 3000,8080). A subdomain for a port not listed answers 404 rather than "not allowed":
+	// it does not even admit that it exists, so which ports are open cannot be probed from
+	// outside (ADR 0062 decision 6).
 	PreviewPorts []int `json:"previewPorts,omitempty"`
-	// PreviewFixedSlug: slug を起動ごとに引き直さず、この Workspace では固定する
-	// （docs/log/81 §4.1）。既定 false ＝ 要件どおり毎回引き直す。ON にする理由は実質
-	// 1 つで、外部 IdP の redirect URI 登録（NextAuth / Auth.js）が前方一致も
-	// ワイルドカードも受け付けないこと。
+	// PreviewFixedSlug: keep this workspace's slug instead of drawing a new one at every
+	// start (docs/log/81 §4.1). Default false, i.e. redrawn each time as required. There is
+	// effectively one reason to turn it on: external IdP redirect URI registration
+	// (NextAuth / Auth.js) accepts neither a prefix match nor a wildcard.
 	PreviewFixedSlug bool `json:"previewFixedSlug,omitempty"`
-	// PreviewPublic: 認証なしで開ける（docs/log/81 §6.1）。★ 起動のたびに false へ
-	// 戻す（fail-closed）—— この機能の事故は「公開のままにしていたのを忘れる」以外に
-	// ほぼ無いので、忘れても閉じる側に倒す。
+	// PreviewPublic: openable without authentication (docs/log/81 §6.1). Reset to false at
+	// every start (fail-closed) — nearly the only accident this feature has is forgetting
+	// that it was left public, so forgetting closes it.
 	PreviewPublic bool `json:"previewPublic,omitempty"`
-	// PreviewTenantShare: 同じテナントの現役メンバー全員に見せる（docs/log/81 §14）。認証は
-	// 必須のまま —— 公開モードとの違いはそこで、こちらは「誰でも」ではなく
-	// 「ログインできる同僚なら」である。
+	// PreviewTenantShare: show it to every active member of the same tenant (docs/log/81
+	// §14). Authentication stays mandatory — that is the difference from public mode: not
+	// "anyone" but "a colleague who can log in".
 	//
-	// ⚠️ PreviewPublic と違い **起動のたびに OFF へ戻さない**（ADR 0062 決定 14）。
-	// fail-closed が要るのは「世界に開けたまま忘れる」に対してであって、相手が既に
-	// Console にログインできる同僚なら当てはまらない。用途（数日かけて見てもらう）は
-	// 必ず再起動をまたぐので、毎回戻すとこの設定は存在しないのと同じになる。
+	// Unlike PreviewPublic this is NOT reset to off at every start (ADR 0062 decision 14).
+	// Fail-closed is needed against "left open to the world and forgotten", which does not
+	// apply when the other party can already log in to the Console. The use (having someone
+	// look over some days) always spans a restart, so resetting it each time would make the
+	// setting as good as absent.
 	PreviewTenantShare bool `json:"previewTenantShare,omitempty"`
-	// PreviewReservedSlug は PreviewFixedSlug が ON のときだけ使う予約。★ 起動中の
-	// slug（workspace.preview_slug 列）とは別物である必要がある —— 列の方は停止で
-	// 必ず空に戻る（停止中の URL は解決しない）ので、そこに予約を兼ねさせると
-	// 「固定したのに再起動で変わった」になる。
+	// PreviewReservedSlug is the reservation used only while PreviewFixedSlug is on. It has
+	// to be distinct from the running slug (the workspace.preview_slug column): that column
+	// always goes back to empty on stop (a stopped workspace's URL must not resolve), so
+	// making it double as the reservation would produce "I fixed it and it changed on
+	// restart anyway".
 	PreviewReservedSlug string `json:"previewReservedSlug,omitempty"`
-	// PreviewCrossOrigin: 兄弟のプレビューオリジンどうしの呼び出しを通す（docs/log/81
-	// §2.4）。ON にすると認証 cookie が SameSite=None になり、CP が **同じ slug の
-	// 兄弟オリジンに限って** CORS を補う。★ 既定 OFF —— クロスオリジンを既定で通す
-	// ことは、URL を知っている第三者のページから利用者のブラウザ経由でプレビューを
-	// 叩ける状態を既定にすること。
+	// PreviewCrossOrigin: let sibling preview origins call each other (docs/log/81 §2.4).
+	// On, the auth cookie becomes SameSite=None and CP supplies CORS for sibling origins of
+	// the same slug only. Default off: allowing cross-origin by default would make it the
+	// default that any third-party page that knows the URL can reach the preview through
+	// the user's browser.
 	PreviewCrossOrigin bool `json:"previewCrossOrigin,omitempty"`
 }
 
@@ -66,10 +69,11 @@ func parseWSSettings(s string) wsSettings {
 	return w
 }
 
-// wsSettingsAPI は CP 管理のワークスペース設定の機能ハンドラ集（docs/log/23 残③）。
-// 解決は埋め込みの memberAuth（登録側で withResolved に包む）。store は
-// WorkspaceStore、tenants はオペレータゲート参照用 TenantStore の narrow view。
-// キャッシュ破棄（evictMembershipCache）だけは memberAuth 経由の a.mgr を直接呼ぶ。
+// wsSettingsAPI is the handler set for the CP-owned workspace settings (docs/log/23 ③).
+// Resolution comes from the embedded memberAuth (registration wraps it in withResolved).
+// store is a narrow WorkspaceStore view and tenants a narrow TenantStore view for the
+// operator gate; only cache eviction (evictMembershipCache) reaches a.mgr directly through
+// memberAuth.
 type wsSettingsAPI struct {
 	memberAuth
 	store   store.WorkspaceStore
@@ -117,9 +121,10 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 	out["previewCrossOrigin"] = st.PreviewCrossOrigin
 	out["previewMaxPorts"] = maxPreviewPorts
 	urls := map[string]string{}
-	// 共有用の固定リンク（docs/log/81 §14.6）。★ こちらは**停止中でも返す** —— 起動を
-	// またいで有効であることが存在理由なので、「今たまたま止まっている」を理由に
-	// 消すと、貼れるリンクという性質そのものが無くなる。
+	// Stable links for sharing (docs/log/81 §14.6). These ARE returned while the workspace
+	// is stopped: being valid across starts is their whole reason to exist, so dropping
+	// them because it happens to be stopped right now removes the very property of being a
+	// link you can paste.
 	shareLinks := map[string]string{}
 	if domain != "" {
 		for _, p := range previewPortsOf(st) {
@@ -133,8 +138,8 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 			}
 		}
 	}
-	// 停止中は空のまま返す。★ 発行されていない URL を見せない —— 押しても 404 になる
-	// リンクは、機能が壊れているという報告になって返ってくる。
+	// Left empty while stopped: never show a URL that has not been issued — a link that
+	// 404s when pressed comes back as a report that the feature is broken.
 	out["previewUrls"] = urls
 	out["previewShareLinks"] = shareLinks
 }
@@ -143,18 +148,18 @@ func (a wsSettingsAPI) addPreview(r *http.Request, res *resolved, st wsSettings,
 // that are currently sharing their preview (docs/log/81 §14.6). It is what turns "someone
 // told me a URL once" into something findable.
 //
-// ★ 起動中かどうかは preview_slug 列の有無で決める。Workspace ごとにランタイムの状態を
-// 問い合わせない —— テナントのメンバー数だけ往復が増えるうえ、ここで欲しいのは
-// 「コンテナが動いているか」ではなく「**プレビューの URL が今あるか**」そのものである。
+// Running-ness is decided by the presence of the preview_slug column, not by asking the
+// runtime per workspace: that would add one round trip per tenant member, and what is
+// wanted here is not "is the container up" but "is there a preview URL right now".
 func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	ctx := r.Context()
 	domain := a.mgr.previewDomain
 	items := []map[string]any{}
-	if domain == "" { // ホスト方式が無いデプロイ: 空を返す（Console は節ごと出さない）
+	if domain == "" { // no host-based preview here: empty, and Console hides the section
 		writeJSON(w, http.StatusOK, map[string]any{"domain": "", "items": items})
 		return
 	}
-	// メンバー一覧は narrow な WorkspaceStore に無いので Store 本体から引く。
+	// The member list is not on the narrow WorkspaceStore, so read it from the store itself.
 	members, err := a.mgr.store.ListMembersByTenant(ctx, mv.TenantID)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -171,15 +176,15 @@ func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ 
 	}
 	for _, ws := range workspaces {
 		if ws.MembershipID == mv.MembershipID {
-			continue // 自分のぶんは既にポップオーバーの上半分に出ている
+			continue // one's own is already in the top half of the popover
 		}
 		owner, ok := byMembership[ws.MembershipID]
 		if !ok {
-			continue // メンバーでなくなった人の Workspace は出さない
+			continue // do not list the workspace of someone who is no longer a member
 		}
-		// ⚠️ 設定はテナントのメンバー数ぶん引く。ポップオーバーを開いた瞬間にしか
-		// 走らない読み出しなので許容しているが、テナントが大きくなったらここが
-		// まとめ読みに変わる場所である。
+		// This reads settings once per tenant member. Acceptable because it only runs the
+		// moment the popover is opened, but this is the place that turns into a batched
+		// read once tenants grow.
 		st := parseWSSettings(mustSettings(ctx, a.mgr, ws.ID))
 		if !st.PreviewTenantShare {
 			continue
@@ -197,7 +202,7 @@ func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ 
 			"ownerUserKey": owner.UserKey,
 			"ownerEmail":   owner.Email,
 			"ports":        ports,
-			"urls":         urls, // 停止中は空 —— 発行されていない URL は見せない
+			"urls":         urls, // empty while stopped: never show a URL that was not issued
 			"shareLinks":   links,
 			"running":      ws.PreviewSlug != "",
 		})
@@ -212,9 +217,9 @@ func (a wsSettingsAPI) sharedPreviews(w http.ResponseWriter, r *http.Request, _ 
 // preview URLs away and mints new ones — the remedy for "I pasted the URL somewhere I
 // should not have".
 //
-// ⚠️ 稼働中のコンテナは作り直さないので、**中の `AF_PREVIEW_URL_*` は次の起動まで古い
-// ままになる**。それでも即時に捨てられる方を選ぶ: 配ってしまった URL を生かしたまま
-// 「次の再起動で変わります」と言うのは、対処になっていない。
+// A running container is not recreated, so `AF_PREVIEW_URL_*` inside it stays stale until
+// the next start. Immediate revocation still wins: telling the user "it will change at the
+// next restart" while the URL they leaked keeps working is not a remedy.
 func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, res *resolved) {
 	if a.mgr.previewDomain == "" {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_configured", "preview subdomains are not configured"})
@@ -227,8 +232,8 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 	}
 	raw := mustSettings(r.Context(), a.mgr, ws.ID)
 	st := parseWSSettings(raw)
-	// 予約（固定 ON のときの持ち越し）も一緒に捨てる。捨てないと、次の起動で
-	// 「捨てたはずの URL」がそのまま戻ってくる。
+	// Throw the reservation away too (the carry-over used when fixed slug is on). Kept, it
+	// would hand the supposedly discarded URL back at the next start.
 	if st.PreviewReservedSlug != "" {
 		st.PreviewReservedSlug = ""
 		out, _ := json.Marshal(st)
@@ -237,8 +242,8 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 			return
 		}
 	}
-	// 稼働中（= slug が発行済み）のときだけ、その場で引き直す。停止中は発行されて
-	// いないので、予約を捨てた時点で用は済んでいる。
+	// Redraw on the spot only while running (i.e. a slug has been issued). While stopped
+	// none exists, so discarding the reservation already did the job.
 	rotated := false
 	if ws.PreviewSlug != "" {
 		if _, err := a.mgr.rotatePreviewSlug(r.Context(), ws); err != nil {
@@ -252,10 +257,10 @@ func (a wsSettingsAPI) reissuePreview(w http.ResponseWriter, r *http.Request, re
 	body := map[string]any{
 		"agentUpdate":      parseWSSettings(raw).AgentUpdate,
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
-		// ★ 「その場で URL が変わったか」を返す。停止中の Workspace には発行済みの
-		// slug が無いので、この操作は成功しても**画面上は何も変わらない** —— 呼び手が
-		// それを言い分けられないと、成功が「押しても無反応」として報告されて返ってくる
-		// （実際に報告された）。
+		// Whether the URLs actually changed on the spot. A stopped workspace has no issued
+		// slug, so this call succeeds while nothing on screen changes; without a way to
+		// tell the two apart, the caller reports the success as "pressing it does nothing"
+		// (which is how it was reported).
 		"previewReissued": rotated,
 	}
 	a.addPreview(r, res, parseWSSettings(raw), body)
@@ -277,9 +282,9 @@ func (a wsSettingsAPI) put(w http.ResponseWriter, r *http.Request, res *resolved
 	if v, ok := body["agentUpdate"].(bool); ok {
 		st.AgentUpdate = v && a.tenantAllowsAgentUpdate(r, res.ws)
 	}
-	// プレビュー（docs/log/81）。ホスト方式が無いデプロイ（AF_PREVIEW_DOMAIN 未設定）でも
-	// 値は保存する —— 設定が「デプロイの都合で黙って消える」より、効かないだけの方が
-	// 説明できる。
+	// Preview (docs/log/81). The values are stored even on a deployment without host-based
+	// preview (AF_PREVIEW_DOMAIN unset): a setting that merely has no effect is easier to
+	// explain than one that silently disappears because of how the deployment is built.
 	if raw, ok := body["previewPorts"].([]any); ok {
 		ports := make([]int, 0, len(raw))
 		for _, v := range raw {

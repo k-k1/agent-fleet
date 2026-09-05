@@ -6,12 +6,12 @@
 // there is a bill. Keeping them apart is the whole design decision: an estimate derived
 // from "seconds × an operator-declared unit price" would go stale silently the first
 // time instance types or prices changed, and then the Console would show two costs that
-// disagree (決定 2).
+// disagree (decision 2).
 //
 // Three properties drive everything here:
 //
 //   - Cost Explorer charges $0.01 PER REQUEST. So the Console never calls it; a poller
-//     writes days into cloud_cost_daily and every API reads the table (決定 7).
+//     writes days into cloud_cost_daily and every API reads the table (decision 7).
 //   - Recent days are `Estimated` and keep moving for about a day. So the poller
 //     re-fetches a trailing window and REPLACES those days rather than accumulating.
 //   - Cost allocation has NO BACKFILL. Days before the tags were activated are not
@@ -46,9 +46,9 @@ import (
 // invoice. Money that does not add up is worse than no money at all.
 const costMicro = 1_000_000
 
-// ⚠️ コスト配分タグのキーは adapters 側（runtime.EC2Tag*）が正。Cost Explorer は
-// GroupBy には素のキーを要求し、結果では "af-membership$<value>"（未タグは空値）で
-// 返す —— その綴りを 2 箇所に持つと黙ってずれる。
+// The cost allocation tag keys are owned by the adapters (runtime.EC2Tag*). Cost Explorer
+// wants the bare key in GroupBy but answers with "af-membership$<value>" (empty value when
+// untagged) — spell that in two places and the two drift apart silently.
 
 // costExplorerAPI is the one call this file makes, as a port so the poller is testable
 // without AWS (and so nobody adds a second $0.01 call by accident).
@@ -101,11 +101,11 @@ func newCloudCostPoller(mgr *manager, ce costExplorerAPI, interval time.Duration
 // an operator switch: a docker deployment has no invoice, and there is nothing to
 // configure about that.
 //
-// ⚠️ Cost Explorer is a GLOBAL service and only answers in us-east-1, regardless of
+// Cost Explorer is a global service and only answers in us-east-1, regardless of
 // where the workspaces run. Pointing it at the deployment region returns nothing and
 // looks exactly like "no spend".
 //
-// ⚠️ No opt-out env. ADR 0044 決定 3 is the precedent: a feature shipped off by default
+// No opt-out env. ADR 0044 decision 3 is the precedent: a feature shipped off by default
 // never fired once. The cost here is ~$1.2/month of Cost Explorer requests, and a
 // deployment that does not want the CP reading its bill withholds the IAM permission —
 // which the poller reports rather than hides.
@@ -157,8 +157,9 @@ func (p *cloudCostPoller) pollOnce(ctx context.Context) {
 		return
 	}
 	p.lastErr.Store("")
-	// 活性化状態が読めなかったとき（＝ payer にしか触れない linked アカウント）は、
-	// いま引いたこの結果そのものが証拠になる（cost_tags.go の noteAttribution）。
+	// When the activation state cannot be read (a linked account, where only the payer
+	// can see it), the result just fetched is itself the evidence — see noteAttribution
+	// in cost_tags.go.
 	p.noteAttribution(rows)
 	if err := p.mgr.store.PutCloudCost(ctx, days, rows); err != nil {
 		log.Printf("cloud cost: storing %d rows: %v", len(rows), err)
@@ -174,7 +175,7 @@ func (p *cloudCostPoller) pollOnce(ctx context.Context) {
 // answers both questions at once: who, and what for. Both metrics come back in the same
 // request too — extra metrics are free, extra requests are not.
 //
-// ⚠️ `End` is EXCLUSIVE in the Cost Explorer API. Passing today as End means today is
+// `End` is EXCLUSIVE in the Cost Explorer API. Passing today as End means today is
 // not in the answer; the window therefore runs to tomorrow so the (estimated, moving)
 // current day is included and refreshed on every pass.
 func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []string, error) {
@@ -186,8 +187,8 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []st
 	if err != nil {
 		return nil, nil, err
 	}
-	// 予約メンバーシップ（種と probe）は共有インフラ扱いにする。引けなければ畳まない
-	// だけで、取り込み自体は続ける。
+	// Reserved memberships (the bake's seed and probe) count as shared infrastructure.
+	// If the set cannot be resolved we simply do not fold; ingestion continues.
 	system, err := p.mgr.systemMembershipIDs(ctx)
 	if err != nil {
 		log.Printf("cloud cost: system memberships could not be resolved, not folding: %v", err)
@@ -234,18 +235,19 @@ func (p *cloudCostPoller) fetch(ctx context.Context) ([]store.CloudCostRow, []st
 }
 
 // foldSystemMemberships moves the reserved memberships' spend into the SHARED bucket
-// (ADR 0048 決定 12). The golden bake's seed and probe are built by the product's ordinary
+// (ADR 0048 decision 12). The golden bake's seed and probe are built by the product's ordinary
 // Start path, so their workspaces carry `af-membership` like anybody's — and they are not
 // anybody. Their money is the deployment keeping its own snapshot warm.
 //
-// ★ Why the tag is not simply left off at creation instead: `af-membership` is not only a
-// cost allocation key, it is the MATCHING key the runtime uses to find a membership's EFS
-// access point and home volume again (runtime_ecs_ec2.go の ensureAccessPoint など).
+// Why the tag is not simply left off at creation instead: `af-membership` is not only a
+// cost allocation key, it is the matching key the runtime uses to find a membership's EFS
+// access point and home volume again (ensureAccessPoint and friends in
+// runtime_ecs_ec2.go).
 // An empty value there would either fail to match or collide with the next untagged
 // resource. So the tag is written exactly as the product writes it, and the fold happens
 // here, at ingest.
 //
-// ⚠️ The sum is NOT optional. PutCloudCost replaces `(day, membership_id, service)`
+// The sum is NOT optional. PutCloudCost replaces `(day, membership_id, service)`
 // wholesale (ON CONFLICT ... DO UPDATE SET unblended=excluded.unblended), so once two
 // groups fold onto the same key, the second write would DELETE the first one's money
 // rather than add to it. Cost Explorer hands us the seed and the untagged shared line as
@@ -260,13 +262,13 @@ func foldSystemMemberships(rows []store.CloudCostRow, system map[string]bool) []
 	for _, row := range rows {
 		if system[row.MembershipID] {
 			row.MembershipID = ""
-			row.TenantID = "" // 共有バケットにテナントは無い（テナント別画面に出さない）
+			row.TenantID = "" // the shared bucket has no tenant: it stays out of per-tenant views
 		}
 		k := key{row.Day, row.MembershipID, row.Service}
 		if i, ok := at[k]; ok {
 			out[i].Unblended += row.Unblended
 			out[i].Amortized += row.Amortized
-			// 片方でも未確定なら合計も未確定。
+			// If either side is still estimated, so is the sum.
 			out[i].Estimated = out[i].Estimated || row.Estimated
 			continue
 		}
@@ -309,7 +311,7 @@ func costRowFrom(day string, estimated bool, g cetypes.Group, tenants map[string
 }
 
 // costAmount parses one Cost Explorer metric into micro-units of its own currency.
-// The currency is passed through verbatim and never converted (決定 6) — a converted
+// The currency is passed through verbatim and never converted (decision 6) — a converted
 // number is no longer the invoice, and the rate would have to come from somewhere that
 // nobody would remember to update.
 func costAmount(m cetypes.MetricValue) (int64, string) {
@@ -323,7 +325,7 @@ func costAmount(m cetypes.MetricValue) (int64, string) {
 // tenantByMembership maps each membership to its tenant so a stored row can be scoped
 // without a join at read time.
 //
-// ⚠️ This resolves what the CP knows TODAY. A membership deleted since the spend
+// This resolves what the CP knows TODAY. A membership deleted since the spend
 // happened has no tenant here, so its money lands with an empty tenant_id and stops
 // appearing in tenant-scoped views — correct, if unobvious: that spend is no longer
 // anyone's to see, and inventing a tenant for it would put a stranger's cost into a
@@ -412,10 +414,10 @@ type cloudCostService struct {
 // myCloudCost (GET /api/cost/me?from=&to=) — the signed-in member's OWN attributed
 // spend, and nothing else.
 //
-// ⚠️ This number is NOT "what this person costs". It is the spend that carries their
+// This number is NOT "what this person costs". It is the spend that carries their
 // membership tag, which on the reference deployment is about a fifth of the bill; the
 // shared majority (NAT, DNS, load balancer, database, idle pool) is not divided and is
-// not included. The Console is required to label it that way (ADR 0048 決定 4), and the
+// not included. The Console is required to label it that way (ADR 0048 decision 4), and the
 // response deliberately does not expose a deployment total that could be subtracted to
 // infer anyone else's.
 func (a adminAPI) myCloudCost(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
@@ -430,10 +432,10 @@ func (a adminAPI) myCloudCost(w http.ResponseWriter, r *http.Request, _ store.Id
 // "is it the home volume or the slot hours" are not derivable from it. Those two
 // readings are the reason this belongs next to the stop / disk-quota buttons.
 //
-// ⚠️ Same body as /api/cost/me on purpose — one aggregation, one shape, so the Console
+// Same body as /api/cost/me on purpose — one aggregation, one shape, so the Console
 // can render both with the same component and the two can never drift apart.
 //
-// ⚠️ The store lookup is scoped by MEMBERSHIP ONLY, deliberately: tenantAdminFor plus
+// The store lookup is scoped by MEMBERSHIP ONLY, deliberately: tenantAdminFor plus
 // resolveMember have already proved this member belongs to this tenant, and passing the
 // tenant as well would hide spend whose row lost its tenant_id — which happens to anyone
 // whose workspace was destroyed (tenantByMembership resolves what exists TODAY). That
@@ -453,9 +455,9 @@ func (a adminAPI) memberCloudCost(w http.ResponseWriter, r *http.Request) {
 // oneMemberCloudCost is the shared body of the two endpoints above: the days, the
 // services and the total for exactly one membership.
 //
-// ⚠️ Rows for the SHARED bucket carry an empty membership_id, so filtering by a real
+// Rows for the SHARED bucket carry an empty membership_id, so filtering by a real
 // membership excludes them by construction. That is what keeps a tenant_admin from
-// seeing the deployment's own infrastructure bill here (ADR 0048 決定 4) — it is not a
+// seeing the deployment's own infrastructure bill here (ADR 0048 decision 4) — it is not a
 // field this handler has to remember to omit.
 func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, membershipID string) {
 	from, to, aerr := usageRange(r)
@@ -494,15 +496,15 @@ func (a adminAPI) oneMemberCloudCost(w http.ResponseWriter, r *http.Request, mem
 // cloudCost (GET /api/admin/cloud-cost?from=&to=&tenant=) — per-member totals for an
 // admin.
 //
-// ⚠️ The SHARED bucket is super_admin only. It is the deployment's own infrastructure
+// The SHARED bucket is super_admin only. It is the deployment's own infrastructure
 // bill (ALB, RDS, Route53, NAT, the CP's own task), which is information about the
 // deployment rather than about a tenant — handing it to a tenant_admin would be reading
-// outside their tenant, the same line ADR 0043 決定 24/25 draws.
+// outside their tenant, the same line ADR 0043 decision 24/25 draws.
 //
-// ★ 予約メンバーシップ（system_tenant.go）の分もここで SHARED に足す。取り込み側
-// （fetch）は既に畳んでいるが、畳むようになったのは窓（既定 7 日）の中だけで、それより
-// 古い行は membership 付きのまま残っている。この 1 行が無いと、過去の月を見たときだけ
-// 「af-golden-seed」という人がメンバー一覧に現れる。
+// Reserved memberships (system_tenant.go) are folded into SHARED here as well. Ingestion
+// folds them too, but only within the trailing window (7 days by default); older rows
+// still carry their membership. Without this, a past month shows a "member" called
+// af-golden-seed in the list.
 func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 	tenantID, ok := a.tenantScope(w, r)
 	if !ok {
@@ -518,7 +520,8 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// 引けなければ畳まないだけ（費用画面を落とすほどの話ではない）。
+	// If the set cannot be resolved we just do not fold — not worth failing the cost
+	// view over.
 	system, _ := a.mgr.systemMembershipIDs(r.Context())
 	deploymentWide := tenantID == "" // tenantScope already proved super_admin for this
 	members := make([]map[string]any, 0, len(totals))

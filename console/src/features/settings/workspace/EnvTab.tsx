@@ -10,15 +10,15 @@ import { usePolling } from "../parts/usePolling.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { pinDrift } from "../../../lib/pinDrift.ts";
 
-// EnvTab (ツールチェーン) selects the workspace toolchains: timezone, node (via nvm),
+// EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
 // the agent-CLI self-update opt-in. Reads/writes via the Agent, so the workspace must
 // be running. Changes apply to sessions/shells started AFTER the change (the Agent
 // injects the selection at launch); already-running ones and the agent process itself
 // pick it up on the next Stop → Start. The destructive lifecycle actions (recreate /
-// clean home) live in their own 危険な操作 tab (DangerTab), and the preview-subdomain
-// settings that used to sit at the bottom of this tab are now their own
-// プレビュー用サブドメイン tab (PreviewTab) — shown only where they are issued.
+// clean home) live in their own "dangerous operations" tab (DangerTab), and the
+// preview-subdomain settings are their own "preview subdomain" tab (PreviewTab) — shown
+// only where they are issued.
 export function EnvTab() {
   const tr = useT();
   const toast = useToast();
@@ -168,12 +168,12 @@ function HostUpdateSection() {
   );
 }
 
-// ToolVersions: バンドルツール（claude / opencode / codex / rtk / gh / go / node /
-// python）の版を「実効（PATH 解決）/ イメージ焼き込み / ~/.local override」の 3 観点で
-// 表示する read-only セクション。PATH は ~/.local/bin が優先なので実効≠イメージが
-// 起こり得る（override バッジ）。ビルド時ピンとのずれは方向つきで色分けする
-// （ピンより古い＝warn / 新しい＝accent、pinDrift）。Agent 経由なので workspace が
-// 起動中のときだけ取れる。
+// ToolVersions is a read-only section showing the bundled tools (claude / opencode /
+// codex / rtk / gh / go / node / python) from three angles: effective (what PATH
+// resolves), baked into the image, and a ~/.local override. ~/.local/bin comes first on
+// PATH, so effective ≠ image is possible (the override badge). Drift from the build-time
+// pin is coloured by direction (older than the pin = warn, newer = accent; pinDrift).
+// Served through the Agent, so it is only available while the workspace is running.
 function ToolVersions({ running }: { running: boolean }) {
   const tr = useT();
   const [tv, setTv] = useState<any>(null);
@@ -196,8 +196,9 @@ function ToolVersions({ running }: { running: boolean }) {
     return <span title={bin.path + (bin.raw ? "\n" + bin.raw : "")}>{bin.version || bin.raw || "?"}</span>;
   };
 
-  // ピンずれバッジ（方向つき色分け）: ピンより古い＝warn（更新が届いていない・kiro の
-  // 固着型）、新しい＝accent（自己更新などの前進・想定内）。一致/判定不能は出さない。
+  // Pin-drift badge, coloured by direction: older than the pin = warn (an update never
+  // arrived — the kiro "stuck" shape), newer = accent (self-update and other expected
+  // moves forward). Nothing is shown when the versions match or cannot be compared.
   const pinBadge = (bin: any, pin: string) => {
     const d = pinDrift(bin?.version, pin);
     if (d !== "behind" && d !== "ahead") return null;
@@ -246,15 +247,17 @@ function ToolVersions({ running }: { running: boolean }) {
                       override
                     </span>
                   )}
-                  {/* 実効とピンのずれ（lean/焼き込みどちらの variant でも出す。cursor の
-                      sha 接尾辞付きピンなどの版形状差は pinDrift が吸収する） */}
+                  {/* Drift between effective and the pin, shown for both the lean and the
+                      baked variant; pinDrift absorbs version-shape differences such as
+                      cursor's sha-suffixed pin. */}
                   {pinBadge(t.effective, t.pin)}
                 </td>
-                {/* ピンは versions.json 由来なので焼き込み実体が無くても出せる。lean
-                    variant（BAKE_AGENT_CLIS=0）は /usr/local に CLI を焼かないので
-                    baked=null になり、以前はこの列が「—」だけでピンが見えなかった。
-                    焼き込み有り: 実体の版（ピンとズレていればバッジ併記）。
-                    焼き込み無し + ピン有り: 実体が無いことを括弧付きの版で表す。 */}
+                {/* The pin comes from versions.json, so it can be shown even with nothing
+                    baked: the lean variant (BAKE_AGENT_CLIS=0) bakes no CLI into
+                    /usr/local, leaving baked=null, and this column would otherwise be a
+                    bare "—" with the pin invisible. Baked: the real version (with a badge
+                    when it drifts from the pin). Not baked but pinned: the pin in
+                    parentheses, marking that nothing is on disk. */}
                 <td>
                   {!t.baked && t.pin ? (
                     <span className="tool-ver-pin-only" title={tr("env.pin_only_title")}>

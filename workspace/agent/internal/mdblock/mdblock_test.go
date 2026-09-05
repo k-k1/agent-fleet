@@ -17,7 +17,7 @@ func TestSetAppendsAndReplacesInPlaceOfItsOwnBlock(t *testing.T) {
 	}
 }
 
-// ★ 本命の回帰: マーカー外（利用者が書いた文章）を絶対に消さない。
+// The regression that matters: text outside the markers, written by the user, is never lost.
 func TestSetPreservesTextOutsideMarkers(t *testing.T) {
 	base := "# my own notes\n\nalways speak Japanese\n"
 	s := Set(base, "user-notes", "hello")
@@ -70,7 +70,8 @@ func TestStripUnknownBlockIsNoop(t *testing.T) {
 	}
 }
 
-// 移行の要: cp -f 時代の生のフリート方針を1度だけ剥がし、AF ブロックは残す。
+// The crux of the migration: strip the raw fleet policy left by the cp -f era exactly once,
+// while keeping the AF blocks.
 func TestStripLegacyPrefixDropsOldCopyKeepsBlocks(t *testing.T) {
 	fleet := "# Workspace Guide (operating policy)\n\nold body\n"
 	start, end := Markers("rtk")
@@ -89,7 +90,7 @@ func TestStripLegacyPrefixLeavesUserWrittenText(t *testing.T) {
 	if out := StripLegacyPrefix(s, "# Workspace Guide (operating policy)\n"); out != s {
 		t.Fatalf("user text must never match the legacy signature:\n%s", out)
 	}
-	// フリート方針が読めない環境（legacy 空）では何も剥がさない。
+	// Where the fleet policy cannot be read (empty legacy), strip nothing.
 	if out := StripLegacyPrefix(s, ""); out != s {
 		t.Fatalf("empty legacy must be a no-op:\n%s", out)
 	}

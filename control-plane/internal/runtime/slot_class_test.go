@@ -1,8 +1,7 @@
-// slot_class_test.go — スロットクラスの宣言・配置・タスク定義（slot_class_test.go 由来）。
-//
-// parseSlotClasses と ec2PoolConfig を未公開のまま組み立てるので、実装と同じ
-// パッケージにしか置けない。CP 側の取り分（resolveSlotClass の連鎖・user_limit の
-// 往復・マイグレーションの版番号）は control-plane/slot_class_test.go に残っている。
+// Slot class declaration, placement and task definition. These tests build
+// parseSlotClasses and ec2PoolConfig while both stay unexported, so they can only live in
+// the implementation's own package; the CP-side half (the resolveSlotClass chain, the
+// user_limit round trip, migration version numbers) is in control-plane/slot_class_test.go.
 package runtime
 
 import (

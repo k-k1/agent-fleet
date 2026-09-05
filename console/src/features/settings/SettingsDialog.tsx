@@ -1,5 +1,5 @@
 // SettingsDialog — per-user settings, organised into a grouped LEFT RAIL
-// (個人設定 / 接続 / ワークスペース) beside a scrolling content pane. The old flat
+// (personal / connections / workspace) beside a scrolling content pane. The old flat
 // single-row segmented tab bar didn't scale past ~6 tabs; grouping makes the three
 // audiences (personal prefs / external connections / workspace infra) legible and
 // keeps the rail from overflowing. Super_admin (tenant/member/quota) management lives
@@ -24,9 +24,9 @@ import { DisplayTab } from "./personal/DisplayTab.tsx";
 import { AccountTab } from "./personal/AccountTab.tsx";
 import { KeysTab } from "./personal/KeysTab.tsx";
 import { EnvTab } from "./workspace/EnvTab.tsx";
-// プレビュー用サブドメイン（docs/log/81）。ツールチェーンの一節だったが、公開範囲を
-// 決める設定が言語のバージョン選択の下にあるのは見つけにくいので独立させた。
-// ★ 発行されるデプロイでしかレールに出さない（usePreviewAvailable）。
+// Preview subdomains (docs/log/81). Its own section rather than part of the toolchain one:
+// a setting that decides who can reach the app is undiscoverable under a language version
+// picker. Only shown in the rail on deployments that issue them (usePreviewAvailable).
 import { PreviewTab, usePreviewAvailable } from "./workspace/PreviewTab.tsx";
 import { AgentsTab } from "./agents/AgentsTab.tsx";
 import { AssistantTab } from "./personal/AssistantTab.tsx";
@@ -45,12 +45,12 @@ import { InternalReposTab } from "./workspace/InternalReposTab.tsx";
 import { BackupTab } from "./workspace/BackupTab.tsx";
 import { NotificationsTab } from "./personal/NotificationsTab.tsx";
 import { MemoryTab } from "./memory/MemoryTab.tsx";
-// 使用量タブは features/usage の View をそのまま差す薄いラッパ（モーダル非依存に
-// 保つ＝将来ペインへ昇格させるときに同じ View を差し替えなしで使える。docs/log/46 §5）。
+// The usage tab is a thin wrapper around the features/usage view, kept independent of the modal
+// so the same view can be promoted to a pane unchanged (docs/log/46 §5).
 import { UsageView } from "../usage/UsageView.tsx";
-// クラウド費用は AWS の請求がある時だけの面（docs/log/67 §67.8）。トークンの「使用量」の
-// 隣に置くが、同じパネルには入れない——時間と $ を並べると、片方が実測でもう片方が
-// 請求である差が消える（ADR 0048 決定 5）。
+// Cloud cost only exists where there is an AWS bill (docs/log/67 §67.8). It sits next to token
+// usage but never in the same panel: putting hours and dollars side by side hides that one is
+// measured and the other is billed (ADR 0048 decision 5).
 import { MyCloudCostView, useCostProfile } from "../cost/CloudCostView.tsx";
 import { MyUptimeView } from "../usage/UptimeHeatmap.tsx";
 
@@ -66,8 +66,9 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["tts", "set.tab_tts"],
       ["notifications", "set.tab_notifications"],
       ["assistant", "set.tab_assistant"],
-      // AI 補助（docs/log/84）。アシスタントの隣なのは「LLM を呼ぶ設定」という近さで、
-      // 中身は別物 — チャットではなく、セッション・ミラー・File ペインの一発生成。
+      // AI assist (docs/log/84). Next to the assistant because both are "settings that call an
+      // LLM", but a different thing: one-shot generation in the session, mirror and File panes
+      // rather than a chat.
       ["aiassist", "set.tab_aiassist"],
       ["instructions", "set.tab_instructions"],
     ],
@@ -91,8 +92,8 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
     items: [
       ["usage", "set.tab_usage"],
       ["cost", "set.tab_cost"],
-      // 稼働時間（docs/log/83）。使用量＝トークン、クラウド費用＝金額、ここ＝占有。
-      // 3 つ並べるのは、そのどれを見たいのかが人によって違うから。
+      // Uptime (docs/log/83). Usage = tokens, cloud cost = money, this = occupancy; all three
+      // are offered because which one a person wants to see differs.
       ["uptime", "set.tab_uptime"],
       ["memory", "set.tab_memory"],
       ["env", "set.tab_env"],
@@ -109,12 +110,12 @@ const ALL_SECTIONS = GROUPS.flatMap((g) => g.items.map(([k]) => k));
 export function SettingsDialog() {
   const tr = useT();
   const costProfile = useCostProfile();
-  // null（判定中）のあいだは出さない —— 出してから消える項目を作らないため。
+  // Hidden while null (still deciding), so no rail item appears and then disappears.
   const previewAvail = usePreviewAvailable();
   const closeSettings = useSettingsUI((s) => s.closeSettings);
   const settingsSection = useSettingsUI((s) => s.settingsSection);
   // Initial section comes from the store (a requested deep-link, else the restored
-  // last-opened one, else 表示). Guard against a stale stored key from an older build.
+  // last-opened one, else Display). Guard against a stale stored key from an older build.
   const [section, setSection] = useState(
     ALL_SECTIONS.includes(settingsSection) ? settingsSection : "display",
   );
@@ -127,7 +128,7 @@ export function SettingsDialog() {
   useBackClose(() => setEntered(false), mobileMatches() && entered);
 
   // Follow programmatic section requests (openSettings(section) called while the modal
-  // is already open) — e.g. a cross-tab pointer like Copilot → Gitホスティング or
+  // is already open) — e.g. a cross-tab pointer like Copilot → Git hosting or
   // CloudWatch → AWS SSM jumps the rail to the target and drills in on mobile. Skip
   // the mount pass so a newly opened phone modal still begins at the list.
   const mountedSettingsSection = useRef(false);
@@ -143,7 +144,7 @@ export function SettingsDialog() {
   }, [settingsSection]);
 
   // Remember the last-opened section (localStorage) so reopening lands here; the store's
-  // openSettings() restores it on the next open (first-ever open defaults to 表示).
+  // openSettings() restores it on the next open (first-ever open defaults to Display).
   useEffect(() => {
     rememberSettingsSection(section);
   }, [section]);
@@ -211,14 +212,14 @@ export function SettingsDialog() {
             {section === "git" && <GitTab />}
             {section === "usage" && <UsageView />}
             {section === "cost" && costProfile?.available && <MyCloudCostView />}
-            {/* ⚠️ 費用と違い、能力の確認は要らない。占有はどのランタイムでも記録される
-                （AWS の請求が無いデプロイでも「いつ動いていたか」は在る）。 */}
+            {/* Unlike cost, this needs no capability check: occupancy is recorded on every
+                runtime, so even a deployment with no AWS bill knows when it was running. */}
             {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
             {section === "env" && <EnvTab />}
-            {/* ⚠️ レールから隠していても、前回開いたタブの記憶で section だけが残ることが
-                ある。PreviewTab 自身も previewDomain を見て「このデプロイには無い」と
-                言うので、ここでは能力の確認を重ねない（費用と違い、白紙にはならない）。 */}
+            {/* Hidden from the rail, the section can still survive in the remembered last-opened
+                tab. PreviewTab itself checks previewDomain and says the deployment has none, so
+                the capability check is not repeated here — unlike cost, it never goes blank. */}
             {section === "preview" && <PreviewTab />}
             {section === "ssm" && <SsmTab />}
             {section === "ops" && <OpsTab />}

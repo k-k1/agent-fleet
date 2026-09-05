@@ -10,10 +10,10 @@ import (
 
 // Regression lock for the 2026-07-22 plan-approval bug.
 //
-// Symptom: the Console's 却下 button drove claude's ExitPlanMode select menu by a fixed
+// Symptom: the Console's Reject button drove claude's ExitPlanMode select menu by a fixed
 // keystroke offset ("Down Down Down Enter", aiming at the 4th "Tell Claude what to
 // change" row). On a SHORTER, wrapping menu those Downs wrapped back onto a "Yes" row,
-// so 却下 silently APPROVED the plan.
+// so Reject silently APPROVED the plan.
 //
 // Root cause is a CLI contract the frontend can't see: the ExitPlanMode menu's option
 // count/order is version-dependent. This test pins the KNOWN shapes and asserts the

@@ -1,11 +1,11 @@
 // Client-side log of important toasts (errors + destructive-action results) so they can
 // be reviewed in the notification center AFTER the transient toast is gone. Trivial toasts
-// ("コピーしました" 等) are NOT logged — they stay purely ephemeral. The producer is the
+// (a "copied" confirmation and the like) are NOT logged — they stay purely ephemeral. The producer is the
 // ToastProvider (toast() with persist), the consumer is the NotificationCenter, which
 // merges these with the server-driven fleet notifications by time.
 //
 // Purely local (localStorage, key af.toastLog) — a copy failure / local delete has no
-// server event, and this must render instantly with no fetch. Pruned to the same 過去7日間
+// server event, and this must render instantly with no fetch. Pruned to the same 7-day
 // window the panel advertises, capped at MAX so the store can't grow unbounded.
 import { create } from "zustand";
 
@@ -21,7 +21,7 @@ export interface ToastLogItem {
 
 const KEY = "af.toastLog";
 const MAX = 50;
-const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // 過去7日間（通知パネルの表示窓に合わせる）
+const MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000; // last 7 days, matching the panel's advertised window
 
 function prune(items: ToastLogItem[]): ToastLogItem[] {
   const cutoff = Date.now() - MAX_AGE_MS;

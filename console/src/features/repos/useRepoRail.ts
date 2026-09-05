@@ -36,15 +36,17 @@ export interface RepoRailContext {
   activeSession: string | null;
 }
 
-// api/connections は各エージェントの認証チェックへシェルアウトする重い呼び出し（~1.5-2s）で、
-// このフックは常駐 3 コンポーネント（ProjectTree / OtherSessionsSection / StartHost）から
-// 同時に呼ばれる。素朴に fetch すると同じ問い合わせが 3 重に飛ぶので、in-flight の Promise を
-// モジュールレベルで共有して同時マウント分を 1 本に相乗りさせる（解決後は捨てる — 後からの
-// マウントは従来どおり取り直す）。相乗りは同一キーに限る: キーは connTick（設定での接続/解除）
-// と WS の running を含むので、変更前のスナップショットで確定して解除済みエージェントが起動
-// メニューに残り続けることはない。失敗は null に畳む（呼び手の settle 契約）。
+// api/connections shells out to every agent's auth check and is expensive (~1.5-2s), and this
+// hook is called at the same time by three always-mounted components (ProjectTree /
+// OtherSessionsSection / StartHost). A naive fetch would send the same query three times, so
+// the in-flight promise is shared at module level and concurrent mounts ride on one request
+// (dropped once it resolves — a later mount fetches again as before). Sharing is limited to
+// the same key: the key includes connTick (connect/disconnect in Settings) and the workspace's
+// running flag, so a disconnected agent cannot linger in the launch menu on a pre-change
+// snapshot. Failures collapse to null (the caller's settle contract).
 let connsInflight: { key: string; p: Promise<ConnectionsStatus | null> } | null = null;
-// 系列の世代。新しいキーで走り出したら古い系列の取り直しは用済み（間隔待ちが明けた時点で降りる）。
+// Series generation. Once a newer key starts, retries from the old series are pointless and
+// stand down as soon as their interval elapses.
 let connsSeries = 0;
 
 function connsOnce(): Promise<ConnectionsStatus | null> {
@@ -53,9 +55,10 @@ function connsOnce(): Promise<ConnectionsStatus | null> {
     .catch(() => null);
 }
 
-// WS が居ないと分かっているなら粘らない — Agent が応答しないのは当然で、running へ戻った
-// ときに下の effect が新しいキーで取り直す。まだ分からない状態（"…" / "unknown" / "starting"）
-// は粘る側に倒す（起動途中の 502 こそが取り直したいケース）。
+// Do not keep retrying when the workspace is known to be down — the Agent cannot answer, and
+// the effect below refetches with a new key once it is running again. States that are not yet
+// known ("…" / "unknown" / "starting") fall on the retrying side: the 502 during boot is
+// exactly the case worth retrying.
 function wsGone(): boolean {
   const st = useWorkspaceStore.getState().state;
   return st === "stopped" || st === "none";
@@ -86,11 +89,12 @@ export function useRepoRailContext(): RepoRailContext {
   // pickers for the whole window — long enough to actually launch an unusable session.
   const [connsDone, setConnsDone] = useState(false);
   // connTick bumps after a connect/disconnect in Settings; refetch so a newly
-  // authenticated agent lights up in the 起動 menu without a full reload.
+  // authenticated agent lights up in the launch menu without a full reload.
   const connTick = useSettingsUI((s) => s.connTick);
-  // running も取得のキーに入れる: WS が上がった瞬間に取り直す。起動直後は Agent がまだ
-  // listen しておらず 502 になるので（connsRetry が数回粘るが、boot-install の長い起動は
-  // それでも足りない）、running への遷移そのものを「今なら答えが返る」合図として使う。
+  // running is part of the fetch key too, so the answer is refetched the moment the workspace
+  // comes up. Right after a start the Agent is not listening yet and the call 502s (connsRetry
+  // retries a few times, but a long boot-install outlasts that), so the transition into
+  // running is itself the signal that an answer is available now.
   useEffect(() => {
     let alive = true;
     setConnsDone(false); // a refetch re-opens the unknown window
@@ -108,7 +112,7 @@ export function useRepoRailContext(): RepoRailContext {
   // Gate on a KNOWN-available answer: until the fetch settles, and if it failed (conns
   // null — we cannot prove any agent is usable), the launch pickers stay empty rather
   // than offering agents that would fail on launch. connsSettling lets the pickers say
-  // "確認中" instead of rendering a bare empty box.
+  // "checking" instead of rendering a bare empty box.
   const ready = (k: string) => connsDone && !!conns && agentOf(k).available({ conns });
   const launchKinds = repoLaunchKinds.filter(ready);
   const connsSettling = !connsDone;

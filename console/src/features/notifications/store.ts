@@ -76,31 +76,33 @@ async function deliver(n: FleetNotification): Promise<void> {
   if (n.kind === "usage-reset") {
     if (s.usageResetNotify && s.ttsEnabled) announce(text.speech, text.body, undefined, "", "usage-notification");
   } else if (s.ttsSessionNotify) {
-    // ⚠️ target.id を自分のセッション名として声色を引くので、共有セッション宛（引き継ぎ）は
-    // 通さない。他人のセッション id で voice を引くと、無関係な設定が当たる。
+    // The voice is looked up from target.id as one of our own session names, so a notification
+    // aimed at a shared session (a handoff) must not take it: looking up a voice by someone
+    // else's session id would apply unrelated settings.
     const mine = n.target.type === "session";
     announce(text.speech, n.displayName, mine ? sessionVoiceOpts(n.target.id) : undefined, mine ? n.target.id : "", "session-notification");
   }
 }
 
-// NotificationOpenResult は「開けたか」だけでなく「**宛先の会話がもう無い**」を返す。
-// 通知は Control Plane に 7 日残るのに会話は消えうる（利用者の削除、あるいはテストが
-// 実 HOME へ落とした幽霊通知）ので、開いた先が「会話が見つかりません」の赤字ペインで
-// 行き止まりになる——押した人には、消えたのか壊れたのかも、どの会話だったのかも分からない。
-// missingConversation はその場合だけ立ち（値は会話名。無題なら空文字）、呼び出し側が
-// 理由を出す。
+// NotificationOpenResult reports not only whether the target opened, but also that the target
+// conversation is gone. A notification lives 7 days in the Control Plane while the conversation
+// can disappear (the user deleted it, or a test wrote a ghost notification into the real HOME),
+// so clicking would dead-end in a red "conversation not found" pane that says neither whether it
+// was deleted or broken, nor which conversation it was. missingConversation is set only in that
+// case (its value is the conversation name, empty when untitled) and the caller states the
+// reason.
 export interface NotificationOpenResult {
   opened: boolean;
   missingConversation?: string;
 }
 
-// conversationReachable は chatGet の結果を「その会話をこのまま開いてよいか」に畳む。
-// ⚠️ **「取れなかった＝消えた」ではない**。WS の起動中に CP が返す 5xx も、通信断で
-// reject した場合（呼び出し側が null にする）も、会話は生きている — ChatView が再試行して
-// 開く経路なので、ここで「消えた」と判定するとセッションへ飛ばして利用者を混乱させる。
-// 消えたと言えるのは **4xx（chat_conversation_not_found）で解決したとき**だけ。
+// conversationReachable folds a chatGet result into "may this conversation be opened as is".
+// A failed fetch does not mean the conversation is gone: the 5xx the CP returns while the WS is
+// starting, and a rejection from a dropped connection (which the caller turns into null), both
+// leave the conversation alive — ChatView retries and opens it, so deciding "gone" here would
+// divert the user to a session instead. Only a 4xx (chat_conversation_not_found) proves it.
 export function conversationReachable(res: unknown): boolean {
-  if (!res) return true; // throw（通信断）— 恒久的に無いことの証拠にはならない
+  if (!res) return true; // a throw (dropped connection) is no proof of permanent absence
   if (typeof (res as { id?: string }).id === "string" && (res as { id?: string }).id) return true;
   return isTransientErr(res);
 }
@@ -110,18 +112,18 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   // session (docs/log/30) — the conversation id rides the payload.
   if ((n.kind === "session-report" || n.kind === "chat-auto-paused" || n.kind === "chat-context-pressure" || n.kind === "chat-context-overflow") && typeof n.payload.conversation_id === "string" && n.payload.conversation_id) {
     const convID = n.payload.conversation_id;
-    // 取得は「恒久的に無い」ことの確認にだけ使う。WS 起動中の 5xx や通信断（throw）は
-    // ChatView 側の再試行に任せてそのまま開く —— ここで「消えた」と判定すると、起動待ちの
-    // 一瞬に押しただけでセッションへ飛ばされる。
+    // The fetch is only used to confirm permanent absence. A 5xx while the WS starts, or a
+    // dropped connection (throw), is left to ChatView's retry and the conversation is opened
+    // anyway — judging "gone" here would divert anyone who clicked during the boot window.
     const conv = await chatGet(convID).catch(() => null);
     if (conversationReachable(conv)) {
       openChat(convID);
       return { opened: true };
     }
-    // 会話は本当に無い。session-report なら報告元セッション（target.id）が残っていること
-    // があるので、そこへ落とす。他の kind は宛先が会話しかない。
-    // 理由はここで言う（OS 通知からのクリックも同じ経路を通るので、UI 層へ返して各所で
-    // 出し分けると片方が無言になる）。
+    // The conversation really is gone. For session-report the reporting session (target.id) may
+    // still exist, so fall back to it; the other kinds have no destination but the conversation.
+    // The reason is stated here because a click on an OS notification takes the same path, and
+    // leaving it to each UI layer would leave one of them silent.
     const title = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
     const label = title || tr("noti.conversation_untitled");
     const r = n.kind === "session-report" ? await openNotificationSession(n, split) : { opened: false };
@@ -135,17 +137,18 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     openRepoScm(n.payload.repo);
     return { opened: true };
   }
-  // メンバーから受け取った引き継ぎ（docs/log/77）。行き先は自分のセッションではなく**共有ビュー**
-  // なので、下の session 解決には落とせない。共有が切れたあとは開けないが、それは正しい
-  // （offer は共有 ACL の派生物で、ACL が消えれば本文も消えている）。
+  // A handoff received from another member (docs/log/77). Its destination is the shared view,
+  // not one of our own sessions, so it must not fall through to the session resolution below.
+  // It stops opening once the share is revoked, which is correct: the offer derives from the
+  // share ACL, and when the ACL is gone so is the content.
   if (n.kind === "handoff-offer" && typeof n.payload.catalogId === "string" && n.payload.catalogId) {
     openSharedSession(n.payload.catalogId, split);
     return { opened: true };
   }
-  // 定時実行の失敗/スキップ（docs/log/38）。行き先はセッションではなく左レールの
-  // スケジュール行で、しかも**実行履歴**——「なぜ動かなかったのか」はそこにしか無い。
-  // 落ちた発火にはそもそもセッションが存在しないので、下の session 解決には落とせない
-  // （落とすと「該当セッションは一覧にありません」という無関係な警告で終わる）。
+  // A failed or skipped scheduled run (docs/log/38). The destination is the schedule row in the
+  // left rail and specifically its run history, the only place that answers "why didn't it run".
+  // A failed firing has no session at all, so this must not fall through to the session
+  // resolution below, which would end in an unrelated "session not in the list" warning.
   if (n.target.type === "schedule" && n.target.id) {
     useSchedulesStore.getState().revealSchedule(n.target.id);
     return { opened: true };
@@ -153,9 +156,9 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
   return openNotificationSession(n, split);
 }
 
-// openNotificationSession は通知の target（セッション）を開く。上の kind 別の行き先が
-// どれも当てはまらなかったときの既定の解決であり、**宛先の会話が消えていた報告**の
-// フォールバックでもある（報告元セッションは残っていることが多い）。
+// openNotificationSession opens the notification's target session. It is both the default
+// resolution when none of the per-kind destinations above applied, and the fallback for a report
+// whose target conversation is gone (the reporting session usually still exists).
 async function openNotificationSession(n: FleetNotification, split: boolean): Promise<NotificationOpenResult> {
   if (n.target.type !== "session" || !n.target.id) return { opened: false };
   let session = useSessionsStore.getState().sessions.find((s) => s.name === n.target.id);

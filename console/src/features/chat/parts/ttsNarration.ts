@@ -8,59 +8,64 @@ import { emotionOpts, voiceCharName } from "./ttsVoices.ts";
 import { MAX_INFLIGHT, audioCtx, connectOutput, heardProvider, outputVolume, synthToBuffer } from "./ttsAudio.ts";
 import { notifyStopped, preemptActive, takeAnnounce } from "./ttsPlay.ts";
 
-// --- 朗読モード（docs/log/24）: ファイル本文を冒頭から順次読み上げ＋カラオケ追従 --------------
-// units（各ブロックのプレーンテキスト）を上から順に合成・再生し、再生を開始した unit の index を
-// onUnit で通知する（呼び手＝FileView がその要素をハイライト＋スクロールする）。startTts と同じ
-// 合成・順次再生・グローバル 1 本再生の仕組みを流用しつつ、一時停止/再開（AudioContext の
-// suspend/resume）と unit 単位の進捗通知を持つ点が異なる。
+// --- Narration mode (docs/log/24): read a file's body from the top, with karaoke follow ---
+// units (the plain text of each block) are synthesised and played in order, and the index of
+// the unit that starts playing is reported through onUnit, which the caller (FileView) uses to
+// highlight and scroll that element. It reuses startTts's synthesis, sequential playback and
+// single-global-playback machinery, but adds pause/resume (AudioContext suspend/resume) and
+// per-unit progress reporting.
 
 export interface NarrationHandle {
   pause(): void;
   resume(): void;
   stop(reason?: TtsStopReason): void;
   isPaused(): boolean;
-  // 声の即時切替（朗読ビューのセレクト）。いま鳴っている文はそのまま、次の文から新しい声。
+  // Immediate voice switch (the narration view's select). The sentence currently playing is
+  // left alone; the new voice starts with the next one.
   setVoice(voice?: Partial<TtsOptions>): void;
 }
 
 export function startNarration(
   units: string[],
   source: string,
-  // onUnit(i) = i 番目の unit の再生を開始。onUnit(null, reason) = 終了（done=自然終了 /
-  // explicit=明示停止、replaced=他の再生への置き換え。ミラーの自動読み上げキューが
-  // 継続可否の判断に使う）。
+  // onUnit(i) = unit i started playing. onUnit(null, reason) = finished: done (natural end),
+  // explicit (stopped on purpose), replaced (another playback took over). The mirror's
+  // auto-read queue uses the reason to decide whether to continue.
   onUnit: (i: number | null, endReason?: TtsEndReason) => void,
-  // 声の上書き（セッションごとの声 sessionVoiceOpts 等）。未指定は設定の話者。
+  // Voice override (per-session sessionVoiceOpts and the like). Unset means the speaker from
+  // settings.
   voice?: Partial<TtsOptions>,
-  // unit ごとの前拍（秒）。リスト項目・段落頭など「新しいブロックの最初の文」に BLOCK_BEAT を
-  // 渡すと、読む前に一拍おく（先頭 unit の前拍は開始遅延になるだけなので無視する）。
+  // Per-unit lead-in beat, in seconds. Passing BLOCK_BEAT for the first sentence of a new
+  // block (list item, paragraph head) inserts a beat before reading it. The first unit's beat
+  // is ignored, since it would only delay the start.
   preGaps?: number[],
-  // 発生元セッション名（左ペインの再生中アイコン用。非セッションの朗読は ""）。
+  // Originating session name, for the left pane's playing icon. Empty for non-session
+  // narration.
   sessionName = "",
 ): NarrationHandle {
-  preemptActive(); // グローバル 1 本（既存の再生を止める・キューは温存）
+  preemptActive(); // one global playback: stop what is playing, keep the queue
   const ctx = audioCtx();
   const s = getSettings();
-  let opts = { ...ttsOptsFromSettings(s), ...voice }; // let: setVoice で差し替わる
-  const userDict = effectiveDict(); // ユーザー＋テナント共通辞書（ユーザー優先）
+  let opts = { ...ttsOptsFromSettings(s), ...voice }; // let: setVoice replaces it
+  const userDict = effectiveDict(); // user plus tenant-wide dictionary (user wins)
 
-  // 各 unit を読み上げ用にクリーン化（Markdown 記法/URL 除去 + コード片の省略読み +
-  // ユーザー辞書）。空になった unit（コード等）は "" のまま残し、原 index を保つ
-  // （再生・ハイライトを飛ばす）。
+  // Clean each unit up for reading: strip markdown syntax and URLs, abbreviate code
+  // fragments, apply the user dictionary. A unit that ends up empty (pure code, say) stays
+  // "" so the original indices are preserved; playback and highlighting skip it.
   const codeOpts = { abbrev: s.ttsAbbrevCode, dict: userDict };
   const texts = units.map((u) => {
     let t = plainify(u, codeOpts).trim();
-    if (t) t = localizedReadings(t, userDict, s.ttsParticlePause); // 辞書 → 読み補正 → 助詞の小休止
+    if (t) t = localizedReadings(t, userDict, s.ttsParticlePause); // dictionary -> reading fixups -> particle pauses
     return t;
   });
 
-  const buffers = new Map<number, AudioBuffer | null>(); // index → 復号済み（null=空/失敗）
+  const buffers = new Map<number, AudioBuffer | null>(); // index -> decoded buffer (null = empty or failed)
   const acs = new Set<AbortController>();
-  let synthAt = 0; // 次に合成を仕掛ける index
-  let cursor = 0; // 次に再生する index
-  let epoch = 0; // 声の世代（setVoice で進む。古い声の合成結果を無効化する）
-  // 実際に合成したプロバイダ（X-TTS-Provider）。auto の行き先は CP が決めるので、最初の
-  // ユニットが返るまで分からない。分かった時点で TopBar の声表示を名乗り直す。
+  let synthAt = 0; // index to synthesise next
+  let cursor = 0; // index to play next
+  let epoch = 0; // voice generation, bumped by setVoice to invalidate older syntheses
+  // The provider that actually synthesised (X-TTS-Provider). CP decides where auto goes, so
+  // this is unknown until the first unit comes back; restate TopBar's voice label then.
   let heard = "";
   const noteHeard = (ab: AudioBuffer) => {
     const h = heardProvider(ab);
@@ -92,8 +97,9 @@ export function startNarration(
     if (!stopped && !playing && inflight === 0 && cursor >= texts.length) finish("done");
   };
 
-  // in-flight 上限まで先読み合成。空 unit は即 null。結果はエポック一致時だけ採用
-  // （setVoice 後に届いた古い声の合成を鳴らさない）。
+  // Synthesise ahead up to the in-flight limit; an empty unit becomes null at once. A result
+  // is accepted only when its epoch still matches, so a stale voice that arrives after
+  // setVoice is never played.
   const pump = () => {
     while (!stopped && inflight < MAX_INFLIGHT && synthAt < texts.length) {
       const i = synthAt++;
@@ -122,10 +128,11 @@ export function startNarration(
     }
   };
 
-  // 声の即時切替（NarrationHandle.setVoice）。いま鳴っている文は触らず、次の文から新しい
-  // 声にする: 未再生の先読み分（buffers は再生済みを消しながら進むので残りは全部 cursor
-  // 以降）を捨て、次に鳴る文（cursor）から合成をやり直す。in-flight は abort しつつ、
-  // 応答順の競合はエポックで確実に無効化する。
+  // Immediate voice switch (NarrationHandle.setVoice): leave the sentence playing alone and
+  // start the new voice at the next one. Drop the unplayed read-ahead (buffers deletes played
+  // entries as it advances, so everything left is at or after cursor) and resynthesise from
+  // cursor. In-flight requests are aborted, and the epoch reliably invalidates any that race
+  // back out of order.
   const setVoice = (voice2?: Partial<TtsOptions>) => {
     if (stopped) return;
     opts = { ...ttsOptsFromSettings(getSettings()), ...voice2 };
@@ -134,17 +141,18 @@ export function startNarration(
     acs.clear();
     buffers.clear();
     synthAt = cursor;
-    heard = ""; // 声が変われば行き先も変わりうる。次のユニットの応答で名乗り直す
+    heard = ""; // a new voice may route elsewhere; restate from the next unit's response
     const st = useTtsStore.getState();
-    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // TopBar の声表示を更新
+    if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // refresh TopBar's voice label
     pump();
-    tryPlay(); // 再生が追いついて待っていた場合に備える
+    tryPlay(); // in case playback had caught up and was waiting
   };
 
-  // 告知の差し挟み（docs/log/24）: 長い朗読の途中でもセッション通知・確認の告知を待たせすぎない。
-  // ユニット境界で announce キューから 1 件取り出し、次のユニットの前にその場で読む。再生中は
-  // TopBar のラベル/声を告知側に差し替え、終わったら朗読のものへ戻す。停止・一時停止は朗読と
-  // 一体（同じ ctx・同じ adapter）。
+  // Interleaved announcements (docs/log/24): session notifications and confirmations must not
+  // wait out a long narration. At a unit boundary, take one item off the announce queue and
+  // read it before the next unit. While it plays, TopBar's label and voice swap to the
+  // announcement's and swap back afterwards. Stop and pause act on both together (same ctx,
+  // same adapter).
   const playInterlude = (a: { text: string; source: string; voice?: Partial<TtsOptions>; sessionName?: string; purpose?: "reading" | "session-notification" | "usage-notification" | "manual" }) => {
     let t = plainify(a.text, codeOpts).trim();
     if (t) t = localizedReadings(t, userDict, getSettings().ttsParticlePause);
@@ -153,17 +161,18 @@ export function startNarration(
       return;
     }
     const aopts = { ...ttsOptsFromSettings(getSettings()), ...a.voice };
-    let aheard = ""; // 告知側の実際の合成先（朗読本体の heard とは別に持つ）
+    let aheard = ""; // where the announcement actually synthesised, kept apart from narration's heard
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
       if (on) st.setActive(adapter, a.source, voiceCharName(aopts, aheard), a.sessionName ?? "", a.purpose ?? "reading");
-      else st.setActive(adapter, source, voiceCharName(opts, heard), sessionName); // 朗読側の名乗りへ戻す
+      else st.setActive(adapter, source, voiceCharName(opts, heard), sessionName); // back to the narration's label
     };
-    // 長い告知（要約など）も合成用に分割して順に鳴らす（1 回の合成が重いと無音の待ちになる）。
+    // Split a long announcement (a summary, say) for synthesis and play the pieces in order:
+    // one heavy synthesis call would be a silent wait.
     const pieces = splitLongSentence(t);
     let pi = 0;
-    playing = true; // 合成待ちの間も次ユニットの再生開始と maybeDone を抑える
+    playing = true; // hold off the next unit and maybeDone while synthesis is pending
     const playNext = () => {
       if (stopped) return;
       if (pi >= pieces.length) {
@@ -183,7 +192,7 @@ export function startNarration(
           return;
         }
         if (!ab) {
-          playNext(); // 失敗した片は飛ばして次へ
+          playNext(); // skip a failed piece
           return;
         }
         aheard = heardProvider(ab) || aheard;
@@ -196,7 +205,7 @@ export function startNarration(
           playNext();
         };
         cur = src;
-        src.start(ctx!.currentTime + (pi === 1 ? 0.15 : 0)); // 朗読との切れ目に小さな間（先頭の片のみ）
+        src.start(ctx!.currentTime + (pi === 1 ? 0.15 : 0)); // small gap from the narration, first piece only
         useTtsStore.getState().setSpeaking(true);
         useTtsStore.getState().setPreparing(false);
       });
@@ -204,11 +213,12 @@ export function startNarration(
     playNext();
   };
 
-  // 連番順に再生。空/失敗 unit は飛ばし、次に再生開始した unit を onUnit で通知。
+  // Play in index order, skipping empty and failed units, and report each newly started unit
+  // through onUnit.
   const tryPlay = () => {
     if (stopped || paused || playing || !ctx) return;
     if (cursor < texts.length) {
-      const a = takeAnnounce(); // 朗読の続きがあるときだけ差し挟む（最後は通常の直列へ）
+      const a = takeAnnounce(); // interleave only while narration continues; the tail runs plainly
       if (a) {
         playInterlude(a);
         return;
@@ -219,12 +229,12 @@ export function startNarration(
       buffers.delete(cursor);
       const idx = cursor;
       cursor++;
-      if (!ab) continue; // 空/失敗 → ハイライトせず次へ
+      if (!ab) continue; // empty or failed: move on without highlighting
       playing = true;
       onUnit(idx);
       useTtsStore.getState().setSpeaking(true);
-      useTtsStore.getState().setPreparing(false); // 音が出はじめた → 生成中を解除
-      noteHeard(ab); // 実際の合成先が分かったので TopBar の声表示を直す（auto のフォールバック）
+      useTtsStore.getState().setPreparing(false); // sound has started: clear "generating"
+      noteHeard(ab); // the real synthesis target is known now; fix TopBar's voice label (auto's fallback)
       const src = ctx.createBufferSource();
       src.buffer = ab;
       connectOutput(ctx, src, outputVolume(opts, heard), opts.paneId);
@@ -236,8 +246,8 @@ export function startNarration(
         maybeDone();
       };
       cur = src;
-      // ブロック頭の前拍。ハイライト（onUnit）は先に出るが、間が「次はここ」の予告に
-      // なるのでカラオケとしてはむしろ自然。
+      // Lead-in beat at the head of a block. The highlight (onUnit) lands first, but the gap
+      // reads as "next is here", which suits karaoke.
       const pre = idx > 0 ? (preGaps?.[idx] ?? 0) : 0;
       src.start(ctx.currentTime + pre);
       return;
@@ -250,13 +260,13 @@ export function startNarration(
   const pause = () => {
     if (stopped || paused) return;
     paused = true;
-    if (ctx && ctx.state === "running") void ctx.suspend(); // 現在の音を含めて停止
+    if (ctx && ctx.state === "running") void ctx.suspend(); // stops the current sound too
   };
   const resume = () => {
     if (stopped || !paused) return;
     paused = false;
     if (ctx) void ctx.resume();
-    tryPlay(); // 一時停止が「文の切れ目」だった場合に備え、再生を促す
+    tryPlay(); // nudge playback in case the pause landed on a sentence boundary
   };
   const stop = (reason: TtsStopReason = "explicit") => {
     if (stopped || ended) return;
@@ -270,22 +280,23 @@ export function startNarration(
       cur = null;
     }
     playing = false;
-    if (ctx && ctx.state === "suspended") void ctx.resume(); // 次の再生のため戻しておく
+    if (ctx && ctx.state === "suspended") void ctx.resume(); // restore it for the next playback
     finish(reason);
-    if (reason === "explicit") notifyStopped(); // ユーザー停止だけ待機キューも捨てる
+    if (reason === "explicit") notifyStopped(); // only a user stop also discards the waiting queue
   };
 
   useTtsStore.getState().setActive(adapter, source, voiceCharName(opts), sessionName);
-  // 初回キックは microtask に回す。呼び手（FileView）が返り値の handle と自分の state を
-  // 確定してから onUnit が走るようにするため（空/エンジン無しで finish が同期発火すると、
-  // beginNarration のセットアップ前に onUnit(null) が来て状態が不整合になるのを防ぐ）。
+  // Defer the first kick to a microtask so onUnit runs only after the caller (FileView) has
+  // settled the returned handle and its own state. Otherwise, with no content or no engine,
+  // finish fires synchronously and onUnit(null) arrives before beginNarration finishes its
+  // setup, leaving the state inconsistent.
   queueMicrotask(() => {
     if (stopped) return;
     if (!ctx || texts.every((t) => !t)) {
-      finish("done"); // エンジン無し（AudioContext 不可）or 読む中身が無い
+      finish("done"); // no engine (AudioContext unavailable) or nothing to read
       return;
     }
-    useTtsStore.getState().setPreparing(true); // 最初の音が鳴るまで「生成中」（TopBar のぐるぐる）
+    useTtsStore.getState().setPreparing(true); // "generating" (TopBar spinner) until the first sound
     pump();
     tryPlay();
   });

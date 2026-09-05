@@ -33,13 +33,13 @@ import { confirmedWorkEnd, latestWorkPromptIndex, textOfParts } from "../mirrorP
 import type { Group, Question, Turn, TurnTtsWiring } from "../transcript/types.ts";
 
 /**
- * ミラーの読み上げ一式（カラオケ朗読・自動読み上げ・作業過程の小声読み・確認の告知・
- * 「ここから朗読」ピル）。MirrorView から**そのまま**移したもので、判断は 1 つも変えていない。
+ * All of the mirror's read-aloud: karaoke reading, auto read-aloud, the quiet reading of work in
+ * progress, announcing a confirmation, and the "read from here" pill.
  *
- * 呼び出し側に残るのは「いつ呼ぶか」が MirrorView の文脈に属する 3 つだけ:
- *   - `resetForSession()` — セッション持ち替えの layout effect の中から（順序に意味がある）
- *   - `resetForTranscript()` — ポーリングが `reset` を受け取った枝から
- *   - `syncAutoRead()` — 転写が動いたときの effect から（deps は呼び出し側が持つ）
+ * The caller keeps only the three whose "when" belongs to MirrorView's context:
+ *   - `resetForSession()` — from the session-switch layout effect (the order there matters)
+ *   - `resetForTranscript()` — from the branch where polling received a `reset`
+ *   - `syncAutoRead()` — from the effect for a moved transcript (the caller owns the deps)
  */
 export function useMirrorTts({
   session,
@@ -68,40 +68,44 @@ export function useMirrorTts({
   pendingPlan: string | null;
   pendingPerm: string | null;
 }) {
-  // --- カラオケ朗読（turnTts, docs/log/24） -----------------------------------------
-  // 読み上げ中のターン（transcript の idx）と一時停止状態。onEnd（自然終了・TopBar 停止・
-  // 他の再生開始）で自分の分だけ片づける。
+  // --- Karaoke reading (turnTts, docs/log/24) ---------------------------------------
+  // The turn being read (its transcript idx) and whether it is paused. onEnd (natural end, a
+  // TopBar stop, another playback starting) clears only our own entry.
   const [ttsReading, setTtsReading] = useState<{ idx: number; paused: boolean } | null>(null);
   const ttsHandleRef = useRef<TurnReadHandle | null>(null);
-  // 選択位置から読み上げるピル（ReaderView の「ここから朗読」と同パターン）。
+  // The pill that reads from the selection, following ReaderView's "read from here" pattern.
   const [ttsPill, setTtsPill] = useState<{ x: number; y: number; idx: number; body: HTMLElement; block: number } | null>(
     null,
   );
-  // 自動読み上げ（P2）: 基準 idx（これ以前の履歴は読まない）／読むべきグループ idx のキュー／
-  // グループごとの読み上げ済みブロック数（グループは追記で育つので、増えた分だけ読む）。
+  // Auto read-aloud (P2): the baseline idx (nothing older than it is read), the queue of group
+  // idxs still to read, and the per-group count of blocks already read — a group grows by
+  // appending, so only the increment is read.
   const ttsAutoSeenRef = useRef<number | null>(null);
-  // seen 基準（上記）が属するセッション。基準は裸の jsonl 行番号なので、セッションが変わると
-  // 意味を失う。ペイン D&D の swap は同一インスタンスのまま session prop だけ差し替える
-  // （＋ドロップ先を active 化する）ため、前セッションの turns が残ったまま自動読み上げ effect が
-  // 走り、その行番号で seen を作ってしまう→新セッションの本文が「新着」に見えて最後の最終回答を
-  // 勝手に読み上げる。session 一致を確認するまで基準を取り直しに留めるためのガード。
+  // Which session the baseline above belongs to. The baseline is a bare jsonl line number, so it
+  // is meaningless in another session. A pane drag-and-drop swap keeps the same instance and only
+  // replaces the session prop (and makes the drop target active), so the auto-read effect can run
+  // while the previous session's turns are still mounted and build a baseline from those line
+  // numbers — after which the new session's body looks "new" and its last final answer gets read
+  // out unasked. This guard keeps us re-baselining until the session matches.
   const ttsAutoSessionRef = useRef(session);
   const ttsAutoQueueRef = useRef<number[]>([]);
   const ttsAutoDoneRef = useRef(new Map<number, number>());
-  // 確定済み作業過程の小声読み。part index で既読を持ち、最後の tool/question/plan までに
-  // 確定した text だけを読む。最終回答（idle）到着時はキューごと破棄して通常朗読へ譲る。
+  // Quiet reading of work already confirmed. Progress is kept as a part index, and only text
+  // settled before the last tool/question/plan is read. When the final answer arrives (idle) the
+  // whole queue is dropped so ordinary reading takes over.
   const ttsWorkRef = useRef<TtsController | null>(null);
   const ttsWorkQueueRef = useRef<string[]>([]);
   const ttsWorkDoneRef = useRef(new Map<number, number>());
-  // 読み上げ担当の登録（turnTts.ts）。同じセッションを複数ペインで開いても読むのは先着の
-  // 1 ペインだけ。readOnly（未アタッチ）ペインは読まないので登録しない。
+  // Claim the reader role (turnTts.ts). With the same session open in several panes only the
+  // first claimant reads. A readOnly (unattached) pane never reads, so it does not claim.
   const ttsTokenRef = useRef(Symbol("ttsReader"));
   useEffect(() => {
     if (readOnly) return;
     return claimTurnReader(session, ttsTokenRef.current);
   }, [session, readOnly]);
-  // 明示的な停止（TopBar・フッター等。プリエンプトは除く）は「静かにして」の意思なので、
-  // 自分の自動読み上げキューも捨てる（全ペイン読みでは他ペイン発の停止もここに届く）。
+  // An explicit stop (TopBar, footer, etc., but not a preemption) means "be quiet", so our own
+  // auto-read queue is dropped too. With all-pane reading, a stop from another pane arrives here
+  // as well.
   useEffect(
     () =>
       onTtsStop(() => {
@@ -111,7 +115,7 @@ export function useMirrorTts({
     [],
   );
   const ttsStart = (idx: number, body: HTMLElement, fromBlock = 0) => {
-    ttsHandleRef.current?.stop("replaced"); // 内部置換なので自動読み上げキューは温存
+    ttsHandleRef.current?.stop("replaced"); // an internal replacement: keep the auto-read queue
     const h = readTurn(
       body,
       sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback"),
@@ -119,31 +123,34 @@ export function useMirrorTts({
       (reason) => {
         ttsHandleRef.current = null;
         setTtsReading((cur) => (cur?.idx === idx ? null : cur));
-        // ユーザーの明示停止だけキューを捨てる。他再生への置換はキューを温存し、置換先が
-        // active に登録された後の状態を見るため microtask から再開判定する。
+        // Only an explicit stop by the user drops the queue. Being replaced by another playback
+        // keeps it, and the resume decision runs from a microtask so it sees the state after the
+        // replacement has registered as active.
         if (reason === "explicit") ttsAutoQueueRef.current.length = 0;
         else queueMicrotask(() => ttsAutoPumpRef.current());
       },
-      { ...(sessionVoiceOpts(session) ?? {}), paneId }, // セッション声＋発生元ペインのステレオ位置
-      session, // 左ペインの再生中アイコン用
+      { ...(sessionVoiceOpts(session) ?? {}), paneId }, // session voice + the origin pane's stereo position
+      session, // for the "playing" icon in the left rail
     );
-    if (!h) return; // 読み上げられる本文が無い（ツールだけのターン等）
+    if (!h) return; // nothing readable in this turn (a tool-only turn, say)
     ttsHandleRef.current = h;
     setTtsReading({ idx, paused: false });
   };
-  // 長い回答の要約読み上げ（設定 ttsSummaryRead）。この文字数を超える新着分は、全文を
-  // 読む代わりにアシスタント（headless CLI・ツールなし one-shot）へ 2 文要約させて読む。
+  // Summary reading of a long answer (the ttsSummaryRead setting). New content longer than this
+  // many characters is not read in full: the assistant (a headless CLI one-shot with no tools)
+  // summarises it in two sentences and that is read instead.
   const TTS_SUMMARY_MIN = 500;
-  // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）
+  // i18n-exempt-start: LLM prompt (model behaviour, not display; docs/log/28 §4)
   const TTS_SUMMARY_PROMPT =
     "次のテキストはコーディングエージェントの回答です。音声で聞くための要約を、日本語で最大2文・120字以内で書いてください。" +
     "記号・コード・URL・箇条書きは使わず、プレーンな文章だけを返してください。要約以外の前置きや説明は書かないでください。\n\n---\n";
   // i18n-exempt-end
-  const ttsSummaryBusyRef = useRef(false); // 要約の生成中（1 本ずつ。終わるまでキューは待つ）
+  const ttsSummaryBusyRef = useRef(false); // a summary is being generated (one at a time; the queue waits)
 
-  // 要約を生成してアナウンス（announce = 再生が空くのを待つ直列キュー・TopBar 停止と統合）で
-  // 読む。カラオケ・ハイライトは付けない（要約文は画面に無いため）— フル本文はフッターの
-  // 読み上げボタンでいつでもカラオケ再生できる。失敗・タイムアウトは全文読みへフォールバック。
+  // Generate the summary and read it through announce (a serial queue that waits for playback to
+  // free up, integrated with the TopBar stop). No karaoke highlight, because the summary text is
+  // not on screen — the full body can always be karaoke-read from the footer button. A failure or
+  // a timeout falls back to reading the full text.
   const ttsSummarize = async (gi: number, body: HTMLElement, fromBlock: number, text: string) => {
     const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.summary_suffix");
     try {
@@ -154,45 +161,49 @@ export function useMirrorTts({
       const reply = (r?.reply || "").trim();
       if (!r?.error && reply)
         announce(tr("mirror.tts.summary_prefix") + reply, label, { ...(sessionVoiceOpts(session) ?? {}), paneId }, session);
-      else ttsStart(gi, body, fromBlock); // 要約が得られない → 全文読み
+      else ttsStart(gi, body, fromBlock); // no summary came back -> read the full text
     } catch {
-      ttsStart(gi, body, fromBlock); // ワークスペース停止・タイムアウト等 → 全文読み
+      ttsStart(gi, body, fromBlock); // workspace stopped, timeout, etc. -> read the full text
     } finally {
       ttsSummaryBusyRef.current = false;
-      ttsAutoPumpRef.current(); // 待たせていた後続へ（再生中なら speaking 解放で再開）
+      ttsAutoPumpRef.current(); // let the waiting ones through (if playing, the speaking release resumes)
     }
   };
 
-  // キューの先頭から「まだ読んでいないブロック」を読む。何か再生中（自分・チャット読み上げ・
-  // アナウンス）なら待つ — 再開のトリガは onEnd と speaking の解放（下の subscribe）。
+  // Read the not-yet-read blocks of the queue's head. If anything is playing (us, a chat reading,
+  // an announcement) we wait — resumption is triggered by onEnd and by the speaking release (the
+  // subscribe below).
   const ttsAutoPump = () => {
     if (!settings.ttsEnabled || !settings.ttsAutoReadMirror) {
       ttsAutoQueueRef.current.length = 0;
       return;
     }
-    // ポーリング途中の本文だけを見て最終回答か判定すると、ナレーションがツール表示より
-    // 1 ポール先行した場合だけ作業過程を読み始めてしまう。作業完了まではキューに貯め、
-    // status が working を抜けた時点の完成 DOM から最後のツール以降だけを読む。
+    // Deciding "is this the final answer" from a mid-poll body starts reading the work in
+    // progress whenever the narration runs one poll ahead of the tool trace. So we queue until
+    // the work is done and, once status leaves working, read only what follows the last tool in
+    // the finished DOM.
     if (statusRef.current === "working") return;
-    if (ttsSummaryBusyRef.current) return; // 要約の生成中 → 終わってから順に
-    // 何か再生中/準備中なら待つ。speaking だけだと合成待ち（登録済みで最初の音がまだ）の
-    // 再生へ割り込むため active も見る（全ペイン読みでは他ペインのポンプと直列になる要）。
+    if (ttsSummaryBusyRef.current) return; // a summary is being generated: resume in order after it
+    // Wait while anything is playing or getting ready. Checking speaking alone would cut into a
+    // playback still waiting on synthesis (registered, first sound not out yet), so active is
+    // checked too — this is what serialises the pumps of the other panes in all-pane reading.
     const st = useTtsStore.getState();
     if (ttsHandleRef.current || st.speaking || st.active) return;
     const q = ttsAutoQueueRef.current;
     while (q.length) {
       const gi = q.shift()!;
       const body = bodyRef.current?.querySelector<HTMLElement>(`[data-turn-idx="${gi}"] .mirror-turn-body`);
-      if (!body) continue; // リセット等で消えたターン
+      if (!body) continue; // a turn that disappeared (a reset, say)
       const done = ttsAutoDoneRef.current.get(gi) ?? 0;
       const total = collectBlocks(body).length;
       ttsAutoDoneRef.current.set(gi, total);
-      if (total <= done) continue; // 増分なし（ツールだけの追記等）
-      // 過程スキップ（chat の分離と同趣・docs/log/19）: 完成した本文からツール前ナレーションを
-      // 飛ばし、最後のツール以降の本文（＝最終回答）だけを自動読み上げする。
-      // 完了後の作業過程は disclosure 内へ移るため、DOM 直下を読む手動朗読も最終回答に揃う。
+      if (total <= done) continue; // no increment (a tool-only append, say)
+      // Skip the work in progress, in the same spirit as chat's separation (docs/log/19): in the
+      // finished body, jump past the pre-tool narration and auto-read only what follows the last
+      // tool, i.e. the final answer. After completion the work moves inside a disclosure, so
+      // manual reading — which reads the direct DOM children — lands on the final answer too.
       const from = Math.max(done, finalAnswerStart(body));
-      if (total <= from) continue; // 読むべき最終回答ブロックがまだ無い（過程だけの追記）
+      if (total <= from) continue; // no final-answer block to read yet (only work was appended)
       if (settings.ttsSummaryRead) {
         const text = turnSpokenText(body, from);
         if (text.length > TTS_SUMMARY_MIN) {
@@ -202,7 +213,7 @@ export function useMirrorTts({
         }
       }
       ttsStart(gi, body, from);
-      if (ttsHandleRef.current) return; // 読み始めた（読める文が無ければ次の候補へ）
+      if (ttsHandleRef.current) return; // reading started (with nothing readable, try the next one)
     }
   };
   const ttsAutoPumpRef = useRef(ttsAutoPump);
@@ -214,7 +225,7 @@ export function useMirrorTts({
     }
     if (statusRef.current !== "working" || ttsWorkRef.current) return;
     const st = useTtsStore.getState();
-    if (st.active || st.speaking) return; // 最終回答・告知など重要な再生へ割り込まない
+    if (st.active || st.speaking) return; // never cut into important playback (final answer, announcement)
     const text = ttsWorkQueueRef.current.shift();
     if (!text) return;
     const voice = { ...(sessionVoiceOpts(session) ?? {}), paneId };
@@ -234,9 +245,10 @@ export function useMirrorTts({
   };
   const ttsWorkPumpRef = useRef(ttsWorkPump);
   ttsWorkPumpRef.current = ttsWorkPump;
-  // 他の再生が終わって音声が空いたら、待たせていた自動読み上げを再開する。zustand の
-  // subscribe は setState 中に同期で呼ばれ、プリエンプト（旧再生 stop → 新再生の登録）の
-  // 途中は active が一瞬 null になるため、microtask に逃がして置き換え完了後の状態で判定する。
+  // When another playback ends and the voice frees up, resume the auto-read we held back.
+  // zustand's subscribe runs synchronously inside setState, and mid-preemption (old playback
+  // stopped, new one not yet registered) active is briefly null — so the decision is deferred to
+  // a microtask and made on the state after the replacement completes.
   useEffect(() => {
     return useTtsStore.subscribe((st, prev) => {
       if (prev.speaking && !st.speaking)
@@ -247,11 +259,12 @@ export function useMirrorTts({
     });
   }, []);
 
-  // 確認・質問の読み上げ（設定 ttsReadPending）: 保留中の AskUserQuestion／プラン承認／
-  // 許可要求が「新しく現れたら」内容を読む（アクティブなペインのみ。全ペイン読み
-  // ttsAutoReadAllPanes では開いている全ペイン。ペインに無いセッションは
-  // useSessionNotifications の短い告知が担当）。開いた時点で既に出ていた
-  // 保留は基準として飲み込み、読まない（ペインを行き来するたびに再読しないため）。
+  // Reading confirmations and questions (the ttsReadPending setting): read a pending
+  // AskUserQuestion / plan approval / permission request when it NEWLY appears. Active pane only,
+  // or every open pane under all-pane reading (ttsAutoReadAllPanes); a session with no pane is
+  // covered by useSessionNotifications' short announcement. Anything already pending when the
+  // pane opened is swallowed as the baseline and not read, so moving between panes does not
+  // re-read it.
   const ttsPendingInitRef = useRef(false);
   const ttsPendingSigRef = useRef("");
   useEffect(() => {
@@ -271,7 +284,7 @@ export function useMirrorTts({
     if (sig === ttsPendingSigRef.current) return;
     ttsPendingSigRef.current = sig;
     if (!sig || readOnly) return;
-    // 対象ペインは自動読み上げと同じ規則（アクティブのみ／全ペイン読みなら担当ペイン）。
+    // Same pane rule as auto read-aloud: the active pane, or the claimed pane under all-pane reading.
     if (settings.ttsAutoReadAllPanes ? !isTurnReader(session, ttsTokenRef.current) : !active) return;
     if (!settings.ttsEnabled || !settings.ttsReadPending) return;
     const label = (sessionMeta ? displayName(sessionMeta) : tr("mirror.session_fallback")) + tr("mirror.tts.confirm_suffix");
@@ -294,19 +307,21 @@ export function useMirrorTts({
       ttsHandleRef.current?.resume();
       setTtsReading((c) => (c ? { ...c, paused: false } : c));
     },
-    stop: () => ttsHandleRef.current?.stop(), // 後始末は onEnd 側で
+    stop: () => ttsHandleRef.current?.stop(), // the cleanup happens in onEnd
   };
-  // セッション切替で停止（本文 DOM ごと入れ替わるため）。アンマウント（ターミナルへの
-  // 切替・ペインを閉じる）では止めない — 再生はグローバル 1 本でビューに依存しないので
-  // そのまま流し、操作は TopBar の停止で足りる。カラオケ・ハイライトは外れた DOM に付いた
-  // まま破棄されるだけで無害（ミラーへ戻ったときのハイライト復元まではしない）。
+  // Stop on a session switch, because the body DOM is replaced with it. Do NOT stop on unmount
+  // (switching to the terminal, closing the pane): playback is a single global stream that does
+  // not depend on the view, so it keeps running and the TopBar stop is control enough. The
+  // karaoke highlight is simply discarded with the detached DOM, which is harmless — it is not
+  // restored when coming back to the mirror.
   const ttsSessionRef = useRef(session);
   useEffect(() => {
     if (ttsSessionRef.current === session) return;
     ttsSessionRef.current = session;
     ttsHandleRef.current?.stop("replaced");
   }, [session]);
-  // 本文内でテキスト選択が確定したら「ここから読み上げ」ピルを出す（assistant ターン内のみ）。
+  // Once a text selection settles inside the body, show the "read from here" pill — assistant
+  // turns only.
   const captureTtsSel = () => {
     const sel = window.getSelection();
     const root = bodyRef.current;
@@ -317,8 +332,9 @@ export function useMirrorTts({
     const range = sel.getRangeAt(0);
     const node = range.startContainer;
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
-    // 完了後に畳んだ作業過程は自動・フッター朗読の対象外。展開中の選択から最終回答へ
-    // 飛ぶピルを出すと誤解を招くので、disclosure 内の選択には操作を出さない。
+    // Work folded away after completion is out of scope for both auto and footer reading. A pill
+    // offered on a selection inside the expanded disclosure would jump to the final answer, which
+    // is misleading — so no control is shown for a selection inside it.
     if (el?.closest(".mt-work")) {
       setTtsPill(null);
       return;
@@ -338,8 +354,8 @@ export function useMirrorTts({
     const rect = range.getBoundingClientRect();
     setTtsPill({ x: Math.round(rect.left), y: Math.round(rect.top - 34), idx: Number(idx), body: turnBody, block });
   };
-  // タッチ選択（長押し＋ドラッグ）は mouseup を出さないので selectionchange でも更新する
-  // （デバウンス・最新クロージャを ref 経由で。ReaderView と同じ）。
+  // A touch selection (long press + drag) fires no mouseup, so selectionchange updates it too,
+  // debounced and reading the latest closure through a ref — the same as ReaderView.
   const ttsCaptureRef = useRef(captureTtsSel);
   ttsCaptureRef.current = captureTtsSel;
   useEffect(() => {
@@ -354,17 +370,18 @@ export function useMirrorTts({
       if (t) clearTimeout(t);
     };
   }, []);
-  // 新しい回答の自動読み上げ（P2）: ポーリングで append された新規 assistant ターンを
-  // 朗読キューへ（通常はアクティブなペインのみ、ttsAutoReadAllPanes なら開いている全ペイン。
-  // ペイン間は 1 本の再生を待ち合って直列）。初回ロード（tail）とリセット（idx の巻き戻り）は
-  // 基準 idx を取り直すだけで履歴は読まない。連続 assistant ターンは同じグループに折り畳まれて
-  // 育つので、キューはグループ idx 単位（重複なし）に持ち、pump が増えたブロックだけ読む。
-  // DOM は commit 後（この effect 実行時）に描画済み。
+  // Auto read-aloud of a new answer (P2): assistant turns appended by polling go into the reading
+  // queue — the active pane only, or every open pane under ttsAutoReadAllPanes, where panes
+  // serialise by waiting on the single playback. The first load (tail) and a reset (idx winding
+  // back) only re-take the baseline idx; history is never read. Consecutive assistant turns fold
+  // into one group that keeps growing, so the queue holds group idxs (no duplicates) and the pump
+  // reads only the added blocks. The DOM is already painted by the time this runs (post-commit).
   const syncAutoRead = ({ turns, groups, status }: { turns: Turn[]; groups: Group[]; status: string }) => {
-  // セッションが変わった直後は、まだ前セッションの turns が残ったまま（swap は同一インスタンスの
-  // まま session prop だけ差し替え、ドロップ先を active 化する）この effect が active 変化で走る
-  // ことがある。その turns の idx で seen を作ると新セッションの本文を誤読するので、session が
-  // 揃うまでは基準を捨てて何も読まない（新セッションの turns が届いた回で改めて基準化する）。
+  // Right after a session change this can run on the active change while the PREVIOUS session's
+  // turns are still mounted (a swap keeps the instance, replaces only the session prop and makes
+  // the drop target active). Building the baseline from those idxs would mis-read the new
+  // session's body, so until the session matches we drop the baseline and read nothing; the round
+  // that brings the new session's turns re-baselines.
   if (ttsAutoSessionRef.current !== session) {
     ttsAutoSessionRef.current = session;
     ttsAutoSeenRef.current = null;
@@ -380,7 +397,7 @@ export function useMirrorTts({
   }
   if (newest < 0) return;
   const seen = ttsAutoSeenRef.current;
-  ttsAutoSeenRef.current = newest; // 非対象ペインでも履歴を飲み込み、後から一括再読しない
+  ttsAutoSeenRef.current = newest; // swallow history even in a non-reading pane, so it is never bulk re-read later
   const canRead =
     !readOnly &&
     settings.ttsEnabled &&
@@ -388,9 +405,9 @@ export function useMirrorTts({
     (settings.ttsAutoReadAllPanes ? isTurnReader(session, ttsTokenRef.current) : active);
 
   if (status === "working" && settings.ttsWorkRead !== "off") {
-    // 現在のユーザープロンプト以後だけを見る。送信直後の pending echo も境界に含め、
-    // 実ターンが履歴へ着地するまでの間に一つ前の作業過程へ巻き戻らないようにする。
-    // まだ実行されていない queued prompt は現在の作業境界にはしない。
+    // Look only at what follows the current user prompt. The just-sent pending echo counts as a
+    // boundary too, so we do not wind back to the previous run's work while the real turn is
+    // still landing in history. A queued prompt that has not run yet is not a boundary.
     const lastUser = latestWorkPromptIndex(groups);
     for (let i = lastUser + 1; i < groups.length; i++) {
       const g = groups[i];
@@ -405,7 +422,8 @@ export function useMirrorTts({
     while (ttsWorkQueueRef.current.length > 4) ttsWorkQueueRef.current.shift();
     if (canRead) ttsWorkPumpRef.current();
   } else {
-    // idle = 最終回答が確定。残っている小声を置換停止し、通常の最終回答朗読へ譲る。
+    // idle = the final answer has settled. Stop any remaining quiet reading as a replacement and
+    // hand over to the ordinary final-answer reading.
     stopTtsForReplacement(ttsWorkRef.current);
     ttsWorkRef.current = null;
     ttsWorkQueueRef.current.length = 0;
@@ -422,7 +440,7 @@ export function useMirrorTts({
     for (const t of turns) {
       if (t.idx === undefined || t.idx <= seen) continue;
       if (t.role !== "assistant" || t.sidechain || t.compact) continue;
-      // このターンが属するグループ＝idx が t.idx 以下で最後のグループ
+      // The group this turn belongs to = the last group whose idx is <= t.idx
       let g: Group | null = null;
       for (const gg of groups) {
         if (gg.idx === undefined) continue;
@@ -437,21 +455,22 @@ export function useMirrorTts({
   ttsAutoPumpRef.current();
   };
 
-  // セッション持ち替えのリセット（MirrorView の layout effect から、そこでの順序のまま呼ぶ）。
+  // Reset on a session switch, called from MirrorView's layout effect in that effect's order.
   const resetForSession = () => {
-    ttsAutoSeenRef.current = null; // 自動読み上げの基準も取り直す（履歴は読まない）
+    ttsAutoSeenRef.current = null; // re-take the auto-read baseline as well (history is not read)
     ttsAutoQueueRef.current.length = 0;
     ttsAutoDoneRef.current.clear();
     stopTtsForReplacement(ttsWorkRef.current);
     ttsWorkRef.current = null;
     ttsWorkQueueRef.current.length = 0;
     ttsWorkDoneRef.current.clear();
-    ttsPendingInitRef.current = false; // 確認読み上げの基準も取り直す
+    ttsPendingInitRef.current = false; // re-take the confirmation-reading baseline too
     ttsPendingSigRef.current = "";
   };
 
-  // 転写そのものが差し替わった（サーバが reset を返した）ときのリセット。idx が振り直される
-  // ので基準も捨てる。全体停止にはしない — 本文 DOM の入れ替えなので "replaced"。
+  // Reset when the transcript itself was replaced (the server returned a reset). The idxs are
+  // renumbered, so the baseline goes too. Not a global stop: the body DOM is being swapped, hence
+  // "replaced".
   const resetForTranscript = () => {
     ttsHandleRef.current?.stop("replaced");
     ttsAutoSeenRef.current = null;
@@ -463,8 +482,8 @@ export function useMirrorTts({
     ttsWorkDoneRef.current.clear();
   };
 
-  // 選択位置から読み上げるピル。本文の外（document.body）へ出すのは、転写のスクロールに
-  // 巻き込まれずビューポート座標で置くため。
+  // The pill that reads from the selection. It is portalled outside the body (to document.body)
+  // so it sits in viewport coordinates instead of being dragged along by the transcript's scroll.
   const pillPortal =
     ttsPill &&
     createPortal(

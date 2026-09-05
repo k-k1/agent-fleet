@@ -12,12 +12,12 @@ import (
 	"testing"
 )
 
-// A Files 翻訳/要約 opens an ad-hoc chat with NO standing assistant (docs/log/30 ②): the verb
-// persona is baked onto the conversation directly, so deleting the old 翻訳/汎用 builtins
-// costs no capability. Drive handleChatCreate over a mux (real routing) and assert the
-// resulting conversation carries the embedded persona, the attached file's dir as
-// knowledge, the composed seed, and the persisted SeedVerb (which keeps a translate thread
-// language-agnostic — see TestPersonaOfLanguageRule).
+// A Files Translate/Summarize opens an ad-hoc chat with NO standing assistant (docs/log/30
+// item 2): the verb persona is baked onto the conversation directly, so deleting the old
+// translate/general builtins costs no capability. Drive handleChatCreate over a mux (real
+// routing) and assert the resulting conversation carries the embedded persona, the attached
+// file's dir as knowledge, the composed seed, and the persisted SeedVerb (which keeps a
+// translate thread language-agnostic — see TestPersonaOfLanguageRule).
 func TestChatCreateAdHocVerb(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)

@@ -121,13 +121,12 @@
   max-width: min(72%, 440px);
   max-height: 62%;
   object-fit: contain;
-  /* うっすら透けるウォーターマーク程度に淡く（旧デザインと同一） */
+  /* Faint enough to read as a watermark. */
   opacity: 0.16;
   user-select: none;
   -webkit-user-drag: none;
 }
-/* .term-mask 本体（全面オーバーレイ）は廃止済み — msg だけが
-   .term-history-actions 内で使われている。 */
+/* There is no .term-mask full-screen overlay; only msg is used, inside .term-history-actions. */
 .term-mask-msg {
   color: #ddd;
   display: inline-flex;
@@ -139,7 +138,7 @@
   right: 12px;
   bottom: 12px;
   /* Sit above xterm's internal transparent hit-test layers (.xterm-helpers z=5),
-     which otherwise cover this and swallow clicks on the 再開 button. */
+     which otherwise cover this and swallow clicks on the resume button. */
   z-index: 20;
   display: flex;
   align-items: center;
@@ -180,7 +179,7 @@
 
 /* Legacy control styles (old element globals), scoped — the verbatim-ported card
    keeps raw <button className="ghost"> markup (:where() = old 0-0-1 specificity).
-   .onboard-scope re-scopes them for the はじめかたガイド modal body (GuideModal),
+   .onboard-scope re-scopes them for the getting-started guide modal body (GuideModal),
    which reuses the same markup outside the .onboard overlay. */
 :where(.onboard, .onboard-scope) button {
   background: var(--btn);
@@ -308,7 +307,7 @@
   margin-top: 8px;
 }
 
-/* v2 (起動導線 Ph1): goal divider + the chat / development tiles, and the 任意
+/* v2 (launch flow, phase 1): goal divider + the chat / development tiles, and the "optional"
    badge on optional dev-track steps. Shared by the overlay and GuideModal. */
 .onboard-div {
   display: flex;

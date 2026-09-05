@@ -15,7 +15,7 @@ import (
 // and hid the chip. This local read mirrors how codex reads its rate_limits.
 
 // usageWindow is one limit window: percent used (0–100) and the ISO reset instant
-// (the Console formats it as a relative "あとN時間/N日" + an absolute date-time).
+// (the Console formats it as a relative "N hours/N days left" + an absolute date-time).
 // Stale marks a window whose capture is older than the window itself: the percent is
 // then a guess, not a reading (see adjustWindow), and the Console shows it as unknown.
 type usageWindow struct {

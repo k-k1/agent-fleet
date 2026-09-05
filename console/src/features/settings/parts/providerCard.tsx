@@ -6,7 +6,7 @@ import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { AGENTS } from "../../../agents/registry.ts";
 
 // Shared building blocks for the settings connection cards, used by both the
-// エージェント tab (Claude / Codex / opencode) and the Git tab (GitHub / Bitbucket).
+// agents tab (Claude / Codex / opencode) and the Git tab (GitHub / Bitbucket).
 // Presentation only — the per-provider auth logic lives in each tab.
 
 // Colored 2-char badge per provider, matching the session kind badge colors so a
@@ -48,7 +48,7 @@ export function CopyCode({ children }: { children: ReactNode }) {
   );
 }
 
-// DisconnectButton: the per-provider "切断" action shown when a connection is live.
+// DisconnectButton: the per-provider disconnect action shown when a connection is live.
 // Confirms first (styled useConfirm — the same dialog SSM/token deletes use), so every
 // destructive action in the settings modal asks before it acts.
 export function DisconnectButton({ onClick }: { onClick: () => void }) {
@@ -70,15 +70,16 @@ export function DisconnectButton({ onClick }: { onClick: () => void }) {
   );
 }
 
-// ReauthButton: the per-provider「再認証」action shown NEXT TO 切断 while a connection is
-// live. Signing in again used to have no UI at all — the card offers 切断 and 接続, so a
-// token that expired server-side (the local credentials still look valid, so the card
-// still reads 接続済み) forced the user to guess that 切断→接続 was the fix.
+// ReauthButton: the per-provider re-authenticate action, shown NEXT TO disconnect while a
+// connection is live. Signing in again had no UI at all: the card offers only disconnect and
+// connect, so a token that expired server-side (the local credentials still look valid, so
+// the card still reads as connected) forced the user to guess that disconnect-then-connect
+// was the fix.
 //
-// It really does sign out first (the CLI owns its credentials; there is no refresh
-// command), so it asks first like 切断 does — but it is not framed as destructive: the
-// OAuth flow opens immediately afterwards, and abandoning it leaves the card in its
-// ordinary 未接続 state with 接続 available.
+// It really does sign out first (the CLI owns its credentials; there is no refresh command),
+// so it asks before acting the way disconnect does — but it is not framed as destructive: the
+// OAuth flow opens immediately afterwards, and abandoning it leaves the card in its ordinary
+// disconnected state with connect available.
 export function ReauthButton({ onClick }: { onClick: () => void }) {
   const tr = useT();
   const askConfirm = useConfirm();
@@ -87,7 +88,7 @@ export function ReauthButton({ onClick }: { onClick: () => void }) {
       title: tr("provider.reauth_confirm_title"),
       body: tr("provider.reauth_confirm_body"),
       confirmLabel: tr("provider.reauth"),
-      danger: false, // 既定は danger — これは復旧操作なので通常ボタンで出す
+      danger: false, // the default is danger; this is a recovery action, so use a normal button
     });
     if (ok) onClick();
   };
@@ -124,7 +125,7 @@ export function ProviderCard({
   );
 }
 
-// Status pill: connected (green + dot + label) or a muted state (未接続 / a count).
+// Status pill: connected (green + dot + label) or a muted state (disconnected, or a count).
 export function StatusPill({ on, children }: { on?: boolean; children: ReactNode }) {
   return (
     <span className={"p-status" + (on ? " on" : "")}>

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { relTime, fmtDateTime, fmtNum, compareText, TIME_HM } from "./intl.ts";
 import { setLocale } from "./i18n/index.ts";
 
-const NOW = 1_700_000_000_000; // 固定基準（テスト決定性のため relTime に now を渡す）
+const NOW = 1_700_000_000_000; // fixed reference; passed to relTime as `now` so tests are deterministic
 
 describe("intl.relTime", () => {
   beforeEach(() => setLocale("ja"));

@@ -5,7 +5,7 @@
 // three fields reach OUTSIDE the tenant (an auto-join domain widens the deployment's
 // entry gate; allowed_providers decides which IdP is trusted to say who someone is).
 // This one reaches nothing outside the tenant, so by the same line it belongs to the
-// tenant_admin (ADR 0043 決定 24/25 → ADR 0047 決定 6).
+// tenant_admin (ADR 0043 decision 24/25 → ADR 0047 decision 6).
 package tenantsrv
 
 import (
@@ -57,7 +57,7 @@ func (a Admin) TenantNetwork(w http.ResponseWriter, r *http.Request) {
 //
 //   - proxy_not_configured: a forwarding header arrived but the deployment says there
 //     is no proxy, so the CP is attributing every request to the load balancer's own
-//     address. ⚠️ This is the dangerous one: an administrator who allowlists the
+//     address. This is the dangerous one: an administrator who allowlists the
 //     address shown to them would be allowing the load balancer — that is, everybody —
 //     while believing they had restricted the tenant.
 //   - client_ip_unknown: the deployment declares N proxies and the chain is shorter
@@ -78,7 +78,7 @@ func proxyMisconfigReason(hops int, info ClientIP) string {
 // SetTenantNetwork (PUT /api/admin/tenants/{slug}/network) stores the rule.
 //
 // Three refusals, in this order, and each of them is a lockout the product would
-// otherwise have created (ADR 0047 決定 4):
+// otherwise have created (ADR 0047 decision 4):
 //
 //  1. the deployment cannot name callers → refuse ANY non-empty rule
 //  2. an entry is not an address or a prefix → refuse (a typo is silent otherwise)
@@ -143,19 +143,17 @@ func (a Admin) SetTenantNetwork(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, tenantNetworkSavedWire{Tenant: t.Slug, AllowedCIDRs: stored})
 }
 
-// tenantNetworkWire — GET /api/admin/tenants/{slug}/network のレスポンス
-// （Console の `NetworkView`、console/src/features/settings/tenant/tenantNetwork.tsx）。
+// tenantNetworkWire is the GET /api/admin/tenants/{slug}/network response, read by the
+// Console's `NetworkView` (console/src/features/settings/tenant/tenantNetwork.tsx).
 //
-// 旧: map[string]any{"tenant":…, "allowed_cidrs":…, "proxy_hops":…, "your_ip":"",
+// was: map[string]any{"tenant":…, "allowed_cidrs":…, "proxy_hops":…, "your_ip":"",
+// "editable":…, "reason":…}, with your_ip overwritten when info.OK.
 //
-//	"editable":…, "reason":…} ＋ info.OK なら your_ip を**上書き**。
-//
-// 🔴 your_ip は**まず "" で必ず入れてから上書き**する形なので、**常に出る**キーであって
-// 条件付きではない（走査は if の中の代入を見て cond と印を付けるが、それは過大評価）。
-// したがって 6 キーとも omitempty は付けない。reason も "" を取りうる（＝正常）。
-//
-// ⚠️ tenant は Console が prop で受け取っている slug の echo。`NetworkView` は宣言して
-// いないが**読んでもいない**ので、型化してもワイヤも画面も変わらない。
+// your_ip is always seeded with "" and only then overwritten, so all six keys are
+// unconditional and none of them takes omitempty; a scan that reads the assignment
+// inside the if marks it conditional, which overstates it. reason may legitimately
+// be "". tenant echoes the slug the Console already holds as a prop — `NetworkView`
+// does not read it, so typing it changes neither the wire nor the screen.
 type tenantNetworkWire struct {
 	Tenant       string `json:"tenant"`
 	AllowedCIDRs string `json:"allowed_cidrs"`
@@ -165,10 +163,10 @@ type tenantNetworkWire struct {
 	Reason       string `json:"reason"`
 }
 
-// tenantNetworkSavedWire — PUT の応答。保存後の**正規化済みテキスト**を返す
-// （192.0.2.7/24 → 192.0.2.0/24）。GET とはキー集合が違うので別の型にする。
+// tenantNetworkSavedWire is the PUT response: the normalized text as stored
+// (192.0.2.7/24 → 192.0.2.0/24). Its key set differs from the GET, hence a separate type.
 //
-// 旧: map[string]any{"tenant":…, "allowed_cidrs":…}
+// was: map[string]any{"tenant":…, "allowed_cidrs":…}
 type tenantNetworkSavedWire struct {
 	Tenant       string `json:"tenant"`
 	AllowedCIDRs string `json:"allowed_cidrs"`

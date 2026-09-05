@@ -63,8 +63,8 @@ func IsWorktree(dir string) bool {
 }
 
 // TrackState is what the VCS knows about one repo-relative path, for the secret
-// warnings in docs/log/56 §7.2 / docs/log/57 憲章6. Only git can actually answer; svn and a
-// missing VCS come back Uncertain rather than a guessed false — "判定不可" is itself
+// warnings in docs/log/56 §7.2 / docs/log/57 charter 6. Only git can actually answer; svn and
+// a missing VCS come back Uncertain rather than a guessed false — "cannot determine" is itself
 // the fact to display, never silently downgraded to "not tracked".
 type TrackState struct {
 	Tracked   bool

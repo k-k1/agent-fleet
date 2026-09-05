@@ -1,11 +1,13 @@
-// ReaderView — 朗読ビュー（docs/log/24）。ファイル本文を「読む」ためのビュー。本文を段落・文に
-// 分割して読みやすい版組で表示し、冒頭から順次読み上げ（TTS）しながら、いま読んでいる文を
-// カラオケ・ハイライト＋自動スクロールで追従する。縦書き/横書きを切り替えられる。
+// ReaderView — the reader view (docs/log/24), for reading a file's prose. It splits the body
+// into paragraphs and sentences, typesets them for reading, speaks them in order (TTS) and
+// follows the current sentence with a karaoke highlight plus auto-scroll. Vertical and
+// horizontal writing can be toggled.
 //
-// 読み上げエンジンは features/chat/tts.ts の startNarration を流用（文配列を渡し、再生開始した
-// 文の index を onUnit で受けてハイライトする）。グローバル 1 本再生・TopBar 停止と相乗り。
-// content kind は "read"（layout/types.ts）。ファイル右クリック「朗読で開く」や FileView の
-// 「朗読」ボタンから開く。
+// Speech reuses startNarration from features/chat/tts.ts: it takes the array of sentences and
+// reports the index of the sentence that started playing through onUnit, which drives the
+// highlight. It shares the single global playback and the TopBar stop control.
+// The content kind is "read" (layout/types.ts). Opened from the file context menu's "open in the
+// reader" (「朗読で開く」) or FileView's reader button (「朗読」).
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { api, isTransientErr } from "../../core/api/client.ts";
@@ -31,8 +33,9 @@ interface FileData {
 export function ReaderView({ filePath, headerActions }: { filePath: string; headerActions?: ReactNode }) {
   const tr = useT();
   const settings = useSettings();
-  // なろう形式ルビ・縦書きは日本語専用機能なので UI ロケールが ja のときだけ有効化する
-  // （非 ja ではルビ解釈を無効化し縦書きトグルも隠す・docs/log/28 §2.4）。
+  // Narou-style ruby and vertical writing are Japanese-only features, so they are enabled only
+  // when the UI locale is ja; otherwise ruby parsing is off and the vertical toggle is hidden
+  // (docs/log/28 §2.4).
   const ja = useLocale() === "ja";
   const [data, setData] = useState<FileData | null>(null);
   const [err, setErr] = useState("");
@@ -41,10 +44,12 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
   const [reading, setReading] = useState(false);
   const [paused, setPaused] = useState(false);
   const [active, setActive] = useState<number | null>(null);
-  // 選択範囲から朗読を（再）開始するピル（選択の先頭にある読み上げ単位の index と表示位置）。
+  // The pill that (re)starts reading from the selection: the index of the speech unit at the
+  // start of the selection, plus where to draw it.
   const [selPill, setSelPill] = useState<{ x: number; y: number; idx: number } | null>(null);
-  // 声セレクトの選択肢はキャラクター設定×エンジン実カタログ（tts.ts の readerVoiceChoices）。
-  // カタログは非同期取得なので、届いたら再レンダして静的フォールバックから差し替える。
+  // The voice select's options are the character settings crossed with the engine's real
+  // catalogue (readerVoiceChoices in tts.ts). The catalogue is fetched asynchronously, so a
+  // re-render on arrival replaces the static fallback.
   const [, setCatalogLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -54,13 +59,15 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     };
   }, []);
   const voiceChoices = readerVoiceChoices();
-  // 保存済みの声が選択肢に無い（キャラを無効化した・基準スタイルを変えた等）→「設定の話者」
-  // として扱う（表示と実再生を一致させる）。
+  // A saved voice that is no longer among the options (the character was disabled, the base
+  // style changed, …) falls back to "the speaker from settings", so what is shown and what is
+  // actually played agree.
   const readerVoice = voiceChoices.some(([v]) => v === settings.readerVoice) ? settings.readerVoice : "";
 
-  // 本文取得（FileView と同じ /api/fs/file）。ファイルが変わったら朗読を止めてリセット。
-  // WS 起動直後は agent が一時的に不通で api() が http_5xx を返す（例外ではない）ため、
-  // 過渡的な失敗はバックオフ再試行する（isTransientErr）。恒久的なエラーだけを表示する。
+  // Fetches the body from the same /api/fs/file as FileView, stopping and resetting the reading
+  // when the file changes. Right after a workspace starts the agent is briefly unreachable and
+  // api() returns http_5xx rather than throwing, so transient failures are retried with backoff
+  // (isTransientErr) and only permanent errors are shown.
   useRetryLoad(async (signal) => {
     if (!filePath) return true;
     handleRef.current?.stop("replaced");
@@ -85,9 +92,10 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
 
   const isText = !!data && !data.binary && typeof data.content === "string";
   const isMarkdown = isText && langFor(filePath) === "markdown";
-  // 原文忠実（改行・行頭スペース保持）＋なろう形式ルビの表示単位。インラインコードの
-  // 省略読み（abbrevCode）は読み上げテキスト側にだけ効く（表示は原文のまま）。辞書は
-  // ユーザー＋テナント共通の合成（ユーザー優先）。
+  // Display units faithful to the source (newlines and leading spaces preserved) plus
+  // Narou-style ruby. Abbreviated reading of inline code (abbrevCode) affects only the spoken
+  // text; the display stays as written. The dictionary merges the user's and the tenant's, with
+  // the user's taking precedence.
   const codeOpts = useMemo(
     () => ({ abbrev: settings.ttsAbbrevCode, dict: effectiveDict() }),
     [settings.ttsAbbrevCode, settings.ttsUserDict],
@@ -96,7 +104,8 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     () => (isText ? buildReadUnits(data!.content!, isMarkdown, codeOpts, ja) : []),
     [isText, data, isMarkdown, codeOpts, ja],
   );
-  // 読み上げ対象（spoken 非空）の単位に連番を振る。data-si=その連番、active と一致でハイライト。
+  // Numbers the units that are actually spoken (non-empty `spoken`) in sequence. data-si holds
+  // that number, and a unit is highlighted when it matches `active`.
   const spokenIdx = useMemo(() => {
     const m: (number | null)[] = [];
     let n = 0;
@@ -104,11 +113,12 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     return m;
   }, [units]);
   const flat = useMemo(() => units.filter((u) => u.spoken).map((u) => u.spoken), [units]);
-  // 読み上げ単位ごとの前拍（段落・マーカー行の頭は一拍、行内の句点は短い一拍、ハードラップは
-  // 間なし）。flat と同じ並び。
+  // The lead-in beat per speech unit: a full beat at the head of a paragraph or marker line, a
+  // short beat at a full stop within a line, none at a hard wrap. Same order as `flat`.
   const flatPre = useMemo(() => readPreGaps(units, BLOCK_BEAT, SENT_BEAT, TAME_BEAT), [units]);
-  // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。origOf で元の
-  // 読み上げ単位（ハイライト単位）へ戻す。head=文の先頭の片（前拍はここだけ）。
+  // A long sentence is split further for synthesis, so waiting on the synthesiser does not leave
+  // silence. origOf maps a piece back to its original speech (highlight) unit, and head marks
+  // the first piece of a sentence, which is the only one that gets the lead-in beat.
   const split = useMemo(() => {
     const texts: string[] = [];
     const origOf: number[] = [];
@@ -123,28 +133,29 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     return { texts, origOf, head };
   }, [flat]);
 
-  const vertical = ja && settings.readerVertical; // 縦書きは ja 限定（非 ja では常に横書き）
+  const vertical = ja && settings.readerVertical; // vertical writing is ja-only; others stay horizontal
   const ttsOn = settings.ttsEnabled;
   const verticalRef = useRef(vertical);
   verticalRef.current = vertical;
 
-  // 縦書き（vertical-rl）は横スクロールで読み進める。ホイール↓（deltaY>0）を「←へ」
-  // ＝後続の列（左）へ変換する。React の onWheel は passive 登録で preventDefault が効かない
-  // ため、ネイティブ wheel を passive:false で張る。本文 DOM の有無で張り直す。
+  // Vertical writing (vertical-rl) progresses by scrolling horizontally, so a downward wheel
+  // (deltaY > 0) is translated to leftward, i.e. towards the following columns. React's onWheel
+  // registers passive, where preventDefault does nothing, so bind a native wheel listener with
+  // passive:false, rebinding whenever the body DOM appears or disappears.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       if (!verticalRef.current || e.deltaY === 0) return;
-      el.scrollLeft -= e.deltaY; // spec準拠ブラウザ: 後続列は scrollLeft 負方向
+      el.scrollLeft -= e.deltaY; // in a spec-compliant browser the following columns are negative scrollLeft
       e.preventDefault();
     };
     el.addEventListener("wheel", onWheel, { passive: false });
     return () => el.removeEventListener("wheel", onWheel);
   }, [isText, units.length]);
 
-  // いま読んでいる文をビューへ。block=論理ブロック軸なので縦書き（vertical-rl）でも
-  // 横スクロールで正しく追従する。
+  // Brings the sentence being read into view. `block` is the logical block axis, so this follows
+  // correctly by scrolling horizontally in vertical writing (vertical-rl) too.
   useEffect(() => {
     if (active == null) return;
     scrollRef.current?.querySelector<HTMLElement>(`[data-si="${active}"]`)?.scrollIntoView({
@@ -154,17 +165,18 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     });
   }, [active]);
 
-  // アンマウントで朗読停止（別ファイルを開く等で本文 DOM が消えるため）。
+  // Stop reading on unmount: the body DOM disappears when another file is opened.
   useEffect(() => () => handleRef.current?.stop("replaced"), []);
 
-  // from 番目の読み上げ単位から（再）開始。合成は分割済みテキスト（split）で行い、
-  // ハイライトは origOf で元の読み上げ単位へ戻す。
+  // (Re)starts from speech unit `from`. Synthesis runs on the split texts, and the highlight is
+  // mapped back to the original speech unit through origOf.
   const startFrom = (from: number, voice = voiceChoiceOpts(readerVoice)) => {
     const start = split.origOf.findIndex((o) => o >= from);
     if (start < 0) return;
     const slice = split.texts.slice(start);
     if (!slice.length) return;
-    // 前拍: 文の先頭の片は元の単位の前拍、合成分割の続き片は間なし。
+    // Lead-in beat: the first piece of a sentence keeps the original unit's beat; the
+    // continuation pieces of a synthesis split get none.
     const pres = slice.map((_, k) => (split.head[start + k] ? flatPre[split.origOf[start + k]] : 0));
     handleRef.current?.stop("replaced");
     const h = startNarration(
@@ -173,13 +185,13 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
       (i) => {
         setActive(i == null ? null : split.origOf[start + i]);
         if (i == null) {
-          // 自然終了 or 外部（TopBar 停止・他再生開始）で終了
+          // Ended, either naturally or externally (TopBar stop, another playback starting)
           setReading(false);
           setPaused(false);
           handleRef.current = null;
         }
       },
-      voice, // ヘッダーで選んだ声（"" = 設定の話者）
+      voice, // the voice chosen in the header ("" = the speaker from settings)
       pres,
     );
     handleRef.current = h;
@@ -189,8 +201,9 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
   const start = () => startFrom(0);
   const stop = () => handleRef.current?.stop();
 
-  // 選択の開始ノードから、その位置（以降）の読み上げ単位の index を得る。選択が非読み上げ単位
-  // （空行/区切り）に始まるときは後続の最初の読み上げ単位へ送る。無ければ null。
+  // Given the selection's start node, returns the index of the speech unit at or after that
+  // position. When the selection starts on a non-spoken unit (a blank line or a separator) it
+  // moves on to the next spoken unit; null if there is none.
   const spokenIdxAt = (node: Node): number | null => {
     const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
     const unit = el?.closest<HTMLElement>(".reader-unit");
@@ -203,7 +216,8 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     return null;
   };
 
-  // 本文内で選択が確定したら、選択の先頭に「ここから朗読」ピルを出す（再生中でも再スタート可）。
+  // Once a selection settles inside the body, show the "read from here" pill at its start; it
+  // can restart the reading even while playback is running.
   const captureSelection = () => {
     const sel = window.getSelection();
     const body = scrollRef.current;
@@ -231,8 +245,9 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     window.getSelection()?.removeAllRanges();
   };
 
-  // タッチ選択（長押し＋ドラッグ）は mouseup を出さないので、selectionchange でもピルを更新
-  // する。連続発火するのでデバウンス。最新クロージャを ref 経由で呼ぶ（mount-once の effect）。
+  // Touch selection (long press and drag) emits no mouseup, so the pill is also updated from
+  // selectionchange. That fires repeatedly, hence the debounce, and the effect runs once on
+  // mount, so the latest closure is reached through a ref.
   const captureRef = useRef(captureSelection);
   captureRef.current = captureSelection;
   useEffect(() => {
@@ -259,7 +274,7 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
     }
   };
 
-  // 本文フォント・サイズは CSS 変数で .reader-body へ渡す（viewer.css が参照）。
+  // The body font and size are passed to .reader-body as CSS variables, read by viewer.css.
   const readerStyle = {
     "--reader-font": readerFontStack(settings.readerFont),
     "--reader-size": settings.readerSize + "px",
@@ -303,7 +318,8 @@ export function ReaderView({ filePath, headerActions }: { filePath: string; head
             onChange={(e) => {
               const v = e.target.value;
               setSetting("readerVoice", v);
-              // 朗読中の変更は中断しない。いま読んでいる文はそのまま、次の文から新しい声。
+              // Changing it mid-reading does not interrupt: the current sentence finishes and
+              // the new voice takes over from the next one.
               handleRef.current?.setVoice(voiceChoiceOpts(v));
             }}
             disabled={!ttsOn}

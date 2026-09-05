@@ -7,8 +7,8 @@ import (
 	"sync"
 )
 
-// NOTE: workspace/agent/internal/httpx/gzip.go と同一実装の複製（CP と Agent は
-// 別 Go module で共有パッケージを持たないため）。直すときは両方直すこと。
+// Duplicated verbatim from workspace/agent/internal/httpx/gzip.go: the CP and the Agent
+// are separate Go modules with no package to share, so fix both copies or neither.
 
 // gzPool reuses gzip writers across requests; BestSpeed because the payloads are
 // small JSON polled every few seconds — latency and CPU beat ratio here.

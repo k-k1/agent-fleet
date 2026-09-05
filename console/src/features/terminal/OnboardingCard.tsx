@@ -1,18 +1,18 @@
-// OnboardingCard — first-run guide, v2 (起動導線再設計 Phase 1). The old card was a
+// OnboardingCard — first-run guide, v2 (launch flow redesign, phase 1). The old card was a
 // single developer-shaped checklist (WS → git → agent → session) that chat-only
 // users could never complete (it only auto-hid on session creation) and that
-// guide/member/lite.md had to patch in prose ("ステップ2と4は飛ばして大丈夫").
+// guide/member/lite.md had to patch in prose ("steps 2 and 4 can be skipped").
 // v2 splits it into the two steps everyone needs — start workspace, connect an
 // agent — followed by a goal choice: chat (repo-less Q&A / translation, done in
 // one click) or development (git → clone → first session, expanded on demand).
-// The card hides once the user has a session OR a started chat, or on "あとで"
+// The card hides once the user has a session OR a started chat, or on "later"
 // (remembered in localStorage). The same body is reused by GuideModal, reachable
-// from the account menu as 「はじめかたガイド」 after dismissal.
+// from the account menu as the getting-started guide (「はじめかたガイド」) after dismissal.
 // Rendered on the active empty pane so it shows just once — BOTH kinds of empty:
 // a blank terminal pane (TerminalView) and a cell with no view at all
-// (panes/Pane.tsx の EmptyPane)。★ 後者が新規ユーザーの初期レイアウト（ops.ts の
-// emptyCell は views: [] ＝ペインが 1 枚も無い）で、TerminalView 側にしか置いていな
-// かった間は、初回のガイドがいちばん見せたい相手にだけ出ていなかった。
+// (EmptyPane in panes/Pane.tsx). The latter is a new user's initial layout (ops.ts's
+// emptyCell has views: [], i.e. not a single pane), so while this lived only in
+// TerminalView the first-run guide missed exactly the people it is for.
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { api } from "../../core/api/client.ts";
@@ -30,7 +30,7 @@ import type { ConnectionsStatus } from "../../types/session.ts";
 const DISMISS_KEY = "af.onboarding.dismissed";
 const TRACK_KEY = "af.onboarding.track";
 // The flagship builtin assistant (workspace/agent/assistants.go: afAssistantID).
-// Always present, so チャットをはじめる can open a draft on it without listing.
+// Always present, so the "start a chat" CTA can open a draft on it without listing.
 const AF_ASSISTANT_ID = "af";
 
 interface GuideState {
@@ -76,7 +76,7 @@ function useGuideState(): GuideState {
     agentOk: !!(
       conns?.claude?.connected ||
       conns?.codex?.connected ||
-      // opencode は APIキー（env）と opencode アカウント（OAuth）のどちらでも成立する。
+      // opencode counts as connected via either an API key (env) or an opencode account (OAuth).
       (conns?.opencode?.envs?.length ?? 0) > 0 ||
       !!conns?.opencode?.oauth
     ),
@@ -125,8 +125,8 @@ function StepRow({ s, next }: { s: Step; next: boolean }) {
   );
 }
 
-// The checklist body, shared between the first-run overlay and the はじめかた
-// ガイド modal. `onNavigate` fires after a CTA that opens another surface
+// The checklist body, shared between the first-run overlay and the getting-started
+// guide modal. `onNavigate` fires after a CTA that opens another surface
 // (settings / new-session modal / a chat draft) — the modal closes itself there;
 // the overlay just stays behind whatever opened.
 function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }) {
@@ -158,8 +158,8 @@ function GuideBody({ g, onNavigate }: { g: GuideState; onNavigate?: () => void }
       done: g.running,
       label: tr("onb.start_ws"),
       hint: tr("onb.start_ws_hint"),
-      // Power glyph (⏻) to match the WS バー's start/stop toggle — same metaphor.
-      // Inert while a start is already under way (same guard as the WS バー) so
+      // Power glyph (⏻) to match the WS bar's start/stop toggle — same metaphor.
+      // Inert while a start is already under way (same guard as the WS bar) so
       // mashing the CTA can't fire concurrent start POSTs.
       cta: g.running
         ? null
@@ -276,10 +276,10 @@ export function OnboardingCard() {
   }, [chatTick, g.running]);
 
   if (dismissed || sessions.length > 0 || (chats ?? 0) > 0) return null;
-  // CP down (status 不明): the empty panes and failed probes look identical to first-run,
+  // CP down (status unknown): the empty panes and failed probes look identical to first-run,
   // but they aren't — don't show the welcome guide (its launch actions can't work anyway,
   // and it misreads a transient outage as a fresh install). The pane keeps its neutral
-  // "セッション未接続" empty state; the WS bar already signals 不明.
+  // "no session attached" empty state; the WS bar already signals the unknown status.
   if (g.cpDown) return null;
   if (g.conns === null || chats === null) return null; // wait for the probes so checks don't flash wrong
 
@@ -306,7 +306,7 @@ export function OnboardingCard() {
   );
 }
 
-// はじめかたガイド — the same checklist as a plain modal, reachable from the
+// Getting-started guide — the same checklist as a plain modal, reachable from the
 // account menu any time (the first-run card is gone once dismissed / set up, but
 // the guide should stay consultable). No dismiss / auto-hide rules here.
 export function GuideModal() {

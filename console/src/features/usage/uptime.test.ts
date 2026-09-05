@@ -1,14 +1,13 @@
-// 稼働時間ヒートマップの純関数（docs/log/83）。
+// Pure functions of the uptime heatmap (docs/log/83).
 //
-// ⚠️ タイムゾーンをこのファイルで固定する。既定のままだと CI と開発機で違う結果になり、
-// 「+09:00 で日付がずれる」という**この機能の要点そのもの**が検査できない。
-// Node は process.env.TZ の変更を後から反映する（実測）。
+// The timezone is pinned in this file. Left at the default, CI and a developer machine disagree
+// and the very point of the feature — that dates shift at +09:00 — goes unchecked. Node picks up
+// a later change to process.env.TZ (measured).
 //
-// 🔥 **固定はモジュールの本体でやる。`beforeAll` では遅い。** describe のコールバックは
-// 収集時（beforeAll より前）に走るので、そこで `buildGrid` を呼んでいると開発機の時計で
-// 畳まれる。開発機が JST なら緑、CI（UTC）だけ赤——という「開発機の状態を検査している
-// テスト」そのものを踏んだ（2026-09-01・develop を赤くした）。念のためグリッドの構築も
-// beforeAll へ移してある。
+// Pin it in the module body; `beforeAll` is too late. A describe callback runs at collection
+// time, before beforeAll, so calling `buildGrid` there folds against the machine's own clock:
+// green on a JST machine, red only on CI (UTC). Grid construction is in beforeAll for the same
+// reason.
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   buildGrid,
@@ -30,29 +29,29 @@ afterAll(() => {
   process.env.TZ = ORIGINAL_TZ;
 });
 
-describe("UTC → ローカルの畳み込み", () => {
-  // ⚠️ ここがずれると、日本の利用者のヒートマップは 9 時間ずれて
-  // 「毎晩深夜に働いている」という表になる。
-  it("UTC の時バケットを閲覧者のローカル時刻へ運ぶ", () => {
+describe("UTC to local folding", () => {
+  // Get this wrong and a Japanese user's heatmap is off by nine hours, claiming they work every
+  // night after midnight.
+  it("carries a UTC hour bucket to the viewer's local time", () => {
     expect(localBucket("2026-09-01T00")).toEqual({ day: "2026-09-01", hour: 9 });
-    // 日付をまたぐ側。UTC の 15:00 はローカルの翌日 0 時。
+    // The side that crosses the date: UTC 15:00 is local midnight the next day.
     expect(localBucket("2026-09-01T15")).toEqual({ day: "2026-09-02", hour: 0 });
   });
 
-  it("壊れたキーは落とす（例外にしない）", () => {
+  it("drops a malformed key instead of throwing", () => {
     expect(localBucket("")).toBeNull();
     expect(localBucket("2026-09-01")).toBeNull();
   });
 
-  // 日付をまたぐぶんを取り寄せないと、端の列が半分空く。
-  it("要求する窓は前後 1 日ぶん広げる", () => {
+  // Without fetching the days either side, the edge columns come out half empty.
+  it("widens the requested window by a day at each end", () => {
     expect(widenForTimezone("2026-09-01", "2026-09-10")).toEqual({
       from: "2026-08-31",
       to: "2026-09-11",
     });
   });
 
-  it("日付の列は両端を含む", () => {
+  it("includes both ends of the date column range", () => {
     expect(dayRange("2026-08-30", "2026-09-02")).toEqual([
       "2026-08-30",
       "2026-08-31",
@@ -66,7 +65,7 @@ const RES: UptimeResponse = {
   from: "2026-09-01",
   to: "2026-09-01",
   interval_secs: 300,
-  // UTC 00 時 = ローカル 9 時。samples はマスの分母（見ていた秒数）。
+  // UTC hour 00 = local hour 9. samples is the cell denominator (seconds observed).
   observed: [
     { hour: "2026-09-01T00", samples: 12 },
     { hour: "2026-09-01T01", samples: 12 },
@@ -104,60 +103,63 @@ const RES: UptimeResponse = {
           max_sessions: 1,
           max_busy: 0,
         },
-        // 起きてはいたが Agent に届かなかった時間（measured なし）。
+        // Up, but the Agent was unreachable: no measured_secs.
         { hour: "2026-09-01T01", samples: 12, running_secs: 3600, max_sessions: 0 },
       ],
     },
   ],
 };
 
-describe("マス目の組み立て", () => {
-  // ⚠️ describe の本体（＝収集時）で畳まない。上のタイムゾーン固定より前に走る作りだと
-  // 開発機の時計で畳まれ、JST の開発機だけ緑になる。
+describe("grid construction", () => {
+  // Do not fold in the describe body (collection time): running before the timezone pin above
+  // folds against the machine's clock and is green only on a JST machine.
   let grid: Map<string, ReturnType<typeof buildGrid> extends Map<string, infer C> ? C : never>;
   beforeAll(() => {
     grid = buildGrid(RES);
   });
 
-  it("メンバーの寄与を 1 マスに積む", () => {
+  it("stacks the members' contributions into one cell", () => {
     const c = grid.get("2026-09-01|9")!;
     expect(c.runningSecs).toBe(5400);
     expect(c.sessionSecs).toBe(9000);
-    // ⚠️ 分母はハートビート 1 本ぶん（＝その時間）。メンバーの samples を足すと、
-    // 合算のマスが「平均何台」ではなく「動いていた割合」になってしまう。
+    // The denominator is one heartbeat's worth (the hour itself). Summing the members' samples
+    // would turn an aggregate cell into "what fraction was running" instead of "how many on
+    // average".
     expect(c.possibleSecs).toBe(12 * 300);
-    // ピークは足さない。合計 4 ではなく、同時に見えた最大の 3。
+    // Peaks are not summed: 3, the most seen at once, not the total of 4.
     expect(c.maxSessions).toBe(3);
   });
 
-  // ⚠️ observed はハートビートだけから作る。メンバーの行から推測すると、CP が
-  // 落ちていた時間と誰も働かなかった時間が同じ灰色になる。
-  it("観測できた時間はハートビート由来で、メンバーの行とは独立", () => {
+  // observed comes from the heartbeat alone. Inferring it from the member rows would paint an
+  // hour the CP was down the same grey as an hour nobody worked.
+  it("derives observed hours from the heartbeat, independent of the member rows", () => {
     expect(grid.get("2026-09-01|9")!.observed).toBe(true);
     expect(grid.get("2026-09-01|10")!.observed).toBe(true);
-    // ハートビートの無い時間は行そのものが無い＝空白。
+    // An hour without a heartbeat has no row at all, i.e. it is blank.
     expect(grid.get("2026-09-01|11")).toBeUndefined();
   });
 
-  it("内訳は寄与の多い順（ホバーで上から 3 件出すので並びが情報になる）", () => {
+  it("orders the breakdown by contribution, since the hover shows only the top three", () => {
     expect(grid.get("2026-09-01|9")!.contributions.map((c) => c.label)).toEqual(["aoi", "bun"]);
   });
 
-  it("平均本数の分母は running ではなく measured", () => {
-    // 稼働 5400 秒・セッション秒 9000 → 平均 1.67 本。
+  it("divides average concurrency by measured, not running", () => {
+    // 5400 running seconds and 9000 session seconds gives an average of 1.67 sessions.
     expect(cellValue(grid.get("2026-09-01|9"), "sessions")).toBeCloseTo(9000 / 5400, 5);
     expect(cellValue(grid.get("2026-09-01|9"), "busy")).toBeCloseTo(1800 / 5400, 5);
   });
 
-  // ⚠️ 分母が「その時間 1 つぶん」だから、同じ式が 1 人なら稼働率・合算なら台数になる。
-  // メンバーの samples を足した分母にすると、合算が「動いていた割合」に化ける。
-  it("稼働率は「その時間に平均で何台」（1 人なら 0..1）", () => {
-    // 5400 秒 / 3600 秒（12 サンプル × 300 秒）= 平均 1.5 台
+  // Because the denominator covers exactly one hour, the same formula is a utilisation for one
+  // member and a count when aggregated. Summing the members' samples turns the aggregate into
+  // "what fraction was running".
+  it("reads running as the average number up in that hour (0..1 for one member)", () => {
+    // 5400 s / 3600 s (12 samples x 300 s) = 1.5 on average
     expect(cellValue(grid.get("2026-09-01|9"), "running")).toBeCloseTo(1.5, 5);
   });
 
-  // ⚠️ ハートビートを取り損ねた時間で 0 除算しない（Infinity がそのまま段の計算に入る）。
-  it("ハートビートが無くても稼働している時間は分母を持つ", () => {
+  // Never divide by zero for an hour whose heartbeat was missed: Infinity flows straight into the
+  // level calculation.
+  it("gives an hour with activity but no heartbeat a denominator", () => {
     const g = buildGrid({
       ...RES,
       observed: [],
@@ -173,47 +175,47 @@ describe("マス目の組み立て", () => {
     expect(cellValue(g.get("2026-09-01|9"), "running")).toBeCloseTo(0.5, 5);
   });
 
-  // ⚠️ 届かなかった Agent を「0 本」と描くと、忙しかった時間に冷たいマスが出る。
-  it("本数不明の時間を 0 本と同じにしない", () => {
+  // Drawing an unreachable Agent as "zero sessions" puts a cold cell on a busy hour.
+  it("does not render an unknown session count as zero sessions", () => {
     const c = grid.get("2026-09-01|10")!;
     expect(c.runningSecs).toBe(3600);
     expect(isUnmeasured(c, "sessions")).toBe(true);
-    // 稼働率の指標では「不明」は無い（走っていた秒数は分かっている）。
+    // The running metric has no "unknown": the running seconds are known.
     expect(isUnmeasured(c, "running")).toBe(false);
   });
 
-  it("最大値は指標ごとに取り直す", () => {
+  it("recomputes the maximum per metric", () => {
     const days = ["2026-09-01"];
     expect(maxValue(grid, days, "sessions")).toBeCloseTo(9000 / 5400, 5);
     expect(maxValue(grid, days, "busy")).toBeCloseTo(1800 / 5400, 5);
   });
 
-  it("null や空の応答で落ちない", () => {
+  it("survives a null or empty response", () => {
     expect(buildGrid(null).size).toBe(0);
     expect(buildGrid({ ...RES, observed: [], members: [] }).size).toBe(0);
   });
 });
 
-describe("色の段", () => {
-  // ⚠️ 本数の指標では「起きていたが 0 本」が最下段。灰色（止まっていた）とは別物なので、
-  // 段を 0 にして描かない、という扱いはできない。
-  it("本数の指標では 0 が最下段", () => {
+describe("colour levels", () => {
+  // For the count metrics "up but zero sessions" is the lowest level. It differs from grey
+  // (stopped), so it cannot be given level 0 and left undrawn.
+  it("puts zero on the lowest level for the count metrics", () => {
     expect(cellLevel(0, 4, true)).toBe(1);
     expect(cellLevel(0.1, 4, true)).toBe(2);
     expect(cellLevel(4, 4, true)).toBe(5);
   });
 
-  it("稼働率の指標は 5 段を全部使う", () => {
+  it("uses all five levels for the running metric", () => {
     expect(cellLevel(0.01, 1, false)).toBe(1);
     expect(cellLevel(1, 1, false)).toBe(5);
   });
 
-  it("最大が 0 でも段は 1 に落ちる（0 除算で NaN の class を作らない）", () => {
+  it("falls back to level 1 when the maximum is 0, so no NaN class is built", () => {
     expect(cellLevel(0, 0, true)).toBe(1);
     expect(cellLevel(0, 0, false)).toBe(1);
   });
 
-  it("凡例の帯は段と同じ分け方", () => {
+  it("splits the legend bands the same way as the levels", () => {
     expect(levelBand(1, 4, true)).toEqual([0, 0]);
     expect(levelBand(2, 4, true)).toEqual([0, 1]);
     expect(levelBand(5, 4, true)).toEqual([3, 4]);
@@ -221,9 +223,9 @@ describe("色の段", () => {
   });
 });
 
-describe("分の表示", () => {
-  // 30 秒を「0 分」と出すと「動いていない」と読まれる。
-  it("0 でない稼働は必ず 1 分以上", () => {
+describe("minute display", () => {
+  // Showing 30 seconds as "0 minutes" reads as "not running".
+  it("shows any non-zero uptime as at least one minute", () => {
     expect(minutesOf(0)).toBe(0);
     expect(minutesOf(20)).toBe(1);
     expect(minutesOf(3600)).toBe(60);

@@ -28,20 +28,20 @@ import (
 
 // ecsEC2Runtime is the `ecs-ec2` Runtime adapter: ECS on the EC2 launch type, with a
 // POOL of general-purpose slots and one PERSISTENT EBS volume per user that gets
-// swapped between them (docs/log/64 §64.12 / §64.15, ADR 0045 決定 8 / 決定 10).
+// swapped between them (docs/log/64 §64.12 / §64.15, ADR 0045 decision 8 / decision 10).
 //
 // Why it exists next to the Fargate adapter rather than inside it: Fargate has no
-// "fast and persistent" home (ADR 0044 決定 4) and cannot go below ~105s on a warm
+// "fast and persistent" home (ADR 0044 decision 4) and cannot go below ~105s on a warm
 // Start, while a hot slot + volume swap measures 22–27s. The price is that one
 // workspace stops being "a service + two EFS access points" and becomes six kinds of
-// resource, on an ECS substrate with zero production mileage (ADR 0045 決定 2-3). So
+// resource, on an ECS substrate with zero production mileage (ADR 0045 decision 2-3). So
 // this ships as a SEPARATE profile: AF_RUNTIME=ecs-ec2 opts a deployment in, and
 // runtime_ecs.go (Fargate) is not touched — rolling back is one line of profile, not
 // a revert.
 //
 // The three invariants everything below leans on:
 //
-//   - A slot is EXCLUSIVE to one user (ADR 0045 決定 8). EC2 on-demand pricing is
+//   - A slot is EXCLUSIVE to one user (ADR 0045 decision 8). EC2 on-demand pricing is
 //     perfectly linear in vCPU, so bin-packing users onto one box saves nothing but
 //     costs a shared kernel and a shared root filesystem.
 //   - The adapter holds NO CP-side state (ADR 0012). Volumes and slots are found by
@@ -154,7 +154,7 @@ const (
 	// "this slot is free" and "AttachVolume succeeded" are the same statement. Two
 	// workspaces racing for the last hot slot are separated by EC2 itself — there is
 	// no CP-side free-list to get out of sync with reality, and the exclusivity of
-	// ADR 0045 決定 8 is enforced by the API rather than by convention.
+	// ADR 0045 decision 8 is enforced by the API rather than by convention.
 	ec2HomeDevice = "/dev/sdf"
 
 	// ec2HomeMountBase is where a slot mounts a user's volume. The task bind-mounts the
@@ -164,7 +164,7 @@ const (
 
 	// Where the credentials-only EFS access point lands inside the task. home now lives
 	// on a single-AZ EBS volume, so the auth/identity set is kept on EFS as well and the
-	// entrypoint symlinks it back into ~ (ADR 0045 決定 3-6 のハイブリッド).
+	// entrypoint symlinks it back into ~ (the ADR 0045 decision 3-6 hybrid).
 	ec2KeepPath = "/var/lib/af/keep"
 
 	EC2TagPool       = "af-pool"
@@ -173,7 +173,7 @@ const (
 	EC2TagWorkspace  = "af-workspace"
 	EC2TagSlotSize   = "af-slot-size"
 	// EC2TagTenant is the owning tenant's SLUG, and it exists only for the bill
-	// (docs/log/67, ADR 0048 決定 3). Nothing in the pool logic reads it: the CP can already
+	// (docs/log/67, ADR 0048 decision 3). Nothing in the pool logic reads it: the CP can already
 	// derive the tenant from af-membership through its own DB, so an opaque tenant id
 	// here would buy nothing. A slug can be read straight out of Cost Explorer, which
 	// is the whole point — grouping the invoice by tenant without the Console.
@@ -243,7 +243,7 @@ const (
 	ec2TagQuarantineReason = "af-quarantine-reason"
 	ec2TagQuarantineAt     = "af-quarantine-at"
 	// EC2RoleGolden is the ONE shared snapshot new homes are built from: a home that has
-	// already paid boot-install (48s) and warmed its caches (ADR 0045 決定 9). One per
+	// already paid boot-install (48s) and warmed its caches (ADR 0045 decision 9). One per
 	// pool, no membership tag — deleting it by mistake would cost every future user
 	// their first two minutes, which is why nothing that walks per-membership resources
 	// can ever match it.
@@ -283,7 +283,7 @@ const (
 	// boot check cannot catch is the one where booting is not the problem.
 	ec2TagBakeReady = "af-bake-ready"
 	// ec2RoleBackup is a periodic copy of a home, kept so that losing the AZ is not the
-	// same as losing the work (ADR 0045 決定 17). It is a THIRD kind of snapshot and it is
+	// same as losing the work (ADR 0045 decision 17). It is a THIRD kind of snapshot and it is
 	// tagged as its own role on purpose: every existing lookup filters on af-role, so
 	// backups are invisible to the restore path, to hibernation's superseded-capture
 	// sweep, and to the golden lookup. Nothing gets to mistake a backup for the copy it
@@ -296,7 +296,7 @@ const (
 	// ec2TagImage stamps the golden snapshot with the workspace image it was baked from.
 	// A golden that predates an image or CLI-pin bump would start new users on the OLD
 	// tools, silently and only for them — so the CP compares and refuses a stale one
-	// instead of trusting that somebody remembered to re-bake (決定 9).
+	// instead of trusting that somebody remembered to re-bake (decision 9).
 	ec2TagImage = "af-image"
 	// ec2TagImageFP stamps the CONTENT the image reference above resolved to when the
 	// golden was baked — `sha256:<hex>` over imageFingerprint()'s per-platform manifest
@@ -355,7 +355,7 @@ type ec2API interface {
 	// explanation. See terminateSlot.
 	TerminateInstances(context.Context, *ec2.TerminateInstancesInput, ...func(*ec2.Options)) (*ec2.TerminateInstancesOutput, error)
 	// Snapshots serve two features that share one mechanism: hibernating a long-unused
-	// home (ADR 0045 決定 4) and seeding a new one from the golden image (決定 9).
+	// home (ADR 0045 decision 4) and seeding a new one from the golden image (decision 9).
 	DescribeSnapshots(context.Context, *ec2.DescribeSnapshotsInput, ...func(*ec2.Options)) (*ec2.DescribeSnapshotsOutput, error)
 	CreateSnapshot(context.Context, *ec2.CreateSnapshotInput, ...func(*ec2.Options)) (*ec2.CreateSnapshotOutput, error)
 	DeleteSnapshot(context.Context, *ec2.DeleteSnapshotInput, ...func(*ec2.Options)) (*ec2.DeleteSnapshotOutput, error)
@@ -394,7 +394,7 @@ type ec2PoolConfig struct {
 	// ⚠️ Not read from SSM by the CP. That would put ssm:GetParameter on the task role
 	// for a value that changes only when the pool stack is redeployed, and it would
 	// break the rule that patching a slot's AMI IS redeploying that stack (ADR 0045
-	// 決定 7). The 40-ec2-pool stack resolves the public parameter and passes the id.
+	// decision 7). The 40-ec2-pool stack resolves the public parameter and passes the id.
 	amiArm64     string
 	pool         string         // AF_ECS_EC2_POOL tag value (defaults to the cluster name)
 	classes      []ec2SlotClass // AF_ECS_EC2_SLOT_TYPES, in declared order
@@ -460,7 +460,7 @@ type ec2PoolConfig struct {
 	slotTerminateAfter time.Duration
 	// hibernateAfter is the THIRD timer in the same series, and the only one that
 	// touches the user's data: once a home has been dormant this long it is snapshotted
-	// and its volume deleted (ADR 0045 決定 4 + 決定 13-2). The next Start restores it —
+	// and its volume deleted (ADR 0045 decision 4 + decision 13-2). The next Start restores it —
 	// 122s and a slower first day, against $4.80 → $1.00 a month for a 20 GiB home
 	// nobody has opened.
 	//
@@ -513,7 +513,7 @@ type ec2PoolConfig struct {
 	// Nothing could recover from that on its own, and each layer was individually correct:
 	//   - ECS could not stop the ghost task (no agent), so its ENI never detached;
 	//   - the sweeper refuses to stop a slot that still holds a task ENI (multi-ENI/egress
-	//     loss, 決定 3-3), so it logged "leaving it running for now" every 5 minutes forever;
+	//     loss, decision 3-3), so it logged "leaving it running for now" every 5 minutes forever;
 	//   - Start reused the slot by affinity and waited for a registration that was never
 	//     coming, which the ingress cut at 60s — the user got a 504 per attempt, for hours.
 	// So the missing piece was a TIME LIMIT on "not registered yet": past it the box is not
@@ -559,7 +559,7 @@ const (
 // say "you land on m7i.xlarge (4 vCPU / 16 GiB)". Asking EC2 (DescribeInstanceTypes)
 // would be authoritative, but it means adding an IAM action to the CP task role and
 // redeploying the platform stack for a label — and the operator writing the ladder
-// already knows the number (ADR 0045 決定 21). 0 = not declared → not shown.
+// already knows the number (ADR 0045 decision 21). 0 = not declared → not shown.
 type ec2Slot struct {
 	instanceType string
 	memMiB       int64
@@ -578,7 +578,7 @@ const (
 // The architecture is DECLARED, never derived from the instance type's name. "a
 // family ending in g is Graviton" reads well until m7gd, x2gd or g4dn, and a wrong
 // guess here does not misprint a label — it boots the wrong AMI. The operator
-// writing the ladder already knows (the same reasoning ADR 0045 決定 21 used for
+// writing the ladder already knows (the same reasoning ADR 0045 decision 21 used for
 // vCPU), and newECSEC2Factory refuses to start when a declared arm64 class has no
 // launch template to run on.
 type ec2SlotClass struct {
@@ -637,7 +637,7 @@ func newECSEC2Factory(mcfg Config) (RuntimeFactory, error) {
 		maxSlots:       EnvInt("AF_ECS_EC2_MAX_SLOTS", 8),
 		homeGiB:        int32(EnvInt("AF_ECS_EC2_HOME_GB", 50)),
 		tmpfsMiB:       int32(EnvInt("AF_ECS_EC2_TMP_MB", 2048)),
-		// noexec is deliberately NOT in the default set. ADR 0045 決定 8 names
+		// noexec is deliberately NOT in the default set. ADR 0045 decision 8 names
 		// noexec,nosuid,nodev, but this is a developer container: installers, test
 		// runners and build tools routinely exec out of /tmp, and a noexec /tmp turns
 		// that into a confusing "Permission denied". The two properties the decision
@@ -742,12 +742,12 @@ func (p ec2PoolConfig) classFor(id string) ec2SlotClass {
 // memory request, and reports the class's architecture with it. Sizing on EC2 is a
 // choice of instance type, not Fargate's 74 discrete (cpu, memory) pairs (docs/log/64
 // §64.4.5): the task reserves neither cpu nor memory, so the user gets the whole box
-// (ADR 0045 決定 8).
+// (ADR 0045 decision 8).
 //
 // ⚠️ The memory argument is a REQUIREMENT, not a cap — "fit me into a box this big" —
 // and the person then gets whatever that box has. It is also why 0 (unset) lands on
 // the SMALLEST slot here, while 0 on Fargate means the deployment's task size and on
-// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 決定 21).
+// docker means WS_MEMORY. The Console says which of the three it is (ADR 0045 decision 21).
 //
 // The class only chooses the LADDER. Memory still chooses the rung, in every class,
 // which is what keeps "8 GB" meaning the same thing after a class change.
@@ -1003,7 +1003,7 @@ func (e *ecsEC2Runtime) Name() string     { return e.base.Name() }
 func (e *ecsEC2Runtime) Endpoint() string { return e.base.Endpoint() }
 
 // State maps the THREE-part truth — home volume, slot, service — onto the port's four
-// words (ADR 0045 決定 3-5). The service's desired/running alone cannot tell a booting
+// words (ADR 0045 decision 3-5). The service's desired/running alone cannot tell a booting
 // slot from a stopped workspace, and calling a starting workspace `stopped` invites the
 // caller to Start it a second time.
 //
@@ -1313,7 +1313,7 @@ func (e *ecsEC2Runtime) prepare(ctx context.Context) (ec2Prep, error) {
 	var err error
 	// home is on EBS now, but the credentials/identity set stays on EFS: a single-AZ
 	// volume is one bad day away from taking the user's logins with it, and the whole
-	// keep-list is under 100 MiB (ADR 0045 決定 3-6). The entrypoint links ~ into it.
+	// keep-list is under 100 MiB (ADR 0045 decision 3-6). The entrypoint links ~ into it.
 	if p.keepAP, err = e.ensureAccessPoint(ctx, "keep-ec2", "/home-keep/"+e.base.membershipID); err != nil {
 		return p, fmt.Errorf("efs keep access point: %w", err)
 	}
@@ -1761,7 +1761,7 @@ func (e *ecsEC2Runtime) launch(ctx context.Context, p ec2Placement, prep ec2Prep
 	}
 	// The home is on this box now, so the box is this person's for as long as it stays
 	// there — stamp it for the bill. Deliberately AFTER the mount and best-effort: the
-	// tag is read by Cost Explorer and by nothing else (ADR 0048 決定 3).
+	// tag is read by Cost Explorer and by nothing else (ADR 0048 decision 3).
 	e.tagSlotOwner(ctx, p.instanceID)
 	// …and it is no longer free, so its free-pool clock stops. Same moment, opposite tag.
 	e.clearSlotFree(ctx, p.instanceID)
@@ -1870,7 +1870,7 @@ func (e *ecsEC2Runtime) markQuarantined(ctx context.Context, instanceID string, 
 //	                                   never flush and unmount the filesystem
 //	StopInstances (graceful)           waits out an ACPI shutdown nobody is listening for
 //	StopInstances while a task ENI     the box comes back MULTI-ENI and silently loses
-//	  is still attached                its egress (決定 3-3) — the very trap the sweeper
+//	  is still attached                its egress (decision 3-3) — the very trap the sweeper
 //	                                   refuses to go near
 //
 // So the order is inverted and one step is added at the front:
@@ -1951,7 +1951,7 @@ func (e *ecsEC2Runtime) forceDetachHome(ctx context.Context, p ec2Placement) {
 }
 
 // waitTaskENIsGone polls until ECS has taken its task ENIs off the instance. Same check
-// the sweeper makes before stopping a slot, and for the same reason (決定 3-3).
+// the sweeper makes before stopping a slot, and for the same reason (decision 3-3).
 func (e *ecsEC2Runtime) waitTaskENIsGone(ctx context.Context, instanceID string) error {
 	for i := 0; i < 60; i++ {
 		out, err := e.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{InstanceIds: []string{instanceID}})
@@ -1987,7 +1987,7 @@ func (e *ecsEC2Runtime) waitInstanceStopped(ctx context.Context, instanceID stri
 
 // instancesHoldTaskENI reports whether any listed instance still carries an ENI that ECS
 // attached for a task. The description is the only marker AWS gives us — the sweeper's
-// taskENIsAttached has read it this way since 決定 3-3 — so both callers share it rather
+// taskENIsAttached has read it this way since decision 3-3 — so both callers share it rather
 // than keeping two copies of the same string match.
 func instancesHoldTaskENI(out *ec2.DescribeInstancesOutput) bool {
 	for _, r := range out.Reservations {
@@ -2034,7 +2034,7 @@ func (e *ecsEC2Runtime) homeVolume(ctx context.Context) (*ec2types.Volume, error
 //
 //  1. this user's home was HIBERNATED (§64.18.3) → rebuild it from that snapshot, so the
 //     workspace cannot tell it ever went away;
-//  2. a GOLDEN snapshot matches the running image (決定 9) → a new user skips
+//  2. a GOLDEN snapshot matches the running image (decision 9) → a new user skips
 //     boot-install (48s) and a cold npm cache;
 //  3. neither → an empty volume, which is correct, just slow.
 //
@@ -2195,7 +2195,7 @@ func (e *ecsEC2Runtime) unclaim(ctx context.Context, volumeID string) {
 }
 
 // ownedTags appends `af-tenant` when this workspace knows its tenant slug. Nothing in
-// the pool reads it — it exists so the invoice can be grouped by tenant (ADR 0048 決定 3).
+// the pool reads it — it exists so the invoice can be grouped by tenant (ADR 0048 decision 3).
 // An unknown slug appends nothing rather than an empty value: an empty cost allocation
 // tag is a real group in the bill, and "tenant = (blank)" reads like a bug.
 func (e *ecsEC2Runtime) ownedTags(tags []ec2types.Tag) []ec2types.Tag {
@@ -2222,7 +2222,7 @@ func (e *ecsEC2Runtime) ownedTags(tags []ec2types.Tag) []ec2types.Tag {
 // ⚠️ Untag on release is what keeps a WARM POOL slot out of somebody's bill. Without it
 // the last user of a box keeps paying for it while it sits idle waiting for the next
 // person — and "idle pool" is exactly the shared cost the operator needs to see as
-// shared (ADR 0048 決定 4).
+// shared (ADR 0048 decision 4).
 func (e *ecsEC2Runtime) tagSlotOwner(ctx context.Context, instanceID string) {
 	if instanceID == "" {
 		return
@@ -2778,7 +2778,7 @@ func (e *ecsEC2Runtime) makeRoom(ctx context.Context) (bool, error) {
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, e.pool.pool),
 			// af-role=slot leaves quarantined boxes alone, as everywhere else: those are
-			// evidence an operator has not looked at yet (決定 20).
+			// evidence an operator has not looked at yet (decision 20).
 			tagFilter(EC2TagRole, ec2RoleSlot),
 			{Name: aws.String("instance-state-name"), Values: []string{"running", "stopped"}},
 		},
@@ -3426,7 +3426,7 @@ func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp stri
 //     and let them have the box. A small memoryReservation keeps the API happy.
 //   - /tmp is a tmpfs. The root volume is shared with whoever had the slot before, so
 //     a disk-backed /tmp would both leak (readable from the host) and let one user fill
-//     the volume out from under the next (ADR 0045 決定 8 の代償 2). tmpfs is the one
+//     the volume out from under the next (ADR 0045 decision 8, price 2). tmpfs is the one
 //     tool Fargate did not have.
 //   - home is a host bind of the freshly mounted EBS, not an EFS volume.
 //
@@ -3436,15 +3436,15 @@ func (e *ecsEC2Runtime) serviceTaskDefIfFingerprint(ctx context.Context, fp stri
 // STRING does not change when the image does, so the stamp is the only field that
 // tells reuseOrRegisterTaskDef the inputs moved. Excluding it would make a re-wake
 // after an image push reuse the old revision — the task would still pull the new
-// image, but it would carry the OLD stamp, and the workspace's 要再起動 badge would
-// then never clear no matter how often the user restarted.
+// image, but it would carry the OLD stamp, and the workspace's "restart required"
+// badge would then never clear no matter how often the user restarted.
 func (e *ecsEC2Runtime) buildTaskDef(ctx context.Context, p ec2Placement, prep ec2Prep) *ecs.RegisterTaskDefinitionInput {
 	env := []ecstypes.KeyValuePair{
 		{Name: aws.String("CLAUDE_CONFIG_DIR"), Value: aws.String("/var/lib/af/claude")},
-		// Where the entrypoint keeps the auth/identity set (ADR 0045 決定 3-6).
+		// Where the entrypoint keeps the auth/identity set (ADR 0045 decision 3-6).
 		{Name: aws.String("AF_WS_KEEP"), Value: aws.String(ec2KeepPath)},
 		{Name: aws.String("AGENT_STOP_GRACE_SEC"), Value: aws.String(strconv.Itoa(agentStopGraceSec()))},
-		// NOTE: AF_WS_SCRATCH is deliberately absent (ADR 0045 決定 10-3). It exists to
+		// NOTE: AF_WS_SCRATCH is deliberately absent (ADR 0045 decision 10-3). It exists to
 		// keep small-file build output off EFS; here home IS local NVMe-backed EBS, so
 		// the relocation would buy nothing and would move the user's caches onto a disk
 		// that is wiped when the slot changes hands.
@@ -3561,7 +3561,7 @@ func (e *ecsEC2Runtime) netConfig(ctx context.Context, p ec2Placement) (*ecstype
 			// Never AssignPublicIp on a slot: a task ENI that outlives a stop turns the
 			// instance into a multi-ENI box that silently loses its auto-assigned public
 			// IPv4, and the agent then cannot reach the control plane at all
-			// (ADR 0045 決定 3-3, measured: 11 minutes offline).
+			// (ADR 0045 decision 3-3, measured: 11 minutes offline).
 			AssignPublicIp: ecstypes.AssignPublicIpDisabled,
 		},
 	}, nil
@@ -3725,7 +3725,7 @@ func (e *ecsEC2Runtime) releaseSlotSince(ctx context.Context, gen int64) error {
 		return fmt.Errorf("%s was started again while releasing its slot; leaving it attached", e.base.name)
 	}
 	// umount first, ALWAYS — while the slot is running. A detach of a mounted filesystem
-	// is how a home gets corrupted (ADR 0045 決定 8 の代償 3), so a failure here must stop
+	// is how a home gets corrupted (ADR 0045 decision 8, price 3), so a failure here must stop
 	// the detach.
 	//
 	// A STOPPED slot is the exception, and it has to be: SSM cannot reach it, and there
@@ -3846,7 +3846,7 @@ func (e *ecsEC2Runtime) waitTasksGone(ctx context.Context) error {
 // never belonged to this user.
 //
 // ⚠️ P0 left the second half out — it deleted the EBS volume but kept the ECS service,
-// the two EFS access points and the two SSM parameters alive forever (ADR 0045 決定 13,
+// the two EFS access points and the two SSM parameters alive forever (ADR 0045 decision 13,
 // docs/log/64 §64.18.1). The order matters: the slot has to come back to the pool and the
 // volume has to be detached before the service goes away, because releaseSlot reads the
 // service to prove nothing is running on it.
@@ -3922,7 +3922,7 @@ func (e *ecsEC2Runtime) homeSnapshots(ctx context.Context) ([]ec2types.Snapshot,
 	return out.Snapshots, nil
 }
 
-// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 決定 4, docs/log/64
+// hibernate is one STEP of putting a long-unused home to sleep (ADR 0045 decision 4, docs/log/64
 // §64.18.2), not the whole thing. A snapshot of a 45 GiB home takes 30–40 minutes, and
 // the sweeper cannot sit on that, so the operation is resumable: each sweep advances it
 // by one step and the state lives in AWS, not in the CP (ADR 0012).
@@ -4148,7 +4148,7 @@ func (e *ecsEC2Runtime) restoreSnapshot(ctx context.Context) (string, error) {
 // promoted to an error that blocks a Start.
 //
 // ★ The image stamp is checked, not assumed. Re-baking is a manual step tied to a release
-// (決定 9), and the failure mode of forgetting it is invisible: only NEW users get it,
+// (decision 9), and the failure mode of forgetting it is invisible: only NEW users get it,
 // they get old CLIs, and everything looks fine. A stale golden is therefore refused —
 // loudly — rather than used.
 func (e *ecsEC2Runtime) goldenSnapshot(ctx context.Context) string {
@@ -4246,7 +4246,7 @@ func (e *ecsEC2Runtime) deleteHomeSnapshots(ctx context.Context) error {
 	return nil
 }
 
-// --- periodic backups (ADR 0045 決定 17) ---
+// --- periodic backups (ADR 0045 decision 17) ---
 
 // backupSnapshots lists this membership's backup copies, newest first. Role-filtered, so
 // a hibernation capture or the pool's golden can never be counted, pruned, or mistaken
@@ -4287,7 +4287,7 @@ func backupStamp(s ec2types.Snapshot) time.Time {
 // BackupHome keeps a copy of this home OUTSIDE its Availability Zone, because an EBS
 // volume lives in exactly one and cannot be evacuated: losing that AZ is otherwise the
 // same as losing the work. Snapshots are regional, so they are the only place a home can
-// be that its own AZ is not (docs/log/64 §64.21, ADR 0045 決定 17).
+// be that its own AZ is not (docs/log/64 §64.21, ADR 0045 decision 17).
 //
 // Three things this deliberately does NOT do:
 //
@@ -4651,7 +4651,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 	// Never stop a slot that still carries a task ENI. ECS detaches those a little after
 	// the task is gone, and an instance stopped in that window comes back MULTI-ENI —
 	// which is how it silently loses its auto-assigned public IPv4 and, on a deployment
-	// without NAT, its egress: the agent then never reconnects (ADR 0045 決定 3-3, and
+	// without NAT, its egress: the agent then never reconnects (ADR 0045 decision 3-3, and
 	// reproduced through this very code path in the live test). Skipping just means the
 	// next sweep stops it.
 	if held, err := f.taskENIsAttached(ctx, instanceID); err != nil || held {
@@ -4669,7 +4669,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 
 // sweepFreeSlots is the sleep test for slots that hold NO home — the half sweepVolume
 // structurally cannot do, because it walks homes and a released slot has none
-// (docs/log/64 §64.31, ADR 0045 決定 22).
+// (docs/log/64 §64.31, ADR 0045 decision 22).
 //
 // ★ The bug it fixes: Ec2SlotSleepSec promises "a slot with no running task is STOPPED,
 // ~$9.6/month instead of ~$95". That was only ever true for a slot with a home still
@@ -4683,7 +4683,7 @@ func (f *ecsEC2Factory) sweepVolume(ctx context.Context, vol *ec2types.Volume) {
 // rolling deploy always overlaps — both read the same tag and reach the same verdict, and
 // StopInstances is idempotent, so a double call is a no-op rather than a race.
 //
-// ⚠️ No warm spare is kept, and that is not an omission (§64.17.2, "プレウォームは入れない").
+// No warm spare is kept, and that is not an omission (§64.17.2, "no pre-warming").
 // A free RUNNING slot buys the next arrival 43s instead of 110s, and costs ~$95/month to
 // hold. A free STOPPED one buys almost nothing: waking it and then attaching and mounting
 // somebody's home is 123–143s against the 135s of building a box from scratch, because the
@@ -4794,7 +4794,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 		// Never stop a slot that still carries a task ENI — the same guard the occupied
 		// path uses, and for the same reason: an instance stopped inside that window comes
 		// back MULTI-ENI and silently loses its auto-assigned public IPv4 and its egress
-		// (ADR 0045 決定 3-3, reproduced on real hardware). Skipping just means the next
+		// (ADR 0045 decision 3-3, reproduced on real hardware). Skipping just means the next
 		// sweep stops it.
 		if held, err := f.taskENIsAttached(ctx, c.id); err != nil || held {
 			if held {
@@ -4821,7 +4821,7 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 // (see slotTerminateAfter).
 //
 // ⚠️ The ECS half is not optional and not automatic. A terminated instance stays in the
-// cluster as ACTIVE with agentConnected=false (ADR 0045 決定 3-2, and observed again on
+// cluster as ACTIVE with agentConnected=false (ADR 0045 decision 3-2, and observed again on
 // the live deployment when the three boxes were terminated by hand) — and a ghost that
 // looks ACTIVE still satisfies placement constraints, so ECS can pick it for a task that
 // then never starts. sweepGhostInstances is the repair path for boxes that vanished some
@@ -4930,7 +4930,7 @@ func (f *ecsEC2Factory) runtimeForVolume(vol *ec2types.Volume) *ecsEC2Runtime {
 
 // sweepGhostInstances deregisters container instances whose EC2 instance is gone or
 // long disconnected. ECS does NOT do this for stopped instances or disconnected agents
-// even when they are terminated (ADR 0045 決定 3-2), and the ghosts satisfy placement
+// even when they are terminated (ADR 0045 decision 3-2), and the ghosts satisfy placement
 // constraints — the scheduler keeps aiming tasks at a box that is not there.
 func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
 	rt := f.probeRuntime()
@@ -5093,7 +5093,7 @@ type ec2SlotView struct {
 	Workspace    string `json:"workspace"`  // occupant, "" = free
 	IdleMinutes  int    `json:"idle_minutes"`
 	// Quarantined: this box failed to mount a home and has been taken out of the pool
-	// (決定 20). It is shown rather than hidden because it keeps billing until somebody
+	// (decision 20). It is shown rather than hidden because it keeps billing until somebody
 	// terminates it, and because "the pool shrank by one" is not an explanation.
 	Quarantined      bool   `json:"quarantined"`
 	QuarantineReason string `json:"quarantine_reason"`
@@ -5109,7 +5109,7 @@ type ec2HomeView struct {
 	Hibernating   bool   `json:"hibernating"`
 	SnapshotID    string `json:"snapshot_id"`
 	SnapshotState string `json:"snapshot_state"`
-	// Backups (決定 17). Reported per home rather than as a pool total, because the
+	// Backups (decision 17). Reported per home rather than as a pool total, because the
 	// question an operator actually has is "would THIS person lose work if their AZ went
 	// away", and an average cannot answer it. BackupAgeMinutes is -1 when there is none.
 	Backups          int `json:"backups"`
@@ -5309,7 +5309,7 @@ func (f *ecsEC2Factory) PoolStatus(ctx context.Context) (EC2PoolStatus, error) {
 	// Quarantined boxes are listed too, on purpose. They are out of the pool for
 	// placement, but they still exist and still bill, and a slot that disappears from the
 	// screen the moment it breaks is how an operator ends up paying for a box nobody can
-	// see (決定 20).
+	// see (decision 20).
 	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
 		Filters: []ec2types.Filter{
 			tagFilter(EC2TagPool, f.pool.pool),

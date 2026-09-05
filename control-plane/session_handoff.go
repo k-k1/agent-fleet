@@ -1,15 +1,15 @@
 package main
 
-// メンバーへの引き継ぎ（docs/log/77 / ADR 0057）の API。
+// The member handoff API (docs/log/77 / ADR 0057).
 //
-// 所有者 A が「この続きをやってほしい」を、**既にそのセッションを共有している** B へ差し出す。
-// 受け取った B は自分の Console から自分の Workspace にセッションを立てる。
+// An owner A offers "please carry this on" to a B who is already sharing that session; B
+// then starts a session in B's own Workspace from B's own Console.
 //
-// ⚠️ この面には A → B の「実行」が一切無い。CP が所有者 Agent を叩くのは offer を作る瞬間の
-// 座標取得（GET /sessions/{name}/handoff-context）1 回だけで、そこに副作用は無い。だから
-// 共有 RW 提案（session_share.go）が必要とした owner lease・冪等 ledger・二重実行防止は
-// ここには存在しない ——「越境するのは文章と座標だけ」という決定（ADR 0057 決定 1/3）が
-// そのまま実装量の差になっている。
+// Nothing here executes anything on A's behalf. CP touches the owner Agent exactly once,
+// when the offer is created, to read the coordinates (GET /sessions/{name}/handoff-context),
+// and that read has no side effects. That is why the owner lease, idempotency ledger and
+// double-execution guards that the shared RW proposal (session_share.go) needed do not exist
+// on this surface: only prose and coordinates cross the boundary (ADR 0057 decisions 1/3).
 
 import (
 	"context"
@@ -25,20 +25,22 @@ import (
 )
 
 const (
-	// handoffPromptMaxBytes は引き継ぎ本文の上限。Agent 側の提案（handoffProposalMaxBytes）と
-	// 同じ 64 KiB —— 差し出す前に手元にあった本文がそのまま通らないのは事故になる。
+	// handoffPromptMaxBytes caps the handoff prompt. It matches the Agent-side proposal
+	// limit (handoffProposalMaxBytes) at 64 KiB: a prompt that was acceptable before being
+	// offered but rejected on the way out would be an accident.
 	handoffPromptMaxBytes = 64 << 10
 	handoffTitleMaxBytes  = 512
-	// handoffOfferTTL は受領待ちの寿命。共有 RW 提案の 24 時間より長いのは、宛先が
-	// **人**だからである（席を外している、休みを取っている、が普通に起きる）。
+	// handoffOfferTTL is how long an offer waits to be taken. Longer than the 24 hours of
+	// the shared RW proposal because the addressee is a person, who is routinely away from
+	// the desk or on leave.
 	handoffOfferTTL = 7 * 24 * time.Hour
 )
 
 type sessionHandoffAPI struct {
 	memberAuth
-	// share は共有 API の**同じインスタンス**。在庫の同期スロットル（syncedAt）と読み取り
-	// レートのバケツはそこが持っているので、別インスタンスを作ると引き継ぎ面だけが
-	// 所有者 Workspace への往復を独自に増やす。
+	// share must be the same instance as the sharing API, which owns the catalog sync
+	// throttle (syncedAt) and the read-rate buckets. A separate instance would let this
+	// surface add its own round trips to the owner Workspace on top.
 	share sessionShareAPI
 }
 
@@ -46,8 +48,9 @@ func newSessionHandoffAPI(m *manager, share sessionShareAPI) sessionHandoffAPI {
 	return sessionHandoffAPI{memberAuth: memberAuth{m}, share: share}
 }
 
-// writeHandoffErr は詳細（ゲートの理由や現在の状態）を載せたエラー。writeAPIErr は
-// code/message しか返さないが、この面は「なぜ止めたか」を Console が出し分ける。
+// writeHandoffErr writes an error carrying detail — the gate's reason, the current status.
+// writeAPIErr returns only code and message, but here the Console has to tell the user why
+// it was stopped.
 func writeHandoffErr(w http.ResponseWriter, status int, code, message string, detail map[string]any) {
 	e := map[string]any{"code": code, "message": message}
 	for k, v := range detail {
@@ -56,14 +59,16 @@ func writeHandoffErr(w http.ResponseWriter, status int, code, message string, de
 	writeJSON(w, status, map[string]any{"error": e})
 }
 
-// handoffOfferBody は差し出しの入力。宛先はセッションではなく**人**（userKey）で、座標は
-// 受け取らない —— repo / branch / HEAD は CP が所有者 Agent に聞く（ADR 0057 決定 5）。
+// handoffOfferBody is the input of an offer. The addressee is a person (userKey), not a
+// session, and no coordinates are accepted: CP asks the owner Agent for repo, branch and
+// HEAD itself (ADR 0057 decision 5).
 type handoffOfferBody struct {
 	SessionName      string `json:"sessionName"`
 	RecipientUserKey string `json:"recipientUserKey"`
 	Title            string `json:"title"`
 	Prompt           string `json:"prompt"`
-	// AckWarning は「未コミットの変更があるが承知の上で送る」。Blocked は覆せない。
+	// AckWarning means "there are uncommitted changes and I am sending anyway". A blocked
+	// state cannot be overridden this way.
 	AckWarning bool `json:"ackWarning"`
 }
 
@@ -93,18 +98,16 @@ func (a sessionHandoffAPI) open(ctx context.Context, o store.SessionHandoffOffer
 	return string(b)
 }
 
-// handoffOfferDTO は所有者向け（本文なし）。A の手元には元の提案があるので、台帳は状態が読めれば足りる。
-// handoffOfferWire — 引き継ぎ提案 1 件の基本形（作成の応答・所有者側の一覧）。
+// handoffOfferWire is the base form of one handoff offer (the create response and the
+// owner's list). It carries no prompt: A still has the original proposal, so the ledger only
+// has to make the status readable.
 //
-// 旧: map[string]any{"id":…, "sessionId":…, …} の 13 キー（handoffOfferDTO の戻り値）。
-// 13 キーとも無条件なので **omitempty は付けない**（branch / headSha / decidedAt などは
-// 空文字を取りうるので、付けるとキーごと消える）。
+// was: map[string]any{"id":…, "sessionId":…, …}, 13 keys (handoffOfferDTO's return value).
 //
-// 🔴 **受信箱だけがキーを 3 つ足す**（listReceived が `d["ownerUserKey"]=…` などで後から詰めていた）。
-// そこを omitempty で表すのは**誤り**——`ownerUserKey` は `keys[…]` にキーが無ければ `""`、
-// `prompt` は `a.open()` が空を返しうるので、**旧コードは「空文字で出す」が omitempty は「消す」**。
-// なので**埋め込みで別の型にする**（下の handoffOfferInboxWire）。埋め込みは JSON で
-// 平坦化されるので、omitempty 無しで両方の変種を忠実に再現できる。
+// All 13 keys are unconditional, so none of them takes omitempty — branch, headSha and
+// decidedAt can legitimately be empty strings, and omitempty would drop the key entirely.
+// The inbox adds three more keys, which is why it is a separate embedding type
+// (handoffOfferInboxWire) rather than optional fields here.
 type handoffOfferWire struct {
 	ID                  string `json:"id"`
 	SessionID           string `json:"sessionId"`
@@ -121,16 +124,16 @@ type handoffOfferWire struct {
 	AcceptedSessionName string `json:"acceptedSessionName"`
 }
 
-// handoffOfferInboxWire — 受信箱の 1 件。基本形に 3 キーを足した 16 キー。
+// handoffOfferInboxWire is one entry of the recipient's inbox: the base form plus three
+// keys, 16 in all. The three cannot be optional fields on the base type — ownerUserKey is ""
+// when the member is unknown and prompt is "" when the ciphertext cannot be opened, and both
+// still have to appear — so they are added by embedding, which JSON flattens.
 //
-// 旧: map[string]any（handoffOfferDTO の戻り値）に listReceived が
+// was: map[string]any (handoffOfferDTO's return value) with listReceived adding three keys.
 //
-//	d["ownerUserKey"] / d["prompt"] / d["sourceSessionKind"] を後から詰めていた形。
-//
-// 🔴 埋め込みなので JSON は**平坦**に出る（`{"id":…, …, "ownerUserKey":…}`）。
-// 基本形と足す 3 つで**実効 json 名の衝突は無い**——衝突すると encoding/json は
-// **どちらも出さない**ので無言でキーが消えるが、それは等価テストが
-// 「キーが消えた」で捕まえる（13 / 16 の絶対数も別に固定してある）。
+// The effective JSON names of the base and the three additions must not collide:
+// encoding/json emits neither side of a collision, so a key would vanish silently. The
+// equivalence test catches that, and the counts 13 / 16 are pinned separately.
 type handoffOfferInboxWire struct {
 	handoffOfferWire
 	OwnerUserKey      string `json:"ownerUserKey"`
@@ -148,20 +151,21 @@ func handoffOfferDTO(o store.SessionHandoffOffer, recipientKey string) handoffOf
 	}
 }
 
-// catalogForOwnedSession は所有者自身の catalog 行を名前で引く。ok=false は「その行が無い」で、
-// **エラーではない**（呼び出し側が意味を決める。読みは「まだ誰にも共有していない」、
-// 書きは 404）。
+// catalogForOwnedSession looks up the owner's own catalog row by name. ok=false means the
+// row is absent, which is not an error — the caller decides what it means (a read takes it
+// as "not shared with anyone yet", a write answers 404).
 //
-// ⚠️ sync の頻度で性格が変わる。`syncCatalogLocked` は所有者 Agent への往復 2 本
-// （`/sessions/catalog` と `/repos`）で、`/repos` は作業コピーごとに git を回すため
-// **worktree が増えるほど重い**。共有の読み取りが `freshCatalog` で間引いているのはこれが
-// 理由（session_share.go の注記）で、宛先一覧のような読みで毎回走らせるとモーダルが
-// 「読み込み中」のまま止まって見える。だから読みは**同じスロットルに乗せる**。
+// How often it syncs decides how this behaves. syncCatalogLocked is two round trips to the
+// owner Agent (/sessions/catalog and /repos), and /repos runs git per working copy, so it
+// gets heavier with every worktree. That is why shared reads are thinned through
+// freshCatalog (see the note in session_share.go): running it on every read, such as
+// populating the recipient list, leaves the modal apparently stuck on "loading". So reads go
+// through the same throttle.
 //
-// ⚠️ 逆に、同期を丸ごと省くことはできない。repo/worktree スコープの共有は**後から作られた
-// セッションにも動的に効く**（docs/log/59 §1）ので、catalog に行が無いことは「共有されていない」
-// の証明にならない —— 省くと、共有済みの新しいセッションに「まだ誰にも共有していません」と
-// 表示してしまう。
+// Skipping the sync altogether is not an option either. Repo- and worktree-scoped shares
+// apply dynamically to sessions created later (docs/log/59 §1), so a missing catalog row is
+// no proof that a session is unshared — skipping it would tell the user that an
+// already-shared new session is "not shared with anyone yet".
 func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved, name string, exact bool) (store.SharedSessionCatalog, bool, *apiError) {
 	if exact || !a.share.freshCatalog(res.mv.MembershipID, shareCatalogTTL) {
 		lock := a.mgr.shareLockFor(res.mv.MembershipID)
@@ -169,7 +173,7 @@ func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved
 		_, err := a.share.syncCatalogLocked(r.Context(), res)
 		lock.Unlock()
 		if err != nil {
-			a.share.invalidateCatalog(res.mv.MembershipID) // 失敗した同期を「新鮮」に数えない
+			a.share.invalidateCatalog(res.mv.MembershipID) // a failed sync must not count as fresh
 			return store.SharedSessionCatalog{}, false, &apiError{http.StatusConflict, "workspace_not_running", "owner workspace must be running to hand off"}
 		}
 	}
@@ -185,8 +189,9 @@ func (a sessionHandoffAPI) catalogForOwnedSession(r *http.Request, res *resolved
 	return store.SharedSessionCatalog{}, false, nil
 }
 
-// recipientsFor は「このセッションを見られる人」＝宛先候補。**共有 ACL の逆引き**であり、
-// テナント名簿ではない（ADR 0057 決定 2: 名簿は誰の文脈にも入れない）。
+// recipientsFor lists who can see this session, i.e. the candidate addressees. It is a
+// reverse lookup over the sharing ACL, not the tenant roster (ADR 0057 decision 2: the
+// roster never enters anyone's context).
 func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv store.MembershipView, c store.SharedSessionCatalog) ([]map[string]string, error) {
 	shares, err := a.mgr.store.ListSessionSharesByOwner(ctx, mv.MembershipID)
 	if err != nil {
@@ -206,22 +211,23 @@ func (a sessionHandoffAPI) recipientsFor(ctx context.Context, mv store.Membershi
 	}
 	out := []map[string]string{}
 	for id, rules := range byRecipient {
-		// ro でも引き継げる。引き継ぎに要るのは会話が読めることで、操作を提案できることではない。
+		// A read-only share is enough: a handoff needs the conversation to be readable,
+		// not the right to propose operations.
 		if effectivePermission(rules, c) == "" {
 			continue
 		}
 		m, ok := byID[id]
 		if !ok {
-			continue // 除名済み。ListMembersByTenant は active しか返さない
+			continue // removed from the tenant; ListMembersByTenant returns active members only
 		}
 		out = append(out, map[string]string{"userKey": m.UserKey, "email": m.Email})
 	}
 	return out, nil
 }
 
-// recipients — GET /api/sessions/{name}/handoff-recipients。差し出す前に A が宛先を選ぶための
-// 一覧と、push ゲートの判定（docs/log/77 §77.5）を同時に返す。ゲートを送信時だけに置くと、A は
-// 長い本文を書き終えてから初めて弾かれる。
+// recipients (GET /api/sessions/{name}/handoff-recipients) returns both the list A picks an
+// addressee from and the push gate's verdict (docs/log/77 §77.5). Putting the gate only on
+// submission would reject A after a long prompt had already been written.
 func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, res *resolved) {
 	name := r.PathValue("name")
 	if res.rt.State(r.Context()) != "running" {
@@ -233,9 +239,10 @@ func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, re
 		writeAPIErr(w, e)
 		return
 	}
-	// 「まだ誰にも共有していない」は**正常な状態**なのでエラーにしない。エラーで返すと
-	// 画面はそれを「取得に失敗した」としか言えず、利用者は次に何をすればよいか分からない
-	// （実利用で最初に踏まれた）。空の候補で答え、先に共有する導線は Console 側が出す。
+	// "not shared with anyone yet" is a normal state, so it is not an error: as an error
+	// the screen can only say "fetch failed" and the user has no idea what to do next
+	// (the first thing real use hit). Answer with an empty candidate list and let the
+	// Console offer the path to share it first.
 	members := []map[string]string{}
 	if found {
 		var err error
@@ -264,18 +271,17 @@ func (a sessionHandoffAPI) recipients(w http.ResponseWriter, r *http.Request, re
 	writeJSON(w, http.StatusOK, map[string]any{"members": members, "context": ctx, "pendingOfferId": pending})
 }
 
-// handoffContext は所有者 Agent に作業コピーの状態を聞く。返り値の 2 つ目は生の map で、
-// Console にはそのまま渡す（blocked / warning のトークンは Agent が組み立てる — 条件が
-// 2 か所に分かれると必ずずれる）。
+// handoffContext asks the owner Agent for the state of the working copy. The raw map is
+// passed to the Console unchanged; the blocked and warning tokens are built by the Agent,
+// because conditions split across two places always drift apart.
 func (a sessionHandoffAPI) handoffContext(ctx context.Context, res *resolved, name string) (map[string]any, string, *apiError) {
 	payload, status, e := a.share.ownerGET(ctx, res, "/sessions/"+url.PathEscape(name)+"/handoff-context")
 	if e != nil {
 		return nil, "", e
 	}
-	// ⚠️ 上流の 404 と 409 を混ぜない。「そんなセッションは無い」と「作業コピーが無いので
-	// 引き継げない」は利用者の次の一手が違う（前者は名前が違う／消えた、後者は共有や
-	// push の話ですらない）。混ぜると、消えたセッションに対して「作業コピーがありません」と
-	// 出て原因が追えなくなる。
+	// Never merge the upstream 404 and 409. "no such session" and "no working copy to hand
+	// off" lead the user to different next steps, and merging them makes a deleted session
+	// report "there is no working copy", which hides the actual cause.
 	switch {
 	case status == http.StatusNotFound:
 		return nil, "", &apiError{http.StatusNotFound, "not_found", "no such session"}
@@ -286,7 +292,7 @@ func (a sessionHandoffAPI) handoffContext(ctx context.Context, res *resolved, na
 	return payload, blocked, nil
 }
 
-// create — POST /api/session-handoff-offers。
+// create handles POST /api/session-handoff-offers.
 func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *resolved) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, handoffPromptMaxBytes+handoffTitleMaxBytes+4096))
 	if err != nil {
@@ -320,7 +326,8 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		writeAPIErr(w, &apiError{http.StatusNotFound, "handoff_session_not_shared", "session is not shared with anyone"})
 		return
 	}
-	// 宛先は共有先に限る。名簿から引くのではなく ACL の逆引きに含まれるかで判定する。
+	// Only people the session is shared with may be addressed, decided by membership in the
+	// reverse ACL lookup rather than by consulting the roster.
 	members, err := a.recipientsFor(r.Context(), res.mv, c)
 	if err != nil {
 		writeAPIErr(w, internalErr(err))
@@ -347,7 +354,8 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 		writeAPIErr(w, &apiError{http.StatusNotFound, "handoff_recipient_not_shared", "recipient does not have this session shared"})
 		return
 	}
-	// push ゲート。⚠️ CP が Agent に聞いた事実だけを見る。要求ボディの座標は受け取らない。
+	// The push gate judges only on what CP asked the Agent; coordinates in the request body
+	// are never accepted.
 	hctx, blocked, e := a.handoffContext(r.Context(), res, c.Name)
 	if e != nil {
 		writeAPIErr(w, e)
@@ -392,8 +400,8 @@ func (a sessionHandoffAPI) create(w http.ResponseWriter, r *http.Request, res *r
 	writeJSON(w, http.StatusCreated, handoffOfferDTO(o, recipient.UserKey))
 }
 
-// listOwned — GET /api/session-handoff-offers。A の台帳。通知は流れ物なので、後から辿れる
-// 唯一の場所（docs/log/77 §77.10）。
+// listOwned (GET /api/session-handoff-offers) is A's ledger. Notifications scroll away, so
+// this is the only place an offer can be traced afterwards (docs/log/77 §77.10).
 func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	a.expireDue(r.Context())
 	rows, err := a.mgr.store.ListSessionHandoffOffersByOwner(r.Context(), mv.MembershipID)
@@ -410,8 +418,9 @@ func (a sessionHandoffAPI) listOwned(w http.ResponseWriter, r *http.Request, _ s
 	writeJSON(w, http.StatusOK, map[string]any{"offers": out})
 }
 
-// listReceived — GET /api/session-handoff-offers/received。B の受信箱。**本文を返す**のは、
-// 受け取るかどうかを決めるのに本文を読む必要があるからで、ここが唯一の本文の出口。
+// listReceived (GET /api/session-handoff-offers/received) is B's inbox. It returns the
+// prompt because deciding whether to accept requires reading it, and this is the only place
+// the prompt leaves CP.
 func (a sessionHandoffAPI) listReceived(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {
 	a.expireDue(r.Context())
 	rows, err := a.mgr.store.ListSessionHandoffOffersByRecipient(r.Context(), mv.MembershipID)
@@ -445,11 +454,12 @@ func (a sessionHandoffAPI) userKeys(ctx context.Context, tenantID string) map[st
 	return out
 }
 
-// withdraw — DELETE /api/session-handoff-offers/{id}。所有者の撤回。
+// withdraw (DELETE /api/session-handoff-offers/{id}) is the owner's retraction.
 //
-// A が「待ちきれず自分で起動する」ときも Console はこれを呼ぶ。⚠️ 起動と撤回の競合
-// （同じ仕事が 2 つ走る）を閉じるのは pending → withdrawn の条件付き更新で、負けた側は
-// 409 を受けて起動をやめる（ADR 0057 決定 6）。
+// The Console also calls it when A gives up waiting and starts the work personally. The race
+// between that start and an acceptance — the same work running twice — is closed by the
+// conditional pending-to-withdrawn update: the loser gets a 409 and abandons its start
+// (ADR 0057 decision 6).
 func (a sessionHandoffAPI) withdraw(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	o, ok, err := a.mgr.store.GetSessionHandoffOffer(r.Context(), r.PathValue("id"))
 	if err != nil {
@@ -483,11 +493,12 @@ func (a sessionHandoffAPI) statusOf(ctx context.Context, id string) string {
 	return o.Status
 }
 
-// accept — POST /api/session-handoff-offers/{id}/accept。受け手が**起動できたあと**の事後申告。
+// accept (POST /api/session-handoff-offers/{id}/accept) is the recipient's report after the
+// session has already been started.
 //
-// 起動そのものは B の Console が既存の POST /sessions で行う（ADR 0057 決定 3）。ここで
-// 起動を代行しないのは、そうすると CP が他人の Workspace を操作することになり、この機能が
-// 避けた構造そのものになるため。
+// The start itself is done by B's Console through the existing POST /sessions (ADR 0057
+// decision 3). Starting it here instead would have CP operating someone else's Workspace —
+// exactly the structure this feature was built to avoid.
 func (a sessionHandoffAPI) accept(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	var in struct {
 		SessionName string `json:"sessionName"`
@@ -496,7 +507,8 @@ func (a sessionHandoffAPI) accept(w http.ResponseWriter, r *http.Request, ident 
 	a.decide(w, r, ident, mv, "accepted", strings.TrimSpace(in.SessionName))
 }
 
-// decline — POST /api/session-handoff-offers/{id}/decline。理由は求めない（ADR 0057 決定 8）。
+// decline handles POST /api/session-handoff-offers/{id}/decline. No reason is asked for
+// (ADR 0057 decision 8).
 func (a sessionHandoffAPI) decline(w http.ResponseWriter, r *http.Request, ident store.Identity, mv store.MembershipView) {
 	a.decide(w, r, ident, mv, "declined", "")
 }
@@ -507,7 +519,8 @@ func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident 
 		writeAPIErr(w, internalErr(err))
 		return
 	}
-	// 権限が無い相手には 404。存在の有無すら答えないのは共有と同じ作法。
+	// 404 for anyone without the right to it: as with sharing, not even existence is
+	// disclosed.
 	if !ok || o.RecipientMembershipID != mv.MembershipID {
 		writeAPIErr(w, &apiError{http.StatusNotFound, "not_found", "handoff offer not found"})
 		return
@@ -530,8 +543,9 @@ func (a sessionHandoffAPI) decide(w http.ResponseWriter, r *http.Request, ident 
 	writeJSON(w, http.StatusOK, map[string]any{"status": to})
 }
 
-// expireDue は期限切れを失効させ、所有者へ 1 回だけ知らせる。一覧を読むついでに回すのは、
-// この機能に専用のワーカーを増やさないため（失効が数分遅れても実害が無い）。
+// expireDue expires overdue offers and tells the owner exactly once. It rides along with a
+// list read so this feature needs no worker of its own; expiring a few minutes late does no
+// harm.
 func (a sessionHandoffAPI) expireDue(ctx context.Context) {
 	expired, err := a.mgr.store.ExpireSessionHandoffOffers(ctx, store.NowTS())
 	if err != nil {
@@ -544,11 +558,10 @@ func (a sessionHandoffAPI) expireDue(ctx context.Context) {
 	}
 }
 
-// notifyOffered / notifyAccepted — docs/log/77 §77.9。
-//
-// ⚠️ CP から直接 InsertNotification する。既存のセッション通知は Agent のアウトボックスを
-// drain する経路だが、引き継ぎは**送る側も受け取る側も Workspace が止まっている**場面が
-// 主戦場なので、その経路では届かない。
+// notifyOffered and notifyAccepted insert notifications from CP directly (docs/log/77
+// §77.9). Ordinary session notifications travel by draining the Agent's outbox, but a
+// handoff typically happens while the Workspace on either side is stopped, and nothing would
+// arrive that way.
 func (a sessionHandoffAPI) notifyOffered(o store.SessionHandoffOffer, _ string, c store.SharedSessionCatalog) {
 	title := o.Title
 	if title == "" {
@@ -565,9 +578,9 @@ func (a sessionHandoffAPI) notifyAccepted(o store.SessionHandoffOffer, _ string,
 		map[string]any{"offerId": o.ID, "sessionName": o.SourceSessionName, "acceptedSessionName": sessionName})
 }
 
-// notify は 1 通入れる。⚠️ InsertNotification の冪等は ON CONFLICT(event_id) で
-// **membership を含まない**ので、eventID には必ず受信者を混ぜること（同じ id を 2 通に使うと
-// 片方が黙って消える）。
+// notify inserts one notification. InsertNotification is idempotent on ON CONFLICT(event_id)
+// alone, which does not include the membership, so eventID must always mix in the recipient:
+// reusing one id for two notifications silently drops one of them.
 func (a sessionHandoffAPI) notify(membershipID, kind, eventID, targetType, targetID, targetKind, displayName string, payload map[string]any) {
 	b, _ := json.Marshal(payload)
 	_ = a.mgr.store.InsertNotification(context.Background(), store.Notification{

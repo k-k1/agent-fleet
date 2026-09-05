@@ -294,7 +294,7 @@ func TestCloudCostStoreScopesAndTotals(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	// ⚠️ A tenant-scoped read must NOT see the shared bucket. It is the deployment's own
+	// A tenant-scoped read must NOT see the shared bucket. It is the deployment's own
 	// infrastructure bill, which is information about the deployment rather than about
 	// this tenant.
 	scoped, err := st.ListCloudCost(ctx, tn.ID, "", "2026-08-01", "2026-08-31")
@@ -363,9 +363,9 @@ func cloudCostFixture(t *testing.T) (*store.SQL, *manager, store.Tenant, store.M
 	return st, mgr, tn, mem
 }
 
-// ⚠️ The shared bucket is the deployment's infrastructure bill. A tenant_admin asking
+// The shared bucket is the deployment's infrastructure bill. A tenant_admin asking
 // about their own tenant must get their members and NOT that — the same line ADR 0043
-// 決定 24/25 draws between "reaches outside the tenant" and "closed inside it".
+// decisions 24/25 draw between "reaches outside the tenant" and "closed inside it".
 func TestCloudCostHidesTheSharedBucketFromATenantAdmin(t *testing.T) {
 	_, mgr, _, mem := cloudCostFixture(t)
 	r := httptest.NewRequest(http.MethodGet, "/api/admin/cloud-cost?tenant=sales&from=2026-08-01&to=2026-08-31", nil)
@@ -471,7 +471,7 @@ func TestMemberCloudCostGivesTheAdminTheShapeTheListCannot(t *testing.T) {
 	if len(services) != 1 || services[0].(map[string]any)["service"] != "Amazon EC2" {
 		t.Fatalf("services = %v", services)
 	}
-	// ⚠️ The same response as /api/cost/me, so the Console renders both with one
+	// The same response as /api/cost/me, so the Console renders both with one
 	// component. Anything extra here would be a second shape to keep in step.
 	for _, k := range []string{"shared_micro", "shared_services", "members", "attributed_micro"} {
 		if _, ok := got[k]; ok {
@@ -484,7 +484,7 @@ func TestMemberCloudCostGivesTheAdminTheShapeTheListCannot(t *testing.T) {
 	}
 }
 
-// ⚠️ Scoped by MEMBERSHIP, not by tenant. tenantByMembership resolves what exists
+// Scoped by MEMBERSHIP, not by tenant. tenantByMembership resolves what exists
 // TODAY, so once a workspace is destroyed its rows are rewritten with an empty
 // tenant_id — and a tenant-scoped read would then show a confident $0.00 for somebody
 // who plainly did spend. The membership already proved it belongs to this tenant.

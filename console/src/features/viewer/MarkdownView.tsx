@@ -190,7 +190,7 @@ export function MarkdownView({
         () => alive,
         (p, line, column, openInNew) => onOpenFileRef.current?.(p, line, column, openInNew),
         // No onOpenDir on this surface (the mirror passes only onOpenFile) → fall back to
-        // revealing the directory in the ファイル rail, which is what the Doc viewer's own
+        // revealing the directory in the Files rail, which is what the Doc viewer's own
         // onOpenDir does. focus: the reader clicked to GO there, so the rail takes the
         // keyboard too. Safe as a default precisely because this whole pass is gated on
         // onOpenFile above: it can never fire on somebody else's shared session.

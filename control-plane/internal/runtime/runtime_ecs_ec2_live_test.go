@@ -78,7 +78,7 @@ func useCPTaskRole(t *testing.T) {
 // `ec2InstanceId ==` while using awsvpc + Service Connect, that an EBS volume mounted by
 // the CP over SSM really becomes the container's /home/dev, and that the EFS
 // credentials access points still mount on the EC2 launch type (docs/log/64 §64.9 listed
-// that last one as 未実測).
+// that last one unverified).
 //
 // Opt-in, because it creates billable resources and needs a substrate:
 //
@@ -115,7 +115,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	u1 := f.New(Workspace{ContainerName: name1, MembershipID: "m-u1", AgentToken: "tok-u1"}, "", nil).(*ecsEC2Runtime)
 	u2 := f.New(Workspace{ContainerName: name2, MembershipID: "m-u2", AgentToken: "tok-u2"}, "", nil).(*ecsEC2Runtime)
 
-	// --- 1. first start. Whether this is a真 cold start depends on what a previous run
+	// --- 1. first start. Whether this is a true cold start depends on what a previous run
 	// left behind, so record it: a home that already exists skips CreateVolume + mkfs +
 	// the first boot-install, and a warm pool skips the instance boot. ---
 	pre, _ := u1.homeVolume(ctx)
@@ -258,7 +258,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// --- 6. hibernation: u1's home (detached since the eviction) becomes a snapshot, the
 	// volume goes, and the next Start rebuilds it. This is the only path in the product
 	// that deletes a live home on its own, so the marker file is the whole assertion.
-	// (ADR 0045 決定 4 / docs/log/64 §64.18.2.) ---
+	// (ADR 0045 decision 4 / docs/log/64 §64.18.2.) ---
 	vol1 := aws.ToString(live.volumeOf(u1).VolumeId)
 	t5 := time.Now()
 	live.eventually(20*time.Minute, "home hibernated (snapshot completed, volume deleted)", func() bool {
@@ -302,7 +302,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 	// a brand-new user on the home it seeds. Earlier rounds only made the same AWS calls
 	// from Go, which left the operator-facing script itself unproven and stopped at "the
 	// volume came from the right snapshot" — never at "a task starts on it". (ADR 0045
-	// 決定 9 / docs/log/64 §64.19.4.)
+	// decision 9 / docs/log/64 §64.19.4.)
 	//
 	// The hibernation snapshot from step 6 cannot be reused as the golden: a successful
 	// restore deletes it, on purpose — otherwise the user pays for both the volume and a
@@ -369,7 +369,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		t.Logf("host view of the golden-seeded home:\n%s", got)
 	}
 
-	// --- 7b. the periodic backup (決定 17). It is the last snapshot path no live test
+	// --- 7b. the periodic backup (decision 17). It is the last snapshot path no live test
 	// ever took, and precisely the shape of call the CP task role had no permission for
 	// until §64.22.3 — so it belongs on the run that uses the production permissions.
 	// Any positive interval means "nothing recent enough exists, take one now". ---
@@ -395,7 +395,7 @@ func TestECSEC2LiveLifecycle(t *testing.T) {
 		if err != nil {
 			t.Errorf("Destroy %s: %v", rt.Name(), err)
 		}
-		// Destroy now folds the Fargate-side resources too (ADR 0045 決定 13-3): the
+		// Destroy now folds the Fargate-side resources too (ADR 0045 decision 13-3): the
 		// service, both EFS access points and both SSM parameters. Those are exactly the
 		// things that survived every earlier run and had to be swept up by teardown.sh.
 		// ECS and EFS both delete asynchronously — DescribeServices keeps returning the
@@ -763,7 +763,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 		t.Errorf("pool holds %d slots for 3 users, want exactly 3", n)
 	}
 	// Say what the AZ numbers mean rather than letting either outcome read as a verdict.
-	// Since 決定 16 a NEW home goes to the AZ holding the fewest homes, so over time they
+	// Since decision 16 a NEW home goes to the AZ holding the fewest homes, so over time they
 	// spread — but three homes created AT THE SAME TIME each read the counts before any of
 	// them wrote, so landing together is just as correct here as spreading.
 	t.Logf("AZs of the three new homes: %v (both outcomes are fine: concurrent creations read "+
@@ -818,7 +818,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 	// sweep) then runs for longer than its own timers, over every home in the pool. What is
 	// being watched for is the quiet kind of breakage: a live workspace disturbed, a slot
 	// leaked, a home detached — or a hibernation starting on its own, which is exactly what
-	// the sweeper stopped being allowed to do (ADR 0045 決定 14). ---
+	// the sweeper stopped being allowed to do (ADR 0045 decision 14). ---
 	for _, u := range users[1:] {
 		if err := u.Stop(ctx); err != nil {
 			t.Fatalf("%s Stop before the soak: %v", u.Name(), err)
@@ -883,7 +883,7 @@ func TestECSEC2LiveScale(t *testing.T) {
 	// --- 4. the reaper's entry point, on real AWS. The lifecycle test drives hibernate()
 	// — the resumable stepper. What is only reachable from the reaper is BeginHibernate:
 	// its guards decide whether a capture starts at all, and both of them are about state
-	// that only AWS knows (ADR 0045 決定 14). s3 is stopped and its slot asleep, which is
+	// that only AWS knows (ADR 0045 decision 14). s3 is stopped and its slot asleep, which is
 	// exactly the shape a tenant's retention sweep would find. ---
 	s3 := users[2]
 	if err := s3.BeginHibernate(ctx); err != nil {
@@ -997,7 +997,7 @@ func (l *liveEC2) instance(instanceID string) *ec2types.Instance {
 	return &out.Reservations[0].Instances[0]
 }
 
-// TestECSEC2LiveKeep is the check ADR 0045 決定 3-6 has been waiting for an image bake to
+// TestECSEC2LiveKeep is the check ADR 0045 decision 3-6 has been waiting for an image bake to
 // get: the entrypoint's AF_WS_KEEP step, running for real on a slot.
 //
 // The credentials-only EFS mount exists because a home on the EC2 pool is ONE EBS volume

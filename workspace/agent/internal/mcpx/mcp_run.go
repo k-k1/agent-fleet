@@ -79,7 +79,7 @@ func runPagerDutyMCP(extra []string) {
 // here, not in the MCP config: -disable-write -disable-admin are always
 // prepended, so the config's wrapper reference alone can never yield write
 // tools. Works unchanged for self-hosted / Grafana Cloud / Amazon Managed
-// Grafana — AMG auth is the same Bearer service-account token (docs/log/25 AMG 検討).
+// Grafana — AMG auth is the same Bearer service-account token (docs/log/25 AMG study).
 func runGrafanaMCP(extra []string) {
 	s, err := secrets.Load()
 	if err != nil {

@@ -66,7 +66,7 @@ func seedGitOAuthTenant(t *testing.T, st *store.SQL, slug, adminEmail string) st
 	return tn
 }
 
-// ★ The editor never sees the stored secret, so it cannot retype it. A save that omits
+// The editor never sees the stored secret, so it cannot retype it. A save that omits
 // the field therefore has to KEEP it — otherwise renaming the client_id silently blanks
 // the credential and the next connect fails at Bitbucket with invalid_client.
 func TestGitOAuthSecretIsWriteOnlyAndSurvivesAnOmittedSave(t *testing.T) {
@@ -120,7 +120,7 @@ func TestGitOAuthSecretIsWriteOnlyAndSurvivesAnOmittedSave(t *testing.T) {
 	}
 }
 
-// ★ A first save with no secret would store a row that LOOKS configured — the member
+// A first save with no secret would store a row that LOOKS configured — the member
 // gets the OAuth button, presses it, and the failure surfaces at Bitbucket as
 // invalid_client. Refuse it where the administrator can still act.
 func TestGitOAuthBitbucketRefusesAFirstSaveWithNoSecret(t *testing.T) {
@@ -155,7 +155,7 @@ func TestGitOAuthGithubNeverStoresASecret(t *testing.T) {
 	}
 }
 
-// ★ The whole point of the row being per tenant is that it is per tenant. A
+// The whole point of the row being per tenant is that it is per tenant. A
 // tenant_admin of one company must not read another's client_id, let alone overwrite
 // the app their members are sent to.
 func TestGitOAuthIsScopedToTheTenant(t *testing.T) {
@@ -214,8 +214,8 @@ func TestGitOAuthRefusesAnUnknownProvider(t *testing.T) {
 	}
 }
 
-// ★ env is NOT a fallback (docs/log/71 決定 2). With BITBUCKET_OAUTH_KEY/SECRET set in the
-// process and no row for the tenant, the start leg must still answer not_configured —
+// env is NOT a fallback (docs/log/71 decision 2). With BITBUCKET_OAUTH_KEY/SECRET set in
+// the process and no row for the tenant, the start leg must still answer not_configured —
 // otherwise "which app am I being sent to" has two answers and the one that wins
 // depends on which tenant you are in.
 func TestGitOAuthStartDoesNotFallBackToEnv(t *testing.T) {
@@ -252,7 +252,7 @@ func TestGitOAuthStartDoesNotFallBackToEnv(t *testing.T) {
 	}
 }
 
-// ★ "The app is registered but PUBLIC_BASE_URL is missing" must NOT be reported as
+// "The app is registered but PUBLIC_BASE_URL is missing" must NOT be reported as
 // not_configured. The two have different owners: the first is the tenant administrator's
 // to fix, the second the operator's — and a tenant administrator told "not configured"
 // goes and re-enters a setting that was already correct.
@@ -339,7 +339,7 @@ func TestGitOAuthAvailabilityIsPerTenant(t *testing.T) {
 	}
 }
 
-// ★ AUTH=dev is the single fixed unauthenticated user, and SUPER_ADMIN_EMAILS matches on
+// AUTH=dev is the single fixed unauthenticated user, and SUPER_ADMIN_EMAILS matches on
 // an address it does not have — so a native / WSL deployment had NO administrator and no
 // way into the tenant settings screen (docs/log/71 §71.6). That was survivable while every
 // deployment setting lived in env; it is not, now that the OAuth apps are tenant rows.

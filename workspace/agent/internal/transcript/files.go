@@ -1,14 +1,15 @@
 package transcript
 
-// 「このセッションが直したファイル」の一覧（docs/log/68）が共有する語彙とヘルパ。
+// Vocabulary and helpers shared by the "files this session changed" list (docs/log/68).
 //
-// 一覧の母集合は転写側——エージェントが編集ツールを呼んだという記録——で、git の
-// 作業ツリー状態は Console 側で `(Repo, Rel)` を鍵に突き合わせる。転写だけだと
-// 取り消した編集が居座り、git だけだとセッションという軸が消えるので、両方を重ねる
-// （decisions/0049 決定 1）。
+// The population comes from the transcript — the record that an agent called an edit
+// tool — while the git working-tree state is joined on the Console side keyed by
+// `(Repo, Rel)`. The transcript alone keeps reverted edits around, git alone loses the
+// per-session axis, so both are layered (decisions/0049 decision 1).
 //
-// ⚠️ 集計は必ず**全転写**に対して行うこと。ミラーは転写を tail 窓でしか持たないので、
-// クライアントで数えると長いセッションで件数が足りず、上へスクロールする度に増える。
+// Aggregate over the WHOLE transcript. The mirror only holds a tail window of it, so
+// counting on the client falls short on long sessions and the count grows every time the
+// user scrolls up.
 
 // FileEdit is ONE edit-family tool call as it sits in the transcript: the target the
 // agent wrote (which may be relative — Cwd is how it gets anchored), and the +/- that
@@ -29,7 +30,7 @@ type FileEdit struct {
 // paired with the Console's type — Path is what FileView opens, and (Repo, Rel) is the
 // join key against GET /fs/changes.
 //
-// ⚠️ Repo/Rel exist precisely so the join does NOT go through Path: browse-relative
+// Repo/Rel exist precisely so the join does NOT go through Path: browse-relative
 // paths are rooted at browseRoot() (overridable with AF_BROWSE_ROOT) while /fs/changes
 // always reports "repos/<repo>/<rel>". They agree by default, so a mismatch would only
 // ever show up on a deployment that moved the browse root.
@@ -50,10 +51,10 @@ type FileTouch struct {
 // verdict when it has one (codex reads it straight out of the patch header); otherwise
 // it is derived from the captured before/after.
 //
-// ⚠️ The absence of before/after must NOT be read as "delete". codex is the only parser
+// The absence of before/after must NOT be read as "delete". codex is the only parser
 // that omits Edits deliberately (its delete branch), and it says so through `explicit`.
 // A kind that merely carries no diff bodies (cursor / copilot, docs/log/68 §68.2.1) would
-// otherwise have every file it touched labelled 削除.
+// otherwise have every file it touched labelled "delete".
 func EditVerb(explicit string, edits []Edit) string {
 	switch explicit {
 	case "add", "delete", "edit":

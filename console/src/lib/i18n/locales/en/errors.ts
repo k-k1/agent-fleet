@@ -165,4 +165,34 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.memory_too_large": "The file is too large.",
   "err.tenant_idp_link_claim_required":
     "This deployment already has a sign-in method for the same issuer. That issuer gives each app registration a different subject for the same person, so without \"how the same account is recognised\", everybody already using this deployment would be refused at login as a duplicate address.",
+
+  // Agent sign-in / OAuth (opencode, kiro, agy, cursor). The codes are shared across
+  // drivers on purpose: the wording holds for every one of them, and the driver-specific
+  // cause arrives as the server's message, which errDetail appends.
+  "err.already_connected": "Already connected. Disconnect first to sign in again.",
+  "err.no_url": "The agent did not return a login URL.",
+  "err.no_selector": "The agent did not show the sign-in method options.",
+  "err.serve_unavailable": "The agent's service could not be started.",
+  "err.login_failed": "The sign-in did not complete.",
+  "err.bad_method": "That sign-in method is not valid.",
+  "err.method_unsupported": "That sign-in method is not available yet.",
+  "err.opencode_unsupported": "opencode was not found (the image may be out of date).",
+  "err.kiro_unsupported": "kiro-cli was not found (it may not be installed).",
+  "err.cursor_unsupported": "cursor-agent was not found (the image may be out of date).",
+  // These carry err.Error() as the whole message, so the catalogue supplies the human
+  // framing and errDetail appends the raw cause after it.
+  "err.oauth_start_failed": "Could not start the sign-in.",
+  "err.oauth_poll_failed": "Could not confirm that the sign-in completed.",
+  "err.oauth_disconnect_failed": "Could not disconnect.",
+  "err.oauth_error": "The authorization server returned an error.",
+  "err.logout_failed": "Could not sign out.",
+  "err.store_failed": "Could not save the credentials.",
+  "err.pty_failed": "Could not start the agent's CLI.",
+  "err.serve_not_ready": "The agent's service did not respond.",
+  "err.agy_unsupported": "agy was not found (the image may be out of date).",
+  "err.no_flow": "That sign-in attempt is unknown or has expired. Start again.",
+  "err.bad_code": "Enter the code.",
+  "err.bad_key": "Enter the key.",
+  "err.bad_env": "That environment variable name is invalid (use capitals and _, like ANTHROPIC_API_KEY).",
+  "err.bad_workspace_id": "The workspace ID is invalid.",
 };

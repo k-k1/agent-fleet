@@ -57,7 +57,7 @@ stops — only the EFS home persists.
 It is also the switch for moving the small-file caches (go build cache, uv, go modules) and
 build artifacts (node_modules, target, .venv) off EFS onto the task-local disk: the
 entrypoint does that only when this is 30 or more, because the measured caches do not fit
-alongside the image in 20 GiB (ADR 0044 決定 3). The default is 50 so that relocation is
+alongside the image in 20 GiB (ADR 0044 decision 3). The default is 50 so that relocation is
 ON — at 0 it can never arm, which is what shipped before and meant every deployment ran
 builds on EFS at ~9x the cost. Roughly $2.9/month per workspace at 24/7, and only while the
 task runs. Set 0 to opt out.
@@ -66,7 +66,7 @@ task runs. Set 0 to opt out.
 
 Which Runtime adapter the Control Plane uses. `ecs` = Fargate (the shipped default: two
 resources per workspace, ~105s to start, home on EFS). `ecs-ec2` = a pool of EC2 slots with
-a persistent per-user EBS home (docs/log/64 §64.12/§64.17, ADR 0045 決定 10/12).
+a persistent per-user EBS home (docs/log/64 §64.12/§64.17, ADR 0045 decision 10/12).
 
 Switch for I/O and persistence (small-file writes 8-30x faster than EFS, a home that
 survives) and for sizes above Fargate's ceilings — NOT for start latency: measured 43-110s
@@ -87,9 +87,9 @@ silently running no workspaces.
 The slot sizes the pool may run. A workspace lands on the smallest slot that holds its
 memory REQUEST and gets the WHOLE box (the task reserves neither cpu nor memory — on EC2
 those are reservations against the instance). EC2 on-demand pricing is perfectly linear in
-vCPU, so bigger slots are not more expensive per user (ADR 0045 決定 8). The vCPU field is
+vCPU, so bigger slots are not more expensive per user (ADR 0045 decision 8). The vCPU field is
 optional and display-only: the Console prints it so a tenant admin can see which box a
-memory number lands on, and omitting it just omits the label (ADR 0045 決定 21 — asking EC2
+memory number lands on, and omitting it just omits the label (ADR 0045 decision 21 — asking EC2
 instead would mean an extra IAM action for a label).
 
 Two shapes, and the old one is not deprecated (docs/log/70 §70.4.2):
@@ -233,7 +233,7 @@ a smaller value simply skips the sleeping stage.
 ### `Ec2HibernateAfterSec`
 
 The DEPLOYMENT DEFAULT for how long a home may sit unopened before it is snapshotted and its
-volume deleted; the next start restores it (ADR 0045 決定 4 and 13-2). A tenant overrides it
+volume deleted; the next start restores it (ADR 0045 decision 4 and 13-2). A tenant overrides it
 from the Console (Tenants → the tenant → "Hibernate unused homes"), so this is only what a
 tenant that has not chosen gets.
 
@@ -344,22 +344,23 @@ required — pass your own domain.
 
 Parent domain for the per-start preview subdomains (docs/81), e.g. `pv.example.com`. A
 workspace start mints a random slug and its services become reachable at
-`https://{slug}-{port}.{PreviewDomain}` — 3000 と 8080 のような 2 ポート構成が、サブパスでは
-なく **それぞれのルート直下**で開ける。
+`https://{slug}-{port}.{PreviewDomain}` — a two-port setup such as 3000 and 8080 opens **each
+at its own root**, not under a subpath.
 
 Empty (the default) = the feature is OFF and nothing for it is created; only the existing
 path-mode `/preview/{port}` exists.
 
-★ ラベルは 1 段しか使えない。ACM のワイルドカード証明書が 1 段しか受け持たないので、ポートは
-`{slug}-{port}` とラベルの中に前置してある（`{port}.{slug}.…` は `*.*.…` を要求して発行できない
-— ADR 0062 決定 2）。
+★ Only one label is available. An ACM wildcard certificate covers a single label, so the port
+is folded into the label itself as `{slug}-{port}` (`{port}.{slug}.…` would need `*.*.…`, which
+cannot be issued — ADR 0062 decision 2).
 
-⚠️ Console の FQDN の **子ではなく兄弟**を勧める（`af.example.com` に対して `pv.example.com`）。
-子（`*.af.example.com`）にすると、プレビューで動くアプリが `.af.example.com` のドメイン cookie を
-書けてしまい、Console の cookie を上書き / 固定できる余地が残る（ADR 0062 決定 13）。
+⚠️ Use a **sibling of the Console FQDN, not a child** (`pv.example.com` against
+`af.example.com`). As a child (`*.af.example.com`), an app running in a preview can write
+domain cookies for `.af.example.com`, leaving room to overwrite or fixate the Console's own
+cookies (ADR 0062 decision 13).
 
-⚠️ この名前を含むゾーンが `HostedZoneId`（または `PreviewHostedZoneId`）でなければ、ACM の DNS
-検証が終わらず **失敗ではなく「進まない」**形でスタックが止まる。
+⚠️ Unless a zone containing this name is `HostedZoneId` (or `PreviewHostedZoneId`), ACM's DNS
+validation never finishes and the stack **stalls rather than fails**.
 
 ### `PreviewHostedZoneId`
 
@@ -367,13 +368,14 @@ Route53 hosted zone id that contains `PreviewDomain`, when that is NOT the zone 
 lives in. Empty (the default) = use `HostedZoneId`, which is right whenever `PreviewDomain`
 sits inside the Console's own zone.
 
-★ 兄弟を勧めている（上記・ADR 0062 決定 13）のに Console のゾーンが委任されたサブドメイン
-（`af.example.com` そのものが 1 つのゾーン）だと、`pv.example.com` は **そのゾーンの外**になる
-—— 兄弟にするには別ゾーン＋親からの NS 委任が要り、その id をここで渡す。これが無いと「勧めて
-いる形が、このテンプレートでは表現できない」ことになる。
+★ A sibling is what we recommend (above, ADR 0062 decision 13), but when the Console's zone is
+itself a delegated subdomain (`af.example.com` is a zone of its own), `pv.example.com` falls
+**outside that zone** — making it a sibling then needs a separate zone plus an NS delegation
+from the parent, and you pass that zone's id here. Without this parameter the shape we
+recommend cannot be expressed in this template at all.
 
-⚠️ Console 側（`Cert` / `DnsRecord`）は常に `HostedZoneId` のままで、ここが効くのはプレビューの
-証明書検証とワイルドカード A レコードだけ。
+⚠️ The Console side (`Cert` / `DnsRecord`) always stays on `HostedZoneId`; this only affects the
+preview certificate's validation and the wildcard A record.
 
 ## Control Plane task
 

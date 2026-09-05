@@ -16,7 +16,7 @@ const CHAT_KINDS: SessionKind[] = SESSION_KINDS.filter((k) => AGENTS[k].caps.hea
 
 // ChatHead is the pane's title row: the conversation title, the backend chip (which
 // doubles as the agent-switch picker on a real conversation), the state chip, and the
-// 作業計画 toggle. It owns no state — the picker's open flag, its dismiss wiring and its
+// work-plan toggle. It owns no state — the picker's open flag, its dismiss wiring and its
 // placement all live in ChatView, because they are what the refs below are anchored to.
 export function ChatHead({
   headerActions,
@@ -67,8 +67,8 @@ export function ChatHead({
           <span className="fi-name">
             <Icon name={draftAsst?.icon || "comment-discussion"} /> {title}
           </span>
-          {/* エージェントのチップ。既存会話ではそのまま切替ピッカーのボタンを兼ねる
-              （draft はまだ会話が無いので表示のみ）。 */}
+          {/* The agent chip. On an existing conversation it doubles as the button that opens the
+              switch picker; a draft has no conversation yet, so it is display-only. */}
           {agent && conversationId && (
             <button
               type="button"
@@ -102,9 +102,9 @@ export function ChatHead({
                     className="ui-menu-item"
                     role="menuitemradio"
                     aria-checked={k === conv?.agent}
-                    // 未接続の CLI にピン留めしても、送信時に接続済みのバックエンドへ退避する
-                    // だけ（chatProviderFor）＝選ばせても効かない。接続状況が分からないとき
-                    // （キャッシュが冷えている）は塞がない。
+                    // Pinning to an unconnected CLI has no effect: on send, chatProviderFor
+                    // just falls back to a connected backend. When connection state is
+                    // unknown (cold cache) do not block the choice.
                     disabled={!!chatConns && !agentOf(k).available({ conns: chatConns })}
                     title={
                       chatConns && !agentOf(k).available({ conns: chatConns })
@@ -114,7 +114,7 @@ export function ChatHead({
                     onClick={() => onSwitchAgent(k)}
                   >
                     <Icon name={k === conv?.agent ? "check" : "blank"} />
-                    {/* kind の色は tokens.css の --kind-* が1ソース（agent-display-naming）。 */}
+                    {/* --kind-* in tokens.css is the single source for kind colors. */}
                     <span className="chat-agent-ic" style={{ color: `var(--kind-${kindClass(k)})` }}>
                       <Icon name={agentOf(k).icon} />
                     </span>
@@ -130,9 +130,9 @@ export function ChatHead({
               <Icon name={stateChip.icon} spin={stateChip.spin} /> {stateChip.text}
             </span>
           )}
-          {/* 作業計画（docs/log/33 第5段）: 圧縮を跨いで原文のまま運ばれる枠の開閉。計画が
-              入っている会話は塗って示す — 「アシスタントが絶対に忘れない内容」がどれかを
-              一目で分かるようにするのがこのバッジの役目。 */}
+          {/* Work plan (docs/log/33 stage 5): opens and closes the box that is carried verbatim
+              across a compaction. A conversation that holds a plan is tinted, so it is obvious at
+              a glance which content the assistant will never forget. */}
           {conversationId && (
             <button
               type="button"

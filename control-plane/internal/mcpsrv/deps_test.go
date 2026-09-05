@@ -1,14 +1,16 @@
 package mcpsrv
 
-// mcpsrv 単体のテストは package main を持たないので、CP 側の切断面を**作り物で**配線する
-// （workspace/agent/internal/mcpx/deps_test.go と同じ考え方）。
+// The mcpsrv unit tests have no package main, so the CP-side seam is wired with fakes
+// (the same idea as workspace/agent/internal/mcpx/deps_test.go).
 //
-// 配線するのは、この package のテストが実際に踏む 4 つだけ——store / master32 / custodian /
-// トークン署名マスタ。残りは値を返さず **panic する**。ゼロ値を返す作り物にすると、配線を
-// 忘れたテストが「空の結果」を正解として緑になる（本物は main の alias_mcp.go が配線する）。
+// Only the four the tests in this package actually reach are wired — store, master32,
+// custodian and the token signing master. The rest panic instead of returning a value: a
+// fake that returned zero values would let a test that forgot to wire something go green
+// on an empty result. (The real wiring is main's alias_mcp.go.)
 //
-// 網羅性の検査（mcpx が reflect で書いているもの）はここには要らない: 切断面が struct の
-// 関数フィールドではなく**インタフェース**なので、実装漏れはコンパイルエラーになる。
+// No exhaustiveness check is needed here, unlike the reflect-based one in mcpx: the seam
+// is an interface rather than a struct of function fields, so a missing implementation is
+// a compile error.
 
 import (
 	"bytes"
@@ -36,9 +38,10 @@ func (c testCP) TokenSignMaster() []byte        { return c.master32 }
 func (c testCP) EvictMembershipCache(string)    { unwired("EvictMembershipCache") }
 func (c testCP) TenantSel(*http.Request) string { unwired("TenantSel"); return "" }
 
-// ScopeRank は作り物でも本物どおり配線する。New がこれで写しの陳腐化を落とすので、
-// panic させると mcpsrv 単体テストがその検査ごと踏めなくなる。値は pat.go の写しでは
-// なく「梯子があること」だけを表す作り物（本物は alias_mcp.go が cpDeps 経由で渡す）。
+// ScopeRank is wired for real even in the fake: New uses it to catch a stale copy, and
+// panicking here would put that check out of reach of the mcpsrv unit tests. The values
+// are not a copy of pat.go's — they only express that a ladder exists (the real ones
+// arrive through cpDeps from alias_mcp.go).
 func (c testCP) ScopeRank(scope string) int {
 	switch scope {
 	case "read":

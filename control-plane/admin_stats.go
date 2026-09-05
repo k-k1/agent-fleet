@@ -63,17 +63,18 @@ func (a adminAPI) memberStats(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	rt := a.mgr.runtimeFor(ws, "")
-	// running / mem / CPU は runtime 中立の合成に任せる（metrics.go の workspaceStats）:
-	// ホストの cgroup が読める構成ならそれを、読めない構成（ECS 全般）なら Agent が
-	// 自分の cgroup から読んだ値を載せる。State() は docker の読みが空振ったときだけ
-	// 引く（メンバー詳細は 4 秒ごとにポーリングされる画面なので、docker 構成で毎回
-	// `docker inspect` を 2 度走らせないための遅延評価）。
+	// running / mem / CPU are left to the runtime-neutral composition (workspaceStats
+	// in metrics.go): the host's cgroup where a deployment can read it, otherwise (ECS
+	// in general) the value the Agent read from its own cgroup. State() is consulted
+	// only when the docker read came up empty — the member detail screen polls every 4
+	// seconds, and this laziness is what keeps a docker deployment from running
+	// `docker inspect` twice on every poll.
 	out := workspaceStats(ctx, a.mgr, rt, sync.OnceValue(func() string { return rt.State(ctx) }))
-	// ディスクはホスト側の du を優先する。CP と Workspace が同じホストに載っている
-	// 構成では、これが「ホーム木そのものの大きさ」——コンテナが止まっていても読める
-	// 唯一の数字で、停止中の棚卸しに要る。ECS では対象のパスが CP に無いので、
-	// Agent が statfs で返した disk_used / disk_total（永続 home の EBS そのもの）が
-	// 既に out に載っている。
+	// Disk prefers the host-side du. Where CP and Workspace share a host, that is the
+	// size of the home tree itself — the only figure readable while the container is
+	// stopped, which taking stock of stopped workspaces needs. On ECS the path is not on
+	// the CP at all, so out already carries the disk_used / disk_total the Agent
+	// returned from statfs (the persistent home's own EBS volume).
 	if used, ok := dirDiskUsage(ctx, a.mgr.rootedDataDir(ws)); ok {
 		out["disk_used"] = used
 	}

@@ -232,7 +232,8 @@ func TestAuthExemptRegistry(t *testing.T) {
 	}
 }
 
-// CP は明示許可リストなので、Agent 側に増えた収集ルートの登録漏れを回帰検知する。
+// The CP is an explicit allow-list, so a collection route added on the Agent side that
+// was never registered here is caught as a regression.
 func TestBrowserAttachmentListProxyRouteRegistered(t *testing.T) {
 	_, mux := smokeEnv(t)
 	req := httptest.NewRequest(http.MethodGet, "/api/browser/attachments", nil)
@@ -242,9 +243,10 @@ func TestBrowserAttachmentListProxyRouteRegistered(t *testing.T) {
 	}
 }
 
-// ミラー本文のパス参照解決: 同じく明示許可リスト方式なので、Agent 側 POST /fs/resolve に
-// 対応する登録漏れを回帰検知する。落ちていると、リンクが 1 つも付かないという「静かな」
-// 壊れ方をする（Console 側は解決できなかった＝実在しない、と読むため）。
+// Path-reference resolution for mirror bodies: same allow-list, so a missing registration
+// against the Agent's POST /fs/resolve is caught here. Without it the breakage is silent
+// — not one link is attached, because the Console reads "did not resolve" as "does not
+// exist".
 func TestFSResolveProxyRouteRegistered(t *testing.T) {
 	_, mux := smokeEnv(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/resolve", nil)
@@ -254,8 +256,8 @@ func TestFSResolveProxyRouteRegistered(t *testing.T) {
 	}
 }
 
-// エディタ AI 変更提案（docs/log/44 Phase 4）: CP は明示許可リスト方式なので、Agent 側
-// ルートに対応する /api/fs/suggest-edit の登録漏れを回帰検知する。
+// Editor AI edit suggestions (docs/log/44 Phase 4): the CP is an explicit allow-list, so
+// a missing /api/fs/suggest-edit registration against the Agent's route is caught here.
 func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
 	_, mux := smokeEnv(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/fs/suggest-edit", nil)
@@ -265,9 +267,9 @@ func TestFSSuggestEditProxyRouteRegistered(t *testing.T) {
 	}
 }
 
-// ★ CP は明示許可リストなので、Agent 側にルートを足しただけでは Console から届かない
-// （再発常習: docs/log/78 の取り込みジョブも Agent → CP の順で 2 か所要る）。ここは CP 側の
-// 登録と、監査分類が付いていることを固定する。
+// The CP is an explicit allow-list, so adding a route on the Agent alone never reaches
+// the Console: a new REST route needs both, Agent then CP (docs/log/78's import jobs made
+// the same mistake). This pins the CP-side registration and the audit classification.
 func TestCPRegistersRepoJobRoutes(t *testing.T) {
 	_, mux := smokeEnv(t)
 	for _, tc := range []struct{ method, path, want string }{
@@ -279,7 +281,8 @@ func TestCPRegistersRepoJobRoutes(t *testing.T) {
 			t.Errorf("%s %s → pattern=%q, want %q", tc.method, tc.path, pattern, tc.want)
 		}
 	}
-	// 中止／既読は変更操作なので監査に載る（誰が取り込みを止めたかは後から要る）。
+	// Cancel and mark-read mutate, so they belong in the audit log: who stopped an
+	// import is asked for afterwards.
 	req := httptest.NewRequest(http.MethodDelete, "/api/repo-jobs/rj123", nil)
 	action, target, ok := auditActionTarget(req)
 	if !ok || action != "repo.job.cancel" || target != "rj123" {

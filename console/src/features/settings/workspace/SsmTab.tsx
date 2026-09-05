@@ -11,10 +11,10 @@ import { Field, Meta } from "../parts/mcpForm.tsx";
 
 // SsmTab manages the member's own AWS SSM login config (docs/log/p3-ssm-session.md)
 // in two tiers so the form isn't cluttered:
-//   プロファイル (共通) = the shared auth bundle (SSO portal + account/role/region);
-//                         many hosts reuse one. Maps to a ~/.aws named profile.
-//   ホスト (個別)       = per-instance only (alias, instance id, run-as document,
-//                         optional region override) + which profile to use.
+//   profile (shared) = the shared auth bundle (SSO portal + account/role/region); many
+//                      hosts reuse one. Maps to a ~/.aws named profile.
+//   host (per-instance) = per-instance only (alias, instance id, run-as document,
+//                      optional region override) + which profile to use.
 // NO AWS secrets are stored or entered here — at session start the in-container aws CLI
 // runs `aws sso login` (device-code URL surfaced in the terminal) and caches the
 // short-lived token in the workspace home.
@@ -42,11 +42,12 @@ async function postJSON(path: string, method: string, body: unknown, toast: (msg
   return true;
 }
 
-// Meta / Field は mcpForm.tsx の共通プリミティブを使う（完全に同型だったため集約）。
+// Meta / Field reuse the shared primitives from mcpForm.tsx (they were identical).
 // FieldGroup / Field build the labeled add-form: a bordered group holding fields that
-// each carry a label, an optional required * marker, and a hint (取得元・形式). Required
-// vs optional is conveyed per-field (the * marker + hint), so one group suffices — no
-// separate 必須 / 詳細 boxes. `title` is optional (omitted for the single merged group).
+// each carry a label, an optional required * marker, and a hint (where the value comes
+// from and its format). Required vs optional is conveyed per-field (the * marker + hint),
+// so one group suffices — no separate required / advanced boxes. `title` is optional
+// (omitted for the single merged group).
 function FieldGroup({ title, optional, children }: { title?: ReactNode; optional?: ReactNode; children: ReactNode }) {
   return (
     <div className="ssm-fgroup">
@@ -66,8 +67,8 @@ export function SsmTab() {
   const [profiles, setProfiles] = useState<any[] | null>(null);
   const [hosts, setHosts] = useState<any[] | null>(null);
   const profileLabelRef = useRef<HTMLInputElement>(null);
-  // The profile add-form open state is lifted here so the host form's
-  // "プロファイルを追加" CTA can expand it (and scroll to it) when none exists yet.
+  // The profile add-form open state is lifted here so the host form's "add a profile"
+  // CTA (「プロファイルを追加」) can expand it (and scroll to it) when none exists yet.
   const [profileOpen, setProfileOpen] = useState(false);
 
   const reload = useCallback(() => {

@@ -1,23 +1,26 @@
-// drawio_stencils.go — `.drawio` ビューアのステンシルを CP がプロキシしてディスクに
-// キャッシュする（docs/log/65 §65.5.3 / ADR 0046 決定 5）。
+// drawio_stencils.go — the CP proxies the `.drawio` viewer's stencils and caches them on
+// disk (docs/log/65 §65.5.3 / ADR 0046 decision 5).
 //
-// なぜ同梱しないのか: ステンシル全体は 203 ファイル / 40.8 MB（`aws4.xml` だけで
-// 6.2 MB）。1 枚の図が使うのはそのうち 1〜2 セットで、実行時は元からオンデマンド
-// （`mxStencilRegistry` は図に現れたセットだけを 1 回取る）なので、問題は配布サイズ
-// だけである。だからバイト列は持たず、**20 KB の台帳だけ**を同梱する。
+// Why they are not bundled: the whole stencil set is 203 files / 40.8 MB (`aws4.xml` alone
+// is 6.2 MB). One diagram uses one or two of those sets, and fetching was on demand
+// already (`mxStencilRegistry` fetches each set appearing in the diagram exactly once), so
+// the only problem is distribution size. Hence no bytes are shipped — only the 20 KB
+// manifest.
 //
-// 台帳（assets/drawio-stencils.json）は 2 つの役割を兼ねる:
-//  1. **SSRF の防壁。** セット名は信用できない `.drawio` の中身（`shape=mxgraph.<set>.*`）
-//     から来る。台帳に無い名前を取りに行く実装は「図を開かせるだけで CP に任意 URL を
-//     叩かせる」道具になる。だから allowlist は「台帳にあるか」だけで判定し、
-//     upstream の URL は台帳の base とセット名から CP が組み立てる（要求は URL を運ばない）。
-//  2. **完全性の担保。** 取得したバイト列を sha256 で突き合わせてから保存する。
+// The manifest (assets/drawio-stencils.json) serves two purposes:
+//  1. SSRF barrier. Set names come from untrusted `.drawio` content
+//     (`shape=mxgraph.<set>.*`). Fetching a name that is not in the manifest would turn
+//     "get someone to open a diagram" into "make the CP hit an arbitrary URL". So the
+//     allowlist is nothing but "is it in the manifest", and the CP builds the upstream URL
+//     from the manifest's base plus the set name — the request never carries a URL.
+//  2. Integrity. Fetched bytes are matched against sha256 before they are stored.
 //
-// **この経路は authGate の内側に置く（除外しない）。** 取りに来るのは Console の
-// 親ウィンドウであってサンドボックス iframe ではないため、セッション cookie が付く。
-// フレームに直接取らせる案は実測で否決した —— オリジンを持たないフレームからの要求は
-// cross-site 扱いで SameSite=Lax の cookie が付かず、authGate に 401 で弾かれる
-// （docs/log/65 §65.11-7 と同じ穴）。詳細は docs/log/65 §65.5.4。
+// This route belongs inside authGate; do not exempt it. The fetch comes from the Console's
+// parent window rather than the sandboxed iframe, so the session cookie is attached.
+// Letting the frame fetch directly was rejected on measurement: a request from an
+// origin-less frame counts as cross-site, carries no SameSite=Lax cookie and authGate
+// rejects it with 401 (the same hole as docs/log/65 §65.11-7). Details in docs/log/65
+// §65.5.4.
 package main
 
 import (
@@ -71,13 +74,13 @@ func loadDrawioManifest() (drawioStencilManifest, error) {
 	return drawioManifest, drawioManifestErr
 }
 
-// drawioStencilHTTP は upstream（raw.githubusercontent）からの取得用。1 ファイル最大
-// 6.2 MB なので、細い回線でも切れない程度に余裕を持たせる。
+// drawioStencilHTTP fetches from upstream (raw.githubusercontent). A single file runs to
+// 6.2 MB, so the timeout has enough slack not to cut off a thin link.
 var drawioStencilHTTP = &http.Client{Timeout: 60 * time.Second}
 
 type drawioStencils struct {
 	cacheDir string
-	// 同じセットへの同時要求で upstream を何度も叩かないための鍵付きロック。
+	// Per-name lock, so concurrent requests for one set hit upstream only once.
 	mu      sync.Mutex
 	loading map[string]*sync.Mutex
 }
@@ -96,7 +99,7 @@ func newDrawioStencils(cfg config) *drawioStencils {
 func registerDrawioStencilRoutes(mux *http.ServeMux, cfg config) {
 	d := newDrawioStencils(cfg)
 	mux.HandleFunc("GET /api/drawio/stencils/{name...}", d.serve)
-	// 版と件数だけを返す（ハーネスと運用の確認用）。バイト列は含まない。
+	// Version and counts only, for the harness and for operators; no stencil bytes.
 	mux.HandleFunc("GET /api/drawio/stencils", d.index)
 }
 
@@ -121,14 +124,15 @@ func (d *drawioStencils) index(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// pathFor はキャッシュ上の置き場所。**セット名をそのままパスに使わない** ——
-// 台帳で照合済みとはいえ、`/` を含む名前（`rack/f5.xml`）をディレクトリに広げると
-// 台帳の更新でパスの意味が変わりうる。sha256 を名前にすれば、内容が変われば別の
-// ファイルになり、古いバイト列が生き残ることも無い。
+// pathFor is where a set lives in the cache. The set name is never used as the path:
+// matched against the manifest or not, expanding a name that contains `/`
+// (`rack/f5.xml`) into directories lets a manifest update change what a path means.
+// Naming the file by sha256 makes different content a different file, so stale bytes
+// cannot survive either.
 //
-// **引数は名前ではなく台帳のエントリ。** 名前から埋め込み台帳を引き直す実装にすると、
-// 呼び出し側が渡した台帳（テストや事前投入）と食い違い、名前の違う複数のセットが
-// 同じファイルへ落ちる。実際そう書いてテストに捕まえられた。
+// The argument is the manifest entry, not the name. Looking the embedded manifest up by
+// name diverges from the manifest the caller passed in (tests, preseeding) and lets sets
+// with different names land in the same file — written that way once, and a test caught it.
 func (d *drawioStencils) pathFor(entry drawioStencilEntry) string {
 	return filepath.Join(d.cacheDir, entry.SHA256+".xml")
 }
@@ -151,9 +155,9 @@ func (d *drawioStencils) serve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := r.PathValue("name")
-	// 台帳に無い名前は取りに行かない。これがこの経路の唯一の allowlist であり、
-	// ここを緩めると任意 URL 取得（SSRF）になる。`..` や絶対パスも、台帳の鍵と
-	// 一致しない時点でここで落ちる。
+	// A name absent from the manifest is never fetched. This is the only allowlist on this
+	// route, and loosening it turns the route into arbitrary-URL fetching (SSRF). `..` and
+	// absolute paths die here too, simply by not matching a manifest key.
 	entry, ok := m.Sets[name]
 	if !ok {
 		http.Error(w, "unknown stencil set", http.StatusNotFound)
@@ -162,14 +166,15 @@ func (d *drawioStencils) serve(w http.ResponseWriter, r *http.Request) {
 
 	body, err := d.fetch(r.Context(), m, name, entry)
 	if err != nil {
-		// 閉域では取れない。**これは異常ではなく想定された劣化**なので、Console 側は
-		// 静かに「枠と色だけ」の絵に落とす（docs/log/65 §65.5.3）。
+		// Unreachable in a closed network. That is expected degradation rather than a
+		// fault, so the Console quietly falls back to outline-and-color shapes
+		// (docs/log/65 §65.5.3).
 		log.Printf("drawio stencil %s unavailable: %v", name, err)
 		http.Error(w, "stencil unavailable", http.StatusBadGateway)
 		return
 	}
-	// 内容はバージョンで固定され、sha256 で検証済み。名前は台帳の鍵なので、
-	// 版が変われば台帳ごと変わる = 長期キャッシュしてよい。
+	// The content is pinned by version and verified by sha256, and the name is a manifest
+	// key, so a new version means a new manifest: safe to cache for a long time.
 	w.Header().Set("Content-Type", "text/xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -185,7 +190,7 @@ func (d *drawioStencils) fetch(ctx context.Context, m drawioStencilManifest, nam
 	mu := d.lockFor(name)
 	mu.Lock()
 	defer mu.Unlock()
-	// ロックを取り直す間に別の要求が入れたかもしれない。
+	// Another request may have stored it while we waited for the lock.
 	if b, err := os.ReadFile(path); err == nil && verifyDrawioStencil(b, entry) == nil {
 		return b, nil
 	}
@@ -195,17 +200,18 @@ func (d *drawioStencils) fetch(ctx context.Context, m drawioStencilManifest, nam
 		return nil, err
 	}
 
-	// キャッシュに置けなくても、この要求には答えられる。
+	// Failing to cache does not stop us answering this request.
 	if err := d.store(path, b); err != nil {
 		log.Printf("drawio stencil cache: %v", err)
 	}
 	return b, nil
 }
 
-// store はキャッシュへ 1 件置く。**必ず一時名 → rename で置く。**
-// ファイル名は内容の sha256 なので、書きかけが正規名で見えた瞬間に「検証済み」の
-// 顔をした壊れたバイト列を配ることになる。事前投入（drawio_preseed.go）は稼働中の
-// CP と同じディレクトリを触るので、そちらからも必ずここを通す。
+// store puts one entry into the cache. Always through a temp name and a rename: the file
+// name is the sha256 of its content, so the moment a half-written file is visible under
+// the real name we serve broken bytes wearing a "verified" face. Preseeding
+// (drawio_preseed.go) touches the same directory as a running CP, so it has to go through
+// here too.
 func (d *drawioStencils) store(path string, b []byte) error {
 	if err := os.MkdirAll(d.cacheDir, 0o755); err != nil {
 		return err
@@ -224,7 +230,7 @@ func (d *drawioStencils) store(path string, b []byte) error {
 		os.Remove(tmpName)
 		return err
 	}
-	// 同一ディレクトリなので rename は atomic。
+	// Same directory, so the rename is atomic.
 	if err := os.Rename(tmpName, path); err != nil {
 		os.Remove(tmpName)
 		return err
@@ -232,13 +238,15 @@ func (d *drawioStencils) store(path string, b []byte) error {
 	return nil
 }
 
-// drawioFetchUpstream は 1 セットを upstream から取り、台帳と照合して返す。
+// drawioFetchUpstream fetches one set from upstream and returns it once it matches the
+// manifest.
 //
-// **リトライを持たせる。** raw.githubusercontent は実際に connection reset を返す
-// （実測: 台帳を焼くとき 8 並列で落ち、実機の初回取得でも 1 度出た）。1 回の瞬断で
-// 502 を返すと、Console 側はそのセットを「頼んだ済み」にしたまま二度と要求しないので、
-// **図のアイコンだけがそのペインの寿命いっぱい欠ける**。ビューア自身の遅延取得を
-// 否決した理由（§65.5.4-3）と同じ失敗をこちらで作らないための retry である。
+// It retries on purpose: raw.githubusercontent really does return connection resets
+// (measured — 8-way parallel fetches while baking the manifest, plus once on a real first
+// fetch). Answering 502 on a single blip is unrecoverable from the Console's side, which
+// marks the set as already requested and never asks for it again, so the diagram's icons
+// stay missing for the whole life of that pane — the same failure that got the viewer's
+// own lazy fetching rejected (§65.5.4-3).
 func drawioFetchUpstream(ctx context.Context, url string, entry drawioStencilEntry) ([]byte, error) {
 	var last error
 	for attempt := 1; attempt <= drawioFetchTries; attempt++ {
@@ -254,7 +262,7 @@ func drawioFetchUpstream(ctx context.Context, url string, entry drawioStencilEnt
 			return b, nil
 		}
 		last = err
-		// 台帳と照合して落ちたものと 404 は、何度やっても同じ。すぐ諦める。
+		// A manifest mismatch and a 404 give the same answer every time; give up now.
 		if errors.Is(err, errDrawioPermanent) {
 			break
 		}
@@ -264,7 +272,7 @@ func drawioFetchUpstream(ctx context.Context, url string, entry drawioStencilEnt
 
 const drawioFetchTries = 3
 
-// 再試行しても意味の無い失敗（内容の不一致・存在しない URL）に付ける印。
+// Marks a failure retrying cannot fix: content mismatch, or a URL that does not exist.
 var errDrawioPermanent = errors.New("permanent")
 
 func drawioFetchOnce(ctx context.Context, url string, entry drawioStencilEntry) ([]byte, error) {
@@ -284,14 +292,14 @@ func drawioFetchOnce(ctx context.Context, url string, entry drawioStencilEntry) 
 	if res.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("upstream HTTP %d", res.StatusCode)
 	}
-	// 台帳がサイズを持っているので、読む量にも上限を掛けられる（+1 で超過を検出）。
+	// The manifest carries the size, so the read itself can be capped (+1 to spot overrun).
 	b, err := io.ReadAll(io.LimitReader(res.Body, entry.Size+1))
 	if err != nil {
 		return nil, err
 	}
 	if err := verifyDrawioStencil(b, entry); err != nil {
-		// 途中で切れた応答は毎回長さが違うので、これは再試行する価値がある。
-		// 完全に取れたうえで中身が違うなら、何度やっても同じ。
+		// A truncated response has a different length every time, so it is worth retrying;
+		// bytes that arrived in full but do not match never will.
 		if int64(len(b)) == entry.Size {
 			return nil, fmt.Errorf("%w: %v", errDrawioPermanent, err)
 		}

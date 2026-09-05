@@ -1,11 +1,11 @@
-// features/usage/api — GET /api/usage/series の型と取得（docs/log/46 §4-a / ADR0029）。
+// features/usage/api — types and fetch for GET /api/usage/series (docs/log/46 §4-a / ADR0029).
 //
-// サーバが集計して返す（Console に生ログは流れない）。ワイヤ形は Go 側
-// workspace/agent/usage_series.go の usageSeriesResp と1対1。軸の語彙は
-// **サーバが未知の軸を 400 で弾く**ので、こちら側も UsageDim に閉じておく。
+// The server aggregates and returns the result; raw logs never reach the Console. The wire shape
+// maps one-to-one onto usageSeriesResp in workspace/agent/usage_series.go. The server rejects an
+// unknown axis with 400, so this side keeps the vocabulary closed in UsageDim.
 import { api } from "../../core/api/client.ts";
 
-/** 集計軸。サーバの validUsageDim と同じ語彙（増減は両側同時に）。 */
+/** Aggregation axis. Same vocabulary as the server's validUsageDim; change both sides together. */
 export type UsageDim =
   | "feature"
   | "kind"
@@ -17,7 +17,7 @@ export type UsageDim =
   | "model_src"
   | "measured";
 
-/** 集計値（series の1要素）。spend = in + ccreate + out（cache_read は含めない）。 */
+/** One entry of `series`. spend = in + ccreate + out (cache_read is not counted). */
 export interface UsageAgg {
   spend: number;
   in: number;
@@ -25,21 +25,22 @@ export interface UsageAgg {
   cread: number;
   ccreate: number;
   calls: number;
-  /** 実測コスト。claude の補助呼び出しだけが返す（セッション本体には無い）。 */
+  /** Measured cost. Only claude's auxiliary calls report it; the session itself does not. */
   cost_usd?: number;
   /**
-   * API 換算相当額の**推定**（サーバが単価表 × トークンで起こす・usage_price.go）。
-   * **実測 cost_usd とは別値で、足さない**（1つの数字に2つの計測法を混ぜない）。
-   * 単価表に無いモデルの行は 0 ではなく「無い」— 値付けできた割合は
-   * priced_spend / unpriced_spend で分かる。
+   * Estimated API-equivalent amount, derived by the server from its price table times the token
+   * counts (usage_price.go). It is a different value from the measured cost_usd and must never be
+   * added to it: one number never mixes two ways of measuring. A model missing from the price
+   * table has no value here rather than 0; priced_spend / unpriced_spend say how much could be
+   * priced.
    */
   cost_est_usd?: number;
 }
 
 /**
- * この応答の金額に使った実効単価（$/100万トークン）と、その出所。
- * src は "builtin"（内蔵表）か "catalog:<provider>/<model>"。金額だけ出して出所を言わないと
- * 検算できないので、モデル名 → 単価 の形でサーバが添えてくる。
+ * The effective unit price used for the amounts in this response ($ per million tokens) and where
+ * it came from: src is "builtin" (the built-in table) or "catalog:<provider>/<model>". An amount
+ * without its source cannot be checked, so the server attaches this as model name to price.
  */
 export interface UsagePrice {
   src: string;
@@ -47,11 +48,11 @@ export interface UsagePrice {
   out: number;
   cread: number;
   cwrite: number;
-  /** 同じモデル名でも kind によって単価が違う（表示は消費の大きい方）。 */
+  /** The same model name is priced differently per kind; the larger consumer is displayed. */
   ambiguous?: boolean;
 }
 
-/** 単価カタログ（models.dev）の申告。無ければフィールドごと来ない。 */
+/** What the price catalogue (models.dev) declares. Absent entirely when there is none. */
 export interface UsageCatalog {
   origin: string; // opencode | file | env
   models: number;
@@ -59,11 +60,11 @@ export interface UsageCatalog {
 }
 
 export interface UsageBucket {
-  t: string; // バケット先頭時刻（RFC3339・UTC）
+  t: string; // start of the bucket (RFC3339, UTC)
   series: Record<string, UsageAgg>;
 }
 
-/** この kind が何をどこまで報告するかの自己申告（データから自動生成される）。 */
+/** How much this kind reports about itself, derived automatically from the data. */
 export interface UsageCoverage {
   tokens: "exact" | "partial" | "none" | string;
   model: "reported" | "requested" | "none" | string;
@@ -77,22 +78,22 @@ export interface UsageSeries {
   split?: string;
   buckets: UsageBucket[];
   totals: UsageAgg;
-  /** split 指定時のみ（「機能 × モデル」等）。matrix[by][split] = 集計値。 */
+  /** Only when split is given (e.g. feature x model). matrix[by][split] = the aggregate. */
   matrix?: Record<string, Record<string, UsageAgg>>;
   coverage: Record<string, UsageCoverage>;
   unmeasured_calls: number;
-  /** 推定額を起こせた消費 / 単価表に無くて起こせなかった消費（spend ベース）。 */
+  /** Consumption that could / could not be priced from the table, in spend terms. */
   priced_spend?: number;
   unpriced_spend?: number;
-  /** モデル名 → この応答で使った単価。 */
+  /** Model name to the unit price used in this response. */
   prices?: Record<string, UsagePrice>;
   catalog?: UsageCatalog;
-  /** 要求期間の一部が raw の保持期間より古く hour 粒度で復元できなかった。 */
+  /** Part of the requested range predates raw retention and could not be rebuilt at hour grain. */
   truncated?: boolean;
   /**
-   * セッション本体の台帳への折り込みが、この読み出しの時点で走っていた。
-   * **＝この応答は直近のターンをまだ含まないかもしれない。** 折り込みは非同期なので、
-   * これが立っている間は落ち着くまで取り直す（UsageView）。
+   * Folding of the sessions themselves into the ledger was running when this read happened, so
+   * the response may not yet include the most recent turns. Folding is asynchronous, so while
+   * this is set UsageView refetches until it settles.
    */
   folding?: boolean;
 }
@@ -103,12 +104,13 @@ export interface UsageQuery {
   bucket?: "day" | "hour";
   by?: UsageDim;
   split?: UsageDim;
-  /** 同一軸 OR・異軸 AND。末尾 * のみ前方一致（例: kind:claude,feature:title.*）。 */
+  /** OR within an axis, AND across axes. Only a trailing * is a prefix match
+   * (e.g. kind:claude,feature:title.*). */
   filter?: string;
   include?: string;
   /**
-   * "force" でセッション折り込みの 60 秒スロットルを飛ばす。**明示的な再取得だけ**に付ける
-   * （自動の取り直しに付けると、折り込みが終わるたびに次を起動して永久に走り続ける）。
+   * "force" skips the 60-second throttle on session folding. Set it only on an explicit refetch:
+   * on an automatic one, every finished fold starts the next and folding never stops.
    */
   fold?: "force";
 }
@@ -120,21 +122,23 @@ export function usageSeriesPath(q: UsageQuery): string {
   return "api/usage/series" + (qs ? "?" + qs : "");
 }
 
-/** 系列を1本取得。api() は失敗を throw せず {error} で解決するので、判定は呼び出し側で。 */
+/** Fetch one series. api() resolves with {error} instead of throwing, so the caller must check. */
 export function fetchUsageSeries(q: UsageQuery, signal?: AbortSignal): Promise<UsageSeries | { error: unknown }> {
   return api(usageSeriesPath(q), signal ? { signal } : undefined);
 }
 
-// --- rtk 効果（トークン節約） -------------------------------------------------
-// 上の台帳（CP 集計）とは別系。コンテナ内 rtk 自身の履歴 DB を Agent が
-// `rtk gain --all --format json` で読み、透過で返す（スキーマは rtk のもの —
-// workspace/agent/agent_rtk.go handleAgentRTKGain）。rtk 不在や失敗は
-// available/error 入りの soft ボディで 200 が返る（呼び出し側は黙って隠す）。
-// 古い Agent（--daily 時代）は daily だけ返す＝weekly/monthly は無い前提で読むこと。
+// --- rtk savings ("rtk 効果") -------------------------------------------------
+// A separate lineage from the ledger above (which the CP aggregates): the Agent reads rtk's own
+// history DB inside the container with `rtk gain --all --format json` and passes it through, so
+// the schema is rtk's (workspace/agent/agent_rtk.go handleAgentRTKGain). A missing rtk or a
+// failure still returns 200 with a soft body carrying available/error, which the caller hides
+// silently. An older Agent (from the --daily era) returns only daily, so read weekly/monthly as
+// possibly absent.
 
-/** 1バケット分。粒度で日付キーが変わる（daily=date / weekly=week_start,week_end / monthly=month）。 */
+/** One bucket. The date key depends on the grain: daily=date / weekly=week_start,week_end /
+ * monthly=month. */
 export interface RtkGainBucket {
-  date?: string; // "YYYY-MM-DD"（タイムゾーン無しの素の日付）
+  date?: string; // "YYYY-MM-DD" (a bare date, no timezone)
   week_start?: string;
   week_end?: string;
   month?: string; // "YYYY-MM"

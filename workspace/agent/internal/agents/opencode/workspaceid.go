@@ -1,25 +1,30 @@
 package opencode
 
-// opencode.ai の workspace ID（`wrk_…`）と、上限に当たったときの枠情報。
+// The opencode.ai workspace ID (`wrk_...`), plus what a usage limit tells us about the plan
+// window.
 //
-// なぜ持つのか（docs/log/54 §54.7）: 利用枠の画面
-// `https://opencode.ai/workspace/{wrk}/go` はブラウザセッション前提で、素の GET は
-// `/auth/authorize` へ 302 する。JSON API も opencode.ai 側には無く（api/* は 404）、
-// Console 側 API は Bearer で開いているが（/api/orgs と /api/user が 401＝経路は存在、
-// /api/usage は 404）、そのトークンは opencode 自身の資格情報ストアにあり読み出す口が
-// 無い。したがって**数値を取り込むことはできない**。できるのは
-//   (1) ID を持って利用枠ページへの導線を出すこと
-//   (2) 上限に当たったときにエラーが運んでくる枠情報（どの枠か・いつ戻るか）を見せること
-// の 2 つで、ID はどちらにも要る。手入力と、エラーからの自動学習の両方で埋める。
+// Why it is kept at all (docs/log/54 §54.7): the plan page
+// `https://opencode.ai/workspace/{wrk}/go` assumes a browser session and a plain GET 302s to
+// `/auth/authorize`. opencode.ai exposes no JSON API either (api/* is 404), and while the
+// Console-side API is open to a Bearer token (/api/orgs and /api/user answer 401, so the
+// route exists; /api/usage is 404), that token lives in opencode's own credential store with
+// no way to read it out. The numbers therefore cannot be ingested. What is possible is
 //
-// 実測の材料:
-//   - 残高切れ: message に `…Manage your billing here: https://opencode.ai/workspace/wrk_x/billing`
-//     （errors_test.go の固定データ）。
-//   - Go の上限: opencode 本体は responseBody を JSON として読み、`metadata.workspace` と
-//     `metadata.limitName` を取り、`retry-after` ヘッダからリセットまでの秒数を出して
-//     `https://opencode.ai/workspace/{workspace}/go` を案内する（バイナリ実測）。
-//     保存されたメッセージにその全部が載るかは版によるので、**どれか一つでも拾えたら
-//     使う**という読み方にしてある。
+//	(1) holding the ID so a link to the plan page can be offered, and
+//	(2) showing the window information a failure carries when a limit is hit (which window,
+//	    when it comes back)
+//
+// and the ID is needed for both. It is filled in by hand and learned from failures.
+//
+// Measured:
+//   - Out of credit: the message carries
+//     `...Manage your billing here: https://opencode.ai/workspace/wrk_x/billing`
+//     (the fixture in errors_test.go).
+//   - Go plan limit: opencode itself reads responseBody as JSON, takes `metadata.workspace`
+//     and `metadata.limitName`, derives the seconds until reset from the `retry-after` header
+//     and points at `https://opencode.ai/workspace/{workspace}/go` (measured against the
+//     binary). Whether a stored message carries all of that depends on the version, so this
+//     reads them as "use whichever one can be found".
 
 import (
 	"encoding/json"
@@ -36,21 +41,22 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// workspaceIDRe matches the ULID-shaped id（Crockford base32・実測 26 文字）。
+// workspaceIDRe matches the ULID-shaped id (Crockford base32, measured at 26 characters).
 var workspaceIDRe = regexp.MustCompile(`\bwrk_[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}\b`)
 
-// NormalizeWorkspaceID extracts the id out of whatever the user pasted. 利用枠ページの
-// URL をそのまま貼るのが自然な操作なので（実機でそうなった）、`wrk_…` だけを取り出す。
-// 見つからなければ空 — 呼び出し側が入力エラーとして扱う。
+// NormalizeWorkspaceID extracts the id out of whatever the user pasted. Pasting the plan
+// page's URL as-is is the natural thing to do (and is what happened on a real machine), so
+// only the `wrk_...` part is taken. Empty when nothing is found, which the caller treats as
+// an input error.
 func NormalizeWorkspaceID(s string) string { return workspaceIDRe.FindString(strings.TrimSpace(s)) }
 
-// ValidWorkspaceID reports whether s CONTAINS an opencode workspace id（URL 可）。
+// ValidWorkspaceID reports whether s CONTAINS an opencode workspace id (a URL is fine).
 func ValidWorkspaceID(s string) bool { return NormalizeWorkspaceID(s) != "" }
 
 type workspaceState struct {
 	ID string `json:"id"`
-	// Source は "manual"（利用者が入力）か "learned"（エラーから拾った）。手入力を
-	// 学習で黙って上書きしないための区別。
+	// Source is "manual" (entered by the user) or "learned" (picked out of a failure). The
+	// distinction exists so that learning never silently overwrites a hand-entered id.
 	Source string `json:"source"`
 	At     string `json:"at"`
 }
@@ -80,7 +86,7 @@ func loadWorkspaceIDLocked() workspaceState {
 	if b, err := os.ReadFile(workspaceIDPath()); err == nil {
 		_ = json.Unmarshal(b, &st)
 	}
-	// 正規化前に書かれたファイル（URL 丸ごと）はここで直す — 読むたびに正しい id へ。
+	// A file written before normalisation existed holds the whole URL; repair it on every read.
 	if id := NormalizeWorkspaceID(st.ID); id != st.ID {
 		st.ID = id
 	}
@@ -118,8 +124,9 @@ func SetWorkspaceID(id string) error {
 	return saveWorkspaceIDLocked(workspaceState{ID: NormalizeWorkspaceID(id), Source: "manual", At: nowRFC3339()})
 }
 
-// learnWorkspaceID records an id seen in a failure. 手入力は上書きしない — 利用者が
-// 選んだ workspace のほうが、たまたまエラーに出た id より意図に近い。
+// learnWorkspaceID records an id seen in a failure. It never overwrites a hand-entered one:
+// the workspace the user chose is closer to their intent than an id that happened to show up
+// in an error.
 func learnWorkspaceID(id string) {
 	if !ValidWorkspaceID(id) {
 		return
@@ -136,15 +143,15 @@ func learnWorkspaceID(id string) {
 
 var nowRFC3339 = func() string { return time.Now().Format(time.RFC3339) }
 
-// --- 上限に当たったときの枠情報 ------------------------------------------------
+// --- window information from a usage limit --------------------------------------
 
 // LimitInfo is what a usage-limit failure tells us about the plan window.
 type LimitInfo struct {
-	Name    string `json:"name,omitempty"`     // "rolling" / "weekly" / "monthly" など
-	ResetAt string `json:"reset_at,omitempty"` // RFC3339。retry-after から算出
+	Name    string `json:"name,omitempty"`     // "rolling" / "weekly" / "monthly" and the like
+	ResetAt string `json:"reset_at,omitempty"` // RFC3339, derived from retry-after
 }
 
-// limitPayload は opencode 本体が読むのと同じ形（responseBody を JSON として読む）。
+// limitPayload is the shape opencode itself reads (responseBody parsed as JSON).
 type limitPayload struct {
 	Metadata struct {
 		Workspace string `json:"workspace"`
@@ -158,22 +165,22 @@ var (
 	lastLimit LimitInfo
 )
 
-// LastLimit returns the most recent usage-limit observation (zero value = 未観測)。
+// LastLimit returns the most recent usage-limit observation (zero value = never observed).
 func LastLimit() LimitInfo {
 	limitMu.Lock()
 	defer limitMu.Unlock()
 	return lastLimit
 }
 
-// scanFailure harvests what a failed turn can tell us: the workspace id（文面にも
-// メタデータにも出る）and, for a usage-limit failure, which window it was and when it
-// resets. 拾えなかった項目は空のまま返す。
+// scanFailure harvests what a failed turn can tell us: the workspace id (which appears both
+// in the prose and in the metadata) and, for a usage-limit failure, which window it was and
+// when it resets. Anything that could not be found is returned empty.
 func scanFailure(e messageError) LimitInfo {
 	learnWorkspaceID(string(workspaceIDRe.Find([]byte(e.Data.Message))))
 	learnWorkspaceID(e.Data.Metadata.Workspace)
 
 	info := LimitInfo{Name: strings.TrimSpace(e.Data.Metadata.LimitName)}
-	// opencode 本体は responseBody（プロバイダ応答の生文字列）を JSON として読み直す。
+	// opencode itself re-reads responseBody (the provider's raw response string) as JSON.
 	if body := e.Data.ResponseBody; body != "" {
 		learnWorkspaceID(string(workspaceIDRe.Find([]byte(body))))
 		var p limitPayload
@@ -193,7 +200,8 @@ func scanFailure(e messageError) LimitInfo {
 	return info
 }
 
-// headerValue looks a header up case-insensitively（応答ヘッダの正規化は版で揺れる）。
+// headerValue looks a header up case-insensitively: how response headers are normalised
+// varies between versions.
 func headerValue(h map[string]string, name string) string {
 	for k, v := range h {
 		if strings.EqualFold(k, name) {
@@ -218,7 +226,7 @@ func resetAt(retryAfter string) string {
 	return ""
 }
 
-// WorkspaceURL builds the deep link for the Go plan page（利用枠の画面）。空 id では空。
+// WorkspaceURL builds the deep link for the Go plan page. Empty for an empty id.
 func WorkspaceURL(id, page string) string {
 	norm := NormalizeWorkspaceID(id)
 	if norm == "" {
@@ -233,7 +241,7 @@ func WorkspaceURL(id, page string) string {
 // --- HTTP ---------------------------------------------------------------------
 
 type workspaceReq struct {
-	ID string `json:"id"` // "" = 登録解除
+	ID string `json:"id"` // "" = unregister
 }
 
 // HandlePutWorkspace records the workspace id the user pasted from their browser

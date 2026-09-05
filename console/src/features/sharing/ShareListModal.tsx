@@ -1,7 +1,7 @@
-// ShareListModal — 所有者が作成した共有の一覧(左ペインの broadcast アイコン / 共有
-// セクションの管理アイコンから開く)。行の見た目・footer の主操作+閉じるという型は
-// ArchivedModal(sessions/ArchivedModal.tsx)に合わせている。作成は ShareCreateModal
-// (このモーダルの「+ 新規共有」、または各行の右クリックメニュー)に分離。
+// ShareListModal lists the shares the owner created (opened from the broadcast icon in the
+// left pane, or the manage icon of the sharing section). Row appearance and the "primary
+// action + close" footer follow ArchivedModal (sessions/ArchivedModal.tsx). Creation lives
+// in ShareCreateModal, reached from the "new share" button here or a row's context menu.
 import { useEffect, useMemo, useState } from "react";
 import { Modal } from "../../ui/Modal.tsx";
 import { Button, IconButton } from "../../ui/Button.tsx";

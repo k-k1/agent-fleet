@@ -27,8 +27,8 @@ import (
 // The file is codex-owned (out of our encrypted store, like claude's creds) and
 // denylisted from the file browser.
 
-// PTY flow plumbing (agents.Flow / agents.FlowStore) は internal/agents/flow.go の
-// 共有実装を使う（docs/log/23 残① Wave F で Wave E の複製を一本化）。
+// PTY flow plumbing (agents.Flow / agents.FlowStore) uses the shared implementation in
+// internal/agents/flow.go.
 
 // --- status ------------------------------------------------------------------------
 
@@ -38,7 +38,7 @@ func LoggedIn() bool { return loggedIn() }
 
 // loggedIn reports whether codex has stored credentials, via `codex login
 // status` (prints "Not logged in" when logged out; anything else => connected).
-// var なのは差し替えの継ぎ目のため（共有 daemon の起動ゲートがこれを見る）。
+// It is a var to leave a seam for substitution (the shared daemon's start gate reads it).
 var loggedIn = func() bool {
 	out, err := exec.Command("codex", "login", "status").CombinedOutput()
 	if err != nil {

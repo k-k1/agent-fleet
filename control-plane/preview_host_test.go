@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const testSlug = "k7f2q9x1w3ub5nzt0abc" // 20 文字
+const testSlug = "k7f2q9x1w3ub5nzt0abc" // 20 characters
 
 func TestParsePreviewHost(t *testing.T) {
 	const domain = "pv.example.com"
@@ -20,12 +20,13 @@ func TestParsePreviewHost(t *testing.T) {
 		{"react", testSlug + "-3000.pv.example.com", true, 3000},
 		{"spring", testSlug + "-8080.pv.example.com", true, 8080},
 		{"with port", testSlug + "-3000.pv.example.com:443", true, 3000},
-		// DNS はケース非依存なので、大文字で来ても同じ Workspace に解決する（slug の
-		// 保存は小文字・比較の前に畳む）。
+		// DNS is case-insensitive, so an uppercase host resolves to the same workspace.
+		// Slugs are stored lowercase and folded before comparison.
 		{"uppercase", strings.ToUpper(testSlug) + "-3000.PV.EXAMPLE.COM", true, 3000},
 		{"trailing dot", testSlug + "-3000.pv.example.com.", true, 3000},
-		// ★ ラベルが 2 段になる形は通さない。ワイルドカード証明書が 1 段しか
-		// 受け持たないので、通したところで TLS が張れない（ADR 0062 決定 2）。
+		// A two-label form is refused: an ACM wildcard certificate covers only one
+		// label, so TLS could not be established even if it parsed (ADR 0062
+		// decision 2).
 		{"two labels", "3000." + testSlug + ".pv.example.com", false, 0},
 		{"console host", "af.example.com", false, 0},
 		{"alb health check", "10.20.1.5", false, 0},
@@ -54,7 +55,7 @@ func TestParsePreviewHost(t *testing.T) {
 	}
 }
 
-// 未設定のデプロイでは何も一致しない ＝ ホスト方式そのものが存在しない。
+// With no domain configured nothing matches: the host form simply does not exist.
 func TestParsePreviewHostDisabledWhenDomainEmpty(t *testing.T) {
 	if _, ok := parsePreviewHost(testSlug+"-3000.pv.example.com", ""); ok {
 		t.Fatal("preview host matched with no AF_PREVIEW_DOMAIN configured")
@@ -82,7 +83,7 @@ func TestNewPreviewSlugShapeAndUniqueness(t *testing.T) {
 }
 
 func TestPreviewPortAllowlist(t *testing.T) {
-	// 既定は要望そのもの（React 3000 / Spring Boot 8080）。
+	// The defaults are exactly what was asked for: React 3000, Spring Boot 8080.
 	var zero wsSettings
 	if !previewPortAllowed(zero, 3000) || !previewPortAllowed(zero, 8080) {
 		t.Fatal("default preview ports should allow 3000 and 8080")
@@ -117,8 +118,8 @@ func TestPreviewURLFor(t *testing.T) {
 	if got := previewURLFor(testSlug, 3000, "pv.example.com"); got != "https://"+testSlug+"-3000.pv.example.com" {
 		t.Fatalf("previewURLFor = %q", got)
 	}
-	// 発行されていない（停止中）ときに URL を組み立てない — 押しても 404 のリンクを
-	// 見せないため。
+	// No slug issued (the workspace is stopped) means no URL, so the user is never
+	// shown a link that only 404s.
 	if got := previewURLFor("", 3000, "pv.example.com"); got != "" {
 		t.Fatalf("previewURLFor with no slug = %q, want empty", got)
 	}
@@ -131,7 +132,7 @@ func TestSafePreviewNext(t *testing.T) {
 		{"//evil.example.com/", "/"},
 		{"/\\evil.example.com", "/"},
 		{"https://evil.example.com", "/"},
-		{previewAuthCallbackPath, "/"}, // ハンドシェイクへ戻すループを作らない
+		{previewAuthCallbackPath, "/"}, // never loop back into the handshake
 	} {
 		if got := safePreviewNext(c.in); got != c.want {
 			t.Errorf("safePreviewNext(%q) = %q, want %q", c.in, got, c.want)
@@ -139,18 +140,18 @@ func TestSafePreviewNext(t *testing.T) {
 	}
 }
 
-// ★ プレビューのホストに来た「プレビュー以外」は 1 つも通さない。同じプロセスが
-// Console と CP API を持っているので、ここが緩むと別オリジンにして閉じたはずの穴が
-// 裏口から開く（ADR 0062 決定 8）。
+// Nothing but a preview may be served on a preview host. The same process also serves the
+// Console and the CP API, so loosening this re-opens through the back door the hole the
+// separate origin was meant to close (ADR 0062 decision 8).
 func TestPreviewDispatchDoesNotServeTheConsole(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusTeapot) // 「通常の mux に届いた」の印
+		w.WriteHeader(http.StatusTeapot) // marks "the normal mux was reached"
 	})
 	mgr := &manager{previewDomain: "pv.example.com", store: nil}
 	a := previewHostAPI{cfg: config{mgr: mgr}, mgr: mgr}
 	h := a.dispatch(inner)
 
-	// Console のホストは素通し（ALB のヘルスチェックも同様）。
+	// The Console host passes straight through, as does the ALB health check.
 	for _, host := range []string{"af.example.com", "10.20.1.5:8080"} {
 		rr := httptest.NewRecorder()
 		req := httptest.NewRequest("GET", "http://"+host+"/api/workspace", nil)
@@ -160,13 +161,14 @@ func TestPreviewDispatchDoesNotServeTheConsole(t *testing.T) {
 			t.Fatalf("host %q: code = %d, want the inner handler (418)", host, rr.Code)
 		}
 	}
-	// プレビューのホストは、たとえ /api/... でも通常の mux へ行かない。store が nil
-	// なので panic ではなく「通らなかったこと」を見たいだけ — 到達したら 418 になる。
+	// A preview host never reaches the normal mux, not even for /api/…. store is nil, so
+	// what matters is that it did not get through, not whether it panicked — reaching the
+	// inner handler would show up as 418.
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "http://"+testSlug+"-3000.pv.example.com/api/workspace", nil)
 	req.Host = testSlug + "-3000.pv.example.com"
 	func() {
-		defer func() { _ = recover() }() // store nil の panic は許容（418 でないことが要点）
+		defer func() { _ = recover() }() // a nil-store panic is fine; the point is "not 418"
 		h.ServeHTTP(rr, req)
 	}()
 	if rr.Code == http.StatusTeapot {
@@ -174,8 +176,9 @@ func TestPreviewDispatchDoesNotServeTheConsole(t *testing.T) {
 	}
 }
 
-// af_pv（プレビューの入場券）はアプリに見せない。ホスト方式では cookie が
-// アプリと同一オリジンに載るので、ブラウザは守ってくれない — この一覧だけが防波堤。
+// af_pv, the preview's admission ticket, must never be shown to the app. Under the host
+// form the cookie sits on the same origin as the app, so the browser will not protect it —
+// this list is the only barrier.
 func TestPreviewAuthCookieIsStrippedFromTheApp(t *testing.T) {
 	if !sensitiveBrowserCookie(previewAuthCookie) {
 		t.Fatal("af_pv must never be forwarded to the previewed app")

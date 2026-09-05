@@ -1,18 +1,20 @@
 #!/bin/bash
-# 第3ラウンド(b): EC2 プール型アダプタ（ecs-ec2）を実 AWS で通すための最小基盤。
-# 方針: **repo の 40-ec2-pool.yaml をそのまま立てる**（テンプレート自体を検証したいので、
-# 手書きの launch template は作らない）。同スタックは 00-network / 20-platform の
-# export を参照するので、その 2 つだけダミースタックで供給する。ALB / RDS は作らない。
+# Minimal infrastructure for exercising the EC2 pool adapter (ecs-ec2) against real AWS.
+# The approach is to stand up the repository's own 40-ec2-pool.yaml as it is — the template
+# itself is what is being verified, so no hand-written launch template. That stack imports
+# exports from 00-network / 20-platform, so only those two are supplied by dummy stacks. No
+# ALB and no RDS.
 #
-# ネットワークは 2 通り:
+# Two network shapes:
 #
-#   既定            デフォルト VPC のパブリックサブネット 1 本。安くて速いが、
-#                   **本番と形が違う**——スロットは自動割当パブリック IPv4 で外に出るので、
-#                   §64.5 (3) の「タスク ENI 残留 → パブリック IPv4 消失 → 戻ってこない」を
-#                   踏む（実際に踏んだ・§64.17.5）。
-#   AF_HARNESS_NAT=1  専用 VPC ＋ プライベートサブネット ＋ NAT ゲートウェイ。**本番相当**。
-#                   スロットもタスクもパブリック IP を持たず、egress は NAT 経由になる。
-#                   NAT は時間課金（約 $0.062/h ＋ 転送量）なので、必ず teardown まで閉じる。
+#   default         one public subnet of the default VPC. Cheap and fast, but a different
+#                   shape from production: slots reach the outside through an auto-assigned
+#                   public IPv4 and therefore hit §64.5 (3), "task ENI lingers -> public
+#                   IPv4 is lost -> it never comes back" (which did happen, §64.17.5).
+#   AF_HARNESS_NAT=1  a dedicated VPC plus private subnets and a NAT gateway — equivalent to
+#                   production. Neither slots nor tasks have a public IP and egress goes
+#                   through the NAT. The NAT bills by the hour (about $0.062/h plus
+#                   transfer), so always close it down through teardown.
 set -euo pipefail
 export AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1
 N=af-ec2c
@@ -34,7 +36,8 @@ cd ~/af-ec2c
 ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
 
 if [ "$NAT" = 1 ]; then
-  # --- 本番相当: 専用 VPC / パブリック（NAT 用）＋ プライベート（スロットとタスク）---
+  # --- production-equivalent: dedicated VPC, public (for the NAT) plus private (slots and
+  # tasks) ---
   CIDR=10.90.0.0/16
   VPC=$(aws ec2 create-vpc --cidr-block $CIDR --query Vpc.VpcId --output text)
   aws ec2 create-tags --resources "$VPC" --tags Key=Name,Value=$N
@@ -45,15 +48,16 @@ if [ "$NAT" = 1 ]; then
     --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
   SUBNET=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.1.0/24 \
     --availability-zone ap-northeast-1a --query Subnet.SubnetId --output text)
-  # 2 本目の AZ。EBS は AZ に固定されるので、「別 AZ に home を持つ人にその AZ のスロットが
-  # 立つか」は 1 本の subnet では一度も試されない（§64.20）。NAT は 1a 側のまま共有する
-  # （AZ 跨ぎの転送料はかかるが、検証したいのは経路ではなく配置）。
+  # A second AZ. EBS is pinned to an AZ, so with a single subnet "does a user whose home is
+  # in another AZ get a slot in that AZ" is never exercised at all (§64.20). The NAT stays
+  # shared on the 1a side (cross-AZ transfer costs something, but what is being verified is
+  # placement, not the route).
   SUBNET2=$(aws ec2 create-subnet --vpc-id "$VPC" --cidr-block 10.90.2.0/24 \
     --availability-zone ap-northeast-1c --query Subnet.SubnetId --output text)
   aws ec2 create-tags --resources "$PUB" --tags Key=Name,Value=$N-public
   aws ec2 create-tags --resources "$SUBNET" --tags Key=Name,Value=$N-private
   aws ec2 create-tags --resources "$SUBNET2" --tags Key=Name,Value=$N-private-c
-  # NAT 自身はパブリック側に置くので、そのサブネットだけ公開経路を持つ。
+  # The NAT itself sits on the public side, so only that subnet has a public route.
   aws ec2 modify-subnet-attribute --subnet-id "$PUB" --map-public-ip-on-launch
   PUBRT=$(aws ec2 create-route-table --vpc-id "$VPC" --query RouteTable.RouteTableId --output text)
   aws ec2 create-route --route-table-id "$PUBRT" --destination-cidr-block 0.0.0.0/0 --gateway-id "$IGW" >/dev/null
@@ -80,33 +84,35 @@ else
 fi
 echo "ACCOUNT=$ACCOUNT VPC=$VPC CIDR=$CIDR SUBNET=$SUBNET SUBNET2=$SUBNET2 NAT=$NAT"
 
-# --- SG: タスク ENI 用（自己参照で全許可）＋ EFS は VPC 内から 2049 ---
+# --- SGs: one for the task ENI (self-referencing, allow all) plus EFS on 2049 from inside
+# the VPC ---
 SG=$(aws ec2 create-security-group --group-name $N-ws --description "af-ec2c ws task eni" --vpc-id "$VPC" --query GroupId --output text)
 aws ec2 authorize-security-group-ingress --group-id "$SG" --protocol -1 --source-group "$SG" >/dev/null
 EFSSG=$(aws ec2 create-security-group --group-name $N-efs --description "af-ec2c efs" --vpc-id "$VPC" --query GroupId --output text)
-# EC2 起動タイプ＋awsvpc では EFS のマウントを誰の経路で張るかが自明でないので、
-# タスク ENI とホストの両方を許すために VPC CIDR から開ける（sandbox 限定）。
+# With the EC2 launch type plus awsvpc it is not obvious whose route carries the EFS mount,
+# so this opens it to the whole VPC CIDR to allow both the task ENI and the host (sandbox
+# only).
 aws ec2 authorize-security-group-ingress --group-id "$EFSSG" --protocol tcp --port 2049 --cidr "$CIDR" >/dev/null
 echo "SG=$SG EFSSG=$EFSSG"
 
-# --- EFS（資格情報ハイブリッド: claude-config と keep のアクセスポイントが載る） ---
+# --- EFS (the credential hybrid: the claude-config and keep access points live on it) ---
 EFS=$(aws efs create-file-system --performance-mode generalPurpose --throughput-mode bursting \
   --tags Key=Name,Value=$N --query FileSystemId --output text)
 while [ "$(aws efs describe-file-systems --file-system-id "$EFS" --query 'FileSystems[0].LifeCycleState' --output text)" != available ]; do sleep 3; done
-# マウントターゲットは AZ ごとに要る。2 本目の AZ にスロットを立てたとき、ここが無いと
-# タスクは資格情報の EFS をマウントできずに落ちる（本番の複数 AZ 構成でも同じ）。
+# A mount target is needed per AZ. Without one, a task on a slot in the second AZ cannot
+# mount the credential EFS and dies — the same holds for a multi-AZ production setup.
 aws efs create-mount-target --file-system-id "$EFS" --subnet-id "$SUBNET" --security-groups "$EFSSG" >/dev/null
 aws efs create-mount-target --file-system-id "$EFS" --subnet-id "$SUBNET2" --security-groups "$EFSSG" >/dev/null
 echo "EFS=$EFS"
 
-# --- ECR ＋ 本番と同じイメージを複製（docker 不要・crane） ---
+# --- ECR plus a copy of the same image production uses (no docker needed — crane) ---
 aws ecr create-repository --repository-name $N-ws >/dev/null 2>&1 || true
 ECR="$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com/$N-ws"
 aws ecr get-login-password | crane auth login "$ACCOUNT.dkr.ecr.$AWS_REGION.amazonaws.com" -u AWS --password-stdin
 crane copy ghcr.io/k-k1/agent-fleet/workspace:0.8.0 "$ECR:dev"
 echo "ECR=$ECR:dev"
 
-# --- ECS クラスタ ＋ Service Connect 名前空間 ---
+# --- ECS cluster plus the Service Connect namespace ---
 NSOP=$(aws servicediscovery create-private-dns-namespace --name $N.internal --vpc "$VPC" --query OperationId --output text)
 for _ in $(seq 60); do
   st=$(aws servicediscovery get-operation --operation-id "$NSOP" --query 'Operation.Status' --output text)
@@ -117,7 +123,7 @@ NSARN=$(aws servicediscovery get-namespace --id "$NSID" --query 'Namespace.Arn' 
 aws ecs create-cluster --cluster-name $N --service-connect-defaults namespace="$NSARN" >/dev/null
 echo "NSARN=$NSARN"
 
-# --- IAM: 実行ロール（ECR pull / logs / SSM SecureString）とタスクロール ---
+# --- IAM: the execution role (ECR pull / logs / SSM SecureString) and the task role ---
 TRUST='{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Principal":{"Service":"ecs-tasks.amazonaws.com"},"Action":"sts:AssumeRole"}]}'
 aws iam create-role --role-name $N-exec --assume-role-policy-document "$TRUST" >/dev/null
 aws iam attach-role-policy --role-name $N-exec --policy-arn arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
@@ -126,13 +132,16 @@ aws iam put-role-policy --role-name $N-exec --policy-name ssm-read --policy-docu
 aws iam create-role --role-name $N-ws-task --assume-role-policy-document "$TRUST" >/dev/null
 echo "roles ok"
 
-# --- CP タスクロールの複製。E2E を**本番の権限で**回すためのもの（docs/log/64 §64.23） ---
-# ⚠️ **手で書き写さない。** 20-platform.yaml の CpTaskRole のポリシーをそのまま取り出す。
-# 書き写した瞬間、ここは「テンプレートが与えている権限」ではなく「与えていると思っている
-# 権限」になり、E2E は本物の穴を緑で通す——それが決定 18-1 で起きたことである
-# （snapshot 権限が 1 つも無いまま 5 ラウンド緑だった）。
-# 解決できない組み込み関数に当たったら**黙って落とさず落ちる**: statement が 1 本欠けた
-# ロールは、欠けたぶんだけ本番より緩い（あるいは厳しい）別物になる。
+# --- A copy of the CP task role, so E2E runs with production's permissions
+# (docs/log/64 §64.23) ---
+# Never transcribe it by hand: extract 20-platform.yaml's CpTaskRole policy as it stands.
+# The moment it is transcribed, this stops being "the permissions the template grants" and
+# becomes "the permissions we think it grants", and E2E passes a real hole green — which is
+# what happened around decision 18-1, five rounds green without a single snapshot
+# permission.
+# On an intrinsic function that cannot be resolved, fail loudly rather than dropping it: a
+# role missing one statement is a different role, looser (or tighter) than production by
+# exactly that much.
 DEPLOYER=$(aws sts get-caller-identity --query Arn --output text)
 python3 - "$REPO_DIR/deploy/aws/ecs/cfn/20-platform.yaml" "$ACCOUNT" "$AWS_REGION" \
   "arn:aws:iam::$ACCOUNT:role/$N-exec" "arn:aws:iam::$ACCOUNT:role/$N-ws-task" \
@@ -191,8 +200,9 @@ echo "CP policy statements: $(python3 -c 'import json,sys;d=json.load(open("cp-p
 aws iam create-role --role-name $N-cp --max-session-duration 43200 --assume-role-policy-document \
   "{\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"AWS\":\"$DEPLOYER\"},\"Action\":\"sts:AssumeRole\"}]}" >/dev/null
 aws iam put-role-policy --role-name $N-cp --policy-name cp-runtime --policy-document file://cp-policy.json
-# 資格情報はプロファイル経由で渡す。静的な STS 資格情報だと 1 時間で切れて、
-# 80 分の E2E が途中から資格情報エラーで落ちる（SDK は role_arn を自分で取り直す）。
+# Pass credentials through a profile. Static STS credentials expire after an hour, and an
+# 80-minute E2E run then fails part way through with credential errors (with a profile the
+# SDK re-assumes role_arn by itself).
 CPROLE=arn:aws:iam::$ACCOUNT:role/$N-cp
 cat > aws-config <<CFG
 [profile $N-cp]
@@ -209,7 +219,7 @@ AWS_CONFIG_FILE=$PWD/aws-config AWS_PROFILE=$N-cp aws sts get-caller-identity --
 
 aws logs create-log-group --log-group-name /$N >/dev/null 2>&1 || true
 
-# --- 40-ec2-pool.yaml が参照する export をダミースタックで供給する ---
+# --- supply the exports 40-ec2-pool.yaml imports from dummy stacks ---
 cat > exports.yaml <<'YAML'
 AWSTemplateFormatVersion: "2010-09-09"
 Description: af-ec2c harness — supplies only the two exports 40-ec2-pool.yaml imports.
@@ -231,7 +241,7 @@ aws cloudformation deploy --stack-name $N-net --template-file exports.yaml \
 aws cloudformation deploy --stack-name $N-plat --template-file exports.yaml \
   --parameter-overrides VpcId="$VPC" ClusterName=$N
 
-# --- ここが本番: repo の 40-ec2-pool.yaml をそのまま立てる ---
+# --- the real thing: stand up the repository's 40-ec2-pool.yaml as it is ---
 aws cloudformation deploy --stack-name $N-pool \
   --template-file "$REPO_DIR/deploy/aws/ecs/cfn/40-ec2-pool.yaml" \
   --capabilities CAPABILITY_NAMED_IAM \
@@ -258,9 +268,9 @@ export AF_ECS_EC2_POOL=$N
 export AF_ECS_EC2_SLOT_TYPES=m7i.large:8192
 export AF_ECS_EC2_MAX_SLOTS=4
 export AF_ECS_EC2_SLOT_SLEEP_SEC=60
-# 就寝の次の段（ADR 0045 決定 23）。本番の推奨は 4h だが、ここは就寝 60 秒に合わせて
-# 300 秒に縮める——実機で確かめたいのは「時間の長さ」ではなく **home を外してから
-# terminate し、ECS の登録も残さない**という順序の方なので。
+# The step after sleep (ADR 0045 decision 23). Production recommends 4h; here it is cut to
+# 300 s to match the 60 s sleep, because what real hardware has to confirm is not the length
+# of time but the order: detach home, then terminate, leaving no ECS registration behind.
 export AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC=300
 export AF_ECS_EC2_RELEASE_GRACE_SEC=60
 export AF_ECS_EC2_HOME_GB=8
@@ -271,8 +281,9 @@ export AF_HARNESS_SUBNET_B=$SUBNET2
 export AF_HARNESS_EFSSG=$EFSSG
 export AF_HARNESS_ACCOUNT=$ACCOUNT
 export AF_HARNESS_NAT=$NAT
-# 実機 E2E は**製品側だけ**をこのロールで走らせる（テスト自身の確認と後始末は
-# デプロイヤのまま）。これが無いと go test は「デプロイヤで走った」と明示ログを出す。
+# On real hardware, E2E runs only the product side under this role; the test's own
+# assertions and cleanup stay on the deployer. Without this, go test logs explicitly that it
+# ran as the deployer.
 export AF_HARNESS_CP_ROLE=$CPROLE
 export AF_HARNESS_CP_PROFILE=$N-cp
 export AF_HARNESS_CP_CONFIG=$HOME/af-ec2c/aws-config

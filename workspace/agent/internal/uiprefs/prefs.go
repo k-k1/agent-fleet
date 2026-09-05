@@ -18,9 +18,10 @@ import (
 // the denylisted .config/agent-fleet (hidden from the file browser) in the home
 // volume, so it survives Stop→Start.
 //
-// このパッケージには「prefs の読み書き」と「main の何にも依存しないアクセサ」だけを置く。
-// 機能側の定数・関数（chatProviders / defaultAutoTurns / modelHidden / materializeMCPAll 等）を
-// 参照するアクセサと HTTP ハンドラは ui_prefs.go（package main）に残っている。
+// This package holds only the prefs read/write plus the accessors that depend on nothing in
+// main. Accessors that reach for feature-side constants and functions (chatProviders,
+// defaultAutoTurns, modelHidden, materializeMCPAll, …) and the HTTP handlers stay in
+// ui_prefs.go (package main).
 
 const MaxBytes = 64 << 10 // 64 KiB cap on the prefs blob
 
@@ -28,14 +29,16 @@ func Path() string {
 	return filepath.Join(paths.HomeDir(), ".config", "agent-fleet", "ui-prefs.json")
 }
 
-// 直前の版の退避先。PUT は本文をそのまま置き換えるので、事故で痩せた blob が来ると
-// それ以前の内容はどこにも残らない（実際に返信サジェストの学習が全端末で消えた）。
+// BackupPath is where the previous version is parked. A PUT replaces the body wholesale, so
+// a blob that accidentally arrives thinner would leave the earlier contents nowhere — the
+// reply suggestions' learned data really was lost on every device that way.
 func BackupPath() string {
 	return Path() + ".prev"
 }
 
-// 累積データのキー — 溜まっていく設定で、失っても作り直せない。Console 側の
-// ACCUMULATED（console/src/lib/settings.ts）と同じ顔ぶれにしてある。
+// accumulatedPrefKeys are the keys holding accumulated data — settings that build up over
+// time and cannot be recreated once lost. Kept to the same membership as the Console's
+// ACCUMULATED (console/src/lib/settings.ts).
 var accumulatedPrefKeys = []string{
 	"quickReplies",
 	"quickRepliesPinned",
@@ -51,8 +54,9 @@ var accumulatedPrefKeys = []string{
 	"ttsUserDict",
 }
 
-// emptyPref は「中身が無い」— 欠落・null・空文字・空配列・空オブジェクト。
-// 数値/真偽値は対象外（0 や false は消えた印ではなく選ばれた値）。
+// emptyPref reports "there is nothing in it": missing, null, empty string, empty array or
+// empty object. Numbers and booleans are excluded — 0 and false are chosen values, not the
+// mark of something erased.
 func emptyPref(v any) bool {
 	switch t := v.(type) {
 	case nil:
@@ -68,10 +72,12 @@ func emptyPref(v any) bool {
 	}
 }
 
-// ShrunkKeys は「前は中身があったのに、この PUT で空（または欠落）になる」累積キーを返す。
-// 利用者が明示的に消すこともある（設定 > キー の「学習済みの候補を全消去」）ので拒否はしない —
-// 拒否すると正当な操作が効かなくなる。代わりに直前の版を .prev へ退避し、何が痩せたかを
-// ログに残す（この形跡が無かったせいで、原因の特定に転写と mtime の突き合わせが要った）。
+// ShrunkKeys returns the accumulated keys that held content before and become empty (or
+// missing) with this PUT. The user may be clearing them deliberately (Settings > Keys, "erase
+// every learned suggestion"), so the write is not rejected — rejecting would break a
+// legitimate operation. Instead the previous version is parked in .prev and what shrank is
+// logged; without that trace, finding the cause took cross-checking transcripts against
+// mtimes.
 func ShrunkKeys(before, after map[string]any) []string {
 	var out []string
 	for _, k := range accumulatedPrefKeys {
@@ -103,9 +109,9 @@ func Read() map[string]any {
 }
 
 // AutoTitleSuggest is the ON/OFF for SESSION title suggestion — the automatic banner
-// plus the manual title-suggest endpoint (設定 > AI補助). The chat side gates on
-// AssistantTitleSuggest and branch names on BranchSuggest: one AI 補助 feature, one key.
-// ★ Branch names used to ride on THIS key, which no label or note ever mentioned
+// plus the manual title-suggest endpoint (Settings > AI assistance). The chat side gates on
+// AssistantTitleSuggest and branch names on BranchSuggest: one AI-assistance feature, one key.
+// Branch names used to ride on THIS key, which no label or note ever mentioned
 // (docs/log/84). Missing/invalid key ⇒ true, matching the frontend's
 // DEFAULTS.autoTitleSuggest (settings.ts) so pre-feature clients get it without an
 // explicit opt-in.
@@ -114,7 +120,7 @@ func AutoTitleSuggest() bool {
 	return !ok || v
 }
 
-// BranchSuggest is the ON/OFF for the branch-name AI suggestion (設定 > AI補助).
+// BranchSuggest is the ON/OFF for the branch-name AI suggestion (Settings > AI assistance).
 // Falls back to AutoTitleSuggest when the key is absent — that is where this gate
 // used to live, so a client that explicitly turned title suggestions off keeps
 // branch names off too until it writes the new key.
@@ -125,7 +131,7 @@ func BranchSuggest() bool {
 	return AutoTitleSuggest()
 }
 
-// EditSuggest is the ON/OFF for the File pane's AI edit suggestion (設定 > AI補助).
+// EditSuggest is the ON/OFF for the File pane's AI edit suggestion (Settings > AI assistance).
 // Missing/invalid ⇒ true: the feature shipped before it had a setting at all, so the
 // absent key means "the historical behaviour", not "off".
 func EditSuggest() bool {
@@ -133,8 +139,8 @@ func EditSuggest() bool {
 	return !ok || v
 }
 
-// OpencodeCatalog is how the opencode launch-model list is shaped (設定 >
-// エージェント > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
+// OpencodeCatalog is how the opencode launch-model list is shaped (Settings >
+// Agents > opencode, ui-prefs opencodeCatalog). One key serves both opencode.ai
 // billing routes, so the same model can appear as opencode/… (Zen, metered) and
 // opencode-go/… (the Go subscription); a Go subscriber rarely wants the metered twins
 // in the list at all. Read live per request — the Console picker and the MCP
@@ -159,7 +165,7 @@ func PeerMessaging() bool {
 func init() { mcpreg.PeerMessagingEnabled = PeerMessaging }
 
 // The opencode package needs the same preference to decide whether to inject
-// OPENCODE_API_KEY at all（無料枠は注入しない）and what to report to /connections.
+// OPENCODE_API_KEY at all (never for the free tier) and what to report to /connections.
 // It lives under internal/agents, which must not read main's config files itself.
 func init() { opencode.UsagePref = OpencodeCatalog }
 
@@ -214,26 +220,27 @@ func AssistantTitleSuggest() bool {
 }
 
 // ChatAutoTurn is the global ON/OFF for the operator's automatic turn on a
-// session report (docs/log/30, 設定 > アシスタント「セッション報告への自動応答」). Missing/invalid
-// key ⇒ true, matching the frontend default — the feature ships ON, with the
+// session report (docs/log/30, Settings > Assistant, "auto-respond to session reports").
+// Missing/invalid key ⇒ true, matching the frontend default — the feature ships ON, with the
 // per-conversation maxAutoTurns cap as the safety stop.
 func ChatAutoTurn() bool {
 	v, ok := Read()["assistantAutoTurn"].(bool)
 	return !ok || v
 }
 
-// ChatQuietCompletion is the global ON/OFF for 静かな完了報告 (設定 >
-// アシスタント). ON のとき、正常な完了報告では自動ターンを回さず、報告カードと
-// 通知センターへの配信だけにする（報告は未配信のまま残り、次のターンに相乗りする
-// — injectPendingReports）。Missing/invalid key ⇒ FALSE: 完了の追撃・要約は既定の
-// 体験として残し、費用を絞りたい利用者だけが明示的に静かにする。
+// ChatQuietCompletion is the global ON/OFF for quiet completion reports (Settings > Assistant).
+// When ON, a normal completion report runs no automatic turn: it only produces the report card and
+// the delivery to the notification centre (the report stays undelivered and rides along with
+// the next turn — injectPendingReports). Missing/invalid key ⇒ FALSE: the follow-up and
+// summary on completion stay the default experience, and only a user who wants to hold costs
+// down goes quiet explicitly.
 func ChatQuietCompletion() bool {
 	v, ok := Read()["assistantQuietCompletion"].(bool)
 	return ok && v
 }
 
-// ChatAutoPilot is the global ON/OFF for 自動走行 (docs/log/30, 設定 >
-// アシスタント「自動走行」): the operator autonomously answers a session's
+// ChatAutoPilot is the global ON/OFF for auto-pilot (docs/log/30, Settings >
+// Assistant, "auto-pilot"): the operator autonomously answers a session's
 // AskUserQuestion with the session's own recommendation, and drives a presented plan
 // through review-by-another-session → feedback → approval. Missing/invalid key ⇒
 // FALSE — acting in the user's stead is consequential, so unlike auto-turn this mode
@@ -245,52 +252,55 @@ func ChatAutoPilot() bool {
 	return ok && v
 }
 
-// ChatAutoResume is the global ON/OFF for 中断時の自動再開 (docs/log/47, 設定 >
-// アシスタント): on an aborted turn (接続断・一時的なレート制限で切れた — 原因が
-// 自然に解消する中断) the operator is told to nudge the session to continue instead of
-// only relaying to the user. Missing/invalid key ⇒ TRUE, unlike 自動走行: the nudge
-// carries no decision of the user's — it re-runs work the user already asked for, and
-// its blast radius is bounded by the retryable/blocked split (a failure whose cause
+// ChatAutoResume is the global ON/OFF for auto-resuming interrupted turns (docs/log/47,
+// Settings > Assistant): on an aborted turn (a dropped connection or a transient rate limit — an
+// abort whose cause clears by itself) the operator is told to nudge the session to continue
+// instead of only relaying to the user. Missing/invalid key ⇒ TRUE, unlike ChatAutoPilot:
+// the nudge carries no decision of the user's — it re-runs work the user already asked for,
+// and its blast radius is bounded by the retryable/blocked split (a failure whose cause
 // won't clear is never auto-resumed) and by maxAutoResumeAttempts.
 func ChatAutoResume() bool {
 	v, ok := Read()["assistantAutoResume"].(bool)
 	return !ok || v
 }
 
-// RateLimitAutoResume is the ON/OFF for 利用上限リセット後の自動再開 (docs/log/47
-// §4-4, 設定 > エージェント > Claude > 動作設定): when a claude session is cut off by
+// RateLimitAutoResume is the ON/OFF for auto-resume after a usage limit resets (docs/log/47
+// §4-4, Settings > Agents > Claude > Behavior): when a claude session is cut off by
 // its usage limit, book a one-shot schedule at the reset instant that tells the session
 // to continue. Missing/invalid key ⇒ TRUE, like ChatAutoResume and for the same
 // reason — the nudge re-runs work the user already asked for and carries no decision of theirs.
 //
-// このトグルが左右するのは**再開の予約だけ**。上限メニューの自動解除（キー入力待ちで
-// 止まったペインを既定の「リセットまで待つ」で待機プロンプトへ戻す）は OFF でも行う:
-// メニューが出ている間セッションは通知も報告も注入も受け付けられず、待つ側の選択肢は
-// 課金判断を含まないため（tmuxx.DismissRateLimitModal）。
+// This toggle governs the resume booking only. The usage-limit menu is still dismissed
+// automatically while it is OFF (a pane stopped waiting for a keypress is returned to the
+// ready prompt through the default "wait for the reset"): with the menu up the session can
+// accept no notification, report or injection, and the waiting option carries no billing
+// decision (tmuxx.DismissRateLimitModal).
 func RateLimitAutoResume() bool {
 	v, ok := Read()["rateLimitAutoResume"].(bool)
 	return !ok || v
 }
 
-// AbortAutoResume is the ON/OFF for 中断からの自動再開 (docs/log/47 §4-6, 設定 >
-// エージェント > Claude > 動作設定): when a claude turn is cut off by something that
-// clears on its own (接続断・一時的なレート制限・ストリームの番犬), the Agent itself
-// re-sends「続けて」instead of routing the resume through the operator assistant.
-// Missing/invalid key ⇒ TRUE, for the same reason as the two toggles above — 再開は
-// 利用者が既に頼んだ作業を走らせ直すだけで、新しい判断を含まない。
+// AbortAutoResume is the ON/OFF for auto-resuming a cut-off turn (docs/log/47 §4-6, Settings >
+// Agents > Claude > Behavior): when a claude turn is cut off by something that
+// clears on its own (a dropped connection, a transient rate limit, the stream watchdog), the
+// Agent re-sends the resume prompt ("続けて") itself instead of routing the resume through the
+// operator assistant.
+// Missing/invalid key ⇒ TRUE, for the same reason as the two toggles above — a resume only
+// re-runs work the user already asked for and carries no new decision.
 //
-// 置き場所が ChatAutoResume（設定 > アシスタント）と違うのは、効く範囲が違うから:
-// こちらはアシスタント会話の有無に関わらず**すべての claude TUI セッション**に適用される
-// （rateLimitAutoResume と同じ立場）。OFF にすると中断は従来どおり即座に報告され、会話を
-// 持つセッションだけがオペレーター主導で再開される（docs/log/47 §3-4）。
+// It sits apart from ChatAutoResume (Settings > Assistant) because its reach differs: this one
+// applies to every claude TUI session, whether or not it has an assistant conversation (the
+// same standing as rateLimitAutoResume). Turned OFF, an abort is reported immediately as
+// before and only a session that has a conversation is resumed under the operator's lead
+// (docs/log/47 §3-4).
 func AbortAutoResume() bool {
 	v, ok := Read()["claudeAbortAutoResume"].(bool)
 	return !ok || v
 }
 
 // ChatAutoCompact is the global ON/OFF for the assistant chat's preventive
-// auto-compaction at the context threshold (docs/log/33 第4段, 設定 > アシスタント
-// 「コンテキストの自動圧縮」). Missing/invalid key ⇒ true, matching the frontend
+// auto-compaction at the context threshold (docs/log/33 stage 4, Settings > Assistant,
+// "auto-compact chat context"). Missing/invalid key ⇒ true, matching the frontend
 // default — the 80% notice gives the user a manual window first, and the summary
 // handoff keeps the stored thread intact, so ON is the safe default.
 func ChatAutoCompact() bool {
@@ -311,7 +321,7 @@ func ChatOutputLanguage() string {
 	}
 }
 
-// Locale returns the Console display language the user picked (設定 > 表示言語,
+// Locale returns the Console display language the user picked (Settings > Display language,
 // ADR 0016). The frontend keeps `locale` server-synced precisely because language is a
 // per-person setting rather than a per-device one, so the Agent can read it for text it
 // generates FOR that person — currently the title suggestion. Unknown/missing ⇒ "ja",

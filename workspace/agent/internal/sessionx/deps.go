@@ -1,27 +1,28 @@
 package sessionx
 
-// deps.go — sessionx が呼び出し側（package main）へ伸ばしている手を 1 枚に集めたもの。
+// deps.go — one page collecting every hand sessionx reaches out to the caller
+// (package main).
 //
-// session 家系は「Console から見た製品そのもの」なので、外向きの依存はごく少数の
-// 一般ヘルパと、家系の外に居座る 2 つの状態（MCP の会話 ID・オペレーターのターン）に
-// 収束する。ここはその断面を隠すのではなく、**1 箇所に集めて数えられるようにする**
-// ための口である（internal/gitx/deps.go・internal/memoryx/deps.go と同じ形）:
+// The session family is "the product as the Console sees it", so its outward dependencies
+// come down to a handful of generic helpers plus the two pieces of state that sit outside
+// the family (the MCP conversation id and the operator turn). This does not hide that seam;
+// it gathers it in one place so it can be counted (the same shape as internal/gitx/deps.go
+// and internal/memoryx/deps.go):
 //
-//   - sessionx は main を import しない（できない。逆向きの依存が既にある）
-//   - なので「main の関数を呼ぶ」は関数値として受け取る形にする
-//   - **配線は起動時に 1 回**（main の session_wiring.go の init）。Configure が欠けを
-//     検査して落とす —— 配線漏れを既定値で黙って埋めると、たとえば
-//     `MaxUploadBytes` が 0 になって**あらゆるアップロードが「大きすぎます」で落ちる**、
-//     `ErrCodeLocked` が空になって**Console に生のコードが出る**。静かに動くより
-//     落ちる方を選ぶ。
+//   - sessionx does not import main (it cannot; the dependency already runs the other way)
+//   - so "call a function in main" is taken as a function value instead
+//   - wiring happens once at boot (the init in main's session_wiring.go), and Configure
+//     panics on what is missing. Filling a gap with a default silently would, for instance,
+//     leave `MaxUploadBytes` at 0 so every upload fails as "too large", or leave
+//     `ErrCodeLocked` empty so the Console shows a raw code. Crashing beats running quietly.
 //
-// 🔥 **エラーコードは sessionx 側で定義し直さない。** 出所が 2 つになると、片方だけ
-// 直した日に画面が生のコードを出す。`errcodes.go` は agent 全体で 15 ファイルが引く
-// 横断表なので **package main に残す**のが正しく、ここへは値として渡す
-// （gitx / memoryx と同じ扱い）。
+// Error codes are not redeclared on the sessionx side: with two sources, the day one of them
+// is fixed the screen shows a raw code. `errcodes.go` is a cross-cutting table read by 15
+// files across the agent, so it belongs in package main and is passed in here as values
+// (same treatment as gitx / memoryx).
 //
-// sessionx 単体のテストは main を持たないので、TestMain ではなく init が偽物を配線する
-// （deps_test.go 参照）。
+// sessionx's own tests have no main, so the fakes are wired by init rather than TestMain
+// (see deps_test.go).
 
 import (
 	"fmt"
@@ -32,66 +33,70 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// Deps は「sessionx から見た外の世界」。**型は main のものを 1 つも含まない**
-// （含んだ瞬間に切断面が閉じなくなる）ので、増えても import は増えない。
+// Deps is the outside world as sessionx sees it. It holds no type from main (the moment it
+// does, the seam stops closing), so it can grow without adding imports.
 type Deps struct {
-	// --- 一般ヘルパ（main.go / connections.go / repo_prompts.go）---
+	// --- Generic helpers (main.go / connections.go / repo_prompts.go) ---
 	//
-	// どれも「main のどこかに 1 本だけ在る」種類の関数で、写しを持つと
-	// 片方だけ直った日に無言でずれる（README §0.5「原本と写し」）。
+	// Each is the kind of function that exists exactly once somewhere in main; keeping a
+	// copy means the two drift silently the day one of them is fixed (README §0.5
+	// "original and copy").
 	EnvOr            func(key, def string) string
 	FirstNonEmpty    func(vals ...string) string
 	SplitFrontmatter func(s string) (map[string]string, string)
 
-	// --- ファイル面（fs.go）---
+	// --- Files (fs.go) ---
 	//
-	// BrowseRoot は添付・貼り付け画像の保存先の根。MaxUploadBytes は上限バイト数で、
-	// **未配線の 0 は「上限 0 バイト」＝全部拒否**になるので零値を許さない。
+	// BrowseRoot is the root that attachments and pasted images are stored under.
+	// MaxUploadBytes is the size cap, and an unwired 0 means "a cap of 0 bytes" = reject
+	// everything, so the zero value is not allowed.
 	BrowseRoot     func() string
 	MaxUploadBytes func() int64
 
-	// --- リポジトリ面（svn.go / repo_jobs.go）---
+	// --- Repositories (svn.go / repo_jobs.go) ---
 	//
-	// セッション一覧はワークツリーの状態を併記するので、git 以外（svn）と
-	// 取り込みジョブの走行数を家系の外から引く。
+	// The session list shows worktree state alongside, so non-git (svn) and the number of
+	// running import jobs are read from outside the family.
 	IsSvnRepo       func(dir string) bool
 	RepoJobsRunning func() int
 
-	// --- 使用量の締め（usage_fold.go）---
+	// --- Closing the usage ledger (usage_fold.go) ---
 	//
-	// セッションの停止・削除で使用量台帳を締める。**usage_fold.go は main に残す**
-	// —— 締めの駆動は `usage_ledger_test.go` / `usage_dedup_test.go`（主題が
-	// main の usage_ledger.go）が握っており、家系へ引き込むと台帳のテストが
-	// 台帳から離れる。gitx も同じ関数を継ぎ目で受けている（gitx/deps.go）。
+	// Stopping or deleting a session closes its usage ledger. usage_fold.go stays in main:
+	// the closing is driven by `usage_ledger_test.go` / `usage_dedup_test.go`, whose
+	// subject is main's usage_ledger.go, and pulling it into the family would move the
+	// ledger's tests away from the ledger. gitx takes the same function across its own
+	// seam (gitx/deps.go).
 	FinalizeSessionUsage  func(m session.Meta)
 	MaybeFoldSessionUsage func()
 
-	// --- 端末履歴（terminal_history.go）---
+	// --- Terminal history (terminal_history.go) ---
 	//
-	// セッションの後始末で履歴ファイルを消す。**未配線を no-op で埋めると
-	// 消し忘れが無言で残る**ので、ここも零値を許さない。
+	// Session teardown deletes the history file. Filling an unwired field with a no-op
+	// would leave files silently undeleted, so the zero value is not allowed here either.
 	RemoveTerminalHistory func(name string)
 
-	// --- ツールチェーン（env_toolchains.go）---
+	// --- Toolchains (env_toolchains.go) ---
 	ToolchainShellPrefix func() string
 
-	// --- ブリッジ／オペレーター（mcp_wiring.go / bridge_operator.go）---
+	// --- Bridge / operator (mcp_wiring.go / bridge_operator.go) ---
 	//
-	// 🔥 MCPConvID は **var を関数で受ける**。main 側の `mcpConvID` は
-	// `mcp_wiring.go` が実行中に書き換える可変状態なので、値で受けると
-	// **配線した瞬間の値で固まり、承認プロンプトが常に古い会話へ飛ぶ**。
-	// （README の `var usageMu = usagex.Mu` と同じ「写してはいけない遠側」の形。
-	// ここは錠ではないので vet は鳴らない —— だから明示的に関数で受ける。）
+	// MCPConvID takes a var through a function. main's `mcpConvID` is mutable state that
+	// `mcp_wiring.go` rewrites at runtime, so taking it by value freezes it at the value it
+	// had when it was wired and approval prompts then always go to the stale conversation.
+	// (The same "far side you must not copy" shape as README's `var usageMu = usagex.Mu`.
+	// This one is not a lock, so vet stays quiet — hence the explicit function.)
 	MCPConvID       func() string
 	RunOperatorTurn func(conv, text string) (string, error)
 
-	// --- 安定エラーコード（errcodes.go）---
+	// --- Stable error codes (errcodes.go) ---
 	//
-	// Console の i18n カタログ（console/src/core/api/client.ts の ERR_TEXT）と対に
-	// なっている文字列。**sessionx 側で定義し直さない。**
-	// 恒久要因（未ログイン／未接続）で共有 daemon を起こさなかったとき。runtime_failed
-	// （一時的な失敗）と分かれているのは、Console の文言も isTransientErr の判定も
-	// 「待てば直るか」で変わるため（runtime_err.go）。
+	// Strings paired with the Console's i18n catalogue (ERR_TEXT in
+	// console/src/core/api/client.ts). Not redeclared on the sessionx side.
+	// ErrCodeAgentNotConnected covers a permanent cause (not signed in, not connected) that
+	// kept the shared daemon from being started. It is separate from runtime_failed (a
+	// transient failure) because both the Console's wording and isTransientErr turn on
+	// "does waiting fix it" (runtime_err.go).
 	ErrCodeAgentNotConnected      string
 	ErrCodeChatConversationNotFnd string
 	ErrCodeForkAtUnsupported      string
@@ -108,16 +113,17 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の session_wiring.go / sessionx のテストの init）。
-// 欠けたまま動かさない。
+// Configure is called exactly once at boot (main's session_wiring.go, or the init in
+// sessionx's own tests). Nothing runs with a gap left in it.
 //
-// 🔥 **網羅は reflect で取る。手書きの一覧にしない。** 手で並べた map はフィールドが
-// 増えたときに漏れ、しかも漏れても何も起きない。危ないのは**値型**である: 関数型なら
-// 未配線は nil 参照で落ちるが、`ErrCodeLocked` のような文字列は**空のまま静かに走り**、
-// Console には `""` というコードが届く。この構造体は既に値型を 12 個持っている。
+// Completeness is taken with reflect, never a hand-written list: a hand-written map misses
+// a field that was added later, and nothing happens when it does. The dangerous ones are
+// the value types. An unwired func dies on a nil dereference, but a string like
+// `ErrCodeLocked` runs on quietly as empty and the Console receives `""` as the code. This
+// struct already holds 12 value-typed fields.
 //
-// 例外を作るときは**フィールドに `sessionx:"optional"` と書く**（一覧を別に持たない。
-// 例外が見えるのは常に宣言のところ）。
+// To make an exception, tag the field `sessionx:"optional"` — there is no separate list, so
+// an exception is always visible at the declaration.
 func Configure(d Deps) {
 	var missing []string
 	v := reflect.ValueOf(d)
@@ -133,7 +139,7 @@ func Configure(d Deps) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		panic(fmt.Sprintf("sessionx.Configure: 配線されていない依存がある: %v", missing))
+		panic(fmt.Sprintf("sessionx.Configure: dependencies left unwired: %v", missing))
 	}
 	deps = d
 	errCodeAgentNotConnected = d.ErrCodeAgentNotConnected
@@ -150,16 +156,16 @@ func Configure(d Deps) {
 	errCodeTitleNoContent = d.ErrCodeTitleNoContent
 }
 
-// Wired は現在の配線を返す。**呼び出し側が「配線が生きているか」を通しで検査する**
-// ための読み出し口で、sessionx 自身は使わない。
+// Wired returns the current wiring. It is a read port for a caller checking end to end that
+// the wiring is live; sessionx itself does not use it.
 //
-// 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**は捕まえられない。
-// とくに 12 本のエラーコードは**全部同じ `string` 型**なので、2 つ入れ替えても
-// 型検査も reflect の網羅検査も鳴らない（2026-09-03 に独立 3 例が出た形）。
-// そこは main 側の session_wiring_test.go が本物の定数と突き合わせて止める。
+// Configure catches only what is unwired, never what is wired wrong. The 12 error codes are
+// all the same `string` type, so swapping two of them trips neither the type checker nor the
+// reflect completeness check. main's session_wiring_test.go stops that by matching them
+// against the real constants.
 func Wired() Deps { return deps }
 
-// 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。
+// Taken by value. Configure writes them once; everything after that only reads.
 var (
 	errCodeAgentNotConnected      string
 	errCodeChatConversationNotFnd string
@@ -175,8 +181,8 @@ var (
 	errCodeTitleNoContent         string
 )
 
-// 以下は移送前と**同じ名前**の薄い委譲。移してきた 12,393 行を 1 行も触らずに済ませる
-// ためで、ここが唯一の外向きの窓口になる。
+// What follows are thin delegations under the same names the code used before the move, so
+// that the 12,393 lines that came over need no edits. This is the only outward window.
 func envOr(key, def string) string { return deps.EnvOr(key, def) }
 
 func firstNonEmpty(vals ...string) string { return deps.FirstNonEmpty(vals...) }
@@ -201,12 +207,13 @@ func toolchainShellPrefix() string { return deps.ToolchainShellPrefix() }
 
 func runOperatorTurn(conv, text string) (string, error) { return deps.RunOperatorTurn(conv, text) }
 
-// mcpConvID は main 側では**変数**だった（mcp_wiring.go が実行中に書き換える）。
-// パッケージを跨いで変数は共有できないので、ここだけは「変数の読み」が
-// 「関数の呼び出し」に変わる —— bridge_approval.go の 3 箇所が `mcpConvID()` になる。
-// **値で写すと承認プロンプトが常に古い会話へ飛ぶ**ので、この 1 段は省けない。
+// mcpConvID was a variable on the main side (mcp_wiring.go rewrites it at runtime). A
+// variable cannot be shared across packages, so here alone "reading a variable" becomes
+// "calling a function" — the three sites in bridge_approval.go become `mcpConvID()`. Copying
+// the value would send approval prompts to the stale conversation forever, so this one hop
+// cannot be skipped.
 func mcpConvID() string { return deps.MCPConvID() }
 
-// 純粋な内部パッケージの薄皮は配線しない（振る舞いが無いので、写しが古くなる余地が
-// 無い）。main 側の homeDir も同じ 1 行である。
+// A thin skin over a pure internal package is not wired: it has no behaviour, so there is no
+// room for a copy to go stale. main's homeDir is the same one line.
 func homeDir() string { return paths.HomeDir() }

@@ -1,12 +1,14 @@
 package sessionx
 
-// 認証切れ（docs/log/47 §4-8）の配線: 資格情報が切れているワークスペースでは、claude の
-// セッションは「入力待ち」ではなく認証切れとして読まれ、自由文の送信は断られる。
+// Wiring of the expired-auth state (docs/log/47 §4-8): in a workspace whose credentials have
+// expired, a claude session reads as expired auth rather than idle, and free-text sends are
+// refused.
 //
-// 分類そのもの（2 つの epoch → 生死）は internal/agents/claude の単体テストが押さえる。
-// ここで見るのは配線: 待機中に見えるペインでも状態が auth になること、送信ガードが
-// その状態を auth_expired として断ること、そして**生きている資格情報では何も変わらない**
-// こと（誤検知側は「動いているセッションを全部止める」ので、同じ強さで固定する）。
+// The classification itself (two epochs → alive or not) is covered by unit tests in
+// internal/agents/claude. What is checked here is the wiring: a pane that looks idle still
+// resolves to auth, the send guard refuses that state as auth_expired, and nothing changes at
+// all while the credentials are alive — a false positive stops every running session, so that
+// side is pinned just as firmly.
 
 import (
 	"encoding/json"
@@ -21,8 +23,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
 )
 
-// writeClaudeCreds は隔離した CLAUDE_CONFIG_DIR に資格情報を置く（実フリートのものは
-// 読まない）。access / refresh は now からの相対。
+// writeClaudeCreds puts credentials in an isolated CLAUDE_CONFIG_DIR, so the real fleet's are
+// never read. access / refresh are relative to now.
 func writeClaudeCreds(t *testing.T, access, refresh time.Duration) {
 	t.Helper()
 	dir := t.TempDir()
@@ -39,44 +41,46 @@ func writeClaudeCreds(t *testing.T, access, refresh time.Duration) {
 		t.Fatal(err)
 	}
 	if want := refresh <= 0 && access <= 0; claude.AuthExpired() != want {
-		t.Fatalf("前提が作れていない: AuthExpired = %v, want %v", claude.AuthExpired(), want)
+		t.Fatalf("could not set up the premise: AuthExpired = %v, want %v", claude.AuthExpired(), want)
 	}
 }
 
-// TestDriveStateAuthExpired: 待機プロンプトのペイン（＝一見 入力待ち）でも、資格情報が
-// 切れていれば auth を返し、走りっぱなしに見えていたマーカーは畳まれること。
+// TestDriveStateAuthExpired: a pane sitting at the waiting prompt (so it looks idle) must
+// still resolve to auth when the credentials have expired, and the marker that made it look
+// still-running must be folded away.
 func TestDriveStateAuthExpired(t *testing.T) {
 	isolateAgentState(t)
 	writeClaudeCreds(t, -8*24*time.Hour+8*time.Hour, -8*24*time.Hour)
 	m := paneShowing(t, "authexp1", "../tmuxx/testdata/footers/idle_bypass_hint.txt")
 	sid := session.UUID(m.Dir, m.Name)
-	// 401 でターンが死んだ直後の形: working のまま Stop hook は鳴っていない。
+	// The shape right after a turn died on a 401: still working, with no Stop hook fired.
 	status.Persist(sid, "working")
 
 	if got := DriveState(m, true, true); got != agents.StateAuth {
-		t.Fatalf("DriveState = %q, want %q（認証切れは 入力待ち ではない）", got, agents.StateAuth)
+		t.Fatalf("DriveState = %q, want %q (expired auth is not idle)", got, agents.StateAuth)
 	}
 	if st, ok := status.Read(sid); ok && st.State == "working" {
-		t.Error("status marker が working のまま — 自己修復が走っていない")
+		t.Error("status marker still working - the self-repair did not run")
 	}
 	if got := DriveState(m, true, true); got != agents.StateAuth {
-		t.Errorf("2 回目の DriveState = %q, want %q（状態が振動している）", got, agents.StateAuth)
+		t.Errorf("second DriveState = %q, want %q (the state is oscillating)", got, agents.StateAuth)
 	}
 }
 
-// TestDriveStateAuthValid: 生きている資格情報では従来どおり（待機ペインは 入力待ち）。
+// TestDriveStateAuthValid: with live credentials nothing changes and a waiting pane is idle.
 func TestDriveStateAuthValid(t *testing.T) {
 	isolateAgentState(t)
 	writeClaudeCreds(t, 8*time.Hour, 25*24*time.Hour)
 	m := paneShowing(t, "authexp2", "../tmuxx/testdata/footers/idle_bypass_hint.txt")
 	if got := DriveState(m, true, true); got == agents.StateAuth {
-		t.Fatalf("DriveState = %q — 生きている資格情報を認証切れと誤判定している", got)
+		t.Fatalf("DriveState = %q - live credentials misread as expired auth", got)
 	}
 }
 
-// TestPromptBlockerAuthExpired: 送信ガード。認証切れのセッションへ自由文を送ると
-// auth_expired で断られること（TUI は文字を受け取るがターンは始まらないので、断らないと
-// 送信側からは成功に見え、ミラーには反映待ちのプロンプトだけが残る）。
+// TestPromptBlockerAuthExpired: the send guard. Free text sent to a session with expired auth
+// must be refused as auth_expired. The TUI accepts the characters but no turn starts, so
+// without the refusal the sender sees success and the mirror is left with nothing but a
+// prompt waiting to be picked up.
 func TestPromptBlockerAuthExpired(t *testing.T) {
 	isolateAgentState(t)
 	writeClaudeCreds(t, -8*24*time.Hour+8*time.Hour, -8*24*time.Hour)
@@ -88,20 +92,20 @@ func TestPromptBlockerAuthExpired(t *testing.T) {
 		t.Fatalf("promptBlocker = %q, want %q", st, agents.StateAuth)
 	}
 	if code := blockedErrCode(st); code != "auth_expired" {
-		t.Errorf("blockedErrCode = %q, want auth_expired（Console の err.<code> と CP の分類が見る値）", code)
+		t.Errorf("blockedErrCode = %q, want auth_expired (the value the Console's err.<code> and CP's classification read)", code)
 	}
 	if blockedErrMessage(st) == "" {
-		t.Error("blockedErrMessage が空 — 断った理由が誰にも伝わらない")
+		t.Error("blockedErrMessage is empty - nobody learns why the send was refused")
 	}
 }
 
-// TestPromptBlockerAuthValid: 生きている資格情報では送信を塞がない。
+// TestPromptBlockerAuthValid: live credentials must not block a send.
 func TestPromptBlockerAuthValid(t *testing.T) {
 	isolateAgentState(t)
 	writeClaudeCreds(t, 8*time.Hour, 25*24*time.Hour)
 	m := session.Meta{Name: "authexp4", Dir: t.TempDir(), Kind: session.KindClaude}
 	session.WriteMeta(m)
 	if st := promptBlocker(m.Name); st == agents.StateAuth {
-		t.Fatalf("promptBlocker = %q — 生きている資格情報で送信を断っている", st)
+		t.Fatalf("promptBlocker = %q - refusing a send with live credentials", st)
 	}
 }

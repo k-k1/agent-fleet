@@ -4,19 +4,21 @@ import { emotionOf } from "../ttsText.ts";
 import { speakersCatalog, type Speaker, type SpeakerStyle } from "../ttsSpeakers.ts";
 import { type TtsOptions } from "./ttsOptions.ts";
 
-// --- セッションごとの声（docs/log/24） ----------------------------------------------
-// 複数セッションの並行運用時に「どのセッションの回答か」を声で判別できるようにする。
-// セッション名のハッシュで話者プールから決定的に選ぶ（同じセッション名は常に同じ声）。
-// プールは「エンジン実カタログ（ttsSpeakers.ts）×ユーザーのキャラクター設定
-// （settings.ttsVoicePool）」で決まる（activeVoicePool）。カタログ未取得（エンジン停止中
-// 等）は下の静的一覧にフォールバック — これが既定で有効なキャラの定義でもある。感情
-// スタイル（あまあま/ツンツン等）を持つキャラは variant も持たせておく（感情読み分けが
-// 使う。カタログがあればスタイル名から導出）。Polly は JP 3 声で同様に。
+// --- Per-session voices (docs/log/24) -----------------------------------------------
+// With several sessions running at once, the voice tells you which session an answer came from.
+// A voice is picked deterministically from the speaker pool by hashing the session name, so the
+// same session name always gets the same voice. The pool is the engine's real catalogue
+// (ttsSpeakers.ts) intersected with the user's character settings (settings.ttsVoicePool) - see
+// activeVoicePool. When the catalogue has not been fetched (engine down, say) the static list
+// below is the fallback, and it doubles as the definition of which characters are enabled by
+// default. Characters that have emotional styles also carry those variants here, used by the
+// emotional reading; with a catalogue they are derived from the style names instead. Polly gets
+// the same treatment across its three Japanese voices.
 export interface VoiceProfile {
-  name: string; // エンジンのキャラ名（settings.ttsVoicePool のキー）
-  base: string; // ノーマルの speaker 番号
-  happy?: string; // 明るい系スタイル（あまあま等）
-  angry?: string; // とがった系スタイル（ツンツン等）
+  name: string; // the engine's character name (the key in settings.ttsVoicePool)
+  base: string; // speaker number of the normal style
+  happy?: string; // bright style
+  angry?: string; // sharp style
 }
 const SESSION_VOICES: VoiceProfile[] = [
   { name: "ずんだもん", base: "3", happy: "1", angry: "7" },
@@ -27,53 +29,56 @@ const SESSION_VOICES: VoiceProfile[] = [
   { name: "冥鳴ひまり", base: "14" },
   { name: "九州そら", base: "16", happy: "15", angry: "18" },
   { name: "もち子さん", base: "20" },
-  { name: "玄野武宏", base: "11", happy: "39", angry: "40" }, // 男声
+  { name: "玄野武宏", base: "11", happy: "39", angry: "40" }, // male voice
   { name: "白上虎太郎", base: "12", happy: "32", angry: "34" },
-  { name: "青山龍星", base: "13" }, // 低い男声
+  { name: "青山龍星", base: "13" }, // deep male voice
   { name: "WhiteCUL", base: "23", happy: "24" },
   { name: "ナースロボ＿タイプＴ", base: "47", happy: "48" },
   { name: "櫻歌ミコ", base: "43" },
 ];
-const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"]; // Polly の JP ニューラルは現状この 3 声
+const SESSION_POLLY_VOICES = ["Takumi", "Kazuha", "Tomoko"]; // Polly's Japanese neural voices are currently these three
 
-// 既定で有効なキャラ（ttsVoicePool に use 未設定のときの既定値）。
+// Characters enabled by default (the value used when ttsVoicePool has no `use` entry).
 const DEFAULT_VOICE_NAMES = new Set(SESSION_VOICES.map((p) => p.name));
 export function isDefaultVoice(name: string): boolean {
   return DEFAULT_VOICE_NAMES.has(name);
 }
 
-// --- キャラクター設定（ユーザーごとの使用キャラ・基準スタイル・速度, docs/log/24） --------
-// エンジンのスタイル名から感情 variant を導出するためのキーワード（部分一致）。
+// --- Character settings: per-user characters, base style and speed (docs/log/24) -----------
+// Keywords (substring match) used to derive the emotional variants from the engine's style names.
 const HAPPY_STYLES = ["あまあま", "わーい", "喜び", "たのしい", "楽々", "元気", "うきうき"];
 const ANGRY_STYLES = ["ツンツン", "おこ", "ツンギレ", "不機嫌", "怒り"];
 
-// profileOf はカタログの 1 キャラから既定プロファイルを組む。base はノーマル系スタイル
-// （名前が「ノーマル」/「ふつう」。無ければ先頭）、happy/angry はスタイル名から導出。
+// profileOf builds the default profile from one character in the catalogue. base is the normal
+// style (named 「ノーマル」 or 「ふつう」, else the first one); happy/angry come from the style
+// names.
 function profileOf(sp: Speaker): VoiceProfile {
   const byName = (words: string[]) => sp.styles.find((st) => words.some((w) => st.name.includes(w)))?.id;
   const normal = sp.styles.find((st) => st.name === "ノーマル" || st.name === "ふつう")?.id ?? sp.styles[0].id;
   return { name: sp.name, base: normal, happy: byName(HAPPY_STYLES), angry: byName(ANGRY_STYLES) };
 }
 
-// TtsTab のキャラリスト 1 行分。styles は基準スタイルの選択肢（カタログ未取得時はノーマルのみ）。
+// One row of the TtsTab character list. styles are the choices for the base style; with no
+// catalogue fetched, only the normal one.
 export interface VoiceCharRow {
   name: string;
   styles: SpeakerStyle[];
   profile: VoiceProfile;
 }
 
-// voiceCharacters は設定 UI・プール解決の元になるキャラ一覧。エンジン実カタログがあれば
-// それを（新キャラ・新スタイルも自動で載る）、無ければ静的フォールバックを返す。
+// voiceCharacters is the character list behind both the settings UI and pool resolution. It
+// returns the engine's real catalogue when there is one, so new characters and styles appear
+// automatically, and the static fallback otherwise.
 export function voiceCharacters(): VoiceCharRow[] {
   const cat = speakersCatalog();
   if (cat && cat.length) return cat.map((sp) => ({ name: sp.name, styles: sp.styles, profile: profileOf(sp) }));
   return SESSION_VOICES.map((p) => ({ name: p.name, styles: [{ id: p.base, name: "ノーマル" }], profile: p }));
 }
 
-// activeVoicePool は「いま使うキャラのプール」= voiceCharacters にユーザーのキャラクター
-// 設定（use/style/speed）を適用した結果。セッション声の割り当てと朗読ビューの声一覧の
-// 共通の源。voice は基準スタイルの speaker 番号、speed はキャラ別速度（undefined =
-// グローバル設定に従う）。
+// activeVoicePool is the pool of characters currently in use: voiceCharacters with the user's
+// character settings (use/style/speed) applied. It is the single source for both session voice
+// assignment and the voice list in the reader view. voice is the speaker number of the base
+// style; speed is the per-character speed, undefined meaning "follow the global setting".
 export interface ActiveVoice {
   name: string;
   voice: string;
@@ -86,7 +91,8 @@ export function activeVoicePool(): ActiveVoice[] {
   for (const c of voiceCharacters()) {
     const conf = pool[c.name];
     if (!(conf?.use ?? DEFAULT_VOICE_NAMES.has(c.name))) continue;
-    // 保存済みスタイルがカタログに無い（エンジン更新等）ときはノーマルへ。
+    // Fall back to the normal style when the saved one is no longer in the catalogue (after an
+    // engine update, for instance).
     const style = conf?.style && c.styles.some((st) => st.id === conf.style) ? conf.style : c.profile.base;
     out.push({ name: c.name, voice: style, speed: conf?.speed || undefined, profile: c.profile });
   }
@@ -94,9 +100,9 @@ export function activeVoicePool(): ActiveVoice[] {
 }
 
 
-// speaker 番号 → キャラ名（スタイル違いも同じキャラに束ねる）。TopBar の「読み上げ中・
-// 〇〇（キャラ名）」表示用。セッション別の声や感情スタイルで「いま誰が喋っているか」を
-// 見て確かめられるようにする。
+// speaker number -> character name, folding the different styles of one character together. Used
+// by the TopBar "now reading" indicator, so that with per-session voices and emotional styles
+// you can see who is speaking.
 const VV_CHAR_NAMES: Record<string, string> = {
   "3": "ずんだもん", "1": "ずんだもん", "7": "ずんだもん", "5": "ずんだもん", "22": "ずんだもん", "38": "ずんだもん",
   "2": "四国めたん", "0": "四国めたん", "6": "四国めたん", "4": "四国めたん",
@@ -111,15 +117,18 @@ const VV_CHAR_NAMES: Record<string, string> = {
   "43": "櫻歌ミコ", "44": "櫻歌ミコ", "45": "櫻歌ミコ",
 };
 
-// voiceCharName は再生に使う声のキャラ名ラベル。明示 polly は VoiceId をそのまま。
-// エンジン実カタログがあればそこから引く（新キャラ・新スタイルも正しく出る）。
+// voiceCharName is the character label for the voice being played. For an explicit polly it is
+// the VoiceId as is. With an engine catalogue the name is looked up there, so new characters and
+// styles come out right.
 //
-// heard（実際に鳴らしたプロバイダ = heardProvider の値）を渡すと auto のフォールバックまで
-// 追う。設定が auto でも CP が Polly に落としていれば Polly の声名を返す — これを見ずに
-// 設定だけで名乗ると、VOICEVOX を立てていないデプロイで「Polly が喋っているのに TopBar は
-// ずんだもん」になる。空文字（未合成・旧 CP）は従来どおり設定ベースのベストエフォート。
+// Passing heard (the provider that actually sounded, i.e. heardProvider's value) also follows the
+// auto fallback: even with the setting on auto, if the CP dropped to Polly this returns the Polly
+// voice name. Naming the voice from the setting alone would show "Zundamon" in the TopBar while
+// Polly is speaking, on a deployment with no VOICEVOX. An empty string (nothing synthesised yet,
+// or an older CP) keeps the settings-based best effort.
 export function voiceCharName(opts: TtsOptions, heard = ""): string {
-  // 明示 polly と同じ扱い。既定の VoiceId は CP の pollyVoiceFor と揃える（en=Joanna / 他=Takumi）。
+  // Treated like an explicit polly. The default VoiceId matches the CP's pollyVoiceFor
+  // (en = Joanna, otherwise Takumi).
   if (heard === "polly" && opts.provider !== "polly") return opts.pollyVoice || (opts.lang === "en" ? "Joanna" : "Takumi");
   if (opts.provider === "polly") return opts.pollyVoice || "Polly";
   const cat = speakersCatalog();
@@ -129,27 +138,28 @@ export function voiceCharName(opts: TtsOptions, heard = ""): string {
   return VV_CHAR_NAMES[opts.voice] || "";
 }
 
-// sessionVoiceOpts はセッション名から声の上書き（voice / pollyVoice）を返す。設定 OFF や
-// セッション名なしは undefined（= 選択中の話者のまま）。startTts / startNarration の
-// opts にスプレッドして使う。
-// voicePoolOpts はキー文字列のハッシュで有効キャラのプール（activeVoicePool）から声を
-// 決定的に選ぶ（同じキーは常に同じ声）。セッション（sessionVoiceOpts）とアシスタント・
-// チャット（assistantVoiceOpts）の共通処理。
+// sessionVoiceOpts returns the voice override (voice / pollyVoice) for a session name, or
+// undefined when the setting is off or there is no session name, leaving the selected speaker in
+// place. Spread it into the opts of startTts / startNarration.
+// voicePoolOpts picks a voice deterministically from the enabled pool (activeVoicePool) by
+// hashing a key string, so the same key always gets the same voice. Shared by sessions
+// (sessionVoiceOpts) and assistant chat (assistantVoiceOpts).
 function voicePoolOpts(key: string): Partial<TtsOptions> | undefined {
   const pool = activeVoicePool();
-  if (!pool.length) return undefined; // 全キャラ OFF → 選択中の話者のまま
+  if (!pool.length) return undefined; // every character off -> keep the selected speaker
   let h = 0;
   for (const c of key) h = (h * 31 + c.codePointAt(0)!) >>> 0;
-  // 上位ビットを折り込んでから剰余を取る。素の h % N は下位ビットしか見ず、31 ≡ -1 (mod 8)
-  // なので実質「文字コードの交代和」になり、似た形式の名前（共通プレフィックス＋数字等）で
-  // 偏る（例: 末尾が 1 と 9、0 と 8 の違いだと必ず同じ声）。折り畳みで実質一様にする。
+  // Fold the high bits in before taking the modulus. A bare h % N looks only at the low bits, and
+  // since 31 = -1 (mod 8) that reduces to an alternating sum of character codes, which clusters
+  // for similarly shaped names (a shared prefix plus a number): names differing only 1 vs 9, or
+  // 0 vs 8, in the last character always land on the same voice. The fold makes it uniform.
   h = (h ^ (h >>> 16)) >>> 0;
   const v = pool[h % pool.length];
   const o: Partial<TtsOptions> = {
     voice: v.voice,
     pollyVoice: SESSION_POLLY_VOICES[h % SESSION_POLLY_VOICES.length],
   };
-  if (v.speed) o.speed = v.speed; // キャラ別速度（未設定キーを作らない — spread で上書きするため）
+  if (v.speed) o.speed = v.speed; // per-character speed; never create an unset key, since this is spread over other opts
   return o;
 }
 
@@ -158,27 +168,28 @@ export function sessionVoiceOpts(session: string): Partial<TtsOptions> | undefin
   return voicePoolOpts(session);
 }
 
-// assistantVoiceOpts はアシスタント・チャットの声。アシスタントに明示の声（assistant.voice、
-// 作成/編集で指定）があれば最優先。無ければ「セッションごとに声を変える」ON のときに
-// アシスタント ID のハッシュでプールから割り当て（同じアシスタントは常に同じ声）。
-// どちらも無ければ undefined（設定の話者）。
+// assistantVoiceOpts is the voice for assistant chat. An explicit voice on the assistant
+// (assistant.voice, set when creating or editing it) wins. Otherwise, when "a different voice per
+// session" is on, one is assigned from the pool by hashing the assistant id, so the same
+// assistant always gets the same voice. With neither, undefined leaves the speaker from settings.
 export function assistantVoiceOpts(assistantId?: string, explicit?: string): Partial<TtsOptions> | undefined {
   if (explicit) return voiceChoiceOpts(explicit);
   if (!assistantId || !getSettings().ttsVoicePerSession) return undefined;
   return voicePoolOpts("assistant:" + assistantId);
 }
 
-// workVoiceOpts は確定済みの作業過程を小声で読むための上書き。現在の VOICEVOX 話者と
-// 同じキャラに対象スタイルがあればそれを使い、無ければ音量だけを下げる。Polly への
-// フォールバックでも volume はクライアント再生に効くため、通常声との区別は維持される。
+// workVoiceOpts is the override for reading settled work steps quietly. If the current VOICEVOX
+// character has the wanted style it is used; otherwise only the volume drops. Volume applies to
+// client-side playback, so even after a fallback to Polly these stay distinguishable from the
+// normal voice.
 export function workVoiceOpts(
   base?: Partial<TtsOptions>,
   mode = getSettings().ttsWorkRead,
 ): Partial<TtsOptions> | undefined {
   if (mode === "off") return undefined;
-  // ヒソヒソ/ささやきは話者スタイル自体の演技に加えて、出力ゲインも明確に下げる。
-  // 下げ幅はユーザーがスライダーで調整する（ttsWorkVolume）。スタイルによって素の音圧が
-  // 高い場合でも、最終回答より小さく聞こえる値にする。
+  // A hushed/whispering style acts the part, but the output gain is also clearly lowered on top
+  // of it; how far is the user's slider (ttsWorkVolume). Some styles are loud in themselves, so
+  // the value has to land below the final answer either way.
   const volume = Math.max(0, Math.min(1, getSettings().ttsWorkVolume));
   const voice = base?.voice || getSettings().ttsVoiceVoicevox;
   const wanted = mode === "hushed" ? ["ヒソヒソ"] : ["ささやき", "囁き"];
@@ -188,16 +199,18 @@ export function workVoiceOpts(
     const style = speaker?.styles.find((st) => wanted.some((w) => st.name.includes(w)));
     if (style) return { voice: style.id, volume };
   }
-  // カタログ取得前でも、同梱設定で番号が確定しているずんだもんはスタイルを使える。
+  // Even before the catalogue is fetched, Zundamon's style numbers are fixed by the bundled
+  // configuration, so those styles can still be used.
   if (VV_CHAR_NAMES[voice] === "ずんだもん") return { voice: mode === "hushed" ? "38" : "22", volume };
   return { volume };
 }
 
-// --- 朗読ビューの声選択（docs/log/24） -----------------------------------------------
-// ReaderView ヘッダーの「声」セレクト用。"" = 設定の話者のまま。"vv:<speaker>" は VOICEVOX
-// のキャラ（provider は auto に上げる — エンジン不在時は Polly が代読し、復帰したら選んだ
-// キャラに戻る）。"polly:<VoiceId>" は明示 Polly。一覧はキャラクター設定で有効にした
-// キャラ（activeVoicePool。基準スタイル・キャラ別速度も反映）。
+// --- Voice selection in the reader view (docs/log/24) --------------------------------
+// For the voice select in the ReaderView header. "" keeps the speaker from settings.
+// "vv:<speaker>" is a VOICEVOX character, with the provider raised to auto so that Polly reads
+// in its place while the engine is absent and the chosen character returns once it is back.
+// "polly:<VoiceId>" is an explicit Polly. The list is the characters enabled in the character
+// settings (activeVoicePool), reflecting the base style and per-character speed.
 export function readerVoiceChoices(): [string, string][] {
   return [
     ["", t("tts.voice_default")],
@@ -206,8 +219,9 @@ export function readerVoiceChoices(): [string, string][] {
   ];
 }
 
-// voiceChoiceOpts は readerVoiceChoices の値を TtsOptions の上書きへ解決する（"" や不明値は
-// undefined = 設定のまま）。キャラ別速度が設定されていればそれも載せる。
+// voiceChoiceOpts resolves a readerVoiceChoices value into a TtsOptions override; "" and unknown
+// values give undefined, leaving the settings as they are. A per-character speed, if set, is
+// carried along.
 export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
   if (v.startsWith("vv:")) {
     const id = v.slice(3);
@@ -220,13 +234,14 @@ export function voiceChoiceOpts(v: string): Partial<TtsOptions> | undefined {
   return undefined;
 }
 
-// --- 感情スタイルの読み分け（docs/log/24） -------------------------------------------
-// 文にエラー・失敗系の語があればツンツン系、成功・完了系ならあまあま系のスタイルで読む
-// （emotionOf の判定。文単位＝合成 1 回単位で切り替え）。感情 variant を持つ話者
-// （エンジン実カタログのスタイル名から導出。カタログ未取得時は SESSION_VOICES の
-// happy/angry）のときだけ効き、Polly やスタイル無しの話者はそのまま。ノーマル以外を
-// 基準スタイルに選んでいる場合も触らない（好みを尊重 — voice がノーマルの speaker 番号に
-// 一致するときだけ変える）。
+// --- Reading with an emotional style (docs/log/24) -----------------------------------
+// A sentence containing error or failure words is read in a sharp style, one about success or
+// completion in a bright style (emotionOf decides; the switch happens per sentence, i.e. per
+// synthesis). It applies only to speakers that have emotional variants, derived from the style
+// names in the engine catalogue or from happy/angry in SESSION_VOICES without one; Polly and
+// speakers without styles are left alone. A base style other than the normal one is also left
+// alone out of respect for the user's choice - the style changes only when voice equals the
+// normal speaker number.
 function emotionProfile(voice: string): VoiceProfile | undefined {
   for (const c of voiceCharacters()) {
     if (c.profile.base === voice && (c.profile.happy || c.profile.angry)) return c.profile;
@@ -235,7 +250,7 @@ function emotionProfile(voice: string): VoiceProfile | undefined {
 }
 
 export function emotionOpts(text: string, base: TtsOptions): TtsOptions {
-  if (getLocale() !== "ja") return base; // 感情スタイルは日本語の語彙判定なので ja 限定（docs/log/28 §2.4）
+  if (getLocale() !== "ja") return base; // the emotion is decided from Japanese vocabulary, so ja only (docs/log/28 §2.4)
   if (!getSettings().ttsEmotion) return base;
   const prof = emotionProfile(base.voice);
   if (!prof) return base;

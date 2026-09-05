@@ -1,11 +1,12 @@
 package agy
 
-// agy は cwd→会話マップ（cache/last_conversations.json = resume 用 UUID の即時
-// ソース）を **graceful exit 時にしか書かない**（v1.1.4、統合 E2E 実測）。Track D
-// の「初回プロンプトで書く」観測は `-p` 実行がプロンプト毎にプロセス終了して
-// いたための見え方で、TUI 常駐セッションでは会話 DB だけが先に生まれ、マップは
-// /exit まで更新されない。pane を kill-session で即死させると UUID が永久に
-// 失われるため、停止前に /exit を打って flush の機会を与える（agents.GracefulStopper）。
+// agy writes the cwd -> conversation map (cache/last_conversations.json, the immediate
+// source of the resume UUID) ONLY on a graceful exit — measured on v1.1.4 through the
+// integration E2E. An earlier observation that it is written on the first prompt was an
+// artefact of `-p` runs ending the process per prompt; in a resident TUI session only the
+// conversation DB appears up front and the map stays stale until /exit. Killing the pane
+// with kill-session therefore loses the UUID for good, so send /exit before stopping to
+// give it a chance to flush (agents.GracefulStopper).
 
 import (
 	"time"
@@ -27,8 +28,9 @@ func (agentImpl) GracefulStop(m session.Meta) bool {
 	}
 	// A pending interactive prompt (ASK_QUESTION / permission menu) swallows the
 	// "/exit" text but its Enter CONFIRMS the highlighted first row — halting a
-	// session mid-permission silently APPROVED the tool call (実機実証: 保留中
-	// halt でファイル作成が承認された)。Escape dismisses either menu (question:
+	// session mid-permission silently APPROVED the tool call (demonstrated on a real
+	// machine: halting while a prompt was pending approved a file creation). Escape
+	// dismisses either menu (question:
 	// Skip, permission: cancel) without choosing, so clear the modal first.
 	if st, _ := Probe(m); st != "" {
 		_ = tmuxx.Cmd("send-keys", "-t", pane, "Escape").Run()

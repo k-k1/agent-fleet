@@ -1,20 +1,22 @@
-// 同じ親の中で「同時に描かれる」兄弟に同じ key を付けてはいけない、という静的検査。
+// Static check that siblings rendered at the same time under the same parent never share a key.
 //
-// React の配列リコンサイル（reconcileChildrenArray）は、key が変わった時点で残りの旧 fiber を
-// key → fiber の Map に集め、最後に Map に残ったものを削除する。key が重複していると Map は
-// 後勝ちで上書きされるので、前のほうの fiber は「新しい子と一致もしない・削除もされない」
-// 迷子になり、その DOM が画面に取り残される。
+// React's array reconciliation (reconcileChildrenArray) collects the remaining old fibers into
+// a key -> fiber Map as soon as a key changes, and deletes whatever is left in the Map at the
+// end. A duplicated key makes the Map keep only the last entry, so the earlier fiber matches no
+// new child and is never deleted: it is orphaned, and its DOM stays on screen.
 //
-// 実害: ミラーの ToDo 帯（TaskChecklist）と 変更ファイル 帯（FileChangeStrip）が両方 key={session}
-// だったため、ペインのセッションを持ち替えるたびに前のセッションの ToDo が 1 枚ずつ積み上がり、
-// 「他セッションの ToDo が全部のミラーの上に固着する」という形で表面化した（リロードで一度
-// 消えてもすぐ増え直す＝サーバは何も返していない）。dev ビルドは "Encountered two children with
-// the same key" を警告するが、**本番ビルドは無言**なので人間が気づけない。
+// Damage: the mirror's todo strip (TaskChecklist) and changed-files strip (FileChangeStrip)
+// both used key={session}, so every time a pane changed session the previous session's todo
+// list piled up on top, appearing as "another session's todos stick above every mirror" (a
+// reload cleared it once, then it grew back, proving the server was sending nothing). Dev
+// builds warn with "Encountered two children with the same key"; production builds are silent,
+// so nobody can notice.
 //
-// 検査するのは「確実に同時に居る」子だけ:
-//   - JSX 要素そのもの                      <A key={s} /> <B key={s} />
-//   - `cond && <X key={s} />` の 1 個       {ok && <A key={s} />}
-// 三項（どちらか一方しか描かれない）と .map() の中（別スコープ）は対象外＝誤検知しない。
+// Only children that are certainly present at the same time are checked:
+//   - a JSX element itself                <A key={s} /> <B key={s} />
+//   - the one element of `cond && <X key={s} />`   {ok && <A key={s} />}
+// Ternaries (only one branch renders) and the inside of .map() (a separate scope) are out of
+// scope, so there are no false positives.
 import { describe, it, expect } from "vitest";
 import ts from "typescript";
 import { readFileSync, readdirSync } from "node:fs";
@@ -31,13 +33,14 @@ function tsxFiles(dir: string, out: string[] = []): string[] {
   return out;
 }
 
-/** その子が「必ず描かれる 1 個の JSX」なら、その key 属性の式テキスト（無ければ null）。 */
+/** If the child is a single JSX element that is certainly rendered, the text of its key
+ *  attribute expression; null otherwise. */
 function keyOfChild(child: ts.JsxChild, sf: ts.SourceFile): string | null {
   let el: ts.JsxElement | ts.JsxSelfClosingElement | null = null;
   if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
     el = child;
   } else if (ts.isJsxExpression(child) && child.expression && ts.isBinaryExpression(child.expression)) {
-    // `cond && <X />` — 描かれるとしたらこの 1 個。
+    // `cond && <X />` — this single element is what would be rendered.
     const b = child.expression;
     if (b.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) {
       const r = b.right;
@@ -55,8 +58,8 @@ function keyOfChild(child: ts.JsxChild, sf: ts.SourceFile): string | null {
   return null;
 }
 
-describe("JSX の兄弟 key", () => {
-  it("同じ親で同時に描かれる子が同じ key を共有しない", () => {
+describe("JSX sibling keys", () => {
+  it("never shares a key between children rendered at once under one parent", () => {
     const offenders: string[] = [];
     for (const file of tsxFiles(SRC)) {
       const sf = ts.createSourceFile(file, readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);

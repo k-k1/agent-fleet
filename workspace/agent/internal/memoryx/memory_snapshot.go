@@ -1,11 +1,12 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 / ADR 0022）— snapshot 本体。
+// Agent memory version management (docs/log/39 / ADR 0022) - the snapshot itself.
 //
-//	live ──① allowlist copy──▶ staging ──② git commit──▶ af-memory.git（bare）
+//	live ──① allowlist copy──▶ staging ──② git commit──▶ af-memory.git (bare)
 //
-// 無変更なら commit しない（空コミットで履歴を汚さない）。commit メッセージの trailer に
-// 契機（AF-Trigger）と変更 slug を刻むので、一覧 API は git log だけで組み立てられる。
+// Nothing is committed when nothing changed, so empty commits never pollute the history. The
+// commit message's trailers carry the trigger (AF-Trigger) and the changed slugs, so the list
+// API can be assembled from git log alone.
 
 import (
 	"fmt"
@@ -15,11 +16,13 @@ import (
 	"time"
 )
 
-// memorySnapshotMu は snapshot / 将来の restore・import を直列化する。staging と bare
-// repo の index を共有するため、同時実行は許さない（トリガーループと手動 API が競合する）。
+// memorySnapshotMu serializes snapshot, and later restore and import. They share the staging
+// dir and the bare repo's index, so concurrent runs are not allowed (the trigger loop and the
+// manual API would otherwise race).
 var memorySnapshotMu sync.Mutex
 
-// snapshot の契機（commit trailer AF-Trigger の値）。restore / import は P2/P3 で使う。
+// Snapshot triggers (the value of the AF-Trigger commit trailer). restore / import are used
+// by P2/P3.
 const (
 	memoryTriggerAuto       = "auto"
 	memoryTriggerManual     = "manual"
@@ -28,28 +31,29 @@ const (
 	memoryTriggerImport     = "import"
 )
 
-// memorySnapshotResult は 1 回の snapshot 実行の結果。Committed=false は「変更が無くて
-// 積まなかった」— エラーではない正常系。
+// memorySnapshotResult is the outcome of one snapshot run. Committed=false means nothing was
+// stacked because nothing changed - a normal result, not an error.
 type memorySnapshotResult struct {
 	Committed bool               `json:"committed"`
 	Rev       string             `json:"rev,omitempty"`
 	Trigger   string             `json:"trigger"`
-	Files     int                `json:"files"`    // repo に載っている対象ファイル総数
-	Changed   []string           `json:"changed"`  // 変更のあった repo 内パス
-	Projects  []memoryProjectRef `json:"projects"` // 変更のあった claude プロジェクト
-	Kinds     []string           `json:"kinds"`    // 対象になったルートの kind
+	Files     int                `json:"files"`    // total number of covered files carried in the repo
+	Changed   []string           `json:"changed"`  // changed paths inside the repo
+	Projects  []memoryProjectRef `json:"projects"` // claude projects that changed
+	Kinds     []string           `json:"kinds"`    // kinds of the roots that were covered
 }
 
-// memorySnapshot は live → staging → commit を 1 往復する。now は呼び出し側から渡す
-// （テストが決定的に検証できるよう time.Now() を内部で呼ばない — 既存 cleanup_archive と同じ流儀）。
+// memorySnapshot makes one live -> staging -> commit round trip. now comes from the caller:
+// time.Now() is never called inside, so tests can verify deterministically (the same style as
+// the existing cleanup_archive).
 func memorySnapshot(trigger string, now time.Time) (memorySnapshotResult, error) {
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 	return memorySnapshotLocked(trigger, now)
 }
 
-// memorySnapshotLocked は memorySnapshotMu を握った状態で 1 往復する。trailers は
-// AF-Trigger の後ろに足す追加の trailer 行（restore が戻し元 rev と scope を刻む）。
+// memorySnapshotLocked makes one round trip while holding memorySnapshotMu. trailers are extra
+// trailer lines appended after AF-Trigger (restore records the rev it came from and the scope).
 func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (memorySnapshotResult, error) {
 	res := memorySnapshotResult{Trigger: trigger, Changed: []string{}, Projects: []memoryProjectRef{}, Kinds: []string{}}
 	roots := memoryRoots()
@@ -71,7 +75,7 @@ func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (me
 	if _, err := memoryGitRun("add", "-A"); err != nil {
 		return res, fmt.Errorf("stage memory: %w", err)
 	}
-	// 差分ゼロなら何も積まない（★8 repo 肥大の抑制でもある）。
+	// Stack nothing when the diff is empty (this also holds down repo growth, ★8).
 	changed, err := memoryGitRun("diff", "--cached", "--name-only")
 	if err != nil {
 		return res, fmt.Errorf("inspect staged memory: %w", err)
@@ -96,16 +100,19 @@ func memorySnapshotLocked(trigger string, now time.Time, trailers ...string) (me
 		return res, err
 	}
 	res.Committed, res.Rev = true, rev
-	// ★8 repo 肥大: 判断は git に任せる（--auto は閾値を超えたときだけ働く）。失敗しても
-	// snapshot は成立しているので握り潰す — ここで返すと「積めたのに失敗」に見えてしまう。
+	// ★8 repo growth: leave the judgement to git (--auto acts only past its threshold). A
+	// failure is swallowed because the snapshot already succeeded - returning it here would
+	// read as "stacked, yet failed".
 	_, _ = memoryGitRun("gc", "--auto", "--quiet")
 	return res, nil
 }
 
-// memoryCommitMessage は 1 行目のサマリと trailer（AF-Trigger / AF-Changed）を組む。
-// trailer は最終段落に固めて置く — `git log --pretty=%(trailers:...)` が拾える形。
+// memoryCommitMessage assembles the first-line summary and the trailers (AF-Trigger /
+// AF-Changed). The trailers sit together in the final paragraph, the shape
+// `git log --pretty=%(trailers:...)` can pick up.
 func memoryCommitMessage(trigger string, now time.Time, changed []string, projects []memoryProjectRef, trailers []string) string {
-	// 1 行目の動詞で「積んだ理由」が一覧の先頭から読めるようにする（詳細は trailer）。
+	// The verb on the first line makes the reason it was stacked readable from the head of the
+	// list; the details live in the trailers.
 	verb := "snapshot"
 	switch trigger {
 	case memoryTriggerRestore:

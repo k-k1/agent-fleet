@@ -1,4 +1,4 @@
-// MemoImageThumb previews a memo's image attachment (docs/log/21 画像添付). The memo-image
+// MemoImageThumb previews a memo's image attachment (docs/log/21 image attachments). The memo-image
 // endpoint requires the tenant header (fetch injects X-AF-Tenant), so a bare <img src>
 // can't reach it — we fetch the bytes as a blob into an object URL, mirroring
 // MirrorView's PastedThumb. Clicking enlarges it in a lightweight overlay; an optional

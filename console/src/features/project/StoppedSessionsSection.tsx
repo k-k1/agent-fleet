@@ -1,7 +1,7 @@
 // Workspace-stopped rail: session metadata remains available from the Control
 // Plane, but repo metadata and mutating session operations require the Agent.
 // Show every session as one history list instead of misclassifying all of them
-// as "その他" merely because the repo endpoint is unavailable.
+// as "other" merely because the repo endpoint is unavailable.
 import { memo } from "react";
 import { Section } from "../../ui/Section.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -19,7 +19,7 @@ export const StoppedSessionsSection = memo(function StoppedSessionsSection() {
   const multi = paneCount(layout) > 1;
   const panes = multi ? sessionPanes(layout) : null;
   const selected = activePane(layout)?.session ?? null;
-  // 作業グループ (docs/log/52): membership resolves from the folder name alone, so the
+  // Working sets (docs/log/52): membership resolves from the folder name alone, so the
   // scope keeps working here even though the repo list needs the (stopped) agent.
   const wset = useActiveWorkingSet();
   const shown = wset ? sessions.filter((s) => sessionInSet(wset, s)) : sessions;

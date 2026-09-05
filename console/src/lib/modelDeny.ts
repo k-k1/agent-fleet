@@ -1,13 +1,16 @@
-// 使わないモデル（設定 > エージェント > 各カード > 動作設定、settings.hiddenModels）。
-// 判定規則は Agent 側 workspace/agent/model_deny.go と対で、必ず両方を同時に直すこと —
-// ここがズレると「ピッカーには出るのに起動が 400 で断られる」という最悪の食い違いになる。
+// Models the user has excluded (Settings > Agents > each card > behaviour, settings.hiddenModels).
+// The matching rule is paired with the Agent's workspace/agent/model_deny.go and both sides must
+// change together: if they drift, a model shows up in the picker but launching it is refused with
+// a 400.
 //
-// 規則: 区切り（/ . _ 空白 :）をハイフンへ寄せて小文字化し、完全一致＋「単一トークンの
-// 別名を隠したときだけ」トークン境界つきの含意一致を見る。
-//   - "fable" は "claude-fable-5" にも当たる（claude は別名でも完全 id でも --model に渡せる）
-//   - "gpt-5.4"（複数トークン＝具体 id）は "gpt-5.4-mini" には当たらない
-//   - "opencode/glm-5.2" は "opencode-go/glm-5.2" には当たらない（課金経路違いを巻き添えにしない）
-//   - "fablet" のような単なる部分文字列には当たらない
+// The rule: fold the separators (/ . _ space :) to hyphens, lowercase, then accept an exact match
+// plus — only when the hidden entry is a single token — a containment match on token boundaries.
+//   - "fable" also matches "claude-fable-5" (claude accepts either the alias or the full id as
+//     --model)
+//   - "gpt-5.4" (multiple tokens, i.e. a concrete id) does not match "gpt-5.4-mini"
+//   - "opencode/glm-5.2" does not match "opencode-go/glm-5.2", so hiding one billing route does
+//     not take out the other
+//   - a mere substring such as "fablet" does not match
 
 export function normModelToken(s: string): string {
   let out = (s || "").trim().toLocaleLowerCase().replace(/[/._ :]/g, "-");
@@ -20,12 +23,13 @@ export function modelMatchesHidden(requested: string, hidden: string): boolean {
   const h = normModelToken(hidden);
   if (!r || !h) return false;
   if (r === h) return true;
-  if (h.includes("-")) return false; // 具体 id を隠しただけ — 前方一致する別モデルは別物
+  if (h.includes("-")) return false; // a concrete id was hidden; another model sharing its prefix is a different model
   return `-${r}-`.includes(`-${h}-`);
 }
 
-// hiddenModelsFor は kind の実効除外リスト。claude だけフェイルセーフを持つ（固定4ティアに
-// 「既定」の選択肢が無いので、全部隠すと起動できるモデルが消える）— Agent 側と同じ規則。
+// hiddenModelsFor is the effective exclusion list for a kind. claude alone has a fail-safe: its
+// four fixed tiers offer no "default" option, so hiding all of them would leave no launchable
+// model. Same rule as the Agent side.
 export function hiddenModelsFor(
   hiddenModels: Record<string, string[]> | undefined,
   kind: string,
@@ -36,7 +40,7 @@ export function hiddenModelsFor(
   const list = raw.filter((v): v is string => typeof v === "string" && !!v.trim());
   if (!list.length) return [];
   if (catalogIds?.length && catalogIds.every((id) => list.some((h) => modelMatchesHidden(id, h)))) {
-    return []; // 全部隠す設定は無視する
+    return []; // a config that hides everything is ignored
   }
   return list;
 }
@@ -47,6 +51,6 @@ export function isModelHidden(
   model: string,
   catalogIds?: string[],
 ): boolean {
-  if (!model.trim()) return false; // 未指定＝CLI 既定に委ねる
+  if (!model.trim()) return false; // unset means "leave it to the CLI default"
   return hiddenModelsFor(hiddenModels, kind, catalogIds).some((h) => modelMatchesHidden(model, h));
 }

@@ -129,10 +129,10 @@ func findProposal(list []map[string]any, id string) map[string]any {
 	return nil
 }
 
-// 提案のタイトル検査は**セッション作成 API と同じ規則**でなければならない。緩いと、提案は
-// 保存も編集もできるのに起動の瞬間だけ bad_title で落ち、利用者には「worktree 起動に失敗」
-// としか見えない（実障害）。だからここでは「保存を通ったタイトルは CleanTitle も通る」を
-// 直接確かめる。
+// A proposal's title check must follow the same rule as the session-create API. Looser here
+// and a proposal can be saved and edited but fails with bad_title at the moment of launch,
+// which the user only ever sees as "worktree launch failed" (a real incident). So this
+// asserts directly that a title which passed saving also passes CleanTitle.
 func TestSessionHandoffProposalTitleMatchesCreateRule(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const name = "handoff2"
@@ -145,20 +145,21 @@ func TestSessionHandoffProposalTitleMatchesCreateRule(t *testing.T) {
 		HandleSessionHandoffProposal(w, r)
 		return w
 	}
-	// 80 文字ちょうどは通る（日本語＝1 文字 3 バイトなので、旧 512 バイト規則とは別物）。
+	// Exactly 80 runes is accepted (Japanese is 3 bytes per rune, so this is a different
+	// rule from the old 512-byte one).
 	if got := post(strings.Repeat("あ", SessionTitleMaxRunes)); got.Code != http.StatusOK {
 		t.Fatalf("80 runes should be accepted: status=%d body=%s", got.Code, got.Body.String())
 	}
 	for _, title := range []string{
-		strings.Repeat("あ", SessionTitleMaxRunes+1), // 1 文字超過
-		"改行を\n含むタイトル",                               // 制御文字
+		strings.Repeat("あ", SessionTitleMaxRunes+1), // one rune over
+		"改行を\n含むタイトル",                               // control character
 	} {
 		got := post(title)
 		if got.Code != http.StatusBadRequest {
 			t.Fatalf("title %q should be refused at proposal time: status=%d body=%s", title, got.Code, got.Body.String())
 		}
 	}
-	// 保存されているタイトルは、そのまま作成 API に渡して通ること。
+	// A stored title must pass the create API unchanged.
 	for _, p := range decodeProposalsField(t, func() string {
 		r := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/handoff-proposal", nil)
 		r.SetPathValue("name", name)

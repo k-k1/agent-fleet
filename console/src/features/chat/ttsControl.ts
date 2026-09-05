@@ -24,8 +24,8 @@ export type TtsBackgroundMode = "mute" | "quiet" | "normal";
 export function ttsIsBackground(hidden: boolean, focused: boolean): boolean {
   return hidden || !focused;
 }
-// quietGain は "quiet" 時のマスター音量倍率（設定 ttsBackgroundVolume でスライダー調整）。
-// 未指定は従来の固定値 HIDDEN_TTS_GAIN。mute は常に 0、normal・非背景は常に 1。
+// quietGain is the master volume factor used in "quiet" mode (the ttsBackgroundVolume slider).
+// Omitted, it is the fixed HIDDEN_TTS_GAIN. mute is always 0; normal and non-background are always 1.
 export function ttsMasterGain(mode: TtsBackgroundMode, background: boolean, quietGain = HIDDEN_TTS_GAIN): number {
   if (!background || mode === "normal") return 1;
   return mode === "mute" ? 0 : Math.max(0, Math.min(1, quietGain));
@@ -33,8 +33,9 @@ export function ttsMasterGain(mode: TtsBackgroundMode, background: boolean, quie
 
 export const MAX_PANE_PAN = 0.7;
 
-// 列の左右端を ±MAX_PANE_PAN に対応させ、その間は実際の列中心（colRatios を反映）で補間する。
-// 上下に積まれたペインは同じ列なので同じ位置。単一列・対象外・設定OFFは中央へ戻す。
+// Maps the leftmost and rightmost columns to ±MAX_PANE_PAN and interpolates between them by the
+// actual column centres (which honour colRatios). Panes stacked vertically share a column and so
+// share a position. A single column, a pane not found, or the setting off all return to centre.
 export function ttsPanePan(enabled: boolean, layout: Layout, paneId?: string): number {
   if (!enabled || !paneId || layout.cols.length < 2) return 0;
   const colIndex = layout.cols.findIndex((col) => col.cells.some((cell) => cell.views.some((view) => view.id === paneId)));

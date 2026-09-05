@@ -9,11 +9,11 @@ import (
 	"time"
 )
 
-// TestTranscriptTouchedIgnoresBookkeeping pins the contract the duplicate-report bug
-// turned on (2026-07-30 s2bl5pv / sannme2 / sp2qemx): 転写の「鮮度」はファイルの mtime
-// ではなく **user/assistant 行の timestamp** で決まる。claude はターンと無関係な記帳行
-// （away_summary・custom-title・…）を後から追記するので、mtime を見ていた頃は静止した
-// セッションが「実行中」に化け、報告済みの指示が「作業を再開した」と誤読されていた。
+// TestTranscriptTouchedIgnoresBookkeeping pins the contract the duplicate-report bug turned
+// on: a transcript's freshness is decided by the timestamp on user/assistant lines, never by
+// the file's mtime. claude appends bookkeeping lines unrelated to any turn (away_summary,
+// custom-title, …) after the fact, so while mtime was the signal an idle session read as
+// "running" and an already-reported instruction read as "work resumed".
 func TestTranscriptTouchedIgnoresBookkeeping(t *testing.T) {
 	const sid = "aaaa1111-2222-5bbb-8ccc-333344445555"
 

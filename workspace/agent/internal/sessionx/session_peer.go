@@ -1,20 +1,22 @@
 package sessionx
 
-// セッション同士のメッセージ（docs/log/58 / ADR 0041）の**サーバ側の砦**。
+// The server-side fort for session-to-session messages (docs/log/58 / ADR 0041).
 //
-// 送信そのものは既存の投入経路（/input の {prompt}）をそのまま使う。ここが持つのは
-// 「peer 送信であることによって課される制約」だけで、置き場をサーバにしたのは意図的:
-// 封筒・宛先ポリシー・arm 非干渉・レート制限は、呼び出し元（MCP プロセス）が実装すると
-// 迂回できてしまう。MCP は `peer_from` を1つ足すだけの薄い層に保ち、守るべき不変条件は
-// 全部この層で閉じる。
+// Sending itself reuses the existing delivery path (/input's {prompt}). What lives here is
+// only the set of constraints that being a peer send imposes, and putting them on the server
+// is deliberate: the envelope, the target policy, leaving the arm alone and the rate limit
+// can all be bypassed if the caller (the MCP process) implements them. MCP stays a thin
+// layer that adds only `peer_from`, and every invariant that has to hold is closed here.
 //
-// **arm を触らない理由**（ADR 0041 決定4）: docs/log/51 のリコンサイラは「機械的 idle」を
-// 証拠に完了を推定する。peer メッセージは conv を持たず、idle 相手には新ターンを開始
-// するので、指示台帳に載せると「利用者の新指示」と誤認して早期 settle / 早期消費を
-// 起こす。しかも AF の投入は TUI への打鍵なので、受信側の transcript では通常入力と
-// 区別が付かない（ネイティブ経路の `origin.kind:"peer"` に相当する印を後から付けられない
-// — docs/log/58 §58.12 実測）。「後で出自を見て弾く」逃げ道が無いぶん、入口で載せないことが
-// 唯一の防御になる。
+// Why the arm is not touched (ADR 0041 decision 4): the reconciler in docs/log/51 infers
+// completion from mechanical idleness as its evidence. A peer message carries no conv and
+// starts a new turn against an idle target, so putting it on the instruction ledger is read
+// as "a new instruction from the user" and causes an early settle / early consumption. On
+// top of that AF delivers by typing into the TUI, so on the receiving side the transcript
+// cannot tell it apart from ordinary input (there is no way to add after the fact the mark
+// the native path has as `origin.kind:"peer"` — measured, docs/log/58 §58.12). With no
+// escape hatch of "reject it later by looking at its origin", not putting it on the ledger
+// in the first place is the only defence.
 
 import (
 	"fmt"
@@ -28,24 +30,25 @@ import (
 )
 
 const (
-	// peerMaxMessageBytes は本文の上限。レビュー結果など、実装担当へ渡す根拠付きの
-	// 指摘を1本に収められる長さにしつつ、TUI への打鍵としても現実的に保つ。超過は
-	// 無言で切り詰めず、エラーで返す（切り詰めは「送ったのに肝心の後半が消えている」
-	// という最悪の失敗になる）。
+	// peerMaxMessageBytes caps the body. Long enough to hold one reasoned finding handed to
+	// whoever implements it (a review result, say), while staying realistic as something
+	// typed into a TUI. Going over is an error, never a silent truncation: truncating gives
+	// the worst failure of all, "it was sent, but the part that mattered is gone".
 	peerMaxMessageBytes = 16 * 1024
 
-	// peerRateWindow / peerRatePerWindow は送信元セッションあたりのレート制限。
-	// 既存の send_to_session に無いのは送信者がオペレーター1人だったからで、送信者が
-	// N になれば A→B→A は自然に起きる。
+	// peerRateWindow / peerRatePerWindow rate-limit per sending session. The existing
+	// send_to_session has no limit because there was one sender, the operator; with N
+	// senders, A->B->A happens on its own.
 	peerRateWindow    = time.Minute
 	peerRatePerWindow = 6
 
-	// peerDuplicateWindow の間に届いた同一の (宛先, 本文) は捨てる。往復ループは
-	// 同じ文面を投げ合う形になりやすく、レート制限だけだと上限まで無駄に走る。
+	// An identical (target, body) arriving within peerDuplicateWindow is dropped. A ping-pong
+	// loop tends to throw the same text back and forth, and the rate limit alone lets it run
+	// pointlessly up to the cap.
 	peerDuplicateWindow = 2 * time.Minute
 )
 
-// peerRejection は「送らせない」判断。Code はそのまま HTTP のエラーコードになる。
+// peerRejection is the decision not to send. Code becomes the HTTP error code as is.
 type peerRejection struct {
 	Code string
 	Msg  string
@@ -57,31 +60,35 @@ func peerReject(code, format string, a ...any) *peerRejection {
 	return &peerRejection{Code: code, Msg: fmt.Sprintf(format, a...)}
 }
 
-// peerIntent は本文の種別と、それが受信側に課す返信方針の対応表（docs/log/58 §58.14）。
+// peerIntents maps the kind of the body to the reply policy it imposes on the receiver
+// (docs/log/58 §58.14).
 //
-// **返信方針を送信側に選ばせない**のが要点。別フィールドにすると `notice`（知らせるだけ）
-// なのに「返信を要求する」といった矛盾した封筒を作れてしまう。種別1つを必須にして、
-// 返信方針はここで導出する。
+// The point is that the sender does not get to choose the reply policy. As a separate field
+// it would allow a contradictory envelope, e.g. a `notice` (just letting you know) that
+// "requires a reply". One kind is mandatory and the reply policy is derived from it here.
 //
-// 値を4つに絞ったのは、選択肢が増えるほどモデルが迷い、封筒の意味が薄まるため。
-// answer / notice が `none`（＝ここで打ち切り）を持つことが、相槌の連鎖を構造的に
-// 終わらせる部分で、既存の重複 drop では止められない「毎回文面が違う丁寧語ループ」への
-// 唯一の弁になっている。
+// It is held to four values because the more options there are the more the model hesitates
+// and the weaker the envelope's meaning gets. answer / notice carrying `none` (stop here) is
+// what structurally ends a chain of acknowledgements, and it is the only valve against the
+// polite loop whose wording differs every time, which the existing duplicate drop cannot
+// stop.
 var peerIntents = map[string]string{
-	"request":  "only-if-blocked", // 行動を求める。返すのは「できない/前提が違う」ときだけ
-	"question": "required",        // 情報を求める。結論だけ1通返す
-	"answer":   "none",            // 相手の question への返答。ここで終わり
-	"notice":   "none",            // 知らせるだけ。返信しない
+	"request":  "only-if-blocked", // asks for action; reply only when you can't or the premise is wrong
+	"question": "required",        // asks for information; one reply with the conclusion only
+	"answer":   "none",            // answers the other side's question; ends here
+	"notice":   "none",            // just letting you know; no reply
 }
 
-// PeerIntentNames は決定的なエラー文とツール説明のための並び順（map の反復は不定順）。
+// PeerIntentNames is the order used for deterministic error text and tool descriptions (map
+// iteration is unordered).
 var PeerIntentNames = []string{"request", "question", "answer", "notice"}
 
-// peerResolveIntent は種別を検証し、封筒に載せる返信方針を返す。
+// peerResolveIntent validates the kind and returns the reply policy to put in the envelope.
 //
-// 空を既定値へ倒さないのは、既定が必ず誤るため: `notice`（返信不要）に倒すと依頼が
-// 黙殺され、`request` に倒すと単なる共有に返信が返ってきて、どちらも「冗長さを減らす」
-// という目的そのものを壊す。付け忘れは呼び出し元のバグなのでエラーで返す。
+// An empty value is not defaulted, because any default is wrong: defaulting to `notice` (no
+// reply needed) means a request is silently ignored, and defaulting to `request` means a
+// plain share draws a reply. Either one destroys the very goal of cutting down the noise. A
+// missing intent is a bug in the caller, so it comes back as an error.
 func peerResolveIntent(intent string) (string, error) {
 	reply, ok := peerIntents[strings.TrimSpace(intent)]
 	if !ok {
@@ -91,30 +98,33 @@ func peerResolveIntent(intent string) (string, error) {
 	return reply, nil
 }
 
-// peerEnvelope は投入する本文の先頭に置く1行を組み立てる。
+// peerEnvelope builds the single line placed at the head of the delivered body.
 //
-// プロンプト前置なのは、各 kind の TUI / driver への打鍵が唯一の共通投入層で、claude
-// 以外に副帯域が無いため（ADR 0041 決定6）。selfReportHintLine の `[agent-fleet]` 注記と
-// 同じ層・同じ作法で、受け取り方の常設ルールは workspace-notes.md 側が持つ。
+// It is prepended to the prompt because typing into each kind's TUI / driver is the only
+// common delivery layer, and outside claude there is no side band (ADR 0041 decision 6). It
+// is the same layer and the same convention as selfReportHintLine's `[agent-fleet]` note,
+// with the standing rules for how to receive one held in workspace-notes.md.
 //
-// 封筒はサーバが必ず付ける。呼び出し元に組ませると、付け忘れ・詐称（他セッション名を
-// 名乗る）がそのまま通ってしまう。
+// The server always attaches the envelope. Letting the caller build it lets a missing
+// envelope, or a forged one claiming another session's name, straight through.
 //
-// `intent` / `reply` を**封筒に**載せるのは、返信規律が効くのが着信の瞬間だからで、
-// workspace-notes.md 側だけに書くと長い文脈の後方で薄まる（docs/log/58 §58.14）。値は
-// 英語のまま — 既存の `from=` と同じ機械トークンの層で、ミラーの読み戻しもここを見る。
-// `reply=` は自己記述的な語にしてあり、常設ルールを読み落としていても意味が通る。
+// `intent` / `reply` go in the envelope because reply discipline bites at the moment of
+// arrival, and writing them only in workspace-notes.md dilutes them far back in a long
+// context (docs/log/58 §58.14). The values stay English: they are the same machine-token
+// layer as the existing `from=`, and the mirror reads them back here too. `reply=` uses
+// self-describing words so it still makes sense to a reader who missed the standing rules.
 func peerEnvelope(from, intent, reply, message string) string {
 	return "[agent-fleet:peer from=" + from + " intent=" + intent + " reply=" + reply + "] " +
 		strings.TrimSpace(message)
 }
 
-// peerTargetAllowed は「この kind へ peer メッセージを送ってよいか」。
+// peerTargetAllowed answers whether a peer message may be sent to this kind.
 //
-// shell / ssm を弾くのが本命（ADR 0041 決定5）。生シェルへの送信は任意コマンド実行で、
-// 汚染されたリポジトリを読んだセッションが他所で任意のコマンドを走らせられる形になる。
-// 判定を NormalizeKind に通さず生の値で見るのは、NormalizeKind が未知/空を claude へ
-// 倒すため — 空 Kind のメタが1つあるだけで shell 以外の穴が開くのを避ける。
+// Rejecting shell / ssm is the whole point (ADR 0041 decision 5). Sending to a raw shell is
+// arbitrary command execution: a session that read a poisoned repository would be able to
+// run arbitrary commands elsewhere. The check reads the raw value rather than going through
+// NormalizeKind, because NormalizeKind maps unknown/empty to claude — a single meta with an
+// empty Kind would otherwise open a hole beyond shell.
 func peerTargetAllowed(kind string) bool {
 	switch kind {
 	case session.KindShell, session.KindSSM, "":
@@ -128,9 +138,10 @@ func peerTargetAllowed(kind string) bool {
 	return false
 }
 
-// PeerReachableSessions は from から見える宛先候補（list_peer_sessions の母集合）。
-// 自分自身・archived・送れない kind を除く。停止中は**含める** — AF は停止中セッションを
-// 再開して届けられるので、一覧から落とすと届く相手が見えなくなる。
+// PeerReachableSessions is the set of targets visible from `from` (the population behind
+// list_peer_sessions). It excludes the sender itself, archived sessions and kinds that
+// cannot be sent to. Stopped sessions are included: AF can resume a stopped session and
+// deliver to it, so dropping them from the list would hide reachable targets.
 func PeerReachableSessions(from string) []session.Meta {
 	var out []session.Meta
 	for _, m := range session.ListMetas() {
@@ -145,8 +156,8 @@ func PeerReachableSessions(from string) []session.Meta {
 	return out
 }
 
-// peerPolicy は送信の可否を判定する。宛先メタを返すのは、呼び出し側が kind を再取得
-// しないで済むようにするため。
+// peerPolicy decides whether the send is allowed. It returns the target's meta so the caller
+// does not have to look the kind up again.
 func peerPolicy(from, to string) (session.Meta, error) {
 	if !session.ValidName(from) {
 		return session.Meta{}, peerReject("bad_peer_from", "peer_from が不正なセッション名です")
@@ -161,8 +172,9 @@ func peerPolicy(from, to string) (session.Meta, error) {
 	if !ok || src.Archived {
 		return session.Meta{}, peerReject("peer_from_unknown", "送信元セッション %s が見つかりません", from)
 	}
-	// 送信元も同じ allowlist で見る。ツールを配っていない kind から `peer_from` を
-	// 名乗られても通さない（MCP を持たない shell から REST を直叩きする経路の封じ）。
+	// The sender goes through the same allowlist. A `peer_from` claimed by a kind that was
+	// never handed the tools does not get through — this closes the path of calling REST
+	// directly from a shell that has no MCP.
 	if !peerTargetAllowed(src.Kind) {
 		return session.Meta{}, peerReject("peer_from_forbidden",
 			"この種別のセッション（%s）はメッセージを送れません", src.Kind)
@@ -178,7 +190,7 @@ func peerPolicy(from, to string) (session.Meta, error) {
 	return dst, nil
 }
 
-// peerValidateMessage は本文の検査。
+// peerValidateMessage checks the body.
 func peerValidateMessage(message string) error {
 	m := strings.TrimSpace(message)
 	if m == "" {
@@ -194,13 +206,14 @@ func peerValidateMessage(message string) error {
 	return nil
 }
 
-// peerLimiter はレート制限と重複 drop の状態。Agent プロセスは常駐なのでメモリで持つ
-// （MCP プロセスは呼び出しごとに生き死にするので、そちらには置けない）。再起動で
-// リセットされるが、これはループを止めるための弁であって監査ではないので許容する。
+// peerLimiter is the state behind the rate limit and the duplicate drop. It is held in
+// memory because the Agent process is resident; the MCP process lives and dies per call, so
+// it cannot live there. A restart resets it, which is acceptable: this is a valve for
+// stopping loops, not an audit trail.
 type peerLimiter struct {
 	mu     sync.Mutex
-	sends  map[string][]time.Time // 送信元 → 直近の送信時刻
-	recent map[string]time.Time   // 送信元|宛先|本文 → 最後に通した時刻
+	sends  map[string][]time.Time // sender -> recent send times
+	recent map[string]time.Time   // sender|target|body -> when it was last let through
 }
 
 var peerRate = &peerLimiter{
@@ -208,19 +221,21 @@ var peerRate = &peerLimiter{
 	recent: map[string]time.Time{},
 }
 
-// allow はレート制限と重複を判定し、通す場合だけ状態を更新する。
+// allow decides on the rate limit and duplicates, and updates the state only when it lets
+// the message through.
 func (l *peerLimiter) allow(from, to, message string, now time.Time) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	// 重複: 同じ相手へ同じ文面を短時間に繰り返すのは往復ループの形。
+	// Duplicate: repeating the same text to the same peer in quick succession is the shape
+	// of a ping-pong loop.
 	key := from + "|" + to + "|" + message
 	if at, ok := l.recent[key]; ok && now.Sub(at) < peerDuplicateWindow {
 		return peerReject("peer_duplicate",
 			"同じ内容を同じ宛先へ連続して送ろうとしています（%s 以内は捨てます）", peerDuplicateWindow)
 	}
 
-	// レート: 送信元あたり peerRatePerWindow 通 / peerRateWindow。
+	// Rate: peerRatePerWindow messages per peerRateWindow, per sender.
 	times := l.sends[from][:0:0]
 	for _, t := range l.sends[from] {
 		if now.Sub(t) < peerRateWindow {
@@ -239,7 +254,8 @@ func (l *peerLimiter) allow(from, to, message string, now time.Time) error {
 	return nil
 }
 
-// pruneLocked は古い重複キーを落とす。放置すると長寿命 Agent でメモリが単調増加する。
+// pruneLocked drops stale duplicate keys. Left alone they grow memory monotonically in a
+// long-lived Agent.
 func (l *peerLimiter) pruneLocked(now time.Time) {
 	for k, at := range l.recent {
 		if now.Sub(at) >= peerDuplicateWindow {

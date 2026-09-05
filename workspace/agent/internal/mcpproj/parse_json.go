@@ -156,7 +156,7 @@ func extraKeys(raw map[string]any, used map[string]bool) map[string]any {
 
 // decodeJSONObject parses b as a JSON object (not array/scalar) at the top level —
 // every kind's project MCP file is an object, so anything else is treated the same
-// as a parse failure (docs/log/57 憲章3, "読めないファイルは触らない").
+// as a parse failure (docs/log/57 charter 3, "never touch a file you cannot read").
 func decodeJSONObject(b []byte) (map[string]any, error) {
 	var v any
 	if err := json.Unmarshal(b, &v); err != nil {

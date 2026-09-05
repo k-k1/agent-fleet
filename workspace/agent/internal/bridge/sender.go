@@ -12,7 +12,7 @@ import (
 
 // StartSender launches the daemon-side delivery loop. One goroutine, a slow
 // ticker, sequential sends — the WSS/network side of the bridge must stay in
-// the "goroutine + a few MB" budget (docs/log/37 「メモリ」). Providers are rebuilt
+// the "goroutine + a few MB" budget (docs/log/37 §memory). Providers are rebuilt
 // from the secrets store every drain, so connect/disconnect in the Console
 // takes effect on the next tick without any registry.
 func StartSender() {
@@ -50,7 +50,7 @@ func DrainOnce() {
 }
 
 // drainWith is the provider-agnostic queue pass (split out for tests). Each provider
-// resumes from its own persisted delivery cursor (docs/log/37 重複対策), so a partial
+// resumes from its own persisted delivery cursor (docs/log/37 de-duplication), so a partial
 // failure never re-posts what already landed. An attempt that made ANY progress
 // resets the retry counter (a long message that advances every tick can't be dropped
 // mid-stream); only a fully-stuck tick counts against maxAttempts.
@@ -130,7 +130,7 @@ func cacheDiscordDM(channelID string) {
 	})
 }
 
-// cacheSlackDM is the Slack write-through DM cache (docs/log/37 Slack 追随).
+// cacheSlackDM is the Slack write-through DM cache (docs/log/37 Slack follow-up).
 func cacheSlackDM(channelID string) {
 	_ = secrets.Update(func(s *secrets.Data) error {
 		if s.Slack != nil {

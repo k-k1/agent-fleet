@@ -1,17 +1,19 @@
-// 引き継ぎの受諾（docs/log/77 / ADR 0057 決定 3）は「起動できた」の**事後申告**である。
+// Accepting a handoff (docs/log/77 / ADR 0057 decision 3) is an after-the-fact report that the
+// session was launched.
 //
-// 起動を CP に代行させない —— させると CP が他人の Workspace を操作することになり、この機能が
-// 避けた構造そのものになる。受け手は自分の権限で自分の Workspace にセッションを作り、その後で
-// ここが「受け取った」を送る。だから起動導線（StartHost）の成功パス以外から呼んではいけない。
+// Never let the CP do the launching: that would have the CP drive someone else's Workspace, which
+// is the very structure this feature exists to avoid. The recipient creates the session in their
+// own Workspace with their own permissions, and only then does this send "accepted". So never call
+// it from anywhere but the success path of the launch flow (StartHost).
 //
-// 起動導線から切り出してあるのは循環 import を避けるためで、置き場所は sharing 側が正しい
-// （offer の寿命は共有 ACL に従属する）。
+// It is split out of the launch flow to avoid a circular import; sharing is the right home for it
+// (an offer's lifetime is subordinate to the share ACL).
 import { apiJSON } from "../../core/api/client.ts";
 import { useHandoffStore } from "./handoffStore.ts";
 
 export async function acceptHandoffOffer(offerId: string, sessionName: string): Promise<void> {
   await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offerId)}/accept`, "POST", { sessionName }).catch(
-    () => undefined, // best-effort: 起動は済んでいる。申告の失敗で起動を壊さない
+    () => undefined, // best-effort: the launch already happened; a failed report must not break it
   );
   void useHandoffStore.getState().refresh();
 }

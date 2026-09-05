@@ -1,11 +1,13 @@
-// 差し出し側のゲート（docs/log/77 §77.5 / ADR 0057 決定 5）。
+// The offering side's gate (docs/log/77 §77.5 / ADR 0057 decision 5).
 //
-// ここで押さえるのは「push していない引き継ぎを送らせない」こと。相手のディスクに所有者の
-// commit は無いので、push されていない引き継ぎは文章がどれだけ立派でも嘘になる —— しかも
-// **一度も push していないブランチの ahead は 0** なので、素朴な実装ほど素通しする。
+// What this holds is that an unpushed handoff can never be sent: the owner's commits are
+// not on the recipient's disk, so however well written the prompt is, the handoff is a lie.
+// A branch that was never pushed has ahead = 0, so the naive implementation lets exactly
+// that case through.
 //
-// 判定そのものは Agent が組み立てて CP がそのまま中継する。この面が守るのは「その判定を
-// 表示し、送信を止める」までで、条件を画面側で組み直さないこと自体がテスト対象である。
+// The verdict is built by the Agent and relayed unchanged by the CP. This surface only
+// displays it and blocks sending; that it does NOT recompute the condition client-side is
+// itself what is under test.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -18,7 +20,8 @@ vi.mock("../../core/api/client.ts", () => ({
   errText: (e: unknown) => String((e as { message?: string })?.message ?? e),
   getTenant: () => "",
 }));
-// 共有作成モーダルは別機能。ここでは「行き止まりにしない導線がある」ことだけ見る。
+// The share-creation modal is a separate feature; all that matters here is that a way out
+// exists rather than a dead end.
 vi.mock("./ShareCreateModal.tsx", () => ({ ShareCreateModal: () => <div data-share-modal /> }));
 
 import { HandoffOfferModal } from "./HandoffOfferModal.tsx";
@@ -45,8 +48,9 @@ async function render(payload: unknown) {
   });
 }
 
-// ⚠️ Modal はポータルで document.body 直下に出る。host を見ると常に空で、テストが
-// 「ボタンが無い」ではなく undefined を比べて落ちる（最初にここで 5 件落ちた）。
+// Modal renders through a portal directly under document.body: looking inside host always
+// finds nothing, and the test then compares undefined instead of reporting a missing
+// button.
 function sendButton(): HTMLButtonElement | undefined {
   return [...document.querySelectorAll("button")].find((b) => b.getAttribute("type") === "submit") as
     | HTMLButtonElement
@@ -66,12 +70,12 @@ afterEach(() => {
 const MEMBERS = [{ userKey: "b-example-com", email: "b@example.com" }];
 
 describe("HandoffOfferModal", () => {
-  it("push 済みで clean なら送れる", async () => {
+  it("allows sending when the branch is pushed and clean", async () => {
     await render({ members: MEMBERS, context: { vcs: "git", branch: "main", headSha: "abcdef1234", remote: "https://x/y.git", ahead: 0 } });
     expect(sendButton()?.disabled).toBe(false);
   });
 
-  it("一度も push していないブランチは送れない（ahead=0 でも止まる）", async () => {
+  it("blocks a branch that was never pushed, even though ahead is 0", async () => {
     await render({
       members: MEMBERS,
       context: { vcs: "git", branch: "temp/x", ahead: 0, noUpstream: true, blocked: "no_upstream" },
@@ -80,12 +84,12 @@ describe("HandoffOfferModal", () => {
     expect(find(".handoff-blocked")).toBeTruthy();
   });
 
-  it("未 push の commit があると送れない", async () => {
+  it("blocks sending while there are unpushed commits", async () => {
     await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 2, blocked: "unpushed_commits" } });
     expect(sendButton()?.disabled).toBe(true);
   });
 
-  it("未コミットは止めず、承知のチェックで送れるようになる", async () => {
+  it("warns rather than blocks on uncommitted changes, and unblocks on acknowledgement", async () => {
     await render({ members: MEMBERS, context: { vcs: "git", branch: "main", ahead: 0, dirty: true, warning: "uncommitted_changes" } });
     expect(sendButton()?.disabled).toBe(true);
     const ack = find('input[type="checkbox"]') as HTMLInputElement;
@@ -96,17 +100,18 @@ describe("HandoffOfferModal", () => {
     expect(sendButton()?.disabled).toBe(false);
   });
 
-  // ⚠️ 実利用で最初に踏まれた形。共有していないのは**正常な状態**なので、CP は 200 ＋ 空の
-  // 候補で答える。画面はそれを「先に共有してください」と言い切り、共有の導線をその場に置く
-  // ——「取得に失敗しました」や読み込み中のままでは、利用者は次の一手が分からない。
-  it("共有していないセッションは、先に共有する旨を説明して導線を出す", async () => {
+  // Not having shared the session yet is a normal state, so the CP answers 200 with an
+  // empty candidate list. The screen has to say "share it first" and offer the way to do
+  // so on the spot: a fetch-failed message, or a stuck loading state, leaves the member
+  // with no idea what to do next.
+  it("explains that an unshared session must be shared first, and offers the way there", async () => {
     await render({ members: [], context: { vcs: "git", branch: "main", ahead: 0 } });
     expect(sendButton()?.disabled).toBe(true);
     const notShared = find(".handoff-blocked");
     expect(notShared?.textContent || "").toContain("共有");
     const labels = [...document.querySelectorAll("button")].map((b) => b.textContent || "");
     expect(labels.some((t) => t.includes("共有"))).toBe(true);
-    // 読み込み中の表示が残っていないこと（残ると「進まない」に見える）。
+    // No leftover loading indicator: it would read as being stuck.
     expect(document.body.textContent || "").not.toContain("読み込み中");
   });
 });

@@ -1,8 +1,8 @@
-// History ↔ layout の同期。history entry は layout の「スナップショット」なので、
-// entry を積まない commit（タブ選択・ペイン活性・折返し・仕切りドラッグ）のあとは
-// 立っている entry を貼り直さないと、次の popstate が古いスナップショットを復元する。
-// モーダルは閉じるために history.back() を撃つ（lib/backClose の戻るで閉じる guard）
-// ので、「モーダルを開いて閉じるとタブが勝手に切り替わる」形で必ず表に出る。
+// History <-> layout sync. A history entry is a snapshot of the layout, so a commit that pushes
+// no entry (tab selection, pane activation, wrap, divider drag) must replace the standing entry;
+// otherwise the next popstate restores a stale snapshot. Modals close by firing history.back()
+// (the back-to-close guard in lib/backClose), so the bug always surfaces as "opening and closing
+// a modal switches the tab on its own".
 import { describe, expect, it, beforeEach } from "vitest";
 import { useLayoutStore, wireLayoutHistory } from "./store.ts";
 import type { Layout } from "./types.ts";
@@ -29,14 +29,14 @@ const tabbedLayout = (selected: string): Layout => ({
 const selectedTab = (): string | null =>
   useLayoutStore.getState().layout.cols[0].cells[0].selectedViewId;
 
-/** popstate は jsdom でも非同期に届く（history.back() はタスクとして queue される）。 */
+/** popstate arrives asynchronously even in jsdom (history.back() is queued as a task). */
 const back = (): Promise<void> =>
   new Promise((resolve) => {
     window.addEventListener("popstate", () => setTimeout(resolve, 0), { once: true });
     history.back();
   });
 
-/** モーダルの「戻るで閉じる」guard（lib/backClose が積むのと同じ entry）。 */
+/** The modal's back-to-close guard (the same entry lib/backClose pushes). */
 const openModal = (): void => {
   history.pushState({ __af: true, afModal: true }, "");
 };
@@ -61,7 +61,7 @@ describe("layout history", () => {
     expect(selectedTab()).toBe("p1");
 
     openModal();
-    await back(); // ✕ / Esc / 背景クリックで閉じる = guard entry を戻るで消費
+    await back(); // closing via ✕ / Esc / backdrop click consumes the guard entry
 
     expect(selectedTab()).toBe("p1");
   });
@@ -75,8 +75,8 @@ describe("layout history", () => {
   });
 
   it("does not reset the layout when popping onto a modal guard entry", async () => {
-    // モーダルが 2 枚重なった状態から上だけ閉じる: 着地先の guard entry は layout を
-    // 持たないので、そこを「layout 無し = 初期レイアウト」と解釈すると全部消える。
+    // Close only the top of two stacked modals: the entry we land on is a guard entry with no
+    // layout, so reading "no layout" as "initial layout" would wipe everything.
     openModal();
     openModal();
     await back();
@@ -86,10 +86,10 @@ describe("layout history", () => {
   });
 
   it("restores the tab that was on screen when the browser back button is used", async () => {
-    // モーダルに限らない: 「entry を積む操作」が置き去りにする entry も同じく古い。
+    // Not just modals: the entry any entry-pushing operation leaves behind is stale the same way.
     useLayoutStore.getState().selectTab("p1");
     useLayoutStore.getState().splitRight();
-    await back(); // 分割を戻る → 直前に画面へ出ていた状態（p1 選択）へ
+    await back(); // undo the split -> back to what was on screen (p1 selected)
 
     expect(useLayoutStore.getState().layout.cols).toHaveLength(1);
     expect(selectedTab()).toBe("p1");

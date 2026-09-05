@@ -106,7 +106,7 @@ func tarNames(t *testing.T, body []byte) map[string]bool {
 func TestDocsBridgeServesTheGuideToEveryRole(t *testing.T) {
 	e := newDocsTestEnv(t)
 	want := []string{
-		// The entry page the Console's 「利用ガイド」 opens, plus one file per shelf.
+		// The entry page the Console's user-guide button opens, plus one file per shelf.
 		"README.md", "README.ja.md",
 		"member/02-sessions.md", "ref/agents.md", "admin/02-limits.md",
 		"operate/01-install.md",

@@ -48,28 +48,30 @@ jobs:
           E2E_REQUIRE: "1"
         run: go test -tags drift -run '^TestDriftAgyPaneMode$' -count=1 -v -timeout 12m ./...
 
-      # ⚠️ スクレイプ経路の契約。上の pane 契約は BuildLaunch しか通らないので、
-      # /usage スクレイプ（scratch dir の事前 trust → TUI 起動 → /usage → パネル解析）
-      # は誰も実 CLI に当てていなかった。ここは trust プロンプトへの応答
-      # （internal/agents/agy/trustprompt.go）が乗る唯一の実機経路でもある —— 事前
-      # trust が効いていればプロンプトは出ず、効かなくなった日にここが赤くなる。
+      # The contract for the scrape path. The pane contract above only exercises
+      # BuildLaunch, so nothing put the /usage scrape (pre-trusting the scratch dir → TUI
+      # launch → /usage → panel parsing) in front of a real CLI. This is also the only path
+      # against a real CLI that covers the reply to the trust prompt
+      # (internal/agents/agy/trustprompt.go): while the pre-trust works no prompt appears,
+      # and this goes red on the day it stops working.
       - name: real /usage scrape contract
         working-directory: workspace/agent
         env:
           AF_AGY_LIVE: "1"
-        # -v はパネルの中身をログに残すため。ただしこのテストはアカウント行も出すので、
-        # public リポジトリのログに素で流さない。pipefail が要る —— 既定の `bash -e` は
-        # pipefail を立てないので、sed に通すと **go test が落ちても緑に見える**。
+        # -v keeps the panel contents in the log, but the test also prints the account
+        # line, which must not go raw into a public repository's logs. pipefail is required:
+        # the default `bash -e` does not set it, so piping through sed makes a failing
+        # `go test` look green.
         run: |
           set -euo pipefail
           go test -run '^TestScrapeUsageLive$' -count=1 -v -timeout 5m ./internal/agents/agy/ \
             | sed -E 's/[[:alnum:]._%+-]+@[[:alnum:].-]+\.[[:alpha:]]{2,}/<redacted-email>/g'
 
-      # ⚠️ カタログの契約。ペインのフッタだけ見ていたので、1.1.19 で
-      # `agy models` が「表示名だけ」→「id<TAB>表示名」に変わったのを
-      # 誰も検知できなかった（docs/log/70 §70.14.8）。しかもその壊れ方は
-      # **セッションは動くのに黙って別のモデル**で、実機の TUI に出る警告
-      # 1 行以外どこにも現れない。上の pane 契約とは別物なので別ステップ。
+      # The catalog contract. Watching only the pane footer meant nothing detected `agy
+      # models` changing from "display name only" to "id<TAB>display name" in 1.1.19
+      # (docs/log/70 §70.14.8) — and that breakage means the session still runs but
+      # silently on a different model, visible nowhere except one warning line in the real
+      # TUI. A separate concern from the pane contract above, hence a separate step.
       - name: real models catalog drift contract
         working-directory: workspace/agent
         env:

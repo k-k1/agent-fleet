@@ -1,5 +1,5 @@
 // PopoutTitleBar — the minimal pop-out tab's only chrome: what this pane shows,
-// a session state dot when one is bound, and the 展開 button that converts the
+// a session state dot when one is bound, and the expand button (「展開」) that converts the
 // tab into a full console in place (setPopoutMode("full") — the layout store
 // already holds the 1-pane layout, so App just re-renders with full chrome).
 import { useEffect } from "react";
@@ -34,7 +34,7 @@ export function PopoutTitleBar() {
   const st = session ? stateInfo(session) : null;
 
   // The tab's browser title mirrors the pane so the tab strip stays readable
-  // with several pop-outs. Restored when the bar unmounts (展開 to full).
+  // with several pop-outs. Restored when the bar unmounts (expanded to full).
   useEffect(() => {
     document.title = title ? `${title} — Agent Fleet` : BASE_TITLE;
     return () => {

@@ -1,6 +1,7 @@
-// 「作業の報告をコメントする」 (docs/log/80 §80.10 / ADR 0061 決定 6).
+// Posting a report on the work back as a ticket comment (docs/log/80 §80.10 / ADR 0061
+// decision 6).
 //
-// ★ The only write af makes against a tracker, and it is gated on a human reading the
+// The only write af makes against a tracker, and it is gated on a human reading the
 // draft. The modal therefore shows, in this order: WHERE it will be posted, WHAT will be
 // posted (editable), and only then the post button. Nothing here fires on mount.
 //
@@ -40,9 +41,10 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
     [sessions, sessionName],
   );
 
-  // 変更ファイルはミラーと同じ源（転写を Agent 側で全期間集計したもの・docs/log/68）。
-  // 取れなくても下書きは作れる —— ファイル一覧が空なのと「取れなかった」のを混同しない
-  // よう、下書き側は「変更ファイルなし」とだけ言う。
+  // The changed files come from the same source as mirror: the Agent's all-time aggregation of
+  // the transcript (docs/log/68). The draft can still be built if the fetch fails, and to avoid
+  // confusing "no files" with "could not fetch" the draft only ever says there are no changed
+  // files.
   useEffect(() => {
     let alive = true;
     setLoadingFiles(true);
@@ -59,8 +61,8 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
     };
   }, [sessionName]);
 
-  // 下書きは「まだ手を入れていない間だけ」作り直す。編集後にセッションを切り替えても
-  // 書いた文章を消さない。
+  // Rebuild the draft only while it is untouched, so switching session after editing never
+  // discards what the user wrote.
   useEffect(() => {
     if (edited || !session) return;
     setBody(composeReportDraft({ item, session, files, note }));
@@ -89,10 +91,12 @@ export function WorkItemReportModal({ item, sessions, onClose }: Props) {
 
   return (
     <Modal title={tr("wi.report_title")} onClose={onClose} className="wi-rmodal">
-      {/* ★ 中身は ui-modal-body / ui-modal-foot に載せる。ui-modal 自身に padding は
-          無く（見出しと footer が自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      {/* Content must sit in ui-modal-body / ui-modal-foot. ui-modal itself has no padding (the
+          heading and footer carry their own), so a child placed directly in it sticks to the
+          frame. */}
       <div className="ui-modal-body">
-        {/* 宛先が最初。押してから「どこに出たのか」を考える形にしない。 */}
+        {/* The destination comes first: nobody should have to work out where it went after
+            pressing post. */}
         <div className="wi-rtarget">
           <span className="wi-rlabel">{tr("wi.report_to")}</span>
           <a href={item.url} target="_blank" rel="noreferrer noopener">

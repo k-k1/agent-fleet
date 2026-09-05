@@ -22,9 +22,9 @@ func TestParseModelsSkipsSignInNoise(t *testing.T) {
 	}
 }
 
-// 1.1.19 の 2 カラム形式。実機で `agy models | cat -A` を読んで確かめた区切りは TAB。
-// ⚠️ 行ごと --model に渡していたので、CLI は「そんなモデルは知らない」と言って既定へ
-// フォールバックしていた——**セッションは起動し、動き、黙って別のモデルだった**。
+// The two-column form of 1.1.19; measured with `agy models | cat -A`, the separator is a TAB.
+// Passing the whole line to --model made the CLI reject the model as unknown and fall back to
+// the default: the session started, ran, and was silently on a different model.
 func TestParseModelsTwoColumn(t *testing.T) {
 	out := []byte("gemini-3.7-flash-high\tGemini 3.7 Flash (High)\n" +
 		"gemini-3.5-flash-low\tGemini 3.5 Flash (Low)\n" +
@@ -46,9 +46,9 @@ func TestParseModelsTwoColumn(t *testing.T) {
 	}
 }
 
-// 旧形式（表示名だけ・それがそのまま --model に通る）は死んだコードではない。
-// ~/.local は永続 home なので、古いイメージで boot-install した Workspace には
-// REPIN が前進させるまで 1.1.17 が残る。ピンを 1.1.19 に上げても両方が現場にいる。
+// The old form (label only, and that label is what --model takes) is not dead code. ~/.local
+// is persistent home, so a Workspace that boot-installed from an older image keeps 1.1.17
+// until REPIN moves it forward: raising the pin to 1.1.19 leaves both forms in the field.
 func TestParseModelsKeepsTheOldSingleColumnForm(t *testing.T) {
 	list := parseModels([]byte("Gemini 3.5 Flash (Medium)\nClaude Sonnet 4.6 (Thinking)\n"))
 	if len(list) != 2 || list[0].ID != "Gemini 3.5 Flash (Medium)" || list[0].Label != list[0].ID {

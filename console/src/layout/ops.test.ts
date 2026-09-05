@@ -67,13 +67,13 @@ describe("open/close/reset", () => {
   it("closing the selected view returns to the tab shown before it, not the neighbor", () => {
     let l = ops.freshTabbedLayout();
     for (const name of ["alpha", "beta", "gamma"]) l = ops.openInTab(l, target(name));
-    l = ops.selectView(l, "p1"); // 例: ミラーのタブを表示している状態
-    l = ops.openInTab(l, target("delta")); // そこからリンクを開く（末尾に追加され選択される）
+    l = ops.selectView(l, "p1"); // e.g. the mirror tab is the one on screen
+    l = ops.openInTab(l, target("delta")); // open a link from it (appended and selected)
     expect(ops.activeCell(l)?.selectedViewId).toBe("p4");
 
     const back = ops.closeView(l, "p4");
     expect(ops.activeCell(back)?.selectedViewId).toBe("p1");
-    // 戻った先が「今表示中」になるので、次に閉じたときの基準もそこから進む。
+    // The tab returned to becomes the one on screen, so the next close starts from there.
     const reopened = ops.openInTab(back, target("epsilon"));
     const again = ops.closeView(reopened, ops.activeView(reopened)!.id);
     expect(ops.activeCell(again)?.selectedViewId).toBe("p1");
@@ -83,7 +83,8 @@ describe("open/close/reset", () => {
     let l = ops.freshTabbedLayout();
     for (const name of ["alpha", "beta"]) l = ops.openInTab(l, target(name));
     l = ops.selectView(l, "p1");
-    // 裏のタブの差し替え（ミラーが開いているプラン面を書き換える経路）は「表示した」ではない。
+    // Retargeting a background tab (how the mirror rewrites an open plan surface) does not count
+    // as showing it.
     l = ops.setPaneTarget(l, "p2", { content: { kind: "doc", docTitle: "plan", docContent: "x" } });
     l = ops.openInTab(l, target("gamma"));
     expect(ops.activeCell(ops.closeView(l, "p3"))?.selectedViewId).toBe("p1");
@@ -169,13 +170,13 @@ describe("tab drag operations", () => {
     for (const name of ["alpha", "beta", "gamma"]) l = ops.openInTab(l, target(name));
     l = ops.selectView(l, "p1");
     l = ops.selectView(l, "p3");
-    l = ops.dropSplitTab(l, "p3", "g0", "right"); // 表示中の p3 を切り離す
+    l = ops.dropSplitTab(l, "p3", "g0", "right"); // tear out p3, the one on screen
     expect(ops.cellById(l, "g0")?.selectedViewId).toBe("p1");
 
-    l = ops.selectView(l, "p2"); // g0 を活性に戻してからもう 1 枚開く
-    l = ops.openInTab(l, target("delta")); // p4（末尾・選択される）
+    l = ops.selectView(l, "p2"); // make g0 active again, then open one more
+    l = ops.openInTab(l, target("delta")); // p4 (appended and selected)
     l = ops.selectView(l, "p1");
-    l = ops.selectView(l, "p2"); // 直前は p1、表示は p2
+    l = ops.selectView(l, "p2"); // previous is p1, on screen is p2
     const moved = ops.moveTab(l, "p2", ops.allCells(l)[1].id);
     expect(ops.cellById(moved, "g0")?.selectedViewId).toBe("p1");
   });
@@ -254,14 +255,13 @@ describe("layout v3 migration", () => {
   });
 });
 
-// ★ 初回ガイドの置き場所が依存している不変条件。新規ユーザーの初期レイアウトは
-// 「ビューを 1 つも持たないセル」で、端末ペインではない — だから TerminalView は
-// 一度もマウントされず、はじめかたガイドを TerminalView の空状態にだけ置いていた間は
-// いちばん見せたい相手にだけ出ていなかった（features/panes/Pane.tsx の EmptyPane が
-// 実際の初回画面）。ここが「最初から端末ペインがある」に戻るなら、ガイドの置き場所も
-// 見直すこと。
+// Invariant the placement of the getting-started guide depends on: a new user's initial layout is
+// a cell holding no views at all, not a terminal pane, so TerminalView never mounts and a guide
+// placed only in TerminalView's empty state is invisible to exactly the people it is for
+// (features/panes/Pane.tsx EmptyPane is the real first screen). If this ever goes back to "a
+// terminal pane from the start", revisit where the guide lives.
 describe("freshLayout", () => {
-  it("新規ユーザーにはペインが 1 枚も無い（初回画面は EmptyPane）", () => {
+  it("gives a new user no panes at all (the first screen is EmptyPane)", () => {
     const l = ops.freshLayout();
     expect(l.cols).toHaveLength(1);
     expect(l.cols[0].cells).toHaveLength(1);

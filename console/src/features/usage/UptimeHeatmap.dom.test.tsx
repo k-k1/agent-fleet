@@ -1,8 +1,8 @@
-// 稼働時間ヒートマップの描画（docs/log/83）。
+// Rendering of the uptime heatmap (docs/log/83).
 //
-// 見るのは**マスの顔つき**で、数字の中身ではない。3 値（未観測 / 停止 / 稼働）が
-// 3 通りの見た目になっていることが、この画面の主張そのものだからである。潰れると、
-// CP が落ちていた日が「誰も働かなかった日」として自信たっぷりに表示される。
+// What is checked is how a cell looks, not the numbers in it: the whole claim of this view is that
+// the three values (unobserved / stopped / running) look three different ways. Collapse them and a
+// day the CP was down is confidently drawn as a day nobody worked.
 import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -16,9 +16,8 @@ vi.mock("../../core/api/client.ts", () => ({
 
 const { UptimeHeatmap } = await import("./UptimeHeatmap.tsx");
 
-// ⚠️ タイムゾーンの固定はモジュール本体で。`beforeAll` に置くと describe の収集より
-// 後になり、収集時に時計を読む書き方をした瞬間「開発機だけ緑」になる（uptime.test.ts の
-// 同じ罠を 2026-09-01 に踏んだ）。
+// Pin the timezone in the module body. In `beforeAll` it runs after describe collection, so any
+// code that reads the clock at collection time is green on the developer's machine only.
 const ORIGINAL_TZ = process.env.TZ;
 process.env.TZ = "Asia/Tokyo";
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
@@ -30,12 +29,12 @@ afterAll(() => {
   delete g.IS_REACT_ACT_ENVIRONMENT;
 });
 
-// UTC 00 時 = ローカル 9 時（Asia/Tokyo）。ローカルで見ると:
-//   09 時 セッション 3 本・動いていたのは 1 本
-//   10 時 セッション 2 本・動いていたのは 0 本  ← 指標を変えると順位が入れ替わる
-//   11 時 稼働中だが Agent に届かず本数不明
-//   12 時 観測できたが停止
-//   13 時以降 ハートビートも無い＝未観測
+// UTC 00 = local 09:00 (Asia/Tokyo). Read locally:
+//   09:00 3 sessions, 1 of them busy
+//   10:00 2 sessions, 0 of them busy  <- switching the metric reorders these cells
+//   11:00 running, but the Agent was unreachable so the count is unknown
+//   12:00 observed but stopped
+//   13:00 onwards no heartbeat either = unobserved
 const DATA = {
   from: "2026-09-01",
   to: "2026-09-01",
@@ -72,7 +71,7 @@ const DATA = {
           max_sessions: 2,
           max_busy: 0,
         },
-        // 起きてはいたが Agent に届かなかった時間。
+        // An hour that was up but where the Agent could not be reached.
         { hour: "2026-09-01T02", samples: 12, running_secs: 3600 },
       ],
     },
@@ -98,50 +97,50 @@ afterEach(() => {
   host = null;
 });
 
-// 1 行目は日付の見出し、その下が 24 行 × 日数。
+// The first row is the date header; below it are 24 rows per day.
 const cells = () => [...(host?.querySelectorAll(".uh-cell") || [])];
 const cellAt = (hour: number) => cells()[hour];
 
-describe("マスの 3 値", () => {
-  it("24 時間ぶんのマスを 1 日ぶん出す", async () => {
+describe("the three values a cell can have", () => {
+  it("renders 24 cells for one day", async () => {
     await mount();
     expect(cells().length).toBe(24);
   });
 
-  it("稼働・停止・未観測が別の見た目になる", async () => {
+  it("makes running, stopped and unobserved look different", async () => {
     await mount();
-    // 9 時（UTC 00）は稼働。段は 1..5 のどれか。
+    // 09:00 (UTC 00) was running; the level is one of 1..5.
     expect(cellAt(9)!.className).toMatch(/uh-lv-[1-5]/);
-    // 12 時（UTC 03）はハートビートだけ＝停止。
+    // 12:00 (UTC 03) has only a heartbeat = stopped.
     expect(cellAt(12)!.className).toContain("uh-stopped");
-    // 13 時（UTC 04）はハートビートも無い＝未観測。
+    // 13:00 (UTC 04) has no heartbeat either = unobserved.
     expect(cellAt(13)!.className).toContain("uh-unobserved");
   });
 
-  // ⚠️ 起きていたが本数が分からない時間を「0 本」と同じ見た目にしない。
-  it("本数不明の時間には地模様が付く", async () => {
+  // An hour that was up but whose session count is unknown must not look like a count of zero.
+  it("hatches the cells whose session count is unknown", async () => {
     await mount();
     expect(cellAt(11)!.className).toContain("uh-unmeasured");
   });
 
-  // 色だけで意味を運ばない。読み上げでも「9/1 09:00 3.0」と読める。
-  it("状態は aria-label にも入る", async () => {
+  // Meaning never rides on colour alone; a screen reader reads out "9/1 09:00 3.0" as well.
+  it("puts the state in the aria-label too", async () => {
     await mount();
     expect(cellAt(12)!.getAttribute("aria-label")).toContain("停止");
     expect(cellAt(13)!.getAttribute("aria-label")).toContain("記録なし");
   });
 
-  it("応答が無くても落ちず、全部が未観測になる", async () => {
+  it("survives an empty response and marks everything unobserved", async () => {
     await mount(null);
     expect(cells().length).toBe(24);
     expect(cells().every((c) => c.className.includes("uh-unobserved"))).toBe(true);
   });
 });
 
-describe("指標の切り替え", () => {
-  // 濃さは「その指標の最大」に対する相対なので、指標を変えるとマスの順位が入れ替わる。
-  // 10 時はセッション 2 本（濃い）だが、動いていた本数は 0 本（最下段）。
-  it("動いていた本数に切り替えるとマスの順位が入れ替わる", async () => {
+describe("switching the metric", () => {
+  // Intensity is relative to the maximum of the chosen metric, so changing it reorders the cells.
+  // 10:00 has 2 sessions (dark) but 0 busy ones (the lowest level).
+  it("reorders the cells when switched to the busy-session count", async () => {
     await mount();
     expect(cellAt(10)!.className).toContain("uh-lv-4");
     const busy = [...(host?.querySelectorAll(".uh-metric") || [])].find((b) =>
@@ -156,22 +155,22 @@ describe("指標の切り替え", () => {
   });
 });
 
-describe("色を見分けられない読み手への逃げ道", () => {
-  it("表ビューに切り替えると値が数字で出る", async () => {
+describe("the way out for a reader who cannot tell the colours apart", () => {
+  it("shows the values as numbers when switched to the table view", async () => {
     await mount();
     const btn = [...(host?.querySelectorAll(".uh-tablebtn") || [])][0] as HTMLButtonElement;
     await act(async () => {
       btn.click();
     });
     const rows = [...(host?.querySelectorAll(".uh-table tbody tr") || [])];
-    // 稼働していた 3 時間ぶん（09・10・11 時）。停止と未観測は行にしない。
+    // The three hours that were running (09, 10, 11). Stopped and unobserved get no row.
     expect(rows.length).toBe(3);
     expect(rows[0].textContent).toContain("2026-09-01 09:00");
-    // 本数が分からない時間は数字ではなくその旨が出る。
+    // An hour with an unknown count says so instead of printing a number.
     expect(rows[2].textContent).toContain("本数不明");
   });
 
-  it("凡例は常に出る", async () => {
+  it("always renders the legend", async () => {
     await mount();
     expect(host?.querySelectorAll(".uh-legend .uh-swatch").length).toBe(7);
   });

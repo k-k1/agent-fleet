@@ -1,10 +1,10 @@
-// 通知センターの行見出しは、wording.ts が扱う kind を**全部**訳せていなければならない。
+// The notification center's row headings must translate every kind wording.ts handles.
 //
-// 実害: 引き継ぎ（docs/log/77）の 3 種と carried-interaction は wording() には分岐があるのに
-// 行見出しの表だけに無く、通知センターには `handoff-offer` と生の識別子が出ていた——日本語に
-// しても英語にしても訳が出ない、という報告の正体がこれ。型では気付けない（表は
-// Record<string, MsgKey> で、kind は文字列リテラルの分岐）ので、wording.ts の**ソースから**
-// kind を拾って突き合わせる。分岐を足して訳を忘れたら、ここが落ちる。
+// Damage: the three handoff kinds (docs/log/77) and carried-interaction had branches in wording()
+// but were missing from the heading table, so the center showed the raw identifier
+// `handoff-offer` in either locale. The types cannot catch it (the table is
+// Record<string, MsgKey> while the kinds are string-literal branches), so the kinds are scraped
+// out of wording.ts's *source* and compared. Add a branch, forget the translation, this fails.
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -13,7 +13,7 @@ import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
 
-/** wording() の `n.kind === "…"` 分岐に出てくる kind をソースから集める。 */
+/** Collect the kinds appearing in wording()'s `n.kind === "…"` branches from its source. */
 function kindsInWording(): string[] {
   const src = readFileSync(path.resolve(__dirname, "wording.ts"), "utf8");
   const out = new Set<string>();
@@ -21,22 +21,23 @@ function kindsInWording(): string[] {
   return [...out];
 }
 
-describe("通知の行見出し", () => {
-  it("wording() が扱う kind はすべて訳を持つ", () => {
+describe("notification row headings", () => {
+  it("every kind wording() handles has a translation", () => {
     const kinds = kindsInWording();
-    // 拾えなくなったら（書き方が変わった）検査が黙って空回りするので、下限も見る。
+    // If the scrape stops matching (the code was written differently) the check would silently
+    // measure nothing, so assert a lower bound too.
     expect(kinds.length).toBeGreaterThan(10);
     expect(kinds.filter((k) => !NOTIFICATION_KIND_LABELS[k])).toEqual([]);
   });
 
-  it("表の訳キーは ja/en 両方に実在する", () => {
+  it("the table's translation keys exist in both ja and en", () => {
     for (const key of Object.values(NOTIFICATION_KIND_LABELS)) {
       expect(ja[key], key).toBeTruthy();
       expect(en[key as keyof typeof en], key).toBeTruthy();
     }
   });
 
-  it("引き継ぎの通知が生の識別子のまま出ない", () => {
+  it("a handoff notification is not shown as a raw identifier", () => {
     setLocale("ja");
     expect(notificationKindLabel("handoff-offer")).toBe("引き継ぎが届きました");
     setLocale("en");
@@ -44,21 +45,22 @@ describe("通知の行見出し", () => {
     setLocale("ja");
   });
 
-  it("未知の kind は識別子へ落とす（新しい CP と古い Console）", () => {
+  it("an unknown kind falls back to the identifier (new CP, old Console)", () => {
     expect(notificationKindLabel("brand-new-kind")).toBe("brand-new-kind");
   });
 
-  it("引き継ぎが「利用上限がリセットされました」へ落ちない（末尾分岐の取り違え）", () => {
+  it("a handoff does not fall through to the usage-reset wording (the last-branch mix-up)", () => {
     setLocale("ja");
     const w = notificationWording({ kind: "handoff-offer", displayName: "残作業の続き", payload: {} });
     expect(w.title).toBe(ja["notif.handoff_offer.title"]);
     expect(w.body).toBe("残作業の続き");
   });
 
-  // アーキ変更で自動復旧できなかった残骸の通知（docs/decisions/0068）。対象はセッションでは
-  // なくワークスペースで、displayName は空——だから既定の「body = displayName」に乗ると
-  // **中身が空の通知**になる。行に出るのは payload の中身そのものでなければならない。
-  it("アーキ残骸は payload の対象を行に出す（displayName は空）", () => {
+  // Notification about residue an architecture change could not restore automatically
+  // (docs/decisions/0068). Its subject is the workspace, not a session, so displayName is empty:
+  // taking the default "body = displayName" would produce a notification with no content. The row
+  // must show the payload's contents themselves.
+  it("architecture residue puts the payload subject in the row (displayName is empty)", () => {
     setLocale("ja");
     const w = notificationWording({
       kind: "arch-residue",
@@ -67,12 +69,12 @@ describe("通知の行見出し", () => {
     });
     expect(w.title).toBe(ja["notif.arch_residue.title"]);
     expect(w.body).toBe("demo/node_modules, mytool");
-    // 末尾の usage-reset 文面へ落ちていないこと（schedule-* が踏んだのと同じ罠）。
+    // It must not fall through to the usage-reset wording at the end (the trap schedule-* hit).
     expect(w.body).not.toContain("上限");
     expect(w.speech).toBe(ja["notif.arch_residue.speech"]);
   });
 
-  it("アーキ残骸の payload が空でも本文が空にならない", () => {
+  it("architecture residue with an empty payload still has a body", () => {
     setLocale("ja");
     const w = notificationWording({ kind: "arch-residue", displayName: "", payload: {} });
     expect(w.body).toBe(ja["notif.arch_residue.body_generic"]);

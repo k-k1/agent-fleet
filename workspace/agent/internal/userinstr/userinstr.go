@@ -2,16 +2,17 @@
 // one body of markdown the workspace's owner writes once, which agent-fleet delivers
 // into every supported CLI's user-scope instruction position.
 //
-// 3 層のうち真ん中に当たる。上は**フリート方針**（イメージに焼き込まれた
-// workspace-notes.md・オペレーター所有）、下は**プロジェクト指示**（作業コピーの
-// CLAUDE.md / AGENTS.md・コミットされる）。ここはその中間で、
-// 「その人の働き方」— 報告の言語・確認の粒度・使ってほしい道具 — を置く。
+// It is the middle of three layers. Above it is the fleet policy (workspace-notes.md baked
+// into the image, owned by the operator); below it are the project instructions (a working
+// copy's CLAUDE.md / AGENTS.md, committed). This layer holds how one person works: the
+// language of reports, how finely to confirm, which tools they want used.
 //
-// このパッケージは**正本の読み書きと本文の組み立てだけ**を持ち、どの CLI のどこへ
-// 配るかは各 internal/agents/<kind> と package main の配布器（agent_instructions.go）
-// が持つ。理由は docs/log/60 §60.5-6 の原則「他人のファイルに書くより AF 専用ファイル＋
-// 参照を優先する」が kind ごとに手段を変えるため — 綴り方をここへ集めると、
-// kind を足すたびにこの層が太る。
+// The package owns only reading/writing the source of truth and assembling the body; where
+// in which CLI it gets delivered belongs to each internal/agents/<kind> and to package
+// main's distributor (agent_instructions.go). The principle in docs/log/60 §60.5-6 — prefer
+// an AF-owned file plus a reference over writing into someone else's file — takes a
+// different form per kind, so collecting the spellings here would make this layer grow with
+// every kind added.
 package userinstr
 
 import (
@@ -24,12 +25,13 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// MaxBytes は本文の上限。根拠は**費用**であって truncation ではない（docs/log/60 §60.9 —
-// codex の project_doc_max_bytes は global を含まないと実測済み）。フリート方針だけで
-// 毎セッション約 30KB が固定費として乗っており、その上に無制限を積ませない。
+// MaxBytes caps the body. The reason is cost, not truncation (docs/log/60 §60.9 — measured:
+// codex's project_doc_max_bytes does not cover the global one). The fleet policy alone adds
+// about 30KB of fixed cost per session; nothing unbounded is stacked on top of that.
 const MaxBytes = 8 * 1024
 
-// ErrTooLarge は上限超過。REST は 1 理由 = 1 コードで返す（docs/log/57 §4）。
+// ErrTooLarge means the body is over MaxBytes. REST answers one reason with one code
+// (docs/log/57 §4).
 var ErrTooLarge = errors.New("too_large")
 
 func notesPath() string { return filepath.Join(paths.AgentConfigDir(), "user-notes.md") }
@@ -41,14 +43,14 @@ func prefsPath() string { return filepath.Join(paths.AgentConfigDir(), "user-not
 func NotesPath() string { return notesPath() }
 func PrefsPath() string { return prefsPath() }
 
-// Prefs は適用先の選択。ポインタで「未設定（＝既定 ON）」と明示 false を区別する
-// （rtk トグルと同じ作法）。
+// Prefs selects where the body applies. Pointers distinguish unset (i.e. on by default)
+// from an explicit false, the same way the rtk toggles do.
 type Prefs struct {
 	Enabled *bool            `json:"enabled"`
 	Targets map[string]*bool `json:"targets"`
 }
 
-// State は正本のスナップショット。
+// State is a snapshot of the source of truth.
 type State struct {
 	Text  string
 	Prefs Prefs
@@ -114,9 +116,10 @@ func (s State) Body(kind string) string {
 	return Render(s.Text)
 }
 
-// header は AF が必ず前置する固定文。フラットな 1 ファイルへ合成する kind では
-// 階層の信号が消えるので、優先順位は**散文で**言うしかない（docs/log/60 §60.5-4）。
-// 読み手はモデルなので、フリート方針と同じ英語で書く（表示言語とは別軸 — ADR 0033）。
+// header is the fixed preamble AF always puts in front. Kinds that merge everything into
+// one flat file lose the signal of the layering, so the precedence has to be stated in prose
+// (docs/log/60 §60.5-4). The reader is a model, so it is written in English like the fleet
+// policy — a separate axis from the display language (ADR 0033).
 const header = "# User instructions (from the person who owns this workspace)\n\n" +
 	"These are the personal working preferences of this workspace's user. They apply to\n" +
 	"every session here. Where they conflict with the workspace guide above, the\n" +

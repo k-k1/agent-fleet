@@ -1,33 +1,37 @@
 package main
 
-// 単価表と「API 換算相当額（推定）」（docs/log/46 §9-2 の続き）。
+// The price table and the estimated API-equivalent cost (docs/log/46 §9-2).
 //
-// 実測コストを返すのは claude の**補助呼び出しだけ**（`total_cost_usd`）。セッション本体は
-// 転写から折り込むのでトークンしか無く、金額の列がずっと「—」だった。だが台帳は
-// in / out / cache_read / cache_create をモデル別に持っているので、**公表単価を掛ければ
-// 推定は出せる**。ここはその掛け算だけを担う。
+// Only claude's auxiliary calls return a measured cost (`total_cost_usd`). A session's own
+// consumption is folded from the transcript, so it carries tokens and nothing else, and its
+// money column stayed empty. The ledger does hold in / out / cache_read / cache_create per
+// model, so multiplying by the published prices yields an estimate. This file is that
+// multiplication and nothing else.
 //
-// 非交渉の約束（この2つを崩すと数字が嘘になる）:
-//   - **推定と実測は別の値**。usageAgg.CostEstUSD（推定）と CostUSD（実測）は決して
-//     足さない・混ぜない。1つの数字に2つの計測法を混ぜたものは、どちらとしても読めない。
-//   - **単価表に無いモデルは推定しない**（0 を出さない）。値付けできなかった消費は
-//     /usage/series の unpriced_spend で申告し、画面が「N% は値付けできていません」と
-//     言えるようにする。「測れていない」を 0 と書かないという ADR0029 §1-c の延長。
+// Two non-negotiable promises — break either and the numbers lie:
+//   - An estimate and a measurement are different values. usageAgg.CostEstUSD (estimated) and
+//     CostUSD (measured) are never added together or mixed. One number holding two ways of
+//     measuring cannot be read as either of them.
+//   - A model that is not in a price table is not estimated, and no 0 is emitted. Consumption
+//     that could not be priced is declared in /usage/series' unpriced_spend, so the screen can
+//     say "N% could not be priced". Writing "not measured" as 0 is what ADR0029 §1-c forbids.
 //
-// 保存はしない（rollup にも書かない）。単価は改定されるので、**読み出しのたびに今の表で
-// 掛け直す**方が、古い単価で焼いた金額がファイルに残るより正しい。
+// Nothing is stored, not even in the rollup. Prices get revised, so multiplying again with
+// today's table on every read is more correct than leaving amounts baked at an old price in a
+// file.
 
 import (
 	"strings"
 	"unicode"
 )
 
-// usagePrice は 100万トークンあたりの USD（プロバイダの公表単価）。
+// usagePrice is USD per million tokens (the provider's published price).
 //
-// CacheRead / CacheWrite は出所が明示している時だけ入る。**0 は「単価 0」ではなく
-// 「未提供」**として倍率へ落とす（内蔵表は倍率が公表値なので常に 0 で置いてある）。
-// 上流が本当に 0 を公表しているごく安いモデルでは、倍率で置いた分だけ上振れするが、
-// 桁で言えば誤差（$0.075/MTok のモデルで $0.09 相当）なのでこの単純さを採る。
+// CacheRead / CacheWrite are filled in only when the source states them. A 0 means "not
+// provided", not "costs nothing", and falls back to the multiplier (the built-in table always
+// leaves them 0 because there the multipliers are the published figures). On a very cheap
+// model where upstream really does publish 0 the multiplier overshoots, but by an order of
+// magnitude that is noise ($0.09 worth on a $0.075/MTok model), so take the simplicity.
 type usagePrice struct {
 	In         float64
 	Out        float64
@@ -35,7 +39,7 @@ type usagePrice struct {
 	CacheWrite float64
 }
 
-// cacheRead / cacheWrite は「出所が言っていればその値、言っていなければ倍率」。
+// cacheRead and cacheWrite take the source's value when it states one, the multiplier otherwise.
 func (p usagePrice) cacheRead() float64 {
 	if p.CacheRead > 0 {
 		return p.CacheRead
@@ -50,27 +54,30 @@ func (p usagePrice) cacheWrite() float64 {
 	return p.In * usageCacheWriteMult
 }
 
-// キャッシュの倍率（Anthropic 公表）。書き込みは 5 分 TTL の 1.25 倍、読み出しは 0.1 倍。
-// **転写は 5m と 1h の内訳を残さない**（session_usage.go の CacheCreate は合算）ので、
-// 1h TTL（2 倍）で書かれた分はここでは 1.25 倍として数えられる＝推定は下振れしうる。
+// The cache multipliers Anthropic publishes: a write is 1.25x at the 5-minute TTL, a read
+// 0.1x. The transcript keeps no 5m/1h breakdown (CacheCreate in session_usage.go is a sum),
+// so tokens written at the 1h TTL (2x) are counted here at 1.25x — the estimate can come out
+// low.
 const (
 	usageCacheWriteMult = 1.25
 	usageCacheReadMult  = 0.10
 )
 
-// usagePrices は正規化済みモデル名 → 単価。**Anthropic の公表単価のみ**を人が確認して
-// 置いた表（2026-08 時点）。他プロバイダ（gpt-* / qwen* / glm-* …）はここでは持たず、
-// カタログ（usage_catalog.go）から引く — 手で写した表を全プロバイダぶん維持するのは
-// 続かないし、適当な既定値で埋めると根拠の無い数字が「推定額」の顔をして合計に混ざる。
-// カタログも無ければ**値付け不可のまま**（0 を出さない）。
+// usagePrices maps a normalized model name to its price: Anthropic's published prices only,
+// placed here by hand after a human checked them (as of 2026-08). Other providers (gpt-* /
+// qwen* / glm-* …) are not kept here but looked up in the catalog (usage_catalog.go) —
+// maintaining a hand-copied table for every provider does not last, and filling it with
+// plausible defaults mixes numbers with no basis into the total wearing the face of an
+// estimate. With no catalog either the consumption stays unpriced, and no 0 is emitted.
 //
-// 版込みの生 id（claude-haiku-4-5-20251001）や provider 付き（anthropic/claude-sonnet-5）は
-// usageNormalizeModel が畳んでからここを引く。
+// A raw versioned id (claude-haiku-4-5-20251001) or a provider-prefixed one
+// (anthropic/claude-sonnet-5) is folded by usageNormalizeModel before it reaches this table.
 var usagePrices = map[string]usagePrice{
-	// 現行世代
-	// fable 5.1 は 5 と同額（$10/$50）だが **cache read だけ $0.25/MTok**（倍率 0.1 =
-	// $1.00 ではない）。倍率で置くと 4 倍に膨らむので明示する。mythos 5.1 が同じ
-	// cache read かは上流が明言していない（launch 時点で未確定）ので倍率のままにする。
+	// Current generation.
+	// fable 5.1 costs the same as 5 ($10/$50) except for its cache read, $0.25/MTok rather
+	// than the 0.1 multiplier's $1.00; the multiplier would inflate it fourfold, so state it.
+	// Upstream does not say whether mythos 5.1 has the same cache read, so that one keeps the
+	// multiplier.
 	"claude-fable-5-1":  {In: 10, Out: 50, CacheRead: 0.25},
 	"claude-mythos-5-1": {In: 10, Out: 50},
 	"claude-fable-5":    {In: 10, Out: 50},
@@ -81,12 +88,12 @@ var usagePrices = map[string]usagePrice{
 	"claude-opus-4-6":   {In: 5, Out: 25},
 	"claude-opus-4-5":   {In: 5, Out: 25},
 	"claude-sonnet-5":   {In: 2, Out: 10},
-	// sonnet 4.6 は 4.5 と同じ $3/$15（sonnet 5 で $2/$10 に下がった）
+	// sonnet 4.6 is $3/$15, the same as 4.5 (sonnet 5 came down to $2/$10).
 	"claude-sonnet-4-6": {In: 3, Out: 15},
 	"claude-sonnet-4-5": {In: 3, Out: 15},
 	"claude-haiku-4-5":  {In: 1, Out: 5},
-	// 旧版。折り込みは過去の転写を遡って取り込む（バックフィルは数か月分が一度に入る）ので、
-	// 今は使っていないモデルの行が普通に出てくる。
+	// Older versions. Folding reaches back through past transcripts (a backfill takes in
+	// months at once), so rows for models nobody uses today turn up routinely.
 	"claude-opus-4-1":   {In: 15, Out: 75},
 	"claude-opus-4":     {In: 15, Out: 75},
 	"claude-opus-4-0":   {In: 15, Out: 75},
@@ -99,26 +106,27 @@ var usagePrices = map[string]usagePrice{
 	"claude-3-opus":     {In: 15, Out: 75},
 }
 
-// usageNormalizeModel は台帳のモデル名を単価表のキーへ畳む。台帳側は「報告された綴りを
-// そのまま系列キーにする」方針（usage_fold.go）なので、版・provider 接頭辞・別名の揺れは
-// **引く側**で吸収する。畳めなかったものはそのまま返す（＝表に無ければ値付け不可）。
+// usageNormalizeModel folds a ledger model name onto a price-table key. The ledger keeps the
+// reported spelling as the series key (usage_fold.go), so version suffixes, provider prefixes
+// and alias drift are absorbed on the lookup side. Anything it cannot fold is returned as is
+// (not in the table means unpriced).
 func usageNormalizeModel(model string) string {
 	s := strings.ToLower(strings.TrimSpace(model))
 	if s == "" {
 		return ""
 	}
-	// opencode / litellm 系の "provider/model"、Bedrock の "anthropic.claude-…"
+	// "provider/model" from opencode / litellm, "anthropic.claude-…" from Bedrock.
 	if i := strings.LastIndex(s, "/"); i >= 0 {
 		s = s[i+1:]
 	}
 	s = strings.TrimPrefix(s, "anthropic.")
-	// Vertex の "claude-opus-4-5@20251101"
+	// Vertex's "claude-opus-4-5@20251101".
 	if i := strings.Index(s, "@"); i >= 0 {
 		s = s[:i]
 	}
 	s = strings.TrimSuffix(s, "-latest")
-	// 版の日付（-20251001）を落とす。**8桁の数字の末尾だけ**を落とす — "claude-opus-4-8" の
-	// ような版番号を巻き込まないための桁数指定。
+	// Drop the version date (-20251001): only a trailing group of exactly 8 digits, so a
+	// version number like "claude-opus-4-8" is not swept up with it.
 	if i := strings.LastIndex(s, "-"); i > 0 && len(s)-i-1 == 8 && allDigits(s[i+1:]) {
 		s = s[:i]
 	}
@@ -134,22 +142,25 @@ func allDigits(s string) bool {
 	return s != ""
 }
 
-// 単価の出所（応答の prices[].src）。**どこの単価かを言わない金額は検算できない。**
+// Where a price came from (prices[].src in the response). An amount that will not say whose
+// price it used cannot be checked.
 const (
-	usagePriceSrcBuiltin = "builtin" // このファイルの表（Anthropic の一次単価・検証済み）
-	usagePriceSrcCatalog = "catalog" // models.dev（usage_catalog.go）
+	usagePriceSrcBuiltin = "builtin" // the table in this file (Anthropic's primary prices, verified)
+	usagePriceSrcCatalog = "catalog" // models.dev (usage_catalog.go)
 )
 
-// usagePriceOf は kind と model から単価を引く。第2戻り値が false = **値付け不可**
-// （推定しない＝0 を出さない）。
+// usagePriceOf looks up the price for a kind and model. A false bool return means the
+// consumption cannot be priced: no estimate, and no 0 either.
 //
-// 順序は「**その消費が実際に通った provider**」で決まる（docs/log/46 §5-c）:
-//  1. kind が anthropic 一次に当たる場合（claude など）は内蔵表を先に見る。こちらは
-//     公表値を人が確認して置いた表で、コミュニティ由来のカタログより信頼が高い
-//     （実測では models.dev の anthropic 値と完全一致した）。
-//  2. それ以外はカタログ。**opencode の消費は opencode ゲートウェイの価格**で換算する
-//     ＝利用者が実際に払う額に一番近い（2026-08-31 決定）。
-//  3. カタログに無ければ内蔵表へ落とす（モデル名が claude 系なら拾える）。
+// The order is decided by the provider the consumption actually went through
+// (docs/log/46 §5-c):
+//  1. When the kind hits Anthropic directly (claude and friends), consult the built-in table
+//     first: published figures a human checked, more trustworthy than the community-sourced
+//     catalog (measured: it matched models.dev's anthropic values exactly).
+//  2. Otherwise the catalog. opencode consumption is converted at the opencode gateway's
+//     prices, which is closest to what the user actually pays (decided 2026-08-31).
+//  3. Not in the catalog either: fall back to the built-in table, which still finds a
+//     claude-family model name.
 func usagePriceOf(kind, model string) (usagePrice, string, bool) {
 	base := usageNormalizeModel(model)
 	order := usageCatalogOrder(kind)
@@ -170,12 +181,13 @@ func usagePriceOf(kind, model string) (usagePrice, string, bool) {
 	return usagePrice{}, "", false
 }
 
-// usageEstCostUSD は集計値1つぶんの API 換算相当額（推定）。
+// usageEstCostUSD is the estimated API-equivalent cost of one aggregate.
 //
-//	= in×入力単価 + ccreate×キャッシュ書込単価 + cread×キャッシュ読取単価 + out×出力単価
+//	= in×input + ccreate×cache-write + cread×cache-read + out×output
 //
-// spend（= in + ccreate + out）ではなく4種を個別に掛ける。キャッシュ読取は spend の定義に
-// 入っていないが**課金はされる**ので、spend から金額を起こすと長い会話ほど実際より安く出る。
+// The four kinds are multiplied separately instead of using spend (= in + ccreate + out).
+// Cache reads are outside the definition of spend but are billed, so deriving the amount from
+// spend makes a conversation look cheaper the longer it runs.
 func usageEstCostUSD(kind, model string, a usageAgg) (float64, string, bool) {
 	p, src, ok := usagePriceOf(kind, model)
 	if !ok {

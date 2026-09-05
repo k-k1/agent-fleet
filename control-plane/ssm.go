@@ -67,10 +67,10 @@ func hostToDTO(h store.SSMHost) ssmHostDTO {
 		InstanceID: h.InstanceID, DocumentName: h.DocumentName, CreatedAt: h.CreatedAt}
 }
 
-// ssmConfigAPI は SSM ログイン設定の機能ハンドラ集（docs/log/23 残③）。解決は埋め込みの
-// memberAuth（登録側で withMembership に包む）、store は SSMStore の narrow view
-// だけを持つ。※ ssmAPI という名前は runtime_ecs.go の AWS SSM クライアント
-// インターフェースが先に使っているため避けた。
+// ssmConfigAPI holds the SSM login-configuration handlers. Identity resolution comes from
+// the embedded memberAuth (registration wraps these in withMembership) and the store is
+// only the narrow SSMStore view. The name avoids ssmAPI, which runtime_ecs.go already uses
+// for its AWS SSM client interface.
 type ssmConfigAPI struct {
 	memberAuth
 	store store.SSMStore
@@ -294,7 +294,7 @@ func ssmProfileName(label string) string {
 // coordinates. The client only sends {name, kind:"ssm", ssm_host_id}; the host's
 // instance/document/region and SSO config stay authoritative in the CP DB and
 // ownership is enforced here. Non-ssm requests pass through untouched.
-// 呼び手は workspaceAPI.sessionCreate のみなので receiver も workspaceAPI（docs/log/23 残③）。
+// The only caller is workspaceAPI.sessionCreate, hence the receiver.
 func (a workspaceAPI) rewriteSSMCreate(ctx context.Context, res *resolved, r *http.Request) *apiError {
 	var peek struct {
 		Name          string `json:"name"`

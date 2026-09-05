@@ -6,8 +6,8 @@ package mcpproj
 // URL/Headers) rather than round-tripping Extra — the same choice mcpreg's own
 // *Servers builders make (ClaudeServers, OpencodeServers, …): a written entry
 // looks like one the CLI itself would produce, not a patchwork of whatever the
-// SOURCE file happened to also carry (docs/log/56 §6, "新規作成するファイルの形は、
-// その CLI 自身が作るものに合わせる").
+// SOURCE file happened to also carry (docs/log/56 §6, "a newly created file takes the
+// shape the CLI itself would produce").
 
 import (
 	"fmt"
@@ -70,7 +70,7 @@ func toAnySlice(v []string) []any {
 // buildCodexBlock renders one `[mcp_servers.<name>]` TOML block for s, the same
 // shape materialize_codex.go's codexServerBlocks writes for the user scope —
 // re-implemented here (not shared) because it reads a mcpproj.Server, not a
-// mcpreg.ServerDef (ADR0040 決定15); the actual TOML syntax helpers
+// mcpreg.ServerDef (ADR0040 decision 15); the actual TOML syntax helpers
 // (mcpreg.TOMLString etc.) ARE shared.
 func buildCodexBlock(name string, s Server) string {
 	var b strings.Builder

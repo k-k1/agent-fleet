@@ -1,13 +1,14 @@
-// wiremap_convert_test.go — 「map → struct へ変換した 1 サイトが、ワイヤを 1 バイトも
-// 変えていない」ことの証明（CONTRACT-MAP / 脚③）。
+// wiremap_convert_test.go — proof that a site converted from map to struct changed not one
+// byte of the wire (CONTRACT-MAP / leg 3).
 //
-// 🔴 **旧 map リテラルはここに写して残す。** 変換したあと、production 側にはもう
-// 「元の形」がどこにも無い。**基準が消えるので、消さずにテストへ移す。**
-// 写しは production から機械的にコピーしたもので、**書き換えない**
-// （書き換えた瞬間、基準ではなく「新しい実装の別表現」になる）。
+// The old map literals are copied here and kept. Once a site is converted, production holds
+// the original shape nowhere, so the baseline would simply be gone: it moves into the test
+// instead of being deleted. The copies are mechanical copies of production and must not be
+// edited — edited, they stop being a baseline and become another expression of the new
+// implementation.
 //
-// ハーネス本体と罠の対照は wiremap_equiv_test.go。
-// ここは「どのサイトを変換し、その等価をどう示したか」だけを持つ。
+// The harness itself and the controls for its traps are in wiremap_equiv_test.go. This file
+// only records which sites were converted and how their equivalence is shown.
 package main
 
 import (
@@ -24,17 +25,17 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/wiretest"
 )
 
-// wiremapConvertedMarker — 変換で生まれた型の doc コメントに必ず書く印。
+// wiremapConvertedMarker is the mark that has to appear in the doc comment of every type
+// born from a conversion.
 //
-// 🔴 型名の接尾辞（`…Wire`）では判別できない。**`sessionWire` のように
-// CONTRACT-MAP より前から在る型が同じ綴りを持つ**ので、名前で拾うと
-// 「証明が要る型」と「元から struct だった型」が混ざる。
-// **「その型が map を置き換えたものか」は名前ではなく由来の情報**なので、
-// 由来をコメントに書き、それを機械が読む。
-const wiremapConvertedMarker = "旧: map[string]any"
+// A name suffix (`…Wire`) cannot tell them apart: types that predate CONTRACT-MAP, such as
+// `sessionWire`, spell it the same way, so picking by name mixes "needs a proof" with "was
+// always a struct". Whether a type replaced a map is provenance, not naming, so the
+// provenance goes into the comment and the machine reads that.
+const wiremapConvertedMarker = "was: map[string]any"
 
-// wiremapConvertedWireTypes は「map を置き換えた」と doc コメントで宣言している
-// struct 型の名前を返す。
+// wiremapConvertedWireTypes returns the names of the struct types whose doc comment declares
+// that they replaced a map.
 func wiremapConvertedWireTypes(t *testing.T, root string) []string {
 	t.Helper()
 	var out []string
@@ -68,13 +69,13 @@ func wiremapConvertedWireTypes(t *testing.T, root string) []string {
 		return nil
 	})
 	if err != nil {
-		t.Fatalf("走査に失敗: %v", err)
+		t.Fatalf("scan failed: %v", err)
 	}
 	sort.Strings(out)
 	return out
 }
 
-// --- ① egressAPI.checkHosts（Console: EgressCheck）---
+// --- (1) egressAPI.checkHosts (Console: EgressCheck) ---
 
 type egressCheckIn struct {
 	Configured bool
@@ -87,12 +88,12 @@ func TestWireEquivEgressCheck(t *testing.T) {
 	inputs := []egressCheckIn{
 		{Configured: true, Mode: "enforce", Enforce: true,
 			Hosts: map[string]egressHostVerdict{"a.example": {Host: "a.example", Allowed: true, Proposed: false}}},
-		// 呼び出し側は make() 済みなので nil にはならないが、**空 map と nil map は
-		// `{}` と `null` で別物**なので両方測る。
+		// The caller has already make()d it, so it is never nil there; but an empty map
+		// and a nil map are `{}` and `null` on the wire, so measure both.
 		{Configured: false, Mode: "log-only", Enforce: false, Hosts: map[string]egressHostVerdict{}},
 	}
 	got := wiretest.AssertEquiv(t, "egressAPI.checkHosts", inputs,
-		func(in egressCheckIn) any { // 旧（egress_member.go の map リテラルの写し）
+		func(in egressCheckIn) any { // old (copy of the map literal in egress_member.go)
 			return map[string]any{
 				"configured": in.Configured, "mode": in.Mode, "enforce": in.Enforce, "hosts": in.Hosts,
 			}
@@ -102,10 +103,10 @@ func TestWireEquivEgressCheck(t *testing.T) {
 				Configured: in.Configured, Mode: in.Mode, Enforce: in.Enforce, Hosts: in.Hosts,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ② adminAPI.hostStats（Console: HostStats）---
+// --- (2) adminAPI.hostStats (Console: HostStats) ---
 
 type hostStatsIn struct {
 	Load1    float64
@@ -117,12 +118,12 @@ type hostStatsIn struct {
 func TestWireEquivHostStats(t *testing.T) {
 	inputs := []hostStatsIn{
 		{Load1: 1.25, Ncpu: 8, MemUsed: 3 << 30, MemTotal: 10 << 30},
-		// 🔴 uint64 を float64 で受け直していないことを実際に測る標本。
-		// 2^53 を超える値は float64 では正確に表せない。
+		// A sample that actually measures that uint64 is not taken back through float64:
+		// beyond 2^53 a float64 cannot represent the value exactly.
 		{Load1: 0, Ncpu: 1, MemUsed: 1<<53 + 1, MemTotal: 1<<62 + 3},
 	}
 	got := wiretest.AssertEquiv(t, "adminAPI.hostStats", inputs,
-		func(in hostStatsIn) any { // 旧（metrics.go の map リテラルの写し）
+		func(in hostStatsIn) any { // old (copy of the map literal in metrics.go)
 			return map[string]any{
 				"load1": in.Load1, "ncpu": in.Ncpu, "mem_used": in.MemUsed, "mem_total": in.MemTotal,
 			}
@@ -132,10 +133,10 @@ func TestWireEquivHostStats(t *testing.T) {
 				Load1: in.Load1, Ncpu: in.Ncpu, MemUsed: in.MemUsed, MemTotal: in.MemTotal,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ③ updateStatus（Console: HostUpdateStatus）---
+// --- (3) updateStatus (Console: HostUpdateStatus) ---
 
 type updateStatusIn struct {
 	Current   string
@@ -146,12 +147,12 @@ type updateStatusIn struct {
 func TestWireEquivUpdateStatus(t *testing.T) {
 	inputs := []updateStatusIn{
 		{Current: "v1", Installed: "v2", Systemd: true},
-		// installed="" が「staged 無し」の表現。**キーは出続けなければならない。**
+		// installed="" is how "nothing staged" is expressed; the key must keep appearing.
 		{Current: "v1", Installed: "", Systemd: false},
-		{Current: "v1", Installed: "v1", Systemd: false}, // 同版＝restartRequired false
+		{Current: "v1", Installed: "v1", Systemd: false}, // same version = restartRequired false
 	}
 	got := wiretest.AssertEquiv(t, "updateStatus", inputs,
-		func(in updateStatusIn) any { // 旧（update.go の map リテラルの写し）
+		func(in updateStatusIn) any { // old (copy of the map literal in update.go)
 			return map[string]any{
 				"current":         in.Current,
 				"installed":       in.Installed,
@@ -167,12 +168,12 @@ func TestWireEquivUpdateStatus(t *testing.T) {
 				Systemd:         in.Systemd,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ④ workItemsAPI.workItemsPayload（Console: WorkItemPayload）---
+// --- (4) workItemsAPI.workItemsPayload (Console: WorkItemPayload) ---
 //
-// 形状関数なので、これ 1 つで 3 サイト（list ×1 / refresh ×2）が型を得る。
+// A shape function, so this one conversion types three sites (list x1 / refresh x2).
 
 type workItemsPayloadIn struct {
 	Items     []workItemDTO
@@ -190,9 +191,9 @@ func TestWireEquivWorkItemsPayload(t *testing.T) {
 			Sessions:  []workItemSessionDTO{{ID: "s1"}},
 			FetchedAt: "2026-09-03T00:00:00Z", Running: true,
 		},
-		// 🔴 production は make(…, 0, n) 済みなので**空スライス**が出る。
-		// nil スライスは `null`・空スライスは `[]` で**別物**なので、両方を測る
-		//（ゼロ値ケース＝全部 nil はハーネスが自動で足す）。
+		// Production has already done make(…, 0, n), so an empty slice goes out. A nil
+		// slice is `null` and an empty slice is `[]` — different, so measure both (the
+		// zero-value case, everything nil, is added by the harness itself).
 		{
 			Items:    []workItemDTO{},
 			Queries:  []workItemQueryDTO{},
@@ -200,7 +201,7 @@ func TestWireEquivWorkItemsPayload(t *testing.T) {
 		},
 	}
 	got := wiretest.AssertEquiv(t, "workItemsAPI.workItemsPayload", inputs,
-		func(in workItemsPayloadIn) any { // 旧（workitems.go の map リテラルの写し）
+		func(in workItemsPayloadIn) any { // old (copy of the map literal in workitems.go)
 			return map[string]any{
 				"items": in.Items, "queries": in.Queries, "sessions": in.Sessions,
 				"fetchedAt": in.FetchedAt, "running": in.Running,
@@ -212,12 +213,12 @@ func TestWireEquivWorkItemsPayload(t *testing.T) {
 				FetchedAt: in.FetchedAt, Running: in.Running,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ⑤ gitServerAPI.blob（Console: Blob）---
+// --- (5) gitServerAPI.blob (Console: Blob) ---
 //
-// 4 つの出口がそれぞれ違うキー集合を返す。**出口ごとに 1 ケース**置く。
+// The four exits each return a different key set, so there is one case per exit.
 
 type gitBlobIn struct {
 	Ref, Path string
@@ -226,7 +227,7 @@ type gitBlobIn struct {
 	LFS       bool
 	LFSOID    string
 	Binary    bool
-	Content   *string // nil = キー無し / &"" = 空ファイル（キーは出る）
+	Content   *string // nil = no key / &"" = empty file (the key is emitted)
 }
 
 func TestWireEquivGitBlob(t *testing.T) {
@@ -237,12 +238,12 @@ func TestWireEquivGitBlob(t *testing.T) {
 		{Ref: "main", Path: "x.psd", Size: 12, LFS: true,
 			LFSOID: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"},
 		{Ref: "main", Path: "y.bin", Size: 3, Binary: true},
-		// 🔴 空ファイル。旧は `"content": ""` を**出す**。string+omitempty なら消えるので、
-		// ここが赤くならないなら Content をポインタにした意味が無い。
+		// Empty file. The old shape does emit `"content": ""`; string+omitempty would drop
+		// it, so if this case never goes red, making Content a pointer bought nothing.
 		{Ref: "main", Path: "empty.txt", Size: 0, Content: &empty},
 	}
 	got := wiretest.AssertEquiv(t, "gitServerAPI.blob", inputs,
-		func(in gitBlobIn) any { // 旧（internal_git_browse.go の resp の写し）
+		func(in gitBlobIn) any { // old (copy of resp in internal_git_browse.go)
 			resp := map[string]any{"ref": in.Ref, "path": in.Path, "size": in.Size}
 			if in.TooLarge {
 				resp["too_large"] = true
@@ -266,20 +267,20 @@ func TestWireEquivGitBlob(t *testing.T) {
 				TooLarge: in.TooLarge, LFS: in.LFS, LFSOID: in.LFSOID,
 				Binary: in.Binary, Content: in.Content}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ⑥ gitServerAPI.repoDTO（Console: InternalRepo）---
+// --- (6) gitServerAPI.repoDTO (Console: InternalRepo) ---
 
 type internalRepoIn struct{ Name, DefaultBranch, CloneURL, CreatedAt string }
 
 func TestWireEquivInternalRepo(t *testing.T) {
 	inputs := []internalRepoIn{
 		{Name: "web", DefaultBranch: "main", CloneURL: "https://x/git/web", CreatedAt: "2026-09-03T00:00:00Z"},
-		{Name: "bare", DefaultBranch: "", CloneURL: "", CreatedAt: ""}, // 空文字でもキーは出る
+		{Name: "bare", DefaultBranch: "", CloneURL: "", CreatedAt: ""}, // keys appear even when empty
 	}
 	got := wiretest.AssertEquiv(t, "gitServerAPI.repoDTO", inputs,
-		func(in internalRepoIn) any { // 旧（internal_git.go の map リテラルの写し）
+		func(in internalRepoIn) any { // old (copy of the map literal in internal_git.go)
 			return map[string]any{
 				"name": in.Name, "default_branch": in.DefaultBranch,
 				"clone_url": in.CloneURL, "created_at": in.CreatedAt, "provider": "internal",
@@ -289,13 +290,13 @@ func TestWireEquivInternalRepo(t *testing.T) {
 			return internalRepoWire{Name: in.Name, DefaultBranch: in.DefaultBranch,
 				CloneURL: in.CloneURL, CreatedAt: in.CreatedAt, Provider: "internal"}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// --- ⑦ sessionHandoffAPI の 2 変種（Console: HandoffOffer）---
+// --- (7) the two variants of sessionHandoffAPI (Console: HandoffOffer) ---
 //
-// 🔴 **同じ TS 型 `HandoffOffer` を 2 つの窓口が分担して埋めている**（create=13 / listReceived=16）。
-// **両方**を測らないと、狭いほうだけ守って広いほうを落とす。
+// One TS type, `HandoffOffer`, is filled in by two endpoints between them (create=13 /
+// listReceived=16). Measure both, or the narrow one is protected while the wide one is lost.
 
 type handoffIn struct {
 	ID, SessionID, SessionName, RecipientUserKey, Title, Status  string
@@ -304,7 +305,7 @@ type handoffIn struct {
 	OwnerUserKey, Prompt, SourceSessionKind                      string
 }
 
-func handoffOldBase(in handoffIn) map[string]any { // 旧 handoffOfferDTO の写し
+func handoffOldBase(in handoffIn) map[string]any { // copy of the old handoffOfferDTO
 	return map[string]any{
 		"id": in.ID, "sessionId": in.SessionID, "sessionName": in.SessionName,
 		"recipientUserKey": in.RecipientUserKey, "title": in.Title, "status": in.Status,
@@ -330,8 +331,8 @@ func handoffInputs() []handoffIn {
 			Status: "pending", Branch: "b", RepoRemote: "r", HeadSha: "h",
 			CreatedAt: "c", ExpiresAt: "e", DecidedAt: "d", AcceptedSessionName: "a",
 			OwnerUserKey: "u1", Prompt: "本文", SourceSessionKind: "claude"},
-		// 🔴 **omitempty を使わなかった理由そのもの**: keys[…] にキーが無ければ
-		// ownerUserKey は ""、a.open() は空を返しうる。旧はそれを**キーごと出す**。
+		// Exactly why omitempty was not used: with no key in keys[…] ownerUserKey is "",
+		// and a.open() may return empty. The old shape emits those keys all the same.
 		{ID: "o2", Status: "withdrawn", OwnerUserKey: "", Prompt: "", SourceSessionKind: ""},
 	}
 }
@@ -340,12 +341,12 @@ func TestWireEquivHandoffOfferCreate(t *testing.T) {
 	got := wiretest.AssertEquiv(t, "sessionHandoffAPI.create", handoffInputs(),
 		func(in handoffIn) any { return handoffOldBase(in) },
 		func(in handoffIn) any { return handoffNewBase(in) })
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
 func TestWireEquivHandoffOfferInbox(t *testing.T) {
 	got := wiretest.AssertEquiv(t, "sessionHandoffAPI.listReceived", handoffInputs(),
-		func(in handoffIn) any { // 旧: DTO に 3 キーを後から足していた形の写し
+		func(in handoffIn) any { // old (copy of the shape that appended three keys to the DTO)
 			d := handoffOldBase(in)
 			d["ownerUserKey"] = in.OwnerUserKey
 			d["prompt"] = in.Prompt
@@ -360,17 +361,17 @@ func TestWireEquivHandoffOfferInbox(t *testing.T) {
 				SourceSessionKind: in.SourceSessionKind,
 			}
 		})
-	t.Logf("突き合わせ方式: %s", got)
+	t.Logf("comparison mode: %s", got)
 }
 
-// TestWireHandoffKeyCountsAreIndependentlyFixed — **絶対数を独立に固定する。**
+// TestWireHandoffKeyCountsAreIndependentlyFixed pins the absolute key counts independently.
 //
-// 🔴 等価ハーネスは「旧の写しと新が同じ」しか見ない。**写しそのものを取り違えていたら、
-// 両方が同じだけ間違ったまま緑になる。**（今日のウェーブで 3 度出た形の最後の 1 つ:
-// 「独立に測ったつもりの 2 つが一致したときこそ系統誤差を疑う」。）
-// そこで**出力キーの個数を写しに依存しない絶対値として固定する**。
-// 埋め込みで実効 json 名が衝突すると encoding/json は**どちらも出さない**ので、
-// その事故もここで数が減って捕まる。
+// The equivalence harness only sees "the copy of the old and the new agree". Get the copy
+// itself wrong and both are wrong by the same amount while staying green — when two
+// supposedly independent measurements agree is exactly when to suspect a systematic error.
+// So the number of output keys is pinned as an absolute value that does not depend on the
+// copy. That also catches an embedding whose effective json names collide: encoding/json
+// emits neither of them, and the count drops here.
 func TestWireHandoffKeyCountsAreIndependentlyFixed(t *testing.T) {
 	in := handoffInputs()[0]
 	for _, tc := range []struct {
@@ -378,8 +379,8 @@ func TestWireHandoffKeyCountsAreIndependentlyFixed(t *testing.T) {
 		v    any
 		want int
 	}{
-		{"create（基本形）", handoffNewBase(in), 13},
-		{"listReceived（受信箱）", handoffOfferInboxWire{
+		{"create (the base shape)", handoffNewBase(in), 13},
+		{"listReceived (the inbox)", handoffOfferInboxWire{
 			handoffOfferWire:  handoffNewBase(in),
 			OwnerUserKey:      in.OwnerUserKey,
 			Prompt:            in.Prompt,
@@ -400,21 +401,21 @@ func TestWireHandoffKeyCountsAreIndependentlyFixed(t *testing.T) {
 				keys = append(keys, k)
 			}
 			sort.Strings(keys)
-			t.Errorf("%s のキー数 = %d, want %d\n  実際: %v\n"+
-				"  減っているなら埋め込みで実効 json 名が衝突している疑い"+
-				"（encoding/json は同深さで同名ならどちらも出さない）。", tc.name, len(m), tc.want, keys)
+			t.Errorf("%s: key count = %d, want %d\n  got: %v\n"+
+				"  if it dropped, suspect an embedded field whose effective json name collides "+
+				"(encoding/json emits neither when two names clash at the same depth).", tc.name, len(m), tc.want, keys)
 		}
 	}
 }
 
-// TestWireEquivConvertedSitesAreAllCovered — この PR で変換した形状に
-// 等価テストが 1 本ずつ在ることを機械で見る。
+// TestWireEquivConvertedSitesAreAllCovered checks by machine that every converted shape has
+// exactly one equivalence test.
 //
-// 🔴 **なぜ要るか**: 変換だけして等価テストを書き忘れても、**全ゲートは緑のまま通る**
-// （型検査は通り、ゴールデンからはそのサイトが消えるだけ）。
-// 「証明が付いていない変換」を捕まえる網が他に無い。
+// Converting and forgetting the equivalence test passes every gate green — the type check
+// succeeds and the site merely disappears from the golden files — and nothing else catches a
+// conversion with no proof attached.
 func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
-	// 変換した wire 型 → 等価テストの名前。**型を足したらここも足す。**
+	// converted wire type -> name of its equivalence test. Add a type, add it here too.
 	covered := map[string]string{
 		"egressCheckWire":       "TestWireEquivEgressCheck",
 		"hostStatsWire":         "TestWireEquivHostStats",
@@ -424,8 +425,9 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 		"internalRepoWire":      "TestWireEquivInternalRepo",
 		"handoffOfferWire":      "TestWireEquivHandoffOfferCreate",
 		"handoffOfferInboxWire": "TestWireEquivHandoffOfferInbox",
-		// internal/tenantsrv に在る型。wire 型が非公開なので**証明はそのパッケージの中**
-		// （control-plane/internal/tenantsrv/wiremap_convert_test.go）。
+		// Types living in internal/tenantsrv. Their wire types are unexported, so the
+		// proof is inside that package
+		// (control-plane/internal/tenantsrv/wiremap_convert_test.go).
 		"tenantNetworkWire":      "TestWireEquivTenantNetwork（internal/tenantsrv）",
 		"tenantNetworkSavedWire": "TestWireEquivTenantNetworkSaved（internal/tenantsrv）",
 		"tenantSlotClassWire":    "TestWireEquivTenantSlotClass（internal/tenantsrv）",
@@ -434,8 +436,8 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 	declared := wiremapConvertedWireTypes(t, ".")
 	for _, name := range declared {
 		if _, ok := covered[name]; !ok {
-			t.Errorf("%s は CONTRACT-MAP が足した wire 型だが、等価テストが登録されていない。"+
-				"変換だけして証明を書き忘れると全ゲート緑のまま通るので、ここで止める。", name)
+			t.Errorf("%s is a wire type CONTRACT-MAP added, but no equivalence test is registered for it. "+
+				"Converting and forgetting the proof passes every gate green, so stop here.", name)
 		}
 	}
 	for name := range covered {
@@ -447,11 +449,11 @@ func TestWireEquivConvertedSitesAreAllCovered(t *testing.T) {
 			}
 		}
 		if !found {
-			t.Errorf("%s の等価テストが登録されているが、型がソースに無い（消したなら表からも消すこと）", name)
+			t.Errorf("an equivalence test is registered for %s, but the type is not in the source (if you deleted it, delete it from this table too)", name)
 		}
 	}
 	if len(declared) == 0 {
-		t.Fatal("wire 型を 1 つも見つけられなかった（走査が壊れている）")
+		t.Fatal("not a single wire type was found (the scan is broken)")
 	}
-	t.Logf("変換済みの wire 型: %d 個", len(declared))
+	t.Logf("converted wire types: %d", len(declared))
 }

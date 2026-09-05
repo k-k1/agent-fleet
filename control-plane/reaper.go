@@ -18,7 +18,7 @@ import (
 // RAM as workspaces go cold:
 //
 //	Tier 1 — session auto-stop: an idle claude session (jsonl-durable, so
-//	  resumable) is halted into 停止中 once it has sat idle past the tenant's
+//	  resumable) is halted into "stopped" once it has sat idle past the tenant's
 //	  session_idle_timeout. This frees the heavy claude process while the
 //	  container keeps running. Shells are NOT halted here (halt = kill and a
 //	  shell's live process/jobs are not durable) — they ride tier 2.
@@ -51,9 +51,10 @@ import (
 type connRegistry struct {
 	mu      sync.Mutex
 	wsConns map[string]int // workspaceID -> open long-lived conns (terminal/preview)
-	// wsAttn は wsConns のうち「人が触っていること」を条件に在席と数える接続の数
-	// （＝端末）。定時実行の起床が張る presence は無条件側に残る（人の打鍵が無いのは
-	// 当たり前で、それを不在と読むと配達中に Workspace を止めてしまう）。
+	// wsAttn is the subset of wsConns that counts as presence only while a human
+	// is still touching it (i.e. terminals). A presence held by a scheduled-run
+	// wake-up stays on the unconditional side: nobody is typing during a delivery,
+	// and reading that as absence would stop the workspace mid-delivery.
 	wsAttn    map[string]int
 	attached  map[string]map[string]int // workspaceID -> session name -> attached terminals
 	lastSeen  map[string]time.Time      // workspaceID -> last request activity
@@ -65,17 +66,17 @@ const (
 	workspacePresenceTTL       = 15 * time.Second
 )
 
-// presenceGrace は「打鍵の無い端末を、あと何分だけ在席と見なすか」（docs/log/75 P3）。
+// presenceGrace is how long a terminal with no keystrokes still counts as
+// presence. Without it, one forgotten Console tab holding a terminal pane open
+// renews the presence lease every 5s and the workspace never stops — and unlike
+// the other main cause of "it never stops" (a pending question), nothing on
+// screen tells the user they are still being billed.
 //
-// なぜ要るか: 端末ペインを開いた Console のタブを 1 枚閉じ忘れると、presence lease が
-// 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。これは question と並ぶ
-// 「止まらない」の主因で、しかも question と違って利用者は自分が課金を続けていることに
-// 気づけない（画面は何も言わない）。
-//
-// テナント別にしないのは、これが課金方針ではなく**人の注意**の定数だから — 30 分
-// 打鍵が無ければキーボードの前に人は居ない。実際に止まるまでの時間を決めるのは
-// 従来どおり ws_idle_timeout（テナント別）で、この値はその時計を「開きっぱなしの
-// ソケット」が止めてしまうのを防ぐだけ。0 で無効（＝従来どおりソケットがある限り在席）。
+// Deliberately not per-tenant: this is a constant about human attention, not a
+// billing policy — after 30 minutes without a keystroke nobody is at the
+// keyboard. How long until a stop actually happens is still ws_idle_timeout
+// (per-tenant); this value only keeps a permanently open socket from stopping
+// that clock. 0 disables it (any socket counts as presence).
 var presenceGrace = 30 * time.Minute
 
 var errWorkspaceStopping = errors.New("workspace idle stop is in progress")
@@ -120,7 +121,8 @@ func (r *connRegistry) addConn(wsID, session string, attention bool) {
 	r.lastSeen[wsID] = time.Now()
 	if attention {
 		r.wsAttn[wsID]++
-		// 開いた瞬間は「人が今そこに居る」— 打鍵を待たずに在席から始める。
+		// Opening it means someone is there now — start as present rather than
+		// waiting for the first keystroke.
 		r.lastInput[wsID] = time.Now()
 	}
 	if session != "" {
@@ -195,8 +197,9 @@ func (r *connRegistry) noteInput(wsID string) {
 
 // watched reports whether someone is present at this workspace right now.
 //
-// 接続の**有無**ではなく「人が触っているか」で答える（docs/log/75 原則 3）。端末以外の
-// 長命接続（定時実行の起床）は打鍵という概念を持たないので無条件に在席とする。
+// The answer is "is a human touching it", not "does a connection exist". A
+// long-lived connection that is not a terminal (a scheduled-run wake-up) has no
+// notion of a keystroke, so it counts as presence unconditionally.
 func (r *connRegistry) watched(wsID string, grace time.Duration, now time.Time) bool {
 	if r == nil {
 		return false
@@ -208,17 +211,18 @@ func (r *connRegistry) watched(wsID string, grace time.Duration, now time.Time) 
 		return false
 	}
 	if total > r.wsAttn[wsID] {
-		return true // 端末以外の接続が 1 本でもあれば在席
+		return true // any non-terminal connection counts as presence
 	}
 	if grace <= 0 {
-		return true // 機能オフ＝従来どおりソケットがある限り在席
+		return true // disabled: a socket alone counts as presence
 	}
 	li, ok := r.lastInput[wsID]
 	return ok && now.Sub(li) < grace
 }
 
-// attentionFresh は presence lease を更新し続けてよいかの判定（heartbeat から）。
-// 純関数に切ってあるのは、5 秒周期の goroutine を待たずにテストで固定するため。
+// attentionFresh reports whether the presence lease may keep being renewed
+// (called from the heartbeat). Split out as a pure function so tests can pin the
+// decision without waiting on the 5s goroutine.
 func (r *connRegistry) attentionFresh(wsID string, grace time.Duration, now time.Time) bool {
 	if r == nil || grace <= 0 {
 		return true
@@ -303,22 +307,24 @@ func (m *manager) trackWorkspaceConnection(ctx context.Context, wsID, session st
 // difference that decides whether idle-stop works at all: the lease is renewed only
 // while the human is still typing (docs/log/75 P3).
 //
-// なぜ端末だけ別扱いか: 端末ペインを開いた Console のタブを閉じ忘れると、この lease が
-// 5 秒ごとに更新され続け、**Workspace は永久に停止しない**。lease は「ソケットがある」
-// ことしか語れないのに、reaper はそれを「人が見ている」と読んでいた。返る noteInput を
-// 打鍵のたびに呼ぶことで、lease は「人が触っている」を語るようになる。
-// ★noteInput は打鍵の中継経路上で呼ばれる（proxy.go relay: onInput() → キーの転送）。
-// つまりここでブロックした時間は、そのまま**そのキーがエコーバックされるまでの遅延**に
-// なる。以前はここで recordWorkspaceActivity を同期呼び出ししており、5 秒に 1 回、
-// ある打鍵だけが DB 1 往復ぶん（activityLockFor を握ったまま）止まっていた。畳み込みが
-// 効いていても「1 打鍵に 1 書き込みではない」ことしか保証せず、当たった打鍵の遅延は
-// DB の応答時間そのものになる。端末は 1 文字の往復で品質が決まる面なので、在席の記録の
-// ために打鍵を待たせてはいけない。
+// Terminals need this because a socket only says "a connection exists", and a
+// forgotten Console tab with a terminal pane open would renew the lease forever.
+// Calling the returned noteInput on every keystroke makes the lease say "a human
+// is touching it" instead.
 //
-// 書き込みは専用の goroutine へ出し、容量 1 のチャネルで畳む: 書き込み中に来た打鍵は
-// 「もう 1 回やる」を 1 個だけ残して素通りする（在席は「最近打鍵があった」という単調な
-// 事実なので、取りこぼしても次の打鍵か heartbeat が同じ結論を書く）。in-memory 側の
-// noteInput は残す — reaper の在席判定はこれを読むので、即時であることに意味がある。
+// noteInput sits on the keystroke relay path (proxy.go relay: onInput() → key
+// forwarding), so any time spent blocking here is added latency before that key
+// echoes back. Never make a keystroke wait on the presence write: coalescing
+// only guarantees "not one write per keystroke", and the keystroke that does hit
+// the write pays the full DB round trip. A terminal is judged on the
+// single-character round trip.
+//
+// So the write goes to a dedicated goroutine behind a capacity-1 channel:
+// keystrokes arriving mid-write leave at most one "do it again" and pass
+// through. Presence is the monotone fact "there was a keystroke recently", so a
+// dropped signal is re-derived by the next keystroke or heartbeat. The in-memory
+// noteInput stays synchronous — the reaper's presence check reads it, and there
+// being immediate is the point.
 func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session string) (release func(), noteInput func(), err error) {
 	rel, err := m.trackPresence(ctx, wsID, session, true)
 	if err != nil {
@@ -334,8 +340,9 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			case <-stop:
 				return
 			case <-pending:
-				// 共有ウォーターマーク（last_seen_at）。force=false なので 5 秒に 1 回へ
-				// 畳まれ、大半の周回はロックとマップ参照だけで返る。
+				// The shared watermark (last_seen_at). force=false coalesces it
+				// to once per 5s, so most rounds return after a lock and a map
+				// lookup.
 				ctxHB, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 				_ = m.recordWorkspaceActivity(ctxHB, wsID, false)
 				cancel()
@@ -350,7 +357,7 @@ func (m *manager) trackWorkspaceTerminal(ctx context.Context, wsID, session stri
 			m.conns.noteInput(wsID)
 			select {
 			case pending <- struct{}{}:
-			default: // 書き込みが既に予約済み — 打鍵は待たない
+			default: // a write is already queued — the keystroke does not wait
 			}
 		}, nil
 }
@@ -370,8 +377,9 @@ func (m *manager) trackPresence(ctx context.Context, wsID, session string, atten
 		for {
 			select {
 			case <-ticker.C:
-				// 打鍵が途絶えた端末は在席を名乗るのをやめる。ticker は止めない —
-				// また打ち始めたら次の tick から lease が復活する。
+				// A terminal whose keystrokes stopped stops claiming presence.
+				// The ticker keeps running, so typing again revives the lease on
+				// the next tick.
 				if attention && !m.conns.attentionFresh(wsID, presenceGrace, time.Now()) {
 					continue
 				}
@@ -404,8 +412,10 @@ type reaper struct {
 	mgr        *manager
 	interval   time.Duration
 	sessionDef time.Duration
-	// interactionDef は「人の判断待ちで止まっているセッション」用の既定（docs/log/75 §75.5）。
-	// idle と分けるのは、答えが返るまでコンテナを起こし続けるのが費用そのものだから。
+	// interactionDef is the default for a session parked on a human decision
+	// (docs/log/75 §75.5).
+	// Kept separate from plain idle because keeping the container awake until the
+	// answer arrives is itself the cost.
 	interactionDef time.Duration
 	wsDef          time.Duration
 	hibDef         time.Duration
@@ -484,14 +494,16 @@ func (rp *reaper) sweep(ctx context.Context) {
 	}
 }
 
-// tierClocks は 1 テナントぶんの解決済みタイムアウト。5 つの (duration, enabled) を位置引数で
-// 回すと、段を足すたび全呼び出しを直すことになり、しかも取り違えても型は通る。
+// tierClocks is one tenant's resolved timeouts. A struct rather than five
+// (duration, enabled) positional arguments: those would have to be fixed at
+// every call site each time a tier is added, and swapping two of them still
+// type-checks.
 type tierClocks struct {
-	session     time.Duration // tier1: ターンが終わっただけの idle
-	interaction time.Duration // tier1: 人の判断待ち（docs/log/75 §75.5）
+	session     time.Duration // tier1: idle, the turn simply ended
+	interaction time.Duration // tier1: parked on a human decision (docs/log/75 §75.5)
 	ws          time.Duration // tier2
 	hibernate   time.Duration // tier3
-	backup      time.Duration // tier4（唯一「アイドル」ではない — 周期）
+	backup      time.Duration // tier4 (the only one that is not idleness — a period)
 
 	sessionOn     bool
 	interactionOn bool
@@ -500,7 +512,8 @@ type tierClocks struct {
 	backupOn      bool
 }
 
-// tier1For は 1 セッションに当てる時計を分類から選ぶ。畳んでよくないものは on=false。
+// tier1For picks the clock for one session from its activity class. Anything
+// that must not be folded away comes back on=false.
 func (c tierClocks) tier1For(s sessionWire) (time.Duration, bool) {
 	switch sessionActivity(s) {
 	case activityIdleWait:
@@ -546,26 +559,28 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 		return
 	}
 	sessions := env.Sessions
-	// busy = この Workspace を起こし続ける理由があるか。判定は sessionActivity
-	// （session_activity.go）に集約してある — 状態がどちらに属するかを reaper の中の
-	// インライン式で決めていた頃は、状態が増えるたび 2 箇所を手で合わせる必要があり、
-	// 実際 blocked / limited / spend_limit で 2 回ドリフトした。
-	// 取り込み中（docs/log/78）はセッションが 1 つも無くても仕事中。ここを見落とすと、
-	// 1 時間かかる clone / checkout の途中で Workspace が止まり、作業コピーは半端なまま
-	// 残る（中断そのものは検出できるが、失われた時間は戻らない）。
+	// busy = is there a reason to keep this workspace awake. Which state counts as
+	// which lives in sessionActivity (session_activity.go) and nowhere else;
+	// deciding it inline here too means two places to keep in sync every time a
+	// state is added, and that has drifted before.
+	// A repo import (docs/log/78) is work even with zero sessions. Miss it and the
+	// workspace stops in the middle of an hour-long clone/checkout, leaving a
+	// half-made working copy — the interruption is detectable, the lost time is not
+	// recoverable.
 	busy := env.RepoJobs > 0
 	for _, s := range sessions {
 		if holdsWorkspace(s) {
 			busy = true
 		}
-		// 畳むまでの時間は分類で変わる: ターンが終わっただけの idle は
-		// session_idle_timeout、人の判断待ちは interaction_idle_timeout。テナントは
-		// 「質問は早く畳んで安くしたい／うちは数時間待ってほしい」を独立に決められる。
+		// How long before folding depends on the class: a turn that simply ended
+		// uses session_idle_timeout, a wait on a human uses
+		// interaction_idle_timeout. A tenant sets the two independently ("fold
+		// questions away quickly to keep it cheap" vs "we want hours").
 		to, on := cl.tier1For(s)
-		// kind の門（docs/log/75 P5）: shell / ssm は halt が「走っているジョブを殺す」意味に
-		// なるので tier1 の対象にしない（p3-9 からの割り切り。守りたいときは
-		// 「自動停止しない」ピン）。それ以外＝エージェントのセッションは、claude も
-		// managed（codex / opencode / …）も halt が resumable なので畳んでよい。
+		// Gate on kind (docs/log/75 P5): for shell / ssm, halt means killing the
+		// running job, so they are out of tier 1 (to protect one, use the "never
+		// auto-stop" pin). Everything else — agent sessions, claude and managed
+		// (codex / opencode / …) alike — has a resumable halt and may be folded.
 		if !on || !tier1Foldable(s.Kind) || !tier1Reapable(s) {
 			continue
 		}
@@ -588,12 +603,13 @@ func (rp *reaper) sweepWorkspace(ctx context.Context, ws store.Workspace, cl tie
 
 	// Tier 2: stop the whole workspace once it is fully cold.
 	_, lastSeen, seen := rp.mgr.conns.snapshot(ws.ID)
-	// 在席は「接続の有無」ではなく「直近に人が触ったか」で見る（docs/log/75 P3）。
+	// Presence is "did a human touch it recently", not "is a connection open".
 	watched := rp.mgr.conns.watched(ws.ID, presenceGrace, now)
 	base := rp.idleBase(seen, lastSeen, ws.LastActiveAt)
-	// ★観測をそのまま公開する（docs/log/75 P4）。管理画面はこれを読むだけで判定をやり直さない
-	// ので、「なぜ止まらないか」を調べる画面が reaper と別の答えを出すことがない。
-	// wsOn が false のときも記録する — 「予定なし」と「機能が切ってある」は別物。
+	// Publish the observation as-is. The admin screen only reads this and never
+	// redoes the decision, so the screen for "why won't it stop" cannot give a
+	// different answer than the reaper. Recorded even when wsOn is false —
+	// "nothing scheduled" and "the feature is off" are not the same thing.
 	rp.mgr.putIdleForecast(ws.ID, idleForecast{
 		Enabled:    cl.wsOn,
 		StopAt:     base.Add(cl.ws),
@@ -728,10 +744,11 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 		log.Printf("idle-stop: lifecycle lost after claim %s: %v", ws.ContainerName, err)
 		return
 	}
-	// 止める前にアウトボックスを吸い出す（docs/log/75）。Agent の通知は Console が見に来た
-	// ときにしか drain されないので、ここで拾っておかないと「未回答のまま停止しました」が
-	// 次に Workspace を起こすまで誰にも届かない — 費用のために止めた結果、止めたことを
-	// 知らせる通知だけが止めたせいで消える。失敗しても停止は続ける（通知は次回拾える）。
+	// Drain the outbox before stopping. Agent notifications are drained only when
+	// the Console comes to look, so without this "stopped with your question
+	// unanswered" reaches nobody until the workspace is next woken — stopping to
+	// save cost would swallow the very notice that says it stopped. A failure here
+	// does not block the stop; the notification survives to the next drain.
 	drainCtx, cancelDrain := context.WithTimeout(lease.Context(), 5*time.Second)
 	drainAgentOutbox(drainCtx, rp.mgr.store, rt, ws.MembershipID)
 	cancelDrain()
@@ -751,7 +768,7 @@ func (rp *reaper) stopWorkspace(ctx context.Context, rt runtime.Runtime, ws stor
 
 // hibernatingRuntime is the optional capability behind tier 3: a runtime that can park a
 // stopped workspace's home somewhere cheaper and bring it back on the next Start. Only
-// ecs-ec2 implements it (snapshot the EBS home, delete the volume — ADR 0045 決定 4);
+// ecs-ec2 implements it (snapshot the EBS home, delete the volume — ADR 0045 decision 4);
 // every other runtime keeps the home where it is, so tier 3 is simply absent for them
 // rather than half-working.
 //
@@ -850,6 +867,5 @@ func (rp *reaper) homeIdleFor(wsID, dbLastActive string, hibTO time.Duration) bo
 	return time.Since(last) >= hibTO
 }
 
-// tier1 / tier2 が見る述語は session_activity.go（sessionActivity / holdsWorkspace /
-// tier1Reapable）に移した。ここに reapableIdle があった頃の集合は tier1Reapable が
-// そのまま引き継いでいる。
+// The predicates tier 1 and tier 2 consult live in session_activity.go
+// (sessionActivity / holdsWorkspace / tier1Reapable).

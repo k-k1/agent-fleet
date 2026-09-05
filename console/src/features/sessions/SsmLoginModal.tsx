@@ -3,7 +3,7 @@
 // (resume). Polls /api/sessions/{name}/ssm-login:
 //   authorize → shows the device-auth URL + code (manual open — the user must
 //               verify the code first; device-code phishing guard)
-//   pending   → 接続中 (cached-token case goes straight to ready)
+//   pending   → connecting (the cached-token case goes straight to ready)
 //   ready     → onReady(name) so the caller attaches
 //   error     → shows the failure
 // `start` (resume) first POSTs /start; `force` re-authenticates.

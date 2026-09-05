@@ -29,8 +29,9 @@
   white-space: nowrap;
 }
 
-/* 混んでいるレールにだけ出る 1 行の絞り込み（docs/log/80 §80.18.4）。クエリ UI ではないので
-   見た目も控えめに —— セクションの中に沈む地味な帯で、ボタンも演算子も持たない。 */
+/* One-line filter, shown only on a crowded rail (docs/log/80 §80.18.4). It is not a query UI,
+   so it stays understated: a plain band that sinks into the section, with no buttons and no
+   operators. */
 .wi-filter {
   display: flex;
   align-items: center;
@@ -56,8 +57,8 @@
   cursor: pointer;
 }
 
-/* 「さらに表示（残り N 件）」/「たたむ」。件数バッジは全件のままなので、この行が
-   「畳んでいるだけで隠していない」ことの説明になる。 */
+/* "Show more (N remaining)" / "Collapse". The count badge keeps reporting the full total, so
+   this row is what explains that the rest is collapsed, not hidden. */
 .wi-more {
   display: block;
   width: calc(100% - 16px);
@@ -79,8 +80,9 @@
   flex-direction: column;
 }
 
-/* ★ 行そのものが詳細を開く（§80.20）。ボタンを並べるのをやめた代わりに、行が押せる
-   ことは hover の地色とカーソルで言う —— レールの他の押せる行（sched-main）と同じ作法。 */
+/* The row itself opens the detail view (§80.20). Instead of a strip of buttons, the row says it
+   is pressable through its hover background and cursor, the same idiom as the rail's other
+   pressable rows (sched-main). */
 .wi-row {
   display: flex;
   align-items: center;
@@ -100,7 +102,7 @@
 .wi-row:hover {
   background: var(--hover, rgba(127, 127, 127, 0.08));
 }
-/* 完了行は消さずに沈める（クエリが求めた行を黙って隠さない）。 */
+/* Done rows are dimmed, not dropped (never silently hide a row the query asked for). */
 .wi-row.done {
   opacity: 0.55;
 }
@@ -137,9 +139,9 @@
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
-/* ★ 明示的に指定する。指定しないと body の 14px をそのまま継いで、レールの中で
-   この行だけ大きくなる（セッション行 .sess-l1 13px / スケジュール .sched-name
-   12.5px / メモ .memo-body 12px）。倣うのは同じ idiom のスケジュール行。 */
+/* Set explicitly: without it the row inherits body's 14px and is the only oversized row in the
+   rail (session row .sess-l1 13px / schedule .sched-name 12.5px / memo .memo-body 12px). It
+   follows the schedule row, which is the same idiom. */
 .wi-title {
   flex: 1 1 auto;
   min-width: 0;
@@ -148,8 +150,9 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 更新の相対時刻。★ 縮まない（flex 0 0 auto）—— 縮ませると「3日…」になって、
-   4 文字のために幅を取った意味が消える。省略されるのはタイトル側でよい。 */
+/* Relative time of the last update. It must not shrink (flex 0 0 auto): shrinking truncates it
+   to "3日…", which wastes the width reserved for those four characters. Truncate the title
+   instead. */
 .wi-when {
   flex: 0 0 auto;
   font-size: 10.5px;
@@ -157,9 +160,9 @@
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-/* ★ 1 行を 1 回だけ省略する。flex + 各要素 overflow:hidden にすると、実測で
-   「demo/we… @d… b… chec…」のように**チップごとに**省略が入り、全部が読めない
-   のに全部が居座る（実描画で確認）。行末で 1 回だけ切る。 */
+/* Truncate the line once, at its end. flex plus overflow:hidden on every element truncates per
+   chip instead; measured: "demo/we… @d… b… chec…", where nothing is readable yet everything
+   still occupies width. */
 .wi-meta {
   min-width: 0;
   font-size: 10.5px;
@@ -177,7 +180,7 @@
   padding: 0 5px;
 }
 
-/* 着手済み: 台帳に行があるあいだ出る。押すとそのセッションを開く。 */
+/* Started: shown while the ledger holds a row for this item. Pressing it opens that session. */
 .wi-started {
   flex: 0 0 auto;
   display: inline-flex;
@@ -202,7 +205,7 @@
 .wi-link:focus-visible {
   opacity: 1;
 }
-/* 粗いポインタ（タッチ）はホバーが無いので常時表示 —— でないと到達できない。 */
+/* A coarse pointer (touch) has no hover, so keep it visible or it cannot be reached. */
 @media (hover: none) {
   .wi-link {
     opacity: 1;
@@ -234,15 +237,15 @@
   margin-top: 5px;
 }
 
-/* --- detail modal (行を押すと開く 1 枚・§80.20) ----------------------------- */
+/* --- detail modal (one sheet, opened by pressing a row; §80.20) ------------- */
 
 .wi-dhead {
   display: flex;
   align-items: baseline;
   gap: 8px;
 }
-/* ★ ここだけは省略しない。レールの行が 1 行で切っているものを読みに来る面なので、
-   折り返してでも全文を出す（行の .wi-title とは正反対の扱い）。 */
+/* Never truncate here. This is the surface people open to read what the rail's row cut to one
+   line, so wrap and show the whole text (the opposite of .wi-title). */
 .wi-dtitle {
   margin: 0;
   font-size: 15px;
@@ -268,7 +271,7 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* 取得元。保存クエリの行と同じ見た目にして、どこから来た行かを 1 語で言う。 */
+/* Provenance. Styled like the saved-query row so one word says where the row came from. */
 .wi-dprov {
   display: inline-block;
   border: 1px solid var(--border);
@@ -284,7 +287,7 @@
   gap: 4px;
 }
 
-/* 本文を持たない代わりに、読みに行く先は必ず出す（§80.9 と同じ理由）。 */
+/* There is no body text, so always show where to go and read it (same reason as §80.9). */
 .wi-dlink {
   display: inline-flex;
   align-items: center;
@@ -341,7 +344,7 @@
   font-size: 11px;
 }
 
-/* --- start-target picker (詳細モーダルの中) --------------------------------- */
+/* --- start-target picker (inside the detail modal) -------------------------- */
 
 .wi-sfield {
   display: flex;
@@ -353,8 +356,8 @@
   padding: 6px 7px;
   border: 1px solid var(--border);
   border-radius: 5px;
-  /* 不透明の token（--input-bg は未定義。transparent だと暗色でドロップダウンの
-     選択肢が読めない）。 */
+  /* An opaque token (--input-bg is undefined, and with transparent the dropdown options are
+     unreadable on a dark theme). */
   background: var(--panel2);
   color: var(--fg);
   font-size: 13px;
@@ -451,8 +454,8 @@
 .wi-qlabel {
   font-size: 13px;
 }
-/* 取得元。1 本ずつ provider が違いうるので、行のどこかに出しておかないと
-   「なぜこのクエリだけ JQL なのか」が読めない。 */
+/* Provenance. Each query can use a different provider, so without it somewhere on the row there
+   is no way to tell why only this query is JQL. */
 .wi-qprov {
   display: inline-block;
   margin-right: 6px;
@@ -483,24 +486,26 @@
   gap: 8px;
 }
 .wi-qform label,
-/* 取得元はセグメント（button 3 つ）なので label で包めない。見出し＋コントロールの
-   縦並びだけ label と揃える。 */
+/* Provenance is a segmented control (three buttons), so it cannot be wrapped in a label. Only
+   the heading-above-control stacking is kept aligned with label. */
 .wi-qform .wi-qfield {
   display: flex;
   flex-direction: column;
   gap: 3px;
   font-size: 12px;
 }
-/* 「何を出すか」（Bitbucket・§80.23）。排他ではないのでチェック。行の器は他のダイアログと
-   同じ .ssm-check で、名前と説明を 1 行に並べる —— 3 つしかないので、選んだ物の説明だけを
-   出すより**全部の説明を常に出す**方が短く済み、選ぶ前に違いが読める。 */
+/* "What to list" (Bitbucket, §80.23). The options are not exclusive, so checkboxes. The row uses
+   the same .ssm-check container as the other dialogs, with name and description on one line:
+   with only three of them, always showing every description is shorter than showing only the
+   selected one, and the differences are readable before choosing. */
 .wi-qchecks {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-/* ⚠️ flex-direction を明示する。ここは `.wi-qform label`（見出しの上下並び）の中なので、
-   指定しないと 1 行が縦積みになり、チェックがラベルの上に浮く（実描画で確認）。 */
+/* Set flex-direction explicitly. This sits inside `.wi-qform label`, which stacks heading above
+   control, so without it the row stacks vertically and the checkbox floats above its label
+   (confirmed by rendering). */
 .wi-qchecks .ssm-check {
   flex-direction: row;
   align-items: baseline;
@@ -508,7 +513,7 @@
   cursor: pointer;
 }
 .wi-qchecks input {
-  /* baseline 揃えの行で、チェック自体は文字の高さに合わせる。 */
+  /* On a baseline-aligned row, the checkbox itself follows the text height. */
   align-self: center;
   margin: 0;
 }
@@ -522,27 +527,29 @@
   min-width: 0;
   overflow-wrap: anywhere;
 }
-/* 組み立て / 手書きの切り替え（Bitbucket・§80.23）。フォームの他の行と同じ左端に置き、
-   ボタンらしく見せない —— 「今の入力を捨てる」操作ではなく、書き方を選ぶ導線なので。 */
+/* Builder / hand-written toggle (Bitbucket, §80.23). Placed at the same left edge as the other
+   form rows and not styled as a button: it only chooses how the query is written, it does not
+   discard the current input. */
 .wi-qform .wi-qmode {
   align-self: flex-start;
   font-size: 12px;
 }
-/* 組み立て結果のプレビュー。行のクエリ（.wi-qquery）と同じ字面にしてあるのは、
-   保存後の行と見比べられるようにするため。 */
+/* Preview of the assembled query. It uses the same type as the row's query (.wi-qquery) so it
+   can be compared against the row after saving. */
 .wi-qform .wi-qfield code.wi-qquery {
   padding: 4px 7px;
   border: 1px dashed var(--border);
   border-radius: 5px;
   color: var(--fg);
 }
-/* 2 本目以降は詰めて置く（1 回の追加で何本できるかが、行数でそのまま読める）。 */
+/* Pack the second and later ones tightly, so the line count shows how many queries one add
+   produces. */
 .wi-qform .wi-qfield code.wi-qquery + code.wi-qquery {
   margin-top: 3px;
 }
-/* ★ 背景は必ず不透明の token を敷く。--input-bg は存在しない変数で、フォールバックの
-   transparent のままだとネイティブのドロップダウンが暗色テーマで読めなくなる
-   （選択肢が地に沈む）。他のダイアログ（ui.css .ui-field select）と同じ組み合わせ。 */
+/* The background must be an opaque token. --input-bg does not exist, and with the transparent
+   fallback the native dropdown becomes unreadable on a dark theme (the options sink into the
+   background). Same pairing as the other dialogs (ui.css .ui-field select). */
 .wi-qform input,
 .wi-qform select {
   padding: 5px 7px;

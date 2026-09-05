@@ -1,6 +1,6 @@
 // SubdirPicker — pick the folder INSIDE a working copy that a new session starts in
 // (createReq.subdir → Meta.Subdir). Collapsed to a one-line summary by default, since
-// almost every launch wants the repo root; 参照 expands a browser rooted at the repo
+// almost every launch wants the repo root; "browse" expands a browser rooted at the repo
 // (api/fs/tree, home-relative "repos/<repo>/…" like the rest of the Console) whose
 // CURRENT path is the selection, mirroring DirPicker. The text field stays editable
 // so a known path can be typed (or pasted) without walking the tree.

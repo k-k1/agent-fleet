@@ -1,9 +1,10 @@
 package copilot
 
-// copilot の起動コマンド組み立てと、状態ディレクトリ（$COPILOT_HOME、既定
-// ~/.copilot）のパス解決。resume は claude 型の自己 sid 固定（--session-id）が
-// 使えるため、agy/codex のような会話 UUID 捕獲は不要 — 常に同じフラグで新規/
-// 再開の両方をまかなえる（実測: 既存 id は resume、未知の valid v4 は新規作成）。
+// Assembling copilot's launch command, and resolving the state directory ($COPILOT_HOME,
+// default ~/.copilot). resume can pin the sid itself the way claude does (--session-id), so
+// there is no need to capture a conversation UUID as agy/codex do — one set of flags covers
+// both new and resumed sessions (measured: an existing id resumes, an unknown valid v4 is
+// created).
 
 import (
 	"os"
@@ -14,7 +15,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// envOr duplicates the helper of the same name in package main; it is small enough that the
+// duplication is preferred to sharing it.
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -25,37 +27,41 @@ func envOr(key, def string) string {
 // Home is copilot's state root ($COPILOT_HOME, default ~/.copilot): config.json
 // (trustedFolders), mcp-config.json, logs/, session-store.db and
 // session-state/<sid>/. The tree is denylisted from the file browser (fs.go):
-// キーチェーンの無いコンテナでは auth トークンが平文で保存され得る（公式 docs）。
+// in a container with no keychain the auth token can end up stored in plaintext
+// (upstream docs).
 func Home() string { return paths.CopilotHome() }
 
 func configPath() string { return filepath.Join(Home(), "config.json") }
 
-// sessionStateDir is the per-session state dir holding events.jsonl (read 正本).
+// sessionStateDir is the per-session state dir holding events.jsonl (the read source of truth).
 func sessionStateDir(sid string) string { return filepath.Join(Home(), "session-state", sid) }
 
 // EventsPath is the session's events.jsonl — the transcript/state source shared
-// by every mode (TUI / -p / ACP managed) — docs/log/36 実測記録.
+// by every mode (TUI / -p / ACP managed) — docs/log/36 measurement record.
 func EventsPath(sid string) string { return filepath.Join(sessionStateDir(sid), "events.jsonl") }
 
 // defaultFlags is the fleet-standard permission/privacy posture:
-//   - --allow-all: fleet 既定の bypass 相当（claude の skip-permissions と同格）。
-//   - --no-remote --no-remote-export: セッションの GitHub 同期とリモート操縦は
-//     既定オフ（会話のフリート外流出と二重操縦を防ぐ — docs/log/36 契約）。
+//   - --allow-all: the fleet-default bypass equivalent (the peer of claude's
+//     skip-permissions).
+//   - --no-remote --no-remote-export: a session's GitHub sync and remote steering are off by
+//     default (keeps the conversation from leaving the fleet and prevents double steering —
+//     the docs/log/36 contract).
 const defaultFlags = "--allow-all --no-remote --no-remote-export"
 
-// buildProgram returns the tmux pane program for a copilot session. Auth is
-// ambient（gh 透過認証のトークンを copilot 自身が拾う — 実測）なのでトークンは
-// 注入しない。--session-id は新規作成と resume の両方を同じ形でまかなう。
-// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
-// 外すのは --allow-all だけ。--no-remote / --no-remote-export（会話のフリート外流出と
-// 二重操縦の防止）は権限確認とは別軸なので必ず残す。
+// buildProgram returns the tmux pane program for a copilot session. Auth is ambient (copilot
+// picks up gh's transparent-auth token itself — measured), so no token is injected.
+// --session-id covers creating a new session and resuming one in the same shape.
+// bypass=false means "do not skip the permission prompts" (the user's choice from
+// docs/log/76, or a plan launch), and only --allow-all is dropped. --no-remote /
+// --no-remote-export (keeping the conversation inside the fleet and preventing double
+// steering) sit on a different axis from permission prompts, so they always stay.
 func buildProgram(model, effort, mode, sid string, bypass bool) string {
 	if override := os.Getenv("AGENT_COPILOT_CMD"); override != "" {
 		return override
 	}
 	flags := envOr("AGENT_COPILOT_FLAGS", defaultFlags)
 	if !bypass {
-		// TUI 側の許可メニューはユーザーが端末/ミラーで操作する。
+		// The TUI's own permission menu is what the user drives from the terminal or the mirror.
 		flags = strings.TrimSpace(strings.ReplaceAll(flags, "--allow-all", ""))
 	}
 	if mode == "plan" {

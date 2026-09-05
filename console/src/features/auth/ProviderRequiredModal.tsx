@@ -1,5 +1,5 @@
 // ProviderRequiredModal — surfaced when the active tenant only accepts a sign-in
-// method other than the one this session used (docs/log/61 §61.9.4 + ADR0043 決定 18).
+// method other than the one this session used (docs/log/61 §61.9.4 + ADR0043 decision 18).
 //
 // A session holds exactly one provider on purpose, so switching to a department
 // that requires a different IdP means signing in again. The Control Plane answers

@@ -14,7 +14,7 @@ export function Row({ label, children }: { label: ReactNode; children?: ReactNod
   );
 }
 
-// Shared settings-tab controls, so the segmented Choice / オン・オフ toggle is defined
+// Shared settings-tab controls, so the segmented Choice and the on/off toggle are defined
 // once instead of copied between DisplayTab and AgentsTab (they drift otherwise).
 export interface ChoiceProps {
   value: unknown;
@@ -40,8 +40,9 @@ export function Choice({ value, options, onChange }: ChoiceProps) {
   );
 }
 
-// Slider: a labeled range input for a 0..1（既定）スカラー設定（音量など）。format で
-// 値の見せ方（例: パーセント）を差し替えられる。onChange は連続的に呼ばれる（ドラッグ中も）。
+// Slider: a labeled range input for a scalar setting, 0..1 by default (volume and the like).
+// format replaces how the value is shown (a percentage, say). onChange fires continuously,
+// including while dragging.
 export function Slider({
   value,
   min = 0,
@@ -73,8 +74,8 @@ export function Slider({
 }
 
 // Select: a native dropdown sharing Choice's [value, label] options, for lists too long
-// for a segmented control (e.g. opencode の ~50 モデル). Values round-trip through the
-// original option (String() のみ表示用に使い、onChange は元の型の値を返す)。
+// for a segmented control (opencode's ~50 models, say). Values round-trip through the
+// original option: String() is used for display only and onChange returns the original type.
 export function Select({ value, options, onChange }: ChoiceProps) {
   return (
     <select
@@ -94,8 +95,9 @@ export function Select({ value, options, onChange }: ChoiceProps) {
   );
 }
 
-// OrderList: 優先順位の並べ替え（上下ボタン式）。value は表示順そのままの id 配列で、
-// 呼び出し側が正規化済みの完全な順序を渡す。行の並びが 1 位から順位を表す。
+// OrderList: reorders a priority list with up/down buttons. value is an id array in display
+// order, and the caller passes a complete, already-normalised order. The row order is the
+// ranking, starting at 1.
 export function OrderList({
   value,
   labels,
@@ -132,7 +134,7 @@ export function OrderList({
   );
 }
 
-// OnOff: an オン / オフ toggle built on Choice (value may be undefined = オフ).
+// OnOff: an on/off toggle built on Choice (value may be undefined, which is off).
 export function OnOff({ value, onChange }: { value?: boolean; onChange: (v: boolean) => void }) {
   const tr = useT();
   return (

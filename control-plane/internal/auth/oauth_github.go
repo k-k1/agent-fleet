@@ -444,10 +444,10 @@ func (p *GitHubProvider) Allowed(ctx context.Context, pr Principal) (bool, error
 
 // NewGitHubProvider builds the adapter from GITHUB_OAUTH_* / AF_GITHUB_*, or
 // returns nil with a warning when the deployment did not (fully) configure it.
-// Following 決定 11, an incomplete GitHub config disables GitHub only — it never
+// Following decision 11, an incomplete GitHub config disables GitHub only — it never
 // stops CP from starting, because that would let one IdP's typo lock out the
 // people signing in through the others.
-// ★ GITHUB_OAUTH_CLIENT_ID means the SIGN-IN app, and since docs/log/71 it means only
+// GITHUB_OAUTH_CLIENT_ID means the SIGN-IN app, and since docs/log/71 it means only
 // that. It used to be shared with the git-connect device flow, which CP injected
 // into every workspace container; that flow now reads the app the TENANT registered
 // (tenant_git_oauth.go), so nothing else consumes this variable. A deployment that
@@ -502,7 +502,7 @@ func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 	return p
 }
 
-// --- construction from a tenant's row (docs/log/61 §61.15 + 決定 34) ---------------
+// --- construction from a tenant's row (docs/log/61 §61.15 + decision 34) ------------
 
 // newTenantGitHubProvider builds the same adapter from a tenant_idp row instead of
 // the environment. Everything protocol-level is identical — the same two gates, the
@@ -519,9 +519,9 @@ func NewGitHubProvider(deployAllowed func(string) bool, dbAllowed func(context.C
 //	                  the org IS the tenant boundary here (docs/log/61 §61.15).
 //	allowDomains      required, from the row. No fallback to the deployment-wide
 //	                  list or the roster term, exactly as BuildTenantProvider does
-//	                  for OIDC (決定 32-3).
+//	                  for OIDC (decision 32-3).
 //
-// ★ webBase / apiBase are deliberately NOT settable from the row: they are the
+// webBase / apiBase are deliberately NOT settable from the row: they are the
 // constants github.com / api.github.com. A row that could redirect them would let a
 // tenant point the adapter at a server it controls and mint any subject it liked —
 // and the subject is what rule 1.5 joins on.

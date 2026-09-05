@@ -1,7 +1,6 @@
 package claude
 
-// claude の起動コマンド組み立てと、resume 判定に使う jsonl の所在確認
-// （旧 package main session_program.go — docs/log/23 残① Wave F で移設）。
+// Building claude's launch command, and locating the jsonl the resume decision rests on.
 
 import (
 	"bytes"
@@ -15,7 +14,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// envOr は package main の同名ヘルパの複製（極小のため共有せず重複を許容）。
+// envOr is a copy of the identically named helper in package main (too small to be worth
+// sharing).
 func envOr(key, def string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -23,35 +23,41 @@ func envOr(key, def string) string {
 	return def
 }
 
-// nativePeerSettings は claude 自前の cross-session チャネル（ListAgents / SendMessage、
-// UDS `/tmp/cc-socks/<pid>.sock`）を AF のセッションで塞ぐ設定（docs/log/58 §58.17 /
-// ADR 0041 決定1）。`--settings` に JSON 文字列として渡す。
+// nativePeerSettings closes claude's own cross-session channel (ListAgents / SendMessage over
+// the UDS `/tmp/cc-socks/<pid>.sock`) for AF sessions (docs/log/58 §58.17 / ADR 0041
+// decision 1). Passed to `--settings` as a JSON string.
 //
-// **なぜ env ではなくこれか**: 元は Dockerfile の `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC`
-// と `DISABLE_TELEMETRY` が事実上の遮断だった（〜2.1.226 実測）。**2.1.251 では両方立てても
-// 貫通する**ことを実プロセスで確認済みで、その隙に AF を通らない着信が実際に起きた
-// （docs/log/58 §58.16）。env は当てにならないので、設定として明示的に閉じる。
+// Why a setting and not env: the effective block used to be the Dockerfile's
+// `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` and `DISABLE_TELEMETRY` (measured up to 2.1.226).
+// On 2.1.251 traffic gets through with both set — confirmed on a real process — and in that
+// gap an inbound message that never passed through AF actually arrived (docs/log/58 §58.16).
+// Env cannot be relied on, so the channel is closed explicitly as a setting.
 //
-// 2つ入っているのは**方向が違う**から。片方だけでは塞がらない:
-//   - `permissions.deny`（送信側）: この2ツールが**一覧から消える**。呼んで拒否されるのでは
-//     なく、モデルからそもそも見えない（実測）。見えていると、封筒も指示台帳もレート制限も
-//     配送保証も無いこちらを掴んでしまう — 実際にそれで誤配と不可視の着信が起きた。
-//   - `crossSessionInbound:"refuse"`（受信側）: **AF が起こしていない** claude（利用者が手で
-//     立てたもの）からの着信を止める。送信側の deny では届かない穴はここだけ。
+// There are two entries because they close opposite DIRECTIONS; one alone does not seal it:
+//   - `permissions.deny` (sending side): the two tools DISAPPEAR from the list. They are not
+//     called and refused — the model never sees them at all (measured). While visible, the
+//     model reaches for a channel with no envelope, no instruction ledger, no rate limit and
+//     no delivery guarantee, which is how a misdelivery and an invisible inbound message
+//     actually happened.
+//   - `crossSessionInbound:"refuse"` (receiving side): stops inbound messages from a claude AF
+//     did NOT start (one the user launched by hand). That is the only hole the sending-side
+//     deny leaves open.
 //
-// **受信側だけでは足りない理由**（実測）: refuse された送信でもツール結果はその場では
-// `success:true` で返り、拒否の受領通知は**数分後・送信側が次にターン境界へ来たとき**に
-// まとめて届く（7分03秒 / 9分49秒後の2通が同一秒に着弾）。黙って消えるわけではないが、
-// **その場では成功に見える**ので、送信側は届いた前提で先へ進み、利用者に「隣へ伝えた」と
-// 報告してしまう。だから送信側で最初から見せない（deny）方が主で、refuse は backstop。
+// Why the receiving side alone is not enough (measured): even a refused send returns
+// `success:true` to the tool on the spot, and the refusal receipts arrive minutes later, when
+// the SENDER next reaches a turn boundary (two of them, 7m03s and 9m49s later, landing in the
+// same second). Nothing vanishes silently, but it LOOKS successful at the time, so the sender
+// proceeds as if it had arrived and tells the user the message was passed on. Hence deny —
+// never showing the tools in the first place — is the primary block, and refuse is a backstop.
 //
-// ⚠️ **`--managed-settings` に置いても `crossSessionInbound` は効かない**（2.1.251 実測）。
-// `permissions.deny` の方は効くので「ポリシー層に置けば両方効く」と読みたくなるが、効かない。
-// `--settings`（flagSettings 層）は**両方効く**ので、1つにまとめてここへ置いている。
+// `crossSessionInbound` does NOT take effect in `--managed-settings` (measured on 2.1.251).
+// `permissions.deny` does, which invites the reading that the policy layer covers both; it
+// does not. `--settings` (the flagSettings layer) works for both, so both live here as one.
 //
-// `--settings` は既存の設定を**置き換えない**（層になるだけ）。AF が管理する settings.json の
-// PreToolUse フック（RTK 書き換え）がこのフラグ付きで実際に発火することを確認済み — ここを
-// 取り違えると、全セッションのフックと Remote Control 設定が黙って消える。
+// `--settings` does not REPLACE the existing settings (it only layers on top). The PreToolUse
+// hook in the settings.json AF manages (the RTK rewrite) was confirmed to still fire with this
+// flag present — get that wrong and every session's hooks and Remote Control settings vanish
+// silently.
 const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]},"crossSessionInbound":"refuse"}`
 
 // buildProgram returns the shell command tmux should run for a session.
@@ -59,7 +65,8 @@ const nativePeerSettings = `{"permissions":{"deny":["ListAgents","SendMessage"]}
 // Otherwise it resumes when a session jsonl already exists, else starts new.
 // label, when non-empty, becomes claude's --name (display name shown in the
 // Remote Control picker and terminal title), e.g. "[AF] agent-fleet @0627-2115".
-// bypass=false は「権限確認をスキップしない」（docs/log/76 の利用者選択、または plan 起動）。
+// bypass=false means the permission prompt is NOT skipped (the user's choice per docs/log/76,
+// or a plan launch).
 func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool) string {
 	if override := os.Getenv("AGENT_SESSION_CMD"); override != "" {
 		return override
@@ -72,13 +79,13 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 		// the choice reachable, so a user who hits a wall can lift the gate themselves
 		// without relaunching. Plan additionally starts deterministically in Plan
 		// through Claude's native permission-mode flag.
-		// フラグ（空白区切りトークン）単位で置換する — 素の部分文字列置換だと既存の
-		// --allow-… が --allow-allow-… に壊れる。
+		// Replace whole flags (whitespace-delimited tokens): a plain substring replace would
+		// corrupt an existing --allow-… into --allow-allow-….
 		flags = strings.TrimSpace(strings.ReplaceAll(" "+flags+" ",
 			" --dangerously-skip-permissions ", " --allow-dangerously-skip-permissions "))
 	}
-	// AGENT_CLAUDE_FLAGS の後ろに足す（上書きさせない）。塞ぐこと自体が目的なので、
-	// 環境変数で無効化できる逃げ道は用意しない。
+	// Appended after AGENT_CLAUDE_FLAGS so it cannot be overridden: closing the channel is
+	// the point, so no environment variable is left that would disable it.
 	flags += " --settings " + session.ShellQuote(nativePeerSettings)
 	if mode == "plan" {
 		flags += " --permission-mode plan"
@@ -92,7 +99,8 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 	if label != "" {
 		flags += " --name " + session.ShellQuote(label)
 	}
-	// sid / forkFrom もシェルに埋めるので他のフラグ値と同様に quote する。
+	// sid / forkFrom are embedded in the shell command too, so quote them like any other
+	// flag value.
 	// Resume the id claude is actually writing under, not necessarily our own: when
 	// claude restarted itself it dropped --session-id and moved to an id of its own
 	// (sid.go). Resuming our slot sid there dies with "No conversation found" and the
@@ -116,7 +124,7 @@ func buildProgram(sid, model, effort, mode, label, forkFrom string, bypass bool)
 
 // rawJSONLPaths returns the conversation log file(s) claude stores UNDER THAT EXACT
 // id, at ConfigDir()/projects/<project>/<id>.jsonl (CLAUDE_CONFIG_DIR when set,
-// P3-5 段2) — NOT a hardcoded ~/.claude. Takes the id at face value.
+// P3-5 stage 2) — NOT a hardcoded ~/.claude. Takes the id at face value.
 func rawJSONLPaths(id string) []string {
 	m, _ := filepath.Glob(filepath.Join(ConfigDir(), "projects", "*", id+".jsonl"))
 	return m
@@ -124,8 +132,9 @@ func rawJSONLPaths(id string) []string {
 
 // jsonlPaths returns the conversation log file(s) for OUR slot sid, following the
 // claude-sid ledger when claude restarted itself onto an id of its own (sid.go).
-// Everything transcript-shaped goes through here — ミラー・使用量・コンテキスト
-// 充填率・中断検知・BG 検知・Remote Control URL — so they all follow the drift.
+// Everything transcript-shaped goes through here — the mirror, usage, context fill,
+// abort detection, background-work detection, the Remote Control URL — so they all
+// follow the drift.
 func jsonlPaths(sid string) []string {
 	return rawJSONLPaths(LiveSID(sid))
 }
@@ -154,8 +163,8 @@ func TranscriptSnapshot(sid string) map[string]int64 {
 // AFTER snap was taken. claude persists a submitted prompt as a user line within well
 // under a second of a real submit, so this — not tmux send-keys exiting 0, which only
 // proves keystrokes reached the pane — is the ground truth that a typed prompt became
-// a turn (配達検証, docs/log/38). Appends are whole lines, so seeking to the recorded EOF
-// never splits the type token.
+// a turn (delivery verification, docs/log/38). Appends are whole lines, so seeking to the
+// recorded EOF never splits the type token.
 func UserTurnAppendedSince(sid string, snap map[string]int64) bool {
 	for _, p := range jsonlPaths(sid) {
 		if bytes.Contains(appendedSince(p, snap[p]), []byte(`"type":"user"`)) {

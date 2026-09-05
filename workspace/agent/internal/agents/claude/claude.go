@@ -1,9 +1,8 @@
-// Package claude は claude CLI 種別の縦割りパッケージ（docs/log/23 残① Wave F: 最大の
-// 縦割り）。Agent 実装・起動コマンド組み立て・jsonl transcript 解析・auth/settings/
-// usage の Connections/Console ハンドラ・status hook 配線・コンテキスト充填率・
-// バックグラウンド実行検知を package main から移設した。挙動・ワイヤ・ディスクは
-// main 時代とバイト同一を維持すること。session-status サブコマンドの入口
-// （hook stdin の解読と pending payload 適用）は main に残る。
+// Package claude holds everything specific to the claude CLI kind: the Agent
+// implementation, building the launch command, parsing the jsonl transcript, the
+// Connections/Console handlers for auth/settings/usage, the status-hook wiring, the context
+// fill and background-work detection. The entry point of the session-status subcommand
+// (decoding the hook stdin and applying the pending payload) stays in main.
 package claude
 
 import (
@@ -22,14 +21,16 @@ import (
 // New returns the claude Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — claude 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
+// agentImpl is the Agent implementation for the claude kind.
 type agentImpl struct{ agents.NoGenericTranscript }
 
 func (agentImpl) Kind() string { return session.KindClaude }
 
-// CanForkAt: 発言時点からの分岐（docs/log/55）。claude だけは公式の口が無く、転写 jsonl を
-// 切り詰めて分岐先を作る（forkat.go）。TUI 起動しか無いので、他の kind と違って managed の
-// 条件は付かない — 経路の可否は ResolveForkAt が kind ごとに答える。
+// Caps: claude is the only kind with no official API for branching at a past message
+// (docs/log/55), so CanForkAt is served by truncating the transcript jsonl (forkat.go). It
+// launches as a TUI only, so unlike the other kinds the capability carries no managed
+// condition — whether a launch route can carry a fork point is answered per kind by
+// ResolveForkAt.
 func (agentImpl) Caps() agents.Caps {
 	return agents.Caps{CanFork: true, CanForkAt: true, CanTranscript: true, UsesLabel: true, PermissionChoice: true}
 }
@@ -53,7 +54,8 @@ func (agentImpl) ForkSource(m session.Meta) (string, error) {
 // tool_result fell on the other side of the cut) — see forkat.go for why that matters.
 //
 // Validating here, at request time, rather than only at launch is deliberate: a refusal
-// must reach the user as "この分岐点は使えません", not as a session that starts and dies.
+// must reach the user as "this fork point cannot be used" (err.fork_bad_anchor), not as a
+// session that starts and dies.
 func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, error) {
 	sid := session.UUID(m.Dir, m.Name)
 	lines, path, _ := TranscriptRead(sid)
@@ -62,15 +64,17 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	}
 	anchor := at.Anchor
 	if at.Include {
-		// 「この発言の続きから」= 次のユーザープロンプトの手前で切る。ForkAt の意味
-		// （この uuid の手前まで残す）は変えないので、材料化も起動もそのまま通る。
+		// "continue from this message" = cut just before the NEXT user prompt. The meaning
+		// of ForkAt (keep everything up to, not including, this uuid) is unchanged, so both
+		// the materialization and the launch pass through as they are.
 		next, err := nextPromptUUID(lines, anchor)
 		if err != nil {
 			return "", err
 		}
 		if next == "" {
-			// 最後のやり取り = 全部残す。ForkAt を空にすると会話まるごと分岐の経路
-			// （--fork-session）に落ちるが、結果は同じ「全部入り」なので正しい。
+			// The last exchange = keep everything. An empty ForkAt falls to the
+			// whole-conversation fork route (--fork-session), which produces the same
+			// everything-included result, so it is the right answer here.
 			return "", nil
 		}
 		anchor = next
@@ -131,30 +135,33 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// Default a live claude with no recorded event yet to idle (it sits at the
 		// prompt waiting for input). Hook events refine it.
 		//
-		// EffectiveModal: AskUserQuestion / ExitPlanMode 自身の permission_prompt が
-		// state を "permission" へ上書きするので、捕捉済みペイロードのほうを正とする。
-		// 素の state だと、質問カードが出ているセッションのチップだけが「許可待ち」を
-		// 名乗る（バッジと本文の食い違い）。
+		// EffectiveModal: AskUserQuestion / ExitPlanMode raise a permission_prompt of their
+		// own that overwrites the state with "permission", so the captured payload is taken
+		// as the truth. With the bare state, a session showing a question card is the one
+		// whose chip claims "waiting for permission" — badge and body disagreeing.
 		li.State = status.EffectiveModal(sid, status.LiveState(sid))
-		// ペイン由来の判定は 1 フレームを 1 回だけ読んでまとめて下す（tmuxx.ReadPane）。
-		// 述語ごとに capture-pane を叩くと、セッション数 × ポーリング間隔でそのまま効く。
+		// Every pane-derived verdict is taken from ONE frame, read once (tmuxx.ReadPane).
+		// A capture-pane per predicate would cost sessions × poll interval.
 		pane := tmuxx.ReadPane(m.Name)
-		// 利用上限メニューで人間待ちに固定されている（tmuxx.AtRateLimitModal）。ターンは
-		// もう終わっているのに、そのメニューは "Esc to cancel" を含みモード表示フッタごと
-		// 入力欄を置き換えるので、下の AtIdlePrompt 経由の自己修復は恒久的に空振りする。
-		// ここで先に拾わないと 進行中 に永久に貼り付く（実測 2026-07-31・約16時間）。
+		// The session is pinned on the usage-limit menu waiting for a human
+		// (tmuxx.AtRateLimitModal). The turn is already over, yet that menu carries
+		// "Esc to cancel" and replaces the composer together with the mode footer, so the
+		// AtIdlePrompt self-heal below misses it permanently. Not catching it here leaves the
+		// session stuck at "running" forever (measured 2026-07-31: about 16 hours).
 		//
-		// HealIdle は非 idle のときだけ呼ぶ — 下の自己修復と同じガードで、MarkTurnEndErr が
-		// idle を永続化するので 2 回目以降の poll では走らない（メニューは人が消すまで出た
-		// ままなので、これが無いと毎 poll 通知と完了報告を撃ち続ける）。
+		// HealIdle is called only when the state is not idle — the same guard as the self-heal
+		// below. MarkTurnEndErr persists idle, so it does not run on later polls (the menu
+		// stays up until a human clears it, so without this every poll would fire another
+		// notification and completion report).
 		//
-		// 認証切れ（docs/log/47 §4-8）を上限メニューより先に見るのは、両方が同時に立ちうる中で
-		// **待っても直らない方**だから: 上限は時刻が来れば解けるが、期限切れは再認証するまで
-		// 何も動かない。メニューの自動解除はペインを直接読む（rate_limit_resume.go）ので、
-		// ここで auth を返してもその回復経路は塞がらない。
-		// 走っていたことになっているターンを HealIdle で畳んでから名乗るのは上限と同じ形 —
-		// 401 で切れたターンでは Stop hook が鳴らず、進行中 のまま貼り付くとバッジが出る前に
-		// 一覧が嘘をつく。
+		// Expired authentication (docs/log/47 §4-8) is checked BEFORE the limit menu because,
+		// of the two conditions that can hold at once, it is the one WAITING DOES NOT FIX: a
+		// limit lifts when its time comes, an expired credential moves nothing until the user
+		// re-authenticates. The menu's automatic release reads the pane directly
+		// (rate_limit_resume.go), so answering auth here does not block that recovery path.
+		// Folding the turn that is still recorded as running through HealIdle before saying so
+		// is the same shape as the limit case: a turn cut off by a 401 fires no Stop hook, and
+		// a session stuck at "running" makes the list lie before the badge ever appears.
 		if AuthExpired() {
 			if li.State != "idle" {
 				HealIdle(sid)
@@ -179,7 +186,7 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 		// IdleSettled, not Idle: while claude renders an answer it hides the spinner and
 		// draws a frame indistinguishable from the ready prompt (measured: 21s per block
 		// boundary, byte-identical for up to 11.4s). Healing on that frame badged a
-		// session 入力待ち mid-answer — and took the stop button away, fired the
+		// session as waiting for input mid-answer — and took the stop button away, fired the
 		// completion notification early, and let the idle rules count it as done. The
 		// settle window (idlesettle.go) is what tells the two apart.
 		if li.State != "idle" && pane.IdleSettled {
@@ -196,8 +203,8 @@ func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {
 			li.State = "working"
 			status.Persist(sid, "working")
 		}
-		// Still idle: background work may yet be running — surface it so 入力待ち isn't
-		// mistaken for "done".
+		// Still idle: background work may yet be running — surface it so "waiting for input"
+		// isn't mistaken for "done".
 		if li.State == "idle" {
 			li.BackgroundBusy, li.BackgroundBusyReason = BackgroundWork(m.Name, sid)
 		}

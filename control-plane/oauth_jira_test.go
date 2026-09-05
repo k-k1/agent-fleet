@@ -1,5 +1,6 @@
-// oauth_jira_test.go — Jira 3LO（docs/log/80 §80.17）。実 Atlassian は CI にも
-// この環境にも無いので、固定するのは「af が組み立てるもの」と「秘密の置き場所」。
+// oauth_jira_test.go — Jira 3LO (docs/log/80 §80.17). A real Atlassian is available
+// neither in CI nor here, so what is pinned is what af constructs and where the secret
+// lives.
 package main
 
 import (
@@ -12,12 +13,12 @@ import (
 	"testing"
 )
 
-// ★ 認可 URL の 4 点を固定する。どれが欠けても症状は「連携したのに動かない」で、
-// 原因が認可 URL だとは分からない形になる:
-//   - audience=api.atlassian.com（無いと 3LO のトークンが API 用にならない）
-//   - offline_access（無いと refresh token が返らず 1 時間で死ぬ）
-//   - prompt=consent（無いと再認可で refresh token が返らない）
-//   - write:jira-work（利用者の選択でコメント投稿まで含める・docs/log/80 §80.10）
+// Four parts of the authorize URL are pinned. Any one of them missing shows up as
+// "connected but it does not work", with nothing pointing at the authorize URL:
+//   - audience=api.atlassian.com — without it the 3LO token is not usable against the API
+//   - offline_access — without it no refresh token comes back and it dies after an hour
+//   - prompt=consent — without it a re-authorization returns no refresh token
+//   - write:jira-work — the user's opt-in to also post comments (docs/log/80 §80.10)
 func TestJiraAuthorizeURLShape(t *testing.T) {
 	au := jiraAuthorizeURL +
 		"?audience=api.atlassian.com" +
@@ -49,8 +50,8 @@ func TestJiraAuthorizeURLShape(t *testing.T) {
 	}
 }
 
-// トークン交換は JSON ボディ（Bitbucket の form+Basic とは違う）。ここを Bitbucket と
-// 同じ形で送ると 400 になり、「アプリの設定ミス」と読める。
+// The token exchange takes a JSON body, unlike Bitbucket's form + Basic. Sending it the
+// Bitbucket way returns a 400 that reads like a misconfigured app.
 func TestJiraExchangeCodeUsesJSONBody(t *testing.T) {
 	var gotCT, gotBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -78,7 +79,7 @@ func TestJiraExchangeCodeUsesJSONBody(t *testing.T) {
 	if err := json.Unmarshal([]byte(gotBody), &sent); err != nil {
 		t.Fatalf("body was not JSON: %s", gotBody)
 	}
-	// client_secret はボディで運ぶ（Basic ではない）。
+	// client_secret travels in the body, not in Basic auth.
 	if sent["client_secret"] != "csecret" || sent["grant_type"] != "authorization_code" {
 		t.Errorf("body = %v", sent)
 	}
@@ -104,8 +105,8 @@ func TestJiraExchangeCodeReportsRefusal(t *testing.T) {
 	}
 }
 
-// リフレッシュも JSON。★ 4xx は invalid_grant（＝再接続が要る）として即返し、
-// 5xx / 429 だけ再試行する —— 取り消された認可を毎回叩き続けないため。
+// Refresh is JSON too. A 4xx returns immediately as invalid_grant, meaning the user has to
+// reconnect; only 5xx and 429 are retried, so a revoked authorization is not hammered.
 func TestJiraRefreshGrant(t *testing.T) {
 	var hits int
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -125,8 +126,8 @@ func TestJiraRefreshGrant(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("refresh: %v", aerr)
 	}
-	// ⚠️ Atlassian は refresh token をローテートする。返ってきた新しい方を運ばないと、
-	// Agent は古い方を保存し続けて次の期限で詰む。
+	// Atlassian rotates the refresh token. Unless the new one is carried back, the Agent
+	// keeps storing the old one and wedges at the next expiry.
 	if tok.AccessToken != "at2" || tok.RefreshToken != "rt2" {
 		t.Errorf("token = %+v", tok)
 	}
@@ -151,9 +152,9 @@ func TestJiraRefreshGrant(t *testing.T) {
 	}
 }
 
-// provider の閉じた集合に jira が入り、コールバック URL が provider ごとに出る。
-// ⚠️ GitHub は device flow なので URL を持たない（持たせると管理画面が「登録しろ」と
-// 言えない値を表示することになる）。
+// jira belongs to the closed provider set, and each provider yields its own callback URL.
+// GitHub uses the device flow and so has none: giving it one would make the admin screen
+// display a value nobody can be told to register.
 func TestJiraIsAGitOAuthProvider(t *testing.T) {
 	if !validGitOAuthProvider(gitOAuthJira) {
 		t.Fatal("jira is not in the closed provider set")
@@ -177,8 +178,8 @@ func TestJiraIsAGitOAuthProvider(t *testing.T) {
 	}
 }
 
-// コールバックの文言は provider 名で差し替わる（Bitbucket と Jira で 9 本ずつ
-// 手書きすると必ずずれる）。
+// The callback copy substitutes the provider name. Hand-writing nine strings each for
+// Bitbucket and Jira would inevitably drift apart.
 func TestOAuthCallbackTextNamesTheProvider(t *testing.T) {
 	ja := oauthCallbackText("ja", "Jira")
 	if !strings.Contains(ja.notConfigured, "Jira") || !strings.Contains(ja.success, "Jira") {

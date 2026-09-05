@@ -17,10 +17,12 @@ import (
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
 // under the test's own tree (mirrors the other handler tests' pattern).
 //
-// 🔥 待ち手を積む位置がすべて。`t.Cleanup` は LIFO なので、**`t.Setenv` の後**に積んだ
-// この待ちが HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。待たずに return すると
-// HandleChatReport が投げた配送 goroutine が**復帰後の実 HOME**へ通知を書き、利用者の
-// Console に幽霊通知が出る（chat_report.go の interimDeliveries を参照）。
+// Where the waiter is pushed is everything. `t.Cleanup` is LIFO, so this wait has to be
+// pushed AFTER `t.Setenv` in order to run BEFORE HOME is restored (push it before and it
+// runs after the restore, which is too late). Returning without waiting lets the delivery
+// goroutine HandleChatReport spawned write its notification into the RESTORED, REAL HOME,
+// which puts a ghost notification in the user's Console (see interimDeliveries in
+// chat_report.go).
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,8 +32,9 @@ func withTempHome(t *testing.T) string {
 }
 
 // TestInstrLedgerRoundTrip is the v1 TestArmSessionReportRoundTrip read through the
-// Phase 2 ledger (docs/log/51): 投入は行の**追加**で、宛先の無い指示は行にならない。
-// 決定的な違いが最後の2行 — v1 の re-arm は前の指示の bit を上書きしたが、行は増える。
+// Phase 2 ledger (docs/log/51): delivery APPENDS a row, and an instruction with no target
+// never becomes one. The decisive difference is the last two lines — v1's re-arm
+// overwrote the previous instruction's bit, whereas rows accumulate.
 func TestInstrLedgerRoundTrip(t *testing.T) {
 	withTempHome(t)
 	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
@@ -39,21 +42,21 @@ func TestInstrLedgerRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Unknown conversation id → no row (宛先の無い行は作らない).
+	// Unknown conversation id → no row (a row with no target is never created).
 	if id := AddInstruction("slot01", RandUUID(), "operator"); id != "" {
-		t.Fatal("dangling conversation id へ行を立てた")
+		t.Fatal("created a row for a dangling conversation id")
 	}
 	// Invalid session name → no row.
 	if id := AddInstruction("bad/../name", conv.ID, "operator"); id != "" {
-		t.Fatal("不正なセッション名で行を立てた")
+		t.Fatal("created a row for an invalid session name")
 	}
 	if SessionReportPending("slot01") {
-		t.Fatal("行が無いのに未報告扱い")
+		t.Fatal("no rows exist, yet the session counts as owing a report")
 	}
 
 	id1 := AddInstruction("slot01", conv.ID, "operator")
 	if id1 == "" || !SessionReportPending("slot01") {
-		t.Fatalf("投入で pending 行ができていない (id=%q)", id1)
+		t.Fatalf("delivery did not create a pending row (id=%q)", id1)
 	}
 	rows := openInstrRows("slot01")
 	if len(rows) != 1 || rows[0].Conv != conv.ID || rows[0].State != instrPending ||
@@ -61,26 +64,27 @@ func TestInstrLedgerRoundTrip(t *testing.T) {
 		t.Fatalf("row = %+v", rows)
 	}
 
-	// 2件目の指示は**追加**される（v1 の re-arm は1bitの上書きだった＝穴A）。
+	// A second instruction is APPENDED (v1's re-arm overwrote the single bit = gap A).
 	id2 := AddInstruction("slot01", conv.ID, "operator")
 	if rows := openInstrRows("slot01"); len(rows) != 2 {
-		t.Fatalf("2件目の指示で行が %d 件（上書きされた）", len(rows))
+		t.Fatalf("second instruction left %d rows (overwritten)", len(rows))
 	}
 
-	// 1件目だけを報告 → その行だけ閉じ、2件目は open のまま。
+	// Report only the first → only that row closes, the second stays open.
 	markInstrReported("slot01", []string{id1}, time.Now())
 	rows = openInstrRows("slot01")
 	if len(rows) != 1 || rows[0].ID != id2 {
-		t.Fatalf("先行指示の報告が後行指示を巻き添えにした: %+v", rows)
+		t.Fatalf("reporting the earlier instruction caught the later one in the crossfire: %+v", rows)
 	}
 	if !SessionReportPending("slot01") {
-		t.Fatal("後行指示が残っているのに未報告なしと判定された")
+		t.Fatal("the later instruction is still open, yet nothing was judged pending")
 	}
 }
 
-// TestInstrLedgerStateMachine pins the row's state machine (docs/log/51 §データモデル):
-// pending → interim_reported（非消費）→ reported → reopened → reported、および
-// stop_session の cancelled。閉じた行が勝手に開かない・上限で reopen が止まることも。
+// TestInstrLedgerStateMachine pins the row's state machine (docs/log/51 §data model):
+// pending → interim_reported (non-consuming) → reported → reopened → reported, plus
+// stop_session's cancelled. Also that a closed row never opens by itself and that the cap
+// stops reopen.
 func TestInstrLedgerStateMachine(t *testing.T) {
 	withTempHome(t)
 	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
@@ -98,72 +102,75 @@ func TestInstrLedgerStateMachine(t *testing.T) {
 
 	id := AddInstruction("slot02", conv.ID, "operator")
 	if got := stateOf("slot02", id); got != instrPending {
-		t.Fatalf("初期状態 = %q", got)
+		t.Fatalf("initial state = %q", got)
 	}
 
-	// interim（質問）は**非消費**: 状態は進むが行は open のまま — 完了報告の義務は残る。
+	// interim (a question) is NON-CONSUMING: the state advances but the row stays open
+	// — the obligation to report completion remains.
 	markInstrInterim("slot02", "question", time.Now())
 	if got := stateOf("slot02", id); got != instrInterim {
-		t.Fatalf("interim 後 = %q", got)
+		t.Fatalf("after interim = %q", got)
 	}
 	if !SessionReportPending("slot02") {
-		t.Fatal("interim 報告が完了のワンショットを食った（v1 の実測不具合）")
+		t.Fatal("the interim report ate the completion one-shot (v1's measured defect)")
 	}
 	markInstrInterim("slot02", "plan-approval", time.Now())
 	rows := ReadInstrRows("slot02")
 	if rows[0].Interim.QuestionAt == "" || rows[0].Interim.PlanAt == "" {
-		t.Fatalf("interim の既報記録が無い: %+v", rows[0])
+		t.Fatalf("no record that the interim was already reported: %+v", rows[0])
 	}
 
 	markInstrReported("slot02", []string{id}, time.Now())
 	if got := stateOf("slot02", id); got != instrReported {
-		t.Fatalf("完了報告後 = %q", got)
+		t.Fatalf("after the completion report = %q", got)
 	}
 	if SessionReportPending("slot02") {
-		t.Fatal("reported の行がまだ未報告扱い")
+		t.Fatal("a reported row is still counted as owing a report")
 	}
 
-	// 補償（§Phase 3 が引く遷移）: reported → reopened → reported。
+	// Compensation (the transition Phase 3 drives): reported → reopened → reported.
 	if !reopenInstrRow("slot02", id) {
-		t.Fatal("reported 行を reopen できない")
+		t.Fatal("cannot reopen a reported row")
 	}
 	if got := stateOf("slot02", id); got != instrReopened || !SessionReportPending("slot02") {
-		t.Fatalf("reopen 後 = %q pending=%v", stateOf("slot02", id), SessionReportPending("slot02"))
+		t.Fatalf("after reopen = %q pending=%v", stateOf("slot02", id), SessionReportPending("slot02"))
 	}
 	markInstrReported("slot02", []string{id}, time.Now())
 	if got := stateOf("slot02", id); got != instrReported {
-		t.Fatalf("再報告後 = %q", got)
+		t.Fatalf("after re-reporting = %q", got)
 	}
-	// reopen は行あたり instrReopenMax 回まで（判定が振動している行を打ち切る）。
+	// reopen is capped at instrReopenMax per row (cutting off a row whose decision
+	// keeps oscillating).
 	for i := 1; i < instrReopenMax; i++ {
 		if !reopenInstrRow("slot02", id) {
-			t.Fatalf("%d 回目の reopen が拒否された", i+1)
+			t.Fatalf("reopen number %d was refused", i+1)
 		}
 		markInstrReported("slot02", []string{id}, time.Now())
 	}
 	if reopenInstrRow("slot02", id) {
-		t.Fatalf("reopen 上限（%d）を超えて開き直した", instrReopenMax)
+		t.Fatalf("reopened past the cap (%d)", instrReopenMax)
 	}
 
-	// stop_session（disarm）は open な行を cancelled にする。cancelled は開き直らない。
+	// stop_session (disarm) turns open rows cancelled. A cancelled row never re-opens.
 	id2 := AddInstruction("slot02", conv.ID, "operator")
 	if n := cancelInstructions("slot02"); n != 1 {
-		t.Fatalf("cancel した行数 = %d, want 1", n)
+		t.Fatalf("cancelled rows = %d, want 1", n)
 	}
 	if got := stateOf("slot02", id2); got != instrCancelled {
-		t.Fatalf("cancel 後 = %q", got)
+		t.Fatalf("after cancel = %q", got)
 	}
 	if SessionReportPending("slot02") {
-		t.Fatal("cancelled の行がまだ報告義務を持っている")
+		t.Fatal("a cancelled row still owes a report")
 	}
 	markInstrReported("slot02", []string{id2}, time.Now())
 	if got := stateOf("slot02", id2); got != instrCancelled {
-		t.Fatalf("cancelled が報告で上書きされた: %q", got)
+		t.Fatalf("a report overwrote cancelled: %q", got)
 	}
 }
 
-// TestMigrateReportArms covers the Phase 2 migration (docs/log/51 §移行): 起動時に v1 の
-// armed=true を1行へ変換し、変換元のファイルは消す（再起動のたびに行が増えないこと）。
+// TestMigrateReportArms covers the Phase 2 migration (docs/log/51 §migration): at startup
+// a v1 armed=true becomes one row and the source file is deleted, so the rows do not grow
+// on every restart.
 func TestMigrateReportArms(t *testing.T) {
 	withTempHome(t)
 	conv := &ChatConversation{ID: RandUUID(), Agent: "claude", Messages: []ChatMessage{}}
@@ -172,23 +179,23 @@ func TestMigrateReportArms(t *testing.T) {
 	}
 	at := time.Now().Add(-5 * time.Minute).Format(time.RFC3339)
 	_ = reportLinks.Write("slot03", reportLink{Conv: conv.ID, Armed: true, At: at})
-	_ = reportLinks.Write("slot04", reportLink{Conv: conv.ID, Armed: false, At: at}) // 消費済み
+	_ = reportLinks.Write("slot04", reportLink{Conv: conv.ID, Armed: false, At: at}) // consumed
 
 	MigrateReportArms()
 
 	rows := openInstrRows("slot03")
 	if len(rows) != 1 || rows[0].Conv != conv.ID || rows[0].Cursor.At != at {
-		t.Fatalf("移行された行 = %+v", rows)
+		t.Fatalf("migrated row = %+v", rows)
 	}
 	if SessionReportPending("slot04") {
-		t.Fatal("armed でない v1 レコードから行を作った")
+		t.Fatal("built a row out of a v1 record that was not armed")
 	}
 	if _, ok := reportLinks.Read("slot03"); ok {
-		t.Fatal("移行元の v1 ファイルが残っている（再起動のたびに行が増える）")
+		t.Fatal("the v1 source file survived (rows would grow on every restart)")
 	}
-	MigrateReportArms() // 2回目は何もしない
+	MigrateReportArms() // a second run must do nothing
 	if n := len(openInstrRows("slot03")); n != 1 {
-		t.Fatalf("再移行で行が %d 件に増えた", n)
+		t.Fatalf("re-migration grew the rows to %d", n)
 	}
 }
 
@@ -327,11 +334,12 @@ func TestChatAutoTurnLimit(t *testing.T) {
 // TestChatReportKickStoresLink exercises the mcp --conv plumbing shape: runMCPStdio's
 // arg parsing must accept --write --conv <id> in any order.
 // End-to-end over real HTTP: the claude Stop hook entrypoint → recordSessionNotification
-// → kickSessionReport → POST /chat/report（= リコンサイラの起床ヒント）→ tick の
-// settle → the 【セッション報告】 card in the operator's conversation. Driven in the
-// incident's exact shape — the pane heal wiped the "working" marker before Stop fired —
-// which used to end in silence. docs/log/51 Phase 1 では kick が消えても次の tick が同じ
-// 状態を見て拾う（ここではヒント有りの経路を通す）。
+// → kickSessionReport → POST /chat/report (= a wake-up hint for the reconciler) → the
+// tick's settle → the session-report (【セッション報告】) card in the operator's
+// conversation. Driven in the incident's exact shape — the pane heal wiped the "working"
+// marker before Stop fired — which used to end in silence. Under docs/log/51 Phase 1 a
+// lost kick is picked up by the next tick seeing the same state; this exercises the path
+// with the hint present.
 // TestQuestionReportInterimKeepsArm pins the interim question report (docs/log/30):
 // a pending AskUserQuestion is reported to the operator conversation so it can
 // relay/answer, but the one-shot arm survives — the instruction's completion
@@ -380,20 +388,21 @@ func TestQuestionReportInterimKeepsArm(t *testing.T) {
 	if got == nil {
 		t.Fatal("no interim question report reached the conversation")
 	}
-	// docs/log/28 P6: カードは**事実だけ**（利用者が読む面）。オペレーターへの指示
-	// （answer_session_question で答えろ）は保存されず、プロンプトを組む瞬間に足される。
+	// docs/log/28 P6: the card carries FACTS ONLY (it is a surface the user reads).
+	// The instructions to the operator (answer with answer_session_question) are not
+	// stored; they are added at the moment the prompt is assembled.
 	if !strings.Contains(got.Content, "質問") || strings.Contains(got.Content, "answer_session_question") {
 		t.Fatalf("question report card = %q", got.Content)
 	}
 	if prompt := ReportPromptFor(*got, "ja"); !strings.Contains(prompt, "answer_session_question") {
-		t.Fatalf("オペレーターへの指示がプロンプトに乗っていない: %q", prompt)
+		t.Fatalf("the operator instructions are missing from the prompt: %q", prompt)
 	}
 	if !SessionReportPending(m.Name) {
-		t.Fatal("interim question report must NOT consume the arm (完了報告は別途)")
+		t.Fatal("interim question report must NOT consume the arm (the completion report is separate)")
 	}
 }
 
-// TestReportHeadForAutoPilot pins the 自動走行 toggle: the interim question/plan
+// TestReportHeadForAutoPilot pins the auto-pilot (自動走行) toggle: the interim question/plan
 // report text carries the mode's marching orders when ON (auto-answer with the
 // session's recommendation / drive the review-approve loop) and the confirm-first
 // instructions when OFF (the default — the key is opt-in).
@@ -481,14 +490,16 @@ func TestPlanReportInterimKeepsArm(t *testing.T) {
 }
 
 // TestInterimDeliveryIsAwaitable pins the seam that keeps a test from writing into the
-// USER'S real state: HandleChatReport の配送は goroutine なので、テストが待たずに return
-// すると `t.Setenv("HOME")` の復帰後に `notice.Put` が走り、通知が**実 HOME** の
-// notification-outbox へ落ちる（2026-09-04、利用者の Console に「プラン検証」の幽霊通知が
-// 出た。押しても消えた temp HOME の会話を指すので「会話が見つかりません」）。
+// USER'S real state: HandleChatReport delivers on a goroutine, so a test that returns
+// without waiting lets `notice.Put` run after `t.Setenv("HOME")` has been restored and the
+// notification lands in the REAL HOME's notification-outbox. Measured: a ghost
+// notification for "プラン検証" showed up in the user's Console, and tapping it pointed at
+// a conversation in a temp HOME that was already gone ("conversation not found").
 //
-// だから検査は**ポーリングしない**: WaitInterimDeliveries から戻った時点で、会話への追記も
-// 通知の書き出しも temp HOME 側で終わっていること。待ちの継ぎ目を外すと（Add/Done を消す）
-// ここが即座に落ちる＝変異が検出できる。
+// So the check does NOT poll: by the time WaitInterimDeliveries returns, both the
+// conversation append and the notification write must be finished on the temp HOME side.
+// Take the waiting seam out (delete the Add/Done) and this fails immediately, which is
+// what makes the mutation detectable.
 func TestInterimDeliveryIsAwaitable(t *testing.T) {
 	home := withTempHome(t)
 	if err := os.MkdirAll(filepath.Join(home, ".config", "agent-fleet"), 0o700); err != nil {
@@ -515,11 +526,12 @@ func TestInterimDeliveryIsAwaitable(t *testing.T) {
 	}
 	WaitInterimDeliveries()
 
-	// ① 通知が temp HOME のアウトボックスに居る（＝実 HOME へ漏れていない）。
+	// (1) The notification sits in the temp HOME's outbox (= it did not leak to the
+	// real HOME).
 	outbox := filepath.Join(home, ".config", "agent-fleet", "notification-outbox")
 	ents, err := os.ReadDir(outbox)
 	if err != nil || len(ents) != 1 {
-		t.Fatalf("待ちから戻った時点で通知が %s に無い (err=%v, 件数=%d)", outbox, err, len(ents))
+		t.Fatalf("no notification in %s by the time the wait returned (err=%v, count=%d)", outbox, err, len(ents))
 	}
 	b, err := os.ReadFile(filepath.Join(outbox, ents[0].Name()))
 	if err != nil {
@@ -534,9 +546,9 @@ func TestInterimDeliveryIsAwaitable(t *testing.T) {
 		t.Fatal(err)
 	}
 	if ev.Kind != "session-report" || ev.DisplayName != m.Title || ev.Payload["conversation_id"] != conv.ID {
-		t.Fatalf("通知の中身 = %+v（宛先の会話 %s を指していない）", ev, conv.ID)
+		t.Fatalf("notification body = %+v (does not point at the target conversation %s)", ev, conv.ID)
 	}
-	// ② 会話への追記も終わっている。
+	// (2) The append to the conversation has finished too.
 	c, err := LoadConv(conv.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -548,26 +560,27 @@ func TestInterimDeliveryIsAwaitable(t *testing.T) {
 		}
 	}
 	if reports != 1 {
-		t.Fatalf("待ちから戻った時点の報告メッセージ = %d 件, want 1", reports)
+		t.Fatalf("report messages present when the wait returned = %d, want 1", reports)
 	}
 }
 
 // TestSessionReportDeferredWhileSubagentBusy pins the premature-completion fix
-// (docs/log/30, 実測 2026-07-24 saga5uc): claude launches background subagents and Stops
+// (docs/log/30, measured 2026-07-24 saga5uc): claude launches background subagents and Stops
 // minutes before the instruction is actually done. That early answer-ready kick must
 // NOT consume the one-shot arm — delivery waits until the subagent transcripts go
 // stale and the session sits at idle, then fires exactly once.
-// docs/log/51 Phase 1 の読み替え: 「保留 waiter」という特例は消え、SubagentBusy は
-// リコンサイラの **busy 証拠** になった（意味論は同じ — 判定が1か所に集まっただけ）。
+// Re-read under docs/log/51 Phase 1: the "deferred waiter" special case is gone and
+// SubagentBusy became BUSY EVIDENCE for the reconciler — the same semantics, with the
+// decision gathered into one place.
 // TestSessionReportIgnoresFalseIdle pins the delivery gate against the false-idle
-// window (実測 2026-07-28 sqmconc/azw7wys): mid-turn, a think gap fires no hooks and
+// window (measured 2026-07-28 sqmconc/azw7wys): mid-turn, a think gap fires no hooks and
 // the pane-based self-heal can remove the status marker; the bare LiveState then
 // defaults to idle and the old waiter spent the one-shot arm on a turn that was still
 // running — the real completion 27 minutes later kicked into armed=false and was
 // silently dropped.
-// docs/log/51 Phase 1 の読み替え: waiter は消え、その配送条件は述語に畳まれた —
-// **無マーカーは「不明」であって idle ではない**、そして transcript の鮮度は busy 証拠。
-// （旧名 TestSessionReportWaiterIgnoresFalseIdle）
+// Re-read under docs/log/51 Phase 1: the waiter is gone and its delivery condition folded
+// into the predicate — no marker means UNKNOWN, not idle, and transcript freshness is busy
+// evidence.
 // TestHaltDisarmsReportOnlyWhenFlagged pins the halt/disarm contract: the MCP
 // stop_session sends {"disarm_report":true} and must cancel the pending one-shot
 // report (stop = instruction cancelled), while the Console's bodyless halt keeps the
@@ -587,9 +600,10 @@ func TestInstrLedgerFileLocation(t *testing.T) {
 	}
 }
 
-// TestReportHeadForTurnAborted covers the 中断時の自動再開 wording (docs/log/47): ON asks the
-// operator to resume, OFF asks it to confirm with the user first, and past the cap the
-// report escalates instead of asking for yet another resume. The language instruction is
+// TestReportHeadForTurnAborted covers the auto-resume-after-abort (中断時の自動再開)
+// wording (docs/log/47): ON asks the operator to resume, OFF asks it to confirm with the
+// user first, and past the cap the report escalates instead of asking for yet another
+// resume. The language instruction is
 // part of the contract — sending JA into a session working in EN (or the reverse) flips
 // its output language for every following turn, and there is no per-session language to
 // read, so the operator has to be told to match the session.

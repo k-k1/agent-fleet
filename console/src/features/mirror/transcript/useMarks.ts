@@ -1,46 +1,48 @@
-// transcript/useMarks — マーカーの取得・追加・削除（docs/log/69 / ADR 0050）。
+// transcript/useMarks — fetching, adding and removing marks (docs/log/69 / ADR 0050).
 //
-// アンカーの決め方そのものは marks.ts（純粋・React も I/O も無し）。ここはミラーと共有
-// ビューが共通で使う配線で、差はエンドポイントと「自分は誰か」だけ。
+// How an anchor is decided lives in marks.ts (pure, no React, no I/O). This is the wiring the
+// mirror and the shared view share; they differ only in the endpoint and in who the viewer is.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON } from "../../../core/api/client.ts";
 import { markRootKey, type NewMark, type TranscriptMark } from "./marks.ts";
 
-/** マーカーを描画層へ渡す配線。無い能力の操作要素は描かない（capabilities.ts の規約）。 */
+/** The wiring handed to the render layer. An absent capability renders no control at all
+ *  (the rule in capabilities.ts). */
 export interface TranscriptMarksWiring {
-  /** root キー → その root に付いている印。参照が変わることで再適用が走る。 */
+  /** Root key -> the marks on that root. A changed reference is what triggers a repaint. */
   byRoot: Map<string, TranscriptMark[]>;
-  /** 一覧帯が使う全件（作成日時の新しい順）。 */
+  /** Everything, newest first, for the list strip. */
   all: TranscriptMark[];
-  /** 印を足せるか。false なら選択ピルを出さない（RO の共有先）。 */
+  /** May the viewer add marks? false renders no selection pill (a read-only recipient). */
   canEdit: boolean;
   add: (m: NewMark) => void;
   remove: (id: string) => void;
-  /** この印を消せるか。所有者は誰の印でも、共有先は自分の印だけ。 */
+  /** May this mark be removed? The owner may remove anyone's; a recipient only their own. */
   canRemove: (m: TranscriptMark) => boolean;
-  /** 作成者の表示名。"" = 所有者。自分のものは「あなた」。 */
+  /** Display name of the author; "" = the owner. The viewer's own marks read as "You". */
   authorLabel: (author: string | undefined) => string;
   /**
-   * 作成者ごとの色スロット（0 = 所有者）。⚠️ 色そのものは利用者が意味づけに選ぶ軸なので、
-   * 作成者はそこへ載せず下線で示す（ADR 0050 決定 5）。
+   * Per-author colour slot (0 = the owner). The colour itself is the axis a reader picks to
+   * carry meaning, so authorship is shown by the underline instead (ADR 0050 decision 5).
    */
   authorSlot: (author: string | undefined) => number;
-  /** id 引き（印をクリックしたときのカード表示用）。 */
+  /** Lookup by id, for the card shown when a mark is clicked. */
   find: (id: string) => TranscriptMark | undefined;
 }
 
-/** 作成者に割り当てる下線色の数（CSS の --mark-author-N と対応）。 */
+/** How many underline colours are assigned to authors (matches --mark-author-N in the CSS). */
 export const MARK_AUTHOR_SLOTS = 6;
 
 /**
- * 再取得の下限間隔。印は「もう一方の誰か」が付けたものが遅れて見えるだけの補助情報で、
- * 転写と同じ毎秒で取り直す価値は無い（所有者 Workspace への往復だけが増える）。
+ * Floor on the refetch interval. Marks are auxiliary — the only cost of being late is that
+ * someone else's mark appears a little after the fact — so refetching every second like the
+ * transcript would only add round trips to the owner's Workspace.
  */
 const MARKS_REFRESH_MS = 15000;
 
-// authorSlotsOf は作成者 → スロット番号。所有者（""）は必ず 0 で、残りは login id の
-// 昇順に 1 から割り当てる — 到着順にすると、ポーリングのたびに色が入れ替わる。
+// authorSlotsOf maps author -> slot number. The owner ("") is always 0; the rest are assigned
+// from 1 in login-id order — assigning by arrival order swaps the colours on every poll.
 function authorSlotsOf(list: TranscriptMark[]): Map<string, number> {
   const others = [...new Set(list.map((m) => m.author || "").filter(Boolean))].sort();
   const map = new Map<string, number>([["", 0]]);
@@ -60,36 +62,37 @@ function byRootOf(list: TranscriptMark[]): Map<string, TranscriptMark[]> {
 }
 
 export interface MarksControllerOptions {
-  /** `api/sessions/<name>/marks` か `api/shared-sessions/<id>/marks`。空 = 機能ごと無効。 */
+  /** `api/sessions/<name>/marks` or `api/shared-sessions/<id>/marks`; "" disables the feature. */
   path: string;
-  /** 印を足せるか（所有者は常に true、共有先は RW のときだけ）。 */
+  /** May the viewer add marks? Always true for the owner; for a recipient only on a RW share. */
   canEdit: boolean;
-  /** 所有者として見ているか（誰の印でも消せる）。 */
+  /** Is the viewer the owner? (They may remove anyone's mark.) */
   isOwner: boolean;
-  /** 自分の login id。所有者は ""。 */
+  /** The viewer's own login id; "" for the owner. */
   viewerId: string;
-  /** 所有者の表示名（共有ビューが「相手の名前」を出すために渡す）。 */
+  /** Display name of the owner, so the shared view can name the other party. */
   ownerLabel: string;
-  /** 「あなた」の訳語。i18n をこのモジュールへ引き込まないための注入。 */
+  /** The translation of "You", injected so this module need not pull in i18n. */
   youLabel: string;
-  /** 取得を止める条件（所有者 Workspace 停止中など）。 */
+  /** Suspends fetching (the owner's Workspace is stopped, for instance). */
   paused?: boolean;
 }
 
 /**
- * マーカーの取得・追加・削除。追加と削除は楽観更新してから送り、失敗したら元へ戻す
- * （印は補助機能なので、通信の都合で会話の読みを止めない）。
+ * Fetches, adds and removes marks. Add and remove update optimistically and roll back on
+ * failure: marks are auxiliary, so network trouble must never stall reading the conversation.
  *
- * ⚠️ 新しいポーリングは作らない。転写のポーリングから `reload()` を呼び、実際の再取得は
- * MARKS_REFRESH_MS で間引く。
+ * Do not add a second poll loop. The transcript's poll calls `reload()`, and the actual refetch
+ * is throttled by MARKS_REFRESH_MS.
  */
 export function useMarksController(opts: MarksControllerOptions): TranscriptMarksWiring & { reload: () => void } {
   const { path, canEdit, isOwner, viewerId, ownerLabel, youLabel, paused } = opts;
   const [byRoot, setByRoot] = useState<Map<string, TranscriptMark[]>>(() => new Map());
   const [all, setAll] = useState<TranscriptMark[]>([]);
   const [slots, setSlots] = useState<Map<string, number>>(() => new Map());
-  // 現在の一覧は ref で持つ。楽観更新→応答という往復の途中で別の追加/削除が挟まるので、
-  // クロージャに焼き付いた配列から組み立てると、あとから来た応答が先の変更を巻き戻す。
+  // The current list lives in a ref: another add or remove can land mid round trip (optimistic
+  // update -> response), and rebuilding from an array captured in a closure lets the later
+  // response undo the earlier change.
   const listRef = useRef<TranscriptMark[]>([]);
   const pathRef = useRef(path);
   const lastFetch = useRef(0);
@@ -101,22 +104,23 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
     setAll([...list].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)));
   }, []);
 
-  // セッションを切り替えたら、前のセッションの印を一瞬でも出さない。
+  // On a session switch, never show the previous session's marks, not even for a frame.
   if (pathRef.current !== path) {
     pathRef.current = path;
-    lastFetch.current = 0; // 別のセッションへ移った直後は、間引きに引っかからせない
+    lastFetch.current = 0; // right after moving to another session, do not let the throttle bite
     if (listRef.current.length) apply([]);
   }
 
-  // 転写のポーリング（毎秒）に相乗りして呼ばれるので、ここで間引く。⚠️ 2 本目の周期を
-  // 増やさないための作りで、増やすと転写と印が別の時刻を見る（docs/log/68 決定 3 と同じ理由）。
+  // Called off the transcript's own poll (once a second), so the throttling happens here. This
+  // exists to avoid a second interval: with two, the transcript and the marks would be looking
+  // at different moments in time (same reason as docs/log/68 decision 3).
   const reload = useCallback(() => {
     if (!path || paused) return;
     const now = Date.now();
     if (now - lastFetch.current < MARKS_REFRESH_MS) return;
     lastFetch.current = now;
     void api(path).then((d) => {
-      if (pathRef.current !== path) return; // 切り替え後に届いた前のセッションの応答
+      if (pathRef.current !== path) return; // a previous session's response, arriving after the switch
       if (!d || d.error || !Array.isArray(d.marks)) return;
       apply(d.marks as TranscriptMark[]);
     });
@@ -129,15 +133,16 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   const add = useCallback(
     (m: NewMark) => {
       if (!path || !canEdit) return;
-      // id は呼び出し側が採番する。Agent 側が create-only なので、再送しても印は増えない
-      // （ADR 0050 決定 4 — 副作用の台帳を持ち出さずに冪等）。
+      // The caller mints the id. The Agent side is create-only, so a resend adds no duplicate
+      // (ADR 0050 decision 4 — idempotent without keeping a ledger of side effects).
       const id = "mk_" + newMarkHex();
       const optimistic: TranscriptMark = { ...m, id, author: viewerId || undefined, created_at: Date.now() };
       apply([...listRef.current, optimistic]);
       void apiJSON(path, "POST", { ...m, id }).then((d) => {
         if (pathRef.current !== path) return;
         const rest = listRef.current.filter((x) => x.id !== id);
-        // 付かなかったものを残さない／保存された姿（created_at と CP が刻んだ author）で置き換える。
+        // Drop one that did not stick; otherwise replace it with the stored shape (created_at
+        // and the author the CP stamped).
         apply(!d || d.error || !d.mark ? rest : [...rest, d.mark as TranscriptMark]);
       });
     },
@@ -151,7 +156,7 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
       apply(listRef.current.filter((x) => x.id !== id));
       void api(path + "?id=" + encodeURIComponent(id), { method: "DELETE" }).then((d) => {
         if (pathRef.current !== path) return;
-        // 消せなかったものを消えたままにしない（他人の印＝403 がここに来る）。
+        // Do not leave a mark gone when the delete failed (someone else's mark = 403 lands here).
         if (d && d.error && gone && !listRef.current.some((x) => x.id === id)) apply([...listRef.current, gone]);
       });
     },
@@ -166,7 +171,7 @@ export function useMarksController(opts: MarksControllerOptions): TranscriptMark
   const authorLabel = useCallback(
     (author: string | undefined) => {
       const who = author || "";
-      if (who === viewerId) return youLabel; // 所有者から見た "" も、共有先から見た自分も
+      if (who === viewerId) return youLabel; // covers both "" seen by the owner and a recipient's own
       return who || ownerLabel;
     },
     [viewerId, youLabel, ownerLabel],

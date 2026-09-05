@@ -17,17 +17,18 @@ import {
 } from "../skillPicker.ts";
 
 /**
- * スキルピッカー（docs/log/50 / ADR0034、v2 クロスエージェント＋§8 クロススキル注入）:
- * セッションで呼べるスキル/コマンドの補完リスト。ネイティブ起動（invoke — "/name" や
- * codex "$name"）に加え、他規約の SKILL.md（foreign — path/origin 付き）は「path を
- * 読んで指示に従え」プロンプトとして差し込む — ただの指示文なので kind/ドライバ不問。
- * 開き方は 2 系統 — 先頭トリガ文字のタイプ（キーボード派。skillTrigger="" の kind は
- * ボタンのみ）と専用ボタン（マウス/タップ派）。選択はフォーカスを textarea に残す
- * sel-index 方式（CommandPalette と同型）。managed 発火未検証の kind（opencode）は
- * ネイティブ項目だけ slashSkillsManaged=false で落とす — foreign はゲート対象外。
+ * Skill picker (docs/log/50 / ADR0034, v2 cross-agent + §8 cross-skill injection): the completion
+ * list of skills/commands callable in the session. Besides native invocation (invoke - "/name", or
+ * codex "$name"), a SKILL.md from another convention (foreign - carries path/origin) is inserted
+ * as a "read this path and follow its instructions" prompt; being plain prompt text it works for
+ * any kind/driver. Two ways to open: typing the leading trigger character (keyboard users; a kind
+ * with skillTrigger="" is button-only) and the dedicated button (mouse/tap users). Selection uses
+ * the sel-index scheme that keeps focus in the textarea (same shape as CommandPalette). For a kind
+ * whose managed invocation is unverified (opencode), only native items are dropped via
+ * slashSkillsManaged=false - foreign items are not gated.
  *
- * MirrorView からそのまま移送したもので、判断は 1 つも変えていない。composerLocked を
- * 見るので、呼び出しは composerLocked が決まったあと（＝コンポーサーの下ごしらえの後）。
+ * Reads composerLocked, so call this after composerLocked has been decided (i.e. after the
+ * composer's setup).
  */
 export function useSkillPicker({
   session,
@@ -49,58 +50,64 @@ export function useSkillPicker({
   composerLocked: boolean;
 }) {
   const canSkills = agent.caps.slashSkills;
-  const skillTrigger = agent.skillTrigger; // "" = ボタンのみ（タイプでは開かない）
-  const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = 未取得
-  const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // 入力中の先頭 /トークン
-  const [skillBtnOpen, setSkillBtnOpen] = useState(false); // ボタン起点で開いた（全件表示）
+  const skillTrigger = agent.skillTrigger; // "" = button only (typing never opens it)
+  const [skills, setSkills] = useState<SessionSkill[] | null>(null); // null = not fetched yet
+  const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // leading /-token being typed
+  const [skillBtnOpen, setSkillBtnOpen] = useState(false); // opened from the button (shows everything)
   const [skillSel, setSkillSel] = useState(0);
-  const skillDismissRef = useRef<string | null>(null); // Esc/外クリックで閉じた時点の token（変わるまで再表示しない）
+  const skillDismissRef = useRef<string | null>(null); // token at the time Esc/outside-click closed it (stays closed until it changes)
   const skillPopRef = useRef<HTMLDivElement>(null);
   const skillBtnRef = useRef<HTMLButtonElement>(null);
   const skillSelRef = useRef<HTMLButtonElement>(null);
 
-  // slashOpen: 先頭トリガのトークンが生きていて、かつ直前に閉じられていない。
-  // skillListVisible: 実際にリストを描く条件 — タイプ起点は該当ゼロなら出さない
-  // （素の /plan 等の手打ちを覆い隠さない）。ボタン起点は空でも「無い」ことを見せる。
-  // 開く条件はトリガのタイプ（bare トークンでは開かない）、絞り込みはどちらの起点でも
-  // 同じトークンで効かせる — ボタンで開いてからタイプしても候補が絞れる。
-  // skillArgs（受動表示）: コマンドを打ち終えて引数を書いている間。引数ヒントを見ながら書け
-  // るようにリストは出したままにするが、確定した 1 件だけに絞り、キーボードは横取りしない
-  // （Enter は送信のまま — ここで Enter を奪うと引数入力中に送信できなくなる）。
+  // slashOpen: the leading trigger token is alive and was not just dismissed.
+  // skillListVisible: when the list is actually drawn - typing-initiated shows nothing when there
+  // are no matches (so a hand-typed plain /plan is not covered up), while button-initiated shows
+  // the empty state so "there are none" is visible. Opening requires typing the trigger (a bare
+  // token does not open it); filtering uses the same token for either origin, so typing after
+  // opening with the button still narrows the list.
+  // skillArgs (passive display): the command is fully typed and arguments are being written. The
+  // list stays up so the argument hint remains readable, but is narrowed to the single settled
+  // item and does not capture the keyboard (Enter still sends - taking Enter here would make it
+  // impossible to send while typing arguments).
   const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
   const skillArgs = slashOpen && !!slashTok?.args;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
   const skillQuery = slashTok?.token ?? "";
   const skillItems = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
-    // managed 発火未検証 kind はネイティブ項目だけ落とす（foreign=注入はただのプロンプト）。
+    // For a kind with unverified managed invocation, drop only the native items (a foreign
+    // injection is just a prompt).
     .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
-  // 受動表示は「一致した 1 件があるときだけ」— 読み込み中や不一致で "/" 始まりの文章を書いて
-  // いる間にポップが出入りしないように、ボタン起点/タイプ起点の緩い条件は使わない。
+  // Passive display only when exactly one item matched, so the popup does not appear and vanish
+  // while loading, or while a "/"-leading sentence that matches nothing is being written; the
+  // looser button-initiated/typing-initiated conditions are deliberately not used here.
   const skillListVisible = skillsOpen && (skillArgs ? skillItems.length > 0 : skillBtnOpen || skills === null || skillItems.length > 0);
-  // キーボード（↑↓移動・Enter/Tab 確定）を横取りするのは能動表示のときだけ。
+  // Capture the keyboard (↑↓ to move, Enter/Tab to confirm) only in the active display.
   const skillNavActive = skillListVisible && !skillArgs;
-  // ネイティブは invoke をそのまま、foreign は「path を読んで指示に従え」プロンプトに組む
-  // （末尾空白 — 続けて引数を打てる）。
+  // Native inserts invoke as is; foreign is built into a "read this path and follow its
+  // instructions" prompt (trailing space, so arguments can be typed right after).
   const skillInsertText = (s: SessionSkill): string =>
     s.invoke || tr("mirror.skills_use_foreign", { path: s.path ?? "" }) + " ";
 
-  // 開いた時に取得（セッション替えでリセット）。都度取得 — セッション途中で SKILL.md を
-  // 作らせる使い方が普通にあるので、開くたびに新鮮なリストを引く（走査は安い）。
+  // Fetch on open (reset when the session changes). Fetched every time: having the session create
+  // a SKILL.md mid-conversation is a normal way to work, so each open pulls a fresh list (the scan
+  // is cheap).
   useEffect(() => setSkills(null), [session]);
   useEffect(() => {
     if (!skillsOpen || !session) return;
     let live = true;
     sessionSkills(session)
       .then((d) => live && setSkills(d.skills || []))
-      .catch(() => live && setSkills((s) => s ?? [])); // 失敗時: 既取得はそのまま、未取得は空扱い
+      .catch(() => live && setSkills((s) => s ?? [])); // on failure: keep what was fetched, treat unfetched as empty
     return () => {
       live = false;
     };
   }, [skillsOpen, session]);
 
-  // draft が手元の token とずれたら（送信でクリア・履歴呼び出し等の setDraft 直書き）閉じる。
-  // 先頭は全角エイリアス（／・＄ — JP IME）も許すので startsWith でなく hasTriggerHead
-  // （bare トークンはそもそもトリガを持たないので、この確認は非 bare のときだけ）。
+  // Close when the draft drifts from the token we hold (cleared on send, history recall and other
+  // direct setDraft writes). The head also accepts full-width aliases (／ and ＄ from a Japanese
+  // IME), so use hasTriggerHead rather than startsWith (a bare token has no trigger at all, hence
+  // the check only for non-bare).
   useEffect(() => {
     if (!slashTok) return;
     if ((!slashTok.bare && !hasTriggerHead(draft, skillTrigger)) || !draft.slice(0, slashTok.end).endsWith(slashTok.token))
@@ -108,21 +115,22 @@ export function useSkillPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draft]);
 
-  // 絞り込みが変わったら選択を先頭へ戻し、選択が動いたら見える位置へ追従。
+  // Reset the selection to the top when the filter changes, and scroll the selection into view
+  // when it moves.
   useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
-  // ★ ブロック本体で書くこと（式のまま返さない）: Chrome 150 以降 scrollIntoView() は
-  // スクロール完了の Promise を返すので、暗黙 return するとその Promise が effect の
-  // クリーンアップとして保存され、次回実行時に React が関数として呼んで TypeError →
-  // 未捕捉のまま root ごとアンマウント＝画面真っ黒になる（候補件数が変わるたびに再実行
-  // される effect なので、絞り込みが 1→0 件に変わった瞬間に踏む）。
+  // Write this with a block body (never return the expression): since Chrome 150 scrollIntoView()
+  // returns a Promise for scroll completion, so an implicit return stores that Promise as the
+  // effect's cleanup, React calls it as a function on the next run and the resulting TypeError
+  // goes uncaught, unmounting the whole root - a black screen. This effect re-runs whenever the
+  // item count changes, so a filter going from 1 to 0 items hits it.
   useEffect(() => {
     skillSelRef.current?.scrollIntoView({ block: "nearest" });
   }, [skillSel, skillItems.length]);
 
-  // 差し込み: 入力中のトークン（無ければ下書き全体の頭）を起動文字列（invoke —
-  // "/name " や "$name "）に置換し、既存の本文は引数として残す。タッチ端末はフォーカス
-  // しない（GBoard が画面を覆う — applySuggestion と同じ規約）。送信はしない —
-  // 引数を足してからユーザーが送る。
+  // Insertion: replace the token being typed (or the head of the whole draft if there is none)
+  // with the invocation string (invoke - "/name " or "$name "), keeping the existing body as
+  // arguments. Do not focus on touch devices (GBoard covers the screen - same rule as
+  // applySuggestion). Does not send; the user sends after adding arguments.
   const pickSkill = (invoke: string) => {
     const el = inputRef.current;
     const caret = el ? (el.selectionStart ?? draft.length) : draft.length;
@@ -131,8 +139,9 @@ export function useSkillPicker({
     setHistIdx(null);
     setSkillBtnOpen(false);
     skillDismissRef.current = null;
-    // invoke 直後のキャレットは末尾空白の右＝引数位置なので args トークンになる → リストは
-    // 受動表示のまま残り、選んだスキルの引数ヒントを見ながら引数を書ける。
+    // Right after invoke the caret sits past the trailing space = the argument position, so this
+    // becomes an args token: the list stays in passive display and the chosen skill's argument
+    // hint stays readable while the arguments are written.
     setSlashTok(slashTokenAt(next, nc, skillTrigger));
     if (coarsePointer()) {
       inputRef.current?.blur();
@@ -147,17 +156,18 @@ export function useSkillPicker({
     });
   };
 
-  // 閉じる（Esc・外クリック・ボタン再押下）。タイプ起点は「いまの token のままなら
-  // 再表示しない」印を残す — 消して打ち直したら（token が変われば）また開く。
+  // Close (Esc, outside click, pressing the button again). Typing-initiated leaves a "do not
+  // reopen while the token is unchanged" mark - deleting and retyping (a different token) opens
+  // it again.
   const closeSkillPicker = () => {
     setSkillBtnOpen(false);
     skillDismissRef.current = slashTok?.token ?? null;
   };
-  // 外クリックで閉じる。textarea 内クリック（キャレット移動）は対象外 — onSelect が
-  // token を追い直してリストが生きるべき操作なので、refs に inputRef も含める。
+  // Close on outside click. A click inside the textarea (caret move) is excluded: onSelect
+  // re-tracks the token there and the list should stay alive, so inputRef is part of refs.
   useDismiss([skillPopRef, skillBtnRef, inputRef], skillListVisible, closeSkillPicker);
 
-  // ボタン起点で開く / 開いていれば閉じる（「/」ボタン）。
+  // Open from the button, or close it if already open (the "/" button).
   const toggleFromButton = () => {
     if (skillListVisible) {
       closeSkillPicker();
@@ -165,32 +175,33 @@ export function useSkillPicker({
     }
     skillDismissRef.current = null;
     setSkillBtnOpen(true);
-    // 既に書いてある先頭トークンを即クエリにする（開いた瞬間から絞り込まれた
-    // 状態で出す）。2 語目以降にキャレットがあれば null＝全件のまま。
+    // Use a leading token that is already written as the query straight away (it opens already
+    // filtered). With the caret in the second word or later this is null = everything.
     const el = inputRef.current;
     setSlashTok(pickerTokenAt(draft, el?.selectionStart ?? draft.length, skillTrigger, true));
   };
 
-  // スキルピッカーのトリガ追跡: 先頭トリガ文字の 1 トークン内にキャレットが
-  // ある間だけ token が立つ。トークンが死んだら Esc 抑止も解除（打ち直しで再表示）。
-  // ボタンで開いている間はトリガ無しの先頭トークンも拾う（＝そのまま絞り込める）。
+  // Skill picker trigger tracking: the token is set only while the caret is inside the single
+  // token following the leading trigger character. When the token dies the Esc suppression is
+  // released too (retyping shows it again). While opened from the button, a leading token with no
+  // trigger is picked up as well, so it filters directly.
   const trackTyping = (value: string, caret: number) => {
     if (!canSkills) return;
     const tok = pickerTokenAt(value, caret, skillTrigger, skillBtnOpen);
     if (!tok) skillDismissRef.current = null;
     setSlashTok(tok);
   };
-  /** キャレット移動（クリック・矢印）でも token の生死を追い直す。 */
+  /** Re-track whether the token is alive on caret moves (click, arrow keys) too. */
   const trackCaret = (value: string, caret: number) => {
     if (canSkills) setSlashTok(pickerTokenAt(value, caret, skillTrigger, skillBtnOpen));
   };
 
-  // スキルピッカーが開いている間は ↑/↓（選択移動）・Enter/Tab（確定）・Esc（閉じる）を
-  // ここで横取りする — 履歴呼び出し（↑/↓）・チップ Tab・送信 Enter より先。IME の
-  // 変換中は触らない。Ctrl/⌘+Enter と Shift+Enter は素通し（そのまま送信/改行できる逃げ道）。
-  // 受動表示（引数入力中 = skillArgs）は横取りしない — 引数ヒントを見せているだけなので、
-  // Enter は送信・↑/↓ はキャレット移動のまま。閉じる Esc だけは受け付ける。
-  // 横取りしたら true を返す（呼び出し側はそこで打ち切る）。
+  // While the skill picker is open, capture ↑/↓ (move selection), Enter/Tab (confirm) and Esc
+  // (close) here, ahead of history recall (↑/↓), chip Tab and send Enter. Do not touch keys during
+  // IME composition. Ctrl/⌘+Enter and Shift+Enter pass through (an escape hatch to send or insert
+  // a newline). The passive display (typing arguments = skillArgs) captures nothing - it only
+  // shows an argument hint, so Enter still sends and ↑/↓ still move the caret; only the closing
+  // Esc is accepted. Returns true when the key was captured (the caller stops there).
   const handleKeyDown = (e: RKeyboardEvent): boolean => {
     if (!skillListVisible || e.nativeEvent.isComposing) return false;
     if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {

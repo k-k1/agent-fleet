@@ -2,7 +2,7 @@
 // one small form: af holds the query, not a copy of the tracker, so the "filter UI" IS
 // this text field. GitHub search syntax goes in as-is, JQL likewise.
 //
-// ★ Bitbucket is the one exception (§80.22): its query is not a dialect the member already
+// Bitbucket is the one exception (§80.22): its query is not a dialect the member already
 // writes but a shape af invented (the `<workspace>/<repo>` prefix, `reviewers.uuid="@me"`),
 // so it is assembled from the connection's own repository list instead of typed.
 import { useEffect, useState } from "react";
@@ -27,30 +27,33 @@ interface Props {
   onSaved(): void;
 }
 
-// provider ごとの既定クエリ。ここが「自分にアサインされた未完了だけ」という既定の
-// 絞り込みそのもの（docs/log/80 §80.7）—— 全件同期をしないという設計を初期値で表している。
-// GitHub は検索構文、Jira は JQL。af は写像を持つだけで、方言はそのまま保存する。
+// Default query per provider. These defaults ARE the "only my open assignments" scoping
+// (docs/log/80 §80.7): the initial value is where the decision not to sync everything shows.
+// GitHub takes search syntax, Jira takes JQL; af only maps between them and stores each dialect
+// verbatim.
 //
-// ★ Bitbucket の既定だけ「そのまま使えない」（docs/log/80 §80.19.1）。⚠️ 置き換えるべき語を
-// 既定値に置いておけばエラーが自分でそれを言う、という当初の目算は**実機で外れた**
-// （§80.22）—— `workspace/repo` のまま保存され、404 が「別のエラー」として読まれた。
-// 一覧を引ける限り組み立て UI が出るので、この既定値が使われるのは手書きに降りたときだけ。
+// Bitbucket's default is the one that cannot be used as-is (docs/log/80 §80.19.1). Measured: the
+// original bet that putting the words needing replacement into the default would make the error
+// explain itself did not hold (§80.22) — `workspace/repo` was saved unchanged and the resulting
+// 404 was read as some other error. The assembly UI appears whenever the repository list can be
+// fetched, so this default is only reached by someone who dropped to free text.
 const DEFAULT_QUERY: Record<string, string> = {
   github: "assignee:@me is:open",
   jira: "assignee = currentUser() AND statusCategory != Done",
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };
 
-// 取得元の並び。製品名なので i18n 対象ではない（docs/log/28 §4）。
+// Source order. Product names, so not subject to i18n (docs/log/28 §4).
 const PROVIDERS = [
   { id: "github", name: "GitHub" },
   { id: "jira", name: "Jira" },
   { id: "bitbucket", name: "Bitbucket" },
 ];
 
-// Bitbucket の 3 つの意図。ラベルは短く（セグメントの 1 行）、説明は選んだ物だけ 1 行出す
-// —— 「レビュー待ち」と「自分の PR」の違いは語だけでは足りず、**どこまで見るか**
-// （リポジトリ / ワークスペース）が答えの範囲そのものだから。
+// Bitbucket's three intents. Labels stay short (one segment line) and only the selected one gets
+// a line of description: the difference between "waiting on my review" and "my own PRs" is not
+// carried by the words alone, because the scope searched (repository vs. workspace) is itself
+// what the answer covers.
 const BB_LABEL = {
   reviewing: "wi.bb_intent_reviewing",
   repo_open: "wi.bb_intent_repo_open",
@@ -73,23 +76,25 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
   const [query, setQuery] = useState(queries.length ? "" : DEFAULT_QUERY.github);
   const [repoHint, setRepoHint] = useState("");
   const [busy, setBusy] = useState(false);
-  // Bitbucket の組み立て（docs/log/80 §80.23）。`bbRepos === null` は「まだ引いていない」、
-  // 空配列は「引いたが候補が無い（＝停止中・未接続・エラー）」で、後者は手書きに落ちる。
-  // ★ 意図は**複数選べる**（排他ではない）。「レビュー待ち」と「自分の PR」はどちらも見たい物で、
-  //   1 本ずつ足させると同じ対象を 2 回選ばせることになる。
+  // Bitbucket assembly (docs/log/80 §80.23). `bbRepos === null` means not fetched yet; an empty
+  // array means fetched but no candidates (stopped, not connected, or an error), and that falls
+  // back to free text.
+  // Several intents can be selected at once; they are not exclusive. Wanting both "waiting on my
+  // review" and "my own PRs" is normal, and adding them one at a time would make the user pick
+  // the same target twice.
   const [bbIntents, setBbIntents] = useState<BbIntent[]>(["reviewing"]);
   const [bbTarget, setBbTarget] = useState("");
   const [bbRepos, setBbRepos] = useState<string[] | null>(null);
   const [bbRaw, setBbRaw] = useState(false);
 
-  // provider を切り替えたら、まだ手を入れていないクエリ欄だけ既定を差し替える
-  // （書きかけの JQL を勝手に消さない）。
+  // Switching provider replaces the default only in an untouched query field, so a half-written
+  // JQL is never discarded.
   const pickProvider = (next: string) => {
     setProvider(next);
     setQuery((cur) => (cur === "" || Object.values(DEFAULT_QUERY).includes(cur) ? DEFAULT_QUERY[next] || "" : cur));
   };
 
-  // Bitbucket を選んだときだけ、接続から「どこを見るか」の候補を引く。1 回だけ。
+  // Fetch the candidate targets from the connection only when Bitbucket is selected, and once.
   useEffect(() => {
     if (provider !== "bitbucket" || bbRepos) return;
     let alive = true;
@@ -101,17 +106,18 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
     };
   }, [provider, bbRepos]);
 
-  // 対象の粒度は「選んだ中に**リポジトリが要る意図**が 1 つでもあるか」で決まる。
-  // 1 つも選んでいないときはリポジトリ側（既定の粒度）を出しておく。
+  // The target granularity is decided by whether any selected intent needs a repository. With
+  // nothing selected, offer the repository side, which is the default granularity.
   const bbNeedRepo = bbIntents.length === 0 || bbIntents.some(bbNeedsRepo);
   const bbOptions = bbRepos ? (bbNeedRepo ? bbRepos : bbWorkspaces(bbRepos)) : [];
-  // 候補が 1 つしか無いなら選ばせない（ワークスペースが 1 つ＝ほとんどの人）。
+  // Do not ask when there is only one candidate; a single workspace is the common case.
   useEffect(() => {
     if (bbOptions.length === 1 && !bbTarget) setBbTarget(bbOptions[0]);
   }, [bbOptions.length, bbTarget]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // 意図を足し引きしても対象は捨てない。リポジトリ → ワークスペースは畳めるが、逆は決められない
-  // （ワークスペースしか選んでいない状態でリポジトリが要る意図を足したら、選び直してもらう）。
+  // Adding or removing an intent never discards the target. A repository folds up to its
+  // workspace, but the reverse cannot be inferred, so adding a repository-scoped intent while
+  // only a workspace is selected asks the user to choose again.
   const toggleIntent = (it: BbIntent) => {
     const next = bbIntents.includes(it) ? bbIntents.filter((x) => x !== it) : [...bbIntents, it];
     setBbIntents(next);
@@ -119,13 +125,14 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
     setBbTarget((cur) => (!cur ? cur : needRepo ? (cur.includes("/") ? cur : "") : bbWorkspaceOf(cur)));
   };
 
-  // 一覧から組み立てられるのは「Bitbucket ＋ 候補があり ＋ 手書きに降りていない」ときだけ。
+  // Assembly from the list is available only for Bitbucket, with candidates, and not after the
+  // user dropped to free text.
   const bbBuild = provider === "bitbucket" && !bbRaw && !!bbRepos && bbRepos.length > 0;
   const effQueries = bbBuild ? bbQueries(bbIntents, bbTarget) : query.trim() ? [query.trim()] : [];
 
-  // 複数まとめて足せるのは Bitbucket の組み立てのときだけ（他は今までどおり 1 本）。
-  // ★ 表示名は 1 本のときだけ効かせる —— 同じ名前の行が 2 本並んでも見分けられないので、
-  //   複数のときは CP の既定（クエリ文字列そのもの）に任せる。
+  // Only the Bitbucket assembly adds several at once; every other provider still adds one.
+  // The label applies only when adding one: two rows with the same name are indistinguishable, so
+  // for several the CP's default (the query string itself) is used.
   const add = async () => {
     if (!effQueries.length || busy) return;
     setBusy(true);
@@ -134,8 +141,8 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
       let failed = "";
       for (const q of effQueries) {
         const res = await workItemQueryCreate({ provider, label: one ? label.trim() : "", query: q, repoHint, enabled: true });
-        // ⚠️ 途中で落ちても残りは足す。3 本のうち 1 本が弾かれたときに「何も増えていない」より、
-        //    「2 本増えて 1 本だけ断られた」の方が、次に何をすればよいかが分かる。
+        // Keep going after a failure. When one of three is rejected, "two added and one refused"
+        // tells the user what to do next; "nothing added" does not.
         if (res && typeof res === "object" && "error" in res && res.error) failed = errText(res.error) || t("wi.query_save_failed");
       }
       if (failed) {
@@ -146,8 +153,9 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
       setLabel("");
       setQuery("");
       setRepoHint("");
-      // ★ bbTarget と選んだ意図は残す。同じ対象で足し直す流れがありふれているのと、
-      //   選択が消えると「本当に足せたのか」を一覧で数え直させることになる。
+      // bbTarget and the selected intents are kept: adding again for the same target is a common
+      // flow, and clearing the selection would force the user to re-count the list to see whether
+      // anything was added at all.
       onSaved();
       onChanged();
     } catch {
@@ -188,8 +196,8 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
 
   return (
     <Modal title={tr("wi.queries")} onClose={onClose} className="wi-qmodal">
-      {/* ★ 中身は ui-modal-body に載せる。ui-modal 自身に padding は無く（見出しが
-          自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      {/* Content must sit in ui-modal-body. ui-modal itself has no padding (the heading carries
+          its own), so a child placed directly in it sticks to the frame. */}
       <div className="ui-modal-body">
         <p className="wi-qhelp">{tr("wi.queries_help")}</p>
         {queries.length > 0 && (
@@ -211,9 +219,9 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             ))}
           </ul>
         )}
-        {/* ブランチ名テンプレート（docs/log/80 P2）。プレビューを添えるのは、{slug} が
-            日本語タイトルで空になる（＝結果が feature/issue-45 になる）ことが、
-            説明文よりも 1 行の実例で伝わるから。 */}
+        {/* Branch name template (docs/log/80 P2). The preview is there because one worked example
+            conveys better than prose that {slug} is empty for a Japanese title, so the result is
+            feature/issue-45. */}
         <div className="wi-qbranch">
           <label>
             <span>{tr("wi.branch_template")}</span>
@@ -227,15 +235,16 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
           <p className="wi-qhint">
             {tr("wi.branch_preview", {
               branch: branchForItem({ key: "acme/web#45", title: "Fix the empty list" }, settings.workItemBranchTemplate),
-              // i18n-exempt: 非 ASCII のタイトル見本そのもの（訳すと例が例でなくなる・docs/log/28 §4）
+              // i18n-exempt: the non-ASCII title sample itself; translating it destroys the example (docs/log/28 §4)
               branch2: branchForItem({ key: "PROJ-123", title: "ログイン後に一覧が空になる" }, settings.workItemBranchTemplate),
             })}
           </p>
         </div>
         <div className="wi-qform">
-          {/* ★ select ではなくセグメント（他のモーダルと同じ ui-seg）。取得元は 3 つで
-              増えないので畳む理由が無く、ネイティブのドロップダウンは暗色テーマで
-              選択肢が読めなかった（背景が透明のまま描かれる）。 */}
+          {/* A segmented control (the same ui-seg as the other modals), not a select. There are
+              three sources and no more, so there is nothing to collapse, and the native dropdown
+              rendered its options unreadably in the dark theme (the background stayed
+              transparent). */}
           <div className="wi-qfield">
             <span>{tr("wi.query_provider")}</span>
             <div className="ui-seg" role="group" aria-label={tr("wi.query_provider")}>
@@ -262,15 +271,16 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             />
           </label>
           {effQueries.length > 1 && <p className="wi-qhint">{tr("wi.bb_label_auto")}</p>}
-          {/* ★ Bitbucket だけ、クエリ欄そのものを出さずに組み立てる（docs/log/80 §80.23）。
-              先頭の `<workspace>/<repo>` も `reviewers.uuid="@me"` も **af の発明**で、
-              利用者が普段書いている方言ではない —— 既定値の `workspace/repo` を
-              置き換えないまま保存され 404 になった、が実際に起きた（§80.23）。
-              GitHub の検索構文と JQL は本物の方言なので、これまでどおり素通しの入力欄。 */}
+          {/* Bitbucket alone is assembled instead of being typed into a query field
+              (docs/log/80 §80.23). Both the leading `<workspace>/<repo>` and
+              `reviewers.uuid="@me"` are af's own inventions, not a dialect users write; the
+              default `workspace/repo` was saved unreplaced and 404'd in practice (§80.23).
+              GitHub search syntax and JQL are real dialects, so those keep a pass-through
+              field. */}
           {bbBuild ? (
             <>
-              {/* ★ セグメント（1 つ選ぶ）ではなくチェック。3 つは排他ではなく、
-                  「レビュー待ち」と「自分の PR」はどちらも見たい物だから。 */}
+              {/* Checkboxes, not a pick-one segmented control: the three are not exclusive, and
+                  wanting both "waiting on my review" and "my own PRs" is normal. */}
               <div className="wi-qfield">
                 <span>{tr("wi.bb_intent")}</span>
                 <div className="wi-qchecks" role="group" aria-label={tr("wi.bb_intent")}>
@@ -283,8 +293,8 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                   ))}
                 </div>
               </div>
-              {/* ⚠️ これは af の制限ではなく Bitbucket の制限。選んだ人が「書き方を間違えた」と
-                  読まないよう、選んだときだけ 1 行で断る。 */}
+              {/* This is a Bitbucket limitation, not af's. Said in one line, and only once the
+                  intent is selected, so nobody reads it as having written the query wrong. */}
               {bbIntents.includes("authored") && <p className="wi-qhint">{tr("wi.bb_authored_note")}</p>}
               <label>
                 <span>{tr(bbNeedRepo ? "wi.bb_target_repo" : "wi.bb_target_ws")}</span>
@@ -297,8 +307,8 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                   ))}
                 </select>
               </label>
-              {/* 保存されるのは 1 本 1 行のクエリ文字列（列は増えていない）。出しておくのは
-                  ★ 後で行のエラーを読むときに、この文字列と突き合わせられるようにするため。 */}
+              {/* What gets saved is one query string per row. It is shown so that a row error
+                  read later can be matched against this exact string. */}
               {effQueries.length > 0 && (
                 <div className="wi-qfield">
                   <span>{tr("wi.bb_preview")}</span>
@@ -319,12 +329,14 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                 <span>{tr("wi.query_expr")}</span>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
               </label>
-              {/* ★ Bitbucket にだけ説明が要る。GitHub と Jira は「どこを見るか」をクエリの
-                  外に置けるが、Bitbucket の API は横断検索を持たないので先頭に対象を書く
-                  （docs/log/80 §80.19.1）。ここを書かないと、利用者は 404 を見てから学ぶことになる。 */}
+              {/* Only Bitbucket needs this note. GitHub and Jira can express where to look
+                  outside the query, but the Bitbucket API has no cross-repository search, so the
+                  target goes at the front (docs/log/80 §80.19.1). Without saying so, the user
+                  learns it from a 404. */}
               {provider === "bitbucket" && <p className="wi-qhint">{tr("wi.query_bb_hint")}</p>}
-              {/* 候補を引けなかった（Workspace 停止中・未接続）ことは黙らない。「一覧から
-                  選べるはずでは？」を先に答えておかないと、手書き欄が仕様に見える。 */}
+              {/* Never stay silent about a failed candidate fetch (workspace stopped, not
+                  connected). Unanswered, the free-text field looks like the intended design
+                  rather than a fallback. */}
               {provider === "bitbucket" && bbRepos?.length === 0 && <p className="wi-qhint">{tr("wi.bb_list_failed")}</p>}
               {provider === "bitbucket" && bbRaw && !!bbRepos?.length && (
                 <button type="button" className="linklike wi-qmode" onClick={() => setBbRaw(false)}>
@@ -334,8 +346,8 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
             </>
           )}
           <label>
-            {/* Jira は課題がリポジトリに紐づかないので、起動先はここが唯一の手がかりに
-                なる（プロジェクト → 作業コピーの対応表がこれ）。 */}
+            {/* A Jira issue is not tied to a repository, so this is the only hint for where to
+                launch — it is the project-to-working-copy mapping. */}
             <span>{provider === "jira" ? tr("wi.query_repo_hint_jira") : tr("wi.query_repo_hint")}</span>
             <select value={repoHint} onChange={(e) => setRepoHint(e.target.value)}>
               <option value="">{tr("wi.query_repo_any")}</option>

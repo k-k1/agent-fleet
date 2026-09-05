@@ -3,8 +3,8 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { swipeBlocked } from "./swipeGuard.ts";
 
-// jsdom はレイアウトを計算しないので scrollWidth/clientWidth は常に 0 —
-// 「はみ出している」状態は明示的に生やす。
+// jsdom computes no layout, so scrollWidth/clientWidth are always 0 — the "overflowing"
+// state has to be planted explicitly.
 function widths(el: HTMLElement, scrollWidth: number, clientWidth: number): void {
   Object.defineProperty(el, "scrollWidth", { value: scrollWidth, configurable: true });
   Object.defineProperty(el, "clientWidth", { value: clientWidth, configurable: true });
@@ -38,7 +38,8 @@ describe("swipeBlocked", () => {
     );
     expect(swipeBlocked(host.querySelector("#ta"))).toBe(true);
     expect(swipeBlocked(host.querySelector("#in"))).toBe(true);
-    // 起点が中の要素でも、祖先を辿って編集面だと分かる
+    // Even when the gesture starts on an inner element, the ancestor walk finds the
+    // editing surface
     expect(swipeBlocked(host.querySelector("#inner"))).toBe(true);
   });
 
@@ -71,20 +72,21 @@ describe("swipeBlocked", () => {
     expect(swipeBlocked(host.querySelector("#x"))).toBe(false);
   });
 
-  // ここが「特定のセッションだけスワイプが効かない」の再発防止。実ブラウザでは
-  // `overflow-y: auto` だけ指定した要素でも overflow-x の計算値が "auto" になるので
-  // （CSS: 片方が visible なら visible → auto）、転写に折り返せない長い文字列が
-  // 1 つ混ざって数十 px はみ出しただけで、転写全体が不感になっていた。
+  // Regression guard for "swipe is dead on this one session". In a real browser an
+  // element that only sets `overflow-y: auto` still computes overflow-x to "auto" (CSS:
+  // if one axis is visible and the other is not, visible becomes auto), so a single
+  // unbreakable long string overflowing the transcript by a few tens of px made the whole
+  // transcript unresponsive.
   it("[data-swipe-y] を宣言した縦スクロール容器は、横へはみ出していても通す", () => {
     const host = mount(
       "<div id='body' data-swipe-y='' style='overflow-y: auto'>" +
         "<div class='mirror-scroll'><p id='t'>ふつうの段落</p></div></div>",
     );
     const body = host.querySelector("#body") as HTMLElement;
-    // jsdom の getComputedStyle は overflow-y だけの指定を overflow-x へ波及させないため、
-    // 実ブラウザで測った計算値（auto）をここで再現する。
+    // jsdom's getComputedStyle does not propagate an overflow-y-only declaration to
+    // overflow-x, so reproduce the value measured in a real browser (auto) here.
     body.style.overflowX = "auto";
-    widths(body, 633, 390); // 幅 390px の実機相当（sha256 が 1 つ混ざった転写の実測値）
+    widths(body, 633, 390); // measured on a 390px-wide device, transcript with one sha256
     expect(swipeBlocked(host.querySelector("#t"))).toBe(false);
   });
 
@@ -101,8 +103,9 @@ describe("swipeBlocked", () => {
   });
 });
 
-// 属性名は data-no-swipe と同じ文字列契約で、付け忘れても何も壊れず「そのセッションだけ
-// スワイプが効かない」に戻るだけなので、付け先を突き合わせておく。
+// The attribute name is a bare string contract like data-no-swipe: forgetting it breaks
+// nothing loudly, it just brings back "swipe is dead on this one session". So check where
+// it is applied.
 describe("data-swipe-y の付け先", () => {
   const read = (rel: string) =>
     readFileSync(fileURLToPath(new URL(rel, import.meta.url)), "utf8");
@@ -116,7 +119,7 @@ describe("data-swipe-y の付け先", () => {
       const src = read(file);
       const at = src.indexOf(`"${cls}"`);
       expect(at, `${file} に .${cls} が見つからない`).toBeGreaterThan(-1);
-      // クラス名から同じ要素の属性列（次の > まで）に宣言があること。
+      // The declaration must sit in the same element's attribute list (up to the next >).
       expect(src.slice(at, src.indexOf(">", at))).toContain("data-swipe-y");
     });
   }

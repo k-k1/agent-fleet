@@ -1,4 +1,4 @@
-// SendMemoModal (docs/log/21 UI刷新) — the selection-send step of the memo queue. Opens with
+// SendMemoModal (docs/log/21 UI overhaul) — the selection-send step of the memo queue. Opens with
 // the selected memos concatenated into one editable message, then sends to a chosen
 // destination:
 //   - a running session (memoFlush with the edited text — sends once + stamps them sent),
@@ -104,14 +104,14 @@ export function SendMemoModal({ memos, onClose, onSent }: SendMemoModalProps) {
 
   const ids = useMemo(() => memos.map((m) => m.id), [memos]);
 
-  // 入力待ち: an alive chat-capable session sitting idle — the best flush target.
+  // Waiting for input: an alive chat-capable session sitting idle — the best flush target.
   const isWaiting = (s: Session) => !!s.alive && agentOf(s.kind).caps.chat && (!s.state || s.state === "idle");
   const aliveSessions = useMemo(
     () => sessions.filter((s) => s.alive).slice().sort((a, b) => (isWaiting(b) ? 1 : 0) - (isWaiting(a) ? 1 : 0)),
     [sessions],
   );
 
-  // Default target: the top-ranked alive session, else 新規起動.
+  // Default target: the top-ranked alive session, else launching a new one.
   useEffect(() => {
     if (target) return;
     setTarget(aliveSessions[0] ? { type: "session", name: aliveSessions[0].name } : { type: "new" });

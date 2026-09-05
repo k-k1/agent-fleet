@@ -17,13 +17,14 @@ import (
 	"time"
 )
 
-// Generic OIDC login client (docs/log/61 §61.6 + ADR0043 決定 1). One implementation
+// Generic OIDC login client (docs/log/61 §61.6 + ADR0043 decision 1). One implementation
 // carries Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab — and Google, which
 // is just the instance whose env names stayed GOOGLE_OAUTH_* so existing
 // deployments need no config change. The flow is discovery -> authorize -> token
-// -> userinfo, all with the standard library: no JWT dependency is added (受入条件 7).
+// -> userinfo, all with the standard library: no JWT dependency is added
+// (acceptance criterion 7).
 //
-// ★ We deliberately do NOT verify the id_token signature (ADR0043 決定 9). The
+// We deliberately do NOT verify the id_token signature (ADR0043 decision 9). The
 // token arrives as the response to a back-channel POST that CP itself made to the
 // IdP's token endpoint, authenticated with client_secret over TLS — the same
 // argument OIDC Core §3.1.3.7 makes for skipping signature validation on the code
@@ -31,7 +32,7 @@ import (
 // out of the id_token payload without signature verification, and that is sound
 // ONLY because the payload came back inside that same TLS response.
 //
-// ★ If a front-channel path is ever added (implicit / form_post, where the browser
+// If a front-channel path is ever added (implicit / form_post, where the browser
 // hands us an id_token), JWKS signature verification becomes mandatory — an
 // attacker controls that channel. Do not reuse decodeIDTokenClaims there.
 
@@ -43,7 +44,7 @@ const (
 	TrustAPI           = "api"
 
 	// Google's well-known endpoints, seeded statically so the historical
-	// deployment path performs no discovery request at all (受入条件 6).
+	// deployment path performs no discovery request at all (acceptance criterion 6).
 	googleIssuer       = "https://accounts.google.com"
 	GoogleAuthorizeURL = "https://accounts.google.com/o/oauth2/v2/auth"
 	GoogleTokenURL     = "https://oauth2.googleapis.com/token"
@@ -77,7 +78,7 @@ type Endpoints struct {
 // pairwiseSubjects reports an issuer that mints a per-client `sub`, i.e. one where
 // two app registrations make the same person look like two people.
 //
-// ★ Read from discovery, never guessed from the issuer's hostname: "microsoftonline"
+// Read from discovery, never guessed from the issuer's hostname: "microsoftonline"
 // is not a rule, it is a coincidence that holds until the next IdP.
 func (ep Endpoints) pairwiseSubjects() bool {
 	for _, t := range ep.SubjectTypes {
@@ -100,13 +101,13 @@ type OIDCProvider struct {
 	Prompt       string     // "" omits the prompt parameter
 	ExtraAuth    url.Values // provider-specific authorize params (Google: access_type)
 	// linkClaim names a STABLE claim to carry alongside `sub`, for rule 1.5's second
-	// key (docs/log/61 §61.15.10 + 決定 38). Entra's `sub` is pairwise — different per app
+	// key (docs/log/61 §61.15.10 + decision 38). Entra's `sub` is pairwise — different per app
 	// registration — so two buttons onto one Entra tenant are two subjects; `oid` is
 	// the same value in both. "" (the default) takes no part in the rule.
 	LinkClaim string
 
 	// Authorization. A provider-specific allowlist replaces the DEPLOYMENT-WIDE
-	// list entirely (docs/log/61 §61.8: "未設定なら共通の許可リストを使う") — that is a
+	// list entirely (docs/log/61 §61.8: when unset, the shared allowlist applies) — that is a
 	// per-provider narrowing operators rely on and P3 did not change it.
 	// dbAllowed is the separate, database-derived term P3 adds on top of whichever
 	// of the two applies: see Allowed.
@@ -196,7 +197,7 @@ func (p *OIDCProvider) endpoints(ctx context.Context) (Endpoints, error) {
 	// The discovered issuer must be the configured one. The one exception is
 	// Entra's multi-tenant document, which returns the literal template
 	// "https://login.microsoftonline.com/{tenantid}/v2.0" — that configuration is
-	// only reachable at all when ALLOWED_TIDS is set (決定 7), which is the real
+	// only reachable at all when ALLOWED_TIDS is set (decision 7), which is the real
 	// check there.
 	if ep.Issuer != "" && strings.TrimRight(ep.Issuer, "/") != strings.TrimRight(p.Issuer, "/") &&
 		!strings.Contains(ep.Issuer, "{tenantid}") {
@@ -342,7 +343,7 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 			log.Printf("oauth: provider %s: %v (continuing with userinfo)", p.ProviderID, err)
 		}
 	}
-	// ★ Tenant pinning (決定 7): with ALLOWED_TIDS set, the token must name one of
+	// Tenant pinning (decision 7): with ALLOWED_TIDS set, the token must name one of
 	// those tenants. A missing tid is a denial, not a pass — a personal Microsoft
 	// account can rewrite its own email, so this is what keeps the email allowlist
 	// meaningful on the common/organizations endpoints.
@@ -357,7 +358,7 @@ func (p *OIDCProvider) Exchange(ctx context.Context, code, redirectURI string) (
 	pr := Principal{Provider: p.ProviderID}
 	pr.Subject = firstNonEmpty(uic.Sub, idc.Sub)
 	pr.Email = firstNonEmpty(uic.Email, idc.Email, emailLike(idc.PreferredUsername), emailLike(idc.UPN))
-	// ★ Rule 1.5's second key, read straight out of the token this exchange returned
+	// Rule 1.5's second key, read straight out of the token this exchange returned
 	// (docs/log/61 §61.15.10). The provider names the CLAIM; the VALUE is never taken from
 	// anywhere else — a tenant that could supply it could name another person. A claim
 	// the IdP did not send leaves BOTH fields empty, so the row takes no part in the
@@ -432,7 +433,7 @@ func (p *OIDCProvider) userinfo(ctx context.Context, ep Endpoints, accessToken s
 //	 deployment-wide list)
 //	OR (an auto-join domain matches, or the person holds a membership)
 //
-// ★ Two things this shape is careful about.
+// Two things this shape is careful about.
 //
 // First, the provider-specific list still REPLACES the deployment-wide list rather
 // than adding to it. Union-ing those two would silently widen a provider an
@@ -441,7 +442,7 @@ func (p *OIDCProvider) userinfo(ctx context.Context, ep Endpoints, accessToken s
 //
 // Second, only the email axis is union-ed. Terms of a different kind stay AND-ed:
 // the GitHub adapter checks org membership separately, so holding an Agent Fleet
-// membership can never be a way past its org gate (決定 2).
+// membership can never be a way past its org gate (decision 2).
 func (p *OIDCProvider) Allowed(ctx context.Context, pr Principal) (bool, error) {
 	email := strings.ToLower(strings.TrimSpace(pr.Email))
 	at := strings.LastIndexByte(email, '@')
@@ -480,7 +481,7 @@ func emailLike(s string) string {
 
 // newGoogleProvider builds the historical Google login as one instance of the
 // generic client. Its env names, scope, prompt and endpoints are unchanged, so an
-// existing deployment behaves exactly as before (受入条件 6).
+// existing deployment behaves exactly as before (acceptance criterion 6).
 func newGoogleProvider(clientID, clientSecret string, deployAllowed func(string) bool, dbAllowed func(context.Context, string) bool) *OIDCProvider {
 	p := &OIDCProvider{
 		ProviderID:    GoogleProviderID,
@@ -545,7 +546,7 @@ func ValidIssuerURL(s string) bool {
 
 // MultiTenantIssuer reports an Entra-style issuer that accepts *any* Microsoft
 // tenant (or personal accounts). Such a deployment is only safe with an explicit
-// tenant allowlist — see buildLoginProviders (決定 7).
+// tenant allowlist — see BuildLoginProviders (decision 7).
 func MultiTenantIssuer(issuer string) bool {
 	u, err := url.Parse(issuer)
 	if err != nil {
@@ -560,15 +561,6 @@ func MultiTenantIssuer(issuer string) bool {
 	return false
 }
 
-// buildLoginProviders assembles the enabled login providers in display order:
-// Google first (when its historical env is set), then AF_OIDC_PROVIDERS in the
-// order listed.
-//
-// Failure policy (ADR0043 決定 11): a provider whose own config is incomplete is
-// dropped with a warning — one broken IdP must never lock everybody out. The one
-// exception is the multi-tenant Entra hazard, which returns an error and is fatal
-// at startup, because ignoring it would silently put "anyone with a Microsoft
-// account" in front of an email allowlist that can be spoofed (決定 7).
 // Deployment is what BuildLoginProviders needs from the deployment's configuration.
 // It is taken by value rather than reading the root package's config, which the
 // adapters cannot see from here — the fields are exactly the five terms the
@@ -587,6 +579,14 @@ type Deployment struct {
 	HasAllowlist bool
 }
 
+// BuildLoginProviders assembles the enabled login providers in display order: Google
+// first (when its historical env is set), then AF_OIDC_PROVIDERS in the order listed.
+//
+// Failure policy (ADR0043 decision 11): a provider whose own config is incomplete is
+// dropped with a warning — one broken IdP must never lock everybody out. The one
+// exception is the multi-tenant Entra hazard, which returns an error and is fatal
+// at startup, because ignoring it would silently put "anyone with a Microsoft
+// account" in front of an email allowlist that can be spoofed (decision 7).
 func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 	var out []LoginProvider
 	seen := map[string]bool{}
@@ -613,7 +613,7 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 
 		issuer := oidcEnv(id, "ISSUER")
 		tids := envx.EmailSet(oidcEnv(id, "ALLOWED_TIDS")) // plain lowercased CSV set (tenant GUIDs)
-		// ★ Checked before the "disable on missing config" rules below so a
+		// Checked before the "disable on missing config" rules below so a
 		// dangerous issuer can never be waved through by an unrelated typo.
 		if issuer != "" && MultiTenantIssuer(issuer) && len(tids) == 0 {
 			return nil, fmt.Errorf("AF_OIDC_%s_ISSUER is a multi-tenant endpoint (%s): set AF_OIDC_%s_ALLOWED_TIDS, or pin the issuer to one tenant — otherwise every Microsoft account in the world reaches the login, and personal accounts can rewrite their own email",
@@ -631,7 +631,7 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 			log.Printf("WARNING: login provider %q disabled — AF_OIDC_%s_CLIENT_ID / AF_OIDC_%s_CLIENT_SECRET are required", id, strings.ToUpper(id), strings.ToUpper(id))
 			continue
 		}
-		// ★ fail-closed: a provider that does not declare how it justifies the
+		// fail-closed: a provider that does not declare how it justifies the
 		// email it hands us is refused, never defaulted (docs/log/61 §61.4).
 		trust := strings.ToLower(oidcEnv(id, "TRUST"))
 		switch trust {
@@ -660,7 +660,7 @@ func BuildLoginProviders(c Deployment) ([]LoginProvider, error) {
 			DeployAllowed: c.DeployAllowed,
 			DBAllowed:     c.DBAllowed,
 		}
-		// ★ AF_OIDC_<ID>_LINK_CLAIM accepts ANY claim name, unlike the tenant column,
+		// AF_OIDC_<ID>_LINK_CLAIM accepts ANY claim name, unlike the tenant column,
 		// which is whitelisted (docs/log/61 §61.15.10). The difference is who is speaking:
 		// this is the operator's own deployment file, and an operator who wanted to
 		// join accounts by email could simply set the allowlist to do it. The hazard is

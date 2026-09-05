@@ -1,15 +1,15 @@
-/* ワークスペースの面（workspace/）— ツールチェーン・プレビュー・SSM・内部リポ・
- * 書き出し / 取り込み・危険な操作。
+/* Workspace tabs (workspace/) — toolchains, preview, SSM, internal repos, export /
+ * import, dangerous operations.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
-/* プレビューの「いまの URL」（docs/log/81 §11）。ポートぶん縦に積み、長いホスト名は
-   折り返さず省略する —— 設定モーダルの幅を URL 1 本で広げない。 */
+/* The preview "current URLs" list (docs/log/81 §11). One line per port; long host names are
+   ellipsised rather than wrapped, so a single URL cannot widen the settings modal. */
 .pv-current {
   display: flex;
   flex-direction: column;
@@ -30,7 +30,7 @@
 }
 
 /* danger zone: a clearly-separated block at the bottom of a settings tab that
-   holds destructive workspace actions (作り直す), kept away from routine controls. */
+   holds destructive workspace actions (recreate), kept away from routine controls. */
 .danger-zone {
   margin-top: 28px;
   padding-top: 14px;
@@ -249,7 +249,7 @@
   color: #ddd;
 }
 
-/* ツールのバージョン（EnvTab）— 実効 / イメージ / ~/.local の read-only 表。 */
+/* Tool versions (EnvTab) — read-only table of effective / image / ~/.local. */
 .tool-ver {
   width: 100%;
   border-collapse: collapse;
@@ -284,8 +284,9 @@
   border: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
 }
 
-/* ピンずれバッジは方向で色分け: behind（ピンより古い＝更新が届いていない）は警告色、
-   ahead（ピンより新しい＝自己更新などの前進・想定内）は情報色。トークンはテーマ両対応。 */
+/* The pin-drift badge is coloured by direction: behind (older than the pin, so an update
+   never arrived) uses the warning colour, ahead (newer, e.g. an expected self-update) uses
+   the info colour. Both tokens work in either theme. */
 .tool-ver-pin {
   margin-left: 4px;
   font-size: 11.5px;
@@ -311,12 +312,12 @@
   padding: 2px 10px;
 }
 
-/* Java 行（EnvTab）: セレクトの右に「インストール」ボタンが出る。未導入の major を
-   選んだときだけ現れるので、常設の幅は取らせない（inline-flex）。 */
-/* ツールチェーン行の「選択 + インストール」。⚠️ レイアウトは共有クラスで、行ごとの
-   識別クラス（env-java-pick / env-node-pick）は**テストが行を特定するため**に別に付ける。
-   node 行を足したとき java のクラスを流用して、`.env-java-pick select` が node 側の
-   select を掴み、Java のテストが落ちた。見た目が同じでも、行の身元は分けること。 */
+/* The "select + install" pair of a toolchain row. The install button only appears when an
+   absent major is selected, so the row must not reserve width for it (inline-flex).
+   Layout comes from the shared class; the per-row identity classes (env-java-pick /
+   env-node-pick) exist so tests can address one row. Reusing another row's class makes
+   `.env-java-pick select` match the node row's select. Rows that look alike still need
+   separate identities. */
 .env-tool-pick {
   display: inline-flex;
   align-items: center;
@@ -328,9 +329,9 @@
   padding: 2px 10px;
 }
 
-/* 設定の書き出し / 取り込み（docs/log/79）。持ち出す範囲と取り込む範囲は同じ見た目のチェック
-   リストにしてある —— 「何が入っているファイルなのか」を、書き出したときと同じ並びで
-   確かめられる方が、片方だけ凝った表にするより安心して使える。 */
+/* Settings export / import (docs/log/79). The export scope and the import scope are the
+   same-looking checklist on purpose: reading back what a file contains in the same order it
+   was written is more reassuring than a richer table on one side only. */
 .backup-tab .backup-picks {
   list-style: none;
   margin: 0 0 10px;
@@ -364,8 +365,8 @@
   font-size: 12px;
 }
 
-/* 取り込みの結果。件数だけの素の箇条書きにしてある — 入った数より **入らなかった数**を
-   同じ行で読ませたいので、成功を強調する装飾は入れない。 */
+/* The import result: a plain list of counts, with no decoration emphasising success — what
+   did NOT come in has to read as easily as what did, on the same line. */
 .backup-result {
   margin: 10px 0 0;
   padding-left: 18px;

@@ -1,12 +1,12 @@
-/* フォームの基礎（parts/mcpForm.tsx）— ラベル付きの欄・キー/値エディタ・
- * チェック行。MCP / SSM / サインイン方式が同じ組み方で使う。
+/* Form furniture (parts/mcpForm.tsx) — labelled fields, the key/value editor and check
+ * rows. MCP, SSM and the sign-in providers all lay out the same way.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 .gi-row {
   display: flex;
@@ -131,8 +131,8 @@
   box-sizing: border-box;
 }
 
-/* 接続元制限の CIDR 一覧は 1 行に長い文字列が入るので、格子の 1 列では読めない
-   （docs/log/66）。ssm-fld.wide と同じ扱いで 1 行を丸ごと使う。 */
+/* The source-restriction CIDR list is one long string per line and is unreadable in a single
+   grid column (docs/log/66), so it takes a whole row, as ssm-fld.wide does. */
 .admin-fld.wide {
   grid-column: 1 / -1;
 }

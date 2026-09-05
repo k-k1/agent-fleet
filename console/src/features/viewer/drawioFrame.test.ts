@@ -1,16 +1,16 @@
-// フレーム HTML の組み立て（docs/log/65 §65.3）。ここで守るのは「外部へ出る経路と
-// 隔離が、文字列として本当に入っているか」だけ。描画そのものは実ブラウザでしか
-// 確かめられないので scripts/drawio/check.mjs が見る。
+// Assembly of the frame HTML (docs/log/65 §65.3). All that is guarded here is that the
+// isolation, and the absence of paths out to external hosts, really are in the string.
+// Rendering itself can only be checked in a real browser, which scripts/drawio/check.mjs does.
 import { describe, expect, it } from "vitest";
 import { drawioFrameSrcdoc, isDrawioFrameEvent, DRAWIO_MSG } from "./drawioFrame.ts";
 
 const html = (dark = false) => drawioFrameSrcdoc({ dark });
 
 describe("drawioFrameSrcdoc", () => {
-  it("外部の既定 URL を空文字ではなく dead value で潰す", () => {
+  it("kills the external default URLs with a dead value rather than an empty string", () => {
     const s = html();
-    // "" は falsy で `window.X = window.X || "https://…"` に負ける（実測で
-    // DRAW_MATH_URL が viewer.diagrams.net を取りに行った）。
+    // "" is falsy and loses to `window.X = window.X || "https://…"` (measured: DRAW_MATH_URL
+    // went for viewer.diagrams.net).
     expect(s).not.toMatch(/window\.DRAW_MATH_URL = "";/);
     for (const name of [
       "PROXY_URL",
@@ -30,80 +30,82 @@ describe("drawioFrameSrcdoc", () => {
     expect(s).toContain('var DEAD = "about:blank";');
   });
 
-  it("フレームは何ひとつ自分で取りに行かない", () => {
+  it("has the frame fetch nothing at all by itself", () => {
     const s = html();
     expect(s).toContain("default-src 'none'");
     expect(s).toContain("connect-src 'none'");
-    // **`<script src>` を復活させてはならない**: オリジンを持たないフレームからの要求は
-    // cross-site 扱いで SameSite=Lax のセッション cookie が付かず、CP の authGate に
-    // 401 で弾かれる（2026-08-16 の不具合）。ビューアの本文は親が postMessage で渡す。
+    // Never restore `<script src>`: a request from an origin-less frame counts as cross-site,
+    // carries no SameSite=Lax session cookie and is rejected by the CP's authGate with a 401.
+    // The viewer's source is passed in by the parent through postMessage.
     expect(s).not.toMatch(/<script[^>]+src=/);
-    // 外部オリジンを script-src に載せる必要も無い（載せれば取りに行く経路が復活する）。
+    // No external origin belongs in script-src either; adding one restores the fetch path.
     expect(s).toContain("script-src 'unsafe-inline';");
   });
 
-  it("ステンシルもフレームには取りに行かせない（docs/log/65 §65.5.4）", () => {
+  it("does not let the frame fetch stencils either (docs/log/65 §65.5.4)", () => {
     const s = html();
-    // ビューア自身の遅延取得を切ったままにする。true に戻すと、認証を通れない要求・
-    // CSP の穴・失敗後に再試行しない詰まり方が **まとめて** 戻ってくる（どれも実測）。
+    // Keep the viewer's own lazy fetching off. Setting it back to true brings all three back at
+    // once: requests that cannot authenticate, a hole in the CSP, and the dead end where a
+    // failed set is never retried (all measured).
     expect(s).toContain("mxStencilRegistry.dynamicLoading = false");
-    // したがって STENCIL_PATH / SHAPES_PATH は dead value のまま。ここを CP へ向ける
-    // 変更は「フレームが自分で取りに行く」への逆戻りを意味する。
+    // STENCIL_PATH and SHAPES_PATH therefore stay dead values. Pointing them at the CP would be
+    // a step back to the frame fetching for itself.
     expect(s).toMatch(/window\.STENCIL_PATH = DEAD;/);
     expect(s).toMatch(/window\.SHAPES_PATH = DEAD;/);
-    // 取得が親の仕事である以上、connect-src を開ける理由が無い（上のケースと二重）。
+    // With fetching being the parent's job, there is no reason to open connect-src (also above).
     expect(s).toContain("connect-src 'none'");
   });
 
-  it("必要なセットは basename ではなく libraries の読み替えで決める", () => {
+  it("resolves the required sets through libraries rather than the bare basename", () => {
     const s = html();
-    // `basename + ".xml"` 決め打ちは rackGeneral → rack/general.xml のような
-    // 読み替えを落として 404 になる。実機で効くのは libraries を引く経路だけ。
+    // Hard-coding `basename + ".xml"` loses mappings such as rackGeneral → rack/general.xml and
+    // 404s. Only the path that consults libraries works on real hardware.
     expect(s).toContain("mxStencilRegistry.libraries");
-    // 割り出しは **展開済みのモデル**から。生 XML の走査は圧縮された <diagram> で
-    // 何も見つけられない（実測 rawSeen=0）。
+    // The detection reads the expanded model: scanning the raw XML finds nothing in a
+    // compressed <diagram> (measured, rawSeen=0).
     expect(s).toContain("v.graph.model");
-    // 差し込みは render のやり直しではなく refresh（見ていた倍率と位置を壊さない）。
+    // Injection is a refresh, not a re-render, so the zoom and position on screen survive.
     expect(s).toContain("parseStencilSets");
     expect(s).toContain("viewer.graph.refresh()");
   });
 
-  it("lightbox をツールバーにも設定にも出さない", () => {
+  it("keeps the lightbox out of both the toolbar and the configuration", () => {
     const s = html();
-    // 図面を app.diagrams.net へ持ち出す唯一のボタン。ツールバー文字列に現れたら赤。
+    // The one button that takes the drawing to app.diagrams.net; if it appears in the toolbar string, fail.
     expect(s).toContain('toolbar: "pages zoom layers"');
     expect(s).toContain("lightbox: 0");
   });
 
-  it("テーマで初期背景が変わる", () => {
+  it("changes the initial background with the theme", () => {
     expect(html(false)).toContain("background:#ffffff");
     expect(html(true)).toContain("background:#1e1e1e");
   });
 
-  it("dark-mode は真偽値ではなく文字列で渡す", () => {
-    // isDarkMode() は "dark" / "auto" と比較するので、true は黙って「ライト」になる。
-    // 暗い背景に黒い既定文字が載って読めなくなる（docs/log/65 §65.11-10）。
-    // 値はフレームの中で描画時に決まるので、ここで見えるのは式そのもの。
-    // **実際に暗色描画になったか**は scripts/drawio/check.mjs が isDarkMode() で検算する。
+  it("passes dark-mode as a string, not a boolean", () => {
+    // isDarkMode() compares against "dark" / "auto", so true silently means light and the
+    // default black text lands on a dark background, unreadable (docs/log/65 §65.11-10).
+    // The value is decided inside the frame at render time, so all that is visible here is the
+    // expression. Whether it really rendered dark is verified by scripts/drawio/check.mjs
+    // through isDarkMode().
     expect(html()).toContain('"dark-mode": dark ? "dark" : "light"');
     expect(html()).not.toMatch(/"dark-mode": dark,/);
   });
 
-  it("ジェスチャを自分で配線する（GraphViewer は何もしない）", () => {
+  it("wires up the gestures itself, since GraphViewer wires up none", () => {
     const s = html();
-    // ホイールは passive 既定では preventDefault が効かないので明示する。
+    // A wheel listener defaults to passive, where preventDefault does nothing, so say so.
     expect(s).toContain('"wheel"');
     expect(s).toContain("{ passive: false }");
     expect(s).toContain('"pointerdown"');
     expect(s).toContain('"dblclick"');
-    // スマホのピンチを図に届かせるには touch-action を切るしかない。
+    // Turning touch-action off is the only way a phone pinch reaches the diagram.
     expect(s).toContain("touch-action:none");
-    // 収め直しは fitGraph ではなく initialViewState（幅が同じだと fitGraph は無反応）。
+    // Refitting uses initialViewState, not fitGraph, which does nothing when the width is unchanged.
     expect(s).toContain("initialViewState");
   });
 
-  it("window.onerror ではなく addEventListener で失敗を拾う", () => {
-    // ビューア本体が window.onerror を上書きするため（実測）。
+  it("catches failures with addEventListener rather than window.onerror", () => {
+    // The viewer overwrites window.onerror (measured).
     const s = html();
     expect(s).toContain('window.addEventListener("error"');
     expect(s).not.toContain("window.onerror =");
@@ -111,7 +113,7 @@ describe("drawioFrameSrcdoc", () => {
 });
 
 describe("isDrawioFrameEvent", () => {
-  it("自分のフレームの形だけを通す", () => {
+  it("accepts only the shape of its own frame's events", () => {
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "ready" })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "booted" })).toBe(true);
     expect(isDrawioFrameEvent({ af: DRAWIO_MSG, t: "rendered", pages: 1, page: 1, scale: 1 })).toBe(true);

@@ -7,14 +7,14 @@ import { CardSettings, ConnPaused, LaunchDefaults, RtkRow } from "./AgentCardPar
 // agy (Antigravity CLI, docs/log/32): claude-style OAuth connect (start → approve in a
 // new tab → paste code → complete) with an auth-method selector (M1 offers Google
 // OAuth only; the GCP-project method lands with M2), plus the shared RTK toggle so
-// the card reads like the other agents'. The 実験枠 label is a 採用条件 (docs/log/32
-// Track C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the
-// card must always say so. The quota gauge (残量%) lives in the WS bar next to the
+// the card reads like the other agents'. The "experimental tier" label is an adoption condition
+// (docs/log/32 Track C-3): the Starter pool is tiny and shared with the IDE/Jules wallet, so the
+// card must always say so. The quota gauge (remaining %) lives in the WS bar next to the
 // Claude / Codex usage chips. On unsupported hosts (no RDRAND) the card shows why
 // instead of the connect flow.
-// CopilotCard: GitHub Copilot CLI（docs/log/36）。専用の認証フローを持たない —
-// GitHub 連携（gh 透過認証）に相乗りするので、状態表示と起動既定のみ。接続/切断は
-// 連携タブの GitHub 側で行う。
+// CopilotCard: GitHub Copilot CLI (docs/log/36). It has no auth flow of its own — it rides on
+// the GitHub connection (gh transparent auth), so this card only shows status and the launch
+// defaults. Connect and disconnect happen on the GitHub side of the connections tab.
 export function CopilotCard({
   running,
   st,
@@ -48,7 +48,7 @@ export function CopilotCard({
           {!st?.connected && (
             <p className="ps-note">
               {tr("agents.copilot_not_connected")}{" "}
-              {/* Copilot rides GitHub auth — jump straight to the Gitホスティング tab. */}
+              {/* Copilot rides GitHub auth — jump straight to the Git hosting tab. */}
               <button type="button" className="linklike" onClick={() => useSettingsUI.getState().openSettings("git")}>
                 {tr("agents.copilot_open_git")}
               </button>

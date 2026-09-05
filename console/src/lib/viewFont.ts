@@ -1,27 +1,29 @@
-// どのペインの文字サイズを動かすのか、を決める純ロジック。
+// Pure logic deciding whose font size a pane's zoom command moves.
 //
-// 文字サイズは「面ごとに 1 本のグローバル設定」で持っている（設定 › 表示のステッパーと、
-// 朗読ビューの ＋/− ボタンが動かしているのと同じ値）。キーボードの拡大/縮小はそれを踏襲し、
-// **アクティブなペインが属する面の設定**を上下させる —— 新しい永続状態を増やさないので、
-// 設定画面の表示・クロスデバイス同期・既定へのリセットが全部そのまま効く。
+// Font size is held as one global setting per surface - the same value the Settings > Display
+// stepper and the read-aloud view's +/- buttons move. The keyboard zoom follows that and moves
+// the setting of the surface the active pane belongs to. Adding no new persisted state means
+// the settings screen, cross-device sync and reset-to-default all keep working unchanged.
 //
-// store も DOM も import しない（lib の原則）。layout の型だけ type-only で借りる。
+// Imports neither the store nor the DOM (the rule for lib); the layout types are borrowed
+// type-only.
 import type { PaneContent } from "../layout/types.ts";
 import { imageFormat } from "./filemeta.ts";
 
-/** 文字サイズを持つ 4 つの面（lib/settings.ts の同名キー）。 */
+/** The four surfaces that carry a font size (same key names as in lib/settings.ts). */
 export type FontSetting = "termSize" | "viewerSize" | "chatSize" | "readerSize";
 
-// 設定 › 表示のステッパーと同じ範囲。両方がこの定数を使うのでズレない。
+// Same range as the Settings > Display stepper; both read these constants so they cannot drift.
 export const FONT_MIN = 9;
 export const FONT_MAX = 28;
 
-/** このペインの文字サイズを支配している設定キー。null＝文字組みを持たない面
- *  （ブラウザ・画像）で、呼び出し側はキーを握らずに端末へ流す。 */
+/** The setting key that governs this pane's font size. Null means a surface with no text of
+ *  its own (browser, image): the caller then lets the key fall through to the terminal. */
 export function fontSettingFor(content: PaneContent | null | undefined): FontSetting | null {
-  if (!content) return null; // 空セル
+  if (!content) return null; // empty cell
   switch (content.kind) {
-    // 端末ペインは chat=true のときミラー（会話）を描くので、面としては chat 側。
+    // With chat=true the terminal pane draws the mirror (a conversation), so it belongs to
+    // the chat surface.
     case "terminal":
       return content.chat ? "chatSize" : "termSize";
     case "chat":
@@ -29,7 +31,8 @@ export function fontSettingFor(content: PaneContent | null | undefined): FontSet
       return "chatSize";
     case "read":
       return "readerSize";
-    // 画像だけは文字を持たない。drawio は図とソースを行き来できるので対象に残す。
+    // Only images carry no text. drawio stays in scope because it toggles between diagram
+    // and source.
     case "file":
       return imageFormat(content.filePath) ? null : "viewerSize";
     case "diff":
@@ -39,12 +42,12 @@ export function fontSettingFor(content: PaneContent | null | undefined): FontSet
     case "commit":
     case "doc":
       return "viewerSize";
-    // browser / browserAttach: ページ側の拡大縮小であってこちらの設定ではない。
+    // browser / browserAttach: zooming there is the page's own, not this setting.
     default:
       return null;
   }
 }
 
-/** 1 段動かした値（範囲外へは出ない）。 */
+/** The value one step away, clamped to the allowed range. */
 export const stepFontSize = (current: number, delta: number): number =>
   Math.min(FONT_MAX, Math.max(FONT_MIN, current + delta));

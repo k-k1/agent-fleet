@@ -1,12 +1,13 @@
-// 取り直し（fetchConnsWithRetry）の契約: 1 回の失敗で「使えるエージェントは無い」を
-// 確定させないこと、粘りすぎないこと、WS が消えたら即やめること。
+// Contract of the retry (fetchConnsWithRetry): one failure must not settle "there are no
+// usable agents", it must not keep trying forever, and it must stop the moment the WS is
+// gone.
 import { describe, it, expect } from "vitest";
 import { fetchConnsWithRetry } from "./connsRetry.ts";
 import type { ConnectionsStatus } from "../../types/session.ts";
 
 const ok = { claude: { connected: true } } as unknown as ConnectionsStatus;
 
-/** 呼ばれた回数と、待たされた間隔を記録するテスト用の依存。 */
+/** Test dependency that records how often it was called and the intervals it waited. */
 function harness(results: (ConnectionsStatus | null)[]) {
   const slept: number[] = [];
   let calls = 0;
@@ -26,14 +27,14 @@ describe("fetchConnsWithRetry", () => {
     const d = await fetchConnsWithRetry({ once: h.once, sleep: h.sleep, delays: [1, 2, 3], abort: () => false });
     expect(d).toBe(ok);
     expect(h.calls()).toBe(3);
-    expect(h.slept).toEqual([1, 2]); // 失敗のたびに次の間隔だけ待つ
+    expect(h.slept).toEqual([1, 2]); // each failure waits the next interval
   });
 
   it("gives up (null) once the schedule is exhausted", async () => {
     const h = harness([null]);
     const d = await fetchConnsWithRetry({ once: h.once, sleep: h.sleep, delays: [1, 2], abort: () => false });
     expect(d).toBeNull();
-    expect(h.calls()).toBe(3); // 初回 + 取り直し 2 回
+    expect(h.calls()).toBe(3); // first call + 2 retries
   });
 
   it("does not retry when the first call already succeeds", async () => {
@@ -47,7 +48,7 @@ describe("fetchConnsWithRetry", () => {
     const h = harness([null]);
     const d = await fetchConnsWithRetry({ once: h.once, sleep: h.sleep, delays: [1, 2], abort: () => true });
     expect(d).toBeNull();
-    expect(h.calls()).toBe(1); // 粘らない
+    expect(h.calls()).toBe(1); // no persistence
     expect(h.slept).toEqual([]);
   });
 
@@ -58,7 +59,7 @@ describe("fetchConnsWithRetry", () => {
       once: h.once,
       sleep: async (ms) => {
         h.slept.push(ms);
-        gone = true; // 待っている間に WS が停止した
+        gone = true; // the WS stopped while we were waiting
       },
       delays: [1, 2, 3],
       abort: () => gone,

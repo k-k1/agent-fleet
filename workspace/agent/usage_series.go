@@ -1,15 +1,17 @@
 package main
 
-// GET /usage/series — 機能別使用量の時系列（docs/log/46 §4 / ADR0029 §8）。
+// GET /usage/series — the per-feature usage time series (docs/log/46 §4 / ADR0029 §8).
 //
-// サーバ側で集計して返す（Console に生ログを流さない）。生ログにはセッション名・会話 id が
-// 載るので、集計して返すことは形の都合ではなくプライバシー側の要求でもある。
+// Aggregated on the server (raw logs never reach the Console). Raw rows carry session names and
+// conversation ids, so aggregating before returning is a privacy requirement, not just a matter
+// of shape.
 //
-// 読む順序は rollup → raw。畳み済みの日は rollup が唯一の正なので、同じ消費を二重に
-// 数えない（usage_rollup.go）。
+// Read order is rollup → raw. For an already folded day the rollup is the only truth, so the
+// same consumption is never counted twice (usage_rollup.go).
 //
-// ⚠️ 新 REST は workspace/agent/routes.go と control-plane/routes.go の**両方**に登録する
-// （CP は明示許可リスト方式。片方漏れると backend 正常でも Console から 404）。
+// A new REST route has to be registered in both workspace/agent/routes.go and
+// control-plane/routes.go (the CP uses an explicit allowlist; miss one side and the Console
+// gets a 404 while the backend is healthy).
 
 import (
 	"net/http"
@@ -21,8 +23,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// 集計軸の語彙。by / split / filter のキーはこれだけを受け付ける（未知の軸を通すと
-// 「指定したのに効いていない」が静かに起きる）。
+// The vocabulary of aggregation dimensions. by / split / filter accept these keys and no
+// others (letting an unknown dimension through silently produces "I specified it and nothing
+// happened").
 const (
 	usageDimFeature    = "feature"
 	usageDimKind       = "kind"
@@ -35,8 +38,8 @@ const (
 	usageDimMeasured   = "measured"
 )
 
-// usageDimValue は次元タプルから軸の値を取る。未知の軸は "" を返さず false を返させる
-// ため、呼び出し前に validUsageDim で弾く。
+// usageDimValue takes one dimension's value out of the dimension tuple. Reject unknown
+// dimensions with validUsageDim before calling, so they fail rather than read as "".
 func usageDimValue(k usageKey, dim string) string {
 	switch dim {
 	case usageDimFeature:
@@ -70,9 +73,9 @@ func validUsageDim(dim string) bool {
 	return false
 }
 
-// usageFilter は dim -> パターン群。**同じ軸は OR、違う軸は AND**（filter=kind:claude,
-// kind:codex は「claude か codex」、filter=kind:claude,feature:title.* は「claude かつ
-// title 系」）。末尾 * だけを前方一致として扱う。
+// usageFilter maps dim -> patterns. The same dimension ORs, different dimensions AND
+// (filter=kind:claude,kind:codex is "claude or codex"; filter=kind:claude,feature:title.* is
+// "claude and the title family"). Only a trailing * is treated as a prefix match.
 type usageFilter map[string][]string
 
 func parseUsageFilter(s string) (usageFilter, string) {
@@ -117,8 +120,8 @@ type usageBucketWire struct {
 	Series map[string]usageAgg `json:"series"`
 }
 
-// usageCoverage は「この kind は何をどこまで報告するか」の自己申告。**データから自動生成
-// する**（手書きの表はドリフトする）— UI の未計測バナーはこれを読んで書く。
+// usageCoverage is a kind's self-report of what it reports and how far. Generated from the
+// data (a hand-written table drifts) — the UI's "not measured" banner is written from this.
 type usageCoverage struct {
 	Tokens string `json:"tokens"` // exact | partial | none
 	Model  string `json:"model"`  // reported | requested | none
@@ -132,46 +135,50 @@ type usageSeriesResp struct {
 	Split   string            `json:"split,omitempty"`
 	Buckets []usageBucketWire `json:"buckets"`
 	Totals  usageAgg          `json:"totals"`
-	// Matrix は split 指定時のみ（「機能 × モデル」等の表）。
+	// Matrix is present only when split is given (a table such as feature x model).
 	Matrix          map[string]map[string]usageAgg `json:"matrix,omitempty"`
 	Coverage        map[string]usageCoverage       `json:"coverage"`
 	UnmeasuredCalls int                            `json:"unmeasured_calls"`
-	// PricedSpend / UnpricedSpend は「推定額をいくらぶんの消費から起こせたか」の申告
-	// （usage_price.go）。推定額だけを出すと、単価表に無いモデルの消費が黙って抜けた
-	// 合計を「API 換算相当額」として読ませてしまう。
+	// PricedSpend / UnpricedSpend report how much of the consumption the estimate could be
+	// derived from (usage_price.go). Showing only the estimate would present a total that
+	// silently omits models missing from the price table as "API-equivalent cost".
 	PricedSpend   int `json:"priced_spend"`
 	UnpricedSpend int `json:"unpriced_spend"`
-	// Prices は**この応答に出てくるモデルに使った単価**（モデル名 → 実効単価と出所）。
-	// 金額の検算にはどこの単価かが要る。集計値には持たせない（軸で畳むと混ざる）。
+	// Prices holds the unit prices used for the models appearing in this response (model name ->
+	// effective price and its source). Checking an amount needs to know which price produced it.
+	// Not carried on the aggregates (folding on a dimension would mix them).
 	Prices map[string]usagePriceWire `json:"prices,omitempty"`
-	// Catalog はカタログの申告（無ければ省略）。
+	// Catalog is the catalog's self-report (omitted when there is none).
 	Catalog *usageCatalogMeta `json:"catalog,omitempty"`
-	// Truncated は要求期間の一部が raw の保持期間より古く、hour バケットでは復元できな
-	// かったことを示す。黙って短い系列を返すと「その期間は消費が無かった」に見える。
+	// Truncated says part of the requested range is older than the raw retention and could not
+	// be reconstructed at hour granularity. Returning a shorter series silently would look like
+	// "there was no consumption in that period".
 	Truncated bool `json:"truncated,omitempty"`
-	// Folding は「セッション本体の折り込みがこの読み出しの時点で走っている」＝この応答は
-	// 直近ターンをまだ含まないかもしれない、の申告。Console はこれが落ちるまで取り直す。
+	// Folding says the session-body fold is running as of this read, i.e. this response may not
+	// include the most recent turns yet. The Console re-fetches until it clears.
 	Folding bool `json:"folding,omitempty"`
 }
 
-// usagePriceWire は応答の prices[model]。値は**実効単価**（キャッシュ単価が出所に無ければ
-// 倍率で置いた後の値）＝画面に出した金額をそのまま検算できる形にする。
+// usagePriceWire is prices[model] in the response. The value is the effective unit price (after
+// the multiplier has filled in cache prices the source does not carry), so the amount shown on
+// screen can be checked as is.
 type usagePriceWire struct {
 	Src        string  `json:"src"` // builtin | catalog:<provider>/<model>
 	In         float64 `json:"in"`  // $/1M
 	Out        float64 `json:"out"` // $/1M
 	CacheRead  float64 `json:"cread"`
 	CacheWrite float64 `json:"cwrite"`
-	// Ambiguous は「同じモデル名でも kind によって単価が違う」（例: gpt-5.6-luna を
-	// codex は openai 定価・opencode はゲートウェイ価格で換算する）。1つの行に単価を
-	// 1つしか出せないので、違うことだけは言う。
+	// Ambiguous means the same model name is priced differently depending on kind (codex
+	// converts gpt-5.6-luna at openai list price, opencode at gateway price). Only one price
+	// fits in a row, so at least say that they differ.
 	Ambiguous bool `json:"ambiguous,omitempty"`
-	// Spend は代表として採った側の消費（大きい方を出す — 小さい方の単価を代表に
-	// してしまうと、表の金額と単価が噛み合わなく見える）。
+	// spend is the consumption of the side taken as representative (the larger one — making the
+	// smaller side's price representative makes the table's amount and price look inconsistent).
 	spend int
 }
 
-// usageSample は集計の入力単位（rollup の1エントリ、または raw をバケット内で畳んだもの）。
+// usageSample is the unit of aggregation input (one rollup entry, or raw rows folded within a
+// bucket).
 type usageSample struct {
 	T   string
 	Key usageKey
@@ -194,8 +201,8 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if dateOnly {
-		// 日付だけで指定された to は「その日いっぱい」。深夜 0 時と解釈すると
-		// from=to=今日 の hour クエリが空になり、まず間違いなく意図と違う。
+		// A to given as a bare date means "through the end of that day". Reading it as
+		// midnight makes a from=to=today hour query empty, which is almost never intended.
 		to = to.AddDate(0, 0, 1).Add(-time.Nanosecond)
 	}
 	from, _, err := parseUsageTime(q.Get("from"), to.AddDate(0, 0, -7))
@@ -231,11 +238,12 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// fold-on-read（docs/log/46 §3-b）: 系列を要求されたこの機会にセッション本体を折り込む。
-	// 非同期なのでこの応答自体は待たない（＝直近ターンは次回の読み出しに乗る）。**待たない
-	// ことを黙っていると「再取得を何度か押すまで最新にならない」画面になる**ので、走行中は
-	// folding を立てて返し、Console が終わってから取り直す。
-	// fold=force は 60 秒スロットルを飛ばす（利用者が明示的に再取得を押した経路だけ）。
+	// fold-on-read (docs/log/46 §3-b): take this request for a series as the occasion to fold
+	// the session bodies. It is asynchronous, so this response does not wait for it (the most
+	// recent turns land on the next read). Saying nothing about not waiting produces a screen
+	// that only goes current after a few presses of refresh, so folding is set while it runs
+	// and the Console re-fetches once it finishes.
+	// fold=force skips the 60s throttle (only on the path where the user pressed refresh).
 	folding := startFoldSessionUsage(q.Get("fold") == "force")
 
 	samples, truncated := collectUsageSamples(from, to, bucket)
@@ -258,10 +266,11 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 			byBucket[s.T] = map[string]usageAgg{}
 			order = append(order, s.T)
 		}
-		// 推定額はここで載せる（保存しない）。サンプルはまだモデル次元を持っている＝
-		// どの軸で畳んだ後でも足し合わせが効く形になるのは、畳む前のこの位置だけ。
-		// 単価は kind でも変わる（同じモデルでも通った provider が違う）ので、
-		// **kind を落とす前**のここで引くこと。
+		// The estimate is attached here and never stored. The sample still carries the model
+		// dimension, and this point, before folding, is the only one where the sums still add
+		// up whichever dimension is folded on. The price varies by kind too (the same model
+		// may have gone through a different provider), so look it up here, before kind is
+		// dropped.
 		agg := s.Agg
 		if est, src, priced := usageEstCostUSD(s.Key.Kind, s.Key.Model, agg); priced {
 			agg.CostEstUSD = est
@@ -296,8 +305,9 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 	}
 	resp.Catalog = usageCatalogInfo()
 	sort.Strings(order)
-	// 消費の無いバケットもゼロで埋める。落とすと「離れた2日」が隣り合う棒として描かれ、
-	// 時間軸として読めなくなる（4日空いたのか連続なのかが絵から消える）。
+	// Buckets with no consumption are filled with zero. Dropping them draws two distant days as
+	// adjacent bars and the picture stops reading as a time axis (a four-day gap becomes
+	// indistinguishable from consecutive days).
 	order = fillUsageBuckets(order, from, to, bucket)
 	resp.Buckets = make([]usageBucketWire, 0, len(order))
 	for _, t := range order {
@@ -310,10 +320,11 @@ func handleUsageSeries(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, resp)
 }
 
-// notePrice はこの応答で使った単価を model 単位に集める。**同じモデル名でも kind が
-// 違えば単価が違う**（gpt-5.6-luna を codex は openai 定価、opencode はゲートウェイ価格で
-// 引く）ので、衝突したら消費の大きい方を代表にし、違うことを ambiguous で申告する
-// （画面のモデル行は kind を持たないので、単価を1つしか出せない）。
+// notePrice collects the unit prices used in this response, per model. The same model name is
+// priced differently across kinds (codex looks gpt-5.6-luna up at openai list price, opencode at
+// gateway price), so on a collision the larger consumption becomes the representative and the
+// difference is reported through ambiguous (the model row on screen carries no kind, so only one
+// price fits).
 func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
 	if k.Model == "" || src == "" {
 		return
@@ -336,7 +347,7 @@ func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
 		Ambiguous: seen, spend: spend,
 	}
 	if seen {
-		if cur.spend >= spend { // 代表は据え置き。ambiguous だけ立てる
+		if cur.spend >= spend { // keep the representative, only raise ambiguous
 			cur.Ambiguous = true
 			r.Prices[k.Model] = cur
 			return
@@ -346,13 +357,14 @@ func (r *usageSeriesResp) notePrice(k usageKey, src string, spend int) {
 	r.Prices[k.Model] = next
 }
 
-// usageMaxFilledBuckets はゼロ埋めの上限。これを超える密度の系列は棒グラフとして読めない
-// （90日 × hour = 2,160 本）ので、埋めずに実データだけを返す — 上限で切り詰めるのではなく
-// **埋めるのをやめる**（データを黙って落とさない）。
+// usageMaxFilledBuckets caps zero-filling. A series denser than this is unreadable as a bar
+// chart (90 days x hour = 2,160 bars), so only the real data is returned — filling stops rather
+// than the data being truncated at the cap (never drop data silently).
 const usageMaxFilledBuckets = 1000
 
-// fillUsageBuckets は要求期間のバケット並びを作り、実データの無いバケットも位置として残す。
-// 返すのは昇順のバケットキー列（既存キーは必ず含む）。
+// fillUsageBuckets builds the bucket sequence of the requested range, keeping buckets with no
+// real data as positions. It returns the bucket keys in ascending order (existing keys are
+// always included).
 func fillUsageBuckets(have []string, from, to time.Time, bucket string) []string {
 	step := 24 * time.Hour
 	cur := from.UTC().Truncate(24 * time.Hour)
@@ -370,7 +382,8 @@ func fillUsageBuckets(have []string, from, to time.Time, bucket string) []string
 		seen[key] = true
 		out = append(out, key)
 	}
-	// 期間の端（from の時刻成分より前のバケット等）に落ちた実データは必ず残す。
+	// Real data that fell at the edge of the range (a bucket before from's time of day, say) is
+	// always kept.
 	for _, t := range have {
 		if !seen[t] {
 			out = append(out, t)
@@ -380,18 +393,21 @@ func fillUsageBuckets(have []string, from, to time.Time, bucket string) []string
 	return out
 }
 
-// collectUsageSamples は期間内のサンプルを集める。**バケットは行の ts（消費が起きた時刻）
-// で刻む** — 追記先のファイル日ではない（usage_rollup.go 冒頭）。
+// collectUsageSamples gathers the samples inside the range. Buckets are cut by the row's ts (the
+// time the consumption happened), not by the day of the file it was appended to (see the top of
+// usage_rollup.go).
 //
-//   - day: 畳み済みの分は rollup から、未畳みの raw（通常は当日のファイル1つ）から残りを。
-//     各 raw ファイルは畳み済みか未畳みのどちらか一方なので、二重に数えない。
-//   - hour: rollup は日粒度なので使えない。ディスクに残っている raw を直接読む（各行は
-//     ちょうど1つのファイルにあるので、こちらも二重にならない）。prune 済みで読めない
-//     期間があれば truncated で正直に言う。
+//   - day: the folded part from the rollup, the rest from the unfolded raw (normally a single
+//     file for today). Each raw file is either folded or unfolded, never both, so nothing is
+//     counted twice.
+//   - hour: the rollup is day-granular and unusable here, so the raw still on disk is read
+//     directly (each row lives in exactly one file, so this does not double count either). If
+//     part of the range was pruned and cannot be read, truncated says so honestly.
 //
-// どちらの経路も (ref, idx) 重複排除を通す。hour だけは「原本が prune 済みファイルにあり
-// 重複が残っている」形を落とせない（水位を空から積むため）が、折り込みの再試行は分単位で
-// 走るので、原本と重複が保持期間（既定90日）を跨ぐことは実質起きない。
+// Both paths go through the (ref, idx) dedup. Only hour cannot drop the shape where the original
+// is in a pruned file and the duplicate remains (its watermark is built up from empty), but the
+// fold retries within minutes, so an original and its duplicate straddling the retention window
+// (90 days by default) does not happen in practice.
 func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSample, truncated bool) {
 	ensureUsageRollups()
 	st := readUsageRollupState()
@@ -404,13 +420,15 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		}
 	}
 
-	// (ref, idx) 重複排除（usage_dedup.go）。折り込みが「行を追記 → watermark を書く」の
-	// 間で落ちると、そのセッションの数ターン分が次のパスで再追記される。
+	// (ref, idx) dedup (usage_dedup.go). If a fold dies between "append the rows" and "write the
+	// watermark", a few turns of that session get appended again on the next pass.
 	//
-	//   - day: 畳み済みファイルは読まないので、その分の水位を rollup state から引き継ぐ
-	//     （原本が rollup にあり、重複だけが未畳みの raw に残っている形を落とすため）。
-	//   - hour: rollup を使わず**畳み済みも含めて raw を全部読み直す**ので、水位は空から
-	//     積み直す。ここで state の水位を引き継ぐと、原本の側まで落としてしまう。
+	//   - day: folded files are not read, so their watermark is carried over from the rollup
+	//     state (to drop the shape where the original is in the rollup and only the duplicate
+	//     is left in unfolded raw).
+	//   - hour: the rollup is not used and all raw is re-read, folded or not, so the watermark
+	//     is rebuilt from empty. Carrying the state's watermark over here would drop the
+	//     originals as well.
 	dd := usageDedupIndex{}
 	if bucket == "day" {
 		dd = st.Folded.clone()
@@ -429,15 +447,16 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 	for _, fileDay := range usagex.RawDays() {
 		_, rolled := st.Rolled[fileDay]
 		if bucket == "day" && rolled {
-			continue // rollup が正。raw を読むと二重計上になる
+			continue // the rollup is the truth; reading raw would double count
 		}
 		rows := usagex.ReadDay(fileDay)
-		seen := map[string]bool{} // call の重複排除はファイル単位（1呼び出しは1ファイル内）
+		seen := map[string]bool{} // call dedup is per file (one call lives inside one file)
 		byBucket := map[string][]usagex.Record{}
 		for _, r := range rows {
 			ts := usageRowTime(r, fileDay)
-			// **期間で絞る前に**通す。どの行を「最初の1件」とみなすかがクエリ期間で
-			// 変わると、期間を変えただけで同じ日の合計が動く。
+			// Pass this before narrowing by range. If which row counts as "the first one"
+			// changed with the query range, the same day's total would move just because the
+			// range was changed.
 			if !dd.accept(r, ts) {
 				continue
 			}
@@ -447,7 +466,8 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 			}
 			key := day + "T00:00:00Z"
 			if bucket == "hour" {
-				// hour では from/to の時刻成分まで効かせる（「直近24時間」を素直に出せる）。
+				// At hour granularity from/to apply down to the time of day, so that "the
+				// last 24 hours" comes out directly.
 				if ts.Before(from) || ts.After(to) {
 					continue
 				}
@@ -460,8 +480,9 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 		}
 	}
 	if bucket == "hour" {
-		// 畳んだ後に prune された raw があると、その期間は時間粒度で復元できない。黙って
-		// 短い系列を返すと「その期間は消費が無かった」に見えるので、範囲が重なる時だけ言う。
+		// Raw pruned after folding cannot be reconstructed at hour granularity. Returning a
+		// shorter series silently would look like "there was no consumption in that period",
+		// so say it whenever the ranges overlap.
 		onDisk := map[string]bool{}
 		for _, d := range usagex.RawDays() {
 			onDisk[d] = true
@@ -476,9 +497,10 @@ func collectUsageSamples(from, to time.Time, bucket string) (samples []usageSamp
 	return samples, truncated
 }
 
-// observeUsageCoverage は観測した次元から kind ごとの計測能力を積み上げる。**その kind が
-// 出せる最良のもの**を採る（1回の失敗ターンで none に落とすと「このエージェントは測れない」
-// と誤読させる。実際に測れていない分は unmeasured_calls が数える）。
+// observeUsageCoverage accumulates each kind's measurement ability from the observed dimensions.
+// It takes the best that kind can produce: dropping to none on a single failed turn would read
+// as "this agent cannot measure at all", while what actually went unmeasured is counted by
+// unmeasured_calls.
 func observeUsageCoverage(cov map[string]usageCoverage, k usageKey) {
 	if k.Kind == "" {
 		return
@@ -489,15 +511,16 @@ func observeUsageCoverage(cov map[string]usageCoverage, k usageKey) {
 	cov[k.Kind] = c
 }
 
-// coverageModelSrc は台帳の model_src を coverage の語彙（reported|requested|none）へ写す。
+// coverageModelSrc maps the ledger's model_src onto the coverage vocabulary
+// (reported|requested|none).
 func coverageModelSrc(src string) string {
 	if src == usagex.ModelReported || src == usagex.ModelRequest {
 		return src
 	}
-	return "none" // default_unknown / 空 = 解決後のモデルが分からない
+	return "none" // default_unknown / empty = the resolved model is not known
 }
 
-// betterOf は ranked の並び（良い順）で a と b の良い方を返す。
+// betterOf returns the better of a and b in ranked's order (best first).
 func betterOf(a, b string, ranked ...string) string {
 	rank := func(s string) int {
 		for i, r := range ranked {
@@ -505,7 +528,7 @@ func betterOf(a, b string, ranked ...string) string {
 				return i
 			}
 		}
-		return len(ranked) // 未知/空は最下位
+		return len(ranked) // unknown/empty ranks last
 	}
 	if rank(b) < rank(a) {
 		return b
@@ -513,8 +536,8 @@ func betterOf(a, b string, ranked ...string) string {
 	return a
 }
 
-// parseUsageTime は RFC3339 と YYYY-MM-DD の両方を受ける。dateOnly は後者だったことを
-// 返す — to 側を「その日の終わり」へ伸ばすかの判断に使う（呼び出し側）。
+// parseUsageTime accepts both RFC3339 and YYYY-MM-DD. dateOnly reports that it was the latter;
+// the caller uses it to decide whether to stretch the to side to the end of that day.
 func parseUsageTime(s string, def time.Time) (t time.Time, dateOnly bool, err error) {
 	if strings.TrimSpace(s) == "" {
 		return def, false, nil
@@ -529,8 +552,8 @@ func parseUsageTime(s string, def time.Time) (t time.Time, dateOnly bool, err er
 	return t.UTC(), true, nil
 }
 
-// parseUsageInclude は include=session,aux を解く。既定は両方（feature フィルタで絞れる形に
-// する、が §9-3 の決定）。
+// parseUsageInclude parses include=session,aux. The default is both; narrowing is left to the
+// feature filter (the decision in §9-3).
 func parseUsageInclude(s string) (session, aux bool) {
 	if strings.TrimSpace(s) == "" {
 		return true, true

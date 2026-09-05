@@ -1,16 +1,20 @@
-// 共有セッションでも「引き継ぎ」の中身が読めること。
+// A handoff has to be readable in a shared session too.
 //
-// propose_session_handoff が転写に残すのはツール行と定型の完了文だけで、次セッションへ渡す
-// 本文は所有者側の別ストアにある。ミラーはそれをカードとして会話へ差し込むが、共有ビューは
-// 転写しか取っていなかったので、共有先には「引き継いだらしい」ことしか見えなかった。
+// propose_session_handoff leaves only a tool line and a boilerplate completion sentence in
+// the transcript; the prompt handed to the next session lives in a separate store on the
+// owner's side. The mirror injects it into the conversation as a card, so a shared view
+// that fetches the transcript alone shows the recipient nothing but "a handoff apparently
+// happened".
 //
-// あわせて docs/log/59 §3 の約束 —「能力が無い操作要素は描画しない」— も押さえる: 共有先は
-// 編集も破棄も起動もできないので、そのボタンが出てはいけない。
+// It also holds the promise of docs/log/59 §3 — never render a control for a capability the
+// viewer does not have: a recipient can neither edit, discard nor launch, so those buttons
+// must not appear.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
-// MarkdownView は remark/rehype を丸ごと引き込む。ここで見たいのは引き継ぎカードなので素通し。
+// MarkdownView drags in all of remark/rehype; the handoff card is what matters here, so it
+// is passed through.
 vi.mock("../viewer/MarkdownView.tsx", () => ({
   MarkdownView: ({ source }: { source?: string }) => <div className="markdown">{source}</div>,
 }));
@@ -20,7 +24,8 @@ vi.mock("../../core/api/client.ts", () => ({
   api: (path: string) => api(path),
   apiJSON: vi.fn(async () => ({})),
   errText: (e: unknown) => String((e as { message?: string })?.message ?? e),
-  // マーカー（docs/log/69）が読み手の login id を tenant ストア経由で引くので、その初期化に要る。
+  // Marks (docs/log/69) look up the reader's login id through the tenant store, which needs
+  // this to initialise.
   getTenant: () => "",
 }));
 
@@ -70,15 +75,15 @@ async function render() {
   await act(async () => {
     root!.render(<SharedSessionView sharedSessionId="catalog-1" />);
   });
-  // 転写と提案はそれぞれ別のポーリングで入ってくる。
+  // The transcript and the proposals arrive on separate polls.
   await act(async () => {
     await Promise.resolve();
   });
   return host;
 }
 
-describe("SharedSessionView の引き継ぎ提案", () => {
-  it("提案の本文とタイトルを出す", async () => {
+describe("SharedSessionView handoff proposals", () => {
+  it("shows the proposal title and prompt", async () => {
     const el = await render();
     const card = el.querySelector(".mirror-handoff");
     expect(card).toBeTruthy();
@@ -86,13 +91,13 @@ describe("SharedSessionView の引き継ぎ提案", () => {
     expect(card!.querySelector(".mirror-handoff-prompt")?.textContent).toBe("未完了: 表示の実装。次はここから。");
   });
 
-  it("編集・破棄・起動は出さない(共有先にその能力は無い)", async () => {
+  it("shows no edit, discard or launch control (the recipient has no such capability)", async () => {
     const el = await render();
     expect(el.querySelector(".mirror-handoff-actions")).toBeNull();
     expect(el.querySelector(".mirror-handoff")!.querySelectorAll("button, textarea, input").length).toBe(0);
   });
 
-  it("会話より後の時点に置く(末尾固定にすると以後の会話が隠れる)", async () => {
+  it("places the card after the conversation up to that point, not pinned to the end where later turns would be hidden", async () => {
     const el = await render();
     const nodes = [...el.querySelectorAll(".mirror-turn, .mirror-handoff")];
     expect(nodes.at(-1)?.classList.contains("mirror-handoff")).toBe(true);
@@ -100,13 +105,13 @@ describe("SharedSessionView の引き継ぎ提案", () => {
   });
 });
 
-// メンバーから受け取った引き継ぎ（docs/log/77）。通知「引き継ぎが届きました」の行き先はこの面
-// なので、受け取る口がここに無いと押した人はどこにも辿り着けない（実際、唯一の口はレール
-// 見出しのアイコンだった＝「開始するボタンが見当たらない」）。
-describe("SharedSessionView の受け取った引き継ぎ", () => {
+// A handoff received from another member (docs/log/77). The "a handoff arrived"
+// notification leads to this surface, so without a way to accept here whoever pressed it
+// reaches a dead end — the only entry point used to be the rail heading icon.
+describe("SharedSessionView received handoffs", () => {
   const OFFER: HandoffOffer = {
     id: "ho_1",
-    sessionId: "catalog-1", // 共有カタログ id = この面の sharedSessionId
+    sessionId: "catalog-1", // shared-catalog id = this surface's sharedSessionId
     sessionName: "sess-a",
     recipientUserKey: "b@example.com",
     ownerUserKey: "a@example.com",
@@ -126,8 +131,8 @@ describe("SharedSessionView の受け取った引き継ぎ", () => {
       return { sessions: [] };
     });
 
-  // 在庫はこの面自身が取りに行く（レールが無い切り離しタブでも帯が出る）ので、ストアは
-  // テストごとに戻す。
+  // This surface fetches the offers itself, so the banner appears even in a detached tab
+  // with no rail; reset the store between tests.
   afterEach(() => useHandoffStore.setState({ owned: [], received: [] }));
 
   async function renderWithToast() {
@@ -135,51 +140,55 @@ describe("SharedSessionView の受け取った引き継ぎ", () => {
     document.body.append(host);
     root = createRoot(host);
     await act(async () => {
-      // 受諾は起動導線に載るので、行は toast を要求する（受信箱と同じ文脈で描く）。
+      // Accepting rides on the launch path, so the row requires a toast — rendered in the
+      // same context as the inbox.
       root!.render(
         <ToastProvider>
           <SharedSessionView sharedSessionId="catalog-1" />
         </ToastProvider>,
       );
     });
-    // 転写・提案・受信箱はそれぞれ別のポーリングで入ってくる（受信箱は 2 本を Promise.all）。
+    // Transcript, proposals and inbox all arrive on separate polls (the inbox does two in a
+    // Promise.all).
     await act(async () => {
       for (let i = 0; i < 4; i++) await Promise.resolve();
     });
     return host;
   }
 
-  it("自分宛の未処理があると帯と受諾の口を出す", async () => {
+  it("shows the banner and a way to accept when an unprocessed offer is addressed to me", async () => {
     withOffer(OFFER);
     const el = await renderWithToast();
     const banner = el.querySelector(".shared-view-handoff");
     expect(banner).toBeTruthy();
     expect(banner!.textContent).toContain("a@example.com");
-    // 帯のボタンから受信箱（受諾/辞退）に辿り着けること。Modal はポータルで body 直下。
+    // The banner button has to reach the inbox (accept / decline). Modal portals directly
+    // under body.
     await act(async () => {
       banner!.querySelector("button")!.click();
     });
     const modal = document.body.querySelector(".ui-modal");
     expect(modal).toBeTruthy();
     expect(modal!.textContent).toContain("未完了: 表示の実装。次はここから。");
-    // 受諾と辞退の 2 つ（文言はロケール依存なので構造で見る）。
+    // Accept and decline, two of them; the wording is locale-dependent, so assert structure.
     expect(modal!.querySelectorAll(".handoff-inbox-actions button").length).toBe(2);
   });
 
-  it("別のセッション宛の引き継ぎでは出さない", async () => {
+  it("shows nothing for a handoff addressed to another session", async () => {
     withOffer({ ...OFFER, sessionId: "catalog-2" });
     const el = await renderWithToast();
     expect(el.querySelector(".shared-view-handoff")).toBeNull();
   });
 });
 
-// 保留中の AskUserQuestion。所有者の Agent はモーダルが開いているあいだ、その質問を
-// 転写(messages)から外してカーソルも手前で止め、pendingQuestions として別枠で返す。
-// ここを描かないと、共有先は「質問が出ているあいだだけ何も見えない」ことになる。
-describe("SharedSessionView の保留中の質問", () => {
+// A pending AskUserQuestion. While the modal is open the owner's Agent keeps the question
+// out of the transcript (messages), stops the cursor before it and returns it separately as
+// pendingQuestions. Without rendering that, the recipient sees nothing for exactly as long
+// as the question is up.
+describe("SharedSessionView pending question", () => {
   const PENDING = {
     ...MESSAGES,
-    // 保留中の質問は messages に入っていない、という実際の形。
+    // The real shape: a pending question is absent from messages.
     pendingText: "方式が2つあります",
     pendingQuestions: [
       {
@@ -199,7 +208,7 @@ describe("SharedSessionView の保留中の質問", () => {
       return { sessions: [] };
     });
 
-  it("質問文と選択肢(preview 込み)を出す", async () => {
+  it("shows the question and its options, preview included", async () => {
     withPending();
     const el = await render();
     const card = el.querySelector(".mt-question");
@@ -210,22 +219,23 @@ describe("SharedSessionView の保留中の質問", () => {
       expect.stringContaining("B 案"),
     ]);
     expect(card!.querySelector(".mq-opt-preview")?.textContent).toContain("+--+");
-    // 質問の直前に流れていた地の文も一緒に(カードだけだと何の話か分からない)。
+    // The prose that ran just before the question comes along too; the card alone gives no
+    // idea what it is about.
     expect(el.textContent).toContain("方式が2つあります");
   });
 
-  it("答える口は出さない(答えるのは所有者)", async () => {
+  it("offers no way to answer (the owner answers)", async () => {
     withPending();
     const el = await render();
     const card = el.querySelector(".mt-question")!;
     expect(card.querySelector(".mq-submit")).toBeNull();
     expect(card.querySelector(".mq-freetext")).toBeNull();
     expect([...card.querySelectorAll("button")].every((b) => (b as HTMLButtonElement).disabled)).toBe(true);
-    // 決着していないので「回答済み」バッジも出ない。
+    // Unresolved, so there is no "answered" badge either.
     expect(card.querySelector(".mq-done")).toBeNull();
   });
 
-  it("転写が空でも「履歴なし」で潰さない", async () => {
+  it("does not collapse to \"no history\" when the transcript is empty", async () => {
     api.mockImplementation(async (path: string) => {
       if (path.includes("/handoff-proposals")) return { proposals: [] };
       if (path.includes("/messages")) return { ...PENDING, messages: [] };
@@ -236,14 +246,15 @@ describe("SharedSessionView の保留中の質問", () => {
     expect(el.querySelector(".mirror-empty")).toBeNull();
   });
 
-  it("決着したら出しっぱなしにしない", async () => {
+  it("drops the card once the question is resolved", async () => {
     withPending();
     vi.useFakeTimers();
     try {
       const el = await render();
       expect(el.querySelector(".mt-question")).toBeTruthy();
-      // 次の poll に pendingQuestions が入っていない = もうモーダルは出ていない。前回の値を
-      // 残すと、所有者が答えたあとも共有先にだけカードが居座る。
+      // No pendingQuestions in the next poll means the modal is gone. Keeping the previous
+      // value would leave the card sitting in the recipient's view alone, after the owner
+      // already answered.
       api.mockImplementation(async (path: string) => {
         if (path.includes("/handoff-proposals")) return { proposals: [] };
         if (path.includes("/messages")) return MESSAGES;

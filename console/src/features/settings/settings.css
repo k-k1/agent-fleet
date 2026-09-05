@@ -1,21 +1,26 @@
-/* 設定モーダルのスタイル。**この 1 枚は面ごとの CSS を読み込む索引で、規則は持たない。**
+/* Styles for the settings modal. This sheet is only an index that imports the per-surface CSS;
+ * it holds no rules of its own.
  *
- * ADR 0067 / FE-SETTINGS で 3,952 行の 1 枚を割った。割り方は行範囲ではなく
- * **クラス名の連結成分**（1 本のセレクタに一緒に出てくる名前どうしを同じファイルへ）。
- * この Console の CSS は全部グローバルで、同名クラスが 2 ファイルに分かれると衝突と
- * してではなく **import 順で無言に合成**されるため、「どの名前も 1 ファイルにしか
- * 出ない」ことが分割の条件になる（scripts/css-dup.mjs で数えている）。
+ * ADR 0067 / FE-SETTINGS split the original single 3,952-line sheet. The split is not by line
+ * range but by connected components of class names (names that appear together in one selector
+ * go to the same file). Every CSS class in this Console is global, and a name defined in two
+ * files is not reported as a conflict: the rules are silently merged in @import order. So the
+ * condition for the split is that no name appears in more than one file (counted by
+ * scripts/css-dup.mjs).
  *
- * 2 つ以上の面が使う名前（モーダルの器・レール・フォームの基礎部品）は parts/ に集約。
+ * Names used by two or more surfaces (the modal shell, the rail, the form primitives) live in
+ * parts/.
  *
- * ⚠ 連結して作るクラス名（`className={"mcp-origin mcp-origin-" + origin}` のような）は、
- *   その語がソースのどこにも現れないので「どの面のものか」が読めない。本体と同じ
- *   ファイルに置くこと —— 分かれると、衝突ではなく **@import 順で勝ち負けが静かに
- *   入れ替わる**（実際にバッジの文字色が #777 → #888 に変わった。規則の数は合ったまま
- *   なので、見つけたのは分割前後のスクリーンショット比較だった）。
+ * Class names built by concatenation (`className={"mcp-origin mcp-origin-" + origin}`) do not
+ * appear as literals anywhere in the source, so there is no way to tell which surface owns
+ * them. Keep them in the same file as their base name: split apart, the winner between them
+ * changes silently with @import order rather than raising a conflict (measured: a badge's text
+ * colour moved from #777 to #888, with the rule count unchanged, so it only showed up in a
+ * before/after screenshot comparison).
  *
- * ★ @import の順序は**元の 1 枚での登場順**で、これがそのまま詰め込み順＝カスケード順に
- *   なる。並べ替えると、同じ要素に当たる別名どうしの勝ち負けが静かに変わる。
+ * The @import order is the order of appearance in the original single sheet, and that is also
+ * the concatenation order, i.e. the cascade order. Reordering silently swaps which of two
+ * different names hitting the same element wins.
  */
 @import "./parts/shell.css";
 @import "./admin/admin.css";

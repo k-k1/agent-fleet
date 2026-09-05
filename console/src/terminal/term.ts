@@ -326,8 +326,8 @@ function keepInputVisible(it: Inst | null) {
 // pane, the newly selected one is pushed below it and out of view. The pane then
 // shows the PREVIOUS session's live screen — its TUI and its tmux status line — while
 // the header, the PTY socket and every keystroke belong to the session the user
-// actually selected. That is the "ターミナルを開くと別のセッションの tmux にアタッチ
-// される" report: nothing mis-attached, the pane was painting the wrong terminal.
+// actually selected. That is the "opening the terminal attaches me to another session's
+// tmux" report: nothing mis-attached, the pane was painting the wrong terminal.
 //
 // Detaching is safe and reversible: the evicted pane keeps its instance, socket and
 // scrollback, and its own ensureTerm re-parents the element (and repaints it via
@@ -1065,7 +1065,7 @@ const CONNECT_STALL = 3000;
 const PTY_CLOSE_SESSION_STOPPED = "session stopped";
 
 // connStalled reports a socket wedged in CONNECTING past CONNECT_STALL — the
-// "起動直後の黒ターミナル" that no drop/heartbeat path catches (no close frame ever
+// "black terminal right after launch" that no drop/heartbeat path catches (no close frame ever
 // arrives). Both the focus/active reconnect and the reveal retry ladder use it to
 // decide a hung connect must be torn down and re-opened.
 function connStalled(it: Inst | null | undefined) {
@@ -1248,7 +1248,7 @@ export function attach(paneId: string, session: string) {
       // ptyCloseSessionStopped in workspace/agent/terminal.go, forwarded verbatim by
       // the CP proxy). Say so in the grid: a pane that is simply blank — the normal
       // case once a container restart has emptied the /tmp history ring — reads as a
-      // broken terminal, and the user has no reason to hunt for the 再開 chip.
+      // broken terminal, and the user has no reason to hunt for the resume chip.
       if (ev.reason === PTY_CLOSE_SESSION_STOPPED) {
         it.term!.write("\r\n" + tr("onb.term_session_stopped") + "\r\n");
       }
@@ -1301,8 +1301,8 @@ export function reconnect(paneId: string) {
 export function ensureAttached(paneId: string, session: string) {
   const it = inst(paneId);
   if (!it || !it.term || !session) return;
-  // A socket wedged OPEN but with no PTY byte ever received is one "起動直後の黒
-  // ターミナル": the fresh attach raced the session bring-up and produced no draw,
+  // A socket wedged OPEN but with no PTY byte ever received is one "black terminal right
+  // after launch": the fresh attach raced the session bring-up and produced no draw,
   // yet the socket looks healthy (heartbeat pongs keep flowing regardless of PTY
   // output), so neither the drop-flag reconnect nor the zombie heartbeat fires and
   // it sits blank until a full reload. Treat OPEN-but-never-drew as NOT live so the
@@ -1311,7 +1311,7 @@ export function ensureAttached(paneId: string, session: string) {
   // A CONNECTING socket is normally left alone — a genuinely in-flight connect will
   // draw shortly. But right after a session launches, the PTY upgrade can hang in
   // CONNECTING (the CP accepts the socket while the agent/tmux is still coming up but
-  // never completes the /ws/pty handshake). That is the OTHER "起動直後の黒" and the
+  // never completes the /ws/pty handshake). That is the OTHER "black right after launch" and the
   // nastier one: CONNECTING never fires onclose/onerror, so the drop-flag reconnect
   // and heartbeat never trip, and — if we blindly trust CONNECTING — every retry rung
   // (and the reveal re-check) skips it, leaving the pane black until a focus tap or

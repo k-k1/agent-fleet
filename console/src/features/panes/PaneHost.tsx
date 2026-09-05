@@ -60,9 +60,10 @@ export const PaneHost = memo(function PaneHost() {
     if (!rect) return;
     document.body.classList.add("col-resizing");
     const onMove = (ev: PointerEvent) => {
-      // ドラッグ量そのものを「両隣が 0.1 を割らない範囲」にクランプする。片側だけ
-      // Math.max(0.1, …) で底打ちすると合計が 1 を超え、右端列がはみ出す比率が
-      // そのまま永続化されてしまう（setColRatios / migrate 側の正規化は保険）。
+      // Clamp the drag delta itself to the range in which neither neighbour falls below 0.1.
+      // Flooring only one side with Math.max(0.1, …) makes the sum exceed 1, and the ratio that
+      // pushes the last column past the edge gets persisted (the normalisation in setColRatios /
+      // migrate is only a backstop).
       const d = (ev.clientX - start) / rect.width;
       const dd = Math.min(Math.max(d, 0.1 - base[i]), base[i + 1] - 0.1);
       const next = base.slice();
@@ -78,8 +79,9 @@ export const PaneHost = memo(function PaneHost() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    // タッチ中断（スクロール横取り等）は pointerup が来ない — リスナと body クラスが
-    // 残留してドラッグ状態が固着しないよう pointercancel でも解除する。
+    // A cancelled touch (scroll taking over, say) never delivers pointerup, so release on
+    // pointercancel too; otherwise the listeners and the body class stay and the drag state
+    // sticks.
     window.addEventListener("pointercancel", onUp);
   };
 
@@ -97,7 +99,7 @@ export const PaneHost = memo(function PaneHost() {
     };
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
-    window.addEventListener("pointercancel", onUp); // 同上: タッチ中断でも解除
+    window.addEventListener("pointercancel", onUp); // as above: release on a cancelled touch too
   };
 
   // A lone, empty terminal is the base state — nothing to close.

@@ -8,8 +8,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// isolateSlots points the sid store and MetaDir at temp dirs（実フリートのセッションを
-// 読まないため）。
+// isolateSlots points the sid store and MetaDir at temp dirs, so the real fleet's sessions are
+// never read.
 func isolateSlots(t *testing.T) SidStore {
 	t.Helper()
 	home := t.TempDir()
@@ -19,8 +19,8 @@ func isolateSlots(t *testing.T) SidStore {
 }
 
 const (
-	imposedID = "11111111-1111-4111-8111-111111111111" // 我々が押し付けた id
-	driftedID = "22222222-2222-4222-8222-222222222222" // CLI が実際に使い始めた id
+	imposedID = "11111111-1111-4111-8111-111111111111" // the id we imposed
+	driftedID = "22222222-2222-4222-8222-222222222222" // the id the CLI actually started using
 	otherID   = "33333333-3333-4333-8333-333333333333"
 )
 
@@ -40,8 +40,9 @@ func ts(t *testing.T, s string) time.Time {
 	return v
 }
 
-// 正常系: 押し付けた id で CLI が書いている限り、何も動かさない。ここが大多数の経路で、
-// 健全なスロットの会話を横取りする余地を作らないことがこの回収の前提。
+// The normal path: as long as the CLI writes under the id we imposed, nothing moves. This is
+// the vast majority of cases, and leaving no room to steal a healthy slot's conversation is the
+// precondition for this recovery to be safe at all.
 func TestResolveImposedKeepsHonoredID(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
@@ -51,19 +52,20 @@ func TestResolveImposedKeepsHonoredID(t *testing.T) {
 	list := func(string) []CLISession {
 		return []CLISession{
 			{ID: imposedID, Created: ts(t, "2026-08-22T10:00:05+09:00")},
-			{ID: driftedID, Created: ts(t, "2026-08-22T10:01:00+09:00")}, // 別スロットの新しい会話
+			{ID: driftedID, Created: ts(t, "2026-08-22T10:01:00+09:00")}, // another slot's newer conversation
 		}
 	}
 	if got := ResolveImposedSID(store, m, list); got != imposedID {
 		t.Fatalf("= %q, want the honored id %q", got, imposedID)
 	}
 	if got := store.Read(slot); got != imposedID {
-		t.Fatalf("ledger = %q, 健全なスロットの台帳が書き換わっている", got)
+		t.Fatalf("ledger = %q, a healthy slot's ledger entry was overwritten", got)
 	}
 }
 
-// ドリフト: 押し付けた id が CLI 側に存在しない＝一度も使われなかった。この dir の
-// 未取得の会話がちょうど 1 つなら拾い直す（claude で実際に起きた壊れ方に対応）。
+// Drift: the imposed id does not exist on the CLI side, i.e. it was never used. When exactly
+// one unclaimed conversation exists in this dir, it is picked up instead (the breakage actually
+// seen with claude).
 func TestResolveImposedAdoptsDrift(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
@@ -81,8 +83,9 @@ func TestResolveImposedAdoptsDrift(t *testing.T) {
 	}
 }
 
-// 未起動スロット（台帳が空）では探索しない。新しいスロットが同じ dir に居る他人の会話を
-// 掴むと、始まってすらいないミラーに知らない会話が出る。
+// No discovery for a slot that never launched (an empty ledger). If a fresh slot grabbed
+// someone else's conversation in the same dir, a mirror that has not even started would show a
+// conversation nobody here had.
 func TestResolveImposedNeverAdoptsForFreshSlot(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
@@ -91,11 +94,12 @@ func TestResolveImposedNeverAdoptsForFreshSlot(t *testing.T) {
 		return []CLISession{{ID: driftedID, Created: ts(t, "2026-08-22T10:00:30+09:00")}}
 	}
 	if got := ResolveImposedSID(store, m, list); got != "" {
-		t.Fatalf("= %q, want \"\" — 未起動スロットは探索してはいけない", got)
+		t.Fatalf("= %q, want \"\" - a slot that never launched must not discover anything", got)
 	}
 }
 
-// 候補が複数なら動かさない。誤採用（他人の会話をミラーに映す）は固まったままより悪い。
+// Nothing moves when there are several candidates: adopting the wrong one (showing someone
+// else's conversation in the mirror) is worse than staying stuck.
 func TestResolveImposedRefusesAmbiguity(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
@@ -112,43 +116,44 @@ func TestResolveImposedRefusesAmbiguity(t *testing.T) {
 	}
 }
 
-// 他スロットが既に持っている会話は候補から外す。copilot/cursor は BuildLaunch で
-// 台帳に書くので、AF が起動した会話は全て「取得済み」になる。
+// A conversation another slot already holds is not a candidate. copilot/cursor write to the
+// ledger in BuildLaunch, so every conversation AF launched counts as claimed.
 func TestResolveImposedSkipsClaimedByOtherSlot(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
 	other := slotMeta(t, "s2", "/tmp/repo", "2026-08-22T09:00:00+09:00")
 	store.Write(session.UUID(m.Dir, m.Name), imposedID)
-	store.Write(session.UUID(other.Dir, other.Name), driftedID) // s2 のもの
+	store.Write(session.UUID(other.Dir, other.Name), driftedID) // belongs to s2
 
 	list := func(string) []CLISession {
 		return []CLISession{{ID: driftedID, Created: ts(t, "2026-08-22T10:00:30+09:00")}}
 	}
 	if got := ResolveImposedSID(store, m, list); got != imposedID {
-		t.Fatalf("= %q, 他スロットの会話を奪っている", got)
+		t.Fatalf("= %q, another slot's conversation was stolen", got)
 	}
 }
 
-// スロット作成より前からある会話は拾わない。recreate は同じ dir に新しい slug を切る
-// ので、前任スロットの会話が必ずそこに残っている（kiro discoverSid と同じ縁）。
+// A conversation older than the slot itself is never picked up. A recreate cuts a new slug
+// into the same dir, so the predecessor slot's conversation is always still sitting there (the
+// same fence as kiro's discoverSid).
 func TestResolveImposedFencesBySlotCreation(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
 	store.Write(session.UUID(m.Dir, m.Name), imposedID)
 
 	list := func(string) []CLISession {
-		return []CLISession{{ID: driftedID, Created: ts(t, "2026-08-22T09:59:00+09:00")}} // 前任
+		return []CLISession{{ID: driftedID, Created: ts(t, "2026-08-22T09:59:00+09:00")}} // the predecessor
 	}
 	if got := ResolveImposedSID(store, m, list); got != imposedID {
-		t.Fatalf("= %q, 前任スロットの会話を採用している", got)
+		t.Fatalf("= %q, the predecessor slot's conversation was adopted", got)
 	}
 }
 
-// 押し付けた id が CLI 側に**在る**なら、それがスロット作成時刻より古くても手放さない。
-// 具体例: fork で材料化したセッションは元会話の created_at を引き継ぐ（copilot の
-// MaterializeForkAt は sid を差し替えるだけ）ので、スロットより古い健全な会話になる。
-// 「在るなら触らない」を先に判定しないと、同じ dir の新しい会話へ乗り換えてしまい、
-// 分岐した会話が丸ごと見えなくなる。
+// If the imposed id EXISTS on the CLI side it is kept, even when it predates the slot's
+// creation. Concretely: a session materialized by a fork inherits the source conversation's
+// created_at (copilot's MaterializeForkAt only swaps the sid), so it is a healthy conversation
+// older than its slot. Unless "exists, so do not touch" is decided first, the slot switches to
+// a newer conversation in the same dir and the whole branched conversation disappears.
 func TestResolveImposedKeepsHonoredIDOlderThanSlot(t *testing.T) {
 	store := isolateSlots(t)
 	m := slotMeta(t, "s1", "/tmp/repo", "2026-08-22T10:00:00+09:00")
@@ -157,7 +162,7 @@ func TestResolveImposedKeepsHonoredIDOlderThanSlot(t *testing.T) {
 
 	list := func(string) []CLISession {
 		return []CLISession{
-			{ID: imposedID, Created: ts(t, "2026-08-01T09:00:00+09:00")}, // fork 元の作成時刻
+			{ID: imposedID, Created: ts(t, "2026-08-01T09:00:00+09:00")}, // the fork source's creation time
 			{ID: driftedID, Created: ts(t, "2026-08-22T10:00:30+09:00")},
 		}
 	}
@@ -165,6 +170,6 @@ func TestResolveImposedKeepsHonoredIDOlderThanSlot(t *testing.T) {
 		t.Fatalf("= %q, want the honored id %q kept", got, imposedID)
 	}
 	if got := store.Read(slot); got != imposedID {
-		t.Fatalf("ledger = %q, 健全な（分岐した）会話を手放している", got)
+		t.Fatalf("ledger = %q, a healthy (branched) conversation was let go", got)
 	}
 }

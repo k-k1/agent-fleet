@@ -4,21 +4,19 @@ import { OnOff, OrderList, Row } from "../parts/controls.tsx";
 import { AiModelRow } from "../parts/aiModelRow.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 
-// AiAssistTab — 「AI 補助生成」。会話ではなく **1 回きりのヘッドレス呼び出し**
-// （Agent 側 OneShotHeadless）で回っている機能の設定を、ここ 1 箇所に集める:
-// セッション/チャットのタイトル、ブランチ名、返信候補（✨）、ファイル編集の提案、
-// チャットの計画更新。
+// AiAssistTab — "AI assisted generation". One place for the settings of every feature that
+// runs as a single one-shot headless call (OneShotHeadless on the Agent side) rather than a
+// conversation: session and chat titles, branch names, reply suggestions (✨), file-edit
+// suggestions and the chat plan update.
 //
-// なぜ独立タブなのか（docs/log/84）。これらは実装をアシスタント・チャットと共有して
-// いるという理由だけで「設定 > アシスタント」に置かれていたが、利用者から見える面は
-// セッション・ミラー・File ペインで、アシスタントではない。おまけに ON/OFF は
-// エージェントタブ（セッションのタイトル）・アシスタントタブ（チャットのタイトル）・
-// キー操作タブ（返信候補）の 3 箇所に散り、ブランチ名とファイル編集提案には
-// そもそもトグルが無かった。分類の軸を「実装の共有先」から「利用者が見る面」へ
-// 移し、散っていた分をここへ集約している。
+// Why it is its own tab (docs/log/84): these features are grouped by the surface the user sees
+// (sessions, mirror, the File pane) rather than by the implementation they happen to share
+// with the assistant chat. Grouping them by implementation scattered the on/off switches over
+// three tabs and left branch names and edit suggestions with no toggle at all.
 //
-// 優先順位とモデルがアシスタントと別系統なのも同じ理由で、こちらは常時走るので
-// 「安くて速い、動くもの」を選びたい（チャットは強いものを選びたい）。
+// The priority order and models are a separate set from the assistant's for the same reason:
+// these run all the time, so the choice is "cheap, fast and good enough", where the chat wants
+// the strongest model.
 export function AiAssistTab() {
   const tr = useT();
   const s = useSettings();
@@ -59,8 +57,8 @@ export function AiAssistTab() {
         ))}
       </section>
 
-      {/* 機能ごとの ON/OFF。1 機能 1 キー — 以前はセッションのタイトル提案の設定が
-          ブランチ名の提案まで黙って止めていた。 */}
+      {/* On/off per feature, one key per feature: sharing a key makes one setting silently
+          disable another (the session title suggestion used to stop branch names too). */}
       <section className="ds-group">
         <h4 className="ds-title">{tr("aiassist.features")}</h4>
         <p className="muted ds-note">{tr("aiassist.note_features")}</p>

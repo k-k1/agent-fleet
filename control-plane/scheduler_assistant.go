@@ -10,10 +10,11 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// Scheduled execution — session_mode=assistant (docs/log/38 アシスタント発火): a due fire
+// Scheduled execution — session_mode=assistant: a due fire
 // runs ONE assistant-chat turn instead of driving a session. The prompt lands as a user
 // turn in the target conversation and the assistant (persona + af tools it carries)
-// executes it — "毎朝オペレーターにフリート状況をまとめさせる" without any session.
+// executes it — "have the operator summarise the fleet every morning" without any
+// session.
 //
 // Target resolution: reuse_target names the conversation (an "a…" slug or a UUID);
 // empty falls back to the schedule's owner_conv — the operator conversation that
@@ -45,8 +46,9 @@ func (f *wakeFirer) fireAssistant(ctx context.Context, res *resolved, sch store.
 	})
 	tctx, cancel := context.WithTimeout(ctx, assistantTurnTimeout)
 	defer cancel()
-	// agentLongCallClient: この同期ターンの上限は tctx の 8 分。共有クライアントの
-	// 2 分タイムアウトに乗ると、承認待ち（最大 4 分）を含むターンが偽エラー記録になる。
+	// agentLongCallClient: this synchronous turn is bounded by tctx's 8 minutes. On the
+	// shared client's 2-minute timeout, a turn that waits for approval (up to 4 minutes)
+	// would be recorded as a spurious error.
 	respBody, status, err := f.agentReqClient(tctx, agentLongCallClient, res.rt, "POST", "/assistant-turns", body)
 	if err != nil {
 		return "", "", fmt.Errorf("assistant turn: %w", err)

@@ -1,15 +1,17 @@
 package mcpsrv
 
-// MCP 2026-07-28（ステートレス版）の受理層（docs/log/49 + ADR0032）。
+// Acceptance layer for MCP 2026-07-28, the stateless revision (docs/log/49 + ADR0032).
 //
-// この版は initialize ハンドシェイクと Mcp-Session-Id を廃止し、版・クライアント情報・
-// クライアント能力を **毎リクエストの `_meta`** で運ぶ。af の /mcp は元から純粋な switch で
-// セッション状態を持たないので、移行の重い部分（state 撤去・sticky routing）は不要だった。
-// ここで足すのは「新版の作法で来た要求を正しく受けて検証する」ことだけ。
+// That revision drops the initialize handshake and Mcp-Session-Id and carries the
+// version, the client info and the client capabilities in `_meta` on EVERY request. af's
+// /mcp was already a plain switch holding no session state, so the heavy part of the
+// migration — tearing out state, sticky routing — did not apply. All this adds is
+// receiving and validating a request that arrives in the new form.
 //
-// 旧クライアント（initialize を送る 2025-* 系）はそのまま通す。spec も
-// 「両対応したいサーバーは旧 initialize を実装し続けてよい」と明示している（SEP-2575
-// Backward Compatibility）。era の判定は「`_meta` に protocolVersion があるか」だけで行う。
+// Older clients (the 2025-* line, which sends initialize) still pass through: the spec is
+// explicit that a server wanting to serve both may keep implementing the old initialize
+// (SEP-2575 Backward Compatibility). The era is decided by one thing only — whether
+// `_meta` carries a protocolVersion.
 
 import (
 	"encoding/base64"

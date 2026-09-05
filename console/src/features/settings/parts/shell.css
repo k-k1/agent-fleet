@@ -1,12 +1,12 @@
-/* モーダルの器 — 設定 / テナント設定 / 管理 の 3 つが共有する外枠、左レール、
- * モバイルのドリルダウン、見出し・注記の基礎。
+/* The modal shell — the outer frame shared by the settings, tenant settings and admin
+ * dialogs, the left rail, the mobile drill-down, and the base styles for headings and notes.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 /* Settings dialog + tabs — extracted from the old console's styles.css
    (regions 6903–7352, 2138–2150) for pixel parity (docs/log/22 P7). Trimmed at P8.
@@ -81,14 +81,14 @@
 }
 
 /* settings modal: segmented section selector (like the New Session modal) */
-/* Only the HEAD bar takes the top bar's surface (follows the 外観 top-bar color /
-   theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
+/* Only the HEAD bar takes the top bar's surface (follows the appearance settings' top-bar
+   color / theme) as an accent tying it to the same chrome; the body stays neutral (--bg, like
    any other modal) so a strong custom top-bar color doesn't flood the whole dialog. */
-/* Modal.tsx が付ける実クラスは `ui-modal settings-modal`（`.modal` は付かない）。
-   旧 `.modal.settings-modal` は Console リビルドのクラス改名で空振りしており、
-   primary ボタン／フォーカスリング（var(--accent) 直参照）が Top 色に追従して
-   いなかった。`.settings-modal` に直して retint を復活させる。アクティブタブ／
-   選択セグメントは元々 --sel-*（--sel-accent: --topbar-accent）で追従済みなので変化なし。 */
+/* The classes Modal.tsx actually applies are `ui-modal settings-modal`; `.modal` is not among
+   them, so a `.modal.settings-modal` selector matches nothing and the primary button and the
+   focus ring (which reference var(--accent) directly) stop following the top-bar color. The
+   active tab and the selected segment follow it through --sel-* (--sel-accent:
+   --topbar-accent) instead, so they are unaffected either way. */
 .settings-modal {
   background: var(--bg);
   /* Retint accents (buttons, active tabs, …) to the top-bar surface, like the admin
@@ -102,7 +102,7 @@
 
 /* Old .modal sizing: the settings dialog is a fixed large surface (not a
    content-sized sheet) so the tab bar and content don't reflow per tab. Sized
-   up toward the 管理 (admin) modal's footprint (min(1100px,94vw)×min(900px,92vh))
+   up toward the admin modal's footprint (min(1100px,94vw)×min(900px,92vh))
    so grouped forms have room to breathe — a touch more modest since the rail +
    single-column forms are narrower than the admin drill-down. */
 .settings-modal.ui-modal {
@@ -236,10 +236,11 @@
   color: var(--dialog-muted);
 }
 
-/* テナント設定モーダル（TenantDialog）。骨格は個人設定と同じ settings-* をそのまま
-   使い、ここでは中身が管理モーダル由来（.admin-*）であることの調整だけを足す。
-   .admin-* 由来の弱い文字は素の --muted では薄すぎるので、この 2 つのモーダルに
-   限ってダイアログ用に持ち上げる（管理モーダルも同じ面を差すので同じ規則）。 */
+/* Tenant settings modal (TenantDialog). Its skeleton reuses the same settings-* as the
+   personal settings; only the adjustments for content that comes from the admin modal
+   (.admin-*) are added here. Muted text inherited from .admin-* is too faint at the plain
+   --muted, so it is lifted to the dialog value for these two modals only (the admin modal
+   shows the same surfaces, hence the same rule). */
 :is(.tenant-modal, .admin-modal) .tc-slug,
 :is(.tenant-modal, .admin-modal) .admin-panel h4 .af-note,
 :is(.tenant-modal, .admin-modal) .af-suffix,
@@ -254,11 +255,11 @@
   margin-top: 12px;
 }
 
-/* メンバーの 2 段（一覧 → 詳細）。管理モーダルと同じ実装（tenantScope）を差すので
-   規則も両方に効かせる。settings-modal の button リセット（枠付きピル）を通ると
-   「戻る」がピルになってしまうので、その分だけ戻す。
-   .settings-crumb（スマホのレール↔本文）はモーダル自体の段で、こちらは本文の中の段。
-   両方出ても意味は重ならない。 */
+/* The two member levels (list → detail). They render the same implementation (tenantScope)
+   as the admin modal, so the rules apply to both. Without this the settings-modal button
+   reset (a bordered pill) turns the back control into a pill, so undo just that much.
+   .settings-crumb (mobile rail ↔ content) is a level of the modal itself while this is a
+   level inside the content; showing both is not a duplication. */
 :is(.tenant-modal, .admin-modal) .tenant-drill {
   margin: 0 0 12px;
 }
@@ -275,8 +276,8 @@
   color: var(--fg);
 }
 
-/* 複数テナントを管理している人向けの切り替え。レールの見出し直下に置くので、
-   レール項目と同じ幅・同じ余白に合わせる。 */
+/* Switcher for people who administer more than one tenant. It sits directly under the rail
+   heading, so it takes the same width and padding as a rail item. */
 .tenant-modal .tenant-picker {
   width: 100%;
   margin: 2px 0 0;
@@ -409,8 +410,8 @@
   font-size: 11px;
 }
 
-/* 動作設定 disclosure: the collapsed behavior header inside a provider card. Reuses the
-   .ps-title look (small uppercase mono) but as a full-width clickable row with a caret,
+/* Behavior-settings disclosure: the collapsed behavior header inside a provider card. Reuses
+   the .ps-title look (small uppercase mono) but as a full-width clickable row with a caret,
    overriding the legacy :where(.settings-modal) button reset (border/padding/bg). */
 .settings-modal .ps-disclosure {
   display: flex;
@@ -508,11 +509,10 @@
   }
 
 }
-/* ===== 管理モーダル（AdminDialog）=====
-   器は個人設定・テナント設定と同じ ui/Modal + .settings-modal。以前は独自の全画面
-   サーフェス（.admin-surface）で、ボタン / 入力の配色まで自前に再定義していたが、
-   settings-modal の規則がそのまま効くようになったので撤去した。ここに残るのは
-   「管理は横が要る」という大きさの差だけ（旧サーフェスの 1100×900 を引き継ぐ）。 */
+/* ===== Admin modal (AdminDialog) =====
+   The shell is the same ui/Modal + .settings-modal as the personal and tenant settings, so
+   the settings-modal rules apply as they are and nothing is redefined here. All that remains
+   is the size difference — admin needs the extra width (1100×900). */
 .admin-modal.ui-modal {
   width: min(1100px, 94vw);
   max-width: min(1100px, 94vw);
@@ -594,8 +594,9 @@
   min-height: 13px;
 }
 
-/* 読み取り専用の値（入力欄の代わりに置くテキスト）。入力欄と同じ .admin-fld の
-   中で、見出し(.af-cap)と補足(.af-unit)の間に入る。未設定は値ではないので弱める。 */
+/* A read-only value (text placed where an input would be). It sits inside the same .admin-fld
+   as an input, between the caption (.af-cap) and the unit note (.af-unit). "Unset" is not a
+   value, so it is muted. */
 .af-val {
   font-size: 12.5px;
   color: var(--fg);
@@ -618,8 +619,9 @@
   color: var(--muted);
 }
 
-/* 設定ミス（プロキシ未申告・送信元不明）はヒントではなく警告である —— 気づかない
-   ままだと「絞ったつもりで全員を通す」ので、色で他のヒントと分ける。 */
+/* A misconfiguration (undeclared proxy, unknown source address) is a warning, not a hint:
+   left unnoticed it lets everyone through while you believe you restricted access, so it is
+   coloured apart from the other hints. */
 .admin-hint.warn {
   color: var(--warn);
 }
@@ -640,7 +642,7 @@
   background: var(--muted2);
 }
 
-/* Text label beside a state dot (admin member header) so 稼働中/停止中 is unambiguous. */
+/* Text label beside a state dot (admin member header) so running/stopped is unambiguous. */
 .state-word {
   font-size: 12px;
   font-weight: 600;
@@ -807,7 +809,7 @@
 
 /* Named sizes fill the three numeric fields above in one click. They are a shortcut,
    not a separate mode, so they sit next to the fields rather than replacing them. */
-/* ⚠️ The tenant's machine picker is the SAME chip row outside .limit-edit, so every
+/* The tenant's machine picker is the SAME chip row outside .limit-edit, so every
    rule below names both. Dropping the `.limit-edit` scope instead would make
    `.le-presets` a global class, and this stylesheet already learned what two
    definitions of one global name do to each other (docs/log/70 §70.10 / .view-head). */
@@ -857,11 +859,11 @@
 }
 
 @media (max-width: 760px) {
-  /* 管理モーダルをスマホで: 1 列・フォームは縦積み・戻るは大きめのタップ領域。
-     .admin* に閉じてあるので global の form-row 等には触れない。 */
+  /* The admin modal on a phone: one column, forms stacked vertically, a larger tap target for
+     back. Scoped to .admin*, so the global form-row and friends are untouched. */
   .admin-modal.ui-modal {
-      /* 個人設定と同じ: 100vw の子を padding 付きの backdrop に押し込まず、
-         backdrop のスマホ用のコンテンツ箱に収める。 */
+      /* Same as the personal settings: rather than forcing a 100vw child into a padded
+         backdrop, fit it into the backdrop's phone content box. */
       width: 100%;
       max-width: 100%;
       height: min(900px, 88dvh);
@@ -922,8 +924,8 @@
   justify-content: flex-start;
 }
 
-/* Wider key column than the SSM cards': these labels ("対象エージェント" / "Environment
-   variables") wrap to two lines at the shared 92px basis. */
+/* Wider key column than the SSM cards': these labels ("target agents" (「対象エージェント」)
+   / "Environment variables") wrap to two lines at the shared 92px basis. */
 .mcp-item .ssm-meta-k {
   flex-basis: 118px;
 }
@@ -932,15 +934,14 @@
    name leads and only the id is mono, because the id is a technical identifier and
    making it the subject sends the reader elsewhere to ask what "entra" is.
 
-   ★ The selector was `.idp-known code` while these rows lived in their own block
-   under the rules form. P7-0 moved them into the sign-in method list (.admin-panel),
-   and the rule silently stopped matching — the id then picked up the GLOBAL <code>
-   style (a bright highlight in dark) and stopped reading as the same chip. Scope it
-   to the row, which is where it actually lives now.
+   Scope the selector to the row the id actually lives in. Scoped to the surrounding block
+   instead, it silently stops matching when the rows move, and the id then picks up the GLOBAL
+   <code> style (a bright highlight in dark) and stops reading as the same chip.
 
-   ★ 枠は var(--border2) では引けない — ライトでは #e6e8ec が地の #f4f5f7 とほぼ同色で、
-   チップが消えて id が宙に浮いた文字列に見える（実測）。前景を薄く混ぜると、どちらの
-   テーマでも同じ濃さで浮く。 */
+   The border cannot be drawn with var(--border2): in the light theme #e6e8ec is almost the
+   same colour as the #f4f5f7 background, so the chip disappears and the id reads as a string
+   floating in mid-air (measured). A faint mix of the foreground stands out equally in both
+   themes. */
 .adm-mcp-row code {
   flex: none;
   font-family: var(--mono);
@@ -958,7 +959,8 @@
   gap: 4px;
   font-size: 10.5px;
   color: var(--muted);
-  /* 枠は .idp-state と同じ理由で前景の混色（var(--border2) はライトで地に沈む）。 */
+  /* Foreground mix for the border, for the same reason as .idp-state (var(--border2) sinks
+     into the background in the light theme). */
   border: 1px solid color-mix(in srgb, var(--fg) 16%, transparent);
   border-radius: 999px;
   padding: 1px 7px;
@@ -969,8 +971,8 @@ label.idp-flag {
   cursor: pointer;
 }
 
-/* ★ 「効いている」を色で言うのは on だけ。両方を色付きにすると、行の意味（受け入れて
-   いるが出さない）が読めなくなる。 */
+/* Only the "on" state says "in effect" through colour. Colouring both states makes the
+   meaning of the row (accepted but not offered) unreadable. */
 .idp-flag.on {
   color: var(--fg);
   border-color: color-mix(in srgb, var(--fg) 30%, var(--border2));
@@ -983,8 +985,8 @@ label.idp-flag {
   accent-color: var(--accent);
 }
 
-/* 倒せない行は理由が title に入る（最後の 1 つ・受け入れていない）。薄くするだけで
-   隠さないのは、そこに状態が在ることは読めないといけないため。 */
+/* A row that cannot be toggled carries the reason in its title (the last one left, or not
+   accepted). It is only dimmed, never hidden, because the state has to stay readable. */
 .idp-flag:has(input:disabled) {
   opacity: 0.6;
   cursor: default;

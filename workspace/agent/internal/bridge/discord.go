@@ -49,7 +49,7 @@ func isThreadArchived(err error) bool {
 	return errors.As(err, &de) && de.Code == 50083
 }
 
-// discordProvider is the P1 send-only Discord implementation (docs/log/37 契約1:
+// discordProvider is the P1 send-only Discord implementation (docs/log/37 contract 1:
 // Discord is fully capable — CanReceive/CanInteract turn on with P2's Gateway
 // connection; Send itself needs only REST, no Gateway).
 type discordProvider struct {
@@ -61,7 +61,7 @@ type discordProvider struct {
 
 // Providers builds the send-capable providers configured in the secrets store.
 // Called per drain — cheap, stateless, and picks up connect/disconnect without
-// any daemon-side registry. Discord and Slack coexist (docs/log/37 Slack 追随): each
+// any daemon-side registry. Discord and Slack coexist (docs/log/37 Slack follow-up): each
 // gets its own resume cursor (queued.Delivered keys on Name()) and DM cache callback.
 func Providers(s *secrets.Data, cacheDiscordDM, cacheSlackDM func(channelID string)) []Provider {
 	var out []Provider
@@ -91,8 +91,8 @@ func (d *discordProvider) Send(m Message) error {
 
 // SendFrom delivers m starting at sub-message index `from` and returns the count of
 // sub-messages delivered so far (cumulative from 0), so the sender can resume a
-// partial delivery without re-posting what already landed (docs/log/37 重複対策 =
-// ResumableSender). A transient failure returns the count reached and the error.
+// partial delivery without re-posting what already landed (docs/log/37 duplicate
+// prevention = ResumableSender). A transient failure returns the count reached and the error.
 func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
 	// In thread mode the completion is already delivered to the session's thread by
 	// answer-ready, so the operator-facing session-report would just double it there
@@ -128,8 +128,8 @@ func (d *discordProvider) SendFrom(m Message, from int) (int, error) {
 // retries so a delivery cursor (SendFrom's `from`) indexes the same messages.
 func (d *discordProvider) buildMessages(m Message) []outMsg {
 	content := m.Text(d.creds.Lang)
-	// 全文ブリッジ (docs/log/37 将来の方向): in full-text mode the answer body IS the
-	// message — drop the headline/「表示名」/link preface and post the scrubbed,
+	// Full-text bridge (docs/log/37 future direction): in full-text mode the answer body IS
+	// the message — drop the headline/display-name/link preface and post the scrubbed,
 	// Discord-formatted body alone (the thread name already names the session, and
 	// the deep link is usually dead in the local-only setup full-text targets). Only
 	// answer-ready carries a body; every other kind keeps its headline.
@@ -225,11 +225,11 @@ func (d *discordProvider) destChannel() (string, error) {
 
 // sendThreaded posts msgs[from:] into the session's thread, creating it from the
 // session's first notification when needed, and returns the cumulative delivered
-// count so a partial failure resumes without duplicating (docs/log/37 重複対策). Failure
+// count so a partial failure resumes without duplicating (docs/log/37 duplicate prevention). Failure
 // policy unchanged: the notification is never lost to thread bookkeeping — a failed
 // thread creation falls back to flat delivery and the grouping retries next event.
 func (d *discordProvider) sendThreaded(m Message, msgs []outMsg, from int) (int, error) {
-	// Mutations go through updateThreads (ロック下 load→fn→save): writing back the
+	// Mutations go through updateThreads (load->fn->save under the lock): writing back the
 	// snapshot read here would roll back a concurrent touch()'s LastPostAt.
 	if ref, ok := loadThreads()[m.SessionName]; ok && ref.Channel == d.creds.ChannelID {
 		delivered, err := d.postRangeToThread(m.SessionName, ref.Thread, msgs, from)
@@ -529,7 +529,7 @@ func DiscordEditMessage(token, channelID, messageID, content string, components 
 }
 
 // DiscordResolveDM opens (or returns the existing) DM channel with the bound
-// user — the REST shape of "DM this person" (docs/log/37 契約5: the bot only ever
+// user — the REST shape of "DM this person" (docs/log/37 contract 5: the bot only ever
 // initiates toward the explicitly bound user id).
 func DiscordResolveDM(token, userID string) (string, error) {
 	var res struct {
@@ -547,7 +547,7 @@ func DiscordResolveDM(token, userID string) (string, error) {
 
 // discordRateRetries / discordRetryCap bound the inline retry on a 429. Handling the
 // rate limit HERE (rather than failing the post and re-sending the whole queue entry)
-// is the primary fix for the duplicate storm (docs/log/37 重複対策): a burst of posts
+// is the primary fix for the duplicate storm (docs/log/37 duplicate prevention): a burst of posts
 // from a long full-text answer routinely trips Discord's per-channel limit, and a
 // mid-batch failure used to re-post the delivered chunks. Bounded so a stuck 429
 // can't hang the single sender goroutine. Vars so tests can shrink them.

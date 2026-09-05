@@ -68,7 +68,7 @@ func TestPlanRespondGuards(t *testing.T) {
 	}
 	// …but the pending plan is the captured PAYLOAD, not the state. ExitPlanMode's own
 	// permission_prompt overwrites "plan" with "permission" while its approval dialog is
-	// still up, and refusing there broke the plan card's コメント送信 outright: this 409
+	// still up, and refusing there broke the plan card's Send comment outright: this 409
 	// no_plan made the Console fall back to /input, which the {prompt} guard then refused
 	// as permission_pending. Nothing could deliver the feedback.
 	dir64 := t.TempDir()

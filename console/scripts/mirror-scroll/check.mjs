@@ -32,21 +32,26 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // "long" is the everyday one: a real session's tail window is hundreds of turns, and its
 // markdown + highlighting + a screenshot land over several frames after the initial pin.
 //
-// mode は検証する筋:
-//   land（既定） — 開いたら末尾に着地する（＋読者の操作を追わない／ホイールで追従が切れる）
-//   restore      — 途中まで読んで離れ、戻ってくると同じ位置に戻る（scrollMark）
-//   swipe        — スマホの横スワイプでセッションを持ち替えると末尾に着地する。指の
-//                  pointerdown が「読者が広げた」窓（noteInteraction）を武装したまま持ち越すと
-//                  遅延レイアウトの再ピンが握りつぶされる、という筋を塞いだうえでの契約テスト。
-//                  なお、この窓を持ち越したままのビルドでもここでは末尾に着地した（fetch と
-//                  レンダが 600ms より長く、窓が閉じたあとの成長で再ピンが効くため）— つまり
-//                  これは「不定にならないこと」を固定する検査であって、赤くなる再現ではない。
-//   shared       — 共有セッション(受信側・docs/log/59)の同じ2点: 初めて開いたら末尾、途中まで
-//                  読んで離れて戻ったらその位置。描画層はミラーと共通でも、着地と復元は
-//                  SharedSessionView 自身の持ち物なので別に見る。
-//   typing       — 末尾に貼り付いたままコンポーザーへ書く。入力欄が縦に伸びていても、
-//                  1 文字ごとに転写が末尾から浮いてはいけない（実測: 1 打鍵で 154px）。
-//                  スクロールアンカリングを切ってから見る（runTyping の注記）。
+// mode selects which behaviour is checked:
+//   land (default) - opening lands at the bottom (and does not follow the reader's own growth;
+//                    a wheel breaks the follow)
+//   restore        - read partway, leave, come back to the same place (scrollMark)
+//   swipe          - a horizontal phone swipe that switches sessions lands at the bottom. This is
+//                    a contract test written after closing the path where the finger's pointerdown
+//                    carries the "the reader expanded this" window (noteInteraction) over still
+//                    armed, which swallows the re-pin for late layout. Note that even a build that
+//                    carries the window over lands at the bottom here (fetch plus render take
+//                    longer than 600ms, so the growth after the window closes still re-pins), so
+//                    this pins down "it must not be nondeterministic" rather than reproducing a
+//                    red.
+//   shared         - the same two points on a shared session, receiving side (docs/log/59): the
+//                    bottom on first open, and the same place after leaving and returning. The
+//                    render layer is shared with the mirror, but landing and restoring belong to
+//                    SharedSessionView itself, so they are checked separately.
+//   typing         - stay pinned to the bottom while writing in the composer. Even with the input
+//                    grown tall, the transcript must not float off the bottom on each keystroke
+//                    (measured: 154px from one keystroke). Checked with scroll anchoring disabled
+//                    (see the note on runTyping).
 const SCENARIOS = [
   { name: "long", turns: 200, images: 3, imgdelay: 3000, mermaid: 0 },
   { name: "mermaid", turns: 12, images: 0, imgdelay: 0, mermaid: 3 },
@@ -90,8 +95,9 @@ async function fetchJSON(url, init) {
   throw new Error("timeout waiting for " + url);
 }
 
-// scrollTop/scrollHeight/clientHeight of the transcript, plus whether 最新へ is showing.
-// `scroller` は面のスクロール容器を返す式(ミラーと共有ビューで別要素)。
+// scrollTop/scrollHeight/clientHeight of the transcript, plus whether the "jump to latest" pill
+// (「最新へ」) is showing. `scroller` is an expression returning the surface's scroll container
+// (a different element for the mirror and for the shared view).
 const probeIn = (scroller) => `(() => {
   const el = ${scroller};
   if (!el) return null;
@@ -99,14 +105,16 @@ const probeIn = (scroller) => `(() => {
     top: Math.round(el.scrollTop),
     gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
     turns: el.querySelectorAll("[data-turn-idx]").length,
-    // 「最新へ」と「返信を頭から」は同じピル（.mirror-jump）なので、後者を除いて数える。
+    // "jump to latest" and "start of the reply" are the same pill (.mirror-jump), so exclude the
+    // latter when counting.
     jump: !!document.querySelector(".mirror-jump:not(.mirror-jump-top)"),
     replyTop: !!document.querySelector(".mirror-jump-top"),
-    // どのセッションの transcript が載っているか — stub は sk4rq2f 以外の idx を +1000 する。
+    // Which session's transcript is mounted - the stub offsets idx by +1000 for all but sk4rq2f.
     first: Number(el.querySelector("[data-turn-idx]")?.dataset.turnIdx ?? -1),
-    // 画面の一番上に見えているターンとそのズレ（scrollMark と同じ採り方）。位置の復元は px では
-    // なく「どの内容が上端にあるか」で見る — 上にある 100 数十ターンの高さは訪問のたびに数 px
-    // ずつ揺れる（ハイライトやフォント）ので、scrollTop の一致を求めると健全な復元まで落ちる。
+    // The topmost visible turn and its offset (sampled the same way as scrollMark). Restoration is
+    // judged by which content is at the top edge, not by px: the height of the hundred-odd turns
+    // above drifts a few px per visit (highlighting, fonts), so demanding an exact scrollTop would
+    // fail even a healthy restore.
     anchor: (() => {
       const t = el.getBoundingClientRect().top;
       for (const d of el.querySelectorAll("[data-turn-idx]")) {
@@ -125,14 +133,15 @@ const wheelIn = (scroller) => `(() => {
 })()`;
 const WHEEL_UP = wheelIn(`document.querySelector(".mirror-body")`);
 const WHEEL_UP_SHARED = wheelIn(`document.querySelector(".shared-view-body")`);
-// 左ペインの共有セッション行(受信側)。1件しか生やさないので先頭で足りる。
+// The shared-session row in the left pane (receiving side). Only one is ever seeded, so the first
+// one is enough.
 const OPEN_SHARED = `(() => {
   const b = document.querySelector(".shared-rail-row");
   if (!b) return "no-row";
   b.click();
   return "ok";
 })()`;
-// The reader, parked at the bottom, expands the last 作業過程 disclosure. The content grows
+// The reader, parked at the bottom, expands the last work-in-progress (「作業過程」) disclosure. The content grows
 // under them and they must STAY — snapping to the bottom would hide what they just opened
 // (the regression 7f871de fixed, and the reason the re-pin used to be time-boxed).
 const EXPAND_WORK = `(() => {
@@ -151,12 +160,13 @@ const openRow = (title) => `(() => {
   b.click();
   return "ok";
 })()`;
-const SESSION_A = "チェックアウトの入力検証"; // sk4rq2f — idx はそのまま（stub）
-const SESSION_B = "返金 API の契約整理"; //     sc9lm3d — idx は +1000（stub）
+const SESSION_A = "チェックアウトの入力検証"; // sk4rq2f - idx left as is (stub)
+const SESSION_B = "返金 API の契約整理"; //     sc9lm3d - idx offset by +1000 (stub)
 const OPEN_SESSION = openRow(SESSION_A);
-// 横スワイプの起点。ターンの見出し行を選ぶ — transcript の中（＝指の pointerdown が
-// 「読者が広げた」窓を武装する場所）で、かつ横スクロールを持つ要素（コードブロック）でない
-// ので swipeGuard に弾かれない。左 1/3 は drawer の領分なので右寄りを取る。
+// Where the horizontal swipe starts. Pick a turn's heading row: it is inside the transcript (where
+// the finger's pointerdown arms the "the reader expanded this" window) and is not an element with
+// its own horizontal scroll (a code block), so swipeGuard does not reject it. The left third
+// belongs to the drawer, so take a point towards the right.
 const SWIPE_FROM = `(() => {
   const body = document.querySelector(".mirror-body");
   if (!body) return "none";
@@ -167,9 +177,10 @@ const SWIPE_FROM = `(() => {
 const pane = (session) => ({ id: "p0", session, content: { kind: "terminal", chat: true }, wrap: null });
 const layout = (session) => ({ cols: [{ id: "c0", rowRatio: 0.5, panes: [pane(session)] }], colRatios: [1], activeId: "p0" });
 
-// --- モード別の筋 ------------------------------------------------------------------
+// --- The behaviour behind each mode -------------------------------------------------
 
-// land（既定）: 開いたら末尾。読者が広げた reflow は追わない。ホイールで追従が切れる。
+// land (default): opening lands at the bottom. Reflow the reader caused is not followed. A wheel
+// breaks the follow.
 async function runLanding(cdp) {
   const opened = await cdp.ev(OPEN_SESSION);
   if (opened !== "ok") throw new Error("could not find the session row in the left pane");
@@ -183,7 +194,7 @@ async function runLanding(cdp) {
   const afterExpand = await cdp.ev(PROBE);
   const keptPlace = expanded !== "ok" || afterExpand.gap > 2;
 
-  // …and the other half of the contract: a real wheel-up must STOP the follow, show 最新へ,
+  // …and the other half of the contract: a real wheel-up must STOP the follow, show the jump pill,
   // and leave the reader where they are (no yank back to the bottom).
   const { x, y } = JSON.parse(await cdp.ev(WHEEL_UP));
   for (let i = 0; i < 4; i++) {
@@ -196,8 +207,9 @@ async function runLanding(cdp) {
   const still = await cdp.ev(PROBE);
 
   const stayedPut = Math.abs(still.top - up.top) < 5;
-  // 末尾に貼り付いている間は「返信を頭から」を出さない — そこは引き継ぎカードの起動ボタンや
-  // 質問カードの回答ボタンが並ぶ面で、浮くピルが被ると押せなくなる（実機で報告あり）。
+  // While pinned to the bottom the "start of the reply" pill stays hidden: that is where the
+  // handoff card's launch button and the question card's answer buttons sit, and a floating pill
+  // over them makes them unpressable (reported from real use).
   const ok = !!landed && landed.gap <= 2 && !landed.jump && !landed.replyTop && keptPlace && up.gap > 2 && up.jump && stayedPut;
   return {
     ok,
@@ -205,8 +217,8 @@ async function runLanding(cdp) {
   };
 }
 
-// restore: A を途中まで読む → B へ持ち替える → A へ戻ると同じ位置（scrollMark）。ついでに
-// 「B は B で末尾に着地する」＝マークがセッションを跨いで漏れないことも見る。
+// restore: read A partway -> switch to B -> back to A lands at the same place (scrollMark). It
+// also checks that B lands at B's own bottom, i.e. the mark does not leak across sessions.
 async function runRestore(cdp) {
   if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
   await sleep(9000);
@@ -216,20 +228,21 @@ async function runRestore(cdp) {
     await sleep(80);
   }
   await sleep(1500);
-  const before = await cdp.ev(PROBE); // 「途中まで読んだ」位置
+  const before = await cdp.ev(PROBE); // the "read partway" position
 
   if ((await cdp.ev(openRow(SESSION_B))) !== "ok") throw new Error("could not find the second session row");
   await sleep(8000);
-  const other = await cdp.ev(PROBE); // 別セッションは自分の末尾に着地する
+  const other = await cdp.ev(PROBE); // the other session lands at its own bottom
 
   if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not re-open the first session");
   await sleep(9000);
   const back = await cdp.ev(PROBE);
   await sleep(2500);
-  const settled = await cdp.ev(PROBE); // 遅延レイアウトが片付いても居座っているか
+  const settled = await cdp.ev(PROBE); // does it stay put once late layout has settled
 
   const sameSession = back.first === before.first && other.first !== before.first;
-  // 同じターンが同じズレで上端に来ていれば復元できている（px の一致は求めない — 上記 PROBE）。
+  // The same turn at the same offset from the top edge means it was restored (no px match
+  // required - see PROBE above).
   const restored =
     !!before.anchor && !!back.anchor &&
     back.anchor.idx === before.anchor.idx &&
@@ -242,10 +255,11 @@ async function runRestore(cdp) {
   };
 }
 
-// shared: 共有セッション(受信側)。初めて開いたら末尾に着地し、途中まで読んで別のセッションへ
-// 移り、戻ってくると同じ位置に戻る。所有者側と同じ2点だが、着地と復元は SharedSessionView 自身の
-// 持ち物(転写の高さは遅れて確定するので、ResizeObserver での再ピンが無いと末尾に届かない —
-// 実測 gap 2096px)。
+// shared: a shared session (receiving side). First open lands at the bottom; read partway, move to
+// another session, come back and the position is the same. The same two points as on the owner's
+// side, but landing and restoring belong to SharedSessionView itself - the transcript's height is
+// only settled late, so without the ResizeObserver re-pin it never reaches the bottom (measured
+// gap 2096px).
 async function runShared(cdp) {
   if ((await cdp.ev(OPEN_SHARED)) !== "ok") throw new Error("could not find the shared session row");
   await sleep(9000);
@@ -257,16 +271,17 @@ async function runShared(cdp) {
     await sleep(80);
   }
   await sleep(1500);
-  const before = await cdp.ev(PROBE_SHARED); // 「途中まで読んだ」位置
+  const before = await cdp.ev(PROBE_SHARED); // the "read partway" position
 
-  // いちど自分のセッション(ミラー)へ移ってから戻る = 共有ビューは unmount/remount される。
+  // Move to one of our own sessions (the mirror) and back, so the shared view is unmounted and
+  // remounted.
   if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not switch to an own session");
   await sleep(8000);
   if ((await cdp.ev(OPEN_SHARED)) !== "ok") throw new Error("could not re-open the shared session");
   await sleep(9000);
   const back = await cdp.ev(PROBE_SHARED);
   await sleep(2500);
-  const settled = await cdp.ev(PROBE_SHARED); // 遅延レイアウトが片付いても居座っているか
+  const settled = await cdp.ev(PROBE_SHARED); // does it stay put once late layout has settled
 
   const restored =
     !!before.anchor && !!back.anchor &&
@@ -280,20 +295,22 @@ async function runShared(cdp) {
   };
 }
 
-// swipe: スマホの横スワイプでセッションを持ち替える。指が transcript の上に降りているのが
-// 肝で、その pointerdown が持ち越されると再ピンが止まり、着地位置が不定になっていた。
+// swipe: switch sessions with a horizontal phone swipe. The point is that the finger comes down on
+// the transcript: when that pointerdown is carried over, the re-pin stops and the landing position
+// becomes nondeterministic.
 async function runSwipe(cdp) {
-  await sleep(6000); // 先頭のセッション（sc.from）が載って落ち着くまで
+  await sleep(6000); // until the initial session (sc.from) has mounted and settled
   const before = await cdp.ev(PROBE);
   const at = await cdp.ev(SWIPE_FROM);
   if (at === "none") throw new Error("no turn head to start the swipe from");
   const { x, y } = JSON.parse(at);
-  // ← へ送る。縦は動かさない＝縦優先の見送り（|dx| <= |dy|）に落ちない。
+  // Move left. Keep y fixed so it never falls into the vertical-first bail-out (|dx| <= |dy|).
   //
-  // 刻みが大きく速いのは意図的: Chromium は連続した touchMove を合成して間の座標を返すので、
-  // 細かく送ると 1 イベントぶんの dx が縮む。ROTATE_DIST=70 を LONG_PRESS_MS=500ms 以内に
-  // 越えられないと、指を置いたまま考えている扱いで候補が取り消される（実測: 120ms 刻みだと
-  // 70px を越えるのが 600ms 目で、スワイプが成立しなかった）。
+  // The steps are large and fast on purpose: Chromium coalesces consecutive touchMoves and reports
+  // intermediate coordinates, so finer steps shrink the dx of a single event. If ROTATE_DIST=70 is
+  // not crossed within LONG_PRESS_MS=500ms, the gesture is treated as a finger resting while the
+  // user thinks and the candidate is cancelled (measured: with 120ms steps, 70px was only crossed
+  // at 600ms and the swipe never took).
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
   for (const dx of [-120, -240]) {
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + dx, y }] });
@@ -301,14 +318,14 @@ async function runSwipe(cdp) {
   }
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
 
-  await sleep(9000); // 持ち替え先の transcript + 遅延レイアウト
+  await sleep(9000); // the switched-to transcript plus its late layout
   const landed = await cdp.ev(PROBE);
   await sleep(2500);
   const settled = await cdp.ev(PROBE);
 
-  // …そして、少しだけ上へ送ると「返信を頭から」が出る（＝末尾でだけ引っ込む導線であって、
-  // 消えたわけではないことの確認）。回答 1 本ぶんより小さく送るのがポイント — 大きく送ると
-  // 最新の回答そのものより上へ出てしまい、頭出しの対象が画面の下になる。
+  // …and a small scroll up brings back the "start of the reply" pill, confirming it only retracts
+  // at the bottom rather than having disappeared. Scrolling less than one reply's height matters:
+  // scroll further and we end up above the latest reply itself, putting its start below the fold.
   const { x: wx, y: wy } = JSON.parse(await cdp.ev(WHEEL_UP));
   await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x: wx, y: wy, deltaX: 0, deltaY: -300, pointerType: "mouse" });
   await sleep(1200);
@@ -324,17 +341,18 @@ async function runSwipe(cdp) {
   };
 }
 
-// typing: 末尾に貼り付いたまま、コンポーザーに長い下書きを書く。入力欄は内容に合わせて縦に
-// 伸びる（.mirror-input の max-height まで）が、その高さを計測するために一瞬 2 行へ縮めると
-// 転写の clientHeight がそのぶん伸び、末尾に居たビューの scrollTop がブラウザに切り詰め
-// られる。高さを戻しても scrollTop は戻らない＝打鍵のたびに末尾から浮く（実測 154px・
-// 入力欄が伸びているほど大きい）。
+// typing: write a long draft in the composer while pinned to the bottom. The input grows with its
+// content (up to .mirror-input's max-height), but shrinking it to two rows for a moment to measure
+// that height grows the transcript's clientHeight by the same amount, and the browser clamps the
+// scrollTop of a view sitting at the bottom. Restoring the height does not restore scrollTop, so
+// the view floats off the bottom on every keystroke (measured 154px, larger the taller the input).
 //
-// ★ 計測の前に .mirror-body の overflow-anchor を切る。Chromium はスクロールアンカリングで
-// この切り詰めを打ち消してしまうので、素の headless では 3/3 緑になり不具合が見えない
-// （＝この検査が何も守らない）。アンカリングは仕様上の保証ではなく、持たない／抑止された
-// エンジンでは素通しで出る — 利用者の報告もそちら側。切った状態が「アンカリングに助けられて
-// いないか」の踏み絵になる。実測: 修正前は 1 打鍵目で gap=154px・「最新へ」まで出た。
+// Disable overflow-anchor on .mirror-body before measuring. Chromium's scroll anchoring cancels
+// this clamping out, so a plain headless run is 3/3 green and the defect is invisible - the check
+// would protect nothing. Anchoring is not a guaranteed behaviour: engines that lack it or have it
+// suppressed show the defect straight through, and that is the side the user reports come from.
+// Running with it off is the test of whether we are being rescued by anchoring. Measured: before
+// the fix, the first keystroke gave gap=154px and even brought up the jump pill.
 const KILL_ANCHOR = `(() => {
   const st = document.createElement("style");
   st.textContent = ".mirror-body { overflow-anchor: none; }";
@@ -357,8 +375,8 @@ async function runTyping(cdp) {
   await cdp.ev(KILL_ANCHOR);
   const landed = await cdp.ev(PROBE);
 
-  // 下書きを書き入れて入力欄を伸ばす（改行込み＝実際に縦へ伸びる形）。insertText は 1 回の
-  // 入力なので、ここはまだ「伸びる瞬間」しか通らない。
+  // Fill in a draft to grow the input (with newlines, so it really grows vertically). insertText is
+  // a single input event, so this only exercises the moment of growth.
   if ((await cdp.ev(`(() => { const t = document.querySelector(".mirror-input"); if (!t) return "none"; t.focus(); return "ok"; })()`)) !== "ok")
     throw new Error("no composer input (session not live?)");
   await cdp.send("Input.insertText", { text: Array.from({ length: 10 }, (_, i) => `下書きの ${i} 行目です。`).join("\n") });
@@ -366,7 +384,8 @@ async function runTyping(cdp) {
   const grown = await cdp.ev(PROBE);
   const h = await cdp.ev(COMPOSER_H);
 
-  // ここからが本題: 伸びきった入力欄に 1 文字ずつ足す。転写は末尾のまま動いてはいけない。
+  // Now the real point: add one character at a time to the fully grown input. The transcript must
+  // stay at the bottom and not move.
   let worst = grown.gap;
   const tops = [];
   for (const ch of "abcde") {
@@ -376,7 +395,7 @@ async function runTyping(cdp) {
     worst = Math.max(worst, p.gap);
     tops.push(p.top);
   }
-  // 縮む向き（文字を消す）も同じ計測を通る。
+  // Shrinking (deleting characters) goes through the same measurement.
   for (let i = 0; i < 5; i++) {
     await cdp.send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
     await cdp.send("Input.dispatchKeyEvent", { type: "keyUp", key: "Backspace", windowsVirtualKeyCode: 8, nativeVirtualKeyCode: 8 });
@@ -403,7 +422,8 @@ async function runScenario(sc, chrome) {
       const target = await fetchJSON(`http://127.0.0.1:${CDP_PORT}/json/new?about:blank`, { method: "PUT" });
       const cdp = await CDP.connect(target.webSocketDebuggerUrl);
       await cdp.send("Page.enable");
-      // swipe の筋だけスマホ相当（≤760px = 左ペインがオフキャンバス drawer になる幅）＋タッチ。
+      // Only the swipe behaviour runs phone-sized (<=760px, the width at which the left pane
+      // becomes an off-canvas drawer) with touch enabled.
       const phone = sc.mode === "swipe";
       await cdp.send("Emulation.setDeviceMetricsOverride",
         phone ? { width: 390, height: 844, deviceScaleFactor: 2, mobile: true }

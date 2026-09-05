@@ -1,20 +1,21 @@
 package chatx
 
-// チャットのシステムプロンプトが表示言語に従うことを固定する。
+// Pins that the chat system prompt follows the display language.
 //
-// 論点は「outputLanguage=auto（既定）のとき何が起きるか」。以前は persona と出力ルールが
-// 日本語で書かれていたので auto は中立でなく、英語 Console の利用者にも日本語で返って
-// しまい、「en のときだけ表示言語を強制する」非対称なフォールバックで補正していた。
-// docs/log/28 P6 で prompt 側（persona・出力ルール・引き継ぎ前置き）を両言語化したので、
-// 表示言語だけで回答言語が決まるようになり、auto は両ロケールで同じ意味（入力言語に従う）に
-// 戻した。強制したい利用者には 設定 > 回答言語（ja/en）があり、そちらが常に優先される。
+// The question is what outputLanguage=auto (the default) does. The persona and the output rules
+// used to be written in Japanese, so auto was not neutral: users on an English Console got
+// Japanese answers, corrected by an asymmetric fallback that forced the display language for en
+// only. docs/log/28 P6 made the prompt side (persona, output rules, handover preamble)
+// bilingual, so the display language alone decides the answer language and auto means the same
+// thing in both locales (follow the input language). A user who wants it forced has
+// Settings > answer language (ja/en), which always wins.
 
 import (
 	"strings"
 	"testing"
 )
 
-// writeUIPrefs（一時 HOME に ui-prefs を書く）は ui_prefs_test.go のものを共用。
+// writeUIPrefs (writes ui-prefs into a temporary HOME) is shared with ui_prefs_test.go.
 
 func TestChatOutputRuleFollowsUILocale(t *testing.T) {
 	cases := []struct {
@@ -23,20 +24,21 @@ func TestChatOutputRuleFollowsUILocale(t *testing.T) {
 		wantEN     bool
 		wantMarker string
 	}{
-		{"英語ロケールは英語の出力ルール", `{"locale":"en"}`, true, "[Output rules (strict)]"},
-		{"日本語ロケールは従来どおり", `{"locale":"ja"}`, false, "【出力ルール（厳守）】"},
-		{"未設定は日本語", `{}`, false, "【出力ルール（厳守）】"},
+		{"english locale gets the english output rules", `{"locale":"en"}`, true, "[Output rules (strict)]"},
+		{"japanese locale is unchanged", `{"locale":"ja"}`, false, "【出力ルール（厳守）】"},
+		{"unset falls back to japanese", `{}`, false, "【出力ルール（厳守）】"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			writeUIPrefs(t, c.prefs)
 			got := (&ChatConversation{}).personaOf()
 			if !strings.Contains(got, c.wantMarker) {
-				t.Fatalf("出力ルールが %q を含まない:\n%s", c.wantMarker, got)
+				t.Fatalf("the output rules do not contain %q:\n%s", c.wantMarker, got)
 			}
-			// 言語シグナルを割らない: 英語側に日本語の出力ルールが同居しないこと。
+			// Do not split the language signal: the English prompt must not also carry the Japanese
+			// output rules.
 			if c.wantEN && strings.Contains(got, "【出力ルール（厳守）】") {
-				t.Fatalf("英語プロンプトに日本語の出力ルールが混入している:\n%s", got)
+				t.Fatalf("the japanese output rules leaked into the english prompt:\n%s", got)
 			}
 		})
 	}
@@ -49,15 +51,15 @@ func TestLanguageRuleAutoFollowsInput(t *testing.T) {
 		conv  ChatConversation
 		want  string
 	}{
-		// P6: persona/出力ルールが表示言語で書かれるようになったので、auto は両ロケールとも
-		// 「入力言語に従う」— 言語を固定したい利用者は明示 ja/en を選ぶ。
-		{"auto × 英語 Console → 入力言語に従う", `{"locale":"en"}`, ChatConversation{}, ""},
-		{"auto × 日本語 Console → 入力言語に従う", `{"locale":"ja"}`, ChatConversation{}, ""},
-		{"auto × 未設定 → 入力言語に従う", `{}`, ChatConversation{}, ""},
-		{"明示 ja は英語 Console でも優先", `{"locale":"en","outputLanguage":"ja"}`, ChatConversation{}, langRuleJA},
-		{"明示 en は日本語 Console でも優先", `{"locale":"ja","outputLanguage":"en"}`, ChatConversation{}, langRuleEN},
-		{"翻訳は英語 Console でも除外", `{"locale":"en"}`, ChatConversation{SeedVerb: "translate"}, ""},
-		{"旧 翻訳 builtin も除外", `{"locale":"en"}`, ChatConversation{AssistantID: "translate"}, ""},
+		// P6: the persona and output rules are now written in the display language, so auto means
+		// "follow the input language" in both locales; pin it with an explicit ja/en instead.
+		{"auto on an english Console follows the input language", `{"locale":"en"}`, ChatConversation{}, ""},
+		{"auto on a japanese Console follows the input language", `{"locale":"ja"}`, ChatConversation{}, ""},
+		{"auto with no locale set follows the input language", `{}`, ChatConversation{}, ""},
+		{"explicit ja wins even on an english Console", `{"locale":"en","outputLanguage":"ja"}`, ChatConversation{}, langRuleJA},
+		{"explicit en wins even on a japanese Console", `{"locale":"ja","outputLanguage":"en"}`, ChatConversation{}, langRuleEN},
+		{"translation is exempt even on an english Console", `{"locale":"en"}`, ChatConversation{SeedVerb: "translate"}, ""},
+		{"the old translate builtin is exempt too", `{"locale":"en"}`, ChatConversation{AssistantID: "translate"}, ""},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

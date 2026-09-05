@@ -1,26 +1,30 @@
-// 描画済み Markdown の中の「引用箇所」を数え、復元し、ハイライトを被せるための道具。
+// Tools for counting, restoring and highlighting quoted passages inside rendered Markdown.
 //
-// なぜオフセットではなく「引用文字列 + 出現番号」なのか: MarkdownView は Markdown を
-// innerHTML で描くので、元ソースの文字位置は手元に残らない。逆に描画後のテキストは安定して
-// いるので、そこでの n 番目の一致をアンカーにする（W3C Web Annotation の TextQuoteSelector
-// と同じ考え方）。本文が改訂されて一致しなくなったときは、ハイライトが付かないだけで、
-// 別の箇所へ誤って付くことはない。
+// Why "quote string + occurrence number" rather than an offset: MarkdownView renders the
+// Markdown through innerHTML, so the character positions of the original source are gone.
+// The rendered text, by contrast, is stable, so the nth match within it is the anchor (the
+// same idea as W3C Web Annotation's TextQuoteSelector). When the body is revised and no
+// longer matches, the highlight simply does not appear; it never lands on the wrong passage.
 //
-// ⚠️ 数える土台は「正規化テキスト」でなければならない（2026-09-04 実測）。選択から採る
-// `Selection.toString()` は**描画テキスト**——CSS の空白畳み込みが効き、`<br>`・段落・箇条書き
-// の境界には元の DOM に無い改行が入る——のに対し、textContent の連結は**生テキスト**なので、
-// 素の `indexOf` は次の選択で必ず外れ、ピッカーが無言で出なくなっていた:
-//   - 段落内のソース改行をまたぐ  選択 "リソース 一覧"  ／ 生 "リソース\n一覧"
-//   - `<br>` をまたぐ             選択 "one\ntwo"      ／ 生 "onetwo"（br は textContent に出ない）
-//   - 段落・箇条書きの項目をまたぐ 選択 "…。\n\nsecond" ／ 生 は区切り無し
-// そこで採取側も復元側も、空白の連なりを 1 個の空白へ畳んだテキストの上で数える
-// （`normalizeQuote` / `flattenRoot`）。空白の「形」の違いだけを吸収するので、
-// 「別の箇所へ誤って付かない」性質はそのまま。
+// Counting must happen on the NORMALIZED text. `Selection.toString()`, the source of the
+// selected string, is rendered text — CSS whitespace collapsing applies and the boundaries of
+// `<br>`, paragraphs and list items gain newlines that the DOM never had — while a
+// concatenation of textContent is raw text. Measured: a plain `indexOf` therefore missed on
+// the very next selection and the picker silently stopped appearing:
+//   - across a source newline inside a paragraph  selection "a b"      / raw "a\nb"
+//   - across a `<br>`                             selection "one\ntwo" / raw "onetwo"
+//                                                 (a br contributes nothing to textContent)
+//   - across paragraphs or list items             selection "x.\n\ny"  / raw has no separator
+// So both the capture side and the restore side count over text whose whitespace runs have
+// been collapsed to a single space (`normalizeQuote` / `flattenRoot`). That absorbs only
+// differences in the SHAPE of whitespace, so the "never lands on the wrong passage" property
+// is preserved.
 //
-// 純粋関数（occurrenceOf / indexOfNth / normalizeQuote）と DOM 操作を分けてあるので、
-// 数え方の回帰は node プロジェクトのテストで固定できる。
+// The pure functions (occurrenceOf / indexOfNth / normalizeQuote) are kept apart from the DOM
+// manipulation so counting regressions can be pinned by node-project tests.
 
-/** text の [0, start) に quote が何回現れるか = start から始まる一致の出現番号。 */
+/** How many times quote occurs in text[0, start) = the occurrence number of the match
+ *  starting at start. */
 export function occurrenceOf(text: string, quote: string, start: number): number {
   if (!quote) return 0;
   let n = 0;
@@ -28,7 +32,7 @@ export function occurrenceOf(text: string, quote: string, start: number): number
   return n;
 }
 
-/** nth 番目（0 始まり）の一致の開始位置。見つからなければ -1。 */
+/** Start position of the nth match (0-based), or -1 if there is none. */
 export function indexOfNth(text: string, quote: string, nth: number): number {
   if (!quote) return -1;
   let i = text.indexOf(quote);
@@ -36,12 +40,14 @@ export function indexOfNth(text: string, quote: string, nth: number): number {
   return i;
 }
 
-/** 空白の連なりを 1 個の空白へ畳む。描画テキストと生テキストの「空白の形」の差を消すため。 */
+/** Collapse whitespace runs to one space, erasing the whitespace-shape difference between
+ *  rendered text and raw text. */
 export function normalizeQuote(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
-/** 前後に改行が入って見える要素。ここを跨いだ選択には、生テキストに無い区切りが入る。 */
+/** Elements that appear to have a line break around them. A selection crossing one gains a
+ *  separator the raw text does not have. */
 const BLOCK_TAGS = new Set([
   "ADDRESS", "ARTICLE", "ASIDE", "BLOCKQUOTE", "BR", "DD", "DETAILS", "DIV", "DL", "DT",
   "FIGCAPTION", "FIGURE", "FOOTER", "FORM", "H1", "H2", "H3", "H4", "H5", "H6", "HEADER",
@@ -51,27 +57,28 @@ const BLOCK_TAGS = new Set([
 
 interface TextSpan {
   node: Text;
-  start: number; // root の生テキスト中での開始位置
+  start: number; // start position within the root's raw text
 }
 
 interface FlatRoot {
   spans: TextSpan[];
-  /** 空白を畳んだあとのテキスト。数えるのは必ずこちら。 */
+  /** The text after whitespace collapsing. Always count over this one. */
   text: string;
-  /** text[i] が生テキストの何文字目から来たか（非減少）。塗るときに生の位置へ戻す。 */
+  /** Which raw-text character text[i] came from (non-decreasing). Used to map back to raw
+   *  positions when painting. */
   rawAt: number[];
 }
 
-// テキストノードを文書順に集め、各ノードの開始オフセットを付けつつ、正規化テキストと
-// 「正規化 → 生」の対応表を作る。ハイライト用の <mark> は数える対象から外さない
-// （既存マークの中の文字も本文の一部）。
+// Collects the text nodes in document order, records each node's start offset, and builds
+// the normalized text plus the normalized-to-raw mapping. Highlight <mark> elements are not
+// excluded from the count: characters inside an existing mark are still part of the body.
 function flattenRoot(root: HTMLElement): FlatRoot {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
   const spans: TextSpan[] = [];
   const rawAt: number[] = [];
   let rawLen = 0;
   let text = "";
-  let pending = false; // 直前に空白か要素境界があった
+  let pending = false; // whitespace or an element boundary was just seen
   for (let n = walker.nextNode(); n; n = walker.nextNode()) {
     if (n.nodeType === Node.ELEMENT_NODE) {
       if (BLOCK_TAGS.has((n as Element).tagName)) pending = true;
@@ -87,7 +94,8 @@ function flattenRoot(root: HTMLElement): FlatRoot {
       }
       if (pending) {
         pending = false;
-        // 先頭の空白は落とす（本文の頭に空白は無いので、数えが 1 文字ズレない）。
+        // Drop leading whitespace: the body never starts with a space, so the count does
+        // not shift by one character.
         if (text.length) {
           text += " ";
           rawAt.push(rawLen + i);
@@ -101,14 +109,16 @@ function flattenRoot(root: HTMLElement): FlatRoot {
   return { spans, text, rawAt };
 }
 
-/** root 内の (node, offset) が生テキスト全体で何文字目か。要素境界なら次のテキストノードの頭。 */
+/** Which character of the whole raw text (node, offset) is within root. At an element
+ *  boundary, the head of the next text node. */
 function offsetIn(spans: TextSpan[], node: Node, offset: number): number {
   for (const s of spans) {
     if (s.node === node) return s.start + offset;
   }
-  // ダブルクリックや段落頭からの選択は startContainer が要素になる。その位置以降で最初に
-  // 現れるテキストノードを開始位置とみなす（先頭からの検索に落とすと、同じ語の別の出現を
-  // 拾ってしまう）。
+  // A double click, or a selection starting at the head of a paragraph, gives an element as
+  // startContainer. Treat the first text node at or after that position as the start;
+  // falling back to a search from the beginning would pick up another occurrence of the same
+  // word.
   if (node.nodeType !== Node.ELEMENT_NODE) return -1;
   const probe = document.createRange();
   probe.setStart(node, Math.min(offset, node.childNodes.length));
@@ -117,13 +127,13 @@ function offsetIn(spans: TextSpan[], node: Node, offset: number): number {
     try {
       if (probe.comparePoint(s.node, 0) >= 0) return s.start;
     } catch {
-      /* 比較できない位置は飛ばす */
+      /* skip positions that cannot be compared */
     }
   }
   return -1;
 }
 
-/** 生テキストの位置 → 正規化テキストの位置（その位置以降で最初の文字）。 */
+/** Raw-text position to normalized-text position (the first character at or after it). */
 function normIndexOf(rawAt: number[], raw: number): number {
   let lo = 0;
   let hi = rawAt.length;
@@ -141,10 +151,11 @@ export interface QuoteAnchor {
 }
 
 /**
- * range と「その選択の見た目の文字列」から引用アンカーを作る。
+ * Builds a quote anchor from a range and the string the selection visually reads as.
  *
- * selected を引数で受けるのは、`Selection.toString()`（描画テキスト）が jsdom では
- * 生テキストになり、この関数がまさに吸収している差をテストで作れなくなるから。
+ * `selected` is a parameter because in jsdom `Selection.toString()` (rendered text) returns
+ * raw text, which would make the very difference this function absorbs impossible to
+ * reproduce in a test.
  */
 export function anchorForRange(root: HTMLElement, range: Range, selected: string): QuoteAnchor | null {
   if (!root.contains(range.startContainer) || !root.contains(range.endContainer)) return null;
@@ -152,14 +163,16 @@ export function anchorForRange(root: HTMLElement, range: Range, selected: string
   if (!quote) return null;
   const { spans, text, rawAt } = flattenRoot(root);
   const rawStart = offsetIn(spans, range.startContainer, range.startOffset);
-  // 選択の先頭が空白だったぶんズレるので、実際の一致位置を start 以降で採り直す。
+  // Leading whitespace in the selection shifts the position, so re-take the actual match
+  // position from start onwards.
   const from = rawStart < 0 ? 0 : Math.max(0, normIndexOf(rawAt, rawStart) - quote.length);
   const at = text.indexOf(quote, from);
   if (at < 0) return null;
   return { quote, nth: occurrenceOf(text, quote, at) };
 }
 
-/** いま root 内で確定している選択を引用アンカーにする。選択が無い／root の外なら null。 */
+/** Turns the selection currently settled inside root into a quote anchor. null when there is
+ *  no selection or it lies outside root. */
 export function selectionAnchor(root: HTMLElement): (QuoteAnchor & { rect: DOMRect }) | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -169,7 +182,7 @@ export function selectionAnchor(root: HTMLElement): (QuoteAnchor & { rect: DOMRe
   return { ...anchor, rect: range.getBoundingClientRect() };
 }
 
-/** 被せたハイライトを剥がす（テキストノードは元通りに繋ぎ直す）。 */
+/** Removes the applied highlights, re-joining the text nodes as they were. */
 export function clearMarks(root: HTMLElement, selector: string): void {
   const marks = [...root.querySelectorAll<HTMLElement>(selector)];
   for (const m of marks) {
@@ -178,43 +191,45 @@ export function clearMarks(root: HTMLElement, selector: string): void {
     while (m.firstChild) parent.insertBefore(m.firstChild, m);
     parent.removeChild(m);
   }
-  if (marks.length) root.normalize(); // 分割された text ノードを戻す（次の数えがズレないように）
+  if (marks.length) root.normalize(); // rejoin split text nodes so the next count stays right
 }
 
-/** applyQuoteMarks が付けたハイライトを剥がす。 */
+/** Removes the highlights applyQuoteMarks applied. */
 export function clearQuoteMarks(root: HTMLElement): void {
   clearMarks(root, "mark.quote-mark");
 }
 
-/** 被せる 1 件: どこを（quote/nth）、どんな見た目で（className/dataset）。 */
+/** One mark to apply: where (quote/nth) and how it looks (className/dataset). */
 export interface PaintedMark extends QuoteAnchor {
   className: string;
   dataset?: Record<string, string>;
 }
 
 /**
- * アンカーの箇所を <mark> で囲む。返り値は「何番目のアンカーが実際に見つかったか」—
- * 改訂で消えた指摘をカード側で灰色にできる。
+ * Wraps each anchored passage in a <mark>. The return value says which anchors were actually
+ * found, so the card side can grey out comments whose passage a revision removed.
  *
- * 1つの引用が複数要素にまたがることがある（段落をまたぐ選択、太字の途中など）ので、
- * Range.surroundContents は使わず、重なるテキストノードごとに切って包む。DOM を触りながら
- * 走査すると位置が狂うので、先に対象を集めてから書き換える（MarkdownView の renderEmoji と
- * 同じ作法）。
+ * One quote can span several elements (a selection across paragraphs, the middle of bold
+ * text), so Range.surroundContents is not used; each overlapping text node is cut and wrapped
+ * separately. Walking while mutating the DOM would corrupt the positions, so the targets are
+ * collected first and rewritten afterwards (the same discipline as MarkdownView's
+ * renderEmoji).
  *
- * selector は「前回この関数が付けたもの」を剥がすためのもので、面ごとに別の class を使う
- * （プランコメントの引用と転写のマーカーが互いを消し合わないように）。
+ * `selector` is what removes marks this function applied last time. Each surface uses its own
+ * class so plan-comment quotes and transcript marks do not erase each other.
  */
 export function applyPaintedMarks(root: HTMLElement, marks: PaintedMark[], selector: string): boolean[] {
   clearMarks(root, selector);
   const { spans, text, rawAt } = flattenRoot(root);
   const found = marks.map(() => false);
-  // 保存済みの引用も畳んでから数える（改行を含む古い印も、そのまま引き当てられる）。
-  // 後ろから処理すると、同じテキストノードを2回切っても先に確定した位置がズレない。
+  // Stored quotes are collapsed before counting too, so an older mark containing newlines
+  // still resolves. Processing back to front keeps already-settled positions correct even
+  // when the same text node is cut twice.
   const targets = marks
     .map((m, i) => {
       const quote = normalizeQuote(m.quote);
       const at = quote ? indexOfNth(text, quote, m.nth) : -1;
-      // 正規化テキストの [at, at+len) を、切り出しに使う生テキストの範囲へ戻す。
+      // Map [at, at+len) in the normalized text back to the raw-text range used for cutting.
       return { i, at, from: at < 0 ? -1 : rawAt[at], to: at < 0 ? -1 : rawAt[at + quote.length - 1] + 1 };
     })
     .filter((x) => x.at >= 0)
@@ -225,10 +240,11 @@ export function applyPaintedMarks(root: HTMLElement, marks: PaintedMark[], selec
     for (const s of spans) {
       const node = s.node;
       const nodeEnd = s.start + (node.nodeValue || "").length;
-      if (nodeEnd <= target.from || s.start >= end) continue; // 重ならない
-      if (!node.parentNode) continue; // 直前の切り出しで置き換わっている
-      // 段落や箇条書きをまたぐ引用は、ブロックの隙間の空白ノードも範囲に入る。塗っても
-      // 見た目は変わらないうえ <ul> の直下に <mark> を作ることになるので、そこは飛ばす。
+      if (nodeEnd <= target.from || s.start >= end) continue; // no overlap
+      if (!node.parentNode) continue; // replaced by an earlier cut
+      // A quote spanning paragraphs or list items also covers the whitespace nodes between
+      // blocks. Painting them changes nothing visually and would put a <mark> directly under
+      // a <ul>, so skip them.
       if (!/\S/.test(node.nodeValue || "")) continue;
       const from = Math.max(0, target.from - s.start);
       const to = Math.min((node.nodeValue || "").length, end - s.start);
@@ -239,17 +255,17 @@ export function applyPaintedMarks(root: HTMLElement, marks: PaintedMark[], selec
       range.setStart(node, from);
       range.setEnd(node, to);
       try {
-        range.surroundContents(mark); // 単一テキストノード内なので必ず成立する
+        range.surroundContents(mark); // always valid: the range is within one text node
         found[target.i] = true;
       } catch {
-        /* 想定外の構造: そのぶんのハイライトは諦める（本文は壊さない） */
+        /* unexpected structure: give up on that highlight rather than damage the body */
       }
     }
   }
   return found;
 }
 
-/** プランコメントの引用ハイライト（番号バッジ付き）。 */
+/** Quote highlights for plan comments, with a number badge. */
 export function applyQuoteMarks(root: HTMLElement, anchors: QuoteAnchor[]): boolean[] {
   return applyPaintedMarks(
     root,

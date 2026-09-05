@@ -1,10 +1,11 @@
 package chatx
 
-// アシスタントチャットのタイトルAI提案（プレビュー専用）。session_title.go と同じ oneShotHeadless
-// 基盤・persona・クリーニングを流用するが、チャットの会話はすでに構造化された chatMessage 配列を
-// 持つため transcript.Turn への変換は不要（sidechain/tool-only turn を持たない分、セッションより
-// 単純）。セッションの自動提案バナー（SuggestedTitle 保留→受理/却下）に相当する仕組みは持たず、
-// リネームダイアログの「AIに提案してもらう」ボタン専用 — conv.Title は書き換えない。
+// AI title suggestion for assistant chats (preview only). Reuses session_title.go's
+// oneShotHeadless plumbing, persona and cleaning, but a chat conversation already is a
+// structured chatMessage slice, so no conversion to transcript.Turn is needed (simpler than a
+// session, which also has sidechain and tool-only turns). There is no equivalent of the
+// session's automatic suggestion banner (SuggestedTitle pending -> accept/reject): this serves
+// only the rename dialog's "ask the AI" (AIに提案してもらう) button, and never writes conv.Title.
 
 import (
 	"context"
@@ -28,9 +29,9 @@ const (
 // recent real exchanges, weighting the recent topic.
 func ChatTitleSuggestPrompt(msgs []ChatMessage, lang string) string {
 	var b strings.Builder
-	b.WriteString(titleSuggestInstructions(lang)) // session_title.go と共有（前置き・ラベル禁止の 悪い例 込み）
+	b.WriteString(titleSuggestInstructions(lang)) // shared with session_title.go (preamble plus the no-label counter-examples)
 	writeChatTitleWindow(&b, msgs)
-	b.WriteString(titleSuggestFooter(lang)) // 会話の続きを書き始めるのを防ぐ後置きも共有
+	b.WriteString(titleSuggestFooter(lang)) // the trailer that stops the model continuing the conversation is shared too
 	return b.String()
 }
 
@@ -70,7 +71,7 @@ func writeChatTitleWindow(b *strings.Builder, msgs []ChatMessage) {
 }
 
 func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, error) {
-	lang := titleLang() // セッション件名と同じ規約（表示言語で生成し、後からの切替では作り直さない）
+	lang := titleLang() // same rule as session titles: generate in the display language and do not regenerate on a later switch
 	reply, err := OneShotHeadless(ctx, OneShotShort, titleSuggestPersona(lang), ChatTitleSuggestPrompt(msgs, lang), titleModel())
 	if err != nil {
 		return "", fmt.Errorf("chat title generation failed: %w", err)
@@ -80,7 +81,7 @@ func runChatTitleSuggestLLM(ctx context.Context, msgs []ChatMessage) (string, er
 
 // handleChatSuggestTitle previews an AI title suggestion for a conversation WITHOUT
 // persisting it — mirrors handleSuggestTitle (session_title.go): the rename dialog's
-// "AIに提案してもらう" button fills the text field for the user to edit/accept themselves.
+// "ask the AI" (AIに提案してもらう) button fills the text field for the user to edit/accept themselves.
 // Works even when the conversation already has a title (renaming is exactly that case).
 func HandleChatSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")

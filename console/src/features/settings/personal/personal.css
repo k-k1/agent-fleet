@@ -1,11 +1,12 @@
-/* 個人設定の面（personal/）— 表示・アカウント・キー操作・読み上げ・通知など。
+/* The personal settings surfaces (personal/) — display, account, keyboard, text-to-speech,
+ * notifications and so on.
  *
- * settings.css を割ったうちの 1 枚（ADR 0067 / FE-SETTINGS）。**クラス名は 1 つの
- * ファイルにしか現れない** —— この Console の CSS は全部グローバルで、同名クラスが
- * 2 ファイルに分かれると衝突ではなく import 順で無言に合成されるため（scripts/css-dup.mjs）。
- * 新しい規則を足すときは、その名前が他のファイルに無いことを確かめること。
+ * One slice of `settings.css` (ADR 0067 / FE-SETTINGS). A class name must appear in exactly
+ * one file: every stylesheet in this Console is global, so the same class split across two
+ * files is not a conflict — it is silently merged in @import order (scripts/css-dup.mjs).
+ * Before adding a rule, check that its name exists nowhere else.
  *
- * 読み込み順は settings.css の @import が決める。ここのファイル名を変えるならそちらも。
+ * Load order is decided by the @import list in settings.css; rename this file there too.
  */
 .font-choices {
   display: flex;
@@ -34,13 +35,15 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 読み仮名辞書エディタ（docs/log/24）: ラベル＋全幅テキストエリアの縦積みブロック。 */
+/* Reading-dictionary editor (docs/log/24): a stacked block of a label plus a full-width
+   textarea. */
 .ds-userdict-block {
   padding: 6px 0;
 }
 
-/* 読み上げ: キャラクター一覧（TtsTab の CharList）。エンジン実カタログ駆動で行数が
-   多くなるのでスクロール枠に収める。行 = チェック＋名前｜スタイル｜速度｜試聴。 */
+/* Text-to-speech: the character list (CharList in TtsTab). It is driven by the engine's real
+   catalogue, so it can be long; keep it inside a scrolling frame. A row is
+   checkbox + name | style | speed | preview. */
 .ds-charlist {
   display: flex;
   flex-direction: column;
@@ -78,8 +81,8 @@
   background: var(--hover-bg, var(--btn));
 }
 
-/* アカウント（サインイン方法の紐づけ・docs/log/61 §61.16）。表のすぐ下に「追加」の見出しが
-   来るので段落として離し、方式の数だけ並ぶボタンは折り返す。 */
+/* Account (linking sign-in methods, docs/log/61 §61.16). The "add" heading follows immediately
+   below the table, so separate it as a paragraph; the row of buttons — one per method — wraps. */
 .account-methods {
   margin-bottom: 22px;
 }
@@ -94,8 +97,9 @@
   gap: 4px 14px;
 }
 
-/* 和文フォントの見本。--mono で描くのは、この設定が効く代表的な面（diff・ビューア・
-   ミラー）が等幅だから。丸数字と漢字を並べて字面の大きさを比べられるようにしている。 */
+/* Japanese font sample. It is drawn with --mono because the surfaces this setting mainly
+   affects (diff, viewer, mirror) are monospaced. Circled numerals and kanji sit side by side
+   so their apparent sizes can be compared. */
 .cjk-preview {
   font-family: var(--mono);
   font-size: 15px;
@@ -123,8 +127,9 @@
   white-space: nowrap;
 }
 
-/* 見出しの右に複数のボタンを並べる（kb-head の space-between で1つの塊として右端へ寄せる）。
-   日本語のラベルは長いので、幅が足りなければ折り返して右寄せのまま2行にする（横に溢れさせない）。 */
+/* Several buttons to the right of the heading (kb-head's space-between pushes them to the
+   right edge as one block). Japanese labels are long, so when the width runs out they wrap to
+   a second line, still right-aligned, rather than overflowing horizontally. */
 .keys-settings .kb-head-actions {
   display: flex;
   align-items: center;
@@ -141,8 +146,9 @@
   margin-top: 14px;
 }
 
-/* 学習済みクイック返信の一覧（返信サジェスト Layer A の管理）。チップと同じ見た目の丸に、
-   使用回数・📌（常に表示）・×（この候補をもう出さない）を並べる。まとめて見直す場所。 */
+/* The list of learned quick replies (managing Layer A of the reply suggestions). Each pill
+   looks like the chip itself and carries the use count, 📌 (always show) and × (never suggest
+   this one again). This is the one place to review them all together. */
 .qr-learned {
   margin: 8px 0 4px;
 }
@@ -194,7 +200,7 @@
   color: var(--fg);
 }
 
-/* ピン留め済み（常に表示）— チップ側と同じく accent 寄りの枠＋📌 で示す。 */
+/* Pinned (always shown) — marked with an accent-leaning border plus 📌, as on the chip. */
 .qr-item.pinned {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
@@ -261,7 +267,7 @@
 
 @media (max-width: 520px) {
   /* Phone: the 3-column row (label · chord · up-to-3 action buttons) can't fit a
-     narrow modal — the last button ("既定"/"Default") gets clipped off the right
+     narrow modal — the last button ("Default", 「既定」) gets clipped off the right
      edge and the label wraps to 3–4 lines. Below ~520px stack the label on its own
      line and put the chord + actions on the next, so nothing overflows and the label
      reads on one line. (Matches the settings dialog's own mobile handling.) */
@@ -298,10 +304,10 @@
   }
 
 }
-/* ── エージェントへの指示（docs/log/60）─────────────────────────────────────
-   本文エディタ + 配り先テーブル。テーブルは「どの kind に・どう配られ・いま効いて
-   いるか」を1行で読ませるのが役目で、未対応の kind も薄く出したままにする
-   （消すと「対応漏れ」に見える）。 */
+/* ── Agent instructions (docs/log/60) ───────────────────────────────────────
+   The body editor plus the delivery-target table. The table's job is to let one row say which
+   kind, how it is delivered and whether it is in effect right now, so unsupported kinds stay
+   listed, only dimmed — removing them would read as a gap in coverage. */
 .instr-editor-label {
   display: block;
   margin: 12px 0 4px;
@@ -382,7 +388,7 @@
   margin-right: 6px;
 }
 
-/* 「書いた」と「効いている」を別に見せるための状態列。 */
+/* Status column, so that "written" and "in effect" are shown as separate things. */
 .instr-ok {
   color: var(--add);
 }

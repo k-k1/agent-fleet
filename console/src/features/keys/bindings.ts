@@ -83,7 +83,7 @@ export function setBinding(id: string, chord: string | null): void {
   setSettings({ keybindings: cur });
 }
 
-/** Reset every override at once (the rebind tab's "全て既定に戻す"). */
+/** Reset every override at once (the rebind tab's "reset all to defaults"). */
 export function resetBindings(): void {
   setSettings({ keybindings: {} });
 }
@@ -96,7 +96,7 @@ export interface Rebindable {
   title: string;
   /** The chord as currently bound (override or default; "" = unbound). */
   chord: string;
-  /** The default chord, for the "既定に戻す" affordance / dirty check. */
+  /** The default chord, for the "reset to default" affordance / dirty check. */
   def: string;
   /** true when a user override is in effect (differs from default OR unbound). */
   overridden: boolean;

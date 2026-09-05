@@ -7,7 +7,7 @@ import type { TreeKind, TreeProject } from "./memoryTypes.ts";
 export interface RestoreScopeState {
   rev: string;
   all: boolean;
-  /** 個別選択（キーは "project:<slug>" / "kind:<kind>"）。 */
+  /** Individual selections, keyed "project:<slug>" / "kind:<kind>". */
   picked: Record<string, boolean>;
   tree: { kinds: TreeKind[]; projects: TreeProject[] } | null;
 }
@@ -16,9 +16,10 @@ export interface RestoreBody {
   scope: { all?: boolean; kinds?: string[]; projects?: string[] };
 }
 
-// RestorePanel — 戻す範囲を選ぶ。選択肢は**その時点のツリー**から作る（今の live では
-// なく）。誤って消したメモリを戻す、が本命のユースケースなので、現在存在しない
-// プロジェクトも選べなければ機能として成立しない（docs/log/39 ④）。
+// RestorePanel — picks the scope to restore. The choices are built from the tree AT THAT
+// SNAPSHOT, not from the current live tree: the point of the feature is bringing back memory
+// that was deleted by mistake, so a project that no longer exists still has to be selectable
+// (docs/log/39 item 4).
 export function RestorePanel({
   state,
   patch,
@@ -27,8 +28,8 @@ export function RestorePanel({
   busy,
 }: {
   state: RestoreScopeState;
-  /** 部分更新。非同期の tree 取得が、その間に変わった選択を巻き戻さないようにするため
-      「スナップショットを差し替える」ではなく「差分を当てる」形にしてある。 */
+  /** Partial update. It applies a delta rather than replacing the whole state so that the
+      async tree fetch cannot undo a selection the user changed while it was in flight. */
   patch: (p: Partial<RestoreScopeState>) => void;
   onClose: () => void;
   onSubmit: (rev: string, body: RestoreBody, label: string) => Promise<void>;
@@ -48,12 +49,12 @@ export function RestorePanel({
     return () => {
       live = false;
     };
-    // rev が変わったときだけ取り直す（選択の変更で再取得しない）。
+    // Refetch only when rev changes; a change of selection must not trigger one.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rev]);
 
   const toggle = (key: string) => patch({ picked: { ...picked, [key]: !picked[key] } });
-  // プロジェクト粒度を持たないルート（codex）は「まるごと」しか選べない。
+  // A root with no per-project granularity (codex) can only be selected whole.
   const wholeKinds = (tree?.kinds ?? []).filter((k) => !k.scopes);
   const projects = tree?.projects ?? [];
   const pickedProjects = projects.filter((p) => picked["project:" + p.slug]).map((p) => p.slug);

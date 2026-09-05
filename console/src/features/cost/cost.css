@@ -1,14 +1,15 @@
-/* クラウド費用（docs/log/67 + ADR 0048）。
-   稼働時間の面（.usage-rows / .usage-toolbar、settings.css）を意図的に使い回して
-   いる。行の形が同じなら「同じ種類の表」として読めるので、違うのは単位だけだと
-   伝わる。ここに足すのは金額固有の要素だけ。 */
+/* Cloud cost (docs/log/67 + ADR 0048).
+   Deliberately reuses the uptime surface (.usage-rows / .usage-toolbar, settings.css):
+   identical row shapes read as "the same kind of table", so the only difference that
+   registers is the unit. Add only cost-specific elements here. */
 
 .cloud-cost .cc-lede {
   margin: 0 0 12px;
 }
 
-/* 見出しの金額。⚠️ ラベルは必ず金額の下に置く——「あなたのコスト」ではなく
-   「直接ひも付く費用」であることは、数字と同じ視線の中に無いと読まれない。 */
+/* Headline amount. The label must sit below the amount: that this is directly
+   attributable cost rather than "your cost" goes unread unless it falls in the same
+   glance as the number. */
 .cloud-cost .cc-headline {
   display: flex;
   flex-direction: column;
@@ -25,7 +26,7 @@
   font-size: 0.82rem;
 }
 
-/* 但し書き。数字のすぐ下、脚注ではない。 */
+/* Caveats. Directly below the number, not as a footnote. */
 .cloud-cost .cc-notes {
   display: flex;
   flex-direction: column;
@@ -40,7 +41,7 @@
   gap: 6px;
 }
 
-/* 日次の棒。SVG を持ち込むほどの図ではないので素の flex で足りる。 */
+/* Daily bars. Not enough of a chart to warrant SVG, so plain flex is enough. */
 .cloud-cost .cc-days {
   display: flex;
   align-items: flex-end;
@@ -64,7 +65,8 @@
   background: var(--accent, #4c8bf5);
   border-radius: 2px 2px 0 0;
 }
-/* 未確定の日はまだ動く。塗りつぶしを弱めて「確定した日と同じ重みで読むな」と示す。 */
+/* An unsettled day can still move. The weaker fill says "do not read this with the
+   same weight as a settled day". */
 .cloud-cost .cc-day.est .cc-day-fill {
   opacity: 0.55;
   background-image: repeating-linear-gradient(
@@ -83,7 +85,8 @@
   font-size: 0.66rem;
   white-space: nowrap;
 }
-/* 日数が増えると日付ラベルは重なる。数字は tooltip にあるので、狭いときは消す。 */
+/* Date labels overlap as the day count grows. The numbers are in the tooltip, so drop
+   the labels when the pane is narrow. */
 @media (max-width: 720px) {
   .cloud-cost .cc-day-lab {
     display: none;
@@ -95,8 +98,9 @@
   font-size: 0.9rem;
 }
 
-/* サービス別の内訳。稼働時間の行は棒（.ur-bar）が真ん中を埋めるが、こちらは
-   名前と金額の 2 列しかないので、金額を右端へ寄せないと宙に浮いて見える。 */
+/* Per-service breakdown. Uptime rows have a bar (.ur-bar) filling the middle, but this
+   table has only two columns (name and amount), so the amount has to be pushed to the
+   right edge or it looks like it is floating. */
 .cloud-cost .usage-row.cc-svc {
   display: flex;
   align-items: center;
@@ -116,9 +120,10 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* メンバー詳細に差す 1 枚（docs/log/67 §67.15）。個人向けは「期間の欄」と「数字」が
-   別のカードに分かれていて枠線が間を作るが、こちらは 1 枚なので、空けないと
-   大きい金額が日付入力に貼り付いて読めなくなる（実測）。 */
+/* The single card embedded in member details (docs/log/67 §67.15). The personal view
+   splits the period field and the numbers into separate cards whose borders create the
+   gap; this is one card, so without spacing a large amount sticks to the date input and
+   becomes unreadable (measured). */
 .member-cost .usage-toolbar {
   margin-bottom: 16px;
 }

@@ -127,8 +127,7 @@ func TestSQLiteMemo(t *testing.T) {
 			t.Fatalf("create: %v", err)
 		}
 	}
-	// List is scoped to the caller's membership（memoCreateFor の 1 件は
-	// store_memo_create_test.go へ移したので、ここは 2 件）。
+	// List is scoped to the caller's membership.
 	rows, err := st.ListMemos(ctx, memA.ID, past)
 	if err != nil || len(rows) != 2 {
 		t.Fatalf("list A: err=%v n=%d", err, len(rows))
@@ -189,7 +188,7 @@ func TestSQLiteMemo(t *testing.T) {
 	}
 }
 
-// Memo categories (docs/log/21 UI刷新): first-class rows, membership-scoped, with a rename
+// Memo categories (docs/log/21 UI overhaul): first-class rows, membership-scoped, with a rename
 // that cascades onto the memos and ReassignMemoCategory that empties/moves them.
 func TestSQLiteMemoCategory(t *testing.T) {
 	ctx := context.Background()
@@ -306,9 +305,9 @@ func TestSQLiteUsage(t *testing.T) {
 	}
 }
 
-// Workspace reads carry the owning tenant's SLUG (docs/log/67, ADR 0048 決定 3). It is not a
-// column on the row — the AWS adapters need it to stamp `af-tenant`, and reading it
-// there would mean a store call from inside a tag write, on every Start.
+// Workspace reads carry the owning tenant's SLUG (docs/log/67, ADR 0048 decision 3). It
+// is not a column on the row — the AWS adapters need it to stamp `af-tenant`, and reading
+// it there would mean a store call from inside a tag write, on every Start.
 func TestSQLiteWorkspaceCarriesTenantSlug(t *testing.T) {
 	ctx := context.Background()
 	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
@@ -400,18 +399,18 @@ func TestMigrationsHaveNoStatementSplittingSemicolonInComments(t *testing.T) {
 	}
 }
 
-// TestFreshSQLiteKeepsWorkspaceColumns は「新規 DB でも workspace の列が揃っている」を
-// 固定する。
+// TestFreshSQLiteKeepsWorkspaceColumns pins that a freshly created DB has the full set of
+// workspace columns.
 //
-// ★ なぜ要るか（2026-08-31 に実測で見つけた）。migrate() は番号付きマイグレーションを
-// 全部流したあとに legacyHook（migrateMemberships）を呼び、そのフックは新規 DB で
-// `DROP TABLE workspace` → `ALTER TABLE workspace_new RENAME TO workspace` を実行する。
-// つまり **0002 より後に ALTER で足した列は、足した直後に捨てられる**。schema_migrations
-// には適用済みと記録されているので、次の起動でも復活しない。
+// migrate() runs every numbered migration and then calls legacyHook
+// (migrateMemberships), which on a fresh DB does `DROP TABLE workspace` followed by
+// `ALTER TABLE workspace_new RENAME TO workspace`. Any column added by an ALTER after
+// 0002 is therefore thrown away moments after it is added, and schema_migrations records
+// the migration as applied, so the next boot does not bring it back.
 //
-// 実害は静かだった: `settings`（ワークスペース設定）は新規 SQLite デプロイにだけ存在せず、
-// 読み出しはエラーを握りつぶすので「保存だけが 500」という形でしか出なかった。
-// preview_slug（docs/log/81）も同じ穴に落ちる。
+// The damage is silent: `settings` (workspace settings) was missing only on fresh SQLite
+// deployments, and reads swallow the error, so it surfaced solely as "saving returns
+// 500". preview_slug (docs/log/81) falls into the same hole.
 func TestFreshSQLiteKeepsWorkspaceColumns(t *testing.T) {
 	st, err := OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
 	if err != nil {
@@ -443,7 +442,8 @@ func TestFreshSQLiteKeepsWorkspaceColumns(t *testing.T) {
 			t.Errorf("fresh SQLite workspace table is missing %q (the membership swap dropped it)", col)
 		}
 	}
-	// 実際に読み書きできるところまで確かめる（列があるだけでは索引の張り直し漏れを拾えない）。
+	// Go as far as an actual read/write: the columns being present does not catch an
+	// index that was never rebuilt.
 	dflt, err := st.EnsureDefaultTenant(ctx)
 	if err != nil {
 		t.Fatalf("default tenant: %v", err)

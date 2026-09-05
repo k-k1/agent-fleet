@@ -1,4 +1,4 @@
-// :shortcode: → 絵文字。テキストノードだけを歩き、code / pre は触らない。
+// :shortcode: to emoji. Walks text nodes only; code / pre are left untouched.
 
 // Common GitHub-style emoji shortcodes (:tada: → 🎉). A curated subset covering what
 // shows up in dev docs — unknown codes are left as literal text (no regression). Mirrors

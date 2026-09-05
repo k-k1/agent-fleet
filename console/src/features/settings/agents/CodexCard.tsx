@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, apiJSON, raw } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail, raw } from "../../../core/api/client.ts";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { kindDisplayName } from "../../../lib/sessionkind.ts";
@@ -41,7 +41,7 @@ export function CodexCard({
     try {
       const res = await api("api/connections/codex/device/start", { method: "POST" });
       if (!res || res.error || !res.url) {
-        toast(tr("agents.codex_auth_failed", { msg: res?.error?.message || tr("agents.codex_device_disabled") }));
+        toast(tr("agents.codex_auth_failed", { msg: res?.error ? errDetail(res.error) : tr("agents.codex_device_disabled") }));
         return;
       }
       setMode("device");
@@ -76,7 +76,7 @@ export function CodexCard({
     try {
       const res = await apiJSON("api/connections/codex/api-key", "POST", { key: key.trim() });
       if (res && res.error) {
-        toast(tr("conn.connect_failed", { msg: String(res.error.message || res.error) }));
+        toast(tr("conn.connect_failed", { msg: errDetail(res.error) }));
         return;
       }
       setKey("");

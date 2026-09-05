@@ -1,21 +1,25 @@
 package claude
 
-// 利用上限が解ける時刻の確定（docs/log/47 §4-4）。
+// Pinning down when a usage limit lifts (docs/log/47 §4-4).
 //
-// 上限でターンが切れると claude は転写にバナーを 1 行残す:
+// When a turn is cut off by the limit, claude leaves one banner line in the transcript:
 //
 //	You've hit your session limit · resets 7:50pm (Asia/Tokyo)
 //
-// これは「時刻が来れば解ける中断」だが、abort.go の分類は retryable / blocked の 2 値
-// しかないので blocked に倒している（再送しても同じ時刻までは同じ結果になる）。ここは
-// その第 3 クラスのために「いつ解けるか」だけを答える。答えは 2 つの独立な材料から作る:
+// That is an interruption that clears once a given time arrives, but abort.go's
+// classification is binary (retryable / blocked), so it is filed as blocked (a resend before
+// that time gets the same result). This file answers only "when does it lift" for that third
+// class. The answer is built from two independent materials:
 //
-//   - バナーの壁時計（転写＝そのセッションが実際に受け取った文言）。日付は書かれていない。
-//   - statusline 捕捉（af-usage.json）の resets_at。unix epoch なので曖昧さが無いが、
-//     アカウント単位で、しかも最後に描画されたときの値なので古いことがある。
+//   - The banner's wall clock (from the transcript, i.e. the wording that session actually
+//     received). No date is written in it.
+//   - resets_at from the statusline capture (af-usage.json). Being a unix epoch it is
+//     unambiguous, but it is per account and holds the value from the last render, so it can
+//     be stale.
 //
-// 壁時計だけだと「翌日の同じ時刻」と区別できず、epoch だけだと 5 時間窓と週次窓の
-// どちらに当たったのかが分からない。よって**バナーで窓を選び、epoch で日付を確定する**。
+// The wall clock alone cannot be told apart from "the same time tomorrow", and the epoch
+// alone does not say which window was hit, the five-hour or the weekly one. So the banner
+// picks the window and the epoch fixes the date.
 
 import (
 	"regexp"
@@ -24,15 +28,15 @@ import (
 	"time"
 )
 
-// resetClockRe pulls the reset wall-clock out of the banner. 実測しているのは
-// "resets 7:50pm (Asia/Tokyo)" の形だけなので、それを確実に取りつつ、日付を伴う形
-// （"resets Aug 3 at 9am (…)"）や分・タイムゾーンの欠落にも耐えるようにしてある。
-// am/pm は必須 — 数字だけを拾うと本文中の無関係な数値に当たる。
+// resetClockRe pulls the reset wall-clock out of the banner. The only form measured is
+// "resets 7:50pm (Asia/Tokyo)", so it takes that reliably while also tolerating a form
+// carrying a date ("resets Aug 3 at 9am (…)") and a missing minute or timezone. The am/pm is
+// mandatory: matching bare digits would hit unrelated numbers in the body.
 var resetClockRe = regexp.MustCompile(`(?i)resets\s+(?:[a-z]{3,9}\.?\s+\d{1,2},?\s+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b\s*(?:\(([^)]+)\))?`)
 
 // weeklyBannerRe recognises the weekly window's banner — "You've hit your weekly limit ·
-// resets 9am (Asia/Tokyo)"（実測コーパス 2026-08-20）。日付を伴う形（"resets Aug 3 at 9am"）は
-// 壁時計だけの曖昧さが無いので除外する。
+// resets 9am (Asia/Tokyo)" (measured corpus). A form carrying a date ("resets Aug 3 at 9am")
+// is excluded because it has none of the wall-clock-only ambiguity.
 var weeklyBannerRe = regexp.MustCompile(`(?i)weekly limit.*resets\s+(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b`)
 
 // parseResetClock reads the banner's reset time. loc is the banner's own zone when it
@@ -52,7 +56,7 @@ func parseResetClock(msg string) (hour, min int, loc *time.Location, ok bool) {
 			return 0, 0, nil, false
 		}
 	}
-	// 12 時制 → 24 時制。12am = 0 時、12pm = 12 時。
+	// 12-hour to 24-hour: 12am = 0, 12pm = 12.
 	h %= 12
 	if strings.EqualFold(m[3], "pm") {
 		h += 12
@@ -67,9 +71,10 @@ func parseResetClock(msg string) (hour, min int, loc *time.Location, ok bool) {
 }
 
 // firstAfter returns the first instant whose wall clock in loc is hour:min and which is
-// strictly after base. base は「バナーが書かれた時刻」＝中断レコードのタイムスタンプ。
-// now ではなく base を基準にするのは、メニューが何時間も出しっぱなしのまま発見される
-// ことがあるから（実測 約16時間）。now 基準だと既に過ぎたリセットを「翌日」と読む。
+// strictly after base. base is the moment the banner was written, i.e. the abort record's
+// timestamp. It is the reference rather than now because the menu can sit on screen for hours
+// before anyone finds it (measured: about 16 hours), and against now a reset that has already
+// passed would be read as "tomorrow".
 func firstAfter(base time.Time, hour, min int, loc *time.Location) time.Time {
 	b := base.In(loc)
 	t := time.Date(b.Year(), b.Month(), b.Day(), hour, min, 0, 0, loc)
@@ -105,11 +110,11 @@ const resetMatchWindow = 2 * time.Minute
 
 // resolveResetAt is the pure decision: when does the limit behind msg lift?
 //
-//	abortedAt — 中断レコードの時刻（バナーが書かれた瞬間）。ゼロなら now で代用する。
-//	captured  — statusline 捕捉の resets_at 群。
+//	abortedAt — the abort record's time (the moment the banner was written); now when zero.
+//	captured  — the resets_at values from the statusline capture.
 //
-// source は判断材料のラベル（ログ用）。ok=false は「決められなかった」で、呼び出し側は
-// 自動再開を仕込まない — 当てずっぽうの時刻に起こしても、また上限に当たるだけ。
+// source labels which material decided it (for logs). ok=false means "could not decide", and
+// the caller then arms no auto-resume: waking at a guessed time only hits the limit again.
 func resolveResetAt(msg string, abortedAt time.Time, captured []time.Time, now time.Time) (at time.Time, source string, ok bool) {
 	base := abortedAt
 	if base.IsZero() {
@@ -117,20 +122,22 @@ func resolveResetAt(msg string, abortedAt time.Time, captured []time.Time, now t
 	}
 	if h, m, loc, parsed := parseResetClock(msg); parsed {
 		want := firstAfter(base, h, m, loc)
-		// 捕捉した epoch が同じ壁時計を指しているなら、そちらを正とする（日付が確定する）。
+		// When a captured epoch points at the same wall clock, it wins (that fixes the date).
 		for _, c := range captured {
 			if c.After(base) && absDur(c.Sub(want)) <= resetMatchWindow {
 				return c, "banner+capture", true
 			}
 		}
-		// 週次の窓だけはバナー単独で決めない（docs/log/47 §4-10）。バナーは壁時計しか書かない
-		// ので "resets 9am" は「今日か明日の 9時」としか読めないが、週次のリセットは数日先に
-		// あり得る。firstAfter が返す明日の 9時に起こしても同じ 429 を踏み、そのたびに新しい
-		// エピソードが開いて予約し直す — 本当のリセットまで毎日 1 ターンずつ焼く。
+		// The weekly window alone is never decided from the banner (docs/log/47 §4-10). The
+		// banner carries only a wall clock, so "resets 9am" can only be read as "9am today or
+		// tomorrow", while a weekly reset can be days away. Waking at the 9am tomorrow that
+		// firstAfter returns hits the same 429, which opens a fresh episode and books again —
+		// burning one turn a day until the real reset.
 		//
-		// 上の一致判定は「同じ瞬間か」なので、数日先の週次リセットには当たらない。ここでは
-		// **壁時計だけ**を突き合わせて日付は捕捉の epoch に決めさせる。新しい方から見るのは、
-		// 捕捉が返す 2 つの窓（5時間・週次）のうち週次は必ず後ろだから。
+		// The match above asks "is it the same instant", so it never lands on a weekly reset
+		// days out. Here only the wall clock is compared and the date is left to the captured
+		// epoch. The newest is tried first because of the two windows the capture returns
+		// (five-hour and weekly) the weekly one is always the later.
 		if weeklyBannerRe.MatchString(msg) {
 			for i := len(captured) - 1; i >= 0; i-- {
 				c := captured[i]
@@ -142,8 +149,8 @@ func resolveResetAt(msg string, abortedAt time.Time, captured []time.Time, now t
 		}
 		return want, "banner", true
 	}
-	// バナーが読めない（版で文言が変わった等）。捕捉した窓のうち、まだ来ていない最も
-	// 早いものへ賭ける — 上限に当たっている以上、次に解けるのはそのどれかである。
+	// The banner is unreadable (a version changed the wording, etc.). Bet on the earliest
+	// captured window still in the future: being at a limit, the next lift is one of them.
 	for _, c := range captured {
 		if c.After(now) {
 			return c, "capture", true

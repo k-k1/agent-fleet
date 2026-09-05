@@ -11,7 +11,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// P7-3 (docs/log/61 §61.17.4 (b) + 決定 41): a SECOND app registration of a directory
+// P7-3 (docs/log/61 §61.17.4 (b) + decision 41): a SECOND app registration of a directory
 // this deployment already has a door to.
 //
 // The failure being prevented is remote from its cause: the tenant saves a row that
@@ -66,7 +66,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 
 	api := newTenantIdPAPI(mgr, nil)
 
-	// ★ The FIRST registration of a pairwise issuer is fine — one door splits nobody.
+	// The FIRST registration of a pairwise issuer is fine — one door splits nobody.
 	// Demanding a claim here would be noise on the common case (every Entra tenant).
 	if w := post(api, row("entra", pairwise, "")); w.Code != http.StatusOK {
 		t.Fatalf("first registration must be accepted: %d %s", w.Code, w.Body.String())
@@ -82,7 +82,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 		t.Fatalf("link_claim must unblock it: %d %s", w.Code, w.Body.String())
 	}
 
-	// ★ The decision comes from DISCOVERY, not from the issuer's hostname. A second
+	// The decision comes from DISCOVERY, not from the issuer's hostname. A second
 	// registration of a PUBLIC-subject issuer is fine: rule 1.5 joins those on `sub`.
 	if w := post(api, row("okta", public, "")); w.Code != http.StatusOK {
 		t.Fatalf("first public registration: %d %s", w.Code, w.Body.String())
@@ -91,7 +91,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 		t.Fatalf("a public-subject issuer must not require a claim: %d %s", w.Code, w.Body.String())
 	}
 
-	// ★ The deployment's OWN provider counts as a door. This is the commonest shape:
+	// The deployment's OWN provider counts as a door. This is the commonest shape:
 	// the tenant registers its own app for the directory the deployment already uses,
 	// and the DB rows alone would not see it.
 	envAPI := newTenantIdPAPI(mgr, []auth.LoginProvider{&auth.OIDCProvider{ProviderID: "entra-env", Issuer: public}})
@@ -114,7 +114,7 @@ func TestTenantIdPPairwiseSecondRegistrationNeedsLinkClaim(t *testing.T) {
 		t.Fatalf("an env provider on the same pairwise issuer must trigger it: %d %s", w.Code, w.Body.String())
 	}
 
-	// ★ Discovery being unreachable is NOT a refusal. The issuer may simply not be
+	// Discovery being unreachable is NOT a refusal. The issuer may simply not be
 	// reachable from the CP right now (it is fetched lazily everywhere else for the
 	// same reason), and a network blip must not stop somebody saving a form.
 	dead := "http://127.0.0.1:1/unreachable"
@@ -175,7 +175,7 @@ func TestSuspendWarnsWhenItIsSomebodysOnlyMethod(t *testing.T) {
 	if !strings.Contains(w.Body.String(), "1 active member") {
 		t.Fatalf("the answer must say how many people: %s", w.Body.String())
 	}
-	// ★ Overridable. Stopping a compromised IdP must stay faster than starting one.
+	// Overridable. Stopping a compromised IdP must stay faster than starting one.
 	if w := suspend("?confirm=1"); w.Code != http.StatusOK {
 		t.Fatalf("confirm must go through: %d %s", w.Code, w.Body.String())
 	}

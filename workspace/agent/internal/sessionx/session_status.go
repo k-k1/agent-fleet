@@ -20,14 +20,15 @@ import (
 // `workspace-agent session-status <state>`, which records {state, ts} keyed by our
 // deterministic slot sid (claude's hook session_id, normalized — see below).
 // wireSession surfaces the state so
-// the Console can badge 進行中 / 応答あり and notify on arrival. Robust and cheap:
+// the Console can badge working / answer-ready and notify on arrival. Robust and cheap:
 // driven by claude's own events, no TUI parsing or transcript polling. With
 // --dangerously-skip-permissions there is no tool-approval QA state, so the two
 // meaningful states are working and idle(=response ready / awaiting input).
 //
-// 状態と pending ペイロードのストア本体は internal/status（docs/log/23 残① Wave A）、
-// claude settings への hook 配線（EnsureStatusHooks）は internal/agents/claude
-// （同 Wave F）; このファイルは session-status サブコマンドの入口だけを持つ。
+// The store for the state and the pending payloads is internal/status (docs/log/23 remaining
+// item 1, Wave A), and the hook wiring into claude's settings (EnsureStatusHooks) is
+// internal/agents/claude (same, Wave F); this file holds only the entry point of the
+// session-status subcommand.
 
 // EnsureClaudeSettingsWiring re-asserts what claude's settings.json must carry for us
 // — the status hooks and the statusLine that captures rate_limits — right before a
@@ -88,18 +89,19 @@ func RunSessionStatusHook(args []string) {
 	}
 	// boot: the SessionStart hook. Reset a fresh or resumed session to idle so a stale
 	// "working" status file (killed mid-turn, then resumed — no Stop ever fired) doesn't
-	// badge 進行中 forever. Two guards: (1) skip source=="compact", which resumes the SAME
+	// badge working forever. Two guards: (1) skip source=="compact", which resumes the SAME
 	// in-flight turn after an auto-compaction — idling it there would false-idle live work;
 	// (2) never RecordSessionNotification, since a stale working→idle reset here is not a
-	// real answer-ready and must not fire the 応答あり notification.
+	// real answer-ready and must not fire the answer-ready notification.
 	if state == "boot" {
 		if h.source == "compact" {
 			return
 		}
-		// 消す前に持ち越す（docs/log/75 §75.6.3 の契機 3）。ここは「モーダルを出したまま
-		// 畳まれたセッションが再開した」瞬間で、直後の applyPendingPayloads が
-		// pending-question/plan/perm を消してしまう — 一覧も halt も通らなかった経路
-		// （SIGKILL 直後の再開など）の最後の受け皿。既に昇格済みなら上書きしない。
+		// Carry it over before it is erased (docs/log/75 §75.6.3, trigger 3). This is the
+		// moment a session that was folded with a modal open resumes, and the
+		// applyPendingPayloads just below erases pending-question/plan/perm — the last
+		// catch for paths that went through neither the listing nor halt (a resume right
+		// after SIGKILL, say). An already-promoted entry is not overwritten.
 		status.PromoteCarried(sid, "stopped")
 		status.Persist(sid, "idle")
 		applyPendingPayloads(sid, "idle", h)
@@ -127,18 +129,20 @@ func RunSessionStatusHook(args []string) {
 		return
 	}
 	// A hook carrying agent_id fired INSIDE a subagent, not on the session's own thread
-	// (実測 2.1.252: サブエージェントの Bash の PostToolUse は agent_id/agent_type 付きで、
-	// **親と同じ session_id** で来る。メインスレッド側にはどちらも無い)。PostToolUse(*) の
-	// working ハートビートはそれを見分けないので、裏でサブエージェントが回っているだけの
-	// セッションが「自分のターンが走っている」と名乗ってしまう — 実測 2026-09-01、sf2ykxk
-	// は待機プロンプトのまま 7〜12 秒ごとに working を打ち直されて 進行中＋停止ボタンになり、
-	// idle でしか走らない BG 検出（claude.BackgroundWork）はそもそも一度も評価されなかった。
+	// (measured on 2.1.252: a subagent's Bash PostToolUse carries agent_id/agent_type and
+	// arrives with the SAME session_id as the parent, while the main thread has neither).
+	// The working heartbeat on PostToolUse(*) does not tell them apart, so a session that
+	// merely has a subagent running in the background claims its own turn is in flight —
+	// measured 2026-09-01: sf2ykxk sat at the ready prompt while working was re-stamped
+	// every 7-12 seconds, showing as in-progress with a stop button, and the background-work
+	// detection (claude.BackgroundWork), which only runs on idle, was never evaluated at all.
 	//
-	// 既にある working の打ち直しは通す: 前景サブエージェントの長いターンでは、その道具こそが
-	// 唯一のハートビートで、落とすと false-idle が戻る。通さないのは idle からの復活だけ —
-	// 裏で回っているセッションは idle のままでいてもらわないと、何が走っているかを名乗る
-	// バッジ（入力待ち · サブエージェント実行中）に到達しない。working が丸ごと失われた
-	// ターンの復旧は、ペインを直接見る reverse-heal（agent.go）の担当。
+	// Re-stamping an EXISTING working is let through: during a foreground subagent's long
+	// turn that tool is the only heartbeat, and dropping it brings false-idle back. What is
+	// blocked is only a revival from idle — a session working in the background has to stay
+	// idle to reach the badge that names what is running (awaiting input · subagent running).
+	// Recovering a turn whose working was lost entirely is the job of the pane-reading
+	// reverse-heal (agent.go).
 	if h.agentID != "" && state == "working" {
 		if cur, _ := status.Read(sid); cur.State != "working" {
 			return
@@ -150,8 +154,9 @@ func RunSessionStatusHook(args []string) {
 	// carries no excerpt (docs/log/30: fact-only, uniform with managed).
 	turnText, _ := status.ReadPendingText(sid)
 	if state == "idle" {
-		// Stop フックの idle は「ターンが終わった」という主張。docs/log/51 のリコンサイラは
-		// この 1bit を完了の証拠に使う（boot の idle リセットと区別するため）。
+		// The Stop hook's idle is a claim that the turn ended. docs/log/51's reconciler uses
+		// that one bit as the evidence of completion (to tell it apart from boot's idle
+		// reset).
 		status.PersistTurnEnd(sid, state)
 	} else {
 		status.Persist(sid, state)
@@ -166,20 +171,22 @@ var claudeAbortInfo = claude.AbortInfo
 
 // turnEndLabel refines the Stop hook's "idle" into what actually ENDED the turn.
 //
-// Stop の idle は「ターンが終わった」としか言わない。**どう**終わったかは転写の末尾に
-// あり、docs/log/47 はそれを読む実装（claude.HealIdle）を既に持っている — が、呼ばれるのは
-// ペイン由来の自己修復経路、つまり「Stop が鳴らなかったとき」だけだった。前提は「API
-// エラーでターンが落ちると claude は Stop を鳴らさない」で、接続断ではそのとおりだった。
+// Stop's idle says no more than "the turn ended". HOW it ended is in the transcript tail, and
+// docs/log/47 already has the implementation that reads it (claude.HealIdle) — but that was
+// called only from the pane-driven self-heal path, i.e. when Stop never fired. The premise was
+// "claude does not fire Stop when an API error kills a turn", which held for a dropped
+// connection.
 //
-// ところが利用上限の 429 では claude はターンを**完了として畳む**（turn_duration を書き、
-// Brewed for … を出し、Stop も鳴らす）。実測 2026-08-05 s6no6jv（モデル別上限）。すると
-// マーカーは先に idle になり、自己修復の `state != "idle"` ガードで HealIdle は素通り、
-// 上限で落ちたターンが「応答が完了」として通知される。agents.StateFailed を作った理由
-// （残高切れが完了と見分けられなかった）と同じ穴が、TUI 経路にだけ残っていた。
+// On a usage-limit 429, though, claude folds the turn up AS COMPLETE (writes turn_duration,
+// prints "Brewed for …", fires Stop). Measured 2026-08-05, s6no6jv (a per-model limit). The
+// marker reaches idle first, the self-heal's `state != "idle"` guard lets HealIdle sail past,
+// and a turn killed by the limit is notified as a completed response. The very hole
+// agents.StateFailed was created for (an exhausted balance being indistinguishable from a
+// completion) was still open on the TUI path alone.
 //
-// 他 kind では素通しになる: 判別材料は claude の jsonl 形式に固有で、AbortInfo は
-// claude の ConfigDir 配下から sid.jsonl を探すので、opencode / codex の sid では何も
-// 見つからず ok=false を返す。
+// Other kinds pass straight through: the evidence is specific to claude's jsonl format, and
+// AbortInfo looks for sid.jsonl under claude's ConfigDir, so an opencode / codex sid finds
+// nothing and it returns ok=false.
 func turnEndLabel(sid, state, turnText string) (string, string) {
 	if state != "idle" {
 		return state, turnText
@@ -188,8 +195,9 @@ func turnEndLabel(sid, state, turnText string) (string, string) {
 	if !ok {
 		return state, turnText
 	}
-	// 理由を excerpt に載せるのは managed の MarkTurnEndErr と同じ契約 — 報告（reason）と
-	// 全文ブリッジ（body）はここから失敗の理由を読む。ターンの本文ではなく理由を渡す。
+	// Putting the reason in the excerpt is the same contract as managed's MarkTurnEndErr: the
+	// report (reason) and the full-text bridge (body) read the failure's reason from here.
+	// Pass the reason, not the turn's body.
 	if a.Retryable {
 		return agents.StateAborted, a.Msg
 	}
@@ -205,7 +213,7 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 	// it is back at the ready prompt, which a footer-string drift makes fire mid-turn. Its
 	// reverse-heal only restores "working" if a poll happens to catch IsBusy, so the
 	// marker can simply stay gone — and keying answer-ready on previous=="working" alone
-	// then dropped the real Stop on the floor: no 応答あり notification and no operator
+	// then dropped the real Stop on the floor: no answer-ready notification and no operator
 	// report (docs/log/30), while the session still read idle (LiveState defaults to idle with
 	// no file). A completion must not hinge on a tmux-string heuristic never misfiring, so
 	// an absent marker counts as a turn that ended. Interim states (question/plan/
@@ -213,17 +221,18 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 	case state == "idle" && (previous == "working" || previous == ""):
 		kind = chatx.ReportKindAnswerReady
 	// A managed turn that ended in a provider-side error (agents.StateFailed). As an
-	// EVENT it is the same terminal completion as answer-ready — the session is back at
-	// 入力待ち and the instruction's one report must fire and consume the arm — but the
-	// report has to say it errored: a silent 応答が完了 is exactly how an exhausted
-	// opencode Zen balance passed for a finished turn. turnText holds the driver's
+	// EVENT it is the same terminal completion as answer-ready — the session is back to
+	// awaiting input and the instruction's one report must fire and consume the arm — but
+	// the report has to say it errored: a silent "the response completed" is exactly how an
+	// exhausted opencode Zen balance passed for a finished turn. turnText holds the driver's
 	// one-line reason, so it also rides the full-text bridge body below.
 	case state == agents.StateFailed && (previous == "working" || previous == ""):
 		kind, reason = chatx.ReportKindAnswerReady, chatx.ReportReasonTurnFailed
-	// A turn CUT OFF before it answered, by something that clears on its own (接続断・
-	// 一時的なレート制限). Same terminal event as above — the session is at 入力待ち and
-	// the instruction's one report must fire — but here re-running the turn is the right
-	// next move, so the report says so instead of "原因を直すまで再送するな" (docs/log/47).
+	// A turn CUT OFF before it answered, by something that clears on its own (a dropped
+	// connection, a temporary rate limit). Same terminal event as above — the session is
+	// awaiting input and the instruction's one report must fire — but here re-running the turn
+	// is the right next move, so the report says so instead of "do not resend until the cause
+	// is fixed" (docs/log/47).
 	case state == agents.StateAborted && (previous == "working" || previous == ""):
 		kind, reason = chatx.ReportKindAnswerReady, chatx.ReportReasonTurnAborted
 	case state == "question" && previous != "question":
@@ -266,13 +275,13 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 			}
 		}
 		ev := notice.New(kind, m.Name, m.Kind, session.Display(m))
-		// 全文ブリッジ (docs/log/37 将来の方向): carry the turn's final prose on the
-		// answer-ready event so a full-text-mode provider can post it. Only
+		// Full-text bridge (docs/log/37, the future direction): carry the turn's final
+		// prose on the answer-ready event so a full-text-mode provider can post it. Only
 		// answer-ready — interim attention events (question/plan/permission) have
 		// no completed turn body. Capped like the operator report excerpt; the
 		// provider scrubs secrets and chunks before any wire.
 		if kind == chatx.ReportKindAnswerReady {
-			// Head-first and generously capped (docs/log/37 Fix ③): the full-text bridge
+			// Head-first and generously capped (docs/log/37 Fix 3): the full-text bridge
 			// stands in for the Console, so the WHOLE answer rides along (chunkMessage
 			// splits it), not a 2000-rune tail like the operator report excerpt.
 			if body := chatx.HeadRunes(turnText, chatx.BridgeBodyCap); body != "" {
@@ -296,9 +305,10 @@ func RecordSessionNotification(sid, previous, state, turnText string) {
 		// interim kinds), so the operator can relay/answer (answer_session_question)
 		// or drive the plan review loop (respond_session_plan); permission stays
 		// notification-center only.
-		// docs/log/51 Phase 1: この kick は終端イベントでは「配送」ではなく**起床ヒント**。
-		// 消費してよいかの判定はリコンサイラが状態をレベルで見て決める（この関数は
-		// 「何が起きたか」を伝えるだけで、「もう報告してよいか」は決めない）。
+		// docs/log/51 Phase 1: on a terminal event this kick is not DELIVERY but a
+		// wake-up hint. Whether the arm may be consumed is decided by the reconciler
+		// reading the state by level (this function only says what happened, never
+		// whether it is time to report).
 		if !holdReport && (kind == chatx.ReportKindAnswerReady || kind == "question" || kind == "plan-approval") && chatx.SessionReportPending(m.Name) {
 			chatx.KickSessionReport(m.Name, kind, reason)
 		}
@@ -421,28 +431,29 @@ func applyPendingPayloads(sid, state string, h hookInput) {
 // clearsInteraction reports whether the hook event that carried toolName may clear the
 // captured payload of the interaction tool `own` (AskUserQuestion / ExitPlanMode).
 //
-// PostToolUse(*) は「完了ツールごとに working を打ち直す」ハートビート（claude/hooks.go）で、
-// モーダルを畳んだのもそのツール自身の PostToolUse なのだから、素直に消して構わない —
-// **ターンが一本道なら**。バックグラウンドのサブエージェント / Workflow が走っていると
-// その前提が崩れる: 実測（2026-08-24、claude 2.1.241）で、サブエージェントの道具は
-// **親と同じ session_id** で PreToolUse/PostToolUse を鳴らす。
+// PostToolUse(*) is the heartbeat that re-stamps working for every completed tool
+// (claude/hooks.go), and since the modal was folded by that same tool's PostToolUse, clearing
+// it is fine — as long as the turn runs on a single track. A background subagent or Workflow
+// breaks that premise: measured (2026-08-24, claude 2.1.241), a subagent's tools fire
+// PreToolUse/PostToolUse with the SAME session_id as the parent.
 //
 //	{"ev":"pre", tool:"Agent"} → {"ev":"pre", tool:"Bash"} → {"ev":"post", tool:"Bash"} → …
 //
-// つまり質問モーダルが出たままでも裏の道具が終わるたびに working が飛んできて、保留中の
-// 質問ペイロードが消えていた。ペイロードを書くのは AskUserQuestion の PreToolUse ただ一度
-// きり（WritePendingQuestion の呼び出しはここだけ）なので、一度消えると二度と戻らず、
-// Console には転写由来の**不活性な**カードだけが残る＝「回答できない」（利用者報告）。
+// So even with the question modal still up, working arrived every time a background tool
+// finished and erased the pending question payload. The payload is written exactly once, at
+// AskUserQuestion's PreToolUse (the only call to WritePendingQuestion), so once erased it never
+// comes back and the Console is left with nothing but the INERT transcript-derived card — "I
+// cannot answer it" (reported by a user).
 //
-// 消してよいのは、そのモーダル自身の PostToolUse か、ツールを伴わない状態遷移
-// （UserPromptSubmit の working / Stop の idle / SessionStart の boot）だけ。
+// Clearing is allowed only from that modal's own PostToolUse, or from a state transition that
+// carries no tool (UserPromptSubmit's working / Stop's idle / SessionStart's boot).
 func clearsInteraction(toolName, own string) bool {
 	return toolName == "" || toolName == own
 }
 
-// effectiveModal は status.EffectiveModal（question > plan > permission の優先順位）
-// の別名。判定そのものは status パッケージが持つ — 表示側（claude の WireLive /
-// DriveState）も同じ解決を通す必要があり、そちらは package main を import できない。
+// effectiveModal is an alias for status.EffectiveModal (priority question > plan >
+// permission). The decision itself belongs to the status package: the display side (claude's
+// WireLive / DriveState) has to go through the same resolution and cannot import package main.
 func effectiveModal(sid, state string) string { return status.EffectiveModal(sid, state) }
 
 // permToolDetail renders "Tool · target" for the permission block (target = the file

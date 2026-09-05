@@ -1,16 +1,18 @@
-/* ミラーの器そのもの: 面の背景／転写ホストへスコープした旧 styles.css の要素グローバル／
-ターミナル⇄チャットのトグル／転写のスクローラと空・読み込み・「さらに古い履歴」
+/* The mirror shell itself: surface background, the old styles.css element globals scoped to the
+transcript host, the terminal/chat toggle, and the transcript scroller with its empty, loading
+and "load older history" states
  *
- * ⚠ これは `mirror.css` を**登場順のまま**切ったうちの 1 枚。連結すれば元の 1 枚に戻る＝
- *   カスケードは 1 バイトも変わらない。並べ替え・別ファイルへの移動をしないこと
- *   （同名グローバルクラスは衝突ではなく @import 順で無言に合成される）。索引は ../mirror.css。
+ * One slice of `mirror.css`, cut at the original order of appearance: concatenating the slices
+ *   reproduces the original sheet byte for byte, so the cascade is unchanged. Do not reorder
+ *   rules or move them to another file (same-named global classes are not a conflict; they are
+ *   silently merged in @import order). Index: ../mirror.css.
  */
 /* The chat (Markdown mirror) has its own surface, independent of the file viewer;
    when unset it falls back to the viewer surface, then the theme --bg. */
 .mirrorview {
   flex: 1;
   min-width: 0;
-  /* Inline-size container (like .termview) so the head's ターミナル⇄チャット controls
+  /* Inline-size container (like .termview) so the head's terminal/chat controls
      and kind badge can collapse when the pane is narrow (@container paneview rules). */
   container: paneview / inline-size;
   /* min-height:0 lets the view shrink to its flex track in .pane instead of
@@ -25,7 +27,7 @@
    (docs/log/59). The blocks in features/mirror/transcript are shared by both and still
    carry this raw <button className="ghost|primary"> markup, so scoping these to
    .mirrorview alone made the very same footer render as a plain bordered button in
-   the shared view (the コピー button stood out like a primary action). :where() keeps
+   the shared view (the copy button stood out like a primary action). :where() keeps
    the specificity at zero, so ui/Button's .ui-btn rules still win where used.
    Historical note follows.
 
@@ -84,7 +86,7 @@
   font-size: 12.5px;
 }
 /* ---- Markdown mirror (case-A: read-mostly view of a claude session) ---- */
-/* Right-align the ターミナル/ミラー switch in the view-head, left of the pane
+/* Right-align the terminal/mirror switch in the view-head, left of the pane
    control cluster (the head already reserves 84px on the right for it). */
 .mirror-toggle {
   margin-left: auto;
@@ -97,7 +99,7 @@
 }
 /* The head's action cluster is .view-head-actions (ui/ui.css) — it was declared
    identically here and in terminal.css. */
-/* Each ターミナル/チャット segment is an icon + label; center them with a small gap
+/* Each terminal/chat segment is an icon + label; center them with a small gap
    so the button reads well both with the label and (on narrow panes) icon-only. */
 .mirror-toggle .seg-btn {
   display: inline-flex;
@@ -114,8 +116,7 @@
     display: none;
   }
 }
-/* （.ds-check は使用箇所なし・.admin-check は settings.css 側に集約済みのため削除。
-   .ds-sub は EnvTab の注記が使う。） */
+/* .ds-sub is used by the EnvTab note. */
 .ds-sub {
   margin: 4px 0 0;
   font-size: 12px;

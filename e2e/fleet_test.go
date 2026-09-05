@@ -1,19 +1,19 @@
 //go:build e2e
 
-// フリート E2E（L2）: Control Plane をヘッドレス（AUTH=dev 既定）で起動し、公開 API
-// だけで workspace 起動 → shell セッション作成 → input（echo）→ fs 読み戻し → 停止、
-// という利用者の最短経路を実コンテナで検証する。kind=shell を使うので LLM
-// クレデンシャルは一切不要。
+// Fleet E2E (L2): starts the control plane headless (AUTH=dev by default) and walks a
+// user's shortest path against real containers using only the public API — start the
+// workspace, create a shell session, send input (echo), read the file back through the
+// fs API, stop. kind=shell means no LLM credential is needed anywhere.
 //
-// 前提: docker と build 済み Workspace イメージ（WS_IMAGE、既定
-// agent-fleet/workspace:dev）。無ければ skip（CI では E2E_REQUIRE=1 で fail に格上げ）。
-// 実行: cd e2e && go test -v -tags e2e -timeout 15m
+// Requires docker and a built Workspace image (WS_IMAGE, default
+// agent-fleet/workspace:dev); without them the test skips, and CI promotes that skip to
+// a failure with E2E_REQUIRE=1.
+// Run: cd e2e && go test -v -tags e2e -timeout 15m
 //
-// 衝突回避: テストごとに DEV_USER を分ける（コンテナ af-ws-<user> / ネットワーク
-// af-net-<user>）。CP と Agent の listen ポートは空きポートを動的に確保 — 実フリートが
-// 動く dev ホストでも干渉しない。teardown はコンテナ・ネットワーク・一時データを
-// best-effort で回収する（コンテナ内 uid 1000 が書いた home は runner から消せない
-// ことがあるため、最後はイメージ自身を root で回して rm する）。
+// Each test gets its own DEV_USER so the container (af-ws-<user>) and network
+// (af-net-<user>) names cannot collide, and the CP and Agent listen ports are allocated
+// dynamically — this has to stay safe to run on a dev host where a real fleet is
+// already up. Teardown reclaims container, network and temporary data best-effort.
 package e2e
 
 import (
@@ -36,7 +36,7 @@ import (
 func TestFleet(t *testing.T) {
 	base := startFleet(t, "e2e")
 
-	// --- shell セッション作成（LLM クレデンシャル不要）---
+	// --- create a shell session (no LLM credential required) ---
 	created := postJSON(t, base+"/api/sessions", map[string]any{"kind": "shell", "title": "e2e"}, 201)
 	name, _ := created["name"].(string)
 	if name == "" {
@@ -45,7 +45,8 @@ func TestFleet(t *testing.T) {
 	t.Logf("session created: %s (kind=%v)", name, created["kind"])
 
 	waitFor(t, 20*time.Second, "session alive in list", func() (bool, string) {
-		// poll 条件内は非 fatal な tryGet を使う(一時エラーで即 Fatal だとリトライが死ぬ)
+		// Poll conditions must use the non-fatal tryGet: a Fatal on a transient error
+		// would kill the retry loop that is the whole point of polling.
 		code, body := tryGet(base + "/api/sessions")
 		if code != 200 {
 			return false, fmt.Sprintf("%d %s", code, truncate([]byte(body)))
@@ -65,13 +66,13 @@ func TestFleet(t *testing.T) {
 		return false, "not in list"
 	})
 
-	// --- input で pane に echo を打鍵 → fs API で読み戻し（drive I/O の疎通）---
+	// --- type an echo into the pane, read it back through the fs API (drive I/O) ---
 	nonce := fmt.Sprintf("e2e-ok-%d", os.Getpid())
-	marker := "e2e-marker.txt" // セッションの cwd = home。fs API も home 相対で読む
+	marker := "e2e-marker.txt" // the session's cwd is home, and the fs API reads home-relative too
 	sendPrompt(t, base, name, fmt.Sprintf("echo %s > %s", nonce, marker))
 	waitFileContains(t, base, marker, nonce, 60*time.Second)
 
-	// --- status / 後片付け系 API ---
+	// --- status and teardown APIs ---
 	status := getJSON(t, base+"/api/sessions/"+name+"/status")
 	if alive, _ := status["alive"].(bool); !alive {
 		t.Fatalf("session status alive=false: %v", status)
@@ -83,41 +84,43 @@ func TestFleet(t *testing.T) {
 	}
 }
 
-// --- 共通ハーネス ---------------------------------------------------------
+// --- shared harness -------------------------------------------------------
 
-// startFleet は前提確認 → CP build/起動（AUTH=dev, DEV_USER=user）→ workspace running
-// までを立ち上げ、CP のベース URL を返す。teardown（CP・コンテナ・ネットワーク・
-// 一時データ）は t.Cleanup に登録済み。extraEnv は CP プロセスへの追加 env（KEY=VAL）。
+// startFleet checks the prerequisites, builds and starts the CP (AUTH=dev,
+// DEV_USER=user), waits for the workspace to reach running, and returns the CP base URL.
+// Teardown of the CP, container, network and temporary data is already registered with
+// t.Cleanup. extraEnv adds KEY=VAL entries to the CP process environment.
 func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	t.Helper()
 	image := envOr("WS_IMAGE", "agent-fleet/workspace:dev")
 	requireDockerAndImage(t, image)
 
 	root := repoRoot(t)
-	tmp := t.TempDir() // CP バイナリ・ログ置き場（コンテナは触らないので自動削除で安全）
+	tmp := t.TempDir() // CP binary and logs; no container touches it, so auto-removal is safe
 	cpBin := buildCP(t, root, tmp)
 
-	// Workspace データはコンテナ内 uid 1000 が書くため t.TempDir の自動削除（失敗 =
-	// テスト失敗）に載せず、自前で best-effort 回収する。
+	// Workspace data is written by uid 1000 inside the container, so it cannot go through
+	// t.TempDir, whose removal failure fails the test. Reclaim it best-effort instead.
 	dataDir, err := os.MkdirTemp("", "af-e2e-data-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// 作成直後に回収を登録: cp.Start 前の Fatal 経路でも /tmp に残さない(#100)。
-	// Cleanup は LIFO なので、後で登録する teardown(CP 停止・コンテナ回収)が先に走る。
+	// Register the reclaim immediately after creating it, so a Fatal before cp.Start
+	// still leaves nothing behind in /tmp. Cleanup is LIFO, so the teardown registered
+	// later (stop CP, reclaim container) runs first, which is the order required here.
 	t.Cleanup(func() { cleanupDataDir(image, dataDir) })
-	// GitHub ランナーなどホスト uid がコンテナの dev(uid 1000) と一致しない環境では、
-	// CP(=このプロセスの uid) が 0755 で作る home / claude-config がコンテナ内から
-	// 書けず、entrypoint（set -e）が落ちて Agent が healthz に到達しない。mount 先を
-	// 先に 0777 で掘っておく（既存 dir は CP の MkdirAll が素通し。uid 1000 のホスト
-	// では従来どおり無害）。パスは manager.rootedDataDir の既定テナント形
-	// <WS_DATA>/<user>/{home,claude-config}。
+	// Where the host uid differs from the container's dev user (uid 1000) — GitHub
+	// runners, for one — home and claude-config created 0755 by the CP are not writable
+	// from inside the container, the entrypoint dies under set -e, and the Agent never
+	// reaches healthz. Pre-create the mount points 0777; the CP's MkdirAll passes over an
+	// existing dir, so this is inert on a uid-1000 host. The path shape is
+	// manager.rootedDataDir's default tenant layout <WS_DATA>/<user>/{home,claude-config}.
 	for _, d := range []string{"home", "claude-config"} {
 		p := filepath.Join(dataDir, user, d)
 		if err := os.MkdirAll(p, 0o777); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.Chmod(p, 0o777); err != nil { // MkdirAll は umask に削られる
+		if err := os.Chmod(p, 0o777); err != nil { // umask trims what MkdirAll asked for
 			t.Fatal(err)
 		}
 	}
@@ -129,7 +132,7 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = logFile.Close() }) // どの経路でも fd を閉じる(#100)
+	t.Cleanup(func() { _ = logFile.Close() }) // close the fd on every exit path
 
 	cp := exec.Command(cpBin)
 	cp.Dir = tmp
@@ -141,7 +144,7 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 		"WS_DATA="+dataDir,
 		"DEV_USER="+user,
 		fmt.Sprintf("WS_AGENT_PORT=%d", agentPort),
-		"CONSOLE_DIR="+tmp, // 静的配信は対象外（存在するダミー dir を指す）
+		"CONSOLE_DIR="+tmp, // static serving is out of scope; point at a dir that exists
 	), extraEnv...)
 	if err := cp.Start(); err != nil {
 		t.Fatalf("start CP: %v", err)
@@ -158,21 +161,21 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 		return resp.StatusCode == 200, resp.Status
 	})
 
-	// --- identity: dev 認証で固定ユーザーに解決される ---
+	// --- identity: dev auth resolves to a fixed user ---
 	who := getJSON(t, base+"/api/whoami")
 	if who["resolved_user"] != user {
 		t.Fatalf("whoami resolved_user = %v, want %q", who["resolved_user"], user)
 	}
 
-	// --- workspace 起動（docker run + Agent healthz まで同期）---
-	// Start は Agent healthz 待ち（15s）に一度でも間に合わないと 500 を返すが冪等
-	// なので、成功するまでリトライしてから running を確認する。
+	// --- start the workspace (docker run, synchronous through Agent healthz) ---
+	// Start returns 500 whenever the 15s Agent-healthz wait is missed even once, but it
+	// is idempotent, so retry until it takes and only then assert running.
 	waitFor(t, 120*time.Second, "workspace/start accepted", func() (bool, string) {
 		code, body := tryPost(base+"/api/workspace/start", nil)
 		return code == 200, fmt.Sprintf("%d %s", code, body)
 	})
 	waitFor(t, 60*time.Second, "workspace running", func() (bool, string) {
-		// poll 条件内は非 fatal な tryGet を使う(#99: getJSON は非200で即 Fatal)
+		// Non-fatal tryGet again here: getJSON would Fatal on any non-200 and end the poll.
 		code, body := tryGet(base + "/api/workspace")
 		if code != 200 {
 			return false, fmt.Sprintf("%d %s", code, truncate([]byte(body)))
@@ -186,8 +189,8 @@ func startFleet(t *testing.T, user string, extraEnv ...string) string {
 	return base
 }
 
-// sendPrompt はセッションの pane にプロンプトを打鍵する（tmux 起動直後の 409 は
-// リトライで吸収）。
+// sendPrompt types a prompt into the session's pane, absorbing the 409 that tmux
+// returns for a moment right after it starts.
 func sendPrompt(t *testing.T, base, name, prompt string) {
 	t.Helper()
 	waitFor(t, 20*time.Second, "session input accepted", func() (bool, string) {
@@ -196,7 +199,7 @@ func sendPrompt(t *testing.T, base, name, prompt string) {
 	})
 }
 
-// waitFileContains は home 相対パスのファイルが want を含むまで fs API を poll する。
+// waitFileContains polls the fs API until the home-relative file contains want.
 func waitFileContains(t *testing.T, base, relPath, want string, timeout time.Duration) {
 	t.Helper()
 	waitFor(t, timeout, relPath+" readable via fs API", func() (bool, string) {
@@ -226,7 +229,8 @@ func envOr(k, def string) string {
 	return def
 }
 
-// prereqMissing は前提未充足を skip にする（CI は E2E_REQUIRE=1 で fail に格上げ）。
+// prereqMissing skips on an unmet prerequisite; CI promotes that to a failure with
+// E2E_REQUIRE=1.
 func prereqMissing(t *testing.T, msg string) {
 	t.Helper()
 	if os.Getenv("E2E_REQUIRE") == "1" {
@@ -251,7 +255,7 @@ func repoRoot(t *testing.T) string {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	return filepath.Dir(filepath.Dir(file)) // e2e/ の親 = リポジトリルート
+	return filepath.Dir(filepath.Dir(file)) // the parent of e2e/ is the repository root
 }
 
 func buildCP(t *testing.T, root, tmp string) string {
@@ -275,7 +279,7 @@ func freePort(t *testing.T) int {
 	return l.Addr().(*net.TCPAddr).Port
 }
 
-// waitFor は cond が真になるまで poll し、タイムアウトで最後の観測値を添えて fail する。
+// waitFor polls cond until it is true, and on timeout fails with the last value observed.
 func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() (bool, string)) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -321,8 +325,8 @@ func postJSON(t *testing.T, url string, body map[string]any, wantStatus int) map
 	return m
 }
 
-// tryGet は fail せずに (status, body) を返す — リトライループ用。body は全文
-// （JSON parse 用）。観測値表示には truncate を通すこと。
+// tryGet returns (status, body) without failing, for retry loops. The body is complete
+// so it can be parsed as JSON; pass it through truncate before displaying it.
 func tryGet(url string) (int, string) {
 	resp, err := http.Get(url)
 	if err != nil {
@@ -333,7 +337,7 @@ func tryGet(url string) (int, string) {
 	return resp.StatusCode, string(b)
 }
 
-// tryPost は fail せずに (status, body) を返す — リトライループ用。
+// tryPost returns (status, body) without failing, for retry loops.
 func tryPost(url string, body map[string]any) (int, string) {
 	var rd io.Reader
 	if body != nil {
@@ -356,12 +360,13 @@ func truncate(b []byte) []byte {
 	return b
 }
 
-// teardown はコンテナ・ネットワーク・CP プロセスを回収する。失敗時は CP ログの
-// 末尾を出す。すべて best-effort — 汚れても次回実行や CI の使い捨て環境で支障が
-// 出ない範囲に留める。dataDir の回収は cleanupDataDir（作成直後に登録）が担う。
+// teardown reclaims the container, the network and the CP process, and dumps the tail of
+// the CP log when the test failed. All of it is best-effort: what it leaves behind must
+// stay within what the next run or CI's disposable environment can absorb. Reclaiming
+// dataDir belongs to cleanupDataDir, registered as soon as the directory exists.
 func teardown(t *testing.T, cp *exec.Cmd, logPath, user string) {
 	t.Helper()
-	// CP を先に落とす（reaper 等がコンテナを触り直さないように）。
+	// Stop the CP first, so the reaper cannot reach back for the container mid-teardown.
 	if cp.Process != nil {
 		_ = cp.Process.Signal(syscall.SIGTERM)
 		done := make(chan struct{})
@@ -384,9 +389,9 @@ func teardown(t *testing.T, cp *exec.Cmd, logPath, user string) {
 	}
 }
 
-// cleanupDataDir は Workspace データ dir を best-effort で回収する。home はコンテナ内
-// uid 1000 の所有物を含み、runner の uid では消せないことがある → イメージ自身を
-// root で回して中身を rm してから RemoveAll。
+// cleanupDataDir reclaims the workspace data dir best-effort. home contains files owned
+// by uid 1000 from inside the container, which the runner's uid may be unable to remove,
+// so on failure run the image itself as root to rm the contents, then RemoveAll again.
 func cleanupDataDir(image, dataDir string) {
 	if err := os.RemoveAll(dataDir); err != nil {
 		_ = exec.Command("docker", "run", "--rm", "--user", "0",

@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { expandThinking, getSettings, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
 
-// 純ロジックだが jsdom プロジェクト（.dom.test.tsx）に置く: settings.ts は API クライアント
-// 経由で読み込み時に localStorage を触るため、node 環境では import 自体が落ちる。
+// Pure logic, but it lives in the jsdom project (.dom.test.tsx): settings.ts touches
+// localStorage at load time through the API client, so under node the import itself fails.
 //
-// 「思考を展開して表示」（設定 > エージェント > 各カード > 動作設定）は kind スコープで、
-// 未設定は必ずオフ＝従来どおり畳んで出す。サーバー ui-prefs は別バージョンの Console も
-// 書くので、boolean 以外が入っていてもオフに倒れることまで固定する。
+// "Expand thinking" (Settings > Agents > each card > Behaviour) is kind-scoped, and an
+// unset value must always mean off, i.e. collapsed as before. Server-side ui-prefs are also
+// written by other Console versions, so this pins that a non-boolean value falls to off too.
 const withThinking = (map: unknown): Settings =>
   ({ ...getSettings(), expandThinking: map } as Settings);
 
@@ -22,7 +22,7 @@ describe("expandThinking", () => {
     const s = withThinking({ opencode: true, codex: false });
     expect(expandThinking(s, "opencode")).toBe(true);
     expect(expandThinking(s, "codex")).toBe(false);
-    // 設定を持たない kind（cursor / kiro も思考を出す）は巻き添えにしない。
+    // A kind with no entry (cursor / kiro also emit thinking) must not be dragged along.
     expect(expandThinking(s, "cursor")).toBe(false);
   });
 
@@ -57,8 +57,9 @@ describe("device-local settings", () => {
     expect(isDeviceLocalSetting("locale")).toBe(false);
   });
 
-  // 面ごとのテーマ/背景は「この端末でどう見せるか」なので端末ローカル。共有セッション
-  // (docs/log/59)も同じ扱い — 追加時にここから漏らすと、別端末の見え方を勝手に上書きする。
+  // A per-region theme/background is "how this device should look", so it stays device-local.
+  // Shared sessions (docs/log/59) are treated the same — leaving a new key out of this list
+  // silently overwrites how another device renders.
   it("keeps every per-region look on this device", () => {
     for (const key of ["mirrorTheme", "sharedTheme", "assistantTheme", "chatColor", "sharedColor"] as const) {
       expect(isDeviceLocalSetting(key)).toBe(true);
@@ -66,15 +67,15 @@ describe("device-local settings", () => {
   });
 });
 
-// 権限確認の既定（docs/log/76）。**欠落は「スキップする」**でなければならない — 既存の
-// prefs を読んだ端末で全セッションが承認待ちになるのは「既定は現状のまま」の破り方の
-// 中で一番目立たない。明示 false のときだけ承認あり。
+// The permission-prompt default (docs/log/76). An absent key must mean "skip": a device that
+// reads existing prefs and suddenly parks every session on an approval prompt is the least
+// visible way to break "the default stays as it is". Approvals only when false is explicit.
 describe("normalizeAgentLaunchDefaults / skipPermissions", () => {
   it("defaults to skipping approvals when the key is absent or broken", () => {
     const rows = normalizeAgentLaunchDefaults({ claude: { model: "opus" }, cursor: { skipPermissions: "no" } });
     expect(rows.claude.skipPermissions).toBe(true);
     expect(rows.cursor.skipPermissions).toBe(true);
-    // 一度も設定されていない kind も同じ（DEFAULT_AGENT_LAUNCH の行）。
+    // Same for a kind that was never configured at all (the DEFAULT_AGENT_LAUNCH row).
     expect(rows.kiro.skipPermissions).toBe(true);
   });
 
@@ -82,17 +83,18 @@ describe("normalizeAgentLaunchDefaults / skipPermissions", () => {
     const rows = normalizeAgentLaunchDefaults({ claude: { skipPermissions: false }, kiro: { skipPermissions: true } });
     expect(rows.claude.skipPermissions).toBe(false);
     expect(rows.kiro.skipPermissions).toBe(true);
-    // 他 kind に漏れない。
+    // Does not leak into other kinds.
     expect(rows.cursor.skipPermissions).toBe(true);
   });
 });
 
-// --- AI 補助生成の分離（docs/log/84）の移行 -----------------------------------
+// --- Migration for the AI-assist split (docs/log/84) ---------------------------
 //
-// 原則は「アップグレードで挙動を変えない」。ただし aiProseModels だけは意図的に
-// 引き継がない（旧キーは名前に反して文章生成の既定まで置き換えていた）。
-// load()（localStorage）と hydrateUIPrefs()（サーバ prefs）が同じ関数を通ることは
-// settingsSync 側ではなくここで固定する — 規則が 2 箇所に写経されていたのが元の事故。
+// The rule is "an upgrade never changes behaviour". aiProseModels is the deliberate
+// exception and is not carried over: despite its name, the old key also replaced the prose
+// generation default. That load() (localStorage) and hydrateUIPrefs() (server prefs) go
+// through the same function is pinned here rather than in settingsSync — the original
+// failure was the rule being copied into two places.
 describe("migrateAiAssistPrefs", () => {
   it("splits the old title toggle into session / chat / branch", () => {
     const o: Record<string, unknown> = { autoTitleSuggest: false };
@@ -111,13 +113,14 @@ describe("migrateAiAssistPrefs", () => {
     const o: Record<string, unknown> = { assistantAgentOrder: ["codex", "claude"] };
     migrateAiAssistPrefs(o);
     expect((o.aiAssistOrder as string[])[0]).toBe("codex");
-    // チャット側はそのまま（分離しても片方だけ動くことはない）
+    // The chat side is left as it was (the split never moves only one of them).
     expect((o.assistantAgentOrder as string[])[0]).toBe("codex");
   });
 
   it("inherits the legacy utility models into BOTH tiers", () => {
-    // 旧キーは（名前に反して）短文・文章の両方へ効いていた。分割の瞬間に片方だけ
-    // 別のモデルへ動かすと、利用者が触っていないのに挙動が変わる。
+    // Despite its name the old key drove both the short-text and the prose tier. Moving
+    // just one of them to a different model at the split would change behaviour for a user
+    // who touched nothing.
     const o: Record<string, unknown> = { assistantUtilityModels: { claude: "haiku" } };
     migrateAiAssistPrefs(o);
     expect(o.aiShortModels).toEqual({ claude: "haiku" });

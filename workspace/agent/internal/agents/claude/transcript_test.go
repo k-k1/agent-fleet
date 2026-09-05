@@ -145,7 +145,7 @@ func TestClaudeDelegationPart(t *testing.T) {
 	}
 }
 
-// TestCollectInteractionAnswers models the reported "AUQ回答がミラーに反映されない" bug:
+// TestCollectInteractionAnswers models the reported "an AUQ answer never reaches the mirror" bug:
 // claude writes an AskUserQuestion tool_use at ASK time and its tool_result lands many
 // lines later (bookkeeping in between), so a live increment / page boundary can split them
 // and CollectTurns' window-local resolution leaves the question unanswered. The
@@ -195,13 +195,13 @@ func TestCollectInteractionAnswers(t *testing.T) {
 	}
 }
 
-// TestCollectInteractionAnswers_Declined pins the fix for "回答済みと表示されるのに
-// 中身は却下の定型文" (docs/build/92 §6): an Escape/interrupt out of AskUserQuestion
+// TestCollectInteractionAnswers_Declined pins the fix for "the card reads as answered while
+// its content is the decline boilerplate" (docs/build/92 §6): an Escape/interrupt out of AskUserQuestion
 // (e.g. the preview free-text bug — a free-text answer lands on the unnumbered "Chat
 // about this" row and Enter activates it) surfaces as an is_error tool_result carrying
 // claude's own "wants to clarify"/"(No answer provided)" boilerplate — real transcript
 // text, captured from the reported session. That must be flagged Declined so the
-// Console can show "却下" instead of rendering it as an answered card.
+// Console can badge it as declined instead of rendering it as an answered card.
 func TestCollectInteractionAnswers_Declined(t *testing.T) {
 	// Real transcript text (captured from the reported session) contains nested quotes and
 	// newlines, so build the JSON line with json.Marshal instead of hand-quoting it.
@@ -225,11 +225,11 @@ func TestCollectInteractionAnswers_Declined(t *testing.T) {
 		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q2","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"別の質問","options":[{"label":"案A"},{"label":"案B"}]}]}}]}}`),
 		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q2","is_error":true,"content":"malformed AskUserQuestion input"}]}}`),
 	}
-	// Console の「キャンセル」で実際に来る形（2026-08-31 実測・実転写から採取）。上の
-	// declineText と違い "(No answer provided)" を**含まない** — キャンセルはターンの中断
-	// なので、claude は「質問が未回答」ではなく「ツールが却下された」として書く。これを
-	// 拾えていなかったため、キャンセルした質問が「回答済み」を名乗り、回答欄にこの英文の
-	// 定型文が入っていた。
+	// The shape the Console's Cancel actually produces (measured 2026-08-31, taken from a real
+	// transcript). Unlike declineText above it does NOT contain "(No answer provided)": Cancel
+	// interrupts the turn, so claude writes it as "the tool was rejected" rather than "the
+	// question went unanswered". Missing this shape is what made a cancelled question call
+	// itself answered, with this boilerplate sitting in the answer field.
 	lines = append(lines,
 		[]byte(`{"type":"assistant","message":{"content":[{"type":"tool_use","id":"q3","name":"AskUserQuestion","input":{"questions":[{"header":"方式","question":"三つ目","options":[{"label":"案A"}]}]}}]}}`),
 		[]byte(`{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"q3","is_error":true,"content":"The user doesn't want to proceed with this tool use. The tool use was rejected (eg. if it was a file edit, the new_string was NOT written to the file). STOP what you are doing and wait for the user to tell you how to proceed."}]}}`),
@@ -239,7 +239,7 @@ func TestCollectInteractionAnswers_Declined(t *testing.T) {
 		t.Errorf("q1 = %+v, want Declined=true (claude's decline boilerplate)", got)
 	}
 	if got := ans["q3"]; !got.Declined {
-		t.Errorf("q3 = %+v, want Declined=true (the Console's キャンセル rejects the tool)", got)
+		t.Errorf("q3 = %+v, want Declined=true (the Console's Cancel rejects the tool)", got)
 	}
 	if got := ans["q2"]; got.Declined {
 		t.Errorf("q2 = %+v, want Declined=false (is_error alone isn't a decline)", got)
@@ -288,8 +288,9 @@ func TestQuestionOptionPreview(t *testing.T) {
 // attachment/queued_command event, never as a user line (claude ≥2.1.207) — parses
 // into a plain user turn, and that non-human / non-queued attachments stay invisible.
 //
-// AnchorID が空であることも固定する: 付けると「ここから分岐」の導線が出て、cutIndex が
-// type:"user" 以外を拒むので必ず 400 になる（実セッションで再現）。
+// It also pins AnchorID as empty: setting it puts the "branch from here" affordance on the
+// turn, and cutIndex refuses anything but type:"user", so the request always 400s (reproduced
+// in a real session).
 func TestQueuedCommandTurn(t *testing.T) {
 	line := []byte(`{"type":"attachment","uuid":"f023bf25-4b3e-4d2d-aad3-f601d9a035c2","attachment":{"type":"queued_command","prompt":" origin/mainをマージして ","commandMode":"prompt","origin":{"kind":"human"}},"timestamp":"2026-07-11T09:16:51.851Z","gitBranch":"feat/x","cwd":"/w"}`)
 	turn, ok := parseTurn(line, 7)
@@ -301,7 +302,7 @@ func TestQueuedCommandTurn(t *testing.T) {
 		t.Errorf("turn = %+v", turn)
 	}
 	if turn.AnchorID != "" {
-		t.Errorf("AnchorID = %q, want empty (割り込み発言からは分岐できない)", turn.AnchorID)
+		t.Errorf("AnchorID = %q, want empty (a mid-run interruption cannot be a fork point)", turn.AnchorID)
 	}
 	if len(turn.Parts) != 1 || turn.Parts[0].Kind != "text" || turn.Parts[0].Text != "origin/mainをマージして" {
 		t.Errorf("parts = %+v", turn.Parts)
@@ -391,7 +392,7 @@ func TestHasConversation(t *testing.T) {
 // mid-line; counting the fragment would advance /messages' cursor (= line count) past a
 // line the parser can't read, and the client — which only ever asks for lines AFTER its
 // cursor — would never receive that turn (the bug that lost a session's first prompt and
-// left its optimistic echo stuck at 「反映待ち」).
+// left its optimistic echo stuck in the mirror's "awaiting sync" pending state).
 func TestReadJSONLLinesPartialTail(t *testing.T) {
 	write := func(t *testing.T, body string) string {
 		t.Helper()
@@ -484,12 +485,13 @@ func TestCollectFileEdits(t *testing.T) {
 	}
 }
 
-// TestPlanAnswerDropsEmbeddedPlan pins the 2026-08-31 report「プランを承認したのに
-// "却下" バッジが付いた」. The CLI now appends the whole approved plan to the
+// TestPlanAnswerDropsEmbeddedPlan pins the reported "the plan was approved, yet it got a
+// declined badge" (2026-08-31). The CLI now appends the whole approved plan to the
 // ExitPlanMode tool_result ("## Approved Plan:" + Markdown, 9 KB+ in the wild). The
 // Console badges the card by keyword-matching that text, so a plan whose own prose says
-// 「却下」/「やり直し」/"reject" flipped its APPROVAL to 却下 — and every poll carried a
-// second copy of a plan the Console already holds. Only the verdict header survives.
+// 却下 (declined) / やり直し (redo) / "reject" flipped its APPROVAL to declined — and every
+// poll carried a second copy of a plan the Console already holds. Only the verdict header
+// survives.
 func TestPlanAnswerDropsEmbeddedPlan(t *testing.T) {
 	result := "User has approved your plan. You can now start coding. Start with updating your todo list if applicable\\n\\n" +
 		"Your plan has been saved to: /var/lib/af/claude/plans/immutable-dazzling-babbage.md\\n" +
@@ -527,14 +529,17 @@ func TestPlanAnswerDropsEmbeddedPlan(t *testing.T) {
 	}
 }
 
-// TestPeerMessageTurn — claude 自前の cross-session チャネル（ListAgents / SendMessage）で
-// **隣のセッションから**届いたメッセージが、ミラーに出ることと、送信者名が付くこと。
+// TestPeerMessageTurn checks that a message arriving FROM A NEIGHBOURING SESSION over claude's
+// own cross-session channel (ListAgents / SendMessage) reaches the mirror, and carries the
+// sender's name.
 //
-// 行の形は 2026-08-31 の実物から取っている（docs/log/58 §58.16）。**着信の形は相手の状態で
-// 変わる**のがこの機能の肝で、片方だけ通す実装だと「相手が忙しかった時だけ消える」という、
-// 再現しないバグにしか見えない壊れ方をする:
-//   - 相手が idle  → type:"user" + isMeta:true（isMeta の門に落ちていた）
-//   - 相手が busy  → type:"attachment" queued_command + origin.kind:"peer"（human 限定の門に落ちていた）
+// The line shapes are taken from real ones (2026-08-31, docs/log/58 §58.16). The crux is that
+// the INBOUND SHAPE DEPENDS ON THE RECIPIENT'S STATE: an implementation that passes only one
+// of them breaks as "messages disappear only when the other side was busy", which reads as an
+// unreproducible bug.
+//   - recipient idle → type:"user" + isMeta:true (was falling at the isMeta gate)
+//   - recipient busy → type:"attachment" queued_command + origin.kind:"peer" (was falling at
+//     the human-only gate)
 func TestPeerMessageTurn(t *testing.T) {
 	const body = "94-freeze試走2本 完了・push済。資料側の不足を申告する。"
 	const wrapper = `Another Claude session sent a message:\n<cross-session-message from=\"uds:/tmp/cc-socks/887891.sock\">\n` + body + `\n</cross-session-message>`
@@ -542,59 +547,61 @@ func TestPeerMessageTurn(t *testing.T) {
 		`"name":"[AF:s6bbilu] 94-freeze 試走2本（A1C14・A2C07）","body":"` + body + `"}`
 
 	for name, ln := range map[string]string{
-		"idle 着信（user + isMeta）": `{"type":"user","isMeta":true,"uuid":"f82a0f77-85ee-4f2c-9bce-b6cffb58c344",` +
+		"idle inbound (user + isMeta)": `{"type":"user","isMeta":true,"uuid":"f82a0f77-85ee-4f2c-9bce-b6cffb58c344",` +
 			`"timestamp":"2026-08-31T11:51:22.608Z","gitBranch":"temp/spzyoht","cwd":"/w",` + origin +
 			`,"message":{"role":"user","content":"` + wrapper + `"}}`,
-		"busy 着信（queued_command）": `{"type":"attachment","timestamp":"2026-08-31T11:51:22.608Z","gitBranch":"temp/spzyoht","cwd":"/w",` +
+		"busy inbound (queued_command)": `{"type":"attachment","timestamp":"2026-08-31T11:51:22.608Z","gitBranch":"temp/spzyoht","cwd":"/w",` +
 			`"attachment":{"type":"queued_command","commandMode":"prompt","prompt":"` + wrapper + `",` + origin + `}}`,
 	} {
 		turn, ok := parseTurn([]byte(ln), 12)
 		if !ok {
-			t.Errorf("%s: 落とされた（＝利用者から見えない）", name)
+			t.Errorf("%s: dropped (= invisible to the user)", name)
 			continue
 		}
 		if turn.Role != "user" || turn.Idx != 12 || turn.Branch != "temp/spzyoht" || turn.Cwd != "/w" {
 			t.Errorf("%s: turn = %+v", name, turn)
 		}
-		// 本文は origin.body — 行そのものに被っている配送の包装は人間に読ませない。
+		// The body is origin.body: the delivery wrapper around the line is not shown to a human.
 		if turn.Text != body || len(turn.Parts) != 1 || turn.Parts[0].Text != body {
 			t.Errorf("%s: text = %q / parts = %+v, want %q", name, turn.Text, turn.Parts, body)
 		}
 		if turn.Source != transcript.SourcePeer {
 			t.Errorf("%s: Source = %q, want %q", name, turn.Source, transcript.SourcePeer)
 		}
-		// バッジに出る送信者。ラベルからセッション名を読み戻せている＝利用者が rail と
-		// 突き合わせられる。ここが空だと「別のセッション」としか出ず、誰の仕業か辿れない。
+		// The sender shown on the badge. Reading the session name back out of the label is
+		// what lets the user match it against the rail; empty here, the mirror can only say
+		// "another session" and there is no way to tell whose message it was.
 		if turn.PeerFrom != "s6bbilu" {
 			t.Errorf("%s: PeerFrom = %q, want %q", name, turn.PeerFrom, "s6bbilu")
 		}
-		// isMeta 行も割り込み行も分岐点にできない（forkat.go cutIndex が拒む）。uuid を
-		// 渡すと「ここから分岐」の導線だけ出て必ず 400 になる。
+		// Neither an isMeta line nor an interruption can be a fork point (forkat.go's cutIndex
+		// refuses them). Handing out the uuid only exposes the "branch from here" affordance,
+		// which then always 400s.
 		if turn.AnchorID != "" {
 			t.Errorf("%s: AnchorID = %q, want empty", name, turn.AnchorID)
 		}
 	}
 
-	// 旧ラベル（セッション名が入る前に作られたセッション）と、AF 外で起動した claude:
-	// 名前は読み戻せないので、タグだけ落として素で出す（"" にしない — 名無しバッジより
-	// 「どのラベルの誰か」の方が辿れる）。
+	// An old label (a session created before the name was included) and a claude launched
+	// outside AF: the name cannot be read back, so only the tag is stripped and the rest is
+	// shown as is. Not "" — a label the user can still recognise beats a nameless badge.
 	old := `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"[AF] 旧ラベルのセッション","body":"x"},` +
 		`"message":{"role":"user","content":"x"}}`
 	if turn, ok := parseTurn([]byte(old), 0); !ok || turn.PeerFrom != "旧ラベルのセッション" {
-		t.Errorf("旧ラベル: ok=%v PeerFrom=%q", ok, turn.PeerFrom)
+		t.Errorf("old label: ok=%v PeerFrom=%q", ok, turn.PeerFrom)
 	}
 
-	// body の無い版に当たったら包装ごと出す（何も出さないよりはるかにマシ）。
+	// On a version that carries no body, show the wrapper as is — far better than nothing.
 	nobody := `{"type":"user","isMeta":true,"origin":{"kind":"peer","name":"[AF:sabc123] t"},` +
 		`"message":{"role":"user","content":"` + wrapper + `"}}`
 	if turn, ok := parseTurn([]byte(nobody), 0); !ok || !strings.Contains(turn.Text, body) {
-		t.Errorf("body 欠落: ok=%v text=%q", ok, turn.Text)
+		t.Errorf("missing body: ok=%v text=%q", ok, turn.Text)
 	}
 
-	// peer でない isMeta 行は従来どおり落ちる（この門を丸ごと開けたわけではない）。
+	// isMeta lines that are not peer messages are still dropped — this gate was not opened wholesale.
 	for name, ln := range map[string]string{
-		"素の isMeta":        `{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-stdout>…"}}`,
-		"human 由来の origin": `{"type":"user","isMeta":true,"origin":{"kind":"human"},"message":{"role":"user","content":"x"}}`,
+		"plain isMeta":        `{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-stdout>…"}}`,
+		"origin from a human": `{"type":"user","isMeta":true,"origin":{"kind":"human"},"message":{"role":"user","content":"x"}}`,
 	} {
 		if _, ok := parseTurn([]byte(ln), 0); ok {
 			t.Errorf("%s: parsed as a turn, want dropped", name)

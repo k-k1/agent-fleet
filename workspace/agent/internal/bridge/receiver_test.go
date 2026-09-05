@@ -44,7 +44,7 @@ func TestThreadToSession(t *testing.T) {
 	}
 }
 
-// TestRouteInboundGate exercises the security gate (ADR0020 契約5): only the bound user's
+// TestRouteInboundGate exercises the security gate (ADR0020 contract 5): only the bound user's
 // messages, only in a known session thread, get injected — everything else is dropped.
 func TestRouteInboundGate(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())

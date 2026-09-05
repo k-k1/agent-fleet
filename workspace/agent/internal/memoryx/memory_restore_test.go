@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// memoryRestoreSeed は「v1 → 変更 → v2」の 2 世代を作り、両 rev を返す。
-// v2 では claude 側で ①上書き ②新規追加 ③削除 の 3 種類が起きているので、restore が
-// 3 方向すべてを戻せるかを 1 本のテストで見られる。
+// memoryRestoreSeed builds two generations, "v1 → change → v2", and returns both revs. On
+// the claude side v2 carries all three kinds of change — (1) overwrite, (2) addition,
+// (3) deletion — so one test can check that restore undoes all three directions.
 func memoryRestoreSeed(t *testing.T, cfg, slug string) (v1, v2 string) {
 	t.Helper()
 	mem := filepath.Join(cfg, "projects", slug, "memory")
@@ -22,9 +22,9 @@ func memoryRestoreSeed(t *testing.T, cfg, slug string) (v1, v2 string) {
 		t.Fatalf("seed v1: %+v err=%v", first, err)
 	}
 
-	memoryWrite(t, filepath.Join(mem, "a.md"), "rewritten\n")               // ① 上書き
-	memoryWrite(t, filepath.Join(mem, "added.md"), "added later\n")         // ② 追加
-	if err := os.Remove(filepath.Join(mem, "nested", "b.md")); err != nil { // ③ 削除
+	memoryWrite(t, filepath.Join(mem, "a.md"), "rewritten\n")               // (1) overwrite
+	memoryWrite(t, filepath.Join(mem, "added.md"), "added later\n")         // (2) addition
+	if err := os.Remove(filepath.Join(mem, "nested", "b.md")); err != nil { // (3) deletion
 		t.Fatal(err)
 	}
 	second, err := memorySnapshot(memoryTriggerManual, time.Now())
@@ -43,14 +43,15 @@ func memoryReadLive(t *testing.T, p string) string {
 	return string(b)
 }
 
-// プロジェクト単位の restore（docs/log/39 ④）: 上書き・追加・削除の 3 方向が戻り、
-// pre-restore snapshot と restore commit が履歴に積まれ、他の kind には触らない。
+// Per-project restore (docs/log/39 ④): all three directions (overwrite, addition, deletion)
+// come back, the pre-restore snapshot and the restore commit are stacked on the history, and
+// no other kind is touched.
 func TestMemoryRestoreProjectScope(t *testing.T) {
 	home, cfg, slug := memoryTestEnv(t)
 	v1, _ := memoryRestoreSeed(t, cfg, slug)
 	mem := filepath.Join(cfg, "projects", slug, "memory")
 
-	// codex 側も v2 の後に動かしておく（プロジェクト scope が越境しないことの確認材料）。
+	// Move the codex side too, after v2, so the project scope can be shown not to cross over.
 	codexIndex := filepath.Join(home, ".codex", "memories", "MEMORY.md")
 	memoryWrite(t, codexIndex, "codex moved on\n")
 
@@ -60,7 +61,7 @@ func TestMemoryRestoreProjectScope(t *testing.T) {
 		t.Fatalf("restore: %v", err)
 	}
 
-	// live が v1 の内容に戻っていること（3 方向すべて）。
+	// live is back at v1's contents (all three directions).
 	if got := memoryReadLive(t, filepath.Join(mem, "a.md")); got != "first\n" {
 		t.Errorf("overwritten file not restored: %q", got)
 	}
@@ -71,7 +72,7 @@ func TestMemoryRestoreProjectScope(t *testing.T) {
 		t.Errorf("file added after the target rev survived the restore (err=%v)", err)
 	}
 
-	// 履歴は書き換えず 2 件積む（pre-restore + restore）。
+	// History is not rewritten; two commits are stacked (pre-restore + restore).
 	if n := memoryCommitCount(t); n != before+2 {
 		t.Fatalf("commits %d → %d, want +2 (pre-restore + restore)", before, n)
 	}
@@ -91,7 +92,8 @@ func TestMemoryRestoreProjectScope(t *testing.T) {
 	if list[1].Rev != res.PreRestore || list[1].Trigger != memoryTriggerPreRestore {
 		t.Errorf("second snapshot = %+v, want the pre-restore commit", list[1])
 	}
-	// 戻し元と適用範囲が trailer から復元できる（監査・「巻き戻しの巻き戻し」の手掛かり）。
+	// The source and the applied scope can be recovered from the trailers (audit, and the clue
+	// for undoing the undo).
 	body, err := memoryGitRun("log", "-1", "--pretty=%B", res.Rev)
 	if err != nil {
 		t.Fatal(err)
@@ -104,26 +106,26 @@ func TestMemoryRestoreProjectScope(t *testing.T) {
 		t.Errorf("restore commit subject should say restore:\n%s", body)
 	}
 
-	// scope 外（codex）は一切巻き戻らない。
+	// Nothing outside the scope (codex) is rolled back.
 	if got := memoryReadLive(t, codexIndex); got != "codex moved on\n" {
 		t.Errorf("project-scoped restore touched the codex root: %q", got)
 	}
-	// pre-restore が「戻す前の live」を確かに保全している。
+	// The pre-restore snapshot really did preserve the live state from before the restore.
 	if d, err := memoryDiff("", res.PreRestore, ""); err != nil || !strings.Contains(d, "codex moved on") {
 		t.Errorf("pre-restore snapshot did not capture the live state: err=%v\n%s", err, d)
 	}
 }
 
-// 全体 restore と「巻き戻しの巻き戻し」（★2）: pre-restore rev へもう一度 restore すれば
-// 元の状態に戻る。日時指定（at）も同じ restore に解決する。
+// All-scope restore and undoing the undo (★2): restoring once more to the pre-restore rev
+// brings the original state back. A timestamp (at) resolves to the same restore.
 func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
 	home, cfg, slug := memoryTestEnv(t)
 	memoryRestoreSeed(t, cfg, slug)
 	mem := filepath.Join(cfg, "projects", slug, "memory")
 	codexIndex := filepath.Join(home, ".codex", "memories", "MEMORY.md")
 
-	// v1 の時刻より後・v2 より前を狙えないので、ここは rev ではなく「今」で全体を撮り直し、
-	// その時刻を at 指定の狙点にする。
+	// There is no instant to aim at between v1 and v2, so take a fresh all-scope snapshot "now"
+	// instead of using a rev, and aim the at parameter at that timestamp.
 	memoryWrite(t, codexIndex, "codex v3\n")
 	v3, err := memorySnapshot(memoryTriggerManual, time.Now())
 	if err != nil || !v3.Committed {
@@ -134,7 +136,7 @@ func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// さらに live を動かしてから、at 指定で v3 へ全体 restore。
+	// Move live again, then restore everything to v3 by timestamp.
 	memoryWrite(t, filepath.Join(mem, "a.md"), "v4\n")
 	memoryWrite(t, codexIndex, "codex v4\n")
 	back, err := memoryRestore(memoryRestoreScope{All: true}, "", at, time.Now())
@@ -154,7 +156,7 @@ func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
 		t.Errorf("all-scope should cover both roots, got %v", back.Scopes)
 	}
 
-	// 巻き戻しの巻き戻し: pre-restore rev へ戻せば v4 の状態が返ってくる。
+	// Undo the undo: restoring to the pre-restore rev brings the v4 state back.
 	undo, err := memoryRestore(memoryRestoreScope{All: true}, back.PreRestore, "", time.Now())
 	if err != nil {
 		t.Fatalf("undo restore: %v", err)
@@ -170,9 +172,9 @@ func TestMemoryRestoreAllScopeIsReversible(t *testing.T) {
 	}
 }
 
-// ★1 の裏返し: restore は allowlist の外へ書かない・消さない。live に置かれた
-// シンボリックリンクの先（資格情報）を書き換えないこと、メモリ以外のファイル
-// （transcript・settings・資格情報）が一切消えないことを見る。
+// The reverse of ★1: restore never writes or deletes outside the allowlist. Checks that it
+// does not write through a symlink planted in live (whose target is the credentials) and that
+// no non-memory file (transcript, settings, credentials) is deleted.
 func TestMemoryRestoreNeverTouchesNonMemoryFiles(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	v1, _ := memoryRestoreSeed(t, cfg, slug)
@@ -180,8 +182,8 @@ func TestMemoryRestoreNeverTouchesNonMemoryFiles(t *testing.T) {
 	mem := filepath.Join(proj, "memory")
 	creds := filepath.Join(cfg, ".credentials.json")
 
-	// 復元先そのものを、allowlist の外を指すシンボリックリンクにすり替える。
-	// リンク越しに書けば資格情報が壊れる（そうなってはいけない）。
+	// Swap the restore destination itself for a symlink pointing outside the allowlist. Writing
+	// through the link would corrupt the credentials, which must not happen.
 	outside := filepath.Join(cfg, "outside.md")
 	memoryWrite(t, outside, "outside content\n")
 	if err := os.Remove(filepath.Join(mem, "a.md")); err != nil {
@@ -201,7 +203,7 @@ func TestMemoryRestoreNeverTouchesNonMemoryFiles(t *testing.T) {
 	if got := memoryReadLive(t, filepath.Join(mem, "a.md")); got != "first\n" {
 		t.Errorf("symlink was not replaced by the restored file: %q", got)
 	}
-	// メモリ以外は 1 つも消えない。
+	// Not one non-memory file is removed.
 	for _, p := range []string{
 		creds,
 		filepath.Join(cfg, "settings.json"),
@@ -216,15 +218,16 @@ func TestMemoryRestoreNeverTouchesNonMemoryFiles(t *testing.T) {
 	if got := memoryReadLive(t, creds); got != `{"token":"SECRET"}` {
 		t.Errorf("credentials were modified: %q", got)
 	}
-	// 資格情報の中身は restore 後の履歴にも入っていない。
+	// The credential contents are absent from the history after the restore too.
 	if blobs, _ := memoryGitRun("grep", "-I", "-l", "SECRET", memoryBranch); strings.TrimSpace(blobs) != "" {
 		t.Errorf("credential contents reachable in repo: %s", blobs)
 	}
 }
 
-// 削除で空になったディレクトリは畳むが、メモリ以外が残っている枝では必ず止まる。
-// （`memory/` の中身は拡張子に関係なく全部が管理対象 — allowlist はパスで決まる。
-// 非メモリが同居するのは `memory/` の外側＝プロジェクト直下の transcript 等。）
+// Directories left empty by a deletion are folded up, but pruning always stops on a branch
+// where something non-memory remains. (Everything inside `memory/` is version-controlled
+// regardless of extension — the allowlist is decided by path. Non-memory files live outside
+// `memory/`, e.g. the transcripts directly under the project.)
 func TestMemoryRestorePrunesEmptyDirsOnly(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	proj := filepath.Join(cfg, "projects", slug)
@@ -234,7 +237,7 @@ func TestMemoryRestorePrunesEmptyDirsOnly(t *testing.T) {
 	if err != nil || !v1.Committed {
 		t.Fatalf("v1: %+v err=%v", v1, err)
 	}
-	// v1 以降に増えたサブディレクトリは、戻すと空になるので畳まれる。
+	// A subdirectory added after v1 becomes empty on restore, so it is pruned.
 	memoryWrite(t, filepath.Join(mem, "onlymem", "c.md"), "c\n")
 	if _, err := memorySnapshot(memoryTriggerManual, time.Now()); err != nil {
 		t.Fatal(err)
@@ -249,8 +252,9 @@ func TestMemoryRestorePrunesEmptyDirsOnly(t *testing.T) {
 		t.Errorf("memory dir with remaining files was pruned: %v", err)
 	}
 
-	// メモリが 1 つも無い時点へ戻すと memory/ ごと畳むが、transcript がいる
-	// プロジェクト直下では必ず止まる（os.Remove は空ディレクトリしか消せない）。
+	// Restoring to a point with no memory at all folds up memory/ itself, but pruning always
+	// stops at the project directory, where the transcript lives (os.Remove only removes an
+	// empty directory).
 	if err := os.RemoveAll(mem); err != nil {
 		t.Fatal(err)
 	}
@@ -270,15 +274,16 @@ func TestMemoryRestorePrunesEmptyDirsOnly(t *testing.T) {
 	}
 }
 
-// tree API: 「その時点に何が入っていたか」。今の live から消えたプロジェクトも当時の
-// snapshot からは選べる（= 誤って消したメモリを戻せる）。
+// The tree API answers "what was there at that point". A project that is gone from live today
+// is still selectable from the snapshot of the time (= memory deleted by mistake can be
+// restored).
 func TestMemoryTreeAtListsHistoricalProjects(t *testing.T) {
 	_, cfg, slug := memoryTestEnv(t)
 	v1, err := memorySnapshot(memoryTriggerManual, time.Now())
 	if err != nil || !v1.Committed {
 		t.Fatalf("v1: %+v err=%v", v1, err)
 	}
-	// live からプロジェクトのメモリを丸ごと消して撮り直す。
+	// Delete the project's memory from live entirely, then take a fresh snapshot.
 	if err := os.RemoveAll(filepath.Join(cfg, "projects", slug, "memory")); err != nil {
 		t.Fatal(err)
 	}
@@ -303,7 +308,7 @@ func TestMemoryTreeAtListsHistoricalProjects(t *testing.T) {
 	if len(kinds) != 2 || kinds[0].Kind != "claude" || !kinds[0].Scopes || kinds[1].Scopes {
 		t.Fatalf("tree kinds = %+v", kinds)
 	}
-	// 現時点（v2）では claude 側が空になっている。
+	// As of now (v2) the claude side is empty.
 	_, kinds2, projects2, err := memoryTreeAt(v2.Rev, "")
 	if err != nil {
 		t.Fatal(err)
@@ -312,7 +317,7 @@ func TestMemoryTreeAtListsHistoricalProjects(t *testing.T) {
 		t.Fatalf("tree at v2 = %+v / %+v", kinds2, projects2)
 	}
 
-	// そして v1 へ戻せばメモリが返ってくる（本命のユースケース）。
+	// And restoring to v1 brings the memory back (the use case this exists for).
 	if _, err := memoryRestore(memoryRestoreScope{Projects: []string{slug}}, v1.Rev, "", time.Now()); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -321,7 +326,7 @@ func TestMemoryTreeAtListsHistoricalProjects(t *testing.T) {
 	}
 }
 
-// スコープの検証: 未知の kind・不正な slug・空スコープは弾く。
+// Scope validation: an unknown kind, an invalid slug and an empty scope are all rejected.
 func TestMemoryResolveScopeRejectsBadInput(t *testing.T) {
 	memoryTestEnv(t)
 	for _, sc := range []memoryRestoreScope{
@@ -335,22 +340,22 @@ func TestMemoryResolveScopeRejectsBadInput(t *testing.T) {
 			t.Errorf("scope %+v was accepted", sc)
 		}
 	}
-	// 全体指定はプロジェクト指定を飲み込む（重複した prefix を 2 度適用しない）。
+	// An all-scope request swallows the project one (a duplicated prefix is not applied twice).
 	targets, err := memoryResolveScope(memoryRestoreScope{All: true, Projects: []string{"-home-dev-repos-demo"}})
 	if err != nil || len(targets) != 2 {
 		t.Fatalf("all+projects = %+v err=%v", targets, err)
 	}
 }
 
-// REST 越しの往復（ルート登録・応答形・エラーコード）。CP 側の登録漏れは別途
-// control-plane のテストで見るが、Agent 側はここで固定する。
+// A round trip over REST (route registration, response shape, error codes). A route missing
+// on the CP side is covered by control-plane's own tests; the Agent side is pinned here.
 func TestMemoryRestoreAPI(t *testing.T) {
 	h := memoryAPIHandler(t)
 	cfg := os.Getenv("CLAUDE_CONFIG_DIR")
 	slug := "-home-dev-repos-demo"
 	v1, _ := memoryRestoreSeed(t, cfg, slug)
 
-	// tree: 選択肢は「その時点」の中身から出る。
+	// tree: the choices come from the contents at that point in time.
 	w := smokeDo(t, h, "GET", "/agents/memory/tree?rev="+v1, "smoke-token", "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("tree: %d %s", w.Code, w.Body.String())
@@ -367,7 +372,7 @@ func TestMemoryRestoreAPI(t *testing.T) {
 		t.Fatalf("tree = %+v", tree)
 	}
 
-	// restore: プロジェクト指定で往復する。
+	// restore: round-trip with a project scope.
 	w = smokeDo(t, h, "POST", "/agents/memory/restore", "smoke-token",
 		`{"rev":"`+v1+`","scope":{"projects":["`+slug+`"]}}`)
 	if w.Code != http.StatusOK {
@@ -390,7 +395,7 @@ func TestMemoryRestoreAPI(t *testing.T) {
 		t.Errorf("live not restored through the API: %q", got)
 	}
 
-	// 入力の検証: 安定コードで 400 / 404 を返す。
+	// Input validation: 400 / 404 with a stable code.
 	for _, c := range []struct {
 		body string
 		code int
@@ -410,7 +415,7 @@ func TestMemoryRestoreAPI(t *testing.T) {
 	}
 }
 
-// snapshot が 1 件も無いうちは restore / tree とも 404（安定コード）で返す。
+// While there is no snapshot at all, restore and tree both answer 404 with a stable code.
 func TestMemoryRestoreBeforeAnySnapshot(t *testing.T) {
 	h := memoryAPIHandler(t)
 	for _, c := range []struct{ method, path, body string }{
@@ -424,8 +429,8 @@ func TestMemoryRestoreBeforeAnySnapshot(t *testing.T) {
 	}
 }
 
-// 自動 snapshot の UI トグル（docs/log/39 決着 #1）: 設定は claude マウント内に永続し、
-// 環境変数の強制 OFF はトグルより強い。
+// The UI toggle for automatic snapshots (docs/log/39 resolution #1): the setting persists
+// inside the claude mount, and the environment's forced OFF beats the toggle.
 func TestMemoryAutoToggle(t *testing.T) {
 	h := memoryAPIHandler(t)
 	readAuto := func() (auto, locked bool) {
@@ -463,7 +468,7 @@ func TestMemoryAutoToggle(t *testing.T) {
 		t.Error("toggle on did not persist")
 	}
 
-	// 運用側の強制 OFF は UI から戻せない。
+	// The operator's forced OFF cannot be undone from the UI.
 	t.Setenv("AF_MEMORY_SNAPSHOT", "off")
 	if auto, locked := readAuto(); auto || !locked {
 		t.Fatalf("env override should force auto off and mark it locked, got %v/%v", auto, locked)
@@ -474,5 +479,5 @@ func TestMemoryAutoToggle(t *testing.T) {
 	}
 }
 
-// ★ TestMemoryP2RoutesRegistered は package main（memory_routes_test.go）に残してある
-// （memory_handlers_test.go の同じ印を参照）。
+// TestMemoryP2RoutesRegistered stays in package main (memory_routes_test.go); see the same
+// note in memory_handlers_test.go.

@@ -51,8 +51,8 @@ func TestEditVerb(t *testing.T) {
 		{"codex patch wording is normalised", "update", []Edit{{Old: "a", New: "b"}}, "edit"},
 		{"all-insert is an add", "", []Edit{{Old: "", New: "x"}}, "add"},
 		{"any old side makes it an edit", "", []Edit{{Old: "", New: "x"}, {Old: "y", New: "z"}}, "edit"},
-		// ⚠️ The regression this guards: a kind that carries no diff bodies at all
-		// (cursor / copilot) must NOT have every file it touched labelled 削除.
+		// The regression this guards: a kind that carries no diff bodies at all
+		// (cursor / copilot) must NOT have every file it touched labelled "delete".
 		{"no bodies and no verdict is an edit, never a delete", "", nil, "edit"},
 	}
 	for _, c := range cases {

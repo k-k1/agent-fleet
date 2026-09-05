@@ -1,5 +1,5 @@
 // golden_bake.go — keeping the pool's golden snapshot in step with the workspace
-// image, without anybody remembering to (ADR 0045 決定 9 / docs/log/64 §64.28).
+// image, without anybody remembering to (ADR 0045 decision 9 / docs/log/64 §64.28).
 //
 // The manual procedure works — §64.28 got one baked on a real deployment — but it is
 // a procedure, and the thing it guards against is a release nobody re-baked for. The
@@ -65,8 +65,8 @@ const (
 	goldenTenantName = "golden snapshot (system)"
 )
 
-// ⚠️ 予約メンバーキー 2 つ（runtime.GoldenSeedKey / GoldenProbeKey）は adapters 側が
-// 宣言する: ecs-ec2 の golden リーダーが AWS リソースをその名前で照合する。
+// The two reserved member keys (runtime.GoldenSeedKey / GoldenProbeKey) are declared with
+// the adapters, because the ecs-ec2 golden reader matches AWS resources by those names.
 
 // goldenBaker drives the series above. One per CP; the reaper ticks it.
 type goldenBaker struct {
@@ -222,7 +222,7 @@ func (b *goldenBaker) bake(ctx context.Context, image, arch string) {
 			return
 		}
 		b.loggedBlocked = ""
-		log.Printf("golden[%s]: no golden for %s; baking one (ADR 0045 決定 9)", arch, image)
+		log.Printf("golden[%s]: no golden for %s; baking one (ADR 0045 decision 9)", arch, image)
 		seedRes, err = b.create(ctx, b.seedKey(arch), arch)
 		if err != nil {
 			log.Printf("golden[%s]: creating the seed workspace failed: %v", arch, err)

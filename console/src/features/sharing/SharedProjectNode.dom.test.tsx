@@ -1,4 +1,4 @@
-// Render test for the 共有セッション tree: the recipient gets one node per working copy
+// Render test for the shared-sessions tree: the recipient gets one node per working copy
 // the owner shares, and a project can hold a dozen worktrees — so it has to fold, and a
 // row has to say WHICH agent the conversation is with (kind icon), the recipient having
 // no other clue.
@@ -16,7 +16,8 @@ let root: Root | null = null;
 let host: HTMLDivElement;
 
 const session = (over: Partial<SharedSession> & { id: string }): SharedSession => ({
-  // CP が返す2つ組: 正規化キー(グルーピング/永続キー)と、表示に使うログイン ID。
+  // The pair the CP returns: the normalised key (grouping / persistence) and the login id
+  // used for display.
   ownerUserKey: "owner-example-com",
   ownerEmail: "owner@example.com",
   name: over.id,
@@ -54,12 +55,12 @@ afterEach(() => {
 });
 
 describe("SharedProjectNode", () => {
-  it("セッション行に kind のアイコンを出す", async () => {
+  it("shows the kind icon on a session row", async () => {
     await render([session({ id: "a", title: "調査", kind: "codex", repo: "proj", workingCopyId: "wc" })]);
     expect(host.querySelector(".shared-rail-row .sess-kic")?.className).toContain("kind-codex");
   });
 
-  it("稼働中は所有者側と同じ状態チップ、所有者WS停止中はワークスペース停止だけを出す", async () => {
+  it("shows the owner-side state chips while running, and only 'workspace stopped' when the owner workspace is down", async () => {
     await render([
       session({ id: "a", title: "質問中", repo: "proj", workingCopyId: "wc", state: "running", activity: "question" }),
       session({ id: "b", title: "進行中", repo: "proj", workingCopyId: "wc", state: "running", activity: "working" }),
@@ -73,13 +74,13 @@ describe("SharedProjectNode", () => {
       "session-state mini on",
       "session-state mini off",
     ]);
-    // 所有者 Workspace が停止していれば、行ごとの状態ではなくその1事実だけを出す。
+    // With the owner's Workspace stopped, show that one fact instead of per-row state.
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc", workspaceState: "stopped" })]);
     expect(host.querySelectorAll(".session-state")).toHaveLength(0);
     expect(host.querySelector(".shared-rail-row .codicon-debug-pause")).toBeTruthy();
   });
 
-  it("プロジェクト見出しで畳むと配下のセッションが消える", async () => {
+  it("hides the sessions underneath when the project heading is collapsed", async () => {
     await render([
       session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base" }),
       session({ id: "b", title: "WTの会話", repo: "proj@feat", workingCopyId: "wc-wt", worktree: true, parent: "proj" }),
@@ -93,7 +94,7 @@ describe("SharedProjectNode", () => {
     expect(rows()).toEqual(["ベースの会話", "WTの会話"]);
   });
 
-  it("worktree はブランチ名で名乗り、ベースはフォルダ名＋ブランチ", async () => {
+  it("names a worktree by its branch, and the base by folder name plus branch", async () => {
     await render([
       session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base", branch: "develop" }),
       session({
@@ -106,7 +107,7 @@ describe("SharedProjectNode", () => {
     expect([...host.querySelectorAll<HTMLElement>(".repo-branch-inline")].map((el) => el.textContent)).toEqual(["develop"]);
   });
 
-  it("working copy 単位でも畳める(畳んだ側だけが隠れる)", async () => {
+  it("collapses per working copy, hiding only the collapsed one", async () => {
     await render([
       session({ id: "a", title: "ベースの会話", repo: "proj", workingCopyId: "wc-base" }),
       session({ id: "b", title: "WTの会話", repo: "proj@feat", workingCopyId: "wc-wt", worktree: true, parent: "proj" }),
@@ -118,16 +119,17 @@ describe("SharedProjectNode", () => {
     expect(rows()).toEqual(["ベースの会話"]);
   });
 
-  it("畳んだ状態は localStorage に残る", async () => {
+  it("persists the collapsed state in localStorage", async () => {
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base" })]);
     await act(async () => host.querySelector<HTMLButtonElement>(".shared-project-head")!.click());
     expect(localStorage.getItem("af-shared-proj-owner-example-com:proj")).toBe("0");
   });
 
-  it("プロジェクト見出しに所有者のログイン ID(メールアドレス)を出す", async () => {
+  it("shows the owner login id (email address) on the project heading", async () => {
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base" })]);
     expect(host.querySelector(".shared-project-owner")?.textContent).toBe("owner@example.com");
-    // email を持たない identity(管理者が user_key だけで足した場合)だけ正規化キーへ落ちる。
+    // Only an identity with no email (added by an admin as a bare user_key) falls back to
+    // the normalised key.
     await render([session({ id: "a", title: "会話", repo: "proj", workingCopyId: "wc-base", ownerEmail: undefined })]);
     expect(host.querySelector(".shared-project-owner")?.textContent).toBe("owner-example-com");
   });

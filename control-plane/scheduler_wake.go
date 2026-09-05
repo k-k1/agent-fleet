@@ -152,7 +152,7 @@ func (f *wakeFirer) fire(ctx context.Context, sch store.Schedule, slot time.Time
 		_ = f.mgr.store.SetWorkspaceState(ctx, res.ws.ID, "running")
 		_ = f.mgr.touchWorkspace(ctx, res.ws.ID)
 	}
-	// session_mode=assistant (docs/log/38 アシスタント発火): run one assistant-chat turn
+	// session_mode=assistant: run one assistant-chat turn
 	// instead of driving a session.
 	if sch.SessionMode == "assistant" {
 		return f.fireAssistant(ctx, res, sch, slot)
@@ -286,7 +286,7 @@ func injectDriver(kind string) string {
 
 // scheduleSource is the injection-origin tag stamped on every prompt this scheduler
 // delivers (create initial_prompt and reuse /input), so the mirror can badge the turn
-// as schedule-driven — and distinguish a run-now（手動発火）from a timed fire. The
+// as schedule-driven — and tell a run-now (manual fire) from a timed one. The
 // Agent whitelists these values (session_injections.go injectionSource).
 func scheduleSource(sch store.Schedule) string {
 	if sch.ManualFirePending {
@@ -324,7 +324,7 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 		"driver":          injectDriver(kind),
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
-		"source":          scheduleSource(sch), // mirror badge: 定期/手動発火 (docs/log/38)
+		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
 	}
 	b, _ := json.Marshal(body)
 	return b

@@ -2,7 +2,7 @@ package mcpreg
 
 // Builtin ops integrations (docs/log/25 Phase 1), normalized into ServerDef so the
 // registry is ONE list instead of "builtin catalog or registered server" branching
-// everywhere (ADR0031 決定 6).
+// everywhere (ADR0031 decision 6).
 //
 // They stay code-defined and not editable: each is launched as
 // `workspace-agent mcp-run <id>`, a wrapper that injects the user's stored key as
@@ -35,12 +35,13 @@ type builtinSpec struct {
 }
 
 var builtinSpecs = map[string]builtinSpec{
-	// af は Agent Fleet 自身のセッション向けサーバー（docs/log/51 Phase 3 §自己申告
-	// ファストパス＋docs/log/53 §53.8 Chromium Attach View）。他の builtin と違って接続情報を持たないので常に ready で、
-	// 向き先も逆 — アシスタントではなく**セッション**に配る。ここに置いたのは
-	// 「レジストリは1つのリスト」という ADR0031 決定6 のため: 自前のサーバーだけ
-	// materialize の外に別配線を持つと、利用者からも見えず、名前衝突の調停からも外れる
-	// （"af" は reservedNames で元から押さえてある）。
+	// af is Agent Fleet's own server for sessions (docs/log/51 Phase 3 §self-report fast
+	// path plus docs/log/53 §53.8 Chromium Attach View). Unlike the other builtins it holds
+	// no connection details, so it is always ready, and it points the other way: it attaches
+	// to sessions, not to the assistant. It lives here because of ADR0031 decision 6, "the
+	// registry is one list" - wiring our own server outside materialize would hide it from
+	// the user and leave it out of name-collision arbitration ("af" is held down in
+	// reservedNames anyway).
 	BuiltinAF: {
 		label:   "Agent Fleet",
 		runArgs: []string{"mcp-stdio", "--self-report", "--chromium-attach"},
@@ -64,10 +65,11 @@ var builtinSpecs = map[string]builtinSpec{
 		runArgs: []string{"mcp-run", "cloudwatch"},
 		ready:   func(s *secrets.Data) bool { return s.CloudWatch != nil && s.CloudWatch.Profile != "" },
 	},
-	// aws = Agent Toolkit for AWS の AWS MCP Server（docs/log/25 §AWS MCP）。他の builtin と
-	// 違い、対話セッションにも配る: 中身が「AWS 上に作る」ための道具（ドキュメント検索・
-	// スキル取得・API 呼び出し）で、使いたいのは相談チャットよりコードを書くセッションだから。
-	// 危険側（書き込みツール）は接続設定の Write opt-in で閉じてある。
+	// aws is the Agent Toolkit for AWS MCP server (docs/log/25 §AWS MCP). Unlike the other
+	// builtins it also attaches to interactive sessions: its tools (documentation search,
+	// skill retrieval, API calls) are for building on AWS, which is wanted in a session
+	// writing code more than in a consultation chat. The dangerous side (the write tools)
+	// stays shut behind the connection's Write opt-in.
 	BuiltinAWS: {
 		label:   "AWS",
 		runArgs: []string{"mcp-run", "aws"},

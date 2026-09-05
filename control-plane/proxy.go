@@ -60,18 +60,19 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case name != "" && strings.HasSuffix(p, "/parent-ff"):
 			return "git.parent_ff", name, true
 		case p == "/api/agents/memory/snapshots":
-			// エージェントメモリの手動 snapshot（docs/log/39）。
+			// Manual snapshot of the agent memory (docs/log/39).
 			return "memory.snapshot", "", true
 		case p == "/api/agents/memory/import":
-			// 受領（refs/imports への取り込み。live にはまだ触れない）。
+			// Receipt into refs/imports; live is not touched yet.
 			return "memory.import", "", true
 		case p == "/api/agents/memory/import/apply":
-			// 取り込んだ内容の live への適用。どの系譜かは URL のヒントから採る。
+			// Applying an imported tree to live; which lineage comes from the URL hint.
 			return "memory.import.apply", q.Get("importId"), true
 		case p == "/api/agents/memory/restore":
-			// 巻き戻し（docs/log/39 ④）。戻し元 rev は Console が **監査用のヒントとして**
-			// クエリにも載せる（本文は読まない = §A.6）。実処理は本文の rev/at/scope が正で、
-			// 何が起きたかは repo の restore commit（AF-Restore-Rev / -Scope）に残る。
+			// Rollback (docs/log/39 stage 4). The Console repeats the source rev in the
+			// query as an audit hint, because the body is never read (§A.6). The body's
+			// rev/at/scope is what actually governs, and what happened is recorded in the
+			// repo's restore commit (AF-Restore-Rev / -Scope).
 			return "memory.restore", q.Get("rev"), true
 		case p == "/api/sessions":
 			return "session.create", "", true
@@ -81,9 +82,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "session.stop", name, true
 		}
 	case http.MethodGet:
-		// 読み取りは原則として監査しないが、メモリの export だけは例外にする（docs/log/39 ★4）:
-		// 個人のメモリを環境の外へ持ち出す唯一の経路であり、「誰がいつ何形式で出したか」が
-		// 残らないと後追いができない。target は形式のみ（本文も内容も読まない）。
+		// Reads are not audited, with one exception: memory export is the only path that
+		// carries someone's personal memory out of the environment, and without a record
+		// of who exported what format when there is nothing to trace afterwards
+		// (docs/log/39 stage 4). The target is the format only — no body, no content.
 		if p == "/api/agents/memory/export" {
 			return "memory.export", q.Get("format"), true
 		}
@@ -92,7 +94,8 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 		case p == "/api/fs/delete":
 			return "fs.delete", q.Get("path"), true
 		case strings.HasPrefix(p, "/api/repo-jobs/"):
-			// 取り込みの中止／既読（docs/log/78）。target は job id（URL だけから採る）。
+			// Cancel / dismiss an import job (docs/log/78). The target is the job id,
+			// taken from the URL alone.
 			return "repo.job.cancel", strings.TrimPrefix(p, "/api/repo-jobs/"), true
 		case name != "" && p == "/api/repos/"+name:
 			return "repo.delete", name, true
@@ -101,10 +104,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 	return "", "", false
 }
 
-// agentProxyAPI は Workspace Agent への素通しプロキシ集（docs/log/23 残③）。解決は
-// 埋め込みの memberAuth（登録側で withResolved に包む — terminal/WS の tenant 選択
-// が query param なのも tenantSel が吸収し従来の resolvedFor と同一）。依存は
-// a.mgr（conns の activity フック・監査 store）のみ。
+// agentProxyAPI is the set of pass-through proxies to the Workspace Agent. Resolution
+// comes from the embedded memberAuth (wrapped in withResolved at registration; tenantSel
+// absorbs the terminal/WS case where the tenant is chosen by query param). Its only
+// dependency is a.mgr, for the connection activity hooks and the audit store.
 type agentProxyAPI struct{ memberAuth }
 
 func newAgentProxyAPI(m *manager) agentProxyAPI { return agentProxyAPI{memberAuth{m}} }
@@ -311,8 +314,8 @@ func (a agentProxyAPI) stream(w http.ResponseWriter, r *http.Request, res *resol
 	}
 }
 
-// EnableCompression: permessage-deflate に対応するブラウザとだけネゴする（モバイル
-// 回線での PTY 出力・スクリーンキャストの帯域削減）。非対応クライアントは従来通り。
+// upgrader negotiates permessage-deflate only with browsers that support it, to cut PTY
+// output and screencast bandwidth on mobile links. Other clients are unaffected.
 var upgrader = websocket.Upgrader{
 	CheckOrigin:       checkWSOrigin,
 	EnableCompression: true,
@@ -347,8 +350,8 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 	// P3-9: an attached terminal keeps the workspace warm and pins its session
 	// (tier 1 won't halt a session someone is watching).
 	session := r.URL.Query().Get("session")
-	// 在席は「ソケットがある」ではなく「人が触っている」で数える（docs/log/75 P3）。
-	// noteInput は下の browser→agent 中継が打鍵フレームを見たときだけ呼ぶ。
+	// Presence counts "a human is touching it", not "a socket exists" (docs/log/75 P3).
+	// noteInput is called only when the browser→agent relay below sees a keystroke frame.
 	releasePresence, noteInput, err := a.mgr.trackWorkspaceTerminal(r.Context(), res.ws.ID, session)
 	if err != nil {
 		writeAPIErr(w, workspaceActivityAPIError(err))
@@ -407,16 +410,16 @@ func (a agentProxyAPI) terminal(w http.ResponseWriter, r *http.Request, res *res
 
 	errc := make(chan error, 2)
 	go relay(up, down, errc, nil)       // agent -> browser
-	go relay(down, up, errc, noteInput) // browser -> agent（打鍵だけ在席として数える）
+	go relay(down, up, errc, noteInput) // browser -> agent; only keystrokes count as presence
 	<-errc                              // first side to close ends the bridge
 }
 
 // terminalFrame is the browser→agent control envelope (console/src/terminal/term.ts):
 // {"type":"input"|"resize"|"ping", …}. Only "input" means a human is at the keyboard.
 //
-// ★ping と resize を数えてはいけない: Console は開いているソケットへ定期的に ping を
-// 送るので、「何かフレームが来た＝在席」にすると、閉じ忘れたタブが永久に Workspace を
-// 温める従来の挙動がそのまま戻る（docs/log/75 P3 が消そうとしているもの）。
+// Never count ping or resize. The Console pings an open socket periodically, so treating
+// "a frame arrived" as presence brings back exactly what docs/log/75 P3 removes: a
+// forgotten tab keeping the workspace warm forever.
 type terminalFrame struct {
 	Type string `json:"type"`
 }

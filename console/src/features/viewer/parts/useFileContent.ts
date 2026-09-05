@@ -1,12 +1,13 @@
-// 開いているファイルの中身と、開き直しで一緒にリセットされる表示状態。
+// The content of the open file, plus the display state that is reset along with it when a
+// different file is opened.
 //
-// 1 つのフックにまとめてあるのは、リセットの範囲が読み込み effect の持ち物
-// だから —— 別のファイルを開いたら、中身だけでなく画像の寸法・画像のモード・
-// PDF のページ数・外部変更の注記も同時に無かったことにしなければならない。
-// 切り離すと「どれをリセットし忘れたか」が effect の外から見えなくなる。
+// It is one hook because the reset scope belongs to the load effect: opening another file
+// must discard not just the content but the image dimensions, the image mode, the PDF page
+// count and the external-change notice at the same time. Split them apart and "which one did
+// we forget to reset" is no longer visible from outside the effect.
 //
-// FileView での宣言位置は元のまま（このフックの 2 つの effect が、この面で
-// いちばん先に走る effect であることは変えていない）。
+// These two effects must stay the first effects to run on this surface; do not move the
+// declaration in FileView.
 import { useEffect, useRef, useState } from "react";
 import { api, isTransientErr } from "../../../core/api/client.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -36,7 +37,8 @@ export function useFileContent(filePath: string) {
   const [err, setErr] = useState("");
   const [imgMode, setImgMode] = useState<"preview" | "source">("preview");
   const [imgDims, setImgDims] = useState<{ w: number; h: number } | null>(null);
-  // PDF のページ数（情報バー用）。開けるまでは null で、行数と同じ場所に出す。
+  // PDF page count for the info bar; null until the document opens, shown where the line
+  // count would be.
   const [pdfPages, setPdfPages] = useState<number | null>(null);
   const [marks, setMarks] = useState<LineMarks | null>(null);
 

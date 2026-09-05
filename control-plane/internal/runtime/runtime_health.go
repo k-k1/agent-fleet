@@ -1,24 +1,26 @@
-// runtime_health.go — Agent 到達待ち（/healthz）の共通部品。
+// runtime_health.go — shared pieces for waiting on the Agent (/healthz).
 //
-// この面の契約はひとつだけ: **「Agent がまだ応答しない」は起動の失敗ではない**。
-// Start はコンテナ/プロセスの起動を確定させるところまでを引き受け、Agent が応答する
-// までの窓は State() の "starting" として表に出す。ECS アダプタは最初からそう作られて
-// いて（watchReady・docs/log/62 §62.5「A readiness failure must still NEVER fail Start」）、
-// ローカルの docker / native 2 つだけが「予算内に /healthz が 200 を返さなければ起動
-// 失敗」だった。その不揃いが 3 つの実害を生んでいた:
+// One contract governs this surface: "the Agent is not answering yet" is not a Start
+// failure. Start owns bringing the container/process up; the window until the Agent
+// answers is surfaced through State() as "starting". The ECS adapter was always built
+// that way (watchReady, docs/log/62 §62.5 "A readiness failure must still NEVER fail
+// Start"); only the local docker and native adapters treated "/healthz did not answer 200
+// within the budget" as a failed start. That mismatch cost three things:
 //
-//   - 実障害（docs/log/38 ★6）: 定時実行の wake が `agent did not become healthy within 15s`
-//     で落ちた。真因は entrypoint の CLI 自己更新（実測 約60 秒）で、コンテナは正常。
-//   - 同じ 15 秒が人手の Start にも効く。予算が 300 秒に伸びるのは自己更新 opt-in が
-//     ON の起動だけなので、**OFF の利用者だけ**が lean/cold な起動・遅い回線・ネット
-//     ワーク home で赤いトーストを踏み、しかも数秒後には普通に使える（起動は続いて
-//     いたのだから）。「一部の人だけ、たまに」に見えるのはこれ。
-//   - 失敗扱いそのものが状態の嘘になる。ensureWorkspaceStartedRTLocked は Start が
-//     エラーなら DB を running にせず idle 時計も触らずに返すので、コンテナは走って
-//     いるのに DB は stopped、reaper の in-memory lastSeen も古いまま、が残っていた。
+//   - Scheduled-run wakes died with `agent did not become healthy within 15s` while the
+//     container was fine — the real cause is the entrypoint's CLI self-update (~60s,
+//     measured).
+//   - The same 15s applied to a human Start, and the budget only widens to 300s when the
+//     self-update opt-in is ON, so users with it OFF were the ones hitting a red toast on
+//     a lean/cold start, a slow link or a network home — and the workspace worked fine
+//     seconds later, because the start had never stopped.
+//   - Treating it as a failure made the recorded state a lie:
+//     ensureWorkspaceStartedRTLocked returns on a Start error without marking the DB
+//     running or touching the idle clock, leaving a running container recorded as stopped
+//     with a stale lastSeen in the reaper.
 //
-// なので予算の数字をいじるのではなく、予算の**意味**を変える: 予算は「同期で待って
-// あげる猶予」であって期限ではない。超えたら starting を名乗り、ポーラーが収束させる。
+// So the budget's meaning changed rather than its number: it is how long a caller waits
+// synchronously, not a deadline. Past it we claim "starting" and let the poller converge.
 package runtime
 
 import (
@@ -32,20 +34,22 @@ import (
 	"time"
 )
 
-// AgentBootBudget は「まだ起動途中だ」と名乗ってよい上限。同期猶予（startHealthWait）を
-// 超えたあとも、この期限までは State() が "starting" を返す。
+// AgentBootBudget is the ceiling on claiming "still booting". Once the synchronous grace
+// (startHealthWait) lapses, State() keeps returning "starting" until this deadline.
 //
-// 300 秒なのは native の rootfs 経路・ECS の startTimeout と同じ根拠（cold pull ＋
-// entrypoint の boot-install ＋ CLI 自己更新の実測 約60 秒を包む）。**必ず時限式**に
-// するのが肝で、収束しない "starting" は Console から停止も再作成もできない箱になる
-// （docs/log/70 §70.14.6 の実害）。期限が切れたら素直に running（コンテナは在る）へ落ちる。
+// 300s for the same reason as the native rootfs path and the ECS startTimeout: it has to
+// cover a cold pull, the entrypoint's boot-install and the ~60s (measured) CLI
+// self-update. It must stay time-limited — a "starting" that never converges is a box the
+// Console can neither stop nor recreate (docs/log/70 §70.14.6). Once it expires we fall
+// back to running: the container does exist.
 const AgentBootBudget = 300 * time.Second
 
-// AgentReadyWait は「Agent に用がある API」がその場で待ってよい上限（AF_AGENT_READY_WAIT_SEC）。
-// 既定 55 秒は ALB の idle timeout 60 秒（deploy/aws/ecs/cfn/30-ingress.yaml）の内側に
-// 収めるため — HTTP ハンドラの中で待つ以上、ここを超えた瞬間に応答そのものが 504 で
-// 消える（docs/log/62 §62.5 で計測済み）。待ちきれなければ 409 workspace_starting を返す。
-// 起動は裏で続くので、利用者/Console の再試行が次に通る。
+// AgentReadyWait is how long an API that needs the Agent may wait in place
+// (AF_AGENT_READY_WAIT_SEC). The 55s default keeps the wait inside the ALB's 60s idle
+// timeout (deploy/aws/ecs/cfn/30-ingress.yaml) — we are waiting inside an HTTP handler, so
+// past that the response itself disappears into a 504 (measured, docs/log/62 §62.5). When
+// the wait runs out the answer is 409 workspace_starting; the start continues in the
+// background, so the caller's or the Console's next retry gets through.
 func AgentReadyWait() time.Duration {
 	if n := EnvInt("AF_AGENT_READY_WAIT_SEC", 0); n > 0 {
 		return time.Duration(n) * time.Second
@@ -59,7 +63,7 @@ func AgentReadyWait() time.Duration {
 // pinned CLIs before the agent listens (docs/log/35 §35.4.1); the native rootfs
 // adapter defaults higher for the same reason.
 //
-// ★ これは「これを過ぎたら失敗」ではなく「これを過ぎたら starting を名乗って返る」。
+// Past this budget the start is not failed — it returns claiming "starting".
 func agentHealthWait(def time.Duration) time.Duration {
 	if n := EnvInt("AF_AGENT_HEALTH_WAIT_SEC", 0); n > 0 {
 		return time.Duration(n) * time.Second
@@ -67,16 +71,16 @@ func agentHealthWait(def time.Duration) time.Duration {
 	return def
 }
 
-// agentNotReadyError は「時間内に /healthz が 200 を返さなかった」だけを意味する。
-// 文言は従来と 1 文字も変えていない（スケジュール実行履歴や運用の grep が拾っている）
-// が、型で区別できるようにして、呼び出し側が **失敗と取り違えない**ようにする。
+// agentNotReadyError means only that /healthz did not answer 200 in time. The message text
+// is kept byte-for-byte — scheduled-run history and operational greps match on it — but the
+// distinct type is what keeps callers from mistaking this for a failure.
 type agentNotReadyError struct{ timeout time.Duration }
 
 func (e agentNotReadyError) Error() string {
 	return fmt.Sprintf("agent did not become healthy within %s", e.timeout)
 }
 
-// agentHealthy は /healthz を 1 回だけ叩く。healthzClient は 5s cap（agent_client.go）。
+// agentHealthy makes a single /healthz call. healthzClient caps it at 5s (agent_client.go).
 func agentHealthy(ctx context.Context, endpoint string) bool {
 	req, err := http.NewRequestWithContext(ctx, "GET", endpoint+"/healthz", nil)
 	if err != nil {
@@ -94,13 +98,13 @@ func agentHealthy(ctx context.Context, endpoint string) bool {
 // timeout lapses. Shared by the docker and native local adapters (ECS has its
 // own converge loop) and by ensureWorkspaceReady.
 //
-// 返るエラーは 2 種類で、意味がまるで違う:
-//   - agentNotReadyError … まだ来ていないだけ。起動は続いている。
-//   - ctx のキャンセル   … 呼び出し側が去った（リクエスト打ち切り・lease 喪失）。
+// Two errors come back and they mean very different things:
+//   - agentNotReadyError … it simply has not arrived yet; the start is still going.
+//   - a ctx cancellation … the caller left (request aborted, lease lost).
 func WaitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		// キャンセル済み ctx で最大タイムアウトまでポーリングし続けない
+		// Don't keep polling to the full timeout on an already-canceled ctx.
 		if err := ctx.Err(); err != nil {
 			return fmt.Errorf("agent health wait canceled: %w", err)
 		}
@@ -112,19 +116,20 @@ func WaitAgentHealthy(ctx context.Context, endpoint string, timeout time.Duratio
 	return agentNotReadyError{timeout: timeout}
 }
 
-// agentStartingMarker は「この起動はまだ Agent の応答待ちだ」という印を workspace の
-// dataDir に置く。プロセス内の変数ではなくファイルなのは 2 つの理由による:
+// agentStartingMarker records "this start is still waiting for the Agent" in the
+// workspace's dataDir. A file rather than a process-local variable, for two reasons:
 //
-//   - State() を呼ぶのは Start を走らせた goroutine とは限らない。/api/workspace の
-//     4 秒ポーリング・SSE・proxy・reaper はそれぞれ別に Runtime を組み立てるので、
-//     in-memory の印はそもそも見えない（見えなければ「running なのに Agent 不在」の
-//     ままターミナルを開いてしまう、というのが直したい症状そのもの）。
-//   - CP が起動の途中で落ちても、残るのはファイル 1 つだけにしたい。中身は期限なので、
-//     期限切れでも /healthz 200 でも消える（自己修復）。
+//   - Whoever calls State() need not be the goroutine that ran Start. The 4s
+//     /api/workspace poll, SSE, the proxy and the reaper each build their own Runtime, so
+//     an in-memory mark is invisible to them — and invisible means opening a terminal
+//     against a workspace that reads "running" while the Agent is absent, which is the
+//     symptom being fixed.
+//   - If the CP dies mid-start, at most one file is left behind. Its content is a
+//     deadline, so it clears itself on expiry or on a /healthz 200.
 type agentStartingMarker struct{ path string }
 
-// agentStartingMarkerIn は dataDir 直下の印。dataDir 未設定（テストの最小 struct 等）
-// では無効な印を返す＝常に非 starting。
+// agentStartingMarkerIn is the mark directly under dataDir. With no dataDir (a minimal
+// struct in a test, say) it returns an inert mark, i.e. never starting.
 func agentStartingMarkerIn(dataDir string) agentStartingMarker {
 	if dataDir == "" {
 		return agentStartingMarker{}
@@ -132,8 +137,8 @@ func agentStartingMarkerIn(dataDir string) agentStartingMarker {
 	return agentStartingMarker{path: filepath.Join(dataDir, ".agent-starting")}
 }
 
-// arm records "starting until <deadline>". Best-effort: 書けなければ従来どおり
-// running に見えるだけで、壊れる方向には倒れない。
+// arm records "starting until <deadline>". Best-effort: failing to write only makes the
+// workspace look running as it did before, which is the safe direction to fall.
 func (m agentStartingMarker) arm(until time.Time) {
 	if m.path == "" {
 		return
@@ -148,9 +153,9 @@ func (m agentStartingMarker) clear() {
 	_ = os.Remove(m.path)
 }
 
-// active reports whether this workspace is still inside its boot window. 印が在る間は
-// 呼ばれるたびに /healthz を 1 回だけ叩き、上がっていれば印を落として running に戻す
-// ので、Start を走らせた CP が居なくなっていても収束する。
+// active reports whether this workspace is still inside its boot window. While the mark
+// exists, every call makes exactly one /healthz probe and drops the mark once the Agent is
+// up, so this converges even when the CP that ran Start is gone.
 func (m agentStartingMarker) active(ctx context.Context, endpoint string) bool {
 	if m.path == "" {
 		return false
@@ -161,7 +166,7 @@ func (m agentStartingMarker) active(ctx context.Context, endpoint string) bool {
 	}
 	sec, err := strconv.ParseInt(strings.TrimSpace(string(b)), 10, 64)
 	if err != nil || !time.Now().Before(time.Unix(sec, 0)) {
-		m.clear() // 期限切れ／壊れた印: これ以上 starting を名乗らない
+		m.clear() // expired or corrupt mark: stop claiming starting
 		return false
 	}
 	if agentHealthy(ctx, endpoint) {

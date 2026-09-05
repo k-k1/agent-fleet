@@ -1,11 +1,11 @@
-// workspace store の push 適用（通信量削減 P3）の契約テスト。ポーリングと同じ
-// 保護則 — 楽観 "…" 遷移中は state を clobber しない — が applyPush にも効く
-// ことを固定する（破れると stop 直後の push フレームがボタンを二度押し可能に
-// 戻したり、starting ダイアログが閉じたりする）。
+// Contract test for the workspace store's push apply (traffic reduction P3). Pins that the
+// same protection as the polling path — never clobber the state during an optimistic "…"
+// transition — also holds for applyPush. Break it and a push frame arriving right after a
+// stop makes the button clickable again, or closes the starting dialog.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// store は api client（window.fetch 束縛・document.baseURI）を import するので
-// 先にグローバルを stub してから import（repos/store.test.ts と同じ流儀）。
+// The store imports the api client, which binds window.fetch and reads document.baseURI, so
+// the globals are stubbed before the import (the same style as repos/store.test.ts).
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,
@@ -53,9 +53,9 @@ describe("workspace store applyPush", () => {
     expect(useWorkspaceStore.getState().state).toBe("unknown");
   });
 
-  // stale（バックエンド更新の未反映）は CP だけが判定する状態。押し付けられた値を
-  // そのまま持ち、消えたら消す — クライアント側で覚えておくと、再起動して解消した
-  // あとも「要再起動」が残り続ける。
+  // stale (a backend update not yet picked up) is decided by the CP alone. Hold whatever is
+  // pushed and clear it when it goes — remembering it client-side would leave the
+  // restart-needed badge up even after a restart resolved it.
   it("adopts and clears the CP-detected stale flag", () => {
     useWorkspaceStore.getState().applyPush({ state: "running", stale: true });
     expect(useWorkspaceStore.getState().stale).toBe(true);
@@ -64,8 +64,8 @@ describe("workspace store applyPush", () => {
   });
 });
 
-// restart() は「停止→起動」だけ。recreate（~/repos を消す）に化けていないことを
-// 呼んだ URL で固定する — 更新の反映で未コミットの作業が消えたら取り返しがつかない。
+// restart() is stop then start, nothing else. The URLs it calls pin that it never turns into
+// recreate (which deletes ~/repos): losing uncommitted work to an update is unrecoverable.
 describe("workspace store restart", () => {
   it("posts stop then start, never recreate", async () => {
     useWorkspaceStore.setState({ state: "running", bootPhase: "", stale: true });
@@ -87,11 +87,11 @@ describe("workspace store restart", () => {
   });
 });
 
-// 収束しない `starting` から抜ける導線を固定する。ECS でタスクが配置できないと
-// desired=1/running=0 のまま State() が永久に "starting" を返す（実測・docs/log/70
-// §70.14.6）。電源トグルが running のときしか停止を出さないと、その状態で UI から
-// 出せる操作が「起動」だけになり、CP は starting の Start を no-op で捨てるので
-// **Console から停止する手段が一つも無くなる**。
+// Pins the way out of a `starting` state that never converges. When ECS cannot place a task
+// it sits at desired=1/running=0 and State() reports "starting" forever (measured,
+// docs/log/70 §70.14.6). If the power toggle only sent stop while running, the only action
+// the UI offered from that state was Start, and the CP no-ops a Start for something it
+// already considers starting — leaving no way at all to stop it from the Console.
 describe("wsPowerStops / wsStartBusy", () => {
   it("stops — not starts — on the server-reported starting", () => {
     expect(wsPowerStops("starting")).toBe(true);
@@ -101,15 +101,15 @@ describe("wsPowerStops / wsStartBusy", () => {
   });
 
   it("leaves the power button clickable while the server says starting", () => {
-    // 無効化してよいのは楽観的な "…" だけ。"starting" で disabled にすると、
-    // 上の停止導線があってもクリックできず同じ行き止まりに戻る。
+    // Only the optimistic "…" may disable the button. Disabling on "starting" would make
+    // the stop path above unclickable and put us back in the same dead end.
     expect(wsBusy("starting")).toBe(false);
     expect(wsBusy("starting…")).toBe(true);
     expect(wsBusy("stopping…")).toBe(true);
   });
 
   it("still refuses to fire a second START while starting", () => {
-    // 停止できるようにしたことで二重起動が復活していないこと。
+    // Making stop reachable must not bring double-start back.
     expect(wsStartBusy("starting")).toBe(true);
     expect(wsStartBusy("starting…")).toBe(true);
     expect(wsStartBusy("stopped")).toBe(false);

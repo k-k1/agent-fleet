@@ -1,14 +1,16 @@
-// EC2 スロットプール（AF_RUNTIME=ecs-ec2）の運用面。docs/log/64 §64.18.6 / ADR 0045 決定 13。
+// The operator surface for the EC2 slot pool (AF_RUNTIME=ecs-ec2). docs/log/64 §64.18.6,
+// ADR 0045 decision 13.
 //
-// この面が答えるのは、このランタイムだけが持ち込む 3 つの問い:
-//   1. いま何台ぶん払っているのか（スロット数と、そのうち起動している台数）
-//   2. どれが眠っているのか（＝止まっていて root EBS だけの課金か）
-//   3. 誰の home がどこにあるのか（スロット上か・退避中か・snapshot になったか）
+// It answers the three questions only this runtime raises:
+//   1. How many machines are being paid for right now (slot count, and how many are running).
+//   2. Which ones are asleep (stopped, billed only for the root EBS).
+//   3. Where each home is (on a slot, evacuated, or turned into a snapshot).
 //
-// ★ 表示は毎回 AWS から導出したものであって、CP が持っている状態ではない（ADR 0012）。
-//   だから「CP を再起動したら見え方が変わる」ということが無い。
-// ★ 他のランタイムではプールという概念が無い。空の表を出すと Fargate のデプロイで
-//   「スロットが全部消えた」に読めるので、その場合はタブごと出さない（AdminTab 側）。
+// Everything shown is derived from AWS on each read, not state the CP holds (ADR 0012), so
+// restarting the CP never changes the picture.
+//
+// Other runtimes have no notion of a pool. An empty table would read as "every slot is gone" on
+// a Fargate deployment, so there the whole tab is omitted (in AdminTab).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -24,8 +26,9 @@ export type PoolBudget = {
 };
 
 /**
- * PoolBudgetHint は上の警告を出す 1 か所。プール画面（常態として）と、テナントの上限を
- * 保存した直後（いま打った数字について）の両方が使うので、文言は 1 つしかない。
+ * PoolBudgetHint is the single place that emits the warning above. Both the pool screen (as a
+ * standing state) and the moment after a tenant limit is saved (about the number just typed)
+ * use it, so there is exactly one wording.
  */
 export function PoolBudgetHint({ budget }: { budget: PoolBudget }) {
   const tr = useT();
@@ -47,8 +50,8 @@ export function PoolBudgetHint({ budget }: { budget: PoolBudget }) {
           {tr("pool.budget_unbounded", { tenants: unbounded.join(", ") })}
         </p>
       )}
-      {/* 分母が違うことを、数字と同じ場所で言う。ここを書かないと運用者は
-          「合計が枠内なら立ち退きは起きない」と読む——起きる。 */}
+      {/* State the difference in denominators next to the numbers. Without it an operator
+          reads "if the total fits, nothing gets evicted" — evictions still happen. */}
       <p className="admin-hint">{tr("pool.budget_denominator")}</p>
     </>
   );
@@ -62,12 +65,12 @@ export type PoolStatus = {
   slot_terminate_sec?: number;
   hibernate_after_sec?: number;
   /**
-   * テナント上限の合計とプール上限の突き合わせ。**問題があるときだけ**返る
-   * （収まっている合計はニュースではなく、材料の 2 つは既にこの画面に出ている）。
+   * The sum of the tenant limits checked against the pool limit. Returned only when there is a
+   * problem: a total that fits is not news, and both inputs are already on this screen.
    *
-   * ⚠️ 2 つは別の分母を数えている。`allocated` は *同時に動いている* Workspace の数、
-   * `max_slots` は *存在してよい箱* の数で、停止中の Workspace はどちらのテナント枠にも
-   * 数えられないまま箱を掴んでいる。1 つの数字に混ぜないこと。
+   * The two count different denominators. `allocated` is the number of Workspaces running *at
+   * once*; `max_slots` is the number of boxes allowed to *exist*, and a stopped Workspace holds
+   * a box while counting against no tenant's quota. Never merge them into one figure.
    */
   budget?: PoolBudget;
   slots?: Slot[];
@@ -79,12 +82,12 @@ export type PoolStatus = {
   bake_rejected?: string;
   bake_reason?: string;
   running_image?: string;
-  /** 宣言されたアーキ毎の golden（docs/log/70 §70.6）。上の 6 つはこの配列の先頭
-   *  （既定クラスのアーキ）と同じ値で、クラスが 1 つのデプロイでは配列も 1 要素。 */
+  /** The golden per declared architecture (docs/log/70 §70.6). The six fields above mirror the
+   *  first element (the default class's arch); a single-class deployment has one element. */
   goldens?: Golden[];
   slot_classes?: { id: string; label: string; arch: string }[];
-  /** 自動焼きが有効か（AF_ECS_EC2_GOLDEN_AUTOBAKE）。AWS から導出できない唯一の値で、
-   *  これが無いと「まだ焼かれていない」と「この先も焼かれない」が同じ顔になる。 */
+  /** Whether auto-baking is on (AF_ECS_EC2_GOLDEN_AUTOBAKE). The one value that cannot be
+   *  derived from AWS; without it "not baked yet" and "never will be" look identical. */
   auto_bake?: boolean;
 };
 type Golden = {
@@ -95,8 +98,8 @@ type Golden = {
   baking?: boolean;
   rejected?: string;
   reason?: string;
-  /** 焼き込みがどこまで進んだか（docs/log/64 §64.30）。BAKE_STEPS の 6 段と、
-   *  「焼かれていない理由」4 種（idle / blocked / rejected / gave_up / off）。 */
+  /** How far the bake has got (docs/log/64 §64.30): the six BAKE_STEPS stages, plus the
+   *  reasons for not being baked (idle / blocked / rejected / gave_up / off). */
   phase?: string;
   phase_since?: string;
   candidate?: string;
@@ -106,8 +109,8 @@ type Golden = {
   seed?: BakeWorkspace;
   probe?: BakeWorkspace;
 };
-/** 焼き込みが立てる予約 workspace。スロットを 1 つ握るので、画面に出さないと
- *  スロット表に「誰にも紐づかない占有」が並ぶことになる。 */
+/** The reserved workspace a bake stands up. It holds a slot, so unless it is shown the slot
+ *  table lists an occupancy belonging to nobody. */
 type BakeWorkspace = { workspace: string; volume_id?: string; instance_id?: string };
 type Slot = {
   instance_id: string;
@@ -117,7 +120,7 @@ type Slot = {
   registered: boolean;
   workspace: string;
   idle_minutes: number;
-  // 隔離されたスロット（決定 20）。プールからは外れているが、まだ課金されている。
+  // A quarantined slot (decision 20): out of the pool, still being billed.
   quarantined?: boolean;
   quarantine_reason?: string;
 };
@@ -135,8 +138,8 @@ type Home = {
   snapshot_state: string;
 };
 
-// 分を「45分 / 3.2時間 / 12日」に。休眠は分単位から日単位までまたぐので、
-// 単位を固定すると 43200 のような読めない数字が並ぶ。
+// Minutes rendered as 45 minutes / 3.2 hours / 12 days. Dormancy spans minutes to days, so a
+// fixed unit would print unreadable figures like 43200.
 type TR = ReturnType<typeof useT>;
 
 function fmtIdle(min: number, tr: TR): string {
@@ -184,17 +187,18 @@ export function PoolView() {
 
   const slots = st.slots || [];
   const homes = st.homes || [];
-  // 隔離された箱はプールの数に入れない——上限にも空きにも数えると、運用者は
-  // 「空きが 1 あるのに誰も入れない」を見ることになる。表には残す（まだ課金されている）。
+  // Quarantined boxes are excluded from the pool counts: counting them towards the cap or the
+  // free slots shows an operator "one free slot that nobody can enter". They stay in the table,
+  // because they are still being billed.
   const pool = slots.filter((s) => !s.quarantined);
   const quarantined = slots.filter((s) => s.quarantined);
   const running = pool.filter((s) => s.state === "running").length;
   const asleep = pool.filter((s) => s.state === "stopped").length;
   const free = pool.filter((s) => !s.workspace).length;
   const atCap = st.max_slots != null && pool.length >= st.max_slots;
-  // 焼き込みが立てた予約 workspace。スロットと home の表では「人」に見えるので、
-  // それが誰でもなく golden のためのものだと分かるようにする（この 2 つが埋まって
-  // いること自体が、上限に近いプールでは説明の要る事実でもある）。
+  // The reserved workspaces a bake stood up. In the slot and home tables they look like people,
+  // so mark them as belonging to the golden and to nobody — and in a pool near its cap, the fact
+  // that these two are occupied is itself something that needs explaining.
   const bakeWS = new Set(
     (st.goldens || []).flatMap((g) => [g.seed?.workspace, g.probe?.workspace].filter(Boolean) as string[]),
   );
@@ -209,16 +213,18 @@ export function PoolView() {
           <PoolTile label={tr("pool.asleep")} value={`${asleep}`} sub={tr("pool.asleep_sub")} />
           <PoolTile label={tr("pool.free")} value={`${free}`} sub={tr("pool.free_sub")} />
         </div>
-        {/* 上限に達している＝次の人はスロットを取り上げて作る。運用者が最初に知りたいのは
-            「増えないこと」ではなく「立ち退きが起きること」なので、そう書く。 */}
+        {/* At the cap, the next person's slot is taken from someone else. What an operator
+            needs first is that evictions will happen, not that the pool stops growing. */}
         {atCap && <p className="admin-hint warn-text">{tr("pool.at_cap")}</p>}
-        {/* 隔離は「勝手に減った」ではなく「この箱はもう使えないので外した。まだ課金される」
-            と読めないと意味がない。台数と、終了は運用者の手であることを書く。 */}
+        {/* Quarantine has to read as "this box was pulled out because it is unusable, and it
+            is still being billed", not as the pool shrinking on its own. State the count, and
+            that terminating it is the operator's job. */}
         {quarantined.length > 0 && (
           <p className="admin-hint warn-text">{tr("pool.quarantined_hint", { n: String(quarantined.length) })}</p>
         )}
-        {/* 「退避しない」を「…の後に退避します」の穴に入れると "after never" になって
-            読めなくなる。0 は別の文にする（既定はオフなので、これが普通に出る方）。 */}
+        {/* Dropping "never" into the "evacuates after …" slot yields "after never", which is
+            unreadable. 0 gets its own sentence — and since the default is off, that is the
+            common case. */}
         <p className="admin-hint">
           {(st.hibernate_after_sec ?? 0) > 0
             ? tr("pool.timers", {
@@ -226,15 +232,16 @@ export function PoolView() {
                 hibernate: fmtDuration(st.hibernate_after_sec ?? 0, tr),
               })
             : tr("pool.timers_no_hibernate", { sleep: fmtDuration(st.slot_sleep_sec ?? 0, tr) })}{" "}
-          {/* 「終了しない」は事象ではなく常態なので、オフのときこそ書く。停止で止まるのは
-              compute だけで、root ボリュームは箱が消えるまで課金され続ける——そしてそれは
-              画面のどこにも出ない（AutoBake を出しているのと同じ理由）。 */}
+          {/* "Never terminates" is a standing state rather than an event, so it is worth saying
+              precisely when the timer is off: stopping ends the compute charge only, and the
+              root volume keeps billing until the box is gone — which appears nowhere else on
+              the screen (the same reason AutoBake is shown). */}
           {(st.slot_terminate_sec ?? 0) > 0
             ? tr("pool.timers_terminate", { terminate: fmtDuration(st.slot_terminate_sec ?? 0, tr) })
             : tr("pool.timers_no_terminate", { max: String(st.max_slots ?? 0) })}
         </p>
-        {/* テナントに配った同時利用の合計が、この箱の数に収まっているか。サーバが
-            「問題があるとき」にだけ載せてくる。 */}
+        {/* Whether the concurrency handed out to tenants fits into this many boxes. The server
+            only includes it when there is a problem. */}
         {st.budget && <PoolBudgetHint budget={st.budget} />}
         {slots.length === 0 ? (
           <p className="muted">{tr("pool.no_slots")}</p>
@@ -316,8 +323,9 @@ export function PoolView() {
                     )}
                   </td>
                   <td>{h.volume_id && h.idle_minutes > 0 ? fmtIdle(h.idle_minutes, tr) : "–"}</td>
-                  {/* 予備が「無い」と「さっき取った」は正反対の答えなので、同じ空欄に
-                      まとめない。退避済みの home は snapshot そのものなので対象外。 */}
+                  {/* "No backup" and "taken a moment ago" are opposite answers and must not
+                      collapse into the same blank cell. An evacuated home is itself the
+                      snapshot, so it is out of scope here. */}
                   <td>
                     {!h.volume_id ? (
                       "–"
@@ -338,25 +346,25 @@ export function PoolView() {
 
       <section className="admin-panel">
         <h4>{tr("pool.golden_title")}</h4>
-        {/* ★ golden は「バイナリの詰まった home」なので、アーキ毎に別物である
-            （docs/log/70 §70.6）。複数アーキを宣言したデプロイでは 1 本だけ見せると
-            「golden はある」と読めてしまい、まだ焼けていない側のクラスの新規ユーザー
-            だけが毎回空の home から始まる——という、当人以外には見えない失敗になる。 */}
+        {/* A golden is a home full of binaries, so it differs per architecture
+            (docs/log/70 §70.6). On a deployment declaring several, showing only one reads as
+            "the golden exists" while new users on the un-baked class start from an empty home
+            every time — a failure nobody but they can see. */}
         {st.goldens?.length ? (
           <>
             {st.goldens.map((g) => (
               <GoldenBake key={g.arch} g={g} st={st} showArch={st.goldens!.length > 1} />
             ))}
-            {/* 焼いている最中の「で、いま何が配られるのか」は 1 回だけ書く。アーキ毎に
-                繰り返すと、読む値（どの段か）が定型文に埋もれる。 */}
+            {/* "So what is handed out meanwhile" is said once. Repeating it per architecture
+                buries the value worth reading (which stage the bake is at) in boilerplate. */}
             {st.goldens.some((g) => BAKE_STEPS.indexOf(g.phase || "") >= 0 && g.phase !== "published") && (
               <p className="admin-hint">{tr("pool.bake_meanwhile")}</p>
             )}
           </>
         ) : st.bake_rejected ? (
-          // 拒否は「イベント」ではなく「状態」である。焼けた golden が起動できなかった
-          // ときの症状は再起動ループだけで、CP ログの 1 行は流れてしまう（§64.28.3）。
-          // 直るまでこの面に出し続ける。
+          // A rejection is a state, not an event: when a baked golden fails to boot the only
+          // symptom is a restart loop, and the one CP log line scrolls away (§64.28.3). Keep it
+          // on this surface until it is fixed.
           <p className="warn-text">
             {tr("pool.golden_rejected", { snapshot: st.bake_rejected, reason: st.bake_reason || "?" })}
           </p>
@@ -365,8 +373,8 @@ export function PoolView() {
         ) : !st.golden_id ? (
           <p className="muted">{tr("pool.golden_none", { image: st.running_image || "" })}</p>
         ) : st.golden_stale ? (
-          // 忘れると見えないまま新規ユーザーだけが古い CLI で始まる種類の失敗なので、
-          // 「一致しない」ではなく「いま何が起きているか」を書く。
+          // Missed, this leaves new users silently starting on an old CLI, so say what is
+          // happening rather than just "they do not match".
           <p className="warn-text">
             {tr("pool.golden_stale", { snapshot: st.golden_id, baked: st.golden_image || "?", running: st.running_image || "?" })}
           </p>
@@ -382,11 +390,11 @@ export function PoolView() {
   );
 }
 
-// 焼き込みの 6 段（CP の ec2BakePhase* と同じ順序・同じ名前）。ここが「進んでいる」
-// ことを見せる唯一の場所である——焼きは 11 分前後かかり、そのうち前半（種の起動・
-// boot-install・スロット解放）は snapshot がまだ存在しない。以前の画面はその間ずっと
-// 「golden はありません」と言っていて、初回起動が遅い理由を調べに来た運用者は
-// **起きていることの逆**を読まされていた。
+// The six bake stages, in the CP's ec2BakePhase* order and under the same names. This is the
+// only place that shows the bake is progressing: it takes around 11 minutes, and through the
+// first half (seed boot, boot-install, releasing the slot) no snapshot exists yet — so a
+// surface without these stages tells an operator investigating slow first starts that there is
+// no golden, the opposite of what is happening.
 const BAKE_STEPS = ["seed", "boot", "capture", "snapshot", "probe", "published"];
 const STEP_LABEL: Record<string, MsgKey> = {
   seed: "pool.bake_step_seed",
@@ -410,9 +418,9 @@ function GoldenBake({ g, st, showArch }: { g: Golden; st: PoolStatus; showArch: 
   return (
     <div className="golden-arch">
       {showArch && <span className="golden-arch-name mono">{g.arch}</span>}
-      {/* 古い golden が残っていることは、焼き直しの進み具合とは別の事実。焼いている
-          最中でも「いま配られているのは古い方」を先に言う（忘れると、新規ユーザーだけ
-          が古い CLI で始まるという、当人以外に見えない失敗になる）。 */}
+      {/* A stale golden still being in place is a fact separate from how the re-bake is going.
+          Even mid-bake, say first that what is handed out right now is the old one — missed,
+          new users silently start on an old CLI. */}
       {g.stale && (
         <p className="warn-text">
           {tr("pool.golden_stale", { snapshot: g.snapshot_id || "?", baked: g.image || "?", running: running || "?" })}
@@ -436,8 +444,8 @@ function GoldenBake({ g, st, showArch }: { g: Golden; st: PoolStatus; showArch: 
       ) : phase === "off" ? (
         <p className="muted">{tr("pool.bake_off")}</p>
       ) : phase === "blocked" ? (
-        // 実デプロイ（本番配備）で焼きを止めたのはこれ。歯止めは正しく効いていた
-        // のに、効いたことがログの 1 行にしか出ていなかった。
+        // This is what stops a bake on a real deployment. The brake works as intended; the
+        // problem was that it working showed up only as a single log line.
         <p className="warn-text">
           {tr("pool.bake_blocked", { used: String(g.slots_in_use ?? 0), max: String(st.max_slots ?? 0) })}
         </p>
@@ -446,8 +454,8 @@ function GoldenBake({ g, st, showArch }: { g: Golden; st: PoolStatus; showArch: 
           {tr("pool.bake_gave_up", { snapshot: g.rejected || "?", reason: g.reason || "?" })}
         </p>
       ) : g.rejected ? (
-        // 拒否は「イベント」ではなく「状態」である。焼けた golden が起動できなかった
-        // ときの症状は再起動ループだけで、CP ログの 1 行は流れてしまう（§64.28.3）。
+        // A rejection is a state, not an event: when a baked golden fails to boot the only
+        // symptom is a restart loop, and the one CP log line scrolls away (§64.28.3).
         <p className="warn-text">
           {tr("pool.golden_rejected", { snapshot: g.rejected, reason: g.reason || "?" })}{" "}
           {tr("pool.bake_retry_left")}
@@ -496,8 +504,8 @@ function BakeDetail({ g }: { g: Golden }) {
   if (g.phase === "probe") {
     parts.push(<span key="verify">{tr("pool.bake_detail_probe", { snapshot: g.candidate || "?" })}</span>);
   }
-  // 種は「スロットを握っている間」だけ出す。snapshot 以降その箱はもう返っていて、
-  // 残った home はボリューム表の方に（焼き込み用の印つきで）並んでいる。
+  // The seed is shown only while it holds a slot. From the snapshot stage on the box is back,
+  // and the remaining home appears in the volume table, marked as belonging to the bake.
   if (g.seed && at >= 0 && at <= BAKE_STEPS.indexOf("capture")) {
     parts.push(<BakeWS key="seed" label={tr("pool.bake_detail_seed")} ws={g.seed} />);
   }
@@ -515,8 +523,8 @@ function BakeWS({ label, ws }: { label: string; ws: BakeWorkspace }) {
   );
 }
 
-// 焼きの経過は「12 秒 → 4 分 12 秒 → 1 時間 3 分」と桁をまたぐ。分に固定すると、
-// 始まった直後がすべて「0 分」になって、動いているのか固まっているのか読めない。
+// Bake elapsed time spans orders of magnitude (12 seconds, 4m12s, 1h03m). Fixed to minutes,
+// everything just after the start reads "0 minutes", which cannot distinguish moving from stuck.
 function fmtElapsed(since: string, tr: TR): string {
   const started = Date.parse(since);
   if (!Number.isFinite(started)) return "";

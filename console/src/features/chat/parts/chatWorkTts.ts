@@ -1,28 +1,30 @@
 import { useTtsStore } from "../../../core/store/tts.ts";
 import { stopTtsForReplacement, type TtsController, type TtsEndReason } from "../tts.ts";
 
-/** 1 ターン分の「作業過程の小声読み」を回すキュー。ターンごとに 1 つ作って使い捨てる。 */
+/** Queue that drives the quiet reading of one turn's work trace. Create one per turn and
+ * throw it away afterwards. */
 export interface WorkStepTts {
-  /** 確定した作業過程を 1 本積み、鳴らせるなら鳴らし始める。 */
+  /** Enqueue one settled work-trace step and start playing it if playback is free. */
   push(text: string): void;
-  /** 再生中・未再生をまとめて破棄し、購読も解く（最終回答の到着・中断・エラー）。 */
+  /** Discard both playing and pending items and drop the subscription (final answer
+   * arrived, aborted, or errored). */
   close(): void;
 }
 
-// 作業過程は確定順に 1 本ずつ読む。次の step が来ても再生中の step は止めず、
-// 最終回答が来た時点でだけ再生中・未再生をまとめて破棄して通常声へ譲る。
-// 他の読み上げに置換された場合も、それを即座に置換し返さず、グローバル再生が
-// 空いてから続きを再開する。
+// Work-trace steps are read one at a time in the order they settle. A newly arriving step
+// does not stop the one playing; only the final answer discards playing and pending items
+// together and yields to the normal voice. If another reading preempts us, do not preempt it
+// straight back — wait for global playback to free up, then resume.
 export function createWorkStepTts({
   workMode,
   makeTts,
   getPaneTts,
   setPaneTts,
 }: {
-  /** settings.ttsWorkRead — "off" のときキューは何もしない。 */
+  /** settings.ttsWorkRead — when "off" the queue does nothing. */
   workMode: string;
   makeTts: (work?: boolean, onEnd?: (reason: TtsEndReason) => void) => TtsController | null;
-  /** この会話がいまペインの再生枠を握っているなら、そのコントローラ。 */
+  /** The controller, if this conversation currently holds the pane's playback slot. */
   getPaneTts: () => TtsController | null;
   setPaneTts: (ctl: TtsController | null) => void;
 }): WorkStepTts {

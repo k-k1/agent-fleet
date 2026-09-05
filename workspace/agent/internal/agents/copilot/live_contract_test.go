@@ -1,14 +1,15 @@
 package copilot
 
-// 実バイナリ契約テスト（opt-in）: AF_COPILOT_LIVE=1 のときだけ実 `copilot --acp`
-// を子プロセスとして起動し、docs/log/36 の managed 契約が実 CLI で成立することを
-// 検証する — spawn→initialize→session/new→prompt(completed)→（別プロセスで）
-// session/load resume→文脈保持。認証は環境の GitHub 連携（gh 透過認証）前提。
-// 実行例: AF_COPILOT_LIVE=1 AGENT_COPILOT_BIN=<path> go test -run TestLive -v ./internal/agents/copilot/
+// Real-binary contract test (opt-in): only with AF_COPILOT_LIVE=1 does it spawn a real
+// `copilot --acp` child and check that docs/log/36's managed contract holds against the real
+// CLI — spawn → initialize → session/new → prompt(completed) → session/load resume (in a
+// separate process) → context preserved. Authentication assumes the environment's GitHub
+// connection (gh transparent auth).
+// Example: AF_COPILOT_LIVE=1 AGENT_COPILOT_BIN=<path> go test -run TestLive -v ./internal/agents/copilot/
 //
-// 週次リリースの CLI なので、これがドリフト検知の一次防衛線（models.go の静的
-// カタログ妥当性は TUI /model の実測に委ねる — Free プランは Auto のみで
-// --model 検証が成立しないため、ここでは model 未指定で流す）。
+// The CLI ships weekly, so this is the first line of drift detection. Whether models.go's
+// static catalog is still valid is left to the measured TUI /model probe; a Free plan only
+// offers Auto, which makes --model unverifiable, so no model is given here.
 
 import (
 	"os"
@@ -22,21 +23,21 @@ import (
 func liveGate(t *testing.T) {
 	t.Helper()
 	if os.Getenv("AF_COPILOT_LIVE") != "1" {
-		t.Skip("AF_COPILOT_LIVE=1 で実 CLI 契約テストを有効化")
+		t.Skip("set AF_COPILOT_LIVE=1 to enable the real-CLI contract test")
 	}
 }
 
 func TestLiveSpawnPromptResume(t *testing.T) {
 	liveGate(t)
-	// HOME を隔離すると gh の保存済み資格情報も見えなくなる（ambient 認証が
-	// 切れる）— 隔離前に実 HOME でトークンを取り、env で明示注入する。
+	// Isolating HOME also hides gh's saved credential (ambient auth breaks), so the token
+	// is read from the real HOME first and injected explicitly through the environment.
 	tok := Token()
 	if tok == "" {
-		t.Skip("gh auth token が取れない（GitHub 未連携）— live テストをスキップ")
+		t.Skip("no gh auth token (GitHub not connected) — skipping the live test")
 	}
 	home := t.TempDir()
 	work := t.TempDir()
-	t.Setenv("HOME", t.TempDir()) // status / sids ストアの隔離
+	t.Setenv("HOME", t.TempDir()) // isolate the status / sids stores
 	t.Setenv("COPILOT_HOME", home)
 	t.Setenv("COPILOT_GITHUB_TOKEN", tok)
 
@@ -67,7 +68,7 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	if sid == "" || sids.Read("live-slot-1") != sid {
 		t.Fatalf("sid not captured: %q store=%q", sid, sids.Read("live-slot-1"))
 	}
-	// read 正本: events.jsonl が書かれ、応答本文が載っている。
+	// The read side's source of truth: events.jsonl is written and carries the reply text.
 	turns := parseEvents(EventsPath(sid))
 	found := false
 	for _, tn := range turns {
@@ -82,8 +83,8 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 		t.Fatalf("post-turn live state: %q", st)
 	}
 
-	// 別プロセスでの resume（session/load）: 子を落として spawn し直し、文脈が
-	// 残っていることを実プロンプトで確認する。
+	// Resume in a separate process (session/load): kill the child, spawn again, and check
+	// with a real prompt that the context survived.
 	h.mu.Lock()
 	oldCmd := h.cmd
 	h.alive = false
@@ -110,13 +111,14 @@ func TestLiveSpawnPromptResume(t *testing.T) {
 	}
 }
 
-// TestLiveModels: 実 TUI /model スクレイプの契約。Free プランのアカウントでは
-// 空カタログ（Auto のみ）、有償プランでは 1 件以上の id が返る — どちらでも
-// 「プローブが完走して解析できる」ことがこのテストの本体（描画ドリフト検知）。
+// TestLiveModels is the contract of the real TUI /model scrape. A Free-plan account returns
+// an empty catalog (Auto only) and a paid plan returns one or more ids; either way, what the
+// test is really asserting is that the probe runs to completion and parses — i.e. rendering
+// drift detection.
 func TestLiveModels(t *testing.T) {
 	liveGate(t)
 	if Token() == "" {
-		t.Skip("gh auth token が取れない（GitHub 未連携）— live テストをスキップ")
+		t.Skip("no gh auth token (GitHub not connected) — skipping the live test")
 	}
 	list, err := probeModels()
 	if err != nil {

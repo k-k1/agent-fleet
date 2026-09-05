@@ -1,5 +1,6 @@
-// コマンドパレットのセッション欄の並び。「最後に入力待ちになったものが一番上、停止中は
-// 一番下」という約束は、ここが唯一の実装なのでここで固定する。
+// Ordering of the command palette's session list. The promise — most recently waiting for
+// input at the top, stopped at the bottom — is pinned here because this is its only
+// implementation.
 import { describe, expect, it } from "vitest";
 import { sessionTier, sortSessionsByAttention, waitingAtFromNotifications, TIER_ALIVE, TIER_STOPPED, TIER_WAITING } from "./order.ts";
 import type { Session } from "../../types/session.ts";
@@ -12,19 +13,20 @@ const s = (name: string, extra: Partial<Session> = {}): Session => ({
   ...extra,
 });
 
-/** 名前 → 「最後に人待ちになった時刻」。表に無ければ 0（不明）。 */
+/** name → the last time it started waiting for a person; 0 (unknown) when absent. */
 const ledger = (map: Record<string, number>) => (name: string) => map[name] || 0;
 const names = (list: Session[]) => list.map((x) => x.name);
 
 describe("sessionTier", () => {
-  it("treats only a live question/plan/permission as 入力待ち", () => {
+  it("treats only a live question/plan/permission as waiting for input", () => {
     expect(sessionTier(s("a", { state: "question" }))).toBe(TIER_WAITING);
     expect(sessionTier(s("b", { state: "plan" }))).toBe(TIER_WAITING);
     expect(sessionTier(s("c", { state: "permission" }))).toBe(TIER_WAITING);
     expect(sessionTier(s("d", { state: "working" }))).toBe(TIER_ALIVE);
-    // 上限リセット待ちは「時計待ち」— 人は何も答えられないので最上段には上げない。
+    // Waiting for a usage-limit reset is waiting on a clock: there is nothing for a person
+    // to answer, so it does not reach the top stage.
     expect(sessionTier(s("e", { state: "limited" }))).toBe(TIER_ALIVE);
-    // 畳まれたときに質問を抱えていた行も、段としては停止中（「下部でよい」）。
+    // A row folded while holding a question is still in the stopped stage.
     expect(sessionTier(s("f", { alive: false, carried: "question" }))).toBe(TIER_STOPPED);
   });
 });
@@ -42,7 +44,7 @@ describe("sortSessionsByAttention", () => {
   });
 
   it("orders the live non-waiting ones by when they last waited, newest first", () => {
-    // 直前に答えたセッション（just）が、ずっと黙って進んでいるものより上。
+    // The session just answered (just) sits above one that has been running silently.
     const list = [s("never", { state: "working" }), s("old", { state: "idle" }), s("just", { state: "working" })];
     const at = ledger({ just: 5_000, old: 100 });
     expect(names(sortSessionsByAttention(list, at))).toEqual(["just", "old", "never"]);
@@ -78,7 +80,7 @@ describe("waitingAtFromNotifications", () => {
     createdAt,
   });
 
-  it("takes the newest 人待ち notification per session", () => {
+  it("takes the newest waiting-for-a-person notification per session", () => {
     const at = waitingAtFromNotifications([
       n("question", "s1", "2026-09-01T10:00:00Z"),
       n("permission-request", "s1", "2026-09-01T12:00:00Z"),
@@ -90,8 +92,8 @@ describe("waitingAtFromNotifications", () => {
 
   it("ignores notifications that are not a session waiting for a person", () => {
     const at = waitingAtFromNotifications([
-      n("answer-ready", "s1", "2026-09-01T10:00:00Z"), // 回答が返ってきた＝待っていない
-      n("question", "sched1", "2026-09-01T10:00:00Z", "schedule"), // セッション宛ではない
+      n("answer-ready", "s1", "2026-09-01T10:00:00Z"), // the answer came back = not waiting
+      n("question", "sched1", "2026-09-01T10:00:00Z", "schedule"), // not aimed at a session
       n("question", "s2", "not-a-date"),
     ]);
     expect(at).toEqual({});

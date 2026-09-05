@@ -37,7 +37,8 @@ import (
 // Why the split runs here: everything below hangs off config, which is the Control
 // Plane's own settings struct — Go cannot grow those methods from another package,
 // and config's fields are read across the whole binary, so it does not travel
-// (ADR 0067 決定 1). The handlers call internal/auth directly (alias_auth.go was reclaimed).
+// (ADR 0067 decision 1). The handlers call internal/auth directly (alias_auth.go was
+// reclaimed).
 //
 // Security note: because CP is now the edge (Funnel forwards client headers
 // verbatim), authGate strips any inbound identity header before trusting our own
@@ -81,7 +82,7 @@ func (c *config) setProviders(ps []auth.LoginProvider) {
 // empty id means "the deployment's first button" — that also covers bookmarked
 // /oauth2/login links and state cookies minted before P0.
 //
-// ★ A "t:<slug>:<name>" id is a tenant-defined provider (docs/log/61 §61.11) and is
+// A "t:<slug>:<name>" id is a tenant-defined provider (docs/log/61 §61.11) and is
 // resolved through the runtime registry, which only holds APPROVED (active) rows.
 // That is what makes "a pending provider issues no session" true at the callback,
 // not merely on the login page — hiding a button is presentation, and decision 14
@@ -321,17 +322,17 @@ func (c config) hasDeploymentAllowlist() bool {
 }
 
 // tenantEmailAllowed is the DATABASE-derived term of the entry gate (docs/log/61
-// §61.9.6 + 決定 16): an auto-join domain matches, or this person is on some
+// §61.9.6 + decision 16): an auto-join domain matches, or this person is on some
 // tenant's roster because an administrator invited them.
 //
-// ★ Adding this term is what lets an invite-run deployment stop maintaining
+// Adding this term is what lets an invite-run deployment stop maintaining
 // AF_OAUTH_ALLOWED_* at all — the roster becomes the single ledger of who may
 // enter (§61.9.5). Taking the INTERSECTION instead would mean adding every invited
 // person to the env as well, which is the double bookkeeping this replaces.
 //
-// ★ It is a term of the EMAIL axis only. It is OR'd with the email allowlists and
+// It is a term of the EMAIL axis only. It is OR'd with the email allowlists and
 // never with a different kind of check: the GitHub adapter's org membership stays
-// a separate AND, or holding a membership would be a way around it (決定 2).
+// a separate AND, or holding a membership would be a way around it (decision 2).
 func (c config) tenantEmailAllowed(ctx context.Context, email string) bool {
 	if c.mgr == nil || c.mgr.tenantLogin == nil {
 		return false
@@ -351,7 +352,7 @@ type oauthState struct {
 	// department's page rather than the generic one, and the Console can preselect
 	// that tenant afterwards.
 	//
-	// ★ It is NOT an authorization input (決定 14). Anybody can type any slug; which
+	// It is NOT an authorization input (decision 14). Anybody can type any slug; which
 	// tenants a person may actually use is decided server-side from membership and
 	// the tenant rules, so this value only ever picks a VIEW.
 	Tnt string `json:"t,omitempty"`
@@ -448,7 +449,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	tenant := sanitizeTenantSlug(st.Tnt)
 	// The state cookie is signed, but still resolve its provider id against the
-	// configured set before branching on it (決定 8) — a provider that was
+	// configured set before branching on it (decision 8) — a provider that was
 	// removed from the config must not keep serving callbacks.
 	p := c.providerFor(r.Context(), st.Prov)
 	if p == nil {
@@ -459,7 +460,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "provider", tenant)
 		return
 	}
-	// ★ A link flow branches here, before anything that would mint a session: the
+	// A link flow branches here, before anything that would mint a session: the
 	// person is already signed in and stays signed in as whoever they were
 	// (docs/log/61 §61.16).
 	if st.Link != "" {
@@ -486,7 +487,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 		loginRedirect(w, r, "denied", tenant)
 		return
 	}
-	// ★ Stamped here, from the provider CP resolved by id — not from anything the
+	// Stamped here, from the provider CP resolved by id — not from anything the
 	// exchange returned and not from the row a tenant typed (docs/log/61 §61.15).
 	pr.Realm = auth.ProviderRealm(p)
 	allowed, err := p.Allowed(r.Context(), pr)
@@ -516,7 +517,7 @@ func (c config) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
 // Console preselects the department whose login URL was used (docs/log/61 §61.10.4).
 // It is a HINT: the Console only honours it if that tenant is among the
 // memberships the server returned, and every API call is authorized server-side
-// regardless (決定 14). An existing query string is preserved, and an existing
+// regardless (decision 14). An existing query string is preserved, and an existing
 // tenant parameter wins so a deep link is never rewritten.
 func withTenantHint(next, tenant string) string {
 	if tenant == "" {
@@ -537,22 +538,23 @@ func withTenantHint(next, tenant string) string {
 
 // linkAfterLogin binds the (provider, subject) that just signed in to a person and
 // reports whether that created a NEW identity — i.e. whether this login landed in a
-// different workspace from one the person may already have (docs/log/61 §61.5 の 3 行目).
+// different workspace from one the person may already have (docs/log/61 §61.5, line 3).
 //
 // Binding here rather than leaving it to the first API request is what makes the
 // answer available at all: by the next request the row exists and the login is no
 // longer new. For an env provider it runs only where more than one sign-in button
 // exists — with a single IdP a new identity just means a new colleague, and the
-// notice would be noise on every deployment that predates this feature (受入条件 6).
+// notice would be noise on every deployment that predates this feature (acceptance
+// criterion 6).
 //
-// ★ For a TENANT-DEFINED provider it always runs, whatever the button count, because
+// For a TENANT-DEFINED provider it always runs, whatever the button count, because
 // this is also where that login can be REFUSED: rule 2' returns errIdentityClaimed
 // for an address that belongs to an existing account, and the caller must hear about
 // it before a session cookie is written. Leaving it to the first API request would
 // mean issuing the session and then failing every request with a 403 nobody can act
 // on.
 //
-// ★ roleHint is suppressed for tenant-defined providers (決定 31): SUPER_ADMIN_EMAILS
+// roleHint is suppressed for tenant-defined providers (decision 31): SUPER_ADMIN_EMAILS
 // is matched on the email alone, and a subsidiary's IdP must not be able to hand out
 // the deployment role by asserting the operator's address. The same suppression is
 // applied again in upsertIdentity, which is the choke point for every OTHER path.
@@ -579,7 +581,7 @@ func (c config) linkAfterLogin(ctx context.Context, p auth.Principal) (bool, err
 		log.Printf("oauth: link %s/%s: %v", p.Provider, p.Subject, err)
 		return false, nil
 	}
-	// ★ The single-provider deployment used to skip this function entirely, and the
+	// The single-provider deployment used to skip this function entirely, and the
 	// resolver wrote the row on the first API request instead. It now runs anyway,
 	// because that path has no provider object and therefore no realm — and a row
 	// with no realm cannot take part in rule 1.5 when the tenant later adds its own
@@ -593,8 +595,8 @@ func (c config) linkAfterLogin(ctx context.Context, p auth.Principal) (bool, err
 }
 
 // writeNewAccountPage is the one page between a login that created a new account
-// and the Console — docs/log/61 受入条件 3: never hand someone a second workspace
-// silently. There is deliberately no "merge with my other account" action on it:
+// and the Console — docs/log/61 acceptance criterion 3: never hand someone a second
+// workspace silently. There is deliberately no "merge with my other account" action on it:
 // being able to sign in to two accounts proves control of both, not that they
 // belong to one person, and the merge could not be undone (§61.5). So the honest
 // advice is to come back with the address they normally use.
@@ -682,8 +684,8 @@ func (c config) authGate(next http.Handler) http.Handler {
 	})
 }
 
-// isAuthExempt（セッション無しで到達できるパス）は routes.go の除外レジストリに
-// 移動した — 各 register 関数が自分の除外を宣言する（docs/log/23 P2-W1）。
+// The paths reachable without a session live in routes.go's exemption registry: each
+// register function declares its own exemptions (docs/log/23 P2-W1).
 
 // wantsHTML is true for top-level browser navigations (redirect to /login);
 // everything else (XHR, WS) gets a 401 the SPA handles.
@@ -696,18 +698,18 @@ func wantsHTML(r *http.Request) bool {
 // handleLogin serves both /login and the per-tenant /login/{slug} (docs/log/61
 // §61.9.3). The slug decides which buttons to show and nothing else.
 //
-// ★ An unknown slug renders the GENERIC page rather than a 404. A 404 would tell
+// An unknown slug renders the GENERIC page rather than a 404. A 404 would tell
 // an unauthenticated visitor which department slugs exist, and the login page is
 // the one surface reachable without a session. For the same reason the unknown-slug
 // page must stay byte-identical to the tenant-less one — if only one of them applied
 // the default tenant's rules, comparing the two would say whether a slug exists.
 //
-// ★ P7-1 (docs/log/61 §61.17.6 + 決定 42): the tenant-less page takes the DEFAULT
+// P7-1 (docs/log/61 §61.17.6 + decision 42): the tenant-less page takes the DEFAULT
 // tenant's hidden_providers — and ONLY those. This closes §61.15.13 ("hiding a
 // button has no effect on the bare /login"), which held merely because that page
 // belonged to no tenant.
 //
-// ★★ allowed_providers is deliberately NOT applied here, and that asymmetry is the
+// allowed_providers is deliberately NOT applied here, and that asymmetry is the
 // whole safety of this change. loginButtons has a valve on the hidden filter (all
 // hidden → ignore it) but NONE on the allowed filter: narrowing allowed_providers
 // until nothing matches renders a page with no buttons at all. This is the one entry
@@ -728,11 +730,11 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if !known {
 		// Unknown (or absent) slug: generic page, and no tenant is carried forward
 		// — a typo must not pin the person to a department that does not exist.
-		// ★ Only HiddenProviders survives from the default tenant; AllowedProviders
+		// Only HiddenProviders survives from the default tenant; AllowedProviders
 		// stays empty (= every enabled provider), see the note above. The slug stays
 		// empty too, so nothing here reaches the state cookie: the buttons carry no
 		// tenant, and the default tenant's own t:default:* rows are not appended
-		// (決定 32-4 keeps that list off the generic page).
+		// (decision 32-4 keeps that list off the generic page).
 		slug, rules = "", store.TenantLoginRules{}
 		if d, ok := c.mgr.tenantLogin.rulesForSlug(r.Context(), auth.DefaultTenantSlug); ok {
 			rules.HiddenProviders = d.HiddenProviders
@@ -763,13 +765,13 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 // loginButtons renders one sign-in button per enabled provider (docs/log/61 §61.6),
 // narrowed to a tenant's allowed_providers when one was named.
 //
-// ★ The narrowing is cosmetic. The same rule is enforced again at tenant
+// The narrowing is cosmetic. The same rule is enforced again at tenant
 // resolution (resolver.go), because a person can always go to the generic /login
-// and press whichever button they like (決定 14).
+// and press whichever button they like (decision 14).
 //
-// ★ A tenant's OWN providers (docs/log/61 §61.11) are appended only when a slug was
+// A tenant's OWN providers (docs/log/61 §61.11) are appended only when a slug was
 // named — /login/<slug>. On the generic page the full list would be a directory of
-// the group's subsidiaries, readable by anyone who can reach the login (決定 32-4).
+// the group's subsidiaries, readable by anyone who can reach the login (decision 32-4).
 // They come last: the department's own button belongs next to the deployment-wide
 // ones, and an operator who wants only that button says so in allowed_providers.
 func (c config) loginButtons(ctx context.Context, next, lang, tenant string, allowed, hidden []string) string {
@@ -781,7 +783,7 @@ func (c config) loginButtons(ctx context.Context, next, lang, tenant string, all
 	if len(providers) == 0 {
 		return `<div class="err">` + auth.LoginText[lang].ErrUnconfigured + `</div>`
 	}
-	// ★ hidden_providers removes a button WITHOUT removing the method (docs/log/61
+	// hidden_providers removes a button WITHOUT removing the method (docs/log/61
 	// §61.15.9): a subsidiary that runs on its own GitHub still has to accept the
 	// parent company's method for the colleague on loan, and that person signs in on
 	// the generic /login. Applied only when something would remain — a page with no

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { autoGrowTextarea } from "./autoGrow.ts";
 
-// jsdom にレイアウトは無いので「転写がずれない」ことは書けない（それは
-// scripts/mirror-scroll の typing シナリオ＝実 Chromium の担当）。ここで固定するのは、その
-// 対策が成り立つための唯一の条件 — 計測のために入力欄を縮めている“その瞬間”に、親の行が
-// min-height で止まっていること。ここを外すと縮みが兄弟の転写へ漏れる。
+// jsdom has no layout, so "the transcript does not drift" cannot be asserted here (that belongs
+// to the scripts/mirror-scroll typing scenario, on a real Chromium). What is pinned here is the
+// one condition the fix rests on: at the instant the input is shrunk for measurement, the parent
+// row is held by min-height. Lose that and the shrink leaks into the sibling transcript.
 function composer(): { row: HTMLDivElement; input: HTMLTextAreaElement } {
   const row = document.createElement("div");
   const input = document.createElement("textarea");
@@ -14,11 +14,11 @@ function composer(): { row: HTMLDivElement; input: HTMLTextAreaElement } {
 }
 
 describe("autoGrowTextarea", () => {
-  it("計測のあいだ親の行を min-height で止め、終わったら元に戻す", () => {
+  it("holds the parent row with min-height while measuring and restores it afterwards", () => {
     const { row, input } = composer();
     row.getBoundingClientRect = () => ({ height: 212 }) as DOMRect;
     const seen: string[] = [];
-    // scrollHeight を読む＝計測の瞬間。そのときの親の min-height を記録する。
+    // Reading scrollHeight is the moment of measurement; record the parent's min-height then.
     Object.defineProperty(input, "scrollHeight", {
       get() {
         seen.push(row.style.minHeight);
@@ -28,12 +28,12 @@ describe("autoGrowTextarea", () => {
 
     autoGrowTextarea(input);
 
-    expect(seen).toEqual(["212px"]); // 縮めた状態が外へ漏れない
+    expect(seen).toEqual(["212px"]); // the shrunken state does not leak out
     expect(input.style.height).toBe("260px");
-    expect(row.style.minHeight).toBe(""); // 後片付け（次のレイアウトを縛らない）
+    expect(row.style.minHeight).toBe(""); // cleaned up, so the next layout is not constrained
   });
 
-  it("親が持っていた min-height は元の値に戻す", () => {
+  it("restores a min-height the parent already had", () => {
     const { row, input } = composer();
     row.style.minHeight = "54px";
     row.getBoundingClientRect = () => ({ height: 54 }) as DOMRect;
@@ -44,7 +44,7 @@ describe("autoGrowTextarea", () => {
     expect(row.style.minHeight).toBe("54px");
   });
 
-  it("要素が無ければ何もしない（マウント前・アンマウント後）", () => {
+  it("does nothing without an element (before mount / after unmount)", () => {
     expect(() => autoGrowTextarea(null)).not.toThrow();
   });
 });

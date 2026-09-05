@@ -10,12 +10,12 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// アカウント表示情報（email/plan）の永続化。agy の token ファイルは identity を
-// 持たない（access/refresh token と auth_method のみ）ので、認証完了時にメイン
-// 画面ヘッダの「email (plan)」行をスクレイプして保存し、GET /connections の
-// Status() が読む。表示専用・best-effort — 無くても AgyCard は劣化表示で受ける
-// （Track C 連絡事項）。秘匿情報ではないが、置き場所は denylist 配下の
-// ~/.config/agent-fleet に既存ストアと揃える。
+// Persistence of the account display info (email/plan). agy's token file carries no
+// identity (only access/refresh token and auth_method), so on successful auth the
+// "email (plan)" line of the main-screen header is scraped and saved, and GET
+// /connections' Status() reads it back. Display-only and best-effort — without it
+// AgyCard simply degrades. Not secret, but it is kept alongside the existing stores
+// under ~/.config/agent-fleet, which the denylist covers.
 
 type accountInfo struct {
 	Email string `json:"email"`
@@ -27,7 +27,7 @@ func accountPath() string {
 }
 
 // captureAccount scrapes the main-screen identity line ("email (plan)" —
-// usage.go の planRe と同じ行) from the flow output and persists it. The plan
+// the same line usage.go's planRe matches) from the flow output and persists it. The plan
 // suffix can render a few seconds after the main screen, so poll briefly.
 func captureAccount(f *agents.Flow, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)

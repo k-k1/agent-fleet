@@ -1,13 +1,13 @@
-// Render tests for the 変更 list's row menu (right-click / ⋯): the three entries
-// — 差分 / 表示 / 編集 — and what each one opens.
+// Render tests for the changes list's row menu (right-click / ⋯): the three entries
+// — Diff / View / Edit — and what each one opens.
 //
 // The row click already opened the diff before the menu existed; these cover the
 // wiring that is easy to break: the ⋯ button must NOT also trigger the row's
-// diff, 表示 / 編集 open the file itself (the home-relative path, not the
+// diff, View / Edit open the file itself (the home-relative path, not the
 // repo-relative one the diff takes), and a deleted file offers the diff only.
 // Plus the one exception to diff-on-click — an untracked file, which has no
 // working diff to show and so opens the file view instead. The last block covers
-// the auto-refresh at the end of a session's turn (差し替えるだけ・失敗しても残す).
+// the auto-refresh at the end of a session's turn (replace only; keep the list on failure).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -21,7 +21,8 @@ interface Change {
 }
 
 let served: Change[] = [];
-// 自動更新の検証用: 次の api 応答を過渡的失敗にする／応答を手で止める。
+// For the auto-refresh checks: make the next api response a transient failure, or hold the
+// response back by hand.
 let failing = false;
 let gate: { wait: Promise<void>; open: () => void } | null = null;
 
@@ -104,7 +105,7 @@ describe("changed-file row menu", () => {
     expect(menuItems()).toHaveLength(0);
   });
 
-  it("right-click lists 差分 / 表示 / 編集 without opening the diff", async () => {
+  it("right-click lists Diff / View / Edit without opening the diff", async () => {
     await render();
     await fire(rows()[0], "contextmenu");
     expect(menuItems().map((b) => b.textContent?.trim())).toEqual(["Diff", "View", "Edit"]);
@@ -118,7 +119,7 @@ describe("changed-file row menu", () => {
     expect(openFileDiff).not.toHaveBeenCalled();
   });
 
-  it("表示 / 編集 open the file itself, by its home-relative path", async () => {
+  it("View / Edit open the file itself, by its home-relative path", async () => {
     await render();
     await fire(rows()[0], "contextmenu");
     await fire(menuItems()[1], "click");
@@ -162,7 +163,7 @@ describe("changed-file row menu", () => {
     expect(openFileDiff).toHaveBeenCalledWith("demo", "src/a.ts", false);
   });
 
-  // The 差分 entry stays reachable from the menu for an untracked file — the row
+  // The Diff entry stays reachable from the menu for an untracked file — the row
   // click changed, the menu did not.
   it("still opens the diff of an untracked file from the menu", async () => {
     served = [{ path: "repos/demo/new.ts", repo: "demo", untracked: true }];
@@ -180,7 +181,7 @@ describe("changed-file row menu", () => {
   });
 });
 
-// The band over each group names the working copy as プロジェクト + ブランチ, not
+// The band over each group names the working copy as project + branch, not
 // as the "<base>@<slug>" folder the API groups by — a wip slug tells a reader
 // nothing about which line of work the changes belong to.
 describe("working-copy group bands", () => {
@@ -237,11 +238,12 @@ describe("working-copy group bands", () => {
   });
 });
 
-// セッションが入力待ちに入ったときの自動更新（features/files/sessionRefresh.ts の合図）。
-// この一覧は「エージェントが何を触ったか」を見る面なので、ターンの終わりに追いつくのが
-// 本来の姿。ただし読み直しのたびに「読み込み中」へ戻ると、勝手に点滅しているようにしか
-// 見えない — 差し替えるだけであることを固定する。
-describe("ターン終了時の自動更新", () => {
+// Auto-refresh when a session goes back to waiting for input (the signal from
+// features/files/sessionRefresh.ts). This list is where one sees what the agent touched, so
+// catching up at the end of a turn is its whole point. But dropping back to "loading" on every
+// reload just looks like the screen flickering on its own, so this pins that the list is only
+// replaced.
+describe("auto-refresh at the end of a turn", () => {
   const turnEnded = async () => {
     await act(async () => {
       useFilesStore.getState().refreshUnder("repos/demo");
@@ -251,11 +253,11 @@ describe("ターン終了時の自動更新", () => {
     });
   };
 
-  it("一覧を消さずに差し替える（読み込み中に戻さない）", async () => {
+  it("replaces the list without clearing it (never falls back to loading)", async () => {
     await render();
     expect(rows()).toHaveLength(1);
 
-    // 応答を止めたまま合図を出す: 読み直しの最中も古い一覧が出ていること。
+    // Signal while the response is held back: the old list must stay visible during the reload.
     let open!: () => void;
     gate = { wait: new Promise<void>((r) => (open = r)), open: () => open() };
     served = [
@@ -263,7 +265,7 @@ describe("ターン終了時の自動更新", () => {
       { path: "repos/demo/src/new.ts", repo: "demo", untracked: true },
     ];
     await turnEnded();
-    expect(rows()).toHaveLength(1); // 「読み込み中」に落ちていない
+    expect(rows()).toHaveLength(1); // has not dropped to "loading"
     expect(host.querySelector(".ui-empty")).toBeNull();
 
     gate.open();
@@ -271,10 +273,10 @@ describe("ターン終了時の自動更新", () => {
     await act(async () => {
       await Promise.resolve();
     });
-    expect(rows()).toHaveLength(2); // 差し替わった
+    expect(rows()).toHaveLength(2); // replaced
   });
 
-  it("読み直しが 502 で失敗しても、今の一覧を残す", async () => {
+  it("keeps the current list when the reload fails with a 502", async () => {
     await render();
     expect(rows()).toHaveLength(1);
     failing = true;

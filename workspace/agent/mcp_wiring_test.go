@@ -1,27 +1,26 @@
 package main
 
-// mcp_wiring.go の配線が**生きているか**を通しで見る 1 本。
+// One end-to-end check that mcp_wiring.go's wiring is actually live.
 //
-// 🔥 `mcpx.Configure` が捕まえるのは**未配線**（nil / 零値）だけで、**間違った配線**は
-// 捕まえられない。実際に踏める形が 3 つある:
+// `mcpx.Configure` only catches wiring that is MISSING (nil / zero value); it cannot catch
+// wiring that is WRONG. Three forms of that are reachable in practice:
 //
-//   - `ApprovalGate` を「常に承認」にする  → **オペレーター承認が丸ごと消える**
-//   - `WriteEnabled` を `return false` 固定 → 書き込み道具が出ない（黙って機能が消える）
-//   - `ConvID` を `return ""` 固定        → 完了報告の宛先が失われる
+//   - `ApprovalGate` turned into "always approve" → operator approval disappears entirely
+//   - `WriteEnabled` pinned to `return false`     → the write tools never appear
+//   - `ConvID` pinned to `return ""`              → completion reports lose their destination
 //
-// どれも配線 1 行の書き換えで、しかもその行は「写しの罠を避けるため閉包にした」という
-// **正しい理由で書かれている**ぶん、将来の整理で触られやすい。移送でカバレッジが落ちた
-// わけではない（移送前も同種のテストは無い）が、**壊せる面が増えた**のは確かなので、
-// ここで 1 本止める。
+// Each is a one-line change to the wiring, and that line is written for the good reason of
+// "a closure, to avoid the copy trap", which makes it an easy target for a future cleanup.
 //
-// 検査の形は 2 つ:
+// Two shapes of check:
 //
-//   - ただの関数は**関数ポインタの同一性**（別の関数や閉包にすり替わっていれば落ちる）
-//   - 閉包で受けている 4 組（写しにできない値）は**往復**（main 側の変数 → mcpx の getter、
-//     mcpx の setter → main 側の変数）
+//   - plain functions are compared by function-pointer identity (a different function or a
+//     closure fails)
+//   - the four pairs held in closures (values that cannot be copied) are checked round-trip
+//     (main's variable → mcpx's getter, mcpx's setter → main's variable)
 //
-// そして **Deps のフィールド集合と検査の集合を突き合わせる**ので、フィールドが増えたのに
-// 検査を足さなければここが落ちる。
+// The set of checks is then reconciled against Deps' set of fields, so adding a field
+// without adding a check fails here.
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
@@ -39,10 +38,10 @@ func TestMCPWiringIsLive(t *testing.T) {
 	w := mcpx.Wired()
 
 	checks := map[string]func(t *testing.T){
-		// --- 値で渡しているもの（本物の定数と同じであること） ---
+		// --- passed by value (must equal the real constant) ---
 		"SessionTitleMaxRunes": func(t *testing.T) {
 			if w.SessionTitleMaxRunes != sessionx.SessionTitleMaxRunes {
-				t.Fatalf("件名の上限 = %d, want %d", w.SessionTitleMaxRunes, sessionx.SessionTitleMaxRunes)
+				t.Fatalf("session title limit = %d, want %d", w.SessionTitleMaxRunes, sessionx.SessionTitleMaxRunes)
 			}
 		},
 		"ReportKindSelfReport": func(t *testing.T) {
@@ -52,11 +51,11 @@ func TestMCPWiringIsLive(t *testing.T) {
 		},
 		"PeerIntentNames": func(t *testing.T) {
 			if !reflect.DeepEqual(w.PeerIntentNames, sessionx.PeerIntentNames) {
-				t.Fatalf("intent の一覧 = %v, want %v", w.PeerIntentNames, sessionx.PeerIntentNames)
+				t.Fatalf("intent list = %v, want %v", w.PeerIntentNames, sessionx.PeerIntentNames)
 			}
 		},
 
-		// --- 関数（本物と同一であること） ---
+		// --- functions (must be the real one) ---
 		"CleanTitle":                 func(t *testing.T) { sameFunc(t, w.CleanTitle, sessionx.CleanTitle) },
 		"PeerReachableSessions":      func(t *testing.T) { sameFunc(t, w.PeerReachableSessions, sessionx.PeerReachableSessions) },
 		"ApprovalGate":               func(t *testing.T) { sameFunc(t, w.ApprovalGate, sessionx.BridgeApprovalGate) },
@@ -72,7 +71,7 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"InstallGrafanaMCP":          func(t *testing.T) { sameFunc(t, w.InstallGrafanaMCP, installGrafanaMCP) },
 		"WriteSSMConfig":             func(t *testing.T) { sameFunc(t, w.WriteSSMConfig, sessionx.WriteSSMConfig) },
 
-		// --- 写しにできない 4 組（往復で見る） ---
+		// --- the four pairs that cannot be copied (checked round-trip) ---
 		"WriteEnabled":      func(t *testing.T) { roundTripBool(t, &mcpWriteEnabled, w.WriteEnabled, w.SetWriteEnabled) },
 		"SetWriteEnabled":   func(t *testing.T) { roundTripBool(t, &mcpWriteEnabled, w.WriteEnabled, w.SetWriteEnabled) },
 		"SelfReportOnly":    func(t *testing.T) { roundTripBool(t, &mcpSelfReportOnly, w.SelfReportOnly, w.SetSelfReportOnly) },
@@ -87,20 +86,20 @@ func TestMCPWiringIsLive(t *testing.T) {
 		"SetConvID": func(t *testing.T) { roundTripConvID(t) },
 	}
 
-	// 検査の集合と Deps のフィールド集合を突き合わせる。**フィールドが増えたら必ずここが
-	// 落ちる**ので、「配線は足したが検査は足さなかった」が起きない。
+	// Reconcile the set of checks with Deps' set of fields. A new field always fails here,
+	// so "wiring added but no check added" cannot happen.
 	typ := reflect.TypeOf(w)
 	seen := map[string]bool{}
 	for i := 0; i < typ.NumField(); i++ {
 		name := typ.Field(i).Name
 		seen[name] = true
 		if _, ok := checks[name]; !ok {
-			t.Errorf("Deps.%s の配線を検査していない（フィールドを足したら検査も足すこと）", name)
+			t.Errorf("Deps.%s wiring is not checked (add a check whenever you add a field)", name)
 		}
 	}
 	for name := range checks {
 		if !seen[name] {
-			t.Errorf("Deps に %s は無い（検査だけが古い）", name)
+			t.Errorf("Deps has no %s (the check alone is stale)", name)
 		}
 	}
 	for name, run := range checks {
@@ -108,13 +107,13 @@ func TestMCPWiringIsLive(t *testing.T) {
 	}
 }
 
-// sameFunc は「その関数そのものが配線されている」ことを見る。閉包や別の関数に
-// すり替わっていれば、コードポインタが違うので落ちる。
+// sameFunc checks that the function itself is what got wired. A closure or a different
+// function has a different code pointer and fails.
 func sameFunc(t *testing.T, got, want any) {
 	t.Helper()
 	g, w := reflect.ValueOf(got).Pointer(), reflect.ValueOf(want).Pointer()
 	if g != w {
-		t.Fatalf("配線先が違う: got %s, want %s", funcName(g), funcName(w))
+		t.Fatalf("wired to the wrong function: got %s, want %s", funcName(g), funcName(w))
 	}
 }
 
@@ -125,8 +124,9 @@ func funcName(pc uintptr) string {
 	return "?"
 }
 
-// roundTripBool は main 側の変数と mcpx の読み書きが**同じ実体**を指していることを見る。
-// 片道（getter だけ / setter だけ）では「固定値を返す配線」を捕まえられない。
+// roundTripBool checks that main's variable and mcpx's read/write refer to the same object.
+// One direction alone (only the getter, or only the setter) cannot catch wiring that returns
+// a fixed value.
 func roundTripBool(t *testing.T, home *bool, get func() bool, set func(bool)) {
 	t.Helper()
 	old := *home
@@ -134,15 +134,15 @@ func roundTripBool(t *testing.T, home *bool, get func() bool, set func(bool)) {
 
 	*home = true
 	if !get() {
-		t.Fatal("main 側で立てた値が mcpx から見えない（getter が固定値を返している）")
+		t.Fatal("a value set on main's side is not visible from mcpx (the getter returns a fixed value)")
 	}
 	*home = false
 	if get() {
-		t.Fatal("main 側で倒した値が mcpx から見えない（getter が固定値を返している）")
+		t.Fatal("a value cleared on main's side is not visible from mcpx (the getter returns a fixed value)")
 	}
 	set(true)
 	if !*home {
-		t.Fatal("mcpx の setter が main 側の変数を書いていない（写しになっている）")
+		t.Fatal("mcpx's setter does not write main's variable (it got a copy)")
 	}
 }
 
@@ -154,10 +154,10 @@ func roundTripConvID(t *testing.T) {
 
 	mcpConvID = "conv-wiring-probe"
 	if got := w.ConvID(); got != "conv-wiring-probe" {
-		t.Fatalf("mcpx から見た会話 id = %q（main 側の代入が届いていない）", got)
+		t.Fatalf("conversation id as seen from mcpx = %q (main's assignment did not reach it)", got)
 	}
 	w.SetConvID("conv-from-mcpx")
 	if mcpConvID != "conv-from-mcpx" {
-		t.Fatalf("main 側の会話 id = %q（mcpx の setter が届いていない）", mcpConvID)
+		t.Fatalf("conversation id on main's side = %q (mcpx's setter did not reach it)", mcpConvID)
 	}
 }

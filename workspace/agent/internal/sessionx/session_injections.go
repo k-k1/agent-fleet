@@ -28,24 +28,24 @@ const (
 	TurnSourceDiscord  = "discord"  // chat bridge — Discord thread reply (docs/log/37 P2a)
 	TurnSourceSlack    = "slack"    // chat bridge — Slack (P2 follow-up)
 	TurnSourceSchedule = "schedule" // scheduled execution fired it (docs/log/38 — CP scheduler create/reuse send)
-	// TurnSourceScheduleManual is a schedule fired by run-now（手動発火）— same pipeline as
-	// "schedule" but user-initiated, so the mirror can badge 定期/手動 distinctly (docs/log/38).
+	// TurnSourceScheduleManual is a schedule fired by run-now — same pipeline as "schedule"
+	// but user-initiated, so the mirror can badge scheduled vs manual distinctly (docs/log/38).
 	TurnSourceScheduleManual = "schedule-manual"
 	// TurnSourceAutoResume is the Agent's own nudge after a retryable cut-off (docs/log/47
-	// §4-6). バッジを分けるのは、これが「誰かの指示」ではなく**中断からの自己修復**
-	// だから — 利用者がミラーを見たとき、自分もオペレーターも送っていない「続けて」が
-	// 誰の仕業か分からないのが一番困る。
+	// §4-6). It gets its own badge because it is not anyone's instruction but self-repair after
+	// an interruption: a "continue" that neither the user nor the operator sent is the worst
+	// thing to find unattributed in the mirror.
 	TurnSourceAutoResume = "auto-resume"
-	// turnSourcePeer is another SESSION's message (docs/log/58 / ADR 0041). バッジを分ける
-	// 理由は auto-resume と同じで、しかもこちらの方が切実 — 利用者もオペレーターも
-	// 送っていない指示がミラーに現れたとき、それが「隣の worktree のセッションから来た」
-	// と分からないと、誰の仕業か辿る手段が無い。**このバッジが peer 着信の唯一の可視化**
-	// なので、付け忘れると人間から見えない経路になる。
+	// turnSourcePeer is another SESSION's message (docs/log/58 / ADR 0041). It needs its own
+	// badge for the same reason as auto-resume, only more urgently: when an instruction that
+	// neither the user nor the operator sent appears in the mirror, without this badge there is
+	// no way to tell it came from a session in a neighbouring worktree. This badge is the only
+	// visualization of a peer arrival, so omitting it makes the path invisible to humans.
 	//
-	// 綴りが internal/transcript にあるのは、**claude 自前の cross-session チャネル**の
-	// 着信（AF を通らないので、この投入ストアには何も残らない）を転写パーサが直接この値で
-	// 立てるため（docs/log/58 §58.16）。両側で別々に "peer" と書くと、経路によってバッジが
-	// 出たり出なかったりする。
+	// The spelling lives in internal/transcript because the transcript parser sets this value
+	// directly for arrivals over claude's own cross-session channel (those bypass AF, so this
+	// injection store holds nothing for them; docs/log/58 §58.16). Writing "peer" separately on
+	// each side would make the badge appear on some paths and not others.
 	turnSourcePeer = transcript.SourcePeer
 )
 
@@ -65,13 +65,14 @@ func injectionSource(s string) string {
 // scheduleInjectionSource returns the schedule origin a caller declared, or "" when the
 // source is not a schedule at all.
 //
-// なぜ injectionSource() と別に要るか: あれは未知/空を operator へ倒すので、由来の記録を
-// report_to から切り離す判定には使えない（素の Console 入力まで operator バッジになる）。
-// そして切り離しは必要だった — 由来の記録が report_to != "" の中にあった間、**完了報告
-// OFF のスケジュール投入はバッジが丸ごと落ちていた**。report_to は report=true のときしか
-// 付かず（CP scheduleReportTo）、Console の完了報告チェックは既定 OFF、利用上限の自動再開に
-// 至っては常に report=false。source は最初から届いていたのに、報告の有無という無関係な条件で
-// 捨てていたことになる。
+// Why this is needed next to injectionSource(): that one falls back to operator for an
+// unknown/empty value, so it cannot decide anything that must be independent of report_to
+// (plain Console input would get an operator badge too). Separating them was necessary: while
+// the origin was recorded only inside report_to != "", schedule injections with completion
+// reporting OFF lost their badge entirely. report_to is set only when report=true (CP
+// scheduleReportTo), the Console's completion-report checkbox defaults to OFF, and auto-resume
+// after a usage limit always sends report=false. The source had been arriving all along and
+// was discarded on the unrelated condition of whether a report was wanted.
 func scheduleInjectionSource(s string) string {
 	switch s {
 	case TurnSourceSchedule, TurnSourceScheduleManual:
@@ -81,12 +82,12 @@ func scheduleInjectionSource(s string) string {
 	}
 }
 
-// badgeOriginOf は「この投入をミラーでどのバッジにするか」を1か所で決める。"" は
-// 利用者が自分で打った入力＝バッジ無し。
+// badgeOriginOf decides in one place which badge an injection gets in the mirror. "" means
+// the user typed it themselves, i.e. no badge.
 //
-// 投入経路（TUI / managed）ごとに switch を書き分けていたのを1つにまとめてあるのは、
-// **記録を配達より前へ動かす**ため（下の警告を参照）。片方の経路だけ動かすと、同じ
-// バッジが kind によって出たり出なかったりする。
+// The per-path (TUI / managed) switches are merged here so the recording can be moved ahead of
+// delivery (see the warning below). Moving only one path would make the same badge appear for
+// some kinds and not others.
 func badgeOriginOf(peerFrom, reportTo, source string) string {
 	switch {
 	case peerFrom != "":
@@ -94,7 +95,7 @@ func badgeOriginOf(peerFrom, reportTo, source string) string {
 	case reportTo != "":
 		return injectionSource(source)
 	default:
-		// 報告 OFF の定時実行だけがここで拾われる（それ以外は ""＝素の入力）。
+		// Only scheduled runs with reporting OFF land here (anything else is "" = plain input).
 		return scheduleInjectionSource(source)
 	}
 }
@@ -127,12 +128,13 @@ var injectionMu sync.Mutex
 // duplicate; a re-injection from a different source updates the origin) and capped (newest
 // kept).
 //
-// **必ず投入より前に呼ぶこと。** タグ付けは要求のたびにこのファイルを読み直すので、記録が
-// 転写の user 行より後になると、その隙間に来たポーリングは同じターンを**由来なし**で返す。
-// ミラーは既に持っているターンを取り直さない（増分は since 以降しか送らない）ので、一度
-// 素で配ったターンは画面を開き直すまで永久にバッジ無しのままになる。peer 送信は配達確認
-// （＝user 行が転写に現れるまで待つ）を必ず通るので、後ろに置くとこの隙間が構造的に開く
-// — 実測 524ms（2026-08-27 sopx6gc 宛の着信）。
+// Always call this BEFORE the injection itself. Tagging re-reads this file on every request,
+// so if the record lands after the transcript's user line, a poll arriving in that gap returns
+// the same turn with no origin. The mirror never re-fetches a turn it already has (increments
+// carry only what is newer than since), so a turn once delivered plain stays unbadged until
+// the screen is reopened. A peer send always waits for delivery confirmation (i.e. for the
+// user line to appear in the transcript), so recording afterwards opens that gap structurally
+// — measured: 524ms.
 func recordInjection(name, text, source string) {
 	text = strings.TrimSpace(text)
 	if !session.ValidName(name) || text == "" {
@@ -176,10 +178,10 @@ func operatorInjections(name string) []string {
 //
 // Slash-command / skill injections need a second matching form: the injected text is the
 // raw "/scout arg" the sender posted, but claude logs the turn as a
-// `<command-name>/<command-message>` tag block (either tag first — 2.1.215 実測 skills are
-// message-first), so an exact text compare never hits and the badge silently vanished for
-// every injected slash command. commandSlashForm recovers "/name args" from the tag block
-// so those turns tag too.
+// `<command-name>/<command-message>` tag block (either tag first — measured on 2.1.215,
+// skills are message-first), so an exact text compare never hits and the badge silently
+// vanished for every injected slash command. commandSlashForm recovers "/name args" from the
+// tag block so those turns tag too.
 func tagInjectedTurns(name string, turns []transcript.Turn) {
 	if len(turns) == 0 {
 		return

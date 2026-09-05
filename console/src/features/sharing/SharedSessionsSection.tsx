@@ -61,14 +61,16 @@ export const SharedSessionsSection = memo(function SharedSessionsSection() {
       <Section id="shared-sessions" title={tr("share.shared_sessions")} icon="broadcast" count={sessions.length}
         actions={<>
           {proposals.length > 0 && <IconButton icon="mail" label={tr("share.pending", { count: proposals.length })} onClick={() => setOpen(true)} />}
-          {/* ⚠️ 上の mail は「自分が出した RW 提案の承認待ち」で**方向が逆**。同じバッジに
-              合流させると意味が壊れるので、引き継ぎ（docs/log/77）は別のアイコンで並べる。 */}
+          {/* The mail badge above points the other way: it counts RW proposals *this* user
+              made that are awaiting approval. Folding handovers (docs/log/77) into it would
+              destroy that meaning, so they get their own icon. */}
           {handoffs > 0 && (
             <IconButton icon="git-branch" label={tr("handoff.inbox_pending", { count: handoffs })} onClick={() => setInboxOpen(true)} />
           )}
-          {/* 明示リロード。定期ポーリングは CP のスナップショットを読むだけで、所有者
-              Workspace の在庫は最大60秒に1回しか取り直さない(docs/log/59 §3)ので、状態や
-              増減を今すぐ反映したいときの出口をここに置く。 */}
+          {/* Explicit reload. The periodic polling only reads the CP snapshot, and the owner
+              Workspace's inventory is re-fetched at most once every 60s (docs/log/59 §3), so
+              this is the way out when a state change or an added/removed session must show
+              up now. */}
           <IconButton icon={reloading ? "loading" : "refresh"} spin={reloading} label={tr("share.reload")}
             disabled={reloading} onClick={() => void reload()} />
           <IconButton icon="settings-gear" label={tr("share.list_title")} onClick={() => setManageOpen(true)} />

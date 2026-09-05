@@ -1,12 +1,13 @@
-// transcript/markPaint — 印を実際の DOM へ被せる（docs/log/69 / ADR 0050）。
+// transcript/markPaint — paints marks onto the real DOM (docs/log/69 / ADR 0050).
 //
-// 切り貼りの本体は features/viewer/quoteMarks.ts（プランコメントと共通）。ここは
-// 「1ターンぶんをまとめて塗り直すか、何もしないか」の判断だけを持つ。
+// The splicing itself lives in features/viewer/quoteMarks.ts (shared with plan comments). This
+// module only decides whether to repaint a whole turn or do nothing.
 //
-// ⚠️ 判断が要るのは、転写がポーリングのたびに再描画されるから。ターンごとに毎回塗り直すと、
-// 400 ターン × 毎秒の DOM 書き換えになる。逆に「印が変わったときだけ」にすると、
-// MarkdownView が本文を作り直した回（テーマ変更など）に印が消えたまま戻らない。
-// そこで「印の内容」「本文の長さ」「いま実際に載っている印の数」の 3 つで判断する。
+// That decision is needed because the transcript re-renders on every poll. Repainting every turn
+// every time means 400 turns' worth of DOM rewriting per second; repainting only "when the marks
+// changed" loses them for good on the renders where MarkdownView rebuilt the body (a theme
+// change, say). So the decision reads three things: the marks, the body's length, and how many
+// marks are actually mounted right now.
 
 import { applyPaintedMarks } from "../../viewer/quoteMarks.ts";
 import type { TranscriptMark } from "./marks.ts";
@@ -19,8 +20,8 @@ function classOf(m: TranscriptMark, slot: number): string {
 }
 
 /**
- * body 配下の各 [data-mark-root] を塗り直す。返り値は次回の判断に使う指紋で、
- * 呼び出し側は前回と同じなら何もしない。
+ * Repaints every [data-mark-root] under `body`. The return value is the signature used for the
+ * next decision: an unchanged signature means the caller can skip the repaint.
  */
 export function paintTurnMarks(
   body: HTMLElement,
@@ -42,10 +43,10 @@ export function paintTurnMarks(
     }
     work.push({ el, list });
   }
-  // 何も付いていないターンは、いま何も載っていないなら触らない（大多数のターンがこれ）。
+  // A turn with no marks is left alone when nothing is mounted on it (the vast majority).
   const have = body.querySelectorAll(MARK_SELECTOR).length;
   if (want === 0 && have === 0) return "";
-  // 本文が作り直されて印が消えた回は、指紋が同じでも塗り直す。
+  // Repaint even on an unchanged signature when the body was rebuilt and lost its marks.
   if (sig === prevSignature && !(want > 0 && have === 0)) return sig;
   for (const { el, list } of work) {
     applyPaintedMarks(

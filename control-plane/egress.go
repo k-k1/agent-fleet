@@ -58,8 +58,8 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 }
 
-// tokenOK checks the shared AF_EGRESS_TOKEN bearer in constant time (タイミング
-// 攻撃でトークンを推測されないように)。
+// tokenOK checks the shared AF_EGRESS_TOKEN bearer in constant time, so the token cannot
+// be guessed by timing.
 func (a egressAPI) tokenOK(r *http.Request) bool {
 	return a.token != "" &&
 		subtle.ConstantTimeCompare([]byte(bearerToken(r)), []byte(a.token)) == 1
@@ -74,7 +74,7 @@ type egressStore interface {
 	store.SettingsStore
 }
 
-// egressAPI is the egress observation/allowlist handler set（docs/log/23 残③）.
+// egressAPI is the egress observation/allowlist handler set.
 // The /internal/* routes (ingest, policy) are authenticated by the shared
 // AF_EGRESS_TOKEN bearer — NOT a user session — so they register directly;
 // the /api/admin/egress* routes register through withSuperAdmin.
@@ -212,8 +212,8 @@ func (a egressAPI) allowlistAdd(w http.ResponseWriter, r *http.Request, ident st
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
 		return
 	}
-	// メンバー申請経路と同じ正規化・検証を適用する(死にエントリや ".com" 等の
-	// TLD 全開放が管理者経路からも入らないように)。
+	// Same normalisation and validation as the member request path, so dead entries and
+	// whole-TLD openings like ".com" cannot get in through the admin route either.
 	entry, aerr := normalizeEgressEntry(b.Entry)
 	if aerr != nil {
 		writeAPIErr(w, aerr)

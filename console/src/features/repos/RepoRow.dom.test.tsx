@@ -1,7 +1,7 @@
 // Render tests for the working-copy row's identity affordances. A worktree row is
 // labelled by its BRANCH, so the folder it actually lives in is only readable from
-// the tooltip and the「ディレクトリ名をコピー」menu item — both are checked here.
-// The right-click menu also must not re-list every agent kind: 起動 (modal) and the
+// the tooltip and the "copy directory name" menu item — both are checked here.
+// The right-click menu also must not re-list every agent kind: the launch modal and the
 // ▼ quick menu own that, and only shell — which the modal excludes — stays.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
@@ -53,7 +53,8 @@ const itemFor = (label: string) => menuItems().find((b) => b.textContent?.includ
 
 beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
-  // ロケールは settings 由来（既定は環境依存）なので、文言で検証する以上ここで固定する。
+  // The locale comes from settings and its default depends on the environment; these tests
+  // assert on wording, so pin it here.
   setLocale("ja");
   copyText.mockClear();
   toast.mockClear();
@@ -69,15 +70,15 @@ afterEach(() => {
   delete g.IS_REACT_ACT_ENVIRONMENT;
 });
 
-describe("RepoRow の worktree 行", () => {
-  it("ブランチ名を表示しつつ、ツールチップにディレクトリ名を出す", async () => {
+describe("RepoRow worktree row", () => {
+  it("shows the branch name and puts the directory in the tooltip", async () => {
     await render(WT);
     expect(host.querySelector(".repo-name")!.textContent).toContain("temp/x");
     expect(host.querySelector<HTMLElement>(".repo-card")!.title).toContain("ディレクトリ: app@wip-x");
     expect(host.querySelector<HTMLElement>(".repo-name")!.title).toContain("ディレクトリ: app@wip-x");
   });
 
-  it("ディレクトリ名のコピーは repos からの相対パス（＝フォルダ名）", async () => {
+  it("copies the directory as the path relative to repos (that is, the folder name)", async () => {
     await render(WT);
     await openMenu();
     const branchIdx = menuItems().findIndex((b) => b.textContent?.includes("ブランチ名をコピー"));
@@ -89,7 +90,7 @@ describe("RepoRow の worktree 行", () => {
     expect(copyText).toHaveBeenCalledWith("app@wip-x");
   });
 
-  it("右クリックメニューに残る起動項目は shell だけ", async () => {
+  it("leaves shell as the only launch item in the right-click menu", async () => {
     await render(WT);
     await openMenu();
     expect(itemFor("Shell を起動")).toBeTruthy();

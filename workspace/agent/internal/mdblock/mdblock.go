@@ -1,16 +1,18 @@
 // Package mdblock owns the marker-delimited regions agent-fleet writes into
 // markdown files that belong to an agent CLI (docs/log/60 §60.7).
 //
-// なぜ共通化したか: 同じ strip/append の実装が codex/rtk.go と agy/rtk.go に複製され、
-// ユーザー指示（docs/log/60）が 3 つ目の書き手になった。マーカーの綴りと「消え方」が
-// ファイルごとにズレると、片方の版が残り続けたり利用者の記述を巻き込んで消したりする。
+// One implementation because the same strip/append logic had been copied into codex/rtk.go
+// and agy/rtk.go, and user instructions (docs/log/60) became a third writer. When the
+// spelling of the markers, or the way a block is removed, drifts between files, one version
+// lingers forever or the removal takes the user's own text with it.
 //
-// 契約:
-//   - 1 つのブロックは <!-- agent-fleet:<name> --> … <!-- /agent-fleet:<name> --> で囲む。
-//   - Set は「既存ブロックを剥がしてから末尾に積む」。よって同じファイルへ複数の
-//     ブロックを書くときは、呼ぶ順序がそのままファイル内の並び順になる。
-//   - **マーカーの外は決して触らない。** 利用者が同じファイルへ書いた文章は残る
-//     （AF が毎起動 cp -f で全消ししていた挙動の置き換え — docs/log/60 実害①）。
+// The contract:
+//   - A block is bounded by <!-- agent-fleet:<name> --> … <!-- /agent-fleet:<name> -->.
+//   - Set strips the existing block and appends at the end, so when several blocks are
+//     written to one file the call order becomes their order in the file.
+//   - Never touch anything outside the markers. Text the user wrote into the same file
+//     survives; this replaces the behaviour where AF `cp -f`'d the whole file away on every
+//     start (docs/log/60 damage 1).
 package mdblock
 
 import "strings"
@@ -71,13 +73,13 @@ func Get(s, name string) (string, bool) {
 // StripLegacyPrefix removes a leading *unmarked* copy of text agent-fleet used to
 // write before it started marking its regions — the era when the entrypoint `cp -f`'d
 // the whole workspace guide over $CODEX_HOME/AGENTS.md and opencode's AGENTS.md
-// (docs/log/60 実害①). Without this, the first run of the marker-based writer would treat
+// (docs/log/60 damage 1). Without this, the first run of the marker-based writer would treat
 // 30 KB of stale guide as "the user's own text", preserve it, and append a second copy.
 //
-// 判定は legacy の**先頭行**でだけ行う。イメージの版が違えば本文は一致しないので
-// バイト比較では移行できず、逆に先頭行より弱い判定（部分一致など）にすると利用者が
-// 書いた文章を巻き込んで消しかねない。マーカーが1つでも見つかったらそこで止め、
-// AF が管理していたブロックは残す。
+// The match is made on legacy's FIRST LINE only. A byte comparison cannot carry the
+// migration, because the body differs between image versions; anything weaker than the
+// first line (a substring match, say) risks deleting text the user wrote. Stop at the first
+// marker found, so blocks AF manages are kept.
 func StripLegacyPrefix(s, legacy string) string {
 	head := firstNonEmptyLine(legacy)
 	if head == "" || !strings.HasPrefix(strings.TrimLeft(s, " \t\n"), head) {

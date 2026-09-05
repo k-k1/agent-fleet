@@ -14,20 +14,20 @@ const c = (sha: string, parents: string[]): GraphCommit => ({
   inBranch: true,
 });
 
-// laneX(i) = 14/2 + i*14, cy = 24, rowH = 48 (CommitGraph.tsx の定数に追従)
+// laneX(i) = 14/2 + i*14, cy = 24, rowH = 48 (follows the constants in CommitGraph.tsx)
 const laneX = (i: number) => 7 + i * 14;
 
-// 行ごとの HTML に切り出す。区切りは "<li " と末尾スペース必須 — "<li" だけだと
-// 中身の <line> にも当たって行がバラバラに割れる。
+// Cut the markup into per-row HTML. The separator must be "<li " WITH the trailing space:
+// a bare "<li" also matches the inner <line> elements and shreds the rows.
 const renderRows = (commits: GraphCommit[]): string[] =>
   renderToStaticMarkup(<CommitGraph commits={commits} onSelect={() => {}} />)
     .split("<li ")
     .slice(1);
 
 describe("CommitGraph merge edges", () => {
-  // マージの第2親が既に別レーンで待たれている形（親に複数の子がいて、
-  // 子の片方が先に描画済み）。レイアウトはレーンを増やさないが、
-  // レンダラはノード→既存レーンへの合流線を描かなければならない。
+  // The merge's second parent is already awaited in another lane (the parent has several
+  // children and one of them was drawn first). The layout adds no lane, but the renderer
+  // must still draw a join edge from the node into that existing lane.
   it("draws a join edge to a pass-through lane that is also a parent", () => {
     const commits = [
       c("b88cf42", ["03e1d78"]),
@@ -37,13 +37,14 @@ describe("CommitGraph merge edges", () => {
     ];
     const mergeRow = renderRows(commits)[1]; // 0377c44 — node sits in lane1
 
-    // ノード(lane1, 中央)→lane0 下端への合流線
+    // join edge from the node (lane1, centre) down to the foot of lane0
     expect(mergeRow).toContain(`x1="${laneX(1)}" y1="24" x2="${laneX(0)}" y2="48"`);
-    // lane0 の素通り直線も残る（b88cf42→03e1d78 の継続）
+    // lane0's pass-through straight line stays too (b88cf42→03e1d78 continuing)
     expect(mergeRow).toContain(`x1="${laneX(0)}" y1="24" x2="${laneX(0)}" y2="48"`);
   });
 
-  // 親が独自レーンを取る通常のマージ（回帰確認）: ノードから扇形に出る線。
+  // A normal merge whose parent takes a lane of its own (regression guard): edges fan out
+  // from the node.
   it("still fans out to a freshly assigned parent lane", () => {
     const commits = [
       c("m1", ["p1", "p2"]),
@@ -55,42 +56,44 @@ describe("CommitGraph merge edges", () => {
   });
 });
 
-// 分岐点（1つの親に複数の子）。子それぞれが親を待つレーンを持つため、どの子の行でも
-// 「兄弟レーンも同じ親を待っている」状態になる。ここで兄弟レーンへ合流線を引いてしまうと、
-// ノードから自レーンの線と兄弟レーン色の斜線が同時に出て（＝両方の色の2本）、次行で
-// 引き戻される「>」状のノイズになる。線は自レーンを素直に下り、親の行で1度だけ集まる。
+// A branch point (one parent, several children). Every child holds a lane awaiting that
+// parent, so on any child's row the sibling lanes await the same parent. Drawing a join edge
+// into a sibling lane there emits the own-lane line AND a diagonal in the sibling's colour —
+// two lines in two colours — which the next row pulls back into a ">"-shaped artefact. The
+// line must run straight down its own lane and converge once, on the parent's row.
 describe("CommitGraph branch points", () => {
-  // b1 と b2 が同じ親 base を持つ二股。b1@lane0 / b2@lane1。
+  // b1 and b2 fork from the same parent, base. b1@lane0 / b2@lane1.
   const commits = [
     c("b1", ["base"]),
     c("b2", ["base"]),
     c("base", []),
   ];
   it("does not draw a redundant edge into a sibling lane awaiting the same parent", () => {
-    const b2Row = renderRows(commits)[1]; // b2 @lane1; lane0 も base を待っている
-    // 自レーン(lane1)を素直に下る線だけがある
+    const b2Row = renderRows(commits)[1]; // b2 @lane1; lane0 awaits base as well
+    // only the straight line down its own lane (lane1) is present
     expect(b2Row).toContain(`x1="${laneX(1)}" y1="24" x2="${laneX(1)}" y2="48"`);
-    // lane0 へ斜めに合流する線は引かない（これが「両方の色の2本」の正体）
+    // no diagonal joining into lane0 — that was the "two lines in two colours"
     expect(b2Row).not.toContain(`x1="${laneX(1)}" y1="24" x2="${laneX(0)}" y2="48"`);
   });
 
   it("converges the sibling lanes exactly once, at the shared parent's row", () => {
-    const baseRow = renderRows(commits)[2]; // base @lane0: lane0/lane1 の両方が曲がり込む
+    const baseRow = renderRows(commits)[2]; // base @lane0: both lane0 and lane1 bend in
     expect(baseRow).toContain(`x1="${laneX(0)}" y1="0" x2="${laneX(0)}" y2="24"`);
     expect(baseRow).toContain(`x1="${laneX(1)}" y1="0" x2="${laneX(0)}" y2="24"`);
   });
 
   it("emits one edge per parent — never one per lane holding it", () => {
-    // 子が5つある分岐点（実リポジトリの a7d5f90 と同形）。各子の行から出る下向きの線は
-    // 「自レーンを下る1本」だけで、兄弟レーンの数だけ斜線が増えたりしない。
+    // A branch point with five children (the shape of a7d5f90 in the real repository). The
+    // downward edge out of each child's row is the single line down its own lane; it does
+    // not grow one diagonal per sibling lane.
     const many = [
       c("k1", ["root"]), c("k2", ["root"]), c("k3", ["root"]),
       c("k4", ["root"]), c("k5", ["root"]), c("root", []),
     ];
-    const k5 = renderRows(many)[4]; // 最後の子: lane0〜3 も root 待ち
-    // ノード(lane4)を起点に下へ出る線だけを見る。lane0〜3 を素通りする兄弟の直線
-    // (x1===x2) は別物で、これは残って当然。
+    const k5 = renderRows(many)[4]; // the last child: lanes 0-3 await root too
+    // Look only at the edges leaving the node (lane4) downward. The siblings' straight
+    // pass-through lines in lanes 0-3 (x1===x2) are a different thing and belong there.
     const fromNode = [...k5.matchAll(new RegExp(`x1="${laneX(4)}" y1="24" x2="(\\d+)" y2="48"`, "g"))];
-    expect(fromNode.map((m) => m[1])).toEqual([String(laneX(4))]); // 自レーンへの1本のみ
+    expect(fromNode.map((m) => m[1])).toEqual([String(laneX(4))]); // exactly one, its own lane
   });
 });

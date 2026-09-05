@@ -1,34 +1,37 @@
 package codex
 
-// Codex の managed driver（docs/log/27 P3）— Driver 型（agents.Driver/ThreadHandle）の
-// 第 2 実装（初出は P2 の opencode）。共有 app-server の WS JSON-RPC に turn 状態
-// 機械（§4）・Interaction（§5）・reconciliation（§6）をマッピングする。
+// The managed codex driver (docs/log/27 P3): the second implementation of the Driver
+// types (agents.Driver/ThreadHandle). It maps the turn state machine (§4), Interaction
+// (§5) and reconciliation (§6) onto the shared app-server's WS JSON-RPC.
 //
-// 実測（0.144.4、docs/log/27 §12.3）に基づく API 選定:
-//   - turn 駆動は `turn/start`。応答は turn id を即返し（status=inProgress）、完走は
-//     `turn/completed` 通知（status: completed | interrupted | failed）で届く。
-//   - `turn/steer` は expectedTurnId 前提の真の mid-turn 注入（実測: 実行中 turn の
-//     同一 turn 内にユーザーメッセージが合流し以後の応答に反映される）— opencode の
-//     「完走後キュー投入」と違い、codex の Steer はネイティブに落ちる。実行中 turn が
-//     無いときだけキューへ縮退する。
-//   - interrupt = `turn/interrupt {threadId, turnId}` → turn/completed(interrupted)。
-//   - 設定変更 = `thread/settings/update`（experimentalApi 必須、§12.1-4）。モデル /
-//     effort は素のフィールド、モード（plan/normal）は collaborationMode
-//     {mode: plan|default, settings:{model, reasoning_effort}} に畳む。
-//   - 質問 = server-initiated request `item/tool/requestUserInput`（thread 単位の
-//     config `features.default_mode_request_user_input=true` を thread/start・resume
-//     の両方で要求 — 既定では "unavailable in this mode" になる、実測）。応答は
-//     JSON-RPC response {answers: {qid: {answers: [label…]}}}。**未応答のまま接続が
-//     切れても、再接続後の thread/resume で同じ要求が新接続へ再配送される**（実測）
-//     — 質問待ちの reconciliation はこれで自動成立する。
-//   - thread/resume 後のスレッドは approvalPolicy / sandboxPolicy が config 既定へ
-//     落ちていることがある（実測: dangerFullAccess で作った thread が resume 後
-//     readOnly に見えた）。resume 直後に thread/settings/update で never＋
-//     dangerFullAccess を再表明する（bypass 運転の維持、§5）。
+// API choices, from measurements (0.144.4, docs/log/27 §12.3):
+//   - A turn is driven by `turn/start`. The response returns the turn id immediately
+//     (status=inProgress); completion arrives as a `turn/completed` notification
+//     (status: completed | interrupted | failed).
+//   - `turn/steer` is real mid-turn injection, keyed on expectedTurnId (measured: the
+//     user message joins the turn that is already running and shows up in the rest of
+//     its answer). Unlike opencode's "queue it until the turn finishes", codex Steer
+//     maps natively; it degrades to the queue only when no turn is running.
+//   - interrupt = `turn/interrupt {threadId, turnId}` → turn/completed(interrupted).
+//   - A settings change = `thread/settings/update` (requires experimentalApi, §12.1-4).
+//     Model and effort are plain fields; the mode (plan/normal) folds into
+//     collaborationMode {mode: plan|default, settings:{model, reasoning_effort}}.
+//   - A question = the server-initiated request `item/tool/requestUserInput` (the
+//     per-thread config `features.default_mode_request_user_input=true` has to be asked
+//     for on both thread/start and thread/resume — by default it answers "unavailable in
+//     this mode", measured). The reply is the JSON-RPC response
+//     {answers: {qid: {answers: [label…]}}}. An unanswered request survives a dropped
+//     connection: thread/resume redelivers it to the new connection (measured), which is
+//     what makes reconciliation of a waiting question work by itself.
+//   - After thread/resume a thread's approvalPolicy / sandboxPolicy can have fallen back
+//     to the config defaults (measured: a thread created with dangerFullAccess looked
+//     readOnly after resume). Re-assert never + dangerFullAccess with
+//     thread/settings/update right after resume, to keep bypass operation (§5).
 //
-// ClientMessageID（§4）の冪等化は kind 共通の永続台帳（agents.MsgLedger — §9.5 の
-// プロセス跨ぎ永続化、P2 持ち越し課題の解消）で行い、codex へは clientUserMessageId
-// としても併送する（item の clientId に往復記録される — 実測。診断と将来の照合用）。
+// ClientMessageID (§4) idempotency uses the kind-agnostic persistent ledger
+// (agents.MsgLedger — the cross-process persistence of §9.5), and the id is also sent to
+// codex as clientUserMessageId (measured: it round-trips in the item's clientId, for
+// diagnostics and future matching).
 
 import (
 	"encoding/json"
@@ -47,17 +50,17 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// ledger は ClientMessageID の永続台帳（プロセス跨ぎの再送冪等化、§9.5）。
+// ledger is the persistent ClientMessageID ledger: cross-process idempotency for resends (§9.5).
 var ledger = agents.NewMsgLedger("codex-msgledger")
 
-// NewDriver returns the managed codex Driver（driverOf が /turn・/respond から引く）。
-// read 層は agentImpl をそのまま埋め込んで温存する。
+// NewDriver returns the managed codex Driver (driverOf looks it up from /turn and
+// /respond). The read layer is kept as is by embedding agentImpl.
 func NewDriver() agents.Driver { return managedDriver{} }
 
 type managedDriver struct{ agentImpl }
 
-// Capabilities（§3.1）。Steer は turn/steer へのネイティブ接続。TUIAttach は false —
-// codex の CLI ルートは排他切替（stop→drain→resume、§2）であって併用ではない。
+// Capabilities (§3.1). Steer maps natively onto turn/steer. TUIAttach is false: codex's
+// CLI route is an exclusive switch (stop→drain→resume, §2), not a parallel channel.
 func (managedDriver) Capabilities() agents.Capabilities {
 	return agents.Capabilities{
 		ProcessModel:  "shared-daemon",
@@ -70,15 +73,16 @@ func (managedDriver) Capabilities() agents.Capabilities {
 	}
 }
 
-// threadFeatures は thread/start・thread/resume に毎回渡す thread 単位 config。
-// request_user_input ツールは app-server スレッドでは既定無効（実測: "unavailable in
-// this mode"）。**TUI が自前で有効化するという当初の前提は誤りだった**（実測 0.144.3 /
-// 0.144.5: TUI も Default mode では同じく拒否する — Plan mode だけが自動で有効）。CLI
-// ルートは buildProgram が同じ feature を -c で渡して対称にしている。
+// threadFeatures is the per-thread config passed on every thread/start and thread/resume.
+// The request_user_input tool is disabled by default on app-server threads (measured:
+// "unavailable in this mode"), and the TUI does not enable it either (measured 0.144.3 /
+// 0.144.5: in Default mode the TUI is refused the same way, only Plan mode turns it on
+// automatically). The CLI route stays symmetric: buildProgram passes the same feature
+// with -c.
 var threadFeatures = map[string]any{"default_mode_request_user_input": true}
 
 // threadConfig is the per-thread config: the features above, plus the MCP servers
-// scoped to THIS session（docs/log/27 §9.3.1）。
+// scoped to THIS session (docs/log/27 §9.3.1).
 //
 // A managed session's MCP child is spawned by the one shared app-server, so the
 // process environment cannot carry a per-session AF_SESSION_NAME the way tmux does
@@ -113,14 +117,14 @@ func threadMCPServers(slot string) (map[string]any, bool) {
 	if err != nil {
 		// Inherit config.toml rather than fail the thread: an unreadable registry
 		// must not stop a session from starting.
-		log.Printf("codex managed: MCP レジストリを読めないため thread 単位設定を省略します (%s): %v", slot, err)
+		log.Printf("codex managed: cannot read the MCP registry, omitting the per-thread config (%s): %v", slot, err)
 		return nil, false
 	}
 	return mcpreg.CodexThreadServers(defs, mcpreg.CodexThreadOpts{SessionName: slot})
 }
 
-// bypassPolicies は AF の無人運転ポリシー（TUI ルートの --dangerously-bypass-… と
-// 同じ意味、コンテナがサンドボックス）。
+// bypassPolicies is AF's unattended-operation policy: the same meaning as the TUI route's
+// --dangerously-bypass-… flags, with the container as the sandbox.
 func bypassPolicies() map[string]any {
 	return map[string]any{
 		"approvalPolicy": "never",
@@ -129,9 +133,10 @@ func bypassPolicies() map[string]any {
 }
 
 // Resume returns the session's ThreadHandle, creating the runtime thread when
-// none exists yet（Driver IF: 無ければ新規 start）。§6 の reconciliation 共通手順を
-// 兼ねる: runtime＋writer 接続の確保 → thread 解決（resume/fork/start）→ ポリシー
-// 再表明 → snapshot 反映。live 購読は writer 接続が generation 単位で常設。
+// none exists yet (Driver interface: start a new one when there is none). It doubles as
+// the shared reconciliation procedure of §6: secure the runtime and writer connection →
+// resolve the thread (resume/fork/start) → re-assert the policies → apply the snapshot.
+// Live subscription is permanent per generation on the writer connection.
 func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if m.Kind != session.KindCodex {
 		return nil, errors.New("codex driver は codex セッション専用です")
@@ -164,7 +169,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 		return h, nil
 	}
 	if h.settings.Model == "" {
-		h.settings.Model = m.Model // 起動時既定（動的変更は UpdateSettings が上書き）
+		h.settings.Model = m.Model // launch-time default (UpdateSettings overwrites it on a change)
 	}
 	if h.settings.Effort == "" {
 		h.settings.Effort = m.Effort
@@ -182,10 +187,10 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if tid != "" {
 		st, err = threadResume(cl, tid, cwd, m.Name)
 		if err != nil {
-			// 初回 turn 前に daemon が再起動したスレッドは rollout が無く resume
-			// できない（§12.1-5）— 会話はまだ空なので新規 start で置き直す。それ以外
-			// のエラーで新 thread を鋳直すと sids が付け替わり会話が見えなくなるので
-			// 正直に失敗させる。
+			// A thread whose daemon restarted before its first turn has no rollout and
+			// cannot be resumed (§12.1-5); the conversation is still empty, so replace it
+			// with a fresh start. On any other error, minting a new thread would repoint
+			// sids and hide the conversation, so fail honestly instead.
 			if !strings.Contains(err.Error(), "no rollout found") {
 				return nil, err
 			}
@@ -202,12 +207,13 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 			return nil, err
 		}
 		tid = st.threadID
-		// TUI ルートの hook 捕捉（RememberSid）と同じスロット対応付け — read 層の
-		// rolloutPath(sids.Read) と排他切替（cli⇄managed の同一会話維持）が乗る。
+		// The same slot mapping as the TUI route's hook capture (RememberSid): the read
+		// layer's rolloutPath (sids.Read) and the exclusive switch (one conversation kept
+		// across cli⇄managed) both ride on it.
 		sids.Write(slotSid, tid)
 	}
-	// resume 後はポリシーが config 既定へ落ちていることがある（実測）— 再表明する。
-	// 失敗しても turn は動く（readOnly 側に倒れるだけ）ので致命にはしない。
+	// After resume the policies can have fallen back to the config defaults (measured), so
+	// re-assert them. A failure is not fatal: the turn still runs, only on the readOnly side.
 	if _, err := cl.call("thread/settings/update", mergeMaps(map[string]any{"threadId": tid}, bypassPolicies()), 10*time.Second); err != nil {
 		log.Printf("codex managed: policy re-assert %s: %v", m.Name, err)
 	}
@@ -217,12 +223,13 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	if st.model != "" {
 		h.curModel = st.model
 		if h.settings.Model == "" {
-			h.settings.Model = st.model // GET /settings に実効値を返す
+			h.settings.Model = st.model // so GET /settings returns the effective value
 		}
 	}
-	// reconcile（§6-4）: resume が返した server 側状態を正とする。実行中 turn が
-	// 残っていれば（前 Agent プロセスが投げたもの）その turnId を引き継ぎ、
-	// turn/completed 通知で確定する。質問待ちなら要求の再配送が直後に届く（実測）。
+	// reconcile (§6-4): the server state resume returned is the truth. A turn still running
+	// (started by the previous Agent process) has its turnId taken over here and is settled
+	// by the turn/completed notification. If a question is pending, the request is
+	// redelivered right after (measured).
 	switch {
 	case st.active && st.waitingInput:
 		h.state = agents.TurnWaitingInteraction
@@ -238,22 +245,23 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	h.mu.Unlock()
 
-	// thread/start は model しか受け取らず、effort / collaboration mode は
-	// thread/settings/update の管轄。作成 UI で選んだ値と Meta に永続化した動的設定を、
-	// 初回 turn より前（および daemon 再接続・fork 後）に native thread へ再適用する。
-	// ここを best-effort にすると UI 上の選択と実際の推論設定が黙って食い違うため、
-	// ユーザー指定がある場合の失敗は Resume の失敗として返す。
+	// thread/start only accepts model; effort and collaboration mode belong to
+	// thread/settings/update. Re-apply the value chosen in the creation UI and the dynamic
+	// settings persisted in Meta to the native thread before the first turn (and after a
+	// daemon reconnect or a fork). Making this best-effort would let the UI selection and
+	// the real inference settings diverge silently, so when the user specified something a
+	// failure is returned as a Resume failure.
 	if m.Model != "" || m.Effort != "" || m.Mode != "" {
 		if err := h.UpdateSettings(agents.ThreadSettings{Model: m.Model, Effort: m.Effort, Mode: m.Mode}); err != nil {
 			h.mu.Lock()
-			h.alive = false // 次回 Resume で設定適用を再試行する
+			h.alive = false // retry applying the settings on the next Resume
 			h.mu.Unlock()
 			return nil, fmt.Errorf("codex thread の実行設定を反映できませんでした: %w", err)
 		}
 	}
 
-	// daemon 死で pump が終了した後も queue には送信済み入力が残り得る（§31）。
-	// Resume がここで再起動しないと、投入済みプロンプトは滞留したままになる。
+	// After a daemon death ends the pump, already-sent input can still sit in the queue
+	// (§31). Unless Resume restarts it here, submitted prompts stay stranded.
 	h.mu.Lock()
 	if len(h.queue) > 0 && !h.pumping && !h.running {
 		h.pumping = true
@@ -261,7 +269,7 @@ func (managedDriver) Resume(m session.Meta) (agents.ThreadHandle, error) {
 	}
 	h.mu.Unlock()
 
-	// exit recording の baseline（opencode driver / tui startSessionTmux と同じ役割）。
+	// Baseline for exit recording (the same role as in the opencode driver and tui startSessionTmux).
 	base, _ := status.OOMKillCount()
 	status.PersistExit(m.Name, status.ExitInfo{OOMBase: base})
 	return h, nil
@@ -283,7 +291,7 @@ func mergeMaps(dst map[string]any, src map[string]any) map[string]any {
 
 // --- thread RPC helpers --------------------------------------------------------
 
-// threadSnapshotWire is what Resume needs back from thread/start・resume・fork.
+// threadSnapshotWire is what Resume needs back from thread/start, resume and fork.
 type threadSnapshotWire struct {
 	threadID       string
 	model          string
@@ -412,9 +420,9 @@ func liveHandles() []*threadHandle {
 }
 
 // DropHandle detaches a managed session from its runtime handle (stop / halt /
-// archive / 排他切替): interrupt any running turn, unsubscribe the writer
-// connection from the thread, forget the handle. 会話の正本（rollout）は残り、
-// 後の Resume（または TUI の `codex resume`）が再接続する。
+// archive / exclusive switch): interrupt any running turn, unsubscribe the writer
+// connection from the thread, forget the handle. The conversation's source of truth
+// (the rollout) stays, and a later Resume (or the TUI's `codex resume`) reattaches.
 func DropHandle(name string) {
 	handlesMu.Lock()
 	h := handles[name]
@@ -435,13 +443,13 @@ func DropHandle(name string) {
 		_, _ = cl.call("turn/interrupt", map[string]any{"threadId": tid, "turnId": turnID}, 10*time.Second)
 	}
 	if tid != "" {
-		// 観測しない接続に thread を載せたままにしない（daemon メモリ・通知の節約）。
+		// Do not leave a thread on a connection nobody watches (saves daemon memory and notifications).
 		_, _ = cl.call("thread/unsubscribe", map[string]any{"threadId": tid}, 10*time.Second)
 	}
 }
 
-// RemoveLedger drops a session's ClientMessageID ledger（/stop — スロットの
-// アイデンティティごと破棄する時だけ。halt/archive は再開があるので残す）。
+// RemoveLedger drops a session's ClientMessageID ledger (/stop only, where the slot's
+// identity is discarded with it; halt/archive keep it because the session can resume).
 func RemoveLedger(name string) { ledger.Remove(name) }
 
 // ManagedAlive reports whether the session has a live runtime handle — the
@@ -456,8 +464,8 @@ func ManagedAlive(name string) bool {
 	return h.alive
 }
 
-// ManagedBusy reports a turn is running or queued (graceful shutdown・排他切替の
-// 待ち/拒否条件).
+// ManagedBusy reports a turn is running or queued (the wait/refuse condition for a
+// graceful shutdown and for the exclusive switch).
 func ManagedBusy(name string) bool {
 	h := handleFor(name)
 	if h == nil {
@@ -468,8 +476,8 @@ func ManagedBusy(name string) bool {
 	return h.running || h.turnID != "" || len(h.queue) > 0
 }
 
-// AbortManaged interrupts every running managed turn（graceful shutdown の
-// per-pane Ctrl-C 相当、§10.2-8）。
+// AbortManaged interrupts every running managed turn (the equivalent of graceful
+// shutdown's per-pane Ctrl-C, §10.2-8).
 func AbortManaged() {
 	for _, h := range liveHandles() {
 		h.mu.Lock()
@@ -482,8 +490,9 @@ func AbortManaged() {
 }
 
 // ReconcileManaged re-attaches managed codex sessions after an Agent boot,
-// daemon restart or writer loss（§6）。対象は「停止扱いになっていない」managed メタ
-// 全部。失敗してもセッションは 停止中 として残り、再開クリック（/start）で再試行。
+// daemon restart or writer loss (§6). It covers every managed meta that is not treated as
+// stopped. On failure the session stays stopped and is retried when the user clicks resume
+// (/start).
 func ReconcileManaged(reason string) {
 	d := managedDriver{}
 	for _, m := range session.ListMetas() {
@@ -499,7 +508,7 @@ func ReconcileManaged(reason string) {
 	}
 }
 
-// reconcileAll is the supervisor-facing wrapper (serve.go の daemon 死・restart 後).
+// reconcileAll is the supervisor-facing wrapper (serve.go, after a daemon death or restart).
 func reconcileAll(reason string) { ReconcileManaged(reason) }
 
 // --- thread handle -----------------------------------------------------------
@@ -521,20 +530,20 @@ type threadHandle struct {
 	tid      string
 	alive    bool
 	state    agents.TurnState
-	running  bool // runtime に active turn がある（pump 駆動または resume で引継ぎ）
+	running  bool // the runtime has an active turn (pump-driven, or taken over by resume)
 	pumping  bool
-	turnID   string // the active turn (turn/steer・turn/interrupt の宛先)
+	turnID   string // the active turn (the target of turn/steer and turn/interrupt)
 	turnEnd  chan agents.TurnState
 	queue    []agents.TurnInput
 	settings agents.ThreadSettings
-	curModel string              // 直近の実効モデル（settings/updated・thread 応答から。モード切替の collaborationMode.settings.model に必須）
-	inter    *agents.Interaction // pending question（waiting_interaction の中身）
-	interQ   []string            // 質問 id 列（応答 map のキー、Interaction.Questions と同順）
-	interReq json.RawMessage     // server request の JSON-RPC id（interClient 接続スコープ）
+	curModel string              // latest effective model (from settings/updated and thread responses; required as collaborationMode.settings.model on a mode switch)
+	inter    *agents.Interaction // pending question (the contents of waiting_interaction)
+	interQ   []string            // question ids (keys of the answer map, same order as Interaction.Questions)
+	interReq json.RawMessage     // JSON-RPC id of the server request (scoped to the interCl connection)
 	interCl  *appClient
 	events   chan agents.Event
-	lastErr  *codexError // 直近ターンの失敗詳細（errors.go）。次ターン開始で clearLastError
-	// されるまで managedEnrich が末尾へ合成 error ターンとして出す。
+	lastErr  *codexError // failure detail of the last turn (errors.go); managedEnrich appends
+	// it as a synthetic trailing error turn until clearLastError runs at the next turn start.
 }
 
 // setLastError / clearLastError / turnError manage the failure detail managedEnrich
@@ -576,7 +585,7 @@ func (h *threadHandle) setState(st agents.TurnState) {
 	h.emit(agents.Event{Kind: "turn_state", TurnState: st})
 }
 
-// runtimeLost drops the handle to unknown（§6-1: 切断時の正直な状態）。The pump's
+// runtimeLost drops the handle to unknown (§6-1: the honest state on disconnect). The pump's
 // wait (if any) unblocks via turnEnd and keeps unknown until reconcile resolves it.
 func (h *threadHandle) runtimeLost() {
 	h.mu.Lock()
@@ -598,9 +607,9 @@ func (h *threadHandle) runtimeLost() {
 // Send starts a turn (turn/start), queueing behind a running one.
 func (h *threadHandle) Send(in agents.TurnInput) error { return h.accept(in) }
 
-// Steer injects a follow-up into the RUNNING turn via native turn/steer（実測:
-// expectedTurnId 前提・同一 turn へ合流）。実行中 turn が無い（完走直後の競合等）
-// ときはキュー（次 turn として投入）へ縮退する。
+// Steer injects a follow-up into the RUNNING turn via native turn/steer (measured: keyed
+// on expectedTurnId, it joins the same turn). When no turn is running (a race just after
+// one completed, say) it degrades to the queue and goes in as the next turn.
 func (h *threadHandle) Steer(in agents.TurnInput) error {
 	if strings.TrimSpace(in.Prompt) == "" && len(in.Attachments) == 0 {
 		return errors.New("empty prompt")
@@ -621,7 +630,7 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 		return h.accept(in)
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
-		return nil // 再送 — 台帳が冪等化（§4）
+		return nil // resend: the ledger makes it idempotent (§4)
 	}
 	_, err := cl.call("turn/steer", map[string]any{
 		"threadId":            tid,
@@ -630,7 +639,7 @@ func (h *threadHandle) Steer(in agents.TurnInput) error {
 		"clientUserMessageId": in.ClientMessageID,
 	}, 15*time.Second)
 	if err != nil {
-		// turn がちょうど終わった等 — 意図（追撃入力）は次 turn として残す。
+		// The turn just ended, or similar: keep the intent (the follow-up input) as the next turn.
 		h.mu.Lock()
 		h.queue = append(h.queue, in)
 		start := !h.pumping
@@ -656,18 +665,20 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 		return errors.New("runtime が停止しています（再開してください）")
 	}
 	if h.inter != nil {
-		// 質問待ち中の自由文送信は誤答のもと（/input の question_pending ガードと
-		// 同じ判断）— 構造化回答（Respond）へ誘導する。
+		// Free text sent while a question is pending invites a wrong answer (the same
+		// judgement as /input's question_pending guard); steer to the structured
+		// answer (Respond).
 		h.mu.Unlock()
 		return agents.ErrQuestionPending
 	}
 	if ledger.SeenOrRecord(h.name, in.ClientMessageID) {
 		h.mu.Unlock()
-		return nil // 再送 — 台帳が冪等化（§4）
+		return nil // resend: the ledger makes it idempotent (§4)
 	}
 	h.queue = append(h.queue, in)
-	// Resume が引き継いだ外部実行中 turn には pump goroutine がない。その場合は
-	// turn/completed dispatcher がキューを起こすまで待つ（二重 turn/start 防止）。
+	// An externally running turn taken over by Resume has no pump goroutine. In that case
+	// wait until the turn/completed dispatcher wakes the queue, so no second turn/start is
+	// issued.
 	start := !h.pumping && !h.running
 	if start {
 		h.pumping = true
@@ -683,13 +694,14 @@ func (h *threadHandle) accept(in agents.TurnInput) error {
 }
 
 // pump processes the queue serially: run one turn/start, wait for its
-// turn/completed (dispatcher が turnEnd へ届ける), repeat.
+// turn/completed (the dispatcher delivers it through turnEnd), repeat.
 func (h *threadHandle) pump() {
 	for {
 		h.mu.Lock()
 		if len(h.queue) == 0 || !h.alive || h.running {
-			// accept と同じ lock 内で停止を確定する。空判定後〜defer の隙間を
-			// 作ると、その間の入力が pumping=true を見て起動されず stranded になる。
+			// Settle the stop inside the same lock accept takes. A gap between the empty
+			// check and a defer would strand input arriving in it: it sees pumping=true
+			// and never starts a pump.
 			h.pumping = false
 			h.mu.Unlock()
 			return
@@ -711,12 +723,12 @@ func (h *threadHandle) pump() {
 }
 
 // runTurn executes ONE turn: turn/start → wait for the dispatcher-delivered
-// terminal state. status ストア（hooks の代わり — WireLive のフォールバックと
-// anySessionWorking が読む）は dispatcher（turn/started・turn/completed）が正で、
-// ここでは楽観の working だけ先に刻む。
+// terminal state. The dispatcher (turn/started, turn/completed) owns the status store
+// (the stand-in for hooks, read by WireLive's fallback and by anySessionWorking); here
+// only the optimistic working mark is written ahead of it.
 func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	agents.MarkTurnStart(h.slotSid)
-	h.clearLastError() // 新しいターンが始まる＝前ターンの合成 error は役目を終える
+	h.clearLastError() // a new turn starting means the previous turn's synthetic error is done
 	h.setState(agents.TurnStarting)
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
@@ -738,19 +750,20 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 		alive := h.alive
 		h.mu.Unlock()
 		if !sameGen {
-			return // reconciliation が新世代の snapshot を既に置いた
+			return // reconciliation already installed a new-generation snapshot
 		}
-		st := agents.TurnUnknown // 切断 — §6 に委ねる（報告はしない）
+		st := agents.TurnUnknown // disconnected: left to §6, and not reported
 		failure := ""
 		if alive {
 			log.Printf("codex managed: turn/start %s: %v", h.name, err)
 			st = agents.TurnFailed
-			// turn/start が JSON-RPC エラーで即拒否されるケース(実測: 利用上限を使い切った
-			// 状態での送信)は turn すら作られず rollout に何も書かれない — ユーザーの発言
-			// すら記録されない。理由を拾えないと通知/報告は空文字のまま「失敗しました」
-			// としか言えず、ミラーの反映待ちechoも一致対象が永遠に現れず消えない
-			// （pendingEcho.echoLanded）。ここで合成した error ターンが managedEnrich 経由で
-			// その代わりを果たす。
+			// When turn/start is refused outright with a JSON-RPC error (measured: sending
+			// with the usage limit exhausted), no turn is created and nothing is written to
+			// the rollout, not even the user's own message. Without picking up the reason,
+			// the notification and the report carry an empty string and can only say
+			// "failed", and the mirror's pending echo never finds anything to match and
+			// never clears (pendingEcho.echoLanded). The error turn synthesized here stands
+			// in for both, through managedEnrich.
 			if ce, ok := codexErrorFromRPC(err); ok {
 				failure = ce.summary()
 				h.setLastError(ce)
@@ -774,13 +787,13 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 			h.turnEnd = nil
 		}
 		h.mu.Unlock()
-		return // 旧世代の response で新世代 handle を上書きしない
+		return // do not let an old generation's response overwrite a new-generation handle
 	}
 	h.turnID = tr.Turn.ID
 	h.mu.Unlock()
 	h.setState(agents.TurnRunning)
 
-	final := <-end // turn/completed（dispatcher）か runtimeLost が必ず届ける
+	final := <-end // turn/completed (dispatcher) or runtimeLost always delivers one
 	h.mu.Lock()
 	sameGen := h.gen == gen
 	if h.turnEnd == end {
@@ -788,7 +801,7 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	}
 	if sameGen {
 		h.turnID = ""
-		h.inter = nil // turn が終わった＝質問はもう待っていない
+		h.inter = nil // the turn ended, so no question is pending any more
 	}
 	h.mu.Unlock()
 	if sameGen {
@@ -796,12 +809,12 @@ func (h *threadHandle) runTurn(in agents.TurnInput, gen int) {
 	}
 }
 
-// Interrupt aborts the running turn and clears the queued追撃（停止の意思表示は
-// キューにも及ぶ）。
+// Interrupt aborts the running turn and clears the queued follow-ups: the intent to stop
+// reaches the queue too.
 func (h *threadHandle) Interrupt() error {
 	h.mu.Lock()
 	cl, tid, turnID := h.client, h.tid, h.turnID
-	running := h.running || turnID != "" // turnID only: agent 再起動後に引き継いだ実行中 turn
+	running := h.running || turnID != "" // turnID only: a running turn taken over after an agent restart
 	h.queue = nil
 	if running {
 		h.state = agents.TurnInterrupting
@@ -815,8 +828,8 @@ func (h *threadHandle) Interrupt() error {
 	return err
 }
 
-// UpdateSettings applies dynamic thread settings（§9.4-3 — 稼働中セッションの
-// モデル/effort/モード変更）via thread/settings/update.
+// UpdateSettings applies dynamic thread settings via thread/settings/update (§9.4-3:
+// changing model / effort / mode on a running session).
 func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	h.mu.Lock()
 	cl, tid := h.client, h.tid
@@ -852,8 +865,8 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 		params["effort"] = s.Effort
 	}
 	if s.Mode != "" {
-		// モードは collaborationMode プリセット（ModeKind: plan | default）。settings.
-		// model は必須なので実効モデルを併送する（reasoning_effort は null 可）。
+		// The mode is a collaborationMode preset (ModeKind: plan | default). settings.model
+		// is required, so the effective model is sent with it (reasoning_effort may be null).
 		kind := "default"
 		if s.Mode == "plan" {
 			kind = "plan"
@@ -870,8 +883,8 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	if _, err := cl.call("thread/settings/update", params, 15*time.Second); err != nil {
 		return err
 	}
-	// RPC 成功後にだけローカル snapshot を進める。失敗時に mode chip が実 runtime
-	// より先行したまま残らないようにする。
+	// Advance the local snapshot only after the RPC succeeds, so a failure cannot leave the
+	// mode chip ahead of the real runtime.
 	h.mu.Lock()
 	if s.ClearModel {
 		h.settings.Model = ""
@@ -892,9 +905,10 @@ func (h *threadHandle) UpdateSettings(s agents.ThreadSettings) error {
 	return nil
 }
 
-// Respond answers the pending Interaction（§5）: question 系のみ。answer/allow は
-// server request への JSON-RPC response（answers[qid] = ラベル列）、cancel/deny は
-// 「答えずに turn を止める」＝ turn/interrupt に落とす（codex に reject の口は無い）。
+// Respond answers the pending Interaction (§5), questions only. answer/allow becomes the
+// JSON-RPC response to the server request (answers[qid] = the list of labels); cancel/deny
+// means "stop the turn without answering" and maps to turn/interrupt, because codex has no
+// reject entry point.
 func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 	h.mu.Lock()
 	inter, qids, reqID, cl := h.inter, h.interQ, h.interReq, h.interCl
@@ -947,7 +961,7 @@ func (h *threadHandle) Respond(reply agents.InteractionReply) error {
 
 func (h *threadHandle) Events() <-chan agents.Event { return h.events }
 
-// Snapshot（§6-3）: reconciliation 用の現在地。
+// Snapshot (§6-3) reports the current position, for reconciliation.
 func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -958,7 +972,7 @@ func (h *threadHandle) Snapshot() (agents.ThreadSnapshot, error) {
 	}, nil
 }
 
-// queuedPrompts surfaces the driver-held queue for the mirror's キュー済み badge.
+// queuedPrompts surfaces the driver-held queue for the mirror's queued badge.
 func (h *threadHandle) queuedPrompts() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -971,8 +985,8 @@ func (h *threadHandle) queuedPrompts() []string {
 	return out
 }
 
-// hasQuestion reports a pending Interaction (WireLive の question 射影が読む —
-// managed は rollout tail probe より handle が正確で安い).
+// hasQuestion reports a pending Interaction (read by WireLive's question projection: for
+// managed sessions the handle is more accurate and cheaper than a rollout tail probe).
 func (h *threadHandle) hasQuestion() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -983,7 +997,7 @@ func (h *threadHandle) hasQuestion() bool {
 // session is currently blocked on, read straight from the live handle WITHOUT
 // resuming the runtime (a notification-poll caller must stay cheap). ok=false when no
 // live handle / no pending question. Used to enrich the codex-question notification
-// with P2b option buttons (docs/log/37 managed ボタン化). The bytes are the SAME shape
+// with P2b option buttons (docs/log/37, managed option buttons). The bytes are the SAME shape
 // bridge_answer fingerprints from Snapshot at answer time (identical []transcript.
 // Question marshaled the same way), so the send-side fingerprint matches the
 // answer-side one for an unchanged question.
@@ -1005,9 +1019,10 @@ func PendingInteraction(name string) (json.RawMessage, bool) {
 	return b, true
 }
 
-// managedEnrich folds the driver-side state into the read layer's TranscriptData
-// （readTranscript から呼ばれる — opencode と同型）: pending question へ Interaction
-// id を載せ、driver 内キューを キュー済み へ合流し、モード chip の即時性を上げる。
+// managedEnrich folds the driver-side state into the read layer's TranscriptData (called
+// from readTranscript, same shape as opencode): it stamps the Interaction id onto the
+// pending question, merges the driver-held queue into the queued list, and makes the mode
+// chip update immediately.
 func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	if m.DriverKind() != session.DriverManaged {
 		return
@@ -1030,12 +1045,12 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	}
 	td.Queued = append(td.Queued, h.queuedPrompts()...)
 	if modeSet != "" {
-		td.Mode = modeSet // 切替直後の rollout はまだ古い — driver 設定が次 turn の真実
+		td.Mode = modeSet // right after a switch the rollout is stale; the driver setting is the truth for the next turn
 	}
 	// A turn rejected at turn/start (errors.go — usage limit exhausted, in the field) never
 	// creates a Turn, so nothing — not even the user's own prompt — reaches the rollout.
 	// Without this, the mirror's optimistic echo has no real turn to reconcile against and
-	// sits at 反映待ち forever (pendingEcho.echoLanded requires a landed turn). Appending a
+	// sits pending forever (pendingEcho.echoLanded requires a landed turn). Appending a
 	// synthetic trailing turn gives both the echo (any post-cutoff error turn resolves it,
 	// console/src/features/mirror/pendingEcho.ts) and the Console (ErrorBlock, same Kind
 	// opencode's errors.go targets) something to show. Cleared by clearLastError the moment
@@ -1052,10 +1067,11 @@ func managedEnrich(m session.Meta, td *agents.TranscriptData) {
 	}
 }
 
-// buildInput assembles the turn/start・turn/steer input items: prompt text +
-// attachments（§10.2-3: managed は tmux 貼付でなく API 添付）。画像は localImage
-// item、その他のファイルはパスをテキストで併記する（codex は TUI でもパス言及で
-// view_image / 読解が発火する — imagePaste の既存経路と同じ扱い）。
+// buildInput assembles the turn/start and turn/steer input items: prompt text plus
+// attachments (§10.2-3: managed attaches through the API instead of pasting into tmux).
+// Images become localImage items; other files have their paths written into the text,
+// because mentioning a path is enough to trigger view_image / reading in codex, in the TUI
+// too — the same treatment as the existing imagePaste route.
 func buildInput(in agents.TurnInput) []map[string]any {
 	var items []map[string]any
 	text := strings.TrimSpace(in.Prompt)
@@ -1078,8 +1094,8 @@ func buildInput(in agents.TurnInput) []map[string]any {
 		text += "添付ファイル:\n" + strings.Join(nonImage, "\n")
 	}
 	if text != "" {
-		// input の先頭に text を置く（items の順序は「画像 → テキスト」でなく
-		// 「テキスト → 画像」が TUI の添付と同じ並び）。
+		// Put the text first in input: "text → image" is the order the TUI's attachment
+		// uses, not "image → text".
 		items = append([]map[string]any{{"type": "text", "text": text}}, items...)
 	}
 	return items
@@ -1087,8 +1103,8 @@ func buildInput(in agents.TurnInput) []map[string]any {
 
 // --- notification / server-request dispatch ------------------------------------
 
-// userInputRequest is the wire params of item/tool/requestUserInput（実測 §12.3:
-// questions[{id, header, question, isOther, options[{label, description}]}]）.
+// userInputRequest is the wire params of item/tool/requestUserInput (measured, §12.3:
+// questions[{id, header, question, isOther, options[{label, description}]}]).
 type userInputRequest struct {
 	ThreadID  string `json:"threadId"`
 	TurnID    string `json:"turnId"`
@@ -1105,9 +1121,9 @@ type userInputRequest struct {
 	} `json:"questions"`
 }
 
-// deliverUserInputRequest lands a server question on its handle（appclient.go の
-// handleServerRequest から）。ItemID を Interaction id にする — 接続を跨いだ再配送
-// でも安定（実測）で、Console の /respond がこの id で答える。
+// deliverUserInputRequest lands a server question on its handle (from appclient.go's
+// handleServerRequest). ItemID becomes the Interaction id: it is stable across a
+// redelivery on another connection (measured), and the Console's /respond answers with it.
 func deliverUserInputRequest(c *appClient, reqID json.RawMessage, p userInputRequest) {
 	h := handleByTid(p.ThreadID)
 	if h == nil {
@@ -1134,9 +1150,9 @@ func deliverUserInputRequest(c *appClient, reqID json.RawMessage, p userInputReq
 	h.emit(agents.Event{Kind: "interaction", TurnState: agents.TurnWaitingInteraction, Interaction: inter})
 }
 
-// dispatchNotification routes a server notification to the owning handle
-// （appclient.go の readLoop から）。turn 状態機械（§4）の正はここ — pump は
-// turnEnd 経由で終端を受け取る。
+// dispatchNotification routes a server notification to the owning handle (from
+// appclient.go's readLoop). This is where the turn state machine (§4) is decided; the
+// pump receives the terminal state through turnEnd.
 func dispatchNotification(msg rpcMsg) {
 	switch msg.Method {
 	case "turn/started":
@@ -1183,9 +1199,10 @@ func dispatchNotification(msg rpcMsg) {
 			case "interrupted":
 				st = agents.TurnCancelled
 			}
-			// 別 turn の完了で実行中 turn を誤終了させない（遅延配送・多重接続）。
-			// 両方の id が分かっていて食い違う時だけ弾く — turn/started を見ていない
-			// 引き継ぎ turn（h.turnID == ""）は従来どおり終端として扱う。
+			// Do not end the running turn because a different turn completed (late
+			// delivery, multiple connections). Reject only when both ids are known and
+			// differ: a taken-over turn that never saw turn/started (h.turnID == "") still
+			// counts as terminal.
 			h.mu.Lock()
 			mismatch := h.turnID != "" && p.Turn.ID != "" && h.turnID != p.Turn.ID
 			h.mu.Unlock()
@@ -1215,7 +1232,7 @@ func dispatchNotification(msg rpcMsg) {
 				default:
 				}
 			} else {
-				// Agent 再起動で引き継いだ turn 等、pump が待っていない完走。
+				// A completion no pump is waiting for, e.g. a turn taken over across an Agent restart.
 				h.setState(st)
 			}
 			if startQueued {
@@ -1256,8 +1273,9 @@ func dispatchNotification(msg rpcMsg) {
 			h.emit(agents.Event{Kind: "settings", Settings: &cur})
 		}
 	case "serverRequest/resolved":
-		// 質問が（別接続・自動解決などで）解消された。id は接続スコープなので
-		// thread 単位で見る — 待機中の Interaction を閉じ、turn 続行へ戻す。
+		// The question was resolved elsewhere (another connection, an automatic resolution).
+		// The id is connection-scoped, so match by thread: close the pending Interaction and
+		// go back to the turn running.
 		var p struct {
 			ThreadID string `json:"threadId"`
 		}
@@ -1277,7 +1295,8 @@ func dispatchNotification(msg rpcMsg) {
 			}
 		}
 	case "item/started", "item/completed":
-		// 圧縮検知（P1 の observer と同じ射影 — writer 接続でも受けて冗長化する）。
+		// Compaction detection (the same projection as the P1 observer; the writer
+		// connection receives it too, for redundancy).
 		var p struct {
 			ThreadID string `json:"threadId"`
 			Item     struct {

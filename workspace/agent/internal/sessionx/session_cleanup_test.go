@@ -26,7 +26,7 @@ func TestClassifySessionCleanup(t *testing.T) {
 	if !ok || action != "delete_session" || safety != "safe" || reasonKey != cleanReasonEphemeral {
 		t.Fatalf("ephemeral: action=%q safety=%q reason=%q ok=%v", action, safety, reasonKey, ok)
 	}
-	// 削除ロック（docs/log/45）: listed, but keep and with no action — the operator must
+	// Deletion lock (docs/log/45): listed, but keep and with no action — the operator must
 	// never propose a tool call that the Agent will refuse with 403.
 	for _, archived := range []bool{false, true} {
 		action, safety, reasonKey, ok := classifySessionCleanup(true, archived, false, false)
@@ -56,10 +56,12 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 		{"clean unmerged needs review", false, 0, 0, 0, false, "unmerged", "delete_worktree", "review"},
 		{"clean diverged needs review", false, 0, 0, 0, false, "diverged", "delete_worktree", "review"},
 		{"unknown relation reviews", false, 0, 0, 0, false, "", "delete_worktree", "review"},
-		// 削除ロック（docs/log/45）は「安全に消せる」条件を満たしていても keep で止める。
+		// A deletion lock (docs/log/45) stops at keep even when the "safe to delete"
+		// conditions are met.
 		{"locked beats safe", true, 0, 0, 0, false, "contained", "", "keep"},
-		// 削除ロック済みセッションが住む WT も同様 — handleDeleteRepo が 403 で拒むので
-		// safe と提案してはならない（停止中/アーカイブ済みのロックも数える）。
+		// Same for a worktree a deletion-locked session lives in — handleDeleteRepo
+		// refuses with 403, so it must never be proposed as safe (locks on stopped and
+		// archived sessions count too).
 		{"locked session inside beats safe", false, 1, 0, 0, false, "contained", "", "keep"},
 	}
 	for _, c := range cases {
@@ -75,8 +77,9 @@ func TestClassifyWorktreeCleanup(t *testing.T) {
 	}
 }
 
-// 掃除候補の理由キーは Console のカタログで訳される（ADR 0033）。Go 側でキーを足して
-// カタログに入れ忘れると、英語 Console だけが静かに ja フォールバックへ落ちて気づけない。
+// The reason keys of a cleanup candidate are translated by the Console's catalogues
+// (ADR 0033). Add a key on the Go side and forget the catalogue, and only the English
+// Console quietly falls back to ja, where nobody notices.
 func TestCleanupReasonKeysExistInConsoleCatalogs(t *testing.T) {
 	for _, locale := range []string{"ja", "en"} {
 		catalog := consoleCatalog(t, locale)

@@ -26,13 +26,13 @@ export function ChatComposerRow({
 }: {
   input: string;
   inputRef: RefObject<HTMLTextAreaElement | null>;
-  /** 入力欄・履歴ボタンを塞ぐか（会話が無い or ターン進行中）。 */
+  /** Block the input and history buttons (no conversation, or a turn in progress). */
   disabled: boolean;
-  /** 送信ボタンを押せるか（本文か添付があるか）。 */
+  /** Whether the send button is pressable (there is body text or an attachment). */
   canSend: boolean;
   canAttach: boolean;
   modSend: boolean;
-  /** 会話 or 下書きが定まっているか（プレースホルダの分岐）。 */
+  /** Whether a conversation or draft is settled (selects the placeholder). */
   hasTarget: boolean;
   history: string[];
   histIdx: number | null;
@@ -41,7 +41,7 @@ export function ChatComposerRow({
   onInput: (value: string) => void;
   onKeyDown: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
   onPaste: (e: ClipboardEvent<HTMLTextAreaElement>) => void;
-  /** 中断ボタンを出すか（送信中、または離脱したターンへの再接続中）。 */
+  /** Whether to show the stop button (sending, or reconnecting to a detached turn). */
   streaming: boolean;
   onStop: () => void;
   onSend: () => void;

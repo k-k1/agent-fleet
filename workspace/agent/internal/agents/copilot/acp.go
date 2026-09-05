@@ -1,14 +1,15 @@
 package copilot
 
-// acpClient は `copilot --acp` 子プロセスとの JSON-RPC 2.0（newline-delimited、
-// stdio）クライアント（docs/log/36 managed 契約・v1.0.73 実測）。
-//   - call: id 採番 → 書き込み → 応答待ち（timeout 0 = 無期限、session/prompt 用）
-//   - notify: 通知（session/cancel）
-//   - respond: サーバー発リクエスト（session/request_permission）への応答
-// readLoop が応答/通知/サーバー発リクエストを振り分ける。onRequest / onNotify は
-// readLoop goroutine 上で同期に呼ばれるため、実装はブロックしてはならない
-// （permission はハンドラが Interaction を記録して即 return し、応答は後から
-// respond() で返す）。
+// acpClient is the JSON-RPC 2.0 client (newline-delimited, over stdio) for the
+// `copilot --acp` child process (docs/log/36 managed contract, measured on v1.0.73).
+//   - call: allocate an id, write, wait for the response (timeout 0 = forever, used by
+//     session/prompt)
+//   - notify: notifications (session/cancel)
+//   - respond: answers to server-initiated requests (session/request_permission)
+// readLoop routes responses, notifications and server-initiated requests. onRequest and
+// onNotify are called synchronously on the readLoop goroutine, so an implementation must
+// never block: the permission handler records an Interaction and returns immediately, and
+// the answer goes back later through respond().
 
 import (
 	"bufio"
@@ -165,7 +166,7 @@ func (c *acpClient) call(method string, params any, timeout time.Duration) (json
 	case r := <-ch:
 		return r.result, r.err
 	case <-c.closed:
-		// markClosed が pending へ配送済みの場合もあるので回収を試みる。
+		// markClosed may already have delivered to pending, so try to collect it.
 		select {
 		case r := <-ch:
 			return r.result, r.err

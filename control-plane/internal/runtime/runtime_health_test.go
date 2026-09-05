@@ -1,10 +1,11 @@
-// runtime_health_test.go — 「Agent がまだ応答しない」を起動失敗にしないための回帰。
+// runtime_health_test.go — regression: "the Agent has not answered yet" must never be
+// reported as a failed start.
 //
-// 直した症状（実報告・2026-08-24）: ローカル docker デプロイの一部の利用者だけが、
-// Workspace を起動するたびに赤いトースト `agent did not become healthy within 15s` を
-// 踏み、しかも数秒後には普通に使えていた。起動は最初から成功していて、CP が「15 秒で
-// /healthz が 200 を返さなければ失敗」と決めていただけ（自己更新 opt-in が ON の人
-// だけ 300 秒だったので「一部の人だけ」に見えた）。docs/log/38 ★6 の定時実行障害と同根。
+// The symptom: some local docker users hit a red `agent did not become healthy within 15s`
+// toast on every Workspace start, and the workspace was usable seconds later. The start had
+// succeeded all along; only the CP's rule that /healthz must answer 200 within the budget
+// turned it into a failure — and the budget widens to 300s only when the self-update opt-in
+// is ON, which is why it looked like it struck just some people.
 package runtime
 
 import (
@@ -20,7 +21,7 @@ import (
 	"time"
 )
 
-// unreadyAgent は /healthz を 503 で返し続ける Agent（＝まだ boot-install 中）。
+// unreadyAgent keeps answering /healthz with 503, i.e. an Agent still in boot-install.
 func unreadyAgent(t *testing.T) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -39,9 +40,9 @@ func readyAgent(t *testing.T) *httptest.Server {
 	return srv
 }
 
-// TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording — 到達しなかったことを呼び出し側が
-// **失敗と区別できる**のが今回の肝。同時に、文言は 1 文字も変えない: スケジュール実行履歴
-// （error:wake: …）や運用の grep がこの文字列を拾っている。
+// TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording — a caller has to be able to tell
+// "it has not arrived" apart from a failure. The wording stays byte-for-byte at the same
+// time: scheduled-run history (error:wake: …) and operational greps match on that string.
 func TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording(t *testing.T) {
 	srv := unreadyAgent(t)
 	err := WaitAgentHealthy(context.Background(), srv.URL, 400*time.Millisecond)
@@ -55,8 +56,8 @@ func TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording(t *testing.T) {
 	if want := "agent did not become healthy within 400ms"; err.Error() != want {
 		t.Fatalf("message drifted: %q, want %q", err.Error(), want)
 	}
-	// キャンセルは別物（呼び出し側が去っただけ）。取り違えると、起動途中の中断を
-	// 「まだ来ていない」と誤読して先へ進んでしまう。
+	// A cancellation is a different thing (the caller simply left). Confusing the two reads
+	// an aborted start as "not here yet" and carries on.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	cerr := WaitAgentHealthy(ctx, srv.URL, time.Second)
@@ -65,9 +66,10 @@ func TestWaitAgentHealthyTimeoutIsTypedAndKeepsItsWording(t *testing.T) {
 	}
 }
 
-// TestAgentStartingMarkerIsSelfHealing — 印は「起動途中だ」と名乗る根拠だが、放置されると
-// 収束しない starting（Console から停止も再作成もできない箱・docs/log/70 §70.14.6）になる。
-// 消える道が 2 本あることを固定する: Agent が上がった / 期限が切れた。
+// TestAgentStartingMarkerIsSelfHealing — the mark is what justifies claiming "still
+// booting", but left behind it yields a starting that never converges: a box the Console
+// can neither stop nor recreate (docs/log/70 §70.14.6). Pins both ways out: the Agent came
+// up, or the deadline passed.
 func TestAgentStartingMarkerIsSelfHealing(t *testing.T) {
 	t.Run("印が無ければ starting ではない", func(t *testing.T) {
 		m := agentStartingMarkerIn(t.TempDir())
@@ -78,7 +80,7 @@ func TestAgentStartingMarkerIsSelfHealing(t *testing.T) {
 
 	t.Run("dataDir を持たない Runtime では常に無効", func(t *testing.T) {
 		m := agentStartingMarkerIn("")
-		m.arm(time.Now().Add(time.Hour)) // 書ける場所が無い＝何も起きない
+		m.arm(time.Now().Add(time.Hour)) // nowhere to write it: nothing happens
 		if m.active(context.Background(), unreadyAgent(t).URL) {
 			t.Fatal("marker without a dataDir must never claim starting")
 		}
@@ -141,9 +143,9 @@ func hostPort(t *testing.T, raw string) (string, string) {
 	return u.Hostname(), u.Port()
 }
 
-// TestDockerStateReportsStartingWhileTheAgentBoots — 「コンテナが running = 使える」では
-// ないことを状態に出す。ここが running のままだと、起動途中の Workspace にターミナルや
-// ファイル取得が繋ぎに行き、誰も居ないソケットで失敗する。
+// TestDockerStateReportsStartingWhileTheAgentBoots — "the container is running" is not
+// "usable", and the state has to say so. Left as running, terminals and file fetches
+// connect to a still-booting Workspace and fail against a socket nobody listens on.
 func TestDockerStateReportsStartingWhileTheAgentBoots(t *testing.T) {
 	dir := t.TempDir()
 	agent := unreadyAgent(t)
@@ -165,7 +167,7 @@ func TestDockerStateReportsStartingWhileTheAgentBoots(t *testing.T) {
 	if got := d.State(ctx); got != "starting" {
 		t.Fatalf("booting agent: State = %q, want starting", got)
 	}
-	// 印が立っていても、コンテナが落ちていれば starting ではない（起きてすらいない）。
+	// Marker or no marker, a dead container is not starting — it is not even up.
 	status = "exited"
 	if got := d.State(ctx); got != "stopped" {
 		t.Fatalf("exited container: State = %q, want stopped", got)
@@ -176,14 +178,15 @@ func TestDockerStateReportsStartingWhileTheAgentBoots(t *testing.T) {
 	}
 }
 
-// TestNativeStateReportsStartingWhileTheAgentBoots — native も同じ。pid が生きている＝
-// running だった頃は、rootfs 初回起動（boot-install で数分）がずっと「稼働中」に見えた。
+// TestNativeStateReportsStartingWhileTheAgentBoots — the same for native. While a live pid
+// meant running, the first rootfs start (minutes of boot-install) read as "running"
+// throughout.
 func TestNativeStateReportsStartingWhileTheAgentBoots(t *testing.T) {
 	dir := t.TempDir()
 	agent := unreadyAgent(t)
 	_, port := hostPort(t, agent.URL)
 	n := &nativeRuntime{name: "af-ws-x", dataDir: dir, agentBin: os.Args[0], agentPort: port}
-	// 自分自身を「生きている agent プロセス」として使う（pidAlive は argv0 の basename 比較）。
+	// Use this test process as the live agent process (pidAlive compares the argv0 basename).
 	if err := os.WriteFile(n.pidFile(), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -197,9 +200,9 @@ func TestNativeStateReportsStartingWhileTheAgentBoots(t *testing.T) {
 	}
 }
 
-// TestWorkspaceAliveCoversStarting — home を消す判断（recreate / clean-home）は
-// 「running か」ではなく「生きているか」で見る。起動途中のコンテナは bind-mount 配下に
-// 書き込みうるので、ここが running 限定だと live な home を消しに行く。
+// TestWorkspaceAliveCoversStarting — deciding to delete a home (recreate / clean-home) asks
+// "is it alive", not "is it running". A booting container can still write under the
+// bind-mount, so a running-only check would go and delete a live home.
 func TestWorkspaceAliveCoversStarting(t *testing.T) {
 	for state, want := range map[string]bool{"running": true, "starting": true, "stopped": false, "none": false} {
 		if got := WorkspaceAlive(state); got != want {

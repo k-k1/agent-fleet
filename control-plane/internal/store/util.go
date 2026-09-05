@@ -1,13 +1,11 @@
 package store
 
-// 切断面のヘルパ。ここにあるのは、store 家系を `package main` から切り出したときに
-// 「外向きに 1 本だけ伸びていた」小さな純関数である（ADR 0067 の仕分けでいう
-// 「一緒に移す」）。定義元（`main.go` / `oauth_bitbucket.go` / `tenant_login.go`）は
-// 他トラックの所有ファイルなので、このウェーブでは触らずに写している。
+// Seam helpers: the small pure functions the store family reached out for when it was
+// extracted from `package main` (ADR 0067). They are copies — the originals still live in
+// `main.go` / `oauth_bitbucket.go` / `tenant_login.go`, which other tracks own.
 //
-// ⚠️ 一時的な重複である。エイリアス回収と同じウェーブ境界で、共有ヘルパの置き場
-// （`internal/…`）へ 1 つにまとめること。それまでは、どちらか片方だけを直すと
-// 無言でずれる。
+// The duplication is temporary, and until it is folded into one shared `internal/…`
+// helper package, fixing only one of the two copies diverges silently.
 
 import (
 	"context"

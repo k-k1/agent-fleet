@@ -20,8 +20,8 @@ import (
 // origin/auth upstream. Accept any origin here (VPC/docker-network bound).
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool { return true },
-	// CP 側 dialer と permessage-deflate をネゴする（ECS では CP↔Agent も
-	// ネットワーク越しなので PTY 出力を圧縮して運ぶ）。
+	// Negotiate permessage-deflate with the CP's dialer: on ECS the CP<->Agent hop is over the
+	// network too, so PTY output travels compressed.
 	EnableCompression: true,
 }
 
@@ -50,8 +50,7 @@ const ptyCloseSessionStopped = "session stopped"
 // attaches the matching tmux session; otherwise it opens a login shell
 // (used for `claude /login` and ad-hoc commands).
 func handlePTY(w http.ResponseWriter, r *http.Request) {
-	// NOTE: ローカル変数名は internal/session パッケージと衝突するため name に変更
-	// （旧: session）。挙動は同一。
+	// Named `name` because `session` would shadow the internal/session package.
 	name := r.URL.Query().Get("session")
 
 	var cmd *exec.Cmd
@@ -63,7 +62,7 @@ func handlePTY(w http.ResponseWriter, r *http.Request) {
 		// Connect-only: attach to a RUNNING session, never start a stopped one. Merely
 		// opening a session's chat/terminal (or a stale "alive" right after a Workspace
 		// Start) used to auto-relaunch it via ensureSessionTmux; resuming is now explicit
-		// (POST /sessions/{name}/start, driven by 再開して続ける / the ターミナル toggle).
+		// (POST /sessions/{name}/start, driven by 再開して続ける / the terminal toggle).
 		if !tmuxx.HasSession(session.TmuxName(name)) {
 			// A finished session remains viewable without resuming it. This is a
 			// finite, read-only replay; no PTY process is created.

@@ -14,7 +14,7 @@
 
 const L = (locale, ja, en) => (locale === "ja" ? ja : en);
 
-// Clock the fixtures hang off. Real "now", so relative labels ("22分前", "2 か月前")
+// Clock the fixtures hang off. Real "now", so relative labels ("22 minutes ago", "2 months ago")
 // read correctly against the machine capturing the shots — a frozen clock would make
 // every commit look months old.
 export const NOW = new Date();
@@ -375,7 +375,7 @@ export function scmStatus(locale, repo) {
   return { branch: r?.branch || "main", ahead: r?.ahead || 0, behind: r?.behind || 0 };
 }
 
-// 変更ファイル帯（docs/log/68）: the files the session's agent edited, as the Agent aggregates
+// Changed-files strip (docs/log/68): the files the session's agent edited, as the Agent aggregates
 // them. Deliberately overlaps `changes()` above only in part — the point of the strip is
 // that the transcript's list and the working tree's list are DIFFERENT sets:
 //   validate.ts / messages.ts  … edited and still dirty (staged / unstaged)
@@ -398,9 +398,9 @@ export function sessionFiles() {
   ];
 }
 
-// 変更ファイル帯の「コミット済み」(docs/log/68 P2): PriceLine.tsx は直したあとコミットまで
-// 済んでいる —— 作業ツリーには何も残っていないが「取り消された」わけではない、という
-// 区別がこの一覧の要点。
+// The "committed" part of the changed-files strip (docs/log/68 P2): PriceLine.tsx was edited and
+// then committed. Nothing is left in the working tree, but that is not the same as having been
+// reverted, and telling the two apart is the point of this list.
 export function committedFiles() {
   return { committed: ["src/cart/PriceLine.tsx", "src/cart/useCartCount.ts"] };
 }
@@ -418,7 +418,7 @@ export function changes(locale, repo) {
   };
 }
 
-// The left rail's 変更 view (FilesChanges) asks ONE cross-repo endpoint instead of
+// The left rail's Changes view (FilesChanges) asks ONE cross-repo endpoint instead of
 // per-repo status, so its entries carry the working copy and a home-relative path.
 export function fsChanges(locale) {
   const of = (repo) =>
@@ -506,12 +506,12 @@ export function fsList(locale, p) {
   return { path: p, entries: [] };
 }
 
-// The ファイル section's tree (GET fs/tree — ProjectFiles). Only "repos" is
+// The Files section's tree (GET fs/tree — ProjectFiles). Only "repos" is
 // populated: its depth-0 entries ARE the working copies, which is the level the
 // rail marks with each copy's icon and a worktree's branch. Deeper folders answer
 // empty, enough for a shot of the section itself.
 // A repo's folder layout, served for any path under repos/<repo>. The launch dialog's
-// 作業ディレクトリ picker browses this, so an empty answer here would make the field look
+// working-directory picker browses this, so an empty answer here would make the field look
 // broken in a shot / a harness run rather than merely unpopulated.
 const REPO_TREE = {
   "": ["console", "docs", "server"],
@@ -570,8 +570,9 @@ export function conversation(locale, id) {
   return {
     ...meta,
     tools: "af_write",
-    // 作業計画（docs/log/33 第5段）: 計画のある会話とない会話でヘッダーの見え方が変わるので、
-    // 既定のスレッドには計画を入れておく（チップが塗られた状態＋パネルの本文が見える）。
+    // Work plan (docs/log/33 stage 5): the header looks different for a conversation with a plan
+    // and one without, so the default thread carries one — the chip is filled in and the panel
+    // body is visible.
     plan_updated_at: ms(14),
     plan: ja
       ? "## 制約\n- gradle 同時実行は最大2本（5GiB/8core の共有コンテナ）\n- 各レーンは push まで。統合ブランチへのマージは統括セッションが行う\n\n## 前提\n- 統合ブランチ = `feature/APP-1175`（develop 起点）\n- シード済みテスト29件のうち2件は未実装のため意図的に fail\n\n## これからやること\n- Wave 1: Lane A を起こす\n- Wave 2: Lane 1 / Lane 2 を並列（Lane A マージ後）"
@@ -620,14 +621,14 @@ export function assistants(locale) {
   ];
 }
 
-// 作業項目（docs/log/80）。すべて架空 —— 実在の課題やアカウントは載せない。
-// state は正規化後の語彙（open / in_progress / done）、key は "owner/name#n"（GitHub）か
-// "PROJ-123"（Jira）。
+// Work items (docs/log/80). All invented — no real issue or account appears here.
+// `state` is the normalised vocabulary (open / in_progress / done); `key` is "owner/name#n"
+// (GitHub) or "PROJ-123" (Jira).
 //
-// ⚠️ ここは実データの「形」に寄せてある（docs/log/80 §80.18）。3 件のスタブで作っていた頃、
-// テストも実描画も緑なのに実機は使えなかった —— 41 件が並ぶ圧も、全行が同じ担当者に
-// なることも、3 件では 1 つも再現しないからである。だから Jira 側は
-// **同一担当者・複数プロジェクト・40 件超**で置く。
+// The shape follows real data (docs/log/80 §80.18). With a three-item stub, tests and rendering
+// were green while the real thing was unusable: neither the weight of 41 rows nor every row
+// carrying the same assignee shows up in three items. Hence the Jira side is deliberately one
+// assignee, several projects, more than 40 items.
 export function workItems(locale) {
   const ja = locale === "ja";
   const it = (id, key, title, over = {}) => ({
@@ -645,8 +646,8 @@ export function workItems(locale) {
     updatedAt: ago(90),
     ...over,
   });
-  // Jira の 1 行。★ repo を持たず、ラベルも普通は無い —— メタ行が「担当者だけ」に
-  // なる（＝実機で 41 行が全部同じ 1 語を出していた）形をそのまま再現する。
+  // One Jira row. It has no repo and usually no labels either, so the meta line reduces to the
+  // assignee alone — the shape that made all 41 rows on the real thing print the same one word.
   const jira = (n, key, title, over = {}) => ({
     id: "wj" + n,
     queryId: "wq2",
@@ -688,9 +689,10 @@ export function workItems(locale) {
         "Revisit font embedding in reports", "Make the timezone a user setting",
       ];
   const PROJECTS = ["G3M", "RCS", "AAC", "NIS", "LINE"];
-  // Bitbucket の 1 行。★ レビュー待ちの PR＝「担当者」の欄には作者が入り、行ごとに
-  // 違う（自分の PR を並べたクエリなら全行同じになり uniformMeta が落とす）。
-  // ラベルは Bitbucket の PR に存在しないので常に空（docs/log/80 §80.19.4）。
+  // One Bitbucket row. For a PR awaiting review the assignee field holds the author, so it
+  // differs per row; a query listing one's own PRs would make every row identical and
+  // uniformMeta would drop it. Bitbucket PRs have no labels, so labels are always empty
+  // (docs/log/80 §80.19.4).
   const bb = (n, key, title, author, over = {}) => ({
     id: "wb" + n,
     queryId: "wq3",
@@ -717,7 +719,7 @@ export function workItems(locale) {
         bb(2, "acme/ledger#201", "Detect duplicate journal imports", "Kenta Mori", { state: "in_progress" }),
         bb(3, "acme/gateway#88", "Return the rate limit headers", "Mika Ito", { updatedAt: ago(60 * 24 * 5) }),
       ];
-  // 38 件 = 5 プロジェクト混在・全行同じ担当者。GitHub の 3 件と合わせて 41 件。
+  // 38 items = 5 projects mixed, same assignee on every row. With the 3 GitHub ones, 41 in all.
   const jiraRows = Array.from({ length: 38 }, (_, i) =>
     jira(i + 1, `${PROJECTS[i % PROJECTS.length]}-${50 + i * 17}`, JIRA_TITLES[i % JIRA_TITLES.length], {
       state: i % 9 === 4 ? "in_progress" : "open",
@@ -735,8 +737,8 @@ export function workItems(locale) {
         labels: ["ui"],
         updatedAt: ago(150),
       }),
-      // ★ ラベルの無い行を 1 件混ぜておく。CP が nil スライス（JSON の null）を出して
-      // いた頃、この形が来ると Console 全体が真っ白になった（docs/log/80 §80.17.5）。消さないこと。
+      // Keep one row with no labels. While the CP emitted a nil slice (null in JSON), this shape
+      // turned the whole Console blank (docs/log/80 §80.17.5). Do not remove it.
       it("wi3", "demo/payments-api#77", ja ? "返金の冪等キーを再設計する" : "Redesign the refund idempotency key", {
         labels: null,
         updatedAt: ago(400),
@@ -779,7 +781,7 @@ export function workItems(locale) {
         lastError: "",
       },
     ],
-    // 1 件だけ着手済み — レールの「着手済み」バッジが絵に出る。
+    // Exactly one item started, so the rail's "started" badge appears in the picture.
     sessions: [
       { id: "wl1", provider: "github", itemKey: "demo/webshop#312", sessionName: "sk4rq2f", repo: "webshop", branch: "feature/issue-312", createdAt: ago(30) },
     ],
@@ -1011,7 +1013,7 @@ export function usageSeries(locale, q) {
   return resp;
 }
 
-// rtk 効果 (GET /api/agents/rtk/gain) — the container-side savings history the usage
+// rtk effect (GET /api/agents/rtk/gain) — the container-side savings history the usage
 // tab's rtk card reads (schema is rtk's own `gain --all` JSON, passed through by the
 // Agent verbatim: daily/weekly/monthly buckets + a lifetime summary, each with
 // commands / in / out / savings% / exec-time). Fictional but plausible: ~46% average
@@ -1142,10 +1144,11 @@ export function cleanupArchives(locale) {
   ];
 }
 
-// --- クラウド費用（docs/log/67 + ADR 0048）------------------------------------------
-// ⚠️ 共有が請求の大半を占めるという実測の形をそのまま持たせている。ここを小さくすると
-// ハーネスの画面が「ほとんど個人に紐づく」ように見えて、この機能の一番大事な事実
-// （個人に出る額は全体の一部でしかない）が確認できなくなる。
+// --- Cloud cost (docs/log/67 + ADR 0048) --------------------------------------------
+// Keeps the measured shape in which shared costs are most of the bill. Shrinking that here
+// would make the harness screen look as if nearly everything is attributable to an individual,
+// and the most important fact about this feature — that the amount shown per person is only a
+// part of the whole — could no longer be checked.
 export const costProfile = () => ({
   runtime: "ecs-ec2",
   available: true,
@@ -1163,7 +1166,7 @@ const costMeta = () => ({
   profile: costProfile(),
 });
 
-// 30 日ぶんの日次。末尾 1 日だけ未確定（縞の塗り分けが見えるように）。
+// 30 daily buckets. Only the last day is unsettled, so the striped fill is visible.
 const costDays = () => {
   const out = [];
   for (let i = 29; i >= 0; i--) {
@@ -1187,10 +1190,10 @@ export const myCloudCost = () => ({
   meta: costMeta(),
 });
 
-// --- 管理のメンバー詳細（docs/log/67 §67.15）---------------------------------------
-// ⚠️ このドリルダウンはこれまでスタブが 1 本も無く、管理の面は目視で確かめられな
-// かった。DOM テストが全部通っていても目視でしか出ないバグが実際に 2 件あったので、
-// 詳細（リソース → 費用 → セッション）まで描けるところまで足す。
+// --- Admin member detail (docs/log/67 §67.15) ---------------------------------------
+// This drill-down had no stub at all, so the admin surface could not be inspected visually —
+// and two real bugs showed up only that way, with every DOM test passing. The stubs go far
+// enough to render the detail (resources -> cost -> sessions).
 export const adminTenants = () => ({
   tenants: [{ slug: "demo", name: "Demo Team", users: 3, running: 1, max_sessions: 8 }],
   super_admin: false,
@@ -1215,8 +1218,9 @@ export const adminMemberStats = () => ({
 
 export const adminMemberSessions = (locale) => ({ sessions: sessions(locale).slice(0, 3) });
 
-// 1 人分の費用。⚠️ 形は myCloudCost と同一（CP 側も同じ集計を返す）。金額を一覧の
-// 1 位（aoi-tanaka）に合わせてあるので、一覧と詳細で数字が食い違わないか目で見られる。
+// Cost for a single person. Same shape as myCloudCost, because the CP returns the same
+// aggregation. The amounts match the top row of the list (aoi-tanaka), so a mismatch between
+// list and detail is visible.
 export const memberCloudCost = () => ({
   from: "2026-08-17",
   to: "2026-09-15",

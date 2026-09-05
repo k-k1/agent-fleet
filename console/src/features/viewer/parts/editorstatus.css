@@ -1,4 +1,5 @@
-/* 外部変更のadvisory通知 (docs/log/44 §7.3): 状態行の中の控えめな注記＋差分確認ボタン。 */
+/* Advisory notice for an external change (docs/log/44 §7.3): a discreet note in the status
+   row plus a button to review the diff. */
 .file-external-note {
   margin-left: 10px;
   color: var(--warning, #d29922);
@@ -75,8 +76,8 @@
 .file-diff-column .diff-remote {
   background: rgb(63 185 80 / 14%);
 }
-/* AI提案パネル（docs/log/44 Phase 4）: 競合パネルの器を流用し、警告色ではなく
-   通常のボーダーで「エラーではない」ことを示す。 */
+/* AI suggestion panel (docs/log/44 Phase 4): reuses the conflict panel's shell, but with
+   the normal border instead of the warning colour so it does not read as an error. */
 .file-editor-suggest {
   border-color: var(--border);
 }

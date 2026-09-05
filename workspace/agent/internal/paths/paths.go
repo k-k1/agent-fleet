@@ -1,7 +1,7 @@
-// Package paths はホーム配下のパス規約（docs/log/23 P1-W5、残① Wave A で internal 化）。
-// ~/.config/agent-fleet は denylist 配下（ファイルブラウザ非表示）で、fstore の
-// 各ストアと資格情報ストアが同居する。package main と internal/session/status の
-// 双方から参照される最下層のヘルパ。
+// Package paths holds the path conventions under the home directory (docs/log/23 P1-W5).
+// ~/.config/agent-fleet is inside the denylist (hidden from the file browser) and houses both
+// the fstore stores and the credential store. This is the lowest-layer helper, referenced by
+// package main and internal/session/status alike.
 package paths
 
 import (
@@ -23,7 +23,7 @@ func AgentConfigDir() string {
 }
 
 // ClaudeConfigDir resolves where the claude CLI reads/writes its state
-// (settings.json, .claude.json, projects/*.jsonl). P3-5 段2 relocates that tree out
+// (settings.json, .claude.json, projects/*.jsonl). P3-5 stage 2 relocates that tree out
 // of home via CLAUDE_CONFIG_DIR; unset means the classic ~/.claude.
 //
 // It lives here rather than in internal/agents/claude so a lower layer (the MCP
@@ -94,8 +94,8 @@ func AgentDataDir() string {
 }
 
 // ExePath is the absolute path to this binary, used to build hook/MCP commands
-// that resolve in an agent's hook context regardless of PATH (docs/log/23 残① Wave F
-// で main の agentExe / codex の複製を一本化).
+// that resolve in an agent's hook context regardless of PATH. One resolver, so main and
+// codex cannot drift apart (docs/log/23 remaining item 1 Wave F).
 func ExePath() string {
 	exe, err := os.Executable()
 	if err != nil || exe == "" {
@@ -168,12 +168,13 @@ func volatilePath(p string) bool {
 }
 
 // ValidIDSegment guards path traversal for files named after one of our own ids:
-// conversation ids, assistant ids, and anything else built from randUUID() (36 桁の
-// hex ＋ '-'). 呼び出し側は id を**そのままファイル名にする直前**に通すこと。
+// conversation ids, assistant ids, and anything else built from randUUID() (36 characters of
+// hex and '-'). Callers must run the id through this immediately before turning it into a
+// file name.
 //
-// ★ ここに置いてあるのは「1 実装 1 箇所」にするため。ウェーブ B では chat_store.go の
-// validConvID と internal/assistants の validID という**2 つの実装**に割れていて、
-// 片方だけ緩めても誰も気付かない形だった（RECLAIM-B で 1 本化）。
+// It lives here so there is one implementation: the check was once split between
+// chat_store.go's validConvID and internal/assistants' validID, and loosening only one of
+// them would have gone unnoticed.
 func ValidIDSegment(id string) bool {
 	if len(id) != 36 {
 		return false

@@ -1,11 +1,12 @@
-// features/mirror/turnTts — ミラーのターン本文をカラオケ朗読する（docs/log/24）。
+// features/mirror/turnTts — karaoke-style narration of a mirror turn's body (docs/log/24).
 //
-// MarkdownView が innerHTML で描画した DOM からブロック（p / h1-h6 / li / blockquote 内の
-// 段落）を文書順に集め、textContent を文分割して startNarration（features/chat/tts.ts）へ
-// 渡す。音声の単位＝文、ハイライトの単位＝ブロック。pre（コード）・table・mermaid は
-// 読まない。ソース（Markdown 文字列）側で分割しないのは、marked のトークンとレンダ結果の
-// 対応維持が脆いため — textContent なら記法は既に落ちており、リンクは表示テキストだけが残る。
-// ターンは完結してから届く（ポーリング）ので、抽出は読み上げ開始時の 1 回で安定する。
+// Collects blocks (p / h1-h6 / li / paragraphs inside blockquote) in document order from the DOM
+// MarkdownView rendered via innerHTML, splits their textContent into sentences and hands them to
+// startNarration (features/chat/tts.ts). Speech unit = sentence, highlight unit = block; pre
+// (code), table and mermaid are not read. Splitting the source Markdown string instead would be
+// fragile, because keeping marked's tokens aligned with the render result is hard — textContent
+// has already dropped the notation, and links keep only their display text. A turn arrives once
+// complete (polling), so extracting once at narration start is stable.
 
 import {
   startNarration,
@@ -19,13 +20,14 @@ import { splitSentences, splitLongSentence, abbrevCode, type CodeReadOpts } from
 import { effectiveDict } from "../chat/ttsDict.ts";
 import { getSettings } from "../../lib/settings.ts";
 
-// 読み上げ対象のリーフブロック。ul/ol は li 単位（入れ子リストは別ブロック）、blockquote は
-// 中の段落へ降りる。pre / table / hr / mermaid（div）などはスキップ。
+// Leaf blocks that get read. ul/ol are read per li (a nested list is its own block), blockquote
+// descends into its paragraphs; pre / table / hr / mermaid (div) are skipped.
 const LEAF = new Set(["P", "H1", "H2", "H3", "H4", "H5", "H6"]);
 
-// collectBlocks はターン本文（.mirror-turn-body）から読み上げ・ハイライト単位のブロック要素を
-// 文書順で返す。テキストパート（本文直下の .markdown ＝ MarkdownView のルート）だけが対象で、
-// ツール表示・thinking（details 内の .markdown）・plan・question は拾わない。
+// collectBlocks returns, in document order, the block elements of a turn body (.mirror-turn-body)
+// that form the speech/highlight units. Only text parts count (a .markdown directly under the
+// body = a MarkdownView root); tool output, thinking (.markdown inside details), plan and
+// question are not picked up.
 export function collectBlocks(body: HTMLElement): HTMLElement[] {
   const out: HTMLElement[] = [];
   body.querySelectorAll<HTMLElement>(":scope > .markdown").forEach((md) => walk(md, out));
@@ -51,17 +53,19 @@ function walkList(list: HTMLElement, out: HTMLElement[]): void {
   }
 }
 
-// finalAnswerStart は「最終回答の本文」が始まるブロック index を返す（index は collectBlocks と
-// 同じブロック順）。ツールが無ければ 0。ミラー自動読み上げが、最終回答より前の作業ナレーションを
-// 飛ばして最終回答だけ読むために使う（chat の分離と同趣・docs/log/19）。
-// 本文パートは body 直下の .markdown、ツール実行は mt-tool* クラスの直下要素として並ぶ。飛ばすのは
-// 「最初の最終回答本文が現れる前」の作業ツールだけ。最終回答の後ろに来るツール（メモ書き込み等の
-// 後始末）以降は最終回答の一部なので飛ばさない — 完了ターンでは workSplit が作業過程を disclosure へ
-// 畳むので、直下に残るツールは後始末だけ。ここで飛ばすと続きの一言しか読まない不具合になる。
+// finalAnswerStart returns the block index where the final answer's body begins (indices follow
+// collectBlocks' block order); 0 when there is no tool. Mirror auto-narration uses it to skip the
+// narration of the work leading up to the answer and read only the final answer (same split as in
+// chat, docs/log/19).
+// Text parts sit as .markdown directly under the body, tool runs as direct children with an
+// mt-tool* class. Only work tools appearing *before* the first final-answer body are skipped:
+// tools that come after it (writing a memo and other clean-up) are part of the final answer — in
+// a completed turn workSplit folds the work trace into a disclosure, so the tools left as direct
+// children are only the clean-up. Skipping past them would read just the trailing sentence.
 export function finalAnswerStart(body: HTMLElement): number {
-  let count = 0; // ここまでに数えた読み上げブロック数
-  let boundary = 0; // 最終回答本文が始まるブロック数
-  let sawAnswer = false; // 最終回答の本文ブロックを既に見たか
+  let count = 0; // speech blocks counted so far
+  let boundary = 0; // block count at which the final answer's body starts
+  let sawAnswer = false; // whether a final-answer body block has been seen
   for (const el of Array.from(body.children) as HTMLElement[]) {
     if (el.classList.contains("markdown")) {
       const blocks: HTMLElement[] = [];
@@ -69,16 +73,17 @@ export function finalAnswerStart(body: HTMLElement): number {
       if (blocks.length) sawAnswer = true;
       count += blocks.length;
     } else if (!sawAnswer && Array.from(el.classList).some((c) => c.startsWith("mt-tool"))) {
-      boundary = count; // 最終回答本文が現れる前のツール＝作業過程なので飛ばす
+      boundary = count; // a tool before the final-answer body is work trace, so skip it
     }
   }
   return boundary;
 }
 
-// blockText はブロック自身の読み上げテキスト。li は入れ子リスト（別ブロックとして読む）と
-// コードブロック・表・mermaid（div）を除いた自前のテキストだけを返す。インライン要素は
-// 再帰で降り、<code>（バッククォート由来）は省略読み（abbrevCode）を当てる — レンダ済み
-// DOM にはバッククォートが残っていないため、ここが plainify 相当の唯一の判定点。
+// blockText is a block's own spoken text. For an li it returns only its own text, excluding
+// nested lists (read as their own blocks), code blocks, tables and mermaid (div). Inline elements
+// are descended into recursively, and <code> (from backticks) gets the abbreviated reading
+// (abbrevCode) — the rendered DOM no longer contains the backticks, so this is the only place
+// that decision can be made, the equivalent of plainify.
 const EXCLUDE = new Set(["UL", "OL", "PRE", "TABLE", "DIV"]);
 function blockText(el: HTMLElement, code?: CodeReadOpts): string {
   let t = "";
@@ -99,9 +104,9 @@ function blockText(el: HTMLElement, code?: CodeReadOpts): string {
   return t;
 }
 
-// blockIndexAt は選択開始ノードから「そこ（以降）で最初に読めるブロック」の index を返す。
-// ノードがブロック内ならそのブロック、ブロック間（ツール表示等）に始まる選択なら後続の
-// 最初のブロック。無ければ -1。
+// blockIndexAt returns the index of the first readable block at or after the node a selection
+// starts from: the containing block if the node is inside one, otherwise the next block when the
+// selection starts between blocks (in tool output, say). -1 when there is none.
 export function blockIndexAt(blocks: HTMLElement[], node: Node): number {
   const el = node.nodeType === Node.TEXT_NODE ? node.parentElement : (node as HTMLElement);
   if (!el) return -1;
@@ -110,8 +115,9 @@ export function blockIndexAt(blocks: HTMLElement[], node: Node): number {
   return blocks.findIndex((b) => !!(node.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING));
 }
 
-// turnSpokenText は fromBlock 以降の読み上げ対象テキストを返す（要約読み上げの入力・
-// 長さ判定用。省略読みや辞書は掛けない生テキスト。コード・表はブロック収集段階で除外済み）。
+// turnSpokenText returns the text to be read from fromBlock on — the input for summarised
+// narration and for length checks. Raw text, with no abbreviation or dictionary applied; code and
+// tables were already excluded when the blocks were collected.
 export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
   return collectBlocks(body)
     .slice(fromBlock)
@@ -120,15 +126,15 @@ export function turnSpokenText(body: HTMLElement, fromBlock = 0): string {
     .join("\n");
 }
 
-// --- 読み上げ担当の登録（全ペイン自動読み上げ, docs/log/24） ---------------------------
-// 同じセッションを複数ペインで開いているとき、自動読み上げ・確認読み上げを担うのは最初に
-// 登録したペインだけ（二重読み防止）。担当ペインが閉じたら次の登録ペインが自動で引き継ぐ。
-// hasTurnReader は useSessionNotifications が「本文をそのまま朗読するセッション」へ短い告知を
-// 重ねないための判定に使う。
+// --- Registering the narrating pane (auto-narration across panes, docs/log/24) ---------------
+// When the same session is open in several panes, only the pane that registered first performs
+// auto-narration and confirmation narration, so nothing is read twice. If that pane closes, the
+// next registered pane takes over automatically. useSessionNotifications uses hasTurnReader to
+// avoid layering a short announcement on top of a session whose body is already being narrated.
 const readers = new Map<string, symbol[]>();
 
-// claimTurnReader はペイン（token）をセッションの読み上げ担当候補に登録し、解除関数を返す
-// （useEffect のクリーンアップにそのまま渡せる）。
+// claimTurnReader registers a pane (token) as a candidate narrator for the session and returns
+// the unregister function, ready to be used as a useEffect cleanup.
 export function claimTurnReader(session: string, token: symbol): () => void {
   const arr = readers.get(session) ?? [];
   arr.push(token);
@@ -142,12 +148,12 @@ export function claimTurnReader(session: string, token: symbol): () => void {
   };
 }
 
-// isTurnReader は token がそのセッションの担当（先着）か。
+// isTurnReader reports whether token is the session's narrator (the first to register).
 export function isTurnReader(session: string, token: symbol): boolean {
   return (readers.get(session) ?? [])[0] === token;
 }
 
-// hasTurnReader はそのセッションを読み上げ可能なミラーペインが（どこかに）開いているか。
+// hasTurnReader reports whether a mirror pane able to narrate this session is open anywhere.
 export function hasTurnReader(session: string): boolean {
   return (readers.get(session)?.length ?? 0) > 0;
 }
@@ -160,28 +166,28 @@ export interface TurnReadHandle {
 
 const ACTIVE = "tts-active";
 
-// readTurn は body の fromBlock 番目のブロック以降を朗読する。再生を開始した文が属する
-// ブロックへカラオケ・ハイライト＋追従スクロール。onEnd は自然終了・明示停止・他再生への
-// 置換のいずれでも理由付きで 1 回だけ呼ばれる。読み上げる
-// 文が無ければ null を返し、onEnd は呼ばれない。
+// readTurn narrates body from block fromBlock on, karaoke-highlighting and scrolling to the block
+// the currently playing sentence belongs to. onEnd is called exactly once, with a reason, whether
+// narration finished naturally, was stopped explicitly or was replaced by another playback.
+// Returns null when there is no sentence to read, in which case onEnd is never called.
 export function readTurn(
   body: HTMLElement,
   source: string,
   fromBlock: number,
   onEnd: (reason: TtsEndReason) => void,
-  voice?: Partial<TtsOptions>, // セッションごとの声（sessionVoiceOpts）等の上書き
-  sessionName = "", // 発生元セッション名（左ペインの再生中アイコン用）
+  voice?: Partial<TtsOptions>, // per-session voice overrides (sessionVoiceOpts) and the like
+  sessionName = "", // originating session name, for the left rail's "playing" icon
 ): TurnReadHandle | null {
   const code: CodeReadOpts = { abbrev: getSettings().ttsAbbrevCode, dict: effectiveDict() };
   const blocks = collectBlocks(body);
   const texts: string[] = [];
   const blockOf: number[] = [];
-  const sentHead: boolean[] = []; // 文の先頭の片か（false = 長文の合成分割の続き）
+  const sentHead: boolean[] = []; // is this the first piece of a sentence (false = continuation of a long one)
   blocks.forEach((b, bi) => {
     if (bi < fromBlock) return;
     for (const s of splitSentences(blockText(b, code))) {
-      // 長い 1 文は合成用にさらに分割（合成の待ちで無音にならないように）。ハイライトは
-      // ブロック単位のままなので見た目は変わらない。
+      // Split one long sentence further for synthesis, so waiting on the synthesiser does not
+      // leave silence. Highlighting stays per block, so this is invisible.
       splitLongSentence(s).forEach((piece, j) => {
         texts.push(piece);
         blockOf.push(bi);
@@ -201,9 +207,10 @@ export function readTurn(
       el.scrollIntoView({ block: "nearest", behavior: "smooth" });
     }
   };
-  // ブロック（段落・リスト項目・見出し）が変わる最初の文には前拍を置く（マーカー記号は
-  // 読まないぶん、構造の切れ目を間で表す）。同一ブロック内の文境界（。区切り）には
-  // より短い一拍（SENT_BEAT）。長文の合成分割の続き片は間を置かない（素材の残り無音のみ）。
+  // Put a beat before the first sentence of a new block (paragraph, list item, heading): marker
+  // characters are not spoken, so the structural break is conveyed by the pause instead. Sentence
+  // boundaries within one block get the shorter SENT_BEAT, and continuation pieces of a split
+  // long sentence get no pause at all (only whatever silence the audio itself carries).
   const preGaps = blockOf.map((b, i) => {
     if (i === 0 || !sentHead[i]) return 0;
     return b !== blockOf[i - 1] ? BLOCK_BEAT : SENT_BEAT;

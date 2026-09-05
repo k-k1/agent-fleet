@@ -1,17 +1,20 @@
-// 作業計画パネル（docs/log/33 第5段）。
+// Work-plan panel (docs/log/33 stage 5).
 //
-// 会話が持つ「圧縮を跨いで原文のまま運ばれる枠」を見る・直す・引き直すための面。
-// 圧縮の引き継ぎ要約（notice カード）が LLM の要約＝毎回書き換わるのに対し、ここは
-// **原文がそのまま次のセッションへ渡る**ので、利用者にとっては「アシスタントに絶対
-// 忘れさせない場所」になる。
+// The surface for viewing, editing and re-deriving the conversation's slot that is carried
+// verbatim across compaction. Where the compaction hand-over summary (the notice card) is an
+// LLM summary and is rewritten every time, the text here reaches the next session unchanged,
+// which makes it the place a user puts what the assistant must never forget.
 //
-// 3つの更新契機（chat_plan.go 冒頭）のうち 2 と 3 の口がここ:
-//   - 更新ボタン … 直近の会話から計画を引き直す（壁打ちで計画が動いた直後に押す）
-//   - 編集 / クリア … 自動更新の取りこぼしと誤上書きを人が直す最後の砦
+// Of the three update triggers (listed at the top of chat_plan.go), 2 and 3 are driven here:
+//   - the refresh button re-derives the plan from the recent conversation (pressed right
+//     after the plan moved during a discussion);
+//   - edit / clear is the last resort for fixing what the automatic update missed or
+//     overwrote.
 //
-// 原文キャリーフォワードは「古い計画が原文のまま強く復活して新しい合意を上書きする」
-// 壊れ方をしうる。編集の口がこの壊れ方に対する唯一の救済なので、パネルは畳めても
-// 消せない（計画がある会話ではヘッダーのボタンが常に出る）。
+// Verbatim carry-forward can fail by resurrecting an old plan, word for word and forcefully,
+// over a newer agreement. The edit affordance is the only remedy for that, so the panel can
+// be collapsed but not removed: the header button is always present on a conversation that
+// has a plan.
 import { useEffect, useState } from "react";
 import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -26,7 +29,8 @@ interface ChatPlanProps {
   conversationId: string;
   plan: string;
   updatedAt?: number;
-  /** 会話ロック待ちになる操作（ターン実行中・圧縮中・WS停止）を止める。 */
+  /** Blocks operations that would wait on the conversation lock: a turn running, a compaction
+   * in progress, or a stopped workspace. */
   disabled?: boolean;
   onUpdated: (conv: Conversation) => void;
   onClose: () => void;
@@ -40,8 +44,8 @@ export function ChatPlan({ conversationId, plan, updatedAt, disabled, onUpdated,
   const [busy, setBusy] = useState<"" | "refresh" | "save">("");
   const [error, setError] = useState("");
 
-  // 別ペイン / 圧縮 / 自動更新で計画が動いたら、閲覧中の本文は追随させる。編集中だけは
-  // 追随させない（利用者が今打っている文字を消す方が害が大きい — 保存時に後勝ちになる）。
+  // Follow the plan when another pane, a compaction or an automatic update moves it — except
+  // while editing, where wiping what the user is typing does more harm; the save then wins.
   useEffect(() => {
     if (!editing) setDraft(plan);
   }, [plan, editing]);

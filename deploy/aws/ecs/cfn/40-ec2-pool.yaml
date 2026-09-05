@@ -1,7 +1,7 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter — EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/log/64 §64.12 /
-  §64.15, ADR 0045 決定 10). Owns what a SLOT is: the launch template (ECS-optimized
+  §64.15, ADR 0045 decision 10). Owns what a SLOT is: the launch template (ECS-optimized
   AMI, the cluster-join user-data, the af-mount/af-umount helpers), the instance role
   and the slot security group. It creates NO instances — the Control Plane runs them
   on demand and tags them af-pool/af-role=slot, exactly as it creates services and
@@ -21,7 +21,7 @@ Parameters:
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
     Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
       stack is how slots get patched (the one operational cost the EC2 launch type
-      really does add — ADR 0045 決定 7).
+      really does add — ADR 0045 decision 7).
   SlotAmiIdArm64:
     Type: String
     Default: ""
@@ -42,7 +42,7 @@ Parameters:
       instance profile, security group, root volume, and the user-data that joins the
       cluster and installs af-mount/af-umount — is architecture-neutral, so the CP
       passes this as a RunInstances ImageId override on the one template below.
-      Patching it is still "redeploy this stack" (ADR 0045 決定 7).
+      Patching it is still "redeploy this stack" (ADR 0045 decision 7).
   SlotRootVolumeGiB:
     Type: Number
     Default: 100
@@ -55,13 +55,13 @@ Parameters:
     Default: 5m
     Description: ECS_ENGINE_TASK_CLEANUP_WAIT_DURATION. The agent README's default is
       3h, which would hand the next user a slot still holding the previous user's
-      stopped containers (ADR 0045 決定 8 の代償 1). Keep it short.
+      stopped containers (ADR 0045 decision 8, price 1). Keep it short.
 
   PoolAlarmEmail:
     Type: String
     Default: ""
     Description: >-
-      Where to send the slot-pool I/O alarms (ADR 0045 決定 28). Empty = no alarms and
+      Where to send the slot-pool I/O alarms (ADR 0045 decision 28). Empty = no alarms and
       no SNS topic, which is what every deployment had before they existed. The address
       gets a confirmation mail from SNS; until it is confirmed the alarms fire into
       nothing. See the SlotIoAlarm resources for what they watch and their one caveat
@@ -119,7 +119,7 @@ Resources:
         # Private subnets + NAT only. A slot must never depend on an auto-assigned
         # public IPv4: a task ENI that survives a stop makes the instance multi-ENI and
         # the address silently stops being assigned — measured as 11 minutes of a
-        # disconnected agent (ADR 0045 決定 3-3).
+        # disconnected agent (ADR 0045 decision 3-3).
         MetadataOptions:
           HttpTokens: required
           HttpPutResponseHopLimit: 2
@@ -193,7 +193,7 @@ Resources:
                 Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
               Cleanup: !Ref TaskCleanupWait
 
-  # --- Slot I/O alarms (ADR 0045 決定 28 / docs/log/64 §64.41.4) ---
+  # --- Slot I/O alarms (ADR 0045 decision 28 / docs/log/64 §64.41.4) ---
   #
   # 🔥 What they are for: on 2026-08-27 one workspace's runaway drove its slot into
   # refault thrash — the root volume, which holds 8.0 GB of data in total, was read at

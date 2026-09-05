@@ -1,19 +1,19 @@
 package agy
 
-// 会話中インタラクティブプロンプト（ASK_QUESTION / ツール許可）の保留検知。
+// Detecting a pending interactive prompt mid-conversation (ASK_QUESTION / tool permission).
 //
-// 検知チャネルの選定（実機調査 2026-07-20, v1.1.4 — docs/log/32）: transcript jsonl は
-// 保留中に何も書かず、OSC/タイトル・stderr・lock ファイルも無し。CLI ログ
-// （log/cli-*.log の "Surfacing ask_question" 行）はイベントのみで本文が無い。
-// 唯一構造まで載るのが **会話 DB（conversations/<uuid>.db）の steps 最終行**:
-// 保留中は status=9（実測: 2=実行中・3=完了・9=ユーザー入力待ち）で、
-// ask_question はツール引数の JSON（{"questions":[{question, options,
-// is_multi_select}]}）が step_payload に**平文文字列として**埋まっている
-// （protobuf の length-delimited 文字列なのでスキーマ逆解析は不要 — JSON の
-// 開始位置を探して 1 値だけデコードする）。ツール許可の保留も同じ status=9
-// （該当ツール step 上）で、こちらは質問構造を持たないため state だけ返す。
-// pane スクレイプ（定型見出しの正規表現）は折返し・文言変更に脆く、この DB
-// 経路が上位互換なので採用しない。
+// Choosing the detection channel (investigated on a real machine 2026-07-20, v1.1.4 —
+// docs/log/32): the transcript jsonl writes nothing while a prompt is pending, and there is no
+// OSC/title, no stderr and no lock file either. The CLI log (the "Surfacing ask_question" line
+// in log/cli-*.log) carries the event but not its body. The only place the structure appears is
+// the LAST steps row of the conversation DB (conversations/<uuid>.db): while pending the status
+// is 9 (measured: 2 = running, 3 = done, 9 = awaiting user input), and for ask_question the tool
+// argument JSON ({"questions":[{question, options, is_multi_select}]}) is embedded in
+// step_payload as a plain string (a protobuf length-delimited string, so no schema reversing is
+// needed — find where the JSON starts and decode a single value). A pending tool permission is
+// the same status=9 (on that tool's step) but carries no question structure, so only the state
+// comes back. Scraping the pane (regexes over fixed headings) is fragile against wrapping and
+// wording changes, and this DB route is a superset of it, so it is not used.
 
 import (
 	"bytes"
@@ -28,8 +28,8 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
 
-// steps.status の実測値（v1.1.4 — docs/log/32）。最終 step の status が会話の
-// 現在地をそのまま表す: 実行中 / 完了 / ユーザー入力待ち。
+// Measured steps.status values (v1.1.4 — docs/log/32). The last step's status is exactly where
+// the conversation stands: running / done / awaiting user input.
 const (
 	stepStatusRunning      = 2
 	stepStatusDone         = 3
@@ -68,7 +68,7 @@ func lastStep(m session.Meta) (int, []byte, bool) {
 // "working" mid-turn, "idle" once the last step completed, "" when the DB has
 // no opinion yet. agy ships no status hooks, so this is the ONLY turn-end
 // signal — /input persists an optimistic "working" that nothing else clears,
-// which left the operator's 完了報告 arm unconsumed forever (docs/log/30 ②).
+// which left the operator's completion-report arm unconsumed forever (docs/log/30 item 2).
 // Callers gate on liveness themselves: a killed session's DB keeps its last
 // status, which must not surface as live state on a stopped session.
 func LiveState(m session.Meta) string {
@@ -111,16 +111,18 @@ func Probe(m session.Meta) (string, []transcript.Question) {
 	return "permission", permissionQuestions(payload)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。Probe の上の
-// 薄い写像だが、Kind の落とし方だけは Probe と違う: 許可は **permission** になる。
+// PendingModal hands the wait-for-a-human state, as it stood just before the pane was folded
+// up, over to the carry-forward (docs/log/75 P5). It is a thin mapping over Probe and differs
+// only in how Kind is resolved: a permission becomes "permission".
 //
-// Probe が許可に対して合成メニュー（Yes / No …）を返すのは、**生きている TUI へ
-// キー列を撃つため**である。畳まれた後にそのメニューを描くと、当てる先がもう無い
-// 答えを利用者に選ばせることになる（docs/log/75 §75.6.4）。運べるのは「どのコマンドを
-// 訊かれていたか」という事実だけで、それは合成した質問文がそのまま持っている。
+// Probe answers a permission with a synthesized menu (Yes / No …) so that a key sequence can be
+// fired at a LIVE TUI. Drawing that menu after the fold-up would have the user pick an answer
+// with nothing left to send it to (docs/log/75 §75.6.4). All that can be carried is which
+// command was being asked about, and the synthesized question text already holds it.
 //
-// agy の保留は**会話 DB に残る**ので、ペインが死んだ後でも読める — ACP 3 種と違い、
-// halt より遅い契機（一覧が停止を見つけたとき）でも拾える。
+// agy's pending state survives in the conversation DB, so it can be read after the pane has
+// died — unlike the three ACP kinds, it can still be picked up at an occasion later than halt
+// (when the session list notices the stop).
 func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	st, qs := Probe(m)
 	switch st {
@@ -142,8 +144,8 @@ func (agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 // permissionQuestions synthesizes the pending permission menu as a Question so
 // the Console's menu-mode card (Down×i + Enter) can drive it — labels and row
 // COUNT must mirror the TUI's menu exactly or the keys land on the wrong row
-// (v1.1.4 実測: run_command は 4 行、write_to_file / replace_file_content は
-// 2 行)。The pending tool's name rides in the payload as a plain string, so an
+// (measured on v1.1.4: run_command has 4 rows, write_to_file / replace_file_content
+// have 2). The pending tool's name rides in the payload as a plain string, so an
 // unknown tool (different menu shape we haven't verified) yields NO card —
 // state=permission alone, answer in the terminal — rather than a mis-keying one.
 func permissionQuestions(payload []byte) []transcript.Question {

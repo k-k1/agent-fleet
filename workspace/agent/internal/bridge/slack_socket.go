@@ -1,12 +1,12 @@
 package bridge
 
-// Slack Socket Mode receive (docs/log/37 Slack 追随 = P2a/P2b/P3先取り parity): the Slack twin of
-// gateway.go + the receive half of receiver.go. Socket Mode delivers events AND interactive
-// button clicks over ONE outbound WSS (no public endpoint), exactly the constraint that made
-// Discord's Gateway the right fit. Each frame is a typed envelope; every events_api /
+// Slack Socket Mode receive (docs/log/37 Slack follow-up = P2a/P2b/P3-taken-early parity): the
+// Slack twin of gateway.go + the receive half of receiver.go. Socket Mode delivers events AND
+// interactive button clicks over ONE outbound WSS (no public endpoint), exactly the constraint
+// that made Discord's Gateway the right fit. Each frame is a typed envelope; every events_api /
 // interactive envelope must be ACKed within 3s by echoing its envelope_id back.
 //
-// Security is identical (ADR0020 契約5, the sole defense): route ONLY the bound user's
+// Security is identical (ADR0020 contract 5, the sole defense): route ONLY the bound user's
 // messages, and ONLY when they land in a session's / the operator's thread (matched by
 // thread_ts — Slack's thread key). No channel listening; received text is injected verbatim.
 
@@ -24,7 +24,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// sourceSlack tags turns injected from Slack so the mirror badges them (docs/log/37 追加要件).
+// sourceSlack tags turns injected from Slack so the mirror badges them (docs/log/37 additional requirements).
 // Matches package main's turnSourceSlack.
 const sourceSlack = "slack"
 
@@ -283,7 +283,7 @@ func superviseSlackReceiver(ctx context.Context, deps ReceiverDeps) {
 
 // desiredSlackReceive reads the current Slack receive intent: bot + app tokens and the bound
 // user id, or zeros when receive is off / unconfigured. Requires the app token (Socket Mode)
-// and a bound user (契約5).
+// and a bound user (contract 5).
 func desiredSlackReceive() (bot, app, boundUser, botUserID string) {
 	s, err := secrets.Load()
 	if err != nil || s.Slack == nil {
@@ -355,7 +355,7 @@ func routeSlackInbound(m slackInboundMsg, creds slackReceiveCreds, deps Receiver
 		return
 	}
 	if creds.boundUser == "" || m.User != creds.boundUser {
-		return // 契約5: only the explicitly bound user is ever routed
+		return // contract 5: only the explicitly bound user is ever routed
 	}
 	if m.ThreadTS == "" {
 		return // only in-thread replies route; a top-level channel message is not a session
@@ -416,7 +416,7 @@ func routeSlackOperator(m slackInboundMsg, conv, text string, creds slackReceive
 
 // routeSlackInteraction is the button-click gate (twin of routeInteraction). The envelope was
 // already ACKed by the read loop (that IS the 3s ack), so this just applies the answer and
-// edits the message to show the outcome + clear the buttons. Same sole defense (契約5).
+// edits the message to show the outcome + clear the buttons. Same sole defense (contract 5).
 func routeSlackInteraction(gi slackInboundInteraction, creds slackReceiveCreds, deps ReceiverDeps) {
 	if deps.Answer == nil {
 		return

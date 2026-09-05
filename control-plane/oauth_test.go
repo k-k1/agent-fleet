@@ -78,7 +78,7 @@ func newStubIdP(t *testing.T, s *stubIdP) *stubIdP {
 }
 
 // stubIDToken builds an unsigned-in-practice JWS: CP reads the payload without
-// verifying the signature (ADR0043 決定 9), so the signature segment is filler.
+// verifying the signature (ADR0043 decision 9), so the signature segment is filler.
 func stubIDToken(claims map[string]any) string {
 	if claims == nil {
 		claims = map[string]any{}
@@ -177,7 +177,7 @@ func loginErrorOf(t *testing.T, w *httptest.ResponseRecorder) string {
 	return u.Query().Get("error")
 }
 
-// --- Google regression (受入条件 6) ----------------------------------------
+// --- Google regression (acceptance criterion 6) ---------------------------
 
 // A deployment that only ever set GOOGLE_OAUTH_* must be byte-for-byte unchanged:
 // same single button, same authorize URL, same parameters — no discovery request
@@ -217,7 +217,7 @@ func TestGoogleOnlyDeploymentIsUnchanged(t *testing.T) {
 	if q.Get("state") == "" {
 		t.Error("authorize: no state")
 	}
-	// One button, and it still says "Google でサインイン".
+	// One button, and its label is unchanged.
 	w := httptest.NewRecorder()
 	cfg.handleLogin(w, httptest.NewRequest(http.MethodGet, "/login", nil))
 	page := w.Body.String()
@@ -364,7 +364,7 @@ func TestTokenEndpointErrorShowsExchangeError(t *testing.T) {
 // --- state / provider resolution -------------------------------------------
 
 // The state cookie is signed, but the provider id it carries is still resolved
-// against the configured set before anything branches on it (決定 8).
+// against the configured set before anything branches on it (decision 8).
 func TestCallbackRejectsStateForUnconfiguredProvider(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{idTokenClaims: map[string]any{"sub": "s", "email": "yamada@acme.co.jp", "email_verified": true}})
 	cfg := oauthTestConfig(t, stubProvider("okta", idp, auth.TrustEmailVerified))
@@ -465,7 +465,7 @@ func TestLegacySessionCookieKeepsWorkingAndIsStillRechecked(t *testing.T) {
 }
 
 // The per-request re-check reads the live allowlist file, so deleting a line is
-// still the offboarding path (docs/log/61 受入条件 5) — no restart, no TTL wait.
+// still the offboarding path (docs/log/61 acceptance criterion 5) — no restart, no TTL wait.
 func TestAuthGateRereadsAllowlistFileEveryRequest(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	file := filepath.Join(t.TempDir(), "allowed-emails.txt")
@@ -576,7 +576,7 @@ func setOIDCEnv(t *testing.T, id string, kv map[string]string) {
 	}
 }
 
-// ★ 決定 7: the multi-tenant Entra endpoints are fatal without a tenant
+// Decision 7: the multi-tenant Entra endpoints are fatal without a tenant
 // allowlist — not "disabled with a warning". Allowing them would put every
 // Microsoft account in the world in front of an email allowlist that personal
 // accounts can spoof.
@@ -604,7 +604,7 @@ func TestMultiTenantIssuerWithoutTIDsIsFatal(t *testing.T) {
 	}
 }
 
-// 決定 11: one misconfigured IdP disables itself; it never takes the deployment
+// Decision 11: one misconfigured IdP disables itself; it never takes the deployment
 // down or, worse, comes up with an undeclared trust rule.
 func TestIncompleteProviderIsDisabledNotFatal(t *testing.T) {
 	full := map[string]string{

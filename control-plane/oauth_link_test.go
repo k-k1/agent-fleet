@@ -16,20 +16,23 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// docs/log/61 §61.16 + ADR0043 決定 37 — 本人の同意で 2 つ目のサインイン方法を紐づける。
-// 何を固定しているか:
-//   - 紐づけはログイン済みの本人からしか始まらない（/oauth2/ は authGate の除外なので
-//     ハンドラ自身が門になっている＝ここが抜けると無認証で identity 行を書ける）
-//   - その方式自身の門（org・ドメイン）を必ず通る（紐づけは迂回路ではない）
-//   - 主張されたアドレスが自分のものでなければ拒否（決定 37・別 email は結合しない）
-//   - 相手の IdP アカウントが誰かのものなら拒否（付け替えも結合もしない）
-//   - identity 行を触らない＝役割は動かない（決定 31）
-//   - 紐づけの往復でセッションが発行/差し替えされない
+// docs/log/61 §61.16 + ADR0043 decision 37 — attaching a second sign-in method with
+// the owner's consent. What is pinned here:
+//   - a link only ever starts from the signed-in owner (/oauth2/ is excluded from
+//     authGate, so the handler is the gate itself: drop that check and identity rows
+//     become writable without authentication)
+//   - the method's own gate (org, domain) always runs — a link is not a way around it
+//   - refuse when the claimed address is not the owner's (decision 37: a different
+//     email is never joined)
+//   - refuse when the far-side IdP account already belongs to somebody (never move it,
+//     never merge)
+//   - the identity row is untouched, so roles do not move (decision 31)
+//   - the link round trip never issues or replaces a session
 
 // --- store layer -------------------------------------------------------------
 
-// 紐づけたあと、その方式でのログインが規則 1 で同じ identity に着地すること。そして
-// identity 行（email・user_key・role）が紐づけで動かないこと。
+// After a link, signing in with that method must land on the same identity by rule 1,
+// and the identity row (email, user_key, role) must not move because of the link.
 func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	const email = "yamada@acme.co.jp"
@@ -43,7 +46,7 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	// 押し間違いで 2 回押しても同じ（冪等）。
+	// Pressing the button twice by mistake changes nothing (idempotent).
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "gh-1", Realm: auth.GithubWebBase, Email: email,
 	}); err != nil {
@@ -56,8 +59,9 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	if after.UserKey != me.UserKey || after.Email != me.Email || after.Role != me.Role {
 		t.Fatalf("the identity row must not move: %+v -> %+v", me, after)
 	}
-	// 紐づけた方式で実際にサインインすると、規則 1 で同じ人。
-	// ★ emailJoin=false（テナント定義）のまま通ることが要点 — 規則 2' は使っていない。
+	// Actually signing in with the linked method resolves to the same person by rule 1.
+	// The point is that it passes with emailJoin=false (a tenant-defined method), so
+	// rule 2' is not what carried it.
 	got, isNew, err := st.LinkIdentity(ctx, linkOf("t:sub:github", "gh-1", email, false))
 	if err != nil || isNew || got.ID != me.ID {
 		t.Fatalf("login with the linked method: %+v isNew=%v err=%v", got, isNew, err)
@@ -68,8 +72,9 @@ func TestAttachProviderAddsAMethodWithoutTouchingTheIdentity(t *testing.T) {
 	}
 }
 
-// ★ 付け替えも結合もしない。3 つの経路（同じ対を他人が持つ／規則 1.5 で他人に当たる／
-// アドレスが他人のもの）はどれも不可逆なので、拒否だけが正しい答え。
+// Never move an account, never merge two. All three routes here (the pair is already
+// someone else's, rule 1.5 lands on someone else, the address is someone else's) are
+// irreversible once taken, so refusing is the only right answer.
 func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 	st, ctx := newLinkStore(t), t.Context()
 	me, _, err := st.LinkIdentity(ctx, linkOf(auth.GoogleProviderID, "g-1", "yamada@acme.co.jp", true))
@@ -84,21 +89,22 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 		t.Fatalf("other: %v", err)
 	}
 
-	// 1. その対そのものが他人のもの。
+	// 1. The pair itself already belongs to somebody else.
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "github", Subject: "gh-9", Realm: auth.GithubWebBase, Email: "yamada@acme.co.jp",
 	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("err = %v, want errLinkTaken", err)
 	}
-	// 2. 規則 1.5 — 別のボタン（テナントの GitHub）だが同じ GitHub アカウント。
-	//    そのアカウントでログインすると other に着地するので、ここで紐づけると
-	//    1 つのアカウントを 2 人が名乗ることになる。
+	// 2. Rule 1.5 — a different button (the tenant's GitHub) but the same GitHub
+	//    account. Signing in with it lands on `other`, so linking it here would let
+	//    two people claim one account.
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:github", Subject: "gh-9", Realm: auth.GithubWebBase, Email: "yamada@acme.co.jp",
 	}); !errors.Is(err, store.ErrLinkTaken) {
 		t.Fatalf("rule 1.5 err = %v, want errLinkTaken", err)
 	}
-	// 3. アドレスが他人のもの（呼び出し側の同一アドレス規則の後ろで、なお効く層）。
+	// 3. The address is somebody else's — a layer that still holds behind the
+	//    caller's same-address rule.
 	if err := st.AttachProvider(ctx, me.ID, store.IdentityLink{
 		Provider: "t:sub:entra", Subject: "e-1", Email: "suzuki@acme.co.jp",
 	}); !errors.Is(err, store.ErrLinkTaken) {
@@ -114,7 +120,8 @@ func TestAttachProviderRefusesAnAccountThatBelongsToSomebody(t *testing.T) {
 
 // --- the flow ----------------------------------------------------------------
 
-// linkTestConfig は「Google で入っている人が、2 つ目の方式（entra）を足す」最小構成。
+// linkTestConfig is the minimal setup for "someone signed in with Google adds a second
+// method (entra)".
 func linkTestConfig(t *testing.T, idp *stubIdP) (config, *store.SQL) {
 	t.Helper()
 	st := p3Store(t)
@@ -198,8 +205,8 @@ func nonceOf(t *testing.T, cfg config, state *http.Cookie) string {
 	return st.Nonce
 }
 
-// ★ 門はここにしかない。/oauth2/ は authGate の除外プレフィックスなので、この
-// チェックが抜けると「セッション不要で identity_provider を書けるエンドポイント」になる。
+// This is the only gate. /oauth2/ is an authGate-excluded prefix, so dropping this
+// check turns the route into an endpoint that writes identity_provider with no session.
 func TestLinkRequiresASignedInSession(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	cfg, st := linkTestConfig(t, idp)
@@ -216,7 +223,8 @@ func TestLinkRequiresASignedInSession(t *testing.T) {
 	}
 }
 
-// 通常経路。往復のあとで対が記録され、セッションは発行も差し替えもされないこと。
+// The happy path: after the round trip the pair is recorded, and the session is neither
+// issued nor replaced.
 func TestLinkAddsTheMethodAndLeavesTheSessionAlone(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 	idp := newStubIdP(t, &stubIdP{
@@ -245,21 +253,23 @@ func TestLinkAddsTheMethodAndLeavesTheSessionAlone(t *testing.T) {
 	if err != nil || len(lp) != 2 {
 		t.Fatalf("linked = %+v (%v), want google + entra", lp, err)
 	}
-	// realm はアダプタが名乗った値で押されていること（規則 1.5 が動く条件）。
+	// realm must be stamped with what the adapter reported — the precondition for
+	// rule 1.5 to work at all.
 	for _, r := range lp {
 		if r.Provider == "entra" && r.Realm != idp.URL {
 			t.Fatalf("realm = %q, want %q", r.Realm, idp.URL)
 		}
 	}
-	// そして次からはその方式でも同じワークスペースに入れる。
+	// And from now on that method reaches the same workspaces.
 	got, isNew, err := st.LinkIdentity(t.Context(), linkOf("entra", "e-1", email, true))
 	if err != nil || isNew || got.ID != me.ID {
 		t.Fatalf("sign-in with the linked method: %+v isNew=%v err=%v", got, isNew, err)
 	}
 }
 
-// ★ 決定 37: 追加できるのは同じアドレスを名乗る方式だけ。別アドレスの結合は §61.5 の
-// 「両方にサインインできることは、同一人物であることの証明ではない」に当たる。
+// Decision 37: only a method claiming the same address may be added. Joining a
+// different address runs into §61.5 — being able to sign in to both is not proof that
+// they are the same person.
 func TestLinkRefusesADifferentAddress(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 	idp := newStubIdP(t, &stubIdP{
@@ -280,7 +290,8 @@ func TestLinkRefusesADifferentAddress(t *testing.T) {
 	}
 }
 
-// ★ 紐づけは門の迂回路ではない。その方式でサインインできない人は、紐づけもできない。
+// A link is not a way around the gate: someone who cannot sign in with that method
+// cannot link it either.
 func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 	idp := newStubIdP(t, &stubIdP{
@@ -288,7 +299,7 @@ func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 		userinfoClaims: map[string]any{"sub": "e-1", "email": email, "email_verified": true},
 	})
 	cfg, st := linkTestConfig(t, idp)
-	// この provider だけの許可リスト（別ドメイン）＝ この人は入れない。
+	// An allow-list on this provider alone, for another domain — so this person is out.
 	cfg.providers[0].(*auth.OIDCProvider).AllowDomains = envx.DomainSet("sub.co.jp")
 	me, session := seedSignedIn(t, cfg, st, email)
 
@@ -303,8 +314,9 @@ func TestLinkRunsTheMethodsOwnGate(t *testing.T) {
 	}
 }
 
-// ★ 署名済みの state は「CP が書いた」しか言わない。2 本目の脚でブラウザが別人に
-// なっていたら（別タブでサインインし直した）、その別人のアカウントに紐づいてしまう。
+// A signed state only says "the CP wrote this". If the browser became somebody else on
+// the second leg (signed in again in another tab), the method would be attached to that
+// other person's account.
 func TestLinkRefusesWhenTheSessionChangedMidFlow(t *testing.T) {
 	const email = "yamada@acme.co.jp"
 	idp := newStubIdP(t, &stubIdP{
@@ -316,7 +328,7 @@ func TestLinkRefusesWhenTheSessionChangedMidFlow(t *testing.T) {
 
 	w := startLink(t, cfg, session, "?provider=entra")
 	state := stateCookieOf(t, w)
-	// 別人のセッションで戻ってくる。
+	// Come back holding somebody else's session.
 	b, _ := json.Marshal(sessionClaims{
 		Email: "suzuki@acme.co.jp", Exp: time.Now().Add(time.Hour).Unix(),
 		Prov: auth.GoogleProviderID, Sub: "g-2",
@@ -335,9 +347,10 @@ func TestLinkRefusesWhenTheSessionChangedMidFlow(t *testing.T) {
 	}
 }
 
-// ★ テナント定義の方式は、そのテナントの名簿に載っている人にだけ差し出す（決定 32-4 と
-// 同じ理由 — 子会社の一覧をデプロイ全体に見せない）。一覧を絞るだけでなく、開始側でも
-// 同じ規則を効かせる（決定 14: 表示は門ではない）。
+// A tenant-defined method is only offered to people on that tenant's roster, for the
+// same reason as decision 32-4: a subsidiary's list is not shown to the whole
+// deployment. The rule runs at the start of the flow too, not just when filtering the
+// list (decision 14: what is displayed is not a gate).
 func TestLinkToATenantMethodNeedsMembership(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -369,7 +382,8 @@ func TestLinkToATenantMethodNeedsMembership(t *testing.T) {
 	}
 }
 
-// アカウント面の一覧: 紐づけ済みと、次に足せるもの。すでに持っている方式は候補に出ない。
+// The account screen's list: what is linked, and what may be added next. A method
+// already held is not offered again.
 func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	cfg, st := linkTestConfig(t, idp)
@@ -412,7 +426,8 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 			t.Error("a configured provider must carry its button label")
 		}
 	}
-	// entra は紐づけ済みなので候補から消え、google は env にあるが未紐づけ扱いではない。
+	// entra is already linked and so drops out of the candidates; google is in env but
+	// is not treated as unlinked either.
 	for _, c := range got.Linkable {
 		if c.Provider == "entra" {
 			t.Fatalf("an already-linked method must not be offered again: %+v", got.Linkable)
@@ -420,10 +435,10 @@ func TestLoginMethodsListsLinkedAndLinkable(t *testing.T) {
 	}
 }
 
-// --- 解除（docs/log/61 §61.16.4）--------------------------------------------------
+// --- detaching (docs/log/61 §61.16.4) ----------------------------------------------
 
-// detachReq は DELETE /api/me/login-methods を 1 回叩く。provider / subject は
-// パスではなくクエリ（テナントの provider id は ":" を含む）。
+// detachReq issues one DELETE /api/me/login-methods. provider / subject go in the query
+// rather than the path, because a tenant provider id contains ":".
 func detachReq(t *testing.T, api accountAPI, me store.Identity, cur loginRef, provider, subject string) *httptest.ResponseRecorder {
 	t.Helper()
 	q := url.Values{"provider": {provider}, "subject": {subject}}
@@ -434,10 +449,12 @@ func detachReq(t *testing.T, api accountAPI, me store.Identity, cur loginRef, pr
 	return w
 }
 
-// ★ 3 つのガードはどれか 1 つでも抜けると別々の壊れ方をする:
-//   - 残り 1 つを外す → 二度と入れないアカウントができる（復旧経路が無い）
-//   - いま使っている方式を外す → そのセッションで自分の足元を消す
-//   - 他人の行 → identity_id を条件から落とすと、対を当てるだけで他人の方式を消せる
+// The three guards break in three different ways if any one of them goes:
+//   - removing the last method leaves an account nobody can ever enter again, with no
+//     recovery path
+//   - removing the method in use cuts the ground from under the current session
+//   - somebody else's row: drop identity_id from the WHERE clause and guessing a pair
+//     is enough to delete another person's method
 func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	cfg, st := linkTestConfig(t, idp)
@@ -445,15 +462,17 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	api := newAccountAPI(cfg)
 	cur := loginRef{auth.GoogleProviderID, "g-1"}
 
-	// 1. まだ 1 つしか無い。★ 現セッションの方式のガードと重なるので、ここでは別の
-	//    方式で入っていることにして「残数」のガード単体を見る — 2 つは独立に効く。
+	// 1. Only one method exists. That overlaps with the current-method guard, so
+	//    pretend the session came in through another method and observe the count
+	//    guard on its own — the two hold independently.
 	if w := detachReq(t, api, me, loginRef{"entra", "e-1"}, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "last_login_method") {
-		t.Fatalf("最後の 1 つは外せてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the last remaining method must not come off: %d %s", w.Code, w.Body.String())
 	}
-	// ★ SQL 層でも数えている（API のチェックと DELETE の間にタブが 1 枚挟まる）。
+	// The SQL layer counts too: another tab can slip in between the API's check and
+	// the DELETE.
 	if err := st.DetachProvider(t.Context(), me.ID, auth.GoogleProviderID, "g-1"); !errors.Is(err, store.ErrLastLoginMethod) {
-		t.Fatalf("store 層の残数ガードが効いていない: %v", err)
+		t.Fatalf("the store layer's remaining-count guard is not working: %v", err)
 	}
 
 	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
@@ -461,12 +480,12 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
-	// 2. 2 つになっても、いま入っている方式は外せない。
+	// 2. Even with two, the method the session is using cannot be removed.
 	if w := detachReq(t, api, me, cur, auth.GoogleProviderID, "g-1"); w.Code != http.StatusConflict ||
 		!strings.Contains(w.Body.String(), "current_login_method") {
-		t.Fatalf("現セッションの方式は外せてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the method the current session uses must not come off: %d %s", w.Code, w.Body.String())
 	}
-	// 3. 他人の行。対を知っていても届かない。
+	// 3. Somebody else's row: knowing the pair still does not reach it.
 	other, _, err := st.LinkIdentity(t.Context(), store.IdentityLink{
 		Provider: "entra", Subject: "e-9", Realm: idp.URL, Email: "suzuki@acme.co.jp",
 		FallbackKey: "suzuki-acme-co-jp", EmailJoin: true,
@@ -475,26 +494,27 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		t.Fatalf("other: %v", err)
 	}
 	if w := detachReq(t, api, me, cur, "entra", "e-9"); w.Code != http.StatusNotFound {
-		t.Fatalf("他人の行に届いてはいけない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("somebody else's row must be out of reach: %d %s", w.Code, w.Body.String())
 	}
 	if lp, _ := st.ListLinkedProviders(t.Context(), other.ID); len(lp) != 1 {
-		t.Fatalf("他人の方式が消えている: %+v", lp)
+		t.Fatalf("somebody else's method was deleted: %+v", lp)
 	}
 
-	// そして正しい 1 件は外せる。identity 行は動かない（解除もログインではない）。
+	// And the legitimate one does come off. The identity row does not move — a detach
+	// is no more a login than an attach is.
 	before, _, _ := st.GetIdentityByID(t.Context(), me.ID)
 	if w := detachReq(t, api, me, cur, "entra", "e-1"); w.Code != http.StatusOK {
-		t.Fatalf("外せるはずの 1 件が外せない: %d %s", w.Code, w.Body.String())
+		t.Fatalf("the one that should come off cannot be detached: %d %s", w.Code, w.Body.String())
 	}
 	lp, _ := st.ListLinkedProviders(t.Context(), me.ID)
 	if len(lp) != 1 || lp[0].Provider != auth.GoogleProviderID {
-		t.Fatalf("linked = %+v, want google だけ", lp)
+		t.Fatalf("linked = %+v, want google only", lp)
 	}
 	after, _, _ := st.GetIdentityByID(t.Context(), me.ID)
 	if after.UserKey != before.UserKey || after.Email != before.Email || after.Role != before.Role {
-		t.Fatalf("解除で identity 行が動いた: %+v -> %+v", before, after)
+		t.Fatalf("the detach moved the identity row: %+v -> %+v", before, after)
 	}
-	// 台帳に残る（いつからその扉が開いていた／閉じたかを後から読めること）。
+	// It lands in the ledger, so when that door opened and closed stays readable later.
 	rows, err := st.ListAuditByTenant(t.Context(), "", 50)
 	if err != nil {
 		t.Fatalf("audit: %v", err)
@@ -506,12 +526,13 @@ func TestDetachRefusesTheLastMethodTheCurrentOneAndSomebodyElses(t *testing.T) {
 		}
 	}
 	if !strings.Contains(seen, "e-1") {
-		t.Fatalf("解除が監査に残っていない: %+v", rows)
+		t.Fatalf("the detach left no trace in the audit log: %+v", rows)
 	}
 }
 
-// ★ 一覧は「外せるかどうか」もサーバが答える。UI はその写しで、判断はしない
-// （決定 14）— そして解除 API は同じ規則を自分でもう一度見る。
+// The server answers "may this be removed" as part of the list. The UI only mirrors that
+// answer and decides nothing (decision 14), and the detach API checks the same rule
+// again for itself.
 func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 	idp := newStubIdP(t, &stubIdP{})
 	cfg, st := linkTestConfig(t, idp)
@@ -543,13 +564,13 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 		return got.Linked
 	}
 
-	// 1 つだけのときは、それが現セッションの方式でもあるので二重に外せない。
+	// With only one, it is also the current session's method, so both guards bite.
 	one := read()
 	if len(one) != 1 || one[0].Removable {
-		t.Fatalf("最後の 1 つが removable になっている: %+v", one)
+		t.Fatalf("the last remaining method is marked removable: %+v", one)
 	}
 	if one[0].Subject != "g-1" {
-		t.Fatalf("行を名指しする subject が返っていない: %+v", one)
+		t.Fatalf("the subject that names the row was not returned: %+v", one)
 	}
 
 	if err := st.AttachProvider(t.Context(), me.ID, store.IdentityLink{
@@ -561,11 +582,11 @@ func TestLoginMethodsSaysWhichRowsCanBeRemoved(t *testing.T) {
 		switch l.Provider {
 		case auth.GoogleProviderID:
 			if !l.Current || l.Removable {
-				t.Fatalf("現セッションの方式は removable ではない: %+v", l)
+				t.Fatalf("the current session's method must not be removable: %+v", l)
 			}
 		case "entra":
 			if l.Current || !l.Removable {
-				t.Fatalf("もう一方は外せるはず: %+v", l)
+				t.Fatalf("the other one must be removable: %+v", l)
 			}
 		}
 	}

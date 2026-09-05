@@ -4,7 +4,7 @@
 // tree rooted at home ("") for everything else the agent may browse (the
 // backend denylists secrets). Section default collapsed (the trees are
 // on-demand); a reveal request (a clone just landed, a repo row's
-// フォルダを開く) opens the section so the target is visible — hence the
+// "open folder" on a repo row) opens the section so the target is visible — hence the
 // controlled Section + own persistence (the old console's af-section-files key,
 // so an existing collapse choice carries over).
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -62,10 +62,10 @@ export const FilesSection = memo(function FilesSection() {
     if (!p) return;
     set(true);
     setView("tree"); // a reveal targets the tree — switch back so it's visible
-    // A leftover 絞り込み hides most of the tree (and, while it is a recursive search,
+    // A leftover quick-filter hides most of the tree (and, while it is a recursive search,
     // replaces it with a flat hit list and unmounts the home tree) — so the row we are
     // about to expand to could land somewhere nobody can see. Clearing it is what
-    // "見せて" means.
+    // "show me this" means.
     setQ("");
     // Only the repos tree is mounted unconditionally; everything else in home lives in
     // the collapsed home disclosure below it. Revealing e.g. ~/.local/share/x without

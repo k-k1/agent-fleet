@@ -111,7 +111,7 @@ func HandleComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// claude wrote its own .credentials.json; nothing for us to store.
-	resetCredCache() // 期限判定を書き戻した資格情報で取り直す（同じ stat のまま中身が変わりうる）
+	resetCredCache() // re-read the freshly written credentials: the contents can change under an unchanged stat
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"connected": true})
 }
 
@@ -171,11 +171,11 @@ func loggedIn() bool {
 // plan) for the Console — `claude auth status` exposes the logged-in identity.
 // GET /connections.
 //
-// 期限（expires_at / days_left / expired）を足しているのは、`claude auth status` が
-// **期限を一切返さない**から（--json も --text も loggedIn/email/orgId/subscriptionType
-// だけ・実測 2.1.231）。カードはそれだけを見ていたので、切れても「接続済み」のまま
-// だった（docs/log/47 §4-7 で書いた「カードの状態表示を根拠にするな」の続き）。期限は
-// authexpiry.go が資格情報から直接読む。
+// The expiry fields (expires_at / days_left / expired) are added here because `claude auth
+// status` returns no expiry at all: both --json and --text carry only loggedIn/email/orgId/
+// subscriptionType (measured on 2.1.231). The card looked at nothing else, so an expired
+// login still read as "connected" (docs/log/47 §4-7: never take a card's status display as
+// evidence). The expiry itself is read straight from the credentials by authexpiry.go.
 func Status() map[string]any {
 	out, err := exec.Command("claude", "auth", "status").Output()
 	if err != nil {

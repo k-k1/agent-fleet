@@ -1,27 +1,28 @@
-// ステンシル台帳（`control-plane/assets/drawio-stencils.json`）を焼き直す（docs/log/65 §65.5.3）。
+// Rebuild the stencil manifest (`control-plane/assets/drawio-stencils.json`), docs/log/65 §65.5.3.
 //
-// 台帳が CP 側に置いてあるのは、照合するのが CP だからである（go:embed）。Console 側に
-// 置いた台帳はただの飾りで、防壁にはならない。
+// The manifest lives on the CP side because CP is what verifies against it (go:embed). A manifest
+// kept in Console would be decoration, not a barrier.
 //
-// 台帳は 2 つの役割を兼ねる:
-//   1. **SSRF の防壁**。取りに行くセット名は、信用できない `.drawio` の中身
-//      （`shape=mxgraph.<set>.<name>`）から来る。台帳に無い名前を CP が取りに行く実装は
-//      「図を開かせるだけで CP に任意 URL を叩かせる」道具になる。
-//   2. **完全性の担保**。CP は取得したバイト列を sha256 で突き合わせてから保存する。
+// It serves two purposes at once:
+//   1. An SSRF barrier. The set names to fetch come from untrusted `.drawio` content
+//      (`shape=mxgraph.<set>.<name>`). An implementation where CP fetches a name absent from the
+//      manifest becomes a tool for making CP hit an arbitrary URL just by opening a diagram.
+//   2. Integrity. CP checks the fetched bytes against sha256 before storing them.
 //
-// **絞ってはいけない。** 載せなかったセットは 404 ＝ その図が黙って劣化する。全件で
-// 20 KB 程度しかないので、絞る動機（配布サイズ）はそもそも成り立たない。絞るのは
-// 台帳ではなく、閉域向けの事前投入（`stencils-preseed.mjs`）の方。
+// Do not narrow this list. A set left out is a 404, i.e. that diagram silently degrades. The whole
+// manifest is only about 20 KB, so the motive for narrowing it (distribution size) does not hold.
+// What gets narrowed is not the manifest but the air-gapped preseed (`stencils-preseed.mjs`).
 //
-// 鍵は **ビューアが実際に要求するパス**である。`mxStencilRegistry` は
-// `mxgraph.<a>.<b>.<name>` を `<a>/<b>` に畳み（getBasenameForStencil）、
-// `_-_` を `_` に置換してから `<basename>.xml` を引く。したがって鍵は
-// `stencils/` からの相対パス（`aws4.xml` / `rack/f5.xml` / `cisco_safe/threat.xml`）。
+// The key is the path the viewer actually requests. `mxStencilRegistry` folds
+// `mxgraph.<a>.<b>.<name>` into `<a>/<b>` (getBasenameForStencil), replaces `_-_` with `_`, and
+// then looks up `<basename>.xml`. So the key is the path relative to `stencils/`
+// (`aws4.xml` / `rack/f5.xml` / `cisco_safe/threat.xml`).
 //
-//   node console/scripts/drawio/stencils-manifest.mjs            # 差分を表示するだけ
-//   node console/scripts/drawio/stencils-manifest.mjs --write    # 書き出す
+//   node console/scripts/drawio/stencils-manifest.mjs            # only show the diff
+//   node console/scripts/drawio/stencils-manifest.mjs --write    # write it out
 //
-// 版は `console/vendor/drawio/README.md` の同梱ビューアと必ず揃える（`--tag` で上書き可）。
+// The version must match the bundled viewer in `console/vendor/drawio/README.md` (`--tag`
+// overrides it).
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
@@ -40,7 +41,7 @@ const WRITE = argv.includes("--write");
 const PREFIX = "src/main/webapp/stencils/";
 const RAW = `https://raw.githubusercontent.com/jgraph/drawio/${TAG}/${PREFIX}`;
 
-// 同梱ビューアと版が食い違った台帳は、名前が変わったセットを黙って 404 にする。
+// A manifest whose version disagrees with the bundled viewer silently 404s any renamed set.
 function viewerTag() {
   const md = fs.readFileSync(path.join(REPO, "console/vendor/drawio/README.md"), "utf8");
   return md.match(/\*\*(v\d+\.\d+\.\d+)\*\*/)?.[1] ?? null;
@@ -48,29 +49,29 @@ function viewerTag() {
 
 const pinned = viewerTag();
 if (pinned && pinned !== TAG) {
-  console.error(`同梱ビューアは ${pinned} なのに台帳を ${TAG} で焼こうとしている。README と揃えること。`);
+  console.error(`the bundled viewer is ${pinned} but the manifest is being baked for ${TAG}. Match the README.`);
   process.exit(2);
 }
 
-console.error(`drawio ${TAG} の stencils/ を列挙中…`);
+console.error(`listing stencils/ of drawio ${TAG}...`);
 const tree = await (await fetch(`https://api.github.com/repos/jgraph/drawio/git/trees/${TAG}?recursive=1`, {
   headers: { "User-Agent": "agent-fleet", ...(process.env.GH_TOKEN ? { Authorization: `Bearer ${process.env.GH_TOKEN}` } : {}) },
 })).json();
-if (!tree.tree) throw new Error(`tree を取得できない: ${JSON.stringify(tree).slice(0, 200)}`);
+if (!tree.tree) throw new Error(`cannot fetch the tree: ${JSON.stringify(tree).slice(0, 200)}`);
 
-// `.xml` だけ。`stencils/` には LICENSE と clipart/*.png も居るが、ビューアは
-// `<basename>.xml` しか要求しないので台帳に入れる意味が無い（入れると SSRF の
-// 防壁が緩むだけ）。
+// `.xml` only. `stencils/` also holds LICENSE and clipart/*.png, but the viewer only ever requests
+// `<basename>.xml`, so putting them in the manifest gains nothing and only loosens the SSRF
+// barrier.
 const files = tree.tree
   .filter((e) => e.type === "blob" && e.path.startsWith(PREFIX) && e.path.endsWith(".xml"))
   .map((e) => ({ name: e.path.slice(PREFIX.length), size: e.size }))
   .sort((a, b) => (a.name < b.name ? -1 : 1));
-console.error(`${files.length} 件 / ${(files.reduce((t, f) => t + f.size, 0) / 1048576).toFixed(1)} MB。sha256 を取るため全件を取得する…`);
+console.error(`${files.length} files / ${(files.reduce((t, f) => t + f.size, 0) / 1048576).toFixed(1)} MB. Fetching all of them to compute sha256...`);
 
 const sets = {};
 let done = 0;
-// 並列を上げると raw.githubusercontent が ECONNRESET を返す（実測 8 並列で落ちた）。
-// 台帳を焼くのは版を上げたときだけなので、遅くても確実な方を採る。
+// Raising the concurrency makes raw.githubusercontent return ECONNRESET (measured: it broke at 8).
+// The manifest is only baked when the version is bumped, so take the slow but reliable option.
 const QUEUE = 3;
 
 async function get(url, tries = 4) {
@@ -94,10 +95,11 @@ await Promise.all(
       const buf = await get(RAW + f.name.split("/").map(encodeURIComponent).join("/")).catch((e) => {
         throw new Error(`${f.name}: ${e.message}`);
       });
-      // git の size は blob のバイト数。取得結果と食い違ったら列挙と実体がずれている。
-      if (buf.length !== f.size) throw new Error(`${f.name}: ${buf.length} bytes（tree は ${f.size}）`);
+      // git's size is the blob's byte count. A mismatch means the listing and the actual files
+      // have drifted apart.
+      if (buf.length !== f.size) throw new Error(`${f.name}: ${buf.length} bytes (tree says ${f.size})`);
       sets[f.name] = { sha256: crypto.createHash("sha256").update(buf).digest("hex"), size: buf.length };
-      if (++done % 25 === 0) console.error(`  ${done} 件…`);
+      if (++done % 25 === 0) console.error(`  ${done} done...`);
     }
   }),
 );
@@ -105,23 +107,23 @@ await Promise.all(
 const manifest = {
   version: TAG,
   base: RAW,
-  // 鍵の並びを固定して差分を読めるようにする。
+  // Fix the key order so the diff stays readable.
   sets: Object.fromEntries(Object.keys(sets).sort().map((k) => [k, sets[k]])),
 };
 const json = JSON.stringify(manifest, null, 1) + "\n";
 
 const before = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
 if (before === json) {
-  console.log(`変更なし（${Object.keys(manifest.sets).length} 件 / ${(json.length / 1024).toFixed(1)} KB）`);
+  console.log(`no change (${Object.keys(manifest.sets).length} sets / ${(json.length / 1024).toFixed(1)} KB)`);
 } else if (WRITE) {
   fs.writeFileSync(OUT, json);
-  console.log(`${OUT} を書き出した（${Object.keys(manifest.sets).length} 件 / ${(json.length / 1024).toFixed(1)} KB）`);
+  console.log(`wrote ${OUT} (${Object.keys(manifest.sets).length} sets / ${(json.length / 1024).toFixed(1)} KB)`);
 } else {
   const old = before ? JSON.parse(before) : { sets: {} };
   const added = Object.keys(manifest.sets).filter((k) => !old.sets[k]);
   const removed = Object.keys(old.sets).filter((k) => !manifest.sets[k]);
   const changed = Object.keys(manifest.sets).filter((k) => old.sets[k] && old.sets[k].sha256 !== manifest.sets[k].sha256);
-  console.log(`差分あり: 追加 ${added.length} / 削除 ${removed.length} / 変更 ${changed.length}`);
+  console.log(`diff: added ${added.length} / removed ${removed.length} / changed ${changed.length}`);
   for (const k of [...added.map((k) => `+ ${k}`), ...removed.map((k) => `- ${k}`), ...changed.map((k) => `~ ${k}`)].slice(0, 40)) console.log(`  ${k}`);
-  console.log("書き出すなら --write");
+  console.log("pass --write to write it out");
 }

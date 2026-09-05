@@ -1,21 +1,22 @@
-// drawio_preseed.go — ステンシルのキャッシュを先に埋める（docs/log/65 §65.5.5 / P1b）。
+// drawio_preseed.go — fills the stencil cache ahead of time (docs/log/65 §65.5.5 / P1b).
 //
-//	control-plane drawio-preseed                 # 既定束をダウンロードして投入
-//	control-plane drawio-preseed --all           # 203 件すべて（40.8 MB）
-//	control-plane drawio-preseed --from <dir>    # ネットワークを使わず、手元の stencils/ から
-//	control-plane drawio-preseed --list          # 何が入るかだけ表示（何もしない）
+//	control-plane drawio-preseed                 # download and store the default bundle
+//	control-plane drawio-preseed --all           # all 203 sets (40.8 MB)
+//	control-plane drawio-preseed --from <dir>    # from a local stencils/ tree, no network
+//	control-plane drawio-preseed --list          # only list what would be stored
 //
-// **閉域では `--from` を使う。** 外に出られる場所で drawio を 1 回 clone し、
-// `src/main/webapp/stencils` をコピーして持ち込み、そのディレクトリを指す。台帳の
-// sha256 で 1 件ずつ照合するので、持ち込みの経路が信用できなくても中身は保証される。
-// キャッシュは内容アドレス（`<sha256>.xml`）なので、**投入済みのディレクトリごと tar で
-// 運んでも同じことができる**（索引ファイルは無い）。
+// An air-gapped deployment uses `--from`: clone drawio once where the network reaches,
+// carry `src/main/webapp/stencils` in, and point at that directory. Every file is checked
+// against the manifest's sha256, so the contents are guaranteed even when the transport
+// that brought them is not. The cache is content-addressed (`<sha256>.xml`), so carrying
+// an already-filled cache directory across as a tar does the same job — there is no index
+// file.
 //
-// なぜ既定が全件ではないのか: 203 件 40.8 MB のうち `aws4.xml` だけで 6.21 MB、
-// `rack/hpe_aruba/switches.xml` が 3.67 MB を占める。閉域の管理者が本当に要るのは
-// クラウド／インフラ図と汎用作図で、そこは 49 件 17.0 MB に収まる。**足りなければ
-// `--all` がある**し、どちらの場合も「何を入れて何を入れなかったか」を必ず出す
-// （黙って打ち切ると「全部入った」と読まれる）。
+// Why the default is not everything: of the 203 sets and 40.8 MB, `aws4.xml` alone is
+// 6.21 MB and `rack/hpe_aruba/switches.xml` 3.67 MB. What an air-gapped admin actually
+// needs is cloud/infrastructure diagrams and general drawing, and that fits in 49 sets and
+// 17.0 MB; `--all` is there when it does not. Either way, always print what was stored and
+// what was not — trimming in silence reads as "everything is in".
 package main
 
 import (
@@ -30,22 +31,23 @@ import (
 	"sync"
 )
 
-// 既定束。**台帳を絞るのとは別の話**である——台帳は全件（絞ると図が黙って劣化する）で、
-// 絞ってよいのは「先に置いておく分」だけ。ここに無いセットも、外に出られる環境なら
-// 要求された時点で CP が取りに行く。
+// The default bundle. This is not the same question as trimming the manifest: the manifest
+// stays complete (trimming it degrades diagrams silently) and only what is placed in
+// advance may be narrowed. A set that is not here is still fetched by the CP on demand
+// wherever the network reaches.
 var (
-	// ディレクトリ丸ごと入れるもの（Azure と Office は 1 ファイルが小さく数が多い）。
+	// Whole directories (Azure and Office are many small files).
 	drawioPreseedPrefixes = []string{"mscae/", "office/"}
-	// 単体で指定するもの。`rack/` は hpe_aruba（3.67 MB）を避けて機種だけ拾う。
+	// Individual sets. `rack/` takes the models but avoids hpe_aruba (3.67 MB).
 	drawioPreseedExact = []string{
-		// クラウド
+		// cloud
 		"aws4.xml", "aws3.xml", "aws3d.xml", "azure.xml", "gcp2.xml",
 		"ibm.xml", "ibm_cloud.xml", "kubernetes.xml", "kubernetes2.xml",
-		// ネットワーク／ラック
+		// network / rack
 		"networks.xml", "networks2.xml",
 		"rack/apc.xml", "rack/cisco.xml", "rack/dell.xml", "rack/f5.xml",
 		"rack/general.xml", "rack/hp.xml", "rack/ibm.xml", "rack/oracle.xml",
-		// 汎用作図
+		// general drawing
 		"basic.xml", "flowchart.xml", "bpmn.xml", "eip.xml",
 		"cabinets.xml", "floorplan.xml", "atlassian.xml", "salesforce.xml",
 		"veeam/veeam.xml",
@@ -82,15 +84,15 @@ func drawioPreseedNames(m drawioStencilManifest, all bool) []string {
 
 func runDrawioPreseed(args []string) {
 	fs := flag.NewFlagSet("drawio-preseed", flag.ExitOnError)
-	all := fs.Bool("all", false, "台帳の全件（203 件 / 40.8 MB）を投入する")
-	from := fs.String("from", "", "ネットワークではなく、このディレクトリ（drawio の stencils/）から読む")
-	dir := fs.String("dir", "", "キャッシュ先（既定 $WS_DATA/drawio-stencils）")
-	list := fs.Bool("list", false, "対象を並べるだけで何もしない")
+	all := fs.Bool("all", false, "seed every entry in the manifest (203 sets / 40.8 MB)")
+	from := fs.String("from", "", "read from this directory (drawio's stencils/) instead of from the network")
+	dir := fs.String("dir", "", "cache destination (default $WS_DATA/drawio-stencils)")
+	list := fs.Bool("list", false, "only list the targets and do nothing")
 	_ = fs.Parse(args)
 
 	m, err := loadDrawioManifest()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "台帳を読めない: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cannot read the manifest: %v\n", err)
 		os.Exit(1)
 	}
 	names := drawioPreseedNames(m, *all)
@@ -98,7 +100,7 @@ func runDrawioPreseed(args []string) {
 	for _, n := range names {
 		total += m.Sets[n].Size
 	}
-	// **入らなかったものを必ず言う。** 黙って絞ると「全部入った」と読まれる。
+	// Always say what was left out; trimming in silence reads as "everything is in".
 	skipped := len(m.Sets) - len(names)
 	var skippedBytes int64
 	for _, e := range m.Sets {
@@ -106,9 +108,9 @@ func runDrawioPreseed(args []string) {
 	}
 	skippedBytes -= total
 
-	fmt.Printf("drawio %s / 対象 %d 件 %.1f MB", m.Version, len(names), float64(total)/(1<<20))
+	fmt.Printf("drawio %s / target %d sets %.1f MB", m.Version, len(names), float64(total)/(1<<20))
 	if skipped > 0 {
-		fmt.Printf("（対象外 %d 件 %.1f MB —— 全件なら --all）", skipped, float64(skippedBytes)/(1<<20))
+		fmt.Printf(" (not targeted: %d sets %.1f MB - use --all for everything)", skipped, float64(skippedBytes)/(1<<20))
 	}
 	fmt.Println()
 	if *list {
@@ -123,11 +125,11 @@ func runDrawioPreseed(args []string) {
 		cacheDir = filepath.Join(envx.Or("WS_DATA", "/tmp/af-data"), "drawio-stencils")
 	}
 	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "キャッシュ先を作れない %s: %v\n", cacheDir, err)
+		fmt.Fprintf(os.Stderr, "cannot create the cache destination %s: %v\n", cacheDir, err)
 		os.Exit(1)
 	}
 	d := &drawioStencils{cacheDir: cacheDir, loading: map[string]*sync.Mutex{}}
-	fmt.Printf("投入先 %s\n", cacheDir)
+	fmt.Printf("seeding into %s\n", cacheDir)
 
 	var done, already, failed int
 	for _, name := range names {
@@ -139,16 +141,18 @@ func runDrawioPreseed(args []string) {
 		}
 		var body []byte
 		if *from != "" {
-			// 持ち込み。**照合してから置く** —— 経路が信用できなくても中身は台帳が保証する。
+			// Carried in: verify before storing — the manifest guarantees the contents
+			// even when the route they arrived by cannot be trusted.
 			body, err = os.ReadFile(filepath.Join(*from, filepath.FromSlash(name)))
 			if err == nil {
 				if verr := verifyDrawioStencil(body, entry); verr != nil {
-					err = fmt.Errorf("%s: %w（--from のディレクトリは %s のものか）", name, verr, m.Version)
+					err = fmt.Errorf("%s: %w (is the --from directory the one for %s?)", name, verr, m.Version)
 				}
 			}
 			if err == nil {
-				// 稼働中の CP と同じディレクトリなので、直に書かず store() を通す
-				// （書きかけが正規名で見えると壊れたものが配られる）。
+				// Same directory a running CP serves from, so go through store()
+				// rather than writing directly: a half-written file visible under its
+				// final name is handed out as if it were whole.
 				err = d.store(path, body)
 			}
 		} else {
@@ -164,10 +168,10 @@ func runDrawioPreseed(args []string) {
 			fmt.Printf("  %d / %d …\n", done+already, len(names))
 		}
 	}
-	fmt.Printf("投入 %d 件 / 既にあった %d 件 / 失敗 %d 件\n", done, already, failed)
+	fmt.Printf("seeded %d / already present %d / failed %d\n", done, already, failed)
 	if failed > 0 {
-		// 失敗しても図は開く（枠と色だけになる）。運用は続けられるので落とさないが、
-		// 終了ステータスは正直に返す。
+		// A missing stencil still opens the diagram (outlines and colours only), so a
+		// failure does not abort the run — but the exit status stays honest.
 		os.Exit(1)
 	}
 }

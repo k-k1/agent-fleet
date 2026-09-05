@@ -1,9 +1,9 @@
-// File ペインが PDF と Office 文書をどう扱うか（docs/log/82）。
+// How the File pane handles PDFs and Office documents (docs/log/82).
 //
-// ここで見るのは「面の選択と受け渡し」だけ —— どのファイルでどの面に降り、生バイトの
-// URL と形式が渡り、情報バーが何と読めるか。実際に絵が出るか・変換が通るかは canvas と
-// WASM の話で jsdom では確かめられない（`npm --prefix console run pdf:check` と
-// `doc:check` が実ブラウザで見る）。
+// Only surface selection and hand-off are covered here: which file lands on which surface, that
+// the raw-bytes URL and the format are passed on, and what the info bar reads. Whether anything
+// is actually painted or converted is canvas and WASM, which jsdom cannot check
+// (`npm --prefix console run pdf:check` and `doc:check` do that in a real browser).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -21,8 +21,8 @@ vi.mock("../../core/api/client.ts", () => ({
   rel: (p: string) => p,
 }));
 
-// PdfView / DocPreview 自体は canvas と WASM を持つので、ここでは「呼ばれた・何を
-// 渡された」だけ見る（実物は scripts/pdf・scripts/doc のハーネスが実ブラウザで見る）。
+// PdfView / DocPreview themselves need canvas and WASM, so only "was it called and with what"
+// is checked here; the real thing is covered by the scripts/pdf and scripts/doc harnesses.
 const pdfProps: { src: string; onMeta?: (m: { pages: number }) => void }[] = [];
 vi.mock("./PdfView.tsx", () => ({
   PdfView: (props: { src: string; onMeta?: (m: { pages: number }) => void }) => {
@@ -82,8 +82,8 @@ afterEach(() => {
 
 describe("the File pane on a PDF", () => {
   it("shows the PDF surface instead of the binary placeholder", async () => {
-    // 退行の型: api/fs/file は PDF を binary:true としか答えないので、PDF の分岐を
-    // バイナリの分岐より後ろに置くと、いつまでも「(バイナリ, 12.1 KB)」のままになる。
+    // Regression shape: api/fs/file reports a PDF only as binary:true, so putting the PDF
+    // branch after the binary branch leaves the pane stuck on "(binary, 12.1 KB)" forever.
     served = binaryFile("repos/x/report.pdf");
     await render("repos/x/report.pdf");
     expect(surface()).toBe("pdf");
@@ -106,7 +106,7 @@ describe("the File pane on a PDF", () => {
       pdfProps.at(-1)?.onMeta?.({ pages: 12 });
     });
     expect(meta()).toContain("12 pages");
-    // 行数はテキストの話。PDF に出しては嘘になる。
+    // A line count is a text notion; showing one for a PDF would be a lie.
     expect(meta()).not.toContain("lines");
   });
 
@@ -147,8 +147,8 @@ describe("the File pane on an Office document", () => {
   });
 
   it("hands the converter the raw bytes, the format and the size", async () => {
-    // size は上限判定に要る（WASM は全体をメモリに載せる）。落とすと巨大な添付で
-    // タブごと落ちるまで気づけない。
+    // size is needed for the limit check, because the WASM converter loads the whole file into
+    // memory. Drop it and a huge attachment is only noticed when it takes the tab down.
     served = binaryFile("repos/x/book.xlsx", 999);
     await render("repos/x/book.xlsx");
     expect(docProps.at(-1)).toMatchObject({ src: "/dl/repos/x/book.xlsx", format: "xlsx", size: 999 });
@@ -162,8 +162,8 @@ describe("the File pane on an Office document", () => {
   });
 
   it("leaves csv and other text files alone", async () => {
-    // csv は anydoc も読めるが、すでにテキストとして読めている。変換に回すと
-    // コードビューも編集面も失う。
+    // anydoc can read csv too, but it already reads as text; sending it through the converter
+    // would lose both the code view and the editing surface.
     served = {
       path: "repos/x/data.csv",
       size: 12,
@@ -181,11 +181,11 @@ describe("the File pane on an Office document", () => {
 
 describe("the bundled pdf.js assets", () => {
   it("addresses cMaps by version, under the app's base URI", async () => {
-    // cMap が引けないと、フォントを埋め込んでいない日本語 PDF が空白になる。
-    // 版をパスに入れるのは、assets/ が immutable で配られるため（vite.config.js）。
+    // Without reachable cMaps, a Japanese PDF that embeds no fonts renders blank. The version
+    // is in the path because assets/ is served as immutable (vite.config.js).
     const { pdfjsAssetURL } = await import("./pdfjs.ts");
     const url = pdfjsAssetURL("cmaps");
-    if (!url) return; // define の無い文脈（同梱アセットを使わない）
+    if (!url) return; // no define in this context, i.e. the bundled assets are not used
     expect(url.startsWith(document.baseURI)).toBe(true);
     expect(url).toMatch(/\/assets\/pdfjs\/\d+\.\d+\.\d+\/cmaps\/$/);
   });

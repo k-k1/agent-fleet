@@ -1,32 +1,33 @@
-// version_info.go — 「いま動いているのはどの版か」に答える面（docs/log/35 §35.6.1）。
+// version_info.go — the surface that answers "which build is running right now"
+// (docs/log/35 §35.6.1).
 //
-// `GET /api/version` は元々 `{"version": buildVersion}` だけを返していた。それで
-// 足りるのはバイナリを直接配るデプロイ（native / compose）だけで、ECS ではコードは
-// *イメージ* として届く。しかも CP と workspace は 30-ingress.yaml の単一 `ImageTag`
-// から作られ、運用者が上げ下げするのはそのタグの方なので、「版」と「イメージ」は
-// 別の問いになる。障害報告には両方が要る（Console のアカウントメニュー最下部）。
+// `GET /api/version` carries both a version and an image because they are different
+// questions. Deployments that ship the binary itself (native / compose) need only the
+// version, but on ECS the code arrives as an *image*, and CP and workspace are both built
+// from the single `ImageTag` in 30-ingress.yaml — the thing an operator actually moves up
+// and down. A bug report needs both (bottom of the Console's account menu).
 //
-// 置き場をここ（既存ルートの追記）にしたのは意図的:
-//   - `{"version": ...}` は追記なので既存の読み手（routes_test / docs/log/35 の実機手順）
-//     が壊れない。
-//   - 新しい REST を足すと agent 側と CP プロキシの allowlist の両方に登録が要る
-//     （毎回それを忘れて 404 になる）。既存の CP 専用ルートならその面倒が無い。
+// Extending this existing route instead of adding a new one is deliberate:
+//   - `{"version": ...}` is only added to, so existing readers (routes_test, the on-machine
+//     procedure in docs/log/35) keep working.
+//   - a new REST endpoint has to be registered both on the agent side and in the CP proxy
+//     allowlist, and forgetting one is a 404 every time. A CP-only route has no such pair.
 //
-// 判らない項目は **キーごと落とす**。docker / native にはタスクメタデータも
-// `AF_ECS_WORKSPACE_IMAGE` も無いので、プロファイル文字列で分岐しなくても自然に
-// 消える — 能力で判定する（golden_bake.go の流儀）。Console 側もキーの有無だけを
-// 見て描くか描かないかを決める。
+// An unknown item is dropped key and all. docker/native have neither task metadata nor
+// `AF_ECS_WORKSPACE_IMAGE`, so the keys disappear on their own without branching on a
+// profile string — decide by capability (golden_bake.go's style). The Console likewise
+// decides what to draw from the presence of a key alone.
 //
-// ★ 版どうしを比べて「更新あり」と言ってはならない。CP と Agent の版が意図的に
+// Never compare two versions here and report "an update is available". CP and Agent
+// versions drift on purpose, so the comparison would light up permanently (the prohibition
+// in workspace_stale.go). This surface only displays; deciding that a restart is required
+// belongs to the existing stale machinery (runtime_ecs_stale.go). Do not grow a second
+// badge out of here.
 //
-//	ずれるのは正常な状態で、比較すると恒久点灯する（workspace_stale.go の禁じ手）。
-//	ここは表示だけで、要再起動の判定は既存の stale 機構（runtime_ecs_stale.go）の
-//	担当。二つ目のバッジをここから生やさない。
-//
-// ★ レジストリ host（`<account>.dkr.ecr.<region>.amazonaws.com`）は落として返す。
-//
-//	全メンバーが読む面に AWS アカウント ID を載せる理由が無い。タグと digest だけで
-//	「どの実体か」は言えるし、ECR を引くのは運用者の手元で足りる。
+// The registry host (`<account>.dkr.ecr.<region>.amazonaws.com`) is stripped before
+// returning: there is no reason to put an AWS account ID on a surface every member reads,
+// tag and digest already say which artifact it is, and querying ECR is something an
+// operator does from their own machine.
 package main
 
 import (
@@ -42,8 +43,8 @@ import (
 
 // imageInfo is one image as the Console is allowed to print it: repository name
 // (registry host stripped), the tag it was deployed under, and the content digest
-// when it is known. `:dev` は MUTABLE なので、タグだけでは実体を特定できない —
-// digest はそのための添え物であって、比較材料ではない。
+// when it is known. `:dev` is mutable, so a tag alone does not identify the artifact; the
+// digest is there for that, not as material for a comparison.
 type imageInfo struct {
 	Repo   string `json:"repo"`
 	Tag    string `json:"tag,omitempty"`

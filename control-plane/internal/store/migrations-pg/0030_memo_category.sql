@@ -1,4 +1,4 @@
--- Memo categories (docs/log/21 UI刷新), Postgres mirror of migrations/0020_memo_category.sql.
+-- Memo categories (docs/log/21 UI overhaul), Postgres mirror of migrations/0020_memo_category.sql.
 -- See that file for the column semantics: a memo still carries its category NAME in
 -- memo.category, and this table persists the ORDER and the existence of empty categories.
 --

@@ -1,12 +1,13 @@
-// DocPreview — Word / Excel / PowerPoint の簡易プレビュー（docs/log/82 §82.4）。
+// DocPreview — lightweight preview of Word / Excel / PowerPoint (docs/log/82 §82.4).
 //
-// anydoc で GFM に変換し、Console の MarkdownView にそのまま載せる。**見た目は再現しない**:
-// ページ体裁も図形の位置もセルの色も落ち、埋め込み画像は alt text になる。だから面の頭に
-// 「簡易プレビュー」と出し、原本を開くための導線（情報バーのダウンロード）を隣に残す
-// —— 再現しているように見せる方が、書式の消えた表を鵜呑みにされるぶん危ない。
+// anydoc converts to GFM, which is rendered by the Console's MarkdownView. It does not reproduce
+// the appearance: page layout, shape positions and cell colours are lost, and embedded images
+// become alt text. Hence the "simple preview" note at the top of the pane and the download link
+// to the original kept next to it — looking faithful would be the more dangerous option, because
+// a table stripped of its formatting would then be taken at face value.
 //
-// 変換は WASM で 1ms 未満（実測・docs/log/82 §82.2）。時間がかかるのは 2.9MB の WASM を
-// 初回に取ってくるところだけで、それは「この形式を開いた人」だけが払う。
+// Conversion itself is under 1ms in WASM (measured, docs/log/82 §82.2). The only slow part is
+// fetching the 2.9MB WASM the first time, and only someone who opens this format pays it.
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
@@ -14,22 +15,22 @@ import { MarkdownView } from "./MarkdownView.tsx";
 import { anydocFailure, toMarkdown, type AnydocFailure, type AnydocFormat } from "./anydoc.ts";
 import type { ScrollMemoryRef } from "./parts/useScrollMemory.ts";
 
-/** これより大きいファイルは変換に回さない。WASM は全体をメモリに載せるので、
- *  巨大な添付でタブごと落とすより、ダウンロードへ誘導する方が正直。 */
+/** Files larger than this are not converted. The WASM loads the whole document into memory, so
+ *  pointing at the download is more honest than killing the tab on a huge attachment. */
 export const MAX_DOC_BYTES = 40 * 1024 * 1024;
 
 interface DocPreviewProps {
-  /** 生バイトの URL（download エンドポイント）。 */
+  /** URL of the raw bytes (the download endpoint). */
   src: string;
-  /** 拡張子から分かる形式。中身から判定できなかったときの手掛かりとして渡す。 */
+  /** Format guessed from the extension, passed as a hint for when the content is inconclusive. */
   format?: string;
-  /** ファイルの大きさ（api/fs/file の size）。上限判定にだけ使う。 */
+  /** File size (from api/fs/file), used only for the size limit. */
   size?: number;
-  /** Markdown 内のリンクを解決する基準パス。 */
+  /** Base path used to resolve links inside the Markdown. */
   basePath?: string;
   onOpenFile?: (path: string, line?: number, column?: number, openInNew?: boolean) => void;
   onOpenDir?: (path: string) => void;
-  /** 表示位置の記憶（parts/useScrollMemory）。スクロールするのは .md-scroll。 */
+  /** Scroll-position memory (parts/useScrollMemory). The element that scrolls is .md-scroll. */
   scrollMemory?: ScrollMemoryRef;
 }
 
@@ -76,7 +77,8 @@ export function DocPreview({ src, format, size, basePath, onOpenFile, onOpenDir,
   }
 
   if (state.phase === "failed") {
-    // 白い面のまま黙らない。「なぜ読めないか」と「原本を開けばよい」を必ず出す。
+    // Never fail silently to a blank pane: always say why it cannot be read and that the original
+    // can still be opened.
     const message =
       state.reason === "too_large"
         ? tr("view.doc.too_large")

@@ -1,8 +1,9 @@
-// HandoffInboxModal — 受け取った引き継ぎの受信箱（docs/log/77 / ADR 0057）。
+// HandoffInboxModal is the inbox of handoffs received (docs/log/77 / ADR 0057).
 //
-// 行そのものは HandoffOfferRow（共有ビューの帯からも同じ面を開く）。ここが持つのは
-// 「どれを出すか」だけ: 既定は未処理の全件で、`offerId` を渡すとその 1 件に絞る
-// —— 共有ビューの帯や通知から来た人に、他人の引き継ぎまで並べても仕方がないため。
+// The rows themselves are HandoffOfferRow (the banner in the shared view opens the same
+// surface). All this component decides is WHICH offers to show: by default every
+// unprocessed one, or just the one named by `offerId` — someone arriving from a banner or
+// a notification has no use for other people's handoffs.
 import { Modal } from "../../ui/Modal.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { HandoffOfferRow } from "./HandoffOfferRow.tsx";

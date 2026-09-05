@@ -1,12 +1,12 @@
-/* viewer.css — 索引。規則は 1 つも持たず、面ごとの parts/*.css を
-   **元の 1 枚での登場順のまま** 読み込むだけ。
+/* viewer.css — the index. It carries no rules of its own; it only imports the per-surface
+   parts/*.css in their original order of appearance in the single sheet.
 
-   順序を動かさないのは、同名グローバルクラスが import 順で合成されるため
-   （console/scripts/css-dup.mjs が一覧を出す）。この 22 枚を下の順に連結すると
-   分割前の viewer.css とバイト単位で同一になる。並べ替えたくなったら、その
-   時点で「合成の結果」が変わる可能性を自分で確かめること。
+   The order must not move because same-named global classes are silently merged in @import
+   order (console/scripts/css-dup.mjs lists them). Concatenating these 22 files in the order
+   below reproduces the pre-split viewer.css byte for byte. Anyone who wants to reorder them
+   has to check for themselves what the merge then produces.
 
-   注: src/app/main.tsx がこのファイルを読み込む位置は変えていない。 */
+   Note: where src/app/main.tsx imports this file is unchanged. */
 
 @import "./parts/shell.css";
 @import "./parts/diff.css";

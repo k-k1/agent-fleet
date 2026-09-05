@@ -208,15 +208,17 @@ type sqlExecQuery interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
-// invalidateUnauthorizedShareDerivatives は、共有規則が変わった直後に**共有から派生した
-// 未処理の約束**をすべて失効させ、本文を消す。所有者の共有変更と同じトランザクションで
-// 呼ばれるので、「ACL 変更が先なら提案/引き継ぎは失効、承認が先ならその副作用の完了後に
-// ACL 変更が通る」という順序（docs/log/59 §2）が一意に決まる。
+// invalidateUnauthorizedShareDerivatives expires every outstanding promise derived from a
+// share and wipes its body, immediately after the sharing rules changed. It runs in the
+// same transaction as the owner's share change, which is what makes the ordering
+// unambiguous (docs/log/59 §2): the ACL change first means the proposal/handoff expires,
+// the approval first means the ACL change lands only after that side effect completed.
 //
-// ⚠️ 派生物は 2 種類ある。RW 提案（共有先 → 所有者）と引き継ぎ offer（所有者 → 共有先）で、
-// **必要な権限が違う**: 提案は rw が要るが、引き継ぎは会話が読めれば足りるので ro でも成立する。
-// 1 つの関数にまとめてあるのは、呼び出し側が 4 か所あり、片方だけ足し忘れると「共有を切ったのに
-// 相手の受信箱に引き継ぎが残る」形で無言に壊れるため。3 つ目が増えてもここに足す。
+// There are two kinds of derivative, and they need DIFFERENT permissions: an RW proposal
+// (recipient → owner) requires rw, while a handoff offer (owner → recipient) only needs
+// the conversation to be readable, so ro is enough. They share one function because there
+// are four call sites and adding only one of them breaks silently — the share is revoked
+// yet the handoff still sits in the other person's inbox. A third kind goes here too.
 func invalidateUnauthorizedShareDerivatives(ctx context.Context, q sqlExecQuery, owner, now string) error {
 	if _, err := q.ExecContext(ctx, `UPDATE session_handoff_offer SET status='expired',ciphertext='',decided_at=?
 		WHERE owner_membership_id=? AND status='pending' AND NOT EXISTS (
@@ -523,8 +525,9 @@ func (s *SQL) ClaimSessionShareProposal(ctx context.Context, id, owner, by, now,
 	if _, err = tx.ExecContext(ctx, `UPDATE shared_session_catalog SET last_seen=last_seen WHERE id=?`, c.ID); err != nil {
 		return p, c, "", err
 	}
-	// scope_key='' は put が拒否するので、ベース直下のセッション(parent_working_copy_id='')が
-	// repo 規則へ誤って一致することはない — effectivePermission と同じ判定を SQL 側でも保つ。
+	// put rejects scope_key='', so a session directly under the base
+	// (parent_working_copy_id='') can never match a repo rule by accident — the SQL
+	// keeps the same test as effectivePermission.
 	if _, err = tx.ExecContext(ctx, `UPDATE session_share SET updated_at=updated_at
 		WHERE owner_membership_id=? AND recipient_membership_id=? AND permission='rw'
 		  AND ((scope_type='session' AND scope_key=?) OR (scope_type IN ('repo','worktree') AND scope_key=?)

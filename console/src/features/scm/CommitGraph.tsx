@@ -14,7 +14,7 @@ const ROW_H = 48;
 const LANE_W = 14;
 const NODE_R = 4;
 
-// relDate: an ISO instant → short locale-aware "…前"（共通実装 lib/intl へ委譲）。
+// relDate: an ISO instant → a short locale-aware "… ago" (delegated to the shared lib/intl).
 const relDate = (iso: string): string => relTime(iso);
 
 export function CommitGraph({

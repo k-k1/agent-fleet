@@ -25,7 +25,7 @@ vi.mock("../../core/api/client.ts", () => ({
   downloadURL: (p: string) => "/dl/" + p,
 }));
 
-// Revealing a directory lands in the ファイル rail; the store call is enough to observe.
+// Revealing a directory lands in the Files rail; the store call is enough to observe.
 const revealed: { path: string; focus?: boolean }[] = [];
 vi.mock("../files/store.ts", () => ({
   useFilesStore: {

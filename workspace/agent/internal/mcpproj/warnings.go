@@ -30,7 +30,7 @@ func nameWarnings(name, file string) []Warning {
 var secretKeyRE = regexp.MustCompile(`(?i)token|key|secret|password|passwd|credential|authorization`)
 
 // looksSecretValue flags a value as secret-shaped by simple Shannon entropy —
-// docs/log/56 §7.2's "高エントロピーな値". Deliberately conservative (long, no
+// docs/log/56 §7.2's "high-entropy value". Deliberately conservative (long, no
 // whitespace, entropy above a plain-English/path threshold) since a false negative
 // here just means one fewer warning, not a false sense of safety (the key-name
 // check above catches the common case).
@@ -58,7 +58,7 @@ func shannonEntropy(s string) float64 {
 // secretWarnings flags an env/header entry that already looks like a credential AND
 // sits in a file whose tracked state means it either IS committed (yellow — docs/log/56
 // §7.2's tracked→tracked row) or CANNOT be determined (yellow, svn/no-VCS — docs/log/57
-// 憲章6). An untracked/ignored file is not warned about here: nothing has reached
+// charter 6). An untracked/ignored file is not warned about here: nothing has reached
 // git yet, which is the safe state this whole check exists to preserve.
 func secretWarnings(s Server, file string, tracked, trackedUncertain bool) []Warning {
 	if !tracked && !trackedUncertain {

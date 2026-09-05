@@ -1,13 +1,14 @@
-// transcript/MarkStrip — 引いたマーカーの一覧（docs/log/69 §69.7）。
+// transcript/MarkStrip — the list of marks drawn on a conversation (docs/log/69 §69.7).
 //
-// 「誰が引いたか」の主経路はここ。本文の `<mark>` は下線の色で作成者を示すだけで、名前は
-// 出さない（読みを邪魔するため）。畳み方・per-session の開閉記憶・空のときは帯ごと出さない、
-// は変更ファイル帯（FileChangeStrip / docs/log/68）と揃えてある — 同じ帯の中で畳み方が違う
-// パネルが並ぶと、無関係な機能が2つあるように読める。
+// This is the primary route to "who drew this": the `<mark>` in the body only encodes the author
+// in its underline colour, never a name, so as not to disturb reading. The fold behaviour, the
+// per-session open/closed memory and hiding the whole strip when empty match the changed-files
+// strip (FileChangeStrip / docs/log/68) — two panels that fold differently side by side read as
+// two unrelated features.
 //
-// 行を押すとその印までスクロールする。⚠️ ただし転写は tail 窓しか持たないので、まだ読み込んで
-// いないターンの印は画面上に存在しない。そのぶんは押せない行として出す（「押しても何も
-// 起きない」より、押せないほうが壊れて見えない）。
+// Clicking a row scrolls to that mark. The transcript only holds a tail window, though, so a
+// mark on a turn that has not been loaded is not on screen at all; those rows render disabled,
+// which looks less broken than a row that does nothing when clicked.
 
 import { useState } from "react";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -28,8 +29,8 @@ export function MarkStrip({ marks, storageKey }: { marks: TranscriptMarksWiring;
   const openKey = "af.mirror-marks-open." + storageKey;
   const [open, setOpen] = useState(() => readLS(openKey) === "1");
 
-  // ⚠️ 空の帯を出さない。「0 件」は「まだ誰も引いていない」と「この面では引けない」を
-  // 区別できず、常時場所だけ取る。
+  // Never render an empty strip: a "0" cannot tell "nobody has drawn one yet" apart from "marks
+  // are not available on this surface", and it takes up room permanently.
   if (!marks.all.length) return null;
 
   const authors = new Set(marks.all.map((m) => m.author || ""));
@@ -50,7 +51,7 @@ export function MarkStrip({ marks, storageKey }: { marks: TranscriptMarksWiring;
           <Icon name="paintcan" />
           <span className="mfl-title">{tr("mirror.mark.strip_title")}</span>
           <span className="mfl-count muted">{marks.all.length}</span>
-          {/* 2人以上が引いている会話でだけ、誰が関わっているかを畳んだままでも見せる。 */}
+          {/* Only when two or more people have drawn: show who is involved even while folded. */}
           {authors.size > 1 && (
             <span className="mfl-lead muted">{tr("mirror.mark.strip_authors", { n: authors.size })}</span>
           )}

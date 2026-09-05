@@ -1,4 +1,4 @@
--- Memo categories (docs/log/21 UI刷新): categories become first-class so they can be added
+-- Memo categories (docs/log/21 UI overhaul): categories become first-class so they can be added
 -- ahead of any memo, reordered by drag-and-drop, and kept even while empty. Scoped per
 -- membership then repo (repo='' is the common bucket), mirroring the memo table. A memo
 -- still carries its category NAME in memo.category — this table persists the ORDER and the

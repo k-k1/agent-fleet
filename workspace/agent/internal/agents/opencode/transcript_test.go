@@ -446,7 +446,7 @@ func newOpencodeLiveStore(t *testing.T) *sql.DB {
 // A real store error must degrade to "" (unknown → the caller falls back to the plugin
 // status), never to "idle". opencode's schema is its own unversioned contract and it
 // does migrate; answering "idle" from a failed read would silently flip a live turn to
-// 入力待ち with no stop button — the claude false-idle bug, reached through the store
+// awaiting input with no stop button — the claude false-idle bug, reached through the store
 // contract instead of a TUI string, and with no reverse-heal to catch it.
 func TestOpencodeLiveStateStoreErrorIsUnknown(t *testing.T) {
 	db := newOpencodeLiveStore(t)

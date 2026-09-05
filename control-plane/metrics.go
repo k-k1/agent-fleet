@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	// ⚠️ 標準ライブラリの runtime。CP 自身の internal/runtime を素の `runtime` で
-	// 綴る（他 41 ファイルと同じ）ために、**衝突する側**へ別名を付けている。
+	// The standard library's runtime. The CP's own internal/runtime is spelled as plain
+	// `runtime` here as in every other file, so the colliding import is the one renamed.
 	goruntime "runtime"
 	"strconv"
 	"strings"
@@ -26,7 +26,7 @@ import (
 //     actionable signal ("my workspace is about to OOM").
 //   - Host stats (loadavg, total memory) → super_admin only. Exposing host-wide
 //     load and capacity to a tenant would leak how busy other tenants are,
-//     against the 相互不可視 principle (runtime.go §9.7).
+//     against the mutual-invisibility principle (runtime.go §9.7).
 //
 // The CP runs as a host process (deploy/local/run-dev.sh), so it reads /proc and
 // the per-container cgroup v2 scope directly. No Agent change, no image rebuild,
@@ -65,8 +65,8 @@ func readHostStats() (load1 float64, ncpu int, memUsed, memTotal uint64) {
 	return
 }
 
-// hostStats serves host load / memory（docs/log/23 残③: adminAPI のメソッドとして
-// 登録側で withSuperAdmin に包む）.
+// hostStats serves host load / memory. It is an adminAPI method, wrapped in
+// withSuperAdmin at registration.
 func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Identity) {
 	load1, ncpu, memUsed, memTotal := readHostStats()
 	writeJSON(w, http.StatusOK, hostStatsWire{
@@ -74,15 +74,16 @@ func (a adminAPI) hostStats(w http.ResponseWriter, _ *http.Request, _ store.Iden
 	})
 }
 
-// hostStatsWire — GET /api/admin/host-stats のレスポンス（Console の `HostStats`、
-// console/src/app/WsBar.tsx）。
+// hostStatsWire is the GET /api/admin/host-stats response (the Console's `HostStats` in
+// console/src/app/WsBar.tsx).
 //
-// 旧: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
-// 4 キーとも無条件なので **omitempty は付けない**。
-// ⚠️ Go の型は readHostStats の戻り値そのまま（load1 float64 / ncpu int /
-// mem_* uint64）。**uint64 を float64 で受け直さないこと**——大きな値で桁が落ちる。
-// TS 側は ncpu を任意（`ncpu?`）にしているが、Go は常に出す。**ワイヤは常に出す側が正**で、
-// TS の緩さに合わせて omitempty を足すとワイヤが変わる。
+// was: map[string]any{"load1":…, "ncpu":…, "mem_used":…, "mem_total":…}
+//
+// All four keys are unconditional, so none of them takes omitempty. The Go types are
+// readHostStats' return values as-is (load1 float64 / ncpu int / mem_* uint64): never
+// re-receive a uint64 as float64, which loses digits at large values. TS types ncpu as
+// optional (`ncpu?`) while Go always emits it — the emitting side defines the wire, and
+// adding omitempty to match the looser TS would change it.
 type hostStatsWire struct {
 	Load1    float64 `json:"load1"`
 	Ncpu     int     `json:"ncpu"`
@@ -98,9 +99,8 @@ type cpuSample struct {
 }
 
 // cpuTracker derives a CPU percentage from the cumulative cpu.stat counter by
-// remembering the previous reading per container id（docs/log/23 P2-W4: 生の
-// package 変数 map+mutex から struct 化。プロセス内キャッシュなのでマルチ
-// インスタンス CP でも各インスタンスが自分の差分を持てばよく、共有不要）。
+// remembering the previous reading per container id. It is an in-process cache, so a
+// multi-instance CP needs no sharing — each instance computes its own delta.
 // Keyed by id, so a recreate (new id) starts fresh. Entries accumulate slowly
 // (one per container ever seen) and are trivially small, so we do not prune.
 type cpuTracker struct {
@@ -129,8 +129,8 @@ var cpuSamples = &cpuTracker{prev: map[string]cpuSample{}}
 
 // dockerContainerID returns the id of a RUNNING container, else "". docker inspect
 // resolves a stopped/exited container too, so we must gate on .State.Running —
-// otherwise containerStats reports a stopped workspace as running (a wrong 稼働中 dot,
-// hidden 停止中 notice, and an enabled 強制停止 button).
+// otherwise containerStats reports a stopped workspace as running: a wrong "running" dot,
+// a hidden "stopped" notice, and an enabled force-stop button.
 func dockerContainerID(ctx context.Context, name string) string {
 	out, err := exec.CommandContext(ctx, "docker", "inspect", "-f", "{{.State.Running}} {{.Id}}", name).Output()
 	if err != nil {
@@ -341,7 +341,7 @@ func containerStats(ctx context.Context, name string) map[string]any {
 func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state func() string) map[string]any {
 	out := containerStats(ctx, rt.Name())
 	if out["running"] != true {
-		// ⚠️ The Console disables 強制停止 on exactly this field, so a docker read that
+		// The Console disables force-stop on exactly this field, so a docker read that
 		// cannot see the container must not be the last word — on ECS it never can
 		// (docs/log/64 §64.27).
 		switch state() {
@@ -376,8 +376,8 @@ func workspaceStats(ctx context.Context, m *manager, rt runtime.Runtime, state f
 	return out
 }
 
-// stats serves the own-workspace resource chip（docs/log/23 残③: workspaceAPI の
-// メソッドとして登録側で withResolved に包む）.
+// stats serves the own-workspace resource chip. It is a workspaceAPI method, wrapped in
+// withResolved at registration.
 func (a workspaceAPI) stats(w http.ResponseWriter, r *http.Request, res *resolved) {
 	ctx := r.Context()
 	rt := res.rt
@@ -400,9 +400,8 @@ type diskSample struct {
 	at    time.Time
 }
 
-// diskUsageCache is the TTL cache for du results（docs/log/23 P2-W4: 生の package
-// 変数 map+mutex から struct 化。プロセス内キャッシュで、外すと du の再実行が
-// 増えるだけ — マルチインスタンス CP でも共有不要）。
+// diskUsageCache is the TTL cache for du results. It is an in-process cache whose only
+// cost when missed is re-running du, so a multi-instance CP needs no sharing.
 type diskUsageCache struct {
 	mu sync.Mutex
 	m  map[string]diskSample

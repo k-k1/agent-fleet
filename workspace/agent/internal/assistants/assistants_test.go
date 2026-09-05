@@ -5,14 +5,15 @@ import (
 	"testing"
 )
 
-// 移送で main 側の 2 つ（ensureBuiltinKnowledge / preferredHeadlessAgent）が
-// パッケージ変数のフックに化け、**代入 2 行を消しても全テストが緑**という穴が開いた
-// （レビュー参考 1・変異試験で実測）。いまは NewDeps の引数なので渡し忘れはコンパイル
-// エラーになるが、「ビルトインが実際に渡された値を使っている」ことはコンパイラには見えない。
-// ここはその 1 点だけを押さえる — Agent が空文字やナレッジのパスが空で立つ形は、
-// 画面上は普通に見えるので気付けない。
+// TestBuiltinsUseInjectedDeps guards the one thing the compiler cannot see: that the
+// builtins actually USE the values they were handed. When the two main-side functions
+// (ensureBuiltinKnowledge / preferredHeadlessAgent) were package-variable hooks, deleting
+// both assignments left every test green (review note 1, measured with mutation testing).
+// They are NewDeps arguments now, so forgetting to pass one is a compile error — but a
+// builtin standing up with an empty Agent or an empty knowledge path still looks normal
+// on screen, so nothing else would notice.
 func TestBuiltinsUseInjectedDeps(t *testing.T) {
-	t.Setenv("HOME", t.TempDir()) // uiprefs.Locale() が実ホームの ui-prefs.json を読まないように
+	t.Setenv("HOME", t.TempDir()) // keep uiprefs.Locale() off the real home's ui-prefs.json
 
 	const knowPath = "/tmp/af-knowledge-probe"
 	const agentKind = "codex-probe"
@@ -22,31 +23,32 @@ func TestBuiltinsUseInjectedDeps(t *testing.T) {
 	))
 
 	if len(got) == 0 {
-		t.Fatal("ビルトインが 1 つも無い")
+		t.Fatal("no builtins at all")
 	}
 	for _, a := range got {
 		if a.Agent != agentKind {
-			t.Errorf("%s: Agent = %q, want %q（DefaultAgent が結線されていない）", a.ID, a.Agent, agentKind)
+			t.Errorf("%s: Agent = %q, want %q (DefaultAgent is not wired up)", a.ID, a.Agent, agentKind)
 		}
 		if len(a.Knowledge) != 1 || a.Knowledge[0] != knowPath {
-			t.Errorf("%s: Knowledge = %v, want [%s]（KnowledgeDir が結線されていない）", a.ID, a.Knowledge, knowPath)
+			t.Errorf("%s: Knowledge = %v, want [%s] (KnowledgeDir is not wired up)", a.ID, a.Knowledge, knowPath)
 		}
 		if a.Persona == "" {
-			t.Errorf("%s: Persona が空", a.ID)
+			t.Errorf("%s: Persona is empty", a.ID)
 		}
 	}
 }
 
-// ゼロ値の Deps（NewDeps を通さずに組んだもの）は、無害な既定値で走らずに落ちること。
-// 「結線し忘れが緑になる」形に戻さないための番人。
+// TestZeroDepsPanics: a zero-value Deps (built without going through NewDeps) must fail
+// rather than run on harmless defaults. This is the guard against sliding back to a shape
+// where forgetting the wiring goes green.
 func TestZeroDepsPanics(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("ゼロ値の Deps で panic しなかった（無害な既定値で走ってはいけない）")
+			t.Fatal("a zero-value Deps did not panic; it must not run on harmless defaults")
 		}
 		if !strings.Contains(fmtOf(r), "NewDeps") {
-			t.Errorf("panic の文言が結線し忘れを指していない: %v", r)
+			t.Errorf("the panic text does not point at the missing wiring: %v", r)
 		}
 	}()
 	_ = Builtins(Deps{})
@@ -67,13 +69,13 @@ func TestNewDepsRejectsNil(t *testing.T) {
 		name       string
 		know, agnt func() string
 	}{
-		{"knowledgeDir が nil", nil, func() string { return "claude" }},
-		{"defaultAgent が nil", func() string { return "/k" }, nil},
+		{"knowledgeDir is nil", nil, func() string { return "claude" }},
+		{"defaultAgent is nil", func() string { return "/k" }, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			defer func() {
 				if recover() == nil {
-					t.Fatal("nil を渡したのに panic しなかった")
+					t.Fatal("passed nil but no panic")
 				}
 			}()
 			_ = NewDeps(c.know, c.agnt)

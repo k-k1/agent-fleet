@@ -8,9 +8,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// 実機の transcript_full.jsonl（2026-07-20 検証セッション）を圧縮した fixture。
-// USER_INPUT のラッパ剥がし・PLANNER_RESPONSE の本文化・ツール step のパート化・
-// SYSTEM 行のスキップ、の 4 経路を 1 会話で踏む。
+// A condensed fixture from a real transcript_full.jsonl. One conversation walks all four
+// paths: unwrapping USER_INPUT, turning PLANNER_RESPONSE into body text, folding tool steps
+// into parts, and skipping SYSTEM lines.
 const fixtureJSONL = `{"step_index":0,"source":"USER_EXPLICIT","type":"USER_INPUT","status":"DONE","content":"<USER_REQUEST>\nRead marker.txt and reply with only its content.\n</USER_REQUEST>\n<ADDITIONAL_METADATA>\nThe current local time is: 2026-07-20T03:06:00+09:00.\n</ADDITIONAL_METADATA>"}
 {"step_index":1,"source":"SYSTEM","type":"CONVERSATION_HISTORY","status":"DONE"}
 {"step_index":2,"source":"MODEL","type":"PLANNER_RESPONSE","status":"DONE","content":""}
@@ -68,9 +68,9 @@ func TestTranscriptParsesBrainJSONL(t *testing.T) {
 	}
 }
 
-// Idx は「厳密に増加する行番号」でなければならない。0 のまま出していた頃は、
-// Console 側が polled turn を idx > lastIdx で捨て、送信プロンプトの 反映待ち
-// エコーも idx > sinceIdx で消えなくなっていた（ミラーが固まる回帰の再発防止）。
+// Idx must be a strictly increasing line number. While it was left at 0, the Console dropped
+// polled turns on idx > lastIdx and the submitted prompt's 反映待ち echo never cleared on
+// idx > sinceIdx either, which froze the mirror.
 func TestTranscriptAssignsIncreasingIdx(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	dir := "/home/dev/repos/proj"

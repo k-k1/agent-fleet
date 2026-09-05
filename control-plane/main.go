@@ -1,7 +1,7 @@
 // Command control-plane is the Phase 1 MVP Control Plane: it serves the static
 // Console, drives the per-user Workspace via the local Docker Runtime adapter,
 // and proxies REST + the terminal WebSocket through to the Workspace Agent.
-// dev 形態（認証バイパス・単一ユーザー）。docs/11-phase1-plan.md 参照。
+// The dev shape is single-user with authentication bypassed; see docs/11-phase1-plan.md.
 package main
 
 import (
@@ -35,7 +35,7 @@ type config struct {
 	addr       string
 	consoleDir string
 	mgr        *manager
-	// ★ The git providers' OAuth apps are NOT here. Since docs/log/71 they are per-tenant
+	// The git providers' OAuth apps are NOT here. Since docs/log/71 they are per-tenant
 	// rows read from the database at the moment a member presses "connect"
 	// (tenant_git_oauth.go); BITBUCKET_OAUTH_KEY/SECRET and the workspace's
 	// GITHUB_OAUTH_CLIENT_ID are not read at all, not even as a fallback.
@@ -66,9 +66,9 @@ type config struct {
 	// `configured` so the Console only warns about unreachable MCP hosts on deployments
 	// where egress really is constrained (docs/log/48 §9).
 	egressProxyAddr string
-	// TTS 読み上げ（docs/log/24 + ADR0013）: CP が直接叩く VOICEVOX エンジンの base URL。
-	// dev は host 起動の CP から docker 公開の 127.0.0.1:50021 へ。AWS は ECS + Cloud Map
-	// の固定 DNS を差し込む（Phase 2）。
+	// TTS read-aloud (docs/log/24 + ADR0013): base URL of the VOICEVOX engine the CP calls
+	// directly. In dev the CP runs on the host and reaches docker's published
+	// 127.0.0.1:50021; on AWS the fixed ECS + Cloud Map DNS name is injected (Phase 2).
 	voicevoxURL string
 	// previewDomain mirrors manager.previewDomain (AF_PREVIEW_DOMAIN) — the parent of
 	// the per-start preview subdomains (docs/log/81). Empty = host-mode preview is off.
@@ -111,7 +111,7 @@ func main() {
 		// P3-9: live activity tracking for idle-stop.
 		conns: newConnRegistry(),
 	}
-	// ★ GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
+	// GITHUB_OAUTH_CLIENT_ID is deliberately NOT injected into the workspace any more
 	// (docs/log/71 §71.5). The GitHub device flow moved into the CP, where the app can be
 	// read per tenant from the database; container env is fixed at container start and
 	// is implemented once per runtime, so a per-tenant value delivered that way would
@@ -133,7 +133,7 @@ func main() {
 	// backfill existing on-disk users so the live deployment is wrapped as the
 	// default tenant without recreating containers.
 	// Postgres (AF_DATABASE_URL) is the RDS backend for a redeployable ECS CP whose
-	// state must outlive task replacement (P3-7 段3a); SQLite is the on-prem default.
+	// state must outlive task replacement (P3-7 stage 3a); SQLite is the on-prem default.
 	dbPath := envx.Or("AF_DB", filepath.Join(mgr.dataRoot, "control-plane.db"))
 	var st *store.SQL
 	var err error
@@ -143,9 +143,10 @@ func main() {
 		}
 		log.Printf("metadata store: postgres")
 	} else {
-		// 初回起動でも素で立ち上がるよう DB の親ディレクトリは自作する（docs/log/35 P1
-		// ゲートで露見: WS_DATA 未作成の素のコンテナ/native 初回起動だと sqlite が
-		// ファイルを作れず即死していた。実デプロイはマウント済み dir で不発だった）。
+		// Create the DB's parent directory so a bare first start works: with WS_DATA not
+		// yet created (a plain container, or a native first run) sqlite cannot create the
+		// file and the CP dies on the spot. A real deployment mounts that directory, which
+		// is why it never surfaces there (docs/log/35 P1).
 		if mkerr := os.MkdirAll(filepath.Dir(dbPath), 0o755); mkerr != nil {
 			log.Printf("WARN: create db dir %s: %v", filepath.Dir(dbPath), mkerr)
 		}
@@ -161,16 +162,16 @@ func main() {
 	mgr.tenantLogin = newTenantLoginCache(st)
 	// Tenant-defined login providers (docs/log/61 §61.11). Unlike the env providers built
 	// below, this set is read from the database on demand, so approving a subsidiary's
-	// IdP needs no restart (決定 29).
+	// IdP needs no restart (decision 29).
 	mgr.tenantIdP = auth.NewTenantIdPRegistry(st, mgr.openTenantSecret)
 	if dt, err := st.EnsureDefaultTenant(ctx); err != nil {
 		log.Fatalf("ensure default tenant: %v", err)
 	} else {
 		mgr.defaultTenantID = dt.ID // used by rootedDataDir to detect flat paths
 	}
-	// ★ SUPER_ADMIN_EMAILS is the single source of truth for the deployment role,
+	// SUPER_ADMIN_EMAILS is the single source of truth for the deployment role,
 	// and this is where removing somebody from it takes effect (docs/log/61 §61.10.7 +
-	// ADR0043 決定 24). UpsertIdentity only ever upgrades, on purpose — it is called
+	// ADR0043 decision 24). UpsertIdentity only ever upgrades, on purpose — it is called
 	// with roleHint="" from addMembership / cleanHome / stopWorkspace, so demoting
 	// there would strip an operator the moment anyone added a member. And a
 	// login-time sync would never reach the case that matters: the person who left
@@ -221,9 +222,9 @@ func main() {
 	}
 	// Full public base (scheme+host) for the in-container memo bridge (AF_CP_BASE_URL).
 	mgr.publicBaseURL = strings.TrimRight(publicBaseURL, "/")
-	// docs/log/81: プレビュー用サブドメインの親（例 pv.example.com）。先頭の "." と
-	// 大文字は落として比較できる形に正規化する — 設定ミスで丸ごと無効になるより、
-	// 素直に読める方がよい。
+	// docs/log/81: the parent of the preview subdomains (e.g. pv.example.com). A leading
+	// "." and upper case are normalised away so it can be compared — reading a slightly
+	// mistyped setting charitably beats having the whole feature go dead.
 	mgr.previewDomain = strings.ToLower(strings.Trim(strings.TrimSpace(os.Getenv("AF_PREVIEW_DOMAIN")), "."))
 	cfg := config{
 		addr:          envx.Or("CP_ADDR", ":8080"),
@@ -247,10 +248,11 @@ func main() {
 		egressDedup: &egressAuditDedup{},
 		// Whether containers are actually routed through the proxy (docs/log/48 §9).
 		egressProxyAddr: egressProxyAddr,
-		// docs/log/24 TTS: 既定は dev の docker 公開先（host loopback）。
+		// docs/log/24 TTS: the default is dev's docker-published endpoint (host loopback).
 		voicevoxURL: envx.Or("AF_VOICEVOX_URL", "http://127.0.0.1:50021"),
-		// docs/log/81: プレビュー用サブドメインの親。空 = ホスト方式は無効（ワイルドカードの
-		// DNS も証明書も無いデプロイでは成立しない）で、従来のパス方式だけが残る。
+		// docs/log/81: the parent of the preview subdomains. Empty = host-mode preview is
+		// off — it cannot work without wildcard DNS and a wildcard certificate — and only
+		// the path-based route remains.
 		previewDomain: mgr.previewDomain,
 	}
 
@@ -269,11 +271,12 @@ func main() {
 	// it off for that tenant (idleTimeout), and a deployment sets its own default in env.
 	// AF_IDLE_SWEEP_INTERVAL=0 disables the reaper entirely — see intervalOff, which is
 	// what makes that true (measured: it was not).
-	// 在席の猶予（docs/log/75 P3）: 打鍵の無い端末を、あと何分だけ「人が居る」と数えるか。
-	// 0 で無効＝従来どおり「ソケットがある限り在席」に戻る。テナント別にしないのは
-	// これが課金方針ではなく人の注意の定数だから（実際に止まるまでの時間を決めるのは
-	// 従来どおり ws_idle_timeout）。reaper が動かない構成でも presence の意味は同じ
-	// なので、この if の外で解決する。
+	// Presence grace (docs/log/75 P3): how much longer a terminal with no keystrokes still
+	// counts as somebody being there. 0 disables it, i.e. back to "an open socket is
+	// presence". Not per-tenant, because this is a constant about human attention rather
+	// than a billing policy — how long until a stop actually happens is still
+	// ws_idle_timeout. Resolved outside the if below: presence means the same thing on a
+	// deployment where the reaper does not run.
 	presenceGrace = intervalOff(os.Getenv("AF_PRESENCE_IDLE_TIMEOUT"), presenceGrace)
 	if iv := intervalOff(os.Getenv("AF_IDLE_SWEEP_INTERVAL"), time.Minute); iv > 0 {
 		// intervalOff, not parseDurationOr: now that the default is non-zero, "0" has to
@@ -281,15 +284,16 @@ func main() {
 		// as "use the default", which would have silently turned an operator's explicit
 		// off switch into 1h/2h — the same trap AF_IDLE_SWEEP_INTERVAL was in.
 		sessDef := intervalOff(os.Getenv("AF_SESSION_IDLE_TIMEOUT"), time.Hour)
-		// 人の判断待ち（質問・プラン承認・許可・上限メニュー・認証切れ）の既定。未設定なら
-		// セッションの既定と同値 — 「質問を出したまま席を立った」を idle より優遇する理由も、
-		// 冷遇する理由も既定としては無い。畳んでも失われない（持ち越し・docs/log/75 §75.6）。
+		// Default for a wait on a human decision (question, plan approval, permission, the
+		// limit menu, expired auth). Unset means the session default: as a default there is
+		// no reason to treat "walked away with a question open" better or worse than idle,
+		// and folding one loses nothing (carry-over, docs/log/75 §75.6).
 		interDef := intervalOff(os.Getenv("AF_INTERACTION_IDLE_TIMEOUT"), sessDef)
 		wsDef := intervalOff(os.Getenv("AF_WS_IDLE_TIMEOUT"), 2*time.Hour)
 		// Tier 3 (ecs-ec2 only): the deployment default for home hibernation. Kept in the
 		// AF_ECS_EC2_* namespace and in seconds because that is where it started life, as
 		// a setting of the pool sweeper; the trigger moved up here so a tenant can override
-		// it (ADR 0045 決定 13-2). Still 0 = off by default.
+		// it (ADR 0045 decision 13-2). Still 0 = off by default.
 		hibDef := time.Duration(runtime.EnvInt("AF_ECS_EC2_HIBERNATE_AFTER_SEC", 0)) * time.Second
 		// Tier 4 (ecs-ec2 only): the deployment default for how often a home is copied
 		// somewhere its AZ is not. Also 0 = off — a backup is cheap but not free, and a
@@ -298,7 +302,7 @@ func main() {
 		go newReaper(mgr, iv, sessDef, interDef, wsDef, hibDef, backupDef).run(context.Background())
 	}
 
-	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 決定 9 / docs/log/64 §64.28).
+	// Golden snapshot auto-bake (ecs-ec2 only — ADR 0045 decision 9 / docs/log/64 §64.28).
 	// The CP already refuses a golden stamped with another image; this is the CP acting
 	// on what it knows instead of logging it and waiting for somebody to run
 	// bake-golden.sh. Default ON: the failure it removes is a release nobody re-baked
@@ -331,7 +335,7 @@ func main() {
 	// bill. No-op unless the runtime declares one (docker/native have no invoice).
 	startCloudCostPoller(context.Background(), mgr)
 
-	// docs/log/20 M5 (claude self-op audit, A-第2段): a sweeper that pulls each running
+	// docs/log/20 M5 (claude self-op audit, A stage 2): a sweeper that pulls each running
 	// claude session's transcript and records Write/Edit/Bash into the audit ledger
 	// (actor_kind=claude). OFF by default (AF_CLAUDE_AUDIT_INTERVAL=0) — it polls every
 	// session, so it's opt-in; enable per deployment once validated.
@@ -364,7 +368,7 @@ func main() {
 		// SAME window the platform already grants a boot to say "starting" — because any
 		// smaller number silently means "schedules do not fire on substrates that boot
 		// slower than this". The old 90s default cut straight through the middle of
-		// ecs-ec2's measured wake distribution (docs/log/38 ★7 ・ docs/log/64):
+		// ecs-ec2's measured wake distribution (docs/log/38 ★7, docs/log/64):
 		// waking a sleeping slot is ~110s and growing the pool ~135s, so a stopped
 		// workspace's morning fire landed or dropped essentially at random.
 		ready := envx.DurationOr(os.Getenv("AF_SCHEDULE_WAKE_TIMEOUT"), runtime.AgentBootBudget)
@@ -394,7 +398,7 @@ func main() {
 	mgr.knownProviderIDs = map[string]bool{}
 	for _, p := range provs {
 		mgr.knownProviderIDs[p.ID()] = true
-		// ★ Stamp the realm on the logins this provider recorded before the column
+		// Stamp the realm on the logins this provider recorded before the column
 		// existed (docs/log/61 §61.15). Here rather than in the migration because only
 		// the set just built knows which id is which IdP — and rule 1.5 refuses to
 		// act on a realm it had to guess. A failure is logged, never fatal: the
@@ -421,7 +425,7 @@ func main() {
 				"(GOOGLE_OAUTH_CLIENT_ID + GOOGLE_OAUTH_CLIENT_SECRET, AF_OIDC_PROVIDERS with AF_OIDC_<ID>_{ISSUER,CLIENT_ID,CLIENT_SECRET,TRUST}, " +
 				"and/or GITHUB_OAUTH_CLIENT_ID + GITHUB_OAUTH_CLIENT_SECRET + AF_GITHUB_ALLOWED_ORGS)")
 		}
-		// ★ "No allowlist" no longer means "nobody can sign in": since P3 the entry
+		// "No allowlist" no longer means "nobody can sign in": since P3 the entry
 		// gate also admits anyone on a tenant's roster or matching an auto-join
 		// domain (docs/log/61 §61.9.6), which is the whole point of the invite-run
 		// deployment — no AF_OAUTH_ALLOWED_* at all. So check the database before
@@ -557,7 +561,7 @@ func logRequests(next http.Handler) http.Handler {
 		sw := &statusWriter{ResponseWriter: w}
 		next.ServeHTTP(sw, r)
 		uri := r.URL.RequestURI()
-		// OAuth 系パスのクエリには認可コード等の機微値が乗るためマスクする
+		// The query on an OAuth path carries the authorization code and similar secrets.
 		if r.URL.RawQuery != "" && strings.Contains(r.URL.Path, "oauth") {
 			uri = r.URL.Path + "?<redacted>"
 		}

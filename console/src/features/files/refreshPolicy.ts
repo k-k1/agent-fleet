@@ -1,33 +1,36 @@
-// FILES の自動更新の「間合い」だけを集めたところ。撃つ側（sessionRefresh.ts）と
-// 読みに行く側（ProjectFiles / FilesChanges）の両方が同じ数字を見るように、
-// 定数はここ 1 箇所に置く。
+// The one place that holds the timing of FILES auto-refresh, so that the side that fires
+// (sessionRefresh.ts) and the sides that read (ProjectFiles / FilesChanges) see the same
+// numbers.
 //
-// 全体の方針: **引き金はイベント、間隔は保険**。ターンの終わり（sessionRefresh.ts）が
-// 主で、残りの 2 つは「イベントでは届かない場面」だけを埋める — 走行中に見に行った人と、
-// 離席していた人。どれも定期ポーリングにはしない（Console↔CP の通信量削減の方針、
-// docs/build/02 §2.3）。
+// The policy: events pull the trigger, intervals are the safety net. The end of a turn
+// (sessionRefresh.ts) is the primary trigger; the other two only cover what events cannot
+// reach — someone looking while a session is still running, and someone who was away.
+// None of them is a periodic poll (Console<->CP traffic reduction, docs/build/02 §2.3).
 //
-// 数字の根拠は「何を待っているか」で、体感の当てずっぽうではない:
-//   - COALESCE / MIN_GAP … 人の操作ではなくエージェントのターン境界が単位
-//   - WORKING_TICK ……… 画面に出ているディレクトリの数だけ往復するので、ファイル
-//     1 個を見張る editor/probe.ts（12 秒）より意図的に遅い
-//   - REVALIDATE_GAP …… alt-tab を繰り返す人にとってポーリングにならない下限
+// Each number follows from what it waits on, not from a guess at how it feels:
+//   - COALESCE / MIN_GAP ... the unit is an agent's turn boundary, not a human action
+//   - WORKING_TICK ......... one round trip per directory on screen, so deliberately
+//     slower than editor/probe.ts (12s), which watches a single file
+//   - REVALIDATE_GAP ....... the floor at which repeated alt-tabbing is not a poll
 
-/** 同時に終わった複数セッションを 1 回にまとめる待ち。 */
+/** Wait that folds several sessions finishing at once into a single refresh. */
 export const COALESCE_MS = 400;
 
-/** 同じ作業コピーを読み直す最短間隔。短いターンを連投されても往復が積み上がらない。 */
+/** Shortest interval between re-reads of the same working copy, so a burst of short turns
+ *  cannot pile up round trips. */
 export const MIN_GAP_MS = 3000;
 
 /**
- * ターンの**途中**でも、走っているセッションの作業コピーだけは低頻度で読み直す間隔。
- * 走っているセッションが 1 つも無くなればタイマーごと止める（常駐ポーラーにしない）。
+ * Interval at which a running session's working copy is re-read at low frequency even
+ * mid-turn. The timer stops entirely once no session is running, so this is not a
+ * resident poller.
  */
 export const WORKING_TICK_MS = 20_000;
 
 /**
- * タブ／ウィンドウに戻ったときの再検証の最短間隔。ターン終了の合図が主で、これは
- * 「離席中に終わっていた」の保険 —— そして state を持たないセッション（shell / SSM）や
- * Agent Fleet の外で起きた変更を拾う、事実上唯一の道でもある。
+ * Shortest interval for revalidating on return to the tab/window. The end-of-turn signal
+ * is the primary trigger and this is the "it finished while I was away" safety net — and
+ * also the only practical way to pick up sessions that carry no state (shell / SSM) and
+ * changes made outside Agent Fleet.
  */
 export const REVALIDATE_GAP_MS = 10_000;

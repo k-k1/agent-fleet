@@ -4,10 +4,12 @@ import (
 	"testing"
 )
 
-// 累積データ（学習済みの返信候補・ピン・利用実績・キー割当…）は、事故で痩せた PUT が
-// 来ると復元不能に消える。実際に消えた（返信サジェストが全端末で初期状態に戻った）ので、
-// 「痩せる書き込みの直前の版を .prev に残す」ことを仕様として固定する。拒否はしない —
-// 設定 > キー の「全消去」は利用者の正当な操作で、拒否すると効かなくなる。
+// Accumulated data (learned reply suggestions, pins, usage history, key bindings, ...)
+// is gone beyond recovery the moment an accidentally shrunken PUT arrives. It has
+// actually happened once — reply suggestions went back to their initial state on every
+// device — so keeping the version from just before a shrinking write in .prev is fixed
+// as the specification. The write is not rejected: "clear all" under Settings > Keys is
+// a legitimate user action, and rejecting it would make that button do nothing.
 func TestShrunkPrefKeys(t *testing.T) {
 	before := map[string]any{
 		"quickReplies":       map[string]any{"ok": map[string]any{"text": "OK"}},
@@ -45,7 +47,7 @@ func TestShrunkPrefKeys(t *testing.T) {
 			if len(tt.want) == 0 && len(got) == 0 {
 				return
 			}
-			// 順序は accumulatedPrefKeys の並び（安定）。
+			// The order is accumulatedPrefKeys' order (stable).
 			if len(got) < len(tt.want) {
 				t.Fatalf("shrunk = %v, want %v", got, tt.want)
 			}
@@ -62,7 +64,8 @@ func TestShrunkPrefKeys(t *testing.T) {
 			}
 		})
 	}
-	// 真偽値は「消えた」ではなく選ばれた値なので、false になっても退避の理由にはしない。
+	// A boolean is a chosen value, not something that vanished, so flipping it to false
+	// is never a reason to snapshot.
 	if got := ShrunkKeys(before, map[string]any{"assistantAutoTurn": true}); len(got) != 3 {
 		t.Fatalf("boolean flips must not be counted as accumulated loss: %v", got)
 	}

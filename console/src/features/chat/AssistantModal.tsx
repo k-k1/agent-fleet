@@ -69,7 +69,8 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
   }, []);
   const toggleIntegration = (id: string) =>
     setIntegrations((ids) => (ids.includes(id) ? ids.filter((x) => x !== id) : [...ids, id]));
-  // 声の選択肢はキャラクター設定×エンジン実カタログ（tts.ts）。届いたら再レンダ。
+  // Voice choices come from the character settings crossed with the engine's live catalog
+  // (tts.ts); re-render once it arrives.
   const [, setCatalogLoaded] = useState(false);
   useEffect(() => {
     let alive = true;
@@ -78,9 +79,10 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
       alive = false;
     };
   }, []);
-  // 先頭の「設定の話者」を「自動」に読み替える（アシスタントの "" = プールから自動割り当て）。
+  // Re-label the leading "speaker from settings" entry as "auto" — an assistant's "" means
+  // it is assigned automatically from the pool.
   const voiceChoices: [string, string][] = [["", tr("asst.voice_auto")], ...readerVoiceChoices().slice(1)];
-  if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // プール外の保存値も表示
+  if (voice && !voiceChoices.some(([v]) => v === voice)) voiceChoices.push([voice, voice]); // show a saved value from outside the pool too
 
   const canSubmit = name.trim().length > 0 && !busy;
 
@@ -106,7 +108,7 @@ export function AssistantModal({ initial, onClose, onSave }: AssistantModalProps
       });
       onClose();
     } catch {
-      // 保存失敗（トーストは onSave 側）— 入力を消さないためモーダルは閉じない
+      // Save failed (onSave owns the toast); the modal stays open so nothing typed is lost.
     } finally {
       setBusy(false);
     }

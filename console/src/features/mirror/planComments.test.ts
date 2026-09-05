@@ -12,8 +12,8 @@ import {
 } from "./planComments.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 
-// node 環境には localStorage が無いので最小の実体を置く（このストアの本体は
-// localStorage 越しのやり取りなので、そこも含めて固定したい）。
+// The node environment has no localStorage, so install a minimal one: this store's whole point
+// is the exchange that goes through localStorage, so that path has to be pinned too.
 class MemStorage {
   private m = new Map<string, string>();
   getItem(k: string) {
@@ -38,31 +38,31 @@ beforeEach(() => {
 const PLAN = "# タイトル\n\n本文です。\n";
 
 describe("planKey", () => {
-  it("同じセッション・同じ本文なら同じ鍵、改訂すると別の鍵", () => {
+  it("same session and same text give the same key; a revision gives a different one", () => {
     expect(planKey("s1", PLAN)).toBe(planKey("s1", PLAN));
     expect(planKey("s1", PLAN)).not.toBe(planKey("s1", PLAN + "追記\n"));
   });
 
-  it("セッションが違えば別の鍵（同じ本文でも混ざらない）", () => {
+  it("a different session gives a different key, so identical texts never mix", () => {
     expect(planKey("s1", PLAN)).not.toBe(planKey("s2", PLAN));
   });
 
-  it("行末空白と前後の空行だけは無視する（同じプランの表示揺れで束が割れない）", () => {
+  it("ignores only trailing whitespace and surrounding blank lines, so rendering jitter does not split a group", () => {
     expect(planKey("s1", PLAN)).toBe(planKey("s1", "\n# タイトル   \n\n本文です。   \n\n"));
   });
 });
 
-describe("コメントの蓄積", () => {
-  it("追加・削除でき、空のコメントは無視される", () => {
+describe("collecting comments", () => {
+  it("adds and removes, and ignores an empty comment", () => {
     const k = planKey("s1", PLAN);
     addPlanComment(k, { quote: "本文", nth: 0, body: "ここが違う" });
-    addPlanComment(k, { quote: "本文", nth: 0, body: "   " }); // 空 → 無視
+    addPlanComment(k, { quote: "本文", nth: 0, body: "   " }); // empty -> ignored
     expect(getPlanComments(k)).toHaveLength(1);
     removePlanComment(k, getPlanComments(k)[0].id);
     expect(getPlanComments(k)).toHaveLength(0);
   });
 
-  it("送信済みは消さずに畳む — 未送信だけが次の送信対象", () => {
+  it("folds sent comments instead of deleting them; only unsent ones are sent next", () => {
     const k = planKey("s1", PLAN);
     addPlanComment(k, { quote: "本文", nth: 0, body: "1つめ" });
     addPlanComment(k, { quote: "タイトル", nth: 0, body: "2つめ" });
@@ -72,16 +72,16 @@ describe("コメントの蓄積", () => {
     expect(unsentComments(getPlanComments(k)).map((c) => c.body)).toEqual(["2つめ"]);
   });
 
-  it("localStorage に載るので、読み直しても残る（別タブ・リロード対策）", () => {
+  it("survives a re-read because it lives in localStorage (for other tabs and reloads)", () => {
     const k = planKey("s1", PLAN);
     addPlanComment(k, { quote: "本文", nth: 0, body: "残ってほしい" });
-    resetPlanCommentsForTest(); // 保存済み JSON から読み直す
+    resetPlanCommentsForTest(); // re-read from the stored JSON
     expect(getPlanComments(k).map((c) => c.body)).toEqual(["残ってほしい"]);
   });
 });
 
 describe("formatPlanFeedback", () => {
-  it("引用を blockquote、指摘をその下に置いた1本の文へ畳む", () => {
+  it("folds into one message with the quote as a blockquote and the remark below it", () => {
     const k = planKey("s1", PLAN);
     addPlanComment(k, { quote: "正しく", nth: 0, body: "正しく無い" });
     addPlanComment(k, { quote: "ユーザーに承認/拒否", nth: 1, body: "拒否だけで良い" });
@@ -89,17 +89,17 @@ describe("formatPlanFeedback", () => {
     expect(text).toContain("プランへのコメント 2 件");
     expect(text).toContain("> 正しく\n\n正しく無い");
     expect(text).toContain("> ユーザーに承認/拒否\n\n拒否だけで良い");
-    // 番号は一覧の並びと一致する（カードのハイライト番号と突き合わせるため）。
+    // The numbering matches the list order, so it lines up with the highlight numbers on the card.
     expect(text.indexOf("1.")).toBeLessThan(text.indexOf("2."));
   });
 
-  it("複数行の引用は行ごとに blockquote 記号を付ける", () => {
+  it("prefixes every line of a multi-line quote with the blockquote marker", () => {
     expect(
       formatPlanFeedback([{ id: "a", quote: "1行目\n2行目", nth: 0, body: "指摘", ts: 0 }]),
     ).toContain("> 1行目\n> 2行目");
   });
 
-  it("全体への追記があれば末尾に足す。コメントが無ければ追記だけ", () => {
+  it("appends an overall note at the end, and sends only the note when there are no comments", () => {
     const one = [{ id: "a", quote: "q", nth: 0, body: "b", ts: 0 }];
     expect(formatPlanFeedback(one, "全体的に急いで")).toMatch(/全体的に急いで$/);
     expect(formatPlanFeedback([], "これだけ")).toBe("これだけ");
@@ -107,8 +107,9 @@ describe("formatPlanFeedback", () => {
   });
 });
 
-// 送信経路の判断。ここが唯一 MirrorView の外に出せた部分で、実障害（届いていない
-// コメントが「送信済み」になり、送信ボタンごと消えて打ち直せない）はこの判断にあった。
+// The delivery-route decision. This is the part that could be lifted out of MirrorView, and it is
+// where the failure lived: undelivered comments were marked sent, which removed the send button
+// and left the user unable to retype them.
 describe("deliverPlanComments", () => {
   const k = () => planKey("s1", PLAN);
   const seed = (...bodies: string[]) => {
@@ -120,27 +121,27 @@ describe("deliverPlanComments", () => {
       .filter((c) => c.sentAt)
       .map((c) => c.body);
   const okRespond = { ok: true, delivered: true };
-  /** 送信できたときだけ在る「実際に送った本文」を取り出す（届いていなければ失敗させる）。 */
+  /** Pull out the text actually sent, which exists only on success (fail the test otherwise). */
   const feedbackOf = (r: Awaited<ReturnType<typeof deliverPlanComments>>) => {
-    if (!r?.ok) throw new Error("届いていない: " + JSON.stringify(r));
+    if (!r?.ok) throw new Error("not delivered: " + JSON.stringify(r));
     return r.feedback;
   };
 
-  it("承認待ちなら respond（却下）で送り、届いたぶんだけ畳む", async () => {
+  it("while approval is pending, sends via respond (reject) and folds only what was delivered", async () => {
     seed("1つめ", "2つめ");
     const respond = vi.fn().mockResolvedValue(okRespond);
     const say = vi.fn().mockResolvedValue(true);
     const res = await deliverPlanComments(k(), { pending: true, respond, say });
 
     expect(res).toMatchObject({ ok: true, via: "reject" });
-    expect(say).not.toHaveBeenCalled(); // 承認ダイアログが開いたまま自由文を送らない
-    // 送った本文がそのまま返る（呼び出し側はこれを楽観エコーに使う）。
+    expect(say).not.toHaveBeenCalled(); // never send free text while the approval dialog is open
+    // The text that was sent comes back verbatim; the caller uses it for the optimistic echo.
     expect(respond).toHaveBeenCalledWith(feedbackOf(res));
     expect(feedbackOf(res)).toContain("1つめ");
     expect(sentBodies()).toEqual(["1つめ", "2つめ"]);
   });
 
-  it("承認待ちでなければ普通の発話として送る", async () => {
+  it("sends as an ordinary utterance when approval is not pending", async () => {
     seed("指摘");
     const respond = vi.fn();
     const say = vi.fn().mockResolvedValue(true);
@@ -151,31 +152,32 @@ describe("deliverPlanComments", () => {
     expect(sentBodies()).toEqual(["指摘"]);
   });
 
-  // 実障害そのもの: 発話が弾かれた（許可待ち・停止中など）のに畳んでいた。
-  it("発話が届かなければ何も畳まない — 打ち直せる状態を保つ", async () => {
+  // The failure itself: comments were folded even though the utterance was refused (awaiting
+// permission, session stopped, and so on).
+  it("folds nothing when the utterance does not arrive, so it stays retypable", async () => {
     seed("指摘");
     const say = vi.fn().mockResolvedValue(false);
     const res = await deliverPlanComments(k(), { pending: false, respond: vi.fn(), say });
 
-    // reason "say" = 発話経路の失敗。sendPrompt が理由を通知済みなので、呼び出し側は
-    // 重ねてトーストしない（この 1 文字が二重トーストの有無を決める）。
+    // reason "say" = the utterance route failed. sendPrompt has already reported why, so the
+    // caller must not toast on top of it; this one value decides whether a duplicate toast appears.
     expect(res).toEqual({ ok: false, reason: "say" });
     expect(sentBodies()).toEqual([]);
     expect(unsentComments(getPlanComments(k()))).toHaveLength(1);
   });
 
-  it("no_plan は発話へ落とす。その発話も失敗したら畳まない", async () => {
+  it("falls back to an utterance on no_plan, and folds nothing if that utterance fails too", async () => {
     seed("指摘");
     const respond = vi.fn().mockResolvedValue({ ok: false, code: "no_plan" });
     const say = vi.fn().mockResolvedValue(false);
     const res = await deliverPlanComments(k(), { pending: true, respond, say });
 
-    expect(say).toHaveBeenCalledTimes(1); // フォールバックは走る
+    expect(say).toHaveBeenCalledTimes(1); // the fallback does run
     expect(res).toEqual({ ok: false, reason: "say" });
     expect(sentBodies()).toEqual([]);
   });
 
-  it("no_plan から発話で届けば畳む（経路は prompt）", async () => {
+  it("folds when the no_plan fallback utterance is delivered (route: prompt)", async () => {
     seed("指摘");
     const respond = vi.fn().mockResolvedValue({ ok: false, code: "no_plan" });
     const res = await deliverPlanComments(k(), {
@@ -188,7 +190,7 @@ describe("deliverPlanComments", () => {
     expect(sentBodies()).toEqual(["指摘"]);
   });
 
-  it("却下は通ったが本文が入らなかった（undelivered）ときは畳まない", async () => {
+  it("folds nothing when the rejection went through but the body did not land (undelivered)", async () => {
     seed("指摘");
     const res = await deliverPlanComments(k(), {
       pending: true,
@@ -200,7 +202,7 @@ describe("deliverPlanComments", () => {
     expect(sentBodies()).toEqual([]);
   });
 
-  it("respond の失敗理由はそのまま返す（呼び出し側がトーストする）", async () => {
+  it("returns respond's failure reason verbatim for the caller to toast", async () => {
     seed("指摘");
     const res = await deliverPlanComments(k(), {
       pending: true,
@@ -212,7 +214,7 @@ describe("deliverPlanComments", () => {
     expect(sentBodies()).toEqual([]);
   });
 
-  it("未送信が無ければ何も送らない（null）", async () => {
+  it("sends nothing and returns null when there is nothing unsent", async () => {
     const ids = seed("送信済みにする");
     markPlanCommentsSent(k(), ids);
     const respond = vi.fn();
@@ -222,7 +224,7 @@ describe("deliverPlanComments", () => {
     expect(say).not.toHaveBeenCalled();
   });
 
-  it("送るのも畳むのも未送信ぶんだけ — 送信済みは本文にも入らない", async () => {
+  it("sends and folds only the unsent ones; already-sent comments stay out of the body", async () => {
     const ids = seed("古い指摘");
     markPlanCommentsSent(k(), ids);
     addPlanComment(k(), { quote: "本文", nth: 0, body: "新しい指摘" });

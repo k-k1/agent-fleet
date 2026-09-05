@@ -1,13 +1,13 @@
 package main
 
-// git_oauth_bridge_seed_test.go — `seedGitOAuthBridge` の回帰。
+// git_oauth_bridge_seed_test.go — regression for `seedGitOAuthBridge`.
 //
-// 本体（cred_helper.go）は package main に居るので、AG-GIT の移送でも動いていない。
-// このテストだけが `internal/gitx/git_oauth_bridge_test.go` から分かれてここに残った
-// ——**駆動を変えないため**である。gitx へ持って行くと、env を読んで secrets へ書く
-// main の関数を「関数値で注入されたもの」として呼ぶことになり、
-// 「起動時に env を 1 度だけ読む」という、このテストが押さえている性質そのものが
-// 検査から外れる。残りの 3 本（bridge 経由の refresh）は gitx 側にある。
+// The implementation lives in package main (cred_helper.go). This one case stays here,
+// apart from `internal/gitx/git_oauth_bridge_test.go`, so that it keeps driving the real
+// thing: moved into gitx it would call a main function that reads env and writes secrets as
+// an injected function value, and the very property this test pins — env is read exactly
+// once at startup — would drop out of the check. The other three cases (refresh through the
+// bridge) are on the gitx side.
 
 import (
 	"os"
@@ -16,7 +16,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/secrets"
 )
 
-// withAgentHome は gitx 側の同名ヘルパの写し（3 行・分割で 2 パッケージに分かれた）。
+// withAgentHome is a copy of the identically named helper in gitx.
 func withAgentHome(t *testing.T) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())

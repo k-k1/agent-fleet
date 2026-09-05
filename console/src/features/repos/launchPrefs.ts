@@ -1,7 +1,8 @@
-// 作業を始める（LaunchModal）の折りたたみセクションの開閉を覚える。リポジトリ単位ではなく
-// 端末単位: 「毎回ブランチ名を打つ人」と「既定のまま起動する人」の違いは人に付くもので、
-// リポジトリを移っても変わらないため。設定（サーバ同期）に置くほどの重みはないので
-// localStorage に留める — 読めなければ既定（畳んだ状態）で困らない。
+// Remembers whether the collapsible sections of the "start work" dialog (LaunchModal) are
+// open. Per device, not per repository: the difference between someone who types a branch
+// name every time and someone who launches with the defaults belongs to the person and does
+// not follow the repository. Not weighty enough for settings (which sync to the server), so
+// it stays in localStorage — if it cannot be read, the collapsed default is fine.
 export type LaunchSectionKey = "place" | "adv";
 
 const KEY = (k: LaunchSectionKey) => "af.launch-open." + k;
@@ -10,7 +11,7 @@ export function readLaunchOpen(k: LaunchSectionKey): boolean {
   try {
     return localStorage.getItem(KEY(k)) === "1";
   } catch {
-    return false; // private mode — 畳んだ既定で開く
+    return false; // private mode — fall back to the collapsed default
   }
 }
 
@@ -19,6 +20,6 @@ export function writeLaunchOpen(k: LaunchSectionKey, open: boolean): void {
     if (open) localStorage.setItem(KEY(k), "1");
     else localStorage.removeItem(KEY(k));
   } catch {
-    /* private mode / quota — 次回また畳んだ状態で開くだけ */
+    /* private mode / quota — it just opens collapsed again next time */
   }
 }

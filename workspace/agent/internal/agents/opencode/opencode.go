@@ -1,7 +1,8 @@
-// Package opencode は opencode CLI 種別の縦割りパッケージ（docs/log/23 残① Wave D:
-// 最初の CLI 縦割り）。Agent 実装・起動コマンド組み立て・SQLite transcript 読み
-// 出し・プロバイダ鍵の Connections ハンドラ・rtk プラグイン適用を package main
-// から移設した。挙動・ワイヤ・ディスクは main 時代とバイト同一を維持すること。
+// Package opencode is the vertical slice for the opencode CLI kind (docs/log/23 remaining
+// item 1, Wave D: the first CLI slice). It holds the Agent implementation, launch-command
+// assembly, the SQLite transcript reader, the Connections handler for provider keys, and
+// rtk plugin application, all moved out of package main. Behaviour, wire and on-disk state
+// must stay byte-identical to what main produced.
 package opencode
 
 import (
@@ -23,7 +24,8 @@ var sids = agents.NewSidStore("opencode-sid")
 // New returns the opencode Agent implementation for the kind registry.
 func New() agents.Agent { return agentImpl{} }
 
-// agentImpl — opencode 種別の Agent 実装（docs/log/23 P1残: CLI 縦割りファイル分割）
+// agentImpl is the Agent implementation for the opencode kind (docs/log/23 P1 remaining:
+// splitting the CLI slices into their own files).
 type agentImpl struct{}
 
 func (agentImpl) Kind() string { return session.KindOpencode }
@@ -67,7 +69,7 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	if anchor == "" {
 		return "", errors.New("分岐点が指定されていません")
 	}
-	// 分岐点を渡せる口は serve の API 側にしかない（`--session <src> --fork` には無い）。
+	// Only the serve API takes a fork point; `--session <src> --fork` has no such argument.
 	if m.DriverKind() != session.DriverManaged {
 		return "", fmt.Errorf("%w: opencode の発言時点からの分岐は managed のセッションでのみ利用できます",
 			agents.ErrForkAtRoute)
@@ -95,9 +97,10 @@ func (agentImpl) ResolveForkAt(m session.Meta, at agents.ForkPoint) (string, err
 	if !at.Include {
 		return anchor, nil
 	}
-	// 「この発言の続きから」= 次のユーザー発言の手前まで。間に挟まる assistant
-	// メッセージ（回答・ツール往復）はすべて引き継がれる。次が無い＝最後のやり取りなら
-	// 会話まるごと（""）が正解 — 最後まで残すとはそういうこと。
+	// "continue from this message" means up to just before the NEXT user message, so every
+	// assistant message in between (the answer and its tool round trips) is carried over.
+	// No next user message means this was the last exchange, and the whole conversation ("")
+	// is the right answer: keeping everything is exactly what that asks for.
 	return nextUserMessageID(db, ses, anchor)
 }
 
@@ -130,14 +133,16 @@ func (agentImpl) Transcript(m session.Meta) (agents.TranscriptData, bool) {
 	return readTranscript(m)
 }
 
-// PendingModal は畳まれる直前の人待ちを持ち越しへ渡す（docs/log/75 P5）。
+// PendingModal hands the wait-for-a-human state that existed just before folding up over
+// to the carry-forward (docs/log/75 P5).
 //
-// opencode の人待ちは question ツール**だけ**である。許可（`permission.asked`）は
-// managed driver が無条件 auto-allow するので、人が答える許可プロンプトは存在しない
-// （docs/log/75 §75.7 P5 に判断を明記）。
+// For opencode that state is the question tool and nothing else. Permission
+// (`permission.asked`) is auto-allowed unconditionally by the managed driver, so a
+// permission prompt a human answers does not exist (the reasoning is spelled out in
+// docs/log/75 §75.7 P5).
 //
-// 保留は opencode 自身のストア（part テーブルの running な question ツール）にあり、
-// プロセスが死んでも残る — halt より遅い契機でも拾える。
+// The pending state lives in opencode's own store (a running question tool in the part
+// table) and survives the process dying, so a trigger later than halt can still pick it up.
 func (a agentImpl) PendingModal(m session.Meta) (agents.PendingModal, bool) {
 	td, _ := a.Transcript(m)
 	if len(td.Pending) == 0 {

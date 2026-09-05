@@ -1,9 +1,9 @@
 package main
 
-// Console 側で和文ローカライズされるエラーコード（console/src/core/api/client.ts の
-// ERR_TEXT と対、docs/log/23 P0-3）。ここの文字列を変えると Console の文言解決が落ちて
-// developer メッセージへフォールバックする — 変更は必ず両側同時に。CP 側の対は
-// control-plane/errcodes.go（quota_sessions）。
+// Error codes the Console localizes into Japanese; the counterpart is ERR_TEXT in
+// console/src/core/api/client.ts (docs/log/23 P0-3). Change a string here and the Console's
+// text lookup fails and falls back to the developer message — always change both sides
+// together. The CP-side counterpart is control-plane/errcodes.go (quota_sessions).
 const (
 	// File editor API (docs/log/44 Phase 1). Keep these synchronized with the CP
 	// proxy constants and Console err.<code> catalogs.
@@ -35,19 +35,19 @@ const (
 	errCodeWorktreeDirty        = "worktree_dirty"
 	errCodeWorktreeRemoveFailed = "worktree_remove_failed"
 	errCodeHasWorktrees         = "has_worktrees"
-	// 削除ロック（docs/log/45）: 対象そのものがロックされている / ロックされた
-	// セッションを巻き添えにする削除を拒んだとき。
+	// Deletion lock (docs/log/45): the target itself is locked, or a deletion was refused
+	// because it would have taken locked sessions down with it.
 	errCodeLocked         = "locked"
 	errCodeLockedSessions = "locked_sessions"
 )
 
-// docs/log/28 P3: 以前は各ハンドラに和文でハードコードされていたユーザー向けエラーを
-// 安定コード化したもの。backend の message は言語非依存の英語 developer fallback、
-// 表示文言は Console の "err.<code>" カタログ（console/src/lib/i18n/locales）が解決する。
-// コードは意味ごとに一意（旧 "not_found"/"empty" 等の使い回しを解消）— 追加・改名時は
-// 必ず i18n カタログ両言語（ja.ts / en.ts）にも "err.<code>" を足す。
+// Stable codes for the user-facing errors (docs/log/28 P3). The backend message is a
+// language-neutral English developer fallback; the displayed text is resolved by the
+// Console's "err.<code>" catalogs (console/src/lib/i18n/locales). Each code is unique per
+// meaning — when adding or renaming one, always add "err.<code>" to both language catalogs
+// (ja.ts / en.ts) as well.
 const (
-	// アシスタントチャット（chat_handlers.go）
+	// Assistant chat (chat_handlers.go)
 	errCodeChatAssistantNotFound  = "chat_assistant_not_found"
 	errCodeChatAgentUnsupported   = "chat_agent_unsupported"
 	errCodeChatPromptEmpty        = "chat_prompt_empty"
@@ -56,57 +56,60 @@ const (
 	errCodeChatConversationNotFnd = "chat_conversation_not_found"
 	errCodeChatNothingToCompact   = "chat_nothing_to_compact"
 
-	// 接続設定（connections.go）
+	// Connection settings (connections.go)
 	errCodeConnAPIKeyRequired     = "conn_api_key_required"
 	errCodeConnGrafanaFields      = "conn_grafana_fields_required"
 	errCodeConnURLScheme          = "conn_url_scheme"
 	errCodeConnAWSProfileRequired = "conn_aws_profile_required"
 	errCodeConnSSORegionMissing   = "conn_sso_region_missing"
 
-	// Jira 接続（connections_jira.go, docs/log/80 P1）
+	// Jira connections (connections_jira.go, docs/log/80 P1)
 	errCodeConnJiraFields   = "conn_jira_fields_required"
 	errCodeConnJiraRejected = "conn_jira_rejected"
 
-	// チャットブリッジ接続（connections.go, docs/log/37 P1）
+	// Chat bridge connections (connections.go, docs/log/37 P1)
 	errCodeConnDiscordTokenRequired = "conn_discord_token_required"
 	errCodeConnDiscordDestRequired  = "conn_discord_destination_required"
 	errCodeConnDiscordDestInvalid   = "conn_discord_destination_invalid"
 	errCodeConnDiscordTokenInvalid  = "conn_discord_token_invalid"
 
-	// Slack チャットブリッジ接続（connections_slack.go, docs/log/37 Slack 追随）
+	// Slack chat bridge connections (connections_slack.go, docs/log/37 Slack follow-up)
 	errCodeConnSlackTokenRequired    = "conn_slack_token_required"
 	errCodeConnSlackDestRequired     = "conn_slack_destination_required"
 	errCodeConnSlackDestInvalid      = "conn_slack_destination_invalid"
 	errCodeConnSlackTokenInvalid     = "conn_slack_token_invalid"
 	errCodeConnSlackAppTokenRequired = "conn_slack_app_token_required"
 
-	// アシスタント CRUD（assistants.go）
+	// Assistant CRUD (assistants.go)
 	errCodeAssistantNotFound      = "assistant_not_found"
 	errCodeAssistantBuiltinEdit   = "assistant_builtin_readonly_edit"
 	errCodeAssistantBuiltinDelete = "assistant_builtin_readonly_delete"
 
-	// 画像貼り付け（session_paste.go）
+	// Image paste (session_paste.go)
 	errCodePasteTooLarge         = "paste_too_large"
 	errCodePasteUnsupportedKind  = "paste_unsupported_kind"
 	errCodePasteUnsupportedAgent = "paste_unsupported_agent"
 
-	// セッション分岐（session_handlers.go）
+	// Session fork (session_handlers.go)
 	errCodeForkUnsupportedKind = "fork_unsupported_kind"
 	errCodeForkMissingDir      = "fork_missing_dir"
-	// 発言時点からの分岐（docs/log/55）。会話まるごとの分岐へ黙って倒さないための境界で、
-	// 2 つに割ってあるのは意味が違うため: unsupported は「この種別/起動方式では地点分岐
-	// という機能が無い」（＝導線を出すべきでなかった）、bad_anchor は「機能はあるが、
-	// この分岐点が使えない」（会話に無い・サブエージェント発言・ミラーが古い）。
+	// Forking at a message (docs/log/55). The boundary that stops a point fork quietly
+	// degrading into a fork of the whole conversation. Split in two because the meanings
+	// differ: unsupported means this kind or launch method has no point-fork feature at all
+	// (so the affordance should never have been offered), bad_anchor means the feature
+	// exists but this fork point cannot be used (not in the conversation, a subagent
+	// message, or a stale mirror).
 	errCodeForkAtUnsupported = "fork_at_unsupported"
 	errCodeForkBadAnchor     = "fork_bad_anchor"
 
-	// AI タイトル提案（session_title.go）
-	// generation_failed は detail（CLI/auth の理由）を保持するため意図的にカタログ化せず、
-	// literal コードのまま英語 developer message を表示する（session_title.go 参照）。
+	// AI title suggestion (session_title.go)
+	// generation_failed is deliberately left out of the catalogs so it can keep its detail
+	// (the CLI/auth reason): it stays a literal code and shows the English developer
+	// message (see session_title.go).
 	errCodeTitleFeatureDisabled = "title_feature_disabled"
 	errCodeTitleNoContent       = "title_no_content"
 
-	// エージェントメモリの版管理（memory_handlers.go, docs/log/39 / ADR 0022）
+	// Agent memory versioning (memory_handlers.go, docs/log/39 / ADR 0022)
 	errCodeMemoryBadRequest     = "memory_bad_request"
 	errCodeMemoryBadRev         = "memory_bad_rev"
 	errCodeMemoryBadPath        = "memory_bad_path"
@@ -115,18 +118,18 @@ const (
 	errCodeMemoryDiffFailed     = "memory_diff_failed"
 	errCodeMemoryBadScope       = "memory_bad_scope"
 	errCodeMemoryRestoreFailed  = "memory_restore_failed"
-	// P3（export / import・memory_export.go / memory_import.go）
+	// P3 (export / import: memory_export.go / memory_import.go)
 	errCodeMemoryExportFailed   = "memory_export_failed"
 	errCodeMemoryImportFailed   = "memory_import_failed"
 	errCodeMemoryBadImport      = "memory_bad_import"
 	errCodeMemorySecretDetected = "memory_secret_detected"
 	errCodeMemoryTooLarge       = "memory_too_large"
 
-	// managed runtime（共有 daemon）を起こせなかった理由のうち、**待っても直らない**もの。
-	// CLI にログイン/接続していないので daemon を起こさなかった、が唯一の中身。
-	// runtime_failed（＝一時的な失敗・502）と分けてあるのは、Console の文言も
-	// isTransientErr の判定も「待てば直るか」で変わるため。
-	// 使うのは internal/sessionx/runtime_err.go で、値は session_wiring.go が
-	// sessionx.Deps 経由で渡す（sessionx 側で定義し直さない — deps.go の注記）。
+	// The reason for failing to wake the managed runtime (the shared daemon) that waiting
+	// will not fix. Its only content: the daemon was not started because the CLI is not
+	// logged in or connected. Kept apart from runtime_failed (a transient failure, 502)
+	// because both the Console's wording and isTransientErr turn on whether waiting helps.
+	// Used by internal/sessionx/runtime_err.go; the value is passed in by session_wiring.go
+	// through sessionx.Deps — do not redefine it inside sessionx (see the note in deps.go).
 	errCodeAgentNotConnected = "agent_not_connected"
 )

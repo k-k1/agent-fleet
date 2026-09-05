@@ -1,23 +1,23 @@
-// 作業項目の詳細 (docs/log/80 §80.8 / §80.20).
+// Work item detail (docs/log/80 §80.8 / §80.20).
 //
-// レールの行をクリックすると開く 1 枚。★ 行から「始める」ボタンを外したのは、41 行の
-// 右端に同じボタンが 41 個並ぶと、レールが「押すと何かが起きる面」に見えて怖いから
-// （利用者からの指摘・§80.20）。行は情報に戻し、操作はここに集める。
+// The single panel a rail row opens. The row lost its "start" button because forty-one identical
+// buttons down the right edge make the rail look like a surface where pressing does something
+// (§80.20); the row is information again and the controls live here.
 //
-// 出すのは **CP が既に持っている項目だけ**（key/title/state/url/assignee/labels/repo/更新）。
-// ★ 本文（説明）は出さない —— CP は本文を預からない決まりで（ADR 0061 決定 2）、ここで
-// 取りに行くと「一覧を見るために Workspace を起こす」を詳細の側から作り直すことになる。
-// 本文はセッションの中で `gh` / MCP が読む（§80.9）。
+// It shows only the fields the CP already holds (key/title/state/url/assignee/labels/repo/updated).
+// It does NOT show the body: the CP is not allowed to hold ticket bodies (ADR 0061 decision 2),
+// and fetching one here would rebuild "wake the Workspace just to look at a list" on the detail
+// side. The body is read inside the session by `gh` or the MCP (§80.9).
 //
-// 起動先の選択（リポジトリ・新しい worktree / 既存の作業コピー）はこの中に統合した。
+// Choosing where to launch (repository, new worktree vs. existing working copy) is folded in here.
 // A ticket does not know where its work happens: a GitHub item names a repository but
 // not which local copy, and a Jira issue names neither.
 //
-// ★ Why this is not the はじめる hub: that hub deliberately lists BASE clones only
+// Why this is not the start hub: that hub deliberately lists BASE clones only
 // ("worktrees are task copies, launched from their tree rows"), and continuing a ticket
 // in the worktree it already has is the normal second visit. It is also why this is not
-// left to the launch dialog's 場所 section, which offers 新しい worktree か このコピーで
-// 直接 but cannot point at a DIFFERENT existing copy.
+// left to the launch dialog's location section, which offers a new worktree or this copy
+// directly but cannot point at a DIFFERENT existing copy.
 //
 // The answer is handed to the existing LaunchModal (via useLaunchTarget) rather than
 // re-implementing any of it — agent, model, prompt, branch and worktree creation all
@@ -38,22 +38,23 @@ import {
   type WorkItemSessionRef,
 } from "./read.ts";
 
-/** Sentinel for 「新しい作業コピー（worktree）を作る」 — not a folder name, so it cannot
+/** Sentinel for "create a new working copy (worktree)" — not a folder name, so it cannot
  * collide with one. */
 export const NEW_WORKTREE = " new-worktree";
 
 interface Props {
   item: WorkItem;
   repos: Repo[];
-  /** Working copy resolved from the query's 既定 / the item's own repo ("" = none). */
+  /** Working copy resolved from the query's default or the item's own repo ("" = none). */
   defaultRepo: string;
-  /** Ledger rows for this item — 「同じチケットに 2 人目」を起動の前に見せる。 */
+  /** Ledger rows for this item — shows a second person on the same ticket before they launch. */
   started: WorkItemSessionRef[];
   onClose(): void;
   /** target = the working copy to launch in; inPlace = the user picked an existing copy
    * (so the launch dialog must not re-default to "new worktree"). */
   onPick(target: Repo, inPlace: boolean): void;
-  /** 作業コピーが 1 つも無いとき —— clone 導線を持つ はじめる ハブに委ねる。 */
+  /** Called when there is no working copy at all: defer to the start hub, which has the clone
+   * path. */
   onStartHub(): void;
   onOpenSession(name: string): void;
   onReport(): void;
@@ -72,8 +73,8 @@ export function WorkItemDetailModal({
 }: Props) {
   const tr = useT();
   const bases = useMemo(() => repos.filter((r) => !r.worktree), [repos]);
-  // 既定のリポジトリ: クエリの指定 → 項目の repo → 先頭。worktree が既定に入っていたら
-  // その親を選ぶ（起動先の選択はこのあとの行で行う）。
+  // Default repository: the query's hint, then the item's repo, then the first one. A worktree
+  // as the default resolves to its parent; where to launch is chosen on the row below.
   const initialBase = useMemo(() => {
     const hit = repos.find((r) => r.name === defaultRepo);
     if (hit) return hit.worktree ? hit.parent || "" : hit.name;
@@ -83,17 +84,17 @@ export function WorkItemDetailModal({
   const [where, setWhere] = useState<string>(NEW_WORKTREE);
 
   const baseRepo = repos.find((r) => r.name === base);
-  // その base の worktree を作成順に。SVN 作業コピーには worktree の概念が無い。
+  // That base's worktrees in creation order. An SVN working copy has no worktree concept.
   const worktrees = useMemo(
     () => repos.filter((r) => r.worktree && r.parent === base).sort((a, b) => (a.createdAt || "").localeCompare(b.createdAt || "")),
     [repos, base],
   );
-  // コミットがまだ無い（unborn）作業コピーでも `git worktree add` は HEAD を解決できない。
+  // `git worktree add` cannot resolve HEAD in a working copy with no commit yet (unborn).
   const canWorktree = !!baseRepo && baseRepo.vcs !== "svn" && !baseRepo.unborn;
 
   const go = () => {
-    // 作業コピーがまだ 1 つも無いなら、ここで選ばせるものが無い —— clone から案内する
-    // はじめる ハブに渡す（種は呼び手が置く）。
+    // With no working copy yet there is nothing to choose here, so hand over to the start hub,
+    // which guides from a clone (the caller has already seeded the prompt).
     if (bases.length === 0) {
       onStartHub();
       return;
@@ -110,30 +111,31 @@ export function WorkItemDetailModal({
   const rel = relTime(item.updatedAt);
 
   return (
-    // ★ タイトルは短縮しない。レールの行は repo を落として `#312` だけを出すが、
-    // 41 行のうちどれを開いたかを言えるのは**完全なキー**である（`#312` は 3 リポジトリ
-    // 分ありうる）。
-    // 見出しの語は種別そのもの（課題 / プルリクエスト）。「作業項目」という 3 つ目の
-    // 名前を面に出さないため —— レールと設定タブは「課題管理」の 1 語で揃えてある。
+    // The heading never shortens the key. The rail row drops the repo and shows just `#312`,
+    // but only the full key says which of 41 rows was opened (`#312` can exist in three
+    // repositories at once).
+    // The heading word is the kind itself (issue / pull request), so that a third name for this
+    // thing never reaches the UI — the rail and the settings tab both use one term.
     <Modal
       title={tr("wi.detail_title", { kind: tr(item.kind === "pr" ? "wi.kind_pr" : "wi.kind_issue"), key: item.key })}
       onClose={onClose}
       className="wi-dmodal"
     >
-      {/* ★ 中身は ui-modal-body / ui-modal-foot に載せる。ui-modal 自身に padding は
-          無く（見出しと footer が自分で持つ形）、直に子を置くと本文だけが枠に貼りつく。 */}
+      {/* Content must sit in ui-modal-body / ui-modal-foot. ui-modal itself has no padding (the
+          heading and footer carry their own), so a child placed directly in it sticks to the
+          frame. */}
       <div className="ui-modal-body">
         <div className="wi-dhead">
           <span className={`wi-dot tone-${stateTone(item.state)}`} title={stateLabel(item.state)}>
             <Icon name={item.kind === "pr" ? "git-pull-request" : "issues"} />
           </span>
-          {/* ★ ここだけは省略しない。レールの行が 1 行で切っているものを読みに来る面なので、
-              折り返してでも全文を出す。 */}
+          {/* Never ellipsised here: this is the panel people open to read what the rail row cut
+              to one line, so it wraps and shows the title in full. */}
           <h3 className="wi-dtitle">{item.title}</h3>
         </div>
 
-        {/* CP が預かっている項目そのまま。無い値の行は描かない（「—」を並べても
-            読む物が増えるだけ）。 */}
+        {/* Exactly the fields the CP holds. A row with no value is not drawn; a column of
+            em-dashes only adds things to read. */}
         <dl className="wi-dfacts">
           <dt>{tr("wi.detail_state")}</dt>
           <dd>{stateLabel(item.state)}</dd>
@@ -177,14 +179,15 @@ export function WorkItemDetailModal({
           )}
         </dl>
 
-        {/* 本文をここに出さない代わりに、「読みに行く先」は必ず出す（§80.9 と同じ理由）。 */}
+        {/* The body is not shown here, so where to go and read it always is (same reason as
+            §80.9). */}
         <a className="wi-dlink" href={item.url} target="_blank" rel="noreferrer noopener">
           <Icon name="link-external" />
           {tr("wi.open_external")}
         </a>
 
-        {/* 着手済み。台帳の一番の実利がこれ —— 同じ課題に 2 人目が入るのを、起動する前に
-            止める（docs/log/80 §80.8）。 */}
+        {/* Already started. This is the ledger's main payoff: it stops a second person picking
+            up the same ticket before they launch (docs/log/80 §80.8). */}
         {started.length > 0 && (
           <section className="wi-dstarted">
             <h4>{tr("wi.detail_started")}</h4>
@@ -199,8 +202,8 @@ export function WorkItemDetailModal({
                 </li>
               ))}
             </ul>
-            {/* 書き戻し。押しても投稿はされない —— 下書きを読むモーダルが開くだけで、
-                投稿はその中の 1 手（ADR 0061 決定 6）。 */}
+            {/* Reporting back. Pressing this posts nothing: it opens a modal for reading the
+                draft, and posting is a separate step inside it (ADR 0061 decision 6). */}
             {canComment(item) && (
               <Button variant="ghost" onClick={onReport}>
                 <Icon name="comment" />
@@ -222,7 +225,7 @@ export function WorkItemDetailModal({
                   value={base}
                   onChange={(e) => {
                     setBase(e.target.value);
-                    setWhere(NEW_WORKTREE); // リポジトリを変えたら起動先は選び直し
+                    setWhere(NEW_WORKTREE); // changing the repository re-opens the where choice
                   }}
                 >
                   {bases.map((r) => (

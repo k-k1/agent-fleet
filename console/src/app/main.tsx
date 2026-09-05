@@ -41,7 +41,7 @@ wireViewport();
 consumePopoutBoot();
 
 // Install the Web Share Target service worker so the installed PWA can receive shares
-// from Android's 共有シート into the memo queue (docs/log/21 画像添付). Best-effort.
+// from Android's share sheet into the memo queue (docs/log/21 image attachments). Best-effort.
 registerShareSW();
 
 createRoot(document.getElementById("root")!).render(

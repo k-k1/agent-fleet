@@ -1,11 +1,11 @@
-// セッション一覧ストアの「再開が死なない」契約。停止中セッションの再開導線は
-// すべて「その行が一覧に載っていること」に依存しているので、一時的な取得失敗で
-// 一覧を空にすると再開ボタンごと消える（コンテナ再起動直後の 502 窓で実際に起きた）。
-// 再開 POST の失敗を握り潰さないことも、ここで固定する。
+// The session list store's "resume never dies" contract. Every route to resuming a stopped
+// session depends on that row being in the list, so blanking the list on a transient fetch
+// failure takes the resume button with it (it happened in the 502 window right after a
+// container restart). That a failed resume POST is not swallowed is pinned here too.
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-// store は api client（window.fetch 束縛・document.baseURI）を import するので
-// 先にグローバルを stub してから import（workspace.test.ts と同じ流儀）。
+// The store imports the api client (which binds window.fetch and reads document.baseURI), so
+// stub the globals before importing it (the same style as workspace.test.ts).
 const values = new Map<string, string>();
 vi.stubGlobal("localStorage", {
   getItem: (key: string) => values.get(key) ?? null,

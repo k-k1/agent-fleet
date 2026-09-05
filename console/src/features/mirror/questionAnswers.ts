@@ -12,9 +12,9 @@
 //
 // So a `"` the user typed inside a free-text answer is indistinguishable from the quote
 // that closes it, and the obvious /"[^"]*"\s*=\s*"([^"]*)"/ stops at the first typed
-// quote: the card showed `A+Bでいこう。ただし` for an answer that went on for three more
-// lines after `ただし"二重再開の回避"は…`. The truncation was silent — the mirror looked
-// like the user had simply said less than they did.
+// quote: the card showed only the text before it and dropped the three lines that followed.
+// The truncation was silent — the mirror looked like the user had simply said less than
+// they did.
 //
 // The question texts are known at render time, so anchor on them instead: an answer runs
 // from its own `"<question>"="` up to the NEXT question's anchor (or, for the last one,
@@ -46,8 +46,8 @@ const cutSep = (s: string) => s.replace(/"[\s,、，]*$/, "").trim();
 // The anchor below used to demand a quote right after the `=`, so a single answer of this
 // shape made the anchored split fail for the WHOLE card and fell back to the legacy pair
 // regex — which skips the unquoted pair entirely and therefore shifts every later answer
-// up by one question (実測 2026-08-18: 3問中1問を自由入力すると、2問目の答えが1問目の
-// カードに、3問目の答えが2問目のカードに出て、3問目は空になる).
+// up by one question (measured: with one of three questions answered as free text, answer 2
+// appeared on card 1, answer 3 on card 2, and card 3 came out empty).
 const NOTES_ONLY = /^\(no option selected\)\s*notes:\s*/;
 const cutNotes = (s: string) => s.replace(NOTES_ONLY, "").trim();
 // …and without a closing quote, the last answer's end is claude's trailing sentence
@@ -119,8 +119,9 @@ export function parseQuestionAnswers(raw: string, prompts: (string | undefined)[
 // but a free-text reply is prose that contains commas of its own. Split, therefore, only
 // as far as it pays off: an answer that matches an option EXACTLY, or whose segments do,
 // is a pick list; anything else is the user's words and is kept verbatim, punctuation
-// and all. Matching is by exact segment equality — never substring containment, or
-// "AWSは使わない" would check the option "AWS" and then vanish from the card.
+// and all. Matching is by exact segment equality — never substring containment, or a typed
+// answer such as "we are not using AWS" would tick the option "AWS" and then vanish from
+// the card.
 export function resolveAnswer(answer: string, labels: string[]): { chosen: string[]; extras: string[] } {
   const a = (answer || "").trim();
   if (!a) return { chosen: [], extras: [] };

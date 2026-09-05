@@ -1,17 +1,18 @@
-// HandoffOfferRow — 受け取った引き継ぎ 1 件の面（docs/log/77 / ADR 0057）。
+// HandoffOfferRow renders one received handoff (docs/log/77 / ADR 0057).
 //
-// 受信箱（HandoffInboxModal）と共有ビューの帯（SharedSessionView）の両方から出す。切り出して
-// あるのは、**受諾の導線が 1 か所しか無かった**のが実利用で最初に踏まれた穴だから: 通知を
-// 押した先は共有ビューで、そこには受け取る口が無く、唯一の口はレール見出しのアイコンだった。
+// It is shown both by the inbox (HandoffInboxModal) and by the banner in the shared view
+// (SharedSessionView); it is a separate component because acceptance must not live in only
+// one place — a notification leads to the shared view, which had no way to accept, leaving
+// the rail heading icon as the only entry point.
 //
-// 「1 ボタン」は**押すまでに考えることが無い**という意味であって、押した瞬間に起動する
-// ことではない（docs/log/77 §77.1）。押すと前埋めされた起動モーダルが開き、本文も作業コピーも
-// エージェントも受け手が選ぶ —— 起きるのは受け手の Workspace で、費用も受け手に付くのだから
-// この確認は省けない。
+// "One button" means nothing to think about BEFORE pressing, not launching the moment it is
+// pressed (docs/log/77 §77.1). Pressing opens the pre-filled launch modal, where the
+// recipient still chooses the prompt, the working copy and the agent: it runs in the
+// recipient's own Workspace and is billed to them, so that confirmation cannot be skipped.
 //
-// 起動そのものは既存の起動導線（useLaunchTarget → LaunchModal → useStartWork）に丸ごと乗せる。
-// CP が他人の Workspace を操作しないのがこの機能の骨格（ADR 0057 決定 3）なので、受諾は
-// 「起動できた」の事後申告として StartHost から送る。
+// The launch itself rides entirely on the existing path (useLaunchTarget → LaunchModal →
+// useStartWork). The CP never operates someone else's Workspace (ADR 0057 decision 3), so
+// acceptance is reported after the fact by StartHost, once the launch succeeded.
 import { useMemo, useState } from "react";
 import { Button } from "../../ui/Button.tsx";
 import { Icon } from "../../ui/Icon.tsx";
@@ -22,9 +23,10 @@ import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts
 import { useHandoffStore, type HandoffOffer } from "./handoffStore.ts";
 import "./sharing.css";
 
-/** remote URL から作業コピー名の当たりを付ける（`…/k-k1/agent-fleet.git` → `agent-fleet`）。
- *  受け手の作業コピー一覧には remote の**ホスト**しか無いので、URL 同士の突合はできない。
- *  ここは既定値を埋めるためだけの推測で、最終判断は受け手がセレクトで行う。 */
+/** Guesses a working-copy name from a remote URL (`…/k-k1/agent-fleet.git` →
+ *  `agent-fleet`). The recipient's working-copy list carries only the remote HOST, so the
+ *  URLs cannot be matched against each other; this guess only fills the default, and the
+ *  recipient decides in the select. */
 export function repoNameFromRemote(remote?: string): string {
   if (!remote) return "";
   const last = remote.replace(/\/+$/, "").split("/").filter(Boolean).at(-1) || "";
@@ -45,8 +47,8 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
       toast(tr("handoff.accept_no_repo"));
       return;
     }
-    // どの offer を受けたのかを起動導線へ持たせる。起動が成功した時点で StartHost が
-    // accept を送る（キャンセルされた起動で受諾済みにしてはいけない）。
+    // Carry which offer this is into the launch path. StartHost sends the accept once the
+    // launch succeeds: a cancelled launch must not mark the offer accepted.
     useLaunchSeed.getState().set(offer.prompt || "", offer.title, "", "", offer.id);
     useLaunchTarget.getState().open({ name: repo.name, path: repo.path, branch: offer.branch || repo.branch, worktree: repo.worktree });
     onDone();
@@ -75,7 +77,8 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
           remote: offer.repoRemote || "-",
         })}
       </p>
-      {/* 本文は畳まずに出す。受け手はこれを読んだうえで押す、が 1 ボタンの前提。 */}
+      {/* The prompt is shown unfolded: the one-button flow assumes the recipient read it
+          before pressing. */}
       <pre className="mirror-handoff-prompt">{offer.prompt}</pre>
       <label className="ui-field">
         <span className="ui-field-label">{tr("handoff.accept_repo")}</span>
@@ -87,8 +90,9 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
           ))}
         </select>
       </label>
-      {/* 作業コピーが 1 つも無いと受諾ボタンは押せない。理由を言わないと「受け取るボタンが
-          効かない」としか見えないので、次の一手（自分で clone する）まで書く。 */}
+      {/* With no working copy at all the accept button cannot fire. Without a reason that
+          only reads as a dead button, so the next step (clone it yourself) is spelled
+          out. */}
       {repos.length === 0 && <p className="ui-field-hint handoff-blocked">{tr("handoff.accept_no_repo_hint")}</p>}
       <p className="ui-field-hint">{tr("handoff.accept_cost_hint")}</p>
       <div className="handoff-inbox-actions">

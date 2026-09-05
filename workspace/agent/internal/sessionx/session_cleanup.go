@@ -105,8 +105,8 @@ func classifySessionCleanup(locked, archived, live, ephemeral bool) (action, saf
 	case live:
 		return "", "", "", false // running — not a cleanup target
 	case locked:
-		// 削除ロック（docs/log/45）: 掃除の対象外。黙って隠すのではなく keep として見せる —
-		// 「なぜ片付かないのか」が利用者にもオペレーターにも分かるように。
+		// Deletion lock (docs/log/45): not a cleanup target. Shown as keep rather than
+		// silently hidden, so both the user and the operator can see why it stays.
 		return "", "keep", cleanReasonLocked, true
 	case archived:
 		// Archived rows are TTL-exempt (HandleListSessions skips them before the prune),
@@ -133,8 +133,9 @@ func classifyWorktreeCleanup(locked bool, lockedSessions, liveCount, ahead int, 
 	case locked:
 		return "", "keep", cleanReasonLocked // docs/log/45
 	case lockedSessions > 0:
-		// 削除ロック済みセッション（docs/log/45）が住む WT は handleDeleteRepo が 403 で拒む。
-		// safe と提案しても実行時に失敗するだけ — keep として理由ごと見せる。
+		// handleDeleteRepo refuses a worktree a deletion-locked session (docs/log/45) lives
+		// in with 403. Proposing it as safe would only fail at execution time, so show it as
+		// keep together with the reason.
 		return "", "keep", cleanReasonWtLockedSess
 	case liveCount > 0:
 		return "", "keep", cleanReasonWtLive
@@ -195,8 +196,9 @@ func HandleSessionsCleanup(w http.ResponseWriter, r *http.Request) {
 		if parent := gitx.WorktreeParent(dir); parent != "" {
 			relation = gitx.GitWorktreeIntegration(parent, dir, gitx.GitCurrentBranch(parent)).Relation
 		}
-		// 削除ロック済みセッション（stopped/archived 含む）が居る WT は削除も 403 で
-		// 拒まれる — handleDeleteRepo と同じ判定（LockedSessionsInDir）で先に keep にする。
+		// Deleting a worktree that holds a deletion-locked session (stopped and archived
+		// ones count) is refused with 403 too, so the same check handleDeleteRepo uses
+		// (LockedSessionsInDir) marks it keep first.
 		lockedSess := len(LockedSessionsInDir(metas, dir))
 		action, safety, reasonKey := classifyWorktreeCleanup(RepoLocked(dir), lockedSess, liveCount, st.Ahead, st.Dirty, relation)
 		out = append(out, cleanupCandidate{

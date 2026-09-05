@@ -1,5 +1,5 @@
-// 操作ビーコンの配線（docs/log/75 P3）。DOM を触るので dom プロジェクト側。
-// 純ロジック（shouldBeacon の真偽表）は attention.test.ts にある。
+// Wiring of the interaction beacon (docs/log/75 P3). It touches the DOM, so it lives in the dom
+// project; the pure logic (shouldBeacon's truth table) is in attention.test.ts.
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { ATTENTION_INTERVAL_MS, shouldBeacon, wireAttentionBeacon } from "./attention.ts";
 
@@ -11,19 +11,19 @@ vi.mock("../core/api/client.ts", () => ({
 describe("shouldBeacon", () => {
   const now = 1_000_000;
 
-  it("可視 × 実操作 × 間隔が空いている、のときだけ送る", () => {
+  it("sends only when visible, really interacted with, and past the interval", () => {
     expect(shouldBeacon(true, true, now, now - ATTENTION_INTERVAL_MS)).toBe(true);
   });
 
-  it("★裏のタブは送らない（開きっぱなしのタブが温め続けるのを防ぐ本体）", () => {
+  it("does not send from a background tab (this is what stops a forgotten tab keeping it warm)", () => {
     expect(shouldBeacon(true, false, now, now - ATTENTION_INTERVAL_MS)).toBe(false);
   });
 
-  it("★合成イベントは人の操作ではない", () => {
+  it("treats a synthetic event as not being human interaction", () => {
     expect(shouldBeacon(false, true, now, now - ATTENTION_INTERVAL_MS)).toBe(false);
   });
 
-  it("★間隔内は送らない（スクロール 1 回ごとに POST しない）", () => {
+  it("does not send within the interval (no POST per scroll)", () => {
     expect(shouldBeacon(true, true, now, now - 1000)).toBe(false);
     expect(shouldBeacon(true, true, now, now - ATTENTION_INTERVAL_MS + 1)).toBe(false);
   });
@@ -43,13 +43,13 @@ describe("wireAttentionBeacon", () => {
   const visible = (v: "visible" | "hidden") =>
     Object.defineProperty(document, "visibilityState", { value: v, configurable: true });
 
-  // jsdom の isTrusted は own かつ non-configurable で偽装できない。実操作を模す
-  // テストは requireTrusted:false で配線し、「合成イベントを弾く」ことは既定のまま
-  // 別ケースで固定する。
+  // jsdom's isTrusted is own and non-configurable, so it cannot be faked. Tests that imitate real
+  // interaction wire with requireTrusted:false; that synthetic events are rejected is pinned by a
+  // separate case, on the default.
   const wireForGestures = () => wireAttentionBeacon({ requireTrusted: false });
   const gesture = (e: Event) => window.dispatchEvent(e);
 
-  it("開いただけでは送らない — 最初の操作から数え始める", () => {
+  it("does not send just for being opened - counting starts at the first interaction", () => {
     vi.useFakeTimers();
     visible("visible");
     un = wireAttentionBeacon();
@@ -57,35 +57,35 @@ describe("wireAttentionBeacon", () => {
     expect(attention).not.toHaveBeenCalled();
   });
 
-  it("実操作で送り、間隔内の追加操作は畳む", () => {
+  it("sends on real interaction and folds further interactions within the interval", () => {
     vi.useFakeTimers();
     visible("visible");
     un = wireForGestures();
     vi.advanceTimersByTime(ATTENTION_INTERVAL_MS + 1);
 
-    // スクロール（＝読んでいる）も操作として数える。打鍵を伴わないので、これが
-    // 数えられないと「読んでいるだけの人」が不在に見える。
+    // Scrolling (i.e. reading) counts as interaction too. It involves no keystrokes, so without
+    // it someone who is only reading looks absent.
     gesture(new WheelEvent("wheel"));
     expect(attention).toHaveBeenCalledTimes(1);
     gesture(new WheelEvent("wheel"));
     gesture(new MouseEvent("pointerdown"));
-    expect(attention).toHaveBeenCalledTimes(1); // 60 秒間は 1 回だけ
+    expect(attention).toHaveBeenCalledTimes(1); // once per 60 seconds
 
     vi.advanceTimersByTime(ATTENTION_INTERVAL_MS + 1);
     gesture(new KeyboardEvent("keydown"));
     expect(attention).toHaveBeenCalledTimes(2);
   });
 
-  it("★合成イベント（isTrusted=false）は拾わない", () => {
+  it("ignores synthetic events (isTrusted=false)", () => {
     vi.useFakeTimers();
     visible("visible");
     un = wireAttentionBeacon();
     vi.advanceTimersByTime(ATTENTION_INTERVAL_MS + 1);
-    window.dispatchEvent(new WheelEvent("wheel")); // jsdom 既定 = 合成
+    window.dispatchEvent(new WheelEvent("wheel")); // jsdom default = synthetic
     expect(attention).not.toHaveBeenCalled();
   });
 
-  it("★裏のタブでは送らない", () => {
+  it("does not send from a background tab", () => {
     vi.useFakeTimers();
     visible("hidden");
     un = wireForGestures();
@@ -94,7 +94,7 @@ describe("wireAttentionBeacon", () => {
     expect(attention).not.toHaveBeenCalled();
   });
 
-  it("解除するとイベントを拾わない", () => {
+  it("stops picking up events once unsubscribed", () => {
     vi.useFakeTimers();
     visible("visible");
     un = wireForGestures();

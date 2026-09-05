@@ -1,4 +1,4 @@
-// 各コードブロック / 引用に付くコピー・折り返しのボタン。
+// The copy and wrap buttons attached to each code block / blockquote.
 import { t } from "../../../lib/i18n/index.ts";
 
 // addCopyButton pins code actions at the bottom-right of a fenced code block: copy

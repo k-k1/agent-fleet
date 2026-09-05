@@ -1,12 +1,11 @@
 package main
 
-// mcp_wiring.go — MCP 家系（`internal/mcpx`）の**配線**だけを持つ。
-// ウェーブ B の別名 alias_mcp.go は RECLAIM-B で回収し、呼び出し側は mcpx を直接呼ぶ。
-// ここに残るのは別名ではなく、**main 側にしか置けない 2 つ**である:
+// mcp_wiring.go — holds nothing but the wiring of the MCP family (`internal/mcpx`). What
+// lives here are not aliases but the two things that can only sit on the main side:
 //
-//   - 「写しにできない 4 つ」の**保管場所**（下記）。
-//   - **mcpx → main** の逆向き依存 19 本を関数値で配線する `mcpx.Configure`。
-//     mcpx は main を import できないので、これが唯一の方法（internal/mcpx/deps.go）。
+//   - The storage for "the four that cannot be copies" (below).
+//   - `mcpx.Configure`, which wires the 19 reverse mcpx → main dependencies as function
+//     values. mcpx cannot import main, so this is the only way (internal/mcpx/deps.go).
 
 import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
@@ -16,16 +15,16 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
-// 🔥 **写しにできない 4 つ**は、値の**保管場所をこちら側に置く**（mcpx は読み書きの口
-// だけを預かる。internal/mcpx/deps.go の注記）。理由は 2 つあり、どちらも「var を
-// エイリアスで受けると壊れる」の実例である:
+// The four that cannot be copies keep their storage on this side; mcpx is handed only the
+// read/write ports (see the note in internal/mcpx/deps.go). Two reasons, both of them
+// instances of "taking a var through an alias breaks it":
 //
-//   - `--conv <id>` と `--write` は**起動時の代入より後**（引数解釈のとき）に決まる。
-//     写しは空/false のまま固まり、bridge_approval.go は「どの会話か分からない」まま
-//     承認を投げる。
-//   - package main のテストはこれらに**直接代入して** mcpx の道具集合を切り替え、
-//     解釈結果を**読み返す**（chat_report_test.go / bridge_approval_test.go）。
-//     写しだと代入が届かず、**スタブが効かないのに緑**になる。
+//   - `--conv <id>` and `--write` are decided after the assignment at startup, when the
+//     arguments are parsed. A copy stays frozen at ""/false, and bridge_approval.go posts
+//     the approval without knowing which conversation it belongs to.
+//   - package main's tests assign to these directly to switch mcpx's tool set, then read the
+//     resulting interpretation back (chat_report_test.go / bridge_approval_test.go). With a
+//     copy the assignment never arrives, and the test goes green while the stub does nothing.
 var (
 	mcpConvID                 string
 	mcpWriteEnabled           bool
@@ -35,8 +34,8 @@ var (
 
 // --- mcpx → main -----------------------------------------------------------
 //
-// 配線漏れは mcpx.Configure が panic で落とす。**既定値で黙って埋めない** —
-// 承認ゲートが未配線のまま素通りする方が、起動しないことより悪い。
+// A missing wire makes mcpx.Configure panic. Never fill one in silently with a default: an
+// approval gate that waves everything through unwired is worse than not starting at all.
 func init() {
 	mcpx.Configure(mcpx.Deps{
 		CleanTitle:           sessionx.CleanTitle,

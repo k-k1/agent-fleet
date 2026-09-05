@@ -346,12 +346,12 @@ func TestBrowserAttachmentHiddenPendingHandoffKeepsHandoffTTL(t *testing.T) {
 	m.Delete(created.ID)
 }
 
-// TestBrowserAttachmentScreencastFrameArrivingBeforeStartReturns: attach 側でも、
-// Page.startScreencast の応答より先に届いたフレームを取りこぼさない。
+// TestBrowserAttachmentScreencastFrameArrivingBeforeStartReturns checks that the attach side
+// also keeps a frame that arrives before Page.startScreencast has returned.
 //
-// 事情は所有ページ側（TestBrowserScreencastFrameArrivingBeforeStartReturns）と同じ
-// で、attach 先はより悪い: 他人のページなので、落とした 1 枚を埋め合わせる再描画を
-// こちらから起こせない。
+// Same situation as the owner-page side (TestBrowserScreencastFrameArrivingBeforeStartReturns),
+// only worse here: the page belongs to someone else, so we cannot force a repaint to make up
+// for a dropped frame.
 func TestBrowserAttachmentScreencastFrameArrivingBeforeStartReturns(t *testing.T) {
 	cdp := newFakeBrowserCDP()
 	m := fakeAttachmentManager(cdp, 0)

@@ -1,25 +1,28 @@
-// enkana_dict.go — 英語カタカナ読み(enkana.go)のオーバーライド辞書。AWS サービス名や
-// 開発者ジャルゴンは CMU 発音辞書では網羅できない/慣用読みと違うため、ここで手当てする。
-// convertWord/convertToken が CMUdict より優先して引く。キーは小文字。慣用の日本語読みを
-// 採用（例 json→ジェイソン, dao→ダオ）。**足りない語はここに 1 行足すだけで拡張できる。**
+// enkana_dict.go — override table for the English-to-katakana readings in enkana.go. AWS
+// service names and developer jargon are either absent from the CMU pronouncing dictionary
+// or read differently there than in common usage, so they are pinned here.
+// convertWord/convertToken consult this before CMUdict. Keys are lowercase, and the
+// conventional Japanese reading wins (json -> ジェイソン, dao -> ダオ); a missing word is one
+// more line.
 //
-// 網羅は限定的（数百語規模の手キュレーション）。EC2/S3 のような略語＋数字は enkana.go の
-// ルールが自動処理するので、原則ここには単語系を置く。
+// Coverage is deliberately partial — a few hundred hand-curated words. Abbreviation+digit
+// forms such as EC2/S3 are handled automatically by the rules in enkana.go, so this table
+// holds word-shaped entries.
 package main
 
 var techKana = map[string]string{
-	// --- 開発ジャルゴン / 一般 ---
-	"dom":        "ドム",     // CMUdict は実在語 dom→"ダム"。DOM(Document Object Model) は慣用でドム
-	"good":       "グッド",    // CMUdict は末尾 D が促音化せず "グド" になる（実機フィードバック）
-	"well":       "ウェル",    // 変異形で "ウェルル" になるとの報告あり。慣用読みに固定
-	"agent":      "エージェント", // CMUdict は "エイジャント" 寄りに誤読（実機フィードバック）
-	"manage":     "マネージ",   // manage 系は CMUdict だと "マナジ..." になる（長音が落ちる）
-	"managed":    "マネージド",  // 実機フィードバック（例: "マネージドサービス"）
+	// --- Developer jargon / general ---
+	"dom":        "ドム",     // CMUdict has the real word dom -> ダム; DOM is conventionally ドム
+	"good":       "グッド",    // CMUdict does not geminate the final D and yields "グド"
+	"well":       "ウェル",    // A variant reading comes out "ウェルル"; pin the conventional one
+	"agent":      "エージェント", // CMUdict misreads it as roughly "エイジャント"
+	"manage":     "マネージ",   // CMUdict gives "マナジ..." for the manage family (long vowel lost)
+	"managed":    "マネージド",  // e.g. "マネージドサービス"
 	"manager":    "マネージャー",
 	"managers":   "マネージャーズ",
-	"management": "マネジメント", // この語だけ慣用的に長音無し（マネージメントでなく）
-	"image":      "イメージ",   // CMUdict は "イマジ" と誤読（実機フィードバック）
-	"images":     "イメージズ",  // Docker images 等
+	"management": "マネジメント", // The one word conventionally without the long vowel (not マネージメント)
+	"image":      "イメージ",   // CMUdict misreads it as "イマジ"
+	"images":     "イメージズ",  // e.g. Docker images
 	"imaging":    "イメージング",
 	"dao":        "ダオ",
 	"json":       "ジェイソン",
@@ -34,7 +37,7 @@ var techKana = map[string]string{
 	"rest":       "レスト",
 	"url":        "ユーアールエル",
 	"uri":        "ユーアールアイ",
-	"id":         "アイディー", // CMUdict は /ɪd/（イド）で引いてしまうため明示
+	"id":         "アイディー", // CMUdict resolves it as /ɪd/ (イド)
 	"uuid":       "ユーユーアイディー",
 	"ipv4":       "アイピーブイフォー",
 	"ipv6":       "アイピーブイシックス",
@@ -61,7 +64,7 @@ var techKana = map[string]string{
 	"env":        "エンブ",
 	"stdout":     "スタンダードアウト",
 	"stderr":     "スタンダードエラー",
-	// --- 言語 / ランタイム ---
+	// --- Languages / runtimes ---
 	"golang":     "ゴーラン",
 	"kotlin":     "コトリン",
 	"typescript": "タイプスクリプト",
@@ -70,7 +73,7 @@ var techKana = map[string]string{
 	"deno":       "ディーノ",
 	"php":        "ピーエイチピー",
 	"csharp":     "シーシャープ",
-	// --- ミドルウェア / ツール ---
+	// --- Middleware / tools ---
 	"nginx":      "エンジンエックス",
 	"redis":      "レディス",
 	"kafka":      "カフカ",
@@ -93,7 +96,7 @@ var techKana = map[string]string{
 	"webpack":    "ウェブパック",
 	"vite":       "ヴィート",
 	"eslint":     "イーエスリント",
-	// --- AWS サービス（略語系は EC2/S3 等ルールで自動、ここは語形の慣用読み） ---
+	// --- AWS services (EC2/S3-style abbreviations are automatic; these are word forms) ---
 	"aws":            "エーダブリューエス",
 	"lambda":         "ラムダ",
 	"dynamodb":       "ダイナモディービー",
@@ -125,7 +128,7 @@ var techKana = map[string]string{
 	"asg":            "エーエスジー",
 	"amplify":        "アンプリファイ",
 	"bedrock":        "ベッドロック",
-	// --- クラウド / ホスティング ---
+	// --- Cloud / hosting ---
 	"azure":        "アジュール",
 	"gcp":          "ジーシーピー",
 	"firebase":     "ファイアベース",
@@ -135,7 +138,7 @@ var techKana = map[string]string{
 	"heroku":       "ヘロク",
 	"supabase":     "スーパーベース",
 	"digitalocean": "デジタルオーシャン",
-	// --- SaaS / サービス / ブランド ---
+	// --- SaaS / services / brands ---
 	"google":      "グーグル",
 	"wikipedia":   "ウィキペディア",
 	"gmail":       "ジーメール",
@@ -167,16 +170,16 @@ var techKana = map[string]string{
 	"nexmo":       "ネクスモ",
 	"sinch":       "シンチ",
 	"citic":       "シティック",
-	"softbank":    "ソフトバンク", // 全大文字 SOFTBANK は 5 字超で英字名読みルールから漏れるため明示
+	"softbank":    "ソフトバンク", // All-caps SOFTBANK is over 5 letters, so the letter-name rule misses it
 	"rakuten":     "ラクテン",
 	"docomo":      "ドコモ",
-	"au":          "エーユー", // キャリアの au（裸 URL は読み上げ前に除去済みなので .au ドメインとは衝突しない）
+	"au":          "エーユー", // The carrier au; bare URLs are stripped before TTS, so .au domains do not collide
 	"ymobile":     "ワイモバイル",
-	"dena":        "ディーエヌエー", // DeNA は camelCase 分割で De/NA に割れて崩れるため明示
+	"dena":        "ディーエヌエー", // camelCase splitting would break DeNA into De/NA
 	"gree":        "グリー",
 	"sybase":      "サイベース",
 	"twiml":       "トゥイムル",
-	"8x8":         "エイトバイエイト", // 数字入りキーは全トークン一致で引かれる（ipv4/route53 と同じ）
+	"8x8":         "エイトバイエイト", // Keys containing digits match the whole token (as ipv4/route53 do)
 	"vonage":      "ボネージ",
 	"plivo":       "プリボ",
 	"messagebird": "メッセージバード",
@@ -206,7 +209,7 @@ var techKana = map[string]string{
 	"intellij":    "インテリジェイ",
 	"npm":         "エヌピーエム",
 	"pnpm":        "ピーエヌピーエム",
-	// --- フレームワーク / ライブラリ / テスト ---
+	// --- Frameworks / libraries / testing ---
 	"react":         "リアクト",
 	"nextjs":        "ネクストジェイエス",
 	"vue":           "ビュー",
@@ -222,10 +225,11 @@ var techKana = map[string]string{
 	"helm":          "ヘルム",
 	"elasticsearch": "エラスティックサーチ",
 	"rabbitmq":      "ラビットエムキュー",
-	// --- 過去セッションのコーパスから抽出した未カバー語（docs/log/24）。実際に読み上げ対象の
-	//     回答テキストに頻出しながら CMUdict に無く「綴りママ/英字読み止まり」だった一般的な
-	//     開発語・外部プロダクト名・小文字略語を手当て。抽出手順は enkana_freq の突合スキャン。 ---
-	// 開発語（複合語・派生語は camelCase 分割が効かず綴りママになるため明示）
+	// --- Words a corpus scan found uncovered (docs/log/24): common dev terms, external
+	//     product names and lowercase abbreviations that are frequent in the answer text
+	//     being spoken yet absent from CMUdict, so they came out spelled as written or
+	//     letter by letter. The extraction procedure is enkana_freq's cross-check scan. ---
+	// Dev terms (compounds and derivatives are not split by camelCase, so list them)
 	"config":       "コンフィグ",
 	"runtime":      "ランタイム",
 	"refactor":     "リファクター",
@@ -244,8 +248,8 @@ var techKana = map[string]string{
 	"changelog":    "チェンジログ",
 	"allowlist":    "アローリスト",
 	"localstorage": "ローカルストレージ",
-	"stdin":        "スタンダードイン", // 既存 stdout=スタンダードアウト / stderr=スタンダードエラー に揃える
-	// UI 語
+	"stdin":        "スタンダードイン", // Matches the existing stdout=スタンダードアウト / stderr=スタンダードエラー
+	// UI terms
 	"placeholder": "プレースホルダー",
 	"popover":     "ポップオーバー",
 	"tooltip":     "ツールチップ",
@@ -255,7 +259,7 @@ var techKana = map[string]string{
 	"websocket":   "ウェブソケット",
 	"dockerfile":  "ドッカーファイル",
 	"gzip":        "ジージップ",
-	// 外部プロダクト / ツール名
+	// External products / tool names
 	"opencode": "オープンコード",
 	"codex":    "コーデックス",
 	"ollama":   "オラマ",
@@ -263,7 +267,7 @@ var techKana = map[string]string{
 	"zundamon": "ずんだもん",
 	"marp":     "マープ",
 	"xterm":    "エックスターム",
-	// 小文字で書かれる略語（大文字なら spellLetters が拾うが、小文字は綴りママになるため明示）
+	// Abbreviations written lowercase; spellLetters covers the uppercase form, lowercase would be spelled as written
 	"mcp": "エムシーピー",
 	"llm": "エルエルエム",
 	"sdk": "エスディーケー",
@@ -283,10 +287,10 @@ var techKana = map[string]string{
 	"poc": "ピーオーシー",
 	"mvp": "エムブイピー",
 	"rtk": "アールティーケー",
-	// --- ネットワーク / プロトコル（小文字表記は英字名読みルールが効かないため明示。
-	//     http/https/ftp/dns/cd は CMUdict に正しい読みが既にあるため未収載。
-	//     arp/nat/sap/sip は CMUdict に「実在の英単語」として載っており誤読されるため
-	//     （nat→ナット, sap→サップ 等）、ここで意図的に上書きする） ---
+	// --- Network / protocols. The letter-name rule does not fire on lowercase spellings.
+	//     http/https/ftp/dns/cd are left out because CMUdict already reads them correctly.
+	//     arp/nat/sap/sip are in CMUdict as real English words and so are misread
+	//     (nat -> ナット, sap -> サップ); overriding them here is deliberate. ---
 	"https": "エイチティーティーピーエス",
 	"tcp":   "ティーシーピー",
 	"udp":   "ユーディーピー",
@@ -311,12 +315,13 @@ var techKana = map[string]string{
 	"ntp":   "エヌティーピー",
 	"rpc":   "アールピーシー",
 	"mtu":   "エムティーユー",
-	"arp":   "エーアールピー", // CMUdict は "アープ" と誤読
-	"nat":   "エヌエーティー", // CMUdict は "ナット" と誤読
-	"sip":   "エスアイピー",  // CMUdict は "シップ" と誤読
-	"sap":   "エスエーピー",  // CMUdict は "サップ" と誤読
-	// --- 開発 / ビジネス略語（小文字表記のみ。ui/crud/faas は CMUdict の読みで既に
-	//     正しいため未収載。roi/seo/saas は CMUdict に実在語として載っており誤読される） ---
+	"arp":   "エーアールピー", // CMUdict misreads it as "アープ"
+	"nat":   "エヌエーティー", // CMUdict misreads it as "ナット"
+	"sip":   "エスアイピー",  // CMUdict misreads it as "シップ"
+	"sap":   "エスエーピー",  // CMUdict misreads it as "サップ"
+	// --- Dev / business abbreviations, lowercase spellings only. ui/crud/faas are left out
+	//     because CMUdict already reads them correctly; roi/seo/saas are real words there
+	//     and are misread. ---
 	"ux":     "ユーエックス",
 	"orm":    "オーアールエム",
 	"dto":    "ディーティーオー",
@@ -331,13 +336,13 @@ var techKana = map[string]string{
 	"sre":    "エスアールイー",
 	"devops": "デブオプス",
 	"gitops": "ギットオプス",
-	"saas":   "サース", // CMUdict は "サス" と誤読（長音が落ちる）
+	"saas":   "サース", // CMUdict misreads it as "サス" (long vowel lost)
 	"paas":   "パース",
 	"iaas":   "アイアース",
 	"ci":     "シーアイ",
-	"roi":    "アールオーアイ", // CMUdict は人名 "ロイ" と誤読
-	"seo":    "エスイーオー",  // CMUdict は "シオ" 寄りに誤読
-	// --- 数字入りの略語（トークン全体一致。EC2/route53 と同じ扱い） ---
+	"roi":    "アールオーアイ", // CMUdict misreads it as the name "ロイ"
+	"seo":    "エスイーオー",  // CMUdict misreads it as roughly "シオ"
+	// --- Abbreviations containing digits (whole-token match, as with EC2/route53) ---
 	"b2b":    "ビーツービー",
 	"b2c":    "ビーツーシー",
 	"c2c":    "シーツーシー",
@@ -347,11 +352,11 @@ var techKana = map[string]string{
 	"gpt":    "ジーピーティー",
 	"gpt3":   "ジーピーティースリー",
 	"gpt4":   "ジーピーティーフォー",
-	// --- 企業 / サービス名（追加分。microsoft/debian/zipkin は CMUdict の読みで既に
-	//     正しいため未収載。salesforce/ubuntu は誤差が大きいため明示上書き） ---
-	"salesforce": "セールスフォース", // CMUdict は "セイルズフォース" 寄り
+	// --- Companies / service names. microsoft/debian/zipkin are left out because CMUdict
+	//     already reads them correctly; salesforce/ubuntu are far enough off to override. ---
+	"salesforce": "セールスフォース", // CMUdict gives roughly "セイルズフォース"
 	"vmware":     "ブイエムウェア",
-	"ubuntu":     "ウブントゥ", // CMUdict は "ウーブートゥー" 寄り
+	"ubuntu":     "ウブントゥ", // CMUdict gives roughly "ウーブートゥー"
 	"centos":     "セントオーエス",
 	"alibaba":    "アリババ",
 	"tencent":    "テンセント",
@@ -369,7 +374,7 @@ var techKana = map[string]string{
 	"smartnews":  "スマートニュース",
 	"sansan":     "サンサン",
 	"abema":      "アベマ",
-	// --- クラウド / インフラツール（追加分） ---
+	// --- Cloud / infrastructure tools ---
 	"pulumi":        "プルミ",
 	"virtualbox":    "バーチャルボックス",
 	"openstack":     "オープンスタック",
@@ -377,7 +382,7 @@ var techKana = map[string]string{
 	"circleci":      "サークルシーアイ",
 	"argocd":        "アルゴシーディー",
 	"loki":          "ロキ",
-	"jaeger":        "イェーガー", // CMUdict は "ジェガー" 寄り
+	"jaeger":        "イェーガー", // CMUdict gives roughly "ジェガー"
 	"newrelic":      "ニューレリック",
 	"splunk":        "スプランク",
 	"logstash":      "ログスタッシュ",
@@ -386,8 +391,8 @@ var techKana = map[string]string{
 	"opentelemetry": "オープンテレメトリー",
 	"otel":          "オーテル",
 	"statsd":        "スタッツディー",
-	// --- 言語 / フレームワーク（追加分。rust/swift/dart/flutter/unity/perl/haskell 等は
-	//     CMUdict の読みで既に正しいため未収載） ---
+	// --- Languages / frameworks. rust/swift/dart/flutter/unity/perl/haskell and the like
+	//     are left out because CMUdict already reads them correctly. ---
 	"erlang":      "アーラン",
 	"clojure":     "クロージャー",
 	"django":      "ジャンゴ",
@@ -396,10 +401,11 @@ var techKana = map[string]string{
 	"xamarin":     "ザマリン",
 	"webassembly": "ウェブアセンブリ",
 	"wasm":        "ワズム",
-	// --- 一般 UI / 開発語（実機フィードバックの読み希望。CMUdict の音写が慣用カタカナから
-	//     外れる語を慣用読みで固定する。例: version→CMUdict ヴァージャン, message→メサジ,
-	//     session→セシャン, setting→セティング, status→スタタス, daemon→ディーマン, docs→ダクス,
-	//     console→カンソール）。派生・複数形は分割が効かず綴りママになるので個別に足す。 ---
+	// --- General UI / dev terms whose CMUdict transcription drifts from the conventional
+	//     katakana, pinned back to the conventional reading. CMUdict gives version→ヴァージャン,
+	//     message→メサジ, session→セシャン, setting→セティング, status→スタタス,
+	//     daemon→ディーマン, docs→ダクス, console→カンソール. Derivatives and plurals are not
+	//     split, so each needs its own entry. ---
 	"version":   "バージョン",
 	"versions":  "バージョンズ",
 	"revision":  "リビジョン",
@@ -429,8 +435,8 @@ var techKana = map[string]string{
 	"write":     "ライト",
 	"console":   "コンソール",
 	"httptest":  "エイチティーティーピーテスト",
-	// --- 容量・データ量の単位（略語トークン。MiB→メビバイト 等。二進接頭辞（〜ビ）と
-	//     十進接頭辞（キロ/メガ…）。キーは小文字化されるので MiB / MB のどちらの表記でも引く）。 ---
+	// --- Size units as abbreviation tokens (MiB -> メビバイト): binary prefixes (…ビ) and
+	//     decimal ones (キロ/メガ…). Keys are lowercased, so MiB and MB both hit. ---
 	"kib": "キビバイト",
 	"mib": "メビバイト",
 	"gib": "ギビバイト",
@@ -441,7 +447,7 @@ var techKana = map[string]string{
 	"gb":  "ギガバイト",
 	"tb":  "テラバイト",
 	"pb":  "ペタバイト",
-	// --- シグナル（sigkill / sigterm / sigint 等。番号付き sigusr1 等はトークン全体一致で引く）。 ---
+	// --- Signals. Numbered ones such as sigusr1 are matched as a whole token. ---
 	"sigkill": "シグキル",
 	"sigterm": "シグターム",
 	"sigint":  "シグイント",
@@ -459,12 +465,13 @@ var techKana = map[string]string{
 	"sigalrm": "シグアラーム",
 	"sigusr1": "シグユーザーワン",
 	"sigusr2": "シグユーザーツー",
-	// --- UNIX コマンド / オペレータ用語（提案分。小文字コマンド名は英字名読みルールが効かず
-	//     綴りママ／CMUdict の実在語に化けるため明示。慣用の発音で固定）。 ---
+	// --- UNIX commands / operator terms. Lowercase command names miss the letter-name rule
+	//     and come out spelled as written, or turn into a real CMUdict word; pin the
+	//     conventional pronunciation. ---
 	"chmod":      "チェンジモッド",
 	"chown":      "チャウン",
 	"chgrp":      "チェンジグループ",
-	"sudo":       "スードゥー", // 語として読む（su を綴る エスユードゥー ではない）
+	"sudo":       "スードゥー", // Read as a word, not spelled out as エスユードゥー
 	"sudoers":    "スードゥアーズ",
 	"umask":      "ユーマスク",
 	"awk":        "オーク",
@@ -496,8 +503,8 @@ var techKana = map[string]string{
 	"ln":         "エルエヌ",
 	"pwd":        "ピーダブリューディー",
 	"mkdir":      "メイクディレクトリ",
-	"rmdir":      "アールエムディーアイアール", // 綴り読み（ユーザー希望）
-	"init":       "イニット",          // init.d は "." を跨ぐので ttsText 側で別処理
+	"rmdir":      "アールエムディーアイアール", // Spelled out letter by letter
+	"init":       "イニット",          // init.d spans a ".", so ttsText handles that separately
 	"df":         "ディーエフ",
 	"du":         "ディーユー",
 	"ps":         "ピーエス",
@@ -511,14 +518,14 @@ var techKana = map[string]string{
 	"umount":     "アンマウント",
 	"uname":      "ユーネーム",
 	"systemd":    "システムディー",
-	"systemctl":  "システムコントロール",  // ctl = control（ユーザー希望）
-	"journalctl": "ジャーナルコントロール", // systemctl に合わせる
+	"systemctl":  "システムコントロール",  // ctl = control
+	"journalctl": "ジャーナルコントロール", // Matches systemctl
 	"dmesg":      "ディーメッセージ",
 	"vim":        "ヴィム",
 	"neovim":     "ネオヴィム",
 	"emacs":      "イーマックス",
 	"bash":       "バッシュ",
-	"bashrc":     "バッシュアールシー", // .bashrc もトークンは bashrc なので拾える
+	"bashrc":     "バッシュアールシー", // .bashrc tokenizes to bashrc, so it is covered too
 	"zsh":        "ゼットエスエイチ",
 	"apt":        "アプト",
 	"yum":        "ヤム",
@@ -532,12 +539,13 @@ var techKana = map[string]string{
 	"fgrep":      "エフグレップ",
 }
 
-// contractionKana は英語の短縮形（アポストロフィ入り）の読み。CMUdict はこれらを分断読み
-// してしまう（"it's"→"イット'エス"、"don't"→"ダン'ティー"）ため、頻出形を慣用カタカナで固定
-// する。キーは小文字・ASCII アポストロフィ。ここに無い短縮形/所有格は convertContraction が
-// 「元の語＋ズ」や「' 除去」でフォールバックする。**足りない形はここに 1 行足すだけで拡張可。**
+// contractionKana gives the readings for English contractions. CMUdict reads them in
+// pieces ("it's" -> "イット'エス", "don't" -> "ダン'ティー"), so the frequent forms are pinned
+// to their conventional katakana here. Keys are lowercase with an ASCII apostrophe. A
+// contraction or possessive not listed falls back in convertContraction to "base word + ズ"
+// or to dropping the apostrophe.
 var contractionKana = map[string]string{
-	// be/have/is の縮約
+	// be/have/is contractions
 	"it's":    "イッツ",
 	"that's":  "ザッツ",
 	"what's":  "ワッツ",
@@ -565,7 +573,7 @@ var contractionKana = map[string]string{
 	"they'd":  "ゼイド",
 	"it'll":   "イトゥル",
 	"it'd":    "イトゥド",
-	// not の縮約
+	// not contractions
 	"don't":     "ドント",
 	"can't":     "キャント",
 	"won't":     "ウォント",

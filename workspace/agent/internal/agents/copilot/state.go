@@ -1,18 +1,19 @@
 package copilot
 
-// events.jsonl の末尾からの live 状態分類（working / question / idle）。copilot は
-// status hook を持たないため、これが TUI ルートの唯一の状態ソース（agy の会話 DB
-// probe に相当 — TUI 文字列非依存で false-idle 教訓に合致）。managed ルートでも
-// 同じファイルを子プロセスが書くので整合する。
+// Live state classification (working / question / idle) from the tail of events.jsonl. copilot
+// has no status hook, so this is the only state source on the TUI route - the counterpart of
+// agy's conversation-DB probe, and like it independent of TUI strings, which is what the
+// false-idle lesson asks for. It stays consistent on the managed route too, because the child
+// process writes the same file.
 //
-// 分類（v1.0.73 実測のイベント順序に基づく）:
-//   - permission.requested に対応する permission.completed が無い → "question"
-//     （許可メニュー/plan モードの承認待ち）
-//   - user.message / assistant.turn_start の後に assistant.turn_end が無い →
-//     "working"（ターン進行中。ルーティング中の turn_start 前ギャップも
-//     user.message 起点で拾う）
-//   - それ以外 → "idle"
-//   - セッション未採番・ファイル無し → ""（起動中/不明 — 呼び出し側は状態なし扱い）
+// The classification (based on the event order measured on v1.0.73):
+//   - a permission.requested with no matching permission.completed -> "question" (waiting on
+//     the permission menu or a plan-mode approval)
+//   - a user.message / assistant.turn_start with no assistant.turn_end after it -> "working"
+//     (a turn in progress; the gap before turn_start while routing is caught from user.message)
+//   - anything else -> "idle"
+//   - no session id yet, or no file -> "" (starting up / unknown - the caller treats it as no
+//     state)
 
 import (
 	"bufio"
@@ -23,9 +24,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// tailWindow bounds how much of events.jsonl the poll reads. 128KB は数ターン分
-// （実測: 1 ターン 3〜60KB）— それより古い open マーカーはターン跨ぎで必ず
-// 閉じられているか、そもそも表示済み。
+// tailWindow bounds how much of events.jsonl the poll reads. 128KB is a few turns' worth
+// (measured: 3-60KB per turn); an open marker older than that has either been closed by a
+// later turn or was displayed long ago.
 const tailWindow = 128 * 1024
 
 // LiveState classifies the session's live state ("" when unknowable).
@@ -42,8 +43,9 @@ func liveStateFromFile(path string) string {
 	return st
 }
 
-// PendingPermission は未完了の許可要求の対象（"" = 許可待ちではない / 取れなかった）。
-// docs/log/75 P5 の持ち越しが「何を訊かれていたか」を出すために読む。
+// PendingPermission returns the subject of an outstanding permission request ("" = not waiting
+// on one, or it could not be read). Read by the docs/log/75 P5 carry-over so it can say what
+// was being asked.
 func PendingPermission(m session.Meta) (string, bool) {
 	sid := SessionID(m)
 	if sid == "" {
@@ -61,7 +63,7 @@ func liveStateDetailFromFile(path string) (string, string) {
 	defer f.Close()
 	if st, err := f.Stat(); err == nil && st.Size() > tailWindow {
 		if _, err := f.Seek(st.Size()-tailWindow, io.SeekStart); err == nil {
-			// 途中から読むので最初の行は欠けている可能性が高い — 捨てる。
+			// Reading from the middle, so the first line is probably truncated - drop it.
 			br := bufio.NewReader(f)
 			_, _ = br.ReadString('\n')
 			return classifyDetail(br)
@@ -75,13 +77,14 @@ func classify(r io.Reader) string {
 	return st
 }
 
-// classifyDetail は classify に「未完了の許可が何を求めていたか」を足したもの
-// （docs/log/75 P5 の持ち越し用）。detail は許可待ちのときだけ埋まり、取れなければ空。
+// classifyDetail is classify plus what an outstanding permission was asking for (for the
+// docs/log/75 P5 carry-over). detail is filled only while waiting on a permission, and stays
+// empty when it cannot be read.
 func classifyDetail(r io.Reader) (string, string) {
-	open := false                 // user.message / turn_start 以後、turn_end 前
-	perms := map[string]bool{}    // requested かつ未 completed の requestId
-	detail := map[string]string{} // requestId → 何を求めていたか（取れた分だけ）
-	last := ""                    // 最後に requested された id（表示に使うのはこれ）
+	open := false                 // after user.message / turn_start, before turn_end
+	perms := map[string]bool{}    // requestIds requested and not yet completed
+	detail := map[string]string{} // requestId -> what it asked for (only where readable)
+	last := ""                    // the last requested id (this is the one displayed)
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 256*1024), 8*1024*1024)
 	for sc.Scan() {
@@ -89,9 +92,10 @@ func classifyDetail(r io.Reader) (string, string) {
 			Type string `json:"type"`
 			Data struct {
 				RequestID string `json:"requestId"`
-				// 許可の対象。events.jsonl のスキーマは版で動くので、**取れたら使う**
-				// 程度に扱う（取れなくても許可待ちの判定そのものは requestId だけで
-				// 成立する）。空なら持ち越しカードは事実だけを述べる。
+				// The subject of the permission. The events.jsonl schema moves between
+				// versions, so this is used only when it happens to be there: deciding
+				// that a permission is pending needs nothing but the requestId. When it
+				// is empty the carry-over card states the fact alone.
 				ToolName string `json:"toolName"`
 				Tool     string `json:"tool"`
 				Command  string `json:"command"`
@@ -117,8 +121,8 @@ func classifyDetail(r io.Reader) (string, string) {
 		case "permission.completed":
 			delete(perms, ev.Data.RequestID)
 		case "session.shutdown":
-			// graceful 終了が刻まれた＝この後に走るものはない。開いたままの
-			// ターンや許可はプロセス毎消えている。
+			// A graceful shutdown was recorded, so nothing runs after this: any turn or
+			// permission still open died with the process.
 			open = false
 			perms = map[string]bool{}
 		}

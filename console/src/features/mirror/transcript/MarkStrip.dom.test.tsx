@@ -1,5 +1,6 @@
-// 「誰が引いたマーカーか」が分かること（docs/log/69 §69.7）。本文の <mark> は下線の色でしか
-// 作成者を示さないので、名前が読めるのはこの帯とカードだけ。
+// The author of a mark must be discoverable (docs/log/69 §69.7). The <mark> in the body encodes
+// the author only in its underline colour, so this strip and the card are the only places a name
+// can be read.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -52,7 +53,7 @@ describe("MarkStrip", () => {
       mark({ id: "mk_2", quote: "共有先の引用", color: "yellow", author: "b@example.com" }),
     ]);
     const el = render(<MarkStrip marks={marks} storageKey="s1" />);
-    // 畳まれていても件数と「2人」が読める。
+    // The count and the number of authors are readable even while folded.
     expect(el.textContent).toContain("2");
 
     act(() => el.querySelector<HTMLButtonElement>(".mirror-marks-toggle")!.click());
@@ -60,7 +61,7 @@ describe("MarkStrip", () => {
     expect(rows).toHaveLength(2);
     expect(rows[0].textContent).toContain("あなた");
     expect(rows[1].textContent).toContain("b@example.com");
-    // 同じ色でも作成者の点は別（色に作成者を載せていない）。
+    // Same colour, different author dot: the colour axis does not carry authorship.
     expect(rows[0].querySelector(".tmark-chip")!.className).toContain("tmark-yellow");
     expect(rows[1].querySelector(".tmark-chip")!.className).toContain("tmark-yellow");
     expect(rows[0].querySelector(".tmark-dot")!.className).toContain("tmark-a0");
@@ -74,15 +75,15 @@ describe("MarkStrip", () => {
     expect(el.querySelector(".tmark-row-del")).toBeNull();
   });
 
-  // ⚠️ 空の帯を出さない。「0 件」は「まだ誰も引いていない」と「この面では引けない」を
-  // 区別できない。
+  // Never render an empty strip: a "0" cannot tell "nobody has drawn one yet" apart from "marks
+  // are not available on this surface".
   it("renders nothing at all when no mark exists", () => {
     const el = render(<MarkStrip marks={wiring([])} storageKey="s3" />);
     expect(el.querySelector(".mirror-marks")).toBeNull();
   });
 
-  // 転写は tail 窓しか持たない。まだ読み込んでいないターンの印は画面に無いので、押せない
-  // 行として出す（押しても何も起きない、にしない）。
+  // The transcript only holds a tail window, so a mark on a turn that has not been loaded is not
+  // on screen; render such a row disabled rather than as a click that does nothing.
   it("disables a row whose mark is not on screen", () => {
     const marks = wiring([mark({ id: "mk_far" })]);
     const el = render(<MarkStrip marks={marks} storageKey="s4" />);

@@ -7,14 +7,15 @@ import (
 	"testing"
 )
 
-// consoleCatalog は Console の 1 ロケール分のカタログを、キー存在確認のために
-// 1 本の文字列として返す。
+// consoleCatalog returns one locale's Console catalog as a single string, for checking
+// whether a key exists.
 //
-// ⚠️ カタログはドメイン別に `locales/<locale>/*.ts` へ分かれており（ADR 0067 決定 4）、
-// `locales/<locale>.ts` は import と spread しか持たない**合成ファイル**である。
-// そちらを読むと「キーが在るのに無い」と言う検査になる —— この関数を経由すること。
+// The catalog is split by domain into `locales/<locale>/*.ts` (ADR 0067 decision 4), and
+// `locales/<locale>.ts` is only a composition file of imports and spreads. Reading that one
+// gives a check that says "missing" about keys that are present, so go through this
+// function.
 //
-// console/ を含まない配布物でビルドする場合に備えて、カタログが無ければスキップする。
+// Skips when the catalog is absent, for builds from a distribution without console/.
 func consoleCatalog(t *testing.T, locale string) string {
 	t.Helper()
 	dir := filepath.Join("..", "..", "console", "src", "lib", "i18n", "locales", locale)
@@ -36,15 +37,15 @@ func consoleCatalog(t *testing.T, locale string) string {
 		b.WriteString("\n")
 		n++
 	}
-	// 0 件でも「キーが無い」ではなく「読めていない」。黙って通すと、この検査は
-	// 存在しないのと同じになる。
+	// Zero files means "could not read", not "the key is missing". Passing silently would
+	// make this check the same as not existing.
 	if n == 0 {
-		t.Fatalf("%s に .ts が 1 つも無い（カタログの置き場所が変わった？）", dir)
+		t.Fatalf("no .ts files at all in %s (did the catalog move?)", dir)
 	}
 	return b.String()
 }
 
-// consoleCatalogHasKey は "key" がカタログに定義されているかを見る。
+// consoleCatalogHasKey reports whether "key" is defined in the catalog.
 func consoleCatalogHasKey(catalog, key string) bool {
 	return strings.Contains(catalog, `"`+key+`"`)
 }

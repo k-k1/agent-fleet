@@ -1,20 +1,21 @@
 package memoryx
 
-// エージェントメモリの版管理（docs/log/39 ④ / ADR 0022 決定 4）— restore。
+// Agent memory version control (docs/log/39 ④ / ADR 0022 decision 4) — restore.
 //
-// 履歴は書き換えない。restore は「その時点の内容を live へ書き戻し、結果を新しい commit
-// として積む」操作であり、適用前に **pre-restore snapshot を必ず取る**ので、巻き戻しの
-// 巻き戻しが常に可能になる（★2）。
+// History is never rewritten. restore writes the contents of a point in time back into live and
+// stacks the result as a new commit, and it always takes a pre-restore snapshot before applying,
+// so undoing the undo is always possible (★2).
 //
-//	rev 解決 ──▶ ① pre-restore snapshot（現在の live を保全）
-//	          ──▶ ② staging を rev の内容へ（scope 限定の checkout）
-//	          ──▶ ③ staging → live（allowlist 内だけの上書き + 消滅分の削除）
-//	          ──▶ ④ restore snapshot（AF-Trigger: restore・戻し元を trailer に記録）
+//	resolve rev ──▶ ① pre-restore snapshot (preserve the current live)
+//	            ──▶ ② staging to the rev's contents (scope-limited checkout)
+//	            ──▶ ③ staging → live (overwrite inside the allowlist + delete what vanished)
+//	            ──▶ ④ restore snapshot (AF-Trigger: restore, source recorded in a trailer)
 //
-// ③ が本ファイルの肝で、「repo に入れてはいけないものを読まない」（★1・memory_roots.go）
-// の**逆向き**——「allowlist の外へ書かない・消さない」——を担保する。live 側の列挙は
-// memoryCollect（= allowlist とシンボリックリンク不追従が効いた経路）しか使わず、書き込み
-// 先も 1 セグメントずつ検査して途中にシンボリックリンクがあれば拒否する。
+// ③ is the heart of this file: it guarantees the reverse of "never read what must not enter the
+// repo" (★1, memory_roots.go) — "never write or delete outside the allowlist". The live side is
+// enumerated only through memoryCollect (the path where the allowlist and the refusal to follow
+// symlinks apply), and every write target is checked one segment at a time, refusing a path with
+// a symlink anywhere along it.
 
 import (
 	"fmt"
@@ -28,8 +29,8 @@ import (
 	"time"
 )
 
-// memoryUserErr は「呼び出し側の入力が悪い」種類の失敗。REST 層が status と安定コードへ
-// そのまま写せるよう、エンジン側で分類まで済ませておく。
+// memoryUserErr is the kind of failure caused by bad caller input. The engine classifies it
+// here so the REST layer can copy it straight into a status and a stable code.
 type memoryUserErr struct {
 	Status int
 	Code   string
@@ -42,56 +43,58 @@ func memoryErrf(status int, code, format string, args ...any) error {
 	return &memoryUserErr{Status: status, Code: code, Msg: fmt.Sprintf(format, args...)}
 }
 
-// memoryRestoreScope は復元範囲。docs/log/39 の `{all | projects: [slug...]}` に、
-// codex のような Scopes=false のルートを丸ごと指すための kinds を足したもの。
+// memoryRestoreScope is the restore range: docs/log/39's `{all | projects: [slug...]}` plus
+// kinds, for pointing at a whole Scopes=false root such as codex's.
 type memoryRestoreScope struct {
 	All      bool     `json:"all"`
 	Kinds    []string `json:"kinds"`
 	Projects []string `json:"projects"`
 }
 
-// memoryScopeTarget は解決済みの復元単位。Repo は bare repo 内の prefix、Rel は
-// root.Dir からの相対（"" = ルート全体）。
+// memoryScopeTarget is a resolved restore unit. Repo is the prefix inside the bare repo, Rel is
+// relative to root.Dir ("" = the whole root).
 type memoryScopeTarget struct {
 	Root memoryRoot
 	Repo string
 	Rel  string
 }
 
-// memoryApplyOpts は適用の変種。既定（ゼロ値）は docs/log/39 ④ そのままの「内容だけ採る」で、
-// Adopt はそこに**系譜の付け替え**を足す（= 移設。取り込んだ履歴をこの環境の履歴にする）。
-// 取り込んだ内容を live へ書く手順は 1 バイトも変えない — 変わるのは main がどの系譜を
-// 指すかだけなので、allowlist 由来の防御（★1 の裏返し）はそのまま効く。
+// memoryApplyOpts is the variant of the apply. The zero value is docs/log/39 ④ as written,
+// "take only the contents"; Adopt adds re-pointing the lineage (= migration, making the
+// imported history this environment's history). The steps that write the imported contents
+// into live do not change by a single byte — all that changes is which lineage main points at,
+// so the allowlist-derived defence (the reverse of ★1) still applies unchanged.
 type memoryApplyOpts struct {
-	// Adopt=true: 適用後に main を from の系譜へ付け替える。元の main は退避 ref
-	// （refs/premigrate/<ts>）へ逃がすので、履歴が消えることはない。
+	// Adopt=true: after applying, re-point main at from's lineage. The previous main is parked
+	// on a rescue ref (refs/premigrate/<ts>), so no history is ever lost.
 	Adopt bool
 }
 
-// memoryRestoreResult は restore 1 回の結果。pre-restore と restore の 2 つの rev を
-// 返すので、UI は「戻した」だけでなく「戻す前の状態はここ」も提示できる。
+// memoryRestoreResult is the result of one restore. It returns both revs, pre-restore and
+// restore, so the UI can show not only "restored" but also "the state before it is here".
 type memoryRestoreResult struct {
-	From       string             `json:"from"`                 // 復元元 snapshot（解決後の sha）
-	PreRestore string             `json:"preRestore,omitempty"` // 直前に積んだ保全 snapshot
+	From       string             `json:"from"`                 // source snapshot (resolved sha)
+	PreRestore string             `json:"preRestore,omitempty"` // preservation snapshot stacked just before
 	Rev        string             `json:"rev,omitempty"`        // restore commit
-	Committed  bool               `json:"committed"`            // false = 既に同じ内容だった
-	Scopes     []string           `json:"scopes"`               // 適用した repo 内 prefix
-	Written    []string           `json:"written"`              // live へ書いたパス（repo 内表記）
-	Deleted    []string           `json:"deleted"`              // live から消したパス（同上）
-	Projects   []memoryProjectRef `json:"projects"`             // restore commit が触ったプロジェクト
-	Busy       bool               `json:"busy"`                 // 対象 kind に実行中セッションがあった
-	// 以下は移設（Adopt）のときだけ。Replaced は退避した元 main の sha、ReplacedRef は
-	// その退避先。UI が「移設前の履歴はここにある」と示せないと、入れ替えが取り返しの
-	// つかない操作に見えてしまう。
+	Committed  bool               `json:"committed"`            // false = the contents were already identical
+	Scopes     []string           `json:"scopes"`               // repo-internal prefixes that were applied
+	Written    []string           `json:"written"`              // paths written into live (repo notation)
+	Deleted    []string           `json:"deleted"`              // paths deleted from live (same notation)
+	Projects   []memoryProjectRef `json:"projects"`             // projects the restore commit touched
+	Busy       bool               `json:"busy"`                 // the target kind had a running session
+	// The rest is for a migration (Adopt) only. Replaced is the sha of the parked previous main
+	// and ReplacedRef is where it was parked. Unless the UI can say "the pre-migration history
+	// is here", the swap looks like an irreversible operation.
 	Adopted     bool   `json:"adopted,omitempty"`
 	Replaced    string `json:"replaced,omitempty"`
 	ReplacedRef string `json:"replacedRef,omitempty"`
 }
 
-// memoryRestore は docs/log/39 ④ の手順をそのまま実行する。now はテストが決定的に検証
-// できるよう呼び出し側から渡す（snapshot と同じ流儀）。
+// memoryRestore runs the docs/log/39 ④ procedure as written. now comes from the caller so that
+// tests can verify deterministically (the same convention snapshot uses).
 func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memoryRestoreResult, error) {
-	// snapshot と staging / index を共有するので、自動 snapshot ループとは相互排他。
+	// Shares staging / the index with snapshot, so it is mutually exclusive with the automatic
+	// snapshot loop.
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
 
@@ -109,9 +112,10 @@ func memoryRestore(sc memoryRestoreScope, rev, at string, now time.Time) (memory
 	return memoryApplyRevLocked(sc, from, memoryTriggerRestore, nil, now, memoryApplyOpts{})
 }
 
-// memoryApplyRev は「解決済みの commit の内容を scope 単位で live へ書き戻す」共通経路。
-// restore（履歴上の時点へ戻す）と import の apply（取り込んだ系譜の内容を採る）は、
-// 出どころの commit が違うだけで手順は同一なので、契機と trailer だけを引数で受ける。
+// memoryApplyRev is the shared path that writes a resolved commit's contents back into live,
+// scope by scope. restore (go back to a point in history) and import's apply (take the contents
+// of an imported lineage) differ only in where the commit comes from, so only the trigger and
+// the trailers are parameters.
 func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	memorySnapshotMu.Lock()
 	defer memorySnapshotMu.Unlock()
@@ -121,7 +125,8 @@ func memoryApplyRev(sc memoryRestoreScope, from, trigger string, extraTrailers [
 	return memoryApplyRevLocked(sc, from, trigger, extraTrailers, now, opts)
 }
 
-// memoryApplyRevLocked は memorySnapshotMu を握った状態の本体（docs/log/39 ④ の手順そのもの）。
+// memoryApplyRevLocked is the body, with memorySnapshotMu held (the docs/log/39 ④ procedure
+// itself).
 func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrailers []string, now time.Time, opts memoryApplyOpts) (memoryRestoreResult, error) {
 	res := memoryRestoreResult{From: from, Scopes: []string{}, Written: []string{}, Deleted: []string{}, Projects: []memoryProjectRef{}}
 	targets, err := memoryResolveScope(sc)
@@ -132,19 +137,21 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	for _, t := range targets {
 		res.Scopes = append(res.Scopes, t.Repo)
 		if busy[t.Root.Kind] {
-			// 実行中セッションがあっても止めない（docs/log/39 ④-5: 既定は続行可）。後から
-			// 書かれた分は restore 後の新しい snapshot として履歴に現れるだけで追跡できる。
+			// Do not stop for a running session (docs/log/39 ④-5: continuing is the default).
+			// Whatever it writes afterwards simply shows up as a new snapshot after the restore,
+			// so it stays traceable.
 			res.Busy = true
 		}
 	}
 
-	// ① 現在の live を必ず保全する。ここで失敗したら何も壊さずに引き返す。
+	// ① Always preserve the current live. On failure here, back out without breaking anything.
 	pre, err := memorySnapshotLocked(memoryTriggerPreRestore, now, "AF-Restore-Rev: "+from)
 	if err != nil {
 		return res, fmt.Errorf("pre-restore snapshot: %w", err)
 	}
-	// 無変更で積まなかった場合は直近 snapshot が既に「戻す前の状態」なので、そちらを返す。
-	// UI がいつでも「巻き戻しの巻き戻し」先を示せる（★2）。
+	// When nothing changed and no commit was stacked, the latest snapshot already IS "the state
+	// before the restore", so return that one: the UI can always point at where undoing the undo
+	// leads (★2).
 	res.PreRestore = pre.Rev
 	if !pre.Committed {
 		if head, herr := memoryGitRun("rev-parse", memoryBranch); herr == nil {
@@ -152,8 +159,8 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 		}
 	}
 
-	// ② staging を rev の内容へ（scope 単位）。rev にその prefix が無ければ「当時は空」
-	//    なので、消したままにするのが正しい復元になる。
+	// ② staging to the rev's contents (per scope). A prefix missing from the rev means it was
+	//    empty back then, so leaving it deleted is the correct restore.
 	staging := memoryStagingDir()
 	for _, t := range targets {
 		dir := filepath.Join(staging, filepath.FromSlash(t.Repo))
@@ -172,7 +179,7 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 		}
 	}
 
-	// ③ staging → live。allowlist の内側だけを書き、scope 内で消えたものだけを消す。
+	// ③ staging → live. Write only inside the allowlist, delete only what vanished in the scope.
 	for _, t := range targets {
 		written, deleted, err := memoryApplyScopeToLive(t, staging)
 		res.Written = append(res.Written, written...)
@@ -184,10 +191,10 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	sort.Strings(res.Written)
 	sort.Strings(res.Deleted)
 
-	// ③.5 移設（Adopt）: ここで初めて main を from の系譜へ付け替える。live を書き終えた
-	//     後に置くのは、①〜③ のどこで失敗しても履歴が動かないようにするため（失敗した
-	//     移設が「履歴だけ入れ替わって中身は古い」状態を作らない）。元の main は退避 ref
-	//     へ逃がすので、入れ替え前の履歴は repo に残り続ける（gc の対象にもならない）。
+	// ③.5 migration (Adopt): only here is main re-pointed at from's lineage. It comes after live
+	//     has been written so that a failure anywhere in ①-③ leaves history untouched (a failed
+	//     migration must not produce "history swapped, contents old"). The previous main is
+	//     parked on a rescue ref, so the pre-swap history stays in the repo, out of gc's reach.
 	if opts.Adopt {
 		prev, _ := memoryGitRun("rev-parse", "--verify", "--quiet", memoryBranch)
 		if prev != "" {
@@ -203,8 +210,8 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 		res.Adopted = true
 	}
 
-	// ④ 適用後の live を restore commit として積む。ここは live を読み直すので、
-	//    「実際に何が起きたか」が履歴の側で確定する（③ の結果を信用しない）。
+	// ④ Stack the applied live as the restore commit. This re-reads live, so "what actually
+	//    happened" is settled on the history side (③'s result is not trusted).
 	trailers := []string{"AF-Restore-Rev: " + from}
 	for _, t := range targets {
 		trailers = append(trailers, "AF-Restore-Scope: "+t.Repo)
@@ -219,10 +226,11 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	}
 	res.Committed, res.Rev, res.Projects = done.Committed, done.Rev, done.Projects
 
-	// 移設は「内容が同じでも起きた事実」を残す。付け替え後の live は取り込んだ head と
-	// 一致するのが普通なので、★8 の無変更 skip をそのまま通すと**系譜を入れ替えた記録が
-	// どこにも残らない**（退避 ref だけになる）。ここだけ空 commit を許し、どの系譜を
-	// いつ採用し何と入れ替えたかを trailer で履歴に刻む。
+	// A migration records that it happened even when the contents are identical. After the
+	// re-point, live usually matches the imported head, so letting ★8's no-change skip run would
+	// leave no record anywhere that the lineage was swapped (only the rescue ref). An empty
+	// commit is allowed just here, carving into the history through trailers which lineage was
+	// adopted when and what it replaced.
 	if opts.Adopt && !done.Committed {
 		msg := memoryCommitMessage(trigger, now, nil, nil, trailers)
 		if _, err := memoryGitRun("commit", "--quiet", "--no-verify", "--allow-empty", "-m", msg); err != nil {
@@ -237,8 +245,9 @@ func memoryApplyRevLocked(sc memoryRestoreScope, from, trigger string, extraTrai
 	return res, nil
 }
 
-// memoryResolveScope は要求スコープを repo 内 prefix の集合へ落とす。宣言テーブルに
-// 無い kind・この環境に無いルート・不正な slug はここで弾く。
+// memoryResolveScope reduces the requested scope to a set of repo-internal prefixes. A kind
+// that is not in the declaration table, a root this environment does not have and an invalid
+// slug are all rejected here.
 func memoryResolveScope(sc memoryRestoreScope) ([]memoryScopeTarget, error) {
 	roots := memoryRoots()
 	if len(roots) == 0 {
@@ -249,7 +258,7 @@ func memoryResolveScope(sc memoryRestoreScope) ([]memoryScopeTarget, error) {
 		byKind[r.Kind] = r
 	}
 	var out []memoryScopeTarget
-	whole := map[string]bool{} // ルート全体を復元する kind
+	whole := map[string]bool{} // kinds restored as a whole root
 	add := func(t memoryScopeTarget) {
 		for _, e := range out {
 			if e.Repo == t.Repo {
@@ -274,7 +283,7 @@ func memoryResolveScope(sc memoryRestoreScope) ([]memoryScopeTarget, error) {
 		add(memoryScopeTarget{Root: r, Repo: r.RepoPrefix})
 	}
 	for _, slug := range sc.Projects {
-		// プロジェクト粒度を持つのは claude だけ（codex は区分がファイル内エントリ）。
+		// Only claude has project granularity (codex divides by entries inside a file).
 		r, ok := byKind["claude"]
 		if !ok || !r.Scopes {
 			return nil, memoryErrf(http.StatusBadRequest, errCodeMemoryBadScope, "project scope is not available")
@@ -283,7 +292,7 @@ func memoryResolveScope(sc memoryRestoreScope) ([]memoryScopeTarget, error) {
 			return nil, memoryErrf(http.StatusBadRequest, errCodeMemoryBadScope, "invalid project %q", slug)
 		}
 		if whole[r.Kind] {
-			continue // ルート全体に含まれるので個別指定は無視する
+			continue // covered by the whole root, so the individual entry is ignored
 		}
 		add(memoryScopeTarget{Root: r, Repo: r.RepoPrefix + "/" + slug, Rel: slug})
 	}
@@ -294,9 +303,9 @@ func memoryResolveScope(sc memoryRestoreScope) ([]memoryScopeTarget, error) {
 	return out, nil
 }
 
-// memorySlugSafe は claude のプロジェクト slug が「単一のパスセグメント」であることを見る。
-// slug は絶対パスの "/" を "-" に潰したものなので先頭が "-" になるのが普通 — git へは
-// `--` の後ろのパスとしてしか渡さないため、ここではパス脱出だけを塞ぐ。
+// memorySlugSafe checks that a claude project slug is a single path segment. A slug is an
+// absolute path with its "/" flattened to "-", so starting with "-" is normal; it only ever
+// reaches git as a path after `--`, so all that is blocked here is path escape.
 func memorySlugSafe(s string) bool {
 	if s == "" || s == "." || len(s) > 255 {
 		return false
@@ -307,8 +316,8 @@ func memorySlugSafe(s string) bool {
 	return true
 }
 
-// memoryRelInScope は root.Dir 相対のパス rel が scope（同じく root.Dir 相対・"" は全体）
-// の内側かを返す。
+// memoryRelInScope reports whether rel (relative to root.Dir) is inside scope (also relative to
+// root.Dir; "" means everything).
 func memoryRelInScope(scope, rel string) bool {
 	if scope == "" {
 		return true
@@ -316,22 +325,25 @@ func memoryRelInScope(scope, rel string) bool {
 	return rel == scope || strings.HasPrefix(rel, scope+"/")
 }
 
-// memoryApplyScopeToLive は staging の scope 配下を live へ反映する（rsync --delete 相当）。
+// memoryApplyScopeToLive reflects staging's scope subtree into live (the equivalent of
+// rsync --delete).
 //
-// 「望ましい状態」は staging 側の列挙、「今の状態」は memoryCollect（allowlist 経由）で
-// 取る。削除候補が allowlist を通ったファイルに限られるのはこの非対称のおかげで、
-// メモリ以外（transcript・資格情報）を消す経路が構造的に存在しない。
+// The desired state comes from enumerating the staging side, the current state from
+// memoryCollect (through the allowlist). It is this asymmetry that limits deletion candidates
+// to files that passed the allowlist: structurally there is no path that deletes anything other
+// than memory (transcripts, credentials).
 func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, deleted []string, err error) {
 	written, deleted = []string{}, []string{}
 	src := filepath.Join(stagingRoot, filepath.FromSlash(t.Repo))
 
-	// 望ましい状態: staging 側の実ファイル（repo 由来だが、live へ書く前にもう一度
-	// allowlist を通す — repo に何かが紛れていても live を汚さないため）。
+	// Desired state: the real files on the staging side. They come from the repo, but pass the
+	// allowlist once more before being written into live, so that anything that slipped into the
+	// repo cannot dirty live.
 	desired := map[string]string{}
 	werr := filepath.WalkDir(src, func(p string, d fs.DirEntry, e error) error {
 		if e != nil {
 			if os.IsNotExist(e) && p == src {
-				return nil // rev に存在しなかった scope = 「全部消す」
+				return nil // a scope absent from the rev = "delete everything"
 			}
 			return e
 		}
@@ -353,7 +365,7 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 		return written, deleted, werr
 	}
 
-	// 今の live のうち scope 内かつ復元後に存在しないもの = 削除。
+	// Whatever is in live now, inside the scope and absent after the restore = delete.
 	for _, f := range memoryCollect(t.Root) {
 		if !memoryRelInScope(t.Rel, f.Rel) {
 			continue
@@ -368,7 +380,8 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 		deleted = append(deleted, t.Root.RepoPrefix+"/"+f.Rel)
 	}
 
-	// 内容が変わるものだけ書く（mtime を無用に動かすと自動 snapshot の契機判定が濁る）。
+	// Write only what changes content (moving mtime for nothing muddies the automatic snapshot's
+	// trigger decision).
 	rels := make([]string, 0, len(desired))
 	for rel := range desired {
 		rels = append(rels, rel)
@@ -394,13 +407,14 @@ func memoryApplyScopeToLive(t memoryScopeTarget, stagingRoot string) (written, d
 	return written, deleted, nil
 }
 
-// memoryPrepareDest は書き込み先の絶対パスを返し、途中のディレクトリを作る。
-// 経路上にシンボリックリンクがあれば拒否する — allowlist の内側に外向きのリンクを
-// 置かれた状態で restore すると、live の外（資格情報等）を上書きしかねないため（★1 の裏返し）。
+// memoryPrepareDest returns the absolute destination path and creates the directories along the
+// way. A symlink anywhere on the path is refused: restoring with an outward link planted inside
+// the allowlist could overwrite things outside live, credentials included (the reverse of ★1).
 func memoryPrepareDest(rootDir, rel string) (string, error) {
-	// ルート自体がまだ無い環境がある: claude を一度も起動していないワークスペース（起動
-	// 直後に別環境のメモリを import するのが正にその状況）には <config>/projects が無い。
-	// 以降の段は 1 段ずつ Mkdir して経路の symlink を検査するので、MkdirAll はここだけ。
+	// Some environments have no root yet: a workspace where claude has never been started (which
+	// is exactly the situation when importing another environment's memory right after boot) has
+	// no <config>/projects. Every level below is created one Mkdir at a time so the path can be
+	// checked for symlinks, so MkdirAll appears only here.
 	if err := os.MkdirAll(rootDir, 0o700); err != nil {
 		return "", err
 	}
@@ -425,7 +439,7 @@ func memoryPrepareDest(rootDir, rel string) (string, error) {
 	}
 	dst := filepath.Join(cur, segs[len(segs)-1])
 	if st, err := os.Lstat(dst); err == nil && st.Mode()&os.ModeSymlink != 0 {
-		// リンク越しに書かず、リンクそのものを実ファイルで置き換える。
+		// Do not write through the link; replace the link itself with a real file.
 		if rerr := os.Remove(dst); rerr != nil {
 			return "", rerr
 		}
@@ -433,7 +447,8 @@ func memoryPrepareDest(rootDir, rel string) (string, error) {
 	return dst, nil
 }
 
-// memorySameContent は復元先が既に同じ内容かを見る（無ければ false）。
+// memorySameContent reports whether the destination already holds the same content (false when
+// it does not exist).
 func memorySameContent(src, dst string) (bool, error) {
 	a, err := os.Stat(src)
 	if err != nil {
@@ -460,9 +475,9 @@ func memorySameContent(src, dst string) (bool, error) {
 	return string(ab) == string(bb), nil
 }
 
-// memoryPruneEmptyDirs は削除で空になったディレクトリを rootDir の手前まで畳む。
-// os.Remove はディレクトリが空のときしか成功しないので、他のもの（transcript 等）が
-// 残っている枝には触れない。
+// memoryPruneEmptyDirs folds up directories left empty by a deletion, stopping short of
+// rootDir. os.Remove only succeeds on an empty directory, so a branch where something else (a
+// transcript, say) remains is left alone.
 func memoryPruneEmptyDirs(rootDir, removed string) {
 	dir := filepath.Dir(removed)
 	for strings.HasPrefix(dir, rootDir+string(os.PathSeparator)) {
@@ -473,7 +488,7 @@ func memoryPruneEmptyDirs(rootDir, removed string) {
 	}
 }
 
-// memoryTreeEntryKind は tree API が返す 1 kind 分の概況。
+// memoryTreeKind is the summary of one kind, as returned by the tree API.
 type memoryTreeKind struct {
 	Kind   string `json:"kind"`
 	Label  string `json:"label"`
@@ -482,7 +497,7 @@ type memoryTreeKind struct {
 	Bytes  int64  `json:"bytes"`
 }
 
-// memoryTreeProject は tree API が返す 1 プロジェクト分。
+// memoryTreeProject is one project's share, as returned by the tree API.
 type memoryTreeProject struct {
 	Slug    string `json:"slug"`
 	Display string `json:"display"`
@@ -490,9 +505,9 @@ type memoryTreeProject struct {
 	Bytes   int64  `json:"bytes"`
 }
 
-// memoryTreeAt は「その時点に何が入っていたか」を返す。restore の選択 UI はこれを見る:
-// 今は消えているプロジェクトも当時の snapshot には居るので、現在の roots を選択肢に
-// 使うと「誤って消したメモリを戻す」という本命のユースケースが成立しない。
+// memoryTreeAt returns what was there at that point in time. The restore picker reads this: a
+// project that is gone today is still present in the snapshot of the time, so using the current
+// roots as the choices would defeat the main use case, restoring memory deleted by mistake.
 func memoryTreeAt(rev, at string) (string, []memoryTreeKind, []memoryTreeProject, error) {
 	if !memoryHasCommits() {
 		return "", nil, nil, memoryErrf(http.StatusNotFound, errCodeMemoryNoSnapshots, "no snapshots yet")
@@ -505,10 +520,10 @@ func memoryTreeAt(rev, at string) (string, []memoryTreeKind, []memoryTreeProject
 	return sha, kinds, projects, err
 }
 
-// memoryTreeOfRev は解決済み commit のツリーを kind 別 / プロジェクト別に畳む。
-// import の preview も同じ形（「取り込んだ系譜には何が入っているか」）を要るのでここに置く。
+// memoryTreeOfRev folds a resolved commit's tree by kind and by project. import's preview needs
+// the same shape ("what is in the imported lineage"), so it lives here.
 func memoryTreeOfRev(sha string) ([]memoryTreeKind, []memoryTreeProject, error) {
-	// --long は "<mode> blob <sha> <size>\t<path>" を返す（size で当時の容量が出せる）。
+	// --long returns "<mode> blob <sha> <size>\t<path>" (size gives the capacity at the time).
 	out, err := memoryGitRun("ls-tree", "-r", "--long", sha)
 	if err != nil {
 		return nil, nil, err

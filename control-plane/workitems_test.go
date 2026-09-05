@@ -1,10 +1,12 @@
-// workitems_test.go — 作業項目の受け皿（docs/log/80 / ADR 0061）。
+// workitems_test.go — the work-item inbox (docs/log/80 / ADR 0061).
 //
-// 固定するのは「壊れたときに一番痛い」4 つ:
-//   - 停止中でもキャッシュが返り、取得は起きない（表示のために Workspace を起こさない）
-//   - 1 本のクエリが失敗しても、そのクエリの行だけが古いまま残り、他は更新される
-//   - Agent へ届かなかったときは fetched_at を進めない（進めると 5 分黙る）
-//   - 「最終取得」は有効なクエリの中で一番古い時刻
+// What is pinned here is the four things that hurt most when they break:
+//   - a stopped workspace still serves the cache and fetches nothing (showing the rail
+//     must not wake a Workspace)
+//   - when one query fails, only that query's rows stay stale; the others still refresh
+//   - a fetch that never reached the Agent does not advance fetched_at (advancing it goes
+//     quiet for five minutes)
+//   - "last fetched" is the oldest stamp among the enabled queries
 package main
 
 import (
@@ -25,7 +27,7 @@ type workItemEnv struct {
 	res  *resolved
 	st   *store.SQL
 	mid  string
-	body func() string // stub Agent が返す /work-items/fetch の本文
+	body func() string // what the stub Agent answers /work-items/fetch with
 	hits *int
 }
 
@@ -73,9 +75,9 @@ func (e *workItemEnv) addQuery(t *testing.T, id, label, query string, enabled bo
 	}
 }
 
-// ★ 停止中は取得に行かず、キャッシュをそのまま返す。この機能で一番価値のある画面が
-// 「止まっている Workspace を起こさずにチケットを見る」ところなので、ここが崩れると
-// 設計の芯（ADR 0061 決定 1）が消える。
+// A stopped workspace does not fetch; it serves the cache as it is. The most valuable screen
+// this feature has is "read your tickets without waking a stopped Workspace", so if this
+// breaks the core of the design goes with it (ADR 0061 decision 1).
 func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
 	env := newWorkItemEnv(t, "stopped")
 	ctx := context.Background()
@@ -101,8 +103,8 @@ func TestWorkItemsStoppedServesCacheWithoutFetching(t *testing.T) {
 	}
 }
 
-// 1 本が失敗しても、成功した方だけが差し替わる。失敗した側の行は残る（消すと
-// 401 が 1 本あるだけで棚が空になる）。
+// A failure in one query replaces only the rows of the queries that succeeded. The failed
+// query's rows stay, because dropping them empties the whole shelf over a single 401.
 func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
@@ -147,8 +149,9 @@ func TestWorkItemsPartialFailureKeepsOtherRows(t *testing.T) {
 	}
 }
 
-// Agent へ届かなかったとき（停止直後・再起動中）は fetched_at を進めない。進めると
-// 「届かなかったこと」を取得済みとして 5 分間黙らせてしまう。
+// When the request never reached the Agent (just stopped, restarting) fetched_at is left
+// alone: advancing it would count "it did not arrive" as fetched and stay silent for the
+// five minutes of the interval.
 func TestWorkItemsUnreachableAgentKeepsStamp(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
@@ -171,8 +174,8 @@ func TestWorkItemsUnreachableAgentKeepsStamp(t *testing.T) {
 	}
 }
 
-// 「最終取得」は有効なクエリの中で**一番古い**時刻。新しい方を出すと、半分が古いままの
-// 一覧を「たったいま取った」と言うことになる。
+// "Last fetched" is the oldest stamp among the enabled queries. Showing the newest would
+// claim a list half of which is stale was fetched just now.
 func TestWorkItemsFetchedAtIsOldestEnabled(t *testing.T) {
 	env := newWorkItemEnv(t, "stopped")
 	ctx := context.Background()
@@ -192,8 +195,8 @@ func TestWorkItemsFetchedAtIsOldestEnabled(t *testing.T) {
 	}
 }
 
-// 取得間隔（5 分）。SSE の tick は 4 秒なので、これが効かないと開いているタブの数だけ
-// GitHub を叩き続ける。
+// The fetch interval (5 minutes). The SSE tick is 4 seconds, so without it GitHub is hit
+// continuously, once per open tab.
 func TestWorkItemsRefreshIntervalThrottles(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
@@ -204,21 +207,21 @@ func TestWorkItemsRefreshIntervalThrottles(t *testing.T) {
 	if *env.hits != 0 {
 		t.Errorf("fetched %d times inside the interval", *env.hits)
 	}
-	// 期限切れにすると通る。
+	// Once the stamp is stale it goes through.
 	stale := time.Now().UTC().Add(-2 * workItemsRefreshEvery).Format(time.RFC3339)
 	_ = env.st.MarkWorkItemQueryFetched(ctx, "q1", stale, "")
 	env.api.refreshNow(ctx, env.res, false)
 	if *env.hits != 1 {
 		t.Errorf("hits = %d, want 1 once the stamp went stale", *env.hits)
 	}
-	// force は間隔を無視する（更新ボタン）。
+	// force ignores the interval (the refresh button).
 	env.api.refreshNow(ctx, env.res, true)
 	if *env.hits != 2 {
 		t.Errorf("hits = %d, want the forced refresh to ignore the interval", *env.hits)
 	}
 }
 
-// 無効なクエリは取得対象から外れる（行は残るが、叩きには行かない）。
+// A disabled query drops out of the fetch set: its rows stay, but nothing is called for it.
 func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	env.addQuery(t, "q1", "無効", "assignee:@me", false)
@@ -230,8 +233,8 @@ func TestWorkItemsDisabledQueryNotFetched(t *testing.T) {
 
 func TestWorkItemQueryValidation(t *testing.T) {
 	mv := store.MembershipView{MembershipID: "m1"}
-	// jira は P1 で受け付けるようになった。未知の provider は今も拒む —— 取得できない
-	// 行として保存されるより、その場で断る方がよい。
+	// jira is accepted; an unknown provider is still refused, because being turned down on
+	// the spot beats being stored as a row that can never fetch anything.
 	if _, aerr := validateWorkItemQuery(mv, workItemQueryDTO{Provider: "jira", Query: "assignee = currentUser()"}); aerr != nil {
 		t.Errorf("jira must be accepted since P1: %v", aerr)
 	}
@@ -253,7 +256,7 @@ func TestWorkItemQueryValidation(t *testing.T) {
 	}
 }
 
-// 台帳は (項目, セッション) で冪等。起動をやり直しても行が二重にならない。
+// The ledger is idempotent on (item, session): a retried launch does not add a second row.
 func TestWorkItemSessionLedgerIdempotent(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	post := func() *httptest.ResponseRecorder {
@@ -279,7 +282,8 @@ func TestWorkItemSessionLedgerIdempotent(t *testing.T) {
 	}
 }
 
-// クエリを消してもキャッシュだけが消え、台帳（着手の事実）は残る。
+// Deleting a query removes only the cache; the ledger — the record that work was started —
+// survives.
 func TestDeleteQueryKeepsLedger(t *testing.T) {
 	env := newWorkItemEnv(t, "running")
 	ctx := context.Background()
@@ -302,10 +306,10 @@ func TestDeleteQueryKeepsLedger(t *testing.T) {
 	}
 }
 
-// ★ 実バグの回帰（Console が真っ白になった）。Go の nil スライスは JSON の null になり、
-// Console 側の item.labels.slice(...) が TypeError で落ちる —— しかもアプリに
-// ErrorBoundary が無いので、セクションではなく **Console 全体**が消える。
-// 「ラベルの無い課題が 1 件でも来たら」起きるので、ワイヤに null を出さないことを固定する。
+// A nil Go slice marshals as JSON null, and the Console's item.labels.slice(...) then throws
+// a TypeError; with no ErrorBoundary in the app it is the whole Console that goes blank, not
+// just the section. A single issue with no labels is enough to trigger it, so the wire is
+// pinned never to carry a null array.
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

@@ -75,11 +75,11 @@ func (a notificationAPI) drainAgent(ctx context.Context, res *resolved) string {
 
 // drainAgentOutbox pulls the Agent's notification outbox into the store and acks it.
 //
-// res を取らないのは、**Workspace を止める直前にも呼ぶ**から（docs/log/75）。Agent の
-// アウトボックスは Console が見に来たときにしか drain されないので、畳んだ直後に
-// 止めると「未回答のまま停止しました」の通知が、次に Workspace を起こすまで誰にも
-// 届かない — 費用のために止めた結果、止めたことを知らせる通知だけが止めたせいで
-// 消える、という一番まずい形になる。
+// It deliberately takes no *resolved, because it is also called just before a workspace
+// is stopped. The Agent's outbox is only drained when the Console comes looking, so
+// stopping right after folding one up would hold "stopped with the question unanswered"
+// until somebody woke the workspace again — the stop-for-cost decision swallowing the one
+// notification that announces it.
 func drainAgentOutbox(ctx context.Context, st store.NotificationStore, rt runtime.Runtime, membershipID string) string {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, rt.Endpoint()+"/notifications", nil)
 	if tok := rt.Token(); tok != "" {

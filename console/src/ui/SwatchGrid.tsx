@@ -2,9 +2,9 @@ import { SURFACE_COLORS, surfaceValue } from "../lib/settings.ts";
 import { useT } from "../lib/i18n/index.ts";
 
 // SwatchGrid: the surface-color picker grid. Each swatch previews the color as it'll
-// look in the active theme; "デフォルト" (no color) shows a slashed neutral chip; the
-// selected one shows a check. Shared by the 外観 popover (TopBar) and the 表示 settings
-// tab (DisplayTab, P7) so the two stay in lockstep.
+// look in the active theme; the default entry (no color) shows a slashed neutral chip; the
+// selected one shows a check. Shared by the appearance popover (TopBar) and the Display
+// settings tab (DisplayTab, P7) so the two stay in lockstep.
 export function SwatchGrid({
   theme,
   value,

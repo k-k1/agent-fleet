@@ -41,10 +41,11 @@ const groupHeading = (dir: string, head?: ArchivedSession): { repo?: string; lab
 
 // "Old" cutoff for bulk-prune. No createdAt = never pruned by age.
 const OLD_DAYS = 7;
-// 削除ロック（docs/log/45）済みは一括削除の対象外 — Agent が 403 で拒むので、件数にも入れない。
+// A deletion-locked row (docs/log/45) is out of scope for the bulk delete — the Agent refuses
+// it with 403, so it must not be counted either.
 const isOld = (s: ArchivedSession, now: number) => {
   if (!s.createdAt || s.locked) return false;
-  const ts = new Date(s.createdAt).getTime(); // ts: i18n の t を隠さない名前に
+  const ts = new Date(s.createdAt).getTime(); // named ts so it does not shadow i18n's t
   return !isNaN(ts) && now - ts > OLD_DAYS * 86400_000;
 };
 
@@ -56,7 +57,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
   const askConfirm = useConfirm();
   const toast = useToast();
   const tr = useT();
-  const locale = useLocale(); // groupHeading の t() をロケール切替に追従させる
+  const locale = useLocale(); // keeps groupHeading's t() in step with a locale switch
 
   const load = () =>
     api("api/sessions/archived")
@@ -77,7 +78,7 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
 
   // Group by dir. Groups sorted by repo name (asc), rows by createdAt desc.
   const groups = useMemo(() => {
-    void locale; // dep: groupHeading（"arch.other"）をロケール切替で作り直す
+    void locale; // dep: rebuild groupHeading ("arch.other") on a locale switch
     const by = new Map<string, ArchivedSession[]>();
     for (const s of filtered) {
       const key = s.dir || "";
@@ -139,8 +140,9 @@ export function ArchivedModal({ onClose, onRestored }: ArchivedModalProps) {
     if (!ok) return;
     setBusy(true);
     try {
-      // reclaim=1: gz 退避してから meta+jsonl を回収（掃除のごみ箱タブから復元可）。
-      // 旧実装の /stop は行だけ消して jsonl を残す最悪の中間状態だった。
+      // reclaim=1: stash a gz copy, then reclaim meta+jsonl (restorable from the cleanup
+      // modal's trash tab). Deleting only the row would leave the jsonl behind — the worst
+      // possible half-state.
       const res = await raw(`api/sessions/${encodeURIComponent(name)}?reclaim=1`, { method: "DELETE" }).catch(
         () => null,
       );

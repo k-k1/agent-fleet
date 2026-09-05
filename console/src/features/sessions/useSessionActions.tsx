@@ -22,11 +22,11 @@ export interface SessionActions {
   archive(s: Session): Promise<void>;
   /** Delete outright (shell/ssm — no conversation worth keeping). Irreversible. */
   deleteSession(s: Session): Promise<void>;
-  /** 削除ロック（docs/log/45）の切替。ON の間、この行はどの削除経路（Console・掃除・
-   *  7日自動prune・オペレーター）からも消せなくなる。 */
+  /** Toggle the deletion lock (docs/log/45). While on, this row cannot be removed by any
+   *  deletion path: Console, cleanup, the 7-day auto-prune, or the operator. */
   setLocked(s: Session, locked: boolean): Promise<void>;
   setKeepAwake(s: Session, hours: number): Promise<void>;
-  /** Bulk-clear every "その他のセッション" (orphan whose working copy is gone):
+  /** Bulk-clear every "other session" (an orphan whose working copy is gone):
    * agent sessions archive (restorable), shell/ssm delete. Repo-scoped stopped
    * sessions are bulk-cleared from the Cleanup modal's stage ① instead. */
   clearOrphans(orphans: Session[]): Promise<void>;
@@ -36,7 +36,7 @@ export interface SessionActions {
    * agent sessions archive (restorable), shell/ssm delete. Locked and live
    * sessions are left alone. */
   archiveStopped(sessions: Session[]): Promise<void>;
-  /** Halt a live session into 停止中 (resumable): kills tmux, keeps the meta. */
+  /** Halt a live session into "stopped" (resumable): kills tmux, keeps the meta. */
   halt(name: string, display: string): Promise<void>;
   /** Mint a NEW live session (fresh slug, same title/dir/model), archive the old. */
   recreate(name: string, display: string): Promise<void>;
@@ -44,7 +44,7 @@ export interface SessionActions {
    *  auto-fires the extraction turn; the operator proposes a summary and only creates the
    *  new session after the user consents. `note` is optional extra instruction. */
   handoff(name: string, kind: string, note?: string): Promise<void>;
-  /** ドライバ排他切替（docs/log/27 P3 §2）: tui ⇄ managed を stop→drain→resume で。 */
+  /** Exclusive driver switch (docs/log/27 P3 §2): tui ⇄ managed via stop→drain→resume. */
   switchDriver(s: Session): Promise<void>;
 }
 
@@ -97,8 +97,9 @@ export function useSessionActions(): SessionActions {
     void refreshSessions();
   };
 
-  // 停止しないピン（docs/log/75）: hours>0 で期限を張り、0 で解除。shell / ssm の走行中ジョブを
-  // af 側から見分けられないので、推測でコンテナを守る代わりに利用者に宣言してもらう。
+  // Keep-awake pin (docs/log/75): hours>0 sets a deadline, 0 clears it. af cannot tell
+  // from the outside whether a shell/ssm job is still running, so the user declares it
+  // rather than the container being protected on a guess.
   const setKeepAwake = async (s: Session, hours: number) => {
     const res = await sessionKeepAwake(s.name, hours);
     if (res?.error) {
@@ -111,7 +112,7 @@ export function useSessionActions(): SessionActions {
   };
 
   const clearOrphans = async (all: Session[]) => {
-    const orphans = all.filter((s) => !s.locked); // 削除ロック（docs/log/45）は一括掃除に載せない
+    const orphans = all.filter((s) => !s.locked); // deletion-locked rows (docs/log/45) are never bulk-cleared
     if (orphans.length === 0) return;
     // Same split as the Cleanup modal's stage ①: agent sessions archive (conversation kept,
     // restorable); shell/ssm have no conversation worth keeping, so they delete.
@@ -140,8 +141,8 @@ export function useSessionActions(): SessionActions {
       return;
     // /archive hides but KEEPS the meta/jsonl (restorable); /stop forgets it
     // (shell/ssm delete). Best-effort per session so one failure doesn't abort
-    // the rest — mirrors the per-row アーカイブ / 削除. ok を数えて結果をトースト
-    // する（403/409 で全滅しても無反応だと片付いたように見えてしまう）。
+    // the rest — mirrors the per-row archive / delete. Count the successes and toast the
+    // result: if every call 403s or 409s, saying nothing looks like it worked.
     const call = (s: Session, ep: "archive" | "stop") =>
       raw(`api/sessions/${encodeURIComponent(s.name)}/${ep}`, { method: "POST" })
         .then((res) => ({ s, ok: res.ok }))
@@ -152,17 +153,17 @@ export function useSessionActions(): SessionActions {
     ]);
     const done = results.filter((r) => r.ok).length;
     const failed = results.length - done;
-    // 失敗した行は残る — そのペインまで閉じない。
+    // A failed row survives — don't close its pane either.
     for (const r of results) if (r.ok) closeSessionPanes(r.s.name);
     toast(failed ? t("clean.run_done", { done, failed }) : t("clean.run_done_ok", { done }));
     void refreshSessions();
   };
 
   const archiveStopped = async (all: Session[]) => {
-    const targets = all.filter((s) => !s.alive && !s.locked); // 稼働中・削除ロック中は対象外
+    const targets = all.filter((s) => !s.alive && !s.locked); // live and deletion-locked rows are out of scope
     if (targets.length === 0) return;
-    // 停止セッションの片付けは Cleanup モーダルの ①と同じ振り分け: エージェントは
-    // アーカイブ（復元可）、shell/ssm は会話に残す価値が無いので削除。
+    // Same split as the Cleanup modal's stage ①: agent sessions archive (restorable);
+    // shell/ssm have no conversation worth keeping, so they delete.
     const ephemeral = targets.filter((s) => agentOf(s.kind).caps.ephemeral);
     const keepable = targets.filter((s) => !agentOf(s.kind).caps.ephemeral);
     const parts: string[] = [];
@@ -277,7 +278,7 @@ export function useSessionActions(): SessionActions {
       );
       return;
     }
-    // 旧ドライバのペイン（managed 化ならターミナル）は無効になる — 開き直す。
+    // The old driver's pane (the terminal, when switching to managed) is now dead — reopen.
     closeSessionPanes(s.name);
     openSessionChat(s.name);
     void refreshSessions();
@@ -290,7 +291,7 @@ export function useSessionActions(): SessionActions {
     // the user's OWN message in the operator chat (and steers the reply language in the
     // default outputLanguage=auto). So it must follow the UI locale — an English user must
     // not see a Japanese paragraph as their own turn, nor get a Japanese reply.
-    // i18n-exempt-start: LLM プロンプト（表示でなくモデル挙動・docs/log/28 §4）— ロケール分岐
+    // i18n-exempt-start: LLM prompt (model behaviour, not display; docs/log/28 §4) — locale branch
     const trimmed = note?.trim();
     const prompt =
       getLocale() === "en"
@@ -310,11 +311,11 @@ export function useSessionActions(): SessionActions {
     try {
       // A dedicated operator conversation preserves any unfinished draft. openChat's auto
       // flag fires this extraction turn as soon as ChatView loads — the assistant is called
-      // directly (アシスタントを直接呼び出す) and comes back with a proposal; the consent
+      // directly and comes back with a proposal; the consent
       // gate before create_session lives in the prompt above.
       const conv = await chatCreate("operator", tr("srow.handoff_title", { name }));
       if (!conv?.id) throw new Error("conversation was not created");
-      autoAddToActiveWorkingSet("convs", conv.id); // docs/log/52 §1: 選択中グループへ自動所属
+      autoAddToActiveWorkingSet("convs", conv.id); // docs/log/52 §1: auto-join the selected working set
       openChat(conv.id, prompt, true);
     } catch {
       toast(t("sess.handoff_failed"));

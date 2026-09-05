@@ -67,8 +67,9 @@ var knownKinds = map[string]bool{
 // Code is the stable machine code the handler puts on the wire; the Console resolves
 // it through its "err.<code>" catalog and only falls back to Msg (a language-neutral
 // developer string) when a code is unmapped. One code per REASON — reusing a single
-// "invalid" for every rule is what docs/log/23 P0-3 set out to remove. 追加・改名時は
-// console/src/lib/i18n/locales/{ja,en}/errors.ts の "err.<code>" も必ず同時に足すこと。
+// "invalid" for every rule is what docs/log/23 P0-3 set out to remove. When adding or
+// renaming a code, always add the matching "err.<code>" to
+// console/src/lib/i18n/locales/{ja,en}/errors.ts in the same change.
 type ValidationError struct {
 	Code string
 	Msg  string
@@ -101,7 +102,7 @@ func invalid(code, format string, a ...any) error {
 	return &ValidationError{Code: code, Msg: fmt.Sprintf(format, a...)}
 }
 
-// ErrTenantStdio is the refusal behind ADR0031 決定 2: a tenant-distributed stdio
+// ErrTenantStdio is the refusal behind ADR0031 decision 2: a tenant-distributed stdio
 // server would let an admin run an arbitrary command in every member's container.
 var ErrTenantStdio error = &ValidationError{
 	Code: CodeTenantStdio,

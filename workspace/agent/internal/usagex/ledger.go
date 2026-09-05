@@ -1,13 +1,15 @@
 package usagex
 
-// 使用量台帳（docs/log/46 / ADR0029 P1）。1行 = LLM 呼び出し1回、または折り込んだ
-// セッションの論理ターン1回。
+// Usage ledger (docs/log/46 / ADR0029 P1). One row = one LLM call, or one logical turn of
+// a session folded in.
 //
-// 非交渉の原則: プロンプト本文・応答本文は一切記録しない（トークン数とメタのみ）。
+// Non-negotiable: neither prompt nor response text is ever recorded — token counts and
+// metadata only.
 //
-// 保存は ~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl（追記のみ・日次ローテ・
-// 既定90日保持）。~/.local は Workspace の recreate を跨いで残る（Workspace Guide）。
-// 1行 ≈ 200B なので、補助 100 呼び出し/日 + セッション 2,000 ターン/日 でも ~420KB/日。
+// Stored in ~/.local/share/agent-fleet/usage/raw/YYYY-MM-DD.jsonl (append-only, rotated
+// daily, kept 90 days by default). ~/.local survives a Workspace recreate (Workspace
+// Guide). A row is ~200B, so even 100 auxiliary calls/day plus 2,000 session turns/day
+// comes to ~420KB/day.
 
 import (
 	"bytes"
@@ -22,27 +24,28 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
-// feature — 消費源の列挙（ADR0029 §2 で凍結。Console 側で i18n する）。
+// feature — the enumeration of consumers, frozen in ADR0029 §2. The Console does the i18n.
 const (
-	FeatureAssistantChat    = "assistant.chat"     // 利用者のチャット1ターン
-	FeatureAssistantAsk     = "assistant.ask"      // 単発アドバイザリ（非永続）
-	FeatureAssistantAutoTur = "assistant.autoturn" // セッション完了報告への自動ターン
-	FeatureAssistantBridge  = "assistant.bridge"   // Discord/Slack からのオペレーター応答
-	FeatureCompact          = "compact"            // 要約引き継ぎ（docs/log/33）
-	FeaturePlanUpdate       = "plan.update"        // 作業計画の明示更新（docs/log/33 第5段）
-	FeatureTitleSession     = "title.session"      // セッション件名の提案
-	FeatureTitleChat        = "title.chat"         // 会話タイトルの提案
-	FeatureBranchSuggest    = "branch.suggest"     // ブランチ名の提案
-	FeatureSuggestSession   = "suggest.session"    // ミラーの ✨ 返信候補
-	FeatureSuggestChat      = "suggest.chat"       // チャットの ✨ 返信候補
-	FeatureSuggestEdit      = "suggest.edit"       // エディタの ✨ AI変更提案（docs/log/44 Phase 4）
-	FeatureSession          = "session"            // 対話セッション本体（転写から折り込み）
-	// FeatureUnknown はタグの付いていない呼び出し。新しい補助機能がタグを付け忘れても
-	// 必ず1行残す（無記録＝見えない消費、を作らないことをタグの正しさより優先する）。
+	FeatureAssistantChat    = "assistant.chat"     // one turn of the user's chat
+	FeatureAssistantAsk     = "assistant.ask"      // one-shot advisory (not persisted)
+	FeatureAssistantAutoTur = "assistant.autoturn" // automatic turn on a session completion report
+	FeatureAssistantBridge  = "assistant.bridge"   // operator reply from Discord/Slack
+	FeatureCompact          = "compact"            // summary carry-forward (docs/log/33)
+	FeaturePlanUpdate       = "plan.update"        // explicit work-plan refresh (docs/log/33 stage 5)
+	FeatureTitleSession     = "title.session"      // session title suggestion
+	FeatureTitleChat        = "title.chat"         // conversation title suggestion
+	FeatureBranchSuggest    = "branch.suggest"     // branch-name suggestion
+	FeatureSuggestSession   = "suggest.session"    // the mirror's ✨ reply suggestions
+	FeatureSuggestChat      = "suggest.chat"       // the chat's ✨ reply suggestions
+	FeatureSuggestEdit      = "suggest.edit"       // the editor's ✨ AI edit suggestion (docs/log/44 Phase 4)
+	FeatureSession          = "session"            // the interactive session itself (folded in from the transcript)
+	// FeatureUnknown is a call that carried no tag. A row is written even when a new
+	// auxiliary feature forgets to tag itself: not recording it would make the consumption
+	// invisible, which matters more than the tag being right.
 	FeatureUnknown = "unknown"
 )
 
-// trigger — ターンの注入元。
+// trigger — where the turn was injected from.
 const (
 	TriggerUser     = "user"
 	TriggerAuto     = "auto"
@@ -53,66 +56,69 @@ const (
 	TriggerRecovery = "recovery"
 )
 
-// model_src — モデル次元をどこから得たかの自己申告（ADR0029 §4）。
+// model_src — self-reported provenance of the model dimension (ADR0029 §4).
 const (
-	ModelReported = "reported"        // 実行側が報告した（claude / 転写の Turn.Model）
-	ModelRequest  = "requested"       // こちらが要求した値しか分からない
-	ModelUnknown  = "default_unknown" // CLI 側の既定に委ねた＝解決後のモデル不明
+	ModelReported = "reported"        // reported by the executor (claude / the transcript's Turn.Model)
+	ModelRequest  = "requested"       // only the value we requested is known
+	ModelUnknown  = "default_unknown" // left to the CLI's default, so the resolved model is unknown
 )
 
-// measured — 「0」と「未計測」を絶対に混同させないための自己申告。
+// measured — self-reported, so that "0" and "not measured" can never be confused.
 const (
-	MeasuredExact   = "exact"   // in/out/cache すべて取れた
-	MeasuredPartial = "partial" // 一部だけ（copilot の outTok のみ 等）
-	MeasuredNone    = "none"    // トークンを報告しない CLI — 回数だけ数える
+	MeasuredExact   = "exact"   // in/out/cache all obtained
+	MeasuredPartial = "partial" // only some of them (copilot's outTok alone, say)
+	MeasuredNone    = "none"    // a CLI that reports no tokens — only the calls are counted
 )
 
-// Record は台帳1行。JSON タグは Console/API と対の凍結ワイヤ（ADR0029 §1）。
+// Record is one ledger row. The JSON tags are the frozen wire it shares with the
+// Console/API (ADR0029 §1).
 type Record struct {
-	TS   string `json:"ts"`   // 呼び出し完了時刻（UTC・RFC3339）
-	Call string `json:"call"` // 呼び出し ID: 1呼び出しが複数モデル行に割れる時に束ねる
-	// Feature/Trigger/Ref/Verb は ctx の usageTag 由来（usage_tag.go）。
+	TS   string `json:"ts"`   // when the call finished (UTC, RFC3339)
+	Call string `json:"call"` // call id: binds the rows one call splits into across models
+	// Feature/Trigger/Ref/Verb come from the ctx usageTag (usage_tag.go).
 	Feature string `json:"feature"`
 	Trigger string `json:"trigger,omitempty"`
-	// Origin/OriginConv はセッションの出自（ADR0029 §6）。ref から解決して行へ焼き込む
-	// ので、セッションが削除されても集計が壊れない。
+	// Origin/OriginConv are the session's provenance (ADR0029 §6). Resolved from ref and
+	// burned into the row, so deleting the session does not break the aggregation.
 	Origin     string `json:"origin,omitempty"`
 	OriginConv string `json:"origin_conv,omitempty"`
-	// Kind は実際に実行したエージェント種別（要求ではなく実行結果）。
+	// Kind is the agent kind that actually ran — the outcome, not the request.
 	Kind     string `json:"kind"`
-	Model    string `json:"model,omitempty"`     // 正規モデル名（版を畳んだ系列キー）
-	ModelRaw string `json:"model_raw,omitempty"` // 報告された生 id（版込み）
-	ModelReq string `json:"model_req,omitempty"` // 要求した値（食い違い＝フォールバック検知）
+	Model    string `json:"model,omitempty"`     // canonical model name (family key, versions folded)
+	ModelRaw string `json:"model_raw,omitempty"` // the raw reported id, version included
+	ModelReq string `json:"model_req,omitempty"` // the value requested; a mismatch detects a fallback
 	ModelSrc string `json:"model_src,omitempty"`
-	Ref      string `json:"ref,omitempty"`  // セッション名 or 会話 id
-	Verb     string `json:"verb,omitempty"` // assistant.chat のサブ次元（translate|summarize）
-	// Sidechain は feature=session のサブ次元（サブエージェント / Workflow の消費）。
+	Ref      string `json:"ref,omitempty"`  // session name or conversation id
+	Verb     string `json:"verb,omitempty"` // sub-dimension of assistant.chat (translate|summarize)
+	// Sidechain is a sub-dimension of feature=session (subagent / Workflow consumption).
 	Sidechain bool `json:"sidechain,omitempty"`
-	// Idx は feature=session の論理ターン通し番号（1始まり）。書き手側の冪等性は
-	// usage/state.json の watermark が担保するが、**追記と watermark は別ファイルで
-	// 原子的に書けない**（間で落ちると再追記される）ので、集計側は (ref, Idx) を読んで
-	// 重複を落とす（usage_dedup.go）。次元ではないので usageKey には入らない。
+	// Idx is the running number of a feature=session logical turn (1-based). The writer's
+	// idempotency rests on the watermark in usage/state.json, but the append and the
+	// watermark live in separate files and cannot be written atomically together — a crash
+	// in between re-appends — so the aggregation reads (ref, Idx) to drop duplicates
+	// (usage_dedup.go). It is not a dimension, so it stays out of usageKey.
 	Idx         int     `json:"idx,omitempty"`
 	In          int     `json:"in"`
 	Out         int     `json:"out"`
 	CacheRead   int     `json:"cread"`
 	CacheCreate int     `json:"ccreate"`
-	Spend       int     `json:"spend"`              // = in + ccreate + out（cache_read を含めない）
-	CostUSD     float64 `json:"cost_usd,omitempty"` // 実測が取れた時だけ（claude）
+	Spend       int     `json:"spend"`              // = in + ccreate + out (cache_read excluded)
+	CostUSD     float64 `json:"cost_usd,omitempty"` // only when actually measured (claude)
 	MS          int     `json:"ms,omitempty"`
 	OK          bool    `json:"ok"`
 	Measured    string  `json:"measured"`
 }
 
-// Spend は主指標。cache_read を含めないのは既存の get_session_usage / ミラーの
-// ContextBar と同じ定義に揃えるため（二つの画面が食い違わない方が、理論的な正しさより重い）。
+// Spend is the headline metric. cache_read is excluded to match the definition
+// get_session_usage and the mirror's ContextBar already use: two screens agreeing weighs
+// more than theoretical correctness.
 func Spend(in, create, out int) int { return in + create + out }
 
-// Enabled — 記録の全体スイッチ。AF_USAGE_RECORD=0 で完全に止める（P5 の設定 UI が
-// 書き換える口）。既定 ON。
+// Enabled is the master switch for recording. AF_USAGE_RECORD=0 stops it entirely (the
+// hook the P5 settings UI writes through). On by default.
 func Enabled() bool { return os.Getenv("AF_USAGE_RECORD") != "0" }
 
-// Dir は台帳のルート。AF_USAGE_DIR はテスト用の差し替え口。
+// Dir is the ledger root. AF_USAGE_DIR is the substitution hook for tests.
 func Dir() string {
 	if v := os.Getenv("AF_USAGE_DIR"); v != "" {
 		return v
@@ -122,7 +128,8 @@ func Dir() string {
 
 func RawDir() string { return filepath.Join(Dir(), "raw") }
 
-// RetentionDays — raw の保持日数（rollup は無期限・ADR0029 §7-3）。
+// RetentionDays is how many days of raw rows to keep; rollups are kept forever
+// (ADR0029 §7-3).
 func RetentionDays() int {
 	if v := os.Getenv("AF_USAGE_RETENTION_DAYS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -133,28 +140,29 @@ func RetentionDays() int {
 }
 
 var (
-	// Mu は追記と prune を直列化する（同一プロセス内の並行ターン）。公開しているのは
-	// usage_rollup.go の readUsageDayForRollup が「追記と競合しない形で 1 日分を読む」ために
-	// 同じロックを取るため。
+	// Mu serialises appends and prunes (concurrent turns inside one process). It is exported
+	// so that readUsageDayForRollup in usage_rollup.go can take the same lock and read a
+	// day's rows without racing an append.
 	//
-	// 🔥 **別名変数で受けないこと。** `var usageMu = usagex.Mu` と書くと **mutex ごと
-	// 写されて別物になり**、追記側と読み側が違う錠を掛けて直列化が無言で消える
-	// （直接の値コピーは go vet の copylocks が捕まえるが、錠を含む構造体を関数の戻り値で
-	// 受け渡す形にすると捕まらない）。呼び出し側は `usagex.Mu.Lock()` と直接書く。
+	// Never bind it to an alias variable: `var usageMu = usagex.Mu` copies the mutex itself,
+	// so the appending and the reading side take different locks and the serialisation
+	// silently disappears. go vet's copylocks catches a direct value copy, but not a lock
+	// carried around inside a struct returned from a function. Callers write
+	// `usagex.Mu.Lock()` directly.
 	Mu sync.Mutex
-	// prunedAt は最後に保持期間 prune を走らせた時刻。追記のたびにディレクトリを
-	// 走査しないための節流 — 台帳は追記の方が桁違いに多い。
+	// prunedAt is when the retention prune last ran. It throttles the directory scan away
+	// from every append — the ledger sees orders of magnitude more appends than prunes.
 	prunedAt time.Time
 )
 
-// AppendRows は行群を当日のファイルへ追記する。1呼び出しが複数モデルに割れた行は
-// 同じ Call を共有した状態で渡ってくる（呼び出し回数を二重に数えないため）。
+// AppendRows appends rows to today's file. Rows a single call split across several models
+// arrive sharing one Call, so the call is not counted twice.
 //
-// 書けなかったことは error で返す。呼び出し元の扱いは2種類に分かれる:
-//   - 補助呼び出しの記録（recordUsageCall）は**ベストエフォート**。台帳が書けないことで
-//     チャットやタイトル提案が失敗してはならないので、握り潰す。
-//   - セッション折り込み（usage_fold.go）は**失敗を伝播させる**。書けていないのに
-//     watermark を進めると、その分の消費が二度と入らない。
+// A failed write comes back as an error, and callers handle it in one of two ways:
+//   - Recording an auxiliary call (recordUsageCall) is best-effort and swallows it: an
+//     unwritable ledger must not make a chat or a title suggestion fail.
+//   - Session folding (usage_fold.go) propagates the failure: advancing the watermark over
+//     rows that were never written loses that consumption for good.
 func AppendRows(rows []Record) error {
 	if len(rows) == 0 || !Enabled() {
 		return nil
@@ -177,7 +185,8 @@ func AppendRows(rows []Record) error {
 			return err
 		}
 	}
-	// Close のエラーまで見る — 追記は書き込みが遅延しうるので、Close が最後の関門になる。
+	// Check the error from Close too: an append can defer the actual write, so Close is the
+	// last gate.
 	if err := f.Close(); err != nil {
 		return err
 	}
@@ -185,8 +194,8 @@ func AppendRows(rows []Record) error {
 	return nil
 }
 
-// pruneRawLocked は保持期間を過ぎた日次ファイルを消す。Mu 保持前提。
-// 1時間に1回までしか走らない（追記のホットパスに ReadDir を積まない）。
+// pruneRawLocked deletes daily files past the retention window. Mu must be held. It runs at
+// most once an hour, to keep a ReadDir off the append hot path.
 func pruneRawLocked() {
 	now := time.Now()
 	if !prunedAt.IsZero() && now.Sub(prunedAt) < time.Hour {
@@ -204,10 +213,10 @@ func pruneRawLocked() {
 		if e.IsDir() || filepath.Ext(name) != ".jsonl" {
 			continue
 		}
-		// ファイル名の日付だけで判定する（mtime は copy/restore でずれる）。
+		// Judge by the date in the file name alone: mtime drifts across copy/restore.
 		day, err := time.Parse("2006-01-02", name[:len(name)-len(".jsonl")])
 		if err != nil {
-			continue // 想定外の名前には触らない
+			continue // leave names we do not recognise alone
 		}
 		if day.Before(cutoff) {
 			_ = os.Remove(filepath.Join(dir, name))
@@ -215,7 +224,7 @@ func pruneRawLocked() {
 	}
 }
 
-// RawDays は台帳に存在する日（UTC の YYYY-MM-DD）を昇順で返す。
+// RawDays returns the days present in the ledger (UTC YYYY-MM-DD) in ascending order.
 func RawDays() []string {
 	ents, err := os.ReadDir(RawDir())
 	if err != nil {
@@ -232,12 +241,13 @@ func RawDays() []string {
 			days = append(days, day)
 		}
 	}
-	sort.Strings(days) // 日付名なので辞書順＝時系列
+	sort.Strings(days) // date names, so lexical order is chronological
 	return days
 }
 
-// ReadDay は1日分の行を追記順で読む。順序を保つことが重要 — 1呼び出しが複数モデル行に
-// 割れたとき、同じ call の最初の行を「呼び出しを数える行」とみなすため（usage_rollup.go）。
+// ReadDay reads one day's rows in append order. The order matters: when a call splits into
+// several model rows, the first row of a call is the one that counts the call
+// (usage_rollup.go).
 func ReadDay(day string) []Record {
 	b, err := os.ReadFile(filepath.Join(RawDir(), day+".jsonl"))
 	if err != nil {
@@ -256,7 +266,7 @@ func ReadDay(day string) []Record {
 	return out
 }
 
-// ReadRows は台帳の全行を時系列で読む（テストと小規模な走査用）。
+// ReadRows reads every row in the ledger in chronological order, for tests and small scans.
 func ReadRows() []Record {
 	var out []Record
 	for _, day := range RawDays() {
@@ -265,18 +275,17 @@ func ReadRows() []Record {
 	return out
 }
 
-// PruneRawNow は保持期間 prune を今すぐ回す（テスト専用の口）。節流は効いたままなので、
-// 直前に ResetPruneClock を呼んでおくこと。移送前は main のテストが usageMu を自分で取って
-// pruneUsageRawLocked() を直接呼んでいたが、どちらも未公開になったのでここに 1 つ口を開ける。
+// PruneRawNow runs the retention prune immediately (a test-only hook). The throttle still
+// applies, so call ResetPruneClock first. It exists because pruneRawLocked is unexported
+// and a test outside this package has no other way in.
 func PruneRawNow() {
 	Mu.Lock()
 	pruneRawLocked()
 	Mu.Unlock()
 }
 
-// ResetPruneClock は保持期間 prune の節流時計を戻す（テスト専用の口）。
-// 移送前は main のテストヘルパ useTempUsageDir が `usageMu` / `usagePrunedAt` を直接
-// 触っていたが、どちらもこのパッケージの未公開状態になったので、その 1 点だけを開ける。
+// ResetPruneClock rewinds the retention prune's throttle clock (a test-only hook). It is
+// the one opening a test helper needs, since prunedAt is unexported.
 func ResetPruneClock() {
 	Mu.Lock()
 	prunedAt = time.Time{}

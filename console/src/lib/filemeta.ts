@@ -14,8 +14,8 @@ const EXT_LANG: Record<string, string> = {
   sh: "bash", bash: "bash", zsh: "bash", fish: "bash",
   yml: "yaml", yaml: "yaml", toml: "ini", ini: "ini", cfg: "ini", conf: "ini",
   xml: "xml", html: "xml", htm: "xml", svg: "xml", vue: "xml",
-  // .drawio / .dio は mxfile（XML）。図として開く面は別にあるが、ソース面では
-  // XML として色を付ける（docs/log/65 §65.4）。
+  // .drawio / .dio are mxfile (XML). Opening them as a diagram is a separate surface; the source
+  // surface highlights them as XML (docs/log/65 §65.4).
   drawio: "xml", dio: "xml",
   css: "css", scss: "scss", sass: "scss", less: "less",
   md: "markdown", markdown: "markdown",
@@ -182,17 +182,17 @@ export function imageFormat(path: string): string {
   return IMAGE_EXT[ext] || "";
 }
 
-// PDF か（docs/log/82）。画像と同じく拡張子だけで決める —— バイト列は download
-// エンドポイントから取り、pdf.js が中身を見て弾くので、ここで先頭バイトまで見る
-// 必要はない。
+// Is this a PDF (docs/log/82)? Decided by extension alone, like images: the bytes come from the
+// download endpoint and pdf.js inspects and rejects the content itself, so there is no need to
+// look at leading bytes here.
 export function isPdfFile(path: string): boolean {
   const name = baseName(path).toLowerCase();
   return name.endsWith(".pdf");
 }
 
-// anydoc で簡易プレビューできる文書の拡張子 → anydoc の形式名（docs/log/82 §82.4）。
-// csv / txt はここに入れない —— すでにテキストとして読めるので、変換に回すと
-// コードビューも編集面も失う。
+// Extensions anydoc can preview -> anydoc's format name (docs/log/82 §82.4). csv / txt must not
+// be listed here: they already read as text, and routing them through conversion loses both the
+// code view and the editing surface.
 const DOC_EXT: Record<string, string> = {
   docx: "docx", docm: "docx", doc: "doc", odt: "odt", rtf: "rtf",
   xlsx: "xlsx", xlsm: "xlsx", xls: "xlsx", ods: "ods",
@@ -200,25 +200,25 @@ const DOC_EXT: Record<string, string> = {
   epub: "epub",
 };
 
-// documentFormat は Office 系文書の形式名（docx/xlsx/pptx…）を返す。対象外なら ""。
-// 拡張子だけで決めるのは画像・PDF と同じ理由で、中身は download の生バイトを
-// anydoc 自身が見て判定する（拾えなかったときの手掛かりとしてこの値を渡す）。
+// documentFormat returns the format name of an Office-style document (docx/xlsx/pptx…), or "" if
+// it is not one. Extension alone, for the same reason as images and PDFs: anydoc itself decides
+// from the raw download bytes, and this value is passed as a hint for when it cannot.
 export function documentFormat(path: string): string {
   const name = baseName(path).toLowerCase();
   const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
   return DOC_EXT[ext] || "";
 }
 
-// 情報バーに出す短い名前（DOCX / XLSX / PPTX …）。
+// The short name shown in the info bar (DOCX / XLSX / PPTX …).
 export function documentLabel(path: string): string {
   const name = baseName(path).toLowerCase();
   const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
   return ext.toUpperCase();
 }
 
-// drawio の図か。拡張子で決まるのは .drawio / .dio の 2 つだけで、`.xml` は中身を
-// 見ないと分からない（mxfile を .xml で保存する運用がある）。`head` を渡せばその
-// 判定まで行う。**内容が無い / 取れないときは拡張子の判断だけ**を返す。
+// Is this a drawio diagram? Only .drawio / .dio are decided by extension; `.xml` cannot be known
+// without looking inside (mxfile is sometimes saved as .xml). Pass `head` to include that check.
+// With no content, or content that could not be fetched, only the extension verdict is returned.
 export function isDrawioFile(path: string, head?: string | null): boolean {
   const name = baseName(path).toLowerCase();
   const ext = name.includes(".") ? (name.split(".").pop() ?? "") : "";
@@ -227,8 +227,8 @@ export function isDrawioFile(path: string, head?: string | null): boolean {
   return looksLikeDrawioXml(head);
 }
 
-// mxfile / mxGraphModel で始まるか。XML 宣言・BOM・コメント・空白を読み飛ばす。
-// 先頭だけで判定できるので、呼び手は数 KB 渡せば足りる。
+// Does it start with mxfile / mxGraphModel? Skips the XML declaration, BOM, comments and
+// whitespace. Only the beginning matters, so a few KB from the caller is enough.
 export function looksLikeDrawioXml(head: string): boolean {
   let s = head.replace(/^\uFEFF/, "").trimStart();
   for (;;) {

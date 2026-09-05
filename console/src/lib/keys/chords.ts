@@ -132,7 +132,7 @@ export function eventKeyChordString(e: KeyboardEvent): string | null {
 }
 
 // shouldIgnore: never dispatch while an IME is composing (Japanese input reports
-// isComposing / keyCode 229 during 変換), nor on auto-repeat (holding a key must not
+// isComposing / keyCode 229 while converting), nor on auto-repeat (holding a key must not
 // fire a command over and over).
 export function shouldIgnore(e: KeyboardEvent): boolean {
   return e.isComposing === true || e.keyCode === 229 || e.repeat === true;

@@ -2,7 +2,7 @@ package main
 
 // git credential-helper glue and startup seeding/migration over the encrypted
 // store (internal/secrets). The store itself moved to internal/secrets in
-// docs/log/23 残① Wave B; the subcommand entry (`workspace-agent cred`), env-driven
+// docs/log/23 remaining item 1 Wave B; the subcommand entry (`workspace-agent cred`), env-driven
 // seeding and legacy-file migration stay in package main.
 
 import (

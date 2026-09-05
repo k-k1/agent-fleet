@@ -1,19 +1,20 @@
 package sessionx
 
-// docs/log/27 P3: 既存セッションのドライバ排他切替（POST /sessions/{name}/driver）。
-// codex の「CLI ルート常設・双方向切替（tui ⇄ managed）」（§2）の実装で、opencode
-// にも同じ形で効く（opencode は排他不要だが、切替の意味論 — 旧ドライバを止めて
-// 新ドライバで同じ会話を再開 — は共通）。
+// docs/log/27 P3: exclusive driver switching for an existing session
+// (POST /sessions/{name}/driver). This implements codex's "the CLI route is always available,
+// switching goes both ways (tui ⇄ managed)" (§2) and works the same way for opencode (which
+// needs no exclusion, but shares the semantics: stop the old driver and resume the same
+// conversation on the new one).
 //
-// 切替は必ず stop → drain → resume を経由する（§2）。drain は最小形: 実行中 /
-// キュー済みの turn がある間は 409 busy_switch で拒否し、「idle まで待つ（または
-// 停止ボタンで interrupt する）」のはユーザーの明示操作に倒す — 切替クリックの
-// 裏で走行中 turn を勝手に abort するのが最も驚く挙動だから。
+// A switch always goes stop → drain → resume (§2). The drain is minimal: while a turn is
+// running or queued the request is refused with 409 busy_switch, leaving "wait for idle (or
+// interrupt with the stop button)" to the user, because silently aborting a running turn
+// behind a switch click is the most surprising behaviour available.
 //
-// 会話の同一性は per-slot sid ストアが担保する: managed 化は同じ thread id を
-// thread/resume し（server 作成 thread の TUI resume と逆方向も実測済み、§12.3）、
-// tui 化は BuildLaunch の従来 resume（codex resume <id> --remote / opencode
-// --session <id>）に乗る。
+// Conversation identity is carried by the per-slot sid store: going managed does a
+// thread/resume on the same thread id (the other direction, a TUI resume of a server-created
+// thread, is measured too, §12.3), and going tui rides BuildLaunch's usual resume
+// (codex resume <id> --remote / opencode --session <id>).
 
 import (
 	"encoding/json"
@@ -30,7 +31,7 @@ import (
 )
 
 type driverReq struct {
-	Driver string `json:"driver"` // "tui"（"" も可）| "managed"
+	Driver string `json:"driver"` // "tui" ("" accepted too) | "managed"
 }
 
 func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
@@ -70,8 +71,8 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// drain 条件: 実行中 turn（またはキュー）を巻き込まない。tui は status ストアの
-	// working（hooks 由来）、managed は handle の running/queue で判定する。
+	// Drain condition: never take a running (or queued) turn with us. For tui that is the
+	// status store's working state (from hooks), for managed the handle's running/queue.
 	sid := session.UUID(m.Dir, name)
 	if m.DriverKind() == session.DriverTUI {
 		if st, ok := status.Read(sid); ok && st.State == "working" {
@@ -85,8 +86,8 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// stop: 旧ドライバ側を落とす（単一 writer 排他、§2 — 同一 thread への二重
-	// writer 状態を作らない）。
+	// stop: bring the old driver down (single-writer exclusion, §2 — never leave two
+	// writers on one thread).
 	if tn := session.TmuxName(name); tmuxx.HasSession(tn) {
 		disconnectRemoteControl(name, m)
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
@@ -105,13 +106,14 @@ func HandleSessionDriver(w http.ResponseWriter, r *http.Request) {
 	}
 	status.Remove(sid)
 
-	// flip → resume: 新ドライバで同じ会話を再開する。失敗したら Driver を戻して
-	// 停止中のまま返す（会話は正本に無傷 — ユーザーは 再開 で旧ドライバに戻れる）。
+	// flip → resume: restart the same conversation on the new driver. On failure, put Driver
+	// back and return the session stopped: the conversation itself is untouched, so the user
+	// can resume on the old driver.
 	prev := m.Driver
 	if target == session.DriverManaged {
 		m.Driver = session.DriverManaged
 	} else {
-		m.Driver = "" // tui は "" で永続化（既存メタとバイト同一の規約）
+		m.Driver = "" // tui persists as "" (the convention that keeps existing meta byte-identical)
 	}
 	if target == session.DriverManaged {
 		d, _ := driverOf(m)

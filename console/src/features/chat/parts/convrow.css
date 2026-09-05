@@ -24,9 +24,10 @@
 .chat-open:hover {
   background: var(--hover-bg);
 }
-/* 「どのチャットを開いているのか」を左ペインで示す。セッション行（.sess-row）と同じ語彙:
-   .is-open = どこかのペインに出ている（控えめなアクセントバー）、.active = フォーカス中の
-   ペインが開いている会話（＝いま話している相手。バー＋行の塗り）。 */
+/* Shows in the left pane which chat is open. Same vocabulary as the session row
+   (.sess-row): .is-open = shown in some pane (a restrained accent bar), .active = the
+   conversation open in the focused pane, i.e. who you are talking to now (bar plus row
+   fill). */
 .chat-row.is-open {
   box-shadow: inset 2px 0 0 color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
 }
@@ -34,8 +35,9 @@
   background: var(--lp-active-bg, var(--active-bg));
   box-shadow: inset 2px 0 0 var(--lp-accent, var(--accent));
 }
-/* フォーカス中の強調は塗り＋アクセントバーだけにする（セッション行 .sess-row.active
-   と同じ強さ）。ここで太字も足すと会話行だけ他より強く目立っていた。 */
+/* The focused emphasis is fill plus accent bar only, matching the strength of the session
+   row .sess-row.active. Adding bold here made conversation rows stand out more than
+   everything else. */
 .chat-kic {
   color: var(--lp-accent, var(--accent));
   background: color-mix(in srgb, var(--lp-accent, var(--accent)) 14%, transparent);

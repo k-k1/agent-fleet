@@ -8,11 +8,11 @@ import (
 
 // TestPostgresDeleteCascade runs the two irreversible deletes against a REAL Postgres.
 //
-// ★ なぜ SQLite のテストだけでは足りないか: cascade は表名を直接並べた DELETE の列で、
-// **2 つの方言でスキーマが一致していない**。`memo_category` は migrations/0020 にあって
-// migrations-pg には無い（この機能自体が Postgres で動いていない、既存の取りこぼし）。
-// 実 DB へ通さない限り、この差は「本番の管理者が取り消せない操作の途中で 500 を踏む」
-// という形でしか現れない。
+// The SQLite test is not enough: the cascade is a list of DELETEs naming tables directly,
+// and the two dialects do not have the same schema — `memo_category` is in
+// migrations/0020 but has no counterpart in migrations-pg, so that feature does not run on
+// Postgres at all. Off a real database the gap only shows up as an admin taking a 500
+// halfway through an irreversible operation.
 //
 // Skipped unless AF_TEST_DATABASE_URL is set — see TestPostgresStore for the harness.
 func TestPostgresDeleteCascade(t *testing.T) {

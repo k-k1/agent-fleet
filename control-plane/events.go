@@ -1,22 +1,22 @@
-// events.go — Console 向け統合 push チャネル（通信量削減 P3）。
+// events.go — the single push channel to the Console, to cut its traffic.
 //
-// GET /api/events は SSE (text/event-stream) で、Console が従来 4〜5 秒毎に
-// 別々に叩いていた常時ポーリング 4 本（workspace / sessions / stats /
-// notifications）を 1 コネクションに集約する。サーバ側で同じ payload 合成関数
-// （workspacePayload / sessionsPayload / containerStats / listPayload）を
-// 接続毎の tick で回し、直前に送った JSON と変わった stream だけをフレームで
-// 送る — 無変化 tick はブラウザ↔CP 間のバイトがゼロになる（モバイル回線の
-// リクエストヘッダ/cookie 往復が主なコストなので、304 ポーリングよりさらに軽い）。
+// GET /api/events is SSE (text/event-stream) and folds the four permanent polls the Console
+// used to run separately every 4-5s (workspace / sessions / stats / notifications) into one
+// connection. The server drives the same payload builders (workspacePayload /
+// sessionsPayload / containerStats / listPayload) on a per-connection tick and frames only
+// the streams whose JSON changed since the last send, so an unchanged tick costs zero bytes
+// between browser and CP. That beats even 304 polling, because on a mobile link the request
+// headers and cookie round trip are the bulk of the cost.
 //
-// フレームは `data: {"stream":"<name>","data":<REST と同一 shape>}\n\n`。
-// shape を既存 REST 応答と揃えることで、Console のストア適用ロジックを
-// ポーリング fallback と共用できる（クライアントは旧 CP では 404 を受けて
-// 従来のポーリングに自動フォールバックする — 版ずれ耐性）。
+// A frame is `data: {"stream":"<name>","data":<same shape as the REST reply>}\n\n`. Keeping
+// the shape identical to the REST responses lets the Console reuse one store-apply path for
+// both this and the polling fallback — and against an older CP the client sees 404 here and
+// falls back on its own, which is what makes a version skew survivable.
 //
-// gzip / etagJSON 両ミドルウェアは text/event-stream を素通しする（gzip.go /
-// etag.go 参照）。認証は他の REST と同じ withResolved ゲート（cookie +
-// X-AF-Tenant ヘッダ）。ポーリング同様、この接続は idle クロックに触れない
-// （開きっぱなしのタブが idle-reaper の停止判断を妨げてはならない）。
+// Both the gzip and etagJSON middlewares pass text/event-stream through untouched (gzip.go
+// / etag.go). Auth is the same withResolved gate as the rest of the REST surface (cookie +
+// X-AF-Tenant header). Like polling, this connection must not touch the idle clock: a tab
+// left open may not block the idle reaper's decision to stop the workspace.
 package main
 
 import (
@@ -31,8 +31,8 @@ import (
 )
 
 const (
-	eventsTick      = 4 * time.Second  // 従来の Console ポーリングと同じ床
-	eventsPingEvery = 20 * time.Second // 無送信が続いたらコメント ping で死活を示す
+	eventsTick      = 4 * time.Second  // the same floor the Console's polling used
+	eventsPingEvery = 20 * time.Second // silence this long: a comment ping shows we are alive
 )
 
 type eventsAPI struct {
@@ -60,10 +60,10 @@ func registerEventsRoutes(mux *http.ServeMux, cfg config) {
 // chip displays rounded percent / 0.1 GiB anyway — an 8 MiB floor and integer
 // CPU percent lose nothing visible. The REST endpoint keeps serving raw values.
 //
-// state はこの tick で workspacePayload が既に引いた State をそのまま渡す
-// （docs/log/63 §63.9）。ecs-ec2 の State() は DescribeVolumes + DescribeServices の
-// 実 API 呼び出しで、購読者 1 人 × 4 秒ごとに走る——同じ tick の中で 2 度引けば
-// その AWS 呼び出しも 2 倍になる。値は同じなのだから 1 回でよい。
+// state is handed in — the State workspacePayload already resolved on this tick
+// (docs/log/63 §63.9). On ecs-ec2, State() is real DescribeVolumes + DescribeServices calls
+// running once per subscriber every 4 seconds, so resolving it twice within one tick would
+// double those AWS calls for a value that cannot have changed.
 func statsPayload(ctx context.Context, m *manager, rt runtime.Runtime, state string) map[string]any {
 	return roundStats(workspaceStats(ctx, m, rt, func() string { return state }))
 }
@@ -96,13 +96,14 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 	last := map[string]string{}
 	lastWrite := time.Now()
 	// emit sends one stream's frame when its serialized payload changed since the
-	// last send. Go の json.Marshal は map キーをソートするので、内容が同じなら
-	// バイト列も同じ — 素朴な文字列比較で diff できる。
+	// last send. json.Marshal sorts map keys, so equal content gives equal bytes and a
+	// plain string comparison is a sound diff.
 	emit := func(stream string, payload any) bool {
-		// この tick の payload を組む途中で切断されたなら、それは「変化」ではなく
-		// 中断。sessions は Agent への HTTP が ctx キャンセルで失敗すると DB ミラー
-		// へフォールバックする（別 shape）ので、ここで弾かないと**購読者がもう居ない
-		// のに**「セッションが変わった」フレームを 1 本書き、last[] まで汚す。
+		// A disconnect while this tick's payload was being built is an abort, not a
+		// change. sessions falls back to the DB mirror (a different shape) when its
+		// HTTP call to the Agent fails on context cancellation, so without this guard
+		// a subscriber that is already gone still gets a "sessions changed" frame
+		// written for it, and last[] is polluted with the fallback shape.
 		if ctx.Err() != nil {
 			return false
 		}
@@ -123,14 +124,15 @@ func (a eventsAPI) stream(w http.ResponseWriter, r *http.Request, res *resolved)
 		wrote := emit("workspace", a.ws.workspacePayload(ctx, res, state))
 		wrote = emit("stats", statsPayload(ctx, a.mgr, res.rt, state)) || wrote
 		wrote = emit("sessions", a.ws.sessionsPayload(ctx, res)) || wrote
-		// 通知 drain の一時失敗（DB エラー等）はこの tick を落とすだけで
-		// ストリーム自体は生かす — 次の tick で回復する。
+		// A transient failure draining notifications (a DB error, say) drops this
+		// tick only and leaves the stream up; the next tick recovers.
 		if p, aerr := a.notif.listPayload(ctx, res); aerr == nil {
 			wrote = emit("notifications", p) || wrote
 		}
-		// 作業項目（docs/log/80）。この payload は DB のキャッシュを読むだけで、
-		// プロバイダへの取得は refreshAsync が別 goroutine で回す —— tick が
-		// 外部 API の往復を待つと、この購読者の他の stream まで丸ごと止まる。
+		// Work items (docs/log/80). This payload only reads the DB cache; fetching
+		// from the provider is refreshAsync's job on its own goroutine. A tick that
+		// waited on an external API round trip would stall every other stream this
+		// subscriber has.
 		if p, aerr := a.wi.workItemsPayload(ctx, res, state); aerr == nil {
 			wrote = emit("workitems", p) || wrote
 		}

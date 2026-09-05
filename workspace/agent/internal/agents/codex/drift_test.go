@@ -1,25 +1,26 @@
 //go:build drift
 
-// codex CLI ドリフト検知（Tier 1）。**実 codex バイナリに当てる**テストで、通常の
-// `go test ./...` からは build tag `drift` で除外される（CI の専用ジョブと、codex が
-// PATH に居る手元だけで走る）。
+// codex CLI drift detection (Tier 1). These tests run against the real codex binary and are
+// excluded from a plain `go test ./...` by the build tag `drift` (they run in CI's dedicated
+// job, and locally when codex is on PATH).
 //
-// なぜ要るか: 既存の codex テストは全て fixture/mock で、codex 自身が何かを変えても
-// 緑のままになる。特に効くのが「**未知の -c キーは黙って無視される**」という実測挙動
-// （--strict-config を付けない本番 buildProgram では、feature キーが改名/削除されても
-// エラーにならず、質問あり状態が無言で壊れる）。claude の false-idle と同型の版数
-// ドリフトを、壊れてから気付くのではなく CI で先に捕まえるのがこの層の役目。
+// Why they are needed: every other codex test uses a fixture or a mock, so it stays green
+// even when codex itself changes something. What matters most is the measured behaviour that
+// an unknown -c key is silently ignored — the production buildProgram passes no
+// --strict-config, so a renamed or deleted feature key raises no error and the "question"
+// state breaks without a word. This layer exists to catch version drift of the same shape as
+// claude's false-idle in CI, instead of noticing it once it is already broken.
 //
-// 設計上の約束: **アサート対象の文字列を手で書き写さない**。検証する -c フラグ・
-// bypass フラグ・hook の入れ子は全て本番の buildProgram() の出力から取り出す。手写しの
-// 期待値だと「テストとテストが一致するだけ」の同語反復になり、既存 mock と同じ穴に
-// 落ちる（実際 driver_test の mock サーバはメソッド名を自前で持つため、codex が改名
-// しても検知できない）。
+// A design promise: never copy an asserted string by hand. The -c flags, the bypass flags and
+// the hook nesting under test all come out of production's own buildProgram(). A hand-copied
+// expectation is a tautology in which one test merely agrees with another, and it falls into
+// the same hole as the existing mocks (driver_test's mock server carries its own method
+// names, so a rename in codex goes undetected).
 //
-// 認証は不要: ここで検証する経路（features list / config 検証 / UserPromptSubmit の
-// 発火）は全て API 呼び出しの前に完結する。実測で UserPromptSubmit は 401 になる
-// ターンでも発火する。実ターンを要する Stop hook・rollout イベント・turn/* 通知は
-// この層では扱わない（Tier 2 / 要課金）。
+// No authentication is needed: every path checked here (features list, config validation, the
+// UserPromptSubmit firing) completes before any API call. Measured, UserPromptSubmit fires
+// even on a turn that ends in a 401. The Stop hook, rollout events and turn/* notifications
+// need a real turn and are out of scope for this layer (Tier 2, which costs money).
 package codex
 
 import (
@@ -148,7 +149,7 @@ func TestDriftCodexFeatureFlagsKnown(t *testing.T) {
 	st, ok := stage[want]
 	if !ok {
 		t.Fatalf("feature %q is gone from `codex features list` — our -c override is now a "+
-			"silent no-op and the TUI route's 質問あり state will never light. Features seen: %v",
+			"silent no-op and the TUI route's question state will never light. Features seen: %v",
 			want, keys(stage))
 	}
 	if st == "removed" {
@@ -466,7 +467,7 @@ func TestDriftCodexUserPromptSubmitHookFires(t *testing.T) {
 	}
 	if !sawHook {
 		t.Fatal("buildProgram no longer injects a hooks.UserPromptSubmit override — the TUI " +
-			"route has lost its 進行中 signal")
+			"route has lost its in-progress signal")
 	}
 	if len(bypassFlags(prog)) == 0 {
 		t.Fatal("buildProgram no longer passes --dangerously-… flags; hook trust would block the hooks")
@@ -510,7 +511,7 @@ func keys(m map[string]string) []string {
 	return out
 }
 
-// TestDriftCodexMemoriesFeatureExists guards the P4 有効化配線 (docs/log/39): our toggle
+// TestDriftCodexMemoriesFeatureExists guards the P4 enablement wiring (docs/log/39): our toggle
 // writes `features.memories` into config.toml, which only means something while codex
 // still ships that gate. A rename/removal upstream turns the Console toggle into a
 // switch that writes a dead key — the memories workspace never appears and the memory

@@ -1,8 +1,8 @@
 // workspace_sizing.go — what the three size axes (memory / CPU / disk) MEAN on the
-// runtime this deployment actually runs (ADR 0045 決定 21, docs/log/64 §64.27).
+// runtime this deployment actually runs (ADR 0045 decision 21, docs/log/64 §64.27).
 //
 // The STORED shape does not change: three independent numbers, runtime-neutral
-// (ADR 0044 決定 1). What changes is that the runtime now SAYS what a stored value
+// (ADR 0044 decision 1). What changes is that the runtime now SAYS what a stored value
 // becomes, so the Console can stop describing every deployment as if it were Fargate.
 //
 // It was describing Fargate everywhere, and on `ecs-ec2` two of the three axes were
@@ -11,7 +11,7 @@
 // PERSISTENT home volume while the hint under it said "the working disk is wiped when
 // the workspace stops". The memory field is subtler — the value is real, but it picks
 // a slot rather than capping anything, because an EC2 slot is used by one person and
-// the task reserves nothing (ADR 0045 決定 8).
+// the task reserves nothing (ADR 0045 decision 8).
 package main
 
 import (
@@ -21,9 +21,9 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// ⚠️ サイジングの語彙（runtime.MemMeaning* / DiskMeaning*）とその 3 型は adapters 側が
-// 宣言する。この file はかつて 4 つの factory 型に SizingProfile() メソッドを生やしており、
-// Go はそれを宣言元パッケージでしか許さない（internal/runtime/profiles.go）。
+// The sizing vocabulary (runtime.MemMeaning* / DiskMeaning*) and its three types are
+// declared alongside the adapters in internal/runtime/profiles.go: the SizingProfile()
+// methods hang off the factory types, and Go only allows that in their own package.
 //
 // sizingProfiler is the optional RuntimeFactory capability. Same shape as
 // WorkspaceImage(): adapters that have nothing special to say don't implement it.

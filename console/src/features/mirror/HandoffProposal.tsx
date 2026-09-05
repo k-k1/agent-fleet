@@ -6,7 +6,7 @@
 // Each card renders at the point in the conversation where it was proposed (see
 // handoffPlacement), NOT as the scroller's last child: a durable card pinned to the
 // bottom owns the mirror's landing position forever, and every message sent afterwards
-// looks lost behind it (2026-08-04 実障害). That is why the fetch lives in a hook the
+// looks lost behind it (observed in a real incident). That is why the fetch lives in a hook the
 // mirror owns — it needs created_at to place each card.
 import { useEffect, useState, type ReactNode } from "react";
 import { api, apiJSON, errText } from "../../core/api/client.ts";
@@ -26,7 +26,7 @@ export interface Proposal {
   created_at: number;
   /** Set once a session was really created from this proposal. The proposal is kept
    *  (re-reading a handoff is useful, and discarding it is the user's call), so this
-   *  only drives the 起動済み badge. */
+   *  only drives the "launched" badge. */
   launched_at?: number;
 }
 
@@ -68,9 +68,9 @@ export async function markHandoffLaunched(session: string, id: string): Promise<
 }
 
 /** The card's chrome, without any of the owner's controls: the same box, heading and
- *  起動済み badge for whoever is reading. The shared view (a recipient who can neither
- *  edit nor launch) renders it with only the read-only body — see docs/log/59 §3
- *  「能力が無い操作要素は描画しない」. */
+ *  "launched" badge for whoever is reading. The shared view (a recipient who can neither
+ *  edit nor launch) renders it with only the read-only body — see docs/log/59 §3, "do not
+ *  render controls for a capability the reader does not have". */
 export function HandoffCard({ intro, launched, children }: { intro: string; launched?: boolean; children: ReactNode }) {
   const tr = useT();
   return (
@@ -112,8 +112,9 @@ export function HandoffProposal({
   const tr = useT();
   const toast = useToast();
   const [draft, setDraft] = useState(proposal.prompt);
-  // 編集欄に載せる時点で作成 API の規則へ詰める。古い提案（80 文字の検査が入る前に
-  // 保存されたもの）はそのままでは保存も起動もできないので、「直せる形」で見せる。
+  // Clamp to the create API's rule as the title enters the edit field: an old proposal
+  // (saved before the 80-character check existed) can neither be saved nor launched as-is,
+  // so present it in a shape the reader can fix.
   const [title, setTitle] = useState(clampSessionTitle(proposal.title || ""));
   const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -125,11 +126,11 @@ export function HandoffProposal({
   const [newWorktree, setNewWorktree] = useState(false);
   const [offerOpen, setOfferOpen] = useState(false);
   const repos = useReposStore((s) => s.repos);
-  // メンバーへの引き継ぎ（docs/log/77）は**セッション単位**の事実で、提案 1 件ごとには紐付かない
-  // （未処理は 1 セッション 1 件）。だからカードには「このセッションは今こうなっている」を出す。
+  // A handoff to a member (docs/log/77) is a per-session fact, not a per-proposal one (at
+  // most one outstanding offer per session), so the card states the session's current state.
   const offer = useHandoffStore((st) => offerForSession(st.owned, session));
-  // 左ペインの共有セクションが定期取得しているが、そこが描かれていない配置でもカードの
-  // 状態が空にならないよう、開いた時点で 1 回だけ取り直す。
+  // The left pane's sharing section polls this, but refresh once on open so the card is not
+  // blank in a layout where that section is not rendered.
   useEffect(() => { void useHandoffStore.getState().refresh(); }, [session]);
 
   // Follow the server copy while not editing (the poll above refreshes it), so an edit
@@ -171,8 +172,9 @@ export function HandoffProposal({
     onChange(null);
   };
   const launch = async () => {
-    // ⚠️ 受領待ちのまま自分で起動すると、同じ仕事が 2 つ走る。撤回を**起動の前に条件付きで**
-    // 通し、負けた（＝相手が先に受け取っていた）ら起動をやめる（ADR 0057 決定 6）。
+    // Launching while an offer is still pending would run the same work twice. Withdraw
+    // conditionally *before* launching and abandon the launch if that race is lost (the
+    // recipient already accepted) — ADR 0057 decision 6.
     if (offer?.status === "pending") {
       if (!window.confirm(tr("handoff.withdraw_confirm", { who: offer.recipientUserKey }))) return;
       const d = await apiJSON(`api/session-handoff-offers/${encodeURIComponent(offer.id)}`, "DELETE");
@@ -282,8 +284,8 @@ export function HandoffProposal({
   );
 }
 
-/** 引き継ぎの状態チップ。通知は流れ物なので、**二重作業を防ぐ**のはこの行の役目である
- *  （docs/log/77 §77.10）。 */
+/** Status chip for the handoff. Notifications scroll away, so preventing duplicated work is
+ *  this line's job (docs/log/77 §77.10). */
 function HandoffOfferStatus({ offer }: { offer: ReturnType<typeof offerForSession> }) {
   const tr = useT();
   if (!offer) return null;

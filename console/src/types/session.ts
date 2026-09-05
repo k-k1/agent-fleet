@@ -22,9 +22,9 @@ export type SessionState = "" | "working" | "idle" | "question" | "plan" | "perm
 export interface Session {
   name: string; // auto-allocated unique slug ("s" + 6 base32 chars, e.g. "sukbq4s") — the session's immutable identity
   kind: SessionKind;
-  // Control route (docs/log/27): "managed" = 共有 runtime＋構造化 RPC（AF が唯一の
-  // writer・tmux pane なし）。absent/"tui" = 従来の tmux 内 TUI。pane の有無は kind
-  // でなくこの軸で決まる — 分岐は必ず isManagedSession() を介す。
+  // Control route (docs/log/27): "managed" = shared runtime + structured RPC (AF is the only
+  // writer, no tmux pane). absent/"tui" = the classic TUI inside tmux. Whether a pane exists
+  // is decided by this axis, not by kind — always branch through isManagedSession().
   driver?: "tui" | "managed" | string;
   title?: string; // user-supplied display title (optional, any kind); "" = auto
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
@@ -43,13 +43,14 @@ export interface Session {
   resumable?: boolean; // a stopped session whose dir still exists (false = archive only)
   backgroundBusy?: boolean; // idle by hook but a run_in_background task is still running
   backgroundBusyReason?: string;
-  // state === "limited"（利用上限のリセット待ち）のときだけ入る、予約済み自動再開の時刻
-  // （RFC3339）。空 = 再開は仕込まれていない（自動再開 OFF／時刻を決める材料が無い／
-  // モデル別上限）。チップに「いつ動くか」を出すためだけの表示用（docs/log/47 §4-9）。
+  // The reserved auto-resume instant (RFC3339), present only while state === "limited"
+  // (waiting for a usage limit to reset). Empty = no resume is scheduled (auto-resume off,
+  // nothing to derive a time from, or a per-model limit). Display-only, so the chip can say
+  // when the session moves again (docs/log/47 §4-9).
   rateLimitResumeAt?: string;
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
-  context?: SessionContextUsage; // claude context-window usage (Agent 側 session.ContextUsage)
+  context?: SessionContextUsage; // claude context-window usage (the Agent's session.ContextUsage)
   branch?: string; // git branch the working copy was on when the session started
   currentBranch?: string; // working copy's branch now, set only when it differs from `branch`
   branchDrift?: boolean; // true = the working tree was switched off `branch` under the session
@@ -61,14 +62,17 @@ export interface Session {
   exitReason?: "oom" | "killed" | "crashed" | string;
   exitCode?: number;
   exitSignal?: number;
-  // 畳まれたときに答えを待っていた対話の種類（docs/log/75）。停止中の行にだけ入り、
-  // 一覧のバッジを 停止中・質問あり にする。稼働中は state が同じことを語る。
+  // Which kind of interaction was still awaiting an answer when the session was stopped
+  // (docs/log/75). Only set on stopped rows, where it turns the list badge into "stopped,
+  // question pending". While the session is alive, `state` says the same thing.
   carried?: "question" | "plan" | "permission" | string;
-  // 削除ロック（docs/log/45）: true の間、削除系（削除＝メタ忘却・完全削除・停止中の
-  // 7日自動prune・作業コピー削除の巻き添え）を Agent が 403 で拒否する。停止/
-  // アーカイブは可逆なので通る。行の鍵バッジと削除項目の無効化はこれを見る。
+  // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
+  // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
+  // removal as a side effect of deleting the working copy). Stop and archive are reversible
+  // and still go through. The row's lock badge and the disabled delete items read this.
   locked?: boolean;
-  // 停止しないピン（docs/log/75）: この時刻までアイドル自動停止の対象外。過去/空 = 掛かっていない。
+  // Keep-awake pin (docs/log/75): exempt from the idle auto-stop until this instant.
+  // Past or empty = no pin is held.
   keepAwakeUntil?: string;
 }
 
@@ -76,15 +80,15 @@ export interface Session {
 // session.ContextUsage (internal/session/session.go). Field names deliberately match
 // the ContextBar props so the terminal/chat heads can spread it straight in.
 export interface SessionContextUsage {
-  read: number; // cache_read_input_tokens（再利用キャッシュ）
-  create: number; // cache_creation_input_tokens（新規キャッシュ）
-  fresh: number; // input_tokens（非キャッシュ）
+  read: number; // cache_read_input_tokens (cache reuse)
+  create: number; // cache_creation_input_tokens (new cache)
+  fresh: number; // input_tokens (uncached)
   model?: string;
 }
 
 // isManagedSession: a managed (paneless) session has no tmux pane — the chat
 // mirror is its primary UI, no terminal view exists, and its inputs go through
-// the semantic /turn・/respond ops instead of TUI key driving (docs/log/27 §10).
+// the semantic /turn and /respond ops instead of TUI key driving (docs/log/27 §10).
 export const isManagedSession = (s?: { driver?: string } | null): boolean =>
   s?.driver === "managed";
 
@@ -92,32 +96,36 @@ export const isManagedSession = (s?: { driver?: string } | null): boolean =>
 export interface ProviderConn {
   connected?: boolean;
   envs?: string[]; // opencode: configured provider API-key env names (auth.go)
-  // agy: host capability (docs/log/32 Track B — RDRAND ガード)。false = this host
+  // agy: host capability (docs/log/32 Track B — the RDRAND guard). false = this host
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
   reason?: string;
-  // チャット連携（discord / slack）: 通知マスタの表示形（notifyOff の反転）。
-  // false 明示のときだけ OFF — 未設定（旧接続）は ON 扱い。
+  // Chat integrations (discord / slack): the display form of the notification master switch
+  // (the inverse of notifyOff). OFF only when false is explicit — unset (an older
+  // connection) counts as ON.
   notify?: boolean;
-  // claude（docs/log/47 §4-8）: OAuth 資格情報の期限。`claude auth status` は期限を一切
-  // 返さないので、Agent が資格情報の refreshTokenExpiresAt を直接読んで載せている。
-  // expired = 更新トークンもアクセストークンも過ぎた（＝もうターンを開始できない）、
-  // days_left = 期限まで 3 日以内のときだけ入る予告。無ければ判断材料が無い
-  // （APIキー運転・未接続・形式変更）で、**期限切れではない**。
+  // claude (docs/log/47 §4-8): the OAuth credential's expiry. `claude auth status` never
+  // reports an expiry, so the Agent reads refreshTokenExpiresAt out of the credential itself
+  // and puts it here. expired = both the refresh and the access token are past (no turn can
+  // start any more); days_left = an advance warning, present only within 3 days of expiry.
+  // Their absence means there is nothing to judge from (API-key operation, not connected, a
+  // changed format) — it does NOT mean expired.
   expires_at?: string;
   expired?: boolean;
   days_left?: number;
-  // opencode: 選択中の課金経路（docs/log/54）。"free" は認証ゼロで起動できる枠なので、
-  // 起動ゲートはこれを見て未接続でも opencode を許す。"off" は逆に、鍵や OAuth が
-  // あっても起動ゲートを閉じる明示的な無効化（connected は false になる）。
+  // opencode: the selected billing route (docs/log/54). "free" is a tier that launches with
+  // no authentication at all, so the launch gate reads this and allows opencode even when
+  // not connected. "off" is the opposite: an explicit disable that closes the launch gate
+  // even when a key or OAuth exists (connected becomes false).
   usage?: "off" | "free" | "go" | "zen";
-  // opencode: APIキー（envs）と併存する opencode アカウント接続（docs/log/54）。
-  oauth?: boolean; // Console アカウントで接続済みか
-  oauth_label?: string; // 接続先の組織名（opencode が返すラベル）
-  oauth_known?: boolean; // false = serve daemon 未起動で未確認（未接続とは限らない）
-  oauth_disabled?: boolean; // マネージド opencode が無効でサインイン導線を出せない
-  // opencode: 利用枠ページ（opencode.ai/workspace/{id}/go）への導線。数値は API が無く
-  // 取り込めないので、ID と URL、上限に当たったときに観測できた枠情報だけを持つ。
+  // opencode: an opencode account connection, which coexists with API keys (envs) (docs/log/54).
+  oauth?: boolean; // connected through the Console account
+  oauth_label?: string; // organisation name of the connection (the label opencode returns)
+  oauth_known?: boolean; // false = unverified because the serve daemon is not up (not necessarily disconnected)
+  oauth_disabled?: boolean; // managed opencode is disabled, so no sign-in route can be offered
+  // opencode: a link to the usage page (opencode.ai/workspace/{id}/go). There is no API for
+  // the numbers, so this holds only the ID, the URL, and whatever quota information could be
+  // observed when a limit was hit.
   workspace_id?: string;
   workspace_id_source?: "manual" | "learned";
   workspace_url?: string;
@@ -129,16 +137,17 @@ export interface ProviderConn {
 export interface ConnectionsStatus {
   claude?: ProviderConn;
   codex?: ProviderConn;
-  // cursor（docs/log/40）: 専用ログインフロー型。connected = ~/.config/cursor/auth.json
-  // あり、supported=false = CLI 未焼き込みの旧イメージ。
+  // cursor (docs/log/40): its own login flow. connected = ~/.config/cursor/auth.json exists;
+  // supported=false = an older image without the CLI baked in.
   cursor?: ProviderConn;
   opencode?: ProviderConn;
   agy?: ProviderConn;
-  // copilot は GitHub 連携相乗り（docs/log/36）: connected = gh トークンあり、
-  // supported=false = CLI 未焼き込みの旧イメージ。
+  // copilot rides on the GitHub integration (docs/log/36): connected = a gh token exists;
+  // supported=false = an older image without the CLI baked in.
   copilot?: ProviderConn;
-  // kiro（docs/log/43）: device-flow ログイン型。connected = 資格情報あり（whoami exit 0）、
-  // supported=false = CLI 未導入（オンデマンド導入前・~855MB は per-user home 行き）。
+  // kiro (docs/log/43): device-flow login. connected = credentials exist (whoami exit 0);
+  // supported=false = the CLI is not installed (before on-demand install; ~855MB goes to the
+  // per-user home).
   kiro?: ProviderConn;
   [provider: string]: ProviderConn | undefined;
 }

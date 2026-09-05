@@ -1,4 +1,4 @@
-// Pure path helper for the 作業ディレクトリ field, kept out of SubdirPicker.tsx so the
+// Pure path helper for the working-directory field, kept out of SubdirPicker.tsx so the
 // node test project can import it without dragging in the api client (which touches
 // localStorage at module load).
 /** normalizeSubdir trims the decoration users paste in ("./x", "/x", "x/") down to the

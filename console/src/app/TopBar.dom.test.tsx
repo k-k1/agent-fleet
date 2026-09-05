@@ -1,13 +1,13 @@
-// アカウントメニュー最下部の「バージョン帯」（docs/log/35 §35.6.1 / version_info.go）。
-//
-// 押さえるのは 3 つ:
-//   ① イメージで配られるデプロイ（ECS）では、版だけでなく **どのイメージか** が出る。
-//      CP と WS は同じ ImageTag から作られる約束だが片方だけ巻き戻せるので別行にし、
-//      `:dev` は MUTABLE なので digest を添える — その並びがそのまま出ること。
-//   ② それ以外のデプロイでは CP がキーごと落とすので、行が **消える**こと。空の
-//      「イメージ」行を出すのは、何も指していない情報を出す嘘に近い。
-//   ③ メニューを開くまで取りに行かないこと。全タブ・全ユーザーが払う起動時 fetch を
-//      増やさないための遅延取得なので、閉じている間の呼び出しは 0 でなければならない。
+// The version zone at the bottom of the account menu (docs/log/35 §35.6.1 /
+// version_info.go). Three things are pinned here:
+//   1. On a deployment where code ships as an image (ECS), the zone answers not only
+//      "which version" but "which image". The CP and the workspace are built from one
+//      ImageTag by convention, but either can be rolled back alone, so they get separate
+//      rows; `:dev` is mutable, so a digest rides along. That layout must come out as is.
+//   2. Elsewhere the CP omits the keys entirely, so the rows must disappear. An empty
+//      "image" row would report something that points at nothing.
+//   3. Nothing is fetched until the menu is opened. The lazy fetch exists so no start-up
+//      request is added for every tab and every user, so calls while closed must be 0.
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -26,11 +26,12 @@ vi.mock("../core/api/client.ts", () => ({
   setUser: () => {},
   isTransientErr: () => false,
 }));
-// 通知センターは別系統（自前で購読する）。ここでは版の行だけを見たいので器に落とす。
+// The notification center subscribes on its own; stub it out so only the version rows
+// are under test.
 vi.mock("../features/notifications/NotificationCenter.tsx", () => ({
   NotificationCenter: () => null,
 }));
-// native の自己更新行は ECS には無い（CP がルートを登録しない = null）。
+// The native self-update row does not exist on ECS (the CP registers no route = null).
 vi.mock("../features/settings/hostUpdate.ts", () => ({ useHostUpdate: () => null }));
 
 import { TopBar } from "./TopBar.tsx";
@@ -87,7 +88,7 @@ afterEach(() => {
 });
 
 describe("TopBar version zone", () => {
-  it("メニューを開くまで /api/version を取りに行かない", async () => {
+  it("does not fetch /api/version until the menu is opened", async () => {
     api.mockResolvedValue(ECS_PAYLOAD);
     await mount();
     expect(api).not.toHaveBeenCalled();
@@ -96,33 +97,33 @@ describe("TopBar version zone", () => {
     expect(api).toHaveBeenCalledWith("api/version");
   });
 
-  it("ECS では版・CP イメージ・WS イメージ・ビルドが並ぶ", async () => {
+  it("lists version, CP image, workspace image and build on ECS", async () => {
     api.mockResolvedValue(ECS_PAYLOAD);
     await mount();
     await openMenu();
 
     const rows = versionRows();
     expect(rows.some((r) => r.includes("9.9.9"))).toBe(true);
-    // タグだけでは実体を特定できないので digest の頭が添う。
+    // A tag alone does not identify the artifact, so the digest prefix rides along.
     expect(rows.some((r) => r.includes("af-control-plane:9.9.9") && r.includes("cafe123"))).toBe(true);
     expect(rows.some((r) => r.includes("af-workspace:9.9.9"))).toBe(true);
-    // digest は 7 桁に切って出す（全長はツールチップ側）。
+    // The digest is shown cut to 7 chars; the full value lives in the tooltip.
     expect(text()).not.toContain("cafe123456789");
     expect(host!.querySelector(".acct-build[title='sha256:cafe123456789']")).not.toBeNull();
   });
 
-  it("イメージの無いデプロイではイメージ行が出ない", async () => {
+  it("shows no image rows on a deployment without images", async () => {
     api.mockResolvedValue({ version: "9.9.9", runtime: "local" });
     await mount();
     await openMenu();
 
     expect(text()).not.toContain("af-workspace");
     expect(text()).not.toContain("af-control-plane");
-    // ビルド刻印（FE バンドル）は元から常時出る行なので残る。
+    // The build stamp (the frontend bundle) is always shown, so it stays.
     expect(versionRows().length).toBeGreaterThan(0);
   });
 
-  it("コピーは版とイメージとビルドを 1 ブロックで書き出す", async () => {
+  it("copies version, images and build as one block", async () => {
     api.mockResolvedValue(ECS_PAYLOAD);
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });

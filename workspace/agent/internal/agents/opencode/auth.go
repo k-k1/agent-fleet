@@ -22,22 +22,25 @@ import (
 // arbitrary value can't be smuggled into the container environment.
 var envNameRe = regexp.MustCompile(`^[A-Z][A-Z0-9_]{1,63}$`)
 
-// opencodeKeyEnv is the one env var that pays opencode.ai（Zen も Go もこれ一本）。
+// opencodeKeyEnv is the one env var that pays opencode.ai — this single one for both Zen
+// and Go.
 const opencodeKeyEnv = "OPENCODE_API_KEY"
 
-// UsagePref reports the selected billing route（ui-prefs opencodeCatalog）。Agent 本体が
-// ui-prefs を読むので、その読み手を注入してもらう（internal パッケージから main の
-// 設定ファイルを触らないため）。未設定なら UsageOff＝明示的に選ぶまで無効。
+// UsagePref reports the selected billing route (ui-prefs opencodeCatalog). The Agent
+// proper is what reads ui-prefs, so the reader is injected rather than having an internal
+// package touch main's settings file. Unset means UsageOff: disabled until explicitly
+// chosen.
 var UsagePref = func() string { return UsageOff }
 
 // env loads the stored provider keys as "NAME=value" entries for the
 // session launcher to pass via `docker`/tmux `-e`. Order is stable (sorted).
 //
-// 無料枠（UsageFree）では OPENCODE_API_KEY を落とす — 「無料枠で使う」と決めた
-// ワークスペースが、鍵が残っているというだけで課金経路に乗ってしまわないように。
-// 他プロバイダの鍵（ANTHROPIC_API_KEY など）は利用者自身の課金なので触らない。
-// UsageOff は全鍵を落とす（defense in depth — Connected() が既に呼び出し元を止める
-// はずだが、万一 env() 単体が呼ばれても課金/外部送信経路を残さない）。
+// On the free tier (UsageFree) OPENCODE_API_KEY is dropped, so that a workspace which
+// chose "use the free tier" cannot end up on a billed route merely because a key is still
+// stored. Other providers' keys (ANTHROPIC_API_KEY and the like) are the user's own
+// billing and are left alone. UsageOff drops every key — defense in depth: Connected()
+// should already have stopped the caller, but if env() is reached on its own it must
+// leave no billing or outbound path behind.
 func env() []string {
 	if UsagePref() == UsageOff {
 		return nil
@@ -77,7 +80,7 @@ func Available() bool {
 
 // connected is the shared "is opencode actually usable" formula: stored provider
 // key(s), a completed account OAuth login, or the user's explicit opt-in to the
-// zero-auth free tier (UsageFree, set in 設定 > エージェント > opencode「使う枠」—
+// zero-auth free tier (UsageFree, set under Settings > Agents > opencode "Route" —
 // default is UsageOff, so a fresh workspace is NOT connected until the user
 // configures something). Takes the already-loaded secrets/oauth state so callers
 // that already have them (Status) don't reload.
@@ -111,9 +114,9 @@ func Connected() bool {
 
 // Status reports which provider env vars are configured (names only,
 // never the keys) for the Console Connections panel (GET /connections), plus the
-// state of the second, independent path: the opencode Console account
-// （OAuth device flow — oauth.go）。connected は「opencode を認証済みで使えるか」
-// なので、どちらの経路でも真になる（registry.ts の kind ゲートがこれを見る）。
+// state of the second, independent path: the opencode Console account (OAuth device
+// flow — oauth.go). connected answers "is opencode authenticated and usable", so either
+// route makes it true; registry.ts's kind gate reads it.
 func Status(s *secrets.Data) map[string]any {
 	names := []string{}
 	for k := range s.Opencode {
@@ -123,21 +126,22 @@ func Status(s *secrets.Data) map[string]any {
 	oa := oauthStatus()
 	usage := UsagePref()
 	m := map[string]any{
-		// connected は「この kind を起動できるか」の判定材料（registry.ts・
-		// headlessAgentAvailable 両方 — Connected と同じ式を共有）。
+		// connected is what decides whether this kind can be launched, for both
+		// registry.ts and headlessAgentAvailable — the same formula Connected uses.
 		"connected":      connected(s, oa),
 		"envs":           names,
 		"usage":          usage,
-		"supported":      Available(), // バイナリ不在（旧イメージ）なら無料枠でも起動できない
+		"supported":      Available(), // no binary (old image) means not even the free tier can launch
 		"oauth":          oa.connected,
-		"oauth_known":    oa.known, // false = daemon 未起動で未確認（未接続とは限らない）
+		"oauth_known":    oa.known, // false = daemon not started, so unverified (not necessarily disconnected)
 		"oauth_disabled": Serve().Disabled(),
 	}
 	if oa.label != "" {
-		m["oauth_label"] = oa.label // Console org 名（実測の label 解決）
+		m["oauth_label"] = oa.label // the Console org name (label resolution, measured)
 	}
-	// 利用枠の導線（docs/log/54 §54.7）: 数値は取り込めないので、ID とページ URL、および
-	// 上限に当たったときに観測できた枠情報だけを返す。
+	// The route to the usage page (docs/log/54 §54.7): the numbers cannot be fetched, so
+	// this returns only the ID, the page URL, and whatever quota information was
+	// observable when a limit was hit.
 	if id, src := WorkspaceID(); id != "" {
 		m["workspace_id"] = id
 		m["workspace_id_source"] = src
@@ -190,12 +194,13 @@ func HandlePutConn(w http.ResponseWriter, r *http.Request) {
 
 // applyKeyChange propagates a stored-key change to the places that cached it.
 //
-// 鍵は起動時に env として注入されるので（docs/log/27 §7）、**保存しただけでは動いている
-// serve daemon には効かない**。実測: Console でキーを消しても daemon は自分の環境に
-// 持ったままで、connections[] に env 接続を出し続け、そのキーで課金され得るモデルも
-// 一覧に残る（Agent を再起動しても Ensure は生きている daemon を adopt するので直らない）。
-// 反映パスは generation++ ＋ drain ＝ Supervisor.Restart。drain は最大60秒かかるので
-// ハンドラは待たず、別ゴルーチンに委ねる。
+// Keys are injected as env at launch (docs/log/27 §7), so storing one has NO effect on a
+// serve daemon that is already running. Measured: deleting the key in the Console leaves
+// the daemon holding it in its own environment, still reporting the env connection in
+// connections[] and still listing the models that key can be billed for (restarting the
+// Agent does not help either, since Ensure adopts the live daemon). The path that does
+// apply it is generation++ plus a drain, i.e. Supervisor.Restart. The drain can take up
+// to 60 seconds, so the handler does not wait and hands it to a separate goroutine.
 func applyKeyChange(reason string) {
 	InvalidateModels()
 	go restartServe("opencode " + reason)
@@ -204,8 +209,9 @@ func applyKeyChange(reason string) {
 // restartServe is the seam tests replace (a real Restart drains live turns).
 var restartServe = func(reason string) { Serve().Restart(reason) }
 
-// ApplyUsageChange is applyKeyChange for a billing-route switch: 無料枠に入る/出ると
-// 注入する OPENCODE_API_KEY の有無が変わるので、鍵の変更と同じ反映が要る。
+// ApplyUsageChange is applyKeyChange for a billing-route switch: entering or leaving the
+// free tier changes whether OPENCODE_API_KEY is injected, so it needs the same
+// propagation as a key change.
 func ApplyUsageChange(reason string) { applyKeyChange("usage changed: " + reason) }
 
 // HandleDeleteConn removes a stored provider key

@@ -6,7 +6,7 @@ import "testing"
 // only dependable parts of that line are the gerund + "…" and the parenthesised elapsed
 // timer: "esc to interrupt" rotates out for a Tip, and the "· ↓ <n> tokens" segment shows
 // only once output tokens have accrued. Keying on tokens (as we did) false-idles every
-// turn that is still thinking — 入力待ち with no 停止 button while claude is plainly working.
+// turn that is still thinking — 入力待ち with no stop button while claude is plainly working.
 func TestSpinnerActive(t *testing.T) {
 	busy := []string{
 		"✽ Zigzagging… (17m 38s · ↓ 57.1k tokens · thought for 2s)",
@@ -31,12 +31,12 @@ func TestSpinnerActive(t *testing.T) {
 		"· Tomfoolering… (running stop hook · 6s · ↓ 279 tokens)",
 		// A todo in progress replaces the whimsical single-word gerund with that item's
 		// multi-word activeForm — real capture (claude_srtaoqr). The old [^\s(]* stopped at
-		// the first space and read this idle: 入力待ち with no 停止 button while plainly working.
+		// the first space and read this idle: 入力待ち with no stop button while plainly working.
 		"✢ Adding regression tests… (13m 31s · ↓ 48.5k tokens)",
 		"✳ Verifying with real Chromium… (2m 3s)",
 		// A todo whose activeForm is Japanese heads the phrase with a CJK char, not an
 		// ASCII capital — real capture (claude_sdfruv7). The [A-Z]-only head read this idle:
-		// 進行中 session badged 入力待ち with no 停止 button while plainly working.
+		// 進行中 session badged 入力待ち with no stop button while plainly working.
 		"· 検証ハーネスを作成中… (12m 2s · ↓ 36.4k tokens)",
 		"✳ テストを実行中… (2m 3s · thinking with high effort)",
 		// An activeForm is arbitrary user text, so it can contain "(" — and the glyph is

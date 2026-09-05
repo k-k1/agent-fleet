@@ -1,28 +1,27 @@
-// テナントのメンバー面（名簿・状態チップ・追加）。メンバー詳細は 1 人ぶんで 650 行
-// あり、名簿とは読む理由が違うので tenantMemberDetail.tsx に分けてある。
+// The tenant members view (roster, state chips, add). The per-member detail is read for a
+// different reason and lives in tenantMemberDetail.tsx.
 //
-// AdminTab.tsx から純粋移動した。docs/log/61 §61.10.6 で offboarding の一式
-// （メンバーを外す → ワークスペースを止める → home を掃除）は tenant_admin のもの
-// と決まった（決定 26）のに、実装は管理モーダルの中にしか無かった。
+// The offboarding set (remove the member, stop the workspace, clean home) belongs to the
+// tenant_admin (docs/log/61 §61.10.6, decision 26), so it must be reachable from here and not
+// only from the admin modal.
 //
-// ★ 出し分けの isSuper は「デプロイ管理者にしか意味が無い操作」（ロールの付与・剥奪）
-// を出すかどうかだけ。付与の PUT /api/admin/membership-role は withSuperAdmin 固定で、
-// ここでボタンを隠すのは案内でしかない。
+// isSuper only decides whether to show the operations that mean something to a deployment
+// admin alone (granting and revoking the role). PUT /api/admin/membership-role is fixed at
+// withSuperAdmin, so hiding the button here is presentation only.
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { api, rawJSON } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useToast } from "../../../ui/ToastProvider.tsx";
-// メンバー詳細のクラウド費用（docs/log/67 §67.15）。請求の無いデプロイでは部品自身が
-// 何も描かないので、ここで出し分けは持たない。
+// Cloud cost in the member detail (docs/log/67 §67.15). On a deployment without billing the
+// component renders nothing itself, so no condition is kept here.
 import { useT } from "../../../lib/i18n/index.ts";
 import { remainingShort } from "../../../lib/sessionview.ts";
 import { fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
 import type { Member, MemberIdle, WsSizing } from "../parts/adminShared.ts";
 
-// MembersPanel — 名簿と「メンバー追加」。TenantView の中に直接書かれていたものを、
-// テナント設定モーダルからも同じ実装を差せるように 1 つの部品にした（描画も
-// 読み込みも元のまま）。
+// MembersPanel — the roster and "add member", as one component so the tenant settings modal
+// and the admin modal use the same implementation.
 export function MembersPanel({
   slug,
   isSuper,
@@ -35,7 +34,7 @@ export function MembersPanel({
   const tr = useT();
   const [members, setMembers] = useState<Member[] | null>(null);
   // The roster shows what each member is sized to, and that only reads correctly once
-  // the runtime has said what the numbers MEAN (ADR 0045 決定 21). Same fetch the member
+  // the runtime has said what the numbers mean (ADR 0045 decision 21). Same fetch the member
   // detail does — it is a small, cacheable, identity-agnostic document.
   const [sizing, setSizing] = useState<WsSizing>(WS_SIZING_FALLBACK);
   useEffect(() => {
@@ -95,20 +94,20 @@ export function MembersPanel({
   );
 }
 
-// MemberIdleChip — 自動停止の見通し（docs/log/75 P4）。
+// MemberIdleChip — the auto-stop outlook (docs/log/75 P4).
 //
-// なぜ名簿に出すのか: 自動停止が効かないとき、これまで運用者に見えるものが何も無かった。
-// reaper はログを出すだけで、調べる唯一の手段が他人のコンテナへ docker exec して status
-// ファイルを読むことだった。止まる予定と「止めているもの」は同じ場所に出す — 「あと 20 分」
-// と「セッション s5 が実行中だから止まらない」は同じ問いへの答えで、別々に置くと
-// 「予定が出ていない＝壊れている」と読まれる。
+// It is on the roster because when auto-stop does not fire, an operator otherwise sees nothing:
+// the reaper only logs, and the only way to investigate was to docker exec into someone else's
+// container and read the status file. The scheduled stop and whatever is holding it open belong
+// in the same place — "20 minutes left" and "session s5 is running so it will not stop" answer
+// the same question, and split apart, a missing schedule reads as breakage.
 //
-// ⚠️ ここで再計算はしない。自前で導出すると reaper が実際に見ているもの（在席・ピン・
-// 背景作業・共有ウォーターマーク）とズレて、原因調査のための画面が別の答えを出す。
-// 出すのは reaper が最後に観測した値そのもの。
+// Never recompute here. A local derivation would drift from what the reaper actually looks at
+// (presence, pins, background work, the share watermark), and the screen used to diagnose the
+// problem would give a different answer. Show the reaper's last observation verbatim.
 function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) {
   const tr = useT();
-  // 稼働していない Workspace に停止予定は無い（CP も running のときしか載せない）。
+  // A workspace that is not running has no scheduled stop (the CP only sends one for running).
   if (state !== "running" || !idle) return null;
   if (!idle.enabled) {
     return <span className="mr-idle muted" title={tr("admin.idle_off_hint")}>{tr("admin.idle_off")}</span>;
@@ -126,7 +125,8 @@ function MemberIdleChip({ idle, state }: { idle?: MemberIdle; state?: string }) 
             : h.kind === "repojob"
               ? tr("admin.idle_hold_repojob")
               : tr("admin.idle_hold_watching");
-    // 2 件目以降は件数だけ（名簿の行は 1 行に収める）。詳細はメンバー詳細で出す。
+    // Beyond the first, only a count: a roster row must stay one line. Details are in the
+    // member detail view.
     const more = holders.length > 1 ? tr("admin.idle_hold_more", { n: String(holders.length - 1) }) : "";
     return (
       <span className="mr-idle hold" title={holdersTitle(holders, tr)}>
@@ -147,11 +147,11 @@ function holdersTitle(holders: NonNullable<MemberIdle["holders"]>, tr: (k: never
   return holders.map((h) => (h.session ? `${h.kind}: ${h.session}` : h.kind)).join(" / ");
 }
 
-// MemberIdleDetail — メンバー詳細の「自動停止の見通し」。
+// MemberIdleDetail — the auto-stop outlook in the member detail.
 //
-// 名簿のチップ（MemberIdleChip）が 1 行に畳んでいるものを開いて出すだけで、判定は
-// どちらも reaper の観測そのもの。**観測時刻を必ず添える**: スイープ間隔（既定 60 秒）
-// ぶん古いので、秒単位で断言させると「画面ではまだ 3 分あったのに止まった」になる。
+// The same reaper observation as MemberIdleChip, unfolded from one line. Always show the
+// observation time: it lags by up to one sweep interval (60s by default), and stating it to the
+// second produces "the screen still said 3 minutes and it stopped".
 export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: string }) {
   const tr = useT();
   if (state !== "running" || !idle) return null;
@@ -195,17 +195,17 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
 
 // MemberSizeChips — what this member is sized to, on the roster row.
 //
-// ★ It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
+// It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
 // are different statements. On ecs-ec2 the memory figure is a requirement that picks a
 // machine and the person then gets the whole thing, so "m6i.large · 2 vCPU / 8 GiB" is
 // the true answer and "8192 MB" is a half-truth. On docker/Fargate the number IS the
 // cap, and there is no box to name.
 //
-// ⚠️ The CPU chip follows the same rule the member detail uses: when cpu_effective is
+// The CPU chip follows the same rule the member detail uses: when cpu_effective is
 // false the axis never reaches the backend, so showing it would put a number on screen
 // that does nothing. It is omitted rather than greyed out.
 //
-// ⚠️ Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
+// Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
 // people to stop reading the column.
 function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
   const tr = useT();

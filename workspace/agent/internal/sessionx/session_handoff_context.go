@@ -1,17 +1,20 @@
 package sessionx
 
-// 引き継ぎの座標（docs/log/77 §77.5）。
+// The coordinates of a handoff (docs/log/77 §77.5).
 //
-// **サーバが自分で調べる**ためのエンドポイントである。引き継ぎ先は別メンバーの Workspace で、
-// そこから所有者のディスクは見えない。だから「どの remote の・どのブランチの・どの commit を
-// 引き継ぐのか」は、モデルにも Console にも書かせず、ここが git に聞いて答える。
+// This endpoint exists so the SERVER finds them out for itself. The recipient is another
+// member's Workspace, from which the owner's disk is invisible. So which remote, which
+// branch and which commit is being handed over is not written by the model or by the
+// Console: this asks git and answers.
 //
-// **remote URL をモデル入力にしない理由**（ADR 0057 決定5）: Console はこの値をクローン導線に
-// 変える。モデルが書ける構造化フィールドにすると、汚染されたリポジトリを読ませるだけで
-// 相手に任意の remote をクローンさせられる形になる。
+// Why the remote URL is not a model input (ADR 0057 decision 5): the Console turns this
+// value into a clone action. As a structured field the model can write, merely getting it
+// to read a poisoned repository would be enough to make the recipient clone an arbitrary
+// remote.
 //
-// 返す `blocked` は**引き継ぎを止めるべきか**の判断そのものを載せる。呼び出し側（CP）が
-// ahead や upstream の有無から組み立て直すと、条件が 2 か所に分かれて必ずずれる。
+// The returned `blocked` carries the decision of whether to stop the handoff, not the raw
+// facts. If the caller (CP) rebuilt it from ahead and the presence of an upstream, the
+// condition would live in two places and would drift.
 
 import (
 	"net/http"
@@ -24,31 +27,35 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// handoffContext はセッションの作業コピーの「引き継げる状態か」を 1 つに畳んだもの。
+// handoffContext folds "is this session's working copy in a state that can be handed
+// over" into one answer.
 type handoffContext struct {
 	Repo          string `json:"repo"`
 	Dir           string `json:"dir"`
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
-	// Vcs は git / svn / ""（作業コピーではない）。git 以外は push の概念が違うので
-	// ゲートを掛けない（Blocked は空になる）。
+	// Vcs is git, svn, or "" (not a working copy). Anything but git has a different
+	// notion of push, so no gate is applied there and Blocked stays empty.
 	Vcs     string `json:"vcs"`
 	Branch  string `json:"branch,omitempty"`
 	Remote  string `json:"remote,omitempty"`
 	HeadSha string `json:"headSha,omitempty"`
 	Ahead   int    `json:"ahead"`
 	Dirty   bool   `json:"dirty"`
-	// Detached / NoUpstream は Ahead では表せない「push 済みか判定できない」状態。
-	// ⚠️ upstream が無いブランチの Ahead は 0 になる（`# branch.ab` 行自体が出ない）ので、
-	// ahead>0 だけを見るゲートは**一度も push していないブランチを素通しする**。
+	// Detached / NoUpstream are the "cannot tell whether it is pushed" states that Ahead
+	// cannot express. A branch with no upstream reports Ahead 0 (the `# branch.ab` line
+	// is absent entirely), so a gate that looks only at ahead>0 lets a branch that was
+	// never pushed straight through.
 	Detached   bool `json:"detached,omitempty"`
 	NoUpstream bool `json:"noUpstream,omitempty"`
-	// Blocked は引き継ぎを止める理由（"" = 止めない）。Dirty は止めず Warning に載せる。
+	// Blocked is the reason to stop the handoff ("" = do not stop). Dirty does not stop
+	// it; it goes in Warning.
 	Blocked string `json:"blocked,omitempty"`
 	Warning string `json:"warning,omitempty"`
 }
 
-// handoffBlockUnpushed / handoffBlockNoUpstream / handoffBlockDetached / handoffWarnDirty は
-// CP と Console が突き合わせる機械トークン（表示文言は Console 側の i18n）。
+// handoffBlockUnpushed / handoffBlockNoUpstream / handoffBlockDetached / handoffWarnDirty
+// are the machine tokens CP and Console match on; the displayed wording is the Console's
+// i18n.
 const (
 	handoffBlockUnpushed   = "unpushed_commits"
 	handoffBlockNoUpstream = "no_upstream"
@@ -56,15 +63,17 @@ const (
 	handoffWarnDirty       = "uncommitted_changes"
 )
 
-// sanitizeRemoteURL は remote URL から資格情報を落とす。`https://x-access-token:ghp_…@host/…`
-// のような URL がそのまま offer に載って別メンバーへ渡るのを防ぐ。SSH 形式は既存の
-// sshToHTTPS で HTTPS へ寄せてから同じ処理に通す（比較にも表示にも同じ形が要る）。
+// sanitizeRemoteURL strips credentials out of a remote URL, so a URL like
+// `https://x-access-token:ghp_…@host/…` never rides along in an offer to another member.
+// The SSH form goes through the existing sshToHTTPS first and then the same path, since
+// comparison and display both need one shape.
 func sanitizeRemoteURL(raw string) string {
 	s := gitx.SSHToHTTPS(strings.TrimSpace(raw))
 	u, err := url.Parse(s)
 	if err != nil || u.Host == "" {
-		// パースできない形（ローカルパス等）は host を持たない。資格情報を含み得ないので
-		// そのまま返すが、`@` を含むなら安全側に倒して落とす。
+		// A form that does not parse (a local path, say) has no host and cannot carry
+		// credentials, so it is returned as is — but anything containing `@` is dropped,
+		// erring on the safe side.
 		if strings.Contains(s, "@") {
 			return ""
 		}
@@ -74,7 +83,8 @@ func sanitizeRemoteURL(raw string) string {
 	return u.String()
 }
 
-// gitHeadSha は HEAD の commit id。取れなければ空（履歴の無い作業コピー）。
+// gitHeadSha is HEAD's commit id, or "" when there is none (a working copy with no
+// history).
 func gitHeadSha(dir string) string {
 	out, err := gitx.Run(dir, "rev-parse", "HEAD")
 	if err != nil {
@@ -83,14 +93,14 @@ func gitHeadSha(dir string) string {
 	return strings.TrimSpace(out)
 }
 
-// gitHasUpstream は現在のブランチに upstream が設定されているか。
+// gitHasUpstream reports whether the current branch has an upstream configured.
 func gitHasUpstream(dir string) bool {
 	_, err := gitx.Run(dir, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
 	return err == nil
 }
 
-// buildHandoffContext は dir の状態を 1 つに畳む。dir が git 作業コピーでなければ
-// Vcs を空（または svn）にして、ゲート判定を行わない。
+// buildHandoffContext folds dir's state into one answer. When dir is not a git working
+// copy, Vcs is left empty (or set to svn) and no gate is evaluated.
 func buildHandoffContext(dir string) handoffContext {
 	c := handoffContext{Repo: filepath.Base(dir), Dir: dir, WorkingCopyID: gitx.WorkingCopyID(dir)}
 	switch {
@@ -104,7 +114,8 @@ func buildHandoffContext(dir string) handoffContext {
 	}
 	st, err := gitx.GitStatus(dir)
 	if err != nil {
-		// git が答えられないなら「引き継げる」と言ってはいけない。判定不能は止める側へ倒す。
+		// If git cannot answer, never claim the work can be handed over: undecidable
+		// falls on the blocking side.
 		c.Blocked = handoffBlockNoUpstream
 		return c
 	}

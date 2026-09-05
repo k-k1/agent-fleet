@@ -19,8 +19,8 @@ const sixA4 = Array.from({ length: 6 }, () => A4);
 
 describe("fitScale", () => {
   it("fits the widest page, not the first one", () => {
-    // 横向きが 1 枚混ざっただけでページごとに倍率が変われば、読んでいる最中に
-    // 段組みが飛ぶ。合わせる先は常にいちばん広いページ。
+    // If a single landscape page made the zoom differ per page, the column would jump
+    // mid-read. Always fit to the widest page.
     const mixed = [A4, LANDSCAPE, A4];
     expect(fitScale(mixed, 942, 12)).toBeCloseTo(918 / 842, 6);
   });
@@ -28,7 +28,7 @@ describe("fitScale", () => {
   it("stays at 1 before the container has been measured", () => {
     expect(fitScale(sixA4, 0, 12)).toBe(1);
     expect(fitScale([], 900, 12)).toBe(1);
-    // 余白のほうが広い（極端に細いペイン）ときも倍率を壊さない
+    // Padding wider than the pane (an extremely narrow pane) must not break the zoom
     expect(fitScale(sixA4, 20, 12)).toBe(1);
   });
 });
@@ -51,13 +51,13 @@ describe("visibleRange", () => {
   const layout = layoutPages(sixA4, 1);
 
   it("returns only the pages near the viewport", () => {
-    // 先読みは画面の 0.5 倍。上端にいるなら 1 ページ目とその次まで。
+    // Overscan is 0.5 viewports, so at the top that is page 1 and the one after it.
     expect(visibleRange(layout, 0, 800, 0.5)).toEqual({ start: 0, end: 2 });
   });
 
   it("follows the scroll position, and pre-renders the page above", () => {
-    // 先読みは上下の両方向。上へ戻したときに白いページが出ないよう、画面の上端より
-    // 手前のページも範囲に入る（4 ページ目の頭にいるなら 3 ページ目から）。
+    // Overscan runs both ways: the page above the viewport top is in range too, so
+    // scrolling back up never shows a blank page (at the head of page 4, start at page 3).
     const range = visibleRange(layout, (842 + PAGE_GAP) * 3, 800, 0.5);
     expect(range.start).toBe(2);
     expect(range.end).toBeGreaterThan(3);
@@ -73,8 +73,8 @@ describe("currentPage", () => {
   const layout = layoutPages(sixA4, 1);
 
   it("names the page under the middle of the pane, not under its top edge", () => {
-    // 上端で決めると、ページの境目が画面上端に来た瞬間に、まだ数ピクセルしか
-    // 見えていない次ページへ番号が飛ぶ。
+    // Deciding by the top edge would jump the number to the next page the moment a page
+    // boundary reaches the viewport top, with only a few pixels of it visible.
     const boundary = 842 + PAGE_GAP;
     expect(currentPage(layout, boundary - 10, 800)).toBe(2);
     expect(currentPage(layout, 0, 800)).toBe(1);
@@ -94,7 +94,7 @@ describe("scroll anchor", () => {
 
     const after = layoutPages(sixA4, 2);
     const restored = scrollTopForAnchor(after, anchor);
-    // 同じページの、同じ割合の位置に戻る（拡大したぶん絶対値は動く）。
+    // Back to the same fraction of the same page; the absolute value moves with the zoom.
     expect(currentPage(after, restored, 800)).toBe(4);
     expect(restored - after.tops[3]).toBeCloseTo(anchor.fraction * (after.sizes[3].h + PAGE_GAP), 0);
   });
@@ -127,7 +127,8 @@ describe("canvasPixelRatio", () => {
   });
 
   it("caps the bitmap of a hugely zoomed page", () => {
-    // 4 倍に拡大した A4 を Retina で持つと 3000 万画素になり、タブごと落ちる。
+    // An A4 page at 4x zoom on a Retina display is 30 million pixels and takes the tab
+    // down with it.
     const ratio = canvasPixelRatio(595 * 4, 842 * 4, 3);
     expect(ratio).toBeLessThan(3);
     expect(595 * 4 * 842 * 4 * ratio * ratio).toBeLessThanOrEqual(MAX_CANVAS_PIXELS + 1);

@@ -9,9 +9,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// GracefulStop の tmux 側 plumbing: /exit（の行）を受けて pane が自死したら
-// true。本物の agy は使わず、行を読んで /exit で終了する fake TUI で
-// send-keys（C-u → literal → Enter）と HasSession ポーリングを検証する。
+// The tmux-side plumbing of GracefulStop: true once the pane exits on its own after receiving
+// the /exit line. Instead of the real agy this drives a fake TUI that reads lines and quits on
+// /exit, exercising send-keys (C-u -> literal -> Enter) and the HasSession polling.
 func TestGracefulStopEndsPane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")
@@ -31,8 +31,8 @@ func TestGracefulStopEndsPane(t *testing.T) {
 	}
 }
 
-// pane が /exit に応じない（busy 相当）場合は猶予後 false — 呼び出し側が
-// kill-session にフォールバックする契約。
+// A pane that does not act on /exit (the busy case) returns false after the grace period; the
+// contract is that the caller then falls back to kill-session.
 func TestGracefulStopTimesOutOnStuckPane(t *testing.T) {
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not on PATH")

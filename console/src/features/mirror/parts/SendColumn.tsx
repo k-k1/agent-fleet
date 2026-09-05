@@ -17,7 +17,7 @@ export function SendColumn({
 }: {
   showMode: boolean;
   isPlan: boolean;
-  /** 端末が名乗ったモード名。まだ来ていなければ「…」。 */
+  /** The mode name the terminal reported, or an ellipsis while none has arrived yet. */
   modeLabel: string;
   modeDisabled: boolean;
   sendDisabled: boolean;

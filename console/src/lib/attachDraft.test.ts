@@ -44,7 +44,7 @@ describe("attachment drafts", () => {
   });
 
   it("keeps the bytes of a not-yet-uploaded file whatever its type — they are the only copy", async () => {
-    // 作業を始める stages before any session exists, so nothing has a path yet.
+    // The Start working dialog stages before any session exists, so nothing has a path yet.
     await writeAttachDraft("k", [{ name: "notes.txt", type: "text/plain", image: false, path: "", file: log("NOTES", "notes.txt") }]);
     expect(await textOf((await readAttachDraft("k"))[0].bytes)).toBe("NOTES");
   });

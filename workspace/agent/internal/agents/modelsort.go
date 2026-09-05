@@ -1,22 +1,22 @@
 package agents
 
-// 起動モデル一覧の並び順ポリシー（GET /agents/{kind}/models = Console のピッカーと
-// MCP list_models の合流点）。
+// Ordering policy for the launch model list (GET /agents/{kind}/models, where the Console
+// picker and MCP list_models meet).
 //
-// 原則は「上流の推奨順をそのまま見せる」— codex の priority 順、cursor / kiro /
-// copilot / agy の列挙順は、新しい順・系列ごとにまとまった意味のある並びで、こちらで
-// 名前順に潰すと「まず選ぶべきモデル」が埋もれる。上流が 1 経路しか無い kind は
-// それだけで決定的なので、何もしないのが正しい。
+// The rule is to show upstream's recommended order as-is: codex's priority order and the
+// enumeration order of cursor / kiro / copilot / agy are meaningful (newest first, grouped by
+// family), and flattening them by name buries the model you should pick first. A kind with only
+// one source is already deterministic, so doing nothing is correct.
 //
-// 例外は**取得経路が 2 つある kind**（現状 opencode）。同じアカウント・同じ設定でも、
-// daemon 由来と CLI 由来で並びが違うため、利用者からは「時々ソート順が乱れる」に
-// 見える（実測 2026-08-31）:
+// The exception is a kind with two sources (today, opencode). With the same account and the same
+// settings the daemon and the CLI return different orders, which looks to the user like the sort
+// order occasionally scrambling (measured 2026-08-31):
 //
-//	daemon GET /api/model → 上流カタログの生の並び（意味を持たない）
-//	CLI    opencode models → id の昇順
+//	daemon GET /api/model -> the raw upstream catalogue order (meaningless)
+//	CLI    opencode models -> ascending by id
 //
-// そこで opencode だけは SortByLabel で並びを正規化し、どちらの経路でも同じ順にする。
-// 新しい kind を足すときも同じ判断で: 経路が 1 本なら上流順、複数あるなら正規化。
+// So opencode alone normalises with SortByLabel, making both routes agree. Judge a new kind the
+// same way: one source, keep upstream order; several, normalise.
 
 import (
 	"sort"
@@ -26,7 +26,7 @@ import (
 // SortByLabel orders choices by their displayed label — what the picker shows — so
 // the list reads the same regardless of which source produced it. Case-insensitive
 // (labels mix case across kinds), with the id as the tiebreak so twins that share a
-// label (opencode の Go/Zen 同名モデルはラベルが id なので実際には割れる) never
+// label (opencode's identically named Go/Zen models do split, since their label is the id) never
 // swap between calls. Sorts in place and returns the same slice for chaining.
 func SortByLabel(list []ModelChoice) []ModelChoice {
 	sort.SliceStable(list, func(i, j int) bool {

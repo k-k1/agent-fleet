@@ -1,24 +1,27 @@
 package sessionx
 
-// sessionx 単体のテストは package main を持たないので、外向きの依存を自前で配線する。
+// sessionx unit tests have no package main, so the outward dependencies are wired here.
 //
-// 🔥 **「作り物を並べる」だけにしなかった理由。** 移送前、これらのテストは main の**本物**を
-// 呼んで走っていた。作り物に差し替えると、アサーションも通る枝も同じまま
-// **捕まえられるバグの集合だけが縮む**（README §4 の 1 番目の落とし穴）。
-// そこで、どの依存が実際に踏まれるかを**測ってから**決めた:
+// Why this is not just a row of fakes: before the move these tests ran against main's real
+// implementations. Replacing them with fakes leaves the assertions and the branches taken
+// unchanged while shrinking only the set of bugs that can be caught (the first pitfall in
+// README §4). So which dependencies are actually reached was measured first:
 //
-//	計測（`p(name)` で数えるだけの配線に差し替えて全 sessionx テストを 1 回）→
+//	measured (wiring replaced by one that only counts with `p(name)`, one full run of the
+//	sessionx tests) ->
 //	  SplitFrontmatter=22 / BrowseRoot=14 / FirstNonEmpty=13 / ToolchainShellPrefix=5 /
-//	  IsSvnRepo=2 / RepoJobsRunning=1、他の 7 本は 0 回
+//	  IsSvnRepo=2 / RepoJobsRunning=1, and 0 for the other 7
 //
-// 踏まれる 6 本は **main の実装をそのまま写す**（下記）。踏まれない 7 本は **panic する**。
-// 作り物の戻り値を置くと、将来ここへ到達するテストが増えたときに**嘘の値で静かに緑になる**
-// ので、鳴る側に倒してある（internal/gitx/deps_test.go と同じ形）。
+// The 6 that are reached copy main's implementation verbatim (below). The 7 that are not
+// panic: a fake return value would silently go green on a lie once a future test does reach
+// here, so this errs on the side of making noise (the same shape as
+// internal/gitx/deps_test.go).
 //
-// 🔥 **`ToolchainShellPrefix` に空文字を返す作り物を置いてはいけない。** main の
-// `env_toolchains.go` は選択ファイルが無くても **`defaultTimezone = "Asia/Tokyo"` を既定に入れる**
-// ので、本物は空ではなく `export TZ='Asia/Tokyo'; ` を返す。ここを空にすると、
-// tmux へ渡すプログラム文字列が本番と変わったまま**テストは緑**になる（実際に一度そうした）。
+// Do not fake `ToolchainShellPrefix` as returning the empty string. main's
+// `env_toolchains.go` puts `defaultTimezone = "Asia/Tokyo"` in by default even with no
+// selection file, so the real one returns `export TZ='Asia/Tokyo'; `, not "". Empty here
+// leaves the program string handed to tmux different from production while the tests stay
+// green (which is what happened once).
 
 import (
 	"encoding/json"
@@ -33,8 +36,8 @@ import (
 
 func init() { Configure(testDeps()) }
 
-// probe は「どの依存が何回踏まれたか」を数えるための計測用。SESSIONX_PROBE=1 で
-// stderr へ出す。**測り直すときにこれを使う**（配線を作り物へ戻さずに済む）。
+// probe counts how often each dependency is reached; SESSIONX_PROBE=1 also prints to stderr.
+// Use this to measure again, so the wiring never has to be turned back into fakes.
 var (
 	probeMu sync.Mutex
 	probe   = map[string]int{}
@@ -49,22 +52,22 @@ func p(name string) {
 	}
 }
 
-// unreached は「sessionx のテストからは踏まれない」と実測した依存の配線。
-// 踏んだら止まる ——「静かに動くより落ちる方を選ぶ」を、作り物にも適用する。
+// unreached wires a dependency that was measured never to be reached from the sessionx
+// tests. Reaching it stops the run: prefer failing over running quietly, fakes included.
 func unreached(name string) {
-	panic("sessionx test deps: " + name + " は移送時の実測では 1 度も踏まれていない。" +
-		"ここへ来たということは新しい検査が main の実装を必要としている: " +
-		"作り物の戻り値を置く前に、main 側（session_wiring.go）と同じ振る舞いを写すか、" +
-		"テストを package main へ置くかを決めること")
+	panic("sessionx test deps: " + name + " was never reached in the measurement taken at the " +
+		"time of the move. Arriving here means a new check needs main's implementation: " +
+		"before putting a fake return value here, decide whether to copy the behaviour of " +
+		"main's session_wiring.go, or to put the test in package main")
 }
 
-// testDeps は sessionx 単体テスト用の配線一式。**網羅性の検査（下）が同じものを使う**ので、
-// 1 箇所に置く。
+// testDeps is the whole wiring for the sessionx unit tests, kept in one place because the
+// exhaustiveness check uses the same thing.
 func testDeps() Deps {
 	return Deps{
-		// --- 実測で踏まれる 6 本（main の実装の写し）---
+		// --- the 6 reached in the measurement (copies of main's implementation) ---
 
-		// connections.go の写し。
+		// A copy of connections.go.
 		FirstNonEmpty: func(vals ...string) string {
 			p("FirstNonEmpty")
 			for _, v := range vals {
@@ -75,8 +78,9 @@ func testDeps() Deps {
 			return ""
 		},
 
-		// repo_prompts.go の写し。**「近似で書き直さない」**——境界（終端の無いブロック・
-		// CRLF・値のクォート剥がし）まで含めて同じでないと、被覆だけが縮む。
+		// A copy of repo_prompts.go. Do not rewrite it approximately: unless the edge cases
+		// (an unterminated block, CRLF, stripping quotes off a value) behave identically too,
+		// only the coverage shrinks.
 		SplitFrontmatter: func(s string) (map[string]string, string) {
 			p("SplitFrontmatter")
 			meta := map[string]string{}
@@ -106,7 +110,7 @@ func testDeps() Deps {
 			return meta, strings.TrimLeft(body, "\n")
 		},
 
-		// fs.go の写し。env が無ければ homeDir()（テストは temp HOME を張る）。
+		// A copy of fs.go. With no env set it falls back to homeDir() (the tests set a temp HOME).
 		BrowseRoot: func() string {
 			p("BrowseRoot")
 			if r := os.Getenv("AF_BROWSE_ROOT"); r != "" {
@@ -115,23 +119,24 @@ func testDeps() Deps {
 			return homeDir()
 		},
 
-		// svn.go の写し。
+		// A copy of svn.go.
 		IsSvnRepo: func(dir string) bool {
 			p("IsSvnRepo")
 			fi, err := os.Stat(filepath.Join(dir, ".svn"))
 			return err == nil && fi.IsDir()
 		},
 
-		// repo_jobs.go の写し —— **に見えるが、台帳そのものが main にしか無い**。
-		// sessionx のテストバイナリでは取り込みジョブを 1 本も起動しないので、本物も
-		// 0 を返す。**「テストでは 0 だから」ではなく「この プロセスには台帳が存在しない」**
-		// という理由で 0 である。台帳を使う検査が来たら main へ置くこと。
+		// Looks like a copy of repo_jobs.go, but the ledger itself only exists in main. The
+		// sessionx test binary starts no import job, so the real one returns 0 as well. It is 0
+		// because this process has no ledger, not because "it is 0 in tests". A check that uses
+		// the ledger belongs in main.
 		RepoJobsRunning: func() int { p("RepoJobsRunning"); return 0 },
 
-		// env_toolchains.go の写し（選択ファイルが無い経路のみ）。
-		// 🔥 **空文字を返してはいけない。** 選択が無くても `defaultTimezone` が入るので、
-		// 本物は `export TZ='Asia/Tokyo'; ` を返す。選択ファイルが在る環境で走らせたら、
-		// 写しでは再現できないので落とす。
+		// A copy of env_toolchains.go, for the no-selection-file path only.
+		// It must not return the empty string: `defaultTimezone` is applied even with no
+		// selection, so the real one returns `export TZ='Asia/Tokyo'; `. Run in an environment
+		// that does have a selection file, this copy cannot reproduce the real behaviour, so it
+		// fails instead.
 		ToolchainShellPrefix: func() string {
 			p("ToolchainShellPrefix")
 			path := filepath.Join(homeDir(), ".config", "agent-fleet", "toolchains.json")
@@ -141,12 +146,12 @@ func testDeps() Deps {
 				}
 				_ = json.Unmarshal(b, &t)
 				if t.Java != "" || (t.Node != "" && t.Node != "system") || (t.Go != "" && t.Go != "system") {
-					panic("sessionx test deps: ToolchainShellPrefix —— " + path +
-						" に選択が在る環境では、この写しでは本物（javaHomeFor / nvm の glob / goRootFor）を再現できない。" +
-						"この検査は package main へ置くこと")
+					panic("sessionx test deps: ToolchainShellPrefix - in an environment where " + path +
+						" holds a selection, this copy cannot reproduce the real thing (javaHomeFor / the nvm glob / goRootFor). " +
+						"put this check in package main")
 				}
 			}
-			// 選択なし: java / node / go は空、TZ だけが既定で入る。
+			// No selection: java / node / go stay empty, only TZ gets its default.
 			const defaultTimezone = "Asia/Tokyo"
 			if _, err := os.Stat("/usr/share/zoneinfo/" + defaultTimezone); err != nil {
 				return ""
@@ -154,7 +159,7 @@ func testDeps() Deps {
 			return "export TZ=" + session.ShellQuote(defaultTimezone) + "; "
 		},
 
-		// --- 実測で踏まれない 7 本（踏んだら落ちる）---
+		// --- the 7 not reached in the measurement (reaching one fails) ---
 		EnvOr:                 func(k, d string) string { unreached("EnvOr"); return d },
 		MaxUploadBytes:        func() int64 { unreached("MaxUploadBytes"); return 0 },
 		FinalizeSessionUsage:  func(session.Meta) { unreached("FinalizeSessionUsage") },
@@ -166,11 +171,11 @@ func testDeps() Deps {
 			return "", nil
 		},
 
-		// --- エラーコード ---
+		// --- error codes ---
 		//
-		// 🔥 **本物の綴りをここに写す。** 適当な文字列を置くと、コードを本文に出す検査が
-		// 「何かが入っている」だけで緑になる。綴りが本物と一致していることは main 側の
-		// session_wiring_test.go が errcodes.go と突き合わせて守っている。
+		// Copy the real spellings here. With an arbitrary string, a check that expects the code
+		// in a response body goes green merely because something is there. That these match the
+		// real ones is guarded by session_wiring_test.go in main, against errcodes.go.
 		ErrCodeAgentNotConnected:      "agent_not_connected",
 		ErrCodeChatConversationNotFnd: "chat_conversation_not_found",
 		ErrCodeForkAtUnsupported:      "fork_at_unsupported",

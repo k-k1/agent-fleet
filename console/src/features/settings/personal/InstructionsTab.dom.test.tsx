@@ -1,8 +1,10 @@
-// エージェントへの指示タブ（docs/log/60）。ここが守るべきは「利用者が画面から誤解しないこと」
-// の 3 点で、それだけを jsdom で押さえる:
-//   ① 未対応の kind が**行として残り**、理由が読めること（黙って消えると対応漏れに見える）
-//   ② 「書いた」と「効いている」が別に出ること（保存できても効かない場合がある）
-//   ③ 上限超過では保存させないこと（Agent 側も 400 で弾くが、画面で先に止める）
+// The agent instructions tab (docs/log/60). What it has to protect is that the screen cannot
+// be misread, and only those three points are pinned down in jsdom:
+//   1. An unsupported kind stays as a row and its reason is readable (dropping it silently
+//      reads as a gap in coverage).
+//   2. "Written" and "in effect" are shown separately (a save can succeed with no effect).
+//   3. Over the limit, saving is blocked (the Agent also rejects it with 400, but the screen
+//      stops it first).
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -70,7 +72,7 @@ async function mount() {
   await act(async () => {
     root!.render(<InstructionsTab />);
   });
-  // useRetryLoad の解決を1回流す。
+  // Flush one round of useRetryLoad's resolution.
   await act(async () => {
     await Promise.resolve();
   });
@@ -95,30 +97,30 @@ const rows = () =>
   );
 
 describe("InstructionsTab", () => {
-  it("未対応の kind を消さずに理由付きで出す", async () => {
+  it("keeps unsupported kinds and shows them with a reason", async () => {
     await mount();
     expect(rows()).toHaveLength(3);
     const unsupported = document.querySelector(".instr-unsupported");
     expect(unsupported).not.toBeNull();
-    // 理由が文言として出ていること（コードそのままでは意味が伝わらない）。
+    // The reason appears as prose; the raw code carries no meaning to the reader.
     expect(
       unsupported?.querySelector(".instr-badge")?.textContent,
     ).toBeTruthy();
     expect(unsupported?.textContent).not.toContain("no_user_scope");
-    // 未対応の行にトグルを出さない（押せる顔をしていると「効くはず」に見える）。
+    // No toggle on an unsupported row: something that looks pressable reads as "this works".
     expect(unsupported?.querySelector(".choice-seg")).toBeNull();
   });
 
-  it("書いた／効いているを行ごとに出し分ける", async () => {
+  it("distinguishes written from in effect per row", async () => {
     await mount();
     expect(document.querySelectorAll(".instr-ok")).toHaveLength(1); // claude
     const fail = document.querySelector(".instr-fail");
     expect(fail).not.toBeNull();
     expect(fail?.textContent).toBeTruthy();
-    expect(fail?.textContent).not.toContain("config_unreadable"); // 生コードを見せない
+    expect(fail?.textContent).not.toContain("config_unreadable"); // never show the raw code
   });
 
-  it("上限を超えたら保存を止める", async () => {
+  it("blocks saving once the limit is exceeded", async () => {
     await mount();
     const ta = document.querySelector<HTMLTextAreaElement>("#instr-body")!;
     const setter = Object.getOwnPropertyDescriptor(
@@ -137,7 +139,7 @@ describe("InstructionsTab", () => {
     expect(apiJSON).not.toHaveBeenCalled();
   });
 
-  it("保存すると本文を PUT する", async () => {
+  it("PUTs the body on save", async () => {
     apiJSON.mockResolvedValue({ ...payload, text: "short\n" });
     await mount();
     const ta = document.querySelector<HTMLTextAreaElement>("#instr-body")!;

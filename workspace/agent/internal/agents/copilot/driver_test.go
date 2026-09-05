@@ -1,9 +1,9 @@
 package copilot
 
-// managed driver のユニットテスト。ACP サーバー（copilot --acp 相当）を
-// io.Pipe 上のフェイクで模し、turn 状態機械（Send→completed / 実行中 queue /
-// interrupt→cancelled / 台帳の冪等化）と permission→Interaction→Respond の
-// 往復（JSON-RPC サーバー発リクエストへの応答）を検証する。
+// Unit tests for the managed driver. The ACP server (what `copilot --acp` is) is faked over
+// io.Pipe, covering the turn state machine (Send → completed, queueing while running,
+// interrupt → cancelled, ledger idempotency) and the permission → Interaction → Respond
+// round trip (answering a server-initiated JSON-RPC request).
 
 import (
 	"bufio"
@@ -93,7 +93,7 @@ func (f *fakeACP) send(v any) {
 
 func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir()) // status.Persist / ledger の書き先を隔離
+	t.Setenv("HOME", t.TempDir()) // isolate where status.Persist / the ledger write
 	cl, f := newFakeACP(t)
 	h := &threadHandle{
 		name: "s1", dir: t.TempDir(), slotSid: "slot-1", sid: "sess-1",
@@ -103,17 +103,18 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
-	// t.Cleanup は LIFO なので、上の t.Setenv("HOME", …) より後に積んだこの待ちが
-	// HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。
+	// t.Cleanup is LIFO, so this wait — registered after the t.Setenv("HOME", …) above —
+	// runs before HOME is restored. Registered before it, it would run after, too late.
 	t.Cleanup(func() { waitPumpIdle(t, h) })
 	return h, f
 }
 
-// waitPumpIdle blocks until the handle's turn goroutine has drained（キューも走行中の
-// turn も無い状態）。**HOME の隔離は待って初めて成立する**: テストが turn を走らせたまま
-// 返ると、`t.Setenv` の復帰後に MarkTurnEnd → status.Persist が走り、書き先が
-// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に slot-1.json が
-// 残っていた）。落ちる方向は安全側 — 待てないまま抜けると実環境を汚すので失敗させる。
+// waitPumpIdle blocks until the handle's turn goroutine has drained (no queue, no running
+// turn). The HOME isolation only holds if we wait: a test returning with a turn still
+// running lets MarkTurnEnd → status.Persist run after `t.Setenv` restores HOME, writing into
+// the real `~/.config/agent-fleet` (measured: slot-1.json was left in the user's
+// session-status/). Failing is the safe direction — giving up on the wait would dirty the
+// real environment, so it fails instead.
 func waitPumpIdle(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -126,7 +127,7 @@ func waitPumpIdle(t *testing.T, h *threadHandle) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Error("turn がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
+	t.Error("a turn is still running after the test: restoring HOME now would write into the real ~/.config/agent-fleet")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
@@ -149,7 +150,7 @@ func TestSendCompletesTurn(t *testing.T) {
 	waitState(t, h, agents.TurnRunning)
 	f.reply(id, map[string]any{"stopReason": "end_turn"})
 	waitState(t, h, agents.TurnCompleted)
-	// 台帳: 同じ ClientMessageID の再送は no-op（新しい turn を始めない）。
+	// Ledger: resending the same ClientMessageID is a no-op (it starts no new turn).
 	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +173,7 @@ func TestSteerQueuesBehindRunning(t *testing.T) {
 		t.Fatalf("queue wrong: %v", got)
 	}
 	f.reply(first, map[string]any{"stopReason": "end_turn"})
-	second := <-f.gotPrompt // 完走後に次 turn として投入される
+	second := <-f.gotPrompt // submitted as the next turn once the first completes
 	f.reply(second, map[string]any{"stopReason": "end_turn"})
 	waitState(t, h, agents.TurnCompleted)
 }
@@ -195,7 +196,8 @@ func TestPermissionInteractionRoundTrip(t *testing.T) {
 	_ = h.Send(agents.TurnInput{Prompt: "run something", ClientMessageID: "m1"})
 	id := <-f.gotPrompt
 	waitState(t, h, agents.TurnRunning)
-	// サーバー発 request（実測の形 — id は turn とは独立の空間）。
+	// Server-initiated request, in the shape measured — its id lives in a space
+	// independent of the turn's.
 	f.send(map[string]any{"jsonrpc": "2.0", "id": 0, "method": "session/request_permission", "params": map[string]any{
 		"sessionId": "sess-1",
 		"toolCall": map[string]any{"toolCallId": "t9", "title": "Run echo", "kind": "execute",
@@ -212,11 +214,11 @@ func TestPermissionInteractionRoundTrip(t *testing.T) {
 		len(snap.Interaction.Questions) != 1 || len(snap.Interaction.Questions[0].Options) != 3 {
 		t.Fatalf("interaction wrong: %+v", snap.Interaction)
 	}
-	// 質問待ち中の自由文はガード（question_pending — 69fde0b の教訓）。
+	// Free text while a question is pending is refused (question_pending).
 	if err := h.Send(agents.TurnInput{Prompt: "x", ClientMessageID: "m2"}); err != agents.ErrQuestionPending {
 		t.Fatalf("want ErrQuestionPending, got %v", err)
 	}
-	// 選択肢 index → optionId 変換で応答。
+	// Answer through the option index → optionId conversion.
 	if err := h.Respond(agents.InteractionReply{ID: "t9", Decision: agents.DecisionAnswer,
 		Answers: []agents.InteractionAnswer{{Options: []int{1}}}}); err != nil {
 		t.Fatal(err)
@@ -238,7 +240,7 @@ func TestRuntimeLostFailsInFlight(t *testing.T) {
 	_ = h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"})
 	<-f.gotPrompt
 	waitState(t, h, agents.TurnRunning)
-	f.toClient.Close() // 子プロセスの喪失
+	f.toClient.Close() // the child process is lost
 	waitState(t, h, agents.TurnUnknown)
 }
 
@@ -250,7 +252,8 @@ func TestUpdateSettingsMode(t *testing.T) {
 	if snap, _ := h.Snapshot(); snap.Settings.Mode != "plan" {
 		t.Fatalf("mode not applied: %+v", snap.Settings)
 	}
-	// model/effort の動的変更は明示エラー（DynamicModel:false の防御実装）。
+	// Changing model/effort dynamically is an explicit error (the guard behind
+	// DynamicModel:false).
 	if err := h.UpdateSettings(agents.ThreadSettings{Model: "gpt-5.4"}); err == nil {
 		t.Fatal("dynamic model change must be rejected")
 	}

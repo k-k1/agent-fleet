@@ -5,7 +5,7 @@
 
 export type MemoKind = "file" | "text";
 
-// An image attached to a memo (docs/log/21 画像添付). path is the absolute in-container path
+// An image attached to a memo (docs/log/21 image attachments). path is the absolute in-container path
 // returned by memoPasteImage (under ~/.cache/agent-fleet/memo-images); name is the
 // basename, used both for display and to preview via GET api/memos/images/{name}.
 export interface MemoAttachment {
@@ -47,7 +47,7 @@ export interface MemoPatch {
   position?: number;
 }
 
-// A first-class category (docs/log/21 UI刷新): created ahead of any memo, reordered by drag,
+// A first-class category (docs/log/21 UI overhaul): created ahead of any memo, reordered by drag,
 // kept while empty. name is unique within a (repo) bucket and stays the grouping key that
 // Memo.category references — so a rename cascades onto the memos.
 export interface MemoCategory {

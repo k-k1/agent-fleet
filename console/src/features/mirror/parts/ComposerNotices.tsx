@@ -1,11 +1,11 @@
 import { Icon } from "../../../ui/Icon.tsx";
 import { t as tr } from "../../../lib/i18n/index.ts";
 
-// コンポーサーが「使えない」5 つの状態。どれも入力欄の代わりに同じ帯
-// （.mirror-compose.mirror-compose-resume）へ理由と、あれば次の一手を出す。分岐そのものは
-// MirrorView が持つ（順序に意味がある — 下の各コメントを参照）。
+// The five states in which the composer is unusable. Each replaces the input with the same band
+// (.mirror-compose.mirror-compose-resume) carrying the reason and, where there is one, the next
+// step. MirrorView owns the branching itself, and its order matters; see the notes below.
 
-/** 作業ディレクトリが消えた履歴。再開の導線は出さない（BuildLaunch が拒む）。 */
+/** History whose working directory is gone. No resume path is offered: BuildLaunch refuses it. */
 export function DirGoneNotice() {
   return (
     // Dir removed: no resume path, so drop the button and just say so — the
@@ -18,7 +18,8 @@ export function DirGoneNotice() {
   );
 }
 
-/** 履歴（未アタッチ）。ボタンは背後で再開し、alive になった時点でコンポーサーが生きる。 */
+/** History (not attached). The button resumes in the background; the composer comes alive once
+ *  the session is. */
 export function ResumeNotice({ running, onResume }: { running: boolean; onResume: () => void }) {
   return (
     // History (read-only): the session isn't attached, so input is disabled. The
@@ -41,7 +42,7 @@ export function ResumeNotice({ running, onResume }: { running: boolean; onResume
   );
 }
 
-/** Workspace 停止中。送っても 502 になるだけなので、履歴として枠を出す。 */
+/** Workspace stopped. Sending would only 502, so the chat is framed as history. */
 export function WsStoppedNotice() {
   return (
     <div className="mirror-compose mirror-compose-resume">
@@ -52,7 +53,7 @@ export function WsStoppedNotice() {
   );
 }
 
-/** 端末に再開メニューが出ている。打鍵はメニューへ行くので、選びに行かせる。 */
+/** The resume menu is up in the terminal. Keystrokes go to the menu, so send the user there. */
 export function TerminalResumeNotice({ onOpenTerminal }: { onOpenTerminal: () => void }) {
   return (
     // Resume menu is up in the terminal: block the composer (keystrokes would go to
@@ -66,7 +67,8 @@ export function TerminalResumeNotice({ onOpenTerminal }: { onOpenTerminal: () =>
   );
 }
 
-/** codex の更新メニューが出ている。数字キー 1 つで選択＋確定なので、見送りの 2 択を直に出す。 */
+/** codex's update menu is up. A single digit key both selects and confirms, so the two skip
+ *  choices are offered directly. */
 export function TerminalUpdateNotice({ onSkip, onSkipUntilNext }: { onSkip: () => void; onSkipUntilNext: () => void }) {
   return (
     // codex's update menu is up: block the composer (typed digits would pick menu
@@ -84,7 +86,7 @@ export function TerminalUpdateNotice({ onSkip, onSkipUntilNext }: { onSkip: () =
   );
 }
 
-/** アタッチ済みだがセッションがまだ立ち上がっていない（再開の途中）。 */
+/** Attached, but the session is still coming up (resume in flight). */
 export function ResumingNotice() {
   return (
     // Attached but the session is still coming up (resume in flight).

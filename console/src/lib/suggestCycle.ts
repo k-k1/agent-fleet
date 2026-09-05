@@ -1,42 +1,46 @@
-// 返信サジェストの Tab 補完（シェルの補完サイクル）。
+// Tab completion for reply suggestions - a shell-style completion cycle.
 //
-// チップ行は入力中の draft で前方一致フィルタされる（lib/quickReplies の rankQuickReplies）。
-// 「ok」まで打つと ok で始まる候補だけが残るので、そこから先はキーボードだけで選べたほうが速い
-// ＝ Tab で候補を順に入力欄へ入れ、もう一度 Tab で次の候補へ、というシェルの補完と同じ操作。
+// The chip row is prefix-filtered by the draft being typed (rankQuickReplies in
+// lib/quickReplies). Once "ok" has been typed only the candidates starting with "ok" remain,
+// so from there it is faster to pick one from the keyboard: Tab puts a candidate into the
+// input, another Tab moves to the next, exactly like shell completion.
 //
-// リングは [自分が打った文字, 候補1, 候補2, …] の順で、一周すると打った文字へ戻る（＝補完を
-// 取り消す手段が Tab だけで完結する）。Shift+Tab は逆回り。候補は Tab を押した時点で凍結する:
-// 入力欄の中身は補完で候補そのものに変わり、そのまま再計算すると絞り込みが「候補1に前方一致
-// するもの」へ狭まってリングが崩れるため。凍結した base はチップ行の絞り込みにも使う
-// （＝サイクル中もチップ列は動かず、いま入っている候補だけが強調される）。
+// The ring is [what the user typed, candidate 1, candidate 2, ...] and wraps back to the typed
+// text, so Tab alone is enough to undo a completion. Shift+Tab walks backwards. The candidate
+// list is frozen the moment Tab is pressed: completion replaces the input with the candidate
+// itself, and recomputing from that would narrow the filter to "things prefixed by candidate
+// 1" and break the ring. The frozen base is also what the chip row filters on, so the chip row
+// stays still while cycling and only the candidate currently in the input is highlighted.
 //
-// 入力欄が空のときの Tab は従来どおりチップへのフォーカス移動（MirrorView / ChatView 側）。
-// ここは「何か打ってから絞り込まれた候補をたどる」ためだけの経路。
+// Tab on an empty input keeps its old meaning - move focus to the chips (handled in MirrorView
+// / ChatView). This path exists only for walking the candidates narrowed by what was typed.
 
-// 空白畳み・全角半角の畳み込み・小文字化は rankQuickReplies の前方一致フィルタと同じものを使う
-// （lib/quickReplies の quickReplyKey）。「チップ行に見えている候補」と「Tab でたどれる候補」を
-// 必ず一致させるため、突合の基準はここで独自に持たない。
+// Whitespace folding, full-width/half-width folding and lowercasing reuse the same function as
+// the rankQuickReplies prefix filter (quickReplyKey in lib/quickReplies). The matching rule is
+// deliberately not reimplemented here, so "the candidates visible in the chip row" and "the
+// candidates Tab walks" can never diverge.
 import { quickReplyKey as norm } from "./quickReplies.ts";
 
 export type SuggestCycle = {
-  /** ユーザーが自分で打った文字（リングの原点＝チップ行の絞り込みキー）。 */
+  /** What the user typed - the origin of the ring and the chip row's filter key. */
   base: string;
-  /** base に前方一致する候補（Tab を押した時点で凍結）。 */
+  /** Candidates prefixed by base, frozen when Tab was pressed. */
   items: string[];
-  /** リング位置。0 = base、1..items.length = items[idx - 1]。 */
+  /** Ring position: 0 = base, 1..items.length = items[idx - 1]. */
   idx: number;
-  /** いま入力欄へ入れた文字。draft と一致しなくなったら手入力で崩れた合図（＝サイクル終了）。 */
+  /** The text last placed in the input. Once it stops matching the draft the user has typed
+   *  over it, which ends the cycle. */
   text: string;
 };
 
-/** base に前方一致する候補（表示綴りのまま・重複は畳む・base そのものは除く）。 */
+/** Candidates prefixed by base, in their display spelling, deduplicated, excluding base. */
 export function suggestMatches(base: string, chips: string[]): string[] {
   const b = norm(base);
   const seen = new Set<string>();
   const out: string[] = [];
   for (const c of chips) {
     const k = norm(c);
-    if (!k || k === b) continue; // 打った文字そのものへ「補完」しても意味がない
+    if (!k || k === b) continue; // completing to exactly what was typed is pointless
     if (b && !k.startsWith(b)) continue;
     if (seen.has(k)) continue;
     seen.add(k);
@@ -46,8 +50,8 @@ export function suggestMatches(base: string, chips: string[]): string[] {
 }
 
 /**
- * Tab / Shift+Tab を1回進める。サイクルを続けられないときは null（＝呼び出し側は Tab を
- * 素通しし、フォーカス移動など従来の挙動に任せる）。
+ * Advance the cycle by one Tab / Shift+Tab. Returns null when the cycle cannot continue, in
+ * which case the caller lets Tab through to its usual behaviour (moving focus).
  */
 export function stepSuggestCycle(
   cur: SuggestCycle | null,
@@ -55,32 +59,34 @@ export function stepSuggestCycle(
   chips: string[],
   backward: boolean,
 ): SuggestCycle | null {
-  // 進行中のサイクル（入力欄が前回入れた候補のままなら継続）。
+  // Cycle in progress: continue while the input still holds the candidate we last placed.
   if (cur && cur.text === draft) {
     const n = cur.items.length;
     const idx = (cur.idx + (backward ? -1 : 1) + n + 1) % (n + 1);
     return { ...cur, idx, text: idx === 0 ? cur.base : cur.items[idx - 1] };
   }
-  // 新しいサイクル。空（空白だけ）や複数行の下書きは対象外 — 前者は空入力の Tab（チップへ
-  // フォーカス）の領分、後者はもう「短い返信の打ち始め」ではない。
+  // New cycle. Empty (or whitespace-only) and multi-line drafts are excluded: the first
+  // belongs to empty-input Tab (focus the chips), the second is no longer the start of a
+  // short reply.
   if (!norm(draft) || /[\r\n]/.test(draft)) return null;
   const items = suggestMatches(draft, chips);
   if (!items.length) return null;
-  const idx = backward ? items.length : 1; // Shift+Tab は末尾から
+  const idx = backward ? items.length : 1; // Shift+Tab starts from the end
   return { base: draft, items, idx, text: items[idx - 1] };
 }
 
-/** いま生きているサイクル（入力欄が手で編集されていたら null）。 */
+/** The cycle still in effect, or null once the input was edited by hand. */
 export function activeSuggestCycle(cur: SuggestCycle | null, draft: string): SuggestCycle | null {
   return cur && cur.text === draft ? cur : null;
 }
 
-/** チップ行の絞り込みに使う文字列（サイクル中は凍結した base）。 */
+/** The string the chip row filters on - the frozen base while cycling. */
 export function suggestFilterDraft(cur: SuggestCycle | null, draft: string): string {
   return activeSuggestCycle(cur, draft)?.base ?? draft;
 }
 
-/** いま入力欄に入っている候補（= 強調するチップ）。base に戻っている / 非サイクル時は null。 */
+/** The candidate currently in the input, i.e. the chip to highlight. Null when the ring is
+ *  back on base or no cycle is running. */
 export function cycledSuggestion(cur: SuggestCycle | null, draft: string): string | null {
   const a = activeSuggestCycle(cur, draft);
   return a && a.idx > 0 ? a.items[a.idx - 1] : null;

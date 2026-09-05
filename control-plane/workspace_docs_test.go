@@ -75,7 +75,7 @@ func TestStageWorkspaceDocs_ShipsTheGuideOnly(t *testing.T) {
 	got := staged(t, dataDir)
 
 	for _, f := range []string{
-		// The Console's 「利用ガイド」 opens docs/README(.ja).md — the tree's own entry
+		// The Console's user-guide button opens docs/README(.ja).md — the tree's own entry
 		// page, which is the only one that branches by reader. Staging the shelves
 		// without it leaves that button opening a file that does not exist.
 		"README.md", "README.ja.md",

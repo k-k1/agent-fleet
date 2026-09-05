@@ -1,9 +1,8 @@
 package main
 
-// mcp_wiring.go — MCP 家系（`internal/mcpsrv`）の**配線**だけを持つ。
-// ウェーブ C の別名 alias_mcp.go は RECLAIM-C で回収し、呼び出し側は mcpsrv を直接呼ぶ。
-// ここに残るのは別名ではなく、**mcpsrv → main の切断面**（`mcpsrv.CP` の実装 26 本と
-// エラーの詰め替え 1 本）である。mcpsrv は main を import できないので、これが唯一の方法。
+// mcp_wiring.go carries only the wiring for the MCP family (`internal/mcpsrv`): the 26
+// `mcpsrv.CP` implementations and the one error repack that form the mcpsrv -> main seam.
+// mcpsrv cannot import main, so this is the only way across.
 
 import (
 	"context"
@@ -15,7 +14,7 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// --- 切断面のアダプタ ----------------------------------------------------------------
+// --- The seam adapter -----------------------------------------------------------------
 
 // cpDeps implements mcpsrv.CP over the CP manager. Every method is a one-liner onto
 // something that already existed; nothing here is new behaviour.

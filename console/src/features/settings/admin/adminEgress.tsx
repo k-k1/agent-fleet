@@ -79,8 +79,9 @@ export function EgressView() {
       <section className="admin-panel">
         <div className="usage-toolbar">
           <span>{tr("admin.mode_label")}</span>
-          {/* "log-only" / "enforce" はサーバ側モードの識別子そのもの（説明文の
-              admin.egress_*_note でも同じ語で参照する）なので意図的に訳さない。 */}
+          {/* "log-only" / "enforce" are the server-side mode identifiers themselves — the
+              admin.egress_*_note copy refers to them by the same words — so they are
+              deliberately left untranslated. */}
           <span className="seg sm">
             <button
               type="button"
@@ -196,8 +197,9 @@ export function EgressView() {
   );
 }
 
-// --- TTS: VOICEVOX エンジンの管理者トグル（docs/log/24 Phase 2） -------------------
-// super_admin のみ。AWS では ECS Service の desired count を 0↔1（オンデマンド起動・
-// 停止中コスト 0）。起動〜ready まで 1〜2 分かかるので、その間は 5s ポーリングで
-// 「準備中」を追従表示する（auto ルーティングは Polly JP が代読）。ECS 管理外（dev の
-// 常駐 docker 等）ではトグルはルーティングの有効/無効のみ。
+// --- TTS: administrator toggle for the VOICEVOX engine (docs/log/24 Phase 2) -------
+// super_admin only. On AWS this moves the ECS service's desired count between 0 and 1 (started
+// on demand, zero cost while stopped). Start to ready takes 1-2 minutes, so a 5s poll tracks
+// the "preparing" state meanwhile, and auto routing falls back to Polly JP. Where the engine is
+// not ECS-managed (a permanently running docker on dev, say) the toggle only enables or
+// disables routing.

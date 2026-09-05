@@ -12,8 +12,8 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-// 予約テナントは管理画面のテナント一覧に出さない（docs/log/61 §61.18）。焼き直しのたびに
-// 使い回される入れ物であって、人のテナントではない。
+// The reserved tenant is kept off the admin tenant list (docs/log/61 §61.18): it is a
+// container reused by every bake, not anybody's tenant.
 func TestListTenantsHidesTheSystemTenant(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -39,10 +39,11 @@ func TestListTenantsHidesTheSystemTenant(t *testing.T) {
 	}
 }
 
-// ★ 落とすのは API 層だけ。store.ListTenants を絞ると、監査ビューの tenant_id → slug
-// 解決（audit.go）と費用ポーラーの membership → tenant 解決（cloudcost.go）が同時に
-// 壊れる — どちらも「テナントの分からない行」を作りはじめ、症状は管理画面ではなく
-// 監査と請求に出る。
+// The API layer is the only place that hides it. Filtering store.ListTenants breaks the
+// audit view's tenant_id → slug resolution (audit.go) and the cost poller's
+// membership → tenant resolution (cloudcost.go) at once: both start producing rows with
+// no known tenant, and the symptom shows up in the audit log and the bill rather than in
+// the admin screen.
 func TestStoreListTenantsStillReturnsTheSystemTenant(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -61,9 +62,10 @@ func TestStoreListTenantsStillReturnsTheSystemTenant(t *testing.T) {
 	t.Fatalf("the store hid the system tenant too; audit and cost resolution depend on it: %+v", ts)
 }
 
-// systemMembershipIDs は active も inactive も拾う。予約メンバーシップは焼き直しの合間に
-// inactive になっていることがあり、そこで漏らすと「たまたま今アクティブでない golden の
-// 費用だけが人の列に出る」という、いちばん気づきにくい形になる。
+// systemMembershipIDs picks up active and inactive memberships alike. A reserved
+// membership is often inactive between bakes, and missing those puts the cost of whichever
+// golden happens to be inactive right now into a person's column — the hardest form of
+// this to notice.
 func TestSystemMembershipIDsIncludeTheDeactivatedOnes(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)
@@ -95,7 +97,8 @@ func TestSystemMembershipIDsIncludeTheDeactivatedOnes(t *testing.T) {
 	}
 }
 
-// 予約テナントが無いデプロイ（ecs-ec2 以外はこれが常態）では空集合。
+// A deployment without the reserved tenant (the normal case everywhere but ecs-ec2)
+// yields the empty set.
 func TestSystemMembershipIDsAreEmptyWithoutTheReservedTenant(t *testing.T) {
 	st := p3Store(t)
 	mgr := p3Manager(t, st)
@@ -108,8 +111,8 @@ func TestSystemMembershipIDsAreEmptyWithoutTheReservedTenant(t *testing.T) {
 	}
 }
 
-// 稼働時間の面からも予約テナントは消す。テナント一覧から消しておきながらここに
-// 「af-golden / af-golden-seed」の行が残ると、隠した意味が無くなる。
+// The uptime view drops the reserved tenant too: hiding it from the tenant list while
+// leaving its rows here would defeat the point of hiding it.
 func TestUsageDropsTheSystemTenantsRows(t *testing.T) {
 	rows := []store.UsageRow{
 		{TenantSlug: "sales", UserKey: "yamada", Day: "2026-08-21", RunningSecs: 60},
@@ -124,9 +127,9 @@ func TestUsageDropsTheSystemTenantsRows(t *testing.T) {
 	}
 }
 
-// 予約メンバーシップの費用は SHARED へ畳む。⚠️ 畳んだ結果 (day, service) が衝突したら
-// **足す**こと — PutCloudCost は置き換えなので、足さずに 2 行返すと後の行が前の行の
-// 金額を消す。
+// A reserved membership's cost folds into SHARED. When the fold collides on (day,
+// service) the amounts must be ADDED: PutCloudCost replaces, so returning two rows
+// instead makes the later one erase the earlier one's money.
 func TestFoldSystemMembershipsSumsIntoTheSharedBucket(t *testing.T) {
 	rows := []store.CloudCostRow{
 		{Day: "2026-08-21", MembershipID: "", TenantID: "", Service: "Amazon EC2", Unblended: 100, Amortized: 100},
@@ -160,7 +163,7 @@ func TestFoldSystemMembershipsSumsIntoTheSharedBucket(t *testing.T) {
 	}
 }
 
-// 予約テナントの無いデプロイでは 1 行も動かさない。
+// A deployment without the reserved tenant leaves every row alone.
 func TestFoldSystemMembershipsIsANoOpWithoutReservedMemberships(t *testing.T) {
 	rows := []store.CloudCostRow{
 		{Day: "2026-08-21", MembershipID: "M-real", Service: "Amazon EC2", Unblended: 7},
@@ -171,7 +174,8 @@ func TestFoldSystemMembershipsIsANoOpWithoutReservedMemberships(t *testing.T) {
 	}
 }
 
-// 費用画面の読み側でも畳む（取り込みの窓より古い行が残っているため）。
+// The cost screen folds on the READ side as well, because rows older than the ingest
+// window are still in the store.
 func TestCloudCostFoldsAnOldSystemRowIntoShared(t *testing.T) {
 	ctx := context.Background()
 	st := p3Store(t)

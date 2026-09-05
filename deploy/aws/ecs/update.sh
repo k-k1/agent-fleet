@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
-# Agent Fleet — ECS / ecs-ec2 の更新をひとコマンドで出す（README §Upgrade の実行版）。
+# Agent Fleet — update an ECS / ecs-ec2 deployment in one command (README §Upgrade, executable).
 #
 #   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile af-sandbox --region ap-northeast-1
-#   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile p --region r --push   # ECR push から
+#   VERSION=0.2.0 deploy/aws/ecs/update.sh --profile p --region r --push   # from the ECR push on
 #
-# compose 構成の `docker compose pull && docker compose up -d`（deploy/compose/README.md
-# §Upgrade）、dev の `deploy/local/run-dev.sh` に当たるもの。runbook を手で叩く分には
-# README §Upgrade のままでよいが、手順のうち三つが「知っていないと落とし穴」なので
-# スクリプトにしてある:
+# The counterpart of `docker compose pull && docker compose up -d` for a compose deployment
+# (deploy/compose/README.md §Upgrade) and of `deploy/local/run-dev.sh` for dev. Running the
+# runbook by hand from README §Upgrade is fine; this exists because three of its steps are
+# pitfalls unless you already know them:
 #
-#  1. **タグが ECR に無いまま deploy できてしまう。** CloudFormation は文字列を
-#     受け取るだけなので、push を忘れた／別リージョンへ push した更新は「成功」し、
-#     そのあと CP タスクが CannotPullContainerError で上がらない。ここでは deploy の
-#     前に両方のイメージの存在を確かめて、先に落とす。
-#  2. **可変タグ（:dev のサンドボックス運用）では CFN が「変更なし」で何も起きない。**
-#     同じタグへ push し直した更新は、テンプレート上の差分がゼロなので CP は古い
-#     タスクのまま走り続ける。空チェンジセットを検出して ECS 側で
-#     force-new-deployment に落とす。
-#  3. **ワークスペースは自動では新しくならない。** adapter はタスク定義を Start ごとに
-#     作り直すので、走っているワークスペースは停止→起動まで古いイメージのまま。
-#     誰がその状態なのかを最後に一覧で出す（Console 側では同じ事実が
-#     WS バーの「要再起動」バッジとして各利用者に出る — control-plane/runtime_ecs_stale.go）。
+#  1. A tag can be deployed while it is not in ECR. CloudFormation only takes a string, so an
+#     update that forgot to push (or pushed to another region) "succeeds", and the CP task then
+#     fails to come up with CannotPullContainerError. Here both images are checked to exist
+#     before the deploy, so it fails earlier.
+#  2. With a mutable tag (the :dev sandbox style), CFN reports "no changes" and nothing happens.
+#     An update re-pushed to the same tag has zero template diff, so the CP keeps running the
+#     old task. The empty changeset is detected and turned into an ECS force-new-deployment.
+#  3. Workspaces do not update themselves. The adapter rebuilds the task definition on every
+#     Start, so a running workspace stays on the old image until it is stopped and started
+#     again. Who is in that state is listed at the end (in the Console the same fact reaches
+#     each user as the "restart required" badge on the WS bar —
+#     control-plane/runtime_ecs_stale.go).
 #
-# ワークスペースを勝手に停止することは絶対にしない。停止はセッションを落とす操作で、
-# タイミングを選ぶのは利用者本人（ADR: 更新トーストが再起動を促さないのと同じ理由）。
+# Never stop a workspace on the operator's behalf. Stopping kills sessions, and choosing the
+# moment belongs to the user (the ADR reason the update toast does not push for a restart).
 set -euo pipefail
 
 usage() {
@@ -69,19 +69,19 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 [ -n "$TEMPLATE" ] || TEMPLATE="$HERE/cfn/30-ingress.yaml"
 AWS=(aws --profile "$PROFILE" --region "$REGION")
 # shellcheck source=deploy/aws/ecs/env.sh
-# af_cfn_deploy（51,200 バイトを超えたら S3 経由）と af_stack_output だけのために読む。
-# ⚠️ af_env_init は呼ばない —— このスクリプトは「生きている配備を更新する」ためのもので、
-# 控えが無くても動くのが取り柄である。バケットは 20-platform の出力から引く。
+# Sourced only for af_cfn_deploy (which goes through S3 past 51,200 bytes) and af_stack_output.
+# af_env_init is deliberately NOT called: this script updates a LIVE deployment, and its value
+# is that it works with no local capture. The bucket comes from 20-platform's outputs.
 . "$HERE/env.sh"
 AF_STACK_PLATFORM="$(af_stack_param "$STACK" PlatformStackName)"
 : "${AF_STACK_PLATFORM:=af-ecs-platform}"
 
-run() {  # dry-run 対応。読み取りは常に実行し、書き込みだけここを通す。
+run() {  # dry-run support. Reads always run; only writes go through here.
   if [ "$DRY" = 1 ]; then echo "DRY: $*"; return 0; fi
   "$@"
 }
 
-# --- 0) push（任意） --------------------------------------------------------
+# --- 0) push (optional) -----------------------------------------------------
 if [ "$PUSH" = 1 ]; then
   args=(--profile "$PROFILE" --region "$REGION")
   [ -n "$IMAGES_TAR" ] && args+=(--images-tar "$IMAGES_TAR")
@@ -90,7 +90,7 @@ if [ "$PUSH" = 1 ]; then
   run env VERSION="$VERSION" "$HERE/release-ecr.sh" "${args[@]}"
 fi
 
-# --- 1) タグが本当に ECR にあるか（落とし穴 1） -----------------------------
+# --- 1) is the tag really in ECR (pitfall 1) --------------------------------
 missing=""
 for repo in af-control-plane af-workspace; do
   if ! "${AWS[@]}" ecr describe-images --repository-name "$repo" \
@@ -106,20 +106,22 @@ if [ -n "$missing" ]; then
 fi
 echo "==> ECR has af-control-plane:$VERSION and af-workspace:$VERSION"
 
-# --- 1b) CP イメージのアーキが CpArch と噛み合っているか（落とし穴 1 の兄弟） -----
-# 落とし穴 1 は「タグが無い」。こちらは「タグはあるが、そのアーキが無い」で、症状は
-# もっと悪い: CannotPullContainerError ですらなく、ECS はタスクを**配置できない**まま
-# desired=1 / running=0 で回り続ける（docs/log/72）。CpArch=arm64 にできるのは
-# publish-dist を control_plane_arm64 で回した版だけで、それは既定 OFF。
-# ⚠️ 判定は「証明できたときだけ落とす」。確かめられなかったときに通すのは、
-# ここが公開ゲートではなく更新の前検査だからで、AF_CP_ARCH_CHECK=0 で丸ごと外せる。
+# --- 1b) does the CP image's architecture match CpArch (sibling of pitfall 1) -----
+# Pitfall 1 is "the tag is missing". This one is "the tag is there but that architecture is
+# not", and the symptom is worse: not even a CannotPullContainerError — ECS simply cannot
+# place the task and spins at desired=1 / running=0 (docs/log/72). CpArch=arm64 is only
+# possible for a build where publish-dist ran with control_plane_arm64, which is off by
+# default.
+# Fail only when it can be proven. Passing when it could not be checked is deliberate: this is
+# an update preflight, not a publishing gate. AF_CP_ARCH_CHECK=0 disables it entirely.
 if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
-  # パラメータ自体が無い旧スタックは x86_64（Fargate が省略時に入れる既定と同じ）。
+  # An older stack without the parameter at all is x86_64 (the default Fargate applies when it
+  # is omitted).
   cp_arch="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
     --query "Stacks[0].Parameters[?ParameterKey=='CpArch'].ParameterValue" \
     --output text 2>/dev/null || true)"
   case "$cp_arch" in ""|None) cp_arch=x86_64 ;; esac
-  want=amd64; [ "$cp_arch" = arm64 ] && want=arm64   # CFN の語彙 → OCI の語彙
+  want=amd64; [ "$cp_arch" = arm64 ] && want=arm64   # CFN's vocabulary -> OCI's
   manifest="$("${AWS[@]}" ecr batch-get-image --repository-name af-control-plane \
     --image-ids "imageTag=$VERSION" \
     --accepted-media-types \
@@ -129,9 +131,10 @@ if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
       "application/vnd.oci.image.index.v1+json" \
     --query 'images[0].imageManifest' --output text 2>/dev/null || true)"
   case "$manifest" in
-    *'"manifests"'*)   # マニフェストリスト＝中身のアーキが読める。ここは断定できる。
-      # jq を足さないための読み方（運用者の手元に必ずあるとは限らない）。platform 側の
-      # "architecture" しか出てこないので、カンマで割って拾えば十分。
+    *'"manifests"'*)   # A manifest list: the architectures inside are readable, so this is
+                       # something we can assert.
+      # Parsed this way to avoid needing jq (an operator does not necessarily have it). Only
+      # the platform side's "architecture" appears, so splitting on commas is enough.
       archs="$(printf '%s' "$manifest" | tr ',' '\n' \
         | sed -n 's/.*"architecture"[[:space:]]*:[[:space:]]*"\([a-z0-9_]*\)".*/\1/p' \
         | sort -u | tr '\n' ' ')"
@@ -145,7 +148,8 @@ if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
           exit 1 ;;
       esac
       ;;
-    *)                 # 単一マニフェスト＝1 アーキ分しか無い。中身は読めない。
+    *)                 # A single manifest: one architecture only, and its contents cannot be
+                       # read here.
       if [ "$want" = arm64 ]; then
         echo "ERROR: CpArch=arm64 but af-control-plane:$VERSION is a SINGLE manifest — it can only" >&2
         echo "       serve one architecture, and this pipeline's single-arch builds are the build" >&2
@@ -158,10 +162,11 @@ if [ "${AF_CP_ARCH_CHECK:-1}" = 1 ]; then
   esac
 fi
 
-# どのクラスタのどのサービスが CP か。スタックが持っている実体（AWS::ECS::Service の
-# physical id ＝ arn:…:service/<cluster>/<name>）から引く。名前の規約
-# （`af-${AWS::StackName}-cp`）を書き写すと、スタック名を変えた瞬間に静かに外れて
-# 「force も待機も別のサービスに当てて成功した」ことになるため、規約は最後の保険。
+# Which service in which cluster is the CP. Resolved from the resource the stack actually owns
+# (the AWS::ECS::Service physical id = arn:…:service/<cluster>/<name>). Transcribing the naming
+# convention (`af-${AWS::StackName}-cp`) instead breaks silently the moment the stack is
+# renamed — the force and the wait would then hit a different service and "succeed" — so the
+# convention is only the last-resort fallback.
 CP_ARN="$("${AWS[@]}" cloudformation describe-stack-resource --stack-name "$STACK" \
   --logical-resource-id Service --query 'StackResourceDetail.PhysicalResourceId' \
   --output text 2>/dev/null || true)"
@@ -173,7 +178,7 @@ case "$CP_ARN" in
     CLUSTER="${rest##*/}"
     ;;
 esac
-if [ -z "$CLUSTER" ]; then             # 保険: 20-platform の export ＋ 命名規約
+if [ -z "$CLUSTER" ]; then             # fallback: 20-platform's export + the naming convention
   PLATFORM_STACK="$("${AWS[@]}" cloudformation describe-stacks --stack-name "$STACK" \
     --query "Stacks[0].Parameters[?ParameterKey=='PlatformStackName'].ParameterValue" --output text)"
   CLUSTER="$("${AWS[@]}" cloudformation list-exports \
@@ -186,17 +191,17 @@ if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ] || [ -z "$CP_SERVICE" ]; then
 fi
 echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
 
-# --- 2) CFN deploy：ImageTag だけ上書き（他は前回値のまま） -------------------
-# `cloudformation deploy` は指定しなかったパラメータを UsePreviousValue で保つので、
-# ここに他のパラメータを書き足してはならない（書けば「前回値」を上書きしてしまう）。
+# --- 2) CFN deploy: override ImageTag only (everything else keeps its previous value) -------
+# `cloudformation deploy` keeps parameters it was not given at UsePreviousValue, so never add
+# another parameter here — adding one overwrites that "previous value".
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
 out=""
 if [ "$DRY" = 1 ]; then
   echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --parameter-overrides ImageTag=$VERSION"
 else
   set +e
-  # ⚠️ af_cfn_deploy を通すこと（env.sh）。テンプレートが 51,200 バイトを超えたら S3 経由に
-  # 切り替わる —— 2026-09-01 に 30-ingress がそこを越え、**リリース配備が全部止まっていた**。
+  # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
+  # bytes. 30-ingress crossed that line once and every release deployment stopped dead.
   out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --parameter-overrides "ImageTag=$VERSION" \
     --no-fail-on-empty-changeset 2>&1)"
@@ -206,26 +211,26 @@ else
   [ $rc -eq 0 ] || exit $rc
 fi
 
-# --- 3) 可変タグで「変更なし」だった場合の取りこぼし（落とし穴 2） -----------
-# 同じタグへ push し直した更新はテンプレート差分がゼロ。CFN は何もせず成功するので、
-# ここで検出して ECS 側の force-new-deployment に落とす（新しいイメージを引き直す）。
+# --- 3) what a mutable tag's "no changes" would drop (pitfall 2) -------------
+# An update re-pushed to the same tag has zero template diff, so CFN does nothing and succeeds.
+# Detect that here and fall back to an ECS force-new-deployment (which re-pulls the new image).
 if [ "$FORCE" = 1 ] || echo "$out" | grep -qi "No changes to deploy"; then
   echo "==> forcing a new CP deployment (mutable tag / --force): $CP_SERVICE"
   run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" \
     --force-new-deployment >/dev/null
 fi
 
-# --- 4) CP が入れ替わるまで待つ ---------------------------------------------
+# --- 4) wait until the CP has been replaced ---------------------------------
 if [ "$DRY" != 1 ]; then
   echo "==> waiting for $CP_SERVICE to stabilise (blue/green behind the ALB)"
   "${AWS[@]}" ecs wait services-stable --cluster "$CLUSTER" --services "$CP_SERVICE"
   echo "==> CP is running the new task definition"
 fi
 
-# --- 5) 走っているワークスペースの一覧（落とし穴 3） -------------------------
-# ここで停止はしない。誰が古いイメージのまま走っているかを出すだけ。
-# list-services はページングを CLI に任せる（--max-items を付けると黙って打ち切られ、
-# 「全員見た」ように読めてしまう）。describe-services は 1 回 10 件までなので束ねる。
+# --- 5) list the running workspaces (pitfall 3) ------------------------------
+# Nothing is stopped here; this only reports who is still running the old image.
+# Leave list-services' paging to the CLI (--max-items truncates silently and then reads as
+# "everyone was seen"). describe-services takes 10 at a time, so batch them.
 arns="$("${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null || true)"
 names=""
 for arn in $arns; do
@@ -246,15 +251,17 @@ while [ $# -gt 0 ]; do
   running="$running $got"
 done
 
-# --- 6) ecs-ec2 の golden snapshot（更新でもう一つ静かに古くなるもの） ---------
-# 新規ユーザーの home の種。イメージが上がると CP は af-image の不一致で golden を
-# 「使わずに空 home を作る」側へ倒す（ADR 0045 決定 9）。壊れはしないが新規の初回起動が
-# 目に見えて遅くなり、気づけるのは CP のログだけ — だから更新のたびにここで出す。
+# --- 6) the ecs-ec2 golden snapshot (the other thing an update quietly makes stale) ---------
+# It seeds a new user's home. When the image moves, the af-image mismatch makes the CP fall to
+# "do not use the golden, create an empty home" (ADR 0045 decision 9). Nothing breaks, but a
+# new user's first start gets visibly slower and the only place it shows is the CP log — hence
+# reporting it on every update.
 #
-# 0.9.2 以降、焼き直しは既定で CP がやる（決定 9-1）。それでもここで出すのは、自動焼きが
-# 「始まらない」条件が二つあるから: AF_ECS_EC2_GOLDEN_AUTOBAKE=0 と、プールの空きが
-# 2 スロット未満。どちらも静かに何も起きないだけなので、直後は必ず古いままに見える
-# （数分で追いつく）ことと合わせて、下のメッセージで断り書きにしている。
+# The re-bake is the CP's job by default (decision 9-1). It is still reported here because
+# there are two conditions under which the automatic bake never starts:
+# AF_ECS_EC2_GOLDEN_AUTOBAKE=0, and fewer than 2 free slots in the pool. Both simply do nothing,
+# silently — so the message below says that, together with the fact that it always looks stale
+# right after an update (it catches up within minutes).
 ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
 WS_IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/af-workspace:$VERSION"
 golden_stale="$("${AWS[@]}" ec2 describe-snapshots --owner-ids self \
@@ -268,36 +275,38 @@ cat <<EOF
 
 ==> done: $STACK is on ImageTag=$VERSION${URL:+  ($URL)}
 
-Console（各利用者のブラウザ）は数分以内に「新しいバージョンがあります」を出し、
-リロードだけで新しくなる（セッションは止まらない）。
+The Console (in each user's browser) shows "a new version is available" within a few minutes,
+and a reload is all it takes (sessions are not interrupted).
 
-ワークスペースは自動では入れ替わらない。adapter は Start のたびにタスク定義を作り直す
-ので、いま走っているものは停止→起動まで古いイメージのまま走り続ける。該当する利用者の
-Console には WS バーの「要再起動」バッジが出る（押すのは本人・停止はセッションを落とす）。
+Workspaces are NOT replaced automatically. The adapter rebuilds the task definition on every
+Start, so anything running now keeps the old image until it is stopped and started again. The
+affected users get the "restart required" badge on the WS bar in their Console (they press it
+themselves — stopping kills their sessions).
 
-※ バッジが誰にも出ないときは 20-platform が古い。CpTaskRole の ecr:BatchGetImage が
-   無いとドリフト判定は「不明」に倒れ、エラーも出さずにバッジだけが消える:
+Note: if nobody gets the badge, 20-platform is out of date. Without ecr:BatchGetImage on
+   CpTaskRole the drift check falls to "unknown" and the badge just disappears, with no error:
      aws cloudformation deploy --stack-name <platform> --template-file cfn/20-platform.yaml \\
        --capabilities CAPABILITY_NAMED_IAM --profile $PROFILE --region $REGION
 EOF
 if [ -n "${running// /}" ]; then
-  echo "いま走っているワークスペース（停止→起動まで旧イメージ）:"
+  echo "Workspaces running now (on the old image until stopped and started again):"
   for n in $running; do echo "  - $n"; done
 else
-  echo "いま走っているワークスペースは無し（次の Start から新しいイメージ）。"
+  echo "No workspaces are running (the next Start picks up the new image)."
 fi
 
 if [ -n "${golden_stale// /}" ]; then
   cat <<EOF
 
-⚠️ ecs-ec2: golden snapshot が古い（新規ユーザーの home の種）。CP は一致しない golden を
-   使わず空 home を作るので、壊れはしないが**新規の初回起動だけが遅くなり**、気づけるのは
-   CP のログだけ（ADR 0045 決定 9）:
+ecs-ec2: the golden snapshot is stale (it seeds a new user's home). The CP does not use a
+   golden that does not match and creates an empty home instead, so nothing breaks, but a new
+   user's FIRST START gets slower and the only place it shows is the CP log (ADR 0045
+   decision 9):
 $(printf '%s\n' "$golden_stale" | while IFS= read -r l; do echo "     $l"; done)
-   いま走るべき image: $WS_IMAGE
+   The image it should carry now: $WS_IMAGE
 
-   通常はこのあと数分で CP が自分で焼き直す（決定 9-1）。焼き始めないのは
-   AF_ECS_EC2_GOLDEN_AUTOBAKE=0 のときと、プールの空きが 2 スロット未満のとき
-   （その 2 つは CP のログが理由を言う）。手で焼くなら bake-golden.sh。
+   Normally the CP re-bakes it by itself within a few minutes (decision 9-1). It does not start
+   when AF_ECS_EC2_GOLDEN_AUTOBAKE=0, or when the pool has fewer than 2 free slots (in both
+   cases the CP log gives the reason). To bake it by hand, use bake-golden.sh.
 EOF
 fi

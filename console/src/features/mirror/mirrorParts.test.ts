@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
 
 describe("workSplit", () => {
-  it("最後のツール以前を作業過程、以後を最終回答に分ける", () => {
+  it("splits at the last tool: work before it, final answer after it", () => {
     const parts = [
       { kind: "text", text: "調べます" },
       { kind: "tool" },
@@ -15,7 +15,7 @@ describe("workSplit", () => {
     expect(textOfParts(parts.slice(4))).toBe("修正できました");
   });
 
-  it("質問とプランも作業境界として扱う", () => {
+  it("treats a question and a plan as work boundaries too", () => {
     expect(workSplit([{ kind: "question" }, { kind: "text", text: "回答です" }])).toEqual({
       at: 1,
       tools: 1,
@@ -24,28 +24,29 @@ describe("workSplit", () => {
     expect(workSplit([{ kind: "plan" }, { kind: "text", text: "完了しました" }])?.at).toBe(1);
   });
 
-  it("ツール無し、または最終テキスト未到着なら分割しない", () => {
+  it("does not split with no tool, or before the final text arrives", () => {
     expect(workSplit([{ kind: "text", text: "通常回答" }])).toBeNull();
     expect(workSplit([{ kind: "text", text: "確認中" }, { kind: "tool" }])).toBeNull();
     expect(workSplit([{ kind: "tool" }, { kind: "thinking", text: "推論" }])).toBeNull();
   });
 
-  it("実回答の後にメモ書き込み等の後始末ツール＋短い続きが来ても、実回答から最終回答扱いにする", () => {
+  it("keeps the real answer as the final answer even when a wrap-up tool and a short follow-up trail it", () => {
     const parts = [
       { kind: "text", text: "調べます" },
       { kind: "tool" },
       { kind: "text", text: "ここが実際の最終回答で、いちばん長い本文になります。" },
-      { kind: "tool" }, // メモリ書き込み（後始末）
+      { kind: "tool" }, // memory write (wrap-up)
       { kind: "text", text: "メモしました" },
     ];
-    // 境界は末尾ツール直後(4)ではなく、実回答(2)。後始末ツールと続きは最終回答側に残す。
+    // The boundary is the real answer (2), not just after the trailing tool (4); the wrap-up tool
+    // and its follow-up stay on the final-answer side.
     expect(workSplit(parts)).toEqual({ at: 2, tools: 1, responses: 1 });
     expect(textOfParts(parts.slice(2))).toBe(
       "ここが実際の最終回答で、いちばん長い本文になります。\n\nメモしました",
     );
   });
 
-  it("末尾テキストが直前テキスト以上なら剥がさない（通常のナレーション→ツール→回答）", () => {
+  it("keeps the trailing text when it is no shorter than the previous one (narration, tool, answer)", () => {
     const parts = [
       { kind: "text", text: "確認します" },
       { kind: "tool" },
@@ -56,26 +57,26 @@ describe("workSplit", () => {
     expect(workSplit(parts)).toEqual({ at: 4, tools: 2, responses: 2 });
   });
 
-  it("複数の後始末ツールを繰り返し剥がす", () => {
+  it("strips several wrap-up tools in a row", () => {
     const parts = [
       { kind: "tool" },
       { kind: "text", text: "十分に長い実際の最終回答の本文です。" },
-      { kind: "tool" }, // 後始末1
+      { kind: "tool" }, // wrap-up 1
       { kind: "text", text: "追記" },
-      { kind: "tool" }, // 後始末2
+      { kind: "tool" }, // wrap-up 2
       { kind: "text", text: "完了" },
     ];
     expect(workSplit(parts)).toEqual({ at: 1, tools: 1, responses: 0 });
   });
 
-  it("最終回答を待たず、ツール到着時点までを確定済み作業過程として返す", () => {
+  it("returns the work confirmed up to the last tool without waiting for the final answer", () => {
     expect(confirmedWorkEnd([{ kind: "text" }, { kind: "tool" }, { kind: "text" }])).toBe(2);
     expect(confirmedWorkEnd([{ kind: "text" }])).toBe(0);
   });
 });
 
 describe("latestWorkPromptIndex", () => {
-  it("送信直後のpendingターンを今回の作業境界として扱う", () => {
+  it("treats a just-sent pending turn as the current work boundary", () => {
     const groups = [
       { role: "user" },
       { role: "assistant" },
@@ -84,7 +85,7 @@ describe("latestWorkPromptIndex", () => {
     expect(latestWorkPromptIndex(groups)).toBe(2);
   });
 
-  it("未実行のqueued promptは現在の作業境界にしない", () => {
+  it("does not treat an unexecuted queued prompt as the current work boundary", () => {
     const groups = [
       { role: "user" },
       { role: "assistant" },
@@ -95,17 +96,18 @@ describe("latestWorkPromptIndex", () => {
 });
 
 describe("awaitingReply", () => {
-  it("最新ユーザーターンに返信がまだ無ければ true（idle→描画待ちの間スピナーを保持）", () => {
-    // ユーザー送信直後：回答ターンがまだ transcript に出ていない＝入力待ちの空白が出る状況。
+  it("is true while the latest user turn has no reply yet, holding the spinner from idle to render", () => {
+    // Just after sending: the reply turn is not in the transcript yet, which would otherwise show
+    // a blank gap.
     expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user" }])).toBe(true);
   });
 
-  it("返信（assistantブロック）が来たら false＝スピナーを消して回答を出す", () => {
+  it("is false once an assistant block arrives, dropping the spinner and showing the answer", () => {
     expect(awaitingReply([{ role: "user" }, { role: "assistant" }])).toBe(false);
     expect(awaitingReply([{ role: "user" }, { role: "assistant" }, { role: "user" }, { role: "assistant" }])).toBe(false);
   });
 
-  it("プロンプトが1つも無い（新規/履歴のみ）なら待たない", () => {
+  it("does not wait when there is no prompt at all (new session or history only)", () => {
     expect(awaitingReply([])).toBe(false);
     expect(awaitingReply([{ role: "assistant" }])).toBe(false);
   });

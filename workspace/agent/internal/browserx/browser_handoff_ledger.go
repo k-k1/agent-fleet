@@ -1,22 +1,24 @@
 package browserx
 
-// ブラウザ attach ハンドオフの配送台帳（docs/log/53-chromium-attach-view.md「完了通知」節）。
+// The delivery ledger for a browser attach handoff (docs/log/53-chromium-attach-view.md
+// §completion notification).
 //
-// request_browser_action で人間に操作を依頼したセッションへ、Console の完了/
-// キャンセルボタンが押された結果を実際に届ける薄い機構。それまでは
-// SetHandoffResult がメモリ上の状態を書き換えるだけで、依頼元セッションへは
-// 何も伝わらなかった（get_browser_action_result を自発的に呼び直さない限り
-// 結果を知る術がない）。
+// A thin mechanism that actually delivers the outcome of the Console's complete / cancel
+// button to the session that asked a human to operate the browser through
+// request_browser_action. Without it, SetHandoffResult only rewrites in-memory state and
+// nothing reaches the requesting session, which then has no way to learn the result unless it
+// calls get_browser_action_result again of its own accord.
 //
-// browserAttachment 自体は Agent 再起動をまたいで残らない（メモリ上のみ）ので、
-// 「再起動を挟んでも通知を失わない」が意味を持つのは
-// ResolveBrowserHandoff（結果確定）～DeliverBrowserHandoff（配送完了）の短い窓
-// だけ — その窓を跨いだクラッシュだけをこの台帳が救う。指示台帳
-// （chat_report_ledger.go）の busy/idle settle 検出とは無関係な別物なので、
-// あちらには載せない: session_peer.go と同じ理由で、指示台帳に載せると
-// リコンサイラが「利用者の新指示」と誤認し早期 settle / 早期消費を起こす
-// （ADR 0041 決定4と同型の事故）。配送そのものは既存の /sessions/{name}/input
-// （agentSendToSession、停止中セッションの再起動込み）を再利用する。
+// A browserAttachment does not itself survive an Agent restart (it is memory-only), so "the
+// notification is not lost across a restart" only means anything for the short window between
+// ResolveBrowserHandoff (the result is decided) and DeliverBrowserHandoff (delivery
+// completes); a crash inside that window is all this ledger rescues. It is a different thing
+// from the instruction ledger (chat_report_ledger.go) and its busy/idle settle detection, and
+// must not be filed there: for the same reason as session_peer.go, a row in the instruction
+// ledger is mistaken by the reconciler for a new instruction from the user and causes an
+// early settle / early consume (the same accident as ADR 0041 decision 4). Delivery itself
+// reuses the existing /sessions/{name}/input (agentSendToSession, including restarting a
+// stopped session).
 
 import (
 	"encoding/json"
@@ -53,8 +55,8 @@ type browserHandoffLedger struct {
 
 var BrowserHandoffLedgers = fstore.JSON[browserHandoffLedger](paths.AgentConfigDir, "browser-handoff-ledger", ".json")
 
-// 台帳の read-modify-write はセッション単位で直列化する（chat_report_ledger.go の
-// lockInstr と同じ理由: 書き手はこのプロセス内の複数ハンドラだけ）。
+// The ledger's read-modify-write is serialized per session (the same reason as lockInstr in
+// chat_report_ledger.go: the only writers are several handlers inside this process).
 var (
 	browserHandoffLocksMu sync.Mutex
 	browserHandoffLocks   = map[string]*sync.Mutex{}

@@ -32,15 +32,15 @@ func withFakeClock(t *testing.T) *time.Time {
 func TestObserveFrameSettlesOnlyAfterTheWindow(t *testing.T) {
 	now := withFakeClock(t)
 	if observeFrame("s1", "frame A") {
-		t.Fatal("初回観測で settled になった — 保守側（いま変わった扱い）に倒すべき")
+		t.Fatal("settled on the very first observation - it must err conservative and treat the frame as just changed")
 	}
 	*now = now.Add(idleSettleWindow - time.Second)
 	if observeFrame("s1", "frame A") {
-		t.Fatal("窓に 1 秒足りないのに settled になった")
+		t.Fatal("settled one second short of the window")
 	}
 	*now = now.Add(2 * time.Second)
 	if !observeFrame("s1", "frame A") {
-		t.Fatal("同じ絵が窓を超えて続いたのに settled にならない — 詰まったセッションが永久に 進行中 に貼り付く")
+		t.Fatal("the same frame outlasted the window but did not settle - a stalled session would stick at in progress forever")
 	}
 }
 
@@ -49,15 +49,15 @@ func TestObserveFrameResetsWhenThePaneRepaints(t *testing.T) {
 	observeFrame("s1", "frame A")
 	*now = now.Add(idleSettleWindow - time.Second)
 	if observeFrame("s1", "frame B") {
-		t.Fatal("絵が変わったのに settled — 再描画は「生きている」証拠なので時計を巻き戻すこと")
+		t.Fatal("settled although the frame changed - a redraw is evidence of life, so the clock must rewind")
 	}
 	*now = now.Add(idleSettleWindow - time.Second)
 	if observeFrame("s1", "frame B") {
-		t.Fatal("巻き戻した窓が効いていない")
+		t.Fatal("the rewound window is not in effect")
 	}
 	*now = now.Add(2 * time.Second)
 	if !observeFrame("s1", "frame B") {
-		t.Fatal("新しい絵で窓を満たしたのに settled にならない")
+		t.Fatal("the new frame filled the window but did not settle")
 	}
 }
 
@@ -65,42 +65,45 @@ func TestObserveFrameIsPerSession(t *testing.T) {
 	now := withFakeClock(t)
 	observeFrame("s1", "frame A")
 	*now = now.Add(idleSettleWindow / 2)
-	observeFrame("s2", "frame A") // 同じ絵でもセッションが違えば時計は別
+	observeFrame("s2", "frame A") // same frame, but a different session keeps its own clock
 	*now = now.Add(idleSettleWindow/2 + time.Second)
 	if !observeFrame("s1", "frame A") {
-		t.Error("s1 は窓を超えている")
+		t.Error("s1 is past the window")
 	}
 	if observeFrame("s2", "frame A") {
-		t.Error("s2 はまだ窓の途中 — セッション間で時計が漏れている")
+		t.Error("s2 is still inside its window - clocks leak between sessions")
 	}
 	ForgetPane("s1")
 	if observeFrame("s1", "frame A") {
-		t.Error("ForgetPane のあとも settled — 名前を再利用した別セッションが前任者の時計を継ぐ")
+		t.Error("still settled after ForgetPane - a later session reusing the name inherits its predecessor's clock")
 	}
 }
 
-// TestStreamingAnswerNeverSettles は実測列（testdata/streaming_answer）を実時刻どおりに
-// 再生して、「回答本文を描いている最中」が settled にならないことを守る。
+// TestStreamingAnswerNeverSettles replays a measured series (testdata/streaming_answer) at
+// its real timing and holds that a pane in the middle of drawing the answer body never
+// settles.
 //
-// 守っているのは settle 窓の値そのもの: この列の最長静止は 11.44 秒なので、
-// idleSettleWindow をそれ以下に縮めるとこのテストが落ちる。落ちたときに直すべきなのは
-// テストではなく窓のほうで、縮めれば「TUI に回答が流れている最中にバッジが 入力待ち へ
-// 落ちる」実害（停止ボタンが消える・完了通知の早撃ち・アイドル判定への波及）が戻る。
+// What it guards is the value of the settle window itself: the longest still period in this
+// series is 11.44 seconds, so shrinking idleSettleWindow below that makes this test fail.
+// When it fails, the thing to fix is the window, not the test: a shorter window brings back
+// the real harm of the badge dropping to waiting for input while the answer still streams
+// into the TUI (the stop button disappears, completion notifications fire early, the idle
+// verdict is affected).
 func TestStreamingAnswerNeverSettles(t *testing.T) {
 	frames := streamingFrames(t)
 	if len(frames) < 10 {
-		t.Fatalf("testdata/streaming_answer が痩せている（%d 枚）", len(frames))
+		t.Fatalf("testdata/streaming_answer is too thin (%d frames)", len(frames))
 	}
 	now := withFakeClock(t)
 	base := *now
 	for _, f := range frames {
-		// production の判定は「本文描画中」を待機と読む — それがこの窓の本体。
+		// production reads "drawing body text" as waiting - that is what this window exists for.
 		if !atIdlePrompt(f.text) {
-			t.Fatalf("%s: atIdlePrompt=false — 実測列の前提が変わった。testdata/streaming_answer/SOURCE.txt を読んで録り直すこと", f.name)
+			t.Fatalf("%s: atIdlePrompt=false - the premise of the measured series changed. Read testdata/streaming_answer/SOURCE.txt and re-record it", f.name)
 		}
 		*now = base.Add(f.at)
 		if observeFrame("streaming", f.text) {
-			t.Fatalf("%s (+%s): 回答を描いている最中に settled になった — この列の最長静止 11.44s に対して idleSettleWindow=%s が短すぎる", f.name, f.at, idleSettleWindow)
+			t.Fatalf("%s (+%s): settled while the answer was still being drawn - idleSettleWindow=%s is too short for this series' longest still period of 11.44s", f.name, f.at, idleSettleWindow)
 		}
 	}
 }
@@ -115,18 +118,18 @@ func streamingFrames(t *testing.T) []streamFrame {
 	t.Helper()
 	files, err := filepath.Glob("testdata/streaming_answer/*.txt")
 	if err != nil || len(files) == 0 {
-		t.Fatalf("testdata/streaming_answer が読めない: %v", err)
+		t.Fatalf("testdata/streaming_answer is unreadable: %v", err)
 	}
 	sort.Strings(files)
 	var out []streamFrame
 	for _, p := range files {
 		name := filepath.Base(p)
 		if name == "SOURCE.txt" {
-			continue // 由来メモ（録り直し方はここに書いてある）
+			continue // provenance note; how to re-record is written there
 		}
 		ms, err := strconv.Atoi(strings.TrimSuffix(name, ".txt"))
 		if err != nil {
-			t.Fatalf("%s: ファイル名は窓の先頭からの経過ミリ秒であること", name)
+			t.Fatalf("%s: the file name must be the milliseconds elapsed from the start of the series", name)
 		}
 		b, err := os.ReadFile(p)
 		if err != nil {

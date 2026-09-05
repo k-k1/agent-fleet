@@ -1,16 +1,17 @@
 package chatx
 
-// アシスタントチャットのコンテキスト使用量の捕捉と逼迫通知（docs/log/33）。
+// Context-usage capture and pressure notices for the assistant chat (docs/log/33).
 //
-// 各プロバイダの headless 実行が返す usage イベントをターン毎に拾い、会話へ
-// 「直近のコンテキスト占有」スナップショット（contextUsage — get_session_usage /
-// ミラーの ContextBar と同じ形）を永続化する。resume 駆動のチャットはコンテキスト
-// がプロバイダ側 transcript に無限に積み上がるため、まず占有を可視化し、閾値超過
-// 時には notice を1回だけ追記して新スレッドへの引き継ぎを促す — これが肥大対策の
-// 第1段（可視化）。要約引き継ぎ（自前コンパクション）は後続。
+// Each turn picks up the usage events every provider's headless run returns and persists
+// a "latest context occupancy" snapshot on the conversation (contextUsage — the same
+// shape as get_session_usage and the mirror's ContextBar). A resume-driven chat piles
+// context up without bound in the provider-side transcript, so the first stage of the
+// answer is to make the occupancy visible, and to append a notice exactly once past the
+// threshold nudging the user to hand over to a new thread. Handing over a summary
+// (compaction of our own) is later work.
 //
-// イベント形状は 3 プロバイダとも実測で確認済み（2026-07: claude-code 2.1.x /
-// codex-cli 0.144 / opencode 1.18）。usage の取れなかったターンでは前回値を保持する。
+// The event shapes are measured on all three providers (2026-07: claude-code 2.1.x /
+// codex-cli 0.144 / opencode 1.18). A turn that yielded no usage keeps the previous value.
 
 import (
 	"sort"
@@ -21,35 +22,37 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-// chatCtxWarnPct — コンテキスト使用率がこの割合(%)以上になったら notice で引き継ぎを
-// 促す。ContextBar の「near」帯（80%）に合わせる: バーが警告色になるのと同じタイミング
-// で文字でも知らせ、プロバイダ側の自動コンパクションやウィンドウ超過エラーより先に
-// 利用者へ届くようにする。
+// chatCtxWarnPct is the context-usage percentage at or above which a notice nudges the
+// user to hand over. It matches the ContextBar's "near" band (80%) so the words arrive at
+// the same moment the bar turns its warning colour, and so the user hears about it before
+// the provider's own auto-compaction or a window-exceeded error does.
 const chatCtxWarnPct = 80.0
 
-// claudeUsage は claude -p の usage ブロック（result イベント/assistant イベントの
-// message.usage 共通の形）。iterations は 1 ターン内の API 呼び出し毎のスナップ
-// ショット（実測: 最後の要素が最終的なコンテキスト占有。ツール多段ターンでも
-// トップレベルの合算値ではなく末尾要素を使えば正確）。
+// ClaudeUsage is the usage block of claude -p (the shape shared by the result event and
+// an assistant event's message.usage). iterations holds one snapshot per API call within
+// the turn; measured, the last element is the final context occupancy, and using that
+// last element rather than the top-level sum stays accurate even for a multi-tool turn.
 type ClaudeUsage struct {
 	InputTokens              int `json:"input_tokens"`
 	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
 	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
-	// OutputTokens はコンテキスト占有には効かない（出力は次ターンの入力として戻る）が、
-	// 使用量台帳の spend には要る（docs/log/46 §2）。実測で存在を確認済み。
+	// OutputTokens does not affect context occupancy (output comes back as the next
+	// turn's input) but the usage ledger's spend needs it (docs/log/46 §2). Its
+	// presence is measured.
 	OutputTokens int           `json:"output_tokens"`
 	Iterations   []ClaudeUsage `json:"iterations,omitempty"`
 }
 
-// contextTokens は入力側スナップショットの合計 = コンテキスト占有量。
+// contextTokens is the sum of the input-side snapshot = the context occupancy.
 func (u ClaudeUsage) contextTokens() int {
 	return u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens
 }
 
-// ledgerTokens は使用量台帳のトークン内訳（docs/log/46）。**modelUsage が取れなかった時の
-// 縮退用**で、モデル別の内訳は失われるが総量は残る。トップレベルの値を使うのは、台帳が
-// 見たいのが「この呼び出しで実際に課金された量」だから — コンテキスト占有（iterations
-// 末尾のスナップショット）とは別の量。
+// LedgerTokens is the usage ledger's token breakdown (docs/log/46). It is the DEGRADED
+// path for when modelUsage could not be read: the per-model breakdown is lost but the
+// totals survive. The top-level values are used because what the ledger wants is "how
+// much this call was actually billed for" — a different quantity from context occupancy
+// (the snapshot at the tail of iterations).
 func (u ClaudeUsage) LedgerTokens() usagex.Tokens {
 	return usagex.Tokens{
 		In: u.InputTokens, Out: u.OutputTokens,
@@ -57,12 +60,13 @@ func (u ClaudeUsage) LedgerTokens() usagex.Tokens {
 	}
 }
 
-// claudeModelUsage は result イベントの modelUsage エントリのうち必要な分。マップの
-// キーは版込みの生モデル id（claude-haiku-4-5-20251001）で、CanonicalModel が版を畳んだ
-// 系列キー（claude-haiku-4-5）— 版が上がっても台帳の系列が分断されないよう両方を持つ。
-// contextWindow はモデルの実ウィンドウ（recorded として使える）。トークン4種と CostUSD は
-// 使用量台帳のモデル別行（ADR 0029 §1）。claude は1呼び出しが複数モデルに割れることが
-// あるので、ここが唯一「モデル毎の内訳」を実測で持つ経路。全フィールド実測確認済み。
+// ClaudeModelUsage is the part of a result event's modelUsage entry we need. The map key
+// is the raw model id including the version (claude-haiku-4-5-20251001) and CanonicalModel
+// is the series key with the version folded away (claude-haiku-4-5); both are kept so a
+// version bump does not split the ledger's series. contextWindow is the model's real
+// window (usable as recorded). The four token counts and CostUSD are the ledger's
+// per-model row (ADR 0029 §1). One claude call can be split across several models, so this
+// is the only path that carries a measured per-model breakdown. All fields are measured.
 type ClaudeModelUsage struct {
 	ContextWindow            int     `json:"contextWindow"`
 	InputTokens              int     `json:"inputTokens"`
@@ -73,9 +77,10 @@ type ClaudeModelUsage struct {
 	CanonicalModel           string  `json:"canonicalModel"`
 }
 
-// usageModelRows は modelUsage を台帳のモデル別行へ変換する。キー（生 id）を model_raw、
-// canonicalModel を系列キーにする。順序はキー昇順に固定 — マップ反復順のままだと同じ
-// 呼び出しでも行順が揺れ、テストと台帳の読み口が不安定になる。
+// UsageModelRows converts modelUsage into the ledger's per-model rows: the key (the raw
+// id) becomes model_raw and canonicalModel the series key. The order is pinned to
+// ascending key — left at map iteration order, the same call would produce a different
+// row order each time, making both the tests and the ledger's read side unstable.
 func UsageModelRows(mu map[string]ClaudeModelUsage) []usagex.ModelRow {
 	if len(mu) == 0 {
 		return nil
@@ -99,37 +104,38 @@ func UsageModelRows(mu map[string]ClaudeModelUsage) []usagex.ModelRow {
 	return rows
 }
 
-// claudeCtx は 1 回の claude 実行のイベント列からコンテキスト占有を追跡する。
-// stream では assistant イベント毎の message.usage を、非 stream では result の
-// usage.iterations 末尾を最終スナップショットとして採る。
+// claudeCtx tracks context occupancy across the event stream of one claude run. In stream
+// mode it takes each assistant event's message.usage; otherwise the tail of the result's
+// usage.iterations is the final snapshot.
 type claudeCtx struct {
 	snap   ClaudeUsage
 	window int
 	model  string
 }
 
-// observeAssistant は stream の assistant イベント（message.usage）を反映する。
-// 同一メッセージのイベントは同じ usage を重複して運ぶので、単純に最後勝ちでよい。
+// observeAssistant applies a stream assistant event (message.usage). Events for the same
+// message carry the same usage repeatedly, so plain last-write-wins is enough.
 func (t *claudeCtx) observeAssistant(model string, u ClaudeUsage) {
 	if u.contextTokens() <= 0 {
 		return
 	}
 	t.snap = u
 	if model != "" {
-		t.model = model // イベントが運ぶ実モデル名を優先
+		t.model = model // prefer the real model name the event carries
 	}
 }
 
-// observeResult は result イベントの usage / modelUsage を反映する。iterations が
-// あれば末尾が最終スナップショット（assistant イベント由来の値とも一致する）。
+// observeResult applies a result event's usage / modelUsage. When iterations is present
+// its tail is the final snapshot (and agrees with the assistant events' values).
 func (t *claudeCtx) observeResult(u ClaudeUsage, modelUsage map[string]ClaudeModelUsage) {
 	if n := len(u.Iterations); n > 0 {
 		t.snap = u.Iterations[n-1]
 	} else if t.snap.contextTokens() == 0 {
 		t.snap = u
 	}
-	// modelUsage からウィンドウ実測値を拾う。サブエージェント禁止のチャットでは通常
-	// 1 エントリ。万一複数あるときは解決済みモデル名と一致するものだけ信用する。
+	// Pick up the measured window from modelUsage. A chat that forbids subagents
+	// normally has one entry; should there be several, only trust the one matching
+	// the already-resolved model name.
 	if len(modelUsage) == 1 {
 		for k, mu := range modelUsage {
 			if t.model == "" {
@@ -144,31 +150,34 @@ func (t *claudeCtx) observeResult(u ClaudeUsage, modelUsage map[string]ClaudeMod
 	}
 }
 
-// apply は追跡結果を会話へ格納する（成功ターンの saveConv 前に呼ぶ）。claude は
-// イベントに実モデルを載せる数少ないプロバイダなので、ここがそのターンのモデル
-// （--model に渡したエイリアスではなく API が名乗った版込み id）の記録点でもある。
+// apply stores the tracking result on the conversation (call it before a successful
+// turn's saveConv). claude is one of the few providers that puts the real model on its
+// events, so this is also where the turn's model is recorded — the version-bearing id the
+// API named itself, not the alias passed to --model.
 func (t *claudeCtx) apply(c *ChatConversation) {
 	setChatContext(c, t.snap.InputTokens, t.snap.CacheReadInputTokens,
 		t.snap.CacheCreationInputTokens, t.window, t.model)
 	c.NoteTurnModel(t.model)
 }
 
-// codexUsage は codex exec --json の turn.completed が運ぶ usage。input_tokens は
-// cached_input_tokens を含む（rollout の token_count と同じ流儀）。ターン合算値
-// なので、ツール多段ターンではコンテキスト占有として過大側の近似になる — チャット
-// の大半（ツールなし 1 呼び出し）では正確で、警告用途には安全側。
+// CodexUsage is the usage carried by turn.completed of codex exec --json. input_tokens
+// includes cached_input_tokens (the same convention as the rollout's token_count). Being
+// a per-turn total it over-approximates context occupancy on a multi-tool turn — accurate
+// for the bulk of chats (one tool-less call) and on the safe side for a warning.
 type CodexUsage struct {
 	InputTokens       int `json:"input_tokens"`
 	CachedInputTokens int `json:"cached_input_tokens"`
-	// 使用量台帳向け（docs/log/46 §2）。実測（codex-cli 0.144.x）で turn.completed が
-	// cache_write_input_tokens / output_tokens / reasoning_output_tokens も運ぶことを確認。
-	// reasoning は output に含まれる内訳なので spend では足さない。
+	// For the usage ledger (docs/log/46 §2). Measured on codex-cli 0.144.x:
+	// turn.completed also carries cache_write_input_tokens / output_tokens /
+	// reasoning_output_tokens. reasoning is a breakdown already contained in output,
+	// so it is not added to spend.
 	CacheWriteInputTokens int `json:"cache_write_input_tokens"`
 	OutputTokens          int `json:"output_tokens"`
 }
 
-// ledgerTokens は codex のターン合算 usage を台帳の内訳へ写す。input_tokens は cached を
-// 含む（rollout の token_count と同じ流儀）ので、fresh = input - cached。
+// LedgerTokens maps codex's per-turn total usage onto the ledger's breakdown.
+// input_tokens includes cached (the rollout token_count convention), so
+// fresh = input - cached.
 func (u CodexUsage) LedgerTokens() usagex.Tokens {
 	fresh := u.InputTokens - u.CachedInputTokens
 	if fresh < 0 {
@@ -180,12 +189,14 @@ func (u CodexUsage) LedgerTokens() usagex.Tokens {
 	}
 }
 
-// opencodeUsage は opencode run --format json の step_finish が運ぶ part.tokens。
-// input はキャッシュ分を含まない（SQLite ストアの message.data.tokens と同じ形）。
+// opencodeUsage is the part.tokens carried by step_finish of opencode run --format json.
+// input excludes the cached share (the same shape as message.data.tokens in the SQLite
+// store).
 type opencodeUsage struct {
 	Input int `json:"input"`
-	// Output は使用量台帳向け（docs/log/46 §2）。このワークスペースは opencode 未ログインで
-	// ライブ検証できていないので、取れなければ 0 のまま — 推測で埋めない（ADR 0029 §4）。
+	// Output is for the usage ledger (docs/log/46 §2). This workspace is not logged
+	// into opencode, so it has no live verification; when it cannot be read it stays
+	// 0 rather than being filled in by guesswork (ADR 0029 §4).
 	Output int `json:"output"`
 	Cache  struct {
 		Read  int `json:"read"`
@@ -193,14 +204,15 @@ type opencodeUsage struct {
 	} `json:"cache"`
 }
 
-// ledgerTokens は opencode の内訳を台帳の形へ写す（input はキャッシュ分を含まない）。
+// LedgerTokens maps opencode's breakdown onto the ledger's shape (input excludes cache).
 func (u opencodeUsage) LedgerTokens() usagex.Tokens {
 	return usagex.Tokens{In: u.Input, Out: u.Output, CacheRead: u.Cache.Read, CacheCreate: u.Cache.Write}
 }
 
-// setChatContext は共通の格納口。スナップショットが空のターン（usage の取れない
-// プロバイダ経路・空応答）では何もせず前回値を残す。window が取れなければモデル名
-// から推定する（contextWindowGuess — get_session_usage と同じ）。
+// setChatContext is the shared store point. On a turn with an empty snapshot (a provider
+// path that yields no usage, an empty answer) it does nothing and leaves the previous
+// value in place. When the window cannot be read it is estimated from the model name
+// (contextWindowGuess — the same as get_session_usage).
 func setChatContext(c *ChatConversation, fresh, read, create, window int, model string) {
 	if fresh < 0 {
 		fresh = 0
@@ -223,10 +235,11 @@ func setChatContext(c *ChatConversation, fresh, read, create, window int, model 
 	c.Context = u
 }
 
-// chatCtxModelFor はウィンドウ推定に使うモデル名: そのターンを実際に回したバックエンド
-// 基準で解決した固定値があればそれ（chatModelFor — 認証フォールバックや途中切替では会話の
-// ピン留めと別 CLI が回るので、kind を渡さないと他 CLI のモデル名でウィンドウを推定して
-// しまう）、なければバックエンド毎の既定。
+// chatCtxModelFor is the model name used to estimate the window: the value resolved
+// against the backend that actually ran the turn, if there is one (chatModelFor — with an
+// auth fallback or a mid-conversation switch, a CLI other than the pinned one runs, so
+// without passing kind the window would be estimated from another CLI's model name), and
+// otherwise the per-backend default.
 func chatCtxModelFor(c *ChatConversation, kind string) string {
 	if m := chatModelFor(c, kind); m != "" {
 		return m
@@ -240,10 +253,11 @@ func chatCtxModelFor(c *ChatConversation, kind string) string {
 	return envOr("AF_CHAT_MODEL", defaultChatModel)
 }
 
-// noteContextPressure は閾値超過時に notice を1回だけ追記し、通知センターへも流す
-// （自動ターン中＝会話を開いていない時でも気づけるように）。閾値を下回ったら
-// （プロバイダ側のコンパクション等で占有が減った場合）フラグを戻し、次の超過で
-// 改めて1回知らせる。呼び出し側が会話ロックを保持し、直後に saveConv すること。
+// NoteContextPressure appends the notice exactly once past the threshold and also pushes
+// it to the notification center, so it is noticed during an auto turn as well (when the
+// conversation is not open). Dropping back below the threshold — occupancy shrinking
+// after a provider-side compaction, say — clears the flag, and the next crossing notifies
+// once again. The caller must hold the conversation lock and saveConv right afterwards.
 func NoteContextPressure(c *ChatConversation) {
 	u := c.Context
 	if u == nil || u.Pct < chatCtxWarnPct {
@@ -265,8 +279,9 @@ func NoteContextPressure(c *ChatConversation) {
 	_ = notice.Put(ev)
 }
 
-// ctxPressureContent は逼迫 notice の正本言語（ja）フォールバック本文。表示は
-// noticeKeyCtxPressure のカタログ訳が担う（chat_notice.go / ADR 0033）。
+// ctxPressureContent is the pressure notice's fallback body in the canonical language
+// (ja). Display goes through noticeKeyCtxPressure's catalogue translation
+// (chat_notice.go / ADR 0033).
 func ctxPressureContent(u *usagex.ContextUsage) string {
 	return "この会話のコンテキスト使用量が上限の約" + strconv.Itoa(int(u.Pct)) + "%" +
 		"（" + fmtKTokens(u.Tokens) + " / " + fmtKTokens(u.Window) + " トークン）に達しました。" +
@@ -275,7 +290,7 @@ func ctxPressureContent(u *usagex.ContextUsage) string {
 		"区切りの良いところで新しいチャットを開くことを検討してください。"
 }
 
-// fmtKTokens は 1000 以上を「123k」に丸める表示用ヘルパー。
+// fmtKTokens is a display helper rounding 1000 and above to "123k".
 func fmtKTokens(n int) string {
 	if n >= 1000 {
 		return strconv.Itoa(n/1000) + "k"

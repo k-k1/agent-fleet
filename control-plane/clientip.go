@@ -36,7 +36,7 @@ type clientIPKey struct{}
 // the "was a forwarding header present" flag as well as the address, because
 // "hops=0 AND an XFF arrived" is exactly the misconfiguration that would otherwise let
 // an administrator allowlist the load balancer's private address and believe they had
-// restricted something (ADR 0047 決定 4).
+// restricted something (ADR 0047 decision 4).
 type clientIPInfo struct {
 	IP        netip.Addr
 	OK        bool

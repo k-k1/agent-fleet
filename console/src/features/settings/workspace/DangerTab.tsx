@@ -10,11 +10,11 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { confirmDirtyNavigation } from "../../editor/dirtyRegistry.ts";
 
-// DangerTab: the destructive workspace-lifecycle actions (作り直す / ホームを掃除する),
-// split out of the toolchains (ワークスペース) tab into their own rail item so a
-// data-loss action isn't mixed in with routine toolchain selection. Still tucked deep
-// in 設定 (not on the always-visible WS bar) and behind a warning dialog, since
-// recreating discards sessions and cloned repos (logins/connections survive).
+// DangerTab: the destructive workspace-lifecycle actions (recreate 「作り直す」 / clean home
+// 「ホームを掃除する」), kept in their own rail item so a data-loss action isn't mixed in with
+// routine toolchain selection. Still tucked deep in settings (not on the always-visible WS
+// bar) and behind a warning dialog, since recreating discards sessions and cloned repos
+// (logins/connections survive).
 export function DangerTab() {
   const tr = useT();
   const toast = useToast();

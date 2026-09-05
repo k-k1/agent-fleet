@@ -75,7 +75,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     setPaneTarget(pid, { content: { kind: "chat", conversationId: cid, draftAssistantId: null } });
   // Same signal MirrorView uses for a stopped session's read-only history view: while the
   // workspace agent is down, /api/chat/* 5xx's forever — show that plainly instead of
-  // spinning "読み込み中…" indefinitely (chat.ts had no such distinction before).
+  // spinning on "loading" indefinitely (chat.ts had no such distinction before).
   const wsRunning = useWorkspaceStore((s) => s.state) === "running";
   const bumpChatList = useChatStore((s) => s.bumpList);
   const markChatBusy = useChatStore((s) => s.markBusy);
@@ -98,7 +98,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const modSend = settings.mirrorSend !== "enter";
   const [conv, setConv] = useState<Conversation | null>(null);
   const [draftAsst, setDraftAsst] = useState<Assistant | null>(null); // greeting source in draft mode
-  // 回答の混線を防ぐキー。Opening another chat from the rail REPLACES the active pane's
+  // Key that keeps answers from crossing. Opening another chat from the rail REPLACES the active pane's
   // content (layout/ops.openActive) — it does not remount this view — while a streaming
   // turn is a detached fetch that outlives the switch. So every piece of turn state below
   // is tagged with the chat it belongs to and only rendered while the pane still shows
@@ -130,18 +130,20 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       return n;
     });
   const sending = !!paneKey && !!sendingKeys[paneKey];
-  const [compactKey, setCompactKey] = useState<string | null>(null); // 要約引き継ぎ実行中の会話（docs/log/33）
+  const [compactKey, setCompactKey] = useState<string | null>(null); // conversation currently carrying its summary forward (docs/log/33)
   const compacting = !!paneKey && compactKey === paneKey;
-  // エージェント切替（docs/log/19）: 実行中の会話と、ピッカーの開閉。
+  // Agent switching (docs/log/19): the conversation being switched, and the picker's open state.
   const [switchKey, setSwitchKey] = useState<string | null>(null);
   const switching = !!paneKey && switchKey === paneKey;
   const [agentPickerOpen, setAgentPickerOpen] = useState(false);
   const agentTagRef = useRef<HTMLButtonElement | null>(null);
   const agentMenuRef = useRef<HTMLDivElement | null>(null);
-  // 接続状況は常設のリポジトリレールが温めた共有キャッシュから読む（HandoffModal と同じ
-  // 作法）。冷えていれば null＝「不明」で、ピッカーは何も塞がない。
+  // Connection state comes from the shared cache the always-present repository rail keeps
+  // warm, the same way HandoffModal does it. A cold cache is null, meaning "unknown", and the
+  // picker then blocks nothing.
   const chatConns = useSyncExternalStore(subscribeConns, getCachedConns, getCachedConns);
-  // 作業計画パネル（docs/log/33 第5段）の開閉。ペイン跨ぎで持ち回らない純粋な表示状態。
+  // Open state of the work-plan panel (docs/log/33 stage 5). Pure view state, never carried
+  // across panes.
   const [planOpen, setPlanOpen] = useState(false);
   // a reloaded turn is still running on the backend; polling for the reply
   const [reattachKey, setReattachKey] = useState<string | null>(null);
@@ -149,8 +151,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   // handoff: fire this first turn automatically once the conversation loads
   const [pendingAuto, setPendingAuto] = useState<{ key: string; text: string } | null>(null);
   const [histIdx, setHistIdx] = useState<number | null>(null); // position in composer history (↑/↓ recall), or null
-  // 読み上げ中の文（ライブ配信カラオケ・docs/log/19）と、直近のターンエラー。どちらも
-  // 発生元の会話で括り、別チャットへ切り替えた後に相手の吹き出しへ出ないようにする。
+  // The sentence being read (live karaoke, docs/log/19) and the most recent turn error. Both
+  // are scoped to the conversation they came from, so after switching chats neither paints
+  // onto the other one's bubble.
   const [karaoke, setKaraoke] = useState<{ key: string; text: string } | null>(null);
   const [err, setErr] = useState<{ key: string; text: string } | null>(null);
   const karaokeText = karaoke && karaoke.key === paneKey ? karaoke.text : null;
@@ -165,9 +168,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const inputRef = useRef<HTMLTextAreaElement | null>(null);
   const convRef = useRef<Conversation | null>(null); // mirror of conv, to guard reloads
   // Aborts an in-flight streaming turn, per chat: a turn left running when the pane was
-  // pointed at another chat must still be the one 中断 stops when you come back to it.
+  // pointed at another chat must still be the one stop cancels when you come back to it.
   const abortsRef = useRef(new Map<string, AbortController>());
-  // 音声読み上げ（docs/log/24）。有効時のみ生成。The pane plays one voice at a time, so the
+  // Read-aloud (docs/log/24), created only when enabled. The pane plays one voice at a time, so the
   // slot is tagged with the chat that owns it: a turn finishing in the chat you switched
   // AWAY from must not adopt (or tear down) the playback the current chat just started.
   const ttsRef = useRef<{ key: string; ctl: TtsController } | null>(null);
@@ -187,8 +190,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     if (paneKeyRef.current === c.id) applyConv(c);
   };
 
-  // エージェント切替ピッカー: 外側クリック/Esc で閉じ、チップの真下にビューポート内で配置
-  // （AssistantSection の ＋ ピッカーと同じ作法）。会話を切り替えたら開いたままにしない。
+  // Agent-switch picker: dismissed by an outside click or Esc, and placed directly under the
+  // chip, kept inside the viewport (same treatment as AssistantSection's new-item picker).
+  // Never left open across a conversation switch.
   useDismiss([agentTagRef, agentMenuRef], agentPickerOpen, () => setAgentPickerOpen(false));
   useLayoutEffect(() => {
     const el = agentMenuRef.current;
@@ -203,9 +207,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     setAgentPickerOpen(false);
   }, [conversationId]);
 
-  // アシスタントの声（docs/log/24）: 明示指定（assistant.voice、作成/編集で設定）を読み上げの
-  // 上書きに使う。draft はロード済みの draftAsst から、既存会話は assistant_id で 1 回引く。
-  // 未指定（""）は assistantVoiceOpts が「セッションごとに声」ON のときプールから割り当てる。
+  // Assistant voice (docs/log/24): an explicit choice (assistant.voice, set at create/edit
+  // time) overrides the read-aloud voice. A draft reads it from the already-loaded draftAsst;
+  // an existing conversation fetches it once by assistant_id. Unset ("") lets
+  // assistantVoiceOpts draw from the pool when per-session voices are on.
   const [assistVoice, setAssistVoice] = useState("");
   const assistId = conv?.assistant_id || draftAssistantId || undefined;
   useEffect(() => {
@@ -245,7 +250,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       setDraftAsst(null);
       // One-shot seed (Phase C prefill, or a session handoff). auto=false prefills the
       // composer for review; auto=true stashes the text to fire automatically once the
-      // conversation has loaded (handoff — アシスタントを直接呼び出す). With no seed the
+      // conversation has loaded (handoff: calling an assistant directly). With no seed the
       // persisted draft (which useDraft reloads on the key change) is left standing.
       const seed = takeChatSeed(conversationId);
       if (seed) {
@@ -255,7 +260,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       // Load the conversation, retrying transient failures. When the workspace agent is
       // still booting (WS just started), the CP answers with an empty/gateway response
       // that api() resolves as { error } (NOT a throw) — reading that as "no id" would
-      // stick the pane on 会話が見つかりません forever. So only a genuine 404
+      // stick the pane on "conversation not found" forever. So only a genuine 404
       // (chat_conversation_not_found = the conversation was deleted) is terminal; anything
       // else is retried with backoff until the backend is reachable, and we also retry
       // when the tab regains focus.
@@ -278,7 +283,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
             }
             // A transient gateway failure (agent still booting) is retried; a genuine
             // 404 (code chat_conversation_not_found) or any other resolved-but-empty
-            // response is terminal → 会話が見つかりません.
+            // response is terminal, giving "conversation not found".
             if (isTransientErr(c)) {
               retry(); // keep the loading state up and try again
               return;
@@ -423,8 +428,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   }, [conv?.messages.length, sending, liveTurn, karaokeText]);
 
   // Auto-grow the composer to fit its content (up to the CSS max-height, then it scrolls),
-  // same as MirrorView's composer — 縮みを外へ出さない計測は lib/autoGrow.ts に集約。
-  // 走るのは入力が変わるたび（seed の流し込み・送信時のクリアも含む）。
+  // same as MirrorView's composer. The measurement that keeps a transient shrink from leaking
+  // out lives in lib/autoGrow.ts. This runs on every input change, including a seed being
+  // poured in and the clear on send.
   useEffect(() => {
     autoGrowTextarea(inputRef.current);
   }, [input]);
@@ -446,9 +452,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
 
   // Ensure a real conversation exists (approach A): a draft is created + promoted before
   // the first upload or send, so image attachments have a conversation id to post to.
-  // 画像ペーストのアップロード中に送信が走るなど、作成中に再入しても会話を二重作成
-  // しないよう、進行中の作成 Promise に相乗りする（成功すれば convRef が埋まり、
-  // 失敗すれば解放されて再試行できる）。
+  // Re-entry during creation (a send firing while a pasted image is still uploading, say)
+  // rides the in-flight creation Promise instead of creating a second conversation. On
+  // success convRef is filled; on failure the slot is released so it can be retried.
   const ensureConvInflight = useRef<Promise<Conversation | null> | null>(null);
   const ensureConv = (): Promise<Conversation | null> => {
     if (convRef.current) return Promise.resolve(convRef.current);
@@ -459,7 +465,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           const title = input.trim().slice(0, 40) || t("chat.new_title");
           const created = await chatCreate(draftAssistantId, title);
           if (!created || !created.id) return null;
-          // グループ選択中に始めた会話はそのグループへ自動所属（docs/log/52 §1）。
+          // A conversation started while a working group is selected joins it automatically
+          // (docs/log/52 §1).
           autoAddToActiveWorkingSet("convs", created.id);
           // Re-key the persisted composer draft to the real conversation, so the promotion's
           // key flip (useDraft reloads from storage) doesn't wipe the text mid-composition
@@ -543,9 +550,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     inputRef.current?.focus();
   };
 
-  // docs/log/33 第2段: 要約引き継ぎ（手動コンパクション）。バックエンドが要約1ターン →
-  // resume ハンドル全リセット → 要約の次ターン注入準備まで行い、更新済み会話を返す。
-  // 実行中は busy を店に立てて他ペインの送信もブロック（バックエンドの会話ロックと整合）。
+  // docs/log/33 stage 2: summary carry-forward (manual compaction). The backend runs one
+  // summarising turn, resets every resume handle, prepares the summary for injection into the
+  // next turn, and returns the updated conversation. While it runs, busy is raised in the
+  // store so other panes cannot send either, matching the backend's conversation lock.
   const doCompact = async () => {
     if (!conversationId || compacting || showStreaming) return;
     if (
@@ -564,7 +572,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       const c2 = await chatCompact(key);
       if (c2 && c2.id) {
         applyConvIfCurrent(c2);
-        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        publishSnapshot(c2); // deliver the new conversation state to other panes and the list
         bumpChatList();
       } else {
         setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.compact_failed"));
@@ -577,9 +585,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     }
   };
 
-  // 途中でバックエンド（CLI）を切り替える（docs/log/19）。設定「エージェント優先順位」は新規
-  // 会話にしか効かないので、進行中の会話を動かす導線はここだけ。バックエンドはピン留めと
-  // モデルを差し替え、新エージェントがまだ知らない履歴は次の送信でまとめて再生される。
+  // Switch the backend (CLI) mid-conversation (docs/log/19). The agent-priority setting only
+  // applies to new conversations, so this is the only path that moves an ongoing one. The
+  // backend swaps the pin and the model, and history the new agent has not seen is replayed
+  // in one go on the next send.
   const doSwitchAgent = async (kind: SessionKind) => {
     if (!conversationId || kind === (conv?.agent as SessionKind | undefined) || showStreaming || compacting) return;
     const key = conversationId;
@@ -590,7 +599,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       const c2 = await chatSetAgent(key, kind);
       if (c2 && c2.id) {
         applyConvIfCurrent(c2);
-        publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける
+        publishSnapshot(c2); // deliver the new conversation state to other panes and the list
         bumpChatList();
       } else {
         setErrorFor(key, c2?.error ? errText(c2.error) : tr("chat.switch_agent_failed"));
@@ -610,8 +619,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     const text = (override ?? input).trim();
     const paths = attachments.map((a) => a.path);
     if (!text && !paths.length) return;
-    // 返信サジェスト（lib/quickReplies）の学習: 短い純テキストのみ取り込む。一度メニューから消した文でも、
-    // 自分で送り直したなら「また使う」意思表示なので隠しを解除する（MirrorView と同挙動）。
+    // Reply-suggestion learning (lib/quickReplies): only short plain text is taken in. Sending
+    // a phrase again after hiding it from the menu signals intent to reuse it, so the hide is
+    // lifted (same behaviour as MirrorView).
     if (text && isQuickReplyCandidate(text, paths.length > 0)) {
       setSetting("quickReplies", recordQuickReply(settings.quickReplies || {}, text, Date.now()));
       const hidden = settings.quickRepliesHidden || [];
@@ -663,8 +673,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     const convId = target.id;
     const ac = new AbortController();
     abortsRef.current.set(convId, ac);
-    // 小声読みが OFF のときは従来どおり delta をライブ再生。ON のときは、途中テキストを
-    // onStep で「作業過程」と確定してから小声で読み、onDone の最終回答を通常声で読む。
+    // With quiet reading off, deltas play live as before. With it on, intermediate text is
+    // settled as a work-trace step in onStep and read quietly, and onDone's final answer is
+    // read in the normal voice.
     const baseVoice = {
       ...(assistantVoiceOpts(target.assistant_id || draftAssistantId || undefined, assistVoice) ?? {}),
       paneId,
@@ -675,7 +686,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         ? startTts(
             {
               ...ttsOptsFromSettings(settings),
-              // アシスタントの声: 明示指定 > プール割り当て（セッションごとに声 ON 時）> 設定の話者
+              // Assistant voice: explicit choice > pool assignment (when per-session voices are on) > the speaker from settings
               ...baseVoice,
               ...(work ? workVoiceOpts(baseVoice, workMode) : undefined),
             },
@@ -685,8 +696,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
               onEnd?.(reason);
             },
             "",
-            // 通常声はライブ中も最終回答確定後もカラオケ表示する。
-            // 作業過程の小声再生だけは disclosure 内なのでハイライトしない。
+            // The normal voice shows karaoke both live and after the final answer settles.
+            // Only the quiet work-trace playback is left unhighlighted, since it sits inside
+            // the disclosure.
             !work ? (t) => setKaraoke({ key: convId, text: t }) : undefined,
           )
         : null;
@@ -700,7 +712,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
       setPaneTts: (ctl) => setPaneTts(convId, ctl),
     });
     let streamDone = false;
-    markChatBusy(convId, true); // publish 進行中 to the rail
+    markChatBusy(convId, true); // publish "in progress" to the rail
     // The live reply + working steps + final conversation live in the store, keyed by
     // conversation, and the bubble renders from there — so the turn survives this pane
     // being closed OR pointed at another chat, and can only ever be painted into the
@@ -712,7 +724,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     // (which now ends with the assistant reply) and removing the still-streaming bubble must
     // happen together. If the teardown runs only AFTER `await chatStream` resolves, a frame
     // slips in where BOTH show — the completed reply plus the slightly-behind (throttled)
-    // streaming copy — which reads as the answer being erased and rewritten (打ち消し→再描画).
+    // streaming copy — which reads as the answer being erased and rewritten.
     const teardown = () => {
       clearLive(convId);
       markChatBusy(convId, false);
@@ -742,7 +754,7 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           setLive(convId, { text: "", steps: [...steps], agent: liveAgent });
           if (workMode === "off") {
             stopTtsForReplacement(paneTts(convId));
-            setPaneTts(convId, makeTts()); // 従来動作: 次の tentative message をライブ再生
+            setPaneTts(convId, makeTts()); // legacy behaviour: play the next tentative message live
           } else if (step.text?.trim()) {
             workTts.push(step.text);
           }
@@ -758,7 +770,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           if (workMode === "off") {
             paneTts(convId)?.flush();
           } else {
-            // 最終回答の到着で、残っている小声再生を置換して通常声へ戻す。
+            // The final answer's arrival preempts any remaining quiet playback and returns to
+            // the normal voice.
             workTts.close();
             const finalText = acc.trim() || updated?.messages.at(-1)?.content || "";
             const c = finalText ? makeTts() : null;
@@ -797,15 +810,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   // Stop the in-flight turn. The turn is now detached from its SSE request on the backend
   // (so a reload can't kill it), which means aborting the fetch alone no longer cancels the
   // headless process — an explicit stop call does. We still abort the local fetch to stop
-  // reading + tear down, and stop the 読み上げ.
+  // reading + tear down, and stop the read-aloud.
   const stop = () => {
     if (!conversationId) return;
     void chatStop(conversationId); // cancel the detached backend turn
     abortsRef.current.get(conversationId)?.abort(); // …and this pane's reader, if it owns one
-    paneTts(conversationId)?.stop(); // 読み上げも即停止（in-flight abort・再生停止・キュー破棄）
+    paneTts(conversationId)?.stop(); // stop the reading too: abort in-flight, halt playback, drop the queue
   };
 
-  // ペインを閉じる/アンマウント時は読み上げを止める（音声が居残らないように）。
+  // Stop the reading when the pane closes or unmounts, so no audio is left behind.
   useEffect(() => () => stopTtsForReplacement(ttsRef.current?.ctl ?? null), []);
 
   // Composer history = the user's own prompts in this conversation, so ↑ recalls them even
@@ -818,8 +831,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
     if (s && history[history.length - 1] !== s) history.push(s);
   }
 
-  // 返信サジェストの一式（候補・ピン留めメニュー・フォーカスリング）は parts/useChatSuggest に。
-  // 呼ぶ位置は元のブロックがあった場所のまま＝中の 2 つの effect の登録順も動かない。
+  // The whole reply-suggestion set (candidates, pin menu, focus ring) lives in
+  // parts/useChatSuggest. The call stays exactly where the original block was, so the
+  // registration order of the two effects inside it does not move either.
   const {
     suggestRef,
     attachSuggestRow,
@@ -874,9 +888,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   };
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
-    // 入力欄が空なら Tab で返信サジェストへ入る（＝入力欄→候補1→候補2→入力欄…のループ）。
-    // 素の Tab は最初の「候補チップ」から（先頭の✨は飛ばす／Shift+Tab で戻れる）。Shift+Tab は
-    // 逆回りなのでリング末尾から入る。テキストがあるときは従来どおりの Tab。
+    // With an empty input, Tab enters the reply suggestions, looping input -> chip 1 -> chip 2
+    // -> input. A plain Tab starts at the first suggestion chip, skipping the leading sparkle
+    // button (Shift+Tab reaches it). Shift+Tab runs the ring backwards, so it enters at the
+    // end. With text in the input, Tab behaves as usual.
     if (e.key === "Tab" && !e.nativeEvent.isComposing && input === "") {
       const ring = suggestRing();
       const target = e.shiftKey
@@ -888,9 +903,10 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         return;
       }
     }
-    // 入力途中の Tab は候補の補完サイクル（シェル流）。打った文字に前方一致する候補＝チップ行に
-    // 見えているものを順に入力欄へ入れ、一周したら自分が打った文字へ戻る。Shift+Tab は逆回り。
-    // 補完できる候補が無ければ何もせず、従来どおりの Tab（フォーカス移動）に落とす。
+    // Tab mid-typing cycles completions, shell style: suggestions that prefix-match what was
+    // typed — the ones visible in the chip row — are placed in the input in turn, and a full
+    // cycle returns the typed text. Shift+Tab runs it backwards. With nothing to complete this
+    // does nothing and falls through to Tab's usual focus move.
     if (e.key === "Tab" && !e.nativeEvent.isComposing && input !== "" && !showStreaming) {
       const next = stepSuggestCycle(cycle, input, suggestChips.map((c) => c.text), e.shiftKey);
       if (next) {
@@ -898,7 +914,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
         setCycle(next);
         setInput(next.text);
         setHistIdx(null);
-        // 値の差し替えでキャレットが動く（先頭に残る）ブラウザがあるので末尾に置き直す。
+        // Some browsers move the caret to the start when the value is replaced, so put it back
+        // at the end.
         requestAnimationFrame(() => {
           const el = inputRef.current;
           if (el) el.setSelectionRange(el.value.length, el.value.length);
@@ -957,9 +974,9 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
   const streamBody = liveTurn?.text ?? "";
   const liveSteps = liveTurn?.steps ?? [];
   const empty = (!conv || conv.messages.length === 0) && !loadError && !showStreaming && !loadingConv;
-  // Status chip like the Sessions list / MirrorView header: 停止中 when the workspace agent
-  // is down (matches SessionRow/MirrorView's stateInfo for a stopped session), else 進行中
-  // while streaming, else 待機中.
+  // Status chip like the Sessions list / MirrorView header: "stopped" when the workspace agent
+  // is down (matches SessionRow/MirrorView's stateInfo for a stopped session), else "running"
+  // while streaming, else "idle".
   const stateChip = !wsRunning
     ? { cls: "off", icon: "debug-pause", spin: false, text: tr("state.stopped") }
     : showStreaming
@@ -1025,15 +1042,15 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           disabled={compacting || switching || showStreaming || storeBusy || !wsRunning}
           onUpdated={(c2) => {
             applyConvIfCurrent(c2);
-            publishSnapshot(c2); // 他ペイン/一覧にも新しい会話状態を届ける（圧縮と同じ流儀）
+            publishSnapshot(c2); // deliver the new state to other panes and the list, as compaction does
           }}
           onClose={() => setPlanOpen(false)}
         />
       )}
       {/* Context fill (docs/log/33): the same gauge the mirror shows, fed from the
           conversation's per-turn usage snapshot (chat_usage.go). Hidden until the
-          first turn reports usage. The trailing 圧縮 button runs the summary
-          handoff (docs/log/33 第2段). */}
+          first turn reports usage. The trailing "compact" button (「圧縮」) runs the
+          summary handoff (docs/log/33 stage 2). */}
       {conv?.context && conv.context.tokens > 0 && (
         <ContextBar
           read={conv.context.read || 0}
@@ -1057,7 +1074,8 @@ export function ChatView({ conversationId, draftAssistantId, paneId, active, hea
           }
         />
       )}
-      {/* 縦へ送って読む面 — 横へはみ出しても横スワイプを殺さない（app/swipeGuard.ts）。 */}
+      {/* A vertically scrolled reading surface: overflowing horizontally must not kill the
+          horizontal swipe (app/swipeGuard.ts). */}
       <div className="chat-scroll" data-swipe-y="" ref={scrollRef}>
         {loadError && (
           <div className="chat-error" role="alert">

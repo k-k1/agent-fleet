@@ -1,4 +1,4 @@
-// golden_keys.go — the reserved names a golden bake uses (golden_bake.go 由来).
+// golden_keys.go — the reserved names a golden bake uses.
 //
 // The baker itself stays with the CP: it drives tenants, memberships and workspace
 // starts, none of which this package can see. What moved is only the naming, because
@@ -16,7 +16,7 @@ const (
 
 // ArchKey names the reserved workspace for one architecture.
 //
-// ⚠️ x86_64 keeps the ORIGINAL, unsuffixed keys. Every deployment that has ever baked
+// x86_64 keeps the ORIGINAL, unsuffixed keys. Every deployment that has ever baked
 // a golden has an af-golden-seed membership, and renaming it would orphan that row
 // (and its home volume) with nothing left pointing at it — a workspace nobody can see
 // and nothing will ever clean up.

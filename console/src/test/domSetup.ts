@@ -6,7 +6,7 @@
 // `textRange(...).getClientRects is not a function`.
 //
 // These give measurement something to read; they do NOT make it meaningful.
-// Anything that depends on real geometry — the 送る pill's position, scroll
+// Anything that depends on real geometry — the send pill's position, scroll
 // offsets, the visible target-line row — cannot be verified here and still needs
 // a real browser.
 
@@ -24,9 +24,10 @@ if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = () => {};
 }
 
-// jsdom にも ResizeObserver は無い。Section など「自分の高さを CSS 変数に公開する」
-// 部品が mount 時に必ず生成するので、観測しないだけの器を置く（0x0 のままなので
-// 実寸に依存する検証は上記のとおり本物のブラウザが要る）。
+// jsdom has no ResizeObserver either. Components that publish their own height as a CSS
+// variable (Section and friends) always construct one at mount, so this is a shell that
+// observes nothing. Boxes stay 0x0, so as above anything depending on real size still needs a
+// real browser.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class {
     observe(): void {}
@@ -35,21 +36,21 @@ if (typeof globalThis.ResizeObserver === "undefined") {
   } as unknown as typeof ResizeObserver;
 }
 
-// jsdom は Blob の URL を作れない（URL.createObjectURL が未実装）。添付を抱える
-// コンポーサーは貼り付けた瞬間にこれを呼ぶので、無いと mount そのものが落ちる。
-// 割り当てた URL を数え上げるだけの器を置く — 中身は解決されないので、実際に画像が
-// 出るかはここでは測れない（それは本物のブラウザの仕事）。取り違え・解放漏れは
-// 「どの URL が作られ、どれが revoke されたか」で検証できる。
+// jsdom cannot make Blob URLs (URL.createObjectURL is unimplemented). The composer that holds
+// attachments calls it the moment something is pasted, so without this the mount itself dies.
+// The shell only hands out countable URLs: they resolve to nothing, so whether an image
+// actually renders cannot be measured here (that is a real browser's job). Mixed-up URLs and
+// missing revokes can still be checked from which URL was created and which was revoked.
 if (typeof URL !== "undefined" && typeof URL.createObjectURL !== "function") {
   let n = 0;
   URL.createObjectURL = () => `blob:af-test/${++n}`;
   URL.revokeObjectURL = () => {};
 }
 
-// matchMedia も無い。device.ts はガード無しで呼ぶし、xterm も open() の中で
-// devicePixelRatio を取るために叩く（無いと Terminal.open が例外で死ぬ）。常に
-// matches:false = デスクトップ／細ポインタ相当を返すだけの器を置く — jsdom には
-// レイアウトもメディアも無いので、実機の分岐そのものはここでは検証できない。
+// matchMedia is missing too. device.ts calls it unguarded, and xterm calls it inside open() to
+// read devicePixelRatio (without it Terminal.open throws). This shell always returns
+// matches:false, i.e. desktop / fine pointer. jsdom has neither layout nor media, so the real
+// device branching cannot be verified here.
 if (typeof window !== "undefined" && typeof window.matchMedia !== "function") {
   window.matchMedia = ((query: string) =>
     ({

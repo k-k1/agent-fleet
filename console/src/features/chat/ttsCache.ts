@@ -1,10 +1,10 @@
-// features/chat/ttsCache — 合成キャッシュの LRU 本体（純関数モジュール）。
-// tts.ts が AudioBuffer を values に使う。DOM に依存しないので vitest から直接テストできる。
+// features/chat/ttsCache - the LRU behind the synthesis cache (a pure-function module).
+// tts.ts stores AudioBuffers as the values. It depends on no DOM, so vitest can test it directly.
 
-// makeAudioLru — 合計 duration（秒）が上限を超えたら古いものからエビクトする LRU。
-// 上限は getter で都度参照する（ユーザー設定 ttsCacheSec の変更に追随するため）。
-// get で触ったエントリは末尾（最新）へ回る。上限を単体で超える値は入れない。
-// 上限 0 以下 = キャッシュ無効（get は保持分を破棄して必ずミス）。
+// makeAudioLru - an LRU that evicts oldest-first once the total duration (seconds) exceeds the cap.
+// The cap is read through a getter on every call so it follows changes to the ttsCacheSec setting.
+// An entry touched by get moves to the tail (most recent). A value larger than the cap on its own is
+// never stored. A cap of 0 or less disables the cache: get drops what is held and always misses.
 export function makeAudioLru<T extends { duration: number }>(maxSec: () => number) {
   const m = new Map<string, T>();
   let total = 0;
@@ -15,12 +15,12 @@ export function makeAudioLru<T extends { duration: number }>(maxSec: () => numbe
   return {
     get(key: string): T | undefined {
       if (maxSec() <= 0) {
-        if (m.size) clear(); // 設定で無効化されたら保持分も手放す
+        if (m.size) clear(); // let go of what is held once the setting disables it
         return undefined;
       }
       const hit = m.get(key);
       if (hit) {
-        m.delete(key); // 触ったら末尾へ（Map は挿入順）
+        m.delete(key); // touched entries move to the tail (Map keeps insertion order)
         m.set(key, hit);
       }
       return hit;
@@ -31,7 +31,8 @@ export function makeAudioLru<T extends { duration: number }>(maxSec: () => numbe
         m.set(key, v);
         total += v.duration;
       }
-      // 上限まで古いものから捨てる（上限が下げられた直後の縮小もここで効く）。
+      // Drop oldest-first down to the cap; this is also what shrinks the cache right after the cap
+      // is lowered.
       for (const [k, old] of m) {
         if (total <= max) break;
         m.delete(k);

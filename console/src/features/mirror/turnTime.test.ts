@@ -15,13 +15,13 @@ describe("endOf", () => {
 
 describe("carryEnd", () => {
   it("advances the block's end to the last folded row, keeping the start", () => {
-    // claude の1ターン: thinking → ツール呼び出し → 最終テキスト。この不具合の本体で、
-    // フッターに出ていたのは 10:00（最初の行）だった。
+    // One claude turn: thinking -> tool call -> final text. The footer used to show 10:00 (the
+    // first row) here.
     const block = { ts: "2026-08-04T10:00:00Z", endTs: "2026-08-04T10:00:00Z" };
     carryEnd(block, { ts: "2026-08-04T10:03:00Z" });
     carryEnd(block, { ts: "2026-08-04T10:07:30Z" });
     expect(block.endTs).toBe("2026-08-04T10:07:30Z");
-    expect(block.ts).toBe("2026-08-04T10:00:00Z"); // 並び順の鍵は先頭のまま
+    expect(block.ts).toBe("2026-08-04T10:00:00Z"); // the ordering key stays on the first row
   });
   it("keeps the previous end when the folded row carries no time", () => {
     const block = { ts: "2026-08-04T10:00:00Z", endTs: "2026-08-04T10:03:00Z" };

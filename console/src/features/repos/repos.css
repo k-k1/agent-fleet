@@ -264,7 +264,7 @@
   color: var(--muted);
 }
 
-/* SubdirPicker (LaunchModal 作業ディレクトリ) — one line collapsed, the DirPicker
+/* SubdirPicker (LaunchModal's working-directory field) — one line collapsed, the DirPicker
    tree below it when expanded. */
 .subdirpick {
   display: flex;
@@ -302,8 +302,9 @@
 }
 
 /* ---- Repos section rows ---- */
-/* リポジトリ取り込みジョブの行（docs/log/78）。進行中と、既読にするまで残る結末。
-   （旧 .repo-cloning は「押している間だけのスピナー」で、接続が切れれば消えていた） */
+/* Repository import job rows (docs/log/78): the running job, and its outcome, which stays
+   until it is acknowledged. A spinner that only lives while the request is in flight would
+   disappear the moment the connection drops, taking the result with it. */
 .repo-job {
   padding: 6px 8px;
   font-size: 13px;
@@ -338,7 +339,8 @@
   margin-top: 2px;
   padding-left: 24px;
 }
-/* 進捗の最終行はパスなので、折り返さず 1 行に収める（行の高さが暴れると木が跳ねる）。 */
+/* The last progress line is a path: keep it on one line rather than wrapping, because a
+   row whose height changes makes the tree jump. */
 .repo-job-line {
   display: inline-block;
   max-width: 100%;
@@ -416,14 +418,15 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 削除ロック（docs/log/45）: 作業コピー行の鍵バッジ（セッション行の .sess-lock と対）。 */
+/* Deletion lock (docs/log/45): the lock badge on a working-copy row (paired with
+   .sess-lock on session rows). */
 .repo-lock {
   flex: none;
   color: var(--muted);
   font-size: 11px;
 }
-/* セッション共有: この working copy(repo/worktree)を誰かに共有中であることを示す
-   バッジ(.repo-lock と対)。 */
+/* Session sharing: badge showing that this working copy (repo/worktree) is currently
+   shared with someone (paired with .repo-lock). */
 .repo-shared {
   flex: none;
   color: var(--muted);
@@ -472,12 +475,12 @@
   color: var(--accent);
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
-/* origin が先行していてクリーンに FF できる（behind のみ） */
+/* origin is ahead and fast-forwards cleanly (behind only) */
 .repo-chip.ab.ff {
   color: var(--ok);
   background: color-mix(in srgb, var(--ok) 14%, transparent);
 }
-/* origin と分岐していて FF 不可＝マージ/リベースが要る（ahead + behind） */
+/* diverged from origin, so no fast-forward: a merge/rebase is needed (ahead + behind) */
 .repo-chip.ab.diverged {
   color: var(--warn);
   background: color-mix(in srgb, var(--warn) 14%, transparent);
@@ -504,7 +507,7 @@
   background: color-mix(in srgb, var(--ok) 10%, transparent);
 }
 
-/* 起動 split button + quick menu. Hidden until the row is hovered / focused (or
+/* Launch split button + quick menu. Hidden until the row is hovered / focused (or
    its quick menu is open) so the right edge belongs to state badges; pointer-less
    devices keep it always visible. */
 .launch-wrap {
@@ -530,9 +533,9 @@
   }
 }
 /* Touch layout: the launch button lives in-flow (no hover overlay), and the
-   trailing cluster (chips / sess badge / ords / 起動) is all flex:none — a busy
+   trailing cluster (chips / sess badge / ords / launch) is all flex:none — a busy
    row overflows the narrow phone drawer, crushing .repo-id to width 0 (the name
-   then paints under the chips) and pushing 起動 past .app-rail-scroll's
+   then paints under the chips) and pushing the launch button past .app-rail-scroll's
    overflow-x clip, where it cannot be tapped. Wrap instead: the cluster drops
    to a second line, right-aligned, and the buttons get a taller tap target. */
 @media (hover: none) {
@@ -602,9 +605,10 @@
 
 /* Launch modal bits. */
 
-/* 折りたたみセクション（LaunchSection）— 場所 / 詳細。畳んでいる間は「見出し ＋
-   要約 ＋ 変更」の 1 行だけ。要約は必ず実際に起動される値なので、灰色でも省略記号で
-   切れてはいけない情報が入る（幅が足りないときは末尾を … で切る）。 */
+/* Collapsible sections (LaunchSection) — place / details. While collapsed each is one
+   line: heading + summary + edit link. The summary always names the values the launch
+   would actually use, so despite being muted it carries information the reader needs
+   (when the width runs out it ellipsizes at the end). */
 .launch-sec {
   border: 1px solid var(--border2, var(--border));
   border-radius: 6px;
@@ -649,7 +653,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* 「既存ブランチ・未選択」など、そのままでは起動できない状態。 */
+/* A state that cannot be launched as-is, e.g. "existing branch, none selected". */
 .launch-sec-sum.warn {
   color: var(--warn);
 }
@@ -707,7 +711,7 @@
   font-size: 12px;
 }
 
-/* ---- はじめる hub (StartModal, 起動導線 Ph2) ---- */
+/* ---- Start hub (StartModal, launch flow Ph2) ---- */
 .start-list {
   border: 1px solid var(--border2, var(--border));
   border-radius: 8px;
@@ -774,7 +778,7 @@
   color: var(--muted);
   flex: none;
 }
-/* Assistant sub-rows nested under the チャット row. */
+/* Assistant sub-rows nested under the chat row. */
 .start-row.start-sub {
   padding-left: 34px;
 }
@@ -816,12 +820,12 @@
   font-size: 12px;
   line-height: 1.5;
 }
-/* はじめる に戻る — pinned left in the modal footer (hub back-navigation). */
+/* "Back to start" — pinned left in the modal footer (hub back-navigation). */
 .launch-back {
   margin-right: auto;
 }
 
-/* clone 完了トーストの「このまま はじめる」ブリッジ（Ph3）。 */
+/* The "start now" bridge on the clone-finished toast (Ph3). */
 .clone-done-toast {
   display: inline-flex;
   align-items: center;

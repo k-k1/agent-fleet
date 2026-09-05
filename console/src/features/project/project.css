@@ -9,8 +9,8 @@
   padding-top: 2px;
 }
 
-/* Separator in the section header, between the repo ops (clone / 更新) and the
-   session maintenance actions (整理 / アーカイブ). */
+/* Separator in the section header, between the repo ops (clone / refresh) and
+   the session maintenance actions (tidy / archive). */
 .proj-head-sep {
   flex: none;
   width: 1px;
@@ -19,7 +19,7 @@
   background: var(--border);
 }
 
-/* Sticky band that carries the 絞り込み box: pins right under the section header
+/* Sticky band that carries the filter box: pins right under the section header
    (--sec-head-h, published by Section) so it stays put like the header while the
    rows scroll. Opaque (rail surface) full-width so scrolled rows don't show
    through the box's margins; below the header band (z:3), above the rows. */
@@ -28,8 +28,9 @@
   top: var(--sec-head-h, 34px);
   /* Nested sticky headers need a descending z-index by depth (outer wins) so an
      inner header pushed up into an outer one's band slides UNDER it, not over.
-     絞り込み(3) > 親レポ base 見出し(2) > wt 見出し(1) > 行(0). Section 見出しは
-     3 のままだが top:0 帯なのでこの帯(top:34-)と重ならず競合しない。 */
+     filter(3) > base repo header(2) > worktree header(1) > row(0). The Section
+     header stays at 3, but its band is top:0, so it never overlaps this one
+     (top:34-) and the two do not compete. */
   z-index: 3;
   background: var(--leftpane-bg);
   /* Own the box's vertical spacing here (padding, not the child's margin) so it
@@ -67,7 +68,7 @@
   background: color-mix(in srgb, var(--lp-accent, var(--accent)) 18%, transparent);
 }
 
-/* Quick filter box (repos + sessions, incl. その他のセッション). */
+/* Quick filter box (repos + sessions, incl. other sessions). */
 .proj-filter {
   display: flex;
   align-items: center;
@@ -149,7 +150,7 @@
   position: sticky;
   top: calc(var(--sec-head-h, 34px) + 33px + 36px);
   /* One tier below the base header so a worktree header slides under its parent
-     repo header (and under 絞り込み) instead of covering them when scrolled. */
+     repo header (and under the filter) instead of covering them when scrolled. */
   z-index: 1;
   background: var(--leftpane-bg);
 }
@@ -214,7 +215,7 @@
   padding: 3px 4px 4px 22px;
 }
 
-/* Rail-bottom ファイル section's trees (FilesSection → ProjectFiles). The shared
+/* Rail-bottom Files section's trees (FilesSection → ProjectFiles). The shared
    .fstree/.fsrow styles apply; no height cap — the rail itself scrolls (the old
    per-node 240px scrollbox is gone). */
 .proj-files {
@@ -267,8 +268,8 @@
   font-weight: 400;
 }
 
-/* WorkingCopyLabel — プロジェクト + ブランチ, the handle a group of files uses
-   instead of the "<base>@<slug>" folder. Shared by the 変更 view's bands
+/* WorkingCopyLabel — project + branch, the handle a group of files uses
+   instead of the "<base>@<slug>" folder. Shared by the Changes view's bands
    (.chg-repo) and the recursive-search bands above. The project keeps the
    emphasis; the branch is meta, trims first, and never wraps. */
 .wc-project {
@@ -299,7 +300,7 @@
   font-size: 11px;
 }
 
-/* ツリー/変更 toggle in the ファイル section header. Lives in the left pane, so
+/* Tree/Changes toggle in the Files section header. Lives in the left pane, so
    its selected segment follows the left-pane accent rather than the top bar's. */
 .files-view {
   flex: none;

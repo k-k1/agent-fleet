@@ -5,7 +5,7 @@ import { MASKED } from "../mcp/mcpWire.ts";
 import type { KV } from "../mcp/mcpWire.ts";
 
 // Form primitives shared by the member registry (McpTab), the tenant distribution
-// form (AdminTab の McpAdminView), and the SSM tab (SsmTab). The forms edit almost the
+// form (McpAdminView in AdminTab), and the SSM tab (SsmTab). The forms edit almost the
 // same definition, so they render with the same field/label/hint furniture
 // (.ssm-fld / .mcp-checks) — keeping each form from drifting into its own ad-hoc layout.
 
@@ -106,7 +106,7 @@ export function KVEditor({
   );
 }
 
-// CheckRow — a wrapped row of checkboxes (利用先 / 対象エージェント / 有効). Exists so a
+// CheckRow — a wrapped row of checkboxes (used by / target agents / enabled). Exists so a
 // single checkbox is laid out the same as a group of seven instead of inheriting
 // whatever the surrounding form does to a bare <label>.
 export function CheckRow({ children }: { children: ReactNode }) {

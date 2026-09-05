@@ -1,9 +1,9 @@
-// Pins the fix for "回答済みと表示されるのに中身は却下の定型文" (docs/build/92 §6): claude's
-// own AskUserQuestion decline boilerplate (an Escape out of the modal — e.g. the preview
-// free-text bug, where a free-text answer lands on the unnumbered "Chat about this" row)
-// used to render as an ordinary "回答済み" card with the raw rejection prose dumped in as
-// if it were the user's answer. A declined question must instead badge distinctly and
-// never try to parse the rejection prose as a pick.
+// Pins the fix for a card badged answered whose body was the decline boilerplate
+// (docs/build/92 §6): claude's own AskUserQuestion decline boilerplate (an Escape out of the
+// modal — e.g. the preview free-text bug, where a free-text answer lands on the unnumbered
+// "Chat about this" row) used to render as an ordinary answered card with the raw rejection
+// prose dumped in as if it were the user's answer. A declined question must instead badge
+// distinctly and never try to parse the rejection prose as a pick.
 import { describe, it, expect, afterEach } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -41,7 +41,7 @@ const DECLINE_TEXT =
   '    Questions asked:\n- "どれにしますか？"\n  (No answer provided)';
 
 describe("QuestionBlock — declined AskUserQuestion", () => {
-  it("badges 却下, not 回答済み, and shows no option as selected", () => {
+  it("badges it rejected, not answered, and shows no option as selected", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -79,14 +79,14 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
       },
     ];
     const el = render(turns, OWNER);
-    // The old behaviour rendered the whole rejection paragraph as a "自由入力"/"回答"
-    // callout (.mq-free) — that must be gone; a short fixed note replaces it instead.
+    // The old behaviour rendered the whole rejection paragraph as a free-text answer callout
+    // (.mq-free) — that must be gone; a short fixed note replaces it instead.
     expect(el.querySelector(".mq-free")).toBeNull();
     expect(el.textContent).not.toContain("wants to clarify");
     expect(el.querySelector(".mq-declined-note")).not.toBeNull();
   });
 
-  it("a genuinely answered question is unaffected — still badges 回答済み with the real pick highlighted", () => {
+  it("leaves a genuinely answered question alone — still badged answered, real pick highlighted", () => {
     const turns: Turn[] = [
       {
         role: "assistant",
@@ -110,7 +110,7 @@ describe("QuestionBlock — declined AskUserQuestion", () => {
     expect(el.querySelector(".mq-declined-note")).toBeNull();
   });
 
-  it("one 却下 note per card, not once per question, for a multi-question decline", () => {
+  it("shows one decline note per card, not once per question, for a multi-question decline", () => {
     const turns: Turn[] = [
       {
         role: "assistant",

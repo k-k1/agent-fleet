@@ -2,8 +2,7 @@
 //
 // The four Runtime adapters (docker / ecs / ecs-ec2 / native), the health probes and the
 // EC2 golden reader live in internal/runtime, and the rest of the CP now names them
-// directly as runtime.X (ADR 0067 決定 2 — the alias-collection pass; this file is what
-// alias_runtime.go left behind once its 39 aliases were gone).
+// directly as runtime.X (ADR 0067 decision 2 — the alias-collection pass).
 //
 // What stays here is only what is NOT an alias:
 //   - the boot wiring the adapters cannot do for themselves (the shared /healthz client,
@@ -25,7 +24,7 @@ import (
 // awsConfigFor is where the CP's own AWS clients get their credentials (cloudcost.go's
 // Cost Explorer, and the store's Secrets Manager reader via store_seam.go).
 //
-// ⚠️ It is a FUNCTION, deliberately, and must not become `var awsConfigFor =
+// It is a FUNCTION, deliberately, and must not become `var awsConfigFor =
 // runtime.AWSConfigFor`. runtime.AWSConfigFor is itself a variable — the one seam the
 // live AWS harness swaps to point a whole run at a test account (docs/log/64 §64.23) —
 // and a var here would capture its value at package init. The swap would then reach the
@@ -45,7 +44,7 @@ func awsConfigFor(ctx context.Context, region string) (aws.Config, error) {
 // this side (rather than an alias of runtime.NewFactory) because the adapters take a
 // plain Config and the values in it are the manager's.
 //
-// ⚠️ RootDataDir is passed as a closure, NOT as the two strings it is made of. The CP
+// RootDataDir is passed as a closure, NOT as the two strings it is made of. The CP
 // discovers its default tenant id late — workspace_lifecycle.go's adoption pass assigns
 // it after boot — and a factory that had copied the value would keep re-basing homes
 // against the empty one.

@@ -1,11 +1,12 @@
 package kiro
 
-// managed driver のユニットテスト。ACP サーバー（kiro-cli acp 相当）を io.Pipe 上の
-// フェイクで模し、turn 状態機械（Send→completed / 実行中 queue / interrupt→cancelled /
-// 台帳の冪等化）と permission→Interaction→Respond の往復、そして session/update →
-// 転写メモリ構築（agent_message_chunk / tool_call / tool_call_update）を検証する。
-// cursor driver_test.go と同型で、kiro 固有の差分（Dynamic* すべて false＝設定変更拒否・
-// モード/lock マッピングの純関数）を追加で押さえる。
+// Unit tests for the managed driver. The ACP server (what kiro-cli acp provides) is faked
+// over io.Pipe, and the tests cover the turn state machine (Send to completed, queueing while
+// running, interrupt to cancelled, ledger idempotency), the permission -> Interaction ->
+// Respond round trip, and building the in-memory transcript from session/update
+// (agent_message_chunk / tool_call / tool_call_update). Same shape as cursor's
+// driver_test.go, plus what is specific to kiro: every Dynamic* is false, so settings changes
+// are refused, and the mode/lock mappings are pure functions.
 
 import (
 	"bufio"
@@ -128,18 +129,19 @@ func newTestHandle(t *testing.T) (*threadHandle, *fakeACP) {
 	h.cl.onRequest = func(id json.RawMessage, method string, params json.RawMessage) {
 		h.onServerRequest(h.cl, id, method, params)
 	}
-	// t.Cleanup は LIFO なので、上の t.Setenv("HOME", …) より後に積んだこの待ちが
-	// HOME 復帰より先に走る（前に積むと復帰の後＝手遅れ）。
+	// t.Cleanup is LIFO, so this wait, pushed after the t.Setenv("HOME", ...) above, runs
+	// before HOME is restored. Pushed before it, it would run after — too late.
 	t.Cleanup(func() { waitPumpIdle(t, h) })
 	h.cl.onNotify = h.onNotify
 	return h, f
 }
 
-// waitPumpIdle blocks until the handle's turn goroutine has drained（キューも走行中の
-// turn も無い状態）。**HOME の隔離は待って初めて成立する**: テストが turn を走らせたまま
-// 返ると、`t.Setenv` の復帰後に MarkTurnEnd → status.Persist が走り、書き先が
-// 実 `~/.config/agent-fleet` になる（実測: 利用者の session-status/ に slot-1.json が
-// 残っていた）。落ちる方向は安全側 — 待てないまま抜けると実環境を汚すので失敗させる。
+// waitPumpIdle blocks until the handle's turn goroutine has drained: nothing queued and no
+// turn running. The HOME isolation only holds once that wait completes. If a test returns
+// with a turn still running, MarkTurnEnd -> status.Persist runs after `t.Setenv` restores
+// HOME and writes to the real `~/.config/agent-fleet` (measured: a slot-1.json was left in a
+// user's session-status/). Failing is the safe direction, so leaving without the drain is
+// reported as a failure rather than allowed to pollute the real environment.
 func waitPumpIdle(t *testing.T, h *threadHandle) {
 	t.Helper()
 	deadline := time.Now().Add(30 * time.Second)
@@ -152,7 +154,7 @@ func waitPumpIdle(t *testing.T, h *threadHandle) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Error("turn がテスト終了後も走っている: このまま HOME を戻すと実 ~/.config/agent-fleet へ書く")
+	t.Error("a turn is still running after the test finished: restoring HOME now writes to the real ~/.config/agent-fleet")
 }
 
 func waitState(t *testing.T, h *threadHandle, want agents.TurnState) {
@@ -175,7 +177,7 @@ func TestSendCompletesTurn(t *testing.T) {
 	waitState(t, h, agents.TurnRunning)
 	f.reply(id, map[string]any{"stopReason": "end_turn"})
 	waitState(t, h, agents.TurnCompleted)
-	// 台帳: 同じ ClientMessageID の再送は no-op（新しい turn を始めない）。
+	// Ledger: resending the same ClientMessageID is a no-op and starts no new turn.
 	if err := h.Send(agents.TurnInput{Prompt: "hi", ClientMessageID: "m1"}); err != nil {
 		t.Fatal(err)
 	}
@@ -262,8 +264,8 @@ func TestRuntimeLostFailsInFlight(t *testing.T) {
 	waitState(t, h, agents.TurnUnknown)
 }
 
-// kiro は cursor と違いモード/モデルとも稼働中変更を受けない（Dynamic* すべて false・
-// registry も UI を出さない）。防御的に明示エラーを返すことを押さえる。
+// Unlike cursor, kiro accepts no live change of mode or model: every Dynamic* is false and
+// the registry offers no UI for it. Pins that an explicit error is returned defensively.
 func TestUpdateSettingsRejectsDynamic(t *testing.T) {
 	h, _ := newTestHandle(t)
 	for _, s := range []agents.ThreadSettings{{Mode: "plan"}, {Model: "claude-sonnet-4.5"}, {Effort: "high"}} {
@@ -271,15 +273,15 @@ func TestUpdateSettingsRejectsDynamic(t *testing.T) {
 			t.Fatalf("dynamic change must be rejected: %+v", s)
 		}
 	}
-	// 空更新（何も変えない）は no-op で成功。
+	// An empty update changes nothing and succeeds as a no-op.
 	if err := h.UpdateSettings(agents.ThreadSettings{}); err != nil {
 		t.Fatalf("empty update should be a no-op, got %v", err)
 	}
 }
 
-// TestManagedTranscriptFromUpdates: session/update 通知だけから user/assistant/tool の
-// 転写が正しく組み上がることを検証する（生きた handle は buf を返し、fileTranscript には
-// 落ちない）。
+// TestManagedTranscriptFromUpdates checks that the user/assistant/tool transcript is built
+// correctly from session/update notifications alone: a live handle returns its buf and never
+// falls through to fileTranscript.
 func TestManagedTranscriptFromUpdates(t *testing.T) {
 	h, f := newTestHandle(t)
 	handlesMu.Lock()
@@ -342,9 +344,10 @@ func (f *fakeACP) meta(params map[string]any) {
 	f.send(map[string]any{"jsonrpc": "2.0", "method": "_kiro.dev/metadata", "params": params})
 }
 
-// TestManagedContextFromMetadata: _kiro.dev/metadata の contextUsagePercentage が最新値
-// として保持され（縮小も反映）、meteringUsage の credit が累積し、ManagedContext /
-// ContextFill が pct→token 変換を厳密に往復することを検証する（Track D）。
+// TestManagedContextFromMetadata checks that contextUsagePercentage from _kiro.dev/metadata
+// is kept as the latest value (including when it shrinks), that meteringUsage credits
+// accumulate, and that ManagedContext / ContextFill round-trip the pct-to-token conversion
+// exactly (Track D).
 func TestManagedContextFromMetadata(t *testing.T) {
 	h, f := newTestHandle(t)
 	handlesMu.Lock()
@@ -352,12 +355,13 @@ func TestManagedContextFromMetadata(t *testing.T) {
 	handlesMu.Unlock()
 	t.Cleanup(func() { handlesMu.Lock(); delete(handles, "s1"); handlesMu.Unlock() })
 
-	// window は通常 spawn 時に ModelWindow で埋まる。ユニットテストは spawn を通さないので直挿し。
+	// window is normally filled from ModelWindow at spawn; a unit test does not go through
+	// spawn, so inject it directly.
 	h.usageMu.Lock()
 	h.ctxWindow = 200_000
 	h.usageMu.Unlock()
 
-	// metadata 未受信: ok=false（context bar は出ない）。
+	// No metadata received yet: ok=false, so no context bar is drawn.
 	if _, _, _, _, ok := ManagedContext("s1"); ok {
 		t.Fatalf("no metadata yet must be ok=false")
 	}
@@ -367,10 +371,10 @@ func TestManagedContextFromMetadata(t *testing.T) {
 		"contextUsagePercentage": 1.25,
 		"meteringUsage":          []any{map[string]any{"value": 0.02, "unit": "credit"}},
 	})
-	f.meta(map[string]any{ // credit のみ（pct 据え置き）＋ credit 累積
+	f.meta(map[string]any{ // credits only, pct unchanged, credits accumulate
 		"meteringUsage": []any{map[string]any{"value": 0.03, "unit": "credit"}},
 	})
-	// readLoop がドレインするのを待つ。
+	// Wait for readLoop to drain.
 	deadline := time.Now().Add(2 * time.Second)
 	var pct, credits float64
 	var window int
@@ -385,17 +389,17 @@ func TestManagedContextFromMetadata(t *testing.T) {
 	if !ok {
 		t.Fatalf("ManagedContext ok=false after metadata")
 	}
-	if pct != 1.25 { // 最新値（3.39→1.25、縮小を反映）
+	if pct != 1.25 { // the latest value: 3.39 -> 1.25, a shrink is reflected
 		t.Errorf("pct = %v, want latest 1.25", pct)
 	}
 	if window != 200_000 {
 		t.Errorf("window = %d, want 200000", window)
 	}
-	if credits < 0.049 || credits > 0.051 { // 0.02 + 0.03 累積
+	if credits < 0.049 || credits > 0.051 { // 0.02 + 0.03 accumulated
 		t.Errorf("credits = %v, want ~0.05", credits)
 	}
 
-	// ContextFill: pct(1.25%) × window(200k) → tokens、window 明示で厳密往復。
+	// ContextFill: pct(1.25%) x window(200k) -> tokens, an exact round trip with window given.
 	c := (agentImpl{}).ContextFill(session.Meta{Name: "s1"})
 	if c == nil {
 		t.Fatalf("ContextFill returned nil with live metadata")
@@ -407,13 +411,14 @@ func TestManagedContextFromMetadata(t *testing.T) {
 	if c.Tokens != wantTok {
 		t.Errorf("ContextFill tokens = %d, want %d", c.Tokens, wantTok)
 	}
-	// フロントは tokens/window から pct を再計算する — 元の pct に一致（丸め内）。
+	// The frontend recomputes pct from tokens/window, and must land on the original pct
+	// within rounding.
 	back := float64(c.Tokens) / float64(c.Window) * 100
 	if back < 1.24 || back > 1.26 {
 		t.Errorf("pct round-trip = %v, want ~1.25", back)
 	}
 
-	// 停止した handle は ok=false（TUI/停止中は context 非表示）。
+	// A stopped handle is ok=false: no context is shown for the TUI route or while stopped.
 	h.mu.Lock()
 	h.alive = false
 	h.mu.Unlock()

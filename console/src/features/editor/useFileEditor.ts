@@ -55,8 +55,9 @@ interface InitialEditableFile {
 const isCleanForFollow = (model: FileEditorModel): boolean =>
   !model.dirty && CLEAN_PHASES.includes(model.phase);
 
-// 提案リクエストの識別子（docs/log/44 §4.1 requestId）。応答の合成先を特定できれば
-// よいので、セッション内で単調なカウンタで足りる。
+// Identifier for a suggestion request (docs/log/44 §4.1 requestId). It only has to
+// identify which response to merge where, so a counter monotonic within the session is
+// enough.
 let suggestSeq = 0;
 
 function remoteFromFile(
@@ -405,9 +406,10 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [followExternalChange, setModel],
   );
 
-  // The dirty-side "差分を確認" action (docs/log/44 §7.3): the user asks to see the
-  // external change, so fetch the body and open the ordinary conflict UI. This
-  // explicit action — never the probe itself — is what may create Conflict.
+  // The dirty-side "review the diff" action (「差分を確認」, docs/log/44 §7.3): the
+  // user asks to see the external change, so fetch the body and open the ordinary
+  // conflict UI. This explicit action — never the probe itself — is what may create
+  // Conflict.
   const confirmExternalChange = useCallback(async (): Promise<void> => {
     const current = modelRef.current;
     if (!current || current.phase !== "dirty" || savingRef.current) return;
@@ -433,15 +435,16 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     }
   }, [setModel]);
 
-  // --- AI 変更提案（docs/log/44 §4 / Phase 4） ---
+  // --- AI edit suggestions (docs/log/44 §4 / Phase 4) ---
 
   const [suggesting, setSuggesting] = useState(false);
   const suggestReqRef = useRef<string | null>(null);
 
-  /** 選択範囲＋指示文で提案を生成する。成功時は model.suggestion に載せて null、
-   *  失敗時は表示用の安定 code を返す（提案は advisory なので例外は投げない）。
-   *  応答は identity（path/requestId）と revision 三重一致の再検証を通ったものだけ
-   *  採用する — 生成中にユーザーが入力していれば `suggestion_stale`。 */
+  /** Generates a suggestion from the selection plus an instruction. On success it lands
+   *  in model.suggestion and null is returned; on failure a stable code for display is
+   *  returned, never an exception, because a suggestion is advisory. A response is only
+   *  accepted after re-validating identity (path/requestId) and the three-way revision
+   *  match — if the user typed while it was generating, that is `suggestion_stale`. */
   const requestSuggestion = useCallback(
     async (instruction: string, range: EditRange): Promise<string | null> => {
       const current = modelRef.current;
@@ -467,7 +470,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
       setSuggesting(true);
       try {
         const result = await suggestEdit({ path, instruction: trimmed, ...windows });
-        // 新しいリクエスト・ファイル切替・reject に追い越された応答は黙って捨てる。
+        // Drop silently a response overtaken by a newer request, a file switch or a reject.
         if (suggestReqRef.current !== requestId) return null;
         const latest = modelRef.current;
         if (!latest || latest.path !== path) return null;
@@ -500,17 +503,18 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [setModel],
   );
 
-  /** 生成中のリクエストを破棄する（応答が来ても捨てる）。 */
+  /** Abandons the in-flight request; its response is discarded if it still arrives. */
   const cancelSuggestion = useCallback(() => {
     suggestReqRef.current = null;
     setSuggesting(false);
   }, []);
 
-  /** 提案をバッファへ適用する（docs/log/44 §4.3: PUT は呼ばない）。applyToView が
-   *  与えられ true を返した場合は CodeMirror の範囲 transaction（undo 1ステップ・
-   *  validator 通過済み）→ onChange → editBuffer が本文を進めるので、ここでは提案の
-   *  退役だけを行う。編集面が無いときは model 側で適用し content 同期に任せる。
-   *  失敗時は安定 code（`suggestion_stale` 等）を返し、提案は保持する。 */
+  /** Applies a suggestion to the buffer (docs/log/44 §4.3: never issues a PUT). When
+   *  applyToView is supplied and returns true, CodeMirror's ranged transaction (one undo
+   *  step, already through the validator) -> onChange -> editBuffer advances the text, so
+   *  all that is left here is retiring the suggestion. With no editing surface, the model
+   *  applies it and content sync takes over. On failure a stable code (`suggestion_stale`
+   *  and friends) is returned and the suggestion is kept. */
   const acceptSuggestion = useCallback(
     (applyToView?: (edit: { from: number; to: number; insert: string }) => boolean): string | null => {
       const current = modelRef.current;
@@ -532,7 +536,7 @@ export function useFileEditor(paneId: string, initial: InitialEditableFile | nul
     [setModel],
   );
 
-  /** 提案を破棄する。バッファは変更しない（docs/log/44 §1.3）。 */
+  /** Discards the suggestion. The buffer is left untouched (docs/log/44 §1.3). */
   const rejectSuggestion = useCallback(() => {
     const current = modelRef.current;
     if (current?.suggestion) setModel(setSuggestion(current, null));

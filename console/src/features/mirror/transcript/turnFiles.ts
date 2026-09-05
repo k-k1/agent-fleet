@@ -1,7 +1,7 @@
 // turnFiles — which files THIS turn edited (docs/log/68 P1).
 //
-// The head's 変更ファイル strip answers "what did this session change"; this answers
-// "what did this reply change", which is the question a reader has while scrolling.
+// The head's changed-files strip (「変更ファイル」) answers "what did this session change"; this
+// answers "what did this reply change", which is the question a reader has while scrolling.
 // Until now the only route to that was to expand a collapsed ToolRun and read tool
 // traces, and edits to one file spread over several calls looked like several things.
 //

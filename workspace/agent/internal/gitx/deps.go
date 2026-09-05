@@ -1,21 +1,21 @@
 package gitx
 
-// deps.go — gitx が呼び出し側（package main）へ伸ばしている手を 1 枚に集めたもの。
+// deps.go — one page collecting every hand gitx reaches out to the caller (package main).
 //
-// git 家系は「リポジトリを持つ」ことそのものなので、外向きの依存は main の各家系へ
-// 散る（ロック台帳・セッションの生存・取り込みジョブ・SVN・資格情報ヘルパ・
-// エラーコード表）。ここはその断面を隠すのではなく、**1 箇所に集めて数えられるように
-// する**ための口である（internal/mcpx/deps.go と同じ形）:
+// The git family is "holding the repositories" itself, so its outward dependencies scatter
+// across main's other families (the lock ledger, session liveness, import jobs, SVN, the
+// credential helper, the error-code table). This does not hide that seam; it gathers it in
+// one place so it can be counted (the same shape as internal/mcpx/deps.go):
 //
-//   - gitx は main を import しない（できない。逆向きの依存が既にある）
-//   - なので「main の関数を呼ぶ」は関数値として受け取る形にする
-//   - **配線は起動時に 1 回**（main の git_wiring.go の init）。Configure が欠けを
-//     検査して落とす —— 配線漏れを既定値で黙って埋めると、たとえば削除の
-//     ロック判定が「常に未ロック」になって**ロックしたはずのものが消える**。
-//     静かに動くより落ちる方を選ぶ。
+//   - gitx does not import main (it cannot; the dependency already runs the other way)
+//   - so "call a function in main" is taken as a function value instead
+//   - wiring happens once at boot (the init in main's git_wiring.go), and Configure panics
+//     on what is missing. Filling a gap with a default silently would, for instance, make
+//     the delete path's lock check read "never locked" so that something locked gets
+//     deleted. Crashing beats running quietly.
 //
-// gitx 単体のテストは main を持たないので、TestMain ではなく init が偽物を配線する
-// （deps_test.go 参照）。
+// gitx's own tests have no main, so the fakes are wired by init rather than TestMain
+// (see deps_test.go).
 
 import (
 	"context"
@@ -28,83 +28,85 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// RepoJobSink は main の `*repoJobSink` のうち **gitx が実際に使う面だけ**を書いた
-// consumer-defined interface（README §1 ③）。
+// RepoJobSink is a consumer-defined interface (README §1 ③) covering only the face of main's
+// `*repoJobSink` that gitx actually uses.
 //
-// ⚠️ main の型をそのまま受け取ることはできない（型を 1 つでも入れた瞬間に断面が
-// 閉じなくなる）。かといって `io.Writer` だけでは足りない —— clone は失敗したときに
-// **それまでの出力の末尾**をエラー本文として返しており、そこが落ちると
-// 「clone に失敗しました」だけが Console に出て理由が消える。
+// main's type cannot be taken directly (one type from main and the seam stops closing), and
+// `io.Writer` alone is not enough: on failure clone returns the tail of the output so far as
+// the error body, and losing that leaves the Console with "clone failed" and no reason.
 //
-// 🔥 main 側のメソッドは `tailString()` で**未公開**である。未公開メソッドは宣言した
-// パッケージに紐づくので、gitx がこの綴りで interface を書いても main の型は満たさない。
-// だから名前を変えて `Tail()` とし、**main 側（git_wiring.go）で薄い adapter を被せる**。
-// repo_jobs.go は AG-GIT の所有外なので、そちらへメソッドを足す選択肢は無い。
+// The method on the main side is `tailString()`, which is unexported. An unexported method
+// is tied to the package that declares it, so an interface written here with that spelling
+// would not be satisfied by main's type. Hence the different name `Tail()`, with a thin
+// adapter on the main side (git_wiring.go). repo_jobs.go is not owned by AG-GIT, so adding a
+// method there is not an option.
 type RepoJobSink interface {
 	io.Writer
-	// Tail は main の (*repoJobSink).tailString —— それまでに書き込まれた出力の末尾。
+	// Tail is main's (*repoJobSink).tailString — the tail of the output written so far.
 	Tail() string
 }
 
-// Deps は「gitx から見た外の世界」。**型は main のものを 1 つも含まない**
-// （含んだ瞬間に切断面が閉じなくなる）ので、増えても import は増えない。
+// Deps is the outside world as gitx sees it. It holds no type from main (the moment it does,
+// the seam stops closing), so it can grow without adding imports.
 type Deps struct {
-	// --- ロック台帳（locks.go）---
+	// --- Lock ledger (locks.go) ---
 	//
-	// 削除・チェックアウト・worktree の刈り取りが「消してよいか」を決める唯一の根拠。
-	// 未配線を零値で埋めると **repoLocked が常に false ＝ ロックが無いのと同じ**に
-	// なるので、Configure が落とす側に倒してある。
+	// The only basis on which delete, checkout and worktree pruning decide whether
+	// something may be removed. Filling an unwired field with the zero value makes
+	// repoLocked always false, which is the same as having no locks at all, so Configure
+	// is tipped towards crashing.
 	AbsPath        func(p string) string
 	RepoLocked     func(dir string) bool
 	LockedRepoDirs func() map[string]bool
 
-	// --- セッションの生存（session_tmux.go / session_handlers.go）---
+	// --- Session liveness (session_tmux.go / session_handlers.go) ---
 	//
-	// 「このワークツリーはまだ誰かが使っているか」。これも未配線が
-	// 「誰も使っていない」に化けると、**動いているセッションのワークツリーを消す**。
+	// "Is anyone still using this worktree?" Here too an unwired field turns into "nobody
+	// is using it", which deletes the worktree of a running session.
 	LiveSessionsInDir   func(dir string) []string
 	LockedSessionsInDir func(metas []session.Meta, dir string) []string
 	WorktreeHasSessions func(dir string) bool
 	ManagedAlive        func(m session.Meta) bool
 
-	// --- 使用量の締め（usage_fold.go）---
+	// --- Closing the usage ledger (usage_fold.go) ---
 	FinalizeSessionUsage func(m session.Meta)
 
-	// --- 取り込みジョブ（repo_jobs.go）---
+	// --- Import jobs (repo_jobs.go) ---
 	//
-	// clone は要求より長く生きるので背景ジョブで走る（docs/log/78）。戻り値の
-	// `RepoJob` は main の型なので `any` で受ける —— gitx は JSON にして返すだけで、
-	// 中身を読まない。
+	// A clone outlives the request, so it runs as a background job (docs/log/78). The
+	// returned `RepoJob` is a type of main's, so it is taken as `any`: gitx only encodes it
+	// as JSON and never reads inside it.
 	RepoJobActive func(name string) bool
 	StartRepoJob  func(kind, name, dir, url string, run func(ctx context.Context, sink RepoJobSink) error) any
 
-	// --- SVN（svn.go）---
+	// --- SVN (svn.go) ---
 	//
-	// ~/repos は git と svn が混在する。一覧は両方を並べるので、git 側から svn を
-	// 引く必要がある。**SvnRepoEntry は gitx.Repo を返す**（Repo は移送で gitx へ
-	// 来たので、これは main の型ではない）。
+	// ~/repos mixes git and svn. The listing shows both, so the git side has to read the
+	// svn side. SvnRepoEntry returns a gitx.Repo, not a type of main's (Repo came over to
+	// gitx in the move).
 	IsSvnRepo    func(dir string) bool
 	SvnRepoEntry func(name, dir string) Repo
 
-	// --- 資格情報ヘルパ（cred_helper.go）---
+	// --- Credential helper (cred_helper.go) ---
 	EnsureCredHelper func() error
 	InternalGitHost  func() string
 
-	// --- 接続（connections.go）---
+	// --- Connections (connections.go) ---
 	//
-	// GitHosts は「対応プロバイダのホスト → 既定の git ユーザ名」。**値を gitx 側で
-	// 持ち直さない**（層ごとに違う表を持つと、片方だけ増えた日に無言で壊れる）。
+	// GitHosts maps a supported provider's host to the default git user name. The values
+	// are not held again on the gitx side: a different table per layer breaks silently the
+	// day only one of them grows an entry.
 	FirstNonEmpty   func(vals ...string) string
 	GitConfigGlobal func(key, val string) error
 	GitHosts        map[string]string
 
-	// --- /scratch への退避（scratch.go）---
+	// --- Relocation to /scratch (scratch.go) ---
 	ScratchAutoRelocate func(dir string)
 
-	// --- 安定エラーコード（errcodes.go）---
+	// --- Stable error codes (errcodes.go) ---
 	//
-	// Console の i18n カタログと対になっている文字列。**gitx 側で定義し直さない**
-	// —— 出所が 2 つになると、片方だけ直した日に画面が生のコードを出す。
+	// Strings paired with the Console's i18n catalogue. Not redeclared on the gitx side:
+	// with two sources, the day one of them is fixed the screen shows a raw code.
 	ErrCodeSessionsRunning       string
 	ErrCodeSessionsRunningDelete string
 	ErrCodeBranchInUse           string
@@ -117,17 +119,18 @@ type Deps struct {
 
 var deps Deps
 
-// Configure は起動時に 1 回だけ呼ぶ（main の git_wiring.go / gitx のテストの init）。
-// 欠けたまま動かさない —— ロック判定やセッションの生存が「たまたま零値」で動くと、
-// **消してはいけないものが消える**側に倒れる。
+// Configure is called exactly once at boot (main's git_wiring.go, or the init in gitx's own
+// tests). Nothing runs with a gap left in it: a lock check or a session-liveness check that
+// happens to run on the zero value tips towards deleting what must not be deleted.
 //
-// 🔥 **網羅は reflect で取る。手書きの一覧にしない。** 手で並べた map はフィールドが
-// 増えたときに漏れ、しかも漏れても何も起きない。危ないのは**値型**である: 関数型なら
-// 未配線は nil 参照で落ちるが、`ErrCodeLocked` のような文字列は**空のまま静かに走り**、
-// Console には `""` というコードが届く。この構造体は既に値型を 9 つ持っている。
+// Completeness is taken with reflect, never a hand-written list: a hand-written map misses
+// a field that was added later, and nothing happens when it does. The dangerous ones are
+// the value types. An unwired func dies on a nil dereference, but a string like
+// `ErrCodeLocked` runs on quietly as empty and the Console receives `""` as the code. This
+// struct already holds 9 value-typed fields.
 //
-// 例外を作るときは**フィールドに `gitx:"optional"` と書く**（一覧を別に持たない。
-// 例外が見えるのは常に宣言のところ）。
+// To make an exception, tag the field `gitx:"optional"` — there is no separate list, so an
+// exception is always visible at the declaration.
 func Configure(d Deps) {
 	var missing []string
 	v := reflect.ValueOf(d)
@@ -143,7 +146,7 @@ func Configure(d Deps) {
 	}
 	if len(missing) > 0 {
 		sort.Strings(missing)
-		panic(fmt.Sprintf("gitx.Configure: 配線されていない依存がある: %v", missing))
+		panic(fmt.Sprintf("gitx.Configure: dependencies left unwired: %v", missing))
 	}
 	deps = d
 	gitHosts = d.GitHosts
@@ -157,9 +160,9 @@ func Configure(d Deps) {
 	errCodeLockedSessions = d.ErrCodeLockedSessions
 }
 
-// unwired は「配線されていない」の判定。零値に加えて、**中身の無いマップ**も
-// 配線漏れとして扱う（`map[string]string{}` は零値ではないが、依存としては
-// 未配線と同じ意味になる）。
+// unwired decides what counts as "not wired". Besides the zero value, an empty map counts
+// too: `map[string]string{}` is not the zero value, but as a dependency it means the same
+// thing as unwired.
 func unwired(v reflect.Value) bool {
 	if v.Kind() == reflect.Map {
 		return v.Len() == 0
@@ -167,15 +170,15 @@ func unwired(v reflect.Value) bool {
 	return v.IsZero()
 }
 
-// Wired は現在の配線を返す。**呼び出し側が「配線が生きているか」を通しで検査する**
-// ための読み出し口で、gitx 自身は使わない。
+// Wired returns the current wiring. It is a read port for a caller checking end to end that
+// the wiring is live; gitx itself does not use it.
 //
-// 🔥 Configure が捕まえるのは**未配線**だけで、**間違った配線**は捕まえられない。
-// `RepoLocked` を「常に false」にしても静かに通る —— しかも配線は 1 行なので、
-// 将来の整理で一番触られやすい場所である。
+// Configure catches only what is unwired, never what is wired wrong. Making `RepoLocked`
+// always false passes quietly, and since the wiring is one line it is the spot most likely
+// to be touched by a future tidy-up.
 func Wired() Deps { return deps }
 
-// 値で受け取るもの。Configure が 1 回だけ書く（以後は読むだけ）。
+// Taken by value. Configure writes them once; everything after that only reads.
 var (
 	gitHosts                     map[string]string
 	errCodeSessionsRunning       string
@@ -188,8 +191,8 @@ var (
 	errCodeLockedSessions        string
 )
 
-// 以下は移送前と**同じ名前**の薄い委譲。移してきた 3,871 行を 1 行も触らずに済ませる
-// ためで、ここが唯一の外向きの窓口になる。
+// What follows are thin delegations under the same names the code used before the move, so
+// that the 3,871 lines that came over need no edits. This is the only outward window.
 func absPath(p string) string { return deps.AbsPath(p) }
 
 func repoLocked(dir string) bool { return deps.RepoLocked(dir) }
@@ -228,6 +231,6 @@ func gitConfigGlobal(key, val string) error { return deps.GitConfigGlobal(key, v
 
 func scratchAutoRelocate(dir string) { deps.ScratchAutoRelocate(dir) }
 
-// 純粋な内部パッケージの薄皮は配線しない（振る舞いが無いので、写しが古くなる余地が
-// 無い）。main 側の homeDir も同じ 1 行である。
+// A thin skin over a pure internal package is not wired: it has no behaviour, so there is no
+// room for a copy to go stale. main's homeDir is the same one line.
 func homeDir() string { return paths.HomeDir() }

@@ -1,11 +1,9 @@
 package main
 
-// chat 家系を internal/chatx へ移したあと、**main に残ったテスト**（chat のハンドラや
-// mcp の引数解釈のように、main の他家系を駆動するもの）が使うヘルパ。
-// chatx 側の同名ヘルパは _test.go に居てパッケージ外から見えないので、ここに 1 組だけ持つ
-// （テストヘルパはパッケージごとに持つのが Go の通例）。
-//
-// ⚠️ **駆動を変えていないこと**は、移送前後の両方に同じ変異を当てて確かめる（PR 本文）。
+// Helpers for the tests that stay in main (the ones driving main's other families, such as
+// the chat handlers or mcp argument parsing). The same-named helpers on the chatx side live
+// in _test.go files and are invisible from outside that package, so main keeps its own one
+// set, as is usual in Go.
 
 import (
 	"context"
@@ -17,11 +15,12 @@ import (
 )
 
 // withTempHome points HOME at a temp dir so the fstore/conversation stores write
-// under the test's own tree（移送前の chat_report_test.go と同じ形）。
+// under the test's own tree.
 //
-// 🔥 配送 goroutine の待ちは **`t.Setenv` の後**に積む（Cleanup は LIFO ＝ HOME 復帰より
-// 先に走る）。待たないと chatx の配送が復帰後の実 HOME へ通知を書き、利用者の Console に
-// 幽霊通知が出る（chatx/chat_report.go の interimDeliveries）。
+// The wait for the delivery goroutine must be registered AFTER `t.Setenv` (Cleanup runs
+// LIFO, so it runs before HOME is restored). Without the wait, chatx's delivery writes a
+// notification into the real HOME once it is back and a ghost notification shows up in the
+// user's Console (interimDeliveries in chatx/chat_report.go).
 func withTempHome(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
@@ -30,18 +29,18 @@ func withTempHome(t *testing.T) string {
 	return dir
 }
 
-// mainStubProvider は main 側から差し替えるためのプロバイダ。
-// **`chatx.ChatProvider` の `Send` が公開されているからこそ書ける** — 移送前は
-// `chatProvider.send` が未公開で、パッケージ外からはスタブを作れなかった。
+// mainStubProvider is the provider main substitutes in. It is only writable because
+// `chatx.ChatProvider`'s `Send` is exported; an unexported method cannot be stubbed from
+// outside the package.
 type mainStubProvider struct {
 	reply string
 	model string
 	err   error
 }
 
-// 🔥 **ターンの開始と模擬の記録は chatx の作法どおりに通す。** `c.TurnModel` へ直接
-// 代入すると**ターンの区切りを跨いで値が残り**、「stored conversation に漏れていないこと」を
-// 見ている検査が落ちる（実際に落として気付いた）。移送前の modelChatProv と同じ手順。
+// Start the turn and record the mock model through chatx's own path. Assigning `c.TurnModel`
+// directly leaves the value in place across a turn boundary, which fails the check that the
+// model does not leak into the stored conversation (observed).
 func (p mainStubProvider) Send(_ context.Context, c *chatx.ChatConversation, _ string) (string, error) {
 	c.StartTurn()
 	if p.model != "" {
@@ -56,14 +55,14 @@ func oneShotLiveTurns() []transcript.Turn {
 	}
 }
 
-// withTestReconciler は本物の reconciler を短い間隔で据える（移送前と同じ駆動）。
-// 実体は chatx の内側なので、据え付けだけを継ぎ目から呼ぶ。
+// withTestReconciler installs the real reconciler on a short interval. The implementation is
+// inside chatx, so only the installation is called through the seam.
 func withTestReconciler(t *testing.T, interval time.Duration) {
 	t.Helper()
 	t.Cleanup(chatx.InstallReconcilerForTest(interval))
 }
 
-// awaitReported は「指示行が配送された報告で reported になる」まで待つ（移送前と同じ）。
+// awaitReported waits until the instruction line turns reported by a delivered report.
 func awaitReported(t *testing.T, name string) {
 	t.Helper()
 	for i := 0; i < 150; i++ {
@@ -72,7 +71,7 @@ func awaitReported(t *testing.T, name string) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("指示行は配送された報告で reported になるべき (指示1件=報告1回): %s", name)
+	t.Fatalf("instruction line should become reported by a delivered report (1 instruction = 1 report): %s", name)
 }
 func containsString(xs []string, want string) bool {
 	for _, x := range xs {

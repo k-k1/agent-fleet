@@ -1,4 +1,4 @@
-// Pop-out glue (ペインの別タブ切り離し) — the DOM half: opener side
+// Pop-out glue (detaching a pane into its own tab) — the DOM half: opener side
 // (openPanePopout) and child-boot side (consumePopoutBoot). The pure
 // descriptor logic lives in layout/popout.ts; the per-tab mode flag in
 // lib/popoutMode.ts.

@@ -24,7 +24,7 @@ import (
 // container's encrypted store, exactly like the git tokens. The CP never sees them: it
 // hands queries down and gets non-secret rows back (ADR 0061).
 //
-// ⚠️ Why a connection is still required even though a Jira MCP server exists: the MCP
+// Why a connection is still required even though a Jira MCP server exists: the MCP
 // only runs inside a conversation, so it cannot produce the rail's list (and its
 // official remote flavour is OAuth, which docs/log/48 §0 puts out of af's scope). The two
 // are complements — this connection feeds the list, the MCP reads the body in-session.
@@ -55,8 +55,8 @@ func jiraStatus(s *secrets.Data) map[string]any {
 	if c.Account != "" {
 		m["account"] = c.Account
 	}
-	// サイトが 1 つでも返す —— 「選べる状態にある」ことと「選択肢が 1 つ」は別で、
-	// 前者を出さないと利用者は切り替えられることに気づけない。
+	// Report the sites even when there is only one: "you may choose" and "there is one
+	// choice" are different, and without the former the user never learns they can switch.
 	if len(c.Sites) > 0 {
 		sites := make([]map[string]any, 0, len(c.Sites))
 		for _, st := range c.Sites {
@@ -90,8 +90,8 @@ func normalizeJiraSite(raw string) (string, error) {
 		return "", fmt.Errorf("site must be a URL like https://example.atlassian.net")
 	}
 	if u.Scheme != "https" {
-		// http だと Basic 認証（メール＋トークン）が平文で飛ぶ。相手は Atlassian Cloud
-		// なので https 以外を受ける理由が無い。
+		// Over http the Basic credentials (email + token) travel in the clear, and the
+		// peer is Atlassian Cloud, so there is no reason to accept anything but https.
 		return "", fmt.Errorf("site must use https")
 	}
 	return u.Scheme + "://" + u.Host, nil
@@ -107,7 +107,7 @@ func jiraAuthHeader(c *secrets.JiraCreds) string {
 
 // jiraAPIBase is where REST calls go — and the two paths do NOT agree.
 //
-// ⚠️ A 3LO token is not accepted by <site>.atlassian.net at all: it addresses the site
+// A 3LO token is not accepted by <site>.atlassian.net at all: it addresses the site
 // through api.atlassian.com/ex/jira/<cloudId>. Sending an OAuth request to the site host
 // fails as an auth error, which reads as "wrong token" rather than "wrong host".
 // c.Site stays the human-facing base (browse links) either way.
@@ -131,7 +131,7 @@ func jiraConnected(c *secrets.JiraCreds) bool {
 
 // handlePutJiraConn stores the connection — but only after Jira accepts it.
 //
-// ★ The credentials are verified against GET /rest/api/3/myself before saving. Three
+// The credentials are verified against GET /rest/api/3/myself before saving. Three
 // fields (site / email / token) are three chances to typo, and without this check the
 // first sign of a bad paste is an error on a rail row minutes later, which reads as
 // "the feature is broken" rather than "the token is wrong".
@@ -176,9 +176,9 @@ func handlePutJiraConn(w http.ResponseWriter, r *http.Request) {
 // that turns them into a usable connection happens here, where the token is allowed to
 // live.
 //
-// ★ Resolving the sites is part of storing. A 3LO token addresses a site by cloud id, so
+// Resolving the sites is part of storing. A 3LO token addresses a site by cloud id, so
 // a connection without one cannot make a single API call — saving the tokens and
-// resolving later would leave a card that says 接続済み next to a rail that 401s.
+// resolving later would leave a card that says "connected" next to a rail that 401s.
 func handleJiraOAuthStore(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		AccessToken  string `json:"access_token"`
@@ -206,9 +206,9 @@ func handleJiraOAuthStore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(sites) == 0 {
-		// 認可は通ったのにサイトが 0。アプリのスコープ不足か、そのアカウントがどの
-		// Jira サイトにも属していない —— どちらも「もう一度接続」では直らないので、
-		// 接続済みにしないでそう言う。
+		// The authorization succeeded yet covers no site: either the app is missing
+		// scopes or the account belongs to no Jira site. Neither is fixed by connecting
+		// again, so say that instead of storing a connection.
 		httpx.WriteErr(w, http.StatusBadGateway, errCodeConnJiraRejected,
 			"the authorization covers no Jira site (check the app's scopes and the account's site access)")
 		return
@@ -256,7 +256,7 @@ func handlePutJiraSite(w http.ResponseWriter, r *http.Request) {
 		if st.CloudID == want {
 			s.Jira.CloudID = st.CloudID
 			s.Jira.Site = st.URL
-			// 表示名はサイト毎に違いうる（別テナントの Jira なら別人格）。
+			// The display name can differ per site (another tenant's Jira is another persona).
 			if name, err := jiraAccount(s.Jira); err == nil {
 				s.Jira.Account = name
 			}
@@ -326,7 +326,7 @@ func jiraAccount(c *secrets.JiraCreds) (string, error) {
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		return "", fmt.Errorf("Jira rejected the credentials")
 	case status == http.StatusNotFound:
-		// 404 はたいてい「サイトは実在するが Jira ではない / URL が違う」。
+		// A 404 usually means the host exists but is not a Jira, or the URL is wrong.
 		return "", fmt.Errorf("no Jira REST API at %s", jiraAPIBase(c))
 	default:
 		return "", fmt.Errorf("Jira answered %d", status)
@@ -342,7 +342,7 @@ func jiraAccount(c *secrets.JiraCreds) (string, error) {
 
 // jiraSearchWorkItems resolves one saved JQL query into rail rows.
 //
-// ⚠️ Two endpoints, on purpose. Atlassian replaced the classic
+// Two endpoints, on purpose. Atlassian replaced the classic
 // GET /rest/api/3/search with /rest/api/3/search/jql (token paging instead of
 // startAt/total), and which one a given site answers depends on when it was migrated.
 // We try the newer path and fall back on 404/410 — the issue shape is identical, so the
@@ -365,7 +365,7 @@ func jiraSearchWorkItems(c *secrets.JiraCreds, queryID, jql string) ([]workItemO
 // jiraOrderedJQL appends `ORDER BY updated DESC` to a query that does not order itself
 // (docs/log/80 §80.18.6).
 //
-// ★ Because the fetch is capped at workItemFetchPerQuery, an unordered JQL means WHICH
+// Because the fetch is capped at workItemFetchPerQuery, an unordered JQL means WHICH
 // 50 rows survive is up to Jira. The rail says "the newest N" — the GitHub adapter passes
 // sort=updated&order=desc for exactly this reason — so an arbitrary cut would make the
 // rail lie. A user-written ORDER BY is left alone: they said what they wanted.
@@ -374,8 +374,8 @@ func jiraOrderedJQL(jql string) string {
 	if q == "" {
 		return q
 	}
-	// "ORDER BY" は JQL のどこにでも書けるわけではなく末尾だけなので、大小文字と
-	// 空白の揺れだけ吸って探せば足りる。
+	// "ORDER BY" may only appear at the end of a JQL query, so absorbing case and
+	// whitespace variation is enough to find it.
 	if jiraOrderBy.MatchString(q) {
 		return q
 	}
@@ -399,7 +399,7 @@ func isJiraNotFound(err error) bool {
 // jiraGet issues one authenticated GET, renewing the OAuth access token when it is
 // expired or refused.
 //
-// ★ Two triggers, not one. The expiry stamp catches the common case before spending a
+// Two triggers, not one. The expiry stamp catches the common case before spending a
 // round trip, and the 401 catches the cases the stamp cannot know about — a token
 // revoked from the Atlassian side, or a clock that disagrees. Retrying at most once
 // keeps a genuinely revoked authorization from looping.
@@ -426,7 +426,8 @@ func jiraGet(c *secrets.JiraCreds, u string) ([]byte, error) {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return nil, &jiraHTTPError{status, "Jira rejected the credentials (re-connect Jira)"}
 	case http.StatusBadRequest:
-		// JQL の文法エラーはここに来る。Jira の説明文をそのまま出すのが一番親切。
+		// A JQL syntax error lands here, and Jira's own explanation is the most helpful
+		// thing to pass through.
 		return nil, &jiraHTTPError{status, "Jira could not parse the JQL: " + jiraErrText(body)}
 	case http.StatusTooManyRequests:
 		return nil, &jiraHTTPError{status, "Jira rate limit reached"}
@@ -476,25 +477,25 @@ func jiraEnsureFresh(c *secrets.JiraCreds) error {
 
 // jiraRefreshMu serializes the refresh grant within this process.
 //
-// ★ Not an optimisation — a correctness requirement of ROTATING refresh tokens, which
+// Not an optimisation — a correctness requirement of ROTATING refresh tokens, which
 // Atlassian now mandates for new integrations. Rotation means each refresh token is
 // single-use AND its reuse is treated as theft: presenting the same one twice can revoke
 // the whole chain, and the member sees Jira spontaneously disconnect. Two callers can
-// reach here at the same moment (a rail fetch and a 投稿 both notice the hour-old token),
+// reach here at the same moment (a rail fetch and a post both notice the hour-old token),
 // so without this lock the normal case is two identical grants racing.
 var jiraRefreshMu sync.Mutex
 
 // jiraRefreshNow runs the refresh grant through the CP bridge and PERSISTS the result.
 //
-// ⚠️ Atlassian rotates the refresh token: the response carries a new one and retires the
+// Atlassian rotates the refresh token: the response carries a new one and retires the
 // old. Not saving it strands the connection at the next expiry with nothing to renew, so
 // the store write is part of the refresh, not an afterthought.
 func jiraRefreshNow(c *secrets.JiraCreds) error {
 	jiraRefreshMu.Lock()
 	defer jiraRefreshMu.Unlock()
-	// 待っている間に別の呼び出しが更新し終えていることがある。その場合は**もう一度
-	// 交換しない** —— 使い終わった更新トークンをもう一度出すのが、まさに rotation が
-	// 「盗用」とみなす操作だからである。ディスクの新しい値を取り込んで戻る。
+	// Another caller may have finished refreshing while this one waited. Do not exchange
+	// again in that case: presenting a spent refresh token is exactly what rotation treats
+	// as theft. Adopt the fresher values from disk and return.
 	if fresh, err := secrets.Load(); err == nil && fresh.Jira != nil && fresh.Jira.AuthKind == "oauth" {
 		if fresh.Jira.Expiry > time.Now().Add(jiraFreshWindow).Unix() && fresh.Jira.AccessToken != "" {
 			c.AccessToken = fresh.Jira.AccessToken
@@ -580,8 +581,9 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 		if is.Fields.Assignee != nil {
 			assignee = is.Fields.Assignee.DisplayName
 		}
-		// ⚠️ fields.labels が無い課題では nil のまま。nil スライスは JSON の null に
-		// なり、受け手が配列として扱えない（同じ形で Console を落とした）。
+		// An issue without fields.labels leaves this nil, and a nil slice marshals to JSON
+		// null, which the receiver cannot treat as an array (this exact shape once crashed
+		// the Console).
 		labels := is.Fields.Labels
 		if labels == nil {
 			labels = []string{}
@@ -592,8 +594,8 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 			State:    normalizeJiraState(is.Fields.Status.StatusCategory.Key),
 			URL:      site + "/browse/" + is.Key,
 			Assignee: assignee, Labels: labels,
-			// Jira はリポジトリを持たない。起動先はクエリの repoHint が決める
-			// （プロジェクト → 作業コピーの対応表がそれ）。
+			// Jira has no repository. The launch target comes from the query's repoHint,
+			// which is the project-to-working-copy mapping.
 			Repo: "", UpdatedAt: jiraTimeToRFC3339(is.Fields.Updated),
 		})
 	}
@@ -601,7 +603,7 @@ func parseJiraSearchIssues(body []byte, site, queryID string) ([]workItemOut, er
 }
 
 // normalizeJiraState maps Jira onto the shared vocabulary via the STATUS CATEGORY, not
-// the status name. Every Jira project renames its statuses ("レビュー中", "検証待ち"),
+// the status name. Every Jira project renames its statuses ("In review", "Awaiting QA"),
 // but the category behind them is one of three fixed values — matching on names would
 // break on the first custom workflow.
 func normalizeJiraState(category string) string {
