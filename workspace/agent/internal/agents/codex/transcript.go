@@ -1,6 +1,7 @@
 package codex
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -24,8 +25,10 @@ import (
 // session_id (sids, from its status hook), so we locate that slot's rollout by
 // id and normalize its events into the SAME transcript.Turn/transcript.Part model the Console chat
 // consumes for claude. The rollout is append-only JSONL, so — like claude — the line
-// order is chronological; here we parse the whole file into ordered turns and let the
-// generic /messages windower page over them (see handleGenericMessages).
+// order is chronological; we parse it into ordered turns and let the generic /messages
+// windower page over them (see handleGenericMessages). Append-only is also why a reader
+// resumes the previous parse over the new lines rather than reading the file again
+// (rolloutcache.go, and rolloutParser below).
 //
 // Event shape (codex 0.14x, verified against real rollouts):
 //   {"timestamp","type":"session_meta","payload":{cwd,git:{branch},...}}   — head
@@ -100,148 +103,328 @@ func parseRollout(lines [][]byte) ([]transcript.Turn, []transcript.Task) {
 // (request_user_input awaiting an answer), split out so readTranscript can surface
 // it while the two-value form stays convenient for tests.
 func parseRolloutFull(lines [][]byte) ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
-	var turns []transcript.Turn
-	var tasks []transcript.Task
-	var cwd, branch, model, effort, mode string
+	p := newRolloutParser()
+	for _, ln := range lines {
+		p.feed(ln)
+	}
+	return p.snapshot()
+}
+
+// rolloutParser is the state parseRolloutFull threads through a rollout's lines, held as
+// a value so a reader can RESUME it over newly appended lines instead of starting again
+// at line 0 (rolloutcache.go).
+//
+// WHY it is resumable: a rollout is append-only, but every /messages poll, every
+// sessions-list poll that heals a stale working state, and every usage read used to parse
+// the whole file. That is fine at a few hundred KB and ruinous beyond it — a session whose
+// tool outputs carry inline images reached 147 MB in one hour, where one full parse
+// measured 3.9 s of CPU for a 94 KB answer (2026-09-05). Re-opening such a session took
+// seconds, and the polls behind it kept the Agent busy the rest of the time.
+type rolloutParser struct {
+	turns []transcript.Turn
+	tasks []transcript.Task
+
+	cwd, branch, model, effort, mode string
 	// The rollout turn currently open (task_started … task_complete). Every displayable
 	// turn inside it carries this id as its fork anchor (docs/log/55): `thread/fork`'s
 	// lastTurnId speaks in these, not in line numbers. Empty until the first
 	// task_started — the preamble (injected instructions) belongs to no turn and must
 	// not be branchable.
-	curTurn := ""
-	lastAssistant := -1           // index of the most recent assistant turn (for usage)
-	callTurn := map[string]int{}  // function_call call_id -> its tool/question turn index
-	answered := map[string]bool{} // call_ids whose function_call_output arrived
-	askCalls := []string{}        // request_user_input call_ids, in order (for pending)
-	for i, ln := range lines {
-		var ev struct {
-			Type      string          `json:"type"`
-			Timestamp string          `json:"timestamp"`
-			Payload   json.RawMessage `json:"payload"`
+	curTurn       string
+	lastAssistant int             // index of the most recent assistant turn (for usage)
+	callTurn      map[string]int  // function_call call_id -> its tool/question turn index
+	answered      map[string]bool // call_ids whose function_call_output arrived
+	askCalls      []string        // request_user_input call_ids, in order (for pending)
+
+	// Last turn lifecycle event seen, for the missed-Stop heal (rolloutCompletedAfter).
+	// Folded in on the way past so that check costs nothing of its own.
+	lifecycle   string
+	lifecycleAt time.Time
+
+	next int // absolute index of the next line — a turn's Idx, and the paging currency
+}
+
+func newRolloutParser() *rolloutParser {
+	return &rolloutParser{
+		lastAssistant: -1,
+		callTurn:      map[string]int{},
+		answered:      map[string]bool{},
+	}
+}
+
+// feed folds one non-blank rollout line into the parse. Lines must arrive in file order
+// and exactly once: the index they are given is what the Console pages over.
+func (p *rolloutParser) feed(ln []byte) {
+	i := p.next
+	p.next++
+	// Cheap pre-read of the two type fields, so lines nothing reads are never decoded.
+	// The bulk of a rollout is event_msg/item_completed mirroring tool results (measured:
+	// 75 MB of a 147 MB file), and decoding those cost 1.4 s of a 3.9 s parse.
+	outer, kind, peeked := peekKinds(ln)
+	if peeked && outer == "event_msg" && !eventMsgUsed(kind) {
+		return
+	}
+	var ev struct {
+		Type      string          `json:"type"`
+		Timestamp string          `json:"timestamp"`
+		Payload   json.RawMessage `json:"payload"`
+	}
+	if json.Unmarshal(ln, &ev) != nil {
+		return
+	}
+	// The peek only recognizes payloads whose first key is "type" (how codex writes
+	// event_msg and response_item). Anything else falls back to decoding it, which is
+	// always correct — this must never depend on the peek having worked.
+	payloadKind := func() string {
+		if peeked {
+			return kind
 		}
-		if json.Unmarshal(ln, &ev) != nil {
-			continue
+		return payloadType(ev.Payload)
+	}
+	switch ev.Type {
+	case "session_meta":
+		p.cwd, p.branch = metaContext(ev.Payload)
+	case "turn_context":
+		// turn_context also carries turn_id, and it can appear WITHOUT a task_started
+		// (settings applied between turns), so it is the fallback anchor source — but
+		// never the primary: it repeats more often than turns do (measured: 19 turn_context
+		// vs 15 task_started in one rollout).
+		if id := payloadTurnID(ev.Payload); id != "" && p.curTurn == "" {
+			p.curTurn = id
 		}
-		switch ev.Type {
-		case "session_meta":
-			cwd, branch = metaContext(ev.Payload)
-		case "turn_context":
-			// turn_context also carries turn_id, and it can appear WITHOUT a task_started
-			// (settings applied between turns), so it is the fallback anchor source — but
-			// never the primary: it repeats more often than turns do (measured: 19 turn_context
-			// vs 15 task_started in one rollout).
-			if id := payloadTurnID(ev.Payload); id != "" && curTurn == "" {
-				curTurn = id
+		// Precedes each turn; carries the model (e.g. "gpt-5.5") and reasoning effort
+		// in effect. effort is often null (default) — kept only when codex records one.
+		if m, e := turnModel(ev.Payload); m != "" {
+			p.model = m
+			p.effort = e
+		}
+		// collaboration_mode.mode is "default" | "plan"; normalize to normal/plan.
+		if cm := turnMode(ev.Payload); cm != "" {
+			p.mode = cm
+		}
+	case "compacted":
+		// codex compacted its history (auto or /compact) and wrote the replacement
+		// summary; shown as claude's collapsible "Context was compacted" block.
+		p.turns = append(p.turns, transcript.Turn{
+			Role: "user", Compact: true, Text: compactedText(ev.Payload),
+			Idx: i, TS: ev.Timestamp, Cwd: p.cwd, Branch: p.branch,
+		})
+	case "response_item":
+		// A tool output is neither a displayable turn nor a plan update, so the two
+		// parses below would only walk it to say no — and these are the biggest payloads
+		// in the file (an inline image is megabytes). Go straight to the attach.
+		if k := payloadKind(); k == "custom_tool_call_output" || k == "function_call_output" {
+			p.attachOutput(ev.Payload)
+			return
+		}
+		t, callID, ok := parseResponseItem(ev.Payload, ev.Timestamp, i, p.cwd, p.branch)
+		if ok {
+			if t.Role == "assistant" {
+				t.Model = p.model
+				t.Effort = p.effort
 			}
-			// Precedes each turn; carries the model (e.g. "gpt-5.5") and reasoning effort
-			// in effect. effort is often null (default) — kept only when codex records one.
-			if m, e := turnModel(ev.Payload); m != "" {
-				model = m
-				effort = e
+			t.AnchorID = p.curTurn
+			p.turns = append(p.turns, t)
+			if t.Role == "assistant" {
+				p.lastAssistant = len(p.turns) - 1
 			}
-			// collaboration_mode.mode is "default" | "plan"; normalize to normal/plan.
-			if cm := turnMode(ev.Payload); cm != "" {
-				mode = cm
-			}
-		case "compacted":
-			// codex compacted its history (auto or /compact) and wrote the replacement
-			// summary; shown as claude's collapsible "Context was compacted" block.
-			turns = append(turns, transcript.Turn{
-				Role: "user", Compact: true, Text: compactedText(ev.Payload),
-				Idx: i, TS: ev.Timestamp, Cwd: cwd, Branch: branch,
-			})
-		case "response_item":
-			t, callID, ok := parseResponseItem(ev.Payload, ev.Timestamp, i, cwd, branch)
-			if ok {
-				if t.Role == "assistant" {
-					t.Model = model
-					t.Effort = effort
-				}
-				t.AnchorID = curTurn
-				turns = append(turns, t)
-				if t.Role == "assistant" {
-					lastAssistant = len(turns) - 1
-				}
-				if callID != "" {
-					callTurn[callID] = len(turns) - 1
-					if len(t.Parts) > 0 && t.Parts[0].Kind == "question" {
-						askCalls = append(askCalls, callID)
-					}
-				}
-				continue
-			}
-			// Not a displayable turn on its own: a plan update (feeds the ToDo list) or a
-			// tool output (attached to its call's trace, or as a question's answer).
-			if pt := parsePlan(ev.Payload); pt != nil {
-				tasks = pt // update_plan resends the whole list
-			}
-			if id, out, gen, imgs := parseCallOutput(ev.Payload); id != "" {
-				answered[id] = true
-				if ti, okk := callTurn[id]; okk && len(turns[ti].Parts) > 0 && out != "" {
-					if turns[ti].Parts[0].Kind == "question" {
-						turns[ti].Parts[0].Answer = answerText(out, turns[ti].Parts[0].Questions)
-					} else {
-						turns[ti].Parts[0].Output = out
-					}
-					// A generated image (imagegen): surface its saved file as a userfile
-					// part — the same shared-files panel claude's SendUserFile gets, so the
-					// user can open the image from the chat instead of digging the path out
-					// of a tool trace.
-					if len(gen) > 0 {
-						turns[ti].Parts = append(turns[ti].Parts, transcript.Part{Kind: "userfile", Files: gen})
-					} else if len(imgs) > 0 {
-						// view_image: the screenshot only exists as inline base64 here (no
-						// servable path was announced) — stash it for readTranscript to
-						// decode and persist to a servable file (see persistViewImages).
-						turns[ti].Parts[0].ViewImageCallID = id
-						turns[ti].Parts[0].ViewImageData = imgs
-					}
+			if callID != "" {
+				p.callTurn[callID] = len(p.turns) - 1
+				if len(t.Parts) > 0 && t.Parts[0].Kind == "question" {
+					p.askCalls = append(p.askCalls, callID)
 				}
 			}
-		case "event_msg":
+			return
+		}
+		// Not a displayable turn on its own: a plan update (feeds the ToDo list) or a
+		// tool output (attached to its call's trace, or as a question's answer).
+		if pt := parsePlan(ev.Payload); pt != nil {
+			p.tasks = pt // update_plan resends the whole list
+		}
+		p.attachOutput(ev.Payload)
+	case "event_msg":
+		switch payloadKind() {
+		case "task_started":
 			// task_started opens the turn every following item belongs to (measured: it
 			// precedes the user prompt's response_item), so the anchor is set here and
 			// stays until the next one.
 			if id := taskStartedTurnID(ev.Payload); id != "" {
-				curTurn = id
+				p.curTurn = id
 			}
-			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && lastAssistant >= 0 {
-				turns[lastAssistant].InTok = in
-				turns[lastAssistant].OutTok = out
-				turns[lastAssistant].CacheRead = read
+			p.noteLifecycle("task_started", ev.Timestamp)
+		case "task_complete":
+			p.noteLifecycle("task_complete", ev.Timestamp)
+		case "token_count":
+			if in, out, read, win, ok := tokenUsage(ev.Payload); ok && p.lastAssistant >= 0 {
+				p.turns[p.lastAssistant].InTok = in
+				p.turns[p.lastAssistant].OutTok = out
+				p.turns[p.lastAssistant].CacheRead = read
 				if win > 0 {
-					turns[lastAssistant].CtxWindow = win
+					p.turns[p.lastAssistant].CtxWindow = win
 				}
 			}
+		case "context_compacted":
 			// context_compacted marks a compaction when no "compacted" line was written
 			// (version-dependent). Skip it when the previous turn already is the compact
 			// block from that line, so one compaction never renders twice.
-			if isContextCompacted(ev.Payload) &&
-				(len(turns) == 0 || !turns[len(turns)-1].Compact) {
-				turns = append(turns, transcript.Turn{
+			if len(p.turns) == 0 || !p.turns[len(p.turns)-1].Compact {
+				p.turns = append(p.turns, transcript.Turn{
 					Role: "user", Compact: true,
-					Idx: i, TS: ev.Timestamp, Cwd: cwd, Branch: branch,
+					Idx: i, TS: ev.Timestamp, Cwd: p.cwd, Branch: p.branch,
 				})
 			}
 		}
 	}
+}
+
+// attachOutput folds a function_call_output / custom_tool_call_output onto the turn of
+// the call it answers.
+func (p *rolloutParser) attachOutput(payload json.RawMessage) {
+	id, out, gen, imgs := parseCallOutput(payload)
+	if id == "" {
+		return
+	}
+	p.answered[id] = true
+	ti, ok := p.callTurn[id]
+	if !ok || len(p.turns[ti].Parts) == 0 || out == "" {
+		return
+	}
+	if p.turns[ti].Parts[0].Kind == "question" {
+		p.turns[ti].Parts[0].Answer = answerText(out, p.turns[ti].Parts[0].Questions)
+	} else {
+		p.turns[ti].Parts[0].Output = out
+	}
+	// A generated image (imagegen): surface its saved file as a userfile part — the same
+	// shared-files panel claude's SendUserFile gets, so the user can open the image from
+	// the chat instead of digging the path out of a tool trace.
+	if len(gen) > 0 {
+		p.turns[ti].Parts = append(p.turns[ti].Parts, transcript.Part{Kind: "userfile", Files: gen})
+	} else if len(imgs) > 0 {
+		// view_image: the screenshot only exists as inline base64 here (no servable path
+		// was announced) — stash it for readTranscript to decode and persist to a servable
+		// file (see persistViewImages).
+		p.turns[ti].Parts[0].ViewImageCallID = id
+		p.turns[ti].Parts[0].ViewImageData = imgs
+	}
+}
+
+func (p *rolloutParser) noteLifecycle(kind, ts string) {
+	at, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return
+	}
+	p.lifecycle, p.lifecycleAt = kind, at
+}
+
+// snapshot renders the parse so far as the caller's own copy: the transcript, the ToDo
+// list, the pending question and the mode.
+//
+// It must not disturb the parser — a cached parse is resumed by the next poll, and the
+// caller edits what it gets back (/messages rewrites userfile paths in place and drops
+// parts). So the turns are cloned first, and the pending question is removed from the
+// clone.
+func (p *rolloutParser) snapshot() ([]transcript.Turn, []transcript.Task, []transcript.Question, string) {
+	turns := cloneTurns(p.turns)
 	// Pending question = the last request_user_input still awaiting an answer. Its
 	// function_call is already in the rollout, so drop that turn from the transcript
 	// (it's surfaced interactively as pending instead) to avoid showing it twice — once
 	// answered it stays in the transcript as a normal answered question block.
 	var pending []transcript.Question
-	for i := len(askCalls) - 1; i >= 0; i-- {
-		id := askCalls[i]
-		if answered[id] {
+	for i := len(p.askCalls) - 1; i >= 0; i-- {
+		id := p.askCalls[i]
+		if p.answered[id] {
 			continue
 		}
-		if ti, ok := callTurn[id]; ok && len(turns[ti].Parts) > 0 {
+		if ti, ok := p.callTurn[id]; ok && len(turns[ti].Parts) > 0 {
 			pending = turns[ti].Parts[0].Questions
 			turns = append(turns[:ti], turns[ti+1:]...)
 		}
 		break
 	}
-	return turns, tasks, pending, mode
+	return turns, append([]transcript.Task(nil), p.tasks...), pending, p.mode
+}
+
+// cloneTurns copies turns deeply enough that a caller can rewrite them without reaching
+// into the cached parse: /messages rewrites each userfile part's paths in place
+// (resolveUserFiles) and removes parts (hidePendingInteraction). Sharing the slices would
+// make those edits permanent — and cumulative, poll after poll.
+func cloneTurns(in []transcript.Turn) []transcript.Turn {
+	out := make([]transcript.Turn, len(in))
+	copy(out, in)
+	for i := range out {
+		parts := make([]transcript.Part, len(out[i].Parts))
+		copy(parts, out[i].Parts)
+		for j := range parts {
+			if parts[j].Files != nil {
+				parts[j].Files = append([]string(nil), parts[j].Files...)
+			}
+		}
+		out[i].Parts = parts
+	}
+	return out
+}
+
+// eventMsgUsed reports whether the parser reads anything from an event_msg of this
+// payload type. Everything else is skipped without being decoded — see feed.
+func eventMsgUsed(kind string) bool {
+	switch kind {
+	case "task_started", "task_complete", "token_count", "context_compacted":
+		return true
+	}
+	return false
+}
+
+// peekKinds reads a rollout line's own type and its payload's type WITHOUT decoding the
+// line: codex writes both as the first key of their object
+// (`{"timestamp":…,"type":"event_msg","payload":{"type":"item_completed",…}`), so a scan
+// of the head is enough. ok=false means the line did not have that shape and the caller
+// must decode it — this is an optimization, never a source of truth.
+func peekKinds(ln []byte) (outer, payload string, ok bool) {
+	const head = 512 // past the timestamp and ordinal, well short of any payload body
+	if len(ln) > head {
+		ln = ln[:head]
+	}
+	const marker = `"payload":{"type":"`
+	at := bytes.Index(ln, []byte(marker))
+	if at < 0 {
+		return "", "", false
+	}
+	payload, ok = quotedValue(ln[at+len(marker):])
+	if !ok {
+		return "", "", false
+	}
+	ot := bytes.Index(ln[:at], []byte(`"type":"`))
+	if ot < 0 {
+		return "", "", false
+	}
+	outer, ok = quotedValue(ln[ot+len(`"type":"`):])
+	if !ok {
+		return "", "", false
+	}
+	return outer, payload, true
+}
+
+// quotedValue returns the JSON string that starts at b (the opening quote already
+// consumed). A backslash means the value is escaped, which none of the type names are —
+// report that as not found rather than decoding it wrongly.
+func quotedValue(b []byte) (string, bool) {
+	end := bytes.IndexByte(b, '"')
+	if end < 0 || bytes.IndexByte(b[:end], '\\') >= 0 {
+		return "", false
+	}
+	return string(b[:end]), true
+}
+
+// payloadType decodes a payload's own "type" — the fallback for a line peekKinds could
+// not read.
+func payloadType(payload json.RawMessage) string {
+	var p struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(payload, &p) != nil {
+		return ""
+	}
+	return p.Type
 }
 
 // turnMode reads the collaboration mode from a turn_context payload and normalizes
@@ -1260,15 +1443,6 @@ func rolloutTurnIDs(lines [][]byte) []string {
 	return out
 }
 
-// isContextCompacted reports an event_msg payload of type context_compacted
-// ("Conversation history was compacted", auto or manual).
-func isContextCompacted(payload json.RawMessage) bool {
-	var p struct {
-		Type string `json:"type"`
-	}
-	return json.Unmarshal(payload, &p) == nil && p.Type == "context_compacted"
-}
-
 // tokenUsage extracts the fresh-input / output / cached-read token counts from a
 // token_count event_msg, mapped onto claude's usage semantics (fresh input excludes
 // the cached read, which is surfaced separately). ok is false for other event_msgs.
@@ -1365,20 +1539,10 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 	cxid := sids.Read(slot)
 	compacting := isCompacting(m)
 	path := rolloutPath(cxid)
-	if path == "" {
-		td := agents.TranscriptData{Compacting: compacting}
-		managedEnrich(m, &td)
-		return td, true
-	}
-	lines, err := rolloutLines(path)
-	if err != nil {
-		td := agents.TranscriptData{Path: path, Compacting: compacting}
-		managedEnrich(m, &td)
-		return td, true
-	}
-	turns, tasks, pending, mode := parseRolloutFull(lines)
-	persistViewImages(turns, slot)
-	td := agents.TranscriptData{Turns: turns, Path: path, Tasks: tasks, Pending: pending, Mode: mode, Compacting: compacting}
+	td := agents.TranscriptData{Path: path, Compacting: compacting}
+	withRollout(path, slot, func(p *rolloutParser) {
+		td.Turns, td.Tasks, td.Pending, td.Mode = p.snapshot()
+	})
 	managedEnrich(m, &td)
 	return td, true
 }
@@ -1391,16 +1555,19 @@ func readTranscript(m session.Meta) (agents.TranscriptData, bool) {
 // working state. Requiring a timestamp at/after workingSince prevents the previous
 // turn's task_complete from making a newly-submitted prompt look idle.
 func rolloutCompletedAfter(m session.Meta, workingSince time.Time) bool {
-	path := rolloutPath(sids.Read(session.UUID(m.Dir, m.Name)))
+	slot := session.UUID(m.Dir, m.Name)
+	path := rolloutPath(sids.Read(slot))
 	if path == "" || workingSince.IsZero() {
 		return false
 	}
-	b, err := os.ReadFile(path)
-	if err != nil {
-		return false
-	}
-	state, at := latestRolloutLifecycle(strings.Split(string(b), "\n"))
-	return state == "task_complete" && !at.IsZero() && !at.Before(workingSince)
+	// Read from the shared incremental parse, which folds the lifecycle events in as it
+	// goes: this check rides the sessions-list poll, and re-reading a long rollout for it
+	// was one of the two paths that kept the Agent busy (rolloutcache.go).
+	done := false
+	withRollout(path, slot, func(p *rolloutParser) {
+		done = p.lifecycle == "task_complete" && !p.lifecycleAt.IsZero() && !p.lifecycleAt.Before(workingSince)
+	})
+	return done
 }
 
 // latestRolloutLifecycle returns the final task_started/task_complete event. Codex
