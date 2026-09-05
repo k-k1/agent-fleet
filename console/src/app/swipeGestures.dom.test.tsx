@@ -4,9 +4,10 @@ import type { SwipeSurfaces } from "./swipeGestures.ts";
 
 // jsdom does not implement TouchEvent, so dispatch an event carrying only what the
 // handlers actually read: touches[0]'s coordinates, and the target.
-function touchEvent(type: string, x: number, y: number, target: Element): Event {
+function touchEvent(type: string, x: number, y: number, target: Element, extra: [number, number][] = []): Event {
   const e = new Event(type, { bubbles: true });
-  Object.defineProperty(e, "touches", { value: [{ clientX: x, clientY: y }] });
+  const touches = [{ clientX: x, clientY: y }, ...extra.map(([ex, ey]) => ({ clientX: ex, clientY: ey }))];
+  Object.defineProperty(e, "touches", { value: touches });
   target.dispatchEvent(e);
   return e;
 }
@@ -49,9 +50,24 @@ function swipe(from: [number, number], dx: number, dy = 0): void {
   touchEvent("touchend", from[0] + dx, from[1] + dy, h.target);
 }
 
+/** Pinch-zoom the page by `factor`: jsdom has no visualViewport, and zoom() reads it as
+ * innerWidth / vv.width (see viewport.ts on why not vv.scale). */
+function setPageZoom(factor: number): void {
+  Object.defineProperty(window, "visualViewport", {
+    // A getter, because tests change innerWidth after arranging the zoom.
+    value: {
+      get width() {
+        return window.innerWidth / factor;
+      },
+    },
+    configurable: true,
+  });
+}
+
 beforeEach(() => {
   // Phone-sized width; the left-third test is min(innerWidth*0.33, 160).
   Object.defineProperty(window, "innerWidth", { value: 390, configurable: true });
+  setPageZoom(1);
 });
 
 afterEach(() => {
@@ -177,6 +193,48 @@ describe("phone horizontal swipe = rotate through running sessions", () => {
     touchEvent("touchstart", 300, 300, input);
     touchEvent("touchmove", 150, 300, input);
     expect(h.calls).toEqual([]);
+  });
+
+  // Regression guard: pinch-zooming an image and dragging it around switched sessions.
+  // Spreading two fingers moves touches[0] far sideways, which the recognizer used to
+  // read as a swipe.
+  it("a pinch does not rotate: the second finger cancels the candidate", () => {
+    h = setup();
+    touchEvent("touchstart", 300, 300, h.target);
+    touchEvent("touchstart", 300, 300, h.target, [[320, 300]]);
+    touchEvent("touchmove", 160, 300, h.target, [[460, 300]]);
+    touchEvent("touchmove", 40, 300, h.target, [[560, 300]]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("a gesture that started with one finger is dropped as soon as a second lands", () => {
+    h = setup();
+    touchEvent("touchstart", 300, 300, h.target);
+    touchEvent("touchmove", 260, 300, h.target); // short of the threshold, still a candidate
+    touchEvent("touchmove", 150, 300, h.target, [[400, 300]]);
+    expect(h.calls).toEqual([]);
+  });
+
+  it("after a pinch, lifting back to one finger does not revive the candidate", () => {
+    h = setup();
+    touchEvent("touchstart", 300, 300, h.target, [[320, 300]]);
+    touchEvent("touchend", 300, 300, h.target);
+    touchEvent("touchmove", 100, 300, h.target);
+    expect(h.calls).toEqual([]);
+  });
+
+  // Pinch-zooming the page (a PDF page, a markdown figure — anything that does not set
+  // touch-action) and then dragging to see the rest of it is a viewport pan, not a swipe.
+  it("while the page is pinch-zoomed nothing is recognised", () => {
+    h = setup();
+    setPageZoom(2);
+    swipe([300, 300], -120);
+    swipe([300, 300], 120);
+    swipe([10, 300], 120); // the drawer's edge swipe is a pan there too
+    expect(h.calls).toEqual([]);
+    setPageZoom(1);
+    swipe([300, 300], -120);
+    expect(h.calls).toEqual(["rotate:next"]);
   });
 
   it("a popped-out tab (rotatable=false) does not rotate", () => {
