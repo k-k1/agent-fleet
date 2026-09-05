@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -548,5 +549,34 @@ func TestOpencodeActiveSession(t *testing.T) {
 	sids.Write(session.UUID(dir, "new1"), "ses_gone")
 	if got := activeSession(db, slot); got != "ses_mapped" && got != "ses_own" {
 		t.Fatalf("stale mapping fallback = %q, want a post-slot store session", got)
+	}
+}
+
+// The parts of a whole conversation are fetched a batch of messages at a time. Across a
+// batch boundary each message must still get its OWN parts and its own ordinal — group
+// them wrong and every turn after the first batch shows another turn's content.
+func TestOpencodeReadSessionAcrossPartBatches(t *testing.T) {
+	db := newOpencodeTestDB(t)
+	prev := partBatch
+	partBatch = 2
+	t.Cleanup(func() { partBatch = prev })
+	ses := "ses_batch"
+	n := partBatch + 3
+	for i := 0; i < n; i++ {
+		id := "m" + strconv.Itoa(i)
+		insMsg(t, db, id, ses, i+1, `{"role":"user","time":{"created":1000}}`)
+		insPart(t, db, "p"+strconv.Itoa(i), id, ses, 1, `{"type":"text","text":"prompt `+strconv.Itoa(i)+`"}`)
+	}
+	turns := readSession(db, ses)
+	if len(turns) != n {
+		t.Fatalf("got %d turns, want %d", len(turns), n)
+	}
+	for i, tr := range turns {
+		if tr.Idx != i {
+			t.Fatalf("turn %d has idx %d", i, tr.Idx)
+		}
+		if want := "prompt " + strconv.Itoa(i); tr.Text != want {
+			t.Fatalf("turn %d text = %q, want %q — parts grouped onto the wrong message", i, tr.Text, want)
+		}
 	}
 }
