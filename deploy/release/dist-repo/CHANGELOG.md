@@ -3,6 +3,11 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.15.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.1) — 2026-09-05
+
+The workspace image is now published for arm64 as well as amd64, so an `ecs-ec2` deployment
+can run Graviton slots on the official images. The code is identical to 0.15.0.
+
 ## [0.15.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.0) — 2026-09-05
 
 The workspace image moves to Debian 13, the file list keeps up with the agent on its own,
