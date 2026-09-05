@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.15.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.0) — 2026-09-05
+
+ワークスペースのイメージが Debian 13 になり、ファイル一覧がエージェントの作業に自分で
+追随するようになり、AI 補助の設定が独立したタブになりました。新しいベースイメージに伴い
+python が 3.11 から 3.13 に上がります（Upgrade notes 参照）。
+
 ## [0.14.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.2) — 2026-09-01
 
 マネージドなデータベースを使うデプロイが、配備の 1 週間ほど後にすべてのリクエストへ 500 を

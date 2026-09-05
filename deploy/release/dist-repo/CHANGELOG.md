@@ -3,6 +3,12 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.15.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.0) — 2026-09-05
+
+The workspace image moves to Debian 13, the file list keeps up with the agent on its own,
+and the settings behind AI assistance now have a tab of their own. The new base image also
+moves Python from 3.11 to 3.13 — see Upgrade notes.
+
 ## [0.14.2](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.14.2) — 2026-09-01
 
 A deployment backed by a managed database would start answering 500 to everything about a
