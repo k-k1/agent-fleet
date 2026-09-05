@@ -23,6 +23,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/sessionx"
 	"os"
@@ -191,10 +192,11 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 	// same two here is the production path.
 	sid := session.UUID(meta.Dir, meta.Name)
 	var part *transcript.Part
+	var lines [][]byte
 	outcome := ""
 	deadline = time.Now().Add(planOutcomeWait)
 	for time.Now().Before(deadline) && outcome == "" {
-		lines := claude.TranscriptLines(sid)
+		lines = claude.TranscriptLines(sid)
 		turns := claude.CollectTurns(lines, 0, len(lines))
 		answers := claude.CollectInteractionAnswers(lines)
 		for i := range turns {
@@ -215,7 +217,8 @@ func TestClaudePlanApprovalContractLive(t *testing.T) {
 	}
 	if part == nil {
 		t.Fatalf("the plan never appeared in the transcript within %s (ExitPlanMode's record format "+
-			"may have changed)\nsid=%s\npane:\n%s", planOutcomeWait, sid, tmuxx.CapturePane(tn))
+			"may have changed)\nsid=%s\nrecords mentioning ExitPlanMode:\n%s\npane:\n%s",
+			planOutcomeWait, sid, planRecordDump(lines), tmuxx.CapturePane(tn))
 	}
 	if outcome == "" {
 		t.Fatalf("the plan's outcome never appeared in the transcript within %s (approval went "+
@@ -275,4 +278,36 @@ func hasYesRow(opts []planMenuOption) bool {
 		}
 	}
 	return false
+}
+
+// planRecordDump lists the transcript records that mention ExitPlanMode. Without it a broken
+// read path only says "the old shape is gone", which is the half of the answer that does not
+// help - the new shape is the half that does. The prompt this test sends is synthetic (notes.txt
+// containing "tmux"), so the records carry nothing worth withholding from the run log; they are
+// cut to a readable size instead.
+func planRecordDump(lines [][]byte) string {
+	const (
+		maxRecords = 5
+		maxBytes   = 2000
+	)
+	var b strings.Builder
+	n := 0
+	for _, ln := range lines {
+		if !bytes.Contains(ln, []byte("ExitPlanMode")) {
+			continue
+		}
+		s := string(ln)
+		if len(s) > maxBytes {
+			s = strings.ToValidUTF8(s[:maxBytes], "") + "…(truncated)"
+		}
+		b.WriteString("  " + s + "\n")
+		if n++; n >= maxRecords {
+			b.WriteString("  …(further records omitted)\n")
+			break
+		}
+	}
+	if n == 0 {
+		return "  (nothing mentions ExitPlanMode at all - the tool call itself never reached the transcript)"
+	}
+	return b.String()
 }
