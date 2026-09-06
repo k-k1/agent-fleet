@@ -9,7 +9,10 @@ func TestIsAFToolName(t *testing.T) {
 		name string
 		want bool
 	}{
-		{"mcp__af_40ed9852__generate_image", true},
+		// One line per CLI whose spelling was read off real data (see afClientToolRE).
+		{"mcp__af_40ed9852__generate_image", true}, // claude
+		{"af_40ed9852-generate_image", true},       // copilot
+		{"af_40ed9852___generate_image", true},     // a longer separator must not break it
 		{"mcp__af__generate_image", true},
 		{"af_40ed9852__generate_image", true},
 		{"af_40ed9852_generate_image", true},

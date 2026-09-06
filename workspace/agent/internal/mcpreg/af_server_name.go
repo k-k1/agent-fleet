@@ -111,12 +111,17 @@ func StaleAFServerName(name string, keep map[string]bool) bool {
 // namespaces an MCP tool by its server, and the server name is what rotates every boot, so
 // the transcript layer cannot compare against a constant.
 //
-// The `mcp__<server>__<tool>` form is claude's, and is what a live session's own tool list
-// spells (`mcp__af_40ed9852__af_report`, read out of a running session on 2026-09-06). The
-// single-underscore and bare forms are tolerated rather than claimed: another CLI that
-// flattens the separator differently would otherwise silently match nothing, and a false
-// positive is impossible without a server actually named `af` / `af_<8 hex>`.
-var afClientToolRE = regexp.MustCompile(`^(?:mcp__)?(?:` + afNamePattern + `|` + BuiltinAF + `)_{1,2}(.+)$`)
+// Every separator here was read off real data in this container on 2026-09-06, not guessed:
+//
+//	claude    mcp__af_40ed9852__af_report        (a live session's own tool list)
+//	opencode  af_786de7cb_af_report              (its session store)
+//	copilot   probe-structured_probe             (~/.copilot/session-state, an MCP tool)
+//	kiro      structured_probe                   (its store: BARE, with orig_name identical)
+//
+// kiro is why the bare form is accepted at all. It costs nothing in practice — a false
+// positive needs another server to own a tool of the same name AND return af's exact result
+// shape — but it is a real narrowing that a namespacing client does not need.
+var afClientToolRE = regexp.MustCompile(`^(?:mcp__)?(?:` + afNamePattern + `|` + BuiltinAF + `)[-_]+(.+)$`)
 
 // IsAFToolName reports whether a client-side MCP tool name is af's own `tool`. The bare
 // name is accepted too, for a client that does not namespace at all.

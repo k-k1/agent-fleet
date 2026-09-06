@@ -404,8 +404,8 @@ current tools until restarted.
   1536x1024".
 - Results are kept under `~/.cache/agent-fleet/generated/` and also open in the file pane.
   They are removed after 30 days.
-- The card is shown for claude and opencode sessions. Other kinds still get the path back, but
-  the picture is not drawn into the conversation.
+- The card is shown for claude, opencode and GitHub Copilot sessions. Other kinds still get
+  the path back, but the picture is not drawn into the conversation.
 
 ## Sharing a conversation (shared sessions)
 

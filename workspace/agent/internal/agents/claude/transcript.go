@@ -237,7 +237,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 		}
 		// Picture cards to splice in AFTER the walk: inserting mid-loop would shift the
 		// indices the loop is iterating over.
-		var gen []genImage
+		var gen []transcript.PendingImage
 		for pi := range t.Parts {
 			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
 				a := answers[t.Parts[pi].QID]
@@ -261,7 +261,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 					// and holding for one would re-send the same turn on every poll forever.
 					t.Parts[pi].QID = ""
 					if img, ok := transcript.GeneratedImagePart(t.Parts[pi].Tool, result); ok {
-						gen = append(gen, genImage{at: pi, part: img})
+						gen = append(gen, transcript.PendingImage{At: pi, Part: img})
 					}
 				}
 			}
@@ -273,7 +273,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 				}
 			}
 		}
-		t.Parts = spliceGenImages(t.Parts, gen)
+		t.Parts = transcript.SplicePendingImages(t.Parts, gen)
 		turns = append(turns, t)
 		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
 			break
@@ -283,26 +283,6 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 		turns[l], turns[r] = turns[r], turns[l]
 	}
 	return turns
-}
-
-// genImage is one picture card waiting to be spliced in, and the index of the tool part it
-// belongs after.
-type genImage struct {
-	at   int
-	part transcript.Part
-}
-
-// spliceGenImages inserts each card immediately after its own tool trace, walking from the
-// end so the earlier insertion points stay valid.
-func spliceGenImages(parts []transcript.Part, gen []genImage) []transcript.Part {
-	for i := len(gen) - 1; i >= 0; i-- {
-		g := gen[i]
-		if g.at < 0 || g.at >= len(parts) {
-			continue
-		}
-		parts = append(parts[:g.at+1], append([]transcript.Part{g.part}, parts[g.at+1:]...)...)
-	}
-	return parts
 }
 
 // PendingGeneratedImageLine reports the LOWEST line index holding a generate_image tool call
