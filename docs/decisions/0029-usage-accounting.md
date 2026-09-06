@@ -52,7 +52,7 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -61,6 +61,15 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 `feature=unknown` is in the enum so that **a new auxiliary feature that forgets to tag itself still
 always leaves a row**. Not creating unrecorded (i.e. invisible) consumption takes priority over the
 tag being right.
+
+**Amendment (2026-09-06).** Two values were added to the `feature` row above. `plan.update` (the
+explicit work-plan refresh, docs/log/33 stage 5) had been in `usagex/ledger.go` as
+`FeaturePlanUpdate` for some time without this table being updated — the enum drifted once
+without a note, which is exactly what "frozen" was meant to prevent. `tool.imagegen` is the image
+generation tool of [ADR 0069](0069-image-generation-providers.md), recorded for the Codex route
+the way the chat's one-shot already is; the plan quota an image consumes is not expressible in
+tokens and is left unmeasured rather than zero-filled (ADR 0069 decision 9). The rule from here:
+a new constant in `ledger.go` and a new value in this table land in the same commit.
 
 ### 3. Collection is "a ctx tag plus one recording point in the provider layer"
 

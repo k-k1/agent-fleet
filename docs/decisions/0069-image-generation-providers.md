@@ -4,8 +4,9 @@ English | [日本語](0069-image-generation-providers.ja.md)
 
 - Status: **proposed — design only, nothing implemented** (2026-09-06). Every number below
   was measured in a Workspace container on that date, or fetched from the vendor's own
-  documentation on that date (Sources at the end). This ADR is written to be reviewed
-  before P0 is built; the two Open questions are the parts that can still change the shape.
+  documentation on that date (Sources at the end). Reviewed the same day: both open
+  questions were measured (see *Open questions — resolved*), and Decisions 3, 8 and 9 were
+  corrected against the code they name. Still nothing is implemented.
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -120,13 +121,22 @@ who holds the key, not by which API is being called:
 
 | Tier | Services | Credential | Fleet-side cost | Egress |
 |---|---|---|---|---|
-| **Existing connection** | Codex (`image_gen`), **Bedrock** (Nova Canvas, Stability suite) | the user's ChatGPT login; the AWS credential chain already modelled as `AWSConn` with no stored secret | provider file only | Codex's own path; `.amazonaws.com` **already allowlisted** |
+| **Existing connection** | Codex (`image_gen`), **Bedrock** (Nova Canvas, Stability suite) | the user's ChatGPT login; the AWS credential chain, referenced the way `CloudWatchConn` / `AWSConn` already do (an `AWSProfileRef`: profile name plus optional region, no stored secret) | provider file only | Codex's own path; `.amazonaws.com` **already allowlisted** |
 | **Member key** | Gemini, OpenAI Images, Stability, FLUX, Ideogram, Recraft, Replicate | member pastes a key (the `secrets.Opencode` provider-key shape) | + a Connections card | **allowlist entry required** |
-| **Tenant key** | Vertex AI, Azure OpenAI | admin configures once | + a CP-side provider reached over `CPBridge` | **none** — CP traffic is outside the restriction (ADR 0047, `tts.go`) |
+| **Tenant key** | Vertex AI, Azure OpenAI | admin configures once | + a CP-side provider, reached over a second bridge of the `CPBridge` shape (today's only instance is `GitOAuthBridge`, minted for the git credential helper) | **none** — CP traffic is outside the restriction (ADR 0047, `tts.go`) |
 
 Therefore the second provider should be **Bedrock**: it adds no new secret, its host is
 already allowlisted, and it brings the editing operations that force Decision 5 to be
 correct early.
+
+Two corrections from the review, both about what the first draft named. `AWSConn` is the
+Agent Toolkit for AWS MCP connection, and its ready check is `s.AWS.Profile != ""`; reusing
+it as the Bedrock credential would make "can generate images" depend on "has connected the
+AWS MCP". The Bedrock provider therefore carries its own `AWSProfileRef` (pre-filled from the
+AWS MCP connection when one exists), and its region is a `Caps` input (Decision 5), not a
+fixed default. And `CPBridge` is a struct, not a channel: the store holds one instance whose
+token is scoped to the git OAuth refresh grant, so the tenant tier gets its own bridge entry
+rather than borrowing that one.
 
 **4. P0 is the Codex route, driven defensively.**
 `codex -a never -s read-only exec --json --skip-git-repo-check --ephemeral --color never
@@ -155,7 +165,9 @@ private parameters, and the shared vocabulary dies.
 
 **7. What a provider cannot do is reported, not hidden.** `size` / `background` / `count`
 stay in the vocabulary even while only the Codex route exists, and unmet requests come back in
-`Result.Warnings` with what actually happened (measured: 1254×1254 for both sizes asked). The
+`Result.Warnings` with what actually happened (measured: 1254×1254 for both sizes asked, and
+again with the parameters spelled out — Open question 2 below — so on the Codex route this
+warning path is the permanent story, not a temporary one). The
 core does not silently resize: an integer-factor box downscale already exists for thumbnails,
 but 1254→1024 is not an integer factor, and adding a resampler to get an exact size would trade
 a real dependency for a promise the provider never made. Exact sizes arrive with the provider
@@ -167,13 +179,26 @@ following the peer-messaging gate exactly (ADR 0041): a ui-prefs key → a hook 
 the next session launched. Default off because this spends the user's ChatGPT plan quota from
 sessions that are not Codex sessions, invisibly. Revisit the default once Decision 9 lands.
 
-⚠️ This needs one structural change: `builtinRunArgsFor` does not receive the agent kind, so
-"do not hand this tool to a Codex session" cannot be expressed today. Thread `kind` through it.
-The condition is not "never for codex" but "not when the effective provider *is* codex" — once
-Gemini or Bedrock is the route, a Codex session wants the fleet tool too.
+⚠️ The run-arg is the *opt-in* switch only; it must not also carry the kind. The first draft
+asked to thread `kind` into `builtinRunArgsFor`. The review found the kind is one call away
+(`Materialize(kind)` → `ForSession(kind)` → `builtinDefs(s)`), but putting it into the args
+would make the `af` server's argv differ per kind — the ownership ledger (`managed.Kinds`) and
+the drift tests were written for one af definition per boot, and `BuiltinRunArgs(id)` (the
+assistant-chat path in `chatx`) has no kind to offer. So the decision "advertise
+`generate_image` to this session or not" is made where the tool list is built:
+`mcpStdioToolList` is computed on every `tools/list`, the server knows its session
+(`AF_SESSION_NAME`, or the codex thread config), and it asks the Agent for the session's kind
+and the effective provider over `agentBaseURL()` — the seam every other session tool already
+uses. The rule is "not when the effective provider *is* codex **and** the session is a Codex
+session"; once Gemini or Bedrock is the route a Codex session wants the fleet tool too, and
+because the rule is evaluated at list time that switch needs no re-materialize.
 
 **9. Usage is recorded, and the unmeasurable part is left unmeasured.** A new feature tag
-`tool.imagegen` extends the enum ADR 0029 §2 froze (that ADR gets an amendment note). The
+`tool.imagegen` extends the enum ADR 0029 §2 froze. The review found that enum has already
+drifted once without a note: `plan.update` (`FeaturePlanUpdate` in `usagex/ledger.go`) exists
+in code and not in the ADR. The amendment to ADR 0029 therefore records both — `plan.update`
+as already shipped, `tool.imagegen` as added here — so the frozen table matches `ledger.go`
+again. The
 Codex route's `turn.completed` usage is recorded the way the chat's one-shot already is. But
 **the plan quota an image consumes is not expressible in tokens**, and the 3–5× multiplier is
 documentation, not telemetry: record image count and pixels, and state plainly that plan
@@ -183,26 +208,58 @@ consumption is not measurable on this route. Do not zero-fill it.
 does and even though it is what would give exact `--size` / `--quality` / `--background`
 control. It is an undocumented internal contract with its own README warning that it may stop
 working, and the fleet would be pinning a product feature to it. When exact control is needed,
-that is what Tier 2/3 providers are for.
+that is what Tier 2/3 providers are for. The review kept this with Open question 2 settled,
+i.e. knowing the private endpoint is the *only* way to an exact size on the ChatGPT-login
+route: this ADR's own measurements show even the public surface drifting (the output file
+name changed between 0.144 and 0.153), and a private one will drift faster.
 
 **11. Provenance is part of the result.** `Result` carries provider, model, region and
 estimated cost, and the prompt's destination is auditable — a generated image means the
 prompt left the container to a named service. Per-provider admin permission follows the
 `tts_engine` precedent when a tenant needs it.
 
-## Open questions — resolve these before writing P0
+## Open questions — resolved 2026-09-06
 
-1. **The MCP tool-call timeout on the client side.** One image is 28 s on the measured Codex
-   route, and the key-based route is documented at up to ~235 s for high quality at high
-   resolution. The Claude binary yielded no `MCP_TOOL_TIMEOUT`-shaped string to grep, so the
-   ceiling is unknown. **Measure it in a real session first.** If a synchronous call cannot
-   survive, P0 becomes `generate_image` → `{job_id}` plus a polling tool — and since Replicate
-   and FLUX are submit-then-poll services anyway, the asynchronous shape may be the right one
-   regardless. `Generate` takes a `context.Context` from the start either way.
-2. **Whether size/quality/background can be steered through `codex exec` at all.** The backend
-   accepts them (prior art), the driver model did not pass them (measured). One prompt-template
-   experiment with the `$imagegen` trigger and an explicit `size=1024x1024` settles whether
-   Decision 7's warning path is the permanent story for the Codex route or a temporary one.
+Both were measured on 2026-09-06 in the same container. The timeout harness is a dummy stdio
+MCP server with one tool, `wait`, that sleeps N seconds and then replies, logging whether its
+reply was written; each CLI drove it in non-interactive mode on its cheapest model. The image
+trial was run once, as budgeted.
+
+1. **The MCP tool-call timeout on the client side — it differs per kind, and each has a lever.**
+
+   | Client | Plain call | Ceiling found | Lever |
+   |---|---|---|---|
+   | Claude Code 2.1.261 | 60 s ok, **300 s ok** | none reached; documented `MCP_TOOL_TIMEOUT` is wall-clock per call, default ~28 h, idle abort 30 min for stdio | nothing needed (`.mcp.json` per-server `timeout` exists) |
+   | Codex CLI 0.153.4 | 90 s ok, **300 s cut** — `timed out awaiting tools/call after 300s` while the server had replied at 300.0 s | 300 s, the `tool_timeout_sec` default | stamp `mcp_servers.<af>.tool_timeout_sec` in the codex materializer (today it writes only `startup_timeout_sec`) |
+   | opencode 1.18.29 | **60 s cut** at 60.0 s — `MCP error -32001: Request timed out` | 60 s, the MCP SDK default; `mcp.<name>.timeout` exists in its config but `opencode mcp add` cannot write it, so the materializer drops `TimeoutMS` | **`notifications/progress` from the server**: opencode sends a `progressToken` and resets its timer on every progress notification — 90 s with a heartbeat every 10 s succeeded |
+
+   What this settles: **P0 stays synchronous.** `generate_image` returns the image in the call.
+   The `af` server emits `notifications/progress` for the call's `progressToken` every 10 s while
+   the provider runs (that alone lifts opencode from 60 s to unbounded), and the codex
+   materializer stamps `tool_timeout_sec` on the af builtin — 600 s leaves margin over the 235 s
+   report; whether codex also resets on progress was not measured. Claude needs nothing.
+   Implementation note: `RunStdio`'s loop writes one response per request, so a heartbeat
+   during an in-flight `tools/call` needs the stdout writer shared under a mutex.
+
+   Job + poll is **not** P0. Each poll is a driver-model turn — tokens and latency on the caller's
+   plan — and no P0 provider is asynchronous by nature. It arrives with the first
+   submit-then-poll provider (Replicate, FLUX) as a second tool, not as a replacement;
+   `Generate` takes a `context.Context` from the start so that split costs nothing later.
+
+   Side finding: `codex exec -a never` refuses MCP tool calls outright (`MCP tool call requires
+   approval, but approval policy is never`) unless the server carries
+   `default_tools_approval_mode="approve"`. The fleet already stamps that on every server it
+   materializes for codex (`mcpreg/attach.go`), so sessions are unaffected; ad-hoc probes are.
+
+2. **Whether size/quality/background can be steered through `codex exec` — no.** One run with
+   the `$imagegen` trigger and `size="1024x1024"`, `quality="low"`, `background="opaque"`, `n=1`
+   spelled out as tool parameters: 37 s, 49.6k input tokens, one 848 KB PNG at **1254×1254**. The
+   driver's own words: *"this tool only accepts prompt text and image references here"* — it
+   folded the constraints into the prompt text. So the parameters exist in the backend, but the
+   `image_gen` tool the driver sees does not expose them. Decision 7's warning path is the
+   permanent story for the Codex route, and exact sizes are a Tier-2/3 property. One useful
+   side effect: the `$imagegen` template produced no `num_last_images_to_include` error — the
+   wasted retry seen in the first two runs was gone.
 
 ## Options rejected
 
@@ -239,3 +296,9 @@ prompt left the container to a named service. Per-provider admin permission foll
 - [Amazon Nova image generation](https://docs.aws.amazon.com/nova/latest/userguide/image-gen-access.html)
   and [Nova pricing](https://aws.amazon.com/nova/pricing/) — Nova Canvas tasks, size rules,
   `InvokeModel` shape.
+- [Claude Code — MCP](https://code.claude.com/docs/en/mcp) — `MCP_TOOL_TIMEOUT` (per call,
+  wall-clock, progress does not extend it), `CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT` (30 min for
+  stdio), per-server `timeout` in `.mcp.json`. Consistent with the 300 s measurement above.
+  The codex `tool_timeout_sec` / `default_tools_approval_mode` keys and opencode's
+  `mcp.<name>.timeout` / `resetTimeoutOnProgress` were read out of the installed binaries, not
+  from documentation.

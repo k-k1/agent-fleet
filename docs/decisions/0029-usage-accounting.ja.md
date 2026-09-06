@@ -50,7 +50,7 @@
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -58,6 +58,14 @@
 
 `feature=unknown` を enum に含めるのは、**新しい補助機能がタグを付け忘れても必ず1行残す**ため。
 無記録（＝見えない消費）を作らないことを、タグの正しさより優先する。
+
+**追記（2026-09-06）。** 上の `feature` 行に 2 値を足した。`plan.update`（明示的な作業計画の
+更新、docs/log/33 stage 5）は `usagex/ledger.go` に `FeaturePlanUpdate` として以前からあり、
+この表は更新されていなかった——列挙は注記なしに一度ずれており、「凍結」が防ぐはずだった事態
+そのものである。`tool.imagegen` は [ADR 0069](0069-image-generation-providers.ja.md) の画像
+生成ツールで、Codex 経路ではチャットの一発実行と同じ要領で記録する。画像が消費するプラン枠は
+トークンで表せないので、0 で埋めず未計測のままにする（ADR 0069 決定 9）。以後の規則: `ledger.go`
+の新しい定数とこの表の新しい値は同じコミットで入れる。
 
 ### 3. 収集は「ctx タグ ＋ プロバイダ層1点記録」
 

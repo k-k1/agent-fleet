@@ -4,8 +4,8 @@
 
 - 状態: **提案（設計のみ・未実装）**（2026-09-06）。以下の数値はすべて同日に Workspace
   コンテナで実測したもの、または同日に各社の公式資料から取得したもの（出典は末尾）。
-  **P0 に着手する前にレビューを受けるための文書**であり、形が変わりうるのは末尾の
-  「未解決の 2 点」だけである。
+  同日にレビュー済み: 未解決だった 2 点は実測で決着し（末尾「未解決の 2 点——決着」）、
+  決定 3・8・9 は名指ししているコードの現物に合わせて訂正した。実装は依然として何もない。
 - 関連: [0013-tts-zundamon.ja.md](0013-tts-zundamon.ja.md)（写した前例。`ttsProvider` と
   `chooseTTSProvider`、そして「前処理は provider の外」）/
   [0031-mcp-registry.ja.md](0031-mcp-registry.ja.md)（レジストリは 1 本のリスト。`af`
@@ -114,12 +114,20 @@ Console の file API が読めるディスクへ落ちる必要があるため�
 
 | 層 | サービス | 資格情報 | フリート側の追加 | egress |
 |---|---|---|---|---|
-| **既存接続を流用** | Codex（`image_gen`）、**Bedrock**（Nova Canvas・Stability 一式） | 利用者の ChatGPT ログイン／秘密を保存しない `AWSConn`（資格情報チェーン） | provider ファイルのみ | Codex の既存経路／`.amazonaws.com` は**既に allowlist にある** |
+| **既存接続を流用** | Codex（`image_gen`）、**Bedrock**（Nova Canvas・Stability 一式） | 利用者の ChatGPT ログイン／AWS の資格情報チェーンを `CloudWatchConn` / `AWSConn` と同じ流儀で参照する（`AWSProfileRef`: プロファイル名＋任意のリージョン、秘密は保存しない） | provider ファイルのみ | Codex の既存経路／`.amazonaws.com` は**既に allowlist にある** |
 | **会員の鍵** | Gemini・OpenAI Images・Stability・FLUX・Ideogram・Recraft・Replicate | 会員が鍵を貼る（`secrets.Opencode` と同じ流儀） | ＋ Connections のカード 1 枚 | **allowlist 追加が必要** |
-| **テナントの鍵** | Vertex AI・Azure OpenAI | 管理者が一度設定 | ＋ CP 側 provider（`CPBridge` 経由） | **不要**——CP の通信は制限の外（ADR 0047・`tts.go`） |
+| **テナントの鍵** | Vertex AI・Azure OpenAI | 管理者が一度設定 | ＋ CP 側 provider。`CPBridge` と同型の bridge をもう 1 本足して経由する（現存する唯一の実体は git 資格情報ヘルパー用の `GitOAuthBridge`） | **不要**——CP の通信は制限の外（ADR 0047・`tts.go`） |
 
 したがって **2 つ目の provider は Bedrock にする**。新しい秘密が要らず、ホストは既に
 allowlist にあり、決定 5 を早期に実物で検証させる編集系の操作が一気に入る。
+
+レビューでの訂正が 2 つ。どちらも初稿が名指しした型の話である。`AWSConn` は Agent Toolkit for
+AWS MCP の接続であり、ready 判定は `s.AWS.Profile != ""` だ。これを Bedrock の資格情報として
+流用すると「画像を作れる」が「AWS MCP を繋いである」に依存する。よって Bedrock provider は
+自前の `AWSProfileRef` を持ち（AWS MCP の接続があればそこから初期値を写す）、リージョンは
+固定の既定値ではなく `Caps` の入力（決定 5）とする。また `CPBridge` は経路ではなく構造体で、
+ストアにある実体は 1 つ、そのトークンの権限は git OAuth の refresh grant に限られている。
+テナント層はそれを借りず、自分の bridge エントリを持つ。
 
 **4. P0 は Codex 経路。ただし守りを固めて叩く。**
 `codex -a never -s read-only exec --json --skip-git-repo-check --ephemeral --color never
@@ -146,7 +154,9 @@ allowlist にあり、決定 5 を早期に実物で検証させる編集系の�
 
 **7. できないことは隠さず報告する。** Codex 経路しか無い時期でも `size` / `background` /
 `count` は語彙に残し、満たせなかった要求は「実際にどうなったか」とともに
-`Result.Warnings` で返す（実測: どちらのサイズ要求でも 1254×1254）。**コアが黙って縮小
+`Result.Warnings` で返す（実測: どちらのサイズ要求でも 1254×1254。パラメータを明示しても
+同じだった——下の未解決 2。つまり Codex 経路ではこの警告経路が恒久的な姿であり、一時的な
+ものではない）。**コアが黙って縮小
 することはしない**——サムネイル用の整数倍ボックス縮小は既にあるが 1254→1024 は整数倍では
 なく、厳密サイズのためにリサンプラを足すのは、provider が約束していない品質の保証と実在の
 依存関係を引き換えにすることになる。厳密サイズはそれを本当に持つ provider とともに来る。
@@ -157,13 +167,25 @@ allowlist にあり、決定 5 を早期に実物で検証させる編集系の�
 既定 OFF の理由は、**codex ではないセッションから、利用者の ChatGPT プラン枠を目に見えない
 まま消費する**からである。決定 9 が入った時点で既定を見直す。
 
-⚠️ ここだけ既存構造の改修が要る。`builtinRunArgsFor` は kind を受け取らないので、
-「codex セッションにはこの道具を配らない」が今の形では書けない。`kind` を通すこと。条件は
-「codex には常に配らない」ではなく「**実効 provider が codex のときだけ配らない**」——
-経路が Gemini や Bedrock になれば、codex セッションもフリート側の道具を欲しがる。
+⚠️ 起動引数は **opt-in のスイッチだけ**を担い、kind を載せてはならない。初稿は
+`builtinRunArgsFor` に `kind` を通せと書いた。レビューで分かったのは、kind は 1 呼び出し先に
+ある（`Materialize(kind)` → `ForSession(kind)` → `builtinDefs(s)`）が、それを引数に載せると
+`af` サーバの argv が kind ごとに違ってしまうことだ。所有台帳（`managed.Kinds`）と drift
+テストは「起動ごとに af の定義は 1 つ」を前提に書かれており、`BuiltinRunArgs(id)`
+（`chatx` のアシスタント経路）には差し出せる kind が無い。したがって「このセッションに
+`generate_image` を見せるか」はツール一覧を組む場所で決める。`mcpStdioToolList` は
+`tools/list` のたびに計算され、サーバは自分のセッションを知っており（`AF_SESSION_NAME`、
+codex なら thread config）、`agentBaseURL()` 経由で Agent にそのセッションの kind と実効
+provider を尋ねる——他のセッション用ツールが既に使っている継ぎ目である。条件は「実効
+provider が codex **かつ** セッションが codex のときだけ配らない」。経路が Gemini や Bedrock
+になれば codex セッションもフリート側の道具を欲しがるし、一覧時に評価するのでその切替に
+再 materialize は要らない。
 
 **9. 使用量は記録する。測れないものは測れないままにする。** 新しい feature タグ
-`tool.imagegen` を、ADR 0029 §2 が凍結した列挙に足す（あちらに追記の注記を入れる）。Codex
+`tool.imagegen` を、ADR 0029 §2 が凍結した列挙に足す。レビューで、この列挙が既に一度、注記
+なしにずれていることが分かった: `plan.update`（`usagex/ledger.go` の `FeaturePlanUpdate`）は
+コードにあって ADR に無い。よって ADR 0029 への追記は 2 件を記す——`plan.update` は出荷済み、
+`tool.imagegen` は本 ADR で追加——凍結された表を `ledger.go` と再び一致させるためである。Codex
 経路の `turn.completed` の usage は、チャットの一発実行が既にやっているのと同じ要領で記録
 する。ただし**画像が消費するプラン枠はトークンでは表現できず**、3〜5 倍という値は文書で
 あってテレメトリではない。枚数とピクセルを記録し、**この経路ではプラン消費が測れないと
@@ -172,25 +194,59 @@ allowlist にあり、決定 5 を早期に実物で検証させる編集系の�
 **10. Codex の非公開バックエンドを自前で叩くことはしない。** 先行 CLI はそれをやっており、
 厳密な `--size` / `--quality` / `--background` が手に入るのもそれだが、README 自身が壊れうると
 警告している非公開契約であり、そこに製品機能を固定することになる。厳密な制御が要る場面の
-ためにこそ、第 2・第 3 層の provider がある。
+ためにこそ、第 2・第 3 層の provider がある。レビューは未解決 2 の決着を知ったうえで、つまり
+ChatGPT ログイン経路で厳密サイズを得る**唯一の**方法が非公開エンドポイントだと分かったうえで、
+この判断を維持した。本 ADR 自身の実測が、公開面ですら動く（出力ファイル名が 0.144 と 0.153 で
+変わった）ことを示しており、非公開面はそれより速く動く。
 
 **11. 由来は結果の一部。** `Result` は provider・モデル・リージョン・概算コストを持ち、
 プロンプトの送り先が監査できるようにする。画像が 1 枚生成されたということは、プロンプトが
 名前のあるサービスへコンテナの外に出たということである。provider 単位の管理者許可が要る
 テナントには `tts_engine` の前例をそのまま当てる。
 
-## 未解決の 2 点——P0 を書く前に潰す
+## 未解決の 2 点——決着（2026-09-06）
 
-1. **クライアント側の MCP ツール呼び出しタイムアウト。** 実測の Codex 経路で 1 枚 28 秒、
-   鍵経路は高品質・高解像度で最大 235 秒という報告がある。claude のバイナリからは
-   `MCP_TOOL_TIMEOUT` 相当の文字列を見つけられず、上限が不明である。**まず実セッションで
-   測ること。** 同期呼び出しが保たないなら、P0 は `generate_image` → `{job_id}` ＋ポーリング
-   の形になる。Replicate や FLUX がもともと投げて待つ型である以上、**非同期こそ正解である
-   可能性が高い**。いずれにせよ `Generate` は最初から `context.Context` を取る。
-2. **そもそも `codex exec` 経由でサイズ・品質・背景を効かせられるのか。** バックエンドは
-   受け付ける（先行事例）が、driver モデルは渡さなかった（実測）。`$imagegen` トリガと
-   `size=1024x1024` の明示を入れたテンプレで 1 回試せば、決定 7 の警告経路が Codex 経路に
-   とって恒久的な姿なのか一時的な姿なのかが決まる。
+2 点とも 2026-09-06 に同じコンテナで実測した。タイムアウトのハーネスは、`wait` という 1 つの
+ツールだけを持つダミーの stdio MCP サーバである（N 秒 sleep して返答し、返答を書けたかを
+ログに残す）。各 CLI の非対話モードから、いちばん安いモデルで叩いた。画像の試行は予算どおり
+1 回だけ行った。
+
+1. **クライアント側の MCP ツール呼び出しタイムアウト——kind ごとに違い、それぞれに手がある。**
+
+   | クライアント | 素の呼び出し | 見つかった上限 | 手 |
+   |---|---|---|---|
+   | Claude Code 2.1.261 | 60 秒 ok、**300 秒 ok** | 到達せず。文書上の `MCP_TOOL_TIMEOUT` は呼び出し単位の壁時計で既定約 28 時間、stdio の無応答中断は 30 分 | 何も要らない（`.mcp.json` にサーバ単位の `timeout` はある） |
+   | Codex CLI 0.153.4 | 90 秒 ok、**300 秒で切断**——サーバは 300.0 秒で返答済みなのに `timed out awaiting tools/call after 300s` | 300 秒＝`tool_timeout_sec` の既定 | codex の materializer で `mcp_servers.<af>.tool_timeout_sec` を書く（今は `startup_timeout_sec` しか書いていない） |
+   | opencode 1.18.29 | **60 秒で切断**、60.0 秒ちょうどで `MCP error -32001: Request timed out` | 60 秒＝MCP SDK の既定。設定に `mcp.<name>.timeout` はあるが `opencode mcp add` が書けないので materializer は `TimeoutMS` を落とす | **サーバからの `notifications/progress`**: opencode は `progressToken` を送り、進捗通知のたびに時計をリセットする——10 秒ごとのハートビートで 90 秒が成功 |
+
+   これで決まること: **P0 は同期のまま。** `generate_image` は呼び出しの中で画像を返す。`af`
+   サーバは provider が走っている間、その呼び出しの `progressToken` に対して 10 秒ごとに
+   `notifications/progress` を出し（これだけで opencode は 60 秒から無制限になる）、codex の
+   materializer は af ビルトインに `tool_timeout_sec` を書く——600 秒なら 235 秒の報告に余裕が
+   ある。codex が進捗でリセットするかは測っていない。claude には何も要らない。実装上の注意:
+   `RunStdio` のループは要求 1 つに応答 1 つを書く形なので、処理中の `tools/call` の間に
+   ハートビートを出すには stdout の writer を mutex で共有する必要がある。
+
+   job＋ポーリングは P0 では**やらない**。ポーリング 1 回は driver モデルの 1 ターン——呼び手の
+   プラン枠でトークンと待ち時間を払う——であり、P0 の provider に本来非同期のものは無い。
+   最初の「投げて待つ」型 provider（Replicate・FLUX）とともに、置き換えではなく 2 本目の道具
+   として入れる。`Generate` は最初から `context.Context` を取るので、その分割は後で費用が
+   かからない。
+
+   副産物: `codex exec -a never` は MCP ツール呼び出しをそもそも拒む（`MCP tool call requires
+   approval, but approval policy is never`）。サーバに `default_tools_approval_mode="approve"`
+   が付いていれば通る。フリートは codex 向けに materialize する全サーバへこれを付けている
+   （`mcpreg/attach.go`）のでセッションには影響せず、手で叩く探針だけが引っかかる。
+
+2. **`codex exec` 経由でサイズ・品質・背景を効かせられるか——効かない。** `$imagegen`
+   トリガに `size="1024x1024"`、`quality="low"`、`background="opaque"`、`n=1` をツール
+   パラメータとして明示した 1 回: 37 秒、input 49.6k トークン、848 KB の PNG が 1 枚、
+   **1254×1254**。driver 自身の言葉は「このツールはここではプロンプト文と参照画像しか受け
+   付けない」で、制約はプロンプト文に畳み込まれた。つまりパラメータはバックエンドには存在
+   するが、driver が見ている `image_gen` ツールはそれを露出していない。決定 7 の警告経路は
+   Codex 経路の恒久的な姿であり、厳密サイズは第 2・第 3 層の性質である。有益な副産物が 1 つ:
+   `$imagegen` テンプレでは `num_last_images_to_include` のエラーが出ず、最初の 2 回で見た
+   無駄なリトライは消えた。
 
 ## 退けた案
 
@@ -225,3 +281,8 @@ allowlist にあり、決定 5 を早期に実物で検証させる編集系の�
 - [Amazon Nova image generation](https://docs.aws.amazon.com/nova/latest/userguide/image-gen-access.html)
   と [Nova pricing](https://aws.amazon.com/nova/pricing/)——Nova Canvas のタスク、サイズ
   規則、`InvokeModel` の形。
+- [Claude Code — MCP](https://code.claude.com/docs/en/mcp)——`MCP_TOOL_TIMEOUT`（呼び出し
+  単位の壁時計。進捗では延びない）、`CLAUDE_CODE_MCP_TOOL_IDLE_TIMEOUT`（stdio は 30 分）、
+  `.mcp.json` のサーバ単位 `timeout`。上の 300 秒の実測と整合する。codex の
+  `tool_timeout_sec` / `default_tools_approval_mode`、opencode の `mcp.<name>.timeout` /
+  `resetTimeoutOnProgress` は文書ではなく、入っているバイナリから読み取った。
