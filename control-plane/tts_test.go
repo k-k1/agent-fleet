@@ -218,6 +218,58 @@ func TestTTSRoutes(t *testing.T) {
 	if rec.Code != http.StatusNotImplemented {
 		t.Errorf("unknown provider status = %d, want 501", rec.Code)
 	}
+
+	// unknown pin → 400. A pin is a routing override, and one that cannot be honoured
+	// must be refused rather than quietly ignored.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。","pin":"nope"}`)))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown pin status = %d, want 400", rec.Code)
+	}
+
+	// One request that is longer than any sentence the client can produce is refused
+	// rather than sent to an engine that a big enough one OOM-kills (decision 17).
+	rec = httptest.NewRecorder()
+	long := strings.Repeat("あ", ttsMaxSynthChars()+1)
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"`+long+`"}`)))
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Errorf("oversized text status = %d, want 413", rec.Code)
+	}
+	// The limit is a ceiling, not a sentence length: what the client really sends passes.
+	rec = httptest.NewRecorder()
+	ok := strings.Repeat("あ", ttsMaxSynthChars())
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"`+ok+`"}`)))
+	if rec.Code != http.StatusOK {
+		t.Errorf("text exactly at the limit = %d, want 200", rec.Code)
+	}
+}
+
+// TestTTSSynthesizePin — the per-utterance pin (ADR 0070 decision 13) decides where the
+// request goes, so one answer is read in one voice even though auto's routing changes
+// underneath it the moment the engine arrives. That it does NOT touch the demand counter
+// is the other half, and it is tested where a demand counter exists
+// (TestTTSSynthesizeRecordsDemand).
+func TestTTSSynthesizePin(t *testing.T) {
+	clearTTSEnv(t)
+	srv, _ := fakeVoicevox(t)
+	st := testSettingsStore(t)
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: srv.URL, mgr: &manager{store: st}})
+
+	// Polly is not configured here, so a pin to it lands on the provider's own 503 —
+	// which is the evidence that the pin decided the route: without it, auto plus a
+	// reachable engine goes to voicevox and answers 200.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。","provider":"auto","pin":"polly"}`)))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Errorf("pinned to polly = %d, want 503 (the pin decided the route)", rec.Code)
+	}
+	// Same request without the pin: the engine answers.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。","provider":"auto"}`)))
+	if p := rec.Header().Get("X-TTS-Provider"); p != "voicevox" {
+		t.Errorf("unpinned auto = %q, want voicevox", p)
+	}
 }
 
 // TestTTSAutoNoProviders — with auto + Japanese and neither the engine nor polly present,
@@ -244,8 +296,15 @@ func TestChooseTTSProvider(t *testing.T) {
 		engineOff, vvReady, plReady bool
 		want                        string
 	}{
-		{"明示voicevox", "voicevox", "en", false, false, true, "voicevox"},
+		{"明示voicevox×engine ready", "voicevox", "en", false, true, true, "voicevox"},
+		// ADR 0070 decision 13. Under on-demand, stopped is the engine's normal state, so
+		// an unconditional "voicevox" here is the one setting that hears nothing at all:
+		// the 502 becomes a silently skipped sentence on the client.
+		{"明示voicevox×engine停止→Polly代読", "voicevox", "ja", false, false, true, "polly"},
+		{"明示voicevox×engine無効→Polly代読", "voicevox", "ja", true, true, true, "polly"},
+		{"明示voicevox×両方不在→voicevox(502)", "voicevox", "ja", false, false, false, "voicevox"},
 		{"明示polly", "polly", "ja", false, true, true, "polly"},
+		{"明示polly×engineのみ→それでもpolly", "polly", "ja", false, true, false, "polly"},
 		{"日本語×engine ready→ずんだもん", "auto", "ja", false, true, true, "voicevox"},
 		{"auto言語×engine ready→ずんだもん", "", "auto", false, true, true, "voicevox"},
 		{"日本語×engine不在→Polly JP", "auto", "ja", false, false, true, "polly"},
@@ -332,7 +391,7 @@ func TestTTSAdminModes(t *testing.T) {
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
 	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
 	vv := &voicevoxProvider{base: srv.URL}
-	ctrl := newTTSController(eng, vv, newTTSDemand(st, time.Minute), st, nil, testControlCfg())
+	ctrl := newTTSController(eng, vv, newTTSDemand(st, time.Minute), st, nil, nil, testControlCfg())
 	adm := ttsAdminAPI{memberAuth{&manager{store: st}}, st, eng, ctrl, vv, newPollyProvider()}
 
 	put := func(body string) map[string]any {
@@ -457,6 +516,12 @@ func TestTTSSpeakers(t *testing.T) {
 
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// /version too: the handler asks the readiness probe first, so that a stopped
+		// engine — the normal state under on-demand — costs no HTTP attempt at all.
+		if r.URL.Path == "/version" {
+			_, _ = w.Write([]byte("0.25.2"))
+			return
+		}
 		if r.URL.Path != "/speakers" {
 			http.NotFound(w, r)
 			return
@@ -496,12 +561,75 @@ func TestTTSSpeakers(t *testing.T) {
 		t.Errorf("cached speakers: code=%d hits=%d, want 200 / 1", rec.Code, hits)
 	}
 
-	// No engine: 502.
+	// No engine and nothing ever stored: 502. A picker cannot be filled out of nothing,
+	// and saying so is better than an empty list that looks like "this engine has no
+	// characters".
 	mux = http.NewServeMux()
 	registerTTSRoutes(mux, config{voicevoxURL: "http://127.0.0.1:1"})
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
 	if rec.Code != http.StatusBadGateway {
 		t.Errorf("speakers without engine = %d, want 502", rec.Code)
+	}
+}
+
+// TestTTSSpeakersDurable — the catalogue outlives the engine (ADR 0070 decision 12).
+// Under on-demand, stopped is the engine's NORMAL state, so a /speakers that only
+// proxies answers 502 almost always and the character picker — whose whole purpose is
+// choosing a voice for later — is unusable exactly when somebody is setting it up.
+func TestTTSSpeakersDurable(t *testing.T) {
+	clearTTSEnv(t)
+	st := testSettingsStore(t)
+
+	up := true
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !up {
+			http.Error(w, "engine stopped", http.StatusBadGateway)
+			return
+		}
+		switch r.URL.Path {
+		case "/speakers":
+			_, _ = w.Write([]byte(`[{"name":"ずんだもん","styles":[{"id":3,"name":"ノーマル","type":"talk"}]}]`))
+		case "/version":
+			_, _ = w.Write([]byte("0.25.2"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	speakers := func(mux *http.ServeMux) (int, []ttsSpeaker, bool) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest("GET", "/api/tts/speakers", nil))
+		var got struct {
+			Speakers []ttsSpeaker
+			Live     bool
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &got)
+		return rec.Code, got.Speakers, got.Live
+	}
+
+	mux := http.NewServeMux()
+	registerTTSRoutes(mux, config{voicevoxURL: srv.URL, mgr: &manager{store: st}})
+	code, list, live := speakers(mux)
+	if code != http.StatusOK || len(list) != 1 || !live {
+		t.Fatalf("live read: code=%d list=%+v live=%v", code, list, live)
+	}
+	if v, _ := st.GetSetting(t.Context(), ttsSpeakersSetting); v == "" {
+		t.Fatal("a live catalogue must be written down; nothing else ever will be")
+	}
+
+	// The engine goes away — the normal state under on-demand — and a fresh CP process
+	// (no memory cache) still answers the picker, saying that this is not live.
+	up = false
+	mux2 := http.NewServeMux()
+	registerTTSRoutes(mux2, config{voicevoxURL: srv.URL, mgr: &manager{store: st}})
+	code, list, live = speakers(mux2)
+	if code != http.StatusOK || len(list) != 1 || list[0].Name != "ずんだもん" {
+		t.Errorf("stopped engine: code=%d list=%+v, want the stored catalogue", code, list)
+	}
+	if live {
+		t.Error("a stored catalogue must not be reported as live")
 	}
 }

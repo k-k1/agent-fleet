@@ -365,6 +365,7 @@ type ttsController struct {
 	demand   *ttsDemand
 	settings store.SettingsStore
 	audit    ttsAuditor
+	speakers *ttsSpeakerCache // may be nil; the durable character catalogue (decision 12)
 	cfg      ttsControlCfg
 	now      func() time.Time // test seam
 
@@ -391,8 +392,8 @@ func ttsControlCfgFromEnv() ttsControlCfg {
 	}
 }
 
-func newTTSController(eng *ttsEngineECS, vv *voicevoxProvider, demand *ttsDemand, settings store.SettingsStore, audit ttsAuditor, cfg ttsControlCfg) *ttsController {
-	c := &ttsController{eng: eng, vv: vv, demand: demand, settings: settings, audit: audit, cfg: cfg, now: time.Now}
+func newTTSController(eng *ttsEngineECS, vv *voicevoxProvider, demand *ttsDemand, settings store.SettingsStore, audit ttsAuditor, speakers *ttsSpeakerCache, cfg ttsControlCfg) *ttsController {
+	c := &ttsController{eng: eng, vv: vv, demand: demand, settings: settings, audit: audit, speakers: speakers, cfg: cfg, now: time.Now}
 	// Wired here rather than by the caller: an engine this controller starts and stops is
 	// exactly the engine whose readiness has to wait for a warm-up, and a gate somebody
 	// forgot to attach fails silently — it just reads ready too early, once, per start.
@@ -604,6 +605,16 @@ func (c *ttsController) maintainWarm(ctx context.Context, state string) {
 		return
 	}
 	c.setWarm(true)
+	// The one moment the catalogue can be captured (decision 12). Doing it only from the
+	// /speakers handler would mean a deployment where nobody opens the settings screen
+	// during the engine's half hour of life never stores one at all — and then the picker
+	// is empty for the rest of the deployment's life, which is the state this is here to
+	// prevent. Once per start: this runs on the transition to warm.
+	if c.speakers != nil {
+		if _, aerr := c.speakers.refresh(ctx, c.vv.base); aerr != nil {
+			log.Printf("tts: refreshing the character catalogue failed: %s", aerr.message)
+		}
+	}
 }
 
 func (c *ttsController) setting(ctx context.Context, key string) string {

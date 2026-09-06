@@ -6,7 +6,7 @@ import { effectiveDict } from "../ttsDict.ts";
 import { type TtsController, type TtsEndReason } from "../ttsControl.ts";
 import { type TtsOptions, ttsOptsFromSettings, localizedReadings } from "./ttsOptions.ts";
 import { emotionOpts, voiceCharName } from "./ttsVoices.ts";
-import { BLOCK_BEAT, CLAUSE_GAP, MAX_INFLIGHT, MIN_CHUNK, SENTENCE_END, SENTENCE_GAP, SENT_BEAT, TAME_BEAT, audioCtx, connectOutput, heardProvider, outputVolume, synthToBuffer } from "./ttsAudio.ts";
+import { BLOCK_BEAT, CLAUSE_GAP, MAX_INFLIGHT, MIN_CHUNK, SENTENCE_END, SENTENCE_GAP, SENT_BEAT, TAME_BEAT, audioCtx, connectOutput, heardProvider, makeProviderPin, outputVolume, synthToBuffer } from "./ttsAudio.ts";
 
 
 // --- Global stop propagation -----------------------------------------------------
@@ -72,6 +72,11 @@ export function startTts(
   // decides the destination, so it is unknown until the first sentence comes back; once known,
   // the TopBar voice label is corrected.
   let heard = "";
+  // The provider is decided once per reading and then stated on every following sentence
+  // (ADR 0070 decision 13). Under an on-demand engine the answer to "where does auto go"
+  // changes while somebody is being read to — the engine finishes starting — and half an
+  // answer in one voice and half in another is worse than either voice throughout.
+  const pin = makeProviderPin();
   const noteHeard = (ab: AudioBuffer) => {
     const h = heardProvider(ab);
     if (!h || h === heard) return;
@@ -210,8 +215,13 @@ export function startTts(
   };
 
   // Keep synthesis running, filling in-flight requests up to the limit.
+  //
+  // Until the provider is pinned the limit is ONE, deliberately: with two in flight the
+  // second sentence is also sent unpinned, and it is exactly the sentence that can come back
+  // in the other voice. It costs the read-ahead one sentence at the very start of a reading,
+  // where the first piece is a short head cut at a comma (firstChunkCut) and comes back fast.
   const pump = () => {
-    while (!stopped && inflight < MAX_INFLIGHT && jobs.length) {
+    while (!stopped && inflight < (pin.pinned() ? MAX_INFLIGHT : 1) && jobs.length) {
       const job = jobs.shift()!;
       inflight++;
       synth(job.text)
@@ -231,7 +241,9 @@ export function startTts(
     const ac = new AbortController();
     acs.add(ac);
     try {
-      return await synthToBuffer(ctx, text, emotionOpts(text, opts), ac.signal);
+      const ab = await synthToBuffer(ctx, text, pin.opts(emotionOpts(text, opts)), ac.signal);
+      pin.note(ab); // the first sentence that comes back decides the voice for the rest
+      return ab;
     } finally {
       acs.delete(ac);
     }

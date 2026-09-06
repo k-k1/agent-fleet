@@ -361,6 +361,17 @@ export const tools = {
   "tts.usage_reset_notify": "制限リセットの通知",
   "tts.reset_btn": "設定を初期状態にリセット",
   // 説明文
+  // --- エンジンの稼働状態（ADR 0070 オンデマンド運転）---
+  "tts.engine_off": "ずんだもんの読み上げは管理者が無効にしています。日本語も Polly が読みます。",
+  "tts.engine_starting":
+    "ずんだもんのエンジンを起動しています（1〜2 分）。準備が整うまでは Polly が代読します。",
+  "tts.engine_warming":
+    "エンジンは起動しました。最初の声の準備中で、ここは Polly が代読します（数秒）。",
+  "tts.engine_stopped":
+    "ずんだもんのエンジンは停止しています（停止中は費用がかかりません）。いまは Polly が代読しています。呼び出すと 1 分ほどで読み始めます。",
+  "tts.wake_btn": "ずんだもんを呼ぶ",
+  "tts.wake_calling": "呼んでいます…",
+  "tts.wake_failed": "呼び出せませんでした。",
   "tts.note_tts":
     "エージェントの回答を音声で読み上げます。回答が届くと文ごとに順次再生します。ずんだもんの合成には VOICEVOX エンジンが必要です（未起動のときは Polly があれば代読、どちらも無ければ無音になります）。",
   "tts.note_tts_credit": " 音声引用：VOICEVOX：ずんだもん。",

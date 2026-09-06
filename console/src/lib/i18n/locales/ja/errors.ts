@@ -7,6 +7,14 @@
 export const errors = {
   // --- API エラー（core/api/client.ts の ERR_TEXT ＋ インライン fallback）---
   // Go 側の安定コード（control-plane/errcodes.go, workspace/agent/errcodes.go）と対。
+  "err.tts_engine_off":
+    "この配備では読み上げエンジン（ずんだもん）が管理者によって無効化されています。有効化は管理者に依頼してください。",
+  "err.tts_engine_unmanaged":
+    "この配備のエンジンは Console から起動できません（外部で常駐させる構成です）。",
+  "err.tts_wake_rate_limited":
+    "エンジンはすでに呼び出し済みです。起動には 70 秒ほどかかります。しばらく待ってから試してください。",
+  "err.tts_text_too_long":
+    "一度に合成できる文字数を超えています。文単位に分けて送ってください。",
   "err.ip_not_allowed":
     "このテナントは管理者が許可したネットワークからしか使えません。現在の接続元は許可されていません。",
   "err.ssm_search_forbidden":

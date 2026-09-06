@@ -2,14 +2,20 @@
 
 English | [日本語](0070-tts-ondemand-engine.ja.md)
 
-- Status: **accepted — P0 and P1 implemented** (2026-09-06). P0 (the stack) shipped first;
-  P1 (the controller in the Control Plane) followed the same day. P2 and P3 are open.
-  Every price below came from the AWS Pricing API on that date, every image figure from the
-  registry API on that date (Sources at the end).
+- Status: **accepted — P0, P1 and P2 implemented; P3 measured and decided** (P0/P1
+  2026-09-06, P2/P3 2026-09-07). Every price below came from the AWS Pricing API on
+  2026-09-06, every image figure from the registry API on that date (Sources at the end).
 - Revised the same day after design review: open questions 1 and 2 were measured (read-only,
   on the ecs-ec2 deployment) and moved under *Resolved*; decision 8 was replaced (a Cloud Map
   DNS name instead of ECS-resolved addresses); decisions 1, 3, 4, 5, 6, 9, 11, 13 and 14
   gained the constraints the review found; decision 16 is new.
+- Revised after P2 and P3: **decision 17 is new** (a per-request character ceiling, which
+  closes open question 3), decision 1 gained the Spot form of the same invariant, and the
+  sizing and SOCI questions P3 was left holding are answered under *What P3 measured* —
+  **1 vCPU / 2 GiB is rejected, Fargate Spot ships as an off-by-default knob, and SOCI is
+  not adopted.** The engine numbers under *What P0 measured* stand except where P3 says
+  otherwise; where the two disagree, P3 measured both sizes against the same texts in one
+  run and P0 did not.
 - Revised again after P0 ran on a real deployment: the estimates it was built on are
   replaced by measurements (*What P0 measured*), **decision 11 is reversed — arm64 is 20 %
   cheaper and 52 % slower, so it is dropped from P3 rather than adopted**, and decision 5
@@ -129,6 +135,52 @@ wherever the two disagree.
   terms to stderr at boot, so they are in CloudWatch — verified to be the same text as
   `/speaker_info`'s `policy` field for one other character.
 
+### What P3 measured (2026-09-07, the same deployment)
+
+P3 had three questions left — is the cheaper task worth it, does Spot work, does SOCI pay —
+and one open question inherited from P0 (how big is "too big" for one request). All four
+were measured with `deploy/aws/ecs/harness/bench-tts-engine.sh`, which starts ONE engine
+task per size with RunTask (outside the service, so the on-demand controller does not stop
+it mid-measurement — it did, the first time) and times synthesis from inside the VPC.
+
+**Both sizes, the same texts, in the same run.** The ratio is synthesis seconds ÷ audio
+seconds; below 1.0 keeps up with playback.
+
+| | 2 vCPU / 4 GiB | 1 vCPU / 2 GiB |
+|---|---|---|
+| a whole answer: 36 sentences, 1,368 characters, 251.5 s of audio | 166.2 s / **0.66**, 170.9 s / 0.68, 170.8 s / 0.68 | 172.5 s / 0.69, 175.2 s / 0.70, **254.5 s / 1.01** |
+| one 35-character sentence | 4.53, 4.55, 4.56 s | 4.68, 4.72, **6.35** s |
+| one 228-character sentence | 26.2, 26.7, 26.7 s | 28.1, 28.2, **42.0** s |
+| a single request that OOM-kills it | 370 survives, **518 kills** (684 too) | 259 survives, **370 kills** |
+| 4 concurrent 328-character requests | survives | *2* concurrent killed it |
+| 8 concurrent 74-character requests (the client's real shape) | survives | survives |
+| price, ap-northeast-1 | $0.1232/hour | $0.0616/hour |
+
+- **1 vCPU / 2 GiB is rejected, and not for the reason P0 expected.** P0 measured it 30 %
+  slower on one sentence; measured properly it is usually only ~5 % slower on a whole
+  answer. It fails on the other two rows:
+  1. **its OOM wall sits inside what the CP allows.** A single 370-character request kills
+     it, and two concurrent 328-character ones killed it, where 4 GiB survived four. The
+     per-request cap is 300 (decision 17), so one legal request pair could take the engine
+     down for every listener — 2.5 minutes of Polly and another 2 GB pull;
+  2. **it is not reliably fast, it is usually fast.** Two runs matched 4 GiB within 5 %, and
+     a third came back 50 % slower with a whole-answer ratio of **1.01** — at which point
+     playback no longer keeps up and silence opens between sentences. Three runs of 2 vCPU
+     gave 0.66, 0.68 and 0.68. n=3 is not a distribution, but a 1 vCPU Fargate task has no
+     burst headroom, and the failure mode of being unlucky is the feature not working.
+  What is saved is $0.06 an hour on an engine that only runs while somebody is listening.
+- **Concurrency queues, it does not scale.** Four concurrent 328-character requests at
+  2 vCPU came back at 40 s, 80 s, 119 s and 159 s; eight 74-character ones at 1 vCPU at
+  13.5 s through 107 s. The engine serialises, so a second listener does not halve anyone's
+  latency — it doubles the tail. This is an argument for one engine per deployment being
+  enough for a handful of listeners, and against expecting it to serve a room.
+- **The cold start, twice more:** pull 34.7 s of a 51.0 s start, and 35.9 s of 56.4 s
+  (RunTask; through the service P0 measured 34 s of 81 s, the difference being the
+  service's own scheduling). Pull is 62-68 % of it — and **still under the 40-second half of
+  the SOCI acceptance gate**, which is why SOCI is not adopted (Options rejected).
+- **Fargate Spot places without a launch type**, on a cluster whose
+  `defaultCapacityProviderStrategy` is empty (decision 1).
+
 ### What the code says today
 
 - `tts.go`'s synthesis client `ttsHTTP` is a plain `http.Client`. It does **not** use
@@ -157,8 +209,16 @@ wherever the two disagree.
    sweeper's premise. It would also consume an `Ec2MaxSlots` seat, which means **reading a
    sentence aloud could stop someone from starting a Workspace.** And an EC2 box that is
    merely stopped still bills for its root volume, so scale-to-zero — the whole point —
-   would be lost. The service therefore says **`LaunchType: FARGATE` explicitly**: omitted,
-   the cluster's default places it on the pool, and this decision is broken by a missing line.
+   would be lost. The service therefore **states its placement explicitly**: normally
+   `LaunchType: FARGATE`, and — when P3's Spot knob is on, since the two are mutually
+   exclusive — an explicit `CapacityProviderStrategy` of `FARGATE_SPOT`. What breaks this
+   decision is saying NEITHER: the API default is EC2, and it lands in the pool. **Measured
+   on 2026-09-07**: a task run with `capacityProvider=FARGATE_SPOT` and no launch type was
+   placed on Fargate Spot on a cluster whose `defaultCapacityProviderStrategy` is empty, so
+   an explicit strategy is exactly as binding as the launch type. It is also the more
+   durable of the two claims: this cluster's `capacityProviders` list is no longer empty
+   (another workstream associated one), so "the cluster has no capacity provider" has
+   stopped being the reason — "the placement is written down" is.
 
 2. **A separate opt-in stack, `50-tts.yaml`, deployed before `30-ingress`.** It imports the
    VPC, private subnets and the CP security group from `00-network`, and the cluster,
@@ -200,6 +260,17 @@ wherever the two disagree.
      member. Someone who wants the voice for their notifications must not have to earn it
      by volume. Audited, because it spends money; idempotent (a wake while `running` or
      `starting` only refreshes the demand clock) and rate-limited per member.
+
+     **As built (P2):** it stamps demand *whatever* the state and *before* it starts
+     anything — the press is somebody saying they are listening, and that is what has to
+     keep the idle window from closing under them while the engine is still on its way. It
+     clears the failure streak the way the admin toggle does (a cooldown stops an automatic
+     retry loop, never a person who pressed a button), and it is refused in two cases
+     rather than pretending: `501` where nothing here can start an engine, and `409` while
+     the mode is `off` — a member cannot buy their way past an administrator's decision,
+     and a task whose routing is off would be paid for and never heard. Three presses per
+     five minutes per member; a cold start is 70-77 s and the button is in front of
+     somebody with nothing else to do while waiting.
    - What neither trigger can do is make the engine arrive for the answer that tripped it.
      Measured: a 2,037-character answer is 6 min 00 s of audio and the engine takes 70–77 s
      to come, so the first answer is Polly for its first fifth at best, and whether the
@@ -304,16 +375,29 @@ wherever the two disagree.
     for itself. It does not: **arm64 is 20 % cheaper and 52 % slower** (6.73 s versus 4.42 s
     for the same sentence), exactly the trade this decision was written to refuse — at a
     real-time ratio of 0.92 on a 42-character sentence, a short sentence (ratio 1.15
-    measured) no longer keeps up with playback. **Where a cheaper option is wanted, x86
-    1 vCPU/2 GiB is the candidate**: half the price and 5.74 s / ratio 0.79, which beats
-    arm64 on both axes. The architecture stays a stack parameter, declared and not inferred,
-    as ADR 0053 established for the CP. `--cpu_num_threads` is set to the task's vCPU count;
-    left alone, the engine picks for itself.
+    measured) no longer keeps up with playback. The architecture stays a stack parameter,
+    declared and not inferred, as ADR 0053 established for the CP. `--cpu_num_threads` is
+    set to the task's vCPU count; left alone, the engine picks for itself.
+
+    **The cheaper x86 size was then measured too, and is also rejected** (*What P3
+    measured*): 1 vCPU / 2 GiB is usually only ~5 % slower, but its OOM wall falls inside
+    the per-request ceiling the CP allows and one of three runs was 50 % slower — a
+    whole-answer ratio of 1.01, where playback stops keeping up. **2 vCPU / 4 GiB stays the
+    size.** Both remain stack parameters: the finding is about this engine on this image,
+    and it should be re-measured, not inherited, when either changes.
 
 12. **The character catalogue must survive a stopped engine.** `/api/tts/speakers` proxies
     the live engine, so under on-demand — where stopped is the normal state — the character
     picker would be unusable almost always. The catalogue is cached durably and refreshed
     whenever the engine is up.
+
+    As built (P2) it is a `SettingsStore` entry (`tts_speakers`) next to `tts_engine` and
+    `tts_dict`, and the response says which it is (`live`). It is refreshed on every live
+    read **and by the controller the moment a fresh engine is warmed** — the second half is
+    the one that matters: a deployment where nobody happens to open the settings screen
+    during the engine's half hour of life would otherwise never capture a catalogue at all,
+    and the picker would be empty for the rest of that deployment's life. The handler asks
+    the readiness probe before trying the engine, so a stopped engine costs no HTTP attempt.
 
 13. **The client pins the provider for the duration of one utterance**, and audio cached
     under `auto` is dropped when the engine's routing changes. The cache comment already
@@ -325,6 +409,21 @@ wherever the two disagree.
     stopped is answered by Polly with `X-TTS-Provider: polly`, not with a 502: today
     `synthToBuffer` turns that 502 into a skipped sentence, which under on-demand would
     silence every sentence until the engine arrives.
+
+    **As built (P2), three parts, and the shape of each is load-bearing:**
+    - the pin travels in a request field of its own (`pin`), and `provider` keeps carrying
+      the member's configured value. Expressing the pin as `provider: "polly"` instead
+      would have been fewer lines and would have stopped the rest of a six-minute answer
+      counting as demand — decision 3's flap, arriving as an idle window that closes on
+      somebody who is listening;
+    - the audio cache keys on `pin || provider`, and the entries keyed on `auto` are
+      dropped the moment an unpinned `auto` request is seen to come back from a different
+      provider. Keying alone is not enough: the first sentence of the NEXT reading is
+      unpinned, and it would hit the stale entry;
+    - the read-ahead runs one request deep until the pin is known. With the usual two in
+      flight the second sentence is also sent unpinned, and it is precisely the sentence
+      that can come back in the other voice. It costs one sentence of read-ahead at the
+      start of a reading, where the first piece is a short head cut at a comma.
 
 14. **The engine is reachable only from the CP.** Its own security group, ingress on 50021
     from the CP security group alone, no load balancer, private subnets. The VOICEVOX HTTP
@@ -349,6 +448,29 @@ wherever the two disagree.
     **but that check is not a safety net for the OOM kill P0 found**: the health check stayed
     HEALTHY right up to the exit. What actually covers it is the warm gate dropping the
     moment `/version` stops answering, and ECS replacing the task underneath.
+
+    **The member-facing half (P2)** is in the read-aloud settings tab, and it exists because
+    on-demand made "stopped" normal: before it, a member whose Japanese was suddenly read by
+    Polly had nothing to look at and nothing to press. It distinguishes *warming up* (wait a
+    few seconds), *stopped* (ask for it - the button of decision 4), and *switched off by an
+    administrator* (nothing you can do), and the first of those is decided by `Ready`, never
+    by the service state.
+
+17. **One synthesis request is capped at 300 characters** (`AF_TTS_MAX_CHARS`, `0` = no
+    cap), answered `413 tts_text_too_long`. This closes open question 3, and it is a guard
+    rail rather than a quota: **measured on 2026-09-07, a single 684-character request
+    OOM-kills the engine at 4 GiB** (exit 137 - earlier than P0's "about 2,000 characters",
+    and P0 was right that the `/version` health check stays HEALTHY to the end). ECS then
+    spends about 2.5 minutes replacing the task while everybody hears Polly, so one careless
+    caller costs every listener.
+
+    The number sits between the two things it has to separate. Above it: nothing that could
+    have succeeded anyway - `ttsHTTP`'s own timeout is 30 s and a 228-character sentence
+    takes 26 s (measured), so a 300-character one is already past the edge. Below it: the
+    real client, by a wide margin - it cuts at sentence ends and splits anything over 60
+    characters before it calls the CP, so the cap can only ever be reached by a script. A
+    cap is preferred to splitting server-side: concatenating WAVs is real work, and the only
+    callers who would need it are the ones this protects the engine from.
 
 ## Resolved by measurement (2026-09-06)
 
@@ -384,11 +506,11 @@ wherever the two disagree.
    break-even, not from observed behaviour, and decision 4's warning is now measured from
    both sides (70–77 s to arrive, six minutes to read one answer). Revisit once there is a
    week of real usage.
-3. **The 4 GiB OOM kill and the 30 s client timeout** (*What P0 measured*). The normal path
-   sends one sentence at a time and is safe, but nothing in the CP refuses an oversized
-   single request and the container health check does not notice the death. Cheap
-   candidates: cap the characters per synthesis request, and raise or split at `ttsHTTP`'s
-   30 s. Neither is P1 work; both want deciding before anyone points a batch job at it.
+3. ~~**The 4 GiB OOM kill and the 30 s client timeout.**~~ **Closed by decision 17**
+   (2026-09-07): the limit was re-measured — a single **684**-character request is enough to
+   OOM-kill a 4 GiB engine, not the ~2,000 P0 estimated — and the CP now caps one request at
+   300 characters. `ttsHTTP`'s 30 s is deliberately left alone: it now sits just above the
+   cap rather than below an unbounded request.
 
 ## Options rejected
 
@@ -408,11 +530,20 @@ wherever the two disagree.
 - **Fargate Spot as the default.** Around 70 % cheaper and an interruption merely falls
   back to Polly, but with idle-stop the remaining bill is already small, and a capacity
   shortfall would show up as an engine that never arrives. Keep it as a later knob.
-- **SOCI lazy loading now.** The gate that rejected it for workspace images was "pull must
-  be at least 40 s and at least 40 % of start-up", measured against a different, smaller
-  image; here pull looks like the majority of the cold start, so the answer may differ.
-  **That is a reason to re-measure, not a reason to assume**, and the engine loads its
-  models at boot, so lazy loading may only move the cost.
+  **P3 shipped exactly that knob** (`UseSpot`, default `off`), because the only thing that
+  needed deciding was whether Spot can be expressed without breaking decision 1 — Spot is a
+  capacity provider strategy and mutually exclusive with `LaunchType` — and the measurement
+  says it can (decision 1). What is still not decided is whether to switch it on, and that
+  wants a deployment with real listeners: an interruption is cheap for a notification chime
+  and expensive in the middle of a six-minute answer.
+- **SOCI lazy loading.** The gate that rejected it for workspace images was "pull must be
+  at least 40 s and at least 40 % of start-up", measured against a different, smaller image;
+  here pull looked like the majority of the cold start, so the answer might have differed.
+  **Re-measured in P3 (2026-09-07), on two starts of this very image: pull is 34.7 s and
+  35.9 s, of a 51.0 s and 56.4 s start — 62-68 % of it, and under the 40-second half of the
+  gate.** So it fails the same gate, from the other side: pull dominates, but there is not
+  enough of it to be worth an indexing step in the release pipeline and a second image
+  artefact to keep in sync. Revisit if the image grows.
 - **Lambda or App Runner.** No scale-to-zero advantage over Fargate here, and worse
   fits: a 2 GB model server is not a function, and App Runner keeps an instance warm.
 - **Resolve the task ENI through ECS (`ListTasks` → `DescribeTasks`)** — the first draft's
@@ -447,14 +578,21 @@ wherever the two disagree.
   `AF_TTS_ECS_START_CHARS` (2000), `AF_TTS_ECS_IDLE_SEC` (1800, `0` = never stop),
   `AF_TTS_ECS_START_DEADLINE_SEC` (300), `AF_TTS_ECS_FAIL_COOLDOWN_SEC` (900, doubling per
   consecutive failure, capped at 16×) and `AF_TTS_ECS_OFF_GRACE_SEC` (60).
-- **P2 — make it pleasant.** The "call Zundamon" control and a "warming up, Polly is
-  reading" state for members, provider pinning, cache invalidation and the Polly answer to an explicit `voicevox`
-  request while stopped (decision 13), the durable character catalogue (decision 12).
-- **P3 — make it cheaper, with evidence.** **Not arm64** — P0 measured it 52 % slower for
-  20 % less money (decision 11); the candidate in its place is **x86 1 vCPU/2 GiB**, which is
-  half the price and still keeps up with playback. Fargate Spot. SOCI only if the numbers
-  say pull dominates: pull is 34 of the 81 seconds, so it is worth re-measuring rather than
-  assuming.
+- **P2 — make it pleasant. Done (2026-09-07).** The Polly answer to an explicit `voicevox`
+  request while the engine is stopped, the per-utterance pin and the cache invalidation that
+  goes with it (decision 13), the durable character catalogue (decision 12), the "call
+  Zundamon" control (`POST /api/tts/wake`, decision 4) and the "warming up, Polly is
+  reading" state next to it (decision 16). The per-request ceiling of decision 17 came with
+  them, because it is the same client's request that hits it.
+- **P3 — make it cheaper, with evidence. Done (2026-09-07): the evidence says mostly no.**
+  **Not arm64** (P0: 52 % slower for 20 % less money) and **not 1 vCPU / 2 GiB** either —
+  measured in *What P3 measured*, it is cheap in the wrong place: the OOM wall moves inside
+  the CP's per-request ceiling, and one run in three could not keep up with playback.
+  **Fargate Spot ships as `UseSpot`, default off**, with the measurement that an explicit
+  capacity provider strategy is as binding as `LaunchType` (decision 1) — turning it on for
+  a deployment with real listeners is a judgement, not a measurement. **SOCI is not
+  adopted**: pull is 62-68 % of the cold start but only ~35 s of it, under the same
+  40-second gate that rejected it for workspace images.
 
 ## Sources checked (2026-09-06)
 
@@ -477,6 +615,13 @@ wherever the two disagree.
 - Read-only observation of the ecs-ec2 deployment: `ecs describe-services`,
   `servicediscovery list-services` / `discover-instances`, `route53
   list-resource-record-sets` on the namespace's zone. Nothing was updated.
+- P3's runs on the same deployment, through
+  `deploy/aws/ecs/harness/bench-tts-engine.sh`: three engine tasks per size started with
+  RunTask, synthesis timed from a bench task inside the VPC (curl's own `time_total`), the
+  audio length computed from the WAV size and the `outputSamplingRate` the engine reported,
+  and the cold-start phases read from `ecs describe-tasks`
+  (`pullStartedAt` / `pullStoppedAt` / `startedAt`). The Spot placement probe is one
+  `ecs run-task --capacity-provider-strategy capacityProvider=FARGATE_SPOT`.
 - P0's own deployment in ap-northeast-1, stood up and torn down for this work: the CloudWatch
   logs of the engine task, `ecs describe-services` / `update-service` around each start and
   stop, and synthesis timed from a throwaway task inside the VPC (the engine's security group

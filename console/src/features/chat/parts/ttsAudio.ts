@@ -65,13 +65,60 @@ export function heardProvider(ab: AudioBuffer | null | undefined): string {
 }
 
 // The key is the synthesis conditions plus the text, separated by NUL, which cannot occur in
-// the text. provider is stored as the configured value (including auto), so right after
-// auto's routing changes the old engine's voice may still play; eviction resolves it, and
-// that is accepted.
+// the text. A pinned request keys on the pin, which is a real provider; an unpinned one keys
+// on the configured value, and "auto" is not a provider at all — the same key means one voice
+// before the engine starts and another one after.
+//
+// That used to be accepted ("eviction resolves it"). Under an on-demand engine it stops being
+// an edge case and happens at every start, several times a day, so the auto-keyed entries are
+// dropped the moment auto is seen to route somewhere else (ADR 0070 decision 13).
 function synthCacheKey(text: string, opts: TtsOptions): string {
-  return [opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", opts.particlePause ? 1 : 0, text].join(
+  return [opts.pin || opts.provider, opts.voice, opts.speed, opts.enkana ? 1 : 0, opts.pollyVoice ?? "", opts.lang ?? "", opts.particlePause ? 1 : 0, text].join(
     "\u0000",
   );
+}
+
+// Where "auto" was last seen to actually route ("" = not known yet).
+let autoRouted = "";
+
+// noteRouting drops the audio "auto" produced under the previous routing. Only unpinned auto
+// requests are consulted: a pinned one is keyed on a real provider and stays valid, and an
+// explicitly configured provider does not move.
+function noteRouting(opts: TtsOptions, actual: string): void {
+  if (!actual || opts.pin) return;
+  if ((opts.provider || "auto") !== "auto") return;
+  if (autoRouted && autoRouted !== actual) {
+    // The key's first field is the provider, so the stale entries are exactly those under
+    // "auto" - plus the empty provider, which is the same thing to CP.
+    synthCache.dropIf((k) => k.startsWith("auto\u0000") || k.startsWith("\u0000"));
+  }
+  autoRouted = actual;
+}
+
+// makeProviderPin holds one utterance's provider (ADR 0070 decision 13). CP decides where auto
+// goes per request, and under an on-demand engine that answer changes mid-answer - the engine
+// finishes starting while somebody is being read to. Half an answer in Zundamon and half in
+// Polly is worse than either voice for the whole of it, so the first sentence that comes back
+// decides, and the rest of that utterance says so explicitly.
+export function makeProviderPin() {
+  let pin = "";
+  return {
+    // pinned reports whether the provider is known yet. Callers hold the read-ahead at one
+    // request until it is: a second sentence in flight unpinned can be the one that differs.
+    pinned: () => pin !== "",
+    // opts returns the options to synthesise with, carrying the pin once there is one.
+    opts: (o: TtsOptions): TtsOptions => (pin ? { ...o, pin } : o),
+    // note takes the provider off the first buffer that comes back - a cache hit included,
+    // because the provider is remembered per buffer rather than per request.
+    note: (ab: AudioBuffer | null | undefined) => {
+      if (!pin && ab) pin = heardProvider(ab);
+    },
+    // reset forgets it, for a playback that deliberately changes voice mid-way
+    // (NarrationHandle.setVoice): the new voice may route somewhere else.
+    reset: () => {
+      pin = "";
+    },
+  };
 }
 
 // synthToBuffer synthesises one sentence through CP's /api/tts/synthesize and decodes it to
@@ -93,7 +140,11 @@ export async function synthToBuffer(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         text,
+        // provider stays the CONFIGURED value even when pinned: CP counts demand from it,
+        // and a pinned remainder that no longer counts would let the on-demand engine's
+        // idle window close on somebody who is listening to it (ADR 0070 decision 3).
         provider: opts.provider,
+        pin: opts.pin ?? "",
         voice: opts.voice,
         speed: opts.speed,
         enkana: opts.enkana ?? false,
@@ -111,6 +162,9 @@ export async function synthToBuffer(
     // per buffer carries the same answer into playback that hits the cache.
     const actual = res.headers.get("X-TTS-Provider");
     if (actual) bufProvider.set(ab, actual);
+    // Before storing this one: what auto means has changed, so what is already stored under
+    // it was made by a different voice.
+    noteRouting(opts, actual ?? "");
     synthCache.put(key, ab);
     return ab;
   } catch {

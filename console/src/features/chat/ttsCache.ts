@@ -39,6 +39,17 @@ export function makeAudioLru<T extends { duration: number }>(maxSec: () => numbe
         total -= old.duration;
       }
     },
+    // dropIf evicts every entry whose key matches, and is how audio synthesised under a
+    // routing that has since changed is thrown away (ADR 0070 decision 13): entries keyed
+    // on the CONFIGURED provider "auto" were recorded by whichever engine auto pointed at
+    // at the time, and under an on-demand engine that changes on every start.
+    dropIf(pred: (key: string) => boolean): void {
+      for (const [k, v] of m) {
+        if (!pred(k)) continue;
+        m.delete(k);
+        total -= v.duration;
+      }
+    },
     size: () => m.size,
   };
 }

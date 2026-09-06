@@ -8,6 +8,14 @@ import type { errors as jaErrors } from "../ja/errors.ts";
 
 export const errors: Record<keyof typeof jaErrors, string> = {
   // --- API errors (mirror of ERR_TEXT + inline fallbacks) ---
+  "err.tts_engine_off":
+    "An administrator has switched the read-aloud engine (Zundamon) off for this deployment. Ask them to enable it.",
+  "err.tts_engine_unmanaged":
+    "The engine on this deployment cannot be started from the Console; it is run externally.",
+  "err.tts_wake_rate_limited":
+    "The engine has already been called. It takes about 70 seconds to arrive \u2014 wait a moment before trying again.",
+  "err.tts_text_too_long":
+    "That is more text than one synthesis request may carry. Send it sentence by sentence.",
   "err.ip_not_allowed":
     "This tenant can only be used from the networks its administrator allows, and this one is not among them.",
   "err.ssm_search_forbidden":

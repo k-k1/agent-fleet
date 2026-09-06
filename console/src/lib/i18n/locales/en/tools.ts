@@ -361,6 +361,17 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "tts.session_notify": "Session voice notifications",
   "tts.usage_reset_notify": "Limit-reset notifications",
   "tts.reset_btn": "Reset settings to initial state",
+  // --- Engine activity (ADR 0070, the on-demand engine) ---
+  "tts.engine_off": "An administrator has switched Zundamon off. Japanese is read by Polly too.",
+  "tts.engine_starting":
+    "The Zundamon engine is starting (1-2 minutes). Polly reads in the meantime.",
+  "tts.engine_warming":
+    "The engine is up and preparing its first voice; Polly reads for these few seconds.",
+  "tts.engine_stopped":
+    "The Zundamon engine is stopped, which costs nothing, and Polly is reading. Call it and it starts reading in about a minute.",
+  "tts.wake_btn": "Call Zundamon",
+  "tts.wake_calling": "Calling\u2026",
+  "tts.wake_failed": "Could not call the engine.",
   "tts.note_tts":
     "Reads the agent's replies aloud. As a reply arrives it plays sentence by sentence. Synthesizing Zundamon needs the VOICEVOX engine (if it isn't running, Polly reads instead when available; with neither, it stays silent).",
   "tts.note_tts_credit": " Voice: VOICEVOX: Zundamon.",
