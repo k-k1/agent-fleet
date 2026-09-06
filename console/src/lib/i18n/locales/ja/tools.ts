@@ -194,6 +194,13 @@ export const tools = {
     "この箱はあなた専用です。vCPU とメモリはまるごと使えます（メモリはホスト側の常駐分を差し引いた上限が入ります）。",
   "machine.note_shared_host":
     "ホストは他の利用者と共有です。表示しているのはこのコンテナに割り当てられた分で、箱そのものの搭載量ではありません。",
+  "machine.usage_title": "使用状況",
+  "machine.usage_window": "直近 {n} 分",
+  "machine.usage_of": "{used} / {total}（{pct}%）",
+  "machine.usage_cpu_of": "{pct}% / {max}%",
+  "machine.usage_oom": "この間にメモリ不足でプロセスが強制終了されました（コンテナ自体は生きています）。",
+  "machine.usage_note":
+    "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化が無いことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
   "machine.note_who_changes":
     "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
 

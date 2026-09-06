@@ -4,6 +4,8 @@ import { useWorkspaceStore } from "../../../core/store/workspace.ts";
 import { Row } from "../parts/controls.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { fmtGiB } from "../../../lib/bytes.ts";
+import { TrendChart } from "../../../ui/TrendChart.tsx";
+import { useWsStatsSeries } from "../../../core/store/wsStatsFeed.ts";
 import {
   machineArch,
   machineDisk,
@@ -26,6 +28,11 @@ import {
 //
 // Every row states whether its value was measured or only configured, and the two are
 // never blended — see lib/machine.ts for why.
+// The usage chart's x-axis: it grows with the data rather than reserving the buffer's whole
+// hour, so a tab opened a minute ago is a full chart instead of a line hugging the right edge.
+const MIN_SPAN_MS = 2 * 60 * 1000;
+const MAX_SPAN_MS = 60 * 60 * 1000;
+
 export function MachineTab() {
   const tr = useT();
   const wsState = useWorkspaceStore((s) => s.state);
@@ -135,6 +142,92 @@ export function MachineView({ d }: { d: WsMachine }) {
         <p className="muted ds-sub">{own ? tr("machine.note_own_box") : tr("machine.note_shared_host")}</p>
         <p className="muted ds-sub">{tr("machine.note_who_changes")}</p>
       </section>
+      {d.running && <UsageSection memMax={memLimit.value} vcpu={vcpu.value} />}
     </div>
+  );
+}
+
+// UsageSection — how much of the machine above is being used, as a moving chart.
+//
+// The ceilings come from the rows above rather than from the series: memory is drawn against
+// THIS workspace's limit and CPU against its core count, so "70% of what?" is answered on the
+// same screen. That is the reason these charts belong here and not only in the WS bar, where
+// a 28px sparkline has no room to say what it is a fraction of.
+//
+// The samples come from wsStatsFeed, which keeps its own clock — see that module for why the
+// push stream alone cannot produce a moving chart.
+function UsageSection({ memMax, vcpu }: { memMax: number; vcpu: number }) {
+  const tr = useT();
+  const samples = useWsStatsSeries();
+  const last = samples[samples.length - 1];
+  // The window grows with the data up to the buffer's hour, so the chart is full from the
+  // first minute instead of a line hugging the right edge of an empty hour.
+  const spanMs = Math.min(MAX_SPAN_MS, Math.max(MIN_SPAN_MS, samples.length ? Date.now() - samples[0].t : 0));
+  const memCeil = last?.memMax || memMax;
+  const cpuCeil = vcpu > 0 ? vcpu * 100 : undefined;
+  const oom = samples.some((s) => s.oom);
+
+  if (!samples.length || !last) return null;
+  const memPct = memCeil && last.memUsed != null ? (last.memUsed / memCeil) * 100 : null;
+  const diskPct = last.diskTotal && last.diskUsed != null ? (last.diskUsed / last.diskTotal) * 100 : null;
+  const lvl = (pct: number | null, warn: number, crit: number) =>
+    pct == null ? "" : pct >= crit ? " is-crit" : pct >= warn ? " is-warn" : "";
+
+  return (
+    <section className="ds-group">
+      <h4 className="ds-title">
+        {tr("machine.usage_title")}
+        <span className="mu-span">{tr("machine.usage_window", { n: String(Math.round(spanMs / 60000)) })}</span>
+      </h4>
+      {oom && <p className="mu-oom">{tr("machine.usage_oom")}</p>}
+      <div className={"mu-chart" + lvl(memPct, 75, 90)}>
+        <div className="mu-head">
+          <span className="mu-k">{tr("machine.memory")}</span>
+          <span className="mu-v">
+            {last.memUsed != null
+              ? tr("machine.usage_of", {
+                  used: fmtGiB(last.memUsed) + " GiB",
+                  total: memCeil ? fmtGiB(memCeil) + " GiB" : "?",
+                  pct: memPct != null ? String(Math.round(memPct)) : "–",
+                })
+              : "–"}
+          </span>
+        </div>
+        <TrendChart points={samples.map((s) => ({ t: s.t, v: s.memUsed }))} max={memCeil || undefined} spanMs={spanMs} />
+      </div>
+      <div className={"mu-chart" + lvl(last.cpu, 60, 90)}>
+        <div className="mu-head">
+          <span className="mu-k">{tr("machine.vcpu")}</span>
+          <span className="mu-v">
+            {last.cpu != null
+              ? cpuCeil
+                ? tr("machine.usage_cpu_of", { pct: String(Math.round(last.cpu)), max: String(cpuCeil) })
+                : `${Math.round(last.cpu)}%`
+              : "–"}
+          </span>
+        </div>
+        <TrendChart points={samples.map((s) => ({ t: s.t, v: s.cpu }))} max={cpuCeil} spanMs={spanMs} />
+      </div>
+      {/* Disk is a level, not a rate: it moves in steps over hours, so a trend line of it
+          says nothing a bar does not. */}
+      {diskPct != null && last.diskUsed != null && last.diskTotal != null && (
+        <div className={"mu-chart" + lvl(diskPct, 80, 92)}>
+          <div className="mu-head">
+            <span className="mu-k">{tr("machine.home_disk")}</span>
+            <span className="mu-v">
+              {tr("machine.usage_of", {
+                used: fmtGiB(last.diskUsed) + " GiB",
+                total: fmtGiB(last.diskTotal) + " GiB",
+                pct: String(Math.round(diskPct)),
+              })}
+            </span>
+          </div>
+          <div className="mu-bar">
+            <span style={{ width: `${Math.min(100, diskPct)}%` }} />
+          </div>
+        </div>
+      )}
+      <p className="muted ds-sub">{tr("machine.usage_note")}</p>
+    </section>
   );
 }

@@ -5,17 +5,22 @@
 //   3. when the running box is not the configured one, BOTH are on screen
 //   4. on a shared host the box's own RAM is never presented as the member's
 //   5. stopped: it says these are next-start values instead of showing nothing
+//   6. the usage charts read their ceilings from the machine above (memory limit, core
+//      count), which is the reason they are on this tab and not only in the WS bar
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { MachineView } from "./MachineTab.tsx";
 import type { WsMachine } from "../../../lib/machine.ts";
+import { __test as feed } from "../../../core/store/wsStatsFeed.ts";
 
 vi.mock("../../../core/api/client.ts", () => ({
   api: () => Promise.resolve({}),
   apiJSON: () => Promise.resolve({}),
   getTenant: () => "default",
 }));
+// The feed is driven directly (feed.sample()) rather than by its 4s timer.
+vi.mock("../../../core/push/events.ts", () => ({ onPush: () => () => {}, pushHealthy: () => true }));
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -33,6 +38,7 @@ async function mount(d: WsMachine) {
 const g = globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean };
 beforeEach(() => {
   g.IS_REACT_ACT_ENVIRONMENT = true;
+  feed.reset();
 });
 afterEach(() => {
   act(() => root?.unmount());
@@ -126,5 +132,35 @@ describe("MachineView", () => {
     expect(text).toContain("m8g.large");
     expect(text).toContain("設定上");
     expect(text).not.toContain("実測");
+  });
+
+  it("draws the usage charts against the machine's own ceilings", async () => {
+    // 4 GiB of an 8 GiB rung capped at 6.5 GiB, and 150% of a 2-vCPU box.
+    feed.setLatest({ running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 150 });
+    feed.sample();
+    feed.sample();
+    const text = await mount(ec2);
+    expect(text).toContain("使用状況");
+    // The memory line is stated against the LIMIT, not against the box's RAM.
+    expect(text).toContain("4.00 GiB / 6.50 GiB");
+    // CPU's ceiling is the core count, so 150% of 2 vCPU is legible as such.
+    expect(text).toContain("150% / 200%");
+    expect(host!.querySelectorAll("svg.trend").length).toBe(2);
+  });
+
+  it("says an OOM kill happened, even after the flag has gone", async () => {
+    feed.setLatest({ running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 5, oom_recent: true });
+    feed.sample();
+    feed.setLatest({ running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 5 });
+    feed.sample();
+    const text = await mount(ec2);
+    expect(text).toContain("メモリ不足でプロセスが強制終了");
+  });
+
+  it("shows no usage block for a stopped workspace", async () => {
+    feed.setLatest({ running: true, mem_used: 4294967296, mem_max: 6979321856, cpu_pct: 5 });
+    feed.sample();
+    const text = await mount({ runtime: "ecs-ec2", running: false, declared: ec2.declared });
+    expect(text).not.toContain("使用状況");
   });
 });

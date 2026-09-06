@@ -197,6 +197,13 @@ export const tools: Record<keyof typeof jaTools, string> = {
     "This box is yours alone, so its vCPUs and memory are all yours (the memory limit is the box's RAM less what is held back for its own daemons).",
   "machine.note_shared_host":
     "The host is shared with other members. These are this container's own figures, not the machine's.",
+  "machine.usage_title": "Usage",
+  "machine.usage_window": "last {n} min",
+  "machine.usage_of": "{used} / {total} ({pct}%)",
+  "machine.usage_cpu_of": "{pct}% / {max}%",
+  "machine.usage_oom": "A process was killed for memory during this window (the container itself survived).",
+  "machine.usage_note":
+    "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged — the control plane is what guarantees it is unchanged — and breaks the line for any period it could not read.",
   "machine.note_who_changes":
     "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",
 

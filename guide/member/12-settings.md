@@ -358,6 +358,11 @@ administrator's to set.
   the one to look at when a build is being killed.
 - A size or class your admin changes applies **at the next start**, so when the running box and the
   configuration disagree, **both** are shown.
+- **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
+  home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core
+  count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
+  unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
+  it could not read**, and it says so when a process was killed for memory during the window.
 
 ### Toolchain
 
