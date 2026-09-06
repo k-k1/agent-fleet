@@ -21,7 +21,12 @@
 //   * // i18n-exempt-file[: reason] anywhere in the file            - the whole file
 //   * ALLOW_FILES (below)                                           - catalogues, reading dictionaries
 
-import ts from "typescript";
+// `typescript-ast` is an alias of typescript@6 (package.json). TypeScript 7 ships no compiler
+// API at all — its "typescript" entry point exports only { version, versionMajorMinor } — and
+// typescript/unstable/ast has the is* predicates but neither createSourceFile nor forEachChild.
+// Point this back at "typescript" and the parse below throws. Collapse the two packages into
+// one when 7.1 ships a real API. See scripts/typecheck.mjs.
+import ts from "typescript-ast";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";

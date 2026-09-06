@@ -17,7 +17,12 @@
 // Shapes built from a function call or a variable are given up on and passed, so false
 // positives do not make the test a nuisance.
 import { describe, expect, it } from "vitest";
-import ts from "typescript";
+// `typescript-ast` is an alias of typescript@6 (package.json). TypeScript 7 ships no compiler
+// API at all — its "typescript" entry point exports only { version, versionMajorMinor } — and
+// typescript/unstable/ast has the is* predicates but neither createSourceFile nor forEachChild.
+// Point this back at "typescript" and the parse below throws. Collapse the two packages into
+// one when 7.1 ships a real API. See scripts/typecheck.mjs.
+import ts from "typescript-ast";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 

@@ -8,7 +8,7 @@
     "dev": "NODE_OPTIONS=--max-old-space-size=4096 vite build --watch --mode development",
     "build": "NODE_OPTIONS=--max-old-space-size=4096 vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "node scripts/typecheck.mjs",
     "test": "vitest run",
     "i18n:lint": "node scripts/i18n-lint.mjs",
     "css:dup": "node scripts/css-dup.mjs",
@@ -72,7 +72,8 @@
     "fake-indexeddb": "^6.2.5",
     "jsdom": "^30.0.0",
     "react-test-renderer": "^19.2.7",
-    "typescript": "^5.7.0",
+    "typescript": "^7.0.2",
+    "typescript-ast": "npm:typescript@^6.0.3",
     "vite": "^8.2.2",
     "vitest": "^5.0.0"
   },
