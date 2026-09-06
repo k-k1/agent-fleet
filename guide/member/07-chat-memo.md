@@ -135,7 +135,7 @@ following progress on your phone and firing back short replies.
 When the agent is waiting on your judgment, a corresponding card appears. Which cards and
 choices are available depends on the agent and the state.
 
-- **Question** — pick a choice (or type a free-form answer), then press **"Submit answer"**. Clicking a choice only selects it, so you can change your mind — and compare the previews some choices come with — before anything is sent.
+- **Question** — pick a choice (or type a free-form answer), then press **"Submit answer"**. Clicking a choice only selects it, so you can change your mind — and compare the previews some choices come with — before anything is sent. What you have picked and typed is kept while you go and look something up: switching to another tab, or to the terminal, brings the card back as you left it. It is cleared once the answer is sent, or when you cancel the question.
 - **Plan awaiting approval** — either "Approve and run" the proposed plan or "Reject (keep going)".
 - **Awaiting permission** — "Allow" / "Deny" the edit or command run (you can also choose to auto-allow for the rest of this session).
 

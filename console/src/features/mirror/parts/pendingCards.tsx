@@ -4,6 +4,7 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { PlanBlock } from "../transcript/blocks.tsx";
 import { PendingQuestions } from "../PendingQuestions.tsx";
+import { questionDraftKey } from "../questionDraft.ts";
 import type { InteractionAnswer } from "../../../core/api/client.ts";
 import type { Question } from "../transcript/types.ts";
 
@@ -114,6 +115,7 @@ export function PermissionCard({
  *  shown alongside it. */
 export function QuestionCard({
   agentName,
+  session,
   questions,
   pendingText,
   repo,
@@ -128,6 +130,7 @@ export function QuestionCard({
   onCancel,
 }: {
   agentName: string;
+  session: string;
   questions: Question[];
   pendingText: string;
   repo: string | null;
@@ -136,9 +139,9 @@ export function QuestionCard({
   multiPage: boolean;
   writeIn: boolean;
   onOpenFile: (path: string, line?: number, column?: number) => void;
-  onSubmitKeys: (keys: string[]) => void;
-  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
-  onRespond?: (answers: InteractionAnswer[]) => void;
+  onSubmitKeys: (keys: string[]) => void | Promise<boolean | void>;
+  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void | Promise<boolean | void>;
+  onRespond?: (answers: InteractionAnswer[]) => void | Promise<boolean | void>;
   onCancel: () => void;
 }) {
   return (
@@ -147,6 +150,7 @@ export function QuestionCard({
       <PendingQuestions
         key={"pq-" + (questions[0]?.question || "")}
         questions={questions}
+        draftKey={questionDraftKey(session)}
         sending={sending}
         onSubmitKeys={onSubmitKeys}
         onSubmitSeq={onSubmitSeq}
