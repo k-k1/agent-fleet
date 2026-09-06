@@ -76,3 +76,86 @@ history button
 .mirror-hist-btn:disabled {
   opacity: 0.4;
 }
+/* Ctrl+R history search (bash's reverse-i-search): a full-width band above the input row. The
+   match is previewed in the textarea below, so this band only carries the query, the position in
+   the history and the way out — everything here stays on one line. */
+.mirror-histsearch {
+  flex: 0 0 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  font-size: 12px;
+}
+.mirror-histsearch.failed {
+  border-color: color-mix(in srgb, var(--warn) 55%, var(--border));
+}
+.mirror-histsearch-label {
+  flex: none;
+  color: var(--muted);
+}
+.mirror-histsearch.failed .mirror-histsearch-label {
+  color: var(--warn);
+}
+/* The query field carries no chrome of its own: the band around it is the affordance, and a
+   second border inside it reads as a form. */
+.mirror-histsearch-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 3px 0;
+  border: none;
+  background: none;
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 12px;
+}
+.mirror-histsearch-input:focus {
+  outline: none;
+}
+/* "3/12" — position in the match list. Tabular figures so stepping through matches doesn't
+   shift the hint next to it. */
+.mirror-histsearch-count {
+  flex: none;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.mirror-histsearch-hint {
+  flex: 0 1 auto;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Tap entry point for the search, shown only where there is no Ctrl key (phone width, see
+   responsive.css). Same metrics as the + and / buttons it sits with. */
+.mirror-hsearch-btn {
+  display: none;
+  flex: none;
+  align-self: stretch;
+  width: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.mirror-hsearch-btn.on {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.mirror-hsearch-btn:disabled {
+  opacity: 0.4;
+}
+.mirror-histsearch-close {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 4px;
+}

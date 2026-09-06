@@ -24,3 +24,22 @@ export function HistoryNav({
     </div>
   );
 }
+
+/**
+ * Opens the Ctrl+R history search from a tap. Phones only (`.mirror-hsearch-btn` is display:none
+ * above the phone width): they have the history column but no Ctrl key, and stacking a third
+ * button into that column would grow the whole composer row, so this sits with + and / instead.
+ */
+export function HistorySearchButton({ open, disabled, onOpen }: { open: boolean; disabled: boolean; onOpen: () => void }) {
+  return (
+    <button
+      type="button"
+      className={"ghost mirror-hsearch-btn" + (open ? " on" : "")}
+      title={tr("mirror.hsearch_open")}
+      disabled={disabled}
+      onClick={onOpen}
+    >
+      <Icon name="search" />
+    </button>
+  );
+}
