@@ -389,8 +389,40 @@ mirror's `UserFileBlock`/`FileCard` with a thumbnail, which is the same route co
   a backward page, where the result is merely outside the window rather than unwritten.
 - **opencode needed none of that**: it keeps a tool's output on the same part, so the card is
   emitted as the call is parsed.
-- Other kinds are one call to the shared function away, but none is added blind: what each CLI
-  spells an MCP tool name has to be read off real data first, and only claude's has been.
+- **Which kinds get a card is decided by evidence, not by effort.** Every spelling below was
+  read off real data in this container on 2026-09-06 — a CLI's own store or a live session's
+  tool list — and a kind with no evidence is left out rather than guessed at:
+
+  | kind | MCP tool name, as its transcript records it | tool result | card |
+  |---|---|---|---|
+  | claude | `mcp__af_40ed9852__af_report` (a live session's tool list) | paired tool_result, plus the cursor hold | **yes** |
+  | opencode | `af_786de7cb_af_report` (its session store) | on the same part | **yes** |
+  | copilot | `probe-structured_probe` — `<server>-<tool>`, a hyphen (`~/.copilot/session-state`) | `tool.execution_complete`, paired by toolCallId | **yes** |
+  | kiro | unknown | unknown | no |
+  | cursor | n/a | **never in the JSONL** — output lives only in store.db | no |
+  | agy | n/a | its tool field is a step TYPE enum (`RUN_COMMAND`, `VIEW_FILE`), not a tool name | no |
+
+  kiro is the one that is merely *unmeasured* rather than blocked. Its v2 JSONL store pairs a
+  result back to its call already, so the card would be cheap — but no MCP tool has ever been
+  called in this container's v2 store (`"name":"shell"` is the only tool_use in it), so
+  neither the name spelling nor the result shape can be read. Its CLASSIC store does hold one
+  (`"name":"structured_probe"` — bare, with `orig_name` identical, and a result shaped
+  `{"Json":{"content":[{"type":"text","text":…}]}}`), which is suggestive and is exactly why
+  it is not enough: the parser reads the v2 store, not that one. One real kiro turn against a
+  dummy MCP server settles it.
+
+  cursor and agy need more than a measurement. cursor would have to read store.db, and agy
+  records no tool name at all.
+
+- The bare form is accepted by the matcher because kiro's classic store shows a client can
+  omit the namespace entirely. It costs nothing in practice — a false positive needs another
+  server to own a tool of the same name AND return af's exact result shape — but it is a real
+  narrowing that a namespacing client does not need.
+
+- Cards are **collected and spliced at the end of a turn**, never inserted as the parser
+  walks. copilot and kiro both keep an index into the parts slice to paste a result onto its
+  call (`toolCallId` / `toolUseId` → position); inserting mid-walk moves the row a later
+  tool's output is about to be written to, and that tool's output lands on the picture.
 
 ### Driven end to end (2026-09-06)
 

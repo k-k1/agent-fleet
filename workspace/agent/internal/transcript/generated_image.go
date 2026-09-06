@@ -82,3 +82,27 @@ func GeneratedImagePart(toolName, result string) (Part, bool) {
 	}
 	return Part{Kind: "userfile", Tool: toolName, Files: files, Caption: strings.Join(warnings, " / ")}, true
 }
+
+// PendingImage is a picture card waiting to be put after the tool trace at index At.
+type PendingImage struct {
+	At   int
+	Part Part
+}
+
+// SplicePendingImages inserts each card immediately after its own tool trace, walking from
+// the end so the earlier insertion points stay valid.
+//
+// Collect-then-splice, never insert-as-you-go: every parser that pairs a result back to its
+// call keeps an index into this same slice (toolIdx / toolUseId → position), and inserting
+// mid-walk would silently move the rows those indices point at — the next tool's output would
+// land on the previous tool's picture.
+func SplicePendingImages(parts []Part, pending []PendingImage) []Part {
+	for i := len(pending) - 1; i >= 0; i-- {
+		p := pending[i]
+		if p.At < 0 || p.At >= len(parts) {
+			continue
+		}
+		parts = append(parts[:p.At+1], append([]Part{p.Part}, parts[p.At+1:]...)...)
+	}
+	return parts
+}
