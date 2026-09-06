@@ -303,6 +303,25 @@ for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
     af_run crane copy "$src" "$dst"
   fi
 done
+# The speech engine's image, when this deployment has speech (ADR 0070 decision 14). It is
+# pinned upstream and has nothing to do with $TAG, and it is copied HERE — in the images
+# step, before 50-tts — because that stack's service cannot start without it and
+# CloudFormation blocks on ECS service stabilisation: create the service against an empty
+# repository and the stack sits in CREATE_IN_PROGRESS repeating CannotPullContainerError,
+# with no way for a later step to rescue it (measured 2026-09-06). The repository is a
+# 20-platform resource for exactly that reason.
+if [ -n "$AF_STACK_TTS" ]; then
+  tts_tag="$(af_read_one_param 50-tts EngineImageTag)"
+  : "${tts_tag:=cpu-ubuntu24.04-0.25.2}"
+  if "${AWS[@]}" ecr describe-images --repository-name af-voicevox \
+      --image-ids "imageTag=$tts_tag" >/dev/null 2>&1; then
+    echo "    · af-voicevox:$tts_tag is already in ECR"
+  else
+    echo "    · crane copy $TTS_ENGINE_FROM:$tts_tag (about 2 GB, both architectures)"
+    af_run crane copy "$TTS_ENGINE_FROM:$tts_tag" "$ECR_HOST/af-voicevox:$tts_tag"
+  fi
+fi
+
 # Do CpArch and the CP image's architecture match? A mismatch is not even a
 # CannotPullContainerError: the task simply cannot be placed, desired=1 / running=0, with
 # no pull error logged at all. Same discipline as update.sh — fail only on proof.
@@ -351,9 +370,6 @@ if [ -n "$AF_STACK_TTS" ]; then
 
   TTS_SERVICE="$(af_stack_output "$AF_STACK_TTS" TtsEcsService)"
   TTS_URL="$(af_stack_output "$AF_STACK_TTS" VoicevoxUrl)"
-  TTS_ECR="$(af_stack_output "$AF_STACK_TTS" EcrEngineUri)"
-  TTS_TAG="$(af_stack_param "$AF_STACK_TTS" EngineImageTag)"
-  : "${TTS_TAG:=cpu-ubuntu24.04-0.25.2}"
 
   # ⚠️ Scale to 0 only when this run CREATED the service. CloudFormation starts a new
   # service at desired 1 (the schema's documented default for an absent DesiredCount, which
@@ -364,23 +380,6 @@ if [ -n "$AF_STACK_TTS" ]; then
     echo "    · scaling $TTS_SERVICE to 0 (the engine is started on demand)"
     af_run "${AWS[@]}" ecs update-service --cluster "$(af_cluster)" \
       --service "$TTS_SERVICE" --desired-count 0 >/dev/null
-  fi
-
-  # The engine image, pinned and carried into ECR (ADR 0070 decision 14) — never pulled
-  # from Docker Hub at task start, because every task in this deployment leaves through
-  # one NAT address and would share a single anonymous pull quota.
-  #
-  # This necessarily happens AFTER the stack, since 50-tts owns the repository. So the one
-  # task CloudFormation started above cannot pull and fails; it is already on its way to
-  # desired 0 and the next real start finds the image here.
-  if [ -n "$TTS_ECR" ] && [ "$AF_DRY" != 1 ]; then
-    if "${AWS[@]}" ecr describe-images --repository-name af-voicevox \
-        --image-ids "imageTag=$TTS_TAG" >/dev/null 2>&1; then
-      echo "    · af-voicevox:$TTS_TAG is already in ECR"
-    else
-      echo "    · crane copy $TTS_ENGINE_FROM:$TTS_TAG (about 2 GB, both architectures)"
-      crane copy "$TTS_ENGINE_FROM:$TTS_TAG" "$TTS_ECR:$TTS_TAG"
-    fi
   fi
 fi
 

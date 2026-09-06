@@ -4,8 +4,8 @@ Description: >-
   that is normally scaled to zero (ADR 0070 P0). Optional: a deployment that does not
   want Japanese speech deploys nothing and `auto` keeps routing every sentence to
   Polly. Imports the VPC, private subnets and the CP security group from 00-network,
-  and the cluster, execution role and Cloud Map namespace from 20-platform; it does
-  NOT depend on 30-ingress. Deploy it BEFORE 30-ingress and hand 30-ingress this
+  and the cluster, execution role, Cloud Map namespace and the engine's ECR repository
+  from 20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE 30-ingress and hand 30-ingress this
   stack's two outputs (TtsEcsService, VoicevoxUrl) so the Control Plane can find and
   drive the engine.
 
@@ -17,7 +17,9 @@ Parameters:
   PlatformStackName:
     Type: String
     Default: af-ecs-platform
-    Description: 20-platform stack to import the cluster, execution role and namespace from.
+    Description: >-
+      20-platform stack to import the cluster, execution role, namespace and the
+      af-voicevox ECR repository from.
   ServiceConnectNamespace:
     Type: String
     Default: af.internal
@@ -79,21 +81,6 @@ Conditions:
   HasLoadAllModels: !Equals [ !Ref LoadAllModels, "on" ]
 
 Resources:
-  # The image lives in ECR, not on Docker Hub (decision 14). The repository is here
-  # rather than in 20-platform so that a deployment without speech carries no unused
-  # repository — at the price of an ordering wrinkle standup.sh has to know about: on a
-  # first stand-up the repository does not exist until this stack does, so the image can
-  # only be copied in AFTER the stack is created. The service is scaled to zero
-  # immediately, so the one task CloudFormation starts at creation finds an empty
-  # repository and fails to pull; that failure is expected and costs nothing.
-  EcrEngine:
-    Type: AWS::ECR::Repository
-    DeletionPolicy: Delete
-    Properties:
-      RepositoryName: af-voicevox
-      EmptyOnDelete: true
-      ImageScanningConfiguration: { ScanOnPush: false }
-
   # The VOICEVOX HTTP API is unauthenticated and has mutating endpoints, so reachability
   # is the whole of its access control: port 50021 from the CP security group and nothing
   # else — no load balancer, private subnets, no public IP (decision 14). The engine also
@@ -158,9 +145,15 @@ Resources:
       ContainerDefinitions:
         - Name: voicevox
           Essential: true
+          # ⚠️ The image must ALREADY be in that repository when this stack is created.
+          # CloudFormation blocks on ECS service stabilisation, so a service that cannot
+          # pull leaves the stack in CREATE_IN_PROGRESS indefinitely (measured 2026-09-06,
+          # on the very first stand-up of this template) — which is why the repository
+          # lives in 20-platform and standup.sh copies the image in during its images
+          # step, one stack earlier than this one.
           Image: !Sub
             - "${Uri}:${Tag}"
-            - Uri: !GetAtt EcrEngine.RepositoryUri
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrVoicevoxUri" }
               Tag: !Ref EngineImageTag
           PortMappings:
             - ContainerPort: 50021
@@ -258,7 +251,3 @@ Outputs:
     Description: AF_VOICEVOX_URL for the Control Plane (the Cloud Map DNS name).
     Value: !Sub "http://${DiscoveryName}.${ServiceConnectNamespace}:50021"
     Export: { Name: !Sub "${AWS::StackName}-VoicevoxUrl" }
-  EcrEngineUri:
-    Description: Where `crane copy` puts the pinned upstream image.
-    Value: !GetAtt EcrEngine.RepositoryUri
-    Export: { Name: !Sub "${AWS::StackName}-EcrEngineUri" }

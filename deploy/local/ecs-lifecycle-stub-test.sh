@@ -99,7 +99,6 @@ case "$args" in
   *"cloudformation describe-stacks --stack-name af-ecs-tts") [ "${STUB_TTS_EXISTS:-0}" = 1 ] || exit 1 ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='TtsEcsService']"*) echo "af-af-ecs-tts-voicevox" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='VoicevoxUrl']"*) echo "http://voicevox.af.internal:50021" ;;
-  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EcrEngineUri']"*) echo "123456789012.dkr.ecr.ap-northeast-1.amazonaws.com/af-voicevox" ;;
   *"ParameterKey=='EngineImageTag'"*) echo "cpu-ubuntu24.04-0.25.2" ;;
   # For capture-env.sh: the parameter and output listings (join form). NatEipAllocationId
   # reproduces exactly the shape that was hit for real — empty as a parameter, but with a
@@ -280,7 +279,13 @@ echo "== case 3f: the speech engine is built between the pool and ingress (ADR 0
 "$ECS/standup.sh" --profile p3 --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3f" </dev/null
 order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name af-ecs-tts"
 order "cloudformation deploy --stack-name af-ecs-tts" "cloudformation deploy --stack-name t-ingress"
-order "cloudformation deploy --stack-name af-ecs-tts" "crane copy docker.io/voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2"
+# The image goes in BEFORE the stack, not after. CloudFormation blocks on ECS service
+# stabilisation, so a service created against an empty repository leaves the stack in
+# CREATE_IN_PROGRESS repeating CannotPullContainerError — and no later step can rescue it,
+# because the deploy never returns. Measured on the first real stand-up of this template;
+# the repository is a 20-platform resource so that this ordering is possible at all.
+order "crane copy docker.io/voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2" "cloudformation deploy --stack-name af-ecs-tts"
+order "cloudformation deploy --stack-name t-platform" "crane copy docker.io/voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2"
 has "ecs update-service --cluster t-cluster --service af-af-ecs-tts-voicevox --desired-count 0"
 order "cloudformation deploy --stack-name af-ecs-tts" "ecs update-service --cluster t-cluster --service af-af-ecs-tts-voicevox --desired-count 0"
 # The values 30-ingress is given come from the stack's outputs, not from the capture.

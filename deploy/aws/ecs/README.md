@@ -32,11 +32,11 @@ platform changes:
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
-| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
+| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-| `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, a dedicated SG (50021 from the CP only), and the ECR repository the pinned upstream image is carried into. Imports 00-network and 20-platform; hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
+| `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
 > separate AWS accounts (`WsRuntime=ecs-ec2`, one `Persistence=delete` and one
@@ -762,11 +762,20 @@ TaskCpu=2048
 TaskMemory=4096
 ```
 
-`standup.sh` then deploys it after the pool and before `30-ingress`, scales the new service
-to 0, carries the pinned image into ECR with `crane`, and hands `30-ingress` the stack's
-`TtsEcsService` / `VoicevoxUrl` outputs. On an existing deployment the same steps by hand
-are: deploy `50-tts`, `ecs update-service --desired-count 0`, `crane copy`, then re-deploy
-`30-ingress` with the two parameters (that last step replaces the CP task).
+`standup.sh` then carries the pinned image into ECR with `crane` during its images step,
+deploys `50-tts` after the pool and before `30-ingress`, scales the new service to 0, and
+hands `30-ingress` the stack's `TtsEcsService` / `VoicevoxUrl` outputs. On an existing
+deployment the same steps by hand are: deploy `20-platform` (it creates the repository),
+`crane copy` the image, deploy `50-tts`, `ecs update-service --desired-count 0`, then
+re-deploy `30-ingress` with the two parameters (that last step replaces the CP task).
+
+⚠️ **The image has to be in ECR before `50-tts` is created, not after.** CloudFormation
+blocks on ECS service stabilisation, so a service created against an empty repository
+leaves the stack in `CREATE_IN_PROGRESS` repeating `CannotPullContainerError` and no later
+step can rescue it — the deploy never returns. That is why the repository is a
+`20-platform` resource even though everything else about it belongs here (measured on this
+template's first stand-up). Creating the stack therefore always costs one cold start: CFN
+waits for the first task to run, and only then is the service scaled back to 0.
 
 Things worth knowing before you enable it:
 
