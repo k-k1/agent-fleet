@@ -13,8 +13,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -82,8 +84,10 @@ func chooseTTSProvider(pref, lang string, engineOff, vvReady, plReady bool) stri
 	return "voicevox" // neither is available: surface voicevox's own 502
 }
 
-// ttsEngineSetting is the setting key behind the admin toggle. Only "off" stops routing to
-// voicevox ("" means enabled, so an externally managed dev engine keeps working).
+// ttsEngineSetting is the setting key behind the admin toggle, and the only record of what
+// the administrator wants: "off" | "on" | "ondemand" (ADR 0070 decision 7), read through
+// ttsEngineMode, which is also where "" is resolved. Under ECS the desired count moves by
+// itself, so it is not the intent and must never be reported as one.
 const ttsEngineSetting = "tts_engine"
 
 // ttsDictSetting holds the tenant-wide reading dictionary (one "spelling=reading" per line,
@@ -99,17 +103,40 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	vv := &voicevoxProvider{base: cfg.voicevoxURL}
 	pl := newPollyProvider()
 	providers := map[string]ttsProvider{"voicevox": vv, "polly": pl}
-	eng := newTTSEngineFromEnv()
+	eng := newTTSEngine()
 	var settings store.SettingsStore
 	if cfg.mgr != nil && cfg.mgr.store != nil {
 		settings = cfg.mgr.store
 	}
-	engineOff := func(ctx context.Context) bool {
-		if settings == nil {
-			return false
+	engineMode := func(ctx context.Context) string {
+		v := ""
+		if settings != nil {
+			v, _ = settings.GetSetting(ctx, ttsEngineSetting)
 		}
-		v, _ := settings.GetSetting(ctx, ttsEngineSetting)
-		return v == "off"
+		return ttsEngineMode(v, eng != nil)
+	}
+
+	// The on-demand controller and the demand counter exist only where there is a service
+	// to start: elsewhere the engine's lifecycle is somebody else's (a standing dev
+	// docker), and counting demand for it would be bookkeeping nobody reads. This is also
+	// what keeps every test that registers these routes free of a background goroutine.
+	var ctrl *ttsController
+	var demand *ttsDemand
+	if eng != nil {
+		ccfg := ttsControlCfgFromEnv()
+		demand = newTTSDemand(settings, ccfg.window)
+		var auditor ttsAuditor
+		if cfg.mgr != nil && cfg.mgr.store != nil {
+			auditor = cfg.mgr.store
+		}
+		// Constructing it also puts the warm-up gate in front of vv.Ready: /version answers
+		// 200 before a voice model is loaded (ADR 0070 decision 16).
+		ctrl = newTTSController(eng, vv, demand, settings, auditor, ccfg)
+		if ccfg.interval > 0 {
+			log.Printf("tts: on-demand controller every %s (start %d chars / %s, idle %s, off grace %s)",
+				ccfg.interval, ccfg.startChars, ccfg.window, ccfg.idle, ccfg.offGrace)
+			go ctrl.run(context.Background())
+		}
 	}
 
 	mux.HandleFunc("POST /api/tts/synthesize", func(w http.ResponseWriter, r *http.Request) {
@@ -130,9 +157,17 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 			writeAPIErr(w, &apiError{http.StatusNotImplemented, "tts_provider_unavailable", "unknown provider: " + req.Provider})
 			return
 		}
+		mode := engineMode(r.Context())
+		// Demand is intent, not outcome (ADR 0070 decision 3): count what this request
+		// wanted before anything is routed, because while the engine starts every request
+		// is served by Polly and an outcome counter would read zero for exactly the two
+		// minutes that matter.
+		if ttsDemandIntent(req.Provider, req.Lang, mode) {
+			demand.record(r.Context(), len([]rune(text)))
+		}
 		name := req.Provider
 		if name == "" || name == "auto" {
-			name = chooseTTSProvider(req.Provider, req.Lang, engineOff(r.Context()), vv.Ready(r.Context()), pl.Ready(r.Context()))
+			name = chooseTTSProvider(req.Provider, req.Lang, mode == ttsModeOff, vv.Ready(r.Context()), pl.Ready(r.Context()))
 		}
 		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang, particlePause: req.ParticlePause}
 		if name == "voicevox" {
@@ -161,14 +196,16 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	// it. When the engine is ECS-managed the service state (running/starting/stopped) is
 	// added so the readiness gate is visible.
 	mux.HandleFunc("GET /api/tts/status", func(w http.ResponseWriter, r *http.Request) {
+		mode := engineMode(r.Context())
 		vvSt := map[string]any{
 			"ready":   vv.Ready(r.Context()),
-			"enabled": !engineOff(r.Context()),
+			"enabled": mode != ttsModeOff,
+			"mode":    mode,
 		}
 		if eng != nil {
 			vvSt["managed"] = true
-			if st, _, err := eng.state(r.Context()); err == nil {
-				vvSt["state"] = st
+			if v, err := eng.view(r.Context()); err == nil {
+				vvSt["state"] = ttsDisplayState(v.state, mode)
 			}
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -219,7 +256,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	// super_admin toggle for the VOICEVOX engine. Under ECS it flips the desired count
 	// between 0 and 1 (on-demand start, zero cost while stopped); the intent is always
 	// recorded in the setting as well, the same way egress does with SettingsStore.
-	adm := ttsAdminAPI{memberAuth{cfg.mgr}, settings, eng, vv, pl}
+	adm := ttsAdminAPI{memberAuth{cfg.mgr}, settings, eng, ctrl, vv, pl}
 	mux.HandleFunc("GET /api/admin/tts", adm.withSuperAdmin(adm.get))
 	mux.HandleFunc("PUT /api/admin/tts", adm.withSuperAdmin(adm.put))
 	mux.HandleFunc("PUT /api/admin/tts/dict", adm.withSuperAdmin(adm.putDict))
@@ -227,19 +264,34 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 
 // --- voicevox provider ---------------------------------------------------------
 
-// voicevoxProvider adapts the VOICEVOX engine at cfg.voicevoxURL. Ready is cached for a
-// short TTL because auto routing asks once per sentence and must not hit /version that
-// often; tracking the engine coming up or going down to a few seconds is accurate enough.
+// voicevoxProvider adapts the VOICEVOX engine at cfg.voicevoxURL. Reachability is cached
+// for a short TTL because auto routing asks once per sentence and must not hit /version
+// that often; tracking the engine coming up or going down to a few seconds is accurate
+// enough.
 type voicevoxProvider struct {
 	base      string
 	mu        sync.Mutex
 	ready     bool
 	checkedAt time.Time
+	// warmGate reports whether the engine has been warmed up since it came up. nil means
+	// nothing warms this engine (no on-demand controller), and then /version alone is
+	// readiness, exactly as it was before on-demand existed.
+	warmGate func() bool
 }
 
 const vvReadyTTL = 4 * time.Second
 
+// Ready is reachable AND warmed. The second half is ADR 0070 decision 16: /version answers
+// 200 before a voice model is loaded, so a RUNNING engine that has not yet synthesized
+// anything is not something to route a listener to — Polly reads for the extra second.
 func (v *voicevoxProvider) Ready(ctx context.Context) bool {
+	if !v.reachable(ctx) {
+		return false
+	}
+	return v.warmGate == nil || v.warmGate()
+}
+
+func (v *voicevoxProvider) reachable(ctx context.Context) bool {
 	v.mu.Lock()
 	if !v.checkedAt.IsZero() && time.Since(v.checkedAt) < vvReadyTTL {
 		ok := v.ready
@@ -479,15 +531,28 @@ func clampSpeed(s float64) float64 {
 
 // --- admin toggle (/api/admin/tts) ---------------------------------------------
 
-// ttsAdminAPI is the handler set behind the admin toggle for the VOICEVOX engine. The source
-// of truth for enabled is the live desired count under ECS, and the setting otherwise (an
-// externally run dev engine).
+// ttsAdminAPI is the handler set behind the admin toggle for the VOICEVOX engine. The
+// stored setting is the only source of truth for the mode; the desired count is what the
+// deployment is doing about it, and the two are reported as separate things.
 type ttsAdminAPI struct {
 	memberAuth
 	settings store.SettingsStore // may be nil (tests)
 	eng      *ttsEngineECS       // nil = not ECS-managed
+	ctrl     *ttsController      // nil = nothing runs the engine on its own
 	vv       *voicevoxProvider
 	pl       *pollyProvider
+}
+
+// ttsDisplayState is what a person is told the engine is doing. It differs from the ECS
+// service state in one place, and that place is the point: right after OFF is pressed the
+// desired count has deliberately not moved yet (the undo window of ADR 0070 decision 5),
+// and a panel that answered "running" there would be reporting the opposite of the
+// administrator's intent — the same class of defect as reporting a setting as reality.
+func ttsDisplayState(raw, mode string) string {
+	if mode == ttsModeOff && (raw == "running" || raw == "starting") {
+		return "stopping"
+	}
+	return raw
 }
 
 // get (GET /api/admin/tts) reports the toggle state plus engine reachability and ECS state.
@@ -496,17 +561,17 @@ func (a ttsAdminAPI) get(w http.ResponseWriter, r *http.Request, _ store.Identit
 }
 
 func (a ttsAdminAPI) status(ctx context.Context) map[string]any {
-	enabled := true
-	if a.settings != nil {
-		v, _ := a.settings.GetSetting(ctx, ttsEngineSetting)
-		enabled = v != "off"
-	}
-	engine := map[string]any{"ready": a.vv.Ready(ctx)}
 	managed := a.eng != nil
+	stored := ""
+	if a.settings != nil {
+		stored, _ = a.settings.GetSetting(ctx, ttsEngineSetting)
+	}
+	mode := ttsEngineMode(stored, managed)
+	engine := map[string]any{"ready": a.vv.Ready(ctx)}
 	if managed {
-		if st, desired, err := a.eng.state(ctx); err == nil {
-			engine["state"] = st
-			enabled = desired >= 1 // under ECS the desired count is the source of truth
+		if v, err := a.eng.view(ctx); err == nil {
+			engine["state"] = ttsDisplayState(v.state, mode)
+			engine["desired"] = v.desired
 		} else {
 			engine["error"] = err.Error()
 		}
@@ -517,34 +582,70 @@ func (a ttsAdminAPI) status(ctx context.Context) map[string]any {
 	}
 	return map[string]any{
 		"managed": managed,
-		"enabled": enabled,
+		"mode":    mode,
+		// enabled is kept for clients written against the two-valued toggle, and it is the
+		// intent — never the desired count. Deriving it from ECS is what made the toggle
+		// appear to move on its own the moment the engine started stopping itself.
+		"enabled": mode != ttsModeOff,
 		"engine":  engine,
 		"polly":   map[string]any{"ready": a.pl.Ready(ctx)},
 		"dict":    dict,
 	}
 }
 
-// put (PUT /api/admin/tts) takes body {enabled:bool}: under ECS it moves desired between 0
-// and 1, and it always records the intent in the setting, which is what switches routing on
-// and off when the engine is not ECS-managed. Audited.
+// put (PUT /api/admin/tts) takes body {mode:"off"|"on"|"ondemand"} — or {enabled:bool}
+// from a client written before the mode existed — and records it in the setting, which is
+// the intent. What happens to the desired count is not symmetric:
+//
+//   - "on" starts the engine now: somebody pressed a button and is waiting.
+//   - "ondemand" touches nothing; the controller decides from here on.
+//   - "off" does NOT stop it here. The stop is debounced by the controller's undo window
+//     (ADR 0070 decision 5), because this panel makes it easy to press OFF and then ON
+//     again, and each of those bought a 2 GB pull and 70-80 seconds. Routing stops at
+//     once regardless — the setting is what chooseTTSProvider reads — so the grace costs
+//     no listener anything. Without a controller there is nobody to do it later, so the
+//     stop happens here.
+//
+// Audited.
 func (a ttsAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.Identity) {
-	var b struct{ Enabled bool }
+	var b struct {
+		Mode    string `json:"mode"`
+		Enabled *bool  `json:"enabled"`
+	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
 		return
 	}
-	val := "on"
-	if !b.Enabled {
-		val = "off"
+	val := b.Mode
+	switch val {
+	case ttsModeOff, ttsModeOn, ttsModeOnDemand:
+	case "":
+		if b.Enabled == nil {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "mode is required"})
+			return
+		}
+		val = ttsModeOn
+		if !*b.Enabled {
+			val = ttsModeOff
+		}
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "unknown mode: " + val})
+		return
 	}
 	if a.settings != nil {
 		if err := a.settings.SetSetting(r.Context(), ttsEngineSetting, val); err != nil {
 			writeAPIErr(w, internalErr(err))
 			return
 		}
+		// When the mode changed is not decoration: the undo window is measured from it,
+		// and it has to survive the CP restart that would otherwise cancel the window.
+		if err := a.settings.SetSetting(r.Context(), ttsModeAtSetting, strconv.FormatInt(time.Now().Unix(), 10)); err != nil {
+			log.Printf("tts: recording the mode change time failed: %v", err)
+		}
 	}
-	if a.eng != nil {
-		if err := a.eng.setEnabled(r.Context(), b.Enabled); err != nil {
+	a.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
+	if a.eng != nil && (val == ttsModeOn || (val == ttsModeOff && a.ctrl == nil)) {
+		if err := a.eng.setEnabled(r.Context(), val == ttsModeOn); err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadGateway, "tts_engine_error", "ecs update failed: " + err.Error()})
 			return
 		}

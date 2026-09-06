@@ -114,7 +114,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.tts_running_waiting": "Running (awaiting response)",
   "admin.tts_stopped": "Stopped",
   "admin.tts_stopped_or_off": "Stopped / not started",
+  "admin.tts_stopping": "Stopping",
   "admin.tts_engine_label": "VOICEVOX engine (Zundamon)",
+  "admin.tts_mode_off": "Disabled",
+  "admin.tts_mode_ondemand": "On demand",
+  "admin.tts_mode_on": "Always on",
   "admin.enable": "Enabled",
   "admin.disable": "Disabled",
   "admin.tts_engine_prefix": "Engine: ",
@@ -124,10 +128,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.tts_polly_ready": "Available",
   "admin.tts_polly_unset": "Not set",
   "admin.tts_starting_note": "Startup takes 1–2 minutes. Until it's ready, Japanese read-aloud is covered by Polly (silent if Polly isn't set).",
+  "admin.tts_stopping_note":
+    "Disabled. Read-aloud has already moved to Polly; the engine itself stops in about a minute. That grace is there so a mis-click — or turning it straight back on — doesn't pay for another 2 GB pull and 70–80 seconds of startup. Switch it back on within it and nothing stops or restarts at all.",
+  "admin.tts_ondemand_note":
+    "On demand: the engine starts once read-aloud demand builds up (2,000 characters in 5 minutes) and stops after 30 minutes with nobody listening. Japanese is read by Polly until it is up. Every automatic start and stop is recorded in the audit log.",
   "admin.tts_no_engine":
     "This deployment has no VOICEVOX engine, and it is not ECS-managed either, so there is nothing this screen could start. Enabling it would route nothing to Zundamon, so the toggle is held at disabled. Provide an engine and it becomes operable again on its own.",
   "admin.tts_disable_note":
-    "Disabling sets the ECS desired count to 0 on AWS to stop the engine (no cost while stopped). Read-aloud itself is turned on/off in the user setting (Read aloud).",
+    "Disabling sends read-aloud to Polly at once and, on AWS, sets the ECS desired count to 0 about a minute later to stop the engine (no cost while stopped). Read-aloud itself is turned on/off in the user setting (Read aloud).",
   "admin.tts_dict_title": "Tenant-wide reading dictionary",
   "admin.saving": "Saving…",
   "admin.tts_dict_ph": "spelling=reading (one per line)\ne.g. agent-fleet=エージェントフリート\n# comment line",

@@ -166,8 +166,13 @@ if [ "$IMAGE" = auto ]; then
     *)       base_sha="v$CUR_TAG" ;;
   esac
   if "${GIT[@]}" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
-    changed="$("${GIT[@]}" diff --name-only "${base_sha}^{commit}" "$SHA" -- workspace/ | head -5)"
+    # Taken in two steps on purpose. `git diff … | head -5` under `set -o pipefail` exits
+    # 141 (SIGPIPE) the moment the diff is longer than five lines, which is exactly the
+    # case this branch exists for — the script died before dispatching anything, with a
+    # status that reads like a crash rather than "the workspace changed".
+    changed="$("${GIT[@]}" diff --name-only "${base_sha}^{commit}" "$SHA" -- workspace/)"
     if [ -n "$changed" ]; then
+      changed="$(printf '%s\n' "$changed" | sed -n '1,5p')"
       IMAGE=both
       echo "==> workspace/ changed since $CUR_TAG — baking BOTH images (+~10min, QEMU):"
       while IFS= read -r f; do [ -n "$f" ] && echo "     $f"; done <<EOF

@@ -789,15 +789,38 @@ Things worth knowing before you enable it:
   i.e. stop the engine in the middle of somebody listening.
 - **The engine is addressed by a Cloud Map DNS name, not Service Connect.** While it is at
   desired 0 the name simply has no A record, `Ready` is false and Polly reads.
-- **Every start pays the full image pull** (about 2 GB; Fargate keeps no image cache), so a
-  cold start is on the order of a minute or two, during which Polly is still reading.
+- **Every start pays the full image pull** (about 2 GB; Fargate keeps no image cache).
+  Measured on this stack: **70–77 s from desired 1 to a running engine**, of which 34 s is
+  the pull, plus another 67–73 s before the Cloud Map A record appears. Polly reads
+  throughout.
 - The engine holds no per-tenant state — the reading dictionaries are applied client-side —
   so destroying it loses nothing.
+- **Do not send one huge synthesis request.** About 2,000 characters in a single call
+  OOM-kills the engine at 4 GiB, and the `/version` health check stays HEALTHY through it;
+  ECS then replaces the task and Polly reads for ~2.5 minutes. The Console sends one
+  sentence at a time, so this is a warning about scripts, not about the product.
 
 Only `30-ingress`'s two parameters are needed on the CP side; `AF_TTS_ECS_CLUSTER` and
 `AF_TTS_ECS_REGION` ride on the existing `AF_ECS_*`, and `CpTaskRole` already carries the
 `ecs:DescribeServices` / `ecs:UpdateService` this needs. See
 [`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#speech-the-voicevox-engine).
+
+**Who moves the desired count** (ADR 0070 P1). The admin panel's toggle now stores one of
+three modes — `off`, `on`, `ondemand` — and on a managed engine an unset value means
+`ondemand`. In that mode the CP starts the engine once read-aloud demand builds up and stops
+it once nobody is listening, and **every automatic start and stop is in the audit log**
+(`tts.engine.auto`, actor `tts-controller`). Nothing needs configuring for the defaults; each
+is overridable as a CP environment variable, and none of them are set by these templates:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `AF_TTS_ECS_CONTROL_INTERVAL_SEC` | 30 | How often the controller looks. **`0` switches the controller off entirely** — the mode is then only what routing reads, and nothing moves the desired count but the toggle. |
+| `AF_TTS_ECS_START_CHARS` | 2000 | Characters of read-aloud demand inside the window that buy a start (about one agent answer). |
+| `AF_TTS_ECS_WINDOW_SEC` | 300 | The rolling window those characters are counted in. |
+| `AF_TTS_ECS_IDLE_SEC` | 1800 | Stop after this long with nobody listening; **`0` = never stop**. Clamped to no less than the start deadline. |
+| `AF_TTS_ECS_START_DEADLINE_SEC` | 300 | A start that has not become `running` by then is treated as failed, returned to 0, and reported with the reason ECS gives. |
+| `AF_TTS_ECS_FAIL_COOLDOWN_SEC` | 900 | How long a failed start blocks the next one, doubling per consecutive failure (capped at 16×). Without it a repeating failure pays a 2 GB pull per attempt. |
+| `AF_TTS_ECS_OFF_GRACE_SEC` | 60 | How long an explicit "disable" waits before the desired count moves. Routing switches to Polly immediately; this only debounces the ECS write, so turning it off and straight back on costs no cold start. |
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
