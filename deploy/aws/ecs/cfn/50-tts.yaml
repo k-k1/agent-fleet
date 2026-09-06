@@ -1,0 +1,264 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter — the VOICEVOX (Zundamon) speech engine as an ECS service
+  that is normally scaled to zero (ADR 0070 P0). Optional: a deployment that does not
+  want Japanese speech deploys nothing and `auto` keeps routing every sentence to
+  Polly. Imports the VPC, private subnets and the CP security group from 00-network,
+  and the cluster, execution role and Cloud Map namespace from 20-platform; it does
+  NOT depend on 30-ingress. Deploy it BEFORE 30-ingress and hand 30-ingress this
+  stack's two outputs (TtsEcsService, VoicevoxUrl) so the Control Plane can find and
+  drive the engine.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+    Description: 00-network stack to import the VPC, private subnets and the CP SG from.
+  PlatformStackName:
+    Type: String
+    Default: af-ecs-platform
+    Description: 20-platform stack to import the cluster, execution role and namespace from.
+  ServiceConnectNamespace:
+    Type: String
+    Default: af.internal
+    Description: >-
+      The private DNS namespace's NAME — it has to be the same value 20-platform was
+      given, because the namespace is imported by id (which carries no name) while the
+      URL handed to the CP is built from the name. Wrong here and everything deploys
+      cleanly while AF_VOICEVOX_URL points at a name that does not resolve.
+  DiscoveryName:
+    Type: String
+    Default: voicevox
+    Description: DNS label the engine answers on, i.e. <DiscoveryName>.<namespace>.
+  EngineImageTag:
+    Type: String
+    Default: cpu-ubuntu24.04-0.25.2
+    Description: >-
+      Tag inside the af-voicevox ECR repository. Pinned by version on purpose: the
+      upstream image is copied in with `crane` rather than pulled from Docker Hub at
+      task start, because this deployment's egress leaves through a single NAT address
+      and would share one anonymous pull quota (ADR 0070 decision 14).
+  TaskCpu:
+    Type: String
+    Default: "2048"
+    AllowedValues: [ "1024", "2048", "4096" ]
+    Description: Fargate task vCPU units (1024 = 1 vCPU). Keep EngineThreads in step.
+  TaskMemory:
+    Type: String
+    Default: "4096"
+    Description: Fargate task memory (MiB). Must be a pair Fargate allows with TaskCpu.
+  CpuArchitecture:
+    Type: String
+    Default: X86_64
+    AllowedValues: [ X86_64, ARM64 ]
+    Description: >-
+      Declared, never inferred (ADR 0053, ADR 0070 decision 11). The image is a
+      two-architecture index, and ARM Fargate is 20.0 % cheaper, but synthesis speed on
+      Graviton is unmeasured — an engine 20 % cheaper and 30 % slower is a bad trade for
+      a latency-sensitive feature. Move it only with numbers in hand.
+  EngineThreads:
+    Type: String
+    Default: "2"
+    AllowedPattern: "^[0-9]+$"
+    Description: >-
+      --cpu_num_threads. Set it to the task's vCPU count (TaskCpu / 1024); left alone the
+      engine picks for itself. Nothing enforces the relationship, so change both together.
+  LoadAllModels:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "on", "off" ]
+    Description: >-
+      --load_all_models. Trades a longer boot for a first synthesis that is not slow.
+      P0 measures both; the default stays off until those numbers exist.
+  LogRetentionDays:
+    Type: Number
+    Default: 7
+    Description: CloudWatch retention for the engine's log group.
+
+Conditions:
+  HasLoadAllModels: !Equals [ !Ref LoadAllModels, "on" ]
+
+Resources:
+  # The image lives in ECR, not on Docker Hub (decision 14). The repository is here
+  # rather than in 20-platform so that a deployment without speech carries no unused
+  # repository — at the price of an ordering wrinkle standup.sh has to know about: on a
+  # first stand-up the repository does not exist until this stack does, so the image can
+  # only be copied in AFTER the stack is created. The service is scaled to zero
+  # immediately, so the one task CloudFormation starts at creation finds an empty
+  # repository and fails to pull; that failure is expected and costs nothing.
+  EcrEngine:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-voicevox
+      EmptyOnDelete: true
+      ImageScanningConfiguration: { ScanOnPush: false }
+
+  # The VOICEVOX HTTP API is unauthenticated and has mutating endpoints, so reachability
+  # is the whole of its access control: port 50021 from the CP security group and nothing
+  # else — no load balancer, private subnets, no public IP (decision 14). The engine also
+  # runs with --disable_mutable_api below; this is the layer that does not depend on a flag.
+  EngineSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} VOICEVOX engine (CP to engine, 50021)"
+      VpcId: !ImportValue { "Fn::Sub": "${NetworkStackName}-VpcId" }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 50021
+          ToPort: 50021
+          SourceSecurityGroupId: !ImportValue { "Fn::Sub": "${NetworkStackName}-CpSgId" }
+          Description: engine port from the Control Plane only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-voicevox-sg" } ]
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/voicevox"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # A Cloud Map DNS service, NOT Service Connect (decision 8). The CP reaches the engine
+  # at http://<DiscoveryName>.<namespace>:50021 through the VPC resolver, so ttsHTTP and
+  # AF_VOICEVOX_URL stay exactly as ADR 0013 wrote them: no /etc/hosts snapshot and no
+  # Envoy sidecar in the synthesis path.
+  #
+  # While the service is at desired 0 the name simply has no A record and the lookup is
+  # NXDOMAIN — voicevoxProvider.Ready goes false and Polly reads. The namespace's SOA TTL
+  # (measured: 15 s) bounds how long a start stays hidden behind negative caching, and the
+  # A record's own 10 s bounds how long a stop stays hidden the other way.
+  #
+  # HealthCheckCustomConfig is what lets ECS own instance health here; without it Cloud
+  # Map refuses the registration for an ECS service that has no load balancer.
+  DiscoveryService:
+    Type: AWS::ServiceDiscovery::Service
+    Properties:
+      Name: !Ref DiscoveryName
+      NamespaceId: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceId" }
+      DnsConfig:
+        DnsRecords:
+          - { Type: A, TTL: 10 }
+      HealthCheckCustomConfig:
+        FailureThreshold: 1
+
+  TaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-voicevox"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      RuntimePlatform:
+        CpuArchitecture: !Ref CpuArchitecture
+        OperatingSystemFamily: LINUX
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      # No TaskRoleArn on purpose: the engine calls no AWS API, so it gets no credentials
+      # at all. Same least-privilege stance as 20-platform's policy-free WsTaskRole.
+      ContainerDefinitions:
+        - Name: voicevox
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !GetAtt EcrEngine.RepositoryUri
+              Tag: !Ref EngineImageTag
+          PortMappings:
+            - ContainerPort: 50021
+          # Command replaces the image's CMD and leaves its ENTRYPOINT in place, so the
+          # whole command line has to be repeated, not just the flags added. Measured with
+          # `crane config` on cpu-ubuntu24.04-0.25.2:
+          #   Entrypoint ["/entrypoint.sh"]  (a wrapper that prints the README and exec "$@")
+          #   Cmd        ["gosu","user","/opt/voicevox_engine/run","--host","0.0.0.0"]
+          # Drop the gosu prefix and the engine runs as root; drop --host and it binds
+          # loopback, where nothing outside the task can reach it.
+          Command:
+            - gosu
+            - user
+            - /opt/voicevox_engine/run
+            - --host
+            - "0.0.0.0"
+            - --disable_mutable_api
+            - --cpu_num_threads
+            - !Ref EngineThreads
+            - !If [ HasLoadAllModels, --load_all_models, !Ref "AWS::NoValue" ]
+          # A wedged engine should be replaced by ECS, not sit RUNNING and unreachable
+          # while the CP reports it as up (decision 16). `curl` is in the image (measured:
+          # the Dockerfile's `apt-get install -y curl gosu`), so no python/wget fallback is
+          # needed. StartPeriod covers the model load — failures before it do not count.
+          HealthCheck:
+            Command: [ "CMD-SHELL", "curl -fsS http://127.0.0.1:50021/version || exit 1" ]
+            Interval: 30
+            Timeout: 5
+            Retries: 3
+            StartPeriod: 120
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: voicevox
+
+  Service:
+    Type: AWS::ECS::Service
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-voicevox"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref TaskDef
+      # ⚠️ LaunchType must stay spelled out. The cluster has NO capacity provider
+      # (measured on the ecs-ec2 deployment: `capacityProviders: []`), so a service that
+      # does not say FARGATE gets the API default, EC2 — which puts the engine inside the
+      # workspace slot pool, breaks the sweeper's "an instance with zero ECS tasks is
+      # idle" premise, and consumes a seat that someone's Workspace needed (ADR 0070
+      # decision 1). One missing line is the whole of that failure.
+      LaunchType: FARGATE
+      # ⚠️ DesiredCount is deliberately ABSENT, and this is load-bearing. From the
+      # resource schema: for a NEW service an unspecified desired count defaults to 1;
+      # for an EXISTING one it is omitted from the update call. So CloudFormation creates
+      # the service running and then never touches the count again — which is what lets
+      # the engine be started and stopped out from under the template. Declaring `0`
+      # instead would reset the count on every task-definition or tag change, i.e. stop
+      # the engine in the middle of somebody listening. standup.sh scales the new service
+      # to 0 straight after creation.
+      DeploymentConfiguration:
+        # One engine, addressed by one DNS name: two tasks during a redeploy would mean
+        # two A records and requests split between a warm engine and a cold one. Stop the
+        # old task first and accept the gap — Polly reads through it.
+        MinimumHealthyPercent: 0
+        MaximumPercent: 100
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref EngineSg ]
+      ServiceRegistries:
+        # awsvpc + an A record: ECS registers the task ENI's address under the Cloud Map
+        # name. No ContainerName/ContainerPort — those are for SRV records.
+        - RegistryArn: !GetAtt DiscoveryService.Arn
+      # The engine is shared cost and is shown as such, never apportioned to members
+      # (ADR 0048, ADR 0070 decision 15). Both keys are already in the CP's cost-allocation
+      # allow-list, so no new key has to be activated. PropagateTags is what makes them
+      # count: Fargate usage is billed against the TASK, and a service's tags reach its
+      # tasks only when it is set.
+      PropagateTags: SERVICE
+      Tags:
+        - Key: af-pool
+          Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+        - Key: af-role
+          Value: tts-engine
+
+Outputs:
+  # Both values are what standup.sh feeds to 30-ingress as TtsEcsService / VoicevoxUrl.
+  # Neither can be empty (a !GetAtt and a !Sub over parameters that have non-empty
+  # defaults), which is what check-cfn-exports.py insists on.
+  TtsEcsService:
+    Description: AF_TTS_ECS_SERVICE for the Control Plane (the engine's ECS service name).
+    Value: !GetAtt Service.Name
+    Export: { Name: !Sub "${AWS::StackName}-TtsEcsService" }
+  VoicevoxUrl:
+    Description: AF_VOICEVOX_URL for the Control Plane (the Cloud Map DNS name).
+    Value: !Sub "http://${DiscoveryName}.${ServiceConnectNamespace}:50021"
+    Export: { Name: !Sub "${AWS::StackName}-VoicevoxUrl" }
+  EcrEngineUri:
+    Description: Where `crane copy` puts the pinned upstream image.
+    Value: !GetAtt EcrEngine.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrEngineUri" }

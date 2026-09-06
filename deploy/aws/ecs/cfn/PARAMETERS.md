@@ -303,6 +303,35 @@ Derived from the schedule id, so it is stable across restarts and `next_run`, th
 confirmation and `{{time}}` keep showing the requested time. On ecs-ec2 every wake is also a
 slot, so keep some spread if many people share one morning hour.
 
+## Speech (the VOICEVOX engine)
+
+Both default to empty, and empty is a complete configuration: the Control Plane keeps its
+own defaults, no engine is managed, and `auto` routes every sentence — Japanese included —
+to Polly. They are filled in only when the optional `50-tts` stack is deployed, and
+`standup.sh` fills them from that stack's outputs rather than from the capture, because a
+rebuilt stack produces new values. Background: ADR 0070.
+
+### `TtsEcsService`
+
+`AF_TTS_ECS_SERVICE` — the engine's ECS service name (`50-tts`'s `TtsEcsService` output).
+Setting it is what puts the engine under the CP's control: the admin toggle then flips the
+service's desired count between 0 and 1, and `GET /api/tts/status` reports
+`running`/`starting`/`stopped` from ECS rather than from a stored setting. Cluster and
+region are deliberately not passed alongside it — `tts_ecs.go` falls back to
+`AF_ECS_CLUSTER` and `AF_ECS_REGION`, and the engine lives in the same cluster.
+
+### `VoicevoxUrl`
+
+`AF_VOICEVOX_URL` — where the engine answers (`50-tts`'s `VoicevoxUrl` output, a Cloud Map
+DNS name such as `http://voicevox.af.internal:50021`). Unset leaves the CP on its
+compose-era default of `http://127.0.0.1:50021`, where nothing listens on ECS.
+
+⚠️ The two are separately meaningful, and a URL without a service name is a legitimate
+combination: an engine somebody else runs and this deployment must not start or stop. The
+reverse — a service name without a URL — is the misconfiguration to watch for, because
+everything deploys cleanly and the toggle appears to work while synthesis goes on reaching
+loopback.
+
 ## WAF
 
 Optional, OFF by default.
