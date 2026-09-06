@@ -35,20 +35,23 @@ export function TtsAdminView() {
   useEffect(() => {
     load();
   }, [load]);
-  // Poll for readiness while enabled but not ready (ECS still starting), and also while the
-  // toggle is pinned off because no engine exists — the pin has to lift the moment one appears.
-  // Polling stops only when it is usable now, or deliberately stopped under management.
+  // Poll while anything is still moving: the engine is coming up, it is being stopped
+  // (the mode said off and the desired count has not caught up yet), or the control is
+  // pinned off because no engine exists — that pin has to lift the moment one appears.
+  // On-demand always polls: the desired count moves without anyone touching this screen.
   useEffect(() => {
-    if (!data || data.engine?.ready) return;
-    if (!data.enabled && data.managed) return;
+    if (!data) return;
+    const settled = data.engine?.ready || data.engine?.state === "stopped";
+    if (settled && data.mode !== "ondemand") return;
+    if (data.mode === "off" && data.managed && data.engine?.state !== "stopping") return;
     const t = setInterval(load, 5000);
     return () => clearInterval(t);
   }, [data, load]);
 
-  const setEnabled = async (enabled: boolean) => {
+  const setMode = async (mode: string) => {
     setBusy(true);
     try {
-      const d = await apiJSON("api/admin/tts", "PUT", { enabled });
+      const d = await apiJSON("api/admin/tts", "PUT", { mode });
       if (d?.error) setErr(errText(d.error));
       else setData(d);
     } finally {
@@ -80,18 +83,24 @@ export function TtsAdminView() {
   // so the effective state is off. Pin only the display and the control to off, never the stored
   // setting: when an engine appears the poll above lifts the pin and the recorded intent returns.
   const noEngine = !!data && !data.managed && !engine.ready;
-  const enabled = !!data?.enabled && !noEngine;
+  // Mode is what the administrator chose and state is what the deployment is doing about
+  // it — two different questions (ADR 0070 decision 7). They disagree on purpose right
+  // after "off" is pressed: the mode is off immediately, the state says stopping, and the
+  // desired count only moves once the undo window has run out.
+  const mode: string = noEngine ? "off" : (data?.mode ?? (data?.enabled === false ? "off" : "on"));
   const engineLabel = !data
     ? "…"
-    : engine.ready
-      ? tr("admin.tts_running")
-      : engine.state === "starting"
-        ? tr("admin.tts_starting")
-        : engine.state === "running"
-          ? tr("admin.tts_running_waiting")
-          : enabled && data.managed
-            ? tr("admin.tts_stopped")
-            : tr("admin.tts_stopped_or_off");
+    : engine.state === "stopping"
+      ? tr("admin.tts_stopping")
+      : engine.ready
+        ? tr("admin.tts_running")
+        : engine.state === "starting"
+          ? tr("admin.tts_starting")
+          : engine.state === "running"
+            ? tr("admin.tts_running_waiting")
+            : mode !== "off" && data.managed
+              ? tr("admin.tts_stopped")
+              : tr("admin.tts_stopped_or_off");
 
   return (
     <div className="admin-stage">
@@ -101,19 +110,30 @@ export function TtsAdminView() {
           <span className="seg sm">
             <button
               type="button"
-              className={"seg-btn" + (enabled ? " active" : "")}
+              className={"seg-btn" + (mode === "off" ? " active" : "")}
               disabled={busy || data === null || noEngine}
-              onClick={() => setEnabled(true)}
+              onClick={() => setMode("off")}
             >
-              {tr("admin.enable")}
+              {tr("admin.tts_mode_off")}
             </button>
+            {/* On-demand only exists where this screen can actually start a service. */}
+            {data?.managed && (
+              <button
+                type="button"
+                className={"seg-btn" + (mode === "ondemand" ? " active" : "")}
+                disabled={busy || data === null}
+                onClick={() => setMode("ondemand")}
+              >
+                {tr("admin.tts_mode_ondemand")}
+              </button>
+            )}
             <button
               type="button"
-              className={"seg-btn" + (!enabled ? " active" : "")}
+              className={"seg-btn" + (mode === "on" ? " active" : "")}
               disabled={busy || data === null || noEngine}
-              onClick={() => setEnabled(false)}
+              onClick={() => setMode("on")}
             >
-              {tr("admin.disable")}
+              {tr("admin.tts_mode_on")}
             </button>
           </span>
           <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
@@ -122,14 +142,16 @@ export function TtsAdminView() {
         </div>
         {data && (
           <>
-            <p className={engine.ready ? "muted" : enabled ? "form-err" : "muted"}>
+            <p className={engine.ready || mode === "off" ? "muted" : "form-err"}>
               {tr("admin.tts_engine_prefix")}{engineLabel}
               {data.managed ? tr("admin.tts_managed") : tr("admin.tts_external")}
               {tr("admin.tts_polly_sep")}{data.polly?.ready ? tr("admin.tts_polly_ready") : tr("admin.tts_polly_unset")}
             </p>
-            {enabled && !engine.ready && data.managed && (
+            {engine.state === "starting" && data.managed && (
               <p className="muted">{tr("admin.tts_starting_note")}</p>
             )}
+            {engine.state === "stopping" && <p className="muted">{tr("admin.tts_stopping_note")}</p>}
+            {mode === "ondemand" && <p className="muted">{tr("admin.tts_ondemand_note")}</p>}
             {noEngine && <p className="muted">{tr("admin.tts_no_engine")}</p>}
             {engine.error && <p className="form-err">{engine.error}</p>}
           </>

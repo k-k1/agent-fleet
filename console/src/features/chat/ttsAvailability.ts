@@ -5,10 +5,14 @@
 // environment. The decision lives here so it can be tested plainly.
 
 export interface TtsProviderStatus {
-  ready: boolean; // can synthesize right now
-  enabled?: boolean; // admin toggle (voicevox only; false = routing stopped)
+  ready: boolean; // can synthesize right now (managed: reachable AND warmed up)
+  enabled?: boolean; // admin intent as a boolean (voicevox only; false = routing stopped)
+  mode?: string; // the admin intent itself: "off" | "on" | "ondemand" (voicevox only)
   managed?: boolean; // under ECS on-demand management (voicevox only)
-  state?: string; // ECS service state when managed (running/starting/stopped)
+  // What the deployment is doing right now, which is a different question from the mode:
+  // running/starting/stopped, plus "stopping" for the window after "off" was pressed and
+  // before the desired count moves (ADR 0070 decisions 5 and 7).
+  state?: string;
 }
 export interface TtsStatus {
   voicevox: TtsProviderStatus;

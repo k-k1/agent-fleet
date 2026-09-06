@@ -8,7 +8,10 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -308,6 +311,95 @@ func TestTTSAdminToggleSetting(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest("POST", "/api/tts/synthesize", strings.NewReader(`{"text":"やあ。"}`)))
 	if rec.Code != http.StatusOK {
 		t.Errorf("synthesize with engine off = %d, want 200 (last-resort voicevox)", rec.Code)
+	}
+}
+
+// TestTTSAdminModes — the three-valued mode (ADR 0070 decision 7) and the undo window on
+// an explicit OFF. Two things are being pinned here:
+//
+//   - what the panel is told is the stored intent, never the desired count. Deriving it
+//     from ECS is what made the toggle appear to move on its own once the engine began
+//     starting and stopping itself;
+//   - pressing OFF does not move the desired count. It says "stopping" and leaves the
+//     stop to the controller's undo window, so OFF-then-ON costs nothing.
+//
+// put() is called directly: the route wrapper needs super_admin auth, which is tested
+// elsewhere, and what matters here is the handler's own behaviour.
+func TestTTSAdminModes(t *testing.T) {
+	clearTTSEnv(t)
+	srv, _ := fakeVoicevox(t)
+	st := testSettingsStore(t)
+	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
+	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	vv := &voicevoxProvider{base: srv.URL}
+	ctrl := newTTSController(eng, vv, newTTSDemand(st, time.Minute), st, nil, testControlCfg())
+	adm := ttsAdminAPI{memberAuth{&manager{store: st}}, st, eng, ctrl, vv, newPollyProvider()}
+
+	put := func(body string) map[string]any {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		adm.put(rec, httptest.NewRequest("PUT", "/api/admin/tts", strings.NewReader(body)), store.Identity{ID: "u1"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("put %s = %d (%s)", body, rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatalf("put body: %v", err)
+		}
+		return out
+	}
+
+	// OFF: the mode flips at once, the state says stopping, the desired count has not moved.
+	out := put(`{"mode":"off"}`)
+	if out["mode"] != "off" || out["enabled"] != false {
+		t.Errorf("after off: mode=%v enabled=%v, want off/false", out["mode"], out["enabled"])
+	}
+	if state := out["engine"].(map[string]any)["state"]; state != "stopping" {
+		t.Errorf("after off: state=%v, want stopping (the undo window has not run out)", state)
+	}
+	if len(f.desired) != 0 {
+		t.Errorf("after off: desired calls = %v, want none (the controller stops it later)", f.desired)
+	}
+	if v, _ := st.GetSetting(t.Context(), ttsModeAtSetting); v == "" {
+		t.Error("the mode change time must be stored: the undo window is measured from it")
+	}
+
+	// ON inside the window: the engine was never stopped, so this costs no cold start.
+	out = put(`{"mode":"on"}`)
+	if out["mode"] != "on" {
+		t.Errorf("after on: mode=%v, want on", out["mode"])
+	}
+	if state := out["engine"].(map[string]any)["state"]; state != "running" {
+		t.Errorf("after on: state=%v, want running", state)
+	}
+	if len(f.desired) != 1 || f.desired[0] != 1 {
+		t.Errorf("after on: desired calls = %v, want a single start", f.desired)
+	}
+
+	// ondemand leaves the desired count entirely to the controller.
+	out = put(`{"mode":"ondemand"}`)
+	if out["mode"] != "ondemand" || len(f.desired) != 1 {
+		t.Errorf("after ondemand: mode=%v desired=%v, want ondemand and no movement", out["mode"], f.desired)
+	}
+
+	// A client written before the mode existed still works.
+	if out = put(`{"enabled":false}`); out["mode"] != "off" {
+		t.Errorf("legacy {enabled:false}: mode=%v, want off", out["mode"])
+	}
+	// An unknown mode is refused rather than silently treated as one of the three.
+	rec := httptest.NewRecorder()
+	adm.put(rec, httptest.NewRequest("PUT", "/api/admin/tts", strings.NewReader(`{"mode":"maybe"}`)), store.Identity{ID: "u1"})
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("unknown mode = %d, want 400", rec.Code)
+	}
+
+	// With no controller there is nobody to stop it later, so OFF stops it here.
+	f2 := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
+	adm2 := ttsAdminAPI{memberAuth{&manager{store: st}}, st, &ttsEngineECS{api: f2, cluster: "c", service: "voicevox"}, nil, vv, newPollyProvider()}
+	rec = httptest.NewRecorder()
+	adm2.put(rec, httptest.NewRequest("PUT", "/api/admin/tts", strings.NewReader(`{"mode":"off"}`)), store.Identity{ID: "u1"})
+	if len(f2.desired) != 1 || f2.desired[0] != 0 {
+		t.Errorf("off without a controller: desired calls = %v, want an immediate stop", f2.desired)
 	}
 }
 
