@@ -113,6 +113,7 @@ export const sessions = {
   "wsbar.preview_title": "opencode web / コンテナ内サービスを開く",
   "wsbar.resources": "リソース",
   "wsbar.resources_title": "リソース使用状況",
+  "wsbar.machine_title": "このワークスペースが動いているマシン（設定 › マシン に詳細）",
   "wsbar.preview.port_label": "ポートを指定して開く",
   "wsbar.preview.port_ph": "ポート",
   "wsbar.preview.port_hint": "コンテナ内で起動したサービスのポート（例: 8080）",

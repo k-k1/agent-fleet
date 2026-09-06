@@ -467,6 +467,7 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "set.tab_keys": "Keyboard",
   "set.tab_usage": "Agent usage",
   "set.tab_memory": "Agent memory",
+  "set.tab_machine": "Machine",
   "set.tab_env": "Toolchains",
   "set.tab_preview": "Preview subdomains",
   "set.tab_agents": "Agents",

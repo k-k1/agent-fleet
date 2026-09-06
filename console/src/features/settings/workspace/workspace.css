@@ -374,3 +374,38 @@
   line-height: 1.8;
   color: var(--muted);
 }
+
+/* Machine tab (MachineTab.tsx) — one value per row, each carrying where it came from.
+   The source marker is deliberately quiet: it qualifies the number, it is not a status. */
+.mv-val {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mv-class {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.mv-src {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* Configured-but-not-measured is the weaker claim of the two, so it is set apart rather
+   than coloured like a warning — nothing is wrong when a workspace is stopped. */
+.mv-src.is-declared {
+  font-style: italic;
+}
+
+/* The two boxes disagree: what is running is not what the settings now say. It is the one
+   line on this screen that has to be noticed. */
+.mv-drift {
+  color: var(--warn);
+}

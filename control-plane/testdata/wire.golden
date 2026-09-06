@@ -1,7 +1,7 @@
 # JSON key sets of the DTOs the Console reads. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestWireShapeGolden -update-wire-golden ./...
 # Format: <type>.<key path> <JSON type>[,omitempty] ([]=array / raw=passed-through JSON)
-# count: 153
+# count: 171
 adminSessionRow.alive bool
 adminSessionRow.dir string
 adminSessionRow.email string
@@ -155,3 +155,21 @@ workItemSessionDTO.itemKey string
 workItemSessionDTO.provider string
 workItemSessionDTO.repo string
 workItemSessionDTO.sessionName string
+workspaceMachineWire.declared.arch string,omitempty
+workspaceMachineWire.declared.class_id string,omitempty
+workspaceMachineWire.declared.class_label string,omitempty
+workspaceMachineWire.declared.dedicated bool
+workspaceMachineWire.declared.home_gib number,omitempty
+workspaceMachineWire.declared.instance_type string,omitempty
+workspaceMachineWire.declared.mem_cap_mib number,omitempty
+workspaceMachineWire.declared.slot_mem_mib number,omitempty
+workspaceMachineWire.declared.vcpu number,omitempty
+workspaceMachineWire.measured.arch string,omitempty
+workspaceMachineWire.measured.cpu_quota number,omitempty
+workspaceMachineWire.measured.disk_total number,omitempty
+workspaceMachineWire.measured.instance_type string,omitempty
+workspaceMachineWire.measured.mem_max number,omitempty
+workspaceMachineWire.measured.mem_total number,omitempty
+workspaceMachineWire.measured.vcpu number,omitempty
+workspaceMachineWire.running bool
+workspaceMachineWire.runtime string

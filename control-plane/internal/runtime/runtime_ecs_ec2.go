@@ -79,6 +79,13 @@ type ecsEC2Runtime struct {
 	// from the rung above (workspaceMemCapMiB). 0 = uncapped.
 	memCapMiB int64
 	homeGiB   int32
+	// The rest of the rung and the class it came from, carried for MachineProfile()
+	// alone: the Console names the box a member is on, and the answer has to be the same
+	// resolution that placement uses rather than a second one computed elsewhere.
+	slotMemMiB int64
+	slotVCPU   int
+	classID    string
+	classLabel string
 
 	// azOfSubnet resolves the deployment's subnets to their AZ (cached in the factory):
 	// an EBS volume never leaves its AZ, so the volume pins the AZ and the AZ picks
@@ -689,17 +696,21 @@ func (f *ecsEC2Factory) New(ws Workspace, secretKey string, extraEnv []string) R
 	if !ok { // unreachable: ecsFactory.New always returns *ecsRuntime
 		panic("ecs-ec2: base factory did not return *ecsRuntime")
 	}
-	instanceType, arch, slotMemMiB := f.pool.slotRungFor(ws.SlotClass, ws.MemBytes)
+	rung, class := f.pool.rungFor(ws.SlotClass, ws.MemBytes)
 	return &ecsEC2Runtime{
 		base:         base,
 		ec2:          f.ec2,
 		ssmc:         f.ssmc,
 		ci:           f.ci,
 		pool:         f.pool,
-		instanceType: instanceType,
-		arch:         arch,
-		memCapMiB:    f.pool.workspaceMemCapMiB(slotMemMiB),
+		instanceType: rung.instanceType,
+		arch:         class.arch,
+		memCapMiB:    f.pool.workspaceMemCapMiB(rung.memMiB),
 		homeGiB:      f.homeGiB(ws),
+		slotMemMiB:   rung.memMiB,
+		slotVCPU:     rung.vcpu,
+		classID:      class.id,
+		classLabel:   class.label,
 		azOfSubnet:   f.subnetAZs,
 		bg:           backgroundWithin(f.pool.waitBudget),
 		now:          time.Now,
@@ -759,15 +770,24 @@ func (p ec2PoolConfig) slotTypeFor(classID string, memBytes int64) (instanceType
 // slotRungFor is slotTypeFor plus the rung's DECLARED memory, which the workspace's
 // memory cap is derived from (workspaceMemCapMiB).
 func (p ec2PoolConfig) slotRungFor(classID string, memBytes int64) (instanceType, arch string, slotMemMiB int64) {
+	s, c := p.rungFor(classID, memBytes)
+	return s.instanceType, c.arch, s.memMiB
+}
+
+// rungFor is the whole answer slotRungFor narrows: the rung itself (including the
+// declared vCPU the Console prints) and the class it was taken from. Every caller goes
+// through here so that "which box does this member get" is decided in exactly one place —
+// a second copy of the rule would drift from placement, and the screen would then promise
+// a box the pool never asks for.
+func (p ec2PoolConfig) rungFor(classID string, memBytes int64) (ec2Slot, ec2SlotClass) {
 	c := p.classFor(classID)
 	want := memBytes / mib
 	for _, s := range c.slots {
 		if want <= s.memMiB {
-			return s.instanceType, c.arch, s.memMiB
+			return s, c
 		}
 	}
-	last := c.slots[len(c.slots)-1]
-	return last.instanceType, c.arch, last.memMiB
+	return c.slots[len(c.slots)-1], c
 }
 
 // workspaceMemCapMiB is the hard memory limit put on the workspace container: the

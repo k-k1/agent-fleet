@@ -107,6 +107,7 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "wsbar.preview_title": "Open opencode web / an in-container service",
   "wsbar.resources": "Resources",
   "wsbar.resources_title": "Resource usage",
+  "wsbar.machine_title": "The machine this workspace runs on (details in Settings › Machine)",
   "wsbar.preview.port_label": "Open a specific port",
   "wsbar.preview.port_ph": "port",
   "wsbar.preview.port_hint": "The port of a service you started in the container (e.g. 8080)",

@@ -516,6 +516,15 @@ button.wu-manage {
   border-radius: 10px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45);
 }
+/* The machine the tiles below are measuring. A caption, not a tile: it never changes while
+   the popover is open, so it must not compete with the numbers that do. */
+.ws-res-machine {
+  padding-bottom: 7px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
 /* Align the tiles as columns (label | trend | value) so the sparklines line up.
    The old width:100% + space-between let each fixed-width sparkline float to a
    different x depending on the label/value widths — visibly misaligned. */

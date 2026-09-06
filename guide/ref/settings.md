@@ -44,6 +44,7 @@ value you set is not the value in force, look one layer out.
 | MCP tokens | tokens for driving your sessions from outside |
 | Notifications | what you are told about, and how |
 | Read aloud | speech engine and voice |
+| Machine | the box your workspace runs on (kind, architecture, vCPU, memory, disk) |
 | Toolchains | JDK and other per-workspace toolchains |
 | Preview subdomains | the URL that opens the app you are building (only where they are issued) |
 | Ops & monitoring | monitoring integrations |
