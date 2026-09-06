@@ -6,8 +6,8 @@ package main
 //
 // The node picker had exactly the bug jdk_install_http.go was written to fix, and the
 // comment there ("Java is the one toolchain the picker could offer without being able
-// to deliver") had quietly stopped being true. nodeOptions is a FIXED list — 18/20/22/24
-// — not "installed ∪ installable, so a member could pick 24 with only 22 on disk;
+// to deliver") had quietly stopped being true. nodeOptions is a FIXED list of majors,
+// not "installed ∪ installable", so a member could pick 24 with only 22 on disk;
 // resolvedToolchains() then globbed ~/.nvm/versions/node/v24.* , found nothing, injected
 // nothing, and every session kept running the old node. No error, no warning: the
 // selection simply did nothing until someone happened to Stop → Start the workspace,
@@ -265,7 +265,7 @@ func nodeInstallStatus() map[string]any {
 		"major":          major,
 		"error":          errMsg,
 		"node_installed": installedNodeMajors(),
-		"node_available": nodeOptions,
+		"node_available": nodeOptionsFor(readToolchains().Node),
 	}
 }
 
@@ -289,7 +289,7 @@ func handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offered := false
-	for _, v := range nodeOptions {
+	for _, v := range nodeOptionsFor(readToolchains().Node) {
 		if v == req.Major {
 			offered = true
 			break
