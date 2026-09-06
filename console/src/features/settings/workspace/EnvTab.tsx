@@ -435,7 +435,7 @@ function JavaRow({
 }
 
 // NodeRow is JavaRow's twin, and exists because node had exactly the same hole.
-// nodeOptions is a FIXED list (18/20/22/24), so the picker always offers versions that
+// nodeOptions is a FIXED list of majors, so the picker always offers versions that
 // may not be on disk — and until now selecting an absent one only wrote the choice.
 // resolvedToolchains() then globbed ~/.nvm/versions/node/v<major>.* , found nothing and
 // injected nothing, so every session kept the old node with no error anywhere; the only

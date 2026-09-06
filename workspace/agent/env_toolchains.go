@@ -76,7 +76,18 @@ var toolchainVerRe = regexp.MustCompile(`^(system|[0-9]{1,3}(\.[0-9]{1,4}){0,2})
 
 // nodeOptions are the versions the Console offers for nvm. "system" keeps the
 // image's base node.
-var nodeOptions = []string{"system", "18", "20", "22", "24"}
+//
+// Even majors only — those are the lines node.js promotes to LTS — and a new one is
+// offered from its April/May release, not from the October it becomes LTS: 26.0.0 shipped
+// 2026-05-05 and until it is listed here a member has no way to ask for it at all.
+// Nothing here needs to be on disk: node_install.go downloads whatever is picked and
+// installedNodeMajors() tells the picker which majors already are.
+//
+// Majors past end-of-life (18, 20) stay on the list. Dropping one strands whoever has it
+// selected — handleNodeInstall refuses a major that is not offered, so the choice they
+// already made would become uninstallable — and a member keeping an old project alive is
+// exactly who needs it.
+var nodeOptions = []string{"system", "18", "20", "22", "24", "26"}
 
 // goOptions merges "system" (baked /usr/local/go, or none), the build pin and the
 // on-demand versions already installed — the list the Console offers.
@@ -265,7 +276,7 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
 		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
 		"node_options":   nodeOptions,
-		// nodeOptions is a FIXED list (18/20/22/24), so — exactly like java — it offers
+		// nodeOptions is a FIXED list, so — exactly like java — it offers
 		// versions that may not be on disk. Without this the Console cannot tell the two
 		// apart, and selecting an absent one silently did nothing (docs/decisions/0068).
 		"node_installed": installedNodeMajors(),
