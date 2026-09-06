@@ -42,6 +42,25 @@ describe("splitYamlFrontMatter", () => {
     });
   });
 
+  // The schema is pinned to YAML 1.1 (see FRONT_MATTER_SCHEMA). js-yaml 5 defaults to 1.2,
+  // where a date is a plain string and `<<` / `!!set` are errors — and an error here is not
+  // a fallback but a disappearance: load() throwing drops the block to parseFlatEntries,
+  // which rejects anything nested and returns null, so the whole panel goes away and the
+  // front matter renders as prose. Drop the schema argument and all three of these fail.
+  it("reads front matter as YAML 1.1, the way the convention was written", () => {
+    const dated = splitYamlFrontMatter("---\ndate: 2026-09-06\n---\n# 本文");
+    expect(dated!.attributes.date).toBeInstanceOf(Date);
+    expect((dated!.attributes.date as Date).toISOString()).toBe("2026-09-06T00:00:00.000Z");
+
+    expect(splitYamlFrontMatter("---\nbase: &b\n  a: 1\nmine:\n  <<: *b\n  b: 2\n---\n# 本文")).toEqual({
+      attributes: { base: { a: 1 }, mine: { a: 1, b: 2 } },
+      body: "# 本文",
+    });
+
+    const set = splitYamlFrontMatter("---\ntags: !!set\n  ? docs\n  ? ops\n---\n# 本文");
+    expect(set!.attributes.tags).toBeInstanceOf(Set);
+  });
+
   it("keeps valid YAML off the lenient path, Japanese keys included", () => {
     expect(splitYamlFrontMatter("---\n用途: 評価\n---\n# 本文")).toEqual({
       attributes: { 用途: "評価" },
