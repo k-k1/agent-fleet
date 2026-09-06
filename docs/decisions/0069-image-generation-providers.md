@@ -391,3 +391,32 @@ mirror's `UserFileBlock`/`FileCard` with a thumbnail, which is the same route co
   emitted as the call is parsed.
 - Other kinds are one call to the shared function away, but none is added blind: what each CLI
   spells an MCP tool name has to be read off real data first, and only claude's has been.
+
+### Driven end to end (2026-09-06)
+
+`imagegen_live_test.go` (build tag `clicontract`, gated on `AF_IMAGEGEN_LIVE=1` because it
+spends real plan quota) runs the whole path in a sandbox: a real `workspace-agent mcp-stdio
+--self-report --image-gen` child speaking MCP over a pipe, the real route table behind it
+(`buildMux()` under `httptest`, so none of main's boot runs and the live Agent is untouched),
+the real Codex CLI, and a real picture at the end. HOME, CODEX_HOME, the usage ledger and the
+Claude config dir all point into a temp tree; the only thing borrowed from the real home is a
+symlink to the Codex login, read and never written through.
+
+What it showed, run once:
+
+- `/imagegen/status` for a claude session: `enabled ready provider=codex ops=[generate edit]`.
+- `tools/list` advertised `generate_image`; the same list for a **codex** session did not,
+  while still carrying `af_report` — the positive control that makes the negative mean
+  something.
+- The call took **47 s** and produced **4 progress notifications**, i.e. the heartbeat really
+  does tick at 10 s intervals for the whole generation. That is the mechanism the opencode
+  ceiling depends on, and until this run it had only been reasoned about in our own server.
+- The result carried a path, and the file at it is a decodable **1254×1254 PNG** for a request
+  of 1024×1024 — with `size=1024x1024 requested, 1254x1254 produced` in the warnings. Note
+  that the earlier provider-only run of the same day returned 1536×1024: the size is not a
+  fixed wrong value, it is unpredictable, which is precisely why Decision 7 reports rather
+  than promises.
+
+Not covered by it, and still not covered by anything: the card's actual pixels in a browser.
+The server side is verified to emit the part and serve the file; the rendering rests on the
+existing `UserFileBlock` and its own tests.
