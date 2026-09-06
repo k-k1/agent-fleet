@@ -180,6 +180,11 @@ seconds; below 1.0 keeps up with playback.
   the SOCI acceptance gate**, which is why SOCI is not adopted (Options rejected).
 - **Fargate Spot places without a launch type**, on a cluster whose
   `defaultCapacityProviderStrategy` is empty (decision 1).
+- **The real engine's `/speakers`, read from inside the VPC** (the shape decision 12 now
+  stores): HTTP 200, 13,117 bytes, **43 characters**, every style `"type": "talk"` on the
+  pinned `0.25.2` image, `id` a JSON number. That is exactly what `voicevoxSpeakers` parses,
+  so the durable catalogue is a 43-character list and not an empty one — the failure mode
+  worth checking, because it would only show up as a picker that stays empty forever.
 
 ### What the code says today
 
