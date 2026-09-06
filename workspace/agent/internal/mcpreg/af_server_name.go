@@ -33,7 +33,11 @@ import (
 // afNameRE matches a name this file generates. It is what lets a stale entry be
 // recognised as af's own even when the ownership ledger has lost it — see
 // StaleAFServerName.
-var afNameRE = regexp.MustCompile(`^af_[0-9a-f]{8}$`)
+// afNamePattern is the shape, held once: afNameRE anchors it, and afClientToolRE embeds it
+// so the two can never drift into disagreeing about what one of af's own names looks like.
+const afNamePattern = `af_[0-9a-f]{8}`
+
+var afNameRE = regexp.MustCompile(`^` + afNamePattern + `$`)
 
 func afNamePath() string { return filepath.Join(paths.AgentConfigDir(), "mcp-af-name") }
 
@@ -101,4 +105,26 @@ func afServerNameLocked() string {
 // (`af_` + 8 hex) that recognising it costs none of the ledger's caution.
 func StaleAFServerName(name string, keep map[string]bool) bool {
 	return !keep[name] && afNameRE.MatchString(name)
+}
+
+// afClientToolRE matches the name a CLIENT sees for one of af's own tools. A client
+// namespaces an MCP tool by its server, and the server name is what rotates every boot, so
+// the transcript layer cannot compare against a constant.
+//
+// The `mcp__<server>__<tool>` form is claude's, and is what a live session's own tool list
+// spells (`mcp__af_40ed9852__af_report`, read out of a running session on 2026-09-06). The
+// single-underscore and bare forms are tolerated rather than claimed: another CLI that
+// flattens the separator differently would otherwise silently match nothing, and a false
+// positive is impossible without a server actually named `af` / `af_<8 hex>`.
+var afClientToolRE = regexp.MustCompile(`^(?:mcp__)?(?:` + afNamePattern + `|` + BuiltinAF + `)_{1,2}(.+)$`)
+
+// IsAFToolName reports whether a client-side MCP tool name is af's own `tool`. The bare
+// name is accepted too, for a client that does not namespace at all.
+func IsAFToolName(name, tool string) bool {
+	name = strings.TrimSpace(name)
+	if name == tool {
+		return true
+	}
+	m := afClientToolRE.FindStringSubmatch(name)
+	return m != nil && m[1] == tool
 }
