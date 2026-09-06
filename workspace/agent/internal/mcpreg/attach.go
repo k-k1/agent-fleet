@@ -211,13 +211,36 @@ func extraEnvVars(d ServerDef) []string {
 	return []string{"AF_SECRET_KEY"}
 }
 
-// timeoutArg maps the definition's timeout onto codex's startup budget. codex takes
-// SECONDS as a float; a definition carries milliseconds.
+// timeoutArg maps the definition's timeouts onto codex's two budgets. codex takes SECONDS as
+// a float; a definition carries milliseconds.
 func timeoutArg(prefix string, d ServerDef) []string {
-	if d.TimeoutMS <= 0 {
-		return nil
+	var out []string
+	if d.TimeoutMS > 0 {
+		out = append(out, "-c", fmt.Sprintf("%sstartup_timeout_sec=%.1f", prefix, float64(d.TimeoutMS)/1000))
 	}
-	return []string{"-c", fmt.Sprintf("%sstartup_timeout_sec=%.1f", prefix, float64(d.TimeoutMS)/1000)}
+	if sec := CodexToolTimeoutSec(d); sec > 0 {
+		out = append(out, "-c", fmt.Sprintf("%stool_timeout_sec=%.1f", prefix, sec))
+	}
+	return out
+}
+
+// CodexToolTimeoutSec is the per-CALL budget codex allows an MCP tool, distinct from the
+// startup budget above and, until ADR 0069, never written at all.
+//
+// Measured 2026-09-06 against a dummy stdio server whose one tool sleeps: codex-cli 0.153.4
+// answers a 90 s call fine and CUTS a 300 s one — "timed out awaiting tools/call after 300s"
+// while the server had replied at 300.0 s — which is the tool_timeout_sec default. Only af's
+// own server needs more, because generate_image runs a whole image generation inside the
+// call; every other server keeps codex's default rather than being quietly widened.
+//
+// 600 s leaves margin over the ~235 s reported for a high-quality large image. Whether codex
+// also resets this clock on notifications/progress (opencode does — that is what lifts ITS
+// 60 s ceiling) was not measured, so the number is not allowed to depend on it.
+func CodexToolTimeoutSec(d ServerDef) float64 {
+	if d.Origin == OriginBuiltin && d.ID == BuiltinAF {
+		return 600
+	}
+	return 0
 }
 
 // mintedHeaderVar names the environment variable a codex remote header reads from.

@@ -95,12 +95,31 @@ var PeerMessagingEnabled func() bool
 
 func peerMessagingOn() bool { return PeerMessagingEnabled != nil && PeerMessagingEnabled() }
 
+// ImageGenEnabled is the same hook for the image generation tool (ADR 0069 decision 8), and
+// off by default for the same reason peer messaging is: it spends the user's ChatGPT plan
+// quota from sessions that are not Codex sessions, invisibly.
+//
+// The run-arg carries the OPT-IN only, never the agent kind. Threading the kind through here
+// would make the af server's argv differ per kind, and the ownership ledger (managed.Kinds),
+// the drift tests and BuiltinRunArgs(id) — which has no kind to offer — are all written for
+// one af definition per boot. "Advertise generate_image to this session or not" is therefore
+// decided where the tool list is built, on every tools/list.
+var ImageGenEnabled func() bool
+
+func imageGenOn() bool { return ImageGenEnabled != nil && ImageGenEnabled() }
+
 // builtinRunArgsFor resolves a builtin's launch args, applying the switches that depend
 // on user settings rather than on the spec alone.
 func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	args := append([]string(nil), spec.runArgs...)
-	if id == BuiltinAF && peerMessagingOn() {
+	if id != BuiltinAF {
+		return args
+	}
+	if peerMessagingOn() {
 		args = append(args, "--peer-messaging")
+	}
+	if imageGenOn() {
+		args = append(args, "--image-gen")
 	}
 	return args
 }

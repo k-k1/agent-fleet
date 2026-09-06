@@ -30,6 +30,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -87,6 +88,14 @@ var mcpSourceSession string
 // (no arm, no shell targets, server-built envelope).
 var mcpPeerMessagingEnabled bool
 
+// mcpImageGenEnabled adds ONLY the image generation tool to the session-side server
+// (ADR 0069 decision 8). Enabled by `--self-report --image-gen`, the same additive shape as
+// --chromium-attach and --peer-messaging. The flag carries the user's opt-in and NOTHING
+// else: which sessions actually see the tool is decided per tools/list (mcpImageGenAdvertise),
+// because the answer depends on the session's agent kind and on which provider is effective,
+// and neither may be frozen into the server's argv.
+var mcpImageGenEnabled bool
+
 // RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
 // Pass --write to additionally expose the write tools (docs/log/19 Q2 af_write opt-in),
 // or --self-report for the session-side server (docs/log/51 Phase 3). Combining
@@ -99,7 +108,8 @@ func RunStdio(args []string) {
 	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
 	setConvID("")
 	mcpPeerMessagingEnabled = false
-	chromiumAttachRequested, peerMessagingRequested := false, false
+	mcpImageGenEnabled = false
+	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -110,6 +120,8 @@ func RunStdio(args []string) {
 			chromiumAttachRequested = true
 		case "--peer-messaging":
 			peerMessagingRequested = true
+		case "--image-gen":
+			imageGenRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -122,21 +134,46 @@ func RunStdio(args []string) {
 	// invocation cannot widen that assistant's scope.
 	setSessionChromiumEnabled(selfReportOnly() && chromiumAttachRequested)
 	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
+	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
-	w := bufio.NewWriter(os.Stdout)
+	stdioOut = &stdioWriter{w: bufio.NewWriter(os.Stdout)}
 	for {
 		line, err := r.ReadBytes('\n')
 		if len(bytes.TrimSpace(line)) > 0 {
 			if resp := dispatchMCPStdio(line); resp != nil {
-				_, _ = w.Write(resp)
-				_ = w.WriteByte('\n')
-				_ = w.Flush()
+				stdioOut.writeLine(resp)
 			}
 		}
 		if err != nil {
 			return // stdin closed (claude shut the server down)
 		}
 	}
+}
+
+// stdioWriter is the server's ONE way onto stdout, and the mutex is load-bearing. The loop
+// above used to be strictly one response per request, so a plain bufio.Writer was enough;
+// generate_image changed that by emitting notifications/progress from a goroutine WHILE a
+// tools/call is still in flight (ADR 0069, open question 1 — a heartbeat is what lifts
+// opencode's 60 s per-call ceiling). Two writers interleaving would produce a torn JSON line,
+// which every client reads as a protocol violation and drops the server for.
+type stdioWriter struct {
+	mu sync.Mutex
+	w  *bufio.Writer
+}
+
+// stdioOut is nil until RunStdio installs it — the unit tests call dispatchMCPStdio directly
+// and have no stdout to write to, so every write goes through the nil-safe helpers below.
+var stdioOut *stdioWriter
+
+func (s *stdioWriter) writeLine(b []byte) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, _ = s.w.Write(b)
+	_ = s.w.WriteByte('\n')
+	_ = s.w.Flush()
 }
 
 type mcpReq struct {
@@ -316,6 +353,9 @@ func mcpStdioToolList() []map[string]any {
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
+		if ops, ok := mcpImageGenAdvertise(); ok {
+			tools = append(tools, mcpStdioImageGenTools(ops)...)
+		}
 		return tools
 	}
 	if writeEnabled() {
@@ -441,6 +481,92 @@ func mcpStdioPeerTools() []map[string]any {
 
 func isPeerTool(name string) bool {
 	return name == "list_peer_sessions" || name == "send_to_peer_session"
+}
+
+// mcpToolGenerateImage is the one image generation tool (ADR 0069). Named as a constant
+// because the call dispatch and the scope check have to agree on it — but the tool literal
+// below spells the name out, because the advertised-schema gate finds the declared tools by
+// parsing this file's AST and only recognises a STRING literal for "name". Using the constant
+// there would drop the tool from that scan without failing anything.
+// TestImageGenToolNameMatchesConstant holds the two spellings together.
+const mcpToolGenerateImage = "generate_image"
+
+// mcpStdioImageGenTools — the image generation tool, advertised only under
+// `--self-report --image-gen` AND only to the sessions mcpImageGenAdvertise picks.
+//
+// ops is the effective provider's own operation list, asked for at list time rather than
+// hard-coded: a route that cannot inpaint must not advertise inpaint, and the answer changes
+// the moment a second provider is configured.
+//
+// The result is a PATH, not the image bytes. A measured PNG from this route is 848 KB, which
+// is ~1.1 MB of base64 in a tool result that then rides in the session's context for the rest
+// of the conversation; the file is on a disk the session can read, so handing back the path
+// costs nothing and the model opens it only if it actually needs to look.
+func mcpStdioImageGenTools(ops []string) []map[string]any {
+	return []map[string]any{
+		{
+			"name": "generate_image",
+			"description": "Agent Fleet: プロンプトから画像を生成し、生成物の**ファイルパス**を返す。" +
+				"返るのは画像そのものではなくパスなので、絵を確認する必要があるときだけ自分の画像読み取り手段でそのパスを開くこと（画像は数MBあり、結果に埋め込むと以後の全ターンの文脈を圧迫する）。" +
+				"生成物は会話をまたいで残り、Console のファイルビューアからも開ける。" +
+				"**size / background / count は希望であって保証ではない。** 実際に何が起きたかは戻り値の warnings に入る（例: 1024x1024 を頼んで 1254x1254 が返る）。" +
+				"warnings を無視して黙ってサイズが合っている前提の説明をしないこと。同じ理由で、寸法が合わないからと生成し直す必要はない（何度やっても同じ）。" +
+				"**1回の呼び出しが利用者の課金枠を消費する**（画像はテキストの数倍速で減る）。試しに何枚も出す、微調整のために連打する、といった使い方はしない。" +
+				"プロンプトは外部の画像生成サービスへ送られる（provider は戻り値に入る）ので、機密情報を含めないこと。" +
+				" / Generate an image and return the FILE PATH (not the bytes). size/background/count are best effort — what actually happened comes back in warnings. Each call spends the user's plan quota.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"prompt": map[string]any{"type": "string", "minLength": 1,
+						"description": "生成する絵の説明。英語でも日本語でもよい"},
+					"op": map[string]any{"type": "string", "enum": ops,
+						"description": "操作の種別（未指定は generate）。この一覧は今有効な provider が実際にできるものだけ"},
+					"size": map[string]any{"type": "string",
+						"description": "希望する寸法。\"1024x1024\" のような WxH か \"auto\"。**通らないことがあり、その場合 warnings に実際の寸法が入る**"},
+					"background": map[string]any{"type": "string", "enum": []string{"auto", "opaque", "transparent"},
+						"description": "希望する背景。transparent は対応しないモデルがあり、その場合 warnings に入る"},
+					"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 4,
+						"description": "希望する枚数（未指定は1）。枚数が足りなければ warnings に入る"},
+					"inputs": map[string]any{"type": "array", "maxItems": 5,
+						"items":       map[string]any{"type": "string"},
+						"description": "参照画像の絶対パス（最大5枚）。編集や画風の参照に使う"},
+				},
+				"required": []string{"prompt"},
+			},
+		},
+	}
+}
+
+// mcpImageGenAdvertise decides whether THIS session is offered generate_image, and with which
+// operations. ok=false means the tool is simply absent from tools/list.
+//
+// The rule (ADR 0069 decision 8): not when the effective provider IS codex and the session IS
+// a Codex session — that session already has the CLI's own built-in image_gen, and routing it
+// through a second codex process would double the cost for nothing. Once Gemini or Bedrock is
+// the route, a Codex session wants the fleet tool too; because the rule is evaluated at list
+// time, that switch needs no re-materialize.
+//
+// It costs one loopback GET per tools/list, and only for users who turned the feature on. An
+// unreachable Agent means the tool could not work anyway, so it is not advertised — better
+// than advertising a tool whose every call fails.
+func mcpImageGenAdvertise() (ops []string, ok bool) {
+	if !mcpImageGenEnabled {
+		return nil, false
+	}
+	self, err := mcpOwningSession()
+	if err != nil {
+		// Without a session name the Agent cannot key the output directory or the usage row,
+		// so the tool has nowhere to put its result.
+		return nil, false
+	}
+	st, err := agentImageGenStatus(self)
+	if err != nil || !st.Enabled || !st.Ready || len(st.Ops) == 0 {
+		return nil, false
+	}
+	if st.Provider == "codex" && st.Kind == session.KindCodex {
+		return nil, false
+	}
+	return st.Ops, true
 }
 
 func chromiumAttachmentIDInputSchema() map[string]any {
@@ -1198,6 +1324,14 @@ func mcpStdioCall(req mcpReq) []byte {
 		// send_to_peer_session args (docs/log/58 §58.14): the message kind. The Agent derives
 		// the reply policy from it, so this layer passes it through untouched.
 		Intent string `json:"intent"`
+		// generate_image args (ADR 0069). Op/Size/Background/Count are passed through as the
+		// caller wrote them: what a provider cannot honour is REPORTED in the result's
+		// warnings, so narrowing them here would hide exactly what the user needs to see.
+		Op         string   `json:"op"`
+		Size       string   `json:"size"`
+		Background string   `json:"background"`
+		Count      int      `json:"count"`
+		Inputs     []string `json:"inputs"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -1217,8 +1351,18 @@ func mcpStdioCall(req mcpReq) []byte {
 	if !mcpPeerMessagingEnabled && isPeerTool(p.Name) {
 		return mcpToolErr(req.ID, "このセッションはセッション間メッセージを許可されていません")
 	}
+	// Same reason again for image generation: the advertised set is the scope boundary, and a
+	// guessed name in tools/call must not reach a route that spends the user's plan quota.
+	if !mcpImageGenEnabled && p.Name == mcpToolGenerateImage {
+		return mcpToolErr(req.ID, "このセッションは画像生成を許可されていません（設定 > エージェント）")
+	}
 
 	switch p.Name {
+	case mcpToolGenerateImage:
+		return mcpGenerateImage(req, imageGenArgs{
+			op: a.Op, prompt: a.Prompt, size: a.Size, background: a.Background,
+			count: a.Count, inputs: a.Inputs,
+		})
 	case "list_peer_sessions":
 		self, err := mcpOwningSession()
 		if err != nil {

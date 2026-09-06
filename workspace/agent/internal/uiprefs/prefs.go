@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
@@ -160,9 +161,29 @@ func PeerMessaging() bool {
 	return v
 }
 
+// ImageGeneration is the ON/OFF for the image generation tool (ADR 0069, ui-prefs
+// imageGeneration). Missing/invalid ⇒ **false**, like PeerMessaging and for a comparable
+// reason: every generated image spends the user's ChatGPT plan quota (3-5x faster than a text
+// turn), from sessions that are not Codex sessions and would otherwise never touch it. A
+// fleet must not inherit that by upgrading.
+func ImageGeneration() bool {
+	v, _ := Read()["imageGeneration"].(bool)
+	return v
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 func init() { mcpreg.PeerMessagingEnabled = PeerMessaging }
+
+// imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,
+// and imagegen itself to refuse the REST route. The second one is not redundant — the Agent
+// REST is reachable by anything holding AGENT_TOKEN, which every session's own MCP server
+// does, so gating only the advertised tool set would leave the preference one curl away from
+// being bypassed.
+func init() {
+	mcpreg.ImageGenEnabled = ImageGeneration
+	imagegen.Enabled = ImageGeneration
+}
 
 // The opencode package needs the same preference to decide whether to inject
 // OPENCODE_API_KEY at all (never for the free tier) and what to report to /connections.

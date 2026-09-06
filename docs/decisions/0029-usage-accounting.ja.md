@@ -30,7 +30,8 @@
 ```jsonc
 {"ts","call","feature","trigger","origin","origin_conv","kind",
  "model","model_raw","model_req","model_src","ref","verb","sidechain","idx",
- "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured"}
+ "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured",
+ "images","pixels"}
 ```
 
 - **`spend` = in + ccreate + out**（cache_read を含めない）。既存の `get_session_usage` /
@@ -45,12 +46,14 @@
   — 代表以外の行は spend>0 / calls=0 になるので、平均は `—` で出す（docs/46 §7-5）。
 - **`measured` で「0」と「未計測」を区別する**（`exact` | `partial` | `none`）。
   トークンを報告しない CLI でも **回数だけは必ず数える**。
+- **`images` / `pixels` は `feature=tool.imagegen` だけが持つ非トークンの次元**で、それ以外では
+  出さない——「画像なし」を 0 で書くことは決してしない（2026-09-06 追加。下の追記を参照）。
 
 ### 2. enum（凍結。Console 側で i18n する）
 
 | 次元 | 値 |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -58,6 +61,22 @@
 
 `feature=unknown` を enum に含めるのは、**新しい補助機能がタグを付け忘れても必ず1行残す**ため。
 無記録（＝見えない消費）を作らないことを、タグの正しさより優先する。
+
+**追記（2026-09-06）。** 上の `feature` 行に 2 値を足した。`plan.update`（明示的な作業計画の
+更新、docs/log/33 stage 5）は `usagex/ledger.go` に `FeaturePlanUpdate` として以前からあり、
+この表は更新されていなかった——列挙は注記なしに一度ずれており、「凍結」が防ぐはずだった事態
+そのものである。`tool.imagegen` は [ADR 0069](0069-image-generation-providers.ja.md) の画像
+生成ツールで、Codex 経路ではチャットの一発実行と同じ要領で記録する。画像が消費するプラン枠は
+トークンで表せないので、0 で埋めず未計測のままにする（ADR 0069 決定 9）。以後の規則: `ledger.go`
+の新しい定数とこの表の新しい値は同じコミットで入れる。
+
+同じ変更で、行に初めての非トークン列 `images` / `pixels` を §1 へ足した。正直に書くと他が
+もっと悪くなるからで、画像生成の行は**駆動ターン**のトークンを正確に持つ一方、画像が消費した
+プラン枠については何も言わない——出来上がった枚数の記録がないと、この行はただの安いテキスト
+ターンに見える。書くのは `feature=tool.imagegen` の行だけ、しかも 1 呼び出しの先頭行だけ
+（複数モデルに割れた呼び出しが「モデルごとに画像を作った」と読まれてはならない）。成功した
+生成を `measured=partial` にするのも同じ理由で、トークンは正確だが消費のすべてがそこに
+入っているわけではない。
 
 ### 3. 収集は「ctx タグ ＋ プロバイダ層1点記録」
 
