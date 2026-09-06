@@ -105,9 +105,9 @@ tenant_idp_api.go tenantIdPAPI.setStatus x1 {id,status}
 tts.go registerTTSRoutes x1 {dict}
 tts.go registerTTSRoutes x1 {providers}
 tts.go registerTTSRoutes x1 {speakers}
-tts.go ttsAdminAPI.get x1 {dict,enabled,engine,managed,polly}
-tts.go ttsAdminAPI.put x1 {dict,enabled,engine,managed,polly}
-tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,polly}
+tts.go ttsAdminAPI.get x1 {dict,enabled,engine,managed,mode,polly}
+tts.go ttsAdminAPI.put x1 {dict,enabled,engine,managed,mode,polly}
+tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,mode,polly}
 update.go updateApply x2 {error}
 update.go updateApply x2 {mode,ok,to}
 usage.go adminAPI.usage x1 {days,from,to,totals}

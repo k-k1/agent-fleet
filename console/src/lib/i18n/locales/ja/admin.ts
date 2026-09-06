@@ -113,7 +113,11 @@ export const admin = {
   "admin.tts_running_waiting": "稼働中（応答待ち）",
   "admin.tts_stopped": "停止中",
   "admin.tts_stopped_or_off": "停止中/未起動",
+  "admin.tts_stopping": "停止処理中",
   "admin.tts_engine_label": "VOICEVOX エンジン（ずんだもん）",
+  "admin.tts_mode_off": "無効",
+  "admin.tts_mode_ondemand": "オンデマンド",
+  "admin.tts_mode_on": "常時稼働",
   "admin.enable": "有効",
   "admin.disable": "無効",
   "admin.tts_engine_prefix": "エンジン: ",
@@ -123,10 +127,14 @@ export const admin = {
   "admin.tts_polly_ready": "利用可",
   "admin.tts_polly_unset": "未設定",
   "admin.tts_starting_note": "起動には 1〜2 分かかります。準備が整うまで、日本語の読み上げは Polly が代読します（Polly 未設定なら無音）。",
+  "admin.tts_stopping_note":
+    "無効にしました。読み上げはすでに Polly へ切り替わっています。エンジンの停止は約 1 分後です（押し間違いや、すぐ有効に戻す操作で、2GB の pull と 70〜80 秒の起動を払い直さないための猶予）。この間に有効へ戻せば、停止も再起動も起きません。",
+  "admin.tts_ondemand_note":
+    "オンデマンド: 読み上げの需要（5 分間で 2,000 文字）が溜まった時点で自動起動し、30 分だれも読み上げなければ自動停止します。起動が終わるまでの日本語は Polly が代読します。自動の起動・停止はすべて監査ログに残ります。",
   "admin.tts_no_engine":
     "この環境には VOICEVOX エンジンがありません（ECS 管理下でもないため、この画面から起動することもできません）。有効にしてもずんだもんへは一切流れないので、無効で固定しています。エンジンを用意すれば自動で操作できるようになります。",
   "admin.tts_disable_note":
-    "無効にすると、AWS では ECS の desired count を 0 にしてエンジンを停止します（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
+    "無効にすると、読み上げはただちに Polly へ回り、AWS では約 1 分後に ECS の desired count が 0 になります（停止中コスト 0）。読み上げ自体はユーザー設定（音声読み上げ）側で ON/OFF します。",
   "admin.tts_dict_title": "テナント共通の読み仮名辞書",
   "admin.saving": "保存中…",
   "admin.tts_dict_ph": "表記=読み（1 行に 1 件）\n例）agent-fleet=エージェントフリート\n# コメント行",
