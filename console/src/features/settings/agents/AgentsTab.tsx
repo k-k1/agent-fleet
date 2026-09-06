@@ -101,6 +101,12 @@ export function AgentsTab() {
         <OnOff value={s.peerMessaging} onChange={(v) => setSetting("peerMessaging", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_peer_messaging")}</p>
+      {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
+          to every kind through af's own MCP server, not any one agent's setting. */}
+      <Row label={tr("agents.image_generation")}>
+        <OnOff value={s.imageGeneration} onChange={(v) => setSetting("imageGeneration", v)} />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_image_generation")}</p>
     </section>
   );
 

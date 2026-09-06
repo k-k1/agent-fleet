@@ -80,6 +80,12 @@ func codexAFThreadEntry(d ServerDef, sessionName string) map[string]any {
 	if d.TimeoutMS > 0 {
 		e["startup_timeout_sec"] = float64(d.TimeoutMS) / 1000
 	}
+	// The thread definition REPLACES the file one whole-entry (see the file header), so a
+	// timeout omitted here is not inherited from config.toml — it is lost, and a managed codex
+	// session would cut generate_image at the 300 s default.
+	if sec := CodexToolTimeoutSec(d); sec > 0 {
+		e["tool_timeout_sec"] = sec
+	}
 	return e
 }
 

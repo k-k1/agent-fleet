@@ -59,6 +59,11 @@ type Call struct {
 	CostUSD  float64    // measured cost (claude only)
 	OK       bool
 	Measured string // empty = infer it from what Totals/Models hold
+	// Images / Pixels are the image-generation dimension (ADR 0069). They ride on the call
+	// rather than on a model row because one generation is one call whatever the driver
+	// model was, and they are copied onto the FIRST row so the count is never doubled.
+	Images int
+	Pixels int
 }
 
 // SetTotals is the recording entry for providers with no per-model breakdown
@@ -143,6 +148,11 @@ func RecordCall(ctx context.Context, c *Call, started time.Time) {
 		r.Spend = Spend(r.In, r.CacheCreate, r.Out)
 		r.Measured = c.MeasuredOr(m.Tokens)
 		rows = append(rows, r)
+	}
+	// On the first row only: a call that split across models must not be read as having
+	// produced the images once per model.
+	if len(rows) > 0 {
+		rows[0].Images, rows[0].Pixels = c.Images, c.Pixels
 	}
 	AppendRows(rows)
 }

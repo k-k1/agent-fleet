@@ -30,7 +30,8 @@
 ```jsonc
 {"ts","call","feature","trigger","origin","origin_conv","kind",
  "model","model_raw","model_req","model_src","ref","verb","sidechain","idx",
- "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured"}
+ "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured",
+ "images","pixels"}
 ```
 
 - **`spend` = in + ccreate + out**（cache_read を含めない）。既存の `get_session_usage` /
@@ -45,6 +46,8 @@
   — 代表以外の行は spend>0 / calls=0 になるので、平均は `—` で出す（docs/46 §7-5）。
 - **`measured` で「0」と「未計測」を区別する**（`exact` | `partial` | `none`）。
   トークンを報告しない CLI でも **回数だけは必ず数える**。
+- **`images` / `pixels` は `feature=tool.imagegen` だけが持つ非トークンの次元**で、それ以外では
+  出さない——「画像なし」を 0 で書くことは決してしない（2026-09-06 追加。下の追記を参照）。
 
 ### 2. enum（凍結。Console 側で i18n する）
 
@@ -66,6 +69,14 @@
 生成ツールで、Codex 経路ではチャットの一発実行と同じ要領で記録する。画像が消費するプラン枠は
 トークンで表せないので、0 で埋めず未計測のままにする（ADR 0069 決定 9）。以後の規則: `ledger.go`
 の新しい定数とこの表の新しい値は同じコミットで入れる。
+
+同じ変更で、行に初めての非トークン列 `images` / `pixels` を §1 へ足した。正直に書くと他が
+もっと悪くなるからで、画像生成の行は**駆動ターン**のトークンを正確に持つ一方、画像が消費した
+プラン枠については何も言わない——出来上がった枚数の記録がないと、この行はただの安いテキスト
+ターンに見える。書くのは `feature=tool.imagegen` の行だけ、しかも 1 呼び出しの先頭行だけ
+（複数モデルに割れた呼び出しが「モデルごとに画像を作った」と読まれてはならない）。成功した
+生成を `measured=partial` にするのも同じ理由で、トークンは正確だが消費のすべてがそこに
+入っているわけではない。
 
 ### 3. 収集は「ctx タグ ＋ プロバイダ層1点記録」
 

@@ -2,11 +2,14 @@
 
 English | [日本語](0069-image-generation-providers.ja.md)
 
-- Status: **proposed — design only, nothing implemented** (2026-09-06). Every number below
-  was measured in a Workspace container on that date, or fetched from the vendor's own
-  documentation on that date (Sources at the end). Reviewed the same day: both open
-  questions were measured (see *Open questions — resolved*), and Decisions 3, 8 and 9 were
-  corrected against the code they name. Still nothing is implemented.
+- Status: **adopted — P0 implemented** (2026-09-06). Every number below was measured in a
+  Workspace container on that date, or fetched from the vendor's own documentation on that
+  date (Sources at the end). Reviewed the same day: both open questions were measured (see
+  *Open questions — resolved*), and Decisions 3, 8 and 9 were corrected against the code they
+  name. P0 — the Codex route, the opt-in gate, the MCP tool, the usage row and the sweep — is
+  in the tree; what P0 deliberately left out, and where the implementation had to go beyond
+  what is written above, is in *Implementation notes* at the end. Tiers 2 and 3 (Decision 3)
+  are not started.
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -302,3 +305,57 @@ trial was run once, as budgeted.
   The codex `tool_timeout_sec` / `default_tools_approval_mode` keys and opencode's
   `mcp.<name>.timeout` / `resetTimeoutOnProgress` were read out of the installed binaries, not
   from documentation.
+
+## Implementation notes (P0, 2026-09-06)
+
+Where it lives: `workspace/agent/internal/imagegen/` (the `Provider` interface,
+`chooseImageProvider`, the Codex provider, storage and retention, and the two REST routes);
+the tool surface in `internal/mcpx` (`--image-gen`, `generate_image`, the progress
+heartbeat); the opt-in gate as ui-prefs `imageGeneration` → `mcpreg.ImageGenEnabled` →
+`builtinRunArgsFor` → `MaterializeAll()`; the feature tag in `usagex/ledger.go`.
+
+Six things the design above did not say, or said differently:
+
+1. **The invocation gained `--ignore-user-config`**, which the 2026-09-06 measurement did not
+   use. `~/.codex/config.toml` is where `mcpreg/materialize_codex.go` writes every registered
+   MCP server, **af's own included** — loading it would spawn the user's whole MCP fleet for
+   one image and hand this exec a `generate_image` of its own. Auth still comes from
+   `CODEX_HOME`, and a live run confirmed the ChatGPT login still applies.
+2. **The MCP tool returns a PATH, not the image.** A measured PNG is 563 KB–848 KB, i.e.
+   ~0.7–1.1 MB of base64 that would then ride in the session's context for the rest of the
+   conversation. The file is on a disk the session can read, so the model opens it only when
+   it actually needs to look. This is what "synchronous" means here — the call returns when
+   the image exists, not that the bytes travel in it.
+3. **`tool_timeout_sec` had to go into three serializers, not the two named in open question
+   1**: `materialize_codex.go` (config.toml), `attach.go` (the chat's `-c` overrides) and
+   `thread_codex.go`. The thread config *replaces* the file entry whole-entry, so a value
+   written only into config.toml is not inherited by a managed codex session — it is lost.
+4. **The ledger row gained two columns**, `images` and `pixels` (ADR 0029 §1, amended in the
+   same commit), and a successful generation is recorded as `measured=partial`: the driver
+   turn's tokens are exact, but the plan quota the image consumed is not in them.
+5. **Retention is 30 days**, swept at most hourly after a generation. Longer than the
+   thumbnail cache next door on purpose: these are not derived data, and regenerating one
+   spends the plan quota again. The Codex provider also deletes the source copies it collected
+   from `$CODEX_HOME/generated_images/<thread_id>/`, so the route no longer feeds the 80 MB
+   pile-up measured above.
+6. **The tool's `op` enum is built at tools/list time from the effective provider's own
+   capability list**, so a route that cannot inpaint never advertises inpaint. The `Op`
+   vocabulary is complete in the Go types (Decision 6); the Codex route reports
+   `generate` / `edit` and refuses a mask outright.
+
+Verified: the unit suites cover provider selection, the directory-diff collection (including a
+stale file that must not be collected and a run that produced no file at all), the tools/list
+exclusion of a Codex session on the Codex route, the heartbeat, the `tool_timeout_sec` on all
+three paths and the ledger row. One live generation was run end to end against the real CLI —
+34 s, 1536×1024 for a request of 1024×1024, one more instance of Decision 7 and a *different*
+wrong size from the 1254×1254 measured above.
+
+One limitation worth naming: `RunStdio`'s loop dispatches serially, so while a generation is
+in flight the af server reads nothing else from stdin, `notifications/cancelled` included. The
+one client on that pipe is the agent waiting on this very call, so nothing is starved in
+practice — but it is why the call carries a bounded budget (8 minutes in the provider, 10 in
+the MCP layer) rather than waiting indefinitely.
+
+Not done, and deliberately: Tier 2 and Tier 3 providers (Decision 3, Bedrock next), job+poll
+(open question 1), and any Console surface beyond the settings toggle — a generated image is
+opened through the existing file viewer.

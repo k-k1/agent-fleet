@@ -236,6 +236,7 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	}
 	before := uiprefs.OpencodeCatalog()
 	peerBefore := uiprefs.PeerMessaging()
+	imageGenBefore := uiprefs.ImageGeneration()
 	if err := os.WriteFile(uiprefs.Path(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
 		return
@@ -245,7 +246,11 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// without rewriting it here the toggle does nothing at all. Sessions already running have
 	// read their config, so it takes effect from the next session launched (which is what the UI
 	// text says too).
-	if uiprefs.PeerMessaging() != peerBefore {
+	// Image generation (ADR 0069) is the same shape: --image-gen is a launch argument of the
+	// session-side af server, so the toggle does nothing until each CLI's native MCP config is
+	// rewritten. Both toggles share one re-materialize — it is idempotent, and writing the
+	// configs twice for a PUT that flipped both would be pure noise in the log.
+	if uiprefs.PeerMessaging() != peerBefore || uiprefs.ImageGeneration() != imageGenBefore {
 		mcpx.MaterializeAll()
 	}
 	// Switching the tier changes the env that is injected (the free tier drops

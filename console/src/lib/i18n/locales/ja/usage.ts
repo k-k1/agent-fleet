@@ -107,6 +107,9 @@ export const usage = {
   "usage.val.feature.suggest.session": "返信候補（セッション）",
   "usage.val.feature.suggest.chat": "返信候補（チャット）",
   "usage.val.feature.suggest.edit": "変更提案（エディタ）",
+  // 画像生成（ADR 0069）。ここに出るトークンは画像を作った側のモデルの分だけで、
+  // 画像そのものが消費するプラン枠はトークンでは表せないため計上していない。
+  "usage.val.feature.tool.imagegen": "画像生成",
   "usage.val.feature.unknown": "未分類",
   "usage.val.trigger.user": "ユーザー",
   "usage.val.trigger.auto": "自動",

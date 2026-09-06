@@ -2,10 +2,12 @@
 
 [English](0069-image-generation-providers.md) | 日本語
 
-- 状態: **提案（設計のみ・未実装）**（2026-09-06）。以下の数値はすべて同日に Workspace
+- 状態: **採用（P0 実装済み）**（2026-09-06）。以下の数値はすべて同日に Workspace
   コンテナで実測したもの、または同日に各社の公式資料から取得したもの（出典は末尾）。
   同日にレビュー済み: 未解決だった 2 点は実測で決着し（末尾「未解決の 2 点——決着」）、
-  決定 3・8・9 は名指ししているコードの現物に合わせて訂正した。実装は依然として何もない。
+  決定 3・8・9 は名指ししているコードの現物に合わせて訂正した。P0——Codex 経路・opt-in
+  ゲート・MCP ツール・使用量の行・掃除——は実装済み。P0 が意図して落としたもの、および
+  実装が上記から踏み出した箇所は末尾「実装メモ」にある。第 2・第 3 層（決定 3）は未着手。
 - 関連: [0013-tts-zundamon.ja.md](0013-tts-zundamon.ja.md)（写した前例。`ttsProvider` と
   `chooseTTSProvider`、そして「前処理は provider の外」）/
   [0031-mcp-registry.ja.md](0031-mcp-registry.ja.md)（レジストリは 1 本のリスト。`af`
@@ -286,3 +288,52 @@ ChatGPT ログイン経路で厳密サイズを得る**唯一の**方法が非�
   `.mcp.json` のサーバ単位 `timeout`。上の 300 秒の実測と整合する。codex の
   `tool_timeout_sec` / `default_tools_approval_mode`、opencode の `mcp.<name>.timeout` /
   `resetTimeoutOnProgress` は文書ではなく、入っているバイナリから読み取った。
+
+## 実装メモ（P0・2026-09-06）
+
+置き場: `workspace/agent/internal/imagegen/`（`Provider` インターフェース、
+`chooseImageProvider`、Codex provider、保存と保持期限、REST 2 本）／ツールの面は
+`internal/mcpx`（`--image-gen`・`generate_image`・進捗ハートビート）／opt-in ゲートは
+ui-prefs `imageGeneration` → `mcpreg.ImageGenEnabled` → `builtinRunArgsFor` →
+`MaterializeAll()`／feature タグは `usagex/ledger.go`。
+
+上の設計が書いていなかった、あるいは書いたのと違う点が 6 つ。
+
+1. **起動コマンドに `--ignore-user-config` を足した**（2026-09-06 の実測では付けていない）。
+   `~/.codex/config.toml` は `mcpreg/materialize_codex.go` が登録済み MCP サーバを——
+   **af 自身のものも含めて**——書き込む場所で、読ませると画像 1 枚のために利用者の MCP
+   一式が起動し、この exec 自身に `generate_image` が生えてしまう。認証は従来どおり
+   `CODEX_HOME` から来ることを実走で確認した。
+2. **MCP ツールが返すのは画像そのものではなくパス。** 実測の PNG は 563 KB〜848 KB、
+   base64 にすると 0.7〜1.1 MB で、それが以後そのセッションの文脈に居座り続ける。ファイルは
+   セッションが読めるディスクにあるので、絵を見る必要があるときだけモデルが開けばよい。
+   ここでの「同期」は「呼び出しが返った時点で画像が存在する」という意味であって、バイト列が
+   呼び出しに乗るという意味ではない。
+3. **`tool_timeout_sec` は未解決 1 が挙げた 2 箇所ではなく 3 箇所に要った**——
+   `materialize_codex.go`（config.toml）、`attach.go`（チャットの `-c` 上書き）、
+   `thread_codex.go`。スレッド設定はファイル側のエントリを**まるごと置き換える**ので、
+   config.toml にだけ書いた値は managed な codex セッションには継承されず、消える。
+4. **台帳の行に列を 2 つ足した**——`images` と `pixels`（ADR 0029 §1 を同じコミットで改訂）。
+   成功した生成も `measured=partial` で記録する: 駆動ターンのトークンは正確だが、画像自体が
+   消費したプラン枠はそこに入っていないため。
+5. **保持期限は 30 日**（生成のたび、最短 1 時間間隔で掃除）。隣のサムネイルキャッシュより
+   長いのは意図的で、これは派生データではなく、作り直しはプラン枠をもう一度使う。Codex
+   provider は回収元（`$CODEX_HOME/generated_images/<thread_id>/`）のコピーも削除するので、
+   この経路は上で実測した 80 MB の堆積をもう増やさない。
+6. **ツールの `op` 列挙は tools/list の時点で実効 provider の能力から組み立てる**ので、
+   inpaint できない経路が inpaint を宣伝することはない。`Op` の語彙は Go の型としては
+   全部そろっており（決定 6）、Codex 経路は `generate` / `edit` を申告し、mask は明示的に断る。
+
+検証: 単体テストで provider 選択、ディレクトリ差分での回収（回収してはいけない既存ファイル、
+1 枚も出なかった run を含む）、Codex セッション×Codex 経路の tools/list 除外、ハートビート、
+3 経路すべての `tool_timeout_sec`、台帳の行を押さえている。実 CLI に対する実走は 1 回——
+34 秒、1024×1024 を頼んで 1536×1024。決定 7 の実例がもう 1 つ増えたことになり、しかも上で
+実測した 1254×1254 とは**また違う**外し方だった。
+
+1 つ明記しておく制約: `RunStdio` のループは直列に処理するので、生成が走っている間 af サーバは
+stdin から何も読まない（`notifications/cancelled` を含む）。そのパイプの向こうにいるのはこの
+呼び出しを待っているエージェント自身なので実害は出ないが、無期限に待たせず上限を切っている
+（provider 側 8 分・MCP 層 10 分）のはこのためである。
+
+意図して未着手: 第 2・第 3 層の provider（決定 3・次は Bedrock）、job+poll（未解決 1）、
+設定トグル以外の Console の面——生成物は既存のファイルビューアで開く。
