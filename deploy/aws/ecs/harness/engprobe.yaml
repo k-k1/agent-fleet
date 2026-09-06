@@ -1,0 +1,160 @@
+# ADR 0071 probe — a throwaway ECS Managed Instances capacity provider plus one llama.cpp
+# service, used only to measure cold start and drain on a real cluster. Not a deliverable
+# stack: 60-engines.yaml is the real thing. Deploy with probe-managed-instances.sh.
+#
+# Three things this template had to learn the hard way (all measured 2026-09-07):
+#   - a Managed Instances capacity provider is CLUSTER-SCOPED: ClusterName is mandatory,
+#     without it ECS answers "The cluster provided is invalid";
+#   - AmazonECSInfrastructureRolePolicyForManagedInstances passes only roles named
+#     ecsInstanceRole*, so a fleet-named instance role needs an explicit iam:PassRole;
+#   - ClusterCapacityProviderAssociations REPLACES the cluster's provider list and requires
+#     DefaultCapacityProviderStrategy — pass the full list and an EMPTY strategy, or a service
+#     that forgot LaunchType lands on the GPU box (ADR 0070 decision 1).
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ADR 0071 probe — a throwaway ECS Managed Instances capacity provider and one
+  llama.cpp (CPU) service, used only to measure cold start and drain. Delete the stack after.
+Parameters:
+  NetworkStackName: { Type: String, Default: af-ecs-network }
+  PlatformStackName: { Type: String, Default: af-ecs-platform }
+  ImageUri: { Type: String, Default: ghcr.io/ggml-org/llama.cpp:server }   # CPU image; :server-cuda for the GPU run
+  ModelRef: { Type: String, Default: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF:Q4_K_M" }
+  VCpuMin: { Type: Number, Default: 2 }
+  VCpuMax: { Type: Number, Default: 4 }
+  MemMin: { Type: Number, Default: 4096 }
+  MemMax: { Type: Number, Default: 16384 }
+  StorageGiB: { Type: Number, Default: 40 }
+Resources:
+  InfraRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-infra"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
+      # The managed policy only passes roles named ecsInstanceRole*; a fleet-named instance
+      # role needs this explicit grant (measured: UnauthorizedOperation iam:PassRole).
+      Policies:
+        - PolicyName: pass-instance-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-${AWS::StackName}-mi-instance"
+                Condition: { StringLike: { "iam:PassedToService": "ec2.*" } }
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInstanceRolePolicyForManagedInstances
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
+      Roles: [ !Ref InstanceRole ]
+  ProbeSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} engine probe (CP to engine, 8080)"
+      VpcId: !ImportValue { "Fn::Sub": "${NetworkStackName}-VpcId" }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !ImportValue { "Fn::Sub": "${NetworkStackName}-CpSgId" }
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-sg" } ]
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/engine"
+      RetentionInDays: 3
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-mi"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: NONE
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref ProbeSg ]
+          StorageConfiguration:
+            StorageSizeGiB: !Ref StorageGiB
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref VCpuMin, Max: !Ref VCpuMax }
+            MemoryMiB: { Min: !Ref MemMin, Max: !Ref MemMax }
+            InstanceGenerations: [ current ]
+            BurstablePerformance: excluded
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+  # Replaces the cluster's provider LIST (the API is not additive), so FARGATE and
+  # FARGATE_SPOT are named alongside ours; the default strategy stays EMPTY on purpose
+  # (ADR 0070 decision 1 / ADR 0071 decision 1).
+  Associations:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref CapacityProvider ]
+      DefaultCapacityProviderStrategy: []
+  TaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-llama"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: "2048"
+      Memory: "3072"
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      ContainerDefinitions:
+        - Name: llama
+          Essential: true
+          Image: !Ref ImageUri
+          PortMappings: [ { ContainerPort: 8080 } ]
+          Command: [ "-hf", !Ref ModelRef, "--host", "0.0.0.0", "--port", "8080", "-c", "8192" ]
+          Environment:
+            - { Name: LLAMA_CACHE, Value: /tmp/llama-cache }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: llama
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-llama"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref TaskDef
+      DesiredCount: 0
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref ProbeSg ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+Outputs:
+  ServiceName: { Value: !GetAtt Service.Name }
+  CapacityProviderName: { Value: !Ref CapacityProvider }

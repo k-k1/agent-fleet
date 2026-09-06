@@ -6,6 +6,9 @@
   （東京・オンデマンド）から、イメージとモデルの数値は同日にレジストリ API と Hugging Face
   API から取得した。このコンテナで実測したものはそう書いた。**P0 に着手する前にレビューを
   受けるための文書**であり、形が変わりうるのは「未解決の点」である。
+- 翌日（2026-09-07）に実測で改訂: 未解決の点 1〜3 を測って「実測で解けた点」へ移し、決定 5・7・8
+  にその帰結を足した。opencode の切断は 300 秒、Managed Instances は CPU 箱で起動 109 秒・
+  終了 93 秒、G 系クォータは検証アカウントで 0（申請中）。GPU 上の数値はまだ無い。
 - 関連: [0070-tts-ondemand-engine.ja.md](0070-tts-ondemand-engine.ja.md)（写す型: 需要で建てて
   アイドルで落とす・Cloud Map 名・純関数のコントローラ・共有費用）/
   [0069-image-generation-providers.ja.md](0069-image-generation-providers.ja.md)（画像生成の
@@ -172,8 +175,11 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    ok になるまで**接続を保持して**から転送する。上限 `AF_ENGINE_WAKE_TIMEOUT`（既定 600 秒）を
    超えたら 503＋`Retry-After`＋人が読める本文（モデルにも見える）。画像の MCP ツールは
    その間 10 秒ごとに `notifications/progress` を出す（opencode の 60 秒を無効化する既存の
-   手）。**opencode のチャット要求を CP が何秒まで握れるか**（SDK 側の timeout）は P0 で
-   測る（未解決 1）。「1 要求で 30 分の窓を買う」のは、その provider／モデルを選んだ本人の
+   手）。**opencode は 300.1 秒で接続を切り、数秒後に同じ要求を送り直す**（実測で解けた点 1）。
+   したがってゲートウェイは 1 回の試行を **290 秒**で打ち切って 503 を返し、起動そのものは
+   試行と切り離して進め、送り直された要求を温まったエンジンへ通す。同じ 300 秒は**最初の
+   トークンまでの時間**にも掛かる——エンジンが起きていても prefill が 300 秒を超えれば
+   opencode は切る（CPU を却下するもう 1 つの理由）。「1 要求で 30 分の窓を買う」のは、その provider／モデルを選んだ本人の
    opt-in であり、0070 の損益分岐に相当するものは無い（代替は「使えない」だけ）。
 
 6. **エンジンは llama.cpp・stable-diffusion.cpp・ComfyUI の 3 つで、前 2 つは公式イメージを
@@ -194,14 +200,15 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    - 3 つは同じ**モデル置き場の規約**（ComfyUI の `models/…` 配置を正とする）を読む。
      sd-server のフラグはその中のファイルを指す。
 
-7. **コントローラは 0070 の設計を N エンジンに一般化して 1 本にし、VOICEVOX もその 1 つに
-   する。** `decideEngineAction` は純関数のまま、エンジンの表（サービス名・URL・ヘルスの
+7. **コントローラは `tts_control.go`（0070 P1: `ttsDemand` / `decideEngineAction` /
+   `ttsController`）を N エンジンに一般化して 1 本にし、VOICEVOX もその 1 つにする。**
+   `decideEngineAction` は純関数のまま、エンジンの表（サービス名・URL・ヘルスの
    URL・アイドル窓・起動期限・クールダウン）を取る。需要時計は `SettingsStore` に永続化
    （1 分に 1 回）、`DescribeServices` に短い TTL キャッシュ、起動失敗は `events[]` で診断して
    クールダウン、`starting` にもアイドル窓を適用（0070 決定 5・6・9・10）。**MI 固有の
    追加が 1 つ**: desired を 0 にしてもインスタンスは MI のスケールインまで残り、その間も
-   管理料と EC2 料金は走る。`running | starting | stopped | draining` の 4 値にし、
-   `draining` の長さを P0 で測る。モードは 0070 決定 7 のとおり `off / on / ondemand` を
+   管理料と EC2 料金は走る。`running | starting | stopped | draining` の 4 値にする。
+   `draining` は CPU 箱で **93 秒**（実測で解けた点 2）。モードは 0070 決定 7 のとおり `off / on / ondemand` を
    エンジンごとに。
 
 8. **スタックは `60-engines.yaml`（任意採用）。`30-ingress` へ渡すのは SSM パラメータ名 1 つ。**
@@ -214,7 +221,14 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    まとめた JSON を SSM に書き、`30-ingress` は `AF_ENGINES_SSM_PARAM` 1 本を渡す。CP は
    起動時に読む（SSM の読みは CP タスクロールに既にある）。**新しい IAM が要る**——MI の
    infrastructure role、インスタンスプロファイル、エンジンの S3 読み、取り込みの S3 書きと
-   秘密の読み。0070 の「IAM 追加ゼロ」はここでは成り立たない。
+   秘密の読み。実測で分かった契約が 3 つ: capacity provider は**クラスタ固有**で
+   `ClusterName` が必須（無いと「The cluster provided is invalid」）、AWS 管理ポリシー
+   `AmazonECSInfrastructureRolePolicyForManagedInstances` の `iam:PassRole` は
+   **`ecsInstanceRole*` という名前のロールにしか効かない**（フリート名のロールを使うなら
+   infrastructure role に PassRole を明示する）、`ClusterCapacityProviderAssociations` は
+   **クラスタのリストを置き換え**、`DefaultCapacityProviderStrategy` は必須プロパティ
+   （FARGATE / FARGATE_SPOT を含む完全なリストと**空の戦略**を渡す）。0070 の「IAM 追加ゼロ」は
+   ここでは成り立たない。
 
 9. **使用量は数え、費用は共有として出す。** llm はゲートウェイが応答の `usage` から
    トークンを、image は枚数とピクセルを、メンバー単位で記録する（`usagex` に
@@ -237,21 +251,58 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
 12. **x86_64 だけ。** `stable-diffusion.cpp` の CUDA イメージは amd64 のみで、G 系に arm64 は
     無い。0070 決定 11 の「arm64 は測ってから」に相当する分岐がそもそも無い。
 
+## 実測で解けた点（2026-09-07）
+
+1. **opencode は 300.1 秒で切り、数秒後に送り直す。** このコンテナの opencode 1.18.29 に、
+   応答を N 秒握るだけの OpenAI 互換スタブを `@ai-sdk/openai-compatible` provider として
+   繋いだ。150 秒の保持は成功（要求 2 本——タイトル生成用の tools=0 と本体の tools=21——
+   とも答えが届き、exit 0）。400 秒と 700 秒の保持は **300.1 秒で Connection reset**、その
+   3〜5 秒後に**同じ要求（tools=21）を再送**し、これを 1200 秒の打ち切りまで**4 回**繰り返した。
+   帰結は決定 5 に書いた: 試行ごとに 290 秒で 503、起動は試行と切り離す、最初のトークンまで
+   300 秒。
+2. **Managed Instances のコールドスタートは CPU 箱で 109 秒、ドレインは 93 秒。**
+   検証アカウント（`af-sandbox`）の共有クラスタに使い捨てスタック
+   （`deploy/aws/ecs/harness/engprobe.yaml`、手順は `probe-managed-instances.sh`）を建て、
+   c6a.large（AMI `ecs-managed-instances-standard-x86_64-20260827`）で llama.cpp の CPU
+   イメージ（297 MB）に 1.1 GB のモデルを HF から取らせた。desired 1 から **+6 秒でタスク、
+   +10 秒でインスタンス起動、+32 秒で pull 開始、+68 秒で RUNNING（pull 35 秒）、+109 秒で
+   モデルロード完了・listen**。desired 0 から **+10 秒でタスク消滅、+79 秒で shutting-down、
+   +93 秒で terminated**。AWS の参照構成の 13 分は、アラームの 2 分と 14 GB のイメージが
+   作った数字である。GPU 箱（2.3 GB の CUDA イメージ、17 GB のモデル）は未実測——3 を参照。
+3. **G 系の vCPU クォータは検証アカウントで 0 だった。** 増加申請（8 vCPU）は自動承認され
+   ず**サポートケース**になった（`CASE_OPENED`）。standup の前提条件として README に書き、
+   0 なら standup がそう言う。GPU 上の数値（prefill、pull、S3 → ローカル、VRAM へのロード）は
+   承認後に同じハーネスで取る。
+
+その他、同日に測ったこと:
+
+- **HF の API は照合に要るものを返す。** `?blobs=true` の `siblings[].lfs.sha256` と
+  `cardData.license`（SDXL は `openrail++`、FLUX.1-schnell は `apache-2.0` で `gated: auto`）。
+  1.1 GB の GGUF を落として `sha256sum` を取ると API の値と一致した——決定 3 の照合は
+  この 2 つの値で書ける。
+- **llama-server（CPU・1.1 GB モデル）**: 起動から `/health` ok まで 3 秒、`/v1/messages`
+  が 200、`--api-key` 無しの要求は 401。opencode から `apiKey: "{env:AF_ENGINE_TOKEN}"` で
+  鍵を渡し、streaming で応答が届くところまで通った。**ただし opencode の要求は、フリートの
+  AGENTS.md を含めると 18.7k トークン、最小構成でも 7.3k トークン**あり、このコンテナ
+  （8 vCPU・共有）の prefill は 1.5B Q4 で **18〜23 tok/s**＝18.7k トークンに 17 分。
+  0.5B Q8 で最小構成にすると 170 秒で完走したが、モデルはツール呼び出しを JSON の**文章**
+  として出した（経路ではなくモデルの限界）。**ツール呼び出しが実際に成立するかは GPU 上の
+  本命モデルで確かめる**まで未検証である。
+- **sd-server（CPU・SD1.5 Q4_0 1.67 GB）**: `/v1/images/generations` は 256px・4 steps で
+  **98 秒**、512px・4 steps で **587 秒**、`/v1/images/edits`（画像＋mask）は 256px で
+  **307 秒**（VAE デコードだけで 51 秒）。応答は `data[].b64_json`。CPU で画像は無理という
+  前提を、API 契約の確認と一緒に数字で押さえた。
+
 ## 未解決の点——P0 を書く前に潰すこと
 
-1. **CP が opencode の要求を何秒握れるか。** opencode（Bun の fetch、`@ai-sdk/openai-compatible`）
-   のクライアント側 timeout を実測する。600 秒より短ければ、決定 5 の「起こして待つ」は
-   llm では成立せず、初回は 503 を返して**モデルに「N 分後に再試行」と言わせる**形に落とす。
-2. **MI のコールドスタートとドレイン。** desired 1 → インスタンス起動 → 2.3〜5 GB の pull →
-   S3 から 17 GB → `/health` ok までの各区間、および desired 0 → インスタンス終了までの
-   時間（管理料が止まるのはそこ）。AWS の参照構成は 13 分と言うが、それはアラームと
-   14 GB のイメージ込みである。
-3. **G 系の vCPU クォータ。** 新しいアカウントは「Running On-Demand G and VT instances」が
-   **0** のことがある。standup の前提条件として書き、0 なら standup がそう言う。
-4. **`image` 役の既定サイズ。** g6f.2xlarge（6 GB）で SDXL が `--offload-to-cpu` 込みで何秒か、
+1. **GPU 上の数値。** G 系クォータの承認後に同じハーネスで: `server-cuda`（2.3 GB）の pull、
+   S3 → ローカルの 17 GB、VRAM へのロード、Qwen3-Coder-30B-A3B の prefill（18.7k トークンが
+   300 秒に収まるのは自明だが、何秒かは要る）、そして **opencode からのツール呼び出しが
+   成立すること**。
+2. **`image` 役の既定サイズ。** g6f.2xlarge（6 GB）で SDXL が `--offload-to-cpu` 込みで何秒か、
    g6.xlarge で何秒か。ComfyUI の SDXL fp16 は 8 GB 前後を使うので、ComfyUI を選ぶ配備は
    g6.xlarge が下限になりうる。
-5. **Workspace 発の資格情報の再利用か、エンジン専用トークンか。** `/git/*` の PAT を
+3. **Workspace 発の資格情報の再利用か、エンジン専用トークンか。** `/git/*` の PAT を
    そのまま使うと、メンバー単位の計上はできるがセッション単位はできない。セッション単位が
    要るなら、Agent が起動時に発行する短命トークンにする。
 
@@ -260,7 +311,9 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
 - **CPU（Fargate 16 vCPU / c8g.4xlarge）で llama.cpp。** 値段は L4 1 枚と同じ
   （$0.79〜0.99/h 対 $1.26/h）で、MoE（3B active）の生成は使えても、**コーディング
   エージェントの 20k トークンの prefill が CPU では分単位**になる。安くもならず遅い。
-  llama.cpp の CPU イメージが 297 MB であることは、この判断を変えない。
+  llama.cpp の CPU イメージが 297 MB であることは、この判断を変えない。実測が裏書きする:
+  このコンテナで 1.5B の prefill が 18〜23 tok/s、opencode の要求は 18.7k トークン、opencode は
+  300 秒で切る。CPU では最初のトークンが間に合わない。
 - **自前の EC2（GPU）を CP が stop/start する。** スロットプールが持つ `StartInstances` /
   `StopInstances` の道具は流用できる（復帰 110 秒の実測もある）が、AMI と NVIDIA ドライバを
   フリートが所有し、停止中も EBS（200 GB で $19/月）が走り、ADR 0045 の走査と
@@ -324,7 +377,12 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
 - `llama.cpp` の `tools/server/README.md`、`stable-diffusion.cpp` の `examples/server/api.md`
   と README、ggml-org の「Anthropic Messages API in llama.cpp」、`opencode.ai/docs/providers`。
 - このコンテナでの実測: `OPENCODE_CONFIG` で指した provider が `opencode models` に出ること
-  （opencode 1.18.29）。
+  （opencode 1.18.29）、遅延スタブに対する opencode の切断と再送、llama.cpp `b10825` の
+  Linux x64 ビルドと `stable-diffusion.cpp` `master-841` の Linux x86_64 ビルドを CPU で
+  動かした各数値、HF から取った GGUF の sha256 照合。
+- 検証アカウント `af-sandbox` での実測: `deploy/aws/ecs/harness/engprobe.yaml` と
+  `probe-managed-instances.sh`（Managed Instances の起動・ドレイン、IAM と capacity provider の
+  契約）、`service-quotas` の L-DB2E81BA。
 - 本リポジトリ: `control-plane/main.go`（proxy env）、`egress_policy.go`、
   `preview_host_serve.go`、`tts_ecs.go`、`internal/runtime/runtime_ecs.go`（awsvpc・`WsSg`）、
   `workspace/agent/internal/imagegen/imagegen.go`、`internal/agents/opencode/{auth,models}.go`、

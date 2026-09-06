@@ -7,6 +7,10 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   figure from the registry and Hugging Face APIs on that date. What was measured in this
   container says so. Written to be reviewed before P0 is built; the Open questions are the
   parts that can still change the shape.
+- Revised the next day (2026-09-07) with measurements: open questions 1–3 were measured and
+  moved under *Resolved*, and decisions 5, 7 and 8 took their consequences. opencode cuts at
+  300 s; Managed Instances start in 109 s and terminate in 93 s on a CPU box; the G-family
+  quota was 0 in the test account (increase requested). No GPU numbers yet.
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -183,8 +187,12 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    ok, then forward. Past `AF_ENGINE_WAKE_TIMEOUT` (default 600 s) it answers 503 with
    `Retry-After` and a human-readable body (the model sees it too). The image MCP tool emits
    `notifications/progress` every 10 s meanwhile (the existing trick that lifts opencode's 60 s).
-   **How long the CP can hold an opencode chat request** (the SDK's client timeout) is measured
-   in P0 (open question 1). "One request buys a 30-minute window" is the opt-in of the person
+   **opencode drops the connection at 300.1 s and re-sends the same request a few seconds
+   later** (Resolved 1). So the gateway cuts each attempt at **290 s** with a 503, drives the
+   wake independently of the attempt, and lets the re-sent request through to the warm
+   engine. The same 300 s also bounds **time to first token** — even with the engine up,
+   a prefill longer than 300 s is cut by opencode (one more reason CPUs are rejected).
+   "One request buys a 30-minute window" is the opt-in of the person
    who chose that provider or model; there is no break-even analogue to 0070 (the alternative is
    simply "not available").
 
@@ -206,14 +214,16 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    - All three read one **model-layout convention** (ComfyUI's `models/…` layout is canonical);
      sd-server's flags point at files inside it.
 
-7. **One controller, 0070's design generalised to N engines, with VOICEVOX as one of them.**
+7. **One controller — `tts_control.go` (0070 P1: `ttsDemand` / `decideEngineAction` /
+   `ttsController`) generalised to N engines, with VOICEVOX as one of them.**
    `decideEngineAction` stays a pure function and takes an engine table (service name, URL,
    health URL, idle window, start deadline, cooldown). Demand clocks persist in `SettingsStore`
    (once a minute), `DescribeServices` gets a short TTL cache, start failures are diagnosed from
    `events[]` and cool down, and the idle window applies during `starting` too (0070
    decisions 5, 6, 9, 10). **One MI-specific addition**: after desired goes to 0 the instance
    lingers until MI scales it in, and the fee and EC2 price run until then. The state becomes
-   `running | starting | stopped | draining`, and P0 measures how long `draining` lasts. Modes
+   `running | starting | stopped | draining`; `draining` is **93 s** on a CPU box (Resolved 2).
+   Modes
    are 0070 decision 7's `off / on / ondemand`, per engine.
 
 8. **The stack is `60-engines.yaml` (optional). What `30-ingress` receives is one SSM parameter
@@ -226,8 +236,14 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    of the 9.2 KB left). Instead `60-engines` writes one JSON of service names and URLs to SSM
    and `30-ingress` passes a single `AF_ENGINES_SSM_PARAM`; the CP reads it at boot (SSM reads
    are already in the CP task role). **New IAM is required** — the MI infrastructure role, the
-   instance profile, S3 read for the engines, S3 write plus secret read for ingestion. 0070's
-   "zero new IAM" does not hold here.
+   instance profile, S3 read for the engines, S3 write plus secret read for ingestion. Three
+   contracts learned by measuring: a capacity provider is **cluster-scoped** and `ClusterName`
+   is mandatory (without it: "The cluster provided is invalid"); the managed policy
+   `AmazonECSInfrastructureRolePolicyForManagedInstances` grants `iam:PassRole` **only on roles
+   named `ecsInstanceRole*`** (a fleet-named role needs an explicit PassRole on the
+   infrastructure role); and `ClusterCapacityProviderAssociations` **replaces the cluster's
+   list** and requires `DefaultCapacityProviderStrategy` (pass the full list including
+   FARGATE / FARGATE_SPOT, and an **empty** strategy). 0070's "zero new IAM" does not hold here.
 
 9. **Usage is counted; cost is shown as shared.** For llm the gateway records tokens from the
    responses' `usage`, for image the count and pixels, per member (`usagex` gains `engine.llm`
@@ -253,21 +269,59 @@ can come from an environment variable via `apiKey: "{env:…}"`.
     the G family; the branch 0070 decision 11 kept open ("arm64 after measuring") does not exist
     here.
 
+## Resolved by measurement (2026-09-07)
+
+1. **opencode cuts at 300.1 s and re-sends a few seconds later.** opencode 1.18.29 in this
+   container was pointed, through an `@ai-sdk/openai-compatible` provider, at an
+   OpenAI-compatible stub that merely holds the response for N seconds. A 150 s hold succeeded
+   (both requests — the tools=0 title request and the tools=21 main one — answered, exit 0).
+   400 s and 700 s holds were **reset at 300.1 s**, the same request (tools=21) was **re-sent
+   3–5 s later**, and that repeated **four times** until the 1200 s cut-off. The consequences
+   are in decision 5: 503 at 290 s per attempt, the wake decoupled from the attempt, 300 s to
+   first token.
+2. **Managed Instances cold start is 109 s on a CPU box, drain 93 s.** A throwaway stack
+   (`deploy/aws/ecs/harness/engprobe.yaml`, driven by `probe-managed-instances.sh`) on the
+   shared cluster of the test account (`af-sandbox`) ran the 297 MB CPU llama.cpp image on a
+   c6a.large (AMI `ecs-managed-instances-standard-x86_64-20260827`), fetching a 1.1 GB model
+   from HF at start. From desired 1: **task at +6 s, instance launched at +10 s, pull started
+   at +32 s, RUNNING at +68 s (35 s pull), model loaded and listening at +109 s**. From
+   desired 0: **tasks gone at +10 s, shutting-down at +79 s, terminated at +93 s**. The 13
+   minutes in AWS's reference come from its 2-minute alarm and 14 GB image. The GPU box
+   (2.3 GB CUDA image, 17 GB model) is unmeasured — see 3.
+3. **The G-family vCPU quota was 0 in the test account.** The increase request (8 vCPU) was
+   not auto-approved and became a **support case** (`CASE_OPENED`). It is written into the
+   README as a stand-up precondition, and stand-up says so when it is 0. GPU numbers (prefill,
+   pull, S3 → local, load into VRAM) come from the same harness once approved.
+
+Also measured the same day:
+
+- **The HF API returns what the verification needs.** `?blobs=true` gives
+  `siblings[].lfs.sha256` and `cardData.license` (SDXL `openrail++`, FLUX.1-schnell
+  `apache-2.0` with `gated: auto`). A 1.1 GB GGUF downloaded and `sha256sum`ed matched the API
+  value — decision 3's check is written against those two fields.
+- **llama-server (CPU, 1.1 GB model)**: 3 s from start to `/health` ok, `/v1/messages`
+  answers 200, a request without `--api-key` gets 401. opencode passed the key through
+  `apiKey: "{env:AF_ENGINE_TOKEN}"` and streamed a reply end to end. **But an opencode request
+  is 18.7k tokens with the fleet's AGENTS.md, 7.3k even minimal**, and prefill in this
+  container (8 vCPU, shared) runs at **18–23 tok/s** for a 1.5B Q4 — 17 minutes for 18.7k
+  tokens. A 0.5B Q8 with the minimal config finished in 170 s but emitted the tool call as JSON
+  **text** (a limit of the model, not the path). **Whether tool calls actually work stays
+  unverified until the real model runs on a GPU.**
+- **sd-server (CPU, SD1.5 Q4_0, 1.67 GB)**: `/v1/images/generations` took **98 s** at 256 px /
+  4 steps and **587 s** at 512 px / 4 steps; `/v1/images/edits` (image + mask) took **307 s** at
+  256 px (51 s of it VAE decode). Responses are `data[].b64_json`. The premise that images need
+  a GPU is now a number, taken together with the API contract.
+
 ## Open questions — to settle before P0 is written
 
-1. **How long the CP can hold an opencode request.** Measure the client-side timeout of
-   opencode (Bun's fetch, `@ai-sdk/openai-compatible`). If it is shorter than 600 s,
-   decision 5's wake-and-hold does not work for llm and the first request answers 503 with the
-   model told to **retry in N minutes**.
-2. **MI cold start and drain.** Each leg of desired 1 → instance up → 2.3–5 GB pull → 17 GB
-   from S3 → `/health` ok, and desired 0 → instance terminated (where the fee stops). AWS's
-   reference says 13 minutes, but that includes the alarm and a 14 GB image.
-3. **The G-family vCPU quota.** New accounts can have "Running On-Demand G and VT instances"
-   at **0**. Write it down as a stand-up precondition, and have stand-up say so when it is 0.
-4. **The default size of the `image` role.** Seconds per SDXL image on g6f.2xlarge (6 GB,
+1. **The GPU numbers.** After the quota is granted, with the same harness: the `server-cuda`
+   (2.3 GB) pull, 17 GB from S3 to local disk, load into VRAM, Qwen3-Coder-30B-A3B prefill
+   (that 18.7k tokens fit in 300 s is obvious; the seconds are still needed), and **that tool
+   calls from opencode actually work**.
+2. **The default size of the `image` role.** Seconds per SDXL image on g6f.2xlarge (6 GB,
    with `--offload-to-cpu`) versus g6.xlarge. ComfyUI's SDXL fp16 uses around 8 GB, so a
    deployment that picks ComfyUI may have g6.xlarge as its floor.
-5. **Reuse the Workspace credential or mint an engine token.** Reusing the `/git/*` PAT gives
+3. **Reuse the Workspace credential or mint an engine token.** Reusing the `/git/*` PAT gives
    per-member accounting but not per-session. If per-session is wanted, the Agent mints a
    short-lived token at launch.
 
@@ -276,7 +330,9 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 - **llama.cpp on CPUs (Fargate 16 vCPU / c8g.4xlarge).** Same price as one L4 ($0.79–0.99/h
   versus $1.26/h); MoE generation (3B active) would be usable, but **a coding agent's 20k-token
   prefill takes minutes on a CPU**. Not cheaper, and slow. The 297 MB CPU image does not change
-  that.
+  that. The measurements back it: 18–23 tok/s of prefill for a 1.5B model in this container,
+  18.7k tokens per opencode request, and opencode cutting at 300 s — on a CPU the first token
+  never arrives in time.
 - **A self-managed GPU EC2 the CP stops and starts.** The slot pool's `StartInstances` /
   `StopInstances` tooling is reusable (and a 110 s resume is measured), but the fleet would own
   the AMI and NVIDIA driver, EBS runs while stopped (200 GB = $19/month), and every path needs
@@ -343,7 +399,12 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 - `llama.cpp` `tools/server/README.md`, `stable-diffusion.cpp` `examples/server/api.md` and
   README, ggml-org's "Anthropic Messages API in llama.cpp", `opencode.ai/docs/providers`.
 - Measured in this container: a provider pointed at by `OPENCODE_CONFIG` appearing in
-  `opencode models` (opencode 1.18.29).
+  `opencode models` (opencode 1.18.29); opencode's cut-off and re-send against a delaying
+  stub; the llama.cpp `b10825` Linux x64 build and the `stable-diffusion.cpp` `master-841`
+  Linux x86_64 build run on CPUs; the sha256 check of a GGUF fetched from HF.
+- Measured in the `af-sandbox` test account: `deploy/aws/ecs/harness/engprobe.yaml` and
+  `probe-managed-instances.sh` (Managed Instances start and drain, the IAM and capacity
+  provider contracts), `service-quotas` for L-DB2E81BA.
 - This repository: `control-plane/main.go` (proxy env), `egress_policy.go`,
   `preview_host_serve.go`, `tts_ecs.go`, `internal/runtime/runtime_ecs.go` (awsvpc, `WsSg`),
   `workspace/agent/internal/imagegen/imagegen.go`,

@@ -43,3 +43,24 @@ docker exec -i <workspace container> sh -s < deploy/aws/ecs/harness/probe-rtk.sh
 ⚠️ **素のイメージに対して走らせても答えにならない。** `BAKE_AGENT_CLIS=0` で焼いた
 イメージには rtk が入っておらず、entrypoint が `~/.local/bin` へ導入する。**boot-install を
 通った home** の側で走らせること（実機での踏み方は ADR 0068 の ⑤⑥ 実測を参照）。
+
+## `engprobe.yaml` / `probe-managed-instances.sh` —— ECS Managed Instances の起動とドレインを測る
+
+[ADR 0071](../../../../docs/decisions/0071-self-hosted-inference-engines.ja.md)（自前の推論
+エンジンを GPU でオンデマンドに動かす）の未解決 2 を測るための使い捨てスタック。**共有クラスタ
+に capacity provider を 1 本足す**ので、`60-engines.yaml` の本番と同じ 2 つの約束を守る:
+関連付けは FARGATE / FARGATE_SPOT を含む完全なリストで渡し（API はリストを置き換える）、
+`DefaultCapacityProviderStrategy` は空のまま。
+
+```bash
+AWS_PROFILE=af-sandbox deploy/aws/ecs/harness/probe-managed-instances.sh up
+AWS_PROFILE=af-sandbox deploy/aws/ecs/harness/probe-managed-instances.sh measure
+AWS_PROFILE=af-sandbox deploy/aws/ecs/harness/probe-managed-instances.sh down   # platform の teardown より先に
+```
+
+2026-09-07 の実測（c6a.large・CPU イメージ 297 MB・モデル 1.1 GB を HF から取得）:
+desired 1 → **+10 秒でインスタンス起動、+68 秒でタスク RUNNING、+109 秒で listen**。
+desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。GPU 版は G 系クォータ（既定 0）の
+申請が通ってから、`ImageUri=ghcr.io/ggml-org/llama.cpp:server-cuda` と `AcceleratorCount` を
+足して同じ手順で測る。箱の同定は**タスク経由**で行うこと——`list-container-instances` には
+スロットプールも並ぶ。
