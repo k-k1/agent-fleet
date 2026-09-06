@@ -238,8 +238,12 @@ wherever the two disagree.
    listening**. A CP that finds no stored value stamps it and judges nothing on that pass —
    the same "the first sweep only stamps" rule the free-slot sweeper uses, and the reason it
    is safe for two CP replicas to overlap during a deployment. `lastStart` is not stored at
-   all: it is read from `DescribeServices` (`deployments[].createdAt`), so a CP replaced
-   mid-start judges the deadline from the same clock as its predecessor.
+   all: it is read from `DescribeServices` (the primary deployment's **`updatedAt`**), so a
+   CP replaced mid-start judges the deadline from the same clock as its predecessor.
+   **Not `createdAt`** — measured on a real service, that is when the *deployment* was
+   created (hours or days earlier, at stack creation) and it does not move when the desired
+   count goes 0 → 1, so a deadline measured from it declares every start on an established
+   service failed the instant it begins and the engine can never come up at all.
 
 7. **`tts_engine` becomes three-valued: `off` / `on` / `ondemand`**, and the desired count
    stops being the admin's intent. Before this, `ttsAdminAPI.status()` reported
@@ -281,6 +285,14 @@ wherever the two disagree.
    than retrying forever — **and then refuses to start again for a cooldown** (15 minutes,
    doubling per consecutive failure). Without it the next sentence restarts the service at
    once, and a failure that repeats pays a 2 GB pull per attempt.
+
+   **An engine that dies on its own is not a failed start and is not recorded as one.** The
+   controller only ever leaves `running` by writing desired 0, which reads as `stopped`; a
+   service that goes from `running` back to `starting` with desired still 1 lost its task to
+   something else — the OOM kill of *What P0 measured*, a health-check replacement, an
+   interruption. That transition is audited separately (`tts.engine.replaced`) and moves
+   nothing: ECS is already putting the task back, and the warm gate has closed, so Polly
+   reads until it returns.
 
 10. **`DescribeServices` gets a short TTL cache** before any of this ships. The status
     endpoint calls it per request, which is harmless while only the admin panel polls, and

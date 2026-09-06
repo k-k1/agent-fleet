@@ -47,7 +47,8 @@ type ttsServiceView struct {
 	state     string    // running | starting | stopped | none
 	desired   int32     // the service's desired count
 	running   int32     // tasks actually running
-	lastStart time.Time // when the primary deployment was created
+	rollout   string    // the primary deployment's rolloutState (COMPLETED / IN_PROGRESS / FAILED)
+	lastStart time.Time // when the primary deployment last changed state — see describe()
 	// events holds the newest service events, which is the only place ECS writes down why
 	// a start failed ("no container instances met the placement constraints", a pull
 	// failure). Reading them needs no permission the CP role does not already have.
@@ -119,11 +120,25 @@ func (t *ttsEngineECS) describe(ctx context.Context) (ttsServiceView, error) {
 		default:
 			v.state = "stopped"
 		}
-		// The primary deployment's creation time is when this start began, read back from
-		// ECS rather than remembered: a CP replaced mid-start has to judge the start
-		// deadline from the same clock as its predecessor (ADR 0070 decision 6).
+		// When the current transition began, read back from ECS rather than remembered: a CP
+		// replaced mid-start has to judge the start deadline from the same clock as its
+		// predecessor (ADR 0070 decision 6).
+		//
+		// It is the primary deployment's `updatedAt`, NOT its `createdAt`. Measured on a real
+		// service: `createdAt` is when the *deployment* was created — the stack's, hours or
+		// days ago — and it does not move when the desired count goes 0 → 1. Judging the
+		// start deadline by it means every start on a service older than the deadline is
+		// declared failed the instant it begins, and the engine can never come up at all.
+		// `updatedAt` moves with the scale-up (and with a task ECS replaces underneath).
 		for _, d := range s.Deployments {
-			if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
+			if aws.ToString(d.Status) != "PRIMARY" {
+				continue
+			}
+			v.rollout = string(d.RolloutState)
+			switch {
+			case d.UpdatedAt != nil:
+				v.lastStart = *d.UpdatedAt
+			case d.CreatedAt != nil:
 				v.lastStart = *d.CreatedAt
 			}
 		}

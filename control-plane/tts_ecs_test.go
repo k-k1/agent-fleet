@@ -99,15 +99,25 @@ func TestTTSEngineViewCache(t *testing.T) {
 	}
 }
 
-// TestTTSEngineViewDetail — the two fields the controller judges a start by: when this
-// start began (the primary deployment) and what ECS says went wrong (the service events).
+// TestTTSEngineViewDetail — the two fields the controller judges a start by: when the
+// current transition began (the primary deployment) and what ECS says went wrong (the
+// service events).
+//
+// `updatedAt`, never `createdAt`: measured on a real service, `createdAt` is when the
+// deployment was created — hours or days before any of this — and it does not move when the
+// desired count goes 0 → 1. Judging the start deadline by it declares every start on an
+// older service failed the instant it begins, so the engine can never come up at all.
 func TestTTSEngineViewDetail(t *testing.T) {
 	created := time.Date(2026, 9, 6, 8, 30, 0, 0, time.UTC)
+	updated := created.Add(3 * time.Hour)
 	f := &fakeTTSECS{svc: &ecstypes.Service{
 		Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0,
 		Deployments: []ecstypes.Deployment{
 			{Status: aws.String("ACTIVE"), CreatedAt: aws.Time(created.Add(-time.Hour))},
-			{Status: aws.String("PRIMARY"), CreatedAt: aws.Time(created)},
+			{
+				Status: aws.String("PRIMARY"), CreatedAt: aws.Time(created), UpdatedAt: aws.Time(updated),
+				RolloutState: ecstypes.DeploymentRolloutStateInProgress,
+			},
 		},
 		Events: []ecstypes.ServiceEvent{
 			{Message: aws.String("unable to place a task")},
@@ -121,8 +131,11 @@ func TestTTSEngineViewDetail(t *testing.T) {
 	if err != nil {
 		t.Fatalf("view: %v", err)
 	}
-	if !v.lastStart.Equal(created) {
-		t.Errorf("lastStart = %v, want the PRIMARY deployment's %v", v.lastStart, created)
+	if !v.lastStart.Equal(updated) {
+		t.Errorf("lastStart = %v, want the PRIMARY deployment's updatedAt %v (createdAt is the deployment, not the start)", v.lastStart, updated)
+	}
+	if v.rollout != string(ecstypes.DeploymentRolloutStateInProgress) {
+		t.Errorf("rollout = %q, want IN_PROGRESS", v.rollout)
 	}
 	if len(v.events) != 2 || v.events[0] != "unable to place a task" {
 		t.Errorf("events = %v, want the newest few, blanks dropped", v.events)

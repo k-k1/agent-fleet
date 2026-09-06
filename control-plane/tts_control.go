@@ -372,6 +372,7 @@ type ttsController struct {
 	warm        bool
 	failures    int
 	lastFailure time.Time
+	prevState   string // the service state at the previous tick, for spotting a replacement
 }
 
 // ttsControlCfgFromEnv reads the tuning. The defaults are ADR 0070's: a 5-minute window,
@@ -462,6 +463,7 @@ func (c *ttsController) tick(ctx context.Context) time.Duration {
 		return c.cfg.interval
 	}
 	now := c.now()
+	c.noteReplacement(ctx, view)
 	mode := ttsEngineMode(c.setting(ctx, ttsEngineSetting), true)
 	lastDemand := c.demand.lastAt(ctx)
 	if lastDemand.IsZero() {
@@ -515,6 +517,34 @@ func (c *ttsController) tick(ctx context.Context) time.Duration {
 		return ttsControlBusyInterval
 	}
 	return c.cfg.interval
+}
+
+// noteReplacement records an engine that went away without being asked to. The controller
+// only ever leaves `running` by writing desired 0, which shows up as `stopped`; a service
+// that goes from running back to starting while desired is still 1 lost its task to
+// something else — the OOM kill P0 measured, a health-check replacement, a Fargate
+// interruption. Telling that apart from the controller's own starts and stops is what keeps
+// the ledger readable: this is not a charge anybody decided to make.
+//
+// The transition is judged from this process's previous observation, so a CP that restarted
+// in between says nothing rather than inventing an event.
+func (c *ttsController) noteReplacement(ctx context.Context, view ttsServiceView) {
+	c.mu.Lock()
+	prev := c.prevState
+	c.prevState = view.state
+	c.mu.Unlock()
+	if prev != "running" || view.state != "starting" || view.desired < 1 {
+		return
+	}
+	detail := strings.TrimSpace(view.rollout + " " + strings.Join(view.events, " | "))
+	log.Printf("tts: the engine task was replaced without being asked: %s", detail)
+	if c.audit == nil {
+		return
+	}
+	_ = c.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: "tts-controller",
+		Action: "tts.engine.replaced", Target: "restart", Detail: detail, At: store.NowTS(),
+	})
 }
 
 // apply moves the desired count and records why. Every automatic movement is audited:

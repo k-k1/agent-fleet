@@ -386,6 +386,54 @@ func TestTTSControllerTick(t *testing.T) {
 	}
 }
 
+// TestTTSControllerReplacement — the engine dying on its own (P0 measured a 4 GiB OOM kill
+// on one oversized request) must not be read as anything the controller did. It goes into
+// the ledger under its own action, the warm gate drops, and the desired count is left alone
+// so ECS can put the task back.
+func TestTTSControllerReplacement(t *testing.T) {
+	st := testSettingsStore(t)
+	now := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
+	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
+	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
+	demand := newTTSDemand(st, 5*time.Minute)
+	demand.now = func() time.Time { return now }
+	demand.record(t.Context(), 100)
+	audit := &fakeTTSAudit{}
+	srv, _ := fakeVoicevox(t)
+	c := newTTSController(eng, &voicevoxProvider{base: srv.URL}, demand, st, audit, testControlCfg())
+	c.now = func() time.Time { return now }
+
+	c.tick(t.Context()) // sees it running, warms it
+	if !c.warmed() {
+		t.Fatal("the engine should be warm after a tick while running")
+	}
+
+	// The task dies: desired stays 1, running drops to 0, and the deployment was updated
+	// just now — the same shape as a start, which is exactly why the transition is what
+	// tells them apart.
+	now = now.Add(time.Minute)
+	f.svc = &ecstypes.Service{
+		Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 0,
+		Deployments: []ecstypes.Deployment{{Status: aws.String("PRIMARY"), UpdatedAt: aws.Time(now)}},
+		Events:      []ecstypes.ServiceEvent{{Message: aws.String("(service voicevox) has stopped 1 running tasks")}},
+	}
+	eng.invalidate()
+	c.tick(t.Context())
+
+	if len(f.desired) != 0 {
+		t.Errorf("desired calls = %v, want none — ECS is already replacing the task", f.desired)
+	}
+	if len(audit.logs) != 1 || audit.logs[0].Action != "tts.engine.replaced" {
+		t.Fatalf("audit = %+v, want one tts.engine.replaced", audit.logs)
+	}
+	if !strings.Contains(audit.logs[0].Detail, "has stopped 1 running tasks") {
+		t.Errorf("audit detail = %q, want the service event that explains it", audit.logs[0].Detail)
+	}
+	if c.warmed() {
+		t.Error("the replacement task is cold; the readiness gate must be closed")
+	}
+}
+
 // TestTTSControllerStartDeadline — a start that never becomes running is given up on, the
 // failure carries the reason ECS wrote into the service events, and the cooldown then
 // refuses to buy another 2 GB pull straight away.
