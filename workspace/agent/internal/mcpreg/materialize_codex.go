@@ -165,6 +165,11 @@ func codexServerBlocks(defs []ServerDef) []string {
 			// codex takes seconds as a float; a definition carries milliseconds.
 			fmt.Fprintf(&b, "startup_timeout_sec = %.1f\n", float64(d.TimeoutMS)/1000)
 		}
+		if sec := CodexToolTimeoutSec(d); sec > 0 {
+			// The per-CALL budget (see CodexToolTimeoutSec): without it a generate_image call
+			// is cut at codex's 300 s default while the server is still producing the image.
+			fmt.Fprintf(&b, "tool_timeout_sec = %.1f\n", sec)
+		}
 		if d.Transport == TransportStdio {
 			// Codex does not inherit arbitrary variables into stdio MCP children.
 			// Builtins name the host variables their wrapper/server needs; values

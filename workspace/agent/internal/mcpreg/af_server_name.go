@@ -33,7 +33,11 @@ import (
 // afNameRE matches a name this file generates. It is what lets a stale entry be
 // recognised as af's own even when the ownership ledger has lost it — see
 // StaleAFServerName.
-var afNameRE = regexp.MustCompile(`^af_[0-9a-f]{8}$`)
+// afNamePattern is the shape, held once: afNameRE anchors it, and afClientToolRE embeds it
+// so the two can never drift into disagreeing about what one of af's own names looks like.
+const afNamePattern = `af_[0-9a-f]{8}`
+
+var afNameRE = regexp.MustCompile(`^` + afNamePattern + `$`)
 
 func afNamePath() string { return filepath.Join(paths.AgentConfigDir(), "mcp-af-name") }
 
@@ -101,4 +105,31 @@ func afServerNameLocked() string {
 // (`af_` + 8 hex) that recognising it costs none of the ledger's caution.
 func StaleAFServerName(name string, keep map[string]bool) bool {
 	return !keep[name] && afNameRE.MatchString(name)
+}
+
+// afClientToolRE matches the name a CLIENT sees for one of af's own tools. A client
+// namespaces an MCP tool by its server, and the server name is what rotates every boot, so
+// the transcript layer cannot compare against a constant.
+//
+// Every separator here was read off real data in this container on 2026-09-06, not guessed:
+//
+//	claude    mcp__af_40ed9852__af_report        (a live session's own tool list)
+//	opencode  af_786de7cb_af_report              (its session store)
+//	copilot   probe-structured_probe             (~/.copilot/session-state, an MCP tool)
+//	kiro      structured_probe                   (its store: BARE, with orig_name identical)
+//
+// kiro is why the bare form is accepted at all. It costs nothing in practice — a false
+// positive needs another server to own a tool of the same name AND return af's exact result
+// shape — but it is a real narrowing that a namespacing client does not need.
+var afClientToolRE = regexp.MustCompile(`^(?:mcp__)?(?:` + afNamePattern + `|` + BuiltinAF + `)[-_]+(.+)$`)
+
+// IsAFToolName reports whether a client-side MCP tool name is af's own `tool`. The bare
+// name is accepted too, for a client that does not namespace at all.
+func IsAFToolName(name, tool string) bool {
+	name = strings.TrimSpace(name)
+	if name == tool {
+		return true
+	}
+	m := afClientToolRE.FindStringSubmatch(name)
+	return m != nil && m[1] == tool
 }

@@ -30,7 +30,8 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 ```jsonc
 {"ts","call","feature","trigger","origin","origin_conv","kind",
  "model","model_raw","model_req","model_src","ref","verb","sidechain","idx",
- "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured"}
+ "in","out","cread","ccreate","spend","cost_usd","ms","ok","measured",
+ "images","pixels"}
 ```
 
 - **`spend` = in + ccreate + out** (cache_read is not included). The same definition as the
@@ -47,12 +48,15 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
   rows have spend>0 with calls=0, so averages are shown as `—` (docs/46 §7-5).
 - **`measured` distinguishes "zero" from "not measured"** (`exact` | `partial` | `none`). Even a
   CLI that reports no tokens still **always has its call counted**.
+- **`images` / `pixels` are the non-token dimension of `feature=tool.imagegen` only**, and both
+  are omitted everywhere else — never written as 0 to mean "no images" (added 2026-09-06; see
+  the amendment below).
 
 ### 2. The enums (frozen; the Console does the i18n)
 
 | Dimension | Values |
 |---|---|
-| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `unknown` |
+| `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
 | `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
@@ -61,6 +65,24 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 `feature=unknown` is in the enum so that **a new auxiliary feature that forgets to tag itself still
 always leaves a row**. Not creating unrecorded (i.e. invisible) consumption takes priority over the
 tag being right.
+
+**Amendment (2026-09-06).** Two values were added to the `feature` row above. `plan.update` (the
+explicit work-plan refresh, docs/log/33 stage 5) had been in `usagex/ledger.go` as
+`FeaturePlanUpdate` for some time without this table being updated — the enum drifted once
+without a note, which is exactly what "frozen" was meant to prevent. `tool.imagegen` is the image
+generation tool of [ADR 0069](0069-image-generation-providers.md), recorded for the Codex route
+the way the chat's one-shot already is; the plan quota an image consumes is not expressible in
+tokens and is left unmeasured rather than zero-filled (ADR 0069 decision 9). The rule from here:
+a new constant in `ledger.go` and a new value in this table land in the same commit.
+
+The same change added the row's first two non-token columns, `images` and `pixels` in §1. They
+exist because the honest alternative was worse: an image generation's ledger row carries the
+DRIVER turn's tokens exactly and says nothing about the plan quota the image consumed, so
+without a count of what was produced the row reads as a cheap text turn. They are written on
+`feature=tool.imagegen` rows only, on the first row of a call (a call that split across models
+must not be read as having produced the images once per model), and a successful generation is
+recorded as `measured=partial` for the same reason — the tokens are exact, the consumption is
+not all in them.
 
 ### 3. Collection is "a ctx tag plus one recording point in the provider layer"
 

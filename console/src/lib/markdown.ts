@@ -1,4 +1,4 @@
-import { load } from "js-yaml";
+import { load, YAML11_SCHEMA, mergeTag } from "js-yaml";
 import { Marked, Tokenizer } from "marked";
 
 export interface YamlFrontMatter {
@@ -167,6 +167,17 @@ function parseFlatEntries(yaml: string): Record<string, unknown> | null {
   return Object.keys(attributes).length ? attributes : null;
 }
 
+// YAML11_SCHEMA carries the 1.1 tags but not the merge key, which js-yaml 5 keeps separate.
+const FRONT_MATTER_SCHEMA = YAML11_SCHEMA.withTags(mergeTag);
+
+// Front matter is read as YAML 1.1, which is what js-yaml 4 did by default and what the
+// front-matter convention grew up on: `date: 2026-09-06` is a timestamp (renderFrontMatter
+// prints Dates as ISO), `<<` merges, `!!set` loads. js-yaml 5 made YAML 1.2 / CORE_SCHEMA
+// the default instead, where the date is the plain string and the other two are an error —
+// and an error here is not a fallback but a disappearance, since load() throwing drops the
+// whole block to parseFlatEntries, which rejects anything nested and returns null. Pinning
+// the schema keeps every document that rendered before rendering the same; changing how
+// dates read is a product decision, not something a dependency bump gets to make.
 export function splitYamlFrontMatter(source: string): YamlFrontMatter | null {
   const match = source.match(/^\uFEFF?---[\t ]*\r?\n[\s\S]*?\r?\n(?:---|\.\.\.)[\t ]*(?:\r?\n|$)/);
   if (!match) return null;
@@ -176,7 +187,7 @@ export function splitYamlFrontMatter(source: string): YamlFrontMatter | null {
   const body = source.slice(match[0].length);
   let attributes: unknown;
   try {
-    attributes = load(yaml);
+    attributes = load(yaml, { schema: FRONT_MATTER_SCHEMA });
   } catch {
     const flat = parseFlatEntries(yaml);
     return flat ? { attributes: flat, body, lenient: true } : null;

@@ -39,6 +39,7 @@ import { useSkillPicker } from "./parts/useSkillPicker.ts";
 import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
+import { ImageLightbox } from "./parts/ImageLightbox.tsx";
 import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
 import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
 import { useHistorySearch } from "./parts/useHistorySearch.ts";
@@ -1996,13 +1997,7 @@ export function MirrorView({
           />
         </div>
       )}
-      {lightbox &&
-        createPortal(
-          <div className="mirror-lightbox" onClick={() => setLightbox(null)} role="presentation">
-            <img src={lightbox} alt={tr("mirror.pasted_image_zoom")} />
-          </div>,
-          document.body,
-        )}
+      {lightbox && createPortal(<ImageLightbox src={lightbox} onClose={() => setLightbox(null)} />, document.body)}
       {managedSettingsOpen && (
         <ManagedSettingsModal
           session={session}

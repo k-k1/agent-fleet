@@ -155,7 +155,7 @@ fs.writeFileSync(path.join(www, "sample.pptx"), pptx);
 fs.writeFileSync(path.join(www, "broken.docx"), Buffer.from("not an office document at all"));
 
 // ---- Bundle, using the production DocPreview as-is --------------------------
-const esbuild = await import(path.join(CONSOLE, "node_modules/esbuild/lib/main.js"));
+const esbuild = await import("esbuild");
 const entry = path.join(www, "entry.jsx");
 fs.writeFileSync(
   entry,

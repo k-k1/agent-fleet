@@ -340,6 +340,13 @@ export interface Settings {
   // reads this key from ui-prefs to decide whether the session-side MCP server
   // advertises the two peer tools at all.
   peerMessaging: boolean;
+  // Global ON/OFF for the image generation tool (AgentsTab > Sessions, ADR 0069). Same shape
+  // as peerMessaging: not per-agent, read by the Agent from ui-prefs to decide whether the
+  // session-side MCP server is launched with --image-gen at all.
+  // Default FALSE. Every generated image spends the user's ChatGPT plan quota — 3-5x faster
+  // than a text turn — from sessions that are not Codex sessions and would otherwise never
+  // touch it, so it is chosen rather than inherited on upgrade.
+  imageGeneration: boolean;
   // How the opencode launch-model list is shaped (AgentsTab > opencode). One
   // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
   // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
@@ -786,6 +793,7 @@ const DEFAULTS: Settings = {
   claudeCustomModels: [],
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
+  imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,

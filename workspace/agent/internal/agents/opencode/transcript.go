@@ -722,6 +722,12 @@ func readParts(partRows [][]byte) ([]transcript.Part, string) {
 				part.File, part.Edits = f, es
 			}
 			parts = append(parts, part)
+			// af's generate_image (ADR 0069) becomes a picture card right after its trace.
+			// No pairing is needed here, unlike claude: opencode keeps a tool's output on the
+			// same part, so the result is in hand the moment the call completes.
+			if img, ok := transcript.GeneratedImagePart(name, p.State.Output); ok {
+				parts = append(parts, img)
+			}
 		case "patch":
 			// A committed edit; opencode records only the file list + hash, so it's a
 			// trace (no before/after to open as a diff).

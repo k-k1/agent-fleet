@@ -15,6 +15,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/browserx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpx"
 )
 
@@ -97,6 +98,11 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /sessions/{name}/driver", sessionx.HandleSessionDriver)
 	mux.HandleFunc("POST /sessions/{name}/paste-image", sessionx.HandlePasteImage)
 	mux.HandleFunc("GET /sessions/{name}/pasted/{file}", sessionx.HandlePastedImage)
+	// Image generation (ADR 0069). Called only by the session-side af MCP server over the
+	// loopback, never by the Console — hence deliberately absent from the CP's agent-proxy
+	// allowlist. /generate blocks for the whole generation (P0 is synchronous).
+	mux.HandleFunc("GET /imagegen/status", imagegen.HandleStatus)
+	mux.HandleFunc("POST /imagegen/generate", imagegen.HandleGenerate)
 	// Memo image attachments (docs/log/21 image attachments) — membership-scoped, so keyed to the
 	// container rather than a session (memo_paste.go). CP proxies /api/memos/* here.
 	mux.HandleFunc("POST /memos/paste-image", handleMemoPasteImage)

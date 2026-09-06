@@ -1,0 +1,213 @@
+package mcpx
+
+// The generate_image tool's own machinery (ADR 0069): the availability question asked at
+// tools/list time, the call itself, and the progress heartbeat that keeps a client's per-call
+// clock from cutting a generation in half.
+//
+// The tool DEFINITION stays in mcp_stdio.go, because the advertised-schema test finds the
+// source of truth by parsing that file's literals — a tool declared anywhere else would be
+// invisible to the gate that checks every advertised schema.
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"strings"
+	"time"
+)
+
+// mcpImageGenStatus is the Agent's answer to "can this session generate images, and how".
+// It reports FACTS; the rule that turns them into a yes or no lives in mcpImageGenAdvertise,
+// where the tool list is built.
+type mcpImageGenStatus struct {
+	Enabled  bool     `json:"enabled"`
+	Provider string   `json:"provider"`
+	Ready    bool     `json:"ready"`
+	Kind     string   `json:"kind"`
+	Model    string   `json:"model"`
+	Ops      []string `json:"ops"`
+}
+
+// agentImageGenStatus asks the Agent over the loopback REST every other session tool already
+// uses. The short timeout is deliberate: this sits on the tools/list path, which a client
+// calls at the start of every turn, so a wedged Agent must cost the turn a moment rather than
+// the whole 15 s default.
+func agentImageGenStatus(session string) (mcpImageGenStatus, error) {
+	var st mcpImageGenStatus
+	out, err := agentDoTimeout(http.MethodGet, "/imagegen/status?session="+url.QueryEscape(session), nil, 3*time.Second)
+	if err != nil {
+		return st, err
+	}
+	if err := json.Unmarshal([]byte(out), &st); err != nil {
+		return st, err
+	}
+	return st, nil
+}
+
+// imageGenArgs is the tool's arguments, already split out of the shared argument struct.
+type imageGenArgs struct {
+	op, prompt, size, background string
+	count                        int
+	inputs                       []string
+}
+
+// mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED the
+// provider's own (8 minutes on the Codex route) so that a slow generation is reported by the
+// provider with a real reason, rather than by this client as a bare timeout.
+//
+// It is also why the budget is bounded rather than left open: RunStdio's loop dispatches
+// serially, so for as long as a generation is in flight this server reads nothing else from
+// stdin — including notifications/cancelled. That is tolerable because the one client on this
+// pipe is the agent waiting on this very call, but an unbounded wait would turn a wedged
+// provider into a wedged Agent Fleet server.
+const mcpImageGenCallTimeout = 10 * time.Minute
+
+func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
+	if strings.TrimSpace(a.prompt) == "" {
+		return mcpToolErr(req.ID, "prompt（生成する絵の説明）が必要です")
+	}
+	self, err := mcpOwningSession()
+	if err != nil {
+		return mcpToolErr(req.ID, err.Error())
+	}
+	body, _ := json.Marshal(map[string]any{
+		"session": self, "op": a.op, "prompt": a.prompt, "size": a.size,
+		"background": a.background, "count": a.count, "inputs": a.inputs,
+	})
+
+	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
+	// call at 60 s flat (measured: "MCP error -32001: Request timed out" at 60.0 s), while a
+	// notification every 10 s took a 90 s call through cleanly; claude ignores progress for
+	// timeout purposes and needs nothing; codex is covered by the tool_timeout_sec the
+	// materializer stamps.
+	stop := startProgressHeartbeat(req, "画像を生成しています…")
+	out, err := agentDoTimeout(http.MethodPost, "/imagegen/generate", body, mcpImageGenCallTimeout)
+	stop()
+	if err != nil {
+		return mcpToolErr(req.ID, "画像を生成できませんでした: "+agentErrDetail(err))
+	}
+	var res struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Name   string `json:"name"`
+			MIME   string `json:"mime"`
+			Bytes  int64  `json:"bytes"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+		} `json:"files"`
+		Provider string   `json:"provider"`
+		Model    string   `json:"model"`
+		Region   string   `json:"region"`
+		Warnings []string `json:"warnings"`
+	}
+	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Files) == 0 {
+		return mcpToolErr(req.ID, "画像生成の結果を読み取れませんでした")
+	}
+	value := map[string]any{
+		"files":    res.Files,
+		"provider": res.Provider,
+	}
+	if res.Model != "" {
+		value["model"] = res.Model
+	}
+	if res.Region != "" {
+		value["region"] = res.Region
+	}
+	// Always present, empty included: a caller that only looks for the key when something went
+	// wrong is the caller that reports a size it never got.
+	value["warnings"] = append([]string{}, res.Warnings...)
+	value["note"] = "パスは生成済みのファイル。絵を確認する必要があるときだけ開くこと。warnings は実際に何が起きたかで、無視して寸法が合っている前提の説明をしないこと。"
+	return mcpStructuredResult(req.ID, value)
+}
+
+// agentErrDetail keeps the Agent's own message (why the provider refused, whether Codex is
+// logged in) in the model-visible error. A generic "generation failed" would leave the model
+// nothing to act on, and the two ends of the range — "you are not logged in" and "the prompt
+// was refused" — call for opposite responses.
+func agentErrDetail(err error) string {
+	var httpErr *agentHTTPError
+	if !errors.As(err, &httpErr) {
+		return err.Error()
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal([]byte(httpErr.Body), &body) == nil && body.Error.Message != "" {
+		return body.Error.Message
+	}
+	return httpErr.Error()
+}
+
+// --- progress heartbeat -------------------------------------------------------------------
+
+// mcpProgressEvery is the heartbeat interval. 10 s against opencode's 60 s ceiling leaves
+// five missed notifications of headroom before the client would give up. A var only so a test
+// can shorten it — a test that waited for the real interval would be a ten-second test.
+var mcpProgressEvery = 10 * time.Second
+
+// startProgressHeartbeat emits notifications/progress for this request until the returned
+// stop is called. It is a no-op when the client sent no progressToken (the token is what a
+// notification is addressed to, and an unaddressed one is dropped) or when there is no stdout
+// to write to, which is the case in the unit tests.
+func startProgressHeartbeat(req mcpReq, message string) (stop func()) {
+	token := mcpProgressToken(req)
+	if len(token) == 0 || stdioOut == nil {
+		return func() {}
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(mcpProgressEvery)
+		defer ticker.Stop()
+		var n int
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				n++
+				// progress must increase; there is no total, because the provider cannot say
+				// how far along an image is.
+				notif, _ := json.Marshal(map[string]any{
+					"jsonrpc": "2.0",
+					"method":  "notifications/progress",
+					"params": map[string]any{
+						"progressToken": token,
+						"progress":      n,
+						"message":       fmt.Sprintf("%s (%ds)", message, n*int(mcpProgressEvery/time.Second)),
+					},
+				})
+				stdioOut.writeLine(notif)
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		// Wait for the goroutine to leave before the caller writes the response, so a
+		// heartbeat can never be emitted after the result it belongs to.
+		<-finished
+	}
+}
+
+// mcpProgressToken reads params._meta.progressToken. It is returned as raw JSON because the
+// spec allows a string OR a number and the notification has to echo back exactly what arrived
+// — re-typing it here is how a client stops recognising its own token.
+func mcpProgressToken(req mcpReq) json.RawMessage {
+	var p struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if len(req.Params) == 0 || json.Unmarshal(req.Params, &p) != nil {
+		return nil
+	}
+	tok := p.Meta["progressToken"]
+	if len(tok) == 0 || string(tok) == "null" {
+		return nil
+	}
+	return tok
+}

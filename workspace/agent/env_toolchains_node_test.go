@@ -116,3 +116,25 @@ func TestParseDottedRejectsNonNumeric(t *testing.T) {
 		t.Fatalf("parseDotted(22.23.2) = %v", got)
 	}
 }
+
+// Retiring a major (18 went when 26 arrived) must not break whoever still has it selected.
+// A <select> whose value matches no <option> shows the FIRST one, so the picker would read
+// "20" while the sessions ran 18, and the install button would refuse the member's own
+// stored choice as unsupported.
+func TestNodeOptionsForKeepsARetiredSelection(t *testing.T) {
+	if got := nodeOptionsFor("18"); got[len(got)-1] != "18" {
+		t.Fatalf("nodeOptionsFor(18) = %v, want 18 appended", got)
+	}
+	for _, current := range []string{"", "system", "22", "../etc"} {
+		if got := nodeOptionsFor(current); len(got) != len(nodeOptions) {
+			t.Errorf("nodeOptionsFor(%q) = %v, want the plain list", current, got)
+		}
+	}
+	// The base list must not be mutated by the append (it is package-level state shared by
+	// every request, so one call leaking into it would offer 18 to everyone from then on).
+	for _, v := range nodeOptions {
+		if v == "18" {
+			t.Fatal("nodeOptions was mutated by nodeOptionsFor")
+		}
+	}
+}

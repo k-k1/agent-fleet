@@ -39,6 +39,7 @@ const (
 	FeatureSuggestChat      = "suggest.chat"       // the chat's ✨ reply suggestions
 	FeatureSuggestEdit      = "suggest.edit"       // the editor's ✨ AI edit suggestion (docs/log/44 Phase 4)
 	FeatureSession          = "session"            // the interactive session itself (folded in from the transcript)
+	FeatureToolImagegen     = "tool.imagegen"      // the image generation tool (ADR 0069)
 	// FeatureUnknown is a call that carried no tag. A row is written even when a new
 	// auxiliary feature forgets to tag itself: not recording it would make the consumption
 	// invisible, which matters more than the tag being right.
@@ -107,6 +108,12 @@ type Record struct {
 	MS          int     `json:"ms,omitempty"`
 	OK          bool    `json:"ok"`
 	Measured    string  `json:"measured"`
+	// Images and Pixels are the non-token dimension of feature=tool.imagegen (ADR 0069
+	// decision 9): the plan quota an image consumes is not expressible in tokens, so what CAN
+	// be counted is counted here and the rest is left unmeasured rather than zero-filled.
+	// Absent on every other feature — never write a 0 to mean "no images".
+	Images int `json:"images,omitempty"`
+	Pixels int `json:"pixels,omitempty"`
 }
 
 // Spend is the headline metric. cache_read is excluded to match the definition

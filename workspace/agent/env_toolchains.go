@@ -76,7 +76,34 @@ var toolchainVerRe = regexp.MustCompile(`^(system|[0-9]{1,3}(\.[0-9]{1,4}){0,2})
 
 // nodeOptions are the versions the Console offers for nvm. "system" keeps the
 // image's base node.
-var nodeOptions = []string{"system", "18", "20", "22", "24"}
+//
+// Even majors only — those are the lines node.js promotes to LTS — and a new one is
+// offered from its April/May release, not from the October it becomes LTS: 26.0.0 shipped
+// 2026-05-05 and until it is listed here a member has no way to ask for it at all.
+// Nothing here needs to be on disk: node_install.go downloads whatever is picked and
+// installedNodeMajors() tells the picker which majors already are.
+//
+// A major leaves the list once it is out of maintenance and nobody is on it (18 went when
+// 26 arrived; it had been end-of-life since 2025-04). Retiring one only stops OFFERING it —
+// what an existing selection needs is nodeOptionsFor.
+var nodeOptions = []string{"system", "20", "22", "24", "26"}
+
+// nodeOptionsFor is nodeOptions plus `current`, and every caller that answers "what may be
+// selected" goes through it. Retiring a major must not break the workspace of whoever still
+// has it: without this the Console's <select> holds a value matching no <option>, which
+// browsers render as the FIRST option — the member reads "20" while their sessions run 18 —
+// and handleNodeInstall rejects their own stored choice as unsupported.
+func nodeOptionsFor(current string) []string {
+	if current == "" || !majorOnlyRe.MatchString(current) {
+		return nodeOptions
+	}
+	for _, v := range nodeOptions {
+		if v == current {
+			return nodeOptions
+		}
+	}
+	return append(append([]string{}, nodeOptions...), current)
+}
 
 // goOptions merges "system" (baked /usr/local/go, or none), the build pin and the
 // on-demand versions already installed — the list the Console offers.
@@ -264,8 +291,8 @@ func handleToolchainsGet(w http.ResponseWriter, r *http.Request) {
 		"agentUpdate":    t.AgentUpdate,
 		"java_available": javaOptions(),         // offered for selection (installed ∪ installable)
 		"java_installed": installedJavaMajors(), // present on disk now (ready without a download)
-		"node_options":   nodeOptions,
-		// nodeOptions is a FIXED list (18/20/22/24), so — exactly like java — it offers
+		"node_options":   nodeOptionsFor(t.Node),
+		// nodeOptions is a FIXED list, so — exactly like java — it offers
 		// versions that may not be on disk. Without this the Console cannot tell the two
 		// apart, and selecting an absent one silently did nothing (docs/decisions/0068).
 		"node_installed": installedNodeMajors(),

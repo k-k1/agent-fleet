@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { MouseEvent as RMouseEvent, PointerEvent as RPointerEvent } from "react";
+import { useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import type { MouseEvent as RMouseEvent, PointerEvent as RPointerEvent, Ref } from "react";
 import { useT } from "../../lib/i18n/index.ts";
 
 // ImageView previews a single image (CodeLeaf-style affordances): the image is
@@ -9,15 +9,30 @@ import { useT } from "../../lib/i18n/index.ts";
 // download endpoint); the browser sniffs and decodes it regardless of the
 // attachment Content-Type. `onLoad` reports the natural pixel size to the caller
 // so the info bar can show W×H.
+//
+// A host that draws its own zoom controls (the mirror's lightbox bar) passes
+// `onZoom` and drives them through the ref handle; the built-in badge then
+// stands down, so there is one zoom readout on screen rather than two.
 const MIN = 1;
 const MAX = 8;
 
 const clamp = (v: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, v));
 
+/** Zoom control for a host that draws its own buttons. */
+export interface ImageViewHandle {
+  /** Multiply the zoom, anchored at the box center (a button has no pointer position). */
+  zoomBy(factor: number): void;
+  /** Back to fit (scale 1, no pan). */
+  reset(): void;
+}
+
 interface ImageViewProps {
   src: string;
   alt?: string;
   onLoad?: (size: { w: number; h: number }) => void;
+  /** Report the zoom level. Supplying it hands the readout to the host and hides the badge. */
+  onZoom?: (scale: number) => void;
+  ref?: Ref<ImageViewHandle>;
 }
 
 // A point relative to the box center, derived from an event carrying client coords.
@@ -32,7 +47,7 @@ interface Transform {
 }
 const FIT: Transform = { scale: 1, tx: 0, ty: 0 };
 
-export function ImageView({ src, alt, onLoad }: ImageViewProps) {
+export function ImageView({ src, alt, onLoad, onZoom, ref }: ImageViewProps) {
   const tr = useT();
   const boxRef = useRef<HTMLDivElement>(null);
   const [t, setT] = useState<Transform>(FIT);
@@ -148,7 +163,24 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
     if (pointers.current.size < 2) pinch.current = null;
   };
 
-  const reset = () => setT(FIT);
+  const reset = useCallback(() => setT(FIT), []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      zoomBy: (factor: number) => setT((prev) => applyZoom(prev, prev.scale * factor, 0, 0)),
+      reset,
+    }),
+    [applyZoom, reset],
+  );
+
+  // Read through a ref: a host that passes an inline callback would otherwise
+  // re-run this on every one of its renders and report a level that never moved.
+  const onZoomRef = useRef(onZoom);
+  onZoomRef.current = onZoom;
+  useEffect(() => {
+    onZoomRef.current?.(scale);
+  }, [scale]);
 
   if (broken) return <div className="imgview muted">{tr("view.cannot_show_image")}</div>;
 
@@ -177,7 +209,7 @@ export function ImageView({ src, alt, onLoad }: ImageViewProps) {
         onError={() => setBroken(true)}
         style={{ transform: `translate(${tx}px, ${ty}px) scale(${scale})` }}
       />
-      {scale > 1 && (
+      {scale > 1 && !onZoom && (
         <button type="button" className="imgview-zoom" onClick={reset} title={tr("view.reset_to_fit")}>
           {Math.round(scale * 100)}%
         </button>

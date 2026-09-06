@@ -168,7 +168,7 @@ async function bundle() {
       });
     },
   };
-  const esbuild = await import(path.join(CONSOLE, "node_modules/esbuild/lib/main.js"));
+  const esbuild = await import("esbuild");
   const version = PDFJS_VERSION;
   for (const dir of ["cmaps", "standard_fonts"]) {
     fs.cpSync(path.join(PDFJS, dir), path.join(www, "assets/pdfjs", version, dir), { recursive: true });

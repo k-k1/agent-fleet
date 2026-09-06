@@ -34,7 +34,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | Timing | What |
 |---|---|
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections |
-| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, MCP servers |
+| **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, image generation, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
 | **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
@@ -198,9 +198,10 @@ Version control over the memory an agent accumulates by itself (claude's auto-me
 
 Connecting and configuring claude / codex / opencode / GitHub Copilot / Cursor / Kiro (and the experimental
 Antigravity): default model, **models you don't use**, **extra Claude models**, expanded thinking, RTK. The
-**Sessions** group holds **session-to-session messaging**, auto-resume after a rate limit resets, and
-auto-resume of an interrupted turn.
-→ [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions)
+**Sessions** group holds **session-to-session messaging**, **image generation**, auto-resume after a rate
+limit resets, and auto-resume of an interrupted turn.
+→ [06 Agents](06-agents.md), [02 Sessions](02-sessions.md#messages-between-sessions),
+[02 Sessions](02-sessions.md#having-a-session-generate-an-image)
 
 ### Git hosting
 

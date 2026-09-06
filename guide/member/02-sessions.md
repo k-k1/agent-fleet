@@ -379,6 +379,34 @@ no longer closed it). If something does arrive over Claude's own channel anyway,
 the chat view as an incoming message**, with the sending session's name. It is closed, and a leak is
 made visible.
 
+## Having a session generate an image
+
+A session can **generate an image from a prompt** — a rough diagram, a stand-in mock, a
+picture for a README: the things you cannot hand over in prose.
+
+**Off by default.** Turn it on under **Settings > Agents > Session > "Image generation"**. The
+change applies to **sessions started from then on**; sessions already running keep their
+current tools until restarted.
+
+- **It goes to the kinds that cannot draw on their own** — claude, opencode and the rest.
+  **Codex sessions do not get it**: the Codex CLI already has image generation built in, and
+  routing it through a second one buys nothing.
+- **Generation runs on your connected Codex (the ChatGPT login).** Without Codex connected the
+  tool does not appear. **Every image spends that plan's included usage** — 3–5× faster than a
+  text exchange — and image generation is not available at all on ChatGPT Free.
+- **The prompt is sent to OpenAI.** Do not have images generated from instructions that carry
+  anything confidential.
+- **Size, background and count are requests, not guarantees.** Asking for 1024×1024 and
+  getting 1536×1024 was measured. What actually came back is handed to the agent as a warning,
+  so when the exact dimensions matter, check the result yourself.
+- **The picture appears in the conversation as a card** (click to enlarge, or open it in a
+  pane). Anything the request did not get is noted above it — "asked for 1024x1024, got
+  1536x1024".
+- Results are kept under `~/.cache/agent-fleet/generated/` and also open in the file pane.
+  They are removed after 30 days.
+- The card is shown for claude, opencode and GitHub Copilot sessions. Other kinds still get
+  the path back, but the picture is not drawn into the conversation.
+
 ## Sharing a conversation (shared sessions)
 
 You can show a session's conversation to another member of the same tenant, **read-only** —

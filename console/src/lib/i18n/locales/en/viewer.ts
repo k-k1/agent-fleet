@@ -70,6 +70,8 @@ export const viewer: Record<keyof typeof jaViewer, string> = {
   "view.document": "Document",
   "view.cannot_show_image": "(Cannot display image)",
   "view.reset_to_fit": "Reset to fit",
+  "view.zoom_in": "Zoom in (wheel / double-click also work)",
+  "view.zoom_out": "Zoom out",
   "view.slide_render_failed": "Failed to render slides",
   "view.marp_load_failed": "Failed to load Marp",
   "view.prev_slide_key": "Previous slide (←)",

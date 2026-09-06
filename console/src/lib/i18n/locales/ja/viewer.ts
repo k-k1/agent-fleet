@@ -68,6 +68,8 @@ export const viewer = {
   "view.document": "ドキュメント",
   "view.cannot_show_image": "(画像を表示できません)",
   "view.reset_to_fit": "フィットに戻す",
+  "view.zoom_in": "拡大（ホイール／ダブルクリックでも）",
+  "view.zoom_out": "縮小",
   "view.slide_render_failed": "スライドの描画に失敗しました",
   "view.marp_load_failed": "Marp の読み込みに失敗しました",
   "view.prev_slide_key": "前のスライド (←)",

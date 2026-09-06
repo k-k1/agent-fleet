@@ -64,11 +64,15 @@ func parseEvents(path string) []transcript.Turn {
 	var turns []transcript.Turn
 	var cur *transcript.Turn
 	toolIdx := map[string]int{} // toolCallId -> cur.Parts index
+	// Picture cards for this turn, spliced at flush (see the collection site below).
+	var gen []transcript.PendingImage
 
 	flush := func() {
 		if cur == nil {
 			return
 		}
+		cur.Parts = transcript.SplicePendingImages(cur.Parts, gen)
+		gen = nil
 		text := ""
 		for _, p := range cur.Parts {
 			if p.Kind == "text" {
@@ -189,6 +193,13 @@ func parseEvents(path string) []transcript.Turn {
 				out = "(failed)"
 			}
 			cur.Parts[i].Output = clip(out)
+			// af's generate_image (ADR 0069) becomes a picture card after its own trace. The
+			// card is only COLLECTED here and spliced at flush: toolIdx holds positions in
+			// this same slice, so inserting now would move the row a later tool's output is
+			// about to be written to.
+			if img, ok := transcript.GeneratedImagePart(cur.Parts[i].Tool, d.Result.Content); ok {
+				gen = append(gen, transcript.PendingImage{At: i, Part: img})
+			}
 		case "assistant.turn_end":
 			if cur != nil && ev.TS != "" {
 				cur.EndTS = ev.TS // the authoritative end of the span

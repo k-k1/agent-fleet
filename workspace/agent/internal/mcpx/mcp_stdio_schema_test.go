@@ -19,25 +19,38 @@ import (
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 52
+	const expectedAdvertisedToolCount = 53
 
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
+	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
 	t.Cleanup(func() {
 		setFlags(oldWrite, oldSelfReport, oldChromium)
 		mcpPeerMessagingEnabled = oldPeer
+		mcpImageGenEnabled, mcpSourceSession = oldImageGen, oldSource
+	})
+	// generate_image's tool list is not static: the server asks the Agent for the session's
+	// kind and the effective provider on every tools/list (ADR 0069 decision 8), so the
+	// variant that advertises it needs an Agent to answer. A claude session with codex as the
+	// effective provider is the case the rule lets through.
+	mcpSourceSession = "slot01"
+	stubImageGenStatus(t, mcpImageGenStatus{
+		Enabled: true, Ready: true, Provider: "codex", Kind: "claude",
+		Ops: []string{"generate", "edit"},
 	})
 
 	variants := []struct {
 		name                        string
 		write, selfReport, chromium bool
 		peer                        bool
+		imageGen                    bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
 		{name: "session", selfReport: true},
 		{name: "session-chromium", selfReport: true, chromium: true},
 		{name: "session-all", selfReport: true, chromium: true, peer: true},
+		{name: "session-imagegen", selfReport: true, imageGen: true},
 	}
 
 	advertised := make(map[string]struct{})
@@ -45,6 +58,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		t.Run(variant.name, func(t *testing.T) {
 			setFlags(variant.write, variant.selfReport, variant.chromium)
 			mcpPeerMessagingEnabled = variant.peer
+			mcpImageGenEnabled = variant.imageGen
 			for _, tool := range mcpStdioToolList() {
 				name := tool["name"].(string)
 				advertised[name] = struct{}{}
