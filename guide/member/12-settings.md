@@ -363,6 +363,7 @@ administrator's to set.
   count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
   unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
   it could not read**, and it says so when a process was killed for memory during the window.
+- The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain
 

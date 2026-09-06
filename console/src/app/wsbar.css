@@ -525,6 +525,11 @@ button.wu-manage {
   font-size: 11px;
   white-space: nowrap;
 }
+/* The deep link into Settings > Machine. The popover already spaces its children, so the
+   shared wu-manage top margin would double up here. */
+.ws-res-pop .wu-manage {
+  margin-top: 2px;
+}
 /* Align the tiles as columns (label | trend | value) so the sparklines line up.
    The old width:100% + space-between let each fixed-width sparkline float to a
    different x depending on the label/value widths — visibly misaligned. */

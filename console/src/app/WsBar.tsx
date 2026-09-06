@@ -213,6 +213,27 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
   return { wsStats, wsHist, hostStats, hostHist };
 }
 
+// MachineDetailsLink: deep link from the resources popover into Settings › Machine, the
+// same hand-over UsageBreakdownLink makes from the usage chip. These tiles answer "how much
+// am I using"; "of what, and can I have more" is the next question and a 28px sparkline has
+// nowhere to answer it — the tab has the box, its limits and an hour of trend.
+function MachineDetailsLink({ onNavigate }: { onNavigate: () => void }) {
+  const tr = useT();
+  const openSettings = useSettingsUI((s) => s.openSettings);
+  return (
+    <button
+      type="button"
+      className="wu-manage"
+      onClick={() => {
+        onNavigate();
+        openSettings("machine");
+      }}
+    >
+      <Icon name="server" /> {tr("wsbar.machine_details")}
+    </button>
+  );
+}
+
 // useWsMachine reads WHAT the workspace runs on, for the header line of the resources
 // popover. Deliberately not part of the 4s tick above: the answer only changes when the
 // container is recreated, so it is fetched when the popover is opened and again when the
@@ -1181,6 +1202,7 @@ export function WsBar() {
             </div>
           )}
           {graphs}
+          <MachineDetailsLink onNavigate={() => setResOpen(false)} />
         </div>
       )}
     </div>
@@ -1203,6 +1225,10 @@ export function WsBar() {
   const statsBlock = (
     <>
       {graphs}
+      {/* Mobile gets the same hand-over as the desktop popover. Gated on `graphs` so that a
+          workspace with no tiles adds no child here — .ws-more-stats:empty is what collapses
+          the block's padding, and an unconditional link would defeat it. */}
+      {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
       {usageChips}
     </>
   );
