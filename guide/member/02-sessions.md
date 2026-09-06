@@ -399,8 +399,13 @@ current tools until restarted.
 - **Size, background and count are requests, not guarantees.** Asking for 1024×1024 and
   getting 1536×1024 was measured. What actually came back is handed to the agent as a warning,
   so when the exact dimensions matter, check the result yourself.
-- Results are kept under `~/.cache/agent-fleet/generated/` and **open in the file pane**. They
-  are removed after 30 days.
+- **The picture appears in the conversation as a card** (click to enlarge, or open it in a
+  pane). Anything the request did not get is noted above it — "asked for 1024x1024, got
+  1536x1024".
+- Results are kept under `~/.cache/agent-fleet/generated/` and also open in the file pane.
+  They are removed after 30 days.
+- The card is shown for claude and opencode sessions. Other kinds still get the path back, but
+  the picture is not drawn into the conversation.
 
 ## Sharing a conversation (shared sessions)
 

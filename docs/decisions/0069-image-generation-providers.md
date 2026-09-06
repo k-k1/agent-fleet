@@ -356,6 +356,38 @@ one client on that pipe is the agent waiting on this very call, so nothing is st
 practice — but it is why the call carries a bounded budget (8 minutes in the provider, 10 in
 the MCP layer) rather than waiting indefinitely.
 
-Not done, and deliberately: Tier 2 and Tier 3 providers (Decision 3, Bedrock next), job+poll
-(open question 1), and any Console surface beyond the settings toggle — a generated image is
-opened through the existing file viewer.
+Not done, and deliberately: Tier 2 and Tier 3 providers (Decision 3, Bedrock next) and
+job+poll (open question 1).
+
+## Implementation notes (P1 — the picture in the conversation, 2026-09-06)
+
+P0 left a generated image reachable but unannounced: the model got a JSON result, the user got
+a faint tool trace and a path to go and find. P1 turns that trace into a picture card, and it
+needed **no frontend change at all** — a `kind:"userfile"` part is already rendered by the
+mirror's `UserFileBlock`/`FileCard` with a thumbnail, which is the same route codex's own
+`image_gen` and `view_image` results take.
+
+- The recogniser is one shared function (`internal/transcript/generated_image.go`): af's tool
+  is identified by SHAPE, not by a constant, because the server name rotates every boot —
+  `mcpreg.IsAFToolName` embeds the same pattern the minter validates against, so the two
+  cannot drift. `mcp__af_<8 hex>__generate_image` is claude's spelling, read out of a live
+  session; the single-underscore and bare forms are tolerated rather than claimed.
+- The **paths come from the tool result**, never from listing the output directory. Three
+  images generated across one conversation therefore get three cards in the right places, and
+  a refusal (prose, not JSON) gets none — the same "prose is not evidence of a file" rule the
+  Codex provider itself follows.
+- **The caption carries the warnings.** Until now Decision 7's report reached only the model:
+  the user saw a picture with no hint that they had asked for 1024×1024 and been handed
+  1536×1024.
+- **claude needed a cursor hold.** It writes the tool_use line at call time and the
+  tool_result some 30 s later, on a line that is a tool-result-only user message and so not a
+  turn of its own — so a live poll delivers the call, moves the window past it, and the card
+  would never appear. The `/messages` handler now holds the cursor short of an UNSETTLED
+  generate_image line, the way it already does for a pending question, and the Console's
+  merge-by-idx replaces the turn it already holds. A call that came back empty-handed is
+  settled, not pending, so a failure never holds the cursor forever; and the hold is skipped on
+  a backward page, where the result is merely outside the window rather than unwritten.
+- **opencode needed none of that**: it keeps a tool's output on the same part, so the card is
+  emitted as the call is parsed.
+- Other kinds are one call to the shared function away, but none is added blind: what each CLI
+  spells an MCP tool name has to be read off real data first, and only claude's has been.

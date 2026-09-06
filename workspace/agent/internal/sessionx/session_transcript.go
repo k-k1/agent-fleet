@@ -180,6 +180,19 @@ func HandleSessionMessages(w http.ResponseWriter, r *http.Request) {
 	// so the same card would render twice. Drop the duplicate and hold the cursor short of
 	// its line, so it comes back — decided — once it resolves.
 	turns, hold := hidePendingInteraction(turns, pending, answers)
+	// A generate_image call whose result has not landed yet holds the cursor too (ADR 0069).
+	// Same reason as a pending interaction: claude writes the tool_use line now and the
+	// tool_result ~30 s later on a line that is not a turn of its own, so without the hold the
+	// window moves past the call and the card never appears at all.
+	//
+	// Only when the window reaches the newest line. On a BACKWARD page the result is simply
+	// outside the window rather than unwritten, and rewinding the client's cursor to a line it
+	// read long ago would re-send the whole tail behind it.
+	if hi == len(lines) {
+		if gen := claude.PendingGeneratedImageLine(turns); gen >= 0 && (hold < 0 || gen < hold) {
+			hold = gen
+		}
+	}
 	// forkPreview's cursor is not a line number but the sentinel that makes the next poll swap
 	// onto the fork's own jsonl. Turning it into a line number breaks the swap itself, so that
 	// one case is left alone.

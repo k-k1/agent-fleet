@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/transcript"
 )
@@ -234,6 +235,9 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 		if !ok {
 			continue // tool results, summaries, bridge/meta bookkeeping
 		}
+		// Picture cards to splice in AFTER the walk: inserting mid-loop would shift the
+		// indices the loop is iterating over.
+		var gen []genImage
 		for pi := range t.Parts {
 			if (t.Parts[pi].Kind == "question" || t.Parts[pi].Kind == "plan") && t.Parts[pi].QID != "" {
 				a := answers[t.Parts[pi].QID]
@@ -245,6 +249,22 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 					t.Parts[pi].Declined = a.Declined
 				}
 			}
+			// A generated image becomes a picture card right after the tool trace that made
+			// it (ADR 0069). The result may not be in this window yet — claude writes the
+			// tool_use immediately and the tool_result ~30 s later — in which case nothing is
+			// appended here and the /messages handler holds the cursor short of this line so
+			// the turn comes back once the file exists.
+			if t.Parts[pi].Kind == "tool" && t.Parts[pi].QID != "" {
+				if result := answers[t.Parts[pi].QID].Text; result != "" {
+					// The call is SETTLED, whether or not it produced a file. Dropping the id
+					// is what releases the cursor hold below: a refusal has no picture coming,
+					// and holding for one would re-send the same turn on every poll forever.
+					t.Parts[pi].QID = ""
+					if img, ok := transcript.GeneratedImagePart(t.Parts[pi].Tool, result); ok {
+						gen = append(gen, genImage{at: pi, part: img})
+					}
+				}
+			}
 			if t.Parts[pi].Kind == "delegation" && t.Parts[pi].QID != "" {
 				if result := answers[t.Parts[pi].QID].Text; result != "" {
 					t.Parts[pi].Output = transcript.CapOutput(result)
@@ -253,6 +273,7 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 				}
 			}
 		}
+		t.Parts = spliceGenImages(t.Parts, gen)
 		turns = append(turns, t)
 		if budget += len(t.Text); budget > 1<<20 { // cap a single response at 1 MiB (newest kept)
 			break
@@ -262,6 +283,51 @@ func CollectTurns(lines [][]byte, lo, hi int) []transcript.Turn {
 		turns[l], turns[r] = turns[r], turns[l]
 	}
 	return turns
+}
+
+// genImage is one picture card waiting to be spliced in, and the index of the tool part it
+// belongs after.
+type genImage struct {
+	at   int
+	part transcript.Part
+}
+
+// spliceGenImages inserts each card immediately after its own tool trace, walking from the
+// end so the earlier insertion points stay valid.
+func spliceGenImages(parts []transcript.Part, gen []genImage) []transcript.Part {
+	for i := len(gen) - 1; i >= 0; i-- {
+		g := gen[i]
+		if g.at < 0 || g.at >= len(parts) {
+			continue
+		}
+		parts = append(parts[:g.at+1], append([]transcript.Part{g.part}, parts[g.at+1:]...)...)
+	}
+	return parts
+}
+
+// PendingGeneratedImageLine reports the LOWEST line index holding a generate_image tool call
+// that is still UNSETTLED — its tool_result had not been written when this window was parsed,
+// so there is neither a picture nor a refusal yet. A call that came back empty-handed keeps no
+// id (CollectTurns clears it), so a failure is never waited on.
+//
+// The /messages handler holds the cursor short of it, exactly as it does for a pending
+// question, so the turn is re-sent once the result exists. Without that hold the card would
+// never appear: claude writes the tool_use line at call time and the tool_result ~30 s later,
+// on a line that is a tool-result-only user message and therefore not a turn of its own, so
+// nothing would ever bring the earlier turn back. -1 means nothing is waiting.
+func PendingGeneratedImageLine(turns []transcript.Turn) int {
+	hold := -1
+	for _, t := range turns {
+		for _, p := range t.Parts {
+			if p.Kind != "tool" || p.QID == "" || !mcpreg.IsAFToolName(p.Tool, transcript.GenerateImageTool) {
+				continue
+			}
+			if hold < 0 || t.Idx < hold {
+				hold = t.Idx
+			}
+		}
+	}
+	return hold
 }
 
 // lineOrigin is claude's own `origin` object: who this line came from, when it did not
@@ -548,6 +614,12 @@ func assistantParts(raw json.RawMessage) (parts []transcript.Part, text string) 
 			part := transcript.Part{Kind: "tool", Tool: b.Name, Info: toolInfo(b.Name, b.Input)}
 			if f, es := toolEdits(b.Name, b.Input); len(es) > 0 {
 				part.File, part.Edits = f, es
+			}
+			// af's generate_image (ADR 0069) produced a file, but the path is in the tool
+			// RESULT, which lands on a later line. Keep the tool_use id so CollectTurns can
+			// pair them up and append the picture as a userfile part.
+			if mcpreg.IsAFToolName(b.Name, transcript.GenerateImageTool) {
+				part.QID = b.ID
 			}
 			parts = append(parts, part)
 		}
