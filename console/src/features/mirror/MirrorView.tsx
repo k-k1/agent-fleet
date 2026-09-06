@@ -39,7 +39,9 @@ import { useSkillPicker } from "./parts/useSkillPicker.ts";
 import { useReplySuggest } from "./parts/useReplySuggest.ts";
 import { JumpPills } from "./parts/JumpPills.tsx";
 import { AttachChips } from "./parts/AttachChips.tsx";
-import { HistoryNav } from "./parts/HistoryNav.tsx";
+import { HistoryNav, HistorySearchButton } from "./parts/HistoryNav.tsx";
+import { HistorySearchBar } from "./parts/HistorySearchBar.tsx";
+import { useHistorySearch } from "./parts/useHistorySearch.ts";
 import { SendColumn } from "./parts/SendColumn.tsx";
 import { SkillButton, SkillList } from "./parts/SkillList.tsx";
 import { SuggestRow } from "./parts/SuggestRow.tsx";
@@ -1277,8 +1279,12 @@ export function MirrorView({
     inputRef.current?.focus();
   };
 
+  // Ctrl+R: bash's reverse-i-search over the same history ↑/↓ walks (parts/useHistorySearch).
+  // ↑ is a fine way back through the last few prompts and a poor one through fifty.
+  const histSearch = useHistorySearch({ history, draft, setDraft, setHistIdx, inputRef, composerLocked });
 
   const onKeyDown = (e: RKeyboardEvent) => {
+    if (histSearch.handleKeyDown(e)) return; // Ctrl+R opens the history search
     if (skillPicker.handleKeyDown(e)) return; // while the skill picker is open it takes ↑↓/Enter/Tab/Esc
     if (suggest.handleKeyDown(e)) return; // Tab: enter the chip row / cycle completions
     // Scroll the transcript without leaving the composer: Ctrl/⌘+↑/↓ nudges, PageUp/PageDown
@@ -1853,6 +1859,21 @@ export function MirrorView({
             />
           )}
           <AttachChips attachments={attachments} pasting={pasting} onRemove={removeAttachment} />
+          {/* Ctrl+R history search. Full-width band above the input row; the match it is on is
+              previewed in the textarea itself, so the two have to be read together. */}
+          {histSearch.open && (
+            <HistorySearchBar
+              inputRef={histSearch.queryRef}
+              query={histSearch.query}
+              count={histSearch.count}
+              pos={histSearch.pos}
+              failed={histSearch.failed}
+              onQuery={histSearch.onQuery}
+              onKeyDown={histSearch.onQueryKeyDown}
+              onBlur={histSearch.onQueryBlur}
+              onCancel={histSearch.cancel}
+            />
+          )}
           <HistoryNav
             canPrev={history.length > 0}
             canNext={histIdx !== null}
@@ -1878,6 +1899,7 @@ export function MirrorView({
               onPick={skillPicker.pick}
             />
           )}
+          <HistorySearchButton open={histSearch.open} disabled={!histSearch.canOpen} onOpen={histSearch.openSearch} />
           {skillPicker.canSkills && (
             <SkillButton
               btnRef={skillPicker.btnRef}

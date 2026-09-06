@@ -150,6 +150,25 @@ finished reading instead of scrolling back to the heading.
 
 A stopped session is read-only history; to reply, restart it with **"Resume and continue"**.
 
+### Reusing something you sent earlier
+
+With the field empty, **↑↓** walk back through the prompts you sent in this conversation (on a
+phone, the **∧∨** buttons beside the field).
+
+To find one fifty messages back, press **Ctrl+R**. The same **incremental history search** bash
+has opens above the field and offers your past prompts containing what you type, newest first.
+The match is shown in the input itself, so even a long prompt can be read in full before you
+commit to it.
+
+- **Ctrl+R** goes further back, **Ctrl+S** comes forward (**↑↓** do the same). The "3/12" on the
+  right is where you are in the matches.
+- **Enter** (or **Tab**) **only puts it in the input — nothing is sent**, so you can edit it first.
+- **Esc** (or **Ctrl+G**) cancels and gives you back whatever you were typing before the search.
+- When nothing matches any more it says "No match" and the last match stays in the input.
+- Phones have no Ctrl key: open it from the **magnifier button** to the left of the input.
+- What is searchable is exactly what **↑↓** recall — the prompts you sent in this conversation,
+  `/commands` included. Other sessions' inputs are not in it.
+
 ### Writing comments on a plan
 
 When you want to say "change just this part" about a long plan, you don't have to quote it and

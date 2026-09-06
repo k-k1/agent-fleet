@@ -17,8 +17,18 @@ the original sheet
     gap: 5px;
   }
   .mirror-attach-btn,
-  .mirror-skill-btn {
+  .mirror-skill-btn,
+  .mirror-hsearch-btn {
     width: 24px;
+  }
+  /* The only way into the history search without a Ctrl key. */
+  .mirror-hsearch-btn {
+    display: inline-flex;
+  }
+  /* With no Ctrl key the key hint is noise, and the width is worth more to the query field: the
+     search is left by tapping away or by ✕. */
+  .mirror-histsearch-hint {
+    display: none;
   }
   /* Options wrap to a single column on a phone, so truncation buys little. Drop the two-line
      clamp so the whole text is readable before tapping (desktop and tablet keep the clamp in
