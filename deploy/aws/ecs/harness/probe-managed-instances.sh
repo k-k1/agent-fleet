@@ -19,6 +19,25 @@
 #   desired 1 → task created +6 s → instance launched +10 s → pull started +32 s
 #             → task RUNNING +68 s (pull 35 s) → model loaded and listening +109 s
 #   desired 0 → tasks gone +10 s → instance shutting-down +79 s → terminated +93 s
+#
+# Same day on a GPU (g6.xlarge, ecs-managed-instances-nvidia-x86_64-20260827 — the NVIDIA
+# driver is in the AMI, nothing to bake; server-cuda 2.47 GB; Qwen3-Coder-30B-A3B Q4 18.5 GB):
+#   desired 1 → instance +15 s → pull started +43 s → pull done +214 s → RUNNING +232 s
+#             → model fetched +2079 s → loaded into VRAM and listening +2351 s
+#   desired 0 → tasks gone +10 s → terminated +427 s (a second GPU run: +463 s)
+# ⚠️ The 1846 s of that start is `llama-server -hf` running at 9.6 MB/s. `curl` pulled SDXL's
+# 6.9 GB over the same NAT at 236 MB/s (28 s) — 24x. The downloader is the bottleneck, not the
+# network, which is why ADR 0071 decision 3 syncs from S3 and never uses -hf at start.
+# ⚠️ 8 vCPU of G-family quota builds ONE g6.xlarge: bringing the sd service up while llama was
+# running produced VcpuLimitExceeded until the first box terminated (408 s). Ask for 16.
+#
+# SdEnabled=true adds a second service (sd-server + a curl sidecar that fetches the checkpoint
+# into a shared host volume). Reach either engine without touching the security group:
+#   aws ssm start-session --target ecs:<cluster>_<task-id>_<runtime-id> \
+#     --document-name AWS-StartPortForwardingSession \
+#     --parameters '{"portNumber":["8080"],"localPortNumber":["18100"]}'
+# ⚠️ CloudFormation resets DesiredCount to the declared 0 whenever the service resource is
+# updated (a task-definition change does it), so re-issue update-service after a stack update.
 set -u
 STACK=${STACK:-af-ecs-engprobe}
 CLUSTER=${CLUSTER:-af-af-ecs-platform}
@@ -42,8 +61,14 @@ down)
 measure)
   S=$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`ServiceName`].OutputValue' --output text)
   LG="/af/$STACK/engine"
-  echo "$(ts) T0 desired->1 ($S)"; aws ecs update-service --cluster "$CLUSTER" --service "$S" --desired-count 1 --query 'service.desiredCount' --output text
-  T0=$(date +%s); inst=""; seen_task=""; seen_run=""; st=""
+  # T0=<epoch> re-attaches the watch to a start already issued (the log filter is anchored to
+  # it, so an earlier run's "model loaded" line in the same log group is never mistaken for
+  # this one's).
+  if [ -z "${T0:-}" ]; then
+    echo "$(ts) T0 desired->1 ($S)"; aws ecs update-service --cluster "$CLUSTER" --service "$S" --desired-count 1 --query 'service.desiredCount' --output text
+    T0=$(date +%s)
+  fi
+  inst=""; seen_task=""; seen_run=""; st=""
   for i in $(seq 1 120); do
     now=$(( $(date +%s) - T0 ))
     task=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$S" --query 'taskArns[0]' --output text 2>/dev/null)
@@ -57,12 +82,15 @@ measure)
       fi
       [ "$st" = "RUNNING" ] && [ -z "$seen_run" ] && { seen_run=1; echo "$(ts) +${now}s task RUNNING pullStarted=$ps pullStopped=$pe startedAt=$sa"; }
     fi
-    l=$(aws logs filter-log-events --log-group-name "$LG" --filter-pattern '"model loaded"' --query 'events[0].timestamp' --output text 2>/dev/null)
+    l=$(aws logs filter-log-events --log-group-name "$LG" --start-time "$((T0 * 1000))" --filter-pattern '"model loaded"' --query 'events[0].timestamp' --output text 2>/dev/null)
     if [ -n "$l" ] && [ "$l" != "None" ]; then echo "$(ts) +${now}s MODEL LOADED (log ts $l)"; break; fi
     [ $((i % 6)) -eq 0 ] && echo "$(ts) +${now}s ... task=${st:-none}"
     sleep 10
   done
   [ -z "$inst" ] && { echo "no instance placed; service events:"; aws ecs describe-services --cluster "$CLUSTER" --services "$S" --query 'services[0].events[0:3].message' --output text; exit 1; }
+  # HOLD=1 keeps the engine up for hands-on tests (port forwarding, opencode); scale it down
+  # yourself afterwards and time the drain with `drain`.
+  [ -n "${HOLD:-}" ] && { echo "$(ts) HOLD set: engine left running on $inst (task $task)"; exit 0; }
   sleep 60
   echo "$(ts) T1 desired->0"; aws ecs update-service --cluster "$CLUSTER" --service "$S" --desired-count 0 --query 'service.desiredCount' --output text
   T1=$(date +%s); seen_t0=""
@@ -76,7 +104,23 @@ measure)
     [ $((i % 6)) -eq 0 ] && echo "$(ts) +${now}s ... tasks=$ntask ec2=$est"
   done
   ;;
+drain)
+  S=$(aws cloudformation describe-stacks --stack-name "$STACK" --query 'Stacks[0].Outputs[?OutputKey==`ServiceName`].OutputValue' --output text)
+  task=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$S" --query 'taskArns[0]' --output text)
+  cia=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$task" --query 'tasks[0].containerInstanceArn' --output text)
+  inst=$(aws ecs describe-container-instances --cluster "$CLUSTER" --container-instances "$cia" --query 'containerInstances[0].ec2InstanceId' --output text)
+  echo "$(ts) T1 desired->0 (instance $inst)"; aws ecs update-service --cluster "$CLUSTER" --service "$S" --desired-count 0 --query 'service.desiredCount' --output text
+  T1=$(date +%s); seen_t0=""
+  for i in $(seq 1 180); do
+    sleep 10; now=$(( $(date +%s) - T1 ))
+    ntask=$(aws ecs list-tasks --cluster "$CLUSTER" --service-name "$S" --query 'length(taskArns)' --output text)
+    est=$(aws ec2 describe-instances --instance-ids "$inst" --query 'Reservations[0].Instances[0].State.Name' --output text 2>/dev/null)
+    [ "$ntask" = "0" ] && [ -z "$seen_t0" ] && { seen_t0=1; echo "$(ts) +${now}s tasks gone"; }
+    [ "$est" != "running" ] && echo "$(ts) +${now}s ec2 state=$est"
+    [ "$est" = "terminated" ] && break
+  done
+  ;;
 *)
-  echo "usage: $0 up|measure|down" >&2; exit 2
+  echo "usage: $0 up|measure|drain|down" >&2; exit 2
   ;;
 esac

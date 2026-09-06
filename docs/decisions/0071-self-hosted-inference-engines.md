@@ -10,7 +10,12 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
 - Revised the next day (2026-09-07) with measurements: open questions 1–3 were measured and
   moved under *Resolved*, and decisions 5, 7 and 8 took their consequences. opencode cuts at
   300 s; Managed Instances start in 109 s and terminate in 93 s on a CPU box; the G-family
-  quota was 0 in the test account (increase requested). No GPU numbers yet.
+  quota was 0 in the test account (increase requested).
+- Revised again the same day, once the quota was granted, after **running it end to end on a
+  GPU** (g6.xlarge, L4): llama.cpp served Qwen3-Coder-30B-A3B and opencode drove it through
+  real tool calls, and sd-server drew SDXL at 1024 px in 21 s. Resolved 4-6 were added and the
+  evidence under decisions 2 and 3 was replaced with measurements (🔴 **decision 3's reason
+  changed** — not cost, but a 24x difference in `-hf` transfer speed).
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -148,16 +153,25 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 
 2. **Two engine roles (`llm`, `image`), one capacity provider each, never co-located.** `llm`
    needs VRAM ≥ 20 GB (Qwen3-Coder-30B-A3B Q4 is 17.3 GiB plus KV cache); `image` needs
-   VRAM ≥ 6 GB (SD1.5 and SDXL q8). Both default to **g6.xlarge (L4 24 GB, $1.26/h all-in)**;
-   `image` can drop to g6f.2xlarge ($0.74/h) for SD1.5-only deployments. **The instance
+   VRAM ≥ 8 GB (SDXL fp16 measured at 7.4 GB — **g6f.2xlarge's 6 GB does not fit it**,
+   Resolved 6). Both default to **g6.xlarge (L4 24 GB, $1.26/h all-in)**; the floor for a
+   cheaper `image` role is g6f.4xlarge (12 GB), not g6f.2xlarge. **The instance
    requirement is a stack parameter per role** (declared, never inferred — ADR 0053). Not
-   sharing a box: running out of VRAM under CUDA does not slow down, it **crashes**. Most of the
-   time only one role is awake, so splitting costs almost nothing extra. ComfyUI is **a second
+   sharing a box: running out of VRAM under CUDA does not slow down, it **crashes**. Measured,
+   the 30B Q4 takes **20.9 GB** and SDXL **7.4 GB**, so both do not fit one L4's 23 GB. Most of
+   the time only one role is awake, so splitting costs almost nothing extra. **But one box per
+   role means a deployment that wakes both needs quota for two (16 vCPU)** — at 8 vCPU only one
+   g6.xlarge exists, and the second role sat in `VcpuLimitExceeded` for 408 s until the first
+   one terminated (Resolved 6). ComfyUI is **a second
    engine of the `image` role** (decision 6) and never runs alongside sd-server (same VRAM).
 
 3. **Models go HF → S3 once, and S3 → local disk on every start. HF is never on the start
-   path.** Pulling 17 GB from HF each start costs **$1.05** in NAT processing and **9 minutes**
-   at 31 MiB/s, and puts HF rate limits and a gate token on the node. S3 storage is
+   path, and `llama-server -hf` never runs at start.** Measurement moved this decision's reason
+   from cost to **speed** (Resolved 5): on the same g6.xlarge through the same NAT,
+   `llama-server -hf` pulled 18.5 GB at **9.6 MB/s (31 minutes)** while `curl` pulled 6.9 GB at
+   **236 MB/s (28 seconds)**. **The 24x gap is the downloader, not the network.** The cost
+   ($1.05 of NAT per 17 GB) and keeping a gate token off the node are two further reasons on
+   top of it. S3 storage is
    $0.025/GB-month ($2.5/month for a 100 GB catalogue) and reads through the gateway endpoint
    are free. **Ingestion is an async job** (a Fargate CPU task: `huggingface-cli download` →
    `aws s3 cp`) that an admin starts with an HF repo id and file list, and it reports success
@@ -222,8 +236,8 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    `events[]` and cool down, and the idle window applies during `starting` too (0070
    decisions 5, 6, 9, 10). **One MI-specific addition**: after desired goes to 0 the instance
    lingers until MI scales it in, and the fee and EC2 price run until then. The state becomes
-   `running | starting | stopped | draining`; `draining` is **93 s** on a CPU box (Resolved 2).
-   Modes
+   `running | starting | stopped | draining`; `draining` is **93 s** on a CPU box and
+   **427 s and 463 s** on GPU boxes (Resolved 4). Modes
    are 0070 decision 7's `off / on / ondemand`, per engine.
 
 8. **The stack is `60-engines.yaml` (optional). What `30-ingress` receives is one SSM parameter
@@ -293,6 +307,30 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    README as a stand-up precondition, and stand-up says so when it is 0. GPU numbers (prefill,
    pull, S3 → local, load into VRAM) come from the same harness once approved.
 
+4. **Cold start and drain on a GPU (g6.xlarge, L4 24 GB).** The AMI is
+   `ecs-managed-instances-nvidia-x86_64-20260827` — NVIDIA drivers included, nothing to bake.
+   From desired 1: **instance at +15 s, pull started at +43 s, pull done at +214 s (171 s for
+   the 2.47 GB `server-cuda`), task RUNNING at +232 s** — the same shape as the CPU box. What
+   follows is the problem: **1,846 s to fetch the model and 272 s to load it into VRAM, 2,351 s
+   (39 minutes) in total**, which is what Resolved 5 is about. **Drain took 427 s and 463 s**,
+   four to five times the CPU box's 93 s: the g6.xlarge and its management fee keep running for
+   7-8 minutes after desired 0, so trimming the idle window can only ever recover that much
+   ($0.15 of drain against $0.65 for a 30-minute window). On the same box sd-server went from
+   **task created to listening in 195 s** (135 s pull plus a 28 s model fetch).
+5. 🔴 **`llama-server -hf` is slow, and it is the downloader, not the network.** On the same
+   g6.xlarge through the same NAT, `-hf` pulled 18.5 GB at **9.6 MB/s (1,846 s)** while `curl`
+   pulled SDXL's 6.9 GB at **236 MB/s (28 s)**. That is **24x**. Decision 3 was originally a
+   cost argument ("do not pay $1 and 9 minutes every start"); it is really the difference
+   between a 39-minute start and a 4-minute one. The design (sync from S3) does not change, but
+   the weight of the reason does.
+6. **VRAM and the G-family quota.** Qwen3-Coder-30B-A3B Q4_K_M used **20,943 MiB** and SDXL
+   fp16 **7,379 MiB** (6,624 MB of params). So **two roles do not fit on one L4**, and dropping
+   `image` to a g6f.2xlarge (6 GB) is not an option (half the answer to the old open question).
+   And **8 vCPU of quota only builds one g6.xlarge**: starting `image` while `llm` was up
+   produced repeated `VcpuLimitExceeded: your current vCPU limit of 8`, and placement succeeded
+   **408 s later**, after the first box terminated. A deployment that wakes both roles asks for
+   16 vCPU.
+
 Also measured the same day:
 
 - **The HF API returns what the verification needs.** `?blobs=true` gives
@@ -305,8 +343,22 @@ Also measured the same day:
   is 18.7k tokens with the fleet's AGENTS.md, 7.3k even minimal**, and prefill in this
   container (8 vCPU, shared) runs at **18–23 tok/s** for a 1.5B Q4 — 17 minutes for 18.7k
   tokens. A 0.5B Q8 with the minimal config finished in 170 s but emitted the tool call as JSON
-  **text** (a limit of the model, not the path). **Whether tool calls actually work stays
-  unverified until the real model runs on a GPU.**
+  **text** (a limit of the model, not the path). **On the GPU with the real model it worked** —
+  below.
+- ✅ **opencode → llama.cpp (L4, Qwen3-Coder-30B-A3B Q4) completed a real tool-calling turn.**
+  With an SSM port forward standing in for the CP gateway, `opencode run --auto` was asked to
+  create hello.txt, read it back and report its size. **In 11 s it called `write` and `bash`,
+  the file existed (`hello fleet`, 11 bytes) and the answer said "11 bytes".** Speed:
+  **prefill of 23,226 tokens in 11.85 s = 1,960 tok/s** (peak 2,523), **12.1 s to first
+  token**, generation at **67.6 tok/s**. The same prefill ran at 18-23 tok/s on CPUs, so this
+  is **85-100x**, and 25x of headroom against opencode's 300 s wall.
+- ✅ **sd-server (L4, SDXL fp16, 6.9 GB)**: `/v1/images/generations` took **7.8 s at 512 px**
+  and **20.8 s and 21.0 s at 1024 px** (default steps); `/v1/images/edits` with a mask took
+  **6.4 s at 512 px**. The 1024 px output was visibly a correct picture (the CPU's 4-step
+  output was noise). That is **28x the CPU** at 1024 px. ⚠️ The native async job API
+  `/sdcpp/v1/img_gen` fails inside the container with
+  **`filesystem error: /proc/1/map_files … Operation not permitted`** while the
+  OpenAI-compatible surface works — one more reason decision 6 takes the latter.
 - **sd-server (CPU, SD1.5 Q4_0, 1.67 GB)**: `/v1/images/generations` took **98 s** at 256 px /
   4 steps and **587 s** at 512 px / 4 steps; `/v1/images/edits` (image + mask) took **307 s** at
   256 px (51 s of it VAE decode). Responses are `data[].b64_json`. The premise that images need
@@ -314,13 +366,13 @@ Also measured the same day:
 
 ## Open questions — to settle before P0 is written
 
-1. **The GPU numbers.** After the quota is granted, with the same harness: the `server-cuda`
-   (2.3 GB) pull, 17 GB from S3 to local disk, load into VRAM, Qwen3-Coder-30B-A3B prefill
-   (that 18.7k tokens fit in 300 s is obvious; the seconds are still needed), and **that tool
-   calls from opencode actually work**.
-2. **The default size of the `image` role.** Seconds per SDXL image on g6f.2xlarge (6 GB,
-   with `--offload-to-cpu`) versus g6.xlarge. ComfyUI's SDXL fp16 uses around 8 GB, so a
-   deployment that picks ComfyUI may have g6.xlarge as its floor.
+1. **How fast S3 → local disk actually is.** What was measured is the fetch from HF, not the
+   path decision 3 uses. Time 17 GB through `aws s3 sync` (gateway endpoint, parallel) and the
+   total wake in decision 5 follows from it. Whether `-hf`'s 31 minutes become 4 or 2 on S3 is
+   this design's start time.
+2. **ComfyUI's VRAM and a workflow run.** SDXL fp16 was 7.4 GB under sd-server; ComfyUI adds
+   Python and PyTorch on top. Confirm g6.xlarge is enough, and drive one `/prompt` →
+   `/history` round trip.
 3. **Reuse the Workspace credential or mint an engine token.** Reusing the `/git/*` PAT gives
    per-member accounting but not per-session. If per-session is wanted, the Agent mints a
    short-lived token at launch.
@@ -330,9 +382,9 @@ Also measured the same day:
 - **llama.cpp on CPUs (Fargate 16 vCPU / c8g.4xlarge).** Same price as one L4 ($0.79–0.99/h
   versus $1.26/h); MoE generation (3B active) would be usable, but **a coding agent's 20k-token
   prefill takes minutes on a CPU**. Not cheaper, and slow. The 297 MB CPU image does not change
-  that. The measurements back it: 18–23 tok/s of prefill for a 1.5B model in this container,
-  18.7k tokens per opencode request, and opencode cutting at 300 s — on a CPU the first token
-  never arrives in time.
+  that. The measurements back it: 18-23 tok/s of prefill for a 1.5B model in this container
+  against **1,960 tok/s for a 30B on one L4**, 18.7k tokens per opencode request, and opencode
+  cutting at 300 s — on a CPU the first token never arrives in time.
 - **A self-managed GPU EC2 the CP stops and starts.** The slot pool's `StartInstances` /
   `StopInstances` tooling is reusable (and a 110 s resume is measured), but the fleet would own
   the AMI and NVIDIA driver, EBS runs while stopped (200 GB = $19/month), and every path needs
@@ -381,7 +433,8 @@ Also measured the same day:
   model means** (billing moves from the user's login to the fleet's box), so the launch menu's
   presentation and consent are designed first. llama.cpp's `/v1/messages` has a known issue
   dropping thinking blocks (#20090), and Claude Code sends many background Haiku requests.
-- **P4 — cheaper, with evidence.** MI Spot, shrinking `image` to g6f, several models through
+- **P4 — cheaper, with evidence.** MI Spot, shrinking `image` to **g6f.4xlarge** (the measured
+  floor is 12 GB; SDXL does not fit a g6f.2xlarge), several models through
   router mode, and image slimming only if P0's numbers say the pull dominates.
 
 ## Sources checked (2026-09-06)
@@ -404,7 +457,9 @@ Also measured the same day:
   Linux x86_64 build run on CPUs; the sha256 check of a GGUF fetched from HF.
 - Measured in the `af-sandbox` test account: `deploy/aws/ecs/harness/engprobe.yaml` and
   `probe-managed-instances.sh` (Managed Instances start and drain, the IAM and capacity
-  provider contracts), `service-quotas` for L-DB2E81BA.
+  provider contracts, llama.cpp and sd-server end to end on a GPU), `service-quotas` for
+  L-DB2E81BA, and SSM port forwarding (`AWS-StartPortForwardingSession` against an ECS Exec
+  target). The GPU measurements cost about an hour of g6.xlarge plus 25.4 GB of NAT, ≈$3.
 - This repository: `control-plane/main.go` (proxy env), `egress_policy.go`,
   `preview_host_serve.go`, `tts_ecs.go`, `internal/runtime/runtime_ecs.go` (awsvpc, `WsSg`),
   `workspace/agent/internal/imagegen/imagegen.go`,

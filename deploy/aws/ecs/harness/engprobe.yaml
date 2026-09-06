@@ -24,6 +24,25 @@ Parameters:
   MemMin: { Type: Number, Default: 4096 }
   MemMax: { Type: Number, Default: 16384 }
   StorageGiB: { Type: Number, Default: 40 }
+  # GPU run: GpuCount=1 AllowedInstanceTypes=g6.xlarge ImageUri=ghcr.io/ggml-org/llama.cpp:server-cuda
+  #          ModelRef=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M ExtraArgs="-ngl 99 -c 32768 --jinja"
+  #          TaskCpu=4096 TaskMemory=14336 StorageGiB=80
+  GpuCount: { Type: Number, Default: 0 }
+  AllowedInstanceTypes: { Type: CommaDelimitedList, Default: "c6a.large,c6a.xlarge,m6a.large,m6a.xlarge" }
+  TaskCpu: { Type: String, Default: "2048" }
+  TaskMemory: { Type: String, Default: "3072" }
+  ExtraArgs: { Type: CommaDelimitedList, Default: "-c,8192" }
+  # Second engine on the same capacity provider (a second instance): stable-diffusion.cpp's
+  # sd-server with a checkpoint fetched by an init container. The CUDA image has no curl and
+  # its ENTRYPOINT is /sd-cli (measured from the image config), hence the fetch sidecar and
+  # the EntryPoint override.
+  SdEnabled: { Type: String, Default: "false", AllowedValues: [ "true", "false" ] }
+  SdImageUri: { Type: String, Default: ghcr.io/leejet/stable-diffusion.cpp:master-cuda }
+  SdModelUrl: { Type: String, Default: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" }
+  SdModelFile: { Type: String, Default: sd_xl_base_1.0.safetensors }
+Conditions:
+  HasGpu: !Not [ !Equals [ !Ref GpuCount, 0 ] ]
+  HasSd: !Equals [ !Ref SdEnabled, "true" ]
 Resources:
   InfraRole:
     Type: AWS::IAM::Role
@@ -101,8 +120,11 @@ Resources:
           InstanceRequirements:
             VCpuCount: { Min: !Ref VCpuMin, Max: !Ref VCpuMax }
             MemoryMiB: { Min: !Ref MemMin, Max: !Ref MemMax }
-            InstanceGenerations: [ current ]
             BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref AllowedInstanceTypes
+            AcceleratorCount: !If [ HasGpu, { Min: !Ref GpuCount, Max: !Ref GpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
       Tags:
         - { Key: af-role, Value: engine-probe }
   # Replaces the cluster's provider LIST (the API is not additive), so FARGATE and
@@ -114,21 +136,46 @@ Resources:
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
       CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref CapacityProvider ]
       DefaultCapacityProviderStrategy: []
+  # ECS Exec (SSM messages) is what lets a laptop reach the engine at all: the task sits in a
+  # private subnet behind a CP-only security group, and
+  #   aws ssm start-session --target ecs:<cluster>_<task-id>_<runtime-id> \
+  #     --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=18100
+  # forwards its port without touching the SG.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel ]
+                Resource: "*"
   TaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
       Family: !Sub "af-${AWS::StackName}-llama"
       RequiresCompatibilities: [ MANAGED_INSTANCES ]
       NetworkMode: awsvpc
-      Cpu: "2048"
-      Memory: "3072"
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
       ContainerDefinitions:
         - Name: llama
           Essential: true
           Image: !Ref ImageUri
           PortMappings: [ { ContainerPort: 8080 } ]
-          Command: [ "-hf", !Ref ModelRef, "--host", "0.0.0.0", "--port", "8080", "-c", "8192" ]
+          Command: !Split [ ",", !Join [ ",", [ "-hf", !Ref ModelRef, "--host", "0.0.0.0", "--port", "8080", !Join [ ",", !Ref ExtraArgs ] ] ] ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref GpuCount } ], !Ref "AWS::NoValue" ]
           Environment:
             - { Name: LLAMA_CACHE, Value: /tmp/llama-cache }
           LogConfiguration:
@@ -145,6 +192,65 @@ Resources:
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref TaskDef
       DesiredCount: 0
+      EnableExecuteCommand: true
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref ProbeSg ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+  SdTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasSd
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-sd"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: curlimages/curl:latest
+          # The host volume is root-owned and curlimages/curl runs as uid 100 (measured:
+          # "curl: (23) client returned ERROR on write"), so the fetch runs as root.
+          User: "0"
+          Command: [ "sh", "-c", !Sub "curl -fsSL -o /models/${SdModelFile} '${SdModelUrl}' && ls -la /models" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: sd-fetch }
+        - Name: sd
+          Essential: true
+          Image: !Ref SdImageUri
+          EntryPoint: [ "/sd-server" ]
+          Command: [ "-m", !Sub "/models/${SdModelFile}", "--listen-ip", "0.0.0.0", "--listen-port", "8080", "--diffusion-fa", "-v" ]
+          PortMappings: [ { ContainerPort: 8080 } ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref GpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: sd }
+  SdService:
+    Type: AWS::ECS::Service
+    Condition: HasSd
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-sd"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref SdTaskDef
+      DesiredCount: 0
+      EnableExecuteCommand: true
       CapacityProviderStrategy:
         - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
       DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
@@ -157,4 +263,5 @@ Resources:
         - { Key: af-role, Value: engine-probe }
 Outputs:
   ServiceName: { Value: !GetAtt Service.Name }
+  SdServiceName: { Value: !If [ HasSd, !GetAtt SdService.Name, "" ] }
   CapacityProviderName: { Value: !Ref CapacityProvider }

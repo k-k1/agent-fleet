@@ -8,7 +8,11 @@
   受けるための文書**であり、形が変わりうるのは「未解決の点」である。
 - 翌日（2026-09-07）に実測で改訂: 未解決の点 1〜3 を測って「実測で解けた点」へ移し、決定 5・7・8
   にその帰結を足した。opencode の切断は 300 秒、Managed Instances は CPU 箱で起動 109 秒・
-  終了 93 秒、G 系クォータは検証アカウントで 0（申請中）。GPU 上の数値はまだ無い。
+  終了 93 秒、G 系クォータは検証アカウントで 0（申請中）。
+- 同日、クォータ承認後に **GPU（g6.xlarge・L4）で通した**: llama.cpp が Qwen3-Coder-30B-A3B を
+  載せて opencode がツール呼び出しまで完走し、sd-server が SDXL を 1024px 21 秒で描いた。
+  「実測で解けた点」4〜6 を追加し、決定 2・3 の根拠を実測で置き換えた（🔴 **決定 3 の理由が
+  変わった**——費用ではなく `-hf` の転送速度が 24 倍違う）。
 - 関連: [0070-tts-ondemand-engine.ja.md](0070-tts-ondemand-engine.ja.md)（写す型: 需要で建てて
   アイドルで落とす・Cloud Map 名・純関数のコントローラ・共有費用）/
   [0069-image-generation-providers.ja.md](0069-image-generation-providers.ja.md)（画像生成の
@@ -139,16 +143,24 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
 
 2. **エンジン役は 2 つ（`llm`・`image`）。役ごとに capacity provider を分け、同じ箱に載せない。**
    `llm` は VRAM ≥ 20 GB（Qwen3-Coder-30B-A3B Q4 が 17.3 GiB＋KV キャッシュ）、`image` は
-   VRAM ≥ 6 GB（SD1.5 と SDXL q8）。既定はどちらも **g6.xlarge（L4 24 GB・$1.26/h 込み）**で、
-   `image` は SD1.5 だけなら g6f.2xlarge（$0.74/h）へ下げられる。**インスタンス要件は
+   VRAM ≥ 8 GB（SDXL fp16 が実測 7.4 GB。**g6f.2xlarge の 6 GB では入らない**——実測で解けた
+   点 6）。既定はどちらも **g6.xlarge（L4 24 GB・$1.26/h 込み）**で、`image` を安くするなら
+   g6f.4xlarge（12 GB）が下限であり、g6f.2xlarge ではない。**インスタンス要件は
    役ごとのスタックパラメータ**（宣言する。導出しない。ADR 0053 の形）。同じ箱に 2 役を
-   載せない理由: CUDA の VRAM 不足は遅くなるのではなく **落ちる**。片方が起きているだけの
-   時間が大半なので、分けても費用はほぼ増えない。ComfyUI は `image` 役の**もう 1 つの
+   載せない理由: CUDA の VRAM 不足は遅くなるのではなく **落ちる**。実測でも 30B Q4 が
+   **20.9 GB**、SDXL が **7.4 GB** で、L4 の 23 GB に両方は入らない。片方が起きているだけの
+   時間が大半なので、分けても費用はほぼ増えない。**ただし役ごとに 1 台なので、両方を同時に
+   起こす配備は G 系クォータが 2 台ぶん（16 vCPU）要る**——8 vCPU では 1 台しか建たず、2 本目の
+   役は `VcpuLimitExceeded` を繰り返して 1 台目が消えるまで 408 秒待った（実測で解けた点 6）。
+   ComfyUI は `image` 役の**もう 1 つの
    エンジン**であり（決定 6）、sd-server と同時には動かさない（同じ VRAM を取り合う）。
 
 3. **モデルは HF → S3 に一度だけ写し、起動のたびに S3 → ローカルディスクへ引く。HF を起動経路に
-   置かない。** 17 GB を毎回 HF から引くと NAT で **$1.05**、31 MiB/s なら **9 分**かかり、
-   HF のレート制限とゲート用トークンをノードに置くことになる。S3 は保存が $0.025/GB-月
+   置かない。とりわけ `llama-server -hf` を起動時に使わない。** 実測がこの決定の理由を
+   費用から**速度**へ移した（実測で解けた点 5）: 同じ g6.xlarge・同じ NAT で、`llama-server -hf`
+   は 18.5 GB を **9.6 MB/s＝31 分**で引いた一方、`curl` は 6.9 GB を **236 MB/s＝28 秒**で
+   引いた。**24 倍の差はネットワークではなくダウンローダにある。** 費用（17 GB あたり NAT
+   $1.05）とゲート用トークンをノードに置く話は、その上に乗るもう 2 つの理由にすぎない。S3 は保存が $0.025/GB-月
    （100 GB のカタログで $2.5/月）で、ゲートウェイエンドポイント経由の読みは無料。
    **取り込みは非同期ジョブ**（Fargate の CPU タスク: `huggingface-cli download` →
    `aws s3 cp`）で、管理者が HF の repo id とファイルを指定して起動し、HF の LFS メタデータの
@@ -208,7 +220,8 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    クールダウン、`starting` にもアイドル窓を適用（0070 決定 5・6・9・10）。**MI 固有の
    追加が 1 つ**: desired を 0 にしてもインスタンスは MI のスケールインまで残り、その間も
    管理料と EC2 料金は走る。`running | starting | stopped | draining` の 4 値にする。
-   `draining` は CPU 箱で **93 秒**（実測で解けた点 2）。モードは 0070 決定 7 のとおり `off / on / ondemand` を
+   `draining` は CPU 箱で **93 秒**、**GPU 箱では 427 秒と 463 秒**（実測で解けた点 4）。
+   モードは 0070 決定 7 のとおり `off / on / ondemand` を
    エンジンごとに。
 
 8. **スタックは `60-engines.yaml`（任意採用）。`30-ingress` へ渡すのは SSM パラメータ名 1 つ。**
@@ -274,6 +287,28 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    0 なら standup がそう言う。GPU 上の数値（prefill、pull、S3 → ローカル、VRAM へのロード）は
    承認後に同じハーネスで取る。
 
+4. **GPU（g6.xlarge・L4 24 GB）でのコールドスタートとドレイン。** AMI は
+   `ecs-managed-instances-nvidia-x86_64-20260827`（NVIDIA ドライバ入り。何も焼かなくてよい）。
+   desired 1 から **+15 秒でインスタンス、+43 秒で pull 開始、+214 秒で pull 完了（`server-cuda`
+   2.47 GB に 171 秒）、+232 秒でタスク RUNNING**。ここまでは CPU 箱と同じ形である。その後が
+   問題で、**モデルの取得に 1,846 秒、VRAM へのロードに 272 秒、合計 2,351 秒（39 分）**
+   かかった——取得を S3 に替える理由が実測で解けた点 5 である。**ドレインは 427 秒と 463 秒**
+   （CPU 箱の 93 秒に対して 4〜5 倍）。desired 0 のあとも 7〜8 分は g6.xlarge の料金と管理料が
+   走るので、**アイドル窓を切り詰めても回収できるのはその分だけ**である（窓 1 回 $0.65 に対し
+   ドレインは $0.15）。sd-server 側は同じ箱で **タスク作成から listen まで 195 秒**（pull 135
+   秒＋6.9 GB の取得 28 秒）。
+5. 🔴 **`llama-server -hf` は遅い。ネットワークではなくダウンローダが遅い。** 同じ
+   g6.xlarge・同じ NAT 経路で、`-hf` は 18.5 GB を **9.6 MB/s（1,846 秒）**、`curl` は SDXL
+   6.9 GB を **236 MB/s（28 秒）**で引いた。**24 倍**である。決定 3 は元々「毎回 $1 と 9 分を
+   払うな」という費用の話だったが、実際には**起動が 39 分になるか 4 分で済むか**の話だった。
+   S3 からの `sync` に置き換える設計は変わらないが、理由の重みが変わる。
+6. **VRAM と G 系クォータ。** Qwen3-Coder-30B-A3B Q4_K_M は **20,943 MiB**、SDXL fp16 は
+   **7,379 MiB**（params 6,624 MB）を使った。したがって **L4 1 枚に 2 役は入らず**、`image` を
+   g6f.2xlarge（6 GB）へ落とす案は成立しない（未解決 2 の答えの半分）。さらに **8 vCPU の
+   クォータでは g6.xlarge が 1 台しか建たない**: llm を起こしたまま image を desired 1 にすると
+   `VcpuLimitExceeded: your current vCPU limit of 8` を繰り返し、1 台目が terminate してから
+   **408 秒後**に placement した。両役を同時に起こす配備は 16 vCPU を申請する。
+
 その他、同日に測ったこと:
 
 - **HF の API は照合に要るものを返す。** `?blobs=true` の `siblings[].lfs.sha256` と
@@ -286,8 +321,20 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
   AGENTS.md を含めると 18.7k トークン、最小構成でも 7.3k トークン**あり、このコンテナ
   （8 vCPU・共有）の prefill は 1.5B Q4 で **18〜23 tok/s**＝18.7k トークンに 17 分。
   0.5B Q8 で最小構成にすると 170 秒で完走したが、モデルはツール呼び出しを JSON の**文章**
-  として出した（経路ではなくモデルの限界）。**ツール呼び出しが実際に成立するかは GPU 上の
-  本命モデルで確かめる**まで未検証である。
+  として出した（経路ではなくモデルの限界）。**GPU の本命モデルでは成立した**——下記。
+- ✅ **opencode → llama.cpp（L4・Qwen3-Coder-30B-A3B Q4）はツール呼び出しまで完走した。**
+  CP ゲートウェイの代わりに SSM のポートフォワードでエンジンへ繋ぎ、`opencode run --auto` に
+  「hello.txt を作り、読み返してバイト数を答えよ」と与えた。**11 秒で `write` と `bash` を
+  呼び、ファイルが実在し（`hello fleet`・11 バイト）、答えも「11 bytes」だった。**
+  性能は **prefill 23,226 トークンを 11.85 秒＝1,960 tok/s**（ピーク 2,523）、
+  **最初のトークンまで 12.1 秒**、生成 **67.6 tok/s**。同じ prefill が CPU では 18〜23 tok/s
+  だったので **85〜100 倍**であり、opencode の 300 秒の壁に対して 25 倍の余裕がある。
+- ✅ **sd-server（L4・SDXL fp16 6.9 GB）**: `/v1/images/generations` が **512px 7.8 秒**、
+  **1024px 20.8 秒と 21.0 秒**（既定ステップ）、`/v1/images/edits`（画像＋mask）が
+  **512px 6.4 秒**。1024px の出力は目で見て正しい絵だった（CPU の 4 ステップはノイズだった）。
+  CPU 比で 1024px は **28 倍**速い。⚠️ ネイティブの非同期 job API `/sdcpp/v1/img_gen` は
+  コンテナ内で **`filesystem error: /proc/1/map_files … Operation not permitted`** を返して
+  使えない（OpenAI 互換の面は問題なく動く）。決定 6 が OpenAI 互換面を採る理由がもう 1 つ増えた。
 - **sd-server（CPU・SD1.5 Q4_0 1.67 GB）**: `/v1/images/generations` は 256px・4 steps で
   **98 秒**、512px・4 steps で **587 秒**、`/v1/images/edits`（画像＋mask）は 256px で
   **307 秒**（VAE デコードだけで 51 秒）。応答は `data[].b64_json`。CPU で画像は無理という
@@ -295,13 +342,13 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
 
 ## 未解決の点——P0 を書く前に潰すこと
 
-1. **GPU 上の数値。** G 系クォータの承認後に同じハーネスで: `server-cuda`（2.3 GB）の pull、
-   S3 → ローカルの 17 GB、VRAM へのロード、Qwen3-Coder-30B-A3B の prefill（18.7k トークンが
-   300 秒に収まるのは自明だが、何秒かは要る）、そして **opencode からのツール呼び出しが
-   成立すること**。
-2. **`image` 役の既定サイズ。** g6f.2xlarge（6 GB）で SDXL が `--offload-to-cpu` 込みで何秒か、
-   g6.xlarge で何秒か。ComfyUI の SDXL fp16 は 8 GB 前後を使うので、ComfyUI を選ぶ配備は
-   g6.xlarge が下限になりうる。
+1. **S3 → ローカルの転送速度。** 実測したのは HF からの取得であって、決定 3 が実際に使う
+   経路ではない。17 GB を `aws s3 sync`（ゲートウェイエンドポイント経由・並列）で引くと
+   何秒かを測り、決定 5 の「起こして待つ」の総所要を確定させる。`-hf` の 31 分が S3 で
+   何分になるかが、この設計の起動時間そのものである。
+2. **ComfyUI の VRAM とワークフロー実行。** SDXL fp16 が sd-server で 7.4 GB だったのに対し、
+   ComfyUI は Python と PyTorch のぶんが乗る。g6.xlarge で足りることの確認と、`/prompt` →
+   `/history` の一往復。
 3. **Workspace 発の資格情報の再利用か、エンジン専用トークンか。** `/git/*` の PAT を
    そのまま使うと、メンバー単位の計上はできるがセッション単位はできない。セッション単位が
    要るなら、Agent が起動時に発行する短命トークンにする。
@@ -312,8 +359,9 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
   （$0.79〜0.99/h 対 $1.26/h）で、MoE（3B active）の生成は使えても、**コーディング
   エージェントの 20k トークンの prefill が CPU では分単位**になる。安くもならず遅い。
   llama.cpp の CPU イメージが 297 MB であることは、この判断を変えない。実測が裏書きする:
-  このコンテナで 1.5B の prefill が 18〜23 tok/s、opencode の要求は 18.7k トークン、opencode は
-  300 秒で切る。CPU では最初のトークンが間に合わない。
+  このコンテナで 1.5B の prefill が 18〜23 tok/s なのに対し、**L4 1 枚では 30B が 1,960 tok/s**。
+  opencode の要求は 18.7k トークンで、opencode は 300 秒で切る。CPU では最初のトークンが
+  間に合わない。
 - **自前の EC2（GPU）を CP が stop/start する。** スロットプールが持つ `StartInstances` /
   `StopInstances` の道具は流用できる（復帰 110 秒の実測もある）が、AMI と NVIDIA ドライバを
   フリートが所有し、停止中も EBS（200 GB で $19/月）が走り、ADR 0045 の走査と
@@ -360,7 +408,8 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
   変わる**（利用者のログインでなくフリートの箱に課金が移る）ので、起動メニューの表示と
   同意を先に設計する。llama.cpp の `/v1/messages` は thinking ブロックを落とす既知の問題
   （#20090）があり、Claude Code は背景で Haiku 宛の要求を多数出す。
-- **P4 — 根拠つきで安くする。** MI の Spot、`image` の g6f への縮小、router モードでの
+- **P4 — 根拠つきで安くする。** MI の Spot、`image` の **g6f.4xlarge** への縮小（実測より
+  下限は 12 GB。g6f.2xlarge では SDXL が入らない）、router モードでの
   複数モデル、そして P0 の数字が pull 支配と言ったときだけイメージの縮小。
 
 ## 確認した出典（2026-09-06）
@@ -382,7 +431,9 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
   動かした各数値、HF から取った GGUF の sha256 照合。
 - 検証アカウント `af-sandbox` での実測: `deploy/aws/ecs/harness/engprobe.yaml` と
   `probe-managed-instances.sh`（Managed Instances の起動・ドレイン、IAM と capacity provider の
-  契約）、`service-quotas` の L-DB2E81BA。
+  契約、GPU での llama.cpp と sd-server の通し）、`service-quotas` の L-DB2E81BA、
+  SSM のポートフォワード（`AWS-StartPortForwardingSession` を ECS Exec の target に）。
+  この GPU 実測にかかった費用は g6.xlarge 約 1 時間ぶんと NAT の 25.4 GB＝合計 $3 程度。
 - 本リポジトリ: `control-plane/main.go`（proxy env）、`egress_policy.go`、
   `preview_host_serve.go`、`tts_ecs.go`、`internal/runtime/runtime_ecs.go`（awsvpc・`WsSg`）、
   `workspace/agent/internal/imagegen/imagegen.go`、`internal/agents/opencode/{auth,models}.go`、

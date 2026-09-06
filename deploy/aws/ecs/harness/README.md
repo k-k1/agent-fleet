@@ -60,7 +60,24 @@ AWS_PROFILE=af-sandbox deploy/aws/ecs/harness/probe-managed-instances.sh down   
 
 2026-09-07 の実測（c6a.large・CPU イメージ 297 MB・モデル 1.1 GB を HF から取得）:
 desired 1 → **+10 秒でインスタンス起動、+68 秒でタスク RUNNING、+109 秒で listen**。
-desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。GPU 版は G 系クォータ（既定 0）の
-申請が通ってから、`ImageUri=ghcr.io/ggml-org/llama.cpp:server-cuda` と `AcceleratorCount` を
-足して同じ手順で測る。箱の同定は**タスク経由**で行うこと——`list-container-instances` には
-スロットプールも並ぶ。
+desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。箱の同定は**タスク経由**で行うこと
+——`list-container-instances` にはスロットプールも並ぶ。
+
+同日、G 系クォータの承認後に **GPU（g6.xlarge）で通した**。パラメータは
+`GpuCount=1 AllowedInstanceTypes=g6.xlarge ImageUri=…:server-cuda`
+`ModelRef=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M ExtraArgs="-ngl,99,-c,32768,--jinja"`
+`TaskCpu=4096 TaskMemory=14336 StorageGiB=80 VCpuMin/Max=4 MemMin/Max=16384`、
+画像側は `SdEnabled=true`。実測は **+232 秒でタスク RUNNING、+2,351 秒で listen**
+（うち 1,846 秒が `-hf` のダウンロード）、**ドレイン 427 秒／463 秒**。
+
+CloudFormation の作法で踏むもの 3 つ:
+
+- **capacity provider の `InstanceRequirements` は排他規則がある。** `InstanceGenerations:
+  [current]` と `AllowedInstanceTypes: [g6.xlarge]` は同時に書けず（世代付きの型名は不可）、
+  `AcceleratorCount` を非 0 にするなら `AcceleratorTypes` も要る。
+- **`DesiredCount` はスタック更新のたびに宣言値 0 へ戻る**（Service リソースが更新されるとき）。
+  更新のあとは `update-service --desired-count 1` を自分で撃ち直す。
+- **エンジンへは SSM のポートフォワードで届く**（SG を触らない）:
+  `aws ssm start-session --target ecs:<cluster>_<task-id>_<runtime-id> --document-name
+  AWS-StartPortForwardingSession --parameters '{"portNumber":["8080"],"localPortNumber":["18100"]}'`。
+  `EnableExecuteCommand: true` とタスクロールの `ssmmessages:*` が前提。
