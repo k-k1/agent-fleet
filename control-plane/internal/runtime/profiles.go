@@ -149,6 +149,63 @@ func (f *ecsEC2Factory) SizingProfile() WorkspaceSizing {
 	return p
 }
 
+// --- machine --------------------------------------------------------------------
+
+// WorkspaceMachine is what a workspace WILL RUN ON according to this deployment's
+// configuration: the box its stored memory request and class resolve to.
+//
+// It is deliberately the DECLARED half only. What the container is running on right now
+// is measured from inside it (workspace/agent/internal/resources), and the two can
+// legitimately disagree — a size or class change applies at the next start, so a
+// workspace keeps its old box until then. The Console shows both when they differ, which
+// is only possible while they stay separate answers.
+//
+// Only the EC2 slot pool implements it. Everywhere else there is no box to name: the
+// memory number is a cap on a machine the member does not have to themselves, and a
+// runtime with nothing to say should not be made to say something (the same rule
+// SizingProfile follows).
+type WorkspaceMachine struct {
+	InstanceType string `json:"instance_type,omitempty"`
+	Arch         string `json:"arch,omitempty"`
+	// VCPU is the rung's DECLARED vCPU count (0 = the operator did not declare one, so
+	// nothing is shown rather than a guess — see WorkspaceSlot.VCPU).
+	VCPU int `json:"vcpu,omitempty"`
+	// SlotMemMiB is the box's memory, MemCapMiB the share the workspace container is
+	// actually given (0 = uncapped, where the box IS the answer).
+	SlotMemMiB int64 `json:"slot_mem_mib,omitempty"`
+	MemCapMiB  int64 `json:"mem_cap_mib,omitempty"`
+	HomeGiB    int32 `json:"home_gib,omitempty"`
+	// ClassID / ClassLabel name the machine class. Both are empty on a deployment that
+	// declared a single unnamed ladder — there is no class to speak of, and printing the
+	// synthetic id would put a word on screen the operator never chose.
+	ClassID    string `json:"class_id,omitempty"`
+	ClassLabel string `json:"class_label,omitempty"`
+	// Dedicated: this box belongs to one member (ADR 0045 decision 8). It is what
+	// permits the Console to show the HOST's RAM and core count as "your machine" —
+	// on a shared host those are other people's numbers, so the CP drops them.
+	Dedicated bool `json:"dedicated"`
+}
+
+// MachineProfile — the EC2 slot pool: the rung this workspace's memory request lands on
+// within its class.
+func (e *ecsEC2Runtime) MachineProfile() WorkspaceMachine {
+	m := WorkspaceMachine{
+		InstanceType: e.instanceType,
+		Arch:         e.arch,
+		VCPU:         e.slotVCPU,
+		SlotMemMiB:   e.slotMemMiB,
+		MemCapMiB:    e.memCapMiB,
+		HomeGiB:      e.homeGiB,
+		Dedicated:    true,
+	}
+	// Named only where the operator declared more than one class, for the same reason
+	// SizingProfile omits SlotClasses there: a single unnamed ladder has no class name.
+	if len(e.pool.classes) > 1 {
+		m.ClassID, m.ClassLabel = e.classID, e.classLabel
+	}
+	return m
+}
+
 // --- cost -----------------------------------------------------------------------
 
 // CostProfile is the runtime's answer to "is there money to show here, and what does it

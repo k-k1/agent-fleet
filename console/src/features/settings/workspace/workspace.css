@@ -374,3 +374,102 @@
   line-height: 1.8;
   color: var(--muted);
 }
+
+/* Machine tab (MachineTab.tsx) — one value per row, each carrying where it came from.
+   The source marker is deliberately quiet: it qualifies the number, it is not a status. */
+.mv-val {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.mv-class {
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10.5px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.mv-src {
+  font-size: 10.5px;
+  color: var(--muted);
+}
+
+/* Configured-but-not-measured is the weaker claim of the two, so it is set apart rather
+   than coloured like a warning — nothing is wrong when a workspace is stopped. */
+.mv-src.is-declared {
+  font-style: italic;
+}
+
+/* The two boxes disagree: what is running is not what the settings now say. It is the one
+   line on this screen that has to be noticed. */
+.mv-drift {
+  color: var(--warn);
+}
+
+/* Machine tab — the usage charts (MachineTab UsageSection). The level class tints the whole
+   block through currentColor, which is what the chart's stroke and fill follow. */
+.mu-chart {
+  margin: 10px 0 14px;
+  color: var(--accent);
+}
+
+.mu-chart.is-warn {
+  color: var(--warn);
+}
+
+.mu-chart.is-crit {
+  color: var(--danger, var(--warn));
+}
+
+.mu-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.mu-k {
+  color: var(--fg);
+}
+
+.mu-v {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* The window the x-axis covers. It grows, so it is stated rather than assumed. */
+.mu-span {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: normal;
+}
+
+/* Disk is a level, not a rate — a bar, no trend. */
+.mu-bar {
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--panel2, var(--panel));
+  overflow: hidden;
+}
+
+.mu-bar > span {
+  display: block;
+  height: 100%;
+  background: currentColor;
+  opacity: 0.55;
+}
+
+/* An OOM kill inside the window. The one line here that has to be read, not glanced at:
+   it is the answer to "why did my build die". */
+.mu-oom {
+  margin: 0 0 8px;
+  color: var(--warn);
+  font-size: 12px;
+}

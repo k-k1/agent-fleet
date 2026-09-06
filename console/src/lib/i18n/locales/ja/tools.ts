@@ -175,6 +175,35 @@ export const tools = {
   "env.agent_update_label": "起動時にエージェント CLI と rtk を最新へ更新する",
   "env.agent_update_note":
     "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）はシステムが焼いたイメージ版で固定。ON にすると次の起動時にそれぞれ最新へ更新します（Stop → Start で反映／OFF に戻して再起動すればイメージ版へ戻ります）。停止中でも変更できます。",
+  // --- マシン（features/settings/workspace/MachineTab.tsx。何の上で動いているか）---
+  "machine.title": "このワークスペースのマシン",
+  "machine.load_failed": "マシンの情報を取得できませんでした。",
+  "machine.stopped_note": "停止中です。次に起動したときの値を表示しています。",
+  "machine.instance_type": "インスタンスタイプ",
+  "machine.arch": "アーキテクチャ",
+  "machine.vcpu": "vCPU",
+  "machine.vcpu_quota": "{n}（上限 {q}）",
+  "machine.memory": "メモリ",
+  "machine.mem_of_box": "{n}（箱の搭載 {box}）",
+  "machine.home_disk": "home ディスク",
+  "machine.src_measured": "実測",
+  "machine.src_declared": "設定上",
+  "machine.next_start_box": "設定が変更されています。次に起動すると {type} になります。",
+  "machine.next_start_size": "設定が変更されています。次に起動すると割り当てが変わります。",
+  "machine.note_own_box":
+    "この箱はあなた専用です。vCPU とメモリはまるごと使えます（メモリはホスト側の常駐分を差し引いた上限が入ります）。",
+  "machine.note_shared_host":
+    "ホストは他の利用者と共有です。表示しているのはこのコンテナに割り当てられた分で、箱そのものの搭載量ではありません。",
+  "machine.usage_title": "使用状況",
+  "machine.usage_window": "直近 {n} 分",
+  "machine.usage_of": "{used} / {total}（{pct}%）",
+  "machine.usage_cpu_of": "{pct}% / {max}%",
+  "machine.usage_oom": "この間にメモリ不足でプロセスが強制終了されました（コンテナ自体は生きています）。",
+  "machine.usage_note":
+    "4 秒ごとに 1 点、最大 1 時間ぶん。値が変わらない間もグラフは進みます（変化が無いことは制御側が保証しています）。取得できなかった時間は線を切って表しています。",
+  "machine.note_who_changes":
+    "サイズとマシンの種類はテナント管理者が決めます。変更は次にワークスペースを起動したときに反映されます。",
+
   "env.update_title": "Agent Fleet の更新",
   "env.update_current": "実行中のバージョン",
   "env.update_staged": "適用待ち",

@@ -296,6 +296,10 @@ func registerWorkspaceRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/workspace/clean-home", ws.withResolved(ws.cleanHome)) // deeper reset: wipe home except logins/connections
 	// Own-workspace resource chip (mem / CPU vs quota) — host-read cgroup, all users.
 	mux.HandleFunc("GET /api/workspace/stats", ws.withResolved(ws.stats))
+	// What the workspace RUNS ON: the measured machine merged with the box this
+	// deployment's configuration says it gets (workspace_machine.go). Read on demand
+	// (a settings section, the resource popover), never on the event tick.
+	mux.HandleFunc("GET /api/workspace/machine", ws.withResolved(ws.machine))
 	// Attention beacon (docs/log/75 P3): tells the idle clock that a human is touching the
 	// Console right now. Presence judged on keystrokes alone reads someone who is only
 	// reading as absent.

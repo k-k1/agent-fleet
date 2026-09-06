@@ -728,6 +728,34 @@
   vector-effect: non-scaling-stroke;
 }
 
+/* ---- TrendChart (ui/TrendChart.tsx) ---- */
+/* Same currentColor discipline as the sparkline above, so the host tints the whole chart by
+   threshold. non-scaling-stroke is what keeps the 1px line 1px while the viewBox is stretched
+   to the container's width. */
+.trend {
+  display: block;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel2, var(--panel));
+}
+.trend-grid {
+  stroke: currentColor;
+  stroke-width: 1;
+  opacity: 0.12;
+  vector-effect: non-scaling-stroke;
+}
+.trend-area {
+  fill: currentColor;
+  opacity: 0.16;
+}
+.trend-line {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
 /* ---- SwatchGrid (ui/SwatchGrid.tsx) — old styles.css verbatim ---- */
 .swatch-row {
   display: flex;

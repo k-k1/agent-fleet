@@ -17,6 +17,7 @@ import { Icon } from "../ui/Icon.tsx";
 import { Sparkline } from "../ui/Sparkline.tsx";
 import { useConfirm } from "../ui/ConfirmProvider.tsx";
 import { useIsMobile } from "../lib/device.ts";
+import { machineSummary, type WsMachine } from "../lib/machine.ts";
 import { useDismiss } from "../lib/useDismiss.ts";
 import { listBrowserAttachments } from "../features/browser/attachmentService.ts";
 import { openBrowserAttachment } from "../features/browser/attachmentAction.ts";
@@ -210,6 +211,46 @@ function useWsResourceChips(tenant: string | null, superAdmin: boolean) {
   }, [superAdmin]);
 
   return { wsStats, wsHist, hostStats, hostHist };
+}
+
+// MachineDetailsLink: deep link from the resources popover into Settings › Machine, the
+// same hand-over UsageBreakdownLink makes from the usage chip. These tiles answer "how much
+// am I using"; "of what, and can I have more" is the next question and a 28px sparkline has
+// nowhere to answer it — the tab has the box, its limits and an hour of trend.
+function MachineDetailsLink({ onNavigate }: { onNavigate: () => void }) {
+  const tr = useT();
+  const openSettings = useSettingsUI((s) => s.openSettings);
+  return (
+    <button
+      type="button"
+      className="wu-manage"
+      onClick={() => {
+        onNavigate();
+        openSettings("machine");
+      }}
+    >
+      <Icon name="server" /> {tr("wsbar.machine_details")}
+    </button>
+  );
+}
+
+// useWsMachine reads WHAT the workspace runs on, for the header line of the resources
+// popover. Deliberately not part of the 4s tick above: the answer only changes when the
+// container is recreated, so it is fetched when the popover is opened and again when the
+// workspace starts or stops (a restart is when a re-sized box actually takes effect).
+function useWsMachine(open: boolean, tenant: string | null, running: boolean) {
+  const [machine, setMachine] = useState<WsMachine | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let alive = true;
+    api("api/workspace/machine")
+      .then((d: any) => alive && setMachine(d && !d.error ? d : null))
+      .catch(() => alive && setMachine(null));
+    return () => {
+      alive = false;
+    };
+  }, [open, tenant, running]);
+  return machine;
 }
 
 // useUsage surfaces one agent's subscription usage (5-hour + weekly) from `endpoint`
@@ -869,6 +910,8 @@ export function WsBar() {
   const [resOpen, setResOpen] = useState(false); // desktop resource-tiles popover
   // Keyboard: Ctrl/⌘+K g r toggles the resource-tiles popover (desktop).
   useOpenSignal("resources", () => setResOpen((o) => !o));
+  const machine = useWsMachine(resOpen, tenant, wsState === "running");
+  const machineLine = machine ? machineSummary(machine) : "";
   const pvRef = useRef<HTMLDivElement>(null);
   const staleRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
@@ -1148,7 +1191,20 @@ export function WsBar() {
         <span className="ws-res-sum">{resSummary || tr("wsbar.resources")}</span>
         <Icon name="chevron-down" />
       </button>
-      {resOpen && <div className="ws-res-pop">{graphs}</div>}
+      {resOpen && (
+        <div className="ws-res-pop">
+          {/* What the numbers below are being spent ON. One line, because the popover
+              answers "how am I doing" and this is the scale that question is relative to;
+              the full breakdown is Settings › Machine. */}
+          {machineLine && (
+            <div className="ws-res-machine" title={tr("wsbar.machine_title")}>
+              {machineLine}
+            </div>
+          )}
+          {graphs}
+          <MachineDetailsLink onNavigate={() => setResOpen(false)} />
+        </div>
+      )}
     </div>
   );
 
@@ -1169,6 +1225,10 @@ export function WsBar() {
   const statsBlock = (
     <>
       {graphs}
+      {/* Mobile gets the same hand-over as the desktop popover. Gated on `graphs` so that a
+          workspace with no tiles adds no child here — .ws-more-stats:empty is what collapses
+          the block's padding, and an unconditional link would defeat it. */}
+      {graphs && <MachineDetailsLink onNavigate={() => setMoreOpen(false)} />}
       {usageChips}
     </>
   );

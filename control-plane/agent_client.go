@@ -114,6 +114,57 @@ func (m *manager) agentStats(ctx context.Context, rt runtime.Runtime) (map[strin
 	return out, nil
 }
 
+// machineMeasured is what the workspace itself could establish about the machine it is
+// running on (GET /workspace/machine).
+//
+// ⚠️ The json tags must stay identical to the Agent's resources.Machine. Nothing here
+// fails loudly when one drifts: the field simply arrives nil and the Console falls back to
+// the declared value, so the screen keeps working and stops telling the truth.
+//
+// Pointers because a nil field means "the workspace could not measure this", which is a
+// different statement from any value it could have sent. This is re-emitted to the Console
+// as well as decoded, so it carries omitempty for the same reason the Agent's own wire
+// does: an axis that cannot be measured leaves the JSON rather than arriving as a zero the
+// screen would have to draw.
+type machineMeasured struct {
+	Arch         string   `json:"arch,omitempty"`
+	VCPU         int      `json:"vcpu,omitempty"`
+	CPUQuota     *float64 `json:"cpu_quota,omitempty"`
+	MemMax       *uint64  `json:"mem_max,omitempty"`
+	MemTotal     *uint64  `json:"mem_total,omitempty"`
+	DiskTotal    *uint64  `json:"disk_total,omitempty"`
+	InstanceType string   `json:"instance_type,omitempty"`
+}
+
+// agentMachine asks the Agent what this workspace is running on. Shares agentStatsClient's
+// short timeout: the answer is a handful of file reads, and a workspace that cannot manage
+// it in five seconds is better reported as unmeasured than left holding the request.
+//
+// An Agent older than this route answers 404, which is returned as an error like any other
+// failure — the caller then serves the declared half alone rather than an empty machine.
+func (m *manager) agentMachine(ctx context.Context, rt runtime.Runtime) (*machineMeasured, error) {
+	if rt.Endpoint() == "" {
+		return nil, fmt.Errorf("agent /workspace/machine: no endpoint")
+	}
+	req, _ := http.NewRequestWithContext(ctx, "GET", rt.Endpoint()+"/workspace/machine", nil)
+	if rt.Token() != "" {
+		req.Header.Set("Authorization", "Bearer "+rt.Token())
+	}
+	resp, err := agentStatsClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("agent /workspace/machine: %s", resp.Status)
+	}
+	var body machineMeasured
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, err
+	}
+	return &body, nil
+}
+
 // countSessions asks the Agent how many sessions are currently running. The quota
 // caps concurrency, so only live (alive) sessions count — stopped/resumable ones,
 // which the Agent keeps listed for the stopped-TTL window, do not occupy a slot.

@@ -178,6 +178,35 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.agent_update_label": "Update the agent CLIs and rtk to the latest on start",
   "env.agent_update_note":
     "Covers claude / opencode / codex / Copilot / Antigravity (agy) / rtk. OFF (default) pins the system-baked image versions. ON updates each to the latest on the next start (applied on Stop → Start; turn it OFF and restart to return to the image versions). You can change this even while stopped.",
+  // --- Machine (features/settings/workspace/MachineTab.tsx — what it runs on) ---
+  "machine.title": "This workspace's machine",
+  "machine.load_failed": "Could not read the machine information.",
+  "machine.stopped_note": "Stopped — showing what the next start will use.",
+  "machine.instance_type": "Instance type",
+  "machine.arch": "Architecture",
+  "machine.vcpu": "vCPU",
+  "machine.vcpu_quota": "{n} (capped at {q})",
+  "machine.memory": "Memory",
+  "machine.mem_of_box": "{n} (box has {box})",
+  "machine.home_disk": "home disk",
+  "machine.src_measured": "measured",
+  "machine.src_declared": "configured",
+  "machine.next_start_box": "The settings have changed — the next start will use {type}.",
+  "machine.next_start_size": "The settings have changed — the next start will use a different allocation.",
+  "machine.note_own_box":
+    "This box is yours alone, so its vCPUs and memory are all yours (the memory limit is the box's RAM less what is held back for its own daemons).",
+  "machine.note_shared_host":
+    "The host is shared with other members. These are this container's own figures, not the machine's.",
+  "machine.usage_title": "Usage",
+  "machine.usage_window": "last {n} min",
+  "machine.usage_of": "{used} / {total} ({pct}%)",
+  "machine.usage_cpu_of": "{pct}% / {max}%",
+  "machine.usage_oom": "A process was killed for memory during this window (the container itself survived).",
+  "machine.usage_note":
+    "One sample every 4 seconds, up to an hour. The chart keeps moving while a value is unchanged — the control plane is what guarantees it is unchanged — and breaks the line for any period it could not read.",
+  "machine.note_who_changes":
+    "The size and the kind of machine are set by your tenant administrator, and a change applies the next time the workspace starts.",
+
   "env.update_title": "Agent Fleet updates",
   "env.update_current": "Running version",
   "env.update_staged": "Staged",

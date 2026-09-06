@@ -16,9 +16,9 @@ How each setting is *used* belongs to the other chapters, so read this one as a
 
 | Group | What is in it |
 |---|---|
-| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions |
-| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens |
-| **Workspace** | Agent usage / Cloud cost / Running time / Agent memory / Toolchain / Preview subdomains / AWS SSM / Internal repositories / Export & import / Danger zone |
+| **Personal** | Display / Account / Keys / Speech / Notifications / Assistant / AI assistance / Agent instructions / Agent memory |
+| **Connections** | Agents / Git hosting / Ops & monitoring / Issue tracker / Chat integration / MCP servers / MCP tokens / AWS SSM |
+| **Workspace** | Agent usage / Cloud cost / Running time / Machine / Toolchain / Preview subdomains / Internal repositories / Export & import / Danger zone |
 
 - It remembers the tab you opened last and reopens there.
 - **On a phone it is a list → detail drill-down.** Back returns to the list; back again closes the dialog.
@@ -36,7 +36,7 @@ Getting this wrong is what makes a setting look like it "didn't work".
 | **Immediately** | Display, keys, speech, notifications; adding and removing connections |
 | **From the next session you start** | Agent behaviour settings, agent instructions, session-to-session messaging, MCP servers |
 | **From the next chat message** | Assistant settings; ops & monitoring connections (when used from an assistant) |
-| **After stopping and starting the workspace** | Toolchain (timezone, language versions) |
+| **After stopping and starting the workspace** | Toolchain (timezone, language versions); Machine (a size or class your admin changed) |
 
 There are also **two storage scopes**. The theme, the surface colours and the main-area layout are stored **on
 this device only**; everything else (font, font size, …) is stored on the server and follows you to another PC
@@ -173,6 +173,23 @@ Adds your own standing instructions to every agent newly started in this workspa
 showing which file it was written to and whether it is in effect.
 See [06 Agents](06-agents.md#agent-instructions-write-down-how-you-work-once).
 
+### Agent memory
+
+Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
+"it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact.
+
+- **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
+  default, so enable it here if you want it.
+- **Automatic snapshots** — taken a few minutes after an agent stops (nothing is stored if nothing changed).
+  "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.
+- **History** — newest first, with the time and the trigger (automatic / manual / pre-restore / restore /
+  import). You can also jump to a point in time by date.
+- **Restore to this point** — pick the scope (everything, or select what to restore). **The state just before
+  the restore is snapshotted too**, so the restore itself can be undone. You are warned if a session of that
+  kind is running.
+- **Export / import** — bundle (full history) or tar.gz (latest only). If what you are about to export looks
+  like it contains secrets, you are warned and asked to confirm first.
+
 ---
 
 ## Connections
@@ -254,6 +271,11 @@ search.
 Tokens for driving your workspace remotely from Claude Code / Claude Desktop on your own machine.
 → [10 Going further](10-integrations.md#driving-your-workspace-from-an-external-claude-mcp)
 
+### AWS SSM
+
+Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
+→ [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
+
 ---
 
 ## Workspace
@@ -320,22 +342,28 @@ square is one hour.
 - Times are shown in **your device's time zone**.
 - **Hours from before recording started stay blank** and cannot be filled in later.
 
-### Agent memory
+### Machine
 
-Version control over the memory an agent accumulates by itself (claude's auto-memory, codex's memories), so
-"it learned something it shouldn't have" and "when did this go wrong" are fixable after the fact.
+**What your workspace runs on.** Read-only: the size and the kind of machine are your tenant
+administrator's to set.
 
-- **Targets** — what can be versioned, with file count, size and the last snapshot. codex has memory disabled by
-  default, so enable it here if you want it.
-- **Automatic snapshots** — taken a few minutes after an agent stops (nothing is stored if nothing changed).
-  "Snapshot now" takes one by hand. On some deployments the operator has disabled automatic snapshots.
-- **History** — newest first, with the time and the trigger (automatic / manual / pre-restore / restore /
-  import). You can also jump to a point in time by date.
-- **Restore to this point** — pick the scope (everything, or select what to restore). **The state just before
-  the restore is snapshotted too**, so the restore itself can be undone. You are warned if a session of that
-  kind is running.
-- **Export / import** — bundle (full history) or tar.gz (latest only). If what you are about to export looks
-  like it contains secrets, you are warned and asked to confirm first.
+- **Instance type / architecture / vCPU / memory / home disk.** On a cloud deployment each member gets a
+  box to themselves, so these are that box's figures.
+- Each value says whether it was **measured** (read inside the container) or **configured** (what the next
+  start will use). While the workspace is stopped everything is configured.
+- **The architecture matters.** On `arm64` rtk is not installed at all, and JDKs and Node are downloaded as
+  arm64 builds ([11 Troubleshooting](11-troubleshooting.md)).
+- **Memory leads with what this workspace may spend, not what the box has.** Part of the box is held back
+  for the host's own daemons, so where both are known you get `6.5 GiB (box has 8 GiB)`. The first number is
+  the one to look at when a build is being killed.
+- A size or class your admin changes applies **at the next start**, so when the running box and the
+  configuration disagree, **both** are shown.
+- **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
+  home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core
+  count — so "70% of what?" is answered on the same screen. The chart keeps moving while a value is
+  unchanged (the control plane is what guarantees it is unchanged) but **breaks the line for any period
+  it could not read**, and it says so when a process was killed for memory during the window.
+- The **Machine and usage** link in the WS bar's **Resources** popover opens this screen directly.
 
 ### Toolchain
 
@@ -350,11 +378,6 @@ there on a deployment that issues preview subdomains** (elsewhere no URL would e
 you set here). Which ports are exposed, pinning the URL, sharing it with your tenant, opening it without a
 login, and re-issuing the URL all live here.
 → [10 Going further](10-integrations.md#preview-subdomains-only-where-they-are-issued)
-
-### AWS SSM
-
-Profiles (shared settings) and SSM hosts (individual) for logging in to another in-house host.
-→ [10 Going further](10-integrations.md#logging-in-to-another-in-house-host-ssm)
 
 ### Internal repositories
 

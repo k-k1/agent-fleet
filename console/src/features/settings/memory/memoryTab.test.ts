@@ -25,12 +25,12 @@ const cpRoutes = read("../../../../../control-plane/routes.go");
 const agentRoutes = read("../../../../../workspace/agent/routes.go");
 
 describe("agent memory tab in the settings modal", () => {
-  it("is registered in both the workspace-group rail and the render branch", () => {
+  it("is registered in both the rail and the render branch", () => {
     expect(dialog).toContain('["memory", "set.tab_memory"]');
     expect(dialog).toContain('{section === "memory" && <MemoryTab />}');
-    // The rail entry belongs to the workspace group, not personal settings or connections.
-    const workspaceGroup = dialog.slice(dialog.indexOf('key: "workspace"'), dialog.indexOf("];"));
-    expect(workspaceGroup).toContain('["memory", "set.tab_memory"]');
+    // Which group it sits in is settingsRail.dom.test.tsx's business; what matters here is
+    // that a rail entry and a render branch exist together (one without the other is a tab
+    // you can click that stays blank).
   });
 
   it("registers every REST path it calls in both CP and Agent (a gap is a 404 from the FE)", () => {

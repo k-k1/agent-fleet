@@ -27,6 +27,9 @@ func buildMux() *http.ServeMux {
 	// The Workspace's own measured resources (docs/log/63 §63.9). Where the CP cannot read
 	// the host's cgroup (ECS in general), this is the only source of memory / CPU / disk.
 	mux.HandleFunc("GET /workspace/stats", handleWorkspaceStats)
+	// What the workspace RUNS ON (arch / vCPU / memory / EC2 instance type). Its own route
+	// rather than a part of the stats above: this does not change while the container lives.
+	mux.HandleFunc("GET /workspace/machine", handleWorkspaceMachine)
 	mux.HandleFunc("GET /sessions", sessionx.HandleListSessions)
 	mux.HandleFunc("GET /sessions/catalog", sessionx.HandleSessionCatalog)
 	mux.HandleFunc("GET /notifications", handleNotifications)

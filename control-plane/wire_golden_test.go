@@ -72,6 +72,10 @@ func wireGoldenTypes() []struct {
 		{"scheduleDTO", reflect.TypeOf(scheduleDTO{})},
 		// Version info behind the update toast and the restart badge.
 		{"imageInfo", reflect.TypeOf(imageInfo{})},
+		// "What am I running on". Two nested halves whose keys the Console compares against
+		// each other; a tag that drifts on the measured side (which must mirror the Agent's
+		// resources.Machine) makes the row fall back to the declared value in silence.
+		{"workspaceMachineWire", reflect.TypeOf(workspaceMachineWire{})},
 	}
 }
 

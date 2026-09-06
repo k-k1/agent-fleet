@@ -24,6 +24,8 @@ import { DisplayTab } from "./personal/DisplayTab.tsx";
 import { AccountTab } from "./personal/AccountTab.tsx";
 import { KeysTab } from "./personal/KeysTab.tsx";
 import { EnvTab } from "./workspace/EnvTab.tsx";
+// What the workspace runs on (docs/log/63 §63.9 measured half + the runtime's declared box).
+import { MachineTab } from "./workspace/MachineTab.tsx";
 // Preview subdomains (docs/log/81). Its own section rather than part of the toolchain one:
 // a setting that decides who can reach the app is undiscoverable under a language version
 // picker. Only shown in the rail on deployments that issue them (usePreviewAvailable).
@@ -55,7 +57,10 @@ import { MyCloudCostView, useCostProfile } from "../cost/CloudCostView.tsx";
 import { MyUptimeView } from "../usage/UptimeHeatmap.tsx";
 
 // Rail groups. Each item = [section key, i18n label key]. Order here IS the rail order.
-const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
+// Exported for settingsRail.dom.test.tsx: which group a section sits in is a decision, not an
+// implementation detail, and the deep links (openSettings("ssm") and friends) depend on the
+// keys surviving a reorganisation of the rail.
+export const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
   {
     key: "personal",
     label: "set.group_personal",
@@ -71,6 +76,11 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       // rather than a chat.
       ["aiassist", "set.tab_aiassist"],
       ["instructions", "set.tab_instructions"],
+      // Agent memory sits next to the instructions rather than under workspace infra:
+      // both answer "what does the agent carry into a session", one written by the member
+      // and one accumulated by the agent. That its bytes live in the workspace does not
+      // place it — the instructions are stored Agent-side too.
+      ["memory", "set.tab_memory"],
     ],
   },
   {
@@ -84,6 +94,9 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       ["chat", "set.tab_chat"],
       ["mcp", "set.tab_mcp"],
       ["tokens", "set.tab_tokens"],
+      // AWS SSM registers an SSO profile and the hosts to log into — an external
+      // connection like the ones above it, not a property of the workspace.
+      ["ssm", "set.tab_ssm"],
     ],
   },
   {
@@ -95,10 +108,11 @@ const GROUPS: { key: string; label: string; items: [string, string][] }[] = [
       // Uptime (docs/log/83). Usage = tokens, cloud cost = money, this = occupancy; all three
       // are offered because which one a person wants to see differs.
       ["uptime", "set.tab_uptime"],
-      ["memory", "set.tab_memory"],
+      // What the workspace runs on, above the toolchains it runs: the architecture here
+      // is what decides which of those are even installable.
+      ["machine", "set.tab_machine"],
       ["env", "set.tab_env"],
       ["preview", "set.tab_preview"],
-      ["ssm", "set.tab_ssm"],
       ["internalrepos", "set.tab_internalrepos"],
       ["backup", "set.tab_backup"],
       ["danger", "set.tab_danger"],
@@ -216,6 +230,7 @@ export function SettingsDialog() {
                 runtime, so even a deployment with no AWS bill knows when it was running. */}
             {section === "uptime" && <MyUptimeView />}
             {section === "memory" && <MemoryTab />}
+            {section === "machine" && <MachineTab />}
             {section === "env" && <EnvTab />}
             {/* Hidden from the rail, the section can still survive in the remembered last-opened
                 tab. PreviewTab itself checks previewDomain and says the deployment has none, so

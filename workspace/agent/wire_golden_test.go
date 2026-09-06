@@ -60,6 +60,9 @@ func wireGoldenTypes() []struct {
 		{"RepoStatus", reflect.TypeOf(gitx.RepoStatus{})},
 		// GET /workspace/stats — the WS bar's resource chip (on ECS this is its only source).
 		{"resources.Stats", reflect.TypeOf(resources.Stats{})},
+		// GET /workspace/machine — the measured half of the Console's "machine" section;
+		// the CP merges it with its own declared answer key by key.
+		{"resources.Machine", reflect.TypeOf(resources.Machine{})},
 		// GET /notifications — one entry of the notification centre.
 		{"notice.Event", reflect.TypeOf(notice.Event{})},
 	}
