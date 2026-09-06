@@ -191,6 +191,25 @@ if [ -z "$CLUSTER" ] || [ "$CLUSTER" = "None" ] || [ -z "$CP_SERVICE" ]; then
 fi
 echo "==> stack=$STACK cluster=$CLUSTER cp-service=$CP_SERVICE"
 
+# --- 1c) the speech engine stack, when this deployment has one (ADR 0070) -------------
+# Kept in step with the repo the same way 30-ingress is: a release ships template fixes,
+# and a 50-tts left behind would drift silently (nothing reads its version).
+#
+# Safe to run against a live engine. The template omits DesiredCount, so CloudFormation
+# leaves the count out of the update call — a running engine is not stopped by a stack
+# update, only by a change to the task definition, which replaces the task as it should.
+# Its image is pinned upstream and has nothing to do with VERSION, so no tag is overridden.
+AF_STACK_INGRESS="$STACK"
+TTS_STACK="$(af_tts_stack || true)"
+if [ -n "$TTS_STACK" ]; then
+  echo "==> cloudformation deploy $TTS_STACK (50-tts, parameters unchanged)"
+  if [ "$DRY" = 1 ]; then
+    echo "DRY: aws cloudformation deploy --stack-name $TTS_STACK --template-file $HERE/cfn/50-tts.yaml"
+  else
+    af_cfn_deploy "$TTS_STACK" "$HERE/cfn/50-tts.yaml" --no-fail-on-empty-changeset
+  fi
+fi
+
 # --- 2) CFN deploy: override ImageTag only (everything else keeps its previous value) -------
 # `cloudformation deploy` keeps parameters it was not given at UsePreviousValue, so never add
 # another parameter here — adding one overwrites that "previous value".

@@ -116,7 +116,7 @@ txt() { tr '\t' '\n' | grep -v '^$' || true; }
 
 # --- 0) what is there right now (without --yes this is where it ends) --------
 echo "==> teardown plan: ${AF_FQDN:-<no live ingress stack>} (profile=$AF_PROFILE region=$AF_REGION)"
-echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
+echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_TTS:+ / $AF_STACK_TTS}${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
 echo "    cluster  : $CLUSTER   persistence=$AF_PERSISTENCE   runtime=$AF_WS_RUNTIME"
 
 list_ws_svcs() { "${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null | txt | grep '/af-ws-' || true; }
@@ -208,6 +208,20 @@ if [ "$AF_DRY" != 1 ]; then
   echo "==> 1b. re-reading the residue now that the CP is down"
   WS_SVCS="$(list_ws_svcs)"; SLOTS="$(list_slots)"; HOMES="$(list_homes)"; SNAPS="$(list_snaps)"; APS="$(list_aps)"
   echo "    workspaces=$(count "$WS_SVCS") slots=$(count "$SLOTS") volumes=$(count "$HOMES") snapshots=$(count "$SNAPS") efs-access-points=$(count "$APS")"
+fi
+
+# --- 1c) the speech engine (ADR 0070) ----------------------------------------
+# Scaled to 0 before its stack is deleted. Deleting the stack would stop the task anyway,
+# but the Cloud Map service in it cannot be deleted while a registered instance is still
+# around, and a task that is still shutting down is exactly that — a race that surfaces as
+# a stack stuck in DELETE_FAILED long after the reason has scrolled away.
+if [ -n "${AF_STACK_TTS:-}" ]; then
+  TTS_SERVICE="$(af_stack_output "$AF_STACK_TTS" TtsEcsService)"
+  if [ -n "$TTS_SERVICE" ]; then
+    echo "==> 1c. stopping the speech engine ($TTS_SERVICE)"
+    af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$TTS_SERVICE" \
+      --desired-count 0 >/dev/null 2>&1 || true
+  fi
 fi
 
 # --- 2) workspace services ---------------------------------------------------
@@ -310,7 +324,7 @@ fi
 
 # --- 8) stacks in reverse order, one at a time -------------------------------
 echo "==> 8. deleting stacks in reverse order, one at a time"
-for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
+for st in "$AF_STACK_INGRESS" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] || continue
   if ! af_stack_exists "$st"; then echo "    - $st: already gone"; continue; fi
   echo "    - $st: delete"
@@ -367,7 +381,7 @@ fi
 # pagination token (`None`) as its own line, so only pass lines shaped like an ARN.
 echo "==> 10. task definitions"
 TDS="$("${AWS[@]}" ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns' --output text 2>/dev/null \
-  | txt | grep -E '/(af-ws-|af-.*-cp)' || true)"
+  | txt | grep -E '/(af-ws-|af-.*-cp|af-.*-voicevox)' || true)"
 for td in $TDS; do
   af_run "${AWS[@]}" ecs deregister-task-definition --task-definition "$td" >/dev/null 2>&1 || true
 done
@@ -426,7 +440,7 @@ fi
 echo ""
 echo "==> sweep (anything that is not 0 is residue)"
 left() { printf '    %-22s %s\n' "$1" "$(count "$2")"; }
-left "cfn stacks" "$(for st in "$AF_STACK_INGRESS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
+left "cfn stacks" "$(for st in "$AF_STACK_INGRESS" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] && af_stack_exists "$st" && echo "$st"; done || true)"
 left "ec2 instances" "$("${AWS[@]}" ec2 describe-instances --filters "Name=tag:af-pool,Values=$CLUSTER" \
   "Name=instance-state-name,Values=pending,running,stopping,stopped" \
@@ -437,7 +451,7 @@ left "snapshots" "$("${AWS[@]}" ec2 describe-snapshots --owner-ids self --filter
   --query 'Snapshots[].SnapshotId' --output text 2>/dev/null | txt || true)"
 left "ecs clusters" "$("${AWS[@]}" ecs list-clusters --query 'clusterArns' --output text 2>/dev/null | txt | grep -F "/$CLUSTER" || true)"
 left "task definitions" "$("${AWS[@]}" ecs list-task-definitions --status ACTIVE --query 'taskDefinitionArns' \
-  --output text 2>/dev/null | txt | grep -E '/(af-ws-|af-.*-cp)' || true)"
+  --output text 2>/dev/null | txt | grep -E '/(af-ws-|af-.*-cp|af-.*-voicevox)' || true)"
 left "log groups /af" "$("${AWS[@]}" logs describe-log-groups --log-group-name-prefix /af \
   --query 'logGroups[].logGroupName' --output text 2>/dev/null | txt || true)"
 # EFS and RDS are the only resources that can outlive the stacks (Persistence=retain), so

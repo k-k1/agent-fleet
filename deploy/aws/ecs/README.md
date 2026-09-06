@@ -32,17 +32,20 @@ platform changes:
 |------|--------|----------|
 | `cfn/00-network.yaml` | **proven** (deploy→verify→teardown in sandbox) | VPC, 2×AZ public+private subnets, IGW, NAT, S3 gateway endpoint, base SGs (`alb`/`cp`/`ws`) |
 | `cfn/10-data.yaml` | **proven** (EFS 2 mount targets available, RDS pg18 available/private/encrypted) | EFS filesystem + mount targets, RDS(Postgres, single-AZ t4g.micro, RDS-managed master secret) |
-| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
+| `cfn/20-platform.yaml` | **proven** (ECR×2, cluster ACTIVE w/ SC default, 3 IAM roles) | ECR (cp+workspace, plus an empty `af-voicevox` for the optional speech engine), ECS cluster, Service Connect namespace (`af.internal`), IAM roles (`cp-task`/`exec`/`ws-task`) |
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-> All five are proven end-to-end **including teardown**: two real deployments in two
+| `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
+
+> The first five are proven end-to-end **including teardown**: two real deployments in two
 > separate AWS accounts (`WsRuntime=ecs-ec2`, one `Persistence=delete` and one
 > `=retain`) ran for days and were deleted on 2026-08-22 leaving zero orphans in
 > either account — the sweep in §Teardown came back empty on every counter. Standing
 > one up needs a domain + Google OAuth client + the CP image in ECR (see stand-up
 > below). Each stack imports the earlier ones' exports, so deploy in order
-> `00 → 10 → 20 → (40, ecs-ec2 only) → 30`.
+> `00 → 10 → 20 → (40, ecs-ec2 only) → (50, speech only) → 30`. `50-tts` is last
+> before `30-ingress` because `30-ingress` is handed its outputs.
 
 `30-ingress.yaml` carries most of the knobs a deployment actually tunes. Its
 `Description:` fields are deliberately one or two lines each; the measurements, the
@@ -736,6 +739,66 @@ workspace's morning schedule fire at random. An undelivered fire is now re-attem
 later ticks for 15 minutes, but each retry re-wakes the workspace, so the budget should
 still be big enough to win on the first attempt.
 
+## Optional: Japanese speech (the VOICEVOX engine, `cfn/50-tts.yaml`)
+
+Read-aloud works on every deployment without this stack: Polly does it, and the CP's `auto`
+routing sends everything there whenever no engine is reachable. What `50-tts` adds is the
+VOICEVOX (Zundamon) voice, as an ECS **Fargate** service that is **normally scaled to zero**
+— an engine left running is about **$90/month** at 2 vCPU / 4 GiB against a deployment whose
+whole run rate is around $165/month, and it is silent most of the day. ADR 0070 has the
+prices, the break-even against Polly and the reasoning; this section is what to type.
+
+**Turning it on** (`standup.sh` builds `50-tts` when, and only when, a `params/50-tts` file
+exists in the captured state — the same shape as the pool layer):
+
+```bash
+# ~/.config/agent-fleet/deploy/<profile>.<region>/params/50-tts
+# Every parameter has a default, so this file may hold nothing but the namespace name;
+# standup.sh overrides NetworkStackName / PlatformStackName / ServiceConnectNamespace
+# from what it already knows about the deployment.
+ServiceConnectNamespace=af.internal
+CpuArchitecture=X86_64
+TaskCpu=2048
+TaskMemory=4096
+```
+
+`standup.sh` then carries the pinned image into ECR with `crane` during its images step,
+deploys `50-tts` after the pool and before `30-ingress`, scales the new service to 0, and
+hands `30-ingress` the stack's `TtsEcsService` / `VoicevoxUrl` outputs. On an existing
+deployment the same steps by hand are: deploy `20-platform` (it creates the repository),
+`crane copy` the image, deploy `50-tts`, `ecs update-service --desired-count 0`, then
+re-deploy `30-ingress` with the two parameters (that last step replaces the CP task).
+
+⚠️ **The image has to be in ECR before `50-tts` is created, not after.** CloudFormation
+blocks on ECS service stabilisation, so a service created against an empty repository
+leaves the stack in `CREATE_IN_PROGRESS` repeating `CannotPullContainerError` and no later
+step can rescue it — the deploy never returns. That is why the repository is a
+`20-platform` resource even though everything else about it belongs here (measured on this
+template's first stand-up). Creating the stack therefore always costs one cold start: CFN
+waits for the first task to run, and only then is the service scaled back to 0.
+
+Things worth knowing before you enable it:
+
+- **`LaunchType: FARGATE` is spelled out in the template and must stay.** The cluster has no
+  capacity provider, so an omitted launch type gets the API default — EC2 — which puts a
+  2 vCPU engine inside the workspace slot pool, breaks the sweeper's "an instance with zero
+  ECS tasks is idle" premise, and takes a seat somebody's Workspace needed.
+- **`DesiredCount` is deliberately absent from the template.** CloudFormation starts a new
+  service at 1 and then leaves the count out of every later update, which is what lets the
+  admin toggle own it. Declaring `0` instead would reset the count on every stack update —
+  i.e. stop the engine in the middle of somebody listening.
+- **The engine is addressed by a Cloud Map DNS name, not Service Connect.** While it is at
+  desired 0 the name simply has no A record, `Ready` is false and Polly reads.
+- **Every start pays the full image pull** (about 2 GB; Fargate keeps no image cache), so a
+  cold start is on the order of a minute or two, during which Polly is still reading.
+- The engine holds no per-tenant state — the reading dictionaries are applied client-side —
+  so destroying it loses nothing.
+
+Only `30-ingress`'s two parameters are needed on the CP side; `AF_TTS_ECS_CLUSTER` and
+`AF_TTS_ECS_REGION` ride on the existing `AF_ECS_*`, and `CpTaskRole` already carries the
+`ecs:DescribeServices` / `ecs:UpdateService` this needs. See
+[`cfn/PARAMETERS.md`](cfn/PARAMETERS.md#speech-the-voicevox-engine).
+
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 
 🚧 **Stood up and run in a sandbox, including a production-shaped VPC — but never with
@@ -1342,7 +1405,7 @@ account, delete them to rehearse the prerequisites from scratch.
 **8. The stacks, in reverse order, one at a time.**
 
 ```bash
-for s in af-ecs-ingress af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
+for s in af-ecs-ingress af-ecs-tts af-ecs-pool af-ecs-platform af-ecs-data af-ecs-network; do
   aws cloudformation delete-stack --stack-name $s
   aws cloudformation wait stack-delete-complete --stack-name $s || break   # stop on the first failure
 done
@@ -1352,7 +1415,10 @@ done
 an exporting stack while an importer still exists (`Cannot delete export … as it is
 in use by …`) — fire all five together and the last ones silently do nothing while
 your wait loop spins on a delete that was already cancelled. `af-ecs-pool` exists
-only under `ecs-ec2`; its stack name is whatever you deployed `40-ec2-pool.yaml` as.
+only under `ecs-ec2` and `af-ecs-tts` only where speech was enabled; each stack name
+is whatever you deployed `40-ec2-pool.yaml` / `50-tts.yaml` as. Scale the engine
+service to 0 before deleting `50-tts`: its Cloud Map service cannot be deleted while a
+task is still registered, and a task on its way down is exactly that.
 Wall clock: ~10 min (`delete` persistence) to ~16 min (`retain`, RDS snapshotting).
 
 **9. `Persistence=retain` needs three extra steps** — a plain `delete-stack` fails

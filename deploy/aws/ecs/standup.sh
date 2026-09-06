@@ -7,7 +7,9 @@
 #
 # Builds from the environment `capture-env.sh` wrote (the stack names and the full set of
 # parameters passed to each stack), in the order
-# `00 -> 10 -> 20 -> (images into ECR) -> 40 -> 30`. The reverse of teardown.sh.
+# `00 -> 10 -> 20 -> (images into ECR) -> 40 -> 50 -> 30`. The reverse of teardown.sh.
+# 40 (the EC2 slot pool) and 50 (the speech engine) are both optional, and 50 comes before
+# 30 because 30 is handed its outputs.
 #
 # ## What it will not come up without
 #
@@ -47,12 +49,15 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
                (default: the captured CpArch). ⚠️ arm64 needs a CP image that is a
                two-architecture index at this tag; the check below refuses the pair
   --from       registry to copy the images from (default ghcr.io/k-k1/agent-fleet)
+  --tts-from   registry to copy the VOICEVOX engine image from
+               (default docker.io/voicevox/voicevox_engine; only used when 50-tts is deployed)
   --dry-run    print every write instead of making it
 EOF
 }
 
 PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_ARCH_ARG=""
 FROM="ghcr.io/k-k1/agent-fleet"
+TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -62,6 +67,7 @@ while [ $# -gt 0 ]; do
     --image-tag) TAG="${2:?--image-tag needs a value}"; shift ;;
     --cp-arch)   CP_ARCH_ARG="${2:?--cp-arch needs x86_64|arm64}"; shift ;;
     --from)      FROM="${2:?--from needs a value}"; shift ;;
+    --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -85,8 +91,16 @@ fi
 # again.
 CFN_DIR="${AF_STANDUP_CFN_DIR:-$HERE/cfn}"
 
+# Speech is opt-in (ADR 0070): 50-tts is deployed only when this deployment asked for it.
+# Having captured parameters for it IS the request — the same shape as the pool layer,
+# where AF_STACK_POOL decides. A deployment turning speech on for the first time has
+# nothing captured, so writing the file is how it opts in (README §Speech).
+if [ -z "${AF_STACK_TTS:-}" ] && [ -r "$(af_params_file 50-tts)" ]; then
+  AF_STACK_TTS=af-ecs-tts
+fi
+
 echo "==> standup plan: ${AF_FQDN:-<from the captured parameters>} (profile=$AF_PROFILE region=$AF_REGION)"
-echo "    order : $AF_STACK_NETWORK → $AF_STACK_DATA → $AF_STACK_PLATFORM → images:$TAG${AF_STACK_POOL:+ → $AF_STACK_POOL} → $AF_STACK_INGRESS"
+echo "    order : $AF_STACK_NETWORK → $AF_STACK_DATA → $AF_STACK_PLATFORM → images:$TAG${AF_STACK_POOL:+ → $AF_STACK_POOL}${AF_STACK_TTS:+ → $AF_STACK_TTS} → $AF_STACK_INGRESS"
 
 # --- 0) preflight (finding out mid-build is the most expensive way) ----------
 fail=0
@@ -96,6 +110,7 @@ for slug in 00-network 10-data 20-platform 30-ingress; do
   [ -r "$(af_params_file "$slug")" ] || say_missing "no params/$slug (was capture-env.sh ever run?)"
 done
 [ -z "$AF_STACK_POOL" ] || [ -r "$(af_params_file 40-ec2-pool)" ] || say_missing "AF_STACK_POOL=$AF_STACK_POOL but there is no params/40-ec2-pool"
+[ -z "$AF_STACK_TTS" ] || [ -r "$(af_params_file 50-tts)" ] || say_missing "AF_STACK_TTS=$AF_STACK_TTS but there is no params/50-tts"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
 # with a Service Connect default namespace then fails with "ECS Service Linked Role is not
@@ -143,7 +158,7 @@ command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> EC
 # name, and read anything deeper as one of its attributes. And when the section exists but
 # nothing could be read, say so as an anomaly — that is distinguishable from a genuine
 # "0 required" where every parameter has a Default.
-for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool; do
+for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool 50-tts; do
   f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
   [ -r "$f" ] && [ -r "$t" ] || continue
   missing=""; has_section=0; parsed=0
@@ -288,6 +303,25 @@ for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
     af_run crane copy "$src" "$dst"
   fi
 done
+# The speech engine's image, when this deployment has speech (ADR 0070 decision 14). It is
+# pinned upstream and has nothing to do with $TAG, and it is copied HERE — in the images
+# step, before 50-tts — because that stack's service cannot start without it and
+# CloudFormation blocks on ECS service stabilisation: create the service against an empty
+# repository and the stack sits in CREATE_IN_PROGRESS repeating CannotPullContainerError,
+# with no way for a later step to rescue it (measured 2026-09-06). The repository is a
+# 20-platform resource for exactly that reason.
+if [ -n "$AF_STACK_TTS" ]; then
+  tts_tag="$(af_read_one_param 50-tts EngineImageTag)"
+  : "${tts_tag:=cpu-ubuntu24.04-0.25.2}"
+  if "${AWS[@]}" ecr describe-images --repository-name af-voicevox \
+      --image-ids "imageTag=$tts_tag" >/dev/null 2>&1; then
+    echo "    · af-voicevox:$tts_tag is already in ECR"
+  else
+    echo "    · crane copy $TTS_ENGINE_FROM:$tts_tag (about 2 GB, both architectures)"
+    af_run crane copy "$TTS_ENGINE_FROM:$tts_tag" "$ECR_HOST/af-voicevox:$tts_tag"
+  fi
+fi
+
 # Do CpArch and the CP image's architecture match? A mismatch is not even a
 # CannotPullContainerError: the task simply cannot be placed, desired=1 / running=0, with
 # no pull error logged at all. Same discipline as update.sh — fail only on proof.
@@ -308,9 +342,58 @@ if [ -n "$AF_STACK_POOL" ]; then
   deploy_stack "$AF_STACK_POOL" 40-ec2-pool.yaml 40-ec2-pool CAPABILITY_NAMED_IAM
 fi
 
+# --- 5b) the speech engine (optional, ADR 0070) ------------------------------
+#
+# Deployed BEFORE 30-ingress, because 30-ingress is handed this stack's two outputs. It
+# imports 00-network and 20-platform only, so it does not close a cycle.
+if [ -n "$AF_STACK_TTS" ]; then
+  tts_existed=0
+  af_stack_exists "$AF_STACK_TTS" && tts_existed=1
+  af_read_params 50-tts
+  # Three parameters are facts this script already knows, and getting them wrong is
+  # invisible: a mistyped namespace NAME deploys cleanly and leaves the CP pointing at a
+  # name that never resolves (the engine reads as permanently down, Polly reads forever).
+  # So derive them rather than trusting a capture taken under other stack names.
+  af_param_override NetworkStackName "$AF_STACK_NETWORK"
+  af_param_override PlatformStackName "$AF_STACK_PLATFORM"
+  ns="$(af_read_one_param 20-platform ServiceConnectNamespace)"
+  [ -z "$ns" ] || af_param_override ServiceConnectNamespace "$ns"
+  echo "==> deploy $AF_STACK_TTS (50-tts)"
+  if [ "$AF_DRY" = 1 ]; then
+    echo "DRY: cloudformation deploy --stack-name $AF_STACK_TTS --template-file $CFN_DIR/50-tts.yaml \\"
+    echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
+  else
+    af_cfn_deploy "$AF_STACK_TTS" "$CFN_DIR/50-tts.yaml" \
+      --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
+      --no-fail-on-empty-changeset
+  fi
+
+  TTS_SERVICE="$(af_stack_output "$AF_STACK_TTS" TtsEcsService)"
+  TTS_URL="$(af_stack_output "$AF_STACK_TTS" VoicevoxUrl)"
+
+  # ⚠️ Scale to 0 only when this run CREATED the service. CloudFormation starts a new
+  # service at desired 1 (the schema's documented default for an absent DesiredCount, which
+  # 50-tts relies on so that later updates leave the count alone), and an engine nobody
+  # asked for costs $0.12/hour. But a stand-up re-run from the middle must not stop an
+  # engine somebody is listening to.
+  if [ "$tts_existed" = 0 ] && [ -n "$TTS_SERVICE" ]; then
+    echo "    · scaling $TTS_SERVICE to 0 (the engine is started on demand)"
+    af_run "${AWS[@]}" ecs update-service --cluster "$(af_cluster)" \
+      --service "$TTS_SERVICE" --desired-count 0 >/dev/null
+  fi
+fi
+
 # --- 6) ingress (parameters holding physical IDs get the new outputs) --------
 af_read_params 30-ingress
 af_param_override ImageTag "$TAG"
+# Speech: pass the engine's real service name and DNS name, or nothing at all. Read from
+# the stack's outputs rather than the capture for the same reason as the launch template —
+# a rebuilt stack produces new values, and a stale one here is a CP that drives a service
+# that no longer exists.
+if [ -n "$AF_STACK_TTS" ]; then
+  [ -z "${TTS_SERVICE:-}" ] || af_param_override TtsEcsService "$TTS_SERVICE"
+  [ -z "${TTS_URL:-}" ] || af_param_override VoicevoxUrl "$TTS_URL"
+fi
 # A flag has to move the value that is actually passed, not just what gets checked. Forget
 # this and `--cp-arch arm64` becomes the worst kind of success: it verifies that arm64
 # would work and then builds x86_64 (measured — the CP that came up had runtimePlatform

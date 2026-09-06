@@ -70,6 +70,24 @@ Resources:
       RepositoryName: af-workspace
       EmptyOnDelete: true
       ImageScanningConfiguration: { ScanOnPush: true }
+  # The pinned VOICEVOX engine image (ADR 0070). It belongs to the optional 50-tts stack by
+  # every other measure, and it is HERE for one reason, measured the hard way: CloudFormation
+  # blocks on ECS service stabilisation, so a service whose repository is created in its own
+  # stack has nothing to pull and the CREATE never converges — the stack sits
+  # CREATE_IN_PROGRESS while `CannotPullContainerError: … not found` repeats, and the step
+  # that would have copied the image in cannot run until that returns. The repository has to
+  # exist one stack earlier so the image is already there when the service first starts.
+  # An unused repository holds no images and costs nothing, so deployments without speech
+  # simply never fill it.
+  EcrVoicevox:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-voicevox
+      EmptyOnDelete: true
+      # Third-party image, pinned by tag and re-copied on every stand-up; a scan on push
+      # would report findings nobody here can fix.
+      ImageScanningConfiguration: { ScanOnPush: false }
 
   # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
   Namespace:
@@ -379,6 +397,9 @@ Outputs:
   EcrWorkspaceUri:
     Value: !GetAtt EcrWorkspace.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrWorkspaceUri" }
+  EcrVoicevoxUri:
+    Value: !GetAtt EcrVoicevox.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrVoicevoxUri" }
   ClusterName:
     Value: !Ref Cluster
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }

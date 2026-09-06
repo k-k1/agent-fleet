@@ -67,6 +67,16 @@ EOF
 cp -a "$STATE/params/." "$STATE2/params/"
 sed -i 's/^AF_PERSISTENCE=delete$/AF_PERSISTENCE=retain/' "$STATE2/env"
 
+# A third one (profile p3): the same deployment with speech opted in (ADR 0070). Note what
+# opts it in — the presence of params/50-tts, with no AF_STACK_TTS in the env. That is the
+# path a deployment turning speech on for the FIRST time takes, and the one where a wrong
+# default stack name would go unnoticed.
+STATE3="$AF_DEPLOY_STATE_DIR/p3.ap-northeast-1.t-ingress"
+mkdir -p "$STATE3/params"
+cp -a "$STATE/params/." "$STATE3/params/"
+cp "$STATE/env" "$STATE3/env"
+echo "ServiceConnectNamespace=af.internal" > "$STATE3/params/50-tts"
+
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
@@ -83,6 +93,13 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='CfnTemplatesBucket']"*) echo "t-cfn-bucket" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='SlotAmiIdArm64']"*) echo "None" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='Url']"*) echo "https://af.example.test" ;;
+  # --- the speech-engine stack (50-tts). Its existence probe must be able to say "no":
+  # standup scales a NEWLY CREATED service to 0 and must leave an existing one alone, so a
+  # fake that always answers "the stack is there" would make that branch untestable.
+  *"cloudformation describe-stacks --stack-name af-ecs-tts") [ "${STUB_TTS_EXISTS:-0}" = 1 ] || exit 1 ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='TtsEcsService']"*) echo "af-af-ecs-tts-voicevox" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='VoicevoxUrl']"*) echo "http://voicevox.af.internal:50021" ;;
+  *"ParameterKey=='EngineImageTag'"*) echo "cpu-ubuntu24.04-0.25.2" ;;
   # For capture-env.sh: the parameter and output listings (join form). NatEipAllocationId
   # reproduces exactly the shape that was hit for real — empty as a parameter, but with a
   # real value in the outputs.
@@ -229,12 +246,58 @@ grep -q "deploy --stack-name t-pool .*CAPABILITY_NAMED_IAM" "$LOG" || fail "40-e
 grep -q "deploy --stack-name t-ingress .*Ec2SlotLaunchTemplate=lt-NEW" "$LOG" || fail "30-ingress got a stale launch template"
 hasnt "Ec2SlotLaunchTemplate=lt-OLD"
 grep -q "deploy --stack-name t-ingress .*ImageTag=9.9.9-dev-test" "$LOG" || fail "30-ingress did not get the deployed tag"
+# Speech is opt-in and this capture did not opt in, so nothing about it may happen. This is
+# also the control for case 3f below: without it, a 50-tts step that never ran and a 50-tts
+# step that ran for everyone would look the same.
+hasnt "deploy --stack-name af-ecs-tts"
+hasnt "TtsEcsService="
+hasnt "AF_VOICEVOX_URL"
+hasnt "voicevox_engine"
 # Does the flag reach the value that is actually passed? Passing the check and then standing
 # up on the default value is something that really happened.
 : > "$LOG"
 "$ECS/standup.sh" --profile p --region ap-northeast-1 --stack t-ingress --yes --cp-arch arm64 > /dev/null </dev/null
 grep -q "deploy --stack-name t-ingress .*CpArch=arm64" "$LOG" || fail "--cp-arch did not reach the CFN parameters"
 if grep -q "deploy --stack-name t-ingress .*CpArch=x86_64" "$LOG"; then fail "the captured CpArch overrode the flag"; fi
+
+echo "== case 3f: the speech engine is built between the pool and ingress (ADR 0070) =="
+#
+# 50-tts is optional and deployed LATE, and both facts are what make the order fragile:
+#
+#   - after 20-platform, because it imports the cluster, the exec role and the namespace;
+#   - BEFORE 30-ingress, because 30-ingress is handed its two outputs. Slip it after and the
+#     stack deploys perfectly while the CP never learns where the engine is — the feature
+#     just silently stays on Polly, which is exactly what ADR 0070 found had been true since
+#     ADR 0013;
+#   - the image can only be copied in AFTER the stack exists, since 50-tts owns the ECR
+#     repository;
+#   - and the freshly created service must be scaled to 0. CloudFormation starts a new
+#     service at desired 1 (the template omits DesiredCount on purpose so that later updates
+#     leave the count alone), so forgetting this leaves a $0.12/hour engine running that
+#     nobody asked for.
+: > "$LOG"
+"$ECS/standup.sh" --profile p3 --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3f" </dev/null
+order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name af-ecs-tts"
+order "cloudformation deploy --stack-name af-ecs-tts" "cloudformation deploy --stack-name t-ingress"
+# The image goes in BEFORE the stack, not after. CloudFormation blocks on ECS service
+# stabilisation, so a service created against an empty repository leaves the stack in
+# CREATE_IN_PROGRESS repeating CannotPullContainerError — and no later step can rescue it,
+# because the deploy never returns. Measured on the first real stand-up of this template;
+# the repository is a 20-platform resource so that this ordering is possible at all.
+order "crane copy docker.io/voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2" "cloudformation deploy --stack-name af-ecs-tts"
+order "cloudformation deploy --stack-name t-platform" "crane copy docker.io/voicevox/voicevox_engine:cpu-ubuntu24.04-0.25.2"
+has "ecs update-service --cluster t-cluster --service af-af-ecs-tts-voicevox --desired-count 0"
+order "cloudformation deploy --stack-name af-ecs-tts" "ecs update-service --cluster t-cluster --service af-af-ecs-tts-voicevox --desired-count 0"
+# The values 30-ingress is given come from the stack's outputs, not from the capture.
+grep -q "deploy --stack-name t-ingress .*TtsEcsService=af-af-ecs-tts-voicevox" "$LOG" \
+  || fail "30-ingress did not get the engine's service name (the CP would never drive it)"
+grep -q "deploy --stack-name t-ingress .*VoicevoxUrl=http://voicevox.af.internal:50021" "$LOG" \
+  || fail "30-ingress did not get the engine's URL (the CP would keep its 127.0.0.1 default)"
+# An engine that is already there is somebody's running engine. Re-running a stand-up from
+# the middle must not stop it.
+: > "$LOG"
+STUB_TTS_EXISTS=1 "$ECS/standup.sh" --profile p3 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+hasnt "--service af-af-ecs-tts-voicevox --desired-count 0"
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #

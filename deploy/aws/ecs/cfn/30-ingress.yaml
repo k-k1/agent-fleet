@@ -335,6 +335,22 @@ Parameters:
       identity with NO login — sandbox/E2E gates only: restrict the ALB security
       group to your own IP before using it (an internet-facing ALB with dev auth
       hands out an authenticated session to anyone who reaches it).
+  TtsEcsService:
+    Type: String
+    Default: ""
+    Description: >-
+      AF_TTS_ECS_SERVICE — the ECS service of the VOICEVOX engine (50-tts's TtsEcsService
+      output). Setting it is what puts the engine under the CP's control: the admin toggle
+      then flips its desired count. Empty = no managed engine, and `auto` routes every
+      Japanese sentence to Polly. Cluster and region ride on AF_ECS_*, so they are not
+      passed separately. ADR 0070.
+  VoicevoxUrl:
+    Type: String
+    Default: ""
+    Description: >-
+      AF_VOICEVOX_URL — where the engine answers (50-tts's VoicevoxUrl output, a Cloud Map
+      DNS name such as http://voicevox.af.internal:50021). Empty leaves the CP on its
+      compose-era default of http://127.0.0.1:50021, where nothing listens on ECS.
   CpAlarmEmail:
     Type: String
     Default: ""
@@ -365,6 +381,12 @@ Conditions:
   HasScheduleWakeTimeout: !Not [ !Equals [ !Ref ScheduleWakeTimeout, "" ] ]
   HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
   HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
+  # Speech (ADR 0070). Each is passed ONLY when 50-tts was deployed, so a deployment
+  # without the engine stack carries neither variable and the CP keeps its own defaults —
+  # no managed engine, and Polly reads. The two are separate conditions because they are
+  # separately meaningful: a URL alone points at an engine somebody else runs.
+  HasTtsEcsService: !Not [ !Equals [ !Ref TtsEcsService, "" ] ]
+  HasVoicevoxUrl: !Not [ !Equals [ !Ref VoicevoxUrl, "" ] ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -733,6 +755,11 @@ Resources:
             - !If [ HasScheduleWakeTimeout, { Name: AF_SCHEDULE_WAKE_TIMEOUT, Value: !Ref ScheduleWakeTimeout }, !Ref "AWS::NoValue" ]
             - !If [ HasScheduleSettle, { Name: AF_SCHEDULE_SETTLE, Value: !Ref ScheduleSettle }, !Ref "AWS::NoValue" ]
             - !If [ HasScheduleJitter, { Name: AF_SCHEDULE_JITTER, Value: !Ref ScheduleJitter }, !Ref "AWS::NoValue" ]
+            # --- Speech: the VOICEVOX engine of 50-tts (ADR 0070). Unset = Polly only. ---
+            # AF_TTS_ECS_CLUSTER / _REGION are deliberately absent: tts_ecs.go falls back to
+            # AF_ECS_CLUSTER and AF_ECS_REGION above, and the engine is in the same cluster.
+            - !If [ HasTtsEcsService, { Name: AF_TTS_ECS_SERVICE, Value: !Ref TtsEcsService }, !Ref "AWS::NoValue" ]
+            - !If [ HasVoicevoxUrl, { Name: AF_VOICEVOX_URL, Value: !Ref VoicevoxUrl }, !Ref "AWS::NoValue" ]
             # Start returns as soon as the service is at desiredCount 1; the Agent
             # readiness poll runs in the background for the log line only, on the
             # AF_ECS_START_TIMEOUT_SEC budget (default 300s). Nothing waits on it,

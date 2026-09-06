@@ -67,6 +67,7 @@ af_env_init() {
     AF_WS_RUNTIME="$(af_stack_param "$AF_STACK_INGRESS" WsRuntime)"
     AF_IMAGE_TAG="$(af_stack_param "$AF_STACK_INGRESS" ImageTag)"
     AF_STACK_POOL="$(af_pool_stack)"
+    AF_STACK_TTS="$(af_tts_stack)"
     AF_PERSISTENCE="$(af_stack_param "${AF_STACK_DATA:-af-ecs-data}" Persistence)"
   elif [ -r "$AF_ENV_DIR/env" ]; then
     # Nothing live means a stand-up. This is the only place the captured state is read.
@@ -90,11 +91,43 @@ af_env_init() {
   AF_STACK_PLATFORM="${AF_STACK_PLATFORM:-af-ecs-platform}"
   AF_WS_RUNTIME="${AF_WS_RUNTIME:-ecs}"
   AF_PERSISTENCE="${AF_PERSISTENCE:-delete}"
+  # Both optional layers default to "there is none" rather than to a conventional name:
+  # under `set -u` an unset one would abort the caller, and guessing a name would make an
+  # absent stack look present.
+  AF_STACK_POOL="${AF_STACK_POOL:-}"
+  AF_STACK_TTS="${AF_STACK_TTS:-}"
   # Values the caller (the script that sourced this) reads. Without export, shellcheck
   # sees them as written and never read.
   export AF_PROFILE AF_REGION AF_FQDN AF_ENV_DIR AF_LIVE AF_IMAGE_TAG AF_STACK_POOL
-  export AF_STACK_NETWORK AF_STACK_DATA AF_STACK_PLATFORM AF_STACK_INGRESS
+  export AF_STACK_NETWORK AF_STACK_DATA AF_STACK_PLATFORM AF_STACK_INGRESS AF_STACK_TTS
   export AF_WS_RUNTIME AF_PERSISTENCE AF_DEV_DEPLOY
+}
+
+# af_tts_stack — name of the speech-engine stack (ADR 0070), empty when there is none.
+#
+# Derived the same way as af_pool_stack, and for the same reason: 30-ingress holds the
+# engine's URL and service name, never the stack that produced them, and the stack name is
+# an operator's choice. So find the stack whose export `<stack>-VoicevoxUrl` carries the
+# value 30-ingress was given — the real thing, rather than a naming convention that goes
+# quietly wrong the day somebody deploys under another name.
+#
+# Empty is the normal answer: speech is opt-in, and most deployments never deploy 50-tts.
+af_tts_stack() {
+  local url name
+  url="$(af_stack_param "$AF_STACK_INGRESS" VoicevoxUrl)"
+  [ -n "$url" ] || return 0
+  name="$("${AWS[@]}" cloudformation list-exports \
+    --query "Exports[?Value=='$url'&&ends_with(Name,'-VoicevoxUrl')].Name" \
+    --output text 2>/dev/null | head -1 || true)"
+  # Check the suffix here as well, rather than trusting the filter. Stripping a suffix that
+  # is not there yields the answer unchanged, so an unexpected reply (an error page, a
+  # differently-shaped export list) would silently become a stack name — and every caller
+  # then works against a stack that does not exist.
+  case "$name" in
+    *-VoicevoxUrl) ;;
+    *) return 0 ;;   # empty, "None", or a shape nobody expected — there is no tts stack
+  esac
+  echo "${name%-VoicevoxUrl}"
 }
 
 # af_pool_stack — name of the pool-layer stack.
@@ -309,6 +342,16 @@ af_read_params() {
     case "$line" in ""|\#*) continue ;; esac
     AF_PARAMS+=("$line")
   done < "$f"
+}
+
+# af_read_one_param <slug> <key> — one value out of a captured params file (empty when
+# absent). Separate from af_read_params because the caller is usually in the middle of
+# building AF_PARAMS[] for another stack and must not have it overwritten.
+af_read_one_param() {
+  local f
+  f="$(af_params_file "$1")"
+  [ -r "$f" ] || return 0
+  sed -n "s/^$2=//p" "$f" | head -1
 }
 
 # af_params_masked — render AF_PARAMS[] for display.
