@@ -38,4 +38,10 @@ the original sheet
     -webkit-line-clamp: unset;
     overflow: visible;
   }
+  /* A tap on the image pans/zooms it, so ✕ (and Back) are the way out of the lightbox on a
+     phone — give the controls a finger-sized target. */
+  .mirror-lightbox-bar button {
+    min-width: 38px;
+    height: 38px;
+  }
 }

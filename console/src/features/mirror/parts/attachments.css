@@ -73,7 +73,9 @@ chips, lightbox)
   inset: 0;
   z-index: 60;
   display: flex;
-  align-items: center;
+  /* stretch, not center: the zoom surface (.imgview) has to be the whole overlay, or a
+     zoomed image would be clipped to the rectangle its fitted size happened to occupy. */
+  align-items: stretch;
   justify-content: center;
   padding: 24px;
   background: color-mix(in srgb, #000 72%, transparent);
@@ -85,4 +87,44 @@ chips, lightbox)
   object-fit: contain;
   border-radius: 6px;
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+}
+/* At fit a click on the image does nothing (it starts the double-click that zooms), so it
+   must not offer the backdrop's zoom-out cursor; while zoomed .imgview.zoomed says grab. */
+.mirror-lightbox .imgview:not(.zoomed) .imgview-img {
+  cursor: zoom-in;
+}
+.mirror-lightbox-bar {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+}
+.mirror-lightbox-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  height: 30px;
+  padding: 0 6px;
+  font: 11px var(--mono);
+  color: var(--fg);
+  background: var(--bar);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  opacity: 0.85;
+  cursor: pointer;
+}
+.mirror-lightbox-bar button:hover {
+  opacity: 1;
+}
+.mirror-lightbox-bar button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.mirror-lightbox-level {
+  min-width: 52px;
 }
