@@ -166,7 +166,9 @@ const CASES = [
 
 // ---------------------------------------------------------------- frame html
 // Use drawioFrame.ts as-is: if the harness wrote its own HTML, what it protects would no longer
-// be the product code. esbuild is present in node_modules as a dependency of vite.
+// be the product code. esbuild is a direct devDependency. It used to be taken out of vite's own
+// dependency tree, and that tree stopped containing it the day vite moved to rolldown/oxc —
+// taking all three harnesses that reach for it (drawio, pdf, doc) down with it.
 async function loadFrameBuilder() {
   const out = path.join(os.tmpdir(), `af-drawio-frame-${process.pid}.cjs`);
   const esbuild = path.join(REPO, "console/node_modules/.bin/esbuild");
