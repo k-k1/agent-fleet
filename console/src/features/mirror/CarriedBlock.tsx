@@ -17,6 +17,7 @@ import { t as tr } from "../../lib/i18n/index.ts";
 import { sessionCarriedAnswer } from "../../core/api/client.ts";
 import type { CarriedInteraction, CarriedAnswerInput } from "../../core/api/client.ts";
 import { PendingQuestions } from "./PendingQuestions.tsx";
+import { carriedDraftKey } from "./questionDraft.ts";
 import { PlanBlock } from "./transcript/blocks.tsx";
 
 export function CarriedBlock({
@@ -38,17 +39,20 @@ export function CarriedBlock({
   const [sending, setSending] = useState(false);
   const [feedback, setFeedback] = useState("");
 
-  const send = async (body: Parameters<typeof sessionCarriedAnswer>[1]) => {
-    if (sending) return;
+  // Returns whether the answer actually left: the question card puts its draft back on a
+  // false, since the card it belongs to stays on screen.
+  const send = async (body: Parameters<typeof sessionCarriedAnswer>[1]): Promise<boolean> => {
+    if (sending) return false;
     setSending(true);
     const r = await sessionCarriedAnswer(session, body);
     setSending(false);
     // Silence is indistinguishable from success (docs/build/92 §7), so always toast a failure.
     if (!r.ok) {
       onError(r.message || tr("err.send_failed"));
-      return;
+      return false;
     }
     onDone();
+    return true;
   };
 
   const title =
@@ -75,11 +79,12 @@ export function CarriedBlock({
         {carried.kind === "question" && (
           <PendingQuestions
             questions={carried.questions || []}
+            draftKey={carriedDraftKey(session)}
             sending={sending}
             // Block the key-driven entry points: a carried interaction has no modal to aim at.
             onSubmitKeys={() => onError(tr("mirror.carried_no_keys"))}
             onSubmitSeq={() => onError(tr("mirror.carried_no_keys"))}
-            onSubmitAnswers={(answers: CarriedAnswerInput[]) => void send({ decision: "answer", answers })}
+            onSubmitAnswers={(answers: CarriedAnswerInput[]) => send({ decision: "answer", answers })}
             onCancel={() => void send({ decision: "discard" })}
             cancelLabel={tr("mirror.carried_discard")}
             submitLabel={tr("mirror.carried_send")}

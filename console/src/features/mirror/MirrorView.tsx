@@ -823,37 +823,41 @@ export function MirrorView({
   // indistinguishable from success, so failures speak — same treatment as sendRespond's
   // managed path. The optimistic 'working' is rolled back too, or the chip claims a turn
   // that never started until the next poll.
-  const driveInput = async (body: { keys?: string[]; seq?: Array<{ k?: string; t?: string }> }) => {
-    if (sending) return;
-    if (wsDown()) return; // WS stopped: no agent to receive the keys
+  // The boolean says whether the keystrokes actually went out — the question card restores
+  // the draft it cleared when they did not (PendingQuestions.fire).
+  const driveInput = async (body: { keys?: string[]; seq?: Array<{ k?: string; t?: string }> }): Promise<boolean> => {
+    if (sending) return false;
+    if (wsDown()) return false; // WS stopped: no agent to receive the keys
     const prev = statusRef.current;
     setSending(true);
     statusRef.current = "working";
     setStatus("working");
     const res = await apiJSON(`api/sessions/${q(session)}/input`, "POST", body).catch(() => null);
-    if (!res || res.error) {
+    const ok = !!res && !res.error;
+    if (!ok) {
       statusRef.current = prev;
       setStatus(prev);
       toast(res?.error ? errText(res.error) : tr("mirror.answer_send_failed"));
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
+    return ok;
   };
 
   // sendKeys drives the AskUserQuestion modal via named keys (Down/Space/Enter), the
   // only way to answer multi-select / multi-question forms (free text can't).
-  const sendKeys = async (keys: string[]) => {
-    if (!keys || !keys.length) return;
-    await driveInput({ keys });
+  const sendKeys = async (keys: string[]): Promise<boolean> => {
+    if (!keys || !keys.length) return false;
+    return await driveInput({ keys });
   };
 
   // sendSeq drives the modal with an ORDERED mix of named keys and literal text — the
   // path for answering a question via its "Type something" free-text row (move down to
   // it, type, Enter). Built by PendingQuestions.submit for multi-question / multi-select
   // forms where free text and option navigation are interleaved.
-  const sendSeq = async (seq: Array<{ k?: string; t?: string }>) => {
-    if (!seq || !seq.length) return;
-    await driveInput({ seq });
+  const sendSeq = async (seq: Array<{ k?: string; t?: string }>): Promise<boolean> => {
+    if (!seq || !seq.length) return false;
+    return await driveInput({ seq });
   };
 
   // sendInterrupt stops the running turn — the equivalent of turn/interrupt, which under tui
@@ -879,9 +883,9 @@ export function MirrorView({
   // sendRespond answers a MANAGED session's pending question by interaction id —
   // a structured answer (docs/log/27 §5). A tui question is still answered by navigating the
   // TUI modal with sendKeys/sendSeq; the server rejects /respond for tui anyway.
-  const sendRespond = async (id: string, answers: InteractionAnswer[]) => {
-    if (sending) return;
-    if (wsDown()) return; // WS stopped: the managed session's structured answer can't be delivered
+  const sendRespond = async (id: string, answers: InteractionAnswer[]): Promise<boolean> => {
+    if (sending) return false;
+    if (wsDown()) return false; // WS stopped: the managed session's structured answer can't be delivered
     setSending(true);
     const prev = statusRef.current;
     statusRef.current = "working";
@@ -897,6 +901,7 @@ export function MirrorView({
     }
     setSending(false);
     setTimeout(() => tickRef.current?.(), 400);
+    return res.ok;
   };
 
   // addFiles uploads files to the session and holds each as an attachment chip —
@@ -1757,6 +1762,7 @@ export function MirrorView({
         {pending && pending.length > 0 && (
           <QuestionCard
             agentName={agentName}
+            session={session}
             questions={pending}
             pendingText={pendingText}
             repo={sessionMeta?.repo ?? null}
@@ -1772,7 +1778,7 @@ export function MirrorView({
               // present: falling back to keys/seq would drive a tmux pane that does not
               // exist. A question missing its id (a transitional or resyncing case up to P2)
               // is rejected server-side with bad_interaction, and sendRespond toasts that.
-              managed ? (answers) => void sendRespond(pending[0]?.id || "", answers) : undefined
+              managed ? (answers) => sendRespond(pending[0]?.id || "", answers) : undefined
             }
             onCancel={() => void sendInterrupt()}
           />

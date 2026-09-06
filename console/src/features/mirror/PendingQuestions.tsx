@@ -17,16 +17,22 @@
 // typed text on option rows and the Enter confirms the highlighted first option
 // (measured on v2.1.204, docs/build/92-driving-a-tui.md).
 
-import { useState } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { t as tr } from "../../lib/i18n/index.ts";
 import type { InteractionAnswer } from "../../core/api/client.ts";
 import { buildClaudeSubmit, buildMenuSeq, buildRespondAnswers } from "./questionKeys.ts";
+import { useQuestionDraft } from "./questionDraft.ts";
 import { OptionBody, hasPreview } from "./transcript/blocks.tsx";
 import type { Question } from "./transcript/types.ts";
 
+// What a submit path reports back. Resolving `false` means the answer never left (the
+// request was refused, the workspace is down): the card stays on screen and its draft is
+// put back. `void` is the older fire-and-forget shape and counts as sent.
+type SubmitResult = void | Promise<boolean | void>;
+
 export function PendingQuestions({
   questions,
+  draftKey = null,
   onSubmitKeys,
   onSubmitSeq,
   onRespond,
@@ -40,12 +46,16 @@ export function PendingQuestions({
   writeIn = false,
 }: {
   questions: Question[];
-  onSubmitKeys: (keys: string[]) => void;
-  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => void;
+  // Where this card's half-finished answer is kept while the view is gone (questionDraft).
+  // Selecting another tab unmounts the whole mirror, so without it every pick made before
+  // going to look something up is lost. null = don't persist (a read-only or preview render).
+  draftKey?: string | null;
+  onSubmitKeys: (keys: string[]) => SubmitResult;
+  onSubmitSeq: (seq: Array<{ k?: string; t?: string }>) => SubmitResult;
   // onRespond (managed sessions): structured answer to the pending Interaction (docs/log/27
   // §5 — one entry per question, in order). When given, every path answers semantically and
   // none of the TUI key driving below runs.
-  onRespond?: (answers: InteractionAnswer[]) => void;
+  onRespond?: (answers: InteractionAnswer[]) => SubmitResult;
   // onCancel: dismiss the pending question without answering (Escape / Interrupt) so the
   // conversation can continue with a fresh prompt instead of an answer.
   onCancel?: () => void;
@@ -54,7 +64,7 @@ export function PendingQuestions({
   // no keys or seq at all — a key with nothing to aim at would decide something else if it
   // landed in a live pane. The Agent delivers the answer as prose after resuming. The option
   // UI (multi-select, free text, preview comparison) is reused unchanged.
-  onSubmitAnswers?: (answers: Array<{ labels: string[]; notes: string }>) => void;
+  onSubmitAnswers?: (answers: Array<{ labels: string[]; notes: string }>) => SubmitResult;
   // The buttons mean something different for a carried interaction (send answer → answer and
   // resume, cancel → discard), so the labels are overridable.
   submitLabel?: string;
@@ -81,10 +91,12 @@ export function PendingQuestions({
   writeIn?: boolean;
 }) {
   const qs = questions || [];
-  const [sel, setSel] = useState<string[][]>(() => qs.map(() => []));
-  // Per-question free-text ("Type something"). Filled → that question is answered by
-  // free text instead of an option (mutually exclusive with a selection, below).
-  const [freeText, setFreeText] = useState<string[]>(() => qs.map(() => ""));
+  // The picked labels and the per-question free-text ("Type something"; filled → that
+  // question is answered by free text instead of an option, mutually exclusive with a
+  // selection below). Both survive the card's unmount — switching tab or toggling to the
+  // terminal takes the whole mirror down, and an answer half made while going to check
+  // something is exactly what must not be thrown away (questionDraft).
+  const { sel, setSel, freeText, setFreeText, clear: clearDraft, save: saveDraft } = useQuestionDraft(draftKey, qs);
   const single = qs.length === 1 && !qs[0]?.multiSelect;
   const menu = answerMode === "menu";
   const semantic = !!onRespond;
@@ -148,21 +160,34 @@ export function PendingQuestions({
   const submitCarried = () =>
     onSubmitAnswers!(qs.map((_, qi) => ({ labels: sel[qi] || [], notes: (freeText[qi] || "").trim() })));
 
-  const submitMenu = () => {
-    if (onSubmitAnswers) return submitCarried();
-    if (semantic) return submitRespond();
-    onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
+  // Every submit goes out through here: the draft is dropped as the answer leaves, and put
+  // back if the send is refused. Answering is the one place where silence is
+  // indistinguishable from success (docs/build/92 §7) — a refusal keeps the card on screen,
+  // so its draft has to be there too, or the next tab switch loses what the user typed.
+  const fire = (run: () => SubmitResult) => {
+    clearDraft();
+    void Promise.resolve(run()).then((ok) => {
+      if (ok === false) saveDraft();
+    });
   };
 
-  const submit = () => {
-    if (onSubmitAnswers) return submitCarried();
-    if (semantic) return submitRespond();
-    // Which keys a built selection becomes is the modal's contract, so it lives in
-    // questionKeys (and is pinned by its tests); the card only routes the result.
-    const out = buildClaudeSubmit(qs, sel, freeText);
-    if (out.keys) return onSubmitKeys(out.keys);
-    onSubmitSeq(out.seq!);
-  };
+  const submitMenu = () =>
+    fire(() => {
+      if (onSubmitAnswers) return submitCarried();
+      if (semantic) return submitRespond();
+      return onSubmitSeq(buildMenuSeq(qs, sel, freeText, writeIn));
+    });
+
+  const submit = () =>
+    fire(() => {
+      if (onSubmitAnswers) return submitCarried();
+      if (semantic) return submitRespond();
+      // Which keys a built selection becomes is the modal's contract, so it lives in
+      // questionKeys (and is pinned by its tests); the card only routes the result.
+      const out = buildClaudeSubmit(qs, sel, freeText);
+      if (out.keys) return onSubmitKeys(out.keys);
+      return onSubmitSeq(out.seq!);
+    });
 
   const wide = hasPreview(qs);
   return (
@@ -234,7 +259,12 @@ export function PendingQuestions({
             className="ghost mq-cancel"
             disabled={sending}
             title={tr("mirror.question_cancel_title")}
-            onClick={onCancel}
+            // Cancelling IS the decision to throw the half-made answer away; keeping its
+            // draft would resurrect it on the next question with the same shape.
+            onClick={() => {
+              clearDraft();
+              onCancel();
+            }}
           >
             <Icon name="close" /> {cancelLabel || tr("mirror.question_cancel")}
           </button>
