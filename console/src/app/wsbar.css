@@ -120,6 +120,42 @@
   flex: 1;
 }
 
+/* Phone: this row must never be wider than the screen. Nothing in the shell clips it, so
+   an overflowing bar widens the DOCUMENT — and a page wider than the viewport is one the
+   browser lets you zoom out of. Once the page sits at any zoom but 1, every horizontal
+   swipe stands down (app/swipeGestures.ts recognises nothing while the page is pinch-
+   zoomed), which takes the edge swipe that pulls out the left pane with it. Measured at
+   390px: the bar wanted 489px before the "restart required" pill even appears, 531px with
+   it — i.e. it was already over, and the pill was what made it obvious.
+   So on a phone: drop the decorative caption, let the state chip size to its own text,
+   and tighten the gap/paddings. WsBar also stops rendering "split right" here (it is
+   permanently disabled on a phone). Measured after: 332px with the pill. */
+@media (max-width: 760px) {
+  .wsbar {
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .ws-label {
+    display: none;
+  }
+  .ws-state {
+    /* The only shrinkable item on the row, deliberately: whatever is added to the bar
+       later squeezes this text (and ellipsizes it) instead of pushing the bar off the
+       screen edge again. */
+    flex: 0 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  /* Same specificity as the `.wsbar button` base above (class + element) and later in the
+     file, so it wins — the plain `.ws-split` / `.ws-power` padding rules do not, which is
+     why this is written against the element. */
+  .wsbar button {
+    padding: 3px 9px;
+  }
+}
+
 /* Resource tiles: label + trend sparkline + current value, tinted by threshold. */
 .ws-graph {
   display: inline-flex;
