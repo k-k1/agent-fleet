@@ -265,7 +265,7 @@ func nodeInstallStatus() map[string]any {
 		"major":          major,
 		"error":          errMsg,
 		"node_installed": installedNodeMajors(),
-		"node_available": nodeOptions,
+		"node_available": nodeOptionsFor(readToolchains().Node),
 	}
 }
 
@@ -289,7 +289,7 @@ func handleNodeInstall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	offered := false
-	for _, v := range nodeOptions {
+	for _, v := range nodeOptionsFor(readToolchains().Node) {
 		if v == req.Major {
 			offered = true
 			break
