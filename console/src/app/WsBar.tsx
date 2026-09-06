@@ -1433,15 +1433,21 @@ export function WsBar() {
         <Icon name={startQueued ? "loading" : "add"} spin={startQueued} />
         <span className="lbl">{tr("wsbar.start_here")}</span>
       </button>
-      <button
-        className="ghost ws-split"
-        title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
-        disabled={!canSplitRight}
-        onClick={() => splitRight()}
-      >
-        <Icon name="split-horizontal" />
-        <span className="lbl">{tr("wsbar.split_right")}</span>
-      </button>
+      {/* Columns are a desktop layout: canSplitRight is false for the whole phone width, so
+          the button could only ever sit there disabled — and the bar has no room to spare
+          (an overflowing bar widens the page, see wsbar.css). Dropped rather than disabled;
+          it returns with the width, since useIsMobile tracks the media query. */}
+      {!isMobile && (
+        <button
+          className="ghost ws-split"
+          title={tr("wsbar.split_right") + hintSuffix("pane.splitRight")}
+          disabled={!canSplitRight}
+          onClick={() => splitRight()}
+        >
+          <Icon name="split-horizontal" />
+          <span className="lbl">{tr("wsbar.split_right")}</span>
+        </button>
+      )}
       <button
         className="ghost ws-split"
         title={tr("wsbar.split_down_title") + hintSuffix("pane.splitDown")}
