@@ -490,17 +490,30 @@ volume は箱を残しても効かず（下の 4）、ECR 複製の効果は pla
 2. **ドレインは既定の `scaleInAfter` で 456 秒**（shutting-down の開始は +95〜104 秒）。
    0070 のハーネスで測った 427 秒・463 秒と同じ範囲で、3 点目として一致した。
 3. **`scaleInAfter: -1` は本当に箱を残す。** `desired 0` から **583 秒後も `running`** のまま
-   （既定なら 456 秒で terminated）。CFN の `AWS::ECS::CapacityProvider` は
+   （既定なら 456 秒で terminated）。🔴 ただし **`scaleInAfter` を後から変えても、既に `-1` の
+   下で idle になった箱は回収されない**——`0` に変えて 497 秒待っても `running` のままだった。
+   残した箱を片づける手は `ecs update-container-instances-state --status DRAINING` で、これは
+   **90 秒で shutting-down** に入った（`ec2 terminate-instances` は MI のリソースベース
+   ポリシーが明示的に拒否する）。CFN の `AWS::ECS::CapacityProvider` は
    `InfrastructureOptimization.ScaleInAfter` と
    `InstanceLaunchTemplate.LocalStorageConfiguration.UseLocalStorage` の**両方を持っている**
    （レビュー R5 は API にあるとだけ書いていた）ので、どちらもスタックのパラメータにできた。
-4. 🔴 **「箱を残せば S3 取得なしで起きる」は、そのままでは成り立たなかった。** `-1` で残した
-   **同じインスタンスに戻った**再起動が、18.5 GB を S3 から**引き直した**（126 秒）。原因は
-   `Host: {}`——ECS/Docker は host パラメータが空だと**タスクごとに新しい匿名ディレクトリ**を
-   割り当てるので、新しいタスクから見た `/models` は空である。`Host: { SourcePath: … }` に
-   直した。決定 7(c) の「温かい箱」は設計としては生きているが、**1 行の書き方で黙って失われる
-   類のもの**だと分かった。この状態での再起動は 410 秒（コールド 586 秒との差 176 秒＝placement と
-   pull のぶん）。
+4. 🔴 **決定 7(c) の「温かい箱」は P0 では成立させられなかった。未証明のまま残す。** 二段構えで
+   外れた:
+   - まず、`-1` で残した**同じインスタンスに戻った**再起動が 18.5 GB を S3 から**引き直した**
+     （126 秒。再起動そのものは 410 秒で、コールド 586 秒との差 176 秒は placement と pull）。
+     原因は `Host: {}`——ECS/Docker は host パラメータが空だと**タスクごとに新しい匿名
+     ディレクトリ**を割り当てるので、新しいタスクから見た `/models` は空である。
+   - そこで `Host: { SourcePath: /var/lib/af-engine-models }` に直したところ、**新品の 120 GiB の
+     箱でも `No space left on device`** でサービスが一度も起動しなくなった。🔴 つまり
+     `StorageConfiguration.storageSizeGiB` が決めるのは MI が**付けるデータボリューム**
+     （コンテナランタイムが使う側）の大きさで、`/var/lib/…` のような任意の host パスは
+     **ルートファイルシステム**に落ちる。両方を測ったうえで `Host: {}` に戻した。
+   おまけに、匿名ディレクトリは**片づけられない**。`-1` で残した 1 台の上で 4 回起動したら
+   18.5 GB × 4 でディスクが埋まった。したがって P0 の答えは「**`scaleInAfter` は既定のまま**」で、
+   温かい箱を成立させるには MI のデータボリュームが実際にマウントされているパスが要る——
+   文書化されておらず、GPU 1 時間を追加で払う価値は無いと判断した。P4 の
+   `useLocalStorage`（インスタンスストア 250 GB がディスクそのもの）で拾い直す。
 5. **プール走査が MI の箱を見ること**は本番のクラスタで現物を確認した。
    `DescribeContainerInstances` は同じクラスタで
    `i-0abeb…/None`・`i-0075e…/None`（スロット、`agentConnected=false`）と

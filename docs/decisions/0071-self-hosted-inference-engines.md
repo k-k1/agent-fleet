@@ -534,17 +534,31 @@ g6.xlarge, roughly $2.
 2. **Drain with the default `scaleInAfter` is 456 seconds** (shutting-down begins at +95-104 s).
    That is the same range as the harness's 427 s and 463 s — a third point in agreement.
 3. **`scaleInAfter: -1` really does keep the box.** 583 seconds after `desired 0` it was still
-   `running` (the default had terminated at 456 s). CloudFormation's
+   `running` (the default had terminated at 456 s). 🔴 But **changing `scaleInAfter` afterwards
+   does not reclaim a box that already went idle under `-1`** — set to `0`, it was still
+   `running` 497 seconds later. What does retire one is
+   `ecs update-container-instances-state --status DRAINING`, which had it **shutting down in 90
+   seconds** (`ec2 terminate-instances` is refused outright by MI's resource-based policy). CloudFormation's
    `AWS::ECS::CapacityProvider` carries **both** `InfrastructureOptimization.ScaleInAfter` and
    `InstanceLaunchTemplate.LocalStorageConfiguration.UseLocalStorage` — review R5 only
    established that the API had them — so both became stack parameters.
-4. 🔴 **"Keep the box and the next start skips the S3 fetch" did not hold as written.** A
-   restart that landed **back on the very same instance** kept by `-1` pulled all 18.5 GB from
-   S3 again (126 s). The cause is `Host: {}`: with an empty host parameter ECS/Docker allocates
-   **a fresh anonymous directory per task**, so `/models` was empty as far as the new task was
-   concerned. Fixed to `Host: { SourcePath: … }`. Decision 7(c)'s warm box survives as a design,
-   but it turns out to be **the kind of thing one line of YAML silently loses**. In that state
-   the restart took 410 s (176 s less than the 586 s cold start — placement and pull).
+4. 🔴 **Decision 7(c)'s warm box could not be made to work in P0, and is left unproven.** It
+   failed twice over:
+   - a restart that landed **back on the very same instance** kept by `-1` pulled all 18.5 GB
+     from S3 again (126 s; the restart itself took 410 s, 176 s less than the 586 s cold start
+     — placement and pull). The cause is `Host: {}`: with an empty host parameter ECS/Docker
+     allocates **a fresh anonymous directory per task**, so `/models` was empty as far as the
+     new task was concerned;
+   - changing it to `Host: { SourcePath: /var/lib/af-engine-models }` then made the service
+     fail to start at all — **`No space left on device` on a brand-new 120 GiB box**. 🔴 So
+     `StorageConfiguration.storageSizeGiB` sizes the **data volume MI attaches** (the one the
+     container runtime uses), while an arbitrary host path like `/var/lib/…` lands on the
+     **root filesystem**. Reverted to `Host: {}` with both measurements written down.
+   On top of that the anonymous directories are **never reclaimed**: four starts on one box
+   kept by `-1` filled its disk with 18.5 GB apiece. P0's answer is therefore "**leave
+   `scaleInAfter` at the default**". Making the warm box work needs the path MI's data volume
+   is actually mounted at, which is undocumented and not worth another GPU hour; P4 picks it up
+   with `useLocalStorage`, where the 250 GB instance store is the whole disk.
 5. **That the pool walk sees MI boxes** was confirmed against the real cluster.
    `DescribeContainerInstances` returns, side by side, `i-0abeb…/None` and `i-0075e…/None` (slots,
    `agentConnected=false`) and `i-059d9…/af-af-ecs-engines-llm` (the engine,
