@@ -241,6 +241,7 @@ CSPRNG から来るので、定数を掴まされるより質は上がる。
 | ログイン flow（`auth.go`）／`/usage`・`/context` スクレイプ／`agy models` | `cmd.Env` |
 | tmux ペイン（`agy.go` の `BuildLaunch`） | `LaunchPlan.Env` → `tmux new-session -e`。プログラム文字列には前置しない（cmdline に載るうえ、`AGENT_AGY_CMD` 上書きで落ちる） |
 | アシスタントチャットの `-p` と one-shot（`chatx/chat_providers.go`） | `cmd.Env` |
+| 画像生成 provider（`internal/imagegen/agy.go`・[0069](0069-image-generation-providers.ja.md)） | `cmd.Env`（隔離 HOME と同時。当初は自前の定数だったが、この決定を受けて seam に寄せた） |
 | ツール版プローブ（`env_tool_versions.go`） | `toolSpec.Env` |
 | entrypoint の `agy_effective_version`／イメージビルドの `--version` 検証 | 呼び出し単位の env（export しない） |
 
@@ -259,8 +260,13 @@ CSPRNG から来るので、定数を掴まされるより質は上がる。
 
 - **shell ペインで人が手打ちする `agy` は依然 abort する。** 製品の spawn 経路だけを覆う判断で
   あり、ログインシェルにマスクを export するのは agy 以外の全プロセスに及ぶので採らなかった。
-- agy の MCP 設定（`internal/mcpreg/materialize_agy.go`）は他種別のような drift テストを持たない。
-  「このホストでは agy が起動しないから」という理由は消えたので、作れるようにはなった。
+- ~~agy の MCP 設定は他種別のような drift テストを持たない~~ → **足した**
+  （`TestDriftAgyMatchesMCPAdd`。「このホストでは agy が起動しないから」という唯一の理由が
+  消えたため）。書いた副産物として 1 つ判っている: **`agy mcp add` は http サーバを
+  `serverUrl` と綴るが、AF は `url` と綴っている**。現状はどちらも読まれる（実測）ので AF は
+  **別名に依存している**状態で、別名が落ちれば AF が登録した remote MCP サーバは**どこにも
+  エラーを出さずに消える** — 実測すると `afdriftremote  stdio  enabled` とコマンド空欄の行に
+  なるだけである。テストはその両方（CLI 側の綴り／AF の綴りが読まれること）を押さえる。
 
 ## 未解決（残り）
 
