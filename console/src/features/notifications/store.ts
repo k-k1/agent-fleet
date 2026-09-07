@@ -94,6 +94,12 @@ async function deliver(n: FleetNotification): Promise<void> {
 export interface NotificationOpenResult {
   opened: boolean;
   missingConversation?: string;
+  // noDestination marks a notification that never had somewhere to go, as opposed to one whose
+  // destination could not be found. The two look identical from opened=false and must not: the
+  // caller's warning for the second ("that session is not in the current list") is a sentence
+  // about sessions, and showing it for the first tells the reader to look for something that
+  // was never involved.
+  noDestination?: boolean;
 }
 
 // conversationReachable folds a chatGet result into "may this conversation be opened as is".
@@ -153,6 +159,14 @@ export async function openNotificationTarget(n: FleetNotification, split: boolea
     useSchedulesStore.getState().revealSchedule(n.target.id);
     return { opened: true };
   }
+  // Anything left whose target is not a session has nowhere to go, and must not fall through:
+  // openNotificationSession would answer a bare opened=false and the center would warn "that
+  // session is not in the current list" — about a notification that never had one. The case
+  // that reached a member is arch-residue (target.type "workspace"): the CP deliberately sends
+  // a non-session target with id and kind empty, so the type is the only thing to read. Its
+  // content is the row itself (wording.ts), which is why not opening anything is correct here
+  // and only the false alarm was wrong.
+  if (n.target.type !== "session") return { opened: false, noDestination: true };
   return openNotificationSession(n, split);
 }
 

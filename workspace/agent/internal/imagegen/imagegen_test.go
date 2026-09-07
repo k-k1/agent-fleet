@@ -392,6 +392,28 @@ func TestRunRecordsFailedGeneration(t *testing.T) {
 	}
 }
 
+// A request refused before the provider did any work still leaves a row, and that row must
+// still say WHICH route was going to run it — the provider never stamped its id on a Result
+// it did not produce, so the kind column came out empty until Run passed its own choice in.
+func TestRunRecordsTheChosenProviderOnAnEarlyRefusal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	withStubProvider(t, stubProvider{id: ProviderCodex, err: errors.New("a mask needs a provider that inpaints")})
+
+	if _, err := Run(context.Background(), Job{Session: "slot01", SID: "s",
+		Request: Request{Op: OpGenerate, Prompt: "a cat", Mask: "/tmp/m.png"}}); err == nil {
+		t.Fatal("the refusal was reported as a success")
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 1 {
+		t.Fatalf("ledger rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != "codex" {
+		t.Fatalf("kind = %q, want codex — an empty kind hides which plan the row belongs to", rows[0].Kind)
+	}
+}
+
 func TestRunRefusesWhenNothingCanServeIt(t *testing.T) {
 	withStubProvider(t, stubProvider{id: ProviderCodex})
 	_, err := Run(context.Background(), Job{Session: "slot01", SID: "s",

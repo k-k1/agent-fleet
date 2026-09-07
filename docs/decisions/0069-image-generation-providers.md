@@ -452,3 +452,43 @@ What it showed, run once:
 Not covered by it, and still not covered by anything: the card's actual pixels in a browser.
 The server side is verified to emit the part and serve the file; the rendering rests on the
 existing `UserFileBlock` and its own tests.
+
+### Where the consumption shows up, and what can actually be measured (2026-09-07)
+
+A generation spends the **ChatGPT plan, not Claude's** — no Anthropic call is made. Three
+surfaces, and they do not agree by accident:
+
+- The **Claude usage chip** is untouched by the generation. The claude turn that CALLS the tool
+  costs Claude tokens as usual, which is a second reason the tool returns a path rather than
+  the bytes.
+- The **ledger** gets a `feature=tool.imagegen` row with `kind=codex` — what actually ran, not
+  who asked (ADR 0029 §1). The asking session is on the row as `ref`, so "what did this claude
+  session cost" is a `ref` question, not a `kind` one. Filing it under claude would put ChatGPT
+  consumption on Claude's line.
+- The **codex usage chip** did not move at all, and that was a defect. It reads `rate_limits`
+  out of the newest rollout JSONL, and a generation runs `--ephemeral`, which writes no
+  rollout — measured: a real generation left no new file under `~/.codex/sessions`. So the chip
+  sat on the last interactive session's numbers while the quota was really being spent.
+
+Two measurements settled how to fix it:
+
+1. **`codex exec --json` carries no quota information.** One generation's whole stream is
+   `thread.started`, `turn.started`, two `item.completed`, `turn.completed` — and
+   `turn.completed` carries only tokens (`input_tokens` … `reasoning_output_tokens`). No
+   `rate_limits`, no `used_percent`, nothing. The chip cannot be fixed from the stream.
+2. **The account's own view can be read directly.** `GET
+   https://chatgpt.com/backend-api/wham/usage`, with the login the fleet already uses for
+   reset credits, returns `rate_limit.primary_window.used_percent` /
+   `secondary_window.used_percent` (plus `plan_type`, credit balance and reset credits). It
+   needs no rollout, so it is now a third source for the chip, taken when it is fresher than
+   the local readings and ignored entirely when the call fails.
+
+**Measuring what one image costs is a different question, and the answer is no.** Read
+immediately before and after a single generation, `wham/usage` moved nothing: the 5-hour
+window stayed at 0% and the weekly at 41%, and the only fields that changed were the two
+windows' countdown clocks. `used_percent` is integer-valued there, so one image is below the
+resolution of every counter the endpoint exposes — as are the credit balance and the
+approximate-messages-remaining estimate. A number for "one image" would have to come from
+generating many in a row and watching the 5-hour window move, which costs exactly what it
+measures. So Decision 9 stands: count images and pixels, record the driver tokens, and leave
+plan consumption explicitly unmeasured rather than invent a figure.

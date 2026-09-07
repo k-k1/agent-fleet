@@ -39,6 +39,11 @@ export function notificationKindLabel(kind: string): string {
 export function notificationRowSubtitle(n: NotificationWordingInput): string {
   const conv = typeof n.payload.conversationTitle === "string" ? n.payload.conversationTitle : "";
   if (n.kind === "session-report" && conv) return `${n.displayName} → ${conv}`;
+  // arch-residue has no session, so displayName is empty and the default would leave the row
+  // showing nothing but a timestamp — which is what a member saw. Clicking it opens nothing by
+  // design (below), so the list of what has to be reinstalled has to be ON the row or it is
+  // nowhere.
+  if (n.kind === "arch-residue") return notificationWording(n).body;
   return n.displayName;
 }
 

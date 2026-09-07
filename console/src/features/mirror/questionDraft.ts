@@ -10,6 +10,10 @@
 // to an empty card — on a multi-question form, several answers' worth of reading thrown
 // away. Persisting the selection is what makes "go and check, then answer" possible at all.
 //
+// The pending card and the carried one (docs/log/75) keep their drafts under a key each, but
+// hand the draft over when they are two renderings of the same unanswered question — see
+// siblingDraftKey.
+//
 // The draft is gated on a signature of the FORM, never on the session alone: a stored
 // selection may only ever be restored onto the identical question set. A card whose
 // questions changed (the next AUQ of the same session, a managed question re-asked under a
@@ -30,14 +34,35 @@ export interface QuestionDraft {
   freeText: string[];
 }
 
+const PENDING_PREFIX = "af.auq-draft.";
+const CARRIED_PREFIX = "af.auq-carried-draft.";
+
 /** The live pending card of a session. */
 export const questionDraftKey = (session: string | null | undefined): string | null =>
-  session ? "af.auq-draft." + session : null;
+  session ? PENDING_PREFIX + session : null;
 
 /** The carried interaction of a session (docs/log/75) — a different card answering a
  *  different way, so it gets its own key rather than fighting over the pending one. */
 export const carriedDraftKey = (session: string | null | undefined): string | null =>
-  session ? "af.auq-carried-draft." + session : null;
+  session ? CARRIED_PREFIX + session : null;
+
+/** The other card of the SAME session: pending ↔ carried.
+ *
+ *  The two keys stay separate because the cards answer differently (keys vs prose), but the
+ *  half-written answer is the user's, not the card's. A session that stops while its
+ *  AskUserQuestion is up takes the pending card down and puts the carried one in its place
+ *  (and a resume that makes the agent ask again does the reverse), and with a key each, what
+ *  had been typed into the free-text row was on screen one moment and gone the next — the
+ *  session's stopping is exactly when the user is away from the keyboard and has typed the
+ *  most. So a card with no draft of its own falls back to the sibling's, gated on the same
+ *  form signature as everything else here: it is restored only onto the identical question
+ *  set, i.e. only when it is literally an answer to what is being asked. */
+export function siblingDraftKey(key: string | null): string | null {
+  if (!key) return null;
+  if (key.startsWith(CARRIED_PREFIX)) return PENDING_PREFIX + key.slice(CARRIED_PREFIX.length);
+  if (key.startsWith(PENDING_PREFIX)) return CARRIED_PREFIX + key.slice(PENDING_PREFIX.length);
+  return null;
+}
 
 // The form's identity. Only what the user answers WITH is in it (question text, the
 // offered labels, whether it is multi-select, and the managed interaction id): a redrawn
@@ -68,17 +93,45 @@ function sanitize(qs: Question[], sel: unknown, freeText: unknown): QuestionDraf
   };
 }
 
-/** readQuestionDraft returns the stored draft for exactly this form, or null. */
-export function readQuestionDraft(key: string | null, qs: Question[]): QuestionDraft | null {
-  if (!key || !qs?.length) return null;
+// One key's entry, only when it was stored for exactly this form.
+function readAt(key: string | null, qs: Question[], sig: string): QuestionDraft | null {
+  if (!key) return null;
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
     const d = JSON.parse(raw) as { sig?: string; sel?: unknown; freeText?: unknown };
-    if (!d || d.sig !== questionSig(qs)) return null;
+    if (!d || d.sig !== sig) return null;
     return sanitize(qs, d.sel, d.freeText);
   } catch {
     return null;
+  }
+}
+
+/** readQuestionDraft returns the stored draft for exactly this form, or null — this card's
+ *  own, falling back to the sibling card's (siblingDraftKey) when the question set is the
+ *  same one. */
+export function readQuestionDraft(key: string | null, qs: Question[]): QuestionDraft | null {
+  if (!key || !qs?.length) return null;
+  const sig = questionSig(qs);
+  return readAt(key, qs, sig) ?? readAt(siblingDraftKey(key), qs, sig);
+}
+
+// The card on screen owns the draft of the form it is showing, so writing takes it over from
+// the sibling key. Without this, emptying the free-text row would only remove this card's
+// entry and the next read would fall back to the copy the other card left — the text the user
+// just deleted coming back on the next tab switch.
+// Only an entry stored for the SAME form is dropped: an unrelated draft (the other card is
+// showing a different question) is none of this card's business.
+function dropSiblingDraft(key: string | null, sig: string): void {
+  const sib = siblingDraftKey(key);
+  if (!sib) return;
+  try {
+    const raw = localStorage.getItem(sib);
+    if (!raw) return;
+    const d = JSON.parse(raw) as { sig?: string };
+    if (d?.sig === sig) localStorage.removeItem(sib);
+  } catch {
+    /* ignore */
   }
 }
 
@@ -89,6 +142,7 @@ export function writeQuestionDraft(key: string | null, sig: string, sel: string[
   if (!key) return;
   const filled = sel.some((a) => a?.length) || freeText.some((t) => (t || "").trim() !== "");
   try {
+    dropSiblingDraft(key, sig);
     if (!filled) {
       localStorage.removeItem(key);
       return;
@@ -99,9 +153,13 @@ export function writeQuestionDraft(key: string | null, sig: string, sel: string[
   }
 }
 
-export function clearQuestionDraft(key: string | null): void {
+/** clearQuestionDraft drops the card's draft. With `sig` (the form it was showing) the
+ *  sibling card's copy of that same form goes too: an answered or cancelled question must
+ *  not come back pre-filled through the fallback in readQuestionDraft. */
+export function clearQuestionDraft(key: string | null, sig?: string): void {
   if (!key) return;
   try {
+    if (sig !== undefined) dropSiblingDraft(key, sig);
     localStorage.removeItem(key);
   } catch {
     /* ignore */
@@ -160,7 +218,7 @@ export function useQuestionDraft(
     setSel,
     freeText,
     setFreeText,
-    clear: () => clearQuestionDraft(key),
+    clear: () => clearQuestionDraft(key, questionSig(qsRef.current)),
     save: () => writeQuestionDraft(key, questionSig(qsRef.current), stateRef.current.sel, stateRef.current.freeText),
   };
 }
