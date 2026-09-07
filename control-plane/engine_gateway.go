@@ -207,6 +207,34 @@ func (g engineGateway) liveMembership(ctx context.Context, mid string) (store.Me
 	return mv, nil
 }
 
+// engineAuthFailure names, for the log only, why a token was refused. It never reaches the
+// client.
+func engineAuthFailure(signKey []byte, tok, key string) string {
+	switch {
+	case tok == "":
+		return "no bearer token — the workspace's AF_ENGINE_TOKEN is unset, so {env:…} resolved to nothing"
+	case !strings.HasPrefix(tok, "afe_"):
+		if strings.HasPrefix(tok, "afei_") {
+			return "the issuing token was presented as a session token"
+		}
+		return "not an engine token at all"
+	}
+	// Order matters, and getting it wrong is how a diagnostic misleads: verifying against the
+	// epoch succeeds for EVERY unexpired token, so asking that first labels all of them
+	// "expired". Ask about now first — if it passes, signature and clock are both fine and the
+	// engine is the only thing left.
+	if c, ok := verifyEngineSessionToken(signKey, tok, time.Now()); ok {
+		if c.Key != key {
+			return "a token for engine " + c.Key + " was used on " + key
+		}
+		return "the token verifies now — the caller was refused for something else"
+	}
+	if _, ok := verifyEngineSessionToken(signKey, tok, time.Unix(0, 0)); ok {
+		return "the token expired"
+	}
+	return "bad signature (a token from another deployment, or the CP's signing master changed)"
+}
+
 // --- the proxy ----------------------------------------------------------------
 
 func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
@@ -219,9 +247,12 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	tok := strings.TrimSpace(strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer "))
 	claims, ok := verifyEngineSessionToken(g.reg.signKey, tok, time.Now())
 	if !ok || claims.Key != key {
-		// Deliberately one message for "not a token", "expired" and "a token for the other
-		// engine". The caller can do nothing different about any of them, and saying which
-		// is a probing aid.
+		// One message for "not a token", "expired" and "a token for the other engine": the
+		// caller can do nothing different about any of them, and saying which is a probing
+		// aid. The OPERATOR does need to tell them apart, though — a 401 with no reason on
+		// the server side cost a live debugging round when the managed route turned out not
+		// to be carrying the token at all — so the distinction is logged, never returned.
+		log.Printf("engine %s: refusing a request (%s)", key, engineAuthFailure(g.reg.signKey, tok, key))
 		writeAPIErr(w, &apiError{http.StatusUnauthorized, "unauthenticated", "invalid engine session token"})
 		return
 	}

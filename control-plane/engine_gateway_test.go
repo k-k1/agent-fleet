@@ -369,6 +369,31 @@ func TestEngineTokensAreNotInterchangeable(t *testing.T) {
 	}
 }
 
+// A 401 says nothing useful to the caller on purpose, but an operator staring at one needs to
+// know which of the four ways it failed. Not knowing cost a live debugging round: the managed
+// route turned out not to be carrying the token at all, and "invalid engine session token"
+// looks identical to a signature mismatch.
+func TestEngineAuthFailureNamesTheReason(t *testing.T) {
+	key := engineSignKey([]byte(strings.Repeat("k", 32)))
+	other := engineSignKey([]byte(strings.Repeat("x", 32)))
+	now := time.Now()
+	cases := []struct {
+		name, tok, want string
+	}{
+		{"missing", "", "AF_ENGINE_TOKEN is unset"},
+		{"not ours", "sk-something", "not an engine token"},
+		{"issuing token", mintEngineIssueToken(key, "M-1"), "issuing token was presented"},
+		{"expired", mintEngineSessionToken(key, "M-1", "s", "llm", now.Add(-time.Hour)), "expired"},
+		{"other engine", mintEngineSessionToken(key, "M-1", "s", "image", now.Add(time.Hour)), "engine image was used on llm"},
+		{"other deployment", mintEngineSessionToken(other, "M-1", "s", "llm", now.Add(time.Hour)), "bad signature"},
+	}
+	for _, c := range cases {
+		if got := engineAuthFailure(key, c.tok, "llm"); !strings.Contains(got, c.want) {
+			t.Errorf("%s: %q does not mention %q", c.name, got, c.want)
+		}
+	}
+}
+
 // --- the table ----------------------------------------------------------------
 
 func TestParseEngineTable(t *testing.T) {

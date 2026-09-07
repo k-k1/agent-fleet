@@ -165,6 +165,41 @@ func TestWriteEngineProvidersSkipsAnEngineWithNoModels(t *testing.T) {
 	}
 }
 
+// 🔥 The regression that produced `401 invalid engine session token` on the first message of
+// a managed session, on the live deployment.
+//
+// opencode's MANAGED route — the default one — runs every session through a single shared
+// `opencode serve` daemon, and that daemon's environment is exactly what env() returns
+// (serve.go). A token placed only on LaunchPlan.Env reaches the tmux route and nothing else,
+// so `{env:AF_ENGINE_TOKEN}` resolved to nothing and the gateway refused it. Nothing about the
+// launch menu looked wrong — the model was listed and selectable — which is why this needs a
+// test of its own rather than being obvious from the config one above.
+func TestEngineTokenReachesTheSharedServeDaemonEnv(t *testing.T) {
+	engineTestHome(t)
+	prevUsage, prevEnv := UsagePref, EngineEnv
+	t.Cleanup(func() { UsagePref, EngineEnv = prevUsage, prevEnv })
+	UsagePref = func() string { return UsageFree }
+
+	var asked []string
+	EngineEnv = func(session string) []string {
+		asked = append(asked, session)
+		return []string{EngineProviderKeyEnv + "=afe_workspace"}
+	}
+	got := env()
+	if len(asked) != 1 || asked[0] != "" {
+		t.Fatalf("EngineEnv called with %v, want exactly one workspace-scoped ask — a daemon has no session", asked)
+	}
+	var found string
+	for _, e := range got {
+		if strings.HasPrefix(e, EngineProviderKeyEnv+"=") {
+			found = e
+		}
+	}
+	if found != EngineProviderKeyEnv+"=afe_workspace" {
+		t.Fatalf("env() = %v — without the token here, every managed session gets 401", got)
+	}
+}
+
 func readEngineConfig(t *testing.T) map[string]any {
 	t.Helper()
 	b, err := os.ReadFile(engineConfigPath())

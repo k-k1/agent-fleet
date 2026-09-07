@@ -628,6 +628,25 @@ g6.xlarge, roughly $2.
     Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which **does nothing and
     exits 0** — it looks like success and ran nothing.
 
+13. 🔴 **A managed session got 401 — P0's implementation had missed opencode's default route.**
+    Creating an opencode session from the Console and sending "hello" produced
+    `APIError (HTTP 401) invalid engine session token`, with `qwen3-coder-30b-a3b` sitting
+    correctly in the launch menu, so the config half was working. The CP log has
+    `GET /internal/engine/catalog 200` but **no `POST /internal/engine/token` at all** — i.e.
+    `BuildLaunch` was never reached. opencode's **managed route runs every session in a
+    workspace through one shared `opencode serve` daemon**, whose environment comes from
+    `auth.go`'s `env()`. A token put on `LaunchPlan.Env` reaches the tmux route and nothing
+    else, so `{env:AF_ENGINE_TOKEN}` stayed empty. Fixed by putting it in `env()`.
+    `env()` also had an **early return when no provider keys are stored**, which dropped the
+    token for exactly the free-tier and Console-login workspaces (the ordinary case); the
+    stored keys and the fleet's own engine are independent, so that went too.
+    🔴 **The consequence is that open question 2's premise — per-session attribution — does not
+    hold for opencode's default route.** A daemon has no session, so the managed route's token
+    is **workspace-scoped** and its usage rows attribute to the member but not to a session;
+    only the tmux route keeps session scope. The token's life also went from 24 hours to
+    **30 days**: a daemon reads `{env:…}` once at start, so a 24-hour token turns into a 401 in
+    the middle of somebody's work that only a daemon restart clears.
+
 Also measured while writing P0:
 
 - **S3 to a box runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the

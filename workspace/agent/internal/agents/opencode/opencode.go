@@ -164,11 +164,12 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// verified on tmux 3.3a) so the keys never appear in the command string /
 	// /proc/*/cmdline / pane_start_command.
 	ocSid := session.UUID(m.Dir, m.Name)
-	envs := append([]string{"AF_SESSION_SID=" + ocSid}, env()...)
-	// The fleet's own inference engines (ADR 0071): a token scoped to THIS session and to
-	// the engine alone, which the shared config refers to as {env:AF_ENGINE_TOKEN}. Empty
-	// on every deployment that runs no engines, which is most of them.
-	envs = append(envs, EngineEnv(m.Name)...)
+	// The fleet's own inference engines (ADR 0071): env() already carries a workspace-scoped
+	// engine token (it has to, for the managed route's shared daemon), and this route can do
+	// better — a tmux session is its own process, so it gets a token scoped to THIS session,
+	// which is what makes the usage row say who spent it. Merged rather than appended: two
+	// entries of the same name in `tmux new-session -e` is not something to leave to luck.
+	envs := mergeCommandEnv(append([]string{"AF_SESSION_SID=" + ocSid}, env()...), EngineEnv(m.Name))
 	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
 	// per-slot id, else a store-derived conversation this slot itself opened — never an
 	// older one from the same dir), UNLESS its last turn was interrupted (incomplete).

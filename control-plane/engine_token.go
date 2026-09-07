@@ -9,12 +9,18 @@ package main
 //     environment at container start, exactly like AF_MEMO_TOKEN and AF_SCHEDULE_TOKEN
 //     (memo_bridge.go). Only the Agent ever sees it, and all it can do is ask for the
 //     second kind.
-//   - The SESSION token is what actually opens the engine: minted per session, expiring,
-//     and good for nothing but `engine:<key>`. It is the value that ends up in
-//     opencode.json's `apiKey: "{env:AF_ENGINE_TOKEN}"`, which means a model running in that
-//     session can read it. Putting the git/MCP PAT there instead — the other candidate in
-//     open question 2 — would hand a leaked value everything that PAT can do, and would not
-//     even answer the question the usage ledger asks, which is cut by SESSION.
+//   - The SESSION token is what actually opens the engine: expiring, and good for nothing but
+//     `engine:<key>`. It is the value that ends up in opencode.json's
+//     `apiKey: "{env:AF_ENGINE_TOKEN}"`, which means a model running in that session can read
+//     it. Putting the git/MCP PAT there instead — the other candidate in open question 2 —
+//     would hand a leaked value everything that PAT can do.
+//
+// ⚠️ "Session" is what the claim is called, not what it always holds. opencode's MANAGED route
+// runs every session in a workspace through one shared `opencode serve` daemon, and a daemon
+// has no session, so that route's token carries an empty session and the usage row lands
+// against the member with no session ref. The tmux route, where a session really is its own
+// process, gets a session-scoped one. Open question 2 assumed session granularity was simply
+// available; for opencode's default route it is not.
 //
 // Both carry an HMAC tag over their own fields and are verified without a lookup; the
 // membership is then resolved live, so a revoked member is refused even inside a token's
@@ -63,12 +69,20 @@ func verifyEngineIssueToken(signKey []byte, token string) (membershipID string, 
 	return mid, true
 }
 
-// engineSessionTokenTTL is how long a minted session token stays valid. Long enough that a
-// session working through the night does not lose the engine mid-answer, short enough that
-// a value which has leaked out of a transcript is not still a key next week. It is NOT tied
-// to the session's own lifetime: nothing revokes a token when a session ends, so the clock
-// is the only bound there is.
-const engineSessionTokenTTL = 24 * time.Hour
+// engineSessionTokenTTL is how long a minted token stays valid. It is NOT tied to a session's
+// own lifetime: nothing revokes a token when a session ends, so the clock is the only bound
+// there is.
+//
+// 30 days rather than the day it started as, and the reason is opencode's managed route: its
+// `opencode serve` daemon reads `{env:AF_ENGINE_TOKEN}` ONCE, at daemon start, so a token that
+// expires under a running daemon turns into `401` in the middle of somebody's work and only a
+// daemon restart clears it. A month outlives a workspace container in practice.
+//
+// That is a weaker "short-lived" than open question 2 imagined, and it is still the point of
+// the design: this value is readable by a model, and it opens `engine:<key>` and nothing else
+// — no git, no MCP, no memos — for a bounded time, against a PAT that opens all of them
+// forever.
+var engineSessionTokenTTL = 30 * 24 * time.Hour
 
 // mintEngineSessionToken returns a token bound to one membership, one session and one
 // engine key, expiring at exp.

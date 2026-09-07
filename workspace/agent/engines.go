@@ -125,27 +125,43 @@ func syncEngineProviders() {
 
 // --- the per-session token ------------------------------------------------------
 
-// engineTokenCache holds one token per session. A launch is not the only thing that asks
-// (a relaunch after a stop asks again), and buying a new token each time would leave a
-// trail of live credentials for one session.
-var engineTokenCache sync.Map // session -> engineCachedToken
+// engineTokenCache holds one token per scope — a session name, or "" for the workspace-wide
+// one the managed route's shared daemon uses. A launch is not the only thing that asks
+// (`opencode models` asks on every launch-modal open), and buying a new token each time would
+// leave a trail of live credentials behind one session.
+var engineTokenCache sync.Map // scope -> engineCachedToken
 
 type engineCachedToken struct {
 	value string
 	// renewAt is deliberately well before the token's own expiry: a session relaunched at
 	// the last minute must not be handed a credential that dies inside the first answer.
 	renewAt time.Time
+	// failedAt marks a negative entry. This is called from `opencode models`, which is on the
+	// launch modal's path, so a Control Plane that cannot be reached must cost one timeout and
+	// not one per modal open.
+	failedAt time.Time
 }
 
-// engineSessionEnv mints (or reuses) this session's engine token, as LaunchPlan.Env entries.
-// Nil when the deployment has no engines, which is what makes this safe to call
-// unconditionally from the opencode launcher.
+// engineNegativeCache is how long a failed mint is remembered. Short enough that a CP which
+// has just come back is picked up on the next launch, long enough that a modal opened
+// repeatedly does not stall repeatedly.
+const engineNegativeCache = time.Minute
+
+// engineSessionEnv mints (or reuses) an engine token for `name`, as KEY=VALUE entries.
+//
+// An EMPTY name asks for the workspace-scoped token, which is what the managed route needs:
+// its `opencode serve` daemon is shared by every session in the workspace, so there is no
+// session to scope it to. A named session gets a session-scoped one.
+//
+// Nil when the deployment runs no engines, which is what makes it safe to call
+// unconditionally from the launcher and from env().
 func engineSessionEnv(name string) []string {
-	if name == "" {
-		return nil
-	}
 	if v, ok := engineTokenCache.Load(name); ok {
-		if c := v.(engineCachedToken); time.Now().Before(c.renewAt) {
+		c := v.(engineCachedToken)
+		if !c.failedAt.IsZero() && time.Since(c.failedAt) < engineNegativeCache {
+			return nil
+		}
+		if c.value != "" && time.Now().Before(c.renewAt) {
 			return []string{opencode.EngineProviderKeyEnv + "=" + c.value}
 		}
 	}
@@ -157,6 +173,7 @@ func engineSessionEnv(name string) []string {
 	}
 	req := map[string]string{"session": name, "key": "llm"}
 	if !engineCPCall(ctx, http.MethodPost, "/internal/engine/token", req, &out) || out.Token == "" {
+		engineTokenCache.Store(name, engineCachedToken{failedAt: time.Now()})
 		return nil
 	}
 	renew := time.Now().Add(time.Hour)

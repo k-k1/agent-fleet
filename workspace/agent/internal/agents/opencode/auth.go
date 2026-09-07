@@ -45,24 +45,38 @@ func env() []string {
 	if UsagePref() == UsageOff {
 		return nil
 	}
-	s, err := secrets.Load()
-	if err != nil || len(s.Opencode) == 0 {
-		return nil
-	}
-	free := UsagePref() == UsageFree
-	names := make([]string, 0, len(s.Opencode))
-	for k := range s.Opencode {
-		if free && k == opencodeKeyEnv {
-			continue
+	var out []string
+	// ⚠️ NOT an early return when there are no stored keys. There used to be one, and it hid
+	// the engine token below from every workspace that has none — which is the free tier and
+	// the Console-OAuth login, i.e. the common case. The stored keys and the fleet's own
+	// engine are independent: a workspace can have no provider key at all and still be
+	// entitled to the engine. Same for an unreadable store: that is a reason to lose the keys,
+	// not a reason to lose the engine.
+	if s, err := secrets.Load(); err == nil {
+		free := UsagePref() == UsageFree
+		names := make([]string, 0, len(s.Opencode))
+		for k := range s.Opencode {
+			if free && k == opencodeKeyEnv {
+				continue
+			}
+			names = append(names, k)
 		}
-		names = append(names, k)
+		sort.Strings(names)
+		for _, k := range names {
+			out = append(out, k+"="+s.Opencode[k])
+		}
 	}
-	sort.Strings(names)
-	out := make([]string, 0, len(names))
-	for _, k := range names {
-		out = append(out, k+"="+s.Opencode[k])
-	}
-	return out
+	// The fleet's own engines (ADR 0071). It has to be HERE and not only on LaunchPlan.Env,
+	// because opencode's managed route — the default one — runs every session through a single
+	// shared `opencode serve` daemon whose environment comes from exactly this function. A
+	// token placed only on the launch plan reaches the tmux route and nothing else, and the
+	// symptom is `401 invalid engine session token` on the first message of a managed session
+	// (measured on the live deployment, which is how this was found).
+	//
+	// Workspace-scoped for the same reason: one daemon serves every session in the workspace,
+	// so there is no session to scope it to at this point. BuildLaunch overrides it with a
+	// session-scoped one where the route allows that.
+	return append(out, EngineEnv("")...)
 }
 
 // Env is the exported form of env for the assistant chat's headless `opencode run`,

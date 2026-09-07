@@ -174,10 +174,15 @@ func engineConfigPath() string {
 	return filepath.Join(dir, configNames[0])
 }
 
-// EngineEnv is the per-session credential, as a KEY=VALUE ready for LaunchPlan.Env. Empty
-// when the deployment runs no engines, which is the normal case.
+// EngineEnv is the engine credential, as a KEY=VALUE ready for an environment. An empty
+// session asks for a WORKSPACE-scoped token, which is all the managed route can use: its
+// `opencode serve` daemon is shared by every session in the workspace, so there is no session
+// to scope it to. A named session gets one scoped to that session, which the tmux route can
+// use because a session is its own process there.
 //
-// It rides the environment rather than the config file for two reasons: it is per session
-// while the file is shared, and tmux `new-session -e` keeps it out of /proc/*/cmdline and
-// pane_start_command (the same rule every provider key here follows).
+// Empty when the deployment runs no engines, which is the normal case.
+//
+// It rides the environment rather than the config file because the file is shared and, on the
+// tmux route, `new-session -e` keeps the value out of /proc/*/cmdline and pane_start_command
+// (the same rule every provider key here follows).
 var EngineEnv = func(session string) []string { return nil }
