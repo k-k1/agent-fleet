@@ -117,7 +117,7 @@ Console の file API が読めるディスクへ落ちる必要があるため�
 | 層 | サービス | 資格情報 | フリート側の追加 | egress |
 |---|---|---|---|---|
 | **既存接続を流用** | Codex（`image_gen`）、**Bedrock**（Nova Canvas・Stability 一式） | 利用者の ChatGPT ログイン／AWS の資格情報チェーンを `CloudWatchConn` / `AWSConn` と同じ流儀で参照する（`AWSProfileRef`: プロファイル名＋任意のリージョン、秘密は保存しない） | provider ファイルのみ | Codex の既存経路／`.amazonaws.com` は**既に allowlist にある** |
-| **会員の鍵** | Gemini・OpenAI Images・Stability・FLUX・Ideogram・Recraft・Replicate | 会員が鍵を貼る（`secrets.Opencode` と同じ流儀） | ＋ Connections のカード 1 枚 | **allowlist 追加が必要** |
+| **メンバーの鍵** | Gemini・OpenAI Images・Stability・FLUX・Ideogram・Recraft・Replicate | メンバーが鍵を貼る（`secrets.Opencode` と同じ流儀） | ＋ Connections のカード 1 枚 | **allowlist 追加が必要** |
 | **テナントの鍵** | Vertex AI・Azure OpenAI | 管理者が一度設定 | ＋ CP 側 provider。`CPBridge` と同型の bridge をもう 1 本足して経由する（現存する唯一の実体は git 資格情報ヘルパー用の `GitOAuthBridge`） | **不要**——CP の通信は制限の外（ADR 0047・`tts.go`） |
 
 したがって **2 つ目の provider は Bedrock にする**。新しい秘密が要らず、ホストは既に
