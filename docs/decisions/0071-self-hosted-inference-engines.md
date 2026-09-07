@@ -14,8 +14,13 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
 - Revised again the same day, once the quota was granted, after **running it end to end on a
   GPU** (g6.xlarge, L4): llama.cpp served Qwen3-Coder-30B-A3B and opencode drove it through
   real tool calls, and sd-server drew SDXL at 1024 px in 21 s. Resolved 4-6 were added and the
-  evidence under decisions 2 and 3 was replaced with measurements (🔴 **decision 3's reason
-  changed** — not cost, but a 24x difference in `-hf` transfer speed).
+  evidence under decisions 2 and 3 was replaced with measurements.
+- Later the same day the S3 path and ComfyUI were measured, adding Resolved 7-9. 🔴 **An
+  earlier revision said "`-hf` is slow because of its downloader" — that was wrong**: the same
+  file pulled with `curl` from Fargate came at 4.2 MB/s, so **what is slow is HF serving that
+  file**. Decision 3's reason is now "HF is too slow for the start path, and 50x different from
+  file to file" (Resolved 5 was rewritten; in the manner of the frozen journals, the gist of
+  the wrong version is kept).
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -166,12 +171,14 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    engine of the `image` role** (decision 6) and never runs alongside sd-server (same VRAM).
 
 3. **Models go HF → S3 once, and S3 → local disk on every start. HF is never on the start
-   path, and `llama-server -hf` never runs at start.** Measurement moved this decision's reason
-   from cost to **speed** (Resolved 5): on the same g6.xlarge through the same NAT,
-   `llama-server -hf` pulled 18.5 GB at **9.6 MB/s (31 minutes)** while `curl` pulled 6.9 GB at
-   **236 MB/s (28 seconds)**. **The 24x gap is the downloader, not the network.** The cost
-   ($1.05 of NAT per 17 GB) and keeping a gate token off the node are two further reasons on
-   top of it. S3 storage is
+   path.** Measurement moved this decision's reason from cost to **speed and unpredictability**
+   (Resolved 5): behind the same NAT, HF served SDXL (stabilityai) at **236 MB/s** but the
+   Qwen3-Coder GGUF (unsloth) at **9.6 MB/s (31 minutes)** through `llama-server -hf` and at
+   **4.2 MB/s (74 minutes)** through `curl` on Fargate. **A 50x difference between files, and
+   which one you get is unknown until you pull.** That is not a speed the start path can be
+   built on. S3 delivers to the same box at a steady **147 MB/s** (Resolved 8). The cost ($1.05
+   of NAT per 17 GB) and keeping a gate token off the node are two further reasons on top of
+   it. S3 storage is
    $0.025/GB-month ($2.5/month for a 100 GB catalogue) and reads through the gateway endpoint
    are free. **Ingestion is an async job** (a Fargate CPU task: `huggingface-cli download` →
    `aws s3 cp`) that an admin starts with an HF repo id and file list, and it reports success
@@ -317,12 +324,17 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    7-8 minutes after desired 0, so trimming the idle window can only ever recover that much
    ($0.15 of drain against $0.65 for a 30-minute window). On the same box sd-server went from
    **task created to listening in 195 s** (135 s pull plus a 28 s model fetch).
-5. 🔴 **`llama-server -hf` is slow, and it is the downloader, not the network.** On the same
-   g6.xlarge through the same NAT, `-hf` pulled 18.5 GB at **9.6 MB/s (1,846 s)** while `curl`
-   pulled SDXL's 6.9 GB at **236 MB/s (28 s)**. That is **24x**. Decision 3 was originally a
-   cost argument ("do not pay $1 and 9 minutes every start"); it is really the difference
-   between a 39-minute start and a 4-minute one. The design (sync from S3) does not change, but
-   the weight of the reason does.
+5. 🔴 **HF's delivery speed differs 50x between files, and the Qwen3-Coder GGUF is slow
+   whatever pulls it.** Behind the same NAT, `llama-server -hf` pulled 18.5 GB at **9.6 MB/s
+   (1,846 s)** while `curl` pulled SDXL's 6.9 GB at **236 MB/s (28 s)**. From those two an
+   earlier revision concluded "the 24x is the downloader"; but **the same GGUF pulled with
+   `curl` from Fargate came at 4.2 MB/s (4,467 s)**, slower still. What is slow is not the
+   client but **HF serving that file (the unsloth repository)**; stabilityai's SDXL was fast
+   only because that file happens to be served that way. Decision 3 was originally a cost
+   argument ("do not pay $1 and 9 minutes every start"); it is really that **a start takes 39
+   to 74 minutes or 4, and you do not know which until you pull**. The design (sync from S3)
+   does not change, but the reason does. The wrong version is kept for the next person tempted
+   to draw the same conclusion from the same two points.
 6. **VRAM and the G-family quota.** Qwen3-Coder-30B-A3B Q4_K_M used **20,943 MiB** and SDXL
    fp16 **7,379 MiB** (6,624 MB of params). So **two roles do not fit on one L4**, and dropping
    `image` to a g6f.2xlarge (6 GB) is not an option (half the answer to the old open question).
@@ -330,6 +342,35 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    produced repeated `VcpuLimitExceeded: your current vCPU limit of 8`, and placement succeeded
    **408 s later**, after the first box terminated. A deployment that wakes both roles asks for
    16 vCPU.
+
+7. **ComfyUI draws SDXL in 8 s on the same L4, at the same 6.9 GB of VRAM as sd-server.** The
+   community image `lecode-official/comfyui-docker:latest` (5.1 GB, ComfyUI 0.8.2) served as
+   the measuring stick, with SDXL fetched from S3 into `models/checkpoints` and a
+   `/prompt` → `/history` → `/view` round trip. From desired 1 it **listened at +504 s**, of
+   which **437 s was the 5.1 GB pull (12 MB/s)** — GHCR through the NAT ran at 14 MB/s for
+   `server-cuda` too, so **unless the images are copied into ECR the pull is most of the cold
+   start**. The first workflow took 42.6 s (model load included); **warm, 1024 px at 20 steps
+   took 7.9 s and 8.3 s** — **2.5x faster** than sd-server's 20.8 s. VRAM 6.9 GB. The picture
+   was visibly right. The bundled ComfyUI-Manager failed to import (decision 6 leaves it out
+   anyway). Re-reading decision 6's order (P1 sd-server, P2 ComfyUI) against the numbers:
+   sd-server's advantages are **the smaller image (2.3 GB vs 5.1 GB) and the OpenAI-compatible
+   surface**, ComfyUI's are **per-image speed and workflow freedom**; since cost is set by the
+   window (decision 5), 13 s per image never reaches the bill. The order stands, but a
+   deployment that draws in volume may end up on ComfyUI.
+8. **S3 → local disk is a steady 104-147 MB/s (`aws s3 cp` default parallelism).** 6.9 GB in
+   45 s, a synthetic 20.8 GB in 198 s, the real 18.5 GB GGUF in 179 s. Slower than HF's fast
+   case (236 MB/s) but off the NAT, 10-25x HF's slow case (4-10 MB/s), and **independent of
+   the file**.
+9. **A production-shaped llm cold start from S3 is 527 s (8.8 minutes).** From desired 1:
+   **instance at +8 s, S3 fetch started at +64 s, pull done at +224 s (178 s), the 18.5 GB
+   fetched at +243 s (179 s) — the fetch and the image pull run concurrently — llama-server
+   started at +260 s, loaded and listening at +527 s** (267 s to load into VRAM). One 4.5th of
+   the 2,351 s straight from HF. What remains large is **the 178 s pull (shrinks with the ECR
+   copy)** and **the 267 s load (reading from gp3 EBS; local NVMe or a provisioned-throughput
+   gp3 may shrink it)** — the S3 fetch is no longer the dominant leg. Consequence for
+   decision 5: the first llm request **always crosses the 300 s wall once** (the engine warms
+   while opencode re-sends once or twice). The image role on sd-server, at 195 s, fits inside
+   the first attempt.
 
 Also measured the same day:
 
@@ -366,14 +407,10 @@ Also measured the same day:
 
 ## Open questions — to settle before P0 is written
 
-1. **How fast S3 → local disk actually is.** What was measured is the fetch from HF, not the
-   path decision 3 uses. Time 17 GB through `aws s3 sync` (gateway endpoint, parallel) and the
-   total wake in decision 5 follows from it. Whether `-hf`'s 31 minutes become 4 or 2 on S3 is
-   this design's start time.
-2. **ComfyUI's VRAM and a workflow run.** SDXL fp16 was 7.4 GB under sd-server; ComfyUI adds
-   Python and PyTorch on top. Confirm g6.xlarge is enough, and drive one `/prompt` →
-   `/history` round trip.
-3. **Reuse the Workspace credential or mint an engine token.** Reusing the `/git/*` PAT gives
+1. **Can the 267 s load into VRAM be cut.** With S3 the fetch is 179 s and the largest leg left
+   is reading 18.5 GB off gp3 EBS. P0 measures MI's `LocalStorageConfiguration` (g6's local
+   NVMe) and a provisioned-throughput gp3.
+2. **Reuse the Workspace credential or mint an engine token.** Reusing the `/git/*` PAT gives
    per-member accounting but not per-session. If per-session is wanted, the Agent mints a
    short-lived token at launch.
 

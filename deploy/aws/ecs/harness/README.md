@@ -70,6 +70,13 @@ desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。箱の同�
 画像側は `SdEnabled=true`。実測は **+232 秒でタスク RUNNING、+2,351 秒で listen**
 （うち 1,846 秒が `-hf` のダウンロード）、**ドレイン 427 秒／463 秒**。
 
+S3 経路（`LlamaModelS3Key`、取り込みは `IngestTaskDef` を Fargate で `run-task`）と ComfyUI
+（`ComfyEnabled=true`・コミュニティイメージ・計測専用）も同日に通した: **S3 → 箱は 105〜147 MB/s**
+（20.8 GB を 198 秒、6.9 GB を 45 秒）、HF は**ファイルで 50 倍違う**（SDXL 236 MB/s、Qwen3-Coder
+GGUF は `-hf` 9.6 MB/s・Fargate の curl 4.2 MB/s）。ComfyUI は listen まで 504 秒（うち 5.1 GB の
+pull が 437 秒）、SDXL 1024px が温まって 8 秒、VRAM 6.9 GB。**S3 から起動する llama は
+desired 1 → +527 秒で listen**（取得 179 秒は pull 178 秒と並行、VRAM ロード 267 秒）。
+
 CloudFormation の作法で踏むもの 3 つ:
 
 - **capacity provider の `InstanceRequirements` は排他規則がある。** `InstanceGenerations:

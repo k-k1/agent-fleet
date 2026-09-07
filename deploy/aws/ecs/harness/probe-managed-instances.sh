@@ -25,9 +25,14 @@
 #   desired 1 → instance +15 s → pull started +43 s → pull done +214 s → RUNNING +232 s
 #             → model fetched +2079 s → loaded into VRAM and listening +2351 s
 #   desired 0 → tasks gone +10 s → terminated +427 s (a second GPU run: +463 s)
-# ⚠️ The 1846 s of that start is `llama-server -hf` running at 9.6 MB/s. `curl` pulled SDXL's
-# 6.9 GB over the same NAT at 236 MB/s (28 s) — 24x. The downloader is the bottleneck, not the
-# network, which is why ADR 0071 decision 3 syncs from S3 and never uses -hf at start.
+# ⚠️ The 1846 s of that start is the HF download (`-hf`, 9.6 MB/s). It is HF's delivery of THAT
+# file, not the client: the same GGUF through `curl` on Fargate came at 4.2 MB/s (4467 s), while
+# stabilityai's SDXL came at 236 MB/s (28 s). S3 → the box runs at 105-147 MB/s (20.8 GB in
+# 198 s, 6.9 GB in 45 s), which is why ADR 0071 decision 3 stages models in S3 first.
+# ComfyUI (community image, 5.1 GB): listening +504 s (437 s of it the GHCR pull at 12 MB/s),
+# SDXL 1024 px / 20 steps 7.9-8.3 s warm, 6.9 GB VRAM; drain 464 s.
+# llama from S3 (LlamaModelS3Key set): instance +8 s, fetch 179 s overlapping the 178 s pull,
+# server up +260 s, loaded and listening +527 s — the production-shaped cold start.
 # ⚠️ 8 vCPU of G-family quota builds ONE g6.xlarge: bringing the sd service up while llama was
 # running produced VcpuLimitExceeded until the first box terminated (408 s). Ask for 16.
 #
