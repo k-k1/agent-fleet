@@ -438,6 +438,11 @@ GitHub ホストの **`ubuntu-24.04-arm` ランナーが無料で使える**の�
   build --platform … --push`）。`publish-dist.yml` には `workspace_arm64` という
   workflow_dispatch の入力を足し、ON のときだけ QEMU + buildx を用意して
   `WS_PLATFORMS` を渡す。**既定 OFF なので通常のリリースは 1 アーキのまま。**
+  - 🔴 **訂正（2026-09-07・0.16.0）: 既定は ON になり、通常のリリースが 2 アーキになった。**
+    0.15.1 が手動で `true` を指定した最初の版で、そのイメージが実機 Graviton で起動した
+    （§70.14 / `acrt`）ので、「起動を確かめていない面を配らない」という唯一の重い理由が
+    消えた。理由の全文は [ADR 0053](../decisions/0053-cp-arch-and-availability.ja.md) 決定 4
+    の訂正。
   - ⚠️ **QEMU での所要時間は未計測**で、このジョブの `timeout-minutes` は 90。
     イメージはコンパイルよりダウンロードと apt が支配的なので税は dpkg と tar に乗る
     はずだが、**それは仮説である**。入らなかったら**タイムアウトを伸ばすのは誤り**で、
