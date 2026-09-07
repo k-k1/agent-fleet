@@ -33,8 +33,10 @@
 # SDXL 1024 px / 20 steps 7.9-8.3 s warm, 6.9 GB VRAM; drain 464 s.
 # llama from S3 (LlamaModelS3Key set): instance +8 s, fetch 179 s overlapping the 178 s pull,
 # server up +260 s, loaded and listening +527 s — the production-shaped cold start.
-# ⚠️ 8 vCPU of G-family quota builds ONE g6.xlarge: bringing the sd service up while llama was
-# running produced VcpuLimitExceeded until the first box terminated (408 s). Ask for 16.
+# ⚠️ 8 vCPU of G-family quota builds TWO g6.xlarge — but a box MI has just retired keeps its
+# 4 vCPU counted for the 7-8 minutes it is shutting down (review of ADR 0071, from CloudTrail).
+# Starting one role right after stopping the other therefore hits VcpuLimitExceeded until the
+# old box is gone. Ask for 16 as one drain's worth of headroom.
 #
 # SdEnabled=true adds a second service (sd-server + a curl sidecar that fetches the checkpoint
 # into a shared host volume). Reach either engine without touching the security group:
