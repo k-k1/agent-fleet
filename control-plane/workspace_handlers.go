@@ -627,6 +627,13 @@ type sessionWire struct {
 	// column: a stopped Workspace has no running job to protect (the Agent declares it
 	// again the next time it wakes).
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
+	// StopAfterTurnAt: the session is armed to stop itself at the end of the turn it is
+	// running (docs/log/85). Missing here it is silently dropped, and the row would give no
+	// sign that the session is about to fold itself away — the arm is usually set from
+	// inside the conversation, so the badge is the only place a user who is not reading the
+	// transcript can see it, or cancel it. No DB-mirror column: a stopped session has no
+	// turn to end, and every fold consumes the arm.
+	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
 	// Carried is the kind of interaction that was waiting for an answer when the session
 	// was folded away (docs/log/75 §75.6.5). A gap in the relay is a silent drop, so it is
 	// needed in BOTH this struct and the DB mirror: while running the list is built from

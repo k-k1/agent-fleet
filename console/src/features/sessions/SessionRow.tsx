@@ -151,6 +151,14 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
             title={tr("srow.keep_awake_badge", { left: remainingShort(s.keepAwakeUntil) })}
           />
         )}
+        {/* Stop-after-turn arm (docs/log/85). The arm is usually set from inside the
+            conversation, where the only trace is a sentence in a transcript nobody is
+            watching — so the row is where a user who did not ask for it finds out, and the
+            menu right here is how they take it back. The server drops an expired arm from the
+            wire, so its presence alone means a stop is still coming. */}
+        {s.alive && s.stopAfterTurnAt && (
+          <Icon name="debug-stop" className="sess-stoparm" title={tr("srow.stop_after_turn_badge")} />
+        )}
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />

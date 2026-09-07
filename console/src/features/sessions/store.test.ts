@@ -59,6 +59,19 @@ describe("sessions store", () => {
     expect(toastMock.mock.calls[0][1]).toMatchObject({ kind: "error" });
   });
 
+  // The accepted POST is authoritative (docs/log/85): the row has to say "stopping after
+  // this turn" straight away, or the only feedback for an arm set from the ⋯ menu is a toast
+  // that disappears, and the arm the session set on the user's word stays invisible until the
+  // next poll lands.
+  it("shows a stop-after-turn arm before the next list poll", () => {
+    useSessionsStore.setState({ sessions: [{ ...row("ssko6g5", true), kind: "shell" as const }] });
+    useSessionsStore.getState().setStopAfterTurn("ssko6g5", "2026-09-07T10:00:00Z");
+    expect(useSessionsStore.getState().sessions[0].stopAfterTurnAt).toBe("2026-09-07T10:00:00Z");
+
+    useSessionsStore.getState().setStopAfterTurn("ssko6g5", "");
+    expect(useSessionsStore.getState().sessions[0].stopAfterTurnAt).toBe("");
+  });
+
   it("reports a successful resume", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({ ok: true })) // POST …/start

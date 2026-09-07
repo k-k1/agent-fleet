@@ -34,7 +34,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		RemoteUrl: li.RemoteURL, State: li.State, Alive: alive, Resumable: li.Resumable,
 		BackgroundBusy: li.BackgroundBusy, BackgroundBusyReason: li.BackgroundBusyReason,
 		Context: li.Context, Locked: m.Locked, Archived: m.Archived,
-		KeepAwakeUntil: m.KeepAwakeUntil,
+		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
 	}
 	// A claude whose limit-aborted turn has been cleaned up (the menu dismisses itself, and a
 	// per-model limit never raises one) leaves its pane back at the waiting prompt, so

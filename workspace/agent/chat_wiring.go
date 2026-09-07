@@ -78,6 +78,7 @@ func init() {
 			}
 		},
 		CleanTitle:             sessionx.CleanTitle,
+		StopArmedSession:       sessionx.StopArmedSession,
 		NormalizeKind:          sessionx.NormalizeKind,
 		SafeBrowsePath:         safeBrowsePath,
 		MaybePushOperatorReply: maybePushOperatorReply,

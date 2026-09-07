@@ -1055,6 +1055,24 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 		// operator's intent (cancel the instruction) does not depend on liveness.
 		chatx.DisarmSessionReport(name)
 	}
+	m, err := haltSessionMeta(m)
+	if err != nil {
+		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
+}
+
+// haltSessionMeta is the halt itself, without the HTTP shell: kill the live pane (or drop the
+// managed handle) and leave the meta listed and resumable. It returns the meta as written.
+//
+// Extracted so the "stop after this turn" arm (session_stop_after_turn.go, docs/log/85) folds a
+// session away through THIS path rather than growing a second one. Every step below is
+// ordering that was learned the hard way — the carry-over promoted before the process that
+// holds the interaction dies, the bridge disconnected before the pane goes, agy given its
+// graceful quit — and a second folding path silently misses them (ADR 0055 decision 12).
+func haltSessionMeta(m session.Meta) (session.Meta, error) {
+	name := m.Name
 	if m.DriverKind() == session.DriverManaged {
 		// Promote the carry-over BEFORE DropHandle (docs/log/75 P5): a pending Interaction
 		// lives only inside the runtime handle and is gone the moment it is dropped —
@@ -1068,15 +1086,11 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 		m.StoppedAt = time.Now().Format(time.RFC3339)
 		// Re-merge the on-disk lock: the meta snapshot above is seconds old by now and a
 		// blind WriteMeta would roll back a lock the user flipped meanwhile.
-		m = WriteSessionMetaKeepingLock(m)
-		httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
-		return
+		return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
 	}
 	tn := session.TmuxName(name)
 	if !tmuxx.HasSession(tn) {
-		// Already stopped — nothing to do; report the current (stopped) wire.
-		httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
-		return
+		return clearStopArm(m), nil // already stopped — nothing to do
 	}
 	// Best-effort: disconnect any active Remote Control bridge before killing the
 	// pane, so a later resume's autoconnect registers fresh under the current
@@ -1095,8 +1109,7 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if !stopped {
 		if out, err := tmuxx.Cmd("kill-session", "-t", session.ExactTarget(tn)).CombinedOutput(); err != nil {
-			httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", fmt.Sprintf("%v: %s", err, out))
-			return
+			return m, fmt.Errorf("%v: %s", err, out)
 		}
 	}
 	status.Remove(session.UUID(m.Dir, name))
@@ -1105,8 +1118,9 @@ func HandleHaltSession(w http.ResponseWriter, r *http.Request) {
 	// GracefulStop/kill above can take seconds, so re-merge the on-disk lock instead
 	// of writing back the stale snapshot (lost-update guard, same as list).
 	m.StoppedAt = time.Now().Format(time.RFC3339)
-	m = WriteSessionMetaKeepingLock(m)
-	httpx.WriteJSON(w, http.StatusOK, wireSession(m, false))
+	// A stop consumes the arm whoever pressed it (docs/log/85): left on disk it would ride
+	// through the resume and fold the session away again at the end of a turn nobody armed.
+	return clearStopArm(WriteSessionMetaKeepingLock(m)), nil
 }
 
 // HandleArchiveSession hides a session from the active list but KEEPS its meta (and
@@ -1136,6 +1150,10 @@ func HandleArchiveSession(w http.ResponseWriter, r *http.Request) {
 	status.Remove(session.UUID(m.Dir, name))
 	status.RemoveExit(name)
 	m.Archived = true
+	// Archiving folds the session away too, so it consumes the stop-after-turn arm for the
+	// same reason halt does (docs/log/85): an arm surviving into the restore would stop the
+	// session again at the end of a turn nobody armed.
+	m.StopAfterTurnAt = ""
 	session.WriteMeta(m)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"archived": name})
 }
