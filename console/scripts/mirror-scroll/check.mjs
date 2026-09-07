@@ -48,6 +48,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 //                    bottom on first open, and the same place after leaving and returning. The
 //                    render layer is shared with the mirror, but landing and restoring belong to
 //                    SharedSessionView itself, so they are checked separately.
+//   working        - a session MID-TURN. Every other scenario runs against an idle transcript, so
+//                    nothing exercised the live exchange: the work trace losing its disclosure on
+//                    a tool-last poll, and the height that follows.
+//   paging         - "load earlier messages". Also never exercised before (the stub always
+//                    answered firstLine=0 / hasMore=false), and the one place where the viewport
+//                    was still pinned by a single measurement taken before the height existed.
 //   typing         - stay pinned to the bottom while writing in the composer. Even with the input
 //                    grown tall, the transcript must not float off the bottom on each keystroke
 //                    (measured: 154px from one keystroke). Checked with scroll anchoring disabled
@@ -60,6 +66,10 @@ const SCENARIOS = [
   { name: "swipe", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "swipe", from: "sk4rq2f" },
   { name: "shared", turns: 200, images: 3, imgdelay: 3000, mermaid: 0, mode: "shared", shared: true },
   { name: "typing", turns: 60, images: 0, imgdelay: 0, mermaid: 0, mode: "typing" },
+  { name: "working", turns: 30, images: 0, imgdelay: 0, mermaid: 0, mode: "working", working: true },
+  // 120 turns = 240 jsonl lines served 120 at a time, so the tail page is 60 turns: enough height
+  // for the prepend to matter, little enough to read up through within a scenario's time budget.
+  { name: "paging", turns: 120, images: 0, imgdelay: 0, mermaid: 0, mode: "paging", paging: true, pagesize: 120 },
 ];
 
 class CDP {
@@ -105,6 +115,10 @@ const probeIn = (scroller) => `(() => {
     top: Math.round(el.scrollTop),
     gap: Math.round(el.scrollHeight - el.scrollTop - el.clientHeight),
     turns: el.querySelectorAll("[data-turn-idx]").length,
+    height: Math.round(el.scrollHeight),
+    // Folded work traces (「作業過程」). A disclosure that DISAPPEARS is not a missing summary row:
+    // with no split the trace is rendered inline instead, i.e. at full height.
+    work: document.querySelectorAll(".mt-work-head").length,
     // "jump to latest" and "start of the reply" are the same pill (.mirror-jump), so exclude the
     // latter when counting.
     jump: !!document.querySelector(".mirror-jump:not(.mirror-jump-top)"),
@@ -359,6 +373,33 @@ const KILL_ANCHOR = `(() => {
   document.head.appendChild(st);
   return "ok";
 })()`;
+// Bring the last reply's FINAL ANSWER to the top of the viewport — the position the mirror itself
+// takes when a reply completes (answerAnchoredRef), and the only one from which the work trace's
+// height is felt: above it and the trace's growth pushes only what is below; at the tail the bottom
+// pin absorbs it.
+const LIVE_WORK_EL = `(() => {
+  const el = document.querySelector(".mirror-body");
+  const turns = el ? [...el.querySelectorAll("[data-turn-idx]")] : [];
+  const last = turns[turns.length - 1];
+  return last ? last.querySelector(".mirror-turn-body > .mt-work") : null;
+})()`;
+// Has the LIVE reply folded yet? Waited for rather than slept through: the stub's idle round is
+// what folds it, and parking before that would watch an ordinary finished turn instead.
+const LIVE_FOLDED = `!!${LIVE_WORK_EL}`;
+const PARK_AT_ANSWER = `(() => {
+  const el = document.querySelector(".mirror-body");
+  const work = ${LIVE_WORK_EL};
+  const answer = work && work.nextElementSibling;
+  if (!answer) return "none";
+  el.scrollTop = Math.max(0, el.scrollTop + answer.getBoundingClientRect().top - el.getBoundingClientRect().top - 12);
+  return "ok";
+})()`;
+const LOAD_EARLIER = `(() => {
+  const b = document.querySelector(".mirror-loadmore-btn");
+  if (!b) return "none";
+  b.click();
+  return "ok";
+})()`;
 const COMPOSER_H = `(() => {
   const t = document.querySelector(".mirror-input");
   return t ? Math.round(t.getBoundingClientRect().height) : -1;
@@ -411,10 +452,122 @@ async function runTyping(cdp) {
   };
 }
 
+// working: a session mid-turn whose live reply carries a huge work trace, watched across polls
+// from where the mirror parks the reader when that reply "completes" — the answer's first line,
+// with the collapsed 作業過程 directly above them.
+//
+// The defect this pins: the trace is inside a disclosure only while workSplit finds a boundary,
+// and workSplit finds none on any poll whose last part is a tool. With no boundary the trace is
+// rendered INLINE — full height, no control — so it blew open and shut roughly every 1.2s, each
+// time moving tens of thousands of px of content above the reader. Two things are therefore
+// asserted: the disclosure never disappears, and the reader does not move.
+//
+// Measured with scroll anchoring off, for the same reason as `typing`: Chromium absorbs growth
+// above the viewport and would report a broken build as green.
+async function runWorking(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  // Long enough for the stub's poll 2 (the momentary idle) to land: that is what folds a reply
+  // that is still running, and the completion anchor then parks the reader on the answer.
+  await sleep(9000);
+  await cdp.ev(KILL_ANCHOR);
+  // Wait for the stub's idle round to fold the LIVE reply — that is the turn under test.
+  let folded = false;
+  for (let i = 0; i < 20 && !folded; i++) {
+    folded = await cdp.ev(LIVE_FOLDED);
+    if (!folded) await sleep(1000);
+  }
+  if (!folded) throw new Error("the live reply never folded (no idle round?)");
+  // Park where the mirror parks a reader when a reply completes: the final answer's first line,
+  // with the folded work trace immediately above the viewport. (Done here rather than left to the
+  // completion anchor, which fires only for a reply that ARRIVES while watching — this one was
+  // already on screen when the session opened.)
+  if ((await cdp.ev(PARK_AT_ANSWER)) !== "ok") throw new Error("no folded work trace to park under");
+  await sleep(1500);
+  const start = await cdp.ev(PROBE);
+  if (start.top <= 0) throw new Error("parked at the very top — the answer is not long enough");
+  const liveIdx = await cdp.ev(`(() => {
+    const t = [...document.querySelectorAll(".mirror-body [data-turn-idx]")];
+    return Number(t[t.length - 1]?.dataset.turnIdx ?? -1);
+  })()`);
+  if (start.anchor?.idx !== liveIdx) throw new Error(`parked under turn ${start.anchor?.idx}, not the live ${liveIdx}`);
+
+  let lost = 0;
+  let worstMove = 0;
+  let minH = start.height;
+  let maxH = start.height;
+  for (let i = 0; i < 8; i++) {
+    await sleep(1400); // one poll's cadence while working (1200ms) plus render
+    const p = await cdp.ev(PROBE);
+    if (!p.work) lost++;
+    minH = Math.min(minH, p.height);
+    maxH = Math.max(maxH, p.height);
+    if (start.anchor && p.anchor) {
+      worstMove = Math.max(worstMove, p.anchor.idx !== start.anchor.idx ? 1e6 : Math.abs(p.anchor.off - start.anchor.off));
+    }
+  }
+  // The transcript legitimately grows by one small part per poll; the defect swings it by the
+  // whole trace, so the height range is reported rather than asserted on.
+  const ok = start.work > 0 && lost === 0 && worstMove <= 8;
+  return {
+    ok,
+    note: `parked on turn ${start.anchor?.idx}@${start.anchor?.off}px with ${start.work} folded trace(s)  disclosure lost on ${lost}/8 polls  worst move=${worstMove}px  height ${minH}→${maxH}px`,
+  };
+}
+
+// paging: read up into a long session until "load earlier messages" fires, and stay on the same
+// content while the prepended page lays out.
+//
+// The viewport used to be pinned across the prepend by a single scrollHeight delta measured one
+// layout effect after the commit — at which point the prepended turns are still EMPTY (MarkdownView
+// fills them from a passive effect, highlighting and images later still). So it compensated for the
+// turn chrome and missed the rest, which then piled up above the reader over the next seconds.
+// Anchoring off, again: it is exactly what hides this.
+async function runPaging(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  await cdp.ev(KILL_ANCHOR);
+  const opened = await cdp.ev(PROBE);
+  const { x, y } = JSON.parse(await cdp.ev(WHEEL_UP));
+
+  // Read upwards, off the tail — the prepend anchor only exists for a reader who is not following
+  // the end. Deliberately well short of the top: the sentinel would otherwise fire mid-wheel, and
+  // Chromium's wheel scrolling is animated, so "where the reader was" would be a moving target.
+  for (let i = 0; i < 8; i++) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: -1200, pointerType: "mouse" });
+    await sleep(120);
+  }
+  await sleep(2000); // let the wheel animation and the pill settle
+  const before = await cdp.ev(PROBE);
+  if (before.top <= 0) throw new Error("scrolled all the way to the top — the tail page is too short");
+
+  // Load the earlier page from the button rather than by scrolling into the sentinel: the same
+  // loadOlder path, from a viewport that is standing still.
+  if ((await cdp.ev(LOAD_EARLIER)) !== "ok") throw new Error("no 'load earlier messages' button (hasMore not set?)");
+  await sleep(1500);
+  const right = await cdp.ev(PROBE); // just after the commit, before the bodies fill in
+  const prepended = right.turns > opened.turns;
+  await sleep(9000); // …and after all of that late height has landed
+  const settled = await cdp.ev(PROBE);
+
+  const held = (a, b, slack) =>
+    !!a?.anchor && !!b?.anchor && b.anchor.idx === a.anchor.idx && Math.abs(b.anchor.off - a.anchor.off) <= slack;
+  // The commit itself must not move the reader, and neither must the late layout that follows —
+  // which is the half that was missing.
+  const heldAcrossCommit = held(before, right, 8);
+  const heldAcrossLayout = held(right, settled, 8);
+  const ok = prepended && heldAcrossCommit && heldAcrossLayout;
+  return {
+    ok,
+    note: `prepended=${prepended} (${opened.turns}→${settled.turns} turns)  before ${before.anchor?.idx}@${before.anchor?.off}px → commit ${right.anchor?.idx}@${right.anchor?.off}px → settled ${settled.anchor?.idx}@${settled.anchor?.off}px  (commit=${heldAcrossCommit} layout=${heldAcrossLayout})`,
+  };
+}
+
 async function runScenario(sc, chrome) {
   const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT),
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
-    "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0"], { stdio: ["ignore", "ignore", "inherit"] });
+    "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0",
+    "--paging", sc.paging ? "1" : "0", "--pagesize", String(sc.pagesize || 400),
+    "--working", sc.working ? "1" : "0"], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
     const results = [];
@@ -451,6 +604,8 @@ async function runScenario(sc, chrome) {
         : sc.mode === "swipe" ? await runSwipe(cdp)
         : sc.mode === "shared" ? await runShared(cdp)
         : sc.mode === "typing" ? await runTyping(cdp)
+        : sc.mode === "working" ? await runWorking(cdp)
+        : sc.mode === "paging" ? await runPaging(cdp)
         : await runLanding(cdp);
       results.push(r);
       console.log(`  [${sc.name} ${run + 1}/${RUNS}] ${r.ok ? "OK " : "NG "} ${r.note}`);
