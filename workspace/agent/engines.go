@@ -120,6 +120,10 @@ func syncEngineProviders() {
 			names = append(names, p.Provider+" ("+strings.Join(p.Models, ",")+")")
 		}
 		log.Printf("engines: opencode provider written: %s", strings.Join(names, "; "))
+		// A serve daemon that was already up read its config, and its `{env:…}`, at start. At
+		// boot there is none and this costs nothing; it matters for a workspace whose sessions
+		// resumed before this call finished, and for a catalogue that changes later.
+		opencode.ApplyEngineChange(strings.Join(names, "; "))
 	}
 }
 

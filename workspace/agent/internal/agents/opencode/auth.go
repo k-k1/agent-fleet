@@ -228,6 +228,14 @@ var restartServe = func(reason string) { Serve().Restart(reason) }
 // propagation as a key change.
 func ApplyUsageChange(reason string) { applyKeyChange("usage changed: " + reason) }
 
+// ApplyEngineChange is applyKeyChange for the fleet's own engines (ADR 0071): the serve
+// daemon reads the provider block and resolves `{env:AF_ENGINE_TOKEN}` ONCE, at start, so a
+// daemon that came up before the engine catalogue was written knows nothing about it and
+// every managed turn on that model fails. Restart is a no-op when nothing is running, which
+// is the ordinary case at boot — this only pays for itself when the catalogue changes under a
+// live daemon.
+func ApplyEngineChange(reason string) { applyKeyChange("engines changed: " + reason) }
+
 // HandleDeleteConn removes a stored provider key
 // (DELETE /connections/opencode/{env}).
 func HandleDeleteConn(w http.ResponseWriter, r *http.Request) {
