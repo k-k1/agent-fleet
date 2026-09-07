@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { voicevoxAvailable, pollyAvailable, type TtsStatus } from "./ttsAvailability.ts";
+import { voicevoxAvailable, pollyAvailable, engineActivity, type TtsStatus } from "./ttsAvailability.ts";
 
 const st = (voicevox: TtsStatus["voicevox"]): TtsStatus => ({ voicevox, polly: { ready: true } });
 
@@ -46,5 +46,47 @@ describe("pollyAvailable", () => {
   // reading-language note; without it the note promises a Polly voice while Zundamon speaks.
   it("absent when not configured - unlike voicevox there is no managed notion", () => {
     expect(pollyAvailable(withPolly(false))).toBe(false);
+  });
+});
+
+// engineActivity is what a member is told the engine is doing, which on-demand made a real
+// question: "stopped" is now the normal state, and the answer decides whether they are shown
+// a button to call it (ADR 0070 decisions 4 and 16).
+describe("engineActivity", () => {
+  const managed = (v: Partial<TtsStatus["voicevox"]>): TtsStatus =>
+    st({ ready: false, managed: true, mode: "ondemand", enabled: true, ...v });
+
+  it("says nothing before the status arrives", () => {
+    expect(engineActivity(null)).toBe("unknown");
+  });
+
+  it("is unavailable where no engine was ever provisioned", () => {
+    expect(engineActivity(st({ ready: false }))).toBe("unavailable");
+  });
+
+  it("is stopped - not unavailable - when a managed engine is scaled to zero", () => {
+    // The distinction is the whole point: this one can be called, the one above cannot.
+    expect(engineActivity(managed({ state: "stopped" }))).toBe("stopped");
+  });
+
+  it("is starting while the task is being placed", () => {
+    expect(engineActivity(managed({ state: "starting" }))).toBe("starting");
+  });
+
+  // ECS RUNNING only says the container started. /version answers 200 before a voice model is
+  // loaded, so a member told "ready" here would be told Zundamon is reading while Polly is.
+  it("is warming when the container runs but is not ready", () => {
+    expect(engineActivity(managed({ state: "running", ready: false }))).toBe("warming");
+  });
+
+  it("is ready only once the CP says ready", () => {
+    expect(engineActivity(managed({ state: "running", ready: true }))).toBe("ready");
+  });
+
+  // The administrator's intent wins over whatever the engine happens to be doing: while the
+  // mode is off, routing goes to Polly and a member must not be offered a button that would
+  // buy a task nobody can hear.
+  it("is off while the mode is off, even with the engine still up", () => {
+    expect(engineActivity(managed({ state: "stopping", ready: true, mode: "off", enabled: false }))).toBe("off");
   });
 });

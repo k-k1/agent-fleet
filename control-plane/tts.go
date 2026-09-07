@@ -21,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -29,8 +30,17 @@ import (
 var ttsHTTP = &http.Client{Timeout: 30 * time.Second}
 
 type ttsSynthReq struct {
-	Text          string  `json:"text"`
-	Provider      string  `json:"provider"`      // "" | "auto" | "voicevox" | "polly"
+	Text     string `json:"text"`
+	Provider string `json:"provider"` // "" | "auto" | "voicevox" | "polly"
+	// Pin is the provider that answered the first sentence of the utterance being read,
+	// sent back on every following sentence so one answer is read in one voice (ADR 0070
+	// decision 13). It is a routing override and nothing else.
+	//
+	// ⚠️ It is a field of its own on purpose, and a client must never express a pin by
+	// sending provider:"polly" instead. Demand is counted from the CONFIGURED provider
+	// (decision 3): a pinned remainder that stopped counting as intent would let the idle
+	// window run out while somebody is still listening to it.
+	Pin           string  `json:"pin"`           // "" | "voicevox" | "polly"
 	Voice         string  `json:"voice"`         // voicevox speaker number (e.g. "3")
 	PollyVoice    string  `json:"pollyVoice"`    // Polly VoiceId (e.g. "Takumi"); also used when auto falls back to Polly
 	Speed         float64 `json:"speed"`         // 0.5-2.0 (voicevox speedScale / Polly prosody rate); 0 or unset = 1.0
@@ -59,15 +69,31 @@ type voiceOpts struct {
 // chooseTTSProvider decides what auto (the default) routes to (the table in docs/log/24).
 // It absorbs the asymmetry between VOICEVOX (Japanese only, must be started) and Polly
 // (multilingual, always up):
-//   - an explicit choice (voicevox / polly) is honoured as-is;
+//   - an explicit polly is honoured as-is;
+//   - an explicit voicevox is honoured while the engine can answer, and read by Polly
+//     while it cannot (ADR 0070 decision 13);
 //   - non-Japanese (lang=en) goes to Polly, falling back to voicevox — which then needs
 //     enkana — when Polly is absent;
 //   - Japanese (ja / auto) goes to voicevox when the engine is enabled and ready, otherwise
 //     to Polly JP (the next sentence returns to voicevox once Ready recovers).
 func chooseTTSProvider(pref, lang string, engineOff, vvReady, plReady bool) string {
 	switch pref {
-	case "voicevox", "polly":
-		return pref
+	case "polly":
+		return "polly"
+	case "voicevox":
+		// Not unconditional, and that is decision 13. Under on-demand a stopped engine is
+		// the NORMAL state, so honouring this as written would leave the one member who
+		// asked for Zundamon by name as the only member who hears nothing: the request
+		// 502s and synthToBuffer turns a 502 into a silently skipped sentence. The same
+		// goes for the engine being switched off — routing is off, and this request is
+		// routing too. Polly reads instead, and X-TTS-Provider says who did.
+		if vvReady && !engineOff {
+			return "voicevox"
+		}
+		if plReady {
+			return "polly"
+		}
+		return "voicevox" // nothing else can answer: surface voicevox's own 502
 	}
 	if lang == "en" {
 		if plReady {
@@ -108,13 +134,11 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	if cfg.mgr != nil && cfg.mgr.store != nil {
 		settings = cfg.mgr.store
 	}
-	engineMode := func(ctx context.Context) string {
-		v := ""
-		if settings != nil {
-			v, _ = settings.GetSetting(ctx, ttsEngineSetting)
-		}
-		return ttsEngineMode(v, eng != nil)
-	}
+	status := ttsStatusView{vv: vv, pl: pl, eng: eng, settings: settings}
+	// The character catalogue outlives the engine (ADR 0070 decision 12): under on-demand
+	// the engine is stopped most of the time, and a picker that can only be filled by a
+	// running engine is a picker nobody can use.
+	speakers := &ttsSpeakerCache{settings: settings}
 
 	// The on-demand controller and the demand counter exist only where there is a service
 	// to start: elsewhere the engine's lifecycle is somebody else's (a standing dev
@@ -131,7 +155,7 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 		}
 		// Constructing it also puts the warm-up gate in front of vv.Ready: /version answers
 		// 200 before a voice model is loaded (ADR 0070 decision 16).
-		ctrl = newTTSController(eng, vv, demand, settings, auditor, ccfg)
+		ctrl = newTTSController(eng, vv, demand, settings, auditor, speakers, ccfg)
 		if ccfg.interval > 0 {
 			log.Printf("tts: on-demand controller every %s (start %d chars / %s, idle %s, off grace %s)",
 				ccfg.interval, ccfg.startChars, ccfg.window, ccfg.idle, ccfg.offGrace)
@@ -157,18 +181,41 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 			writeAPIErr(w, &apiError{http.StatusNotImplemented, "tts_provider_unavailable", "unknown provider: " + req.Provider})
 			return
 		}
-		mode := engineMode(r.Context())
+		switch req.Pin {
+		case "", "auto", "voicevox", "polly":
+			// ok
+		default:
+			writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "unknown pin: " + req.Pin})
+			return
+		}
+		// One request, one sentence: the client cuts at sentence ends and splits anything
+		// longer than 60 characters before it gets here. The cap is for everything that is
+		// not that client — measured, a single request of about 2,000 characters OOM-kills
+		// a 4 GiB engine while its health check stays HEALTHY throughout, and one over
+		// roughly 300 characters outlives ttsHTTP's own 30 s timeout anyway (ADR 0070
+		// decision 17).
+		if max := ttsMaxSynthChars(); max > 0 && len([]rune(text)) > max {
+			writeAPIErr(w, &apiError{http.StatusRequestEntityTooLarge, "tts_text_too_long",
+				fmt.Sprintf("one synthesis request is limited to %d characters; split the text into sentences", max)})
+			return
+		}
+		mode := status.mode(r.Context())
 		// Demand is intent, not outcome (ADR 0070 decision 3): count what this request
 		// wanted before anything is routed, because while the engine starts every request
 		// is served by Polly and an outcome counter would read zero for exactly the two
 		// minutes that matter.
+		//
+		// ⚠️ It is req.Provider — the member's configured preference — and never the pin
+		// below. A pinned remainder of an answer that stopped counting would starve the
+		// automatic trigger and let the idle window close on somebody who is listening.
 		if ttsDemandIntent(req.Provider, req.Lang, mode) {
 			demand.record(r.Context(), len([]rune(text)))
 		}
-		name := req.Provider
-		if name == "" || name == "auto" {
-			name = chooseTTSProvider(req.Provider, req.Lang, mode == ttsModeOff, vv.Ready(r.Context()), pl.Ready(r.Context()))
+		pref := req.Provider
+		if req.Pin == "voicevox" || req.Pin == "polly" {
+			pref = req.Pin
 		}
+		name := chooseTTSProvider(pref, req.Lang, mode == ttsModeOff, vv.Ready(r.Context()), pl.Ready(r.Context()))
 		o := voiceOpts{voice: req.Voice, speed: req.Speed, lang: req.Lang, particlePause: req.ParticlePause}
 		if name == "voicevox" {
 			// VOICEVOX cannot read English spelling, so transliterate it first. Polly
@@ -196,50 +243,27 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	// it. When the engine is ECS-managed the service state (running/starting/stopped) is
 	// added so the readiness gate is visible.
 	mux.HandleFunc("GET /api/tts/status", func(w http.ResponseWriter, r *http.Request) {
-		mode := engineMode(r.Context())
-		vvSt := map[string]any{
-			"ready":   vv.Ready(r.Context()),
-			"enabled": mode != ttsModeOff,
-			"mode":    mode,
-		}
-		if eng != nil {
-			vvSt["managed"] = true
-			if v, err := eng.view(r.Context()); err == nil {
-				vvSt["state"] = ttsDisplayState(v.state, mode)
-			}
-		}
-		writeJSON(w, http.StatusOK, map[string]any{
-			"providers": map[string]any{
-				"voicevox": vvSt,
-				"polly":    map[string]any{"ready": pl.Ready(r.Context())},
-			},
-		})
+		writeJSON(w, http.StatusOK, status.body(r.Context()))
 	})
 
-	// Character list, proxied from VOICEVOX /speakers, so the character picker in settings
-	// offers names, styles and speaker numbers from the live engine — a static table of
-	// speaker numbers drifts away from it (docs/log/24). The 60s cache keeps settings
-	// re-renders off the engine. A stopped engine gives 502, and the UI falls back to
-	// read-only display of the current setting.
-	var spMu sync.Mutex
-	var spCache []ttsSpeaker
-	var spAt time.Time
+	// "Call Zundamon" — the explicit start trigger of ADR 0070 decision 4, for any logged
+	// in member. Somebody who wants the voice for their own notifications must not have to
+	// earn it by volume.
+	wake := &ttsWakeAPI{memberAuth: memberAuth{cfg.mgr}, status: status, eng: eng, ctrl: ctrl, demand: demand}
+	mux.HandleFunc("POST /api/tts/wake", wake.withIdentity(wake.post))
+
+	// Character list, from VOICEVOX /speakers, so the character picker in settings offers
+	// names, styles and speaker numbers from the real engine — a static table of speaker
+	// numbers drifts away from it (docs/log/24). Under on-demand the engine is stopped
+	// most of the time, so the catalogue is also kept durably and answered from there
+	// while it is down (decision 12); "live" says which of the two this is.
 	mux.HandleFunc("GET /api/tts/speakers", func(w http.ResponseWriter, r *http.Request) {
-		spMu.Lock()
-		cached, fresh := spCache, !spAt.IsZero() && time.Since(spAt) < 60*time.Second
-		spMu.Unlock()
-		if !fresh {
-			list, aerr := voicevoxSpeakers(r.Context(), cfg.voicevoxURL)
-			if aerr != nil {
-				writeAPIErr(w, aerr)
-				return
-			}
-			spMu.Lock()
-			spCache, spAt = list, time.Now()
-			spMu.Unlock()
-			cached = list
+		list, live, aerr := speakers.get(r.Context(), cfg.voicevoxURL, vv.reachable(r.Context()))
+		if aerr != nil {
+			writeAPIErr(w, aerr)
+			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"speakers": cached})
+		writeJSON(w, http.StatusOK, map[string]any{"speakers": list, "live": live})
 	})
 
 	// The tenant-wide reading dictionary, readable by every logged-in user. The client
@@ -260,6 +284,62 @@ func registerTTSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /api/admin/tts", adm.withSuperAdmin(adm.get))
 	mux.HandleFunc("PUT /api/admin/tts", adm.withSuperAdmin(adm.put))
 	mux.HandleFunc("PUT /api/admin/tts/dict", adm.withSuperAdmin(adm.putDict))
+}
+
+// ttsMaxSynthChars is the ceiling on ONE synthesis request, in characters
+// (AF_TTS_MAX_CHARS, 0 = no cap). It is not a quota — it is the guard rail P0 measured
+// the need for: about 2,000 characters in a single call OOM-kills a 4 GiB engine, the
+// container health check on /version stays HEALTHY right up to the exit, and ECS then
+// spends about 2.5 minutes replacing the task while Polly reads. The default sits just
+// above ttsHTTP's own limit (a 268-character sentence takes 25.2 s against a 30 s
+// timeout), so nothing that would have succeeded is refused, and far below what the
+// browser client can produce at all — it cuts at sentence ends and splits anything over
+// 60 characters before sending (ADR 0070 decision 17).
+func ttsMaxSynthChars() int { return runtime.EnvInt("AF_TTS_MAX_CHARS", 300) }
+
+// --- status ---------------------------------------------------------------------
+
+// ttsStatusView builds what a member is told about the engines. GET /api/tts/status
+// answers with it and POST /api/tts/wake echoes it back, so pressing the button shows
+// the new state without a second round trip.
+//
+// Mode (the stored intent) and state (what the deployment is doing about it) are
+// separate fields on purpose — ADR 0070 decision 7, and the same defect class as a
+// screen that reports a setting as though it were reality.
+type ttsStatusView struct {
+	vv       *voicevoxProvider
+	pl       *pollyProvider
+	eng      *ttsEngineECS       // nil = not ECS-managed
+	settings store.SettingsStore // may be nil (tests)
+}
+
+func (s ttsStatusView) mode(ctx context.Context) string {
+	v := ""
+	if s.settings != nil {
+		v, _ = s.settings.GetSetting(ctx, ttsEngineSetting)
+	}
+	return ttsEngineMode(v, s.eng != nil)
+}
+
+func (s ttsStatusView) body(ctx context.Context) map[string]any {
+	mode := s.mode(ctx)
+	vvSt := map[string]any{
+		"ready":   s.vv.Ready(ctx),
+		"enabled": mode != ttsModeOff,
+		"mode":    mode,
+	}
+	if s.eng != nil {
+		vvSt["managed"] = true
+		if v, err := s.eng.view(ctx); err == nil {
+			vvSt["state"] = ttsDisplayState(v.state, mode)
+		}
+	}
+	return map[string]any{
+		"providers": map[string]any{
+			"voicevox": vvSt,
+			"polly":    map[string]any{"ready": s.pl.Ready(ctx)},
+		},
+	}
 }
 
 // --- voicevox provider ---------------------------------------------------------

@@ -4,6 +4,14 @@ import { applyReadings } from "../ttsText.ts";
 
 export interface TtsOptions {
   provider: string; // "auto" | "voicevox" | "polly"
+  // The provider that answered the first sentence of the utterance being read, sent back on
+  // every following one so a single answer is read in a single voice (ADR 0070 decision 13).
+  // Not a setting: it is set per playback by makeProviderPin, never from settings.
+  //
+  // ⚠️ It is its own field, and a pin must never be expressed as provider:"polly" instead —
+  // CP counts demand from the CONFIGURED provider, and a pinned remainder that stopped
+  // counting would let the engine's idle window close on somebody who is still listening.
+  pin?: string; // "" | "voicevox" | "polly"
   voice: string; // VOICEVOX speaker number
   speed: number; // speedScale
   enkana?: boolean; // pre-transcribe English into katakana (CP's enkana; voicevox only)

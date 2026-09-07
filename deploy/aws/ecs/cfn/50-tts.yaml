@@ -55,9 +55,11 @@ Parameters:
     AllowedValues: [ X86_64, ARM64 ]
     Description: >-
       Declared, never inferred (ADR 0053, ADR 0070 decision 11). The image is a
-      two-architecture index, and ARM Fargate is 20.0 % cheaper, but synthesis speed on
-      Graviton is unmeasured — an engine 20 % cheaper and 30 % slower is a bad trade for
-      a latency-sensitive feature. Move it only with numbers in hand.
+      two-architecture index and ARM Fargate is 20.0 % cheaper, so the question was whether
+      ONNX inference on Graviton pays for itself. Measured in P0: it does not — arm64 is
+      20 % cheaper and 52 % SLOWER (6.73 s against 4.42 s for the same sentence), and at a
+      real-time ratio of 0.92 a short sentence stops keeping up with playback. Leave it on
+      X86_64; the parameter stays for a future architecture, not for this one.
   EngineThreads:
     Type: String
     Default: "2"
@@ -72,6 +74,25 @@ Parameters:
     Description: >-
       --load_all_models. Trades a longer boot for a first synthesis that is not slow.
       P0 measures both; the default stays off until those numbers exist.
+  UseSpot:
+    Type: String
+    Default: "off"
+    AllowedValues: [ "on", "off" ]
+    Description: >-
+      Fargate Spot for the engine (ADR 0070 P3). About 70 % cheaper, and an interruption
+      merely falls back to Polly — the engine holds no state, and the controller already
+      treats a task that disappears as a replacement rather than a failed start. Off by
+      default because with idle-stop the remaining bill is small and a capacity shortfall
+      shows up as an engine that never arrives.
+      ⚠️ Spot and LaunchType are mutually exclusive, so "on" replaces `LaunchType: FARGATE`
+      with an explicit capacity provider strategy. That is equally binding — measured on a
+      real cluster: a task run with `capacityProvider=FARGATE_SPOT` and no LaunchType was
+      placed on FARGATE_SPOT, and an explicit strategy overrides the cluster default, so
+      decision 1's invariant (the engine never lands in the EC2 slot pool) still holds. It
+      is the OMISSION of both that breaks it.
+      ⚠️ Switching this on or off changes the service's placement, which CloudFormation
+      applies by REPLACING the service — and a newly created service starts at desired 1
+      (the DesiredCount contract below), so expect one cold start and scale it back to 0.
   LogRetentionDays:
     Type: Number
     Default: 7
@@ -79,6 +100,7 @@ Parameters:
 
 Conditions:
   HasLoadAllModels: !Equals [ !Ref LoadAllModels, "on" ]
+  HasSpot: !Equals [ !Ref UseSpot, "on" ]
 
 Resources:
   # The VOICEVOX HTTP API is unauthenticated and has mutating endpoints, so reachability
@@ -197,13 +219,20 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-voicevox"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref TaskDef
-      # ⚠️ LaunchType must stay spelled out. The cluster has NO capacity provider
-      # (measured on the ecs-ec2 deployment: `capacityProviders: []`), so a service that
-      # does not say FARGATE gets the API default, EC2 — which puts the engine inside the
-      # workspace slot pool, breaks the sweeper's "an instance with zero ECS tasks is
-      # idle" premise, and consumes a seat that someone's Workspace needed (ADR 0070
-      # decision 1). One missing line is the whole of that failure.
-      LaunchType: FARGATE
+      # ⚠️ The placement must stay SPELLED OUT — as LaunchType here, or as the capacity
+      # provider strategy below when UseSpot is on. A service that says neither gets the
+      # API default, EC2, which puts the engine inside the workspace slot pool, breaks the
+      # sweeper's "an instance with zero ECS tasks is idle" premise, and consumes a seat
+      # that someone's Workspace needed (ADR 0070 decision 1). One missing line is the
+      # whole of that failure, and a cluster that later gains a default capacity provider
+      # strategy changes what "the default" even means — so neither is inferred here.
+      LaunchType: !If [ HasSpot, !Ref "AWS::NoValue", FARGATE ]
+      CapacityProviderStrategy:
+        !If
+          - HasSpot
+          - - CapacityProvider: FARGATE_SPOT
+              Weight: 1
+          - !Ref "AWS::NoValue"
       # ⚠️ DesiredCount is deliberately ABSENT, and this is load-bearing. From the
       # resource schema: for a NEW service an unspecified desired count defaults to 1;
       # for an EXISTING one it is omitted from the update call. So CloudFormation creates

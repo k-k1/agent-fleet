@@ -16,7 +16,16 @@ import {
 } from "../../../lib/settings.ts";
 import { voiceCharacters, isDefaultVoice, previewVoice } from "../../chat/tts.ts";
 import { loadSpeakers, speakersCatalog } from "../../chat/ttsSpeakers.ts";
-import { loadTtsStatus, ttsStatusCache, voicevoxAvailable, pollyAvailable } from "../../chat/ttsStatus.ts";
+import {
+  loadTtsStatus,
+  refreshTtsStatus,
+  ttsStatusCache,
+  voicevoxAvailable,
+  pollyAvailable,
+  engineActivity,
+  wakeEngine,
+  type TtsStatus,
+} from "../../chat/ttsStatus.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { Button } from "../../../ui/Button.tsx";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
@@ -115,6 +124,7 @@ export function TtsTab() {
             </Row>
             <p className="muted ds-note">{noVv ? tr("tts.note_no_voicevox") : tr("tts.note_engine")}</p>
             {noVv && s.ttsProvider === "voicevox" && <p className="form-err">{tr("tts.warn_voicevox_missing")}</p>}
+            {s.ttsProvider !== "polly" && <EngineState engines={engines} onChange={setEngines} />}
             {/* Reading language (docs/log/84). It decides the routing when the engine is set
                 to auto (en → Polly) and Polly's default voice. It is its own setting rather
                 than the assistant's answer language: sharing that one made switching the chat
@@ -262,6 +272,77 @@ export function TtsTab() {
         </Button>
         <p className="muted ds-note">{tr("tts.note_reset")}</p>
       </section>
+    </div>
+  );
+}
+
+// EngineState — what the VOICEVOX engine is doing, and the one control a member has over it
+// (ADR 0070 decisions 4 and 16).
+//
+// It exists because on-demand made "stopped" the engine's normal state. Before it, a member
+// whose Japanese was suddenly read by Polly had nothing to look at: the reading just sounded
+// different, with no way to tell an engine that is warming up (seconds) from one that is not
+// running at all (which somebody has to ask for), and no way to ask.
+//
+// Two things it deliberately does not do. It does not report "warming up" from the service
+// state — ECS RUNNING means the container started, not that a voice model is loaded, so it
+// keys on ready (decision 16). And it does not offer the button while the mode is off: that
+// is an administrator's decision, and a member cannot buy their way past it.
+function EngineState({ engines, onChange }: { engines: TtsStatus | null; onChange: (st: TtsStatus) => void }) {
+  const tr = useT();
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const activity = engineActivity(engines);
+
+  // While the engine is on its way, follow it: a start takes 70-80 seconds (measured), which
+  // is a long time to look at a screen that says "stopped" because the answer is 30 s old.
+  const moving = activity === "starting" || activity === "warming";
+  useEffect(() => {
+    if (!moving) return;
+    let alive = true;
+    const t = setInterval(() => {
+      void refreshTtsStatus().then((st) => alive && st && onChange(st));
+    }, 5000);
+    return () => {
+      alive = false;
+      clearInterval(t);
+    };
+  }, [moving, onChange]);
+
+  if (activity === "unknown" || activity === "unavailable" || activity === "ready") return null;
+
+  const wake = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      const r = await wakeEngine();
+      if (!r.ok) {
+        setErr(r.message || tr("tts.wake_failed"));
+        return;
+      }
+      if (r.status) onChange(r.status);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="ds-engine-state">
+      <p className="muted ds-note">
+        {activity === "off"
+          ? tr("tts.engine_off")
+          : activity === "starting"
+            ? tr("tts.engine_starting")
+            : activity === "warming"
+              ? tr("tts.engine_warming")
+              : tr("tts.engine_stopped")}
+      </p>
+      {activity === "stopped" && (
+        <Button variant="ghost" icon="unmute" disabled={busy} onClick={wake}>
+          {busy ? tr("tts.wake_calling") : tr("tts.wake_btn")}
+        </Button>
+      )}
+      {err && <p className="form-err">{err}</p>}
     </div>
   );
 }
