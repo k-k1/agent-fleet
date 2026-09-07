@@ -598,6 +598,11 @@ type fakeContainerInstances struct {
 	// stickyENI models the opposite: ECS acknowledges the deregistration but the ENI
 	// stays attached. The teardown must then refuse to stop the box (decision 3-3).
 	stickyENI bool
+	// capacityProvider maps EC2 instance id -> the capacity provider ECS reports for it.
+	// Empty (the usual case) is a slot the CP launched from the pool's launch template;
+	// a value means somebody else's box shares the cluster — an ADR 0071 engine on
+	// Managed Instances.
+	capacityProvider map[string]string
 }
 
 func (f *fakeContainerInstances) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
@@ -612,13 +617,17 @@ func (f *fakeContainerInstances) DescribeContainerInstances(_ context.Context, i
 	out := &ecs.DescribeContainerInstancesOutput{}
 	for _, arn := range in.ContainerInstances {
 		id := strings.TrimPrefix(arn, "arn:ci/")
-		out.ContainerInstances = append(out.ContainerInstances, ecstypes.ContainerInstance{
+		ci := ecstypes.ContainerInstance{
 			ContainerInstanceArn: aws.String(arn),
 			Ec2InstanceId:        aws.String(id),
 			Status:               aws.String("ACTIVE"),
 			AgentConnected:       f.registered[id],
 			RunningTasksCount:    f.tasks[id],
-		})
+		}
+		if cp := f.capacityProvider[id]; cp != "" {
+			ci.CapacityProviderName = aws.String(cp)
+		}
+		out.ContainerInstances = append(out.ContainerInstances, ci)
 	}
 	return out, nil
 }
@@ -679,7 +688,11 @@ func newEC2Harness(t *testing.T) *ec2Harness {
 		efs:  &fakeEFS{},
 		ssm:  &fakeSSM{},
 		ssmc: &fakeSSMCmd{fail: map[string]bool{}},
-		ci:   &fakeContainerInstances{registered: map[string]bool{}, tasks: map[string]int32{}},
+		ci: &fakeContainerInstances{
+			registered:       map[string]bool{},
+			tasks:            map[string]int32{},
+			capacityProvider: map[string]string{},
+		},
 	}
 	h.ssmc.sink = h.ec2
 	h.ci.sink = h.ec2
@@ -2616,6 +2629,54 @@ func TestECSEC2SweeperDeregistersTheBoxItTerminates(t *testing.T) {
 
 	if got := h.ci.deregistered; len(got) != 1 || got[0] != "arn:ci/i-cold" {
 		t.Fatalf("DeregisterContainerInstance = %v, want [arn:ci/i-cold]", got)
+	}
+}
+
+// The cluster is shared. ADR 0071 adds an engine box to it through an ECS Managed
+// Instances capacity provider, and every container-instance walk in this file was written
+// for pool members only: an MI box that ECS is draining looks exactly like a ghost slot
+// (ACTIVE, agent gone, EC2 instance about to vanish), and deregistering it takes an engine
+// away from the controller that owns it. The capacity provider name is what tells them
+// apart — a pool slot registers itself from user-data and carries none (ADR 0071 decision 1
+// and review R7(a)).
+func TestECSEC2PoolWalksSkipManagedInstancesBoxes(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.pool.ghostAfter = time.Minute
+	// One real slot, connected, plus a draining engine box on the engine capacity provider.
+	h.ec2.addSlot("i-slot", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-slot"] = true
+	// A running engine: connected, with the engine task on it. Nothing here may read it as
+	// a slot that is ready to take a workspace.
+	h.ci.registered["i-engine"] = true
+	h.ci.capacityProvider["i-engine"] = "af-af-ecs-engines-llm"
+	h.ci.tasks["i-engine"] = 1
+	// And one MI is draining: agent gone, EC2 instance already out of the world.
+	h.ci.registered["i-engine-drain"] = false
+	h.ci.capacityProvider["i-engine-drain"] = "af-af-ecs-engines-llm"
+
+	ready, err := h.rt.registeredSlots(ctx)
+	if err != nil {
+		t.Fatalf("registeredSlots: %v", err)
+	}
+	if !ready["i-slot"] || ready["i-engine"] {
+		t.Fatalf("registeredSlots = %v, want only the pool slot", ready)
+	}
+	counts, err := h.rt.slotTaskCounts(ctx)
+	if err != nil {
+		t.Fatalf("slotTaskCounts: %v", err)
+	}
+	if _, seen := counts["i-engine"]; seen {
+		t.Fatalf("slotTaskCounts = %v — an engine box is not a slot with an occupant", counts)
+	}
+
+	// The engine's EC2 instance is not in the fake's world at all, which is exactly the
+	// "the box is gone" state the ghost sweep deregisters on.
+	if err := h.factory().sweepGhostInstances(ctx); err != nil {
+		t.Fatalf("sweepGhostInstances: %v", err)
+	}
+	if got := h.ci.deregistered; len(got) != 0 {
+		t.Fatalf("DeregisterContainerInstance = %v, want none — the engine box is MI's to drain", got)
 	}
 }
 

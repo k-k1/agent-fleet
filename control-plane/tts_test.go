@@ -330,9 +330,9 @@ func TestTTSAdminModes(t *testing.T) {
 	srv, _ := fakeVoicevox(t)
 	st := testSettingsStore(t)
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox"}
 	vv := &voicevoxProvider{base: srv.URL}
-	ctrl := newTTSController(eng, vv, newTTSDemand(st, time.Minute), st, nil, testControlCfg())
+	ctrl := newTTSController(eng, vv, newEngineDemand(st, ttsEngineSettings().demandAt, time.Minute), st, nil, testControlCfg())
 	adm := ttsAdminAPI{memberAuth{&manager{store: st}}, st, eng, ctrl, vv, newPollyProvider()}
 
 	put := func(body string) map[string]any {
@@ -360,7 +360,7 @@ func TestTTSAdminModes(t *testing.T) {
 	if len(f.desired) != 0 {
 		t.Errorf("after off: desired calls = %v, want none (the controller stops it later)", f.desired)
 	}
-	if v, _ := st.GetSetting(t.Context(), ttsModeAtSetting); v == "" {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().modeAt); v == "" {
 		t.Error("the mode change time must be stored: the undo window is measured from it")
 	}
 
@@ -395,7 +395,7 @@ func TestTTSAdminModes(t *testing.T) {
 
 	// With no controller there is nobody to stop it later, so OFF stops it here.
 	f2 := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
-	adm2 := ttsAdminAPI{memberAuth{&manager{store: st}}, st, &ttsEngineECS{api: f2, cluster: "c", service: "voicevox"}, nil, vv, newPollyProvider()}
+	adm2 := ttsAdminAPI{memberAuth{&manager{store: st}}, st, &engineECS{api: f2, cluster: "c", service: "voicevox"}, nil, vv, newPollyProvider()}
 	rec = httptest.NewRecorder()
 	adm2.put(rec, httptest.NewRequest("PUT", "/api/admin/tts", strings.NewReader(`{"mode":"off"}`)), store.Identity{ID: "u1"})
 	if len(f2.desired) != 1 || f2.desired[0] != 0 {

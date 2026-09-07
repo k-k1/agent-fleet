@@ -23,7 +23,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 )
 
-func liveTTSEngine(t *testing.T) *ttsEngineECS {
+func liveTTSEngine(t *testing.T) *engineECS {
 	t.Helper()
 	if os.Getenv("AF_TTS_LIVE") != "1" {
 		t.Skip("set AF_TTS_LIVE=1 AF_TTS_LIVE_CLUSTER=… AF_TTS_LIVE_SERVICE=… to run the live engine check")
@@ -36,7 +36,7 @@ func liveTTSEngine(t *testing.T) *ttsEngineECS {
 	if err != nil {
 		t.Fatalf("aws config: %v", err)
 	}
-	return &ttsEngineECS{api: ecs.NewFromConfig(ac), cluster: cluster, service: service}
+	return &engineECS{api: ecs.NewFromConfig(ac), cluster: cluster, service: service}
 }
 
 // TestTTSEngineLiveView reads a real service: the state mapping, the primary deployment's

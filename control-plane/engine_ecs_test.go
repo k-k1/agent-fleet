@@ -15,6 +15,9 @@ type fakeTTSECS struct {
 	svc      *ecstypes.Service // nil = not found
 	desired  []int32           // recorded UpdateService calls
 	describe int               // DescribeServices calls, for the TTL cache test
+	// instances are the cluster's container instances, keyed arn -> capacity provider.
+	// Only an engine that declares a capacity provider ever reads them (ADR 0071).
+	instances map[string]string
 }
 
 func (f *fakeTTSECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -31,6 +34,26 @@ func (f *fakeTTSECS) UpdateService(_ context.Context, in *ecs.UpdateServiceInput
 	return &ecs.UpdateServiceOutput{}, nil
 }
 
+func (f *fakeTTSECS) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
+	out := &ecs.ListContainerInstancesOutput{}
+	for arn := range f.instances {
+		out.ContainerInstanceArns = append(out.ContainerInstanceArns, arn)
+	}
+	return out, nil
+}
+
+func (f *fakeTTSECS) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
+	out := &ecs.DescribeContainerInstancesOutput{}
+	for _, arn := range in.ContainerInstances {
+		ci := ecstypes.ContainerInstance{ContainerInstanceArn: aws.String(arn)}
+		if cp := f.instances[arn]; cp != "" {
+			ci.CapacityProviderName = aws.String(cp)
+		}
+		out.ContainerInstances = append(out.ContainerInstances, ci)
+	}
+	return out, nil
+}
+
 func TestTTSEngineECSState(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -44,7 +67,7 @@ func TestTTSEngineECSState(t *testing.T) {
 		{"inactive→none", &ecstypes.Service{Status: aws.String("INACTIVE"), DesiredCount: 1}, "none", 0},
 	}
 	for _, c := range cases {
-		eng := &ttsEngineECS{api: &fakeTTSECS{svc: c.svc}, cluster: "c", service: "voicevox"}
+		eng := &engineECS{api: &fakeTTSECS{svc: c.svc}, cluster: "c", service: "voicevox"}
 		v, err := eng.view(t.Context())
 		if err != nil {
 			t.Fatalf("%s: %v", c.name, err)
@@ -55,9 +78,41 @@ func TestTTSEngineECSState(t *testing.T) {
 	}
 
 	// missing service → error (misconfiguration should be visible, not "none" silently)
-	eng := &ttsEngineECS{api: &fakeTTSECS{}, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: &fakeTTSECS{}, cluster: "c", service: "voicevox"}
 	if _, err := eng.view(t.Context()); err == nil {
 		t.Error("missing service should return an error")
+	}
+}
+
+// A Managed Instances engine is "stopped" from the moment the task goes, and keeps billing
+// for the several minutes AWS then takes to terminate the box (measured 427-463 s on a GPU
+// box). The controller has to be able to see that: the idle window cannot be tuned against
+// a cost that is already spent, and a start that lands on a box still holding the model
+// file skips the whole S3 fetch (ADR 0071 decision 7). A Fargate engine declares no capacity
+// provider and must never pay for the lookup, let alone report the state.
+func TestEngineECSDrainingIsOnlyForManagedInstances(t *testing.T) {
+	stopped := func() *ecstypes.Service {
+		return &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0, RunningCount: 0}
+	}
+	f := &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "af-engines-llm"}}
+	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	v, err := eng.view(t.Context())
+	if err != nil || v.state != "draining" {
+		t.Fatalf("state=%q err=%v, want draining", v.state, err)
+	}
+
+	// Somebody else's box on the same cluster (a workspace slot) is not this engine draining.
+	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-2": ""}}
+	eng = &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	if v, _ := eng.view(t.Context()); v.state != "stopped" {
+		t.Fatalf("state=%q, want stopped — a pool slot is not an engine box", v.state)
+	}
+
+	// Fargate: no provider declared, so the cluster is never walked at all.
+	f = &fakeTTSECS{svc: stopped(), instances: map[string]string{"arn:ci/i-1": "af-engines-llm"}}
+	eng = &engineECS{api: f, key: "tts", cluster: "c", service: "voicevox"}
+	if v, _ := eng.view(t.Context()); v.state != "stopped" {
+		t.Fatalf("state=%q, want stopped — a Fargate engine has no box to drain", v.state)
 	}
 }
 
@@ -68,7 +123,7 @@ func TestTTSEngineECSState(t *testing.T) {
 func TestTTSEngineViewCache(t *testing.T) {
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}}
 	now := time.Now()
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
 
 	for range 5 {
 		if _, err := eng.view(t.Context()); err != nil {
@@ -79,7 +134,7 @@ func TestTTSEngineViewCache(t *testing.T) {
 		t.Errorf("DescribeServices calls = %d, want 1 (the rest served from the cache)", f.describe)
 	}
 
-	now = now.Add(ttsViewTTL + time.Second)
+	now = now.Add(engineViewTTL + time.Second)
 	if _, err := eng.view(t.Context()); err != nil {
 		t.Fatalf("view after the TTL: %v", err)
 	}
@@ -126,7 +181,7 @@ func TestTTSEngineViewDetail(t *testing.T) {
 			{Message: aws.String("older still")},
 		},
 	}}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox"}
 	v, err := eng.view(t.Context())
 	if err != nil {
 		t.Fatalf("view: %v", err)
@@ -144,7 +199,7 @@ func TestTTSEngineViewDetail(t *testing.T) {
 
 func TestTTSEngineECSSetEnabled(t *testing.T) {
 	f := &fakeTTSECS{}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox"}
 	if err := eng.setEnabled(t.Context(), true); err != nil {
 		t.Fatalf("on: %v", err)
 	}

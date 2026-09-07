@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 118
+# count: 120
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -23,6 +23,8 @@ egress.go egressAPI.stats x1 {days,egress,enforce,mode}
 egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}
 egress_member.go egressAPI.propose x1 {entry,id,state}
+engine_gateway.go engineGateway.catalog x1 {engines}
+engine_gateway.go engineGateway.issueSessionToken x1 {base_url,expires_at,models,token}
 git_lfs.go gitServerAPI.lfsBatch x1 {objects,transfer}
 git_lfs.go writeLFSErr x1 {message}
 git_lfs_locks.go gitServerAPI.lfsLockCreate x1 {lock}

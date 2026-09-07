@@ -2437,6 +2437,22 @@ func (e *ecsEC2Runtime) occupiedInstances(ctx context.Context) (map[string]bool,
 	return busy, nil
 }
 
+// isPoolContainerInstance reports whether a container instance belongs to the workspace
+// slot pool rather than to something else sharing the cluster.
+//
+// The pool's boxes are launched by the CP from a launch template and register themselves
+// through user-data, so ECS reports NO capacity provider for them. An engine box (ADR 0071
+// decision 1: ECS Managed Instances, added to the same cluster as an extra capacity
+// provider) always carries its provider's name. Every container-instance walk here is
+// written for pool members — "ACTIVE and agentConnected means a slot is ready", "no ECS
+// task means the box is idle", "the EC2 instance is gone so deregister" — and an engine box
+// satisfies none of those premises: it is not a slot, its idleness is the engine
+// controller's business, and MI owns its lifecycle. So the whole cluster walk is filtered
+// here rather than at each caller (ADR 0071 review R7(a)).
+func isPoolContainerInstance(ci ecstypes.ContainerInstance) bool {
+	return strings.TrimSpace(aws.ToString(ci.CapacityProviderName)) == ""
+}
+
 // registeredSlots is the set of EC2 instance ids the cluster currently accepts tasks
 // on (ACTIVE + agentConnected). An unregistered slot can hold a volume but cannot run
 // the task yet, so it sorts behind the hot ones rather than being skipped.
@@ -2455,6 +2471,9 @@ func (e *ecsEC2Runtime) registeredSlots(ctx context.Context) (map[string]bool, e
 			return nil, err
 		}
 		for _, ci := range out.ContainerInstances {
+			if !isPoolContainerInstance(ci) {
+				continue
+			}
 			if aws.ToString(ci.Status) == "ACTIVE" && ci.AgentConnected {
 				ready[aws.ToString(ci.Ec2InstanceId)] = true
 			}
@@ -4883,7 +4902,7 @@ func (e *ecsEC2Runtime) deregisterSlot(ctx context.Context, instanceID string) {
 			return
 		}
 		for _, ci := range out.ContainerInstances {
-			if aws.ToString(ci.Ec2InstanceId) != instanceID {
+			if !isPoolContainerInstance(ci) || aws.ToString(ci.Ec2InstanceId) != instanceID {
 				continue
 			}
 			if _, err := e.ci.DeregisterContainerInstance(ctx, &ecs.DeregisterContainerInstanceInput{
@@ -4917,6 +4936,9 @@ func (e *ecsEC2Runtime) slotTaskCounts(ctx context.Context) (map[string]int, err
 			return nil, err
 		}
 		for _, ci := range out.ContainerInstances {
+			if !isPoolContainerInstance(ci) {
+				continue
+			}
 			counts[aws.ToString(ci.Ec2InstanceId)] = int(ci.RunningTasksCount + ci.PendingTasksCount)
 		}
 	}
@@ -4967,6 +4989,12 @@ func (f *ecsEC2Factory) sweepGhostInstances(ctx context.Context) error {
 			return err
 		}
 		for _, ci := range out.ContainerInstances {
+			// An engine box's agent disconnects while MI drains it, and its EC2 instance is
+			// gone a few minutes later — exactly the shape this sweeper deregisters. Doing
+			// that to a box ECS is still tidying up is not the CP's call.
+			if !isPoolContainerInstance(ci) {
+				continue
+			}
 			if ci.AgentConnected || aws.ToString(ci.Status) != "ACTIVE" {
 				continue
 			}

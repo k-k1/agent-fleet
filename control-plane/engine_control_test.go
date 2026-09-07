@@ -15,11 +15,11 @@ import (
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
-func testControlCfg() ttsControlCfg {
-	return ttsControlCfg{
+func testControlCfg() engineControlCfg {
+	return engineControlCfg{
 		interval:   30 * time.Second,
 		window:     5 * time.Minute,
-		startChars: 2000,
+		startUnits: 2000,
 		idle:       30 * time.Minute,
 		deadline:   5 * time.Minute,
 		cooldown:   15 * time.Minute,
@@ -32,9 +32,9 @@ func testControlCfg() ttsControlCfg {
 func TestDecideEngineAction(t *testing.T) {
 	now := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
 	ago := func(d time.Duration) time.Time { return now.Add(-d) }
-	base := ttsEngineSnapshot{mode: ttsModeOnDemand, lastDemand: ago(time.Minute)}
+	base := engineSnapshot{mode: engineModeOnDemand, lastDemand: ago(time.Minute)}
 
-	with := func(f func(s *ttsEngineSnapshot)) ttsEngineSnapshot {
+	with := func(f func(s *engineSnapshot)) engineSnapshot {
 		s := base
 		f(&s)
 		return s
@@ -42,139 +42,139 @@ func TestDecideEngineAction(t *testing.T) {
 
 	cases := []struct {
 		name       string
-		snap       ttsEngineSnapshot
-		cfg        ttsControlCfg
+		snap       engineSnapshot
+		cfg        engineControlCfg
 		wantAction string
 		wantReason string
 	}{
 		{
 			"no service at all → never touch anything",
-			with(func(s *ttsEngineSnapshot) { s.state = "none" }),
-			testControlCfg(), ttsActionNone, ttsReasonNoService,
+			with(func(s *engineSnapshot) { s.state = "none" }),
+			testControlCfg(), engineActionNone, engineReasonNoService,
 		},
 		{
 			"ondemand: demand over the threshold starts it",
-			with(func(s *ttsEngineSnapshot) { s.state = "stopped"; s.windowChars = 2000 }),
-			testControlCfg(), ttsActionStart, ttsReasonDemand,
+			with(func(s *engineSnapshot) { s.state = "stopped"; s.windowUnits = 2000 }),
+			testControlCfg(), engineActionStart, engineReasonDemand,
 		},
 		{
 			"ondemand: a Console chiming announcements never starts it",
-			with(func(s *ttsEngineSnapshot) { s.state = "stopped"; s.windowChars = 120 }),
-			testControlCfg(), ttsActionNone, ttsReasonBelow,
+			with(func(s *engineSnapshot) { s.state = "stopped"; s.windowUnits = 120 }),
+			testControlCfg(), engineActionNone, engineReasonBelow,
 		},
 		{
 			"ondemand: idle window expired → stop",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand = "running", 1, ago(31*time.Minute)
 			}),
-			testControlCfg(), ttsActionStop, ttsReasonIdle,
+			testControlCfg(), engineActionStop, engineReasonIdle,
 		},
 		{
 			"ondemand: somebody is still listening → leave it",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand = "running", 1, ago(29*time.Minute)
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonInUse,
+			testControlCfg(), engineActionNone, engineReasonInUse,
 		},
 		{
 			// A window shorter than a cold start would stop the service while it is still
 			// starting, and the next sentence would start it again.
 			"ondemand: the idle window is clamped to the start deadline",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand, s.lastStart = "starting", 1, ago(3*time.Minute), ago(3*time.Minute)
 			}),
-			func() ttsControlCfg { c := testControlCfg(); c.idle = time.Minute; return c }(),
-			ttsActionNone, ttsReasonInUse,
+			func() engineControlCfg { c := testControlCfg(); c.idle = time.Minute; return c }(),
+			engineActionNone, engineReasonInUse,
 		},
 		{
 			"ondemand: idle applies to a service stuck at starting too",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand, s.lastStart = "starting", 1, ago(40*time.Minute), ago(2*time.Minute)
 			}),
-			testControlCfg(), ttsActionStop, ttsReasonIdle,
+			testControlCfg(), engineActionStop, engineReasonIdle,
 		},
 		{
 			"ondemand: a start that never became running is a failure, not a retry",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastStart = "starting", 1, ago(6*time.Minute)
 			}),
-			testControlCfg(), ttsActionStop, ttsReasonDeadline,
+			testControlCfg(), engineActionStop, engineReasonDeadline,
 		},
 		{
 			"ondemand: inside the cooldown a fresh demand buys nothing",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.windowChars, s.failures, s.lastFailure = "stopped", 9000, 1, ago(10*time.Minute)
+			with(func(s *engineSnapshot) {
+				s.state, s.windowUnits, s.failures, s.lastFailure = "stopped", 9000, 1, ago(10*time.Minute)
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonCooldown,
+			testControlCfg(), engineActionNone, engineReasonCooldown,
 		},
 		{
 			"ondemand: the cooldown doubles with the second failure",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.windowChars, s.failures, s.lastFailure = "stopped", 9000, 2, ago(20*time.Minute)
+			with(func(s *engineSnapshot) {
+				s.state, s.windowUnits, s.failures, s.lastFailure = "stopped", 9000, 2, ago(20*time.Minute)
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonCooldown,
+			testControlCfg(), engineActionNone, engineReasonCooldown,
 		},
 		{
 			"ondemand: once the cooldown is over, demand starts it again",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.windowChars, s.failures, s.lastFailure = "stopped", 9000, 1, ago(16*time.Minute)
+			with(func(s *engineSnapshot) {
+				s.state, s.windowUnits, s.failures, s.lastFailure = "stopped", 9000, 1, ago(16*time.Minute)
 			}),
-			testControlCfg(), ttsActionStart, ttsReasonDemand,
+			testControlCfg(), engineActionStart, engineReasonDemand,
 		},
 		{
 			"ondemand: no demand mark stored → stamp only, decide nothing",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand = "running", 1, time.Time{}
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonFirstPass,
+			testControlCfg(), engineActionNone, engineReasonFirstPass,
 		},
 		{
 			"ondemand: idle 0 means never stop",
-			with(func(s *ttsEngineSnapshot) {
+			with(func(s *engineSnapshot) {
 				s.state, s.desired, s.lastDemand = "running", 1, ago(10*time.Hour)
 			}),
-			func() ttsControlCfg { c := testControlCfg(); c.idle = 0; return c }(),
-			ttsActionNone, ttsReasonNoIdleStop,
+			func() engineControlCfg { c := testControlCfg(); c.idle = 0; return c }(),
+			engineActionNone, engineReasonNoIdleStop,
 		},
 		{
 			"off: inside the undo window the desired count does not move",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.desired, s.mode, s.modeAt = "running", 1, ttsModeOff, ago(20*time.Second)
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.modeAt = "running", 1, engineModeOff, ago(20*time.Second)
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonOffGrace,
+			testControlCfg(), engineActionNone, engineReasonOffGrace,
 		},
 		{
 			"off: past the undo window it stops",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.desired, s.mode, s.modeAt = "running", 1, ttsModeOff, ago(2*time.Minute)
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.modeAt = "running", 1, engineModeOff, ago(2*time.Minute)
 			}),
-			testControlCfg(), ttsActionStop, ttsReasonAdminOff,
+			testControlCfg(), engineActionStop, engineReasonAdminOff,
 		},
 		{
 			// A CP that restarted inside the window has no mark; stopping is the safe
 			// direction, because off means routing already goes to Polly.
 			"off: with no recorded mode time there is no grace to wait out",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.desired, s.mode = "running", 1, ttsModeOff
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOff
 			}),
-			testControlCfg(), ttsActionStop, ttsReasonAdminOff,
+			testControlCfg(), engineActionStop, engineReasonAdminOff,
 		},
 		{
 			"off: already stopped → nothing to do",
-			with(func(s *ttsEngineSnapshot) { s.state, s.mode = "stopped", ttsModeOff }),
-			testControlCfg(), ttsActionNone, ttsReasonOff,
+			with(func(s *engineSnapshot) { s.state, s.mode = "stopped", engineModeOff }),
+			testControlCfg(), engineActionNone, engineReasonOff,
 		},
 		{
 			"on: a stopped engine is started whatever the demand",
-			with(func(s *ttsEngineSnapshot) { s.state, s.mode, s.windowChars = "stopped", ttsModeOn, 0 }),
-			testControlCfg(), ttsActionStart, ttsReasonAdminOn,
+			with(func(s *engineSnapshot) { s.state, s.mode, s.windowUnits = "stopped", engineModeOn, 0 }),
+			testControlCfg(), engineActionStart, engineReasonAdminOn,
 		},
 		{
 			"on: an idle engine is never stopped",
-			with(func(s *ttsEngineSnapshot) {
-				s.state, s.desired, s.mode, s.lastDemand = "running", 1, ttsModeOn, ago(10*time.Hour)
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.lastDemand = "running", 1, engineModeOn, ago(10*time.Hour)
 			}),
-			testControlCfg(), ttsActionNone, ttsReasonOn,
+			testControlCfg(), engineActionNone, engineReasonOn,
 		},
 	}
 	for _, c := range cases {
@@ -192,13 +192,13 @@ func TestTTSDemandIntent(t *testing.T) {
 		pref, lang, mode string
 		want             bool
 	}{
-		{"auto Japanese", "auto", "ja", ttsModeOnDemand, true},
-		{"unset provider, lang auto", "", "auto", ttsModeOnDemand, true},
-		{"explicit polly never counts", "polly", "ja", ttsModeOnDemand, false},
-		{"English through auto goes to Polly anyway", "auto", "en", ttsModeOnDemand, false},
-		{"an explicit voicevox pin counts even in English", "voicevox", "en", ttsModeOnDemand, true},
-		{"nothing counts while the mode is off", "auto", "ja", ttsModeOff, false},
-		{"mode on counts the same as ondemand", "auto", "ja", ttsModeOn, true},
+		{"auto Japanese", "auto", "ja", engineModeOnDemand, true},
+		{"unset provider, lang auto", "", "auto", engineModeOnDemand, true},
+		{"explicit polly never counts", "polly", "ja", engineModeOnDemand, false},
+		{"English through auto goes to Polly anyway", "auto", "en", engineModeOnDemand, false},
+		{"an explicit voicevox pin counts even in English", "voicevox", "en", engineModeOnDemand, true},
+		{"nothing counts while the mode is off", "auto", "ja", engineModeOff, false},
+		{"mode on counts the same as ondemand", "auto", "ja", engineModeOn, true},
 	}
 	for _, c := range cases {
 		if got := ttsDemandIntent(c.pref, c.lang, c.mode); got != c.want {
@@ -213,16 +213,16 @@ func TestTTSEngineMode(t *testing.T) {
 		managed bool
 		want    string
 	}{
-		{"off", true, ttsModeOff},
-		{"on", true, ttsModeOn},
-		{"ondemand", true, ttsModeOnDemand},
-		{"", true, ttsModeOnDemand},  // a managed engine defaults to on-demand
-		{"", false, ttsModeOn},       // an engine somebody else runs is simply on
-		{"garbage", true, ttsModeOn}, // a typo must not silence speech
+		{"off", true, engineModeOff},
+		{"on", true, engineModeOn},
+		{"ondemand", true, engineModeOnDemand},
+		{"", true, engineModeOnDemand},  // a managed engine defaults to on-demand
+		{"", false, engineModeOn},       // an engine somebody else runs is simply on
+		{"garbage", true, engineModeOn}, // a typo must not silence speech
 	}
 	for _, c := range cases {
-		if got := ttsEngineMode(c.stored, c.managed); got != c.want {
-			t.Errorf("ttsEngineMode(%q, managed=%v) = %q, want %q", c.stored, c.managed, got, c.want)
+		if got := engineMode(c.stored, c.managed); got != c.want {
+			t.Errorf("engineMode(%q, managed=%v) = %q, want %q", c.stored, c.managed, got, c.want)
 		}
 	}
 }
@@ -232,39 +232,39 @@ func TestTTSEngineMode(t *testing.T) {
 func TestTTSDemandWindow(t *testing.T) {
 	st := testSettingsStore(t)
 	now := time.Date(2026, 9, 6, 9, 0, 0, 0, time.UTC)
-	d := newTTSDemand(st, 5*time.Minute)
+	d := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	d.now = func() time.Time { return now }
 
 	d.record(t.Context(), 300)
-	if got := d.chars(); got != 300 {
+	if got := d.units(); got != 300 {
 		t.Fatalf("chars = %d, want 300", got)
 	}
 	// Inside the window the characters add up; the store is written only once a minute.
 	now = now.Add(30 * time.Second)
 	d.record(t.Context(), 700)
-	if got := d.chars(); got != 1000 {
+	if got := d.units(); got != 1000 {
 		t.Errorf("chars after a second request = %d, want 1000", got)
 	}
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v != strconv.FormatInt(now.Add(-30*time.Second).Unix(), 10) {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v != strconv.FormatInt(now.Add(-30*time.Second).Unix(), 10) {
 		t.Errorf("stored demand = %q, want the first request's time (writes are throttled to one a minute)", v)
 	}
 	// Past the window the old characters are gone, and the throttle has expired.
 	now = now.Add(6 * time.Minute)
 	d.record(t.Context(), 50)
-	if got := d.chars(); got != 50 {
+	if got := d.units(); got != 50 {
 		t.Errorf("chars after the window rolled = %d, want 50", got)
 	}
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v != strconv.FormatInt(now.Unix(), 10) {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v != strconv.FormatInt(now.Unix(), 10) {
 		t.Errorf("stored demand = %q, want %d", v, now.Unix())
 	}
 
 	// A fresh process (empty memory) reads the stored mark: this is what keeps a CP
 	// restart from stopping the engine out from under somebody who is listening.
-	fresh := newTTSDemand(st, 5*time.Minute)
+	fresh := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	if got := fresh.lastAt(t.Context()); !got.Equal(time.Unix(now.Unix(), 0)) {
 		t.Errorf("lastAt on a fresh process = %v, want the stored %v", got, now)
 	}
-	if got := fresh.chars(); got != 0 {
+	if got := fresh.units(); got != 0 {
 		t.Errorf("chars on a fresh process = %d, want 0 (the window is not persisted)", got)
 	}
 }
@@ -280,7 +280,7 @@ func TestTTSSynthesizeRecordsDemand(t *testing.T) {
 	st := testSettingsStore(t)
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}}
 	orig := newTTSEngine
-	newTTSEngine = func() *ttsEngineECS { return &ttsEngineECS{api: f, cluster: "c", service: "voicevox"} }
+	newTTSEngine = func() *engineECS { return &engineECS{api: f, cluster: "c", service: "voicevox"} }
 	t.Cleanup(func() { newTTSEngine = orig })
 
 	mux := http.NewServeMux()
@@ -291,12 +291,12 @@ func TestTTSSynthesizeRecordsDemand(t *testing.T) {
 	}
 
 	post(`{"text":"読み上げてほしい。","provider":"polly","pollyVoice":"Takumi"}`)
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v != "" {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v != "" {
 		t.Errorf("a request pinned to Polly recorded demand (%q); it never wanted the engine", v)
 	}
 
 	post(`{"text":"読み上げてほしい。","voice":"3"}`)
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v == "" {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v == "" {
 		t.Error("an auto request in Japanese should have recorded demand")
 	}
 }
@@ -329,11 +329,11 @@ func TestTTSControllerTick(t *testing.T) {
 	srv, _ := fakeVoicevox(t)
 	st := testSettingsStore(t)
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox"}
 	now := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
 	eng.now = func() time.Time { return now }
 	vv := &voicevoxProvider{base: srv.URL}
-	demand := newTTSDemand(st, 5*time.Minute)
+	demand := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	demand.now = func() time.Time { return now }
 	audit := &fakeTTSAudit{}
 	c := newTTSController(eng, vv, demand, st, audit, testControlCfg())
@@ -344,7 +344,7 @@ func TestTTSControllerTick(t *testing.T) {
 	if len(f.desired) != 0 {
 		t.Fatalf("first pass moved the desired count to %v, want no movement", f.desired)
 	}
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v == "" {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v == "" {
 		t.Fatal("first pass should have stamped the demand mark")
 	}
 
@@ -378,8 +378,8 @@ func TestTTSControllerTick(t *testing.T) {
 	if len(f.desired) != 2 || f.desired[1] != 0 {
 		t.Fatalf("desired calls = %v, want a stop after the idle window", f.desired)
 	}
-	if len(audit.logs) != 2 || audit.logs[1].Target != "stop" || audit.logs[1].Detail != ttsReasonIdle {
-		t.Fatalf("audit = %+v, want a stop recorded as %q", audit.logs, ttsReasonIdle)
+	if len(audit.logs) != 2 || audit.logs[1].Target != "stop" || audit.logs[1].Detail != engineReasonIdle {
+		t.Fatalf("audit = %+v, want a stop recorded as %q", audit.logs, engineReasonIdle)
 	}
 	if c.warmed() {
 		t.Error("a stopped engine must not stay warm")
@@ -394,8 +394,8 @@ func TestTTSControllerReplacement(t *testing.T) {
 	st := testSettingsStore(t)
 	now := time.Date(2026, 9, 6, 10, 0, 0, 0, time.UTC)
 	f := &fakeTTSECS{svc: &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1}}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
-	demand := newTTSDemand(st, 5*time.Minute)
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
+	demand := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	demand.now = func() time.Time { return now }
 	demand.record(t.Context(), 100)
 	audit := &fakeTTSAudit{}
@@ -448,8 +448,8 @@ func TestTTSControllerStartDeadline(t *testing.T) {
 			{Message: aws.String("(service voicevox) failed to place a task: CannotPullContainerError")},
 		},
 	}}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
-	demand := newTTSDemand(st, 5*time.Minute)
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox", now: func() time.Time { return now }}
+	demand := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	demand.now = func() time.Time { return now }
 	demand.record(t.Context(), 5000)
 	audit := &fakeTTSAudit{}

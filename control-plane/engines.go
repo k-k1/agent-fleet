@@ -1,0 +1,284 @@
+package main
+
+// engines.go — the table of self-hosted inference engines, and the per-engine runtime the
+// gateway and the controller share (ADR 0071 P0).
+//
+// The table is written by the 60-engines stack into ONE SSM parameter and read here once at
+// startup. It is a parameter rather than a set of environment variables because 30-ingress
+// has about 9 KB of CloudFormation template budget left and six knobs per engine would eat
+// a third of it (ADR 0071 decision 8); the CP task role's SSM read is already scoped to
+// /af-ws/*, so the name has to live under that prefix and nothing new is granted.
+//
+// Read ONCE, at startup, on purpose: an engine's service name and URL only change when the
+// stack changes, and a stack change replaces the CP task anyway. Re-reading it per request
+// would put an SSM call in front of every token, which is a rate limit waiting to happen.
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awscfg "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/ssm"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+)
+
+// engineDef is one row of the table 60-engines wrote. Every field is declared by the stack
+// rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
+// the CP would have to ask the engine for is something it cannot ask.
+type engineDef struct {
+	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
+	Service          string   `json:"service"`          // ECS service whose desired count moves
+	CapacityProvider string   `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
+	URL              string   `json:"url"`              // http://llm.af.internal:8080
+	Health           string   `json:"health"`           // "/health"
+	Provider         string   `json:"provider"`         // "llamacpp" — the provider id a Workspace configures
+	Models           []string `json:"models"`           // model ids offered as <provider>/<id>
+	APIKeyParam      string   `json:"apiKeyParam"`      // SSM SecureString the engine's own --api-key is in
+	IdleSec          int      `json:"idleSec"`
+	StartDeadlineSec int      `json:"startDeadlineSec"`
+	Mode             string   `json:"mode"` // the DEFAULT mode; a stored setting wins
+}
+
+type engineTable struct {
+	Engines []engineDef `json:"engines"`
+}
+
+// engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
+// demand counter and the key it presents upstream.
+type engineRuntimeState struct {
+	def    engineDef
+	ecs    *engineECS
+	ctrl   *engineController
+	demand *engineDemand
+	apiKey string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
+}
+
+// engineRegistry is every engine this deployment runs. Nil (or empty) is the normal case —
+// self-hosted inference is opt-in and a GPU box is $1.26/hour — and every entry point
+// checks for it rather than assuming.
+type engineRegistry struct {
+	mu      sync.RWMutex
+	byKey   map[string]*engineRuntimeState
+	signKey []byte
+}
+
+func (r *engineRegistry) get(key string) *engineRuntimeState {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.byKey[key]
+}
+
+// list returns the engines in a stable order, for the launch-menu answer.
+func (r *engineRegistry) list() []*engineRuntimeState {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]*engineRuntimeState, 0, len(r.byKey))
+	for _, key := range []string{"llm", "image", "comfy"} {
+		if e := r.byKey[key]; e != nil {
+			out = append(out, e)
+		}
+	}
+	for k, e := range r.byKey {
+		if k != "llm" && k != "image" && k != "comfy" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// engineSettingsFor names an engine's three settings rows. VOICEVOX keeps the names ADR
+// 0070 shipped (ttsEngineSettings); everything since is prefixed by its key.
+func engineSettingsFor(key string) engineSettings {
+	return engineSettings{
+		mode:     "engine_" + key + "_mode",
+		modeAt:   "engine_" + key + "_mode_at",
+		demandAt: "engine_" + key + "_demand_at",
+	}
+}
+
+// engineControlCfgFor is the controller tuning for one engine. Two of the values come from
+// the stack rather than the environment, because they are properties of the hardware that
+// stack bought: a start deadline shorter than the real cold start records every start as a
+// failure and doubles the cooldown away (measured cold start from S3: 527 s, against ADR
+// 0070's 300 s default), and the idle window is what a $1.26/hour box is worth.
+//
+// startUnits is 1: for an inference engine the request IS the demand (ADR 0071 decision 5).
+// There is no Polly standing in while it starts, so there is no reason to wait for a second
+// request before believing the first one.
+func engineControlCfgFor(d engineDef) engineControlCfg {
+	deadline := time.Duration(d.StartDeadlineSec) * time.Second
+	if deadline <= 0 {
+		deadline = 900 * time.Second
+	}
+	idle := time.Duration(d.IdleSec) * time.Second
+	if d.IdleSec == 0 {
+		idle = 1800 * time.Second
+	}
+	up := strings.ToUpper(d.Key)
+	return engineControlCfg{
+		interval:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_CONTROL_INTERVAL_SEC", 30)) * time.Second,
+		window:     time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_WINDOW_SEC", 300)) * time.Second,
+		startUnits: 1,
+		idle:       time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_IDLE_SEC", int(idle.Seconds()))) * time.Second,
+		deadline:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_START_DEADLINE_SEC", int(deadline.Seconds()))) * time.Second,
+		cooldown:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_FAIL_COOLDOWN_SEC", 900)) * time.Second,
+		// No undo window: there is no UI toggle to press twice for an inference engine, and
+		// the grace only exists to debounce one (ADR 0070 decision 5).
+		offGrace: 0,
+	}
+}
+
+// engineSSMAPI is the narrow SSM port, so a test can answer with a table of its own.
+type engineSSMAPI interface {
+	GetParameter(context.Context, *ssm.GetParameterInput, ...func(*ssm.Options)) (*ssm.GetParameterOutput, error)
+}
+
+// loadEngineTable reads the table. AF_ENGINES_JSON is the inline form, for a dev CP with no
+// AWS at all; AF_ENGINES_SSM_PARAM is what a real deployment is given.
+func loadEngineTable(ctx context.Context, api engineSSMAPI) (engineTable, error) {
+	if raw := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", "")); raw != "" {
+		return parseEngineTable(raw)
+	}
+	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
+	if name == "" || api == nil {
+		return engineTable{}, nil
+	}
+	out, err := api.GetParameter(ctx, &ssm.GetParameterInput{Name: aws.String(name)})
+	if err != nil {
+		return engineTable{}, fmt.Errorf("reading %s: %w", name, err)
+	}
+	return parseEngineTable(aws.ToString(out.Parameter.Value))
+}
+
+func parseEngineTable(raw string) (engineTable, error) {
+	var t engineTable
+	if err := json.Unmarshal([]byte(raw), &t); err != nil {
+		return engineTable{}, fmt.Errorf("parsing the engine table: %w", err)
+	}
+	for i, d := range t.Engines {
+		if d.Key == "" || d.Service == "" || d.URL == "" {
+			return engineTable{}, fmt.Errorf("engine %d: key, service and url are all required", i)
+		}
+	}
+	return t, nil
+}
+
+// newEngineRegistry builds and starts the engines. A failure to read the table is logged
+// and leaves the registry empty rather than stopping the CP: the deployment's Workspaces,
+// sessions and everything else do not depend on an engine existing, and refusing to boot
+// over an optional feature is the larger outage.
+func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
+	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
+	inline := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", ""))
+	if name == "" && inline == "" {
+		return nil
+	}
+	region := firstEnv("AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION")
+	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
+	if err != nil {
+		log.Printf("engines: disabled (aws config: %v)", err)
+		return nil
+	}
+	ssmc := ssm.NewFromConfig(ac)
+	table, err := loadEngineTable(ctx, ssmc)
+	if err != nil {
+		log.Printf("engines: disabled (%v)", err)
+		return nil
+	}
+	if len(table.Engines) == 0 {
+		return nil
+	}
+
+	var settings store.SettingsStore
+	var auditor engineAuditor
+	if mgr != nil && mgr.store != nil {
+		settings = mgr.store
+		auditor = mgr.store
+	}
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
+	if mgr != nil {
+		reg.signKey = engineSignKey(mgr.tokenSignMaster())
+	}
+	ecsc := ecs.NewFromConfig(ac)
+	cluster := firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")
+	for _, d := range table.Engines {
+		st := &engineRuntimeState{
+			def: d,
+			ecs: &engineECS{
+				api: ecsc, key: d.Key, cluster: cluster,
+				service: d.Service, capacityProvider: d.CapacityProvider,
+			},
+			apiKey: readEngineAPIKey(ctx, ssmc, d),
+		}
+		cfg := engineControlCfgFor(d)
+		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
+		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
+		reg.byKey[d.Key] = st
+		log.Printf("engines: %s -> %s (service=%s idle=%s deadline=%s models=%s)",
+			d.Key, d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
+		if cfg.interval > 0 {
+			go st.ctrl.run(context.Background())
+		}
+	}
+	return reg
+}
+
+// readEngineAPIKey fetches the engine's own --api-key. Not fatal when it fails: an engine
+// started without one still answers, and refusing to serve because the SECOND lock could not
+// be read would turn a defence-in-depth measure into a single point of failure. The
+// reachability rule (the SG lets only the CP in) is the first lock and does not depend on
+// this.
+func readEngineAPIKey(ctx context.Context, api engineSSMAPI, d engineDef) string {
+	if strings.TrimSpace(d.APIKeyParam) == "" || api == nil {
+		return ""
+	}
+	out, err := api.GetParameter(ctx, &ssm.GetParameterInput{
+		Name: aws.String(d.APIKeyParam), WithDecryption: aws.Bool(true),
+	})
+	if err != nil {
+		log.Printf("engines: %s api key (%s) unreadable: %v", d.Key, d.APIKeyParam, err)
+		return ""
+	}
+	return strings.TrimSpace(aws.ToString(out.Parameter.Value))
+}
+
+// mode is the engine's current mode, the stored setting winning over the stack's default.
+func (e *engineRuntimeState) mode(ctx context.Context) string {
+	if e.ctrl != nil {
+		if v := e.ctrl.setting(ctx, engineSettingsFor(e.def.Key).mode); v != "" {
+			return engineMode(v, true)
+		}
+	}
+	return engineMode(e.def.Mode, true)
+}
+
+// modelIDs are the ids this engine's provider offers, as <provider>/<id>.
+func (e *engineRuntimeState) modelIDs() []string {
+	provider := e.def.Provider
+	if provider == "" {
+		provider = e.def.Key
+	}
+	out := make([]string, 0, len(e.def.Models))
+	for _, m := range e.def.Models {
+		if m = strings.TrimSpace(m); m != "" {
+			out = append(out, provider+"/"+m)
+		}
+	}
+	return out
+}
