@@ -231,8 +231,17 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   - クローン後は origin を本来の remote へ戻す。`git submodule sync` は `.gitmodules` を
     読み直すので上の SSH→HTTPS 書換えを潰す——config の url を使うこと。
   - 親が持っていない submodule／pin 先はそのまま後続の通常 update が埋める。
+  - **入れ子の submodule も降りて種付けする**（入れ子のオブジェクトは親 submodule 自身の
+    ストア配下にある）。1 パスでは無理——入れ子は親 submodule の中にしか宣言が無く、
+    その親を clone するまで存在しないため。
   - 待ち時間は 60 秒 → 10 秒。種付けが効く経路にはもう fetch するものが無く、ここで待つのは
     本物のネットワーク clone だけになったため。合わせて `--jobs 4`（git 既定は 1＝直列）。
+- 🔴 **`update --recursive` は `--init` が無いと入れ子に届かない**。実測（git 2.47）: 付けないと
+  トップレベルを clone → 中へ降りる → 入れ子が未 init なので**スキップ（exit 0・出力も無し）**。
+  空ディレクトリが残り、`submodule status --recursive` が `-` を出すまで誰も気づかない。
+  先行の `submodule init` では代用できない（トップレベルの `.gitmodules` しか展開できず、
+  入れ子は親 submodule を checkout するまで読めない）。入れ子向けの SSH→HTTPS 書換え規則
+  （`submoduleInsteadOfArgs`）も、`--init` が無い間は到達不能だった。
 - **SCM（read/write git）**: changes / diff / log / graph / show / stage / unstage / discard / commit。
   sha は hex 検証、応答はサイズ上限でキャップ。
 - **fs**: home ルートのツリー/ファイル/アップロード/リネーム等。traversal 防御・サイズ上限・

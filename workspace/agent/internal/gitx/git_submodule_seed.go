@@ -14,6 +14,11 @@ package gitx
 // 41 MB submodule with the remote OFFLINE, and git hardlinks the objects (same inode), so the
 // worktree's store cost 168 KB rather than 41 MB. Only then does the normal update run, to
 // fill in whatever the parent did not have.
+//
+// Nesting works the same way one level down — a nested submodule's objects are at
+// <store>/<name>/modules/<nested name> — but it cannot be done in one pass: a nested submodule
+// is declared only inside its parent submodule, which does not exist until that one is cloned.
+// Hence the descent in seedSubmodulesFrom.
 
 import (
 	"fmt"
@@ -27,16 +32,30 @@ import (
 // entry's NAME, which is only conventionally the same string as its path.
 type submoduleSpec struct{ Name, Path string }
 
+// maxSeedDepth bounds the descent into nested submodules. In practice the parent's own store
+// bounds it already — each level has to exist there as a real directory — so this is only here
+// so that a symlink inside that store cannot spin.
+const maxSeedDepth = 8
+
 // seedSubmodulesFromParent populates dir's not-yet-checked-out submodules by cloning them from
 // parentDir's own module store instead of from the network. Best-effort and silent about the
 // ordinary cases (no submodules, a submodule the parent never checked out): every one it skips
 // is simply left to the normal update that follows.
 func seedSubmodulesFromParent(dir, parentDir string) {
-	if !hasSubmodules(dir) {
+	seedSubmodulesFrom(dir, parentModuleStore(parentDir), 0)
+}
+
+// seedSubmodulesFrom seeds dir's submodules out of store — a .git/modules directory holding one
+// gitdir per submodule NAME — and then descends into each of them. A nested submodule's objects
+// sit at <store>/<name>/modules/<nested name> (measured), so the same trick works all the way
+// down; and it has to, because a nested submodule is only declared inside its parent submodule
+// and so cannot be seeded before that one exists.
+func seedSubmodulesFrom(dir, store string, depth int) {
+	if store == "" || !hasSubmodules(dir) {
 		return
 	}
-	store := parentModuleStore(parentDir)
-	if store == "" {
+	if depth >= maxSeedDepth {
+		log.Printf("submodules %s: nested deeper than %d, leaving the rest to the update", dir, maxSeedDepth)
 		return
 	}
 	// The url override below is read from config, so init has to have expanded .gitmodules
@@ -53,12 +72,14 @@ func seedSubmodulesFromParent(dir, parentDir string) {
 		if !isGitDir(src) {
 			continue // the parent never checked this one out; there is nothing to seed from
 		}
-		if !submodulePathEmpty(filepath.Join(dir, filepath.FromSlash(sm.Path))) {
-			continue // already populated (a relaunch); never clone over a working tree
+		sub := filepath.Join(dir, filepath.FromSlash(sm.Path))
+		if submodulePathEmpty(sub) { // never clone over a working tree
+			if err := seedSubmodule(dir, sm, src); err != nil {
+				log.Printf("submodules %s: seeding %s from the parent failed: %v", dir, sm.Path, err)
+				continue
+			}
 		}
-		if err := seedSubmodule(dir, sm, src); err != nil {
-			log.Printf("submodules %s: seeding %s from the parent failed: %v", dir, sm.Path, err)
-		}
+		seedSubmodulesFrom(sub, filepath.Join(src, "modules"), depth+1)
 	}
 }
 

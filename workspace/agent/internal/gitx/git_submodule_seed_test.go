@@ -111,6 +111,138 @@ func TestSeedSubmodulesFromParent(t *testing.T) {
 	}
 }
 
+// TestSeedSubmodulesFromParentNested is the same proof one level down, for a submodule that
+// itself has a submodule: with both remotes gone, everything that ends up on disk came from the
+// parent. It also pins the git behaviour that forces the descent — a nested submodule cannot be
+// seeded in the same pass as its parent, because it is not declared anywhere until its parent
+// is checked out.
+func TestSeedSubmodulesFromParentNested(t *testing.T) {
+	git := gitTestEnv(t)
+	f := nestedFixture(t, git)
+
+	if submodulePathEmpty(nestedInnerIn(f.parent)) {
+		t.Fatal("setup: the parent's nested submodule should be checked out")
+	}
+
+	// Both remotes vanish. Everything below therefore comes from the parent's store or not at all.
+	for _, p := range []string{f.inner, f.outer} {
+		if err := os.Rename(p, p+".gone"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	control := filepath.Join(f.root, "control")
+	git(t, f.parent, "worktree", "add", "-q", control, "-b", "control")
+	if out, err := exec.Command("git", "-C", control, "-c", "protocol.file.allow=always",
+		"submodule", "update", "--init", "--recursive").CombinedOutput(); err == nil {
+		t.Fatalf("a fresh worktree resolved its nested submodules without the remotes: %s", out)
+	}
+
+	wt := filepath.Join(f.root, "wt")
+	git(t, f.parent, "worktree", "add", "-q", wt, "-b", "feat")
+	seedSubmodulesFromParent(wt, f.parent)
+
+	if submodulePathEmpty(filepath.Join(wt, "libs", "outer")) {
+		t.Fatal("the top-level submodule was not seeded")
+	}
+	if submodulePathEmpty(nestedInnerIn(wt)) {
+		t.Fatal("the NESTED submodule was not seeded — seedSubmodulesFrom did not descend into it")
+	}
+	if gaps := submoduleGaps(wt); len(gaps) != 0 {
+		t.Errorf("submoduleGaps after seeding = %+v, want none", gaps)
+	}
+	origin, err := Run(nestedInnerIn(wt), "remote", "get-url", "origin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin != f.inner {
+		t.Errorf("nested submodule origin = %q, want the declared remote %q", origin, f.inner)
+	}
+}
+
+// TestGitSubmodulesUpdateInitsNested covers the fallback the seeding leaves behind: a submodule
+// the parent has no copy of is still fetched from the remote, and if it is nested it has to be
+// initialized on the way. That is what the --init in runSubmoduleUpdate is for, and this drives
+// the agent's own code path rather than git directly.
+func TestGitSubmodulesUpdateInitsNested(t *testing.T) {
+	git := gitTestEnv(t)
+	f := nestedFixture(t, git)
+	// The fixture's submodule URLs are local paths, which git refuses to clone by default
+	// (CVE-2022-39253). Real submodule URLs are HTTPS and need no such permission, so allowing
+	// it here is fixture plumbing, not part of what is under test.
+	git(t, "", "config", "--global", "protocol.file.allow", "always")
+
+	wt := filepath.Join(f.root, "wt")
+	git(t, f.parent, "worktree", "add", "-q", wt, "-b", "feat")
+	if out := gitSubmodulesUpdate(wt); out != submoduleDone {
+		t.Fatalf("gitSubmodulesUpdate = %v, want submoduleDone", out)
+	}
+	if submodulePathEmpty(nestedInnerIn(wt)) {
+		t.Error("gitSubmodulesUpdate left the nested submodule empty — `submodule update " +
+			"--recursive` skips one that is not initialized, so it needs --init")
+	}
+}
+
+// TestSubmoduleUpdateRecursiveNeedsInit pins the git behaviour the flag above compensates for:
+// without --init, `--recursive` clones the top-level submodule, descends into it, finds the
+// nested entry uninitialized and skips it — exit 0 and no output, so nothing looks wrong. If a
+// future git initializes nested submodules on its own, this fails and --init can be dropped.
+func TestSubmoduleUpdateRecursiveNeedsInit(t *testing.T) {
+	git := gitTestEnv(t)
+	f := nestedFixture(t, git)
+
+	clone := filepath.Join(f.root, "clone")
+	git(t, "", "clone", "-q", f.super, clone)
+	git(t, clone, "submodule", "init")
+	git(t, clone, "-c", "protocol.file.allow=always", "submodule", "update", "--recursive")
+
+	if !submodulePathEmpty(nestedInnerIn(clone)) {
+		t.Fatal("`submodule update --recursive` initialized a nested submodule on its own; " +
+			"the --init in runSubmoduleUpdate can be reconsidered")
+	}
+	// ...and with --init it is populated, so --init really is the difference.
+	git(t, clone, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
+	if submodulePathEmpty(nestedInnerIn(clone)) {
+		t.Error("even --init --recursive left the nested submodule empty")
+	}
+}
+
+// nestedFixture builds inner ⊂ outer ⊂ super, plus a parent clone with everything checked out
+// recursively — the shape the nested tests all need.
+type nested struct{ root, inner, outer, super, parent string }
+
+func nestedFixture(t *testing.T, git gitRunner) nested {
+	t.Helper()
+	f := nested{root: t.TempDir()}
+	f.inner = filepath.Join(f.root, "inner")
+	f.outer = filepath.Join(f.root, "outer")
+	f.super = filepath.Join(f.root, "super")
+	f.parent = filepath.Join(f.root, "parent")
+
+	repo := func(dir, file string) {
+		git(t, "", "init", "-q", "-b", "main", dir)
+		writeFile(t, filepath.Join(dir, file), file+"\n")
+		git(t, dir, "add", "-A")
+		git(t, dir, "commit", "-qm", "init")
+	}
+	// Local-path submodules need protocol.file.allow (git's CVE-2022-39253 hardening).
+	addSub := func(dir, url, path string) {
+		git(t, dir, "-c", "protocol.file.allow=always", "submodule", "add", "-q", url, path)
+		git(t, dir, "commit", "-qm", "add "+path)
+	}
+	repo(f.inner, "i.txt")
+	repo(f.outer, "o.txt")
+	addSub(f.outer, f.inner, "nested/inner")
+	repo(f.super, "s.txt")
+	addSub(f.super, f.outer, "libs/outer")
+
+	git(t, "", "clone", "-q", f.super, f.parent)
+	git(t, f.parent, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive", "-q")
+	return f
+}
+
+func nestedInnerIn(dir string) string { return filepath.Join(dir, "libs", "outer", "nested", "inner") }
+
 // gitDirOf returns the absolute git directory of a working copy.
 func gitDirOf(t *testing.T, dir string) string {
 	t.Helper()

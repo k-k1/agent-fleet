@@ -109,7 +109,15 @@ func gitSubmodulesUpdate(dir string) submoduleOutcome {
 // that logs the result and files the follow-up notification.
 func runSubmoduleUpdate(dir string, insteadOf []string) submoduleOutcome {
 	ctx, cancel := context.WithTimeout(context.Background(), submoduleHardTimeout)
-	args := append(append([]string{}, insteadOf...), "submodule", "update", "--recursive", "--jobs", submoduleFetchJobs)
+	// --init is what makes --recursive reach a NESTED submodule at all. MEASURED (git 2.47):
+	// `submodule update --recursive` without it clones the top level, descends into it, finds
+	// the nested entry uninitialized and skips it — exit 0, no output, and `submodule status
+	// --recursive` reports it as '-'. The separate `submodule init` above cannot cover this:
+	// it only expands the top-level .gitmodules, and a nested one is not readable until its
+	// parent submodule has been checked out. (The insteadOf flags exist for exactly those
+	// nested clones, and were unreachable without --init.)
+	args := append(append([]string{}, insteadOf...),
+		"submodule", "update", "--init", "--recursive", "--jobs", submoduleFetchJobs)
 	cmd := CmdContext(ctx, dir, args...)
 	var out bytes.Buffer // read only after Wait returns, on whichever side reaps
 	cmd.Stdout, cmd.Stderr = &out, &out

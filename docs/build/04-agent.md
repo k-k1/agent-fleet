@@ -213,8 +213,18 @@ the badge, and raises a browser notification on the transitions that need a huma
   - Afterwards the submodule's origin is put back to the real remote, taken from config —
     `git submodule sync` re-reads `.gitmodules` and would undo the SSH→HTTPS rewrite.
   - Anything the parent does not have is simply left to the normal update that follows.
+  - **Nested submodules are seeded too**, by descending: a nested one's objects sit under its
+    parent submodule's own store. It cannot be done in one pass — a nested submodule is
+    declared only inside its parent submodule, which does not exist until that one is cloned.
   - The start budget is therefore 10 s rather than 60, and submodules are fetched with
     **four jobs** (git's own default is one, i.e. strictly sequential).
+- **The recursive update needs `--init` to reach a nested submodule at all.** Measured (git
+  2.47): without it, `update --recursive` clones the top level, descends into it, finds the
+  nested entry uninitialized and **skips it — exit 0 and no output**, leaving an empty
+  directory that only the recursive status reports as missing. The initial `submodule init`
+  cannot cover this: it expands the top-level `.gitmodules`, and a nested one is unreadable
+  until its parent submodule is checked out. (This is also what makes the SSH→HTTPS rewrite
+  rules for nested clones reachable.)
 - **SCM read and write**: changes, diff, log, graph, show, stage, unstage, discard,
   commit. Revisions are validated and responses are size-capped.
 - **The filesystem API** defends against traversal, caps sizes and detects binaries.
