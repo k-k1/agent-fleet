@@ -3,7 +3,13 @@ import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
 import { OnOff, OrderList, Row } from "../parts/controls.tsx";
-import { useSettings, setSetting, IMAGE_PROVIDERS, normalizeImageProviderOrder } from "../../../lib/settings.ts";
+import {
+  useSettings,
+  setSetting,
+  IMAGE_PROVIDERS,
+  normalizeImageProviderOrder,
+  imageProviderLabel,
+} from "../../../lib/settings.ts";
 import { agentOf } from "../../../agents/registry.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
@@ -116,7 +122,9 @@ export function AgentsTab() {
           <Row label={tr("agents.image_provider_order")}>
             <OrderList
               value={normalizeImageProviderOrder(s.imageProviderOrder)}
-              labels={Object.fromEntries(IMAGE_PROVIDERS.map((p) => [p, agentOf(p).assistantName]))}
+              labels={Object.fromEntries(
+                IMAGE_PROVIDERS.map((p) => [p, imageProviderLabel(p) || agentOf(p).assistantName]),
+              )}
               onChange={(v) => setSetting("imageProviderOrder", v)}
             />
           </Row>

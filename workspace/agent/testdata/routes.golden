@@ -118,6 +118,7 @@ POST /connections/slack/channels
 POST /connections/slack/inspect
 DELETE /connections/svn
 GET /copilot/usage
+POST /engine/usage
 GET /env/jdk-install
 POST /env/jdk-install
 GET /env/node-install

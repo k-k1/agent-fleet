@@ -51,6 +51,11 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
   --from       registry to copy the images from (default ghcr.io/k-k1/agent-fleet)
   --tts-from   registry to copy the VOICEVOX engine image from
                (default docker.io/voicevox/voicevox_engine; only used when 50-tts is deployed)
+  --llm-from   registry to copy the llama.cpp server image from
+               (default ghcr.io/ggml-org/llama.cpp; only used when 60-engines is deployed)
+  --sd-from    registry to copy the stable-diffusion.cpp server image from
+               (default ghcr.io/leejet/stable-diffusion.cpp; only used when 60-engines is
+               deployed AND params/60-engines stages an image checkpoint)
   --dry-run    print every write instead of making it
 EOF
 }
@@ -58,6 +63,8 @@ EOF
 PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_ARCH_ARG=""
 FROM="ghcr.io/k-k1/agent-fleet"
 TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
+LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"
+SD_ENGINE_FROM="ghcr.io/leejet/stable-diffusion.cpp"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -68,6 +75,8 @@ while [ $# -gt 0 ]; do
     --cp-arch)   CP_ARCH_ARG="${2:?--cp-arch needs x86_64|arm64}"; shift ;;
     --from)      FROM="${2:?--from needs a value}"; shift ;;
     --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
+    --llm-from)  LLM_ENGINE_FROM="${2:?--llm-from needs a value}"; shift ;;
+    --sd-from)   SD_ENGINE_FROM="${2:?--sd-from needs a value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -99,8 +108,15 @@ if [ -z "${AF_STACK_TTS:-}" ] && [ -r "$(af_params_file 50-tts)" ]; then
   AF_STACK_TTS=af-ecs-tts
 fi
 
+# Self-hosted inference is opt-in the same way (ADR 0071): captured parameters for
+# 60-engines ARE the request. A GPU box is $1.26/hour while it is up, so nothing about this
+# stack happens because a template exists in the repo.
+if [ -z "${AF_STACK_ENGINES:-}" ] && [ -r "$(af_params_file 60-engines)" ]; then
+  AF_STACK_ENGINES=af-ecs-engines
+fi
+
 echo "==> standup plan: ${AF_FQDN:-<from the captured parameters>} (profile=$AF_PROFILE region=$AF_REGION)"
-echo "    order : $AF_STACK_NETWORK → $AF_STACK_DATA → $AF_STACK_PLATFORM → images:$TAG${AF_STACK_POOL:+ → $AF_STACK_POOL}${AF_STACK_TTS:+ → $AF_STACK_TTS} → $AF_STACK_INGRESS"
+echo "    order : $AF_STACK_NETWORK → $AF_STACK_DATA → $AF_STACK_PLATFORM → images:$TAG${AF_STACK_POOL:+ → $AF_STACK_POOL}${AF_STACK_TTS:+ → $AF_STACK_TTS}${AF_STACK_ENGINES:+ → $AF_STACK_ENGINES} → $AF_STACK_INGRESS"
 
 # --- 0) preflight (finding out mid-build is the most expensive way) ----------
 fail=0
@@ -111,6 +127,7 @@ for slug in 00-network 10-data 20-platform 30-ingress; do
 done
 [ -z "$AF_STACK_POOL" ] || [ -r "$(af_params_file 40-ec2-pool)" ] || say_missing "AF_STACK_POOL=$AF_STACK_POOL but there is no params/40-ec2-pool"
 [ -z "$AF_STACK_TTS" ] || [ -r "$(af_params_file 50-tts)" ] || say_missing "AF_STACK_TTS=$AF_STACK_TTS but there is no params/50-tts"
+[ -z "${AF_STACK_ENGINES:-}" ] || [ -r "$(af_params_file 60-engines)" ] || say_missing "AF_STACK_ENGINES=$AF_STACK_ENGINES but there is no params/60-engines"
 
 # The ECS service-linked role. A new account does not have it, and creating the cluster
 # with a Service Connect default namespace then fails with "ECS Service Linked Role is not
@@ -158,7 +175,7 @@ command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> EC
 # name, and read anything deeper as one of its attributes. And when the section exists but
 # nothing could be read, say so as an anomaly — that is distinguishable from a genuine
 # "0 required" where every parameter has a Default.
-for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool 50-tts; do
+for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool 50-tts 60-engines; do
   f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
   [ -r "$f" ] && [ -r "$t" ] || continue
   missing=""; has_section=0; parsed=0
@@ -321,6 +338,41 @@ if [ -n "$AF_STACK_TTS" ]; then
     af_run crane copy "$TTS_ENGINE_FROM:$tts_tag" "$ECR_HOST/af-voicevox:$tts_tag"
   fi
 fi
+# The llama.cpp server image, when this deployment runs its own inference (ADR 0071). Here
+# for the same CloudFormation reason as the speech engine — 60-engines blocks on service
+# stabilisation and cannot rescue an empty repository — and for a measured one on top:
+# GHCR through this NAT runs at 12-14 MB/s, which put 178 seconds of a 527-second cold start
+# into the pull. Once it is in ECR the pull is in-region.
+if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  llm_tag="$(af_read_one_param 60-engines LlmImageTag)"
+  : "${llm_tag:=server-cuda}"
+  if "${AWS[@]}" ecr describe-images --repository-name af-llamacpp \
+      --image-ids "imageTag=$llm_tag" >/dev/null 2>&1; then
+    echo "    · af-llamacpp:$llm_tag is already in ECR"
+  else
+    echo "    · crane copy $LLM_ENGINE_FROM:$llm_tag (about 2.5 GB)"
+    af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" "$ECR_HOST/af-llamacpp:$llm_tag"
+  fi
+  # The sd-server image, for the `image` role (ADR 0071 P1). Copied ONLY when a checkpoint is
+  # staged, which is the same condition that decides whether the service exists at all: with
+  # ImageModelS3Key empty 60-engines creates no image service, so there is nothing to pull and
+  # a deployment that only wants an LLM should not spend minutes copying 2.3 GB it will never
+  # run. When the key IS set, this runs before the stack — the ordering that matters, because
+  # a service that cannot pull leaves CREATE_IN_PROGRESS with no way back.
+  # ⚠️ amd64 only upstream; there is no arm64 G-family instance either (decision 12).
+  sd_key="$(af_read_one_param 60-engines ImageModelS3Key)"
+  if [ -n "$sd_key" ]; then
+    sd_tag="$(af_read_one_param 60-engines ImageImageTag)"
+    : "${sd_tag:=master-cuda}"
+    if "${AWS[@]}" ecr describe-images --repository-name af-sdcpp \
+        --image-ids "imageTag=$sd_tag" >/dev/null 2>&1; then
+      echo "    · af-sdcpp:$sd_tag is already in ECR"
+    else
+      echo "    · crane copy $SD_ENGINE_FROM:$sd_tag (about 2.3 GB)"
+      af_run crane copy "$SD_ENGINE_FROM:$sd_tag" "$ECR_HOST/af-sdcpp:$sd_tag"
+    fi
+  fi
+fi
 
 # Do CpArch and the CP image's architecture match? A mismatch is not even a
 # CannotPullContainerError: the task simply cannot be placed, desired=1 / running=0, with
@@ -383,6 +435,91 @@ if [ -n "$AF_STACK_TTS" ]; then
   fi
 fi
 
+# --- 5c) the inference engines (optional, ADR 0071) --------------------------
+#
+# Also BEFORE 30-ingress, which is handed this stack's EnginesSsmParam output. It imports
+# 00-network and 20-platform only.
+#
+# ⚠️ It owns the cluster's capacity-provider associations, and that list is REPLACED rather
+# than added to. Only one stack in a deployment may do that — take the measurement harness
+# down first (deploy/aws/ecs/harness/probe-managed-instances.sh down).
+if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  engines_existed=0
+  ENGINES_LLM_BEFORE=""; ENGINES_IMAGE_BEFORE=""
+  if af_stack_exists "$AF_STACK_ENGINES"; then
+    engines_existed=1
+    # Which engine services existed BEFORE this run. Asked here rather than after the deploy
+    # because that is the only moment the answer is knowable, and it is what decides whether
+    # a service may be scaled to 0 below: a role staged on this run is new even though the
+    # stack is not (the two-pass stand-up makes that the normal case, and the image role can
+    # be added to a deployment that has been running the llm role for months).
+    ENGINES_LLM_BEFORE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
+    ENGINES_IMAGE_BEFORE="$(af_stack_output "$AF_STACK_ENGINES" ImageServiceName)"
+  fi
+  af_read_params 60-engines
+  # Derived, not trusted from a capture taken under other stack names — the same reasoning
+  # as 50-tts: a mistyped namespace deploys cleanly and leaves the CP pointing at a name
+  # that never resolves, and the engine then reads as permanently failing to start.
+  af_param_override NetworkStackName "$AF_STACK_NETWORK"
+  af_param_override PlatformStackName "$AF_STACK_PLATFORM"
+  ns="$(af_read_one_param 20-platform ServiceConnectNamespace)"
+  [ -z "$ns" ] || af_param_override ServiceConnectNamespace "$ns"
+
+  # The engine's own API key (ADR 0071 decision 4d). Machine-generated with no human input,
+  # so it is CREATED here rather than merely checked for like the login secrets: an operator
+  # cannot usefully choose it, and a missing one would stop the task from starting with
+  # "ResourceNotFoundException" from the exec role's SSM read — which reads as a broken
+  # stack. Written only when absent, so a re-run never rotates a key the CP is holding.
+  llm_key_param="$(af_read_one_param 60-engines LlmApiKeySsmParam)"
+  : "${llm_key_param:=/af-ws/engine-llm-key}"
+  if [ -n "$llm_key_param" ] && ! have_ssm "$llm_key_param"; then
+    echo "    · creating SSM SecureString $llm_key_param (the engine's --api-key)"
+    if [ "$AF_DRY" != 1 ]; then
+      # Through a file, never `--value <secret>`: an argument is in /proc/<pid>/cmdline for
+      # anything on the host to read, and it lands in any shell trace or command log that
+      # happens to be on. The file is 0600 in a private temp dir and removed straight after.
+      key_json="$(mktemp -d)/put.json"
+      ( umask 077; printf '{"Name":"%s","Type":"SecureString","Value":"%s","Overwrite":false}\n' \
+          "$llm_key_param" "$(head -c 32 /dev/urandom | base64 | tr -d '=+/' | cut -c1-40)" > "$key_json" )
+      "${AWS[@]}" ssm put-parameter --cli-input-json "file://$key_json" >/dev/null
+      rm -rf "$(dirname "$key_json")"
+    fi
+  fi
+
+  echo "==> deploy $AF_STACK_ENGINES (60-engines)"
+  if [ "$AF_DRY" = 1 ]; then
+    echo "DRY: cloudformation deploy --stack-name $AF_STACK_ENGINES --template-file $CFN_DIR/60-engines.yaml \\"
+    echo "     --parameter-overrides $(af_params_masked | tr '\n' ' ')"
+  else
+    af_cfn_deploy "$AF_STACK_ENGINES" "$CFN_DIR/60-engines.yaml" \
+      --capabilities CAPABILITY_NAMED_IAM \
+      --parameter-overrides ${AF_PARAMS[@]+"${AF_PARAMS[@]}"} \
+      --no-fail-on-empty-changeset
+  fi
+
+  ENGINES_PARAM="$(af_stack_output "$AF_STACK_ENGINES" EnginesSsmParam)"
+  ENGINES_LLM_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
+  ENGINES_IMAGE_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" ImageServiceName)"
+
+  # Same rule as the speech engine, and a costlier one to get wrong: CloudFormation starts a
+  # new service at desired 1, and an idle g6.xlarge is $1.26/hour. Only when this run created
+  # it, so a stand-up re-run cannot stop an engine somebody is waiting on.
+  #
+  # Both roles, tested per SERVICE rather than per stack: "-" is what the stack outputs for a
+  # role with no model staged, so a role that appears in this run's outputs and not in the
+  # ones read before the deploy is a service CloudFormation just created at desired 1. The
+  # two-pass stand-up makes that the normal case for the first model, and adding the image
+  # role to a deployment that has been running the llm role for months is the same shape.
+  for pair in "$ENGINES_LLM_BEFORE|$ENGINES_LLM_SERVICE" "$ENGINES_IMAGE_BEFORE|$ENGINES_IMAGE_SERVICE"; do
+    before="${pair%%|*}"; now="${pair#*|}"
+    case "$now" in ""|"-") continue ;; esac
+    case "$before" in ""|"-") ;; *) continue ;; esac
+    echo "    · scaling $now to 0 (the engine is started on demand)"
+    af_run "${AWS[@]}" ecs update-service --cluster "$(af_cluster)" \
+      --service "$now" --desired-count 0 >/dev/null
+  done
+fi
+
 # --- 6) ingress (parameters holding physical IDs get the new outputs) --------
 af_read_params 30-ingress
 af_param_override ImageTag "$TAG"
@@ -393,6 +530,11 @@ af_param_override ImageTag "$TAG"
 if [ -n "$AF_STACK_TTS" ]; then
   [ -z "${TTS_SERVICE:-}" ] || af_param_override TtsEcsService "$TTS_SERVICE"
   [ -z "${TTS_URL:-}" ] || af_param_override VoicevoxUrl "$TTS_URL"
+fi
+# Engines: one parameter, the SSM name the CP reads its engine table from (ADR 0071
+# decision 8).
+if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  [ -z "${ENGINES_PARAM:-}" ] || af_param_override EnginesSsmParam "$ENGINES_PARAM"
 fi
 # A flag has to move the value that is actually passed, not just what gets checked. Forget
 # this and `--cp-arch arm64` becomes the worst kind of success: it verifies that arm64

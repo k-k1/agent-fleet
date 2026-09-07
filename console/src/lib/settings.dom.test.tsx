@@ -52,15 +52,22 @@ describe("normalizeClaudeCustomModels", () => {
 // it unreachable until the user happened to re-save their settings.
 describe("normalizeImageProviderOrder", () => {
   it("appends a provider the stored list never heard of, in the built-in order", () => {
-    expect(normalizeImageProviderOrder(["codex"])).toEqual(["codex", "agy"]);
+    expect(normalizeImageProviderOrder(["codex"])).toEqual(["codex", "sdcpp", "agy"]);
   });
 
   it("honours an explicit reorder and drops unknown ids and duplicates", () => {
-    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["codex", "agy"]);
+    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["codex", "agy", "sdcpp"]);
   });
 
   it("falls back to the built-in order for a broken stored value", () => {
-    expect(normalizeImageProviderOrder("agy")).toEqual(["agy", "codex"]);
+    expect(normalizeImageProviderOrder("agy")).toEqual(["sdcpp", "agy", "codex"]);
+  });
+
+  // The fleet's own engine (ADR 0071) is ranked here as well as in the Agent. It is in the
+  // list even where no deployment runs one, because leaving it out is what would silently
+  // write a stored order that pushes it last — the case the first test above is about.
+  it("ranks the self-hosted engine", () => {
+    expect(normalizeImageProviderOrder(["agy", "sdcpp", "codex"])).toEqual(["agy", "sdcpp", "codex"]);
   });
 });
 

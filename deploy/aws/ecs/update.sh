@@ -210,6 +210,21 @@ if [ -n "$TTS_STACK" ]; then
   fi
 fi
 
+# --- 1d) the inference-engine stack, when this deployment has one (ADR 0071) ----------
+# Same reasoning and the same safety: DesiredCount is absent from the template, so a stack
+# update never stops an engine somebody is mid-answer with. The llama.cpp image is pinned
+# upstream and unrelated to VERSION, so no tag is overridden here either.
+ENGINES_STACK="$(af_engines_stack || true)"
+if [ -n "$ENGINES_STACK" ]; then
+  echo "==> cloudformation deploy $ENGINES_STACK (60-engines, parameters unchanged)"
+  if [ "$DRY" = 1 ]; then
+    echo "DRY: aws cloudformation deploy --stack-name $ENGINES_STACK --template-file $HERE/cfn/60-engines.yaml"
+  else
+    af_cfn_deploy "$ENGINES_STACK" "$HERE/cfn/60-engines.yaml" \
+      --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset
+  fi
+fi
+
 # --- 2) CFN deploy: override ImageTag only (everything else keeps its previous value) -------
 # `cloudformation deploy` keeps parameters it was not given at UsePreviousValue, so never add
 # another parameter here — adding one overwrites that "previous value".

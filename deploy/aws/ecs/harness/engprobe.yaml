@@ -1,0 +1,412 @@
+# ADR 0071 probe — a throwaway ECS Managed Instances capacity provider plus one llama.cpp
+# service, used only to measure cold start and drain on a real cluster. Not a deliverable
+# stack: 60-engines.yaml is the real thing. Deploy with probe-managed-instances.sh.
+#
+# Three things this template had to learn the hard way (all measured 2026-09-07):
+#   - a Managed Instances capacity provider is CLUSTER-SCOPED: ClusterName is mandatory,
+#     without it ECS answers "The cluster provided is invalid";
+#   - AmazonECSInfrastructureRolePolicyForManagedInstances passes only roles named
+#     ecsInstanceRole*, so a fleet-named instance role needs an explicit iam:PassRole;
+#   - ClusterCapacityProviderAssociations REPLACES the cluster's provider list and requires
+#     DefaultCapacityProviderStrategy — pass the full list and an EMPTY strategy, or a service
+#     that forgot LaunchType lands on the GPU box (ADR 0070 decision 1).
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ADR 0071 probe — a throwaway ECS Managed Instances capacity provider and one
+  llama.cpp (CPU) service, used only to measure cold start and drain. Delete the stack after.
+Parameters:
+  NetworkStackName: { Type: String, Default: af-ecs-network }
+  PlatformStackName: { Type: String, Default: af-ecs-platform }
+  ImageUri: { Type: String, Default: ghcr.io/ggml-org/llama.cpp:server }   # CPU image; :server-cuda for the GPU run
+  ModelRef: { Type: String, Default: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF:Q4_K_M" }
+  VCpuMin: { Type: Number, Default: 2 }
+  VCpuMax: { Type: Number, Default: 4 }
+  MemMin: { Type: Number, Default: 4096 }
+  MemMax: { Type: Number, Default: 16384 }
+  StorageGiB: { Type: Number, Default: 40 }
+  # GPU run: GpuCount=1 AllowedInstanceTypes=g6.xlarge ImageUri=ghcr.io/ggml-org/llama.cpp:server-cuda
+  #          ModelRef=unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF:Q4_K_M ExtraArgs="-ngl 99 -c 32768 --jinja"
+  #          TaskCpu=4096 TaskMemory=14336 StorageGiB=80
+  GpuCount: { Type: Number, Default: 0 }
+  AllowedInstanceTypes: { Type: CommaDelimitedList, Default: "c6a.large,c6a.xlarge,m6a.large,m6a.xlarge" }
+  TaskCpu: { Type: String, Default: "2048" }
+  TaskMemory: { Type: String, Default: "3072" }
+  ExtraArgs: { Type: CommaDelimitedList, Default: "-c,8192" }
+  # Second engine on the same capacity provider (a second instance): stable-diffusion.cpp's
+  # sd-server with a checkpoint fetched by an init container. The CUDA image has no curl and
+  # its ENTRYPOINT is /sd-cli (measured from the image config), hence the fetch sidecar and
+  # the EntryPoint override.
+  SdEnabled: { Type: String, Default: "false", AllowedValues: [ "true", "false" ] }
+  SdImageUri: { Type: String, Default: ghcr.io/leejet/stable-diffusion.cpp:master-cuda }
+  SdModelUrl: { Type: String, Default: "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors" }
+  SdModelFile: { Type: String, Default: sd_xl_base_1.0.safetensors }
+  # S3 staging (ADR 0071 decision 3): `ingest` is a Fargate task that copies one HF file into
+  # the stack's bucket; LlamaModelS3Key non-empty switches the llama service from `-hf` to a
+  # sidecar `aws s3 cp` from that bucket, which is the path the real design uses.
+  LlamaModelS3Key: { Type: String, Default: "" }
+  LlamaModelFile: { Type: String, Default: "model.gguf" }
+  # ComfyUI for the VRAM / workflow measurement only. No official image exists (ADR 0071
+  # decision 6 bakes the fleet's own); the community image here is a measuring stick, not a
+  # deliverable. Its checkpoints dir is /opt/comfyui/models/checkpoints, it listens on 8188.
+  ComfyEnabled: { Type: String, Default: "false", AllowedValues: [ "true", "false" ] }
+  ComfyImageUri: { Type: String, Default: "ghcr.io/lecode-official/comfyui-docker:latest" }
+  ComfyModelS3Key: { Type: String, Default: "image/sd_xl_base_1.0.safetensors" }
+Conditions:
+  HasGpu: !Not [ !Equals [ !Ref GpuCount, 0 ] ]
+  LlamaFromS3: !Not [ !Equals [ !Ref LlamaModelS3Key, "" ] ]
+  HasComfy: !Equals [ !Ref ComfyEnabled, "true" ]
+  HasSd: !Equals [ !Ref SdEnabled, "true" ]
+Resources:
+  InfraRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-infra"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
+      # The managed policy only passes roles named ecsInstanceRole*; a fleet-named instance
+      # role needs this explicit grant (measured: UnauthorizedOperation iam:PassRole).
+      Policies:
+        - PolicyName: pass-instance-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-${AWS::StackName}-mi-instance"
+                Condition: { StringLike: { "iam:PassedToService": "ec2.*" } }
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInstanceRolePolicyForManagedInstances
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
+      Roles: [ !Ref InstanceRole ]
+  ProbeSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} engine probe (CP to engine, 8080)"
+      VpcId: !ImportValue { "Fn::Sub": "${NetworkStackName}-VpcId" }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !ImportValue { "Fn::Sub": "${NetworkStackName}-CpSgId" }
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-sg" } ]
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/engine"
+      RetentionInDays: 3
+  CapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-mi"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: NONE
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref ProbeSg ]
+          StorageConfiguration:
+            StorageSizeGiB: !Ref StorageGiB
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref VCpuMin, Max: !Ref VCpuMax }
+            MemoryMiB: { Min: !Ref MemMin, Max: !Ref MemMax }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref AllowedInstanceTypes
+            AcceleratorCount: !If [ HasGpu, { Min: !Ref GpuCount, Max: !Ref GpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+  # Replaces the cluster's provider LIST (the API is not additive), so FARGATE and
+  # FARGATE_SPOT are named alongside ours; the default strategy stays EMPTY on purpose
+  # (ADR 0070 decision 1 / ADR 0071 decision 1).
+  Associations:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref CapacityProvider ]
+      DefaultCapacityProviderStrategy: []
+  # ECS Exec (SSM messages) is what lets a laptop reach the engine at all: the task sits in a
+  # private subnet behind a CP-only security group, and
+  #   aws ssm start-session --target ecs:<cluster>_<task-id>_<runtime-id> \
+  #     --document-name AWS-StartPortForwardingSession --parameters portNumber=8080,localPortNumber=18100
+  # forwards its port without touching the SG.
+  TaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: ecs-exec
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ ssmmessages:CreateControlChannel, ssmmessages:CreateDataChannel, ssmmessages:OpenControlChannel, ssmmessages:OpenDataChannel ]
+                Resource: "*"
+        - PolicyName: models-bucket
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ s3:GetObject, s3:PutObject, s3:AbortMultipartUpload, s3:ListBucket ]
+                Resource: [ !GetAtt ModelsBucket.Arn, !Sub "${ModelsBucket.Arn}/*" ]
+  ModelsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+    Properties:
+      BucketName: !Sub "af-${AWS::StackName}-models-${AWS::AccountId}"
+      PublicAccessBlockConfiguration: { BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true }
+  # One-off Fargate task: curl an HF file into ephemeral storage, then `aws s3 cp` it up.
+  #   aws ecs run-task --launch-type FARGATE --task-definition af-<stack>-ingest \
+  #     --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}" \
+  #     --overrides '{"containerOverrides":[{"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…"},{"name":"KEY","value":"llm/model.gguf"}]}]}'
+  IngestTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-ingest"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: "2048"
+      Memory: "4096"
+      EphemeralStorage: { SizeInGiB: 60 }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes: [ { Name: scratch } ]
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: curlimages/curl:latest
+          User: "0"
+          Command: [ 'sh', '-c', 'start=$(date +%s); curl -fsSL -o /scratch/blob "$URL" && echo "fetched $(stat -c %s /scratch/blob) bytes in $(( $(date +%s) - start ))s"' ]
+          Environment: [ { Name: URL, Value: "" }, { Name: KEY, Value: "" } ]
+          MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: ingest-fetch }
+        - Name: upload
+          Essential: true
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command: [ !Sub 'start=$(date +%s); aws s3 cp /scratch/blob "s3://${ModelsBucket}/$KEY" --only-show-errors && echo "uploaded $KEY in $(( $(date +%s) - start ))s"' ]
+          Environment: [ { Name: KEY, Value: "" } ]
+          MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: ingest-upload }
+  TaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-llama"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        # S3 mode only: the sidecar copies the model from the stack bucket onto the host volume
+        # (gateway endpoint, multipart, no NAT) and logs how long it took — that number IS open
+        # question 1 of ADR 0071.
+        - !If
+          - LlamaFromS3
+          - Name: fetch
+            Essential: false
+            Image: public.ecr.aws/aws-cli/aws-cli:latest
+            EntryPoint: [ "sh", "-c" ]
+            Command: [ !Sub 'start=$(date +%s); aws s3 cp "s3://${ModelsBucket}/${LlamaModelS3Key}" "/models/${LlamaModelFile}" --only-show-errors && echo "s3 fetch $(stat -c %s /models/${LlamaModelFile}) bytes in $(( $(date +%s) - start ))s"' ]
+            MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+            LogConfiguration:
+              LogDriver: awslogs
+              Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: llama-fetch }
+          - !Ref "AWS::NoValue"
+        - Name: llama
+          Essential: true
+          Image: !Ref ImageUri
+          PortMappings: [ { ContainerPort: 8080 } ]
+          Command: !If
+            - LlamaFromS3
+            - !Split [ ",", !Join [ ",", [ "-m", !Sub "/models/${LlamaModelFile}", "--host", "0.0.0.0", "--port", "8080", !Join [ ",", !Ref ExtraArgs ] ] ] ]
+            - !Split [ ",", !Join [ ",", [ "-hf", !Ref ModelRef, "--host", "0.0.0.0", "--port", "8080", !Join [ ",", !Ref ExtraArgs ] ] ] ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref GpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: !If [ LlamaFromS3, [ { ContainerName: fetch, Condition: SUCCESS } ], !Ref "AWS::NoValue" ]
+          Environment:
+            - { Name: LLAMA_CACHE, Value: /tmp/llama-cache }
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: llama
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-llama"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref TaskDef
+      DesiredCount: 0
+      EnableExecuteCommand: true
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref ProbeSg ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+  SdTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasSd
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-sd"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: curlimages/curl:latest
+          # The host volume is root-owned and curlimages/curl runs as uid 100 (measured:
+          # "curl: (23) client returned ERROR on write"), so the fetch runs as root.
+          User: "0"
+          Command: [ "sh", "-c", !Sub "curl -fsSL -o /models/${SdModelFile} '${SdModelUrl}' && ls -la /models" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: sd-fetch }
+        - Name: sd
+          Essential: true
+          Image: !Ref SdImageUri
+          EntryPoint: [ "/sd-server" ]
+          Command: [ "-m", !Sub "/models/${SdModelFile}", "--listen-ip", "0.0.0.0", "--listen-port", "8080", "--diffusion-fa", "-v" ]
+          PortMappings: [ { ContainerPort: 8080 } ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref GpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: sd }
+  SdService:
+    Type: AWS::ECS::Service
+    Condition: HasSd
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-sd"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref SdTaskDef
+      DesiredCount: 0
+      EnableExecuteCommand: true
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref ProbeSg ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+  ComfyTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasComfy
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-comfy"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref TaskCpu
+      Memory: !Ref TaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt TaskRole.Arn
+      Volumes:
+        - Name: checkpoints
+          Host: {}
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command: [ !Sub 'start=$(date +%s); aws s3 cp "s3://${ModelsBucket}/${ComfyModelS3Key}" /models/ --only-show-errors && chmod -R a+rX /models && echo "s3 fetch $(ls -l /models | tail -1) in $(( $(date +%s) - start ))s"' ]
+          MountPoints: [ { SourceVolume: checkpoints, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: comfy-fetch }
+        - Name: comfy
+          Essential: true
+          Image: !Ref ComfyImageUri
+          Command: [ "--listen", "0.0.0.0", "--port", "8188" ]
+          Environment: [ { Name: USER_ID, Value: "1000" }, { Name: GROUP_ID, Value: "1000" } ]
+          PortMappings: [ { ContainerPort: 8188 } ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref GpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: checkpoints, ContainerPath: /opt/comfyui/models/checkpoints } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options: { awslogs-group: !Ref LogGroup, awslogs-region: !Ref "AWS::Region", awslogs-stream-prefix: comfy }
+  ComfyService:
+    Type: AWS::ECS::Service
+    Condition: HasComfy
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-comfy"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref ComfyTaskDef
+      DesiredCount: 0
+      EnableExecuteCommand: true
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref CapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref ProbeSg ]
+      Tags:
+        - { Key: af-role, Value: engine-probe }
+Outputs:
+  ServiceName: { Value: !GetAtt Service.Name }
+  ModelsBucket: { Value: !Ref ModelsBucket }
+  IngestTaskDef: { Value: !Ref IngestTaskDef }
+  SdServiceName: { Value: !If [ HasSd, !GetAtt SdService.Name, "" ] }
+  CapacityProviderName: { Value: !Ref CapacityProvider }

@@ -109,6 +109,11 @@ type Result struct {
 	Provider string
 	Model    string
 	Region   string
+	// Destination says, in words a person reads, where the prompt actually went. A provider
+	// id answers that only for someone who knows the vocabulary, and the difference that
+	// matters here — a vendor's API against a box this deployment runs itself — is exactly
+	// the one `sdcpp` does not spell out. Empty when the provider id already says it.
+	Destination string
 	// Warnings say what the provider could not honour, in the caller's language-neutral terms
 	// ("size=1024x1024 requested, 1254x1254 produced"). Never a silent downgrade.
 	Warnings []string
@@ -162,20 +167,32 @@ type Provider interface {
 const (
 	ProviderCodex = "codex"
 	ProviderAgy   = "agy"
+	// ProviderSdcpp is the fleet's OWN engine (ADR 0071): stable-diffusion.cpp on a GPU this
+	// deployment pays for, reached through the Control Plane's engine gateway.
+	ProviderSdcpp = "sdcpp"
 )
 
-// providerOrder is the BUILT-IN order "auto" walks. Both entries are Tier-1 (ADR 0069
+// providerOrder is the BUILT-IN order "auto" walks. The first two entries are Tier-1 (ADR 0069
 // decision 3): each runs on a login the container already holds, and neither costs a new secret
-// or an egress allowlist entry.
+// or an egress allowlist entry. The third is the fleet's own hardware (ADR 0071), present only
+// in a deployment that stood an image engine up.
 //
-// agy is first because it HONOURS MORE OF THE REQUEST: its aspect ratio reaches the tool
+// sdcpp is first where it exists, and the reason is whose account pays: the other two spend a
+// MEMBER's plan quota — invisibly, three to five times faster than a text turn, which is why
+// the whole feature is off by default (decision 8) — while a deployment that stood up the image
+// engine has already decided to pay for that hardware itself. It also honours more of the
+// request than either: exact sizes (measured), plus edit and inpaint, which neither of the
+// others can do at all. It is simply absent from `Ready` where no engine is deployed, which is
+// most deployments, so this does not change what anyone gets today.
+//
+// agy before codex because it HONOURS MORE OF THE REQUEST: its aspect ratio reaches the tool
 // (measured), while the Codex route lets the caller choose no dimension at all. The first
 // version of this list put codex first on the grounds that a reordered default would move an
 // existing user's generation onto a different plan's quota — a real objection, and one that
 // only applies once there are such users. There are none yet (this has not shipped), so the
 // default is chosen on the merits instead, while that is still free. A stored
 // `imageProviderOrder` outranks this list, so anyone who does have a preference keeps it.
-var providerOrder = []string{ProviderAgy, ProviderCodex}
+var providerOrder = []string{ProviderSdcpp, ProviderAgy, ProviderCodex}
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
 // same hook shape as Enabled). nil, or a list that names nothing known, simply means the
@@ -212,10 +229,10 @@ func effectiveOrder() []string {
 }
 
 // Providers returns the registered providers, in providerOrder. Built fresh on each call so a
-// changed environment (a Codex login that arrived after boot) is picked up, and a var so a
-// test can drive Run without a Codex CLI on PATH.
+// changed environment (a Codex login that arrived after boot, an engine stack deployed since)
+// is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newCodexProvider(), newAgyProvider()}
+	return []Provider{newSdcppProvider(), newCodexProvider(), newAgyProvider()}
 }
 
 // chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
@@ -262,12 +279,13 @@ type StoredFile struct {
 
 // Stored is the core's answer: files on disk plus the provenance and the warnings.
 type Stored struct {
-	Files    []StoredFile `json:"files"`
-	Provider string       `json:"provider"`
-	Model    string       `json:"model,omitempty"`
-	Region   string       `json:"region,omitempty"`
-	Warnings []string     `json:"warnings,omitempty"`
-	CostUSD  float64      `json:"cost_usd,omitempty"`
+	Files       []StoredFile `json:"files"`
+	Provider    string       `json:"provider"`
+	Model       string       `json:"model,omitempty"`
+	Region      string       `json:"region,omitempty"`
+	Destination string       `json:"destination,omitempty"`
+	Warnings    []string     `json:"warnings,omitempty"`
+	CostUSD     float64      `json:"cost_usd,omitempty"`
 }
 
 // ErrNoProvider is the refusal when nothing can serve the request — no provider is ready, or
@@ -337,12 +355,13 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			return Stored{}, err
 		}
 		return Stored{
-			Files:    files,
-			Provider: res.Provider,
-			Model:    res.Model,
-			Region:   res.Region,
-			Warnings: append(res.Warnings, requestWarnings(req, res, p.Caps(req.Model))...),
-			CostUSD:  res.CostUSD,
+			Files:       files,
+			Provider:    res.Provider,
+			Model:       res.Model,
+			Region:      res.Region,
+			Destination: res.Destination,
+			Warnings:    append(res.Warnings, requestWarnings(req, res, p.Caps(req.Model))...),
+			CostUSD:     res.CostUSD,
 		}, nil
 	}
 	// Every candidate failed. Report them all: "codex is out of quota, and the local engine is

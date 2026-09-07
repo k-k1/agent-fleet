@@ -18,9 +18,9 @@ func newWakeAPI(t *testing.T, svc *ecstypes.Service, engineURL string) (*ttsWake
 	t.Helper()
 	st := testSettingsStore(t)
 	f := &fakeTTSECS{svc: svc}
-	eng := &ttsEngineECS{api: f, cluster: "c", service: "voicevox"}
+	eng := &engineECS{api: f, cluster: "c", service: "voicevox"}
 	vv := &voicevoxProvider{base: engineURL}
-	demand := newTTSDemand(st, 5*time.Minute)
+	demand := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	ctrl := newTTSController(eng, vv, demand, st, nil, nil, testControlCfg())
 	mgr := &manager{store: st}
 	return &ttsWakeAPI{
@@ -59,7 +59,7 @@ func TestTTSWakeStarts(t *testing.T) {
 	}
 	// The press is what says "somebody is listening": without the stamp the controller's
 	// very next tick reads a stale demand mark and stops what was just started.
-	if v, _ := st.GetSetting(t.Context(), ttsDemandSetting); v == "" {
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v == "" {
 		t.Error("wake must refresh the demand clock")
 	}
 	// It spends money, so it is in the ledger.
@@ -102,7 +102,7 @@ func TestTTSWakeRefusals(t *testing.T) {
 	srv, _ := fakeVoicevox(t)
 
 	a, _, st := newWakeAPI(t, &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 0}, srv.URL)
-	if err := st.SetSetting(t.Context(), ttsEngineSetting, ttsModeOff); err != nil {
+	if err := st.SetSetting(t.Context(), ttsEngineSetting, engineModeOff); err != nil {
 		t.Fatalf("set setting: %v", err)
 	}
 	if rec, _ := wakePost(t, a, "u1"); rec.Code != http.StatusConflict {

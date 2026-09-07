@@ -547,6 +547,18 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"items":       map[string]any{"type": "string"},
 			"description": "参照画像の絶対パス（最大5枚）。編集や画風の参照に使う"},
 	}
+	// mask goes with inpaint and nothing else. A mask handed to a route that has no mask
+	// parameter does not fail — it produces a picture OF the mask — so the parameter is offered
+	// only where some provider can actually take one (ADR 0071 P1).
+	// The literal, because this package cannot import internal/imagegen — the ops arrive as
+	// strings from the Agent's own status route, which is where the vocabulary is defined.
+	for _, op := range offer.Ops {
+		if op == "inpaint" {
+			props["mask"] = map[string]any{"type": "string",
+				"description": "マスク画像の絶対パス。op=inpaint のときだけ使い、塗り替える領域を示す（受け取らない provider に送れば拒否される）"}
+			break
+		}
+	}
 	if len(offer.AspectRatios) > 0 {
 		props["aspect_ratio"] = map[string]any{"type": "string", "enum": offer.AspectRatios,
 			"description": "希望する縦横比。これを実際に受け取る provider がある（寸法そのものは選べない。実際の寸法は比に近い値になり、ずれれば warnings に入る）。受け取らない provider に送った場合は warnings に入る"}
@@ -568,8 +580,8 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"生成物は会話をまたいで残り、Console のファイルビューアからも開ける。" +
 				"**size / background / count は希望であって保証ではない。** 実際に何が起きたかは戻り値の warnings に入る（例: 1024x1024 を頼んで 1254x1254 が返る）。" +
 				"warnings を無視して黙ってサイズが合っている前提の説明をしないこと。同じ理由で、寸法が合わないからと生成し直す必要はない（何度やっても同じ）。" +
-				"**1回の呼び出しが利用者の課金枠を消費する**（画像はテキストの数倍速で減る）。試しに何枚も出す、微調整のために連打する、といった使い方はしない。" +
-				"プロンプトは外部の画像生成サービスへ送られる（provider は戻り値に入る）ので、機密情報を含めないこと。" +
+				"**1回の呼び出しには実際の費用がかかる**——外部サービスの経路では利用者の課金枠を消費し（画像はテキストの数倍速で減る）、フリート自前のエンジンの配備ではGPUの箱が起きる。試しに何枚も出す、微調整のために連打する、といった使い方はしない。" +
+				"プロンプトはコンテナの外の画像生成サービスへ送られる（宛先は戻り値の provider と destination に入る。自前エンジンならフリート自身の箱）ので、機密情報を含めないこと。" +
 				" / Generate an image and return the FILE PATH (not the bytes). size/background/count are best effort — what actually happened comes back in warnings. Each call spends the user's plan quota.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
@@ -1445,6 +1457,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		Background  string   `json:"background"`
 		Count       int      `json:"count"`
 		Inputs      []string `json:"inputs"`
+		Mask        string   `json:"mask"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -1475,7 +1488,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
-			inputs: a.Inputs,
+			inputs: a.Inputs, mask: a.Mask,
 		})
 	case "list_peer_sessions":
 		self, err := mcpOwningSession()

@@ -703,7 +703,20 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // Image providers in the Agent's own built-in order (imagegen.providerOrder). agy is first
 // because it honours more of the request — a requested aspect ratio reaches its tool, where the
 // codex route lets the caller choose no dimension at all.
-export const IMAGE_PROVIDERS = ["agy", "codex"] as const;
+// The image providers a member can rank, in the built-in order. `sdcpp` is the fleet's own
+// engine (ADR 0071): it is here because the Agent ranks it in the same list, and a UI that
+// omitted it would write a stored order that silently pushes it last — the one thing
+// normalizeImageProviderOrder exists to prevent. A deployment without that engine simply never
+// routes to it, the same way an unusable login is skipped.
+export const IMAGE_PROVIDERS = ["sdcpp", "agy", "codex"] as const;
+
+// imageProviderLabel names one provider for the ordering list. agy and codex are agent kinds
+// and carry their own display name; sdcpp is not an agent at all — it is a service this
+// deployment runs — so it has its own label rather than a lookup that would return "sdcpp".
+export function imageProviderLabel(id: string): string {
+  if (id === "sdcpp") return "Agent Fleet (self-hosted)";
+  return "";
+}
 
 // normalizeImageProviderOrder folds any stored value into a total order over IMAGE_PROVIDERS —
 // the same rules the Agent applies in imagegen.effectiveOrder(), so the list the user drags is

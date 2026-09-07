@@ -391,6 +391,14 @@ func (m *manager) workspaceExtraEnv(ctx context.Context, ws store.Workspace) []s
 			// mount. Its own credential for the same reason as the others; a leak reads
 			// this member's docs subset and nothing else.
 			"AF_DOCS_TOKEN="+mintDocsToken(docsSignKey(m.tokenSignMaster()), ws.MembershipID),
+			// Self-hosted inference engines (ADR 0071 decision 4): the ISSUING credential
+			// only. All it can do is buy a session-scoped token from /internal/engine/token,
+			// and that second token is the one a session's model can read out of its own
+			// environment — so the value with the longer life never goes anywhere a
+			// transcript can reach. Injected whether or not this deployment runs an engine:
+			// the routes are simply absent when it does not, which the agent reads as "no
+			// engines" without needing a second signal.
+			"AF_ENGINE_ISSUE_TOKEN="+mintEngineIssueToken(engineSignKey(m.tokenSignMaster()), ws.MembershipID),
 			// Git OAuth refresh bridge (docs/log/71 §71.8): the agent posts its Bitbucket
 			// refresh token here so the CP can add the TENANT's client secret, which
 			// therefore never reaches the container. Its own credential for the same

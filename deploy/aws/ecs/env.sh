@@ -68,6 +68,7 @@ af_env_init() {
     AF_IMAGE_TAG="$(af_stack_param "$AF_STACK_INGRESS" ImageTag)"
     AF_STACK_POOL="$(af_pool_stack)"
     AF_STACK_TTS="$(af_tts_stack)"
+    AF_STACK_ENGINES="$(af_engines_stack)"
     AF_PERSISTENCE="$(af_stack_param "${AF_STACK_DATA:-af-ecs-data}" Persistence)"
   elif [ -r "$AF_ENV_DIR/env" ]; then
     # Nothing live means a stand-up. This is the only place the captured state is read.
@@ -96,10 +97,12 @@ af_env_init() {
   # absent stack look present.
   AF_STACK_POOL="${AF_STACK_POOL:-}"
   AF_STACK_TTS="${AF_STACK_TTS:-}"
+  AF_STACK_ENGINES="${AF_STACK_ENGINES:-}"
   # Values the caller (the script that sourced this) reads. Without export, shellcheck
   # sees them as written and never read.
   export AF_PROFILE AF_REGION AF_FQDN AF_ENV_DIR AF_LIVE AF_IMAGE_TAG AF_STACK_POOL
   export AF_STACK_NETWORK AF_STACK_DATA AF_STACK_PLATFORM AF_STACK_INGRESS AF_STACK_TTS
+  export AF_STACK_ENGINES
   export AF_WS_RUNTIME AF_PERSISTENCE AF_DEV_DEPLOY
 }
 
@@ -128,6 +131,32 @@ af_tts_stack() {
     *) return 0 ;;   # empty, "None", or a shape nobody expected — there is no tts stack
   esac
   echo "${name%-VoicevoxUrl}"
+}
+
+# af_engines_stack — name of the inference-engine stack (ADR 0071), empty when there is
+# none. Same derivation as af_tts_stack: 30-ingress holds the SSM parameter NAME, never the
+# stack that wrote it, so the stack is found by matching that value against the
+# `<stack>-EnginesSsmParam` exports rather than by guessing a naming convention.
+#
+# ⚠️ Unlike the speech engine, the value being matched has a sensible default
+# (/af-ws/engines), so two deployments in one account would both match. They cannot share
+# an account anyway — 60-engines owns the cluster's capacity-provider associations, which
+# are cluster-scoped — but if that ever changes, this is the line that needs an
+# account-unique name.
+#
+# Empty is the normal answer: self-hosted inference is opt-in, and a GPU box is $1.26/hour.
+af_engines_stack() {
+  local param name
+  param="$(af_stack_param "$AF_STACK_INGRESS" EnginesSsmParam)"
+  [ -n "$param" ] || return 0
+  name="$("${AWS[@]}" cloudformation list-exports \
+    --query "Exports[?Value=='$param'&&ends_with(Name,'-EnginesSsmParam')].Name" \
+    --output text 2>/dev/null | head -1 || true)"
+  case "$name" in
+    *-EnginesSsmParam) ;;
+    *) return 0 ;;
+  esac
+  echo "${name%-EnginesSsmParam}"
 }
 
 # af_pool_stack — name of the pool-layer stack.

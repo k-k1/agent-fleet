@@ -39,9 +39,9 @@ const (
 type ttsWakeAPI struct {
 	memberAuth
 	status ttsStatusView
-	eng    *ttsEngineECS  // nil = nothing here can start an engine
-	ctrl   *ttsController // nil = no controller (then nothing stops it either)
-	demand *ttsDemand     // nil where there is no engine to want
+	eng    *engineECS        // nil = nothing here can start an engine
+	ctrl   *engineController // nil = no controller (then nothing stops it either)
+	demand *engineDemand     // nil where there is no engine to want
 
 	mu   sync.Mutex
 	seen map[string]ttsWakeCount
@@ -100,7 +100,7 @@ func (a *ttsWakeAPI) post(w http.ResponseWriter, r *http.Request, ident store.Id
 		return
 	}
 	mode := a.status.mode(r.Context())
-	if mode == ttsModeOff {
+	if mode == engineModeOff {
 		// An administrator turned speech off. A member asking for the voice cannot
 		// overrule that, and starting an engine whose output routing is off would buy a
 		// task nobody can hear.

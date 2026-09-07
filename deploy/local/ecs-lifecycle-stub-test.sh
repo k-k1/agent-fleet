@@ -77,6 +77,14 @@ cp -a "$STATE/params/." "$STATE3/params/"
 cp "$STATE/env" "$STATE3/env"
 echo "ServiceConnectNamespace=af.internal" > "$STATE3/params/50-tts"
 
+# A fourth (profile p4): self-hosted inference opted in (ADR 0071), the same way — the
+# presence of params/60-engines, with no AF_STACK_ENGINES in the env.
+STATE4="$AF_DEPLOY_STATE_DIR/p4.ap-northeast-1.t-ingress"
+mkdir -p "$STATE4/params"
+cp -a "$STATE/params/." "$STATE4/params/"
+cp "$STATE/env" "$STATE4/env"
+printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\nImageModelS3Key=image/sd_xl_base_1.0.safetensors\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
 #!/usr/bin/env bash
@@ -100,6 +108,16 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='TtsEcsService']"*) echo "af-af-ecs-tts-voicevox" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='VoicevoxUrl']"*) echo "http://voicevox.af.internal:50021" ;;
   *"ParameterKey=='EngineImageTag'"*) echo "cpu-ubuntu24.04-0.25.2" ;;
+  # --- the inference-engine stack (60-engines, ADR 0071). Same shape as 50-tts above: the
+  # existence probe has to be able to say "no", or the "scale a NEWLY created service to 0"
+  # branch cannot be tested — and an engine left at desired 1 is $1.26/hour, ten times the
+  # speech engine's.
+  *"cloudformation describe-stacks --stack-name af-ecs-engines") [ "${STUB_ENGINES_EXISTS:-0}" = 1 ] || exit 1 ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EnginesSsmParam']"*) echo "/af-ws/engines" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='LlmServiceName']"*) echo "af-af-ecs-engines-llm" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
+  *"ParameterKey=='LlmImageTag'"*) echo "server-cuda" ;;
+  *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
   # For capture-env.sh: the parameter and output listings (join form). NatEipAllocationId
   # reproduces exactly the shape that was hit for real — empty as a parameter, but with a
   # real value in the outputs.
@@ -141,6 +159,12 @@ case "$args" in
   *"ecr describe-images"*)
     # After a teardown the ECR is empty. Forces standup down the crane copy path.
     [ "${STUB_ECR_HAS:-0}" = 1 ] || exit 1 ;;
+  # The engine's own --api-key is the one secret standup CREATES rather than merely checks
+  # for (it is machine-generated; an operator cannot usefully choose it). So the probe has to
+  # be able to answer "not there" — otherwise the generate branch is never exercised, and a
+  # real stand-up would fail at the engine task with a ResourceNotFoundException that reads
+  # as a broken stack.
+  *"ssm get-parameter --name /af-ws/engine-llm-key"*) [ "${STUB_ENGINE_KEY_EXISTS:-0}" = 1 ] || exit 1 ;;
   *"ssm get-parameter"*) echo "ok" ;;
   *"iam get-role"*) echo "ok" ;;
   *"route53 get-hosted-zone"*) echo "ok" ;;
@@ -253,6 +277,11 @@ hasnt "deploy --stack-name af-ecs-tts"
 hasnt "TtsEcsService="
 hasnt "AF_VOICEVOX_URL"
 hasnt "voicevox_engine"
+# The same control for the inference engines: they are opt-in too, and a GPU box that
+# appears because a template exists in the repo is $918/month.
+hasnt "deploy --stack-name af-ecs-engines"
+hasnt "EnginesSsmParam="
+hasnt "ggml-org/llama.cpp"
 # Does the flag reach the value that is actually passed? Passing the check and then standing
 # up on the default value is something that really happened.
 : > "$LOG"
@@ -298,6 +327,58 @@ grep -q "deploy --stack-name t-ingress .*VoicevoxUrl=http://voicevox.af.internal
 : > "$LOG"
 STUB_TTS_EXISTS=1 "$ECS/standup.sh" --profile p3 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 hasnt "--service af-af-ecs-tts-voicevox --desired-count 0"
+
+echo "== case 3g: the inference engines are built between speech and ingress (ADR 0071) =="
+#
+# The same ordering trap as 50-tts, with a more expensive failure at the end of it:
+#
+#   - after 20-platform (it imports the cluster, the exec role, the namespace and the
+#     af-llamacpp repository) and BEFORE 30-ingress (which is handed EnginesSsmParam —
+#     slip it after and everything deploys while the CP never learns the engine exists);
+#   - the image goes into ECR BEFORE the stack, for the CloudFormation-stabilisation reason
+#     50-tts documents above, and for a measured one: GHCR through the NAT is 12-14 MB/s;
+#   - the engine's own --api-key is generated into SSM if it is not there, because the task
+#     cannot start without it and the failure reads as a broken stack, not a missing secret;
+#   - and the freshly created service must be scaled to 0.
+: > "$LOG"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > "$WORK/out3g" 2>&1 </dev/null || { cat "$WORK/out3g"; fail "standup for p4 failed"; }
+order "cloudformation deploy --stack-name t-pool" "cloudformation deploy --stack-name af-ecs-engines"
+order "cloudformation deploy --stack-name af-ecs-engines" "cloudformation deploy --stack-name t-ingress"
+order "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda" "cloudformation deploy --stack-name af-ecs-engines"
+order "cloudformation deploy --stack-name t-platform" "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+grep -q "deploy --stack-name af-ecs-engines .*CAPABILITY_NAMED_IAM" "$LOG" \
+  || fail "60-engines creates named IAM roles and needs CAPABILITY_NAMED_IAM"
+has "ssm put-parameter --cli-input-json"
+has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
+order "cloudformation deploy --stack-name af-ecs-engines" "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
+# The image role (ADR 0071 P1) is the same shape, with two differences that are easy to get
+# wrong: its image comes from a different upstream, and it has NO generated key at all
+# (sd-server has no authentication option — the security group is the whole of it).
+order "crane copy ghcr.io/leejet/stable-diffusion.cpp:master-cuda" "cloudformation deploy --stack-name af-ecs-engines"
+has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-image --desired-count 0"
+grep -q "deploy --stack-name t-ingress .*EnginesSsmParam=/af-ws/engines" "$LOG" \
+  || fail "30-ingress did not get the engine table's SSM name (the gateway would 404)"
+# ⚠️ The key is machine-generated and must never reach an argument. An argv is in
+# /proc/<pid>/cmdline for anything on the host to read, and it lands in every shell trace and
+# command log that happens to be on — which is exactly how this check first fired.
+if grep -qE "put-parameter .*--value [A-Za-z0-9]{20,}" "$LOG"; then fail "the generated engine key was passed as an argument"; fi
+# An engine that already exists is somebody's running engine — and a GPU one, so stopping it
+# mid-answer also throws away a nine-minute cold start.
+: > "$LOG"
+STUB_ENGINES_EXISTS=1 STUB_ENGINE_KEY_EXISTS=1 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+hasnt "--service af-af-ecs-engines-llm --desired-count 0"
+hasnt "--service af-af-ecs-engines-image --desired-count 0"
+# And a key that is already there is never rotated: the CP is holding the old value, and
+# replacing it under a running engine locks the gateway out of it.
+hasnt "ssm put-parameter"
+# A deployment that runs only an LLM must not pay for the 2.3 GB image it will never start.
+# The condition is the same one that decides whether the service exists at all — an empty
+# ImageModelS3Key means 60-engines creates no image service, so there is nothing to pull.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+hasnt "crane copy ghcr.io/leejet/stable-diffusion.cpp"
+has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #

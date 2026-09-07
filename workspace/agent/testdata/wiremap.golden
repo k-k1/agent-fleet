@@ -46,6 +46,7 @@ connections_slack.go handleDeleteSlackConn x1 {disconnected}
 connections_slack.go handlePutSlackConn x1 {botName,channelId,connected,events,fullText,mirrorInput,mode,notify,operator,receive,teamName,test,testError,threads,userId} cond{botName,channelId,fullText,mirrorInput,mode,operator,receive,teamName,test,testError,threads,userId}
 connections_slack.go handleSlackChannels x1 {channels,resolvedUserId} cond{resolvedUserId}
 connections_slack.go handleSlackInspect x1 {botName,botUserId,teamName}
+engines.go handleEngineUsage x1 {recorded}
 env_tool_versions.go handleToolVersions x1 {checkedAt,tools}
 env_toolchains.go handleToolchainsGet x1 {agentUpdate,go,go_options,java,java_available,java_installed,node,node_installed,node_options,timezone,tz_options}
 fs.go handleFSDelete x1 {deleted}

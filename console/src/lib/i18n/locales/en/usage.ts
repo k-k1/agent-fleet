@@ -111,6 +111,9 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   // Image generation (ADR 0069). The tokens shown are the driving model's only: the plan
   // quota the image itself consumes is not expressible in tokens and is left unrecorded.
   "usage.val.feature.tool.imagegen": "Image generation",
+  // The fleet's own inference engine (ADR 0071). Real measured tokens with no price: what
+  // that answer cost is a share of a GPU box's hour, shown as a component cost instead.
+  "usage.val.feature.engine.llm": "Self-hosted LLM",
   "usage.val.feature.unknown": "Untagged",
   "usage.val.trigger.user": "User",
   "usage.val.trigger.auto": "Automatic",

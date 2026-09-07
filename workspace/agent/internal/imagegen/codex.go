@@ -83,6 +83,10 @@ func newCodexProvider() *codexProvider {
 
 func (p *codexProvider) ID() string { return ProviderCodex }
 
+// DefaultModel is the DRIVER model, which is what this route can name: the image model behind
+// the built-in tool is gpt-image-2 whatever runs the turn, and nothing in the CLI reports it.
+func (p *codexProvider) DefaultModel() string { return p.model }
+
 // Caps for the Codex route. Sizes and Backgrounds are deliberately EMPTY: measured twice on
 // 2026-09-06, once with the size in the prose and once with size/quality/background spelled
 // out as tool parameters, both runs produced 1254x1254 and the driver said outright that

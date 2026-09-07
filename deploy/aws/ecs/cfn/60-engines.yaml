@@ -1,0 +1,1056 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  agent-fleet ECS adapter — the fleet's own inference engines on GPU, normally scaled to
+  zero (ADR 0071 P0: the `llm` role, llama.cpp; P1: the `image` role, stable-diffusion.cpp's
+  sd-server). Optional, and each role is optional on its own: a deployment that does not want
+  self-hosted inference deploys nothing and no engine model appears in any launch menu.
+  Imports the VPC, private subnets and the CP security group from 00-network, and the
+  cluster, execution role, Cloud Map namespace and the af-llamacpp / af-sdcpp ECR
+  repositories from 20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE
+  30-ingress and hand 30-ingress this stack's EnginesSsmParam output.
+
+# Fargate has no GPU (AWS Fargate FAQ; containers-roadmap #88, open since 2019), so the
+# 0070 shape — "an ECS service whose desired count is 0 while nobody wants it" — is bought
+# here from ECS Managed Instances instead: AWS owns the instance, the AMI and the NVIDIA
+# driver, and terminates the box once the task is gone.
+#
+# Five things this template had to learn the hard way, all measured on a real cluster
+# 2026-09-07 through deploy/aws/ecs/harness/engprobe.yaml:
+#
+#   - a Managed Instances capacity provider is CLUSTER-SCOPED: ClusterName is mandatory,
+#     and without it ECS answers "The cluster provided is invalid";
+#   - AmazonECSInfrastructureRolePolicyForManagedInstances passes only roles named
+#     ecsInstanceRole*, so the fleet-named instance role below needs an explicit
+#     iam:PassRole (measured: UnauthorizedOperation otherwise);
+#   - ClusterCapacityProviderAssociations REPLACES the cluster's provider list and requires
+#     DefaultCapacityProviderStrategy — so the full list is named here and the default
+#     strategy is deliberately EMPTY. Put anything in it and a service that forgot its
+#     LaunchType lands on the GPU box (ADR 0070 decision 1, ADR 0071 decision 1);
+#   - InstanceRequirements refuses InstanceGenerations together with generation-bearing type
+#     names, and AcceleratorCount needs AcceleratorTypes alongside it;
+#   - DesiredCount on an ECS::Service returns to its declared value on EVERY service update,
+#     so it is absent here on purpose — see the Service below.
+#
+# ⚠️ Exactly one stack in a deployment may own the cluster's capacity-provider
+# associations, because the API replaces the list rather than adding to it. That stack is
+# this one. The measurement harness (harness/engprobe.yaml) owns the same list, so take it
+# down first: `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
+
+Parameters:
+  # ⚠️ The long-form reasoning for these — the measurements, the trade-offs, the traps — is in
+  # cfn/PARAMETERS-60-engines.md. It lives there rather than here because a template body over
+  # 51,200 bytes cannot be handed to CloudFormation directly, and a YAML comment costs exactly
+  # what a Description does.
+  #
+  # ⚠️ Write every parameter in BLOCK form. The one-line `{ Type: …, Default: … }` map reads as
+  # REQUIRED to standup.sh's preflight — it looks for a `Default:` on its own line — and one of
+  # those stops every stand-up with "required parameter … is missing from params/60-engines"
+  # (measured against the stub test).
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+    Description: 00-network stack to import the VPC, private subnets and the CP SG from.
+  PlatformStackName:
+    Type: String
+    Default: af-ecs-platform
+    Description: >-
+      20-platform stack to import the cluster, execution role, namespace and the af-llamacpp
+      and af-sdcpp ECR repositories from.
+  ServiceConnectNamespace:
+    Type: String
+    Default: af.internal
+    Description: >-
+      The private DNS namespace's NAME, which must match what 20-platform was given: the
+      namespace is imported by id, while the engine URLs are built from the name.
+  EnginesSsmParamName:
+    Type: String
+    Default: /af-ws/engines
+    AllowedPattern: "^/af-ws/[A-Za-z0-9_.\\-/]+$"
+    Description: >-
+      SSM parameter this stack writes the engine table to, and the one value 30-ingress is
+      handed. MUST be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
+
+  # --- the llm role (llama.cpp) -------------------------------------------------
+  LlmDiscoveryName:
+    Type: String
+    Default: llm
+    Description: DNS label the llm engine answers on, i.e. <LlmDiscoveryName>.<namespace>.
+  LlmImageTag:
+    Type: String
+    Default: server-cuda
+    Description: >-
+      Tag inside the af-llamacpp ECR repository. standup.sh copies the upstream image in
+      before this stack is deployed.
+  LlmModelS3Key:
+    Type: String
+    Default: ""
+    Description: >-
+      Key inside this stack's models bucket, e.g. llm/Qwen3-Coder-…-Q4_K_M.gguf, put there by
+      the ingest task. ⚠️ EMPTY (the default) means NO llm SERVICE IS CREATED — deliberately,
+      and it is the first half of a two-pass stand-up. See PARAMETERS-60-engines.md.
+  LlmModelFile:
+    Type: String
+    Default: model.gguf
+    Description: File name the model is copied to on the box, i.e. /models/<LlmModelFile>.
+  LlmModelIds:
+    Type: CommaDelimitedList
+    Default: "qwen3-coder-30b-a3b"
+    Description: >-
+      Model ids the gateway advertises, i.e. what a user picks as llamacpp/<id>. Declared,
+      never derived — the engine is asleep when the launch menu is drawn. The first is --alias.
+  LlmExtraArgs:
+    Type: CommaDelimitedList
+    Default: "-ngl,99,-c,32768,--jinja"
+    Description: >-
+      Extra llama-server flags. The defaults are the ones measured on an L4 (all layers on the
+      GPU, 32k context, chat template applied — the last is what makes tool calls work).
+  LlmApiKeySsmParam:
+    Type: String
+    Default: /af-ws/engine-llm-key
+    Description: >-
+      SSM SecureString holding llama-server's --api-key, which the CP presents upstream: the
+      second lock on an API that has none of its own. standup.sh creates it. Empty = no key.
+  LlmTaskCpu:
+    Type: String
+    Default: "4096"
+    Description: Task vCPU units. 4096 fills a g6.xlarge; keep it under the instance.
+  LlmTaskMemory:
+    Type: String
+    Default: "14336"
+    Description: >-
+      Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent — a task that
+      asks for all of it never places, which reads as a capacity problem.
+  LlmAllowedInstanceTypes:
+    Type: CommaDelimitedList
+    Default: "g6.xlarge"
+    Description: >-
+      Instance types this role may buy. Declared per role: the floor is a VRAM number (the 30B
+      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory.
+  LlmGpuCount:
+    Type: Number
+    Default: 1
+    Description: GPUs per box, and the task's GPU resource requirement. 0 = a CPU box (test only).
+  LlmVCpuMin:
+    Type: Number
+    Default: 4
+    Description: Lower bound of the instance requirement (vCPU).
+  LlmVCpuMax:
+    Type: Number
+    Default: 8
+    Description: Upper bound of the instance requirement (vCPU).
+  LlmMemMinMiB:
+    Type: Number
+    Default: 15000
+    Description: Lower bound of the instance requirement (MiB).
+  LlmMemMaxMiB:
+    Type: Number
+    Default: 65536
+    Description: Upper bound of the instance requirement (MiB).
+  LlmStorageGiB:
+    Type: Number
+    Default: 120
+    Description: >-
+      EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE —
+      throughput and IOPS cannot be asked for.
+  LlmUseLocalStorage:
+    Type: String
+    Default: "false"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      Use the 250 GB instance store instead of an EBS data volume (ADR 0071 open question 1).
+      Off until measured: it is also wiped per box, i.e. a fresh S3 fetch on every cold start.
+  LlmScaleInAfter:
+    Type: Number
+    Default: -2
+    Description: >-
+      infrastructureOptimization.scaleInAfter in seconds: -2 = leave it at AWS's default,
+      -1 = never tidy up, 0-3600 = that many seconds.
+  LlmIdleSec:
+    Type: Number
+    Default: 1800
+    Description: How long the engine goes unwanted before the controller stops it.
+  LlmStartDeadlineSec:
+    Type: Number
+    Default: 900
+    Description: >-
+      How long a start may take before the controller calls it failed. MUST exceed the real
+      cold start (measured 527-586 s) or every start is a failure and the cooldown doubles away.
+  LlmMode:
+    Type: String
+    Default: ondemand
+    AllowedValues: [ off, on, ondemand ]
+    Description: >-
+      The engine's initial mode, written into the SSM table as the DEFAULT only — once an
+      admin sets it, the stored setting wins (ADR 0070 decision 7).
+
+  # --- the image role (stable-diffusion.cpp — ADR 0071 P1) ----------------------
+  # A mirror of the llm block, and a mirror on purpose: instance requirements are declared per
+  # role because the floor is a VRAM number (SDXL fp16 measured 7,379 MiB against the 30B's
+  # 20,943), and the two roles must never share a box — CUDA does not slow down when VRAM runs
+  # out, it crashes.
+  ImageDiscoveryName:
+    Type: String
+    Default: image
+    Description: DNS label the image engine answers on, i.e. <ImageDiscoveryName>.<namespace>.
+  ImageImageTag:
+    Type: String
+    Default: master-cuda
+    Description: >-
+      Tag inside the af-sdcpp ECR repository (the doubled word is the `image` ROLE's container
+      image tag). Upstream is amd64 only, which is no constraint: G-family has no arm64 member.
+  ImageModelS3Key:
+    Type: String
+    Default: ""
+    Description: >-
+      Key inside this stack's models bucket, e.g. image/sd_xl_base_1.0.safetensors.
+      ⚠️ EMPTY (the default) means NO image SERVICE IS CREATED, for the same reason as
+      LlmModelS3Key. It is also what decides whether standup.sh copies the 2.3 GB image at all.
+  ImageModelFile:
+    Type: String
+    Default: sd_xl_base_1.0.safetensors
+    Description: >-
+      File name the checkpoint is copied to on the box. sd-server reads safetensors directly,
+      so this is the file the ingest task uploaded, not a converted form.
+  ImageModelIds:
+    Type: CommaDelimitedList
+    Default: "sdxl-base-1.0"
+    Description: >-
+      Model ids the gateway advertises. Declared, never derived — the Agent needs the answer
+      while the engine is asleep. The FIRST is the provider's default model, and its Caps.
+  ImageExtraArgs:
+    Type: CommaDelimitedList
+    Default: "--diffusion-fa"
+    Description: >-
+      Extra sd-server flags. --diffusion-fa is what the GPU measurement ran with (1024px in
+      20.8-21.0 s, 7.4 GB of VRAM on an L4). There is no --api-key: sd-server has no auth.
+  ImageTaskCpu:
+    Type: String
+    Default: "4096"
+    Description: Task vCPU units. 4096 fills a g6.xlarge; keep it under the instance.
+  ImageTaskMemory:
+    Type: String
+    Default: "14336"
+    Description: Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent.
+  ImageAllowedInstanceTypes:
+    Type: CommaDelimitedList
+    Default: "g6.xlarge"
+    Description: >-
+      Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
+      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4).
+  ImageGpuCount:
+    Type: Number
+    Default: 1
+    Description: GPUs per box, and the task's GPU resource requirement. 0 = a CPU box (test only).
+  ImageVCpuMin:
+    Type: Number
+    Default: 4
+    Description: Lower bound of the instance requirement (vCPU).
+  ImageVCpuMax:
+    Type: Number
+    Default: 8
+    Description: Upper bound of the instance requirement (vCPU).
+  ImageMemMinMiB:
+    Type: Number
+    Default: 15000
+    Description: Lower bound of the instance requirement (MiB).
+  ImageMemMaxMiB:
+    Type: Number
+    Default: 65536
+    Description: Upper bound of the instance requirement (MiB).
+  ImageStorageGiB:
+    Type: Number
+    Default: 60
+    Description: >-
+      EBS data volume per box when ImageUseLocalStorage is off. Smaller than the llm role's,
+      but not much: the anonymous model volume is re-allocated per task and never reclaimed.
+  ImageUseLocalStorage:
+    Type: String
+    Default: "false"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      Use the instance store instead of an EBS data volume. Less pressing than on the llm
+      role: 6.5 GB from S3 is under a minute either way.
+  ImageScaleInAfter:
+    Type: Number
+    Default: -2
+    Description: >-
+      infrastructureOptimization.scaleInAfter in seconds. -1 ("never tidy up") is a trap with
+      an anonymous model volume — the kept box re-fetches anyway. See the task definition.
+  ImageIdleSec:
+    Type: Number
+    Default: 900
+    Description: >-
+      How long the engine goes unwanted before the controller stops it. Half the llm role's
+      window: an image is a 21-second request with no conversation around it.
+  ImageStartDeadlineSec:
+    Type: Number
+    Default: 900
+    Description: >-
+      How long a start may take before the controller calls it failed. sd-server measured 195 s
+      from task creation to listen; the variable term is how long a GPU box takes to appear.
+  ImageMode:
+    Type: String
+    Default: ondemand
+    AllowedValues: [ off, on, ondemand ]
+    Description: The engine's initial mode, written into the SSM table as the DEFAULT only.
+
+  # --- ingest -----------------------------------------------------------------
+  HfTokenSecretArn:
+    Type: String
+    Default: ""
+    Description: >-
+      Secrets Manager ARN holding HF_TOKEN, read by the INGEST task only (the token is the
+      operator's and never lands on an engine box). Empty = ungated repositories only.
+  IngestCpu:
+    Type: String
+    Default: "2048"
+    Description: Fargate vCPU units for the ingest task.
+  IngestMemory:
+    Type: String
+    Default: "4096"
+    Description: Fargate memory (MiB) for the ingest task.
+  IngestDiskGiB:
+    Type: Number
+    Default: 80
+    Description: >-
+      Ephemeral storage for the ingest task, i.e. the largest model this deployment can take
+      in — it stages the whole file before uploading. 80 GiB covers the 22 GB FLUX checkpoint.
+  LogRetentionDays:
+    Type: Number
+    Default: 14
+    Description: CloudWatch retention for the engine and ingest log group.
+
+Conditions:
+  # An engine with nothing to serve is not a service (see LlmModelS3Key). Everything that
+  # would try to run llama-server hangs off this, and so does the entry in the engine table
+  # — a model advertised in a launch menu whose service does not exist is worse than one that
+  # is merely asleep.
+  HasLlmModel: !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ]
+  HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
+  UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
+  HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
+  HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
+  HasHfToken: !Not [ !Equals [ !Ref HfTokenSecretArn, "" ] ]
+  # The same four for the image role, and the pair that decides the shape of the engine table
+  # (0, 1 or 2 rows — the comma between them only exists when both are there).
+  HasImageModel: !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ]
+  HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
+  ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
+  HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
+  HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
+
+Resources:
+  # --- IAM: three roles, all of them closed inside this stack (ADR 0071 decision 8) ------
+  # The CP needs NOTHING new: UpdateService, DescribeServices, the container-instance reads
+  # and ssm:GetParameter under /af-ws/* are all already unconditional on CpTaskRole.
+
+  # The role ECS itself assumes to run the Managed Instances fleet.
+  InfraRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-infra"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
+      # The managed policy's iam:PassRole only covers roles named ecsInstanceRole*, and the
+      # instance role below is fleet-named. Without this grant the capacity provider is
+      # created and then never launches anything: UnauthorizedOperation on iam:PassRole,
+      # visible only in CloudTrail (measured).
+      Policies:
+        - PolicyName: pass-instance-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-${AWS::StackName}-mi-instance"
+                Condition: { StringLike: { "iam:PassedToService": "ec2.*" } }
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInstanceRolePolicyForManagedInstances
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
+      Roles: [ !Ref InstanceRole ]
+
+  # Engine tasks READ the model catalogue. Ingest WRITES it and reads the HF token. They are
+  # two roles on purpose: the credential that can overwrite a model file must not be sitting
+  # on a box that runs a network service, and the operator's HF token must not either.
+  #
+  # ⚠️ No ssmmessages:* here. The measurement harness has it (it is the only way to reach a
+  # private-subnet engine from a laptop, through
+  # `aws ssm start-session --target ecs:<cluster>_<task>_<runtime>`), and a production engine
+  # is not something anyone should be able to open a shell into.
+  EngineTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-engine-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: models-read
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ s3:GetObject ]
+                Resource: !Sub "${ModelsBucket.Arn}/*"
+              - Effect: Allow
+                Action: [ s3:ListBucket ]
+                Resource: !GetAtt ModelsBucket.Arn
+
+  IngestTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-ingest-task"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs-tasks.amazonaws.com }
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: models-write
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: [ s3:PutObject, s3:AbortMultipartUpload, s3:GetObject ]
+                Resource: !Sub "${ModelsBucket.Arn}/*"
+              - Effect: Allow
+                Action: [ s3:ListBucket ]
+                Resource: !GetAtt ModelsBucket.Arn
+
+  # --- the model catalogue ------------------------------------------------------
+  # S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch
+  # never touches the NAT). Versioning is off deliberately: a 17 GB model kept in duplicate
+  # for every re-ingest is a bill nobody meant to sign, and the sha256 in the ingest log is
+  # what identifies a file (ADR 0071 decision 10).
+  ModelsBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub "af-${AWS::StackName}-models-${AWS::AccountId}"
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault: { SSEAlgorithm: AES256 }
+      LifecycleConfiguration:
+        Rules:
+          - Id: abort-incomplete-uploads
+            Status: Enabled
+            AbortIncompleteMultipartUpload: { DaysAfterInitiation: 3 }
+
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    DeletionPolicy: Delete
+    Properties:
+      LogGroupName: !Sub "/af/${AWS::StackName}/engines"
+      RetentionInDays: !Ref LogRetentionDays
+
+  # llama-server's HTTP API is unauthenticated by default and has mutating endpoints, so
+  # reachability is the whole of its access control: port 8080 from the CP security group
+  # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision
+  # 14, ADR 0071 decision 4). --api-key is the second lock, not the first.
+  #
+  # For sd-server there IS no second lock: stable-diffusion.cpp's server has no
+  # authentication option at all (upstream examples/server/api.md documents none), so this
+  # group is the whole of the image engine's access control. Both roles share it because both
+  # answer on 8080 to the CP and to nobody else; what separates them is the capacity
+  # provider, not the firewall.
+  EngineSg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "af-${AWS::StackName} inference engines (CP to engine, 8080)"
+      VpcId: !ImportValue { "Fn::Sub": "${NetworkStackName}-VpcId" }
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !ImportValue { "Fn::Sub": "${NetworkStackName}-CpSgId" }
+          Description: engine port from the Control Plane only
+      Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
+
+  # --- capacity: one provider per engine role (ADR 0071 decision 2) -------------
+  # Two roles never share a box: CUDA does not slow down when VRAM runs out, it crashes, and
+  # the two measured footprints (20.9 GB for the 30B, 7.4 GB for SDXL) do not both fit on one
+  # L4's 22,888 MiB. Two providers is also what makes `draining` observable per role.
+  #
+  # ⚠️ Two providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
+  # that was just stopped holds its 4 vCPU for the 7-8 minutes it spends draining, so waking
+  # one role while the other is on its way out needs 12. A deployment that uses both roles
+  # should hold 16 or more (quota L-DB2E81BA, which is a support case and not auto-approved).
+  LlmCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-llm"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: CAPACITY_PROVIDER
+        InfrastructureOptimization: !If
+          - HasScaleInAfter
+          - ScaleInAfter: !Ref LlmScaleInAfter
+          - !Ref "AWS::NoValue"
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref EngineSg ]
+          StorageConfiguration: !If
+            - UseLocalStorage
+            - !Ref "AWS::NoValue"
+            - StorageSizeGiB: !Ref LlmStorageGiB
+          LocalStorageConfiguration: !If
+            - UseLocalStorage
+            - UseLocalStorage: true
+            - !Ref "AWS::NoValue"
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref LlmVCpuMin, Max: !Ref LlmVCpuMax }
+            MemoryMiB: { Min: !Ref LlmMemMinMiB, Max: !Ref LlmMemMaxMiB }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref LlmAllowedInstanceTypes
+            # AcceleratorCount is refused without AcceleratorTypes (measured).
+            AcceleratorCount: !If [ HasGpu, { Min: !Ref LlmGpuCount, Max: !Ref LlmGpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+      Tags:
+        # Cost allocation: engine hours are a COMPONENT cost, shown as such and never
+        # apportioned to a member (ADR 0048, ADR 0071 decision 9).
+        - { Key: af-role, Value: engine-llm }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+
+  # The image role's own capacity. Created even when no image model is staged: a capacity
+  # provider costs nothing while nothing runs on it, it is named in the association list
+  # below (which is replaced wholesale, so it cannot be added conditionally without churning
+  # the list), and deleting one that a service used is a stack update that has to wait for
+  # the service to go first.
+  ImageCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-image"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: CAPACITY_PROVIDER
+        InfrastructureOptimization: !If
+          - HasImageScaleInAfter
+          - ScaleInAfter: !Ref ImageScaleInAfter
+          - !Ref "AWS::NoValue"
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref EngineSg ]
+          StorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - !Ref "AWS::NoValue"
+            - StorageSizeGiB: !Ref ImageStorageGiB
+          LocalStorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - UseLocalStorage: true
+            - !Ref "AWS::NoValue"
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref ImageVCpuMin, Max: !Ref ImageVCpuMax }
+            MemoryMiB: { Min: !Ref ImageMemMinMiB, Max: !Ref ImageMemMaxMiB }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref ImageAllowedInstanceTypes
+            AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+      Tags:
+        - { Key: af-role, Value: engine-image }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+
+  # ⚠️ This REPLACES the cluster's provider list — the API is not additive — so FARGATE and
+  # FARGATE_SPOT have to be named alongside ours or every Fargate service in the deployment
+  # loses its provider. DefaultCapacityProviderStrategy is a REQUIRED property and is
+  # deliberately EMPTY: with a default strategy in place, a service that does not spell out
+  # `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
+  # line is the whole of that failure).
+  Associations:
+    Type: AWS::ECS::ClusterCapacityProviderAssociations
+    Properties:
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider, !Ref ImageCapacityProvider ]
+      DefaultCapacityProviderStrategy: []
+
+  # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
+  # A Fargate task an operator runs by hand:
+  #
+  #   aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+  #     --task-definition af-<stack>-ingest \
+  #     --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}' \
+  #     --overrides '{"containerOverrides":[
+  #        {"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…/resolve/main/x.gguf"},
+  #                                       {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
+  #        {"name":"upload","environment":[{"name":"KEY","value":"llm/x.gguf"}]}]}'
+  #
+  # ⚠️ Overriding a command here takes ONE string, because the EntryPoint is already
+  # ["sh","-c"]. Passing ["sh","-c",<script>] becomes `sh -c sh -c <script>`, which does
+  # nothing and exits 0 — it reads as success and ran nothing (measured).
+  #
+  # The sha256 is not optional decoration. "The file got bigger" is what a truncated
+  # download also looks like, and a GGUF that is 99 % there loads and then answers nonsense.
+  # The value comes from the HF API's `?blobs=true` siblings[].lfs.sha256, which was
+  # verified against a real sha256sum of the downloaded file.
+  IngestTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-ingest"
+      RequiresCompatibilities: [ FARGATE ]
+      NetworkMode: awsvpc
+      Cpu: !Ref IngestCpu
+      Memory: !Ref IngestMemory
+      EphemeralStorage: { SizeInGiB: !Ref IngestDiskGiB }
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt IngestTaskRole.Arn
+      Volumes: [ { Name: scratch } ]
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: curlimages/curl:latest
+          # The shared volume is root-owned and curlimages/curl runs as uid 100, which
+          # surfaces as the useless "curl: (23) client returned ERROR on write" (measured).
+          User: "0"
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - >-
+              set -e;
+              [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; };
+              start=$(date +%s);
+              if [ -n "$HF_TOKEN" ]; then set -- -H "Authorization: Bearer $HF_TOKEN"; else set --; fi;
+              curl -fsSL "$@" -o /scratch/blob "$URL";
+              size=$(stat -c %s /scratch/blob);
+              secs=$(( $(date +%s) - start ));
+              echo "ingest: fetched $size bytes in ${secs}s";
+              if [ -n "$SHA256" ]; then
+                got=$(sha256sum /scratch/blob | cut -d" " -f1);
+                [ "$got" = "$SHA256" ] || { echo "ingest: sha256 mismatch: got $got want $SHA256"; exit 1; };
+                echo "ingest: sha256 ok $got";
+              else
+                echo "ingest: WARNING no SHA256 given — the upload is unverified";
+              fi
+          Environment:
+            - { Name: URL, Value: "" }
+            - { Name: SHA256, Value: "" }
+          Secrets: !If
+            - HasHfToken
+            - - { Name: HF_TOKEN, ValueFrom: !Ref HfTokenSecretArn }
+            - !Ref "AWS::NoValue"
+          MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ingest-fetch
+        - Name: upload
+          Essential: true
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub >-
+              set -e;
+              [ -n "$KEY" ] || { echo "ingest: KEY is required"; exit 2; };
+              start=$(date +%s);
+              aws s3 cp /scratch/blob "s3://${ModelsBucket}/$KEY" --only-show-errors;
+              echo "ingest: uploaded $KEY in $(( $(date +%s) - start ))s";
+          Environment: [ { Name: KEY, Value: "" } ]
+          MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
+          # SUCCESS, not COMPLETE: a fetch that failed its checksum must not be uploaded.
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: ingest-upload
+
+  # --- the llm engine -----------------------------------------------------------
+  LlmTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasLlmModel
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-llm"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref LlmTaskCpu
+      Memory: !Ref LlmTaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt EngineTaskRole.Arn
+      Volumes:
+        # An ANONYMOUS host volume — an empty `Host`, no SourcePath. Both halves of that are
+        # measured, and both are counter-intuitive:
+        #
+        #   - a named `SourcePath` does NOT work. `StorageConfiguration.storageSizeGiB` sizes
+        #     the DATA volume MI attaches (what the container runtime uses); an arbitrary host
+        #     path like /var/lib/… lands on the ROOT filesystem, which is much smaller.
+        #     Measured: with SourcePath the fetch died with "No space left on device" on a
+        #     brand-new 120 GiB box, every time, and the service never started at all.
+        #   - the price of the anonymous form is that ECS allocates a FRESH directory per
+        #     task, so a box that MI keeps (scaleInAfter -1) does NOT skip the S3 fetch on the
+        #     next start — measured, a restart onto the very same instance re-fetched all
+        #     18.5 GB (126 s) — and the previous tasks' directories are never reclaimed, so
+        #     four starts on one kept box filled the disk.
+        #
+        # ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and scaleInAfter is
+        # left at the AWS default rather than -1. Making it work needs the path MI's data
+        # volume is actually mounted at, which is not documented and was not worth another GPU
+        # hour to find; P4 can pick it up with `useLocalStorage`, where the 250 GB instance
+        # store is the whole disk.
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        # The fetch runs to completion before llama-server starts, and it logs how long it
+        # took — that line is the S3 half of the cold start, measured at 104-147 MB/s and
+        # running concurrently with the image pull.
+        - Name: fetch
+          Essential: false
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub >-
+              set -e;
+              if [ -s "/models/${LlmModelFile}" ]; then
+                echo "s3 fetch: /models/${LlmModelFile} is already on this box";
+                exit 0;
+              fi;
+              start=$(date +%s);
+              aws s3 cp "s3://${ModelsBucket}/${LlmModelS3Key}" "/models/${LlmModelFile}.part" --only-show-errors;
+              mv "/models/${LlmModelFile}.part" "/models/${LlmModelFile}";
+              echo "s3 fetch: $(stat -c %s /models/${LlmModelFile}) bytes in $(( $(date +%s) - start ))s";
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: llm-fetch
+        - Name: llama
+          Essential: true
+          # ⚠️ The image must ALREADY be in that repository when this stack is created.
+          # CloudFormation blocks on ECS service stabilisation, so a service that cannot
+          # pull leaves the stack in CREATE_IN_PROGRESS indefinitely — which is why the
+          # repository lives in 20-platform and standup.sh copies the image in during its
+          # images step, one stack earlier than this one (measured on 50-tts, 2026-09-06).
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
+              Tag: !Ref LlmImageTag
+          PortMappings: [ { ContainerPort: 8080 } ]
+          # The image's ENTRYPOINT is llama-server, so this is flags only. --alias is what
+          # makes the model answer to the id the launch menu offers rather than to the file
+          # path it was loaded from.
+          Command: !Split
+            - ","
+            - !Join
+              - ","
+              - - "-m"
+                - !Sub "/models/${LlmModelFile}"
+                - "--host"
+                - "0.0.0.0"
+                - "--port"
+                - "8080"
+                - "--alias"
+                - !Select [ 0, !Ref LlmModelIds ]
+                - !Join [ ",", !Ref LlmExtraArgs ]
+          ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          Environment:
+            # -hf is never used (decision 3), but llama-server writes here regardless of
+            # how the model arrived; pointing it at /tmp keeps it off the model volume.
+            - { Name: LLAMA_CACHE, Value: /tmp/llama-cache }
+          Secrets: !If
+            - HasLlmApiKey
+            - - Name: LLAMA_API_KEY
+                ValueFrom: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${LlmApiKeySsmParam}"
+            - !Ref "AWS::NoValue"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: llm
+
+  # A Cloud Map DNS service, not Service Connect: the CP reaches the engine at
+  # http://<name>.<namespace>:8080 through the VPC resolver, so the gateway needs no
+  # sidecar and no /etc/hosts snapshot (ADR 0070 decision 8).
+  #
+  # While the service is at desired 0 the name has no A record at all and the lookup is
+  # NXDOMAIN. That is not an error the gateway reports — it is the normal state of an engine
+  # nobody is using, and "wake it and hold the request" is what happens instead.
+  LlmDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: HasLlmModel
+    Properties:
+      Name: !Ref LlmDiscoveryName
+      NamespaceId: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceId" }
+      DnsConfig:
+        DnsRecords: [ { Type: A, TTL: 10 } ]
+      # Without it Cloud Map refuses the registration for an ECS service that has no load
+      # balancer.
+      HealthCheckCustomConfig: { FailureThreshold: 1 }
+
+  LlmService:
+    Type: AWS::ECS::Service
+    Condition: HasLlmModel
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-llm"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref LlmTaskDef
+      # ⚠️ DesiredCount is deliberately ABSENT, and this is load-bearing. From the resource
+      # schema: for a NEW service an unspecified desired count defaults to 1; for an
+      # EXISTING one it is omitted from the update call. So CloudFormation creates the
+      # service running and then never touches the count again — which is what lets the
+      # engine be started and stopped out from under the template. Declaring `0` instead
+      # would reset the count on every task-definition or tag change, i.e. kill a GPU box
+      # mid-answer. standup.sh scales the new service to 0 straight after creation.
+      #
+      # ⚠️ And no LaunchType either: a capacity provider strategy and a launch type are
+      # mutually exclusive. This is the ONE service in the deployment that is allowed to
+      # omit LaunchType, and only because it names its provider explicitly.
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref LlmCapacityProvider, Weight: 1 }
+      # One engine behind one DNS name: two tasks during a redeploy would mean two A records
+      # and requests split between a warm engine and a cold one, on a box that costs
+      # $1.26/hour. Stop the old task first.
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref EngineSg ]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt LlmDiscovery.Arn
+      PropagateTags: SERVICE
+      Tags:
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+        - { Key: af-role, Value: engine-llm }
+
+  # --- the image engine (ADR 0071 P1) -------------------------------------------
+  ImageTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImageModel
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-image"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref ImageTaskCpu
+      Memory: !Ref ImageTaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt EngineTaskRole.Arn
+      Volumes:
+        # `Host: {}`, for the reasons measured on the llm role above — a SourcePath lands on
+        # the root filesystem and fills a brand-new box, and the price of the anonymous form
+        # is a fresh directory per task.
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub >-
+              set -e;
+              if [ -s "/models/${ImageModelFile}" ]; then
+                echo "s3 fetch: /models/${ImageModelFile} is already on this box";
+                exit 0;
+              fi;
+              start=$(date +%s);
+              aws s3 cp "s3://${ModelsBucket}/${ImageModelS3Key}" "/models/${ImageModelFile}.part" --only-show-errors;
+              mv "/models/${ImageModelFile}.part" "/models/${ImageModelFile}";
+              echo "s3 fetch: $(stat -c %s /models/${ImageModelFile}) bytes in $(( $(date +%s) - start ))s";
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: image-fetch
+        - Name: sd
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
+              Tag: !Ref ImageImageTag
+          # ⚠️ The image's ENTRYPOINT is /sd-cli, NOT the server — so unlike the llama.cpp
+          # image this one needs the entry point overridden or the task starts a one-shot CLI,
+          # renders nothing and exits. There is no curl in the image either, which is why the
+          # fetch is a separate aws-cli container. (Measured 2026-09-07.)
+          EntryPoint: [ "/sd-server" ]
+          PortMappings: [ { ContainerPort: 8080 } ]
+          # --listen-ip / --listen-port, not --host / --port: sd-server does not share
+          # llama-server's flag names.
+          Command: !Split
+            - ","
+            - !Join
+              - ","
+              - - "-m"
+                - !Sub "/models/${ImageModelFile}"
+                - "--listen-ip"
+                - "0.0.0.0"
+                - "--listen-port"
+                - "8080"
+                - !Join [ ",", !Ref ImageExtraArgs ]
+          ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: image
+
+  ImageDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: HasImageModel
+    Properties:
+      Name: !Ref ImageDiscoveryName
+      NamespaceId: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceId" }
+      DnsConfig:
+        DnsRecords: [ { Type: A, TTL: 10 } ]
+      HealthCheckCustomConfig: { FailureThreshold: 1 }
+
+  ImageService:
+    Type: AWS::ECS::Service
+    Condition: HasImageModel
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-image"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref ImageTaskDef
+      # DesiredCount deliberately ABSENT — see the llm service. standup.sh scales a NEWLY
+      # created service to 0; a later update leaves whatever count the controller set.
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref ImageCapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref EngineSg ]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ImageDiscovery.Arn
+      PropagateTags: SERVICE
+      Tags:
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+        - { Key: af-role, Value: engine-image }
+
+  # --- the engine table the CP reads at startup (ADR 0071 decision 8) -----------
+  # 30-ingress has 9.2 KB of template budget left and six parameters per engine would eat a
+  # third of it, so the CP is handed ONE parameter name and reads the table from SSM. The
+  # name has to be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
+  EnginesParam:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref EnginesSsmParamName
+      Type: String
+      Description: !Sub "agent-fleet engine table written by ${AWS::StackName} (ADR 0071)"
+  # The table holds 0, 1 or 2 rows — each role is staged independently — so it is assembled
+  # from two fragments and a separator that only exists when both are there. `api` is what
+  # tells the reader what KIND of endpoint this is, and it decides two things that would
+  # otherwise be guessed from the key: whether the Agent writes an opencode chat provider for
+  # it, and whether the gateway counts tokens out of the response (`chat`) or leaves the
+  # accounting to the Agent's tool.imagegen row (`images`, ADR 0071 decision 9).
+  #
+  # The image engine's health path is /v1/models, not /health: stable-diffusion.cpp's server
+  # has no health endpoint (upstream api.md), and /v1/models is the cheapest GET it answers.
+  # It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+      Value: !Sub
+        - '{"engines":[${Llm}${Sep}${Image}]}'
+        - Llm: !If
+            - HasLlmModel
+            - !Sub
+              - >-
+                {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
+                "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
+                "health":"/health","provider":"llamacpp","models":["${Models}"],
+                "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
+                "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
+              - Service: !GetAtt LlmService.Name
+                Cp: !Sub "af-${AWS::StackName}-llm"
+                Models: !Join [ '","', !Ref LlmModelIds ]
+            - ""
+          Image: !If
+            - HasImageModel
+            - !Sub
+              - >-
+                {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
+                "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
+                "health":"/v1/models","provider":"sdcpp","models":["${Models}"],
+                "apiKeyParam":"","idleSec":${ImageIdleSec},
+                "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
+              - Service: !GetAtt ImageService.Name
+                Cp: !Sub "af-${AWS::StackName}-image"
+                Models: !Join [ '","', !Ref ImageModelIds ]
+            - ""
+          Sep: !If [ HasBothModels, ",", "" ]
+
+Outputs:
+  # The one value standup.sh feeds to 30-ingress. Non-empty by construction (a parameter
+  # with a non-empty default), which is what check-cfn-exports.py insists on.
+  EnginesSsmParam:
+    Description: AF_ENGINES_SSM_PARAM for the Control Plane (the engine table's SSM name).
+    Value: !Ref EnginesSsmParamName
+    Export: { Name: !Sub "${AWS::StackName}-EnginesSsmParam" }
+  LlmServiceName:
+    Description: >-
+      The llm engine's ECS service name (what the controller drives), or "-" while no model
+      is staged. Never empty: an empty Export fails the whole stack (check-cfn-exports.py).
+    Value: !If [ HasLlmModel, !GetAtt LlmService.Name, "-" ]
+    Export: { Name: !Sub "${AWS::StackName}-LlmServiceName" }
+  LlmCapacityProviderName:
+    Description: The llm capacity provider, i.e. what marks a container instance as NOT a workspace slot.
+    Value: !Ref LlmCapacityProvider
+    Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
+  ImageServiceName:
+    Description: >-
+      The image engine's ECS service name, or "-" while no checkpoint is staged. Never empty
+      for the same reason as the llm one: an empty Export fails the whole stack.
+    Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
+    Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
+  ImageCapacityProviderName:
+    Description: The image capacity provider (the other thing that marks a box as NOT a workspace slot).
+    Value: !Ref ImageCapacityProvider
+    Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
+  ModelsBucket:
+    Description: S3 bucket the models are staged in (ingest writes, engines read).
+    Value: !Ref ModelsBucket
+    Export: { Name: !Sub "${AWS::StackName}-ModelsBucket" }
+  IngestTaskDefFamily:
+    Description: Task definition family to `aws ecs run-task` for taking a model in from Hugging Face.
+    Value: !Ref IngestTaskDef
+    Export: { Name: !Sub "${AWS::StackName}-IngestTaskDefFamily" }

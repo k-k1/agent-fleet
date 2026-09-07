@@ -103,6 +103,11 @@ func driverModelOf(id string) string {
 		return codexDriverModel()
 	case ProviderAgy:
 		return agyDriverModel()
+	case ProviderSdcpp:
+		// Not a driver model but the CHECKPOINT the engine was started with — the only model
+		// this route has, and the one its Caps are keyed to. Answered from the stack's
+		// declaration, so asking costs nothing and does not wake the box.
+		return sdcppDriverModel()
 	}
 	return ""
 }
