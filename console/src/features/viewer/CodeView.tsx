@@ -229,6 +229,15 @@ export const CodeView = memo(function CodeView({ html, lines, lineNumbers, wrap,
 
   const onMiniDown = (e: RMouseEvent) => {
     const pane = e.currentTarget as HTMLElement;
+    // Suppress the browser's native drag-select. The minimap's own text is behind
+    // `pointer-events: none`, so the press lands on .minimap itself and the browser
+    // anchors a selection at the nearest text position — inside the (contentEditable)
+    // code area — then extends it as the drag scrolls the file, painting the whole
+    // scrolled range blue (measured: a 12-step drag selected 856 characters). It also
+    // keeps focus and any existing selection where they were, which is what we want: the
+    // minimap is a scroll control, not a focusable surface. `.minimap { user-select: none }`
+    // covers the same case in Chromium, but this is the guard we rely on.
+    e.preventDefault();
     scrollToMini(e.clientY, pane);
     const move = (ev: MouseEvent) => scrollToMini(ev.clientY, pane);
     const up = () => {
