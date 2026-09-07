@@ -2,7 +2,7 @@
 
 English | [日本語](0071-self-hosted-inference-engines.ja.md)
 
-- Status: **adopted — P0 and P1 implemented, not yet merged to develop** (2026-09-07; approved by the review the same day, drafted 2026-09-06). Every price below
+- Status: **adopted — P0 and P1 implemented and merged to develop (PR #419)** (2026-09-07; approved by the review the same day, drafted 2026-09-06). Every price below
   came from AWS's public price data (Tokyo, on-demand) on that date, every image and model
   figure from the registry and Hugging Face APIs on that date. What was measured in this
   container says so. Written to be reviewed before P0 is built; the Open questions are the
@@ -247,6 +247,32 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    "One request buys a 30-minute window" is the opt-in of the person
    who chose that provider or model; there is no break-even analogue to 0070 (the alternative is
    simply "not available").
+
+   🔴 **"The CP holds it" is good for 60 seconds on a non-streaming request (P1 measurement 9,
+   2026-09-07).** How long it can be held is decided not by the CP but by **whatever sits in
+   front**: 30-ingress's ALB has `idle_timeout.timeout_seconds: "60"` and closes a connection
+   that has carried no response byte for a minute. The streaming path could hold for 900 s
+   because its 10-second heartbeat was **also defeating that idle timeout** — a side effect of
+   the mechanism written for opencode's 300 seconds. Images answer with JSON and have nowhere
+   to put a heartbeat, so **the first call to a cold engine always died at 60 s** (measured: the
+   CP answered `503 59.998s` while the engine itself was ready at 165 s). So this decision now
+   splits by role:
+   - **streaming** (`chat`) holds to `AF_ENGINE_WAKE_TIMEOUT`, as the body says;
+   - **non-streaming** (`images`) folds its hold **below the front end's idle timeout** and
+     answers `503 engine_waking` + `Retry-After` (`AF_ENGINE_PLAIN_HOLD`, default **45 s**,
+     never above `AF_ENGINE_WAKE_TIMEOUT`). The side that keeps waiting is the caller: the
+     `sdcpp` provider asks again within its own 16-minute budget. What a person sees — one call,
+     one picture — is unchanged, because the MCP progress heartbeat keeps the client's clock
+     alive and the retries never surface above the tool.
+   The **code** on the 503 decides whether to retry (`engine_waking` yes; `engine_off` and
+   `engine_unavailable` no). Retrying on the number alone would turn a clear refusal about a
+   switched-off engine into sixteen minutes of silence. 502 and 504 are retried as well: they
+   are **the front end answering on the gateway's behalf**, which is also what a Control Plane
+   too old to know `engine_waking` looks like from here.
+   Raising the ALB's `idle_timeout` was rejected: it applies to every route, the same hole
+   reopens on any deployment whose front end is not ours (CloudFront, a customer's nginx), and
+   **the CP cannot ask what that value is**. Put the mechanism on the side that survives
+   whatever is in front.
 
 6. **Three engines — llama.cpp, stable-diffusion.cpp, ComfyUI. The first two are official
    images copied into ECR; ComfyUI is baked by the fleet.** Why these:
@@ -682,6 +708,12 @@ one attempt** — and one broke: 🔴 **an MI box does not appear in a `describe
 listing**, so the check P0 relied on to say "no GPU is running" was not evidence of that at
 all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 13:47:04Z), roughly $0.31.
 
+That evening the CP and the Workspace were rebaked and **the other half — the `generate_image`
+path — was driven on real hardware too**. That is measurement 9 onwards, and **two more
+expectations broke** there: decision 5's "the CP holds the request" is good for 60 seconds on a
+non-streaming request (9), and the failure fell through onto a member's plan quota without
+saying so (10). The second g6.xlarge came up at 15:26, again about $0.3.
+
 1. **The image role's cold start is 197 seconds** (`execute-change-set` to
    `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
    **+57 s to task creation**, +61 s for the box to register as a container instance, pull
@@ -735,8 +767,77 @@ all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 1
    CP's parser test parses — trailing spaces from CloudFormation's folded scalars included. The
    shape a test has to survive is the one CloudFormation emits, not the one a person would type.
 
+9. 🔴 **Driving `generate_image` on a real deployment showed the other half of the definition
+   of done — "one call returns a picture" — does NOT hold on the first attempt.** The CP and
+   the Workspace were rebaked as `0.16.1-dev-f4a12675` and deployed to af-sandbox, and
+   `workspace-agent mcp-stdio --image-gen` was driven from the real workspace (opencode session
+   `sh7gxia`). The first call to a stopped image engine, in full (all times 2026-09-07 UTC):
+   - 15:26:49 the request. **sdcpp is not streaming**, so the gateway takes the `plain` path.
+   - 15:26:50 the CP logs `engine image: started on demand`.
+   - **15:27:49 the CP answers `POST /engine/image/v1/images/generations` with 503, in
+     `59.998s`.**
+   - 15:29:35 the CP logs `engine image: warmed up (ready)` — **the start itself took 165
+     seconds**, the same band as P1 measurement 1's 197 s (a second point).
+   Sixty seconds flat did not come from the CP, whose own bound is 900. It came from
+   **30-ingress's ALB, `idle_timeout.timeout_seconds: "60"`** (confirmed on the live load
+   balancer): a connection that has carried no response byte for 60 seconds is closed.
+   **The llm role never hit this because of the SSE comment line every 10 seconds** — written
+   for opencode's 300-second ceiling, and it turns out to have been defeating the ALB's idle
+   timeout at the same time. P0's "512 seconds in one attempt" was riding on that side effect.
+   The fix (decision 5's 🔴): the non-streaming hold is folded below whatever sits in front,
+   via `AF_ENGINE_PLAIN_HOLD` (default 45 s), and answers `503 engine_waking` + `Retry-After`.
+   The one that keeps asking is the `sdcpp` provider, inside its own 16-minute budget, and it
+   **rebuilds** rather than replays the request — an edit's body is a multipart document the
+   first attempt already read to the end, so a replay would send an empty body on the one
+   endpoint that is not JSON. **What a caller sees — one call, one picture — is preserved by
+   moving where the waiting happens.**
+
+10. 🔴 **That 60-second failure fell through onto a member's plan quota, silently.** Two ledger
+    rows belong to the one tool call: `kind:"sdcpp"` `ok:false` `ms:60000`, and 21 seconds
+    later `kind:"agy"` `ok:true` `ms:20880` `images:1` `pixels:1048576`. `auto` is an ORDER of
+    ready providers, so the second one runs when the first fails — as designed, but it **spent
+    a member's Antigravity quota on an image the fleet's own hardware was two minutes from
+    serving**. The reason sdcpp is first in that order (ADR 0069, whose wallet pays) is exactly
+    what the fallback inverts. Decision 5's fix closes this path too, since the call no longer
+    fails at 60 s. ⚠️ The fallback itself is worth keeping — it is right on a deployment whose
+    engine really is down — but **not distinguishing "would have worked if we waited" from
+    "genuinely unavailable" before spending a quota** remains open on the 0069 side.
+
+11. ✅ **Warm, the whole path works.** From the same session, through the CP gateway, the
+    provider and the MCP tool:
+    - **generate at 1024×1024 in 23.4 s** (`auto` chose sdcpp; the PNG came back at 1,073,204
+      bytes with an IHDR of 1024×1024). **Exactly two progress notifications, 10 s apart**
+      (gaps 10.0 / 10.0 / 3.4 s).
+    - **edit (multipart) in 5.3 s** and **inpaint (multipart + mask) in 5.0 s**, both 512×512.
+      **This is the first time the gateway's Content-Type passthrough met the real thing**, and
+      the boundary survived — the third of P1's additions to the body, now measured.
+    - The CP logged one line each: `200 23.396s` and `200 5.236s`.
+    - **The faces that answer without waking anything were confirmed too**: with zero boxes
+      running, `/imagegen/status` returns `provider:"sdcpp"` `ready:true`
+      `model:"sdxl-base-1.0"` `ops:[generate,edit,inpaint]` `order:["sdcpp","agy","codex"]`.
+      `tools/list` advertises a `provider` enum of `["sdcpp","agy"]` and an `op` enum of
+      `["generate","edit","inpaint"]`.
+
+12. ✅ **The ledger is what decision 9 said.** In one day's raw file: **5 `tool.imagegen` rows
+    and 0 `engine.image` rows**. The image rows carry `images` and `pixels` (1024² as
+    `1048576`, 512² as `262144`), `ref` is the session name, and `measured:"none"` — no token
+    exists on this route, and that is not written as zero (the same rule ADR 0069 took).
+    ✅ **It also settled one of P0's leftovers: the `engine.llm` rows DO reach the ledger** —
+    **55 of them** the same day, with `in`/`out` and `measured:"exact"`, `kind:"opencode"`.
+    That is the CP→Agent POST fixed to use `newAgentTransport()` in P0 measurement 11, working
+    on the real thing.
+
 Also verified in P1:
 
+- **ECS Exec is usable as a harness, but its pty dies on stdin EOF.** Giving
+  `aws ecs execute-command --interactive` a `</dev/null` makes a long call **disappear along
+  with the session the moment the request is sent** (which is how the first measurement was
+  lost). Detach with `setsid`, write to a file, and peek with short execs; `nohup` alone is not
+  enough. Run Python with `-u`, or buffered output dies with the process. Note the Workspace
+  task role has **no `ssmmessages:*`** — correctly so — hence a temporary inline policy
+  `af-adr0071-p1-temp-exec` alongside `enableExecuteCommand`, **both removed afterwards**.
+- **A follow-on to "don't read a `describe-instances` listing"** (measurement 2): the engine box
+  was again only findable on the ECS side, through `describe-container-instances`.
 - **Copying GHCR → ECR took 177 seconds for 2.42 GB** (`crane copy` from this container), the
   same rate as P0's llama.cpp (2.59 GB in 179 s).
 - **The `image` role's ECR repository (`af-sdcpp`) lives in 20-platform**, because a repository
@@ -779,10 +880,11 @@ Also verified in P1:
   - **The `image` role has no `--api-key`.** sd-server has no authentication mechanism at all
     (upstream `examples/server/api.md`), so the security group is the whole of its access
     control, and decision 4(d)'s "second lock" is an llm-role-only story.
-  The **engine side** of the definition of done was measured on real hardware (1, 3 and 4
-  below). **Driving it through the CP gateway and the Agent provider on real hardware is not
-  done** — that needs the CP and Workspace images rebuilt — and is covered by unit and
-  integration tests in the meantime.
+  The definition of done was **measured in full on real hardware** — the engine side in 1, 3
+  and 4 below, the CP gateway and the Agent provider in 9-12 (`0.16.1-dev-f4a12675` deployed to
+  af-sandbox, `generate_image` called from a real workspace's opencode session). 🔴 **The first
+  attempt failed** — an ALB cuts a non-streaming request at 60 seconds (measurement 9) — which
+  added one fix to P1: decision 5 now splits by role.
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and

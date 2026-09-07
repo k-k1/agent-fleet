@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // sdcppStub stands in for the CP's engine gateway. It records what arrived and answers with
@@ -343,5 +344,182 @@ func TestAutoPrefersTheSelfHostedEngineOverAMembersPlan(t *testing.T) {
 	// cannot do it — a fall-through to one would be a second failure, not a rescue.
 	if got := chooseImageProviders("", Request{Op: OpInpaint}, providerOrder, ready, caps); len(got) != 1 || got[0] != ProviderSdcpp {
 		t.Errorf("inpaint chose %v", got)
+	}
+}
+
+// --- waking the engine across more than one request (ADR 0071 P1, measured 2026-09-07) -----
+
+// shortRetries makes the wait between attempts a mechanism a test can observe rather than a
+// wall-clock cost. Without it these tests would spend the real three-second floor per attempt.
+func shortRetries(t *testing.T) {
+	t.Helper()
+	oldMin, oldMax := sdcppRetryMin, sdcppRetryMax
+	sdcppRetryMin, sdcppRetryMax = time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { sdcppRetryMin, sdcppRetryMax = oldMin, oldMax })
+}
+
+// The claim the whole retry loop exists for. The gateway cannot hold a non-streaming request
+// while a GPU box boots — the ingress closes an idle connection first (measured: the CP
+// answered `503 59.998s` against its own 900-second hold, while the engine took 165 s) — so
+// one tool call has to survive being answered "not yet" several times.
+func TestSdcppKeepsAskingWhileTheEngineIsWaking(t *testing.T) {
+	shortRetries(t)
+	var attempts int
+	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts < 3 {
+			w.Header().Set("Retry-After", "6")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"the fleet's own inference engine is starting; retry"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+	})
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"})
+	if err != nil {
+		t.Fatalf("Generate: %v — a waking engine must not end the call", err)
+	}
+	if attempts != 3 {
+		t.Errorf("attempts = %d, want 3", attempts)
+	}
+	if len(res.Images) != 1 {
+		t.Fatalf("images = %d", len(res.Images))
+	}
+}
+
+// An ingress that gave up on the gateway's behalf. It never gets to say `engine_waking`, so
+// the status is all there is — and it is also what a Control Plane too old to fold its wait
+// looks like from here.
+func TestSdcppRetriesAnIngressTimeout(t *testing.T) {
+	shortRetries(t)
+	var attempts int
+	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.WriteHeader(http.StatusGatewayTimeout)
+			_, _ = io.WriteString(w, "<html>504 Gateway Time-out</html>")
+			return
+		}
+		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+	})
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if attempts != 2 {
+		t.Errorf("attempts = %d, want the 504 to have been retried once", attempts)
+	}
+}
+
+// The two 503s that are refusals, not delays. Retrying either would turn a clear answer into
+// a sixteen-minute hang, with the model told nothing until the very end.
+func TestSdcppDoesNotRetryARefusal(t *testing.T) {
+	shortRetries(t)
+	for _, tc := range []struct{ code, want string }{
+		{"engine_off", "switched off"},
+		{"engine_unavailable", "did not come up in time"},
+	} {
+		t.Run(tc.code, func(t *testing.T) {
+			var attempts int
+			p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+				attempts++
+				w.WriteHeader(http.StatusServiceUnavailable)
+				_, _ = io.WriteString(w, `{"error":{"code":"`+tc.code+`","message":"`+tc.want+`"}}`)
+			})
+			_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "x"})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want the gateway's own message", err)
+			}
+			if attempts != 1 {
+				t.Errorf("attempts = %d, want 1 — a refusal is not a delay", attempts)
+			}
+		})
+	}
+}
+
+// The retry has to REBUILD the request, not replay it: an edit's body is a multipart document
+// that the first attempt has already read to the end. A retried POST carrying an empty body
+// would fail on the one endpoint in this system that is not JSON, and only there.
+func TestSdcppRebuildsTheMultipartBodyOnRetry(t *testing.T) {
+	shortRetries(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.png")
+	if err := os.WriteFile(src, tinyPNG(t, 16, 16), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var attempts int
+	sizes := map[int]int{}
+	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		_, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil {
+			t.Errorf("attempt %d content-type: %v", attempts, err)
+			return
+		}
+		mr := multipart.NewReader(r.Body, params["boundary"])
+		for {
+			part, perr := mr.NextPart()
+			if perr != nil {
+				break
+			}
+			b, _ := io.ReadAll(part)
+			if part.FormName() == "image" {
+				sizes[attempts] = len(b)
+			}
+		}
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "6")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"starting"}}`)
+			return
+		}
+		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 16, 16)))
+	})
+	if _, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "red", Inputs: []string{src},
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("attempts = %d, want 2", attempts)
+	}
+	if sizes[2] == 0 || sizes[2] != sizes[1] {
+		t.Errorf("image part was %d bytes on the retry and %d on the first try — the body was replayed, not rebuilt",
+			sizes[2], sizes[1])
+	}
+}
+
+// The budget is the caller's, not the gateway's: when it runs out the message has to say what
+// was being waited for, because "context deadline exceeded" after fifteen minutes of waking a
+// GPU box tells nobody what to do next.
+func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOut(t *testing.T) {
+	shortRetries(t)
+	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"starting"}}`)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	_, err := p.Generate(ctx, Request{Op: OpGenerate, Prompt: "x"})
+	if err == nil || !strings.Contains(err.Error(), "did not come up within") {
+		t.Fatalf("err = %v, want a reason naming the wait", err)
+	}
+}
+
+func TestSdcppRetryAfterIsClamped(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", sdcppRetryMin},
+		{"nonsense", sdcppRetryMin},
+		{"0", sdcppRetryMin},
+		{"1", sdcppRetryMin},
+		{"6", 6 * time.Second},
+		{"3600", sdcppRetryMax},
+	} {
+		if got := sdcppRetryAfter(tc.in); got != tc.want {
+			t.Errorf("sdcppRetryAfter(%q) = %s, want %s", tc.in, got, tc.want)
+		}
 	}
 }

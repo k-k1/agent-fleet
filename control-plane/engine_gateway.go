@@ -31,6 +31,25 @@ package main
 // 503 + Retry-After is therefore NOT the normal path. It is for a non-streaming request
 // (which has nowhere to put a heartbeat) and for a start that genuinely failed. A 503 spends
 // one of the client's finite retries, and how many it has is not something this side knows.
+//
+// ## The non-streaming path cannot hold for 900 seconds (measured 2026-09-07, ADR 0071 P1)
+//
+// The first real generate_image call against a stopped image engine came back as
+// `POST /engine/image/v1/images/generations 503 59.998s` — the CP's own hold is 900 s, so
+// something else cut it: the ingress ALB's `idle_timeout.timeout_seconds`, which
+// 30-ingress.yaml sets to 60. A request that has sent no response byte for 60 seconds is
+// closed under both ends, and the image engine needed 165 s to come up. The streaming path
+// never noticed because its heartbeat is a byte every 10 s — written for opencode's 300 s
+// ceiling, and it turns out to have been carrying the ALB too.
+//
+// So the hold on THIS path is bounded below the ingress's idle timeout and the answer is the
+// 503 + Retry-After the design already called for, which the caller retries against its own
+// (much longer) budget. Bounding it here rather than raising the ALB's timeout is what keeps
+// this working behind a CloudFront, an nginx or a customer's own reverse proxy, none of which
+// this process can interrogate.
+//
+// The engine keeps coming up across those retries: every attempt records demand and finds
+// desired already at 1, so a retry costs one ECS read, not another start.
 
 import (
 	"bytes"
@@ -68,6 +87,28 @@ var engineHeartbeatLine = []byte(": af-engine waking\n\n")
 func engineWakeTimeout() time.Duration {
 	return time.Duration(runtime.EnvInt("AF_ENGINE_WAKE_TIMEOUT", 900)) * time.Second
 }
+
+// enginePlainHold bounds the hold on the NON-streaming path, and it exists because that path
+// has no heartbeat and therefore no way to survive an ingress idle timeout (see the note at
+// the top of this file). 45 s against the ALB's 60 leaves room for the 503 to be written and
+// travel; a deployment whose ingress is more generous can raise it, and one behind a proxy
+// that cuts at 30 s must lower it — this process cannot ask, so it is a knob with a default
+// that matches the ingress this repository ships.
+//
+// It never RAISES the wait: the effective bound is the smaller of this and the wake timeout,
+// so setting AF_ENGINE_WAKE_TIMEOUT low still means what it says.
+func enginePlainHold() time.Duration {
+	hold := time.Duration(runtime.EnvInt("AF_ENGINE_PLAIN_HOLD", 45)) * time.Second
+	if wake := engineWakeTimeout(); hold > wake {
+		return wake
+	}
+	return hold
+}
+
+// errEngineWaking says the hold ran out while the engine was on its way up, as opposed to a
+// start that failed. The two are the same status to a client that cannot retry and opposite
+// facts to one that can, which is the whole point of answering with a code it can read.
+var errEngineWaking = errors.New("the engine is still coming up")
 
 // engineReadyPoll is how often the engine's health endpoint is asked while it starts. Fast
 // enough that the first answer is not held back by the poll itself, slow enough that a
@@ -449,10 +490,18 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 	claims engineSessionClaims, mv store.MembershipView, body []byte) {
 
 	started := time.Now()
-	ctx, cancel := context.WithTimeout(r.Context(), engineWakeTimeout())
+	ctx, cancel := context.WithTimeout(r.Context(), enginePlainHold())
 	defer cancel()
 	start := g.dial(ctx, eng, r, body)
 	if start.err != nil {
+		// Two different facts behind one status. "Still waking" is the ordinary answer on this
+		// path and says come back; anything else is a failure the caller should surface.
+		if errors.Is(start.err, errEngineWaking) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(engineReadyPoll.Seconds()*2)))
+			writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_waking",
+				"the fleet's own inference engine is starting; retry"})
+			return
+		}
 		retry := int(engineReadyPoll.Seconds() * 10)
 		w.Header().Set("Retry-After", strconv.Itoa(retry))
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable",
@@ -527,6 +576,7 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 // endpoint. Returns as soon as it is up, and only errors when the wake timeout or the
 // caller's own deadline runs out.
 func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState) error {
+	waitStarted := time.Now()
 	for {
 		if engineHealthy(ctx, eng) {
 			return nil
@@ -536,7 +586,11 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 		}
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("gave up after %s", engineWakeTimeout())
+			// Wrapped, not replaced: the streaming path turns this into the text a person and a
+			// model both read, and the non-streaming one turns it into a code a client retries
+			// on. Both need to know it was the WAIT that ended, not the start that failed.
+			return fmt.Errorf("gave up waiting for the engine after %s: %w",
+				time.Since(waitStarted).Truncate(time.Second), errEngineWaking)
 		case <-time.After(engineReadyPoll):
 		}
 	}

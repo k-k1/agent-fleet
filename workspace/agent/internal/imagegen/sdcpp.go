@@ -8,10 +8,25 @@ package imagegen
 //
 //   - the transport is the Control Plane's engine gateway, not the engine. The Workspace
 //     never reaches a GPU box: it POSTs to /engine/image/v1/… on the CP, which wakes the box
-//     if it is asleep and holds the request while it comes up (decision 4). So there is no
-//     start, no health poll and no retry loop here — one HTTP call that may take minutes;
+//     if it is asleep (decision 4). So there is no start and no health poll here;
 //   - sd-server's OpenAI-compatible face maps one-to-one onto Op: /v1/images/generations is
 //     generate, /v1/images/edits is edit, and the same endpoint with a `mask` is inpaint.
+//
+// ## Why there IS a retry loop, after all (measured 2026-09-07, ADR 0071 P1)
+//
+// The first version of this file said the gateway holds the request while the box comes up, so
+// one HTTP call is all there is. Driven on a real deployment that turned out to be false in a
+// way no test could show: this route is not streaming (sd-server answers JSON), so the request
+// sends no byte for as long as the engine takes, and the ingress ALB closes an idle connection
+// at 60 seconds. The image engine needs about 165. Measured, the CP answered
+// `503 59.998s` and the image generation fell through to another provider — spending a
+// MEMBER's plan quota on a call the fleet's own hardware was two minutes away from serving,
+// which is the exact outcome putting sdcpp first in the order exists to avoid.
+//
+// So the gateway now folds its non-streaming wait BELOW the ingress's idle timeout and answers
+// `503 engine_waking` + `Retry-After`, and this is the side that keeps asking. One tool call
+// still returns one picture: the retries are invisible above this function, and the MCP layer's
+// progress heartbeat is what keeps the client's own clock alive through them.
 //
 // ⚠️ NOT the native async job API (/sdcpp/v1/img_gen). It is unusable inside a container —
 // measured on the GPU box, it answers `filesystem error: /proc/1/map_files … Operation not
@@ -190,34 +205,9 @@ func (p *sdcppProvider) Generate(ctx context.Context, req Request) (Result, erro
 	ctx, cancel := context.WithTimeout(ctx, sdcppTimeout)
 	defer cancel()
 
-	var (
-		httpReq *http.Request
-		err     error
-	)
-	if req.Op == OpGenerate {
-		httpReq, err = sdcppGenerationRequest(ctx, conn, req)
-	} else {
-		httpReq, err = sdcppEditRequest(ctx, conn, req)
-	}
+	body, err := p.send(ctx, conn, req)
 	if err != nil {
 		return Result{}, err
-	}
-	httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
-
-	resp, err := p.client.Do(httpReq)
-	if err != nil {
-		return Result{}, fmt.Errorf("reaching the image engine failed: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, sdcppMaxResponse))
-	if err != nil {
-		return Result{}, fmt.Errorf("reading the image engine's answer failed: %w", err)
-	}
-	if resp.StatusCode >= 300 {
-		// The gateway's own refusals arrive here too — a 503 with "the fleet's own inference
-		// engine did not come up in time" is the message a person and the model both need, so
-		// it is passed through rather than replaced with the status code.
-		return Result{}, fmt.Errorf("the image engine answered %s: %s", resp.Status, sdcppErrText(body))
 	}
 
 	images, err := sdcppDecode(body)
@@ -246,6 +236,133 @@ func (p *sdcppProvider) Generate(ctx context.Context, req Request) (Result, erro
 // leaves room for a batch of larger ones without letting a misbehaving engine grow the
 // Agent's memory without limit.
 const sdcppMaxResponse = 64 << 20
+
+// sdcppRetryMin and sdcppRetryMax bound what a Retry-After is allowed to ask for. The floor
+// stops a misconfigured gateway turning this into a spin; the ceiling stops one turning a
+// 165-second wake into a five-minute one because nobody read the header back. Vars only so a
+// test can measure the mechanism instead of the wall clock.
+var (
+	sdcppRetryMin = 3 * time.Second
+	sdcppRetryMax = 30 * time.Second
+)
+
+// send performs the request, retrying for as long as the gateway says the engine is on its way
+// up and the context allows. Returns the successful body.
+//
+// The request is rebuilt on every attempt rather than replayed: an edit's body is a multipart
+// document that has already been read, and a retried POST that sends an empty body is a bug
+// that only appears on the one endpoint that is not JSON.
+func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) ([]byte, error) {
+	for attempt := 1; ; attempt++ {
+		var (
+			httpReq *http.Request
+			err     error
+		)
+		if req.Op == OpGenerate {
+			httpReq, err = sdcppGenerationRequest(ctx, conn, req)
+		} else {
+			httpReq, err = sdcppEditRequest(ctx, conn, req)
+		}
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+
+		body, status, retryAfter, err := p.attempt(httpReq)
+		if err != nil {
+			return nil, err
+		}
+		if status < 300 {
+			return body, nil
+		}
+		if !sdcppRetryable(status, body) {
+			// The gateway's own refusals arrive here too — a 503 with "the fleet's own inference
+			// engine did not come up in time" is the message a person and the model both need, so
+			// it is passed through rather than replaced with the status code.
+			return nil, fmt.Errorf("the image engine answered %d %s: %s",
+				status, http.StatusText(status), sdcppErrText(body))
+		}
+		select {
+		case <-ctx.Done():
+			// The budget is gone, so this is the end. Said in terms of what was actually
+			// happening — a bare "context deadline exceeded" after fifteen minutes of waking a
+			// GPU box tells nobody what to do next.
+			return nil, fmt.Errorf(
+				"the fleet's own image engine did not come up within %s (%d attempts): %s",
+				sdcppTimeout, attempt, sdcppErrText(body))
+		case <-time.After(retryAfter):
+		}
+	}
+}
+
+// attempt is one round trip, with the body fully read so the connection can be reused for the
+// next one. status is 0 only when err is set.
+func (p *sdcppProvider) attempt(httpReq *http.Request) (body []byte, status int, retryAfter time.Duration, err error) {
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("reaching the image engine failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, err = io.ReadAll(io.LimitReader(resp.Body, sdcppMaxResponse))
+	if err != nil {
+		return nil, 0, 0, fmt.Errorf("reading the image engine's answer failed: %w", err)
+	}
+	return body, resp.StatusCode, sdcppRetryAfter(resp.Header.Get("Retry-After")), nil
+}
+
+// sdcppRetryable decides whether asking again can plausibly do better.
+//
+//   - the gateway says 503 for three different facts, so the CODE decides and not the number:
+//     `engine_waking` is "on its way, ask again"; `engine_off` is an admin switch and
+//     `engine_unavailable` is a start that failed, and asking either of those again for fifteen
+//     minutes would turn a clear refusal into a hang.
+//   - 504 and 502 are an INGRESS, not the gateway: a proxy between the two decided the wait was
+//     too long and answered on its behalf. That is the failure this loop was written for. It
+//     stays retryable even though the CP now folds its wait below the ALB's, because the next
+//     deployment's proxy is not this one's — and it is also what a Control Plane too old to
+//     know `engine_waking` looks like from here, since its 900-second hold never survives to
+//     answer at all.
+func sdcppRetryable(status int, body []byte) bool {
+	switch status {
+	case http.StatusGatewayTimeout, http.StatusBadGateway:
+		return true
+	case http.StatusServiceUnavailable:
+		return sdcppErrCode(body) == "engine_waking"
+	}
+	return false
+}
+
+// sdcppErrCode pulls the machine-readable code out of the gateway's error object. "" for
+// anything else, including the engine's own errors, which have no code of this shape.
+func sdcppErrCode(body []byte) string {
+	var doc struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &doc) != nil {
+		return ""
+	}
+	return doc.Error.Code
+}
+
+// sdcppRetryAfter reads the header, in the delay-seconds form the gateway sends, and clamps it.
+// An absent or unreadable value is not an error: the floor is a perfectly good answer to "come
+// back later" and the alternative is giving up on a wake that is already under way.
+func sdcppRetryAfter(v string) time.Duration {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n <= 0 {
+		return sdcppRetryMin
+	}
+	d := time.Duration(n) * time.Second
+	if d < sdcppRetryMin {
+		return sdcppRetryMin
+	}
+	if d > sdcppRetryMax {
+		return sdcppRetryMax
+	}
+	return d
+}
 
 // sdcppGenerationRequest builds POST /v1/images/generations. Only the fields sd-server
 // documents are sent: prompt, n and size (WIDTHxHEIGHT). `model` is deliberately absent —
