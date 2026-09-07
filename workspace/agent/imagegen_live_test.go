@@ -49,6 +49,14 @@ func requireImagegenLive(t *testing.T) {
 // real home, because there is no other way to be logged in, and the run only reads it.
 func imagegenSandbox(t *testing.T, kind string) string {
 	t.Helper()
+	return imagegenSandboxOrdered(t, kind, nil)
+}
+
+// imagegenSandboxOrdered is imagegenSandbox with an explicit provider order written into
+// ui-prefs — the only way to steer the route from outside, since the MCP tool deliberately has
+// no provider parameter (naming a service is the caller's business, not the model's).
+func imagegenSandboxOrdered(t *testing.T, kind string, order []string) string {
+	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
 	codexHome := filepath.Join(root, "codex")
@@ -64,6 +72,19 @@ func imagegenSandbox(t *testing.T, kind string) string {
 	if err := os.Symlink(realCodexAuth, filepath.Join(codexHome, "auth.json")); err != nil {
 		t.Fatal(err)
 	}
+	// The agy login, borrowed the same way and for the same reason: the provider resolves the
+	// token from HOME, so the sandbox needs one there or agy is simply not ready. Absent is not
+	// a failure — only the agy test skips on it.
+	realAgyToken := filepath.Join(paths.HomeDir(), ".gemini", "antigravity-cli", "antigravity-oauth-token")
+	if _, err := os.Stat(realAgyToken); err == nil {
+		agyDir := filepath.Join(home, ".gemini", "antigravity-cli")
+		if err := os.MkdirAll(agyDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(realAgyToken, filepath.Join(agyDir, "antigravity-oauth-token")); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	t.Setenv("HOME", home)
 	t.Setenv("CODEX_HOME", codexHome)
@@ -76,7 +97,15 @@ func imagegenSandbox(t *testing.T, kind string) string {
 	if err := os.MkdirAll(prefs, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(prefs, "ui-prefs.json"), []byte(`{"imageGeneration":true}`), 0o600); err != nil {
+	uiPrefs := map[string]any{"imageGeneration": true}
+	if len(order) > 0 {
+		uiPrefs["imageProviderOrder"] = order
+	}
+	prefsJSON, err := json.Marshal(uiPrefs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prefs, "ui-prefs.json"), prefsJSON, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	// A session for the tool to belong to: its kind is what the tools/list rule turns on.
@@ -253,6 +282,150 @@ func TestImagegenLiveEndToEnd(t *testing.T) {
 	if cfg.Width == 0 || cfg.Height == 0 {
 		t.Fatalf("image is %dx%d", cfg.Width, cfg.Height)
 	}
+}
+
+// TestImagegenLiveAgyEndToEnd is the same path over the SECOND provider, and it exists to
+// settle the one thing the Codex route could never do: whether a requested aspect ratio
+// survives a driver model. It also proves the sandbox shape the provider depends on — the
+// isolated HOME with an allow-list of one tool — really does let generate_image through, which
+// no unit test with a stub `agy` can show.
+//
+//	AF_IMAGEGEN_LIVE=1 go test -tags clicontract -run TestImagegenLiveAgy -timeout 15m .
+//
+// It spends one image against the user's Antigravity plan.
+func TestImagegenLiveAgyEndToEnd(t *testing.T) {
+	requireImagegenLive(t)
+	if _, err := exec.LookPath("agy"); err != nil {
+		t.Skipf("no agy on PATH (%v)", err)
+	}
+	if _, err := os.Stat(filepath.Join(paths.HomeDir(), ".gemini", "antigravity-cli", "antigravity-oauth-token")); err != nil {
+		t.Skipf("no agy login to borrow (%v)", err)
+	}
+	bin := buildAgentBinary(t) // before the sandbox — see the note in the codex test
+	home := imagegenSandboxOrdered(t, session.KindClaude, []string{"agy", "codex"})
+	serveAgentRoutes(t)
+
+	statusBody := agentGETLive(t, "/imagegen/status?session=slot01")
+	var st struct {
+		Enabled      bool     `json:"enabled"`
+		Ready        bool     `json:"ready"`
+		Provider     string   `json:"provider"`
+		Kind         string   `json:"kind"`
+		Model        string   `json:"model"`
+		Ops          []string `json:"ops"`
+		AspectRatios []string `json:"aspectRatios"`
+		Order        []string `json:"order"`
+	}
+	if json.Unmarshal(statusBody, &st) != nil {
+		t.Fatalf("status is not JSON: %s", statusBody)
+	}
+	if !st.Enabled || !st.Ready || st.Provider != "agy" {
+		t.Fatalf("status = %+v, want the preference order to have put agy in front", st)
+	}
+	if len(st.AspectRatios) == 0 {
+		t.Fatalf("status = %+v, want the route's aspect ratios", st)
+	}
+	t.Logf("status: %+v", st)
+
+	child := startMCPChild(t, bin, "mcp-stdio", "--self-report", "--image-gen")
+	child.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}})
+	list, _ := child.awaitResult(t, 1)
+	if !toolAdvertised(list, "generate_image") {
+		t.Fatalf("generate_image is not advertised: %v", list["tools"])
+	}
+	// The parameter only exists where it reaches the tool, so its presence here is the
+	// difference between this route and the codex one, visible to the model.
+	if !toolHasProperty(list, "generate_image", "aspect_ratio") {
+		t.Fatalf("the agy route advertised no aspect_ratio: %v", list["tools"])
+	}
+
+	started := time.Now()
+	child.send(t, map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{
+			"name": "generate_image",
+			"arguments": map[string]any{
+				"prompt":       "a single small blue triangle centred on a white background, flat vector style",
+				"aspect_ratio": "16:9",
+			},
+			"_meta": map[string]any{"progressToken": "live-agy-1"},
+		},
+	})
+	res, progress := child.awaitResult(t, 2)
+	t.Logf("generation took %s, %d progress notification(s)", time.Since(started).Round(time.Second), len(progress))
+
+	if isErr, _ := res["isError"].(bool); isErr {
+		t.Fatalf("generate_image failed: %v", res["content"])
+	}
+	structured, _ := res["structuredContent"].(map[string]any)
+	if structured["provider"] != "agy" {
+		t.Fatalf("provider = %v, want the run attributed to agy", structured["provider"])
+	}
+	files, _ := structured["files"].([]any)
+	if len(files) == 0 {
+		t.Fatalf("result carried no file: %v", res)
+	}
+	first, _ := files[0].(map[string]any)
+	path, _ := first["path"].(string)
+	if !strings.HasPrefix(path, filepath.Join(home, ".cache", "agent-fleet", "generated")) {
+		t.Fatalf("path = %q, want it under the session's generated dir inside the sandbox", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("the returned path does not exist: %v", err)
+	}
+	defer f.Close()
+	cfg, format, err := image.DecodeConfig(f)
+	if err != nil {
+		t.Fatalf("the returned file is not a decodable image: %v", err)
+	}
+	t.Logf("image: %s %dx%d, warnings=%v", format, cfg.Width, cfg.Height, structured["warnings"])
+	if cfg.Width == 0 || cfg.Height == 0 {
+		t.Fatalf("image is %dx%d", cfg.Width, cfg.Height)
+	}
+	// The claim under test. The tolerance is the provider's own: the ratio is honoured
+	// approximately (measured 1376x768 for 16:9), and a square answer would mean it was not
+	// honoured at all — which is what the codex route does with every size it is given.
+	if got, want := float64(cfg.Width)/float64(cfg.Height), 16.0/9.0; got < want*0.9 || got > want*1.1 {
+		t.Errorf("aspect ratio = %.3f (%dx%d), want ~%.3f — the request did not reach the tool",
+			got, cfg.Width, cfg.Height, want)
+	}
+	// No throwaway home may outlive the call: the provider deletes the one it made, and a leak
+	// would accumulate a whole agy state tree per generation.
+	if leaked := leftoverAgyHomes(t); len(leaked) > 0 {
+		t.Errorf("throwaway agy homes survived the run: %v", leaked)
+	}
+}
+
+func leftoverAgyHomes(t *testing.T) []string {
+	t.Helper()
+	ents, err := os.ReadDir(os.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []string
+	for _, e := range ents {
+		if strings.HasPrefix(e.Name(), "af-imagegen-agy-") {
+			out = append(out, e.Name())
+		}
+	}
+	return out
+}
+
+// toolHasProperty reports whether an advertised tool's inputSchema offers a property.
+func toolHasProperty(list map[string]any, tool, prop string) bool {
+	tools, _ := list["tools"].([]any)
+	for _, raw := range tools {
+		def, _ := raw.(map[string]any)
+		if def["name"] != tool {
+			continue
+		}
+		schema, _ := def["inputSchema"].(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		_, ok := props[prop]
+		return ok
+	}
+	return false
 }
 
 // TestImagegenLiveNotOfferedToACodexSession is the exclusion of ADR 0069 decision 8, driven

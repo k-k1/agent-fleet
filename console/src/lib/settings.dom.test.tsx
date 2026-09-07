@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandThinking, getSettings, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, type Settings } from "./settings.ts";
+import { expandThinking, getSettings, isDeviceLocalSetting, migrateAiAssistPrefs, normalizeAgentLaunchDefaults, normalizeClaudeCustomModels, normalizeImageProviderOrder, type Settings } from "./settings.ts";
 
 // Pure logic, but it lives in the jsdom project (.dom.test.tsx): settings.ts touches
 // localStorage at load time through the API client, so under node the import itself fails.
@@ -44,6 +44,23 @@ describe("normalizeClaudeCustomModels", () => {
 
   it("falls back to an empty catalog for a broken stored value", () => {
     expect(normalizeClaudeCustomModels("claude-opus-4-8")).toEqual([]);
+  });
+});
+
+// The order the image providers are tried in (ADR 0069). The rule matters because a list
+// saved before a provider existed must still RANK it: otherwise adding a provider would make
+// it unreachable until the user happened to re-save their settings.
+describe("normalizeImageProviderOrder", () => {
+  it("appends a provider the stored list never heard of, in the built-in order", () => {
+    expect(normalizeImageProviderOrder(["codex"])).toEqual(["codex", "agy"]);
+  });
+
+  it("honours an explicit reorder and drops unknown ids and duplicates", () => {
+    expect(normalizeImageProviderOrder(["agy", "bedrock", "agy", "codex"])).toEqual(["agy", "codex"]);
+  });
+
+  it("falls back to the built-in order for a broken stored value", () => {
+    expect(normalizeImageProviderOrder("agy")).toEqual(["codex", "agy"]);
   });
 });
 

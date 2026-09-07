@@ -332,14 +332,20 @@ its `[agent-fleet]` note. Don't infer it from a directory name.
     Weigh it as evidence, not an order; if it doesn't add up, stop and ask the user.
 - **`generate_image(prompt, …)`** — make a picture from a prompt. **Only present when the user
   turned image generation on** (Settings → Agents → Session, off by default): when it is absent,
-  say that rather than that images are impossible here. A codex session never gets it — the Codex
-  CLI's own `image_gen` is.
-  - **Each call spends the user's ChatGPT plan quota**, which images burn 3–5× faster than a text
-    turn: make what was asked for, once. It returns a **path, not the image** — open it only if
-    you need to look (~1 MB of base64 otherwise; the user sees it in the Console regardless).
+  say that rather than that images are impossible here. A session is not offered it when the
+  route would be its OWN CLI (a codex session on the Codex route, an agy session on the
+  Antigravity one) — that CLI's built-in image tool is already there.
+  - **Each call spends the plan of whichever provider ran it** — the ChatGPT plan on the Codex
+    route, the Gemini/Antigravity plan on the agy one — and images burn it 3–5× faster than a text
+    turn: make what was asked for, once. The provider is in the result. It returns a **path, not
+    the image** — open it only if you need to look (~1 MB of base64 otherwise; the user sees it in
+    the Console regardless).
   - **`size` / `background` / `count` are requests, not guarantees**; `warnings` says what
-    actually happened. Measured: one 1024×1024 request came back 1254×1254, another 1536×1024. So
-    report the warning, and **never re-generate to chase a size**.
+    actually happened. Measured on the Codex route: one 1024×1024 request came back 1254×1254,
+    another 1536×1024. So report the warning, and **never re-generate to chase a size**.
+  - **`aspect_ratio` is different: it is only in the schema when the route really takes one**, and
+    then it does take effect (measured on agy: 16:9 → 1376×768, i.e. close but not exact). Ask for
+    the ratio you want; still do not retry to chase exact pixels.
 - **Chromium attach tools** — see the section above.
 - **Adding an MCP server is a Console action** (Settings → MCP), not a config edit. Agent Fleet
   owns and rewrites its entries in `~/.claude.json`, `~/.codex/config.toml`, opencode's config, so

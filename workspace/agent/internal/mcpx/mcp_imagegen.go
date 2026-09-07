@@ -22,12 +22,13 @@ import (
 // It reports FACTS; the rule that turns them into a yes or no lives in mcpImageGenAdvertise,
 // where the tool list is built.
 type mcpImageGenStatus struct {
-	Enabled  bool     `json:"enabled"`
-	Provider string   `json:"provider"`
-	Ready    bool     `json:"ready"`
-	Kind     string   `json:"kind"`
-	Model    string   `json:"model"`
-	Ops      []string `json:"ops"`
+	Enabled      bool     `json:"enabled"`
+	Provider     string   `json:"provider"`
+	Ready        bool     `json:"ready"`
+	Kind         string   `json:"kind"`
+	Model        string   `json:"model"`
+	Ops          []string `json:"ops"`
+	AspectRatios []string `json:"aspectRatios"`
 }
 
 // agentImageGenStatus asks the Agent over the loopback REST every other session tool already
@@ -48,9 +49,9 @@ func agentImageGenStatus(session string) (mcpImageGenStatus, error) {
 
 // imageGenArgs is the tool's arguments, already split out of the shared argument struct.
 type imageGenArgs struct {
-	op, prompt, size, background string
-	count                        int
-	inputs                       []string
+	op, prompt, size, aspectRatio, background string
+	count                                     int
+	inputs                                    []string
 }
 
 // mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED the
@@ -74,7 +75,8 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	}
 	body, _ := json.Marshal(map[string]any{
 		"session": self, "op": a.op, "prompt": a.prompt, "size": a.size,
-		"background": a.background, "count": a.count, "inputs": a.inputs,
+		"aspectRatio": a.aspectRatio, "background": a.background,
+		"count": a.count, "inputs": a.inputs,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
