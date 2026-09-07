@@ -75,6 +75,27 @@ number of hours, and the row shows how much of that is left.
 It is deliberately time-boxed. An exemption you set once and forget is how a workspace
 ends up running for a month.
 
+## Having a session stop when it is done
+
+The opposite case: you want the session to **stop once the work is finished** — you left a
+long job running overnight and would rather it did not hold the workspace up afterwards.
+
+There are two ways to ask, and both set the same thing:
+
+- **Tell the session** — "stop when this is done". It arms the stop itself.
+- **Stop when this turn ends** in the ⋯ menu — set it yourself. Cancelling is in the same place.
+
+An armed row carries a badge. The stop happens **after the running turn ends**: it will not
+stop while a question is waiting for you or while work is still going. It is the resumable
+stop, so the conversation stays and Start picks it up where it left off, and you get one
+notification when it happens.
+
+**Sending a new instruction releases it.** "Stop when you are done" was said about the work
+in front of you, not about whatever you ask for next.
+
+One session stopping does not stop the workspace on its own — it only lets idle-stop get
+there sooner.
+
 ## Locking something against deletion
 
 **Lock against deletion** in the ⋯ menu marks a session as one that must not go away.

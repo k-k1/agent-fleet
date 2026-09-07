@@ -588,6 +588,14 @@ echo する。** 呼び出しの step イベントには `ImageName` と `Prompt
    別問題であり、`internal/hostcaps` とセッション側の guard は意図的に触っていない。この
    provider がその判断を偶然先取りしないためである。
 
+   🔴 **訂正（2026-09-07）: その別問題は決着した**（[0008](0008-antigravity-cli-agent-kind.ja.md)
+   の「RDRAND 非提示ホストへの正式対応」）。よってこの経路もマスクを自前で綴らず、他の全
+   spawn と同じ `internal/agents/agy` の seam から受け取る。実利は 2 つある。**(a)** マスクを
+   拒否するデプロイ（`AF_AGY_RDRAND_MASK=0`）ではこの経路も当てなくなる——自前の定数では
+   拒否が貫通しなかった。**(b)** RDRAND が生きているホストには当たらなくなる——自前の定数は
+   無条件に当てており、健全なホストからハードウェア RNG を取り上げていた（害はないが、
+   0008 の「動いているデプロイの挙動は変えない」に反する）。
+
 **使用量。** `result` イベントに `input_tokens` / `output_tokens` / `thinking_tokens` /
 `cache_read_tokens` / `total_tokens` が載る。関係は仮定せず実測した: `input_tokens` は
 キャッシュ分を**含まない**（26896 + 75 = total 26971 で、cache_read 16289 はその外——codex の

@@ -63,9 +63,11 @@ func injectSessionPrompt(name, prompt string) error {
 	if err := typeLineAndSubmit(name, pane, prompt); err != nil {
 		return err
 	}
-	// A slash command isn't a turn — don't optimistically mark working (mirrors submitPromptTUI).
+	// A slash command isn't a turn — don't optimistically mark working (mirrors submitPromptTUI),
+	// and for the same reason it does not supersede a stop-after-turn arm (docs/log/85).
 	if !slashCmdRe.MatchString(prompt) {
 		markSessionWorking(name)
+		cancelStopArmOnNewPrompt(name)
 	}
 	return nil
 }
@@ -85,6 +87,7 @@ func injectManagedPrompt(meta session.Meta, prompt string) error {
 		return err
 	}
 	markSessionWorking(meta.Name)
+	cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	return nil
 }
 

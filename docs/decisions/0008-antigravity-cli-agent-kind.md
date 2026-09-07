@@ -279,6 +279,7 @@ them is the requirement itself.
 | Login flow (`auth.go`), the `/usage` and `/context` scrapes, `agy models` | `cmd.Env` |
 | The tmux pane (`BuildLaunch` in `agy.go`) | `LaunchPlan.Env` → `tmux new-session -e`. Never a prefix on the program string: that lands in cmdline and is lost to an `AGENT_AGY_CMD` override |
 | The assistant chat's `-p` turns and one-shots (`chatx/chat_providers.go`) | `cmd.Env` |
+| The image-generation provider (`internal/imagegen/agy.go`, [0069](0069-image-generation-providers.md)) | `cmd.Env`, alongside its isolated HOME (it started with a local copy of the literal and was moved onto the seam by this decision) |
 | The tool-version probe (`env_tool_versions.go`) | `toolSpec.Env` |
 | entrypoint's `agy_effective_version` and the image build's `--version` check | per-invocation env (never exported) |
 
@@ -297,8 +298,14 @@ them is the requirement itself.
 
 - **`agy` typed by hand in a shell pane still aborts.** The decision covers the product's spawn
   paths; exporting the mask into the login shell would reach every process, not just agy.
-- agy's MCP config (`internal/mcpreg/materialize_agy.go`) has no drift test like the other kinds.
-  The reason ("agy will not start on this host") is gone, so one is buildable now.
+- ~~agy's MCP config has no drift test like the other kinds~~ → **it has one now**
+  (`TestDriftAgyMatchesMCPAdd`; the single reason it lacked one — "agy will not start on this
+  host" — is gone). Writing it turned one thing up: **`agy mcp add` spells an http server
+  `serverUrl` where af writes `url`**. Both are read today (measured), so af depends on an
+  ALIAS, and if that alias is ever dropped every remote MCP server af registers for agy
+  **disappears with no error anywhere** — measured, it becomes a row reading
+  `afdriftremote  stdio  enabled` with an empty command. The test pins both halves: the CLI's
+  own spelling, and that af's is still read.
 
 ## Open questions
 

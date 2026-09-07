@@ -96,6 +96,11 @@ type Deps struct {
 	SafeBrowsePath   func(p string) (full, rel string, ok bool)
 	// MaybePushOperatorReply pushes a reply out to the Discord/Slack bridge (bridge_operator.go).
 	MaybePushOperatorReply func(conv, reply string)
+	// StopArmedSession halts a session whose "stop after this turn" arm has come due
+	// (docs/log/85). Only the moment is decided here — the reconciler already owns "has the
+	// turn ended"; the fold itself stays on the session side, where the halt promotes a
+	// pending interaction out of the doomed process first and consumes the arm.
+	StopArmedSession func(name string) error
 	// RateLimitState reads the reservation of a rate-limit episode (the fstore handle in
 	// rate_limit_resume.go). An accessor rather than the value, so the var is not copied: the
 	// far side is a var, and receiving it into an alias variable makes a copy (hit twice in

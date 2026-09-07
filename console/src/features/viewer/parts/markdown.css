@@ -19,6 +19,10 @@
   box-sizing: border-box;
   z-index: 4;
   pointer-events: none; /* transparent to clicks; rows re-enable below */
+  /* The bar is a child of the scroller, not of .markdown, so it inherits body size rather
+     than the document's — take the setting directly, or the breadcrumb stays small while the
+     headings it mirrors grow. */
+  font-size: var(--viewer-size, 14px);
 }
 .md-sticky-row {
   pointer-events: auto;
@@ -54,11 +58,16 @@
 .md-sticky-h6 {
   padding-left: 44px;
 }
+/* --viewer-size is the file-viewer font size from Settings > Display, and what the keyboard
+   zoom moves for a viewer pane (lib/viewFont.ts). Only the viewer roots set it (.fileview,
+   DocView, DiffView, as an inline style), so the fallback is what the other surfaces that
+   render this same MarkdownView are left on; the mirror and the assistant chat put their own
+   size on top (.mirror-turn .markdown, .chatview .markdown). */
 .markdown {
   max-width: 860px;
   margin: 0 auto;
   padding: 20px 28px 60px;
-  font: 14px/1.7 system-ui, sans-serif;
+  font: var(--viewer-size, 14px) / 1.7 system-ui, sans-serif;
   color: var(--fg);
 }
 .md-frontmatter {

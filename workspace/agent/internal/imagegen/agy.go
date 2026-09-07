@@ -27,12 +27,14 @@ package imagegen
 //     prose. agy's tool result does spell the path out ("Generated image is saved at %s."), and
 //     that is exactly the contract the Codex route refused to depend on: a driver model can
 //     break it silently.
-//   - the RDRAND mask on the CHILD's environment only. On a host whose CPU exposes no RDRAND
-//     agy's FIPS self-test aborts at launch (ADR 0008 and its correction); masking the bit out
-//     of OpenSSL's CPU detection is enough to start it. It is set here, on this provider's own
-//     child process, and nowhere else: whether the product should support agy sessions on such a
-//     host at all is a separate question, and this must not answer it by accident. Where RDRAND
-//     does exist the mask simply makes OpenSSL use its other entropy sources.
+//   - the RDRAND mask, taken from the one place that decides it. On a host whose kernel has
+//     withdrawn RDRAND, agy's FIPS self-test aborts at launch and masking the bit out of
+//     OpenSSL's CPU detection is what starts it (ADR 0008). That used to be spelled out here,
+//     because whether the product should offer agy as an agent KIND on such a host was still
+//     open; it was decided on 2026-09-07, so this route now takes the overlay from
+//     `internal/agents/agy` like every other agy spawn — which is also what makes a deployment
+//     that refuses the mask (`AF_AGY_RDRAND_MASK=0`) refuse it here, and leaves a host with a
+//     working RDRAND untouched.
 //
 // Measured 2026-09-07 (agy 1.1.5, signed in, gemini-3.8-flash-low as the driver): 25 s wall for
 // one image, 16 s of it the turn itself; ~27k input / 75 output tokens; a 122 KB JPEG at
@@ -69,12 +71,6 @@ const defaultAgyModel = "gemini-3.8-flash-low"
 // reason rather than cut by the client. It is also passed to agy as --print-timeout, whose own
 // default is 5 minutes — otherwise agy would give up first and this budget would never apply.
 const agyGenerateTimeout = 8 * time.Minute
-
-// agyRDRANDMask is the OpenSSL CPU-detection mask that lets agy start on a host without RDRAND.
-// Spelled out here rather than taken from internal/hostcaps on purpose: hostcaps answers "should
-// the product offer agy as an agent kind on this host", which is a separate decision from "may
-// this provider run one child process".
-const agyRDRANDMask = "OPENSSL_ia32cap=~0x4000000000000000"
 
 // agyAspectRatios is the built-in tool's own enum, read out of the CLI's embedded JSON schema
 // ("Supported values: '1:1', '2:3', '3:2', '3:4', '4:3', '9:16', '16:9'. Default is '1:1'").
@@ -409,8 +405,11 @@ func (p *agyProvider) foldRotatedToken(home string) {
 	}
 }
 
-// envWithHome is os.Environ() with HOME repointed and the RDRAND mask added. Go's exec does not
-// dedupe, so an existing HOME is replaced rather than appended to.
+// envWithHome is os.Environ() with HOME repointed and this host's agy overlay appended
+// (agy.Env — nil where RDRAND is fine or the mask is refused). Both keys are dropped from the
+// inherited environment first. Appending alone would in fact win — exec keeps the LAST value of a
+// repeated key (measured on go1.26) — but leaving a stale OPENSSL_ia32cap in the slice would have
+// the child's environment state two different things about the same CPU feature.
 func envWithHome(home string) []string {
 	out := make([]string, 0, len(os.Environ())+2)
 	for _, e := range os.Environ() {
@@ -419,7 +418,7 @@ func envWithHome(home string) []string {
 		}
 		out = append(out, e)
 	}
-	return append(out, "HOME="+home, agyRDRANDMask)
+	return agy.Env(append(out, "HOME="+home))
 }
 
 // --- the prompt and the stream ---------------------------------------------------------------

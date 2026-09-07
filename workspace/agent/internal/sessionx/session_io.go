@@ -665,6 +665,7 @@ func handleManagedInputPrompt(w http.ResponseWriter, meta session.Meta, prompt, 
 		return
 	}
 	markSessionWorking(meta.Name)
+	cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	switch {
 	case peerFrom != "":
 		// Not on the ledger (ADR 0041 decision 4). The origin was recorded above.
@@ -722,6 +723,9 @@ func submitPromptTUI(w http.ResponseWriter, name, pane, prompt string) bool {
 	// Real prompts still mark working so the chip reacts before the agent's own hook.
 	if !slashCmdRe.MatchString(strings.TrimSpace(prompt)) {
 		markSessionWorking(name)
+		// The same predicate decides that a stop-after-turn arm is superseded (docs/log/85):
+		// what releases the arm is new WORK arriving, and a slash command starts none.
+		cancelStopArmOnNewPrompt(name)
 	}
 	return true
 }

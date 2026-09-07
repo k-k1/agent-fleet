@@ -19,7 +19,7 @@ import (
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 53
+	const expectedAdvertisedToolCount = 54
 
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
