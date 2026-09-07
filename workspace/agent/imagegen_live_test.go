@@ -49,13 +49,13 @@ func requireImagegenLive(t *testing.T) {
 // real home, because there is no other way to be logged in, and the run only reads it.
 func imagegenSandbox(t *testing.T, kind string) string {
 	t.Helper()
-	return imagegenSandboxOrdered(t, kind, nil)
+	return imagegenSandboxOrdered(t, kind, nil, true)
 }
 
 // imagegenSandboxOrdered is imagegenSandbox with an explicit provider order written into
-// ui-prefs — the only way to steer the route from outside, since the MCP tool deliberately has
-// no provider parameter (naming a service is the caller's business, not the model's).
-func imagegenSandboxOrdered(t *testing.T, kind string, order []string) string {
+// ui-prefs, and with the agy login optionally withheld so a test can drive the case where only
+// one provider is ready at all.
+func imagegenSandboxOrdered(t *testing.T, kind string, order []string, withAgy bool) string {
 	t.Helper()
 	root := t.TempDir()
 	home := filepath.Join(root, "home")
@@ -76,7 +76,7 @@ func imagegenSandboxOrdered(t *testing.T, kind string, order []string) string {
 	// token from HOME, so the sandbox needs one there or agy is simply not ready. Absent is not
 	// a failure — only the agy test skips on it.
 	realAgyToken := filepath.Join(paths.HomeDir(), ".gemini", "antigravity-cli", "antigravity-oauth-token")
-	if _, err := os.Stat(realAgyToken); err == nil {
+	if _, err := os.Stat(realAgyToken); err == nil && withAgy {
 		agyDir := filepath.Join(home, ".gemini", "antigravity-cli")
 		if err := os.MkdirAll(agyDir, 0o700); err != nil {
 			t.Fatal(err)
@@ -206,7 +206,9 @@ func TestImagegenLiveEndToEnd(t *testing.T) {
 	// HOME, and under the temp one it re-downloads the whole tree into a directory the
 	// cleanup then cannot remove (read-only module files). Measured, once.
 	bin := buildAgentBinary(t)
-	home := imagegenSandbox(t, session.KindClaude)
+	// codex-first, explicitly: the built-in default now puts agy in front, and this test is
+	// about the codex route.
+	home := imagegenSandboxOrdered(t, session.KindClaude, []string{"codex", "agy"}, true)
 	serveAgentRoutes(t)
 
 	// The Agent's own answer first: nothing else works if this is wrong.
@@ -302,7 +304,7 @@ func TestImagegenLiveAgyEndToEnd(t *testing.T) {
 		t.Skipf("no agy login to borrow (%v)", err)
 	}
 	bin := buildAgentBinary(t) // before the sandbox — see the note in the codex test
-	home := imagegenSandboxOrdered(t, session.KindClaude, []string{"agy", "codex"})
+	home := imagegenSandboxOrdered(t, session.KindClaude, []string{"agy", "codex"}, true)
 	serveAgentRoutes(t)
 
 	statusBody := agentGETLive(t, "/imagegen/status?session=slot01")
@@ -338,6 +340,11 @@ func TestImagegenLiveAgyEndToEnd(t *testing.T) {
 	if !toolHasProperty(list, "generate_image", "aspect_ratio") {
 		t.Fatalf("the agy route advertised no aspect_ratio: %v", list["tools"])
 	}
+	// With both logins present this claude session may name either service — the argument that
+	// makes "generate the same prompt on both and compare" possible.
+	if !toolHasProperty(list, "generate_image", "provider") {
+		t.Fatalf("two ready providers were not offered as a choice: %v", list["tools"])
+	}
 
 	started := time.Now()
 	child.send(t, map[string]any{
@@ -347,6 +354,10 @@ func TestImagegenLiveAgyEndToEnd(t *testing.T) {
 			"arguments": map[string]any{
 				"prompt":       "a single small blue triangle centred on a white background, flat vector style",
 				"aspect_ratio": "16:9",
+				// Named explicitly rather than left to the order: this is the path a comparison
+				// takes, and an explicit choice must reach exactly that provider and never fall
+				// through to the other account.
+				"provider": "agy",
 			},
 			"_meta": map[string]any{"progressToken": "live-agy-1"},
 		},
@@ -429,24 +440,50 @@ func toolHasProperty(list map[string]any, tool, prop string) bool {
 }
 
 // TestImagegenLiveNotOfferedToACodexSession is the exclusion of ADR 0069 decision 8, driven
-// through the real server. It generates nothing, so it costs no quota.
+// through the real server. Both halves are checked because the rule is now per PROVIDER: a
+// Codex session may not route to codex, but it still wants the tool for any other route, and
+// only when nothing else is left does the tool disappear. It generates nothing, so it costs no
+// quota.
 func TestImagegenLiveNotOfferedToACodexSession(t *testing.T) {
 	requireImagegenLive(t)
 	bin := buildAgentBinary(t) // before the sandbox — see the note in the test above
-	imagegenSandbox(t, session.KindCodex)
-	serveAgentRoutes(t)
 
-	child := startMCPChild(t, bin, "mcp-stdio", "--self-report", "--image-gen")
-	child.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}})
-	list, _ := child.awaitResult(t, 1)
-	// The negative needs its own positive control: an empty or failed tools/list would pass
-	// this check without proving anything.
-	if !toolAdvertised(list, "af_report") {
-		t.Fatalf("the tool list is not a real one: %v", list["tools"])
-	}
-	if toolAdvertised(list, "generate_image") {
-		t.Fatal("a codex session on the codex route was offered the fleet tool as well as its own")
-	}
+	t.Run("with agy also ready it keeps the tool, minus codex", func(t *testing.T) {
+		if _, err := os.Stat(filepath.Join(paths.HomeDir(), ".gemini", "antigravity-cli", "antigravity-oauth-token")); err != nil {
+			t.Skipf("no agy login to borrow (%v)", err)
+		}
+		imagegenSandboxOrdered(t, session.KindCodex, nil, true)
+		serveAgentRoutes(t)
+
+		child := startMCPChild(t, bin, "mcp-stdio", "--self-report", "--image-gen")
+		child.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}})
+		list, _ := child.awaitResult(t, 1)
+		if !toolAdvertised(list, "generate_image") {
+			t.Fatalf("a codex session lost the tool although agy could have served it: %v", list["tools"])
+		}
+		// With one provider left there is no choice to offer, so the argument is absent —
+		// which is itself the proof that codex was taken out of the offer.
+		if toolHasProperty(list, "generate_image", "provider") {
+			t.Errorf("a provider choice was advertised with only one provider left: %v", list["tools"])
+		}
+	})
+
+	t.Run("with only codex ready the tool disappears", func(t *testing.T) {
+		imagegenSandboxOrdered(t, session.KindCodex, nil, false)
+		serveAgentRoutes(t)
+
+		child := startMCPChild(t, bin, "mcp-stdio", "--self-report", "--image-gen")
+		child.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": map[string]any{}})
+		list, _ := child.awaitResult(t, 1)
+		// The negative needs its own positive control: an empty or failed tools/list would pass
+		// this check without proving anything.
+		if !toolAdvertised(list, "af_report") {
+			t.Fatalf("the tool list is not a real one: %v", list["tools"])
+		}
+		if toolAdvertised(list, "generate_image") {
+			t.Fatal("a codex session was offered the fleet tool as well as its own")
+		}
+	})
 }
 
 func toolAdvertised(list map[string]any, name string) bool {

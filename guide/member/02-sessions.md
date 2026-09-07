@@ -396,6 +396,10 @@ current tools until restarted.
   ChatGPT login)** and **Antigravity (agy)** — and **Settings > Agents > Session > "Image
   provider order"** decides which is tried first. The first one signed in is used, and **a
   call that fails falls through to the next**. With neither connected the tool does not appear.
+- **You can name one in the request.** Say "make it with Codex", or "make the same prompt on
+  both so I can compare", and the agent picks that provider. A named provider is used on its
+  own with no fall-through — nothing is billed to a service you did not choose — and
+  **comparing costs one image on each plan.** Say nothing and the order above decides.
 - **Every image spends the included usage of whichever plan produced it** — the ChatGPT plan
   for Codex, the Gemini/Antigravity plan for Antigravity, both 3–5× faster than a text
   exchange. Image generation is not available at all on ChatGPT Free. **Which plan is drawn

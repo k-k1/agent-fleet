@@ -700,11 +700,10 @@ export const DEFAULT_MODEL = "sonnet";
 export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
-// Image providers in the Agent's own built-in order (imagegen.providerOrder). codex is first
-// because it shipped first, not because it is better: agy honours a requested aspect ratio and
-// codex honours nothing, but reordering the default would silently move an existing user's
-// image generation onto a different account and a different plan's quota.
-export const IMAGE_PROVIDERS = ["codex", "agy"] as const;
+// Image providers in the Agent's own built-in order (imagegen.providerOrder). agy is first
+// because it honours more of the request — a requested aspect ratio reaches its tool, where the
+// codex route lets the caller choose no dimension at all.
+export const IMAGE_PROVIDERS = ["agy", "codex"] as const;
 
 // normalizeImageProviderOrder folds any stored value into a total order over IMAGE_PROVIDERS —
 // the same rules the Agent applies in imagegen.effectiveOrder(), so the list the user drags is

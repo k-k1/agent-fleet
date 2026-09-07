@@ -360,10 +360,18 @@ type stubProvider struct {
 	err      error
 	notReady bool
 	calls    *[]string
+	// caps overrides the default generate-only capability, for the tests that are about what a
+	// provider ADVERTISES rather than what it produces.
+	caps *Caps
 }
 
-func (s stubProvider) ID() string                 { return s.id }
-func (s stubProvider) Caps(string) Caps           { return Caps{Ops: []Op{OpGenerate}} }
+func (s stubProvider) ID() string { return s.id }
+func (s stubProvider) Caps(string) Caps {
+	if s.caps != nil {
+		return *s.caps
+	}
+	return Caps{Ops: []Op{OpGenerate}}
+}
 func (s stubProvider) Ready(context.Context) bool { return !s.notReady }
 func (s stubProvider) Generate(context.Context, Request) (Result, error) {
 	if s.calls != nil {

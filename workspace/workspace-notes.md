@@ -354,6 +354,11 @@ its `[agent-fleet]` note. Don't infer it from a directory name.
   - **`aspect_ratio` is different: it is only in the schema when the route really takes one**, and
     then it does take effect (measured on agy: 16:9 → 1376×768, i.e. close but not exact). Ask for
     the ratio you want; still do not retry to chase exact pixels.
+  - **`provider` appears only when there is a real choice**, and its enum never contains this
+    session's own CLI. **Leave it out unless the user named a service** ("use Codex for this",
+    "generate it on both so I can compare") — the default order is theirs, set in the Console.
+    Naming one pins the call to it with no fall-through, and a comparison spends one image on
+    each of two different plans, so do it when asked and not to satisfy your own curiosity.
 - **Chromium attach tools** — see the section above.
 - **Adding an MCP server is a Console action** (Settings → MCP), not a config edit. Agent Fleet
   owns and rewrites its entries in `~/.claude.json`, `~/.codex/config.toml`, opencode's config, so

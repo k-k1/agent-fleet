@@ -168,14 +168,14 @@ const (
 // decision 3): each runs on a login the container already holds, and neither costs a new secret
 // or an egress allowlist entry.
 //
-// Codex is first, and the reason is NOT that it is the better route — agy is measurably better
-// at honouring the request, since its aspect ratio actually reaches the tool while codex's size
-// does not. It is first because it shipped first: for every user who already has this feature
-// working, a reordered default would silently move their image generation onto a DIFFERENT
-// account and a different plan's quota, which is the one thing an "improvement" must not do by
-// itself. The order is a user preference with a Console control, so choosing agy is one drag
-// away — and a fall-through already reaches it when codex is signed out or out of quota.
-var providerOrder = []string{ProviderCodex, ProviderAgy}
+// agy is first because it HONOURS MORE OF THE REQUEST: its aspect ratio reaches the tool
+// (measured), while the Codex route lets the caller choose no dimension at all. The first
+// version of this list put codex first on the grounds that a reordered default would move an
+// existing user's generation onto a different plan's quota — a real objection, and one that
+// only applies once there are such users. There are none yet (this has not shipped), so the
+// default is chosen on the merits instead, while that is still free. A stored
+// `imageProviderOrder` outranks this list, so anyone who does have a preference keeps it.
+var providerOrder = []string{ProviderAgy, ProviderCodex}
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
 // same hook shape as Enabled). nil, or a list that names nothing known, simply means the
