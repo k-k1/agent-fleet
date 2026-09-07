@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -146,5 +148,47 @@ func TestExpiredStopArmIsNotOnTheWire(t *testing.T) {
 	m.StopAfterTurnAt = time.Now().Format(time.RFC3339)
 	if got := stopArmVisible(m); got == "" {
 		t.Fatal("a live arm must be on the wire")
+	}
+}
+
+// A create can arm the session up front (docs/log/85): the CP scheduler uses it for a
+// schedule with stop_after_run. It rides the create rather than a POST that follows,
+// because the arm has to be on disk BEFORE the initial prompt is delivered — a prompt
+// arriving after an arm is exactly what releases it, so the two orders are not equivalent.
+func TestCreateSessionCanArmStopAfterTurn(t *testing.T) {
+	if _, err := exec.LookPath("tmux"); err != nil {
+		t.Skip("tmux not available")
+	}
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_SESSIONS_DIR", filepath.Join(home, "sessions"))
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions", HandleCreateSession)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	for _, tc := range []struct {
+		name string
+		arm  bool
+	}{{"armed", true}, {"plain", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			var created session.Session
+			do(t, srv, "POST", "/sessions", map[string]any{
+				"dir": home, "kind": "shell", "stop_after_turn": tc.arm,
+			}, http.StatusCreated, &created)
+			defer exec.Command("tmux", "kill-session", "-t", session.TmuxName(created.Name)).Run()
+
+			m, ok := session.ReadMeta(created.Name)
+			if !ok {
+				t.Fatal("meta not persisted")
+			}
+			if _, live := session.StopArmedAt(m, time.Now()); live != tc.arm {
+				t.Fatalf("armed=%v, want %v (meta %q)", live, tc.arm, m.StopAfterTurnAt)
+			}
+			if (created.StopAfterTurnAt != "") != tc.arm {
+				t.Fatalf("wire stopAfterTurnAt = %q, want armed=%v", created.StopAfterTurnAt, tc.arm)
+			}
+		})
 	}
 }

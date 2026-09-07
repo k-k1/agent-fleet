@@ -54,7 +54,11 @@ type scheduleDTO struct {
 	OwnerConv           string `json:"owner_conv,omitempty"`
 	// Report opts the fire's session into the docs/log/30 completion report back to the
 	// owner conversation. Default false = no report (the fire runs silently).
-	Report       bool   `json:"report"`
+	Report bool `json:"report"`
+	// StopAfterRun folds the fire's session away once it has finished the prompt
+	// (docs/log/85). Default false = leave it running. Ignored in session_mode=assistant,
+	// which drives a conversation and holds no session.
+	StopAfterRun bool   `json:"stop_after_run"`
 	Enabled      bool   `json:"enabled"`
 	NextRun      string `json:"next_run,omitempty"`
 	NextRunLocal string `json:"next_run_local,omitempty"` // next_run rendered in the schedule's tz
@@ -86,7 +90,7 @@ func scheduleToDTO(s store.Schedule) scheduleDTO {
 		NewBranch: s.NewBranch, Prompt: s.Prompt, OverlapPolicy: s.OverlapPolicy,
 		Rotation: s.Rotation, MissingTargetPolicy: s.MissingTargetPolicy,
 		ReuseSession: s.ReuseSession, ReuseRunCount: s.ReuseRunCount,
-		OwnerConv: s.OwnerConv, Report: s.Report, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
+		OwnerConv: s.OwnerConv, Report: s.Report, StopAfterRun: s.StopAfterRun, Enabled: s.Enabled, NextRun: s.NextRun, LastRun: s.LastRun,
 		LastStatus: s.LastStatus, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
 	}
 	// Render the next fire in the schedule's own zone so the operator can read back a
@@ -133,7 +137,7 @@ func validateScheduleDTO(mv store.MembershipView, in scheduleDTO) (store.Schedul
 		Worktree: strings.TrimSpace(in.Worktree), NewBranch: in.NewBranch,
 		Prompt: in.Prompt, OverlapPolicy: strings.TrimSpace(in.OverlapPolicy),
 		Rotation: strings.TrimSpace(in.Rotation), MissingTargetPolicy: strings.TrimSpace(in.MissingTargetPolicy),
-		Report: in.Report,
+		Report: in.Report, StopAfterRun: in.StopAfterRun,
 	}
 	applyScheduleDefaults(&s)
 	if strings.TrimSpace(s.Prompt) == "" {
@@ -437,6 +441,7 @@ type schedulePatch struct {
 	Rotation            *string `json:"rotation"`
 	MissingTargetPolicy *string `json:"missing_target_policy"`
 	Report              *bool   `json:"report"`
+	StopAfterRun        *bool   `json:"stop_after_run"`
 	// owner_conv is intentionally NOT patchable: create stamps it to the operator's own
 	// conversation (mcp_stdio withOwnerConv) so completion reports always return to the
 	// operator. Letting update change it would let a report be redirected within the
@@ -482,6 +487,9 @@ func (p schedulePatch) apply(sch *store.Schedule) (specChanged bool) {
 	}
 	if p.Report != nil {
 		sch.Report = *p.Report
+	}
+	if p.StopAfterRun != nil {
+		sch.StopAfterRun = *p.StopAfterRun
 	}
 	return specChanged
 }

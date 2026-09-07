@@ -127,7 +127,31 @@ func (f *wakeFirer) deliverReuse(ctx context.Context, rt runtime.Runtime, sch st
 	if serr := f.sendToSession(ctx, rt, target.Name, alive, body); serr != nil {
 		return "", serr
 	}
+	if sch.StopAfterRun {
+		f.armStopAfterRun(ctx, rt, target.Name)
+	}
 	return "", nil
+}
+
+// armStopAfterRun asks the Agent to fold this session away once the turn just delivered
+// ends (docs/log/85). Only the reuse SEND path needs it — a fire that creates its session
+// carries the arm in the create body instead.
+//
+// ★ It must run AFTER the send, never before: a prompt delivered to an armed session is
+// exactly what releases the arm ("stop when you are done" is about the work in flight, and
+// anything arriving afterwards is not part of it). Armed first, the fire's own prompt would
+// cancel it.
+//
+// Best-effort by design. The prompt is already delivered, so failing the fire here would
+// invite a retry that delivers it twice; the cost of the miss is a session that stays up
+// until the ordinary idle timeout, which is the behaviour without the option at all.
+func (f *wakeFirer) armStopAfterRun(ctx context.Context, rt runtime.Runtime, name string) {
+	body, _ := json.Marshal(map[string]bool{"on": true})
+	_, status, err := f.agentReq(ctx, rt, http.MethodPost,
+		"/sessions/"+url.PathEscape(name)+"/stop-after-turn", body)
+	if err != nil || status >= 300 {
+		log.Printf("scheduler: %s: could not arm stop_after_run (status %d): %v", name, status, err)
+	}
 }
 
 // sendToSession delivers body to an existing session's /input, first confirming the
@@ -418,6 +442,7 @@ func buildReuseCreateBody(sch store.Schedule, slot time.Time, title string) []by
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
+		"stop_after_turn": sch.StopAfterRun,    // docs/log/85 — see buildInjectBody
 	}
 	b, _ := json.Marshal(body)
 	return b

@@ -355,6 +355,30 @@ func memberTools() []mcpTool {
 			},
 		},
 		{
+			// stop_session for a session that is still working: it arms the stop rather
+			// than performing it, so the running turn finishes (and the report it owes is
+			// delivered) before the session is folded away. docs/log/85.
+			name: "stop_session_after_turn", minScope: scopeWrite,
+			desc: "Arm a session to stop once the work it is doing is finished. Unlike stop_session it interrupts nothing: the running turn completes, any report it owes is delivered, and only then is the session folded away (resumable, conversation kept). Use it to reclaim sessions in a fan-out as each one finishes. It will not stop while a question or approval is pending, and sending the session a new instruction releases the arm; pass on=false to release it explicitly.",
+			schema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "description": "session name"},
+					"on":   map[string]any{"type": "boolean", "description": "true = arm (default), false = release"},
+				},
+				"required": []string{"name"},
+			},
+			run: func(ctx context.Context, a API, res *Resolved, args map[string]any) (string, error) {
+				on := true
+				if v, ok := args["on"].(bool); ok {
+					on = v
+				}
+				body, _ := json.Marshal(map[string]bool{"on": on})
+				return a.cp.AgentText(ctx, res.RT, "POST",
+					"/sessions/"+url.PathEscape(argStr(args, "name"))+"/stop-after-turn", body)
+			},
+		},
+		{
 			name: "resume_session", minScope: scopeWrite,
 			desc:   "Resume a stopped session (relaunches it from its saved state; the conversation history is kept; a live session is left as-is). Drive it afterwards with send_to_session.",
 			schema: nameArg,

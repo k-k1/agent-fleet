@@ -56,6 +56,8 @@ export const schedules: Record<keyof typeof jaSchedules, string> = {
   "sched.f_model_ph": "Default",
   "sched.f_report": "Report to assistant",
   "sched.f_report_hint": "deliver the completion report to the owning conversation (default: off)",
+  "sched.f_stop_after_run": "Stop when done",
+  "sched.f_stop_after_run_hint": "stop the session once the run finishes — after any report, and resumable (default: off)",
   "sched.f_prompt": "Prompt",
   "sched.f_session_mode": "Session mode",
   "sched.f_reuse_target": "Reuse target",
