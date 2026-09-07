@@ -40,6 +40,11 @@ const (
 	FeatureSuggestEdit      = "suggest.edit"       // the editor's ✨ AI edit suggestion (docs/log/44 Phase 4)
 	FeatureSession          = "session"            // the interactive session itself (folded in from the transcript)
 	FeatureToolImagegen     = "tool.imagegen"      // the image generation tool (ADR 0069)
+	// FeatureEngineLLM is one call to the fleet's OWN llama.cpp engine, routed through the
+	// CP's /engine/llm gateway (ADR 0071 decision 9). The tokens are real and measured, but
+	// there is no price to attach: the cost of that answer is a share of a GPU box's hour,
+	// which is a component cost shown as such and never apportioned (ADR 0048).
+	FeatureEngineLLM = "engine.llm"
 	// FeatureUnknown is a call that carried no tag. A row is written even when a new
 	// auxiliary feature forgets to tag itself: not recording it would make the consumption
 	// invisible, which matters more than the tag being right.

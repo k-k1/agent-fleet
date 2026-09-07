@@ -110,6 +110,9 @@ export const usage = {
   // 画像生成（ADR 0069）。ここに出るトークンは画像を作った側のモデルの分だけで、
   // 画像そのものが消費するプラン枠はトークンでは表せないため計上していない。
   "usage.val.feature.tool.imagegen": "画像生成",
+  // 自前の推論エンジン（ADR 0071）。トークンは実測だが単価は無い——その回答の費用は
+  // GPU の箱の時間の一部であり、コンポーネント費用として別に出す。
+  "usage.val.feature.engine.llm": "自前 LLM",
   "usage.val.feature.unknown": "未分類",
   "usage.val.trigger.user": "ユーザー",
   "usage.val.trigger.auto": "自動",

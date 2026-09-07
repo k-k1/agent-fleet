@@ -42,6 +42,11 @@ func buildMux() *http.ServeMux {
 	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
 	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
 	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
+	// The fleet's own inference engines (ADR 0071 decision 9): the CP is the only party
+	// that sees an engine's response, so it counts the tokens and posts the row here, where
+	// every other feature's consumption already lives. CP-called like the two above, so it
+	// needs no entry in the CP's agent-proxy allowlist either.
+	mux.HandleFunc("POST /engine/usage", handleEngineUsage)
 	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.

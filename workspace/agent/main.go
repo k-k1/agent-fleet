@@ -257,6 +257,12 @@ func main() {
 	// the user as a report when it gives up.
 	sessionx.StartAbortResumeWatch()
 
+	// Self-hosted inference engines (ADR 0071 P0): ask the CP which engines this deployment
+	// runs and declare them in opencode's config, so `llamacpp/<model>` is in the launch
+	// menu. In the background because it is a call out over the public hairpin and nothing
+	// else waits on it; a deployment with no engines answers 404 and this is a no-op.
+	go syncEngineProviders()
+
 	// Chat-bridge delivery loop (docs/log/37 P1): drains the on-disk queue that
 	// notice.Put / record-exit enqueue into (possibly from hook subprocesses)
 	// and pushes to the configured chat providers (Discord first).

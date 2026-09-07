@@ -165,6 +165,10 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 	// /proc/*/cmdline / pane_start_command.
 	ocSid := session.UUID(m.Dir, m.Name)
 	envs := append([]string{"AF_SESSION_SID=" + ocSid}, env()...)
+	// The fleet's own inference engines (ADR 0071): a token scoped to THIS session and to
+	// the engine alone, which the shared config refers to as {env:AF_ENGINE_TOKEN}. Empty
+	// on every deployment that runs no engines, which is most of them.
+	envs = append(envs, EngineEnv(m.Name)...)
 	// Resume the slot's OWN opencode conversation (activeSession: the plugin-captured
 	// per-slot id, else a store-derived conversation this slot itself opened — never an
 	// older one from the same dir), UNLESS its last turn was interrupted (incomplete).
