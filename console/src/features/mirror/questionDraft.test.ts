@@ -10,6 +10,7 @@ import {
   clearQuestionDraft,
   questionDraftKey,
   carriedDraftKey,
+  siblingDraftKey,
 } from "./questionDraft.ts";
 import type { Question } from "./transcript/types.ts";
 
@@ -40,6 +41,54 @@ describe("question draft storage", () => {
     expect(questionDraftKey("s1")).not.toBe(questionDraftKey("s2"));
     expect(questionDraftKey(null)).toBeNull();
     expect(carriedDraftKey("")).toBeNull();
+  });
+
+  it("pairs the two cards of one session, and only those", () => {
+    expect(siblingDraftKey(questionDraftKey("s1"))).toBe(carriedDraftKey("s1"));
+    expect(siblingDraftKey(carriedDraftKey("s1"))).toBe(questionDraftKey("s1"));
+    expect(siblingDraftKey(null)).toBeNull();
+    expect(siblingDraftKey("af.mirror-draft.s1")).toBeNull(); // the composer's draft, not a card's
+  });
+
+  it("hands the draft over when the stopped session turns the card into the carried one", () => {
+    // The reported loss: typed into the live card's free-text row, the session stops, and
+    // the carried card — the same question, answered as prose — came up empty.
+    writeQuestionDraft(questionDraftKey("s1"), questionSig(QS), [["B"], []], ["", "そのほか"]);
+    expect(readQuestionDraft(carriedDraftKey("s1"), QS)).toEqual({ sel: [["B"], []], freeText: ["", "そのほか"] });
+    // And back, for the question the resumed agent asks again.
+    store.clear();
+    writeQuestionDraft(carriedDraftKey("s1"), questionSig(QS), [[], []], ["書きかけ", ""]);
+    expect(readQuestionDraft(questionDraftKey("s1"), QS)?.freeText).toEqual(["書きかけ", ""]);
+  });
+
+  it("hands over nothing to another session, or to another question", () => {
+    writeQuestionDraft(questionDraftKey("s1"), questionSig(QS), [["B"], []], ["", ""]);
+    expect(readQuestionDraft(carriedDraftKey("s2"), QS)).toBeNull();
+    const other: Question[] = [{ ...QS[0], question: "べつの質問" }, QS[1]];
+    expect(readQuestionDraft(carriedDraftKey("s1"), other)).toBeNull();
+  });
+
+  it("the card on screen takes the form over, so a cleared row stays cleared", () => {
+    const pending = questionDraftKey("s1");
+    const carried = carriedDraftKey("s1");
+    writeQuestionDraft(pending, questionSig(QS), [[], []], ["消す前", ""]);
+    writeQuestionDraft(carried, questionSig(QS), [[], []], ["消す前", ""]); // the carried card restored it
+    expect(store.has(pending!)).toBe(false); // …and now owns it
+    writeQuestionDraft(carried, questionSig(QS), [[], []], ["", ""]); // the user emptied the row
+    expect(readQuestionDraft(carried, QS)).toBeNull();
+  });
+
+  it("an unrelated draft of the other card is left alone", () => {
+    const other: Question[] = [{ question: "べつの質問", options: [{ label: "A" }] }];
+    writeQuestionDraft(carriedDraftKey("s1"), questionSig(other), [["A"]], [""]);
+    writeQuestionDraft(questionDraftKey("s1"), questionSig(QS), [["B"], []], ["", ""]);
+    expect(readQuestionDraft(carriedDraftKey("s1"), other)).not.toBeNull();
+  });
+
+  it("an answered card takes the other's copy of that form with it", () => {
+    writeQuestionDraft(questionDraftKey("s1"), questionSig(QS), [["B"], []], ["", "そのほか"]);
+    clearQuestionDraft(carriedDraftKey("s1"), questionSig(QS)); // sent from the carried card
+    expect(readQuestionDraft(carriedDraftKey("s1"), QS)).toBeNull();
   });
 
   it("a null key stores nothing and reads back nothing", () => {

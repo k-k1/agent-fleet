@@ -2,6 +2,7 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -10,19 +11,31 @@ import (
 
 // The payload the account view really returns, trimmed to what is read (measured 2026-09-07
 // against this container's own login).
-const accountUsageBody = `{"user_id":"user-x","account_id":"a1","email":"u@example.com",
+//
+// Both reset_at are relative to NOW, not the epochs that were measured. adjustWindow zeroes a
+// window whose reset instant has passed (a reading whose window has since rolled over is not
+// 41% any more — it is 0%), so the captured epochs made this a time bomb: it passed for the
+// few minutes between the capture and reset_at, and failed on every branch afterwards, with a
+// diff that reads like the classifier broke. What the test is about is the mapping of the two
+// windows, so what matters is only that both are still open.
+const accountUsageFmt = `{"user_id":"user-x","account_id":"a1","email":"u@example.com",
  "plan_type":"plus",
  "rate_limit":{"allowed":true,"limit_reached":false,
-  "primary_window":{"used_percent":3,"limit_window_seconds":18000,"reset_after_seconds":17979,"reset_at":1788768929},
-  "secondary_window":{"used_percent":41,"limit_window_seconds":604800,"reset_after_seconds":5048,"reset_at":1788755977}},
+  "primary_window":{"used_percent":3,"limit_window_seconds":18000,"reset_after_seconds":17979,"reset_at":%d},
+  "secondary_window":{"used_percent":41,"limit_window_seconds":604800,"reset_after_seconds":5048,"reset_at":%d}},
  "credits":{"has_credits":true,"balance":"466.09"},
  "rate_limit_reset_credits":{"available_count":3}}`
+
+func accountUsageBody() string {
+	now := time.Now().Unix()
+	return fmt.Sprintf(accountUsageFmt, now+17979, now+5048)
+}
 
 func TestGetAccountUsageMapsBothWindows(t *testing.T) {
 	var gotAuth, gotAccount string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotAccount = r.Header.Get("Authorization"), r.Header.Get("ChatGPT-Account-Id")
-		_, _ = w.Write([]byte(accountUsageBody))
+		_, _ = w.Write([]byte(accountUsageBody()))
 	}))
 	defer srv.Close()
 
