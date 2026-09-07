@@ -680,7 +680,7 @@ The `image` role and the `sdcpp` provider were written against the same af-sandb
 the role actually deployed and driven. One P0 expectation held — **the image role fits inside
 one attempt** — and one broke: 🔴 **an MI box does not appear in a `describe-instances`
 listing**, so the check P0 relied on to say "no GPU is running" was not evidence of that at
-all. The exercise cost about 12 minutes of g6.xlarge, roughly $0.25.
+all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 13:47:04Z), roughly $0.31.
 
 1. **The image role's cold start is 197 seconds** (`execute-change-set` to
    `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
