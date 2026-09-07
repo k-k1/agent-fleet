@@ -22,10 +22,21 @@ import (
 // It reports FACTS; the rule that turns them into a yes or no lives in mcpImageGenAdvertise,
 // where the tool list is built.
 type mcpImageGenStatus struct {
-	Enabled      bool     `json:"enabled"`
-	Provider     string   `json:"provider"`
-	Ready        bool     `json:"ready"`
-	Kind         string   `json:"kind"`
+	Enabled      bool                  `json:"enabled"`
+	Provider     string                `json:"provider"`
+	Ready        bool                  `json:"ready"`
+	Kind         string                `json:"kind"`
+	Model        string                `json:"model"`
+	Ops          []string              `json:"ops"`
+	AspectRatios []string              `json:"aspectRatios"`
+	Providers    []mcpImageGenProvider `json:"providers"`
+}
+
+// mcpImageGenProvider is one ready provider: what it is called, and what it can do. The
+// per-provider list is what makes an explicit `provider` argument honest — the tool's enums are
+// built from the providers this session may actually name, not from the first one.
+type mcpImageGenProvider struct {
+	ID           string   `json:"id"`
 	Model        string   `json:"model"`
 	Ops          []string `json:"ops"`
 	AspectRatios []string `json:"aspectRatios"`
@@ -49,9 +60,9 @@ func agentImageGenStatus(session string) (mcpImageGenStatus, error) {
 
 // imageGenArgs is the tool's arguments, already split out of the shared argument struct.
 type imageGenArgs struct {
-	op, prompt, size, aspectRatio, background string
-	count                                     int
-	inputs                                    []string
+	op, provider, prompt, size, aspectRatio, background string
+	count                                               int
+	inputs                                              []string
 }
 
 // mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED the
@@ -74,8 +85,8 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		return mcpToolErr(req.ID, err.Error())
 	}
 	body, _ := json.Marshal(map[string]any{
-		"session": self, "op": a.op, "prompt": a.prompt, "size": a.size,
-		"aspectRatio": a.aspectRatio, "background": a.background,
+		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
+		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs,
 	})
 

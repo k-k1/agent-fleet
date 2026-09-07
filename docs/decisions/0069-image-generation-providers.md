@@ -2,15 +2,16 @@
 
 English | [日本語](0069-image-generation-providers.ja.md)
 
-- Status: **adopted — P0/P1/P2 implemented** (P0/P1 2026-09-06, P2 2026-09-07). Every number
+- Status: **adopted — P0/P1/P2/P3 implemented** (P0/P1 2026-09-06, P2/P3 2026-09-07). Every number
   below was measured in a Workspace container on the date it is attributed to, or fetched from
   the vendor's own documentation on that date (Sources at the end). Reviewed 2026-09-06: both
   open questions were measured (see *Open questions — resolved*), and Decisions 3, 8 and 9 were
   corrected against the code they name. P0 — the Codex route, the opt-in gate, the MCP tool, the
   usage row and the sweep — is in the tree, P1 put the picture in the conversation, and **P2
   added the second provider (agy) and with it the aspect-ratio axis, the provider-order UI and a
-  correction to the "another agent CLI is not the way" aside**. What each phase deliberately left
-  out is in its *Implementation notes* at the end. Tiers 2 and 3 (Decision 3) are not started.
+  correction to the "another agent CLI is not the way" aside**; **P3 let the caller NAME a
+  provider (`generate_image`'s `provider` argument) and settled the default order on the merits**.
+  What each phase deliberately left out is in its *Implementation notes* at the end. Tiers 2 and 3 (Decision 3) are not started.
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -649,6 +650,11 @@ reports the shortfall as a warning. `edit` is advertised on the strength of the 
   at honouring the request; codex is first because it shipped first. Reordering the default would
   silently move every existing user's image generation onto a different account and a different
   plan's quota, which is the one thing an improvement must not do by itself.
+
+  🔴 **Corrected the same day (P3 below): the order is `agy, codex`.** The objection above is
+  sound and its premise was not — nobody is using this yet, so there is no working setup to move.
+  A default chosen to protect users who do not exist costs the ones who will arrive the better
+  route. It is decided on the merits while that is still free.
 - **The Console control exists now** (Settings → Agents → Session, under the on/off switch, and
   only while it is on). Ranking a list of one was not a setting; ranking two accounts that spend
   two different plans is. It is the same `OrderList` the assistant order uses, and
@@ -681,3 +687,52 @@ no provider parameter. Run once:
 Not covered, and deliberately: `edit` with real `ImagePaths` (it would cost another image to
 learn what the schema already states), `count > 1`, and what one image costs the Antigravity plan
 (the same measurement problem as the ChatGPT one, and the same answer — leave it unmeasured).
+
+## Implementation notes (P3 — naming a provider, and the default order, 2026-09-07)
+
+Two changes, both from the same question: *now that there are two routes, who picks?*
+
+### The default order is `agy, codex`
+
+P2 put codex first to avoid moving an existing user's generation onto another plan. The
+objection is sound and its premise was not: **nobody is using this yet**, so there is no working
+setup to protect, and a default chosen for users who do not exist costs the ones who will arrive
+the better route. agy honours a requested aspect ratio and codex honours nothing, so on the
+merits agy is first — decided now, while it is still free to decide. A stored
+`imageProviderOrder` outranks the built-in list either way, so anyone who has expressed a
+preference keeps it.
+
+### `generate_image` gained a `provider` argument
+
+The backend always supported this: `chooseImageProviders` honours an explicit pref as exactly
+one provider with no fall-through, and `/imagegen/generate` has always taken `provider`. What was
+missing was the tool surface, left out deliberately — "naming a service is the caller's business,
+not the model's". The use case that overturns it is **comparison**: "generate this prompt on both
+and show me the difference" is a thing a user asks for in the session, and the session had no way
+to express it.
+
+- **The enum is the providers this session may actually name**, computed at tools/list time from
+  the per-provider list `/imagegen/status` now returns. It is absent when there is only one, so
+  the argument never appears as a decoration.
+- **The exclusion of Decision 8 is now per provider, not per effective route.** It was "not a
+  codex session on the codex route"; it is now "a session is never offered the route that drives
+  its own CLI". A Codex session with agy ready is therefore offered the tool with agy as its only
+  choice — which the old rule refused outright — and the tool disappears only when nothing is
+  left. The same check is repeated in the REST route (`imagegen_own_cli`), because the advertised
+  set is a scope boundary and a guessed name in `tools/call` must not cross it.
+- **`op` and `aspect_ratio` became the UNION over the offered providers.** Per-provider schemas
+  are not expressible in one tool, and the union promises nothing false: a named provider that
+  cannot do the op is refused by name, and an aspect ratio a route cannot honour already comes
+  back in `warnings`. It also fixes something the first version got wrong quietly — auto already
+  routed an op only the SECOND provider supports to that provider, while the tool advertised only
+  the first one's ops, so that op was unreachable.
+- **The description carries the cost.** Naming a provider pins the call to one plan, and
+  comparing two spends one image on each of two different accounts — so the tool says to name one
+  only when the user did.
+
+Verified: the mcpx suite covers the per-provider exclusion (a codex session keeps the tool when
+agy is ready and loses it when agy is not), the union, the enum contents and the two "absent
+unless real" rules; `internal/imagegen` covers the status list and the REST refusal. The live
+suite now drives the agy generation with `provider: "agy"` named explicitly, and its
+codex-session test runs both halves — with agy ready the tool survives, without it the tool is
+gone (against `af_report` as the positive control).

@@ -46,6 +46,20 @@ type statusResponse struct {
 	// readable without guessing at a preference file, and a settings UI has something to
 	// render when there is more than one provider to rank.
 	Order []string `json:"order,omitempty"`
+	// Providers is EVERY ready provider, in the effective order, each with its own capability
+	// list. The flat fields above describe only the first one — which was enough while the
+	// caller could not choose, and stopped being enough the moment `generate_image` grew a
+	// `provider` argument: a tool that offers a choice has to advertise what each choice can
+	// do, or the enum is a guess.
+	Providers []providerStatus `json:"providers,omitempty"`
+}
+
+// providerStatus is one ready provider as the tool surface needs to see it.
+type providerStatus struct {
+	ID           string   `json:"id"`
+	Model        string   `json:"model,omitempty"`
+	Ops          []string `json:"ops,omitempty"`
+	AspectRatios []string `json:"aspectRatios,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
@@ -56,7 +70,8 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			out.Kind = m.Kind
 		}
 	}
-	// The first READY provider in the effective order is the one auto would route to.
+	// Every ready provider, in the effective order. The FIRST is what auto would route to, and
+	// is repeated in the flat fields; the rest are what an explicit `provider` can name.
 	byID := map[string]Provider{}
 	for _, p := range Providers() {
 		byID[p.ID()] = p
@@ -66,21 +81,30 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		if !ok || !p.Ready(r.Context()) {
 			continue
 		}
-		out.Provider, out.Ready = p.ID(), true
-		switch p.ID() {
-		case ProviderCodex:
-			out.Model = codexDriverModel()
-		case ProviderAgy:
-			out.Model = agyDriverModel()
-		}
 		caps := p.Caps("")
+		st := providerStatus{ID: p.ID(), Model: driverModelOf(p.ID()), AspectRatios: caps.AspectRatios}
 		for _, op := range caps.Ops {
-			out.Ops = append(out.Ops, string(op))
+			st.Ops = append(st.Ops, string(op))
 		}
-		out.AspectRatios = caps.AspectRatios
-		break
+		out.Providers = append(out.Providers, st)
+		if !out.Ready {
+			out.Provider, out.Ready = st.ID, true
+			out.Model, out.Ops, out.AspectRatios = st.Model, st.Ops, st.AspectRatios
+		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// driverModelOf reports the model a generation would run on, per provider. "" for a provider
+// that is not driven by a model of ours to name.
+func driverModelOf(id string) string {
+	switch id {
+	case ProviderCodex:
+		return codexDriverModel()
+	case ProviderAgy:
+		return agyDriverModel()
+	}
+	return ""
 }
 
 type generateRequest struct {
@@ -131,6 +155,15 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	meta, ok := session.ReadMeta(body.Session)
 	if !ok {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+body.Session)
+		return
+	}
+	// A named provider may not be the caller's OWN CLI. The tool's enum already leaves it out,
+	// but the advertised set is a scope boundary and a guessed name in tools/call must not cross
+	// it: this session can make that picture with its own built-in tool, and going out through a
+	// second process of the same CLI would spend the plan twice for it (ADR 0069 decision 8).
+	if p := strings.TrimSpace(body.Provider); p != "" && p == meta.Kind {
+		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_own_cli",
+			"this session is a "+meta.Kind+" session: use its own built-in image tool rather than spending the plan twice through the fleet one")
 		return
 	}
 

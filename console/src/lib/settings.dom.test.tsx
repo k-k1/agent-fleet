@@ -56,11 +56,11 @@ describe("normalizeImageProviderOrder", () => {
   });
 
   it("honours an explicit reorder and drops unknown ids and duplicates", () => {
-    expect(normalizeImageProviderOrder(["agy", "bedrock", "agy", "codex"])).toEqual(["agy", "codex"]);
+    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["codex", "agy"]);
   });
 
   it("falls back to the built-in order for a broken stored value", () => {
-    expect(normalizeImageProviderOrder("agy")).toEqual(["codex", "agy"]);
+    expect(normalizeImageProviderOrder("agy")).toEqual(["agy", "codex"]);
   });
 });
 
