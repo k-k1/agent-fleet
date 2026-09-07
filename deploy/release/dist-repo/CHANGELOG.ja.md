@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.16.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.16.0) — 2026-09-07
+
+自分では絵を描けないセッションが画像を生成できるようになり、できた絵は会話の中に出ます。
+ずんだもんの声は聴いている人がいる間だけ動くようになり、設定に「マシン」タブが増えて、
+自分のワークスペースが何の上で動いているのかが分かるようになりました。
+
 ## [0.15.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.1) — 2026-09-05
 
 workspace イメージを amd64 に加えて arm64 でも公開しました。`ecs-ec2` の配備で、公式の
