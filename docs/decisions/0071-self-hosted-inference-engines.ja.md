@@ -471,6 +471,80 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
   画面は関数ではなく、Bedrock は ADR 0069 の第 1 層として既にある（自前で動かす要求とは
   別物）。
 
+## P0 の実測（2026-09-07）
+
+P0 を書きながら `af-sandbox` の共有クラスタに `60-engines` を実際に建てて測った。フェーズ節が
+「P0 で測る」と挙げた 5 点はここで決着し、**そのうち 2 つは本文の予想を外した**——`Host: {}` の
+volume は箱を残しても効かず（下の 4）、ECR 複製の効果は placement のばらつきに埋もれた（1）。
+実測にかかった費用は g6.xlarge 約 1.4 時間で $2 程度。
+
+1. **本番相当のコールドスタートは 586 秒**（`desired 1` → listen）。イメージは ECR、モデルは
+   S3、箱は無し。内訳: **+88 秒で task 作成と placement**、pull **79 秒**（GHCR の 178 秒に対して
+   99 秒短い）、S3 取得 **161 秒**（18.5 GB＝115 MB/s）、+350 秒で RUNNING、**+586 秒で
+   `model loaded` と listen**（VRAM ロード 236 秒）。🔴 **「ECR 複製後に測り直せば 527 秒より
+   縮む」という見込みは外れた**——pull は確かに 99 秒縮んだが、同じ日の別の起動では placement が
+   8 秒だったところが今回は 88 秒で、支配的なのは pull ではなく**箱が現れるまでの時間の
+   ばらつき**である。決定 5 の `AF_ENGINE_WAKE_TIMEOUT` 既定 900 秒は据え置く（586 秒に対して
+   余白 314 秒）。2 点からの一般化を避けて言えるのは「**500〜600 秒台で、下振れも上振れもする**」
+   までである。
+2. **ドレインは既定の `scaleInAfter` で 456 秒**（shutting-down の開始は +95〜104 秒）。
+   0070 のハーネスで測った 427 秒・463 秒と同じ範囲で、3 点目として一致した。
+3. **`scaleInAfter: -1` は本当に箱を残す。** `desired 0` から **583 秒後も `running`** のまま
+   （既定なら 456 秒で terminated）。CFN の `AWS::ECS::CapacityProvider` は
+   `InfrastructureOptimization.ScaleInAfter` と
+   `InstanceLaunchTemplate.LocalStorageConfiguration.UseLocalStorage` の**両方を持っている**
+   （レビュー R5 は API にあるとだけ書いていた）ので、どちらもスタックのパラメータにできた。
+4. 🔴 **「箱を残せば S3 取得なしで起きる」は、そのままでは成り立たなかった。** `-1` で残した
+   **同じインスタンスに戻った**再起動が、18.5 GB を S3 から**引き直した**（126 秒）。原因は
+   `Host: {}`——ECS/Docker は host パラメータが空だと**タスクごとに新しい匿名ディレクトリ**を
+   割り当てるので、新しいタスクから見た `/models` は空である。`Host: { SourcePath: … }` に
+   直した。決定 7(c) の「温かい箱」は設計としては生きているが、**1 行の書き方で黙って失われる
+   類のもの**だと分かった。この状態での再起動は 410 秒（コールド 586 秒との差 176 秒＝placement と
+   pull のぶん）。
+5. **プール走査が MI の箱を見ること**は本番のクラスタで現物を確認した。
+   `DescribeContainerInstances` は同じクラスタで
+   `i-0abeb…/None`・`i-0075e…/None`（スロット、`agentConnected=false`）と
+   `i-059d9…/af-af-ecs-engines-llm`（エンジン、`agentConnected=true`）を並べて返す。フィルタが
+   無ければ `registeredSlots` はエンジンの箱を「空きスロット」と数え、ドレインに入った時点で
+   `sweepGhostInstances` がそれを deregister する。`capacityProviderName` が空かどうかが唯一の
+   区別で、P0 はそこで切っている（決定 1・レビュー R7(a)）。
+6. **エンジンの面は本番の経路で通った。** CP の SG に置いた使い捨ての Fargate タスクから
+   （SSM ポートフォワードは使わない——本番のタスクロールに `ssmmessages:*` を入れないため）:
+   `http://llm.af.internal:8080/health` が **200**、`/v1/chat/completions` が
+   `--alias` の `qwen3-coder-30b-a3b` として答え、**鍵無しの要求は 401**。SG（CP からのみ）と
+   `--api-key`（SSM SecureString）の二重の鍵が両方効いている。
+7. 🔴 **`usage` はストリームに黙って現れるわけではない。** 同じエンジンに
+   `stream_options.include_usage` を付けると `[DONE]` の直前に
+   `{"choices":[],"usage":{...}}` が来るが、**付けなければ usage のチャンクは一切来ない**。
+   AI SDK は付けるが、数えるのは CP の仕事（決定 9）なので**ゲートウェイが自分で付ける**
+   ことにした。付けなかった場合に 0 を書かず `measured="none"` にするのは、0069 が画像で
+   採った「測れないものは 0 と書かない」と同じ扱いである。
+8. **CFN の 2 つの契約が P0 で増えた。**
+   (a) **`DesiredCount` を書かない効果は実測どおり**——`ScaleInAfter` を変える更新も、
+   タスク定義を差し替える更新も、`desiredCount` を 0 のまま残した。
+   (b) 🔴 **モデルがまだ無いうちにサービスを作ると、スタックは永久に固まる。** 初回の create で
+   実際に踏んだ: 取得サイドカーが `Key … does not exist` で落ち、タスクが 60 秒ごとに
+   crash-loop する間スタックは `CREATE_IN_PROGRESS` のまま——20-platform が ECR リポジトリを
+   持っている理由とまったく同じ形である。S3 のバケットを作るのも、それを読むサービスを作るのも
+   同じスタックなので、**`LlmModelS3Key` が空ならサービスを作らない**という条件にし、
+   初回だけ「空で建てる → 取り込む → キーを入れて建て直す」の 2 回に分けた。
+9. **standup の秘密の渡し方。** エンジンの `--api-key` は機械が作る値なので standup が
+   **無ければ作る**（チェックだけの他の秘密と違う）。最初の実装は
+   `ssm put-parameter --value <秘密>` で、自分で足したスタブテストの表明に引っかかった——
+   引数は `/proc/<pid>/cmdline` から誰にでも読め、シェルのトレースにも残る。`--cli-input-json
+   file://…`（0600・直後に削除）に直した。
+
+その他、P0 で確かめたこと:
+
+- **S3 → 箱は 115〜147 MB/s**（18.5 GB を 126・161 秒）。0070 のハーネスの 104〜147 MB/s と
+  同じ範囲で、5 点目でも「ファイルによらず一定」は崩れていない。
+- **S3 → S3 のサーバサイドコピーは 17.3 GiB を 52 秒**（同一リージョン・無料）。取り込み済みの
+  モデルを別のバケットへ移すのは、HF から引き直す 31〜74 分と比べる対象にならない。
+- **`crane copy` で GHCR → ECR は 2.59 GB を 179 秒**（このコンテナから）。
+- スタブテスト（`deploy/local/ecs-lifecycle-stub-test.sh`）に case 3g を足し、順序
+  （20 → イメージ → 60 → 30）、`CAPABILITY_NAMED_IAM`、鍵の生成、新規サービスの desired 0、
+  既存サービスに触らないこと、生成した鍵を引数に置かないことを固定した。
+
 ## フェーズ
 
 - **P0 — 土台と llm。** `60-engines.yaml`（capacity provider・S3・取り込みタスク・llm の

@@ -512,6 +512,86 @@ Also measured the same day:
   are not functions, and Bedrock already exists as ADR 0069's first layer (a different request
   from "run it ourselves").
 
+## Measured while writing P0 (2026-09-07)
+
+`60-engines` was deployed for real onto the shared `af-sandbox` cluster while P0 was being
+written. The five things the Phases section said P0 would measure are settled here, and **two
+of them contradicted what the body expected** — a `Host: {}` volume does not survive a task
+even on a box that was deliberately kept (4), and the gain from copying the image into ECR
+disappeared inside the variance of placement (1). The whole exercise cost about 1.4 hours of
+g6.xlarge, roughly $2.
+
+1. **The production-shaped cold start is 586 seconds** (`desired 1` → listening), with the
+   image in ECR, the model in S3 and no box. Broken down: **+88 s to task creation and
+   placement**, pull **79 s** (99 s less than GHCR's 178 s), S3 fetch **161 s** (18.5 GB =
+   115 MB/s), RUNNING at +350 s, **`model loaded` and listening at +586 s** (236 s loading
+   into VRAM). 🔴 **The expectation that re-measuring after the ECR copy would beat 527 s was
+   wrong.** The pull really did shrink by 99 s, but placement took 88 s where an earlier start
+   the same day took 8 — what dominates is not the pull but **how long it takes for a box to
+   exist at all**. `AF_ENGINE_WAKE_TIMEOUT` stays at 900 s (314 s of headroom over 586). Avoiding
+   a generalisation from two points, all that can be said is "**500-600 seconds, and it moves
+   both ways**".
+2. **Drain with the default `scaleInAfter` is 456 seconds** (shutting-down begins at +95-104 s).
+   That is the same range as the harness's 427 s and 463 s — a third point in agreement.
+3. **`scaleInAfter: -1` really does keep the box.** 583 seconds after `desired 0` it was still
+   `running` (the default had terminated at 456 s). CloudFormation's
+   `AWS::ECS::CapacityProvider` carries **both** `InfrastructureOptimization.ScaleInAfter` and
+   `InstanceLaunchTemplate.LocalStorageConfiguration.UseLocalStorage` — review R5 only
+   established that the API had them — so both became stack parameters.
+4. 🔴 **"Keep the box and the next start skips the S3 fetch" did not hold as written.** A
+   restart that landed **back on the very same instance** kept by `-1` pulled all 18.5 GB from
+   S3 again (126 s). The cause is `Host: {}`: with an empty host parameter ECS/Docker allocates
+   **a fresh anonymous directory per task**, so `/models` was empty as far as the new task was
+   concerned. Fixed to `Host: { SourcePath: … }`. Decision 7(c)'s warm box survives as a design,
+   but it turns out to be **the kind of thing one line of YAML silently loses**. In that state
+   the restart took 410 s (176 s less than the 586 s cold start — placement and pull).
+5. **That the pool walk sees MI boxes** was confirmed against the real cluster.
+   `DescribeContainerInstances` returns, side by side, `i-0abeb…/None` and `i-0075e…/None` (slots,
+   `agentConnected=false`) and `i-059d9…/af-af-ecs-engines-llm` (the engine,
+   `agentConnected=true`). Without a filter, `registeredSlots` counts the engine box as a free
+   slot, and the moment it starts draining `sweepGhostInstances` deregisters it. Whether
+   `capacityProviderName` is empty is the only thing that tells them apart, and that is where P0
+   cuts (decision 1, review R7(a)).
+6. **The engine's own surface works over the production path.** From a throwaway Fargate task
+   placed in the CP's security group — not an SSM port-forward, because the production task role
+   deliberately has no `ssmmessages:*`: `http://llm.af.internal:8080/health` answered **200**,
+   `/v1/chat/completions` answered as `qwen3-coder-30b-a3b` (the `--alias`), and **a request with
+   no key got 401**. Both locks — the SG (CP only) and `--api-key` from an SSM SecureString — are
+   doing their job.
+7. 🔴 **`usage` does not just appear in a stream.** With `stream_options.include_usage` the same
+   engine emits `{"choices":[],"usage":{...}}` immediately before `[DONE]`; **without it there is
+   no usage chunk at all**. The AI SDK does set it, but counting is the CP's job (decision 9), so
+   **the gateway now adds the flag itself**. Writing `measured="none"` rather than zeros when it
+   is still absent is the same treatment ADR 0069 gave images: what cannot be measured is not
+   recorded as zero.
+8. **Two more CloudFormation contracts.**
+   (a) **Omitting `DesiredCount` behaves as measured** — neither the update that changed
+   `ScaleInAfter` nor the one that replaced the task definition moved `desiredCount` off 0.
+   (b) 🔴 **Creating the service before a model exists wedges the stack for good.** Hit for real
+   on the first create: the fetch sidecar died with `Key … does not exist`, the task crash-looped
+   every 60 seconds, and the stack sat in `CREATE_IN_PROGRESS` — exactly the shape that put the
+   ECR repositories in 20-platform. The same stack creates the bucket and the service that reads
+   it, so **an empty `LlmModelS3Key` now creates no service**, and the first stand-up is two
+   passes: build it empty, ingest, then set the key and build again.
+9. **How stand-up passes a secret.** The engine's `--api-key` is machine-generated, so stand-up
+   **creates it when it is missing** rather than only checking for it as it does for the other
+   secrets. The first implementation used `ssm put-parameter --value <secret>` and was caught by
+   an assertion in the stub test this work added: an argument is readable from
+   `/proc/<pid>/cmdline` and lands in any shell trace. It goes through
+   `--cli-input-json file://…` now (0600, deleted immediately).
+
+Also measured while writing P0:
+
+- **S3 to a box runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the
+  harness's 104-147 MB/s; a fifth data point has not broken "it does not depend on the file".
+- **A server-side S3-to-S3 copy moves 17.3 GiB in 52 seconds** (same region, free). Moving an
+  already-ingested model between buckets is not comparable to the 31-74 minutes of fetching it
+  from Hugging Face again.
+- **`crane copy` from GHCR to ECR: 2.59 GB in 179 seconds** (from this container).
+- The stub test (`deploy/local/ecs-lifecycle-stub-test.sh`) gained a case 3g pinning the order
+  (20 → images → 60 → 30), `CAPABILITY_NAMED_IAM`, the key generation, scaling a newly created
+  service to 0, leaving an existing one alone, and not putting the generated key in an argument.
+
 ## Phases
 
 - **P0 — the substrate, and llm.** `60-engines.yaml` (capacity providers, S3, the ingestion
