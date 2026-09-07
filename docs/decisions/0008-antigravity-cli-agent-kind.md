@@ -97,7 +97,18 @@ Done in a throwaway container from the existing image rather than by building on
   Embedded R2514, bare metal, `detect-virt: none`) **does not advertise rdrand in
   `/proc/cpuinfo`** (suspected kernel mask or BIOS disable) → the self-test aborts.
   `seccomp=unconfined` makes no difference, and because it is a prebuilt binary there is no
-  switch to disable FIPS — **it cannot be worked around from user space**.
+  switch to disable FIPS.
+
+  🔴 **Correction (2026-09-07): it CAN be worked around from user space.** Masking the RDRAND
+  capability bit out of OpenSSL's CPU detection is enough —
+  `OPENSSL_ia32cap='~0x4000000000000000' agy --version` starts and prints `1.1.27` on this
+  same host, where the unmasked command still aborts. `GOFIPS=0` and `GODEBUG=fips140=off` do
+  nothing (both still abort), which is why the original conclusion looked right. The mask only
+  stops the hardware RNG being used; entropy then comes from the kernel as usual. This
+  unblocks running agy on this development host — it does NOT change the deployment
+  requirement below, which is about running agy as shipped rather than with a mask. (The
+  hands-on gap this note reopens is still real: `agy models` here answers "Please sign in", so
+  interaction/auth/resume remain unverified on this host for want of a login, not a CPU.)
 
 → **A new deployment requirement: a host running agy must have RDRAND enabled** (most cloud VMs
 and current CPUs do; this development host does not). This is not a defect specific to

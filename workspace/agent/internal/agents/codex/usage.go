@@ -85,6 +85,11 @@ type usage struct {
 	SevenDay *usageWindow
 	PlanType string
 	AgeSec   int
+	// LimitReached is the account view's own verdict that the plan is out of quota RIGHT NOW.
+	// Only that source can assert it — a rollout reading carries percentages and nothing else —
+	// so false here means "not asserted", never "known to be fine". PlanExhausted is the one
+	// place that distinction is spelled out.
+	LimitReached bool
 }
 
 const resetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
@@ -217,14 +222,38 @@ func getAccountUsage(ctx context.Context, client *http.Client, url, token, accou
 	var raw struct {
 		PlanType  string `json:"plan_type"`
 		RateLimit struct {
-			Primary   *accountWindow `json:"primary_window"`
-			Secondary *accountWindow `json:"secondary_window"`
+			LimitReached bool           `json:"limit_reached"`
+			Primary      *accountWindow `json:"primary_window"`
+			Secondary    *accountWindow `json:"secondary_window"`
 		} `json:"rate_limit"`
 	}
 	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&raw) != nil {
 		return usage{}, false
 	}
-	return classifyWindows(raw.RateLimit.Primary.recorded(), raw.RateLimit.Secondary.recorded(), raw.PlanType)
+	u, ok := classifyWindows(raw.RateLimit.Primary.recorded(), raw.RateLimit.Secondary.recorded(), raw.PlanType)
+	if !ok {
+		return usage{}, false
+	}
+	u.LimitReached = raw.RateLimit.LimitReached
+	return u, true
+}
+
+// PlanExhausted reports whether the ChatGPT plan behind the Codex login is out of quota right
+// now. known=false means it could not be found out — no login, the call failed, or the answer
+// is only a local reading, which carries no such flag.
+//
+// It exists so that a feature which SPENDS that plan can step aside before spending it: image
+// generation (ADR 0069) routes to the next provider instead of calling codex and getting an
+// honest but useless failure. The distinction matters — "not asserted" must never be read as
+// "known to be fine", or a caller would treat an unreachable endpoint as permission to go
+// ahead. Here that is the right default anyway (fail open, try codex, let it say no itself),
+// but it has to be a decision rather than an accident.
+func PlanExhausted(ctx context.Context) (exhausted, known bool) {
+	u, ok := accountUsage(ctx)
+	if !ok || !u.OK {
+		return false, false
+	}
+	return u.LimitReached, true
 }
 
 // accountWindow is one window as the account view spells it.

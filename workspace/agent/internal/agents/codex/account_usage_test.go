@@ -123,3 +123,34 @@ func TestAccountUsageCacheStampsAge(t *testing.T) {
 		t.Fatalf("empty cache reported a reading: %+v", got)
 	}
 }
+
+// PlanExhausted must distinguish "the account says it is out of quota" from "we could not
+// find out". A caller that spends this plan (image generation, ADR 0069) steps aside on the
+// first and goes ahead on the second, so collapsing them into one bool would either strand
+// the feature whenever the endpoint hiccups or spend quota that is already gone.
+func TestPlanExhaustedSeparatesUnknownFromFine(t *testing.T) {
+	body := func(reached bool) string {
+		return fmt.Sprintf(`{"plan_type":"plus","rate_limit":{"limit_reached":%t,
+		 "primary_window":{"used_percent":100,"limit_window_seconds":18000,"reset_at":%d}}}`,
+			reached, time.Now().Add(time.Hour).Unix())
+	}
+	for _, tc := range []struct {
+		name              string
+		h                 http.HandlerFunc
+		wantExh, wantKnwn bool
+	}{
+		{"account says exhausted", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body(true))) }, true, true},
+		{"account says fine", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body(false))) }, false, true},
+		{"endpoint down", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.h)
+			defer srv.Close()
+			u, ok := getAccountUsage(context.Background(), srv.Client(), srv.URL, "t", "")
+			exh, known := u.LimitReached, ok && u.OK
+			if exh != tc.wantExh || known != tc.wantKnwn {
+				t.Fatalf("exhausted/known = %v/%v, want %v/%v", exh, known, tc.wantExh, tc.wantKnwn)
+			}
+		})
+	}
+}

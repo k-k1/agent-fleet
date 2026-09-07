@@ -38,18 +38,28 @@ type statusResponse struct {
 	Kind     string   `json:"kind,omitempty"` // the asking session's agent kind, "" when unknown
 	Model    string   `json:"model,omitempty"`
 	Ops      []string `json:"ops,omitempty"`
+	// Order is the effective provider order, so the answer to "why did it route there" is
+	// readable without guessing at a preference file, and a settings UI has something to
+	// render when there is more than one provider to rank.
+	Order []string `json:"order,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
-	out := statusResponse{Enabled: enabled()}
+	out := statusResponse{Enabled: enabled(), Order: effectiveOrder()}
 	if name := r.URL.Query().Get("session"); session.ValidName(name) {
 		if m, ok := session.ReadMeta(name); ok {
 			out.Kind = m.Kind
 		}
 	}
+	// The first READY provider in the effective order is the one auto would route to.
+	byID := map[string]Provider{}
 	for _, p := range Providers() {
-		if !p.Ready(r.Context()) {
+		byID[p.ID()] = p
+	}
+	for _, id := range out.Order {
+		p, ok := byID[id]
+		if !ok || !p.Ready(r.Context()) {
 			continue
 		}
 		out.Provider, out.Ready = p.ID(), true
