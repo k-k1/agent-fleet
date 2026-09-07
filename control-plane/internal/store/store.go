@@ -286,7 +286,17 @@ type Schedule struct {
 	// Report opts a fire into the docs/log/30 completion report: true passes OwnerConv as the
 	// session's report_to so the result comes back to the operator/assistant conversation.
 	// Default false = fire silently (run history / failure notifications still surface).
-	Report               bool
+	Report bool
+	// StopAfterRun folds the fire's session away once it has finished the prompt
+	// (docs/log/85): the Agent is armed to stop the session at the end of that turn, after
+	// any report it owes has gone out. Default false = leave it running, which is the
+	// behaviour every existing schedule was written against.
+	//
+	// It is what makes a scheduled fire pay for itself: a 3am run on a woken workspace
+	// otherwise holds it up until the idle timeout expires, so the cheapest part of the
+	// night is billed for the longest. Ignored in session_mode=assistant, which drives a
+	// conversation and never holds a session.
+	StopAfterRun         bool
 	Enabled              bool
 	NextRun, LastRun     string
 	LastStatus           string

@@ -31,6 +31,9 @@ export interface ScheduleDTO {
   // Completion-report opt-in: true = the fire's session reports back to the owner
   // (operator/assistant) conversation. Default false = fire silently.
   report?: boolean;
+  // Stop-after-run opt-in (docs/log/85): true = the fire's session stops itself once it has
+  // finished the prompt (after any report it owes). Default false = it stays running.
+  stop_after_run?: boolean;
   enabled: boolean;
   next_run?: string;
   next_run_local?: string;
@@ -58,6 +61,7 @@ export interface ScheduleEditable {
   agent_kind?: string;
   model?: string;
   report?: boolean;
+  stop_after_run?: boolean;
 }
 
 // One row from GET /api/schedules/{id}/runs.

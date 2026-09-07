@@ -325,6 +325,10 @@ func buildInjectBody(sch store.Schedule, slot time.Time) []byte {
 		"report_to":       scheduleReportTo(sch),
 		"idempotency_key": scheduleIdempotencyKey(sch.ID, slot),
 		"source":          scheduleSource(sch), // mirror badge: scheduled vs manual fire
+		// stop_after_run (docs/log/85): the arm rides the create rather than a POST that
+		// follows it, so it is on disk before the Agent delivers initial_prompt — an arm set
+		// afterwards races the delivery, and a prompt arriving after an arm releases it.
+		"stop_after_turn": sch.StopAfterRun,
 	}
 	b, _ := json.Marshal(body)
 	return b

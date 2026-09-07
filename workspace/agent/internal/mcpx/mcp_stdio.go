@@ -1035,6 +1035,7 @@ var mcpStdioWriteTools = []map[string]any{
 	{
 		"name": "create_schedule",
 		"description": "定時実行スケジュールを登録する（docs/log/38）。指定時刻に、必要なら停止中のワークスペースを起こして新規セッションを起動し、prompt を最初のタスクとして投入する。report=true を指定した時だけ完了報告がこの会話に届く（既定 false=報告しない。実行履歴と失敗通知は report と無関係に残る）。利用者が報告を求めたら report=true にする。" +
+			"stop_after_run=true にすると、そのセッションは指示をやり切った時点で自動停止する（報告を先に届けてから停止・再開可能）。夜間や早朝の発火で起こしたワークスペースがアイドル自動停止まで起きっぱなしになるのを避けられるので、無人の定時実行では基本的に付けてよい（既定 false=起動したまま）。" +
 			"利用者の自然言語（「毎朝9時」「平日夕方6時」「6時間おき」等）は、あなたが構造化 spec に翻訳して渡すこと: spec_kind=cron なら spec は5フィールドの cron 式（分 時 日 月 曜日・曜日は0=日曜）、interval なら spec は秒数（最小60）、once なら spec は RFC3339 の絶対時刻。tz は IANA タイムゾーン（例 Asia/Tokyo）で cron/once の評価基準（DST 込み）。" +
 			"登録すると解釈した spec と next_run_local（次回発火の具体日時）が返るので、必ず利用者に読み上げて確認する（例『毎日 09:00 JST に実行、次回は 7/23 09:00 でよいですか?』）。元の自然言語表現は spec_label に入れておくと一覧で人に見せられる。" +
 			"prompt には固定メタ変数 {{date}} {{time}} {{datetime}} {{tz}} {{schedule_id}} {{schedule_label}} {{last_run}} を埋め込め、発火時に置換される（未定義の変数はそのまま残る）。" +
@@ -1060,6 +1061,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"missing_target_policy": map[string]any{"type": "string", "description": "reuse×reuse_target 時のみ。対象セッションが消えていた場合（recreate 既定=作り直す | fail=失敗通知で止める）"},
 				"overlap_policy":        map[string]any{"type": "string", "description": "reuse 時のみ。前回実行が走行中に次が来た場合（skip 既定=見送り | queue=キュー投入 | restart=中断して送る）"},
 				"report":                map[string]any{"type": "boolean", "description": "完了報告をこの会話に届けるか（任意。既定 false=報告しない。assistant モードでは無関係=投入自体が会話に届く）"},
+				"stop_after_run":        map[string]any{"type": "boolean", "description": "実行が終わったらそのセッションを停止するか（任意。既定 false=起動したまま。報告は停止前に届く。再開可能。assistant モードでは無関係=セッションを使わない）"},
 			},
 			"required": []string{"spec_kind", "spec", "prompt"},
 		},
@@ -1086,6 +1088,7 @@ var mcpStdioWriteTools = []map[string]any{
 				"missing_target_policy": map[string]any{"type": "string", "description": "recreate | fail（任意）"},
 				"overlap_policy":        map[string]any{"type": "string", "description": "skip | queue | restart（任意・reuse 時）"},
 				"report":                map[string]any{"type": "boolean", "description": "完了報告をオペレーター会話に届けるか（任意。false=報告しない）"},
+				"stop_after_run":        map[string]any{"type": "boolean", "description": "実行が終わったらセッションを停止するか（任意。false=起動したまま）"},
 			},
 			"required": []string{"id"},
 		},
@@ -1173,6 +1176,23 @@ var mcpStdioWriteTools = []map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"name": map[string]any{"type": "string", "description": "停止するセッション名（list_my_sessions の name）"},
+			},
+			"required": []string{"name"},
+		},
+	},
+	{
+		// The counterpart of stop_session for a session that is still working: it arms the
+		// stop instead of performing it, so the turn finishes (and its report is delivered)
+		// before the session is folded away. docs/log/85.
+		"name": "stop_session_after_turn",
+		"description": "指定セッションに『今の作業が終わったら停止する』を予約する（docs/log/85）。stop_session と違って即座には止めず、走っているターンが終わってから停止するので、作業が中断されず、そのセッションが返すはずの完了報告も先に届く。" +
+			"ファンアウトで複数セッションを走らせ、終わったものから畳んで資源を空けたい時に使う（走行中に stop_session を押すと作業が切れる）。停止は再開可能で会話も残る。" +
+			"質問・承認待ちの間や作業が続いている間は停止しない。予約後にそのセッションへ新しい指示を送ると予約は自動的に解除される。on=false で明示的に解除できる。",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string", "description": "対象セッション名（list_my_sessions の name）"},
+				"on":   map[string]any{"type": "boolean", "description": "true=予約する（既定）、false=予約を解除する"},
 			},
 			"required": []string{"name"},
 		},
@@ -1864,6 +1884,24 @@ func mcpStdioCall(req mcpReq) []byte {
 		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "stop_session_after_turn":
+		// Deliberately does NOT disarm the report, which is the whole difference from
+		// stop_session: this stop lets the instruction finish, so the report it owes is
+		// still owed — and the Agent delivers it before folding the session away
+		// (docs/log/85).
+		if !writeEnabled() {
+			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		on := a.On == nil || *a.On
+		armBody, _ := json.Marshal(map[string]bool{"on": on})
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/stop-after-turn", armBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "停止予約の更新に失敗しました: "+err.Error())
 		}
 		return mcpTextResult(req.ID, out)
 	case "get_memory_snapshot":

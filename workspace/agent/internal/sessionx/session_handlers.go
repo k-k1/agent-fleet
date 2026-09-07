@@ -260,6 +260,15 @@ type CreateReq struct {
 	// create_session (which knows its own conversation id via --conv); Console creates
 	// leave it empty.
 	ReportTo string `json:"report_to"`
+	// StopAfterTurn arms the stop-after-turn (docs/log/85) on the new session, so it folds
+	// itself away once it has finished the initial_prompt. Set by the CP scheduler for a
+	// schedule with stop_after_run — a 3am fire otherwise holds the workspace it woke until
+	// the idle timeout expires.
+	//
+	// It rides the CREATE rather than a POST that follows, because the arm has to be on disk
+	// before the prompt is delivered: an arm set afterwards races that delivery, and a prompt
+	// arriving after an arm is exactly what releases it.
+	StopAfterTurn bool `json:"stop_after_turn"`
 	// Source attributes the initial_prompt injection's origin for the mirror badge
 	// (docs/log/38): "schedule" / "schedule-manual" from the CP scheduler; anything else
 	// (incl. empty — the operator MCP) records as "operator". Whitelisted server-side.
@@ -757,6 +766,12 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
 		Origin: origin, OriginConv: originConv,
+	}
+	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
+	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
+	// task is precisely the work it is waiting for the end of.
+	if req.StopAfterTurn {
+		meta.StopAfterTurnAt = meta.CreatedAt
 	}
 	// docs/log/51 Phase 3, the self-report fast path: add one line to the launch task saying
 	// "call af_report when you are done" — only for an instruction that owes a report, i.e.
