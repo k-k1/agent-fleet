@@ -197,6 +197,24 @@ the badge, and raises a browser notification on the transitions that need a huma
   3. an already-wedged submodule is repaired by the one recipe that was measured to
      work — complete the transfer, then force-checkout the recorded revision. **Only
      empty working trees are touched, so local changes are never destroyed.**
+- **Seeding from the parent** is what makes that re-clone stop costing anything. **Measured
+  (git 2.47): make a submodule's remote unreachable and a fresh worktree's update fails**,
+  even though the parent holds every object on the same disk — nothing links the two stores.
+  So before the update runs, each submodule is cloned locally out of the parent's own copy:
+  **measured 0.23 s for a 41 MB submodule with the remote offline**, with the objects
+  hardlinked to the parent's, so the worktree's store cost 168 KB rather than 41 MB. N
+  worktrees no longer cost N times the submodule's size.
+  - The local-path protocol is re-enabled **for that one invocation only**, and only for a
+    path the agent computed itself — never for a URL out of `.gitmodules`, which is where
+    CVE-2022-39253 lives.
+  - The URL override is passed on the command line, not written to config: **the config file
+    is shared with the parent and every sibling worktree**, so writing the local path there
+    would redirect their fetches too.
+  - Afterwards the submodule's origin is put back to the real remote, taken from config —
+    `git submodule sync` re-reads `.gitmodules` and would undo the SSH→HTTPS rewrite.
+  - Anything the parent does not have is simply left to the normal update that follows.
+  - The start budget is therefore 10 s rather than 60, and submodules are fetched with
+    **four jobs** (git's own default is one, i.e. strictly sequential).
 - **SCM read and write**: changes, diff, log, graph, show, stage, unstage, discard,
   commit. Revisions are validated and responses are size-capped.
 - **The filesystem API** defends against traversal, caps sizes and detects binaries.

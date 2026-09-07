@@ -216,6 +216,23 @@ Console は 4 秒ポーリングで ● 進行中 / ❓ 質問 / ✓ 入力待�
   (3) 既に wedge した submodule は実測の唯一効くレシピ——`fetch` で転送を完了させ、親が記録する
   sha を `checkout --detach --force`——で修復する。作業ツリーが空のものだけが対象なので
   ローカル変更を壊さない。worktree 再利用（再起動）時も未取得なら再同期する。
+- **親からの種付け（`git_submodule_seed.go`）**: 上の「親とは別に丸ごとクローンし直す」は
+  worktree 作成が遅い理由そのもの。実測（git 2.47）**submodule の remote を到達不能にすると
+  新規 worktree の `submodule update` は失敗する**——同じディスク上の親が全オブジェクトを
+  持っていても使われない。そこで update の前に、親の `.git/modules/<name>` からローカルに
+  クローンして種を置く。実測: 41MB の submodule が**remote オフラインのまま 0.23 秒**、
+  オブジェクトは親とハードリンク（同一 inode）なので新ストアは 41MB ではなく 168KB。
+  worktree を N 本作っても submodule のディスクが N 倍にならない。
+  - `protocol.file.allow=always` は**この 1 回の呼び出しにだけ**、しかも自前で組み立てた親の
+    パスに対してのみ付ける（CVE-2022-39253 は `.gitmodules` 由来のローカル URL の話なので、
+    そちらには決して付けない）。
+  - url の差し替えは `git config` ではなく `-c`。`.git/config` は親と全 worktree の共有物で、
+    そこにローカルパスを書くと他のコピーの fetch まで親へ向いてしまう。
+  - クローン後は origin を本来の remote へ戻す。`git submodule sync` は `.gitmodules` を
+    読み直すので上の SSH→HTTPS 書換えを潰す——config の url を使うこと。
+  - 親が持っていない submodule／pin 先はそのまま後続の通常 update が埋める。
+  - 待ち時間は 60 秒 → 10 秒。種付けが効く経路にはもう fetch するものが無く、ここで待つのは
+    本物のネットワーク clone だけになったため。合わせて `--jobs 4`（git 既定は 1＝直列）。
 - **SCM（read/write git）**: changes / diff / log / graph / show / stage / unstage / discard / commit。
   sha は hex 検証、応答はサイズ上限でキャップ。
 - **fs**: home ルートのツリー/ファイル/アップロード/リネーム等。traversal 防御・サイズ上限・
