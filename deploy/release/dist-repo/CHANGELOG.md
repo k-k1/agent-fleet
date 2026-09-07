@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.16.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.16.0) — 2026-09-07
+
+Sessions that cannot draw can now generate images, and the pictures land in the
+conversation. The Zundamon voice runs only while someone is listening instead of around
+the clock, and Settings gains a Machine tab that says what your workspace is actually
+running on.
+
 ## [0.15.1](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.15.1) — 2026-09-05
 
 The workspace image is now published for arm64 as well as amd64, so an `ecs-ec2` deployment
