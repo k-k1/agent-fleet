@@ -139,7 +139,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # スイートと main スイートは別の版を指すので、片方を security・片方を main で読むと
 # **存在しない版差が出る**。実際それで「trixie にすると chromium が下がる」という誤った
 # 代償が 1 度記録され、ベース更新の判断を狂わせた。ここに書くのは常に security の版。
-ARG CHROMIUM_VERSION=152.0.7977.75-1~deb13u1
+ARG CHROMIUM_VERSION=152.0.7977.82-1~deb13u1
 # BAKE_OPTIONAL_TOOLS=0（native lean rootfs）は chromium 本体・CJK フォントを焼かず
 # オンデマンド DL（P2 の install-chromium、CHROMIUM_DL_VERSION ピン）に回すが、
 # その DL 版が動くための実行時ライブラリと fontconfig/DejaVu はここで明示導入する
