@@ -169,6 +169,12 @@ type Session struct {
 	// on stopped rows too — a pin that is set has to be visible before it expires, or it
 	// cannot be released.
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
+	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
+	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
+	// usually set from inside the conversation (the MCP tool) where the user only sees prose
+	// claiming it was set, and because a session that is about to fold itself away must be
+	// cancellable before it does.
+	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
 }
 
 // ContextUsage is a claude session's current context fill — the newest assistant
@@ -271,6 +277,17 @@ type Meta struct {
 	// and ssm always holds aws). Rather than guessing, the decision was to have the user
 	// declare it.
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
+	// StopAfterTurnAt arms a one-shot self-stop (docs/log/85): the instant (RFC3339) the arm
+	// was set. At the first end of turn observed AFTER it, the session is halted — the
+	// resumable stop, so nothing is lost and the user can pick the session back up.
+	//
+	// Why an instant rather than a boolean, the same reason as KeepAwakeUntil and the
+	// opposite of it (one says "do not stop", this one says "stop"): the value doubles as the
+	// lower bound the completion evidence is cut by, so a leftover end-of-turn marker from
+	// the PREVIOUS turn cannot fire it, and an arm nobody consumed expires on its own
+	// (stopArmMaxAge) instead of folding a session away hours later, in the middle of
+	// unrelated work.
+	StopAfterTurnAt string `json:"stopAfterTurnAt,omitempty"`
 	// ForkFrom is the SOURCE conversation id this session was forked from, in the
 	// kind's own id space: claude = the source slot's sid (jsonl), opencode = its
 	// ses_… id, codex = its session uuid. It only affects the FIRST launch — each

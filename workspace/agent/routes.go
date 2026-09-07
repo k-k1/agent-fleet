@@ -71,6 +71,10 @@ func buildMux() *http.ServeMux {
 	// for a bounded time. The answer to af being unable to tell whether a shell / ssm job is
 	// still running.
 	mux.HandleFunc("POST /sessions/{name}/keep-awake", sessionx.HandleSessionKeepAwake)
+	// Stop-after-turn arm (docs/log/85): the mirror image of the pin above — fold this session
+	// away at the end of the turn it is running. control-plane/routes.go needs the same path
+	// registered (the CP proxies by allowlist).
+	mux.HandleFunc("POST /sessions/{name}/stop-after-turn", sessionx.HandleSessionStopAfterTurn)
 	mux.HandleFunc("POST /sessions/{name}/archive", sessionx.HandleArchiveSession)
 	mux.HandleFunc("POST /sessions/{name}/restore", sessionx.HandleRestoreSession)
 	// Programmatic drive I/O for the MCP tools (docs/0006 P3-6 E).

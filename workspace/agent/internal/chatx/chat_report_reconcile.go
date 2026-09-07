@@ -561,6 +561,11 @@ type reportReconciler struct {
 	hints  map[string]string // name -> the latest hint's reason (turn-failed / turn-aborted)
 	selfs  map[string]string // name -> RFC3339 of the self-report (af_report)
 	states map[string]reportSettleState
+	// stops is the same debounce for the stop-after-turn arm (chat_stop_after_turn.go). A separate
+	// map rather than a shared counter: the two decisions cut the evidence at different lower
+	// bounds (the instruction row vs the arm), so quiet ticks counted for one of them say
+	// nothing about the other.
+	stops map[string]reportSettleState
 }
 
 func newReportReconciler(interval time.Duration) *reportReconciler {
@@ -573,6 +578,7 @@ func newReportReconciler(interval time.Duration) *reportReconciler {
 		hints:    map[string]string{},
 		selfs:    map[string]string{},
 		states:   map[string]reportSettleState{},
+		stops:    map[string]reportSettleState{},
 	}
 }
 
@@ -712,6 +718,11 @@ func (rc *reportReconciler) sweep(now time.Time) {
 		rc.compensate(name, now)
 	}
 	rc.prune(pending)
+	// The stop-after-turn arms come last, and the order is the point (docs/log/85): a session
+	// that owes a report is stopped only after that report has gone out. Stopping first parks
+	// the report until somebody resumes the session, which for the operator waiting on it is
+	// indistinguishable from never being told.
+	rc.sweepStopArms(now)
 }
 
 // prune drops bookkeeping for sessions with no open rows left (reported, cancelled, or the

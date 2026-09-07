@@ -2,7 +2,7 @@
 // drive a session row wherever it renders (the flat list AND the per-working-copy
 // nodes of the project tree). Each op hits the Agent, then refreshes the store and
 // closes any stale panes; confirmations and error toasts are built in.
-import { raw, sessionSetLock, sessionKeepAwake } from "../../core/api/client.ts";
+import { raw, sessionSetLock, sessionKeepAwake, sessionStopAfterTurn } from "../../core/api/client.ts";
 import { useConfirm } from "../../ui/ConfirmProvider.tsx";
 import { useToast } from "../../ui/ToastProvider.tsx";
 import { useLayoutStore } from "../../layout/store.ts";
@@ -26,6 +26,9 @@ export interface SessionActions {
    *  deletion path: Console, cleanup, the 7-day auto-prune, or the operator. */
   setLocked(s: Session, locked: boolean): Promise<void>;
   setKeepAwake(s: Session, hours: number): Promise<void>;
+  /** Arm / release the stop-after-turn arm (docs/log/85): the session folds itself away once
+   *  the turn it is running ends. Resumable, and a new instruction releases it. */
+  setStopAfterTurn(s: Session, on: boolean): Promise<void>;
   /** Bulk-clear every "other session" (an orphan whose working copy is gone):
    * agent sessions archive (restorable), shell/ssm delete. Repo-scoped stopped
    * sessions are bulk-cleared from the Cleanup modal's stage ① instead. */
@@ -108,6 +111,20 @@ export function useSessionActions(): SessionActions {
     }
     useSessionsStore.getState().setKeepAwake(s.name, res?.keepAwakeUntil ?? "");
     toast(hours > 0 ? t("sess.keep_awake_on", { hours }) : t("sess.keep_awake_off"), { kind: "success" });
+    void refreshSessions();
+  };
+
+  // Stop-after-turn arm (docs/log/85). The counterpart of the pin above: instead of holding
+  // the session awake, it stops it at the end of the turn it is running. Nothing is lost — the
+  // stop is the resumable one — so it needs no confirmation.
+  const setStopAfterTurn = async (s: Session, on: boolean) => {
+    const res = await sessionStopAfterTurn(s.name, on);
+    if (res?.error) {
+      toast(t("sess.stop_after_turn_failed"));
+      return;
+    }
+    useSessionsStore.getState().setStopAfterTurn(s.name, res?.stopAfterTurnAt ?? "");
+    toast(on ? t("sess.stop_after_turn_on") : t("sess.stop_after_turn_off"), { kind: "success" });
     void refreshSessions();
   };
 
@@ -322,5 +339,5 @@ export function useSessionActions(): SessionActions {
     }
   };
 
-  return { archive, deleteSession, setLocked, setKeepAwake, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
+  return { archive, deleteSession, setLocked, setKeepAwake, setStopAfterTurn, clearOrphans, archiveStopped, halt, recreate, handoff, switchDriver };
 }

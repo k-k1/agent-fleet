@@ -20,6 +20,7 @@ export const NOTIFICATION_KIND_LABELS: Record<string, MsgKey> = {
   "schedule-failed": "noti.kind_schedule_failed",
   "schedule-skipped": "noti.kind_schedule_skipped",
   "carried-interaction": "noti.kind_carried_interaction",
+  "stop-after-turn": "noti.kind_stop_after_turn",
   "handoff-offer": "noti.kind_handoff_offer",
   "handoff-accepted": "noti.kind_handoff_accepted",
   "handoff-expired": "noti.kind_handoff_expired",
@@ -135,6 +136,16 @@ export function notificationWording(n: NotificationWordingInput): { title: strin
       title: t("notif.carried.title", { what: kindText }),
       body: t("notif.carried.body", { name }),
       speech: t("notif.carried.speech", { name, what: kindText }),
+    };
+  }
+  if (n.kind === "stop-after-turn") {
+    // The session folded itself away at the end of its turn, because it was asked to
+    // (docs/log/85). Whoever asked is by definition not watching — that is the point of
+    // asking — so the message has to carry both that it happened and that nothing was lost.
+    return {
+      title: t("notif.stop_after_turn.title"),
+      body: t("notif.stop_after_turn.body", { name }),
+      speech: t("notif.stop_after_turn.speech", { name }),
     };
   }
   if (n.kind === "handoff-offer") {

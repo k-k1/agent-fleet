@@ -172,6 +172,7 @@ func handleManagedTurn(w http.ResponseWriter, meta session.Meta, req turnReq) {
 		// The optimistic working mark has the same motive as on tui: a poll right after the
 		// send must not read a stale idle.
 		markSessionWorking(meta.Name)
+		cancelStopArmOnNewPrompt(meta.Name) // new work supersedes a stop-after-turn arm (docs/log/85)
 	}
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"sent": meta.Name, "op": req.Op})
 }

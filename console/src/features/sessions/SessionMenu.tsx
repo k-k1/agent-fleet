@@ -299,6 +299,25 @@ export function SessionMenu({ s, actions, running, open, place, keepOpenRefs, on
                 ? tr("srow.keep_awake_off")
                 : tr("srow.keep_awake_on", { hours: KEEP_AWAKE_HOURS })}
             </button>
+            {/* Stop-after-turn arm (docs/log/85), the pin's mirror image: fold this session
+                away once the turn it is running ends. Live rows only — a stopped session has
+                no turn to end, and every fold consumes the arm anyway. The same arm is set
+                from inside the conversation by the af_stop_after_turn MCP tool, so this item
+                doubles as the way to take back a stop the session armed on the user's word. */}
+            {s.alive && (
+              <button
+                type="button"
+                className="ui-menu-item"
+                title={tr("srow.stop_after_turn_hint")}
+                onClick={() => {
+                  onClose();
+                  void actions.setStopAfterTurn(s, !s.stopAfterTurnAt);
+                }}
+              >
+                <Icon name="debug-stop" />{" "}
+                {s.stopAfterTurnAt ? tr("srow.stop_after_turn_off") : tr("srow.stop_after_turn_on")}
+              </button>
+            )}
             {agentOf(s.kind).caps.ephemeral ? (
               <button
                 type="button"
