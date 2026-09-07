@@ -74,8 +74,9 @@ export function NotificationCenter() {
   const activate = async (n: FleetNotification, split: boolean) => {
     const r = await openNotificationTarget(n, split);
     // "not in the list" is about a session, so it must not appear when the conversation was the
-    // thing that vanished — openNotificationTarget already toasted that reason.
-    if (!r.opened && r.missingConversation === undefined) toast(tr("noti.session_not_in_list"), { kind: "warn" });
+    // thing that vanished — openNotificationTarget already toasted that reason — nor when the
+    // notification never targeted a session at all (noDestination; arch-residue is one).
+    if (!r.opened && !r.noDestination && r.missingConversation === undefined) toast(tr("noti.session_not_in_list"), { kind: "warn" });
     if (r.opened) setOpen(false);
     void useNotificationStore.getState().markSeen(undefined, [n.id]);
   };
