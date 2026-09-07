@@ -16,7 +16,7 @@ import { prettyModel } from "../../../lib/modelName.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
 import { splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
-import { textOfParts, workSplit } from "../mirrorParts.ts";
+import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
 import { foldParts, peerIntentOf, peerSenderOf, spendOf } from "./model.ts";
@@ -84,12 +84,30 @@ export function TranscriptTurn({
   // open is decided ONLY by defaultWorkOpen at the moment the turn first folds — i.e. by whether
   // the reader was following the tail then. Losing or regaining the tail afterwards changes
   // nothing; only the reader's own click does.
-  const work = useRef({ id: "", folded: false, open: false, defaulted: false });
+  //
+  // The boundary itself is latched the same way. workSplit only splits when a real final text
+  // follows the last tool, so it returns null again the moment one more tool arrives after the
+  // answer — and with no split the work trace is rendered INLINE, i.e. at full height with no
+  // disclosure at all. On a folded turn that is still running, tool-last and text-last polls
+  // alternate, so the trace blew open and shut once a poll, remounting the whole subtree (every
+  // MarkdownView re-parses) each way. Measured by mirror-scroll's `working` scenario: a reader
+  // parked on the final answer is thrown off that turn entirely, 3/3. Once a turn has a work
+  // boundary it keeps it — only a NEWER computed split replaces it, nothing makes it disappear.
+  const work = useRef({ id: "", folded: false, open: false, defaulted: false, split: null as WorkSplit | null });
   const [, redrawWork] = useReducer((n: number) => n + 1, 0);
   const workId = (caps.session || "") + "#" + turn.idx;
-  if (work.current.id !== workId) work.current = { id: workId, folded: false, open: false, defaulted: false };
+  if (work.current.id !== workId)
+    work.current = { id: workId, folded: false, open: false, defaulted: false, split: null };
   if (foldWork) work.current.folded = true;
-  const split = !isUser && work.current.folded ? workSplit(turn.parts) : null;
+  // A remembered boundary indexes a PREFIX of the parts, and parts normally only append, so its
+  // tool/response counts stay true. A store-backed agent can replace its live turn wholesale
+  // though; if the array came back shorter, the boundary is meaningless and is dropped.
+  if (work.current.split && work.current.split.at > turn.parts.length) work.current.split = null;
+  if (!isUser && work.current.folded) {
+    const fresh = workSplit(turn.parts);
+    if (fresh) work.current.split = fresh;
+  }
+  const split = !isUser && work.current.folded ? work.current.split : null;
   if (split && !work.current.defaulted) {
     work.current.defaulted = true;
     work.current.open = defaultWorkOpen;

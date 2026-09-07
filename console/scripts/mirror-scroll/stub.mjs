@@ -37,6 +37,18 @@ const MERMAID = Number(arg("mermaid", 0)); // trailing turns that carry a mermai
 // Outstanding handoff proposal: "" none | "mid" proposed a few turns back | "new" just
 // proposed (nothing newer yet) | "launched" already used to start a session.
 const HANDOFF = arg("handoff", "");
+// Backward paging (docs/decisions/0009 P2). With it on, only the tail PAGE of the transcript is
+// served, firstLine/hasMore advertise that there is more above, and `before=` answers the page
+// before it — the shape a real long session has, and the one the mirror's "load earlier messages"
+// runs against. Off by default so every existing scenario keeps its single whole-transcript reply.
+const PAGING = arg("paging", "0") === "1";
+const PAGE = Number(arg("pagesize", 400)); // jsonl lines per window; the server clamps the limit
+// A session mid-turn, whose live reply carries a huge work trace. Its parts grow one per poll,
+// alternating tool-last and text-last — the shape that made workSplit come and go, taking the
+// whole 作業過程 disclosure with it. Poll 3 reports idle for one round (claude's Stop hook / a TUI
+// heal), which is what folds a turn that is still running.
+const WORKING = arg("working", "0") === "1";
+const WORK_ROWS = Number(arg("workrows", 30)); // tool+text pairs in that live trace
 // --shared 1 seeds one received shared session (the shared section of the left pane). The default
 // is zero, which hides the section entirely, so the mirror-side harness sees no difference.
 const SHARED = arg("shared", "0") === "1";
@@ -96,18 +108,79 @@ function buildTurns(n) {
 }
 const TURNS_BODY = buildTurns(TURNS);
 
+// The live reply of a working session: a long work trace, then the real answer. Parts are appended
+// one per poll from there (see livePartsAt), alternating tool and text.
+const LIVE_WORK = (() => {
+  const parts = [];
+  for (let i = 0; i < WORK_ROWS; i++) {
+    parts.push({ kind: "tool", tool: i % 2 ? "Read" : "Bash", info: `工程 ${i}`, output: `${i} 件の一致\n`.repeat(6) });
+    parts.push({ kind: "text", text: `${i} 番目の工程を終えた。${"あ".repeat(80)}` });
+  }
+  // Several screens of final answer, so a reader parked at its first line (where the mirror puts
+  // them when a reply completes) is neither at the tail nor above the work trace — the one place
+  // from which the trace's height is felt.
+  parts.push({ kind: "text", text: Array.from({ length: 8 }, (_, i) => answer(`最終 ${i}`)).join("\n\n") });
+  return parts;
+})();
+// Poll n's parts. The trailing parts alternate kind, so `workSplit` alternates between finding a
+// boundary and finding none — and with no boundary the whole trace used to render inline.
+const livePartsAt = (n) => {
+  const extra = [];
+  for (let k = 0; k < Math.max(0, n - 2); k++) {
+    extra.push(k % 2 === 0 ? { kind: "tool", tool: "Write", info: `追記 ${k}` } : { kind: "text", text: "続けます。" });
+  }
+  return [...LIVE_WORK, ...extra];
+};
+// Poll counter per session — the working scenario's whole point is that consecutive polls differ.
+const polls = new Map();
+
 function messages(session, q) {
+  // A `since=0` fetch is a reader opening the session from scratch, so the count restarts there:
+  // the stub outlives a scenario's runs, and without this only the first run ever saw the idle
+  // round (the later ones then silently watched an ordinary finished turn).
+  const fresh = q.get("before") === null && Number(q.get("since") || 0) === 0;
+  const n = fresh ? 0 : (polls.get(session) ?? -1) + 1;
+  polls.set(session, n);
+  // Poll 2 reads idle for one round while the turn is still going: the momentary idle that folds a
+  // running reply. `finalizing` does not bridge it, because a partial reply is already in the
+  // transcript (awaitingReply is false).
+  // "idle" spelled out, not "": the mirror only takes a status it was actually sent
+  // (`if (d.status)`), so an empty string leaves the previous one standing.
+  const status = WORKING ? (n === 2 ? "idle" : "working") : "";
   const body = {
-    name: session, cursor: TURNS * 2, status: "", alive: true, // idle: no streaming follow
-    firstLine: 0, hasMore: false, mode: "Default", tasks: [], pendingQuestions: null,
+    name: session, cursor: TURNS * 2, status, alive: true,
+    mode: "Default", tasks: [], pendingQuestions: null,
     jsonlLines: TURNS * 2, jsonlMtime: 1753600000,
+    // Only a WINDOWED reply carries the window's edge; an incremental poll leaves it alone.
+    // Repeating firstLine:0/hasMore:false on every poll (which this used to do) wipes out what the
+    // tail reply just advertised, one poll after it arrived — there is then nothing above to load.
+    ...(PAGING ? {} : { firstLine: 0, hasMore: false }),
   };
-  if (Number(q.get("since") || 0) !== 0) return { ...body, messages: [] };
   // Line indices must differ per session (a real jsonl's do), or switching sessions would
   // reuse the previous one's anchored reply idx and mask a bug.
   const off = session === "sk4rq2f" ? 0 : 1000;
-  const messagesOut = off ? TURNS_BODY.map((t) => ({ ...t, idx: t.idx + off })) : TURNS_BODY;
-  return { ...body, messages: messagesOut, reset: true };
+  const all = (off ? TURNS_BODY.map((t) => ({ ...t, idx: t.idx + off })) : TURNS_BODY).map((t) =>
+    WORKING && t.idx === off + TURNS * 2 - 1 ? { ...t, parts: livePartsAt(n) } : t,
+  );
+  const window = (upto) => {
+    // The tail `PAGE` lines below `upto` (a jsonl line number), as whole turns.
+    const from = Math.max(0, upto - PAGE);
+    const out = all.filter((t) => t.idx - off >= from && t.idx - off < upto);
+    return { messages: out, firstLine: off + from, hasMore: from > 0 };
+  };
+  const before = q.get("before");
+  if (PAGING && before !== null) {
+    // "Load earlier messages": the page ENDING at the oldest line held. No reset — it is prepended.
+    return { ...body, ...window(Number(before) - off) };
+  }
+  if (Number(q.get("since") || 0) !== 0) {
+    // Incremental poll. An idle stub has nothing to add; a working one resends its live turn,
+    // whose parts have grown (the mirror merges by idx, so this replaces rather than appends).
+    if (!WORKING) return { ...body, messages: [] };
+    return { ...body, messages: [all[all.length - 1]] };
+  }
+  if (PAGING) return { ...body, ...window(TURNS * 2), reset: true };
+  return { ...body, messages: all, reset: true };
 }
 
 // ---- API surface -------------------------------------------------------------------
@@ -236,5 +309,8 @@ const server = http.createServer((req, res) => {
 });
 
 server.listen(PORT, "127.0.0.1", () =>
-  console.log(`[mirror-scroll stub] :${PORT} turns=${TURNS} images=${IMAGES} imgdelay=${IMG_DELAY} mermaid=${MERMAID}`),
+  console.log(
+    `[mirror-scroll stub] :${PORT} turns=${TURNS} images=${IMAGES} imgdelay=${IMG_DELAY} mermaid=${MERMAID}` +
+      `${PAGING ? ` paging=${PAGE}` : ""}${WORKING ? ` working rows=${WORK_ROWS}` : ""}`,
+  ),
 );
