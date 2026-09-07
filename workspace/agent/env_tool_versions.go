@@ -23,6 +23,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 )
 
@@ -47,6 +48,10 @@ type toolSpec struct {
 	Baked string   // real path of the binary baked into the image
 	Args  []string // arguments that print the version (default --version)
 	Pin   string   // key in versions.json (empty for unpinned tools)
+	// Env is extra KEY=VALUE pairs the probe needs to get an answer at all. Empty for
+	// every tool but agy, whose FIPS build aborts on a host with no usable RDRAND unless
+	// the mask rides along (agy/fips.go).
+	Env []string
 	// PyDist is the PyPI distribution name of a Python MCP server installed with
 	// `uv tool install`. These cannot be asked for their version by running them
 	// (measured 2026-08-06):
@@ -65,9 +70,10 @@ var toolSpecs = []toolSpec{
 	{Name: "codex", Cmd: "codex", Baked: "/usr/local/bin/codex", Pin: "codex"},
 	// agy's true pin comes from the immutable GCS object the official installer manifest
 	// names (workspace/Dockerfile: AGY_VERSION + AGY_RELEASE_BUILD + sha256 check). On a host
-	// that does not expose RDRAND, `--version` itself SIGABRTs, so probeVersion yields the
-	// fetch-failure marker "(取得失敗)" — which is itself a sign of such a host.
-	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy"},
+	// whose RDRAND the kernel has withdrawn, `--version` itself SIGABRTs, so the probe gets
+	// the same mask every other agy spawn does — without it this row reads "(取得失敗)" on a
+	// host where agy in fact runs.
+	{Name: "agy", Cmd: "agy", Baked: "/usr/local/bin/agy", Pin: "agy", Env: agy.MaskEnv()},
 	{Name: "copilot", Cmd: "copilot", Baked: "/usr/local/bin/copilot", Pin: "copilot"},
 	// cursor (kind="cursor", docs/log/40) is a versioned Node.js tarball bundle, not npm. The
 	// baked tree is /usr/local/share/cursor-agent/versions/<ver>/ and
@@ -156,7 +162,7 @@ var verNumRe = regexp.MustCompile(`[0-9]+\.[0-9]+(\.[0-9]+)?`)
 
 // probeVersion reads the version of the binary at path into a toolBin. nil when there is no
 // binary.
-func probeVersion(ctx context.Context, path string, args []string) *toolBin {
+func probeVersion(ctx context.Context, path string, args, env []string) *toolBin {
 	fi, err := os.Stat(path)
 	if err != nil || fi.IsDir() {
 		return nil
@@ -172,7 +178,11 @@ func probeVersion(ctx context.Context, path string, args []string) *toolBin {
 	}
 	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, path, args...).Output()
+	cmd := exec.CommandContext(ctx, path, args...)
+	if len(env) > 0 {
+		cmd.Env = append(os.Environ(), env...)
+	}
+	out, err := cmd.Output()
 	if ctx.Err() != nil {
 		return &toolBin{Path: path, Raw: "(timeout)"}
 	}
@@ -231,7 +241,7 @@ func probeTool(ctx context.Context, spec toolSpec, path, home string) *toolBin {
 	if spec.PyDist != "" {
 		return uvToolVersion(path, spec.PyDist, home)
 	}
-	return probeVersion(ctx, path, spec.Args)
+	return probeVersion(ctx, path, spec.Args, spec.Env)
 }
 
 // toolProbe collects the versions for one tool. The three columns (effective / baked /

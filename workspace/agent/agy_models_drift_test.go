@@ -37,7 +37,9 @@ func TestDriftAgyModelsCatalog(t *testing.T) {
 		t.Skip("agy is not signed in — `agy models` needs a real token")
 	}
 
-	raw, err := exec.Command("agy", "models").Output()
+	cmd := exec.Command("agy", "models")
+	cmd.Env = agy.Env(os.Environ()) // same RDRAND mask the product spawns with (agy/fips.go)
+	raw, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("agy models failed: %v", err)
 	}

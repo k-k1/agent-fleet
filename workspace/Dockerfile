@@ -325,9 +325,11 @@ ENV COPILOT_AUTO_UPDATE=false
 # object（version-build-idを含むURL）を直接取得する。sha256 はその公式manifestの
 # sha512検証済みアーカイブから計算して二重に固定する。bump は AGY_VERSION、
 # AGY_RELEASE_BUILD と両archのshaを揃えて書き換える。
-# 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 では RDRAND 命令が無いホストだと
-# 起動即 SIGABRT する（0008 PoC: Ryzen Embedded R2514）。RDRAND 非提示のビルドホスト
-# でもイメージは焼けるよう、起動を伴う --version 検証は rdrand 提示時だけ行う。
+# 注意: agy は Go BoringCrypto(FIPS) ビルドで、x86 でカーネルが RDRAND を取り下げた
+# ホストだと起動即 SIGABRT する（0008: Ryzen Embedded R2514）。そこは Agent が全 spawn に
+# 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
+# --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
+# バイナリを走らせられるとは限らない）。
 ARG AGY_VERSION=1.1.26
 ARG AGY_RELEASE_BUILD=5550154686791680
 ARG AGY_SHA256_X64=c47c0726266b3513660b7094bceceecbd03d8ae907786aa269c507ceb7e4ee54
@@ -345,7 +347,8 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       install -m 0755 /tmp/antigravity /usr/local/bin/agy; \
       rm -f /tmp/agy.tgz /tmp/antigravity; \
       if grep -qw rdrand /proc/cpuinfo; then agy --version; \
-      else echo "skip agy --version check (build host exposes no rdrand)"; fi; \
+      elif [ "$arch" = "amd64" ]; then OPENSSL_ia32cap='~0x4000000000000000' agy --version; \
+      else echo "skip agy --version check (non-x86 build host)"; fi; \
     fi
 
 # agy はインストール済みバイナリを通常実行中にバックグラウンド自己更新する

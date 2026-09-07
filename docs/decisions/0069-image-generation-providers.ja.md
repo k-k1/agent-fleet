@@ -119,7 +119,7 @@ Console の file API が読めるディスクへ落ちる必要があるため�
 | 層 | サービス | 資格情報 | フリート側の追加 | egress |
 |---|---|---|---|---|
 | **既存接続を流用** | Codex（`image_gen`）、**agy**（`generate_image`・2026-09-07 追加）、**Bedrock**（Nova Canvas・Stability 一式） | 利用者の ChatGPT ログイン／agy が既に持っている Antigravity の OAuth トークン／AWS の資格情報チェーンを `CloudWatchConn` / `AWSConn` と同じ流儀で参照する（`AWSProfileRef`: プロファイル名＋任意のリージョン、秘密は保存しない） | provider ファイルのみ | 各 CLI の既存経路／`.amazonaws.com` は**既に allowlist にある** |
-| **会員の鍵** | Gemini・OpenAI Images・Stability・FLUX・Ideogram・Recraft・Replicate | 会員が鍵を貼る（`secrets.Opencode` と同じ流儀） | ＋ Connections のカード 1 枚 | **allowlist 追加が必要** |
+| **メンバーの鍵** | Gemini・OpenAI Images・Stability・FLUX・Ideogram・Recraft・Replicate | メンバーが鍵を貼る（`secrets.Opencode` と同じ流儀） | ＋ Connections のカード 1 枚 | **allowlist 追加が必要** |
 | **テナントの鍵** | Vertex AI・Azure OpenAI | 管理者が一度設定 | ＋ CP 側 provider。`CPBridge` と同型の bridge をもう 1 本足して経由する（現存する唯一の実体は git 資格情報ヘルパー用の `GitOAuthBridge`） | **不要**——CP の通信は制限の外（ADR 0047・`tts.go`） |
 
 したがって **2 つ目の provider は Bedrock にする**。新しい秘密が要らず、ホストは既に
@@ -506,7 +506,7 @@ RDRAND マスクを当てるまでそもそも起動せず、当てた今も「�
 いる・文章はファイルの根拠にならない・出力ディレクトリを読む——であり、生き残る主張はここに
 書いたものより狭い: *エージェント CLI は API 直叩きより劣る provider であり、何も無いよりは
 良い provider である。* Gemini の鍵を持たない claude / opencode のセッションにとって、
-実際に机の上にあった選択肢は「何も無い」だった。agy 経路は下に実装した。会員が鍵を持つなら、
+実際に机の上にあった選択肢は「何も無い」だった。agy 経路は下に実装した。メンバーが鍵を持つなら、
 Gemini API を直接叩く第 2 層の provider が依然として正解である。
 
 **「画像 1 枚がいくらか」を測れるかは別の問いで、答えは「測れない」。** 1 回の生成の直前直後に

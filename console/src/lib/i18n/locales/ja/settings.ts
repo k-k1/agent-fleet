@@ -218,6 +218,8 @@ export const settings = {
   "agents.agy_method_gcp": "GCP プロジェクト（準備中）",
   "agents.agy_rtk_note":
     "agy はコマンド書換フックを持たないため指示ベース（ベストエフォート）。AGENTS.md で rtk 利用を促すだけで、強制ではありません。",
+  "agents.agy_rdrand_masked":
+    "このホストの RDRAND 命令が壊れているため、agy は OpenSSL の CPU 検出から RDRAND を外して動かしています。乱数は FIPS ビルドのハードウェア源ではなくカーネル由来です。",
   "agents.agy_unsupported": "このホストでは利用できません（{reason}）",
   "agents.copilot_desc":
     "GitHub Copilot CLI は GitHub 連携（gh 透過認証）に相乗りします — 個別のログインは不要です。GitHub アカウントに Copilot サブスクリプションが必要です（Free プランは月間クォータ小）。",

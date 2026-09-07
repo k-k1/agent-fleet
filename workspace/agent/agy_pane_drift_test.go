@@ -70,8 +70,14 @@ func TestDriftAgyPaneMode(t *testing.T) {
 				t.Fatalf("BuildLaunch: %v", err)
 			}
 			tn := "drift-agy-" + tc.name
-			if out, err := exec.Command("tmux", "-L", sock, "new-session", "-d", "-s", tn,
-				"-x", "200", "-y", "50", "-c", plan.Cwd, plan.Program).CombinedOutput(); err != nil {
+			args := []string{"-L", sock, "new-session", "-d", "-s", tn, "-x", "200", "-y", "50", "-c", plan.Cwd}
+			// plan.Env carries what production passes with `tmux -e` (the RDRAND mask on a
+			// host that needs it). Dropping it here would make the pane die at launch on
+			// exactly the host the mask exists for, and read as a footer drift.
+			for _, kv := range plan.Env {
+				args = append(args, "-e", kv)
+			}
+			if out, err := exec.Command("tmux", append(args, plan.Program)...).CombinedOutput(); err != nil {
 				t.Fatalf("tmux new-session: %v: %s", err, out)
 			}
 			defer func() { _ = exec.Command("tmux", "-L", sock, "kill-session", "-t", tn).Run() }()

@@ -173,7 +173,7 @@ If Docker is an option, prefer the §1 setup (`wsl-quickstart.sh`).
 | Console build OOMs | `NODE_OPTIONS=--max-old-space-size=3072` (the script already sets it). Stop other builds when memory is tight |
 | `go`/`npm` missing | install per §1 and fix PATH (the script auto-sources nvm) |
 | Java not found | `ls -d /usr/lib/jvm/temurin-*-jdk* ~/.local/share/agent-fleet/jvm/temurin-*-jdk*`; if empty, `workspace-agent install-jdk <major>` |
-| `agy` missing from the agent picker | the host CPU does not expose RDRAND (`grep -w rdrand /proc/cpuinfo` is empty). agy is a FIPS build that requires RDRAND, so it is deliberately hidden ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
+| `agy` missing from the agent picker | the host CPU exposes no usable RDRAND (`grep -w rdrand /proc/cpuinfo` is empty) **and** the workaround did not take. agy is a FIPS build that needs the instruction; where the kernel has withdrawn it the Agent masks it out of OpenSSL's detection and runs agy anyway, so a hidden kind means the masked `agy --version` failed too — or `AF_AGY_RDRAND_MASK=0` refuses the mask ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
 
 For deployment forms and the env index see [docs/build/09-deploy.md](../../docs/build/09-deploy.md);
 for production Compose steps see [deploy/compose/README.md](../compose/README.md).

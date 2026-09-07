@@ -1232,6 +1232,13 @@ docker manifest inspect ghcr.io/k-k1/agent-fleet/control-plane:<v> >/dev/null &&
 # 0) リリースノートを書く（publish の前提。無いと publish は render 時に fail する）
 #    deploy/release/notes/<v>.md（英語＝正）と <v>.ja.md。書き方は notes/README.md
 VERSION=0.3.0 ROOTFS=<既存の r でよい> deploy/release/notes-body.sh   # 本文プレビュー
+# 0b) 横断索引 notes/SUMMARY.md（英語＝正）と SUMMARY.ja.md に、その版の節を足す。
+#     新機能・修正を 1 項目 1 行＋面のタグ。CLI ピンは「動いたものだけ」を、
+#     ノートではなく**ビルド元 commit の Dockerfile** から取る（準備〜dispatch の間に
+#     別セッションがピンを上げることがある — 0.13.0 で実際に踏んだ）:
+#       git show <build-commit>:workspace/Dockerfile \
+#         | grep -E '^ARG (CLAUDE_CODE|OPENCODE|CODEX|COPILOT|AGY|CURSOR|KIRO|RTK)_VERSION='
+#     を前版のビルド元 commit と差分する。release-gate が台帳の全版に節があることを検査する。
 # 1) 台帳へ 1 行追加（版 / 公開日 / ビルド元 commit）→ CHANGELOG 再生成 → commit
 $EDITOR deploy/release/notes/index.tsv
 deploy/release/gen-changelog.sh
@@ -1250,7 +1257,9 @@ git tag -a v0.3.0 <build commit> -m "agent-fleet 0.3.0" && git push origin v0.3.
 組み立てる。footer（asset 名・`rootfs-<r>`・install 一行）は `<r>` がビルド時にしか
 確定しないため**ノート側には書かない**。publish はノート未整備を hard error にする
 （dist-stub-test の case 10/11 で固定）。release-gate の dist-gate が
-`gen-changelog.sh --check` と「台帳の全版にノートがある」ことを検査する。
+`gen-changelog.sh --check` と「台帳の全版にノートがある」こと、および
+**「台帳の全版が `notes/SUMMARY.md` / `.ja.md` に節を持つ」**ことを検査する
+（横断索引は手で書くので、足し忘れに気づく仕組みが他に無い・2026-09-07 追加）。
 **アセットは不変だがノート本文はメタデータなので後から差し替え可能**
 （`gh release edit v<v> --notes-file -`）。0.1.0〜0.2.3 のノートはこの経路で後追い
 整備済み。
