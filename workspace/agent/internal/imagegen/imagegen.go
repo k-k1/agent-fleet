@@ -256,7 +256,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 	// Record on every path, including the failed one: a turn that burned driver tokens and
 	// produced nothing still consumed the user's plan, and a row with ok:false is what keeps
 	// that visible (ADR 0029 §3).
-	recordUsage(ctx, job, res, err == nil, started)
+	recordUsage(ctx, job, name, res, err == nil, started)
 	if err != nil {
 		return Stored{}, err
 	}
@@ -334,10 +334,14 @@ func parseSize(s string) (w, h int, ok bool) {
 // IMAGE consumes is not expressible in tokens and is not recorded — hence measured=partial
 // even on a fully successful run. Reading such a row as the whole consumption would understate
 // it, and zero-filling the missing part would be worse: it would claim the image was free.
-func recordUsage(ctx context.Context, job Job, res Result, ok bool, started time.Time) {
+//
+// chosen is the provider Run picked. A provider only stamps its own id on a Result it actually
+// produced, so a request refused before any work started (an unsupported op, a mask on a route
+// with no mask input) would otherwise leave the row's kind column empty.
+func recordUsage(ctx context.Context, job Job, chosen string, res Result, ok bool, started time.Time) {
 	tag := usagex.Tag{Feature: usagex.FeatureToolImagegen, Trigger: usagex.TriggerUser, Ref: job.Session}
 	call := usagex.Call{
-		Kind:     usageKindOf(res.Provider, job.Pref),
+		Kind:     usageKindOf(res.Provider, chosen),
 		ModelReq: res.Model,
 		OK:       ok,
 		CostUSD:  res.CostUSD,
@@ -359,9 +363,13 @@ func recordUsage(ctx context.Context, job Job, res Result, ok bool, started time
 // usageKindOf is the ledger's kind column: what actually ran, not what was requested. The
 // Codex route really is a codex process, so it is attributed to codex; a provider that is a
 // plain HTTP call to a vendor is not an agent kind at all and carries its own id.
-func usageKindOf(provider, pref string) string {
+//
+// It is deliberately NOT the calling session's kind. A claude session that generates an image
+// spends the ChatGPT plan, not Claude's, and filing the row under claude would put that
+// consumption on the wrong plan's line. The calling session is on the row as `ref`.
+func usageKindOf(provider, chosen string) string {
 	if provider == "" {
-		provider = pref
+		provider = chosen
 	}
 	if provider == ProviderCodex {
 		return session.KindCodex
