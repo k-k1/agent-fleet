@@ -2,27 +2,37 @@ package codex
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
 )
 
-// The payload the account view really returns, trimmed to what is read (measured 2026-09-07
-// against this container's own login).
-const accountUsageBody = `{"user_id":"user-x","account_id":"a1","email":"u@example.com",
+// accountUsageBody is the payload the account view really returns, trimmed to what is read
+// (measured 2026-09-07 against this container's own login).
+//
+// The reset instants are stamped RELATIVE TO NOW on purpose. adjustWindow treats a reset that
+// has already passed as a rolled-over window and decays the reading to 0, so a fixture with
+// fixed epochs passes on the day it is written and starts failing once the clock walks past
+// them — which is exactly what happened to the first version of this test.
+func accountUsageBody(t *testing.T) string {
+	t.Helper()
+	return fmt.Sprintf(`{"user_id":"user-x","account_id":"a1","email":"u@example.com",
  "plan_type":"plus",
  "rate_limit":{"allowed":true,"limit_reached":false,
-  "primary_window":{"used_percent":3,"limit_window_seconds":18000,"reset_after_seconds":17979,"reset_at":1788768929},
-  "secondary_window":{"used_percent":41,"limit_window_seconds":604800,"reset_after_seconds":5048,"reset_at":1788755977}},
+  "primary_window":{"used_percent":3,"limit_window_seconds":18000,"reset_at":%d},
+  "secondary_window":{"used_percent":41,"limit_window_seconds":604800,"reset_at":%d}},
  "credits":{"has_credits":true,"balance":"466.09"},
- "rate_limit_reset_credits":{"available_count":3}}`
+ "rate_limit_reset_credits":{"available_count":3}}`,
+		time.Now().Add(time.Hour).Unix(), time.Now().Add(48*time.Hour).Unix())
+}
 
 func TestGetAccountUsageMapsBothWindows(t *testing.T) {
 	var gotAuth, gotAccount string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth, gotAccount = r.Header.Get("Authorization"), r.Header.Get("ChatGPT-Account-Id")
-		_, _ = w.Write([]byte(accountUsageBody))
+		_, _ = w.Write([]byte(accountUsageBody(t)))
 	}))
 	defer srv.Close()
 
@@ -108,5 +118,36 @@ func TestAccountUsageCacheStampsAge(t *testing.T) {
 	empty := &accountUsageCacheT{fetched: time.Now()}
 	if got := empty.aged(); got.OK {
 		t.Fatalf("empty cache reported a reading: %+v", got)
+	}
+}
+
+// PlanExhausted must distinguish "the account says it is out of quota" from "we could not
+// find out". A caller that spends this plan (image generation, ADR 0069) steps aside on the
+// first and goes ahead on the second, so collapsing them into one bool would either strand
+// the feature whenever the endpoint hiccups or spend quota that is already gone.
+func TestPlanExhaustedSeparatesUnknownFromFine(t *testing.T) {
+	body := func(reached bool) string {
+		return fmt.Sprintf(`{"plan_type":"plus","rate_limit":{"limit_reached":%t,
+		 "primary_window":{"used_percent":100,"limit_window_seconds":18000,"reset_at":%d}}}`,
+			reached, time.Now().Add(time.Hour).Unix())
+	}
+	for _, tc := range []struct {
+		name              string
+		h                 http.HandlerFunc
+		wantExh, wantKnwn bool
+	}{
+		{"account says exhausted", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body(true))) }, true, true},
+		{"account says fine", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(body(false))) }, false, true},
+		{"endpoint down", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusBadGateway) }, false, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(tc.h)
+			defer srv.Close()
+			u, ok := getAccountUsage(context.Background(), srv.Client(), srv.URL, "t", "")
+			exh, known := u.LimitReached, ok && u.OK
+			if exh != tc.wantExh || known != tc.wantKnwn {
+				t.Fatalf("exhausted/known = %v/%v, want %v/%v", exh, known, tc.wantExh, tc.wantKnwn)
+			}
+		})
 	}
 }

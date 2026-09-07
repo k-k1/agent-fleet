@@ -153,10 +153,50 @@ const (
 	ProviderCodex = "codex"
 )
 
-// providerOrder is what "auto" walks, best-supported first. P0 has one entry; the second is
-// meant to be Bedrock, because it adds no new secret, its host is already in the egress
-// allowlist, and it brings the editing operations that keep Op honest (ADR 0069 decision 3).
+// providerOrder is the BUILT-IN order "auto" walks, best-supported first. P0 has one entry;
+// the second is meant to be Bedrock, because it adds no new secret, its host is already in the
+// egress allowlist, and it brings the editing operations that keep Op honest (ADR 0069
+// decision 3).
+//
+// What the default order SHOULD be once there is more than one is deliberately not guessed at
+// here: a self-hosted engine costs nothing per image but waits on a GPU, while the Codex route
+// is fast and spends the user's plan. That trade-off is decided when the second provider is
+// real, not now.
 var providerOrder = []string{ProviderCodex}
+
+// ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
+// same hook shape as Enabled). nil, or a list that names nothing known, simply means the
+// built-in order.
+var ProviderOrderPref func() []string
+
+// effectiveOrder normalizes the stored preference into a TOTAL order: unknown ids and
+// duplicates are dropped, and every provider the preference does not mention is appended in
+// the built-in order. The same shape as main's agentOrderPref, and for the same reason — a
+// partial or stale list (written before a provider existed) must still rank every provider,
+// or adding one would make it unreachable until the user re-saved their settings.
+func effectiveOrder() []string {
+	out := make([]string, 0, len(providerOrder))
+	seen := map[string]bool{}
+	known := map[string]bool{}
+	for _, id := range providerOrder {
+		known[id] = true
+	}
+	add := func(id string) {
+		if known[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if ProviderOrderPref != nil {
+		for _, id := range ProviderOrderPref() {
+			add(id)
+		}
+	}
+	for _, id := range providerOrder {
+		add(id)
+	}
+	return out
+}
 
 // Providers returns the registered providers, in providerOrder. Built fresh on each call so a
 // changed environment (a Codex login that arrived after boot) is picked up, and a var so a
@@ -165,23 +205,26 @@ var Providers = func() []Provider {
 	return []Provider{newCodexProvider()}
 }
 
-// chooseImageProvider decides what "auto" (the default) routes to — the same shape as
-// chooseTTSProvider in control-plane/tts.go.
+// chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
+// as chooseTTSProvider in control-plane/tts.go, widened to a LIST because readiness is checked
+// before the call while exhaustion only shows up during it. A provider that says it is ready
+// and then fails is exactly the case a single choice cannot survive.
 //
-// An explicit choice is honoured as-is EVEN WHEN IT IS NOT READY: the caller named a
-// provider, and that provider's own error ("codex is not logged in") is a better answer than
-// silently producing an image on a different service, billed to a different account. Only
-// auto is allowed to walk past an unready one. "" means nothing can serve the request.
-func chooseImageProvider(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) string {
+// An explicit choice is honoured as-is EVEN WHEN IT IS NOT READY, and it never falls through
+// to another: the caller named a provider, and that provider's own error ("codex is not logged
+// in") is a better answer than silently producing an image on a different service, billed to a
+// different account. Only auto walks the list. Empty means nothing can serve the request.
+func chooseImageProviders(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) []string {
 	if pref != "" && pref != "auto" {
-		return pref
+		return []string{pref}
 	}
+	var out []string
 	for _, id := range order {
 		if ready[id] && caps(id).Supports(req.Op) {
-			return id
+			out = append(out, id)
 		}
 	}
-	return ""
+	return out
 }
 
 // Job is one core-side generation: which session asked, what it asked for, and which provider
@@ -239,42 +282,59 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		}
 		return p.Caps(req.Model)
 	}
-	name := chooseImageProvider(job.Pref, req, providerOrder, ready, capsOf)
-	if name == "" {
+	candidates := chooseImageProviders(job.Pref, req, effectiveOrder(), ready, capsOf)
+	if len(candidates) == 0 {
 		return Stored{}, ErrNoProvider
 	}
-	p, ok := provs[name]
-	if !ok {
-		return Stored{}, fmt.Errorf("%w: %s", ErrUnknownProvider, name)
-	}
-	if !p.Caps(req.Model).Supports(req.Op) {
-		return Stored{}, fmt.Errorf("%w: %s cannot do %s", ErrNoProvider, name, req.Op)
-	}
 
-	started := time.Now()
-	res, err := p.Generate(ctx, req)
-	// Record on every path, including the failed one: a turn that burned driver tokens and
-	// produced nothing still consumed the user's plan, and a row with ok:false is what keeps
-	// that visible (ADR 0029 §3).
-	recordUsage(ctx, job, name, res, err == nil, started)
-	if err != nil {
-		return Stored{}, err
+	var attempts []error
+	for _, name := range candidates {
+		p, ok := provs[name]
+		if !ok {
+			return Stored{}, fmt.Errorf("%w: %s", ErrUnknownProvider, name)
+		}
+		// An explicit pref reaches here even for an op it cannot do, so that the refusal comes
+		// from the named provider rather than from a chooser the caller cannot see.
+		if !p.Caps(req.Model).Supports(req.Op) {
+			return Stored{}, fmt.Errorf("%w: %s cannot do %s", ErrNoProvider, name, req.Op)
+		}
+		if err := ctx.Err(); err != nil {
+			return Stored{}, err
+		}
+
+		started := time.Now()
+		res, err := p.Generate(ctx, req)
+		// Record on every path, including the failed one: an attempt that burned driver tokens
+		// and produced nothing still consumed the user's plan, and a row with ok:false is what
+		// keeps that visible (ADR 0029 §3). Recording INSIDE the loop is what makes a
+		// fall-through cost two honest rows rather than one that hides the wasted attempt.
+		recordUsage(ctx, job, name, res, err == nil && len(res.Images) > 0, started)
+		if err == nil && len(res.Images) == 0 {
+			err = errors.New("the provider returned no image")
+		}
+		if err != nil {
+			attempts = append(attempts, fmt.Errorf("%s: %w", name, err))
+			continue // the next provider in the order, if the caller left the choice to us
+		}
+
+		files, err := storeImages(job.SID, res.Images)
+		if err != nil {
+			// A storage failure is OURS, not the provider's: the picture exists and trying a
+			// second provider would spend more quota to hit the same broken disk.
+			return Stored{}, err
+		}
+		return Stored{
+			Files:    files,
+			Provider: res.Provider,
+			Model:    res.Model,
+			Region:   res.Region,
+			Warnings: append(res.Warnings, requestWarnings(req, res)...),
+			CostUSD:  res.CostUSD,
+		}, nil
 	}
-	if len(res.Images) == 0 {
-		return Stored{}, errors.New("the provider returned no image")
-	}
-	files, err := storeImages(job.SID, res.Images)
-	if err != nil {
-		return Stored{}, err
-	}
-	return Stored{
-		Files:    files,
-		Provider: res.Provider,
-		Model:    res.Model,
-		Region:   res.Region,
-		Warnings: append(res.Warnings, requestWarnings(req, res)...),
-		CostUSD:  res.CostUSD,
-	}, nil
+	// Every candidate failed. Report them all: "codex is out of quota, and the local engine is
+	// not running" is actionable in a way that either half alone is not.
+	return Stored{}, errors.Join(attempts...)
 }
 
 // normalizeRequest fills in the defaults the wire may omit. It never narrows what was asked

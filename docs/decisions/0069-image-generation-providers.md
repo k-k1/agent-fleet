@@ -483,6 +483,45 @@ Two measurements settled how to fix it:
    needs no rollout, so it is now a third source for the chip, taken when it is fresher than
    the local readings and ignored entirely when the call fails.
 
+### Ordering, and falling through (2026-09-07)
+
+"What happens when codex cannot serve this" has two halves, and the first implementation only
+handled one. **Not logged in** is a readiness question, answered before the call, and auto
+already walked past it. **Out of quota** only shows up when the call is made — and a single
+chosen provider has nowhere to go from there. Both halves are now closed:
+
+- `chooseImageProvider` became `chooseImageProviders` and returns the ORDERED list of ready,
+  capable providers rather than the first one. `Run` walks it and returns on the first
+  success. An explicit `provider` still resolves to exactly one and never falls through: the
+  caller named a service, and quietly billing a different account for the picture is the
+  failure that rule exists to prevent.
+- **Every attempt gets its own ledger row.** A fall-through costs two honest rows — the failed
+  one burned driver tokens — rather than one that hides the wasted attempt.
+- **Readiness now includes exhaustion.** The Codex provider asks `codex.PlanExhausted`, which
+  reads the account view added above. Only the account's own `limit_reached` counts;
+  "could not find out" leaves codex ready and lets it answer for itself, so an endpoint hiccup
+  cannot strand the feature.
+- **The order is a user preference** (ui-prefs `imageProviderOrder`), normalized into a TOTAL
+  order the way main's `agentOrderPref` does: unknown ids and duplicates dropped, unmentioned
+  providers appended in the built-in order. A list written before a provider existed therefore
+  still ranks it — otherwise adding a provider would make it unreachable until the user
+  happened to re-save their settings. `/imagegen/status` reports the effective order, so "why
+  did it route there" is readable without guessing at a file.
+
+What the built-in default order should BE, once there is more than one entry, is deliberately
+not guessed at: a self-hosted engine costs nothing per image but waits on a GPU, while the
+Codex route is fast and spends the user's plan. That is decided when the second provider is
+real. There is no Console UI yet for the same reason — ranking a list of one is not a setting.
+
+An aside settled while looking at this: **another agent CLI is not the way to add a provider.**
+agy was the candidate (Gemini's image models), and two things stood in the way here. It could
+not start at all on this host until the RDRAND mask in ADR 0008's correction, and even now it
+answers "Please sign in", so nothing about its image capability could be measured. But the
+design objection stands regardless: driving a second agent CLI would repeat, per CLI, every
+compromise the Codex route already carries — parameters mediated by a driver model, prose that
+is not evidence of a file, a directory diff to collect the result. Gemini as a Tier-2 provider
+calling the image API directly has none of those.
+
 **Measuring what one image costs is a different question, and the answer is no.** Read
 immediately before and after a single generation, `wham/usage` moved nothing: the 5-hour
 window stayed at 0% and the weekly at 41%, and the only fields that changed were the two

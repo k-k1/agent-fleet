@@ -183,6 +183,25 @@ func init() { mcpreg.PeerMessagingEnabled = PeerMessaging }
 func init() {
 	mcpreg.ImageGenEnabled = ImageGeneration
 	imagegen.Enabled = ImageGeneration
+	imagegen.ProviderOrderPref = ImageProviderOrder
+}
+
+// ImageProviderOrder is the user's preferred order for image providers (ui-prefs
+// imageProviderOrder). Missing means "the built-in order"; imagegen normalizes whatever comes
+// back into a total order, so a stale list written before a provider existed still ranks every
+// provider rather than hiding the new one.
+func ImageProviderOrder() []string {
+	raw, ok := Read()["imageProviderOrder"].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(raw))
+	for _, v := range raw {
+		if s, ok := v.(string); ok && s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // The opencode package needs the same preference to decide whether to inject
