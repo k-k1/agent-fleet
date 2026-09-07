@@ -21,6 +21,14 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   file**. Decision 3's reason is now "HF is too slow for the start path, and 50x different from
   file to file" (Resolved 5 was rewritten; in the manner of the frozen journals, the gist of
   the wrong version is kept).
+- The same day, a **pre-P0 review** was appended at the end ("Review (2026-09-07, before P0)").
+  Two premises fell to the review's own measurements: 🔴 **opencode's 300 s is not a wall-clock
+  wall but a cut after 300 s of a silent body — with an SSE comment line every 10 s a 400 s
+  hold was answered within a single attempt** (decision 5 is proposed for replacement), and
+  🔴 **8 vCPU of quota does build two g6.xlarge; what blocked the second was a draining box
+  still holding its quota** (decision 2). Decision 3's corrected reason — "what is slow is HF
+  serving that file" — fell to a third data point, the same SDXL at 39.6 MB/s from Fargate.
+  The review proposes approval (P0 may start); changing the status line is left to the author.
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -502,3 +510,195 @@ Also measured the same day:
   `workspace/agent/internal/imagegen/imagegen.go`,
   `internal/agents/opencode/{auth,models}.go`,
   `deploy/aws/ecs/cfn/{00-network,20-platform,30-ingress,50-tts}.yaml`.
+
+## Review (2026-09-07, before P0)
+
+In the manner of 0070's review: does each decision follow from its evidence, and is any
+conclusion drawn that the measurements cannot carry? The verdict first: **approval (P0 may
+start) is proposed, on the condition that decisions 5 and 2 are rewritten as proposed below
+before any P0 code is written — the review's own measurements overturned their premises.** The
+"generalise from two points" error the author already corrected once appears **twice more**:
+in the corrected version of decision 3's reason and in decision 2's 8 vCPU sentence. Both were
+refuted by data that already existed (the CloudWatch logs and CloudTrail) — no re-measurement
+was needed, only a re-reading.
+
+### What the review measured and checked
+
+- **R1. opencode's 300 s is a silence limit, not a wall.** opencode 1.18.29 in this container
+  (a Bun binary — the strings carry `BUN_1.2`) was pointed at an OpenAI-compatible stub with
+  three behaviours (throwaway under `/tmp`; the main request is tools=21, 70 KB, preceded by
+  the tools=0 title request):
+  1. **Hold with no bytes** (the ADR's Resolved 1 reproduced): request at 5.7 s → **the same
+     request re-sent at 308.0 s, 612.5 s, …** (302-304 s apart; matches the ADR's "reset at
+     300.1 s, re-sent seconds later").
+  2. **Headers only** (200, `text/event-stream`, then a silent body for 400 s): **re-sent at
+     306.9 s**. Headers do not hold it.
+  3. **Headers plus an SSE comment line `: ping` every 10 s**, then the real chunks and
+     `[DONE]` after 400 s: **no re-send; opencode printed the answer delivered at 405 s
+     (`PROBE-OK after 400s`) and exited normally** (the title request arrived the same way).
+  So the cut fires when **no body bytes arrive for 300 s**, not on elapsed time. A gateway that
+  keeps the connection and writes one line every 10 s carries the 527 s start and the silence
+  of prefill **inside a single attempt**. Decision 5's "503 at 290 s, wake decoupled from the
+  attempt, ride the re-send" and "300 s to first token" came from reading this mechanism as a
+  wall, and **bet on the re-send count being finite** (that count is opencode's / the AI
+  SDK's to decide; the ADR's "four times" is the 1,200 s harness cut-off, not a limit — the
+  review's reproduction saw **six attempts** (five re-sends) before its 1,900 s cut-off, the
+  gaps growing 302, 310, 316, 330 s — waits of 2, 4, 8, 16, 32 s after each cut, the AI SDK's
+  exponential backoff — with no sign of giving up; whether there is a cap remains unknown).
+- **R2. 8 vCPU builds two g6.xlarge. Only one was built because a draining box was holding
+  its quota.** CloudTrail (read-only) `RunInstances` / `TerminateInstances`, re-ordered (JST):
+  06:42:25 A launched (llm, straight from HF) → 07:12:32 B launched (by all appearances image's
+  first attempt — the run whose fetch sidecar could not write as uid 100, the measurement
+  recorded in `engprobe.yaml`'s comment) → **07:17:13 MI terminated B** →
+  07:19:24, 07:20:01, 07:20:43 `VcpuLimitExceeded` (A running, **B shutting down and still
+  counted at 4 vCPU**: A 4 + B 4 + new 4 > 8) → 07:25:05 A terminated → **07:26:04 C launched
+  successfully** — while A's EC2 instance was still on its way out (drain is 427-463 s). So two
+  boxes (8 vCPU) do coexist; what cannot be built is a box **inside the 7-8 minutes after one
+  was dropped**. "16 vCPU for both roles" survives, but the reason changes from "only one
+  builds" to "**headroom for one draining box**". B's 07:12:32 → 07:17:13 (281 s) is also a
+  measurement of MI's default clock clearing a box whose task had died (R5).
+- **R3. g6f VRAM, official: 5,722 MiB (2xlarge), 11,444 MiB (4xlarge), 2,861 MiB (xlarge and
+  large); g6.xlarge 22,888 MiB.** From `describe-instance-types`, replacing the table's
+  third-party "≈3 / ≈6 / ≈12 GB". The same call gives g6.xlarge an instance store of **250 GB**
+  and an **EBS baseline throughput of 125 MB/s** (g6f.2xlarge 250, g6f.4xlarge 750).
+- **R4. Prices match the AWS pricing API.** g6.xlarge $1.1672/h (Tokyo, Linux, on-demand); MI
+  fee g6.xlarge $0.0910, g6f.2xlarge $0.0537, g6f.4xlarge $0.1075, c6a.large $0.0116. Total
+  $1.258/h, a 30-minute window $0.63 (the text's $0.65 is slightly generous), a 427-464 s
+  drain $0.15, always-on 730 h $918/month, NAT for 17 GB $1.05, EFS 100 GB $36, EFS IA reads
+  of 17 GB $0.20 — no arithmetic error. The GPU measurement bill: six boxes on CloudTrail add
+  up to about 1.5 hours (more than the text's "about one hour"), roughly $3.5 with NAT.
+- **R5. The MI API has two knobs the ADR does not mention** (aws-cli 2.36.40 service model):
+  `infrastructureOptimization.scaleInAfter` (**seconds before an idle box is cleared**; null =
+  default, −1 = never, 0-3,600) and
+  `instanceLaunchTemplate.localStorageConfiguration.useLocalStorage` (**use the instance store
+  as the data volume and provision no EBS**). `storageConfiguration`, on the other hand, has
+  **only `storageSizeGiB`** — no throughput or IOPS; open question 1's "provisioned-throughput
+  gp3" is not selectable under MI. The 427-463 s drain was measured with `scaleInAfter` at its
+  (undocumented) default, so **calling it a fixed MI cost is premature**.
+- **R6. HF's speed cannot be said to be "set by the file" either.** The same log group
+  (`/af/af-ecs-engprobe/engine`) holds a third point: **the same SDXL (6,938,078,334 bytes)
+  came to the ingestion task (curl on Fargate) in 175 s = 39.6 MB/s** — the file the MI box's
+  sidecar (same curl, same NAT) pulled at 236 MB/s. GGUF: 9.6 and 4.2 MB/s; SDXL: 236 and
+  39.6 MB/s. Four points support "**4-236 MB/s, and what decides it is unknown**" and no more;
+  "the unsloth repository is slow" is a generalisation from two points (the corrected sentence
+  had the same shape as the one it replaced). What remains as decision 3's evidence is that S3
+  ran at 104-147 MB/s on all three pulls (Resolved 8).
+- **R7. The code as it is.** (a) The slot pool's `registeredSlots` and `sweepGhostInstances`
+  (`runtime_ecs_ec2.go`) **walk every container instance in the cluster with no filter** — MI
+  boxes are in that list (the harness's first run timing a slot box is the mirror image). The
+  EC2-tag sweeps (`af-role=slot`, `Ec2MaxSlots`) are unaffected, but these two calls sit
+  outside decision 1's "untouched". (b) The CP task role's SSM read is **scoped to
+  `parameter/af-ws/*`** (`SsmWorkspaceParams` in `20-platform.yaml`). (c)
+  `ec2:DescribeInstances` and `ecs:ListContainerInstances` / `DescribeContainerInstances` are
+  on the CP role **unconditionally** (`Ec2SlotPool` / `EcsContainerInstances`), so observing
+  `draining` needs no new permission. (d) `/git/*` and `/mcp` both authenticate with a Bearer
+  PAT, per member (`git_http.go`, `mcpsrv`) — open question 2's premise holds. (e)
+  `30-ingress.yaml` is 41,988 bytes (9,212 left); the three contracts (`ClusterName`
+  mandatory, PassRole limited to `ecsInstanceRole*`, associations replace the list with an
+  empty default strategy) match what `engprobe.yaml` encodes. (f) `af-sandbox` is as left:
+  llama / sd / comfy at desired 0, zero G-family instances, quota 8 (nothing was woken).
+
+### Proposed revisions, decision by decision
+
+- **Decision 1** — append: "ADR 0045 decision 6 rejected MI for Workspaces (ECS owns the
+  lifecycle, there is no stop, the volume takes only a size). **An engine holds no state it
+  would miss**, so the same properties are an advantage here — a difference of subject, not a
+  contradiction." And from R7(a): "The slot pool's container-instance walks (`registeredSlots`,
+  `sweepGhostInstances`) see MI boxes too. P0 excludes them by `capacityProviderName` from
+  `DescribeContainerInstances` and pins that with a test."
+- **Decision 2** — rewrite "at 8 vCPU only one g6.xlarge exists … 408 s" per R2: "8 vCPU
+  builds two. But **for the 7-8 minutes after a stop the previous box keeps its 4 vCPU**, so a
+  restart of one role that overlaps the other role's start hits `VcpuLimitExceeded`. A
+  deployment that uses both roles asks for 16 vCPU as headroom for one draining box." Replace
+  the table's g6f VRAM with R3's official values, and soften "g6f.2xlarge's 6 GB does not fit
+  it" to "**fp16 without offload does not fit 5,722 MiB** (`--offload-to-cpu` and quantisation
+  are unmeasured — P4)": the original open question 2 asked exactly those two, and closing it
+  as "not an option" without measuring them is the same kind of leap.
+- **Decision 3** — design unchanged; fix the reason per R6: "Behind the same NAT HF ran at
+  **4-236 MB/s, 6x apart for the same file** (SDXL: 236 MB/s by curl on the MI box, 39.6 MB/s
+  by curl on Fargate). Four points cannot say whether file, path or time decides it; what they
+  say is **you do not know until you pull**. S3 ran at 104-147 MB/s on all three pulls." Keep
+  Resolved 5's "what is slow is HF serving that file (the unsloth repository)" under 🔴 and note
+  that "set by the file" was a two-point generalisation too.
+- **Decision 5** — replace (R1): "When a request arrives for an engine at desired 0, the CP
+  sets desired 1 and, **for streaming requests, answers at once with 200 and
+  `text/event-stream` headers, then writes an SSE comment line every 10 s until the first
+  upstream byte**; when the engine starts answering, its stream is joined. The same heartbeat
+  covers prefill silence (it runs while waiting for the upstream headers too). So **300 s
+  bounds the heartbeat interval, not the attempt.** Past `AF_ENGINE_WAKE_TIMEOUT` the answer
+  is 503 + `Retry-After` + body — the path for non-streaming requests and for a wake that
+  actually failed, never the normal path. A 503 spends one of the client's finite retries, so
+  it does not belong on the normal path." The 600 s default leaves 73 s over the measured
+  527 s, not enough for a P0 deployment that still pulls from GHCR (178 s at 14 MB/s) — **900 s
+  until re-measured after the ECR copy**, and the controller's start deadline (decision 7) is
+  at least that. "One more reason CPUs are rejected" becomes "17 minutes", not "a wall" (the
+  rejection stands).
+- **Decision 6** — the order stands, but drop "the smaller image" from its reasons: 5.1 GB is
+  the community image used for measuring, and the size of the ComfyUI image the fleet bakes
+  is unmeasured. What remains is **the smaller surface and code** — OpenAI compatibility maps
+  onto 0069's `Op` one-to-one, and none of the workflow template, the WebSocket pane or the
+  fleet-built image is needed — the same shape as P0's reason for llm first. "2.5x faster" has
+  not been checked for equal steps and sampler; add "like-for-like unverified".
+- **Decision 7** — three points. (a) The states keep 0070 decision 7's `stopping` (the OFF
+  undo window) and `tts_ecs.go`'s `none`, and **add** `draining` (not four values). (b) **The
+  start deadline is per engine and at least the measured cold start** — at 0070's default of
+  300 s every GPU start would be a "failure" and the cooldown would double away (the same
+  presentation as the `createdAt` incident). (c) The drain was measured at `scaleInAfter`'s
+  default (R5), so **P0 measures 0 and −1 once each** ($0.15 each). −1 is material for a
+  "keep the box" design: a request that arrives while the box still exists after desired 0
+  should come up without the S3 fetch, since **both the image and the model file are on the
+  box** (the VRAM load only). "Trimming the idle window can only ever recover the drain" reads
+  the drain as pure waste — whether it can be designed in as a warm-box window is one P0
+  measurement: stop, then re-request inside the drain.
+- **Decision 8** — (a) "SSM reads are already in the CP task role" holds **only under
+  `/af-ws/*`** (R7(b)); decide whether the parameter is named `/af-ws/engines` or the
+  `20-platform` policy is widened, and write it down. (b) The contrast with 0070 is accurate and
+  can be made precise: **the CP side adds zero IAM here too** (UpdateService / DescribeServices
+  / DescribeInstances / container-instance reads / SSM read are all present and unconditional);
+  the new IAM is the three roles closed inside `60-engines` (infrastructure, instance profile,
+  task). (c) The harness shares one TaskRole between ingestion and engines; production splits
+  it as the text says — ingestion (write plus secret) and engine (read). `ssmmessages:*` is
+  harness-only and stays out of the production roles.
+- **Open question 1** — recommendation: **measure `useLocalStorage: true` first.** g6.xlarge's
+  EBS baseline of 125 MB/s bounds both the S3 fetch (104-147 MB/s looks like the EBS write
+  ceiling, not S3's) and the VRAM load (18.5 GB is at least 148 s even at 125 MB/s). The
+  250 GB instance store should move both; provisioned gp3 throughput does not exist under MI
+  (R5).
+- **Open question 2** — recommendation: **a per-session dedicated token.** Three reasons: (1)
+  `usagex` rows are cut per session and a PAT does not match them; (2) a value placed in
+  `{env:…}` is visible to the model — a short-lived value good only for `engine:llm` loses
+  less when leaked than a PAT that works on git and MCP; (3) it is the shape of 0069
+  decision 3's review correction (the tenant layer does not borrow the git bridge; it has its
+  own entry).
+- **Phases** — P0's "the numbers for open questions 1-3" and P1's "open question 4" are
+  pre-revision numbering; the open questions are now 1 and 2 only. P0's measurements are
+  spelled out: the `useLocalStorage` cold start, the `scaleInAfter` 0 / −1 drains, a re-request
+  inside the drain, the pull from ECR, and the pool walks excluding MI.
+- **Resolved 1 and 6** — append R1's and R2's consequences under 🔴 (the text stays).
+
+### Answers to the questions asked
+
+1. Decisions still resting on estimates: decision 2's g6f floor (offload and quantisation
+   unmeasured), decision 6's "smaller image" (fleet image unmeasured), decision 7's drain
+   (`scaleInAfter` default), decision 5's 600 s (73 s of headroom). **6 and 7 can be measured
+   in P0; 2 and 5 are fixed in the text before P0.**
+2. Decision 5 does not follow. Resolved 1 says "cut after 300 s of silence", not "cut at 300 s"
+   (R1), and the design for a finite re-send count is not written. Holding with a heartbeat
+   removes the dependence on re-sends.
+3. "HF stays off the start path" is sound. "50x between files" and "unsloth is slow" fall to
+   the third point (the same SDXL at 39.6 MB/s) (R6).
+4. The order may stand, but for "the smaller surface and code", not "the smaller image".
+5. Open question 1: `useLocalStorage`; open question 2: the dedicated token (above).
+6. The contrast is accurate (CP side zero, three new roles). The three contracts match the
+   harness. Only the SSM premise is conditional on `/af-ws/*`.
+7. No arithmetic errors (R4).
+8. No contradictions. State that 0045 decision 6 (MI unfit for Workspaces) is about a
+   different subject, keep 0070's state set and start deadline, and close the two pool walks
+   (R7(a)) in P0.
+
+### Proposed status line
+
+Once decisions 2 and 5 above are reflected in the text, change the status line to
+**"approved (P0 may start)" (reviewed 2026-09-07)**. Add to P0's definition of done: "the first
+request to a stopped engine returns an answer **within a single attempt**" — the one
+observation that verifies the replacement of decision 5.
