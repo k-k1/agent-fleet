@@ -292,10 +292,11 @@ type Schedule struct {
 	// any report it owes has gone out. Default false = leave it running, which is the
 	// behaviour every existing schedule was written against.
 	//
-	// It is what makes a scheduled fire pay for itself: a 3am run on a woken workspace
-	// otherwise holds it up until the idle timeout expires, so the cheapest part of the
-	// night is billed for the longest. Ignored in session_mode=assistant, which drives a
-	// conversation and never holds a session.
+	// What it saves is memory, not money: an unattended fire otherwise leaves its session
+	// alive for the rest of the night, holding a CLI process on a shared host. It does NOT
+	// bring the workspace's own stop forward — a finished session is idle, and idle was
+	// never what kept the workspace awake (holdsWorkspace is machineBusy only). Ignored in
+	// session_mode=assistant, which drives a conversation and never holds a session.
 	StopAfterRun         bool
 	Enabled              bool
 	NextRun, LastRun     string
