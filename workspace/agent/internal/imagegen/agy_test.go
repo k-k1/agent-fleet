@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/agy"
 )
 
 // fakeAgy writes a stand-in `agy` that reads the NDJSON prompt off stdin, emits the print-mode
@@ -368,27 +370,41 @@ func TestAgyFoldsARotatedTokenBack(t *testing.T) {
 	}
 }
 
-// The mask goes on THIS child and nowhere else: whether the product should offer agy sessions
-// on a host with no RDRAND is a separate decision, and this must not answer it by accident.
+// The child gets the isolated home and whatever RDRAND overlay this host calls for — and the
+// overlay comes from agy.MaskEnv rather than a copy of the literal, so a deployment that refuses
+// the mask refuses it here too and a host with a working RDRAND is left alone. The stale value
+// planted below must not survive either way.
 func TestAgyEnvCarriesTheMaskAndTheIsolatedHome(t *testing.T) {
 	t.Setenv("HOME", "/home/real")
 	t.Setenv("OPENSSL_ia32cap", "leftover")
 	env := envWithHome("/tmp/iso")
+	want := agy.MaskEnv()
 	var home, mask int
 	for _, e := range env {
 		switch {
 		case e == "HOME=/tmp/iso":
 			home++
-		case e == agyRDRANDMask:
+		case len(want) == 1 && e == want[0]:
 			mask++
 		case strings.HasPrefix(e, "HOME=") || strings.HasPrefix(e, "OPENSSL_ia32cap="):
-			t.Fatalf("a stale %q survived; exec does not dedupe, so the first one would win", e)
+			t.Fatalf("a stale %q survived; the child's environment would state two different things about the same CPU feature", e)
 		}
 	}
-	if home != 1 || mask != 1 {
-		t.Fatalf("env = %d homes, %d masks", home, mask)
+	if home != 1 || mask != len(want) {
+		t.Fatalf("env = %d homes, %d masks (this host wants 1 home and %d)", home, mask, len(want))
 	}
 	if os.Getenv("HOME") != "/home/real" {
 		t.Fatal("the Agent's own environment was modified")
 	}
+	// The assertion above follows the host, so on its own it would still pass against a
+	// hardcoded literal. This one does not: with the mask declined, nothing may set that
+	// variable on the child, whatever the CPU says.
+	t.Run("refused", func(t *testing.T) {
+		t.Setenv("AF_AGY_RDRAND_MASK", "0")
+		for _, e := range envWithHome("/tmp/iso") {
+			if strings.HasPrefix(e, "OPENSSL_ia32cap=") {
+				t.Fatalf("AF_AGY_RDRAND_MASK=0 declined the mask, but %q reached the child", e)
+			}
+		}
+	})
 }

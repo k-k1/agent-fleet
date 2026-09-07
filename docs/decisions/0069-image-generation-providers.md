@@ -623,6 +623,15 @@ feed, not an audit log**; a capability conclusion drawn from it alone would have
    without RDRAND is a separate question under review elsewhere; `internal/hostcaps` and the
    session guard are deliberately untouched, so this provider does not answer it by accident.
 
+   🔴 **Correction (2026-09-07): that separate question was settled**
+   ([0008](0008-antigravity-cli-agent-kind.md), "Supporting hosts without RDRAND"), so this route
+   no longer spells the mask out itself and takes it from the `internal/agents/agy` seam like
+   every other agy spawn. Two things follow. **(a)** A deployment that refuses the mask
+   (`AF_AGY_RDRAND_MASK=0`) now has it refused here too — the local constant went around the
+   refusal. **(b)** A host with a working RDRAND is left alone — the local constant applied
+   unconditionally, taking a healthy hardware RNG away from that child, which is harmless but
+   contradicts 0008's "no deployment where agy runs today changes behaviour".
+
 **Usage.** The `result` event carries `input_tokens` / `output_tokens` / `thinking_tokens` /
 `cache_read_tokens` / `total_tokens`, and two relationships were measured rather than assumed:
 `input_tokens` **excludes** the cached share (26896 + 75 = 26971 total, with cache_read 16289
