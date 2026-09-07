@@ -1,11 +1,15 @@
 package gitx
 
 import (
+	"bytes"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // TestSubmoduleSpecs pins that the name and the path are read as separate things. git keys
@@ -204,6 +208,58 @@ func TestSubmoduleUpdateRecursiveNeedsInit(t *testing.T) {
 	git(t, clone, "-c", "protocol.file.allow=always", "submodule", "update", "--init", "--recursive")
 	if submodulePathEmpty(nestedInnerIn(clone)) {
 		t.Error("even --init --recursive left the nested submodule empty")
+	}
+}
+
+// TestSeedSubmodulesFromCycles pins that the descent terminates, and that maxSeedDepth is what
+// terminates it. The fixture is the worst case that can be built: a `path = .` entry is
+// accepted by `submodule init` (measured) and makes filepath.Join(dir, path) return dir itself,
+// so the working-copy side of the walk never moves, while a symlink makes <store>/self/modules
+// resolve back to <store>, so the store side never moves either.
+//
+// Even that cannot run forever — the store PATH still grows a segment per level, and measured,
+// without the cap this fixture unwinds at depth 41 after ~3 s, where Linux refuses the 41st
+// symlink traversal. So the assertion carrying the weight is not the timeout but that the cap
+// is what fired: falling back on the filesystem's own limits is not a bound to rely on.
+func TestSeedSubmodulesFromCycles(t *testing.T) {
+	git := gitTestEnv(t)
+	root := t.TempDir()
+	wt, store := filepath.Join(root, "wt"), filepath.Join(root, "store")
+
+	git(t, "", "init", "-q", "-b", "main", wt)
+	writeFile(t, filepath.Join(wt, "f.txt"), "f\n")
+	git(t, wt, "add", "-A")
+	git(t, wt, "commit", "-qm", "init")
+	writeFile(t, filepath.Join(wt, ".gitmodules"),
+		"[submodule \"self\"]\n\tpath = .\n\turl = https://example.invalid/self.git\n")
+	writeFile(t, filepath.Join(store, "self", "HEAD"), "ref: refs/heads/main\n")
+	if err := os.MkdirAll(filepath.Join(store, "self", "objects"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(store, filepath.Join(store, "self", "modules")); err != nil {
+		t.Fatal(err)
+	}
+	// Both halves of the loop have to be real or the test proves nothing.
+	if specs := submoduleSpecs(wt); len(specs) != 1 || filepath.Join(wt, specs[0].Path) != wt {
+		t.Fatalf("setup: the submodule path does not resolve back to its own working copy: %+v", specs)
+	}
+	if !isGitDir(filepath.Join(store, "self", "modules", "self")) {
+		t.Fatal("setup: the store does not actually loop, so nothing recurses")
+	}
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	done := make(chan struct{})
+	go func() { defer close(done); seedSubmodulesFrom(wt, store, 0) }()
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("seedSubmodulesFrom did not terminate on a cyclic store — maxSeedDepth is not bounding the descent")
+	}
+	if !strings.Contains(logs.String(), "nested deeper than") {
+		t.Errorf("the depth cap never fired, so the cycle was stopped by something else:\n%s", logs.String())
 	}
 }
 

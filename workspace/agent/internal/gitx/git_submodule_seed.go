@@ -32,9 +32,12 @@ import (
 // entry's NAME, which is only conventionally the same string as its path.
 type submoduleSpec struct{ Name, Path string }
 
-// maxSeedDepth bounds the descent into nested submodules. In practice the parent's own store
-// bounds it already — each level has to exist there as a real directory — so this is only here
-// so that a symlink inside that store cannot spin.
+// maxSeedDepth bounds the descent into nested submodules. Nothing here can loop forever even
+// without it: the store path gains a segment per level, so a cyclic store is eventually refused
+// by the filesystem — MEASURED, a store whose `modules` entry is a symlink back to itself
+// unwinds at depth 41, where Linux gives up after 40 symlink traversals. But that is ~3 s of
+// pointless git invocations to arrive at, and a kernel limit nobody chose is not a bound to
+// lean on, so the descent stops at a depth no real repository reaches.
 const maxSeedDepth = 8
 
 // seedSubmodulesFromParent populates dir's not-yet-checked-out submodules by cloning them from
