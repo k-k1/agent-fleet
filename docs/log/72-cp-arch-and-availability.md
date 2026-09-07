@@ -123,6 +123,12 @@ Console の Vite ビルドと Go のコンパイルを QEMU エミュレーシ�
   ⚠️ **`workspace_arm64` は OFF のままで、この非対称が中身である**——同じ 2 択に見えて
   値段が二桁違う（**CP は +71 秒 / workspace は +593 秒**・§72.5.1）。71 秒は 90 分の
   timeout に対して誤差なので、**運用者に訊く理由が無い**。
+  🔴 **訂正（2026-09-07・0.16.0）: `workspace_arm64` も既定 ON になった。** 当時の記述が
+  誤っていたのではなく、**「確かめたか」の問いが workspace では後から片付いた**だけである
+  ——0.15.1 が `workspace_arm64: true` で publish した最初の版で、そのイメージが実機の
+  Graviton（`acrt` の m8g.large）で起動した。残る反対理由は +593 秒だけになり、実測で
+  publish 全体が 14 分 → 28 分（timeout 90 分）なので倒した。判断の全文は
+  [ADR 0053](../decisions/0053-cp-arch-and-availability.ja.md) 決定 4 の訂正にある。
 
 ### 72.4.2 走らせる側
 

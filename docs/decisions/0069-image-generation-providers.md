@@ -2,14 +2,16 @@
 
 English | [日本語](0069-image-generation-providers.ja.md)
 
-- Status: **adopted — P0 implemented** (2026-09-06). Every number below was measured in a
-  Workspace container on that date, or fetched from the vendor's own documentation on that
-  date (Sources at the end). Reviewed the same day: both open questions were measured (see
-  *Open questions — resolved*), and Decisions 3, 8 and 9 were corrected against the code they
-  name. P0 — the Codex route, the opt-in gate, the MCP tool, the usage row and the sweep — is
-  in the tree; what P0 deliberately left out, and where the implementation had to go beyond
-  what is written above, is in *Implementation notes* at the end. Tiers 2 and 3 (Decision 3)
-  are not started.
+- Status: **adopted — P0/P1/P2/P3 implemented** (P0/P1 2026-09-06, P2/P3 2026-09-07). Every number
+  below was measured in a Workspace container on the date it is attributed to, or fetched from
+  the vendor's own documentation on that date (Sources at the end). Reviewed 2026-09-06: both
+  open questions were measured (see *Open questions — resolved*), and Decisions 3, 8 and 9 were
+  corrected against the code they name. P0 — the Codex route, the opt-in gate, the MCP tool, the
+  usage row and the sweep — is in the tree, P1 put the picture in the conversation, and **P2
+  added the second provider (agy) and with it the aspect-ratio axis, the provider-order UI and a
+  correction to the "another agent CLI is not the way" aside**; **P3 let the caller NAME a
+  provider (`generate_image`'s `provider` argument) and settled the default order on the merits**.
+  What each phase deliberately left out is in its *Implementation notes* at the end. Tiers 2 and 3 (Decision 3) are not started.
 - Related: [0013-tts-zundamon.md](0013-tts-zundamon.md) (the provider-abstraction precedent
   this copies: `ttsProvider` + `chooseTTSProvider`, and "pre-processing belongs outside the
   provider") / [0031-mcp-registry.md](0031-mcp-registry.md) (the registry is one list; the
@@ -124,7 +126,7 @@ who holds the key, not by which API is being called:
 
 | Tier | Services | Credential | Fleet-side cost | Egress |
 |---|---|---|---|---|
-| **Existing connection** | Codex (`image_gen`), **Bedrock** (Nova Canvas, Stability suite) | the user's ChatGPT login; the AWS credential chain, referenced the way `CloudWatchConn` / `AWSConn` already do (an `AWSProfileRef`: profile name plus optional region, no stored secret) | provider file only | Codex's own path; `.amazonaws.com` **already allowlisted** |
+| **Existing connection** | Codex (`image_gen`), **agy** (`generate_image`, added 2026-09-07), **Bedrock** (Nova Canvas, Stability suite) | the user's ChatGPT login; the Antigravity OAuth token agy already persists; the AWS credential chain, referenced the way `CloudWatchConn` / `AWSConn` already do (an `AWSProfileRef`: profile name plus optional region, no stored secret) | provider file only | each CLI's own path; `.amazonaws.com` **already allowlisted** |
 | **Member key** | Gemini, OpenAI Images, Stability, FLUX, Ideogram, Recraft, Replicate | member pastes a key (the `secrets.Opencode` provider-key shape) | + a Connections card | **allowlist entry required** |
 | **Tenant key** | Vertex AI, Azure OpenAI | admin configures once | + a CP-side provider, reached over a second bridge of the `CPBridge` shape (today's only instance is `GitOAuthBridge`, minted for the git credential helper) | **none** — CP traffic is outside the restriction (ADR 0047, `tts.go`) |
 
@@ -170,7 +172,13 @@ private parameters, and the shared vocabulary dies.
 stay in the vocabulary even while only the Codex route exists, and unmet requests come back in
 `Result.Warnings` with what actually happened (measured: 1254×1254 for both sizes asked, and
 again with the parameters spelled out — Open question 2 below — so on the Codex route this
-warning path is the permanent story, not a temporary one). The
+warning path is the permanent story, not a temporary one). 🔴 **Amended 2026-09-07: "mediated
+away by the driver" is a property of a ROUTE, not of the agentic shape.** The agy route's
+`aspect_ratio` really does reach its tool (16:9 → 1376×768, measured twice), so a fourth axis
+was added to `Request`/`Caps` and the MCP tool advertises it **only where a provider has a list
+of its own**. The rule survives intact — exact sizes are still promised by nobody, and the miss
+is reported — but "warnings are the permanent story" is now specific to the Codex route rather
+than to every CLI-driven one. See the P2 notes. The
 core does not silently resize: an integer-factor box downscale already exists for thumbnails,
 but 1254→1024 is not an integer factor, and adding a resampler to get an exact size would trade
 a real dependency for a promise the provider never made. Exact sizes arrive with the provider
@@ -452,3 +460,288 @@ What it showed, run once:
 Not covered by it, and still not covered by anything: the card's actual pixels in a browser.
 The server side is verified to emit the part and serve the file; the rendering rests on the
 existing `UserFileBlock` and its own tests.
+
+### Where the consumption shows up, and what can actually be measured (2026-09-07)
+
+A generation spends the **ChatGPT plan, not Claude's** — no Anthropic call is made. Three
+surfaces, and they do not agree by accident:
+
+- The **Claude usage chip** is untouched by the generation. The claude turn that CALLS the tool
+  costs Claude tokens as usual, which is a second reason the tool returns a path rather than
+  the bytes.
+- The **ledger** gets a `feature=tool.imagegen` row with `kind=codex` — what actually ran, not
+  who asked (ADR 0029 §1). The asking session is on the row as `ref`, so "what did this claude
+  session cost" is a `ref` question, not a `kind` one. Filing it under claude would put ChatGPT
+  consumption on Claude's line.
+- The **codex usage chip** did not move at all, and that was a defect. It reads `rate_limits`
+  out of the newest rollout JSONL, and a generation runs `--ephemeral`, which writes no
+  rollout — measured: a real generation left no new file under `~/.codex/sessions`. So the chip
+  sat on the last interactive session's numbers while the quota was really being spent.
+
+Two measurements settled how to fix it:
+
+1. **`codex exec --json` carries no quota information.** One generation's whole stream is
+   `thread.started`, `turn.started`, two `item.completed`, `turn.completed` — and
+   `turn.completed` carries only tokens (`input_tokens` … `reasoning_output_tokens`). No
+   `rate_limits`, no `used_percent`, nothing. The chip cannot be fixed from the stream.
+2. **The account's own view can be read directly.** `GET
+   https://chatgpt.com/backend-api/wham/usage`, with the login the fleet already uses for
+   reset credits, returns `rate_limit.primary_window.used_percent` /
+   `secondary_window.used_percent` (plus `plan_type`, credit balance and reset credits). It
+   needs no rollout, so it is now a third source for the chip, taken when it is fresher than
+   the local readings and ignored entirely when the call fails.
+
+### Ordering, and falling through (2026-09-07)
+
+"What happens when codex cannot serve this" has two halves, and the first implementation only
+handled one. **Not logged in** is a readiness question, answered before the call, and auto
+already walked past it. **Out of quota** only shows up when the call is made — and a single
+chosen provider has nowhere to go from there. Both halves are now closed:
+
+- `chooseImageProvider` became `chooseImageProviders` and returns the ORDERED list of ready,
+  capable providers rather than the first one. `Run` walks it and returns on the first
+  success. An explicit `provider` still resolves to exactly one and never falls through: the
+  caller named a service, and quietly billing a different account for the picture is the
+  failure that rule exists to prevent.
+- **Every attempt gets its own ledger row.** A fall-through costs two honest rows — the failed
+  one burned driver tokens — rather than one that hides the wasted attempt.
+- **Readiness now includes exhaustion.** The Codex provider asks `codex.PlanExhausted`, which
+  reads the account view added above. Only the account's own `limit_reached` counts;
+  "could not find out" leaves codex ready and lets it answer for itself, so an endpoint hiccup
+  cannot strand the feature.
+- **The order is a user preference** (ui-prefs `imageProviderOrder`), normalized into a TOTAL
+  order the way main's `agentOrderPref` does: unknown ids and duplicates dropped, unmentioned
+  providers appended in the built-in order. A list written before a provider existed therefore
+  still ranks it — otherwise adding a provider would make it unreachable until the user
+  happened to re-save their settings. `/imagegen/status` reports the effective order, so "why
+  did it route there" is readable without guessing at a file.
+
+What the built-in default order should BE, once there is more than one entry, is deliberately
+not guessed at: a self-hosted engine costs nothing per image but waits on a GPU, while the
+Codex route is fast and spends the user's plan. That is decided when the second provider is
+real. There is no Console UI yet for the same reason — ranking a list of one is not a setting.
+
+An aside settled while looking at this: **another agent CLI is not the way to add a provider.**
+agy was the candidate (Gemini's image models), and two things stood in the way here. It could
+not start at all on this host until the RDRAND mask in ADR 0008's correction, and even now it
+answers "Please sign in", so nothing about its image capability could be measured. But the
+design objection stands regardless: driving a second agent CLI would repeat, per CLI, every
+compromise the Codex route already carries — parameters mediated by a driver model, prose that
+is not evidence of a file, a directory diff to collect the result. Gemini as a Tier-2 provider
+calling the image API directly has none of those.
+
+🔴 **Correction (2026-09-07): the blocker was gone and the design objection was half wrong.**
+agy was logged in on this host the same day (`test(agy)`, the hand-driven OAuth harness), so its
+image capability became measurable — and measuring it inverted the main claim. The compromises
+do NOT all repeat: **the aspect ratio a caller asks for really does reach the tool**, which is
+the one thing the Codex route could never do and the reason Decision 7's warning path was called
+permanent. What does repeat is the rest — a driver model in the middle, prose that is not
+evidence of a file, an output directory to read — and the sentence that survives is narrower
+than the one written here: *an agent CLI is a worse provider than a direct API call, and a
+better one than nothing.* For a Claude or opencode session with no Gemini key, "nothing" is the
+alternative that was actually on the table. The agy route is implemented below; a direct Gemini
+API provider is still the Tier-2 answer when a member has a key.
+
+**Measuring what one image costs is a different question, and the answer is no.** Read
+immediately before and after a single generation, `wham/usage` moved nothing: the 5-hour
+window stayed at 0% and the weekly at 41%, and the only fields that changed were the two
+windows' countdown clocks. `used_percent` is integer-valued there, so one image is below the
+resolution of every counter the endpoint exposes — as are the credit balance and the
+approximate-messages-remaining estimate. A number for "one image" would have to come from
+generating many in a row and watching the 5-hour window move, which costs exactly what it
+measures. So Decision 9 stands: count images and pixels, record the driver tokens, and leave
+plan consumption explicitly unmeasured rather than invent a figure.
+
+## Implementation notes (P2 — the agy route, the second provider, 2026-09-07)
+
+The second Tier-1 provider (Decision 3): `agy` runs on the Antigravity OAuth token the container
+already holds, so it costs no new secret and no egress allowlist entry — and it spends a
+DIFFERENT plan from codex, which is the whole reason it is worth having next to it rather than
+instead of it.
+
+Everything below was measured on 2026-09-07 in this container, agy 1.1.5 signed in, with
+`gemini-3.8-flash-low` as the driver. One image was budgeted for the provider measurement and
+one for the end-to-end run; both are reported.
+
+**What the built-in tool actually is.** `generate_image` with `Prompt` (required), `ImageName`
+(required — lowercase, underscores, ≤3 words), `AspectRatio` (`1:1` default / `2:3` / `3:2` /
+`3:4` / `4:3` / `9:16` / `16:9`) and `ImagePaths` (≤3 absolute paths, "to edit, combine, or use
+as references"). It has **no size, quality or background parameter at all**, and the picture is
+produced by `gemini-3.1-flash-image` — a value read out of agy's own step store, not off any
+wire this package parses, so it is not reported as provenance.
+
+**The finding that matters: the aspect ratio is not mediated away.** A 16:9 request came back
+**1376×768** (ratio 1.792 against 1.778 — 0.8% wide), twice, once through the provider alone and
+once through the whole MCP path. That is the first time a caller's request has survived a driver
+model on any route in this ADR. It is an amendment to Decision 7 rather than a repeal of it:
+
+- **exact sizes are still not selectable anywhere.** 1376×768 is not 16:9, and no parameter asks
+  for pixels. The provider therefore compares the RATIO with a **5% tolerance** and warns only
+  when the request was ignored outright — warning about the 0.8% miss would train a caller to
+  retry a generation that never comes out differently, and each retry spends the plan again.
+- `size` and `background` on this route are reported as unavailable in `warnings`, not silently
+  dropped.
+- `aspect_ratio` is a **new axis on `Request` and `Caps`, not a spelling of `Size`** (Decision
+  5). The MCP tool advertises `aspect_ratio` **only when the effective provider has a list of its
+  own**, which is what stops it becoming a second knob that turns and moves nothing.
+
+**A measurement trap worth writing down: `--output-format stream-json` echoes the tool's
+parameters LOSSILY.** The step event for the call showed `ImageName` and `Prompt` and no
+`AspectRatio` — the first reading was therefore "the driver dropped it", which is exactly the
+Codex story. The conversation store (`~/.gemini/antigravity-cli/conversations/<id>.db`) holds
+the real call: `{"AspectRatio":"16:9","ImageName":…,"Prompt":…}`. **The stream is a progress
+feed, not an audit log**; a capability conclusion drawn from it alone would have been wrong.
+
+**The invocation** (`internal/imagegen/agy.go`), and what each piece answers:
+
+1. **An isolated `$HOME` per call, sharing only a symlink to the OAuth token.** agy resolves its
+   whole configuration from `$HOME` and has no `--ignore-user-config`; its MCP config is
+   global-only. Under the real home one picture would load the user's entire materialized MCP
+   fleet — and hand the turn a `generate_image` of its own. This is `chatAgyHome`'s trick
+   (chat_providers.go), and it doubles as the cleanup: the conversation store, the presence lock
+   and the collected sources all die with the directory, so nothing accumulates the way
+   `$CODEX_HOME/generated_images` reached 80 MB. A refreshed token is folded back to the real one
+   first (agy rotates by tmp+rename, which replaces the symlink with a real file).
+2. **No `--dangerously-skip-permissions`, and `permissions.allow` naming exactly one tool.**
+   Print mode cannot prompt, so everything not allow-listed is auto-denied — measured with a
+   deliberate `run_command`: `denied_actions:[{action:"command"}]` and the run ends `CANCELED`.
+   This is the agy analogue of codex's `-s read-only`, and it is what makes "the model could not
+   have scripted a placeholder PNG" true rather than hoped for. The live run then confirmed the
+   positive half: `generate_image` itself passes the allow-list and needs no extra grant.
+3. **The prompt on stdin as one `--input-format stream-json` message.** `--print` takes its
+   prompt as a flag VALUE, i.e. in argv, i.e. in every process listing on a shared host. The
+   envelope is `{"event":"user","message":{"content":…}}` (both spellings were probed for free —
+   a malformed message is rejected before any model call).
+4. **The result is collected from `brain/<conversation_id>/`, top level only**, never from prose.
+   agy's own tool result does spell the path out — `Generated image is saved at %s.` — which is
+   precisely the contract the Codex route refused to depend on. The conversation's directory also
+   holds `.system_generated/`, `.user_uploaded/` and `scratch/`, none of which is a picture.
+   There is no pre-run snapshot to diff against, because a brand-new home cannot contain an
+   earlier run's file — the scoping the snapshot provides on the Codex route is provided here by
+   the home itself.
+5. **The RDRAND mask on the child's environment only** (`OPENSSL_ia32cap=~0x4000000000000000`,
+   ADR 0008's correction). Whether the product should offer agy as an agent KIND on a host
+   without RDRAND is a separate question under review elsewhere; `internal/hostcaps` and the
+   session guard are deliberately untouched, so this provider does not answer it by accident.
+
+   🔴 **Correction (2026-09-07): that separate question was settled**
+   ([0008](0008-antigravity-cli-agent-kind.md), "Supporting hosts without RDRAND"), so this route
+   no longer spells the mask out itself and takes it from the `internal/agents/agy` seam like
+   every other agy spawn. Two things follow. **(a)** A deployment that refuses the mask
+   (`AF_AGY_RDRAND_MASK=0`) now has it refused here too — the local constant went around the
+   refusal. **(b)** A host with a working RDRAND is left alone — the local constant applied
+   unconditionally, taking a healthy hardware RNG away from that child, which is harmless but
+   contradicts 0008's "no deployment where agy runs today changes behaviour".
+
+**Usage.** The `result` event carries `input_tokens` / `output_tokens` / `thinking_tokens` /
+`cache_read_tokens` / `total_tokens`, and two relationships were measured rather than assumed:
+`input_tokens` **excludes** the cached share (26896 + 75 = 26971 total, with cache_read 16289
+outside it — the opposite of the codex rollout convention), and `output_tokens` **includes**
+`thinking_tokens` (421 output of which 418 thinking, total = input + output). Adding them would
+double-count the reasoning. The ledger row is `feature=tool.imagegen`, `kind=agy`,
+`measured=partial` — the same shape as the codex one, and for the same reason: agy's remaining
+quota is only scrapable from its TUI, so what one image costs the Antigravity plan is as
+unmeasured here as on the Codex route.
+
+**Readiness is `exec.LookPath` plus the token file**, and nothing else. There is no exhaustion
+check to match codex's `PlanExhausted`: agy's quota figure costs a TUI scrape of several seconds,
+which is impossible on the tools/list path. An out-of-quota agy answers for itself and `Run`'s
+fall-through moves on.
+
+**`MaxCount` is 1 and `MaxInputs` is 3.** One call produced one picture; asking for more would be
+a second call and a second unit of the user's plan, so the honest number is 1 and the core
+reports the shortfall as a warning. `edit` is advertised on the strength of the tool's own
+`ImagePaths` schema — a contract, not a measurement, and said so in the code.
+
+### What two providers opened
+
+- **The built-in order is `codex, agy`, and the reason is not quality.** agy is measurably better
+  at honouring the request; codex is first because it shipped first. Reordering the default would
+  silently move every existing user's image generation onto a different account and a different
+  plan's quota, which is the one thing an improvement must not do by itself.
+
+  🔴 **Corrected the same day (P3 below): the order is `agy, codex`.** The objection above is
+  sound and its premise was not — nobody is using this yet, so there is no working setup to move.
+  A default chosen to protect users who do not exist costs the ones who will arrive the better
+  route. It is decided on the merits while that is still free.
+- **The Console control exists now** (Settings → Agents → Session, under the on/off switch, and
+  only while it is on). Ranking a list of one was not a setting; ranking two accounts that spend
+  two different plans is. It is the same `OrderList` the assistant order uses, and
+  `normalizeImageProviderOrder` repeats `effectiveOrder()`'s rules in the frontend so the list the
+  user drags is the list "auto" will walk.
+- **The tools/list exclusion generalised.** It was "not a codex session on the codex route"; it is
+  now "not a session whose own CLI is what the route would drive", which covers agy without a
+  second special case.
+- The user-facing text stopped saying Codex. `agents.note_image_generation` (ja/en),
+  `guide/member/02-sessions` (ja/en) and `workspace/workspace-notes.md` now name both providers,
+  say which plan each spends, and state the aspect-ratio exception.
+
+### Driven end to end (2026-09-07)
+
+`TestImagegenLiveAgyEndToEnd` (build tag `clicontract`, `AF_IMAGEGEN_LIVE=1`) runs the whole path
+in the same sandbox the codex live test uses, with `imageProviderOrder: ["agy","codex"]` written
+into ui-prefs — the only way to steer the route from outside, since the MCP tool deliberately has
+no provider parameter. Run once:
+
+- `/imagegen/status`: `ready provider=agy model=gemini-3.8-flash-low ops=[generate edit]
+  aspectRatios=[1:1 2:3 3:2 3:4 4:3 9:16 16:9] order=[agy codex]` — i.e. the stored preference
+  really does re-rank a provider that was second in the built-in order.
+- `tools/list` advertised `generate_image` **with `aspect_ratio` in its schema**, which is the
+  visible difference between the two routes from the model's side.
+- The call took **23 s** with 2 progress notifications, and returned a decodable **1376×768 JPEG
+  with no warnings** for `aspect_ratio: "16:9"` — the request honoured, end to end, through the
+  MCP layer.
+- No throwaway home survived the run.
+
+Not covered, and deliberately: `edit` with real `ImagePaths` (it would cost another image to
+learn what the schema already states), `count > 1`, and what one image costs the Antigravity plan
+(the same measurement problem as the ChatGPT one, and the same answer — leave it unmeasured).
+
+## Implementation notes (P3 — naming a provider, and the default order, 2026-09-07)
+
+Two changes, both from the same question: *now that there are two routes, who picks?*
+
+### The default order is `agy, codex`
+
+P2 put codex first to avoid moving an existing user's generation onto another plan. The
+objection is sound and its premise was not: **nobody is using this yet**, so there is no working
+setup to protect, and a default chosen for users who do not exist costs the ones who will arrive
+the better route. agy honours a requested aspect ratio and codex honours nothing, so on the
+merits agy is first — decided now, while it is still free to decide. A stored
+`imageProviderOrder` outranks the built-in list either way, so anyone who has expressed a
+preference keeps it.
+
+### `generate_image` gained a `provider` argument
+
+The backend always supported this: `chooseImageProviders` honours an explicit pref as exactly
+one provider with no fall-through, and `/imagegen/generate` has always taken `provider`. What was
+missing was the tool surface, left out deliberately — "naming a service is the caller's business,
+not the model's". The use case that overturns it is **comparison**: "generate this prompt on both
+and show me the difference" is a thing a user asks for in the session, and the session had no way
+to express it.
+
+- **The enum is the providers this session may actually name**, computed at tools/list time from
+  the per-provider list `/imagegen/status` now returns. It is absent when there is only one, so
+  the argument never appears as a decoration.
+- **The exclusion of Decision 8 is now per provider, not per effective route.** It was "not a
+  codex session on the codex route"; it is now "a session is never offered the route that drives
+  its own CLI". A Codex session with agy ready is therefore offered the tool with agy as its only
+  choice — which the old rule refused outright — and the tool disappears only when nothing is
+  left. The same check is repeated in the REST route (`imagegen_own_cli`), because the advertised
+  set is a scope boundary and a guessed name in `tools/call` must not cross it.
+- **`op` and `aspect_ratio` became the UNION over the offered providers.** Per-provider schemas
+  are not expressible in one tool, and the union promises nothing false: a named provider that
+  cannot do the op is refused by name, and an aspect ratio a route cannot honour already comes
+  back in `warnings`. It also fixes something the first version got wrong quietly — auto already
+  routed an op only the SECOND provider supports to that provider, while the tool advertised only
+  the first one's ops, so that op was unreachable.
+- **The description carries the cost.** Naming a provider pins the call to one plan, and
+  comparing two spends one image on each of two different accounts — so the tool says to name one
+  only when the user did.
+
+Verified: the mcpx suite covers the per-provider exclusion (a codex session keeps the tool when
+agy is ready and loses it when agy is not), the union, the enum contents and the two "absent
+unless real" rules; `internal/imagegen` covers the status list and the REST refusal. The live
+suite now drives the agy generation with `provider: "agy"` named explicitly, and its
+codex-session test runs both halves — with agy ready the tool survives, without it the tool is
+gone (against `af_report` as the positive control).

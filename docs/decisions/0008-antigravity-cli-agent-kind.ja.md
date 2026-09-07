@@ -83,12 +83,26 @@ codex/opencode 追加と同じ轍。触る範囲は限定的:
   x86 の FIPS 乱数モジュールが **RDRAND 命令を必須**とする。本ホスト（AMD Ryzen Embedded
   R2514・ベアメタル・`detect-virt: none`）は **`/proc/cpuinfo` に rdrand 非提示**（カーネル
   マスク/BIOS 無効の疑い）→ 自己テスト abort。`seccomp=unconfined` でも変わらず、プリビルド
-  ゆえ FIPS 無効化スイッチもなく**ユーザー空間からは回避不可**。
+  ゆえ FIPS 無効化スイッチも無い。
+
+  🔴 **訂正（2026-09-07）: ユーザー空間から回避できる。** OpenSSL の CPU 機能検出から RDRAND の
+  ビットを落とすだけでよい——同じホストで、素のコマンドは今も abort するのに
+  `OPENSSL_ia32cap='~0x4000000000000000' agy --version` は起動して `1.1.27` を表示する。
+  `GOFIPS=0` と `GODEBUG=fips140=off` はどちらも効かない（依然 abort）ので、元の結論が正しく
+  見えたのはそのためである。マスクが止めるのはハードウェア RNG の使用だけで、エントロピーは
+  従来どおりカーネルから来る。これで**この開発ホストでも agy を起動できる**——ただし下の配備
+  要件は変わらない（そちらは「マスク無しの素のまま動かす」話である）。なお、この訂正が開け直す
+  実機確認の穴はまだ残っている: ここで `agy models` は「サインインしてください」と答えるので、
+  対話/認証/resume が未検証なのは **CPU ではなくログインが無いため**である。
 
 → **新たな配備要件: agy を動かすホストは RDRAND 有効が必須**（一般的なクラウド VM・現行 CPU の
 多くは満たすが、この開発ホストは満たさない）。これは agy/Agent-Fleet 固有の欠陥ではなく FIPS
 ビルドの性質。**この開発ホストでは対話/認証/resume の実機確認まで到達できない**ため、以下は
 RDRAND 有効ホストで再 PoC する。
+
+🔴 **訂正（2026-09-07）: この配備要件は AF の製品要件としては解除した。** 素のまま動かすなら
+RDRAND は依然として必須だが、AF は該当ホストでマスクを当てて正式に対応する
+（下記「RDRAND 非提示ホストへの正式対応」）。「実機確認まで到達できない」も解消済み。
 
 ## 再 PoC 結果（2026-07-20、RDRAND 有効ホスト＝WSL2 / Ryzen 7 PRO 8840HS の Workspace コンテナ内）
 
@@ -174,6 +188,86 @@ logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で�
 対応は WireLive の dead 側 capture ＋ halt の `agents.GracefulStopper`（`/exit` 送出→猶予→kill）。
 この知見は本文「resume 単位 = 会話 UUID」の運用条件として上書きする。
 
+## RDRAND 非提示ホストへの正式対応（2026-09-07 決定）
+
+上の 🔴 訂正で「マスクを当てれば起動する」ことは判ったが、製品は依然として
+`internal/hostcaps` が agy 種別ごと隠していた。**手では動くのに製品からは使えない**という
+ねじれを、以下の測定に基づいて解消する。
+
+### 何が壊れているのかの測定（本開発ホスト）
+
+「RDRAND が無い」は正確ではなかった。**命令はある。壊れている。**
+
+- `CPUID.1:ECX` bit30 は **RDRAND=1**（`__get_cpuid` で実測）。だから自前で CPU 検出をする
+  ライブラリ（BoringCrypto がそう）は命令に手を伸ばす。
+- その命令は **毎回 `0xffffffffffffffff` を返し、しかも成功（CF=1）を主張する**（5 回連続で
+  実測）。AMD の RDRAND errata そのもので、**カーネルが `/proc/cpuinfo` の flags から rdrand を
+  落としているのはこのため**（CPUID 側は触らない）。
+- `CRNGT` は連続乱数生成器テストで、直前と同じブロックを弾く。定数を食わされれば初回で発火して
+  abort する。**自己テストは正しく仕事をしている**。壊れているのはエントロピー源のほうである。
+
+→ したがってマスクは「FIPS 経路を外す」というより、**カーネルが他の全消費者に対して既に下して
+いる判断（この命令は信用できない）を OpenSSL の検出にも伝える**行為である。乱数はカーネルの
+CSPRNG から来るので、定数を掴まされるより質は上がる。
+
+### 決定
+
+**カーネルが RDRAND を取り下げた x86 ホストに限り、agy の全子プロセスに
+`OPENSSL_ia32cap=~0x4000000000000000` を当てて正式に対応する。**
+
+- **自己限定的**: `/proc/cpuinfo` に rdrand があるホストにマスクは当たらない。よって **今 agy が
+  動いているどのデプロイも挙動は変わらない**。マスクが変えるのは「動かない」を「動く」にする
+  ところだけである。
+- **黙ってはやらない**: Agent のログに 1 行残し、`GET /connections` の agy に
+  `rdrand_masked: true` を載せ、Console の agy カードが「乱数は FIPS ビルドのハードウェア源では
+  なくカーネル由来」と表示する。
+- **拒否できる**: FIPS モジュール自身のエントロピー経路が要件であるテナントは
+  `AF_AGY_RDRAND_MASK=0` を置く。マスクは当たらず、種別は従来どおり `reason="no_rdrand"` で
+  隠れる。**ただしその要件を持つデプロイがこのホスト級に居るべきかは別問題**である。ここは
+  FIPS の乱数源が壊れている機械であって、マスクの有無で FIPS になったりならなかったりする
+  機械ではない。
+- **「効く」は仮定せず測る**: hostcaps はマスクが要るホストで一度だけ `agy --version` を
+  マスク付きで走らせ（約 0.2 秒・プロセス寿命でキャッシュ）、**成功したときだけ**
+  supported=true にする。将来 agy が別経路で命令に触れるようになったら、ユーザーの前で落ちる
+  のではなく種別が再び隠れる。
+
+### 実装（マスクを配る全経路）
+
+一箇所（`internal/hostcaps.AgyRDRANDMask`）で組み立て、`internal/agents/agy/fips.go` を経由して
+配る。**取りこぼしは劣化ではなく SIGABRT** なので、経路の網羅がそのまま要件になる。
+
+| 経路 | 渡し方 |
+|------|--------|
+| ログイン flow（`auth.go`）／`/usage`・`/context` スクレイプ／`agy models` | `cmd.Env` |
+| tmux ペイン（`agy.go` の `BuildLaunch`） | `LaunchPlan.Env` → `tmux new-session -e`。プログラム文字列には前置しない（cmdline に載るうえ、`AGENT_AGY_CMD` 上書きで落ちる） |
+| アシスタントチャットの `-p` と one-shot（`chatx/chat_providers.go`） | `cmd.Env` |
+| 画像生成 provider（`internal/imagegen/agy.go`・[0069](0069-image-generation-providers.ja.md)） | `cmd.Env`（隔離 HOME と同時。当初は自前の定数だったが、この決定を受けて seam に寄せた） |
+| ツール版プローブ（`env_tool_versions.go`） | `toolSpec.Env` |
+| entrypoint の `agy_effective_version`／イメージビルドの `--version` 検証 | 呼び出し単位の env（export しない） |
+
+### 実機確認（本開発ホスト・マスク適用後）
+
+- `agy --version` → 1.1.27、`agy models` → 実カタログ 14 件。
+- `TestDriftAgyModelsCatalog`（`drift` タグ）が **製品コードの `agy.Models()` 経由で通る**。
+- `TestDriftAgyPaneMode`（同）が **default / plan の両方で実 tmux ペインに実 agy を起動して
+  通る** ＝ セッションが本当に立つ。
+- 陰性対照: `AF_AGY_RDRAND_MASK=0` を置くと `BuildLaunch` が `no_rdrand` で拒否に戻る。
+- ツール版行が `(取得失敗)` から `1.1.27` になった。副産物として **entrypoint がピン（1.1.26）と
+  実体（1.1.27）の食い違いを見られるようになった** — このホストでは marker に落ちていたため、
+  自己更新のドリフトがそもそも見えていなかった。
+
+### 残ること
+
+- **shell ペインで人が手打ちする `agy` は依然 abort する。** 製品の spawn 経路だけを覆う判断で
+  あり、ログインシェルにマスクを export するのは agy 以外の全プロセスに及ぶので採らなかった。
+- ~~agy の MCP 設定は他種別のような drift テストを持たない~~ → **足した**
+  （`TestDriftAgyMatchesMCPAdd`。「このホストでは agy が起動しないから」という唯一の理由が
+  消えたため）。書いた副産物として 1 つ判っている: **`agy mcp add` は http サーバを
+  `serverUrl` と綴るが、AF は `url` と綴っている**。現状はどちらも読まれる（実測）ので AF は
+  **別名に依存している**状態で、別名が落ちれば AF が登録した remote MCP サーバは**どこにも
+  エラーを出さずに消える** — 実測すると `afdriftremote  stdio  enabled` とコマンド空欄の行に
+  なるだけである。テストはその両方（CLI 側の綴り／AF の綴りが読まれること）を押さえる。
+
 ## 未解決（残り）
 
 - **GCP プロジェクト経路の per-user ログイン**手順（`gcloud` 連携要否、env で渡す資格の形。
@@ -190,7 +284,8 @@ logout・認証フロー・`/usage` 4 バー・RDRAND 非露出）を実機で�
 実装は codex 追加の轍（launch 分岐＋`agy_auth.go` device-auth 流用＋CP プロキシ＋Console パネル）に
 乗り、構造差分はイメージ導入が npm でなく `install.sh` の 1 点のみ。**PoC でインストールは確認済
 だが、agy の FIPS ビルドが RDRAND を必須とし本開発ホストでは起動不可**（上記）。配備ドキュメント
-に RDRAND 要件を明記。**2026-07-20 追記: RDRAND 有効ホストでの再 PoC 完了**（上記「再 PoC 結果」
+に RDRAND 要件を明記（**2026-09-07 に解除** — 上記「RDRAND 非提示ホストへの正式対応」）。
+**2026-07-20 追記: RDRAND 有効ホストでの再 PoC 完了**（上記「再 PoC 結果」
 — 起動・OAuth 認証・`-p` 非対話まで実機確認済）。**次アクション=残り未解決（GCP 経路・logout・
 resume 単位）を潰しつつ段階実装**。
 

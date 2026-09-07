@@ -354,6 +354,9 @@ func registerSessionRoutes(mux *http.ServeMux, cfg config) {
 	// Keep-awake pin (docs/log/75) — shields the session and the Workspace from idle
 	// auto-stop for a bounded time.
 	mux.HandleFunc("POST /api/sessions/{name}/keep-awake", rest)
+	// Stop-after-turn arm (docs/log/85) — fold this session away once the turn it is
+	// running ends. The pin's mirror image, and proxied the same way.
+	mux.HandleFunc("POST /api/sessions/{name}/stop-after-turn", rest)
 	// Read and live-update a managed session's ThreadSettings (docs/log/27 P2 §9.4-3) —
 	// proxied verbatim.
 	mux.HandleFunc("GET /api/sessions/{name}/settings", rest)

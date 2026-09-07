@@ -286,7 +286,18 @@ type Schedule struct {
 	// Report opts a fire into the docs/log/30 completion report: true passes OwnerConv as the
 	// session's report_to so the result comes back to the operator/assistant conversation.
 	// Default false = fire silently (run history / failure notifications still surface).
-	Report               bool
+	Report bool
+	// StopAfterRun folds the fire's session away once it has finished the prompt
+	// (docs/log/85): the Agent is armed to stop the session at the end of that turn, after
+	// any report it owes has gone out. Default false = leave it running, which is the
+	// behaviour every existing schedule was written against.
+	//
+	// What it saves is memory, not money: an unattended fire otherwise leaves its session
+	// alive for the rest of the night, holding a CLI process on a shared host. It does NOT
+	// bring the workspace's own stop forward — a finished session is idle, and idle was
+	// never what kept the workspace awake (holdsWorkspace is machineBusy only). Ignored in
+	// session_mode=assistant, which drives a conversation and never holds a session.
+	StopAfterRun         bool
 	Enabled              bool
 	NextRun, LastRun     string
 	LastStatus           string

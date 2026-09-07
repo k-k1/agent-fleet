@@ -70,12 +70,17 @@
     opacity: 0;
   }
 }
+/* A fenced block follows the document size, so the file viewer's font-size setting carries
+   into the code and not only the prose around it. Written against --viewer-size rather than
+   as an em (which is what inline code can afford, mdlinks.css): an em would also re-size the
+   blocks in the mirror and the assistant chat, whose prose sits on --chat-size instead. The
+   fallback holds those at 12px (14 * 0.86). */
 .markdown pre code {
   background: none;
   border: none;
   padding: 0;
   margin: 0;
-  font-size: 12px;
+  font-size: calc(var(--viewer-size, 14px) * 0.86);
   line-height: 1.55;
 }
 .markdown blockquote {

@@ -443,7 +443,14 @@ func newEngineController(eng *engineECS, keys engineSettings, warmup func(contex
 // must not be left to a caller: an engine this controller starts and stops is exactly the
 // engine whose readiness has to wait for a warm-up, and a gate somebody forgot to attach
 // fails silently — it just reads ready too early, once, per start.
-func newTTSController(eng *engineECS, vv *voicevoxProvider, demand *engineDemand, settings store.SettingsStore, audit engineAuditor, cfg engineControlCfg) *engineController {
+//
+// speakers may be nil. When it is not, the transition to warm is also where the character
+// catalogue is captured (ADR 0070 decision 12): doing it only from the /speakers handler
+// would mean a deployment where nobody opens the settings screen during the engine's half
+// hour of life never stores one at all, and then the picker is empty for the rest of that
+// deployment's life. The closure below runs the capture exactly where the ttsController's own
+// maintainWarm used to — after a successful warm-up synthesis, i.e. once per start.
+func newTTSController(eng *engineECS, vv *voicevoxProvider, demand *engineDemand, settings store.SettingsStore, audit engineAuditor, speakers *ttsSpeakerCache, cfg engineControlCfg) *engineController {
 	c := newEngineController(eng, ttsEngineSettings(), func(ctx context.Context, alreadyWarm bool) bool {
 		if !voicevoxReady(ctx, vv.base) {
 			return false
@@ -454,6 +461,11 @@ func newTTSController(eng *engineECS, vv *voicevoxProvider, demand *engineDemand
 		if _, aerr := voicevoxSynthesize(ctx, vv.base, ttsWarmupText, "", 0, false); aerr != nil {
 			log.Printf("tts: warm-up synthesis failed: %s", aerr.message)
 			return false
+		}
+		if speakers != nil {
+			if _, aerr := speakers.refresh(ctx, vv.base); aerr != nil {
+				log.Printf("tts: refreshing the character catalogue failed: %s", aerr.message)
+			}
 		}
 		return true
 	}, demand, settings, audit, cfg)

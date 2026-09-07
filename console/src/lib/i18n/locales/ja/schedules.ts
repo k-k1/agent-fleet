@@ -54,6 +54,8 @@ export const schedules = {
   "sched.f_model_ph": "既定",
   "sched.f_report": "アシスタントに報告",
   "sched.f_report_hint": "完了報告を登録元の会話に届ける（既定: しない）",
+  "sched.f_stop_after_run": "終わったら停止",
+  "sched.f_stop_after_run_hint": "実行が終わったらセッションを停止する（報告のあと・再開できます。既定: しない）",
   "sched.f_prompt": "プロンプト",
   "sched.f_session_mode": "セッションモード",
   "sched.f_reuse_target": "再利用ターゲット",

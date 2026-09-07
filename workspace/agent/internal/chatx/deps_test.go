@@ -170,6 +170,7 @@ func testDeps() Deps {
 			return full, rel, true
 		},
 		MaybePushOperatorReply: func(string, string) {},
+		StopArmedSession:       func(string) error { return nil },
 		RateLimitState:         func(string) (string, string, bool) { return "", "", false },
 	}
 }

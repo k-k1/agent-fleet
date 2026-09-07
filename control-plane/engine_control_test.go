@@ -299,6 +299,23 @@ func TestTTSSynthesizeRecordsDemand(t *testing.T) {
 	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v == "" {
 		t.Error("an auto request in Japanese should have recorded demand")
 	}
+
+	// The pin is not the configured provider (ADR 0070 decision 13 read through
+	// decision 3). A client reading an answer that Polly started keeps sending
+	// pin:"polly" until the end, and every one of those sentences still wanted the
+	// engine — express the pin as provider:"polly" instead and the rest of a six-minute
+	// answer stops counting, which is exactly how the idle window closes on somebody who
+	// is still listening.
+	if err := st.SetSetting(t.Context(), ttsEngineSettings().demandAt, ""); err != nil {
+		t.Fatalf("clear demand: %v", err)
+	}
+	mux2 := http.NewServeMux() // a fresh registration, so the write throttle starts clean
+	registerTTSRoutes(mux2, config{voicevoxURL: srv.URL, mgr: &manager{store: st}})
+	mux2.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("POST", "/api/tts/synthesize",
+		strings.NewReader(`{"text":"続きも聞いています。","provider":"auto","pin":"polly"}`)))
+	if v, _ := st.GetSetting(t.Context(), ttsEngineSettings().demandAt); v == "" {
+		t.Error("a request pinned to polly by an auto client recorded no demand; the pinned remainder of an answer must keep counting")
+	}
 }
 
 // fakeTTSAudit records what the controller wrote to the ledger.
@@ -336,7 +353,7 @@ func TestTTSControllerTick(t *testing.T) {
 	demand := newEngineDemand(st, ttsEngineSettings().demandAt, 5*time.Minute)
 	demand.now = func() time.Time { return now }
 	audit := &fakeTTSAudit{}
-	c := newTTSController(eng, vv, demand, st, audit, testControlCfg())
+	c := newTTSController(eng, vv, demand, st, audit, nil, testControlCfg())
 	c.now = func() time.Time { return now }
 
 	// Nothing stored yet: the first pass stamps and decides nothing.
@@ -400,7 +417,7 @@ func TestTTSControllerReplacement(t *testing.T) {
 	demand.record(t.Context(), 100)
 	audit := &fakeTTSAudit{}
 	srv, _ := fakeVoicevox(t)
-	c := newTTSController(eng, &voicevoxProvider{base: srv.URL}, demand, st, audit, testControlCfg())
+	c := newTTSController(eng, &voicevoxProvider{base: srv.URL}, demand, st, audit, nil, testControlCfg())
 	c.now = func() time.Time { return now }
 
 	c.tick(t.Context()) // sees it running, warms it
@@ -453,7 +470,7 @@ func TestTTSControllerStartDeadline(t *testing.T) {
 	demand.now = func() time.Time { return now }
 	demand.record(t.Context(), 5000)
 	audit := &fakeTTSAudit{}
-	c := newTTSController(eng, &voicevoxProvider{base: "http://127.0.0.1:1"}, demand, st, audit, testControlCfg())
+	c := newTTSController(eng, &voicevoxProvider{base: "http://127.0.0.1:1"}, demand, st, audit, nil, testControlCfg())
 	c.now = func() time.Time { return now }
 
 	c.tick(t.Context())

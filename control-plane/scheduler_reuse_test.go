@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -186,6 +188,14 @@ type fakeAgent struct {
 	archived  []string
 	created   int
 	startedAt []string
+	// calls is the ORDER of the write calls the fire made ("input", "stop-after-turn", …).
+	// The stop-after-run arm is only correct after the send, so the sequence is the
+	// assertion, not the presence (docs/log/85).
+	calls []string
+	// createBody is the last POST /sessions body, so a test can read the create-time flags.
+	createBody []byte
+	// arms records the stop-after-turn calls as "<session>:<body>" (docs/log/85).
+	arms []string
 	// unready names report alive-but-not-input-ready on /status (a booting/zombie pane),
 	// so awaitSessionReady never clears for them — models the sbk7oej silent-drop.
 	unready map[string]bool
@@ -216,10 +226,17 @@ func (a *fakeAgent) handler() http.Handler {
 			_ = json.NewEncoder(w).Encode(map[string]any{"alive": alive, "ready": ready})
 		case r.Method == http.MethodPost && p == "/sessions":
 			a.created++
+			a.createBody, _ = io.ReadAll(r.Body)
+			a.calls = append(a.calls, "create")
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"name": a.newName})
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/input"):
 			a.inputs = append(a.inputs, sessionSeg(p))
+			a.calls = append(a.calls, "input")
+		case r.Method == http.MethodPost && strings.HasSuffix(p, "/stop-after-turn"):
+			a.calls = append(a.calls, "stop-after-turn")
+			body, _ := io.ReadAll(r.Body)
+			a.arms = append(a.arms, sessionSeg(p)+":"+strings.TrimSpace(string(body)))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/archive"):
 			a.archived = append(a.archived, sessionSeg(p))
 		case r.Method == http.MethodPost && strings.HasSuffix(p, "/start"):
@@ -437,5 +454,69 @@ func TestFireReuseUnreadyTargetErrorsNotSilentFire(t *testing.T) {
 	got, _, _ := st.GetSchedule(ctx, "sch_zomb")
 	if got.ReuseRunCount != 0 {
 		t.Errorf("run count advanced on a swallowed send: %d, want 0", got.ReuseRunCount)
+	}
+}
+
+// TestFireReuseArmsStopAfterTheSend pins the ORDER, which is the whole correctness of the
+// option on the reuse path: a prompt delivered to an armed session releases the arm, so
+// arming before the send would cancel the very stop the schedule asked for.
+func TestFireReuseArmsStopAfterTheSend(t *testing.T) {
+	a := &fakeAgent{sessions: []sessionWire{{Name: "nightly", Alive: true, State: "idle"}}}
+	sch := store.Schedule{
+		ID: "sch_stop", SessionMode: "reuse", ReuseTarget: "nightly",
+		Prompt: "run the nightly checks", StopAfterRun: true,
+	}
+	f, res, _, ctx := newReuseFixture(t, a, sch)
+
+	if status, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC()); err != nil || status != "fired" {
+		t.Fatalf("status=%q err=%v, want fired/nil", status, err)
+	}
+	if want := []string{"input", "stop-after-turn"}; !reflect.DeepEqual(a.calls, want) {
+		t.Fatalf("call order = %v, want %v (arming before the send would cancel itself)", a.calls, want)
+	}
+	if len(a.arms) != 1 || a.arms[0] != `nightly:{"on":true}` {
+		t.Fatalf("arm = %v, want [nightly:{\"on\":true}]", a.arms)
+	}
+}
+
+// A schedule without the option must not touch the arm at all — the default is the
+// behaviour every schedule written before it was created against.
+func TestFireReuseWithoutStopAfterRunDoesNotArm(t *testing.T) {
+	a := &fakeAgent{sessions: []sessionWire{{Name: "nightly", Alive: true, State: "idle"}}}
+	sch := store.Schedule{ID: "sch_plain", SessionMode: "reuse", ReuseTarget: "nightly", Prompt: "go"}
+	f, res, _, ctx := newReuseFixture(t, a, sch)
+
+	if _, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC()); err != nil {
+		t.Fatalf("fire: %v", err)
+	}
+	if len(a.arms) != 0 {
+		t.Fatalf("armed without stop_after_run: %v", a.arms)
+	}
+}
+
+// The create path carries the arm in the create body instead: it has to be on disk before
+// the Agent delivers initial_prompt, and a POST that follows the create would race it.
+func TestFireReuseCreateCarriesStopAfterRun(t *testing.T) {
+	a := &fakeAgent{sessions: nil, newName: "fresh-9"}
+	sch := store.Schedule{
+		ID: "sch_stop_create", SessionMode: "reuse", ReuseTarget: "gone",
+		MissingTargetPolicy: "recreate", Prompt: "go", StopAfterRun: true,
+	}
+	f, res, _, ctx := newReuseFixture(t, a, sch)
+
+	if _, _, err := f.fireReuse(ctx, res, sch, time.Now().UTC()); err != nil {
+		t.Fatalf("fire: %v", err)
+	}
+	var body struct {
+		StopAfterTurn bool `json:"stop_after_turn"`
+	}
+	if err := json.Unmarshal(a.createBody, &body); err != nil {
+		t.Fatalf("create body %s: %v", a.createBody, err)
+	}
+	if !body.StopAfterTurn {
+		t.Fatalf("create body did not carry the arm: %s", a.createBody)
+	}
+	if len(a.arms) != 0 {
+		t.Fatalf("create path must not ALSO post the arm (it would race the delivery): %v", a.arms)
 	}
 }

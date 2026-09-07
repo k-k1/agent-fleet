@@ -82,6 +82,7 @@ var sessionWireBinding = map[string]string{
 	"ExitCode":             "exitCode",
 	"ExitSignal":           "exitSignal",
 	"KeepAwakeUntil":       "keepAwakeUntil",
+	"StopAfterTurnAt":      "stopAfterTurnAt",
 	"Carried":              "carried",
 }
 
@@ -131,7 +132,7 @@ func sessionContractFamily() contractFamily {
 			"path", "dir", "subdir", "remoteUrl", "state", "alive", "resumable", "backgroundBusy",
 			"backgroundBusyReason", "rateLimitResumeAt", "createdAt", "model", "context", "branch",
 			"currentBranch", "branchDrift", "worktree", "exitReason", "exitCode", "exitSignal",
-			"carried", "locked", "keepAwakeUntil"),
+			"carried", "locked", "keepAwakeUntil", "stopAfterTurnAt"),
 		tsOnly: consoleOnlyExempt,
 		goOnly: goOnlyExempt,
 	}

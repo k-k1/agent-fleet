@@ -164,6 +164,7 @@ internal/sessionx/session_marks.go HandleSessionMarks x2 {mark}
 internal/sessionx/session_paste.go SavePastedImageTo x1 {name,path}
 internal/sessionx/session_skills.go HandleSessionSkills x2 {skills}
 internal/sessionx/session_ssm.go HandleStartSession x1 {ok}
+internal/sessionx/session_stop_after_turn.go HandleSessionStopAfterTurn x1 {name,stopAfterTurnAt}
 internal/sessionx/session_suggest_reply.go HandleSuggestReplies x1 {suggestions}
 internal/sessionx/session_title.go HandleSessionSuggestBranch x1 {branch}
 internal/sessionx/session_title.go HandleSuggestTitle x1 {suggestedTitle}

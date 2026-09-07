@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -20,7 +21,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
 
-func TestChooseImageProvider(t *testing.T) {
+func TestChooseImageProviders(t *testing.T) {
 	caps := func(id string) Caps {
 		switch id {
 		case "codex":
@@ -32,31 +33,65 @@ func TestChooseImageProvider(t *testing.T) {
 	}
 	order := []string{"codex", "bedrock"}
 	for _, tc := range []struct {
-		name, pref, want string
-		op               Op
-		ready            map[string]bool
+		name, pref string
+		op         Op
+		ready      map[string]bool
+		want       []string
 	}{
-		{name: "auto takes the first ready one that can do it", op: OpGenerate,
-			ready: map[string]bool{"codex": true, "bedrock": true}, want: "codex"},
-		{name: "auto walks past an unready provider", op: OpGenerate,
-			ready: map[string]bool{"bedrock": true}, want: "bedrock"},
-		{name: "auto walks past one that cannot do the op", op: OpInpaint,
-			ready: map[string]bool{"codex": true, "bedrock": true}, want: "bedrock"},
+		// auto returns EVERY usable provider in order, not just the first: readiness is
+		// checked before the call and exhaustion only shows up during it.
+		{name: "auto lists every ready, capable provider", op: OpGenerate,
+			ready: map[string]bool{"codex": true, "bedrock": true}, want: []string{"codex", "bedrock"}},
+		{name: "auto skips an unready provider", op: OpGenerate,
+			ready: map[string]bool{"bedrock": true}, want: []string{"bedrock"}},
+		{name: "auto skips one that cannot do the op", op: OpInpaint,
+			ready: map[string]bool{"codex": true, "bedrock": true}, want: []string{"bedrock"}},
 		{name: "nothing can serve it", op: OpUpscale,
-			ready: map[string]bool{"codex": true, "bedrock": true}, want: ""},
+			ready: map[string]bool{"codex": true, "bedrock": true}},
 		{name: "empty pref means auto", pref: "", op: OpGenerate,
-			ready: map[string]bool{"codex": true}, want: "codex"},
-		// An explicit choice is honoured even when unready: that provider's own error is a
-		// better answer than silently billing a different account for the picture.
+			ready: map[string]bool{"codex": true}, want: []string{"codex"}},
+		// An explicit choice is honoured even when unready, and NEVER falls through to
+		// another: silently billing a different account for the picture is the failure this
+		// prevents.
 		{name: "an explicit choice is honoured while unready", pref: "bedrock", op: OpGenerate,
-			ready: map[string]bool{"codex": true}, want: "bedrock"},
-		{name: "an explicit choice is honoured for an op it cannot do", pref: "codex", op: OpInpaint,
-			ready: map[string]bool{"codex": true, "bedrock": true}, want: "codex"},
+			ready: map[string]bool{"codex": true}, want: []string{"bedrock"}},
+		{name: "an explicit choice never falls through", pref: "codex", op: OpGenerate,
+			ready: map[string]bool{"codex": true, "bedrock": true}, want: []string{"codex"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := chooseImageProvider(tc.pref, Request{Op: tc.op}, order, tc.ready, caps)
-			if got != tc.want {
-				t.Fatalf("chooseImageProvider = %q, want %q", got, tc.want)
+			got := chooseImageProviders(tc.pref, Request{Op: tc.op}, order, tc.ready, caps)
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("chooseImageProviders = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The stored preference is normalized into a TOTAL order. A list written before a provider
+// existed must still rank it, or adding a provider would make it unreachable until the user
+// happened to re-save their settings.
+func TestEffectiveOrder(t *testing.T) {
+	oldOrder, oldPref := providerOrder, ProviderOrderPref
+	providerOrder = []string{"codex", "bedrock", "sd"}
+	t.Cleanup(func() { providerOrder, ProviderOrderPref = oldOrder, oldPref })
+
+	for _, tc := range []struct {
+		name string
+		pref []string
+		want []string
+	}{
+		{name: "no preference at all", want: []string{"codex", "bedrock", "sd"}},
+		{name: "a full reordering", pref: []string{"sd", "bedrock", "codex"}, want: []string{"sd", "bedrock", "codex"}},
+		// The two that matter: a partial list still ranks the rest, and junk cannot make a
+		// provider vanish.
+		{name: "a partial list appends the rest", pref: []string{"sd"}, want: []string{"sd", "codex", "bedrock"}},
+		{name: "unknown ids and dupes are dropped", pref: []string{"nope", "sd", "sd", ""},
+			want: []string{"sd", "codex", "bedrock"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ProviderOrderPref = func() []string { return tc.pref }
+			if got := effectiveOrder(); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("effectiveOrder = %v, want %v", got, tc.want)
 			}
 		})
 	}
@@ -65,16 +100,29 @@ func TestChooseImageProvider(t *testing.T) {
 // What a provider could not honour is reported, never hidden (ADR 0069 decision 7).
 func TestRequestWarnings(t *testing.T) {
 	res := Result{Images: []Image{{Width: 1254, Height: 1254}}}
-	got := requestWarnings(Request{Size: "1024x1024", Count: 1}, res)
+	none := Caps{}
+	got := requestWarnings(Request{Size: "1024x1024", Count: 1}, res, none)
 	if len(got) != 1 || got[0] != "size=1024x1024 requested, 1254x1254 produced" {
 		t.Fatalf("warnings = %v", got)
 	}
-	if got := requestWarnings(Request{Size: "auto", Count: 2}, res); len(got) != 1 ||
+	if got := requestWarnings(Request{Size: "auto", Count: 2}, res, none); len(got) != 1 ||
 		got[0] != "count=2 requested, 1 produced" {
 		t.Fatalf("warnings = %v, want the count one only", got)
 	}
-	if got := requestWarnings(Request{Size: "1254x1254", Count: 1}, res); len(got) != 0 {
+	if got := requestWarnings(Request{Size: "1254x1254", Count: 1}, res, none); len(got) != 0 {
 		t.Fatalf("warnings = %v, want none when the request was honoured", got)
+	}
+	// An aspect ratio asked of a route that has none is invisible in the produced dimensions —
+	// nothing else would ever tell the caller it was dropped.
+	if got := requestWarnings(Request{AspectRatio: "16:9", Count: 1}, res, none); len(got) != 1 ||
+		got[0] != "aspect_ratio=16:9 requested, but this route cannot choose an aspect ratio" {
+		t.Fatalf("warnings = %v, want the aspect-ratio one", got)
+	}
+	// ...and a route that DOES offer ratios says for itself what it did with one, so the core
+	// must stay quiet rather than warn twice.
+	withRatios := Caps{AspectRatios: []string{"1:1", "16:9"}}
+	if got := requestWarnings(Request{AspectRatio: "16:9", Count: 1}, res, withRatios); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from the core", got)
 	}
 }
 
@@ -307,24 +355,144 @@ func TestSweepGeneratedDropsOnlyExpired(t *testing.T) {
 // --- the core ------------------------------------------------------------------------------
 
 type stubProvider struct {
-	id  string
-	res Result
-	err error
+	id       string
+	res      Result
+	err      error
+	notReady bool
+	calls    *[]string
+	// caps overrides the default generate-only capability, for the tests that are about what a
+	// provider ADVERTISES rather than what it produces.
+	caps *Caps
 }
 
-func (s stubProvider) ID() string                 { return s.id }
-func (s stubProvider) Caps(string) Caps           { return Caps{Ops: []Op{OpGenerate}} }
-func (s stubProvider) Ready(context.Context) bool { return true }
+func (s stubProvider) ID() string { return s.id }
+func (s stubProvider) Caps(string) Caps {
+	if s.caps != nil {
+		return *s.caps
+	}
+	return Caps{Ops: []Op{OpGenerate}}
+}
+func (s stubProvider) Ready(context.Context) bool { return !s.notReady }
 func (s stubProvider) Generate(context.Context, Request) (Result, error) {
+	if s.calls != nil {
+		*s.calls = append(*s.calls, s.id)
+	}
 	return s.res, s.err
 }
 
-func withStubProvider(t *testing.T, p Provider) {
+func withStubProvider(t *testing.T, ps ...Provider) {
 	t.Helper()
-	oldProviders, oldOrder := Providers, providerOrder
-	Providers = func() []Provider { return []Provider{p} }
-	providerOrder = []string{p.ID()}
-	t.Cleanup(func() { Providers, providerOrder = oldProviders, oldOrder })
+	oldProviders, oldOrder, oldPref := Providers, providerOrder, ProviderOrderPref
+	order := make([]string, 0, len(ps))
+	for _, p := range ps {
+		order = append(order, p.ID())
+	}
+	Providers = func() []Provider { return ps }
+	providerOrder = order
+	ProviderOrderPref = nil
+	t.Cleanup(func() { Providers, providerOrder, ProviderOrderPref = oldProviders, oldOrder, oldPref })
+}
+
+// The case the whole ordering exists for: the first provider says it is ready and then fails
+// anyway (the plan ran out between the check and the call). auto moves on, and BOTH attempts
+// are in the ledger — the failed one burned tokens and hiding it would understate the cost.
+func TestRunFallsThroughToTheNextProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	var calls []string
+	withStubProvider(t,
+		stubProvider{id: ProviderCodex, calls: &calls,
+			res: Result{Provider: ProviderCodex, Usage: Usage{In: 40, Measured: true}},
+			err: errors.New("out of quota")},
+		stubProvider{id: "sd", calls: &calls, res: Result{Provider: "sd",
+			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png", Width: 4, Height: 4}}}},
+	)
+
+	out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Provider != "sd" {
+		t.Fatalf("provider = %q, want the fallback to have produced it", out.Provider)
+	}
+	if want := []string{ProviderCodex, "sd"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want %v", calls, want)
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 2 || rows[0].OK || !rows[1].OK {
+		t.Fatalf("ledger rows = %+v, want a failed codex row then a successful sd row", rows)
+	}
+	if rows[0].Kind != "codex" || rows[0].In != 40 {
+		t.Fatalf("the failed attempt was not recorded honestly: %+v", rows[0])
+	}
+}
+
+// An explicit choice must never be quietly served by someone else — that is a different
+// account being billed for the picture.
+func TestRunDoesNotFallThroughOnAnExplicitChoice(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	var calls []string
+	withStubProvider(t,
+		stubProvider{id: ProviderCodex, calls: &calls, res: Result{Provider: ProviderCodex},
+			err: errors.New("out of quota")},
+		stubProvider{id: "sd", calls: &calls, res: Result{Provider: "sd",
+			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}},
+	)
+
+	if _, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1", Pref: ProviderCodex,
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}}); err == nil {
+		t.Fatal("an explicit codex request was served by another provider")
+	}
+	if want := []string{ProviderCodex}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want only the named provider", calls)
+	}
+}
+
+// When everything fails the caller gets EVERY reason: "codex is out of quota, and the local
+// engine is not running" is actionable in a way that either half alone is not.
+func TestRunReportsEveryFailedAttempt(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	withStubProvider(t,
+		stubProvider{id: ProviderCodex, res: Result{Provider: ProviderCodex}, err: errors.New("out of quota")},
+		stubProvider{id: "sd", res: Result{Provider: "sd"}, err: errors.New("engine not running")},
+	)
+	_, err := Run(context.Background(), Job{Session: "slot01", SID: "s",
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}})
+	if err == nil {
+		t.Fatal("every provider failed and Run reported success")
+	}
+	for _, want := range []string{"out of quota", "engine not running", "codex", "sd"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("err = %v, want it to mention %q", err, want)
+		}
+	}
+}
+
+// A provider that is not ready is never called at all — that is what keeps auto off a route
+// whose plan is already exhausted.
+func TestRunSkipsAnUnreadyProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	var calls []string
+	withStubProvider(t,
+		stubProvider{id: ProviderCodex, calls: &calls, notReady: true},
+		stubProvider{id: "sd", calls: &calls, res: Result{Provider: "sd",
+			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png"}}}},
+	)
+	if _, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}}); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"sd"}; !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %v, want the unready provider skipped entirely", calls)
+	}
 }
 
 // The ledger row for one generation (ADR 0069 decision 9): images and pixels counted, the
@@ -389,6 +557,28 @@ func TestRunRecordsFailedGeneration(t *testing.T) {
 	rows := usagex.ReadRows()
 	if len(rows) != 1 || rows[0].OK || rows[0].In != 40 {
 		t.Fatalf("rows = %+v, want one ok:false row with the tokens it burned", rows)
+	}
+}
+
+// A request refused before the provider did any work still leaves a row, and that row must
+// still say WHICH route was going to run it — the provider never stamped its id on a Result
+// it did not produce, so the kind column came out empty until Run passed its own choice in.
+func TestRunRecordsTheChosenProviderOnAnEarlyRefusal(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	withStubProvider(t, stubProvider{id: ProviderCodex, err: errors.New("a mask needs a provider that inpaints")})
+
+	if _, err := Run(context.Background(), Job{Session: "slot01", SID: "s",
+		Request: Request{Op: OpGenerate, Prompt: "a cat", Mask: "/tmp/m.png"}}); err == nil {
+		t.Fatal("the refusal was reported as a success")
+	}
+	rows := usagex.ReadRows()
+	if len(rows) != 1 {
+		t.Fatalf("ledger rows = %d, want 1", len(rows))
+	}
+	if rows[0].Kind != "codex" {
+		t.Fatalf("kind = %q, want codex — an empty kind hides which plan the row belongs to", rows[0].Kind)
 	}
 }
 

@@ -86,3 +86,40 @@ describe("where clicking a session report leads", () => {
     expect(openChat).toHaveBeenCalledWith("c1");
   });
 });
+
+// A notification whose subject is the workspace has no session, and the CP sends target.id/kind
+// empty for it on purpose. Falling through to the session resolution answered a bare
+// opened=false, which the center turns into "that session is not in the current list" — a
+// warning about a session the notification never had. Seen by a member on 2026-09-07 after an
+// architecture change filed arch-residue.
+describe("a notification whose subject is not a session", () => {
+  const residue = (): FleetNotification => ({
+    seq: 2, id: "e2", kind: "arch-residue",
+    target: { type: "workspace", id: "" },
+    displayName: "",
+    payload: { from: "amd64", repos: ["demo/node_modules"], bins: [] },
+    createdAt: "2026-09-07T04:11:00Z", seen: false,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    useSessionsStore.setState({ sessions: [{ name: "s1", kind: "claude", alive: true }] });
+  });
+
+  it("says it had nowhere to go instead of looking like a session that vanished", async () => {
+    const r = await openNotificationTarget(residue(), false);
+    expect(r).toEqual({ opened: false, noDestination: true });
+    expect(openSessionChat).not.toHaveBeenCalled();
+    expect(openChat).not.toHaveBeenCalled();
+  });
+
+  // The distinction is the whole point: a session target that genuinely is not in the list must
+  // still produce the warning, so noDestination cannot simply be set whenever nothing opened.
+  it("a missing SESSION target is still reported as missing", async () => {
+    useSessionsStore.setState({ sessions: [] });
+    const r = await openNotificationTarget(
+      { ...residue(), kind: "answer-ready", target: { type: "session", id: "gone" } }, false);
+    expect(r.opened).toBe(false);
+    expect(r.noDestination).toBeUndefined();
+  });
+});

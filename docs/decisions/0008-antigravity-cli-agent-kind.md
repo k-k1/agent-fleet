@@ -97,13 +97,28 @@ Done in a throwaway container from the existing image rather than by building on
   Embedded R2514, bare metal, `detect-virt: none`) **does not advertise rdrand in
   `/proc/cpuinfo`** (suspected kernel mask or BIOS disable) → the self-test aborts.
   `seccomp=unconfined` makes no difference, and because it is a prebuilt binary there is no
-  switch to disable FIPS — **it cannot be worked around from user space**.
+  switch to disable FIPS.
+
+  🔴 **Correction (2026-09-07): it CAN be worked around from user space.** Masking the RDRAND
+  capability bit out of OpenSSL's CPU detection is enough —
+  `OPENSSL_ia32cap='~0x4000000000000000' agy --version` starts and prints `1.1.27` on this
+  same host, where the unmasked command still aborts. `GOFIPS=0` and `GODEBUG=fips140=off` do
+  nothing (both still abort), which is why the original conclusion looked right. The mask only
+  stops the hardware RNG being used; entropy then comes from the kernel as usual. This
+  unblocks running agy on this development host — it does NOT change the deployment
+  requirement below, which is about running agy as shipped rather than with a mask. (The
+  hands-on gap this note reopens is still real: `agy models` here answers "Please sign in", so
+  interaction/auth/resume remain unverified on this host for want of a login, not a CPU.)
 
 → **A new deployment requirement: a host running agy must have RDRAND enabled** (most cloud VMs
 and current CPUs do; this development host does not). This is not a defect specific to
 agy or Agent-Fleet; it is a property of FIPS builds. **On this development host we cannot reach
 hands-on verification of interaction, authentication or resume**, so the following was re-run on
 a host with RDRAND.
+
+🔴 **Correction (2026-09-07): as a requirement on Agent Fleet, this is lifted.** Running agy as
+shipped still needs RDRAND, but AF now supports such a host by applying the mask (see "Supporting
+hosts without RDRAND" below). The hands-on gap is closed too.
 
 ## Second PoC (2026-07-20, on an RDRAND-enabled host = a workspace container on WSL2 / Ryzen 7 PRO 8840HS)
 
@@ -209,6 +224,89 @@ graceful exit** (the Track D observation that "it writes on the first prompt" wa
 `agents.GracefulStopper` on halt (send `/exit`, wait, then kill). This finding overrides the body
 text above as the operating condition for "the resume unit is a conversation UUID".
 
+## Supporting hosts without RDRAND (decided 2026-09-07)
+
+The correction above established that agy starts once the mask is applied, but the product went
+on hiding the kind outright in `internal/hostcaps`. **It worked by hand and was unusable from the
+product** — that contradiction is resolved here, on the strength of the following measurements.
+
+### What is actually broken (measured on this development host)
+
+"No RDRAND" was not accurate. **The instruction is there. It is broken.**
+
+- `CPUID.1:ECX` bit 30 says **RDRAND=1** (measured with `__get_cpuid`). So a library doing its own
+  CPU detection — BoringCrypto among them — reaches for the instruction.
+- That instruction **returns `0xffffffffffffffff` every time, and claims success (CF=1)** (five
+  consecutive calls measured). It is the AMD RDRAND errata, and it is **why the kernel drops
+  rdrand from the flags in `/proc/cpuinfo`** while leaving CPUID alone.
+- `CRNGT` is the continuous RNG self-test, which rejects a block equal to the previous one. Fed a
+  constant it fires on the first call and the module aborts. **The self-test is doing its job**;
+  the broken part is the entropy source.
+
+→ So the mask is less "switching the FIPS path off" than **telling OpenSSL's detection what the
+kernel already tells every other consumer on this host: that instruction cannot be trusted**.
+Randomness then comes from the kernel CSPRNG, which is better than being handed a constant.
+
+### Decision
+
+**On x86 hosts whose kernel has withdrawn RDRAND, and only there, every agy child process runs
+with `OPENSSL_ia32cap=~0x4000000000000000`.**
+
+- **Self-limiting**: a host whose `/proc/cpuinfo` advertises rdrand never gets the mask, so **no
+  deployment where agy runs today changes behaviour**. All the mask changes is "does not run" into
+  "runs".
+- **Not silent**: one line in the Agent's log, `rdrand_masked: true` on the agy entry of
+  `GET /connections`, and the Console's agy card states that randomness comes from the kernel
+  rather than the FIPS build's hardware source.
+- **Refusable**: a tenant for whom the FIPS module's own entropy path is a requirement sets
+  `AF_AGY_RDRAND_MASK=0`; nothing is masked and the kind stays hidden with `reason="no_rdrand"` as
+  before. **Whether a deployment with that requirement belongs on a host of this class is a
+  separate question** — this is a machine whose FIPS entropy source is broken, not one that is
+  FIPS or not depending on the mask.
+- **"It works" is measured, not assumed**: on a host that needs the mask, hostcaps runs
+  `agy --version` behind it once (~0.2s, cached for the process lifetime) and reports
+  supported=true **only if that succeeds**. Should a future agy build reach the instruction by
+  another route, the kind goes back to being hidden instead of dying in front of the user.
+
+### Implementation (every path the mask has to reach)
+
+Built in one place (`internal/hostcaps.AgyRDRANDMask`) and distributed through
+`internal/agents/agy/fips.go`. **A missed path does not degrade, it SIGABRTs**, so covering all of
+them is the requirement itself.
+
+| Path | How it is passed |
+|------|------------------|
+| Login flow (`auth.go`), the `/usage` and `/context` scrapes, `agy models` | `cmd.Env` |
+| The tmux pane (`BuildLaunch` in `agy.go`) | `LaunchPlan.Env` → `tmux new-session -e`. Never a prefix on the program string: that lands in cmdline and is lost to an `AGENT_AGY_CMD` override |
+| The assistant chat's `-p` turns and one-shots (`chatx/chat_providers.go`) | `cmd.Env` |
+| The image-generation provider (`internal/imagegen/agy.go`, [0069](0069-image-generation-providers.md)) | `cmd.Env`, alongside its isolated HOME (it started with a local copy of the literal and was moved onto the seam by this decision) |
+| The tool-version probe (`env_tool_versions.go`) | `toolSpec.Env` |
+| entrypoint's `agy_effective_version` and the image build's `--version` check | per-invocation env (never exported) |
+
+### Verified on real hardware (this development host, with the mask)
+
+- `agy --version` → 1.1.27, `agy models` → a real 14-entry catalogue.
+- `TestDriftAgyModelsCatalog` (`drift` tag) passes **through the product's own `agy.Models()`**.
+- `TestDriftAgyPaneMode` (same) passes for **both default and plan mode, launching the real agy in
+  a real tmux pane** — i.e. a session genuinely comes up.
+- Negative control: with `AF_AGY_RDRAND_MASK=0`, `BuildLaunch` refuses again with `no_rdrand`.
+- The tool-version row went from `(取得失敗)` to `1.1.27`. As a side effect **entrypoint can now
+  see the disagreement between the pin (1.1.26) and the binary on disk (1.1.27)** — on this host it
+  fell back to the marker, so self-update drift was invisible in the first place.
+
+### What is left
+
+- **`agy` typed by hand in a shell pane still aborts.** The decision covers the product's spawn
+  paths; exporting the mask into the login shell would reach every process, not just agy.
+- ~~agy's MCP config has no drift test like the other kinds~~ → **it has one now**
+  (`TestDriftAgyMatchesMCPAdd`; the single reason it lacked one — "agy will not start on this
+  host" — is gone). Writing it turned one thing up: **`agy mcp add` spells an http server
+  `serverUrl` where af writes `url`**. Both are read today (measured), so af depends on an
+  ALIAS, and if that alias is ever dropped every remote MCP server af registers for agy
+  **disappears with no error anywhere** — measured, it becomes a row reading
+  `afdriftremote  stdio  enabled` with an empty command. The test pins both halves: the CLI's
+  own spelling, and that af's is still read.
+
 ## Open questions
 
 - **Per-user login for the GCP project route** (whether `gcloud` integration is needed, and the
@@ -228,7 +326,8 @@ implementation rides the rut of adding codex (a launch branch, an `agy_auth.go` 
 device-auth, a CP proxy, a Console panel), and the only structural difference is that the image
 brings it in with `install.sh` rather than npm. **The PoC confirmed installation, but agy's FIPS
 build requires RDRAND and will not start on this development host** (above). The deployment
-documentation must state the RDRAND requirement. **Added 2026-07-20: the second PoC on an
+documentation must state the RDRAND requirement (**lifted 2026-09-07** — see "Supporting hosts
+without RDRAND"). **Added 2026-07-20: the second PoC on an
 RDRAND-enabled host is complete** (see "Second PoC" — startup, OAuth authentication and
 non-interactive `-p` all verified on real hardware). **Next action = implement in stages while
 closing the remaining open questions (the GCP route, logout, the resume unit).**

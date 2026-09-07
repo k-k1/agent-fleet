@@ -60,6 +60,11 @@ type Request struct {
 	// silently resample to hit an exact size, because that would trade a real dependency for
 	// a promise the provider never made.
 	Size string
+	// AspectRatio is "<w>:<h>" or "auto" — a SEPARATE axis from Size, not a spelling of it.
+	// The agy route takes a ratio and has no size parameter at all, while the Codex route takes
+	// neither; folding one into the other would make a provider that honours the ratio look
+	// like one that ignores the size (ADR 0069 decision 5, per (provider, model) capability).
+	AspectRatio string
 	// Background is "auto" | "opaque" | "transparent". gpt-image-2 has no transparency at all.
 	Background string
 	Count      int
@@ -128,10 +133,15 @@ type Caps struct {
 	// Sizes is the exact sizes the caller may pick. EMPTY MEANS THE CALLER CANNOT PICK — on
 	// the Codex route the size is decided by the model and measured to ignore what was asked
 	// for, so an empty list is the honest answer, not a missing one.
-	Sizes       []string
-	Backgrounds []string
-	MaxCount    int
-	MaxInputs   int
+	Sizes []string
+	// AspectRatios is the exact ratios the caller may pick ("16:9"). Empty means the caller
+	// cannot pick, exactly as with Sizes — and the two are independent: the agy route has
+	// ratios and no sizes, the Codex route has neither. A ratio list stuffed into Sizes would
+	// advertise "16:9" as a dimension and be wrong in both directions.
+	AspectRatios []string
+	Backgrounds  []string
+	MaxCount     int
+	MaxInputs    int
 }
 
 func (c Caps) Supports(op Op) bool {
@@ -156,48 +166,95 @@ type Provider interface {
 // Provider ids. The id is the wire value the MCP surface and the ledger both carry.
 const (
 	ProviderCodex = "codex"
+	ProviderAgy   = "agy"
+	// ProviderSdcpp is the fleet's OWN engine (ADR 0071): stable-diffusion.cpp on a GPU this
+	// deployment pays for, reached through the Control Plane's engine gateway.
 	ProviderSdcpp = "sdcpp"
 )
 
-// providerOrder is what "auto" walks, best-supported first.
+// providerOrder is the BUILT-IN order "auto" walks. The first two entries are Tier-1 (ADR 0069
+// decision 3): each runs on a login the container already holds, and neither costs a new secret
+// or an egress allowlist entry. The third is the fleet's own hardware (ADR 0071), present only
+// in a deployment that stood an image engine up.
 //
-// sdcpp before codex, and the reason is whose account pays. The Codex route spends the
-// USER's ChatGPT plan quota — invisibly, three to five times faster than a text turn, which
-// is why the whole feature is off by default (ADR 0069 decision 8). A deployment that stands
-// up the image engine has already decided to pay for that hardware itself, and it also gets
-// edit and inpaint, which the Codex route cannot do at all. Naming `codex` explicitly still
-// picks it: an explicit choice is honoured even when auto would not have made it.
-var providerOrder = []string{ProviderSdcpp, ProviderCodex}
+// sdcpp is first where it exists, and the reason is whose account pays: the other two spend a
+// MEMBER's plan quota — invisibly, three to five times faster than a text turn, which is why
+// the whole feature is off by default (decision 8) — while a deployment that stood up the image
+// engine has already decided to pay for that hardware itself. It also honours more of the
+// request than either: exact sizes (measured), plus edit and inpaint, which neither of the
+// others can do at all. It is simply absent from `Ready` where no engine is deployed, which is
+// most deployments, so this does not change what anyone gets today.
+//
+// agy before codex because it HONOURS MORE OF THE REQUEST: its aspect ratio reaches the tool
+// (measured), while the Codex route lets the caller choose no dimension at all. The first
+// version of this list put codex first on the grounds that a reordered default would move an
+// existing user's generation onto a different plan's quota — a real objection, and one that
+// only applies once there are such users. There are none yet (this has not shipped), so the
+// default is chosen on the merits instead, while that is still free. A stored
+// `imageProviderOrder` outranks this list, so anyone who does have a preference keeps it.
+var providerOrder = []string{ProviderSdcpp, ProviderAgy, ProviderCodex}
+
+// ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
+// same hook shape as Enabled). nil, or a list that names nothing known, simply means the
+// built-in order.
+var ProviderOrderPref func() []string
+
+// effectiveOrder normalizes the stored preference into a TOTAL order: unknown ids and
+// duplicates are dropped, and every provider the preference does not mention is appended in
+// the built-in order. The same shape as main's agentOrderPref, and for the same reason — a
+// partial or stale list (written before a provider existed) must still rank every provider,
+// or adding one would make it unreachable until the user re-saved their settings.
+func effectiveOrder() []string {
+	out := make([]string, 0, len(providerOrder))
+	seen := map[string]bool{}
+	known := map[string]bool{}
+	for _, id := range providerOrder {
+		known[id] = true
+	}
+	add := func(id string) {
+		if known[id] && !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	if ProviderOrderPref != nil {
+		for _, id := range ProviderOrderPref() {
+			add(id)
+		}
+	}
+	for _, id := range providerOrder {
+		add(id)
+	}
+	return out
+}
 
 // Providers returns the registered providers, in providerOrder. Built fresh on each call so a
 // changed environment (a Codex login that arrived after boot, an engine stack deployed since)
 // is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newSdcppProvider(), newCodexProvider()}
+	return []Provider{newSdcppProvider(), newCodexProvider(), newAgyProvider()}
 }
 
-// modelNamer is implemented by a provider that can name its default model WITHOUT calling
-// anything — which for a self-hosted engine is the whole trick, since the engine is asleep
-// when the question is asked.
-type modelNamer interface{ DefaultModel() string }
-
-// chooseImageProvider decides what "auto" (the default) routes to — the same shape as
-// chooseTTSProvider in control-plane/tts.go.
+// chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
+// as chooseTTSProvider in control-plane/tts.go, widened to a LIST because readiness is checked
+// before the call while exhaustion only shows up during it. A provider that says it is ready
+// and then fails is exactly the case a single choice cannot survive.
 //
-// An explicit choice is honoured as-is EVEN WHEN IT IS NOT READY: the caller named a
-// provider, and that provider's own error ("codex is not logged in") is a better answer than
-// silently producing an image on a different service, billed to a different account. Only
-// auto is allowed to walk past an unready one. "" means nothing can serve the request.
-func chooseImageProvider(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) string {
+// An explicit choice is honoured as-is EVEN WHEN IT IS NOT READY, and it never falls through
+// to another: the caller named a provider, and that provider's own error ("codex is not logged
+// in") is a better answer than silently producing an image on a different service, billed to a
+// different account. Only auto walks the list. Empty means nothing can serve the request.
+func chooseImageProviders(pref string, req Request, order []string, ready map[string]bool, caps func(id string) Caps) []string {
 	if pref != "" && pref != "auto" {
-		return pref
+		return []string{pref}
 	}
+	var out []string
 	for _, id := range order {
 		if ready[id] && caps(id).Supports(req.Op) {
-			return id
+			out = append(out, id)
 		}
 	}
-	return ""
+	return out
 }
 
 // Job is one core-side generation: which session asked, what it asked for, and which provider
@@ -256,43 +313,60 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		}
 		return p.Caps(req.Model)
 	}
-	name := chooseImageProvider(job.Pref, req, providerOrder, ready, capsOf)
-	if name == "" {
+	candidates := chooseImageProviders(job.Pref, req, effectiveOrder(), ready, capsOf)
+	if len(candidates) == 0 {
 		return Stored{}, ErrNoProvider
 	}
-	p, ok := provs[name]
-	if !ok {
-		return Stored{}, fmt.Errorf("%w: %s", ErrUnknownProvider, name)
-	}
-	if !p.Caps(req.Model).Supports(req.Op) {
-		return Stored{}, fmt.Errorf("%w: %s cannot do %s", ErrNoProvider, name, req.Op)
-	}
 
-	started := time.Now()
-	res, err := p.Generate(ctx, req)
-	// Record on every path, including the failed one: a turn that burned driver tokens and
-	// produced nothing still consumed the user's plan, and a row with ok:false is what keeps
-	// that visible (ADR 0029 §3).
-	recordUsage(ctx, job, res, err == nil, started)
-	if err != nil {
-		return Stored{}, err
+	var attempts []error
+	for _, name := range candidates {
+		p, ok := provs[name]
+		if !ok {
+			return Stored{}, fmt.Errorf("%w: %s", ErrUnknownProvider, name)
+		}
+		// An explicit pref reaches here even for an op it cannot do, so that the refusal comes
+		// from the named provider rather than from a chooser the caller cannot see.
+		if !p.Caps(req.Model).Supports(req.Op) {
+			return Stored{}, fmt.Errorf("%w: %s cannot do %s", ErrNoProvider, name, req.Op)
+		}
+		if err := ctx.Err(); err != nil {
+			return Stored{}, err
+		}
+
+		started := time.Now()
+		res, err := p.Generate(ctx, req)
+		// Record on every path, including the failed one: an attempt that burned driver tokens
+		// and produced nothing still consumed the user's plan, and a row with ok:false is what
+		// keeps that visible (ADR 0029 §3). Recording INSIDE the loop is what makes a
+		// fall-through cost two honest rows rather than one that hides the wasted attempt.
+		recordUsage(ctx, job, name, res, err == nil && len(res.Images) > 0, started)
+		if err == nil && len(res.Images) == 0 {
+			err = errors.New("the provider returned no image")
+		}
+		if err != nil {
+			attempts = append(attempts, fmt.Errorf("%s: %w", name, err))
+			continue // the next provider in the order, if the caller left the choice to us
+		}
+
+		files, err := storeImages(job.SID, res.Images)
+		if err != nil {
+			// A storage failure is OURS, not the provider's: the picture exists and trying a
+			// second provider would spend more quota to hit the same broken disk.
+			return Stored{}, err
+		}
+		return Stored{
+			Files:       files,
+			Provider:    res.Provider,
+			Model:       res.Model,
+			Region:      res.Region,
+			Destination: res.Destination,
+			Warnings:    append(res.Warnings, requestWarnings(req, res, p.Caps(req.Model))...),
+			CostUSD:     res.CostUSD,
+		}, nil
 	}
-	if len(res.Images) == 0 {
-		return Stored{}, errors.New("the provider returned no image")
-	}
-	files, err := storeImages(job.SID, res.Images)
-	if err != nil {
-		return Stored{}, err
-	}
-	return Stored{
-		Files:       files,
-		Provider:    res.Provider,
-		Model:       res.Model,
-		Region:      res.Region,
-		Destination: res.Destination,
-		Warnings:    append(res.Warnings, requestWarnings(req, res)...),
-		CostUSD:     res.CostUSD,
-	}, nil
+	// Every candidate failed. Report them all: "codex is out of quota, and the local engine is
+	// not running" is actionable in a way that either half alone is not.
+	return Stored{}, errors.Join(attempts...)
 }
 
 // normalizeRequest fills in the defaults the wire may omit. It never narrows what was asked
@@ -307,6 +381,7 @@ func normalizeRequest(r Request) Request {
 	}
 	r.Prompt = strings.TrimSpace(r.Prompt)
 	r.Size = strings.TrimSpace(r.Size)
+	r.AspectRatio = strings.TrimSpace(r.AspectRatio)
 	r.Background = strings.TrimSpace(r.Background)
 	return r
 }
@@ -315,8 +390,14 @@ func normalizeRequest(r Request) Request {
 // The provider reports what IT knows it could not honour; this catches the rest — most
 // importantly a count that came back short, which no provider can see as a failure because
 // each image it did produce is fine.
-func requestWarnings(req Request, res Result) []string {
+func requestWarnings(req Request, res Result, caps Caps) []string {
 	var out []string
+	// A route with no aspect-ratio list cannot have honoured one, and unlike the size there is
+	// no produced dimension to catch it after the fact — a 16:9 request answered with a square
+	// picture is only visibly wrong to someone who knows what they asked for.
+	if r := req.AspectRatio; r != "" && r != "auto" && len(caps.AspectRatios) == 0 {
+		out = append(out, fmt.Sprintf("aspect_ratio=%s requested, but this route cannot choose an aspect ratio", r))
+	}
 	if n := len(res.Images); req.Count > 0 && n != req.Count {
 		out = append(out, fmt.Sprintf("count=%d requested, %d produced", req.Count, n))
 	}
@@ -352,10 +433,14 @@ func parseSize(s string) (w, h int, ok bool) {
 // IMAGE consumes is not expressible in tokens and is not recorded — hence measured=partial
 // even on a fully successful run. Reading such a row as the whole consumption would understate
 // it, and zero-filling the missing part would be worse: it would claim the image was free.
-func recordUsage(ctx context.Context, job Job, res Result, ok bool, started time.Time) {
+//
+// chosen is the provider Run picked. A provider only stamps its own id on a Result it actually
+// produced, so a request refused before any work started (an unsupported op, a mask on a route
+// with no mask input) would otherwise leave the row's kind column empty.
+func recordUsage(ctx context.Context, job Job, chosen string, res Result, ok bool, started time.Time) {
 	tag := usagex.Tag{Feature: usagex.FeatureToolImagegen, Trigger: usagex.TriggerUser, Ref: job.Session}
 	call := usagex.Call{
-		Kind:     usageKindOf(res.Provider, job.Pref),
+		Kind:     usageKindOf(res.Provider, chosen),
 		ModelReq: res.Model,
 		OK:       ok,
 		CostUSD:  res.CostUSD,
@@ -377,12 +462,22 @@ func recordUsage(ctx context.Context, job Job, res Result, ok bool, started time
 // usageKindOf is the ledger's kind column: what actually ran, not what was requested. The
 // Codex route really is a codex process, so it is attributed to codex; a provider that is a
 // plain HTTP call to a vendor is not an agent kind at all and carries its own id.
-func usageKindOf(provider, pref string) string {
+//
+// It is deliberately NOT the calling session's kind. A claude session that generates an image
+// spends the ChatGPT plan, not Claude's, and filing the row under claude would put that
+// consumption on the wrong plan's line. The calling session is on the row as `ref`.
+func usageKindOf(provider, chosen string) string {
 	if provider == "" {
-		provider = pref
+		provider = chosen
 	}
-	if provider == ProviderCodex {
+	switch provider {
+	case ProviderCodex:
 		return session.KindCodex
+	case ProviderAgy:
+		// The two spellings are identical today, which is exactly why the mapping is written
+		// down: the provider id is a wire value of this package and the kind is the fleet's
+		// agent-kind enum, and a rename of either must not silently file the row elsewhere.
+		return agyUsageKind
 	}
 	return provider
 }

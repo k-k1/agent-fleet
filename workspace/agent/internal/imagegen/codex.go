@@ -47,6 +47,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/codex"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 )
 
@@ -107,7 +108,7 @@ func (p *codexProvider) Caps(string) Caps {
 // login on disk. It deliberately does NOT shell out to `codex login status` the way
 // agents/codex.Status does — Ready is on the tools/list path, which the client calls on every
 // turn, and a CLI spawn there would be paid for by every session.
-func (p *codexProvider) Ready(context.Context) bool {
+func (p *codexProvider) Ready(ctx context.Context) bool {
 	if _, err := exec.LookPath(p.exe); err != nil {
 		return false
 	}
@@ -120,8 +121,23 @@ func (p *codexProvider) Ready(context.Context) bool {
 	}
 	// Only the mode is read, never a token. api-key mode is accepted as well: it works, it
 	// just bills the API instead of the ChatGPT plan, which is the user's own arrangement.
-	return json.Unmarshal(b, &a) == nil && a.AuthMode != ""
+	if json.Unmarshal(b, &a) != nil || a.AuthMode == "" {
+		return false
+	}
+	// A login is not the same as quota. Being logged in and OUT of plan quota is the case a
+	// readiness check that stops at auth.json cannot see: auto would pick this route, spend
+	// nothing, and fail — instead of stepping aside for a provider that can actually run.
+	// Only the account's own verdict counts; an unreachable endpoint leaves codex ready and
+	// lets it give its own answer (codex.PlanExhausted returns known=false).
+	if exhausted, known := planExhausted(ctx); known && exhausted {
+		return false
+	}
+	return true
 }
+
+// planExhausted is a var so a test can drive the readiness branch without a network. In
+// production it is the Codex account view (internal/agents/codex), which caches the call.
+var planExhausted = codex.PlanExhausted
 
 func (p *codexProvider) Generate(ctx context.Context, req Request) (Result, error) {
 	if req.Prompt == "" {

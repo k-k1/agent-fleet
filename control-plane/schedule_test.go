@@ -161,6 +161,50 @@ func TestScheduleUpdatePatch(t *testing.T) {
 	if sch5.Report {
 		t.Error("report=false patch not persisted")
 	}
+
+	// stop_after_run (docs/log/85) travels the same three ways as report: it survives the
+	// store round trip, an unrelated patch leaves it alone, and it can be turned back off.
+	// A schedule whose option silently reset would keep a woken workspace up all night,
+	// which is the one thing the option exists to stop.
+	if up6 := doJSON(api.update, mv, "PATCH", `{"stop_after_run":true}`, dto.ID); up6.Code != 200 {
+		t.Fatalf("update6 code=%d body=%s", up6.Code, up6.Body.String())
+	}
+	sch6, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if !sch6.StopAfterRun {
+		t.Error("stop_after_run=true patch not persisted")
+	}
+	_ = doJSON(api.update, mv, "PATCH", `{"prompt":"newest"}`, dto.ID)
+	sch7, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if !sch7.StopAfterRun {
+		t.Error("unrelated patch reset stop_after_run")
+	}
+	if up8 := doJSON(api.update, mv, "PATCH", `{"stop_after_run":false}`, dto.ID); up8.Code != 200 {
+		t.Fatalf("update8 code=%d body=%s", up8.Code, up8.Body.String())
+	}
+	sch8, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if sch8.StopAfterRun {
+		t.Error("stop_after_run=false patch not persisted")
+	}
+}
+
+// TestScheduleCreateCarriesStopAfterRun: the create path stores the option and hands it
+// back on the wire, so the Console checkbox reads back what was saved.
+func TestScheduleCreateCarriesStopAfterRun(t *testing.T) {
+	api, ctx, mv := newSchedAPITest(t)
+	rec := doJSON(api.create, mv, "POST",
+		`{"spec_kind":"cron","spec":"0 3 * * *","tz":"UTC","prompt":"nightly","stop_after_run":true}`, "")
+	if rec.Code != 200 && rec.Code != 201 {
+		t.Fatalf("create code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var dto scheduleDTO
+	_ = json.Unmarshal(rec.Body.Bytes(), &dto)
+	if !dto.StopAfterRun {
+		t.Fatalf("create response dropped stop_after_run: %s", rec.Body.String())
+	}
+	sch, _, _ := api.store.GetSchedule(ctx, dto.ID)
+	if !sch.StopAfterRun {
+		t.Error("stop_after_run not persisted by create")
+	}
 }
 
 func TestSchedulePauseResumeRunNow(t *testing.T) {

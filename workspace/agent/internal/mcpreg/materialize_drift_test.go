@@ -17,8 +17,10 @@
 // There are two exceptions. cursor has no `mcp add`, so the reference runs the other way round
 // (cursor reads the file af wrote). Every one of kiro's `mcp` subcommands demands a login, so it
 // is skipped where nobody is logged in. Nothing else needs authentication — `mcp add` /
-// `mcp list` only read and write config files. agy cannot start on this host (no RDRAND), which
-// makes it the one kind with no drift-detection layer.
+// `mcp list` only read and write config files. agy takes the RDRAND mask on its child
+// environment like every other agy spawn (ADR 0008); without it the CLI aborts before writing
+// anything on a host whose kernel has withdrawn the instruction, which is why this was for a
+// long time the one kind with no drift-detection layer at all.
 
 package mcpreg
 
@@ -30,6 +32,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/hostcaps"
 )
 
 func cliBin(t *testing.T, name string) string {
@@ -462,4 +466,74 @@ func TestDriftCursorReadsAFConfig(t *testing.T) {
 			t.Fatalf("cursor cannot read af's ~/.cursor/mcp.json (%q does not appear):\n%s", name, out)
 		}
 	}
+}
+
+// agy's global MCP config, in both directions — because af and the CLI do not spell a remote
+// server the same way, and the question worth a test is not which spelling is nicer but whether
+// agy still reads af's.
+//
+// Every agy child here carries the RDRAND mask, for the reason ADR 0008 gives: where the kernel
+// has withdrawn the instruction the CLI aborts before writing anything. It comes from
+// internal/hostcaps rather than internal/agents/agy because that package imports this one.
+func TestDriftAgyMatchesMCPAdd(t *testing.T) {
+	bin := cliBin(t, "agy")
+
+	// A stdio entry is compared structurally against what the CLI's own `mcp add` produces.
+	cliHome := t.TempDir()
+	runCLI(t, agyDriftEnv(cliHome), bin, "mcp", "add", "--env", "K=v", "afdrift", "/bin/echo", "a", "b")
+	want := serverEntry(t, agyDriftConfig(cliHome), "mcpServers", "afdrift")
+	// `mcp add` writes agy's own default out in full; af leaves it off, and an entry with no
+	// "disabled" key lists as enabled (measured), so the two say the same thing.
+	delete(want, "disabled")
+
+	afHome := t.TempDir()
+	t.Setenv("HOME", afHome)
+	defs := []ServerDef{
+		sessionDef(ServerDef{Name: "afdrift", Origin: OriginUser, Transport: TransportStdio,
+			Command: "/bin/echo", Args: []string{"a", "b"}, Env: map[string]string{"K": "v"}}),
+		sessionDef(ServerDef{Name: "afdriftremote", Origin: OriginUser, Transport: TransportHTTP,
+			URL: "https://mcp.example.com/mcp", Headers: map[string]string{"Authorization": "Bearer t"}}),
+	}
+	if _, _, _, err := materializeAgy(defs, nil); err != nil {
+		t.Fatalf("materializeAgy: %v", err)
+	}
+	requireSameKeys(t, "agy", serverEntry(t, agyMCPConfigPath(), "mcpServers", "afdrift"), want)
+
+	// The remote entry cannot be compared that way: `agy mcp add` writes "serverUrl" where af
+	// writes "url". Both are accepted today (measured), so af's is an ALIAS it relies on — pin
+	// the CLI's own spelling, so a rename upstream is seen here...
+	remoteHome := t.TempDir()
+	runCLI(t, agyDriftEnv(remoteHome), bin, "mcp", "add", "--header", "Authorization: Bearer t",
+		"afdriftremote", "https://mcp.example.com/mcp")
+	cliRemote := serverEntry(t, agyDriftConfig(remoteHome), "mcpServers", "afdriftremote")
+	if _, ok := cliRemote["serverUrl"]; !ok {
+		t.Fatalf("`agy mcp add` no longer writes serverUrl for an http server, so af's \"url\" may "+
+			"no longer be the alias of anything: %v", cliRemote)
+	}
+	// ...and assert the half that actually protects the user: agy reads the file af wrote, with
+	// the remote server's URL intact. Measured with the key deliberately misspelled, this is what
+	// losing the alias looks like — no error anywhere, just a row reading
+	// `afdriftremote  stdio  enabled` with an empty command, i.e. a server that silently never
+	// works.
+	cmd := exec.Command(bin, "mcp", "list")
+	cmd.Dir = afHome
+	cmd.Env = append(os.Environ(), agyDriftEnv(afHome)...)
+	out, _ := cmd.CombinedOutput() // an unreachable probe is reported in the table, not the exit code
+	for _, want := range []string{"afdrift", "afdriftremote", "https://mcp.example.com/mcp"} {
+		if !strings.Contains(string(out), want) {
+			t.Fatalf("agy cannot read af's mcp_config.json (%q does not appear):\n%s", want, out)
+		}
+	}
+}
+
+// agyDriftEnv points an agy child at an isolated home and gives it whatever this host's CPU
+// needs (nil where RDRAND is fine).
+func agyDriftEnv(home string) []string {
+	return append([]string{"HOME=" + home}, hostcaps.AgyRDRANDMask()...)
+}
+
+// agyDriftConfig is agyMCPConfigPath() for an explicit home, so the CLI's own output can be read
+// without repointing this process's HOME.
+func agyDriftConfig(home string) string {
+	return filepath.Join(home, ".gemini", "config", "mcp_config.json")
 }

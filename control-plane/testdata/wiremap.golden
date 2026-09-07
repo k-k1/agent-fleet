@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 120
+# count: 121
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -105,11 +105,12 @@ tenant_idp_api.go tenantIdPAPI.remove x1 {deleted}
 tenant_idp_api.go tenantIdPAPI.setStatus x1 {error,members}
 tenant_idp_api.go tenantIdPAPI.setStatus x1 {id,status}
 tts.go registerTTSRoutes x1 {dict}
+tts.go registerTTSRoutes x1 {live,speakers}
 tts.go registerTTSRoutes x1 {providers}
-tts.go registerTTSRoutes x1 {speakers}
 tts.go ttsAdminAPI.get x1 {dict,enabled,engine,managed,mode,polly}
 tts.go ttsAdminAPI.put x1 {dict,enabled,engine,managed,mode,polly}
 tts.go ttsAdminAPI.putDict x1 {dict,enabled,engine,managed,mode,polly}
+tts_wake.go ttsWakeAPI.post x1 {providers,started}
 update.go updateApply x2 {error}
 update.go updateApply x2 {mode,ok,to}
 usage.go adminAPI.usage x1 {days,from,to,totals}

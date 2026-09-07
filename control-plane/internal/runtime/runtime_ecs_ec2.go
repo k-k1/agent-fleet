@@ -1105,7 +1105,7 @@ func (e *ecsEC2Runtime) State(ctx context.Context) string {
 //
 // No extra API call: the events come from the DescribeServices the caller already made.
 func (e *ecsEC2Runtime) notePlacementBlocked(s ecstypes.Service) {
-	why := ecsPlacementBlocked(s)
+	why := ecsPlacementBlocked(s, time.Now())
 	if why == "" {
 		// Still coming up normally. Do NOT clear the phase here: an ordinary Start is
 		// concurrently writing its own progress ("slot: creating", "home: attaching")
@@ -1145,7 +1145,10 @@ const blockedPhasePrefix = "blocked: "
 // for a long while. That is exactly why this is matched against the deployment rather
 // than "was there an event recently": the wedge is permanent but the event is not
 // repeated (measured — the run that prompted this had a single event and then silence).
-func ecsPlacementBlocked(s ecstypes.Service) string {
+//
+// ⚠️ And an event has to STAND for placementBlockedGrace before it counts, because the
+// same sentence is emitted by a wait the CP created itself — see that constant.
+func ecsPlacementBlocked(s ecstypes.Service, now time.Time) string {
 	var since time.Time
 	for _, d := range s.Deployments {
 		if aws.ToString(d.Status) == "PRIMARY" && d.CreatedAt != nil {
@@ -1157,11 +1160,37 @@ func ecsPlacementBlocked(s ecstypes.Service) string {
 			continue
 		}
 		if msg := aws.ToString(ev.Message); strings.Contains(msg, "unable to place a task") {
+			// Not `return ""` on a young one: ECS lists newest first, and a wedge that
+			// ECS re-emitted leaves a fresh copy in front of the aged original. Skipping
+			// forward reports the original; a bare return would hide the wall every time
+			// ECS repeated itself.
+			if now.Sub(aws.ToTime(ev.CreatedAt)) < placementBlockedGrace {
+				continue
+			}
 			return strings.TrimSpace(msg)
 		}
 	}
 	return ""
 }
+
+// placementBlockedGrace is how long "unable to place a task" must stand before it is
+// reported as a wall.
+//
+// 🔥 Without it the message fires during a wait the CP ITSELF created. Growing the pool
+// takes an EC2 launch plus an ECS agent registration, and the service is already asking
+// for its task while that happens; ECS then names as "closest matching" one of the
+// STOPPED slots (Ec2SlotTerminateAfterSec=0 leaves them registered with the agent
+// disconnected — 6 of 9 on the deployment where this was found), which reads like a
+// diagnosis and is only an artefact. Measured on acrt 2026-09-07, a member moving to an
+// arm slot class: pool grown 04:11:43 → "unable to place … doesn't have the agent
+// connected" 04:12:08 → task started 04:12:38. The Console had already told them
+// "Cannot start. Waiting will not help" — 30 seconds before it started.
+//
+// 120s is that 55-second window with margin. Erring long is the cheap direction: a real
+// wedge is permanent, so the only cost is naming it later, while erring short is the bug
+// above. The transient case never reports even after ageing past this, because by then
+// the task is RUNNING and State() takes the branch that clears the phase instead.
+const placementBlockedGrace = 120 * time.Second
 
 // Start brings the workspace up on a slot. Everything that can be slow is pushed off
 // the caller's thread: Start runs inside an HTTP request behind a 60s-idle ALB

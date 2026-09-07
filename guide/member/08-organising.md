@@ -42,6 +42,7 @@ guessing. Note that reading usage and context volume is also available to other 
 - **Send instructions to running sessions** — delivers prompts just as if you typed them into the terminal. It states which session it will send what to before executing.
 - **Launch new sessions** — pick a repository (dir), agent kind (claude / codex / cursor / copilot / kiro / agy / opencode / shell), and model, then start. Models are specified after checking the actually selectable list (claude uses tier names fable / opus / sonnet / haiku plus user-registered full IDs; codex / cursor / copilot / kiro / opencode use a catalog reflecting connection state). With a **worktree** you can carve out an independent working copy plus branch, so parallel work doesn't collide. If you pass an **initial task (initial_prompt)**, work starts right after launch.
 - **Stop and resume sessions** — fold up sessions that are no longer needed, running away, or hogging resources, and resume them later with their conversation history intact. It confirms which one to stop before executing, and stopped sessions can also be resumed from the Console. The operator can only perform a **resumable "stop"**; destructive deletion of a session is limited to Console-side operations.
+  - For a session that is still working you can ask it to **stop when that work is done**: the running turn finishes and its report arrives before the session is folded away, so nothing is cut off. Use it to reclaim a fan-out one session at a time as each finishes (sending the session a new instruction releases it).
 - **Memo queue operations** — check, add, and organize queued memos, and **batch-send selected memos** (operate the memo queue from [07](07-chat-memo.md) over chat).
 - **Consulting other assistants** — when a decision needs specialist knowledge, it asks the SRE assistant or others for advice before acting (the consulted assistant only returns advice; it does no work).
 
@@ -142,6 +143,11 @@ next run time, so check that it matches your intent.
 - By default each run uses a fresh session. If you ask "reuse the same session and build up
   context," **long-lived session reuse** (with rebuild conditions such as every N runs or
   per time period) is also possible.
+- It can also **stop when it is done**. Tick **"Stop when done"** in Details & edit (ask the
+  operator for `stop_after_run`) and the session stops once that run has finished — report
+  first, stop after, and resumable. It keeps the session an unattended run leaves behind from
+  holding its memory for the rest of the night (it does not change when the workspace itself
+  stops — a finished session was never what kept it awake).
 
 ## Constraints and caveats
 

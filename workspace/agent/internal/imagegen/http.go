@@ -38,43 +38,92 @@ type statusResponse struct {
 	Kind     string   `json:"kind,omitempty"` // the asking session's agent kind, "" when unknown
 	Model    string   `json:"model,omitempty"`
 	Ops      []string `json:"ops,omitempty"`
+	// AspectRatios is the effective provider's own list, so the MCP schema can offer the
+	// parameter only where it actually reaches the tool. Empty means the tool must not
+	// advertise it at all rather than accept it and drop it.
+	AspectRatios []string `json:"aspectRatios,omitempty"`
+	// Order is the effective provider order, so the answer to "why did it route there" is
+	// readable without guessing at a preference file, and a settings UI has something to
+	// render when there is more than one provider to rank.
+	Order []string `json:"order,omitempty"`
+	// Providers is EVERY ready provider, in the effective order, each with its own capability
+	// list. The flat fields above describe only the first one — which was enough while the
+	// caller could not choose, and stopped being enough the moment `generate_image` grew a
+	// `provider` argument: a tool that offers a choice has to advertise what each choice can
+	// do, or the enum is a guess.
+	Providers []providerStatus `json:"providers,omitempty"`
+}
+
+// providerStatus is one ready provider as the tool surface needs to see it.
+type providerStatus struct {
+	ID           string   `json:"id"`
+	Model        string   `json:"model,omitempty"`
+	Ops          []string `json:"ops,omitempty"`
+	AspectRatios []string `json:"aspectRatios,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
 func HandleStatus(w http.ResponseWriter, r *http.Request) {
-	out := statusResponse{Enabled: enabled()}
+	out := statusResponse{Enabled: enabled(), Order: effectiveOrder()}
 	if name := r.URL.Query().Get("session"); session.ValidName(name) {
 		if m, ok := session.ReadMeta(name); ok {
 			out.Kind = m.Kind
 		}
 	}
+	// Every ready provider, in the effective order. The FIRST is what auto would route to, and
+	// is repeated in the flat fields; the rest are what an explicit `provider` can name.
+	byID := map[string]Provider{}
 	for _, p := range Providers() {
-		if !p.Ready(r.Context()) {
+		byID[p.ID()] = p
+	}
+	for _, id := range out.Order {
+		p, ok := byID[id]
+		if !ok || !p.Ready(r.Context()) {
 			continue
 		}
-		out.Provider, out.Ready = p.ID(), true
-		if n, ok := p.(modelNamer); ok {
-			out.Model = n.DefaultModel()
+		caps := p.Caps("")
+		st := providerStatus{ID: p.ID(), Model: driverModelOf(p.ID()), AspectRatios: caps.AspectRatios}
+		for _, op := range caps.Ops {
+			st.Ops = append(st.Ops, string(op))
 		}
-		for _, op := range p.Caps("").Ops {
-			out.Ops = append(out.Ops, string(op))
+		out.Providers = append(out.Providers, st)
+		if !out.Ready {
+			out.Provider, out.Ready = st.ID, true
+			out.Model, out.Ops, out.AspectRatios = st.Model, st.Ops, st.AspectRatios
 		}
-		break
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
+// driverModelOf reports the model a generation would run on, per provider. "" for a provider
+// that is not driven by a model of ours to name.
+func driverModelOf(id string) string {
+	switch id {
+	case ProviderCodex:
+		return codexDriverModel()
+	case ProviderAgy:
+		return agyDriverModel()
+	case ProviderSdcpp:
+		// Not a driver model but the CHECKPOINT the engine was started with — the only model
+		// this route has, and the one its Caps are keyed to. Answered from the stack's
+		// declaration, so asking costs nothing and does not wake the box.
+		return sdcppDriverModel()
+	}
+	return ""
+}
+
 type generateRequest struct {
-	Session    string   `json:"session"`
-	Provider   string   `json:"provider"`
-	Op         string   `json:"op"`
-	Prompt     string   `json:"prompt"`
-	Size       string   `json:"size"`
-	Background string   `json:"background"`
-	Count      int      `json:"count"`
-	Inputs     []string `json:"inputs"`
-	Mask       string   `json:"mask"`
-	Model      string   `json:"model"`
+	Session     string   `json:"session"`
+	Provider    string   `json:"provider"`
+	Op          string   `json:"op"`
+	Prompt      string   `json:"prompt"`
+	Size        string   `json:"size"`
+	AspectRatio string   `json:"aspectRatio"`
+	Background  string   `json:"background"`
+	Count       int      `json:"count"`
+	Inputs      []string `json:"inputs"`
+	Mask        string   `json:"mask"`
+	Model       string   `json:"model"`
 }
 
 // HandleGenerate answers POST /imagegen/generate. It blocks for the whole generation: P0 is
@@ -113,14 +162,24 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "no_session", "session not found: "+body.Session)
 		return
 	}
+	// A named provider may not be the caller's OWN CLI. The tool's enum already leaves it out,
+	// but the advertised set is a scope boundary and a guessed name in tools/call must not cross
+	// it: this session can make that picture with its own built-in tool, and going out through a
+	// second process of the same CLI would spend the plan twice for it (ADR 0069 decision 8).
+	if p := strings.TrimSpace(body.Provider); p != "" && p == meta.Kind {
+		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_own_cli",
+			"this session is a "+meta.Kind+" session: use its own built-in image tool rather than spending the plan twice through the fleet one")
+		return
+	}
 
 	job := Job{
 		Session: body.Session,
 		SID:     session.UUID(meta.Dir, body.Session),
 		Pref:    body.Provider,
 		Request: Request{
-			Op: op, Prompt: body.Prompt, Size: body.Size, Background: body.Background,
-			Count: body.Count, Inputs: body.Inputs, Mask: body.Mask, Model: body.Model,
+			Op: op, Prompt: body.Prompt, Size: body.Size, AspectRatio: body.AspectRatio,
+			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
+			Mask: body.Mask, Model: body.Model,
 		},
 	}
 	out, err := Run(r.Context(), job)

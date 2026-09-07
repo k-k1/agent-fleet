@@ -151,7 +151,7 @@ func scrapeUsage() (*usageResult, error) {
 	enforceTelemetryOff() // launch-time re-pin, same as BuildLaunch
 	cmd := exec.Command("agy")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
 		return nil, err

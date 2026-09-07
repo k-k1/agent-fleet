@@ -762,6 +762,7 @@ ServiceConnectNamespace=af.internal
 CpuArchitecture=X86_64
 TaskCpu=2048
 TaskMemory=4096
+# UseSpot=on   # ~70% cheaper, an interruption just falls back to Polly (see below)
 ```
 
 `standup.sh` then carries the pinned image into ECR with `crane` during its images step,
@@ -781,10 +782,21 @@ waits for the first task to run, and only then is the service scaled back to 0.
 
 Things worth knowing before you enable it:
 
-- **`LaunchType: FARGATE` is spelled out in the template and must stay.** The cluster has no
-  capacity provider, so an omitted launch type gets the API default — EC2 — which puts a
-  2 vCPU engine inside the workspace slot pool, breaks the sweeper's "an instance with zero
-  ECS tasks is idle" premise, and takes a seat somebody's Workspace needed.
+- **The placement is spelled out in the template and must stay spelled out.** Normally
+  `LaunchType: FARGATE`; with `UseSpot=on` an explicit `CapacityProviderStrategy` instead,
+  because the two are mutually exclusive. Saying NEITHER is what breaks it: the API default
+  is EC2, which puts a 2 vCPU engine inside the workspace slot pool, breaks the sweeper's
+  "an instance with zero ECS tasks is idle" premise, and takes a seat somebody's Workspace
+  needed. (Measured 2026-09-07: an explicit `FARGATE_SPOT` strategy with no launch type
+  places on Spot, so it is as binding as the launch type.)
+- **`UseSpot=on` is a knob, not the default.** Fargate Spot is around 70 % cheaper and an
+  interruption costs nothing but a fallback to Polly — the engine holds no state, and the
+  controller already treats a task that disappears as a replacement rather than a failed
+  start (`tts.engine.replaced`). It is off by default because idle-stop has already made
+  the bill small, and a capacity shortfall shows up as an engine that never arrives.
+  ⚠️ Switching it changes the service's placement, which CloudFormation applies by
+  **replacing the service** — and a newly created service starts at desired 1, so expect a
+  cold start and scale it back to 0.
 - **`DesiredCount` is deliberately absent from the template.** CloudFormation starts a new
   service at 1 and then leaves the count out of every later update, which is what lets the
   admin toggle own it. Declaring `0` instead would reset the count on every stack update —
@@ -797,10 +809,17 @@ Things worth knowing before you enable it:
   throughout.
 - The engine holds no per-tenant state — the reading dictionaries are applied client-side —
   so destroying it loses nothing.
-- **Do not send one huge synthesis request.** About 2,000 characters in a single call
-  OOM-kills the engine at 4 GiB, and the `/version` health check stays HEALTHY through it;
-  ECS then replaces the task and Polly reads for ~2.5 minutes. The Console sends one
-  sentence at a time, so this is a warning about scripts, not about the product.
+- **One huge synthesis request kills the engine, and the CP now refuses one.** Measured
+  2026-09-07: a **single 684-character request OOM-kills it at 4 GiB** (exit 137), and the
+  `/version` health check stays HEALTHY through it; ECS then replaces the task and Polly
+  reads for ~2.5 minutes, for everybody. The CP caps one request at
+  **`AF_TTS_MAX_CHARS` characters (default 300, `0` = no cap)** and answers `413
+  tts_text_too_long` above it — far above what the Console can send (it splits at 60) and
+  just past what `ttsHTTP`'s 30 s timeout allows anyway (a 228-character sentence takes
+  26 s). This is a guard rail for scripts, not a product limit.
+- **Concurrency queues, it does not scale.** Measured at 2 vCPU / 4 GiB: four concurrent
+  328-character requests came back at 40 s, 80 s, 119 s and 159 s — the engine serialises
+  them, so a second listener does not halve anyone's latency, it doubles the tail.
 
 Only `30-ingress`'s two parameters are needed on the CP side; `AF_TTS_ECS_CLUSTER` and
 `AF_TTS_ECS_REGION` ride on the existing `AF_ECS_*`, and `CpTaskRole` already carries the
@@ -822,6 +841,7 @@ is overridable as a CP environment variable, and none of them are set by these t
 | `AF_TTS_ECS_IDLE_SEC` | 1800 | Stop after this long with nobody listening; **`0` = never stop**. Clamped to no less than the start deadline. |
 | `AF_TTS_ECS_START_DEADLINE_SEC` | 300 | A start that has not become `running` by then is treated as failed, returned to 0, and reported with the reason ECS gives. |
 | `AF_TTS_ECS_FAIL_COOLDOWN_SEC` | 900 | How long a failed start blocks the next one, doubling per consecutive failure (capped at 16×). Without it a repeating failure pays a 2 GB pull per attempt. |
+| `AF_TTS_MAX_CHARS` | 300 | Ceiling on ONE synthesis request, in characters; `0` = no cap. Not a controller knob — it protects the engine from the single oversized request that OOM-kills it (see above). |
 | `AF_TTS_ECS_OFF_GRACE_SEC` | 60 | How long an explicit "disable" waits before the desired count moves. Routing switches to Polly immediately; this only debounces the ECS write, so turning it off and straight back on costs no cold start. |
 
 ## Optional: the fleet's own inference engines (`cfn/60-engines.yaml`)

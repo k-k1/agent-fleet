@@ -45,6 +45,7 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
   const [agent, setAgent] = useState(s.agent_kind || "claude");
   const [model, setModel] = useState(s.model || "");
   const [report, setReport] = useState(!!s.report);
+  const [stopAfterRun, setStopAfterRun] = useState(!!s.stop_after_run);
 
   const kinds = useMemo(
     () => (AGENT_KINDS.includes(agent) ? AGENT_KINDS : [agent, ...AGENT_KINDS]),
@@ -63,8 +64,9 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
     if (agent !== (s.agent_kind || "claude")) p.agent_kind = agent;
     if (model !== (s.model || "")) p.model = model;
     if (report !== !!s.report) p.report = report;
+    if (stopAfterRun !== !!s.stop_after_run) p.stop_after_run = stopAfterRun;
     return p;
-  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report]);
+  }, [s, specKind, spec, tz, label, prompt, wake, agent, model, report, stopAfterRun]);
 
   const dirty = Object.keys(patch).length > 0;
   const canSave = dirty && !busy && prompt.trim().length > 0 && spec.trim().length > 0;
@@ -194,6 +196,19 @@ export function ScheduleDetailModal({ s, onClose, onSaved }: Props) {
             <span>
               {tr("sched.f_report")}
               <span className="ui-field-hint"> — {tr("sched.f_report_hint")}</span>
+            </span>
+          </label>
+        )}
+
+        {/* Stop-after-run opt-in (docs/log/85), default off. Hidden for
+            session_mode=assistant for the same reason as the report above: that mode drives a
+            conversation and holds no session to stop. */}
+        {s.session_mode !== "assistant" && (
+          <label className="ui-field" style={{ flexDirection: "row", alignItems: "flex-start", gap: 8 }}>
+            <input type="checkbox" checked={stopAfterRun} onChange={(e) => setStopAfterRun(e.target.checked)} />
+            <span>
+              {tr("sched.f_stop_after_run")}
+              <span className="ui-field-hint"> — {tr("sched.f_stop_after_run_hint")}</span>
             </span>
           </label>
         )}

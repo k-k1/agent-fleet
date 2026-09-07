@@ -23,17 +23,19 @@ on:
       version:
         description: 'Release version (semver, e.g. 0.1.0)'
         required: true
+      # ON by default since 0.16.0. It was OFF for 0.15.1, the release that first published
+      # the workspace for arm64 at all, because the workspace image cannot cross-compile and
+      # pays a MEASURED 593 seconds for the arm64 half — the whole run goes from ~14 to ~28
+      # minutes, against a 90 minute timeout. That is affordable, and leaving it off means
+      # an ecs-ec2 Graviton slot only works on an image the operator baked themselves, which
+      # is ADR 0044 決定 3 (a feature shipped off is a feature that does not exist).
+      # ⚠️ Turn it OFF only to reproduce a pre-0.15.1 amd64-only workspace release.
       workspace_arm64:
-        description: 'Also build the workspace image for arm64 (needed by ecs-ec2 Graviton slots — docs/log/70)'
+        description: 'Build the workspace image for arm64 as well as amd64, so ecs-ec2 Graviton slots run the published image (docs/log/70). On by default: it costs ~10 min because the workspace cannot cross-compile.'
         type: boolean
-        default: false
-      # ON by default, unlike workspace_arm64 above, and the asymmetry is the point.
-      # The CP cross-compiles (docs/log/72 §72.3), so the arm64 half costs a MEASURED 71
-      # seconds — against a 90 minute timeout. The workspace image cannot cross-compile
-      # and pays 593. At 71 seconds there is no case for making an operator ask: leaving
-      # it off would mean CpArch=arm64 only works on a specially-baked image, which is
-      # ADR 0044 決定 3 (a feature shipped off is a feature that does not exist).
-      # ⚠️ Turn it OFF only to reproduce a pre-0.10.1 single-architecture release.
+        default: true
+      # Same reasoning, far cheaper: the CP cross-compiles (docs/log/72 §72.3), so its arm64
+      # half is a MEASURED 71 seconds.
       control_plane_arm64:
         description: 'Build the control-plane image for arm64 as well as amd64, so a deployment can set CpArch=arm64 (docs/log/72). On by default: it costs ~71s because the CP cross-compiles.'
         type: boolean

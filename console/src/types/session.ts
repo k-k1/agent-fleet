@@ -74,6 +74,11 @@ export interface Session {
   // Keep-awake pin (docs/log/75): exempt from the idle auto-stop until this instant.
   // Past or empty = no pin is held.
   keepAwakeUntil?: string;
+  // Stop-after-turn arm (docs/log/85): the session stops itself at the end of the turn it is
+  // running, and this is when it was armed. Empty = not armed. Usually set from inside the
+  // conversation (the af_stop_after_turn MCP tool), which is why the row shows it: otherwise
+  // the only trace is a sentence in a transcript nobody is watching.
+  stopAfterTurnAt?: string;
 }
 
 // A session's current context fill — the wire shape of the Agent's
@@ -100,6 +105,10 @@ export interface ProviderConn {
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
   reason?: string;
+  // agy: true when it only runs here with the CPU's RDRAND masked out of OpenSSL's
+  // detection, i.e. its randomness comes from the kernel rather than the FIPS build's
+  // hardware source (docs/decisions/0008). The card says so.
+  rdrand_masked?: boolean;
   // Chat integrations (discord / slack): the display form of the notification master switch
   // (the inverse of notifyOff). OFF only when false is explicit — unset (an older
   // connection) counts as ON.

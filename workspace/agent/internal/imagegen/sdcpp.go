@@ -100,6 +100,10 @@ func (p *sdcppProvider) conn(ctx context.Context) (EngineConn, bool) {
 	return c, true
 }
 
+// sdcppDriverModel names the checkpoint for the status route (driverModelOf), without waking
+// anything: the answer comes from what the stack declared, which the Agent already holds.
+func sdcppDriverModel() string { return newSdcppProvider().DefaultModel() }
+
 // DefaultModel is the first id the stack declared, which is also the checkpoint sd-server was
 // started with — the server holds ONE model, chosen by a startup flag, and has no way to
 // switch at request time.

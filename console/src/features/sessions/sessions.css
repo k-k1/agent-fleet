@@ -198,6 +198,15 @@
   font-size: 11px;
 }
 
+/* Stop-after-turn arm (docs/log/85): this session folds itself away when the running turn
+   ends. Accent, like the keep-awake pin and for the mirror-image reason — a row about to
+   disappear on its own has to be as noticeable as one being held up. */
+.sess-stoparm {
+  flex: none;
+  color: var(--accent);
+  font-size: 11px;
+}
+
 /* Session sharing: badge marking that this session is currently shared with someone.
    Treated like .sess-lock (muted, no warning colour). */
 .sess-shared {

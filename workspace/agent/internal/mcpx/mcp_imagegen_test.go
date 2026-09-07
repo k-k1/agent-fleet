@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -59,60 +60,128 @@ func withImageGen(t *testing.T, on bool) {
 // The tool literal must spell its name out for the advertised-schema scan (it only reads
 // string literals), so the constant the dispatch uses could drift away from it unnoticed.
 func TestImageGenToolNameMatchesConstant(t *testing.T) {
-	tools := mcpStdioImageGenTools([]string{"generate"})
+	tools := mcpStdioImageGenTools(imageGenOffer{Providers: []string{"agy"}, Ops: []string{"generate"}})
 	if len(tools) != 1 || tools[0]["name"] != mcpToolGenerateImage {
 		t.Fatalf("advertised name = %v, want %q", tools[0]["name"], mcpToolGenerateImage)
 	}
 }
 
-// The one exclusion of ADR 0069 decision 8, and its negative control: a Codex session already
-// has the CLI's own image_gen, so routing it through a second codex process would double the
-// cost for nothing — but the same session DOES want the fleet tool once the route is not codex.
+// imageGenSchemaProps digs the tool's inputSchema properties out, so a test can ask what the
+// schema actually offers rather than what it was meant to.
+func imageGenSchemaProps(tools []map[string]any) map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+	schema, _ := tools[0]["inputSchema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	return props
+}
+
+// The exclusion of ADR 0069 decision 8, and its negative control: a session whose own CLI a
+// route would drive already has that CLI's built-in image tool, so going out through a second
+// process of it would double the cost for nothing — but the same session DOES want the fleet
+// tool for every OTHER route, which is why the rule is applied per provider rather than to the
+// effective one only.
 func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
+	codex := mcpImageGenProvider{ID: "codex", Ops: []string{"generate", "edit"}}
+	agy := mcpImageGenProvider{ID: "agy", Ops: []string{"generate", "edit"}, AspectRatios: []string{"1:1", "16:9"}}
+	bedrock := mcpImageGenProvider{ID: "bedrock", Ops: []string{"generate", "inpaint"}}
+
 	for _, tc := range []struct {
-		name     string
-		status   mcpImageGenStatus
-		wantAdv  bool
-		wantOps  int
-		imageGen bool
+		name          string
+		status        mcpImageGenStatus
+		wantAdv       bool
+		wantProviders []string
+		wantOps       []string
+		wantRatios    int
+		imageGen      bool
 	}{
 		{
-			name:     "codex session on the codex route is excluded",
-			status:   mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "codex", Ops: []string{"generate"}},
+			name: "a codex session is offered every route but codex",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "codex",
+				Providers: []mcpImageGenProvider{codex, agy}},
+			imageGen: true, wantAdv: true,
+			wantProviders: []string{"agy"}, wantOps: []string{"generate", "edit"}, wantRatios: 2,
+		},
+		{
+			name: "a codex session with only codex ready loses the tool entirely",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "codex",
+				Providers: []mcpImageGenProvider{codex}},
 			imageGen: true,
 		},
 		{
-			name:     "claude session on the codex route is offered the tool",
-			status:   mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate", "edit"}},
-			imageGen: true, wantAdv: true, wantOps: 2,
+			name: "an agy session is excluded from agy for the same reason",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "agy",
+				Providers: []mcpImageGenProvider{agy, codex}},
+			imageGen: true, wantAdv: true,
+			wantProviders: []string{"codex"}, wantOps: []string{"generate", "edit"},
 		},
 		{
-			name:     "codex session on another route is offered the tool",
-			status:   mcpImageGenStatus{Enabled: true, Ready: true, Provider: "bedrock", Kind: "codex", Ops: []string{"generate"}},
-			imageGen: true, wantAdv: true, wantOps: 1,
+			// The union is the point: auto already routes an op only the SECOND provider
+			// supports to that provider, so advertising the first one's ops alone hid it.
+			name: "a claude session gets every provider, and the union of what they can do",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{agy, bedrock}},
+			imageGen: true, wantAdv: true,
+			wantProviders: []string{"agy", "bedrock"},
+			wantOps:       []string{"generate", "edit", "inpaint"}, wantRatios: 2,
+		},
+		{
+			// Version skew: this child can outlive an Agent that predates the per-provider
+			// list. The effective one in the flat fields still has to work.
+			name: "an Agent that answers with only the flat fields still serves the tool",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Provider: "codex", Ops: []string{"generate"}},
+			imageGen: true, wantAdv: true,
+			wantProviders: []string{"codex"}, wantOps: []string{"generate"},
 		},
 		{
 			name:     "no provider is ready",
-			status:   mcpImageGenStatus{Enabled: true, Ready: false, Provider: "", Kind: "claude"},
+			status:   mcpImageGenStatus{Enabled: true, Ready: false, Kind: "claude"},
 			imageGen: true,
 		},
 		{
-			name:   "the flag is off, so the Agent is never even asked",
-			status: mcpImageGenStatus{Enabled: true, Ready: true, Provider: "codex", Kind: "claude", Ops: []string{"generate"}},
+			name: "the flag is off, so the Agent is never even asked",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{codex}},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			withImageGen(t, tc.imageGen)
 			stubImageGenStatus(t, tc.status)
-			ops, ok := mcpImageGenAdvertise()
+			offer, ok := mcpImageGenAdvertise()
 			if ok != tc.wantAdv {
 				t.Fatalf("advertise = %v, want %v", ok, tc.wantAdv)
 			}
-			if len(ops) != tc.wantOps {
-				t.Fatalf("ops = %v, want %d", ops, tc.wantOps)
+			if !reflect.DeepEqual(offer.Providers, tc.wantProviders) {
+				t.Fatalf("providers = %v, want %v", offer.Providers, tc.wantProviders)
+			}
+			if !reflect.DeepEqual(offer.Ops, tc.wantOps) {
+				t.Fatalf("ops = %v, want %v", offer.Ops, tc.wantOps)
+			}
+			if len(offer.AspectRatios) != tc.wantRatios {
+				t.Fatalf("aspect ratios = %v, want %d", offer.AspectRatios, tc.wantRatios)
 			}
 			if got := advertisedNames(t); tc.wantAdv != got[mcpToolGenerateImage] {
 				t.Fatalf("generate_image in tools/list = %v, want %v", got[mcpToolGenerateImage], tc.wantAdv)
+			}
+
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			// Each parameter appears only where it is real: aspect_ratio only when some
+			// provider takes one, provider only when there is a choice to make. Advertising
+			// either otherwise is the size mistake again — a knob that moves nothing.
+			if _, has := props["aspect_ratio"]; has != (tc.wantRatios > 0) {
+				t.Fatalf("aspect_ratio in schema = %v, want %v", has, tc.wantRatios > 0)
+			}
+			prov, has := props["provider"].(map[string]any)
+			if has != (len(tc.wantProviders) > 1) {
+				t.Fatalf("provider in schema = %v, want %v", has, len(tc.wantProviders) > 1)
+			}
+			if has {
+				// The enum must be the offer, so the session's own CLI is not nameable.
+				if got, _ := prov["enum"].([]string); !reflect.DeepEqual(got, tc.wantProviders) {
+					t.Fatalf("provider enum = %v, want %v", got, tc.wantProviders)
+				}
 			}
 		})
 	}

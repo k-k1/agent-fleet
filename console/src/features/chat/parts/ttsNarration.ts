@@ -5,7 +5,7 @@ import { effectiveDict } from "../ttsDict.ts";
 import { type TtsController, type TtsEndReason, type TtsStopReason } from "../ttsControl.ts";
 import { type TtsOptions, ttsOptsFromSettings, localizedReadings } from "./ttsOptions.ts";
 import { emotionOpts, voiceCharName } from "./ttsVoices.ts";
-import { MAX_INFLIGHT, audioCtx, connectOutput, heardProvider, outputVolume, synthToBuffer } from "./ttsAudio.ts";
+import { MAX_INFLIGHT, audioCtx, connectOutput, heardProvider, makeProviderPin, outputVolume, synthToBuffer } from "./ttsAudio.ts";
 import { notifyStopped, preemptActive, takeAnnounce } from "./ttsPlay.ts";
 
 // --- Narration mode (docs/log/24): read a file's body from the top, with karaoke follow ---
@@ -67,6 +67,10 @@ export function startNarration(
   // The provider that actually synthesised (X-TTS-Provider). CP decides where auto goes, so
   // this is unknown until the first unit comes back; restate TopBar's voice label then.
   let heard = "";
+  // One narration is one utterance: the provider is decided by the first unit that comes
+  // back and stated on every later one (ADR 0070 decision 13), so an on-demand engine that
+  // finishes starting halfway through a file does not change the voice mid-read.
+  const pin = makeProviderPin();
   const noteHeard = (ab: AudioBuffer) => {
     const h = heardProvider(ab);
     if (!h || h === heard) return;
@@ -100,8 +104,10 @@ export function startNarration(
   // Synthesise ahead up to the in-flight limit; an empty unit becomes null at once. A result
   // is accepted only when its epoch still matches, so a stale voice that arrives after
   // setVoice is never played.
+  // Until the provider is pinned the limit is ONE: with two in flight the second unit is
+  // also sent unpinned, and it is exactly the one that can come back in the other voice.
   const pump = () => {
-    while (!stopped && inflight < MAX_INFLIGHT && synthAt < texts.length) {
+    while (!stopped && inflight < (pin.pinned() ? MAX_INFLIGHT : 1) && synthAt < texts.length) {
       const i = synthAt++;
       const text = texts[i];
       if (!text) {
@@ -112,9 +118,12 @@ export function startNarration(
       const ac = new AbortController();
       acs.add(ac);
       const ep = epoch;
-      synthToBuffer(ctx!, text, emotionOpts(text, opts), ac.signal)
+      synthToBuffer(ctx!, text, pin.opts(emotionOpts(text, opts)), ac.signal)
         .then((ab) => {
-          if (ep === epoch) buffers.set(i, ab);
+          if (ep === epoch) {
+            pin.note(ab);
+            buffers.set(i, ab);
+          }
         })
         .catch(() => {
           if (ep === epoch) buffers.set(i, null);
@@ -142,6 +151,7 @@ export function startNarration(
     buffers.clear();
     synthAt = cursor;
     heard = ""; // a new voice may route elsewhere; restate from the next unit's response
+    pin.reset(); // and it may route to a different engine, so the old pin is not this voice's
     const st = useTtsStore.getState();
     if (st.active === adapter) st.setActive(adapter, source, voiceCharName(opts), sessionName); // refresh TopBar's voice label
     pump();
@@ -162,6 +172,9 @@ export function startNarration(
     }
     const aopts = { ...ttsOptsFromSettings(getSettings()), ...a.voice };
     let aheard = ""; // where the announcement actually synthesised, kept apart from narration's heard
+    // Its own pin as well: an announcement read between two units is a separate utterance,
+    // and inheriting the narration's provider would pin it to a voice nobody chose for it.
+    const apin = makeProviderPin();
     const label = (on: boolean) => {
       const st = useTtsStore.getState();
       if (st.active !== adapter) return;
@@ -185,7 +198,7 @@ export function startNarration(
       const piece = pieces[pi++];
       const ac = new AbortController();
       acs.add(ac);
-      void synthToBuffer(ctx!, piece, emotionOpts(piece, aopts), ac.signal).then((ab) => {
+      void synthToBuffer(ctx!, piece, apin.opts(emotionOpts(piece, aopts)), ac.signal).then((ab) => {
         acs.delete(ac);
         if (stopped) {
           playing = false;
@@ -195,6 +208,7 @@ export function startNarration(
           playNext(); // skip a failed piece
           return;
         }
+        apin.note(ab);
         aheard = heardProvider(ab) || aheard;
         label(true);
         const src = ctx!.createBufferSource();

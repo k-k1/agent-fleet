@@ -155,13 +155,17 @@ func HandleSessionLock(w http.ResponseWriter, r *http.Request) {
 //
 // The keep-awake pin (KeepAwakeUntil) gets the same treatment: the list is polled every few
 // seconds, so an older snapshot rolling back a pin pressed meanwhile looks to the user like
-// a button that did nothing — the same trap the lock already fell into once.
+// a button that did nothing — the same trap the lock already fell into once. So does the
+// stop-after-turn arm (docs/log/85), where losing the write is worse than a dead button: the
+// arm silently stops being honoured and the session the user expected to fold away keeps
+// running.
 func WriteSessionMetaKeepingLock(m session.Meta) session.Meta {
 	sessionLockMu.Lock()
 	defer sessionLockMu.Unlock()
 	if current, ok := session.ReadMeta(m.Name); ok {
 		m.Locked = current.Locked
 		m.KeepAwakeUntil = current.KeepAwakeUntil
+		m.StopAfterTurnAt = current.StopAfterTurnAt
 	}
 	session.WriteMeta(m)
 	return m

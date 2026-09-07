@@ -26,6 +26,8 @@ interface SessionsStore {
   /** Reflect a successful deletion-lock toggle before the next list refresh. */
   setLocked(name: string, locked: boolean): void;
   setKeepAwake(name: string, keepAwakeUntil: string): void;
+  /** Reflect a successful stop-after-turn toggle before the next list refresh. */
+  setStopAfterTurn(name: string, stopAfterTurnAt: string): void;
   /** Resume/launch a stopped session (POST start). Resolves true when the backend
    * accepted the resume; false (with a toast already shown) when it did not, so the
    * caller can leave its resume affordance armed instead of waiting forever. */
@@ -62,6 +64,12 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
   // (same as the lock toggle).
   setKeepAwake(name: string, keepAwakeUntil: string) {
     const list = get().sessions.map((s) => (s.name === name ? { ...s, keepAwakeUntil } : s));
+    ser = JSON.stringify(list);
+    set({ sessions: list });
+  },
+
+  setStopAfterTurn(name: string, stopAfterTurnAt: string) {
+    const list = get().sessions.map((s) => (s.name === name ? { ...s, stopAfterTurnAt } : s));
     ser = JSON.stringify(list);
     set({ sessions: list });
   },

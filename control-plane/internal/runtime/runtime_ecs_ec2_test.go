@@ -4366,9 +4366,10 @@ const unplaceable = "(service af-ws-x) was unable to place a task because no con
 // `aws ecs describe-services` by hand as the only way to find out why.
 func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
 	now := time.Now()
-	deploy := now.Add(-2 * time.Minute)
+	deploy := now.Add(-10 * time.Minute)
+	stood := now.Add(-placementBlockedGrace - time.Minute) // long past the grace
 
-	got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, placeEvent(now.Add(-time.Minute), unplaceable)))
+	got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, placeEvent(stood, unplaceable)), now)
 	if !strings.Contains(got, "missing an attribute") {
 		t.Fatalf("the placement failure was not surfaced: %q", got)
 	}
@@ -4376,14 +4377,45 @@ func TestECSPlacementBlockedReadsTheCurrentDeployment(t *testing.T) {
 	// A redeployment after the fix. The old complaint stays in the event list, so reading
 	// anything older than the current deployment turns an ordinary cold start into a
 	// bogus diagnosis.
-	if got := ecsPlacementBlocked(svcWithEvents(1, 0, now, placeEvent(now.Add(-time.Minute), unplaceable))); got != "" {
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, now, placeEvent(stood, unplaceable)), now); got != "" {
 		t.Fatalf("an event older than the current deployment was reported: %q", got)
 	}
 
 	// A start that is simply coming up says nothing.
 	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy,
-		placeEvent(now, "(service af-ws-x) has started 1 tasks: (task abc)."))); got != "" {
+		placeEvent(now, "(service af-ws-x) has started 1 tasks: (task abc).")), now); got != "" {
 		t.Fatalf("a healthy start was reported as blocked: %q", got)
+	}
+}
+
+// The event is also emitted by a wait the CP created itself, so it only counts once it has
+// STOOD for the grace. Measured on acrt 2026-09-07 (a member moving to an arm slot class):
+// the pool grew at 04:11:43, ECS complained at 04:12:08 naming a STOPPED slot as the
+// "closest matching" one, and the task started at 04:12:38 — the member was told "Cannot
+// start. Waiting will not help" thirty seconds before it started.
+func TestECSPlacementBlockedIgnoresTheWaitItCausedItself(t *testing.T) {
+	now := time.Now()
+	deploy := now.Add(-10 * time.Minute) // older than every event below, so only the grace decides
+	const growing = "(service af-ws-x) was unable to place a task because no container " +
+		"instance met all of its requirements. The closest matching (container-instance abc) " +
+		"doesn't have the agent connected."
+
+	// 25 seconds in — the slot the CP just created has not registered yet.
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, placeEvent(now.Add(-25*time.Second), growing)), now); got != "" {
+		t.Fatalf("a start still growing its slot was called a wall: %q", got)
+	}
+
+	// The same event, once it has stood: a wedge does not resolve, so it must still be named.
+	old := placeEvent(now.Add(-placementBlockedGrace-time.Second), growing)
+	if got := ecsPlacementBlocked(svcWithEvents(1, 0, deploy, old), now); !strings.Contains(got, "agent connected") {
+		t.Fatalf("an event that stood past the grace was not reported: %q", got)
+	}
+
+	// ECS repeating itself must not hide the wall: the fresh copy is listed first (newest
+	// first), and stopping at it would reset the clock on every repeat.
+	repeated := svcWithEvents(1, 0, deploy, placeEvent(now, growing), old)
+	if got := ecsPlacementBlocked(repeated, now); !strings.Contains(got, "agent connected") {
+		t.Fatalf("a repeated event hid the aged original: %q", got)
 	}
 }
 
@@ -4395,7 +4427,9 @@ func TestECSEC2BlockedPhaseIsSetAndCleared(t *testing.T) {
 	now := time.Now()
 	defer h.rt.setPhase("")
 
-	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-time.Minute), placeEvent(now, unplaceable)))
+	// Aged past placementBlockedGrace: a fresh event is the pool growing, not a wall.
+	h.rt.notePlacementBlocked(svcWithEvents(1, 0, now.Add(-10*time.Minute),
+		placeEvent(now.Add(-placementBlockedGrace-time.Minute), unplaceable)))
 	ph := h.rt.BootPhase()
 	if !strings.HasPrefix(ph, blockedPhasePrefix) || !strings.Contains(ph, "missing an attribute") {
 		t.Fatalf("phase does not carry the reason: %q", ph)

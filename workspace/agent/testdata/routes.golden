@@ -235,6 +235,7 @@ GET /sessions/{name}/ssm-login
 POST /sessions/{name}/start
 GET /sessions/{name}/status
 POST /sessions/{name}/stop
+POST /sessions/{name}/stop-after-turn
 POST /sessions/{name}/suggest-branch
 POST /sessions/{name}/suggest-replies
 POST /sessions/{name}/title/accept

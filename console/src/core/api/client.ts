@@ -749,6 +749,14 @@ export const sessionKeepAwake = (
   hours: number,
 ): Promise<{ keepAwakeUntil?: string; error?: ApiError }> =>
   apiJSON(`api/sessions/${encodeURIComponent(name)}/keep-awake`, "POST", { hours });
+
+// Stop-after-turn arm (docs/log/85): the pin's mirror image — stop this session once the turn
+// it is running ends. The stop is resumable, and a new instruction releases the arm.
+export const sessionStopAfterTurn = (
+  name: string,
+  on: boolean,
+): Promise<{ stopAfterTurnAt?: string; error?: ApiError }> =>
+  apiJSON(`api/sessions/${encodeURIComponent(name)}/stop-after-turn`, "POST", { on });
 export const repoSetLock = (name: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>
   apiJSON(`api/repos/${encodeURIComponent(name)}/lock`, "POST", { locked });
 export const chatSetLock = (id: string, locked: boolean): Promise<{ locked?: boolean; error?: ApiError }> =>

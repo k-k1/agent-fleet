@@ -310,26 +310,38 @@ func TestSdcppRejectsAnAnswerItCannotRead(t *testing.T) {
 	}
 }
 
-// "auto" walks providerOrder, and the fleet's own engine comes first: the Codex route spends
-// the USER's ChatGPT plan quota, while a deployment that stood up this engine already decided
-// to pay for the hardware itself. Naming codex explicitly still picks it.
-func TestAutoPrefersTheSelfHostedEngineOverTheUsersPlan(t *testing.T) {
+// "auto" walks the effective order, and the fleet's own engine comes first where it exists:
+// the other routes spend a MEMBER's plan quota, while a deployment that stood up this engine
+// already decided to pay for the hardware itself. Naming a provider explicitly still pins it,
+// and a deployment with no engine — the normal case — is unaffected.
+func TestAutoPrefersTheSelfHostedEngineOverAMembersPlan(t *testing.T) {
 	caps := func(id string) Caps {
 		if id == ProviderSdcpp {
 			return Caps{Ops: []Op{OpGenerate, OpEdit, OpInpaint}}
 		}
 		return Caps{Ops: []Op{OpGenerate, OpEdit}}
 	}
-	ready := map[string]bool{ProviderSdcpp: true, ProviderCodex: true}
-	if got := chooseImageProvider("", Request{Op: OpGenerate}, providerOrder, ready, caps); got != ProviderSdcpp {
-		t.Errorf("auto chose %q, want %q", got, ProviderSdcpp)
+	ready := map[string]bool{ProviderSdcpp: true, ProviderCodex: true, ProviderAgy: true}
+	got := chooseImageProviders("", Request{Op: OpGenerate}, providerOrder, ready, caps)
+	if len(got) == 0 || got[0] != ProviderSdcpp {
+		t.Errorf("auto chose %v, want %q first", got, ProviderSdcpp)
 	}
-	if got := chooseImageProvider(ProviderCodex, Request{Op: OpGenerate}, providerOrder, ready, caps); got != ProviderCodex {
-		t.Errorf("an explicit codex became %q", got)
+	// The fall-through order still holds behind it: an engine that turns out to be broken must
+	// leave the member's own routes reachable rather than ending the call.
+	if len(got) != 3 {
+		t.Errorf("auto returned %v, want every ready provider in order", got)
 	}
-	// And with no engine deployed — the normal case — auto still finds the Codex route.
-	if got := chooseImageProvider("", Request{Op: OpGenerate}, providerOrder,
-		map[string]bool{ProviderCodex: true}, caps); got != ProviderCodex {
-		t.Errorf("with no engine, auto chose %q", got)
+	if got := chooseImageProviders(ProviderCodex, Request{Op: OpGenerate}, providerOrder, ready, caps); len(got) != 1 || got[0] != ProviderCodex {
+		t.Errorf("an explicit codex became %v", got)
+	}
+	// With no engine deployed — the normal case — auto is exactly what it was before.
+	if got := chooseImageProviders("", Request{Op: OpGenerate}, providerOrder,
+		map[string]bool{ProviderCodex: true, ProviderAgy: true}, caps); len(got) == 0 || got[0] != ProviderAgy {
+		t.Errorf("with no engine, auto chose %v", got)
+	}
+	// inpaint is the fleet engine's alone here, so the list must not offer a provider that
+	// cannot do it — a fall-through to one would be a second failure, not a rescue.
+	if got := chooseImageProviders("", Request{Op: OpInpaint}, providerOrder, ready, caps); len(got) != 1 || got[0] != ProviderSdcpp {
+		t.Errorf("inpaint chose %v", got)
 	}
 }
