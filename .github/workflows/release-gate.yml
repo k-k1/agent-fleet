@@ -407,6 +407,19 @@ jobs:
               || { echo "::error::missing release notes: deploy/release/notes/$v.md"; exit 1; }
           done < deploy/release/notes/index.tsv
 
+      # SUMMARY is the one-line index across releases; it is hand-maintained, so
+      # nothing else would notice a version that never got its section.
+      - name: every released version is in SUMMARY
+        run: |
+          set -eu
+          while IFS="$(printf '\t')" read -r v _date _commit; do
+            case "$v" in ''|\#*) continue ;; esac
+            for f in SUMMARY.md SUMMARY.ja.md; do
+              grep -qF "## [$v](" "deploy/release/notes/$f" \
+                || { echo "::error::missing section for $v in deploy/release/notes/$f"; exit 1; }
+            done
+          done < deploy/release/notes/index.tsv
+
       - name: chromium CDN real download (pinned build)
         run: |
           set -eux

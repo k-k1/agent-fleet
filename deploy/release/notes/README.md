@@ -9,7 +9,14 @@ tree. Internal-only work (CI, refactors, docs for this repo) does not belong her
 0.3.0.md      English — canonical
 0.3.0.ja.md   Japanese — same content
 index.tsv     published release ledger: version → publish date → build commit
+SUMMARY.md    one-line index of every release's features, fixes and CLI pin bumps
+SUMMARY.ja.md Japanese — same content
 ```
+
+`SUMMARY*.md` are not release bodies: they are the cross-release index, one line per
+item, tagged with the area each item belongs to. They are updated as part of
+publishing (step 2 below) and `release-gate` fails when a ledger row has no section
+in them. How to write a section is documented at the top of the file itself.
 
 Same convention as the READMEs: English is canonical, Japanese sits alongside as
 `.ja.md`. A missing `<version>.md` fails the publish; a missing `.ja.md` only omits
@@ -74,13 +81,15 @@ Covered by the runbook in [docs/log/35 §35.8.2](../../../docs/log/35-packaging.
 that concern this directory:
 
 1. Write `<version>.md` and `<version>.ja.md`.
-2. Append the row to `index.tsv` (version, publish date, build commit).
-3. Run `deploy/release/gen-changelog.sh` and commit the regenerated
+2. Add the version's section to `SUMMARY.md` and `SUMMARY.ja.md` (CLI pins read from
+   the build commit, not from the notes — see the file's own header).
+3. Append the row to `index.tsv` (version, publish date, build commit).
+4. Run `deploy/release/gen-changelog.sh` and commit the regenerated
    `dist-repo/CHANGELOG*.md`.
-4. Tag the build commit `v<version>` in this repo and push the tag.
-5. Publish with `--seed` so the CHANGELOG reaches the dist repo.
+5. Tag the build commit `v<version>` in this repo and push the tag.
+6. Publish with `--seed` so the CHANGELOG reaches the dist repo.
 
-Steps 2-4 exist because the version→commit mapping used to be recoverable only from
+Steps 3-5 exist because the version→commit mapping used to be recoverable only from
 the `publish-dist` workflow runs' `head_sha`. Releases 0.1.0-0.2.3 were reconstructed
 that way and tagged retroactively; keep the ledger and the tags current so that never
 has to be repeated.
