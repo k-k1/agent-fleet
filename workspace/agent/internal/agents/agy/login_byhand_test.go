@@ -1,12 +1,12 @@
 //go:build clicontract
 
-// A hand-driven agy OAuth login, for the one host the product deliberately refuses to run agy
-// on. hostcaps hides the agy kind entirely when the CPU exposes no RDRAND, on the strength of
-// ADR 0008's "it cannot be worked around from user space" — which is wrong: masking the RDRAND
-// bit out of OpenSSL's CPU detection is enough (see the correction in ADR 0008).
+// A hand-driven agy OAuth login: the one step of the Connections flow that cannot be
+// automated, because completing it needs a human with a browser.
 //
-// This drives the SAME steps HandleStart/HandleComplete do, so a pass is evidence that the
-// product's own flow would work here too once the mask is applied at the spawn site.
+// It drives the SAME steps HandleStart/HandleComplete do, through the same helpers and the
+// same environment (fips.go's mask included), so a pass is evidence for the product's own
+// flow — which is how the RDRAND workaround was first shown to carry a whole login on a host
+// where ADR 0008 had declared agy unrunnable.
 //
 //	AF_AGY_LOGIN=1 go test -tags clicontract -run TestAgyLoginByHand -timeout 20m ./internal/agents/agy/
 //
@@ -47,8 +47,7 @@ func TestAgyLoginByHand(t *testing.T) {
 
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir
-	// The whole point: without this the FIPS self-test aborts before the selector appears.
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "OPENSSL_ia32cap=~0x4000000000000000")
+	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
 		t.Fatal(err)

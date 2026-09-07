@@ -20,8 +20,8 @@
 // No authentication: `mcp list` only reads the config files and tries to connect. The probes
 // are things like /bin/true and the handshake may fail — only the name and its origin
 // appearing in the listing is being observed. kiro is unverified because every `mcp`
-// subcommand demands a login; agy cannot start on this host (no RDRAND) and its MCP config
-// is global-only, with no project scope at all.
+// subcommand demands a login; agy's MCP config is global-only, so there is no project scope
+// for this test to observe in the first place.
 package mcpreg
 
 import (

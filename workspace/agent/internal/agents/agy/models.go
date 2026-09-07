@@ -2,6 +2,7 @@ package agy
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -52,7 +53,9 @@ func Models() []agents.ModelChoice {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	out, err := exec.CommandContext(ctx, "agy", "models").Output()
+	cmd := exec.CommandContext(ctx, "agy", "models")
+	cmd.Env = Env(os.Environ())
+	out, err := cmd.Output()
 	if err != nil {
 		return modelsList // stale-if-error: an expired cache still beats an empty picker
 	}

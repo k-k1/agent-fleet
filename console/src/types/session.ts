@@ -100,6 +100,10 @@ export interface ProviderConn {
   // cannot run agy ("no_rdrand" / "not_installed"); absent = supported.
   supported?: boolean;
   reason?: string;
+  // agy: true when it only runs here with the CPU's RDRAND masked out of OpenSSL's
+  // detection, i.e. its randomness comes from the kernel rather than the FIPS build's
+  // hardware source (docs/decisions/0008). The card says so.
+  rdrand_masked?: boolean;
   // Chat integrations (discord / slack): the display form of the notification master switch
   // (the inverse of notifyOff). OFF only when false is explicit — unset (an older
   // connection) counts as ON.

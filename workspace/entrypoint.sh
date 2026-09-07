@@ -316,14 +316,19 @@ cli_present() { [ -x "/usr/local/bin/$1" ] || [ -e "$HOME/.local/bin/$1" ]; }
 # 固着する。しかも実害は静かで、その版で出力形式が変わっていれば「セッションは動く
 # のに黙って別のモデル」になる（§70.14.8 で実際にそうなった）。
 #
-# 実体を問えるなら実体を問う。問えないのは RDRAND 非提示の x86 ホストだけで、そこは
-# 起動即 SIGABRT する（decisions/0008）ので marker に落ちる。arm64 は §70.13 の実測で
-# 安全と確定している（BoringCrypto が乱数を命令でなく getrandom(2) から取るため、
-# `rng` を持たない Graviton2 でも RC=0 だった）。
+# だから常に実体を問う。カーネルが RDRAND を取り下げた x86 ホストでは素の起動が
+# SIGABRT する（decisions/0008）ので、Agent が全 spawn に当てるのと同じ
+# OPENSSL_ia32cap マスクを当てて問う（0008 の 2026-09-07 決定。RDRAND 提示ホストには
+# 当たらない）。arm64 は §70.13 の実測で素のまま安全と確定している（BoringCrypto が
+# 乱数を命令でなく getrandom(2) から取るため、`rng` を持たない Graviton2 でも RC=0）。
+# マスクは呼び出し単位で当てる — export すると agy 以外の全プロセスに及ぶ。
 agy_effective_version() {
   local bin="$HOME/.local/bin/agy" v=""
-  if [ -x "$bin" ] && { [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; }; then
+  if [ ! -x "$bin" ]; then :
+  elif [ "$(uname -m)" = "aarch64" ] || grep -qw rdrand /proc/cpuinfo 2>/dev/null; then
     v="$(timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
+  else
+    v="$(OPENSSL_ia32cap='~0x4000000000000000' timeout 30 "$bin" --version 2>/dev/null | head -1 | tr -dc '0-9.')"
   fi
   [ -n "$v" ] || v="$(cat "$HOME/.local/bin/.agy.version" 2>/dev/null)"
   printf '%s' "$v"

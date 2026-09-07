@@ -216,6 +216,8 @@ export const settings: Record<keyof typeof jaSettings, string> = {
   "agents.agy_method_gcp": "GCP project (coming soon)",
   "agents.agy_rtk_note":
     "agy has no command-rewrite hook, so it's instruction-based (best effort). AGENTS.md just encourages rtk use; it isn't enforced.",
+  "agents.agy_rdrand_masked":
+    "This host's RDRAND instruction is broken, so agy runs with it masked out of OpenSSL's CPU detection. Its randomness comes from the kernel instead of the FIPS build's hardware source.",
   "agents.agy_unsupported": "Not available on this host ({reason})",
   "agents.copilot_desc":
     "GitHub Copilot CLI rides the GitHub connection (gh transparent auth) — no separate sign-in. A Copilot subscription on the GitHub account is required (the Free tier has a small monthly quota).",

@@ -51,7 +51,7 @@ cd agent-fleet-native-<v>-linux-amd64
 | Linux kernel (unprivileged user namespaces) | The stock WSL2 kernel has AppArmor disabled, so it should work as-is. See the note below |
 | bash / coreutils / tar | Standard userland only. zstd is bundled as `bin/zstd`, so it is **not needed on the host** |
 | curl or wget | Used only for the initial rootfs download (see air-gap below) |
-| (optional) CPU exposing RDRAND | Only for the `agy` (Antigravity CLI) agent kind — its FIPS build aborts without RDRAND. Hosts without it run everything else; the Console just hides `agy` |
+| (optional) CPU exposing RDRAND | Only for the `agy` (Antigravity CLI) agent kind — its FIPS build aborts without RDRAND. Where the kernel has withdrawn the instruction the Agent masks it out of OpenSSL's detection and agy runs anyway, its randomness coming from the kernel; set `AF_AGY_RDRAND_MASK=0` to refuse that and have the Console hide `agy` instead ([0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)) |
 
 On **bare-metal Ubuntu 23.10+ (non-WSL)**, unprivileged userns may be restricted by
 AppArmor. In that case, run once:

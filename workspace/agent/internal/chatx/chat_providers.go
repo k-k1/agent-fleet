@@ -998,7 +998,7 @@ func (agyChat) Send(ctx context.Context, c *ChatConversation, prompt string) (st
 	args, model := agyChatArgs(c, headlessPrompt(c.personaOf(), c.knowledgeDirs(), prompt))
 	cmd := exec.CommandContext(ctx, "agy", args...)
 	cmd.Dir = wd
-	cmd.Env = envWith("HOME=" + home)
+	cmd.Env = agy.Env(envWith("HOME=" + home))
 	// agy may refresh the OAuth token via tmp+rename, replacing the symlink with a
 	// diverging real file — fold a rotated token back to the shared one (as for codex).
 	defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
@@ -1667,7 +1667,7 @@ func OneShotHeadless(ctx context.Context, tier OneShotTier, persona, prompt, cla
 		args = append(args, "-p", headlessPrompt(persona, nil, prompt))
 		cmd := exec.CommandContext(ctx, "agy", args...)
 		cmd.Dir = wdir
-		cmd.Env = envWith("HOME=" + home)
+		cmd.Env = agy.Env(envWith("HOME=" + home))
 		defer reconcileChatCreds(agy.TokenPath(), filepath.Join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"))
 		out, err := cmd.Output()
 		if err != nil {
