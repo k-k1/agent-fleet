@@ -46,6 +46,12 @@ type EngineProvider struct {
 	Provider string   // "llamacpp" — the id a model is picked as <provider>/<model>
 	BaseURL  string   // absolute: the CP's public base plus /engine/<key>/v1
 	Models   []string // model ids, declared by the stack (the engine is asleep)
+
+	// The window the engine was started with (llama-server's -c) and the output cap declared
+	// with it, or 0 for a stack that predates them. One pair per ENGINE, not per model: one
+	// llama-server serves one gguf with one -c, so every id in Models shares that window.
+	ContextTokens   int
+	MaxOutputTokens int
 }
 
 // engineProviderConfigKey is the top-level member af owns here. Only entries af itself
@@ -142,7 +148,23 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 	ids := append([]string(nil), e.Models...)
 	sort.Strings(ids) // stable, so a re-read is byte-identical and no-op launches do not churn the file
 	for _, id := range ids {
-		models[id] = map[string]any{"name": id + " (self-hosted)"}
+		m := map[string]any{"name": id + " (self-hosted)"}
+		// Both numbers or neither, and both measured against opencode 1.18.29 rather than
+		// guessed:
+		//
+		//   - a model with no `limit` gets context 0, and opencode DISABLES auto-compaction
+		//     when the context is 0. The session then runs until llama-server rejects the
+		//     request, which is the failure this field exists to prevent;
+		//   - the usable window is context MINUS the output cap, and an output of 0 is not
+		//     "unset" there — it falls back to 32000. Writing the context alone would leave
+		//     a 32k engine with 768 usable tokens and compaction thrashing from turn one.
+		//
+		// So a stack that declares only one of them gets neither: today's behaviour, rather
+		// than a worse one dressed up as a fix.
+		if e.ContextTokens > 0 && e.MaxOutputTokens > 0 {
+			m["limit"] = map[string]any{"context": e.ContextTokens, "output": e.MaxOutputTokens}
+		}
+		models[id] = m
 	}
 	return map[string]any{
 		engineProviderMarker: true,

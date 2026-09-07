@@ -35,6 +35,13 @@ import (
 // engineDef is one row of the table 60-engines wrote. Every field is declared by the stack
 // rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
 // the CP would have to ask the engine for is something it cannot ask.
+//
+// ContextTokens and MaxOutputTokens sit on the ENGINE rather than on each model, because that
+// is the real granularity: one llama-server process serves ONE gguf with ONE -c, and the
+// several ids in Models are aliases pointing at that one window. Two models with different
+// windows are two engines — two rows, and two provider ids, since the Agent keys opencode's
+// provider block by Provider and the second would otherwise overwrite the first. Zero means a
+// stack older than the field, and the Agent then writes no limit at all rather than guessing.
 type engineDef struct {
 	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
 	API              string   `json:"api"`              // "chat" | "images" — see engineAPI* below
@@ -44,6 +51,8 @@ type engineDef struct {
 	Health           string   `json:"health"`           // "/health"
 	Provider         string   `json:"provider"`         // "llamacpp" — the provider id a Workspace configures
 	Models           []string `json:"models"`           // model ids offered as <provider>/<id>
+	ContextTokens    int      `json:"contextTokens"`    // the window the engine is STARTED with (llama-server -c)
+	MaxOutputTokens  int      `json:"maxOutputTokens"`  // output cap advertised with it
 	APIKeyParam      string   `json:"apiKeyParam"`      // SSM SecureString the engine's own --api-key is in
 	IdleSec          int      `json:"idleSec"`
 	StartDeadlineSec int      `json:"startDeadlineSec"`

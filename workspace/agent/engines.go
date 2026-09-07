@@ -67,6 +67,11 @@ type engineCatalogRow struct {
 	Provider string   `json:"provider"`
 	BaseURL  string   `json:"base_url"` // relative to AF_CP_BASE_URL
 	Models   []string `json:"models"`
+	// The window the engine was STARTED with, and the output cap declared alongside it. Both
+	// absent (0) on a deployment whose engine stack predates them, which is why they are
+	// passed on rather than defaulted — see opencode.EngineProvider.
+	ContextTokens   int `json:"context_tokens"`
+	MaxOutputTokens int `json:"max_output_tokens"`
 }
 
 // api defaults to chat, matching the CP's own reading of a table written before the field
@@ -186,6 +191,7 @@ func syncEngineProviders() {
 		}
 		providers = append(providers, opencode.EngineProvider{
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
+			ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
 		})
 	}
 	changed, err := opencode.WriteEngineProviders(providers)
