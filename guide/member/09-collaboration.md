@@ -93,8 +93,11 @@ notification when it happens.
 **Sending a new instruction releases it.** "Stop when you are done" was said about the work
 in front of you, not about whatever you ask for next.
 
-One session stopping does not stop the workspace on its own — it only lets idle-stop get
-there sooner.
+This is tidying rather than cost control: a session that has finished is not what keeps the
+workspace awake, so stopping it does not change when the workspace stops. What you get is
+the memory it was holding, back right away, and a list where "finished" reads as "stopped".
+Idle auto-stop does the same thing on a delay — except that it skips a session while you
+have it open, so stopping one while you watch it work is something only this can do.
 
 ## Locking something against deletion
 

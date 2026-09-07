@@ -262,8 +262,8 @@ type CreateReq struct {
 	ReportTo string `json:"report_to"`
 	// StopAfterTurn arms the stop-after-turn (docs/log/85) on the new session, so it folds
 	// itself away once it has finished the initial_prompt. Set by the CP scheduler for a
-	// schedule with stop_after_run — a 3am fire otherwise holds the workspace it woke until
-	// the idle timeout expires.
+	// schedule with stop_after_run — an unattended fire otherwise leaves its session alive
+	// (and its memory held) for the rest of the night.
 	//
 	// It rides the CREATE rather than a POST that follows, because the arm has to be on disk
 	// before the prompt is delivered: an arm set afterwards races that delivery, and a prompt

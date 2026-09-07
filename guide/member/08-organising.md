@@ -145,8 +145,9 @@ next run time, so check that it matches your intent.
   per time period) is also possible.
 - It can also **stop when it is done**. Tick **"Stop when done"** in Details & edit (ask the
   operator for `stop_after_run`) and the session stops once that run has finished — report
-  first, stop after, and resumable. It keeps a workspace woken for a 3am run from staying up
-  until the idle timeout comes round.
+  first, stop after, and resumable. It keeps the session an unattended run leaves behind from
+  holding its memory for the rest of the night (it does not change when the workspace itself
+  stops — a finished session was never what kept it awake).
 
 ## Constraints and caveats
 
