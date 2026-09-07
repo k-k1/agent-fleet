@@ -84,17 +84,17 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 type generateRequest struct {
-	Session    string   `json:"session"`
-	Provider   string   `json:"provider"`
-	Op         string   `json:"op"`
-	Prompt      string `json:"prompt"`
-	Size        string `json:"size"`
-	AspectRatio string `json:"aspectRatio"`
-	Background string   `json:"background"`
-	Count      int      `json:"count"`
-	Inputs     []string `json:"inputs"`
-	Mask       string   `json:"mask"`
-	Model      string   `json:"model"`
+	Session     string   `json:"session"`
+	Provider    string   `json:"provider"`
+	Op          string   `json:"op"`
+	Prompt      string   `json:"prompt"`
+	Size        string   `json:"size"`
+	AspectRatio string   `json:"aspectRatio"`
+	Background  string   `json:"background"`
+	Count       int      `json:"count"`
+	Inputs      []string `json:"inputs"`
+	Mask        string   `json:"mask"`
+	Model       string   `json:"model"`
 }
 
 // HandleGenerate answers POST /imagegen/generate. It blocks for the whole generation: P0 is
