@@ -906,6 +906,10 @@ the captured state — the same shape as the pool and speech layers:
 ServiceConnectNamespace=af.internal
 LlmModelIds=qwen3-coder-30b-a3b
 LlmAllowedInstanceTypes=g6.xlarge
+# The context llama-server is started with, and what the client is told it has. One knob for
+# both, so they cannot drift; move them together when the model changes.
+LlmContextTokens=32768
+LlmMaxOutputTokens=4096
 # The image role, if you want it. Leave every Image* line out and no image service exists.
 ImageModelIds=sdxl-base-1.0
 ImageModelFile=sd_xl_base_1.0.safetensors

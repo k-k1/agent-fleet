@@ -56,6 +56,64 @@ func TestWriteEngineProvidersDeclaresTheModelWithoutTheEngine(t *testing.T) {
 	}
 }
 
+// The window the engine was started with has to reach opencode as a `limit`, and BOTH halves
+// of it. Measured against opencode 1.18.29:
+//
+//   - a model declared with only a `name` comes back as limit={context:0,output:0}, and
+//     opencode switches auto-compaction OFF when the context is 0. The session then runs
+//     until llama-server rejects the request, with nothing in the UI to explain it;
+//   - the usable window is context MINUS the output cap, and 0 there is not "unset" — it
+//     substitutes 32000. A 32,768-token engine declared without the output half would be
+//     left with 768 usable tokens, i.e. compaction thrashing from the first turn.
+func TestWriteEngineProvidersDeclaresTheWindow(t *testing.T) {
+	engineTestHome(t)
+	if _, err := WriteEngineProviders([]EngineProvider{{
+		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
+		Models: []string{"qwen3-coder-30b-a3b"}, ContextTokens: 32768, MaxOutputTokens: 4096,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	root := readEngineConfig(t)
+	p, _ := root["provider"].(map[string]any)
+	entry, _ := p["llamacpp"].(map[string]any)
+	models, _ := entry["models"].(map[string]any)
+	model, _ := models["qwen3-coder-30b-a3b"].(map[string]any)
+	limit, _ := model["limit"].(map[string]any)
+	if limit == nil {
+		t.Fatalf("no limit on the model: %v", model)
+	}
+	if limit["context"] != float64(32768) || limit["output"] != float64(4096) {
+		t.Errorf("limit = %v", limit)
+	}
+}
+
+// Half a pair is not half a fix. A stack that declares one number and not the other gets
+// neither, which leaves today's behaviour (no limit at all) rather than the 768-token window
+// a context without an output cap produces.
+func TestWriteEngineProvidersOmitsAHalfDeclaredWindow(t *testing.T) {
+	engineTestHome(t)
+	for _, e := range []EngineProvider{
+		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}},
+		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, ContextTokens: 32768},
+		{Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/x", Models: []string{"m"}, MaxOutputTokens: 4096},
+	} {
+		if _, err := WriteEngineProviders([]EngineProvider{e}); err != nil {
+			t.Fatal(err)
+		}
+		root := readEngineConfig(t)
+		p, _ := root["provider"].(map[string]any)
+		entry, _ := p["llamacpp"].(map[string]any)
+		models, _ := entry["models"].(map[string]any)
+		model, _ := models["m"].(map[string]any)
+		if model == nil {
+			t.Fatalf("the model went missing: %v", entry)
+		}
+		if _, ok := model["limit"]; ok {
+			t.Errorf("ctx=%d out=%d wrote a limit anyway: %v", e.ContextTokens, e.MaxOutputTokens, model)
+		}
+	}
+}
+
 // The config is the USER's file. af owns its own provider entries and nothing else — the
 // same bargain the MCP materializer makes — so a hand-written provider and a hand-written
 // top-level member both survive, and af's own stale entry does not.
