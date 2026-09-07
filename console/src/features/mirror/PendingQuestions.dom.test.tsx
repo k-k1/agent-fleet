@@ -142,6 +142,30 @@ describe("PendingQuestions draft", () => {
     expect(texts()[1].value).toBe("そのほか");
   });
 
+  it("the carried card picks up what was typed into the live one for the same question", () => {
+    // The session stopping is what swaps the cards (docs/log/75): the live card goes, the
+    // carried one takes its place with the identical question — and the answer half written
+    // into the free-text row was being lost right there, at the moment the user is away from
+    // the keyboard.
+    mount();
+    click(opts()[1]); // B
+    type(texts()[1], "そのほか");
+    unmount();
+
+    mount(QS, "af.auq-carried-draft.s1");
+    expect(picked()).toEqual([false, true, false, false]);
+    expect(texts()[1].value).toBe("そのほか");
+
+    // The card on screen owns it now: emptying the row there is not undone by the copy the
+    // live card left behind.
+    type(texts()[1], "");
+    click(opts()[1]); // untoggle B
+    unmount();
+    mount(QS, "af.auq-carried-draft.s1");
+    expect(picked()).toEqual([false, false, false, false]);
+    expect(texts()[1].value).toBe("");
+  });
+
   it("cancelling throws the draft away", () => {
     mount();
     click(opts()[1]);
