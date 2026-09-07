@@ -60,6 +60,11 @@ type Request struct {
 	// silently resample to hit an exact size, because that would trade a real dependency for
 	// a promise the provider never made.
 	Size string
+	// AspectRatio is "<w>:<h>" or "auto" — a SEPARATE axis from Size, not a spelling of it.
+	// The agy route takes a ratio and has no size parameter at all, while the Codex route takes
+	// neither; folding one into the other would make a provider that honours the ratio look
+	// like one that ignores the size (ADR 0069 decision 5, per (provider, model) capability).
+	AspectRatio string
 	// Background is "auto" | "opaque" | "transparent". gpt-image-2 has no transparency at all.
 	Background string
 	Count      int
@@ -123,10 +128,15 @@ type Caps struct {
 	// Sizes is the exact sizes the caller may pick. EMPTY MEANS THE CALLER CANNOT PICK — on
 	// the Codex route the size is decided by the model and measured to ignore what was asked
 	// for, so an empty list is the honest answer, not a missing one.
-	Sizes       []string
-	Backgrounds []string
-	MaxCount    int
-	MaxInputs   int
+	Sizes []string
+	// AspectRatios is the exact ratios the caller may pick ("16:9"). Empty means the caller
+	// cannot pick, exactly as with Sizes — and the two are independent: the agy route has
+	// ratios and no sizes, the Codex route has neither. A ratio list stuffed into Sizes would
+	// advertise "16:9" as a dimension and be wrong in both directions.
+	AspectRatios []string
+	Backgrounds  []string
+	MaxCount     int
+	MaxInputs    int
 }
 
 func (c Caps) Supports(op Op) bool {
@@ -151,18 +161,21 @@ type Provider interface {
 // Provider ids. The id is the wire value the MCP surface and the ledger both carry.
 const (
 	ProviderCodex = "codex"
+	ProviderAgy   = "agy"
 )
 
-// providerOrder is the BUILT-IN order "auto" walks, best-supported first. P0 has one entry;
-// the second is meant to be Bedrock, because it adds no new secret, its host is already in the
-// egress allowlist, and it brings the editing operations that keep Op honest (ADR 0069
-// decision 3).
+// providerOrder is the BUILT-IN order "auto" walks. Both entries are Tier-1 (ADR 0069
+// decision 3): each runs on a login the container already holds, and neither costs a new secret
+// or an egress allowlist entry.
 //
-// What the default order SHOULD be once there is more than one is deliberately not guessed at
-// here: a self-hosted engine costs nothing per image but waits on a GPU, while the Codex route
-// is fast and spends the user's plan. That trade-off is decided when the second provider is
-// real, not now.
-var providerOrder = []string{ProviderCodex}
+// Codex is first, and the reason is NOT that it is the better route — agy is measurably better
+// at honouring the request, since its aspect ratio actually reaches the tool while codex's size
+// does not. It is first because it shipped first: for every user who already has this feature
+// working, a reordered default would silently move their image generation onto a DIFFERENT
+// account and a different plan's quota, which is the one thing an "improvement" must not do by
+// itself. The order is a user preference with a Console control, so choosing agy is one drag
+// away — and a fall-through already reaches it when codex is signed out or out of quota.
+var providerOrder = []string{ProviderCodex, ProviderAgy}
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
 // same hook shape as Enabled). nil, or a list that names nothing known, simply means the
@@ -202,7 +215,7 @@ func effectiveOrder() []string {
 // changed environment (a Codex login that arrived after boot) is picked up, and a var so a
 // test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newCodexProvider()}
+	return []Provider{newCodexProvider(), newAgyProvider()}
 }
 
 // chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
@@ -328,7 +341,7 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			Provider: res.Provider,
 			Model:    res.Model,
 			Region:   res.Region,
-			Warnings: append(res.Warnings, requestWarnings(req, res)...),
+			Warnings: append(res.Warnings, requestWarnings(req, res, p.Caps(req.Model))...),
 			CostUSD:  res.CostUSD,
 		}, nil
 	}
@@ -349,6 +362,7 @@ func normalizeRequest(r Request) Request {
 	}
 	r.Prompt = strings.TrimSpace(r.Prompt)
 	r.Size = strings.TrimSpace(r.Size)
+	r.AspectRatio = strings.TrimSpace(r.AspectRatio)
 	r.Background = strings.TrimSpace(r.Background)
 	return r
 }
@@ -357,8 +371,14 @@ func normalizeRequest(r Request) Request {
 // The provider reports what IT knows it could not honour; this catches the rest — most
 // importantly a count that came back short, which no provider can see as a failure because
 // each image it did produce is fine.
-func requestWarnings(req Request, res Result) []string {
+func requestWarnings(req Request, res Result, caps Caps) []string {
 	var out []string
+	// A route with no aspect-ratio list cannot have honoured one, and unlike the size there is
+	// no produced dimension to catch it after the fact — a 16:9 request answered with a square
+	// picture is only visibly wrong to someone who knows what they asked for.
+	if r := req.AspectRatio; r != "" && r != "auto" && len(caps.AspectRatios) == 0 {
+		out = append(out, fmt.Sprintf("aspect_ratio=%s requested, but this route cannot choose an aspect ratio", r))
+	}
 	if n := len(res.Images); req.Count > 0 && n != req.Count {
 		out = append(out, fmt.Sprintf("count=%d requested, %d produced", req.Count, n))
 	}
@@ -431,8 +451,14 @@ func usageKindOf(provider, chosen string) string {
 	if provider == "" {
 		provider = chosen
 	}
-	if provider == ProviderCodex {
+	switch provider {
+	case ProviderCodex:
 		return session.KindCodex
+	case ProviderAgy:
+		// The two spellings are identical today, which is exactly why the mapping is written
+		// down: the provider id is a wire value of this package and the kind is the fleet's
+		// agent-kind enum, and a rename of either must not silently file the row elsewhere.
+		return agyUsageKind
 	}
 	return provider
 }

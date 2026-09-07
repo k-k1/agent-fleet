@@ -59,22 +59,35 @@ func withImageGen(t *testing.T, on bool) {
 // The tool literal must spell its name out for the advertised-schema scan (it only reads
 // string literals), so the constant the dispatch uses could drift away from it unnoticed.
 func TestImageGenToolNameMatchesConstant(t *testing.T) {
-	tools := mcpStdioImageGenTools([]string{"generate"})
+	tools := mcpStdioImageGenTools([]string{"generate"}, nil)
 	if len(tools) != 1 || tools[0]["name"] != mcpToolGenerateImage {
 		t.Fatalf("advertised name = %v, want %q", tools[0]["name"], mcpToolGenerateImage)
 	}
 }
 
-// The one exclusion of ADR 0069 decision 8, and its negative control: a Codex session already
-// has the CLI's own image_gen, so routing it through a second codex process would double the
-// cost for nothing — but the same session DOES want the fleet tool once the route is not codex.
+// imageGenSchemaProps digs the tool's inputSchema properties out, so a test can ask what the
+// schema actually offers rather than what it was meant to.
+func imageGenSchemaProps(tools []map[string]any) map[string]any {
+	if len(tools) == 0 {
+		return nil
+	}
+	schema, _ := tools[0]["inputSchema"].(map[string]any)
+	props, _ := schema["properties"].(map[string]any)
+	return props
+}
+
+// The exclusion of ADR 0069 decision 8, and its negative control: a session whose own CLI is
+// what the route would drive already has that CLI's built-in image tool, so going out through a
+// second process of it would double the cost for nothing — but the same session DOES want the
+// fleet tool once the route is a different one.
 func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		status   mcpImageGenStatus
-		wantAdv  bool
-		wantOps  int
-		imageGen bool
+		name       string
+		status     mcpImageGenStatus
+		wantAdv    bool
+		wantOps    int
+		wantRatios int
+		imageGen   bool
 	}{
 		{
 			name:     "codex session on the codex route is excluded",
@@ -92,6 +105,19 @@ func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
 			imageGen: true, wantAdv: true, wantOps: 1,
 		},
 		{
+			name:     "agy session on the agy route is excluded for the same reason",
+			status:   mcpImageGenStatus{Enabled: true, Ready: true, Provider: "agy", Kind: "agy", Ops: []string{"generate"}},
+			imageGen: true,
+		},
+		{
+			// The aspect-ratio list rides through to the schema, so a route that has one can be
+			// told from a route that has not.
+			name: "codex session on the agy route gets the tool and its aspect ratios",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Provider: "agy", Kind: "codex",
+				Ops: []string{"generate", "edit"}, AspectRatios: []string{"1:1", "16:9"}},
+			imageGen: true, wantAdv: true, wantOps: 2, wantRatios: 2,
+		},
+		{
 			name:     "no provider is ready",
 			status:   mcpImageGenStatus{Enabled: true, Ready: false, Provider: "", Kind: "claude"},
 			imageGen: true,
@@ -104,15 +130,24 @@ func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			withImageGen(t, tc.imageGen)
 			stubImageGenStatus(t, tc.status)
-			ops, ok := mcpImageGenAdvertise()
+			ops, ratios, ok := mcpImageGenAdvertise()
 			if ok != tc.wantAdv {
 				t.Fatalf("advertise = %v, want %v", ok, tc.wantAdv)
 			}
 			if len(ops) != tc.wantOps {
 				t.Fatalf("ops = %v, want %d", ops, tc.wantOps)
 			}
+			if len(ratios) != tc.wantRatios {
+				t.Fatalf("aspect ratios = %v, want %d", ratios, tc.wantRatios)
+			}
 			if got := advertisedNames(t); tc.wantAdv != got[mcpToolGenerateImage] {
 				t.Fatalf("generate_image in tools/list = %v, want %v", got[mcpToolGenerateImage], tc.wantAdv)
+			}
+			// The parameter appears only where it is real: advertising aspect_ratio on a route
+			// with no ratios is the size mistake all over again — a knob that moves nothing.
+			props := imageGenSchemaProps(mcpStdioImageGenTools(ops, ratios))
+			if _, has := props["aspect_ratio"]; has != (tc.wantRatios > 0) {
+				t.Fatalf("aspect_ratio in schema = %v, want %v", has, tc.wantRatios > 0)
 			}
 		})
 	}
@@ -123,7 +158,7 @@ func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
 func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	withImageGen(t, true)
 	t.Setenv("AGENT_ADDR", ":1") // nothing listens
-	if _, ok := mcpImageGenAdvertise(); ok {
+	if _, _, ok := mcpImageGenAdvertise(); ok {
 		t.Fatal("generate_image was advertised with no Agent to serve it")
 	}
 }

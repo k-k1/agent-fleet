@@ -38,6 +38,10 @@ type statusResponse struct {
 	Kind     string   `json:"kind,omitempty"` // the asking session's agent kind, "" when unknown
 	Model    string   `json:"model,omitempty"`
 	Ops      []string `json:"ops,omitempty"`
+	// AspectRatios is the effective provider's own list, so the MCP schema can offer the
+	// parameter only where it actually reaches the tool. Empty means the tool must not
+	// advertise it at all rather than accept it and drop it.
+	AspectRatios []string `json:"aspectRatios,omitempty"`
 	// Order is the effective provider order, so the answer to "why did it route there" is
 	// readable without guessing at a preference file, and a settings UI has something to
 	// render when there is more than one provider to rank.
@@ -63,28 +67,34 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out.Provider, out.Ready = p.ID(), true
-		if p.ID() == ProviderCodex {
+		switch p.ID() {
+		case ProviderCodex:
 			out.Model = codexDriverModel()
+		case ProviderAgy:
+			out.Model = agyDriverModel()
 		}
-		for _, op := range p.Caps("").Ops {
+		caps := p.Caps("")
+		for _, op := range caps.Ops {
 			out.Ops = append(out.Ops, string(op))
 		}
+		out.AspectRatios = caps.AspectRatios
 		break
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
 }
 
 type generateRequest struct {
-	Session    string   `json:"session"`
-	Provider   string   `json:"provider"`
-	Op         string   `json:"op"`
-	Prompt     string   `json:"prompt"`
-	Size       string   `json:"size"`
-	Background string   `json:"background"`
-	Count      int      `json:"count"`
-	Inputs     []string `json:"inputs"`
-	Mask       string   `json:"mask"`
-	Model      string   `json:"model"`
+	Session     string   `json:"session"`
+	Provider    string   `json:"provider"`
+	Op          string   `json:"op"`
+	Prompt      string   `json:"prompt"`
+	Size        string   `json:"size"`
+	AspectRatio string   `json:"aspectRatio"`
+	Background  string   `json:"background"`
+	Count       int      `json:"count"`
+	Inputs      []string `json:"inputs"`
+	Mask        string   `json:"mask"`
+	Model       string   `json:"model"`
 }
 
 // HandleGenerate answers POST /imagegen/generate. It blocks for the whole generation: P0 is
@@ -129,8 +139,9 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		SID:     session.UUID(meta.Dir, body.Session),
 		Pref:    body.Provider,
 		Request: Request{
-			Op: op, Prompt: body.Prompt, Size: body.Size, Background: body.Background,
-			Count: body.Count, Inputs: body.Inputs, Mask: body.Mask, Model: body.Model,
+			Op: op, Prompt: body.Prompt, Size: body.Size, AspectRatio: body.AspectRatio,
+			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
+			Mask: body.Mask, Model: body.Model,
 		},
 	}
 	out, err := Run(r.Context(), job)

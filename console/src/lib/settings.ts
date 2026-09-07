@@ -347,6 +347,17 @@ export interface Settings {
   // than a text turn — from sessions that are not Codex sessions and would otherwise never
   // touch it, so it is chosen rather than inherited on upgrade.
   imageGeneration: boolean;
+  // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
+  // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
+  // unmentioned providers append in the built-in order — so a list saved before a provider
+  // existed still ranks it. Same rule as normalizeImageProviderOrder below, so the UI shows
+  // exactly what the backend will do.
+  //
+  // It only became a setting when there were two providers to rank: ordering a list of one is
+  // not a choice. The order matters because the providers spend DIFFERENT accounts — codex the
+  // ChatGPT plan, agy the Antigravity one — and "auto" walks this list, falling through to the
+  // next when one is signed out or out of quota.
+  imageProviderOrder: string[];
   // How the opencode launch-model list is shaped (AgentsTab > opencode). One
   // OPENCODE_API_KEY opens both opencode.ai billing routes, so the same model shows up
   // twice: opencode/… (Zen, pay-per-request) and opencode-go/… (the Go subscription).
@@ -689,6 +700,25 @@ export const DEFAULT_MODEL = "sonnet";
 export const ASSISTANT_AGENT_KINDS = ["claude", "codex", "opencode", "cursor", "agy"] as const;
 export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 
+// Image providers in the Agent's own built-in order (imagegen.providerOrder). codex is first
+// because it shipped first, not because it is better: agy honours a requested aspect ratio and
+// codex honours nothing, but reordering the default would silently move an existing user's
+// image generation onto a different account and a different plan's quota.
+export const IMAGE_PROVIDERS = ["codex", "agy"] as const;
+
+// normalizeImageProviderOrder folds any stored value into a total order over IMAGE_PROVIDERS —
+// the same rules the Agent applies in imagegen.effectiveOrder(), so the list the user drags is
+// exactly the list "auto" will walk.
+export function normalizeImageProviderOrder(v: unknown): string[] {
+  const out: string[] = [];
+  const push = (k: unknown) => {
+    if (typeof k === "string" && (IMAGE_PROVIDERS as readonly string[]).includes(k) && !out.includes(k)) out.push(k);
+  };
+  if (Array.isArray(v)) v.forEach(push);
+  IMAGE_PROVIDERS.forEach(push);
+  return out;
+}
+
 // normalizeAssistantOrder folds any stored value into a total order over
 // ASSISTANT_AGENT_KINDS: unknown entries and dupes drop, missing kinds append in
 // the built-in order — same rules as the Agent's assistantAgentOrderPref, so what
@@ -794,6 +824,7 @@ const DEFAULTS: Settings = {
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
+  imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   expandThinking: {},
   assistantTitleSuggest: true,

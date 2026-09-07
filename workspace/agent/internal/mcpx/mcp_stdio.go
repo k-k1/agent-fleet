@@ -353,8 +353,8 @@ func mcpStdioToolList() []map[string]any {
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
-		if ops, ok := mcpImageGenAdvertise(); ok {
-			tools = append(tools, mcpStdioImageGenTools(ops)...)
+		if ops, ratios, ok := mcpImageGenAdvertise(); ok {
+			tools = append(tools, mcpStdioImageGenTools(ops, ratios)...)
 		}
 		return tools
 	}
@@ -502,7 +502,31 @@ const mcpToolGenerateImage = "generate_image"
 // is ~1.1 MB of base64 in a tool result that then rides in the session's context for the rest
 // of the conversation; the file is on a disk the session can read, so handing back the path
 // costs nothing and the model opens it only if it actually needs to look.
-func mcpStdioImageGenTools(ops []string) []map[string]any {
+func mcpStdioImageGenTools(ops []string, ratios []string) []map[string]any {
+	// aspect_ratio is offered ONLY when the effective provider has a list of its own, because
+	// unlike size it is a parameter that really reaches the tool where it exists (measured: agy
+	// honours 16:9, codex's route exposes no such parameter at all). Advertising it everywhere
+	// would repeat exactly the mistake size documents — a knob the caller turns and nothing
+	// moves.
+	props := map[string]any{
+		"prompt": map[string]any{"type": "string", "minLength": 1,
+			"description": "生成する絵の説明。英語でも日本語でもよい"},
+		"op": map[string]any{"type": "string", "enum": ops,
+			"description": "操作の種別（未指定は generate）。この一覧は今有効な provider が実際にできるものだけ"},
+		"size": map[string]any{"type": "string",
+			"description": "希望する寸法。\"1024x1024\" のような WxH か \"auto\"。**通らないことがあり、その場合 warnings に実際の寸法が入る**"},
+		"background": map[string]any{"type": "string", "enum": []string{"auto", "opaque", "transparent"},
+			"description": "希望する背景。transparent は対応しないモデルがあり、その場合 warnings に入る"},
+		"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 4,
+			"description": "希望する枚数（未指定は1）。枚数が足りなければ warnings に入る"},
+		"inputs": map[string]any{"type": "array", "maxItems": 5,
+			"items":       map[string]any{"type": "string"},
+			"description": "参照画像の絶対パス（最大5枚）。編集や画風の参照に使う"},
+	}
+	if len(ratios) > 0 {
+		props["aspect_ratio"] = map[string]any{"type": "string", "enum": ratios,
+			"description": "希望する縦横比。今有効な provider はこれを実際に受け取る（寸法そのものは選べない。実際の寸法は比に近い値になり、ずれれば warnings に入る）"}
+	}
 	return []map[string]any{
 		{
 			"name": "generate_image",
@@ -516,22 +540,8 @@ func mcpStdioImageGenTools(ops []string) []map[string]any {
 				" / Generate an image and return the FILE PATH (not the bytes). size/background/count are best effort — what actually happened comes back in warnings. Each call spends the user's plan quota.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
-				"properties": map[string]any{
-					"prompt": map[string]any{"type": "string", "minLength": 1,
-						"description": "生成する絵の説明。英語でも日本語でもよい"},
-					"op": map[string]any{"type": "string", "enum": ops,
-						"description": "操作の種別（未指定は generate）。この一覧は今有効な provider が実際にできるものだけ"},
-					"size": map[string]any{"type": "string",
-						"description": "希望する寸法。\"1024x1024\" のような WxH か \"auto\"。**通らないことがあり、その場合 warnings に実際の寸法が入る**"},
-					"background": map[string]any{"type": "string", "enum": []string{"auto", "opaque", "transparent"},
-						"description": "希望する背景。transparent は対応しないモデルがあり、その場合 warnings に入る"},
-					"count": map[string]any{"type": "integer", "minimum": 1, "maximum": 4,
-						"description": "希望する枚数（未指定は1）。枚数が足りなければ warnings に入る"},
-					"inputs": map[string]any{"type": "array", "maxItems": 5,
-						"items":       map[string]any{"type": "string"},
-						"description": "参照画像の絶対パス（最大5枚）。編集や画風の参照に使う"},
-				},
-				"required": []string{"prompt"},
+				"properties": props,
+				"required":   []string{"prompt"},
 			},
 		},
 	}
@@ -540,33 +550,40 @@ func mcpStdioImageGenTools(ops []string) []map[string]any {
 // mcpImageGenAdvertise decides whether THIS session is offered generate_image, and with which
 // operations. ok=false means the tool is simply absent from tools/list.
 //
-// The rule (ADR 0069 decision 8): not when the effective provider IS codex and the session IS
-// a Codex session — that session already has the CLI's own built-in image_gen, and routing it
-// through a second codex process would double the cost for nothing. Once Gemini or Bedrock is
-// the route, a Codex session wants the fleet tool too; because the rule is evaluated at list
-// time, that switch needs no re-materialize.
+// The rule (ADR 0069 decision 8): not when the session's OWN CLI is what the effective provider
+// would drive — a Codex session on the codex route, an agy session on the agy route. That
+// session already has the CLI's built-in image tool, and going out through a second process of
+// the same CLI would double the cost for nothing. Route a Codex session to agy (or the other way
+// round) and it wants the fleet tool again; because the rule is evaluated at list time, that
+// switch needs no re-materialize.
 //
 // It costs one loopback GET per tools/list, and only for users who turned the feature on. An
 // unreachable Agent means the tool could not work anyway, so it is not advertised — better
 // than advertising a tool whose every call fails.
-func mcpImageGenAdvertise() (ops []string, ok bool) {
+func mcpImageGenAdvertise() (ops, ratios []string, ok bool) {
 	if !mcpImageGenEnabled {
-		return nil, false
+		return nil, nil, false
 	}
 	self, err := mcpOwningSession()
 	if err != nil {
 		// Without a session name the Agent cannot key the output directory or the usage row,
 		// so the tool has nowhere to put its result.
-		return nil, false
+		return nil, nil, false
 	}
 	st, err := agentImageGenStatus(self)
 	if err != nil || !st.Enabled || !st.Ready || len(st.Ops) == 0 {
-		return nil, false
+		return nil, nil, false
 	}
 	if st.Provider == "codex" && st.Kind == session.KindCodex {
-		return nil, false
+		return nil, nil, false
 	}
-	return st.Ops, true
+	// The same rule reads for agy: an agy session routed to the agy provider already has the
+	// CLI's own built-in generate_image, and going out through a second agy process would spend
+	// the plan twice for one picture.
+	if st.Provider == "agy" && st.Kind == session.KindAgy {
+		return nil, nil, false
+	}
+	return st.Ops, st.AspectRatios, true
 }
 
 func chromiumAttachmentIDInputSchema() map[string]any {
@@ -1327,11 +1344,12 @@ func mcpStdioCall(req mcpReq) []byte {
 		// generate_image args (ADR 0069). Op/Size/Background/Count are passed through as the
 		// caller wrote them: what a provider cannot honour is REPORTED in the result's
 		// warnings, so narrowing them here would hide exactly what the user needs to see.
-		Op         string   `json:"op"`
-		Size       string   `json:"size"`
-		Background string   `json:"background"`
-		Count      int      `json:"count"`
-		Inputs     []string `json:"inputs"`
+		Op          string   `json:"op"`
+		Size        string   `json:"size"`
+		AspectRatio string   `json:"aspect_ratio"`
+		Background  string   `json:"background"`
+		Count       int      `json:"count"`
+		Inputs      []string `json:"inputs"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -1360,8 +1378,8 @@ func mcpStdioCall(req mcpReq) []byte {
 	switch p.Name {
 	case mcpToolGenerateImage:
 		return mcpGenerateImage(req, imageGenArgs{
-			op: a.Op, prompt: a.Prompt, size: a.Size, background: a.Background,
-			count: a.Count, inputs: a.Inputs,
+			op: a.Op, prompt: a.Prompt, size: a.Size, aspectRatio: a.AspectRatio,
+			background: a.Background, count: a.Count, inputs: a.Inputs,
 		})
 	case "list_peer_sessions":
 		self, err := mcpOwningSession()

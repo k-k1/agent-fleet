@@ -100,16 +100,29 @@ func TestEffectiveOrder(t *testing.T) {
 // What a provider could not honour is reported, never hidden (ADR 0069 decision 7).
 func TestRequestWarnings(t *testing.T) {
 	res := Result{Images: []Image{{Width: 1254, Height: 1254}}}
-	got := requestWarnings(Request{Size: "1024x1024", Count: 1}, res)
+	none := Caps{}
+	got := requestWarnings(Request{Size: "1024x1024", Count: 1}, res, none)
 	if len(got) != 1 || got[0] != "size=1024x1024 requested, 1254x1254 produced" {
 		t.Fatalf("warnings = %v", got)
 	}
-	if got := requestWarnings(Request{Size: "auto", Count: 2}, res); len(got) != 1 ||
+	if got := requestWarnings(Request{Size: "auto", Count: 2}, res, none); len(got) != 1 ||
 		got[0] != "count=2 requested, 1 produced" {
 		t.Fatalf("warnings = %v, want the count one only", got)
 	}
-	if got := requestWarnings(Request{Size: "1254x1254", Count: 1}, res); len(got) != 0 {
+	if got := requestWarnings(Request{Size: "1254x1254", Count: 1}, res, none); len(got) != 0 {
 		t.Fatalf("warnings = %v, want none when the request was honoured", got)
+	}
+	// An aspect ratio asked of a route that has none is invisible in the produced dimensions —
+	// nothing else would ever tell the caller it was dropped.
+	if got := requestWarnings(Request{AspectRatio: "16:9", Count: 1}, res, none); len(got) != 1 ||
+		got[0] != "aspect_ratio=16:9 requested, but this route cannot choose an aspect ratio" {
+		t.Fatalf("warnings = %v, want the aspect-ratio one", got)
+	}
+	// ...and a route that DOES offer ratios says for itself what it did with one, so the core
+	// must stay quiet rather than warn twice.
+	withRatios := Caps{AspectRatios: []string{"1:1", "16:9"}}
+	if got := requestWarnings(Request{AspectRatio: "16:9", Count: 1}, res, withRatios); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from the core", got)
 	}
 }
 

@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
-import { OnOff, Row } from "../parts/controls.tsx";
-import { useSettings, setSetting } from "../../../lib/settings.ts";
+import { OnOff, OrderList, Row } from "../parts/controls.tsx";
+import { useSettings, setSetting, IMAGE_PROVIDERS, normalizeImageProviderOrder } from "../../../lib/settings.ts";
+import { agentOf } from "../../../agents/registry.ts";
 import { useConnections } from "../parts/useConnections.ts";
 import { useWorkspaceStore, wsStartBusy } from "../../../core/store/workspace.ts";
 import { useT } from "../../../lib/i18n/index.ts";
@@ -107,6 +108,21 @@ export function AgentsTab() {
         <OnOff value={s.imageGeneration} onChange={(v) => setSetting("imageGeneration", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_image_generation")}</p>
+      {/* The order only appears with the switch on: it is meaningless otherwise, and it is the
+          one place the two providers' DIFFERENT accounts (ChatGPT plan vs Antigravity plan) are
+          visible as a choice rather than as something that just happened. */}
+      {s.imageGeneration && (
+        <>
+          <Row label={tr("agents.image_provider_order")}>
+            <OrderList
+              value={normalizeImageProviderOrder(s.imageProviderOrder)}
+              labels={Object.fromEntries(IMAGE_PROVIDERS.map((p) => [p, agentOf(p).assistantName]))}
+              onChange={(v) => setSetting("imageProviderOrder", v)}
+            />
+          </Row>
+          <p className="muted ds-note">{tr("agents.note_image_provider_order")}</p>
+        </>
+      )}
     </section>
   );
 

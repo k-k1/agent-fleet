@@ -389,16 +389,27 @@ change applies to **sessions started from then on**; sessions already running ke
 current tools until restarted.
 
 - **It goes to the kinds that cannot draw on their own** — claude, opencode and the rest.
-  **Codex sessions do not get it**: the Codex CLI already has image generation built in, and
-  routing it through a second one buys nothing.
-- **Generation runs on your connected Codex (the ChatGPT login).** Without Codex connected the
-  tool does not appear. **Every image spends that plan's included usage** — 3–5× faster than a
-  text exchange — and image generation is not available at all on ChatGPT Free.
-- **The prompt is sent to OpenAI.** Do not have images generated from instructions that carry
-  anything confidential.
-- **Size, background and count are requests, not guarantees.** Asking for 1024×1024 and
-  getting 1536×1024 was measured. What actually came back is handed to the agent as a warning,
-  so when the exact dimensions matter, check the result yourself.
+  **A session of the same kind as the CLI doing the generating does not get it**: no codex
+  session when the route is Codex, no agy session when the route is Antigravity. That CLI
+  already has image generation built in, and starting a second copy of it only pays twice.
+- **Generation runs on a CLI you already have connected.** Two can serve it — **Codex (the
+  ChatGPT login)** and **Antigravity (agy)** — and **Settings > Agents > Session > "Image
+  provider order"** decides which is tried first. The first one signed in is used, and **a
+  call that fails falls through to the next**. With neither connected the tool does not appear.
+- **Every image spends the included usage of whichever plan produced it** — the ChatGPT plan
+  for Codex, the Gemini/Antigravity plan for Antigravity, both 3–5× faster than a text
+  exchange. Image generation is not available at all on ChatGPT Free. **Which plan is drawn
+  down is decided by that order**, so move the other one up if you would rather not spend one
+  of them.
+- **The prompt is sent to that provider (OpenAI or Google).** Do not have images generated
+  from instructions that carry anything confidential. Which one produced a picture is recorded
+  with it.
+- **Size, background and count are requests, not guarantees.** On the Codex route, asking for
+  1024×1024 and getting 1536×1024 was measured. What actually came back is handed to the agent
+  as a warning, so when the exact dimensions matter, check the result yourself.
+- **The aspect ratio is the one exception, and only on the Antigravity route** (16:9 measured
+  as 1376×768). You still cannot pick exact dimensions, but you can ask for landscape or
+  portrait. The Codex route has no aspect-ratio setting at all.
 - **The picture appears in the conversation as a card** (click to enlarge, or open it in a
   pane). Anything the request did not get is noted above it — "asked for 1024x1024, got
   1536x1024".
