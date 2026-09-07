@@ -2,9 +2,11 @@
 // Track A). Laid out like the codex package, it keeps the Agent implementation, the launch
 // command assembly, the Connections auth handlers and the rtk block application inside the
 // kind. The execution method can only be Terminal (CLI)/tmux: v1.1.4 has no structured
-// output, so Managed cannot be built (docs/decisions/0008). The host requirements (RDRAND,
-// whether the binary is present) are decided by internal/hostcaps, and Status() /
-// BuildLaunch wire that in (the docs/log/32 Track B contract).
+// output, so Managed cannot be built (docs/decisions/0008). The host requirements (a usable
+// RDRAND, whether the binary is present) are decided by internal/hostcaps, and Status() /
+// BuildLaunch wire that in (the docs/log/32 Track B contract). Where the CPU's RDRAND has
+// been withdrawn by the kernel, hostcaps also hands back the environment overlay that makes
+// agy start anyway — fips.go is the seam every spawn site in this package goes through.
 package agy
 
 import (
@@ -54,8 +56,9 @@ func (agentImpl) Caps() agents.Caps {
 
 func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.LaunchPlan, error) {
 	// Same host gate as the Console's kind selector: on a host where agy can't run
-	// (binary absent / no RDRAND → SIGABRT at launch) refuse to build the pane
-	// program instead of letting the session die on start (docs/log/32 Track B).
+	// (binary absent, or no usable RDRAND that the mask could rescue → SIGABRT at
+	// launch) refuse to build the pane program instead of letting the session die on
+	// start (docs/log/32 Track B).
 	if supported, reason := hostcaps.AgyStatus(); !supported {
 		return agents.LaunchPlan{}, fmt.Errorf("agy はこのホストで利用できません（%s）", reason)
 	}
@@ -78,7 +81,14 @@ func (agentImpl) BuildLaunch(m session.Meta, _ agents.LaunchOpts) (agents.Launch
 		prelaunch.Write(slotSid, LastConversationFor(m.Dir))
 		brainPrelaunch.Write(slotSid, strings.Join(listBrainDirs(), "\n"))
 	}
-	return agents.LaunchPlan{Program: buildProgram(m.Model, m.Mode, resumeID, agents.BypassPermissions(m)), Cwd: m.CWD()}, nil
+	// The RDRAND mask rides LaunchPlan.Env (tmux -e) rather than a prefix on the program
+	// string, so it reaches an AGENT_AGY_CMD override too and stays out of
+	// /proc/*/cmdline. Nil on a normal host.
+	return agents.LaunchPlan{
+		Program: buildProgram(m.Model, m.Mode, resumeID, agents.BypassPermissions(m)),
+		Cwd:     m.CWD(),
+		Env:     MaskEnv(),
+	}, nil
 }
 
 func (agentImpl) WireLive(m session.Meta, alive bool) agents.LiveInfo {

@@ -44,9 +44,13 @@ no registry login. Point `REGISTRY` at your own mirror to pull from elsewhere.
   recommended over personal Pro/Max).
 - (Optional, for the `agy` agent kind) a host CPU that exposes **RDRAND**
   (`grep -w rdrand /proc/cpuinfo`). The Antigravity CLI is a FIPS build that
-  aborts at startup without it (kernel-masked / BIOS-disabled counts as
-  missing — seen on AMD Ryzen Embedded). Hosts without RDRAND still run
-  everything else; the Console just hides `agy` from the agent selector
+  aborts at startup without it. Where the kernel has withdrawn the instruction
+  (seen on AMD Ryzen Embedded, whose RDRAND returns a constant), the Agent masks
+  it out of OpenSSL's CPU detection and runs agy anyway — its randomness then
+  comes from the kernel rather than the CPU, which the Console's agy card says
+  outright. A deployment for which the FIPS module's own entropy path is a
+  requirement sets `AF_AGY_RDRAND_MASK=0`, and `agy` is hidden from the agent
+  selector as before
   ([decision 0008](../../docs/decisions/0008-antigravity-cli-agent-kind.md)).
 
 ## Quick start

@@ -59,7 +59,7 @@ const flowTTL = 10 * time.Minute
 var flows = agents.NewFlowStore(flowTTL)
 
 // hostcapsOK rejects an auth request on hosts where agy can't run (binary
-// absent / no RDRAND) — the same gate as the Console's kind selector and
+// absent / no usable RDRAND) — the same gate as the Console's kind selector and
 // BuildLaunch (docs/log/32 Track B contract).
 func hostcapsOK(w http.ResponseWriter) bool {
 	supported, reason := hostcaps.AgyStatus()
@@ -115,7 +115,7 @@ func HandleStart(w http.ResponseWriter, r *http.Request) {
 
 	cmd := exec.Command("agy")
 	cmd.Dir = loginDir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color")
+	cmd.Env = Env(append(os.Environ(), "TERM=xterm-256color"))
 	f, err := agents.StartFlow(cmd)
 	if err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "pty_failed", err.Error())
@@ -272,7 +272,8 @@ func HandleDisconnect(w http.ResponseWriter, r *http.Request) {
 
 // Status reports the agy connection state for GET /connections, plus the host
 // capability gate the Console uses to hide the kind (supported/reason — docs/log/32
-// Track B contract). Login state is the token file's existence (`agy models` is the
+// Track B contract) plus rdrand_masked, the disclosure that agy runs here with its
+// hardware RNG masked out. Login state is the token file's existence (`agy models` is the
 // authoritative probe but hits the network — not for this polled path). method
 // is the token's auth_method ("consumer" = Starter OAuth; the GCP route lands in M2);
 // email/plan come from the auth-time main-screen capture (for AgyCard, best-effort —
@@ -283,6 +284,12 @@ func Status() map[string]any {
 	m["supported"] = supported
 	if !supported {
 		m["reason"] = reason
+	}
+	// Say when agy is only running because its FIPS build's hardware RNG was masked out
+	// (fips.go). The substitution is legitimate but it is not the shipped configuration,
+	// so the card states it rather than leaving the user to find it in a log.
+	if supported && RDRANDMasked() {
+		m["rdrand_masked"] = true
 	}
 	b, err := os.ReadFile(tokenPath())
 	if err != nil {

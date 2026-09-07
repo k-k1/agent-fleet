@@ -33,7 +33,7 @@ func TestExtractVer(t *testing.T) {
 
 // probeVersion returns nil for a path that does not exist, and the UI renders a dash.
 func TestProbeVersionMissing(t *testing.T) {
-	if got := probeVersion(context.Background(), "/no/such/binary", nil); got != nil {
+	if got := probeVersion(context.Background(), "/no/such/binary", nil, nil); got != nil {
 		t.Errorf("probeVersion(missing) = %+v, want nil", got)
 	}
 }
