@@ -144,7 +144,14 @@ func engineUsageFeature(key string) string { return "engine." + key }
 // engineUsageClient is separate from the upstream one: this call must not sit behind a
 // generation's worth of idle connections, and it has a real timeout because nothing is
 // waiting on it.
-var engineUsageClient = &http.Client{Timeout: 10 * time.Second}
+//
+// ⚠️ newAgentTransport, not a bare client. A Service Connect alias is not DNS — the ECS agent
+// writes it into /etc/hosts once, at CP task start — so a workspace created after the CP came
+// up does not resolve, and only agent_dial.go's Cloud Map fallback finds it. Measured on the
+// live deployment: a plain client lost the row with
+// `dial tcp: lookup af-ws-… on 10.20.0.2:53: no such host`, which is precisely the failure
+// that file exists to prevent, and it is silent — a dropped usage row looks like no usage.
+var engineUsageClient = &http.Client{Timeout: 10 * time.Second, Transport: newAgentTransport()}
 
 func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
 	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool) {

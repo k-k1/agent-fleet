@@ -547,6 +547,26 @@ volume は箱を残しても効かず（下の 4）、ECR 複製の効果は pla
    引数は `/proc/<pid>/cmdline` から誰にでも読め、シェルのトレースにも残る。`--cli-input-json
    file://…`（0600・直後に削除）に直した。
 
+10. ✅ **完了の定義の後半——「停止中のエンジンへの最初の要求が 1 回の試行で答えを返す」——を
+    実物で通した。** af-sandbox に P0 のコードを配備し（`0.16.1-dev-5b62a9b4`）、GPU の箱が
+    **1 台も無い**状態（desired 0・`describe-instances` で 0 台・Cloud Map の名前も未登録）から
+    `POST https://<fqdn>/engine/llm/v1/chat/completions`（`stream:true`）を **curl で 1 回だけ**
+    投げた:
+    - **即座に `HTTP/2 200` と `content-type: text/event-stream`**（要求と同じ秒）。
+    - CP が同じ秒に `engine llm: started on demand` を書き、**10 秒ごとに `: af-engine waking` を
+      51 回**流した。バイトが途切れた最長は 10 秒で、opencode の 300 秒に対して 30 倍の余裕。
+    - **512 秒後にモデルの答えが同じ接続に流れ、`ADR0071-ONE-ATTEMPT` と返って `[DONE]`。**
+      CP のログは `POST /engine/llm/v1/chat/completions 200 8m31.915s` の 1 行だけで、
+      **再送も 503 も無い**。決定 5 の差し替えは、これで実測に裏打ちされた。
+    - 最後のチャンクに `usage`（prompt 24 / completion 12）が乗っていた。**curl は
+      `stream_options` を送っていない**ので、これはゲートウェイが自分で付けた分である（7）。
+11. 🔴 **その 1 回で、CP→Agent の使用量 POST が落ちるのも見つかった。**
+    `dial tcp: lookup af-ws-… on 10.20.0.2:53: no such host`——Service Connect の別名は DNS では
+    なく、ECS agent が CP のタスク起動時に一度 `/etc/hosts` に書くだけなので、**CP より後に
+    作られた Workspace は解決しない**。`agent_dial.go` はまさにそのために Cloud Map への
+    fallback を持っているのに、こちらは素の `http.Client` を使っていた。`newAgentTransport()` に
+    直した。落ちても静かなので（行が 1 本消えるだけ）、実物を通さなければ見つからない類である。
+
 その他、P0 で確かめたこと:
 
 - **S3 → 箱は 115〜147 MB/s**（18.5 GB を 126・161 秒）。0070 のハーネスの 104〜147 MB/s と
@@ -554,6 +574,15 @@ volume は箱を残しても効かず（下の 4）、ECR 複製の効果は pla
 - **S3 → S3 のサーバサイドコピーは 17.3 GiB を 52 秒**（同一リージョン・無料）。取り込み済みの
   モデルを別のバケットへ移すのは、HF から引き直す 31〜74 分と比べる対象にならない。
 - **`crane copy` で GHCR → ECR は 2.59 GB を 179 秒**（このコンテナから）。
+- **起動メニューの半分**は実物の opencode 1.18.29 に対して固定した:
+  `WriteEngineProviders` が書いた設定をそのまま渡すと `opencode models` が
+  `llamacpp/qwen3-coder-30b-a3b` を出す。**エンジンの host は実在しないもの**を指定してあり、
+  CLI が provider に接続しないこと——起動メニューが描かれる時点でエンジンは眠っている——が
+  確かめたい性質そのものである（`clicontract` タグのテスト）。
+- 🔴 **CFN が desired を 1 に戻していないことは CloudTrail で確かめた。** `UpdateService` を
+  並べると、タスク定義を差し替えた 2 回はどちらも `desiredCount` が**未指定**で、`1` を書いたのは
+  こちらの計測スクリプトだけだった。「一度は自分で起きたのでは」と疑ったとき、サービスの
+  `createdAt`（置換されていない）と CloudTrail の 2 つが要った。
 - スタブテスト（`deploy/local/ecs-lifecycle-stub-test.sh`）に case 3g を足し、順序
   （20 → イメージ → 60 → 30）、`CAPABILITY_NAMED_IAM`、鍵の生成、新規サービスの desired 0、
   既存サービスに触らないこと、生成した鍵を引数に置かないことを固定した。

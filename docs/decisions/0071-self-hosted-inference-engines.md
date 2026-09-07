@@ -594,6 +594,29 @@ g6.xlarge, roughly $2.
    `/proc/<pid>/cmdline` and lands in any shell trace. It goes through
    `--cli-input-json file://…` now (0600, deleted immediately).
 
+10. ✅ **The second half of the definition of done — "the first request to a stopped engine is
+    answered on one attempt" — was carried out for real.** P0's code was deployed to
+    af-sandbox (`0.16.1-dev-5b62a9b4`) and, with **no GPU box in existence at all** (desired 0,
+    `describe-instances` empty, the Cloud Map name unregistered), a **single** curl sent
+    `POST https://<fqdn>/engine/llm/v1/chat/completions` with `stream:true`:
+    - **`HTTP/2 200` and `content-type: text/event-stream` immediately** (the same second).
+    - The CP logged `engine llm: started on demand` in that same second and wrote
+      **`: af-engine waking` 51 times, every 10 seconds**. The longest gap between bytes was
+      10 s, thirty times inside opencode's 300 s.
+    - **512 seconds later the model's answer came down the same connection**, reading
+      `ADR0071-ONE-ATTEMPT`, then `[DONE]`. The CP's log has one line —
+      `POST /engine/llm/v1/chat/completions 200 8m31.915s` — and **no resend and no 503**.
+      Decision 5's replacement is now backed by measurement.
+    - The last chunk carried `usage` (24 prompt / 12 completion). **curl never sent
+      `stream_options`**, so that is the gateway adding it (see 7).
+11. 🔴 **That same run exposed the CP→Agent usage POST failing.**
+    `dial tcp: lookup af-ws-… on 10.20.0.2:53: no such host` — a Service Connect alias is not
+    DNS; the ECS agent writes it into `/etc/hosts` once, at CP task start, so **a workspace
+    created after the CP came up does not resolve**. `agent_dial.go` exists precisely for that
+    and carries a Cloud Map fallback, and this call was using a bare `http.Client`. Changed to
+    `newAgentTransport()`. It fails silently — one row goes missing — so nothing but running it
+    for real would have found it.
+
 Also measured while writing P0:
 
 - **S3 to a box runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the
@@ -602,6 +625,16 @@ Also measured while writing P0:
   already-ingested model between buckets is not comparable to the 31-74 minutes of fetching it
   from Hugging Face again.
 - **`crane copy` from GHCR to ECR: 2.59 GB in 179 seconds** (from this container).
+- **The launch-menu half** is pinned against the real opencode 1.18.29: handed the config
+  `WriteEngineProviders` writes, `opencode models` lists `llamacpp/qwen3-coder-30b-a3b`. The
+  engine's host in that test **does not exist**, because the property being checked is that the
+  CLI never contacts the provider — the menu is drawn while the engine is asleep (a
+  `clicontract`-tagged test).
+- 🔴 **That CloudFormation is not putting the desired count back to 1 was confirmed from
+  CloudTrail.** Lining up the `UpdateService` calls, the two that replaced the task definition
+  both left `desiredCount` **unset**, and the only calls writing `1` were this work's own
+  measurement scripts. Answering "did it start by itself?" took both the service's `createdAt`
+  (not replaced) and CloudTrail.
 - The stub test (`deploy/local/ecs-lifecycle-stub-test.sh`) gained a case 3g pinning the order
   (20 → images → 60 → 30), `CAPABILITY_NAMED_IAM`, the key generation, scaling a newly created
   service to 0, leaving an existing one alone, and not putting the generated key in an argument.
