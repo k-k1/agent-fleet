@@ -17,6 +17,7 @@ Order matches the template.
 - [The `llm` role (llama.cpp)](#the-llm-role-llamacpp)
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
 - [Ingest](#ingest)
+- [The engine table](#the-engine-table)
 
 ## Shared
 
@@ -65,11 +66,38 @@ DECLARED, never derived (ADR 0053): the engine is asleep when the launch menu is
 waking a GPU box to enumerate one model is the opposite of on-demand. The first id is what
 `--alias` tells llama-server to answer to.
 
+### `LlmContextTokens` / `LlmMaxOutputTokens`
+
+The context `llama-server` is started with (`-c`) **and** the window the client is told the model
+has. One parameter feeds both, so "served" and "advertised" cannot drift — the flag used to live
+inside `LlmExtraArgs`, where CloudFormation cannot read it back out to put it in the engine table,
+and the table therefore said nothing at all. 32,768 is what was measured on an L4 (opencode's
+request is 18.7k tokens with the fleet's `AGENTS.md` included).
+
+⚠️ **Do not also pass `-c` in `LlmExtraArgs`.** The command line is built as
+`… -c <LlmContextTokens> <LlmExtraArgs…>`, so a second `-c` wins for the engine while the table
+keeps advertising this one — the exact drift the split exists to prevent.
+
+Both numbers travel, and the second is not decoration. Measured against opencode 1.18.29, which is
+what a workspace drives this engine with:
+
+- a model the client has never heard of and that declares no `limit` is read as **context 0**, and
+  auto-compaction is **switched off** at 0. The session then grows until `llama-server` rejects the
+  request, with nothing in the UI to explain it;
+- the usable window is `context − output cap`, and an output cap of **0 is not "unset"** there — it
+  substitutes 32,000. Declaring a 32,768-token context without the output half would leave **768**
+  usable tokens, i.e. compaction thrashing from the first turn. That is why the Agent writes both
+  or neither, and why both carry a `MinValue`.
+
+One pair per **engine**, not per model: one `llama-server` process serves one GGUF with one `-c`,
+so the several ids in `LlmModelIds` are aliases sharing that window. Two models with different
+windows are two engines — two rows in the table, and **two `provider` ids**, because the Agent
+keys opencode's provider block by provider id and a second `llamacpp` would overwrite the first.
+
 ### `LlmExtraArgs`
 
-Extra `llama-server` flags. The defaults are the ones measured on an L4: all layers on the GPU,
-a 32k context (opencode's request is 18.7k tokens with the fleet's `AGENTS.md` included) and the
-chat template applied, which is what makes tool calls work.
+Extra `llama-server` flags. The defaults are the ones measured on an L4: all layers on the GPU and
+the chat template applied, which is what makes tool calls work. The context is `LlmContextTokens`.
 
 ### `LlmApiKeySsmParam`
 
@@ -247,3 +275,23 @@ can be ingested, which covers every model in the ADR's table except FLUX.1-dev a
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
 disk is the largest model the deployment can take in — 80 GiB covers the 22 GB FLUX checkpoint
 with room for the filesystem.
+
+## The engine table
+
+Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1
+or 2 rows (each role is staged independently), which the Control Plane reads once at startup.
+
+**`api`** tells the reader what KIND of endpoint a row is, and it decides two things that would
+otherwise be guessed from the key: whether the Agent writes an opencode chat provider for it — an
+image engine there would put `sdcpp/sdxl-base-1.0` in the launch menu as something to hold a
+conversation with — and whether the gateway counts tokens out of the response (`chat`) or leaves
+the accounting to the Agent's `tool.imagegen` row (`images`, ADR 0071 decision 9).
+
+**The image row's health path is `/v1/models`, not `/health`**: stable-diffusion.cpp's server has
+no health endpoint at all (upstream `examples/server/api.md`), and `/v1/models` is the cheapest GET
+it answers. It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+
+**The llm row carries `contextTokens` / `maxOutputTokens`** — see those parameters above. Nothing
+downstream can ask the engine for them: the box is asleep when the launch menu is drawn, which is
+the whole point of an on-demand engine. A row from a stack older than the fields omits them, and
+both the gateway and the Agent then say nothing rather than advertising a zero.

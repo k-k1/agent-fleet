@@ -207,6 +207,39 @@ func engineCatalogStub(t *testing.T, rows string) *[]string {
 const engineRowLlm = `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1","models":["qwen3-coder-30b-a3b"]}`
 const engineRowImage = `{"key":"image","api":"images","provider":"sdcpp","base_url":"/engine/image/v1","models":["sdxl-base-1.0"]}`
 
+const engineRowLlmSized = `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1","models":["qwen3-coder-30b-a3b"],"context_tokens":32768,"max_output_tokens":4096}`
+
+// The window the stack started llama-server with reaches opencode's config as a `limit`, or
+// the model is listed with a context of 0 — which is how opencode reads a model it has never
+// heard of, and it turns auto-compaction off at 0.
+func TestSyncEngineProvidersCarriesTheDeclaredWindow(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	engineCatalogStub(t, engineRowLlmSized)
+
+	syncEngineProviders()
+
+	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Context, Output int } `json:"limit"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	got := cfg.Provider["llamacpp"].Models["qwen3-coder-30b-a3b"].Limit
+	if got.Context != 32768 || got.Output != 4096 {
+		t.Errorf("limit = %+v\n%s", got, b)
+	}
+}
+
 // The image engine must not become an opencode provider. It answers /v1/images/generations
 // and nothing else, so `sdcpp/sdxl-base-1.0` in the launch menu would be a model you can
 // pick and then cannot talk to.
