@@ -617,6 +617,17 @@ g6.xlarge, roughly $2.
     `newAgentTransport()`. It fails silently — one row goes missing — so nothing but running it
     for real would have found it.
 
+12. ✅ **The ingest task was run for real, once.** It pulled SDXL's 6.94 GB from Hugging Face
+    in **161 seconds (43 MB/s)**, **matched the sha256 Hugging Face declares** (`31e35c80…`),
+    and put it in S3 in **46 seconds**. That exercises the check itself and the
+    `DependsOn: SUCCESS` that keeps an unverified file from being uploaded, against a real
+    file. It is also a fifth Hugging Face data point, and **43 MB/s** landed inside the
+    4-236 MB/s band again — "you cannot tell until you pull" has not broken at five points.
+    ⚠️ One operational note: when overriding this task's command through `run-task`, the
+    override must be **a single string**, because the `EntryPoint` is already `["sh","-c"]`.
+    Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which **does nothing and
+    exits 0** — it looks like success and ran nothing.
+
 Also measured while writing P0:
 
 - **S3 to a box runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the

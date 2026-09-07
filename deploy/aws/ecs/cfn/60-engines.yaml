@@ -479,6 +479,10 @@ Resources:
   #                                       {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
   #        {"name":"upload","environment":[{"name":"KEY","value":"llm/x.gguf"}]}]}'
   #
+  # ⚠️ Overriding a command here takes ONE string, because the EntryPoint is already
+  # ["sh","-c"]. Passing ["sh","-c",<script>] becomes `sh -c sh -c <script>`, which does
+  # nothing and exits 0 — it reads as success and ran nothing (measured).
+  #
   # The sha256 is not optional decoration. "The file got bigger" is what a truncated
   # download also looks like, and a GGUF that is 99 % there loads and then answers nonsense.
   # The value comes from the HF API's `?blobs=true` siblings[].lfs.sha256, which was

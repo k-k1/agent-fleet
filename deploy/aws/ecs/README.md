@@ -913,6 +913,11 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
      {"name":"upload","environment":[{"name":"KEY","value":"llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"}]}]}'
 ```
 
+⚠️ **The container overrides above take ONE string per command**, because the containers'
+`EntryPoint` is already `["sh","-c"]`. Passing `["sh","-c", "<script>"]` becomes
+`sh -c sh -c <script>`, which does nothing and exits 0 — it reads as a successful ingest that
+fetched nothing (measured).
+
 ⚠️ **Budget an unpredictable amount of time for that fetch, and give the checksum.** Measured
 over four pulls of two files through the same NAT, Hugging Face delivered between **4 and
 236 MB/s**, and nothing about the file, the client or the path predicted which — the same
