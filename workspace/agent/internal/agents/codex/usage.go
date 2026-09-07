@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -56,7 +57,7 @@ type resetCredits struct {
 
 // HandleUsage serves GET /codex/usage for the Console's WsBar chip.
 func HandleUsage(w http.ResponseWriter, r *http.Request) {
-	u := readUsage()
+	u := readUsageWith(r.Context())
 	// authed = a ChatGPT-subscription login is present. The Console keeps the chip
 	// visible whenever authed even if no rollout reading is available yet, so the chip
 	// never vanishes on a transient miss; a codex the user isn't signed into has none.
@@ -87,6 +88,23 @@ type usage struct {
 }
 
 const resetCreditsURL = "https://chatgpt.com/backend-api/wham/rate-limit-reset-credits"
+
+// accountUsageURL is the account's OWN live quota view — the same host and login the reset
+// credits above already use. It is the only source that does not depend on a codex session
+// having written something locally:
+//
+//	{"plan_type":"plus","rate_limit":{"primary_window":{"used_percent":0,
+//	  "limit_window_seconds":18000,"reset_at":…},"secondary_window":{…}}}
+//
+// Measured 2026-09-07 with this container's login. It matters because both local sources can
+// be arbitrarily stale — the rollout reading only advances when a codex session WRITES a
+// rollout, and an image generation deliberately runs `--ephemeral`, which writes none
+// (measured: a real generation left no new rollout file). Without this the chip keeps showing
+// the last interactive session's numbers while the quota is really being spent.
+//
+// Unofficial, like the reset-credits call next to it — so it is one source among three and a
+// failure falls back to the local readings rather than emptying the chip.
+const accountUsageURL = "https://chatgpt.com/backend-api/wham/usage"
 
 type codexAuth struct {
 	AuthMode string `json:"auth_mode"`
@@ -130,6 +148,98 @@ var resetCreditsCache struct {
 }
 
 const resetCreditsTTL = 5 * time.Minute
+
+// accountUsageCache throttles the quota call for the same reason resetCreditsCache does: the
+// chip polls every few seconds and this is an unofficial endpoint reached with the user's own
+// token.
+type accountUsageCacheT struct {
+	sync.Mutex
+	val     usage
+	ok      bool
+	fetched time.Time
+}
+
+var accountUsageCache accountUsageCacheT
+
+const accountUsageTTL = 5 * time.Minute
+
+func accountUsage(ctx context.Context) (usage, bool) {
+	auth, ok := readCodexAuth()
+	if !ok {
+		return usage{}, false
+	}
+	c := &accountUsageCache
+	c.Lock() // also single-flights concurrent polls
+	defer c.Unlock()
+	if !c.fetched.IsZero() && time.Since(c.fetched) < accountUsageTTL {
+		return c.aged(), c.ok
+	}
+	val, got := getAccountUsage(ctx, http.DefaultClient, accountUsageURL, auth.Tokens.AccessToken, auth.Tokens.AccountID)
+	if got {
+		c.val, c.ok = val, true
+	}
+	c.fetched = time.Now()
+	return c.aged(), c.ok
+}
+
+// aged stamps how old the cached reading is, so readUsage can compare it against a local one
+// on the same scale. Caller holds the lock.
+func (c *accountUsageCacheT) aged() usage {
+	u := c.val
+	if c.ok {
+		u.AgeSec = int(time.Since(c.fetched).Seconds())
+	}
+	return u
+}
+
+// getAccountUsage maps the account view onto the same window shape the rollout reading uses,
+// so classifyWindows stays the single place that decides which window is which. The endpoint
+// gives SECONDS where a rollout gives minutes.
+func getAccountUsage(ctx context.Context, client *http.Client, url, token, accountID string) (usage, bool) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return usage{}, false
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	if accountID != "" {
+		req.Header.Set("ChatGPT-Account-Id", accountID)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return usage{}, false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return usage{}, false
+	}
+	var raw struct {
+		PlanType  string `json:"plan_type"`
+		RateLimit struct {
+			Primary   *accountWindow `json:"primary_window"`
+			Secondary *accountWindow `json:"secondary_window"`
+		} `json:"rate_limit"`
+	}
+	if json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&raw) != nil {
+		return usage{}, false
+	}
+	return classifyWindows(raw.RateLimit.Primary.recorded(), raw.RateLimit.Secondary.recorded(), raw.PlanType)
+}
+
+// accountWindow is one window as the account view spells it.
+type accountWindow struct {
+	UsedPercent float64 `json:"used_percent"`
+	WindowSec   int     `json:"limit_window_seconds"`
+	ResetAt     int64   `json:"reset_at"`
+}
+
+func (w *accountWindow) recorded() *recordedWindow {
+	if w == nil {
+		return nil
+	}
+	return &recordedWindow{UsedPercent: w.UsedPercent, WindowMinutes: w.WindowSec / 60, ResetsAt: w.ResetAt}
+}
 
 func fetchResetCredits(ctx context.Context) (resetCredits, bool) {
 	auth, ok := readCodexAuth()
@@ -261,6 +371,33 @@ const observedFreshSkipSec = 10
 
 // readUsage returns the fresher of the two sources of the same account-wide
 // reading: the app-server push and the newest rollout-recorded snapshot.
+// readUsageWith adds the account's own live quota to the two LOCAL readings and takes
+// whichever is freshest. The account view is the only one that does not depend on a codex
+// session having written something here, so it is what keeps the chip honest across an
+// image generation (`--ephemeral`, no rollout) or any other quiet stretch. When the call
+// fails the chip is exactly what it was before.
+func readUsageWith(ctx context.Context) usage {
+	local := readUsage()
+	acct, ok := accountUsage(ctx)
+	return pickUsage(local, acct, ok)
+}
+
+// pickUsage is the choice itself, kept apart from the fetching so it can be tested without a
+// network. Both are real readings: the older one is the one to drop — a rollout written
+// seconds ago beats a 5-minute-old cached fetch, and vice versa.
+func pickUsage(local, acct usage, acctOK bool) usage {
+	if !acctOK {
+		return local
+	}
+	if !local.OK {
+		return acct
+	}
+	if local.AgeSec >= 0 && local.AgeSec <= acct.AgeSec {
+		return local
+	}
+	return acct
+}
+
 func readUsage() usage {
 	observed, ok := observedUsage()
 	if ok && observed.AgeSec <= observedFreshSkipSec {
