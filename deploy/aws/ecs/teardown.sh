@@ -116,7 +116,7 @@ txt() { tr '\t' '\n' | grep -v '^$' || true; }
 
 # --- 0) what is there right now (without --yes this is where it ends) --------
 echo "==> teardown plan: ${AF_FQDN:-<no live ingress stack>} (profile=$AF_PROFILE region=$AF_REGION)"
-echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_TTS:+ / $AF_STACK_TTS}${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
+echo "    stacks   : $AF_STACK_INGRESS${AF_STACK_ENGINES:+ / $AF_STACK_ENGINES}${AF_STACK_TTS:+ / $AF_STACK_TTS}${AF_STACK_POOL:+ / $AF_STACK_POOL} / $AF_STACK_PLATFORM / $AF_STACK_DATA / $AF_STACK_NETWORK"
 echo "    cluster  : $CLUSTER   persistence=$AF_PERSISTENCE   runtime=$AF_WS_RUNTIME"
 
 list_ws_svcs() { "${AWS[@]}" ecs list-services --cluster "$CLUSTER" --query 'serviceArns' --output text 2>/dev/null | txt | grep '/af-ws-' || true; }
@@ -224,6 +224,24 @@ if [ -n "${AF_STACK_TTS:-}" ]; then
   fi
 fi
 
+# --- 1d) the inference engines (ADR 0071) ------------------------------------
+# Same Cloud Map race as the speech engine, and a GPU box on top: an engine left running
+# keeps billing $1.26/hour through however long the rest of this teardown takes, and its
+# Managed Instances box does not go away until several minutes AFTER the task does
+# (measured drain: 427-463 s). Stop it first and let the drain overlap the stack deletions.
+#
+# ⚠️ What this does NOT delete is the models bucket — it is Retain, deliberately. Re-fetching
+# a 17 GB model from Hugging Face measured 31 minutes at the speed it happened to serve that
+# day, and there is no way to know in advance what that speed will be.
+if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  ENG_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
+  if [ -n "$ENG_SERVICE" ]; then
+    echo "==> 1d. stopping the llm engine ($ENG_SERVICE)"
+    af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$ENG_SERVICE" \
+      --desired-count 0 >/dev/null 2>&1 || true
+  fi
+fi
+
 # --- 2) workspace services ---------------------------------------------------
 echo "==> 2. deleting workspace services ($(count "$WS_SVCS"))"
 for s in $WS_SVCS; do
@@ -324,7 +342,7 @@ fi
 
 # --- 8) stacks in reverse order, one at a time -------------------------------
 echo "==> 8. deleting stacks in reverse order, one at a time"
-for st in "$AF_STACK_INGRESS" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
+for st in "$AF_STACK_INGRESS" "$AF_STACK_ENGINES" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] || continue
   if ! af_stack_exists "$st"; then echo "    - $st: already gone"; continue; fi
   echo "    - $st: delete"
@@ -440,7 +458,7 @@ fi
 echo ""
 echo "==> sweep (anything that is not 0 is residue)"
 left() { printf '    %-22s %s\n' "$1" "$(count "$2")"; }
-left "cfn stacks" "$(for st in "$AF_STACK_INGRESS" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
+left "cfn stacks" "$(for st in "$AF_STACK_INGRESS" "$AF_STACK_ENGINES" "$AF_STACK_TTS" "$AF_STACK_POOL" "$AF_STACK_PLATFORM" "$AF_STACK_DATA" "$AF_STACK_NETWORK"; do
   [ -n "$st" ] && af_stack_exists "$st" && echo "$st"; done || true)"
 left "ec2 instances" "$("${AWS[@]}" ec2 describe-instances --filters "Name=tag:af-pool,Values=$CLUSTER" \
   "Name=instance-state-name,Values=pending,running,stopping,stopped" \

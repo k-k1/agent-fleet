@@ -36,6 +36,7 @@ platform changes:
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
+| `cfn/60-engines.yaml` | **new** (ADR 0071 P0) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp engine on a GPU, as an ECS **Managed Instances** service that is normally scaled to zero: an MI capacity provider (`llm`), the three IAM roles it needs, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), the engine's task definition, service, Cloud Map name and SG (8080 from the CP only), and the SSM parameter holding the engine table. Imports 00-network and 20-platform (including the `af-llamacpp` repository, which must already hold the image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
 | `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
@@ -44,8 +45,9 @@ platform changes:
 > either account — the sweep in §Teardown came back empty on every counter. Standing
 > one up needs a domain + Google OAuth client + the CP image in ECR (see stand-up
 > below). Each stack imports the earlier ones' exports, so deploy in order
-> `00 → 10 → 20 → (40, ecs-ec2 only) → (50, speech only) → 30`. `50-tts` is last
-> before `30-ingress` because `30-ingress` is handed its outputs.
+> `00 → 10 → 20 → (40, ecs-ec2 only) → (50, speech only) → (60, self-hosted inference
+> only) → 30`. `50-tts` and `60-engines` come before `30-ingress` because `30-ingress` is
+> handed their outputs.
 
 `30-ingress.yaml` carries most of the knobs a deployment actually tunes. Its
 `Description:` fields are deliberately one or two lines each; the measurements, the
@@ -821,6 +823,161 @@ is overridable as a CP environment variable, and none of them are set by these t
 | `AF_TTS_ECS_START_DEADLINE_SEC` | 300 | A start that has not become `running` by then is treated as failed, returned to 0, and reported with the reason ECS gives. |
 | `AF_TTS_ECS_FAIL_COOLDOWN_SEC` | 900 | How long a failed start blocks the next one, doubling per consecutive failure (capped at 16×). Without it a repeating failure pays a 2 GB pull per attempt. |
 | `AF_TTS_ECS_OFF_GRACE_SEC` | 60 | How long an explicit "disable" waits before the desired count moves. Routing switches to Polly immediately; this only debounces the ECS write, so turning it off and straight back on costs no cold start. |
+
+## Optional: the fleet's own inference engines (`cfn/60-engines.yaml`)
+
+🚧 **New with ADR 0071 P0.** This stack runs **llama.cpp on a GPU that only exists while
+somebody is using it**, and offers its model to opencode as `llamacpp/<model>`. Everything
+about it is opt-in, because unlike the speech engine it is not cheap when it is up:
+**g6.xlarge (NVIDIA L4, 24 GB) is $1.26/hour all in**, or $918/month if it never stops. ADR
+0071 has the pricing, the alternatives that were rejected and every measurement; this section
+is what to type.
+
+**Why Managed Instances and not Fargate.** Fargate has no GPU and never has (AWS Fargate FAQ;
+containers-roadmap #88, open since 2019). ECS Managed Instances is the closest thing to
+"Fargate with a GPU": AWS owns the instance, the AMI and the NVIDIA driver, and terminates the
+box once the task is gone — which is the property ADR 0070's whole design rests on.
+
+### Before you start
+
+1. **G-family vCPU quota.** A new account has **zero**, and the increase is not
+   auto-approved: it opens a support case that takes hours to days. Ask for **16** (`L-DB2E81BA`,
+   "Running On-Demand G and VP instances") — 8 builds two g6.xlarge, but a box AWS has just
+   retired keeps its 4 vCPU counted for the 7–8 minutes it spends shutting down, so 16 is one
+   drain's worth of headroom. Check with:
+   ```bash
+   aws service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA --query 'Quota.Value'
+   ```
+2. **Only one stack may own the cluster's capacity-provider associations.** The API replaces
+   the list rather than adding to it, so if the measurement harness
+   (`harness/engprobe.yaml`) is deployed, take it down first —
+   `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
+3. **The image has to be in ECR before the stack is created**, for exactly the reason
+   `50-tts` documents above (CloudFormation blocks on service stabilisation and no later step
+   can rescue an empty repository). `standup.sh` does it in the images step; by hand it is
+   `crane copy ghcr.io/ggml-org/llama.cpp:server-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-llamacpp:server-cuda`.
+   It is also worth doing for a measured reason: **GHCR through this NAT runs at 12–14 MB/s**,
+   which put 178 seconds of a 527-second cold start into the pull alone.
+
+### Turning it on
+
+`standup.sh` builds `60-engines` when, and only when, a `params/60-engines` file exists in
+the captured state — the same shape as the pool and speech layers:
+
+```bash
+# ~/.config/agent-fleet/deploy/<profile>.<region>/params/60-engines
+# Every parameter has a default; standup.sh overrides NetworkStackName /
+# PlatformStackName / ServiceConnectNamespace from what it already knows.
+ServiceConnectNamespace=af.internal
+LlmModelIds=qwen3-coder-30b-a3b
+LlmAllowedInstanceTypes=g6.xlarge
+# Left out on the FIRST pass — see below.
+# LlmModelS3Key=llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+```
+
+`standup.sh` then copies the image into ECR, generates the engine's own API key into SSM
+(`/af-ws/engine-llm-key`, a SecureString) if it is not there, deploys `60-engines` after the
+speech engine and before `30-ingress`, scales the new service to 0, and hands `30-ingress`
+the stack's `EnginesSsmParam` output.
+
+⚠️ **The first stand-up is two passes, and `LlmModelS3Key` is what separates them.** The
+bucket a model is staged in is created by this stack, and the service that serves the model
+is created by this stack — so on the very first deploy there is nothing in the bucket yet,
+and CloudFormation blocks on ECS service stabilisation. Measured, on this stack's first real
+create: the fetch sidecar answered `Key … does not exist` and the task crash-looped every
+60 seconds while the stack sat in `CREATE_IN_PROGRESS`, with no later step able to rescue it.
+So:
+
+1. deploy with **`LlmModelS3Key` empty** (the default). You get the bucket, the ingest task,
+   the capacity provider, the roles and an engine table that says `{"engines":[]}` — and no
+   service to hang;
+2. run the ingest task below to put a model in the bucket;
+3. set `LlmModelS3Key` in `params/60-engines` and run `standup.sh` again (or
+   `update.sh`, which re-deploys this stack every release). The service is created, comes up
+   once, and is scaled back to 0.
+
+### Getting a model into the catalogue
+
+The engine never talks to Hugging Face. Models are staged into the stack's S3 bucket once,
+by a Fargate task, and the engine pulls from S3 at start:
+
+```bash
+# The sha256 is siblings[].lfs.sha256 from https://huggingface.co/api/models/<repo>?blobs=true
+aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+  --task-definition af-af-ecs-engines-ingest \
+  --network-configuration 'awsvpcConfiguration={subnets=[subnet-…],securityGroups=[sg-…],assignPublicIp=DISABLED}' \
+  --overrides '{"containerOverrides":[
+     {"name":"fetch","environment":[
+        {"name":"URL","value":"https://huggingface.co/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"},
+        {"name":"SHA256","value":"<the lfs sha256>"}]},
+     {"name":"upload","environment":[{"name":"KEY","value":"llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"}]}]}'
+```
+
+⚠️ **Budget an unpredictable amount of time for that fetch, and give the checksum.** Measured
+over four pulls of two files through the same NAT, Hugging Face delivered between **4 and
+236 MB/s**, and nothing about the file, the client or the path predicted which — the same
+SDXL checkpoint came at 236 MB/s to one box and 39.6 MB/s to another. That unpredictability
+is the whole reason models are staged in S3, which was **104–147 MB/s on every attempt**. The
+sha256 matters for the same reason: a truncated 17 GB GGUF loads and then answers nonsense,
+and "the file got bigger" is what a truncated download looks like too.
+
+A gated repository (`gated: auto` on the HF API — FLUX.1-dev, SD 3.5) additionally needs the
+operator to have accepted the licence on Hugging Face and an `HF_TOKEN` in Secrets Manager,
+passed as `HfTokenSecretArn`. The token is read by the **ingest task only**; it never reaches
+an engine box.
+
+### What a member sees
+
+Nothing to configure. The Agent asks the CP which engines exist, writes them into opencode's
+global config as a provider, and `llamacpp/<model>` appears in the launch picker — **while the
+GPU box is still asleep**, which is why the model ids are a stack parameter rather than
+something read from the engine. Picking it and sending the first message starts the box and
+holds the request until it answers; the answer arrives on the **first attempt**, with no
+retry, which is the observation that verifies ADR 0071 decision 5.
+
+### Things worth knowing
+
+- **`DesiredCount` is absent from the template, deliberately**, for the same reason as
+  `50-tts`: CloudFormation would otherwise reset it on every stack update, i.e. kill a GPU box
+  in the middle of an answer.
+- **The default capacity-provider strategy is empty and must stay empty.** With one in place,
+  any service that does not spell out `LaunchType: FARGATE` lands on the GPU box.
+- **A stopped engine keeps billing for several minutes.** Measured drain after `desired 0`:
+  **427 and 463 seconds** on a GPU box (93 s on a CPU one). Shortening the idle window only
+  ever recovers window time, never that.
+- **The cold start is minutes, not seconds.** Measured from S3, image already in ECR:
+  **527 s** to a listening engine — 178 s of image pull and 179 s of S3 fetch running
+  concurrently, then 267 s loading 18.5 GB into VRAM. The CP holds the request open across
+  all of it (see below), so a person sees a slow first answer rather than an error.
+- **Everything the controller does automatically is in the audit log** (`engine.llm.auto`,
+  actor `engine-llm-controller`), like the speech engine's.
+
+The CP side takes exactly **one** parameter, `EnginesSsmParam`: 30-ingress has around 9 KB of
+template budget left and six knobs per engine would eat a third of it, so the engine table
+lives in SSM under `/af-ws/` — which is already the whole of `CpTaskRole`'s SSM read scope, so
+no permission is added. Everything else is a CP environment variable, none of them set by
+these templates:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `AF_ENGINE_WAKE_TIMEOUT` | 900 | How long one request may be held open while the engine comes up. Above the measured 527 s cold start with room for a slow pull. |
+| `AF_ENGINE_LLM_CONTROL_INTERVAL_SEC` | 30 | How often the controller looks. **`0` switches it off entirely.** |
+| `AF_ENGINE_LLM_IDLE_SEC` | the stack's `LlmIdleSec` (1800) | Stop after this long with nobody asking; **`0` = never stop**. Clamped to no less than the start deadline. |
+| `AF_ENGINE_LLM_START_DEADLINE_SEC` | the stack's `LlmStartDeadlineSec` (900) | A start that has not become `running` by then is treated as failed. ⚠️ **Must exceed the real cold start.** ADR 0070's 300 s default would record every GPU start as a failure and double the cooldown away. |
+| `AF_ENGINE_LLM_FAIL_COOLDOWN_SEC` | 900 | How long a failed start blocks the next one, doubling per consecutive failure (capped at 16×). |
+| `AF_ENGINE_LLM_WINDOW_SEC` | 300 | The rolling window demand is counted in. One request is one unit of demand — for inference the request *is* the intent, unlike speech where Polly stands in while the engine starts. |
+
+### Holding the first request (why there is no retry)
+
+A cold engine takes minutes and opencode gives up at 300 seconds — but **not on elapsed
+time**. Measured three ways against opencode 1.18.29: holding the connection with nothing
+sent is cut at 300.1 s; sending the 200 and the headers and then nothing is cut at 306.9 s;
+sending the headers and then one SSE **comment** line every 10 seconds is not cut at all, and
+a 400-second wait produced the answer with no resend. So the gateway answers a streaming
+request immediately with `200 text/event-stream` and heartbeats until the engine's first byte
+arrives. **300 seconds is the maximum silence, not the maximum wait.** `503` + `Retry-After`
+is kept for non-streaming requests and genuine start failures only: a 503 spends one of the
+client's finite retries, and how many it has is not something this side knows.
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 

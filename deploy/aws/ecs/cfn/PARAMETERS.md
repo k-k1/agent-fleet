@@ -332,6 +332,29 @@ reverse — a service name without a URL — is the misconfiguration to watch fo
 everything deploys cleanly and the toggle appears to work while synthesis goes on reaching
 loopback.
 
+## Self-hosted inference (the fleet's own engines)
+
+### `EnginesSsmParam`
+
+`AF_ENGINES_SSM_PARAM` — the name of the SSM parameter `60-engines` wrote its engine table
+into (that stack's `EnginesSsmParam` output; `/af-ws/engines` by default). Empty, the
+default, is a complete configuration: no engine is managed, `/engine/*` answers 404, and no
+`llamacpp/…` model appears in any launch menu.
+
+**One parameter for every engine, on purpose.** Six per engine — service, URL, health path,
+models, idle window, start deadline — would take about a third of what is left of
+`30-ingress`'s 51,200 bytes, and the number of engines is meant to grow (ADR 0071 decision 8).
+So the stack writes one JSON document to SSM and hands the CP its name.
+
+⚠️ **The name has to be under `/af-ws/`.** `CpTaskRole`'s SSM read is scoped to
+`parameter/af-ws/*` (`20-platform`, Sid `SsmWorkspaceParams`), so a parameter anywhere else
+deploys perfectly and then reads `AccessDenied` at CP start — with the engines simply absent
+and no other symptom. The template's `AllowedPattern` refuses it rather than letting that
+happen. Nothing else about the engines is a CFN parameter; the tuning is CP environment
+variables (`AF_ENGINE_WAKE_TIMEOUT`, `AF_ENGINE_LLM_*`), documented in the deployment README.
+
+Background, prices and every measurement: ADR 0071.
+
 ## WAF
 
 Optional, OFF by default.

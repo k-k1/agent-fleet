@@ -121,6 +121,7 @@ save_params "$AF_STACK_DATA"     10-data
 save_params "$AF_STACK_PLATFORM" 20-platform
 [ -n "${AF_STACK_POOL:-}" ] && save_params "$AF_STACK_POOL" 40-ec2-pool
 [ -n "${AF_STACK_TTS:-}" ] && save_params "$AF_STACK_TTS" 50-tts
+[ -n "${AF_STACK_ENGINES:-}" ] && save_params "$AF_STACK_ENGINES" 60-engines
 save_params "$AF_STACK_INGRESS"  30-ingress
 
 # Keep an existing mark, so that a --force re-capture does not erase the dev-deployment mark.
@@ -144,6 +145,11 @@ AF_STACK_POOL=${AF_STACK_POOL:-}
 # The speech engine (ADR 0070). Empty is the normal value — it is opt-in, and the presence
 # of params/50-tts is what makes standup.sh build it again.
 AF_STACK_TTS=${AF_STACK_TTS:-}
+# The self-hosted inference engines (ADR 0071). Same shape as the speech engine: opt-in,
+# empty by default, and the presence of params/60-engines is what makes standup.sh build it
+# again. ⚠️ The models bucket is NOT captured here and is Retain on purpose — a 17 GB model
+# takes 30-40 minutes to fetch back from Hugging Face, when it comes back at all.
+AF_STACK_ENGINES=${AF_STACK_ENGINES:-}
 AF_STACK_INGRESS=$AF_STACK_INGRESS
 AF_WS_RUNTIME=$AF_WS_RUNTIME
 AF_PERSISTENCE=$AF_PERSISTENCE
@@ -178,7 +184,7 @@ fi
 cat <<EOF
 
 ==> captured: $AF_FQDN  (profile=$AF_PROFILE region=$AF_REGION)
-    stacks: $AF_STACK_NETWORK / $AF_STACK_DATA / $AF_STACK_PLATFORM${AF_STACK_POOL:+ / $AF_STACK_POOL}${AF_STACK_TTS:+ / $AF_STACK_TTS} / $AF_STACK_INGRESS
+    stacks: $AF_STACK_NETWORK / $AF_STACK_DATA / $AF_STACK_PLATFORM${AF_STACK_POOL:+ / $AF_STACK_POOL}${AF_STACK_TTS:+ / $AF_STACK_TTS}${AF_STACK_ENGINES:+ / $AF_STACK_ENGINES} / $AF_STACK_INGRESS
     runtime=$AF_WS_RUNTIME persistence=$AF_PERSISTENCE image=$AF_IMAGE_TAG
 
 Every tool that touches a deployment addresses the same one with --profile / --region:

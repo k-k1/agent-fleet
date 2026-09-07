@@ -88,6 +88,18 @@ Resources:
       # Third-party image, pinned by tag and re-copied on every stand-up; a scan on push
       # would report findings nobody here can fix.
       ImageScanningConfiguration: { ScanOnPush: false }
+  # The pinned llama.cpp CUDA server image (ADR 0071), here for the same reason as the one
+  # above — a repository created in 60-engines itself would be empty when that stack's
+  # service first tries to pull, and the CREATE would never converge. It is also the
+  # measured difference between a 527-second cold start and a worse one: at 12-14 MB/s
+  # through the NAT, pulling 2.47 GB from GHCR at task start cost 178 seconds.
+  EcrLlamacpp:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-llamacpp
+      EmptyOnDelete: true
+      ImageScanningConfiguration: { ScanOnPush: false }
 
   # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
   Namespace:
@@ -400,6 +412,9 @@ Outputs:
   EcrVoicevoxUri:
     Value: !GetAtt EcrVoicevox.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrVoicevoxUri" }
+  EcrLlamacppUri:
+    Value: !GetAtt EcrLlamacpp.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrLlamacppUri" }
   ClusterName:
     Value: !Ref Cluster
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }
