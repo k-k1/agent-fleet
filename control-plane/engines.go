@@ -37,6 +37,7 @@ import (
 // the CP would have to ask the engine for is something it cannot ask.
 type engineDef struct {
 	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
+	API              string   `json:"api"`              // "chat" | "images" — see engineAPI* below
 	Service          string   `json:"service"`          // ECS service whose desired count moves
 	CapacityProvider string   `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
 	URL              string   `json:"url"`              // http://llm.af.internal:8080
@@ -51,6 +52,30 @@ type engineDef struct {
 
 type engineTable struct {
 	Engines []engineDef `json:"engines"`
+}
+
+// The API families an engine can speak. It is declared by the stack rather than guessed from
+// the key, and it decides two things that are otherwise invisible:
+//
+//   - which engines the Agent turns into an opencode provider. An image engine written into
+//     opencode's config would put `sdcpp/sdxl-base-1.0` in the launch menu as something to
+//     hold a conversation with;
+//   - who counts the usage. A chat response carries `usage` and the gateway is the only party
+//     that sees it; an image response carries pixels, which the Agent counts as tool.imagegen
+//     when it stores the file (ADR 0071 decision 9, ADR 0069 decision 9). Counting both here
+//     would put an `engine.image` row with no tokens in it next to the real one.
+const (
+	engineAPIChat   = "chat"
+	engineAPIImages = "images"
+)
+
+// api is the engine's API family, defaulting to chat. The default matters: a table written by
+// the P0 stack has no `api` field at all, and the CP is upgraded before the stack is.
+func (d engineDef) api() string {
+	if v := strings.TrimSpace(d.API); v != "" {
+		return v
+	}
+	return engineAPIChat
 }
 
 // engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
@@ -230,8 +255,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
 		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
 		reg.byKey[d.Key] = st
-		log.Printf("engines: %s -> %s (service=%s idle=%s deadline=%s models=%s)",
-			d.Key, d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
+		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
+			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
 		if cfg.interval > 0 {
 			go st.ctrl.run(context.Background())
 		}

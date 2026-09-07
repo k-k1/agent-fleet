@@ -100,6 +100,17 @@ Resources:
       RepositoryName: af-llamacpp
       EmptyOnDelete: true
       ImageScanningConfiguration: { ScanOnPush: false }
+  # The pinned stable-diffusion.cpp CUDA image (ADR 0071 P1, the `image` role). Same trap,
+  # same remedy: 60-engines cannot create the repository it pulls from. Unlike the two above
+  # it is filled only when a deployment actually stages an image checkpoint — 2.31 GB copied
+  # into every stand-up that only wants an LLM is a pull nobody asked for.
+  EcrSdcpp:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-sdcpp
+      EmptyOnDelete: true
+      ImageScanningConfiguration: { ScanOnPush: false }
 
   # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
   Namespace:
@@ -415,6 +426,9 @@ Outputs:
   EcrLlamacppUri:
     Value: !GetAtt EcrLlamacpp.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrLlamacppUri" }
+  EcrSdcppUri:
+    Value: !GetAtt EcrSdcpp.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrSdcppUri" }
   ClusterName:
     Value: !Ref Cluster
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }

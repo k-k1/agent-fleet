@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
@@ -161,5 +163,130 @@ func TestEngineSessionEnvMintsPerSessionAndCaches(t *testing.T) {
 	}
 	if len(asked) != 2 {
 		t.Fatalf("the CP was asked %d times for 3 launches (%v) — the cache is not holding", len(asked), asked)
+	}
+}
+
+// --- the catalogue, and the two things it feeds (ADR 0071 P1) --------------------
+
+// engineCatalogStub answers /internal/engine/catalog with `rows` and mints a token per ask,
+// echoing back which engine was asked for. It resets both caches, which are process-global.
+func engineCatalogStub(t *testing.T, rows string) *[]string {
+	t.Helper()
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/internal/engine/catalog":
+			_, _ = w.Write([]byte(`{"engines":[` + rows + `]}`))
+		case "/internal/engine/token":
+			var req struct{ Session, Key string }
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			asked = append(asked, req.Key+"/"+req.Session)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"token": "afe_" + req.Key, "expires_at": "2099-01-01T00:00:00Z",
+			})
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("AF_CP_BASE_URL", srv.URL)
+	t.Setenv("AF_ENGINE_ISSUE_TOKEN", "afei_test")
+	engineTokenCache.Clear()
+	engineCatalogState.mu.Lock()
+	engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+	engineCatalogState.mu.Unlock()
+	t.Cleanup(func() {
+		engineCatalogState.mu.Lock()
+		engineCatalogState.rows, engineCatalogState.at, engineCatalogState.ok = nil, time.Time{}, false
+		engineCatalogState.mu.Unlock()
+		engineTokenCache.Clear()
+	})
+	return &asked
+}
+
+const engineRowLlm = `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1","models":["qwen3-coder-30b-a3b"]}`
+const engineRowImage = `{"key":"image","api":"images","provider":"sdcpp","base_url":"/engine/image/v1","models":["sdxl-base-1.0"]}`
+
+// The image engine must not become an opencode provider. It answers /v1/images/generations
+// and nothing else, so `sdcpp/sdxl-base-1.0` in the launch menu would be a model you can
+// pick and then cannot talk to.
+func TestSyncEngineProvidersWritesOnlyChatEngines(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	engineCatalogStub(t, engineRowLlm+","+engineRowImage)
+
+	syncEngineProviders()
+
+	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]any `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cfg.Provider["llamacpp"]; !ok {
+		t.Errorf("the chat engine is missing from %v", cfg.Provider)
+	}
+	if _, ok := cfg.Provider["sdcpp"]; ok {
+		t.Error("the image engine was written as a chat provider — it would appear in the launch menu")
+	}
+}
+
+// The image tool's transport: the images engine, an absolute URL through the CP, and a token
+// minted for THAT engine (a token carries the engine it opens, and the gateway refuses one
+// presented at another).
+func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
+	asked := engineCatalogStub(t, engineRowLlm+","+engineRowImage)
+	base := os.Getenv("AF_CP_BASE_URL")
+
+	conn, ok := engineImageConn(context.Background())
+	if !ok {
+		t.Fatal("no image engine found in a catalogue that has one")
+	}
+	if conn.BaseURL != base+"/engine/image/v1" {
+		t.Errorf("base url = %q", conn.BaseURL)
+	}
+	if conn.Token != "afe_image" || len(*asked) != 1 || (*asked)[0] != "image/" {
+		t.Errorf("token = %q, asks = %v — want one workspace-scoped ask for the image engine",
+			conn.Token, *asked)
+	}
+	if len(conn.Models) != 1 || conn.Models[0] != "sdxl-base-1.0" {
+		t.Errorf("models = %v", conn.Models)
+	}
+	// A second call is served from the caches: this sits behind Ready(), which a client calls
+	// on every tools/list.
+	if _, _ = engineImageConn(context.Background()); len(*asked) != 1 {
+		t.Errorf("asks after a second lookup = %v — the token cache is not holding", *asked)
+	}
+}
+
+// A deployment with only the llm role — which is every deployment until an image checkpoint
+// is staged — has no image provider, and that is a quiet no, not an error.
+func TestEngineImageConnIsAbsentWithoutAnImageEngine(t *testing.T) {
+	engineCatalogStub(t, engineRowLlm)
+	if _, ok := engineImageConn(context.Background()); ok {
+		t.Fatal("found an image engine in a catalogue that has none")
+	}
+}
+
+// One token per (engine, scope). Presenting the llm token to /engine/image/v1 is refused by
+// the gateway — the claim doing its job — so the cache must not hand the same value to both.
+func TestEngineTokenIsCachedPerEngine(t *testing.T) {
+	asked := engineCatalogStub(t, engineRowLlm+","+engineRowImage)
+	if got := engineToken(context.Background(), "llm", "sess-a"); got != "afe_llm" {
+		t.Fatalf("llm token = %q", got)
+	}
+	if got := engineToken(context.Background(), "image", "sess-a"); got != "afe_image" {
+		t.Fatalf("image token = %q — the cache is keyed by scope alone", got)
+	}
+	if got := engineToken(context.Background(), "llm", "sess-a"); got != "afe_llm" {
+		t.Fatalf("cached llm token = %q", got)
+	}
+	if len(*asked) != 2 {
+		t.Fatalf("asks = %v, want one per engine", *asked)
 	}
 }

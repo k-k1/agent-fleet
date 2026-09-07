@@ -53,8 +53,8 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		out.Provider, out.Ready = p.ID(), true
-		if p.ID() == ProviderCodex {
-			out.Model = codexDriverModel()
+		if n, ok := p.(modelNamer); ok {
+			out.Model = n.DefaultModel()
 		}
 		for _, op := range p.Caps("").Ops {
 			out.Ops = append(out.Ops, string(op))

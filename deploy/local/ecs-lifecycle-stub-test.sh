@@ -83,7 +83,7 @@ STATE4="$AF_DEPLOY_STATE_DIR/p4.ap-northeast-1.t-ingress"
 mkdir -p "$STATE4/params"
 cp -a "$STATE/params/." "$STATE4/params/"
 cp "$STATE/env" "$STATE4/env"
-printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\nImageModelS3Key=image/sd_xl_base_1.0.safetensors\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
@@ -115,6 +115,7 @@ case "$args" in
   *"cloudformation describe-stacks --stack-name af-ecs-engines") [ "${STUB_ENGINES_EXISTS:-0}" = 1 ] || exit 1 ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='EnginesSsmParam']"*) echo "/af-ws/engines" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='LlmServiceName']"*) echo "af-af-ecs-engines-llm" ;;
+  *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
   *"ParameterKey=='LlmImageTag'"*) echo "server-cuda" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
   # For capture-env.sh: the parameter and output listings (join form). NatEipAllocationId
@@ -350,6 +351,11 @@ grep -q "deploy --stack-name af-ecs-engines .*CAPABILITY_NAMED_IAM" "$LOG" \
 has "ssm put-parameter --cli-input-json"
 has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
 order "cloudformation deploy --stack-name af-ecs-engines" "ecs update-service --cluster t-cluster --service af-af-ecs-engines-llm --desired-count 0"
+# The image role (ADR 0071 P1) is the same shape, with two differences that are easy to get
+# wrong: its image comes from a different upstream, and it has NO generated key at all
+# (sd-server has no authentication option — the security group is the whole of it).
+order "crane copy ghcr.io/leejet/stable-diffusion.cpp:master-cuda" "cloudformation deploy --stack-name af-ecs-engines"
+has "ecs update-service --cluster t-cluster --service af-af-ecs-engines-image --desired-count 0"
 grep -q "deploy --stack-name t-ingress .*EnginesSsmParam=/af-ws/engines" "$LOG" \
   || fail "30-ingress did not get the engine table's SSM name (the gateway would 404)"
 # ⚠️ The key is machine-generated and must never reach an argument. An argv is in
@@ -361,9 +367,18 @@ if grep -qE "put-parameter .*--value [A-Za-z0-9]{20,}" "$LOG"; then fail "the ge
 : > "$LOG"
 STUB_ENGINES_EXISTS=1 STUB_ENGINE_KEY_EXISTS=1 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 hasnt "--service af-af-ecs-engines-llm --desired-count 0"
+hasnt "--service af-af-ecs-engines-image --desired-count 0"
 # And a key that is already there is never rotated: the CP is holding the old value, and
 # replacing it under a running engine locks the gateway out of it.
 hasnt "ssm put-parameter"
+# A deployment that runs only an LLM must not pay for the 2.3 GB image it will never start.
+# The condition is the same one that decides whether the service exists at all — an empty
+# ImageModelS3Key means 60-engines creates no image service, so there is nothing to pull.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+hasnt "crane copy ghcr.io/leejet/stable-diffusion.cpp"
+has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #

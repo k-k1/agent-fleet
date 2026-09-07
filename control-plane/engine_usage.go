@@ -153,12 +153,24 @@ func engineUsageFeature(key string) string { return "engine." + key }
 // that file exists to prevent, and it is silent — a dropped usage row looks like no usage.
 var engineUsageClient = &http.Client{Timeout: 10 * time.Second, Transport: newAgentTransport()}
 
-func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
-	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool) {
+// engineUsageRowFor builds the row for one call, or reports that this engine's consumption is
+// not the gateway's to count.
+//
+// Only the token-bearing engines are counted here. An image engine's response has no `usage`
+// in it at all — what it spends is pixels, and the party that can count those is the Agent,
+// which writes the tool.imagegen row as it stores the file (ADR 0071 decision 9, ADR 0069
+// decision 9). Writing one from here as well would put an `engine.image` line with
+// measured="none" next to every real one, in a graph whose categories are a frozen
+// enumeration (ADR 0029 §2).
+func engineUsageRowFor(def engineDef, claims engineSessionClaims, u engineUsage,
+	took time.Duration, ok bool) (engineUsageRow, bool) {
 
+	if def.api() != engineAPIChat {
+		return engineUsageRow{}, false
+	}
 	row := engineUsageRow{
-		Feature:  engineUsageFeature(eng.def.Key),
-		Provider: eng.def.Provider,
+		Feature:  engineUsageFeature(def.Key),
+		Provider: def.Provider,
 		Session:  claims.Session,
 		Model:    strings.TrimSpace(u.Model),
 		In:       u.PromptTokens,
@@ -170,7 +182,14 @@ func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
 	if u.empty() {
 		row.Measured = "none"
 	}
-	if g.mgr == nil {
+	return row, true
+}
+
+func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
+	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool) {
+
+	row, count := engineUsageRowFor(eng.def, claims, u, took, ok)
+	if !count || g.mgr == nil {
 		return
 	}
 	// Detached from the request: the client's context is done the moment the answer is

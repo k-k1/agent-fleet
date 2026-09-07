@@ -51,18 +51,34 @@ type imageGenArgs struct {
 	op, prompt, size, background string
 	count                        int
 	inputs                       []string
+	// mask is an absolute path, and only inpaint uses it. It arrives here rather than being
+	// folded into inputs because a mask is not a reference image: handing one to a route that
+	// has no mask parameter produces a picture OF the mask, which is why the Codex provider
+	// refuses it outright (ADR 0069) and the self-hosted one requires it (ADR 0071 P1).
+	mask string
 }
 
-// mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED the
-// provider's own (8 minutes on the Codex route) so that a slow generation is reported by the
-// provider with a real reason, rather than by this client as a bare timeout.
+// mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED every
+// provider's own so that a slow generation is reported by the provider with a real reason,
+// rather than by this client as a bare timeout. The chain, longest last:
+//
+//	engine gateway 15 min  <  sdcpp provider 16 min  <  this 18 min
+//	codex provider  8 min  <  this
+//
+// 18 rather than the 10 it started at, because the self-hosted route can legitimately spend a
+// quarter of an hour: a request to a stopped image engine is held by the Control Plane while
+// a GPU box is bought, booted, and loaded with a checkpoint (ADR 0071 decision 5). Waiting is
+// what the progress heartbeat below exists to make survivable.
 //
 // It is also why the budget is bounded rather than left open: RunStdio's loop dispatches
 // serially, so for as long as a generation is in flight this server reads nothing else from
 // stdin — including notifications/cancelled. That is tolerable because the one client on this
 // pipe is the agent waiting on this very call, but an unbounded wait would turn a wedged
 // provider into a wedged Agent Fleet server.
-const mcpImageGenCallTimeout = 10 * time.Minute
+//
+// ⚠️ A codex session is capped below this by its own tool_timeout_sec (600 s, stamped by the
+// materializer), so on that kind a cold engine start can still be cut short by the client.
+const mcpImageGenCallTimeout = 18 * time.Minute
 
 func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	if strings.TrimSpace(a.prompt) == "" {
@@ -74,7 +90,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	}
 	body, _ := json.Marshal(map[string]any{
 		"session": self, "op": a.op, "prompt": a.prompt, "size": a.size,
-		"background": a.background, "count": a.count, "inputs": a.inputs,
+		"background": a.background, "count": a.count, "inputs": a.inputs, "mask": a.mask,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
@@ -97,10 +113,11 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 			Width  int    `json:"width"`
 			Height int    `json:"height"`
 		} `json:"files"`
-		Provider string   `json:"provider"`
-		Model    string   `json:"model"`
-		Region   string   `json:"region"`
-		Warnings []string `json:"warnings"`
+		Provider    string   `json:"provider"`
+		Model       string   `json:"model"`
+		Region      string   `json:"region"`
+		Destination string   `json:"destination"`
+		Warnings    []string `json:"warnings"`
 	}
 	if err := json.Unmarshal([]byte(out), &res); err != nil || len(res.Files) == 0 {
 		return mcpToolErr(req.ID, "画像生成の結果を読み取れませんでした")
@@ -114,6 +131,12 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	}
 	if res.Region != "" {
 		value["region"] = res.Region
+	}
+	// Where the prompt went, when the provider id does not say it on its own (ADR 0069
+	// decision 11): `sdcpp` is the fleet's own GPU box, not a vendor, and the tool's own
+	// description says "an external image service" because that is true of the other routes.
+	if res.Destination != "" {
+		value["destination"] = res.Destination
 	}
 	// Always present, empty included: a caller that only looks for the key when something went
 	// wrong is the caller that reports a size it never got.

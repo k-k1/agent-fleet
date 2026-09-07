@@ -2,15 +2,17 @@ package main
 
 // engines.go — the Workspace side of the fleet's own inference engines (ADR 0071 P0).
 //
-// Three small jobs, all of them talking to the Control Plane over the same public hairpin
+// Four small jobs, all of them talking to the Control Plane over the same public hairpin
 // the memo, schedule and MCP bridges use (AF_CP_BASE_URL), authenticated by the issuing
 // token the CP injects at container start (AF_ENGINE_ISSUE_TOKEN):
 //
-//  1. at boot, ask which engines exist and write them into opencode's config as a provider,
-//     so `llamacpp/<model>` is in the launch menu — while every engine is still asleep;
+//  1. at boot, ask which engines exist and write the CHAT ones into opencode's config as a
+//     provider, so `llamacpp/<model>` is in the launch menu — while every engine is asleep;
 //  2. at each opencode launch, buy a token scoped to THAT session and hand it to the pane
 //     through tmux's environment;
-//  3. accept the usage rows the CP posts back after an engine answers, and append them to
+//  3. tell the image generation layer how to reach the IMAGES engine, which is the transport
+//     behind the `sdcpp` provider (ADR 0071 P1, ADR 0069 decision 3);
+//  4. accept the usage rows the CP posts back after an engine answers, and append them to
 //     this workspace's ledger, which is where every other feature's consumption lives.
 //
 // A deployment with no engines gets 404 on the catalog and everything here is a no-op. That
@@ -30,6 +32,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/chatx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/usagex"
 )
@@ -39,7 +42,84 @@ var engineHTTP = &http.Client{Timeout: 20 * time.Second}
 // The opencode launcher calls this for every session it starts. Wired here rather than in
 // the opencode package because minting the token is a call to the Control Plane, and an
 // internal CLI package has no business knowing the CP exists (the same seam UsagePref uses).
-func init() { opencode.EngineEnv = engineSessionEnv }
+//
+// The imagegen seam is the same shape and exists for the same reason: internal/imagegen owns
+// "make pixels", not "know where the Control Plane is".
+func init() {
+	opencode.EngineEnv = engineSessionEnv
+	imagegen.EngineLookup = engineImageConn
+}
+
+// The API families the CP's catalogue reports. Chat engines become opencode providers; images
+// engines become the imagegen `sdcpp` provider. The key is NOT what decides this — an engine's
+// role is declared by the stack (ADR 0071 decision 8).
+const (
+	engineAPIChat   = "chat"
+	engineAPIImages = "images"
+)
+
+// engineCatalogRow is one engine as the CP describes it. It never touches an engine to
+// answer, which is what lets the launch menu be drawn — and the image tool be advertised —
+// while every GPU box is asleep.
+type engineCatalogRow struct {
+	Key      string   `json:"key"`
+	API      string   `json:"api"`
+	Provider string   `json:"provider"`
+	BaseURL  string   `json:"base_url"` // relative to AF_CP_BASE_URL
+	Models   []string `json:"models"`
+}
+
+// api defaults to chat, matching the CP's own reading of a table written before the field
+// existed.
+func (r engineCatalogRow) api() string {
+	if v := strings.TrimSpace(r.API); v != "" {
+		return v
+	}
+	return engineAPIChat
+}
+
+// The catalogue is cached because Ready() is on the tools/list path — a client asks it at the
+// start of every turn — and a CP round trip there would be paid for by every session on every
+// turn. The TTL is long because the answer only changes when the 60-engines stack does.
+const (
+	engineCatalogTTL      = 10 * time.Minute
+	engineCatalogRetryTTL = time.Minute // after a failure: back off, but notice a CP that came back
+)
+
+var engineCatalogState struct {
+	mu   sync.Mutex
+	rows []engineCatalogRow
+	at   time.Time
+	ok   bool
+}
+
+// engineCatalogRows returns the engines this deployment runs, refreshing at most once per
+// TTL. A failed refresh keeps the previous answer rather than reporting "no engines": the
+// engines did not go away because the hairpin blipped, and dropping them would take
+// generate_image out of tools/list mid-conversation.
+func engineCatalogRows(ctx context.Context) []engineCatalogRow {
+	engineCatalogState.mu.Lock()
+	defer engineCatalogState.mu.Unlock()
+	ttl := engineCatalogTTL
+	if !engineCatalogState.ok {
+		ttl = engineCatalogRetryTTL
+	}
+	if !engineCatalogState.at.IsZero() && time.Since(engineCatalogState.at) < ttl {
+		return engineCatalogState.rows
+	}
+	var cat struct {
+		Engines []engineCatalogRow `json:"engines"`
+	}
+	c, cancel := context.WithTimeout(ctx, 15*time.Second)
+	defer cancel()
+	engineCatalogState.at = time.Now()
+	if !engineCPCall(c, http.MethodGet, "/internal/engine/catalog", nil, &cat) {
+		engineCatalogState.ok = false
+		return engineCatalogState.rows
+	}
+	engineCatalogState.rows, engineCatalogState.ok = cat.Engines, true
+	return engineCatalogState.rows
+}
 
 // engineCPCall is the shared shape of the two calls out: base URL, issuing token, JSON in
 // and out. Returns ok=false with no error logged for "this deployment has no engines" (404)
@@ -91,20 +171,19 @@ func engineCPCall(ctx context.Context, method, path string, in, out any) bool {
 func syncEngineProviders() {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	var cat struct {
-		Engines []struct {
-			Key      string   `json:"key"`
-			Provider string   `json:"provider"`
-			BaseURL  string   `json:"base_url"`
-			Models   []string `json:"models"`
-		} `json:"engines"`
-	}
-	if !engineCPCall(ctx, http.MethodGet, "/internal/engine/catalog", nil, &cat) {
+	rows := engineCatalogRows(ctx)
+	if len(rows) == 0 {
 		return
 	}
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
-	providers := make([]opencode.EngineProvider, 0, len(cat.Engines))
-	for _, e := range cat.Engines {
+	providers := make([]opencode.EngineProvider, 0, len(rows))
+	for _, e := range rows {
+		// CHAT engines only. An image engine declared here would put `sdcpp/sdxl-base-1.0`
+		// in the launch menu as something to hold a conversation with, and picking it would
+		// send a chat completion to an endpoint that has never heard of one.
+		if e.api() != engineAPIChat {
+			continue
+		}
 		providers = append(providers, opencode.EngineProvider{
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
 		})
@@ -129,11 +208,19 @@ func syncEngineProviders() {
 
 // --- the per-session token ------------------------------------------------------
 
-// engineTokenCache holds one token per scope — a session name, or "" for the workspace-wide
-// one the managed route's shared daemon uses. A launch is not the only thing that asks
-// (`opencode models` asks on every launch-modal open), and buying a new token each time would
-// leave a trail of live credentials behind one session.
-var engineTokenCache sync.Map // scope -> engineCachedToken
+// engineTokenCache holds one token per (engine key, scope) — the scope being a session name,
+// or "" for the workspace-wide one the managed route's shared daemon and the image tool use. A
+// launch is not the only thing that asks (`opencode models` asks on every launch-modal open),
+// and buying a new token each time would leave a trail of live credentials behind one session.
+//
+// Keyed by engine as well as by scope because a token opens ONE engine: presenting the llm
+// token to /engine/image/v1 is refused, and it should be — that is the claim doing its job.
+var engineTokenCache sync.Map // engineTokenScope -> engineCachedToken
+
+type engineTokenScope struct {
+	key     string // the engine, e.g. "llm" or "image"
+	session string // "" = workspace-scoped
+}
 
 type engineCachedToken struct {
 	value string
@@ -160,25 +247,36 @@ const engineNegativeCache = time.Minute
 // Nil when the deployment runs no engines, which is what makes it safe to call
 // unconditionally from the launcher and from env().
 func engineSessionEnv(name string) []string {
-	if v, ok := engineTokenCache.Load(name); ok {
+	tok := engineToken(context.Background(), "llm", name)
+	if tok == "" {
+		return nil
+	}
+	return []string{opencode.EngineProviderKeyEnv + "=" + tok}
+}
+
+// engineToken mints (or reuses) a token for one engine and one scope. "" when the deployment
+// runs no engines, when the CP cannot be reached, or when that engine does not exist.
+func engineToken(ctx context.Context, key, session string) string {
+	scope := engineTokenScope{key: key, session: session}
+	if v, ok := engineTokenCache.Load(scope); ok {
 		c := v.(engineCachedToken)
 		if !c.failedAt.IsZero() && time.Since(c.failedAt) < engineNegativeCache {
-			return nil
+			return ""
 		}
 		if c.value != "" && time.Now().Before(c.renewAt) {
-			return []string{opencode.EngineProviderKeyEnv + "=" + c.value}
+			return c.value
 		}
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	c, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var out struct {
 		Token     string `json:"token"`
 		ExpiresAt string `json:"expires_at"`
 	}
-	req := map[string]string{"session": name, "key": "llm"}
-	if !engineCPCall(ctx, http.MethodPost, "/internal/engine/token", req, &out) || out.Token == "" {
-		engineTokenCache.Store(name, engineCachedToken{failedAt: time.Now()})
-		return nil
+	req := map[string]string{"session": session, "key": key}
+	if !engineCPCall(c, http.MethodPost, "/internal/engine/token", req, &out) || out.Token == "" {
+		engineTokenCache.Store(scope, engineCachedToken{failedAt: time.Now()})
+		return ""
 	}
 	renew := time.Now().Add(time.Hour)
 	if exp, err := time.Parse(time.RFC3339, out.ExpiresAt); err == nil {
@@ -186,8 +284,42 @@ func engineSessionEnv(name string) []string {
 			renew = time.Now().Add(half)
 		}
 	}
-	engineTokenCache.Store(name, engineCachedToken{value: out.Token, renewAt: renew})
-	return []string{opencode.EngineProviderKeyEnv + "=" + out.Token}
+	engineTokenCache.Store(scope, engineCachedToken{value: out.Token, renewAt: renew})
+	return out.Token
+}
+
+// --- the image engine (ADR 0071 P1) ----------------------------------------------
+
+// engineImageConn tells internal/imagegen how to reach the fleet's own image engine, or says
+// there is none. Called from the provider's Ready() (the tools/list path) and from its
+// Generate, so both sides of "is it offered" and "can it run" agree by construction.
+//
+// The token is WORKSPACE-scoped, not per session, and that is a different trade from
+// opencode's. The engine credential opencode uses ends up in a config the model can read
+// through `{env:…}`, so a narrow scope limits what a leak costs; this one never leaves the
+// Agent's own process. What the CP does with the session claim is label a usage row, and for
+// images the row is written here instead (feature tool.imagegen, with the session as its ref),
+// so a session-scoped token would buy nothing and cost one credential per session.
+func engineImageConn(ctx context.Context) (imagegen.EngineConn, bool) {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
+	if base == "" {
+		return imagegen.EngineConn{}, false
+	}
+	for _, e := range engineCatalogRows(ctx) {
+		if e.api() != engineAPIImages || e.Provider != imagegen.ProviderSdcpp {
+			continue
+		}
+		tok := engineToken(ctx, e.Key, "")
+		if tok == "" {
+			return imagegen.EngineConn{}, false
+		}
+		return imagegen.EngineConn{
+			BaseURL: base + e.BaseURL,
+			Token:   tok,
+			Models:  append([]string(nil), e.Models...),
+		}, true
+	}
+	return imagegen.EngineConn{}, false
 }
 
 // --- the usage the CP posts back -------------------------------------------------

@@ -234,12 +234,15 @@ fi
 # a 17 GB model from Hugging Face measured 31 minutes at the speed it happened to serve that
 # day, and there is no way to know in advance what that speed will be.
 if [ -n "${AF_STACK_ENGINES:-}" ]; then
-  ENG_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
-  if [ -n "$ENG_SERVICE" ]; then
-    echo "==> 1d. stopping the llm engine ($ENG_SERVICE)"
+  for out in LlmServiceName ImageServiceName; do
+    ENG_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" "$out")"
+    # "-" is a role with no model staged, i.e. no service to stop (the output is never empty
+    # because an empty Export rolls the stack back).
+    case "$ENG_SERVICE" in ""|"-") continue ;; esac
+    echo "==> 1d. stopping the engine ($ENG_SERVICE)"
     af_run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$ENG_SERVICE" \
       --desired-count 0 >/dev/null 2>&1 || true
-  fi
+  done
 fi
 
 # --- 2) workspace services ---------------------------------------------------

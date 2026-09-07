@@ -1,12 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
   agent-fleet ECS adapter — the fleet's own inference engines on GPU, normally scaled to
-  zero (ADR 0071 P0: the `llm` role, llama.cpp). Optional: a deployment that does not want
+  zero (ADR 0071 P0: the `llm` role, llama.cpp; P1: the `image` role, stable-diffusion.cpp's
+  sd-server). Optional, and each role is optional on its own: a deployment that does not want
   self-hosted inference deploys nothing and no engine model appears in any launch menu.
   Imports the VPC, private subnets and the CP security group from 00-network, and the
-  cluster, execution role, Cloud Map namespace and the af-llamacpp ECR repository from
-  20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE 30-ingress and hand
-  30-ingress this stack's EnginesSsmParam output.
+  cluster, execution role, Cloud Map namespace and the af-llamacpp / af-sdcpp ECR
+  repositories from 20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE
+  30-ingress and hand 30-ingress this stack's EnginesSsmParam output.
 
 # Fargate has no GPU (AWS Fargate FAQ; containers-roadmap #88, open since 2019), so the
 # 0070 shape — "an ECS service whose desired count is 0 while nobody wants it" — is bought
@@ -36,6 +37,15 @@ Description: >-
 # down first: `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
 
 Parameters:
+  # ⚠️ The long-form reasoning for these — the measurements, the trade-offs, the traps — is in
+  # cfn/PARAMETERS-60-engines.md. It lives there rather than here because a template body over
+  # 51,200 bytes cannot be handed to CloudFormation directly, and a YAML comment costs exactly
+  # what a Description does.
+  #
+  # ⚠️ Write every parameter in BLOCK form. The one-line `{ Type: …, Default: … }` map reads as
+  # REQUIRED to standup.sh's preflight — it looks for a `Default:` on its own line — and one of
+  # those stops every stand-up with "required parameter … is missing from params/60-engines"
+  # (measured against the stub test).
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -44,27 +54,23 @@ Parameters:
     Type: String
     Default: af-ecs-platform
     Description: >-
-      20-platform stack to import the cluster, execution role, namespace and the
-      af-llamacpp ECR repository from.
+      20-platform stack to import the cluster, execution role, namespace and the af-llamacpp
+      and af-sdcpp ECR repositories from.
   ServiceConnectNamespace:
     Type: String
     Default: af.internal
     Description: >-
-      The private DNS namespace's NAME — it has to be the same value 20-platform was given,
-      because the namespace is imported by id (which carries no name) while the URL written
-      into the SSM parameter is built from the name. Wrong here and everything deploys
-      cleanly while the CP's gateway points at a name that does not resolve.
+      The private DNS namespace's NAME, which must match what 20-platform was given: the
+      namespace is imported by id, while the engine URLs are built from the name.
   EnginesSsmParamName:
     Type: String
     Default: /af-ws/engines
     AllowedPattern: "^/af-ws/[A-Za-z0-9_.\\-/]+$"
     Description: >-
-      SSM parameter this stack writes the engine table to, and the single value 30-ingress
-      is handed (ADR 0071 decision 8). It MUST live under /af-ws/ — the CP task role's SSM
-      read is scoped to parameter/af-ws/* (20-platform, Sid SsmWorkspaceParams), and a name
-      outside it deploys cleanly and then reads AccessDenied at CP start.
+      SSM parameter this stack writes the engine table to, and the one value 30-ingress is
+      handed. MUST be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
 
-  # --- the llm role -----------------------------------------------------------
+  # --- the llm role (llama.cpp) -------------------------------------------------
   LlmDiscoveryName:
     Type: String
     Default: llm
@@ -73,25 +79,15 @@ Parameters:
     Type: String
     Default: server-cuda
     Description: >-
-      Tag inside the af-llamacpp ECR repository. The upstream image
-      (ghcr.io/ggml-org/llama.cpp:server-cuda, 2.47 GB) is copied in with `crane` by
-      standup.sh rather than pulled at task start: measured, GHCR through this NAT runs at
-      12-14 MB/s, which put 178 of a 527-second cold start into the pull alone.
+      Tag inside the af-llamacpp ECR repository. standup.sh copies the upstream image in
+      before this stack is deployed.
   LlmModelS3Key:
     Type: String
     Default: ""
     Description: >-
-      Key inside this stack's models bucket, e.g.
-      llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf. The engine never talks to Hugging Face
-      (ADR 0071 decision 3 — measured at 4-236 MB/s with no way to tell which until you pull,
-      against S3's steady 104-147 MB/s), so a model gets there through the ingest task below.
-      ⚠️ EMPTY (the default) means NO llm SERVICE IS CREATED — only the bucket, the ingest
-      task, the capacity provider and the roles. That is deliberate and it is the first half
-      of a two-pass stand-up: CloudFormation blocks on ECS service stabilisation, and a
-      service whose model is not in the bucket yet can never become stable, so creating it
-      before there is anything to serve leaves the stack in CREATE_IN_PROGRESS with no later
-      step able to rescue it (the same trap 20-platform's ECR repositories exist to avoid).
-      Deploy once with this empty, run the ingest task, then deploy again with the key.
+      Key inside this stack's models bucket, e.g. llm/Qwen3-Coder-…-Q4_K_M.gguf, put there by
+      the ingest task. ⚠️ EMPTY (the default) means NO llm SERVICE IS CREATED — deliberately,
+      and it is the first half of a two-pass stand-up. See PARAMETERS-60-engines.md.
   LlmModelFile:
     Type: String
     Default: model.gguf
@@ -100,26 +96,20 @@ Parameters:
     Type: CommaDelimitedList
     Default: "qwen3-coder-30b-a3b"
     Description: >-
-      Model ids the gateway advertises for this engine, i.e. what a user picks as
-      llamacpp/<id>. DECLARED, never derived (ADR 0053): the engine is asleep when the
-      launch menu is drawn, and waking a GPU box to enumerate one model is the opposite of
-      on-demand. The first id is what --alias tells llama-server to answer to.
+      Model ids the gateway advertises, i.e. what a user picks as llamacpp/<id>. Declared,
+      never derived — the engine is asleep when the launch menu is drawn. The first is --alias.
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,-c,32768,--jinja"
     Description: >-
-      Extra llama-server flags. The defaults are the ones measured on an L4: all layers on
-      the GPU, a 32k context (opencode's request is 18.7k tokens with the fleet's AGENTS.md
-      included) and the chat template applied, which is what makes tool calls work.
+      Extra llama-server flags. The defaults are the ones measured on an L4 (all layers on the
+      GPU, 32k context, chat template applied — the last is what makes tool calls work).
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
     Description: >-
-      SSM SecureString holding the key llama-server is started with (--api-key) and the CP
-      presents upstream. Reachability is already the whole of the engine's access control
-      (the SG below), so this is the second lock on an API that is unauthenticated by
-      default and has mutating endpoints (ADR 0071 decision 4d). standup.sh generates it if
-      it is missing. Empty = no --api-key.
+      SSM SecureString holding llama-server's --api-key, which the CP presents upstream: the
+      second lock on an API that has none of its own. standup.sh creates it. Empty = no key.
   LlmTaskCpu:
     Type: String
     Default: "4096"
@@ -128,26 +118,18 @@ Parameters:
     Type: String
     Default: "14336"
     Description: >-
-      Task memory (MiB). Below the instance's 16 GiB by enough for the ECS agent — a task
-      that asks for all of it never places, which reads as a capacity problem.
+      Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent — a task that
+      asks for all of it never places, which reads as a capacity problem.
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge"
     Description: >-
-      Instance types the llm capacity provider may buy. DECLARED per role (ADR 0071
-      decision 2), because the floor is a VRAM number and VRAM is not derivable from vCPU
-      or memory: Qwen3-Coder-30B-A3B Q4_K_M measured 20,943 MiB, which needs the L4's
-      22,888 and does not fit anything smaller in the family.
-      ⚠️ InstanceRequirements refuses this alongside InstanceGenerations.
+      Instance types this role may buy. Declared per role: the floor is a VRAM number (the 30B
+      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory.
   LlmGpuCount:
     Type: Number
     Default: 1
     Description: GPUs per box, and the task's GPU resource requirement. 0 = a CPU box (test only).
-  # ⚠️ Block form, not `{ Type: …, Default: … }` on one line. standup.sh's preflight reads
-  # this section to tell a required parameter from an optional one, and it reads a
-  # `Default:` only on its own line — an inline map therefore reads as REQUIRED and stops
-  # every stand-up with "required parameter … is missing from params/60-engines" (measured
-  # against the stub test).
   LlmVCpuMin:
     Type: Number
     Default: 4
@@ -168,64 +150,157 @@ Parameters:
     Type: Number
     Default: 120
     Description: >-
-      EBS data volume per box, when UseLocalStorage is off. It has to hold the image layers
-      plus every model the role pulls from S3. MI exposes only the SIZE — throughput and
-      IOPS cannot be asked for (measured against the API), which is why UseLocalStorage
-      exists below.
+      EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE —
+      throughput and IOPS cannot be asked for.
   LlmUseLocalStorage:
     Type: String
     Default: "false"
     AllowedValues: [ "true", "false" ]
     Description: >-
-      Use the instance store instead of an EBS data volume. ADR 0071 open question 1: on
-      g6.xlarge the EBS baseline is 125 MB/s, and that one number bounds BOTH the S3 fetch
-      (measured 104-147 MB/s, i.e. the write side saturates) and the 267-second load of
-      18.5 GB into VRAM. The instance store is 250 GB of local NVMe. Off by default until
-      the measurement in the ADR says otherwise — an instance store is also wiped on every
-      box, which costs a fresh S3 fetch per cold start.
+      Use the 250 GB instance store instead of an EBS data volume (ADR 0071 open question 1).
+      Off until measured: it is also wiped per box, i.e. a fresh S3 fetch on every cold start.
   LlmScaleInAfter:
     Type: Number
     Default: -2
     Description: >-
-      infrastructureOptimization.scaleInAfter, in seconds: how long MI leaves an idle box
-      before terminating it. -2 = do not set it, i.e. AWS's default (measured drain: 427 and
-      463 seconds on a GPU box, 93 on a CPU box). -1 = never tidy up. 0-3600 = that many
-      seconds. Worth having as a knob because a box kept a little longer is a warm start:
-      image layers and the model file are still on it, so the next request pays only the
-      VRAM load (ADR 0071 decision 7c).
+      infrastructureOptimization.scaleInAfter in seconds: -2 = leave it at AWS's default,
+      -1 = never tidy up, 0-3600 = that many seconds.
   LlmIdleSec:
     Type: Number
     Default: 1800
-    Description: >-
-      AF_ENGINE_LLM_IDLE_SEC — how long the engine goes unwanted before the controller
-      stops it. Written into the SSM table below rather than passed to 30-ingress, which has
-      no room left for per-engine parameters (ADR 0071 decision 8).
+    Description: How long the engine goes unwanted before the controller stops it.
   LlmStartDeadlineSec:
     Type: Number
     Default: 900
     Description: >-
       How long a start may take before the controller calls it failed. MUST exceed the real
-      cold start or every start is recorded as a failure and the cooldown doubles away
-      (measured 527 s from S3 with the image pulled over NAT; 0070's 300 s default would
-      fail all of them).
+      cold start (measured 527-586 s) or every start is a failure and the cooldown doubles away.
   LlmMode:
     Type: String
     Default: ondemand
     AllowedValues: [ off, on, ondemand ]
     Description: >-
       The engine's initial mode, written into the SSM table as the DEFAULT only — once an
-      admin sets it the stored setting wins, because under on-demand the desired count is
-      not the admin's intent (ADR 0070 decision 7).
+      admin sets it, the stored setting wins (ADR 0070 decision 7).
+
+  # --- the image role (stable-diffusion.cpp — ADR 0071 P1) ----------------------
+  # A mirror of the llm block, and a mirror on purpose: instance requirements are declared per
+  # role because the floor is a VRAM number (SDXL fp16 measured 7,379 MiB against the 30B's
+  # 20,943), and the two roles must never share a box — CUDA does not slow down when VRAM runs
+  # out, it crashes.
+  ImageDiscoveryName:
+    Type: String
+    Default: image
+    Description: DNS label the image engine answers on, i.e. <ImageDiscoveryName>.<namespace>.
+  ImageImageTag:
+    Type: String
+    Default: master-cuda
+    Description: >-
+      Tag inside the af-sdcpp ECR repository (the doubled word is the `image` ROLE's container
+      image tag). Upstream is amd64 only, which is no constraint: G-family has no arm64 member.
+  ImageModelS3Key:
+    Type: String
+    Default: ""
+    Description: >-
+      Key inside this stack's models bucket, e.g. image/sd_xl_base_1.0.safetensors.
+      ⚠️ EMPTY (the default) means NO image SERVICE IS CREATED, for the same reason as
+      LlmModelS3Key. It is also what decides whether standup.sh copies the 2.3 GB image at all.
+  ImageModelFile:
+    Type: String
+    Default: sd_xl_base_1.0.safetensors
+    Description: >-
+      File name the checkpoint is copied to on the box. sd-server reads safetensors directly,
+      so this is the file the ingest task uploaded, not a converted form.
+  ImageModelIds:
+    Type: CommaDelimitedList
+    Default: "sdxl-base-1.0"
+    Description: >-
+      Model ids the gateway advertises. Declared, never derived — the Agent needs the answer
+      while the engine is asleep. The FIRST is the provider's default model, and its Caps.
+  ImageExtraArgs:
+    Type: CommaDelimitedList
+    Default: "--diffusion-fa"
+    Description: >-
+      Extra sd-server flags. --diffusion-fa is what the GPU measurement ran with (1024px in
+      20.8-21.0 s, 7.4 GB of VRAM on an L4). There is no --api-key: sd-server has no auth.
+  ImageTaskCpu:
+    Type: String
+    Default: "4096"
+    Description: Task vCPU units. 4096 fills a g6.xlarge; keep it under the instance.
+  ImageTaskMemory:
+    Type: String
+    Default: "14336"
+    Description: Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent.
+  ImageAllowedInstanceTypes:
+    Type: CommaDelimitedList
+    Default: "g6.xlarge"
+    Description: >-
+      Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
+      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4).
+  ImageGpuCount:
+    Type: Number
+    Default: 1
+    Description: GPUs per box, and the task's GPU resource requirement. 0 = a CPU box (test only).
+  ImageVCpuMin:
+    Type: Number
+    Default: 4
+    Description: Lower bound of the instance requirement (vCPU).
+  ImageVCpuMax:
+    Type: Number
+    Default: 8
+    Description: Upper bound of the instance requirement (vCPU).
+  ImageMemMinMiB:
+    Type: Number
+    Default: 15000
+    Description: Lower bound of the instance requirement (MiB).
+  ImageMemMaxMiB:
+    Type: Number
+    Default: 65536
+    Description: Upper bound of the instance requirement (MiB).
+  ImageStorageGiB:
+    Type: Number
+    Default: 60
+    Description: >-
+      EBS data volume per box when ImageUseLocalStorage is off. Smaller than the llm role's,
+      but not much: the anonymous model volume is re-allocated per task and never reclaimed.
+  ImageUseLocalStorage:
+    Type: String
+    Default: "false"
+    AllowedValues: [ "true", "false" ]
+    Description: >-
+      Use the instance store instead of an EBS data volume. Less pressing than on the llm
+      role: 6.5 GB from S3 is under a minute either way.
+  ImageScaleInAfter:
+    Type: Number
+    Default: -2
+    Description: >-
+      infrastructureOptimization.scaleInAfter in seconds. -1 ("never tidy up") is a trap with
+      an anonymous model volume — the kept box re-fetches anyway. See the task definition.
+  ImageIdleSec:
+    Type: Number
+    Default: 900
+    Description: >-
+      How long the engine goes unwanted before the controller stops it. Half the llm role's
+      window: an image is a 21-second request with no conversation around it.
+  ImageStartDeadlineSec:
+    Type: Number
+    Default: 900
+    Description: >-
+      How long a start may take before the controller calls it failed. sd-server measured 195 s
+      from task creation to listen; the variable term is how long a GPU box takes to appear.
+  ImageMode:
+    Type: String
+    Default: ondemand
+    AllowedValues: [ off, on, ondemand ]
+    Description: The engine's initial mode, written into the SSM table as the DEFAULT only.
 
   # --- ingest -----------------------------------------------------------------
   HfTokenSecretArn:
     Type: String
     Default: ""
     Description: >-
-      Secrets Manager ARN holding HF_TOKEN, read by the INGEST task only (ADR 0071 decision
-      3: the token is the operator's, and it never lands on an engine box). Empty = only
-      ungated repositories can be ingested, which covers every model in the ADR's table
-      except FLUX.1-dev and SD 3.5.
+      Secrets Manager ARN holding HF_TOKEN, read by the INGEST task only (the token is the
+      operator's and never lands on an engine box). Empty = ungated repositories only.
   IngestCpu:
     Type: String
     Default: "2048"
@@ -238,9 +313,8 @@ Parameters:
     Type: Number
     Default: 80
     Description: >-
-      Ephemeral storage for the ingest task. It stages the whole file on disk before
-      uploading, so this is the largest model the deployment can take in — 80 GiB covers the
-      22 GB FLUX checkpoint with room for the filesystem.
+      Ephemeral storage for the ingest task, i.e. the largest model this deployment can take
+      in — it stages the whole file before uploading. 80 GiB covers the 22 GB FLUX checkpoint.
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -257,6 +331,13 @@ Conditions:
   HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
   HasHfToken: !Not [ !Equals [ !Ref HfTokenSecretArn, "" ] ]
+  # The same four for the image role, and the pair that decides the shape of the engine table
+  # (0, 1 or 2 rows — the comma between them only exists when both are there).
+  HasImageModel: !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ]
+  HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
+  ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
+  HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
+  HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
 
 Resources:
   # --- IAM: three roles, all of them closed inside this stack (ADR 0071 decision 8) ------
@@ -397,6 +478,12 @@ Resources:
   # reachability is the whole of its access control: port 8080 from the CP security group
   # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision
   # 14, ADR 0071 decision 4). --api-key is the second lock, not the first.
+  #
+  # For sd-server there IS no second lock: stable-diffusion.cpp's server has no
+  # authentication option at all (upstream examples/server/api.md documents none), so this
+  # group is the whole of the image engine's access control. Both roles share it because both
+  # answer on 8080 to the CP and to nobody else; what separates them is the capacity
+  # provider, not the firewall.
   EngineSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -411,9 +498,14 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
   # --- capacity: one provider per engine role (ADR 0071 decision 2) -------------
-  # `image` gets its own in P1. Two roles never share a box: CUDA does not slow down when
-  # VRAM runs out, it crashes, and the two measured footprints (20.9 GB for the 30B, 7.4 GB
-  # for SDXL) do not both fit on one L4.
+  # Two roles never share a box: CUDA does not slow down when VRAM runs out, it crashes, and
+  # the two measured footprints (20.9 GB for the 30B, 7.4 GB for SDXL) do not both fit on one
+  # L4's 22,888 MiB. Two providers is also what makes `draining` observable per role.
+  #
+  # ⚠️ Two providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
+  # that was just stopped holds its 4 vCPU for the 7-8 minutes it spends draining, so waking
+  # one role while the other is on its way out needs 12. A deployment that uses both roles
+  # should hold 16 or more (quota L-DB2E81BA, which is a support case and not auto-approved).
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -455,6 +547,49 @@ Resources:
         - { Key: af-role, Value: engine-llm }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
+  # The image role's own capacity. Created even when no image model is staged: a capacity
+  # provider costs nothing while nothing runs on it, it is named in the association list
+  # below (which is replaced wholesale, so it cannot be added conditionally without churning
+  # the list), and deleting one that a service used is a stack update that has to wait for
+  # the service to go first.
+  ImageCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-image"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: CAPACITY_PROVIDER
+        InfrastructureOptimization: !If
+          - HasImageScaleInAfter
+          - ScaleInAfter: !Ref ImageScaleInAfter
+          - !Ref "AWS::NoValue"
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref EngineSg ]
+          StorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - !Ref "AWS::NoValue"
+            - StorageSizeGiB: !Ref ImageStorageGiB
+          LocalStorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - UseLocalStorage: true
+            - !Ref "AWS::NoValue"
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref ImageVCpuMin, Max: !Ref ImageVCpuMax }
+            MemoryMiB: { Min: !Ref ImageMemMinMiB, Max: !Ref ImageMemMaxMiB }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref ImageAllowedInstanceTypes
+            AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+      Tags:
+        - { Key: af-role, Value: engine-image }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+
   # ⚠️ This REPLACES the cluster's provider list — the API is not additive — so FARGATE and
   # FARGATE_SPOT have to be named alongside ours or every Fargate service in the deployment
   # loses its provider. DefaultCapacityProviderStrategy is a REQUIRED property and is
@@ -465,7 +600,7 @@ Resources:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider ]
+      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider, !Ref ImageCapacityProvider ]
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
@@ -723,6 +858,117 @@ Resources:
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
         - { Key: af-role, Value: engine-llm }
 
+  # --- the image engine (ADR 0071 P1) -------------------------------------------
+  ImageTaskDef:
+    Type: AWS::ECS::TaskDefinition
+    Condition: HasImageModel
+    Properties:
+      Family: !Sub "af-${AWS::StackName}-image"
+      RequiresCompatibilities: [ MANAGED_INSTANCES ]
+      NetworkMode: awsvpc
+      Cpu: !Ref ImageTaskCpu
+      Memory: !Ref ImageTaskMemory
+      ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
+      TaskRoleArn: !GetAtt EngineTaskRole.Arn
+      Volumes:
+        # `Host: {}`, for the reasons measured on the llm role above — a SourcePath lands on
+        # the root filesystem and fills a brand-new box, and the price of the anonymous form
+        # is a fresh directory per task.
+        - Name: models
+          Host: {}
+      ContainerDefinitions:
+        - Name: fetch
+          Essential: false
+          Image: public.ecr.aws/aws-cli/aws-cli:latest
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub >-
+              set -e;
+              if [ -s "/models/${ImageModelFile}" ]; then
+                echo "s3 fetch: /models/${ImageModelFile} is already on this box";
+                exit 0;
+              fi;
+              start=$(date +%s);
+              aws s3 cp "s3://${ModelsBucket}/${ImageModelS3Key}" "/models/${ImageModelFile}.part" --only-show-errors;
+              mv "/models/${ImageModelFile}.part" "/models/${ImageModelFile}";
+              echo "s3 fetch: $(stat -c %s /models/${ImageModelFile}) bytes in $(( $(date +%s) - start ))s";
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: image-fetch
+        - Name: sd
+          Essential: true
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
+              Tag: !Ref ImageImageTag
+          # ⚠️ The image's ENTRYPOINT is /sd-cli, NOT the server — so unlike the llama.cpp
+          # image this one needs the entry point overridden or the task starts a one-shot CLI,
+          # renders nothing and exits. There is no curl in the image either, which is why the
+          # fetch is a separate aws-cli container. (Measured 2026-09-07.)
+          EntryPoint: [ "/sd-server" ]
+          PortMappings: [ { ContainerPort: 8080 } ]
+          # --listen-ip / --listen-port, not --host / --port: sd-server does not share
+          # llama-server's flag names.
+          Command: !Split
+            - ","
+            - !Join
+              - ","
+              - - "-m"
+                - !Sub "/models/${ImageModelFile}"
+                - "--listen-ip"
+                - "0.0.0.0"
+                - "--listen-port"
+                - "8080"
+                - !Join [ ",", !Ref ImageExtraArgs ]
+          ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
+          MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
+          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref "AWS::Region"
+              awslogs-stream-prefix: image
+
+  ImageDiscovery:
+    Type: AWS::ServiceDiscovery::Service
+    Condition: HasImageModel
+    Properties:
+      Name: !Ref ImageDiscoveryName
+      NamespaceId: !ImportValue { "Fn::Sub": "${PlatformStackName}-NamespaceId" }
+      DnsConfig:
+        DnsRecords: [ { Type: A, TTL: 10 } ]
+      HealthCheckCustomConfig: { FailureThreshold: 1 }
+
+  ImageService:
+    Type: AWS::ECS::Service
+    Condition: HasImageModel
+    DependsOn: Associations
+    Properties:
+      ServiceName: !Sub "af-${AWS::StackName}-image"
+      Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+      TaskDefinition: !Ref ImageTaskDef
+      # DesiredCount deliberately ABSENT — see the llm service. standup.sh scales a NEWLY
+      # created service to 0; a later update leaves whatever count the controller set.
+      CapacityProviderStrategy:
+        - { CapacityProvider: !Ref ImageCapacityProvider, Weight: 1 }
+      DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: DISABLED
+          Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+          SecurityGroups: [ !Ref EngineSg ]
+      ServiceRegistries:
+        - RegistryArn: !GetAtt ImageDiscovery.Arn
+      PropagateTags: SERVICE
+      Tags:
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+        - { Key: af-role, Value: engine-image }
+
   # --- the engine table the CP reads at startup (ADR 0071 decision 8) -----------
   # 30-ingress has 9.2 KB of template budget left and six parameters per engine would eat a
   # third of it, so the CP is handed ONE parameter name and reads the table from SSM. The
@@ -733,19 +979,45 @@ Resources:
       Name: !Ref EnginesSsmParamName
       Type: String
       Description: !Sub "agent-fleet engine table written by ${AWS::StackName} (ADR 0071)"
-      Value: !If
-        - HasLlmModel
-        - !Sub
-          - >-
-            {"engines":[{"key":"llm","service":"${Service}","capacityProvider":"${Cp}",
-            "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
-            "health":"/health","provider":"llamacpp","models":["${Models}"],
-            "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
-            "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}]}
-          - Service: !GetAtt LlmService.Name
-            Cp: !Sub "af-${AWS::StackName}-llm"
-            Models: !Join [ '","', !Ref LlmModelIds ]
-        - '{"engines":[]}' 
+  # The table holds 0, 1 or 2 rows — each role is staged independently — so it is assembled
+  # from two fragments and a separator that only exists when both are there. `api` is what
+  # tells the reader what KIND of endpoint this is, and it decides two things that would
+  # otherwise be guessed from the key: whether the Agent writes an opencode chat provider for
+  # it, and whether the gateway counts tokens out of the response (`chat`) or leaves the
+  # accounting to the Agent's tool.imagegen row (`images`, ADR 0071 decision 9).
+  #
+  # The image engine's health path is /v1/models, not /health: stable-diffusion.cpp's server
+  # has no health endpoint (upstream api.md), and /v1/models is the cheapest GET it answers.
+  # It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+      Value: !Sub
+        - '{"engines":[${Llm}${Sep}${Image}]}'
+        - Llm: !If
+            - HasLlmModel
+            - !Sub
+              - >-
+                {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
+                "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
+                "health":"/health","provider":"llamacpp","models":["${Models}"],
+                "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
+                "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
+              - Service: !GetAtt LlmService.Name
+                Cp: !Sub "af-${AWS::StackName}-llm"
+                Models: !Join [ '","', !Ref LlmModelIds ]
+            - ""
+          Image: !If
+            - HasImageModel
+            - !Sub
+              - >-
+                {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
+                "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
+                "health":"/v1/models","provider":"sdcpp","models":["${Models}"],
+                "apiKeyParam":"","idleSec":${ImageIdleSec},
+                "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
+              - Service: !GetAtt ImageService.Name
+                Cp: !Sub "af-${AWS::StackName}-image"
+                Models: !Join [ '","', !Ref ImageModelIds ]
+            - ""
+          Sep: !If [ HasBothModels, ",", "" ]
 
 Outputs:
   # The one value standup.sh feeds to 30-ingress. Non-empty by construction (a parameter
@@ -764,6 +1036,16 @@ Outputs:
     Description: The llm capacity provider, i.e. what marks a container instance as NOT a workspace slot.
     Value: !Ref LlmCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
+  ImageServiceName:
+    Description: >-
+      The image engine's ECS service name, or "-" while no checkpoint is staged. Never empty
+      for the same reason as the llm one: an empty Export fails the whole stack.
+    Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
+    Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
+  ImageCapacityProviderName:
+    Description: The image capacity provider (the other thing that marks a box as NOT a workspace slot).
+    Value: !Ref ImageCapacityProvider
+    Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
   ModelsBucket:
     Description: S3 bucket the models are staged in (ingest writes, engines read).
     Value: !Ref ModelsBucket

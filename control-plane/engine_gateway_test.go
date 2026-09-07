@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -475,4 +476,155 @@ func setEngineHeartbeat(t *testing.T, d time.Duration) func() {
 	prevBeat, prevPoll := engineHeartbeatInterval, engineReadyPoll
 	engineHeartbeatInterval, engineReadyPoll = d, 5*d
 	return func() { engineHeartbeatInterval, engineReadyPoll = prevBeat, prevPoll }
+}
+
+// --- the image role (ADR 0071 P1) ---------------------------------------------
+
+// newTestImageEngine is the `image` row: the same gateway, a different API family and a
+// different health path — sd-server has no /health at all (upstream api.md), so readiness is
+// GET /v1/models.
+func newTestImageEngine(t *testing.T, url string, api engineECSAPI) *engineRuntimeState {
+	t.Helper()
+	e := &engineRuntimeState{
+		def: engineDef{
+			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
+			Health: "/v1/models", Provider: "sdcpp", Models: []string{"sdxl-base-1.0"},
+			IdleSec: 900, StartDeadlineSec: 900,
+		},
+		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
+	}
+	e.demand = newEngineDemand(nil, engineSettingsFor("image").demandAt, 5*time.Minute)
+	return e
+}
+
+// /v1/images/edits is multipart/form-data, and the boundary that makes the body readable
+// lives in the Content-Type header. Stamping application/json on everything — which is what
+// this gateway did while `llm` was the only role — turns an edit into an unparseable body at
+// the far end, on the one endpoint in the system that is not JSON.
+func TestEngineGatewayForwardsTheCallersContentType(t *testing.T) {
+	var gotCType, gotBody string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/models" {
+			_, _ = w.Write([]byte(`{"data":[{"id":"sd-cpp-local"}]}`))
+			return
+		}
+		gotCType = r.Header.Get("Content-Type")
+		b, _ := io.ReadAll(r.Body)
+		gotBody = string(b)
+		_, _ = w.Write([]byte(`{"created":1,"output_format":"png","data":[{"b64_json":"AA=="}]}`))
+	}))
+	defer up.Close()
+
+	st := newTestImageEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
+
+	const ctype = "multipart/form-data; boundary=abc123"
+	body := "--abc123\r\nContent-Disposition: form-data; name=\"prompt\"\r\n\r\na cat\r\n--abc123--\r\n"
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/image/v1/images/edits", strings.NewReader(body))
+	r.Header.Set("Content-Type", ctype)
+	r.SetPathValue("path", "images/edits")
+	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(body))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotCType != ctype {
+		t.Errorf("upstream Content-Type = %q, want the caller's %q (the boundary is in it)", gotCType, ctype)
+	}
+	if gotBody != body {
+		t.Errorf("upstream body = %q, want it byte-for-byte", gotBody)
+	}
+}
+
+// A caller that sends no Content-Type still gets JSON, because that is what every
+// OpenAI-compatible client means.
+func TestEngineGatewayDefaultsToJSONContentType(t *testing.T) {
+	var gotCType string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/health" {
+			return
+		}
+		gotCType = r.Header.Get("Content-Type")
+		_, _ = w.Write([]byte(`{"choices":[]}`))
+	}))
+	defer up.Close()
+	st := newTestEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"llm": st}}}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/llm/v1/chat/completions", strings.NewReader("{}"))
+	r.Header.Del("Content-Type")
+	r.SetPathValue("path", "chat/completions")
+	g.plain(rec, r, st, engineSessionClaims{Key: "llm"}, testMembership(), []byte("{}"))
+
+	if gotCType != "application/json" {
+		t.Errorf("upstream Content-Type = %q, want application/json", gotCType)
+	}
+}
+
+// Who counts what (ADR 0071 decision 9). A chat engine's tokens are visible only here, so
+// the gateway records them; an image engine's spend is pixels, which only the Agent sees as
+// it stores the file — and a row written from both ends would double the ledger's line count
+// while adding a feature the frozen enumeration does not have.
+func TestOnlyChatEnginesAreCountedByTheGateway(t *testing.T) {
+	claims := engineSessionClaims{MembershipID: "M-1", Session: "s-1"}
+	usage := engineUsage{PromptTokens: 24, CompletionTokens: 12, Model: "qwen3-coder-30b-a3b"}
+
+	row, count := engineUsageRowFor(engineDef{Key: "llm", API: engineAPIChat, Provider: "llamacpp"},
+		claims, usage, time.Second, true)
+	if !count {
+		t.Fatal("a chat engine went uncounted")
+	}
+	if row.Feature != "engine.llm" || row.In != 24 || row.Out != 12 || row.Measured != "exact" {
+		t.Fatalf("row = %+v", row)
+	}
+
+	if _, count := engineUsageRowFor(engineDef{Key: "image", API: engineAPIImages, Provider: "sdcpp"},
+		claims, engineUsage{}, time.Second, true); count {
+		t.Error("the gateway wrote a usage row for an image engine — the Agent already writes tool.imagegen")
+	}
+
+	// A table written by the P0 stack has no `api` field, and the CP is upgraded before the
+	// stack is. Defaulting to anything but chat would silently stop counting llm tokens.
+	if _, count := engineUsageRowFor(engineDef{Key: "llm", Provider: "llamacpp"},
+		claims, usage, time.Second, true); !count {
+		t.Error("a row with no api field stopped being counted")
+	}
+}
+
+// The engine table with both roles in it, which is what 60-engines writes once an image
+// checkpoint is staged.
+func TestParseEngineTableReadsBothRoles(t *testing.T) {
+	raw := `{"engines":[
+	 {"key":"llm","api":"chat","service":"af-llm","capacityProvider":"cp-llm",
+	  "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
+	  "models":["qwen3-coder-30b-a3b"],"idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"},
+	 {"key":"image","api":"images","service":"af-image","capacityProvider":"cp-image",
+	  "url":"http://image.af.internal:8080","health":"/v1/models","provider":"sdcpp",
+	  "models":["sdxl-base-1.0"],"apiKeyParam":"","idleSec":900,"startDeadlineSec":900,"mode":"ondemand"}]}`
+	tab, err := parseEngineTable(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(tab.Engines) != 2 {
+		t.Fatalf("engines = %+v", tab.Engines)
+	}
+	img := tab.Engines[1]
+	if img.api() != engineAPIImages || img.Provider != "sdcpp" || img.Health != "/v1/models" {
+		t.Fatalf("image row = %+v", img)
+	}
+	// sd-server has no API key of any kind, so the second lock the llm role has does not
+	// exist here and the security group is the whole of the access control.
+	if img.APIKeyParam != "" {
+		t.Errorf("apiKeyParam = %q, want empty", img.APIKeyParam)
+	}
+	// The registry's order is what the catalogue is drawn in: llm, then image.
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{
+		"image": {def: tab.Engines[1]}, "llm": {def: tab.Engines[0]},
+	}}
+	got := reg.list()
+	if len(got) != 2 || got[0].def.Key != "llm" || got[1].def.Key != "image" {
+		t.Fatalf("list order = %+v", got)
+	}
 }

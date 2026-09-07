@@ -174,6 +174,7 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, map[string]any{
 			"key":      e.def.Key,
+			"api":      e.def.api(),
 			"provider": e.def.Provider,
 			"base_url": "/engine/" + e.def.Key + "/v1",
 			"models":   e.def.Models,
@@ -488,7 +489,16 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	if err != nil {
 		return upstreamStart{err: err}
 	}
-	req.Header.Set("Content-Type", "application/json")
+	// The caller's own Content-Type, not a hard-coded application/json: /v1/images/edits is
+	// multipart/form-data and its boundary parameter lives in that header, so replacing it
+	// makes the body unreadable at the far end — a failure that only shows up on the one
+	// endpoint that is not JSON (ADR 0071 P1). JSON is the fallback for a caller that sent
+	// none, which is what every OpenAI-compatible client does anyway.
+	ctype := strings.TrimSpace(r.Header.Get("Content-Type"))
+	if ctype == "" {
+		ctype = "application/json"
+	}
+	req.Header.Set("Content-Type", ctype)
 	if v := r.Header.Get("Accept"); v != "" {
 		req.Header.Set("Accept", v)
 	}

@@ -104,6 +104,11 @@ type Result struct {
 	Provider string
 	Model    string
 	Region   string
+	// Destination says, in words a person reads, where the prompt actually went. A provider
+	// id answers that only for someone who knows the vocabulary, and the difference that
+	// matters here — a vendor's API against a box this deployment runs itself — is exactly
+	// the one `sdcpp` does not spell out. Empty when the provider id already says it.
+	Destination string
 	// Warnings say what the provider could not honour, in the caller's language-neutral terms
 	// ("size=1024x1024 requested, 1254x1254 produced"). Never a silent downgrade.
 	Warnings []string
@@ -151,19 +156,30 @@ type Provider interface {
 // Provider ids. The id is the wire value the MCP surface and the ledger both carry.
 const (
 	ProviderCodex = "codex"
+	ProviderSdcpp = "sdcpp"
 )
 
-// providerOrder is what "auto" walks, best-supported first. P0 has one entry; the second is
-// meant to be Bedrock, because it adds no new secret, its host is already in the egress
-// allowlist, and it brings the editing operations that keep Op honest (ADR 0069 decision 3).
-var providerOrder = []string{ProviderCodex}
+// providerOrder is what "auto" walks, best-supported first.
+//
+// sdcpp before codex, and the reason is whose account pays. The Codex route spends the
+// USER's ChatGPT plan quota — invisibly, three to five times faster than a text turn, which
+// is why the whole feature is off by default (ADR 0069 decision 8). A deployment that stands
+// up the image engine has already decided to pay for that hardware itself, and it also gets
+// edit and inpaint, which the Codex route cannot do at all. Naming `codex` explicitly still
+// picks it: an explicit choice is honoured even when auto would not have made it.
+var providerOrder = []string{ProviderSdcpp, ProviderCodex}
 
 // Providers returns the registered providers, in providerOrder. Built fresh on each call so a
-// changed environment (a Codex login that arrived after boot) is picked up, and a var so a
-// test can drive Run without a Codex CLI on PATH.
+// changed environment (a Codex login that arrived after boot, an engine stack deployed since)
+// is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newCodexProvider()}
+	return []Provider{newSdcppProvider(), newCodexProvider()}
 }
+
+// modelNamer is implemented by a provider that can name its default model WITHOUT calling
+// anything — which for a self-hosted engine is the whole trick, since the engine is asleep
+// when the question is asked.
+type modelNamer interface{ DefaultModel() string }
 
 // chooseImageProvider decides what "auto" (the default) routes to — the same shape as
 // chooseTTSProvider in control-plane/tts.go.
@@ -206,12 +222,13 @@ type StoredFile struct {
 
 // Stored is the core's answer: files on disk plus the provenance and the warnings.
 type Stored struct {
-	Files    []StoredFile `json:"files"`
-	Provider string       `json:"provider"`
-	Model    string       `json:"model,omitempty"`
-	Region   string       `json:"region,omitempty"`
-	Warnings []string     `json:"warnings,omitempty"`
-	CostUSD  float64      `json:"cost_usd,omitempty"`
+	Files       []StoredFile `json:"files"`
+	Provider    string       `json:"provider"`
+	Model       string       `json:"model,omitempty"`
+	Region      string       `json:"region,omitempty"`
+	Destination string       `json:"destination,omitempty"`
+	Warnings    []string     `json:"warnings,omitempty"`
+	CostUSD     float64      `json:"cost_usd,omitempty"`
 }
 
 // ErrNoProvider is the refusal when nothing can serve the request — no provider is ready, or
@@ -268,12 +285,13 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 		return Stored{}, err
 	}
 	return Stored{
-		Files:    files,
-		Provider: res.Provider,
-		Model:    res.Model,
-		Region:   res.Region,
-		Warnings: append(res.Warnings, requestWarnings(req, res)...),
-		CostUSD:  res.CostUSD,
+		Files:       files,
+		Provider:    res.Provider,
+		Model:       res.Model,
+		Region:      res.Region,
+		Destination: res.Destination,
+		Warnings:    append(res.Warnings, requestWarnings(req, res)...),
+		CostUSD:     res.CostUSD,
 	}, nil
 }
 

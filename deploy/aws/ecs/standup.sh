@@ -53,6 +53,9 @@ usage: standup.sh --profile <p> --region <r> [--yes] [--image-tag <tag>] [--cp-a
                (default docker.io/voicevox/voicevox_engine; only used when 50-tts is deployed)
   --llm-from   registry to copy the llama.cpp server image from
                (default ghcr.io/ggml-org/llama.cpp; only used when 60-engines is deployed)
+  --sd-from    registry to copy the stable-diffusion.cpp server image from
+               (default ghcr.io/leejet/stable-diffusion.cpp; only used when 60-engines is
+               deployed AND params/60-engines stages an image checkpoint)
   --dry-run    print every write instead of making it
 EOF
 }
@@ -61,6 +64,7 @@ PROFILE=""; REGION=""; STACK="af-ecs-ingress"; AF_YES=0; AF_DRY=0; TAG=""; CP_AR
 FROM="ghcr.io/k-k1/agent-fleet"
 TTS_ENGINE_FROM="docker.io/voicevox/voicevox_engine"
 LLM_ENGINE_FROM="ghcr.io/ggml-org/llama.cpp"
+SD_ENGINE_FROM="ghcr.io/leejet/stable-diffusion.cpp"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)   PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -72,6 +76,7 @@ while [ $# -gt 0 ]; do
     --from)      FROM="${2:?--from needs a value}"; shift ;;
     --tts-from)  TTS_ENGINE_FROM="${2:?--tts-from needs a value}"; shift ;;
     --llm-from)  LLM_ENGINE_FROM="${2:?--llm-from needs a value}"; shift ;;
+    --sd-from)   SD_ENGINE_FROM="${2:?--sd-from needs a value}"; shift ;;
     --dry-run)   AF_DRY=1 ;;
     -h|--help)   usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
@@ -348,6 +353,25 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     echo "    · crane copy $LLM_ENGINE_FROM:$llm_tag (about 2.5 GB)"
     af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" "$ECR_HOST/af-llamacpp:$llm_tag"
   fi
+  # The sd-server image, for the `image` role (ADR 0071 P1). Copied ONLY when a checkpoint is
+  # staged, which is the same condition that decides whether the service exists at all: with
+  # ImageModelS3Key empty 60-engines creates no image service, so there is nothing to pull and
+  # a deployment that only wants an LLM should not spend minutes copying 2.3 GB it will never
+  # run. When the key IS set, this runs before the stack — the ordering that matters, because
+  # a service that cannot pull leaves CREATE_IN_PROGRESS with no way back.
+  # ⚠️ amd64 only upstream; there is no arm64 G-family instance either (decision 12).
+  sd_key="$(af_read_one_param 60-engines ImageModelS3Key)"
+  if [ -n "$sd_key" ]; then
+    sd_tag="$(af_read_one_param 60-engines ImageImageTag)"
+    : "${sd_tag:=master-cuda}"
+    if "${AWS[@]}" ecr describe-images --repository-name af-sdcpp \
+        --image-ids "imageTag=$sd_tag" >/dev/null 2>&1; then
+      echo "    · af-sdcpp:$sd_tag is already in ECR"
+    else
+      echo "    · crane copy $SD_ENGINE_FROM:$sd_tag (about 2.3 GB)"
+      af_run crane copy "$SD_ENGINE_FROM:$sd_tag" "$ECR_HOST/af-sdcpp:$sd_tag"
+    fi
+  fi
 fi
 
 # Do CpArch and the CP image's architecture match? A mismatch is not even a
@@ -421,7 +445,17 @@ fi
 # down first (deploy/aws/ecs/harness/probe-managed-instances.sh down).
 if [ -n "${AF_STACK_ENGINES:-}" ]; then
   engines_existed=0
-  af_stack_exists "$AF_STACK_ENGINES" && engines_existed=1
+  ENGINES_LLM_BEFORE=""; ENGINES_IMAGE_BEFORE=""
+  if af_stack_exists "$AF_STACK_ENGINES"; then
+    engines_existed=1
+    # Which engine services existed BEFORE this run. Asked here rather than after the deploy
+    # because that is the only moment the answer is knowable, and it is what decides whether
+    # a service may be scaled to 0 below: a role staged on this run is new even though the
+    # stack is not (the two-pass stand-up makes that the normal case, and the image role can
+    # be added to a deployment that has been running the llm role for months).
+    ENGINES_LLM_BEFORE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
+    ENGINES_IMAGE_BEFORE="$(af_stack_output "$AF_STACK_ENGINES" ImageServiceName)"
+  fi
   af_read_params 60-engines
   # Derived, not trusted from a capture taken under other stack names — the same reasoning
   # as 50-tts: a mistyped namespace deploys cleanly and leaves the CP pointing at a name
@@ -465,15 +499,25 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
 
   ENGINES_PARAM="$(af_stack_output "$AF_STACK_ENGINES" EnginesSsmParam)"
   ENGINES_LLM_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" LlmServiceName)"
+  ENGINES_IMAGE_SERVICE="$(af_stack_output "$AF_STACK_ENGINES" ImageServiceName)"
 
   # Same rule as the speech engine, and a costlier one to get wrong: CloudFormation starts a
   # new service at desired 1, and an idle g6.xlarge is $1.26/hour. Only when this run created
   # it, so a stand-up re-run cannot stop an engine somebody is waiting on.
-  if [ "$engines_existed" = 0 ] && [ -n "$ENGINES_LLM_SERVICE" ]; then
-    echo "    · scaling $ENGINES_LLM_SERVICE to 0 (the engine is started on demand)"
+  #
+  # Both roles, tested per SERVICE rather than per stack: "-" is what the stack outputs for a
+  # role with no model staged, so a role that appears in this run's outputs and not in the
+  # ones read before the deploy is a service CloudFormation just created at desired 1. The
+  # two-pass stand-up makes that the normal case for the first model, and adding the image
+  # role to a deployment that has been running the llm role for months is the same shape.
+  for pair in "$ENGINES_LLM_BEFORE|$ENGINES_LLM_SERVICE" "$ENGINES_IMAGE_BEFORE|$ENGINES_IMAGE_SERVICE"; do
+    before="${pair%%|*}"; now="${pair#*|}"
+    case "$now" in ""|"-") continue ;; esac
+    case "$before" in ""|"-") ;; *) continue ;; esac
+    echo "    · scaling $now to 0 (the engine is started on demand)"
     af_run "${AWS[@]}" ecs update-service --cluster "$(af_cluster)" \
-      --service "$ENGINES_LLM_SERVICE" --desired-count 0 >/dev/null
-  fi
+      --service "$now" --desired-count 0 >/dev/null
+  done
 fi
 
 # --- 6) ingress (parameters holding physical IDs get the new outputs) --------
