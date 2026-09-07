@@ -593,16 +593,12 @@ func TestOnlyChatEnginesAreCountedByTheGateway(t *testing.T) {
 	}
 }
 
-// The engine table with both roles in it, which is what 60-engines writes once an image
-// checkpoint is staged.
+// The engine table with both roles in it. The string is byte-for-byte what the real
+// 60-engines stack wrote into SSM on 2026-09-07 once an image checkpoint was staged —
+// including the spaces CloudFormation's folded scalars leave behind — because the shape this
+// parser has to survive is the one CloudFormation produces, not the one a test would write.
 func TestParseEngineTableReadsBothRoles(t *testing.T) {
-	raw := `{"engines":[
-	 {"key":"llm","api":"chat","service":"af-llm","capacityProvider":"cp-llm",
-	  "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
-	  "models":["qwen3-coder-30b-a3b"],"idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"},
-	 {"key":"image","api":"images","service":"af-image","capacityProvider":"cp-image",
-	  "url":"http://image.af.internal:8080","health":"/v1/models","provider":"sdcpp",
-	  "models":["sdxl-base-1.0"],"apiKeyParam":"","idleSec":900,"startDeadlineSec":900,"mode":"ondemand"}]}`
+	raw := `{"engines":[{"key":"llm","api":"chat","service":"af-af-ecs-engines-llm","capacityProvider":"af-af-ecs-engines-llm", "url":"http://llm.af.internal:8080", "health":"/health","provider":"llamacpp","models":["qwen3-coder-30b-a3b"], "apiKeyParam":"/af-ws/engine-llm-key","idleSec":1800, "startDeadlineSec":900,"mode":"ondemand"},{"key":"image","api":"images","service":"af-af-ecs-engines-image","capacityProvider":"af-af-ecs-engines-image", "url":"http://image.af.internal:8080", "health":"/v1/models","provider":"sdcpp","models":["sdxl-base-1.0"], "apiKeyParam":"","idleSec":900, "startDeadlineSec":900,"mode":"ondemand"}]}`
 	tab, err := parseEngineTable(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)

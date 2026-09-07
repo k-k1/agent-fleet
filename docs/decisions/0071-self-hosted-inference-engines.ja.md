@@ -2,7 +2,7 @@
 
 [English](0071-self-hosted-inference-engines.md) | 日本語
 
-- 状態: **承認済み（P0 着手可・未実装）**（2026-09-07 のレビューで。起草は 2026-09-06）。価格はすべて同日に AWS の公開価格データ
+- 状態: **採用（P0・P1 実装済み／develop 未マージ）**（2026-09-07。同日のレビューで承認済み・起草は 2026-09-06）。価格はすべて同日に AWS の公開価格データ
   （東京・オンデマンド）から、イメージとモデルの数値は同日にレジストリ API と Hugging Face
   API から取得した。このコンテナで実測したものはそう書いた。**P0 に着手する前にレビューを
   受けるための文書**であり、形が変わりうるのは「未解決の点」である。
@@ -28,6 +28,10 @@
   壁ではなく本文が無音の上限）、決定 2 の「8 vCPU では 1 台」と決定 3 の「ファイルで決まる」を
   直し（どちらも 2 点からの一般化だった）、決定 1・6・7・8 と未解決・フェーズにレビューの指摘を
   足した。状態を承認済みに改めた。
+- 同日、**P0 を実装・実機検証**（「P0 の実測」節）に続けて **P1（`image` 役と provider
+  `sdcpp`）を実装し、エンジン側を実機で測った**（「P1 の実測」節）。フェーズ節の P1 に
+  実装で足した 3 点を書いた。🔴 P0 の実測 10 が「GPU 0 台」の根拠にしていた
+  `describe-instances` は、**MI の箱を一覧に出さない**——P1 の実測 2 で訂正した。
 - 関連: [0070-tts-ondemand-engine.ja.md](0070-tts-ondemand-engine.ja.md)（写す型: 需要で建てて
   アイドルで落とす・Cloud Map 名・純関数のコントローラ・共有費用）/
   [0069-image-generation-providers.ja.md](0069-image-generation-providers.ja.md)（画像生成の
@@ -617,6 +621,80 @@ volume は箱を残しても効かず（下の 4）、ECR 複製の効果は pla
   （20 → イメージ → 60 → 30）、`CAPABILITY_NAMED_IAM`、鍵の生成、新規サービスの desired 0、
   既存サービスに触らないこと、生成した鍵を引数に置かないことを固定した。
 
+## P1 の実測（2026-09-07）
+
+P1（`image` 役と provider `sdcpp`）を書きながら、af-sandbox の同じスタックに image 役を足して
+実際に測った。P0 の予想が当たったのが 1 つ——**image 役は 1 回目の試行に収まる**——外れたのが
+1 つ: 🔴 **MI の箱は `describe-instances` の一覧に出ない**ので、P0 が「GPU 0 台」の根拠に
+していた確認手段は、実は根拠になっていなかった。かかった費用は g6.xlarge を 12 分ぶんで
+$0.25 程度。
+
+1. **image 役のコールドスタートは 197 秒**（`execute-change-set` から
+   `listening on: http://0.0.0.0:8080` まで。イメージは ECR、チェックポイントは S3、箱は
+   無し）。内訳: **+57 秒でタスク作成**、+61 秒で箱が container instance として登録、
+   pull **55 秒**（ECR。P0 のハーネスが GHCR から引いた 135 秒に対して）、S3 取得は
+   **6.94 GB を 65 秒＝107 MB/s**、そして **+197 秒で listen**。llm 役の 586 秒の
+   3 分の 1 で、**opencode の 300 秒の中に収まる**——実測で解けた点 9 の「image 役は
+   sd-server なら 195 秒で 1 回目の試行に収まる」は当たった。サービス作成を含むスタック更新
+   全体は 5 分 4 秒。
+2. 🔴 **MI の箱は `ec2 describe-instances` の一覧に現れない。id で名指しすれば返る。**
+   タスクが RUNNING で `describe-container-instances` が
+   `i-08a9…/af-af-ecs-engines-image` を返している最中に、`describe-instances` を
+   **フィルタ無しで**呼んで生 JSON を数えると 3 台（スロットプールの m8g/m7i）しか無く、その
+   id は含まれない。ところが `describe-instances --instance-ids i-08a9…` は
+   **g6.xlarge / running / `af-role=engine-image`** を返す（`OwnerId` は自分のアカウント、
+   `RequesterId` は AWS 側、タグに `aws:ec2:fleet-id` と
+   `aws:ec2:managed-launch=ecs-managed-instances`）。帰結が 2 つ:
+   - **「`describe-instances` が 0 台だから GPU は動いていない」は成り立たない。** P0 の
+     実測 10 と運用手順はその形で書いてあるので訂正する。止まったことを確かめる手は
+     **`describe-instances --instance-ids <id>`**（id は ECS の
+     `describe-container-instances` から取る）か、ECS 側の container instance が消えることで
+     ある。「0 件」を道具ごと疑う話がまた出た。
+   - 費用配分タグは効いている——箱に `af-role=engine-image` が付いていた（決定 9）。
+3. **sd-server の面は本番の経路で通った。** CP の SG に置いた使い捨ての Fargate タスクから
+   （本番のタスクロールに `ssmmessages:*` を入れないので、P0 と同じ手）:
+   `GET /v1/models` が **200 を 4.6 ms**、`/v1/images/generations` が
+   **512px 11.2 秒（初回）・1024px 17.5 秒**、`"n":2` の 512px が **10.7 秒で 2 枚**
+   ——暖まれば 1 枚 5.4 秒で、初回の 11.2 秒には暖機が入っている——、
+   `/v1/images/edits`（image＋mask の multipart）が **512px 5.2 秒**。**鍵は要らない**
+   （何のヘッダも付けずに 200）。P0 の 512px 7.8 秒 / 1024px 20.8 秒とは別の日の別の箱なので、
+   言えるのは「512px 5〜11 秒、1024px 17〜21 秒」の帯までである。
+4. ✅ **`size` は効く。** 1024x1024 を頼んだ応答の PNG は IHDR が
+   `00 00 04 00 00 00 04 00`＝**1024×1024**、edits で 512x512 を頼んだ応答は **512×512**
+   だった。0069 決定 7 の「size は希望であって保証ではない」は Codex 経路の恒久的な姿だが、
+   **この provider では頼んだとおりに返る**——だから `Caps.Sizes` を空（＝選べない）に
+   せず、チェックポイントごとの一覧を出す形にした。
+5. **VRAM は params 6,624 MB**（P0 と同じ値）。auto-fit は DiT 4,897 MiB・Conditioner
+   1,559 MiB・VAE 159 MiB を全部 CUDA0 に載せた（L4 の空きは 22,369 MiB）。llm 役の
+   20.9 GB と足すと L4 には収まらないという決定 2 の根拠が、別の日の別の箱でもう一度出た。
+6. **ドレインは shutting-down まで 71〜164 秒、terminated まで 477 秒。** `desired 0` の
+   あと +71 秒の時点ではまだ ACTIVE、+164 秒には `shutting-down` だった。P0 の
+   「shutting-down の開始は +95〜104 秒」と同じ帯で、3 点目として一致した。
+7. **CFN の変更は追加 4・変更 2 で、llm 役には触れない。** 変更セットは
+   `ImageCapacityProvider` / `ImageTaskDef` / `ImageDiscovery` / `ImageService` を Add、
+   `Associations`（capacity provider のリストは置換なので毎回出る）と `EnginesParam` を
+   Modify。`LlmService` は現れず、llm の desired は 0 のままだった——決定 8(a) の
+   「`DesiredCount` を書かない」が、2 つ目の役を足す更新でも効いている。
+8. **エンジン表は 2 行になった。** SSM に書かれた**実物の文字列**を CP のパーサのテストに
+   そのまま入れてある——CloudFormation の折りたたみスカラーが残す空白ごと。テストが守るべき
+   形は、テストを書く人間が書く形ではなく CloudFormation が出す形だからである。
+
+その他、P1 で確かめたこと:
+
+- **GHCR → ECR の複製は 2.42 GB を 177 秒**（このコンテナから `crane copy`）。P0 の
+  llama.cpp（2.59 GB を 179 秒）と同じ速さ。
+- **`image` 役の ECR リポジトリ（`af-sdcpp`）は 20-platform に置いた。** 60-engines の中に
+  作ると、そのスタックが自分で作ったリポジトリから pull しようとして CREATE が収束しない
+  ——`af-llamacpp` と `af-voicevox` がそこにある理由と同じで、3 つ目の同じ形である。
+  ただし複製は `ImageModelS3Key` が入っているときだけ走らせる: LLM しか使わない配備に
+  2.3 GB を引かせる理由が無い。
+- **`60-engines.yaml` が 51,200 バイトの壁に当たった。** image 役を足した時点で 55,832
+  バイトになり、スタブテストの門番（case 3b-2）が落ちた。30-ingress と同じ手当てで、
+  パラメータの長文を `cfn/PARAMETERS-60-engines.md` に移して 50,779 バイトに戻した
+  （中身は削っていない）。`af_cfn_deploy` は S3 経由に切り替えて通してくれるが、通るかどうかを
+  デプロイの日に知るのは遅い。
+
+
 ## フェーズ
 
 - **P0 — 土台と llm。** `60-engines.yaml`（capacity provider・S3・取り込みタスク・llm の
@@ -630,9 +708,23 @@ volume は箱を残しても効かず（下の 4）、ECR 複製の効果は pla
   除外すること。llm を先にする
   のは、要求されたのが画像だからではなく、**アプリ側のコードが最も少なく土台を検証できる**
   からである（opencode 側はゼロ改修）。
-- **P1 — image（sd-server）。** `image` 役のサービス、Agent の provider `sdcpp`（transport は
-  CP ゲートウェイ。0069 決定 3 の「テナント層は CP 経由」と同じ）、`Caps` は (provider,
-  モデルファイル) 単位、generate / edit / inpaint、進捗通知。
+- **P1 — image（sd-server）。実装済み**（2026-09-07。「P1 の実測」節）。`image` 役のサービス、
+  Agent の provider `sdcpp`（transport は CP ゲートウェイ。0069 決定 3 の「テナント層は
+  CP 経由」と同じ）、`Caps` は (provider, モデルファイル) 単位、generate / edit / inpaint、
+  進捗通知。実装で本文に足したことが 3 つ:
+  - **エンジン表に `api`（`chat` / `images`）を足した。** 役の性質を key から導かず宣言する
+    ためで、これが 2 つを決める——Agent が opencode の provider として書くかどうか（image
+    エンジンを書くと「会話できないモデル」が起動メニューに出る）と、使用量をゲートウェイが
+    数えるか（`chat`）Agent の `tool.imagegen` が数えるか（`images`。決定 9）。
+  - **ゲートウェイは要求の `Content-Type` を素通しする。** `/v1/images/edits` は
+    multipart で、boundary はそのヘッダの中にある——`application/json` を上から書くと、
+    JSON でない唯一の面だけが壊れる。
+  - **`image` 役に `--api-key` は無い。** sd-server に認証の仕組みがそもそも無いので
+    （上流の `examples/server/api.md`）、SG が access control の全部である。決定 4(d) の
+    「二重の鍵」は llm 役だけの話になる。
+  完了の定義のうち**エンジン側**は実測で通した（下の 1・3・4）。**CP のゲートウェイと
+  Agent の provider を実機で通すのは未了**——それには CP と Workspace のイメージを焼き直す
+  必要があり、単体・結合テストでは押さえてある。
 - **P2 — ComfyUI。** 自前イメージ、`/engine/comfy/` のペイン、provider `comfy` とワーク
   フローテンプレート、sd-server との排他。
 - **P3 — llm を codex と claude へ。** codex は `model_providers` に `base_url`＋

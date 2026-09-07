@@ -2,7 +2,7 @@
 
 English | [日本語](0071-self-hosted-inference-engines.ja.md)
 
-- Status: **approved — P0 may start; nothing implemented** (by the 2026-09-07 review; drafted 2026-09-06). Every price below
+- Status: **adopted — P0 and P1 implemented, not yet merged to develop** (2026-09-07; approved by the review the same day, drafted 2026-09-06). Every price below
   came from AWS's public price data (Tokyo, on-demand) on that date, every image and model
   figure from the registry and Hugging Face APIs on that date. What was measured in this
   container says so. Written to be reviewed before P0 is built; the Open questions are the
@@ -34,6 +34,11 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   decision 3's "it depends on the file" were corrected (both were generalisations from two
   points), and decisions 1, 6, 7 and 8, the open questions and the phases took the review's
   findings. Status changed to approved.
+- The same day, **P0 was implemented and verified on real hardware** ("What P0 measured"), and
+  then **P1 (the `image` role and the `sdcpp` provider) was implemented and its engine side
+  measured** ("What P1 measured"). The Phases entry for P1 records the three things the
+  implementation added. 🔴 P0's measurement 10 used `describe-instances` as evidence for "no GPU
+  boxes"; it **does not list MI boxes at all** — corrected in P1's measurement 2.
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -669,6 +674,83 @@ Also measured while writing P0:
   (20 → images → 60 → 30), `CAPABILITY_NAMED_IAM`, the key generation, scaling a newly created
   service to 0, leaving an existing one alone, and not putting the generated key in an argument.
 
+## What P1 measured (2026-09-07)
+
+The `image` role and the `sdcpp` provider were written against the same af-sandbox stack, with
+the role actually deployed and driven. One P0 expectation held — **the image role fits inside
+one attempt** — and one broke: 🔴 **an MI box does not appear in a `describe-instances`
+listing**, so the check P0 relied on to say "no GPU is running" was not evidence of that at
+all. The exercise cost about 12 minutes of g6.xlarge, roughly $0.25.
+
+1. **The image role's cold start is 197 seconds** (`execute-change-set` to
+   `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
+   **+57 s to task creation**, +61 s for the box to register as a container instance, pull
+   **55 s** (from ECR, against the 135 s the P0 harness spent pulling from GHCR), S3 fetch
+   **6.94 GB in 65 s = 107 MB/s**, and **listening at +197 s**. That is a third of the llm
+   role's 586 s and it **fits inside opencode's 300 seconds** — measured-and-settled point 9's
+   "the image role, on sd-server, fits in the first attempt at 195 s" was right. The whole
+   stack update, service creation included, took 5 minutes 4 seconds.
+2. 🔴 **An MI box is absent from `ec2 describe-instances` listings; asked for by id, it is
+   there.** While the task was RUNNING and `describe-container-instances` was returning
+   `i-08a9…/af-af-ecs-engines-image`, calling `describe-instances` **with no filter** and
+   counting the raw JSON gave three instances (the slot pool's m8g/m7i) and not that id. Yet
+   `describe-instances --instance-ids i-08a9…` returns **g6.xlarge / running /
+   `af-role=engine-image`** (`OwnerId` is our own account, `RequesterId` is AWS's, and the tags
+   carry `aws:ec2:fleet-id` and `aws:ec2:managed-launch=ecs-managed-instances`). Two
+   consequences:
+   - **"`describe-instances` shows none, so no GPU is running" does not hold.** P0's
+     measurement 10 and the operating notes are written that way, so this corrects them. What
+     does confirm a stopped box is **`describe-instances --instance-ids <id>`** (take the id
+     from ECS's `describe-container-instances`) or watching the container instance disappear on
+     the ECS side. Another "zero results" that had to be doubted at the tool, not the fact.
+   - The cost-allocation tagging works — the box carried `af-role=engine-image` (decision 9).
+3. **sd-server's surface works over the production path.** From a throwaway Fargate task placed
+   in the CP's security group (the production task role gets no `ssmmessages:*`, so this is
+   P0's technique again): `GET /v1/models` answered **200 in 4.6 ms**,
+   `/v1/images/generations` took **11.2 s at 512px (first call) and 17.5 s at 1024px**, `"n":2`
+   at 512px took **10.7 s and returned two images** — 5.4 s each once warm, so the first call's
+   11.2 s includes warm-up — and `/v1/images/edits` (image plus mask, multipart) took **5.2 s
+   at 512px**. **No key is needed** (200 with no header at all). P0's 7.8 s / 20.8 s were a
+   different box on a different day, so all that can be said is a band: **5-11 s at 512px,
+   17-21 s at 1024px**.
+4. ✅ **`size` is honoured.** The PNG returned for a 1024x1024 request has IHDR
+   `00 00 04 00 00 00 04 00` = **1024×1024**, and a 512x512 edit came back **512×512**. ADR
+   0069 decision 7's "size is a wish, not a promise" is the permanent story for the Codex
+   route, but **this provider returns what was asked for** — which is why `Caps.Sizes` is a
+   per-checkpoint list here rather than the empty one that means "the caller cannot pick".
+5. **VRAM is 6,624 MB of params** (the same figure as P0). auto-fit put DiT 4,897 MiB,
+   Conditioner 1,559 MiB and VAE 159 MiB all on CUDA0, against the L4's 22,369 MiB free. Add
+   the llm role's 20.9 GB and it does not fit — decision 2's grounds, measured again on
+   another box on another day.
+6. **Drain: 71-164 seconds to shutting-down, 477 s to terminated.** At +71 s after
+   `desired 0` the box was still ACTIVE; by +164 s it was `shutting-down`. That is the same
+   band as P0's "shutting-down begins at +95-104 s", agreeing as a third point.
+7. **The CloudFormation change is four additions and two modifications, and it does not touch
+   the llm role.** The change set adds `ImageCapacityProvider`, `ImageTaskDef`,
+   `ImageDiscovery` and `ImageService`, and modifies `Associations` (the provider list is
+   replaced, so it shows up every time) and `EnginesParam`. `LlmService` does not appear at
+   all, and llm's desired count stayed 0 — decision 8(a)'s "do not declare `DesiredCount`"
+   holding through an update that adds a second role.
+8. **The engine table now has two rows**, and the **literal string** SSM was given is what the
+   CP's parser test parses — trailing spaces from CloudFormation's folded scalars included. The
+   shape a test has to survive is the one CloudFormation emits, not the one a person would type.
+
+Also verified in P1:
+
+- **Copying GHCR → ECR took 177 seconds for 2.42 GB** (`crane copy` from this container), the
+  same rate as P0's llama.cpp (2.59 GB in 179 s).
+- **The `image` role's ECR repository (`af-sdcpp`) lives in 20-platform**, because a repository
+  created inside 60-engines would be empty when that same stack's service first tries to pull
+  and the CREATE would never converge — the third instance of the shape `af-llamacpp` and
+  `af-voicevox` are there for. The copy itself only runs when `ImageModelS3Key` is set: there is
+  no reason to pull 2.3 GB into a deployment that only wants an LLM.
+- **`60-engines.yaml` hit the 51,200-byte wall.** Adding the image role took it to 55,832 bytes
+  and the stub test's gate (case 3b-2) failed. Treated the way 30-ingress was: the long-form
+  parameter prose moved to `cfn/PARAMETERS-60-engines.md`, taking the template back to 50,779
+  bytes with nothing shortened. `af_cfn_deploy` would have handed it over through S3 anyway, but
+  finding out on the day of a deploy is late.
+
+
 ## Phases
 
 - **P0 — the substrate, and llm.** `60-engines.yaml` (capacity providers, S3, the ingestion
@@ -682,9 +764,25 @@ Also measured while writing P0:
   and −1, a re-request during drain, the pull from ECR, and that the pool walks exclude MI. llm goes first not because the request led with images
   but because **it validates the substrate with the least application code** (zero changes on
   the opencode side).
-- **P1 — image (sd-server).** The `image` role's service, the Agent provider `sdcpp` (transport
-  via the CP gateway — 0069 decision 3's "the tenant layer goes through the CP"), `Caps` per
-  (provider, model file), generate / edit / inpaint, progress notifications.
+- **P1 — image (sd-server). Implemented** (2026-09-07; see "What P1 measured"). The `image`
+  role's service, the Agent provider `sdcpp` (transport via the CP gateway — 0069 decision 3's
+  "the tenant layer goes through the CP"), `Caps` per (provider, model file), generate / edit /
+  inpaint, progress notifications. Three things the implementation added to this text:
+  - **The engine table gained `api` (`chat` / `images`).** A role's nature is declared rather
+    than derived from its key, and it decides two things — whether the Agent writes the engine
+    into opencode's config as a provider (writing an image engine there puts a model you cannot
+    converse with in the launch menu), and whether the gateway counts the usage (`chat`) or the
+    Agent's `tool.imagegen` row does (`images`; decision 9).
+  - **The gateway forwards the caller's `Content-Type`.** `/v1/images/edits` is multipart and
+    the boundary lives in that header — stamping `application/json` over it breaks the one
+    surface that is not JSON.
+  - **The `image` role has no `--api-key`.** sd-server has no authentication mechanism at all
+    (upstream `examples/server/api.md`), so the security group is the whole of its access
+    control, and decision 4(d)'s "second lock" is an llm-role-only story.
+  The **engine side** of the definition of done was measured on real hardware (1, 3 and 4
+  below). **Driving it through the CP gateway and the Agent provider on real hardware is not
+  done** — that needs the CP and Workspace images rebuilt — and is covered by unit and
+  integration tests in the meantime.
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and
