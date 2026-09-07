@@ -5,7 +5,8 @@ English | [日本語](0053-cp-arch-and-availability.ja.md)
 - Status: **adopted** (2026-08-23). The record of the investigation is [docs/72](../log/72-cp-arch-and-availability.md).
 - See also: [0044-workspace-sizing.md](0044-workspace-sizing.md) decision 3
   (**a feature shipped off by default might as well not exist** — decision 4 of this ADR defies that
-  by saying "ship it off by default", so the reason has to be stated) /
+  by saying "ship it off by default", so the reason has to be stated. 🔴 That exception ended on
+  2026-09-07: see the amendment in decision 4) /
   [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decision 8
   (`ImageTag` is shared by the CP and the workspace, i.e. **they cannot use different tags**) /
   [0037-registry-policy.md](0037-registry-policy.md) (images are distributed via a registry; the
@@ -68,6 +69,18 @@ like the same binary choice but the prices differ by two orders of magnitude: **
 (because it cross-compiles — decision 2) and **the workspace is +593 seconds** (because it installs
 per-architecture binaries and cannot cross-compile). 71 seconds is noise against a 90-minute timeout,
 so **there is no reason to ask the operator.**
+
+🔴 **Amended 2026-09-07 (0.16.0): `workspace_arm64` is on by default too, and the asymmetry is now
+only in the price, not in the default.** Nothing above was wrong when it was written — it is the
+third step of the same sequence, arriving later for the workspace because its "have you checked?"
+question settled later. 0.15.1 was the first release published with `workspace_arm64: true`, and the
+image it produced **was started on real Graviton** (an `acrt` m8g.large slot, arm64 golden included —
+[70](../log/70-slot-instance-classes.md)). With that, point 2 below is answered for the workspace as
+well, and the remaining objection was only the +593 seconds: **a measured ~14 → ~28 minute run against
+a 90-minute timeout.** Leaving it off at that price is [0044](0044-workspace-sizing.md) decision 3 —
+a feature shipped off by default might as well not exist — because an `ecs-ec2` Graviton slot would
+keep depending on an image the operator baked themselves. The two flags stay **separate inputs**
+(decision 3 is unchanged); only the default moved.
 
 **The reason changed twice on the way to this default, so it is recorded:**
 
