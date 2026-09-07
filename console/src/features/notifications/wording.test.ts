@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-import { NOTIFICATION_KIND_LABELS, notificationKindLabel, notificationWording } from "./wording.ts";
+import { NOTIFICATION_KIND_LABELS, notificationKindLabel, notificationRowSubtitle, notificationWording } from "./wording.ts";
 import { setLocale } from "../../lib/i18n/index.ts";
 import { ja } from "../../lib/i18n/locales/ja.ts";
 import { en } from "../../lib/i18n/locales/en.ts";
@@ -78,5 +78,24 @@ describe("notification row headings", () => {
     setLocale("ja");
     const w = notificationWording({ kind: "arch-residue", displayName: "", payload: {} });
     expect(w.body).toBe(ja["notif.arch_residue.body_generic"]);
+  });
+
+  // Measured on a real workspace (2026-09-07): the row rendered as the heading and a timestamp
+  // and nothing else, because the subtitle defaults to displayName and this kind has none. The
+  // row is the only place the list can appear — clicking opens nothing by design — so an empty
+  // subtitle means the member is told something needs reinstalling and never told what.
+  it("the architecture-residue ROW names what has to be reinstalled", () => {
+    setLocale("ja");
+    const sub = notificationRowSubtitle({
+      kind: "arch-residue",
+      displayName: "",
+      payload: { from: "amd64", repos: ["demo/node_modules"], bins: ["mytool"] },
+    });
+    expect(sub).toBe("demo/node_modules, mytool");
+  });
+
+  it("a kind that does have a session keeps displayName as its subtitle", () => {
+    setLocale("ja");
+    expect(notificationRowSubtitle({ kind: "answer-ready", displayName: "プラン検証", payload: {} })).toBe("プラン検証");
   });
 });
