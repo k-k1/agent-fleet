@@ -197,6 +197,44 @@ func TestDecideEngineAction(t *testing.T) {
 			with(func(s *engineSnapshot) { s.state, s.windowUnits, s.noModels = "stopped", 9999, true }),
 			testControlCfg(), engineActionNone, engineReasonNoModel,
 		},
+		// RUNNING but never able to answer. Measured on the dev deployment: a task that started
+		// before the Control Plane had published the active set came up as the idle
+		// placeholder, reached RUNNING and never warmed — and `starting` was the only state
+		// the deadline covered, so nothing ever judged it (ADR 0072's P0 measurements, and the
+		// hole review R6 predicted).
+		{
+			"running but never warm past the deadline is a failed start",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.unwarmedSince = ago(10 * time.Minute) // deadline is 5
+			}),
+			testControlCfg(), engineActionStop, engineReasonUnwarmed,
+		},
+		{
+			"inside the deadline it is left alone — a cold start legitimately takes minutes",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.unwarmedSince = ago(time.Minute)
+			}),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
+		{
+			// 🔴 The clock is NOT "it is not warm right now". Judging on the instant stops a
+			// healthy engine over one failed probe, which is worse than the waste it prevents.
+			"a warm engine is never stopped for this, however long it has been up",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.warm, s.unwarmedSince = true, ago(10*time.Hour)
+			}),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
+		{
+			// The zero value means "nobody is tracking this" — every engine with no warm gate,
+			// VOICEVOX included — and must not be read as "unwarmed since the epoch".
+			"an untracked engine is not judged on warmth at all",
+			with(func(s *engineSnapshot) { s.state, s.desired, s.mode = "running", 1, engineModeOn }),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
 		{
 			// The reason lands in the audit ledger next to a charge, so "the admin switched
 			// it off" must not be reported as "there was nothing to serve".

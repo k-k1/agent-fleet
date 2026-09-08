@@ -271,6 +271,7 @@ const (
 	engineReasonFirstPass  = "first_pass"     // no demand mark yet: stamp, judge nothing
 	engineReasonDraining   = "draining"       // stopped, but the box has not gone yet
 	engineReasonNoModel    = "no_model"       // the catalogue is empty: nothing to serve at any price
+	engineReasonUnwarmed   = "unwarmed"       // RUNNING for longer than a start takes, and still not answering
 )
 
 // engineControlCfg is the controller's tuning, all of it from the environment.
@@ -299,6 +300,20 @@ type engineSnapshot struct {
 	// Stated in the negative so the zero value — every engine that has no catalogue at all,
 	// VOICEVOX included — means "there is something to serve" and behaves exactly as before.
 	noModels bool
+	// warm is whether the engine has actually answered since it came up, and unwarmedSince is
+	// the moment the clock on "it has not" started: the latest of the running deployment's
+	// creation, this process's own start, and the last time the engine WAS warm.
+	//
+	// Both exist because of a failure measured on the dev deployment (ADR 0072's P0
+	// measurements): a task that started before the Control Plane had published the active set
+	// came up as the idle placeholder, reached RUNNING, and never warmed. `starting` is the
+	// only state the start deadline covered, so nothing ever judged it — the box billed at
+	// $1.26/hour and the panel said "preparing" for as long as anybody left it.
+	//
+	// The zero value means "do not judge", which is what every caller that does not track it
+	// gets (the VOICEVOX controller, and every table case written before this).
+	warm          bool
+	unwarmedSince time.Time
 }
 
 // decideEngineAction is the whole of the controller's judgement (decisions 5 and 9).
@@ -353,6 +368,20 @@ func decideEngineAction(now time.Time, s engineSnapshot, cfg engineControlCfg) (
 			return engineActionStop, engineReasonNoModel
 		}
 		return engineActionNone, engineReasonNoModel
+	}
+
+	// RUNNING but never able to answer, for longer than a start is allowed to take. This is a
+	// FAILED START that happens to have reached RUNNING first, and it is treated as one:
+	// stopped, counted, and cooled down, so `mode=on` retries with a backoff instead of paying
+	// for a wedged task for ever.
+	//
+	// The clock starts at the LATEST of the deployment's creation, this process's start and the
+	// last time the engine was warm — never at "it is not warm right now". Judging on the
+	// instant would stop a healthy engine over one failed probe, and judging from the
+	// deployment alone would stop a healthy one on the first tick after a CP restart.
+	if up && s.state == "running" && !s.warm && cfg.deadline > 0 &&
+		!s.unwarmedSince.IsZero() && now.Sub(s.unwarmedSince) >= cfg.deadline {
+		return engineActionStop, engineReasonUnwarmed
 	}
 
 	if s.mode == engineModeOn {
@@ -468,6 +497,11 @@ type engineController struct {
 	lastFailure time.Time
 	prevState   string    // the service state at the previous tick, for spotting a replacement
 	lastSample  time.Time // when this process last recorded an observation; zero = never
+	// lastWarmAt is when this process last saw the engine answer, and watchSince is when it
+	// started looking. Together they are what stops the "running but never warm" rule from
+	// firing on a healthy engine right after a CP restart — see engineSnapshot.unwarmedSince.
+	lastWarmAt time.Time
+	watchSince time.Time
 }
 
 // ttsControlCfgFromEnv reads the tuning. The defaults are ADR 0070's: a 5-minute window,
@@ -492,6 +526,7 @@ func newEngineController(eng *engineECS, keys engineSettings, warmup func(contex
 	return &engineController{
 		eng: eng, keys: keys, warmup: warmup, demand: demand,
 		settings: settings, audit: audit, cfg: cfg, now: time.Now,
+		watchSince: time.Now(),
 	}
 }
 
@@ -543,6 +578,11 @@ func (c *engineController) warmed() bool {
 
 func (c *engineController) setWarm(v bool) {
 	c.mu.Lock()
+	if v {
+		// Stamped on every warm observation, not only on the transition: it is the moment the
+		// "has not answered for too long" clock restarts from.
+		c.lastWarmAt = c.now()
+	}
 	if c.warm != v {
 		c.warm = v
 		if v {
@@ -618,7 +658,9 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		lastDemand: lastDemand, windowUnits: c.demand.units(),
 		failures: c.failures, lastFailure: c.lastFailure,
 		noModels: noModels,
+		warm:     c.warm,
 	}
+	snap.unwarmedSince = latestTime(view.lastStart, c.watchSince, c.lastWarmAt)
 	c.mu.Unlock()
 
 	action, reason := decideEngineAction(now, snap, c.cfg)
@@ -627,7 +669,9 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		c.apply(ctx, true, reason, "")
 	case engineActionStop:
 		detail := ""
-		if reason == engineReasonDeadline {
+		// Both of these ARE failed starts, and both have to cool down: without a cooldown
+		// `mode=on` restarts the same wedged task on the next tick, for ever.
+		if reason == engineReasonDeadline || reason == engineReasonUnwarmed {
 			// The real reason a start failed ("no container instances met the placement
 			// constraints", a pull failure) is only ever written into the service events.
 			detail = strings.Join(view.events, " | ")
@@ -656,6 +700,17 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		return engineControlBusyInterval
 	}
 	return c.cfg.interval
+}
+
+// latestTime is the most recent of the times given, ignoring the zero ones.
+func latestTime(ts ...time.Time) time.Time {
+	var out time.Time
+	for _, t := range ts {
+		if !t.IsZero() && t.After(out) {
+			out = t
+		}
+	}
+	return out
 }
 
 // noteReplacement records an engine that went away without being asked to. The controller
