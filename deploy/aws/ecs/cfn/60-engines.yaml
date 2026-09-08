@@ -335,38 +335,37 @@ Mappings:
   # rules have a failure behind them: PARAMETERS-60-engines.md, "The fetch sidecar".
   Engine:
     fetch:
-      script: >-
-        set -e;
-        mkdir -p "$MODELS_DIR";
-        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true);
+      # ⚠️ A LITERAL block (`|-`), not a folded one (`>-`). YAML folding keeps a MORE-INDENTED
+      # line literal, so a continuation line indented to line up with its command silently
+      # keeps its newline — and the shell then reads the second half as a new command.
+      # Measured on the live deployment: the jq filter below, indented under its `jq -r`, ran
+      # as `jq -r --arg s "$START"` (which dumped the whole document) followed by
+      # `sh: [(.models[]?|…: command not found`. The service came up idle and nothing said why.
+      script: |-
+        set -e
+        mkdir -p "$MODELS_DIR"
+        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
         if [ -z "$V" ] || [ "$V" = "None" ]; then
-          echo "engine fetch: no active set at $ACTIVE_PARAM — this engine has nothing to load";
-          : > "$MODELS_DIR/cmdline";
-          exit 0;
-        fi;
-        START=$(printf '%s' "$V" | jq -r '.start // ""');
-        printf '%s' "$V" | jq -r --arg s "$START"
-          '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]'
-          > /tmp/keys;
+          echo "engine fetch: no active set at $ACTIVE_PARAM - this engine has nothing to load"
+          : > "$MODELS_DIR/cmdline"
+          exit 0
+        fi
+        START=$(printf '%s' "$V" | jq -r '.start // ""')
+        echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
+        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
         while read -r k; do
-          [ -n "$k" ] || continue;
-          dst="$MODELS_DIR/$k";
-          if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi;
-          mkdir -p "$(dirname "$dst")";
-          t0=$(date +%s);
-          aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors;
-          mv "$dst.part" "$dst";
-          echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s";
-        done < /tmp/keys;
-        printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG"
-          '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else
-             ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // [])
-             + (if $al != "" then [$al,$m.id] else [] end)
-             + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end)
-             + ($m.a // []) | join(" ") end'
-          > "$MODELS_DIR/cmdline.part";
-        mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline";
-        echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")";
+          [ -n "$k" ] || continue
+          dst="$MODELS_DIR/$k"
+          if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi
+          mkdir -p "$(dirname "$dst")"
+          t0=$(date +%s)
+          aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors
+          mv "$dst.part" "$dst"
+          echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
+        done < /tmp/keys
+        printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG" '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // []) + (if $al != "" then [$al,$m.id] else [] end) + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end) + ($m.a // []) | join(" ") end' > "$MODELS_DIR/cmdline.part"
+        mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
+        echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
 
 Conditions:
   # Whether the ROLE exists — its service, its DNS name, its row in the engine table. WHAT it
