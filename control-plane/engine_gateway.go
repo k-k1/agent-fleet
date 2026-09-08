@@ -401,6 +401,21 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "could not read the request body"})
 		return
 	}
+	// A chat request naming a model the catalogue does not hold is refused HERE (ADR 0072
+	// decision 7). The point is not validation for its own sake: with P1's router the engine
+	// would happily load a file off disk by name, and "what this deployment offers" has to be
+	// the catalogue rather than the contents of a directory. Refusing before the wake also
+	// means a typo does not buy a GPU box.
+	//
+	// Only when a model is actually named, and only for chat: the image route deliberately
+	// sends no `model` (sd-server holds one, chosen at startup), and a GET has no body.
+	if eng.def.api() == engineAPIChat {
+		if m := engineRequestModel(body); m != "" && !engineCatalogHolds(eng.catalog.enabled(r.Context()), m) {
+			writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown",
+				"no model " + m + " in this engine's catalogue"})
+			return
+		}
+	}
 	// The request IS the demand (decision 5). Recorded before anything can fail, so an
 	// engine that is mid-start does not read as unwanted and get stopped by the controller
 	// on the very tick somebody is waiting for it.
@@ -444,6 +459,31 @@ func askForStreamUsage(body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+// engineRequestModel is the model an OpenAI-compatible request named, or "" when it named none
+// or the body is not JSON at all. Unparseable is "" rather than an error: the engine is the one
+// entitled to reject a body this gateway could not read (the same rule askForStreamUsage
+// follows), and refusing here would turn a bad request into a confusing 404.
+func engineRequestModel(body []byte) string {
+	var probe struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.Model)
+}
+
+// engineCatalogHolds reports whether one of the enabled models answers to this id. LoRAs are
+// skipped: they are not something a chat request can be routed to.
+func engineCatalogHolds(models []store.EngineModel, id string) bool {
+	for _, m := range models {
+		if !engineModelIsLora(m) && m.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // engineWantsStream reports whether the caller asked for a streamed answer. Read from the

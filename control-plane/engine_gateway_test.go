@@ -726,3 +726,54 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 		t.Errorf("an engine with an empty catalogue was offered: %v", none)
 	}
 }
+
+// A chat request naming a model the catalogue does not hold is refused before anything is
+// woken (ADR 0072 decision 7). Three things are pinned, and each one is a way this could go
+// wrong on a live deployment rather than in a test:
+//
+//   - the id compared is the CATALOGUE's, which is also what the Agent writes into opencode's
+//     provider block. If those two ever disagreed, every request would 404;
+//   - a request naming NO model is untouched. `/v1/models` is a GET with no body at all;
+//   - the IMAGE route is exempt. sd-server holds one checkpoint chosen at startup and the
+//     provider deliberately sends no `model`, so a check there would refuse a field that only
+//     a well-meaning client would add.
+func TestEngineGatewayRefusesAModelOutsideTheCatalogue(t *testing.T) {
+	rows := []store.EngineModel{
+		{Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true},
+		{Role: "llm", ID: "parked", Kind: "gguf", Enabled: false},
+		{Role: "llm", ID: "some-lora", Kind: "lora", Enabled: true},
+	}
+	if !engineCatalogHolds(rows[:1], "qwen3-coder-30b-a3b") {
+		t.Error("the enabled model was not found by its catalogue id")
+	}
+	enabled := []store.EngineModel{}
+	for _, m := range rows {
+		if m.Enabled {
+			enabled = append(enabled, m)
+		}
+	}
+	// A model an administrator switched OFF is not in this deployment any more, so naming it
+	// is the same as naming one that never existed.
+	if engineCatalogHolds(enabled, "parked") {
+		t.Error("a disabled model was accepted")
+	}
+	// A LoRA is not something a chat request can be routed to, however it is enabled.
+	if engineCatalogHolds(enabled, "some-lora") {
+		t.Error("a LoRA was accepted as a model")
+	}
+	if engineCatalogHolds(enabled, "/models/whatever.gguf") {
+		t.Error("a file path was accepted as a model id")
+	}
+
+	if got := engineRequestModel([]byte(`{"model":" qwen3 ","messages":[]}`)); got != "qwen3" {
+		t.Errorf("model = %q", got)
+	}
+	// No model named, and a body that is not JSON at all: both are "" so the request goes
+	// through untouched and the engine answers for itself.
+	if got := engineRequestModel([]byte(`{"messages":[]}`)); got != "" {
+		t.Errorf("no model should read as empty, got %q", got)
+	}
+	if got := engineRequestModel(nil); got != "" {
+		t.Errorf("an unreadable body should read as empty, got %q", got)
+	}
+}
