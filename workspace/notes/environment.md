@@ -7,7 +7,7 @@ user-invocable: false
 
 Read when: a recreate / clean-home / stop is coming up, `$AF_WS_SCRATCH` is set, a build died
 with exit 137, you need a tool that is not installed, or the user asks how this environment
-behaves. The always-loaded policy is `/etc/claude-code/CLAUDE.md`; this file is the long form.
+behaves. This is the long form of the operating policy loaded by your CLI at session start.
 
 ## Persistence model (what survives what)
 

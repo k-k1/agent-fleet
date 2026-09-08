@@ -38,6 +38,9 @@ jobs:
       - uses: actions/checkout@v4
 
       # No dependencies (standard library only), so the runner's python3 is used as is.
+      - name: docs-check regression tests
+        run: python3 -m unittest discover -s scripts -p test_docs_check.py
+
       - name: docs-check
         run: python3 scripts/docs-check.py
 
