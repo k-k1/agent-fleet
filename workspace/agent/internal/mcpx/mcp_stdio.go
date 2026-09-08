@@ -570,12 +570,14 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 			"description": "生成に使うサービス。**未指定が既定**で、その場合は利用者が設定した優先順位に従い、失敗すれば次の provider に送られる。" +
 				"明示するとその 1 つだけを使い、失敗しても次に送らない（利用者が名指ししたサービス以外に課金しないため）。" +
 				"**利用者が「◯◯で作って」「両方で比べたい」と明示したときだけ指定すること。** provider ごとに消費されるプランが違い、比較のために 2 回呼べば 2 つのプランがそれぞれ減る。" +
-				"できることも provider ごとに違う（縦横比を受け取るのは一部だけ）。今使えるのは enum のとおりで、このセッション自身の CLI は含まれない"}
+				"できることも provider ごとに違う（縦横比を受け取るのは一部だけ）。" +
+				"**enum の値は CLI の名前であってサービス名ではない**——どれがどの画像サービスかは、このツールの説明の先頭に書いてある対応表で引くこと"}
 	}
 	return []map[string]any{
 		{
 			"name": "generate_image",
 			"description": "Agent Fleet: プロンプトから画像を生成し、生成物の**ファイルパス**を返す。" +
+				imageGenRoutesNote(offer) +
 				"返るのは画像そのものではなくパスなので、絵を確認する必要があるときだけ自分の画像読み取り手段でそのパスを開くこと（画像は数MBあり、結果に埋め込むと以後の全ターンの文脈を圧迫する）。" +
 				"生成物は会話をまたいで残り、Console のファイルビューアからも開ける。" +
 				"**size / background / count は希望であって保証ではない。** 実際に何が起きたかは戻り値の warnings に入る（例: 1024x1024 を頼んで 1254x1254 が返る）。" +
@@ -592,6 +594,41 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 	}
 }
 
+// imageGenRoutesNote spells out WHICH image service each offered route reaches, and which one
+// this session does not get.
+//
+// Without it the tool names only CLIs. A codex session whose single route was `agy` had no
+// wording anywhere that said "Gemini" — not in the description, and not in an enum, because a
+// one-entry offer drops the `provider` parameter entirely — and answered a request to compare
+// the two with "the Gemini route is not available in this session" while holding it (measured
+// 2026-09-08). The same silence hides the other half: that the missing service is the one the
+// session's OWN built-in image tool produces, which is what makes such a comparison possible at
+// all.
+func imageGenRoutesNote(offer imageGenOffer) string {
+	routes := make([]string, 0, len(offer.Providers))
+	for _, id := range offer.Providers {
+		if s := offer.Services[id]; s != "" {
+			routes = append(routes, id+" = "+s)
+		} else {
+			routes = append(routes, id)
+		}
+	}
+	note := "**このツールから使える画像サービス**: " + strings.Join(routes, " / ") + "。"
+	if len(offer.Providers) == 1 {
+		note += "選択肢はこれだけで、必ずこの経路になる。"
+	}
+	if id := offer.SelfExcluded; id != "" {
+		what := id + " 経由の経路"
+		if s := offer.Services[id]; s != "" {
+			what = s
+		}
+		note += "**このセッションは " + id + " セッションなので、" + what + "だけはこのツールから使えない**——" +
+			"同じ CLI をもう一段起動して同じプランを二重に払わないための除外であって、そのサービスが使えないという意味ではない。" +
+			"それが要るときは自分の内蔵の画像生成ツールを使うこと（両方を並べたいときは、内蔵ツールとこのツールを1回ずつ使う）。"
+	}
+	return note
+}
+
 // imageGenOffer is what THIS session may be told about generate_image: which providers it is
 // allowed to name, and the vocabulary those providers between them support.
 type imageGenOffer struct {
@@ -605,6 +642,14 @@ type imageGenOffer struct {
 	// that. What a NAMED provider cannot do is refused by name at call time, and an
 	// unhonourable aspect ratio comes back in warnings, so the union promises nothing false.
 	Ops, AspectRatios []string
+	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
+	// including the one dropped below, which the description has to be able to name.
+	Services map[string]string
+	// SelfExcluded is the provider id left out for being this session's own CLI, "" when none
+	// was. The tool says so rather than staying silent: a session that cannot see why a service
+	// is missing reports it as unavailable, and its own built-in tool — the one thing that can
+	// still produce that picture — goes unused.
+	SelfExcluded string
 }
 
 // mcpImageGenAdvertise decides whether THIS session is offered generate_image, and with what.
@@ -640,12 +685,19 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		// An Agent that predates the per-provider list (this child can outlive an Agent update)
 		// still answers with the effective one in the flat fields. Fall back to it rather than
 		// dropping the tool: one provider is what the feature shipped with.
-		ready = []mcpImageGenProvider{{ID: st.Provider, Model: st.Model, Ops: st.Ops, AspectRatios: st.AspectRatios}}
+		ready = []mcpImageGenProvider{{ID: st.Provider, Service: st.Service, Model: st.Model, Ops: st.Ops, AspectRatios: st.AspectRatios}}
 	}
 	seenOp, seenRatio := map[string]bool{}, map[string]bool{}
+	offer.Services = map[string]string{}
 	for _, p := range ready {
+		if p.Service != "" {
+			offer.Services[p.ID] = p.Service
+		}
 		if p.ID == st.Kind {
-			continue // this session's own CLI — it already has the built-in tool
+			// This session's own CLI — it already has the built-in tool. Recorded, not just
+			// skipped, so the description can say which service went missing and why.
+			offer.SelfExcluded = p.ID
+			continue
 		}
 		offer.Providers = append(offer.Providers, p.ID)
 		for _, op := range p.Ops {

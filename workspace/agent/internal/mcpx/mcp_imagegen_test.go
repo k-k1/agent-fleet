@@ -197,6 +197,59 @@ func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	}
 }
 
+// The tool has to SAY which image service each route reaches, because the ids are CLI names.
+// Measured 2026-09-08: a codex session whose only route was `agy` answered a request to compare
+// the two services with "the Gemini route is not available in this session" — the word Gemini
+// appeared nowhere in the tool, and a one-entry offer drops the `provider` enum that is the only
+// other place a name could have shown up.
+func TestImageGenDescriptionNamesTheServices(t *testing.T) {
+	agy := mcpImageGenProvider{ID: "agy", Service: "Gemini の画像生成", Ops: []string{"generate"}}
+	codex := mcpImageGenProvider{ID: "codex", Service: "GPT Image", Ops: []string{"generate"}}
+
+	t.Run("a codex session is told what its one route is, and why the other is missing", func(t *testing.T) {
+		withImageGen(t, true)
+		stubImageGenStatus(t, mcpImageGenStatus{Enabled: true, Ready: true, Kind: "codex",
+			Providers: []mcpImageGenProvider{agy, codex}})
+		offer, ok := mcpImageGenAdvertise()
+		if !ok || offer.SelfExcluded != "codex" {
+			t.Fatalf("advertise = %v, offer = %+v, want codex recorded as excluded", ok, offer)
+		}
+		tools := mcpStdioImageGenTools(offer)
+		desc, _ := tools[0]["description"].(string)
+		// The route it HAS, the one it does not, and what to do instead. Without the last two a
+		// refusal to compare reads as "that service is unreachable from here".
+		for _, want := range []string{"Gemini の画像生成", "GPT Image", "内蔵"} {
+			if !strings.Contains(desc, want) {
+				t.Fatalf("description does not mention %q: %s", want, desc)
+			}
+		}
+		// Nothing to choose between, so the enum is absent — which is exactly why the
+		// description is the only place either name can appear.
+		if _, has := imageGenSchemaProps(tools)["provider"]; has {
+			t.Fatalf("a single-route offer advertised a provider argument")
+		}
+	})
+
+	t.Run("a session with both routes gets both names and no exclusion note", func(t *testing.T) {
+		withImageGen(t, true)
+		stubImageGenStatus(t, mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+			Providers: []mcpImageGenProvider{agy, codex}})
+		offer, ok := mcpImageGenAdvertise()
+		if !ok || offer.SelfExcluded != "" {
+			t.Fatalf("advertise = %v, offer = %+v, want nothing excluded", ok, offer)
+		}
+		desc, _ := mcpStdioImageGenTools(offer)[0]["description"].(string)
+		for _, want := range []string{"agy = Gemini の画像生成", "codex = GPT Image"} {
+			if !strings.Contains(desc, want) {
+				t.Fatalf("description does not map %q: %s", want, desc)
+			}
+		}
+		if strings.Contains(desc, "使えない") {
+			t.Fatalf("description claims a route is missing when none is: %s", desc)
+		}
+	})
+}
+
 func advertisedNames(t *testing.T) map[string]bool {
 	t.Helper()
 	out := map[string]bool{}
