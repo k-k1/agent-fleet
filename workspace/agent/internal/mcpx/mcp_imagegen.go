@@ -24,6 +24,7 @@ import (
 type mcpImageGenStatus struct {
 	Enabled      bool                  `json:"enabled"`
 	Provider     string                `json:"provider"`
+	Service      string                `json:"service"`
 	Ready        bool                  `json:"ready"`
 	Kind         string                `json:"kind"`
 	Model        string                `json:"model"`
@@ -36,7 +37,11 @@ type mcpImageGenStatus struct {
 // per-provider list is what makes an explicit `provider` argument honest — the tool's enums are
 // built from the providers this session may actually name, not from the first one.
 type mcpImageGenProvider struct {
-	ID           string   `json:"id"`
+	ID string `json:"id"`
+	// Service is the image service the id stands for ("GPT Image", "Gemini …"). It is what the
+	// tool description says out loud: the enum values are CLI names, and a session asked for a
+	// picture "from Gemini" cannot map that onto `agy` on its own.
+	Service      string   `json:"service"`
 	Model        string   `json:"model"`
 	Ops          []string `json:"ops"`
 	AspectRatios []string `json:"aspectRatios"`
