@@ -37,10 +37,11 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   create a catalogue row, and a harness for seeing a picture — are at the end of that section.
 - The same day, **P1 (the llm role's router mode) was implemented and measured, on a CPU and on
   hardware** (the "P1 measurements" section): preset generation, syncing every enabled model,
-  `LlmModelsMax`, the redefinition of `warm`, and per-model windows. Of the definitions of done,
-  **the first and third were driven on hardware** (two GGUFs usable on one box, and the swap
-  answering on one attempt); the second — two models in the launch menu — is unit-tested only,
-  because creating the row is a super_admin screen, the same wall P0 hit. 🔴 Three points of the
+  `LlmModelsMax`, the redefinition of `warm`, and per-model windows. **All three definitions of done were driven on
+  hardware** (two GGUFs usable on one box, the swap answering on one attempt, and — once the
+  second row was registered and enabled in the Console — two models in the launch menu with a
+  session started on the second). Only creating the row needs a person: it is a super_admin
+  screen, the same wall P0 hit. 🔴 Three points of the
   text were corrected by measurement: **`--models-dir` is not used** (it would list names the
   catalogue does not hold and count `llm/loras/` as a model), **`-c` must leave `LlmExtraArgs`**
   (a command-line flag beats the preset, so one `-c` gives every model the same window), and
@@ -783,12 +784,11 @@ command line and its preset does not need CUDA. The CPU runs used llama.cpp's of
 `b10853` (the one review R1 used) with stories260K and Qwen2.5-0.5B-Instruct Q4_K_M; the hardware
 runs used `af-sandbox` / ap-northeast-1's g6.xlarge for about half an hour (roughly $0.6).
 
-**The first and third definitions of done were driven on hardware** — two `llamacpp/` models on
-one box, each usable, and the reload on the switch answering on one attempt (7 below). **The
-second (two models in the launch menu) is pinned by unit tests through the whole
-catalogue → Agent → opencode chain**: creating the row is a super_admin screen and AWS
-credentials cannot drive it (the same wall as P0 measurement 5; on the user's call, the hardware
-run stopped at the engine layer).
+**All three definitions of done were driven on hardware.** The first and third came from the
+engine probe (10 below); the second — two `llamacpp/` models in the launch menu — was driven by
+**the user registering and enabling the second row in the Console and starting a session on it**
+(15). Only that one link needs a person: creating a row is a super_admin screen and AWS
+credentials cannot drive it (the same wall as P0 measurement 5).
 
 ### Settled on a CPU
 
@@ -891,6 +891,22 @@ run stopped at the engine layer).
     with `AccessDenied … s3:PutObject`. **It is review R3's "the CP holds no S3 permission at all"
     restated by AWS.** The transcript goes to the log instead (passing the key as an override
     environment variable would put it in CloudTrail for ever, so that route is not taken).
+
+15. **The launch menu's two models were driven on hardware too** (definition of done 2, with the
+    user pressing the buttons). The panel's "register a file from the bucket" created the second
+    row (`qwen2.5-coder-1.5b`, window 32768/4096, size 1,117,320,768) and it was enabled. The CP
+    log shows the whole chain: `llm catalogue row registered: qwen2.5-coder-1.5b (1 file(s),
+    disabled)` → `llm active set published … (242 bytes)` → `catalogue change for llm pushed to
+    1 workspace(s)` → the Agent's `GET /internal/engine/catalog 200`. **The picker offered two
+    `llamacpp/` models and a session started on the second one.** A later CP replacement
+    published the same two rows from the database
+    (`models=llamacpp/qwen2.5-coder-1.5b,llamacpp/qwen3-coder-30b-a3b`) — the ordinary
+    observation that the rows, not a hand-written document, are the truth.
+    - 🔴 **The registration form had no window field.** P1 made the window per model, and the one
+      UI that creates a row could not declare one — so a model registered there carried
+      `context_tokens` 0, which reaches opencode as context 0 and **switches auto-compaction
+      off**. The window (context and output cap, sent only as a pair) and the size (the only
+      source for "sync +N s") were added.
 
 ### What P1 needed that the decisions did not name
 
@@ -1014,10 +1030,10 @@ run stopped at the engine layer).
   syncing every enabled model with the panel's "sync +N s (estimate)", and `warm_model` with the
   switch count. **Definition of done: two `llamacpp/` models in the launch menu, each usable in
   turn, and the reload of a switch answered on the first attempt** (ADR 0071 P0's observation,
-  taken across a switch). **The first and third were driven on hardware** (two GGUFs on one box,
-  answering in 0.4–0.7 s, 10 s and 276–282 s); **the two models in the launch menu are
-  unit-tested only** — creating the row is a super_admin screen, which AWS credentials cannot
-  drive.
+  taken across a switch). **All three were driven on hardware** (two GGUFs on one box, answering in
+  0.4–0.7 s, 10 s and 276–282 s; and with the second row registered and enabled in the Console,
+  the picker offered two models and a session started on the second). Only the row-creating step
+  needs a person — it is a super_admin screen, which AWS credentials cannot drive.
 - **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** Open question 9 first, one GPU hour.
   The self-built image (pinned tag, no Manager, open question 8; including the `20-platform` ECR
   repository and the CI bake), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider
