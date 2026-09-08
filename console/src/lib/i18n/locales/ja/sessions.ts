@@ -177,6 +177,8 @@ export const sessions = {
   "sess.stop_after_turn_failed": "停止の予約を変更できませんでした",
   "sess.locked_off": "削除ロックを解除しました",
   "sess.archive_failed": "アーカイブに失敗しました",
+  "sess.tab_closed_gone": "「{name}」はアーカイブ（または削除）されたため、タブを閉じました",
+  "sess.tabs_closed_gone": "アーカイブ（または削除）されたセッション {count} 件のタブを閉じました",
   "sess.delete_title": "セッションを削除",
   "sess.delete_body": "「{name}」を削除します。この操作は取り消せません。",
   "sess.cleanup_archive_n": "{count} 件をアーカイブ",

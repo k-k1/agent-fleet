@@ -339,6 +339,11 @@ export function closeSessionPanes(l: Layout, name: string): Layout {
   const ids = allViews(l).filter((v) => v.content.kind === "terminal" && v.session === name).map((v) => v.id);
   return ids.reduce((next, id) => closeView(next, id), l);
 }
+/** Same for several sessions at once, so one tidy-up that archives a dozen sessions
+ *  produces ONE layout (and one history entry) rather than a dozen. */
+export function closeSessionsPanes(l: Layout, names: Iterable<string>): Layout {
+  return [...names].reduce((next, name) => closeSessionPanes(next, name), l);
+}
 export function setColRatios(l: Layout, ratios: number[]): Layout {
   const sum = ratios.reduce((n, r) => n + r, 0);
   return { ...l, colRatios: sum > 0 ? ratios.map((r) => r / sum) : equalRatios(ratios.length) };

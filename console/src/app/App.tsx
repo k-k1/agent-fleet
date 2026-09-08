@@ -22,6 +22,7 @@ import {
   wireBrowserAttachmentReconcile,
 } from "../features/browser/attachmentService.ts";
 import { useSessionsStore, startSessionsPolling } from "../features/sessions/store.ts";
+import { wireSessionPaneReconcile } from "../features/sessions/paneReconcile.ts";
 import { SessionModals } from "../features/sessions/SessionModals.tsx";
 import { AuthExpiredModal } from "../features/auth/AuthExpiredModal.tsx";
 import { ProviderRequiredModal } from "../features/auth/ProviderRequiredModal.tsx";
@@ -296,6 +297,9 @@ export function App() {
     // When a session goes idle, re-read FILES for just that working copy. The listing
     // arrives anyway, so this costs no extra traffic, and firings coalesce per copy.
     const unFilesSessionRefresh = wireFilesSessionRefresh();
+    // A session archived (or deleted) anywhere else — another tab, another device, the
+    // cleanup run, the operator — takes its tabs with it here too.
+    const unSessionPaneReconcile = wireSessionPaneReconcile();
     // Unified push channel (traffic reduction P3): register the wiring before connecting
     // so the first snapshot frame is not dropped. The pollers still start as the fallback
     // and skip their tick while pushHealthy.
@@ -332,6 +336,7 @@ export function App() {
       unBrowserAttachmentReconcile();
       unWsRefresh();
       unFilesSessionRefresh();
+      unSessionPaneReconcile();
       unPushApply();
       stopPush();
       stopWsPoll();
