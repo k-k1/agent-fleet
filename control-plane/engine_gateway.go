@@ -199,7 +199,7 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		"token":      tok,
 		"expires_at": exp.UTC().Format(time.RFC3339),
 		"base_url":   "/engine/" + key + "/v1",
-		"models":     eng.modelIDs(),
+		"models":     eng.modelIDs(r.Context()),
 	})
 }
 
@@ -217,30 +217,90 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
-		out = append(out, engineCatalogRowFor(e.def))
+		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()))
+		if row == nil {
+			continue // nothing enabled: the same as switched off, from a Workspace's point of view
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"engines": out})
 }
 
-// engineCatalogRowFor is one engine as the Agent reads it.
+// engineCatalogRowFor is one engine as the Agent reads it, built from the CATALOGUE rather
+// than from the stack (ADR 0072 decision 7).
 //
-// The window is reported only when the stack declared it. A zero here is not a small context,
-// it is "this stack is older than the field", and forwarding it would have the Agent advertise
-// a context of 0 to opencode — which switches auto-compaction off, i.e. exactly the state the
-// field exists to fix. Absent means absent, and the Agent leaves the limit unwritten.
-func engineCatalogRowFor(d engineDef) map[string]any {
-	row := map[string]any{
-		"key":      d.Key,
-		"api":      d.api(),
-		"provider": d.Provider,
-		"base_url": "/engine/" + d.Key + "/v1",
-		"models":   d.Models,
+// Two shapes ride together, and they are not redundant:
+//
+//   - `models` stays a flat list of ids, because that is what an Agent old enough to predate
+//     this ADR reads to write opencode's provider block. Removing it would take the launch
+//     menu away from every workspace image not yet rebuilt.
+//   - `model_rows` carries the same models with the per-model window, description and declared
+//     sizes. The window is per MODEL now, which is what removes ADR 0071's "two models with
+//     different windows are two engines".
+//
+// The window is reported only when it was declared. A zero is not a small context, it is
+// "nobody said" — and forwarding it has the Agent advertise a context of 0 to opencode, which
+// switches auto-compaction off, i.e. exactly the state the field exists to fix.
+//
+// nil when nothing is enabled. An engine with an empty catalogue cannot serve anything, so
+// offering it would put a model in a launch menu that answers 503 (decision 1).
+func engineCatalogRowFor(d engineDef, models []store.EngineModel) map[string]any {
+	ids := []string{}
+	rows := []map[string]any{}
+	loras := []map[string]any{}
+	for _, m := range models {
+		if engineModelIsLora(m) {
+			loras = append(loras, engineCatalogModelRow(m))
+			continue
+		}
+		ids = append(ids, m.ID)
+		rows = append(rows, engineCatalogModelRow(m))
 	}
-	if d.ContextTokens > 0 {
-		row["context_tokens"] = d.ContextTokens
-		row["max_output_tokens"] = d.MaxOutputTokens
+	if len(ids) == 0 {
+		return nil
+	}
+	row := map[string]any{
+		"key":        d.Key,
+		"api":        d.api(),
+		"provider":   d.Provider,
+		"base_url":   "/engine/" + d.Key + "/v1",
+		"models":     ids,
+		"model_rows": rows,
+	}
+	if len(loras) > 0 {
+		row["loras"] = loras
+	}
+	// The engine-wide window, kept for an Agent that has no per-model reader yet. It is the
+	// window of whichever model the engine will start with, which for a one-model role is the
+	// same number ADR 0071 published.
+	if c, mo := engineStartWindow(models); c > 0 {
+		row["context_tokens"] = c
+		row["max_output_tokens"] = mo
 	}
 	return row
+}
+
+// engineStartWindow is the window of the model the engine is started with — the selected or
+// default one, falling back to the first. It exists so the engine-wide fields above describe
+// the model that will actually answer, rather than an arbitrary row.
+func engineStartWindow(models []store.EngineModel) (int, int) {
+	var first store.EngineModel
+	found := false
+	for _, m := range models {
+		if engineModelIsLora(m) {
+			continue
+		}
+		if !found {
+			first, found = m, true
+		}
+		if m.Selected || m.Default {
+			return m.ContextTokens, m.MaxOutputTokens
+		}
+	}
+	if !found {
+		return 0, 0
+	}
+	return first.ContextTokens, first.MaxOutputTokens
 }
 
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
@@ -324,6 +384,15 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	}
 	if eng.mode(r.Context()) == engineModeOff {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_off", "this engine is switched off"})
+		return
+	}
+	// An engine whose catalogue is empty has nothing to answer with, and waking it would buy a
+	// GPU box to run `sleep infinity` (ADR 0072 decision 1). `engine_unavailable` rather than
+	// `engine_waking`: the sdcpp provider retries the second for a quarter of an hour, and no
+	// amount of waiting adds a model.
+	if !eng.catalog.hasModels(r.Context()) {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable",
+			"this engine has no enabled model — an administrator has to select one"})
 		return
 	}
 

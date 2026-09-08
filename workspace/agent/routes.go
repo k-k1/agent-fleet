@@ -47,6 +47,10 @@ func buildMux() *http.ServeMux {
 	// every other feature's consumption already lives. CP-called like the two above, so it
 	// needs no entry in the CP's agent-proxy allowlist either.
 	mux.HandleFunc("POST /engine/usage", handleEngineUsage)
+	// The same reverse direction, for the model catalogue (ADR 0072 decision 7): the CP tells
+	// this workspace an administrator changed what the engines offer, so the launch menu and
+	// generate_image do not wait out the catalogue's 10-minute TTL.
+	mux.HandleFunc("POST /engine/catalog-changed", handleEngineCatalogChanged)
 	mux.HandleFunc("POST /sessions", sessionx.HandleCreateSession)
 	// Idempotency reconcile (session_idempotency.go): resolve a create whose POST
 	// response was lost to a client timeout, so the caller need not retry into a dup.

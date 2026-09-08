@@ -213,6 +213,77 @@ type EngineHourCounters struct {
 	DrainingSecs int `json:"draining_secs,omitempty"`
 }
 
+// EngineModel is one entry of the engine model catalogue (ADR 0072 decision 2): what a
+// self-hosted engine may load, declared by an administrator rather than by a CloudFormation
+// parameter. Two layers make up the truth — S3 says what EXISTS, this says what is OFFERED —
+// and neither of them is the engine, which is asleep whenever the question is asked (ADR 0053).
+//
+// Role is the ENGINE KEY, not a separate taxonomy: the row belongs to `llm` or `image` the
+// same way the SSM engine table's rows do, so `PUT /api/admin/engines/{key}/models/{id}`
+// carries both halves of the primary key.
+type EngineModel struct {
+	Role, ID, Kind string
+	// Files is one entry for a single-file model and several for a split one (FLUX's
+	// diffusion_model + clip_l + t5xxl + vae). It is what the fetch sidecar syncs.
+	Files []EngineModelFile
+	// Enabled = synced onto the box and offered. Selected is the image role's ONE checkpoint
+	// (sd-server holds one and cannot switch at request time); Default is the llm role's
+	// answer to a request that named no model. Both are exclusive within a role.
+	Enabled, Selected, Default bool
+	Args                       []string
+	// ContextTokens/MaxOutputTokens move here from the engine because with a router the window
+	// is per MODEL (ADR 0072 decision 3). Zero means undeclared, and undeclared must stay
+	// unwritten — opencode reads a limit of 0 as "no auto-compaction".
+	ContextTokens, MaxOutputTokens int
+	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
+	Sizes       []string
+	Description string
+	VramMiB     int
+	// License is HF's `cardData.license` verbatim and LicenseName is where the terms really
+	// are when that says "other" — which is the case for both non-commercial models in the
+	// ADR's table. Keeping only the first shows them as "other" and nothing else.
+	License, LicenseName, LicenseURL string
+	Precision, BaseModel             string
+	CreatedAt, UpdatedAt             string
+}
+
+// EngineModelFile is one S3 object a model is made of.
+//
+// Flag is empty for a single-file model — the engine's own `-m` takes it — and holds the
+// LITERAL flag for each part of a split one (`--vae`, `--clip_l`, `--t5xxl`,
+// `--diffusion-model`). Storing the flag rather than a role name keeps the engine's spelling
+// out of the sidecar: sd.cpp mixes `--clip_l` with `--diffusion-model`, and a mapping table
+// would be a second place to keep that in step.
+//
+// There is no local path. The box mirrors the bucket — `image/checkpoints/x.safetensors`
+// becomes `/models/image/checkpoints/x.safetensors` — which is both what makes the active set
+// small enough for SSM's 4,096 characters and what makes the tree ComfyUI can read unchanged
+// (ADR 0071 decision 6).
+type EngineModelFile struct {
+	Flag  string `json:"flag,omitempty"`
+	S3Key string `json:"s3Key"`
+}
+
+// EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the
+// ingest job's state transitions — which is why it is a table and not one JSON value in
+// SettingsStore (ADR 0072 open question 5).
+type EngineModelStore interface {
+	// ListEngineModels returns one role's catalogue, ordered by id. role=="" spans every role.
+	ListEngineModels(ctx context.Context, role string) ([]EngineModel, error)
+	// PutEngineModel inserts or replaces one row wholesale.
+	PutEngineModel(ctx context.Context, m EngineModel) error
+	// SetEngineModelEnabled toggles one row. Reports false when there is no such row, so a
+	// caller can answer 404 rather than 200 for a model that does not exist.
+	SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error)
+	// SetEngineModelSelected makes one row THE selected checkpoint of its role, clearing the
+	// others in the same statement — an image role with two selected rows has no answer to
+	// "what will the engine start with", and the exclusivity has to hold across two writers.
+	SetEngineModelSelected(ctx context.Context, role, id string) (bool, error)
+	// SetEngineModelDefault is the same exclusivity for the llm role's default model.
+	SetEngineModelDefault(ctx context.Context, role, id string) (bool, error)
+	DeleteEngineModel(ctx context.Context, role, id string) (bool, error)
+}
+
 // SSMProfile is the COMMON auth bundle shared by many hosts (docs/log/p3-ssm-
 // session.md): the AWS IAM Identity Center (SSO) portal + account/role/default region.
 // It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
@@ -548,6 +619,7 @@ type Store interface {
 	EgressStore
 	SettingsStore
 	UsageStore
+	EngineModelStore
 	CloudCostStore
 	SSMStore
 	MemoStore

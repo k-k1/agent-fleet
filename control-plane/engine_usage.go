@@ -20,9 +20,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"log"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
@@ -232,4 +234,86 @@ func (g engineGateway) postUsage(ctx context.Context, mv store.MembershipView, r
 		// the accounting — a CP newer than the image it launched must degrade visibly.
 		log.Printf("engine usage: the agent answered %s (an older workspace image has no /engine/usage)", resp.Status)
 	}
+}
+
+// --- telling the workspaces the catalogue moved (ADR 0072 decision 7) --------------
+
+// engineCatalogPushConcurrency bounds the fan-out. A deployment can hold hundreds of
+// workspaces and this is a background nicety — the Agent's own 10-minute TTL is what
+// guarantees convergence — so it is deliberately slow and cheap rather than a burst of
+// connections from the CP the moment an administrator presses a button.
+const engineCatalogPushConcurrency = 8
+
+// notifyEngineCatalogChanged tells every RUNNING workspace to re-read /internal/engine/catalog.
+//
+// The reverse direction already exists (postUsage above) and this uses the same transport for
+// the same reason: a Service Connect alias is written into /etc/hosts once, at CP task start,
+// so a plain client cannot resolve a workspace created afterwards — newAgentTransport's Cloud
+// Map fallback is what finds it, and getting this wrong is silent.
+//
+// Best-effort by construction. A workspace that is stopped, unreachable or running an image
+// older than the route simply catches up at its next TTL, so nothing here retries and nothing
+// blocks the administrator's request.
+func notifyEngineCatalogChanged(ctx context.Context, mgr *manager, key string) {
+	if mgr == nil || mgr.store == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	tenants, err := mgr.store.ListTenants(ctx)
+	if err != nil {
+		log.Printf("engines: listing tenants for the catalogue push failed: %v", err)
+		return
+	}
+	sem := make(chan struct{}, engineCatalogPushConcurrency)
+	var wg sync.WaitGroup
+	sent := 0
+	for _, t := range tenants {
+		wss, err := mgr.store.ListWorkspaces(ctx, t.ID)
+		if err != nil {
+			continue
+		}
+		for _, ws := range wss {
+			// The DB's state column, not a live probe: asking the runtime would be one ECS or
+			// Docker call per workspace before a notification nobody is waiting for. A stale
+			// "running" costs one refused connection.
+			if ws.State != "running" {
+				continue
+			}
+			rt := mgr.runtimeFor(ws, "")
+			if rt == nil || rt.Endpoint() == "" {
+				continue
+			}
+			sent++
+			wg.Add(1)
+			go func(endpoint, token string) {
+				defer wg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+				postEngineCatalogChanged(ctx, endpoint, token, key)
+			}(rt.Endpoint(), rt.Token())
+		}
+	}
+	wg.Wait()
+	if sent > 0 {
+		log.Printf("engines: catalogue change for %s pushed to %d workspace(s)", key, sent)
+	}
+}
+
+func postEngineCatalogChanged(ctx context.Context, endpoint, token, key string) {
+	body, _ := json.Marshal(map[string]string{"key": key})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"/engine/catalog-changed", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := engineUsageClient.Do(req)
+	if err != nil {
+		return // stopped, or on its way there: the TTL covers it
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4<<10))
 }

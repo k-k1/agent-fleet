@@ -270,6 +270,7 @@ const (
 	engineReasonNoIdleStop = "idle_disabled"  // the idle window is 0, so never stop
 	engineReasonFirstPass  = "first_pass"     // no demand mark yet: stamp, judge nothing
 	engineReasonDraining   = "draining"       // stopped, but the box has not gone yet
+	engineReasonNoModel    = "no_model"       // the catalogue is empty: nothing to serve at any price
 )
 
 // engineControlCfg is the controller's tuning, all of it from the environment.
@@ -294,6 +295,10 @@ type engineSnapshot struct {
 	windowUnits int       // units of intent inside cfg.window
 	failures    int       // consecutive failed starts
 	lastFailure time.Time
+	// noModels says the engine's catalogue holds nothing enabled (ADR 0072 decision 1(c)).
+	// Stated in the negative so the zero value — every engine that has no catalogue at all,
+	// VOICEVOX included — means "there is something to serve" and behaves exactly as before.
+	noModels bool
 }
 
 // decideEngineAction is the whole of the controller's judgement (decisions 5 and 9).
@@ -330,6 +335,24 @@ func decideEngineAction(now time.Time, s engineSnapshot, cfg engineControlCfg) (
 			return engineActionNone, engineReasonOffGrace
 		}
 		return engineActionStop, engineReasonAdminOff
+	}
+
+	// Nothing in the catalogue: there is no price at which this box is worth buying (ADR 0072
+	// decision 1(c)). It is checked BELOW the off branch so an engine an administrator switched
+	// off still audits as `admin_off` — the reason lands next to a charge and the two facts are
+	// different — and ABOVE the mode branches because `on` otherwise starts the placeholder
+	// container. That placeholder is the trap: it reaches RUNNING and never warms, and
+	// `running && !warmed` is not a failure state, so the controller would re-examine it every
+	// five seconds for ever while the deployment pays $1.26/hour for `sleep infinity`.
+	//
+	// Stopping (rather than merely not starting) is deliberate: an engine that was up when its
+	// last model was disabled is the same waste, and the administrator who disabled it is the
+	// one who asked for this.
+	if s.noModels {
+		if up {
+			return engineActionStop, engineReasonNoModel
+		}
+		return engineActionNone, engineReasonNoModel
 	}
 
 	if s.mode == engineModeOn {
@@ -424,10 +447,14 @@ type engineController struct {
 	// It is called on EVERY tick, warm or not — the point is also to notice the engine going
 	// away — and is passed the current verdict so the expensive half (VOICEVOX's throwaway
 	// synthesis) runs only on the way up.
-	warmup   func(ctx context.Context, alreadyWarm bool) bool
-	demand   *engineDemand
-	settings store.SettingsStore
-	audit    engineAuditor
+	warmup func(ctx context.Context, alreadyWarm bool) bool
+	// hasModels answers "is there anything this engine could serve" (ADR 0072). nil = the
+	// engine has no catalogue — VOICEVOX, and any engine on a CP with no store — and is then
+	// treated as having something, so nothing about those engines changes.
+	hasModels func(ctx context.Context) bool
+	demand    *engineDemand
+	settings  store.SettingsStore
+	audit     engineAuditor
 	// uptime is where each tick's observation is recorded (engine_uptime.go). nil = not
 	// recorded, which is what the VOICEVOX engine does: its panel has no heatmap, and an
 	// INSERT every 30 seconds for a series nothing reads is a cost with no reader.
@@ -581,12 +608,16 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		c.demand.stamp(ctx)
 		return c.cfg.interval
 	}
+	// Outside the lock: this reads the catalogue (a cached database query), and c.mu guards
+	// only the failure counters and the warm flag.
+	noModels := c.hasModels != nil && !c.hasModels(ctx)
 	c.mu.Lock()
 	snap := engineSnapshot{
 		state: view.state, desired: view.desired, lastStart: view.lastStart,
 		mode: mode, modeAt: c.settingTime(ctx, c.keys.modeAt),
 		lastDemand: lastDemand, windowUnits: c.demand.units(),
 		failures: c.failures, lastFailure: c.lastFailure,
+		noModels: noModels,
 	}
 	c.mu.Unlock()
 

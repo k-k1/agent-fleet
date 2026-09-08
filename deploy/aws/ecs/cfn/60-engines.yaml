@@ -616,24 +616,8 @@ Resources:
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
-  # A Fargate task an operator runs by hand:
-  #
-  #   aws ecs run-task --cluster <cluster> --launch-type FARGATE \
-  #     --task-definition af-<stack>-ingest \
-  #     --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}' \
-  #     --overrides '{"containerOverrides":[
-  #        {"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…/resolve/main/x.gguf"},
-  #                                       {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
-  #        {"name":"upload","environment":[{"name":"KEY","value":"llm/x.gguf"}]}]}'
-  #
-  # ⚠️ Overriding a command here takes ONE string, because the EntryPoint is already
-  # ["sh","-c"]. Passing ["sh","-c",<script>] becomes `sh -c sh -c <script>`, which does
-  # nothing and exits 0 — it reads as success and ran nothing (measured).
-  #
-  # The sha256 is not optional decoration. "The file got bigger" is what a truncated
-  # download also looks like, and a GGUF that is 99 % there loads and then answers nonsense.
-  # The value comes from the HF API's `?blobs=true` siblings[].lfs.sha256, which was
-  # verified against a real sha256sum of the downloaded file.
+  # A Fargate task an operator runs by hand. The `run-task` recipe, the override trap and why
+  # the sha256 is not optional: PARAMETERS-60-engines.md, "Running the ingest task by hand".
   IngestTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -720,25 +704,9 @@ Resources:
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
-        # An ANONYMOUS host volume — an empty `Host`, no SourcePath. Both halves of that are
-        # measured, and both are counter-intuitive:
-        #
-        #   - a named `SourcePath` does NOT work. `StorageConfiguration.storageSizeGiB` sizes
-        #     the DATA volume MI attaches (what the container runtime uses); an arbitrary host
-        #     path like /var/lib/… lands on the ROOT filesystem, which is much smaller.
-        #     Measured: with SourcePath the fetch died with "No space left on device" on a
-        #     brand-new 120 GiB box, every time, and the service never started at all.
-        #   - the price of the anonymous form is that ECS allocates a FRESH directory per
-        #     task, so a box that MI keeps (scaleInAfter -1) does NOT skip the S3 fetch on the
-        #     next start — measured, a restart onto the very same instance re-fetched all
-        #     18.5 GB (126 s) — and the previous tasks' directories are never reclaimed, so
-        #     four starts on one kept box filled the disk.
-        #
-        # ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and scaleInAfter is
-        # left at the AWS default rather than -1. Making it work needs the path MI's data
-        # volume is actually mounted at, which is not documented and was not worth another GPU
-        # hour to find; P4 can pick it up with `useLocalStorage`, where the 250 GB instance
-        # store is the whole disk.
+        # An ANONYMOUS host volume — an empty `Host`, no SourcePath. Both halves are measured
+        # and both are counter-intuitive; the measurements, and why decision 7(c)'s "warm box"
+        # stays unproven, are in PARAMETERS-60-engines.md, "The model volume".
         - Name: models
           Host: {}
       ContainerDefinitions:
@@ -885,9 +853,7 @@ Resources:
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
-        # `Host: {}`, for the reasons measured on the llm role above — a SourcePath lands on
-        # the root filesystem and fills a brand-new box, and the price of the anonymous form
-        # is a fresh directory per task.
+        # `Host: {}`, for the reasons measured on the llm role above.
         - Name: models
           Host: {}
       ContainerDefinitions:

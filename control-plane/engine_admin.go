@@ -51,6 +51,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines", a.withSuperAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
 	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
+	// The model catalogue (ADR 0072 decision 7). A CP route, not an Agent one, so it needs no
+	// entry in the agent-proxy allowlist in routes.go — that list exists for endpoints the
+	// Workspace Agent implements and the CP forwards.
+	mux.HandleFunc("PUT /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.putModel))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -73,19 +77,38 @@ func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, _ store.Iden
 // llama-server binds its port 267 seconds before the weights are in VRAM (measured) — and a
 // panel that showed only "running" would report an engine as up through the whole cold start.
 //
-// The models are the STACK'S declaration (ADR 0053), never a question put to the engine: the
-// engine is asleep most of the time, so anything only it could answer is unanswerable exactly
-// when somebody opens this panel. `llm` is one process holding one GGUF, so the declaration is
-// also the truth about what is loaded — which is why `warm` is what qualifies it.
+// The models are a DECLARATION (ADR 0053), never a question put to the engine: the engine is
+// asleep most of the time, so anything only it could answer is unanswerable exactly when
+// somebody opens this panel. Since ADR 0072 the declaration is the catalogue rather than the
+// stack, which is what makes the list on this panel editable at all.
+//
+// `models` (the flat id list) and `model_rows` both ride: the first is what the panel showed
+// before the catalogue existed and what a client written against it still reads.
 func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[string]any {
 	mode := e.mode(ctx)
 	cfg := e.controlCfg()
+	catalogue := e.catalog.list(ctx)
+	ids := []string{}
+	modelRows := []map[string]any{}
+	for _, m := range catalogue {
+		if m.Enabled && !engineModelIsLora(m) {
+			ids = append(ids, m.ID)
+		}
+		modelRows = append(modelRows, engineAdminModelRow(m))
+	}
 	row := map[string]any{
 		"key":      e.def.Key,
 		"api":      e.def.api(),
 		"provider": e.def.Provider,
-		"models":   e.def.Models,
-		"mode":     mode,
+		"models":   ids,
+		// Every row, enabled or not: this panel is where an administrator turns one ON, so a
+		// list filtered to the enabled ones would have no way to reach the others.
+		"model_rows": modelRows,
+		// Stated rather than left to be inferred from an empty list, because it is the reason
+		// the engine will refuse to start (decideEngineAction's `no_model`) and the panel has
+		// to say so instead of offering a toggle that does nothing.
+		"has_models": e.catalog.hasModels(ctx),
+		"mode":       mode,
 		// The INTENT, never the desired count — see the note in tts.go's status.
 		"enabled": mode != engineModeOff,
 		"managed": e.ecs != nil,
@@ -266,6 +289,105 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	}
 	log.Printf("engines: %s set to %s by %s", key, val, ident.ID)
 	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
+}
+
+// putModel (PUT /api/admin/engines/{key}/models/{id}) is the catalogue's one mutation route
+// (ADR 0072 decision 7). The body carries whichever of the three it means:
+//
+//	{"enabled": true|false}   switch a model on or off — i.e. sync it onto the box, or stop
+//	{"selected": true}        the image role's ONE checkpoint (sd-server holds one)
+//	{"default": true}         the llm role's answer to a request that named no model
+//
+// `selected` and `default` are exclusive within a role and the store enforces it in one
+// transaction; both also enable, because an administrator who picked a checkpoint has said it
+// should be loaded.
+//
+// ⚠️ What this does NOT do is restart a running engine. Changing the selection takes effect at
+// the next start (decision 4): the box holds one checkpoint chosen by a startup flag, and
+// silently redeploying the service would kill whatever generation is in flight. The panel says
+// so; a deliberate restart is the mode toggle.
+func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	var b struct {
+		Enabled  *bool `json:"enabled"`
+		Selected *bool `json:"selected"`
+		Default  *bool `json:"default"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		return
+	}
+
+	ctx := r.Context()
+	var (
+		found  bool
+		err    error
+		action string
+	)
+	switch {
+	case b.Selected != nil && *b.Selected:
+		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
+		action = "select"
+	case b.Default != nil && *b.Default:
+		found, err = a.mgr.store.SetEngineModelDefault(ctx, key, id)
+		action = "default"
+	case b.Enabled != nil:
+		found, err = a.mgr.store.SetEngineModelEnabled(ctx, key, id, *b.Enabled)
+		action = "enable"
+		if !*b.Enabled {
+			action = "disable"
+		}
+	default:
+		// An empty body must not be read as "switch it off", for the same reason the mode
+		// route refuses one.
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "enabled, selected or default is required"})
+		return
+	}
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		return
+	}
+	e.catalog.invalidate()
+
+	// The box is told next, and a failure here is REPORTED rather than logged: the row was
+	// written, so the panel would otherwise show the new selection while the engine keeps
+	// starting with the old one — which is the exact failure "publish the active set" exists to
+	// prevent, and it would only be noticed at the next cold start.
+	if perr := e.publishActiveSet(ctx); perr != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		return
+	}
+	a.audit(ctx, ident, "engine."+key+".model", action+" "+id)
+	// Detached: the fan-out dials every running workspace, and nobody is waiting for it. A
+	// workspace that misses the push catches up on the catalogue's own 10-minute TTL.
+	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, key)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
+// audit records one super-admin action against the catalogue. Same ledger, same shape as the
+// mode toggle next door.
+func (a engineAdminAPI) audit(ctx context.Context, ident store.Identity, action, target string) {
+	if a.mgr == nil || a.mgr.store == nil {
+		return
+	}
+	_ = a.mgr.store.InsertAudit(ctx, store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+		Action: action, Target: target, At: store.NowTS(),
+	})
 }
 
 // engineModeFromBody reads {mode} — or {enabled} from a client written against a two-valued

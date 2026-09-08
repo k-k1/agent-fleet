@@ -59,9 +59,15 @@ type EngineConn struct {
 	// https://<cp>/engine/image/v1.
 	BaseURL string
 	Token   string
-	// Models are the ids the STACK declared for this engine. The engine is asleep when this
-	// is read, so nothing may be asked of it (ADR 0053 / ADR 0071 decision 8).
+	// Models are the ids the CATALOGUE declares for this engine. The engine is asleep when
+	// this is read, so nothing may be asked of it (ADR 0053 / ADR 0071 decision 8). The FIRST
+	// is the one the engine will start with — sd-server holds one checkpoint, chosen by a
+	// startup flag — which is why the order matters and is not sorted here.
 	Models []string
+	// Sizes is the size list DECLARED per model id (ADR 0072 decision 2). Empty for a model
+	// whose catalogue entry says nothing, and for a Control Plane older than the catalogue,
+	// in which case sdcppSizes falls back to reading the id.
+	Sizes map[string][]string
 }
 
 // EngineLookup is the seam the Agent fills in. nil — the normal case — means this deployment
@@ -139,6 +145,7 @@ func (p *sdcppProvider) DefaultModel() string {
 // channel, so "transparent" is a request this route cannot meet, and Generate says so in the
 // warnings rather than this list implying otherwise.
 func (p *sdcppProvider) Caps(model string) Caps {
+	conn, _ := p.conn(context.Background())
 	if strings.TrimSpace(model) == "" {
 		model = p.DefaultModel()
 	}
@@ -146,7 +153,7 @@ func (p *sdcppProvider) Caps(model string) Caps {
 		// inpaint as well as edit: /v1/images/edits takes an optional `mask`, and a mask is
 		// the whole difference between the two ops.
 		Ops:   []Op{OpGenerate, OpEdit, OpInpaint},
-		Sizes: sdcppSizes(model),
+		Sizes: sdcppDeclaredSizes(conn, model),
 		// Measured with one input image and one mask. The endpoint has an `image[]` field for
 		// more, but a capability nobody has run is a promise, so this says one.
 		MaxInputs: 1,
@@ -154,13 +161,24 @@ func (p *sdcppProvider) Caps(model string) Caps {
 	}
 }
 
-// sdcppSizes is the size list for a checkpoint family, keyed off the declared model id.
+// sdcppDeclaredSizes prefers the catalogue's own declaration and falls back to reading the
+// model id (ADR 0072 decision 2, phase P0 item 10).
 //
-// Derived from the id rather than declared per model because the alternative is a stack
-// parameter listing pixel dimensions per checkpoint, and the ids the fleet stages are its own
-// naming. The engine ACCEPTS other sizes — `size` is a plain WIDTHxHEIGHT field — so this is
-// the set the tool offers, not a limit it enforces: an unlisted size is passed through and
-// whatever comes back is reported by the core as a warning if it differs.
+// The fallback is not dead code and is not going away soon: a catalogue row seeded from an
+// ADR 0071 stack declares no sizes at all, and a Control Plane older than the catalogue sends
+// none either. Guessing from the id is what those deployments have always had, and it is
+// better than an empty list — an empty Sizes reads as "this provider offers no sizes".
+func sdcppDeclaredSizes(conn EngineConn, model string) []string {
+	if s := conn.Sizes[model]; len(s) > 0 {
+		return s
+	}
+	return sdcppSizes(model)
+}
+
+// sdcppSizes is the size list for a checkpoint family, guessed from the model id. The engine
+// ACCEPTS other sizes — `size` is a plain WIDTHxHEIGHT field — so this is the set the tool
+// offers, not a limit it enforces: an unlisted size is passed through and whatever comes back
+// is reported by the core as a warning if it differs.
 func sdcppSizes(model string) []string {
 	m := strings.ToLower(model)
 	switch {

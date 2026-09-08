@@ -276,6 +276,55 @@ Fargate sizing for the ingest task. It stages the whole file on disk before uplo
 disk is the largest model the deployment can take in — 80 GiB covers the 22 GB FLUX checkpoint
 with room for the filesystem.
 
+### Running the ingest task by hand
+
+```
+aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+  --task-definition af-<stack>-ingest \
+  --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}' \
+  --overrides '{"containerOverrides":[
+     {"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…/resolve/main/x.gguf"},
+                                    {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
+     {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/x.safetensors"}]}]}'
+```
+
+`harness/ingest-model.sh` is the same thing with the sha256 and the license resolved for you;
+ADR 0072 phase P4 moves the whole flow into the Console.
+
+⚠️ **Overriding a command here takes ONE string**, because the `EntryPoint` is already
+`["sh","-c"]`. Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which does nothing
+and exits 0 — it reads as success and ran nothing (measured).
+
+**The sha256 is not optional decoration.** "The file got bigger" is what a truncated download
+also looks like, and a GGUF that is 99 % there loads and then answers nonsense. The value comes
+from the HF API's `?blobs=true` `siblings[].lfs.sha256`, which was verified against a real
+`sha256sum` of the downloaded file.
+
+**Where the file goes** is the ComfyUI layout (ADR 0071 decision 6, ADR 0072 decision 2):
+`llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`, `image/loras/`, `image/vae/`,
+`image/text_encoders/`, `image/diffusion_models/`. All three engines read the same tree, so a
+checkpoint ingested for sd-server is already where ComfyUI would look for it.
+
+## The model volume
+
+Both engine task definitions mount an ANONYMOUS host volume — an empty `Host`, no `SourcePath`.
+Both halves of that are measured, and both are counter-intuitive:
+
+- **a named `SourcePath` does NOT work.** `StorageConfiguration.storageSizeGiB` sizes the DATA
+  volume Managed Instances attaches (what the container runtime uses); an arbitrary host path
+  like `/var/lib/…` lands on the ROOT filesystem, which is much smaller. Measured: with
+  `SourcePath` the fetch died with "No space left on device" on a brand-new 120 GiB box, every
+  time, and the service never started at all.
+- **the price of the anonymous form is a fresh directory per task.** A box that MI keeps
+  (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart onto the
+  very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
+  never reclaimed, so four starts on one kept box filled the disk.
+
+ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `*ScaleInAfter` is left at the
+AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
+at, which is not documented and was not worth another GPU hour to find; `useLocalStorage`, where
+the 250 GB instance store is the whole disk, is where to pick it up (ADR 0072 open question 9).
+
 ## The engine table
 
 Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1

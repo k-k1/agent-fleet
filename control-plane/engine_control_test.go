@@ -176,6 +176,36 @@ func TestDecideEngineAction(t *testing.T) {
 			}),
 			testControlCfg(), engineActionNone, engineReasonOn,
 		},
+		// ADR 0072 decision 1(c). Without these three the placeholder container reaches
+		// RUNNING, never warms, and `running && !warmed` is not a failure state — so a
+		// `mode=on` deployment buys $1.26/hour for `sleep infinity` while the panel says
+		// "starting" for ever.
+		{
+			"on: an empty catalogue is not started at any price",
+			with(func(s *engineSnapshot) { s.state, s.mode, s.noModels = "stopped", engineModeOn, true }),
+			testControlCfg(), engineActionNone, engineReasonNoModel,
+		},
+		{
+			"on: an engine whose last model was disabled is stopped",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.noModels = "running", 1, engineModeOn, true
+			}),
+			testControlCfg(), engineActionStop, engineReasonNoModel,
+		},
+		{
+			"ondemand: demand over the threshold does not start an empty catalogue",
+			with(func(s *engineSnapshot) { s.state, s.windowUnits, s.noModels = "stopped", 9999, true }),
+			testControlCfg(), engineActionNone, engineReasonNoModel,
+		},
+		{
+			// The reason lands in the audit ledger next to a charge, so "the admin switched
+			// it off" must not be reported as "there was nothing to serve".
+			"off wins over an empty catalogue, so the ledger says why",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.noModels = "running", 1, engineModeOff, true
+			}),
+			engineControlCfg{cooldown: 15 * time.Minute}, engineActionStop, engineReasonAdminOff,
+		},
 	}
 	for _, c := range cases {
 		action, reason := decideEngineAction(now, c.snap, c.cfg)

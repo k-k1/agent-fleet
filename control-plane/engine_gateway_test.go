@@ -680,31 +680,49 @@ func TestParseEngineTableReadsBothRoles(t *testing.T) {
 
 // The context window the llm role is STARTED with travels in the table, because nobody
 // downstream can ask for it: llama-server holds it, and the whole design is that the box is
-// asleep when the launch menu is drawn. It is one pair per engine rather than per model —
-// one process, one gguf, one -c — so every id in `models` shares it.
+// asleep when the launch menu is drawn.
+//
+// Since ADR 0072 the window is per MODEL and the table's copy is the SEED of that (the row a
+// deployment upgrading from ADR 0071 already had). What the Agent reads comes from the
+// catalogue, and the engine-wide pair describes the model the engine will start with.
 func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	raw := `{"engines":[{"key":"llm","api":"chat","service":"s","capacityProvider":"cp",
 	 "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
 	 "models":["qwen3-coder-30b-a3b"], "contextTokens":32768,"maxOutputTokens":4096,
+	 "modelS3Key":"llm/qwen.gguf",
 	 "apiKeyParam":"","idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"}]}`
 	tab, err := parseEngineTable(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	d := tab.Engines[0]
-	if d.ContextTokens != 32768 || d.MaxOutputTokens != 4096 {
-		t.Fatalf("window = %d/%d", d.ContextTokens, d.MaxOutputTokens)
+	if d.ContextTokens != 32768 || d.MaxOutputTokens != 4096 || d.ModelS3Key != "llm/qwen.gguf" {
+		t.Fatalf("seed = %d/%d %q", d.ContextTokens, d.MaxOutputTokens, d.ModelS3Key)
 	}
-	row := engineCatalogRowFor(d)
+	row := engineCatalogRowFor(d, []store.EngineModel{{
+		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+	}})
 	if row["context_tokens"] != 32768 || row["max_output_tokens"] != 4096 {
 		t.Errorf("catalogue row = %v", row)
 	}
+	rows, _ := row["model_rows"].([]map[string]any)
+	if len(rows) != 1 || rows[0]["context_tokens"] != 32768 {
+		t.Errorf("per-model rows = %v", row["model_rows"])
+	}
 
-	// A stack from before the field says nothing, and the row must say nothing too. Reporting
-	// the zero would make the Agent advertise a context of 0, which is what turns opencode's
-	// auto-compaction off — worse than the silence it replaced.
-	old := engineCatalogRowFor(engineDef{Key: "llm", Provider: "llamacpp", Models: []string{"m"}})
+	// A catalogue entry from before the field says nothing, and the row must say nothing too.
+	// Reporting the zero would make the Agent advertise a context of 0, which is what turns
+	// opencode's auto-compaction off — worse than the silence it replaced.
+	old := engineCatalogRowFor(engineDef{Key: "llm", Provider: "llamacpp"},
+		[]store.EngineModel{{Role: "llm", ID: "m", Enabled: true}})
 	if _, ok := old["context_tokens"]; ok {
 		t.Errorf("an undeclared window was reported anyway: %v", old)
+	}
+
+	// Nothing enabled is not an engine with an empty model list: it is an engine that must not
+	// appear at all, or a launch menu offers a model whose every request answers 503.
+	if none := engineCatalogRowFor(d, nil); none != nil {
+		t.Errorf("an engine with an empty catalogue was offered: %v", none)
 	}
 }
