@@ -15,6 +15,12 @@ export const admin = {
   "admin.mode_mcp": "MCP 配布",
   "admin.mode_tts": "読み上げ",
   "admin.mode_pool": "スロット",
+  "admin.mode_engines": "推論エンジン",
+  "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
+  "admin.engines_state_prefix": "状態: ",
+  "admin.engines_models_sep": " / モデル: ",
+  "admin.engines_always_on_note": "常時稼働は GPU の箱を止めません（$1.26/時）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけ箱を買い、アイドルで自分で止まります。",
   // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
   // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
   "admin.group_tenants": "テナント",

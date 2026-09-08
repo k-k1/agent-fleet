@@ -799,9 +799,13 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3.
     a member's Antigravity quota on an image the fleet's own hardware was two minutes from
     serving**. The reason sdcpp is first in that order (ADR 0069, whose wallet pays) is exactly
     what the fallback inverts. Decision 5's fix closes this path too, since the call no longer
-    fails at 60 s. ⚠️ The fallback itself is worth keeping — it is right on a deployment whose
-    engine really is down — but **not distinguishing "would have worked if we waited" from
-    "genuinely unavailable" before spending a quota** remains open on the 0069 side.
+    fails at 60 s. ⚠️ The fallback itself was kept — it is right on a deployment whose engine
+    really is down, and refusing would only mean no picture. What was removed is the SILENCE:
+    a generation served by a fall-through now carries a warning naming what failed ahead of it
+    and saying that it ran on a different account's plan. Whose wallet pays is the one thing
+    the built-in order decides, so inverting it quietly is the part that was wrong. Decision
+    5's fix also makes "would have worked if we waited" much rarer: the provider now exhausts
+    its own 16-minute budget, so a failure there means genuinely unavailable.
 
 11. ✅ **Warm, the whole path works.** From the same session, through the CP gateway, the
     provider and the MCP tool:
@@ -826,6 +830,24 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3.
     **55 of them** the same day, with `in`/`out` and `measured:"exact"`, `kind:"opencode"`.
     That is the CP→Agent POST fixed to use `newAgentTransport()` in P0 measurement 11, working
     on the real thing.
+
+13. ✅ **Re-measured after the fix, the other half of the definition of done holds on real
+    hardware (2026-09-08).** `0.16.1-dev-2e501835` (decision 5's split) was deployed and
+    `generate_image` called once from **zero boxes** — with `sdcpp` named explicitly, so that a
+    failure could not spend a member's quota through the fall-through of measurement 10. In UTC:
+    - 01:03:30 the request → `engine image: started on demand`
+    - 01:04:15 `503 45.012s`, 01:05:06 `503 45.007s`, 01:05:57 `503 45.007s` — **folded three
+      times, each below the front end's 60 seconds**
+    - 01:06:22 `warmed up (ready)`. **Cold start 172 seconds** (a third point in the same band
+      as measurement 1's 197 s and measurement 9's 165 s)
+    - 01:06:41 **`200 38.547s`**
+    - **One tool call, 191.6 seconds.** 19 progress notifications, every gap 10.0 s, and the
+      answer was 1024×1024, 1,073,204 bytes, `provider:"sdcpp"`.
+    None of the three retries surfaced above the tool. **"One call returns a picture" holds,
+    once the waiting is moved from the CP to the caller.** edit (**5.2 s**) and inpaint
+    (**5.0 s**), both 512×512, passed on the same build, and that day's ledger holds
+    **three `tool.imagegen` rows, all `kind:"sdcpp"` and `ok:true`** — **no agy row**, i.e. no
+    fall-through happened. `engine.image` is still 0 rows.
 
 Also verified in P1:
 
@@ -885,6 +907,21 @@ Also verified in P1:
   af-sandbox, `generate_image` called from a real workspace's opencode session). 🔴 **The first
   attempt failed** — an ALB cuts a non-streaming request at 60 seconds (measurement 9) — which
   added one fix to P1: decision 5 now splits by role.
+- **P1.5 — the two holes real hardware found (2026-09-08).** Decision 5's split (measurement
+  9), making the fall-through say so (measurement 10), and **an on/off control in the
+  Console**. The last is not a new mechanism: the mode has always been the stored setting
+  `engine_<key>_mode`, which the gateway (`503 engine_off`), the catalogue (the engine
+  disappears) and the controller (stop it and keep it stopped) all read. Only the WRITING half
+  was missing, so the only way to switch an engine off was a stack parameter (`LlmMode` /
+  `ImageMode`) — a CloudFormation run, which is not what anyone reaches for while a GPU is
+  misbehaving. `GET /api/admin/engines` and `PUT /api/admin/engines/{key}` were added behind
+  super_admin, the same shape as TTS's `/api/admin/tts`. One thing differs: **Disabled stops
+  the box immediately.** TTS debounces it because a mistaken OFF→ON there costs a 2 GB pull and
+  80 seconds; a GPU is $1.26/hour and an undo window is time you pay for.
+  🔴 One defect surfaced while building it: `engineRuntimeState.mode` **only consulted the
+  stored setting when a controller existed**. Harmless in production, where one always does,
+  but it made "what mode is this engine in" depend on an unrelated collaborator. The setting is
+  now held by the state itself.
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and

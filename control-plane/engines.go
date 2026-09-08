@@ -81,11 +81,16 @@ func (d engineDef) api() string {
 // engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
 // demand counter and the key it presents upstream.
 type engineRuntimeState struct {
-	def    engineDef
-	ecs    *engineECS
-	ctrl   *engineController
-	demand *engineDemand
-	apiKey string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
+	def  engineDef
+	ecs  *engineECS
+	ctrl *engineController
+	// settings is where the mode lives. Held here rather than reached through ctrl, which is
+	// how it started: "what mode is this engine in" is a question about the engine, and making
+	// the answer depend on whether a controller happens to exist means an admin toggle writes
+	// a setting that nothing reads on any deployment that has no loop running. May be nil.
+	settings store.SettingsStore
+	demand   *engineDemand
+	apiKey   string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
 }
 
 // engineRegistry is every engine this deployment runs. Nil (or empty) is the normal case —
@@ -249,7 +254,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 				api: ecsc, key: d.Key, cluster: cluster,
 				service: d.Service, capacityProvider: d.CapacityProvider,
 			},
-			apiKey: readEngineAPIKey(ctx, ssmc, d),
+			apiKey:   readEngineAPIKey(ctx, ssmc, d),
+			settings: settings,
 		}
 		cfg := engineControlCfgFor(d)
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
@@ -285,8 +291,8 @@ func readEngineAPIKey(ctx context.Context, api engineSSMAPI, d engineDef) string
 
 // mode is the engine's current mode, the stored setting winning over the stack's default.
 func (e *engineRuntimeState) mode(ctx context.Context) string {
-	if e.ctrl != nil {
-		if v := e.ctrl.setting(ctx, engineSettingsFor(e.def.Key).mode); v != "" {
+	if e.settings != nil {
+		if v, _ := e.settings.GetSetting(ctx, engineSettingsFor(e.def.Key).mode); strings.TrimSpace(v) != "" {
 			return engineMode(v, true)
 		}
 	}

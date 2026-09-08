@@ -67,6 +67,29 @@ holds the **tenant-wide pronunciation dictionary**, which applies to everyone's 
 (a member's personal dictionary overrides the same spelling). When a product name or an
 in-house term is consistently mispronounced, ask the super_admin to add it there.
 
+## Inference engines (self-hosted GPUs — super_admin only)
+
+An **Inference engines** section appears in the Admin modal only where the deployment actually
+runs its own engines (`llamacpp` for conversation, `sdcpp` for images). Where it runs none, the
+item is not there at all.
+
+Each role takes one of three settings.
+
+| | What it does |
+|---|---|
+| **Disabled** | The engine disappears from the launch menu and from `generate_image`, and requests are refused with 503. The box stops right away. |
+| **On demand** | A GPU box is bought only when something asks, and it stops itself once nobody has used it for a while. **This is the default.** |
+| **Always on** | The box is never stopped. Answers are faster, but **you are billed while nothing is using it**. |
+
+"State" is not the setting you chose — it is what is actually running. Right after you press
+Disabled the mode is disabled and the state says stopping, because the box does not vanish the
+instant you press it. That is not a disagreement.
+
+⚠️ **The first request waits.** A request to a stopped engine answers after roughly three
+minutes, the time it takes to buy a box and load the model (the call itself completes in one
+go — nothing has to be retried). Before time-critical work you can warm it up by switching to
+Always on — **and remember to switch it back.**
+
 ## Controlling outbound traffic (egress — super_admin only)
 
 This is the **Traffic** section of the Admin modal. **It is super_admin only, so it does not appear

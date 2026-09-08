@@ -621,3 +621,63 @@ func TestHandleStatusReportsTheGate(t *testing.T) {
 		t.Fatalf("generate with the gate off = %d, want 403", rec.Code)
 	}
 }
+
+// A fall-through moves the bill onto a different account, and the built-in order exists to
+// decide exactly that. Measured on a live deployment (ADR 0071 P1): the self-hosted engine
+// failed on a cold start, `auto` produced the image on a member's Antigravity plan, and the
+// only trace was `provider: agy` — which is what a deliberate choice looks like too.
+func TestAutoSaysWhenItFellThroughToAnotherAccount(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	withStubProvider(t,
+		stubProvider{id: ProviderSdcpp, err: errors.New("the engine did not come up")},
+		stubProvider{id: ProviderAgy, res: Result{Provider: ProviderAgy,
+			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png", Width: 4, Height: 4}}}},
+	)
+
+	out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Provider != ProviderAgy {
+		t.Fatalf("provider = %q, want the fall-through to have produced it", out.Provider)
+	}
+	var got string
+	for _, w := range out.Warnings {
+		if strings.Contains(w, "fell back") {
+			got = w
+		}
+	}
+	if got == "" {
+		t.Fatalf("warnings = %v — a fall-through onto another account said nothing", out.Warnings)
+	}
+	if !strings.Contains(got, ProviderSdcpp) || !strings.Contains(got, "did not come up") {
+		t.Errorf("warning = %q, want it to name what failed and why", got)
+	}
+}
+
+// The mirror. Without it the check above would pass on a build that warns unconditionally,
+// and every ordinary generation would carry a warning about a failure that never happened.
+func TestAutoIsSilentWhenTheFirstProviderServed(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AF_USAGE_DIR", filepath.Join(home, "usage"))
+	withStubProvider(t,
+		stubProvider{id: ProviderSdcpp, res: Result{Provider: ProviderSdcpp,
+			Images: []Image{{Bytes: tinyPNG(t, 4, 4), MIME: "image/png", Width: 4, Height: 4}}}},
+		stubProvider{id: ProviderAgy},
+	)
+
+	out, err := Run(context.Background(), Job{Session: "slot01", SID: "sid-1",
+		Request: Request{Op: OpGenerate, Prompt: "a cat"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range out.Warnings {
+		if strings.Contains(w, "fell back") {
+			t.Errorf("warned about a fall-through that did not happen: %q", w)
+		}
+	}
+}

@@ -157,6 +157,10 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/engine/token", g.issueSessionToken)
 	mux.HandleFunc("GET /internal/engine/catalog", g.catalog)
 	mux.HandleFunc("/engine/{key}/v1/{path...}", g.serve)
+	// The super-admin toggle. Registered here rather than in its own register* because it
+	// needs the same registry, and building a second one would mean a second SSM read and two
+	// answers to "what mode is this engine in".
+	registerEngineAdminRoutes(mux, cfg, reg)
 }
 
 // --- token issue --------------------------------------------------------------

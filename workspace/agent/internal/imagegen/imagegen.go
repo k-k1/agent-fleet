@@ -354,19 +354,45 @@ func Run(ctx context.Context, job Job) (Stored, error) {
 			// second provider would spend more quota to hit the same broken disk.
 			return Stored{}, err
 		}
+		warnings := append(fallbackWarnings(name, attempts), res.Warnings...)
 		return Stored{
 			Files:       files,
 			Provider:    res.Provider,
 			Model:       res.Model,
 			Region:      res.Region,
 			Destination: res.Destination,
-			Warnings:    append(res.Warnings, requestWarnings(req, res, p.Caps(req.Model))...),
+			Warnings:    append(warnings, requestWarnings(req, res, p.Caps(req.Model))...),
 			CostUSD:     res.CostUSD,
 		}, nil
 	}
 	// Every candidate failed. Report them all: "codex is out of quota, and the local engine is
 	// not running" is actionable in a way that either half alone is not.
 	return Stored{}, errors.Join(attempts...)
+}
+
+// fallbackWarnings says out loud that this picture was NOT made by the provider the order
+// picked, and names what went wrong with the one(s) ahead of it.
+//
+// It exists because of a measured accident (ADR 0071 P1, 2026-09-07): the fleet's own engine
+// failed on a cold start and `auto` fell through to agy, which produced the image against a
+// MEMBER's Antigravity plan. Everything worked as designed and the result said
+// `provider: agy` — but nobody was told that a plan had been spent because something failed,
+// as opposed to because that was the plan. Whose wallet paid is exactly what the built-in
+// order is there to decide, so silently inverting it is the thing that must not be silent.
+//
+// A warning rather than a refusal: on a deployment whose engine really is down, falling
+// through is the RIGHT answer and refusing would just mean no picture.
+func fallbackWarnings(used string, attempts []error) []string {
+	if len(attempts) == 0 {
+		return nil
+	}
+	reasons := make([]string, 0, len(attempts))
+	for _, err := range attempts {
+		reasons = append(reasons, err.Error())
+	}
+	return []string{fmt.Sprintf(
+		"fell back to %s because the provider(s) ahead of it failed: %s — this ran on a different account's plan than the preferred route",
+		used, strings.Join(reasons, "; "))}
 }
 
 // normalizeRequest fills in the defaults the wire may omit. It never narrows what was asked
