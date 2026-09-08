@@ -351,7 +351,11 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    and a per-provider `tool.imagegen`; ADR 0029's enumeration is appended). No unit price is
    attached (a token here has no dollar value). Instance hours carry the cost-allocation tags
    `af-role=engine-llm` / `engine-image` and are **shown as component cost, never apportioned**
-   (ADR 0048).
+   (ADR 0048). **The second half of that — the showing — had no implementation until
+   2026-09-08**: the tags were written, but the CP only ever read the `af-membership` axis, so
+   engine GPU hours sat in the shared bucket as the same `Amazon EC2 - Compute` line as the idle
+   slot pool (measured at 19% of the bill). ADR 0048 decision 15 closes it with a second
+   Cost Explorer request grouped by `af-role`.
 
 10. **Provenance is part of the result (0069 decision 11).** Providers are `llamacpp` / `sdcpp`
     / `comfy`; the model is **the file name and its sha256** (the ingestion job also keeps the

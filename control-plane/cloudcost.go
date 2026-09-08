@@ -166,6 +166,28 @@ func (p *cloudCostPoller) pollOnce(ctx context.Context) {
 		return
 	}
 	log.Printf("cloud cost: %d rows over %d days", len(rows), len(days))
+	p.pollRoles(ctx)
+}
+
+// pollRoles fetches and stores the second cut — the shared bucket by af-role.
+//
+// Separate from the pass above, and deliberately AFTER it: this is the request that can be
+// dropped. If it fails, the per-member view is already stored and the shared card simply
+// falls back to its service breakdown; the reverse (letting a by-role failure abort the
+// invoice everyone is charged from) would be the wrong way round.
+func (p *cloudCostPoller) pollRoles(ctx context.Context) {
+	rows, days, err := p.fetchByRole(ctx)
+	if err != nil {
+		// Not stored in lastErr: that field is what the Console prints next to the
+		// numbers, and this cut is an extra breakdown, not the numbers.
+		log.Printf("cloud cost by role: %v", err)
+		return
+	}
+	if err := p.mgr.store.PutCloudCostByRole(ctx, days, rows); err != nil {
+		log.Printf("cloud cost by role: storing %d rows: %v", len(rows), err)
+		return
+	}
+	log.Printf("cloud cost by role: %d rows over %d days", len(rows), len(days))
 }
 
 // fetch asks Cost Explorer for the trailing window in ONE request, grouped by
@@ -276,6 +298,136 @@ func foldSystemMemberships(rows []store.CloudCostRow, system map[string]bool) []
 		out = append(out, row)
 	}
 	return out
+}
+
+// fetchByRole asks Cost Explorer for the SAME window and the SAME money, cut by what it
+// was for instead of by whose it was: one more request, grouped by (af-role, service) and
+// filtered to exactly the line items that make up the shared bucket.
+//
+// Why a second request at all. Cost Explorer's GroupBy takes two axes and no more, and the
+// first pass has already spent both on (af-membership, service). Nothing derives this from
+// what is already stored — an engine's GPU hours and an unclaimed slot's are both
+// "Amazon EC2 - Compute" with an empty membership, and no arithmetic on that table can tell
+// them apart. It doubles this feature's Cost Explorer bill from ~$1.2 to ~$2.4 a month.
+//
+// The FILTER is what makes the two tables safe to show on one screen. Without it, a slot a
+// member is holding would appear both in their attributed total and under role `slot`, and
+// the shared card would add up to more than the shared bucket. With it, the row set here is
+// the row set the other pass stored with an empty membership:
+//
+//   - af-membership ABSENT — the shared bucket proper.
+//   - OR af-membership EQUALS one of the reserved system memberships — the golden bake's
+//     seed and probe, which carry the tag like anybody but are the deployment keeping its
+//     own snapshot warm, and which foldSystemMemberships moves into shared at ingest. When
+//     that set cannot be resolved the branch is dropped rather than guessed, and the two
+//     totals differ by the seed's spend instead of by everything.
+func (p *cloudCostPoller) fetchByRole(ctx context.Context) ([]store.CloudCostRoleRow, []string, error) {
+	now := p.now().UTC()
+	start := now.AddDate(0, 0, -(p.window - 1)).Format(usageDayFmt)
+	end := now.AddDate(0, 0, 1).Format(usageDayFmt)
+
+	system, err := p.mgr.systemMembershipIDs(ctx)
+	if err != nil {
+		log.Printf("cloud cost by role: system memberships could not be resolved, their spend "+
+			"will be missing from the by-role total: %v", err)
+	}
+	filter := sharedBucketFilter(system)
+	var rows []store.CloudCostRoleRow
+	seen := map[string]bool{}
+	var page *string
+	for {
+		out, err := p.ce.GetCostAndUsage(ctx, &costexplorer.GetCostAndUsageInput{
+			TimePeriod:    &cetypes.DateInterval{Start: aws.String(start), End: aws.String(end)},
+			Granularity:   cetypes.GranularityDaily,
+			Metrics:       []string{"UnblendedCost", "AmortizedCost"},
+			NextPageToken: page,
+			// The same expression on every page: a filter that changed mid-pagination
+			// would silently answer a different question for the later days.
+			Filter: filter,
+			GroupBy: []cetypes.GroupDefinition{
+				{Type: cetypes.GroupDefinitionTypeTag, Key: aws.String(runtime.EC2TagRole)},
+				{Type: cetypes.GroupDefinitionTypeDimension, Key: aws.String("SERVICE")},
+			},
+		})
+		if err != nil {
+			return nil, nil, fmt.Errorf("cost explorer by role (%s..%s): %w", start, end, err)
+		}
+		for _, r := range out.ResultsByTime {
+			day := aws.ToString(r.TimePeriod.Start)
+			seen[day] = true
+			for _, g := range r.Groups {
+				if row, ok := costRoleRowFrom(day, r.Estimated, g); ok {
+					rows = append(rows, row)
+				}
+			}
+		}
+		if out.NextPageToken == nil || aws.ToString(out.NextPageToken) == "" {
+			break
+		}
+		page = out.NextPageToken
+	}
+	days := make([]string, 0, len(seen))
+	for d := range seen {
+		days = append(days, d)
+	}
+	return rows, days, nil
+}
+
+// sharedBucketFilter builds the Cost Explorer expression that selects the shared bucket:
+// everything without an af-membership, plus the reserved memberships that are folded into
+// shared at ingest.
+//
+// The Or is dropped when there is nothing to add to it. Cost Explorer rejects a Tags filter
+// with an empty Values list, and an Or with one branch is the branch — sending either shape
+// would fail the whole request over a deployment that simply has no golden bake yet.
+func sharedBucketFilter(system map[string]bool) *cetypes.Expression {
+	absent := &cetypes.Expression{Tags: &cetypes.TagValues{
+		Key:          aws.String(runtime.EC2TagMembership),
+		MatchOptions: []cetypes.MatchOption{cetypes.MatchOptionAbsent},
+	}}
+	if len(system) == 0 {
+		return absent
+	}
+	ids := make([]string, 0, len(system))
+	for id := range system {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids) // a map's order would make the request (and its tests) non-deterministic
+	return &cetypes.Expression{Or: []cetypes.Expression{
+		*absent,
+		{Tags: &cetypes.TagValues{
+			Key:          aws.String(runtime.EC2TagMembership),
+			Values:       ids,
+			MatchOptions: []cetypes.MatchOption{cetypes.MatchOptionEquals},
+		}},
+	}}
+}
+
+// costRoleRowFrom turns one by-role Cost Explorer group into a stored row.
+//
+// Unlike costRowFrom, an EMPTY role is kept and is not an error: "af-role$" with nothing
+// after it is NAT, the load balancer, RDS, DNS and tax — the part of the bill that carries
+// no role and never can. Dropping it would leave the shared card unable to say what the
+// residual is, which is the number a reader most wants next to the engine's.
+func costRoleRowFrom(day string, estimated bool, g cetypes.Group) (store.CloudCostRoleRow, bool) {
+	if len(g.Keys) < 2 {
+		return store.CloudCostRoleRow{}, false
+	}
+	role := strings.TrimPrefix(g.Keys[0], runtime.EC2TagRole+"$")
+	if role == g.Keys[0] {
+		// Not the key we asked for — refuse rather than guess, exactly as costRowFrom does.
+		return store.CloudCostRoleRow{}, false
+	}
+	unblended, currency := costAmount(g.Metrics["UnblendedCost"])
+	amortized, _ := costAmount(g.Metrics["AmortizedCost"])
+	if unblended == 0 && amortized == 0 {
+		return store.CloudCostRoleRow{}, false
+	}
+	return store.CloudCostRoleRow{
+		Day: day, Role: role, Service: g.Keys[1],
+		Unblended: unblended, Amortized: amortized,
+		Currency: currency, Estimated: estimated,
+	}, true
 }
 
 // costRowFrom turns one Cost Explorer group into a stored row, or reports that it is not
@@ -409,6 +561,48 @@ type cloudCostDay struct {
 type cloudCostService struct {
 	Service   string `json:"service"`
 	Unblended int64  `json:"unblended_micro"`
+}
+
+// cloudCostRole is one row of the shared bucket's by-role breakdown: an af-role value, the
+// group it belongs to, and its money. Both identifiers are stable keys the Console
+// translates — never prose, and never an AWS service name.
+type cloudCostRole struct {
+	Role      string `json:"role"`
+	Group     string `json:"group"`
+	Unblended int64  `json:"unblended_micro"`
+}
+
+// cloudCostGroup is the same money one level up: the four things the shared bill is made
+// of. This is what answers "how much are the engines costing us", which the service
+// breakdown structurally cannot — an engine's GPU hours and an unclaimed slot's are the
+// same AWS service.
+type cloudCostGroup struct {
+	Group     string `json:"group"`
+	Unblended int64  `json:"unblended_micro"`
+}
+
+// sharedRoleBreakdown aggregates the by-role rows into the two levels the shared card
+// draws. Both are computed here rather than in the Console so that the group a role
+// belongs to has exactly one definition (runtime.CostRoleGroup) and the two levels can
+// never disagree about a total.
+func sharedRoleBreakdown(rows []store.CloudCostRoleRow) ([]cloudCostRole, []cloudCostGroup) {
+	byRole := map[string]int64{}
+	byGroup := map[string]int64{}
+	for _, r := range rows {
+		byRole[r.Role] += r.Unblended
+		byGroup[runtime.CostRoleGroup(r.Role)] += r.Unblended
+	}
+	roles := make([]cloudCostRole, 0, len(byRole))
+	for role, v := range byRole {
+		roles = append(roles, cloudCostRole{Role: role, Group: runtime.CostRoleGroup(role), Unblended: v})
+	}
+	sort.Slice(roles, func(i, j int) bool { return roles[i].Unblended > roles[j].Unblended })
+	groups := make([]cloudCostGroup, 0, len(byGroup))
+	for g, v := range byGroup {
+		groups = append(groups, cloudCostGroup{Group: g, Unblended: v})
+	}
+	sort.Slice(groups, func(i, j int) bool { return groups[i].Unblended > groups[j].Unblended })
+	return roles, groups
 }
 
 // myCloudCost (GET /api/cost/me?from=&to=) — the signed-in member's OWN attributed
@@ -567,6 +761,22 @@ func (a adminAPI) cloudCost(w http.ResponseWriter, r *http.Request) {
 		}
 		resp["shared_micro"] = sharedMicro
 		resp["shared_services"] = sortedCostServices(byService)
+		// The same money by role. Only here, under the same super_admin gate as the
+		// service breakdown: it is the deployment's own infrastructure either way.
+		//
+		// A deployment whose poller has never landed the second request — an older CP, or
+		// one whose extra Cost Explorer call failed — simply has no rows, and the Console
+		// draws the service breakdown alone rather than an empty section.
+		roleRows, err := a.mgr.store.ListCloudCostByRole(r.Context(), from, to)
+		if err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+		if len(roleRows) > 0 {
+			roles, groups := sharedRoleBreakdown(roleRows)
+			resp["shared_roles"] = roles
+			resp["shared_groups"] = groups
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

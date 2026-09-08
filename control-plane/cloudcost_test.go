@@ -151,6 +151,12 @@ func (f *fakeCE) GetCostAndUsage(_ context.Context, in *costexplorer.GetCostAndU
 	if f.err != nil {
 		return nil, f.err
 	}
+	// Out of queued pages = a failed request, not a panic. A pass now makes two requests
+	// (by member, then by role), and "the second one failed" is a case with its own
+	// behaviour worth testing rather than an index out of range.
+	if len(f.pages) == 0 {
+		return nil, fmt.Errorf("fakeCE: no page queued for this request")
+	}
 	out := f.pages[0]
 	f.pages = f.pages[1:]
 	return &out, nil

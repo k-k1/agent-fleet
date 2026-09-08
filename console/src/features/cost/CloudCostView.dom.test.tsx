@@ -158,6 +158,82 @@ describe("CloudCostAdminView", () => {
     expect(text()).not.toContain("共有（割り当てなし）");
   });
 
+  // The by-role cut (ADR 0048 decision 15). Its whole reason to exist is that the service list
+  // CANNOT answer "what are the engines costing": an engine's GPU hours and an unclaimed slot's
+  // are both "Amazon EC2 - Compute" with no membership, so on the service list they are one
+  // anonymous line. Measured on af-sandbox, the engines were 19% of the bill while invisible.
+  it("names the engines and the speech engine inside the shared bucket", async () => {
+    api.mockResolvedValue({
+      members: [],
+      attributed_micro: 0,
+      shared_micro: 7_000_000,
+      shared_services: [{ service: "Amazon Elastic Compute Cloud - Compute", unblended_micro: 5_000_000 }],
+      shared_groups: [
+        { group: "engine", unblended_micro: 5_000_000 },
+        { group: "platform", unblended_micro: 1_800_000 },
+        { group: "tts", unblended_micro: 200_000 },
+      ],
+      shared_roles: [
+        { role: "engine-llm", group: "engine", unblended_micro: 4_700_000 },
+        { role: "", group: "platform", unblended_micro: 1_800_000 },
+        { role: "engine-models", group: "engine", unblended_micro: 300_000 },
+        { role: "tts-engine", group: "tts", unblended_micro: 200_000 },
+      ],
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    expect(text()).toContain("何のための費用か"); // the positive control for the absence test below
+    expect(text()).toContain("推論エンジン");
+    expect(text()).toMatch(/\$5\.00/);
+    expect(text()).toContain("音声合成エンジン");
+    // The residual has to be named rather than left blank: "what is left after the engines" is
+    // the comparison the reader is making, and an unlabelled row answers it with nothing.
+    expect(text()).toContain("基盤（割り当て不可）");
+    expect(text()).toContain("役割タグなし");
+    // Per-role detail sits behind a disclosure, but <details> renders its children either way,
+    // so the rows are in the DOM and the labels are the thing worth holding down.
+    expect(text()).toContain("推論エンジン（LLM）");
+    expect(text()).toContain("モデル置き場");
+    // The service list stays: it is the same money by a different axis, and it is what makes an
+    // unexpected AWS line item visible at all.
+    expect(text()).toContain("Amazon Elastic Compute Cloud - Compute");
+  });
+
+  // An af-role this build has no wording for must show the raw tag value. A blank row, or the
+  // money silently joining a bucket it does not belong to, is how a new stack's cost becomes
+  // something nobody ever asks about.
+  it("falls back to the raw tag value for a role it does not know", async () => {
+    api.mockResolvedValue({
+      members: [],
+      attributed_micro: 0,
+      shared_micro: 1_000_000,
+      shared_services: [],
+      shared_groups: [{ group: "other", unblended_micro: 1_000_000 }],
+      shared_roles: [{ role: "future-thing", group: "other", unblended_micro: 1_000_000 }],
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    expect(text()).toContain("future-thing");
+    expect(text()).toContain("その他");
+  });
+
+  // An older Control Plane, or one whose extra Cost Explorer request keeps failing, sends no
+  // by-role keys at all. The section must then be absent rather than an empty list under a
+  // heading that promises an answer.
+  it("draws no by-role section when the response has none", async () => {
+    api.mockResolvedValue({
+      members: [],
+      attributed_micro: 0,
+      shared_micro: 9_000_000,
+      shared_services: [{ service: "Amazon Route 53", unblended_micro: 9_000_000 }],
+      meta: meta(),
+    });
+    await mount(<CloudCostAdminView tenants={tenants} isSuper={true} />);
+    expect(text()).toContain("共有インフラ");
+    expect(text()).not.toContain("何のための費用か");
+    expect(host!.querySelectorAll("details.cc-roles").length).toBe(0);
+  });
+
   it("says the numbers may be incomplete on an unverified runtime", async () => {
     api.mockResolvedValue({
       members: [],

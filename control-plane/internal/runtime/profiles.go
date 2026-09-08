@@ -9,6 +9,8 @@
 // types declared here.
 package runtime
 
+import "strings"
+
 // Values for WorkspaceSizing.MemMeaning / DiskMeaning. Kept as short strings rather
 // than booleans because there are three disk answers, not two, and a boolean pair
 // would have to be re-read every time a fourth runtime appears.
@@ -246,6 +248,63 @@ const (
 	costCentreIdlePool = "idle_pool" // warm slots nobody is holding
 	costCentreCP       = "cp"        // the control plane's own task
 	costCentreTax      = "tax"
+	// No engine / tts centre here on purpose. CostProfile is static per runtime, but
+	// whether a deployment HAS an inference or speech engine is a stack it may or may not
+	// have adopted (acrt runs 50-tts and not 60-engines). The shared card names those from
+	// the data instead — a role with no spend simply has no row (ADR 0048 decision 15).
+)
+
+// CostRoleGroup buckets an `af-role` tag value into the four things the shared bill is
+// actually made of (ADR 0048 decision 15). The Cost Explorer poller groups the shared
+// bucket by this key; this is what turns a list of tag values into an answer.
+//
+// It lives here, next to the role constants themselves, so that adding a role and
+// forgetting to place it is a one-file mistake rather than a two-package one. The engine
+// and TTS values are the exception — they are written by CloudFormation
+// (`60-engines.yaml`, `50-tts.yaml`), not by this package — so they are matched as
+// literals and the prefix rule covers a third engine role arriving without a code change.
+//
+// An unrecognised role deliberately becomes CostRoleGroupOther rather than being folded
+// into the platform residual: a new tag value showing up as "other" is a question, while
+// the same money quietly joining NAT and RDS is not.
+func CostRoleGroup(role string) string {
+	switch role {
+	case "":
+		// No af-role at all: NAT, ALB, RDS, Route53, tax. Not a gap — these cannot carry
+		// one (a NAT gateway's bytes do not know who asked for them).
+		return CostRoleGroupPlatform
+	case ttsEngineRole:
+		return CostRoleGroupTTS
+	case ec2RoleHome, ec2RoleSlot, ec2RoleBackup, ec2RoleQuarantined,
+		EC2RoleGolden, EC2RoleGoldenCandidate, EC2RoleGoldenRejected:
+		// Workspace infrastructure that no member is holding right now: unclaimed warm
+		// slots, the golden snapshot, orphaned homes and backups. Everything claimed
+		// carries af-membership and is answered by the per-member view instead.
+		return CostRoleGroupPool
+	}
+	if strings.HasPrefix(role, engineRolePrefix) {
+		return CostRoleGroupEngine
+	}
+	return CostRoleGroupOther
+}
+
+// The groups CostRoleGroup returns. Identifiers, not prose: the Console translates them.
+const (
+	CostRoleGroupEngine   = "engine"   // engine-llm / engine-image / engine-models / engine-logs
+	CostRoleGroupTTS      = "tts"      // tts-engine
+	CostRoleGroupPool     = "pool"     // workspace resources nobody is holding
+	CostRoleGroupPlatform = "platform" // no af-role: NAT, ALB, RDS, DNS, tax
+	CostRoleGroupOther    = "other"    // a tag value this build does not know
+)
+
+const (
+	// engineRolePrefix is what 60-engines.yaml stamps on every billed resource of the
+	// inference stack: the capacity providers, the services, the model bucket and the
+	// log group.
+	engineRolePrefix = "engine-"
+	// ttsEngineRole is 50-tts.yaml's, and it is NOT `engine-tts` — renaming it now would
+	// split its history in the bill, where the old value keeps the spend it already has.
+	ttsEngineRole = "tts-engine"
 )
 
 // CostProfile — docker: the operator's own hardware. There is no invoice to read.
