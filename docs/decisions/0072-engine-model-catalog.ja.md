@@ -570,3 +570,271 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
   Kontext-dev / FLUX.2-dev・klein 4B・9B / Qwen-Image / Z-Image-Turbo の 11 件、Docker Hub の
   `vllm/vllm-openai:latest`（`full_size` 9.7 GB）、stable-diffusion.cpp `README.md` の対応
   モデルの節（日付つきの更新履歴）
+
+## レビュー（2026-09-08・P0 着手前）
+
+0071 のレビューと同じ流儀で、「決定 → 根拠 → 実測」の筋と、実測から引けない結論を引いて
+いないかを疑った。起草者とは別のセッションで、本文の「既に持っている権限」「数 KB」「CP が
+拒否する」の類は**コードと AWS の API で読み直した**。結論から書く: **承認（P0 着手可）を
+提案する。ただし決定 2・5・6・7・10 の 5 箇所は、レビューで前提が覆ったか、CP に無い権限を
+前提にしているので、P0 のコードを書く前に本文を下の提案どおり改めること。** 起草者が「測って
+から決める」に回した未解決 1 の 4 点は、**このコンテナの CPU で全部解けた**（R1）——利用者の
+判断で P1 は後回しだが、P1 を止める理由はもう無い。本文で最も重い見落としは、**CP のタスク
+ロールに S3 の権限が 1 つも無い**ことで、決定 6（マニフェストを読む）と決定 7（S3 のファイルを
+消す）がそれに気づかずに書かれている（R3）。
+
+### レビューで測ったこと・確かめたこと
+
+- **R1. ルーターモードの 4 点（未解決 1）を CPU で測った。** llama.cpp の公式ビルド
+  `b10853`（`llama-b10853-bin-ubuntu-x64`、`version: 0.4.0-dev`）に、`ggml-org/models` の
+  `tinyllamas/stories260K.gguf`（**1.1 MB**）を `alpha.gguf` / `beta.gguf` の 2 名で置き、
+  `--models-dir` + `--models-preset`（`[*] c = 512`、`[alpha] c = 256, load-on-startup = true`）+
+  `--models-max 1` で起動した。数字はすべてこの構成での実測である。
+  1. **(a) 空の `--models-dir` で起動し、`/health` は `{"status":"ok"}`**。`/models` と
+     `/v1/models` は `{"data":[]}`。無い id への要求は **`400 "model 'nope' not found"`**
+     （404 ではない）、`model` の無い要求は `400 "model name is missing from the request"`。
+     決定 1 の「llm 役は空で listen」は成立する。🔴 同時に、**`/health` は warm の根拠に
+     ならない**（0 モデルで ok を返す）——決定 3 の「`GET /models` の `loaded` を warm とする」は
+     正しく、逆に `/health` を warm と読む今日のコードはルーターでは嘘になる。
+  2. **(b) autoload 中の要求は待たされる。** 未ロードの `beta` へ要求すると、ログに
+     `ensure_model: waiting until model name=beta is fully loaded...` と出て、ロード後に
+     **200 で本文が返った**（蹴られない）。決定 3 の「心拍で握る」だけで足り、`/models/load` を
+     先に叩く分岐は要らない。
+  3. **(c) `--models-max 1` で 2 つ目を要求すると、1 つ目を降ろして載せる。** ログ:
+     `models_max reached, request for name=beta queued at position 1` →
+     `tick: evicting idle LRU name=alpha for a queued request` → `stopping model instance
+     name=alpha`。`/models` の `status` は `alpha: unloaded / beta: loaded` に入れ替わり、
+     `alpha` を要求すれば元に戻る（両方向とも 200）。降ろしてから載せるので、VRAM が二重に
+     なる区間は無いはずだが、**GPU での確認は残る**（「idle LRU」が生成中のモデルをどう扱うかも
+     未測）。子は**別プロセス**で、ルーターがループバックの空きポート（`--port 51219`）に
+     `--alias alpha --ctx-size 256 --model …` で spawn する——`/models` の `status.args` に
+     そのまま出る。ルーターに `--api-key` を渡しても**子には渡らず**、子のポートの `/health` は鍵無しで 200 を返した——届くのはタスクの netns の中だけである。
+  4. **(d) `stream_options.include_usage` の `usage` はルーター経由でも最後のチャンクに来る**
+     （`"usage":{"completion_tokens":4,"prompt_tokens":43,…}` が 1 回、`[DONE]` の前）。
+     ストリーミングでも非ストリーミングでも **`model` はカタログ id（`beta` / `alpha`）**で
+     返る。**窓はモデル毎に効いた**: `/props?model=alpha` が `n_ctx: 256`、`beta` が `512`
+     （`[*]` から）。
+- **R2. SSM の 3 点。** (a) CP のタスクロールは `parameter/af-ws/*` に
+  `ssm:PutParameter` / `GetParameter` / `GetParameters` / `DeleteParameter` /
+  `AddTagsToResource` を持つ（`20-platform.yaml` の `SsmWorkspaceParams`）——決定 2 の「既に
+  持っている」は正しい。(b) **葉と子は共存できる**: `/af-ws/<x>` を作ってから `/af-ws/<x>/child`、
+  逆順の両方が通った（開発配備で作って消した）。`/af-ws/engines` の下に
+  `/af-ws/engines/<key>/active` を置く形は成立する。(c) 🔴 **Standard tier の上限は 4,096
+  文字**——4,200 文字の `PutParameter` は `ValidationException: Standard tier parameters
+  support a maximum parameter value of 4096 characters` で断られた。Advanced tier は 8 KB で
+  1 本 $0.05/月。今日のエンジン表は 666 バイトである。本文の「数 KB」は 4 KB の壁を知らずに
+  書かれている。
+- **R3. CP タスクロールの現物（`20-platform.yaml`）。** ECS は `CreateService` / `UpdateService` /
+  `DeleteService` / `DescribeServices` / `ListServices` / `RegisterTaskDefinition` /
+  `DeregisterTaskDefinition` / `DescribeTaskDefinition` / `DescribeTasks` / `ListTasks` /
+  `TagResource`（資源 `*`）で、**`ecs:RunTask` は無い**。`iam:PassRole` は `ExecRole` と
+  `WsTaskRole`（`ecs-tasks` 宛）と `af-*-slot`（`ec2` 宛）。**S3 のアクションは 1 つも無い**
+  ——モデルバケットの `GetObject` も `DeleteObject` も無い。したがって決定 6 に要るのは
+  `ecs:RunTask`（family 限定）と `iam:PassRole`（**`IngestTaskRole` だけ**——実行ロールの
+  PassRole は既にある）で、本文の「取り込みのタスクロールと実行ロール」は半分余計。一方、
+  決定 6 の「`upload` コンテナがマニフェストを書いてから `engine_models` に行を作る」（CP が
+  マニフェストを読む）と決定 7 の「削除（S3 のファイルも消す）」は、**CP に無い権限を使って
+  いる**。
+- **R4. テンプレートの予算（問い 3）。** `60-engines.yaml` は **50,774 バイト（残り 426）**。
+  廃止する 12 パラメータは **2,558 バイト**（llm 6 つ 1,475・image 4 つ 1,083）、旧コマンド
+  ライン（`-m` / `--alias` / `-c`）とエンジン表の `models` / `contextTokens` で約 450——
+  **空く余白は約 3,400 バイト**。足すものの概算: `LlmEnabled` / `ImageEnabled` 350、
+  `EngineTaskRole` の `GetParameter` 250、`ImageEngine` と `ImageComfyTag` のパラメータ＋条件＋
+  `!If` ×4（イメージ・entrypoint・コマンド・表の `health`）1,100、CP 向け `AWS::IAM::Policy`
+  800 と表の `ingest` ブロック 250、一般化した fetch サイドカー（SSM 読み・`jq`・ループ・
+  preset・コマンドライン）は今日の 648 に対して約 1,800 で **2 役に複製すると +2,300**、
+  プレースホルダのラッパー ×2 で 400——**合計 約 5,450**。差し引き **約 2,000 バイトの超過**。
+  サイドカーの本文を `Mappings` に 1 本置いて両役から `!FindInMap` で引けば +1,200 に縮み、
+  超過は約 950 になる。**変更セットは壁に入らない**が、コメントが **15,568 バイト**、
+  パラメータの Description が約 5,500 バイトあるので、ボリュームの 2 つの実測注とハーネス向けの
+  `run-task` レシピ（合計 3 KB 強）を `PARAMETERS-60-engines.md` へ移せば入る。`env.sh` の
+  `af_cfn_deploy` は 51,200 超で S3 経由に切り替わるが、CI の case 3b-2 が壁で落とすので
+  それは経路ではない。もう 1 つ: **`EcrComfyUri` は `20-platform` に無い**（ECR は
+  `af-control-plane` / `af-workspace` / `af-voicevox` / `af-llamacpp` / `af-sdcpp` の 5 つ）。
+  決定 4 の `!If` は `20-platform`（22,530 バイト。余裕はある）にリポジトリ 1 つと、
+  `standup.sh` の images 段に自前イメージの複製を足して初めて成立する。
+- **R5. イメージの中身。** sd-server の `master-cuda` は `nvidia/cuda:*-cudnn-runtime-ubuntu*`
+  ベース（上流 `docker/Dockerfile.cuda`。`ENTRYPOINT /sd-cli`、`libgomp1` を apt で足すだけ）
+  なので **`sh` はある**——決定 1 のプレースホルダ（`sh -c '… sleep infinity'`）は同じ
+  イメージで書ける。fetch サイドカーの `public.ecr.aws/aws-cli/aws-cli:latest` には
+  **`jq`・`python3`・`bash`・`sh` が入っている**（`crane export` で確認）ので、active set は
+  JSON のままサイドカーで読める。
+- **R6. コントローラの現物（`engine_control.go`）。** `decideEngineAction` は `mode=on` で
+  desired ≥ 1 なら何もしない（`engineReasonOn`）。起動期限は **ondemand かつ `starting`** に
+  しか効かず、`running` で `warmed()` が false のままの状態は**失敗にならず、5 秒間隔で
+  永遠に見に行く**（`tick` の `engineControlBusyInterval`）。決定 1 のプレースホルダ
+  （`sleep infinity`）が RUNNING になると、ondemand ではゲートウェイが起こさない限り無害だが、
+  **`mode=on` の配備では管理者が「モデル無し」の箱を $1.26/時で買い続け、パネルは永遠に
+  「準備中」**を出す。
+- **R7. `generate_image` の現物。** `imagegen.Request` には **`Model` が既にあり**（「Empty
+  means the provider's own default」）、`Caps(model)` は (provider, model) 毎——決定 5 の
+  `model` 引数は 0069 の形に収まる。`loras` に相当するものは `Request` にも `Caps` にも無い。
+  ツールの引数は「**本当に選べるときだけ出す**」規則で作られており（`provider` は経路が
+  2 つ以上のときだけ、`aspect_ratio` は経路の和集合）、`model` 引数は今日**無い**。
+  Agent のカタログは tools/list（**毎ターン**）の経路で 10 分 TTL、Agent の `POST /engine/usage`
+  （`routes.go`）は CP → Agent の逆経路として**既にある**——決定 7 の `catalog-changed` は
+  同じ形で作れる。`opencode.ApplyEngineChange` と `engineProviderEntry`（モデル単位）も本文の
+  とおり在る。
+- **R8. HF の現況（本日）。** FLUX.1-schnell は `license: apache-2.0`・`gated: auto`（本文の
+  とおり）、FLUX.2 klein 4B と Z-Image-Turbo は `apache-2.0`・`gated: false`。🔴 **FLUX.1-dev と
+  SD3.5 Medium は `cardData.license` が `"other"`** で、実体は `license_name`
+  （`flux-1-dev-non-commercial-license` / `stabilityai-ai-community`）にある。決定 2 の
+  マニフェストが `license`（`cardData.license`）だけを写すと、**非商用の 2 つが「other」と
+  だけ書かれて出る**。
+- **R9. `useLocalStorage` は置き換えではなく更新で効く。** `AWS::ECS::CapacityProvider` の
+  スキーマで create-only なのは `Name`・`ClusterName`・`InstanceLaunchTemplate/FipsEnabled`
+  （`CapacityOptionType` は条件付き）で、`LocalStorageConfiguration` は含まれない。
+  `ImageUseLocalStorage=true` はスタック更新 1 回で入り、関連付けリストは動かない——未解決 9 の
+  計測は「パラメータを 1 つ変えてハーネスを 1 回」で済む。
+- **R10. 開発配備は起こしていない。** GPU 実測は無し（費用 $0）。R2 で作った SSM パラメータは
+  消した。
+
+### 決定ごとの改訂提案
+
+- **決定 1** — 5 点。(a) **P1 を後回しにした以上、P0 の llm 役は `-m` のままで「空で listen」
+  できない**（R1(a) はルーターの性質）。P0 は両役とも同じラッパーで揃える: サイドカーが
+  active set から `/models/cmdline` を書き、エンジンのコンテナは `sh -c 'if [ -s
+  /models/cmdline ]; then exec … $(cat /models/cmdline); else sleep infinity; fi'` で起きる
+  （R5: どのイメージにも `sh` はある）。llm 役をルーターに切り替える日（P1）は、サイドカーが
+  書く 1 行が `--models-dir … --models-preset …` に変わるだけで、ラッパーは同じ。(b)
+  **`ParameterNotFound` を「空」として扱う**——`60-engines` は `30-ingress` より先に建つので、
+  スタック作成時に CP は存在せず、active set は書かれていない。ここで `set -e` が拾えば
+  二段階スタンドアップが形を変えて戻る。(c) **コントローラに「カタログが空なら起こさない」を
+  足す**（R6）: `engineSnapshot` に `hasModels` を持ち、`mode=on` でも `decideEngineAction` が
+  `engineReasonNoModel` で何もしない。パネルはトグルの代わりに「有効なモデルが無い」を出す。
+  ゲートウェイの `503 engine_unavailable` だけでは `mode=on` の穴が残る。(d) スタンドアップは
+  **今日と同じく安定化のために GPU 箱を 1 回買う**（プレースホルダも `GPU` の
+  `ResourceRequirements` を持つ）——消えるのは二段階で、初回の 10 分と $0.2 ではない。本文に
+  書く。(e) 以上の条件で、二段階は本当に消える。
+- **決定 2** — (a) IAM の前提は正しく（R2(a)）、箱側の `GetParameter` を `60-engines` の
+  `EngineTaskRole` に足す形は 0071 決定 8 の「新しい IAM はスタックの中で閉じる」と整合する。
+  (b) 🔴 **「数 KB」を「4,096 文字」に改める**（R2(c)）。active set には S3 キー・ローカル名・
+  フラグ・preset の材料だけを置き、`description` や `license` は DB に留める。テストで
+  「モデル 20・LoRA 20 の active set が 4,096 文字に収まる」を固定し、収まらない設計変更が
+  来たら Advanced tier（$0.05/月）に上げる判断を**その時に**する。(c) 葉と子は共存する
+  （R2(b)）ので名前はそのままでよい。(d) CP が作るパラメータは CloudFormation の外にある
+  ——`teardown.sh` が `/af-ws/engines/*/active` を消すことを書く。(e) サイドカーは `jq` で
+  JSON を読める（R5）。行志向にする必要は無い。(f) S3 レイアウトの移行（`image/…` →
+  `image/checkpoints/…`）と決定 7 の種（`modelS3Key`）は**同じ手順の中で**動かす——種が旧キーを
+  指せば、最初の起動が空振りする。
+- **決定 3** — 「未解決 1 の実測に依存する」の但し書きは**外せる**（R1）。ルーターは要件を
+  満たす: 空で ok、autoload は待つ、`--models-max 1` は LRU を降ろして載せる、`usage` と
+  `model` は届く、窓はモデル毎。本文の `warm` の再定義（`GET /models` の `loaded`）は R1(a) で
+  必須になった——`/health` を warm と読む今日の `warmup` はルーターでは常に true を返す。
+  細部を 2 つ足す: `404 model_unknown` はゲートウェイ自身の判定で、ルーター自身は **400** を
+  返す（どちらでもよいが、番号を混ぜない）；子プロセスはループバックの空きポートに
+  `--api-key` 無しで立つ（タスクの netns の外からは届かないので許容。書いておく）。
+  残る GPU の宿題は 1 つ——「idle LRU」が**生成中**のモデルをどう扱うか（待つのか）。
+- **決定 4** — (a) `ImageEngine` の `!If` は R4 の予算を通してからで、**`20-platform` の
+  ECR リポジトリ 1 つと `standup.sh` の images 段の追加**が前提（自前イメージは
+  `af-workspace` と同じく CI で焼いて複製する。0071 決定 6）。(b) 🔴 **決定 10 の「既定は
+  klein 4B」は ComfyUI の実測であって sd-server の実測ではない**。P0 の image 役は sd-server
+  なので、**P0 の既定は SDXL**（唯一 sd-server で測った 1 ファイルのチェックポイント）。klein は
+  sd.cpp が対応を名乗るが、分割モデルのフラグ組み立て（決定 4 の「分割モデルは 1 エントリ」の項）ごと未測で、P0 で
+  それを踏むと完了の定義が sd-server の問題で止まる。(c) **P0 の完了の定義に使う「2 つ目の
+  チェックポイント」が決まっていない。** バケットにある sd-server 向けの 1 ファイルは SDXL
+  base だけで、Z-Image・klein は分割モデルである。SDXL 系のもう 1 本（OpenRAIL++ の
+  fine-tune か、Refiner）を先に取り込む——ライセンスは決定 10 の規則で選ぶ。(d)
+  `UpdateService --force-new-deployment` は CP の既存権限で足りる（R3）。
+- **決定 5** — 🔴 **「CP が要求で拒否する」は、決定 4 の「ゲートウェイは本文を読まない」と
+  両立しない。** sd-server 経路では LoRA は prompt の `<sd_cpp_extra_args>` の中にあり、
+  ComfyUI 経路ではワークフロー JSON のノードの中にある——CP が拒否するには prompt かグラフを
+  読むことになる。拒否の場所を**Agent**（enum 外の名前と `baseModel` 不一致を組み立ての
+  段階で断る）と**箱**（有効な LoRA しか同期しないので、無い名前はエンジンが失敗させる。
+  `--lora-model-dir` と `models/loras/` がパスの範囲）に移し、CP の行を消す。`model` /
+  `loras` の形は 0069 に収まる（R7）: `Request.Model` は既にあり、`Caps` に `Loras []{name,
+  description, baseModel}` を足す。ただし規則を 2 つ書く: **引数は本当に選べるときだけ出す**
+  （`provider` と同じ——フリートのエンジンが有効なチェックポイントを 2 つ以上持つときだけ
+  `model` が現れ、値はカタログの id のみ。Codex / agy の固定モデルは enum に混ぜない。
+  `model` を指定しつつ provider がフリート以外なら名指しで拒む）；**enum は他の引数に依存
+  できない**ので、`loras` の enum は有効な LoRA 全部で、説明に各 LoRA の `baseModel` を書き、
+  組み合わせの検査は Agent がする。
+- **決定 6** — (a) `ecs:RunTask` は本当に無い（R3）ので必要。`iam:PassRole` は
+  **`IngestTaskRole` だけ**——`ExecRole` の PassRole は `PassTaskRoles` に既にある。本文の
+  「取り込みのタスクロールと実行ロール」を直す。(b) 🔴 **CP はマニフェストを読めない**
+  （S3 の権限が無い）。行は **CP 自身が HF から解決した sha256・license・bytes と、
+  `DescribeTasks` の終了コード（`fetch` SUCCESS → `upload` SUCCESS）**から作る——それで
+  足りる（sha256 の照合は `fetch` が済ませている）。マニフェストは箱が読むもので、CP は
+  読まない、と書く。(c) 「CP の IAM 追加ゼロ」を守る代替は **EventBridge**: CP が
+  `/af-ws/engines/ingest/job` を書き（既存の PutParameter）、`60-engines` の
+  `AWS::Events::Rule`（`aws.ssm` の Parameter Store Change）がスタック内のロールで `RunTask`
+  し、CP は `ListTasks --family` で追う。CP 側ゼロは守れるが、配送が at-least-once で
+  ジョブが二重に走りうる上、失敗が CloudTrail にしか出ない。**推奨は本文の
+  `AWS::IAM::Policy` を受け入れ、0071 決定 8 を精密に改訂すること**: 「CP のロールに他スタックが
+  足してよいのは、**そのスタックの資源にしか効かない権限**（family 限定の RunTask・ingest
+  ロール限定の PassRole）だけで、`Resource: *` は足さない」。(d) CP から HF API への egress が
+  前提（30-ingress の NAT の先）。自前の前段で外向きを絞る配備では取り込みは手打ちに落ちる。
+- **決定 7** — 🔴 **「削除（S3 のファイルも消す）」は CP にできない**（R3）。取り込みタスクに
+  `MODE=delete` を持たせて同じ `RunTask` で消す（マニフェストを先に消す順序はそこで守る）か、
+  P4 まで `harness/ingest-model.sh` の兄弟に任せる。押し通知の逆経路は在る（R7）。
+- **決定 10** — (a) 🔴 マニフェストと `engine_models` は **`license` と `license_name` と
+  URL の 3 つ**を持つ（R8: 非商用の 2 つは `license: other`）。取り込み時の値は HF の
+  card が変わっても動かない**スナップショット**で、それは本文のとおり。(b) 受諾は
+  **誰がいつ**を残す（`licenseAcceptedBy` / `At` をマニフェストと監査ログに）。(c)
+  マルチテナント配備の妥当性（問い 8）: 「運用者がメンバー全員の代わりに条項を引き受ける」は
+  正しい読みで、それをそのまま UI の一文にする。加えて **`commercialUse` の軸**を出す——
+  FLUX.1-dev の非商用は「メンバーに有料で提供する配備」では運用者自身の違反になるので、
+  「取り込みは拒まない」の横に「この配備が商用なら入れてはいけない」をライセンス名から
+  引ける形で出す（Stability の年商 $1M も同じ欄）。(d) `HF_TOKEN` は個人のアカウントに
+  紐づく——同意した人が去れば失効する。組織アカウントのトークンを推奨に書く。
+- **未解決 1** — **解けた**（R1）。残るのは (c) の GPU 確認 1 回だけで、それは P1 の完了の
+  定義（交替のリロード）と同じ観測である。
+- **未解決 5** — **表にする**。理由が 3 つ: (1) 書き手が 2 人いる（管理者のトグルと、
+  取り込みジョブの状態遷移 `ingesting → ready / failed`）。`SettingsStore` の JSON 1 本は
+  全体を読んで全体を書く形で、CAS が無く、同時に来れば片方が消える；(2) `files[]` /
+  `args[]` / `sizes[]` は行ごとに形が違い、パネルの一覧・種・削除はどれも行の操作である；
+  (3) 2 方言の migration は `engine_hourly`（`migrations/0055` と `migrations-pg/0040`）の
+  前例があり、費用は既知。`lastUsedAt` は **P0 では持たない**（要求ごとの UPDATE を避ける。
+  `engine_<key>_demand_at` の 1 分抑制と同じ形で P4 に足せる）。
+- **未解決 9** — **測る価値はある。1 GPU 時間で 2 つ動く。** (1) `useLocalStorage`: R9 の
+  とおりパラメータ 1 つで入る。効くのは切り替え（12.3 GB を 92 MB/s → NVMe）だけでなく、
+  **コールドスタートの S3 → EBS 33 GB・332〜360 秒**もで、これは EBS の書き込み上限
+  （g6.xlarge のベースライン 125 MB/s）に張り付いた数字である。(2) **RAM で解く案**を
+  並べて測る: 3 モデル 27 GB がページキャッシュに残らないのは箱の RAM が 15 GB だから
+  で、`ImageMemMinMiB` を 30,000 に上げれば g6.2xlarge（32 GiB）が選ばれ、コードは 1 行も
+  変わらない。切り替えが RAM → VRAM（数秒）になれば、`useLocalStorage` は起動時間だけの
+  話に戻る。どちらも `bench-image-engine.sh` がそのまま測れる（フェーズ 2 回で切り替えを含む）。
+  順序は P2 の前——ComfyUI のイメージ作りと独立で、P2 の完了の定義（切り替えの価格）を
+  変えるからである。
+- **フェーズ** — P0 に足す: ラッパー entrypoint、`ParameterNotFound` の扱い、コントローラの
+  「空なら起こさない」、コメントの `PARAMETERS-60-engines.md` への移動（R4）、2 つ目の
+  チェックポイント、`teardown.sh` の SSM 掃除、S3 移行と種の同時性。P1 は未解決 1 に
+  縛られない（R1）。P2 は `20-platform` のリポジトリと自前イメージの CI を含む。P4 は
+  `MODE=delete` を含む。
+
+### 問いへの答え
+
+1. **決定 2 の SSM は閉じる**（R2(a)）——CP 側は追加ゼロ、箱側は `60-engines` の中の
+   `GetParameter` 1 文で、0071 決定 8 と整合する。閉じないのは**値の大きさ**で、4,096 文字が
+   上限（R2(c)）。
+2. **安定はする。ただし 3 条件つき**（決定 1 の改訂 (a)(b)(c)）: 両役ともラッパー、
+   `ParameterNotFound` は空、`mode=on` の穴を塞ぐ。ヘルスチェックはコンテナに無く（ECS の
+   RUNNING は「essential が起動した」）、CFN が待つのはそこまでなので、`sleep infinity` で
+   安定する。二段階は消えるが、安定化のための GPU 箱 1 回は残る。
+3. **入らない。** 余白 3,400 に対して追加 5,450（`Mappings` で共有しても 4,350）で、
+   約 1〜2 KB の超過（R4）。コメント 15.5 KB のうち 3 KB を `PARAMETERS-60-engines.md` へ
+   移せば入る。加えて `20-platform` に ECR リポジトリが要る。
+4. **拒否の場所が違う**（決定 5 の改訂）——CP は本文を読まないので Agent と箱で拒む。
+   `model` は `Request.Model` に、`loras` は `Caps` の追加で 0069 に収まる（R7）。引数は
+   「本当に選べるとき」だけ、値はフリートのカタログ id だけ。
+5. **代替はある**（EventBridge）が推奨しない。`AWS::IAM::Policy` を受け入れ、0071 決定 8 を
+   「そのスタックの資源にしか効かない権限は足してよい」に改訂する。PassRole は ingest ロール
+   だけ（R3）。S3 の読み書きは**足さない**——CP はマニフェストを読まず、削除は取り込みタスクが
+   する（決定 6・7 の改訂）。
+6. **表**（未解決 5 の項）。`lastUsedAt` は P0 では持たない。
+7. **説明文だけでは足りない。** 「いま温かいモデル」は CP が `POST /engine/usage` の
+   `model` から**最後に成功した要求のモデル**として持てる（エンジンには聞かない。0053）。
+   これをカタログの行に `warm_model` で出し、**`model` 未指定の既定を「温かければそれ、
+   でなければカタログの既定」**にサーバ側で決める——エージェントに温度を推論させない。
+   切り替えた要求は `warnings` に「モデルを切り替えたので +N 秒」を返す。`useLocalStorage`
+   は測る価値がある（未解決 9 の項。RAM 案と並べて 1 GPU 時間）。
+8. **妥当。ただし 3 つ足す**（決定 10 の改訂）: `license_name` を持つ、受諾の記録、
+   `commercialUse` の軸と「この配備が商用なら」の一文。
+
+### 状態行の提案
+
+上の決定 2・5・6・7・10 を本文に反映したうえで、状態行を
+**「承認済み（P0 着手可）」（2026-09-08 レビュー）** に改める。未解決 1 は「解けた（レビュー
+R1）」に打ち消す。P0 の完了の定義に **「`mode=on` のエンジンがカタログ空で起きないこと」と
+「スタック作成時（CP 不在・active set 無し）に両役のサービスが安定すること」** を足す——前者は
+R6 の穴、後者は決定 1 の主張そのものの観測である。
