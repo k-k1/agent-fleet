@@ -253,6 +253,10 @@ var (
 // document that has already been read, and a retried POST that sends an empty body is a bug
 // that only appears on the one endpoint that is not JSON.
 func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) ([]byte, error) {
+	// lastWaking is what the gateway last said while the engine was on its way up. Kept so the
+	// give-up message can name it: the budget can run out INSIDE a request as easily as between
+	// two, and a caller who waited a quarter of an hour deserves the same answer either way.
+	lastWaking := ""
 	for attempt := 1; ; attempt++ {
 		var (
 			httpReq *http.Request
@@ -270,6 +274,13 @@ func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) 
 
 		body, status, retryAfter, err := p.attempt(httpReq)
 		if err != nil {
+			// A transport error with the budget already gone is the same event as the one below
+			// — the wait ended — and it must not be reported as a bare "context deadline
+			// exceeded". Which of the two paths notices first is a race, so both say the same
+			// thing.
+			if ctx.Err() != nil {
+				return nil, sdcppGaveUp(attempt, lastWaking)
+			}
 			return nil, err
 		}
 		if status < 300 {
@@ -282,17 +293,25 @@ func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) 
 			return nil, fmt.Errorf("the image engine answered %d %s: %s",
 				status, http.StatusText(status), sdcppErrText(body))
 		}
+		lastWaking = sdcppErrText(body)
 		select {
 		case <-ctx.Done():
-			// The budget is gone, so this is the end. Said in terms of what was actually
-			// happening — a bare "context deadline exceeded" after fifteen minutes of waking a
-			// GPU box tells nobody what to do next.
-			return nil, fmt.Errorf(
-				"the fleet's own image engine did not come up within %s (%d attempts): %s",
-				sdcppTimeout, attempt, sdcppErrText(body))
+			return nil, sdcppGaveUp(attempt, lastWaking)
 		case <-time.After(retryAfter):
 		}
 	}
+}
+
+// sdcppGaveUp is the end of the budget, said in terms of what was actually happening. A bare
+// "context deadline exceeded" after a quarter of an hour of waking a GPU box tells nobody what
+// to do next, and this message is read by a person AND by the model that asked for the picture.
+func sdcppGaveUp(attempts int, lastWaking string) error {
+	if lastWaking == "" {
+		return fmt.Errorf("the fleet's own image engine did not come up within %s (%d attempts)",
+			sdcppTimeout, attempts)
+	}
+	return fmt.Errorf("the fleet's own image engine did not come up within %s (%d attempts): %s",
+		sdcppTimeout, attempts, lastWaking)
 }
 
 // attempt is one round trip, with the body fully read so the connection can be reused for the
