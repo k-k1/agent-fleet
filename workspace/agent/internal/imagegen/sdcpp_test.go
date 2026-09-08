@@ -506,6 +506,40 @@ func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOut(t *testing.T) {
 	}
 }
 
+// The other way the budget can run out: INSIDE a request rather than between two. Which of
+// the two notices first is a race — it showed up as a flaky test before it showed up as a
+// thought — and a caller who waited a quarter of an hour must not be told
+// "context deadline exceeded" just because the clock happened to land mid-flight.
+func TestSdcppGivesUpWithAReasonWhenTheBudgetRunsOutMidRequest(t *testing.T) {
+	shortRetries(t)
+	var attempts int
+	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
+		attempts++
+		if attempts == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(w, `{"error":{"code":"engine_waking","message":"still coming up"}}`)
+			return
+		}
+		// Slower than the budget, but BOUNDED. A handler that waits to be released — on a
+		// channel or on the request's own context — hangs the test instead: httptest's Close
+		// waits for outstanding handlers and is registered before anything this function can
+		// add, so it runs last (measured, as a 600-second hang).
+		time.Sleep(200 * time.Millisecond)
+		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 8, 8)))
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	_, err := p.Generate(ctx, Request{Op: OpGenerate, Prompt: "x"})
+	if err == nil || !strings.Contains(err.Error(), "did not come up within") {
+		t.Fatalf("err = %v, want the same reason as when the wait ends between attempts", err)
+	}
+	// And it still carries what the gateway last said, which is the only actionable half.
+	if !strings.Contains(err.Error(), "still coming up") {
+		t.Errorf("err = %v, want the gateway's last word kept", err)
+	}
+}
+
 func TestSdcppRetryAfterIsClamped(t *testing.T) {
 	for _, tc := range []struct {
 		in   string
