@@ -2,7 +2,7 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **P0 implemented and verified on hardware (2026-09-08). P1 onwards not started.**
+- Status: **P0 and P1 implemented and verified on hardware (2026-09-08). P2 onwards not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -35,6 +35,17 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   and never warms** (4), and **the straightforward active set did not fit 4,096 characters at 20
   models and 20 LoRAs** (1). Two things P0 needed that the decisions did not name — a way to
   create a catalogue row, and a harness for seeing a picture — are at the end of that section.
+- The same day, **P1 (the llm role's router mode) was implemented and measured, on a CPU and on
+  hardware** (the "P1 measurements" section): preset generation, syncing every enabled model,
+  `LlmModelsMax`, the redefinition of `warm`, and per-model windows. Of the definitions of done,
+  **the first and third were driven on hardware** (two GGUFs usable on one box, and the swap
+  answering on one attempt); the second — two models in the launch menu — is unit-tested only,
+  because creating the row is a super_admin screen, the same wall P0 hit. 🔴 Three points of the
+  text were corrected by measurement: **`--models-dir` is not used** (it would list names the
+  catalogue does not hold and count `llm/loras/` as a model), **`-c` must leave `LlmExtraArgs`**
+  (a command-line flag beats the preset, so one `-c` gives every model the same window), and
+  **warm is "any model loaded", not "the default model loaded"** (a box that swapped models would
+  read as answering-but-not-warm, and the `unwarmed` rule would stop it mid-conversation).
 - The same day, the **review before P0** landed at the end ("Review (2026-09-08, before P0)") and
   the text was revised on it. Four premises fell — 🔴 **the CP task role holds no S3 permission
   at all** (decisions 6 and 7 had the CP reading manifests and deleting S3 files), 🔴 **SSM's
@@ -274,10 +285,20 @@ names move between versions — pin the tag and freeze the templates behind gold
      the seed of decision 7.
 
 3. **The llm role runs in router mode; the request's `model` picks the model; the window
-   becomes per model.** `llama-server --models-dir /models/llm --models-preset
-   /models/llm/presets.ini --models-max <LlmModelsMax>`. The fetch sidecar generates the preset
-   from the active set (section name = catalogue id, `model` = path, `c`, `n-gpu-layers`,
-   `alias`, fixed LoRAs). `-m`, `--alias` and `-c` leave the command line.
+   becomes per model.** `llama-server --models-preset /models/llm/presets.ini --models-max
+   <LlmModelsMax>`. The fetch sidecar generates the preset from the active set (section name =
+   catalogue id, `model` = path, `c`, `n-gpu-layers`, fixed LoRAs). `-m`, `--alias` and `-c`
+   leave the command line.
+   - 🔴 **No `--models-dir`** (P1 measurements 1 and 3). The draft used it alongside the preset,
+     but a directory scan makes the FILE NAME the model name: ids the catalogue does not hold
+     would appear in `/models` (against decision 7), and the `llm/loras/` subdirectory would be
+     counted as one model (upstream reads a subdirectory as a multi-shard GGUF). A preset section
+     **defines** a model whether or not a file of that name exists, so the catalogue id is the
+     model id. `alias` is not needed either — the router passes `--alias <section>` itself.
+   - 🔴 **`-c` must never be in `LlmExtraArgs`** (measurement 2). The router hands its own command
+     line to every child and a command-line argument beats the preset, so a single `-c 32768`
+     erases every model's declared window (measured: two models declaring 4096 and 384 both came
+     up at 32768). The template's Description and the parameter reference say so as a prohibition.
    - **ADR 0071's "correction after P1" stops being a constraint.** The window is declared per
      model as `c`, the catalogue carries `contextTokens` / `maxOutputTokens` per model, and the
      Agent writes opencode's `models.<id>.limit` **per model** (`engineProviderEntry` already
@@ -292,10 +313,18 @@ names move between versions — pin the tag and freeze the templates behind gold
      catalogue's `vramMiB` sum fits the box is the operator's call; the CP only helps with the
      addition).
    - **`warm` changes meaning.** Today `/health` ok = weights in VRAM. Under the router, warm is
-     "`GET /models` shows the **default model as `loaded`**", and the health path stays `/health`
-     (open question 1 measures what it means). The default is the one catalogue entry flagged
-     `default`, written into the preset as `load-on-startup = true`. Without it the first request
-     pays "box start 527 s + load 267 s".
+     "`GET /models` shows **at least one model as `loaded`**", and the health path stays
+     `/health`. The default is the one catalogue entry flagged `default`, written into the preset
+     as `load-on-startup = true`. Without it the first request pays "box start 527 s + load
+     267 s".
+     - 🔴 **Not "the DEFAULT model is loaded"** (P1 measurement 4). Under `--models-max 1` a box
+       serving the other model has unloaded the default, so tying warm to the default reads as
+       answering-but-not-warm — and `running && !warmed` for 900 seconds is what P0's `unwarmed`
+       rule stops, mid-conversation. `sleeping` and `loading` are not warm either: both mean the
+       next request pays for weights.
+     - The engine table declares it as `warmPath` (`/models` for llm, empty for image) rather than
+       deriving it from the provider name (ADR 0053). `GET /models` triggers no autoload and does
+       not reset the router's idle timer, so polling it every 30 seconds is free (measurement 5).
    - **A request during autoload is held by the heartbeat.** The gateway's streaming path sends an
      SSE comment every 10 seconds until the upstream's first byte (ADR 0071 decision 5), and
      nothing new is needed — **the router queues the request** (R1(b): 200 after `ensure_model:
@@ -309,9 +338,12 @@ names move between versions — pin the tag and freeze the templates behind gold
      details: the router answers **400** for an unknown id, and the gateway's `404 model_unknown`
      is its own verdict — do not mix the numbers; the children are **separate processes** on a
      loopback port with no `--api-key` (unreachable from outside the task's netns; written down).
-     One GPU question remains — what "idle LRU" does with a model that is **generating** — and it
-     is the same observation as P1's definition of done. P1 is deferred by the user's priority
-     (images first), no longer by anything unmeasured.
+     One question about "idle LRU" and a model that is **generating** remained, and
+     🔴 **it is settled too (P1 measurement 7): the eviction waits.** The interrupted stream was
+     delivered whole and the waiting request paid "the rest of that answer plus the load" (48.6
+     seconds of waiting, on a CPU). So the price of `--models-max 1` is a wait rather than a
+     broken answer — but **a non-streaming request is cut by the ALB during that wait** (the
+     60 seconds of ADR 0071 P1 measurement 9).
 
 4. **The image role holds one checkpoint; a swap takes effect at the next start; one at a
    time.** sd-server has no switch, extra roles are ruled out by the wall, co-tenancy by VRAM.
@@ -505,13 +537,19 @@ names move between versions — pin the tag and freeze the templates behind gold
    the router returns in the response (= the catalogue id). `engine_hourly` (ADR 0071 decision
    13) is untouched — uptime is a property of the box, not of the model.
 
-9. **The effect on the cold start is stated in numbers, and only enabled entries are synced.**
-   S3 → EBS is a steady 104–147 MB/s (ADR 0071 measurement 8), so the llm sync time is **the sum
-   of the enabled GGUFs' sizes** — 179 seconds per 18.5 GB. Enabling is "load", not "ingest": five
-   entries in the catalogue with one enabled is today's 527 seconds. The admin panel shows
-   "sync +N s (estimate)" next to the toggle (the size is in the manifest; as with
-   `observed_secs`, **it says estimate**). `useLocalStorage` (ADR 0071 open question 1) stays as
-   it is.
+9. **The effect on the cold start is stated in numbers, and what is synced differs by role.**
+   S3 → EBS is a steady 104–147 MB/s (ADR 0071 measurement 8; P1 measurement 9 adds 116.7 and
+   139.7 MB/s), so the llm sync time is **the sum of the enabled GGUFs' sizes** — 179 seconds per
+   18.5 GB.
+   - **The llm role (a router) syncs every enabled model.** It is expected to answer for any of
+     them, and a model whose file is missing does not wait — it fails with 500 (P1 measurement 6).
+     So on this role enabling a model literally means "the next start takes N seconds longer".
+   - **The image role syncs only the selected checkpoint.** sd-server holds one, so there is no
+     reason to put somebody else's checkpoint into every cold start.
+   - The admin panel shows "sync +N s (estimate)" next to the toggle. **The size is declared when
+     the row is registered** — the CP cannot look in S3 (R3) — so it lives in `files[].bytes`,
+     the same posture as the manifest, and as with `observed_secs` **it says estimate**.
+   `useLocalStorage` (ADR 0071 open question 1) stays as it is.
 
 10. **Model selection policy — the first default is chosen from "Apache-2.0, ungated, fits an
     L4 without quantisation"; gated and non-commercial models enter only by an operator's
@@ -736,6 +774,140 @@ g6.xlarge, under $1.
   It borrows the ingest task definition — two containers, a shared volume, S3 write is exactly
   the shape needed, and the template has 820 bytes of room for a new resource.
 
+## P1 measurements (2026-09-08, this container's CPU and the dev deployment)
+
+Measured while implementing P1, the llm role's router mode. **Upstream behaviour was settled on a
+CPU first and only the expensive observations were bought on a GPU** — how the router reads its
+command line and its preset does not need CUDA. The CPU runs used llama.cpp's official build
+`b10853` (the one review R1 used) with stories260K and Qwen2.5-0.5B-Instruct Q4_K_M; the hardware
+runs used `af-sandbox` / ap-northeast-1's g6.xlarge for about half an hour (roughly $0.6).
+
+**The first and third definitions of done were driven on hardware** — two `llamacpp/` models on
+one box, each usable, and the reload on the switch answering on one attempt (7 below). **The
+second (two models in the launch menu) is pinned by unit tests through the whole
+catalogue → Agent → opencode chain**: creating the row is a super_admin screen and AWS
+credentials cannot drive it (the same wall as P0 measurement 5; on the user's call, the hardware
+run stopped at the engine layer).
+
+### Settled on a CPU
+
+1. **A preset alone is enough, and the section name becomes the model id.** Through upstream's
+   "if the key does not correspond to an existing model, give at least the model path" path, a
+   section `[qwen3-coder-30b-a3b]` with `model = /models/llm/Qwen3-…-Q4_K_M.gguf` is addressable
+   **by the catalogue id, whatever the file is called**. Hence 🔴 **`--models-dir` is not
+   used** — the drafted decision 3 named both, but a directory scan turns file names into model
+   names, so (a) names the catalogue does not hold appear in `/models` (colliding with decision
+   7's "what is not in the catalogue does not exist") and (b) the `llm/loras/` subdirectory is
+   **counted as one model** (upstream reads a subdirectory as a split GGUF). A preset-only router
+   has neither problem.
+2. 🔴 **A command-line `-c` beats the preset's per-model `c`.** Started with `-c 32768`, two
+   models declaring `c = 4096` and `c = 384` were both spawned **`--ctx-size 32768`** (visible in
+   `/models`'s `status.args`). That is upstream's stated precedence — command line > per model >
+   `[*]` — and removing it gives 4096 / 384 as declared. This deployment's `LlmExtraArgs` was
+   `-ngl,99,-c,32768,--jinja`, so **P1's first step was taking `-c` out**: one flag erases every
+   declared window and nothing says so.
+3. **The router's command line is inherited by its children.** `-ngl 99 --jinja` appear verbatim
+   in each instance's `status.args`. `--alias` is **added by the router itself**, so the preset
+   does not need it (the drafted decision 3 listed `alias`; measurement says it is redundant).
+4. 🔴 **An empty router still answers `/health` with `{"status":"ok"}`** (R1(a), re-confirmed).
+   `status.value` has five values — `loaded` / `unloaded` / `loading` / `sleeping` /
+   `downloading` — and `sleeping` (the `--sleep-idle-seconds` auto-unload, disabled by default at
+   -1) is also a state where the next request pays for weights. So warm is **at least one
+   `loaded`**. 🔴 **Not "the default is `loaded`"**, which is what the drafted decision 3 said: a
+   box that swapped models under `--models-max 1` would read as answering-but-not-warm, and 900
+   seconds of `running && !warmed` is exactly what P0's `unwarmed` rule stops — **mid-conversation.**
+5. **`GET /models` triggers no autoload and does not reset the router's idle timer** (upstream's
+   exemption list), which makes it safe as the target of a probe that runs every 30 seconds.
+   `GET /props?model=` **does** trigger a load, so it must not be used for that.
+6. **A preset entry whose file is missing does not stop the router.** It starts, lists the model,
+   and only a request for that one fails with `500 model name=… failed to load`. An unknown id is
+   **400** (as in R1).
+7. 🔴 **`--models-max 1` evicts only an IDLE model — it waits for a generation to finish.** With
+   900 tokens streaming from one model, a request for the other logged `models_max reached …
+   queued at position 1` and sat there for **48.6 seconds** before `evicting idle LRU` moved, and
+   **all 854 chunks of the interrupted stream were delivered**. That settles open question 1(c):
+   **the answer is "it waits"**, and the price is paid by the waiting request instead ("the rest
+   of that answer plus the load"). 🔴 The first attempt at this measurement was a false positive:
+   the "interrupted" stream ended after 14 chunks — and so did the control run with nobody
+   interrupting, because the model simply stopped. Only with `ignore_eos` (854 chunks, 64.8 s)
+   was there a window to interrupt. **"It was cut off" is like "zero hits": check the instrument
+   before believing it.**
+
+### Measured on hardware (the dev deployment, g6.xlarge)
+
+8. **Taking in the second GGUF** (Qwen2.5-Coder-1.5B-Instruct Q4_K_M, Apache-2.0, ungated):
+   **1,117,320,768 bytes from Hugging Face in 35 s** (31.9 MB/s), sha256 matched, **2 s** to S3.
+   One more point for ADR 0071 decision 3's "Hugging Face is unpredictable" (inside the 4–236 MB/s
+   band).
+9. **The sidecar wrote the router's preset on the real box**, and its log is the evidence:
+   `llm/Qwen3-…-Q4_K_M.gguf 18556689568 bytes in 159s` (116.7 MB/s),
+   `llm/qwen2.5-coder-1.5b-…gguf 1117320768 bytes in 8s` (139.7 MB/s),
+   `preset /models/llm/presets.ini holds 2 model(s), 'qwen3-coder-30b-a3b' loaded at startup`,
+   `cmdline = --models-preset /models/llm/presets.ini`. **Decision 9's "the total size lands on
+   the cold start" is literal**: 167 seconds for two models against 159 for one.
+10. **A switch answers on one attempt** (definition of done 1). Two runs agreed:
+
+    | request | run 1 | run 2 | what happened |
+    |---|---|---|---|
+    | `qwen3-coder-30b-a3b` (warm) | **0.7 s** | **0.4 s** | loaded at startup |
+    | `qwen2.5-coder-1.5b` | **10.1 s** | **10.0 s** | unload the 30B, load 1.1 GB |
+    | `qwen3-coder-30b-a3b` (back) | **281.8 s** | **276.3 s** | 18.5 GB back into VRAM |
+
+    All 200, **one attempt, no resend**, and the answers were visibly from different models. The
+    276–282 seconds are ADR 0071's 267-second reload plus generation — **this design's price**
+    (decision 3). An unknown id was refused by the router with **400**; the gateway's `404
+    model_unknown` is its own verdict and the numbers are deliberately different (that one is not
+    observed on hardware — reaching the gateway needs a session token).
+11. 🔴 **`/health` said "ok" for four and a half minutes while nothing was loaded.** Sampling both
+    endpoints every 20 seconds across a switch, all 14 samples had `/health` at
+    `200 {"status":"ok"}` while the same instant's `/models` said `qwen3-coder-30b-a3b: loading`.
+    **Had P0's `warmProbe` been pointed at the real router, the panel would have said "ready" for
+    276 seconds and the `unwarmed` rule would never have fired.** Those 14 samples are the
+    evidence behind decision 3's redefinition of warm.
+12. **The deployed image is llama.cpp `b10830`** (`org.opencontainers.image.version`, copied into
+    ECR on 2026-09-07). Router mode, `--models-max`, custom preset entries and `load-on-startup`
+    are all in that build (checked in `tools/server/README.md` at the same commit). `server-cuda`
+    is a moving tag, so **the version is decided by the day it was copied**.
+
+### What bit on hardware
+
+13. 🔴 **An on-demand engine started by hand is stopped 90 seconds later.** Right after
+    `aws ecs update-service --desired-count 1`, the CP logged `engine llm: stop (idle)` and the
+    pending task went away — `engine_llm_demand_at` was left over from earlier work, so
+    `now - lastDemand ≥ idle (1800 s)` was true on the first tick. It is the third face of ADR
+    0071's "`on` and `off` are both persistent settings": **on-demand cannot be woken by hand**,
+    and making demand means going through the gateway, which needs a session token. So the
+    hardware run used **`run-task` to put the llm task definition straight onto the capacity
+    provider** (the controller only watches the SERVICE, so it never touched it) and talked to the
+    task's private IP.
+    - The cost: **the CP-side warm probe was not exercised on hardware.** The CP only probes while
+      the service is up (`maintainWarm` is driven by the service's state), and a standalone task
+      has no Cloud Map A record. Measurement 11 asks the same question from the probe's side, and
+      the verdict itself is pinned by `TestEngineWarmProbeReadsTheRouterModelList`.
+14. 🔴 **Overriding the probe's task role with the CP's takes away its S3 write.** The engine's
+    `--api-key` is an SSM SecureString and the CP task role is the only one that can read it, so
+    `run-task --overrides` was given that `taskRoleArn` — and the transcript upload then failed
+    with `AccessDenied … s3:PutObject`. **It is review R3's "the CP holds no S3 permission at all"
+    restated by AWS.** The transcript goes to the log instead (passing the key as an override
+    environment variable would put it in CloudTrail for ever, so that route is not taken).
+
+### What P1 needed that the decisions did not name
+
+- **`harness/probe-llm-engine.sh`.** Text, not pictures, so `probe-image-engine.sh` does not
+  apply; the llm sibling has the same shape (borrow the ingest task definition, wear the CP's
+  security group). `--watch` samples `/health` and `/models` side by side every 20 seconds across
+  a switch — that is how 11 was measured.
+- **`files[].bytes` (a declared size) and the panel's "sync +N s (estimate)".** Decision 9's "the
+  sum of the enabled GGUFs' sizes" needs the CP to know a size, and the CP cannot look in S3
+  (R3), so **it is declared when the row is registered** — the same posture as the manifest, and
+  no migration was needed (`files` is already a JSON column). Divided by 104 MB/s, the slow end
+  of the measured band.
+- **`warm_model` and "model switches: N".** What decision 3 says to show rather than hide. The
+  gateway takes the model an answer came back as from the usage row and counts the changes. Both
+  are facts of THIS CP process (like the demand window), and the panel says so.
+- **`warmPath` in the engine table.** The declaration that makes "are there weights in memory" a
+  different question from "is it healthy". Not derived from the provider name (ADR 0053): a second
+  engine speaking the same API would otherwise inherit a probe nobody chose for it.
 
 ## Options rejected
 
@@ -775,9 +947,10 @@ g6.xlarge, under $1.
 
 1. ~~**The router's four points** (decision 3 depends on them)~~ **Resolved (review R1, on a
    CPU)**: `/health` ok while empty, autoload waits, `--models-max 1` evicts the idle LRU and
-   loads, `usage` and `model` arrive through the router, the window is per model. One GPU
-   check remains — what "idle LRU" does with a model that is generating — and it is the same
-   observation as P1's definition of done.
+   loads, `usage` and `model` arrive through the router, the window is per model. ~~One check
+   remains — what "idle LRU" does with a model that is generating~~ **also resolved (P1
+   measurement 7, on a CPU): it waits.** The interrupted generation was delivered in full, and
+   the waiting request moved on to its load 48.6 seconds later.
 2. **sd-server's LoRA** (decision 5 depends on it): the cost of a changing LoRA set under
    `immediately`, the VRAM of `at_runtime`, whether `<sd_cpp_extra_args>` also works on
    `/v1/images/edits` (multipart), and what a `baseModel` mismatch does (silent breakage or a
@@ -834,12 +1007,16 @@ g6.xlarge, under $1.
   last-updated timestamp in `describe-stacks` has not moved); a `mode=on` engine with an empty
   catalogue does not start; at stack creation (no CP, no active set) both roles' services
   stabilise.**
-- **P1 — llm in router mode.** Open question 1 is settled (R1), so nothing blocks it; it is
-  deferred by the user's priority (images first). Preset generation, per-model windows,
-  `LlmModelsMax`, the redefinition of `warm`, opencode's provider with per-model `limit`.
-  **Definition of done: two `llamacpp/` models in the launch menu, each usable in turn, and the
-  reload of a switch answered on the first attempt** (ADR 0071 P0's observation, taken across a
-  switch).
+- **P1 — llm in router mode. Implemented and verified on hardware (see *P1 measurements*).**
+  Preset generation (no `--models-dir`), per-model windows, `LlmModelsMax`, the redefinition of
+  `warm` (`warmPath` and `loaded` in `/models`), opencode's provider with per-model `limit`,
+  syncing every enabled model with the panel's "sync +N s (estimate)", and `warm_model` with the
+  switch count. **Definition of done: two `llamacpp/` models in the launch menu, each usable in
+  turn, and the reload of a switch answered on the first attempt** (ADR 0071 P0's observation,
+  taken across a switch). **The first and third were driven on hardware** (two GGUFs on one box,
+  answering in 0.4–0.7 s, 10 s and 276–282 s); **the two models in the launch menu are
+  unit-tested only** — creating the row is a super_admin screen, which AWS credentials cannot
+  drive.
 - **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** Open question 9 first, one GPU hour.
   The self-built image (pinned tag, no Manager, open question 8; including the `20-platform` ECR
   repository and the CI bake), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider

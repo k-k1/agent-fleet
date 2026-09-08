@@ -89,6 +89,39 @@ VRAM 使用が 280 MiB に戻るのがその印）。`--highvram` を足して�
 ⚠️ **実行中のこのスクリプトを編集しないこと**（上と同じ）。`bench-image-engine.py` は起動時に
 S3 へ写されるので、こちらは編集しても走行中の回には効かない。
 
+## `probe-image-engine.sh` / `probe-llm-engine.sh` —— 走っているエンジンに、VPC の中から 1 回聞く
+
+[ADR 0072](../../../../docs/decisions/0072-engine-model-catalog.ja.md) の完了の定義を観測する
+ためのもの。ベンチと違って**自分の箱を建てない**——既にある（か、これから起こす）エンジンに
+1 回聞くだけである。エンジンは私設サブネットにいて CP の SG しか通さないので、外から見る手は
+「メンバーのセッション」か「VPC の中のタスク」しかなく、これは後者。取り込みタスク定義を
+借りている（2 コンテナ・共有ボリューム・`sh -c` の entrypoint がそのまま要るもので、
+`60-engines` に資源を 1 つ足す余裕は無い）。
+
+```bash
+# 絵: 起こして 1 枚描かせ、S3 に置いて止める
+deploy/aws/ecs/harness/probe-image-engine.sh --profile af-sandbox --region ap-northeast-1 \
+  --wake --stop --seed 42 --name sdxl-before
+# 文字: ルーターに 2 つのモデルを片方ずつ聞き、交替の秒数を測る
+deploy/aws/ecs/harness/probe-llm-engine.sh --profile af-sandbox --region ap-northeast-1 \
+  --models qwen3-coder-30b-a3b,qwen2.5-coder-1.5b --watch
+```
+
+⚠️ **llm の `--wake` は ondemand のエンジンには効かない。** `update-service --desired-count 1`
+を叩いても、需要の印（`engine_<key>_demand_at`）が古ければコントローラが最初のティックで
+`stop (idle)` を出し、90 秒で pending タスクごと落とす（実測）。手で起こしたいときは
+**`run-task` でエンジンのタスク定義を capacity provider に直接流し**、タスクの私設 IP を
+`--engine http://<ip>:8080` で渡す。コントローラはサービスしか見ないので触られない。
+
+⚠️ **llm の鍵は SSM から、タスクの中で読む。** `--api-key` は SecureString で、読める役は
+CP のタスクロールだけなので `--overrides` の `taskRoleArn` でそれを着せている。鍵を環境変数で
+渡すと `RunTask` の要求ごと CloudTrail に残る。**代わりに S3 へ書けなくなる**（CP に S3 の
+権限は 1 つも無い）ので、転記はログに出る——`aws logs tail … --filter-pattern probe`。
+
+⚠️ **`--watch` は交替を 1 回買う。** `/health` と `/models` を 20 秒ごとに並べて見るモードで、
+GPU の箱では 5 分と $0.1 ほど。ルーターは重みを載せている最中でも `/health` に ok を返す
+——それを見るためのモードである。
+
 ## `probe-rtk.sh` —— rtk は「ロードする」だけでなく**使えるか**
 
 上の基盤とは独立した単体の検査で、**AWS を何も作らない**。ワークスペースのコンテナの中で
