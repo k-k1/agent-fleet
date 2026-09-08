@@ -1254,3 +1254,22 @@ export const adminCloudCost = () => ({
   ],
   meta: costMeta(),
 });
+
+// ---- skill picker (docs/log/50 / §9 two tiers) --------------------------------------
+// Two of the session's own (a project skill and a command) and the skills the claude CLI
+// ships, as the Agent reports them: source "cli", no description (the Console fills the
+// well-known ones from its i18n table and shows the rest by name).
+export function sessionSkills(locale) {
+  const ja = locale === "ja";
+  const own = [
+    { name: "handoff", description: ja ? "作業の引き継ぎ書を書く" : "Write a handoff note", source: "project", type: "skill", invoke: "/handoff " },
+    { name: "proofread", description: ja ? "原稿の形式を整える" : "Tidy a manuscript", argumentHint: ja ? "<章番号>" : "<chapter>", source: "project", type: "command", invoke: "/proofread " },
+  ];
+  const cli = ["code-review", "dataviz", "loop", "run", "schedule", "simplify", "update-config", "verify"].map((name) => ({
+    name,
+    source: "cli",
+    type: "skill",
+    invoke: "/" + name + " ",
+  }));
+  return [...own, ...cli].sort((a, b) => (a.name < b.name ? -1 : 1));
+}

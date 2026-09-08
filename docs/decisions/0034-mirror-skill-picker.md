@@ -157,3 +157,34 @@ Ctrl+click to send immediately" (docs/50 §2.2).
 The exception kept in v1 as "the same idiom as reply suggestions" (§2) is withdrawn. Users did not
 use it, leaving only the risk of misfiring on a skill with arguments. Now that §8 has made writing
 arguments the main route, the picker is consistently **insertion only**.
+
+## Addendum (2026-09-08, v6): claude's bundled skills, in a second tier behind "//"
+
+Context: the user wants claude's shipped skills (dataviz, simplify, code-review, …) reachable
+from the "/" button — but with their own skills first, and the bundled set only on one more
+key. §0 of docs/log/50 had deferred bundled enumeration as "a contract tied to the CLI version".
+
+### 10. The bundled list comes from the SDK init frame, not from the binary
+
+The CLI is one binary with the skill definitions as minified JS constants; scraping it is exactly
+the version-bound contract we refused. The SDK's `system/init` frame, however, carries `skills`
+(names only) as a public field. Sending `/help` over stream-json makes claude answer locally, so
+the probe costs no model call (measured: input_tokens 0, ~0.8 s). The Agent caches the result
+per binary identity (path + mtime + size) and merges unknown names as `source:"cli"` — the same
+treatment as codex's `.system` and cursor's advertised list, so the UI needs no new concept.
+
+Honest limits, both measured: the `-p` set is an approximation of the TUI's (gated by model and
+mode — keybindings-help exists only in the TUI, deep-research only in -p), and the frame has no
+descriptions (the Console keeps a small i18n table). Built-in *commands* (/compact, /model …)
+stay out: they are obtainable the same way but open TUI dialogs the mirror cannot show.
+
+### 11. Two tiers: the user's own entries first, the CLI's behind one more key
+
+With an empty query the `cli` entries fold into a trailing "show N more" row (↓ + Enter, or a
+click); typing the trigger twice (`//`, `$$`, full-width too) unfolds them as well. A non-empty
+query always searches both tiers with the own tier winning ties — someone typing `/sim` expects
+the shipped simplify. A list made of `cli` entries alone (cursor, a claude session with no
+skills of its own) is never folded: hiding all of it behind a click is a hurdle, not a priority.
+
+Rejected: making a second press of the "/" button unfold. The second press closes today, and
+keeping that is worth more than one extra shortcut; the row and `//` cover both hands.

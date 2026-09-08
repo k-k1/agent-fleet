@@ -1,6 +1,6 @@
 # 50. ミラーのスキルピッカー — セッションのスキル/コマンドを認識して 1 操作で呼ぶ
 
-- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.ja.md)。
+- 状態: **✅ 実装済み**（v1 claude 2026-07-28 / **v2 クロスエージェント同日** — codex・opencode・cursor 追加、実測記録は §7 / **v6 claude 同梱スキル＋2 段表示 2026-09-08** — §9）。意思決定は [decisions/0034](../decisions/0034-mirror-skill-picker.ja.md)。
 - 関連: [29](29-keyboard-system.md)（キーボード体系 — sel-index リストの流儀）/ [27](27-agent-managed-driver.md)（turn 経路）/ [40](40-cursor-agent-kind.md)・[43](43-kiro-agent-kind.md)（ACP）/ 起動モーダルのテンプレ集約（`workspace/agent/repo_prompts.go`）
 
 ---
@@ -19,6 +19,8 @@ TUI 補完へ行く、(c) 起動モーダルのテンプレ（新規セッショ
 **非目的**（積み残し、§6）:
 - claude の組み込みコマンド（/compact 等）の列挙 — CLI 版依存の契約になるため見送り
   （cursor は例外: CLI 広告リスト自体が builtin 込みで、それが正 — §7）。
+  🔴 2026-09-08 訂正: **同梱スキル**（dataviz / simplify …）は版に依らない経路（SDK の
+  init フレーム）で列挙できると判明し v6 で実装した（§9）。組み込み**コマンド**は引き続き対象外。
 - プラグイン由来スキル（`plugins/<marketplace>/…/skills`、`/plugin:skill` 起動形）。
 - kiro（広告ペイロードの user 定義形が未検証 — §7.4）・copilot・agy（ユーザー起動可能な
   仕組み自体が未確認/未検証 — §7.5）。
@@ -52,7 +54,7 @@ TUI 補完へ行く、(c) 起動モーダルのテンプレ（新規セッショ
 
 | kind | project | user | cli（同梱/広告） | 起動形 |
 |---|---|---|---|---|
-| claude | `.claude/skills`＋`commands` | `claude.ConfigDir()` 配下同 | — | `/name` |
+| claude | `.claude/skills`＋`commands` | `claude.ConfigDir()` 配下同 | **init フレームの `skills`**（v6・§9） | `/name` |
 | codex | `.codex/skills` | `$CODEX_HOME/skills` | `…/skills/.system` | `$name` |
 | opencode | `.opencode/command(s)` | `~/.config/opencode/command(s)` | — | `/name` |
 | cursor | （FS フォールバック: `.cursor/commands`＋`skills`） | — | **ACP 広告リストが正** | `/name` |
@@ -158,7 +160,9 @@ kind ゲートは `AgentCaps.slashSkills` ＋ managed セッションでは `sla
 
 ## 6. 積み残し
 
-- claude の組み込みコマンド・プラグインスキルの列挙（§0）。
+- claude の組み込みコマンド・プラグインスキルの列挙（§0）。→ 同梱スキルは v6 で済（§9）。
+  組み込みコマンドは init の `slash_commands` − `skills` で名前だけなら取れるが、TUI で
+  ダイアログを開くもの（/model /config）はミラーに映らないので出さない判断のまま。
 - kiro: 広告リスト（`_kiro.dev/commands/available` — **cursor の
   `available_commands_update` とは別の専用メソッド**）の `prompts` にユーザー定義が
   載るはずだが実データ 0 件で形が未検証（§7.4）。取り込みは cursor と同じ
@@ -271,3 +275,76 @@ repo 内の既存ドキュメントには claude 以外の「スキル相当」�
 cursor / kiro / copilot / agy のミラーでピッカーに `proofread`（`.claude` バッジ）が
 並び、選ぶと「.claude/skills/proofread/SKILL.md を読んで指示に従え」が入力欄に入る。
 スキルの正本はどちらか片方に置けばよい。
+
+## 9. claude 同梱スキルと 2 段表示（v6・2026-09-08）
+
+**要望**: claude の同梱スキル（dataviz / simplify / code-review …）を「/」ボタンから
+出したい。ただし利用者定義を優先し、もう 1 キー（`//`）押したときだけ同梱を出す。
+
+### 9.1 列挙経路（実測 claude 2.1.263）
+
+- **バイナリ内に SKILL.md は無い**。CLI は 206MB の単一実行ファイルで、同梱スキルは
+  minified JS の定数（`name:kYe,description:"…"` の形で変数間接）。文字列スクレイプは
+  契約にならない（§0 で見送った理由そのもの）。
+- **SDK の init フレームが版に依らない列挙**: `claude -p --input-format stream-json
+  --output-format stream-json --verbose --no-session-persistence --max-turns 1` に
+  `{"type":"user","message":{"role":"user","content":"/help"}}` を 1 行流すと
+  `system/init` が出る。`/help` はローカル応答（`"/help isn't available in this
+  environment."`）で終わり、**input_tokens 0・cost 0**。所要 **約 0.8〜1.0 秒**。
+  stdin を即閉じると init は出ない（hook イベントだけ）。
+- init のフィールド: `skills`（同梱＋ユーザー/プロジェクトの名前が混在・**説明無し**）、
+  `slash_commands`（skills＋組み込みコマンド compact/clear/model…＋ユーザーコマンド）、
+  `terminal_slash_commands`（doctor/color/reload-plugins＝端末専用）、`claude_code_version`。
+- 🔴 **-p の `skills` は TUI の集合と一致しない**: 同じ 2.1.263 で TUI セッションには
+  keybindings-help / security-review / init があり、-p には deep-research / verify /
+  debug / batch / doctor / run-skill-generator が並ぶ（モデル・モードでゲート）。
+  近似であって正ではない — 選んでも走行中セッションが受けない項目があり得る。
+- 副作用: SessionStart hook が発火する（ユーザー hook も）。`--no-session-persistence`
+  でも `projects/-tmp-<cwd>` に空の `memory/` を作る（実測）→ 固定の一時 dir
+  `$TMPDIR/af-claude-skills-probe` を再利用して 1 個に抑える。`--settings` は
+  実セッションと同じ nativePeerSettings（cross-session チャネルを開かない）。
+
+### 9.2 実装
+
+- Agent `internal/agents/claude/bundled_skills.go`: `BundledSkills()` がプローブ→
+  init の `skills` を返す。**キャッシュ鍵はバイナリ実体**（`EvalSymlinks` したパス＋
+  mtime＋size）— 版取得のための追加 exec を避ける。失敗はキャッシュしない（次の open
+  で再試行）。mutex で同時プローブを直列化。締切 20 秒（ECS のネットワーク home で初回が
+  遅い前提・[[tool-version-probe-timeout]] の教訓）。
+- `sessionx/session_skills.go`: claude の FS 走査の後に `appendBundledSkills` で
+  **未知の名前だけ** `source:"cli"` / `type:"skill"` / `invoke:"/name "` として合流
+  （init の `skills` にはユーザーレベルのスキルも混ざるので名前で重複排除）。テストは
+  `claudeBundledSkills` 変数を差し替え、**実 claude を起動しない**。
+- 説明文は Console の i18n 表 `mirror.skills_cli_desc.<name>`（ja/en）。表に無いものは
+  名前のみ。CLI 内の `menuDescription` を基にしたが、無いものは AF 側の要約。
+- Console 2 段表示（`skillPicker.ts` `collapseCli` / `filterSkills` の tier）:
+  - **空クエリ**で開いたとき、`source==="cli"` は末尾の「CLI 同梱のスキル / コマンドを
+    あと N 件表示」行に畳む。↓ で行に到達し Enter、またはクリックで展開。展開後の並びも
+    利用者定義→cli なので、**行が居た index にそのまま最初の同梱項目が来る**（選択が
+    「今開いたもの」に着地する）。
+  - **`//`**（トリガ 2 連打・全角 `／／` も・codex は `$$`）＝展開ジェスチャ。
+    `splitDoubleTrigger` が 2 個目のトリガをクエリから外す。`//sim` は両層を `sim` で
+    絞る。確定時は `//sim` 全体が `invoke` に置き換わる（ゴミの `/` は残らない）。
+  - **クエリがあれば常に両層を横断**（`/sim` で同梱の simplify が出ないと期待に反する）。
+    同順位なら利用者定義が先（`filterSkills` の tier tie-break）。
+  - **cli しか無い一覧は畳まない**（cursor の広告リスト全部・自前スキル 0 の claude）。
+    全部を 1 クリックの裏に隠す意味が無い。
+  - 受動表示（引数入力中）は畳まない。閉じるたび（`skillsOpen` false）に畳み直す。
+  - 同じ規則が codex `.system` / cursor builtin にも自動で効く（kind 分岐無し）。
+
+### 9.3 検証（2026-09-08）
+
+- Go: `TestParseInitSkills`（hook フレーム越し・非 JSON 行・skills 無し init）、
+  `TestBundledSkillsLive`（`AF_LIVE_CLAUDE=1` で実 CLI: 16 本・1.05 秒・2 回目はキャッシュ）、
+  `TestHandleSessionSkills`（stub 3 本→ scout 重複排除・dataviz/simplify が cli）。
+- Console: `skillPicker.test.ts` に tier 順・`collapseCli`・`splitDoubleTrigger`・
+  `//sim` 置換を追加（25 件緑）。
+- 実バンドル headless（shots スタブに `/api/sessions/{name}/skills` fixture と
+  `--idle`（質問カードでロックされた composer を外す）を追加して駆動）: ボタン→畳み
+  2 行＋more 行 / ↓↓Enter → 展開・選択が `/code-review` に着地 / Enter で差し込み /
+  more 行クリック / `/`→畳み・`//`→10 行・`//sim`→simplify のみ・Enter で `/simplify ` /
+  `/s`→schedule, simplify（両層横断）。ja/en とも。
+- 🔥 ハーネスの罠 2 つ: fixture セッションは**質問カード付き**で composer がロックされ
+  「/」ボタンが disabled（最初の走行は全状態が空＝道具の陰性）。`.click()` で開くと
+  **textarea にフォーカスが無く** ↓/Enter が届かない（利用者はタイプで開くか、ボタンの
+  あとに入力欄へ戻る）。どちらも「0 件」を先に疑って判明（[[null-result-needs-positive-control]]）。

@@ -1908,10 +1908,13 @@ export function MirrorView({
               passive={skillPicker.passive}
               skills={skillPicker.skills}
               items={skillPicker.items}
+              more={skillPicker.more}
+              trigger={skillPicker.trigger}
               sel={skillPicker.sel}
               query={skillPicker.query}
               onHover={skillPicker.setSel}
               onPick={skillPicker.pick}
+              onMore={skillPicker.unfold}
             />
           )}
           <HistorySearchButton open={histSearch.open} disabled={!histSearch.canOpen} onOpen={histSearch.openSearch} />

@@ -174,6 +174,12 @@ func TestHandleSessionSkills(t *testing.T) {
 	writeFile(t, filepath.Join(dir, ".claude", "skills", "scout", "SKILL.md"),
 		"---\nname: scout\ndescription: 調査\n---\nbody")
 	t.Setenv("CLAUDE_CONFIG_DIR", t.TempDir()) // the user root is empty
+	// Stand in for the bundled-skill probe (never start a real claude from a test). The list
+	// repeats a name the scan already found (scout — the probe sees user-level skills too), which
+	// must not produce a duplicate.
+	orig := claudeBundledSkills
+	claudeBundledSkills = func() []string { return []string{"scout", "simplify", "dataviz"} }
+	t.Cleanup(func() { claudeBundledSkills = orig })
 
 	get := func(name string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/skills", nil)
@@ -194,8 +200,15 @@ func TestHandleSessionSkills(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if len(resp.Skills) != 1 || resp.Skills[0].Name != "scout" || resp.Skills[0].Source != "project" {
+	// the worktree's own skill, plus the two bundled ones as "cli" (scout deduped, name order)
+	if len(resp.Skills) != 3 || resp.Skills[0].Name != "dataviz" || resp.Skills[1].Name != "scout" || resp.Skills[2].Name != "simplify" {
 		t.Fatalf("skills = %#v", resp.Skills)
+	}
+	if s := resp.Skills[1]; s.Source != "project" || s.Invoke != "/scout " {
+		t.Errorf("scout = %#v", s)
+	}
+	if s := resp.Skills[0]; s.Source != "cli" || s.Type != "skill" || s.Invoke != "/dataviz " || s.Path != "" {
+		t.Errorf("bundled dataviz = %#v", s)
 	}
 
 	// a codex session lists the native ones (.codex/skills, invoked as "$name") plus the
