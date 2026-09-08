@@ -358,9 +358,17 @@ function EngineModels({
  * staged file is. Without it the only catalogue row that ever exists is the seeded one, and
  * "choose another checkpoint without touching CloudFormation" has nothing to choose.
  *
- * Three fields and no more. Everything else the catalogue can hold (the window, the sizes, the
- * licence) is either irrelevant to the role or better filled in by P4's ingest, which can read
- * it from the model card instead of asking a person to retype it. */
+ * Few fields on purpose — most of what the catalogue can hold (the sizes, the licence) is better
+ * filled in by P4's ingest, which reads it from the model card instead of asking a person to
+ * retype it. Two exceptions earn their place, and both are about what happens AFTER the row
+ * exists:
+ *
+ *   - the WINDOW, for a chat engine. Since ADR 0072 P1 the window is per model, and a model
+ *     registered without one reaches opencode as context 0 — which switches auto-compaction off,
+ *     the exact failure the field exists to prevent. Both halves or neither (an output cap of 0
+ *     is read as 32,000, so a context alone leaves 768 usable tokens);
+ *   - the SIZE, because the control plane cannot look in S3 (ADR 0072 review R3) and this is the
+ *     only place the "sync +N s" estimate can come from. Optional: no size, no estimate. */
 function EngineModelAdd({
   busy,
   isImage,
@@ -375,6 +383,9 @@ function EngineModelAdd({
   const [id, setId] = useState("");
   const [s3Key, setS3Key] = useState("");
   const [desc, setDesc] = useState("");
+  const [ctx, setCtx] = useState("");
+  const [out, setOut] = useState("");
+  const [bytes, setBytes] = useState("");
 
   if (!open) {
     return (
@@ -385,16 +396,29 @@ function EngineModelAdd({
   }
   const submit = () => {
     if (!id.trim() || !s3Key.trim()) return;
+    const n = (v: string) => {
+      const parsed = Number(v.trim().replace(/[_,]/g, ""));
+      return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+    };
+    // Both halves of the window or neither: a context with no output cap leaves opencode 768
+    // usable tokens, which is worse than the no-limit default it would otherwise get.
+    const c = n(ctx);
+    const o = n(out);
     onAdd({
       id: id.trim(),
       kind: isImage ? "checkpoint" : "gguf",
-      files: [{ s3Key: s3Key.trim() }],
+      files: [{ s3Key: s3Key.trim(), bytes: n(bytes) }],
       description: desc.trim(),
+      context_tokens: c && o ? c : 0,
+      max_output_tokens: c && o ? o : 0,
     });
     setOpen(false);
     setId("");
     setS3Key("");
     setDesc("");
+    setCtx("");
+    setOut("");
+    setBytes("");
   };
   return (
     <div className="engines-model-add">
@@ -414,6 +438,30 @@ function EngineModelAdd({
         value={desc}
         placeholder={tr("admin.engines_model_add_desc")}
         onChange={(ev) => setDesc(ev.currentTarget.value)}
+      />
+      {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
+          context at all, so offering the field there would ask for a number nothing reads. */}
+      {!isImage && (
+        <>
+          <input
+            value={ctx}
+            inputMode="numeric"
+            placeholder={tr("admin.engines_model_add_ctx")}
+            onChange={(ev) => setCtx(ev.currentTarget.value)}
+          />
+          <input
+            value={out}
+            inputMode="numeric"
+            placeholder={tr("admin.engines_model_add_out")}
+            onChange={(ev) => setOut(ev.currentTarget.value)}
+          />
+        </>
+      )}
+      <input
+        value={bytes}
+        inputMode="numeric"
+        placeholder={tr("admin.engines_model_add_bytes")}
+        onChange={(ev) => setBytes(ev.currentTarget.value)}
       />
       <button type="button" className="primary sm" disabled={busy} onClick={submit}>
         {tr("admin.engines_model_add_go")}

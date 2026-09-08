@@ -397,8 +397,9 @@ describe("EnginesAdminView", () => {
     );
     await click(open as HTMLElement);
 
+    // id, key, description, size. The WINDOW fields are chat-only, and this is the image role.
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    expect(inputs.length).toBe(3);
+    expect(inputs.length).toBe(4);
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(
@@ -425,8 +426,10 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
       id: "juggernaut-xl-v9",
       kind: "checkpoint",
-      files: [{ s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors" }],
+      files: [{ s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors", bytes: 0 }],
       description: "a photographic SDXL fine-tune",
+      context_tokens: 0,
+      max_output_tokens: 0,
     });
   });
 
@@ -501,5 +504,91 @@ describe("EnginesAdminView", () => {
     });
     await mount();
     expect(host!.textContent).not.toContain("同期 +");
+  });
+
+  // ADR 0072 P1: a chat engine's row carries its OWN window, and this form is the only way to
+  // declare one until P4's ingest reads it off the model card. A model registered without one
+  // reaches opencode as context 0 — which switches auto-compaction off.
+  it("declares a window and a size when registering a model for a chat engine", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          key: "llm",
+          api: "chat",
+          provider: "llamacpp",
+          has_models: true,
+          model_rows: [{ id: "qwen3-coder-30b-a3b", kind: "gguf", enabled: true, default: true }],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    expect(inputs.length).toBe(6);
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type(inputs[0], "qwen2.5-coder-1.5b");
+    await type(inputs[1], "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
+    await type(inputs[2], "small and quick");
+    await type(inputs[3], "32768");
+    await type(inputs[4], "4096");
+    await type(inputs[5], "1117320768");
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLElement,
+    );
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models", "POST", {
+      id: "qwen2.5-coder-1.5b",
+      kind: "gguf",
+      files: [{ s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", bytes: 1117320768 }],
+      description: "small and quick",
+      context_tokens: 32768,
+      max_output_tokens: 4096,
+    });
+  });
+
+  // Half a window is worse than none: opencode reads an output cap of 0 as 32,000, so a 32k
+  // context declared alone leaves 768 usable tokens. Both halves or neither.
+  it("drops a context declared without an output cap", async () => {
+    api.mockResolvedValue({
+      engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
+    });
+    apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type(inputs[0], "half-declared");
+    await type(inputs[1], "llm/x.gguf");
+    await type(inputs[3], "32768");
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)![2] as Record<string, number>;
+    expect(body.context_tokens).toBe(0);
+    expect(body.max_output_tokens).toBe(0);
   });
 });

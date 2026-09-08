@@ -49,6 +49,12 @@ export const admin = {
   "admin.engines_model_add": "バケットのファイルを登録する",
   "admin.engines_model_add_id": "id（利用者が選ぶ名前）",
   "admin.engines_model_add_desc": "説明（エージェントが読む 1 行・任意）",
+  // 🔴 窓は「両方か、どちらも書かないか」。context だけだと opencode は出力上限 0 を
+  // 32,000 と読み、32k のモデルが使える窓 768 トークンになる（ADR 0072 決定 3）。
+  "admin.engines_model_add_ctx": "窓（context・chat のみ）",
+  "admin.engines_model_add_out": "出力上限（context と対で）",
+  // CP は S3 を見られないので、同期の秒数を出せる唯一の出どころが宣言されたサイズ。
+  "admin.engines_model_add_bytes": "サイズ（バイト・任意）",
   "admin.engines_model_add_go": "登録する",
   "admin.engines_model_add_note": "CP は S3 を見ません（権限を持たせていません）。キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
   "admin.engines_model_vram": "VRAM {n} MiB",

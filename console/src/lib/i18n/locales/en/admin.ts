@@ -52,6 +52,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add": "Register a file from the bucket",
   "admin.engines_model_add_id": "id (what a member picks)",
   "admin.engines_model_add_desc": "description (one line an agent reads, optional)",
+  // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
+  // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
+  "admin.engines_model_add_ctx": "context window (chat only)",
+  "admin.engines_model_add_out": "output cap (with the context)",
+  // The control plane cannot look in S3, so a declared size is the only source for "sync +N s".
+  "admin.engines_model_add_bytes": "size in bytes (optional)",
   "admin.engines_model_add_go": "Register",
   "admin.engines_model_add_note": "The control plane does not look in S3 (it holds no permission to). A mistyped key shows up in the fetch log at the next start. The row is created disabled.",
   "admin.engines_model_vram": "VRAM {n} MiB",
