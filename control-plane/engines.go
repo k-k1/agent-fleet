@@ -168,8 +168,11 @@ func engineControlCfgFor(d engineDef) engineControlCfg {
 		idle:       time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_IDLE_SEC", int(idle.Seconds()))) * time.Second,
 		deadline:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_START_DEADLINE_SEC", int(deadline.Seconds()))) * time.Second,
 		cooldown:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_FAIL_COOLDOWN_SEC", 900)) * time.Second,
-		// No undo window: there is no UI toggle to press twice for an inference engine, and
-		// the grace only exists to debounce one (ADR 0070 decision 5).
+		// No undo window, even though there IS a toggle now (the admin panel of ADR 0071
+		// P1.5). The grace exists to make an accidental OFF→ON cheap, and for VOICEVOX it is:
+		// a 2 GB pull and 80 seconds. Here it would mean paying $1.26/hour for a box nobody
+		// may ask for again, so the engine's own cold start is the price of changing your
+		// mind (ADR 0070 decision 5, and why this one departs from it).
 		offGrace: 0,
 	}
 }
