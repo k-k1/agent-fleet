@@ -377,4 +377,85 @@ describe("EnginesAdminView", () => {
     await mount();
     expect(host!.textContent).toContain("有効なモデルがありません");
   });
+
+  // P0's definition of done is "switch the image checkpoint to another one without touching
+  // CloudFormation", and the seed creates exactly ONE row per role — so there has to be a way
+  // to add the second. This is not P4's ingest: it writes down a file that is already staged.
+  it("registers a staged file as a catalogue row, disabled", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [{ id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true }],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
+    await mount();
+    const open = Array.from(host!.querySelectorAll("button")).find(
+      (b) => b.textContent === "バケットのファイルを登録する",
+    );
+    await click(open as HTMLElement);
+
+    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    expect(inputs.length).toBe(3);
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        )!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type(inputs[0], "juggernaut-xl-v9");
+    await type(inputs[1], "image/checkpoints/juggernaut_xl_v9.safetensors");
+    await type(inputs[2], "a photographic SDXL fine-tune");
+
+    // ⚠️ The form must not imply the key was checked. The CP holds no S3 permission at all
+    // (ADR 0072 review R3), so a typo only surfaces at the next cold start. Asserted while the
+    // form is open, because submitting closes it.
+    expect(host!.textContent).toContain("CP は S3 を見ません");
+
+    const go = Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+      (b) => b.textContent === "登録する",
+    );
+    await click(go as HTMLElement);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
+      id: "juggernaut-xl-v9",
+      kind: "checkpoint",
+      files: [{ s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors" }],
+      description: "a photographic SDXL fine-tune",
+    });
+  });
+
+  // "Forget" is the row, not the file: the CP has no s3:DeleteObject. The one the engine starts
+  // with cannot be forgotten, or the role is left with no checkpoint at all.
+  it("forgets a row, and refuses to forget the one in use", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "parked", kind: "checkpoint", enabled: false },
+          ],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
+    await mount();
+    const forget = Array.from(host!.querySelectorAll(".engines-model")).map((li) =>
+      Array.from(li.querySelectorAll("button")).find((b) => b.textContent === "登録を消す"),
+    );
+    expect((forget[0] as HTMLButtonElement).disabled).toBe(true);
+    expect((forget[1] as HTMLButtonElement).disabled).toBe(false);
+    await click(forget[1] as HTMLElement);
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/parked",
+      "DELETE",
+      undefined,
+    );
+  });
 });

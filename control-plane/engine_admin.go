@@ -55,6 +55,16 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// entry in the agent-proxy allowlist in routes.go — that list exists for endpoints the
 	// Workspace Agent implements and the CP forwards.
 	mux.HandleFunc("PUT /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.putModel))
+	// Registering a file that is ALREADY in the bucket, and forgetting one. Not the ingest of
+	// ADR 0072 decision 6 — that fetches from Hugging Face, needs ecs:RunTask and is phase P4.
+	// This is the other half of what P4 will do: write down what a staged file is.
+	//
+	// P0 cannot do without it. The seed creates exactly ONE row per role (the model the stack
+	// was already serving), so with only that and the toggles there is no second checkpoint to
+	// select — and "select another checkpoint without touching CloudFormation" is P0's own
+	// definition of done.
+	mux.HandleFunc("POST /api/admin/engines/{key}/models", a.withSuperAdmin(a.postModel))
+	mux.HandleFunc("DELETE /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.deleteModel))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -376,6 +386,122 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// workspace that misses the push catches up on the catalogue's own 10-minute TTL.
 	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, key)
 	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
+// postModel (POST /api/admin/engines/{key}/models) registers a file that is already in the
+// models bucket. It is the manual half of what phase P4's ingest will do for itself.
+//
+// The row is created DISABLED whatever the body says. "The file is in the bucket" and "members
+// may use it" are different facts (ADR 0072's rejected "derive the catalogue from ListObjects"),
+// and the second is a separate, deliberate press of Enable — which is also what gives an
+// administrator a chance to read the licence line before anything is offered.
+//
+// ⚠️ Nothing here verifies that the S3 key exists. The CP task role has no S3 permission at all
+// and none is being added (ADR 0072 review R3), so a typo surfaces in the fetch sidecar's log at
+// the next cold start. That is the honest cost of keeping the CP out of the bucket, and it is
+// why the panel shows the key back.
+func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	var b struct {
+		ID    string `json:"id"`
+		Kind  string `json:"kind"`
+		Files []struct {
+			Flag  string `json:"flag"`
+			S3Key string `json:"s3Key"`
+		} `json:"files"`
+		Args            []string `json:"args"`
+		ContextTokens   int      `json:"context_tokens"`
+		MaxOutputTokens int      `json:"max_output_tokens"`
+		Sizes           []string `json:"sizes"`
+		Description     string   `json:"description"`
+		VramMiB         int      `json:"vram_mib"`
+		License         string   `json:"license"`
+		LicenseName     string   `json:"license_name"`
+		LicenseURL      string   `json:"license_url"`
+		Precision       string   `json:"precision"`
+		BaseModel       string   `json:"base_model"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		return
+	}
+	id := strings.TrimSpace(b.ID)
+	if id == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "id is required"})
+		return
+	}
+	m := store.EngineModel{
+		Role: key, ID: id, Kind: strings.TrimSpace(b.Kind),
+		Args: b.Args, ContextTokens: b.ContextTokens, MaxOutputTokens: b.MaxOutputTokens,
+		Sizes: b.Sizes, Description: strings.TrimSpace(b.Description), VramMiB: b.VramMiB,
+		License: strings.TrimSpace(b.License), LicenseName: strings.TrimSpace(b.LicenseName),
+		LicenseURL: strings.TrimSpace(b.LicenseURL),
+		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
+	}
+	for _, f := range b.Files {
+		if k := strings.TrimSpace(f.S3Key); k != "" {
+			m.Files = append(m.Files, store.EngineModelFile{Flag: strings.TrimSpace(f.Flag), S3Key: k})
+		}
+	}
+	if len(m.Files) == 0 {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "at least one file (s3Key) is required"})
+		return
+	}
+	if err := a.mgr.store.PutEngineModel(r.Context(), m); err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	e.catalog.invalidate()
+	// No publish and no push: the row is disabled, so nothing about the active set or any
+	// workspace's catalogue has changed yet. Enabling it is what moves those.
+	a.audit(r.Context(), ident, "engine."+key+".model", "register "+id)
+	log.Printf("engines: %s catalogue row registered: %s (%d file(s), disabled)", key, id, len(m.Files))
+	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
+}
+
+// deleteModel forgets a catalogue row. The FILE stays in the bucket: the CP has no
+// s3:DeleteObject and is not getting one (ADR 0072 decision 7 — the delete belongs to the
+// ingest task, phase P4). Saying so is the point; a route that silently left 7 GB behind while
+// looking like a delete is worse than one that does not offer it.
+func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	found, err := a.mgr.store.DeleteEngineModel(r.Context(), key, id)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	if !found {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		return
+	}
+	e.catalog.invalidate()
+	// A deleted row may have been enabled, so the box's active set really has changed.
+	if perr := e.publishActiveSet(r.Context()); perr != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		return
+	}
+	a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
+	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
+	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
 }
 
 // audit records one super-admin action against the catalogue. Same ledger, same shape as the

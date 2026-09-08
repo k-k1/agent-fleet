@@ -43,6 +43,17 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // redeploying here would kill a generation in flight (ADR 0072 decision 4). Say so first.
   "admin.engines_model_next_start": "A new choice takes effect at the next start. A running engine is not swapped (that would kill a generation in flight).",
   "admin.engines_model_window": "context {c} / output {o}",
+  // 🔴 "Forget", not "Delete": the CP has no s3:DeleteObject and is not getting one (ADR 0072
+  // decision 7 — deleting the file is the ingest task's job, phase P4). The file stays.
+  "admin.engines_model_forget": "Forget",
+  // Not P4's ingest (which fetches from Hugging Face); just writing down what a file already in
+  // the bucket IS. The seed creates one row per role, so without this there is no second
+  // checkpoint to switch to without touching CloudFormation.
+  "admin.engines_model_add": "Register a file from the bucket",
+  "admin.engines_model_add_id": "id (what a member picks)",
+  "admin.engines_model_add_desc": "description (one line an agent reads, optional)",
+  "admin.engines_model_add_go": "Register",
+  "admin.engines_model_add_note": "The control plane does not look in S3 (it holds no permission to). A mistyped key shows up in the fetch log at the next start. The row is created disabled.",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // The box's clock and the service's clock are different facts: the first is when the EC2
   // instance registered, the second when the deployment last changed — which moves without any

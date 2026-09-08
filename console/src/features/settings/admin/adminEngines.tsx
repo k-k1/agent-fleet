@@ -156,13 +156,27 @@ export function EnginesAdminView() {
    *  guessing at the exclusivity rule — selecting one model clears another, and reproducing
    *  that here would be a second copy of a rule that has to be enforced in a transaction. */
   const setModel = async (key: string, id: string, patch: Record<string, boolean>) => {
-    setBusy(key + "/" + id);
+    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
+  };
+
+  const addModel = async (key: string, body: Record<string, unknown>) => {
+    await callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
+  };
+
+  const forgetModel = async (key: string, id: string) => {
+    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "DELETE", undefined, key);
+  };
+
+  const callModel = async (
+    busyKey: string,
+    path: string,
+    method: string,
+    body: unknown,
+    key: string,
+  ) => {
+    setBusy(busyKey);
     try {
-      const d = await apiJSON(
-        `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`,
-        "PUT",
-        patch,
-      );
+      const d = await apiJSON(path, method, body);
       if (d?.error) {
         setErr(errText(d.error));
         return;
@@ -211,6 +225,8 @@ export function EnginesAdminView() {
             row={e}
             busy={busy}
             onChange={(id, patch) => setModel(e.key, id, patch)}
+            onForget={(id) => forgetModel(e.key, id)}
+            onAdd={(body) => addModel(e.key, body)}
           />
           {e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
           {e.error && <p className="form-err">{e.error}</p>}
@@ -248,23 +264,27 @@ function EngineModels({
   row,
   busy,
   onChange,
+  onForget,
+  onAdd,
 }: {
   row: EngineRow;
   busy: string;
   onChange: (id: string, patch: Record<string, boolean>) => void;
+  onForget: (id: string) => void;
+  onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
   const models = row.model_rows || [];
-  // An engine with no catalogue at all is the interesting case, not an empty section: the
-  // controller refuses to start it and every request is refused, so it needs a sentence rather
-  // than a blank area that reads as "still loading".
-  if (models.length === 0) {
-    return <p className="form-err">{tr("admin.engines_catalog_empty")}</p>;
-  }
   const isImage = row.api === "images";
   return (
     <div className="engines-models">
-      {!row.has_models && <p className="form-err">{tr("admin.engines_catalog_none_enabled")}</p>}
+      {/* An engine with no catalogue at all is the interesting case, not an empty section: the
+          controller refuses to start it and every request is refused, so it gets a sentence
+          rather than a blank area that reads as "still loading". */}
+      {models.length === 0 && <p className="form-err">{tr("admin.engines_catalog_empty")}</p>}
+      {models.length > 0 && !row.has_models && (
+        <p className="form-err">{tr("admin.engines_catalog_none_enabled")}</p>
+      )}
       <ul className="engines-model-list">
         {models.map((m) => {
           const started = !!(m.selected || m.default);
@@ -297,6 +317,17 @@ function EngineModels({
                       {tr("admin.engines_model_select")}
                     </button>
                   )}
+                  {/* Forgetting the ROW. The file stays in the bucket — the CP has no
+                      s3:DeleteObject and is not getting one (ADR 0072 decision 7) — so the
+                      label says "forget", not "delete", and the note below says why. */}
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    disabled={pending || started}
+                    onClick={() => onForget(m.id)}
+                  >
+                    {tr("admin.engines_model_forget")}
+                  </button>
                 </span>
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
@@ -306,6 +337,85 @@ function EngineModels({
         })}
       </ul>
       <p className="muted">{tr("admin.engines_model_next_start")}</p>
+      <EngineModelAdd busy={busy === row.key + "/+"} isImage={isImage} onAdd={onAdd} />
+    </div>
+  );
+}
+
+/** Registering a file that is ALREADY in the models bucket.
+ *
+ * This is NOT the ingest — that fetches from Hugging Face, needs `ecs:RunTask` on the Control
+ * Plane, and is phase P4. It is the other half of what P4 will do for itself: write down what a
+ * staged file is. Without it the only catalogue row that ever exists is the seeded one, and
+ * "choose another checkpoint without touching CloudFormation" has nothing to choose.
+ *
+ * Three fields and no more. Everything else the catalogue can hold (the window, the sizes, the
+ * licence) is either irrelevant to the role or better filled in by P4's ingest, which can read
+ * it from the model card instead of asking a person to retype it. */
+function EngineModelAdd({
+  busy,
+  isImage,
+  onAdd,
+}: {
+  busy: boolean;
+  isImage: boolean;
+  onAdd: (body: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const [id, setId] = useState("");
+  const [s3Key, setS3Key] = useState("");
+  const [desc, setDesc] = useState("");
+
+  if (!open) {
+    return (
+      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+        {tr("admin.engines_model_add")}
+      </button>
+    );
+  }
+  const submit = () => {
+    if (!id.trim() || !s3Key.trim()) return;
+    onAdd({
+      id: id.trim(),
+      kind: isImage ? "checkpoint" : "gguf",
+      files: [{ s3Key: s3Key.trim() }],
+      description: desc.trim(),
+    });
+    setOpen(false);
+    setId("");
+    setS3Key("");
+    setDesc("");
+  };
+  return (
+    <div className="engines-model-add">
+      <input
+        value={id}
+        placeholder={tr("admin.engines_model_add_id")}
+        onChange={(ev) => setId(ev.currentTarget.value)}
+      />
+      <input
+        value={s3Key}
+        placeholder={
+          isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf"
+        }
+        onChange={(ev) => setS3Key(ev.currentTarget.value)}
+      />
+      <input
+        value={desc}
+        placeholder={tr("admin.engines_model_add_desc")}
+        onChange={(ev) => setDesc(ev.currentTarget.value)}
+      />
+      <button type="button" className="primary sm" disabled={busy} onClick={submit}>
+        {tr("admin.engines_model_add_go")}
+      </button>
+      <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+        {tr("common.cancel")}
+      </button>
+      {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
+          being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
+          next cold start, so the panel says so rather than implying a check happened. */}
+      <p className="muted">{tr("admin.engines_model_add_note")}</p>
     </div>
   );
 }

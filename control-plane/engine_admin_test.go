@@ -281,3 +281,129 @@ func TestEngineDisplayStateDoesNotContradictTheButton(t *testing.T) {
 		}
 	}
 }
+
+// --- the model catalogue routes (ADR 0072) ------------------------------------
+
+// engineModelAdminAPI is the admin API wired to a real store, so the catalogue routes exercise
+// the exclusivity the store enforces rather than a stub that agrees with them.
+func engineModelAdminAPI(t *testing.T) (engineAdminAPI, *engineRuntimeState, store.Store) {
+	t.Helper()
+	st := testSettingsStore(t)
+	reg, e := newAdminTestRegistry(t, &engineTestECS{}, st)
+	e.catalog = newEngineCatalog(st, "image")
+	// No ssm and no activeParam: publishActiveSet is then a no-op, which is what a CP with an
+	// inline table does. What is under test here is the ROW, not the publish.
+	return engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}, e, st
+}
+
+func adminModel(t *testing.T, a engineAdminAPI, method, key, id, body string) (int, map[string]any) {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	path := "/api/admin/engines/" + key + "/models"
+	if id != "" {
+		path += "/" + id
+	}
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.SetPathValue("key", key)
+	r.SetPathValue("id", id)
+	switch method {
+	case "POST":
+		a.postModel(rec, r, store.Identity{ID: "u1"})
+	case "PUT":
+		a.putModel(rec, r, store.Identity{ID: "u1"})
+	case "DELETE":
+		a.deleteModel(rec, r, store.Identity{ID: "u1"})
+	}
+	var out map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	return rec.Code, out
+}
+
+// The whole P0 flow through the API: register a staged file, enable it, make it the one the
+// engine starts with — and see the previous one stop being it. This is the sequence behind
+// ADR 0072 P0's definition of done, minus the GPU.
+func TestEngineAdminModelLifecycle(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := context.Background()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	e.catalog.invalidate()
+
+	code, out := adminModel(t, a, "POST", "image", "", `{"id":"jugg","kind":"checkpoint",
+	  "files":[{"s3Key":"image/checkpoints/juggernaut_xl_v9.safetensors"}],
+	  "description":"a photographic SDXL fine-tune","license":"creativeml-openrail-m"}`)
+	if code != http.StatusOK {
+		t.Fatalf("register = %d (%v)", code, out)
+	}
+	rows, _ := st.ListEngineModels(ctx, "image")
+	var jugg store.EngineModel
+	for _, m := range rows {
+		if m.ID == "jugg" {
+			jugg = m
+		}
+	}
+	// ⚠️ Registered means STAGED, not offered. "The file is in the bucket" and "members may use
+	// it" are different facts, and the second is a separate press.
+	if jugg.ID == "" || jugg.Enabled || jugg.Selected {
+		t.Fatalf("a registered row must arrive disabled: %+v", jugg)
+	}
+	if jugg.License != "creativeml-openrail-m" {
+		t.Errorf("licence was dropped: %+v", jugg)
+	}
+
+	// Selecting is what an administrator presses to change the checkpoint, and it is exclusive.
+	if code, out = adminModel(t, a, "PUT", "image", "jugg", `{"selected":true}`); code != http.StatusOK {
+		t.Fatalf("select = %d (%v)", code, out)
+	}
+	rows, _ = st.ListEngineModels(ctx, "image")
+	var selected []string
+	for _, m := range rows {
+		if m.Selected {
+			selected = append(selected, m.ID)
+		}
+	}
+	if len(selected) != 1 || selected[0] != "jugg" {
+		t.Fatalf("selection after the switch = %v", selected)
+	}
+	// The answer carries the whole engine row, so the panel does not have to reproduce the
+	// exclusivity rule client-side.
+	mr, _ := out["model_rows"].([]any)
+	if len(mr) != 2 {
+		t.Fatalf("model_rows = %v", out["model_rows"])
+	}
+	if out["has_models"] != true {
+		t.Errorf("has_models = %v", out["has_models"])
+	}
+
+	// Forgetting a row leaves the FILE alone — the CP has no s3:DeleteObject (review R3) — and
+	// an unknown id is a 404 rather than a silent success.
+	if code, _ = adminModel(t, a, "DELETE", "image", "sdxl-base-1.0", ""); code != http.StatusOK {
+		t.Fatalf("forget = %d", code)
+	}
+	if code, _ = adminModel(t, a, "DELETE", "image", "sdxl-base-1.0", ""); code != http.StatusNotFound {
+		t.Errorf("forgetting twice = %d, want 404", code)
+	}
+	if code, _ = adminModel(t, a, "PUT", "image", "nope", `{"enabled":true}`); code != http.StatusNotFound {
+		t.Errorf("unknown model = %d, want 404", code)
+	}
+}
+
+// An empty body must not be read as "switch it off", and a row with no file must not be
+// created: it would be a catalogue entry the sidecar can never sync, visible as an engine that
+// starts and idles.
+func TestEngineAdminModelRefusesAnEmptyBody(t *testing.T) {
+	a, _, _ := engineModelAdminAPI(t)
+	if code, _ := adminModel(t, a, "PUT", "image", "x", `{}`); code != http.StatusBadRequest {
+		t.Errorf("empty patch = %d, want 400", code)
+	}
+	if code, _ := adminModel(t, a, "POST", "image", "", `{"id":"x"}`); code != http.StatusBadRequest {
+		t.Errorf("no files = %d, want 400", code)
+	}
+	if code, _ := adminModel(t, a, "POST", "image", "", `{"files":[{"s3Key":"a"}]}`); code != http.StatusBadRequest {
+		t.Errorf("no id = %d, want 400", code)
+	}
+}

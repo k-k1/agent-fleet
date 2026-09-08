@@ -40,6 +40,17 @@ export const admin = {
   // ここで再デプロイすると生成中の要求を殺す（ADR 0072 決定 4）。だから先に言っておく。
   "admin.engines_model_next_start": "選び直しは次の起動から効きます。走っているエンジンは入れ替えません（生成中の要求を殺さないため）。",
   "admin.engines_model_window": "窓 {c} / 出力 {o}",
+  // 🔴 「削除」ではなく「登録を消す」。CP に `s3:DeleteObject` は無く、足すつもりも無い
+  // （決定 7。消すのは取り込みタスクの仕事で P4）。ファイルはバケットに残る。
+  "admin.engines_model_forget": "登録を消す",
+  // P4 の取り込み（HF から取ってくる）ではなく、既にバケットに在るファイルを「これは
+  // 何か」と書き留めるだけの口。種は役ごとに 1 行しか作らないので、これが無いと
+  // 「CloudFormation を触らずに別のチェックポイントへ」の選び先が無い。
+  "admin.engines_model_add": "バケットのファイルを登録する",
+  "admin.engines_model_add_id": "id（利用者が選ぶ名前）",
+  "admin.engines_model_add_desc": "説明（エージェントが読む 1 行・任意）",
+  "admin.engines_model_add_go": "登録する",
+  "admin.engines_model_add_note": "CP は S3 を見ません（権限を持たせていません）。キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
   // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
