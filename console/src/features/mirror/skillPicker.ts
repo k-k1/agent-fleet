@@ -70,12 +70,43 @@ export function pickerTokenAt(text: string, caret: number, trigger = "/", allowB
   return { token: text.slice(0, end), start: 0, end, bare: true };
 }
 
+// splitDoubleTrigger: a token that itself starts with the trigger (the user typed "//" or
+// "$$") is the "show the bundled ones too" gesture (docs/log/50 §9). Strip that second trigger
+// and return the remaining query with all=true; any other token is returned unchanged. The
+// full-width aliases count here too (a Japanese IME types ／／).
+export function splitDoubleTrigger(token: string, trigger: string): { query: string; all: boolean } {
+  const head = triggerHead(token, trigger);
+  if (!head) return { query: token, all: false };
+  return { query: token.slice(head.length), all: true };
+}
+
+// isCli: a CLI-bundled/advertised entry (claude's shipped skills, codex's .system, cursor's
+// builtin list) — the second tier of the picker.
+export function isCli(s: SessionSkill): boolean {
+  return s.source === "cli";
+}
+
+// collapseCli: the two-tier display (docs/log/50 §9). With showAll=false the CLI-bundled
+// entries are folded away behind a "show N more" row, so the user's own skills come first —
+// but only when there IS a first tier: a list made of cli entries alone (cursor's advertised
+// list, a claude session with no skills of its own) is shown as it is, since hiding all of it
+// behind one click would just be a hurdle. Returns the rows to show and the folded count.
+export function collapseCli(items: SessionSkill[], showAll: boolean): { shown: SessionSkill[]; hidden: number } {
+  if (showAll) return { shown: items, hidden: 0 };
+  const own = items.filter((s) => !isCli(s));
+  if (own.length === 0) return { shown: items, hidden: 0 };
+  return { shown: own, hidden: items.length - own.length };
+}
+
 // filterSkills: order by prefix match > name substring > description substring. Case-insensitive.
-// An empty query returns everything (in the API's order, i.e. name ascending).
+// Within one rank the user's own entries (project/user/foreign) come before the CLI-bundled
+// ones, so `/sim` lists a project "simulate" ahead of the shipped "simplify". An empty query
+// returns everything in that tier order (the API's name order within a tier).
 export function filterSkills(skills: SessionSkill[], query: string): SessionSkill[] {
   const q = query.trim().toLowerCase();
-  if (!q) return skills;
+  const tier = (s: SessionSkill): number => (isCli(s) ? 1 : 0);
   const rank = (s: SessionSkill): number => {
+    if (!q) return 0;
     const nm = s.name.toLowerCase();
     if (nm.startsWith(q)) return 0;
     if (nm.includes(q)) return 1;
@@ -83,9 +114,9 @@ export function filterSkills(skills: SessionSkill[], query: string): SessionSkil
     return -1;
   };
   return skills
-    .map((s) => ({ s, r: rank(s) }))
+    .map((s) => ({ s, r: rank(s), t: tier(s) }))
     .filter((x) => x.r >= 0)
-    .sort((a, b) => a.r - b.r)
+    .sort((a, b) => a.r - b.r || a.t - b.t)
     .map((x) => x.s);
 }
 

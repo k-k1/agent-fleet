@@ -39,6 +39,9 @@ node console/scripts/shots/capture.mjs --locale en
   check the shot, not just the exit code.
 - The stub logs `[stub] unhandled: <path>` for any API path it does not know, which is
   how you find an endpoint a new view needs.
+- `server.mjs --idle` (or `SHOTS_IDLE=1`) serves the mirror session idle with no pending
+  question. The README shot wants the live question card, but that card locks the composer,
+  so anything that exercises the composer itself (the skill picker's tiers, say) needs this.
 
 ## Publishing
 

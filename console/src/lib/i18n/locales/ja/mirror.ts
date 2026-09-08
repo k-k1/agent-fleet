@@ -157,6 +157,28 @@ export const mirror = {
 
   // foreign（他規約）スキルの注入プロンプト — エージェントへの指示文そのもの
   "mirror.skills_use_foreign": "{path} を読んで、そのスキルの指示に従って実行して。",
+  // 2 段表示（docs/log/50 §9）: CLI 同梱のスキルは利用者定義の下に畳み、この行かトリガ 2 連打で開く
+  "mirror.skills_more_cli": "CLI 同梱のスキル / コマンドをあと {n} 件表示",
+  // 同梱スキルの説明（claude の init フレームは名前しか運ばない）。表に無いものは名前だけで出る
+  "mirror.skills_cli_desc.dataviz": "グラフ / ダッシュボードの設計指針",
+  "mirror.skills_cli_desc.update-config": "設定を変える: hooks・権限・環境変数（settings.json）",
+  "mirror.skills_cli_desc.keybindings-help": "キーボードショートカットの変更・追加",
+  "mirror.skills_cli_desc.code-review": "差分をレビューして不具合と整理点を挙げる",
+  "mirror.skills_cli_desc.simplify": "変更したコードを挙動を変えずに整理する",
+  "mirror.skills_cli_desc.fewer-permission-prompts": "よく使う読み取り系コマンドを許可リストに足して確認を減らす",
+  "mirror.skills_cli_desc.loop": "プロンプトやコマンドを一定間隔で繰り返す（例: /loop 5m /foo）",
+  "mirror.skills_cli_desc.schedule": "定期実行のクラウドエージェント（ルーチン）を作成・管理する",
+  "mirror.skills_cli_desc.claude-api": "Claude API を使うアプリの構築・デバッグの参照",
+  "mirror.skills_cli_desc.workflow-authoring": "Workflow スクリプト（複数エージェントの編成）の書き方",
+  "mirror.skills_cli_desc.run": "このプロジェクトのアプリを起動して変更が動くのを確かめる",
+  "mirror.skills_cli_desc.run-skill-generator": "このプロジェクトのアプリの起動方法を知るスキルを作る",
+  "mirror.skills_cli_desc.init": "CLAUDE.md を新しく作る",
+  "mirror.skills_cli_desc.security-review": "ブランチの未反映の変更をセキュリティレビューする",
+  "mirror.skills_cli_desc.verify": "変更が意図どおり動くことを検証する",
+  "mirror.skills_cli_desc.debug": "デバッグログを有効にして問題を調べる",
+  "mirror.skills_cli_desc.batch": "大きな変更を計画し、バックグラウンドのエージェントがそれぞれ PR を開く",
+  "mirror.skills_cli_desc.doctor": "Claude Code のインストール状態を診断する",
+  "mirror.skills_cli_desc.deep-research": "多段階の深い調査を行う",
   // CompactBlock
   "mirror.context_compacted": "コンテキストが圧縮されました",
   "mirror.token_change": "{before} → {after} トークン",

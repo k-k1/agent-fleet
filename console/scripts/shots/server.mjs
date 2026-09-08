@@ -26,6 +26,10 @@ const LOCALE = arg("locale", "ja");
 // Whether to expose the admin / tenant-settings surface. Off by default: one extra entry point
 // silently changes the README screenshot of the account menu. Turn it on only to look at it.
 const ADMIN = argv.includes("--admin") || process.env.SHOTS_ADMIN === "1";
+// --idle: serve the mirror session as idle with no pending question. The README shot wants the
+// live question card, but that card locks the composer, so anything that needs the composer
+// itself (the skill picker, say) is checked with this on.
+const IDLE = argv.includes("--idle") || process.env.SHOTS_IDLE === "1";
 
 const MIME = {
   ".html": "text/html; charset=utf-8",
@@ -167,7 +171,18 @@ const exact = {
 };
 
 const re = [
-  [/^\/api\/sessions\/([^/]+)\/messages$/, (m) => fx.messages(LOCALE, decodeURIComponent(m[1]))],
+  [
+    /^\/api\/sessions\/([^/]+)\/messages$/,
+    (m) => {
+      const body = fx.messages(LOCALE, decodeURIComponent(m[1]));
+      if (!IDLE) return body;
+      const { pendingQuestions: _q, pendingText: _t, ...rest } = body;
+      return { ...rest, status: body.status === "question" ? "idle" : body.status };
+    },
+  ],
+  // The composer's skill picker (docs/log/50): the session's own skills plus the CLI-bundled
+  // tier (source "cli", names only — the shape claude's init frame yields, §9).
+  [/^\/api\/sessions\/([^/]+)\/skills$/, () => ({ skills: fx.sessionSkills(LOCALE) })],
   // The "committed" verdict of the changed-files strip (docs/log/68 P2): repo-relative paths
   // that appeared in a commit made since the session started.
   [/^\/api\/sessions\/([^/]+)\/committed$/, () => fx.committedFiles()],

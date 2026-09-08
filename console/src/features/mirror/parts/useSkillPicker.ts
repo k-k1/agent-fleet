@@ -8,11 +8,13 @@ import { useDismiss } from "../../../lib/useDismiss.ts";
 import type { AgentDescriptor } from "../../../agents/registry.ts";
 import {
   applySkillToDraft,
+  collapseCli,
   exactSkills,
   filterSkills,
   hasTriggerHead,
   pickerTokenAt,
   slashTokenAt,
+  splitDoubleTrigger,
   type SlashToken,
 } from "../skillPicker.ts";
 
@@ -26,6 +28,13 @@ import {
  * the sel-index scheme that keeps focus in the textarea (same shape as CommandPalette). For a kind
  * whose managed invocation is unverified (opencode), only native items are dropped via
  * slashSkillsManaged=false - foreign items are not gated.
+ *
+ * Two tiers (docs/log/50 §9): the user's own entries (project/user/foreign) are listed first
+ * and the CLI-bundled ones (source "cli" - claude's shipped skills, codex's .system, cursor's
+ * builtins) are folded behind a "show N more" row while the query is empty. The row opens
+ * them (↓ to it and Enter, or a click), as does typing the trigger twice ("//", "$$"). A
+ * non-empty query always searches both tiers - someone typing "/sim" expects the shipped
+ * simplify to show up - with the own tier winning ties.
  *
  * Reads composerLocked, so call this after composerLocked has been decided (i.e. after the
  * composer's setup).
@@ -55,6 +64,7 @@ export function useSkillPicker({
   const [slashTok, setSlashTok] = useState<SlashToken | null>(null); // leading /-token being typed
   const [skillBtnOpen, setSkillBtnOpen] = useState(false); // opened from the button (shows everything)
   const [skillSel, setSkillSel] = useState(0);
+  const [cliOpen, setCliOpen] = useState(false); // the "show N more" row was taken (second tier unfolded)
   const skillDismissRef = useRef<string | null>(null); // token at the time Esc/outside-click closed it (stays closed until it changes)
   const skillPopRef = useRef<HTMLDivElement>(null);
   const skillBtnRef = useRef<HTMLButtonElement>(null);
@@ -73,17 +83,25 @@ export function useSkillPicker({
   const slashOpen = canSkills && !composerLocked && slashTok !== null && !slashTok.bare && skillDismissRef.current !== slashTok.token;
   const skillArgs = slashOpen && !!slashTok?.args;
   const skillsOpen = canSkills && !composerLocked && (skillBtnOpen || slashOpen);
-  const skillQuery = slashTok?.token ?? "";
-  const skillItems = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
+  // "//" (the token itself starts with the trigger) is the show-all gesture: the second trigger
+  // is not part of the query.
+  const { query: skillQuery, all: doubleTrigger } = splitDoubleTrigger(slashTok?.token ?? "", skillTrigger);
+  const skillMatches = (skillArgs ? exactSkills(skills ?? [], skillQuery) : skills ? filterSkills(skills, skillQuery) : [])
     // For a kind with unverified managed invocation, drop only the native items (a foreign
     // injection is just a prompt).
     .filter((s) => !!s.path || !managed || agent.caps.slashSkillsManaged);
+  // Fold the CLI tier only while browsing (empty query, not unfolded, not the "//" gesture);
+  // a query searches both tiers. The passive display is a single settled item and is never folded.
+  const { shown: skillItems, hidden: skillMore } = collapseCli(skillMatches, skillArgs || cliOpen || doubleTrigger || !!skillQuery.trim());
   // Passive display only when exactly one item matched, so the popup does not appear and vanish
   // while loading, or while a "/"-leading sentence that matches nothing is being written; the
   // looser button-initiated/typing-initiated conditions are deliberately not used here.
   const skillListVisible = skillsOpen && (skillArgs ? skillItems.length > 0 : skillBtnOpen || skills === null || skillItems.length > 0);
   // Capture the keyboard (↑↓ to move, Enter/Tab to confirm) only in the active display.
   const skillNavActive = skillListVisible && !skillArgs;
+  // Rows the keyboard walks: the items plus, when folded, the "show N more" row at the end
+  // (sel === skillItems.length selects it).
+  const skillRows = skillItems.length + (skillMore > 0 ? 1 : 0);
   // Native inserts invoke as is; foreign is built into a "read this path and follow its
   // instructions" prompt (trailing space, so arguments can be typed right after).
   const skillInsertText = (s: SessionSkill): string =>
@@ -92,7 +110,15 @@ export function useSkillPicker({
   // Fetch on open (reset when the session changes). Fetched every time: having the session create
   // a SKILL.md mid-conversation is a normal way to work, so each open pulls a fresh list (the scan
   // is cheap).
-  useEffect(() => setSkills(null), [session]);
+  useEffect(() => {
+    setSkills(null);
+    setCliOpen(false);
+  }, [session]);
+  // Fold the second tier again whenever the list closes, so each open starts with the user's
+  // own entries on top.
+  useEffect(() => {
+    if (!skillsOpen) setCliOpen(false);
+  }, [skillsOpen]);
   useEffect(() => {
     if (!skillsOpen || !session) return;
     let live = true;
@@ -118,6 +144,10 @@ export function useSkillPicker({
   // Reset the selection to the top when the filter changes, and scroll the selection into view
   // when it moves.
   useEffect(() => setSkillSel(0), [slashTok?.token, skillBtnOpen]);
+  // Unfolding: keep the selection where it is. The user's own entries come first in the
+  // unfolded list too, so the index that held the "show more" row now holds the first
+  // bundled entry - the selection lands exactly on what was just revealed.
+  const unfoldCli = () => setCliOpen(true);
   // Write this with a block body (never return the expression): since Chrome 150 scrollIntoView()
   // returns a Promise for scroll completion, so an implicit return stores that Promise as the
   // effect's cleanup, React calls it as a function on the next run and the resulting TypeError
@@ -204,16 +234,23 @@ export function useSkillPicker({
   // Esc is accepted. Returns true when the key was captured (the caller stops there).
   const handleKeyDown = (e: RKeyboardEvent): boolean => {
     if (!skillListVisible || e.nativeEvent.isComposing) return false;
-    if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillItems.length) {
+    if (skillNavActive && (e.key === "ArrowDown" || e.key === "ArrowUp") && skillRows) {
       e.preventDefault();
-      const n = skillItems.length;
+      const n = skillRows;
       setSkillSel((s) => (s + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
       return true;
     }
-    if (skillNavActive && ((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab") && skillItems[skillSel]) {
-      e.preventDefault();
-      pickSkill(skillInsertText(skillItems[skillSel]));
-      return true;
+    if (skillNavActive && ((e.key === "Enter" && !e.ctrlKey && !e.metaKey && !e.shiftKey) || e.key === "Tab")) {
+      if (skillItems[skillSel]) {
+        e.preventDefault();
+        pickSkill(skillInsertText(skillItems[skillSel]));
+        return true;
+      }
+      if (skillMore > 0 && skillSel === skillItems.length) {
+        e.preventDefault();
+        unfoldCli();
+        return true;
+      }
     }
     if (e.key === "Escape") {
       e.preventDefault();
@@ -228,6 +265,9 @@ export function useSkillPicker({
     trigger: skillTrigger,
     skills,
     items: skillItems,
+    /** Folded CLI-bundled entries (0 = nothing folded); the list draws a "show N more" row. */
+    more: skillMore,
+    unfold: unfoldCli,
     sel: skillSel,
     setSel: setSkillSel,
     query: skillQuery,
