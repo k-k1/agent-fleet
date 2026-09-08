@@ -171,3 +171,35 @@ describe("MarkdownView path auto-linking", () => {
     expect(pathLinks()).toHaveLength(1);
   });
 });
+
+// A path made of hex — a generated-image directory (UUID) plus a numeric filename — used
+// to be eaten by the commit-hash linkifier: it ran first, split the <code> into three
+// "commit" fragments (which is also why linkifyPathRefs then skipped it: no longer a bare
+// token), and the file itself was left unopenable. The path is the thing being cited.
+describe("a path outranks the hashes inside it", () => {
+  const IMG = "~/.cache/agent-fleet/generated/40b1acd8-bf44-5343-aa9d-338c427f7048/image-1788834344-1.png";
+  const commitLinks = () => [...host.querySelectorAll<HTMLAnchorElement>("a.md-commit-link")];
+
+  it("links the whole generated-image path and no hash inside it", async () => {
+    resolved[IMG] = { path: ".cache/agent-fleet/generated/40b1acd8/image-1788834344-1.png", type: "file" };
+    await render(`1. \`${IMG}\` — 循環回路模様の海`, { repo: "r1" });
+    expect(pathLinks().map((a) => a.textContent)).toEqual([IMG]);
+    expect(commitLinks()).toHaveLength(0);
+  });
+
+  it("keeps the path plain — not a row of commit links — when it does not resolve", async () => {
+    await render(`\`${IMG}\``, { repo: "r1" });
+    expect(pathLinks()).toHaveLength(0);
+    expect(commitLinks()).toHaveLength(0);
+  });
+
+  it("does not read a UUID written in prose as a commit either", async () => {
+    await render("生成先は 40b1acd8-bf44-5343-aa9d-338c427f7048 です", { repo: "r1" });
+    expect(commitLinks()).toHaveLength(0);
+  });
+
+  it("still links a sha cited on its own", async () => {
+    await render("修正は 9219ab9 で入れた", { repo: "r1" });
+    expect(commitLinks().map((a) => a.textContent)).toEqual(["9219ab9"]);
+  });
+});
