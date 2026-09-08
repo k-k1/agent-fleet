@@ -178,6 +178,14 @@ func (u *usageSampler) prune(ctx context.Context, now time.Time) {
 	if err := u.mgr.store.PruneUsageHourly(ctx, cutoff); err != nil {
 		log.Printf("showback: prune hourly usage: %v", err)
 	}
+	// engine_hourly (ADR 0071) is the same kind of row on the same retention, and the
+	// engines write it from their own controllers. It is pruned from here rather than from
+	// each controller so the deployment has one hourly-bucket janitor rather than one per
+	// engine racing on the same clock — and so an engine table that shrinks does not strand
+	// the rows of an engine nobody runs any more.
+	if err := u.mgr.store.PruneEngineHourly(ctx, cutoff); err != nil {
+		log.Printf("showback: prune hourly engine occupancy: %v", err)
+	}
 }
 
 // --- admin API ---

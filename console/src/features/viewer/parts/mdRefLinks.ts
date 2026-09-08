@@ -33,6 +33,13 @@ import { openCommit } from "../../scm/open.ts";
 // code (`sukbq4s` / `9219ab9` written in backticks — the common way these are mentioned)
 // IS linkified for all shapes: a slug in backticks references that session/conversation,
 // and a hash in backticks references that commit (commit still click-verified).
+//
+// A PATH WINS OVER THE TOKENS INSIDE IT. Inline code that is path-shaped
+// (`~/.cache/agent-fleet/generated/40b1acd8-…/image-1788834344-1.png`) is left entirely
+// alone here so linkifyPathRefs can link it as the one thing it actually is. Otherwise the
+// hex runs a UUID and a numeric filename are made of get taken for shas first, and because
+// that splits the <code> into elements, the path link can never happen afterwards: the
+// reader is left with three dead "commit" fragments instead of one link to the file.
 const COMMIT_RE = "[0-9a-f]{7,40}";
 const SLUG_RE = "s[a-z2-7]{6}"; // randSlug: "s" + 6 base32-lower chars (a-z, 2-7)
 const CONV_RE = "a[a-z2-7]{6}"; // randConvSlug: "a" + 6 base32-lower chars
@@ -43,6 +50,28 @@ const REF_RE = new RegExp(`\\b(?:${COMMIT_RE}|${SLUG_RE}|${CONV_RE})\\b`, "g");
 // Cheap "does this document mention a conv-slug-shaped token at all" probe, used to
 // decide whether loading the conversation list is worth it (see ensureConvs call).
 export const CONV_HINT_RE = new RegExp(`\\b${CONV_RE}\\b`);
+
+// Neighbours that say a hex run is a FIELD of something bigger — a path segment
+// ("generated/40b1acd8"), a UUID group ("…-338c427f7048"), a numeric part of a filename
+// ("image-1788834344-1.png") — rather than a sha someone is citing. \b alone can't tell:
+// "/" and "-" are word boundaries, so every such group matched the commit shape and the
+// most common false positive in this app (a generated-file path) came out as a row of
+// commit links. A citation is written with a space, a bracket or a sentence around it, so
+// requiring that costs nothing real; the one shape it drops is a hash RANGE ("a1b2c3d-…"),
+// which was never a single commit anyway. Slugs keep the old rule — "temp/sukbq4s" is a
+// branch named after a live session and linking it is the point.
+const HEX_FIELD_NEIGHBOR = /[/\-]/;
+const inPathLikeContext = (text: string, start: number, end: number) =>
+  HEX_FIELD_NEIGHBOR.test(text[start - 1] ?? "") || HEX_FIELD_NEIGHBOR.test(text[end] ?? "");
+
+// isPathCandidateCode reports whether an inline <code> is the kind of token linkifyPathRefs
+// will try to resolve. Kept in one place so the two passes agree on what a path is: this
+// pass skips exactly what that one claims.
+export function isPathCandidateCode(code: HTMLElement): boolean {
+  if (code.closest("pre,a")) return false;
+  if (code.childElementCount) return false;
+  return pathRefCandidate(code.textContent) !== null;
+}
 
 export function linkifyRefs(
   root: HTMLElement,
@@ -56,7 +85,11 @@ export function linkifyRefs(
       if (!n.nodeValue || !/[0-9a-z]/i.test(n.nodeValue)) return NodeFilter.FILTER_REJECT;
       // Never touch fenced blocks (literal source) or text already inside a link. Inline
       // code IS walked — a slug in backticks still linkifies (gated below to slug-only).
-      return n.parentElement?.closest("pre,a") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+      if (n.parentElement?.closest("pre,a")) return NodeFilter.FILTER_REJECT;
+      // …except when that inline code is a path: it belongs to linkifyPathRefs whole.
+      const code = n.parentElement?.closest("code");
+      if (code && isPathCandidateCode(code)) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
     },
   });
   const targets: Text[] = [];
@@ -80,7 +113,10 @@ export function linkifyRefs(
         if (convs?.some((c) => c.slug === token)) a = makeConversationLink(token, onError, openConversation);
       }
       if (!a && /^[0-9a-f]{7,40}$/.test(token)) {
-        if (repo) a = makeCommitLink(token, repo, onError);
+        // A hex run wedged between "/" or "-" is a path segment / UUID group, not a sha.
+        if (repo && !inPathLikeContext(text, m.index, m.index + token.length)) {
+          a = makeCommitLink(token, repo, onError);
+        }
       } else if (!a && /^s[a-z2-7]{6}$/.test(token)) {
         // session-slug shape: link only if that session exists right now
         const exists = useSessionsStore.getState().sessions.some((s) => s.name === token);
@@ -243,8 +279,7 @@ export async function linkifyPathRefs(
   el.querySelectorAll<HTMLElement>("code").forEach((code) => {
     if (candidates.length >= MAX_REFS_PER_DOC) return;
     if (code.dataset.pathLink) return; // already processed (the effect can link twice)
-    if (code.closest("pre,a")) return; // fenced source, or already inside a link
-    if (code.childElementCount) return; // not a bare token
+    if (!isPathCandidateCode(code)) return; // fenced source, inside a link, or not path-shaped
     const ref = pathRefCandidate(code.textContent);
     if (ref) candidates.push({ code, ref });
   });

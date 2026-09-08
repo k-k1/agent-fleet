@@ -32,12 +32,15 @@ func enabled() bool { return Enabled != nil && Enabled() }
 // RULE that turns it into a yes or no lives in the MCP server (mcpx), where the tool list is
 // built; this endpoint reports facts.
 type statusResponse struct {
-	Enabled  bool     `json:"enabled"`
-	Provider string   `json:"provider,omitempty"` // the effective provider, "" when none is ready
-	Ready    bool     `json:"ready"`
-	Kind     string   `json:"kind,omitempty"` // the asking session's agent kind, "" when unknown
-	Model    string   `json:"model,omitempty"`
-	Ops      []string `json:"ops,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	Provider string `json:"provider,omitempty"` // the effective provider, "" when none is ready
+	Ready    bool   `json:"ready"`
+	Kind     string `json:"kind,omitempty"` // the asking session's agent kind, "" when unknown
+	Model    string `json:"model,omitempty"`
+	// Service is the effective provider's image SERVICE, repeated from Providers for the same
+	// reason the other flat fields are.
+	Service string   `json:"service,omitempty"`
+	Ops     []string `json:"ops,omitempty"`
 	// AspectRatios is the effective provider's own list, so the MCP schema can offer the
 	// parameter only where it actually reaches the tool. Empty means the tool must not
 	// advertise it at all rather than accept it and drop it.
@@ -56,7 +59,12 @@ type statusResponse struct {
 
 // providerStatus is one ready provider as the tool surface needs to see it.
 type providerStatus struct {
-	ID           string   `json:"id"`
+	ID string `json:"id"`
+	// Service is the image service this route reaches, in the words a person asks for it by.
+	// The id alone is a CLI name, and nothing downstream can decode it: a codex session whose
+	// only route is `agy` was measured answering that "the Gemini route is not available in
+	// this session" while holding exactly that route (2026-09-08).
+	Service      string   `json:"service,omitempty"`
 	Model        string   `json:"model,omitempty"`
 	Ops          []string `json:"ops,omitempty"`
 	AspectRatios []string `json:"aspectRatios,omitempty"`
@@ -82,17 +90,47 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		caps := p.Caps("")
-		st := providerStatus{ID: p.ID(), Model: driverModelOf(p.ID()), AspectRatios: caps.AspectRatios}
+		st := providerStatus{
+			ID:           p.ID(),
+			Service:      serviceLabelOf(p.ID()),
+			Model:        driverModelOf(p.ID()),
+			AspectRatios: caps.AspectRatios,
+		}
 		for _, op := range caps.Ops {
 			st.Ops = append(st.Ops, string(op))
 		}
 		out.Providers = append(out.Providers, st)
 		if !out.Ready {
 			out.Provider, out.Ready = st.ID, true
+			out.Service = st.Service
 			out.Model, out.Ops, out.AspectRatios = st.Model, st.Ops, st.AspectRatios
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, out)
+}
+
+// serviceLabelOf names the image SERVICE a provider reaches — not the CLI that drives it and
+// not a model id. A caller asks for "GPT Image" or "Gemini", never for "codex" or "agy", and a
+// model handed only the id has to guess the mapping; the one that guessed wrong concluded a
+// service it could reach was unavailable. Brand names rather than model ids on purpose: ids
+// move (ADR 0069 Context) and nothing here may depend on one staying valid.
+//
+// The plan each one spends is part of the label because it is the difference that decides
+// between two routes when the caller does have a choice.
+func serviceLabelOf(id string) string {
+	switch id {
+	case ProviderCodex:
+		return "GPT Image（OpenAI。利用者の ChatGPT プランを消費）"
+	case ProviderAgy:
+		// The nickname is here because it is what a member says out loud, and matching the
+		// request to a route is the whole job of this label. It stays a NICKNAME for the family
+		// rather than a tier ("Nano Banana Pro" is the pro image model, this route is on a flash
+		// one) — naming a tier would be a claim about a model id that moves.
+		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
+	case ProviderSdcpp:
+		return "Stable Diffusion（このフリート自身の GPU。外部サービスではない）"
+	}
+	return ""
 }
 
 // driverModelOf reports the model a generation would run on, per provider. "" for a provider
@@ -167,8 +205,16 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 	// it: this session can make that picture with its own built-in tool, and going out through a
 	// second process of the same CLI would spend the plan twice for it (ADR 0069 decision 8).
 	if p := strings.TrimSpace(body.Provider); p != "" && p == meta.Kind {
+		// The message names the SERVICE as well as the id, so the refusal cannot be read as
+		// "that service is unreachable from here" — it is reachable, through this session's own
+		// built-in tool, and that is the whole instruction.
+		detail := ""
+		if s := serviceLabelOf(p); s != "" {
+			detail = " (" + s + ")"
+		}
 		httpx.WriteErr(w, http.StatusBadRequest, "imagegen_own_cli",
-			"this session is a "+meta.Kind+" session: use its own built-in image tool rather than spending the plan twice through the fleet one")
+			"this session is a "+meta.Kind+" session: the "+p+" route"+detail+
+				" is reachable through its OWN built-in image tool — use that rather than spending the same plan twice through the fleet one")
 		return
 	}
 

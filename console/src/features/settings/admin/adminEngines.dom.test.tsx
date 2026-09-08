@@ -113,6 +113,121 @@ describe("EnginesAdminView", () => {
     expect(host!.textContent).toContain("動かしていません");
   });
 
+  // The status block, and the rule it is written to: a field the CP has no answer for is
+  // ABSENT, and the panel must not fill the hole. Each assertion below is a hole that would
+  // otherwise be filled with something an operator would act on.
+  it("shows when the box started and when it will stop by itself", async () => {
+    const now = Date.now();
+    api.mockResolvedValue({
+      engines: [
+        row({
+          state: "running",
+          desired: 1,
+          warm: true,
+          // The BOX's own clock, not the service's: `service_since` moves on a stack update
+          // without a new box being bought, and it is the box that costs $1.26/hour.
+          box: { id: "i-08a9", status: "ACTIVE", since: new Date(now - 3720_000).toISOString() },
+          service_since: new Date(now - 99_000_000).toISOString(),
+          stop_eta: new Date(now + 600_000).toISOString(),
+          window_secs: 300,
+          window_counted_secs: 300,
+          window_units: 3,
+          last_demand: new Date(now - 120_000).toISOString(),
+        }),
+      ],
+    });
+    await mount();
+    const text = host!.textContent || "";
+    expect(text).toContain("i-08a9");
+    expect(text).toContain("1 時間 2 分 経過"); // the box's age, not the service's
+    expect(text).toContain("あと 10 分");
+    expect(text).toContain("直近 5 分の要求: 3 件");
+    expect(text).toContain("（読み込み済）");
+    // The count covers the whole window, so it must NOT be qualified — a warning that is
+    // always on is a warning nobody reads.
+    expect(text).not.toContain("この CP が数えているのは");
+  });
+
+  it("does not promise a stop for an engine that will not stop", async () => {
+    // Pinned on. The CP omits stop_eta, and the panel must not substitute anything for it —
+    // not even the idle policy, which does not apply while the engine is pinned.
+    api.mockResolvedValue({
+      engines: [
+        row({
+          mode: "on",
+          state: "running",
+          desired: 1,
+          idle_secs: 900,
+          window_secs: 300,
+          window_counted_secs: 300,
+        }),
+      ],
+    });
+    await mount();
+    expect(host!.textContent).not.toContain("自動停止");
+  });
+
+  it("states the idle window for a stopped on-demand engine, as a policy and not a time", async () => {
+    // Nothing to stop, so there is no countdown — but the window itself is still worth knowing,
+    // and it is a different claim ("30 minutes after the last request") from a clock time.
+    api.mockResolvedValue({
+      engines: [row({ mode: "ondemand", state: "stopped", desired: 0, idle_secs: 900 })],
+    });
+    await mount();
+    const text = host!.textContent || "";
+    expect(text).toContain("誰も使わなくなってから 15 分で自動停止します");
+    expect(text).not.toContain("あと");
+  });
+
+  // 🔴 The one number on this panel that can be confidently wrong. The rolling count lives in
+  // the control plane's memory, so a CP replaced two minutes ago answers "0 requests in the
+  // last 5 minutes" while somebody is mid-conversation with the engine.
+  it("says so when it has not been counting for a whole window", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          state: "running",
+          desired: 1,
+          window_secs: 300,
+          window_counted_secs: 90,
+          window_units: 0,
+          last_demand: new Date(Date.now() - 60_000).toISOString(),
+        }),
+      ],
+    });
+    await mount();
+    const text = host!.textContent || "";
+    expect(text).toContain("直近 5 分の要求: 0 件");
+    expect(text).toContain("この CP が数えているのは");
+    // The last-request time is persisted, so it stays true across the restart the count did
+    // not survive — which is what makes the 0 above readable rather than alarming.
+    expect(text).toContain("最後の要求");
+  });
+
+  // The service events are the only place ECS writes down why a start failed, and an engine
+  // stuck in `starting` is exactly when somebody needs them.
+  it("shows why a start is stuck, only while it is stuck", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          state: "starting",
+          desired: 1,
+          events: ["(service af-image) was unable to place a task because no container instance met all of its requirements."],
+        }),
+      ],
+    });
+    await mount();
+    expect(host!.textContent).toContain("no container instance met all of its requirements");
+  });
+
+  // <details> hides its children, it does not unmount them. Leaving the heatmap inside a closed
+  // one fires a 14-day query per engine on load, for a section nobody opened.
+  it("does not fetch the history until the section is opened", async () => {
+    api.mockResolvedValue({ engines: [row(), row({ key: "llm" })] });
+    await mount();
+    expect(api.mock.calls.map((c) => String(c[0]))).toEqual(["api/admin/engines"]);
+  });
+
   it("lists every engine, each with its own control", async () => {
     api.mockResolvedValue({
       engines: [

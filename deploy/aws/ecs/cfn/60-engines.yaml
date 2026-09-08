@@ -85,9 +85,8 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      Key inside this stack's models bucket, e.g. llm/Qwen3-Coder-…-Q4_K_M.gguf, put there by
-      the ingest task. ⚠️ EMPTY (the default) means NO llm SERVICE IS CREATED — deliberately,
-      and it is the first half of a two-pass stand-up. See PARAMETERS-60-engines.md.
+      Key in this stack's models bucket, put there by the ingest task. ⚠️ EMPTY (the default)
+      means NO llm SERVICE IS CREATED — the first half of a two-pass stand-up. See PARAMETERS.
   LlmModelFile:
     Type: String
     Default: model.gguf
@@ -98,12 +97,26 @@ Parameters:
     Description: >-
       Model ids the gateway advertises, i.e. what a user picks as llamacpp/<id>. Declared,
       never derived — the engine is asleep when the launch menu is drawn. The first is --alias.
+  LlmContextTokens:
+    Type: Number
+    Default: 32768
+    MinValue: 512
+    Description: >-
+      llama-server's -c AND the context advertised to the client: ONE parameter so the two
+      cannot drift. Do not also put -c in LlmExtraArgs.
+  LlmMaxOutputTokens:
+    Type: Number
+    Default: 4096
+    MinValue: 256
+    Description: >-
+      Output cap advertised with it. It is SUBTRACTED from the context to get the usable
+      window, and 0 does not mean unset — see PARAMETERS-60-engines.md.
   LlmExtraArgs:
     Type: CommaDelimitedList
-    Default: "-ngl,99,-c,32768,--jinja"
+    Default: "-ngl,99,--jinja"
     Description: >-
-      Extra llama-server flags. The defaults are the ones measured on an L4 (all layers on the
-      GPU, 32k context, chat template applied — the last is what makes tool calls work).
+      Extra llama-server flags, measured on an L4: all layers on the GPU, chat template applied
+      (the latter is what makes tool calls work). The context is LlmContextTokens.
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -196,15 +209,14 @@ Parameters:
     Type: String
     Default: master-cuda
     Description: >-
-      Tag inside the af-sdcpp ECR repository (the doubled word is the `image` ROLE's container
-      image tag). Upstream is amd64 only, which is no constraint: G-family has no arm64 member.
+      Tag in the af-sdcpp ECR repository (the doubled word is the image ROLE's container image
+      tag). Upstream is amd64 only, which costs nothing: G-family has no arm64 member.
   ImageModelS3Key:
     Type: String
     Default: ""
     Description: >-
-      Key inside this stack's models bucket, e.g. image/sd_xl_base_1.0.safetensors.
-      ⚠️ EMPTY (the default) means NO image SERVICE IS CREATED, for the same reason as
-      LlmModelS3Key. It is also what decides whether standup.sh copies the 2.3 GB image at all.
+      Key in this stack's models bucket. ⚠️ EMPTY (the default) means NO image SERVICE IS
+      CREATED (as LlmModelS3Key), and standup.sh then does not copy the 2.3 GB image either.
   ImageModelFile:
     Type: String
     Default: sd_xl_base_1.0.safetensors
@@ -782,6 +794,8 @@ Resources:
                 - "8080"
                 - "--alias"
                 - !Select [ 0, !Ref LlmModelIds ]
+                - "-c"
+                - !Ref LlmContextTokens
                 - !Join [ ",", !Ref LlmExtraArgs ]
           ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
@@ -980,15 +994,9 @@ Resources:
       Type: String
       Description: !Sub "agent-fleet engine table written by ${AWS::StackName} (ADR 0071)"
   # The table holds 0, 1 or 2 rows — each role is staged independently — so it is assembled
-  # from two fragments and a separator that only exists when both are there. `api` is what
-  # tells the reader what KIND of endpoint this is, and it decides two things that would
-  # otherwise be guessed from the key: whether the Agent writes an opencode chat provider for
-  # it, and whether the gateway counts tokens out of the response (`chat`) or leaves the
-  # accounting to the Agent's tool.imagegen row (`images`, ADR 0071 decision 9).
-  #
-  # The image engine's health path is /v1/models, not /health: stable-diffusion.cpp's server
-  # has no health endpoint (upstream api.md), and /v1/models is the cheapest GET it answers.
-  # It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+  # from two fragments and a separator that exists only when both do. What `api` decides, why
+  # the image row's health path is /v1/models rather than /health, and why the llm row carries
+  # its context window: PARAMETERS-60-engines.md, "The engine table".
       Value: !Sub
         - '{"engines":[${Llm}${Sep}${Image}]}'
         - Llm: !If
@@ -998,6 +1006,7 @@ Resources:
                 {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/health","provider":"llamacpp","models":["${Models}"],
+                "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
                 "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name

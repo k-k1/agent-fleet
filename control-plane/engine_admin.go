@@ -22,6 +22,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"strconv"
@@ -49,6 +50,7 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	a := engineAdminAPI{memberAuth{cfg.mgr}, reg, settings}
 	mux.HandleFunc("GET /api/admin/engines", a.withSuperAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
+	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -64,8 +66,20 @@ func (a engineAdminAPI) get(w http.ResponseWriter, r *http.Request, _ store.Iden
 // call, an engine at desired 0 is the normal state, and a panel that polls this list would
 // otherwise dial a sleeping box on every refresh. What ECS says is the honest answer to "is
 // it running", and it costs a cached read.
+//
+// `warm` is a different matter and IS here: it is a bool the controller already maintains on
+// its own tick (engineController.warmed), so reading it costs nothing and dials nobody. It is
+// worth the field because RUNNING and READY are genuinely different for these engines —
+// llama-server binds its port 267 seconds before the weights are in VRAM (measured) — and a
+// panel that showed only "running" would report an engine as up through the whole cold start.
+//
+// The models are the STACK'S declaration (ADR 0053), never a question put to the engine: the
+// engine is asleep most of the time, so anything only it could answer is unanswerable exactly
+// when somebody opens this panel. `llm` is one process holding one GGUF, so the declaration is
+// also the truth about what is loaded — which is why `warm` is what qualifies it.
 func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[string]any {
 	mode := e.mode(ctx)
+	cfg := e.controlCfg()
 	row := map[string]any{
 		"key":      e.def.Key,
 		"api":      e.def.api(),
@@ -75,16 +89,109 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// The INTENT, never the desired count — see the note in tts.go's status.
 		"enabled": mode != engineModeOff,
 		"managed": e.ecs != nil,
+		"warm":    e.ctrl.warmed(),
+		// The demand window, always reported as the length it actually is. A client that
+		// hard-codes "last 5 minutes" is wrong the moment an operator sets
+		// AF_ENGINE_<KEY>_WINDOW_SEC, and it is the window the START decision is made on.
+		"window_secs": int(cfg.window.Seconds()),
+		"idle_secs":   int(engineIdleWindow(cfg).Seconds()),
 	}
-	if e.ecs != nil {
-		if v, err := e.ecs.view(ctx); err == nil {
-			row["state"] = engineDisplayState(v.state, mode)
-			row["desired"] = v.desired
-		} else {
-			row["error"] = err.Error()
+	if e.demand != nil {
+		row["window_units"] = e.demand.units()
+		// ⚠️ How much of that window this process can actually speak for. The buckets are in
+		// memory and nothing else, so a CP replaced a minute ago reports zero requests while
+		// somebody is mid-conversation with the engine. Without this field the panel states a
+		// confident 0 it has no basis for; with it, the 0 can be drawn as "not counted yet".
+		row["window_counted_secs"] = int(e.demand.countedFor().Seconds())
+		if last := e.demand.lastAt(ctx); !last.IsZero() {
+			// Persisted (engine_<key>_demand_at), so this one DOES survive a restart, and it
+			// is what makes the paragraph above safe: the last-wanted time is still true when
+			// the count next to it has been reset to zero.
+			row["last_demand"] = last.UTC().Format(time.RFC3339)
 		}
 	}
+	if e.ecs == nil {
+		return row
+	}
+	v, err := e.ecs.view(ctx)
+	if err != nil {
+		row["error"] = err.Error()
+		return row
+	}
+	row["state"] = engineDisplayState(v.state, mode)
+	row["desired"] = v.desired
+	// `running` and `rollout` are deliberately NOT added here even though the view carries
+	// them. Nothing renders them, and a field on the wire with no reader is a shape the next
+	// person has to keep working without knowing what would notice if it broke. The state
+	// already folds the two counts, and "why is it stuck" is answered by the events below far
+	// better than by the word FAILED.
+	//
+	// The service events are the ONLY place ECS writes down why a start failed ("no container
+	// instances met the placement constraints", a pull failure). An operator staring at an
+	// engine stuck in `starting` has nowhere else to read it, and the alternative is a trip to
+	// the AWS console for a string the CP already has in hand.
+	if len(v.events) > 0 {
+		row["events"] = v.events
+	}
+	if !v.lastStart.IsZero() {
+		row["service_since"] = v.lastStart.UTC().Format(time.RFC3339)
+	}
+	// When the BOX started, which is a different fact from when the service last changed —
+	// see engineBox. Only a Managed Instances engine has one, and a Fargate engine pays no
+	// call to find that out.
+	if b, ok := e.ecs.box(ctx); ok {
+		box := map[string]any{"id": b.instanceID, "status": b.status}
+		if !b.since.IsZero() {
+			box["since"] = b.since.UTC().Format(time.RFC3339)
+		}
+		row["box"] = box
+	}
+	// When it will stop by itself. Absent — rather than "never" or a far-off date — whenever
+	// the question has no answer: pinned on, switched off, already stopped, or no demand mark
+	// yet. See engineStopETA for why each of those must not be answered.
+	if eta := engineStopETA(mode, v.desired >= 1, e.demandAt(ctx), cfg); !eta.IsZero() {
+		row["stop_eta"] = eta.UTC().Format(time.RFC3339)
+	}
 	return row
+}
+
+// demandAt is the persisted last-wanted mark, or the zero time when there is no counter.
+func (e *engineRuntimeState) demandAt(ctx context.Context) time.Time {
+	if e.demand == nil {
+		return time.Time{}
+	}
+	return e.demand.lastAt(ctx)
+}
+
+// uptime (GET /api/admin/engines/{key}/hourly?from=&to=) is the engine's occupancy history,
+// in the same UTC hour buckets and over the same date window as /api/admin/usage/hourly.
+//
+// It reads engine_hourly, which the engine's own controller fills a tick at a time
+// (engine_uptime.go). Nothing is computed from the CURRENT state here: an engine running right
+// now says nothing about last Tuesday, and the whole reason for the table is that the CP used
+// to throw every observation away.
+func (a engineAdminAPI) uptime(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		return
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeAPIErr(w, internalErr(errors.New("no store")))
+		return
+	}
+	fromDay, toDay, fromHour, toHour, aerr := usageHourWindow(r, time.Now().UTC())
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	rows, err := a.mgr.store.ListEngineHourly(r.Context(), key, fromHour, toHour)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	writeJSON(w, http.StatusOK, buildEngineHourly(key, rows, fromDay, toDay, e.controlCfg()))
 }
 
 // engineDisplayState is ttsDisplayState's twin, for the same reason: right after OFF is

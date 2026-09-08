@@ -17,7 +17,7 @@ vi.mock("../../viewer/MarkdownView.tsx", () => ({
 import { TranscriptView } from "./TranscriptView.tsx";
 import { groupTurns } from "./model.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
-import type { Turn } from "./types.ts";
+import type { Part, Turn } from "./types.ts";
 import { t as tr } from "../../../lib/i18n/index.ts";
 
 let root: Root | null = null;
@@ -252,6 +252,72 @@ describe("folding the work trace never flaps back", () => {
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: false }))).toBe("open");
     // Returning to the tail must not close what is being read.
     expect(workState(rerender(WORK_TURN, OWNER, { working: false, autoCollapseWork: true }))).toBe("open");
+  });
+});
+
+// The work trace is rendered inside a disclosure only while workSplit finds a boundary; with no
+// split it is rendered INLINE, at full height and with no control. So a split that comes and goes
+// is not a cosmetic flicker — it is the whole trace blowing open and shut under the reader. Both
+// halves of that are pinned here: what latches the fold on a running turn, and the boundary
+// surviving the polls where workSplit has nothing to say.
+describe("the work boundary never disappears once a turn has one", () => {
+  const bigWork: Part[] = [];
+  for (let i = 0; i < 8; i++) {
+    bigWork.push({ kind: "tool", tool: "Read", info: "f" + i });
+    bigWork.push({ kind: "text", text: "経過 " + i });
+  }
+  const ANSWER: Part = { kind: "text", text: "調べ終わりました。原因は設定ミスです。" };
+  const turnsWith = (parts: Part[], extra: Turn[] = []): Turn[] => [
+    { role: "user", text: "調べて", idx: 1, ts: "2026-09-08T10:00:00Z" },
+    { role: "assistant", idx: 2, ts: "2026-09-08T10:01:00Z", parts },
+    ...extra,
+  ];
+  const workState = (el: HTMLElement) => {
+    const head = el.querySelector<HTMLButtonElement>(".mt-work-head");
+    return head ? (head.getAttribute("aria-expanded") === "true" ? "open" : "closed") : "unfolded";
+  };
+
+  it("keeps the disclosure through a poll whose last part is a tool", () => {
+    const done = [...bigWork, ANSWER];
+    expect(workState(render(turnsWith(done), OWNER, { working: true, autoCollapseWork: true }))).toBe("unfolded");
+    // Completion folds it…
+    expect(workState(rerender(turnsWith(done), OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+    // …and the turn turning out not to be over (one more tool, so workSplit has no final text to
+    // split on) must not throw the whole trace back on screen.
+    const toolLast = [...done, { kind: "tool", tool: "Write", info: "memo.md" } as Part];
+    expect(workState(rerender(turnsWith(toolLast), OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
+    // …nor when the reader is the one who closed it.
+    const textAgain = [...toolLast, { kind: "text", text: "続けます" } as Part];
+    expect(workState(rerender(turnsWith(textAgain), OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
+  });
+
+  it("does not fold a still-running reply because a follow-up was typed into it", () => {
+    const streaming = [...bigWork, { kind: "text", text: "途中の説明" } as Part];
+    const el = render(turnsWith(streaming), OWNER, { working: true, autoCollapseWork: true });
+    expect(workState(el)).toBe("unfolded");
+    // The optimistic echo of a follow-up sent mid-turn: a user group AFTER the running reply.
+    // It is not the boundary — the agent has not started it — so the reply stays the live one.
+    const echo: Turn[] = [{ role: "user", text: "ついでにこれも", idx: 1e9 + 1, pending: true }];
+    expect(workState(rerender(turnsWith(streaming, echo), OWNER, { working: true, autoCollapseWork: true }))).toBe(
+      "unfolded",
+    );
+  });
+
+  it("still folds the previous reply the moment a follow-up is sent after it finished", () => {
+    const done = [...bigWork, ANSWER];
+    // It completed while the reader watched, so it folded then — and the fold is one-way.
+    expect(workState(render(turnsWith(done), OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+    const echo: Turn[] = [{ role: "user", text: "次のお願い", idx: 1e9 + 1, pending: true }];
+    expect(workState(rerender(turnsWith(done, echo), OWNER, { working: true, autoCollapseWork: true }))).toBe("closed");
+  });
+
+  it("carries no remembered boundary across a session switch", () => {
+    const done = [...bigWork, ANSWER];
+    expect(workState(render(turnsWith(done), OWNER, { working: false, autoCollapseWork: true }))).toBe("closed");
+    // Another session's turn at the same idx, still running: it must start unfolded, not inherit
+    // the previous conversation's boundary.
+    const other = rerender(turnsWith(done), { ...OWNER, session: "s2" }, { working: true, autoCollapseWork: true });
+    expect(workState(other)).toBe("unfolded");
   });
 });
 

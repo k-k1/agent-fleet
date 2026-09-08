@@ -21,6 +21,43 @@ export const admin = {
   "admin.engines_models_sep": " / モデル: ",
   "admin.engines_always_on_note": "常時稼働は GPU の箱を止めません（$1.26/時）。用が済んだらオンデマンドへ戻してください。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけ箱を買い、アイドルで自分で止まります。",
+  // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
+  // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
+  // そもそも出さないので、「不明」「0」「予定なし」といった穴埋めの語を足さないこと。
+  // 出てしまうと、空白＝未知だったものが断定として読まれ、そのまま GPU を止める判断に使われる。
+  "admin.engines_model_loaded": "（読み込み済）",
+  "admin.engines_model_declared": "（宣言。まだ読み込まれていません）",
+  // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
+  // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
+  "admin.engines_since_box": "箱の起動 ",
+  "admin.engines_since_service": "サービスの更新 ",
+  "admin.engines_up_for": "{d} 経過",
+  "admin.engines_stops_at": "自動停止 ",
+  "admin.engines_stops_in": "あと {d}",
+  "admin.engines_stops_due": "自動停止の時刻を過ぎています（次のコントローラの巡回で止まります）",
+  // 秒読みが出せないとき（止まっている＝止めるものが無い）に、方針そのものを言う行。
+  // 「10:47 に止まる」とは別の主張で、これが無いと停止中のエンジンの窓を見る手が無い。
+  "admin.engines_idle_policy": "誰も使わなくなってから {d}で自動停止します",
+  "admin.engines_recent": "直近 {m} 分の要求: {n} 件",
+  // 🔴 数えているのは CP のプロセス内のメモリだけ。入れ替わると 0 に戻るので、
+  // 窓ぶん数え切っていないときは必ずそう書く（「最後の要求」は永続化されていて残る）。
+  "admin.engines_recent_partial": "※ この CP が数えているのは直近 {d}ぶんだけです",
+  "admin.engines_last_demand": "最後の要求 ",
+  "admin.engines_history": "稼働実績（14 日）",
+  "admin.engines_metric_label": "濃さが表すもの",
+  "admin.engines_metric_running": "応答できた時間",
+  "admin.engines_metric_up": "箱があった時間",
+  "admin.engines_state_down": "停止",
+  "admin.engines_ro_detail": "応答 {run} ・ 起動中 {start} ・ 後始末 {drain}",
+  "admin.engines_col_running": "応答",
+  "admin.engines_col_starting": "起動中",
+  "admin.engines_col_draining": "後始末",
+  "admin.engines_dur_hm": "{h} 時間 {m} 分",
+  "admin.engines_dur_m": "{m} 分",
+  "admin.engines_uptime_none": "この期間に動いていた記録はありません。",
+  "admin.engines_uptime_error": "稼働実績を読み込めませんでした。",
+  "admin.engines_uptime_note":
+    "約 {n} 秒ごとのサンプリングです。「箱があった時間」には、まだ応答できない起動中（実測 165〜197 秒）と、タスクが消えたあとインスタンスが残っている後始末（実測 427〜477 秒）が入ります——どちらも課金されますが、要求には答えていません。記録を始める前の時間は空白のままで、後から取ることはできません。金額ではありません。",
   // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
   // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
   "admin.group_tenants": "テナント",

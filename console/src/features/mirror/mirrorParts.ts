@@ -15,6 +15,7 @@ export interface WorkSplit {
 export interface PromptBoundaryLike {
   role: string;
   queued?: boolean;
+  pending?: boolean;
 }
 
 // The user turn just before the work to explore begins. A just-sent optimistic echo (pending)
@@ -22,6 +23,22 @@ export interface PromptBoundaryLike {
 export function latestWorkPromptIndex(groups: PromptBoundaryLike[]): number {
   for (let i = groups.length - 1; i >= 0; i--) {
     if (groups[i].role === "user" && !groups[i].queued) return i;
+  }
+  return -1;
+}
+
+// The same boundary, but counting only prompts that have LANDED in the transcript — neither a
+// queued prompt nor a just-sent optimistic echo.
+//
+// The distinction matters for deciding which reply is the live one. Type a follow-up while the
+// agent is working and the echo appends after the still-streaming reply, so the pending-inclusive
+// boundary declares that reply history — it folds mid-stream, and the fold is one-way. The echo is
+// re-badged `queued` a poll or two later (only once the agent reports its queue), but by then the
+// damage is latched. A landed prompt cannot move back like that: the reply after it is finished by
+// definition, because the agent had to answer before the next prompt could run.
+export function landedWorkPromptIndex(groups: PromptBoundaryLike[]): number {
+  for (let i = groups.length - 1; i >= 0; i--) {
+    if (groups[i].role === "user" && !groups[i].queued && !groups[i].pending) return i;
   }
   return -1;
 }

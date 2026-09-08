@@ -35,6 +35,13 @@ import (
 // engineDef is one row of the table 60-engines wrote. Every field is declared by the stack
 // rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
 // the CP would have to ask the engine for is something it cannot ask.
+//
+// ContextTokens and MaxOutputTokens sit on the ENGINE rather than on each model, because that
+// is the real granularity: one llama-server process serves ONE gguf with ONE -c, and the
+// several ids in Models are aliases pointing at that one window. Two models with different
+// windows are two engines — two rows, and two provider ids, since the Agent keys opencode's
+// provider block by Provider and the second would otherwise overwrite the first. Zero means a
+// stack older than the field, and the Agent then writes no limit at all rather than guessing.
 type engineDef struct {
 	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
 	API              string   `json:"api"`              // "chat" | "images" — see engineAPI* below
@@ -44,6 +51,8 @@ type engineDef struct {
 	Health           string   `json:"health"`           // "/health"
 	Provider         string   `json:"provider"`         // "llamacpp" — the provider id a Workspace configures
 	Models           []string `json:"models"`           // model ids offered as <provider>/<id>
+	ContextTokens    int      `json:"contextTokens"`    // the window the engine is STARTED with (llama-server -c)
+	MaxOutputTokens  int      `json:"maxOutputTokens"`  // output cap advertised with it
 	APIKeyParam      string   `json:"apiKeyParam"`      // SSM SecureString the engine's own --api-key is in
 	IdleSec          int      `json:"idleSec"`
 	StartDeadlineSec int      `json:"startDeadlineSec"`
@@ -263,6 +272,13 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		cfg := engineControlCfgFor(d)
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
 		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
+		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
+		// not inside newEngineController because the VOICEVOX controller shares that
+		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series
+		// nothing reads is a cost with no reader.
+		if mgr != nil && mgr.store != nil {
+			st.ctrl.uptime = mgr.store
+		}
 		reg.byKey[d.Key] = st
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
 			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
@@ -300,6 +316,18 @@ func (e *engineRuntimeState) mode(ctx context.Context) string {
 		}
 	}
 	return engineMode(e.def.Mode, true)
+}
+
+// controlCfg is the tuning that governs this engine, whether or not a controller is running.
+// Falling back to the stack's declaration rather than to a zero value matters: the admin panel
+// reads the idle window out of this to say when the engine will stop by itself, and a zero
+// there is configured to mean "never stops", which is the opposite of the truth for a managed
+// engine that simply has no loop attached in this process.
+func (e *engineRuntimeState) controlCfg() engineControlCfg {
+	if e.ctrl != nil {
+		return e.ctrl.cfg
+	}
+	return engineControlCfgFor(e.def)
 }
 
 // modelIDs are the ids this engine's provider offers, as <provider>/<id>.

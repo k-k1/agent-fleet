@@ -388,10 +388,13 @@ picture for a README: the things you cannot hand over in prose.
 change applies to **sessions started from then on**; sessions already running keep their
 current tools until restarted.
 
-- **It goes to the kinds that cannot draw on their own** — claude, opencode and the rest.
-  **A session of the same kind as the CLI doing the generating does not get it**: no codex
-  session when the route is Codex, no agy session when the route is Antigravity. That CLI
-  already has image generation built in, and starting a second copy of it only pays twice.
+- **Every kind of session gets it** — claude and opencode, but codex and agy too. What is left
+  out is **the one route that runs the session's own CLI**: a codex session cannot pick the
+  Codex route, an agy session cannot pick the Antigravity one. That CLI already has image
+  generation built in, and starting a second copy of it only pays twice. **The picture from the
+  missing route is still available from that session's own built-in tool** — including "make
+  the same prompt on both so I can compare", which is one call to each. Only when no route is
+  left does the tool itself disappear.
 - **Generation runs on a CLI you already have connected.** Two can serve it — **Codex (the
   ChatGPT login)** and **Antigravity (agy)** — and **Settings > Agents > Session > "Image
   provider order"** decides which is tried first. The first one signed in is used, and **a

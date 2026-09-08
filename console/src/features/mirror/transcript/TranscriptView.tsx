@@ -15,7 +15,7 @@ import { TranscriptTurn } from "./TranscriptTurn.tsx";
 import { ctxSizeAfter, ctxSizeBefore } from "./model.ts";
 import type { Group } from "./types.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
-import { latestWorkPromptIndex } from "../mirrorParts.ts";
+import { landedWorkPromptIndex } from "../mirrorParts.ts";
 import { chronoInsertIndex } from "../handoffPlacement.ts";
 
 export interface TranscriptViewProps {
@@ -61,12 +61,20 @@ export function TranscriptView({
     .slice()
     .sort((a, b) => a.at - b.at)
     .map((c) => ({ ...c, insertAt: chronoInsertIndex(times, c.at) }));
-  // The current work boundary — INCLUDING a just-sent optimistic echo (pending). If we
-  // skipped pending here, sending a new prompt would leave lastUser on the PREVIOUS user
-  // turn, so the previous (already-finished) reply counts as "the live exchange" below and
-  // its work trace unfolds the moment you hit send. latestWorkPromptIndex treats pending as
-  // the boundary (but not un-run queued prompts), which keeps the old reply folded.
-  const lastUser = latestWorkPromptIndex(groups);
+  // The current work boundary, counting only prompts that have LANDED — neither a queued one
+  // nor a just-sent optimistic echo.
+  //
+  // Counting the echo (which this used to do) hands the live exchange to a prompt the agent has
+  // not started: type a follow-up while a long reply streams and the echo appends after it, so
+  // that still-streaming reply falls before the boundary and folds mid-stream — permanently,
+  // because folding is one-way. The echo becomes `queued` a poll later (only once the agent
+  // reports its queue), but the latch has already closed and the reply spends the rest of its
+  // life folded.
+  //
+  // Excluding the echo does NOT unfold the previous, already-finished reply the moment you hit
+  // send (the reason it was counted here). That reply folded when it completed, and TranscriptTurn
+  // latches the fold: foldWork going false again never re-opens anything.
+  const lastUser = landedWorkPromptIndex(groups);
   for (let i = 0; i < groups.length; i++) {
     for (const c of cards) if (c.insertAt === i) els.push(c.node);
     const g = groups[i];

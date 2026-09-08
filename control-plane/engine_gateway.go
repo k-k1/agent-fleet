@@ -217,15 +217,30 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
-		out = append(out, map[string]any{
-			"key":      e.def.Key,
-			"api":      e.def.api(),
-			"provider": e.def.Provider,
-			"base_url": "/engine/" + e.def.Key + "/v1",
-			"models":   e.def.Models,
-		})
+		out = append(out, engineCatalogRowFor(e.def))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"engines": out})
+}
+
+// engineCatalogRowFor is one engine as the Agent reads it.
+//
+// The window is reported only when the stack declared it. A zero here is not a small context,
+// it is "this stack is older than the field", and forwarding it would have the Agent advertise
+// a context of 0 to opencode — which switches auto-compaction off, i.e. exactly the state the
+// field exists to fix. Absent means absent, and the Agent leaves the limit unwritten.
+func engineCatalogRowFor(d engineDef) map[string]any {
+	row := map[string]any{
+		"key":      d.Key,
+		"api":      d.api(),
+		"provider": d.Provider,
+		"base_url": "/engine/" + d.Key + "/v1",
+		"models":   d.Models,
+	}
+	if d.ContextTokens > 0 {
+		row["context_tokens"] = d.ContextTokens
+		row["max_output_tokens"] = d.MaxOutputTokens
+	}
+	return row
 }
 
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {

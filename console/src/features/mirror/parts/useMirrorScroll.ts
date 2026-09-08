@@ -28,7 +28,7 @@ const REPLY_TOP_PAD = 8;
  *   - `applyFollow()`  the layout effect for a transcript that moved (MirrorView owns the deps)
  *   - `resetForSession()` / `saveMarkFor()` the session-switch layout effect and its teardown
  *   - `armFollow()`    a send — "take me to the conversation"
- *   - `capturePrependHeight()` / `applyPrependAdjust()` prepending older history
+ *   - `capturePrependAnchor()` / `applyPrependAdjust()` prepending older history
  */
 export function useMirrorScroll() {
   // Show a "jump to latest ↓" affordance whenever the user has scrolled up off the bottom
@@ -38,8 +38,10 @@ export function useMirrorScroll() {
   // the viewport AND follow is off. Never at the bottom, where it would cover the buttons the
   // user has to press (see syncReplyTop).
   const [showReplyTop, setShowReplyTop] = useState(false);
-  // Backward paging: the pre-prepend scrollHeight, so we can pin the viewport across it.
-  const prependAdjustRef = useRef<number | null>(null);
+  // Backward paging: the turn being read when older history is prepended, and where its top edge
+  // sat relative to the viewport. Held as an ANCHOR rather than as a height delta — see
+  // capturePrependAnchor.
+  const prependAnchorRef = useRef<{ idx: number; offset: number } | null>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const scrollBoxRef = useRef<HTMLDivElement>(null); // inner content wrapper — its height tracks the transcript
@@ -123,6 +125,10 @@ export function useMirrorScroll() {
     if (!el || typeof ResizeObserver === "undefined") return;
     const ro = new ResizeObserver(() => {
       scheduleReplyTopSync();
+      // A prepended page is still laying out: put the turn being read back where it was. Same
+      // reason as the two holds below (height arrives late), and it outranks nothing — a restore
+      // in flight is the more specific intent, and at the tail the bottom pin wins.
+      if (!restoringRef.current && holdPrependAnchor()) return;
       // While restoring, hold the anchor instead of the end — same reason as the bottom pin
       // (height arrives late), only a different target. If atBottomRef is set, something
       // re-armed follow (a send, jump to latest), which wins: fold the restore away.
@@ -169,6 +175,7 @@ export function useMirrorScroll() {
     const el = bodyRef.current;
     if (!el) return;
     scheduleReplyTopSync();
+    rebasePrependAnchor(); // a move we didn't make becomes the anchor's new resting place
     const movedUp = el.scrollTop < selfTopRef.current - 1;
     if (atBottomRef.current && !movedUp) {
       // Following, and the viewport did not move up — the gap (if any) is content that grew
@@ -211,6 +218,7 @@ export function useMirrorScroll() {
     const el = bodyRef.current;
     if (!el) return;
     endRestore(); // the end was chosen explicitly — drop the restore anchor
+    prependAnchorRef.current = null; // …and the paging anchor with it
     el.scrollTop = el.scrollHeight;
     selfTopRef.current = el.scrollTop;
     atBottomRef.current = true;
@@ -232,6 +240,7 @@ export function useMirrorScroll() {
     const top = scrollTopForTurn(el, idx, REPLY_TOP_PAD);
     if (top === null) return;
     endRestore();
+    prependAnchorRef.current = null; // an explicit destination replaces the paging anchor
     el.scrollTop = top;
     selfTopRef.current = el.scrollTop;
     // We left the end, so follow goes off — otherwise the next poll drags us back down.
@@ -403,6 +412,7 @@ export function useMirrorScroll() {
   // A send or a jump-to-latest is the user saying "take me to the conversation" — re-arm follow.
   const armFollow = () => {
     atBottomRef.current = true;
+    prependAnchorRef.current = null;
     setShowJump(false);
   };
 
@@ -437,27 +447,74 @@ export function useMirrorScroll() {
 
   /** Drop a pending prepend adjustment, at the head of a session switch with the other cursors. */
   const resetPrepend = () => {
-    prependAdjustRef.current = null;
+    prependAnchorRef.current = null;
+  };
+
+  // Put the anchor turn back at the offset it was read at, while a prepended page settles.
+  //
+  // The target is ABSOLUTE (scrollTopForTurn), never a delta, and that is what makes it safe to
+  // run on every resize: whatever else moved the viewport in between — our own writes, the
+  // browser's scroll anchoring, a late image — this puts the same content back under the same
+  // edge, and it is a no-op when someone already did. A delta would double-count exactly the
+  // growth anchoring had already absorbed.
+  //
+  // Returns true when it held (the caller then leaves the bottom pin alone this round).
+  const holdPrependAnchor = (): boolean => {
+    const el = bodyRef.current;
+    const hold = prependAnchorRef.current;
+    if (!el || !hold) return false;
+    if (atBottomRef.current) {
+      // Following the tail again — the end is the anchor now.
+      prependAnchorRef.current = null;
+      return false;
+    }
+    const top = scrollTopForTurn(el, hold.idx, hold.offset);
+    if (top === null) {
+      // The anchor turn left the window (a reset re-took the tail). Nothing to hold on to.
+      prependAnchorRef.current = null;
+      return false;
+    }
+    if (Math.abs(top - el.scrollTop) >= 1) {
+      el.scrollTop = top;
+      selfTopRef.current = el.scrollTop;
+    }
+    return true;
+  };
+
+  // Accept a viewport move nobody here made as the new resting place of the anchor: the reader
+  // scrolled (wheel, touch, key, or a scrollbar drag, which dispatches no pointerdown), or the
+  // browser's own scroll anchoring got there first. Re-baselining rather than dropping the hold
+  // is the point — the reader keeps scrolling while the prepended page lays out, and the growth
+  // above them still has to be absorbed after they stop.
+  const rebasePrependAnchor = () => {
+    const el = bodyRef.current;
+    const hold = prependAnchorRef.current;
+    if (!el || !hold || el.scrollTop === selfTopRef.current) return;
+    const mark = captureMark(el, false);
+    if (mark) prependAnchorRef.current = { idx: mark.idx, offset: mark.offset };
   };
 
   /** Record the position being read on leave; the DOM the cleanup reads is the OUTGOING one. */
   const saveMarkFor = (session: string) => saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
 
-  /** Record the height just before older history is prepended, so scrollTop can be advanced by
-   *  exactly that much and the viewport held. */
-  const capturePrependHeight = () => {
+  /** Record the position being read just before older history is prepended.
+   *
+   *  This used to record scrollHeight and, one layout effect later, advance scrollTop by however
+   *  much it had grown. That measurement is taken while the prepended turns are still EMPTY —
+   *  MarkdownView writes their bodies from a passive effect, and highlight / mermaid / images
+   *  land later still — so it compensated for the turn chrome and missed essentially all of the
+   *  real height, which then piled up above the reader over the next seconds. It is the same
+   *  reason the bottom pin and the position restore are not one-shot either. */
+  const capturePrependAnchor = () => {
     const el = bodyRef.current;
-    prependAdjustRef.current = el ? el.scrollHeight : null; // pin the viewport across the prepend
+    if (!el || atBottomRef.current) return; // at the tail the bottom pin is already the anchor
+    const mark = captureMark(el, false);
+    prependAnchorRef.current = mark ? { idx: mark.idx, offset: mark.offset } : null;
   };
-  // After an older page is prepended, restore the viewport: scrollTop grows by exactly the
-  // height added on top, so the user stays on the same content instead of jumping up.
+  /** Hold that position across the prepend commit, and keep holding it from the ResizeObserver
+   *  until the reader lands somewhere else or returns to the tail. */
   const applyPrependAdjust = () => {
-    const el = bodyRef.current;
-    if (el && prependAdjustRef.current != null) {
-      el.scrollTop += el.scrollHeight - prependAdjustRef.current;
-      selfTopRef.current = el.scrollTop;
-      prependAdjustRef.current = null;
-    }
+    holdPrependAnchor();
   };
 
   return {
@@ -473,7 +530,7 @@ export function useMirrorScroll() {
     resetForSession,
     resetPrepend,
     saveMarkFor,
-    capturePrependHeight,
+    capturePrependAnchor,
     applyPrependAdjust,
     noteInteraction,
     onBodyScroll,

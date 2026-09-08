@@ -177,6 +177,42 @@ type UsageHourCounters struct {
 	MaxBusy      int `json:"max_busy,omitempty"`
 }
 
+// EngineHourRow is one (engine, hour) occupancy bucket for a self-hosted inference
+// engine (ADR 0071). No membership and no tenant: an engine belongs to the deployment,
+// and the question it answers — "was the GPU up, and was it serving anything" — has no
+// owner to attribute it to.
+//
+// ⚠️ The ABSENCE of a row is meaningful. There is no separate heartbeat here (unlike
+// UsageHourRow): the controller watches one engine per tick and cannot half-observe it,
+// so a row IS the observation. No row = the hour was never watched, which the UI must
+// draw as blank rather than as "stopped".
+type EngineHourRow struct {
+	EngineKey, Hour string
+	EngineHourCounters
+}
+
+// EngineHourCounters is what one hour accumulates. Split out from the row so the
+// controller's per-tick delta and the stored total are literally the same shape.
+//
+// ⚠️ ObservedSecs is the denominator and is STORED rather than reconstructed from
+// Samples x interval. The controller's interval is not constant — it drops to 5 seconds
+// while an engine is starting or warming — so samples x nominal interval overstates a
+// busy hour and reports a running ratio above 100%.
+//
+// ⚠️ Running / Starting / Draining are disjoint, and only the first means "serving".
+// Starting and Draining are both billing with nothing being answered: the cold start
+// (165-197 s measured on a GPU box) and the several minutes Managed Instances keeps the
+// EC2 instance after the task is gone (427-477 s measured). Summing them into RunningSecs
+// would claim uptime that never served a request; dropping them would hide money.
+// The json tags carry omitempty because these ride the API as-is.
+type EngineHourCounters struct {
+	Samples      int `json:"samples,omitempty"`
+	ObservedSecs int `json:"observed_secs,omitempty"`
+	RunningSecs  int `json:"running_secs,omitempty"`
+	StartingSecs int `json:"starting_secs,omitempty"`
+	DrainingSecs int `json:"draining_secs,omitempty"`
+}
+
 // SSMProfile is the COMMON auth bundle shared by many hosts (docs/log/p3-ssm-
 // session.md): the AWS IAM Identity Center (SSO) portal + account/role/default region.
 // It maps to one ~/.aws named profile; `aws sso login` authenticates it. Personal
@@ -1038,6 +1074,17 @@ type UsageStore interface {
 	// rows of usage_daily and answers a question nobody asks about last spring, so it
 	// has the retention usage_daily never needed.
 	PruneUsageHourly(ctx context.Context, beforeHour string) error
+
+	// AddEngineHour accumulates one controller tick into the (engine, hour) bucket
+	// (ADR 0071). Everything here sums; there is no peak to take, because an engine's
+	// desired count only ever moves between 0 and 1.
+	AddEngineHour(ctx context.Context, engineKey, hour string, d EngineHourCounters) error
+	// ListEngineHourly returns one engine's rows in [fromHour, toHour] (inclusive,
+	// YYYY-MM-DDTHH, UTC). engineKey=="" spans every engine.
+	ListEngineHourly(ctx context.Context, engineKey, fromHour, toHour string) ([]EngineHourRow, error)
+	// PruneEngineHourly drops rows strictly before beforeHour, on the same retention as
+	// PruneUsageHourly and from the same janitor.
+	PruneEngineHourly(ctx context.Context, beforeHour string) error
 }
 
 // CloudCostRow is one (day, membership, service) slice of the AWS invoice, as landed

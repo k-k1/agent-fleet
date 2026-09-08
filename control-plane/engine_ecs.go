@@ -46,12 +46,41 @@ type engineECS struct {
 	// Fargate, where there is no such state.
 	capacityProvider string
 
-	mu     sync.Mutex
-	cached engineServiceView
-	cachAt time.Time
-	cachEr error
-	now    func() time.Time // test seam
+	mu        sync.Mutex
+	cached    engineServiceView
+	cachAt    time.Time
+	cachEr    error
+	cachBox   engineBox
+	cachBoxOn bool
+	cachBoxAt time.Time
+	now       func() time.Time // test seam
 }
+
+// engineBox is the EC2 instance a Managed Instances engine is running on, as ECS sees it.
+//
+// It exists because the service's own timestamps answer a different question. `lastStart` is
+// when the primary deployment last changed state — a fact about the service — and after a
+// task is replaced underneath, or a stack update, it moves without a new box being bought.
+// What an operator looking at a $1.26/hour GPU wants is when THE BOX started, and the only
+// place that is written down is the container instance's registeredAt.
+//
+// ⚠️ Do not reach for `ec2 describe-instances` to answer this. A Managed Instances box does
+// NOT appear in an unfiltered listing — measured on af-sandbox while the task was RUNNING:
+// the listing returned three unrelated instances and not the engine's, while
+// `--instance-ids i-08a9…` returned it as a running g6.xlarge (ADR 0071, P1 の実測 2). ECS is
+// the source that can be enumerated.
+type engineBox struct {
+	instanceID string    // i-08a9… — the id `describe-instances --instance-ids` will accept
+	arn        string    // the container instance ARN
+	status     string    // ACTIVE while it can take tasks, DRAINING once it is going away
+	since      time.Time // registeredAt: when the box joined the cluster
+}
+
+// engineBoxTTL is the cache in front of the two container-instance calls. Longer than
+// engineViewTTL because it answers a slower question: a box takes minutes to appear and 427-477
+// seconds to go away (measured), so nothing here changes inside three seconds, and the admin
+// panel polls every five while an engine is moving.
+const engineBoxTTL = 20 * time.Second
 
 // engineServiceView is one DescribeServices answer, reduced to what the readiness gate and
 // the on-demand controller look at.
@@ -188,9 +217,39 @@ const engineServiceEventsKept = 3
 // would keep an engine in a state the controller reads as "do not start yet", i.e. an
 // AccessDenied would silently turn the whole feature off.
 func (t *engineECS) draining(ctx context.Context) bool {
+	_, ok := t.box(ctx)
+	return ok
+}
+
+// box is the cached container-instance lookup. Two callers with two reasons: `draining`
+// (stopped-but-still-billing, ADR 0071 decision 7) and the admin panel, which wants the
+// registeredAt this is the only source of.
+//
+// Not found and not readable both answer false, and the difference is deliberately dropped:
+// the only caller that acts on it is the controller, and it must read an unreadable cluster
+// as "not draining" rather than as "do not start yet" — see draining above.
+func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
 	if t.capacityProvider == "" {
-		return false
+		return engineBox{}, false // Fargate: nothing to look up, and no call to pay for
 	}
+	now := t.clock()
+	t.mu.Lock()
+	if !t.cachBoxAt.IsZero() && now.Sub(t.cachBoxAt) < engineBoxTTL {
+		b, ok := t.cachBox, t.cachBoxOn
+		t.mu.Unlock()
+		return b, ok
+	}
+	t.mu.Unlock()
+
+	b, ok := t.describeBox(ctx)
+	t.mu.Lock()
+	t.cachBox, t.cachBoxOn, t.cachBoxAt = b, ok, now
+	t.mu.Unlock()
+	return b, ok
+}
+
+// describeBox is the uncached walk of the cluster's container instances.
+func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 	var arns []string
 	var next *string
 	for {
@@ -199,7 +258,7 @@ func (t *engineECS) draining(ctx context.Context) bool {
 		})
 		if err != nil {
 			log.Printf("%s: listing container instances failed: %v", t.logKey(), err)
-			return false
+			return engineBox{}, false
 		}
 		arns = append(arns, out.ContainerInstanceArns...)
 		if next = out.NextToken; next == nil {
@@ -213,16 +272,28 @@ func (t *engineECS) draining(ctx context.Context) bool {
 		})
 		if err != nil {
 			log.Printf("%s: describing container instances failed: %v", t.logKey(), err)
-			return false
+			return engineBox{}, false
 		}
 		for _, ci := range out.ContainerInstances {
-			if aws.ToString(ci.CapacityProviderName) == t.capacityProvider {
-				return true
+			// The capacity provider is what tells this engine's box apart from a workspace
+			// slot on the same cluster. Matching on anything looser would report the pool's
+			// m8g as the GPU that is costing $1.26 an hour.
+			if aws.ToString(ci.CapacityProviderName) != t.capacityProvider {
+				continue
 			}
+			b := engineBox{
+				instanceID: aws.ToString(ci.Ec2InstanceId),
+				arn:        aws.ToString(ci.ContainerInstanceArn),
+				status:     aws.ToString(ci.Status),
+			}
+			if ci.RegisteredAt != nil {
+				b.since = *ci.RegisteredAt
+			}
+			return b, true
 		}
 		arns = arns[n:]
 	}
-	return false
+	return engineBox{}, false
 }
 
 func (t *engineECS) logKey() string {
