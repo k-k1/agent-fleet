@@ -225,7 +225,17 @@ describe("EnginesAdminView", () => {
   it("does not fetch the history until the section is opened", async () => {
     api.mockResolvedValue({ engines: [row(), row({ key: "llm" })] });
     await mount();
-    expect(api.mock.calls.map((c) => String(c[0]))).toEqual(["api/admin/engines"]);
+    const called = api.mock.calls.map((c) => String(c[0]));
+    // The heatmap is a 14-day query per engine and nothing on screen shows it yet.
+    expect(called.filter((p) => p.includes("/hourly"))).toEqual([]);
+    // The ingest list IS fetched, once per engine: a download started before lunch has to be
+    // visible on the panel that is opened after it, and the call is a cheap read that also
+    // reconciles a finished job.
+    expect(called.sort()).toEqual([
+      "api/admin/engines",
+      "api/admin/engines/image/ingest",
+      "api/admin/engines/llm/ingest",
+    ]);
   });
 
   it("lists every engine, each with its own control", async () => {
@@ -595,5 +605,125 @@ describe("EnginesAdminView", () => {
     const body = apiJSON.mock.calls.at(-1)![2] as Record<string, number>;
     expect(body.context_tokens).toBe(0);
     expect(body.max_output_tokens).toBe(0);
+  });
+
+  // ADR 0072 decision 6 / 10. The order is the whole point: look the source up, SEE the licence
+  // and the gating, and only then is there a checkbox to accept it — an acceptance offered
+  // before the terms is not one.
+  it("shows the licence before offering to accept it, and refuses a gated repo with no token", async () => {
+    api.mockResolvedValue({
+      engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
+    });
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    await type(inputs[0], "black-forest-labs/FLUX.1-dev");
+    await type(inputs[1], "flux1-dev.safetensors");
+    await type(inputs[2], "flux1-dev");
+
+    // Nothing to accept yet: the source has not been read.
+    expect(host!.querySelector(".engines-ingest-accept")).toBe(null);
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7",
+      bytes: 23802932552,
+      gated: true,
+      license: "other",
+      license_name: "flux-1-dev-non-commercial-license",
+      commercial_use: "no",
+      can_ingest: false,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    // The two licence fields, the size and both warnings — the non-commercial one because the
+    // deployment may be charging, the gated one because it cannot be fetched at all here.
+    expect(host!.textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(host!.textContent).toContain("23.8 GB");
+    expect(host!.textContent).toContain("非商用ライセンス");
+    expect(host!.textContent).toContain("トークンがありません");
+    // 🔴 And the acceptance is unusable: pressing on would spend a Fargate task to earn a 401.
+    const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    const go = Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+      (b) => b.textContent === "取り込む",
+    ) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+  });
+
+  it("starts an ingest once the licence is accepted, and shows the job", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    await type(inputs[0], "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF");
+    await type(inputs[1], "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
+    await type(inputs[2], "qwen2.5-coder-1.5b");
+    await type(inputs[4], "32768");
+    await type(inputs[5], "4096");
+
+    apiJSON.mockResolvedValueOnce({ sha256: "cc32", bytes: 1117320768, gated: false,
+      license: "apache-2.0", commercial_use: "yes", can_ingest: true });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+      box.click();
+    });
+    apiJSON.mockResolvedValueOnce({ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running" });
+    // After starting, the panel re-reads the job list — which is how a running download appears.
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [{ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running", source: "hf:Qwen/…", bytes: 1117320768 }] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/llm/ingest");
+    expect(body[2]).toMatchObject({
+      id: "qwen2.5-coder-1.5b",
+      kind: "gguf",
+      s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      context_tokens: 32768,
+      max_output_tokens: 4096,
+      license_accepted: true,
+      source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
+    });
+    expect(host!.textContent).toContain("取り込み中");
   });
 });

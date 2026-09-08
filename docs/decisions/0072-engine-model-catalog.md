@@ -2,7 +2,8 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **P0 and P1 implemented and verified on hardware (2026-09-08). P2 onwards not started.**
+- Status: **P0, P1 and P4 implemented (2026-09-08..09); P0 and P1 verified on hardware. P2, P3
+  and P5 not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -489,6 +490,12 @@ names move between versions — pin the tag and freeze the templates behind gold
      the sha256 check was done by `fetch`, and that is enough. The manifest is **for the box**. The
      row is created as `enabled: false` — **ingested is not offered**; an admin enables it. In
      progress and failure reasons (sha256 mismatch, 401, disk) show on the panel's row.
+   - 🔴 **A gated repository publishes its metadata anonymously** (P4 measurement 1):
+     `api/models/<repo>?blobs=true` answers with the licence, the gating flag and **every file's
+     sha256 and size** with no token, and only the DOWNLOAD is 401. So the CP resolves without
+     ever holding the operator's token, and a gated repository on a deployment with no token is
+     refused BEFORE a task is started — nine minutes of Fargate ending in a 401 costs money and
+     explains nothing.
    - **Civitai** (the de-facto home of SDXL LoRAs): downloads authenticate with an
      `Authorization: Bearer` API key; the sha256 is `files[].hashes.SHA256` of the
      `model-versions` API. The key is an operator secret in Secrets Manager like HF's, read by
@@ -926,6 +933,58 @@ credentials cannot drive it (the same wall as P0 measurement 5).
   different question from "is it healthy". Not derived from the provider name (ADR 0053): a second
   engine speaking the same API would otherwise inherit a probe nobody chose for it.
 
+## P4 measurements (2026-09-09, while implementing)
+
+Ingest from the Console (decision 6), gating and licence acceptance (decision 10), and
+`MODE=delete` (decision 7). **Nothing has been pressed on hardware yet** — what is here is the
+upstream measuring that changed the design, and what the implementation turned up.
+
+1. 🔴 **A gated repository publishes its metadata anonymously.** Checked on FLUX.1-dev and
+   SD 3.5 Medium: `api/models/<repo>?blobs=true` returned `gated: "auto"`, `license: "other"`,
+   the `license_name` (`flux-1-dev-non-commercial-license` / `stabilityai-ai-community`) and
+   **the sha256 and size of all 29 files** with no token — and only
+   `resolve/main/<file>` answered 401. That decided the shape: **the Control Plane does not hold
+   the Hugging Face token.** The CP resolves, the ingest task (which has the token) fetches, and
+   decision 6's "the token never lands on a box" now covers the CP as well.
+2. **Civitai's API is alive** (open question 4). `api/v1/model-versions/128713` answered
+   anonymously with `files[].hashes.SHA256` (upper case), `sizeKB` (**fractional kilobytes** —
+   multiply by 1024), `downloadUrl`, `baseModel` and `model.type`, and the download 302'd to a
+   signed R2 URL that needed no key. There is no licence field of the kind Hugging Face has, so
+   the catalogue says "see the model page" — **a guessed licence name must not sit next to real
+   ones**.
+3. **`commercial_use` is read off the licence name** (decision 10): `no` for anything containing
+   `non-commercial` / `-nc`, `yes` for Apache-2.0 / MIT / OpenRAIL++ / CreativeML OpenRAIL-M,
+   `unknown` otherwise. **`unknown` is a real answer** — cheaper than a list of every licence in
+   the world, and far cheaper than a wrong `yes`.
+4. 🔴 **A semicolon in a migration comment stopped the Control Plane booting — again.** The
+   runner splits the file on semicolons with no SQL parser, so one inside a comment cut a
+   `CREATE TABLE` in half and every test failed with `incomplete input`. It is a known trap, and
+   it was walked into **inside the warning written to explain it** (which contained a literal
+   `;`). The file now says, in words, that no comment in it may contain one.
+5. **A job is a row, and it carries the catalogue row it will create.** A download runs for
+   minutes (Hugging Face: 4–236 MB/s) and a CP can be replaced inside one. The first cut kept
+   the pending row in a map in the process, which leaves "the bytes are in the bucket and the
+   row is nobody's to create". The job row now holds the spec as JSON, and a test pins that a
+   DIFFERENT process finishes the job and writes the row.
+6. **A failure reports the task's own words.** `DescribeTasks` says "fetch exited 1". Reading the
+   log (a `logs:GetLogEvents` grant scoped to this stack's group) says
+   `ingest: sha256 mismatch: got … want …`, and that is what the panel shows — "the file changed
+   upstream" and "this deployment has no token" need completely different things from the reader.
+7. **Deleting the bytes is still the ingest task's job** (decision 7). The CP has no
+   `s3:DeleteObject` and gains none; `DELETE …/models/{id}?purge=1` forgets the row and then
+   starts the task in `MODE=delete`. The row is READ before it is deleted — the keys exist
+   nowhere else, and doing it the other way round reports success and deletes nothing.
+
+### What P4 needed that the decisions did not name
+
+- **Resolve and start are two API calls.** An "I accept" offered before the licence and the
+  gating are on screen is not an acceptance. `POST …/ingest/resolve` starts nothing and answers
+  the licence, the size, the sha256, the gating and `can_ingest`; the panel draws that first and
+  only then offers the checkbox.
+- **`engine_ingest_jobs`** (sqlite `0058` / pg `0043`), and `license_accepted_by` /
+  `license_accepted_at` / `commercial_use` on `engine_models`. An acceptance is the record of a
+  HUMAN act, and it cannot be reconstructed from the model card afterwards.
+
 ## Options rejected
 
 - **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
@@ -977,8 +1036,12 @@ credentials cannot drive it (the same wall as P0 measurement 5).
    **without waiting for the next start** — a resident sidecar re-syncing the active set, and
    does the router rescan `--models-dir` (or is there a reload endpoint)? If not, llm also
    swaps "at the next start" to begin with, and this is P4.
-4. **Civitai's API** (decision 6): the authentication form (header or `?token=`),
-   `files[].hashes.SHA256`, the `model.type` and `baseModel` values.
+4. ~~**Civitai's API** (decision 6)~~ **Resolved (P4 measurement 2, 2026-09-09)**: the developer
+   site is still 404, but `GET https://civitai.com/api/v1/model-versions/<id>` answers
+   ANONYMOUSLY with `files[].hashes.SHA256` (upper-case hex), `files[].sizeKB` (**fractional
+   kilobytes**), `files[].downloadUrl`, `baseModel` (a display name such as `"SD 1.5"`) and
+   `model.type` (`Checkpoint` / `LORA`). The download 302s to a signed R2 URL and answered 200
+   with no key for the public model tried — some models do need one.
 5. ~~**`engine_models` as a table or as a settings-store value.**~~ **A table (review, answer
    6)**. Two writers (the admin's toggles and the ingest job's `ingesting → ready / failed`), and
    one JSON read whole and written whole has no CAS, so one of them loses; `files[]` / `args[]` /
@@ -1053,11 +1116,15 @@ credentials cannot drive it (the same wall as P0 measurement 5).
   needs it, after open question 2. **Definition of done: the same prompt and seed give a
   different picture with and without the LoRA, and an SD 1.5 LoRA does not appear in the enum
   on SDXL.**
-- **P4 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`;
-  PassRole for the ingest role only), HF sha256 / `license` / `license_name` resolution, the
-  gating sentence and licence-acceptance UI (who and when, the commercial axis; decision 10),
-  progress and failure display, the ingest task's `MODE=delete` (decision 7), Civitai (after
-  open question 4). Until then, `harness/ingest-model.sh`.
+- **P4 — ingest from the Console. Implemented (see *P4 measurements*).** The `ingest` API
+  (resolve and start as two calls, plus a job list), the RunTask IAM (inside `60-engines`;
+  PassRole for the ingest role only, plus `logs:GetLogEvents` so a failure can say why), HF
+  resolution of sha256 / `license` / `license_name` / size / gating, Civitai (open question 4
+  turned out to be answerable, so it went in at the same time), the gating sentence and the
+  licence-acceptance UI (who and when, the commercial axis; decision 10), progress and failure
+  in the panel, and the ingest task's `MODE=delete` (decision 7). A job is a row
+  (`engine_ingest_jobs`) carrying the catalogue row it will create, so a Control Plane replaced
+  mid-download still ends with a row for the bytes that landed.
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6).**
 

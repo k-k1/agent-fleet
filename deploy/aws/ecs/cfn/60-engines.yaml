@@ -58,10 +58,8 @@ Parameters:
     Description: >-
       Tag inside the af-llamacpp ECR repository. standup.sh copies the upstream image in
       before this stack is deployed.
-  # ⚠️ SEED PARAMETERS (ADR 0072 decision 7). These five are read ONCE, by a Control Plane whose
-  # llm catalogue is empty, to create the row this deployment was already serving. After that
-  # the catalogue is the declaration and these are ignored — see PARAMETERS-60-engines.md,
-  # "The seed parameters".
+  # ⚠️ SEED PARAMETERS (ADR 0072 decision 7), read ONCE by a CP whose catalogue for the role is
+  # empty — PARAMETERS-60-engines.md, "The seed parameters".
   LlmModelS3Key:
     Type: String
     Default: ""
@@ -121,18 +119,15 @@ Parameters:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
     Description: >-
-      Instance types this role may buy. Declared per role: the floor is a VRAM number (the 30B
-      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory. More than one type,
-      because one has nowhere to go when an AZ is short of it. ⚠️ A FILTER, not an order of
-      preference: MI has no allocation strategy and the cheapest member is what gets bought,
-      so a fallback belongs ABOVE the intended box, never below.
+      Instance types this role may buy — more than one, because a single type has nowhere to go
+      when an AZ is short of it. ⚠️ A FILTER, not an order of preference: MI has no allocation
+      strategy and the CHEAPEST member is bought, so a fallback belongs above the intended box.
   LlmAcceleratorMemMinMiB:
     Type: Number
     Default: 21000
     Description: >-
-      VRAM floor (MiB): decision 2's >= 20 GB, above the 30B's measured 20,943. Short VRAM
-      crashes CUDA rather than slowing it, so this refuses an unusable card once the type list
-      is widened. 0 = do not ask (as GpuCount 0 does).
+      VRAM floor (MiB): ADR 0071 decision 2's >= 20 GB, above the 30B's measured 20,943. Short
+      VRAM crashes CUDA rather than slowing it. 0 = do not ask (as GpuCount 0 does).
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -156,9 +151,7 @@ Parameters:
   LlmStorageGiB:
     Type: Number
     Default: 120
-    Description: >-
-      EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE —
-      throughput and IOPS cannot be asked for.
+    Description: "EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE."
   LlmUseLocalStorage:
     Type: String
     Default: "false"
@@ -227,8 +220,8 @@ Parameters:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
     Description: >-
-      Extra sd-server flags. --diffusion-fa is what the GPU measurement ran with (1024px in
-      20.8-21.0 s, 7.4 GB of VRAM on an L4). There is no --api-key: sd-server has no auth.
+      Extra sd-server flags; --diffusion-fa is what the GPU measurement ran with. There is no
+      --api-key: sd-server has no authentication of its own.
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -248,9 +241,8 @@ Parameters:
     Type: Number
     Default: 8000
     Description: >-
-      VRAM floor (MiB): decision 2's >= 8 GB, above SDXL fp16's measured 7,379. A 16 GB card
-      clears it — holding the role to the 24 GB class every image measurement used is the type
-      list's job. 0 = do not ask.
+      VRAM floor (MiB): ADR 0071 decision 2's >= 8 GB, above SDXL fp16's measured 7,379. Holding
+      the role to the 24 GB class is the type list's job. 0 = do not ask.
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -326,22 +318,16 @@ Parameters:
   IngestDiskGiB:
     Type: Number
     Default: 80
-    Description: >-
-      Ephemeral storage for the ingest task, i.e. the largest model this deployment can take
-      in — it stages the whole file before uploading. 80 GiB covers the 22 GB FLUX checkpoint.
+    Description: "Ephemeral storage for the ingest task: the largest model this deployment can take in."
   LogRetentionDays:
     Type: Number
     Default: 14
     Description: CloudWatch retention for the engine and ingest log group.
 
 Mappings:
-  # ONE fetch sidecar for both roles (ADR 0072 decision 1(a)): read the active set from SSM,
-  # sync what the engine is about to load, write `/models/cmdline` — and, with PRESET_FILE set,
-  # a llama.cpp router preset (decision 3).
-  #
-  # ⚠️ A LITERAL block (`|-`), never folded; ParameterNotFound is EMPTY; what each role syncs:
-  # PARAMETERS-60-engines.md, "The fetch sidecar". `deploy/local/engine-sidecar-test.sh` runs
-  # this script for real, and CI runs that.
+  # ONE fetch sidecar for both roles: the active set from SSM in, `/models/cmdline` (and a
+  # router preset) out. ⚠️ A LITERAL block (`|-`), never folded — PARAMETERS-60-engines.md,
+  # "The fetch sidecar". `deploy/local/engine-sidecar-test.sh` runs it for real, and CI runs that.
   Engine:
     fetch:
       script: |-
@@ -384,11 +370,8 @@ Mappings:
         echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
 
 Conditions:
-  # Whether the ROLE exists — its service, its DNS name, its row in the engine table. WHAT it
-  # loads is the catalogue's business (ADR 0072 decision 1), so this no longer keys off a model
-  # key; but leaving `*Enabled` at "" keeps the old meaning for one release, so an existing
-  # params/60-engines that switched a role off by emptying its model key still does. Why the
-  # two-pass stand-up is gone: PARAMETERS-60-engines.md, "The idle wrapper".
+  # Whether the ROLE exists. WHAT it loads is the catalogue's (ADR 0072 decision 1); `""` keeps
+  # the old "empty model key = no role" meaning for one release. PARAMETERS-60-engines.md.
   HasLlmModel: !Or
     - !Equals [ !Ref LlmEnabled, "true" ]
     - !And [ !Equals [ !Ref LlmEnabled, "" ], !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ] ]
@@ -427,9 +410,8 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
-      # The managed policy's iam:PassRole only covers roles named ecsInstanceRole*, and the
-      # instance role below is fleet-named. Without this grant the capacity provider is
-      # created and then never launches anything: UnauthorizedOperation on iam:PassRole,
+      # The managed policy's iam:PassRole only covers ecsInstanceRole*, and the instance role
+      # below is fleet-named. Without this the provider launches nothing: UnauthorizedOperation,
       # visible only in CloudTrail (measured).
       Policies:
         - PolicyName: pass-instance-role
@@ -510,10 +492,42 @@ Resources:
               - Effect: Allow
                 Action: [ s3:ListBucket ]
                 Resource: !GetAtt ModelsBucket.Arn
+              # MODE=delete (ADR 0072 decision 7). The Control Plane has no s3:DeleteObject and
+              # is not getting one, so forgetting a row and deleting the bytes are different
+              # acts performed by different principals.
+              - Effect: Allow
+                Action: [ s3:DeleteObject ]
+                Resource: !Sub "${ModelsBucket.Arn}/*"
 
-  # --- the model catalogue ------------------------------------------------------
-  # Read for free through 00-network's gateway endpoint; versioning deliberately off (a 17 GB
-  # model kept in duplicate per re-ingest); ComfyUI's layout so all three engines read one tree.
+  # The Control Plane's only new permissions in this repository (ADR 0072 decision 6): start the
+  # ingest task, pass the role it runs as, read that task's log. All pinned to THIS stack's
+  # resources — PARAMETERS-60-engines.md, "The ingest permissions".
+  CpIngestPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Sub "af-${AWS::StackName}-cp-ingest"
+      Roles:
+        - !Select [ 1, !Split [ "/", !ImportValue { "Fn::Sub": "${PlatformStackName}-CpTaskRoleArn" } ] ]
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Action: [ ecs:RunTask ]
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:task-definition/af-${AWS::StackName}-ingest:*"
+            Condition:
+              ArnEquals: { "ecs:cluster": !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" } }
+          - Effect: Allow
+            Action: [ iam:PassRole ]
+            Resource: !GetAtt IngestTaskRole.Arn
+            Condition: { StringEquals: { "iam:PassedToService": ecs-tasks.amazonaws.com } }
+          # Why the log and not just the exit code: DescribeTasks says a container failed, the
+          # log says WHY (sha256 mismatch, 401 on a gated repository, no space), and that
+          # sentence is what the panel shows instead of "exit 1".
+          - Effect: Allow
+            Action: [ logs:GetLogEvents, logs:DescribeLogStreams ]
+            Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/af/${AWS::StackName}/engines:*"
+
+  # --- the model catalogue (PARAMETERS-60-engines.md, "The models bucket") ------
   ModelsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -533,10 +547,8 @@ Resources:
           - Id: abort-incomplete-uploads
             Status: Enabled
             AbortIncompleteMultipartUpload: { DaysAfterInitiation: 3 }
-      # Cost allocation. The compute already carries af-role through the capacity providers
-      # and the services; without these two, the stack's storage and logs are the only part
-      # of the engines' bill that stays anonymous in the shared bucket (ADR 0048 decision 15).
-      # A cost allocation key is never retroactive, so tag first and read afterwards.
+      # Cost allocation (ADR 0048 decision 15): without these the stack's storage and logs are
+      # the only part of the engines' bill with no name on it. A key is never retroactive.
       Tags:
         - { Key: af-role, Value: engine-models }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
@@ -551,10 +563,8 @@ Resources:
         - { Key: af-role, Value: engine-logs }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
-  # Reachability IS the access control for both engines: port 8080 from the CP security group
-  # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision 14,
-  # ADR 0071 decision 4). llama-server's --api-key is a second lock; sd-server has no
-  # authentication option at all, so for the image role this group is the whole of it.
+  # Reachability IS the access control (ADR 0071 decision 4): 8080 from the CP's SG and nothing
+  # else. sd-server has no authentication of its own, so for the image role this is all of it.
   EngineSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -665,8 +675,8 @@ Resources:
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
-  # A Fargate task an operator runs by hand. The `run-task` recipe, the override trap and why
-  # the sha256 is not optional: PARAMETERS-60-engines.md, "Running the ingest task by hand".
+  # Started by the Control Plane (ADR 0072 decision 6) or by hand — the recipe, the override
+  # trap and why the sha256 is not optional: PARAMETERS-60-engines.md, "Ingest".
   IngestTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -690,6 +700,7 @@ Resources:
           Command:
             - >-
               set -e;
+              [ "$MODE" = delete ] && { echo "ingest: delete mode, nothing to fetch"; exit 0; };
               [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; };
               start=$(date +%s);
               if [ -n "$HF_TOKEN" ]; then set -- -H "Authorization: Bearer $HF_TOKEN"; else set --; fi;
@@ -707,6 +718,7 @@ Resources:
           Environment:
             - { Name: URL, Value: "" }
             - { Name: SHA256, Value: "" }
+            - { Name: MODE, Value: "" }
           Secrets: !If
             - HasHfToken
             - - { Name: HF_TOKEN, ValueFrom: !Ref HfTokenSecretArn }
@@ -727,9 +739,13 @@ Resources:
               set -e;
               [ -n "$KEY" ] || { echo "ingest: KEY is required"; exit 2; };
               start=$(date +%s);
+              if [ "$MODE" = delete ]; then
+                for k in $KEY; do aws s3 rm "s3://${ModelsBucket}/$k" --only-show-errors; echo "ingest: deleted $k"; done;
+                exit 0;
+              fi;
               aws s3 cp /scratch/blob "s3://${ModelsBucket}/$KEY" --only-show-errors;
               echo "ingest: uploaded $KEY in $(( $(date +%s) - start ))s";
-          Environment: [ { Name: KEY, Value: "" } ]
+          Environment: [ { Name: KEY, Value: "" }, { Name: MODE, Value: "" } ]
           MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
           # SUCCESS, not COMPLETE: a fetch that failed its checksum must not be uploaded.
           DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
@@ -753,16 +769,13 @@ Resources:
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
-        # An ANONYMOUS host volume — an empty `Host`, no SourcePath. Both halves are measured
-        # and both are counter-intuitive; the measurements, and why decision 7(c)'s "warm box"
-        # stays unproven, are in PARAMETERS-60-engines.md, "The model volume".
+        # An ANONYMOUS host volume — empty `Host`, no SourcePath, both measured:
+        # PARAMETERS-60-engines.md, "The model volume".
         - Name: models
           Host: {}
       ContainerDefinitions:
-        # The fetch runs to completion before llama-server starts, and it logs how long it
-        # took — that line is the S3 half of the cold start, measured at 104-147 MB/s and
-        # running concurrently with the image pull. The script is shared with the image role
-        # (see Mappings); everything role-specific is in the environment below.
+        # Runs to completion before llama-server starts, and logs how long the S3 half of the
+        # cold start took. Shared with the image role; the difference is the environment below.
         - Name: fetch
           Essential: false
           Image: public.ecr.aws/aws-cli/aws-cli:latest
@@ -772,10 +785,8 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
-            # ROUTER MODE (ADR 0072 decision 3): the model, its window and its own flags go into
-            # a preset section named after the catalogue id, so `-m` / `--alias` / `-c` leave the
-            # command line entirely — which is why both flags below are empty here now. The
-            # router names each instance with --alias itself (measured).
+            # ROUTER MODE (ADR 0072 decision 3): everything model-specific moves into a preset
+            # section named after the catalogue id — hence ALIAS_FLAG and CTX_FLAG empty.
             - { Name: PRESET_FILE, Value: /models/llm/presets.ini }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
@@ -795,10 +806,7 @@ Resources:
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
               Tag: !Ref LlmImageTag
           PortMappings: [ { ContainerPort: 8080 } ]
-          # ⚠️ The idle wrapper (ADR 0072 decision 1(a)): an engine with nothing to load has to
-          # come up rather than fail, or CloudFormation waits for a service that never
-          # stabilises. Why the binary path is spelled out, and why $(cat …) is unquoted:
-          # PARAMETERS-60-engines.md, "The idle wrapper".
+          # ⚠️ The idle wrapper (ADR 0072 decision 1(a)) — PARAMETERS-60-engines.md.
           EntryPoint: [ "sh", "-c" ]
           Command:
             - !Sub
@@ -883,7 +891,7 @@ Resources:
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
-        # `Host: {}`, for the reasons measured on the llm role above.
+        # `Host: {}`, as on the llm role above.
         - Name: models
           Host: {}
       ContainerDefinitions:
@@ -980,12 +988,10 @@ Resources:
       Name: !Ref EnginesSsmParamName
       Type: String
       Description: !Sub "agent-fleet engine table written by ${AWS::StackName} (ADR 0071)"
-  # The table holds 0, 1 or 2 rows — each role is staged independently — so it is assembled
-  # from two fragments and a separator that exists only when both do. What `api` decides, why
-  # the image row's health path is /v1/models rather than /health, and why the llm row carries
-  # its context window: PARAMETERS-60-engines.md, "The engine table".
+  # 0, 1 or 2 rows, so: two fragments and a separator that exists only when both do. What each
+  # field decides: PARAMETERS-60-engines.md, "The engine table".
       Value: !Sub
-        - '{"engines":[${Llm}${Sep}${Image}]}'
+        - '{"engines":[${Llm}${Sep}${Image}],"ingest":${Ingest}}'
         - Llm: !If
             - HasLlmModel
             - !Sub
@@ -1016,6 +1022,18 @@ Resources:
                 Models: !Join [ '","', !Ref ImageModelIds ]
             - ""
           Sep: !If [ HasBothModels, ",", "" ]
+          # What the Control Plane needs to start an ingest and to read why one failed. The
+          # network placement is here rather than derived, for the reason everything else in
+          # this table is (ADR 0053): the CP cannot ask CloudFormation at request time.
+          Ingest: !Sub
+            - >-
+              {"taskDef":"${Family}","subnets":["${Subnets}"],"securityGroups":["${Sg}"],
+              "logGroup":"${Log}","hasToken":${Token}}
+            - Family: !Ref IngestTaskDef
+              Subnets: !Join [ '","', !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ] ]
+              Sg: !Ref EngineSg
+              Log: !Ref LogGroup
+              Token: !If [ HasHfToken, "true", "false" ]
 
 Outputs:
   # The one value standup.sh feeds to 30-ingress. Non-empty by construction (a parameter

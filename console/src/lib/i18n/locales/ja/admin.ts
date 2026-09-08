@@ -58,6 +58,23 @@ export const admin = {
   "admin.engines_model_add_bytes": "サイズ",
   "admin.engines_model_add_go": "登録する",
   "admin.engines_model_add_note": "id は利用者が選ぶ名前、キーはバケットの中のパス、説明はエージェントが読む 1 行です。窓と出力上限は両方書いたときだけ効きます（片方だけは無視します——出力上限を書かないと 32,000 と読まれ、32k のモデルが 768 トークンになるため）。サイズ（バイト）は「同期 +N 秒」の推定に使うだけで任意です。CP は S3 を見ません（権限を持たせていません）ので、キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
+  // --- 取り込み（ADR 0072 決定 6・P4）---
+  // 🔴 解決してから受諾する。ライセンスも gated も見せる前に「同意」を出したら、それは
+  // 同意ではない。gated はトークンが無ければここで断る（9 分後の 401 では遅い）。
+  "admin.engines_ingest_open": "Hugging Face などから取り込む",
+  "admin.engines_ingest_repo": "リポジトリ",
+  "admin.engines_ingest_file": "ファイル名",
+  "admin.engines_ingest_resolve": "調べる",
+  "admin.engines_ingest_go": "取り込む",
+  "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
+  "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
+  "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。スタックの HfTokenSecretArn に運用者のトークンを置いてください（読むのは取り込みタスクだけです）。",
+  "admin.engines_ingest_noncommercial": "🔴 非商用ライセンスです。メンバーに有料で提供している配備では、入れると運用者自身の違反になります。",
+  "admin.engines_ingest_note": "リポジトリ名（`owner/name`）でも、モデルページの URL を貼っても構いません。sha256・サイズ・ライセンスは CP がその API から読みます。ダウンロードするのは取り込みタスクで、CP は S3 にもトークンにも触りません。取り込めた行は無効の状態で作られます。",
+  "admin.engines_ingest_state_pending": "開始中",
+  "admin.engines_ingest_state_running": "取り込み中",
+  "admin.engines_ingest_state_done": "完了",
+  "admin.engines_ingest_state_failed": "失敗",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
   // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。

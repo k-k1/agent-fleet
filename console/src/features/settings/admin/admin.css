@@ -283,6 +283,19 @@
   }
 }
 
+/* The ingest form sits inside the same bordered block as the register one; what it adds is a
+   place for the resolved facts and the acceptance, which have to be READ rather than skimmed. */
+.engines-ingest-accept {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.engines-ingest-jobs {
+  margin-top: 6px;
+}
+
 .engines-history {
   margin-top: 10px;
 }

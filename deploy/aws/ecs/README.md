@@ -955,10 +955,13 @@ Two steps since ADR 0072, and they are separate on purpose: **staging** puts the
 **enabling** offers them. "The file is in the bucket" and "members may use it" are different
 facts, and deriving the second from the first is what ADR 0053 forbids.
 
-1. stage the file with the ingest task below;
-2. add the row and switch it on in **Settings → Admin → engines**. Until phase P4 puts the
-   ingest behind that panel too, the row is created there by hand (or by the seed, for the model
-   a deployment was already running).
+1. stage the file — **Settings → Admin → engines → "take one in from Hugging Face"** does it
+   for you since ADR 0072 P4 (paste `owner/name` or a model-page URL; the control plane reads the
+   sha256, the size and the licence from that source's API and starts the ingest task). The
+   `run-task` below is the same thing by hand, for a deployment whose control plane cannot reach
+   the internet;
+2. switch the row on in the same panel. It arrives DISABLED whichever way it was staged —
+   "the file is in the bucket" and "members may use it" are different facts.
 
 **Where the file goes** is ComfyUI's layout (ADR 0071 decision 6, ADR 0072 decision 2), so one
 tree serves all three engines: `llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`,

@@ -244,7 +244,17 @@ type EngineModel struct {
 	// ADR's table. Keeping only the first shows them as "other" and nothing else.
 	License, LicenseName, LicenseURL string
 	Precision, BaseModel             string
-	CreatedAt, UpdatedAt             string
+	// Who accepted the licence and when (ADR 0072 decision 10). A record of a HUMAN act: a
+	// gated repository distributes only to accounts that accepted its terms, and in a
+	// multi-tenant deployment the operator accepts on behalf of every member — so the
+	// question an audit asks is who did that, which the model card cannot answer.
+	LicenseAcceptedBy, LicenseAcceptedAt string
+	// CommercialUse is "yes" | "no" | "unknown", resolved from the licence at ingest. It is a
+	// statement about what THIS DEPLOYMENT may do, which a licence name alone does not make
+	// obvious — FLUX.1-dev is non-commercial, and a deployment that charges its members is in
+	// breach by using it.
+	CommercialUse        string
+	CreatedAt, UpdatedAt string
 }
 
 // EngineModelFile is one S3 object a model is made of.
@@ -626,6 +636,7 @@ type Store interface {
 	SettingsStore
 	UsageStore
 	EngineModelStore
+	EngineIngestStore
 	CloudCostStore
 	SSMStore
 	MemoStore

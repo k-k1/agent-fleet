@@ -495,6 +495,16 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if s := engineSyncSecs(m); s > 0 {
 		row["sync_secs"] = s
 	}
+	// Who accepted the licence, and whether this deployment may charge for what the model
+	// makes (ADR 0072 decision 10). Both are absent rather than empty when nobody recorded
+	// them — a row staged before phase P4, or registered by hand.
+	if m.LicenseAcceptedBy != "" {
+		row["license_accepted_by"] = m.LicenseAcceptedBy
+		row["license_accepted_at"] = m.LicenseAcceptedAt
+	}
+	if m.CommercialUse != "" {
+		row["commercial_use"] = m.CommercialUse
+	}
 	return row
 }
 

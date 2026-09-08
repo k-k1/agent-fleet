@@ -66,6 +66,32 @@ type EngineModel = {
   sync_secs?: number;
 };
 
+/** What POST …/ingest/resolve answered: what the file IS, before anything is started. */
+type ResolvedSource = {
+  sha256?: string;
+  bytes?: number;
+  gated?: boolean;
+  license?: string;
+  license_name?: string;
+  license_url?: string;
+  base_model?: string;
+  commercial_use?: string;
+  /** false when the repository is gated and this deployment has no Hugging Face token. The
+   *  button is disabled on it rather than letting a task run nine minutes into a 401. */
+  can_ingest?: boolean;
+};
+
+type IngestJob = {
+  id: string;
+  model_id: string;
+  s3_key?: string;
+  source?: string;
+  state: string;
+  message?: string;
+  bytes?: number;
+  created_at?: string;
+};
+
 type EngineRow = {
   key: string;
   api?: string;
@@ -111,6 +137,7 @@ export function EnginesAdminView() {
   const [rows, setRows] = useState<EngineRow[] | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
+  const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
 
   const load = useCallback(async () => {
     try {
@@ -128,6 +155,26 @@ export function EnginesAdminView() {
   useEffect(() => {
     load();
   }, [load]);
+
+  /** The ingest jobs for one engine. The CP reconciles against ECS inside this call, so asking
+   *  is also what moves a finished job to `done` while somebody is watching. */
+  const loadJobs = useCallback(async (key: string) => {
+    const d = await api(`api/admin/engines/${encodeURIComponent(key)}/ingest`);
+    if (!d?.error) setJobs((cur) => ({ ...cur, [key]: Array.isArray(d?.jobs) ? d.jobs : [] }));
+  }, []);
+  useEffect(() => {
+    (rows || []).forEach((e) => loadJobs(e.key));
+  }, [rows, loadJobs]);
+  // A download runs for minutes, so the list polls itself while one is in flight — and stops
+  // the moment none is, because this is a screen somebody leaves open.
+  useEffect(() => {
+    const live = Object.entries(jobs).filter(([, js]) =>
+      js.some((j) => j.state === "running" || j.state === "pending"),
+    );
+    if (live.length === 0) return;
+    const t = setInterval(() => live.forEach(([key]) => loadJobs(key)), 10000);
+    return () => clearInterval(t);
+  }, [jobs, loadJobs]);
 
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a
@@ -237,6 +284,13 @@ export function EnginesAdminView() {
             onForget={(id) => forgetModel(e.key, id)}
             onAdd={(body) => addModel(e.key, body)}
           />
+          <EngineIngest
+            engineKey={e.key}
+            isImage={e.api === "images"}
+            busy={busy === e.key + "/ingest"}
+            onStarted={() => loadJobs(e.key)}
+          />
+          <EngineIngestJobs jobs={jobs[e.key] || []} />
           {e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
           {e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container
@@ -467,6 +521,214 @@ function EngineModelAdd({
       <p className="muted">{tr("admin.engines_model_add_note")}</p>
     </div>
   );
+}
+
+/** Taking a model IN from Hugging Face, Civitai or a URL (ADR 0072 decision 6, phase P4).
+ *
+ * Two steps, and the split is the point: RESOLVE first (what is this file, what does it weigh,
+ * what licence does it carry, is the repository gated), then INGEST. An acceptance offered
+ * before the terms are on screen is not an acceptance, and a gated repository on a deployment
+ * with no Hugging Face token is refused here rather than nine minutes into a Fargate task. */
+function EngineIngest({
+  engineKey,
+  isImage,
+  busy,
+  onStarted,
+}: {
+  engineKey: string;
+  isImage: boolean;
+  busy: boolean;
+  onStarted: () => void;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const [repo, setRepo] = useState("");
+  const [file, setFile] = useState("");
+  const [id, setId] = useState("");
+  const [desc, setDesc] = useState("");
+  const [ctx, setCtx] = useState("");
+  const [out, setOut] = useState("");
+  const [found, setFound] = useState<ResolvedSource | null>(null);
+  const [accepted, setAccepted] = useState(false);
+  const [err, setErr] = useState("");
+
+  const source = () => {
+    const r = repo.trim();
+    // A pasted https://huggingface.co/<repo>/blob|resolve/<rev>/<file> is what a person
+    // actually has in hand, so it is accepted as-is rather than asked for in pieces.
+    const m = r.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)(?:\/(?:blob|resolve)\/([^/]+)\/(.+))?$/);
+    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: m[3] || file.trim() } };
+    const civ = r.match(/civitai\.com\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
+    if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: file.trim() } };
+    if (/^https?:\/\//.test(r)) return { url: r, sha256: file.trim() };
+    return { hf: { repo: r, file: file.trim(), revision: "" } };
+  };
+
+  const resolve = async () => {
+    setErr("");
+    const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/resolve`, "POST", {
+      source: source(),
+    });
+    if (d?.error) {
+      setFound(null);
+      setErr(errText(d.error));
+      return;
+    }
+    setFound(d as ResolvedSource);
+    setAccepted(false);
+  };
+
+  const start = async () => {
+    setErr("");
+    const n = (v: string) => {
+      const p = Number(v.trim().replace(/[_,]/g, ""));
+      return Number.isFinite(p) && p > 0 ? Math.floor(p) : 0;
+    };
+    const c = n(ctx);
+    const o = n(out);
+    const key = (isImage ? "image/checkpoints/" : "llm/") + (file.trim() || id.trim());
+    const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
+      id: id.trim(),
+      kind: isImage ? "checkpoint" : "gguf",
+      s3Key: key,
+      source: source(),
+      description: desc.trim(),
+      context_tokens: c && o ? c : 0,
+      max_output_tokens: c && o ? o : 0,
+      license_accepted: true,
+    });
+    if (d?.error) {
+      setErr(errText(d.error));
+      return;
+    }
+    setOpen(false);
+    setFound(null);
+    setAccepted(false);
+    setRepo("");
+    setFile("");
+    setId("");
+    onStarted();
+  };
+
+  if (!open) {
+    return (
+      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+        {tr("admin.engines_ingest_open")}
+      </button>
+    );
+  }
+  const field = (label: string, value: string, set: (v: string) => void, placeholder = "") => (
+    <label className="engines-model-add-row">
+      <span>{label}</span>
+      <input value={value} placeholder={placeholder} onChange={(ev) => set(ev.currentTarget.value)} />
+    </label>
+  );
+  return (
+    <div className="engines-model-add engines-ingest">
+      {field(tr("admin.engines_ingest_repo"), repo, setRepo, "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
+      {field(tr("admin.engines_ingest_file"), file, setFile, isImage ? "name.safetensors" : "name.gguf")}
+      {field(tr("admin.engines_model_add_id"), id, setId, "qwen2.5-coder-1.5b")}
+      {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
+      {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
+      {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096")}
+      <div className="engines-model-add-actions">
+        <button type="button" className="ghost sm" onClick={resolve} disabled={busy || !repo.trim()}>
+          {tr("admin.engines_ingest_resolve")}
+        </button>
+        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+          {tr("common.cancel")}
+        </button>
+      </div>
+      {/* Everything below appears only once the source has been read: the licence to accept,
+          the size that becomes the cold start, and — for a gated repository — whether this
+          deployment can take it in at all. */}
+      {found && <ResolvedNote found={found} />}
+      {found && (
+        <label className="engines-ingest-accept">
+          <input
+            type="checkbox"
+            checked={accepted}
+            disabled={found.can_ingest === false}
+            onChange={(ev) => setAccepted(ev.currentTarget.checked)}
+          />
+          <span>{tr("admin.engines_ingest_accept")}</span>
+        </label>
+      )}
+      {found && (
+        <div className="engines-model-add-actions">
+          <button
+            type="button"
+            className="primary sm"
+            disabled={busy || !accepted || !id.trim() || found.can_ingest === false}
+            onClick={start}
+          >
+            {tr("admin.engines_ingest_go")}
+          </button>
+        </div>
+      )}
+      {err && <p className="form-err">{err}</p>}
+      <p className="muted">{tr("admin.engines_ingest_note")}</p>
+    </div>
+  );
+}
+
+/** What the source turned out to be. Every line is a fact the control plane read from the
+ *  source's own API — nothing here is guessed, and the two licence fields are both shown
+ *  because Hugging Face answers `other` for the non-commercial ones. */
+function ResolvedNote({ found }: { found: ResolvedSource }) {
+  const tr = useT();
+  const bits: string[] = [];
+  if (found.bytes) bits.push(fmtBytes(found.bytes));
+  if (found.license_name || found.license) bits.push(found.license_name || found.license || "");
+  if (found.base_model) bits.push(found.base_model);
+  return (
+    <>
+      <p className="muted engines-model-meta">
+        {bits.join(" · ")}
+        {found.sha256 ? <span className="mono"> {found.sha256.slice(0, 12)}…</span> : null}
+      </p>
+      {found.commercial_use === "no" && (
+        <p className="form-err">{tr("admin.engines_ingest_noncommercial")}</p>
+      )}
+      {found.gated && (
+        <p className={found.can_ingest === false ? "form-err" : "muted"}>
+          {tr(found.can_ingest === false ? "admin.engines_ingest_gated_no_token" : "admin.engines_ingest_gated")}
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The jobs this engine has run, newest first. Shown only when there are any: an empty list is
+ *  the normal state and a heading over nothing reads as something being broken. */
+function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
+  const tr = useT();
+  if (jobs.length === 0) return null;
+  return (
+    <ul className="engines-model-list engines-ingest-jobs">
+      {jobs.map((j) => (
+        <li key={j.id} className="engines-model on">
+          <div className="engines-model-head">
+            <span className="mono">{j.model_id}</span>
+            <span className="engines-model-tag">{tr(("admin.engines_ingest_state_" + j.state) as never)}</span>
+          </div>
+          <p className="muted engines-model-meta">
+            {j.source}
+            {j.bytes ? " · " + fmtBytes(j.bytes) : ""}
+          </p>
+          {/* The task's own words, not an exit code: "sha256 mismatch" and "401 on a gated
+              repository" need different things from the person reading them. */}
+          {j.message && <p className="form-err engines-model-meta">{j.message}</p>}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function fmtBytes(n: number): string {
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + " GB";
+  if (n >= 1e6) return Math.round(n / 1e6) + " MB";
+  return n + " B";
 }
 
 /** The one-line facts under a model, each omitted when it is not known — the same rule the

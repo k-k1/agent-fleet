@@ -2,7 +2,7 @@
 
 [English](0072-engine-model-catalog.md) | 日本語
 
-- 状態: **P0・P1 実装済み・実機検証済み（2026-09-08）。P2 以降は未着手。** 起草・レビュー・改訂・
+- 状態: **P0・P1・P4 実装済み（2026-09-08〜09）。P0・P1 は実機検証済み。P2・P3・P5 は未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
   `examples/server/api.md`・`docs/lora.md` から読んだ——起草の時点で**この文書のために新しく
@@ -427,6 +427,13 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
    - **HF API から `sha256` と `license` を解決**（`?blobs=true` の `siblings[].lfs.sha256`、
      `cardData.license`。0071 実測で照合済み）。gated（`gated: auto`）は 401/403 で知り、
      「HF でライセンスに同意してから」と**その文言で**失敗を名乗る（0071 決定 11）。
+     - 🔴 **gated でもメタデータは匿名で読める**（P4 の実測 1）。`gated: auto` のリポジトリでも
+       `api/models/<repo>?blobs=true` はライセンス・gated の別・**全ファイルの sha256 と
+       サイズ**を返し、401 になるのは**ダウンロードだけ**である。だから CP は HF トークンを
+       持たずに全部解決でき、トークンは取り込みタスクの中に閉じたままにできる——決定 6 の
+       「トークンは箱に載せない」が、CP にも当てはまる形で成立する。
+     - トークンが無い配備で gated を頼まれたら、**タスクを起こす前に断る**
+       （`gated_no_token`）。9 分走ってから 401 で落ちるのと、費用も分かりやすさも違う。
    - **`ecs:RunTask` で取り込みタスクを起動**する。CP のタスクロールに `ecs:RunTask` は無い
      （R3: ECS は `CreateService` … `ListTasks` の読み書きで、`RunTask` だけ無い）ので、
      `ecs:RunTask`（取り込みの family に限る）と `iam:PassRole`（**`IngestTaskRole` だけ**——
@@ -842,6 +849,57 @@ P1（llm 役のルーターモード）を実装しながら測った。**上流
   provider 名から導出しない（ADR 0053）——同じ API を話す 2 つ目のエンジンが、誰も選んで
   いない健診方法を継ぐことになる。
 
+## P4 の実測（2026-09-09・実装しながら）
+
+Console からの取り込み（決定 6）と、gated・ライセンス受諾（決定 10）、`MODE=delete`（決定 7）。
+**実機の押し込みはまだ**——この節にあるのは、上流 API を測って設計が変わった点と、実装で
+分かったことである。
+
+1. 🔴 **gated リポジトリのメタデータは匿名で読める。** FLUX.1-dev と SD3.5 Medium で確認:
+   `api/models/<repo>?blobs=true` は `gated: "auto"`・`license: "other"`・
+   `license_name`（`flux-1-dev-non-commercial-license` / `stabilityai-ai-community`）・
+   **29 ファイル分の sha256 とサイズ**を鍵無しで返し、**401 になるのは
+   `resolve/main/<file>` のダウンロードだけ**だった。設計がこれで決まった——**CP は HF の
+   トークンを持たない**。解決は CP、取得はトークンを持つ取り込みタスク、という分担が
+   そのまま成立する（決定 6 の「トークンは箱に載せない」を CP にも適用できた）。
+2. **Civitai の API は生きている**（未解決 4）。`api/v1/model-versions/128713` が匿名で
+   `files[].hashes.SHA256`（大文字）・`sizeKB`（**小数のキロバイト**。1024 倍してバイトに
+   直す）・`downloadUrl`・`baseModel`・`model.type` を返し、ダウンロードは署名付き R2 への
+   302 で鍵無しで 200 だった。ライセンス欄は HF のような形では無いので、カタログには
+   「モデルページを見よ」と書く——**推測した名前を他の本物と並べない**。
+3. **`commercial_use` はライセンス名から引く**（決定 10）。`non-commercial` / `-nc` を含めば
+   `no`、Apache-2.0 / MIT / OpenRAIL++ / CreativeML OpenRAIL-M なら `yes`、それ以外は
+   `unknown`。**`unknown` は本物の答え**で、世界中のライセンスの一覧を持つより、間違えて
+   `yes` と言わないほうが安い。
+4. 🔴 **移行 SQL のコメントに `;` を書いて、また CP を起動不能にした。** 移行の実行側は
+   ファイルをセミコロンで素朴に分割するので、コメント中の 1 つが CREATE TABLE を半分に
+   切り、`incomplete input` で全テストが落ちた。[[cfn-embedded-shell-yaml-folding]] に
+   ある既知の罠を、**その罠を説明する警告文の中でもう一度踏んだ**（`` `;` `` と書いた）。
+   ファイル冒頭に「この文書のコメントにセミコロンを書くな」と言葉で書いた。
+5. **ジョブは行、作る予定のカタログ行ごと。** ダウンロードは分単位（HF は 4〜236 MB/s）で、
+   その最中に CP は入れ替わりうる。最初はプロセス内の map に持っていたが、それだと
+   「バイト列はバケットに在るのに、対応する行は誰にも作れない」状態が残る。ジョブ行に
+   `spec`（作る予定の行の JSON）を持たせ、**別プロセスが finish しても行が作られる**ことを
+   テストで固定した。
+6. **失敗理由はタスクの言葉で出す。** `DescribeTasks` は「fetch が 1 で終わった」しか言わない。
+   `logs:GetLogEvents`（このスタックのロググループだけ）を CP に足し、
+   `ingest: sha256 mismatch: got … want …` をそのままパネルに出す——「sha256 が違う」と
+   「gated で 401」は、読んだ人がやることが全く違う。
+7. **削除はやはり取り込みタスクの仕事**（決定 7）。CP に `s3:DeleteObject` は無いままで、
+   `DELETE …/models/{id}?purge=1` は行を消したあと `MODE=delete` のタスクを起こす。
+   行を先に読んでから消す——**キーは行の中にしか無いので、順番を逆にすると「成功」と言って
+   何も消さない**。
+
+### P4 で本文に無かった追加
+
+- **「調べる」と「取り込む」を 2 本の API に分けた。** ライセンスも gated も見せる前に
+  「同意」を出したら、それは同意ではない。`POST …/ingest/resolve` は何も起こさずに
+  ライセンス・サイズ・sha256・gated・`can_ingest` を返し、パネルはそれを描いてから
+  チェックボックスを出す。
+- **`engine_ingest_jobs` 表**（sqlite `0058` / pg `0043`）と、`engine_models` の
+  `license_accepted_by` / `license_accepted_at` / `commercial_use`。受諾は**人の行為の記録**で、
+  モデルカードからは後で再現できない。
+
 ## 却下した案
 
 - **vLLM を llm 役のエンジンにする（今は）。** 1 プロセス 1 モデルでルーターが無く、切替＝
@@ -888,8 +946,12 @@ P1（llm 役のルーターモード）を実装しながら測った。**上流
    足せるか——サイドカーを常駐させて active set を再同期し、ルーターが `--models-dir` を
    再走査するか（しないなら `/models` の再読込の口があるか）。無ければ「llm も次の起動」で
    始め、これは P4。
-4. **Civitai の API**（決定 6）: 認証の形（ヘッダか `?token=` か）、`files[].hashes.SHA256`、
-   `model.type` と `baseModel` の値。
+4. ~~**Civitai の API**（決定 6）~~ **解けた（P4 の実測 2・2026-09-09）**: 開発者サイトは
+   相変わらず 404 だが、`GET https://civitai.com/api/v1/model-versions/<id>` が**匿名で**
+   `files[].hashes.SHA256`（大文字 hex）・`files[].sizeKB`（**キロバイトの小数**）・
+   `files[].downloadUrl`・`baseModel`（`"SD 1.5"` のような表示名）・`model.type`
+   （`Checkpoint` / `LORA`）を返す。ダウンロードは署名付きの R2 URL へ 302 で、
+   試した公開モデルは**鍵無しで 200** だった（鍵が要るモデルもある）。
 5. ~~**`engine_models` を DB に置くか設定ストアに置くか。**~~ **表にする（レビューの答え 6）**。
    書き手が 2 人いる（管理者のトグルと取り込みジョブの状態遷移）ので JSON 1 本の全読み全書きは
    CAS が無く片方が消える；`files[]` / `args[]` / `sizes[]` は行ごとに形が違い、一覧・種・削除は
@@ -957,10 +1019,13 @@ P1（llm 役のルーターモード）を実装しながら測った。**上流
   sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、
   未解決 2 を測ってから。**完了の定義: 同じ prompt・同じ seed で LoRA の有無が絵を変え、
   SD1.5 の LoRA が SDXL で enum に出ない。**
-- **P4 — Console からの取り込み。** `ingest` API、RunTask の IAM（`60-engines` 内。PassRole は
-  ingest ロールだけ）、HF の sha256 / `license` / `license_name` 解決、gated の一文とライセンス
-  受諾 UI（誰がいつ・商用の軸。決定 10）、進行と失敗の表示、取り込みタスクの `MODE=delete`
-  （決定 7）、Civitai（未解決 4 の後）。それまでは `harness/ingest-model.sh`。
+- **P4 — Console からの取り込み。実装済み（「P4 の実測」）。** `ingest` API（解決と開始を
+  分けた 2 本＋ジョブ一覧）、RunTask の IAM（`60-engines` 内。PassRole は ingest ロールだけ、
+  ＋失敗理由を読む `logs:GetLogEvents`）、HF の sha256 / `license` / `license_name` / サイズ /
+  gated 解決、Civitai（未解決 4 が解けたので同時に入れた）、gated の一文とライセンス受諾 UI
+  （誰がいつ・商用の軸。決定 10）、進行と失敗の表示、取り込みタスクの `MODE=delete`（決定 7）。
+  ジョブは表（`engine_ingest_jobs`）で、作る予定の行ごと持つ——ダウンロードの最中に CP が
+  入れ替わっても、バケットに落ちたバイト列に対応する行が作られる。
 - **P5 — 走行中の追加同期（未解決 3）、llm の仮想モデル id（決定 5 の後半）、ComfyUI の
   ペイン、sd-server の非同期 API（未解決 6）。**
 
