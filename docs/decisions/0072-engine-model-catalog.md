@@ -2,7 +2,7 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **draft (2026-09-08). Written to be reviewed before P0 is built.** Every number
+- Status: **adopted — P0 may start (revised the same day after the 2026-09-08 review; drafted the same day).** Every number
   below is quoted from ADR 0071's measurements; the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read the same day from the repositories' `tools/server/README.md`,
   `examples/server/api.md` and `docs/lora.md`. **Nothing was newly measured for this document**
@@ -22,6 +22,18 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   default became klein 4B. 🔴 Two of the runs had to be repeated — `--cache-none` makes every
   prompt re-read the weights from disk, and a second prompt with the same seed hits the output
   cache and "runs" in 0.5 s. Neither was visible until the numbers were.
+- The same day, the **review before P0** landed at the end ("Review (2026-09-08, before P0)") and
+  the text was revised on it. Four premises fell — 🔴 **the CP task role holds no S3 permission
+  at all** (decisions 6 and 7 had the CP reading manifests and deleting S3 files), 🔴 **SSM's
+  Standard tier caps a value at 4,096 characters** ("a few KB" was wrong), 🔴 **decision 5's
+  "the CP refuses the request" contradicts decision 4's "the gateway does not read the body"**,
+  🔴 **decision 10's "klein 4B is the default" is a ComfyUI measurement, not an sd-server one**
+  (P0's default is SDXL). Added: three conditions to decision 1 (a wrapper on both roles,
+  `ParameterNotFound` means empty, `mode=on` with an empty catalogue does not start), the 4 KB
+  rule to decision 2, the PassRole scope and a sharper ADR 0071 decision 8 to decision 6,
+  `warm_model` to decision 7, `license_name`, acceptance records and a commercial-use axis to
+  decision 10. **The review settled open question 1 entirely on a CPU** (R1). The status became
+  adopted.
 
 ## Context
 
@@ -178,11 +190,24 @@ names move between versions — pin the tag and freeze the templates behind gold
    - **The two-pass stand-up (ADR 0071 P0's measurement) goes away.** Today a service whose model
      is not in the bucket never stabilises, so `<Role>ModelS3Key` empty = no service on the first
      pass, then ingest, then deploy again. With a catalogue, the fetch sidecar treats "nothing to
-     load" as **success**: the llm role listens on an empty `--models-dir` (the router starts
-     with zero models — open question 1 confirms this), the image role runs a `sleep infinity`
-     placeholder and reaches RUNNING. The service stabilises, and the gateway **does not wake
-     a role whose catalogue is empty** (`503 engine_unavailable`, "this role has no enabled
-     model"). The parameters shrink to `LlmEnabled` / `ImageEnabled`.
+     load" as **success**, and the engine container starts through **the same wrapper on both
+     roles** (review, decision 1(a)): the sidecar writes `/models/cmdline` from the active set,
+     and the container runs `sh -c 'if [ -s /models/cmdline ]; then exec <engine> $(cat
+     /models/cmdline); else sleep infinity; fi'`. Every image has `sh` (R5). While P1 is deferred
+     the llm role stays on `-m`; the day it moves to the router, only the line the sidecar writes
+     changes. The service stabilises, and the gateway **does not wake a role whose catalogue is
+     empty** (`503 engine_unavailable`, "this role has no enabled model"). The parameters shrink
+     to `LlmEnabled` / `ImageEnabled`. Two more conditions make it hold (review, decision
+     1(b)(c)): **the sidecar treats SSM's `ParameterNotFound` as "empty"** — `60-engines` is
+     created before `30-ingress`, so at stack creation there is no CP and no active set, and a
+     `set -e` tripping there brings the two passes back in another shape; and **the controller
+     does not start an engine whose catalogue is empty even at `mode=on`**
+     (`engineSnapshot.hasModels`, `decideEngineAction` answering `engineReasonNoModel`) —
+     `engine_control.go` polls `running && !warmed` every 5 seconds forever (R6), so a `mode=on`
+     deployment would otherwise keep buying a `sleep infinity` box at $1.26/hour. The panel shows
+     "no enabled model" in place of the toggle. What disappears is the second pass; **the one
+     GPU box bought for stabilisation, ten minutes, stays** (the placeholder carries the `GPU`
+     resource requirement too; review, decision 1(d)).
 
 2. **The catalogue's truth is two-layered: S3 says what exists, the CP's database says how it
    is offered. The engine is never asked.**
@@ -217,8 +242,19 @@ names move between versions — pin the tag and freeze the templates behind gold
      `ssm:GetParameter` (that path only) to `EngineTaskRole` **inside `60-engines`** (ADR 0071
      decision 8: new IAM stays closed inside the stack). The fetch sidecar reads it, syncs,
      builds the preset and the command line. SSM rather than S3 writes from the CP (a bucket
-     policy) because it is **a permission the CP already holds**, the value is small (a few KB),
-     and the box does not need a live CP at the moment it reads.
+     policy) because it is **a permission the CP already holds** (confirmed, R2(a)), the value is
+     small, and the box does not need a live CP at the moment it reads. 🔴 **The Standard tier
+     caps a value at 4,096 characters** (R2(c): 4,200 characters is a `ValidationException`;
+     today's engine table is 666 bytes). So the active set carries **only S3 keys, local names,
+     flags and the preset's material**; `description` and `license` stay in the database. A test
+     pins "an active set of 20 models and 20 LoRAs fits in 4,096 characters", and a design change
+     that breaks it is when the Advanced tier (8 KB, $0.05/month) gets decided — not before. The
+     sidecar reads the JSON as JSON with `jq` (the `aws-cli` image carries `jq`, `python3` and
+     `bash`; R5). The leaf `/af-ws/engines` and the child `/af-ws/engines/<key>/active` coexist
+     (R2(b)). A parameter the CP creates lives outside CloudFormation, so **`teardown.sh` deletes
+     `/af-ws/engines/*/active`**. The S3 layout migration (`image/…` → `image/checkpoints/…`) and
+     decision 7's seed (`modelS3Key`) move **in the same step** — a seed pointing at the old key
+     makes the first start come up empty.
    - ADR 0071's engine table (one SSM value, read at startup) **stays, as the infrastructure
      table** — service name, URL, health path, capacity provider, idle, deadline, mode.
      `models[]` and `contextTokens` move to the catalogue; when present in the table they are
@@ -248,14 +284,21 @@ names move between versions — pin the tag and freeze the templates behind gold
      `default`, written into the preset as `load-on-startup = true`. Without it the first request
      pays "box start 527 s + load 267 s".
    - **A request during autoload is held by the heartbeat.** The gateway's streaming path sends an
-     SSE comment every 10 seconds until the upstream's first byte (ADR 0071 decision 5), so if the
-     router queues the request nothing new is needed. If it refuses instead (open question 1),
-     the gateway calls `/models/load` and waits for `loaded` before forwarding — either way the
-     wait never leaves the heartbeat.
-   - This decision depends on open question 1 (four points). Should the router fall short, the
-     fallback is "load the **one selected** entry of the active set with `-m`, and swap at the
-     next start" (decision 4's shape) — per-model windows stay in the catalogue, only one model
-     is resident at a time, and the catalogue's design does not change.
+     SSE comment every 10 seconds until the upstream's first byte (ADR 0071 decision 5), and
+     nothing new is needed — **the router queues the request** (R1(b): 200 after `ensure_model:
+     waiting until model … is fully loaded`). No `/models/load` branch.
+   - **Open question 1's four points were settled by the review on a CPU (R1)**: the router
+     starts on an empty `--models-dir` with `/health` ok, autoload waits, `--models-max 1` evicts
+     the idle LRU and loads (`evicting idle LRU`), `usage` and `model` (the catalogue id) arrive
+     through the router, and the window is per model (`n_ctx` from `/props?model=`). Hence
+     🔴 **`/health` is no evidence of warm** (ok with zero models) — today's `warmProbe` pointed at
+     the router would always say true. `warm` is `loaded` in `GET /models`, as written. Two
+     details: the router answers **400** for an unknown id, and the gateway's `404 model_unknown`
+     is its own verdict — do not mix the numbers; the children are **separate processes** on a
+     loopback port with no `--api-key` (unreachable from outside the task's netns; written down).
+     One GPU question remains — what "idle LRU" does with a model that is **generating** — and it
+     is the same observation as P1's definition of done. P1 is deferred by the user's priority
+     (images first), no longer by anything unmeasured.
 
 4. **The image role holds one checkpoint; a swap takes effect at the next start; one at a
    time.** sd-server has no switch, extra roles are ruled out by the wall, co-tenancy by VRAM.
@@ -298,7 +341,21 @@ names move between versions — pin the tag and freeze the templates behind gold
        (`/v1/models` for sd-server, `/system_stats` for ComfyUI) with `!If`, on the **same** task
        definition, service and Cloud Map name. A second service set does not fit the wall, and
        the two never run at once (ADR 0071 decision 2), so two are not needed. The engine
-       table's `provider` becomes `comfy`, and the Agent picks its provider by it.
+       table's `provider` becomes `comfy`, and the Agent picks its provider by it. Two
+       preconditions (R4): **one more ECR repository, `af-comfyui`, in `20-platform`** (there are
+       five today and none for ComfyUI; 22.5 KB of room), with the self-built image baked in CI
+       like `af-workspace` and copied by `standup.sh`'s images step; and **the budget does not
+       fit as it stands** — `60-engines.yaml` is 50,774 bytes, about 3,000 freed by the retired
+       parameters against about 5,450 added (4,350 with the sidecar held once in `Mappings`).
+       Moving the two volume measurement notes and the `run-task` recipe (3 KB and a bit) out
+       of the 15.5 KB of comments into `PARAMETERS-60-engines.md` makes room. **Move first, add
+       after** (P0's first step).
+     - 🔴 **P0's image role is still sd-server, so P0's default is SDXL** (review, decision
+       4(b)). Decision 10's klein 4B is a ComfyUI measurement; sd.cpp claims klein but the
+       split-model flag assembly is unmeasured with it, and stepping on that in P0 stalls the
+       definition of done on an sd-server problem. The second checkpoint P0's definition of done
+       needs is **another SDXL-family checkpoint** (an OpenRAIL++-M fine-tune, chosen by decision
+       10's rules), ingested first. klein becomes the default in P2, once ComfyUI is in.
 
 5. **A LoRA is a catalogue entry, chosen per request. The agent can only name what the
    catalogue has.**
@@ -325,8 +382,20 @@ names move between versions — pin the tag and freeze the templates behind gold
        only if a deployment needs it.
      - A LoRA whose `baseModel` does not match (an SD 1.5 LoRA on SDXL) either produces a
        **silently broken picture** or is ignored with a tensor-name warning; to the user both
-       read as "did nothing". So **the Agent does not offer it in the enum and the CP refuses it in
-       the request**.
+       read as "did nothing". So **the Agent does not offer it in the enum and refuses it when
+       assembling the request**. 🔴 **Not the CP** (review, decision 5): the LoRA sits inside
+       the prompt's `<sd_cpp_extra_args>` or inside the workflow JSON, so a CP refusal means
+       reading the body, which contradicts decision 4's "verbatim". The second line of defence is
+       **the box**: only enabled LoRAs are synced, so a name outside the enum fails at the engine,
+       and `--lora-model-dir` with `models/loras/` bounds the path.
+     - **The arguments fit ADR 0069** (R7): `imagegen.Request.Model` already exists, and `Caps`
+       gains `Loras []{name, description, baseModel}`. Two rules: **an argument appears only
+       when there is really a choice** (as `provider` does — `model` appears only when the
+       fleet's engine has two or more enabled checkpoints, its values are catalogue ids only, the
+       Codex / agy fixed models are never mixed into the enum, and a `model` given with a
+       non-fleet provider is refused by name); **an enum cannot depend on another argument**, so
+       the `loras` enum is every enabled LoRA, each description states its `baseModel`, and the
+       Agent checks the combination.
      - Depends on open question 2: the cost of a per-request change of LoRA set under
        `immediately` (a re-merge would be seconds, against a 21-second generation), and the VRAM
        delta of `at_runtime` (7.4 GB plus something surely fits an L4, perhaps not a g6f). The
@@ -351,16 +420,28 @@ names move between versions — pin the tag and freeze the templates behind gold
      `?blobs=true`, `cardData.license` — verified against a real checksum in ADR 0071). A gated
      repository (`gated: auto`) is recognised by 401/403 and the failure **says so in those
      words** — "accept the licence on Hugging Face first" (ADR 0071 decision 11);
-   - **starts the ingest task with `ecs:RunTask`**. IAM: the CP role needs `ecs:RunTask` (limited
-     to the ingest family) and `iam:PassRole` (the ingest task role and the execution role). This
-     is the **first breach** of ADR 0071 decision 8's "zero CP IAM additions", but it lives in an
-     `AWS::IAM::Policy` inside `60-engines` (`Roles:` = the role name cut out of `20-platform`'s
-     `CpTaskRoleArn`), so **a deployment without the stack gains nothing**. The subnets and SG
-     RunTask needs are written by `60-engines` into the engine table's `ingest` block;
-   - follows completion with `DescribeTasks`, and creates the `engine_models` row only after the
-     `upload` container wrote the manifest (decision 2), as `enabled: false` — **ingested is not
-     offered**; an admin enables it. In progress and failure reasons (sha256 mismatch, 401, disk)
-     show on the panel's row.
+   - **starts the ingest task with `ecs:RunTask`**. The CP task role has no `ecs:RunTask` (R3: it
+     holds `CreateService` … `ListTasks` and lacks only `RunTask`), so it gains `ecs:RunTask`
+     (limited to the ingest family) and `iam:PassRole` (**`IngestTaskRole` only** — the execution
+     role's PassRole is already in `PassTaskRoles`). This is the **first breach** of ADR 0071
+     decision 8's "zero CP IAM additions", but it lives in an `AWS::IAM::Policy` inside
+     `60-engines` (`Roles:` = the role name cut out of `20-platform`'s `CpTaskRoleArn`), so **a
+     deployment without the stack gains nothing**. ADR 0071 decision 8 is sharpened to: "another
+     stack may add to the CP's role only **permissions that reach that stack's own resources**
+     (RunTask limited to the family, PassRole limited to the ingest role), never `Resource: *`".
+     EventBridge was considered as the alternative that keeps the CP at zero (the CP writes
+     `/af-ws/engines/ingest/job`, an `AWS::Events::Rule` in `60-engines` runs the task under a
+     role of its own) and rejected: at-least-once delivery can run a job twice and a failure
+     surfaces only in CloudTrail (review, decision 6(c)). The subnets and SG RunTask needs are
+     written by `60-engines` into the engine table's `ingest` block. Egress from the CP to the
+     HF API is a precondition; a deployment that restricts outbound traffic falls back to the
+     hand-run ingest;
+   - 🔴 **the CP does not read the manifest — it cannot** (R3: the CP task role has no S3 action at
+     all, and none is added). The row is built from **what the CP itself resolved from HF (sha256,
+     licence, bytes) and the exit codes in `DescribeTasks` (`fetch` SUCCESS → `upload` SUCCESS)**;
+     the sha256 check was done by `fetch`, and that is enough. The manifest is **for the box**. The
+     row is created as `enabled: false` — **ingested is not offered**; an admin enables it. In
+     progress and failure reasons (sha256 mismatch, 401, disk) show on the panel's row.
    - **Civitai** (the de-facto home of SDXL LoRAs): downloads authenticate with an
      `Authorization: Bearer` API key; the sha256 is `files[].hashes.SHA256` of the
      `model-versions` API. The key is an operator secret in Secrets Manager like HF's, read by
@@ -385,10 +466,20 @@ names move between versions — pin the tag and freeze the templates behind gold
      catches up on the TTL.
    - **The admin panel** (`GET /api/admin/engines`) shows `models[]` **as the catalogue sees it**:
      id, enabled, selected (image), default (llm), window, `vramMiB`, last used, licence. The
-     actions are enable/disable, select, default, delete (which also deletes the S3 files —
-     **manifest first**: a file deleted before its manifest stays a candidate whose sync then
-     fails). ADR 0071 decision 13's "models are the stack's declaration" becomes "models are
-     the catalogue's declaration", and `warm` means what decision 3 says.
+     actions are enable/disable, select, default, delete. 🔴 **Deleting the S3 files is the ingest
+     task's job, not the CP's** (R3: the CP has no `DeleteObject`) — the same `RunTask` with
+     `MODE=delete`, which is where the **manifest first** order is kept (a file deleted before its
+     manifest stays a candidate whose sync then fails). Until P4, a sibling of
+     `harness/ingest-model.sh` does it. ADR 0071 decision 13's "models are the stack's
+     declaration" becomes "models are the catalogue's declaration", and `warm` means what
+     decision 3 says.
+   - **The model that is warm now (`warm_model`) is the CP's to know** — as the model of **the
+     last successful request**, read off the `model` in `POST /engine/usage` (never asked of the
+     engine; ADR 0053). It goes on the catalogue row, and **the default for a request without
+     `model` is decided server-side: the warm model if there is one, else the catalogue's
+     default** — the agent is not made to reason about temperature (review, answer 7; a switch
+     is a 1–2.5 minute re-read, *Resolved* 5). A request that switched gets a warning:
+     "switched model, +N s".
    - **The seed (decision 1's compatibility)**: when the CP starts with an empty catalogue and
      the engine table carries `models[]`, it creates **one row** from that id, its
      `contextTokens`, and a `modelS3Key` that `60-engines` adds to the table. A deployment
@@ -431,7 +522,18 @@ names move between versions — pin the tag and freeze the templates behind gold
       columns.
     - **Non-commercial models (FLUX.1-dev / Kontext-dev / FLUX.2-dev / klein 9B) are never the
       default.** Ingest is not refused, but the catalogue's `license` shows on the panel row and
-      in `generate_image`'s provenance (decision 8).
+      in `generate_image`'s provenance (decision 8). 🔴 **The manifest and `engine_models` carry
+      three fields: `license`, `license_name` and the URL** (R8: FLUX.1-dev and SD3.5 have
+      `cardData.license` = `"other"`, and the substance is in `license_name`; copying `license`
+      alone would list the two non-commercial models as just "other"). The values are a
+      **snapshot** at ingest time, unmoved by later edits to the HF card. Acceptance records
+      **who and when** (`licenseAcceptedBy` / `licenseAcceptedAt`, in the manifest and the audit
+      log). And a **`commercialUse` axis** is shown: FLUX.1-dev's non-commercial terms make a
+      deployment that sells access to members the operator's own violation, so next to "ingest
+      is not refused" stands "not on a commercial deployment", derived from the licence name
+      (Stability's $1M revenue line goes in the same column). An `HF_TOKEN` is bound to a
+      personal account and dies when the person who accepted leaves — an organisation account's
+      token is the recommendation (review, decision 10).
     - **12B and up is ingested as quantised files** (`precision`, decision 2). A 23 GB fp16 body
       does not fit an L4's VRAM: it pays 180 seconds from S3 and the load into VRAM, then
       crashes.
@@ -491,9 +593,9 @@ were checked by eye.
     5.6 GB in 722 s), then 27–93 s to S3 — four more points for ADR 0071 decision 3.
 
 Consequences: decision 10's default is **klein 4B** (3). Decision 4's ComfyUI-first stands, with
-the price of "switch per request" (5) added to the text, and the catalogue's `warm` (the model
-resident now) goes into `generate_image`'s description so **the agent can prefer the warm model**
-(P2). Open question 7 is closed; 8 is half closed (the size of a self-built image is still
+the price of "switch per request" (5) added to the text, and the CP's `warm_model` **decides the
+default for a request without `model` server-side** (decision 7 — the shape the review's answer 7
+corrected "put it in the description" into). Open question 7 is closed; 8 is half closed (the size of a self-built image is still
 unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB class and a
 200-second pull, and the 20–26 s checkout + pip and its NAT dependency go away).
 
@@ -531,16 +633,13 @@ unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB 
   itself reads its database.
 - **EFS for the catalogue.** Rejected in ADR 0071.
 
-## Open questions — measure 1 before P1, 7 and 8 before P2 (2 and 6 only when an sd-server deployment needs them)
+## Open questions — measure 8 and 9 before P2 (2 and 6 only when an sd-server deployment needs them)
 
-1. **The router's four points** (decision 3 depends on them): (a) does it start on an empty
-   `--models-dir` and answer `/health` ok (decision 1's "stable while empty" also depends on
-   it); (b) is a request during autoload queued or refused, and if queued, does the heartbeat
-   cover the silence to the first byte; (c) with `--models-max 1`, does a request for a second
-   model unload the first and load the second (without crashing); (d) do `usage` (with
-   `stream_options.include_usage`) and the response's `model` arrive through the router
-   (decision 8). (a), (b) and (d) can be measured in this container with the 1.1 GB CPU model;
-   (c) needs a GPU.
+1. ~~**The router's four points** (decision 3 depends on them)~~ **Resolved (review R1, on a
+   CPU)**: `/health` ok while empty, autoload waits, `--models-max 1` evicts the idle LRU and
+   loads, `usage` and `model` arrive through the router, the window is per model. One GPU
+   check remains — what "idle LRU" does with a model that is generating — and it is the same
+   observation as P1's definition of done.
 2. **sd-server's LoRA** (decision 5 depends on it): the cost of a changing LoRA set under
    `immediately`, the VRAM of `at_runtime`, whether `<sd_cpp_extra_args>` also works on
    `/v1/images/edits` (multipart), and what a `baseModel` mismatch does (silent breakage or a
@@ -552,10 +651,12 @@ unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB 
    swaps "at the next start" to begin with, and this is P4.
 4. **Civitai's API** (decision 6): the authentication form (header or `?token=`),
    `files[].hashes.SHA256`, the `model.type` and `baseModel` values.
-5. **`engine_models` as a table or as a settings-store value.** Tens of rows, read per
-   request — one JSON in `SettingsStore` would do. The table exists for `lastUsedAt`, written
-   on every request; whether that is an acceptable write rate for the settings store decides it
-   (`engine_<key>_demand_at` is throttled to once a minute for that reason).
+5. ~~**`engine_models` as a table or as a settings-store value.**~~ **A table (review, answer
+   6)**. Two writers (the admin's toggles and the ingest job's `ingesting → ready / failed`), and
+   one JSON read whole and written whole has no CAS, so one of them loses; `files[]` / `args[]` /
+   `sizes[]` differ per row and the list, the seed and delete are all row operations; a
+   two-dialect migration has `engine_hourly` as precedent. `lastUsedAt` is **not in P0** (no
+   UPDATE per request; the once-a-minute shape of `engine_<key>_demand_at` can add it in P4).
 6. **Why sd-server's async API failed** (decision 4's hypothesis): does `/sdcpp/v1/img_gen` work
    when `--lora-model-dir` is given explicitly? If so, an sd-server deployment can drop the
    60-second rule — without changing the order (ComfyUI first).
@@ -566,28 +667,44 @@ unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB 
    at start (20–26 s, NAT-dependent). A self-built image pins v0.34.0 and carries no Manager.
    The GGUF-reading node (`ComfyUI-GGUF`) was not needed (fp8 safetensors sufficed); bundling
    one means **a pinned revision written into the Dockerfile** (ADR 0071 decision 6).
-9. **Can the switch re-read (*Resolved* 5) be shortened?** `useLocalStorage` (ADR 0071 open
-   question 1) would replace EBS's 92 MB/s with the instance store's NVMe, which should turn a
-   12.3 GB re-read into a dozen seconds — the same homework as the llm role's 267-second VRAM
-   load. Measured on the P2 box.
+9. **Can the switch re-read (*Resolved* 5) be shortened? — two candidates, one GPU hour, before
+   P2** (review, answer 7 and R9). (1) `useLocalStorage` (ADR 0071 open question 1): the
+   capacity provider's `LocalStorageConfiguration` is not create-only, so `ImageUseLocalStorage=true`
+   lands in one stack update (R9). It pays not only on the switch (12.3 GB at 92 MB/s → NVMe)
+   but on **the cold start's 33 GB S3 → EBS at 332–360 s**, a number pinned to EBS's write
+   ceiling (125 MB/s baseline on a g6.xlarge). (2) **Solve it with RAM**: the three models
+   (27 GB) leave the page cache because the box has 15 GB; `ImageMemMinMiB=30000` selects a
+   g6.2xlarge (32 GiB) with no code change. If a switch becomes RAM → VRAM (seconds),
+   `useLocalStorage` is back to being a start-time question. `bench-image-engine.sh` measures
+   both as they are, and since the answer changes P2's definition of done (the price of a
+   switch), it is measured **before P2**.
 
 ## Phases
 
-- **P0 — the catalogue's foundation.** `engine_models` and the seed, manifests, the S3 layout
-  migration, the active set in SSM and a role-independent fetch sidecar (one script: sync,
-  preset, command line), the shrink to `LlmEnabled` / `ImageEnabled` with the old parameters
-  kept for one release, the admin API (list, enable, select) and the panel's `models[]`,
-  `/internal/engine/catalog` from the catalogue plus the `catalog-changed` push, `sdcpp`'s
-  `Caps.Sizes` from the declaration. **Definition of done: re-select the image checkpoint in
-  the Console and, with no CloudFormation touched, the next start returns a picture from the
-  new one — the stack's last-updated timestamp in `describe-stacks` has not moved.**
-- **P1 — llm in router mode.** After open question 1. Preset generation, per-model windows,
+- **P0 — the catalogue's foundation.** The first step is moving 3 KB of comments out of
+  `60-engines.yaml` into `PARAMETERS-60-engines.md` (R4: move first, add after). Then
+  `engine_models` (a table, open question 5) and the seed, manifests, the S3 layout migration
+  (in the same step as the seed), the active set in SSM (the 4,096-character rule and its test)
+  and a role-independent fetch sidecar (one script: sync, `/models/cmdline`, `ParameterNotFound`
+  as empty), the wrapper entrypoint on both roles, the controller's "empty catalogue does not
+  start", the shrink to `LlmEnabled` / `ImageEnabled` with the old parameters kept for one
+  release, `teardown.sh`'s SSM cleanup, the admin API (list, enable, select) and the panel's
+  `models[]`, `/internal/engine/catalog` from the catalogue plus the `catalog-changed` push,
+  `sdcpp`'s `Caps.Sizes` from the declaration, and a second SDXL-family checkpoint ingested.
+  **Definition of done: re-select the image checkpoint in the Console from SDXL to the second
+  one and, with no CloudFormation touched, the next start returns a picture from it (the stack's
+  last-updated timestamp in `describe-stacks` has not moved); a `mode=on` engine with an empty
+  catalogue does not start; at stack creation (no CP, no active set) both roles' services
+  stabilise.**
+- **P1 — llm in router mode.** Open question 1 is settled (R1), so nothing blocks it; it is
+  deferred by the user's priority (images first). Preset generation, per-model windows,
   `LlmModelsMax`, the redefinition of `warm`, opencode's provider with per-model `limit`.
   **Definition of done: two `llamacpp/` models in the launch menu, each usable in turn, and the
   reload of a switch answered on the first attempt** (ADR 0071 P0's observation, taken across a
   switch).
-- **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** The self-built image (pinned tag, no
-  Manager, open question 8), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider
+- **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** Open question 9 first, one GPU hour.
+  The self-built image (pinned tag, no Manager, open question 8; including the `20-platform` ECR
+  repository and the CI bake), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider
   (generate / edit / inpaint mapped onto per-family workflow templates, driving `/prompt` →
   `/history` → `/view` with progress notifications), templates for five families — SDXL,
   SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden tests, and
@@ -604,10 +721,11 @@ unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB 
   needs it, after open question 2. **Definition of done: the same prompt and seed give a
   different picture with and without the LoRA, and an SD 1.5 LoRA does not appear in the enum
   on SDXL.**
-- **P4 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`),
-  HF sha256 / licence resolution, the gating sentence and licence-acceptance UI (decision 10),
-  progress and failure display, Civitai (after open question 4). Until then,
-  `harness/ingest-model.sh`.
+- **P4 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`;
+  PassRole for the ingest role only), HF sha256 / `license` / `license_name` resolution, the
+  gating sentence and licence-acceptance UI (who and when, the commercial axis; decision 10),
+  progress and failure display, the ingest task's `MODE=delete` (decision 7), Civitai (after
+  open question 4). Until then, `harness/ingest-model.sh`.
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6).**
 

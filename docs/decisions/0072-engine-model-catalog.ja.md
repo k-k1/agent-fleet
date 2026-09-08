@@ -2,7 +2,7 @@
 
 [English](0072-engine-model-catalog.md) | 日本語
 
-- 状態: **草案（2026-09-08）。P0 に着手する前にレビューを受けるための文書。** 数字はすべて
+- 状態: **承認済み（P0 着手可）（2026-09-08 のレビューを受けて同日改訂。起草も同日）。** 数字はすべて
   ADR 0071 の実測から引き、上流（llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの
   `tools/server/README.md`・`examples/server/api.md`・`docs/lora.md` から読んだ。**この文書の
   ために新しく測ったものは無い**——測ってから決めることは「未解決の点」に列挙し、決定の
@@ -19,6 +19,15 @@
   未解決 7・8 を実測で埋め、決定 10 の既定を klein 4B にした。🔴 途中で 2 度測り直した——
   `--cache-none` が毎要求ディスク読み直しにする罠と、同じ seed の 2 回目が出力キャッシュに
   当たって 0.5 秒になる罠。どちらも数字が出てから分かった。
+- 同日、**P0 着手前のレビュー**を末尾の「レビュー（2026-09-08・P0 着手前）」に受け、本文を改訂した。
+  覆った前提が 4 つ——🔴 **CP のタスクロールに S3 の権限は 1 つも無い**（決定 6・7 が
+  マニフェストの読みと S3 の削除を CP に頼っていた）、🔴 **SSM Standard tier の上限は 4,096
+  文字**（「数 KB」は誤り）、🔴 **決定 5 の「CP が要求で拒否」は決定 4 の「本文を読まない」と
+  両立しない**、🔴 **決定 10 の「既定は klein 4B」は ComfyUI の実測で sd-server の実測ではない**
+  （P0 の既定は SDXL）。加えて決定 1 に 3 条件（両役ラッパー・`ParameterNotFound` は空・
+  `mode=on` でカタログ空なら起こさない）、決定 2 に 4 KB の規則、決定 6 に PassRole の範囲と
+  0071 決定 8 の精密化、決定 7 に `warm_model`、決定 10 に `license_name` と受諾の記録と商用の
+  軸を足した。**未解決 1 はレビューが CPU で全部解いた**（R1）。状態を承認済みに改めた。
 
 ## 背景
 
@@ -168,10 +177,22 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
    - **二段階スタンドアップ（0071 P0 の実測）が消える。** 今は「モデルがバケットに無いと
      サービスが安定しない」ために `<Role>ModelS3Key` 空＝サービス無しで一度建て、取り込んで
      から建て直す。カタログ方式では fetch サイドカーが「載せるものが無い」を**正常終了**とし、
-     llm 役は空の `--models-dir` で listen（ルーターはモデル 0 個で起動できる——未解決 1 で
-     確認）、image 役は `sleep infinity` のプレースホルダで RUNNING になる。サービスは安定し、
+     エンジンのコンテナは**両役とも同じラッパー**で起きる（レビュー決定 1(a)）: サイドカーが
+     active set から `/models/cmdline` を書き、コンテナは
+     `sh -c 'if [ -s /models/cmdline ]; then exec <engine> $(cat /models/cmdline); else sleep
+     infinity; fi'`。どのイメージにも `sh` はある（R5）。P1 が後回しのあいだ llm 役は `-m` の
+     ままで、ルーターに替える日はサイドカーが書く 1 行が変わるだけ。サービスは安定し、
      ゲートウェイは**カタログが空なら起こさない**（`503 engine_unavailable`「このロールに
      有効なモデルが無い」）。パラメータは `LlmEnabled` / `ImageEnabled` の 2 つに縮む。
+     成立の条件があと 2 つ（レビュー決定 1(b)(c)）: **サイドカーは SSM の `ParameterNotFound`
+     を「空」として扱う**——`60-engines` は `30-ingress` より先に建つので、スタック作成時に
+     CP は存在せず active set は無い。`set -e` がそこで拾えば二段階が形を変えて戻る；
+     **コントローラは `mode=on` でもカタログが空なら起こさない**（`engineSnapshot.hasModels`、
+     `decideEngineAction` が `engineReasonNoModel` で何もしない）——`engine_control.go` は
+     `running && !warmed` を 5 秒間隔で永遠に見に行くので（R6）、`sleep infinity` の箱を
+     `mode=on` の配備が $1.26/時で買い続ける穴がある。パネルはトグルの代わりに「有効なモデルが
+     無い」を出す。消えるのは二段階であって、**安定化のために GPU 箱を 1 回買う 10 分は残る**
+     （プレースホルダも `GPU` の `ResourceRequirements` を持つ。レビュー決定 1(d)）。
 
 2. **カタログの真実は 2 層。S3 が「何があるか」、CP の DB が「どう出すか」。エンジンには聞かない。**
    - **S3 のレイアウトは ComfyUI の規約**（0071 決定 6）: `llm/<name>.gguf`（分割は
@@ -203,8 +224,18 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      `ssm:GetParameter`（同じパスのみ）を **`60-engines` の中で**足す（0071 決定 8 の
      「新しい IAM はスタックの中で閉じる」）。fetch サイドカーはこれを読んで同期し、preset を
      組み、コマンドラインを作る。SSM を選んだ理由: CP に S3 の書きを与える案（バケット
-     ポリシー）と比べ、**既に持っている権限**で済み、値が小さく（数 KB）、そして箱が読む瞬間に
-     CP が生きている必要が無い。
+     ポリシー）と比べ、**既に持っている権限**で済み（R2(a) で確認）、値が小さく、そして箱が読む
+     瞬間に CP が生きている必要が無い。🔴 **値の上限は Standard tier の 4,096 文字**（R2(c):
+     4,200 文字は `ValidationException`。今日のエンジン表は 666 バイト）。だから active set には
+     **S3 キー・ローカル名・フラグ・preset の材料だけ**を置き、`description` や `license` は
+     DB に留める。テストで「モデル 20・LoRA 20 の active set が 4,096 文字に収まる」を固定し、
+     収まらない設計変更が来たら Advanced tier（8 KB・$0.05/月）へ上げる判断を**その時に**する。
+     サイドカーは `jq` で JSON のまま読む（`aws-cli` のイメージに `jq`・`python3`・`bash` がある。
+     R5）。葉 `/af-ws/engines` と子 `/af-ws/engines/<key>/active` は共存する（R2(b)）。
+     CP が作るパラメータは CloudFormation の外にあるので、**`teardown.sh` が
+     `/af-ws/engines/*/active` を消す**。S3 レイアウトの移行（`image/…` →
+     `image/checkpoints/…`）と決定 7 の種（`modelS3Key`）は**同じ手順で**動かす——種が旧キーを
+     指せば最初の起動が空振りする。
    - 0071 のエンジン表（SSM 1 本、起動時読み）は**基盤の表として残る**——サービス名・URL・健診・
      capacity provider・idle・deadline・mode。`models[]` と `contextTokens` はカタログへ
      移り、表にあれば決定 7 の種として読む。
@@ -231,13 +262,20 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      preset の `load-on-startup = true` にする。起動時に載せないと、最初の要求が「箱の起動
      527 秒＋ロード 267 秒」を払う。
    - **autoload 中の要求は心拍で握る。** ゲートウェイの streaming 経路は上流の最初のバイトまで
-     10 秒ごとの SSE コメントを流す（0071 決定 5）ので、ルーターが要求を待たせる実装なら
-     追加の機構は要らない。蹴る実装（未解決 1）なら、ゲートウェイが `/models/load` を叩いて
-     `loaded` まで待ってから転送する——どちらでも心拍の外へ出ない。
-   - この決定は未解決 1（4 点）の実測に依存する。ルーターが要件を満たさなければ、代替は
-     「active set のうち**選択中の 1 つ**を `-m` で載せ、差し替えは image 役と同じく次回起動」
-     （決定 4 の形）——モデル毎の窓はカタログに残り、同時に載るのが 1 つになるだけで、
-     カタログの設計は変わらない。
+     10 秒ごとの SSE コメントを流す（0071 決定 5）ので、追加の機構は要らない——**ルーターは
+     要求を待たせる**（R1(b): `ensure_model: waiting until model … is fully loaded` の後に
+     200）。`/models/load` を先に叩く分岐は要らない。
+   - **未解決 1 の 4 点はレビューが CPU で解いた（R1）**: 空の `--models-dir` で起動して
+     `/health` は ok、autoload は待つ、`--models-max 1` は idle LRU を降ろして載せる
+     （`evicting idle LRU`）、`usage` と `model`（カタログ id）はルーター経由で届き、窓は
+     モデル毎（`/props?model=` の `n_ctx`）。したがって 🔴 **`/health` は warm の根拠に
+     ならない**（0 モデルで ok）——今日の `warmProbe` をルーターに向けたまま使えば常に
+     true になる。`warm` は本文どおり `GET /models` の `loaded`。細部を 2 つ: 無い id への
+     ルーターの答えは **400**、ゲートウェイの `404 model_unknown` は自分の判定で、番号を
+     混ぜない；子は**別プロセス**でループバックの空きポートに `--api-key` 無しで立つ
+     （タスクの netns の外からは届かない。書いておく）。GPU に残る宿題は 1 つ——「idle LRU」が
+     **生成中**のモデルをどう扱うか。それは P1 の完了の定義（交替のリロード）と同じ観測である。
+     P1 を後回しにする理由はもう「未測」ではなく、利用者の優先順位（画像が先）だけである。
 
 4. **image 役は 1 チェックポイントを保持し、差し替えは「次の起動」で効く。同時に 1 つ。**
    sd-server に切替の口は無く、役を増やす案は壁で、同居は VRAM で退けられる。だから
@@ -276,7 +314,19 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
        コマンド）と健診パス（sd-server は `/v1/models`、ComfyUI は `/system_stats`）だけを
        `!If` で切り替える。2 つ目のサービス一式は壁に入らず、同時に動かさない（0071 決定 2）
        のだから 2 つ要らない。エンジン表の `provider` が `comfy` になり、Agent はそれで
-       provider を選ぶ。
+       provider を選ぶ。前提が 2 つ（R4）: **`20-platform` に ECR リポジトリ `af-comfyui` を
+       1 つ足し**（今は 5 つで、ComfyUI のは無い。22.5 KB の余裕はある）、自前イメージは
+       `af-workspace` と同じく CI で焼いて `standup.sh` の images 段が複製する；そして
+       **予算は今のままでは入らない**——`60-engines.yaml` は 50,774 バイトで、廃止分 約 3,000
+       に対して足すもの 約 5,450（サイドカーを `Mappings` に 1 本置いて両役から引けば 4,350）。
+       コメント 15.5 KB のうち、ボリュームの実測注 2 つと `run-task` のレシピ（3 KB 強）を
+       `PARAMETERS-60-engines.md` へ移して入れる。**移してから足す**（P0 の最初の手順）。
+     - 🔴 **P0 の image 役は sd-server のままなので、P0 の既定は SDXL である**（レビュー決定
+       4(b)）。決定 10 の klein 4B は ComfyUI の実測で、sd.cpp が klein を名乗っていても
+       分割モデルのフラグ組み立てごと未測——P0 でそれを踏むと完了の定義が sd-server の問題で
+       止まる。P0 の完了の定義に使う 2 つ目のチェックポイントは **SDXL 系のもう 1 本**
+       （OpenRAIL++-M の fine-tune。決定 10 の規則で選ぶ）を先に取り込む。klein が既定に
+       なるのは P2 で ComfyUI が入ってから。
 
 5. **LoRA はカタログの項目であり、要求で選ぶ。エージェントが選べるのはカタログにある名前だけ。**
    - **image。** 箱は `image/loras/` のうち**有効なもの**を同期し、`--lora-model-dir
@@ -300,7 +350,18 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
        ComfyUI の後に、要る配備があれば作る。
      - `baseModel` が合わない LoRA（SD1.5 の LoRA を SDXL に）は sd.cpp が**黙って崩れた絵**を
        出すか、テンソル名の不一致を警告して無視する。どちらも利用者には「効かない」としか
-       見えないので、**Agent が enum で出さず、CP が要求で拒否する**。
+       見えないので、**Agent が enum で出さず、組み立ての段階で断る**。🔴 拒否は **CP では
+       しない**（レビュー決定 5）——LoRA は prompt の `<sd_cpp_extra_args>` かワークフロー
+       JSON の中にあり、CP が拒むには本文を読むことになって決定 4 の「素通し」と両立しない。
+       もう 1 段の守りは**箱**にある: 有効な LoRA しか同期しないので、enum の外の名前は
+       エンジンが失敗させ、`--lora-model-dir` と `models/loras/` がパスの範囲である。
+     - **引数の形は 0069 に収まる**（R7）: `imagegen.Request.Model` は既にあり、`Caps` に
+       `Loras []{name, description, baseModel}` を足す。規則を 2 つ書く——**引数は本当に
+       選べるときだけ出す**（`provider` と同じ。フリートのエンジンが有効なチェックポイントを
+       2 つ以上持つときだけ `model` が現れ、値はカタログの id だけ。Codex / agy の固定モデルは
+       enum に混ぜず、`model` を指定しつつ provider がフリート以外なら名指しで拒む）；
+       **enum は他の引数に依存できない**ので、`loras` の enum は有効な LoRA 全部で、説明に各
+       LoRA の `baseModel` を書き、組み合わせの検査は Agent がする。
      - この決定は未解決 2 に依存する: `immediately` モードで要求ごとに LoRA の組が変わる
        コスト（再マージなら秒単位で、生成 21 秒に対して払える額か）と、`at_runtime` の
        VRAM 増分（7.4 GB＋α が L4 に入るのは確実だが、g6f には入らないかもしれない）。
@@ -323,15 +384,26 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
    - **HF API から `sha256` と `license` を解決**（`?blobs=true` の `siblings[].lfs.sha256`、
      `cardData.license`。0071 実測で照合済み）。gated（`gated: auto`）は 401/403 で知り、
      「HF でライセンスに同意してから」と**その文言で**失敗を名乗る（0071 決定 11）。
-   - **`ecs:RunTask` で取り込みタスクを起動**する。IAM は CP のロールに `ecs:RunTask`
-     （取り込みの family に限る）と `iam:PassRole`（取り込みのタスクロールと実行ロール）が要る。
-     0071 決定 8 の「CP の IAM 追加はゼロ」を**ここで初めて破る**が、置き場は
-     `60-engines` の中の `AWS::IAM::Policy`（`Roles:` に `20-platform` の `CpTaskRoleArn` から
-     切り出したロール名）で、**スタックを採用しない配備の CP は何も増えない**。RunTask に要る
-     subnets と SG は `60-engines` がエンジン表の `ingest` ブロックに書く。
-   - 完了は `DescribeTasks` で追い、`upload` コンテナがマニフェスト（決定 2）を書いてから
-     `engine_models` に行を作る（`enabled: false`——**取り込めた＝出る、ではない**。管理者が
-     有効にする）。進行中・失敗理由（sha256 不一致・401・容量）はパネルの行に出す。
+   - **`ecs:RunTask` で取り込みタスクを起動**する。CP のタスクロールに `ecs:RunTask` は無い
+     （R3: ECS は `CreateService` … `ListTasks` の読み書きで、`RunTask` だけ無い）ので、
+     `ecs:RunTask`（取り込みの family に限る）と `iam:PassRole`（**`IngestTaskRole` だけ**——
+     実行ロールの PassRole は `PassTaskRoles` に既にある）を足す。0071 決定 8 の「CP の IAM
+     追加はゼロ」を**ここで初めて破る**が、置き場は `60-engines` の中の `AWS::IAM::Policy`
+     （`Roles:` に `20-platform` の `CpTaskRoleArn` から切り出したロール名）で、**スタックを
+     採用しない配備の CP は何も増えない**。0071 決定 8 はこう精密化する: 「CP のロールに他の
+     スタックが足してよいのは、**そのスタックの資源にしか効かない権限**（family 限定の
+     RunTask・ingest ロール限定の PassRole）だけで、`Resource: *` は足さない」。代替に
+     EventBridge（CP が `/af-ws/engines/ingest/job` を書き、`60-engines` の `AWS::Events::Rule`
+     がスタック内のロールで RunTask する）を検討したが、配送が at-least-once でジョブが二重に
+     走りうるうえ失敗が CloudTrail にしか出ないので採らない（レビュー決定 6(c)）。RunTask に
+     要る subnets と SG は `60-engines` がエンジン表の `ingest` ブロックに書く。CP から HF の
+     API への egress が前提で、外向きを絞る配備では取り込みは手打ちに落ちる。
+   - 🔴 **CP はマニフェストを読まない——読めない**（R3: CP のタスクロールに S3 のアクションは
+     1 つも無く、足しもしない）。行は **CP 自身が HF から解決した sha256・license・bytes と、
+     `DescribeTasks` の終了コード（`fetch` SUCCESS → `upload` SUCCESS）**から作る。sha256 の
+     照合は `fetch` が済ませているのでそれで足りる。マニフェストは**箱が読むもの**である。
+     行は `enabled: false` で作る（**取り込めた＝出る、ではない**。管理者が有効にする）。
+     進行中・失敗理由（sha256 不一致・401・容量）はパネルの行に出す。
    - **Civitai**（SDXL の LoRA の事実上の出所）: ダウンロードは `Authorization: Bearer` の
      API キー、sha256 は `model-versions` API の `files[].hashes.SHA256`。キーは HF と同じく
      Secrets Manager の運用者の秘密で、取り込みタスクだけが読む。🔴 **Civitai の API 仕様は
@@ -355,9 +427,18 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      なかった Workspace は TTL で追いつく。
    - **admin パネル**（`GET /api/admin/engines`）の行に `models[]` を**カタログの姿**で出す:
      id・enabled・selected（image）・default（llm）・窓・`vramMiB`・最終使用・ライセンス。
-     操作は有効/無効・選択・既定・削除（S3 のファイルも消す。**マニフェストを先に消す**——
-     ファイルが先に消えると候補に残ったまま同期が失敗する）。決定 13（0071）の「モデルは
-     スタックの宣言」は「モデルはカタログの宣言」に読み替え、`warm` の意味は決定 3 のとおり。
+     操作は有効/無効・選択・既定・削除。🔴 **削除で S3 のファイルを消すのは CP ではなく
+     取り込みタスク**（R3: CP に `DeleteObject` は無い）——同じ `RunTask` に `MODE=delete` を
+     持たせ、**マニフェストを先に消す**順序はそこで守る（ファイルが先に消えると候補に残った
+     まま同期が失敗する）。P4 までは `harness/ingest-model.sh` の兄弟に任せる。決定 13（0071）の
+     「モデルはスタックの宣言」は「モデルはカタログの宣言」に読み替え、`warm` の意味は決定 3 の
+     とおり。
+   - **いま温かいモデル（`warm_model`）は CP が持つ**——`POST /engine/usage` に載る `model`
+     から**最後に成功した要求のモデル**として（エンジンには聞かない。ADR 0053）。カタログの
+     行に出し、**`model` 未指定の既定を「温かければそれ、でなければカタログの既定」にサーバ側で
+     決める**——エージェントに温度を推論させない（レビューの答え 7。切り替えは EBS 読み直し
+     1〜2.5 分、実測で解けた点 5）。切り替えた要求は `warnings` に「モデルを切り替えたので
+     +N 秒」を返す。
    - **種（決定 1 の互換）**: CP 起動時にカタログが空で、エンジン表に `models[]` があれば、
      その id・`contextTokens` と、`60-engines` が表に書き足す `modelS3Key` から**1 行だけ**
      作る。今日の配備は CP を上げた瞬間に今日のモデルがカタログにあり、何も変わらない。
@@ -392,6 +473,16 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
       変わっている——**ライセンスと gated は別の軸**で、カタログも別の欄に持つ。
     - **非商用（FLUX.1-dev / Kontext-dev / FLUX.2-dev / klein 9B）は既定にしない。** 取り込みは
       拒まないが、カタログの `license` がパネルの行と `generate_image` の由来（決定 8）に出る。
+      🔴 **マニフェストと `engine_models` は `license`・`license_name`・URL の 3 つを持つ**
+      （R8: FLUX.1-dev と SD3.5 は `cardData.license` が `"other"` で、実体は `license_name`
+      にある。`license` だけ写すと非商用の 2 つが「other」とだけ書かれて出る）。取り込み時の
+      値は HF の card が変わっても動かない**スナップショット**。受諾は**誰がいつ**を残す
+      （`licenseAcceptedBy` / `licenseAcceptedAt` をマニフェストと監査ログに）。そして
+      **`commercialUse` の軸**を出す——FLUX.1-dev の非商用は「メンバーに有料で提供する配備」では
+      運用者自身の違反になるので、「取り込みは拒まない」の横に「この配備が商用なら入れては
+      いけない」をライセンス名から引ける形で出す（Stability の年商 $1M も同じ欄）。`HF_TOKEN`
+      は個人のアカウントに紐づき、同意した人が去れば失効する——組織アカウントのトークンを
+      推奨に書く（レビュー決定 10）。
     - **12B 以上は量子化ファイルを取り込む**（`precision`、決定 2）。fp16 の本体 23 GB は L4 の
       VRAM に入らず、S3 から引く 180 秒と VRAM へのロードを払ってから落ちる。
     - **60 秒規則**（決定 4）: `syncSafe` を宣言しないモデルは sd-server の配備には出ない。
@@ -446,8 +537,9 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
     S3 へは 27〜93 秒——0071 決定 3 の根拠がもう 4 点増えた。
 
 帰結: 決定 10 の既定を **klein 4B** にした（3）。決定 4 の ComfyUI 本命は変わらないが、
-「要求毎の切り替え」の価格（5）を本文に足し、カタログの `warm`（いま載っているモデル）を
-`generate_image` の説明に出して**エージェントが温かいモデルを選べる**ようにする（P2）。
+「要求毎の切り替え」の価格（5）を本文に足し、CP が持つ `warm_model` で **`model` 未指定の
+既定を温かいモデルにサーバ側で決める**（決定 7。レビューの答え 7 で「説明文だけでは足りない」
+と直された形）。
 未解決 7 は解け、8 は半分解けた（自前イメージの大きさは未測のまま——コミュニティイメージと
 同じ PyTorch＋CUDA なら 5 GB 級で pull 200 秒、checkout と pip の 20〜26 秒と NAT 依存が消える）。
 
@@ -482,14 +574,12 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
   1 回にした理由）。SSM に書くのは**箱が読む active set** だけで、CP 自身は DB を読む。
 - **EFS にカタログを置く。** 0071 で却下済み。
 
-## 未解決の点——P1 の前に 1 を、P2 の前に 7・8 を測る（2 と 6 は sd-server の配備が要るときだけ）
+## 未解決の点——P2 の前に 8・9 を測る（2 と 6 は sd-server の配備が要るときだけ）
 
-1. **ルーターモードの 4 点**（決定 3 が依存）: (a) `--models-dir` が空でも起動して `/health` が
-   ok か（決定 1 の「空で安定」も依存）；(b) autoload 中の要求は待つのか蹴られるのか、待つなら
-   最初のバイトまでの無音が心拍で覆えるか；(c) `--models-max 1` で 2 つ目を要求したとき、
-   1 つ目が降りて 2 つ目が載るか（落ちないか）；(d) `stream_options.include_usage` の `usage`
-   と応答の `model` がルーター経由でも届くか（決定 8）。CPU の 1.1 GB モデルで (a)(b)(d) は
-   このコンテナで測れる。(c) は GPU が要る。
+1. ~~**ルーターモードの 4 点**（決定 3 が依存）~~ **解けた（レビュー R1・CPU）**: 空で
+   `/health` ok、autoload は待つ、`--models-max 1` は idle LRU を降ろして載せる、`usage` と
+   `model` はルーター経由で届き、窓はモデル毎。残るのは GPU で 1 回——「idle LRU」が生成中の
+   モデルをどう扱うか——で、P1 の完了の定義と同じ観測。
 2. **sd-server の LoRA**（決定 5 が依存）: `immediately` で要求ごとに組が変わるコスト、
    `at_runtime` の VRAM、`<sd_cpp_extra_args>` が `/v1/images/edits`（multipart）でも効くか、
    `baseModel` 不一致のときの挙動（黙って崩れるのか、警告か）。CPU の SD1.5 Q4 で
@@ -500,10 +590,11 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
    始め、これは P4。
 4. **Civitai の API**（決定 6）: 認証の形（ヘッダか `?token=` か）、`files[].hashes.SHA256`、
    `model.type` と `baseModel` の値。
-5. **`engine_models` を DB に置くか設定ストアに置くか。** 行数は数十、参照は要求毎——
-   `SettingsStore` の JSON 1 本でも足りる。表にするのは `lastUsedAt` を要求のたびに書くから
-   で、それが設定ストアの書き込み頻度として許されるかで決まる（`engine_<key>_demand_at` は
-   1 分に 1 回に抑えている前例）。
+5. ~~**`engine_models` を DB に置くか設定ストアに置くか。**~~ **表にする（レビューの答え 6）**。
+   書き手が 2 人いる（管理者のトグルと取り込みジョブの状態遷移）ので JSON 1 本の全読み全書きは
+   CAS が無く片方が消える；`files[]` / `args[]` / `sizes[]` は行ごとに形が違い、一覧・種・削除は
+   どれも行の操作；2 方言の migration は `engine_hourly` の前例がある。`lastUsedAt` は **P0 では
+   持たない**（要求ごとの UPDATE を避ける。`engine_<key>_demand_at` の 1 分抑制と同じ形で P4 に）。
 6. **sd-server の非同期 API の故障原因**（決定 4 の仮説）: `--lora-model-dir` を明示した
    起動で `/sdcpp/v1/img_gen` が通るか。通れば sd-server の配備でも 60 秒規則を外せるが、
    本命（ComfyUI）の順序は変えない。
@@ -514,25 +605,40 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
    （20〜26 秒・NAT 依存）が要った。自前で焼くなら v0.34.0 を固定し、Manager を入れない。
    GGUF を読むノード（`ComfyUI-GGUF`）は今回要らなかった（fp8 の safetensors で足りた）。
    同梱するなら**リビジョンを固定して Dockerfile に書く**のが条件（0071 決定 6）。
-9. **切り替えの読み直し（実測で解けた点 5）を縮められるか**: `useLocalStorage`（0071 未解決 1）
-   で EBS の 92 MB/s をインスタンスストアの NVMe に替えると、12.3 GB の読み直しが十数秒に
-   なるはずで、これは llm 役の VRAM ロード 267 秒と同じ宿題である。P2 の箱で測る。
+9. **切り替えの読み直し（実測で解けた点 5）を縮められるか——P2 の前に 1 GPU 時間で 2 案を測る**
+   （レビューの答え 7・R9）。(1) `useLocalStorage`（0071 未解決 1）: capacity provider の
+   `LocalStorageConfiguration` は create-only ではなく、`ImageUseLocalStorage=true` の更新 1 回で
+   入る（R9）。効くのは切り替え（12.3 GB を 92 MB/s → NVMe）だけでなく、**コールドスタートの
+   S3 → EBS 33 GB・332〜360 秒**も——これは EBS の書き込み上限（g6.xlarge のベースライン
+   125 MB/s）に張り付いた数字である。(2) **RAM で解く**: 3 モデル 27 GB がページキャッシュに
+   残らないのは箱の RAM が 15 GB だからで、`ImageMemMinMiB` を 30,000 に上げれば g6.2xlarge
+   （32 GiB）が選ばれ、コードは 1 行も変わらない。切り替えが RAM → VRAM（数秒）になれば
+   `useLocalStorage` は起動時間だけの話に戻る。どちらも `bench-image-engine.sh` がそのまま測れ、
+   P2 の完了の定義（切り替えの価格）を変えるので **P2 の前**に測る。
 
 ## フェーズ
 
-- **P0 — カタログの土台。** `engine_models` と種、マニフェスト、S3 レイアウトの移行、active set
-  の SSM と fetch サイドカーの一般化（役に依らない 1 本のスクリプト——同期・preset・
-  コマンドライン）、`LlmEnabled` / `ImageEnabled` への縮退と旧パラメータの互換、admin API
-  （一覧・有効化・選択）とパネルの `models[]`、`/internal/engine/catalog` のカタログ化と
-  `catalog-changed` の押し通知、`sdcpp` の `Caps.Sizes` を宣言から。**完了の定義: image の
-  チェックポイントを Console で選び直し、CloudFormation を触らずに次の起動で新しい絵が返る。
-  `describe-stacks` の最終更新時刻が動いていないことがその証拠。**
-- **P1 — llm のルーターモード。** 未解決 1 を測ってから。preset 生成、モデル毎の窓、
+- **P0 — カタログの土台。** 最初の手順は `60-engines.yaml` のコメント 3 KB を
+  `PARAMETERS-60-engines.md` へ移すこと（R4。移してから足す）。そのうえで `engine_models`
+  （表。未解決 5）と種、マニフェスト、S3 レイアウトの移行（種と同じ手順で）、active set の SSM
+  （4,096 文字の規則とテスト）と fetch サイドカーの一般化（役に依らない 1 本——同期・
+  `/models/cmdline`・`ParameterNotFound` は空）、両役のラッパー entrypoint、コントローラの
+  「カタログが空なら起こさない」、`LlmEnabled` / `ImageEnabled` への縮退と旧パラメータの互換、
+  `teardown.sh` の SSM 掃除、admin API（一覧・有効化・選択）とパネルの `models[]`、
+  `/internal/engine/catalog` のカタログ化と `catalog-changed` の押し通知、`sdcpp` の `Caps.Sizes` を
+  宣言から、SDXL 系の 2 つ目のチェックポイントの取り込み。**完了の定義: image のチェック
+  ポイントを Console で SDXL からもう 1 本へ選び直し、CloudFormation を触らずに次の起動で
+  新しい絵が返る（`describe-stacks` の最終更新時刻が動いていないことがその証拠）；`mode=on` の
+  エンジンがカタログ空で起きない；スタック作成時（CP 不在・active set 無し）に両役のサービスが
+  安定する。**
+- **P1 — llm のルーターモード。** 未解決 1 は解けている（R1）ので縛りは無く、順序は利用者の
+  優先（画像が先）で後回し。preset 生成、モデル毎の窓、
   `LlmModelsMax`、`warm` の再定義、opencode の provider をモデル毎の `limit` で。**完了の
   定義: 起動メニューに `llamacpp/` のモデルが 2 つ出て、片方ずつ使え、交替のリロードが
   1 回の試行で答えを返す**（0071 P0 の完了の定義と同じ観測を交替で行う）。
-- **P2 — ComfyUI（0071 P2 をここへ前倒し）。** 自前イメージ（タグ固定・Manager 無し・
-  未解決 8）、`ImageEngine=comfy` の `!If`（決定 4）、provider `comfy`（generate / edit /
+- **P2 — ComfyUI（0071 P2 をここへ前倒し）。** 先に未解決 9 を 1 GPU 時間で測る。自前イメージ
+  （タグ固定・Manager 無し・未解決 8。`20-platform` の ECR リポジトリと CI の焼きを含む）、
+  `ImageEngine=comfy` の `!If`（決定 4）、provider `comfy`（generate / edit /
   inpaint を族ごとのワークフローテンプレートへ写し、`/prompt` → `/history` → `/view` を
   進捗通知つきで回す）、テンプレートは SDXL / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image の
   5 族をリポジトリに置いてゴールデンテストで固定、`generate_image` の `model` 引数
@@ -547,9 +653,10 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
   sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、
   未解決 2 を測ってから。**完了の定義: 同じ prompt・同じ seed で LoRA の有無が絵を変え、
   SD1.5 の LoRA が SDXL で enum に出ない。**
-- **P4 — Console からの取り込み。** `ingest` API、RunTask の IAM（`60-engines` 内）、HF の
-  sha256 / license 解決、gated の一文とライセンス受諾 UI（決定 10）、進行と失敗の表示、
-  Civitai（未解決 4 の後）。それまでは `harness/ingest-model.sh`。
+- **P4 — Console からの取り込み。** `ingest` API、RunTask の IAM（`60-engines` 内。PassRole は
+  ingest ロールだけ）、HF の sha256 / `license` / `license_name` 解決、gated の一文とライセンス
+  受諾 UI（誰がいつ・商用の軸。決定 10）、進行と失敗の表示、取り込みタスクの `MODE=delete`
+  （決定 7）、Civitai（未解決 4 の後）。それまでは `harness/ingest-model.sh`。
 - **P5 — 走行中の追加同期（未解決 3）、llm の仮想モデル id（決定 5 の後半）、ComfyUI の
   ペイン、sd-server の非同期 API（未解決 6）。**
 
