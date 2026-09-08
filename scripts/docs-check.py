@@ -40,6 +40,7 @@ in stages.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import sys
@@ -1105,10 +1106,26 @@ def check_notes(f: Findings) -> None:
         if not m:
             f.error(f"notes/{n}: no frontmatter (needs name / description / user-invocable)")
             continue
+        # Require a small JSON-compatible YAML subset instead of pretending to parse
+        # arbitrary YAML. This keeps CI dependency-free and rejects broken quotes,
+        # escapes and duplicate keys before a CLI silently drops a skill.
         fm = {}
-        for line in m.group(1).splitlines():
-            k, _, v = line.partition(":")
-            fm[k.strip()] = v.strip().strip('"')
+        try:
+            for line in m.group(1).splitlines():
+                k, sep, v = line.partition(":")
+                k, v = k.strip(), v.strip()
+                if not sep or k not in ("name", "description", "user-invocable") or k in fm:
+                    raise ValueError("unexpected or duplicate field")
+                if k == "description":
+                    v = json.loads(v)
+                    if not isinstance(v, str):
+                        raise ValueError("description must be a double-quoted string")
+                elif not re.fullmatch(r"[a-z0-9-]+", v):
+                    raise ValueError("name and user-invocable must be plain scalars")
+                fm[k] = v
+        except ValueError as err:
+            f.error(f"notes/{n}: invalid frontmatter: {err}")
+            continue
         if fm.get("name") != f"af-{stem}":
             f.error(f"notes/{n}: frontmatter name must be af-{stem}, got {fm.get('name')!r}")
         desc = fm.get("description", "")

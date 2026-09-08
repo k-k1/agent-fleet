@@ -112,3 +112,108 @@ func TestApplyEmptyIsNoop(t *testing.T) {
 		t.Fatal("empty topic set must not create the root")
 	}
 }
+
+func TestApplyLeavesUnownedDirectoriesAndLinksAlone(t *testing.T) {
+	for _, kind := range []string{"missing-skill", "directory-link", "file-link", "quoted-marker"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "af-environment")
+			external := t.TempDir()
+			write(t, filepath.Join(external, "SKILL.md"), withMarker("external"))
+			if kind == "directory-link" {
+				if err := os.Symlink(external, dir); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if kind == "file-link" {
+					if err := os.Symlink(filepath.Join(external, "SKILL.md"), filepath.Join(dir, "SKILL.md")); err != nil {
+						t.Fatal(err)
+					}
+				} else if kind == "quoted-marker" {
+					write(t, filepath.Join(dir, "SKILL.md"), "User documentation\n```\n"+Marker+"\n```\n")
+				}
+			}
+			if err := Apply(root, map[string]string{"environment": topic}); err != nil {
+				t.Fatal(err)
+			}
+			if kind == "missing-skill" {
+				if _, err := os.Lstat(filepath.Join(dir, "SKILL.md")); !os.IsNotExist(err) {
+					t.Fatal("claimed user directory")
+				}
+			} else if kind == "file-link" {
+				if st, err := os.Lstat(filepath.Join(dir, "SKILL.md")); err != nil || st.Mode()&os.ModeSymlink == 0 {
+					t.Fatal("replaced user link")
+				}
+			} else if kind == "quoted-marker" {
+				b, _ := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+				if !strings.HasPrefix(string(b), "User documentation") {
+					t.Fatal("overwrote quoted marker")
+				}
+			}
+			if err := Apply(root, map[string]string{"other": topic}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := os.Lstat(dir); err != nil {
+				t.Fatalf("removed user directory: %v", err)
+			}
+			b, _ := os.ReadFile(filepath.Join(external, "SKILL.md"))
+			if string(b) != withMarker("external") {
+				t.Fatal("changed external file")
+			}
+		})
+	}
+}
+
+func TestApplyDoesNotFollowTemporarySymlink(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "af-environment", "SKILL.md")
+	write(t, path, withMarker("old"))
+	external := filepath.Join(t.TempDir(), "user-file")
+	write(t, external, "keep")
+	if err := os.Symlink(external, path+".af-tmp"); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(root, map[string]string{"environment": topic}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(external)
+	if string(b) != "keep" {
+		t.Fatal("temporary symlink target overwritten")
+	}
+}
+
+func TestApplyRejectsInvalidStemBeforePruning(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "af-old", "SKILL.md")
+	write(t, path, withMarker("old"))
+	if err := Apply(root, map[string]string{"x/../../outside": topic}); err == nil {
+		t.Fatal("invalid stem accepted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("pruned before validating: %v", err)
+	}
+}
+
+func TestPruneDoesNotTreatQuotedOrLinkedMarkerAsOwnership(t *testing.T) {
+	root := t.TempDir()
+	write(t, filepath.Join(root, "af-quoted", "SKILL.md"), "Example:\n"+Marker+"\n")
+	external := filepath.Join(t.TempDir(), "SKILL.md")
+	write(t, external, withMarker("external"))
+	if err := os.Mkdir(filepath.Join(root, "af-linked"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(external, filepath.Join(root, "af-linked", "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := Apply(root, map[string]string{"environment": topic}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"af-quoted", "af-linked"} {
+		if _, err := os.Lstat(filepath.Join(root, name, "SKILL.md")); err != nil {
+			t.Fatalf("removed %s: %v", name, err)
+		}
+	}
+}

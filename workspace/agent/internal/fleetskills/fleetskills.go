@@ -12,7 +12,8 @@
 //     placed there appears in the stream-json init `skills` list).
 //   - codex    $CODEX_HOME/skills (0.153; its own bundle lives under skills/.system).
 //   - opencode ~/.config/opencode/skills (1.18; it also scans ~/.claude/skills and
-//     ~/.agents/skills, which is why nothing is written to those — it would list twice).
+//     ~/.agents/skills). Same-name copies collapse to one entry (measured on 1.18.29);
+//     keep the native root because OpenCode can disable Claude skill discovery.
 //
 // agy reads only the project-side .agents/skills, and copilot / kiro show no user skills root
 // in their binaries, so those kinds keep the index route only.
@@ -25,6 +26,7 @@
 package fleetskills
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -67,10 +69,16 @@ func Load(dir string) map[string]string {
 
 // Apply makes `<root>/af-<stem>/SKILL.md` exist for every topic and removes AF-owned
 // directories whose topic is gone. Idempotent: a file whose content already matches is not
-// rewritten. Empty topics is a no-op.
+// rewritten. Empty topics is a no-op. The caller must serialize Apply calls; the
+// workspace agent uses instrMu. This is not a boundary against concurrent user edits.
 func Apply(root string, topics map[string]string) error {
 	if len(topics) == 0 {
 		return nil
+	}
+	for stem := range topics {
+		if !stemRe.MatchString(stem) {
+			return fmt.Errorf("invalid fleet skill stem: %q", stem)
+		}
 	}
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		return err
@@ -97,21 +105,22 @@ func Apply(root string, topics map[string]string) error {
 	for stem, body := range topics {
 		dir := filepath.Join(root, Prefix+stem)
 		path := filepath.Join(dir, "SKILL.md")
+		// Existing directories belong to the user unless a regular SKILL.md proves
+		// ownership. In particular, never follow a per-skill directory symlink.
+		if st, err := os.Lstat(dir); err == nil {
+			if !st.IsDir() || !owned(path) {
+				continue
+			}
+		} else if !os.IsNotExist(err) {
+			return err
+		} else if err := os.Mkdir(dir, 0o755); err != nil {
+			return err
+		}
 		want := withMarker(body)
 		if cur, err := os.ReadFile(path); err == nil && string(cur) == want {
 			continue
-		} else if err == nil && !owned(path) {
-			// Someone else's `af-<stem>`: not ours to overwrite. Leave it, and leave it out.
-			continue
 		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			return err
-		}
-		tmp := path + ".af-tmp"
-		if err := os.WriteFile(tmp, []byte(want), 0o644); err != nil {
-			return err
-		}
-		if err := os.Rename(tmp, path); err != nil {
+		if err := replace(path, want); err != nil {
 			return err
 		}
 	}
@@ -130,7 +139,43 @@ func withMarker(body string) string {
 	return Marker + "\n\n" + body
 }
 
+// replace uses an exclusively created temporary file so a pre-existing name cannot
+// redirect the write. Rename publishes complete content to concurrent CLI readers.
+func replace(path, body string) error {
+	f, err := os.CreateTemp(filepath.Dir(path), ".af-skill-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(body); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Chmod(0o644); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
+}
+
 func owned(path string) bool {
+	st, err := os.Lstat(path)
+	if err != nil || !st.Mode().IsRegular() {
+		return false
+	}
 	b, err := os.ReadFile(path)
-	return err == nil && strings.Contains(string(b), Marker)
+	if err != nil {
+		return false
+	}
+	body := string(b)
+	if strings.HasPrefix(body, "---\n") {
+		if i := strings.Index(body[4:], "\n---\n"); i >= 0 {
+			body = body[4+i+len("\n---\n"):]
+		}
+	}
+	// Quoting the marker in a user's documentation is not an ownership grant.
+	return strings.HasPrefix(body, Marker+"\n")
 }
