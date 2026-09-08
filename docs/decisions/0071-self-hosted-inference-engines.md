@@ -865,6 +865,25 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
     - ⚠️ This was not an instrumented run but a user going about their work, so the tool-side
       duration and the notification count were not observed. Only the CP log was.
 
+15. ✅ **All three modes of the P1.5 toggle were exercised on real hardware (2026-09-08, a user
+    pressing them in the Console).** On `0.16.1-dev-c346ad66`, from the CP log (UTC):
+    02:41:05 `stop (idle)` (**the controller stopping it by itself** — the idle path confirmed
+    on the way past) → 02:46:52 `image set to off` → 02:46:54 `set to on` →
+    **02:49:53 `warmed up (ready)`** → six images between 02:50:11 and 02:53:33 (11.361 s for
+    the first, 5.4-5.5 s after) → 02:58:31 `set to off` (the box stopped) → 03:03:30
+    `set to ondemand`. **Off stops it, on starts it, and the mode persists** — all three seen
+    on the real thing. The start from `on` took **179 seconds**, making cold start
+    **165 / 172 / 173 / 179 / 197 seconds** across five points.
+    - 🔴 **This did NOT verify the reasoning behind `offGrace: 0`.** An OFF→ON two seconds
+      apart did happen, but the box had already been idle-stopped at 02:41:05, so `off` had
+      nothing to throw away. "OFF→ON buys a whole cold start" remains unmeasured.
+    - 🔴 An operational trap was walked into: **`off` is a persisted setting, not a pause.** It
+      was left off for five minutes after the test, and during that time `generate_image` was
+      refused with `503 engine_off` and the engine was gone from the catalogue. It is hard to
+      tell apart from "the box is merely stopped" — both are desired 0. The panel's wording
+      says as much, but the shape where the person who pressed it forgets to press back
+      remains. Worth considering a separate "pause" in P4.
+
 Also verified in P1:
 
 - **ECS Exec is usable as a harness, but its pty dies on stdin EOF.** Giving
@@ -937,7 +956,8 @@ Also verified in P1:
   🔴 One defect surfaced while building it: `engineRuntimeState.mode` **only consulted the
   stored setting when a controller existed**. Harmless in production, where one always does,
   but it made "what mode is this engine in" depend on an unrelated collaborator. The setting is
-  now held by the state itself.
+  now held by the state itself. **All three modes were pressed on real hardware** (measurement
+  15).
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and
