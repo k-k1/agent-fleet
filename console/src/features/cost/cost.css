@@ -127,3 +127,22 @@
 .member-cost .usage-toolbar {
   margin-bottom: 16px;
 }
+
+/* The shared bucket by af-role (ADR 0048 decision 15). Two levels: the group totals read as the
+   answer, the per-role rows behind a disclosure read as the evidence. The detail is collapsed
+   because a reader asking "what are the engines costing" is done after the first list. */
+.cloud-cost .cc-roles {
+  margin: 6px 0 4px;
+}
+.cloud-cost .cc-roles > summary {
+  cursor: pointer;
+  font-size: 0.82rem;
+  color: var(--muted, #8a94a6);
+  padding: 4px 0;
+}
+/* Indented so an open disclosure reads as detail OF the list above rather than a second list
+   of the same rank - the two carry the same money and would otherwise look additive. */
+.cloud-cost .cc-roles .usage-rows {
+  padding-left: 14px;
+  border-left: 2px solid var(--border, #2a2f3a);
+}

@@ -3438,6 +3438,75 @@ func (s *SQL) CloudCostTotals(ctx context.Context, tenantID, fromDay, toDay stri
 	return out, rows.Err()
 }
 
+// PutCloudCostByRole replaces the given days of the by-role cut, wholesale, for exactly
+// the reasons PutCloudCost does: Cost Explorer restates recent days, and a role that stops
+// being billed has to be able to reach zero rather than freeze at its last value.
+//
+// It is a second transaction rather than part of the first because the two cuts come from
+// two Cost Explorer requests: if the by-role one fails, the by-member answer that already
+// arrived is still worth storing.
+func (s *SQL) PutCloudCostByRole(ctx context.Context, days []string, rows []CloudCostRoleRow) error {
+	if len(days) == 0 {
+		return nil
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, d := range days {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM cloud_cost_role_daily WHERE day=?`, d); err != nil {
+			return err
+		}
+	}
+	now := NowTS()
+	for _, r := range rows {
+		est := 0
+		if r.Estimated {
+			est = 1
+		}
+		if _, err = tx.ExecContext(ctx,
+			`INSERT INTO cloud_cost_role_daily(day, role, service,
+			   unblended, amortized, currency, estimated, updated_at)
+			 VALUES(?,?,?,?,?,?,?,?)
+			 ON CONFLICT(day, role, service) DO UPDATE SET
+			   unblended=excluded.unblended, amortized=excluded.amortized,
+			   currency=excluded.currency, estimated=excluded.estimated,
+			   updated_at=excluded.updated_at`,
+			r.Day, r.Role, r.Service,
+			r.Unblended, r.Amortized, r.Currency, est, now); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+// ListCloudCostByRole returns the raw per-(day, role, service) rows in the window. No
+// tenant or membership filter exists because every row is shared cost — the handler's job
+// is to refuse the whole thing to anyone below super_admin, not to narrow it.
+func (s *SQL) ListCloudCostByRole(ctx context.Context, fromDay, toDay string) ([]CloudCostRoleRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT day, role, service, unblended, amortized, currency, estimated
+		 FROM cloud_cost_role_daily WHERE day BETWEEN ? AND ?
+		 ORDER BY day, role, service`, fromDay, toDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CloudCostRoleRow
+	for rows.Next() {
+		var r CloudCostRoleRow
+		var est int
+		if err := rows.Scan(&r.Day, &r.Role, &r.Service,
+			&r.Unblended, &r.Amortized, &r.Currency, &est); err != nil {
+			return nil, err
+		}
+		r.Estimated = est != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // CloudCostDays is the coverage window that actually exists. It is what lets the API say
 // "cost allocation was not switched on before this date" instead of drawing an honest-
 // looking zero — and that distinction is permanent, because activation is not

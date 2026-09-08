@@ -5,8 +5,11 @@ package opencode
 // the ordering, and the fallback conditions.
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents"
 )
 
 // live is a shrunk version of a measured catalog: on the Zen side a free model, a twin
@@ -185,4 +188,59 @@ func TestCatalogEmptyStaysEmpty(t *testing.T) {
 	if got := Catalog(nil, UsageGo); len(got) != 0 {
 		t.Errorf("got %+v", got)
 	}
+}
+
+// opencode enables its own `amazon-bedrock` provider whenever the AWS SDK credential chain
+// resolves, and on ECS it ALWAYS resolves (every task gets
+// AWS_CONTAINER_CREDENTIALS_RELATIVE_URI). Measured against the real CLI 1.18.29: no
+// credentials → 7 ids; an AWS profile in reach → the same 7 plus 121 amazon-bedrock/… .
+//
+// None of them can work — WsTaskRole carries no policies at all, and af never exports
+// AWS_PROFILE into a session — so the picker was offering 121 models that fail on the first
+// message.
+func TestCatalogDropsBedrockFromTheMenu(t *testing.T) {
+	ids := []string{
+		"opencode/grok-code",
+		"amazon-bedrock/amazon.nova-lite-v1:0",
+		"amazon-bedrock/anthropic.claude-opus-4-6-v1",
+		"anthropic/claude-opus-4-6", // the user's OWN key — a different bill, never touched
+	}
+	got := idsOf(Catalog(ids, UsageZen))
+	for _, id := range got {
+		if strings.HasPrefix(id, "amazon-bedrock/") {
+			t.Fatalf("%q is in the menu; it answers AccessDenied on the first message", id)
+		}
+	}
+	if !slices.Contains(got, "anthropic/claude-opus-4-6") {
+		t.Errorf("another vendor's own key was dropped too: %v", got)
+	}
+	if !slices.Contains(got, "opencode/grok-code") {
+		t.Errorf("opencode's own route was dropped: %v", got)
+	}
+
+	// A deployment that wired the credentials up some other way can put them back.
+	t.Setenv("AF_OPENCODE_SHOW_BEDROCK", "1")
+	if got := idsOf(Catalog(ids, UsageZen)); !slices.Contains(got, "amazon-bedrock/amazon.nova-lite-v1:0") {
+		t.Errorf("AF_OPENCODE_SHOW_BEDROCK=1 did not restore them: %v", got)
+	}
+}
+
+// ⚠️ The empty-menu rescue re-enters Catalog with UsageZen and leans on "UsageZen keeps
+// everything". A filter that UsageZen cannot undo therefore has to be applied to the INPUT,
+// or a catalogue of nothing but bedrock ids recurses until the stack goes.
+func TestCatalogDoesNotRecurseWhenEverythingIsFiltered(t *testing.T) {
+	only := []string{"amazon-bedrock/amazon.nova-lite-v1:0", "amazon-bedrock/amazon.nova-pro-v1:0"}
+	for _, pref := range []string{UsageFree, UsageGo, UsageZen, UsageOff} {
+		if got := Catalog(only, pref); len(got) != 0 {
+			t.Errorf("pref=%s: %v, want an empty menu", pref, idsOf(got))
+		}
+	}
+}
+
+func idsOf(ms []agents.ModelChoice) []string {
+	out := make([]string, 0, len(ms))
+	for _, m := range ms {
+		out = append(out, m.ID)
+	}
+	return out
 }

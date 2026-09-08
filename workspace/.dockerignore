@@ -3,6 +3,8 @@ bin/
 **/*.md
 # …but workspace-notes.md is a build input (baked in as the agents' usage policy).
 !workspace-notes.md
+# …and its topic files (read on demand by the agents; see workspace-notes.md's index).
+!notes/*.md
 # …and the assistant knowledge md files are //go:embed inputs of the agent binary
 # (agent/assistants.go), so they must stay in the build context too.
 !agent/knowledge/*.md

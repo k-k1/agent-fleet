@@ -30,7 +30,50 @@ func instrEnv(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("AF_WORKSPACE_NOTES", notes)
+	topics := filepath.Join(t.TempDir(), "notes")
+	if err := os.MkdirAll(topics, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(topics, "fixture.md"), []byte(topicFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AF_WORKSPACE_NOTES_DIR", topics)
 	instrErrs = map[string]string{}
+}
+
+const topicFixture = "---\nname: af-fixture\ndescription: \"read before the fixture\"\nuser-invocable: false\n---\n# Fixture\n\ntopic body\n"
+
+// The topic files reach claude / codex / opencode as skills under each CLI's user skills
+// root; the other kinds have no such root and keep the policy's index as their only route.
+func TestReconcileRegistersTopicFilesAsSkills(t *testing.T) {
+	instrEnv(t)
+	reconcileAgentInstructions()
+	home := os.Getenv("HOME")
+	for _, root := range []string{
+		filepath.Join(home, ".claude", "skills"),
+		filepath.Join(home, ".codex", "skills"),
+		filepath.Join(home, ".config", "opencode", "skills"),
+	} {
+		b, err := os.ReadFile(filepath.Join(root, "af-fixture", "SKILL.md"))
+		if err != nil {
+			t.Fatalf("%s: %v", root, err)
+		}
+		if !strings.HasPrefix(string(b), "---\nname: af-fixture\n") || !strings.Contains(string(b), "topic body") {
+			t.Fatalf("%s: unexpected content:\n%s", root, b)
+		}
+	}
+	for _, root := range []string{
+		filepath.Join(home, ".gemini", "skills"),
+		filepath.Join(home, ".copilot", "skills"),
+		filepath.Join(home, ".kiro", "skills"),
+	} {
+		if _, err := os.Stat(root); !os.IsNotExist(err) {
+			t.Fatalf("%s must not be created (no verified user skills root)", root)
+		}
+	}
+	if len(instrErrs) != 0 {
+		t.Fatalf("errors: %v", instrErrs)
+	}
 }
 
 // stubRTKOnPath puts a dummy `rtk` at the front of PATH.

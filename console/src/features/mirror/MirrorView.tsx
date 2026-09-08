@@ -84,6 +84,7 @@ import { useSessionFilesStore, type SessionFile } from "./sessionFiles.ts";
 // reader may DO here is expressed as TranscriptCaps — the mirror is the owner, so it fills
 // in every capability; a recipient fills in almost none. See transcript/capabilities.ts.
 import { TranscriptView } from "./transcript/TranscriptView.tsx";
+import { useStableBlockIds } from "./transcript/blockIdentity.ts";
 import type { TranscriptCaps } from "./transcript/capabilities.ts";
 import type { Group, Part, Question, TaskItem, Turn } from "./transcript/types.ts";
 import { coalesceUserActions, groupTurns, isNoise, latestContext, parseCommand, spendOf } from "./transcript/model.ts";
@@ -1363,7 +1364,10 @@ export function MirrorView({
   }));
   const extras = [...queuedTurns, ...echoTurns];
   const baseTurns = coalesceUserActions(turns);
-  const groups = groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns);
+  // useStableBlockIds, not groupTurns' own numbering: a backward page can prepend older rows of
+  // the block the reader is IN, and the block must not change its name (React key / data-turn-idx)
+  // under them when it does. See blockIdentity.ts.
+  const groups = useStableBlockIds(groupTurns(extras.length ? [...baseTurns, ...extras] : baseTurns), session);
 
   // replyPending: the newest user prompt has no assistant reply after it yet — i.e. the
   // answer to the latest turn hasn't rendered. This is the signal that the mirror is still
@@ -1387,7 +1391,10 @@ export function MirrorView({
   // latest reply; its final text is the context for the B-1 heuristic, combined with the
   // frequency learning in settings.quickReplies.
   const lastUserGi = latestWorkPromptIndex(groups);
-  const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : undefined;
+  // …and with no prompt in the window at all (a long autonomous stretch), the newest block is the
+  // latest reply. Leaving it undefined there is what hid "start of the reply" on exactly the
+  // sessions whose replies are long enough to need it.
+  const replyGroup = lastUserGi >= 0 ? groups[lastUserGi + 1] : groups[groups.length - 1];
   const lastReplyText = replyGroup && replyGroup.role === "assistant" ? textOfParts(replyGroup.parts) : "";
   // Target of "reply from the top". Written to a ref during render so the ResizeObserver /
   // onScroll closures — created once under [] — can read the current value (same shape as
@@ -1498,6 +1505,11 @@ export function MirrorView({
     planSendDisabled: planSendBlocked,
     forkAt: canForkAt ? openForkAt : undefined,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
+    // Lets an auth error block see that the login was renewed after the turn it killed, so it
+    // reports that instead of asking for a re-authentication that has already happened. Polled
+    // with the rest of the meta, so the card flips on its own once the user comes back from
+    // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
+    authOkAt: sessionMeta?.authOkAt,
     tts: tts.wiring,
     expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),
@@ -1901,10 +1913,13 @@ export function MirrorView({
               passive={skillPicker.passive}
               skills={skillPicker.skills}
               items={skillPicker.items}
+              more={skillPicker.more}
+              trigger={skillPicker.trigger}
               sel={skillPicker.sel}
               query={skillPicker.query}
               onHover={skillPicker.setSel}
               onPick={skillPicker.pick}
+              onMore={skillPicker.unfold}
             />
           )}
           <HistorySearchButton open={histSearch.open} disabled={!histSearch.canOpen} onOpen={histSearch.openSearch} />

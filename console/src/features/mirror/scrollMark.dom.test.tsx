@@ -4,7 +4,9 @@
 // functions of the scroll position (as domSetup.ts notes, real measurements are only possible in a
 // real browser - what is verified here is the arithmetic that turns rectangles into a scrollTop).
 import { describe, it, expect, beforeEach } from "vitest";
-import { applyMark, captureMark, clearMarks, saveMark, scrollTopForTurn, loadMark } from "./scrollMark.ts";
+import {
+  applyMark, captureMark, captureMarkBelow, clearMarks, saveMark, scrollTopForTurn, loadMark,
+} from "./scrollMark.ts";
 
 /** A scroll container holding a row of turns. Rectangles are content coordinates minus
  * el.scrollTop, exactly as a browser computes them. */
@@ -33,6 +35,35 @@ const TURNS = [
 beforeEach(() => {
   document.body.innerHTML = "";
   clearMarks();
+});
+
+// The reference the backward-paging hold uses. The page is prepended INTO the block the reader is
+// in (its rows join it at the front), so that block's own top edge is not a fixed point — the
+// boundary below the reader is.
+describe("captureMarkBelow", () => {
+  it("captures the next turn down, not the one the reader is inside", () => {
+    const el = fixture(TURNS);
+    el.scrollTop = 250; // 50px into turn 2 — captureMark would say 2@-50
+    expect(captureMarkBelow(el)).toEqual({ atBottom: false, idx: 3, offset: 350 });
+  });
+
+  it("takes the turn itself when the reader sits exactly on its boundary", () => {
+    const el = fixture(TURNS);
+    el.scrollTop = 200;
+    expect(captureMarkBelow(el)).toEqual({ atBottom: false, idx: 2, offset: 0 });
+  });
+
+  it("has nothing to hold on to inside the last turn (the caller falls back)", () => {
+    const el = fixture(TURNS);
+    el.scrollTop = 650;
+    expect(captureMarkBelow(el)).toBeNull();
+  });
+
+  it("never anchors on a synthetic turn (optimistic echo / queued prompt)", () => {
+    const el = fixture([{ idx: 1, top: 0, h: 200 }, { idx: 1e9 + 3, top: 200, h: 100 }]);
+    el.scrollTop = 50;
+    expect(captureMarkBelow(el)).toBeNull();
+  });
 });
 
 describe("captureMark", () => {

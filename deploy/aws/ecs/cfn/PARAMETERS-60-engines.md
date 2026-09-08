@@ -20,12 +20,16 @@ Order matches the template.
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
 - [The fetch sidecar](#the-fetch-sidecar)
 - [The idle wrapper](#the-idle-wrapper)
+- [Editing this template](#editing-this-template)
+- [The task roles](#the-task-roles)
+- [The models bucket](#the-models-bucket)
 - [The capacity providers](#the-capacity-providers)
 - [The engine services](#the-engine-services)
 - [The G-family quota](#the-g-family-quota)
 - [Ingest](#ingest)
 - [The model volume](#the-model-volume)
 - [The engine table](#the-engine-table)
+- [Cost allocation](#cost-allocation--every-billed-resource-in-this-stack-carries-af-role)
 
 ## What this template learned the hard way
 
@@ -217,7 +221,40 @@ because the floor is a VRAM number and VRAM is not derivable from vCPU or memory
 Qwen3-Coder-30B-A3B Q4_K_M measured 20,943 MiB, which needs the L4's 22,888 and does not fit
 anything smaller in the family.
 
+Default `g6.xlarge,g5.xlarge` — two types, because one type has nowhere to go when EC2 answers
+`InsufficientInstanceCapacity: We currently do not have sufficient g6.xlarge capacity in the
+Availability Zone you requested`. That is a fact about a type in an AZ, and the VPC that
+00-network builds has only two AZs, so the advice attached to the message ("get capacity by not
+specifying an Availability Zone") has nothing left to offer: the provider is already handed
+both private subnets and has already tried both.
+
+⚠️ **The list is a filter, not an order of preference, and there is no way to make it one.**
+Managed Instances has no allocation-strategy field — `aws ecs create-capacity-provider
+--generate-cli-skeleton` shows `managedInstancesProvider` carrying nothing but
+`instanceRequirements` and the price-protection knobs
+(`onDemandMaxPricePercentageOverLowestPrice`), which is also the tell for what selection does
+honour. So express the priority as price and let the intended box be the cheapest member:
+with the ADR's table (Tokyo, on-demand + MI management fee per hour) g6.xlarge is $1.258 and
+g5.xlarge $1.573, and the L4 box is what you get while it exists. **A cheaper type added here
+becomes the default rather than the fallback** — g4dn.xlarge at $0.765 would win every
+placement, and its T4 is half the VRAM and unmeasured for this role. A fallback belongs above
+the intended box, never below it.
+
+Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole default
+8-vCPU G-family quota by itself, and then the other role cannot launch at all.
+
 ⚠️ `InstanceRequirements` refuses this alongside `InstanceGenerations`.
+
+### `LlmAcceleratorMemMinMiB`
+
+VRAM floor (MiB) written as an instance requirement instead of a sentence in a comment: ADR
+0071 decision 2 puts this role at >= 20 GB and the 30B measured 20,943 MiB, so the default is
+21,000. Running out of VRAM does not slow CUDA down, it crashes it, which is why the floor
+travels with the type list — widen `LlmAllowedInstanceTypes` and this is what still refuses a
+card the model cannot load. `0` = do not ask (which is also what `LlmGpuCount: 0` does).
+
+The requirement is `AcceleratorTotalMemoryMiB`, i.e. the total across the accelerators asked
+for; with `LlmGpuCount: 1` that is the one card.
 
 ### `LlmGpuCount`, `LlmVCpuMin` / `LlmVCpuMax`, `LlmMemMinMiB` / `LlmMemMaxMiB`
 
@@ -314,12 +351,22 @@ no authentication option at all (upstream `examples/server/api.md` documents non
 security group — port 8080 from the CP and nothing else — is the whole of this engine's access
 control. The llm role's `--api-key` is a second lock that does not exist here.
 
-### `ImageAllowedInstanceTypes`
+### `ImageAllowedInstanceTypes` / `ImageAcceleratorMemMinMiB`
 
 Instance types the image capacity provider may buy. The measured floor is 7,379 MiB of VRAM for
 SDXL fp16, so g6f.2xlarge's 5,722 MiB does not fit it in that form — but `--offload-to-cpu` and
 quantisation are UNMEASURED (ADR 0071 decision 2, P4), so this is a default rather than a proof
 that nothing smaller works.
+
+Default `g6.xlarge,g5.xlarge`, for the reason under `LlmAllowedInstanceTypes`: this is the role
+the capacity shortfall was actually observed on, the list is a filter and not a preference
+order, and the cheapest member is the one that normally gets bought.
+
+`ImageAcceleratorMemMinMiB` defaults to 8,000 — decision 2's ">= 8 GB", above the 7,379 MiB
+measurement. Note what that does NOT do: a 16 GB T4 clears it, while every image measurement
+there is (SDXL 8.0 s, Z-Image 10.5 s, klein 4B 4.0 s — ADR 0072) was taken on a 24 GB L4. The
+type list is what holds the role to measured hardware; the floor only keeps a card too small to
+load the checkpoint out.
 
 ### `ImageStorageGiB`
 
@@ -438,6 +485,48 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   (`no_model`, ADR 0072 decision 1(c)). Without that half, `mode=on` buys $1.26/hour for
   `sleep infinity`.
 
+## Editing this template
+
+It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so
+prose lives in this file and the template keeps a line or two per parameter. Two rules that have
+each cost a stand-up:
+
+- **Write every parameter in BLOCK form.** The one-line `{ Type: …, Default: … }` map reads as
+  REQUIRED to `standup.sh`'s preflight — it looks for a `Default:` on its own line — and one of
+  those stops every stand-up with "required parameter … is missing from params/60-engines"
+  (measured against the stub test).
+- **Move prose out BEFORE adding anything**, and check the size afterwards:
+  `wc -c deploy/aws/ecs/cfn/60-engines.yaml`. `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2
+  fails the moment a shipped template crosses the line.
+
+## The task roles
+
+**Engine tasks READ the model catalogue; the ingest task WRITES it and holds the Hugging Face
+token.** Two roles on purpose: the credential that can overwrite a model file must not sit on a
+box running a network service, and the operator's HF token must not either.
+
+⚠️ **No `ssmmessages:*` on either.** The measurement harness has it — the only way to reach a
+private-subnet engine from a laptop — and a production engine is not something anyone should be
+able to open a shell into.
+
+The engine role's `ssm:GetParameter` covers exactly the two parameters this stack's own engines
+read (`<EnginesSsmParamName>` and `.../<key>/active`), granted INSIDE this stack: ADR 0071
+decision 8's rule that a new permission never leaves the stack that needs it. The Control Plane
+side needs nothing new — its `ssm:PutParameter` is already scoped to `/af-ws/*` (20-platform,
+Sid `SsmWorkspaceParams`).
+
+## The models bucket
+
+S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch never
+touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in duplicate for every
+re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
+The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
+
+The image role's capacity provider is created even when no image model is staged: a provider
+costs nothing while nothing runs on it, it is named in the association list (which is replaced
+wholesale, so it cannot be added conditionally without churning the list), and deleting one a
+service used is a stack update that has to wait for the service to go first.
+
 ## The capacity providers
 
 **One provider per role, and the two roles never share a box.** CUDA does not slow down when
@@ -545,6 +634,16 @@ the 250 GB instance store is the whole disk, is where to pick it up (ADR 0072 op
 
 ## The engine table
 
+**Cloud Map DNS, not Service Connect.** The CP reaches an engine at
+`http://<name>.<namespace>:8080` through the VPC resolver, so the gateway needs no sidecar and no
+`/etc/hosts` snapshot (ADR 0070 decision 8). At desired 0 the name has no A record at all — the
+normal state of an engine nobody is using, not an error.
+
+**Why the table is one SSM parameter.** 30-ingress has about 9.2 KB of template budget left and
+six parameters per engine would eat a third of it, so the CP is handed ONE parameter name and
+reads the table from SSM at startup. The name has to be under `/af-ws/` — that is the whole of
+the CP task role's SSM read scope.
+
 Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1
 or 2 rows (each role is staged independently), which the Control Plane reads once at startup.
 
@@ -584,3 +683,28 @@ fetch sidecar reads it. Two consequences worth stating: the `EngineTaskRole` gra
 `ssm:GetParameter` on `<EnginesSsmParamName>/*` (inside this stack, per ADR 0071 decision 8), and
 because CloudFormation does not own those parameters, **`teardown.sh` deletes them** — otherwise
 a torn-down deployment leaves `/af-ws/engines/*/active` behind for the next one to read.
+
+## Cost allocation — every billed resource in this stack carries `af-role`
+
+The engine hours are a COMPONENT cost: shown as their own line, never apportioned to a member
+(ADR 0071 decision 9, ADR 0048 decision 15). What makes that possible is that `af-role` is already
+one of the Control Plane's activated cost allocation keys, so nothing new has to be switched on —
+and switching a key on is not retroactive, which is why the tags go on before the reading does.
+
+| Resource | `af-role` | How it reaches the bill |
+|---|---|---|
+| `LlmCapacityProvider` / `ImageCapacityProvider` | `engine-llm` / `engine-image` | `PropagateTags: CAPACITY_PROVIDER` — the MI instance is the billed unit |
+| `LlmService` / `ImageService` | `engine-llm` / `engine-image` | `PropagateTags: SERVICE` — the MI management fee is billed against the task |
+| `ModelsBucket` | `engine-models` | bucket tags; S3 storage for the staged GGUF / checkpoints |
+| `LogGroup` | `engine-logs` | log group tags; CloudWatch ingestion and storage |
+
+Measured on af-sandbox over 2026-09-01..08 (one Cost Explorer request, grouped by `af-role` and
+SERVICE): `engine-llm` $5.18, `engine-image` $0.73 — of which $0.37 and $0.05 arrive as "Amazon
+Elastic Container Service" rather than EC2, i.e. the Managed Instances fee DOES inherit the
+service's tags, and $0.08 as "EC2 - Other" for the data volume. None of it carries
+`af-membership`, so all of it lands in the shared bucket and none of it is ever charged to a
+person.
+
+**What still cannot be split**: the ingest job pulls model weights from Hugging Face over the NAT
+gateway, and NAT data processing is untaggable (ADR 0048 decision 4). Fetching the same file from
+S3 afterwards does not — 00-network's gateway endpoint keeps that off the NAT entirely.

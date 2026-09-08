@@ -1252,5 +1252,42 @@ export const adminCloudCost = () => ({
     { service: "Amazon Relational Database Service", unblended_micro: 7_100_000 },
     { service: "Tax", unblended_micro: 4_000_000 },
   ],
+  // The same shared money by af-role (ADR 0048 decision 15). Proportions follow the measured
+  // ones on af-sandbox: the engines are a real block (19% of the whole bill there), the
+  // platform residual is still the largest row, and `slot` in the shared bucket is small
+  // because a held slot is answered by the per-member view instead.
+  shared_groups: [
+    { group: "platform", unblended_micro: 62_300_000 },
+    { group: "engine", unblended_micro: 28_400_000 },
+    { group: "pool", unblended_micro: 4_600_000 },
+    { group: "tts", unblended_micro: 1_200_000 },
+  ],
+  shared_roles: [
+    { role: "", group: "platform", unblended_micro: 62_300_000 },
+    { role: "engine-llm", group: "engine", unblended_micro: 25_100_000 },
+    { role: "slot", group: "pool", unblended_micro: 4_600_000 },
+    { role: "engine-image", group: "engine", unblended_micro: 2_900_000 },
+    { role: "tts-engine", group: "tts", unblended_micro: 1_200_000 },
+    { role: "engine-models", group: "engine", unblended_micro: 400_000 },
+  ],
   meta: costMeta(),
 });
+
+// ---- skill picker (docs/log/50 / §9 two tiers) --------------------------------------
+// Two of the session's own (a project skill and a command) and the skills the claude CLI
+// ships, as the Agent reports them: source "cli", no description (the Console fills the
+// well-known ones from its i18n table and shows the rest by name).
+export function sessionSkills(locale) {
+  const ja = locale === "ja";
+  const own = [
+    { name: "handoff", description: ja ? "作業の引き継ぎ書を書く" : "Write a handoff note", source: "project", type: "skill", invoke: "/handoff " },
+    { name: "proofread", description: ja ? "原稿の形式を整える" : "Tidy a manuscript", argumentHint: ja ? "<章番号>" : "<chapter>", source: "project", type: "command", invoke: "/proofread " },
+  ];
+  const cli = ["code-review", "dataviz", "loop", "run", "schedule", "simplify", "update-config", "verify"].map((name) => ({
+    name,
+    source: "cli",
+    type: "skill",
+    invoke: "/" + name + " ",
+  }));
+  return [...own, ...cli].sort((a, b) => (a.name < b.name ? -1 : 1));
+}

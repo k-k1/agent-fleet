@@ -905,7 +905,11 @@ the captured state — the same shape as the pool and speech layers:
 # PlatformStackName / ServiceConnectNamespace from what it already knows.
 ServiceConnectNamespace=af.internal
 LlmModelIds=qwen3-coder-30b-a3b
-LlmAllowedInstanceTypes=g6.xlarge
+# More than one type, or a shortfall in one AZ is the whole of "the engine never arrives".
+# The list is a filter and not a preference order (MI has no allocation strategy), so the
+# cheapest member is the one normally bought: keep the intended box cheapest and put a
+# fallback ABOVE it, never below. PARAMETERS-60-engines.md has the argument.
+LlmAllowedInstanceTypes=g6.xlarge,g5.xlarge
 # The context llama-server is started with, and what the client is told it has. One knob for
 # both, so they cannot drift; move them together when the model changes.
 LlmContextTokens=32768

@@ -9,21 +9,13 @@ Description: >-
   repositories from 20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE
   30-ingress and hand 30-ingress this stack's EnginesSsmParam output.
 
-# ⚠️ Why Managed Instances rather than Fargate, five things this template had to learn the hard
-# way on a real cluster, and one rule about who owns the cluster's capacity-provider list:
-# PARAMETERS-60-engines.md, "What this template learned the hard way". Read it before editing
+# ⚠️ Read PARAMETERS-60-engines.md, "What this template learned the hard way", before editing
 # the capacity providers or the services.
 
 Parameters:
-  # ⚠️ The long-form reasoning for these — the measurements, the trade-offs, the traps — is in
-  # cfn/PARAMETERS-60-engines.md. It lives there rather than here because a template body over
-  # 51,200 bytes cannot be handed to CloudFormation directly, and a YAML comment costs exactly
-  # what a Description does.
-  #
-  # ⚠️ Write every parameter in BLOCK form. The one-line `{ Type: …, Default: … }` map reads as
-  # REQUIRED to standup.sh's preflight — it looks for a `Default:` on its own line — and one of
-  # those stops every stand-up with "required parameter … is missing from params/60-engines"
-  # (measured against the stub test).
+  # ⚠️ The long-form reasoning is in cfn/PARAMETERS-60-engines.md (a comment costs what a
+  # Description does, and this file is at the 51,200-byte wall). Write every parameter in BLOCK
+  # form — see that file, "Editing this template".
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -74,14 +66,11 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      SEED: key in this stack's models bucket for the model this deployment already runs.
-      Empty with LlmEnabled unset means no llm role at all.
+      SEED: the key this deployment already serves. Empty with LlmEnabled unset = no llm role.
   LlmModelFile:
     Type: String
     Default: model.gguf
-    Description: >-
-      Unused since ADR 0072 — the box mirrors the bucket, so the local path is the S3 key.
-      Kept for one release so an existing params file still applies.
+    Description: "Unused since ADR 0072 — the box mirrors the bucket. Kept for one release."
   LlmModelIds:
     Type: CommaDelimitedList
     Default: "qwen3-coder-30b-a3b"
@@ -95,9 +84,7 @@ Parameters:
     Type: Number
     Default: 4096
     MinValue: 256
-    Description: >-
-      SEED: the output cap advertised with it. It is SUBTRACTED from the context to get the
-      usable window, and 0 does not mean unset — see PARAMETERS-60-engines.md.
+    Description: "SEED: the output cap advertised with it (0 does not mean unset)."
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja"
@@ -132,10 +119,20 @@ Parameters:
       asks for all of it never places, which reads as a capacity problem.
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
-    Default: "g6.xlarge"
+    Default: "g6.xlarge,g5.xlarge"
     Description: >-
       Instance types this role may buy. Declared per role: the floor is a VRAM number (the 30B
-      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory.
+      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory. More than one type,
+      because one has nowhere to go when an AZ is short of it. ⚠️ A FILTER, not an order of
+      preference: MI has no allocation strategy and the cheapest member is what gets bought,
+      so a fallback belongs ABOVE the intended box, never below.
+  LlmAcceleratorMemMinMiB:
+    Type: Number
+    Default: 21000
+    Description: >-
+      VRAM floor (MiB): decision 2's >= 20 GB, above the 30B's measured 20,943. Short VRAM
+      crashes CUDA rather than slowing it, so this refuses an unusable card once the type list
+      is widened. 0 = do not ask (as GpuCount 0 does).
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -167,8 +164,8 @@ Parameters:
     Default: "false"
     AllowedValues: [ "true", "false" ]
     Description: >-
-      Use the 250 GB instance store instead of an EBS data volume (ADR 0071 open question 1).
-      Off until measured: it is also wiped per box, i.e. a fresh S3 fetch on every cold start.
+      Use the 250 GB instance store instead of an EBS data volume. Off until measured
+      (ADR 0071 open question 1, ADR 0072 open question 9).
   LlmScaleInAfter:
     Type: Number
     Default: -2
@@ -184,7 +181,7 @@ Parameters:
     Default: 900
     Description: >-
       How long a start may take before the controller calls it failed. MUST exceed the real
-      cold start (measured 527-586 s) or every start is a failure and the cooldown doubles away.
+      cold start (measured 527-586 s for one model; a router syncs every enabled one).
   LlmMode:
     Type: String
     Default: ondemand
@@ -194,10 +191,7 @@ Parameters:
       admin sets it, the stored setting wins (ADR 0070 decision 7).
 
   # --- the image role (stable-diffusion.cpp — ADR 0071 P1) ----------------------
-  # A mirror of the llm block, and a mirror on purpose: instance requirements are declared per
-  # role because the floor is a VRAM number (SDXL fp16 measured 7,379 MiB against the 30B's
-  # 20,943), and the two roles must never share a box — CUDA does not slow down when VRAM runs
-  # out, it crashes.
+  # A mirror of the llm block on purpose: the instance floor is a VRAM number, per role.
   ImageEnabled:
     Type: String
     Default: ""
@@ -219,8 +213,8 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      SEED: key in this stack's models bucket for the checkpoint this deployment already runs.
-      Empty with ImageEnabled unset means no image role, and standup.sh copies no sdcpp image.
+      SEED: the checkpoint this deployment already serves. Empty with ImageEnabled unset = no
+      image role, and standup.sh copies no sdcpp image.
   ImageModelFile:
     Type: String
     Default: sd_xl_base_1.0.safetensors
@@ -245,10 +239,18 @@ Parameters:
     Description: Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent.
   ImageAllowedInstanceTypes:
     Type: CommaDelimitedList
-    Default: "g6.xlarge"
+    Default: "g6.xlarge,g5.xlarge"
     Description: >-
       Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
-      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4).
+      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4). Two types,
+      with the warning under LlmAllowedInstanceTypes attached.
+  ImageAcceleratorMemMinMiB:
+    Type: Number
+    Default: 8000
+    Description: >-
+      VRAM floor (MiB): decision 2's >= 8 GB, above SDXL fp16's measured 7,379. A 16 GB card
+      clears it — holding the role to the 24 GB class every image measurement used is the type
+      list's job. 0 = do not ask.
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -333,16 +335,13 @@ Parameters:
     Description: CloudWatch retention for the engine and ingest log group.
 
 Mappings:
-  # ONE fetch sidecar for both roles (ADR 0072 decision 1(a)): read the active set the Control
-  # Plane published to SSM, sync the files the engine is about to load, and write
-  # `/models/cmdline` — the model-specific half of the engine's argument list. With PRESET_FILE
-  # set it writes a llama.cpp ROUTER preset as well, and then syncs every enabled model rather
-  # than only the starting one (ADR 0072 decision 3, phase P1).
+  # ONE fetch sidecar for both roles (ADR 0072 decision 1(a)): read the active set from SSM,
+  # sync what the engine is about to load, write `/models/cmdline` — and, with PRESET_FILE set,
+  # a llama.cpp router preset (decision 3).
   #
-  # ⚠️ ParameterNotFound is EMPTY not an error; what each role syncs; and why this is a LITERAL
-  # block (`|-`) rather than a folded one, which silently split the shell on the live
-  # deployment: PARAMETERS-60-engines.md, "The fetch sidecar". `deploy/local/engine-sidecar-
-  # test.sh` runs this script for real against a stub `aws`, and CI runs that.
+  # ⚠️ A LITERAL block (`|-`), never folded; ParameterNotFound is EMPTY; what each role syncs:
+  # PARAMETERS-60-engines.md, "The fetch sidecar". `deploy/local/engine-sidecar-test.sh` runs
+  # this script for real, and CI runs that.
   Engine:
     fetch:
       script: |-
@@ -394,6 +393,7 @@ Conditions:
     - !Equals [ !Ref LlmEnabled, "true" ]
     - !And [ !Equals [ !Ref LlmEnabled, "" ], !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ] ]
   HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
+  HasLlmAcceleratorMem: !And [ !Condition HasGpu, !Not [ !Equals [ !Ref LlmAcceleratorMemMinMiB, 0 ] ] ]
   UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
   HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
@@ -404,6 +404,7 @@ Conditions:
     - !Equals [ !Ref ImageEnabled, "true" ]
     - !And [ !Equals [ !Ref ImageEnabled, "" ], !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ] ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
+  HasImageAcceleratorMem: !And [ !Condition HasImageGpu, !Not [ !Equals [ !Ref ImageAcceleratorMemMinMiB, 0 ] ] ]
   ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
@@ -459,13 +460,8 @@ Resources:
       InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
       Roles: [ !Ref InstanceRole ]
 
-  # Engine tasks READ the model catalogue. Ingest WRITES it and reads the HF token. Two roles
-  # on purpose: the credential that can overwrite a model file must not sit on a box running a
-  # network service, and the operator's HF token must not either.
-  #
-  # ⚠️ No ssmmessages:* here. The measurement harness has it (the only way to reach a
-  # private-subnet engine from a laptop), and a production engine is not something anyone
-  # should be able to open a shell into.
+  # Engine tasks READ the model catalogue; ingest WRITES it and holds the HF token. Two roles on
+  # purpose, and no ssmmessages:* on either: PARAMETERS-60-engines.md, "The task roles".
   EngineTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -488,10 +484,7 @@ Resources:
                 Action: [ s3:ListBucket ]
                 Resource: !GetAtt ModelsBucket.Arn
               # The active set the Control Plane publishes (ADR 0072 decision 2). Scoped to the
-              # two parameters this stack's own engines read, and granted INSIDE this stack —
-              # ADR 0071 decision 8's rule that a new permission never leaves the stack that
-              # needs it. The CP side needs nothing new: its ssm:PutParameter is already
-              # /af-ws/* (20-platform, Sid SsmWorkspaceParams).
+              # granted INSIDE this stack (ADR 0071 decision 8); the CP side needs nothing new.
               - Effect: Allow
                 Action: [ ssm:GetParameter ]
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${EnginesSsmParamName}/*"
@@ -519,10 +512,8 @@ Resources:
                 Resource: !GetAtt ModelsBucket.Arn
 
   # --- the model catalogue ------------------------------------------------------
-  # S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch
-  # never touches the NAT). Versioning is off deliberately: a 17 GB model kept in duplicate for
-  # every re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (0071
-  # decision 10). The layout is ComfyUI's, so all three engines read one tree (0072 decision 2).
+  # Read for free through 00-network's gateway endpoint; versioning deliberately off (a 17 GB
+  # model kept in duplicate per re-ingest); ComfyUI's layout so all three engines read one tree.
   ModelsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -542,6 +533,13 @@ Resources:
           - Id: abort-incomplete-uploads
             Status: Enabled
             AbortIncompleteMultipartUpload: { DaysAfterInitiation: 3 }
+      # Cost allocation. The compute already carries af-role through the capacity providers
+      # and the services; without these two, the stack's storage and logs are the only part
+      # of the engines' bill that stays anonymous in the shared bucket (ADR 0048 decision 15).
+      # A cost allocation key is never retroactive, so tag first and read afterwards.
+      Tags:
+        - { Key: af-role, Value: engine-models }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
   LogGroup:
     Type: AWS::Logs::LogGroup
@@ -549,6 +547,9 @@ Resources:
     Properties:
       LogGroupName: !Sub "/af/${AWS::StackName}/engines"
       RetentionInDays: !Ref LogRetentionDays
+      Tags:
+        - { Key: af-role, Value: engine-logs }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
   # Reachability IS the access control for both engines: port 8080 from the CP security group
   # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision 14,
@@ -605,6 +606,8 @@ Resources:
             AcceleratorCount: !If [ HasGpu, { Min: !Ref LlmGpuCount, Max: !Ref LlmGpuCount }, !Ref "AWS::NoValue" ]
             AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
             AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            # Total across the accelerators asked for: with AcceleratorCount 1, the card.
+            AcceleratorTotalMemoryMiB: !If [ HasLlmAcceleratorMem, { Min: !Ref LlmAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
       Tags:
         # Cost allocation: engine hours are a COMPONENT cost, shown as such and never
         # apportioned to a member (ADR 0048, ADR 0071 decision 9).
@@ -612,10 +615,7 @@ Resources:
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
   # The image role's own capacity. Created even when no image model is staged: a capacity
-  # provider costs nothing while nothing runs on it, it is named in the association list
-  # below (which is replaced wholesale, so it cannot be added conditionally without churning
-  # the list), and deleting one that a service used is a stack update that has to wait for
-  # the service to go first.
+  # provider costs nothing while idle and the association list below is replaced wholesale.
   ImageCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -650,6 +650,7 @@ Resources:
             AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
             AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
             AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            AcceleratorTotalMemoryMiB: !If [ HasImageAcceleratorMem, { Min: !Ref ImageAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
       Tags:
         - { Key: af-role, Value: engine-image }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
@@ -825,10 +826,8 @@ Resources:
               awslogs-region: !Ref "AWS::Region"
               awslogs-stream-prefix: llm
 
-  # A Cloud Map DNS service, not Service Connect: the CP reaches the engine at
-  # http://<name>.<namespace>:8080 through the VPC resolver, so the gateway needs no sidecar
-  # and no /etc/hosts snapshot (ADR 0070 decision 8). At desired 0 the name has no A record
-  # at all — the normal state of an engine nobody is using, not an error.
+  # Cloud Map DNS, not Service Connect (ADR 0070 decision 8). At desired 0 the name has no A
+  # record at all — the normal state of an engine nobody is using, not an error.
   LlmDiscovery:
     Type: AWS::ServiceDiscovery::Service
     Condition: HasLlmModel
@@ -974,9 +973,7 @@ Resources:
         - { Key: af-role, Value: engine-image }
 
   # --- the engine table the CP reads at startup (ADR 0071 decision 8) -----------
-  # 30-ingress has 9.2 KB of template budget left and six parameters per engine would eat a
-  # third of it, so the CP is handed ONE parameter name and reads the table from SSM. The
-  # name has to be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
+  # ONE parameter name is handed to 30-ingress; the CP reads the table from SSM at startup.
   EnginesParam:
     Type: AWS::SSM::Parameter
     Properties:

@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { applySkillToDraft, exactSkills, filterSkills, hasTriggerHead, originKind, pickerTokenAt, slashTokenAt } from "./skillPicker.ts";
+import {
+  applySkillToDraft,
+  collapseCli,
+  exactSkills,
+  filterSkills,
+  hasTriggerHead,
+  originKind,
+  pickerTokenAt,
+  slashTokenAt,
+  splitDoubleTrigger,
+} from "./skillPicker.ts";
 import type { SessionSkill } from "../../core/api/client.ts";
 
 const sk = (name: string, description = "", type: SessionSkill["type"] = "skill"): SessionSkill => ({
@@ -81,6 +91,43 @@ describe("filterSkills", () => {
   });
   it("drops entries that match nowhere", () => {
     expect(filterSkills(skills, "zzz")).toEqual([]);
+  });
+  it("puts the user's own entries ahead of CLI-bundled ones within a rank (docs/log/50 §9)", () => {
+    const cli = (name: string, description = ""): SessionSkill => ({ ...sk(name, description), source: "cli" });
+    const mixed = [cli("dataviz", "charts"), sk("handoff", "引き継ぎ"), cli("simplify", "cleanup"), sk("simulate", "sim run")];
+    expect(filterSkills(mixed, "").map((s) => s.name)).toEqual(["handoff", "simulate", "dataviz", "simplify"]);
+    // both prefix-match "sim": the project one first, then the bundled one; the description
+    // match ranks below either
+    expect(filterSkills(mixed, "sim").map((s) => s.name)).toEqual(["simulate", "simplify"]);
+    // name-substring rank ("a"): own before bundled, then the description-only match last
+    expect(filterSkills(mixed, "a").map((s) => s.name)).toEqual(["handoff", "simulate", "dataviz", "simplify"]);
+  });
+});
+
+describe("collapseCli / splitDoubleTrigger (two-tier display, docs/log/50 §9)", () => {
+  const cli = (name: string): SessionSkill => ({ ...sk(name), source: "cli" });
+  it("folds the CLI-bundled entries away behind a count when the user has entries of their own", () => {
+    const items = [sk("handoff"), cli("dataviz"), cli("simplify")];
+    expect(collapseCli(items, false)).toEqual({ shown: [items[0]], hidden: 2 });
+    expect(collapseCli(items, true)).toEqual({ shown: items, hidden: 0 });
+  });
+  it("shows a list made of CLI entries alone as it is (nothing to rank above them)", () => {
+    const items = [cli("dataviz"), cli("simplify")];
+    expect(collapseCli(items, false)).toEqual({ shown: items, hidden: 0 });
+    expect(collapseCli([], false)).toEqual({ shown: [], hidden: 0 });
+  });
+  it("treats a token that starts with the trigger again (// or $$) as the show-all gesture", () => {
+    expect(splitDoubleTrigger("/", "/")).toEqual({ query: "", all: true });
+    expect(splitDoubleTrigger("/sim", "/")).toEqual({ query: "sim", all: true });
+    expect(splitDoubleTrigger("／", "/")).toEqual({ query: "", all: true }); // full-width alias
+    expect(splitDoubleTrigger("$ima", "$")).toEqual({ query: "ima", all: true });
+    expect(splitDoubleTrigger("sim", "/")).toEqual({ query: "sim", all: false });
+    expect(splitDoubleTrigger("", "/")).toEqual({ query: "", all: false });
+    expect(splitDoubleTrigger("/x", "")).toEqual({ query: "/x", all: false }); // button-only kind: no trigger, no gesture
+  });
+  it("the double-trigger token is replaced whole on confirmation (no stray slash left behind)", () => {
+    expect(applySkillToDraft("//", 2, "/simplify ")).toEqual({ next: "/simplify ", caret: 10 });
+    expect(applySkillToDraft("//sim args", 5, "/simplify ")).toEqual({ next: "/simplify args", caret: 10 });
   });
 });
 

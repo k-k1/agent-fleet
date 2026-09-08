@@ -80,6 +80,13 @@ export interface TranscriptCaps {
    * re-authenticate somebody else's agent, so offering the route would be a dead end.
    */
   onReauth?: () => void;
+  /**
+   * When the agent's login in force was written (Session.authOkAt, RFC3339). An error block
+   * whose turn is OLDER than this has already been re-authenticated, so it drops the fix-it
+   * route and says so instead of asking again for something that is done. Absent → every auth
+   * failure keeps offering the route (the shared view, an agent that reports no such moment).
+   */
+  authOkAt?: string;
   /** Karaoke read-aloud wiring (docs/log/24). Absent → no per-turn TTS buttons. */
   tts?: TurnTtsWiring;
   /**

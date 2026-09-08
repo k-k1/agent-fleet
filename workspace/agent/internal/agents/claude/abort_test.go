@@ -376,3 +376,65 @@ func TestUsageLimitAbortIsTheLimitSubset(t *testing.T) {
 		})
 	}
 }
+
+// TestAbortAuthAxis pins Abort.Auth — the mark auth_resume.go opens an episode from
+// (docs/log/47 §4-11). It is a SUBSET of blocked: a login failure is not fixed by re-sending,
+// but unlike the other blocked causes it is fixed by an action the user can take, and this is
+// what tells the two apart.
+//
+// The verdict is apiError.isAuth, the same one that puts cause="auth" on the mirror's error
+// block. That shared classifier is the point: a card offering "re-authenticate" for a failure
+// nothing then resumes, or a resume waiting on a login for a failure the card never mentioned,
+// are the two ways this can be wrong.
+func TestAbortAuthAxis(t *testing.T) {
+	cases := []struct {
+		name   string
+		line   string
+		auth   bool
+		retry  bool
+		reason string
+	}{
+		{
+			name: "measured expiry", line: apiErrKind(authErrText, 401, "authentication_failed"),
+			auth: true, reason: "the shape actually recorded when a login expires",
+		},
+		{
+			// The wording is unknown but claude's own machine-readable field is not, and that
+			// field is what does not get reworded between releases.
+			name: "unknown wording, auth kind", line: apiErrKind("API Error: nobody has seen this", 0, "authentication_failed"),
+			auth: true, reason: "the error field alone must be enough",
+		},
+		{
+			name: "usage limit is blocked but not auth", line: apiErr("You've reached your Fable 5 limit.", 429),
+			auth: false, reason: "waiting fixes it; signing in again does not",
+		},
+		{
+			name: "over-long prompt is blocked but not auth", line: apiErrKind("Prompt is too long", 400, "invalid_request"),
+			auth: false, reason: "no login renewal will shorten the conversation",
+		},
+		{
+			// A transient fault is abort_resume.go's. Marking it auth as well would leave one
+			// cut-off with two watchers sending "continue" at it.
+			name: "retryable is never auth", line: apiErr("API Error: Connection closed mid-response.", 0),
+			auth: false, retry: true, reason: "it belongs to the retryable sweep",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var r abortRecord
+			if err := json.Unmarshal([]byte(tc.line), &r); err != nil {
+				t.Fatal(err)
+			}
+			a, ok := abortFrom([]byte(tc.line), r)
+			if !ok {
+				t.Fatalf("ok=false, want an aborted turn")
+			}
+			if a.Auth != tc.auth {
+				t.Errorf("Auth = %v, want %v (%s)", a.Auth, tc.auth, tc.reason)
+			}
+			if a.Retryable != tc.retry {
+				t.Errorf("Retryable = %v, want %v", a.Retryable, tc.retry)
+			}
+		})
+	}
+}

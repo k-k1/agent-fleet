@@ -223,6 +223,26 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "cost.centre_idle_pool": "Idle slot pool",
   "cost.centre_cp": "Control plane",
   "cost.centre_tax": "Tax",
+  // The shared bucket, cut by af-role (ADR 0048 decision 15). The wording carries one claim and
+  // has to keep it: this is the same invoice grouped differently, NOT an apportionment. Say
+  // "estimate" anywhere here and the screen is describing something it is not.
+  "cost.by_role": "What it was for",
+  "cost.by_role_detail": "Per resource role",
+  "cost.group_engine": "Inference engines",
+  "cost.group_tts": "Speech engine",
+  "cost.group_pool": "Idle workspace resources",
+  "cost.group_platform": "Platform (unattributable)",
+  "cost.group_other": "Other",
+  "cost.role_none": "No role tag",
+  "cost.role_engine_llm": "Inference engine (LLM)",
+  "cost.role_engine_image": "Inference engine (images)",
+  "cost.role_engine_models": "Model storage",
+  "cost.role_engine_logs": "Engine logs",
+  "cost.role_tts_engine": "Speech engine",
+  "cost.role_slot": "Idle slots",
+  "cost.role_home": "Home volumes",
+  "cost.role_golden": "Golden snapshot",
+  "cost.role_backup": "Backups",
   "uptime.my_title": "When your workspace was running",
   "uptime.my_intro":
     "Each square is one hour: grey means the workspace was stopped, warmer means more sessions were open. Nothing here is a charge — it is what your workspace was doing, which is usually the reason a day's cloud cost looks the way it does.",

@@ -351,7 +351,11 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    and a per-provider `tool.imagegen`; ADR 0029's enumeration is appended). No unit price is
    attached (a token here has no dollar value). Instance hours carry the cost-allocation tags
    `af-role=engine-llm` / `engine-image` and are **shown as component cost, never apportioned**
-   (ADR 0048).
+   (ADR 0048). **The second half of that — the showing — had no implementation until
+   2026-09-08**: the tags were written, but the CP only ever read the `af-membership` axis, so
+   engine GPU hours sat in the shared bucket as the same `Amazon EC2 - Compute` line as the idle
+   slot pool (measured at 19% of the bill). ADR 0048 decision 15 closes it with a second
+   Cost Explorer request grouped by `af-role`.
 
 10. **Provenance is part of the result (0069 decision 11).** Providers are `llamacpp` / `sdcpp`
     / `comfy`; the model is **the file name and its sha256** (the ingestion job also keeps the
@@ -1013,6 +1017,58 @@ instruction to have the Task tool's explore subagent read the saved file, which 
 model could not carry through; it finished by writing an untrue conclusion ("check your internet
 connection"). The fetch itself returned 200. That is opencode behaving as specified and outside
 this ADR, but **the window is a separate, real hole found while looking into it**.
+
+## The box would not launch — the candidate list held one instance type (2026-09-08)
+
+Waking the image role produced this run of service events:
+
+```
+(service af-…-engines-image) was unable to place a task. Reason:
+ResourceInitializationError: Unable to launch instance(s) ... InsufficientInstanceCapacity:
+We currently do not have sufficient g6.xlarge capacity in the Availability Zone you requested
+(ap-northeast-1a). ... You can currently get g6.xlarge capacity by not specifying an
+Availability Zone in your request or choosing ap-northeast-1c.
+```
+
+The same thing came back for 1c — the AZ the message had just recommended. **This is not the
+quota**; that answers `VcpuLimitExceeded`. There simply was no L4 box in either AZ at that
+minute. A `has started 1 tasks` sits between the two failures, so one of the retries did get a
+box.
+
+The advice attached to the message has nothing to offer here. **The provider is already handed
+both of 00-network's private subnets, and that VPC has only two AZs** (`!Select [0/1, !GetAZs
+""]`), so every AZ it can choose from had already been tried. What was left was that only one
+instance type could be bought at all, so `Llm/ImageAllowedInstanceTypes` now default to
+`g6.xlarge,g5.xlarge`.
+
+🔴 **The candidates cannot be ordered.** `managedInstancesProvider` has no allocation-strategy
+field (checked with `aws ecs create-capacity-provider --generate-cli-skeleton`: it carries
+`instanceRequirements` and the price protection `onDemandMaxPricePercentageOverLowestPrice`,
+and nothing corresponding to EC2 Fleet's `prioritized` + `Priority`). `allowedInstanceTypes` is
+**a filter, not a preference order** — and that price-protection knob is itself the tell that
+selection looks at price. So **express the priority as price and keep the intended box the
+cheapest member of the set**: by the table above g6.xlarge is $1.258 against g5.xlarge's
+$1.573, so the L4 is what arrives while an L4 exists.
+
+⚠️ **A cheaper type added here becomes the default, not the fallback.** g4dn.xlarge is $0.765,
+under g6.xlarge, so it would win every placement that has capacity — on half the VRAM, and
+unmeasured for these roles. A fallback belongs *above* the intended box. The same care keeps
+8-vCPU types out of the default: one g6.2xlarge fills the whole 8-vCPU quota, and then the
+other role cannot launch at all (the other side of R2).
+
+Decision 2's VRAM floors had until now been carried by a comment and a type name. Widening the
+list means writing them as requirements: `LlmAcceleratorMemMinMiB` = 21,000 (above the measured
+20,943), `ImageAcceleratorMemMinMiB` = 8,000 (decision 2's ">= 8 GB", above the measured
+7,379), reaching CloudFormation as `AcceleratorTotalMemoryMiB.Min`. Since running short of VRAM
+crashes CUDA rather than slowing it, the floor is what refuses a card the model cannot load
+once the type list is widened. But **the image role's 8,000 does admit a 16 GB T4**, while
+every image measurement there is (SDXL 8.0 s, Z-Image 10.5 s, klein 4B 4.0 s — ADR 0072) was
+taken on a 24 GB L4. What holds the role to measured hardware is the type list, not the floor.
+
+**None of this creates capacity.** It removes only the part of the failure that was "one type
+was all we could buy"; a period when the G family is short across the region ends the same way.
+The one guarantee is a capacity reservation (`capacityReservations` is on the same API), paid
+for whether or not it is used — which is the scale-to-zero premise traded away.
 
 ## Phases
 

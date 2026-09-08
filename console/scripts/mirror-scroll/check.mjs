@@ -70,6 +70,15 @@ const SCENARIOS = [
   // 120 turns = 240 jsonl lines served 120 at a time, so the tail page is 60 turns: enough height
   // for the prepend to matter, little enough to read up through within a scenario's time budget.
   { name: "paging", turns: 120, images: 0, imgdelay: 0, mermaid: 0, mode: "paging", paging: true, pagesize: 120 },
+  // readup: the reported path — keep the wheel going upwards from the tail, so the sentinel fires
+  // WHILE the reader is moving and the page lands under a viewport that is not standing still
+  // (`paging` deliberately loads from the button, from a still viewport). --split writes each
+  // reply as several jsonl rows, so the window edge falls inside an assistant block, the way a
+  // real one does.
+  {
+    name: "readup", turns: 60, images: 0, imgdelay: 0, mermaid: 0,
+    mode: "readup", paging: true, pagesize: 60, split: true, asks: 40, longans: 12,
+  },
 ];
 
 class CDP {
@@ -562,12 +571,103 @@ async function runPaging(cdp) {
   };
 }
 
+// readup: the reader keeps wheeling UPWARDS from the tail, so "load earlier messages" fires from
+// the sentinel while the viewport is still moving — the reported path, and the one `paging` does
+// not take (it clicks the button from a standing viewport).
+//
+// Three things are sampled after every wheel step:
+//   * the CONTENT at the top edge (the anchor turn). Wheeling up can only ever expose an earlier
+//     turn, so an anchor moving forwards is the reader being pushed back down.
+//   * whether every block is still rendered under the idx it had. A backward page whose edge falls
+//     inside an assistant block re-anchors that block on an older row, i.e. React throws the whole
+//     subtree away and builds a new one — losing the fold latch, the work boundary and the
+//     reader's own open/closed choice, and taking the prepend anchor's target with it
+//     (scrollTopForTurn looks the old idx up and finds nothing).
+//   * every assistant block's 作業過程 state (open / closed / inline, keyed by the turn's idx).
+//     Nobody clicks in this scenario, so a block that was `closed` must not come back `open`, and
+//     the number of open traces must never rise. `inline` means the disclosure is gone entirely
+//     and the trace is drawn at full height.
+const WORK_STATES = `(() => {
+  const el = document.querySelector(".mirror-body");
+  const out = {};
+  for (const t of el.querySelectorAll(".mirror-turn.assistant")) {
+    const head = t.querySelector(".mt-work-head");
+    out[t.dataset.turnIdx] = head ? (head.getAttribute("aria-expanded") === "true" ? "open" : "closed") : "inline";
+  }
+  return out;
+})()`;
+async function runReadUp(cdp) {
+  if ((await cdp.ev(OPEN_SESSION)) !== "ok") throw new Error("could not find the session row in the left pane");
+  await sleep(9000);
+  await cdp.ev(KILL_ANCHOR);
+  const opened = await cdp.ev(PROBE);
+  const { x, y } = JSON.parse(await cdp.ev(WHEEL_UP));
+
+  // What each block's work trace looked like BEFORE the reader moved: every completed reply is
+  // folded and closed at this point (the reader is at the tail, so defaultWorkOpen is false).
+  const seen = new Map(Object.entries(await cdp.ev(WORK_STATES)));
+  const changes = [];
+  const yanks = [];
+  const vanished = [];
+  // Nobody clicks anything in this scenario, so the number of OPEN work traces can only ever go
+  // down (a block scrolling out of the window). Counting them as well as diffing per idx is the
+  // point: when a block is re-keyed its old idx simply disappears, so a per-idx diff alone sees a
+  // stranger rather than a disclosure that sprang open.
+  let opens = Object.values(Object.fromEntries(seen)).filter((s) => s === "open").length;
+  const opened0 = opens;
+  let prev = opened.anchor;
+  let pages = 0;
+  let turns = opened.turns;
+  let maxH = opened.height;
+  for (let step = 0; step < 60; step++) {
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseWheel", x, y, deltaX: 0, deltaY: -1500, pointerType: "mouse" });
+    await sleep(250);
+    const p = await cdp.ev(PROBE);
+    if (p.turns > turns) { pages++; turns = p.turns; }
+    maxH = Math.max(maxH, p.height);
+    // A prepend legitimately moves scrollTop by the height of what was inserted above, so px is
+    // not the measure: the CONTENT at the top edge is. Wheeling up can only ever expose an
+    // EARLIER turn, so the anchor turn's idx going forwards means the reader was pushed back down.
+    if (prev && p.anchor && p.anchor.idx > prev.idx) yanks.push(`step${step}: turn ${prev.idx}→${p.anchor.idx}`);
+    prev = p.anchor;
+    opens = sample(await cdp.ev(WORK_STATES), `step${step}`);
+    if (pages >= 2 && p.top <= 0) break;
+  }
+  await sleep(4000); // let the last prepended page finish laying out
+  const settled = await cdp.ev(PROBE);
+  opens = sample(await cdp.ev(WORK_STATES), "settle");
+
+  function sample(now, where) {
+    for (const [idx, state] of Object.entries(now)) {
+      const was = seen.get(idx);
+      if (was && was !== state) changes.push(`${where} turn ${idx}: ${was}→${state}`);
+      seen.set(idx, state);
+    }
+    // A block that is still on screen but is no longer rendered under the idx it had: its first
+    // jsonl row is now an older one, i.e. React threw the old subtree away and built a new one.
+    if (Object.keys(now).length) {
+      for (const idx of seen.keys()) {
+        if (!(idx in now) && !vanished.some((v) => v.endsWith("turn " + idx))) vanished.push(`${where}: turn ${idx}`);
+      }
+    }
+    const open = Object.values(now).filter((s) => s === "open").length;
+    if (open > opens) changes.push(`${where}: open traces ${opens}→${open} (nobody clicked)`);
+    return open;
+  }
+  const reopened = changes.filter((c) => /closed→open|closed→inline|open traces/.test(c));
+  const ok = pages > 0 && reopened.length === 0 && yanks.length === 0 && vanished.length === 0;
+  return {
+    ok,
+    note: `pages=${pages} (${opened.turns}→${settled.turns} turns, height ${opened.height}→${maxH}px)  reading ${opened.anchor?.idx}@${opened.anchor?.off}px → ${settled.anchor?.idx}@${settled.anchor?.off}px  open traces ${opened0}→${opens}  reopened=${reopened.length}${reopened.length ? " [" + reopened.slice(0, 4).join("; ") + "]" : ""}  re-keyed=${vanished.length}${vanished.length ? " [" + vanished.slice(0, 4).join("; ") + "]" : ""}  yanks=${yanks.length}${yanks.length ? " [" + yanks.slice(0, 3).join("; ") + "]" : ""}`,
+  };
+}
+
 async function runScenario(sc, chrome) {
   const stub = spawn(process.execPath, [path.join(HERE, "stub.mjs"), "--port", String(PORT),
     "--turns", String(sc.turns), "--images", String(sc.images), "--imgdelay", String(sc.imgdelay),
     "--mermaid", String(sc.mermaid), "--shared", sc.shared ? "1" : "0",
     "--paging", sc.paging ? "1" : "0", "--pagesize", String(sc.pagesize || 400),
-    "--working", sc.working ? "1" : "0"], { stdio: ["ignore", "ignore", "inherit"] });
+    "--working", sc.working ? "1" : "0", "--split", sc.split ? "1" : "0", "--asks", String(sc.asks || 1), "--longans", String(sc.longans || 1)], { stdio: ["ignore", "ignore", "inherit"] });
   try {
     await fetchJSON(`${BASE}api/whoami`);
     const results = [];
@@ -606,6 +706,7 @@ async function runScenario(sc, chrome) {
         : sc.mode === "typing" ? await runTyping(cdp)
         : sc.mode === "working" ? await runWorking(cdp)
         : sc.mode === "paging" ? await runPaging(cdp)
+        : sc.mode === "readup" ? await runReadUp(cdp)
         : await runLanding(cdp);
       results.push(r);
       console.log(`  [${sc.name} ${run + 1}/${RUNS}] ${r.ok ? "OK " : "NG "} ${r.note}`);

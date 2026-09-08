@@ -200,6 +200,33 @@ func CredentialExpiry() Expiry {
 // at, so not showing it there means they never notice.
 func AuthExpired() bool { return CredentialExpiry().Dead(time.Now()) }
 
+// AuthOKAt is WHEN this workspace's claude login was last written while being usable —
+// the credentials file's mtime, and only while the record it holds can still run a turn.
+// Zero means "no such moment can be named": no credentials file, or nothing to judge on
+// (Expiry.Known=false — an environment token, an API key, a changed format).
+//
+// It exists because a login failure is not undone by anything visible in the transcript.
+// The error block stays in the conversation forever, still offering "re-authenticate", long
+// after the user did exactly that — so the Console needs one fact to compare the failed turn
+// against: the login in force now is NEWER than that turn. mtime is what says so; signing in
+// rewrites the file (as does a successful token refresh, which is equally good evidence that
+// the login works again).
+//
+// A moment, not a boolean, on purpose. "Is the login alive right now" cannot answer whether a
+// PAST turn's failure has been dealt with: after a server-side revocation the file goes on
+// looking alive, so a boolean would call every auth failure fixed the instant it appeared.
+func AuthOKAt() time.Time {
+	e := CredentialExpiry()
+	if !e.Known || e.Dead(time.Now()) {
+		return time.Time{}
+	}
+	st, err := os.Stat(credsPath())
+	if err != nil {
+		return time.Time{}
+	}
+	return st.ModTime()
+}
+
 // resetCredCache drops the stat cache. Right after re-authenticating or disconnecting the
 // contents can change while the stat does not (rewritten in the same second at the same size),
 // so those two paths discard it explicitly.

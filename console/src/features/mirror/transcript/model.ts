@@ -231,6 +231,7 @@ export function groupTurns(turns: Turn[]): Group[] {
       last.parts.push(...parts);
       last.origins.push(...originsOf(t, parts));
       last.folded++;
+      if (typeof t.idx === "number") last.endIdx = t.idx; // the block's last row (useStableBlockIds)
       // Once two or more rows are folded, the block's text is a string that depends on how
       // many rows the window held, so an occurrence-number anchor cannot live there
       // (docs/log/69 §69.3.2).
@@ -271,6 +272,7 @@ export function groupTurns(turns: Turn[]): Group[] {
         ts: t.ts,
         endTs: endOf(t) || undefined,
         idx: t.idx,
+        endIdx: t.idx,
         anchorId: t.anchorId,
         origins: originsOf(t, parts),
         bodyRoot: turnKey(t) ? markRootKey(turnKey(t), BODY_PART) : "",

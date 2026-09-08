@@ -216,6 +216,12 @@ The error in the chat view offers **"Re-authenticate"**. Connect again from ther
 session resumes exactly where it left off**. The agent's card in ⚙ Settings → Agents also
 shows the connection state ([06](06-agents.md)).
 
+Once you are signed in again, **that same error turns into "Re-authenticated"** (the button
+goes away) and **the session picks up where it stopped by itself** (Claude, with automatic
+resume on — the mirror shows the continuation carrying an auto-resume badge). The failure
+itself stays red: it did happen, so it is not erased. If nothing continues after a while, send
+"continue" in that conversation and it resumes from the same point.
+
 ### A Claude session shows "Login expired — sign in again", or sending starts nothing
 
 **This workspace's Claude login has expired.** The credentials are still on disk, so the

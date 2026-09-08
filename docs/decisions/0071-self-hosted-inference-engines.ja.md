@@ -321,7 +321,10 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    `engine.llm` / `tool.imagegen` の provider 別。ADR 0029 の列挙に追記）。単価は付けない
    （ここでの 1 トークンにドル建ての値は無い）。インスタンス時間は `af-role=engine-llm` /
    `engine-image` の費用配分タグで**コンポーネント費用として表示し、按分しない**
-   （ADR 0048）。
+   （ADR 0048）。**この後半（表示）は 2026-09-08 まで実装が無かった**——タグは打たれて
+   いたが CP は `af-membership` の軸しか読んでおらず、エンジンの GPU 時間は共有バケットで
+   空きスロットプールと同じ `Amazon EC2 - Compute` に混ざっていた（実測で請求の 19%）。
+   ADR 0048 決定 15 で `af-role` の 2 本目のリクエストを足して塞いだ。
 
 10. **由来は結果の一部（0069 決定 11）。** provider は `llamacpp` / `sdcpp` / `comfy`、モデルは
     **ファイル名と sha256**（HF の repo id とリビジョンも取り込みジョブが残す）。プロンプトは
@@ -929,6 +932,52 @@ opencode の `provider` ブロックを書くので（`opencode/engine.go`）、
 「インターネット接続を確認してください」という事実と違う結論を書いた。fetch 自体は 200 で
 成功している。opencode の仕様どおりの動作でこの ADR の範囲外だが、**窓の件はその調査の途中で
 見つかった、別の・実在する穴**である。
+
+## 在庫切れで箱が建たない——候補を 1 機種にしていた（2026-09-08）
+
+image 役を起こしたときに、サービスイベントがこれを並べた:
+
+```
+(service af-…-engines-image) was unable to place a task. Reason:
+ResourceInitializationError: Unable to launch instance(s) ... InsufficientInstanceCapacity:
+We currently do not have sufficient g6.xlarge capacity in the Availability Zone you requested
+(ap-northeast-1a). ... You can currently get g6.xlarge capacity by not specifying an
+Availability Zone in your request or choosing ap-northeast-1c.
+```
+
+同じものが 1c でも出た（勧められた側の AZ である）。**クォータではない**——それなら
+`VcpuLimitExceeded` になる。純粋に、その時刻のその AZ に L4 の箱が無かった。間に
+`has started 1 tasks` が挟まっているので、リトライのどこかで 1 台は取れている。
+
+メッセージの勧め（AZ を指定するな）はここでは何も残っていない。**MI には 00-network の private
+subnet を両方渡してあり、その VPC は AZ を 2 つしか持たない**（`!Select [0/1, !GetAZs ""]`）。
+つまり選べる面は既に全部試したうえで落ちている。残っていたのは**買える機種が 1 つしかない**
+ことのほうで、`Llm/ImageAllowedInstanceTypes` の既定を `g6.xlarge,g5.xlarge` にした。
+
+🔴 **候補に順序は付けられない。** `managedInstancesProvider` に allocation strategy に当たる
+項目は無い（`aws ecs create-capacity-provider --generate-cli-skeleton` で確認。
+`instanceRequirements` と価格保護の `onDemandMaxPricePercentageOverLowestPrice` があるだけで、
+EC2 Fleet の `prioritized` + `Priority` に相当するものは露出していない）。`allowedInstanceTypes`
+は**フィルタであって優先順位ではない**。価格保護の項目があること自体が、選択が価格を見る側の
+証拠でもある。だから**優先順位は価格順で表現し、狙いの箱を集合の最安に保つ**——上の価格表で
+g6.xlarge $1.258 < g5.xlarge $1.573 なので、L4 がある限り L4 が来る。
+
+⚠️ **安い機種を足すと「予備」ではなく「既定」になる。** g4dn.xlarge は $0.765 で g6.xlarge より
+安く、在庫があっても毎回そちらが選ばれる。T4 16 GB は VRAM が半分で、この役では未測定である。
+予備は狙いの箱より**高い側**に置く。8 vCPU 機種（g6.2xlarge）を既定に入れないのも同じ用心で、
+1 台で既定クォータの 8 vCPU を使い切り、もう片方の役が建たなくなる（R2 の裏返し）。
+
+決定 2 の VRAM 下限は、これまでコメントと機種名だけで表現していた。候補を広げる以上は要件と
+して書いた: `LlmAcceleratorMemMinMiB` = 21,000（実測 20,943 の上）、`ImageAcceleratorMemMinMiB`
+= 8,000（決定 2 の「≥ 8 GB」・実測 7,379 の上）、CloudFormation では
+`AcceleratorTotalMemoryMiB.Min`。VRAM 不足は遅くなるのではなく落ちるので、機種リストを広げた
+先で載らないカードを止めるのはこの下限である。ただし **image の 8,000 は T4 16 GB を通す**——
+image の実測（SDXL 8.0 秒・Z-Image 10.5 秒・klein 4B 4.0 秒。ADR 0072）は全部 L4 24 GB で
+取っている。測定済みのハードウェアに留めているのは下限ではなく機種リストのほうである。
+
+**この変更は在庫を作らない。** 減らせるのは「1 機種しか買えない」ぶんだけで、G 系が地域ごと
+枯れている時間帯には同じことが起きる。確実性が要るなら容量予約（`capacityReservations` は
+同じ API にある）だが、使っていない間も払うので scale-to-zero の前提と引き換えになる。
 
 ## フェーズ
 

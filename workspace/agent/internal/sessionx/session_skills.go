@@ -17,7 +17,8 @@ import (
 // Per-session skill list (docs/log/50 / ADR0034, made cross-agent in v2): what the mirror view's
 // skill picker can offer for the session the user is talking to right now. Source and invocation
 // form differ per kind (all measured 2026-07-28, docs/log/50 §7):
-//   - claude:   .claude/skills + .claude/commands (project = meta.Dir / user = claude.ConfigDir()) → "/name"
+//   - claude:   .claude/skills + .claude/commands (project = meta.Dir / user = claude.ConfigDir()) → "/name",
+//               plus the CLI's bundled skills (dataviz, simplify, …) from the SDK init frame as "cli" (§9)
 //   - codex:    .codex/skills (project) + $CODEX_HOME/skills (user; the bundled .system counts as cli) → "$name" mention
 //   - opencode: .opencode/command(s) (project) + ~/.config/opencode/command(s) (user) → "/name"
 //   - cursor:   the ACP advertised list (builtin skills + global + project, all of it) is authoritative.
@@ -66,6 +67,7 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	switch meta.Kind {
 	case session.KindClaude:
 		skills = scanSlashSkills(filepath.Join(meta.Dir, ".claude"), claude.ConfigDir())
+		skills = appendBundledSkills(skills, claudeBundledSkills())
 		nativeConvs = []string{".claude/skills"}
 	case session.KindCodex:
 		skills = codexSkills(meta.Dir)
@@ -82,6 +84,35 @@ func HandleSessionSkills(w http.ResponseWriter, r *http.Request) {
 	}
 	skills = appendForeignSkills(skills, meta.Dir, nativeConvs)
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"skills": skills})
+}
+
+// claudeBundledSkills is the probe for the skills the claude CLI ships (docs/log/50 §9); a
+// variable so tests can stand in for it instead of starting a real claude.
+var claudeBundledSkills = claude.BundledSkills
+
+// appendBundledSkills adds the CLI-advertised skill names that the filesystem scan did not
+// already produce, as source "cli" entries (same treatment as codex's .system and cursor's
+// builtin list). The advertised list mixes in the user-level skills too, which the scan already
+// knows by name, hence the dedupe. Names only: the Console supplies descriptions for the
+// well-known ones.
+func appendBundledSkills(native []sessionSkill, advertised []string) []sessionSkill {
+	if len(advertised) == 0 {
+		return native
+	}
+	seen := map[string]bool{}
+	for _, s := range native {
+		seen[s.Name] = true
+	}
+	out := native
+	for _, nm := range advertised {
+		if nm == "" || seen[nm] || len(out) >= maxSessionSkills {
+			continue
+		}
+		seen[nm] = true
+		out = append(out, sessionSkill{Name: nm, Source: "cli", Type: "skill", Invoke: "/" + nm + " "})
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
 }
 
 // foreignConvs are the in-repo SKILL.md tree conventions consulted as foreign (§8). The commands

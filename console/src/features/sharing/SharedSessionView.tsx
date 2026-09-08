@@ -14,6 +14,7 @@ import { MarkdownView } from "../viewer/MarkdownView.tsx";
 import type { TranscriptCaps } from "../mirror/transcript/capabilities.ts";
 import type { Question, Turn } from "../mirror/transcript/types.ts";
 import { coalesceUserActions, groupTurns, mergeTurns } from "../mirror/transcript/model.ts";
+import { useStableBlockIds } from "../mirror/transcript/blockIdentity.ts";
 import { patchAnswers } from "../mirror/interactionAnswers.ts";
 import { ownerLabel, useSharedSessionsStore } from "./store.ts";
 import { HandoffInboxModal } from "./HandoffInboxModal.tsx";
@@ -473,7 +474,9 @@ export function SharedSessionView({ sharedSessionId, headerActions }: { sharedSe
     }
   };
 
-  const groups = groupTurns(coalesceUserActions(turns));
+  // Same reason as the mirror's: the recipient's view pages backwards too, and a block whose key
+  // moves is a block that unmounts (blockIdentity.ts).
+  const groups = useStableBlockIds(groupTurns(coalesceUserActions(turns)), sharedSessionId);
 
 
   // A recipient can read, and nothing else. Every capability the mirror fills in is

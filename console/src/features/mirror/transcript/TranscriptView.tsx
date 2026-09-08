@@ -15,7 +15,7 @@ import { TranscriptTurn } from "./TranscriptTurn.tsx";
 import { ctxSizeAfter, ctxSizeBefore } from "./model.ts";
 import type { Group } from "./types.ts";
 import type { TranscriptCaps } from "./capabilities.ts";
-import { landedWorkPromptIndex } from "../mirrorParts.ts";
+import { liveExchangeFrom } from "../mirrorParts.ts";
 import { chronoInsertIndex } from "../handoffPlacement.ts";
 
 export interface TranscriptViewProps {
@@ -74,7 +74,11 @@ export function TranscriptView({
   // Excluding the echo does NOT unfold the previous, already-finished reply the moment you hit
   // send (the reason it was counted here). That reply folded when it completed, and TranscriptTurn
   // latches the fold: foldWork going false again never re-opens anything.
-  const lastUser = landedWorkPromptIndex(groups);
+  //
+  // A window with no prompt in it at all is its own case, and not a rare one on a long autonomous
+  // stretch — see liveExchangeFrom, which is what keeps "no prompt in sight" from meaning "all of
+  // this is live".
+  const liveFrom = liveExchangeFrom(groups);
   for (let i = 0; i < groups.length; i++) {
     for (const c of cards) if (c.insertAt === i) els.push(c.node);
     const g = groups[i];
@@ -98,7 +102,7 @@ export function TranscriptView({
           key={g.idx}
           turn={g}
           caps={caps}
-          foldWork={!working || i < lastUser}
+          foldWork={!working || i < liveFrom}
           // Keep the work process open on completion ONLY for the live exchange (the reply
           // after the last user prompt): a reader who scrolled up into its streaming tool
           // trace shouldn't have it yanked closed when it folds. Every earlier turn — and
@@ -106,7 +110,7 @@ export function TranscriptView({
           // scrolled up (atBottom=false) — must default CLOSED, or it mounts expanded with
           // no click and the reflow jumps the scroll. Only the value at the moment the turn
           // first folds is used; later changes never re-open or re-close it.
-          defaultWorkOpen={!autoCollapseWork && i > lastUser}
+          defaultWorkOpen={!autoCollapseWork && i >= liveFrom}
         />
       ),
     );
