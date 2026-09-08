@@ -161,6 +161,15 @@
   font-size: 11px;
 }
 
+/* Separator between two facts on one status line. In the stylesheet rather than in the JSX
+   because "・" is a Japanese punctuation mark, and a bare Japanese literal in a component is
+   what `npm run i18n:lint` exists to catch — while a pure separator in the message catalogue
+   would be a translatable key with no meaning in it. */
+.engines-sep::before {
+  content: " \30FB ";
+  color: var(--dialog-muted);
+}
+
 .engines-history {
   margin-top: 10px;
 }

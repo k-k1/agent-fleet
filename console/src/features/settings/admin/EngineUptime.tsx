@@ -64,6 +64,17 @@ function defaultRange(): { from: string; to: string } {
 
 const pct = (v: number) => Math.round(v * 100) + "%";
 
+/** The separator between two facts on one status line.
+ *
+ * It is CSS content rather than a literal in the JSX because the mark that reads best here is
+ * "・", a Japanese punctuation character: written inline it is a bare Japanese literal, which
+ * `npm run i18n:lint` rejects (rightly — it would never be translated). Putting a pure
+ * separator in the catalogue would instead add a translatable key carrying no meaning, and one
+ * more thing for a translator to get wrong. A decorative separator belongs in the stylesheet,
+ * and `aria-hidden` keeps it out of what a screen reader announces. */
+export const Sep = () => <span className="engines-sep" aria-hidden="true" />;
+
+
 /** Duration in the reader's units. Hours appear only once there are any, so a 4-minute start
  *  does not read as "0 時間 4 分". */
 export function useDuration(): (secs: number) => string {
@@ -293,7 +304,9 @@ function EngineReadout({
       ) : (
         <>
           <span className="uh-ro-val mono">
-            {pct(engineCellValue(cell, metric))} ・ {dur(engineMetricSecs(cell, metric))}
+            {pct(engineCellValue(cell, metric))}
+            <Sep />
+            {dur(engineMetricSecs(cell, metric))}
           </span>
           <span className="uh-ro-sub muted">
             {tr("admin.engines_ro_detail")

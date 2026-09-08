@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
-import { EngineUptimePanel, useDuration } from "./EngineUptime.tsx";
+import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
 
 // The self-hosted inference engines (ADR 0071): one row per engine, each with the same
@@ -235,7 +235,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
         <>
           {tr(upKind as never)}
           <span className="mono">{localStamp(startedAt)}</span>
-          {" ・ "}
+          <Sep />
           {tr("admin.engines_up_for").replace("{d}", dur(upSecs))}
           {row.box?.id ? <span className="mono engines-boxid"> {row.box.id}</span> : null}
           {/* DRAINING is stopped-but-still-billing: the task is gone, the instance is not.
@@ -260,7 +260,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
           <>
             {tr("admin.engines_stops_at")}
             <span className="mono">{localStamp(stopIn!)}</span>
-            {" ・ "}
+            <Sep />
             {tr("admin.engines_stops_in").replace("{d}", dur(leftSecs))}
           </>
         ) : (
@@ -307,7 +307,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
               not — which is what makes a zero above readable rather than alarming. */}
           {row.last_demand && (
             <>
-              {" ・ "}
+              <Sep />
               {tr("admin.engines_last_demand")}
               <span className="mono">{localStamp(row.last_demand)}</span>
             </>

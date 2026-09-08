@@ -52,7 +52,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_metric_running": "Able to answer",
   "admin.engines_metric_up": "A box existed",
   "admin.engines_state_down": "Down",
-  "admin.engines_ro_detail": "answering {run} ・ starting {start} ・ draining {drain}",
+  "admin.engines_ro_detail": "answering {run} · starting {start} · draining {drain}",
   "admin.engines_col_running": "Answering",
   "admin.engines_col_starting": "Starting",
   "admin.engines_col_draining": "Draining",
