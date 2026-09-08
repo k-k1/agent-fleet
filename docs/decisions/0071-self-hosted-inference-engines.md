@@ -2,7 +2,7 @@
 
 English | [日本語](0071-self-hosted-inference-engines.ja.md)
 
-- Status: **adopted — P0 and P1 implemented, not yet merged to develop** (2026-09-07; approved by the review the same day, drafted 2026-09-06). Every price below
+- Status: **adopted — P0 and P1 implemented and merged to develop (PR #419)** (2026-09-07; approved by the review the same day, drafted 2026-09-06). Every price below
   came from AWS's public price data (Tokyo, on-demand) on that date, every image and model
   figure from the registry and Hugging Face APIs on that date. What was measured in this
   container says so. Written to be reviewed before P0 is built; the Open questions are the
@@ -43,6 +43,13 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   declared no window for the model at all** — opencode reads a model with no `limit` as having a
   context of 0, and it **switches auto-compaction off at 0**. Fixed by splitting
   `LlmContextTokens` / `LlmMaxOutputTokens` out of `LlmExtraArgs` ("A correction after P1").
+- The next day (2026-09-08) **the rest of P1.5 — showing an engine's current state in the
+  Console — was implemented** and decision 13 added. A toggle alone (also P1.5) cannot answer
+  "is it safe to switch this off", so the panel gained the start time, the automatic stop time,
+  recent demand, the model that is loaded, and an occupancy heatmap. 🔴 Building it revealed that
+  **engine uptime was recorded nowhere at all**: the controller read the service every 30 seconds
+  and threw the observation away, so that tick became the sampler for a new `engine_hourly`
+  table. Most of decision 13 is rules for not writing down what is not known.
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -252,6 +259,32 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    who chose that provider or model; there is no break-even analogue to 0070 (the alternative is
    simply "not available").
 
+   🔴 **"The CP holds it" is good for 60 seconds on a non-streaming request (P1 measurement 9,
+   2026-09-07).** How long it can be held is decided not by the CP but by **whatever sits in
+   front**: 30-ingress's ALB has `idle_timeout.timeout_seconds: "60"` and closes a connection
+   that has carried no response byte for a minute. The streaming path could hold for 900 s
+   because its 10-second heartbeat was **also defeating that idle timeout** — a side effect of
+   the mechanism written for opencode's 300 seconds. Images answer with JSON and have nowhere
+   to put a heartbeat, so **the first call to a cold engine always died at 60 s** (measured: the
+   CP answered `503 59.998s` while the engine itself was ready at 165 s). So this decision now
+   splits by role:
+   - **streaming** (`chat`) holds to `AF_ENGINE_WAKE_TIMEOUT`, as the body says;
+   - **non-streaming** (`images`) folds its hold **below the front end's idle timeout** and
+     answers `503 engine_waking` + `Retry-After` (`AF_ENGINE_PLAIN_HOLD`, default **45 s**,
+     never above `AF_ENGINE_WAKE_TIMEOUT`). The side that keeps waiting is the caller: the
+     `sdcpp` provider asks again within its own 16-minute budget. What a person sees — one call,
+     one picture — is unchanged, because the MCP progress heartbeat keeps the client's clock
+     alive and the retries never surface above the tool.
+   The **code** on the 503 decides whether to retry (`engine_waking` yes; `engine_off` and
+   `engine_unavailable` no). Retrying on the number alone would turn a clear refusal about a
+   switched-off engine into sixteen minutes of silence. 502 and 504 are retried as well: they
+   are **the front end answering on the gateway's behalf**, which is also what a Control Plane
+   too old to know `engine_waking` looks like from here.
+   Raising the ALB's `idle_timeout` was rejected: it applies to every route, the same hole
+   reopens on any deployment whose front end is not ours (CloudFront, a customer's nginx), and
+   **the CP cannot ask what that value is**. Put the mechanism on the side that survives
+   whatever is in front.
+
 6. **Three engines — llama.cpp, stable-diffusion.cpp, ComfyUI. The first two are official
    images copied into ECR; ComfyUI is baked by the fleet.** Why these:
    - `llama-server`: an official CUDA image, and beyond OpenAI compatibility it has
@@ -336,6 +369,61 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 12. **x86_64 only.** `stable-diffusion.cpp`'s CUDA image is amd64-only and there is no arm64 in
     the G family; the branch 0070 decision 11 kept open ("arm64 after measuring") does not exist
     here.
+
+13. **Show the current state under the rule "do not write down what you do not know", and record
+    the occupancy history by making the controller's own tick the sampler.** The super-admin
+    "Inference engines" panel gains when the engine started, when it will stop by itself, what
+    has been asked of it lately, which model is loaded, and a heatmap of its history (P1.5). A
+    screen with nothing but a toggle cannot answer "is it safe to switch this off" — a
+    $1.26/hour box is asleep most of the time, so **everything visible before the button is
+    pressed is whatever this panel says**. Most of the design turned out to be rules about what
+    NOT to show:
+    - **The start time is the box's `registeredAt`** (ECS `describe-container-instances`),
+      falling back to the service's `lastStart` only when there is no box. They are **different
+      facts**: `lastStart` moves on a stack update or a replaced task, without any box being
+      bought. 🔴 Not `ec2 describe-instances` (P1's measurement 2: **an MI box does not appear
+      in the listing**, so an EC2-side implementation would answer "no box" for a running GPU).
+    - **The stop time is omitted whenever there is no answer.** An engine pinned `on` does not
+      stop, so showing a countdown there is a promise of a saving that will not arrive. Same for
+      `off`, for an engine that is already stopped, and for one with no demand mark yet — the
+      same reason `decideEngineAction` judges nothing on that pass. The threshold lives in one
+      function (`engineIdleWindow()`) so the panel's countdown and the controller reach the same
+      instant; kept separately they diverge the day one of them forgets the clamp to the start
+      deadline.
+    - 🔴 **The recent request count exists only in the CP's process memory.** It resets to zero
+      when the CP is replaced (only `lastAt` is persisted — decision 6). So when less than a
+      full window has been counted, `window_counted_secs` says so and the UI adds "this control
+      plane has only been counting for N minutes". **Never write a past it cannot recount as 0**
+      — this is the single number on the screen that can be confidently wrong. The persisted
+      last-request time beside it is what makes a zero readable.
+    - **The models are the stack's declaration** (ADR 0053), never a question put to the engine
+      — it is asleep, i.e. unanswerable at exactly the moment somebody comes to look. Whether
+      one is loaded is answered by the `warmed()` the controller already maintains (ECS RUNNING
+      means "the port is open", and llama-server satisfies that 267 seconds before the weights
+      are in VRAM).
+    - **The history goes into a new table, `engine_hourly`, written by the controller's tick.**
+      Engine uptime was recorded nowhere at all before this: the controller read the service
+      every 30 seconds and threw the observation away. Nothing else in the CP looks that often,
+      and the AWS call is already paid for, so recording it costs one INSERT.
+      - A cell is **three-valued**, and **an hour with no row is UNOBSERVED, i.e. blank**.
+        Unlike `usage_hourly` there is no separate heartbeat row: the controller watches one
+        engine and cannot half-observe it, whereas the workspace sweep walks every tenant and
+        can.
+      - ⚠️ **The denominator `observed_secs` is stored.** The tick interval is not constant (5
+        seconds while starting or warming), so reconstructing it as `samples x nominal interval`
+        **exceeds 100% in exactly the busy hours** somebody opens the panel to look at.
+      - ⚠️ **The first tick of a process records nothing**, and one tick claims at most one
+        interval. A CP that was down for an hour comes back with a large elapsed time and a
+        perfectly valid current state, and attributing that gap to what it happens to see now
+        fills the outage with confident colour. The cost is 30 seconds lost per CP start; the
+        return is that **a blank stays blank**.
+      - ⚠️ **`running` / `starting` / `draining` are separate columns.** The last two bill and
+        answer nothing (measured: 165-197 s to start, 427-477 s to drain). Summing them into
+        running would claim the engine was serving; dropping them would make spent money vanish.
+        The heatmap can show either reading ("able to answer" and "a box existed").
+    - **No money is drawn** (ADR 0048 decision 2). An hourly figure could only be seconds times
+      a rate somebody typed in once, which is why the existing view is an uptime view and not a
+      cost view.
 
 ## Resolved by measurement (2026-09-07)
 
@@ -686,6 +774,13 @@ one attempt** — and one broke: 🔴 **an MI box does not appear in a `describe
 listing**, so the check P0 relied on to say "no GPU is running" was not evidence of that at
 all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 13:47:04Z), roughly $0.31.
 
+That evening the CP and the Workspace were rebaked and **the other half — the `generate_image`
+path — was driven on real hardware too**. That is measurement 9 onwards, and **two more
+expectations broke** there: decision 5's "the CP holds the request" is good for 60 seconds on a
+non-streaming request (9), and the failure fell through onto a member's plan quota without
+saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measurement 13 (after the fix) and 14
+(a claude session a user drove themselves) close the definition of done on real hardware.
+
 1. **The image role's cold start is 197 seconds** (`execute-change-set` to
    `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
    **+57 s to task creation**, +61 s for the box to register as a container instance, pull
@@ -739,8 +834,114 @@ all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 1
    CP's parser test parses — trailing spaces from CloudFormation's folded scalars included. The
    shape a test has to survive is the one CloudFormation emits, not the one a person would type.
 
+9. 🔴 **Driving `generate_image` on a real deployment showed the other half of the definition
+   of done — "one call returns a picture" — does NOT hold on the first attempt.** The CP and
+   the Workspace were rebaked as `0.16.1-dev-f4a12675` and deployed to af-sandbox, and
+   `workspace-agent mcp-stdio --image-gen` was driven from the real workspace (opencode session
+   `sh7gxia`). The first call to a stopped image engine, in full (all times 2026-09-07 UTC):
+   - 15:26:49 the request. **sdcpp is not streaming**, so the gateway takes the `plain` path.
+   - 15:26:50 the CP logs `engine image: started on demand`.
+   - **15:27:49 the CP answers `POST /engine/image/v1/images/generations` with 503, in
+     `59.998s`.**
+   - 15:29:35 the CP logs `engine image: warmed up (ready)` — **the start itself took 165
+     seconds**, the same band as P1 measurement 1's 197 s (a second point).
+   Sixty seconds flat did not come from the CP, whose own bound is 900. It came from
+   **30-ingress's ALB, `idle_timeout.timeout_seconds: "60"`** (confirmed on the live load
+   balancer): a connection that has carried no response byte for 60 seconds is closed.
+   **The llm role never hit this because of the SSE comment line every 10 seconds** — written
+   for opencode's 300-second ceiling, and it turns out to have been defeating the ALB's idle
+   timeout at the same time. P0's "512 seconds in one attempt" was riding on that side effect.
+   The fix (decision 5's 🔴): the non-streaming hold is folded below whatever sits in front,
+   via `AF_ENGINE_PLAIN_HOLD` (default 45 s), and answers `503 engine_waking` + `Retry-After`.
+   The one that keeps asking is the `sdcpp` provider, inside its own 16-minute budget, and it
+   **rebuilds** rather than replays the request — an edit's body is a multipart document the
+   first attempt already read to the end, so a replay would send an empty body on the one
+   endpoint that is not JSON. **What a caller sees — one call, one picture — is preserved by
+   moving where the waiting happens.**
+
+10. 🔴 **That 60-second failure fell through onto a member's plan quota, silently.** Two ledger
+    rows belong to the one tool call: `kind:"sdcpp"` `ok:false` `ms:60000`, and 21 seconds
+    later `kind:"agy"` `ok:true` `ms:20880` `images:1` `pixels:1048576`. `auto` is an ORDER of
+    ready providers, so the second one runs when the first fails — as designed, but it **spent
+    a member's Antigravity quota on an image the fleet's own hardware was two minutes from
+    serving**. The reason sdcpp is first in that order (ADR 0069, whose wallet pays) is exactly
+    what the fallback inverts. Decision 5's fix closes this path too, since the call no longer
+    fails at 60 s. ⚠️ The fallback itself was kept — it is right on a deployment whose engine
+    really is down, and refusing would only mean no picture. What was removed is the SILENCE:
+    a generation served by a fall-through now carries a warning naming what failed ahead of it
+    and saying that it ran on a different account's plan. Whose wallet pays is the one thing
+    the built-in order decides, so inverting it quietly is the part that was wrong. Decision
+    5's fix also makes "would have worked if we waited" much rarer: the provider now exhausts
+    its own 16-minute budget, so a failure there means genuinely unavailable.
+
+11. ✅ **Warm, the whole path works.** From the same session, through the CP gateway, the
+    provider and the MCP tool:
+    - **generate at 1024×1024 in 23.4 s** (`auto` chose sdcpp; the PNG came back at 1,073,204
+      bytes with an IHDR of 1024×1024). **Exactly two progress notifications, 10 s apart**
+      (gaps 10.0 / 10.0 / 3.4 s).
+    - **edit (multipart) in 5.3 s** and **inpaint (multipart + mask) in 5.0 s**, both 512×512.
+      **This is the first time the gateway's Content-Type passthrough met the real thing**, and
+      the boundary survived — the third of P1's additions to the body, now measured.
+    - The CP logged one line each: `200 23.396s` and `200 5.236s`.
+    - **The faces that answer without waking anything were confirmed too**: with zero boxes
+      running, `/imagegen/status` returns `provider:"sdcpp"` `ready:true`
+      `model:"sdxl-base-1.0"` `ops:[generate,edit,inpaint]` `order:["sdcpp","agy","codex"]`.
+      `tools/list` advertises a `provider` enum of `["sdcpp","agy"]` and an `op` enum of
+      `["generate","edit","inpaint"]`.
+
+12. ✅ **The ledger is what decision 9 said.** In one day's raw file: **5 `tool.imagegen` rows
+    and 0 `engine.image` rows**. The image rows carry `images` and `pixels` (1024² as
+    `1048576`, 512² as `262144`), `ref` is the session name, and `measured:"none"` — no token
+    exists on this route, and that is not written as zero (the same rule ADR 0069 took).
+    ✅ **It also settled one of P0's leftovers: the `engine.llm` rows DO reach the ledger** —
+    **55 of them** the same day, with `in`/`out` and `measured:"exact"`, `kind:"opencode"`.
+    That is the CP→Agent POST fixed to use `newAgentTransport()` in P0 measurement 11, working
+    on the real thing.
+
+13. ✅ **Re-measured after the fix, the other half of the definition of done holds on real
+    hardware (2026-09-08).** `0.16.1-dev-2e501835` (decision 5's split) was deployed and
+    `generate_image` called once from **zero boxes** — with `sdcpp` named explicitly, so that a
+    failure could not spend a member's quota through the fall-through of measurement 10. In UTC:
+    - 01:03:30 the request → `engine image: started on demand`
+    - 01:04:15 `503 45.012s`, 01:05:06 `503 45.007s`, 01:05:57 `503 45.007s` — **folded three
+      times, each below the front end's 60 seconds**
+    - 01:06:22 `warmed up (ready)`. **Cold start 172 seconds** (a third point in the same band
+      as measurement 1's 197 s and measurement 9's 165 s)
+    - 01:06:41 **`200 38.547s`**
+    - **One tool call, 191.6 seconds.** 19 progress notifications, every gap 10.0 s, and the
+      answer was 1024×1024, 1,073,204 bytes, `provider:"sdcpp"`.
+    None of the three retries surfaced above the tool. **"One call returns a picture" holds,
+    once the waiting is moved from the CP to the caller.** edit (**5.2 s**) and inpaint
+    (**5.0 s**), both 512×512, passed on the same build, and that day's ledger holds
+    **three `tool.imagegen` rows, all `kind:"sdcpp"` and `ok:true`** — **no agy row**, i.e. no
+    fall-through happened. `engine.image` is still 0 rows.
+
+14. ✅ **The same machinery held on the claude route (2026-09-08, one call a user actually
+    made).** Right after the P1.5 toggle was deployed (`0.16.1-dev-c346ad66`) the user had a
+    **claude session generate an image over MCP**. The engine was stopped, and the CP log took
+    the same shape as 13: 02:22:39 `started on demand` → **`503 45.004s`, `45.002s`,
+    `45.003s`** → 02:25:32 `warmed up (ready)` → 02:25:38 **`200 26.325s`** (about 179 seconds
+    from the request). Three warm ones followed at `200 5.545s`, `5.436s` and `5.423s`.
+    - **Cold start is now 165 / 172 / 173 / 197 seconds across four points.** The band holds.
+    - What makes it worth recording is the KIND. claude puts no ceiling on an MCP tool call
+      (measured: claude none, codex 300 s, opencode 60 s), so this is the route that does NOT
+      depend on the progress heartbeat — and it still took three folds and one answer. Decision
+      5's fix is therefore working against the FRONT END's 60 seconds rather than against any
+      one client's habits, which rules out 13 having ridden on something opencode-specific.
+    - ⚠️ This was not an instrumented run but a user going about their work, so the tool-side
+      duration and the notification count were not observed. Only the CP log was.
+
 Also verified in P1:
 
+- **ECS Exec is usable as a harness, but its pty dies on stdin EOF.** Giving
+  `aws ecs execute-command --interactive` a `</dev/null` makes a long call **disappear along
+  with the session the moment the request is sent** (which is how the first measurement was
+  lost). Detach with `setsid`, write to a file, and peek with short execs; `nohup` alone is not
+  enough. Run Python with `-u`, or buffered output dies with the process. Note the Workspace
+  task role has **no `ssmmessages:*`** — correctly so — hence a temporary inline policy
+  `af-adr0071-p1-temp-exec` alongside `enableExecuteCommand`, **both removed afterwards**.
+- **A follow-on to "don't read a `describe-instances` listing"** (measurement 2): the engine box
+  was again only findable on the ECS side, through `describe-container-instances`.
 - **Copying GHCR → ECR took 177 seconds for 2.42 GB** (`crane copy` from this container), the
   same rate as P0's llama.cpp (2.59 GB in 179 s).
 - **The `image` role's ECR repository (`af-sdcpp`) lives in 20-platform**, because a repository
@@ -822,10 +1023,33 @@ this ADR, but **the window is a separate, real hole found while looking into it*
   - **The `image` role has no `--api-key`.** sd-server has no authentication mechanism at all
     (upstream `examples/server/api.md`), so the security group is the whole of its access
     control, and decision 4(d)'s "second lock" is an llm-role-only story.
-  The **engine side** of the definition of done was measured on real hardware (1, 3 and 4
-  below). **Driving it through the CP gateway and the Agent provider on real hardware is not
-  done** — that needs the CP and Workspace images rebuilt — and is covered by unit and
-  integration tests in the meantime.
+  The definition of done was **measured in full on real hardware** — the engine side in 1, 3
+  and 4 below, the CP gateway and the Agent provider in 9-12 (`0.16.1-dev-f4a12675` deployed to
+  af-sandbox, `generate_image` called from a real workspace's opencode session). 🔴 **The first
+  attempt failed** — an ALB cuts a non-streaming request at 60 seconds (measurement 9) — which
+  added one fix to P1: decision 5 now splits by role.
+- **P1.5 — the two holes real hardware found (2026-09-08).** Decision 5's split (measurement
+  9), making the fall-through say so (measurement 10), and **an on/off control in the
+  Console**. The last is not a new mechanism: the mode has always been the stored setting
+  `engine_<key>_mode`, which the gateway (`503 engine_off`), the catalogue (the engine
+  disappears) and the controller (stop it and keep it stopped) all read. Only the WRITING half
+  was missing, so the only way to switch an engine off was a stack parameter (`LlmMode` /
+  `ImageMode`) — a CloudFormation run, which is not what anyone reaches for while a GPU is
+  misbehaving. `GET /api/admin/engines` and `PUT /api/admin/engines/{key}` were added behind
+  super_admin, the same shape as TTS's `/api/admin/tts`. One thing differs: **Disabled stops
+  the box immediately.** TTS debounces it because a mistaken OFF→ON there costs a 2 GB pull and
+  80 seconds; a GPU is $1.26/hour and an undo window is time you pay for.
+  🔴 One defect surfaced while building it: `engineRuntimeState.mode` **only consulted the
+  stored setting when a controller existed**. Harmless in production, where one always does,
+  but it made "what mode is this engine in" depend on an unrelated collaborator. The setting is
+  now held by the state itself.
+  **The current state was then added to the same screen (decision 13)** — a toggle on its own
+  does not tell anyone whether it is safe to switch an engine off. The `GET /api/admin/engines`
+  row gained the box's start time, the automatic stop time, recent demand and `warm`, and
+  `GET /api/admin/engines/{key}/hourly` plus the new `engine_hourly` table drive an occupancy
+  heatmap. The sampler is the controller's own tick, because **engine uptime was recorded
+  nowhere at all** until then. The details — never drawing unobserved as stopped, storing the
+  denominator, omitting a field rather than guessing it — are in decision 13.
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and

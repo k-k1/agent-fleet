@@ -1043,7 +1043,8 @@ these templates:
 
 | Variable | Default | What it does |
 |---|---|---|
-| `AF_ENGINE_WAKE_TIMEOUT` | 900 | How long one request may be held open while the engine comes up. Above the measured 527 s cold start with room for a slow pull. |
+| `AF_ENGINE_WAKE_TIMEOUT` | 900 | How long one **streaming** request may be held open while the engine comes up. Above the measured 527 s cold start with room for a slow pull. |
+| `AF_ENGINE_PLAIN_HOLD` | 45 | The same, for a **non-streaming** request, which has no heartbeat and so cannot outlast whatever proxy is in front. Must stay below the front end's idle timeout — 30-ingress sets the ALB's to 60 s. Past it the answer is `503 engine_waking` + `Retry-After`, which the caller retries. Never raises the wait above `AF_ENGINE_WAKE_TIMEOUT`. |
 | `AF_ENGINE_LLM_CONTROL_INTERVAL_SEC` | 30 | How often the controller looks. **`0` switches it off entirely.** |
 | `AF_ENGINE_LLM_IDLE_SEC` | the stack's `LlmIdleSec` (1800) | Stop after this long with nobody asking; **`0` = never stop**. Clamped to no less than the start deadline. |
 | `AF_ENGINE_LLM_START_DEADLINE_SEC` | the stack's `LlmStartDeadlineSec` (900) | A start that has not become `running` by then is treated as failed. ⚠️ **Must exceed the real cold start.** ADR 0070's 300 s default would record every GPU start as a failure and double the cooldown away. |
@@ -1066,6 +1067,18 @@ request immediately with `200 text/event-stream` and heartbeats until the engine
 arrives. **300 seconds is the maximum silence, not the maximum wait.** `503` + `Retry-After`
 is kept for non-streaming requests and genuine start failures only: a 503 spends one of the
 client's finite retries, and how many it has is not something this side knows.
+
+⚠️ **A non-streaming request cannot be held for 900 seconds, and it is not the CP that decides
+that.** Measured on a live deployment 2026-09-07: the first `generate_image` against a stopped
+image engine came back as `POST /engine/image/v1/images/generations 503 59.998s`, against the
+CP's own 900-second bound — the ALB's `idle_timeout.timeout_seconds` (60 in 30-ingress) closes
+a connection that has carried no response byte for a minute, and the engine needed 165 s. The
+streaming path never noticed because its heartbeat is a byte every 10 s, which is exactly what
+an idle timer watches for. So the non-streaming hold is folded below the front end
+(`AF_ENGINE_PLAIN_HOLD`, 45 s) and answers `503 engine_waking` + `Retry-After`; the Workspace's
+`sdcpp` provider keeps asking inside its own 16-minute budget, so one tool call still returns
+one picture. **Behind a stricter proxy than this repository's ALB, lower `AF_ENGINE_PLAIN_HOLD`
+to match** — the CP has no way to ask what that timeout is.
 
 ## Optional: EC2 slot pool (`WsRuntime=ecs-ec2`)
 

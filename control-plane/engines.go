@@ -90,11 +90,16 @@ func (d engineDef) api() string {
 // engineRuntimeState is one engine, fully wired: the ECS adapter, its controller, its
 // demand counter and the key it presents upstream.
 type engineRuntimeState struct {
-	def    engineDef
-	ecs    *engineECS
-	ctrl   *engineController
-	demand *engineDemand
-	apiKey string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
+	def  engineDef
+	ecs  *engineECS
+	ctrl *engineController
+	// settings is where the mode lives. Held here rather than reached through ctrl, which is
+	// how it started: "what mode is this engine in" is a question about the engine, and making
+	// the answer depend on whether a controller happens to exist means an admin toggle writes
+	// a setting that nothing reads on any deployment that has no loop running. May be nil.
+	settings store.SettingsStore
+	demand   *engineDemand
+	apiKey   string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
 }
 
 // engineRegistry is every engine this deployment runs. Nil (or empty) is the normal case —
@@ -172,8 +177,11 @@ func engineControlCfgFor(d engineDef) engineControlCfg {
 		idle:       time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_IDLE_SEC", int(idle.Seconds()))) * time.Second,
 		deadline:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_START_DEADLINE_SEC", int(deadline.Seconds()))) * time.Second,
 		cooldown:   time.Duration(runtime.EnvInt("AF_ENGINE_"+up+"_FAIL_COOLDOWN_SEC", 900)) * time.Second,
-		// No undo window: there is no UI toggle to press twice for an inference engine, and
-		// the grace only exists to debounce one (ADR 0070 decision 5).
+		// No undo window, even though there IS a toggle now (the admin panel of ADR 0071
+		// P1.5). The grace exists to make an accidental OFF→ON cheap, and for VOICEVOX it is:
+		// a 2 GB pull and 80 seconds. Here it would mean paying $1.26/hour for a box nobody
+		// may ask for again, so the engine's own cold start is the price of changing your
+		// mind (ADR 0070 decision 5, and why this one departs from it).
 		offGrace: 0,
 	}
 }
@@ -258,11 +266,19 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 				api: ecsc, key: d.Key, cluster: cluster,
 				service: d.Service, capacityProvider: d.CapacityProvider,
 			},
-			apiKey: readEngineAPIKey(ctx, ssmc, d),
+			apiKey:   readEngineAPIKey(ctx, ssmc, d),
+			settings: settings,
 		}
 		cfg := engineControlCfgFor(d)
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
 		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
+		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
+		// not inside newEngineController because the VOICEVOX controller shares that
+		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series
+		// nothing reads is a cost with no reader.
+		if mgr != nil && mgr.store != nil {
+			st.ctrl.uptime = mgr.store
+		}
 		reg.byKey[d.Key] = st
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
 			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
@@ -294,12 +310,24 @@ func readEngineAPIKey(ctx context.Context, api engineSSMAPI, d engineDef) string
 
 // mode is the engine's current mode, the stored setting winning over the stack's default.
 func (e *engineRuntimeState) mode(ctx context.Context) string {
-	if e.ctrl != nil {
-		if v := e.ctrl.setting(ctx, engineSettingsFor(e.def.Key).mode); v != "" {
+	if e.settings != nil {
+		if v, _ := e.settings.GetSetting(ctx, engineSettingsFor(e.def.Key).mode); strings.TrimSpace(v) != "" {
 			return engineMode(v, true)
 		}
 	}
 	return engineMode(e.def.Mode, true)
+}
+
+// controlCfg is the tuning that governs this engine, whether or not a controller is running.
+// Falling back to the stack's declaration rather than to a zero value matters: the admin panel
+// reads the idle window out of this to say when the engine will stop by itself, and a zero
+// there is configured to mean "never stops", which is the opposite of the truth for a managed
+// engine that simply has no loop attached in this process.
+func (e *engineRuntimeState) controlCfg() engineControlCfg {
+	if e.ctrl != nil {
+		return e.ctrl.cfg
+	}
+	return engineControlCfgFor(e.def)
 }
 
 // modelIDs are the ids this engine's provider offers, as <provider>/<id>.

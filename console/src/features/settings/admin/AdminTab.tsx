@@ -15,6 +15,7 @@ import { SignInMethodRegister } from "../tenant/tenantSignInMethods.tsx";
 import { TenantScopeBody, tenantScopeGroups } from "../tenant/tenantScope.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
+import { EnginesAdminView } from "./adminEngines.tsx";
 import { TenantsList } from "./adminTenants.tsx";
 
 // AdminTab (the super_admin surface) — the same left rail + body two-pane shell as personal and
@@ -37,7 +38,7 @@ interface RailGroup {
   items: [string, string][];
 }
 
-function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
+function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): RailGroup[] {
   return [
     {
       key: "tenants",
@@ -55,6 +56,10 @@ function rootGroups(opts: { pool: boolean; cost: boolean }): RailGroup[] {
       items: [
         ["egress", "admin.mode_egress"],
         ["tts", "admin.mode_tts"],
+        // Self-hosted inference (ADR 0071) is opt-in and most deployments run none. An empty
+        // "engines" item would read as "my engines disappeared" — the same reason the slot
+        // pool item is conditional.
+        ...(opts.engines ? ([["engines", "admin.mode_engines"]] as [string, string][]) : []),
         // The slot pool exists on one runtime only. An empty "slots" item on a Fargate
         // deployment reads as "my slots disappeared".
         ...(opts.pool ? ([["pool", "admin.mode_pool"]] as [string, string][]) : []),
@@ -84,6 +89,9 @@ export function AdminTab() {
   // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
   // answers {"runtime":"other"} everywhere else.
   const [hasPool, setHasPool] = useState(false);
+  // Whether this deployment RUNS self-hosted engines. The route only exists where the engine
+  // table does, so a non-empty list is the evidence — never the absence of an error.
+  const [hasEngines, setHasEngines] = useState(false);
   // Whether this deployment HAS an AWS bill. Runtime-declared, not configured.
   const costProfile = useCostProfile();
 
@@ -132,13 +140,16 @@ export function AdminTab() {
     api("api/admin/ec2-pool")
       .then((d) => setHasPool(d?.runtime === "ecs-ec2"))
       .catch(() => setHasPool(false));
+    api("api/admin/engines")
+      .then((d) => setHasEngines(Array.isArray(d?.engines) && d.engines.length > 0))
+      .catch(() => setHasEngines(false));
   }, []);
 
   if (forbidden) return <p className="muted pad">{tr("admin.forbidden")}</p>;
   if (tenants === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   const cost = !!costProfile?.available;
-  const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost });
+  const groups = scope ? tenantScopeGroups({ cost }) : rootGroups({ pool: hasPool, cost, engines: hasEngines });
   const section = scope ? scopeSection : rootSection;
   const scopeTenant = scope ? tenants.find((t) => t.slug === scope) || null : null;
   const currentLabel = tr(
@@ -186,6 +197,7 @@ export function AdminTab() {
     if (rootSection === "register") return <SignInMethodRegister />;
     if (rootSection === "egress") return <EgressView />;
     if (rootSection === "tts") return <TtsAdminView />;
+    if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
     if (rootSection === "pool" && hasPool) return <PoolView />;
     if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;
     if (rootSection === "usage") return <UsageView tenants={tenants} isSuper={isSuper} />;

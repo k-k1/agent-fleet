@@ -211,6 +211,59 @@ func TestEngineGatewayNonStreamingSaysRetryAfter(t *testing.T) {
 	if rec.Header().Get("Retry-After") == "" {
 		t.Error("no Retry-After: a 503 without one tells the client to guess")
 	}
+	// The CODE, not the number. The caller retries a wake and surfaces a refusal, and both
+	// are 503 — measured on the real deployment, where the difference decided whether one
+	// tool call produced a picture or fell through onto a member's plan quota.
+	if code := engineErrCode(t, rec.Body.Bytes()); code != "engine_waking" {
+		t.Errorf("code = %q, want engine_waking so the caller knows to ask again", code)
+	}
+}
+
+func engineErrCode(t *testing.T, body []byte) string {
+	t.Helper()
+	var doc struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &doc); err != nil {
+		t.Fatalf("error body is not JSON: %s", body)
+	}
+	return doc.Error.Code
+}
+
+// The non-streaming path has no heartbeat, so the thing that ends it first is whatever proxy
+// sits in front — 30-ingress.yaml sets the ALB's idle_timeout to 60 s, and a hold longer than
+// that never gets to answer at all. Measured before this bound existed: the CP logged
+// `POST /engine/image/v1/images/generations 503 59.998s` against its own 900-second hold,
+// while the image engine came up in 165 s.
+func TestEnginePlainHoldStaysUnderTheIngressIdleTimeout(t *testing.T) {
+	const albIdleTimeout = 60 * time.Second // deploy/aws/ecs/cfn/30-ingress.yaml
+	if got := enginePlainHold(); got >= albIdleTimeout {
+		t.Errorf("plain hold = %s, want less than the ingress idle timeout %s", got, albIdleTimeout)
+	}
+	// It bounds the wait; it must never extend one that was deliberately made shorter.
+	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "5")
+	t.Setenv("AF_ENGINE_PLAIN_HOLD", "45")
+	if got, want := enginePlainHold(), 5*time.Second; got != want {
+		t.Errorf("plain hold = %s with a 5 s wake timeout, want %s", got, want)
+	}
+	// And a deployment behind a stricter proxy can say so.
+	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "900")
+	t.Setenv("AF_ENGINE_PLAIN_HOLD", "20")
+	if got, want := enginePlainHold(), 20*time.Second; got != want {
+		t.Errorf("plain hold = %s, want the configured %s", got, want)
+	}
+}
+
+// The streaming path keeps the full budget: its heartbeat is a byte on the wire every 10 s,
+// which is exactly what an idle timeout is watching for, so nothing in front of it cuts in.
+func TestEngineStreamingKeepsTheFullWakeBudget(t *testing.T) {
+	t.Setenv("AF_ENGINE_WAKE_TIMEOUT", "900")
+	t.Setenv("AF_ENGINE_PLAIN_HOLD", "45")
+	if got, want := engineWakeTimeout(), 900*time.Second; got != want {
+		t.Errorf("wake timeout = %s, want %s — the plain bound must not leak onto the stream", got, want)
+	}
 }
 
 // llama-server binds its port and answers /health with 503 {"status":"loading model"} for

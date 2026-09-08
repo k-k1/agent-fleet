@@ -2389,6 +2389,60 @@ func (s *SQL) PruneUsageHourly(ctx context.Context, beforeHour string) error {
 	return err
 }
 
+// AddEngineHour accumulates one controller tick into the (engine, hour) bucket (ADR 0071).
+//
+// Everything sums, including observed_secs — that is the point of storing the denominator
+// rather than deriving it from samples x interval, which the controller's variable interval
+// (30 s idle, 5 s while starting) makes wrong in exactly the hours anybody looks at.
+func (s *SQL) AddEngineHour(ctx context.Context, engineKey, hour string, d EngineHourCounters) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO engine_hourly(engine_key, hour, samples, observed_secs,
+		                           running_secs, starting_secs, draining_secs)
+		 VALUES(?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(engine_key, hour) DO UPDATE SET
+		   samples       = engine_hourly.samples       + excluded.samples,
+		   observed_secs = engine_hourly.observed_secs + excluded.observed_secs,
+		   running_secs  = engine_hourly.running_secs  + excluded.running_secs,
+		   starting_secs = engine_hourly.starting_secs + excluded.starting_secs,
+		   draining_secs = engine_hourly.draining_secs + excluded.draining_secs`,
+		engineKey, hour, d.Samples, d.ObservedSecs, d.RunningSecs, d.StartingSecs, d.DrainingSecs)
+	return err
+}
+
+// ListEngineHourly returns one engine's hourly buckets in [fromHour, toHour] (inclusive).
+// No JOIN: an engine is named by the stack's table, not by a row in this database, so
+// there is nothing to label it with here.
+func (s *SQL) ListEngineHourly(ctx context.Context, engineKey, fromHour, toHour string) ([]EngineHourRow, error) {
+	q := `SELECT engine_key, hour, samples, observed_secs, running_secs, starting_secs, draining_secs
+	      FROM engine_hourly WHERE hour BETWEEN ? AND ?`
+	args := []any{fromHour, toHour}
+	if engineKey != "" {
+		q += ` AND engine_key=?`
+		args = append(args, engineKey)
+	}
+	q += ` ORDER BY engine_key, hour`
+	rows, err := s.db.QueryContext(ctx, q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []EngineHourRow
+	for rows.Next() {
+		var e EngineHourRow
+		if err := rows.Scan(&e.EngineKey, &e.Hour, &e.Samples, &e.ObservedSecs,
+			&e.RunningSecs, &e.StartingSecs, &e.DrainingSecs); err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+func (s *SQL) PruneEngineHourly(ctx context.Context, beforeHour string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM engine_hourly WHERE hour < ?`, beforeHour)
+	return err
+}
+
 // nullable maps "" to a SQL NULL so empty optional columns stay NULL.
 func nullable(s string) any {
 	if s == "" {
