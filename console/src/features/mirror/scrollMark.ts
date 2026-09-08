@@ -62,6 +62,28 @@ export function captureMark(el: HTMLElement | null, atBottom: boolean): ScrollMa
   return null;
 }
 
+/** Capture the position against the first turn boundary BELOW the reader instead of the block
+ * they are inside. Same shape as captureMark, and the offset is >= 0 rather than <= 0.
+ *
+ * For the backward-paging hold this is the only reference that means the same thing afterwards.
+ * The prepended rows join the block the reader is in at its FRONT (blockIdentity.ts), so that
+ * block's top edge moves up by everything that was inserted — "3,752px into turn 182" then points
+ * at content tens of thousands of px earlier. The top of the NEXT block does not move relative to
+ * the reader: nothing is inserted between them. Returns null when the reader is inside the last
+ * block (nothing below to hold on to) — the caller falls back to captureMark. */
+export function captureMarkBelow(el: HTMLElement | null): ScrollMark | null {
+  if (!el) return null;
+  const top = el.getBoundingClientRect().top;
+  for (const turn of Array.from(el.querySelectorAll<HTMLElement>("[data-turn-idx]"))) {
+    const r = turn.getBoundingClientRect();
+    if (r.top < top - 1) continue;
+    const idx = Number(turn.getAttribute("data-turn-idx"));
+    if (!Number.isFinite(idx) || idx >= SYNTHETIC_IDX) return null;
+    return { atBottom: false, idx, offset: Math.round(r.top - top) };
+  }
+  return null;
+}
+
 /** The scrollTop that puts the top edge of turn idx offset px below the viewport's top edge.
  * null when that turn is not mounted (outside the tail window; the caller falls back to the tail). */
 export function scrollTopForTurn(el: HTMLElement | null, idx: number, offset = 0): number | null {

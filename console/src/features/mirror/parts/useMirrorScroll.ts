@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { applyMark, captureMark, saveMark, scrollTopForTurn, loadMark, type ScrollMark } from "../scrollMark.ts";
+import {
+  applyMark, captureMark, captureMarkBelow, saveMark, scrollTopForTurn, loadMark, type ScrollMark,
+} from "../scrollMark.ts";
 import type { Group } from "../transcript/types.ts";
 
 // The user counts as "stuck to the bottom" (auto-follow on) while within this many px of
@@ -38,9 +40,10 @@ export function useMirrorScroll() {
   // the viewport AND follow is off. Never at the bottom, where it would cover the buttons the
   // user has to press (see syncReplyTop).
   const [showReplyTop, setShowReplyTop] = useState(false);
-  // Backward paging: the turn being read when older history is prepended, and where its top edge
-  // sat relative to the viewport. Held as an ANCHOR rather than as a height delta — see
-  // capturePrependAnchor.
+  // Backward paging: the turn boundary just BELOW the reader when older history is prepended, and
+  // where its top edge sat relative to the viewport. Held as an ANCHOR rather than as a height
+  // delta (see capturePrependAnchor), and taken from below rather than from the block they are
+  // inside (see prependMark).
   const prependAnchorRef = useRef<{ idx: number; offset: number } | null>(null);
   const mirrorRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -337,7 +340,11 @@ export function useMirrorScroll() {
     for (let i = groups.length - 1; i >= 0; i--) {
       if (groups[i].role === "user") { u = i; break; }
     }
-    const reply = groups[u + 1];
+    // No prompt anywhere in the window (a long autonomous stretch — the mirror holds a window, and
+    // one instruction can run for hundreds of jsonl lines) is not "the reply is groups[0]", which
+    // is what `groups[u + 1]` would say: it would anchor the completion scroll, and the target of
+    // "start of the reply", on the block at the TOP of the window. The newest block is the live one.
+    const reply = u >= 0 ? groups[u + 1] : groups[groups.length - 1];
     const replyIdx = reply && reply.role !== "user" ? reply.idx : undefined;
 
     // First settle for this session: land at the bottom (the familiar "open shows the
@@ -490,9 +497,15 @@ export function useMirrorScroll() {
     const el = bodyRef.current;
     const hold = prependAnchorRef.current;
     if (!el || !hold || el.scrollTop === selfTopRef.current) return;
-    const mark = captureMark(el, false);
+    const mark = prependMark(el);
     if (mark) prependAnchorRef.current = { idx: mark.idx, offset: mark.offset };
   };
+
+  // The reference the paging hold uses: the first turn boundary BELOW the reader, because the page
+  // is prepended ABOVE them — into the very block they are in, whose top edge therefore moves
+  // (see captureMarkBelow). Only when there is nothing below does it fall back to the block they
+  // are inside, which is the tail, where the bottom pin owns the position anyway.
+  const prependMark = (el: HTMLElement) => captureMarkBelow(el) ?? captureMark(el, false);
 
   /** Record the position being read on leave; the DOM the cleanup reads is the OUTGOING one. */
   const saveMarkFor = (session: string) => saveMark(session, captureMark(bodyRef.current, atBottomRef.current));
@@ -508,7 +521,7 @@ export function useMirrorScroll() {
   const capturePrependAnchor = () => {
     const el = bodyRef.current;
     if (!el || atBottomRef.current) return; // at the tail the bottom pin is already the anchor
-    const mark = captureMark(el, false);
+    const mark = prependMark(el);
     prependAnchorRef.current = mark ? { idx: mark.idx, offset: mark.offset } : null;
   };
   /** Hold that position across the prepend commit, and keep holding it from the ResizeObserver
