@@ -120,10 +120,20 @@ type engineDemand struct {
 	key      string
 	settings store.SettingsStore // nil = nothing to persist to (tests, unmanaged engines)
 	now      func() time.Time    // test seam
+	// since is when THIS PROCESS started counting. The buckets are in memory and nothing
+	// else, so a CP that was replaced two minutes ago honestly reports "0 requests in the
+	// last 5 minutes" while somebody is mid-conversation with the engine. Only the mark is
+	// persisted (decision 6), and widening the window would not help — the counts are simply
+	// not there. Anything that displays units() has to display this next to it, or the panel
+	// states a confident zero it has no basis for.
+	since time.Time
 }
 
 func newEngineDemand(settings store.SettingsStore, key string, window time.Duration) *engineDemand {
-	return &engineDemand{buckets: map[int64]int{}, window: window, key: key, settings: settings, now: time.Now}
+	return &engineDemand{
+		buckets: map[int64]int{}, window: window, key: key, settings: settings,
+		now: time.Now, since: time.Now(),
+	}
 }
 
 // record adds one request's units of demand to the window and refreshes the last-wanted
@@ -154,6 +164,22 @@ func (d *engineDemand) record(ctx context.Context, units int) {
 			log.Printf("engine: recording demand for %s failed: %v", d.key, err)
 		}
 	}
+}
+
+// countedFor is how much of the window this process can actually speak for: the whole window
+// once it has been up that long, less than that right after a restart, and zero when there is
+// no counter at all. A caller rendering units() must render this too — see `since`.
+func (d *engineDemand) countedFor() time.Duration {
+	if d == nil || d.since.IsZero() {
+		return 0
+	}
+	if up := d.now().Sub(d.since); up < d.window {
+		if up < 0 {
+			return 0
+		}
+		return up
+	}
+	return d.window
 }
 
 // units is the demand inside the rolling window.
@@ -330,11 +356,9 @@ func decideEngineAction(now time.Time, s engineSnapshot, cfg engineControlCfg) (
 		if s.lastDemand.IsZero() {
 			return engineActionNone, engineReasonFirstPass
 		}
-		idle := cfg.idle
-		if idle < cfg.deadline {
-			idle = cfg.deadline
-		}
-		if now.Sub(s.lastDemand) >= idle {
+		// engineIdleWindow, not the raw cfg.idle: the admin panel counts down to the same
+		// moment and the two must not drift (engine_uptime.go).
+		if now.Sub(s.lastDemand) >= engineIdleWindow(cfg) {
 			return engineActionStop, engineReasonIdle
 		}
 		return engineActionNone, engineReasonInUse
@@ -404,14 +428,19 @@ type engineController struct {
 	demand   *engineDemand
 	settings store.SettingsStore
 	audit    engineAuditor
-	cfg      engineControlCfg
-	now      func() time.Time // test seam
+	// uptime is where each tick's observation is recorded (engine_uptime.go). nil = not
+	// recorded, which is what the VOICEVOX engine does: its panel has no heatmap, and an
+	// INSERT every 30 seconds for a series nothing reads is a cost with no reader.
+	uptime engineUptimeStore
+	cfg    engineControlCfg
+	now    func() time.Time // test seam
 
 	mu          sync.Mutex
 	warm        bool
 	failures    int
 	lastFailure time.Time
-	prevState   string // the service state at the previous tick, for spotting a replacement
+	prevState   string    // the service state at the previous tick, for spotting a replacement
+	lastSample  time.Time // when this process last recorded an observation; zero = never
 }
 
 // ttsControlCfgFromEnv reads the tuning. The defaults are ADR 0070's: a 5-minute window,
@@ -538,6 +567,11 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	}
 	now := c.now()
 	c.noteReplacement(ctx, view)
+	// The RAW state, not engineDisplayState's: the heatmap records what the hardware did,
+	// and the display state is a statement about the button that was just pressed.
+	// Deliberately above the first-pass return below — that tick observed the engine just as
+	// well as any other, it merely has nothing to decide.
+	c.recordUptime(ctx, now, view.state)
 	mode := engineMode(c.setting(ctx, c.keys.mode), true)
 	lastDemand := c.demand.lastAt(ctx)
 	if lastDemand.IsZero() {

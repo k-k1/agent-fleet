@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,10 @@ type fakeTTSECS struct {
 	// instances are the cluster's container instances, keyed arn -> capacity provider.
 	// Only an engine that declares a capacity provider ever reads them (ADR 0071).
 	instances map[string]string
+	// registered is the registeredAt the box reports, i.e. when it joined the cluster. Zero
+	// leaves it unset, which is the shape of a cluster that has no box at all.
+	registered time.Time
+	listCalls  int
 }
 
 func (f *fakeTTSECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -35,6 +40,7 @@ func (f *fakeTTSECS) UpdateService(_ context.Context, in *ecs.UpdateServiceInput
 }
 
 func (f *fakeTTSECS) ListContainerInstances(_ context.Context, _ *ecs.ListContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.ListContainerInstancesOutput, error) {
+	f.listCalls++
 	out := &ecs.ListContainerInstancesOutput{}
 	for arn := range f.instances {
 		out.ContainerInstanceArns = append(out.ContainerInstanceArns, arn)
@@ -45,13 +51,63 @@ func (f *fakeTTSECS) ListContainerInstances(_ context.Context, _ *ecs.ListContai
 func (f *fakeTTSECS) DescribeContainerInstances(_ context.Context, in *ecs.DescribeContainerInstancesInput, _ ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
 	out := &ecs.DescribeContainerInstancesOutput{}
 	for _, arn := range in.ContainerInstances {
-		ci := ecstypes.ContainerInstance{ContainerInstanceArn: aws.String(arn)}
+		ci := ecstypes.ContainerInstance{
+			ContainerInstanceArn: aws.String(arn),
+			Ec2InstanceId:        aws.String("i-" + strings.TrimPrefix(arn, "arn:ci/i-")),
+			Status:               aws.String("ACTIVE"),
+		}
+		if !f.registered.IsZero() {
+			ci.RegisteredAt = aws.Time(f.registered)
+		}
 		if cp := f.instances[arn]; cp != "" {
 			ci.CapacityProviderName = aws.String(cp)
 		}
 		out.ContainerInstances = append(out.ContainerInstances, ci)
 	}
 	return out, nil
+}
+
+// When the BOX started, which is the question `lastStart` cannot answer: that one is the
+// service's primary deployment timestamp and moves on a stack update or a replaced task
+// without a new box being bought. An operator looking at a $1.26/hour GPU means the box.
+//
+// ⚠️ The lookup goes through ECS and not through `ec2 describe-instances`. A Managed Instances
+// box does not appear in an unfiltered EC2 listing at all — measured on af-sandbox while the
+// task was RUNNING (ADR 0071, P1 の実測 2) — so an EC2-side implementation would report
+// "no box" for a GPU that is running and billing.
+func TestEngineECSBoxReportsWhenTheInstanceStarted(t *testing.T) {
+	at := time.Date(2026, 9, 8, 4, 3, 0, 0, time.UTC)
+	f := &fakeTTSECS{
+		svc:        &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
+		instances:  map[string]string{"arn:ci/i-08a9": "af-engines-image"},
+		registered: at,
+	}
+	eng := &engineECS{api: f, key: "image", cluster: "c", service: "image", capacityProvider: "af-engines-image"}
+
+	b, ok := eng.box(t.Context())
+	if !ok {
+		t.Fatal("no box found while one is registered under this engine's capacity provider")
+	}
+	if !b.since.Equal(at) || b.instanceID != "i-08a9" {
+		t.Errorf("box = %+v, want i-08a9 registered at %v", b, at)
+	}
+
+	// Cached: the admin panel polls every five seconds while an engine is moving, and a box
+	// takes minutes to appear and 427-477 s to go away. Nothing here changes inside the TTL.
+	before := f.listCalls
+	for range 4 {
+		_, _ = eng.box(t.Context())
+	}
+	if f.listCalls != before {
+		t.Errorf("%d extra cluster walks inside the TTL, want 0", f.listCalls-before)
+	}
+
+	// A Fargate engine declares no capacity provider and must never pay for the lookup.
+	f2 := &fakeTTSECS{svc: f.svc, instances: f.instances, registered: at}
+	fargate := &engineECS{api: f2, key: "tts", cluster: "c", service: "voicevox"}
+	if _, ok := fargate.box(t.Context()); ok || f2.listCalls != 0 {
+		t.Errorf("fargate: found=%v calls=%d, want false/0", ok, f2.listCalls)
+	}
 }
 
 func TestTTSEngineECSState(t *testing.T) {

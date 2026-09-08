@@ -24,7 +24,7 @@ egress_member.go egressAPI.propose x1 {already,entry,id,state}
 egress_member.go egressAPI.propose x1 {already,entry,state}
 egress_member.go egressAPI.propose x1 {entry,id,state}
 engine_admin.go engineAdminAPI.get x1 {engines}
-engine_admin.go engineAdminAPI.put x1 {api,desired,enabled,error,key,managed,mode,models,provider,state} cond{desired,error,state}
+engine_admin.go engineAdminAPI.put x1 {api,box,desired,enabled,error,events,idle_secs,key,last_demand,managed,mode,models,provider,service_since,state,stop_eta,warm,window_counted_secs,window_secs,window_units} cond{box,error,events,last_demand,service_since,stop_eta,window_counted_secs,window_units}
 engine_gateway.go engineGateway.catalog x1 {engines}
 engine_gateway.go engineGateway.issueSessionToken x1 {base_url,expires_at,models,token}
 git_lfs.go gitServerAPI.lfsBatch x1 {objects,transfer}

@@ -90,6 +90,44 @@ minutes, the time it takes to buy a box and load the model (the call itself comp
 go — nothing has to be retried). Before time-critical work you can warm it up by switching to
 Always on — **and remember to switch it back.**
 
+### Reading the current state
+
+Below the setting is what that engine is doing right now. **A line that is not there means "not
+known"** — nothing is padded out with a zero or a "not scheduled", so read the absences that way.
+
+- **Box started** — when the GPU instance joined the cluster, how long ago that was, and the
+  instance id. If it says **Service updated** instead, no box was found; that timestamp also
+  moves on a deployment update, so it is not the box's own lifetime.
+- **Stops by itself** — shown only for an engine running on demand. **It is absent under Always
+  on**, because it does not stop. Same for Disabled and for an engine that is already stopped:
+  the absence is the answer.
+- **Requests in the last N min** — how many arrived in that window. ⚠️ This count lives in the
+  **control plane's own memory**, so it resets to zero when the control plane is replaced. Until
+  a full window has been counted you will see "this control plane has only been counting for …"
+  beside it. **Last request**, next to it, **is stored**, so that one stays correct across a
+  replacement. **A zero does not prove nobody is using the engine.**
+- **Models** — the model names the stack declares. `(loaded)` means the engine is warm enough to
+  actually answer; right after a start it reads `(declared, not loaded yet)`, and that is the
+  three minutes above.
+- **When a start is failing**, ECS's own reason is shown verbatim ("no container instance met
+  all of its requirements", and so on) — you can read it here without opening the AWS console.
+
+### History (14 days)
+
+Opening **History** shows a heatmap of **24 hours down by date across**. One cell is one hour,
+and the darker it is the longer the engine was up in that hour.
+
+- The shade can mean one of two things. **Able to answer** is the time it could serve requests;
+  **A box existed** adds the cold start (not able to answer yet) and the drain (the task is gone
+  but the instance is not). **Those two also bill**, so use "a box existed" when reconciling
+  against an invoice.
+- 🔴 **A blank cell means "no record", not "it was stopped".** The control plane was not running,
+  or the engine did not exist yet, and it cannot be filled in afterwards. Time the engine spent
+  stopped is grey, which is a different colour from blank.
+- **No amounts are shown.** Real cloud spend is only available per day, so an hourly figure could
+  only be a rate times a number of seconds — an estimate. This screen answers "when was it
+  running"; "what did it cost" is answered by the cloud cost screen.
+
 ## Controlling outbound traffic (egress — super_admin only)
 
 This is the **Traffic** section of the Admin modal. **It is super_admin only, so it does not appear

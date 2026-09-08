@@ -23,6 +23,45 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_models_sep": " / models: ",
   "admin.engines_always_on_note": "Always-on keeps the GPU box up ($1.26/hour). Put it back on demand when you are done.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys a box only when something asks, and it stops itself once idle.",
+  // --- engine status (adminEngines.tsx, EngineStatus) ---
+  // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
+  // answer for is omitted entirely, so do not add filler like "unknown", "0" or "not
+  // scheduled": a blank reads as unknown, and filler reads as fact and gets acted on.
+  "admin.engines_model_loaded": "(loaded)",
+  "admin.engines_model_declared": "(declared, not loaded yet)",
+  // The box's clock and the service's clock are different facts: the first is when the EC2
+  // instance registered, the second when the deployment last changed — which moves without any
+  // box being bought.
+  "admin.engines_since_box": "Box started ",
+  "admin.engines_since_service": "Service updated ",
+  "admin.engines_up_for": "{d} ago",
+  "admin.engines_stops_at": "Stops by itself at ",
+  "admin.engines_stops_in": "in {d}",
+  "admin.engines_stops_due": "Past its stop time (it goes on the controller's next pass)",
+  // Shown when there is no countdown to give (it is stopped, so there is nothing to stop).
+  // A different claim from a time, and without it a stopped engine shows no window at all.
+  "admin.engines_idle_policy": "Stops itself {d} after nobody is using it",
+  "admin.engines_recent": "Requests in the last {m} min: {n}",
+  // 🔴 The count lives in this control plane's memory and nowhere else, so it resets to 0 when
+  // the CP is replaced. Say so whenever less than a full window has been counted; the
+  // last-request time next to it is persisted and stays true.
+  "admin.engines_recent_partial": "(this control plane has only been counting for {d})",
+  "admin.engines_last_demand": "Last request ",
+  "admin.engines_history": "History (14 days)",
+  "admin.engines_metric_label": "What the shade means",
+  "admin.engines_metric_running": "Able to answer",
+  "admin.engines_metric_up": "A box existed",
+  "admin.engines_state_down": "Down",
+  "admin.engines_ro_detail": "answering {run} ・ starting {start} ・ draining {drain}",
+  "admin.engines_col_running": "Answering",
+  "admin.engines_col_starting": "Starting",
+  "admin.engines_col_draining": "Draining",
+  "admin.engines_dur_hm": "{h}h {m}m",
+  "admin.engines_dur_m": "{m}m",
+  "admin.engines_uptime_none": "Nothing was recorded as running in this period.",
+  "admin.engines_uptime_error": "Could not load the history.",
+  "admin.engines_uptime_note":
+    "Sampled about every {n} seconds. \"A box existed\" includes the cold start, when it cannot answer yet (165-197 s measured), and the drain, when the task is gone but the instance is not (427-477 s measured) — both bill, neither answers a request. Hours from before recording began stay blank and cannot be filled in later. This is not money.",
   "admin.group_tenants": "Tenants",
   "admin.group_deployment": "Deployment",
   "admin.group_across": "Across tenants",

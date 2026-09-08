@@ -13,6 +13,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
@@ -176,6 +180,87 @@ func TestEngineAdminListsEveryEngine(t *testing.T) {
 	// $1.26/hour box running because nobody picked a value is what these ADRs exist to avoid.
 	if row["mode"] != engineModeOnDemand {
 		t.Errorf("mode = %v with nothing stored, want ondemand", row["mode"])
+	}
+}
+
+// The status fields the panel draws (ADR 0071 P1.5). The property under test is not that each
+// field is present — it is that a field the CP has no answer for is ABSENT rather than filled
+// with a plausible-looking value. A blank on that screen reads as "unknown"; a zero or a
+// fallback date reads as fact and gets acted on against a $1.26/hour GPU.
+func TestEngineAdminRowOmitsWhatItCannotAnswer(t *testing.T) {
+	st := testSettingsStore(t)
+	at := time.Date(2026, 9, 8, 4, 3, 0, 0, time.UTC)
+	f := &fakeTTSECS{
+		svc:        &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
+		instances:  map[string]string{"arn:ci/i-08a9": "af-engines-image"},
+		registered: at,
+	}
+	e := newTestImageEngine(t, "http://127.0.0.1:1", f)
+	e.settings = st
+	e.ecs.capacityProvider = "af-engines-image"
+	e.demand = newEngineDemand(st, engineSettingsFor("image").demandAt, 5*time.Minute)
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+
+	// Nothing has ever asked for it: no demand mark, so no stop time. The controller judges
+	// nothing on that pass either (engineReasonFirstPass), so there is genuinely no answer.
+	row := a.row(ctx, e)
+	if _, ok := row["stop_eta"]; ok {
+		t.Errorf("stop_eta = %v with no demand mark, want it absent", row["stop_eta"])
+	}
+	if _, ok := row["last_demand"]; ok {
+		t.Errorf("last_demand = %v before anything asked, want it absent", row["last_demand"])
+	}
+	// The window is always reported as the length it actually is. A client that hard-codes
+	// "the last 5 minutes" is wrong the moment AF_ENGINE_IMAGE_WINDOW_SEC is set.
+	if row["window_secs"] != 300 {
+		t.Errorf("window_secs = %v, want 300", row["window_secs"])
+	}
+	// ⚠️ And how much of that window this process can speak for. The count is in memory only,
+	// so without this the panel states a confident 0 for an engine somebody is using through a
+	// control plane that started a minute ago.
+	if _, ok := row["window_counted_secs"]; !ok {
+		t.Error("window_counted_secs is missing — the rolling count is unqualified, and a CP " +
+			"replaced mid-conversation reports 0 requests as if it were a measurement")
+	}
+
+	// Now somebody asks for it. Under on-demand and up, the stop time appears.
+	e.demand.record(ctx, 1)
+	row = a.row(ctx, e)
+	if row["last_demand"] == nil {
+		t.Error("last_demand is missing after a request")
+	}
+	eta, ok := row["stop_eta"].(string)
+	if !ok {
+		t.Fatalf("stop_eta = %v, want the time the controller will stop it", row["stop_eta"])
+	}
+	if got, err := time.Parse(time.RFC3339, eta); err != nil {
+		t.Errorf("stop_eta %q is not RFC3339: %v", eta, err)
+	} else if d := time.Until(got); d < 14*time.Minute || d > 15*time.Minute {
+		// idle 900 s from newTestImageEngine, and the panel must reach the same moment the
+		// controller does.
+		t.Errorf("stop_eta is %v away, want the engine's 15-minute idle window", d)
+	}
+
+	// Pinned on, the engine does not stop by itself, so the countdown must vanish rather than
+	// promise a saving that will not arrive.
+	if code, _ := adminPut(t, a, "image", `{"mode":"on"}`); code != http.StatusOK {
+		t.Fatalf("on failed")
+	}
+	if row = a.row(ctx, e); row["stop_eta"] != nil {
+		t.Errorf("stop_eta = %v while pinned on, want it absent", row["stop_eta"])
+	}
+
+	// The box's own clock, which is the one an operator means. It comes from ECS's
+	// registeredAt and NOT from `ec2 describe-instances`, whose unfiltered listing does not
+	// contain a Managed Instances box at all (ADR 0071, P1 の実測 2).
+	box, ok := row["box"].(map[string]any)
+	if !ok {
+		t.Fatalf("box = %v, want the container instance", row["box"])
+	}
+	if box["id"] != "i-08a9" || box["since"] != at.Format(time.RFC3339) {
+		t.Errorf("box = %v, want i-08a9 started at %v", box, at.Format(time.RFC3339))
 	}
 }
 

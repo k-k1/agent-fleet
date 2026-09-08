@@ -39,6 +39,13 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   measured** ("What P1 measured"). The Phases entry for P1 records the three things the
   implementation added. 🔴 P0's measurement 10 used `describe-instances` as evidence for "no GPU
   boxes"; it **does not list MI boxes at all** — corrected in P1's measurement 2.
+- The next day (2026-09-08) **the rest of P1.5 — showing an engine's current state in the
+  Console — was implemented** and decision 13 added. A toggle alone (also P1.5) cannot answer
+  "is it safe to switch this off", so the panel gained the start time, the automatic stop time,
+  recent demand, the model that is loaded, and an occupancy heatmap. 🔴 Building it revealed that
+  **engine uptime was recorded nowhere at all**: the controller read the service every 30 seconds
+  and threw the observation away, so that tick became the sampler for a new `engine_hourly`
+  table. Most of decision 13 is rules for not writing down what is not known.
 - Related: [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) (the shape copied here:
   start on demand, stop on idle, Cloud Map names, a pure-function controller, shared cost) /
   [0069-image-generation-providers.md](0069-image-generation-providers.md) (the image
@@ -358,6 +365,61 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 12. **x86_64 only.** `stable-diffusion.cpp`'s CUDA image is amd64-only and there is no arm64 in
     the G family; the branch 0070 decision 11 kept open ("arm64 after measuring") does not exist
     here.
+
+13. **Show the current state under the rule "do not write down what you do not know", and record
+    the occupancy history by making the controller's own tick the sampler.** The super-admin
+    "Inference engines" panel gains when the engine started, when it will stop by itself, what
+    has been asked of it lately, which model is loaded, and a heatmap of its history (P1.5). A
+    screen with nothing but a toggle cannot answer "is it safe to switch this off" — a
+    $1.26/hour box is asleep most of the time, so **everything visible before the button is
+    pressed is whatever this panel says**. Most of the design turned out to be rules about what
+    NOT to show:
+    - **The start time is the box's `registeredAt`** (ECS `describe-container-instances`),
+      falling back to the service's `lastStart` only when there is no box. They are **different
+      facts**: `lastStart` moves on a stack update or a replaced task, without any box being
+      bought. 🔴 Not `ec2 describe-instances` (P1's measurement 2: **an MI box does not appear
+      in the listing**, so an EC2-side implementation would answer "no box" for a running GPU).
+    - **The stop time is omitted whenever there is no answer.** An engine pinned `on` does not
+      stop, so showing a countdown there is a promise of a saving that will not arrive. Same for
+      `off`, for an engine that is already stopped, and for one with no demand mark yet — the
+      same reason `decideEngineAction` judges nothing on that pass. The threshold lives in one
+      function (`engineIdleWindow()`) so the panel's countdown and the controller reach the same
+      instant; kept separately they diverge the day one of them forgets the clamp to the start
+      deadline.
+    - 🔴 **The recent request count exists only in the CP's process memory.** It resets to zero
+      when the CP is replaced (only `lastAt` is persisted — decision 6). So when less than a
+      full window has been counted, `window_counted_secs` says so and the UI adds "this control
+      plane has only been counting for N minutes". **Never write a past it cannot recount as 0**
+      — this is the single number on the screen that can be confidently wrong. The persisted
+      last-request time beside it is what makes a zero readable.
+    - **The models are the stack's declaration** (ADR 0053), never a question put to the engine
+      — it is asleep, i.e. unanswerable at exactly the moment somebody comes to look. Whether
+      one is loaded is answered by the `warmed()` the controller already maintains (ECS RUNNING
+      means "the port is open", and llama-server satisfies that 267 seconds before the weights
+      are in VRAM).
+    - **The history goes into a new table, `engine_hourly`, written by the controller's tick.**
+      Engine uptime was recorded nowhere at all before this: the controller read the service
+      every 30 seconds and threw the observation away. Nothing else in the CP looks that often,
+      and the AWS call is already paid for, so recording it costs one INSERT.
+      - A cell is **three-valued**, and **an hour with no row is UNOBSERVED, i.e. blank**.
+        Unlike `usage_hourly` there is no separate heartbeat row: the controller watches one
+        engine and cannot half-observe it, whereas the workspace sweep walks every tenant and
+        can.
+      - ⚠️ **The denominator `observed_secs` is stored.** The tick interval is not constant (5
+        seconds while starting or warming), so reconstructing it as `samples x nominal interval`
+        **exceeds 100% in exactly the busy hours** somebody opens the panel to look at.
+      - ⚠️ **The first tick of a process records nothing**, and one tick claims at most one
+        interval. A CP that was down for an hour comes back with a large elapsed time and a
+        perfectly valid current state, and attributing that gap to what it happens to see now
+        fills the outage with confident colour. The cost is 30 seconds lost per CP start; the
+        return is that **a blank stays blank**.
+      - ⚠️ **`running` / `starting` / `draining` are separate columns.** The last two bill and
+        answer nothing (measured: 165-197 s to start, 427-477 s to drain). Summing them into
+        running would claim the engine was serving; dropping them would make spent money vanish.
+        The heatmap can show either reading ("able to answer" and "a box existed").
+    - **No money is drawn** (ADR 0048 decision 2). An hourly figure could only be seconds times
+      a rate somebody typed in once, which is why the existing view is an uptime view and not a
+      cost view.
 
 ## Resolved by measurement (2026-09-07)
 
@@ -922,6 +984,13 @@ Also verified in P1:
   stored setting when a controller existed**. Harmless in production, where one always does,
   but it made "what mode is this engine in" depend on an unrelated collaborator. The setting is
   now held by the state itself.
+  **The current state was then added to the same screen (decision 13)** — a toggle on its own
+  does not tell anyone whether it is safe to switch an engine off. The `GET /api/admin/engines`
+  row gained the box's start time, the automatic stop time, recent demand and `warm`, and
+  `GET /api/admin/engines/{key}/hourly` plus the new `engine_hourly` table drive an occupancy
+  heatmap. The sampler is the controller's own tick, because **engine uptime was recorded
+  nowhere at all** until then. The details — never drawing unobserved as stopped, storing the
+  denominator, omitting a field rather than guessing it — are in decision 13.
 - **P2 — ComfyUI.** The fleet's image, the `/engine/comfy/` pane, the `comfy` provider with its
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and

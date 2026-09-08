@@ -263,6 +263,13 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		cfg := engineControlCfgFor(d)
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
 		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
+		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
+		// not inside newEngineController because the VOICEVOX controller shares that
+		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series
+		// nothing reads is a cost with no reader.
+		if mgr != nil && mgr.store != nil {
+			st.ctrl.uptime = mgr.store
+		}
 		reg.byKey[d.Key] = st
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
 			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
@@ -300,6 +307,18 @@ func (e *engineRuntimeState) mode(ctx context.Context) string {
 		}
 	}
 	return engineMode(e.def.Mode, true)
+}
+
+// controlCfg is the tuning that governs this engine, whether or not a controller is running.
+// Falling back to the stack's declaration rather than to a zero value matters: the admin panel
+// reads the idle window out of this to say when the engine will stop by itself, and a zero
+// there is configured to mean "never stops", which is the opposite of the truth for a managed
+// engine that simply has no loop attached in this process.
+func (e *engineRuntimeState) controlCfg() engineControlCfg {
+	if e.ctrl != nil {
+		return e.ctrl.cfg
+	}
+	return engineControlCfgFor(e.def)
 }
 
 // modelIDs are the ids this engine's provider offers, as <provider>/<id>.
