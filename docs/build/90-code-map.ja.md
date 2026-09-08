@@ -89,6 +89,7 @@ kind 固有実装は `internal/` にある。
 |---|---|
 | `Dockerfile` | Workspace イメージ。**配布の既定はエージェント CLI を焼かない**（[04 §4.9](04-agent.ja.md)）|
 | `entrypoint.sh` | 起動時の seed と agent 起動。**利用ガイドの配布は agent 側の仕事**で、entrypoint ではない |
-| `workspace-notes.md` | 全コンテナへ配る運用ポリシー |
+| `workspace-notes.md` | 全コンテナへ配る運用ポリシーの常時読込部分（禁止事項と罠だけ） |
+| `notes/` | そのトピックファイル（イメージでは `/usr/local/share/agent-fleet/notes/`）。本体の索引が指す手順で、エージェントが必要時に読む |
 | `opencode-plugin/` / `tmux.conf` / `vendor/` | プラグイン、tmux 設定、静的バイナリの置き場 |
 | `.dockerignore` | ⚠️ `**/*.md` を除外したうえで embed 対象を `!` で戻している——**編集前に読むべき罠** |

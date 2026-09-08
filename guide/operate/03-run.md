@@ -159,7 +159,15 @@ one.
 Every agent running in a workspace can be made to read **the operator's policy**. It lives in the
 repository as `workspace/workspace-notes.md`, is baked into the Workspace image and delivered to
 every container (claude reads it as the managed policy at `/etc/claude-code/CLAUDE.md` on every
-session; codex and opencode are seeded with the same text at each start).
+session; codex, opencode, agy, copilot and kiro get the same text composed into their own
+instruction files at each start).
+
+The policy is split in two so that it stays short: the always-loaded file carries only the
+prohibitions and the traps an agent cannot see coming, and ends with an index of **topic files**
+(`workspace/notes/<topic>.md`, shipped as `/usr/local/share/agent-fleet/notes/`) that hold the
+procedures — the agent reads the one for its situation when it gets there. Put a new rule in the
+always-loaded file only when the agent has to know it *before* it knows it needs it; everything
+else goes in a topic file, and the index line is what makes it findable.
 
 - This is where fleet-wide rules go: **what must not be done** (deleting repositories, writing
   credentials in the clear), **the constraints of this environment** (no root, no Docker, shared
@@ -169,9 +177,9 @@ session; codex and opencode are seeded with the same text at each start).
 - A user's own additions do **not** belong in this layer. They go in each person's ⚙ Settings →
   Agent instructions, and fleet policy wins where the two conflict
   ([member/06](../member/06-agents.md#agent-instructions-write-down-how-you-work-once)).
-- **Its length is a per-session context cost.** Every agent reads it every time, so before adding
-  to it, check that it is genuinely needed by everyone, every time. This layer cannot be
-  delivered to cursor.
+- **The always-loaded file's length is a per-session context cost.** Every agent reads it every
+  time, so before adding to it, check that it is genuinely needed by everyone, every time — a
+  topic file costs nothing until it is read. This layer cannot be delivered to cursor.
 
 ## Once it is on the public internet
 
