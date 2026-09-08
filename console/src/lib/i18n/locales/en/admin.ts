@@ -29,6 +29,21 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // scheduled": a blank reads as unknown, and filler reads as fact and gets acted on.
   "admin.engines_model_loaded": "(loaded)",
   "admin.engines_model_declared": "(declared, not loaded yet)",
+  // --- the model catalogue (ADR 0072) ---
+  // "enabled" and "started with" are different questions: the first is whether this deployment
+  // may use it, the second is the one checkpoint sd-server holds (or, for llm, the model a
+  // request that named none gets).
+  "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no box is started.",
+  "admin.engines_catalog_none_enabled": "No model is enabled. This engine will not start until one is.",
+  "admin.engines_model_started": "loaded at start",
+  "admin.engines_model_enable": "Enable",
+  "admin.engines_model_disable": "Disable",
+  "admin.engines_model_select": "Start with this",
+  // 🔴 Choosing another one does NOT swap a running box. It holds the one chosen at start, and
+  // redeploying here would kill a generation in flight (ADR 0072 decision 4). Say so first.
+  "admin.engines_model_next_start": "A new choice takes effect at the next start. A running engine is not swapped (that would kill a generation in flight).",
+  "admin.engines_model_window": "context {c} / output {o}",
+  "admin.engines_model_vram": "VRAM {n} MiB",
   // The box's clock and the service's clock are different facts: the first is when the EC2
   // instance registered, the second when the deployment last changed — which moves without any
   // box being bought.

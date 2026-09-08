@@ -242,4 +242,139 @@ describe("EnginesAdminView", () => {
     expect(host!.textContent).toContain("qwen3-coder-30b-a3b");
     expect(host!.textContent).toContain("sdxl-base-1.0");
   });
+
+  // --- the model catalogue (ADR 0072) ---------------------------------------
+
+  // "may this deployment use it" and "this is the one the engine starts with" are different
+  // questions, and the panel has to offer both: sd-server holds ONE checkpoint chosen by a
+  // startup flag, so enabling a second one does not load it.
+  it("selects a checkpoint through the model route, without restarting anything", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "sdxl-fine-tune", kind: "checkpoint", enabled: true },
+          ],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(
+      row({
+        has_models: true,
+        model_rows: [
+          { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true },
+          { id: "sdxl-fine-tune", kind: "checkpoint", enabled: true, selected: true },
+        ],
+      }),
+    );
+    await mount();
+    // Only the model that is NOT already the one started with offers the control.
+    const select = Array.from(host!.querySelectorAll(".engines-model button")).filter(
+      (b) => b.textContent === "これで起動する",
+    );
+    expect(select.length).toBe(1);
+    await click(select[0] as HTMLElement);
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/sdxl-fine-tune",
+      "PUT",
+      { selected: true },
+    );
+    // ⚠️ The panel must say that a running engine is not swapped. Without it an administrator
+    // presses this mid-generation expecting an immediate change (ADR 0072 decision 4).
+    expect(host!.textContent).toContain("次の起動から効きます");
+  });
+
+  // The llm role's equivalent is the model a request that named none gets, so the same button
+  // sends a different field. Getting this wrong would set `selected` on an engine that has no
+  // such concept and silently change nothing.
+  it("sends default, not selected, for a chat engine", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          key: "llm",
+          api: "chat",
+          provider: "llamacpp",
+          has_models: true,
+          model_rows: [{ id: "qwen3", kind: "gguf", enabled: true }],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
+    await mount();
+    const select = Array.from(host!.querySelectorAll(".engines-model button")).find(
+      (b) => b.textContent === "これで起動する",
+    );
+    await click(select as HTMLElement);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models/qwen3", "PUT", {
+      default: true,
+    });
+  });
+
+  // A disabled model stays on the panel — this is the only place it can be turned back on.
+  it("keeps a disabled model reachable and offers to enable it", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "parked", kind: "checkpoint", enabled: false },
+          ],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
+    await mount();
+    expect(host!.textContent).toContain("parked");
+    const enable = Array.from(host!.querySelectorAll(".engines-model button")).find(
+      (b) => b.textContent === "有効にする",
+    );
+    await click(enable as HTMLElement);
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/parked", "PUT", {
+      enabled: true,
+    });
+  });
+
+  // A LoRA is never something an engine is started with, so the control that would say so is
+  // not offered — the check the Agent also makes when it builds the tool's enum.
+  it("does not offer to start with a LoRA", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "watercolour", kind: "lora", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const select = Array.from(host!.querySelectorAll(".engines-model button")).filter(
+      (b) => b.textContent === "これで起動する",
+    );
+    expect(select.length).toBe(0);
+    expect(host!.textContent).toContain("LoRA");
+  });
+
+  // An empty catalogue is the reason the controller refuses to start the engine, so it gets a
+  // sentence. A blank area here reads as "still loading" and an administrator waits for a box
+  // that is never coming.
+  it("says why an engine with no catalogue will not start", async () => {
+    api.mockResolvedValue({ engines: [row({ has_models: false, model_rows: [] })] });
+    await mount();
+    expect(host!.textContent).toContain("カタログは空です");
+  });
+
+  it("says when models exist but none is enabled", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({ has_models: false, model_rows: [{ id: "parked", kind: "checkpoint", enabled: false }] }),
+      ],
+    });
+    await mount();
+    expect(host!.textContent).toContain("有効なモデルがありません");
+  });
 });

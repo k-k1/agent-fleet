@@ -27,6 +27,20 @@ export const admin = {
   // 出てしまうと、空白＝未知だったものが断定として読まれ、そのまま GPU を止める判断に使われる。
   "admin.engines_model_loaded": "（読み込み済）",
   "admin.engines_model_declared": "（宣言。まだ読み込まれていません）",
+  // --- モデルカタログ（ADR 0072）---
+  // 「有効/無効」と「これで起動する」は別の問い。前者は配備が使ってよいか、後者は
+  // sd-server が抱える 1 つのチェックポイント（llm なら model 未指定の既定）。
+  "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、箱も起動しません。",
+  "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
+  "admin.engines_model_started": "起動時に読み込む",
+  "admin.engines_model_enable": "有効にする",
+  "admin.engines_model_disable": "無効にする",
+  "admin.engines_model_select": "これで起動する",
+  // 🔴 選び直しても走っている箱は入れ替えない。抱えているのは起動時に決めた 1 つで、
+  // ここで再デプロイすると生成中の要求を殺す（ADR 0072 決定 4）。だから先に言っておく。
+  "admin.engines_model_next_start": "選び直しは次の起動から効きます。走っているエンジンは入れ替えません（生成中の要求を殺さないため）。",
+  "admin.engines_model_window": "窓 {c} / 出力 {o}",
+  "admin.engines_model_vram": "VRAM {n} MiB",
   // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
   // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
   "admin.engines_since_box": "箱の起動 ",

@@ -170,6 +170,65 @@
   color: var(--dialog-muted);
 }
 
+/* The model catalogue (ADR 0072). One block per model, not a table: the facts under a model are
+   omitted rather than blanked when they are unknown, and a table would draw an empty cell for
+   each of them — which is exactly the "a plausible blank reads as a fact" problem the status
+   block above is written to avoid. */
+.engines-models {
+  margin-top: 10px;
+}
+
+.engines-model-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A disabled model is dimmed rather than hidden. This panel is the only place one can be turned
+   on, so filtering them out would put them out of reach. */
+.engines-model {
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+  padding: 6px 8px;
+  opacity: 0.6;
+}
+
+.engines-model.on {
+  opacity: 1;
+}
+
+.engines-model-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Pushes the buttons to the trailing edge and keeps them there when the id wraps. */
+.engines-model-actions {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.engines-model-tag {
+  font-size: 11px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--dialog-muted);
+}
+
+.engines-model-desc,
+.engines-model-meta {
+  font-size: 12px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
 .engines-history {
   margin-top: 10px;
 }
