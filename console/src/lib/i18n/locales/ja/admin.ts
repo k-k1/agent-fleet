@@ -27,6 +27,45 @@ export const admin = {
   // 出てしまうと、空白＝未知だったものが断定として読まれ、そのまま GPU を止める判断に使われる。
   "admin.engines_model_loaded": "（読み込み済）",
   "admin.engines_model_declared": "（宣言。まだ読み込まれていません）",
+  // --- モデルカタログ（ADR 0072）---
+  // 「有効/無効」と「これで起動する」は別の問い。前者は配備が使ってよいか、後者は
+  // sd-server が抱える 1 つのチェックポイント（llm なら model 未指定の既定）。
+  "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、箱も起動しません。",
+  "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
+  "admin.engines_model_started": "起動時に読み込む",
+  "admin.engines_model_enable": "有効にする",
+  "admin.engines_model_disable": "無効にする",
+  "admin.engines_model_select": "これで起動する",
+  // 🔴 選び直しても走っている箱は入れ替えない。抱えているのは起動時に決めた 1 つで、
+  // ここで再デプロイすると生成中の要求を殺す（ADR 0072 決定 4）。だから先に言っておく。
+  "admin.engines_model_next_start": "選び直しは次の起動から効きます。走っているエンジンは入れ替えません（生成中の要求を殺さないため）。",
+  "admin.engines_model_window": "窓 {c} / 出力 {o}",
+  // 🔴 「削除」ではなく「登録を消す」。CP に `s3:DeleteObject` は無く、足すつもりも無い
+  // （決定 7。消すのは取り込みタスクの仕事で P4）。ファイルはバケットに残る。
+  "admin.engines_model_forget": "登録を消す",
+  // P4 の取り込み（HF から取ってくる）ではなく、既にバケットに在るファイルを「これは
+  // 何か」と書き留めるだけの口。種は役ごとに 1 行しか作らないので、これが無いと
+  // 「CloudFormation を触らずに別のチェックポイントへ」の選び先が無い。
+  "admin.engines_model_add": "バケットのファイルを登録する",
+  "admin.engines_model_add_id": "id",
+  "admin.engines_model_add_key": "キー",
+  "admin.engines_model_add_desc": "説明",
+  // 🔴 窓は「両方か、どちらも書かないか」。context だけだと opencode は出力上限 0 を
+  // 32,000 と読み、32k のモデルが使える窓 768 トークンになる（ADR 0072 決定 3）。
+  "admin.engines_model_add_ctx": "窓",
+  "admin.engines_model_add_out": "出力上限",
+  // CP は S3 を見られないので、同期の秒数を出せる唯一の出どころが宣言されたサイズ。
+  "admin.engines_model_add_bytes": "サイズ",
+  "admin.engines_model_add_go": "登録する",
+  "admin.engines_model_add_note": "id は利用者が選ぶ名前、キーはバケットの中のパス、説明はエージェントが読む 1 行です。窓と出力上限は両方書いたときだけ効きます（片方だけは無視します——出力上限を書かないと 32,000 と読まれ、32k のモデルが 768 トークンになるため）。サイズ（バイト）は「同期 +N 秒」の推定に使うだけで任意です。CP は S3 を見ません（権限を持たせていません）ので、キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
+  "admin.engines_model_vram": "VRAM {n} MiB",
+  // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
+  // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。
+  "admin.engines_model_sync": "同期 +{n} 秒（推定）",
+  // いま VRAM に載っているモデルと、その入れ替わりの回数。1 度に 1 つしか抱えない設計の
+  // 価格で、「warm」だけを出していると見えなくなる。
+  "admin.engines_warm_model": "VRAM 上: ",
+  "admin.engines_model_swaps": "この CP が起きてからのモデル交替: {n} 回",
   // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
   // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
   "admin.engines_since_box": "箱の起動 ",

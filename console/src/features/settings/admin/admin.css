@@ -170,6 +170,119 @@
   color: var(--dialog-muted);
 }
 
+/* The model catalogue (ADR 0072). One block per model, not a table: the facts under a model are
+   omitted rather than blanked when they are unknown, and a table would draw an empty cell for
+   each of them — which is exactly the "a plausible blank reads as a fact" problem the status
+   block above is written to avoid. */
+.engines-models {
+  margin-top: 10px;
+}
+
+.engines-model-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* A disabled model is dimmed rather than hidden. This panel is the only place one can be turned
+   on, so filtering them out would put them out of reach. */
+.engines-model {
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+  padding: 6px 8px;
+  opacity: 0.6;
+}
+
+.engines-model.on {
+  opacity: 1;
+}
+
+.engines-model-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Pushes the buttons to the trailing edge and keeps them there when the id wraps. */
+.engines-model-actions {
+  margin-inline-start: auto;
+  display: flex;
+  gap: 4px;
+}
+
+.engines-model-tag {
+  font-size: 11px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 999px;
+  padding: 0 6px;
+  color: var(--dialog-muted);
+}
+
+.engines-model-desc,
+.engines-model-meta {
+  font-size: 12px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
+}
+
+/* Registering a row: ONE field per line, each with its own label.
+   The fields are not interchangeable — an S3 key, a token count and a byte count look nothing
+   alike, and putting one in the wrong box is silent (the control plane never reads the bucket).
+   A strip of identical inputs labelled only by placeholder text loses its labels the moment
+   somebody starts typing, which is exactly when they are wanted. */
+.engines-model-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+}
+
+.engines-model-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+/* A fixed label column so the inputs line up. The labels are single words on purpose — what
+   each field means, and the rule that the window only counts in pairs, is the paragraph under
+   the form; a label long enough to explain itself wraps to two lines in both locales. */
+.engines-model-add-row > span {
+  flex: 0 0 8ch;
+  color: var(--dialog-muted);
+}
+
+.engines-model-add-row > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.engines-model-add-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* No label column to line up with at phone width: the label goes above its input, and the
+   buttons stop being two half-width boxes side by side. */
+@media (max-width: 760px) {
+  .engines-model-add-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  .engines-model-add-row > span {
+    flex: 0 0 auto;
+  }
+}
+
 .engines-history {
   margin-top: 10px;
 }

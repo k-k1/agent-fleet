@@ -48,8 +48,22 @@ type EngineProvider struct {
 	Models   []string // model ids, declared by the stack (the engine is asleep)
 
 	// The window the engine was started with (llama-server's -c) and the output cap declared
-	// with it, or 0 for a stack that predates them. One pair per ENGINE, not per model: one
-	// llama-server serves one gguf with one -c, so every id in Models shares that window.
+	// with it, or 0 when nobody declared them. The ENGINE-wide fallback: it describes the model
+	// the engine will start with, and it is what a Control Plane older than the model catalogue
+	// sends.
+	ContextTokens   int
+	MaxOutputTokens int
+
+	// Windows is the per-model form (ADR 0072 decision 3). It wins over the pair above for any
+	// id it names. The distinction stopped being academic with the catalogue: two models with
+	// different windows used to have to be two engines with two provider ids, because there was
+	// only one place to put the number.
+	Windows map[string]EngineModelWindow
+}
+
+// EngineModelWindow is one model's declared context and output cap. Both or neither are
+// meaningful — see engineProviderEntry for the measurement behind that.
+type EngineModelWindow struct {
 	ContextTokens   int
 	MaxOutputTokens int
 }
@@ -161,8 +175,16 @@ func engineProviderEntry(e EngineProvider) map[string]any {
 		//
 		// So a stack that declares only one of them gets neither: today's behaviour, rather
 		// than a worse one dressed up as a fix.
-		if e.ContextTokens > 0 && e.MaxOutputTokens > 0 {
-			m["limit"] = map[string]any{"context": e.ContextTokens, "output": e.MaxOutputTokens}
+		//
+		// The model's own window wins over the engine's. With ADR 0072's catalogue an engine
+		// can offer several models with different `-c` values, and writing the engine-wide
+		// number against all of them would advertise the wrong context for every model but one.
+		ctx, out := e.ContextTokens, e.MaxOutputTokens
+		if w, ok := e.Windows[id]; ok && w.ContextTokens > 0 {
+			ctx, out = w.ContextTokens, w.MaxOutputTokens
+		}
+		if ctx > 0 && out > 0 {
+			m["limit"] = map[string]any{"context": ctx, "output": out}
 		}
 		models[id] = m
 	}

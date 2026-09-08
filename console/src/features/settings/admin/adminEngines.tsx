@@ -36,11 +36,47 @@ type EngineBox = {
   since?: string;
 };
 
+/** One entry of the model catalogue (ADR 0072). What the engine may load is a declaration an
+ *  administrator edits here, not a CloudFormation parameter — which is the whole point of the
+ *  ADR: swapping a checkpoint is an operational act, performed while the GPU is asleep. */
+type EngineModel = {
+  id: string;
+  kind?: string;
+  enabled: boolean;
+  /** The image role's ONE checkpoint (sd-server holds one, chosen at startup) and the llm
+   *  role's answer to a request that named no model. Exclusive within an engine. */
+  selected?: boolean;
+  default?: boolean;
+  description?: string;
+  context_tokens?: number;
+  max_output_tokens?: number;
+  vram_mib?: number;
+  /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
+   *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
+  license?: string;
+  license_name?: string;
+  license_url?: string;
+  base_model?: string;
+  precision?: string;
+  sizes?: string[];
+  files?: string[];
+  /** What enabling this model adds to the next cold start, in seconds, from the file sizes
+   *  whoever staged them declared. Absent when nobody declared one — the CP cannot look in S3
+   *  (ADR 0072 review R3), so this is an estimate and is labelled as one. */
+  sync_secs?: number;
+};
+
 type EngineRow = {
   key: string;
   api?: string;
   provider?: string;
   models?: string[];
+  /** Every row of the catalogue, enabled or not — this panel is where one is turned ON, so a
+   *  list filtered to the enabled ones would have no way to reach the others. */
+  model_rows?: EngineModel[];
+  /** Whether anything is enabled at all. Stated by the CP rather than inferred from the list,
+   *  because it is the reason the controller refuses to start the engine. */
+  has_models?: boolean;
   mode: string;
   enabled: boolean;
   managed: boolean;
@@ -50,6 +86,11 @@ type EngineRow = {
    *  llama-server binds its port 267 seconds before the weights are in VRAM (measured), so a
    *  panel showing only the ECS state reports an engine as up through its whole cold start. */
   warm?: boolean;
+  /** The model whose weights are actually in VRAM, and how many times that changed. Both are
+   *  in-memory facts of the CURRENT control-plane process (as window_units is), and the swap
+   *  count is the visible price of `--models-max 1`: every change cost an unload plus a load. */
+  warm_model?: string;
+  model_swaps?: number;
   /** Service events — the only place ECS writes down why a start failed. */
   events?: string[];
   service_since?: string;
@@ -119,6 +160,43 @@ export function EnginesAdminView() {
     }
   };
 
+  /** Enable / disable a model, or make it the one the engine starts with. The CP answers with
+   *  the whole engine row, so the panel takes its new state from the server rather than
+   *  guessing at the exclusivity rule — selecting one model clears another, and reproducing
+   *  that here would be a second copy of a rule that has to be enforced in a transaction. */
+  const setModel = async (key: string, id: string, patch: Record<string, boolean>) => {
+    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
+  };
+
+  const addModel = async (key: string, body: Record<string, unknown>) => {
+    await callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
+  };
+
+  const forgetModel = async (key: string, id: string) => {
+    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "DELETE", undefined, key);
+  };
+
+  const callModel = async (
+    busyKey: string,
+    path: string,
+    method: string,
+    body: unknown,
+    key: string,
+  ) => {
+    setBusy(busyKey);
+    try {
+      const d = await apiJSON(path, method, body);
+      if (d?.error) {
+        setErr(errText(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   if (rows === null) return <p className="muted pad">{tr("common.loading")}</p>;
 
   return (
@@ -152,6 +230,13 @@ export function EnginesAdminView() {
             {e.models?.length ? " " + tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared") : ""}
           </p>
           <EngineStatus row={e} />
+          <EngineModels
+            row={e}
+            busy={busy}
+            onChange={(id, patch) => setModel(e.key, id, patch)}
+            onForget={(id) => forgetModel(e.key, id)}
+            onAdd={(body) => addModel(e.key, body)}
+          />
           {e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
           {e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container
@@ -168,6 +253,249 @@ export function EnginesAdminView() {
       <p className="muted pad">{tr("admin.engines_note")}</p>
     </div>
   );
+}
+
+/** The model catalogue for one engine (ADR 0072 decision 7).
+ *
+ * Two controls per row and they are NOT the same question:
+ *
+ *   - enable/disable = "may this deployment use it at all". A disabled model is not synced onto
+ *     the box and not offered to any session.
+ *   - select = "this is the one the engine starts with". The image role holds ONE checkpoint,
+ *     chosen by a startup flag, so exactly one row carries it; the llm role's equivalent is the
+ *     model a request that named none gets.
+ *
+ * ⚠️ Selecting does NOT restart a running engine, and the note says so. The box holds one
+ * checkpoint chosen at start, so the change lands at the next start (ADR 0072 decision 4) —
+ * redeploying the service instead would kill whatever generation is in flight, and the person
+ * pressing this button has not been asked about that. */
+function EngineModels({
+  row,
+  busy,
+  onChange,
+  onForget,
+  onAdd,
+}: {
+  row: EngineRow;
+  busy: string;
+  onChange: (id: string, patch: Record<string, boolean>) => void;
+  onForget: (id: string) => void;
+  onAdd: (body: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const models = row.model_rows || [];
+  const isImage = row.api === "images";
+  return (
+    <div className="engines-models">
+      {/* An engine with no catalogue at all is the interesting case, not an empty section: the
+          controller refuses to start it and every request is refused, so it gets a sentence
+          rather than a blank area that reads as "still loading". */}
+      {models.length === 0 && <p className="form-err">{tr("admin.engines_catalog_empty")}</p>}
+      {models.length > 0 && !row.has_models && (
+        <p className="form-err">{tr("admin.engines_catalog_none_enabled")}</p>
+      )}
+      <ul className="engines-model-list">
+        {models.map((m) => {
+          const started = !!(m.selected || m.default);
+          const pending = busy === row.key + "/" + m.id;
+          const isLora = m.kind === "lora";
+          return (
+            <li key={m.id} className={m.enabled ? "engines-model on" : "engines-model"}>
+              <div className="engines-model-head">
+                <span className="mono">{m.id}</span>
+                {started && <span className="engines-model-tag">{tr("admin.engines_model_started")}</span>}
+                {isLora && <span className="engines-model-tag">LoRA</span>}
+                <span className="engines-model-actions">
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    disabled={pending}
+                    onClick={() => onChange(m.id, { enabled: !m.enabled })}
+                  >
+                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
+                  </button>
+                  {/* A LoRA is never something an engine is started with, so the control that
+                      would say so is not offered for one. */}
+                  {!isLora && !started && (
+                    <button
+                      type="button"
+                      className="ghost sm"
+                      disabled={pending}
+                      onClick={() => onChange(m.id, isImage ? { selected: true } : { default: true })}
+                    >
+                      {tr("admin.engines_model_select")}
+                    </button>
+                  )}
+                  {/* Forgetting the ROW. The file stays in the bucket — the CP has no
+                      s3:DeleteObject and is not getting one (ADR 0072 decision 7) — so the
+                      label says "forget", not "delete", and the note below says why. */}
+                  <button
+                    type="button"
+                    className="ghost sm"
+                    disabled={pending || started}
+                    onClick={() => onForget(m.id)}
+                  >
+                    {tr("admin.engines_model_forget")}
+                  </button>
+                </span>
+              </div>
+              {m.description && <p className="muted engines-model-desc">{m.description}</p>}
+              <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
+            </li>
+          );
+        })}
+      </ul>
+      <p className="muted">{tr("admin.engines_model_next_start")}</p>
+      <EngineModelAdd busy={busy === row.key + "/+"} isImage={isImage} onAdd={onAdd} />
+    </div>
+  );
+}
+
+/** Registering a file that is ALREADY in the models bucket.
+ *
+ * This is NOT the ingest — that fetches from Hugging Face, needs `ecs:RunTask` on the Control
+ * Plane, and is phase P4. It is the other half of what P4 will do for itself: write down what a
+ * staged file is. Without it the only catalogue row that ever exists is the seeded one, and
+ * "choose another checkpoint without touching CloudFormation" has nothing to choose.
+ *
+ * Few fields on purpose — most of what the catalogue can hold (the sizes, the licence) is better
+ * filled in by P4's ingest, which reads it from the model card instead of asking a person to
+ * retype it. Two exceptions earn their place, and both are about what happens AFTER the row
+ * exists:
+ *
+ *   - the WINDOW, for a chat engine. Since ADR 0072 P1 the window is per model, and a model
+ *     registered without one reaches opencode as context 0 — which switches auto-compaction off,
+ *     the exact failure the field exists to prevent. Both halves or neither (an output cap of 0
+ *     is read as 32,000, so a context alone leaves 768 usable tokens);
+ *   - the SIZE, because the control plane cannot look in S3 (ADR 0072 review R3) and this is the
+ *     only place the "sync +N s" estimate can come from. Optional: no size, no estimate. */
+function EngineModelAdd({
+  busy,
+  isImage,
+  onAdd,
+}: {
+  busy: boolean;
+  isImage: boolean;
+  onAdd: (body: Record<string, unknown>) => void;
+}) {
+  const tr = useT();
+  const [open, setOpen] = useState(false);
+  const [id, setId] = useState("");
+  const [s3Key, setS3Key] = useState("");
+  const [desc, setDesc] = useState("");
+  const [ctx, setCtx] = useState("");
+  const [out, setOut] = useState("");
+  const [bytes, setBytes] = useState("");
+
+  if (!open) {
+    return (
+      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+        {tr("admin.engines_model_add")}
+      </button>
+    );
+  }
+  const submit = () => {
+    if (!id.trim() || !s3Key.trim()) return;
+    const n = (v: string) => {
+      const parsed = Number(v.trim().replace(/[_,]/g, ""));
+      return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+    };
+    // Both halves of the window or neither: a context with no output cap leaves opencode 768
+    // usable tokens, which is worse than the no-limit default it would otherwise get.
+    const c = n(ctx);
+    const o = n(out);
+    onAdd({
+      id: id.trim(),
+      kind: isImage ? "checkpoint" : "gguf",
+      files: [{ s3Key: s3Key.trim(), bytes: n(bytes) }],
+      description: desc.trim(),
+      context_tokens: c && o ? c : 0,
+      max_output_tokens: c && o ? o : 0,
+    });
+    setOpen(false);
+    setId("");
+    setS3Key("");
+    setDesc("");
+    setCtx("");
+    setOut("");
+    setBytes("");
+  };
+  // One field per ROW, each with its own label. The fields are not interchangeable — an S3 key,
+  // a token count and a byte count look nothing alike and mistyping one into another is silent —
+  // so they are not laid out as a strip of look-alike boxes with placeholder text that vanishes
+  // the moment somebody types.
+  const field = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder = "",
+    numeric = false,
+  ) => (
+    <label className="engines-model-add-row">
+      <span>{label}</span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        inputMode={numeric ? "numeric" : undefined}
+        onChange={(ev) => set(ev.currentTarget.value)}
+      />
+    </label>
+  );
+  return (
+    <div className="engines-model-add">
+      {field(tr("admin.engines_model_add_id"), id, setId,
+        isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
+      {field(tr("admin.engines_model_add_key"), s3Key, setS3Key,
+        isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf")}
+      {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
+      {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
+          context at all, so offering the field there would ask for a number nothing reads. */}
+      {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
+      {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096", true)}
+      {field(tr("admin.engines_model_add_bytes"), bytes, setBytes, "1117320768", true)}
+      <div className="engines-model-add-actions">
+        <button type="button" className="primary sm" disabled={busy} onClick={submit}>
+          {tr("admin.engines_model_add_go")}
+        </button>
+        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+          {tr("common.cancel")}
+        </button>
+      </div>
+      {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
+          being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
+          next cold start, so the panel says so rather than implying a check happened. */}
+      <p className="muted">{tr("admin.engines_model_add_note")}</p>
+    </div>
+  );
+}
+
+/** The one-line facts under a model, each omitted when it is not known — the same rule the
+ *  status block follows. The licence is two fields on purpose: Hugging Face answers `other` for
+ *  both non-commercial models in ADR 0072's table, and showing only that says nothing. */
+function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
+  const bits: string[] = [];
+  if (m.context_tokens) {
+    bits.push(
+      (tr("admin.engines_model_window" as never) as string)
+        .replace("{c}", String(m.context_tokens))
+        .replace("{o}", String(m.max_output_tokens ?? 0)),
+    );
+  }
+  if (m.sizes?.length) bits.push(m.sizes.join(" "));
+  if (m.base_model) bits.push(m.base_model);
+  if (m.precision) bits.push(m.precision);
+  if (m.vram_mib) {
+    bits.push((tr("admin.engines_model_vram" as never) as string).replace("{n}", String(m.vram_mib)));
+  }
+  // What this model costs the next cold start. Stated as an estimate because it is one: S3 to
+  // the box ran at 104–147 MB/s over four measured starts, and this uses the slow end.
+  if (m.sync_secs) {
+    bits.push((tr("admin.engines_model_sync" as never) as string).replace("{n}", String(m.sync_secs)));
+  }
+  const licence = m.license_name || m.license;
+  if (licence) bits.push(licence);
+  if (m.files?.length) bits.push(m.files.join(" "));
+  return bits.join(" · ");
 }
 
 /** The collapsed history, one 14-day query per engine.
@@ -310,6 +638,32 @@ function EngineStatus({ row }: { row: EngineRow }) {
               <Sep />
               {tr("admin.engines_last_demand")}
               <span className="mono">{localStamp(row.last_demand)}</span>
+            </>
+          )}
+        </>
+      ),
+    });
+  }
+
+  // Which model is in VRAM right now, and what the taking of turns has cost. A router holding
+  // one model at a time (LlmModelsMax=1) reloads on every change of model — 267 s of weights,
+  // measured — and an engine that only ever says "warm" hides that entirely (ADR 0072
+  // decision 3). Both numbers are this CP process's own, like the demand count above.
+  if (row.warm_model || row.model_swaps) {
+    lines.push({
+      key: "warm-model",
+      body: (
+        <>
+          {row.warm_model && (
+            <>
+              {tr("admin.engines_warm_model")}
+              <span className="mono">{row.warm_model}</span>
+            </>
+          )}
+          {!!row.model_swaps && (
+            <>
+              {row.warm_model && <Sep />}
+              {tr("admin.engines_model_swaps").replace("{n}", String(row.model_swaps))}
             </>
           )}
         </>

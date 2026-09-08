@@ -323,3 +323,50 @@ func TestEngineTokenIsCachedPerEngine(t *testing.T) {
 		t.Fatalf("asks = %v, want one per engine", *asked)
 	}
 }
+
+// The `model_rows` a router engine sends, all the way through to opencode's config: two models
+// in one provider, each with its OWN window (ADR 0072 decision 3).
+//
+// This is the whole of the "two models in the launch menu" claim as the Agent can check it. The
+// launch menu itself is opencode reading this file, and what makes each entry usable is its
+// `limit`: a model listed without one is read as context 0, which switches auto-compaction off.
+func TestSyncEngineProvidersWritesAWindowPerModel(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	engineCatalogStub(t, `{"key":"llm","api":"chat","provider":"llamacpp","base_url":"/engine/llm/v1",`+
+		`"models":["qwen3-coder-30b-a3b","qwen2.5-coder-1.5b"],`+
+		`"context_tokens":32768,"max_output_tokens":4096,"model_rows":[`+
+		`{"id":"qwen3-coder-30b-a3b","context_tokens":32768,"max_output_tokens":4096,"default":true},`+
+		`{"id":"qwen2.5-coder-1.5b","context_tokens":8192,"max_output_tokens":2048}]}`)
+
+	syncEngineProviders()
+
+	b, err := os.ReadFile(filepath.Join(home, ".config", "opencode", "opencode.jsonc"))
+	if err != nil {
+		t.Fatalf("no opencode config written: %v", err)
+	}
+	var cfg struct {
+		Provider map[string]struct {
+			Models map[string]struct {
+				Limit struct{ Context, Output int } `json:"limit"`
+			} `json:"models"`
+		} `json:"provider"`
+	}
+	if err := json.Unmarshal(b, &cfg); err != nil {
+		t.Fatal(err)
+	}
+	models := cfg.Provider["llamacpp"].Models
+	if len(models) != 2 {
+		t.Fatalf("the launch menu would offer %d model(s): %s", len(models), b)
+	}
+	if got := models["qwen3-coder-30b-a3b"].Limit; got.Context != 32768 || got.Output != 4096 {
+		t.Errorf("the 30B's limit = %+v", got)
+	}
+	// ⚠️ The second model's own window, NOT the engine-wide 32,768. That number is the one the
+	// stack seeded from ADR 0071, and letting it win here would advertise four times the context
+	// this model was started with — the request is then refused by llama-server itself.
+	if got := models["qwen2.5-coder-1.5b"].Limit; got.Context != 8192 || got.Output != 2048 {
+		t.Errorf("the 1.5B's limit = %+v, want 8192/2048", got)
+	}
+}

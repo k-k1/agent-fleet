@@ -201,6 +201,11 @@ jobs:
       # fake `aws`, so it runs per PR as well.
       - name: teardown / bring-up order (the same check as release-gate)
         run: ./deploy/local/ecs-lifecycle-stub-test.sh
+      # The engine fetch sidecar lives inside a CloudFormation Mappings entry, where nothing
+      # type-checks it and the only feedback is a GPU box that comes up idle ten minutes
+      # later. This pulls it out of the template and runs it (ADR 0072 P0).
+      - name: engine fetch sidecar (real script, stub aws)
+        run: ./deploy/local/engine-sidecar-test.sh
 
   console:
     runs-on: ubuntu-latest

@@ -285,6 +285,11 @@ if [ -n "$APS" ]; then
 fi
 
 # --- 6) SSM ------------------------------------------------------------------
+# BeginsWith is a NAME prefix, not a path level, so this sweep also takes the parameters
+# CloudFormation does not own and would therefore leave behind: the engine active sets the
+# Control Plane publishes at /af-ws/engines/<key>/active (ADR 0072 decision 2). Left in place
+# they are read by the NEXT deployment's engine boxes, which would sync a checkpoint from a
+# bucket that no longer exists.
 WS_PARAMS="$("${AWS[@]}" ssm describe-parameters --parameter-filters "Key=Name,Option=BeginsWith,Values=/af-ws/" \
   --query 'Parameters[].Name' --output text 2>/dev/null | txt || true)"
 if [ -n "$WS_PARAMS" ]; then

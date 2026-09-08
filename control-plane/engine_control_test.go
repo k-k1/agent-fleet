@@ -176,6 +176,74 @@ func TestDecideEngineAction(t *testing.T) {
 			}),
 			testControlCfg(), engineActionNone, engineReasonOn,
 		},
+		// ADR 0072 decision 1(c). Without these three the placeholder container reaches
+		// RUNNING, never warms, and `running && !warmed` is not a failure state — so a
+		// `mode=on` deployment buys $1.26/hour for `sleep infinity` while the panel says
+		// "starting" for ever.
+		{
+			"on: an empty catalogue is not started at any price",
+			with(func(s *engineSnapshot) { s.state, s.mode, s.noModels = "stopped", engineModeOn, true }),
+			testControlCfg(), engineActionNone, engineReasonNoModel,
+		},
+		{
+			"on: an engine whose last model was disabled is stopped",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.noModels = "running", 1, engineModeOn, true
+			}),
+			testControlCfg(), engineActionStop, engineReasonNoModel,
+		},
+		{
+			"ondemand: demand over the threshold does not start an empty catalogue",
+			with(func(s *engineSnapshot) { s.state, s.windowUnits, s.noModels = "stopped", 9999, true }),
+			testControlCfg(), engineActionNone, engineReasonNoModel,
+		},
+		// RUNNING but never able to answer. Measured on the dev deployment: a task that started
+		// before the Control Plane had published the active set came up as the idle
+		// placeholder, reached RUNNING and never warmed — and `starting` was the only state
+		// the deadline covered, so nothing ever judged it (ADR 0072's P0 measurements, and the
+		// hole review R6 predicted).
+		{
+			"running but never warm past the deadline is a failed start",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.unwarmedSince = ago(10 * time.Minute) // deadline is 5
+			}),
+			testControlCfg(), engineActionStop, engineReasonUnwarmed,
+		},
+		{
+			"inside the deadline it is left alone — a cold start legitimately takes minutes",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.unwarmedSince = ago(time.Minute)
+			}),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
+		{
+			// 🔴 The clock is NOT "it is not warm right now". Judging on the instant stops a
+			// healthy engine over one failed probe, which is worse than the waste it prevents.
+			"a warm engine is never stopped for this, however long it has been up",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode = "running", 1, engineModeOn
+				s.warm, s.unwarmedSince = true, ago(10*time.Hour)
+			}),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
+		{
+			// The zero value means "nobody is tracking this" — every engine with no warm gate,
+			// VOICEVOX included — and must not be read as "unwarmed since the epoch".
+			"an untracked engine is not judged on warmth at all",
+			with(func(s *engineSnapshot) { s.state, s.desired, s.mode = "running", 1, engineModeOn }),
+			testControlCfg(), engineActionNone, engineReasonOn,
+		},
+		{
+			// The reason lands in the audit ledger next to a charge, so "the admin switched
+			// it off" must not be reported as "there was nothing to serve".
+			"off wins over an empty catalogue, so the ledger says why",
+			with(func(s *engineSnapshot) {
+				s.state, s.desired, s.mode, s.noModels = "running", 1, engineModeOff, true
+			}),
+			engineControlCfg{cooldown: 15 * time.Minute}, engineActionStop, engineReasonAdminOff,
+		},
 	}
 	for _, c := range cases {
 		action, reason := decideEngineAction(now, c.snap, c.cfg)

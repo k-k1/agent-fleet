@@ -55,6 +55,73 @@ RunTask のタスクレベル override で与え、Cloud Map にもサービス�
 ので、走っている最中に長さが変わると残りが化ける（この作業中に 1 回踏んだ）。編集したいときは
 `/tmp` へ写して走らせるか、終わるのを待つ。
 
+## `bench-image-engine.sh` / `bench-image-engine.py` —— 同じ L4 で ComfyUI に複数のチェックポイントを描かせる
+
+[ADR 0072](../../../../docs/decisions/0072-engine-model-catalog.ja.md) の実測に使ったもの。
+`60-engines` の **image 役の capacity provider に RunTask で 1 タスクだけ流し**、4 コンテナで
+測って S3 に落とす: fetch（バケットから ComfyUI の `models/` 配置へ。ファイルごとに秒数）→
+comfy（コミュニティイメージの焼き込みは古いので起動時に `--comfy-tag` へ checkout＋pip。
+`--phases` の `label:flags` ごとに ComfyUI を建て直す）→ bench（SDXL / Z-Image-Turbo /
+FLUX.2 klein 4B を各 2 回、往復、LoRA の有無を同 seed、512px）→ upload（絵と
+`results.jsonl` を `s3://<bucket>/bench/<run>/` へ）。
+
+```bash
+AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
+  deploy/aws/ecs/harness/bench-image-engine.sh --phases "default:,highvram:--highvram"
+```
+
+⚠️ **サービスにもスタックにも触らない**（`bench-tts-engine.sh` と同じ理由）。モデルは先に
+取り込みタスクでバケットに入れておく（README の「Getting a model into the catalogue」。
+必要なキーはスクリプトの `MODELS`）。ComfyUI のイメージは公式が無いので、コミュニティ
+イメージを `crane copy` で ECR の `af-engbench:comfyui` に写してから走らせる（手順は
+スクリプトの冒頭。GHCR から NAT 越しに毎回 5.4 GB を引かないため）。終わったらリポジトリごと消す。
+
+⚠️ **使った箱では走らない。** タスクの匿名 host volume は前のタスクの分が片づかないので、
+同じ 60 GB の箱に 2 本目を流すと fetch が `No space left` で落ちる（実測）。スクリプトは
+Managed Instances が箱を回収する（最後のタスクから約 8 分でクラスタの一覧から消える）のを
+待ってから RunTask する。停止直後の箱に載ったタスクは pull 開始まで **9.5 分** PENDING
+だった（新しい箱なら 30 秒）——待つほうが早い。
+
+⚠️ **ComfyUI に `--cache-none` を付けない。** ローダーノードの出力＝モデル本体がキャッシュ
+されず、**毎要求ディスクから読み直す**（warm の SDXL 1024px が 19 秒でなく 57 秒。実行後の
+VRAM 使用が 280 MiB に戻るのがその印）。`--highvram` を足しても直らない。
+
+⚠️ **実行中のこのスクリプトを編集しないこと**（上と同じ）。`bench-image-engine.py` は起動時に
+S3 へ写されるので、こちらは編集しても走行中の回には効かない。
+
+## `probe-image-engine.sh` / `probe-llm-engine.sh` —— 走っているエンジンに、VPC の中から 1 回聞く
+
+[ADR 0072](../../../../docs/decisions/0072-engine-model-catalog.ja.md) の完了の定義を観測する
+ためのもの。ベンチと違って**自分の箱を建てない**——既にある（か、これから起こす）エンジンに
+1 回聞くだけである。エンジンは私設サブネットにいて CP の SG しか通さないので、外から見る手は
+「メンバーのセッション」か「VPC の中のタスク」しかなく、これは後者。取り込みタスク定義を
+借りている（2 コンテナ・共有ボリューム・`sh -c` の entrypoint がそのまま要るもので、
+`60-engines` に資源を 1 つ足す余裕は無い）。
+
+```bash
+# 絵: 起こして 1 枚描かせ、S3 に置いて止める
+deploy/aws/ecs/harness/probe-image-engine.sh --profile af-sandbox --region ap-northeast-1 \
+  --wake --stop --seed 42 --name sdxl-before
+# 文字: ルーターに 2 つのモデルを片方ずつ聞き、交替の秒数を測る
+deploy/aws/ecs/harness/probe-llm-engine.sh --profile af-sandbox --region ap-northeast-1 \
+  --models qwen3-coder-30b-a3b,qwen2.5-coder-1.5b --watch
+```
+
+⚠️ **llm の `--wake` は ondemand のエンジンには効かない。** `update-service --desired-count 1`
+を叩いても、需要の印（`engine_<key>_demand_at`）が古ければコントローラが最初のティックで
+`stop (idle)` を出し、90 秒で pending タスクごと落とす（実測）。手で起こしたいときは
+**`run-task` でエンジンのタスク定義を capacity provider に直接流し**、タスクの私設 IP を
+`--engine http://<ip>:8080` で渡す。コントローラはサービスしか見ないので触られない。
+
+⚠️ **llm の鍵は SSM から、タスクの中で読む。** `--api-key` は SecureString で、読める役は
+CP のタスクロールだけなので `--overrides` の `taskRoleArn` でそれを着せている。鍵を環境変数で
+渡すと `RunTask` の要求ごと CloudTrail に残る。**代わりに S3 へ書けなくなる**（CP に S3 の
+権限は 1 つも無い）ので、転記はログに出る——`aws logs tail … --filter-pattern probe`。
+
+⚠️ **`--watch` は交替を 1 回買う。** `/health` と `/models` を 20 秒ごとに並べて見るモードで、
+GPU の箱では 5 分と $0.1 ほど。ルーターは重みを載せている最中でも `/health` に ok を返す
+——それを見るためのモードである。
+
 ## `probe-rtk.sh` —— rtk は「ロードする」だけでなく**使えるか**
 
 上の基盤とは独立した単体の検査で、**AWS を何も作らない**。ワークスペースのコンテナの中で

@@ -72,6 +72,28 @@ type engineCatalogRow struct {
 	// passed on rather than defaulted — see opencode.EngineProvider.
 	ContextTokens   int `json:"context_tokens"`
 	MaxOutputTokens int `json:"max_output_tokens"`
+	// ModelRows is the same models with what the CATALOGUE says about each (ADR 0072): its own
+	// window, the line an agent reads when it chooses, and — for the image role — the sizes the
+	// checkpoint was trained at, DECLARED rather than guessed from the id.
+	//
+	// Absent on a Control Plane older than the catalogue, which is why Models above stays: the
+	// two images are deployed separately and the Agent is upgraded on its own schedule.
+	ModelRows []engineCatalogModel `json:"model_rows"`
+	// Loras are the accessories, never something to start the engine with. Carried for the
+	// image role so generate_image can offer them by name (ADR 0072 decision 5, phase P3).
+	Loras []engineCatalogModel `json:"loras"`
+}
+
+// engineCatalogModel is one model as the catalogue describes it.
+type engineCatalogModel struct {
+	ID              string   `json:"id"`
+	ContextTokens   int      `json:"context_tokens"`
+	MaxOutputTokens int      `json:"max_output_tokens"`
+	Description     string   `json:"description"`
+	Sizes           []string `json:"sizes"`
+	BaseModel       string   `json:"base_model"`
+	Selected        bool     `json:"selected"`
+	Default         bool     `json:"default"`
 }
 
 // api defaults to chat, matching the CP's own reading of a table written before the field
@@ -192,6 +214,7 @@ func syncEngineProviders() {
 		providers = append(providers, opencode.EngineProvider{
 			Key: e.Key, Provider: e.Provider, BaseURL: base + e.BaseURL, Models: e.Models,
 			ContextTokens: e.ContextTokens, MaxOutputTokens: e.MaxOutputTokens,
+			Windows: engineModelWindows(e),
 		})
 	}
 	changed, err := opencode.WriteEngineProviders(providers)
@@ -210,6 +233,49 @@ func syncEngineProviders() {
 		// resumed before this call finished, and for a catalogue that changes later.
 		opencode.ApplyEngineChange(strings.Join(names, "; "))
 	}
+}
+
+// engineModelWindows is the per-model context/output declaration, or nil when the Control
+// Plane sent none — in which case opencode gets the engine-wide pair, exactly as before.
+func engineModelWindows(e engineCatalogRow) map[string]opencode.EngineModelWindow {
+	if len(e.ModelRows) == 0 {
+		return nil
+	}
+	out := map[string]opencode.EngineModelWindow{}
+	for _, m := range e.ModelRows {
+		if m.ID == "" || m.ContextTokens <= 0 {
+			continue
+		}
+		out[m.ID] = opencode.EngineModelWindow{
+			ContextTokens: m.ContextTokens, MaxOutputTokens: m.MaxOutputTokens,
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// handleEngineCatalogChanged (POST /engine/catalog-changed) is the Control Plane telling this
+// workspace that the model catalogue moved (ADR 0072 decision 7).
+//
+// The catalogue is cached for ten minutes because it is read on the tools/list path — every
+// turn, of every session — so without this push an administrator's new checkpoint would take
+// up to that long to appear in a launch menu. The TTL stays as the safety net: a workspace that
+// was starting, or unreachable, or created after the change, converges on its own.
+//
+// Called by the CP itself, like /engine/usage — never by the Console, so it needs no entry in
+// the CP's agent-proxy allowlist.
+func handleEngineCatalogChanged(w http.ResponseWriter, r *http.Request) {
+	// Drop the cache so the refresh below really re-reads rather than returning the copy that
+	// is up to ten minutes old.
+	engineCatalogState.mu.Lock()
+	engineCatalogState.at = time.Time{}
+	engineCatalogState.mu.Unlock()
+	// Detached from the request: syncEngineProviders dials the CP and then rewrites opencode's
+	// config, and the CP is not waiting for either.
+	go syncEngineProviders()
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"refreshing": true})
 }
 
 // --- the per-session token ------------------------------------------------------
@@ -322,10 +388,46 @@ func engineImageConn(ctx context.Context) (imagegen.EngineConn, bool) {
 		return imagegen.EngineConn{
 			BaseURL: base + e.BaseURL,
 			Token:   tok,
-			Models:  append([]string(nil), e.Models...),
+			Models:  engineImageModelIDs(e),
+			Sizes:   engineImageSizes(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
+}
+
+// engineImageModelIDs puts the SELECTED checkpoint first. sd-server holds one, chosen by a
+// startup flag, so the first id is the provider's default model and the one its Caps describe
+// — and after ADR 0072 which one that is, is an administrator's choice rather than the order
+// the stack happened to list them in.
+func engineImageModelIDs(e engineCatalogRow) []string {
+	out := make([]string, 0, len(e.Models))
+	for _, m := range e.ModelRows {
+		if m.Selected || m.Default {
+			out = append(out, m.ID)
+		}
+	}
+	for _, id := range e.Models {
+		if len(out) > 0 && out[0] == id {
+			continue
+		}
+		out = append(out, id)
+	}
+	return out
+}
+
+// engineImageSizes is the declared size list per model id, or nil when the catalogue says
+// nothing — in which case the provider goes on reading the id, as it always has.
+func engineImageSizes(e engineCatalogRow) map[string][]string {
+	out := map[string][]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && len(m.Sizes) > 0 {
+			out[m.ID] = m.Sizes
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // --- the usage the CP posts back -------------------------------------------------

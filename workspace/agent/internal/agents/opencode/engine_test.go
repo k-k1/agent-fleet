@@ -279,3 +279,45 @@ func mustConfigDir(t *testing.T) string {
 	}
 	return dir
 }
+
+// Two models, two windows — the shape ADR 0072's catalogue makes ordinary and ADR 0071's
+// engine-wide pair could not express at all.
+//
+// Under ADR 0071 the window was the ENGINE's (one llama-server, one GGUF, one -c), so two models
+// with different windows had to be two engines with two provider ids. In router mode each model
+// carries its own `c` into the preset, so the engine-wide number is only a fallback — and it has
+// to stay one: a model the catalogue says nothing about must not silently inherit another
+// model's context, and a model it does describe must not be overwritten by the engine's.
+func TestWriteEngineProvidersDeclaresAWindowPerModel(t *testing.T) {
+	engineTestHome(t)
+	if _, err := WriteEngineProviders([]EngineProvider{{
+		Key: "llm", Provider: "llamacpp", BaseURL: "https://cp/engine/llm/v1",
+		Models:        []string{"qwen3-coder-30b-a3b", "qwen2.5-coder-1.5b", "undescribed"},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+		Windows: map[string]EngineModelWindow{
+			"qwen3-coder-30b-a3b": {ContextTokens: 32768, MaxOutputTokens: 4096},
+			"qwen2.5-coder-1.5b":  {ContextTokens: 8192, MaxOutputTokens: 2048},
+		},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	root := readEngineConfig(t)
+	p, _ := root["provider"].(map[string]any)
+	entry, _ := p["llamacpp"].(map[string]any)
+	models, _ := entry["models"].(map[string]any)
+	for id, want := range map[string][2]float64{
+		"qwen3-coder-30b-a3b": {32768, 4096},
+		"qwen2.5-coder-1.5b":  {8192, 2048},
+		"undescribed":         {32768, 4096}, // falls back to the engine-wide pair
+	} {
+		model, _ := models[id].(map[string]any)
+		limit, _ := model["limit"].(map[string]any)
+		if limit == nil {
+			t.Errorf("%s has no limit: %v", id, model)
+			continue
+		}
+		if limit["context"] != want[0] || limit["output"] != want[1] {
+			t.Errorf("%s limit = %v, want context %v output %v", id, limit, want[0], want[1])
+		}
+	}
+}

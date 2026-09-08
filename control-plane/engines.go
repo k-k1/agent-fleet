@@ -36,24 +36,32 @@ import (
 // rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
 // the CP would have to ask the engine for is something it cannot ask.
 //
-// ContextTokens and MaxOutputTokens sit on the ENGINE rather than on each model, because that
-// is the real granularity: one llama-server process serves ONE gguf with ONE -c, and the
-// several ids in Models are aliases pointing at that one window. Two models with different
-// windows are two engines — two rows, and two provider ids, since the Agent keys opencode's
-// provider block by Provider and the second would otherwise overwrite the first. Zero means a
-// stack older than the field, and the Agent then writes no limit at all rather than guessing.
+// ⚠️ What the engine LOADS is no longer here. Models, ContextTokens, MaxOutputTokens and
+// ModelS3Key are now the SEED of the catalogue (ADR 0072 decision 7): they are read once, when
+// a role's catalogue is empty, so a deployment upgrading from ADR 0071 comes up serving exactly
+// what it served before. After that the catalogue is the declaration and these are ignored —
+// which is what stops a CloudFormation parameter overwriting an administrator's choice on every
+// CP restart. Everything else here (service, URL, health, capacity provider, idle, deadline,
+// mode) really is a property of the vessel and stays the stack's to declare.
 type engineDef struct {
-	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
-	API              string   `json:"api"`              // "chat" | "images" — see engineAPI* below
-	Service          string   `json:"service"`          // ECS service whose desired count moves
-	CapacityProvider string   `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
-	URL              string   `json:"url"`              // http://llm.af.internal:8080
-	Health           string   `json:"health"`           // "/health"
-	Provider         string   `json:"provider"`         // "llamacpp" — the provider id a Workspace configures
-	Models           []string `json:"models"`           // model ids offered as <provider>/<id>
-	ContextTokens    int      `json:"contextTokens"`    // the window the engine is STARTED with (llama-server -c)
-	MaxOutputTokens  int      `json:"maxOutputTokens"`  // output cap advertised with it
-	APIKeyParam      string   `json:"apiKeyParam"`      // SSM SecureString the engine's own --api-key is in
+	Key              string `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
+	API              string `json:"api"`              // "chat" | "images" — see engineAPI* below
+	Service          string `json:"service"`          // ECS service whose desired count moves
+	CapacityProvider string `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
+	URL              string `json:"url"`              // http://llm.af.internal:8080
+	Health           string `json:"health"`           // "/health"
+	// WarmPath is where "are there weights in memory" is asked, when that is a DIFFERENT
+	// question from "is it healthy". Empty (the image role, and any ADR 0071 table) means the
+	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
+	// with ok while holding nothing at all (ADR 0072 P1, measured), so warmth is read from each
+	// model's `status.value` instead.
+	WarmPath         string   `json:"warmPath"`
+	Provider         string   `json:"provider"`        // "llamacpp" — the provider id a Workspace configures
+	Models           []string `json:"models"`          // SEED ONLY: the model ids ADR 0071's stack declared
+	ContextTokens    int      `json:"contextTokens"`   // SEED ONLY: the window that model was started with
+	MaxOutputTokens  int      `json:"maxOutputTokens"` // SEED ONLY
+	ModelS3Key       string   `json:"modelS3Key"`      // SEED ONLY: where that model's one file is in the bucket
+	APIKeyParam      string   `json:"apiKeyParam"`     // SSM SecureString the engine's own --api-key is in
 	IdleSec          int      `json:"idleSec"`
 	StartDeadlineSec int      `json:"startDeadlineSec"`
 	Mode             string   `json:"mode"` // the DEFAULT mode; a stored setting wins
@@ -100,6 +108,59 @@ type engineRuntimeState struct {
 	settings store.SettingsStore
 	demand   *engineDemand
 	apiKey   string // llama-server's --api-key, read from SSM at startup; "" = the engine has none
+	// catalog is what this engine may load (ADR 0072). Never nil, but its store may be — a CP
+	// with no database answers "there are models" rather than stopping every engine.
+	catalog *engineCatalog
+	// ssm and activeParam are how the BOX is told what to load. Both empty on a dev CP with an
+	// inline table: nothing is reading the parameter there.
+	ssm         engineSSMWriteAPI
+	activeParam string
+	served      engineServed
+}
+
+// engineServed is which model this engine last answered with, and how often that changed.
+//
+// It exists because ADR 0072 decision 3 refuses to hide the price of `--models-max 1`: two
+// sessions using two models take turns, and every turn costs an unload plus 267 seconds of
+// weights going back into VRAM. A panel that showed only "warm" would show a healthy engine
+// while every answer paid for a reload.
+//
+// In memory and nowhere else, like the demand window's buckets: a CP replaced a minute ago
+// reports zero swaps while somebody is mid-conversation. The panel labels it accordingly rather
+// than pretending the number spans the engine's life.
+type engineServed struct {
+	mu    sync.Mutex
+	model string
+	swaps int
+}
+
+// noteServed records the model an answer actually came back as. Only successful answers count:
+// a 400 for a model the router does not hold did not move any weights.
+func (e *engineRuntimeState) noteServed(model string, ok bool) {
+	model = strings.TrimSpace(model)
+	if model == "" || !ok {
+		return
+	}
+	e.served.mu.Lock()
+	defer e.served.mu.Unlock()
+	if e.served.model != "" && e.served.model != model {
+		e.served.swaps++
+		log.Printf("%s: served model changed %s -> %s (%d swap(s) since this CP started)",
+			e.def.Key, e.served.model, model, e.served.swaps)
+	}
+	e.served.model = model
+}
+
+// servedModel is the last model to answer, and the number of changes seen. The model is
+// reported as "" once the engine is not warm — the box went away and took the weights with it,
+// so naming one would tell the panel a request is cheap when it is a cold start.
+func (e *engineRuntimeState) servedModel() (string, int) {
+	e.served.mu.Lock()
+	defer e.served.mu.Unlock()
+	if e.ctrl != nil && !e.ctrl.warmed() {
+		return "", e.served.swaps
+	}
+	return e.served.model, e.served.swaps
 }
 
 // engineRegistry is every engine this deployment runs. Nil (or empty) is the normal case —
@@ -249,9 +310,11 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 
 	var settings store.SettingsStore
 	var auditor engineAuditor
+	var models store.EngineModelStore
 	if mgr != nil && mgr.store != nil {
 		settings = mgr.store
 		auditor = mgr.store
+		models = mgr.store
 	}
 	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{}}
 	if mgr != nil {
@@ -260,18 +323,40 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	ecsc := ecs.NewFromConfig(ac)
 	cluster := firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")
 	for _, d := range table.Engines {
+		// The seed runs before anything reads the catalogue, so an upgrade from ADR 0071 comes
+		// up serving what it served before rather than as an engine with nothing to load
+		// (decision 7). A failure is logged and not fatal: an empty catalogue stops the engine
+		// starting, which is visible in the panel, and refusing to boot the whole CP over an
+		// optional feature is the larger outage.
+		if err := seedEngineCatalog(ctx, models, d); err != nil {
+			log.Printf("engines: seeding the %s catalogue failed: %v", d.Key, err)
+		}
 		st := &engineRuntimeState{
 			def: d,
 			ecs: &engineECS{
 				api: ecsc, key: d.Key, cluster: cluster,
 				service: d.Service, capacityProvider: d.CapacityProvider,
 			},
-			apiKey:   readEngineAPIKey(ctx, ssmc, d),
-			settings: settings,
+			apiKey:      readEngineAPIKey(ctx, ssmc, d),
+			settings:    settings,
+			catalog:     newEngineCatalog(models, d.Key),
+			ssm:         ssmc,
+			activeParam: engineActiveParamName(name, d.Key),
+		}
+		// Published at start as well as on every change: the box reads it when it starts, and a
+		// CP that came up after a catalogue edit it never saw (another replica's, or one made
+		// while this process was down) would otherwise leave the parameter stale forever.
+		if err := st.publishActiveSet(ctx); err != nil {
+			log.Printf("engines: %v", err)
 		}
 		cfg := engineControlCfgFor(d)
 		st.demand = newEngineDemand(settings, engineSettingsFor(d.Key).demandAt, cfg.window)
 		st.ctrl = newEngineController(st.ecs, engineSettingsFor(d.Key), st.warmProbe, st.demand, settings, auditor, cfg)
+		// The controller must not buy a $1.26/hour box for an engine that has nothing to load.
+		// Without this, `mode=on` with an empty catalogue starts the placeholder container
+		// (`sleep infinity`) and the controller then watches it for ever at 5-second intervals,
+		// because `running && !warmed` is not a failure state (ADR 0072 decision 1(c)).
+		st.ctrl.hasModels = st.catalog.hasModels
 		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
 		// not inside newEngineController because the VOICEVOX controller shares that
 		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series
@@ -281,7 +366,8 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		}
 		reg.byKey[d.Key] = st
 		log.Printf("engines: %s (%s) -> %s (service=%s idle=%s deadline=%s models=%s)",
-			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline, strings.Join(d.Models, ","))
+			d.Key, d.api(), d.URL, d.Service, cfg.idle, cfg.deadline,
+			strings.Join(st.modelIDs(ctx), ","))
 		if cfg.interval > 0 {
 			go st.ctrl.run(context.Background())
 		}
@@ -330,16 +416,23 @@ func (e *engineRuntimeState) controlCfg() engineControlCfg {
 	return engineControlCfgFor(e.def)
 }
 
-// modelIDs are the ids this engine's provider offers, as <provider>/<id>.
-func (e *engineRuntimeState) modelIDs() []string {
+// modelIDs are the ids this engine's provider offers, as <provider>/<id>. Read from the
+// CATALOGUE, not from the stack (ADR 0072 decision 1): a model an administrator switched off
+// is not something a session should find in its launch menu, and the stack no longer knows
+// which those are.
+func (e *engineRuntimeState) modelIDs(ctx context.Context) []string {
 	provider := e.def.Provider
 	if provider == "" {
 		provider = e.def.Key
 	}
-	out := make([]string, 0, len(e.def.Models))
-	for _, m := range e.def.Models {
-		if m = strings.TrimSpace(m); m != "" {
-			out = append(out, provider+"/"+m)
+	rows := e.catalog.enabled(ctx)
+	out := make([]string, 0, len(rows))
+	for _, m := range rows {
+		if engineModelIsLora(m) {
+			continue
+		}
+		if id := strings.TrimSpace(m.ID); id != "" {
+			out = append(out, provider+"/"+id)
 		}
 	}
 	return out

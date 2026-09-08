@@ -199,7 +199,7 @@ func (g engineGateway) issueSessionToken(w http.ResponseWriter, r *http.Request)
 		"token":      tok,
 		"expires_at": exp.UTC().Format(time.RFC3339),
 		"base_url":   "/engine/" + key + "/v1",
-		"models":     eng.modelIDs(),
+		"models":     eng.modelIDs(r.Context()),
 	})
 }
 
@@ -217,30 +217,90 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
-		out = append(out, engineCatalogRowFor(e.def))
+		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()))
+		if row == nil {
+			continue // nothing enabled: the same as switched off, from a Workspace's point of view
+		}
+		out = append(out, row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"engines": out})
 }
 
-// engineCatalogRowFor is one engine as the Agent reads it.
+// engineCatalogRowFor is one engine as the Agent reads it, built from the CATALOGUE rather
+// than from the stack (ADR 0072 decision 7).
 //
-// The window is reported only when the stack declared it. A zero here is not a small context,
-// it is "this stack is older than the field", and forwarding it would have the Agent advertise
-// a context of 0 to opencode — which switches auto-compaction off, i.e. exactly the state the
-// field exists to fix. Absent means absent, and the Agent leaves the limit unwritten.
-func engineCatalogRowFor(d engineDef) map[string]any {
-	row := map[string]any{
-		"key":      d.Key,
-		"api":      d.api(),
-		"provider": d.Provider,
-		"base_url": "/engine/" + d.Key + "/v1",
-		"models":   d.Models,
+// Two shapes ride together, and they are not redundant:
+//
+//   - `models` stays a flat list of ids, because that is what an Agent old enough to predate
+//     this ADR reads to write opencode's provider block. Removing it would take the launch
+//     menu away from every workspace image not yet rebuilt.
+//   - `model_rows` carries the same models with the per-model window, description and declared
+//     sizes. The window is per MODEL now, which is what removes ADR 0071's "two models with
+//     different windows are two engines".
+//
+// The window is reported only when it was declared. A zero is not a small context, it is
+// "nobody said" — and forwarding it has the Agent advertise a context of 0 to opencode, which
+// switches auto-compaction off, i.e. exactly the state the field exists to fix.
+//
+// nil when nothing is enabled. An engine with an empty catalogue cannot serve anything, so
+// offering it would put a model in a launch menu that answers 503 (decision 1).
+func engineCatalogRowFor(d engineDef, models []store.EngineModel) map[string]any {
+	ids := []string{}
+	rows := []map[string]any{}
+	loras := []map[string]any{}
+	for _, m := range models {
+		if engineModelIsLora(m) {
+			loras = append(loras, engineCatalogModelRow(m))
+			continue
+		}
+		ids = append(ids, m.ID)
+		rows = append(rows, engineCatalogModelRow(m))
 	}
-	if d.ContextTokens > 0 {
-		row["context_tokens"] = d.ContextTokens
-		row["max_output_tokens"] = d.MaxOutputTokens
+	if len(ids) == 0 {
+		return nil
+	}
+	row := map[string]any{
+		"key":        d.Key,
+		"api":        d.api(),
+		"provider":   d.Provider,
+		"base_url":   "/engine/" + d.Key + "/v1",
+		"models":     ids,
+		"model_rows": rows,
+	}
+	if len(loras) > 0 {
+		row["loras"] = loras
+	}
+	// The engine-wide window, kept for an Agent that has no per-model reader yet. It is the
+	// window of whichever model the engine will start with, which for a one-model role is the
+	// same number ADR 0071 published.
+	if c, mo := engineStartWindow(models); c > 0 {
+		row["context_tokens"] = c
+		row["max_output_tokens"] = mo
 	}
 	return row
+}
+
+// engineStartWindow is the window of the model the engine is started with — the selected or
+// default one, falling back to the first. It exists so the engine-wide fields above describe
+// the model that will actually answer, rather than an arbitrary row.
+func engineStartWindow(models []store.EngineModel) (int, int) {
+	var first store.EngineModel
+	found := false
+	for _, m := range models {
+		if engineModelIsLora(m) {
+			continue
+		}
+		if !found {
+			first, found = m, true
+		}
+		if m.Selected || m.Default {
+			return m.ContextTokens, m.MaxOutputTokens
+		}
+	}
+	if !found {
+		return 0, 0
+	}
+	return first.ContextTokens, first.MaxOutputTokens
 }
 
 func (g engineGateway) issuerMembership(r *http.Request) (store.MembershipView, *apiError) {
@@ -326,11 +386,35 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_off", "this engine is switched off"})
 		return
 	}
+	// An engine whose catalogue is empty has nothing to answer with, and waking it would buy a
+	// GPU box to run `sleep infinity` (ADR 0072 decision 1). `engine_unavailable` rather than
+	// `engine_waking`: the sdcpp provider retries the second for a quarter of an hour, and no
+	// amount of waiting adds a model.
+	if !eng.catalog.hasModels(r.Context()) {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "engine_unavailable",
+			"this engine has no enabled model — an administrator has to select one"})
+		return
+	}
 
 	body, err := io.ReadAll(io.LimitReader(r.Body, engineMaxRequestBody))
 	if err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "could not read the request body"})
 		return
+	}
+	// A chat request naming a model the catalogue does not hold is refused HERE (ADR 0072
+	// decision 7). The point is not validation for its own sake: with P1's router the engine
+	// would happily load a file off disk by name, and "what this deployment offers" has to be
+	// the catalogue rather than the contents of a directory. Refusing before the wake also
+	// means a typo does not buy a GPU box.
+	//
+	// Only when a model is actually named, and only for chat: the image route deliberately
+	// sends no `model` (sd-server holds one, chosen at startup), and a GET has no body.
+	if eng.def.api() == engineAPIChat {
+		if m := engineRequestModel(body); m != "" && !engineCatalogHolds(eng.catalog.enabled(r.Context()), m) {
+			writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown",
+				"no model " + m + " in this engine's catalogue"})
+			return
+		}
 	}
 	// The request IS the demand (decision 5). Recorded before anything can fail, so an
 	// engine that is mid-start does not read as unwanted and get stopped by the controller
@@ -375,6 +459,31 @@ func askForStreamUsage(body []byte) []byte {
 		return body
 	}
 	return out
+}
+
+// engineRequestModel is the model an OpenAI-compatible request named, or "" when it named none
+// or the body is not JSON at all. Unparseable is "" rather than an error: the engine is the one
+// entitled to reject a body this gateway could not read (the same rule askForStreamUsage
+// follows), and refusing here would turn a bad request into a confusing 404.
+func engineRequestModel(body []byte) string {
+	var probe struct {
+		Model string `json:"model"`
+	}
+	if json.Unmarshal(body, &probe) != nil {
+		return ""
+	}
+	return strings.TrimSpace(probe.Model)
+}
+
+// engineCatalogHolds reports whether one of the enabled models answers to this id. LoRAs are
+// skipped: they are not something a chat request can be routed to.
+func engineCatalogHolds(models []store.EngineModel, id string) bool {
+	for _, m := range models {
+		if !engineModelIsLora(m) && m.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 // engineWantsStream reports whether the caller asked for a streamed answer. Read from the
@@ -665,10 +774,74 @@ func engineHealthy(ctx context.Context, eng *engineRuntimeState) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// warmProbe is the controller's readiness gate for this engine: the same health check, so
-// the controller and the gateway cannot disagree about whether the engine is up.
+// warmProbe is the controller's readiness gate for this engine.
+//
+// Without a WarmPath it is the same health check the gateway waits on, so the two cannot
+// disagree about whether the engine is up. With one — the llm role, which is a llama.cpp ROUTER
+// since ADR 0072 P1 — health and warmth stop being the same question: measured on b10853, a
+// router holding NO models at all answers /health with {"status":"ok"}. Reading warmth off that
+// would report an engine as ready through its whole 527-second cold start, tell the panel it is
+// warm while nothing is loaded, and defuse the `unwarmed` rule that exists to stop a box which
+// reached RUNNING and never came up.
 func (e *engineRuntimeState) warmProbe(ctx context.Context, _ bool) bool {
-	return engineHealthy(ctx, e)
+	if strings.TrimSpace(e.def.WarmPath) == "" {
+		return engineHealthy(ctx, e)
+	}
+	return len(engineLoadedModels(ctx, e)) > 0
+}
+
+// engineLoadedModels asks the router which models have weights in memory right now.
+//
+// ⚠️ This is the one question the CP does put to an engine, and it is legitimate under ADR 0053
+// because it is not a DECLARATION: what may be loaded is the catalogue's answer, given while the
+// box is asleep; what IS loaded is a fact only the running process holds. Nothing here decides
+// what may be offered.
+//
+// "Loaded" is the only value that counts as warm. `sleeping` (the router's idle unload) and
+// `loading` both mean the next request pays for weights again, which is exactly what warm is
+// supposed to promise it will not.
+func engineLoadedModels(ctx context.Context, eng *engineRuntimeState) []string {
+	path := strings.TrimSpace(eng.def.WarmPath)
+	if path == "" {
+		return nil
+	}
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodGet, strings.TrimRight(eng.def.URL, "/")+path, nil)
+	if err != nil {
+		return nil
+	}
+	if eng.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+eng.apiKey)
+	}
+	resp, err := engineClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var doc struct {
+		Data []struct {
+			ID     string `json:"id"`
+			Status struct {
+				Value string `json:"value"`
+			} `json:"status"`
+		} `json:"data"`
+	}
+	// Capped: the router lists every model it knows with its full argument list and metadata,
+	// and this runs on a 30-second timer.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range doc.Data {
+		if strings.EqualFold(m.Status.Value, "loaded") {
+			out = append(out, m.ID)
+		}
+	}
+	return out
 }
 
 // engineGatewayEnvName is the environment variable the session token is injected under, and

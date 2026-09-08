@@ -951,6 +951,31 @@ image service on that run, and `standup.sh` scales it to 0 without touching the 
 
 ### Getting a model into the catalogue
 
+Two steps since ADR 0072, and they are separate on purpose: **staging** puts the bytes in S3,
+**enabling** offers them. "The file is in the bucket" and "members may use it" are different
+facts, and deriving the second from the first is what ADR 0053 forbids.
+
+1. stage the file with the ingest task below;
+2. add the row and switch it on in **Settings → Admin → engines**. Until phase P4 puts the
+   ingest behind that panel too, the row is created there by hand (or by the seed, for the model
+   a deployment was already running).
+
+**Where the file goes** is ComfyUI's layout (ADR 0071 decision 6, ADR 0072 decision 2), so one
+tree serves all three engines: `llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`,
+`image/loras/`, `image/vae/`, `image/text_encoders/`, `image/diffusion_models/`. The box mirrors
+the bucket — `image/checkpoints/x.safetensors` becomes `/models/image/checkpoints/x.safetensors`
+— so the key IS the path and there is no second name to keep in step.
+
+⚠️ **A deployment staged before ADR 0072 has `image/sd_xl_base_1.0.safetensors` at the top
+level.** Move it with a server-side copy (no NAT, no re-download) and update `ImageModelS3Key` in
+the SAME change, because that parameter is what seeds the catalogue row:
+
+```bash
+aws s3 cp "s3://$BUCKET/image/sd_xl_base_1.0.safetensors" \
+          "s3://$BUCKET/image/checkpoints/sd_xl_base_1.0.safetensors"
+aws s3 rm "s3://$BUCKET/image/sd_xl_base_1.0.safetensors"
+```
+
 The engine never talks to Hugging Face. Models are staged into the stack's S3 bucket once,
 by a Fargate task, and the engine pulls from S3 at start:
 
@@ -974,8 +999,24 @@ The image role is the same task with a different URL and key — measured end to
      {"name":"fetch","environment":[
         {"name":"URL","value":"https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/resolve/main/sd_xl_base_1.0.safetensors"},
         {"name":"SHA256","value":"31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b"}]},
-     {"name":"upload","environment":[{"name":"KEY","value":"image/sd_xl_base_1.0.safetensors"}]}]}'
+     {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}]}'
 ```
+
+A **second** checkpoint is the same call again with another URL and key. Pick it by ADR 0072
+decision 10 — Apache-2.0 or OpenRAIL, not gated, and it has to fit an L4 without quantising:
+
+```bash
+  --overrides '{"containerOverrides":[
+     {"name":"fetch","environment":[
+        {"name":"URL","value":"https://huggingface.co/<owner>/<repo>/resolve/main/<file>.safetensors"},
+        {"name":"SHA256","value":"<the lfs sha256>"}]},
+     {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/<file>.safetensors"}]}]}'
+```
+
+⚠️ **For the `sdcpp` image role it must be a SINGLE-file checkpoint** — an SDXL fine-tune, not
+FLUX.2 klein or Z-Image. Those are split models (`--diffusion-model` + text encoders + VAE) and
+sd-server's flag assembly for them is unmeasured; they are ComfyUI's job in phase P2, where
+they WERE measured (ADR 0072, "measurements that settled a question", 2026-09-08).
 
 ⚠️ **The container overrides above take ONE string per command**, because the containers'
 `EntryPoint` is already `["sh","-c"]`. Passing `["sh","-c", "<script>"]` becomes
@@ -999,10 +1040,18 @@ an engine box.
 
 **The `llm` role:** nothing to configure. The Agent asks the CP which engines exist, writes the
 chat ones into opencode's global config as a provider, and `llamacpp/<model>` appears in the
-launch picker — **while the GPU box is still asleep**, which is why the model ids are a stack
-parameter rather than something read from the engine. Picking it and sending the first message
-starts the box and holds the request until it answers; the answer arrives on the **first
-attempt**, with no retry, which is the observation that verifies ADR 0071 decision 5.
+launch picker — **while the GPU box is still asleep**, which is why the ids come from the
+catalogue and never from the engine. Picking one and sending the first message starts the box
+and holds the request until it answers; the answer arrives on the **first attempt**, with no
+retry, which is the observation that verifies ADR 0071 decision 5.
+
+Since ADR 0072 P1 `llama-server` runs as a **router**: every enabled model appears in the
+picker with **its own context window**, and the request's `model` chooses between them. Two
+things follow, and both are the administrator's to weigh. Every enabled GGUF is synced onto the
+box, so the cold start grows with their total size (the panel estimates it per model), and
+`LlmModelsMax` (default **1**) caps how many are held at once — under that cap a request for the
+other model waits for the current answer to finish and then pays a full reload. The panel names
+the model in VRAM and counts the changes.
 
 **The `image` role:** it becomes a provider of the existing `generate_image` tool (ADR 0069),
 which is **off by default and turned on per user** in Settings → Agents ("画像生成"). Once the

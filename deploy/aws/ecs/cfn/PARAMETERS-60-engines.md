@@ -13,11 +13,51 @@ shortened in the move.
 
 Order matches the template.
 
+- [What this template learned the hard way](#what-this-template-learned-the-hard-way)
 - [Shared](#shared)
+- [The seed parameters](#the-seed-parameters)
 - [The `llm` role (llama.cpp)](#the-llm-role-llamacpp)
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
+- [The fetch sidecar](#the-fetch-sidecar)
+- [The idle wrapper](#the-idle-wrapper)
+- [Editing this template](#editing-this-template)
+- [The task roles](#the-task-roles)
+- [The models bucket](#the-models-bucket)
+- [The capacity providers](#the-capacity-providers)
+- [The engine services](#the-engine-services)
+- [The G-family quota](#the-g-family-quota)
 - [Ingest](#ingest)
+- [The model volume](#the-model-volume)
 - [The engine table](#the-engine-table)
+- [Cost allocation](#cost-allocation--every-billed-resource-in-this-stack-carries-af-role)
+
+## What this template learned the hard way
+
+**Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
+containers-roadmap #88, open since 2019), so ADR 0070's shape — "an ECS service whose desired
+count is 0 while nobody wants it" — is bought here from ECS Managed Instances instead: AWS owns
+the instance, the AMI and the NVIDIA driver, and terminates the box once the task is gone.
+
+All measured on a real cluster on 2026-09-07 through `deploy/aws/ecs/harness/engprobe.yaml`.
+
+- a Managed Instances capacity provider is CLUSTER-SCOPED: `ClusterName` is mandatory, and
+  without it ECS answers "The cluster provided is invalid";
+- `AmazonECSInfrastructureRolePolicyForManagedInstances` passes only roles named
+  `ecsInstanceRole*`, so the fleet-named instance role needs an explicit `iam:PassRole`
+  (measured: `UnauthorizedOperation` otherwise, visible only in CloudTrail);
+- `ClusterCapacityProviderAssociations` REPLACES the cluster's provider list and requires
+  `DefaultCapacityProviderStrategy` — so the full list is named in the template and the default
+  strategy is deliberately EMPTY. Put anything in it and a service that forgot its `LaunchType`
+  lands on the GPU box (ADR 0070 decision 1, ADR 0071 decision 1);
+- `InstanceRequirements` refuses `InstanceGenerations` together with generation-bearing type
+  names, and `AcceleratorCount` needs `AcceleratorTypes` alongside it;
+- `DesiredCount` on an `ECS::Service` returns to its declared value on EVERY service update —
+  see [The engine services](#the-engine-services).
+
+⚠️ **Exactly one stack in a deployment may own the cluster's capacity-provider associations**,
+because the API replaces the list rather than adding to it. That stack is this one. The
+measurement harness (`harness/engprobe.yaml`) owns the same list, so take it down first:
+`deploy/aws/ecs/harness/probe-managed-instances.sh down`.
 
 ## Shared
 
@@ -35,6 +75,42 @@ SSM parameter this stack writes the engine table to, and the single value 30-ing
 `parameter/af-ws/*` (20-platform, Sid `SsmWorkspaceParams`), and a name outside it deploys
 cleanly and then reads AccessDenied at CP start.
 
+## The seed parameters
+
+`LlmModelS3Key` / `LlmModelFile` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens`
+and the four `Image*` mirrors are **no longer what the engine loads** (ADR 0072 decision 1).
+The catalogue in the Control Plane's database is, and an administrator edits it from the admin
+panel while the GPU is asleep — the act these parameters made into a CloudFormation run.
+
+They survive as the **seed** (decision 7). A Control Plane whose catalogue for a role is EMPTY
+reads them once and creates the one row the deployment was already serving, so an upgrade from
+ADR 0071 comes up unchanged. After that they are ignored, which is the point: the seed must not
+overwrite an administrator's choice on every stack update.
+
+⚠️ **The S3 layout move and the seed happen together** (decision 2(f)). The bucket now follows
+ComfyUI's layout, so `image/sd_xl_base_1.0.safetensors` belongs under `image/checkpoints/`. Do
+the server-side copy AND update `ImageModelS3Key` in the same change: a seed pointing at the old
+key produces a row whose file is not there, and the failure surfaces in the fetch sidecar at the
+next cold start rather than at deploy time.
+
+`LlmModelFile` / `ImageModelFile` are unused outright. The box mirrors the bucket —
+`image/checkpoints/x.safetensors` lands at `/models/image/checkpoints/x.safetensors` — which is
+what keeps the active set inside SSM's 4,096 characters and leaves a tree ComfyUI reads
+unchanged.
+
+### `LlmEnabled` / `ImageEnabled`
+
+Whether the ROLE exists at all: its service, its Cloud Map name, its row in the engine table.
+`""` (the default) means "whatever `*ModelS3Key` said", which is the one release of
+compatibility decision 1 allows — an existing `params/60-engines` that switched a role off by
+emptying its model key still does.
+
+Under ADR 0071 an empty model key meant NO SERVICE, because a service whose fetch container
+could not find a file never stabilised and CloudFormation blocked on it — the two-pass stand-up.
+That is gone: the sidecar treats "nothing staged" as success and the engine idles
+([the idle wrapper](#the-idle-wrapper)), so a role can be created in one pass with an empty
+catalogue. What stops it costing money is the controller, not the template.
+
 ## The `llm` role (llama.cpp)
 
 ### `LlmImageTag`
@@ -51,20 +127,19 @@ engine never talks to Hugging Face (ADR 0071 decision 3 — measured at 4-236 MB
 tell which until you pull, against S3's steady 104-147 MB/s), so a model gets there through the
 ingest task.
 
-⚠️ **EMPTY (the default) means NO `llm` SERVICE IS CREATED** — only the bucket, the ingest task,
-the capacity provider and the roles. That is deliberate and it is the first half of a two-pass
-stand-up: CloudFormation blocks on ECS service stabilisation, and a service whose model is not
-in the bucket yet can never become stable, so creating it before there is anything to serve
-leaves the stack in `CREATE_IN_PROGRESS` with no later step able to rescue it (the same trap
-20-platform's ECR repositories exist to avoid). Deploy once with this empty, run the ingest
-task, then deploy again with the key.
+⚠️ **EMPTY with `LlmEnabled` unset still means NO `llm` SERVICE IS CREATED** — that is the one
+release of compatibility described under [the seed parameters](#the-seed-parameters). It no
+longer means a two-pass stand-up, though: since ADR 0072 the sidecar treats "nothing staged" as
+success and the engine idles, so the role can be created before anything is in the bucket. Say
+`LlmEnabled=true` for that.
 
 ### `LlmModelIds`
 
-Model ids the gateway advertises for this engine, i.e. what a user picks as `llamacpp/<id>`.
-DECLARED, never derived (ADR 0053): the engine is asleep when the launch menu is drawn, and
-waking a GPU box to enumerate one model is the opposite of on-demand. The first id is what
-`--alias` tells llama-server to answer to.
+The catalogue id of the model this deployment was already serving, and nothing more since ADR
+0072 — the ids a member picks come from the catalogue, which is also where the launch menu is
+drawn from while the box is asleep (ADR 0053 unchanged: nothing asks the engine). Only the FIRST
+id is used, as the seeded row's id. Under router mode `--alias` is set by the router itself, per
+preset section.
 
 ### `LlmContextTokens` / `LlmMaxOutputTokens`
 
@@ -89,15 +164,42 @@ what a workspace drives this engine with:
   usable tokens, i.e. compaction thrashing from the first turn. That is why the Agent writes both
   or neither, and why both carry a `MinValue`.
 
-One pair per **engine**, not per model: one `llama-server` process serves one GGUF with one `-c`,
-so the several ids in `LlmModelIds` are aliases sharing that window. Two models with different
-windows are two engines — two rows in the table, and **two `provider` ids**, because the Agent
-keys opencode's provider block by provider id and a second `llamacpp` would overwrite the first.
+🔴 **Since ADR 0072 P1 these are SEED values and the window is per MODEL.** The llm role runs
+llama-server in router mode, where each catalogue model carries its own `c` into the preset, so
+"one window per engine" — and the rule above it, that two windows mean two engines and two
+provider ids — is gone. These two parameters are read once, to build the row a deployment
+upgrading from ADR 0071 was already serving.
 
 ### `LlmExtraArgs`
 
 Extra `llama-server` flags. The defaults are the ones measured on an L4: all layers on the GPU and
-the chat template applied, which is what makes tool calls work. The context is `LlmContextTokens`.
+the chat template applied, which is what makes tool calls work. The router passes its own command
+line down to every model instance it spawns, so these reach each model (measured: `--jinja` and
+`--n-gpu-layers 99` appear in `/models`'s `status.args`).
+
+🔴 **Never put `-c` here.** A command-line argument WINS over the preset — that is the router's
+documented precedence and it was measured: with `-c 32768` on the router, two models whose preset
+sections said `c = 4096` and `c = 384` both came up `--ctx-size 32768`. One flag, and every
+model's declared window is silently gone. Windows belong to the catalogue.
+
+### `LlmModelsMax`
+
+How many models the router may hold at once (`--models-max`; upstream's default is 4, `0` =
+unlimited). **1 here, deliberately.** The router knows nothing about VRAM: a second 30B Q4 on an
+L4 does not make the box slow, it makes CUDA crash (ADR 0071 decision 2). At 1 the second model's
+first request costs an unload plus a load — 267 s of weights into VRAM, measured — which is the
+price of this design and is shown in the panel rather than hidden.
+
+Measured about that swap, on llama.cpp b10853 (CPU, two models, `--models-max 1`):
+
+- the eviction **waits for the model to be idle**: a request for the other model was queued for
+  48.6 s while an 854-chunk stream finished, and the stream was delivered whole. An in-flight
+  generation is not interrupted (ADR 0072 open question 1(c));
+- so the waiting request pays "rest of the current answer + load". A STREAMING request is held by
+  the gateway's SSE heartbeat and rides it out; a non-streaming one does not — it has no bytes to
+  show, so the gateway's own 45-second hold (`AF_ENGINE_PLAIN_HOLD`, deliberately under the ALB's
+  60) ends it with a retryable `503 engine_waking`. Raise `LlmModelsMax` only when the models
+  genuinely fit together.
 
 ### `LlmApiKeySsmParam`
 
@@ -305,6 +407,168 @@ should be tuned against (ADR 0071, P0 measurement 1).
 
 As `LlmMode`: the initial mode, a default the stored setting overrides.
 
+## The fetch sidecar
+
+One script for both roles, in the template's `Mappings` (ADR 0072 decision 1(a)). It reads the
+active set the Control Plane published to SSM, syncs the files the engine is about to load, and
+writes `/models/cmdline` — the model-specific half of the argument list. Everything
+role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
+and `ALIAS_FLAG` / `CTX_FLAG`.
+
+⚠️ **It is a LITERAL block (`|-`), never a folded one (`>-`).** YAML folding keeps a
+MORE-INDENTED line literal, so a continuation line indented to line up with its command silently
+keeps its newline — and the shell then reads the second half as a new command. Measured on the
+live deployment: a `jq` filter indented under its own `jq -r` ran as `jq -r --arg s "$START"`
+(which dumps the whole document) followed by `sh: [(.models[]?|…: command not found`. The
+service reached a steady state with the idle placeholder and nothing anywhere said why — one GPU
+box and ten minutes to notice. One command per line, and `deploy/local/engine-sidecar-test.sh`
+extracts the script as deployed and runs it (CI runs that).
+
+Four rules, each with a failure behind it:
+
+- **`ParameterNotFound` is EMPTY, not an error.** 60-engines is created BEFORE 30-ingress, so at
+  stack-creation time there is no Control Plane and no parameter at all. A `set -e` that failed
+  here would bring the two-pass stand-up back in a new shape (ADR 0072 decision 1(b)).
+- **The image role fetches only the STARTING checkpoint's files**, plus every enabled LoRA. S3
+  to EBS ran at 92–147 MB/s (measured), so syncing every enabled model would put minutes of
+  somebody else's checkpoint into every cold start. Enabling a model OFFERS it; selecting one
+  LOADS it, and sd-server holds exactly one.
+- **The llm role fetches EVERY enabled model**, because the router can be asked for any of them
+  at request time and a miss is a 500, not a wait (measured). The cold start therefore grows
+  with the sum of the enabled GGUFs — ADR 0072 decision 9, and what the panel's "sync +N s"
+  estimate is for.
+- **A file already on the box is not re-fetched.** The volume is fresh per task today, so this
+  is currently a no-op — it is what makes a warm box worth anything if ADR 0071 decision 7(c)
+  ever gets one.
+
+**Router presets (`PRESET_FILE`, the llm role).** With it set the script also writes an INI
+file, one section per catalogue model: the section NAME is the catalogue id, `model` is the
+path, `c` is that model's window, the model's own `args` become preset keys (`--jinja` →
+`jinja = true`, `-ngl 99` → `ngl = 99`) and the starting model gets `load-on-startup = true`.
+`/models/cmdline` then holds `--models-preset <file>` and nothing else: `-m`, `--alias` and `-c`
+leave the command line entirely (ADR 0072 decision 3), which is why `ALIAS_FLAG` and `CTX_FLAG`
+are empty for BOTH roles now. Measured against llama.cpp b10853:
+
+- a preset section whose name matches no file in any model source **defines** a model, so the
+  catalogue id is the model id even though the file is called something else entirely;
+- the router passes `--alias <section>` to each instance itself, so an `alias` key is not needed;
+- a section whose `model` path is missing does NOT stop the router — it starts, lists the model,
+  and only a request for that one fails (`500 model name=… failed to load`).
+
+`jq`, not a JSON-in-shell parser: `public.ecr.aws/aws-cli/aws-cli` carries `jq`, `python3` and
+`bash` (verified with `crane export`).
+
+## The idle wrapper
+
+Both engine containers start as `sh -c 'if [ -s /models/cmdline ]; then exec <engine> $(cat
+/models/cmdline); else … sleep infinity; fi'`. An engine with nothing to load has to COME UP
+rather than fail, or CloudFormation waits on a service that never stabilises.
+
+- **The binary path is spelled out** because the entry point is being overridden. llama.cpp's
+  own `ENTRYPOINT` is `["/app/llama-server"]` and `/app` is NOT on `PATH` (measured with
+  `crane config ghcr.io/ggml-org/llama.cpp:server-cuda`); sd-server's image entry point is
+  `/sd-cli`, the one-shot CLI, and it has no `curl` either — which is why the fetch is a
+  separate `aws-cli` container (measured 2026-09-07).
+- **sd-server's flags are spelled differently**: `--listen-ip` / `--listen-port`, not `--host` /
+  `--port`. `--lora-model-dir` is STATED rather than defaulted, because the default is the
+  current directory — `/` here — and that is the leading suspicion for the async job API dying
+  in `/proc` (ADR 0072 open question 6).
+- **`--models-max` is on the llm wrapper, not in the preset**: it is a property of the BOX (how
+  many models fit in this L4's VRAM), not of a model, so it stays a stack parameter
+  (`LlmModelsMax`) while everything per-model comes from the catalogue.
+- **`$(cat …)` is deliberately unquoted** — the file IS an argument list. The Control Plane
+  refuses to publish an S3 key containing whitespace for exactly this reason.
+- **Idling is not free**, and the template is not what makes it cheap. A placeholder container
+  reaches RUNNING and never warms, and `running && !warmed` is not a failure state, so the
+  controller would re-examine it every five seconds for ever. The Control Plane's
+  `decideEngineAction` refuses to start — and stops — an engine whose catalogue is empty
+  (`no_model`, ADR 0072 decision 1(c)). Without that half, `mode=on` buys $1.26/hour for
+  `sleep infinity`.
+
+## Editing this template
+
+It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so
+prose lives in this file and the template keeps a line or two per parameter. Two rules that have
+each cost a stand-up:
+
+- **Write every parameter in BLOCK form.** The one-line `{ Type: …, Default: … }` map reads as
+  REQUIRED to `standup.sh`'s preflight — it looks for a `Default:` on its own line — and one of
+  those stops every stand-up with "required parameter … is missing from params/60-engines"
+  (measured against the stub test).
+- **Move prose out BEFORE adding anything**, and check the size afterwards:
+  `wc -c deploy/aws/ecs/cfn/60-engines.yaml`. `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2
+  fails the moment a shipped template crosses the line.
+
+## The task roles
+
+**Engine tasks READ the model catalogue; the ingest task WRITES it and holds the Hugging Face
+token.** Two roles on purpose: the credential that can overwrite a model file must not sit on a
+box running a network service, and the operator's HF token must not either.
+
+⚠️ **No `ssmmessages:*` on either.** The measurement harness has it — the only way to reach a
+private-subnet engine from a laptop — and a production engine is not something anyone should be
+able to open a shell into.
+
+The engine role's `ssm:GetParameter` covers exactly the two parameters this stack's own engines
+read (`<EnginesSsmParamName>` and `.../<key>/active`), granted INSIDE this stack: ADR 0071
+decision 8's rule that a new permission never leaves the stack that needs it. The Control Plane
+side needs nothing new — its `ssm:PutParameter` is already scoped to `/af-ws/*` (20-platform,
+Sid `SsmWorkspaceParams`).
+
+## The models bucket
+
+S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch never
+touches the NAT). **Versioning is off deliberately**: a 17 GB model kept in duplicate for every
+re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (ADR 0071 decision 10).
+The layout is ComfyUI's, so all three engines read one tree (ADR 0072 decision 2).
+
+The image role's capacity provider is created even when no image model is staged: a provider
+costs nothing while nothing runs on it, it is named in the association list (which is replaced
+wholesale, so it cannot be added conditionally without churning the list), and deleting one a
+service used is a stack update that has to wait for the service to go first.
+
+## The capacity providers
+
+**One provider per role, and the two roles never share a box.** CUDA does not slow down when
+VRAM runs out, it crashes, and the two measured footprints (20.9 GB for the 30B, 7.4 GB for
+SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2). Two providers is also what
+makes `draining` observable per role — and what makes the deployment want 16 of the G-family
+quota, see below.
+
+⚠️ **`ClusterCapacityProviderAssociations` REPLACES the cluster's provider list** — the API is
+not additive — so `FARGATE` and `FARGATE_SPOT` have to be named alongside ours or every Fargate
+service in the deployment loses its provider. `DefaultCapacityProviderStrategy` is a REQUIRED
+property and is deliberately EMPTY: with a default strategy in place, a service that does not
+spell out `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
+line is the whole of that failure).
+
+## The engine services
+
+⚠️ **The engine image must ALREADY be in its ECR repository when this stack is created.**
+CloudFormation blocks on ECS service stabilisation, so a service that cannot pull leaves the
+stack in `CREATE_IN_PROGRESS` indefinitely. That is why the repositories live in 20-platform and
+`standup.sh` copies the images in during its images step, one stack earlier than this one
+(measured on 50-tts, 2026-09-06).
+
+⚠️ **`DesiredCount` is deliberately ABSENT, and this is load-bearing.** From the resource
+schema: for a NEW service an unspecified desired count defaults to 1; for an EXISTING one it is
+omitted from the update call. So CloudFormation creates the service running and then never
+touches the count again — which is what lets the engine be started and stopped out from under
+the template. Declaring `0` instead would reset the count on every task-definition or tag
+change, i.e. kill a GPU box mid-answer. `standup.sh` scales the new service to 0 straight after
+creation.
+
+⚠️ **And no `LaunchType` either**: a capacity provider strategy and a launch type are mutually
+exclusive. These are the ONE pair of services in the deployment allowed to omit `LaunchType`,
+and only because they name their provider explicitly.
+
+## The G-family quota
+
+Two capacity providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
+that was just stopped holds its 4 vCPU for the 7–8 minutes it spends draining, so waking one
+role while the other is on its way out needs 12. A deployment that uses both roles should hold
+16 or more (quota `L-DB2E81BA`, which is a support case and not auto-approved).
+
 ## Ingest
 
 ### `HfTokenSecretArn`
@@ -319,7 +583,66 @@ Fargate sizing for the ingest task. It stages the whole file on disk before uplo
 disk is the largest model the deployment can take in — 80 GiB covers the 22 GB FLUX checkpoint
 with room for the filesystem.
 
+### Running the ingest task by hand
+
+```
+aws ecs run-task --cluster <cluster> --launch-type FARGATE \
+  --task-definition af-<stack>-ingest \
+  --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}' \
+  --overrides '{"containerOverrides":[
+     {"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…/resolve/main/x.gguf"},
+                                    {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
+     {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/x.safetensors"}]}]}'
+```
+
+`harness/ingest-model.sh` is the same thing with the sha256 and the license resolved for you;
+ADR 0072 phase P4 moves the whole flow into the Console.
+
+⚠️ **Overriding a command here takes ONE string**, because the `EntryPoint` is already
+`["sh","-c"]`. Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which does nothing
+and exits 0 — it reads as success and ran nothing (measured).
+
+**The sha256 is not optional decoration.** "The file got bigger" is what a truncated download
+also looks like, and a GGUF that is 99 % there loads and then answers nonsense. The value comes
+from the HF API's `?blobs=true` `siblings[].lfs.sha256`, which was verified against a real
+`sha256sum` of the downloaded file.
+
+**Where the file goes** is the ComfyUI layout (ADR 0071 decision 6, ADR 0072 decision 2):
+`llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`, `image/loras/`, `image/vae/`,
+`image/text_encoders/`, `image/diffusion_models/`. All three engines read the same tree, so a
+checkpoint ingested for sd-server is already where ComfyUI would look for it.
+
+## The model volume
+
+Both engine task definitions mount an ANONYMOUS host volume — an empty `Host`, no `SourcePath`.
+Both halves of that are measured, and both are counter-intuitive:
+
+- **a named `SourcePath` does NOT work.** `StorageConfiguration.storageSizeGiB` sizes the DATA
+  volume Managed Instances attaches (what the container runtime uses); an arbitrary host path
+  like `/var/lib/…` lands on the ROOT filesystem, which is much smaller. Measured: with
+  `SourcePath` the fetch died with "No space left on device" on a brand-new 120 GiB box, every
+  time, and the service never started at all.
+- **the price of the anonymous form is a fresh directory per task.** A box that MI keeps
+  (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart onto the
+  very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
+  never reclaimed, so four starts on one kept box filled the disk.
+
+ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `*ScaleInAfter` is left at the
+AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
+at, which is not documented and was not worth another GPU hour to find; `useLocalStorage`, where
+the 250 GB instance store is the whole disk, is where to pick it up (ADR 0072 open question 9).
+
 ## The engine table
+
+**Cloud Map DNS, not Service Connect.** The CP reaches an engine at
+`http://<name>.<namespace>:8080` through the VPC resolver, so the gateway needs no sidecar and no
+`/etc/hosts` snapshot (ADR 0070 decision 8). At desired 0 the name has no A record at all — the
+normal state of an engine nobody is using, not an error.
+
+**Why the table is one SSM parameter.** 30-ingress has about 9.2 KB of template budget left and
+six parameters per engine would eat a third of it, so the CP is handed ONE parameter name and
+reads the table from SSM at startup. The name has to be under `/af-ws/` — that is the whole of
+the CP task role's SSM read scope.
 
 Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1
 or 2 rows (each role is staged independently), which the Control Plane reads once at startup.
@@ -334,30 +657,32 @@ the accounting to the Agent's `tool.imagegen` row (`images`, ADR 0071 decision 9
 no health endpoint at all (upstream `examples/server/api.md`), and `/v1/models` is the cheapest GET
 it answers. It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
 
+**The llm row carries `warmPath: /models`**, and the image row carries none. It is where the CP
+asks "are there weights in memory", which stopped being the same question as "is it healthy" the
+moment the llm role became a router: measured on b10853, a router with an EMPTY model list still
+answers `/health` with `{"status":"ok"}`, so a warm flag read from the health check would be true
+through the whole 527-second cold start. With `warmPath` set the CP reads `status.value` out of
+`/models` instead and calls the engine warm when at least one model is `loaded`. Declared rather
+than derived from the provider name, for the usual reason (ADR 0053): a second engine speaking
+the same API would otherwise inherit a probe nobody chose for it. `GET /models` neither triggers
+an autoload nor resets the router's idle timer (upstream README), so polling it is free.
+
 **The llm row carries `contextTokens` / `maxOutputTokens`** — see those parameters above. Nothing
 downstream can ask the engine for them: the box is asleep when the launch menu is drawn, which is
 the whole point of an on-demand engine. A row from a stack older than the fields omits them, and
 both the gateway and the Agent then say nothing rather than advertising a zero.
 
-## The `models` volume is anonymous
+**`models`, `contextTokens`, `maxOutputTokens` and `modelS3Key` are SEED fields** since ADR 0072
+— see [The seed parameters](#the-seed-parameters). Everything else in the row is a property of
+the vessel (service, URL, health path, capacity provider, idle window, start deadline, mode) and
+stays the stack's to declare.
 
-Each task definition mounts `- Name: models` / `Host: {}` — an ANONYMOUS host volume, an empty
-`Host` with no `SourcePath`. Both halves of that are measured, and both are counter-intuitive:
-
-- a named `SourcePath` does NOT work. `StorageConfiguration.storageSizeGiB` sizes the DATA volume
-  MI attaches (what the container runtime uses); an arbitrary host path like `/var/lib/…` lands on
-  the ROOT filesystem, which is much smaller. Measured: with `SourcePath` the fetch died with
-  "No space left on device" on a brand-new 120 GiB box, every time, and the service never started
-  at all.
-- the price of the anonymous form is that ECS allocates a FRESH directory per task, so a box that
-  MI keeps (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart
-  onto the very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories
-  are never reclaimed, so four starts on one kept box filled the disk.
-
-ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `scaleInAfter` is left at the
-AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
-at, which is not documented and was not worth another GPU hour to find; P4 can pick it up with
-`useLocalStorage`, where the 250 GB instance store is the whole disk.
+**The active set is a different parameter, and the stack does not write it.** The Control Plane
+publishes `<EnginesSsmParamName>/<key>/active` whenever the catalogue changes, and the box's
+fetch sidecar reads it. Two consequences worth stating: the `EngineTaskRole` grants
+`ssm:GetParameter` on `<EnginesSsmParamName>/*` (inside this stack, per ADR 0071 decision 8), and
+because CloudFormation does not own those parameters, **`teardown.sh` deletes them** — otherwise
+a torn-down deployment leaves `/af-ws/engines/*/active` behind for the next one to read.
 
 ## Cost allocation — every billed resource in this stack carries `af-role`
 

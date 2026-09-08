@@ -1,0 +1,340 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
+)
+
+func catalogStore(t *testing.T) *store.SQL {
+	t.Helper()
+	st, err := store.OpenSQLite(filepath.Join(t.TempDir(), "cp.db"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { st.Close() })
+	if err := st.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+	return st
+}
+
+// The active set is what the BOX reads, and SSM's Standard tier refuses a value over 4,096
+// CHARACTERS — measured against the real API on 2026-09-08, where 4,200 came back
+// `ValidationException`. ADR 0072 decision 2 pins the shape against a catalogue of 20 models
+// and 20 LoRAs, which is what "a deployment that actually uses this" looks like.
+//
+// This is the test that keeps the document small. Every field added to engineActiveSet is
+// multiplied by forty here, and the failure it prevents is silent: an over-long PutParameter
+// is refused, the parameter keeps yesterday's value, and the engine goes on loading the old
+// model with nothing in the panel to say why.
+func TestEngineActiveSetFitsInSSMStandardTier(t *testing.T) {
+	var rows []store.EngineModel
+	for i := 0; i < 20; i++ {
+		rows = append(rows, store.EngineModel{
+			Role: "image", ID: fmt.Sprintf("sdxl-community-fine-tune-%02d", i), Kind: "checkpoint",
+			Enabled: true, Selected: i == 0,
+			Files: []store.EngineModelFile{
+				{S3Key: fmt.Sprintf("image/checkpoints/sdxl_community_fine_tune_%02d.safetensors", i)},
+			},
+			// The parts that must NOT reach the box: they are the reason the document fits.
+			Description: strings.Repeat("a long description an agent reads when it chooses. ", 4),
+			License:     "creativeml-openrail-m", LicenseName: "openrail", VramMiB: 7379,
+			Sizes: []string{"1024x1024", "1152x896", "896x1152", "1216x832", "832x1216"},
+		})
+		rows = append(rows, store.EngineModel{
+			Role: "image", ID: fmt.Sprintf("watercolour-style-lora-v%02d", i), Kind: "lora",
+			Enabled: true, BaseModel: "sdxl",
+			Files: []store.EngineModelFile{
+				{S3Key: fmt.Sprintf("image/loras/watercolour_style_lora_v%02d.safetensors", i)},
+			},
+			Description: strings.Repeat("what this LoRA does to a picture. ", 4),
+		})
+	}
+	value, err := engineActiveSetJSON(buildEngineActiveSet("image", rows))
+	if err != nil {
+		t.Fatalf("20 models and 20 LoRAs must fit: %v", err)
+	}
+	t.Logf("20 models + 20 LoRAs = %d characters of %d", len(value), engineActiveSetMaxChars)
+
+	// And the limit is really enforced, rather than being a constant nobody compares against.
+	var many []store.EngineModel
+	for i := 0; i < 200; i++ {
+		many = append(many, store.EngineModel{
+			Role: "image", ID: fmt.Sprintf("model-%03d", i), Enabled: true,
+			Files: []store.EngineModelFile{{S3Key: fmt.Sprintf("image/checkpoints/m%03d.safetensors", i)}},
+		})
+	}
+	if _, err := engineActiveSetJSON(buildEngineActiveSet("image", many)); err == nil {
+		t.Fatal("an oversized active set was accepted — SSM would refuse it and nothing would notice")
+	}
+}
+
+// What the box is told, and what it is deliberately not told.
+func TestBuildEngineActiveSet(t *testing.T) {
+	rows := []store.EngineModel{
+		{Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true,
+			Files:       []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+			Description: "the one everybody has", License: "openrail++", VramMiB: 7379},
+		{Role: "image", ID: "klein-4b", Kind: "checkpoint", Enabled: true, Selected: true,
+			Files: []store.EngineModelFile{
+				{S3Key: "image/diffusion_models/klein.safetensors"},
+				{Flag: "--t5xxl", S3Key: "image/text_encoders/qwen_3_4b_fp8.safetensors"},
+			},
+			Args: []string{"--type", "q8_0"}},
+		{Role: "image", ID: "off-one", Kind: "checkpoint", Enabled: false,
+			Files: []store.EngineModelFile{{S3Key: "image/checkpoints/nope.safetensors"}}},
+		{Role: "image", ID: "watercolour", Kind: "lora", Enabled: true,
+			Files: []store.EngineModelFile{{S3Key: "image/loras/watercolour.safetensors"}}},
+	}
+	set := buildEngineActiveSet("image", rows)
+	if set.Start != "klein-4b" {
+		t.Errorf("start = %q, want the SELECTED checkpoint", set.Start)
+	}
+	if len(set.Models) != 2 {
+		t.Fatalf("a disabled model reached the box: %+v", set.Models)
+	}
+	if len(set.Loras) != 1 || set.Loras[0] != "image/loras/watercolour.safetensors" {
+		t.Errorf("loras = %+v", set.Loras)
+	}
+	// A LoRA must never be something the engine is started with, however the list is ordered.
+	for _, m := range set.Models {
+		if m.ID == "watercolour" {
+			t.Error("a LoRA was listed as a model")
+		}
+	}
+	// The split model keeps its flags, which is the whole reason the flag is stored rather
+	// than a role name that would need a mapping table on the box.
+	var klein engineActiveModel
+	for _, m := range set.Models {
+		if m.ID == "klein-4b" {
+			klein = m
+		}
+	}
+	if len(klein.Files) != 2 {
+		t.Fatalf("split model files = %+v", klein.Files)
+	}
+	// The flagless part is a bare string (it goes to the engine's own -m) and the other keeps
+	// its literal flag — the shorthand that pays for itself once per model in the deployment.
+	if k, ok := klein.Files[0].(string); !ok || k != "image/diffusion_models/klein.safetensors" {
+		t.Errorf("first file = %#v, want a bare key", klein.Files[0])
+	}
+	if f, ok := klein.Files[1].(engineActiveFile); !ok || f.Flag != "--t5xxl" {
+		t.Errorf("second file = %#v, want the flagged form", klein.Files[1])
+	}
+
+	// Nothing a person reads goes to the box. The 4,096-character budget is the reason, and a
+	// field that slipped in here would only be noticed once a real catalogue stopped fitting.
+	raw, _ := json.Marshal(set)
+	for _, leaked := range []string{"the one everybody has", "openrail++", "7379"} {
+		if strings.Contains(string(raw), leaked) {
+			t.Errorf("the active set carries %q, which belongs in the panel: %s", leaked, raw)
+		}
+	}
+
+	// Nothing selected: the first enabled model is started with, rather than nothing — an
+	// engine with models and no start flag comes up as the placeholder, which reads exactly
+	// like a broken deploy.
+	plain := buildEngineActiveSet("llm", []store.EngineModel{
+		{Role: "llm", ID: "a", Enabled: true, Files: []store.EngineModelFile{{S3Key: "llm/a.gguf"}}},
+	})
+	if plain.Start != "a" {
+		t.Errorf("start = %q with nothing selected", plain.Start)
+	}
+}
+
+// The seed is what makes an upgrade from ADR 0071 a no-op: the deployment comes up serving
+// what it served before, from the stack's own parameters, and never again.
+func TestSeedEngineCatalog(t *testing.T) {
+	ctx := context.Background()
+	st := catalogStore(t)
+	d := engineDef{
+		Key: "image", API: engineAPIImages, Provider: "sdcpp",
+		Models: []string{"sdxl-base-1.0"}, ModelS3Key: "image/checkpoints/sd_xl_base_1.0.safetensors",
+	}
+	if err := seedEngineCatalog(ctx, st, d); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	rows, err := st.ListEngineModels(ctx, "image")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %v %+v", err, rows)
+	}
+	m := rows[0]
+	if m.ID != "sdxl-base-1.0" || !m.Enabled || !m.Selected || m.Kind != "checkpoint" {
+		t.Fatalf("seeded row = %+v", m)
+	}
+	if len(m.Files) != 1 || m.Files[0].S3Key != "image/checkpoints/sd_xl_base_1.0.safetensors" {
+		t.Fatalf("seeded files = %+v", m.Files)
+	}
+
+	// Seeding again must NOT undo an administrator's choice. This is the whole point of the
+	// "only when empty" rule: the seed comes from a CloudFormation parameter, and the CP
+	// restarts on every stack update.
+	if _, err := st.SetEngineModelEnabled(ctx, "image", "sdxl-base-1.0", false); err != nil {
+		t.Fatalf("disable: %v", err)
+	}
+	if err := seedEngineCatalog(ctx, st, d); err != nil {
+		t.Fatalf("re-seed: %v", err)
+	}
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 || rows[0].Enabled {
+		t.Fatalf("the seed overwrote an administrator's choice: %+v", rows)
+	}
+
+	// A stack that stages no model seeds nothing at all, rather than a row pointing at "".
+	if err := seedEngineCatalog(ctx, st, engineDef{Key: "llm", Models: []string{"m"}}); err != nil {
+		t.Fatalf("empty seed: %v", err)
+	}
+	if rows, _ := st.ListEngineModels(ctx, "llm"); len(rows) != 0 {
+		t.Fatalf("a row was seeded with no S3 key: %+v", rows)
+	}
+}
+
+// A database error must never read as "there are no models": that answer stops a running GPU
+// and answers 503 to everybody using it (see the engineCatalog type comment).
+func TestEngineCatalogHasModels(t *testing.T) {
+	ctx := context.Background()
+	st := catalogStore(t)
+
+	if !newEngineCatalog(nil, "llm").hasModels(ctx) {
+		t.Error("a CP with no store must not report an empty catalogue")
+	}
+	c := newEngineCatalog(st, "llm")
+	if c.hasModels(ctx) {
+		t.Error("an empty catalogue reported models")
+	}
+	// A LoRA on its own is not something an engine can be started with.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "llm", ID: "l", Kind: "lora", Enabled: true,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	c.invalidate()
+	if c.hasModels(ctx) {
+		t.Error("a LoRA alone counted as something to serve")
+	}
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "llm", ID: "m", Kind: "gguf", Enabled: true,
+	}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	c.invalidate()
+	if !c.hasModels(ctx) {
+		t.Error("an enabled model was not seen")
+	}
+}
+
+func TestEngineActiveParamName(t *testing.T) {
+	if got := engineActiveParamName("/af-ws/engines", "llm"); got != "/af-ws/engines/llm/active" {
+		t.Errorf("got %q", got)
+	}
+	// A trailing slash in the stack's parameter must not produce a doubled one: SSM treats
+	// //llm as a different name, so the box would read a parameter nobody writes.
+	if got := engineActiveParamName("/af-ws/engines/", "image"); got != "/af-ws/engines/image/active" {
+		t.Errorf("got %q", got)
+	}
+	// No base = an inline dev table. Nothing reads the parameter, so nothing is published.
+	if got := engineActiveParamName("", "llm"); got != "" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// The two documents the dev deployment's image role is driven with in ADR 0072's P0
+// measurements, byte for byte.
+//
+// They are here because the live check could not go through the admin API: driving it needs a
+// super_admin browser session, and the P0 measurement was made from AWS credentials alone. So
+// the active set was published by hand — and this is what makes that a faithful stand-in for
+// what the Control Plane's own publishActiveSet would have written, rather than a plausible
+// hand-typed JSON that happens to work.
+//
+// The link this does NOT cover is the admin route writing the row, which is
+// TestEngineAdminModelLifecycle's job.
+func TestEngineActiveSetForTheDevDeployment(t *testing.T) {
+	sdxl := store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}
+	jugg := store.EngineModel{
+		Role: "image", ID: "juggernaut-xl-v9", Kind: "checkpoint", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/juggernaut_xl_v9.safetensors"}},
+	}
+	got, err := engineActiveSetJSON(buildEngineActiveSet("image", []store.EngineModel{sdxl, jugg}))
+	if err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	want := `{"v":1,"key":"image","start":"sdxl-base-1.0","models":[` +
+		`{"id":"sdxl-base-1.0","f":["image/checkpoints/sd_xl_base_1.0.safetensors"]},` +
+		`{"id":"juggernaut-xl-v9","f":["image/checkpoints/juggernaut_xl_v9.safetensors"]}]}`
+	if got != want {
+		t.Errorf("before the switch:\n got %s\nwant %s", got, want)
+	}
+
+	// After the administrator presses "start with this" on the second checkpoint. The store
+	// keeps `selected` exclusive within a role, so exactly one row carries it.
+	sdxl.Selected, jugg.Selected = false, true
+	got, err = engineActiveSetJSON(buildEngineActiveSet("image", []store.EngineModel{sdxl, jugg}))
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	want = `{"v":1,"key":"image","start":"juggernaut-xl-v9","models":[` +
+		`{"id":"sdxl-base-1.0","f":["image/checkpoints/sd_xl_base_1.0.safetensors"]},` +
+		`{"id":"juggernaut-xl-v9","f":["image/checkpoints/juggernaut_xl_v9.safetensors"]}]}`
+	if got != want {
+		t.Errorf("after the switch:\n got %s\nwant %s", got, want)
+	}
+}
+
+// The llm role's active set once the second GGUF is in the bucket, pinned byte for byte.
+//
+// It is pinned for the same reason the image pair above is: a live verification run publishes
+// this document to SSM by hand (driving the admin API needs a super_admin browser session,
+// which AWS credentials are not), and a hand-written document that differs from what
+// publishActiveSet writes would verify the wrong thing.
+func TestEngineActiveSetForTheDevDeploymentLlm(t *testing.T) {
+	qwen30b := store.EngineModel{
+		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
+		Files: []store.EngineModelFile{
+			{S3Key: "llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf", Bytes: 18553648864},
+		},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+	}
+	coder15b := store.EngineModel{
+		Role: "llm", ID: "qwen2.5-coder-1.5b", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{
+			{S3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", Bytes: 1117320768},
+		},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+	}
+	got, err := engineActiveSetJSON(buildEngineActiveSet("llm", []store.EngineModel{qwen30b, coder15b}))
+	if err != nil {
+		t.Fatalf("active set: %v", err)
+	}
+	want := `{"v":1,"key":"llm","start":"qwen3-coder-30b-a3b","models":[` +
+		`{"id":"qwen3-coder-30b-a3b","f":["llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"],"c":32768},` +
+		`{"id":"qwen2.5-coder-1.5b","f":["llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"],"c":32768}]}`
+	if got != want {
+		t.Errorf("the llm active set is\n got %s\nwant %s", got, want)
+	}
+	// The declared size is the panel's "sync +N s", and it stays OUT of the active set: the box
+	// gets S3 keys and flags and nothing else, because the document has 4,096 characters to live
+	// in (ADR 0072 decision 2).
+	if strings.Contains(got, "1117320768") {
+		t.Error("a file size reached the active set")
+	}
+	if s := engineSyncSecs(coder15b); s != 11 {
+		t.Errorf("sync estimate for the 1.1 GB model = %d s, want 11", s)
+	}
+	if s := engineSyncSecs(qwen30b); s != 179 {
+		t.Errorf("sync estimate for the 18.5 GB model = %d s, want 179", s)
+	}
+	// Undeclared sizes print nothing rather than "+0 s".
+	if s := engineSyncSecs(store.EngineModel{Files: []store.EngineModelFile{{S3Key: "llm/x.gguf"}}}); s != 0 {
+		t.Errorf("an undeclared size estimated %d s", s)
+	}
+}
