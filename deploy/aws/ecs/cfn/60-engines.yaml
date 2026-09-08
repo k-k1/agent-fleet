@@ -14,27 +14,9 @@ Description: >-
 # here from ECS Managed Instances instead: AWS owns the instance, the AMI and the NVIDIA
 # driver, and terminates the box once the task is gone.
 #
-# Five things this template had to learn the hard way, all measured on a real cluster
-# 2026-09-07 through deploy/aws/ecs/harness/engprobe.yaml:
-#
-#   - a Managed Instances capacity provider is CLUSTER-SCOPED: ClusterName is mandatory,
-#     and without it ECS answers "The cluster provided is invalid";
-#   - AmazonECSInfrastructureRolePolicyForManagedInstances passes only roles named
-#     ecsInstanceRole*, so the fleet-named instance role below needs an explicit
-#     iam:PassRole (measured: UnauthorizedOperation otherwise);
-#   - ClusterCapacityProviderAssociations REPLACES the cluster's provider list and requires
-#     DefaultCapacityProviderStrategy — so the full list is named here and the default
-#     strategy is deliberately EMPTY. Put anything in it and a service that forgot its
-#     LaunchType lands on the GPU box (ADR 0070 decision 1, ADR 0071 decision 1);
-#   - InstanceRequirements refuses InstanceGenerations together with generation-bearing type
-#     names, and AcceleratorCount needs AcceleratorTypes alongside it;
-#   - DesiredCount on an ECS::Service returns to its declared value on EVERY service update,
-#     so it is absent here on purpose — see the Service below.
-#
-# ⚠️ Exactly one stack in a deployment may own the cluster's capacity-provider
-# associations, because the API replaces the list rather than adding to it. That stack is
-# this one. The measurement harness (harness/engprobe.yaml) owns the same list, so take it
-# down first: `deploy/aws/ecs/harness/probe-managed-instances.sh down`.
+# ⚠️ Five things this template had to learn the hard way on a real cluster, and one rule about
+# who owns the cluster's capacity-provider list: PARAMETERS-60-engines.md, "What this template
+# learned the hard way". Read it before editing the capacity providers or the services.
 
 Parameters:
   # ⚠️ The long-form reasoning for these — the measurements, the trade-offs, the traps — is in
@@ -71,6 +53,13 @@ Parameters:
       handed. MUST be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
 
   # --- the llm role (llama.cpp) -------------------------------------------------
+  LlmEnabled:
+    Type: String
+    Default: ""
+    AllowedValues: [ "", "true", "false" ]
+    Description: >-
+      Create the llm role at all. "" (the default) = whatever LlmModelS3Key said, which is the
+      one release of compatibility ADR 0072 decision 1 allows. WHAT it loads is the catalogue's.
   LlmDiscoveryName:
     Type: String
     Default: llm
@@ -81,36 +70,38 @@ Parameters:
     Description: >-
       Tag inside the af-llamacpp ECR repository. standup.sh copies the upstream image in
       before this stack is deployed.
+  # ⚠️ SEED PARAMETERS (ADR 0072 decision 7). These five are read ONCE, by a Control Plane whose
+  # llm catalogue is empty, to create the row this deployment was already serving. After that
+  # the catalogue is the declaration and these are ignored — see PARAMETERS-60-engines.md,
+  # "The seed parameters".
   LlmModelS3Key:
     Type: String
     Default: ""
     Description: >-
-      Key in this stack's models bucket, put there by the ingest task. ⚠️ EMPTY (the default)
-      means NO llm SERVICE IS CREATED — the first half of a two-pass stand-up. See PARAMETERS.
+      SEED: key in this stack's models bucket for the model this deployment already runs.
+      Empty with LlmEnabled unset means no llm role at all.
   LlmModelFile:
     Type: String
     Default: model.gguf
-    Description: File name the model is copied to on the box, i.e. /models/<LlmModelFile>.
+    Description: >-
+      Unused since ADR 0072 — the box mirrors the bucket, so the local path is the S3 key.
+      Kept for one release so an existing params file still applies.
   LlmModelIds:
     Type: CommaDelimitedList
     Default: "qwen3-coder-30b-a3b"
-    Description: >-
-      Model ids the gateway advertises, i.e. what a user picks as llamacpp/<id>. Declared,
-      never derived — the engine is asleep when the launch menu is drawn. The first is --alias.
+    Description: "SEED: the catalogue id for that model. The FIRST is the one that is seeded."
   LlmContextTokens:
     Type: Number
     Default: 32768
     MinValue: 512
-    Description: >-
-      llama-server's -c AND the context advertised to the client: ONE parameter so the two
-      cannot drift. Do not also put -c in LlmExtraArgs.
+    Description: "SEED: that model's context window (llama-server's -c, and what is advertised)."
   LlmMaxOutputTokens:
     Type: Number
     Default: 4096
     MinValue: 256
     Description: >-
-      Output cap advertised with it. It is SUBTRACTED from the context to get the usable
-      window, and 0 does not mean unset — see PARAMETERS-60-engines.md.
+      SEED: the output cap advertised with it. It is SUBTRACTED from the context to get the
+      usable window, and 0 does not mean unset — see PARAMETERS-60-engines.md.
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja"
@@ -201,6 +192,12 @@ Parameters:
   # role because the floor is a VRAM number (SDXL fp16 measured 7,379 MiB against the 30B's
   # 20,943), and the two roles must never share a box — CUDA does not slow down when VRAM runs
   # out, it crashes.
+  ImageEnabled:
+    Type: String
+    Default: ""
+    AllowedValues: [ "", "true", "false" ]
+    Description: >-
+      Create the image role at all. "" = whatever ImageModelS3Key said (as LlmEnabled).
   ImageDiscoveryName:
     Type: String
     Default: image
@@ -211,24 +208,21 @@ Parameters:
     Description: >-
       Tag in the af-sdcpp ECR repository (the doubled word is the image ROLE's container image
       tag). Upstream is amd64 only, which costs nothing: G-family has no arm64 member.
+  # SEED parameters, as on the llm role above.
   ImageModelS3Key:
     Type: String
     Default: ""
     Description: >-
-      Key in this stack's models bucket. ⚠️ EMPTY (the default) means NO image SERVICE IS
-      CREATED (as LlmModelS3Key), and standup.sh then does not copy the 2.3 GB image either.
+      SEED: key in this stack's models bucket for the checkpoint this deployment already runs.
+      Empty with ImageEnabled unset means no image role, and standup.sh copies no sdcpp image.
   ImageModelFile:
     Type: String
     Default: sd_xl_base_1.0.safetensors
-    Description: >-
-      File name the checkpoint is copied to on the box. sd-server reads safetensors directly,
-      so this is the file the ingest task uploaded, not a converted form.
+    Description: "Unused since ADR 0072 (the box mirrors the bucket). Kept for one release."
   ImageModelIds:
     Type: CommaDelimitedList
     Default: "sdxl-base-1.0"
-    Description: >-
-      Model ids the gateway advertises. Declared, never derived — the Agent needs the answer
-      while the engine is asleep. The FIRST is the provider's default model, and its Caps.
+    Description: "SEED: the catalogue id for that checkpoint. The FIRST is the one seeded."
   ImageExtraArgs:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
@@ -332,12 +326,62 @@ Parameters:
     Default: 14
     Description: CloudWatch retention for the engine and ingest log group.
 
+Mappings:
+  # ONE fetch sidecar for both roles (ADR 0072 decision 1(a)): read the active set the Control
+  # Plane published to SSM, sync exactly the files the engine is about to load, and write
+  # `/models/cmdline` — the model-specific half of the engine's argument list.
+  #
+  # ⚠️ ParameterNotFound is EMPTY, not an error, and only the STARTING model is fetched. Both
+  # rules have a failure behind them: PARAMETERS-60-engines.md, "The fetch sidecar".
+  Engine:
+    fetch:
+      script: >-
+        set -e;
+        mkdir -p "$MODELS_DIR";
+        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true);
+        if [ -z "$V" ] || [ "$V" = "None" ]; then
+          echo "engine fetch: no active set at $ACTIVE_PARAM — this engine has nothing to load";
+          : > "$MODELS_DIR/cmdline";
+          exit 0;
+        fi;
+        START=$(printf '%s' "$V" | jq -r '.start // ""');
+        printf '%s' "$V" | jq -r --arg s "$START"
+          '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]'
+          > /tmp/keys;
+        while read -r k; do
+          [ -n "$k" ] || continue;
+          dst="$MODELS_DIR/$k";
+          if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi;
+          mkdir -p "$(dirname "$dst")";
+          t0=$(date +%s);
+          aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors;
+          mv "$dst.part" "$dst";
+          echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s";
+        done < /tmp/keys;
+        printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG"
+          '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else
+             ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // [])
+             + (if $al != "" then [$al,$m.id] else [] end)
+             + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end)
+             + ($m.a // []) | join(" ") end'
+          > "$MODELS_DIR/cmdline.part";
+        mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline";
+        echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")";
+
 Conditions:
-  # An engine with nothing to serve is not a service (see LlmModelS3Key). Everything that
-  # would try to run llama-server hangs off this, and so does the entry in the engine table
-  # — a model advertised in a launch menu whose service does not exist is worse than one that
-  # is merely asleep.
-  HasLlmModel: !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ]
+  # Whether the ROLE exists — its service, its DNS name, its row in the engine table. WHAT it
+  # loads is the catalogue's business (ADR 0072 decision 1), so this no longer keys off a model
+  # key; but leaving `*Enabled` at "" keeps the old meaning for one release, so an existing
+  # params/60-engines that switched a role off by emptying its model key still does.
+  #
+  # ⚠️ The two-pass stand-up is what this removes. Under ADR 0071 an empty model key meant NO
+  # SERVICE, because a service whose fetch container could not find a file never stabilised and
+  # CloudFormation blocked on it. Now the sidecar treats "nothing staged" as success and the
+  # engine container idles (see EngineWrapper below), so the service stabilises with an empty
+  # catalogue and the role can be created in one pass.
+  HasLlmModel: !Or
+    - !Equals [ !Ref LlmEnabled, "true" ]
+    - !And [ !Equals [ !Ref LlmEnabled, "" ], !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ] ]
   HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
   UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
   HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
@@ -345,7 +389,9 @@ Conditions:
   HasHfToken: !Not [ !Equals [ !Ref HfTokenSecretArn, "" ] ]
   # The same four for the image role, and the pair that decides the shape of the engine table
   # (0, 1 or 2 rows — the comma between them only exists when both are there).
-  HasImageModel: !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ]
+  HasImageModel: !Or
+    - !Equals [ !Ref ImageEnabled, "true" ]
+    - !And [ !Equals [ !Ref ImageEnabled, "" ], !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ] ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
   ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
@@ -402,14 +448,13 @@ Resources:
       InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
       Roles: [ !Ref InstanceRole ]
 
-  # Engine tasks READ the model catalogue. Ingest WRITES it and reads the HF token. They are
-  # two roles on purpose: the credential that can overwrite a model file must not be sitting
-  # on a box that runs a network service, and the operator's HF token must not either.
+  # Engine tasks READ the model catalogue. Ingest WRITES it and reads the HF token. Two roles
+  # on purpose: the credential that can overwrite a model file must not sit on a box running a
+  # network service, and the operator's HF token must not either.
   #
-  # ⚠️ No ssmmessages:* here. The measurement harness has it (it is the only way to reach a
-  # private-subnet engine from a laptop, through
-  # `aws ssm start-session --target ecs:<cluster>_<task>_<runtime>`), and a production engine
-  # is not something anyone should be able to open a shell into.
+  # ⚠️ No ssmmessages:* here. The measurement harness has it (the only way to reach a
+  # private-subnet engine from a laptop), and a production engine is not something anyone
+  # should be able to open a shell into.
   EngineTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -431,6 +476,14 @@ Resources:
               - Effect: Allow
                 Action: [ s3:ListBucket ]
                 Resource: !GetAtt ModelsBucket.Arn
+              # The active set the Control Plane publishes (ADR 0072 decision 2). Scoped to the
+              # two parameters this stack's own engines read, and granted INSIDE this stack —
+              # ADR 0071 decision 8's rule that a new permission never leaves the stack that
+              # needs it. The CP side needs nothing new: its ssm:PutParameter is already
+              # /af-ws/* (20-platform, Sid SsmWorkspaceParams).
+              - Effect: Allow
+                Action: [ ssm:GetParameter ]
+                Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${EnginesSsmParamName}/*"
 
   IngestTaskRole:
     Type: AWS::IAM::Role
@@ -456,9 +509,9 @@ Resources:
 
   # --- the model catalogue ------------------------------------------------------
   # S3 at $0.025/GB-month, read for free through 00-network's gateway endpoint (the fetch
-  # never touches the NAT). Versioning is off deliberately: a 17 GB model kept in duplicate
-  # for every re-ingest is a bill nobody meant to sign, and the sha256 in the ingest log is
-  # what identifies a file (ADR 0071 decision 10).
+  # never touches the NAT). Versioning is off deliberately: a 17 GB model kept in duplicate for
+  # every re-ingest is a bill nobody meant to sign, and the sha256 identifies a file (0071
+  # decision 10). The layout is ComfyUI's, so all three engines read one tree (0072 decision 2).
   ModelsBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
@@ -486,16 +539,10 @@ Resources:
       LogGroupName: !Sub "/af/${AWS::StackName}/engines"
       RetentionInDays: !Ref LogRetentionDays
 
-  # llama-server's HTTP API is unauthenticated by default and has mutating endpoints, so
-  # reachability is the whole of its access control: port 8080 from the CP security group
-  # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision
-  # 14, ADR 0071 decision 4). --api-key is the second lock, not the first.
-  #
-  # For sd-server there IS no second lock: stable-diffusion.cpp's server has no
-  # authentication option at all (upstream examples/server/api.md documents none), so this
-  # group is the whole of the image engine's access control. Both roles share it because both
-  # answer on 8080 to the CP and to nobody else; what separates them is the capacity
-  # provider, not the firewall.
+  # Reachability IS the access control for both engines: port 8080 from the CP security group
+  # and nothing else — no load balancer, private subnets, no public IP (ADR 0070 decision 14,
+  # ADR 0071 decision 4). llama-server's --api-key is a second lock; sd-server has no
+  # authentication option at all, so for the image role this group is the whole of it.
   EngineSg:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -514,10 +561,9 @@ Resources:
   # the two measured footprints (20.9 GB for the 30B, 7.4 GB for SDXL) do not both fit on one
   # L4's 22,888 MiB. Two providers is also what makes `draining` observable per role.
   #
-  # ⚠️ Two providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
-  # that was just stopped holds its 4 vCPU for the 7-8 minutes it spends draining, so waking
-  # one role while the other is on its way out needs 12. A deployment that uses both roles
-  # should hold 16 or more (quota L-DB2E81BA, which is a support case and not auto-approved).
+  # ⚠️ Two providers means two boxes, and a draining one still holds its vCPU: a deployment
+  # using both roles wants 16 of the G-family quota. PARAMETERS-60-engines.md, "The G-family
+  # quota".
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -712,22 +758,22 @@ Resources:
       ContainerDefinitions:
         # The fetch runs to completion before llama-server starts, and it logs how long it
         # took — that line is the S3 half of the cold start, measured at 104-147 MB/s and
-        # running concurrently with the image pull.
+        # running concurrently with the image pull. The script is shared with the image role
+        # (see Mappings); everything role-specific is in the environment below.
         - Name: fetch
           Essential: false
           Image: public.ecr.aws/aws-cli/aws-cli:latest
           EntryPoint: [ "sh", "-c" ]
-          Command:
-            - !Sub >-
-              set -e;
-              if [ -s "/models/${LlmModelFile}" ]; then
-                echo "s3 fetch: /models/${LlmModelFile} is already on this box";
-                exit 0;
-              fi;
-              start=$(date +%s);
-              aws s3 cp "s3://${ModelsBucket}/${LlmModelS3Key}" "/models/${LlmModelFile}.part" --only-show-errors;
-              mv "/models/${LlmModelFile}.part" "/models/${LlmModelFile}";
-              echo "s3 fetch: $(stat -c %s /models/${LlmModelFile}) bytes in $(( $(date +%s) - start ))s";
+          Command: [ !FindInMap [ Engine, fetch, script ] ]
+          Environment:
+            - { Name: MODELS_DIR, Value: /models }
+            - { Name: BUCKET, Value: !Ref ModelsBucket }
+            - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
+            # llama-server names the model it answers to with --alias and takes its window as
+            # -c. sd-server has neither, which is the whole of the difference between the two
+            # roles' use of one script.
+            - { Name: ALIAS_FLAG, Value: "--alias" }
+            - { Name: CTX_FLAG, Value: "-c" }
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           LogConfiguration:
             LogDriver: awslogs
@@ -747,24 +793,18 @@ Resources:
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
               Tag: !Ref LlmImageTag
           PortMappings: [ { ContainerPort: 8080 } ]
-          # The image's ENTRYPOINT is llama-server, so this is flags only. --alias is what
-          # makes the model answer to the id the launch menu offers rather than to the file
-          # path it was loaded from.
-          Command: !Split
-            - ","
-            - !Join
-              - ","
-              - - "-m"
-                - !Sub "/models/${LlmModelFile}"
-                - "--host"
-                - "0.0.0.0"
-                - "--port"
-                - "8080"
-                - "--alias"
-                - !Select [ 0, !Ref LlmModelIds ]
-                - "-c"
-                - !Ref LlmContextTokens
-                - !Join [ ",", !Ref LlmExtraArgs ]
+          # ⚠️ The idle wrapper (ADR 0072 decision 1(a)): an engine with nothing to load has to
+          # come up rather than fail, or CloudFormation waits for a service that never
+          # stabilises. Why the binary path is spelled out, and why $(cat …) is unquoted:
+          # PARAMETERS-60-engines.md, "The idle wrapper".
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub
+              - >-
+                if [ -s /models/cmdline ]; then exec /app/llama-server --host 0.0.0.0 --port 8080
+                ${Extra} $(cat /models/cmdline);
+                else echo "llm: no model in the catalogue — idling"; sleep infinity; fi
+              - Extra: !Join [ " ", !Ref LlmExtraArgs ]
           ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
@@ -785,12 +825,9 @@ Resources:
               awslogs-stream-prefix: llm
 
   # A Cloud Map DNS service, not Service Connect: the CP reaches the engine at
-  # http://<name>.<namespace>:8080 through the VPC resolver, so the gateway needs no
-  # sidecar and no /etc/hosts snapshot (ADR 0070 decision 8).
-  #
-  # While the service is at desired 0 the name has no A record at all and the lookup is
-  # NXDOMAIN. That is not an error the gateway reports — it is the normal state of an engine
-  # nobody is using, and "wake it and hold the request" is what happens instead.
+  # http://<name>.<namespace>:8080 through the VPC resolver, so the gateway needs no sidecar
+  # and no /etc/hosts snapshot (ADR 0070 decision 8). At desired 0 the name has no A record
+  # at all — the normal state of an engine nobody is using, not an error.
   LlmDiscovery:
     Type: AWS::ServiceDiscovery::Service
     Condition: HasLlmModel
@@ -811,17 +848,10 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-llm"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref LlmTaskDef
-      # ⚠️ DesiredCount is deliberately ABSENT, and this is load-bearing. From the resource
-      # schema: for a NEW service an unspecified desired count defaults to 1; for an
-      # EXISTING one it is omitted from the update call. So CloudFormation creates the
-      # service running and then never touches the count again — which is what lets the
-      # engine be started and stopped out from under the template. Declaring `0` instead
-      # would reset the count on every task-definition or tag change, i.e. kill a GPU box
-      # mid-answer. standup.sh scales the new service to 0 straight after creation.
-      #
-      # ⚠️ And no LaunchType either: a capacity provider strategy and a launch type are
-      # mutually exclusive. This is the ONE service in the deployment that is allowed to
-      # omit LaunchType, and only because it names its provider explicitly.
+      # ⚠️ DesiredCount is deliberately ABSENT and this is load-bearing — declaring `0` would
+      # kill a GPU box mid-answer on every stack update. No LaunchType either: it is mutually
+      # exclusive with a capacity provider strategy. PARAMETERS-60-engines.md, "The engine
+      # services".
       CapacityProviderStrategy:
         - { CapacityProvider: !Ref LlmCapacityProvider, Weight: 1 }
       # One engine behind one DNS name: two tasks during a redeploy would mean two A records
@@ -861,17 +891,15 @@ Resources:
           Essential: false
           Image: public.ecr.aws/aws-cli/aws-cli:latest
           EntryPoint: [ "sh", "-c" ]
-          Command:
-            - !Sub >-
-              set -e;
-              if [ -s "/models/${ImageModelFile}" ]; then
-                echo "s3 fetch: /models/${ImageModelFile} is already on this box";
-                exit 0;
-              fi;
-              start=$(date +%s);
-              aws s3 cp "s3://${ModelsBucket}/${ImageModelS3Key}" "/models/${ImageModelFile}.part" --only-show-errors;
-              mv "/models/${ImageModelFile}.part" "/models/${ImageModelFile}";
-              echo "s3 fetch: $(stat -c %s /models/${ImageModelFile}) bytes in $(( $(date +%s) - start ))s";
+          Command: [ !FindInMap [ Engine, fetch, script ] ]
+          Environment:
+            - { Name: MODELS_DIR, Value: /models }
+            - { Name: BUCKET, Value: !Ref ModelsBucket }
+            - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
+            # sd-server has no --alias and no -c: it holds one checkpoint and answers to
+            # whatever it was started with. Empty, so the shared script emits neither.
+            - { Name: ALIAS_FLAG, Value: "" }
+            - { Name: CTX_FLAG, Value: "" }
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           LogConfiguration:
             LogDriver: awslogs
@@ -885,25 +913,24 @@ Resources:
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
               Tag: !Ref ImageImageTag
-          # ⚠️ The image's ENTRYPOINT is /sd-cli, NOT the server — so unlike the llama.cpp
-          # image this one needs the entry point overridden or the task starts a one-shot CLI,
-          # renders nothing and exits. There is no curl in the image either, which is why the
-          # fetch is a separate aws-cli container. (Measured 2026-09-07.)
-          EntryPoint: [ "/sd-server" ]
-          PortMappings: [ { ContainerPort: 8080 } ]
+          # ⚠️ The image's ENTRYPOINT is /sd-cli, NOT the server, and there is no curl in it
+          # either — which is why the fetch is a separate aws-cli container (measured
+          # 2026-09-07). The same idle wrapper as the llm role.
+          #
           # --listen-ip / --listen-port, not --host / --port: sd-server does not share
-          # llama-server's flag names.
-          Command: !Split
-            - ","
-            - !Join
-              - ","
-              - - "-m"
-                - !Sub "/models/${ImageModelFile}"
-                - "--listen-ip"
-                - "0.0.0.0"
-                - "--listen-port"
-                - "8080"
-                - !Join [ ",", !Ref ImageExtraArgs ]
+          # llama-server's flag names. --lora-model-dir is STATED rather than defaulted: the
+          # default is the current directory, which is `/` here, and that is the leading
+          # suspicion for the async job API dying in /proc (ADR 0072 open question 6).
+          EntryPoint: [ "sh", "-c" ]
+          Command:
+            - !Sub
+              - >-
+                mkdir -p /models/image/loras;
+                if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
+                --listen-port 8080 --lora-model-dir /models/image/loras
+                ${Extra} $(cat /models/cmdline);
+                else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
+              - Extra: !Join [ " ", !Ref ImageExtraArgs ]
           ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
@@ -973,6 +1000,7 @@ Resources:
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/health","provider":"llamacpp","models":["${Models}"],
                 "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
+                "modelS3Key":"${LlmModelS3Key}",
                 "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
@@ -986,6 +1014,7 @@ Resources:
                 {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/v1/models","provider":"sdcpp","models":["${Models}"],
+                "modelS3Key":"${ImageModelS3Key}",
                 "apiKeyParam":"","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name

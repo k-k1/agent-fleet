@@ -248,6 +248,23 @@ func buildEngineActiveSet(key string, rows []store.EngineModel) engineActiveSet 
 // active set that is one character too long is rejected by SSM, and the failure surfaces as an
 // engine that keeps loading yesterday's model — the parameter simply does not change.
 func engineActiveSetJSON(set engineActiveSet) (string, error) {
+	// The box builds a shell command line out of these keys and relies on word splitting to
+	// turn `/models/cmdline` into arguments, so a key with whitespace in it becomes two
+	// arguments and the engine starts with a file name it cannot open. S3 permits the
+	// character; this pipeline does not, and the honest place to say so is here rather than in
+	// a start failure nobody can read.
+	for _, m := range set.Models {
+		for _, f := range m.Files {
+			if err := engineActiveKeyOK(engineActiveFileKey(f)); err != nil {
+				return "", fmt.Errorf("model %s: %w", m.ID, err)
+			}
+		}
+	}
+	for _, k := range set.Loras {
+		if err := engineActiveKeyOK(k); err != nil {
+			return "", err
+		}
+	}
 	b, err := json.Marshal(set)
 	if err != nil {
 		return "", err
@@ -258,6 +275,24 @@ func engineActiveSetJSON(set engineActiveSet) (string, error) {
 			set.Key, len(b), engineActiveSetMaxChars)
 	}
 	return string(b), nil
+}
+
+// engineActiveFileKey reads the key out of either form of a file entry.
+func engineActiveFileKey(f any) string {
+	switch v := f.(type) {
+	case string:
+		return v
+	case engineActiveFile:
+		return v.Key
+	}
+	return ""
+}
+
+func engineActiveKeyOK(key string) error {
+	if key == "" || strings.ContainsAny(key, " \t\n\r") {
+		return fmt.Errorf("the S3 key %q has whitespace in it, which the engine's command line cannot carry", key)
+	}
+	return nil
 }
 
 // engineActiveParamName is where one engine's active set lives, derived from the engine table's
