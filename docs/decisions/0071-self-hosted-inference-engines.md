@@ -712,7 +712,8 @@ That evening the CP and the Workspace were rebaked and **the other half — the 
 path — was driven on real hardware too**. That is measurement 9 onwards, and **two more
 expectations broke** there: decision 5's "the CP holds the request" is good for 60 seconds on a
 non-streaming request (9), and the failure fell through onto a member's plan quota without
-saying so (10). The second g6.xlarge came up at 15:26, again about $0.3.
+saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measurement 13 (after the fix) and 14
+(a claude session a user drove themselves) close the definition of done on real hardware.
 
 1. **The image role's cold start is 197 seconds** (`execute-change-set` to
    `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
@@ -848,6 +849,21 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3.
     (**5.0 s**), both 512×512, passed on the same build, and that day's ledger holds
     **three `tool.imagegen` rows, all `kind:"sdcpp"` and `ok:true`** — **no agy row**, i.e. no
     fall-through happened. `engine.image` is still 0 rows.
+
+14. ✅ **The same machinery held on the claude route (2026-09-08, one call a user actually
+    made).** Right after the P1.5 toggle was deployed (`0.16.1-dev-c346ad66`) the user had a
+    **claude session generate an image over MCP**. The engine was stopped, and the CP log took
+    the same shape as 13: 02:22:39 `started on demand` → **`503 45.004s`, `45.002s`,
+    `45.003s`** → 02:25:32 `warmed up (ready)` → 02:25:38 **`200 26.325s`** (about 179 seconds
+    from the request). Three warm ones followed at `200 5.545s`, `5.436s` and `5.423s`.
+    - **Cold start is now 165 / 172 / 173 / 197 seconds across four points.** The band holds.
+    - What makes it worth recording is the KIND. claude puts no ceiling on an MCP tool call
+      (measured: claude none, codex 300 s, opencode 60 s), so this is the route that does NOT
+      depend on the progress heartbeat — and it still took three folds and one answer. Decision
+      5's fix is therefore working against the FRONT END's 60 seconds rather than against any
+      one client's habits, which rules out 13 having ridden on something opencode-specific.
+    - ⚠️ This was not an instrumented run but a user going about their work, so the tool-side
+      duration and the notification count were not observed. Only the CP log was.
 
 Also verified in P1:
 
