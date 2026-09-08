@@ -126,6 +126,10 @@ func abortResumeTick(now time.Time) {
 	for _, m := range session.ListMetas() {
 		st, has := abortResumeStates.Read(m.Name)
 		a, ok := abortInfoFor(m)
+		// A turn killed by the login is blocked, not retryable, so everything below drops it.
+		// It has its own recovery, on the same tail read: wait for the credentials to be
+		// renewed, then resume (auth_resume.go).
+		authResumeStep(m, a, ok, now)
 		if !ok || !a.Retryable {
 			// The tail is not a cut-off: the resume worked, the user moved on themselves,
 			// or the turn ended normally. Blocked aborts (usage limit, balance, prompt too

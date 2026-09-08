@@ -43,6 +43,13 @@ type Abort struct {
 	Msg       string    // the error text (rides the report / chat bridge as the reason)
 	Retryable bool      // a re-send fixes it (auto-resume eligible) vs pointless until fixed
 	At        time.Time // when the abort was recorded; zero = the record carried no timestamp
+	// Auth marks the one blocked cause that a USER ACTION clears rather than a wait:
+	// the login expired. Retryable stays false — re-sending right now fails the same way —
+	// but once the credentials are renewed the turn can be picked up again, which is what
+	// auth_resume.go waits for. The verdict is apiError.isAuth (errors.go), the same
+	// classifier that puts cause="auth" on the mirror's error block, so the card offering
+	// "re-authenticate" and the resume that follows can never disagree.
+	Auth bool
 }
 
 // retryableOverrides are texts where claude ITSELF says the error is not the user's
@@ -283,6 +290,7 @@ func abortFrom(line []byte, r abortRecord) (Abort, bool) {
 	}
 	a := Abort{Msg: strings.TrimSpace(AssistantText(line))}
 	a.Retryable = classifyAbort(a.Msg, r.Status, r.Error)
+	a.Auth = !a.Retryable && apiError{msg: a.Msg, kind: r.Error, status: r.Status}.isAuth()
 	if at, err := time.Parse(time.RFC3339, r.Timestamp); err == nil {
 		a.At = at
 	}
@@ -313,6 +321,22 @@ func UsageLimitAbort(sid string) (Abort, LimitKind, bool) {
 		return Abort{}, "", false
 	}
 	return limitKindOf(a.Msg, a)
+}
+
+// AuthAbort is AbortInfo narrowed to a turn that died on the login (docs/log/47 §4-11).
+// Only when ok=true may an auth-resume episode (auth_resume.go) be opened.
+//
+// It is deliberately NOT keyed on AuthExpired(): that reads the local credentials file, and
+// the failure this catches is the one the file cannot see — a token revoked or invalidated
+// server side still leaves a credential that looks perfectly alive locally (`claude auth
+// status` reports loggedIn either way). The transcript tail is the only witness that a turn
+// actually died of it.
+func AuthAbort(sid string) (Abort, bool) {
+	a, ok := AbortInfo(sid)
+	if !ok || !a.Auth {
+		return Abort{}, false
+	}
+	return a, true
 }
 
 // limitKindOf is the pure form (for the corpus tests): it decides the kind of limit from the

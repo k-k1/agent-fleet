@@ -1505,6 +1505,11 @@ export function MirrorView({
     planSendDisabled: planSendBlocked,
     forkAt: canForkAt ? openForkAt : undefined,
     onReauth: () => useSettingsUI.getState().openSettings("agents"),
+    // Lets an auth error block see that the login was renewed after the turn it killed, so it
+    // reports that instead of asking for a re-authentication that has already happened. Polled
+    // with the rest of the meta, so the card flips on its own once the user comes back from
+    // Settings > Agents — no reload, and it survives one (docs/log/47 §4-11).
+    authOkAt: sessionMeta?.authOkAt,
     tts: tts.wiring,
     expandThinking: expandThinking(settings, sessionMeta?.kind),
     isRejectedPlan: (p: string) => rejectedPlansRef.current.has(p.trim()),

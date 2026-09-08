@@ -175,6 +175,7 @@ export const mirror: Record<keyof typeof jaMirror, string> = {
   "mirror.error_auth_hint":
     "The {agent} sign-in has expired. Re-authenticate and this session picks up where it left off.",
   "mirror.error_auth_action": "Re-authenticate",
+  "mirror.error_auth_done": "Re-authenticated. The {agent} sign-in was renewed after this failure.",
   "mirror.collapse_output": "Collapse output",
   "mirror.collapse_section": "Collapse",
   "mirror.show_output": "Show output",

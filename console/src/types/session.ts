@@ -48,6 +48,12 @@ export interface Session {
   // nothing to derive a time from, or a per-model limit). Display-only, so the chip can say
   // when the session moves again (docs/log/47 §4-9).
   rateLimitResumeAt?: string;
+  // When the agent's CURRENT login was written (RFC3339, claude only; empty when there is
+  // nothing to judge on — an environment token, no credentials file). Never read as "the
+  // login is fine now": it only means anything against a TURN'S timestamp. A turn that died
+  // on the login and is OLDER than this has been re-authenticated since, which is what lets
+  // the mirror's error block stop offering a fix the user already applied (docs/log/47 §4-11).
+  authOkAt?: string;
   createdAt?: string; // ISO timestamp
   model?: string; // claude model
   context?: SessionContextUsage; // claude context-window usage (the Agent's session.ContextUsage)

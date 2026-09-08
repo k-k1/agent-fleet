@@ -74,6 +74,22 @@
 .mef-action:hover {
   background: color-mix(in srgb, var(--del) 14%, var(--bg));
 }
+/* The same recovery row once the login has been renewed (ErrorBlock `resolved`). It is a
+   statement, not an offer, so there is no button and no red: the failure itself stays red
+   above — it really did happen — while the row under it goes green to say it has been dealt
+   with. Both hues are the shared tokens, which carry the light-mode contrast fixes. */
+.mirror-error-fix.mef-done {
+  /* Mixed into --bg, not into transparent: this row sits on the failure card's red tint, and
+     a translucent green over it comes out a muddy neutral that reads as "nothing changed"
+     (measured in light mode, where the tint is strongest). The border carries the state at a
+     glance for anyone who cannot separate the two hues. */
+  background: color-mix(in srgb, var(--ok) 14%, var(--bg));
+  border: 1px solid color-mix(in srgb, var(--ok) 40%, transparent);
+  color: var(--ok);
+}
+.mirror-error-fix.mef-done .mef-msg {
+  color: var(--fg);
+}
 /* Edit-family traces are clickable — they open a diff pane. Reset the button and
    lift the opacity so they read as interactive, not just a faint trace. */
 button.mt-tool-diff {

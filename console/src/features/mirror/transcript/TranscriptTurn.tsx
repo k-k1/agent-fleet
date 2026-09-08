@@ -17,7 +17,7 @@ import { t as tr } from "../../../lib/i18n/index.ts";
 import { splitPastedImages } from "../../../lib/pastedImages.ts";
 import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
-import { footTime } from "../turnTime.ts";
+import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
 import { foldParts, peerIntentOf, peerSenderOf, spendOf } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
@@ -188,6 +188,7 @@ export function TranscriptTurn({
           cause={item.p.cause}
           agentName={agentName}
           onReauth={caps.onReauth}
+          resolved={authResolved(caps.authOkAt, turn.endTs || turn.ts)}
         />
       ) : (
         <MarkdownView
