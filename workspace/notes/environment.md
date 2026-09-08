@@ -1,3 +1,8 @@
+---
+name: af-environment
+description: "Agent Fleet workspace: what survives recreate / clean home / stop, the /scratch task disk, checking your memory and CPU limits (cgroup v2, exit 137 = OOM), what is not installed (no root, no Docker, no DB servers), and how to answer questions about this environment from the shipped guide. Read before planning around a missing tool, before a recreate, or when the user asks how the workspace behaves."
+user-invocable: false
+---
 # This Workspace: persistence, disk, resources, what is missing, where the docs are
 
 Read when: a recreate / clean-home / stop is coming up, `$AF_WS_SCRATCH` is set, a build died

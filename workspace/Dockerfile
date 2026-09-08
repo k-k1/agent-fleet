@@ -610,7 +610,8 @@ COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 # claude は managed-policy ファイル /etc/claude-code/CLAUDE.md（毎セッション読込・除外不可）
 # として焼き込み、codex/opencode/agy/copilot/kiro 分は home 永続なので agent が毎起動で
 # 合成する（agent_instructions.go）。常時読込は禁止事項と罠だけの短い本体で、手順の長文は
-# notes/<topic>.md に分けて必要時にエージェント自身が読む（本体末尾の索引が指す）。
+# notes/<topic>.md に分けて必要時にエージェント自身が読む（本体末尾の索引が指す。claude /
+# codex / opencode には agent が起動時に同じファイルを af-<topic> スキルとしても登録する）。
 COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
 COPY notes/ /usr/local/share/agent-fleet/notes/
 RUN mkdir -p /etc/claude-code \

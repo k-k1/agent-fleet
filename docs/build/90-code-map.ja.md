@@ -72,6 +72,7 @@ kind 固有実装は `internal/` にある。
 | `mcpreg` | MCP レジストリ本体（CLI 別 materialize を含む）|
 | `hostcaps` | ホストの実行能力の検知（動かせない kind は提示せず隠す）|
 | `userinstr` / `mdblock` | ユーザー指示の正本と、共有ファイル内で AF が所有する markdown ブロック |
+| `fleetskills` | Workspace ガイドのトピックファイル（`notes/*.md`）を各 CLI のユーザー用スキル置き場へ `af-<topic>` スキルとして登録する |
 | `status` / `tmuxx` / `transcript` | 共通状態ストア、tmux の exact 操作と probe、transcript の wire |
 | `httpx` / `gitx` / `fstore` / `paths` / `secrets` / `notice` | 小さな共有ユーティリティ |
 

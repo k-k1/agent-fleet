@@ -167,7 +167,10 @@ prohibitions and the traps an agent cannot see coming, and ends with an index of
 (`workspace/notes/<topic>.md`, shipped as `/usr/local/share/agent-fleet/notes/`) that hold the
 procedures — the agent reads the one for its situation when it gets there. Put a new rule in the
 always-loaded file only when the agent has to know it *before* it knows it needs it; everything
-else goes in a topic file, and the index line is what makes it findable.
+else goes in a topic file, and the index line is what makes it findable. Where the CLI has a
+user-level skills directory (claude, codex, opencode) the agent also registers each topic file as
+a skill named `af-<topic>` at every start, so the CLI's own skill index — description at start,
+body on demand — is a second way to the same text; the other kinds have only the index.
 
 - This is where fleet-wide rules go: **what must not be done** (deleting repositories, writing
   credentials in the clear), **the constraints of this environment** (no root, no Docker, shared

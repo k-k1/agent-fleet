@@ -1093,6 +1093,31 @@ def check_notes(f: Findings) -> None:
                 f"notes/{n}: shipped but never named in workspace-notes.md"
                 " (the policy's index is the only way an agent learns it exists)"
             )
+        # The same file is registered verbatim as `af-<stem>/SKILL.md` under each CLI's user
+        # skills root (workspace/agent/internal/fleetskills), so its frontmatter is what the
+        # CLIs parse: the name has to be the directory name, the description is the only
+        # part in context at start (claude caps it at 1,536 characters and drops longer
+        # ones), and `user-invocable: false` keeps a reference text out of the user's
+        # slash menu and the Console picker while the model can still open it.
+        stem = n[: -len(".md")]
+        text = read(os.path.join(notes_dir, n))
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        if not m:
+            f.error(f"notes/{n}: no frontmatter (needs name / description / user-invocable)")
+            continue
+        fm = {}
+        for line in m.group(1).splitlines():
+            k, _, v = line.partition(":")
+            fm[k.strip()] = v.strip().strip('"')
+        if fm.get("name") != f"af-{stem}":
+            f.error(f"notes/{n}: frontmatter name must be af-{stem}, got {fm.get('name')!r}")
+        desc = fm.get("description", "")
+        if not desc:
+            f.error(f"notes/{n}: frontmatter description is empty")
+        elif len(desc) > 1536:
+            f.error(f"notes/{n}: description is {len(desc)} chars; claude drops skills over 1,536")
+        if fm.get("user-invocable") != "false":
+            f.error(f"notes/{n}: frontmatter must say user-invocable: false (reference text, not a command)")
 
 
 def check_ref_parity(f: Findings) -> None:

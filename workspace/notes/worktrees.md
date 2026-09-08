@@ -1,3 +1,8 @@
+---
+name: af-worktrees
+description: "Agent Fleet workspace: git worktrees shared with other sessions - which working copy is yours, why the parent clone must never be fast-forwarded or checked out for someone else, integrating the base into your own worktree, the shared stash stack, and sharing node_modules between worktrees without emptying the parent's tree. Read before touching a working copy that is not yours, integrating or fast-forwarding, or installing dependencies in a worktree."
+user-invocable: false
+---
 # Worktrees, the parent clone, and sharing dependencies between working copies
 
 Read when: you are about to touch a working copy that is not the one your session started in,

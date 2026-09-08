@@ -1,3 +1,8 @@
+---
+name: af-build
+description: "Agent Fleet workspace: build memory and toolchains on the shared, memory-constrained host - JDK discovery and JAVA_HOME (two roots, workspace-agent install-jdk, the amd64/arm64 ls trap), Gradle and Maven heap and daemon rules, Node heap and test-worker caps. Read before running a JVM or Node build or test suite, or when a build died with exit code 137."
+user-invocable: false
+---
 # Build memory and toolchains (JDK, Gradle, Maven, Node)
 
 Read when: you are about to run a JVM or Node build or test suite, need a JDK / `JAVA_HOME`, or a

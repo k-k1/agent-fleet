@@ -1,3 +1,8 @@
+---
+name: af-browser
+description: "Agent Fleet workspace: headless Chromium for screenshots and UI verification (the coarse-pointer trap), the seven-step procedure for handing an automation-owned Chromium page to the user through attach_chromium (port 0, DevToolsActivePort, view-only default), and the Console browser pane the user sees but you cannot. Read before screenshotting or verifying a UI, attaching a browser for the user, or telling the user how to view a web app you started."
+user-invocable: false
+---
 # Browsers: headless Chromium, handing a page to the user, and the Console's browser pane
 
 Read when: you are about to take a screenshot or verify a UI, hand an automation-owned page to

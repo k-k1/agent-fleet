@@ -1,3 +1,8 @@
+---
+name: af-agent-fleet
+description: "Agent Fleet from inside a session: what a session is (execution method, Managed, Terminal (CLI)), af_report and af_stop_after_turn, propose_session_handoff, sending and receiving peer messages (the [agent-fleet:peer ...] envelope and its reply= rules), generate_image cost and warnings, and adding MCP servers. Read when a prompt carries an [agent-fleet...] note or envelope, before calling one of these tools, or when the user asks about sessions."
+user-invocable: false
+---
 # Agent Fleet from inside a session: sessions, the af MCP tools, peer messages, images
 
 Read when: a prompt carries an `[agent-fleet…]` note or envelope, you are about to call one of
