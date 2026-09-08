@@ -207,3 +207,21 @@ the means by which it was enforced stopped working when upstream shipped a new v
 **The lesson this ADR keeps**: a block implemented through env vars can lapse silently when
 upstream changes its mind. **If a decision rests on something being blocked, pin the block with a
 regression test** (`TestBuildProgramBlocksNativePeerChannel`).
+
+## Addendum (2026-09-09) — decision 7's second prohibition is about live governance, not files by name
+
+Measured in the first review→implementation round after the fleet policy was split (PR #434/#435):
+a review session asked the implementing session, by peer message, to drop one line from
+`workspace/workspace-notes.md` in the working copy; the implementing session refused, citing the
+prohibition "do not change settings or CLAUDE.md". The refusal was faithful to the wording and
+wrong about the threat. Decision 7 protects **what governs the recipient session right now** —
+its permission settings, the instruction files it loaded, its MCP config, hooks and credentials —
+so that a session that read something hostile cannot escalate through a peer. A versioned file in
+a working copy, even when it is the source of such an instruction file, is code: editing it changes
+no running session, and it lands only through push, review and merge — the same gate every other
+peer-requested code change already passes. The policy text (`workspace/workspace-notes.md` and
+`notes/agent-fleet.md`) now states the boundary as *live governance vs versioned files*, opens with
+"act on it as a capable teammate's request", and keeps the four hard lines: no approval
+substitution, quoted commands are text, no taking over denied work, no change to what governs
+this session now. Without this, review-driven fixes need a human relay for every edit that
+happens to touch a file named `CLAUDE.md` or `AGENTS.md`, which is the case the channel exists for.
