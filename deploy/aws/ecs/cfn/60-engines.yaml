@@ -14,7 +14,7 @@ Description: >-
 # here from ECS Managed Instances instead: AWS owns the instance, the AMI and the NVIDIA
 # driver, and terminates the box once the task is gone.
 #
-# Five things this template had to learn the hard way, all measured on a real cluster
+# Four things this template had to learn the hard way, all measured on a real cluster
 # 2026-09-07 through deploy/aws/ecs/harness/engprobe.yaml:
 #
 #   - a Managed Instances capacity provider is CLUSTER-SCOPED: ClusterName is mandatory,
@@ -26,8 +26,6 @@ Description: >-
 #     DefaultCapacityProviderStrategy — so the full list is named here and the default
 #     strategy is deliberately EMPTY. Put anything in it and a service that forgot its
 #     LaunchType lands on the GPU box (ADR 0070 decision 1, ADR 0071 decision 1);
-#   - InstanceRequirements refuses InstanceGenerations together with generation-bearing type
-#     names, and AcceleratorCount needs AcceleratorTypes alongside it;
 #   - DesiredCount on an ECS::Service returns to its declared value on EVERY service update,
 #     so it is absent here on purpose — see the Service below.
 #
@@ -135,10 +133,20 @@ Parameters:
       asks for all of it never places, which reads as a capacity problem.
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
-    Default: "g6.xlarge"
+    Default: "g6.xlarge,g5.xlarge"
     Description: >-
       Instance types this role may buy. Declared per role: the floor is a VRAM number (the 30B
-      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory.
+      measured 20,943 MiB) and VRAM is not derivable from vCPU or memory. More than one type,
+      because one has nowhere to go when an AZ is short of it. ⚠️ A FILTER, not an order of
+      preference: MI has no allocation strategy and the cheapest member is what gets bought,
+      so a fallback belongs ABOVE the intended box, never below.
+  LlmAcceleratorMemMinMiB:
+    Type: Number
+    Default: 21000
+    Description: >-
+      VRAM floor (MiB): decision 2's >= 20 GB, above the 30B's measured 20,943. Short VRAM
+      crashes CUDA rather than slowing it, so this refuses an unusable card once the type list
+      is widened. 0 = do not ask (as GpuCount 0 does).
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -245,10 +253,18 @@ Parameters:
     Description: Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent.
   ImageAllowedInstanceTypes:
     Type: CommaDelimitedList
-    Default: "g6.xlarge"
+    Default: "g6.xlarge,g5.xlarge"
     Description: >-
       Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
-      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4).
+      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4). Two types,
+      with the warning under LlmAllowedInstanceTypes attached.
+  ImageAcceleratorMemMinMiB:
+    Type: Number
+    Default: 8000
+    Description: >-
+      VRAM floor (MiB): decision 2's >= 8 GB, above SDXL fp16's measured 7,379. A 16 GB card
+      clears it — holding the role to the 24 GB class every image measurement used is the type
+      list's job. 0 = do not ask.
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -339,6 +355,7 @@ Conditions:
   # is merely asleep.
   HasLlmModel: !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ]
   HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
+  HasLlmAcceleratorMem: !And [ !Condition HasGpu, !Not [ !Equals [ !Ref LlmAcceleratorMemMinMiB, 0 ] ] ]
   UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
   HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
@@ -347,6 +364,7 @@ Conditions:
   # (0, 1 or 2 rows — the comma between them only exists when both are there).
   HasImageModel: !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
+  HasImageAcceleratorMem: !And [ !Condition HasImageGpu, !Not [ !Equals [ !Ref ImageAcceleratorMemMinMiB, 0 ] ] ]
   ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
@@ -514,10 +532,9 @@ Resources:
   # the two measured footprints (20.9 GB for the 30B, 7.4 GB for SDXL) do not both fit on one
   # L4's 22,888 MiB. Two providers is also what makes `draining` observable per role.
   #
-  # ⚠️ Two providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
-  # that was just stopped holds its 4 vCPU for the 7-8 minutes it spends draining, so waking
-  # one role while the other is on its way out needs 12. A deployment that uses both roles
-  # should hold 16 or more (quota L-DB2E81BA, which is a support case and not auto-approved).
+  # ⚠️ Two providers means two boxes, i.e. 8 vCPU of the G-family quota at once, and a box on
+  # its way out holds 4 more for 7-8 minutes: ask for 16 (L-DB2E81BA — README.md, "Before you
+  # start", which also says why it is a support case).
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -553,6 +570,8 @@ Resources:
             AcceleratorCount: !If [ HasGpu, { Min: !Ref LlmGpuCount, Max: !Ref LlmGpuCount }, !Ref "AWS::NoValue" ]
             AcceleratorTypes: !If [ HasGpu, [ gpu ], !Ref "AWS::NoValue" ]
             AcceleratorManufacturers: !If [ HasGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            # Total across the accelerators asked for: with AcceleratorCount 1, the card.
+            AcceleratorTotalMemoryMiB: !If [ HasLlmAcceleratorMem, { Min: !Ref LlmAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
       Tags:
         # Cost allocation: engine hours are a COMPONENT cost, shown as such and never
         # apportioned to a member (ADR 0048, ADR 0071 decision 9).
@@ -598,6 +617,7 @@ Resources:
             AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
             AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
             AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            AcceleratorTotalMemoryMiB: !If [ HasImageAcceleratorMem, { Min: !Ref ImageAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
       Tags:
         - { Key: af-role, Value: engine-image }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
@@ -616,24 +636,8 @@ Resources:
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
-  # A Fargate task an operator runs by hand:
-  #
-  #   aws ecs run-task --cluster <cluster> --launch-type FARGATE \
-  #     --task-definition af-<stack>-ingest \
-  #     --network-configuration 'awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}' \
-  #     --overrides '{"containerOverrides":[
-  #        {"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…/resolve/main/x.gguf"},
-  #                                       {"name":"SHA256","value":"<siblings[].lfs.sha256 from the HF API>"}]},
-  #        {"name":"upload","environment":[{"name":"KEY","value":"llm/x.gguf"}]}]}'
-  #
-  # ⚠️ Overriding a command here takes ONE string, because the EntryPoint is already
-  # ["sh","-c"]. Passing ["sh","-c",<script>] becomes `sh -c sh -c <script>`, which does
-  # nothing and exits 0 — it reads as success and ran nothing (measured).
-  #
-  # The sha256 is not optional decoration. "The file got bigger" is what a truncated
-  # download also looks like, and a GGUF that is 99 % there loads and then answers nonsense.
-  # The value comes from the HF API's `?blobs=true` siblings[].lfs.sha256, which was
-  # verified against a real sha256sum of the downloaded file.
+  # A Fargate task an operator runs by hand. The invocation, where the sha256 comes from and
+  # the `sh -c sh -c` trap are in README.md, "Getting a model into the catalogue".
   IngestTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
