@@ -1,5 +1,16 @@
 -- The engine model catalogue (ADR 0072 decision 2).
 --
+-- ⚠️ IF NOT EXISTS, and that is not decoration. This file was numbered 0041/0056 on the branch
+-- that first deployed it, and a collision with another migration of the same version forced a
+-- renumber before it was merged. A deployment that had already applied the OLD number then met
+-- the new one and tried to create a table it already had, which stopped the Control Plane from
+-- booting at all (measured on the development deployment).
+--
+-- The lesson is the rule, not this clause: RENUMBERING A MIGRATION THAT ANY DEPLOYMENT HAS
+-- ALREADY APPLIED IS A BREAKING CHANGE. When two branches collide on a version, the one that
+-- has never been deployed is the one to move, and if both have been, the second needs a repair
+-- migration (see 0059 / 0044) rather than a rename.
+--
 -- What a self-hosted engine loads used to be a CloudFormation parameter -- LlmModelS3Key,
 -- ImageModelFile and ten siblings -- so swapping a checkpoint meant editing params/60-engines
 -- and running a stack update. It is an OPERATIONAL act, not a deployment one: an administrator
@@ -24,7 +35,7 @@
 -- catalogue that copies only the first shows the two NON-COMMERCIAL models as "other".
 -- The values are a SNAPSHOT taken at ingest: the model card can change under a deployment
 -- that already accepted the terms.
-CREATE TABLE engine_models (
+CREATE TABLE IF NOT EXISTS engine_models (
   role              TEXT NOT NULL,               -- 'llm' / 'image' -- the ENGINE KEY this model is for
   id                TEXT NOT NULL,               -- what a member picks: 'sdxl-base-1.0'
   kind              TEXT NOT NULL DEFAULT '',    -- gguf | checkpoint | lora | vae | text_encoder | diffusion_model
@@ -49,4 +60,4 @@ CREATE TABLE engine_models (
   updated_at        TEXT NOT NULL DEFAULT '',
   PRIMARY KEY (role, id)
 );
-CREATE INDEX idx_engine_models_role_enabled ON engine_models(role, enabled);
+CREATE INDEX IF NOT EXISTS idx_engine_models_role_enabled ON engine_models(role, enabled);
