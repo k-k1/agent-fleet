@@ -338,3 +338,48 @@ it answers. It only listens once the checkpoint is loaded, so a 200 there really
 downstream can ask the engine for them: the box is asleep when the launch menu is drawn, which is
 the whole point of an on-demand engine. A row from a stack older than the fields omits them, and
 both the gateway and the Agent then say nothing rather than advertising a zero.
+
+## The `models` volume is anonymous
+
+Each task definition mounts `- Name: models` / `Host: {}` — an ANONYMOUS host volume, an empty
+`Host` with no `SourcePath`. Both halves of that are measured, and both are counter-intuitive:
+
+- a named `SourcePath` does NOT work. `StorageConfiguration.storageSizeGiB` sizes the DATA volume
+  MI attaches (what the container runtime uses); an arbitrary host path like `/var/lib/…` lands on
+  the ROOT filesystem, which is much smaller. Measured: with `SourcePath` the fetch died with
+  "No space left on device" on a brand-new 120 GiB box, every time, and the service never started
+  at all.
+- the price of the anonymous form is that ECS allocates a FRESH directory per task, so a box that
+  MI keeps (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart
+  onto the very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories
+  are never reclaimed, so four starts on one kept box filled the disk.
+
+ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `scaleInAfter` is left at the
+AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
+at, which is not documented and was not worth another GPU hour to find; P4 can pick it up with
+`useLocalStorage`, where the 250 GB instance store is the whole disk.
+
+## Cost allocation — every billed resource in this stack carries `af-role`
+
+The engine hours are a COMPONENT cost: shown as their own line, never apportioned to a member
+(ADR 0071 decision 9, ADR 0048 decision 15). What makes that possible is that `af-role` is already
+one of the Control Plane's activated cost allocation keys, so nothing new has to be switched on —
+and switching a key on is not retroactive, which is why the tags go on before the reading does.
+
+| Resource | `af-role` | How it reaches the bill |
+|---|---|---|
+| `LlmCapacityProvider` / `ImageCapacityProvider` | `engine-llm` / `engine-image` | `PropagateTags: CAPACITY_PROVIDER` — the MI instance is the billed unit |
+| `LlmService` / `ImageService` | `engine-llm` / `engine-image` | `PropagateTags: SERVICE` — the MI management fee is billed against the task |
+| `ModelsBucket` | `engine-models` | bucket tags; S3 storage for the staged GGUF / checkpoints |
+| `LogGroup` | `engine-logs` | log group tags; CloudWatch ingestion and storage |
+
+Measured on af-sandbox over 2026-09-01..08 (one Cost Explorer request, grouped by `af-role` and
+SERVICE): `engine-llm` $5.18, `engine-image` $0.73 — of which $0.37 and $0.05 arrive as "Amazon
+Elastic Container Service" rather than EC2, i.e. the Managed Instances fee DOES inherit the
+service's tags, and $0.08 as "EC2 - Other" for the data volume. None of it carries
+`af-membership`, so all of it lands in the shared bucket and none of it is ever charged to a
+person.
+
+**What still cannot be split**: the ingest job pulls model weights from Hugging Face over the NAT
+gateway, and NAT data processing is untaggable (ADR 0048 decision 4). Fetching the same file from
+S3 afterwards does not — 00-network's gateway endpoint keeps that off the NAT entirely.

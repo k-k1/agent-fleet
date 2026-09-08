@@ -87,6 +87,27 @@ function centreLabel(tr: (k: MsgKey) => string, id: string): string {
   return s === key ? id : s;
 }
 
+// One row of the shared bucket's by-role breakdown, as the CP sends it. `role` is the raw
+// af-role tag value ("" for the part of the bill that carries none) and `group` is the bucket the
+// CP put it in - both are identifiers, never prose, so they can be translated here.
+type CostRoleRow = { role: string; group: string; unblended_micro: number };
+type CostGroupRow = { group: string; unblended_micro: number };
+
+// Labels for the by-role breakdown. Same fallback discipline as centreLabel: an af-role this build
+// has no wording for shows its raw tag value rather than a blank or a guess, because a value the
+// Console does not know is exactly the case where the reader needs to see what AWS actually said.
+function roleLabel(tr: (k: MsgKey) => string, role: string): string {
+  if (role === "") return tr("cost.role_none");
+  const key = ("cost.role_" + role.replace(/-/g, "_")) as MsgKey;
+  const s = tr(key);
+  return s === key ? role : s;
+}
+function groupLabel(tr: (k: MsgKey) => string, group: string): string {
+  const key = ("cost.group_" + group) as MsgKey;
+  const s = tr(key);
+  return s === key ? group : s;
+}
+
 // labelStride - how often to put a tick on the daily bars, aiming for about ten.
 // Labelling all 30 days makes neighbours overlap into one unreadable run of characters.
 function labelStride(n: number): number {
@@ -417,6 +438,8 @@ export function CloudCostAdminView({
   const maxMember = members.reduce((m, x) => Math.max(m, x.unblended_micro || 0), 0);
   const shared: number | undefined = data?.shared_micro;
   const sharedServices: any[] = data?.shared_services || [];
+  const sharedRoles: CostRoleRow[] = data?.shared_roles || [];
+  const sharedGroups: CostGroupRow[] = data?.shared_groups || [];
   const attributed: number = data?.attributed_micro || 0;
 
   return (
@@ -484,6 +507,49 @@ export function CloudCostAdminView({
             <div className="cc-total">{fmtMoney(shared, currency)}</div>
             <div className="cc-total-lab muted">{tr("cost.shared_label")}</div>
           </div>
+          {/* What it was FOR, before what AWS calls it. An engine's GPU hours and an unclaimed
+              slot's are the same AWS service, so the service list below cannot separate them and
+              the whole component reads as one anonymous "EC2 - Compute" line (ADR 0048 decision
+              15). Absent on a deployment whose poller has not landed the second Cost Explorer
+              request, in which case only the service list is drawn. */}
+          {sharedGroups.length > 0 && (
+            <>
+              <h5 className="cc-sub">{tr("cost.by_role")}</h5>
+              <div className="usage-rows">
+                {sharedGroups.map((g) => (
+                  <div key={g.group} className="usage-row cc-svc">
+                    {/* The name column is a fixed 220px with an ellipsis (settings.css), so a
+                        label that runs long is truncated - measured, two of these did. The
+                        titles are the safety net; the labels themselves are kept short. */}
+                    <span className="ur-key" title={groupLabel(tr, g.group)}>
+                      {groupLabel(tr, g.group)}
+                    </span>
+                    <span className="ur-hrs mono">{fmtMoney(g.unblended_micro, currency)}</span>
+                  </div>
+                ))}
+              </div>
+              <details className="cc-roles">
+                <summary>{tr("cost.by_role_detail")}</summary>
+                <div className="usage-rows">
+                  {sharedRoles.map((r) => (
+                    <div key={r.role} className="usage-row cc-svc">
+                      {/* The title carries the raw af-role too: on a row whose label came from
+                          the catalogue, that is the only place the actual tag value appears,
+                          and it is what somebody checking the bill in AWS needs. */}
+                      <span
+                        className="ur-key"
+                        title={r.role ? `${roleLabel(tr, r.role)} (af-role=${r.role})` : roleLabel(tr, r.role)}
+                      >
+                        {roleLabel(tr, r.role)}
+                      </span>
+                      <span className="ur-hrs mono">{fmtMoney(r.unblended_micro, currency)}</span>
+                    </div>
+                  ))}
+                </div>
+              </details>
+            </>
+          )}
+          <h5 className="cc-sub">{tr("cost.breakdown")}</h5>
           <div className="usage-rows">
             {sharedServices.map((s) => (
               <div key={s.service} className="usage-row cc-svc">

@@ -321,7 +321,10 @@ containers-roadmap #88 は 2019 年から開いたまま）。llama.cpp は CPU 
    `engine.llm` / `tool.imagegen` の provider 別。ADR 0029 の列挙に追記）。単価は付けない
    （ここでの 1 トークンにドル建ての値は無い）。インスタンス時間は `af-role=engine-llm` /
    `engine-image` の費用配分タグで**コンポーネント費用として表示し、按分しない**
-   （ADR 0048）。
+   （ADR 0048）。**この後半（表示）は 2026-09-08 まで実装が無かった**——タグは打たれて
+   いたが CP は `af-membership` の軸しか読んでおらず、エンジンの GPU 時間は共有バケットで
+   空きスロットプールと同じ `Amazon EC2 - Compute` に混ざっていた（実測で請求の 19%）。
+   ADR 0048 決定 15 で `af-role` の 2 本目のリクエストを足して塞いだ。
 
 10. **由来は結果の一部（0069 決定 11）。** provider は `llamacpp` / `sdcpp` / `comfy`、モデルは
     **ファイル名と sha256**（HF の repo id とリビジョンも取り込みジョブが残す）。プロンプトは

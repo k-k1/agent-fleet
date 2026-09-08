@@ -1099,6 +1099,20 @@ type CloudCostRow struct {
 	Estimated                            bool
 }
 
+// CloudCostRoleRow is one (day, af-role, service) slice of the SHARED part of the invoice
+// — the same money CloudCostRow holds with an empty MembershipID, cut by what it was FOR
+// instead of by whose it was (ADR 0048 decision 15).
+//
+// Role=="" is not a gap: NAT, ALB, RDS, Route53 and tax carry no af-role and cannot, so it
+// is the deployment's irreducible platform cost. The rows never overlap CloudCostRow's
+// attributed ones, so the two must not be summed together.
+type CloudCostRoleRow struct {
+	Day, Role, Service   string
+	Unblended, Amortized int64
+	Currency             string
+	Estimated            bool
+}
+
 // CloudCostTotal is one member's attributed spend over a window, enriched with the
 // labels needed to name them. The labels are resolved at READ time by join, exactly
 // like UsageRow: a membership that has been deleted leaves rows whose money is still
@@ -1129,6 +1143,15 @@ type CloudCostStore interface {
 	// "nothing was spent" apart from "the poller has never covered this range" —
 	// the difference matters because cost allocation cannot be backfilled.
 	CloudCostDays(ctx context.Context) (first, last string, err error)
+
+	// PutCloudCostByRole replaces the given days of the by-role cut. Same wholesale
+	// replacement as PutCloudCost and for the same reason; a separate call because the
+	// two come from two Cost Explorer requests and either can fail on its own.
+	PutCloudCostByRole(ctx context.Context, days []string, rows []CloudCostRoleRow) error
+	// ListCloudCostByRole returns the by-role rows in [fromDay,toDay]. There is no
+	// tenant or membership parameter on purpose: every row here is shared, which is
+	// super_admin-only information (ADR 0048 decision 4).
+	ListCloudCostByRole(ctx context.Context, fromDay, toDay string) ([]CloudCostRoleRow, error)
 }
 
 // SSMStore is the SSM login config (docs/log/p3-ssm-session.md), personal

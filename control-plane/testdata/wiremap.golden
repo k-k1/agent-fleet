@@ -12,7 +12,7 @@ admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
 admin_stats.go adminAPI.memberStats x1 {running}
 audit.go adminAPI.audit x1 {audit}
-cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_micro,shared_services,to} cond{shared_micro,shared_services}
+cloudcost.go adminAPI.cloudCost x1 {attributed_micro,from,members,meta,shared_groups,shared_micro,shared_roles,shared_services,to} cond{shared_groups,shared_micro,shared_roles,shared_services}
 cloudcost.go adminAPI.oneMemberCloudCost x1 {days,from,meta,services,to,total_micro}
 drawio_stencils.go drawioStencils.index x1 {cached,sets,version}
 egress.go egressAPI.allowlistAdd x1 {entry,id,state}

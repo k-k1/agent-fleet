@@ -308,6 +308,66 @@ disappear**. Deleting the rows would break that premise and **change a past mont
 fact**. `CloudCostTotal` was designed from the start to "emit an empty UserKey/Email if the membership is
 gone", so the display does not break either.
 
+## Decision 15 — add the **`af-role` axis** to the shared breakdown. The inference and speech engines get their own line, and that is not apportionment
+
+ADR 0071 decision 9 had already decided that "engine instance hours are shown as a **component cost**
+through the `af-role=engine-llm` / `engine-image` cost allocation tags, and never apportioned". **The tags
+were being written; nothing read them.** The single request the CP sends to Cost Explorer is
+`GroupBy=(af-membership, SERVICE)`, and `af-role` sat in decision 1's allowlist — activated, and used by
+nobody.
+
+So the shared bucket's only breakdown was the AWS service name:
+
+| What it is | How it reads on the shared card | What it is mixed with |
+|---|---|---|
+| Engine GPU (the MI instance) | `Amazon EC2 - Compute` | **the idle slot pool** |
+| TTS (Fargate) | `Amazon Elastic Container Service` | **the Control Plane's own task** |
+
+**Measured (af-sandbox, 2026-09-01..08, one Cost Explorer request)**: `engine-llm` $5.18,
+`engine-image` $0.73, `tts-engine` $0.17 — **19% of the whole bill**, invisible. What attaches to a
+person is 22.3% (decision 4), so this is a block of the same order.
+
+- **Add a second Cost Explorer request.** GroupBy takes two axes and the first request spends both on
+  (af-membership, SERVICE). Nothing **derives** this from the stored table: an engine's GPU hours and an
+  unclaimed slot's are both "empty membership + EC2-Compute", and no arithmetic separates them.
+  $1.2/month → **$2.4/month**.
+- **This is not apportionment.** Decision 2 (no estimates) and decision 4 (do not distribute shared cost)
+  both **still hold** — it is the same invoice grouped differently. Multiplying `engine_hourly`'s seconds
+  (ADR 0071 decision 13) by a declared unit price is rejected again: there is no reason to publish an
+  estimate when the real figure costs $0.01.
+- ⚠️ **The filter is the load-bearing part.** Only rows where `af-membership` is **ABSENT**. Without it a
+  slot a member is holding — which carries **both** `af-membership` and `af-role=slot` — appears in their
+  attributed total AND under role `slot`, and the shared card adds up to more than the shared bucket.
+  Measured: `slot` EC2-Compute went from $3.33 (unfiltered) to **$0.12** (ABSENT). The $3.21 difference is
+  time somebody was holding, which the per-member view already answers.
+- ⚠️ **Reserved memberships are added back with an Or** (decision 13). The golden seed and probe carry
+  `af-membership` but are folded into SHARED on ingest, so ABSENT alone would make the two tables' totals
+  differ by their spend. `Or[ABSENT, EQUALS(reserved ids…)]`. ⚠️ **Cost Explorer rejects an empty
+  `Values`**, so on a deployment with no reserved ids the Or is dropped and the bare ABSENT term is sent
+  (both shapes measured against the live API).
+- **`role=''` is the answer, not a gap.** NAT, ALB, RDS, Route53 and tax cannot carry an `af-role` (a NAT
+  gateway's bytes do not know who asked for them). It is shown as **the residual next to the engines**.
+  ⚠️ Measured, the largest single item in sandbox's $22.25 residual is NAT at $8.59 (bytes $5.61 +
+  hours $2.98, inside `EC2 - Other`) — decision 4's "NAT cannot be split" is exactly what is left. **The ingest job's Hugging Face download lands here too**;
+  re-fetching from S3 afterwards does not, because it goes through the gateway endpoint.
+- **Two levels.** Group totals (engines / speech / workspace resources nobody is holding / platform)
+  first, per-role rows in a disclosure below. The grouping is decided in **one place, the CP's
+  `runtime.CostRoleGroup`** — split it across the Console as well and the two totals will disagree.
+  ⚠️ **An unrecognised role becomes "other"**, never part of the platform residual: a new tag value that
+  quietly joins NAT and RDS is money nobody will ever ask about again.
+- **A failure keeps the first request's result.** The second one is an extra breakdown, not the invoice,
+  so a failure leaves the per-member ingest done and does not reach `meta.error` (which the screen prints
+  next to the numbers). An older CP, or one whose second request keeps failing, simply omits the keys and
+  the screen draws the service breakdown alone.
+- ⚠️ **The S3 bucket and the log group carried no tags at all** (`ModelsBucket` / `LogGroup`). **Tags do
+  not backfill any more than activation does**, so they were stamped before the design was finished
+  (decision 1's ordering). The MI management fee and the data volume **did** inherit the service's tags —
+  `engine-llm` came back with $0.37 under ECS and $0.08 under EC2-Other — so nothing more was needed
+  there, and that was measured rather than assumed.
+- **No manual step on acrt (a member account) either.** `af-role` is already activated by the payer, and
+  `GetCostAndUsage` with `GroupBy Type=TAG` works from a member account (measured). acrt does not run
+  60-engines, so only `tts-engine` shows up, at $0.07 over 7 days.
+
 ## Options discarded
 
 - **Show apportionment (running seconds × unit price) alongside actual spend** — decision 2. Two numbers
@@ -328,6 +388,12 @@ gone", so the display does not break either.
 - **Derive the member detail's cost by filtering the list's response** — decision 12. The total can be
   derived, but neither the daily figures nor the breakdown are in it — and those two are the reason for
   putting it on the detail.
+- **Derive the by-role view from `engine_hourly` seconds × a unit price** — decision 15. Decision 2's exact
+  shape, and the trap is that the table already exists so it could just be written.
+- **Repoint the existing request at (af-role, SERVICE)** — decision 15. It loses the membership axis, and
+  Cost Explorer's two-axis limit cannot be moved, so a second request is the only way.
+- **Fetch the by-role cut every 12 hours to hold it at $0.6/month** — it splits the freshness of one screen
+  in two. $0.6/month does not pay for that confusion.
 - **Ride the member detail's cost on `/stats`** — decision 12. It would put four-second polling and a
   six-hourly database read in the same response.
 - **Have the CP revert a tag a person turned off** — decision 11. Do not override the operator in their

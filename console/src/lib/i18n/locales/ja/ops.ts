@@ -220,6 +220,26 @@ export const ops = {
   "cost.centre_idle_pool": "空きスロット",
   "cost.centre_cp": "コントロールプレーン",
   "cost.centre_tax": "税",
+  // 共有分を af-role で割った内訳（ADR 0048 決定 15）。文言が持つ主張は 1 つで、
+  // これは同じ請求を別の軸で切ったものであって按分ではない。ここで「見積」と
+  // 書いた瞬間、画面は実態と違うことを言い始める。
+  "cost.by_role": "何のための費用か",
+  "cost.by_role_detail": "リソースの役割ごと",
+  "cost.group_engine": "推論エンジン",
+  "cost.group_tts": "音声合成エンジン",
+  "cost.group_pool": "未使用のワークスペース資源",
+  "cost.group_platform": "基盤（割り当て不可）",
+  "cost.group_other": "その他",
+  "cost.role_none": "役割タグなし",
+  "cost.role_engine_llm": "推論エンジン（LLM）",
+  "cost.role_engine_image": "推論エンジン（画像）",
+  "cost.role_engine_models": "モデル置き場",
+  "cost.role_engine_logs": "エンジンのログ",
+  "cost.role_tts_engine": "音声合成エンジン",
+  "cost.role_slot": "空きスロット",
+  "cost.role_home": "ホームボリューム",
+  "cost.role_golden": "ゴールデンスナップショット",
+  "cost.role_backup": "バックアップ",
   "uptime.my_title": "ワークスペースが動いていた時間",
   "uptime.my_intro":
     "1 マスが 1 時間です。灰色は停止していた時間、濃いほど同時に開いていたセッションが多い時間です。金額ではありません — その日のクラウド費用がそうなっている理由の方です。",
