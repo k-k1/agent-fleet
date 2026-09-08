@@ -243,3 +243,49 @@ func TestEngineActiveParamName(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// The two documents the dev deployment's image role is driven with in ADR 0072's P0
+// measurements, byte for byte.
+//
+// They are here because the live check could not go through the admin API: driving it needs a
+// super_admin browser session, and the P0 measurement was made from AWS credentials alone. So
+// the active set was published by hand — and this is what makes that a faithful stand-in for
+// what the Control Plane's own publishActiveSet would have written, rather than a plausible
+// hand-typed JSON that happens to work.
+//
+// The link this does NOT cover is the admin route writing the row, which is
+// TestEngineAdminModelLifecycle's job.
+func TestEngineActiveSetForTheDevDeployment(t *testing.T) {
+	sdxl := store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}
+	jugg := store.EngineModel{
+		Role: "image", ID: "juggernaut-xl-v9", Kind: "checkpoint", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/juggernaut_xl_v9.safetensors"}},
+	}
+	got, err := engineActiveSetJSON(buildEngineActiveSet("image", []store.EngineModel{sdxl, jugg}))
+	if err != nil {
+		t.Fatalf("before: %v", err)
+	}
+	want := `{"v":1,"key":"image","start":"sdxl-base-1.0","models":[` +
+		`{"id":"sdxl-base-1.0","f":["image/checkpoints/sd_xl_base_1.0.safetensors"]},` +
+		`{"id":"juggernaut-xl-v9","f":["image/checkpoints/juggernaut_xl_v9.safetensors"]}]}`
+	if got != want {
+		t.Errorf("before the switch:\n got %s\nwant %s", got, want)
+	}
+
+	// After the administrator presses "start with this" on the second checkpoint. The store
+	// keeps `selected` exclusive within a role, so exactly one row carries it.
+	sdxl.Selected, jugg.Selected = false, true
+	got, err = engineActiveSetJSON(buildEngineActiveSet("image", []store.EngineModel{sdxl, jugg}))
+	if err != nil {
+		t.Fatalf("after: %v", err)
+	}
+	want = `{"v":1,"key":"image","start":"juggernaut-xl-v9","models":[` +
+		`{"id":"sdxl-base-1.0","f":["image/checkpoints/sd_xl_base_1.0.safetensors"]},` +
+		`{"id":"juggernaut-xl-v9","f":["image/checkpoints/juggernaut_xl_v9.safetensors"]}]}`
+	if got != want {
+		t.Errorf("after the switch:\n got %s\nwant %s", got, want)
+	}
+}

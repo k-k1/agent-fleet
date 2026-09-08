@@ -2,12 +2,14 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **adopted — P0 may start (revised the same day after the 2026-09-08 review; drafted the same day).** Every number
-  below is quoted from ADR 0071's measurements; the upstream facts (llama.cpp,
-  stable-diffusion.cpp) were read the same day from the repositories' `tools/server/README.md`,
-  `examples/server/api.md` and `docs/lora.md`. **Nothing was newly measured for this document**
-  — what has to be measured before a decision can stand is listed under *Open questions*, and
-  each decision names the question it depends on.
+- Status: **P0 implemented and verified on hardware (2026-09-08). P1 onwards not started.**
+  Drafting, review, revision and implementation all happened the same day. **As drafted**, every
+  number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
+  stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
+  `examples/server/api.md` and `docs/lora.md`: **nothing was newly measured for the draft**, and
+  what had to be measured before a decision could stand is listed under *Open questions*, each
+  decision naming the question it depends on. What was measured afterwards is in two sections —
+  *Resolved by measurement* (ComfyUI) and *P0 measurements* (the implementation).
 - Revised the same day: **vLLM and ComfyUI were weighed, and the licence, gating and file sizes of
   the candidate models (SD3 / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image / Qwen-Image) were taken
   from the HF API** (Context: "Candidate models", "vLLM and ComfyUI"). Three consequences:
@@ -22,6 +24,17 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   default became klein 4B. 🔴 Two of the runs had to be repeated — `--cache-none` makes every
   prompt re-read the weights from disk, and a second prompt with the same seed hits the output
   cache and "runs" in 0.5 s. Neither was visible until the numbers were.
+- **P0 was implemented and verified on real hardware the same day** (the "P0 measurements"
+  section): the catalogue table, the seed, the active set in SSM, one role-independent fetch
+  sidecar, both roles' idle wrapper, `no_model`, the admin API and panel, the `catalog-changed`
+  push, and declared `sizes[]`. Of the definitions of done, **the first and third were driven on
+  hardware** (same prompt and seed, SDXL to Juggernaut-XL v9, with `describe-stacks` reporting an
+  unchanged last-update time; and the services stabilising with no Control Plane and no active
+  set); the second is unit-tested only. 🔴 Three things bit on the way: **a YAML folded block
+  left the sidecar doing nothing** (measurement 2), **nothing stopped a box that reaches RUNNING
+  and never warms** (4), and **the straightforward active set did not fit 4,096 characters at 20
+  models and 20 LoRAs** (1). Two things P0 needed that the decisions did not name — a way to
+  create a catalogue row, and a harness for seeing a picture — are at the end of that section.
 - The same day, the **review before P0** landed at the end ("Review (2026-09-08, before P0)") and
   the text was revised on it. Four premises fell — 🔴 **the CP task role holds no S3 permission
   at all** (decisions 6 and 7 had the CP reading manifests and deleting S3 files), 🔴 **SSM's
@@ -599,6 +612,131 @@ corrected "put it in the description" into). Open question 7 is closed; 8 is hal
 unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB class and a
 200-second pull, and the 20–26 s checkout + pip and its NAT dependency go away).
 
+## P0 measurements (2026-09-08, the dev deployment)
+
+Measured while implementing P0, on the development deployment (`af-sandbox` / ap-northeast-1).
+Of the three definitions of done the phases section gave, **the first and the third were driven
+on real hardware and the second is unit-tested only** (why: 10). About forty minutes of
+g6.xlarge, under $1.
+
+1. **The Control Plane seeded the catalogue from the stack and published the active set**
+   (decisions 2 and 7). Its own log at start:
+   `engines: llm active set published to /af-ws/engines/llm/active (152 bytes)` and
+   `engines: image active set published … (132 bytes)`. The documents:
+
+   ```
+   {"v":1,"key":"llm","start":"qwen3-coder-30b-a3b","models":[{"id":"qwen3-coder-30b-a3b",
+    "f":["llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"],"c":32768}]}
+   {"v":1,"key":"image","start":"sdxl-base-1.0","models":[{"id":"sdxl-base-1.0",
+    "f":["image/checkpoints/sd_xl_base_1.0.safetensors"]}]}
+   ```
+
+   **132–152 characters against the 4,096 of R2(c).** The pinned "20 models and 20 LoRAs" comes
+   to 3,200 — but the straightforward shape **did not fit at 4,280**, even while obeying
+   decision 2's "S3 keys and flags only". It took two more cuts: LoRAs became bare S3 keys (the
+   box scans a directory, so it needs no name and no description) and a flagless file became a
+   bare string. 4 KB is not headroom to be careful with; it is what decides the shape.
+
+2. 🔴 **The sidecar came up doing nothing. A YAML FOLDED block (`>-`) does not fold a
+   more-indented line.** The jq filter, indented to line up under its own `jq -r`, kept its
+   newline, so the shell ran `jq -r --arg s "$START"` (which dumps the whole document) and then
+   looked for a command called `[(.models[]?|…`. `/models/cmdline` stayed empty, the engine came
+   up as the placeholder, **the service reached a steady state and nothing anywhere said why**.
+   That is a GPU box and ten minutes spent arriving at "no picture, no reason". Fixed by a
+   literal block (`|-`). What stops it happening again is
+   `deploy/local/engine-sidecar-test.sh`, which **pulls the script out of the template as it is
+   actually deployed and runs it** against a stub `aws` and the real `jq`: shell inside a
+   CloudFormation `Mappings` entry has no type check, no linter, and its only feedback is a GPU
+   box ten minutes later.
+
+3. **Decision 1(b) and 1(d) were observed as they stand.** A task that started during the stack
+   update (10:17:25), before the Control Plane had been replaced and before any active set
+   existed, logged
+   `engine fetch: no active set at /af-ws/engines/image/active - this engine has nothing to load`,
+   idled, and **the service reached a steady state**. That is the third definition of done —
+   "with no Control Plane and no active set, both roles' services stabilise" — and it was not
+   even contrived. The two-pass stand-up is gone.
+
+4. 🔴 **The same observation exposed a hole. That task stays RUNNING and never warms.** The
+   `no_model` rule of decision 1(c) does not fire, because the catalogue is not empty. The start
+   deadline only covers `starting` (R6) and `running && !warmed` is not a failure, so $1.26/hour
+   runs with nothing to stop it. Added: **RUNNING past the start deadline without ever having
+   warmed is a failed start that happened to reach RUNNING** — stop it, count it, cool down. The
+   clock does NOT start at "it is not warm right now": it starts at the latest of the
+   deployment's creation, **when this Control Plane started watching**, and when the engine was
+   last warm. Anything else stops a healthy engine over one failed probe or one CP replacement.
+
+5. **The switch works on real hardware (definition of done 1).** Same prompt, same seed 42, same
+   512×512:
+
+   | | SDXL base 1.0 | Juggernaut-XL v9 |
+   |---|---|---|
+   | S3 → EBS | 6,938,078,334 B in **64 s** (108 MB/s) | 7,105,348,188 B in **39 s** (182 MB/s) |
+   | cmdline | `-m /models/image/checkpoints/sd_xl_base_1.0.safetensors` | `-m /models/image/checkpoints/juggernaut_xl_v9.safetensors` |
+   | VRAM | 6,624 MB | the same family, so much the same |
+   | first 512px after loading | **11.4 s** | **21.5 s** |
+   | PNG | 455,316 B | 430,587 B (**visibly a different picture**) |
+
+   And **`describe-stacks` reports `LastUpdatedTime` as `2026-09-08T10:49:24.476Z` both before
+   and after** — "the checkpoint changed without touching CloudFormation" is literally true. The
+   first-picture times (11.4 s / 21.5 s) are longer than ADR 0071's warm 512px of 7.8 s; that is
+   the one-off cost carried by the first generation after a load, and with two points it is a
+   range and nothing more.
+   - 🔴 **Stated plainly: the switch was made by publishing the active set by hand, not by
+     pressing the Console's button.** Driving the super-admin screen needs a browser session and
+     this measurement was made from AWS credentials alone. That the hand-written document is
+     **byte-identical to what the CP's `publishActiveSet` writes** is pinned by
+     `TestEngineActiveSetForTheDevDeployment`. The only link not driven on hardware is "the admin
+     route writes the row", which is `TestEngineAdminModelLifecycle`'s job; the CP's own publish
+     is observed above.
+
+6. **Ingesting the second checkpoint** (Juggernaut-XL v9, CreativeML OpenRAIL-M, not gated, one
+   file): 7,105,348,188 bytes from Hugging Face in **163 s** (43.6 MB/s), sha256 matched, **48 s**
+   to S3. One more point for ADR 0071 decision 3's "Hugging Face delivers at 4–236 MB/s and
+   nothing predicts which".
+   🔴 **For sd-server it has to be a SINGLE-file checkpoint.** The klein 4B and Z-Image files in
+   the bucket are split models and sd.cpp's flag assembly for them is unmeasured (decision 4(b))
+   — that is ComfyUI's job in P2.
+
+7. **The S3 layout move** (`image/sd_xl_base_1.0.safetensors` → `image/checkpoints/…`) is a
+   server-side copy: instant, and it never touches the NAT. `ImageModelS3Key` was updated in the
+   same step, per decision 2(f) — a seed still pointing at the old key produces a row whose file
+   is not there, and the first start fails in the fetch sidecar.
+
+8. 🔴 **The G-family vCPU quota of 8 was hit.** Waking a box straight after stopping one fails
+   placement for minutes with `VcpuLimitExceeded: your current vCPU limit of 8`, because the
+   draining box still holds its 4 vCPU. It is exactly what `PARAMETERS-60-engines.md`'s "The
+   G-family quota" describes, and the practical consequence is that **a start/stop/start
+   verification cannot proceed until the drain (456 s measured) is over**.
+
+9. 🔴 **This deployment's image role was in `mode=on`**, set by somebody before this work.
+   `aws ecs update-service --desired-count 0` is undone within thirty seconds by
+   `engine image: start (admin_on)`. **The mode is a Control Plane settings row and AWS
+   credentials cannot change it** — stopping it needs the Console's toggle. It is the mirror of
+   ADR 0071's "`off` is a persistent setting, not a pause": so is `on`.
+
+10. **The second definition of done — a `mode=on` engine does not start with an empty catalogue —
+    was not driven on hardware**, because emptying the catalogue needs the super-admin screen. It
+    is pinned by four cases in `TestDecideEngineAction` (not started when empty; stopped if it is
+    up; not started even with demand over the threshold; `off` still wins the audit reason), and
+    the `unwarmed` rule of 4 by four more in the same table.
+
+### What P0 needed that the decisions did not name
+
+- **A way to create a catalogue row.** The seed makes exactly ONE row per role (decision 7) and
+  the other way to make one is P4's ingest API — so with only the toggles there is **nothing to
+  switch to, and definition of done 1 is unreachable**. The half of P4 that is not "fetch from
+  Hugging Face" — writing down what a file already in the bucket is — was added as
+  `POST /api/admin/engines/{key}/models`. It needs no `ecs:RunTask` and no PassRole, so the CP's
+  IAM does not grow, and the row is always created disabled. Its pair, `DELETE …/models/{id}`,
+  forgets the ROW only (there is no `s3:DeleteObject` — decision 7).
+- **`harness/probe-image-engine.sh`.** The engine is on a private subnet and admits only the CP's
+  security group, so the only ways to see a picture are a member's `generate_image` and a task
+  inside the VPC. The first was not available for this measurement (5), so the second was built.
+  It borrows the ingest task definition — two containers, a shared volume, S3 write is exactly
+  the shape needed, and the template has 820 bytes of room for a new resource.
+
+
 ## Options rejected
 
 - **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
@@ -681,7 +819,7 @@ unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB 
 
 ## Phases
 
-- **P0 — the catalogue's foundation.** The first step is moving 3 KB of comments out of
+- **P0 — the catalogue's foundation. Implemented and verified on hardware (see *P0 measurements*).** The first step is moving 3 KB of comments out of
   `60-engines.yaml` into `PARAMETERS-60-engines.md` (R4: move first, add after). Then
   `engine_models` (a table, open question 5) and the seed, manifests, the S3 layout migration
   (in the same step as the seed), the active set in SSM (the 4,096-character rule and its test)
