@@ -63,6 +63,34 @@ func TestStatusListsEveryReadyProvider(t *testing.T) {
 	}
 }
 
+// The status names the image SERVICE behind each route, not only the CLI id it is keyed by.
+// The id is what the tool's enum carries, and a session asked for a picture "from Gemini"
+// cannot map that onto `agy` on its own — the one that could not reported the service as
+// unavailable while holding the only route to it.
+func TestStatusNamesTheServiceBehindEachProvider(t *testing.T) {
+	withImagegenSession(t, session.KindClaude,
+		stubProvider{id: ProviderAgy, caps: capsOf([]Op{OpGenerate})},
+		stubProvider{id: ProviderCodex, caps: capsOf([]Op{OpGenerate})},
+	)
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status is not JSON: %v (%s)", err, rec.Body)
+	}
+	want := map[string]string{ProviderAgy: "Gemini", ProviderCodex: "GPT Image"}
+	for _, p := range got.Providers {
+		if !strings.Contains(p.Service, want[p.ID]) {
+			t.Fatalf("provider %s service = %q, want it to name %q", p.ID, p.Service, want[p.ID])
+		}
+	}
+	// The flat field describes the effective provider, like every other flat field here.
+	if !strings.Contains(got.Service, "Gemini") {
+		t.Fatalf("effective service = %q, want the first ready provider's", got.Service)
+	}
+}
+
 // A named provider may not be the caller's own CLI. The tool's enum already leaves it out, but
 // the advertised set is a scope boundary — a guessed name in tools/call must not cross it and
 // spend the plan twice for a picture this session can make with its own built-in tool.
@@ -80,5 +108,10 @@ func TestGenerateRefusesTheSessionsOwnCLI(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "imagegen_own_cli") {
 		t.Fatalf("body = %s, want the reason on the wire", rec.Body)
+	}
+	// Naming the service is what stops the refusal being read as "GPT Image is unreachable from
+	// here": it is reachable, through this session's own built-in tool.
+	if !strings.Contains(rec.Body.String(), "GPT Image") {
+		t.Fatalf("body = %s, want the service named so the refusal is actionable", rec.Body)
 	}
 }

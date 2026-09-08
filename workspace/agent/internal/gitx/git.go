@@ -1057,8 +1057,9 @@ func EnsureRepo(remoteURL, branch, newBranch, name string) (string, error) {
 // running sessions: the new branch gets its OWN directory. newBranch, when set, is
 // created off base (git worktree add -b); otherwise the worktree checks out the
 // existing base branch. Submodules are populated into the worktree's own per-worktree
-// gitdir over the token-authed HTTPS path (see gitSubmodulesUpdate); this does not
-// disturb the parent's submodules. git refuses to check out a branch already live in
+// gitdir, seeded from the parent's copy of them where it has one (git_submodule_seed.go)
+// and otherwise over the token-authed HTTPS path (see gitSubmodulesUpdate); neither
+// disturbs the parent's submodules. git refuses to check out a branch already live in
 // another worktree, which the error surfaces as-is.
 func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error) {
 	if !IsGitRepo(parentDir) {
@@ -1097,6 +1098,7 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 			// Nothing else on the relaunch path ever retries, so the session would keep
 			// landing in the same broken checkout; retry here instead.
 			if len(submoduleGaps(dir)) > 0 {
+				seedSubmodulesFromParent(dir, parentDir)
 				gitSubmodulesEnsure(dir)
 			}
 			return dir, nil
@@ -1116,7 +1118,11 @@ func EnsureWorktree(parentDir, base, newBranch, folderSeg string) (string, error
 	if out, err := Combined(parentDir, args...); err != nil {
 		return "", fmt.Errorf("worktree add: %v: %s", err, out)
 	}
-	applyGitIdentity(dir)    // commit identity for the worktree (config is shared, but explicit)
+	applyGitIdentity(dir) // commit identity for the worktree (config is shared, but explicit)
+	// A worktree's submodules live in their own object store, so without this they are fetched
+	// from the remote all over again — see git_submodule_seed.go. Seed from the parent's copy
+	// first; the ensure below then only has to cover what the parent did not have.
+	seedSubmodulesFromParent(dir, parentDir)
 	gitSubmodulesEnsure(dir) // per-worktree submodule checkout; parent untouched (verified)
 	// A new worktree starts without node_modules/target/.venv, which is exactly when
 	// relocating them is free. Only on creation: an existing worktree may already hold

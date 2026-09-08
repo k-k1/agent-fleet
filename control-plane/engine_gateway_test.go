@@ -677,3 +677,34 @@ func TestParseEngineTableReadsBothRoles(t *testing.T) {
 		t.Fatalf("list order = %+v", got)
 	}
 }
+
+// The context window the llm role is STARTED with travels in the table, because nobody
+// downstream can ask for it: llama-server holds it, and the whole design is that the box is
+// asleep when the launch menu is drawn. It is one pair per engine rather than per model —
+// one process, one gguf, one -c — so every id in `models` shares it.
+func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
+	raw := `{"engines":[{"key":"llm","api":"chat","service":"s","capacityProvider":"cp",
+	 "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
+	 "models":["qwen3-coder-30b-a3b"], "contextTokens":32768,"maxOutputTokens":4096,
+	 "apiKeyParam":"","idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"}]}`
+	tab, err := parseEngineTable(raw)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	d := tab.Engines[0]
+	if d.ContextTokens != 32768 || d.MaxOutputTokens != 4096 {
+		t.Fatalf("window = %d/%d", d.ContextTokens, d.MaxOutputTokens)
+	}
+	row := engineCatalogRowFor(d)
+	if row["context_tokens"] != 32768 || row["max_output_tokens"] != 4096 {
+		t.Errorf("catalogue row = %v", row)
+	}
+
+	// A stack from before the field says nothing, and the row must say nothing too. Reporting
+	// the zero would make the Agent advertise a context of 0, which is what turns opencode's
+	// auto-compaction off — worse than the silence it replaced.
+	old := engineCatalogRowFor(engineDef{Key: "llm", Provider: "llamacpp", Models: []string{"m"}})
+	if _, ok := old["context_tokens"]; ok {
+		t.Errorf("an undeclared window was reported anyway: %v", old)
+	}
+}

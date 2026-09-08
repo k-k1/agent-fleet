@@ -617,7 +617,7 @@ export function MirrorView({
       const d = await api(`api/sessions/${q(session)}/messages?before=${before}&limit=${WINDOW}`);
       if (d && !d.error && Array.isArray(d.messages)) {
         if (d.messages.length) {
-          scroll.capturePrependHeight(); // keep the viewport steady across the prepend
+          scroll.capturePrependAnchor(); // keep the viewport steady across the prepend
           const older = d.messages;
           setTurns((t) => [...older, ...t]);
         }
@@ -632,7 +632,8 @@ export function MirrorView({
     }
   };
 
-  // Shift the viewport back by exactly what was prepended (useMirrorScroll.applyPrependAdjust).
+  // Put the reader back on the turn they were reading across the prepend. The hold then stays
+  // armed inside useMirrorScroll, because at this point the prepended turns have no content yet.
   useLayoutEffect(() => {
     scroll.applyPrependAdjust();
   }, [turns]);

@@ -39,6 +39,10 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   measured** ("What P1 measured"). The Phases entry for P1 records the three things the
   implementation added. 🔴 P0's measurement 10 used `describe-instances` as evidence for "no GPU
   boxes"; it **does not list MI boxes at all** — corrected in P1's measurement 2.
+- One correction added the next day (2026-09-08). 🔴 **The provider block P0 and P1 shipped
+  declared no window for the model at all** — opencode reads a model with no `limit` as having a
+  context of 0, and it **switches auto-compaction off at 0**. Fixed by splitting
+  `LlmContextTokens` / `LlmMaxOutputTokens` out of `LlmExtraArgs` ("A correction after P1").
 - The next day (2026-09-08) **the rest of P1.5 — showing an engine's current state in the
   Console — was implemented** and decision 13 added. A toggle alone (also P1.5) cannot answer
   "is it safe to switch this off", so the panel gained the start time, the automatic stop time,
@@ -951,6 +955,45 @@ Also verified in P1:
   bytes with nothing shortened. `af_cfn_deploy` would have handed it over through S3 anyway, but
   finding out on the day of a deploy is late.
 
+
+## A correction after P1 — nobody was ever told the engine's window (2026-09-08)
+
+The provider block P0 and P1 shipped writes nothing but `{"name": …}` for the model. What using
+it on a real box showed is that this is **not read as "no window declared" but as "the window is
+zero"**.
+
+🔴 **Measured against opencode 1.18.29** (af's own provider shape written into an isolated HOME,
+then `GET /config/providers` read back): `qwen3-coder-30b-a3b` comes back as
+`limit={context:0, output:0}`. Two consequences, both silent:
+
+- **opencode DISABLES auto-compaction when the context is 0.** The conversation grows until the
+  `llama-server` started with `-c 32768` rejects the request. Nothing says so on screen.
+- **The usable window is `context − output cap`, and an output cap of 0 is not "unset" — it
+  substitutes 32000** (`var M7=32000`). So declaring the context alone would leave
+  32,768 − 32,000 = **768 tokens** and compaction thrashing from the first turn. **Neither is
+  better than one of the two.**
+
+The fix keeps decision 8's shape — declared, never derived. `-c` was buried inside
+`LlmExtraArgs`, where CloudFormation cannot read it back out, which is why the engine table could
+not carry it. `LlmContextTokens` / `LlmMaxOutputTokens` are split out and the same value feeds
+**both** the command line's `-c` and the table. The CP publishes them only when `contextTokens`
+> 0, and the Agent writes opencode's `limit` only when both are present (one alone leaves the old
+behaviour: no limit at all).
+
+**The window belongs to the ENGINE, not to a model.** One `llama-server` process serves one GGUF
+with one `-c`, so the ids listed in `LlmModelIds` are aliases sharing that one window. Two models
+with different windows are **two rows** — and ⚠️ **two provider ids**, because the Agent keys
+opencode's `provider` block by provider id (`opencode/engine.go`) and a second `llamacpp` would
+silently overwrite the first.
+
+It surfaced through a report that "WebFetch does not work with qwen3-coder-30b-a3b in the
+sandbox", and **that report's cause was something else**: opencode truncates tool output at 2000
+lines / 51,200 bytes and **never cuts inside a line**. Google News's RSS is a single 89 KB line
+with no newline in it, so the body handed to the model was **0 bytes** — all that survived was the
+instruction to have the Task tool's explore subagent read the saved file, which the 30B local
+model could not carry through; it finished by writing an untrue conclusion ("check your internet
+connection"). The fetch itself returned 200. That is opencode behaving as specified and outside
+this ADR, but **the window is a separate, real hole found while looking into it**.
 
 ## Phases
 
