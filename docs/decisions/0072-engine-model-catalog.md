@@ -8,6 +8,13 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   `examples/server/api.md` and `docs/lora.md`. **Nothing was newly measured for this document**
   — what has to be measured before a decision can stand is listed under *Open questions*, and
   each decision names the question it depends on.
+- Revised the same day: **vLLM and ComfyUI were weighed, and the licence, gating and file sizes of
+  the candidate models (SD3 / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image / Qwen-Image) were taken
+  from the HF API** (Context: "Candidate models", "vLLM and ComfyUI"). Three consequences:
+  **ComfyUI becomes the image role's main engine and its phase moves forward** (decisions 4, 5,
+  10; phase P2), decision 4 gains the rule that **a model whose generation exceeds 60 seconds
+  cannot be served over a synchronous API**, and **vLLM is rejected** (with the conditions for
+  revisiting). The sd-server LoRA path (`<sd_cpp_extra_args>`) is demoted to a fallback.
 
 ## Context
 
@@ -97,6 +104,58 @@ request is: make the models swappable, and make LoRAs applicable.
 ADR 0071 decision 6 already makes **that layout the shared model-store convention of all three
 engines**.
 
+### Candidate models (checked against the HF API, 2026-09-08)
+
+Licence and gating are `cardData.license` / `license_name` / `gated` of
+`https://huggingface.co/api/models/<repo>`; sizes are `siblings[].size` with `?blobs=true`.
+**The weight on an L4 (22.9 GB) is an estimate everywhere except ADR 0071's measurement (SDXL
+fp16 7.4 GB), and carries a ★.** So is the generation time — the only measurements are SDXL's
+21 s (sd-server) and 8 s (ComfyUI).
+
+| Model | Licence | Gated | On an L4 | Verdict |
+|---|---|---|---|---|
+| SD1.5 | OpenRAIL | no | light | not offered |
+| SDXL 1.0 | OpenRAIL++-M | no | fp16 7.4 GB measured | stays the workhorse; largest LoRA ecosystem |
+| SD3 Medium | Stability Community | yes | light | not offered — superseded by 3.5, 4.7k downloads |
+| SD3.5 Medium (2.5B) | Stability Community (commercial use under $1M revenue) | yes | 5 GB + T5-XXL fp8 ≈5 GB★ | candidate; fits as fp16 |
+| SD3.5 Large (8B) | same | yes | fp16 16 GB + T5 → fp8 / GGUF★ | quantised only; Turbo is 4 steps |
+| FLUX.1-schnell (12B) | Apache-2.0 | **yes** | 23 GB → fp8 / GGUF★ | fast at 4 steps; most LoRAs target dev |
+| FLUX.1-dev / Kontext-dev | flux-1-dev-non-commercial | yes | as above, 20–28 steps ≈60–90 s★ | best quality and LoRAs, but **non-commercial** and the **60-second rule** (decision 4) |
+| FLUX.2-dev (32B) | flux-non-commercial | yes | does not fit | out |
+| **FLUX.2 [klein] 4B** | **Apache-2.0** | **no** | 7 GB + 7 GB text encoder★ | **candidate for the first default** |
+| FLUX.2 [klein] 9B | flux-non-commercial | yes | quantised only★ | behind the 4B |
+| **Z-Image-Turbo (6B)** | **Apache-2.0** | **no** | ≈12 GB bf16★ + a Qwen-family encoder | **candidate for the first default**; 8 steps |
+| Qwen-Image (20B) | Apache-2.0 | no | 4-bit + a 7B encoder★ | strong text rendering, heavy; later |
+
+Three readings. **Apache-2.0 and ungated is exactly three models — FLUX.2 klein 4B,
+Z-Image-Turbo, Qwen-Image**; FLUX.1-schnell has become gated while staying Apache-2.0. **12B
+and up is quantised on an L4**: the catalogue holds fp8 or GGUF files, and `text_encoders/`
+(T5-XXL, CLIP-L) is shared between SD3.5 and FLUX.1 (decision 2). **A model whose generation
+exceeds 60 seconds cannot be served over sd-server's synchronous API** (decision 4).
+
+stable-diffusion.cpp's support (README): SD3/SD3.5, FLUX.1, Qwen-Image (2025-10-12), FLUX.2-dev
+(2025-11-30), Z-Image (2025-12-01), FLUX.2-klein (2026-01-18). **It follows — always behind**,
+and every official recipe is published as a ComfyUI workflow.
+
+### vLLM and ComfyUI
+
+**vLLM is not adopted now** (reasons under *Options rejected*). In short: **one process, one
+model, no router** (a switch is a restart; llama.cpp's router switches in-process), **a 9.7 GB
+image** (Docker Hub `vllm/vllm-openai:latest`, compressed — four times llama.cpp's 2.47 GB, so
+ADR 0071's 178-second pull grows with it), **30B-class hardly fits an L4** (AWQ / GPTQ / FP8
+rather than GGUF; Qwen3-Coder-30B-A3B's official FP8 is about 30 GB), and **its strengths do not
+apply** (continuous batching and multi-LoRA pay off on concurrent requests to the same model;
+the fleet's engine sleeps most of the time and serves a few sessions while awake).
+
+**ComfyUI becomes the image role's main engine** (decisions 4, 5, 10). ADR 0071's measurements
+are the reasons: **2.5× faster on the same L4** (7.9 s against 20.8 s), **checkpoint and LoRAs
+chosen per workflow with loaded ones cached** (both sd-server's "one, at the next start" and
+the unmeasured LoRA-switch cost disappear), **an asynchronous API** (`/prompt` returns at once,
+`/history` is polled in short calls, so the ALB's 60-second idle never applies), and **new
+models land there first**. The price: a self-built image, a workflow template per model
+family, a `comfy` provider, and an API contract that is not versioned the way OpenAI's is (node
+names move between versions — pin the tag and freeze the templates behind golden tests).
+
 ## Decisions
 
 1. **A model is data, not a stack resource.** The stack owns the role's **vessel** — capacity
@@ -128,8 +187,12 @@ engines**.
    - **A manifest `<file>.json` next to every file**, written by the ingest job: `sha256`,
      `bytes`, `source` (URL, HF repo id and revision, or Civitai version id), `license` (HF's
      `cardData.license`), `kind` (`gguf` / `checkpoint` / `lora` / `vae` / `text_encoder` /
-     `diffusion_model`), `baseModel` (`sdxl` / `sd15` / `flux` / …: what a LoRA **fits**,
-     declared by the operator at ingest), `ingestedAt`. "The file exists" is not "usable" —
+     `diffusion_model`), `baseModel` (`sdxl` / `sd35` / `flux1` / `flux2-klein` / `zimage` /
+     `qwen-image` / …: what a LoRA **fits**, declared by the operator at ingest), `precision`
+     (`fp16` / `fp8` / `q8_0` / `q4_k` …; **12B and up is quantised on an L4**, so the same model
+     appears as several files of different precision), `ingestedAt`. `text_encoders/` is shared
+     across families — SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one ingest serves
+     both `files[]`. "The file exists" is not "usable" —
      **only files with a manifest** are catalogue candidates (the same rule as ADR 0071
      decision 3's "do not trust 'the file got bigger'").
    - **A new table `engine_models` in the CP's database**: `id` (what a user picks —
@@ -202,10 +265,33 @@ engines**.
    - **A split model is one entry.** FLUX lists `diffusion_model` / `clip_l` / `t5xxl` / `vae` with
      roles in `files[]`, and the sidecar assembles the `--diffusion-model` … flags. `--type` and
      `--offload-to-cpu` go in `args[]`; shrinking to g6f (ADR 0071 P4) becomes one line there.
-   - **When ComfyUI (ADR 0071 P2) arrives, the "one" in this decision disappears.** ComfyUI picks
-     the checkpoint per workflow, so with the same catalogue and the same S3 layout `selected`
+   - **A model whose generation exceeds 60 seconds is not served by a synchronous-API engine.**
+     As ADR 0071 P1 measurement 9 found, the ALB closes a connection that carries no response
+     byte for 60 seconds, and `/v1/images/generations` is one JSON answer with nowhere to put a
+     heartbeat. SDXL's 21 seconds never hit it; FLUX.1-dev-class (60–90 s★) and SD3.5 Large
+     without Turbo are **cut every time, even on a warm engine**. sd-server's async API was
+     broken inside a container (ADR 0071's measurement). So next to `sizes[]` the catalogue
+     carries `syncSafe` (may be served over a synchronous API), declared by the operator, and
+     sd-server offers nothing else.
+     - One hypothesis is kept: that async API failed at `/proc/1/map_files`, and
+       `--lora-model-dir` defaults to **the current directory** — with a cwd of `/` the LoRA
+       scan walks into `/proc`. One start with `--lora-model-dir /models/image/loras` settles
+       it (open question 6). Even if it does, the rule above stays — a working async API is a
+       fallback's story, and the main road is the next point.
+   - **ComfyUI becomes the image role's main engine (phase P2), and the "one" in this decision
+     disappears there.** ComfyUI picks checkpoint and LoRAs per workflow, caches what is loaded,
+     and its `/prompt` returns at once with `/history` polled in short calls, so the 60-second
+     rule does not apply either. With the same catalogue and the same S3 layout `selected`
      becomes per request. That is why the catalogue is engine-agnostic: **sd-server's limit is
-     not baked into the catalogue's shape**.
+     not baked into the catalogue's shape**. sd-server stays as the light path — official
+     2.3 GB image, OpenAI-compatible, no image to build — for a deployment that chooses it
+     (decision 10).
+     - **The stack gains no role.** One parameter, `ImageEngine` (`sdcpp` / `comfy`), switches
+       only the container definition (image, entrypoint, command) and the health path
+       (`/v1/models` for sd-server, `/system_stats` for ComfyUI) with `!If`, on the **same** task
+       definition, service and Cloud Map name. A second service set does not fit the wall, and
+       the two never run at once (ADR 0071 decision 2), so two are not needed. The engine
+       table's `provider` becomes `comfy`, and the Agent picks its provider by it.
 
 5. **A LoRA is a catalogue entry, chosen per request. The agent can only name what the
    catalogue has.**
@@ -216,13 +302,20 @@ engines**.
      and `loras: [{name, weight}]` (`name`'s enum = only the LoRAs whose **`baseModel` matches the
      selected checkpoint**; `weight` 0–2, default 1). The tool description lists the catalogue's
      `description` lines, so the agent can choose "`watercolor-v2` for a watercolour look".
-     - The Agent's `sdcpp` provider appends
+     - **The main road is ComfyUI** (decision 4): the `comfy` provider puts the checkpoint name
+       and a chain of `LoraLoader` nodes (name, strength) into the family's workflow template
+       and posts it to `/prompt`. A LoRA is a node swapped in, so the cost of a changing set is
+       ComfyUI's cache's business, and sd-server's merge behaviour (open question 2) need not
+       be measured.
+     - **The fallback is sd-server** (an `ImageEngine=sdcpp` deployment): the Agent's `sdcpp`
+       provider appends
        `<sd_cpp_extra_args>{"lora":[{"path":"<file>","multiplier":<w>}]}</sd_cpp_extra_args>` to
        the prompt. **The gateway is not involved** (still verbatim — decision 4 of ADR 0071 reads
        the body for usage only). ⚠️ **A prompt that already contains `<sd_cpp_extra_args>` is
        refused**: this hole carries not only `seed` and `sample_steps` but `lora.path`, a file path
        on the server. The prompt is written by the model, and anything the model has read can end
-       up in it (the stance of ADR 0071 decision 4(d)).
+       up in it (the stance of ADR 0071 decision 4(d)). This path is built after ComfyUI, and
+       only if a deployment needs it.
      - A LoRA whose `baseModel` does not match (an SD 1.5 LoRA on SDXL) either produces a
        **silently broken picture** or is ignored with a tensor-name warning; to the user both
        read as "did nothing". So **the Agent does not offer it in the enum and the CP refuses it in
@@ -309,7 +402,43 @@ engines**.
    `observed_secs`, **it says estimate**). `useLocalStorage` (ADR 0071 open question 1) stays as
    it is.
 
+10. **Model selection policy — the first default is chosen from "Apache-2.0, ungated, fits an
+    L4 without quantisation"; gated and non-commercial models enter only by an operator's
+    explicit act.** From the table in Context:
+    - **The default candidates are FLUX.2 [klein] 4B and Z-Image-Turbo** (both Apache-2.0,
+      ungated, the main file fits an L4 as fp16/bf16★), next to the workhorse SDXL. **Which one
+      becomes the default is decided after measuring** (open question 7: per-image time and
+      VRAM on an L4, and the LoRA ecosystem).
+    - **SD1.5 and SD3 Medium are not offered.** The former is superseded by SDXL, the latter by
+      SD3.5.
+    - **Gated models (all of SD3.5, all of FLUX.1, FLUX.2 dev and klein 9B) can be ingested only
+      on a deployment whose operator accepted the terms on HF and placed an `HF_TOKEN`** (ADR
+      0071 decisions 3 and 11, unchanged). "Gated" is the setting "distribute only to accounts
+      that accepted the owner's terms" (`gated: auto` grants on acceptance); anonymous or
+      unaccepted tokens get 401/403. On a multi-tenant deployment **the operator takes on the
+      terms on behalf of every member**, so the ingest UI states that sentence and requires
+      `licenseAccepted` (decision 6). FLUX.1-schnell has become gated while staying Apache-2.0 —
+      **licence and gating are separate axes**, and the catalogue keeps them in separate
+      columns.
+    - **Non-commercial models (FLUX.1-dev / Kontext-dev / FLUX.2-dev / klein 9B) are never the
+      default.** Ingest is not refused, but the catalogue's `license` shows on the panel row and
+      in `generate_image`'s provenance (decision 8).
+    - **12B and up is ingested as quantised files** (`precision`, decision 2). A 23 GB fp16 body
+      does not fit an L4's VRAM: it pays 180 seconds from S3 and the load into VRAM, then
+      crashes.
+    - **The 60-second rule** (decision 4): a model without `syncSafe` is not offered on an
+      sd-server deployment.
+
 ## Options rejected
+
+- **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
+  restart, **a step back from llama.cpp for this ADR's purpose**. The 9.7 GB image quadruples
+  the pull, the 4-bit MoE quantisations that would fit a 30B on an L4 are less mature than
+  GGUF, and its strengths (continuous batching, dynamic multi-LoRA) pay off on concurrent
+  requests to the same model, which an engine that sleeps most of the time never sees. **Two
+  conditions for revisiting**: five or more concurrent sessions on the same model as the norm,
+  or a model with no GGUF. The catalogue's `kind` can hold a `safetensors` LLM, so vLLM can join
+  that day as a second `llm` engine on the same S3 layout.
 
 - **A row (service set) per model in `60-engines`.** Does not fit the wall, and if it did, one
   sleeping service per model and two boxes when two models wake. The router answers for llm,
@@ -334,7 +463,7 @@ engines**.
   itself reads its database.
 - **EFS for the catalogue.** Rejected in ADR 0071.
 
-## Open questions — measure 1 and 2 before P0, 3 before P1
+## Open questions — measure 1 before P1, 7 and 8 before P2 (2 and 6 only when an sd-server deployment needs them)
 
 1. **The router's four points** (decision 3 depends on them): (a) does it start on an empty
    `--models-dir` and answer `/health` ok (decision 1's "stable while empty" also depends on
@@ -359,6 +488,18 @@ engines**.
    request — one JSON in `SettingsStore` would do. The table exists for `lastUsedAt`, written
    on every request; whether that is an acceptable write rate for the settings store decides it
    (`engine_<key>_demand_at` is throttled to once a minute for that reason).
+6. **Why sd-server's async API failed** (decision 4's hypothesis): does `/sdcpp/v1/img_gen` work
+   when `--lora-model-dir` is given explicitly? If so, an sd-server deployment can drop the
+   60-second rule — without changing the order (ComfyUI first).
+7. **Measuring the default** (decision 10): per-image time, VRAM and picture quality of FLUX.2
+   [klein] 4B and Z-Image-Turbo on an L4, the same three for SD3.5 Medium, and whether one
+   FLUX.1-dev image really exceeds 60 seconds. All need a GPU; measured in one go on the
+   ComfyUI box (P2).
+8. **ComfyUI's own image** (phase P2): how many GB with PyTorch + CUDA (the community image was
+   5.1 GB and a 437-second pull), and whether the GGUF-reading node (`ComfyUI-GGUF`) is bundled
+   at a pinned tag — a custom node is "arbitrary code" (why ADR 0071 decision 6 excluded the
+   Manager), so bundling one means **a pinned revision written into the Dockerfile**. fp8
+   safetensors may make it unnecessary (the L4 is Ada and has fp8 matrix units).
 
 ## Phases
 
@@ -375,15 +516,29 @@ engines**.
   **Definition of done: two `llamacpp/` models in the launch menu, each usable in turn, and the
   reload of a switch answered on the first attempt** (ADR 0071 P0's observation, taken across a
   switch).
-- **P2 — LoRA.** After open question 2. The image role's `loras/` sync, `generate_image`'s
-  `model` / `loras`, `sdcpp`'s `<sd_cpp_extra_args>` and the refusal rules; fixed preset LoRAs
-  for llm. **Definition of done: the same prompt and seed give a different picture with and
-  without the LoRA, and an SD 1.5 LoRA does not appear in the enum on SDXL.**
-- **P3 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`),
-  HF sha256 / licence resolution, the licence-acceptance UI, progress and failure display,
-  Civitai (after open question 4). Until then, `harness/ingest-model.sh`.
-- **P4 — syncing into a running box (open question 3), virtual model ids for llm (the second
-  half of decision 5), ComfyUI on the same catalogue (ADR 0071 P2).**
+- **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** The self-built image (pinned tag, no
+  Manager, open question 8), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider
+  (generate / edit / inpaint mapped onto per-family workflow templates, driving `/prompt` →
+  `/history` → `/view` with progress notifications), templates for five families — SDXL,
+  SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden tests, and
+  `generate_image`'s `model` argument (enum = the enabled checkpoints; several for the first
+  time). Open question 7 is measured on this box and decides decision 10's default. The pane
+  (`/engine/comfy/` over WebSocket) is **not included** — `generate_image` needs only the API;
+  the screen is P5. **Definition of done: on one box, SDXL and klein 4B (or Z-Image-Turbo)
+  alternate per request and return pictures with no service restart in between, and 1024px
+  SDXL comes back in the 8-second range of ADR 0071 measurement 7.**
+- **P3 — LoRA.** On ComfyUI: the image role's `loras/` sync, `generate_image`'s `loras`, the
+  `LoraLoader` chain in the templates, refusal on a `baseModel` mismatch; fixed preset LoRAs
+  for llm. sd-server's `<sd_cpp_extra_args>` path only when an `ImageEngine=sdcpp` deployment
+  needs it, after open question 2. **Definition of done: the same prompt and seed give a
+  different picture with and without the LoRA, and an SD 1.5 LoRA does not appear in the enum
+  on SDXL.**
+- **P4 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`),
+  HF sha256 / licence resolution, the gating sentence and licence-acceptance UI (decision 10),
+  progress and failure display, Civitai (after open question 4). Until then,
+  `harness/ingest-model.sh`.
+- **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
+  half of decision 5), the ComfyUI pane, sd-server's async API (open question 6).**
 
 ## Sources checked (2026-09-08)
 
@@ -399,3 +554,8 @@ engines**.
   (`SsmWorkspaceParams`), ADRs 0053, 0069, 0071
 - Civitai's REST API reference: the wiki points at a new home, and that home answered 404
   (open question 4)
+- For the same-day revision: HF's `api/models/<repo>` (`cardData.license` / `license_name` /
+  `gated`, `siblings[].size` with `?blobs=true`) for eleven repositories — SD3, SD3.5 Medium and
+  Large, FLUX.1-dev / schnell / Kontext-dev, FLUX.2-dev / klein 4B / klein 9B, Qwen-Image,
+  Z-Image-Turbo — Docker Hub's `vllm/vllm-openai:latest` (`full_size` 9.7 GB), and the dated
+  model-support history in stable-diffusion.cpp's `README.md`

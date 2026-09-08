@@ -7,6 +7,12 @@
   `tools/server/README.md`・`examples/server/api.md`・`docs/lora.md` から読んだ。**この文書の
   ために新しく測ったものは無い**——測ってから決めることは「未解決の点」に列挙し、決定の
   どれがそれに依存するかを各項に書いた。
+- 同日に改訂: **vLLM と ComfyUI を検討し、候補のモデル（SD3 / SD3.5 / FLUX.1 / FLUX.2 klein /
+  Z-Image / Qwen-Image）のライセンス・gated・ファイルサイズを HF の API で取った**（背景の
+  「候補のモデル」「vLLM と ComfyUI」）。帰結が 3 つ——**ComfyUI を image 役の本命にして
+  フェーズを前倒しし**（決定 4・5・10、フェーズ P2）、**生成が 60 秒を超えるモデルは同期 API では
+  出せない**という規則を決定 4 に足し、**vLLM は却下**（再検討の条件つき）。sd-server 向けの
+  LoRA 経路（`<sd_cpp_extra_args>`）は代替に降格した。
 
 ## 背景
 
@@ -91,6 +97,56 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
 ポイントも LoRA も選べる。0071 決定 6 は**この配置を 3 エンジン共通のモデル置き場の規約**と
 決めている。
 
+### 候補のモデル（2026-09-08 に HF の API で確認）
+
+ライセンスと gated は `https://huggingface.co/api/models/<repo>` の `cardData.license` /
+`license_name` / `gated`、サイズは `?blobs=true` の `siblings[].size`。**L4（22.9 GB）での重さは
+0071 の実測（SDXL fp16 7.4 GB）以外は推定で、★ を付けた。** 生成時間も同じ——実測は SDXL の
+21 秒（sd-server）と 8 秒（ComfyUI）だけである。
+
+| モデル | ライセンス | gated | L4 での重さ | 評価 |
+|---|---|---|---|---|
+| SD1.5 | OpenRAIL | 無し | 軽い | 出さない |
+| SDXL 1.0 | OpenRAIL++-M | 無し | fp16 7.4 GB 実測 | 主力のまま。LoRA の生態系が最大 |
+| SD3 Medium | Stability Community | 有り | 軽い | 出さない。3.5 に置き換えられ、DL 数 4.7k |
+| SD3.5 Medium（2.5B） | Stability Community（年商 $1M 未満は商用可） | 有り | 本体 5 GB + T5-XXL fp8 約 5 GB★ | 候補。fp16 のまま入る |
+| SD3.5 Large（8B） | 同上 | 有り | fp16 16 GB + T5 → fp8 / GGUF 前提★ | 量子化前提。Turbo は 4 ステップ |
+| FLUX.1-schnell（12B） | Apache-2.0 | **有り** | 本体 23 GB → fp8 / GGUF 前提★ | 4 ステップで速い。LoRA は dev 向けが多い |
+| FLUX.1-dev / Kontext-dev | flux-1-dev-non-commercial | 有り | 同上、20〜28 ステップで 60〜90 秒★ | 画質と LoRA は最強だが**非商用**、**60 秒規則**（決定 4） |
+| FLUX.2-dev（32B） | flux-non-commercial | 有り | 入らない | 対象外 |
+| **FLUX.2 [klein] 4B** | **Apache-2.0** | **無し** | 本体 7 GB + テキストエンコーダ 7 GB★ | **最初の既定の候補** |
+| FLUX.2 [klein] 9B | flux-non-commercial | 有り | 量子化前提★ | 4B に劣後 |
+| **Z-Image-Turbo（6B）** | **Apache-2.0** | **無し** | 本体 bf16 約 12 GB★ + Qwen 系エンコーダ | **最初の既定の候補**。8 ステップ |
+| Qwen-Image（20B） | Apache-2.0 | 無し | 4bit + 7B エンコーダ★ | 文字描画は強いが重い。後回し |
+
+読み方が 3 つ。**Apache-2.0 かつ gated 無しは FLUX.2 klein 4B・Z-Image-Turbo・Qwen-Image の
+3 つだけ**で、FLUX.1-schnell は Apache-2.0 のまま gated に変わっている。**12B 以上は L4 で
+量子化前提**で、fp8 や GGUF の別ファイルをカタログが持ち、`text_encoders/`（T5-XXL・CLIP-L）は
+SD3.5 と FLUX.1 で共有できる（決定 2）。**生成が 60 秒を超えるモデルは sd-server の同期 API では
+出せない**（決定 4）。
+
+stable-diffusion.cpp の対応（README）: SD3/SD3.5、FLUX.1、Qwen-Image（2025-10-12）、
+FLUX.2-dev（2025-11-30）、Z-Image（2025-12-01）、FLUX.2-klein（2026-01-18）。**追随はする。
+ただし常に後追い**で、公式の手順はどれも ComfyUI のワークフローで出る。
+
+### vLLM と ComfyUI
+
+**vLLM は今は採らない**（却下した案に理由）。要点は、**1 プロセス 1 モデルでルーターが無い**
+（切替＝再起動。llama.cpp のルーターは同一プロセス内）、**イメージが 9.7 GB**（Docker Hub
+`vllm/vllm-openai:latest` の圧縮サイズ。llama.cpp の 2.47 GB の 4 倍で、0071 の pull 178 秒が
+そのまま伸びる）、**L4 に 30B 級が入りにくい**（GGUF ではなく AWQ / GPTQ / FP8 で、
+Qwen3-Coder-30B-A3B の公式 FP8 は約 30 GB）、そして**強みが効かない**（連続バッチングと
+マルチ LoRA は同じモデルへの同時要求で効く。フリートのエンジンは普段寝ていて、起きている間の
+同時利用は数セッション）。
+
+**ComfyUI は image 役の本命にする**（決定 4・5・10）。0071 の実測がそのまま理由になる: 同じ L4 で
+**2.5 倍速い**（7.9 秒対 20.8 秒）、**チェックポイントも LoRA もワークフロー毎に選べてロード済みを
+キャッシュする**（sd-server の「1 つ・次の起動」と「LoRA 切替コスト未測」はどちらも消える）、
+**API が非同期**（`/prompt` が即返り `/history` を短く叩くので、ALB の 60 秒アイドルに当たらない）、
+**新モデルの参照実装が先に載る**。払うものは自前イメージ・族ごとのワークフローテンプレート・
+provider `comfy`・そして API 契約が OpenAI 互換のように版で守られていないこと（ノード名が版で
+変わるので、タグを固定しテンプレートをゴールデンテストで固定する）。
+
 ## 決定
 
 1. **モデルはスタックの資源ではなく、データである。** スタックが持つのは役の**器**——capacity
@@ -119,8 +175,12 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
    - **各ファイルの隣にマニフェスト `<file>.json`** を取り込みジョブが書く: `sha256`・`bytes`・
      `source`（URL、HF の repo id とリビジョン、または Civitai の version id）・`license`
      （HF の `cardData.license`）・`kind`（`gguf` / `checkpoint` / `lora` / `vae` /
-     `text_encoder` / `diffusion_model`）・`baseModel`（`sdxl` / `sd15` / `flux` / …。
-     LoRA の**適合先**であり、取り込み時に運用者が宣言する）・`ingestedAt`。「ファイルが
+     `text_encoder` / `diffusion_model`）・`baseModel`（`sdxl` / `sd35` / `flux1` / `flux2-klein` /
+     `zimage` / `qwen-image` / …。LoRA の**適合先**であり、取り込み時に運用者が宣言する）・
+     `precision`（`fp16` / `fp8` / `q8_0` / `q4_k` …。**12B 以上は L4 で量子化前提**なので、同じ
+     モデルの別精度が別ファイルとして並ぶ）・`ingestedAt`。`text_encoders/` は族をまたいで
+     共有する——SD3.5 と FLUX.1 は同じ T5-XXL と CLIP-L を読むので、1 回取り込めば両方の
+     `files[]` から指せる。「ファイルが
      ある＝使える」ではなく、**マニフェストが揃っているものだけ**がカタログの候補になる
      （0071 決定 3 の「増えた＝成功を信じない」と同じ）。
    - **CP の DB に新表 `engine_models`**: `id`（利用者が選ぶ名前——`qwen3-coder-30b-a3b`・
@@ -188,10 +248,29 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
      `vae` の役割付きで並び、サイドカーが `--diffusion-model` 以下のフラグを組む。`--type` と
      `--offload-to-cpu` は `args[]`。g6f への縮小（0071 P4）はこの `args[]` に書く 1 行に
      なる。
-   - **ComfyUI（0071 P2）が入れば、この決定の「1 つ」は消える。** ComfyUI はワークフロー毎に
-     チェックポイントを選ぶので、同じカタログ・同じ S3 配置のまま `selected` が
-     「要求毎」になる。カタログをエンジン非依存に設計するのはそのためで、**sd-server の制約を
-     カタログの形に焼き込まない**。
+   - **生成が 60 秒を超えるモデルは、同期 API のエンジンでは出さない。** 0071 P1 の実測 9 の
+     とおり ALB は応答のバイトが 60 秒来ない接続を閉じ、`/v1/images/generations` は JSON 一発で
+     心拍を差し込む先が無い。SDXL の 21 秒は当たらなかったが、FLUX.1-dev 級（60〜90 秒★）や
+     SD3.5 Large の非 Turbo は**温まったエンジンでも毎回切られる**。sd-server の非同期 API は
+     コンテナ内で壊れていた（0071 実測）。したがってカタログの `sizes[]` と同じ場所に
+     `syncSafe`（同期 API で出してよいか）を運用者が宣言し、sd-server ではそれ以外を出さない。
+     - 仮説を 1 つ残す: その非同期 API が `/proc/1/map_files` で落ちたのは、`--lora-model-dir` の
+       既定が**カレントディレクトリ**で、cwd が `/` だと LoRA の走査が `/proc` に入るからかも
+       しれない。`--lora-model-dir /models/image/loras` を付けた起動 1 回で確かめられる
+       （未解決 6）。直っても本文の規則は変えない——非同期 API が使えるのは代替の話で、
+       本命は次の項である。
+   - **ComfyUI を image 役の本命にする（フェーズ P2）。この決定の「1 つ」はそこで消える。**
+     ComfyUI はワークフロー毎にチェックポイントも LoRA も選び、ロード済みをキャッシュし、
+     `/prompt` が即返って `/history` を短く叩くので 60 秒規則にも当たらない。同じカタログ・
+     同じ S3 配置のまま `selected` が「要求毎」になる。カタログをエンジン非依存に設計するのは
+     そのためで、**sd-server の制約をカタログの形に焼き込まない**。sd-server は「公式イメージ
+     2.3 GB・OpenAI 互換・自前イメージ不要」の軽い経路として残す（配備が選ぶ。決定 10）。
+     - スタックでは**役を増やさない**。`ImageEngine`（`sdcpp` / `comfy`）のパラメータ 1 つで、
+       **同じ**タスク定義・サービス・Cloud Map 名のまま、コンテナ定義（イメージ・entrypoint・
+       コマンド）と健診パス（sd-server は `/v1/models`、ComfyUI は `/system_stats`）だけを
+       `!If` で切り替える。2 つ目のサービス一式は壁に入らず、同時に動かさない（0071 決定 2）
+       のだから 2 つ要らない。エンジン表の `provider` が `comfy` になり、Agent はそれで
+       provider を選ぶ。
 
 5. **LoRA はカタログの項目であり、要求で選ぶ。エージェントが選べるのはカタログにある名前だけ。**
    - **image。** 箱は `image/loras/` のうち**有効なもの**を同期し、`--lora-model-dir
@@ -201,13 +280,18 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
      （`name` の enum＝**選択中のチェックポイントと `baseModel` が一致する** LoRA だけ。
      `weight` は 0〜2、既定 1）。ツールの説明文にカタログの `description` を並べ、
      エージェントが「水彩風なら `watercolor-v2`」と選べるようにする。
-     - Agent の provider `sdcpp` が prompt の末尾に
-       `<sd_cpp_extra_args>{"lora":[{"path":"<file>","multiplier":<w>}]}</sd_cpp_extra_args>`
+     - **本命は ComfyUI**（決定 4）: provider `comfy` が族ごとのワークフローテンプレートに
+       チェックポイント名と `LoraLoader` の連鎖（name・strength）を差して `/prompt` に投げる。
+       LoRA はノードとして差し替わるので、組が変わるコストは ComfyUI のキャッシュの話になり、
+       sd-server のマージ方式（未解決 2）を測る必要が無い。
+     - **代替は sd-server**（`ImageEngine=sdcpp` の配備）: Agent の provider `sdcpp` が prompt の
+       末尾に `<sd_cpp_extra_args>{"lora":[{"path":"<file>","multiplier":<w>}]}</sd_cpp_extra_args>`
        を付ける。**ゲートウェイは触らない**（素通しのまま。決定 4 の「本文を読むのは usage
        のときだけ」を守る）。⚠️ **利用者の prompt に既に `<sd_cpp_extra_args>` があれば拒否
        する**——この穴からは `seed` や `sample_steps` だけでなく、サーバのファイル
        パスに対する `lora.path` が通る。prompt はモデルが書くものであり、モデルが読んだ
-       ものは何であれ prompt に現れうる（0071 決定 4(d) と同じ姿勢）。
+       ものは何であれ prompt に現れうる（0071 決定 4(d) と同じ姿勢）。この経路は
+       ComfyUI の後に、要る配備があれば作る。
      - `baseModel` が合わない LoRA（SD1.5 の LoRA を SDXL に）は sd.cpp が**黙って崩れた絵**を
        出すか、テンソル名の不一致を警告して無視する。どちらも利用者には「効かない」としか
        見えないので、**Agent が enum で出さず、CP が要求で拒否する**。
@@ -285,7 +369,34 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
    トグルの横に「同期 +N 秒（推定）」を出す（サイズはマニフェストにある。`observed_secs` の
    ときと同じで、**推定と書く**）。`useLocalStorage`（0071 未解決 1）は据え置き。
 
+10. **モデルの選定方針——最初に出す既定は「Apache-2.0・gated 無し・L4 に量子化なしで入る」から
+    選び、gated と非商用は運用者の明示の行為でしか入らない。** 背景の表から:
+    - **既定の候補は FLUX.2 [klein] 4B と Z-Image-Turbo**（どちらも Apache-2.0・gated 無し・
+      本体が L4 に fp16/bf16 のまま入る★）と、主力の SDXL。**どちらを既定にするかは測ってから**
+      （未解決 7: L4 での 1 枚の時間と VRAM、LoRA の生態系）。
+    - **SD1.5 と SD3 Medium は出さない。** 前者は SDXL に、後者は SD3.5 に置き換えられている。
+    - **gated（SD3.5 全部・FLUX.1 全部・FLUX.2 dev/klein 9B）は、運用者が HF で同意して
+      `HF_TOKEN` を置いた配備でだけ取り込める**（0071 決定 3・11 のまま）。gated とは
+      「所有者の条項に同意したアカウントにだけ配る」設定（`gated: auto` は同意で即時許可）で、
+      匿名や未同意のトークンでは 401/403 になる。マルチテナント配備では**運用者がメンバー全員の
+      代わりに条項を引き受ける**ことになるので、取り込みの UI はその一文を出して
+      `licenseAccepted` を要求する（決定 6）。FLUX.1-schnell は Apache-2.0 のまま gated に
+      変わっている——**ライセンスと gated は別の軸**で、カタログも別の欄に持つ。
+    - **非商用（FLUX.1-dev / Kontext-dev / FLUX.2-dev / klein 9B）は既定にしない。** 取り込みは
+      拒まないが、カタログの `license` がパネルの行と `generate_image` の由来（決定 8）に出る。
+    - **12B 以上は量子化ファイルを取り込む**（`precision`、決定 2）。fp16 の本体 23 GB は L4 の
+      VRAM に入らず、S3 から引く 180 秒と VRAM へのロードを払ってから落ちる。
+    - **60 秒規則**（決定 4）: `syncSafe` を宣言しないモデルは sd-server の配備には出ない。
+
 ## 却下した案
+
+- **vLLM を llm 役のエンジンにする（今は）。** 1 プロセス 1 モデルでルーターが無く、切替＝
+  再起動——**この ADR の目的に対して llama.cpp より後退する**。イメージ 9.7 GB は pull を
+  4 倍にし、L4 に 30B 級を入れる 4bit の MoE 量子化は GGUF ほど枯れておらず、強み（連続
+  バッチング・マルチ LoRA の動的ロード）は同じモデルへの同時要求で効くもので、普段寝ている
+  エンジンでは出番が無い。**再検討の条件は 2 つ**: 同じモデルに同時 5 セッション以上が常態に
+  なったとき、GGUF が無いモデルを載せたいとき。カタログの `kind` は `safetensors` の LLM を
+  持てるので、その日に vLLM を 2 つ目の `llm` エンジンとして同じ S3 配置に足せる。
 
 - **モデルごとに `60-engines` の行（サービス一式）を足す。** 壁で入らず、入っても寝ている
   サービスが役の数だけ並び、2 モデル同時に起きれば箱も 2 台。llm はルーターが、image は
@@ -308,7 +419,7 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
   1 回にした理由）。SSM に書くのは**箱が読む active set** だけで、CP 自身は DB を読む。
 - **EFS にカタログを置く。** 0071 で却下済み。
 
-## 未解決の点——P0 の前に 1・2 を、P1 の前に 3 を測る
+## 未解決の点——P1 の前に 1 を、P2 の前に 7・8 を測る（2 と 6 は sd-server の配備が要るときだけ）
 
 1. **ルーターモードの 4 点**（決定 3 が依存）: (a) `--models-dir` が空でも起動して `/health` が
    ok か（決定 1 の「空で安定」も依存）；(b) autoload 中の要求は待つのか蹴られるのか、待つなら
@@ -330,6 +441,17 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
    `SettingsStore` の JSON 1 本でも足りる。表にするのは `lastUsedAt` を要求のたびに書くから
    で、それが設定ストアの書き込み頻度として許されるかで決まる（`engine_<key>_demand_at` は
    1 分に 1 回に抑えている前例）。
+6. **sd-server の非同期 API の故障原因**（決定 4 の仮説）: `--lora-model-dir` を明示した
+   起動で `/sdcpp/v1/img_gen` が通るか。通れば sd-server の配備でも 60 秒規則を外せるが、
+   本命（ComfyUI）の順序は変えない。
+7. **既定モデルの実測**（決定 10）: FLUX.2 [klein] 4B と Z-Image-Turbo の L4 での 1 枚の時間・
+   VRAM・絵の質、SD3.5 Medium の同じ 3 点、FLUX.1-dev の 1 枚が本当に 60 秒を超えるか。
+   すべて GPU が要る。ComfyUI（P2）の箱で一度に測る。
+8. **ComfyUI の自前イメージ**（フェーズ P2）: PyTorch + CUDA で何 GB になるか（コミュニティ
+   イメージは 5.1 GB で pull 437 秒）、GGUF を読むノード（`ComfyUI-GGUF`）をタグ固定で
+   同梱するか——カスタムノードは「任意のコード」であり（0071 決定 6 が Manager を退けた
+   理由）、同梱するなら**リビジョンを固定して Dockerfile に書く**のが条件。fp8 の safetensors
+   を使えば要らないかもしれない（L4 は Ada で fp8 の行列積を持つ）。
 
 ## フェーズ
 
@@ -344,14 +466,26 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
   `LlmModelsMax`、`warm` の再定義、opencode の provider をモデル毎の `limit` で。**完了の
   定義: 起動メニューに `llamacpp/` のモデルが 2 つ出て、片方ずつ使え、交替のリロードが
   1 回の試行で答えを返す**（0071 P0 の完了の定義と同じ観測を交替で行う）。
-- **P2 — LoRA。** 未解決 2 を測ってから。image の `loras/` 同期・`generate_image` の `model` /
-  `loras`・`sdcpp` の `<sd_cpp_extra_args>`・拒否規則；llm の preset 固定 LoRA。**完了の定義:
-  同じ prompt・同じ seed で LoRA の有無が絵を変え、SD1.5 の LoRA が SDXL で enum に出ない。**
-- **P3 — Console からの取り込み。** `ingest` API、RunTask の IAM（`60-engines` 内）、HF の
-  sha256 / license 解決、ライセンス受諾 UI、進行と失敗の表示、Civitai（未解決 4 の後）。
-  それまでは `harness/ingest-model.sh`。
-- **P4 — 走行中の追加同期（未解決 3）、llm の仮想モデル id（決定 5 の後半）、ComfyUI との
-  統合（0071 P2 と同じカタログを読ませる）。**
+- **P2 — ComfyUI（0071 P2 をここへ前倒し）。** 自前イメージ（タグ固定・Manager 無し・
+  未解決 8）、`ImageEngine=comfy` の `!If`（決定 4）、provider `comfy`（generate / edit /
+  inpaint を族ごとのワークフローテンプレートへ写し、`/prompt` → `/history` → `/view` を
+  進捗通知つきで回す）、テンプレートは SDXL / SD3.5 / FLUX.1 / FLUX.2 klein / Z-Image の
+  5 族をリポジトリに置いてゴールデンテストで固定、`generate_image` の `model` 引数
+  （enum＝有効なチェックポイント。ここで初めて複数になる）。未解決 7 の実測をこの箱で行い、
+  決定 10 の既定を決める。ペイン（`/engine/comfy/` の WebSocket）は**含めない**——
+  `generate_image` に要るのは API だけで、画面は P5。**完了の定義: 同じ箱で SDXL と
+  klein 4B（または Z-Image-Turbo）を要求毎に切り替えて絵が返り、その間にサービスの
+  再起動が無く、1024px の SDXL が 0071 実測 7 の 8 秒台で出る。**
+- **P3 — LoRA。** ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
+  テンプレートの `LoraLoader` 連鎖、baseModel 不一致の拒否；llm の preset 固定 LoRA。
+  sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、
+  未解決 2 を測ってから。**完了の定義: 同じ prompt・同じ seed で LoRA の有無が絵を変え、
+  SD1.5 の LoRA が SDXL で enum に出ない。**
+- **P4 — Console からの取り込み。** `ingest` API、RunTask の IAM（`60-engines` 内）、HF の
+  sha256 / license 解決、gated の一文とライセンス受諾 UI（決定 10）、進行と失敗の表示、
+  Civitai（未解決 4 の後）。それまでは `harness/ingest-model.sh`。
+- **P5 — 走行中の追加同期（未解決 3）、llm の仮想モデル id（決定 5 の後半）、ComfyUI の
+  ペイン、sd-server の非同期 API（未解決 6）。**
 
 ## 確認した出典（2026-09-08）
 
@@ -365,3 +499,8 @@ image 役は SDXL base 1.0 を**それぞれ 1 つ**載せて動く。要求は�
   `internal/imagegen/sdcpp.go`、`internal/agents/opencode/engine.go`、`20-platform.yaml`
   （`SsmWorkspaceParams`）、ADR 0053・0069・0071
 - Civitai の REST API リファレンスは wiki が移転先を指し、移転先が 404 だった（未解決 4）
+- 同日の改訂で: HF の `api/models/<repo>`（`cardData.license` / `license_name` / `gated`、
+  `?blobs=true` の `siblings[].size`）を SD3 / SD3.5 Medium・Large / FLUX.1-dev・schnell・
+  Kontext-dev / FLUX.2-dev・klein 4B・9B / Qwen-Image / Z-Image-Turbo の 11 件、Docker Hub の
+  `vllm/vllm-openai:latest`（`full_size` 9.7 GB）、stable-diffusion.cpp `README.md` の対応
+  モデルの節（日付つきの更新履歴）
