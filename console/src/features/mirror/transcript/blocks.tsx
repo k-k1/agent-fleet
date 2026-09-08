@@ -306,20 +306,31 @@ export function ThinkingBlock({
 // action a reader in the Console can take. Keep the original as evidence and add what happened
 // and where to fix it. Without onReauth (the shared view) that route is not offered at all — a
 // recipient cannot re-authenticate somebody else's agent, so it would lead nowhere.
+//
+// `resolved` is that same card AFTER the user did it. The transcript is immutable, so without
+// this the block goes on demanding a re-authentication forever — the reader signs in, comes
+// back, and the conversation still shows a red "sign in again" button as the last thing that
+// happened, which reads as "it didn't take". It is decided by the caller from one comparison
+// (the login in force was written after this turn), never by whether the login is valid right
+// now: after a server-side revocation the credentials look valid from the first moment, so
+// that test would call every failure fixed on sight.
 export function ErrorBlock({
   info,
   text,
   cause,
   agentName,
   onReauth,
+  resolved,
 }: {
   info?: string;
   text?: string;
   cause?: string;
   agentName: string;
   onReauth?: () => void;
+  resolved?: boolean;
 }) {
   if (!text && !info) return null;
+  const authFix = cause === "auth" && !!onReauth;
   return (
     <div className="mirror-error" role="alert">
       <div className="mirror-error-head">
@@ -327,15 +338,23 @@ export function ErrorBlock({
         <span className="mte-title">{tr("mirror.error_label")}</span>
         {info && <span className="mte-code">{info}</span>}
       </div>
-      {cause === "auth" && onReauth && (
-        <div className="mirror-error-fix">
-          <p className="mef-msg">{tr("mirror.error_auth_hint", { agent: agentName })}</p>
-          <button type="button" className="mef-action" onClick={onReauth}>
-            <Icon name="plug" />
-            {tr("mirror.error_auth_action")}
-          </button>
-        </div>
-      )}
+      {authFix &&
+        (resolved ? (
+          // Done: state it and stop there. No button — Settings > Agents would open on a
+          // connected card with nothing to do, which reads as "that didn't work either".
+          <div className="mirror-error-fix mef-done">
+            <Icon name="check" />
+            <p className="mef-msg">{tr("mirror.error_auth_done", { agent: agentName })}</p>
+          </div>
+        ) : (
+          <div className="mirror-error-fix">
+            <p className="mef-msg">{tr("mirror.error_auth_hint", { agent: agentName })}</p>
+            <button type="button" className="mef-action" onClick={onReauth}>
+              <Icon name="plug" />
+              {tr("mirror.error_auth_action")}
+            </button>
+          </div>
+        ))}
       {text && <div className="mirror-error-body">{text}</div>}
     </div>
   );

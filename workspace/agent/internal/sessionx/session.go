@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/gitx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/status"
@@ -47,6 +48,15 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		if state, at, waiting := rateLimitWaiting(m, time.Now()); waiting {
 			s.State = state
 			s.RateLimitResumeAt = at
+		}
+	}
+	// When the login in force was written. Sent for a stopped session too: the mirror of a
+	// session that died on an expired login is exactly where the reader goes to see whether
+	// re-authenticating took (docs/log/47 §4-11). Costs one stat, and the credential parse
+	// behind it is already cached on that stat for the state check above.
+	if NormalizeKind(m.Kind) == session.KindClaude {
+		if at := claude.AuthOKAt(); !at.IsZero() {
+			s.AuthOkAt = at.Format(time.RFC3339)
 		}
 	}
 	// For a stopped session, surface WHY it ended (crash / OOM) if the pane recorder

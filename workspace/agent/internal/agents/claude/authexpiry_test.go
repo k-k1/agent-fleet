@@ -159,3 +159,47 @@ func TestCredentialExpiryFromFile(t *testing.T) {
 		t.Errorf("oauthToken = %q, want %q (the same read must be shared)", got, "tok")
 	}
 }
+
+// TestAuthOKAtNamesTheLoginMoment: the moment the Console and auth_resume.go compare a failed
+// turn against (docs/log/47 §4-11). Zero unless there is a usable login to name, and it MOVES
+// when the file is rewritten — that movement is the only evidence a re-authentication happened,
+// since a revoked token leaves a credential that reads perfectly healthy.
+func TestAuthOKAtNamesTheLoginMoment(t *testing.T) {
+	dir := isolateClaudeConfig(t)
+	now := time.Now()
+
+	if got := AuthOKAt(); !got.IsZero() {
+		t.Fatalf("AuthOKAt = %v with no credentials, want zero (nothing to name)", got)
+	}
+
+	// Dead credentials: there IS a file, but naming its moment would tell the Console that a
+	// failure had been dealt with while nothing can run.
+	writeCredsExpiry(t, dir, now.Add(-10*24*time.Hour+8*time.Hour), now.Add(-10*24*time.Hour))
+	if got := AuthOKAt(); !got.IsZero() {
+		t.Fatalf("AuthOKAt = %v on expired credentials, want zero", got)
+	}
+
+	writeCredsExpiry(t, dir, now.Add(8*time.Hour), now.Add(30*24*time.Hour))
+	first := AuthOKAt()
+	if first.IsZero() {
+		t.Fatal("AuthOKAt is zero on a live login")
+	}
+
+	// A re-login rewrites the file, and the moment has to move with it — a filesystem whose
+	// mtime resolution swallowed the change would leave a session waiting forever.
+	later := time.Now().Add(2 * time.Second)
+	if err := os.Chtimes(filepath.Join(dir, ".credentials.json"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	resetCredCache()
+	if got := AuthOKAt(); !got.After(first) {
+		t.Errorf("AuthOKAt = %v after a rewrite, want later than %v", got, first)
+	}
+
+	// An environment token overrides the file, so the file describes nothing in force.
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "sk-ant-oat01-env")
+	resetCredCache()
+	if got := AuthOKAt(); !got.IsZero() {
+		t.Errorf("AuthOKAt = %v while running on an environment token, want zero", got)
+	}
+}

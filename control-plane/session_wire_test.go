@@ -42,7 +42,7 @@ const agentSessionsPayload = `{"sessions":[{
 	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
 	"label":"[AF] t","started":"07/15 12:00","createdAt":"2026-07-15T12:00:00+09:00",
 	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,
-	"backgroundBusy":true,"backgroundBusyReason":"subagent",
+	"backgroundBusy":true,"backgroundBusyReason":"subagent","authOkAt":"2026-08-14T09:00:00+09:00",
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
 	"exitReason":"oom","exitCode":137,"exitSignal":9
@@ -106,6 +106,10 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// that cannot say what is running.
 		"backgroundBusy":       true,
 		"backgroundBusyReason": "subagent",
+		// When the login in force was written (docs/log/47 §4-11). Dropped here, the mirror
+		// cannot tell an auth failure the user has already fixed from a live one, and goes on
+		// asking them to re-authenticate for the rest of the conversation's life.
+		"authOkAt": "2026-08-14T09:00:00+09:00",
 	}
 	for k, v := range want {
 		if got[k] != v {

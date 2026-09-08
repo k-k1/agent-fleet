@@ -146,6 +146,48 @@ describe("TranscriptCaps: no capability, no control", () => {
     expect(el.querySelector(".mef-action")).toBeNull(); // but no route to go and fix it
   });
 
+  it("stops asking for a re-authentication the owner has already made (docs/log/47 §4-11)", () => {
+    // The transcript never changes, so without this the block goes on demanding a sign-in for
+    // the rest of the conversation's life — the reader fixes it, comes back, and the last thing
+    // in the mirror still says it is broken.
+    const turns: Turn[] = [
+      {
+        role: "assistant",
+        idx: 1,
+        ts: "2026-08-14T03:00:00Z",
+        parts: [{ kind: "error", info: "authentication_failed (HTTP 401)", text: "Please run /login", cause: "auth" }],
+      },
+    ];
+    // A login written BEFORE the failed turn is the one that failed: keep offering the fix.
+    const stale = render(turns, { ...OWNER, authOkAt: "2026-08-14T02:00:00Z" });
+    expect(stale.querySelector(".mef-action")).not.toBeNull();
+    expect(stale.querySelector(".mef-done")).toBeNull();
+    act(() => root?.unmount());
+    host?.remove();
+
+    const el = render(turns, { ...OWNER, authOkAt: "2026-08-14T04:00:00Z" });
+    expect(el.querySelector(".mef-action")).toBeNull(); // no button: there is nothing left to do
+    const done = el.querySelector(".mef-done");
+    expect(done).not.toBeNull();
+    expect(done!.textContent).toContain(tr("mirror.error_auth_done", { agent: "Claude" }));
+    // The failure itself is still shown as a failure — it did happen.
+    expect(el.querySelector(".mirror-error-body")?.textContent).toContain("/login");
+  });
+
+  it("leaves a failure that is not about the login alone, however new the sign-in is", () => {
+    const turns: Turn[] = [
+      {
+        role: "assistant",
+        idx: 1,
+        ts: "2026-08-14T03:00:00Z",
+        parts: [{ kind: "error", info: "rate_limit (HTTP 429)", text: "You've hit your session limit" }],
+      },
+    ];
+    const el = render(turns, { ...OWNER, authOkAt: "2026-08-14T04:00:00Z" });
+    expect(el.querySelector(".mirror-error")).not.toBeNull();
+    expect(el.querySelector(".mirror-error-fix")).toBeNull();
+  });
+
   it("hides the attachment panel entirely when there is nowhere to open it (the DTO drops the paths)", () => {
     const turns: Turn[] = [
       { role: "assistant", idx: 1, parts: [{ kind: "userfile", files: ["out/report.md"], caption: "結果" }] },

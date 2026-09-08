@@ -595,6 +595,12 @@ type sessionWire struct {
 	// is waiting for the limit to lift and not when work will resume. No DB-mirror column
 	// (a stopped workspace has no episode in progress).
 	RateLimitResumeAt string `json:"rateLimitResumeAt,omitempty"`
+	// AuthOkAt passes through when the agent's current login was written (RFC3339, claude
+	// only). Dropped, an error block in the mirror goes on offering "re-authenticate" for a
+	// failure the user already dealt with, and the Console cannot tell a fixed login failure
+	// from a live one. No DB-mirror column: it describes the credentials in a RUNNING
+	// workspace, and a stale copy would claim a login is current when nothing has been read.
+	AuthOkAt string `json:"authOkAt,omitempty"`
 	// Context: claude's remaining context (the source data for ContextBar). The shape is
 	// owned by the Agent and the Console (chat view) and the CP does not interpret it, so
 	// it is relayed as RawMessage. Dropped in the relay, ContextBar never appears through
