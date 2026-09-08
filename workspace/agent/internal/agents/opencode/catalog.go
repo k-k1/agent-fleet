@@ -66,8 +66,18 @@ const (
 // Usage* constants. The label stays the id: the Console localizes the Go/Zen marker itself
 // (agentModels.ts) and the MCP list_models an assistant reads wants the raw id anyway.
 func Catalog(ids []string, pref string) []agents.ModelChoice {
-	out := make([]agents.ModelChoice, 0, len(ids))
+	// Unusable ids come out FIRST, before any of the billing-route shaping. The rescue
+	// below re-enters this function with UsageZen and relies on "UsageZen keeps everything",
+	// so an id dropped inside the loop for a reason UsageZen cannot undo would recurse for
+	// ever. Filtering the input keeps that invariant true.
+	usable := make([]string, 0, len(ids))
 	for _, id := range ids {
+		if keepInMenu(id) {
+			usable = append(usable, id)
+		}
+	}
+	out := make([]agents.ModelChoice, 0, len(usable))
+	for _, id := range usable {
 		if !keepForUsage(id, pref) {
 			continue
 		}
@@ -78,8 +88,8 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 	// INPUT being non-empty — an already-empty catalog (CLI absent / offline) is not a
 	// preference problem and must not bounce back into this function. UsageOff is
 	// exempt from this rescue: an empty picker IS the intended result of "off".
-	if pref != UsageOff && len(out) == 0 && len(ids) > 0 {
-		return Catalog(ids, UsageZen)
+	if pref != UsageOff && len(out) == 0 && len(usable) > 0 {
+		return Catalog(usable, UsageZen)
 	}
 	// Go first everywhere: whichever route is selected, a subscription-covered id is
 	// the one to reach for first. Inside a group the order is normalized by id
@@ -96,6 +106,36 @@ func Catalog(ids []string, pref string) []agents.ModelChoice {
 		}
 		return 1
 	})
+}
+
+// bedrockPrefix is opencode's own `amazon-bedrock` provider — nothing to do with af.
+const bedrockPrefix = "amazon-bedrock/"
+
+// keepInMenu drops ids that opencode offers but this workspace cannot actually use.
+//
+// Only one so far, and it is a big one: opencode enables its built-in `amazon-bedrock`
+// provider whenever the AWS SDK credential chain RESOLVES, and every ECS task has
+// AWS_CONTAINER_CREDENTIALS_RELATIVE_URI set, so the chain always resolves. Measured with the
+// real CLI (1.18.29): no credentials → 7 ids, all opencode/…; an AWS profile in reach → the
+// same 7 plus **121 amazon-bedrock/…**, and nothing else changes.
+//
+// They cannot work. The workspace task role is `WsTaskRole`, which carries no policies at all
+// on purpose (20-platform: "No policies attached on purpose"), so bedrock:InvokeModel is
+// AccessDenied; and af never exports AWS_PROFILE into a session or into the serve daemon — an
+// AWS connection configured in Settings reaches MCP spawns and SSM sessions only. So the menu
+// was offering 121 models that fail on the first message, which is the worst kind of wrong: it
+// looks available.
+//
+// This is a STOPGAP for the menu, not a ban. It shapes the catalogue exactly like the billing
+// route above does, so an explicitly named id still launches (handleCreateSession validates
+// against the unshaped list) and AF_OPENCODE_SHOW_BEDROCK=1 puts them back for a deployment
+// that has wired credentials up some other way. The real answer is ADR 0069's second provider
+// layer, which gives Bedrock a connection and a credential of its own.
+func keepInMenu(id string) bool {
+	if !strings.HasPrefix(id, bedrockPrefix) {
+		return true
+	}
+	return envOr("AF_OPENCODE_SHOW_BEDROCK", "") == "1"
 }
 
 // keepForUsage decides whether one id belongs in the menu under pref. Only opencode.ai's two
