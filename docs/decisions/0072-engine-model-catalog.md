@@ -342,8 +342,9 @@ names move between versions — pin the tag and freeze the templates behind gold
      🔴 **it is settled too (P1 measurement 7): the eviction waits.** The interrupted stream was
      delivered whole and the waiting request paid "the rest of that answer plus the load" (48.6
      seconds of waiting, on a CPU). So the price of `--models-max 1` is a wait rather than a
-     broken answer — but **a non-streaming request is cut by the ALB during that wait** (the
-     60 seconds of ADR 0071 P1 measurement 9).
+     broken answer. Streaming rides it out on the heartbeat; **a non-streaming request cannot** —
+     the gateway's own 45-second hold (`AF_ENGINE_PLAIN_HOLD`, deliberately inside the ALB's 60)
+     ends it first with a retryable `503 engine_waking`.
 
 4. **The image role holds one checkpoint; a swap takes effect at the next start; one at a
    time.** sd-server has no switch, extra roles are ruled out by the wall, co-tenancy by VRAM.

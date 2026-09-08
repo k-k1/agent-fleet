@@ -123,20 +123,19 @@ engine never talks to Hugging Face (ADR 0071 decision 3 — measured at 4-236 MB
 tell which until you pull, against S3's steady 104-147 MB/s), so a model gets there through the
 ingest task.
 
-⚠️ **EMPTY (the default) means NO `llm` SERVICE IS CREATED** — only the bucket, the ingest task,
-the capacity provider and the roles. That is deliberate and it is the first half of a two-pass
-stand-up: CloudFormation blocks on ECS service stabilisation, and a service whose model is not
-in the bucket yet can never become stable, so creating it before there is anything to serve
-leaves the stack in `CREATE_IN_PROGRESS` with no later step able to rescue it (the same trap
-20-platform's ECR repositories exist to avoid). Deploy once with this empty, run the ingest
-task, then deploy again with the key.
+⚠️ **EMPTY with `LlmEnabled` unset still means NO `llm` SERVICE IS CREATED** — that is the one
+release of compatibility described under [the seed parameters](#the-seed-parameters). It no
+longer means a two-pass stand-up, though: since ADR 0072 the sidecar treats "nothing staged" as
+success and the engine idles, so the role can be created before anything is in the bucket. Say
+`LlmEnabled=true` for that.
 
 ### `LlmModelIds`
 
-Model ids the gateway advertises for this engine, i.e. what a user picks as `llamacpp/<id>`.
-DECLARED, never derived (ADR 0053): the engine is asleep when the launch menu is drawn, and
-waking a GPU box to enumerate one model is the opposite of on-demand. The first id is what
-`--alias` tells llama-server to answer to.
+The catalogue id of the model this deployment was already serving, and nothing more since ADR
+0072 — the ids a member picks come from the catalogue, which is also where the launch menu is
+drawn from while the box is asleep (ADR 0053 unchanged: nothing asks the engine). Only the FIRST
+id is used, as the seeded row's id. Under router mode `--alias` is set by the router itself, per
+preset section.
 
 ### `LlmContextTokens` / `LlmMaxOutputTokens`
 
@@ -193,8 +192,10 @@ Measured about that swap, on llama.cpp b10853 (CPU, two models, `--models-max 1`
   48.6 s while an 854-chunk stream finished, and the stream was delivered whole. An in-flight
   generation is not interrupted (ADR 0072 open question 1(c));
 - so the waiting request pays "rest of the current answer + load". A STREAMING request is held by
-  the gateway's SSE heartbeat; a non-streaming one has no bytes to show and the ALB cuts it at 60 s
-  (ADR 0071 P1 measurement 9). Raise `LlmModelsMax` only when the models genuinely fit together.
+  the gateway's SSE heartbeat and rides it out; a non-streaming one does not — it has no bytes to
+  show, so the gateway's own 45-second hold (`AF_ENGINE_PLAIN_HOLD`, deliberately under the ALB's
+  60) ends it with a retryable `503 engine_waking`. Raise `LlmModelsMax` only when the models
+  genuinely fit together.
 
 ### `LlmApiKeySsmParam`
 
