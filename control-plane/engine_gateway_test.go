@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -775,5 +776,96 @@ func TestEngineGatewayRefusesAModelOutsideTheCatalogue(t *testing.T) {
 	}
 	if got := engineRequestModel(nil); got != "" {
 		t.Errorf("an unreadable body should read as empty, got %q", got)
+	}
+}
+
+// --- ADR 0072 P1: warmth is not health, once the llm role is a router ----------
+
+// A llama.cpp router answers /health with {"status":"ok"} while holding NO models at all
+// (measured against b10853 with an empty model list). So the P0 warm probe — the health check —
+// reports a router as warm from the second it binds its port: through the whole 527-second cold
+// start, and for ever afterwards on a box that failed to load anything. The panel's "warm" chip
+// and the controller's `unwarmed` rule both read that flag, so both would be lying.
+//
+// With a WarmPath the CP reads each model's status out of /models instead, and only `loaded`
+// counts.
+func TestEngineWarmProbeReadsTheRouterModelList(t *testing.T) {
+	var loaded atomic.Value
+	loaded.Store(`{"data":[{"id":"a","status":{"value":"unloaded"}},{"id":"b","status":{"value":"unloaded"}}]}`)
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health":
+			// What the router says with nothing loaded, verbatim.
+			w.Write([]byte(`{"status":"ok"}`))
+		case "/models":
+			w.Write([]byte(loaded.Load().(string)))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer up.Close()
+
+	router := newTestEngine(t, up.URL, nil)
+	router.def.WarmPath = "/models"
+	ctx := context.Background()
+
+	if !engineHealthy(ctx, router) {
+		t.Fatal("the stub is not answering /health — the rest of this test would pass for the wrong reason")
+	}
+	if router.warmProbe(ctx, false) {
+		t.Error("a router holding no models read as warm")
+	}
+	loaded.Store(`{"data":[{"id":"a","status":{"value":"loading"}},{"id":"b","status":{"value":"sleeping"}}]}`)
+	// `loading` is the 267 seconds of weights going into VRAM and `sleeping` is the router's own
+	// idle unload: both mean the next request pays for the weights, which is exactly what warm
+	// promises it will not.
+	if router.warmProbe(ctx, false) {
+		t.Error("loading/sleeping read as warm")
+	}
+	loaded.Store(`{"data":[{"id":"a","status":{"value":"unloaded"}},{"id":"b","status":{"value":"loaded"}}]}`)
+	if !router.warmProbe(ctx, false) {
+		t.Error("a loaded model did not read as warm")
+	}
+	if got := engineLoadedModels(ctx, router); len(got) != 1 || got[0] != "b" {
+		t.Errorf("loaded models = %v, want [b]", got)
+	}
+	// ⚠️ Warm is "SOMETHING is loaded", not "the DEFAULT is loaded". With --models-max 1 a
+	// session using the second model evicts the first, and a warm flag tied to the default would
+	// go false on a box that is answering — which the controller's `unwarmed` rule would
+	// eventually stop, mid-conversation.
+
+	// An engine with no WarmPath (the image role, and every table written before ADR 0072 P1)
+	// keeps the health check as its whole answer.
+	sd := newTestEngine(t, up.URL, nil)
+	if !sd.warmProbe(ctx, false) {
+		t.Error("without a WarmPath the health check should decide, and it answers ok")
+	}
+}
+
+// The price of --models-max 1, made visible (ADR 0072 decision 3). Two sessions on two models
+// take turns, and each turn costs an unload plus a load; the panel shows the count rather than
+// reporting a uniformly "warm" engine.
+func TestEngineServedModelCountsSwaps(t *testing.T) {
+	e := newTestEngine(t, "http://127.0.0.1:1", nil)
+	// No controller attached, so warmed() is not consulted — that path is the panel's, and it is
+	// covered where the row is built.
+	e.ctrl = nil
+
+	e.noteServed("qwen3-coder-30b-a3b", true)
+	e.noteServed("qwen3-coder-30b-a3b", true)
+	if m, n := e.servedModel(); m != "qwen3-coder-30b-a3b" || n != 0 {
+		t.Errorf("same model twice = (%q, %d), want (qwen3-coder-30b-a3b, 0)", m, n)
+	}
+	e.noteServed("qwen2.5-coder-1.5b", true)
+	e.noteServed("qwen3-coder-30b-a3b", true)
+	if m, n := e.servedModel(); m != "qwen3-coder-30b-a3b" || n != 2 {
+		t.Errorf("after two swaps = (%q, %d), want (qwen3-coder-30b-a3b, 2)", m, n)
+	}
+	// A refused request moved no weights: the router answers 400 for a model it does not hold
+	// without touching the one that is loaded.
+	e.noteServed("nope", false)
+	e.noteServed("", true)
+	if m, n := e.servedModel(); m != "qwen3-coder-30b-a3b" || n != 2 {
+		t.Errorf("a failed answer changed the served model: (%q, %d)", m, n)
 	}
 }

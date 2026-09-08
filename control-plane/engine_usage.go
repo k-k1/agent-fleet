@@ -191,6 +191,10 @@ func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
 	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool) {
 
 	row, count := engineUsageRowFor(eng.def, claims, u, took, ok)
+	// Before the ledger, and whether or not there is one to write to: this is where the CP finds
+	// out which model the router actually answered as, and the swap count that comes out of it
+	// is the visible price of --models-max 1 (ADR 0072 decision 3).
+	eng.noteServed(row.Model, ok)
 	if !count || g.mgr == nil {
 		return
 	}

@@ -52,6 +52,13 @@ export const admin = {
   "admin.engines_model_add_go": "登録する",
   "admin.engines_model_add_note": "CP は S3 を見ません（権限を持たせていません）。キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
   "admin.engines_model_vram": "VRAM {n} MiB",
+  // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
+  // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。
+  "admin.engines_model_sync": "同期 +{n} 秒（推定）",
+  // いま VRAM に載っているモデルと、その入れ替わりの回数。1 度に 1 つしか抱えない設計の
+  // 価格で、「warm」だけを出していると見えなくなる。
+  "admin.engines_warm_model": "VRAM 上: ",
+  "admin.engines_model_swaps": "この CP が起きてからのモデル交替: {n} 回",
   // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
   // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
   "admin.engines_since_box": "箱の起動 ",

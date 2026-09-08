@@ -74,10 +74,10 @@ STUB
 chmod +x "$WORK/bin/aws"
 export PATH="$WORK/bin:$PATH"
 
-run() { # run <fixture> <alias-flag> <ctx-flag> -> writes $WORK/models/cmdline
+run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] -> writes $WORK/models/cmdline
   rm -rf "$WORK/models"; mkdir -p "$WORK/models"
   : > "$WORK/fetched"
-  ACTIVE_SET_FIXTURE="$1" ALIAS_FLAG="$2" CTX_FLAG="$3" \
+  ACTIVE_SET_FIXTURE="$1" ALIAS_FLAG="$2" CTX_FLAG="$3" PRESET_FILE="${4:-}" \
   MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
   AF_TEST_FETCHED="$WORK/fetched" \
     sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 || fail "the sidecar exited non-zero: $(cat "$WORK/out")"
@@ -102,7 +102,9 @@ want="-m $WORK/models/image/checkpoints/sd_xl_base_1.0.safetensors"
 grep -q "s3://b/image/checkpoints/sd_xl_base_1.0.safetensors" "$WORK/fetched" \
   || fail "the checkpoint was not fetched: $(cat "$WORK/fetched")"
 
-echo "== the llm role: --alias and -c come from the catalogue =="
+echo "== a single-model role: --alias and -c come from the catalogue =="
+# The shape the llm role had before router mode, and the one any single-model engine still
+# gets: everything model-specific on the command line.
 LLM='{"v":1,"key":"llm","start":"qwen3","models":[{"id":"qwen3","f":["llm/q.gguf"],"c":32768,"a":["--jinja"]}]}'
 run "$LLM" "--alias" "-c"
 got="$(cat "$WORK/models/cmdline")"
@@ -135,5 +137,64 @@ echo "== a start id that names nothing leaves an EMPTY command line, not a broke
 GONE='{"v":1,"key":"image","start":"gone","models":[{"id":"a","f":["image/checkpoints/a.safetensors"]}]}'
 run "$GONE" "" ""
 [ ! -s "$WORK/models/cmdline" ] || fail "a missing start id produced '$(cat "$WORK/models/cmdline")'"
+
+echo "== the llm ROUTER: one preset section per model, and nothing model-specific on the command line =="
+# ADR 0072 decision 3 / phase P1. The section name is the CATALOGUE ID — measured against
+# llama.cpp b10853, a preset section that matches no file DEFINES a model, which is what lets a
+# member pick `llamacpp/qwen3-coder-30b-a3b` for a file called Qwen3-Coder-…-Q4_K_M.gguf.
+ROUTER='{"v":1,"key":"llm","start":"small","models":[{"id":"qwen3","f":["llm/q.gguf"],"c":32768,"a":["--jinja","-ngl","99"]},{"id":"small","f":["llm/s.gguf"],"c":8192}]}'
+run "$ROUTER" "" "" "$WORK/models/llm/presets.ini"
+got="$(cat "$WORK/models/cmdline")"
+want="--models-preset $WORK/models/llm/presets.ini"
+[ "$got" = "$want" ] || fail "router cmdline is '$got', want '$want'"
+# ⚠️ -m / --alias / -c must be GONE. A -c on the command line wins over every preset section
+# (measured: two models declaring 4096 and 384 both came up --ctx-size 32768), so a stray flag
+# here would silently give every model one window.
+case "$got" in *" -m "*|*"--alias"*|*" -c "*) fail "the router command line still carries a model flag: $got";; esac
+preset="$(cat "$WORK/models/llm/presets.ini")"
+want_preset='[qwen3]
+model = '"$WORK"'/models/llm/q.gguf
+c = 32768
+jinja = true
+ngl = 99
+
+[small]
+model = '"$WORK"'/models/llm/s.gguf
+c = 8192
+load-on-startup = true'
+[ "$preset" = "$want_preset" ] || fail "the preset is:
+$preset
+want:
+$want_preset"
+
+echo "== the router syncs EVERY enabled model, not just the starting one =="
+# The opposite rule to the image role's, and for a measured reason: the router answers a request
+# for any listed model, and a model whose file is absent fails with 500 rather than waiting.
+grep -q "llm/q.gguf" "$WORK/fetched" || fail "a model that is not the starting one was not fetched"
+grep -q "llm/s.gguf" "$WORK/fetched" || fail "the starting model was not fetched"
+
+echo "== a start id that names nothing still loads something at startup =="
+# Not the image role's rule (empty command line, engine idles): every model is already on the
+# box, so the honest repair is to load the first one — otherwise nothing is ever `loaded`, the
+# engine never reads as warm, and the controller stops it as a failed start 900 s later.
+ORPHAN='{"v":1,"key":"llm","start":"gone","models":[{"id":"first","f":["llm/a.gguf"],"c":4096},{"id":"second","f":["llm/b.gguf"]}]}'
+run "$ORPHAN" "" "" "$WORK/models/llm/presets.ini"
+grep -q "^load-on-startup = true" "$WORK/models/llm/presets.ini" || fail "nothing is loaded at startup"
+python3 - "$WORK/models/llm/presets.ini" <<'PY' || fail "load-on-startup did not fall back to the first model"
+import sys
+sec, hit = "", ""
+for line in open(sys.argv[1]):
+    if line.startswith("["): sec = line.strip()
+    if line.strip() == "load-on-startup = true": hit = sec
+raise SystemExit(0 if hit == "[first]" else 1)
+PY
+
+echo "== an empty catalogue leaves the router idling too =="
+# The wrapper starts the engine only when /models/cmdline is non-empty, so an active set with no
+# models has to produce an EMPTY one — a router started with an empty preset would answer
+# /health with ok for ever and read as a healthy engine holding nothing.
+EMPTY='{"v":1,"key":"llm","start":"","models":[]}'
+run "$EMPTY" "" "" "$WORK/models/llm/presets.ini"
+[ ! -s "$WORK/models/cmdline" ] || fail "an empty catalogue produced '$(cat "$WORK/models/cmdline")'"
 
 echo "OK: the engine fetch sidecar behaves"

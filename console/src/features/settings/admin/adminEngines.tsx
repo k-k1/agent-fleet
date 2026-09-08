@@ -60,6 +60,10 @@ type EngineModel = {
   precision?: string;
   sizes?: string[];
   files?: string[];
+  /** What enabling this model adds to the next cold start, in seconds, from the file sizes
+   *  whoever staged them declared. Absent when nobody declared one — the CP cannot look in S3
+   *  (ADR 0072 review R3), so this is an estimate and is labelled as one. */
+  sync_secs?: number;
 };
 
 type EngineRow = {
@@ -82,6 +86,11 @@ type EngineRow = {
    *  llama-server binds its port 267 seconds before the weights are in VRAM (measured), so a
    *  panel showing only the ECS state reports an engine as up through its whole cold start. */
   warm?: boolean;
+  /** The model whose weights are actually in VRAM, and how many times that changed. Both are
+   *  in-memory facts of the CURRENT control-plane process (as window_units is), and the swap
+   *  count is the visible price of `--models-max 1`: every change cost an unload plus a load. */
+  warm_model?: string;
+  model_swaps?: number;
   /** Service events — the only place ECS writes down why a start failed. */
   events?: string[];
   service_since?: string;
@@ -438,6 +447,11 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
   if (m.vram_mib) {
     bits.push((tr("admin.engines_model_vram" as never) as string).replace("{n}", String(m.vram_mib)));
   }
+  // What this model costs the next cold start. Stated as an estimate because it is one: S3 to
+  // the box ran at 104–147 MB/s over four measured starts, and this uses the slow end.
+  if (m.sync_secs) {
+    bits.push((tr("admin.engines_model_sync" as never) as string).replace("{n}", String(m.sync_secs)));
+  }
   const licence = m.license_name || m.license;
   if (licence) bits.push(licence);
   if (m.files?.length) bits.push(m.files.join(" "));
@@ -584,6 +598,32 @@ function EngineStatus({ row }: { row: EngineRow }) {
               <Sep />
               {tr("admin.engines_last_demand")}
               <span className="mono">{localStamp(row.last_demand)}</span>
+            </>
+          )}
+        </>
+      ),
+    });
+  }
+
+  // Which model is in VRAM right now, and what the taking of turns has cost. A router holding
+  // one model at a time (LlmModelsMax=1) reloads on every change of model — 267 s of weights,
+  // measured — and an engine that only ever says "warm" hides that entirely (ADR 0072
+  // decision 3). Both numbers are this CP process's own, like the demand count above.
+  if (row.warm_model || row.model_swaps) {
+    lines.push({
+      key: "warm-model",
+      body: (
+        <>
+          {row.warm_model && (
+            <>
+              {tr("admin.engines_warm_model")}
+              <span className="mono">{row.warm_model}</span>
+            </>
+          )}
+          {!!row.model_swaps && (
+            <>
+              {row.warm_model && <Sep />}
+              {tr("admin.engines_model_swaps").replace("{n}", String(row.model_swaps))}
             </>
           )}
         </>

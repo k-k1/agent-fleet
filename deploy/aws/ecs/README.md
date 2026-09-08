@@ -1036,10 +1036,18 @@ an engine box.
 
 **The `llm` role:** nothing to configure. The Agent asks the CP which engines exist, writes the
 chat ones into opencode's global config as a provider, and `llamacpp/<model>` appears in the
-launch picker — **while the GPU box is still asleep**, which is why the model ids are a stack
-parameter rather than something read from the engine. Picking it and sending the first message
-starts the box and holds the request until it answers; the answer arrives on the **first
-attempt**, with no retry, which is the observation that verifies ADR 0071 decision 5.
+launch picker — **while the GPU box is still asleep**, which is why the ids come from the
+catalogue and never from the engine. Picking one and sending the first message starts the box
+and holds the request until it answers; the answer arrives on the **first attempt**, with no
+retry, which is the observation that verifies ADR 0071 decision 5.
+
+Since ADR 0072 P1 `llama-server` runs as a **router**: every enabled model appears in the
+picker with **its own context window**, and the request's `model` chooses between them. Two
+things follow, and both are the administrator's to weigh. Every enabled GGUF is synced onto the
+box, so the cold start grows with their total size (the panel estimates it per model), and
+`LlmModelsMax` (default **1**) caps how many are held at once — under that cap a request for the
+other model waits for the current answer to finish and then pays a full reload. The panel names
+the model in VRAM and counts the changes.
 
 **The `image` role:** it becomes a provider of the existing `generate_image` tool (ADR 0069),
 which is **off by default and turned on per user** in Settings → Agents ("画像生成"). Once the

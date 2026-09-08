@@ -9,14 +9,10 @@ Description: >-
   repositories from 20-platform; it does NOT depend on 30-ingress. Deploy it BEFORE
   30-ingress and hand 30-ingress this stack's EnginesSsmParam output.
 
-# Fargate has no GPU (AWS Fargate FAQ; containers-roadmap #88, open since 2019), so the
-# 0070 shape — "an ECS service whose desired count is 0 while nobody wants it" — is bought
-# here from ECS Managed Instances instead: AWS owns the instance, the AMI and the NVIDIA
-# driver, and terminates the box once the task is gone.
-#
-# ⚠️ Five things this template had to learn the hard way on a real cluster, and one rule about
-# who owns the cluster's capacity-provider list: PARAMETERS-60-engines.md, "What this template
-# learned the hard way". Read it before editing the capacity providers or the services.
+# ⚠️ Why Managed Instances rather than Fargate, five things this template had to learn the hard
+# way on a real cluster, and one rule about who owns the cluster's capacity-provider list:
+# PARAMETERS-60-engines.md, "What this template learned the hard way". Read it before editing
+# the capacity providers or the services.
 
 Parameters:
   # ⚠️ The long-form reasoning for these — the measurements, the trade-offs, the traps — is in
@@ -107,7 +103,17 @@ Parameters:
     Default: "-ngl,99,--jinja"
     Description: >-
       Extra llama-server flags, measured on an L4: all layers on the GPU, chat template applied
-      (the latter is what makes tool calls work). The context is LlmContextTokens.
+      (the latter is what makes tool calls work). ⚠️ NEVER -c here: the router passes its own
+      command line to every model instance and a command line WINS over the preset, so one -c
+      silently gives every model that window (measured). Windows are the catalogue's.
+  LlmModelsMax:
+    Type: Number
+    Default: 1
+    MinValue: 0
+    Description: >-
+      Models the router may hold at once (llama-server --models-max; 0 = unlimited). 1 because
+      the router does not know about VRAM: a second 30B Q4 on an L4 does not run slowly, it
+      crashes. Raise it only for a box whose models fit side by side.
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -328,19 +334,17 @@ Parameters:
 
 Mappings:
   # ONE fetch sidecar for both roles (ADR 0072 decision 1(a)): read the active set the Control
-  # Plane published to SSM, sync exactly the files the engine is about to load, and write
-  # `/models/cmdline` — the model-specific half of the engine's argument list.
+  # Plane published to SSM, sync the files the engine is about to load, and write
+  # `/models/cmdline` — the model-specific half of the engine's argument list. With PRESET_FILE
+  # set it writes a llama.cpp ROUTER preset as well, and then syncs every enabled model rather
+  # than only the starting one (ADR 0072 decision 3, phase P1).
   #
-  # ⚠️ ParameterNotFound is EMPTY, not an error, and only the STARTING model is fetched. Both
-  # rules have a failure behind them: PARAMETERS-60-engines.md, "The fetch sidecar".
+  # ⚠️ ParameterNotFound is EMPTY not an error; what each role syncs; and why this is a LITERAL
+  # block (`|-`) rather than a folded one, which silently split the shell on the live
+  # deployment: PARAMETERS-60-engines.md, "The fetch sidecar". `deploy/local/engine-sidecar-
+  # test.sh` runs this script for real against a stub `aws`, and CI runs that.
   Engine:
     fetch:
-      # ⚠️ A LITERAL block (`|-`), not a folded one (`>-`). YAML folding keeps a MORE-INDENTED
-      # line literal, so a continuation line indented to line up with its command silently
-      # keeps its newline — and the shell then reads the second half as a new command.
-      # Measured on the live deployment: the jq filter below, indented under its `jq -r`, ran
-      # as `jq -r --arg s "$START"` (which dumped the whole document) followed by
-      # `sh: [(.models[]?|…: command not found`. The service came up idle and nothing said why.
       script: |-
         set -e
         mkdir -p "$MODELS_DIR"
@@ -352,7 +356,12 @@ Mappings:
         fi
         START=$(printf '%s' "$V" | jq -r '.start // ""')
         echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
-        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
+        if [ -n "$PRESET_FILE" ]; then
+          START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
+          printf '%s' "$V" | jq -r '[(.models[]?|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
+        else
+          printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
+        fi
         while read -r k; do
           [ -n "$k" ] || continue
           dst="$MODELS_DIR/$k"
@@ -363,7 +372,15 @@ Mappings:
           mv "$dst.part" "$dst"
           echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
         done < /tmp/keys
-        printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG" '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // []) + (if $al != "" then [$al,$m.id] else [] end) + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end) + ($m.a // []) | join(" ") end' > "$MODELS_DIR/cmdline.part"
+        if [ -n "$PRESET_FILE" ]; then
+          mkdir -p "$(dirname "$PRESET_FILE")"
+          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
+          mv "$PRESET_FILE.part" "$PRESET_FILE"
+          echo "engine fetch: preset $PRESET_FILE holds $(grep -c '^\[' "$PRESET_FILE" || true) model(s), '$START' loaded at startup"
+          if [ -s "$PRESET_FILE" ]; then printf -- '--models-preset %s' "$PRESET_FILE" > "$MODELS_DIR/cmdline.part"; else : > "$MODELS_DIR/cmdline.part"; fi
+        else
+          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG" '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // []) + (if $al != "" then [$al,$m.id] else [] end) + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end) + ($m.a // []) | join(" ") end' > "$MODELS_DIR/cmdline.part"
+        fi
         mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
         echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
 
@@ -371,13 +388,8 @@ Conditions:
   # Whether the ROLE exists — its service, its DNS name, its row in the engine table. WHAT it
   # loads is the catalogue's business (ADR 0072 decision 1), so this no longer keys off a model
   # key; but leaving `*Enabled` at "" keeps the old meaning for one release, so an existing
-  # params/60-engines that switched a role off by emptying its model key still does.
-  #
-  # ⚠️ The two-pass stand-up is what this removes. Under ADR 0071 an empty model key meant NO
-  # SERVICE, because a service whose fetch container could not find a file never stabilised and
-  # CloudFormation blocked on it. Now the sidecar treats "nothing staged" as success and the
-  # engine container idles (see EngineWrapper below), so the service stabilises with an empty
-  # catalogue and the role can be created in one pass.
+  # params/60-engines that switched a role off by emptying its model key still does. Why the
+  # two-pass stand-up is gone: PARAMETERS-60-engines.md, "The idle wrapper".
   HasLlmModel: !Or
     - !Equals [ !Ref LlmEnabled, "true" ]
     - !And [ !Equals [ !Ref LlmEnabled, "" ], !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ] ]
@@ -556,13 +568,8 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
   # --- capacity: one provider per engine role (ADR 0071 decision 2) -------------
-  # Two roles never share a box: CUDA does not slow down when VRAM runs out, it crashes, and
-  # the two measured footprints (20.9 GB for the 30B, 7.4 GB for SDXL) do not both fit on one
-  # L4's 22,888 MiB. Two providers is also what makes `draining` observable per role.
-  #
-  # ⚠️ Two providers means two boxes, and a draining one still holds its vCPU: a deployment
-  # using both roles wants 16 of the G-family quota. PARAMETERS-60-engines.md, "The G-family
-  # quota".
+  # ⚠️ Why the two roles never share a box, and why two providers want 16 of the G-family
+  # quota: PARAMETERS-60-engines.md, "The capacity providers" and "The G-family quota".
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -647,12 +654,8 @@ Resources:
         - { Key: af-role, Value: engine-image }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
-  # ⚠️ This REPLACES the cluster's provider list — the API is not additive — so FARGATE and
-  # FARGATE_SPOT have to be named alongside ours or every Fargate service in the deployment
-  # loses its provider. DefaultCapacityProviderStrategy is a REQUIRED property and is
-  # deliberately EMPTY: with a default strategy in place, a service that does not spell out
-  # `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
-  # line is the whole of that failure).
+  # ⚠️ This REPLACES the cluster's provider list, and its empty default strategy is
+  # load-bearing: PARAMETERS-60-engines.md, "The capacity providers".
   Associations:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
@@ -768,11 +771,13 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
-            # llama-server names the model it answers to with --alias and takes its window as
-            # -c. sd-server has neither, which is the whole of the difference between the two
-            # roles' use of one script.
-            - { Name: ALIAS_FLAG, Value: "--alias" }
-            - { Name: CTX_FLAG, Value: "-c" }
+            # ROUTER MODE (ADR 0072 decision 3): the model, its window and its own flags go into
+            # a preset section named after the catalogue id, so `-m` / `--alias` / `-c` leave the
+            # command line entirely — which is why both flags below are empty here now. The
+            # router names each instance with --alias itself (measured).
+            - { Name: PRESET_FILE, Value: /models/llm/presets.ini }
+            - { Name: ALIAS_FLAG, Value: "" }
+            - { Name: CTX_FLAG, Value: "" }
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           LogConfiguration:
             LogDriver: awslogs
@@ -782,11 +787,8 @@ Resources:
               awslogs-stream-prefix: llm-fetch
         - Name: llama
           Essential: true
-          # ⚠️ The image must ALREADY be in that repository when this stack is created.
-          # CloudFormation blocks on ECS service stabilisation, so a service that cannot
-          # pull leaves the stack in CREATE_IN_PROGRESS indefinitely — which is why the
-          # repository lives in 20-platform and standup.sh copies the image in during its
-          # images step, one stack earlier than this one (measured on 50-tts, 2026-09-06).
+          # ⚠️ The image must ALREADY be in that repository when this stack is created, or the
+          # stack blocks in CREATE_IN_PROGRESS: PARAMETERS-60-engines.md, "The engine services".
           Image: !Sub
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
@@ -801,7 +803,7 @@ Resources:
             - !Sub
               - >-
                 if [ -s /models/cmdline ]; then exec /app/llama-server --host 0.0.0.0 --port 8080
-                ${Extra} $(cat /models/cmdline);
+                --models-max ${LlmModelsMax} ${Extra} $(cat /models/cmdline);
                 else echo "llm: no model in the catalogue — idling"; sleep infinity; fi
               - Extra: !Join [ " ", !Ref LlmExtraArgs ]
           ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
@@ -895,8 +897,10 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
-            # sd-server has no --alias and no -c: it holds one checkpoint and answers to
-            # whatever it was started with. Empty, so the shared script emits neither.
+            # sd-server holds ONE checkpoint, has no --alias, no -c and no router: all three
+            # empty, so the shared script writes a plain `-m` command line and syncs only the
+            # selected checkpoint.
+            - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
@@ -912,14 +916,8 @@ Resources:
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
               Tag: !Ref ImageImageTag
-          # ⚠️ The image's ENTRYPOINT is /sd-cli, NOT the server, and there is no curl in it
-          # either — which is why the fetch is a separate aws-cli container (measured
-          # 2026-09-07). The same idle wrapper as the llm role.
-          #
-          # --listen-ip / --listen-port, not --host / --port: sd-server does not share
-          # llama-server's flag names. --lora-model-dir is STATED rather than defaulted: the
-          # default is the current directory, which is `/` here, and that is the leading
-          # suspicion for the async job API dying in /proc (ADR 0072 open question 6).
+          # ⚠️ Why the entry point is overridden, why sd-server's flags are spelled differently
+          # and why --lora-model-dir is stated: PARAMETERS-60-engines.md, "The idle wrapper".
           EntryPoint: [ "sh", "-c" ]
           Command:
             - !Sub
@@ -997,7 +995,7 @@ Resources:
               - >-
                 {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
-                "health":"/health","provider":"llamacpp","models":["${Models}"],
+                "health":"/health","warmPath":"/models","provider":"llamacpp","models":["${Models}"],
                 "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
                 "modelS3Key":"${LlmModelS3Key}",
                 "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},

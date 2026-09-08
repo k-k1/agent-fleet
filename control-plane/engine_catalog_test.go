@@ -289,3 +289,52 @@ func TestEngineActiveSetForTheDevDeployment(t *testing.T) {
 		t.Errorf("after the switch:\n got %s\nwant %s", got, want)
 	}
 }
+
+// The llm role's active set once the second GGUF is in the bucket, pinned byte for byte.
+//
+// It is pinned for the same reason the image pair above is: a live verification run publishes
+// this document to SSM by hand (driving the admin API needs a super_admin browser session,
+// which AWS credentials are not), and a hand-written document that differs from what
+// publishActiveSet writes would verify the wrong thing.
+func TestEngineActiveSetForTheDevDeploymentLlm(t *testing.T) {
+	qwen30b := store.EngineModel{
+		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
+		Files: []store.EngineModelFile{
+			{S3Key: "llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf", Bytes: 18553648864},
+		},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+	}
+	coder15b := store.EngineModel{
+		Role: "llm", ID: "qwen2.5-coder-1.5b", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{
+			{S3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", Bytes: 1117320768},
+		},
+		ContextTokens: 32768, MaxOutputTokens: 4096,
+	}
+	got, err := engineActiveSetJSON(buildEngineActiveSet("llm", []store.EngineModel{qwen30b, coder15b}))
+	if err != nil {
+		t.Fatalf("active set: %v", err)
+	}
+	want := `{"v":1,"key":"llm","start":"qwen3-coder-30b-a3b","models":[` +
+		`{"id":"qwen3-coder-30b-a3b","f":["llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"],"c":32768},` +
+		`{"id":"qwen2.5-coder-1.5b","f":["llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"],"c":32768}]}`
+	if got != want {
+		t.Errorf("the llm active set is\n got %s\nwant %s", got, want)
+	}
+	// The declared size is the panel's "sync +N s", and it stays OUT of the active set: the box
+	// gets S3 keys and flags and nothing else, because the document has 4,096 characters to live
+	// in (ADR 0072 decision 2).
+	if strings.Contains(got, "1117320768") {
+		t.Error("a file size reached the active set")
+	}
+	if s := engineSyncSecs(coder15b); s != 11 {
+		t.Errorf("sync estimate for the 1.1 GB model = %d s, want 11", s)
+	}
+	if s := engineSyncSecs(qwen30b); s != 179 {
+		t.Errorf("sync estimate for the 18.5 GB model = %d s, want 179", s)
+	}
+	// Undeclared sizes print nothing rather than "+0 s".
+	if s := engineSyncSecs(store.EngineModel{Files: []store.EngineModelFile{{S3Key: "llm/x.gguf"}}}); s != 0 {
+		t.Errorf("an undeclared size estimated %d s", s)
+	}
+}

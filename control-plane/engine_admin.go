@@ -129,6 +129,16 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		"window_secs": int(cfg.window.Seconds()),
 		"idle_secs":   int(engineIdleWindow(cfg).Seconds()),
 	}
+	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
+	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
+	// the engine is not warm — a named model would say "this request is cheap" about a box that
+	// is not even running.
+	if served, swaps := e.servedModel(); served != "" || swaps > 0 {
+		if served != "" {
+			row["warm_model"] = served
+		}
+		row["model_swaps"] = swaps
+	}
 	if e.demand != nil {
 		row["window_units"] = e.demand.units()
 		// ⚠️ How much of that window this process can actually speak for. The buckets are in
@@ -417,6 +427,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		Files []struct {
 			Flag  string `json:"flag"`
 			S3Key string `json:"s3Key"`
+			Bytes int64  `json:"bytes"`
 		} `json:"files"`
 		Args            []string `json:"args"`
 		ContextTokens   int      `json:"context_tokens"`
@@ -449,7 +460,9 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	}
 	for _, f := range b.Files {
 		if k := strings.TrimSpace(f.S3Key); k != "" {
-			m.Files = append(m.Files, store.EngineModelFile{Flag: strings.TrimSpace(f.Flag), S3Key: k})
+			m.Files = append(m.Files, store.EngineModelFile{
+				Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
+			})
 		}
 	}
 	if len(m.Files) == 0 {

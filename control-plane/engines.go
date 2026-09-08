@@ -44,18 +44,24 @@ import (
 // CP restart. Everything else here (service, URL, health, capacity provider, idle, deadline,
 // mode) really is a property of the vessel and stays the stack's to declare.
 type engineDef struct {
-	Key              string   `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
-	API              string   `json:"api"`              // "chat" | "images" — see engineAPI* below
-	Service          string   `json:"service"`          // ECS service whose desired count moves
-	CapacityProvider string   `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
-	URL              string   `json:"url"`              // http://llm.af.internal:8080
-	Health           string   `json:"health"`           // "/health"
-	Provider         string   `json:"provider"`         // "llamacpp" — the provider id a Workspace configures
-	Models           []string `json:"models"`           // SEED ONLY: the model ids ADR 0071's stack declared
-	ContextTokens    int      `json:"contextTokens"`    // SEED ONLY: the window that model was started with
-	MaxOutputTokens  int      `json:"maxOutputTokens"`  // SEED ONLY
-	ModelS3Key       string   `json:"modelS3Key"`       // SEED ONLY: where that model's one file is in the bucket
-	APIKeyParam      string   `json:"apiKeyParam"`      // SSM SecureString the engine's own --api-key is in
+	Key              string `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
+	API              string `json:"api"`              // "chat" | "images" — see engineAPI* below
+	Service          string `json:"service"`          // ECS service whose desired count moves
+	CapacityProvider string `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
+	URL              string `json:"url"`              // http://llm.af.internal:8080
+	Health           string `json:"health"`           // "/health"
+	// WarmPath is where "are there weights in memory" is asked, when that is a DIFFERENT
+	// question from "is it healthy". Empty (the image role, and any ADR 0071 table) means the
+	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
+	// with ok while holding nothing at all (ADR 0072 P1, measured), so warmth is read from each
+	// model's `status.value` instead.
+	WarmPath         string   `json:"warmPath"`
+	Provider         string   `json:"provider"`        // "llamacpp" — the provider id a Workspace configures
+	Models           []string `json:"models"`          // SEED ONLY: the model ids ADR 0071's stack declared
+	ContextTokens    int      `json:"contextTokens"`   // SEED ONLY: the window that model was started with
+	MaxOutputTokens  int      `json:"maxOutputTokens"` // SEED ONLY
+	ModelS3Key       string   `json:"modelS3Key"`      // SEED ONLY: where that model's one file is in the bucket
+	APIKeyParam      string   `json:"apiKeyParam"`     // SSM SecureString the engine's own --api-key is in
 	IdleSec          int      `json:"idleSec"`
 	StartDeadlineSec int      `json:"startDeadlineSec"`
 	Mode             string   `json:"mode"` // the DEFAULT mode; a stored setting wins
@@ -109,6 +115,52 @@ type engineRuntimeState struct {
 	// inline table: nothing is reading the parameter there.
 	ssm         engineSSMWriteAPI
 	activeParam string
+	served      engineServed
+}
+
+// engineServed is which model this engine last answered with, and how often that changed.
+//
+// It exists because ADR 0072 decision 3 refuses to hide the price of `--models-max 1`: two
+// sessions using two models take turns, and every turn costs an unload plus 267 seconds of
+// weights going back into VRAM. A panel that showed only "warm" would show a healthy engine
+// while every answer paid for a reload.
+//
+// In memory and nowhere else, like the demand window's buckets: a CP replaced a minute ago
+// reports zero swaps while somebody is mid-conversation. The panel labels it accordingly rather
+// than pretending the number spans the engine's life.
+type engineServed struct {
+	mu    sync.Mutex
+	model string
+	swaps int
+}
+
+// noteServed records the model an answer actually came back as. Only successful answers count:
+// a 400 for a model the router does not hold did not move any weights.
+func (e *engineRuntimeState) noteServed(model string, ok bool) {
+	model = strings.TrimSpace(model)
+	if model == "" || !ok {
+		return
+	}
+	e.served.mu.Lock()
+	defer e.served.mu.Unlock()
+	if e.served.model != "" && e.served.model != model {
+		e.served.swaps++
+		log.Printf("%s: served model changed %s -> %s (%d swap(s) since this CP started)",
+			e.def.Key, e.served.model, model, e.served.swaps)
+	}
+	e.served.model = model
+}
+
+// servedModel is the last model to answer, and the number of changes seen. The model is
+// reported as "" once the engine is not warm — the box went away and took the weights with it,
+// so naming one would tell the panel a request is cheap when it is a cold start.
+func (e *engineRuntimeState) servedModel() (string, int) {
+	e.served.mu.Lock()
+	defer e.served.mu.Unlock()
+	if e.ctrl != nil && !e.ctrl.warmed() {
+		return "", e.served.swaps
+	}
+	return e.served.model, e.served.swaps
 }
 
 // engineRegistry is every engine this deployment runs. Nil (or empty) is the normal case —

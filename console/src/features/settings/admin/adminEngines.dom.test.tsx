@@ -458,4 +458,48 @@ describe("EnginesAdminView", () => {
       undefined,
     );
   });
+
+  // ADR 0072 P1. A router role holds ONE model at a time, so two sessions on two models take
+  // turns and every turn costs an unload plus 267 s of weights. The panel is where that price is
+  // stated: "warm" alone describes a swapping engine and a settled one identically.
+  it("names the model in VRAM and how often it has changed", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          key: "llm",
+          api: "chat",
+          provider: "llamacpp",
+          state: "running",
+          desired: 1,
+          warm: true,
+          warm_model: "qwen2.5-coder-1.5b",
+          model_swaps: 3,
+          has_models: true,
+          model_rows: [
+            { id: "qwen3-coder-30b-a3b", kind: "gguf", enabled: true, default: true, sync_secs: 179 },
+            { id: "qwen2.5-coder-1.5b", kind: "gguf", enabled: true, sync_secs: 11 },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    expect(host!.textContent).toContain("qwen2.5-coder-1.5b");
+    expect(host!.textContent).toContain("モデル交替: 3 回");
+    // The cold-start cost of each model, next to the toggle that adds it — and marked as an
+    // estimate, because the control plane has never looked at the bucket.
+    expect(host!.textContent).toContain("同期 +179 秒（推定）");
+    expect(host!.textContent).toContain("同期 +11 秒（推定）");
+  });
+
+  // Nobody declared the sizes (every row the seed makes, and every row registered before the
+  // field existed). "+0 s" would be a claim; nothing is the truth.
+  it("says nothing about the sync when no size was declared", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({ has_models: true, model_rows: [{ id: "sdxl-base-1.0", kind: "checkpoint", enabled: true }] }),
+      ],
+    });
+    await mount();
+    expect(host!.textContent).not.toContain("同期 +");
+  });
 });

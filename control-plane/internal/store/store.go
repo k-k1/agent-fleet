@@ -262,6 +262,12 @@ type EngineModel struct {
 type EngineModelFile struct {
 	Flag  string `json:"flag,omitempty"`
 	S3Key string `json:"s3Key"`
+	// Bytes is the object's size, as whoever staged it declared it — the CP cannot look, having
+	// no S3 permission at all (ADR 0072 review R3). It buys one thing: the panel can say what
+	// enabling this model adds to the next cold start, which for the llm role is real money
+	// (S3 to EBS ran at 104-147 MB/s, so 18.5 GB is three minutes of a $1.26/hour box).
+	// Zero means undeclared, and undeclared prints nothing rather than "+0 s".
+	Bytes int64 `json:"bytes,omitempty"`
 }
 
 // EngineModelStore is the catalogue. Two writers reach it — an administrator's toggle and the

@@ -774,10 +774,74 @@ func engineHealthy(ctx context.Context, eng *engineRuntimeState) bool {
 	return resp.StatusCode == http.StatusOK
 }
 
-// warmProbe is the controller's readiness gate for this engine: the same health check, so
-// the controller and the gateway cannot disagree about whether the engine is up.
+// warmProbe is the controller's readiness gate for this engine.
+//
+// Without a WarmPath it is the same health check the gateway waits on, so the two cannot
+// disagree about whether the engine is up. With one — the llm role, which is a llama.cpp ROUTER
+// since ADR 0072 P1 — health and warmth stop being the same question: measured on b10853, a
+// router holding NO models at all answers /health with {"status":"ok"}. Reading warmth off that
+// would report an engine as ready through its whole 527-second cold start, tell the panel it is
+// warm while nothing is loaded, and defuse the `unwarmed` rule that exists to stop a box which
+// reached RUNNING and never came up.
 func (e *engineRuntimeState) warmProbe(ctx context.Context, _ bool) bool {
-	return engineHealthy(ctx, e)
+	if strings.TrimSpace(e.def.WarmPath) == "" {
+		return engineHealthy(ctx, e)
+	}
+	return len(engineLoadedModels(ctx, e)) > 0
+}
+
+// engineLoadedModels asks the router which models have weights in memory right now.
+//
+// ⚠️ This is the one question the CP does put to an engine, and it is legitimate under ADR 0053
+// because it is not a DECLARATION: what may be loaded is the catalogue's answer, given while the
+// box is asleep; what IS loaded is a fact only the running process holds. Nothing here decides
+// what may be offered.
+//
+// "Loaded" is the only value that counts as warm. `sleeping` (the router's idle unload) and
+// `loading` both mean the next request pays for weights again, which is exactly what warm is
+// supposed to promise it will not.
+func engineLoadedModels(ctx context.Context, eng *engineRuntimeState) []string {
+	path := strings.TrimSpace(eng.def.WarmPath)
+	if path == "" {
+		return nil
+	}
+	c, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodGet, strings.TrimRight(eng.def.URL, "/")+path, nil)
+	if err != nil {
+		return nil
+	}
+	if eng.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+eng.apiKey)
+	}
+	resp, err := engineClient.Do(req)
+	if err != nil {
+		return nil
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil
+	}
+	var doc struct {
+		Data []struct {
+			ID     string `json:"id"`
+			Status struct {
+				Value string `json:"value"`
+			} `json:"status"`
+		} `json:"data"`
+	}
+	// Capped: the router lists every model it knows with its full argument list and metadata,
+	// and this runs on a 30-second timer.
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&doc); err != nil {
+		return nil
+	}
+	var out []string
+	for _, m := range doc.Data {
+		if strings.EqualFold(m.Status.Value, "loaded") {
+			out = append(out, m.ID)
+		}
+	}
+	return out
 }
 
 // engineGatewayEnvName is the environment variable the session token is injected under, and

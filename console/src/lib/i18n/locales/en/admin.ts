@@ -55,6 +55,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_go": "Register",
   "admin.engines_model_add_note": "The control plane does not look in S3 (it holds no permission to). A mistyped key shows up in the fetch log at the next start. The row is created disabled.",
   "admin.engines_model_vram": "VRAM {n} MiB",
+  // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
+  // slow end. For a router role every enabled model is synced, so this really is what enabling
+  // it adds to the next cold start.
+  "admin.engines_model_sync": "sync +{n} s (est.)",
+  // Which model has weights in VRAM, and how often that changed — the price of holding one
+  // model at a time, rather than a uniformly "warm" engine.
+  "admin.engines_warm_model": "In VRAM: ",
+  "admin.engines_model_swaps": "model changes since this control plane started: {n}",
   // The box's clock and the service's clock are different facts: the first is when the EC2
   // instance registered, the second when the deployment last changed — which moves without any
   // box being bought.

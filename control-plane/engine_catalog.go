@@ -375,7 +375,7 @@ func seedEngineCatalog(ctx context.Context, st store.EngineModelStore, d engineD
 		// seeding it switched off would turn an upgrade into an outage.
 		Enabled: true, Selected: d.api() == engineAPIImages, Default: d.api() == engineAPIChat,
 		ContextTokens: d.ContextTokens, MaxOutputTokens: d.MaxOutputTokens,
-		Description:   "seeded from the 60-engines stack (ADR 0072 decision 7)",
+		Description: "seeded from the 60-engines stack (ADR 0072 decision 7)",
 	}
 	if err := st.PutEngineModel(ctx, m); err != nil {
 		return err
@@ -428,6 +428,28 @@ func engineCatalogModelRow(m store.EngineModel) map[string]any {
 	return row
 }
 
+// engineSyncMBps is what S3 to the box's EBS volume actually ran at, the slow end of the
+// measured band (104-147 MB/s over four cold starts, ADR 0071 measurement 8 and ADR 0072 P0
+// measurement 5). It turns a declared file size into the seconds enabling a model adds to the
+// next cold start — an ESTIMATE, and the panel says so: the fast end is 40% quicker and a box
+// that already holds the file pays nothing.
+const engineSyncMBps = 104
+
+// engineSyncSecs is how long this model's files take to reach the box, or 0 when nobody
+// declared their size. Rounded UP: the number exists to set an expectation about a wait, and a
+// 40-second sync reported as "+0 s" is worse than saying nothing.
+func engineSyncSecs(m store.EngineModel) int {
+	var total int64
+	for _, f := range m.Files {
+		total += f.Bytes
+	}
+	if total <= 0 {
+		return 0
+	}
+	per := int64(engineSyncMBps) * 1000 * 1000
+	return int((total + per - 1) / per)
+}
+
 // engineAdminModelRow is one model as the admin panel reads it: everything the catalogue holds
 // except the S3 keys' bulk, plus the licence fields, which are the whole point of keeping two
 // of them (Hugging Face reports `other` for both non-commercial models in ADR 0072's table).
@@ -469,6 +491,9 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	}
 	if files := engineModelFileNames(m); len(files) > 0 {
 		row["files"] = files
+	}
+	if s := engineSyncSecs(m); s > 0 {
+		row["sync_secs"] = s
 	}
 	return row
 }

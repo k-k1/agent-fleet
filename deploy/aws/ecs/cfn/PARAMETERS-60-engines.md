@@ -20,6 +20,7 @@ Order matches the template.
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
 - [The fetch sidecar](#the-fetch-sidecar)
 - [The idle wrapper](#the-idle-wrapper)
+- [The capacity providers](#the-capacity-providers)
 - [The engine services](#the-engine-services)
 - [The G-family quota](#the-g-family-quota)
 - [Ingest](#ingest)
@@ -27,6 +28,11 @@ Order matches the template.
 - [The engine table](#the-engine-table)
 
 ## What this template learned the hard way
+
+**Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
+containers-roadmap #88, open since 2019), so ADR 0070's shape — "an ECS service whose desired
+count is 0 while nobody wants it" — is bought here from ECS Managed Instances instead: AWS owns
+the instance, the AMI and the NVIDIA driver, and terminates the box once the task is gone.
 
 All measured on a real cluster on 2026-09-07 through `deploy/aws/ecs/harness/engprobe.yaml`.
 
@@ -155,15 +161,40 @@ what a workspace drives this engine with:
   usable tokens, i.e. compaction thrashing from the first turn. That is why the Agent writes both
   or neither, and why both carry a `MinValue`.
 
-One pair per **engine**, not per model: one `llama-server` process serves one GGUF with one `-c`,
-so the several ids in `LlmModelIds` are aliases sharing that window. Two models with different
-windows are two engines — two rows in the table, and **two `provider` ids**, because the Agent
-keys opencode's provider block by provider id and a second `llamacpp` would overwrite the first.
+🔴 **Since ADR 0072 P1 these are SEED values and the window is per MODEL.** The llm role runs
+llama-server in router mode, where each catalogue model carries its own `c` into the preset, so
+"one window per engine" — and the rule above it, that two windows mean two engines and two
+provider ids — is gone. These two parameters are read once, to build the row a deployment
+upgrading from ADR 0071 was already serving.
 
 ### `LlmExtraArgs`
 
 Extra `llama-server` flags. The defaults are the ones measured on an L4: all layers on the GPU and
-the chat template applied, which is what makes tool calls work. The context is `LlmContextTokens`.
+the chat template applied, which is what makes tool calls work. The router passes its own command
+line down to every model instance it spawns, so these reach each model (measured: `--jinja` and
+`--n-gpu-layers 99` appear in `/models`'s `status.args`).
+
+🔴 **Never put `-c` here.** A command-line argument WINS over the preset — that is the router's
+documented precedence and it was measured: with `-c 32768` on the router, two models whose preset
+sections said `c = 4096` and `c = 384` both came up `--ctx-size 32768`. One flag, and every
+model's declared window is silently gone. Windows belong to the catalogue.
+
+### `LlmModelsMax`
+
+How many models the router may hold at once (`--models-max`; upstream's default is 4, `0` =
+unlimited). **1 here, deliberately.** The router knows nothing about VRAM: a second 30B Q4 on an
+L4 does not make the box slow, it makes CUDA crash (ADR 0071 decision 2). At 1 the second model's
+first request costs an unload plus a load — 267 s of weights into VRAM, measured — which is the
+price of this design and is shown in the panel rather than hidden.
+
+Measured about that swap, on llama.cpp b10853 (CPU, two models, `--models-max 1`):
+
+- the eviction **waits for the model to be idle**: a request for the other model was queued for
+  48.6 s while an 854-chunk stream finished, and the stream was delivered whole. An in-flight
+  generation is not interrupted (ADR 0072 open question 1(c));
+- so the waiting request pays "rest of the current answer + load". A STREAMING request is held by
+  the gateway's SSE heartbeat; a non-streaming one has no bytes to show and the ALB cuts it at 60 s
+  (ADR 0071 P1 measurement 9). Raise `LlmModelsMax` only when the models genuinely fit together.
 
 ### `LlmApiKeySsmParam`
 
@@ -333,21 +364,48 @@ As `LlmMode`: the initial mode, a default the stored setting overrides.
 One script for both roles, in the template's `Mappings` (ADR 0072 decision 1(a)). It reads the
 active set the Control Plane published to SSM, syncs the files the engine is about to load, and
 writes `/models/cmdline` — the model-specific half of the argument list. Everything
-role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, and
-`ALIAS_FLAG` / `CTX_FLAG` (llama-server names its model with `--alias` and takes its window as
-`-c`; sd-server has neither, so the image role passes both empty).
+role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
+and `ALIAS_FLAG` / `CTX_FLAG`.
 
-Three rules, each with a failure behind it:
+⚠️ **It is a LITERAL block (`|-`), never a folded one (`>-`).** YAML folding keeps a
+MORE-INDENTED line literal, so a continuation line indented to line up with its command silently
+keeps its newline — and the shell then reads the second half as a new command. Measured on the
+live deployment: a `jq` filter indented under its own `jq -r` ran as `jq -r --arg s "$START"`
+(which dumps the whole document) followed by `sh: [(.models[]?|…: command not found`. The
+service reached a steady state with the idle placeholder and nothing anywhere said why — one GPU
+box and ten minutes to notice. One command per line, and `deploy/local/engine-sidecar-test.sh`
+extracts the script as deployed and runs it (CI runs that).
+
+Four rules, each with a failure behind it:
 
 - **`ParameterNotFound` is EMPTY, not an error.** 60-engines is created BEFORE 30-ingress, so at
   stack-creation time there is no Control Plane and no parameter at all. A `set -e` that failed
   here would bring the two-pass stand-up back in a new shape (ADR 0072 decision 1(b)).
-- **Only the STARTING model's files are fetched**, plus every enabled LoRA. S3 to EBS ran at
-  92–147 MB/s (measured), so syncing every enabled model would put minutes of somebody else's
-  checkpoint into every cold start. Enabling a model OFFERS it; selecting one LOADS it.
+- **The image role fetches only the STARTING checkpoint's files**, plus every enabled LoRA. S3
+  to EBS ran at 92–147 MB/s (measured), so syncing every enabled model would put minutes of
+  somebody else's checkpoint into every cold start. Enabling a model OFFERS it; selecting one
+  LOADS it, and sd-server holds exactly one.
+- **The llm role fetches EVERY enabled model**, because the router can be asked for any of them
+  at request time and a miss is a 500, not a wait (measured). The cold start therefore grows
+  with the sum of the enabled GGUFs — ADR 0072 decision 9, and what the panel's "sync +N s"
+  estimate is for.
 - **A file already on the box is not re-fetched.** The volume is fresh per task today, so this
   is currently a no-op — it is what makes a warm box worth anything if ADR 0071 decision 7(c)
   ever gets one.
+
+**Router presets (`PRESET_FILE`, the llm role).** With it set the script also writes an INI
+file, one section per catalogue model: the section NAME is the catalogue id, `model` is the
+path, `c` is that model's window, the model's own `args` become preset keys (`--jinja` →
+`jinja = true`, `-ngl 99` → `ngl = 99`) and the starting model gets `load-on-startup = true`.
+`/models/cmdline` then holds `--models-preset <file>` and nothing else: `-m`, `--alias` and `-c`
+leave the command line entirely (ADR 0072 decision 3), which is why `ALIAS_FLAG` and `CTX_FLAG`
+are empty for BOTH roles now. Measured against llama.cpp b10853:
+
+- a preset section whose name matches no file in any model source **defines** a model, so the
+  catalogue id is the model id even though the file is called something else entirely;
+- the router passes `--alias <section>` to each instance itself, so an `alias` key is not needed;
+- a section whose `model` path is missing does NOT stop the router — it starts, lists the model,
+  and only a request for that one fails (`500 model name=… failed to load`).
 
 `jq`, not a JSON-in-shell parser: `public.ecr.aws/aws-cli/aws-cli` carries `jq`, `python3` and
 `bash` (verified with `crane export`).
@@ -361,7 +419,15 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
 - **The binary path is spelled out** because the entry point is being overridden. llama.cpp's
   own `ENTRYPOINT` is `["/app/llama-server"]` and `/app` is NOT on `PATH` (measured with
   `crane config ghcr.io/ggml-org/llama.cpp:server-cuda`); sd-server's image entry point is
-  `/sd-cli`, the one-shot CLI, so that one always had to be overridden.
+  `/sd-cli`, the one-shot CLI, and it has no `curl` either — which is why the fetch is a
+  separate `aws-cli` container (measured 2026-09-07).
+- **sd-server's flags are spelled differently**: `--listen-ip` / `--listen-port`, not `--host` /
+  `--port`. `--lora-model-dir` is STATED rather than defaulted, because the default is the
+  current directory — `/` here — and that is the leading suspicion for the async job API dying
+  in `/proc` (ADR 0072 open question 6).
+- **`--models-max` is on the llm wrapper, not in the preset**: it is a property of the BOX (how
+  many models fit in this L4's VRAM), not of a model, so it stays a stack parameter
+  (`LlmModelsMax`) while everything per-model comes from the catalogue.
 - **`$(cat …)` is deliberately unquoted** — the file IS an argument list. The Control Plane
   refuses to publish an S3 key containing whitespace for exactly this reason.
 - **Idling is not free**, and the template is not what makes it cheap. A placeholder container
@@ -371,7 +437,28 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   (`no_model`, ADR 0072 decision 1(c)). Without that half, `mode=on` buys $1.26/hour for
   `sleep infinity`.
 
+## The capacity providers
+
+**One provider per role, and the two roles never share a box.** CUDA does not slow down when
+VRAM runs out, it crashes, and the two measured footprints (20.9 GB for the 30B, 7.4 GB for
+SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2). Two providers is also what
+makes `draining` observable per role — and what makes the deployment want 16 of the G-family
+quota, see below.
+
+⚠️ **`ClusterCapacityProviderAssociations` REPLACES the cluster's provider list** — the API is
+not additive — so `FARGATE` and `FARGATE_SPOT` have to be named alongside ours or every Fargate
+service in the deployment loses its provider. `DefaultCapacityProviderStrategy` is a REQUIRED
+property and is deliberately EMPTY: with a default strategy in place, a service that does not
+spell out `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
+line is the whole of that failure).
+
 ## The engine services
+
+⚠️ **The engine image must ALREADY be in its ECR repository when this stack is created.**
+CloudFormation blocks on ECS service stabilisation, so a service that cannot pull leaves the
+stack in `CREATE_IN_PROGRESS` indefinitely. That is why the repositories live in 20-platform and
+`standup.sh` copies the images in during its images step, one stack earlier than this one
+(measured on 50-tts, 2026-09-06).
 
 ⚠️ **`DesiredCount` is deliberately ABSENT, and this is load-bearing.** From the resource
 schema: for a NEW service an unspecified desired count defaults to 1; for an EXISTING one it is
@@ -469,6 +556,16 @@ the accounting to the Agent's `tool.imagegen` row (`images`, ADR 0071 decision 9
 **The image row's health path is `/v1/models`, not `/health`**: stable-diffusion.cpp's server has
 no health endpoint at all (upstream `examples/server/api.md`), and `/v1/models` is the cheapest GET
 it answers. It only listens once the checkpoint is loaded, so a 200 there really does mean ready.
+
+**The llm row carries `warmPath: /models`**, and the image row carries none. It is where the CP
+asks "are there weights in memory", which stopped being the same question as "is it healthy" the
+moment the llm role became a router: measured on b10853, a router with an EMPTY model list still
+answers `/health` with `{"status":"ok"}`, so a warm flag read from the health check would be true
+through the whole 527-second cold start. With `warmPath` set the CP reads `status.value` out of
+`/models` instead and calls the engine warm when at least one model is `loaded`. Declared rather
+than derived from the provider name, for the usual reason (ADR 0053): a second engine speaking
+the same API would otherwise inherit a probe nobody chose for it. `GET /models` neither triggers
+an autoload nor resets the router's idle timer (upstream README), so polling it is free.
 
 **The llm row carries `contextTokens` / `maxOutputTokens`** — see those parameters above. Nothing
 downstream can ask the engine for them: the box is asleep when the launch menu is drawn, which is
