@@ -1017,44 +1017,107 @@ def check_notes(f: Findings) -> None:
     notes = os.path.join(ROOT, "workspace", "workspace-notes.md")
     if not os.path.exists(notes):
         return
+    notes_dir = os.path.join(ROOT, "workspace", "notes")
     shelves = LIVING + ("decisions", "log")
     ref_re = re.compile(
         r"`(" + "|".join(shelves) + r")/([A-Za-z0-9._-]+\.md)`"
     )
-    # Search within a paragraph, not a line: searching by line fails on nothing more than
-    # a wrap, and "write it on the same line" is a formatting constraint, not a semantic
-    # one.
-    lines = read(notes).splitlines()
-    blocks: list[tuple[int, str]] = []  # (first line number, paragraph)
-    start, buf = 1, []
-    for i, line in enumerate(lines, 1):
-        if line.strip():
-            if not buf:
-                start = i
-            buf.append(line)
-        elif buf:
-            blocks.append((start, "\n".join(buf)))
-            buf = []
-    if buf:
-        blocks.append((start, "\n".join(buf)))
+    # The always-loaded policy is short; the procedures live in topic files under
+    # `workspace/notes/`, shipped next to it as `/usr/local/share/agent-fleet/notes/`. The
+    # policy names them either by that absolute path or as `notes/<file>.md`; both forms
+    # must resolve, and every topic file must be reachable from the policy — an unnamed
+    # topic file is dead weight in the image and, worse, a rule nobody will ever read.
+    topic_re = re.compile(
+        r"`(?:/usr/local/share/agent-fleet/)?notes/([A-Za-z0-9._-]+\.md)`"
+    )
+    topics_shipped = (
+        sorted(n for n in os.listdir(notes_dir) if n.endswith(".md"))
+        if os.path.isdir(notes_dir)
+        else []
+    )
+    topics_named: set[str] = set()
 
-    for lineno, block in blocks:
-        for m in ref_re.finditer(block):
-            name, fname = m.group(1), m.group(2)
-            if name not in GUIDE_SHELVES:
-                f.error(
-                    f"workspace-notes.md:{lineno}: points at a shelf that is not shipped"
-                    f" -> {name}/{fname}"
-                    " (only guide/ is in the container; point at a guide/ shelf)"
-                )
-                continue
-            if not os.path.exists(os.path.join(GUIDE, name, fname)):
-                f.error(
-                    f"workspace-notes.md:{lineno}: points at a file that does not exist"
-                    f" on that shelf -> {name}/{fname}"
-                    " (every agent reads these instructions, so a stale pointer"
-                    " misdirects all of them)"
-                )
+    def paragraphs(path: str) -> list[tuple[int, str]]:
+        # Search within a paragraph, not a line: searching by line fails on nothing more
+        # than a wrap, and "write it on the same line" is a formatting constraint, not a
+        # semantic one.
+        blocks: list[tuple[int, str]] = []  # (first line number, paragraph)
+        start, buf = 1, []
+        for i, line in enumerate(read(path).splitlines(), 1):
+            if line.strip():
+                if not buf:
+                    start = i
+                buf.append(line)
+            elif buf:
+                blocks.append((start, "\n".join(buf)))
+                buf = []
+        if buf:
+            blocks.append((start, "\n".join(buf)))
+        return blocks
+
+    # The topic files are read by the same agents, so they obey the same shelf rule.
+    shipped = [("workspace-notes.md", notes)] + [
+        (f"notes/{n}", os.path.join(notes_dir, n)) for n in topics_shipped
+    ]
+    for label, path in shipped:
+        for lineno, block in paragraphs(path):
+            for m in topic_re.finditer(block):
+                fname = m.group(1)
+                if label == "workspace-notes.md":
+                    topics_named.add(fname)
+                if fname not in topics_shipped:
+                    f.error(
+                        f"{label}:{lineno}: points at a topic file that is not in the"
+                        f" image -> notes/{fname} (add workspace/notes/{fname} or fix the"
+                        " name; every agent follows this pointer)"
+                    )
+            for m in ref_re.finditer(block):
+                name, fname = m.group(1), m.group(2)
+                if name not in GUIDE_SHELVES:
+                    f.error(
+                        f"{label}:{lineno}: points at a shelf that is not shipped"
+                        f" -> {name}/{fname}"
+                        " (only guide/ is in the container; point at a guide/ shelf)"
+                    )
+                    continue
+                if not os.path.exists(os.path.join(GUIDE, name, fname)):
+                    f.error(
+                        f"{label}:{lineno}: points at a file that does not exist"
+                        f" on that shelf -> {name}/{fname}"
+                        " (every agent reads these instructions, so a stale pointer"
+                        " misdirects all of them)"
+                    )
+    for n in topics_shipped:
+        if n not in topics_named:
+            f.error(
+                f"notes/{n}: shipped but never named in workspace-notes.md"
+                " (the policy's index is the only way an agent learns it exists)"
+            )
+        # The same file is registered verbatim as `af-<stem>/SKILL.md` under each CLI's user
+        # skills root (workspace/agent/internal/fleetskills), so its frontmatter is what the
+        # CLIs parse: the name has to be the directory name, the description is the only
+        # part in context at start (claude caps it at 1,536 characters and drops longer
+        # ones), and `user-invocable: false` keeps a reference text out of the user's
+        # slash menu and the Console picker while the model can still open it.
+        stem = n[: -len(".md")]
+        text = read(os.path.join(notes_dir, n))
+        m = re.match(r"---\n(.*?)\n---\n", text, re.S)
+        if not m:
+            f.error(f"notes/{n}: no frontmatter (needs name / description / user-invocable)")
+            continue
+        fm = {}
+        for line in m.group(1).splitlines():
+            k, _, v = line.partition(":")
+            fm[k.strip()] = v.strip().strip('"')
+        if fm.get("name") != f"af-{stem}":
+            f.error(f"notes/{n}: frontmatter name must be af-{stem}, got {fm.get('name')!r}")
+        desc = fm.get("description", "")
+        if not desc:
+            f.error(f"notes/{n}: frontmatter description is empty")
+        elif len(desc) > 1536:
+            f.error(f"notes/{n}: description is {len(desc)} chars; claude drops skills over 1,536")
+        if fm.get("user-invocable") != "false":
+            f.error(f"notes/{n}: frontmatter must say user-invocable: false (reference text, not a command)")
 
 
 def check_ref_parity(f: Findings) -> None:

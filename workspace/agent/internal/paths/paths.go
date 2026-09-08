@@ -75,6 +75,18 @@ func FleetNotesPath() string {
 	return "/usr/local/share/agent-fleet/workspace-notes.md"
 }
 
+// FleetNotesDir holds the topic files behind the workspace guide (`workspace/notes/*.md`):
+// the procedures the guide's index points at, read by an agent when it reaches that
+// situation. The same files are registered as skills where a CLI has a user skills root
+// (fleetskills), so the CLI's own index surfaces them. The env override mirrors
+// AF_WORKSPACE_NOTES for tests.
+func FleetNotesDir() string {
+	if p := os.Getenv("AF_WORKSPACE_NOTES_DIR"); p != "" {
+		return p
+	}
+	return "/usr/local/share/agent-fleet/notes"
+}
+
 // CursorHome is cursor's state root (~/.cursor): mcp.json, cli-config.json, projects/.
 func CursorHome() string { return filepath.Join(HomeDir(), ".cursor") }
 

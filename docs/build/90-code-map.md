@@ -72,6 +72,7 @@ and per-agent implementations live under `internal/`.
 | `mcpreg` | The MCP registry, including the per-CLI materialisers |
 | `hostcaps` | Detecting what the host can run, so an unusable kind is hidden rather than offered |
 | `userinstr`, `mdblock` | The user-instruction source of truth, and the markdown block this product owns inside a shared file |
+| `fleetskills` | Registers the workspace guide's topic files (`notes/*.md`) as `af-<topic>` skills under each CLI's user skills root |
 | `status`, `tmuxx`, `transcript` | The shared state store, exact tmux operations and probing, the transcript wire format |
 | `httpx`, `gitx`, `fstore`, `paths`, `secrets`, `notice` | The small shared utilities |
 
@@ -91,6 +92,7 @@ rather than trusting a number written here.
 |---|---|
 | `Dockerfile` | The workspace image. **The distribution default bakes no agent CLIs** ([04 §4.9](04-agent.md)) |
 | `entrypoint.sh` | Start-up seeding and launching the agent. **Distributing the operating guide is the agent's job**, not the entrypoint's |
-| `workspace-notes.md` | The operating policy delivered into every container |
+| `workspace-notes.md` | The operating policy delivered into every container — the short, always-loaded part (prohibitions and traps) |
+| `notes/` | Its topic files (`/usr/local/share/agent-fleet/notes/` in the image): the procedures the policy's index points at, read by the agent on demand |
 | `opencode-plugin/`, `tmux.conf`, `vendor/` | The plugin, tmux configuration, and a home for static binaries |
 | `.dockerignore` | ⚠️ It excludes `**/*.md` and then re-includes what is embedded — **a trap worth reading before editing** |

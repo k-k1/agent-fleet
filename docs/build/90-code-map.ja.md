@@ -72,6 +72,7 @@ kind 固有実装は `internal/` にある。
 | `mcpreg` | MCP レジストリ本体（CLI 別 materialize を含む）|
 | `hostcaps` | ホストの実行能力の検知（動かせない kind は提示せず隠す）|
 | `userinstr` / `mdblock` | ユーザー指示の正本と、共有ファイル内で AF が所有する markdown ブロック |
+| `fleetskills` | Workspace ガイドのトピックファイル（`notes/*.md`）を各 CLI のユーザー用スキル置き場へ `af-<topic>` スキルとして登録する |
 | `status` / `tmuxx` / `transcript` | 共通状態ストア、tmux の exact 操作と probe、transcript の wire |
 | `httpx` / `gitx` / `fstore` / `paths` / `secrets` / `notice` | 小さな共有ユーティリティ |
 
@@ -89,6 +90,7 @@ kind 固有実装は `internal/` にある。
 |---|---|
 | `Dockerfile` | Workspace イメージ。**配布の既定はエージェント CLI を焼かない**（[04 §4.9](04-agent.ja.md)）|
 | `entrypoint.sh` | 起動時の seed と agent 起動。**利用ガイドの配布は agent 側の仕事**で、entrypoint ではない |
-| `workspace-notes.md` | 全コンテナへ配る運用ポリシー |
+| `workspace-notes.md` | 全コンテナへ配る運用ポリシーの常時読込部分（禁止事項と罠だけ） |
+| `notes/` | そのトピックファイル（イメージでは `/usr/local/share/agent-fleet/notes/`）。本体の索引が指す手順で、エージェントが必要時に読む |
 | `opencode-plugin/` / `tmux.conf` / `vendor/` | プラグイン、tmux 設定、静的バイナリの置き場 |
 | `.dockerignore` | ⚠️ `**/*.md` を除外したうえで embed 対象を `!` で戻している——**編集前に読むべき罠** |

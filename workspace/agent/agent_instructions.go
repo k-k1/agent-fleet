@@ -36,6 +36,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/copilot"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/kiro"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/opencode"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/fleetskills"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/httpx"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mdblock"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
@@ -125,6 +126,16 @@ func applyInstructionsLocked() {
 	note("agy", agy.ApplyFleetNotes(fleet))
 	note("copilot", copilot.ApplyFleetNotes(fleet))
 	note("kiro", kiro.ApplyFleetNotes(fleet))
+
+	// 1b. The topic files behind the policy, registered as skills where the CLI has a user
+	// skills root, so its own index (description at start, body on demand) carries an agent
+	// to the right file. claude IS reachable here: the root is $CLAUDE_CONFIG_DIR, AF's own
+	// mount, unlike the policy file under /etc. The other kinds keep the index in the policy
+	// text as their only route (see package fleetskills for what was measured).
+	topics := fleetskills.Load(paths.FleetNotesDir())
+	note("claude", fleetskills.Apply(filepath.Join(paths.ClaudeConfigDir(), "skills"), topics))
+	note("codex", fleetskills.Apply(filepath.Join(paths.CodexHome(), "skills"), topics))
+	note("opencode", fleetskills.Apply(filepath.Join(paths.OpencodeConfigDir(), "skills"), topics))
 
 	// 2. The user's own instructions.
 	note("claude", claude.ApplyUserInstructions(st.Body("claude")))

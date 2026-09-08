@@ -134,3 +134,29 @@ into someone else's file**.
   deletes only its own single file and **neither enumerates nor deletes** anything else.
 - The inventory table in docs/39 (whose "common" row treated agy as a distribution target) was
   corrected in docs/60 §60.2.
+
+## Amendment (2026-09-08): the fleet layer split in two, and its topic files as skills
+
+The fleet layer had grown to 429 lines / 34 KB — some 8,400 tokens composed into every session
+of six kinds, past the 200 lines Claude Code recommends for a CLAUDE.md. It is now two pieces:
+
+- `workspace/workspace-notes.md` keeps only what an agent must know *before* it knows it needs
+  it — prohibitions and silent traps (135 lines / 10 KB) — and ends with an index.
+- `workspace/notes/<topic>.md` (shipped as `/usr/local/share/agent-fleet/notes/`) hold the
+  procedures; an agent reads the one for its situation when it gets there. They cost nothing
+  until read.
+
+Distribution of the always-loaded piece is unchanged (this ADR's decisions 4–9). The topic files
+gain a second route on top of the index: at every start the agent registers each of them as a
+skill `af-<topic>` under the CLI's **user skills root** where one exists and was measured to be
+read — `$CLAUDE_CONFIG_DIR/skills` (which is AF's own mount, so claude is reachable here even
+though its policy under `/etc` is not), `$CODEX_HOME/skills`, `~/.config/opencode/skills`. agy
+reads only a project-side `.agents/skills`, and copilot / kiro show no user root, so they keep the
+index alone. The rule of decision 4 holds: AF writes only directories named `af-*` whose
+`SKILL.md` carries its marker line, overwrites and deletes only those, and treats an empty topic
+set as a no-op. `user-invocable: false` keeps the entries out of the user's slash menu and the
+Console picker while the model still sees them (measured: the model lists all five; the
+stream-json init list omits them). Rejected on the way: `@import` (expanded at start, saves
+nothing), MCP resources (the af server is tools-only and CLI support is uneven), and moving the
+text into tool descriptions (also loaded at start). `scripts/docs-check.py` now checks the
+index's pointers, the topic files' guide references and their frontmatter.
