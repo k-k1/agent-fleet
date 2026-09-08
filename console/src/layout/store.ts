@@ -45,6 +45,10 @@ interface LayoutStore {
   splitDown(paneId: string): void;
   closePane(paneId: string, removeOutright?: boolean): void;
   closeSessionPanes(name: string): void;
+  /** Close the panes of sessions that have LEFT the session list (archived or deleted,
+   *  here or anywhere else — features/sessions/paneReconcile). Deliberately not a history
+   *  push: nobody navigated, and Back must not restore a tab whose session is gone. */
+  closeGoneSessionPanes(names: string[]): void;
   swapPanes(aId: string, bId: string): void;
   dropSplit(srcId: string, refId: string, dir: "right" | "down"): void;
   setActive(id: string): void;
@@ -261,6 +265,7 @@ export const useLayoutStore = create<LayoutStore>((set, get) => {
     closePane: (paneId, removeOutright = false) =>
       commit(ops.closePane(get().layout, paneId, removeOutright)),
     closeSessionPanes: (name) => commit(ops.closeSessionPanes(get().layout, name)),
+    closeGoneSessionPanes: (names) => commit(ops.closeSessionsPanes(get().layout, names), false),
     swapPanes: (aId, bId) => commit(ops.swapPanes(get().layout, aId, bId)),
     dropSplit: (srcId, refId, dir) => commit(ops.dropSplit(get().layout, srcId, refId, dir)),
     // Activation / divider drags aren't history-worthy navigations (no push).

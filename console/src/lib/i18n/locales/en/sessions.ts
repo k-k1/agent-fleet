@@ -169,6 +169,8 @@ export const sessions: Record<keyof typeof jaSessions, string> = {
   "sess.stop_after_turn_failed": "Could not change the stop-after-turn setting",
   "sess.locked_off": "Deletion lock removed",
   "sess.archive_failed": "Failed to archive",
+  "sess.tab_closed_gone": "Closed the tab for “{name}” — the session was archived or deleted",
+  "sess.tabs_closed_gone": "Closed the tabs of {count} sessions that were archived or deleted",
   "sess.delete_title": "Delete session",
   "sess.delete_body": "Delete “{name}”. This can't be undone.",
   "sess.cleanup_archive_n": "archive {count}",

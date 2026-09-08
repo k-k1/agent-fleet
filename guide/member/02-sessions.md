@@ -217,6 +217,11 @@ Which operations appear depends on the session's kind and state. For example, AI
 "Archive", while throwaway shell / SSM show "Delete". Log files may remain after deletion, but
 the session cannot be brought back to the list.
 
+**Tabs of an archived (or deleted) session close on their own.** That holds when you tidied up
+from another tab, from another device or in bulk from cleanup, and a notice then says the tab was
+closed (tidying up in this window closes it right there, with no notice). Only that session's own
+screen (terminal / chat) closes: files and plans you opened from it stay where they are.
+
 ### Tidying up in bulk (cleanup)
 
 When things get untidy, open the cleanup modal from the trash icon **"Open cleanup (survey &
