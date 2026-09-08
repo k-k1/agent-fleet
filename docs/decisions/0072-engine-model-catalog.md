@@ -15,6 +15,13 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   10; phase P2), decision 4 gains the rule that **a model whose generation exceeds 60 seconds
   cannot be served over a synchronous API**, and **vLLM is rejected** (with the conditions for
   revisiting). The sd-server LoRA path (`<sd_cpp_extra_args>`) is demoted to a fallback.
+- The same day, **ComfyUI was measured on the dev deployment's GPU (g6.xlarge, L4)** (*Resolved by
+  measurement*; the harness is `deploy/aws/ecs/harness/bench-image-engine.sh`). klein 4B,
+  Z-Image-Turbo and SDXL all draw on one box, a warm picture takes 4–11 seconds, and **a switch
+  is a re-read from EBS, 1–2.5 minutes**. Open questions 7 and 8 were filled in and decision 10's
+  default became klein 4B. 🔴 Two of the runs had to be repeated — `--cache-none` makes every
+  prompt re-read the weights from disk, and a second prompt with the same seed hits the output
+  cache and "runs" in 0.5 s. Neither was visible until the numbers were.
 
 ## Context
 
@@ -405,10 +412,12 @@ names move between versions — pin the tag and freeze the templates behind gold
 10. **Model selection policy — the first default is chosen from "Apache-2.0, ungated, fits an
     L4 without quantisation"; gated and non-commercial models enter only by an operator's
     explicit act.** From the table in Context:
-    - **The default candidates are FLUX.2 [klein] 4B and Z-Image-Turbo** (both Apache-2.0,
-      ungated, the main file fits an L4 as fp16/bf16★), next to the workhorse SDXL. **Which one
-      becomes the default is decided after measuring** (open question 7: per-image time and
-      VRAM on an L4, and the LoRA ecosystem).
+    - **The default is FLUX.2 [klein] 4B, with Z-Image-Turbo second** (both Apache-2.0, ungated,
+      and they fit an L4 as bf16), next to the workhorse SDXL. Decided by measurement (*Resolved*
+      3): a warm 1024px picture is klein **4.0 s** (VRAM 11.6 GB), Z-Image **10.5 s** (12.2 GB),
+      SDXL 8.0 s (6.9 GB). Loading is klein 106–110 s and Z-Image 133–154 s, **paid on every
+      switch** (*Resolved* 5), so the lighter one is the default. Both pictures are right to the
+      eye; Z-Image leans photographic.
     - **SD1.5 and SD3 Medium are not offered.** The former is superseded by SDXL, the latter by
       SD3.5.
     - **Gated models (all of SD3.5, all of FLUX.1, FLUX.2 dev and klein 9B) can be ingested only
@@ -428,6 +437,65 @@ names move between versions — pin the tag and freeze the templates behind gold
       crashes.
     - **The 60-second rule** (decision 4): a model without `syncSafe` is not offered on an
       sd-server deployment.
+
+## Resolved by measurement (2026-09-08, the dev deployment's g6.xlarge)
+
+The harness is `deploy/aws/ecs/harness/bench-image-engine.sh` (+ `.py`). It runs **one task with
+RunTask** on the image role's capacity provider — four containers: fetch → ComfyUI → the bench
+client → upload to S3 — and never uses ECS Exec. ComfyUI is the community image
+`ghcr.io/lecode-official/comfyui-docker:latest` (5.36 GB compressed, **v0.8.2** baked in), copied
+to ECR, **checked out at v0.34.0 at start** (1–2 s) plus `pip install -r requirements.txt`
+(19–24 s). The text encoder is fp8 (`qwen_3_4b_fp8_mixed`, 5.6 GB). The numbers are from the
+last two phases (stock flags, `--highvram`) of four runs on the same box shape; the pictures
+were checked by eye.
+
+1. **klein 4B, Z-Image-Turbo and SDXL draw on one L4.** All 26 pictures succeeded, nothing
+   crashed. The workflows are the official templates' subgraphs in API form
+   (`bench-image-engine.py`): klein 4B distilled at 4 steps, cfg 1; Z-Image-Turbo at 8 steps,
+   cfg 1, shift 3.
+2. **`qwen_3_4b.safetensors` has the same sha256 in the Z-Image and the klein repositories**
+   (`6c671498…`). Decision 2's "`text_encoders/` is shared across families" is now a fact.
+3. **A warm picture (1024px)**: SDXL 20 steps **8.0 s** (ADR 0071 measurement 7 said 7.9),
+   Z-Image-Turbo **10.4–10.6 s**, klein 4B **3.7–4.0 s**, SDXL 512px 2.1–2.7 s. SDXL with a
+   LoRA is 7.8–8.1 s: **a LoRA is free once warm**. Stock flags and `--highvram` do not differ.
+4. **VRAM**: SDXL 6.9 GB, Z-Image 12.2 GB (17.5 GB with the stock flags, which keep the text
+   encoder too), klein 11.6–13.2 GB. The three cannot sit in VRAM together; ComfyUI swaps.
+5. 🔴 **A switch is a re-read from EBS every time, 1–2.5 minutes.** The first visit and the
+   return visit cost the same: SDXL 56–63 s, klein 106–110 s, Z-Image 133–154 s. The box's
+   15 GB of RAM cannot keep three models (27 GB), so a model leaving VRAM goes back to disk.
+   **Decision 4's "switch per request" holds, but a request that switches pays 10–30 warm
+   pictures.** The dominant term is the EBS gp3 read (12.3 GB in 133 s = 92 MB/s) — one more
+   place where ADR 0071 open question 1's `useLocalStorage` (instance-store NVMe) would pay.
+6. **The 60-second rule (decision 4) hits the switching request on ComfyUI** — every warm
+   picture is under 11 s, but a request that includes a switch exceeds 60 s. It is harmless
+   only because `/prompt` → `/history` is asynchronous; on a synchronous-API engine the
+   switching request is always cut.
+7. **The cold start, from RunTask**: pull starts at +33 s, the 5.4 GB (compressed) image from
+   ECR takes **205 s**, S3 → EBS **33.3 GB in 332–360 s** (92–100 MB/s, ADR 0071 measurement 8's
+   band, concurrent with the pull), checkout + pip 20–26 s, ComfyUI answers `/system_stats`
+   36–45 s later, the first SDXL takes 63 s — **526 s to the first picture**. The same order as
+   the llm role's 527 s (ADR 0071), and the sum of the synced models' sizes is what moves it
+   (decision 9).
+8. 🔴 **Never pass `--cache-none`.** The loader nodes' outputs — the models themselves — are
+   not cached, so **every prompt re-reads the weights from disk** (a warm SDXL took 57 s,
+   Z-Image 134–147 s, and VRAM fell back to 280 MiB after each run). `--highvram` does not
+   help. The first two runs were measured that way.
+9. 🔴 **Sending the same graph twice hits the output cache: 0.5 s and nothing executed.** A
+   warm measurement needs a different seed. That invalidated the third run.
+10. **The box**: a g6.xlarge registers **15,000 MiB** with ECS. **A second task on the same box
+    fails with `No space left`** (the anonymous host volume is never reclaimed — ADR 0071
+    decision 7's note). A task placed on a box that had just stopped one sat **9.5 minutes in
+    PENDING** before its pull started (33 s on a fresh box). Waiting for Managed Instances to
+    reclaim the box is faster.
+11. **Ingest (HF → S3) ran at 7.8–44 MB/s** with no way to predict which (12.3 GB in 283 s,
+    5.6 GB in 722 s), then 27–93 s to S3 — four more points for ADR 0071 decision 3.
+
+Consequences: decision 10's default is **klein 4B** (3). Decision 4's ComfyUI-first stands, with
+the price of "switch per request" (5) added to the text, and the catalogue's `warm` (the model
+resident now) goes into `generate_image`'s description so **the agent can prefer the warm model**
+(P2). Open question 7 is closed; 8 is half closed (the size of a self-built image is still
+unmeasured — the same PyTorch + CUDA base as the community image means a 5 GB class and a
+200-second pull, and the 20–26 s checkout + pip and its NAT dependency go away).
 
 ## Options rejected
 
@@ -491,15 +559,17 @@ names move between versions — pin the tag and freeze the templates behind gold
 6. **Why sd-server's async API failed** (decision 4's hypothesis): does `/sdcpp/v1/img_gen` work
    when `--lora-model-dir` is given explicitly? If so, an sd-server deployment can drop the
    60-second rule — without changing the order (ComfyUI first).
-7. **Measuring the default** (decision 10): per-image time, VRAM and picture quality of FLUX.2
-   [klein] 4B and Z-Image-Turbo on an L4, the same three for SD3.5 Medium, and whether one
-   FLUX.1-dev image really exceeds 60 seconds. All need a GPU; measured in one go on the
-   ComfyUI box (P2).
-8. **ComfyUI's own image** (phase P2): how many GB with PyTorch + CUDA (the community image was
-   5.1 GB and a 437-second pull), and whether the GGUF-reading node (`ComfyUI-GGUF`) is bundled
-   at a pinned tag — a custom node is "arbitrary code" (why ADR 0071 decision 6 excluded the
-   Manager), so bundling one means **a pinned revision written into the Dockerfile**. fp8
-   safetensors may make it unnecessary (the L4 is Ada and has fp8 matrix units).
+7. ~~**Measuring the default** (decision 10)~~ **Resolved** (*Resolved* 3–5). What remains is the
+   two gated ones — SD3.5 Medium and FLUX.1-dev — on a deployment that has an `HF_TOKEN`.
+8. **ComfyUI's own image** (phase P2) — half resolved (*Resolved* 7 and 8): the community image
+   is 5.36 GB compressed and a 205-second pull, and its baked v0.8.2 needed the checkout + pip
+   at start (20–26 s, NAT-dependent). A self-built image pins v0.34.0 and carries no Manager.
+   The GGUF-reading node (`ComfyUI-GGUF`) was not needed (fp8 safetensors sufficed); bundling
+   one means **a pinned revision written into the Dockerfile** (ADR 0071 decision 6).
+9. **Can the switch re-read (*Resolved* 5) be shortened?** `useLocalStorage` (ADR 0071 open
+   question 1) would replace EBS's 92 MB/s with the instance store's NVMe, which should turn a
+   12.3 GB re-read into a dozen seconds — the same homework as the llm role's 267-second VRAM
+   load. Measured on the P2 box.
 
 ## Phases
 
@@ -522,8 +592,9 @@ names move between versions — pin the tag and freeze the templates behind gold
   `/history` → `/view` with progress notifications), templates for five families — SDXL,
   SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden tests, and
   `generate_image`'s `model` argument (enum = the enabled checkpoints; several for the first
-  time). Open question 7 is measured on this box and decides decision 10's default. The pane
-  (`/engine/comfy/` over WebSocket) is **not included** — `generate_image` needs only the API;
+  time — and **the description names the model that is warm now**: a switch is a 1–2.5 minute
+  re-read, so the agent can prefer the warm one when the default will do; *Resolved* 5). The
+  pane (`/engine/comfy/` over WebSocket) is **not included** — `generate_image` needs only the API;
   the screen is P5. **Definition of done: on one box, SDXL and klein 4B (or Z-Image-Turbo)
   alternate per request and return pictures with no service restart in between, and 1024px
   SDXL comes back in the 8-second range of ADR 0071 measurement 7.**
