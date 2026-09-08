@@ -50,16 +50,17 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // the bucket IS. The seed creates one row per role, so without this there is no second
   // checkpoint to switch to without touching CloudFormation.
   "admin.engines_model_add": "Register a file from the bucket",
-  "admin.engines_model_add_id": "id (what a member picks)",
-  "admin.engines_model_add_desc": "description (one line an agent reads, optional)",
+  "admin.engines_model_add_id": "id",
+  "admin.engines_model_add_key": "key",
+  "admin.engines_model_add_desc": "description",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
-  "admin.engines_model_add_ctx": "context window (chat only)",
-  "admin.engines_model_add_out": "output cap (with the context)",
+  "admin.engines_model_add_ctx": "window",
+  "admin.engines_model_add_out": "output cap",
   // The control plane cannot look in S3, so a declared size is the only source for "sync +N s".
-  "admin.engines_model_add_bytes": "size in bytes (optional)",
+  "admin.engines_model_add_bytes": "size",
   "admin.engines_model_add_go": "Register",
-  "admin.engines_model_add_note": "The control plane does not look in S3 (it holds no permission to). A mistyped key shows up in the fetch log at the next start. The row is created disabled.",
+  "admin.engines_model_add_note": "The id is what a member picks, the key is the path inside the bucket, the description is the one line an agent reads. The window and the output cap only count when BOTH are given (one alone is ignored — without a cap it is read as 32,000, which leaves a 32k model 768 usable tokens). The size in bytes is optional and only feeds the \"sync +N s\" estimate. The control plane does not look in S3 (it holds no permission to), so a mistyped key shows up in the fetch log at the next start. The row is created disabled.",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
   // slow end. For a router role every enabled model is synced, so this really is what enabling

@@ -528,6 +528,11 @@ describe("EnginesAdminView", () => {
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
+    // One field per ROW, each with its own label: six labelled rows, not a strip of six
+    // look-alike boxes whose placeholder captions vanish as soon as somebody types into them.
+    const rows = Array.from(host!.querySelectorAll(".engines-model-add-row"));
+    expect(rows.length).toBe(6);
+    expect(rows.every((r) => r.querySelector("span") && r.querySelector("input"))).toBe(true);
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
     expect(inputs.length).toBe(6);
     const type = async (el: Element, v: string) => {

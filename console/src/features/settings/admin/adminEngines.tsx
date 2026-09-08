@@ -420,55 +420,47 @@ function EngineModelAdd({
     setOut("");
     setBytes("");
   };
+  // One field per ROW, each with its own label. The fields are not interchangeable — an S3 key,
+  // a token count and a byte count look nothing alike and mistyping one into another is silent —
+  // so they are not laid out as a strip of look-alike boxes with placeholder text that vanishes
+  // the moment somebody types.
+  const field = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder = "",
+    numeric = false,
+  ) => (
+    <label className="engines-model-add-row">
+      <span>{label}</span>
+      <input
+        value={value}
+        placeholder={placeholder}
+        inputMode={numeric ? "numeric" : undefined}
+        onChange={(ev) => set(ev.currentTarget.value)}
+      />
+    </label>
+  );
   return (
     <div className="engines-model-add">
-      <input
-        value={id}
-        placeholder={tr("admin.engines_model_add_id")}
-        onChange={(ev) => setId(ev.currentTarget.value)}
-      />
-      <input
-        value={s3Key}
-        placeholder={
-          isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf"
-        }
-        onChange={(ev) => setS3Key(ev.currentTarget.value)}
-      />
-      <input
-        value={desc}
-        placeholder={tr("admin.engines_model_add_desc")}
-        onChange={(ev) => setDesc(ev.currentTarget.value)}
-      />
+      {field(tr("admin.engines_model_add_id"), id, setId,
+        isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
+      {field(tr("admin.engines_model_add_key"), s3Key, setS3Key,
+        isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf")}
+      {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
           context at all, so offering the field there would ask for a number nothing reads. */}
-      {!isImage && (
-        <>
-          <input
-            value={ctx}
-            inputMode="numeric"
-            placeholder={tr("admin.engines_model_add_ctx")}
-            onChange={(ev) => setCtx(ev.currentTarget.value)}
-          />
-          <input
-            value={out}
-            inputMode="numeric"
-            placeholder={tr("admin.engines_model_add_out")}
-            onChange={(ev) => setOut(ev.currentTarget.value)}
-          />
-        </>
-      )}
-      <input
-        value={bytes}
-        inputMode="numeric"
-        placeholder={tr("admin.engines_model_add_bytes")}
-        onChange={(ev) => setBytes(ev.currentTarget.value)}
-      />
-      <button type="button" className="primary sm" disabled={busy} onClick={submit}>
-        {tr("admin.engines_model_add_go")}
-      </button>
-      <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
-        {tr("common.cancel")}
-      </button>
+      {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
+      {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096", true)}
+      {field(tr("admin.engines_model_add_bytes"), bytes, setBytes, "1117320768", true)}
+      <div className="engines-model-add-actions">
+        <button type="button" className="primary sm" disabled={busy} onClick={submit}>
+          {tr("admin.engines_model_add_go")}
+        </button>
+        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+          {tr("common.cancel")}
+        </button>
+      </div>
       {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
           being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
           next cold start, so the panel says so rather than implying a check happened. */}

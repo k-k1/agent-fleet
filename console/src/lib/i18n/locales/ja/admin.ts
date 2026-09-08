@@ -47,16 +47,17 @@ export const admin = {
   // 何か」と書き留めるだけの口。種は役ごとに 1 行しか作らないので、これが無いと
   // 「CloudFormation を触らずに別のチェックポイントへ」の選び先が無い。
   "admin.engines_model_add": "バケットのファイルを登録する",
-  "admin.engines_model_add_id": "id（利用者が選ぶ名前）",
-  "admin.engines_model_add_desc": "説明（エージェントが読む 1 行・任意）",
+  "admin.engines_model_add_id": "id",
+  "admin.engines_model_add_key": "キー",
+  "admin.engines_model_add_desc": "説明",
   // 🔴 窓は「両方か、どちらも書かないか」。context だけだと opencode は出力上限 0 を
   // 32,000 と読み、32k のモデルが使える窓 768 トークンになる（ADR 0072 決定 3）。
-  "admin.engines_model_add_ctx": "窓（context・chat のみ）",
-  "admin.engines_model_add_out": "出力上限（context と対で）",
+  "admin.engines_model_add_ctx": "窓",
+  "admin.engines_model_add_out": "出力上限",
   // CP は S3 を見られないので、同期の秒数を出せる唯一の出どころが宣言されたサイズ。
-  "admin.engines_model_add_bytes": "サイズ（バイト・任意）",
+  "admin.engines_model_add_bytes": "サイズ",
   "admin.engines_model_add_go": "登録する",
-  "admin.engines_model_add_note": "CP は S3 を見ません（権限を持たせていません）。キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
+  "admin.engines_model_add_note": "id は利用者が選ぶ名前、キーはバケットの中のパス、説明はエージェントが読む 1 行です。窓と出力上限は両方書いたときだけ効きます（片方だけは無視します——出力上限を書かないと 32,000 と読まれ、32k のモデルが 768 トークンになるため）。サイズ（バイト）は「同期 +N 秒」の推定に使うだけで任意です。CP は S3 を見ません（権限を持たせていません）ので、キーの打ち間違いは次の起動時に fetch のログで分かります。登録した行は無効の状態で作られます。",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
   // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。

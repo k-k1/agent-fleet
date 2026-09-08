@@ -229,6 +229,60 @@
   overflow-wrap: anywhere;
 }
 
+/* Registering a row: ONE field per line, each with its own label.
+   The fields are not interchangeable — an S3 key, a token count and a byte count look nothing
+   alike, and putting one in the wrong box is silent (the control plane never reads the bucket).
+   A strip of identical inputs labelled only by placeholder text loses its labels the moment
+   somebody starts typing, which is exactly when they are wanted. */
+.engines-model-add {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+}
+
+.engines-model-add-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+/* A fixed label column so the inputs line up. The labels are single words on purpose — what
+   each field means, and the rule that the window only counts in pairs, is the paragraph under
+   the form; a label long enough to explain itself wraps to two lines in both locales. */
+.engines-model-add-row > span {
+  flex: 0 0 8ch;
+  color: var(--dialog-muted);
+}
+
+.engines-model-add-row > input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.engines-model-add-actions {
+  display: flex;
+  gap: 6px;
+}
+
+/* No label column to line up with at phone width: the label goes above its input, and the
+   buttons stop being two half-width boxes side by side. */
+@media (max-width: 760px) {
+  .engines-model-add-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+  }
+
+  .engines-model-add-row > span {
+    flex: 0 0 auto;
+  }
+}
+
 .engines-history {
   margin-top: 10px;
 }
