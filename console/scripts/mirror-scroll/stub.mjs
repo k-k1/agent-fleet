@@ -49,6 +49,16 @@ const PAGE = Number(arg("pagesize", 400)); // jsonl lines per window; the server
 // heal), which is what folds a turn that is still running.
 const WORKING = arg("working", "0") === "1";
 const WORK_ROWS = Number(arg("workrows", 30)); // tool+text pairs in that live trace
+// Write each reply as one jsonl row PER PART instead of a single row (see buildTurns).
+const SPLIT = arg("split", "0") === "1";
+// Emit a user prompt only every ASKS replies. The default 1 (every reply) is the shape every
+// scenario had, and it is the shape a long autonomous session does NOT have: one instruction can
+// run for hundreds of jsonl lines, so a whole 400-line window can hold no prompt at all — and then
+// landedWorkPromptIndex is -1 and every block on screen counts as "the live exchange".
+const ASKS = Number(arg("asks", 1));
+// Repeat each reply's FINAL answer this many times. Only the text after the last tool stays
+// visible once a block folds, so this is the knob for "a folded block that is still tall".
+const LONGANS = Number(arg("longans", 1));
 // --shared 1 seeds one received shared session (the shared section of the left pane). The default
 // is zero, which hides the section entirely, so the mirror-side harness sees no difference.
 const SHARED = arg("shared", "0") === "1";
@@ -89,24 +99,34 @@ const diagram = (i) =>
 const T0 = Date.parse("2026-08-04T10:00:00.000Z");
 const turnTS = (i) => new Date(T0 + i * 60_000).toISOString();
 
+// Without --split a reply is ONE jsonl row, which is what the stub always did. A real transcript
+// is not like that: claude writes a reply as several rows (the narration, each tool call, then the
+// answer), and groupTurns folds consecutive assistant rows back into one block keyed by the FIRST
+// row's idx. That is the shape a backward page has to survive — a window edge lands INSIDE a
+// block, so prepending the page before it re-anchors the block on an older idx, i.e. under a
+// different React key.
 function buildTurns(n) {
   const t = [];
+  let line = 0;
   for (let i = 0; i < n; i++) {
     const q = `質問 ${i}: 合計 0 円で決済に進めてしまう件を調べて`;
-    t.push({ role: "user", idx: i * 2, ts: turnTS(i), text: q, parts: [{ kind: "text", text: q }] });
+    if (i % ASKS === 0) t.push({ role: "user", idx: line++, ts: turnTS(i), text: q, parts: [{ kind: "text", text: q }] });
     const parts = [
       { kind: "text", text: `調べます（${i}）。` },
       { kind: "tool", tool: "Grep", info: "validateCart · src/", output: "src/checkout/validate.ts:4\nsrc/checkout/index.ts:22" },
       { kind: "tool", tool: "Read", info: "src/checkout/validate.ts", output: "42 行を読み込みました" },
-      { kind: "text", text: answer(i) },
+      { kind: "text", text: Array.from({ length: LONGANS }, () => answer(i)).join("\n\n") },
     ];
     if (IMAGES && i >= n - IMAGES) parts.push({ kind: "userfile", files: [`shot-${i}.png`], caption: "スクリーンショット" });
     if (MERMAID && i >= n - MERMAID) parts.push({ kind: "text", text: diagram(i) });
-    t.push({ role: "assistant", idx: i * 2 + 1, ts: turnTS(i), model: "claude-opus-5", inTok: 1000, outTok: 100, text: "", parts });
+    const row = (ps) => ({ role: "assistant", idx: line++, ts: turnTS(i), model: "claude-opus-5", inTok: 1000, outTok: 100, text: "", parts: ps });
+    if (!SPLIT) t.push(row(parts));
+    else for (const p of parts) t.push(row([p])); // one row per part, as a real jsonl has
   }
   return t;
 }
 const TURNS_BODY = buildTurns(TURNS);
+const LINES = TURNS_BODY.length; // jsonl lines, = the idx just past the end
 
 // The live reply of a working session: a long work trace, then the real answer. Parts are appended
 // one per poll from there (see livePartsAt), alternating tool and text.
@@ -148,9 +168,9 @@ function messages(session, q) {
   // (`if (d.status)`), so an empty string leaves the previous one standing.
   const status = WORKING ? (n === 2 ? "idle" : "working") : "";
   const body = {
-    name: session, cursor: TURNS * 2, status, alive: true,
+    name: session, cursor: LINES, status, alive: true,
     mode: "Default", tasks: [], pendingQuestions: null,
-    jsonlLines: TURNS * 2, jsonlMtime: 1753600000,
+    jsonlLines: LINES, jsonlMtime: 1753600000,
     // Only a WINDOWED reply carries the window's edge; an incremental poll leaves it alone.
     // Repeating firstLine:0/hasMore:false on every poll (which this used to do) wipes out what the
     // tail reply just advertised, one poll after it arrived — there is then nothing above to load.
@@ -160,7 +180,7 @@ function messages(session, q) {
   // reuse the previous one's anchored reply idx and mask a bug.
   const off = session === "sk4rq2f" ? 0 : 1000;
   const all = (off ? TURNS_BODY.map((t) => ({ ...t, idx: t.idx + off })) : TURNS_BODY).map((t) =>
-    WORKING && t.idx === off + TURNS * 2 - 1 ? { ...t, parts: livePartsAt(n) } : t,
+    WORKING && t.idx === off + LINES - 1 ? { ...t, parts: livePartsAt(n) } : t,
   );
   const window = (upto) => {
     // The tail `PAGE` lines below `upto` (a jsonl line number), as whole turns.
@@ -179,7 +199,7 @@ function messages(session, q) {
     if (!WORKING) return { ...body, messages: [] };
     return { ...body, messages: [all[all.length - 1]] };
   }
-  if (PAGING) return { ...body, ...window(TURNS * 2), reset: true };
+  if (PAGING) return { ...body, ...window(LINES), reset: true };
   return { ...body, messages: all, reset: true };
 }
 

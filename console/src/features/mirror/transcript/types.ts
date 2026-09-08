@@ -124,7 +124,15 @@ export interface Group {
   cacheCreate: number;
   ts?: string; // the block's START (first folded turn) — ordering key, see chronoInsertIndex
   endTs?: string; // the block's END (last folded turn) — what the footer shows
+  // The block's identity: normally the first folded turn's idx, but see useStableBlockIds — a
+  // backward page can prepend OLDER ROWS OF THIS SAME BLOCK, and then the first row's idx is a
+  // different number for content the reader is looking at. It is the React key and the
+  // data-turn-idx every scroll anchor points at, so it has to survive that.
   idx?: number;
+  // The LAST folded turn's idx. Only useStableBlockIds reads it: a block is "the same block" as
+  // one from the previous render when their row ranges overlap, and the first row alone cannot
+  // say that.
+  endIdx?: number;
   // The FIRST folded turn's anchor — branching "from this block" means branching before
   // everything it shows, so a merged block must not adopt a later turn's anchor.
   anchorId?: string;

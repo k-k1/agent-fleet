@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, textOfParts, workSplit } from "./mirrorParts.ts";
+import {
+  awaitingReply, confirmedWorkEnd, latestWorkPromptIndex, liveExchangeFrom, textOfParts, workSplit,
+} from "./mirrorParts.ts";
 
 describe("workSplit", () => {
   it("splits at the last tool: work before it, final answer after it", () => {
@@ -110,5 +112,27 @@ describe("awaitingReply", () => {
   it("does not wait when there is no prompt at all (new session or history only)", () => {
     expect(awaitingReply([])).toBe(false);
     expect(awaitingReply([{ role: "assistant" }])).toBe(false);
+  });
+});
+
+// The mirror reads a WINDOW of the transcript, so "no landed prompt in sight" is a normal state,
+// not an impossible one. It must not be read as "all of this is the live exchange".
+describe("liveExchangeFrom", () => {
+  const a = { role: "assistant" };
+  it("is the group after the last landed prompt", () => {
+    expect(liveExchangeFrom([a, { role: "user" }, a])).toBe(2);
+  });
+
+  it("counts neither a queued prompt nor a just-sent echo as having started", () => {
+    const groups = [a, { role: "user" }, a, { role: "user", pending: true }, { role: "user", queued: true }];
+    expect(liveExchangeFrom(groups)).toBe(2);
+  });
+
+  it("falls back to the NEWEST block when the window holds no landed prompt at all", () => {
+    // Every block above it is then history — it must fold while the session works, and must not
+    // default to open when the reader is scrolled up.
+    expect(liveExchangeFrom([a, { role: "user", pending: true }])).toBe(1);
+    expect(liveExchangeFrom([a])).toBe(0);
+    expect(liveExchangeFrom([])).toBe(0);
   });
 });

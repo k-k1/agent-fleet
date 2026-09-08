@@ -43,6 +43,26 @@ export function landedWorkPromptIndex(groups: PromptBoundaryLike[]): number {
   return -1;
 }
 
+// liveExchangeFrom: the index of the first group belonging to the LIVE exchange — the reply the
+// agent is working on now (or finished last), as opposed to the history above it.
+//
+// Normally that is simply the group after the last landed prompt. But the mirror holds a WINDOW of
+// the transcript, and the window need not contain a landed prompt at all: one instruction can run
+// for hundreds of jsonl lines (claude's tool results are not displayable turns, so a long
+// autonomous stretch is pure assistant rows), and the only prompt in view can be a just-sent echo
+// or a queued one, neither of which has started. -1 means "the prompt that started this is not on
+// screen" — NOT "all of this is live", which is what a bare `i > lastUser` says, and which hands
+// every block above the newest one the treatment meant for the one reply the reader is watching
+// stream: never folding while the session works, and folding OPEN when it finally does.
+//
+// (When the window is pure assistant rows this is a no-op — groupTurns folds them into ONE block,
+// which is the newest and therefore live either way. It bites when a block is followed only by
+// prompts that have not run.)
+export function liveExchangeFrom(groups: PromptBoundaryLike[]): number {
+  const last = landedWorkPromptIndex(groups);
+  return last >= 0 ? last + 1 : Math.max(0, groups.length - 1);
+}
+
 // awaitingReply: the newest user prompt has no assistant reply after it yet — the mirror
 // is still waiting for the answer to the latest turn. Used to hold the "working" indicator
 // across the gap between a session reading idle and its reply actually landing in the
