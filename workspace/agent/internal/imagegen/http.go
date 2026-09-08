@@ -122,7 +122,11 @@ func serviceLabelOf(id string) string {
 	case ProviderCodex:
 		return "GPT Image（OpenAI。利用者の ChatGPT プランを消費）"
 	case ProviderAgy:
-		return "Gemini の画像生成（Google。利用者の Antigravity/Gemini プランを消費）"
+		// The nickname is here because it is what a member says out loud, and matching the
+		// request to a route is the whole job of this label. It stays a NICKNAME for the family
+		// rather than a tier ("Nano Banana Pro" is the pro image model, this route is on a flash
+		// one) — naming a tier would be a claim about a model id that moves.
+		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
 	case ProviderSdcpp:
 		return "Stable Diffusion（このフリート自身の GPU。外部サービスではない）"
 	}
