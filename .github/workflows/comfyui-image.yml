@@ -1,0 +1,83 @@
+# Bake the fleet's own pinned ComfyUI image (ADR 0072 decision 4, phase P2) and push it to
+# GHCR, where `standup.sh` copies it into this deployment's `af-comfyui` ECR repository —
+# exactly the same crane-copy step that already exists for the community llama.cpp and
+# stable-diffusion.cpp images (ADR 0071), except the source is OUR build instead of a
+# third party's.
+#
+# ⚠️ Deliberately NOT part of dev-image.yml / release.sh. Those bake control-plane and
+# workspace at the APPLICATION's version, on every release; ComfyUI here is versioned by its
+# OWN pinned upstream revision (deploy/aws/ecs/comfyui/Dockerfile's COMFYUI_REF) and changes on
+# a completely different, much rarer schedule. Tying its rebuild to every app release would
+# re-bake an unchanged 5+ GB image on every tag and touch the release pipeline (release.sh,
+# publish-dist.yml, the forbidden-token gate, arm64-image-time.yml) for an image that ships
+# nothing user-facing and is never part of a distribution.
+#
+# amd64 only: the G-family has no arm64 member (ADR 0072 background, "候補のモデル"), so a
+# multi-arch manifest here would cost build time for an architecture nothing ever pulls.
+name: comfyui-image
+
+permissions:
+  contents: read
+  packages: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag pushed to GHCR (and what standup.sh reads as ImageComfyImageTag). Convention: the ComfyUI ref itself, e.g. v0.34.0.'
+        required: true
+        default: 'v0.34.0'
+      comfyui_ref:
+        description: 'ComfyUI git ref to build (tag or commit). Must match deploy/aws/ecs/comfyui/Dockerfile unless you are testing a bump.'
+        required: true
+        default: 'v0.34.0'
+
+concurrency:
+  group: comfyui-image-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  bake:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      REG: ghcr.io/${{ github.repository }}
+    steps:
+      - name: refuse an unusable tag
+        run: |
+          set -euo pipefail
+          echo "${{ inputs.tag }}" | grep -Eq '^[0-9A-Za-z][0-9A-Za-z._-]*$' \
+            || { echo "::error::'${{ inputs.tag }}' is not a usable image tag"; exit 1; }
+
+      - uses: actions/checkout@v4
+
+      - name: set up buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: log in to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: bake and push
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --platform linux/amd64 \
+            --build-arg COMFYUI_REF="${{ inputs.comfyui_ref }}" \
+            --tag "$REG/comfyui:${{ inputs.tag }}" \
+            --push \
+            deploy/aws/ecs/comfyui
+
+      - name: how to use it
+        run: |
+          {
+            echo "## comfyui image \`${{ inputs.tag }}\` (ComfyUI ${{ inputs.comfyui_ref }})"
+            echo ""
+            d=$(docker buildx imagetools inspect "$REG/comfyui:${{ inputs.tag }}" --format '{{.Manifest.Digest}}' 2>/dev/null) || true
+            [ -n "${d:-}" ] && echo "- \`comfyui\` $d"
+            echo ""
+            echo '```'
+            echo "crane copy $REG/comfyui:${{ inputs.tag }} <acct>.dkr.ecr.<region>.amazonaws.com/af-comfyui:${{ inputs.tag }}"
+            echo '```'
+            echo ""
+            echo "standup.sh does this automatically when ImageEngine=comfy — see ImageComfyImageTag in params/60-engines."
+          } >> "$GITHUB_STEP_SUMMARY"
