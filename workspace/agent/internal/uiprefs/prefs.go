@@ -10,6 +10,7 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/imagegen"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/mcpreg"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/paths"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 // Per-user UI preferences (theme / icon set / fonts / viewer options). The Console
@@ -184,11 +185,32 @@ func FleetSpawn() bool {
 	return v
 }
 
+// SpawnChildLimit is how many children the user lets one session have at a time (ADR 0073
+// decision 6, ui-prefs sessionSpawnChildLimit). It returns the stored number RAW — 0 for missing
+// or malformed — because the range and the fallback belong to session.NormalizeSpawnChildLimit,
+// where the Agent's enforcement and the MCP layer's wording both read them.
+//
+// Unlike FleetSpawn this is not a capability switch: with steering off the number is never
+// consulted, and with it on the value only moves a ceiling that already exists.
+func SpawnChildLimit() int {
+	v, ok := Read()["sessionSpawnChildLimit"].(float64)
+	if !ok {
+		return 0
+	}
+	return int(v)
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
+//
+// session takes the child limit the same way, and for the reason that forces the shape here:
+// this package depends on session, so session cannot read the prefs itself. Both processes that
+// need the answer get it — the Agent and the short-lived mcp-stdio are the same binary, and this
+// init runs in each.
 func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetSpawnEnabled = FleetSpawn
+	session.SpawnChildLimitPref = SpawnChildLimit
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,

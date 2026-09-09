@@ -53,15 +53,58 @@ const (
 	OriginUnknown = "unknown"
 )
 
-// SpawnChildLimit is how many children one session may have at a time (ADR 0073 decision 6).
-// Deliberately a constant and deliberately small: this is the first session-side capability
-// that consumes the shared host's memory with nobody watching.
+// SpawnChildLimitDefault is how many children one session may have at a time when the user has
+// chosen nothing (ADR 0073 decision 6). Deliberately small: this is the first session-side
+// capability that consumes the shared host's memory with nobody watching.
 //
 // It is NOT a measured resource limit — it is the number a refusal can name, and the tool
 // description states it so a caller learns the ceiling before planning around one it does not
-// have. Whatever replaces it has to keep that property. It lives in this leaf package because
-// both ends need it: the Agent enforces it, the MCP layer advertises it.
-const SpawnChildLimit = 3
+// have. Making it configurable did not change that: SpawnChildLimit is read afresh at every
+// point that says the number out loud, so no caller is ever told a figure that is not in force.
+const SpawnChildLimitDefault = 3
+
+// SpawnChildLimitMax is the largest value the setting may take (ADR 0073 decision 6, amendment
+// 2026-09-10). A live claude session measures 340-435 MB and this host's cgroup is 10 GiB
+// (docs/log/88 §88.9.2), so six children plus their parent is under a third of the host —
+// leaving room for the sessions the user opened themselves.
+//
+// The ceiling has to be well under what the host can hold, because this budget is PER PARENT and
+// nothing bounds their number: two parents at six is already thirteen agents. Refusing to have an
+// upper bound at all would give back the one property the limit exists for — a ceiling a refusal
+// can name before the host runs out of memory instead of after.
+const SpawnChildLimitMax = 6
+
+// SpawnChildLimitPref answers the user's configured child limit, RAW: whatever number is stored,
+// or 0 for missing or malformed. Wired by internal/uiprefs, which cannot be imported from here
+// (it depends on this package). Nil means "nothing is wired", i.e. the default.
+//
+// The range and the fallback live in NormalizeSpawnChildLimit rather than in the setter, so the
+// Agent (which enforces the budget) and the MCP layer (which advertises it and writes it into
+// refusals) cannot drift into two answers.
+var SpawnChildLimitPref func() int
+
+// SpawnChildLimit is the child limit in force. Call it at the moment the number is needed —
+// enforcing, advertising, refusing — never once into a variable: the user can change the setting
+// between two turns of the same session, and a stale figure in a refusal is exactly the invisible
+// limit decision 6 refuses to have.
+func SpawnChildLimit() int {
+	if SpawnChildLimitPref == nil {
+		return SpawnChildLimitDefault
+	}
+	return NormalizeSpawnChildLimit(SpawnChildLimitPref())
+}
+
+// NormalizeSpawnChildLimit narrows a stored value into the permitted range. Anything outside
+// 1..SpawnChildLimitMax reads as the default rather than as the nearest bound: the Console offers
+// a fixed set of choices, so an out-of-range value can only be a hand-edited or stale prefs file,
+// and "what the workspace does with no setting" is a better answer to that than a number nobody
+// picked. Same rule as the other uiprefs accessors — invalid is not a choice.
+func NormalizeSpawnChildLimit(n int) int {
+	if n < 1 || n > SpawnChildLimitMax {
+		return SpawnChildLimitDefault
+	}
+	return n
+}
 
 // ValidOrigin narrows an origin arriving from outside into the recordable vocabulary. The
 // create wire field is reachable from any client, so an unknown value degrades to user (a

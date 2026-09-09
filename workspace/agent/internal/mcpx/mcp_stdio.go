@@ -774,7 +774,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"Tell the user you are starting one, and what for. " +
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
-				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit) + " children at a time (a slot frees when the user deletes or " +
+				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
 				"archives that child, or when one you left stopped expires - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
 				"from here. " +
@@ -3273,7 +3273,8 @@ func mcpListChildSessions(id json.RawMessage, self string) []byte {
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
 		return mcpToolErr(id, "子セッション一覧を読めませんでした: "+err.Error())
 	}
-	rows := make([]any, 0, session.SpawnChildLimit)
+	limit := session.SpawnChildLimit()
+	rows := make([]any, 0, limit)
 	for _, s := range wire.Sessions {
 		if s.Origin != session.OriginSession || s.OriginSession != self {
 			continue
@@ -3301,12 +3302,12 @@ func mcpListChildSessions(id json.RawMessage, self string) []byte {
 		}
 		rows = append(rows, row)
 	}
-	left := session.SpawnChildLimit - len(rows)
+	left := limit - len(rows)
 	if left < 0 {
 		left = 0
 	}
 	return mcpStructuredResult(id, map[string]any{
-		"sessions": rows, "slotsLeft": left, "slotLimit": session.SpawnChildLimit,
+		"sessions": rows, "slotsLeft": left, "slotLimit": limit,
 	})
 }
 

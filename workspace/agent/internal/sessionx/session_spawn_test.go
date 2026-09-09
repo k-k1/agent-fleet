@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/uiprefs"
 )
 
 // spawnFixture gives each test its own session store, so metas written here cannot leak into
@@ -22,6 +24,23 @@ func spawnFixture(t *testing.T, metas ...session.Meta) {
 			m.CreatedAt = "2026-09-09T10:00:00+09:00"
 		}
 		session.WriteMeta(m)
+	}
+}
+
+// spawnLimitPref writes the user's child-limit setting into the fixture's HOME. Call it AFTER
+// spawnFixture, which is what points HOME at a temp dir.
+//
+// It writes the prefs FILE rather than setting session.SpawnChildLimitPref, so the assertions
+// below run the route production runs: ui-prefs.json -> uiprefs.SpawnChildLimit -> the init hook
+// -> session.SpawnChildLimit. Setting the hook by hand would pass with that wiring deleted.
+func spawnLimitPref(t *testing.T, n int) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(uiprefs.Path()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := json.Marshal(map[string]any{"sessionSpawnChildLimit": n})
+	if err := os.WriteFile(uiprefs.Path(), b, 0o600); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -194,6 +213,46 @@ func TestSpawnBudgetCountsStoppedButNotArchivedChildren(t *testing.T) {
 	(&spawnSlot{parent: "elsewhere"}).release()
 }
 
+// The budget is the user's setting (ADR 0073 decision 6, amendment 2026-09-10), and BOTH things
+// that number does have to follow it: what is enforced, and what the refusal says.
+//
+// The second half is the point. Enforcing a configured limit while the refusal still reads
+// "上限 3" produces the invisible limit decision 6 exists to prevent — the caller is told a
+// ceiling it is not being held to, and a unit test on the count alone would never notice.
+func TestSpawnBudgetFollowsTheUsersSetting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pref int
+		want int // the limit actually in force
+	}{
+		{"one child", 1, 1},
+		{"the ceiling", session.SpawnChildLimitMax, session.SpawnChildLimitMax},
+		// Not a value the Console can produce, so it falls back to the default rather than to a
+		// ceiling nobody chose.
+		{"past the ceiling", session.SpawnChildLimitMax + 1, session.SpawnChildLimitDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			spawnFixture(t, session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser})
+			spawnLimitPref(t, tc.pref)
+
+			for i := 0; i < tc.want; i++ {
+				if err := reserveSpawnSlot("root"); err != nil {
+					t.Fatalf("child %d of %d refused: %v", i+1, tc.want, err)
+				}
+				(&spawnSlot{parent: "root"}).publish(child(fmt.Sprintf("kid%d", i), "root"))
+			}
+			err := reserveSpawnSlot("root")
+			if err == nil {
+				t.Fatalf("child %d was allowed although the limit is %d", tc.want+1, tc.want)
+			}
+			// The number the caller is shown is the number it was held to.
+			if want := fmt.Sprintf("上限 %d）", tc.want); !strings.Contains(err.Error(), want) {
+				t.Fatalf("refusal %q does not name the limit in force (%q)", err, want)
+			}
+		})
+	}
+}
+
 // Two creates that differ in content are not serialized by the idempotency ledger (it keys on
 // one intent), so counting metas alone lets both pass the same "two existing". The reservation
 // is what closes that.
@@ -285,11 +344,12 @@ func TestSpawnBudgetHoldsUnderConcurrentCreates(t *testing.T) {
 	}
 	wg.Wait()
 
-	if won != session.SpawnChildLimit {
-		t.Fatalf("%d creates got a slot, want exactly %d", won, session.SpawnChildLimit)
+	limit := session.SpawnChildLimit()
+	if won != limit {
+		t.Fatalf("%d creates got a slot, want exactly %d", won, limit)
 	}
-	if n := countChildren("root"); n != session.SpawnChildLimit {
-		t.Fatalf("children = %d, want %d", n, session.SpawnChildLimit)
+	if n := countChildren("root"); n != limit {
+		t.Fatalf("children = %d, want %d", n, limit)
 	}
 	if err := reserveSpawnSlot("root"); err == nil {
 		t.Fatal("the limit is not in force after the race")

@@ -108,6 +108,18 @@ Agent Team 側は出典。**すべて確認できた事実**である。
 | **完了通知** | **親のポーリングが正**（`get_session_status`）。補助として peer messaging が ON のときだけ、`create_session` が初期指示末尾に「終わったら親へ `intent=answer` で 1 通返せ」を足す＝**モデル発火**（ADR 0073 決定 9、docs/log/87 §87.5）。セッション宛の報告チャネルは作らない（ADR 0041 が却下した案。arm の所有者が二重になる） | **イベント駆動。** `when a teammate finishes and stops, it automatically notifies the lead and includes its final answer in the notification` — **[AT] Context and communication**。別機能の `notify_when_idle` は `Claude Code subscribes without starting a turn or spending tokens in the watched session` / `The notice is one-shot... neither session polls the other` / 12 時間で失効 — **[CSM]** | **向こうがハーネス層で解いている。§88.6-1 の示唆はここ** |
 | **異種エージェント** | claude / codex / opencode / cursor / kiro / agy / copilot をまたぐ（`kind` 引数。`mcpx/mcp_stdio.go:765` の `create_session` 説明文） | **Claude Code セッションのみ。** ページ全体を通じて他社 CLI・他社モデルへの言及は無い（`Teammates` は `Separate Claude Code instances` — **[AT] Architecture**） | **af 固有。** 「起こせる種類が 1 つしかない」ことは向こうの他の判断（shell の軸が無い等）にも効いている |
 
+🔴 **上記「上限」欄の訂正（2 点・本文は残す）。** どちらも本記録より後の変更で、比較の結論
+（守っている対象が違う）は変わらない。
+
+1. **「停止中もアーカイブ済みも数え、削除だけが枠を空ける」は誤り。** アーカイブ済みは数えず
+   （2026-09-09・ADR 0073 決定 6 補遺・[89](89-child-session-listing.md) §89.4）、停止したままの
+   子は `StoppedTTL` の満了でも枠が空く。起票時に「削除だけ」と書いたのは、TTL の prune が
+   アーカイブ済みを対象外にしていることを**規則の側からしか読んでいなかった**ためである
+   （一覧の実装を読めば分かった）。
+2. **「同時 3 本」は既定 3 本。** 2026-09-10 に利用者設定になった（1〜6・[87](87-session-spawn.md)
+   §87.16）。左欄の読み方は変わらない — 3 は当時も「資源の実測値ではない暫定値」で、
+   設定化はその暫定値を**誰が選ぶか**を移しただけである。
+
 ## 88.5 向こうが解いていて af が解いていない問題
 
 **2 件。1 件は af への示唆になり（§88.6-1）、1 件は非スコープでよい。**
