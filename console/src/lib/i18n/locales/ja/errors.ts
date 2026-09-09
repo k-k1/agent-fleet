@@ -219,4 +219,5 @@ export const errors = {
   "err.ingest_unavailable": "この配備では Console からの取り込みが構成されていません",
   "err.license_not_accepted": "ライセンスへの同意が必要です",
   "err.gated_no_token": "gated のリポジトリですが、この配備に Hugging Face のトークンがありません",
+  "err.model_id_exists": "その id のモデルはこのエンジンに既にあります",
 };

@@ -48,4 +48,5 @@ const (
 	errCodeIngestUnavailable   = "ingest_unavailable"
 	errCodeIngestNotAccepted   = "license_not_accepted"
 	errCodeIngestGatedNoToken  = "gated_no_token"
+	errCodeIngestIDExists      = "model_id_exists"
 )

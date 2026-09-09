@@ -319,6 +319,67 @@ func adminModel(t *testing.T, a engineAdminAPI, method, key, id, body string) (i
 	return rec.Code, out
 }
 
+// 🔴 An ingest onto an id the catalogue already holds is refused BEFORE the task starts.
+//
+// The row is written by PutEngineModel, which is an upsert on (role, id) — right for the seed
+// and for registering a staged file, and here it would replace a WORKING row's files, licence
+// and sha256 with the new ones and set enabled=false. The engine would quietly lose the
+// checkpoint it starts with, minutes after a button was pressed, with nothing linking the two.
+//
+// And it must refuse before RunTask, not after: the alternative spends the download first and
+// then either overwrites the row or strands gigabytes in the bucket with no row to reach them.
+func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := context.Background()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	e.catalog.invalidate()
+	// A deployment that CAN ingest — otherwise the earlier "no ingest task here" refusal is
+	// what gets tested, and this check would never be reached.
+	a.reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{fail: "not reached"}, store: st, models: st,
+	}
+
+	rec := httptest.NewRecorder()
+	body := `{"id":"sdxl-base-1.0","kind":"checkpoint","s3Key":"image/checkpoints/other.safetensors",
+	  "license_accepted":true,"source":{"url":"https://example.invalid/other.safetensors",
+	  "sha256":"` + strings.Repeat("a", 64) + `"}}`
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, store.Identity{ID: "u1"})
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("ingest onto an existing id = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "model_id_exists") {
+		t.Errorf("the refusal does not name itself: %s", rec.Body.String())
+	}
+	// The seeded row is untouched: still enabled, still pointing at its own file.
+	rows, _ := st.ListEngineModels(ctx, "image")
+	for _, m := range rows {
+		if m.ID != "sdxl-base-1.0" {
+			continue
+		}
+		if !m.Enabled || len(m.Files) == 0 || m.Files[0].S3Key != "image/checkpoints/sd_xl_base_1.0.safetensors" {
+			t.Errorf("the existing row was disturbed: enabled=%v files=%v", m.Enabled, m.Files)
+		}
+	}
+	// A DIFFERENT id on the same engine is not what this refuses — it gets past the check and
+	// fails later for its own reasons (this deployment's registry declares no ingest task).
+	rec2 := httptest.NewRecorder()
+	body2 := strings.Replace(body, `"id":"sdxl-base-1.0"`, `"id":"sdxl-base-1.1"`, 1)
+	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body2))
+	r2.SetPathValue("key", "image")
+	a.postIngest(rec2, r2, store.Identity{ID: "u1"})
+	if rec2.Code == http.StatusConflict {
+		t.Errorf("a free id was refused as a duplicate: %s", rec2.Body.String())
+	}
+}
+
 // The whole P0 flow through the API: register a staged file, enable it, make it the one the
 // engine starts with — and see the previous one stop being it. This is the sequence behind
 // ADR 0072 P0's definition of done, minus the GPU.

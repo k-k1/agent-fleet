@@ -735,6 +735,22 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 			"the licence has to be accepted before a model is taken in"})
 		return
 	}
+	// 🔴 An id already in the catalogue is REFUSED, because the row is written by PutEngineModel
+	// and that is an upsert on (role, id) — correct for the seed and for registering a staged
+	// file, catastrophic here. The job would download for minutes and then replace a working
+	// row's files and licence with the new ones AND set enabled=false, so the engine would lose
+	// the checkpoint it starts with and nobody would connect the two events.
+	//
+	// Refusing is also the honest reading of what an ingest is: it CREATES a row (disabled, for
+	// an administrator to turn on). Replacing the bytes under an id is a different act, and
+	// forgetting the old row first says so out loud.
+	for _, m := range e.catalog.list(r.Context()) {
+		if m.ID == id {
+			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
+				"this engine already has a model called " + id + " — forget that row first, or choose another id"})
+			return
+		}
+	}
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
 	if aerr != nil {
 		writeAPIErr(w, aerr)

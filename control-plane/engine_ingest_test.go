@@ -30,6 +30,19 @@ func hfStub(t *testing.T) *httptest.Server {
 				"license_name":"flux-1-dev-non-commercial-license"},
 				"siblings":[{"rfilename":"flux1-dev.safetensors","size":23802932552,
 				"lfs":{"sha256":"4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7"}}]}`))
+		// The diffusers layout, measured 2026-09-09 on black-forest-labs/FLUX.1-dev: nine
+		// .safetensors, of which only the top-level two are anything a person can take in. Five
+		// are shards of two larger files; the rest are pipeline components in subdirectories.
+		case strings.Contains(r.URL.Path, "FLUX-full"):
+			w.Write([]byte(`{"gated":"auto","cardData":{"license":"other",
+				"license_name":"flux-1-dev-non-commercial-license"},"siblings":[
+				{"rfilename":"alt/model.safetensors","size":1000,"lfs":{"sha256":"7777777777777777777777777777777777777777777777777777777777777777"}},
+				{"rfilename":"vae/diffusion_pytorch_model.safetensors","size":167666902,"lfs":{"sha256":"1111111111111111111111111111111111111111111111111111111111111111"}},
+				{"rfilename":"transformer/diffusion_pytorch_model-00001-of-00003.safetensors","size":9982000000,"lfs":{"sha256":"2222222222222222222222222222222222222222222222222222222222222222"}},
+				{"rfilename":"text_encoder_2/model-00001-of-00002.safetensors","size":4994000000,"lfs":{"sha256":"4444444444444444444444444444444444444444444444444444444444444444"}},
+				{"rfilename":"text_encoder/model.safetensors","size":246144152,"lfs":{"sha256":"5555555555555555555555555555555555555555555555555555555555555555"}},
+				{"rfilename":"flux1-dev.safetensors","size":23802932552,"lfs":{"sha256":"4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7"}},
+				{"rfilename":"ae.safetensors","size":335304388,"lfs":{"sha256":"6666666666666666666666666666666666666666666666666666666666666666"}}]}`))
 		// A real GGUF repository: several quantisations to choose between, files that are not
 		// the model at all, and the context length Hugging Face parses out of the GGUF header
 		// (`gguf.context_length`) and publishes on this very call — measured 2026-09-09 against
@@ -162,6 +175,54 @@ func TestEngineIngestListOffersOnlyWhatCanBeTakenIn(t *testing.T) {
 	if _, aerr := engineIngestList(context.Background(),
 		engineIngestSource{URL: "https://example.invalid/m.gguf"}, "gguf"); aerr == nil {
 		t.Error("a plain url was listed as though it had files")
+	}
+}
+
+// 🔴 Measured on the dev deployment (2026-09-09): the picker on FLUX.1-dev offered NINE files,
+// five of them shards (`…-00001-of-00003.safetensors`). A shard is not a model — taking one in
+// downloads ten gigabytes and writes a catalogue row nothing can load, which is precisely the
+// dead end the list was built to remove.
+//
+// What survives is ordered, not just filtered: the single-file checkpoint is at the top level
+// and the diffusers components are in subdirectories, so top level comes first. The components
+// stay on the list because ADR 0072 decision 2 stages `text_encoders/` and `vae/` in their own
+// right — they are simply never what somebody opening this picker came for.
+func TestEngineIngestListDropsShardsAndPutsTheCheckpointFirst(t *testing.T) {
+	srv := hfStub(t)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	got, aerr := engineIngestList(context.Background(),
+		engineIngestSource{HF: &engineIngestHF{Repo: "black-forest-labs/FLUX-full"}}, "checkpoint")
+	if aerr != nil {
+		t.Fatalf("list: %v", aerr.message)
+	}
+	names := []string{}
+	for _, c := range got {
+		names = append(names, c.Name)
+	}
+	// 🔴 `alt/…` sorts before both top-level files by name, so this order is reachable ONLY by
+	// the top-level-first rule — without it the checkpoint somebody came for is third.
+	want := []string{
+		"ae.safetensors",
+		"flux1-dev.safetensors",
+		"alt/model.safetensors",
+		"text_encoder/model.safetensors",
+		"vae/diffusion_pytorch_model.safetensors",
+	}
+	if len(names) != len(want) {
+		t.Fatalf("offered %d files, want %d: %v", len(names), len(want), names)
+	}
+	for i, w := range want {
+		if names[i] != w {
+			t.Errorf("candidate %d = %q, want %q (full list %v)", i, names[i], w, names)
+		}
+	}
+	for _, n := range names {
+		if engineIngestShard(n) {
+			t.Errorf("%q is one shard of a split file and cannot be taken in on its own", n)
+		}
 	}
 }
 

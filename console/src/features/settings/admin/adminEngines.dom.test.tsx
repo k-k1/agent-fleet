@@ -22,7 +22,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { EnginesAdminView } from "./adminEngines.tsx";
+import { EnginesAdminView, engineIdFromFile } from "./adminEngines.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -75,6 +75,24 @@ afterEach(() => {
   api.mockReset();
   apiJSON.mockReset();
   vi.useRealTimers();
+});
+
+// 🔴 A PROPOSAL, not an answer: it fills an empty id field and the field stays editable. What
+// it has to get exactly right is the single-file checkpoint, which has no ambiguity at all —
+// and it must drop the quantisation tag, which names the FILE and not the model (the same model
+// at q4 and q8 is one model with two files).
+describe("engineIdFromFile", () => {
+  it("proposes the stem, without the quantisation that names the file", () => {
+    expect(engineIdFromFile("flux1-dev.safetensors")).toBe("flux1-dev");
+    expect(engineIdFromFile("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf")).toBe("qwen2.5-coder-0.5b-instruct");
+    // Two quantisations of one model propose one id — the CP then refuses the second as a
+    // duplicate (409 model_id_exists), which is the correct conversation to have.
+    expect(engineIdFromFile("qwen2.5-coder-0.5b-instruct-q8_0.gguf")).toBe(
+      engineIdFromFile("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"),
+    );
+    expect(engineIdFromFile("Model-BF16.safetensors")).toBe("model");
+    expect(engineIdFromFile("vae/diffusion_pytorch_model.safetensors")).toBe("diffusion_pytorch_model");
+  });
 });
 
 describe("EnginesAdminView", () => {

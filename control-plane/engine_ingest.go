@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -117,6 +118,9 @@ func engineIngestExts(kind string) []string {
 
 func engineIngestWanted(name string, exts []string) bool {
 	l := strings.ToLower(name)
+	if engineIngestShard(l) {
+		return false
+	}
 	for _, e := range exts {
 		if strings.HasSuffix(l, e) {
 			return true
@@ -124,6 +128,16 @@ func engineIngestWanted(name string, exts []string) bool {
 	}
 	return false
 }
+
+// engineIngestShard spots one piece of a file split across several
+// (`…-00001-of-00003.safetensors`, Hugging Face's convention for a repository stored in the
+// diffusers layout). 🔴 Measured 2026-09-09 on black-forest-labs/FLUX.1-dev: nine .safetensors,
+// five of them shards. A single shard is not a model — taking one in downloads gigabytes and
+// produces a catalogue row nothing can load, which is the dead end this list exists to avoid.
+// Whole multi-part staging is its own job (ADR 0072 open questions), not one entry in a picker.
+var engineShardRe = regexp.MustCompile(`-\d{5}-of-\d{5}\.[a-z]+$`)
+
+func engineIngestShard(lower string) bool { return engineShardRe.MatchString(lower) }
 
 // engineIngestResolve turns a source into something the task can be told to fetch.
 func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineResolved, *apiError) {
@@ -148,8 +162,6 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
 }
 
-// engineResolveHF reads the model card and the file's LFS metadata.
-//
 // engineHFDoc is the part of a model's API answer this file reads. One call serves both the
 // listing and the resolve, so a person who picks a file from the list is choosing from the same
 // answer the sha256 and the licence are then taken out of — the alternative is two reads that
@@ -195,6 +207,8 @@ func engineReadHF(ctx context.Context, repo, revision string) (engineHFDoc, stri
 	return doc, rev, nil
 }
 
+// engineResolveHF reads the model card and the file's LFS metadata.
+//
 // The licence is taken as TWO fields on purpose (ADR 0072 decision 10, review R8): Hugging Face
 // answers `license: "other"` for both non-commercial models in the ADR's table and puts the real
 // terms in `license_name`, so a catalogue that copies only the first shows them as "other".
@@ -289,11 +303,23 @@ func engineIngestList(ctx context.Context, src engineIngestSource, kind string) 
 		"only a Hugging Face repository or a Civitai version can be listed"}
 }
 
-// engineSortCandidates puts them in the order a person reads them — by name, which for a GGUF
-// repository groups the quantisations (…-q4_k_m, …-q5_k_m, …-q8_0) into the sequence somebody is
-// choosing along.
+// engineSortCandidates puts them in the order a person reads them: the repository's own top
+// level first, then by name.
+//
+// Top level first because that is where the single-file checkpoint lives — FLUX.1-dev keeps
+// `flux1-dev.safetensors` beside a whole diffusers tree of components, and the components are
+// legitimate to stage one day (ADR 0072 decision 2's `text_encoders/` and `vae/`) but are never
+// what somebody opening this picker came for. Within a level, by name, which for a GGUF
+// repository groups the quantisations (…-q4_k_m, …-q5_k_m, …-q8_0) into the sequence somebody
+// is choosing along.
 func engineSortCandidates(c []engineCandidate) []engineCandidate {
-	sort.Slice(c, func(i, j int) bool { return c[i].Name < c[j].Name })
+	sort.SliceStable(c, func(i, j int) bool {
+		ti, tj := !strings.Contains(c[i].Name, "/"), !strings.Contains(c[j].Name, "/")
+		if ti != tj {
+			return ti
+		}
+		return c[i].Name < c[j].Name
+	})
 	return c
 }
 

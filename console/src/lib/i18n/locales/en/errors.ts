@@ -222,4 +222,5 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.ingest_unavailable": "Ingest from the Console is not configured on this deployment.",
   "err.license_not_accepted": "The licence has to be accepted first.",
   "err.gated_no_token": "The repository is gated and this deployment has no Hugging Face token.",
+  "err.model_id_exists": "This engine already has a model with that id.",
 };

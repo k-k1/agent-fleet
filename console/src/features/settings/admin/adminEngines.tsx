@@ -613,6 +613,10 @@ function EngineIngest({
     const res = d as ResolvedSource;
     setFound(res);
     setAccepted(false);
+    // Same rule as the window below: fill an empty field, never overwrite a typed one. The id
+    // is what a member sees in the launch menu, and the CP refuses one the catalogue already
+    // holds (409 model_id_exists), so this is a starting point rather than an answer.
+    if (!id.trim()) setId(engineIdFromFile(name));
     // Offered, not applied — and only into a field nobody has typed in, because the number
     // somebody entered deliberately outranks the one off the model card. The cap follows at an
     // eighth, which is what both models here were already being run at; it is a select, so it
@@ -778,6 +782,25 @@ function EngineIngest({
       <p className="muted">{tr("admin.engines_ingest_note")}</p>
     </div>
   );
+}
+
+/** A catalogue id proposed from the filename that was picked.
+ *
+ * The id is what a member sees in the launch menu, so it wants to be short — but it is also a
+ * key, and the person choosing it has just read the filename and nothing else. Proposing the
+ * stem gets `flux1-dev.safetensors` to `flux1-dev` exactly, and gets a GGUF most of the way
+ * there once the quantisation tag comes off, which is a detail of the FILE and not of the model
+ * (the same model at q4 and q8 is one model with two files).
+ *
+ * A proposal, never a decision: it fills an empty field and the field stays editable, for the
+ * same reason the context window does. Deriving `sdxl-base-1.0` from `sd_xl_base_1.0` is where
+ * this stops being derivation and starts being guessing, and it is left to the person. */
+export function engineIdFromFile(file: string): string {
+  const stem = (file.split("/").pop() || "")
+    .replace(/\.(safetensors|gguf|ckpt|pt|sft|bin)$/i, "")
+    .toLowerCase();
+  // The quantisation / precision tag, which names the file rather than the model.
+  return stem.replace(/[-.](q\d+(_[a-z0-9]+)*|iq\d+(_[a-z0-9]+)*|f16|fp16|bf16|f32|fp32|fp8(_[a-z0-9]+)*|int8)$/, "");
 }
 
 /** The output cap, as a fraction of the context window.
