@@ -223,4 +223,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.license_not_accepted": "The licence has to be accepted first.",
   "err.gated_no_token": "The repository is gated and this deployment has no Hugging Face token.",
   "err.model_id_exists": "This engine already has a model with that id.",
+  "err.hf_token_unsupported": "This deployment's engine stack has nowhere to keep the token — update 60-engines.",
+  "err.hf_token_empty": "The token is empty.",
+  "err.hf_token_store_failed": "The token could not be saved.",
+  "err.hf_token_put_failed": "The token could not be written into the deployment's secret.",
 };

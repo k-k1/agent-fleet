@@ -220,4 +220,8 @@ export const errors = {
   "err.license_not_accepted": "ライセンスへの同意が必要です",
   "err.gated_no_token": "gated のリポジトリですが、この配備に Hugging Face のトークンがありません",
   "err.model_id_exists": "その id のモデルはこのエンジンに既にあります",
+  "err.hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新してください",
+  "err.hf_token_empty": "トークンが空です",
+  "err.hf_token_store_failed": "トークンを保存できませんでした",
+  "err.hf_token_put_failed": "トークンを配備の秘密に書き込めませんでした",
 };

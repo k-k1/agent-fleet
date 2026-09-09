@@ -485,6 +485,10 @@ type engineIngester struct {
 	logs    engineIngestLogsAPI
 	store   store.EngineIngestStore
 	models  store.EngineModelStore
+	// tokens is the operator's Hugging Face token. It hangs here rather than on an engine
+	// because the ingest task is deployment-wide, and because this is the only place that
+	// needs the value rather than the fact that there is one.
+	tokens *engineHfTokens
 	// onDone is called after a job created its catalogue row, so the registry can invalidate
 	// its cache and the panel shows the new row without waiting for the TTL.
 	onDone func(role string)
@@ -504,6 +508,13 @@ type engineIngestRequest struct {
 // succeeds and a CP that dies before recording it is a task nobody can see, which is the one
 // outcome with no way back.
 func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (store.EngineIngestJob, *apiError) {
+	// The registered token is carried into the stack's secret before EVERY ingest. Not when it
+	// looks stale — nothing can look stale here: the CP has no `GetSecretValue`, and a stack
+	// rebuilt under a registered token holds the sentinel with no way to notice. Staged before
+	// the job row so a deployment that cannot write the secret fails without leaving one.
+	if aerr := g.tokens.stage(ctx); aerr != nil {
+		return store.EngineIngestJob{}, aerr
+	}
 	spec, _ := json.Marshal(req)
 	job := store.EngineIngestJob{
 		ID: store.NewID(), Role: req.Role, ModelID: req.ModelID, S3Key: req.S3Key,

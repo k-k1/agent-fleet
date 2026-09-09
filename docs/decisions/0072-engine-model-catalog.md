@@ -2,8 +2,10 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). P2, P3
-  and P5 not started.**
+- Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
+  registering the Hugging Face token from the Console (open question 12) is implemented, and
+  not yet verified on hardware (2026-09-09, "P5 implementation"). P2, P3 and the rest of P5
+  are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -508,6 +510,15 @@ names move between versions — pin the tag and freeze the templates behind gold
      ever holding the operator's token, and a gated repository on a deployment with no token is
      refused BEFORE a task is started — nine minutes of Fargate ending in a 401 costs money and
      explains nothing.
+   - **Revised (2026-09-09, open question 12; implemented)**: ~~the token is configured outside
+     the CP, as the `HfTokenSecretArn` CloudFormation parameter~~ → **the record of truth for
+     the token is the CP's own database (sealed with the `custodian`), and Secrets Manager is
+     the transport for a value ECS can be handed no other way. The CP holds `PutSecretValue` on
+     that one secret and never `GetSecretValue`** — it cannot read back what it wrote, so "the
+     CP does not hold the token" **weakens but does not vanish**. Only the ingest task reads the
+     value, and the anonymous-metadata point above stays exactly as it is (**only the
+     registration path changes**). The stack creates the secret **always**, holding the sentinel
+     `-`, so the `Secrets` block is always there and the CloudFormation round trip is gone.
    - **Civitai** (the de-facto home of SDXL LoRAs): downloads authenticate with an
      `Authorization: Bearer` API key; the sha256 is `files[].hashes.SHA256` of the
      `model-versions` API. The key is an operator secret in Secrets Manager like HF's, read by
@@ -1094,6 +1105,76 @@ had killed an entire path.**
   first alone leaves bytes nothing can reach that keep being paid for (measured: a 491 MB file
   outlived its row). The safe option is the default and is reset every time it opens.
 
+## P5 implementation — registering the Hugging Face token from the Console (2026-09-09)
+
+Open question 12's decision (DB as the record of truth, Secrets Manager as transport), built in
+the **shape (b)** the review recommended — the stack creates the secret **always**. Nothing else
+in P5 was touched.
+
+1. **The entry condition (template headroom) was paid first.** The condition existed because
+   adding one resource did not fit under the 51,200-byte wall. It was paid by **deleting the
+   `HfTokenSecretArn` parameter itself** (~370 bytes with its description) and moving the stack
+   `Description` prose into `PARAMETERS-60-engines.md`, "What this stack is". Result:
+   **50,869 bytes**, 331 to spare. As before, moving prose into a `#` comment saves nothing.
+   🔴 **A deleted parameter can stop an existing deployment**: `cloudformation deploy` refuses
+   a `--parameter-overrides` key the template does not declare, and `params/60-engines` is a
+   snapshot of the stack as it was, so the line survives. `env.sh` gained `af_param_drop` and
+   stand-up drops it just before deploying 60-engines (`update.sh` passes no parameters there,
+   so it was never affected).
+
+2. **The secret is always there.** `HfTokenSecret` is created unconditionally holding the
+   sentinel `-`; `Secrets: [{ Name: HF_TOKEN, ValueFrom: !Ref HfTokenSecret }]` lost its `!If`,
+   and the fetch shell reads `[ "$HF_TOKEN" != - ]` as "no token". A task definition is
+   CloudFormation's and static, so **a `Secrets` block that appears with the token would put the
+   round trip back** — which was the whole complaint. The secret is unnamed: a named one cannot
+   be re-created while the deleted one sits in its recovery window.
+
+3. **"Never reads back" is enforced by IAM.** `CpIngestPolicy` gains
+   `secretsmanager:PutSecretValue` on **that one ARN** and never `GetSecretValue`.
+   `ExecHfTokenPolicy` (ECS resolves `Secrets` with the **execution** role, which 20-platform
+   scopes to `secret:rds!*` — without this the task dies at startup) stopped being conditional.
+
+4. **The record of truth is the DB.** Four settings rows (`engine_hf_token` = the sealed value,
+   `_key_ref`, `_by`, `_at`), sealed with the existing `custodian`, exactly like a tenant's IdP
+   client secret. The key ref is a fixed `deployment` rather than a tenant id — this value
+   outlives any tenant. **One token per deployment** (decision 6 unchanged: per-tenant tokens
+   would let tenant A's acceptance stage a model tenant B then uses).
+
+5. **The secret is written first, the DB second.** The other order gives a deployment whose
+   `PutSecretValue` keeps failing **a panel that says "registered", every ingest going out
+   anonymous, and a 401 that talks about the licence**. The opposite failure (secret written,
+   DB save failed) is overwritten by the next registration, and nothing reads that secret except
+   an ingest this CP starts.
+
+6. **It is written again before every ingest.** Not "when it looks stale" — **nothing can look
+   stale** without `GetSecretValue`, and a re-created stack holds the sentinel while the DB
+   holds a token. The only symptom would be a 401, so `start` stages every time.
+
+7. **The gated verdict moved from the stack's declaration to a DB fact.** The engine table's
+   `ingest.hasToken` is replaced by `ingest.tokenSecret` (the ARN). The CP is upgraded before
+   the stack, so **an old table (no `tokenSecret`, `hasToken` set) keeps working**: nothing can
+   be registered, gated still resolves, and the panel says which of the two it is
+   (`stack_token`).
+
+8. **The panel never holds the value.** The input is write-only (`type="password"`) and the
+   status is "registered, by whom, when". There is **no current value that could be shown** —
+   the CP cannot read it — so a field that looked pre-filled would be a claim the deployment
+   cannot back.
+
+**Tests**: 7 in Go, 3 in the DOM. Five regressions were actually introduced to confirm they are
+caught — swapping the write order (a registration survives a refused secret), a `clear` that
+skips the sentinel (removed on screen, alive in the path the task reads), a `start` that does
+not stage (401 on a re-created stack), not clearing the field after saving (the token stays on
+screen), and offering the field when `available: false` (a button that does nothing on an old
+stack).
+
+**Not verified on hardware.** Three things are worth pressing: that `PutSecretValue` really
+passes (the policy's `Roles:` depends on carving the role name out of an imported ARN), that an
+ingest with the `-` sentinel succeeds **as anonymous**, and that a gated repository (SD 3.5
+Medium, FLUX.1-dev) is taken in without a 401 once a token is registered. The third is also
+open question 7's outstanding half — "measure the two gated defaults on a deployment that has
+an `HF_TOKEN`".
+
 ## Options rejected
 
 - **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
@@ -1240,8 +1321,11 @@ had killed an entire path.**
 12. ~~**Let the Hugging Face token be registered from the Console**~~ **Decided (review
     2026-09-09, section 5) — "DB as the source of truth, Secrets Manager as transport" is adopted,
     and "never reads back" is enforced by IAM (`PutSecretValue` only, `GetSecretValue` never
-    granted).** Implementation is P5, entry condition: **free up a resource's worth of headroom in
-    `60-engines.yaml`**. What follows is the original text:
+    granted).** **Implemented (2026-09-09, "P5 implementation" — shape (b), the always-created
+    secret; not verified on hardware).** The entry condition — **headroom in
+    `60-engines.yaml`** — was paid by deleting one parameter and moving the stack `Description`
+    prose into `PARAMETERS-60-engines.md` (50,842 → 50,869 bytes against the 51,200 wall).
+    What follows is the original text:
     (same origin, separate session.) Today it is the `HfTokenSecretArn` CloudFormation parameter, so putting one in
     means **a CloudFormation run and a CP restart** — the very path that ran into measurement 6's
     IAM hole. "It is a secret, therefore Secrets Manager" is not an argument: this product keeps
@@ -1315,7 +1399,14 @@ had killed an entire path.**
   (`engine_ingest_jobs`) carrying the catalogue row it will create, so a Control Plane replaced
   mid-download still ends with a row for the bytes that landed.
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
-  half of decision 5), the ComfyUI pane, sd-server's async API (open question 6).**
+  half of decision 5), the ComfyUI pane, sd-server's async API (open question 6), the tenant
+  axis (open question 11).**
+  **Registering the Hugging Face token from the Console (open question 12) was implemented
+  ahead of the rest** — it depends on nothing else here and it decides outright whether gated
+  repositories (all of SD 3.5, all of FLUX.1) can be taken in at all. **Done when: a token is
+  registered in the Console, a gated repository is taken in without CloudFormation being
+  touched, and the ingest task's log carries no 401.** (Not verified on hardware — see "P5
+  implementation".)
 
 ## Sources checked (2026-09-08)
 
