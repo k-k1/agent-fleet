@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.17.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.17.0) — 2026-09-09
+
+ECS の配備で、推論をフリート自身の GPU で動かせるようになりました。箱は誰かが使っている間だけ
+存在し、opencode の起動メニューに並ぶモデルと、外部のアカウントを要らない画像生成になります。
+セッションに「終わったら止まって」と指示できるようにもなり、画像生成の経路が 2 本になりました。
+
 ## [0.16.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.16.0) — 2026-09-07
 
 自分では絵を描けないセッションが画像を生成できるようになり、できた絵は会話の中に出ます。
