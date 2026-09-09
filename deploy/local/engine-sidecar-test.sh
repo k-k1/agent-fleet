@@ -64,9 +64,13 @@ case "$1 $2" in
     ;;
   "s3 cp")
     dst="$4"
+    [ -z "${AF_TEST_FAIL_CP:-}" ] || { echo "stub aws: refusing to copy" >&2; exit 1; }
     mkdir -p "$(dirname "$dst")"
     printf 'weights' > "$dst"
-    echo "$3" >> "$AF_TEST_FETCHED"
+    # ready=n/y records whether the ENGINE had already been released when this object was
+    # fetched. That, not the order of the list, is the property start-first sync is for.
+    if [ -f "$MODELS_DIR/ready" ]; then r=y; else r=n; fi
+    echo "$3 ready=$r" >> "$AF_TEST_FETCHED"
     ;;
   *) echo "stub aws: unexpected $*" >&2; exit 2 ;;
 esac
@@ -196,5 +200,34 @@ echo "== an empty catalogue leaves the router idling too =="
 EMPTY='{"v":1,"key":"llm","start":"","models":[]}'
 run "$EMPTY" "" "" "$WORK/models/llm/presets.ini"
 [ ! -s "$WORK/models/cmdline" ] || fail "an empty catalogue produced '$(cat "$WORK/models/cmdline")'"
+
+echo "== the engine is released after the START model and BEFORE the rest =="
+# The point of the change: a router syncs every enabled model, but only the starting one is on
+# the critical path. Measured on the deployment, the second model cost 5 s and the starting one
+# 117 s -- with five models enabled the old order put minutes of somebody else's weights in
+# front of the first token (ADR 0072 open question 11, the "time wall").
+ORDER='{"v":1,"key":"llm","start":"second","models":[{"id":"first","f":["llm/a.gguf"]},{"id":"second","f":["llm/b.gguf"]},{"id":"third","f":["llm/c.gguf"]}],"loras":["llm/loras/l.gguf"]}'
+run "$ORDER" "" "" "$WORK/models/llm/presets.ini"
+grep -q '^s3://b/llm/b.gguf ready=n$' "$WORK/fetched" || fail "the START model was not fetched before the engine was released: $(cat "$WORK/fetched")"
+grep -q '^s3://b/llm/loras/l.gguf ready=n$' "$WORK/fetched" || fail "a LoRA was deferred; they are small and belong with the start model: $(cat "$WORK/fetched")"
+grep -q '^s3://b/llm/a.gguf ready=y$' "$WORK/fetched" || fail "a non-start model was fetched BEFORE the engine was released: $(cat "$WORK/fetched")"
+grep -q '^s3://b/llm/c.gguf ready=y$' "$WORK/fetched" || fail "a non-start model was fetched BEFORE the engine was released: $(cat "$WORK/fetched")"
+[ "$(grep -c . "$WORK/fetched")" = 4 ] || fail "every enabled model must still be synced, just later: $(cat "$WORK/fetched")"
+
+echo "== the marker is written even when there is nothing to load =="
+# The engine no longer waits for the sidecar to EXIT, it waits for the marker. So every way out
+# of this script has to leave one, or an engine with an empty catalogue waits an hour instead of
+# idling and the service never stabilises (ADR 0072 decision 1(b)).
+run "" "" ""
+[ -f "$WORK/models/ready" ] || fail "no marker for an absent active set: the engine would hang"
+
+echo "== a FAILED fetch still releases the engine, and leaves no command line =="
+# Without the trap the engine waits out its whole hour on a box that is billing at $1.26/h, and
+# the panel says nothing. With it, the wrapper finds no cmdline and idles, which is the same
+# thing an empty catalogue does and is already understood everywhere downstream.
+rm -rf "$WORK/models"; mkdir -p "$WORK/models"; : > "$WORK/fetched"
+ACTIVE_SET_FIXTURE="$IMG" ALIAS_FLAG="" CTX_FLAG="" PRESET_FILE="" MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" AF_TEST_FETCHED="$WORK/fetched" AF_TEST_FAIL_CP=1   sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 && fail "a failed fetch should not exit 0"
+[ -f "$WORK/models/ready" ] || fail "a failed fetch left no marker: the engine would hang for an hour"
+[ ! -s "$WORK/models/cmdline" ] || fail "a failed fetch produced a command line: $(cat "$WORK/models/cmdline")"
 
 echo "OK: the engine fetch sidecar behaves"

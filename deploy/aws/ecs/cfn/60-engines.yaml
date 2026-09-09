@@ -332,6 +332,7 @@ Mappings:
       script: |-
         set -e
         mkdir -p "$MODELS_DIR"
+        trap 'touch "$MODELS_DIR/ready" 2>/dev/null || true' EXIT
         V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
         if [ -z "$V" ] || [ "$V" = "None" ]; then
           echo "engine fetch: no active set at $ACTIVE_PARAM - this engine has nothing to load"
@@ -342,20 +343,24 @@ Mappings:
         echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
         if [ -n "$PRESET_FILE" ]; then
           START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
-          printf '%s' "$V" | jq -r '[(.models[]?|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
+          printf '%s' "$V" | jq -r --arg s "$START" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > /tmp/keys.rest
         else
-          printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys
+          : > /tmp/keys.rest
         fi
-        while read -r k; do
-          [ -n "$k" ] || continue
-          dst="$MODELS_DIR/$k"
-          if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi
-          mkdir -p "$(dirname "$dst")"
-          t0=$(date +%s)
-          aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors
-          mv "$dst.part" "$dst"
-          echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
-        done < /tmp/keys
+        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys.start
+        fetch_keys() {
+          while read -r k; do
+            [ -n "$k" ] || continue
+            dst="$MODELS_DIR/$k"
+            if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi
+            mkdir -p "$(dirname "$dst")"
+            t0=$(date +%s)
+            aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors
+            mv "$dst.part" "$dst"
+            echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
+          done < "$1"
+        }
+        fetch_keys /tmp/keys.start
         if [ -n "$PRESET_FILE" ]; then
           mkdir -p "$(dirname "$PRESET_FILE")"
           printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
@@ -367,6 +372,10 @@ Mappings:
         fi
         mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
         echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
+        touch "$MODELS_DIR/ready"
+        echo "engine fetch: engine may start; $(grep -c . /tmp/keys.rest || true) file(s) still to sync"
+        fetch_keys /tmp/keys.rest
+        echo "engine fetch: every enabled model is on this box"
 
 Conditions:
   # Whether the ROLE exists. WHAT it loads is the catalogue's (ADR 0072 decision 1); `""` keeps
@@ -392,9 +401,8 @@ Conditions:
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
 
 Resources:
-  # --- IAM: three roles, all of them closed inside this stack (ADR 0071 decision 8) ------
-  # The CP needs NOTHING new: UpdateService, DescribeServices, the container-instance reads
-  # and ssm:GetParameter under /af-ws/* are all already unconditional on CpTaskRole.
+  # --- IAM: three roles, all closed inside this stack (ADR 0071 decision 8) ------
+  # The CP needs nothing new beyond CpIngestPolicy below.
 
   # The role ECS itself assumes to run the Managed Instances fleet.
   InfraRole:
@@ -409,9 +417,8 @@ Resources:
             Action: sts:AssumeRole
       ManagedPolicyArns:
         - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
-      # The managed policy's iam:PassRole only covers ecsInstanceRole*, and the instance role
-      # below is fleet-named. Without this the provider launches nothing: UnauthorizedOperation,
-      # visible only in CloudTrail (measured).
+      # iam:PassRole in the managed policy only covers ecsInstanceRole*, and ours is
+      # fleet-named. Without this: UnauthorizedOperation, CloudTrail only (measured).
       Policies:
         - PolicyName: pass-instance-role
           PolicyDocument:
@@ -497,8 +504,7 @@ Resources:
                 Action: [ s3:DeleteObject ]
                 Resource: !Sub "${ModelsBucket.Arn}/*"
 
-  # The Control Plane's only new permissions in this repository (ADR 0072 decision 6): start the
-  # ingest task, pass the role it runs as, read that task's log. All pinned to THIS stack's
+  # The CP's only new permissions (ADR 0072 decision 6), all pinned to THIS stack's
   # resources — PARAMETERS-60-engines.md, "The ingest permissions".
   CpIngestPolicy:
     Type: AWS::IAM::Policy
@@ -592,8 +598,7 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
   # --- capacity: one provider per engine role (ADR 0071 decision 2) -------------
-  # ⚠️ Why the two roles never share a box, and why two providers want 16 of the G-family
-  # quota: PARAMETERS-60-engines.md, "The capacity providers" and "The G-family quota".
+  # ⚠️ PARAMETERS-60-engines.md, "The capacity providers" and "The G-family quota".
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -688,8 +693,7 @@ Resources:
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, once, out of the start path (ADR 0071 decision 3) ------
-  # Started by the Control Plane (ADR 0072 decision 6) or by hand — the recipe, the override
-  # trap and why the sha256 is not optional: PARAMETERS-60-engines.md, "Ingest".
+  # Started by the CP (ADR 0072 decision 6) or by hand: PARAMETERS-60-engines.md, "Ingest".
   IngestTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -824,13 +828,14 @@ Resources:
           Command:
             - !Sub
               - >-
+                n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
                 if [ -s /models/cmdline ]; then exec /app/llama-server --host 0.0.0.0 --port 8080
                 --models-max ${LlmModelsMax} ${Extra} $(cat /models/cmdline);
                 else echo "llm: no model in the catalogue — idling"; sleep infinity; fi
               - Extra: !Join [ " ", !Ref LlmExtraArgs ]
           ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
-          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          DependsOn: [ { ContainerName: fetch, Condition: START } ]
           Environment:
             # -hf is never used (decision 3), but llama-server writes here regardless of
             # how the model arrived; pointing it at /tmp keeps it off the model volume.
@@ -940,6 +945,7 @@ Resources:
             - !Sub
               - >-
                 mkdir -p /models/image/loras;
+                n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
                 if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
                 --listen-port 8080 --lora-model-dir /models/image/loras
                 ${Extra} $(cat /models/cmdline);
@@ -947,7 +953,7 @@ Resources:
               - Extra: !Join [ " ", !Ref ImageExtraArgs ]
           ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
-          DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
+          DependsOn: [ { ContainerName: fetch, Condition: START } ]
           LogConfiguration:
             LogDriver: awslogs
             Options:
@@ -1032,9 +1038,8 @@ Resources:
                 Models: !Join [ '","', !Ref ImageModelIds ]
             - ""
           Sep: !If [ HasBothModels, ",", "" ]
-          # What the Control Plane needs to start an ingest and to read why one failed. The
-          # network placement is here rather than derived, for the reason everything else in
-          # this table is (ADR 0053): the CP cannot ask CloudFormation at request time.
+          # What the CP needs to start an ingest and read why one failed. Declared, not
+          # derived (ADR 0053): the CP cannot ask CloudFormation at request time.
           Ingest: !Sub
             - >-
               {"taskDef":"${Family}","subnets":["${Subnets}"],"securityGroups":["${Sg}"],

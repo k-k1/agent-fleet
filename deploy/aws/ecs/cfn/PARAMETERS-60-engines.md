@@ -453,6 +453,49 @@ writes `/models/cmdline` — the model-specific half of the argument list. Every
 role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
 and `ALIAS_FLAG` / `CTX_FLAG`.
 
+### The START model gates the engine; the rest are synced behind it
+
+Since 2026-09-09 the sidecar does **not** fetch everything before the engine may start. It syncs
+the starting model (and every LoRA — they are small and decide what the engine can be asked for),
+writes the preset and `/models/cmdline`, **touches `/models/ready`**, and only then fetches the
+remaining enabled models. The engine containers wait for that MARKER rather than for the sidecar
+to exit, so `DependsOn` on both engines is `START`, not `SUCCESS`.
+
+Why: a router syncs every enabled model (decision 9) but loads one, and the sync is serial. On
+the deployment the starting model cost 117 s and the second 5 s — but the cost is per model, so
+five enabled models put minutes of weights nobody asked for in front of the first token. This is
+the "time wall" that ADR 0072 open question 11 measured at about five models for a ten-minute
+cold start; moving it off the critical path is what makes a bigger catalogue survivable.
+
+Measured on the deployment the day it went in, same two models as every other number here:
+
+| | old order | start-first |
+|---|---|---|
+| sidecar reads the active set | +50 s | +50 s |
+| starting model (18.5 GB) on disk | +171 s (after the 1.1 GB one) | **+165 s** |
+| **llama-server listening** | +184 s | **+169 s** |
+| the other model (1.1 GB) lands | before the engine | **+171 s, engine already up** |
+| model in VRAM | +275 s | **+267 s** |
+
+⚠️ **With this catalogue the win is only about 8-15 seconds, and that is the honest number** —
+the deferred model is 1.1 GB, so there was barely anything to defer. What the run proves is the
+MECHANISM (`engine may start; 1 file(s) still to sync`, then the engine listening four seconds
+later, then the second model arriving behind it). The saving is one deferred model's sync time,
+so it grows with the catalogue and is worth nothing on a single-model deployment.
+
+Two consequences to keep in mind:
+
+- **A request for a model that has not landed yet fails rather than waits.** llama.cpp's router
+  starts happily with preset paths that do not exist (measured, ADR 0072 P1 point 6) and errors
+  only on a request for that model. The window is the sync time of the models after the first.
+- 🔴 **Every exit from the sidecar must leave the marker**, which is why it opens with
+  `trap 'touch $MODELS_DIR/ready' EXIT`. Without it a failed fetch — or an empty catalogue —
+  leaves the engine waiting out its whole hour-long loop on a box billing at $1.26/h, and the
+  service never stabilises (decision 1(b)). With it, the wrapper finds no `cmdline` and idles,
+  which is the case everything downstream already understands.
+  `deploy/local/engine-sidecar-test.sh` asserts both the ordering and the marker, and each
+  assertion was checked against the defect it is meant to catch.
+
 ⚠️ **It is a LITERAL block (`|-`), never a folded one (`>-`).** YAML folding keeps a
 MORE-INDENTED line literal, so a continuation line indented to line up with its command silently
 keeps its newline — and the shell then reads the second half as a new command. Measured on the
