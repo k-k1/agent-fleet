@@ -239,7 +239,8 @@ AGENTS.md の既知事項）。exit code はパイプを通さずに取ってい
 （codex / opencode / copilot / cursor / kiro）は分岐が別で、`slot.publish` も
 `noteCreateOrigin` も `handOverSpawnLineage` も別の行にある。ここは「テストで固定できていない」
 ではなく **単に未着手**として残す。**マージ後に独立した変更として入れる** — 5 巡目の助言に
-従った。2 巡目・3 巡目の追加欠陥はどちらも「別の直しのついでの変更」から出ているので、
+従った。**→ 追記（2026-09-09）: §87.14 で実施した。上の 3 件のうち 2 と 3 も、managed 経路に
+限っては同時に固定されている。**2 巡目・3 巡目の追加欠陥はどちらも「別の直しのついでの変更」から出ているので、
 別件の commit に同梱するのは同じ形を踏みに行くことになる。
 
 代わりに固定してあるもの: `spawnSlot` の契約（`TestSpawnSlotIsHandedOverToTheMeta`）、
@@ -307,3 +308,41 @@ managed 経路が配線試験を通っていない件（§87.11 に移した）�
 - **[B6] A2 の防御は MCP 層だけで、`HandleStartSession` は今もアーカイブ済みを起こす。**
   決定 4 の「ハンドラ側ゲート」の設計どおりで回帰ではない、という判定に同意。
 - **managed 経路の配線試験** — 上のとおりマージ後。
+
+## 87.14 追記（2026-09-09）— managed 経路の配線試験（§87.11 の宿題）
+
+`session_spawn_wiring_managed_test.go` を足した。ADR 0073 の実装課題として唯一「未着手」で
+残っていたもので、マージ後の独立した変更として入れる、という 5 巡目の助言どおりの扱いである。
+
+**安く済んだ理由**: 分岐が解決に使うレジストリ `managedDrivers`（`session_turn.go:31`）が
+パッケージ変数なので、そこへ偽ドライバを差せば launch が関数呼び出しになる。ランタイムも
+デーモンも CLI も要らない。偽ドライバは `agents.Driver` を nil 埋め込みし `Resume` だけを
+実装する（他が呼ばれたら値をでっち上げずに panic する。`deps_stub_test.go` と同じ作法）。
+mcpx の deps は既に `deps_stub_test.go` が本物で配線している（managed 起動が mcpx を通るため）。
+
+固定したもの（tui の 4 本と同じ形）:
+
+- `TestCreateSessionSpawnWiringManaged` — 系譜（wire と meta の両方）、`h.Send` へ届く本文の
+  封筒、**配達時点で注入記録が既にあること**、create 後に枠が漏れていないこと。
+- `TestRecreateSpawnedChildKeepsOneSlotManaged` — managed の recreate が
+  `handOverSpawnLineage` を呼び、子 1 本が枠 1 本のままであること。
+
+**§87.11 が「固定できていない」と列挙した 3 件のうち 2 と 3 が、managed 経路では固定できた。**
+理由は経路の性質そのもので、tui の配達が `go deliverInitialPrompt`（窓の外）なのに対し、
+managed の `h.Send` は **`slot.publish` の直後・ハンドラ復帰の前**、つまり窓の内側で同期的に
+呼ばれる。偽ハンドルの `Send` の中で「いま親は子を何本抱えているか（`countChildren`）」と
+「予約はいくつ残っているか」を同時に読めば、公開と解放が 1 つのクリティカルセクションで
+起きたかどうかが外から観測できる。§87.10 の訂正（効くのは managed だから、という根拠）が
+そのまま試験になった形である。
+
+陽性対照（コードを壊して落ちることを確認済み）:
+
+| 壊した箇所 | 落ちたテスト |
+|-----------|------------|
+| managed 分岐から `noteCreateOrigin` を消す | `TestCreateSessionSpawnWiringManaged`（配達時に無バッジ） |
+| managed 分岐の `noteCreateOrigin` を `h.Send` の後ろへ移す | 同上 |
+| managed 分岐の `slot.publish` を `session.WriteMeta` に戻す（解放は復帰時の defer 任せ） | 同上（窓の内側で 1 本の子 ＋ 1 件の予約＝二重計上） |
+| managed の recreate から `handOverSpawnLineage` を消す | `TestRecreateSpawnedChildKeepsOneSlotManaged`（子が 2 本に見える） |
+
+残るのは §87.11 の 1 件目（`publish` が 1 つのクリティカルセクションであること）だけで、
+これは割っても別の呼び手が枠を取るため総数が変わらず、依然として外から観測できない。
