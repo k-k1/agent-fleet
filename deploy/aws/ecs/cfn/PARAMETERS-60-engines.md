@@ -496,6 +496,37 @@ Two consequences to keep in mind:
   `deploy/local/engine-sidecar-test.sh` asserts both the ordering and the marker, and each
   assertion was checked against the defect it is meant to catch.
 
+### Tuning the AWS CLI is NOT worth it — measured
+
+The obvious next lever after start-first sync was the copy itself: 18.5 GB at an effective
+161 MB/s looked slow next to the 567 MB/s Mountpoint got off the same class of box. It is slow,
+but **the AWS CLI's settings are not why**. `harness/probe-s3-fetch-tuning.sh`, one box, the same
+object four times, stock first:
+
+| `max_concurrent_requests` / `multipart_chunksize` | | |
+|---|---|---|
+| stock (10 / 8 MB) | 93 s | 199 MB/s |
+| 20 / 16 MB | 85 s | **218 MB/s** |
+| 40 / 32 MB | 86 s | 215 MB/s |
+| 64 / 64 MB | 85 s | **218 MB/s** |
+
+**It plateaus at concurrency 20 and never moves again** — 40 and 64 buy nothing. The whole
+tuning is worth about 9%, i.e. 8 seconds off a 267-second cold start, in exchange for the
+sidecar writing an `~/.aws/config` and this template spending budget it does not have. **Not
+adopted.**
+
+Two things worth keeping from the run. **The client is the ceiling, not the network**: 218 MB/s
+against Mountpoint's measured 567 MB/s on the same box, with `nproc=4` — the CLI is Python, and
+at these rates checksums and TLS are CPU-bound. If the copy ever has to get faster, the lever is
+a faster CLIENT (s5cmd is the obvious candidate, and unlike Mountpoint it would go in the FETCH
+sidecar's image, leaving the engine image and the fast local swap alone) — not more concurrency.
+
+And **stock here was 199 MB/s while the real sidecar sees 161 MB/s**. The likely difference is
+that on a real cold start the engine image is still being pulled: ECS starts each container as
+its own image lands, so the small aws-cli image is fetching while the 2.47 GB llama.cpp image is
+still coming down (measured: fetch logging at +54 s, `pullStoppedAt` at +88 s). That contention
+is not removable — the pull has to happen.
+
 ⚠️ **It is a LITERAL block (`|-`), never a folded one (`>-`).** YAML folding keeps a
 MORE-INDENTED line literal, so a continuation line indented to line up with its command silently
 keeps its newline — and the shell then reads the second half as a new command. Measured on the
