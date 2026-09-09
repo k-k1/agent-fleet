@@ -3633,27 +3633,75 @@ aws ecs describe-container-instances --cluster <cluster> --container-instances <
 これは一覧に必ず出る。スロット箱（`capacityProviderName` が `null`）と
 同じ表の中で区別できるので、**見落としが構造的に起きない**。
 
-### 64.43.6 まだ通っていない——llm 側は有効化されていない
+### 64.43.6 🔴 **2 パス目のあと CP を再起動しないと、llm は製品のどこにも存在しない**
 
-🔴 **image は端から端まで通ったが、llm は通っていない。** 原因は配備の失敗ではなく、
-**モデルを有効化する 1 手が踏まれていない**ことである。
+配備の直後、image は端から端まで通ったのに **llm は Console の管理パネルに
+カードすら出なかった**。「有効化の 1 手が踏まれていない」ように見えたが、原因はそこではない。
 
-- モデル本体は S3 に**在る**（17.28 GiB・§64.43.2 で取り込み済み）。
-- しかし有効モデルを指す `/<prefix>/engines/llm/active` が**書かれていない**
-  （image 側の `…/image/active` は Console から 18:38:41 に書かれている）。
-- 実際 18:30:40 に llm サービスを起こしたとき、取り込み側は
-  `no active set at …/llm/active - this engine has nothing to load`、
-  本体は `llm: no model in the catalogue — idling` を出して**モデルを読まずに待機**した。
-  3 分後に落とされている。
+**CP はエンジン表を起動時に一度しか読まない。**
 
-⚠️ **この状態のエンジンは「起動する」。** 健全性検査は通り、サービスは steady state に
-達する——**モデルを 1 つも読んでいないまま**である。「起動したから配備できている」は
-ここでは成立しない。**完了の判定は active set が書かれていることと、
-実際に推論が返ることの両方で行う。**
+| | |
+|---|---|
+| `newEngineRegistry`（`control-plane/engines.go`） | 呼び出し元は `engine_gateway.go` の CP 配線時**1 箇所のみ** |
+| `loadEngineTable` | 非テストの呼び出し元は**その 1 箇所だけ**。SSM を 1 回読んで `byKey` を作る |
+| 再読み込み | **経路が無い**（reload / refresh もタイマーも管理 API も無い） |
+| 管理 API | `GET`/`PUT /api/admin/engines/{key}` は全て `byKey` 解決＝**表に無いキーは 404** |
 
-有効化は Console（設定 > 管理 > 推論エンジン）から行う導線がある。
-それを踏んでから、opencode のセッションを当該モデルで起こして
-**ツール呼び出しまで通す**のが llm 側の完了条件で、そこは未了である。
-⚠️ 併せて確認すること: ADR 0071 決定 5（300 秒は無音ボディの上限であって壁時計ではなく、
-ハートビートで置き換えた）が**実配備で効いているか**。コールドスタートが 527〜586 秒
-だった以上、ここが llm 側の本当の確認点である。
+そこへ §64.43.1 の **2 パス構成**が噛み合う。1 パス目の時点では LLM モデルがまだ S3 に無く、
+**モデルキーが空ならサービスを作らない**（永久に固まるスタックを避けるための設計）ので、
+**表に llm の行が入らない**。行が入るのはモデルが揃った 2 パス目の後である。実測:
+
+```
+CP タスク起動        17:54:12   ← このとき表は image だけ
+エンジン表に llm     18:33:13   ← 39 分後。走っている CP は読み直さない
+```
+
+⇒ **走っている CP のレジストリには image しか無い。** だから
+「カードが無い」→「active set を書く導線が無い」→「Console からは何もできない」と
+一列に並ぶ。書き込み route 自体が registry 解決なので、**API を直接叩いても 404** である。
+
+✅ **直しは CP のローリング再起動だけ。** `maximumPercent 200` /
+`minimumHealthyPercent 100` ＋ ALB なので**無停止**である（実測: 新タスクが running に
+なってから旧タスクが抜けるまで両方が同時に running・配信の切れ目なし。収束まで約 3 分）。
+
+```
+aws ecs update-service --cluster <cluster> --service <cp-service> --force-new-deployment
+```
+
+★ **再起動すると Console 操作すら要らなかった。** CP は起動時に台帳をスタックから
+シードして active set を自分で書く（ADR 0072 決定 7）:
+
+```
+engines: llm catalogue seeded from the stack: qwen3-coder-30b-a3b -> llm/…Q4_K_M.gguf
+engines: llm active set published to /<prefix>/engines/llm/active (152 bytes)
+engines: llm (chat) -> http://llm.…:8080 (idle=30m0s deadline=15m0s models=llamacpp/qwen3-coder-30b-a3b)
+```
+
+✅ **再シードは利用者の選択を上書きしない。** 同時に image 側の active set も書き直されるが、
+Console で選ばれていた `juggernaut-xl-v9` が `start` のまま残った（マージであって初期化ではない）。
+
+⚠️ **手順にも画面にもこれを言うものが無い。** 配備した本人が「サービスは steady state、
+モデルも S3 に在る、なのに画面に出ない」で止まる。**60-engines を 2 パスで積んだら、
+最後に CP を入れ替えるところまでが手順である。**
+
+⚠️ **この形は「エンジンを増やしたとき」に必ず再発する。** 表に行を足すのは CFN だが、
+それを読むのは CP の起動だけなので、**substrate の更新が製品に届かない**。
+直すなら定期再読み込みか、管理パネルからの再読み込みである。
+
+### 64.43.7 それでも「起動した」を完了と読んではいけない
+
+有効モデルが無い状態のエンジンは、**モデルを 1 つも読まないまま起動して健全性検査を通り、
+サービスは steady state に達する**。実測（18:30:40 に llm サービスが上がったとき）:
+
+```
+engine fetch: no active set at …/llm/active - this engine has nothing to load
+llm: no model in the catalogue — idling
+```
+
+⚠️ **「サービスが steady state だから配備できている」は成立しない。**
+完了の判定は **active set が書かれていること**と、**実際に推論が返ること**の両方で行う。
+
+⚠️ 残りの確認点: opencode のセッションを当該モデルで起こして**ツール呼び出しまで通す**こと。
+とくに ADR 0071 決定 5（300 秒は無音ボディの上限であって壁時計ではなく、ハートビートで
+置き換えた）が**実配備で効いているか**——コールドスタートが 527〜586 秒だった以上、
+利用者から見て 5〜10 分黙る区間をハートビートが埋められているかが本当の確認点である。
