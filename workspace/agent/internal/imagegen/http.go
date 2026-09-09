@@ -68,6 +68,19 @@ type providerStatus struct {
 	Model        string   `json:"model,omitempty"`
 	Ops          []string `json:"ops,omitempty"`
 	AspectRatios []string `json:"aspectRatios,omitempty"`
+	// Models is every checkpoint this provider may be asked for BY NAME (ADR 0072 decision 5,
+	// phase P2) — empty for a provider that does not implement ModelLister at all (codex, agy)
+	// or that currently has zero or one (nothing to choose between). comfy is the first
+	// provider for which this is ever more than one entry.
+	Models []modelStatus `json:"models,omitempty"`
+}
+
+// modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
+// unchanged from.
+type modelStatus struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+	Warm        bool   `json:"warm,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
@@ -98,6 +111,18 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, op := range caps.Ops {
 			st.Ops = append(st.Ops, string(op))
+		}
+		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
+		// same one `provider` already follows) — a list of zero or one is not something a
+		// caller can meaningfully pick between, and advertising it anyway would put an enum in
+		// the tool schema that never has more than its own default in it.
+		if ml, ok := p.(ModelLister); ok {
+			if models := ml.Models(r.Context()); len(models) > 1 {
+				st.Models = make([]modelStatus, 0, len(models))
+				for _, m := range models {
+					st.Models = append(st.Models, modelStatus{ID: m.ID, Description: m.Description, Warm: m.Warm})
+				}
+			}
 		}
 		out.Providers = append(out.Providers, st)
 		if !out.Ready {

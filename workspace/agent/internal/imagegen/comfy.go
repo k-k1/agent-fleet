@@ -107,6 +107,22 @@ func (p *comfyProvider) Caps(model string) Caps {
 	}
 }
 
+// Models implements ModelLister (ADR 0072 decision 5, phase P2): every checkpoint the catalogue
+// currently enables for this engine, in the same order EngineConn.Models declares them (the
+// selected/default one first — see engineImageModelIDs in the Agent's engines.go), each marked
+// warm when it is the one decision 7's warm_model names.
+func (p *comfyProvider) Models(ctx context.Context) []ModelInfo {
+	conn, ok := p.conn(ctx)
+	if !ok {
+		return nil
+	}
+	out := make([]ModelInfo, 0, len(conn.Models))
+	for _, id := range conn.Models {
+		out = append(out, ModelInfo{ID: id, Description: conn.Descriptions[id], Warm: id != "" && id == conn.Warm})
+	}
+	return out
+}
+
 // comfySizesFor prefers the catalogue's own declaration (ADR 0072 decision 2) and falls back to
 // the one size every family in this template set was actually trained and measured at.
 func comfySizesFor(conn EngineConn, model string) []string {

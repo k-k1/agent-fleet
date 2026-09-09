@@ -401,13 +401,14 @@ func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn,
 			return imagegen.EngineConn{}, false
 		}
 		return imagegen.EngineConn{
-			BaseURL:   base + e.BaseURL,
-			Token:     tok,
-			Models:    engineImageModelIDs(e),
-			Sizes:     engineImageSizes(e),
-			BaseModel: engineImageBaseModels(e),
-			Files:     engineImageFiles(e),
-			Warm:      engineImageWarm(e),
+			BaseURL:      base + e.BaseURL,
+			Token:        tok,
+			Models:       engineImageModelIDs(e),
+			Sizes:        engineImageSizes(e),
+			BaseModel:    engineImageBaseModels(e),
+			Files:        engineImageFiles(e),
+			Warm:         engineImageWarm(e),
+			Descriptions: engineImageDescriptions(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
@@ -505,6 +506,21 @@ func engineImageWarm(e engineCatalogRow) string {
 		}
 	}
 	return ""
+}
+
+// engineImageDescriptions is the catalogue's own per-model line (ADR 0072 decision 2) — the
+// sentence an agent reads when choosing a checkpoint. nil when the catalogue declares none.
+func engineImageDescriptions(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && m.Description != "" {
+			out[m.ID] = m.Description
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // --- the usage the CP posts back -------------------------------------------------

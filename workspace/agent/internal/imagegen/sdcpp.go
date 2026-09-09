@@ -83,6 +83,11 @@ type EngineConn struct {
 	// re-read (measured), so answering with whatever is already warm is free and answering
 	// with an arbitrary "first enabled" model is not.
 	Warm string
+	// Descriptions is the catalogue's own per-model line (ADR 0072 decision 2), the sentence an
+	// agent reads when CHOOSING a checkpoint — "photoreal, SDXL fine-tune" and the like. Empty
+	// for a model the catalogue says nothing about, which is not an error: the id alone is a
+	// usable, if less helpful, choice.
+	Descriptions map[string]string
 }
 
 // EngineFile is one file ADR 0072 decision 2 declares for a model: the on-disk basename (the

@@ -163,6 +163,28 @@ type Provider interface {
 	Generate(ctx context.Context, req Request) (Result, error)
 }
 
+// ModelInfo is one checkpoint a caller may name in Request.Model, as the MCP surface needs to
+// see it: an id to send back, a line an agent reads when choosing, and whether the engine
+// happens to have it loaded right now.
+type ModelInfo struct {
+	ID          string
+	Description string
+	// Warm is true for at most one model per provider — the one a request naming none would
+	// get (ADR 0072 decision 7). Advertised so an agent can say "the warm one is fine" instead
+	// of naming a cold checkpoint and paying a switch it did not need to ask for.
+	Warm bool
+}
+
+// ModelLister is an OPTIONAL capability a Provider may implement: "here is more than one
+// checkpoint you may ask for by name". Kept off the core Provider interface because every
+// existing provider (codex, agy, sdcpp) has exactly one answer for any model argument — codex
+// and agy do not expose a choice at all, and sdcpp holds one checkpoint chosen at start — so
+// forcing them to implement a list-of-one would be a required method with no real information
+// in it. comfy (ADR 0072 P2) is the first provider for which this is ever more than one entry.
+type ModelLister interface {
+	Models(ctx context.Context) []ModelInfo
+}
+
 // Provider ids. The id is the wire value the MCP surface and the ledger both carry.
 const (
 	ProviderCodex = "codex"
