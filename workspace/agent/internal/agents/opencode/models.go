@@ -3,6 +3,7 @@ package opencode
 import (
 	"context"
 	"crypto/sha256"
+	"log"
 	"os"
 	"os/exec"
 	"strings"
@@ -51,9 +52,18 @@ func Models() []string {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "opencode", "models")
-	cmd.Env = mergeCommandEnv(os.Environ(), providerEnv)
+	cmd.Env = withoutAWSCredentialChain(mergeCommandEnv(os.Environ(), providerEnv))
+	// Keep stderr. `cmd.Output()` throws it away, and this call fails silently in every other
+	// respect too — the error path returns a nil list, which the picker renders exactly like
+	// "this account has no models". Measured cost of that silence: a production deployment
+	// where the menu was empty for hours and the operator was sent to check the connection and
+	// the plan, neither of which had anything to do with it (docs/log/64 §64.43.8).
+	var errb strings.Builder
+	cmd.Stderr = &errb
+	started := time.Now()
 	out, err := cmd.Output()
 	if err != nil {
+		log.Printf("opencode: listing models failed after %s: %v%s", time.Since(started).Round(time.Millisecond), err, firstLine(errb.String()))
 		return modelsList // stale-if-error: an expired cache still beats an empty picker
 	}
 	modelsList = parseModels(string(out))
@@ -186,6 +196,75 @@ func InvalidateModels() {
 	modelsMu.Lock()
 	modelsAt = time.Time{}
 	modelsMu.Unlock()
+}
+
+// awsChainEnv is every variable that lets the AWS SDK's credential chain resolve. Removing
+// them is what keeps `amazon-bedrock` out of the catalog command; IMDS is not an environment
+// variable, so it is closed separately with AWS_EC2_METADATA_DISABLED (on ecs-ec2 the slot's
+// instance profile is reachable, so dropping the container variables alone is not enough).
+var awsChainEnv = []string{
+	"AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_SESSION_TOKEN",
+	"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+	"AWS_CONTAINER_AUTHORIZATION_TOKEN", "AWS_CONTAINER_AUTHORIZATION_TOKEN_FILE",
+	"AWS_PROFILE", "AWS_ROLE_ARN", "AWS_WEB_IDENTITY_TOKEN_FILE",
+	"AWS_SHARED_CREDENTIALS_FILE", "AWS_CONFIG_FILE",
+}
+
+// withoutAWSCredentialChain blinds `opencode models` to AWS, because opencode enables its
+// built-in `amazon-bedrock` provider whenever the chain RESOLVES — and every ECS task carries
+// AWS_CONTAINER_CREDENTIALS_RELATIVE_URI, so it always does.
+//
+// 🔴 This is a COST fix, not a cosmetic one, and it is a different bug from the one
+// keepInMenu answers. keepInMenu drops `amazon-bedrock/…` from the list Catalog() shapes —
+// i.e. AFTER this command has already run. Measured on the production deployment
+// (docs/log/64 §64.43.8): with the chain resolving, `opencode models` took **45 seconds**
+// (18.8s of it CPU) against a 10-second budget, so it was killed every single time and the
+// picker fell back to "default only". The shaping never got a list to shape. Raising the
+// timeout does not fix that — 18.8s of CPU is over any budget this path can justify, since
+// the Console asks on every launch-modal open.
+//
+// Nothing is lost: these models cannot run here anyway. WsTaskRole carries no policies on
+// purpose, so bedrock:InvokeModel is AccessDenied, and af never exports AWS_PROFILE into a
+// session or the serve daemon. AF_OPENCODE_SHOW_BEDROCK=1 puts the chain back for a
+// deployment that wired credentials up some other way — the same escape hatch keepInMenu has,
+// and it has to be honoured HERE too, or the flag would show a menu this function emptied.
+//
+// ⚠️ Scope is this one subprocess. Launched sessions build their environment elsewhere, so a
+// member's own AWS tooling inside the workspace is untouched.
+func withoutAWSCredentialChain(env []string) []string {
+	if envOr("AF_OPENCODE_SHOW_BEDROCK", "") == "1" {
+		return env
+	}
+	drop := make(map[string]bool, len(awsChainEnv))
+	for _, k := range awsChainEnv {
+		drop[k] = true
+	}
+	out := make([]string, 0, len(env)+1)
+	for _, entry := range env {
+		name, _, ok := strings.Cut(entry, "=")
+		if ok && drop[name] {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return append(out, "AWS_EC2_METADATA_DISABLED=true")
+}
+
+// firstLine trims a captured stderr down to something a log line can carry. Empty stays
+// empty so the caller's message does not end in a dangling separator.
+func firstLine(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		s = s[:i]
+	}
+	const max = 200
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return ": " + s
 }
 
 // mergeCommandEnv applies stored connection values over the Agent's inherited
