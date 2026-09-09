@@ -35,6 +35,7 @@ Keeping it current:
 - **[engines]** The engines panel shows start time, automatic stop time, recent demand, the model in VRAM and 14 days of occupancy
 - **[sessions]** A session can be told to stop once it is done: it finishes the running turn and then halts (⋯ menu, agents, operator)
 - **[schedules]** A scheduled run can stop its session afterwards, instead of leaving the workspace up until the idle timeout
+- **[sessions]** A session can observe the fleet it is part of — another session's state, its own context usage, reading and adding memos — and nothing that acts (off by default, Settings › Agents)
 - **[image generation]** Antigravity added as a second provider (a different plan, honours the aspect ratio) and tried first; a request can name the provider, and an automatic one falls through when a plan is out of quota
 - **[mirror › skills]** Claude's bundled skills are in the skill picker, folded below your own
 - **[cost]** The shared-cost card breaks inference engines and the speech engine out of the EC2 / ECS lumps
