@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 129
+# count: 130
 admin_sessions.go adminAPI.allSessions x1 {sessions}
 admin_stats.go adminAPI.memberSessions x3 {sessions}
 admin_stats.go adminAPI.memberStats x1 {cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} cond{cpu_pct,disk_quota,disk_used,exit_code,mem_max,oom_kill_total,oom_killed,oom_recent,running,starting} dyn+partial
@@ -26,11 +26,12 @@ egress_member.go egressAPI.propose x1 {entry,id,state}
 engine_admin.go engineAdminAPI.deleteModel x1 {api,box,desired,enabled,error,events,has_models,idle_secs,key,last_demand,managed,mode,model_rows,model_swaps,models,provider,purge,service_since,state,stop_eta,warm,warm_model,window_counted_secs,window_secs,window_units} cond{box,error,events,last_demand,model_swaps,purge,service_since,stop_eta,warm_model,window_counted_secs,window_units}
 engine_admin.go engineAdminAPI.get x1 {engines}
 engine_admin.go engineAdminAPI.listIngest x2 {jobs}
+engine_admin.go engineAdminAPI.listIngestFiles x1 {files}
 engine_admin.go engineAdminAPI.postIngest x1 {bytes,created_at,id,message,model_id,s3_key,source,state} cond{bytes,message}
 engine_admin.go engineAdminAPI.postModel x1 {api,box,desired,enabled,error,events,has_models,idle_secs,key,last_demand,managed,mode,model_rows,model_swaps,models,provider,service_since,state,stop_eta,warm,warm_model,window_counted_secs,window_secs,window_units} cond{box,error,events,last_demand,model_swaps,service_since,stop_eta,warm_model,window_counted_secs,window_units}
 engine_admin.go engineAdminAPI.put x1 {api,box,desired,enabled,error,events,has_models,idle_secs,key,last_demand,managed,mode,model_rows,model_swaps,models,provider,service_since,state,stop_eta,warm,warm_model,window_counted_secs,window_secs,window_units} cond{box,error,events,last_demand,model_swaps,service_since,stop_eta,warm_model,window_counted_secs,window_units}
 engine_admin.go engineAdminAPI.putModel x1 {api,box,desired,enabled,error,events,has_models,idle_secs,key,last_demand,managed,mode,model_rows,model_swaps,models,provider,service_since,state,stop_eta,warm,warm_model,window_counted_secs,window_secs,window_units} cond{box,error,events,last_demand,model_swaps,service_since,stop_eta,warm_model,window_counted_secs,window_units}
-engine_admin.go engineAdminAPI.resolveIngest x1 {base_model,bytes,can_ingest,commercial_use,deployment_token,gated,license,license_name,license_url,sha256,source} cond{base_model,license,license_name,license_url}
+engine_admin.go engineAdminAPI.resolveIngest x1 {base_model,bytes,can_ingest,commercial_use,context_length,deployment_token,gated,license,license_name,license_url,sha256,source} cond{base_model,context_length,license,license_name,license_url}
 engine_gateway.go engineGateway.catalog x1 {engines}
 engine_gateway.go engineGateway.issueSessionToken x1 {base_url,expires_at,models,token}
 git_lfs.go gitServerAPI.lfsBatch x1 {objects,transfer}

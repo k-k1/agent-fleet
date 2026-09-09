@@ -690,7 +690,13 @@ describe("EnginesAdminView", () => {
     await type(inputs[1], "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
     await type(inputs[2], "qwen2.5-coder-1.5b");
     await type(inputs[4], "32768");
-    await type(inputs[5], "4096");
+    // The output cap is a select over fractions of the window, not a free number — 1/8 of
+    // 32,768 is the 4,096 both models here were already being run at.
+    await act(async () => {
+      const sel = host!.querySelectorAll(".engines-ingest select")[0] as HTMLSelectElement;
+      sel.value = "4096";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
 
     apiJSON.mockResolvedValueOnce({ sha256: "cc32", bytes: 1117320768, gated: false,
       license: "apache-2.0", commercial_use: "yes", can_ingest: true });
@@ -727,6 +733,145 @@ describe("EnginesAdminView", () => {
       source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
     });
     expect(host!.textContent).toContain("取り込み中");
+  });
+
+  /** The input of the form row with this label. By label rather than by index, because the
+   *  filename row turns from an input into a select the moment a listing arrives. */
+  const fieldByLabel = (label: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    )!;
+
+  // 🔴 The context length Hugging Face publishes is the ARCHITECTURE's ceiling, and this
+  // deployment already runs a model well below it: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+  // says 262144 and is run at 32768, because 262k does not fit an L4. So a number somebody
+  // entered has to outrank the one off the model card — silently replacing it is how a window
+  // that was chosen for the GPU becomes one that was chosen by the publisher.
+  it("never overwrites a window that was typed with the model's ceiling", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const set = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await set(fieldByLabel("リポジトリ").querySelector("input")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+    await set(fieldByLabel("ファイル名").querySelector("input")!, "Q4_K_M.gguf");
+    // Chosen deliberately, for the GPU this deployment has.
+    await set(fieldByLabel("コンテキストウィンドウ").querySelector("input")!, "32768");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "a".repeat(64),
+      bytes: 18556689568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 262144,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+
+    const ctx = fieldByLabel("コンテキストウィンドウ").querySelector("input") as HTMLInputElement;
+    expect(ctx.value).toBe("32768");
+    // Still SAID, because it is a fact worth knowing — just not one that overwrites a decision.
+    expect(host!.textContent).toContain("モデルの上限 262144");
+  });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): the filename was free text, and one letter
+  // short of `flux1-dev.safetensors` is refused correctly while looking exactly like a file
+  // that is not there. So "look it up" with no filename asks the repository what it HOLDS, and
+  // the answer becomes a picker.
+  //
+  // The two numbers ride along from the same answer: Hugging Face has already parsed the GGUF
+  // header, so the window is offered rather than copied off a model card by hand, and the cap
+  // follows at an eighth of it. Both stay editable — the window especially, because it is the
+  // MODEL's ceiling and not what fits in this deployment's GPU.
+  it("lists what the repository holds, and offers the window off the file that is picked", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const el = host!.querySelector(".engines-ingest input")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // No filename yet, so the first call asks what there is — and starts nothing.
+    apiJSON.mockResolvedValueOnce({
+      files: [
+        { name: "qwen2.5-coder-0.5b-instruct-q2_k.gguf", bytes: 415182720 },
+        { name: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf", bytes: 491400064 },
+      ],
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/files");
+    const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    expect(Array.from(picker.options).map((o) => o.value)).toEqual([
+      "",
+      "qwen2.5-coder-0.5b-instruct-q2_k.gguf",
+      "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+    ]);
+    // The size is on the option, because "which quantisation" IS a question about size.
+    expect(picker.textContent).toContain("491 MB");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
+      bytes: 491400064,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 32768,
+    });
+    await act(async () => {
+      picker.value = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Picking resolves that file, and the resolve is where the licence comes from.
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/resolve");
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
+      source: { hf: { file: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" } },
+    });
+    // Attributed as the MODEL's number, never presented as the window this deployment chose.
+    expect(host!.textContent).toContain("モデルの上限 32768");
+
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input")) as HTMLInputElement[];
+    const ctxField = inputs.find((i) => i.value === "32768");
+    expect(ctxField).toBeTruthy();
+    const caps = Array.from(host!.querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
+    expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
   });
 
   // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered

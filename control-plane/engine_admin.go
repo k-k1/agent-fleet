@@ -68,6 +68,9 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
 	// licence they are about to accept is on screen BEFORE the button that accepts it.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/resolve", a.withSuperAdmin(a.resolveIngest))
+	// And what the repository HAS, so the filename is picked rather than copied by hand across
+	// two windows — the same read, filtered to the files this engine could actually load.
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/files", a.withSuperAdmin(a.listIngestFiles))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -658,7 +661,49 @@ func engineResolvedRow(res engineResolved, def engineIngestDef) map[string]any {
 	if res.BaseModel != "" {
 		row["base_model"] = res.BaseModel
 	}
+	// The model's own maximum, offered so nobody reads it off a model card by hand. Sent as
+	// what it is — a ceiling, not a setting: 🔴 the 30B in this deployment publishes 262144 and
+	// is run at 32768, because the architecture's limit and what fits in an L4 are different
+	// questions and only one of them is Hugging Face's to answer.
+	if res.ContextLength > 0 {
+		row["context_length"] = res.ContextLength
+	}
 	return row
+}
+
+// engineIngestKindFor says what an engine takes in, which is what the file list is filtered by.
+// The catalogue's `kind` is the same word the panel sends when it starts one.
+func engineIngestKindFor(e *engineRuntimeState) string {
+	if e.def.api() == engineAPIImages {
+		return "checkpoint"
+	}
+	return "gguf"
+}
+
+// listIngestFiles (POST …/ingest/files) answers "what does this repository offer", so the
+// filename is chosen instead of retyped. 🔴 Measured 2026-09-09: a name one letter short
+// (`flux1-dev.safetensor`) is refused correctly and looks exactly like a file that is not
+// there, and the person is left comparing two strings across two windows.
+//
+// It starts nothing, like the resolve, and it is the same read: whatever is picked here is
+// resolved out of an answer with the same shape a moment later.
+func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
+		return
+	}
+	var b engineIngestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	files, aerr := engineIngestList(r.Context(), b.Source, engineIngestKindFor(e))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
 }
 
 // postIngest (POST …/ingest) resolves the source and starts the task.

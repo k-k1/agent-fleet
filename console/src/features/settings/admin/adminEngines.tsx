@@ -79,7 +79,15 @@ type ResolvedSource = {
   /** false when the repository is gated and this deployment has no Hugging Face token. The
    *  button is disabled on it rather than letting a task run nine minutes into a 401. */
   can_ingest?: boolean;
+  /** The model's OWN maximum, off the GGUF header. 🔴 A ceiling, not a setting: the 30B in
+   *  this deployment publishes 262144 and is run at 32768, because what the architecture
+   *  allows and what fits in the GPU are different questions. Offered, never applied. */
+  context_length?: number;
 };
+
+/** One file a repository offers (POST …/ingest/files), already filtered to the ones this
+ *  engine could load and that carry a sha256. */
+type IngestCandidate = { name: string; bytes?: number; sha256?: string };
 
 type IngestJob = {
   id: string;
@@ -574,33 +582,77 @@ function EngineIngest({
   const [ctx, setCtx] = useState("");
   const [out, setOut] = useState("");
   const [found, setFound] = useState<ResolvedSource | null>(null);
+  const [files, setFiles] = useState<IngestCandidate[] | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [err, setErr] = useState("");
 
-  const source = () => {
+  const source = (name = file) => {
     const r = repo.trim();
     // A pasted https://huggingface.co/<repo>/blob|resolve/<rev>/<file> is what a person
     // actually has in hand, so it is accepted as-is rather than asked for in pieces.
     const m = r.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)(?:\/(?:blob|resolve)\/([^/]+)\/(.+))?$/);
-    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: m[3] || file.trim() } };
+    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: m[3] || name.trim() } };
     const civ = r.match(/civitai\.com\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
-    if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: file.trim() } };
-    if (/^https?:\/\//.test(r)) return { url: r, sha256: file.trim() };
-    return { hf: { repo: r, file: file.trim(), revision: "" } };
+    if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: name.trim() } };
+    if (/^https?:\/\//.test(r)) return { url: r, sha256: name.trim() };
+    return { hf: { repo: r, file: name.trim(), revision: "" } };
   };
 
-  const resolve = async () => {
-    setErr("");
+  /** A plain url addresses one file and has no listing; the field carries its sha256 there. */
+  const listable = () => !/^https?:\/\//.test(repo.trim()) || /huggingface\.co|civitai\.com/.test(repo.trim());
+
+  const resolveFile = async (name: string) => {
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/resolve`, "POST", {
-      source: source(),
+      source: source(name),
     });
     if (d?.error) {
       setFound(null);
       setErr(errDetail(d.error));
       return;
     }
-    setFound(d as ResolvedSource);
+    const res = d as ResolvedSource;
+    setFound(res);
     setAccepted(false);
+    // Offered, not applied — and only into a field nobody has typed in, because the number
+    // somebody entered deliberately outranks the one off the model card. The cap follows at an
+    // eighth, which is what both models here were already being run at; it is a select, so it
+    // stays a choice rather than a number that appeared.
+    if (res.context_length && !ctx.trim()) {
+      setCtx(String(res.context_length));
+      if (!out.trim()) setOut(String(Math.floor(res.context_length / 8)));
+    }
+  };
+
+  /** 「調べる」. With no file named yet this ASKS WHAT THERE IS, because a filename retyped from
+   *  another window is where the mistakes are. One candidate resolves straight through — a
+   *  picker over a single option is a question with one answer. */
+  const resolve = async () => {
+    setErr("");
+    if (!file.trim() && listable()) {
+      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/files`, "POST", {
+        source: source(""),
+      });
+      if (d?.error) {
+        setFiles(null);
+        setErr(errDetail(d.error));
+        return;
+      }
+      const list = (Array.isArray(d?.files) ? d.files : []) as IngestCandidate[];
+      setFiles(list);
+      if (list.length === 1) {
+        setFile(list[0].name);
+        await resolveFile(list[0].name);
+      }
+      return;
+    }
+    await resolveFile(file);
+  };
+
+  const pick = async (name: string) => {
+    setErr("");
+    setFile(name);
+    setFound(null);
+    if (name) await resolveFile(name);
   };
 
   const start = async () => {
@@ -631,6 +683,7 @@ function EngineIngest({
     setAccepted(false);
     setRepo("");
     setFile("");
+    setFiles(null);
     setId("");
     onStarted();
   };
@@ -650,12 +703,42 @@ function EngineIngest({
   );
   return (
     <div className="engines-model-add engines-ingest">
-      {field(tr("admin.engines_ingest_repo"), repo, setRepo, "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
-      {field(tr("admin.engines_ingest_file"), file, setFile, isImage ? "name.safetensors" : "name.gguf")}
+      {/* Editing the repository drops the list and the verdict with it: a filename picked out
+          of the previous repository's answer would resolve against the new one. */}
+      {field(tr("admin.engines_ingest_repo"), repo, (v) => {
+        setRepo(v);
+        setFiles(null);
+        setFile("");
+        setFound(null);
+      }, "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
+      {/* The filename is a picker as soon as the repository has been asked what it holds. The
+          text field stays underneath it: a plain url has no listing, and there the field
+          carries the sha256 instead. */}
+      {files && files.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>{tr("admin.engines_ingest_file")}</span>
+          <select value={file} onChange={(ev) => pick(ev.currentTarget.value)}>
+            <option value="">{tr("admin.engines_ingest_pick")}</option>
+            {files.map((f) => (
+              <option key={f.name} value={f.name}>
+                {f.name}
+                {f.bytes ? " · " + fmtBytes(f.bytes) : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {files && files.length === 0 && <p className="form-err">{tr("admin.engines_ingest_no_files")}</p>}
+      {!files && field(tr("admin.engines_ingest_file"), file, setFile, isImage ? "name.safetensors" : "name.gguf")}
       {field(tr("admin.engines_model_add_id"), id, setId, "qwen2.5-coder-1.5b")}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
-      {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096")}
+      {/* The output cap is a FRACTION of the window, never a free number. It is not published
+          anywhere — it is a deployment's policy for how much of the window one reply may eat —
+          and 🔴 ADR 0072 decision 3: left at 0 opencode reads it as 32,000 and a 32k model ends
+          up with 768 usable tokens. Offering computed values makes the pair impossible to
+          half-fill. */}
+      {!isImage && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
         <button type="button" className="ghost sm" onClick={resolve} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
@@ -697,6 +780,49 @@ function EngineIngest({
   );
 }
 
+/** The output cap, as a fraction of the context window.
+ *
+ * A free number here is a question nobody can answer from a model card: how much of the window
+ * one reply may consume is a deployment's choice, not a property Hugging Face publishes. The
+ * fractions are computed from whatever window is in the field beside it, so the two can never
+ * disagree — and 1/8 of the 32,768 both models in this deployment declare is 4,096, which is
+ * what they were being run at by hand. Falls back to a plain number while no window is known,
+ * because a select with nothing to compute from would offer nothing at all. */
+function OutputCapField({
+  ctx,
+  value,
+  onChange,
+}: {
+  ctx: string;
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  const tr = useT();
+  const window = Math.floor(Number(ctx.trim().replace(/[_,]/g, "")));
+  if (!Number.isFinite(window) || window <= 0) {
+    return (
+      <label className="engines-model-add-row">
+        <span>{tr("admin.engines_model_add_out")}</span>
+        <input value={value} placeholder="4096" onChange={(ev) => onChange(ev.currentTarget.value)} />
+      </label>
+    );
+  }
+  const options = [4, 8, 16].map((d) => ({ d, n: Math.floor(window / d) })).filter((o) => o.n > 0);
+  return (
+    <label className="engines-model-add-row">
+      <span>{tr("admin.engines_model_add_out")}</span>
+      <select value={value} onChange={(ev) => onChange(ev.currentTarget.value)}>
+        <option value="">{tr("admin.engines_ingest_pick")}</option>
+        {options.map((o) => (
+          <option key={o.d} value={String(o.n)}>
+            {`1/${o.d}（${o.n}）`}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 /** What the source turned out to be. Every line is a fact the control plane read from the
  *  source's own API — nothing here is guessed, and the two licence fields are both shown
  *  because Hugging Face answers `other` for the non-commercial ones. */
@@ -706,6 +832,11 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
   if (found.bytes) bits.push(fmtBytes(found.bytes));
   if (found.license_name || found.license) bits.push(found.license_name || found.license || "");
   if (found.base_model) bits.push(found.base_model);
+  // Attributed, always: it is the architecture's ceiling, not a window this deployment has
+  // decided it can afford, and the two differ by 8x on the model already running here.
+  if (found.context_length) {
+    bits.push((tr("admin.engines_ingest_ctx_max") as string).replace("{n}", String(found.context_length)));
+  }
   return (
     <>
       <p className="muted engines-model-meta">

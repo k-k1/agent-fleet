@@ -69,6 +69,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
   "admin.engines_ingest_resolve": "Look it up",
+  // Not having the filename in hand is the normal state, so "look it up" starts by asking the
+  // repository what it holds.
+  "admin.engines_ingest_pick": "Choose one",
+  "admin.engines_ingest_no_files": "This repository offers nothing this engine could load with a sha256.",
+  // 🔴 The MODEL's ceiling, not the window this deployment can run. The 30B declares 262144 and
+  // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
+  "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
   "admin.engines_ingest_go": "Take it in",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",

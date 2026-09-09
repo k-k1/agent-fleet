@@ -70,6 +70,12 @@ export const admin = {
   "admin.engines_ingest_repo": "リポジトリ",
   "admin.engines_ingest_file": "ファイル名",
   "admin.engines_ingest_resolve": "調べる",
+  // ファイル名を持っていない状態が普通なので、「調べる」は最初にリポジトリの中身を聞く。
+  "admin.engines_ingest_pick": "選んでください",
+  "admin.engines_ingest_no_files": "このリポジトリに、このエンジンが読み込めて sha256 のあるファイルがありません。",
+  // 🔴 モデル側の上限であって、この配備で回せる窓ではない。30B は 262144 と申告するが
+  // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
+  "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
   "admin.engines_ingest_go": "取り込む",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",

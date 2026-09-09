@@ -27,6 +27,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -86,6 +87,42 @@ type engineResolved struct {
 	BaseModel   string
 	Gated       bool
 	Source      string // what a person reads in the job list
+	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
+	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
+	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
+	// this deployment runs it at 32768, because what the architecture allows and what fits in
+	// an L4 are different questions. The panel offers it and says whose number it is.
+	ContextLength int
+}
+
+// engineCandidate is one file a repository offers. The list exists because a filename is
+// something a person retypes from another window, and 🔴 a name one letter short (measured
+// 2026-09-09: `flux1-dev.safetensor`) is indistinguishable from a name that is simply not there.
+// Everything here comes from the same answer the resolve reads.
+type engineCandidate struct {
+	Name   string `json:"name"`
+	Bytes  int64  `json:"bytes"`
+	SHA256 string `json:"sha256"`
+}
+
+// engineIngestExts says which files are worth offering for a role. A repository holds READMEs,
+// configs and preview images too, and a list that includes them buries the two or three lines
+// that are actually the model.
+func engineIngestExts(kind string) []string {
+	if kind == "gguf" {
+		return []string{".gguf"}
+	}
+	return []string{".safetensors", ".ckpt", ".pt", ".sft"}
+}
+
+func engineIngestWanted(name string, exts []string) bool {
+	l := strings.ToLower(name)
+	for _, e := range exts {
+		if strings.HasSuffix(l, e) {
+			return true
+		}
+	}
+	return false
 }
 
 // engineIngestResolve turns a source into something the task can be told to fetch.
@@ -113,6 +150,51 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 
 // engineResolveHF reads the model card and the file's LFS metadata.
 //
+// engineHFDoc is the part of a model's API answer this file reads. One call serves both the
+// listing and the resolve, so a person who picks a file from the list is choosing from the same
+// answer the sha256 and the licence are then taken out of — the alternative is two reads that
+// can disagree across a push to the repository.
+type engineHFDoc struct {
+	Gated    any `json:"gated"` // false, or "auto" / "manual" — a string is still gated
+	CardData struct {
+		License     any    `json:"license"` // a string, or a list on some cards
+		LicenseName string `json:"license_name"`
+		LicenseLink string `json:"license_link"`
+	} `json:"cardData"`
+	// Hugging Face parses the GGUF header itself and publishes the result here. Absent for
+	// every repository that holds no GGUF, which is why the field is optional everywhere it
+	// is read rather than a reason to fail.
+	GGUF struct {
+		ContextLength int    `json:"context_length"`
+		Architecture  string `json:"architecture"`
+	} `json:"gguf"`
+	Siblings []struct {
+		Name string `json:"rfilename"`
+		Size int64  `json:"size"`
+		LFS  struct {
+			SHA256 string `json:"sha256"`
+		} `json:"lfs"`
+	} `json:"siblings"`
+}
+
+// engineReadHF fetches a model's metadata, returning the revision it settled on so callers can
+// build a download URL against the same one.
+func engineReadHF(ctx context.Context, repo, revision string) (engineHFDoc, string, *apiError) {
+	rev := strings.TrimSpace(revision)
+	if rev == "" {
+		rev = "main"
+	}
+	api := engineIngestBase + "/api/models/" + repo + "?blobs=true"
+	if rev != "main" {
+		api = engineIngestBase + "/api/models/" + repo + "/revision/" + url.PathEscape(rev) + "?blobs=true"
+	}
+	var doc engineHFDoc
+	if aerr := engineIngestGetJSON(ctx, api, &doc); aerr != nil {
+		return engineHFDoc{}, rev, aerr
+	}
+	return doc, rev, nil
+}
+
 // The licence is taken as TWO fields on purpose (ADR 0072 decision 10, review R8): Hugging Face
 // answers `license: "other"` for both non-commercial models in the ADR's table and puts the real
 // terms in `license_name`, so a catalogue that copies only the first shows them as "other".
@@ -122,39 +204,18 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	if repo == "" || file == "" {
 		return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "hf needs a repo and a file"}
 	}
-	rev := strings.TrimSpace(hf.Revision)
-	if rev == "" {
-		rev = "main"
-	}
-	api := engineIngestBase + "/api/models/" + repo + "?blobs=true"
-	if rev != "main" {
-		api = engineIngestBase + "/api/models/" + repo + "/revision/" + url.PathEscape(rev) + "?blobs=true"
-	}
-	var doc struct {
-		Gated    any `json:"gated"` // false, or "auto" / "manual" — a string is still gated
-		CardData struct {
-			License     any    `json:"license"` // a string, or a list on some cards
-			LicenseName string `json:"license_name"`
-			LicenseLink string `json:"license_link"`
-		} `json:"cardData"`
-		Siblings []struct {
-			Name string `json:"rfilename"`
-			Size int64  `json:"size"`
-			LFS  struct {
-				SHA256 string `json:"sha256"`
-			} `json:"lfs"`
-		} `json:"siblings"`
-	}
-	if aerr := engineIngestGetJSON(ctx, api, &doc); aerr != nil {
+	doc, rev, aerr := engineReadHF(ctx, repo, hf.Revision)
+	if aerr != nil {
 		return engineResolved{}, aerr
 	}
 	var found bool
 	out := engineResolved{
-		License:     engineFirstString(doc.CardData.License),
-		LicenseName: strings.TrimSpace(doc.CardData.LicenseName),
-		LicenseURL:  strings.TrimSpace(doc.CardData.LicenseLink),
-		Gated:       engineHFGated(doc.Gated),
-		Source:      "hf:" + repo + "/" + file,
+		License:       engineFirstString(doc.CardData.License),
+		LicenseName:   strings.TrimSpace(doc.CardData.LicenseName),
+		LicenseURL:    strings.TrimSpace(doc.CardData.LicenseLink),
+		Gated:         engineHFGated(doc.Gated),
+		ContextLength: doc.GGUF.ContextLength,
+		Source:        "hf:" + repo + "/" + file,
 	}
 	for _, s := range doc.Siblings {
 		if s.Name != file {
@@ -180,6 +241,90 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	return out, nil
 }
 
+// engineIngestList answers "what does this source offer", so a filename is picked rather than
+// retyped. Only files that can actually be taken in are returned: one with no sha256 would fail
+// the resolve a moment later, and offering it is offering a dead end.
+//
+// A plain url addresses one file and has no listing — the caller keeps its own field for that.
+func engineIngestList(ctx context.Context, src engineIngestSource, kind string) ([]engineCandidate, *apiError) {
+	exts := engineIngestExts(kind)
+	switch {
+	case src.HF != nil:
+		repo := strings.Trim(strings.TrimSpace(src.HF.Repo), "/")
+		if repo == "" {
+			return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "hf needs a repo"}
+		}
+		doc, _, aerr := engineReadHF(ctx, repo, src.HF.Revision)
+		if aerr != nil {
+			return nil, aerr
+		}
+		out := []engineCandidate{}
+		for _, s := range doc.Siblings {
+			if len(s.LFS.SHA256) != 64 || !engineIngestWanted(s.Name, exts) {
+				continue
+			}
+			out = append(out, engineCandidate{Name: s.Name, Bytes: s.Size, SHA256: strings.ToLower(s.LFS.SHA256)})
+		}
+		return engineSortCandidates(out), nil
+	case src.Civitai != nil:
+		if src.Civitai.VersionID <= 0 {
+			return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "civitai needs a versionId"}
+		}
+		doc, aerr := engineReadCivitai(ctx, src.Civitai.VersionID)
+		if aerr != nil {
+			return nil, aerr
+		}
+		out := []engineCandidate{}
+		for _, f := range doc.Files {
+			if len(f.Hashes.SHA256) != 64 || !strings.EqualFold(f.Type, "Model") {
+				continue
+			}
+			out = append(out, engineCandidate{
+				Name: f.Name, Bytes: int64(f.SizeKB * 1024), SHA256: strings.ToLower(f.Hashes.SHA256),
+			})
+		}
+		return engineSortCandidates(out), nil
+	}
+	return nil, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
+		"only a Hugging Face repository or a Civitai version can be listed"}
+}
+
+// engineSortCandidates puts them in the order a person reads them — by name, which for a GGUF
+// repository groups the quantisations (…-q4_k_m, …-q5_k_m, …-q8_0) into the sequence somebody is
+// choosing along.
+func engineSortCandidates(c []engineCandidate) []engineCandidate {
+	sort.Slice(c, func(i, j int) bool { return c[i].Name < c[j].Name })
+	return c
+}
+
+// engineCivitaiDoc is one model VERSION. Shared by the listing and the resolve for the same
+// reason as the Hugging Face one.
+type engineCivitaiDoc struct {
+	BaseModel string `json:"baseModel"`
+	Model     struct {
+		Name string `json:"name"`
+		Type string `json:"type"`
+	} `json:"model"`
+	Files []struct {
+		Name        string  `json:"name"`
+		SizeKB      float64 `json:"sizeKB"`
+		Type        string  `json:"type"`
+		DownloadURL string  `json:"downloadUrl"`
+		Hashes      struct {
+			SHA256 string `json:"SHA256"`
+		} `json:"hashes"`
+	} `json:"files"`
+}
+
+func engineReadCivitai(ctx context.Context, versionID int) (engineCivitaiDoc, *apiError) {
+	var doc engineCivitaiDoc
+	id := strconv.Itoa(versionID)
+	if aerr := engineIngestGetJSON(ctx, engineCivitaiBase+"/api/v1/model-versions/"+id, &doc); aerr != nil {
+		return engineCivitaiDoc{}, aerr
+	}
+	return doc, nil
+}
+
 // engineResolveCivitai reads a model VERSION, which is what a Civitai download URL addresses.
 //
 // Measured 2026-09-09 (ADR 0072 open question 4, which the draft could not answer because the
@@ -190,26 +335,11 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 	if c.VersionID <= 0 {
 		return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "civitai needs a versionId"}
 	}
-	var doc struct {
-		BaseModel string `json:"baseModel"`
-		Model     struct {
-			Name string `json:"name"`
-			Type string `json:"type"`
-		} `json:"model"`
-		Files []struct {
-			Name        string  `json:"name"`
-			SizeKB      float64 `json:"sizeKB"`
-			Type        string  `json:"type"`
-			DownloadURL string  `json:"downloadUrl"`
-			Hashes      struct {
-				SHA256 string `json:"SHA256"`
-			} `json:"hashes"`
-		} `json:"files"`
-	}
-	id := strconv.Itoa(c.VersionID)
-	if aerr := engineIngestGetJSON(ctx, engineCivitaiBase+"/api/v1/model-versions/"+id, &doc); aerr != nil {
+	doc, aerr := engineReadCivitai(ctx, c.VersionID)
+	if aerr != nil {
 		return engineResolved{}, aerr
 	}
+	id := strconv.Itoa(c.VersionID)
 	want := strings.TrimSpace(c.File)
 	for _, f := range doc.Files {
 		if want != "" && f.Name != want {

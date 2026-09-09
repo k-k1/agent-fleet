@@ -30,6 +30,22 @@ func hfStub(t *testing.T) *httptest.Server {
 				"license_name":"flux-1-dev-non-commercial-license"},
 				"siblings":[{"rfilename":"flux1-dev.safetensors","size":23802932552,
 				"lfs":{"sha256":"4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7"}}]}`))
+		// A real GGUF repository: several quantisations to choose between, files that are not
+		// the model at all, and the context length Hugging Face parses out of the GGUF header
+		// (`gguf.context_length`) and publishes on this very call — measured 2026-09-09 against
+		// four repositories from three publishers.
+		case strings.Contains(r.URL.Path, "Qwen2.5-Coder-0.5B"):
+			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
+				"gguf":{"context_length":32768,"architecture":"qwen2"},
+				"siblings":[
+				{"rfilename":"README.md","size":9000},
+				{"rfilename":"qwen2.5-coder-0.5b-instruct-q8_0.gguf","size":675710848,
+				 "lfs":{"sha256":"e1a77721fa97d4120000000000000000000000000000000000000000000000ff"}},
+				{"rfilename":"qwen2.5-coder-0.5b-instruct-q4_k_m.gguf","size":491400064,
+				 "lfs":{"sha256":"1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32"}},
+				{"rfilename":"unversioned.gguf","size":123},
+				{"rfilename":"qwen2.5-coder-0.5b-instruct-q2_k.gguf","size":415182720,
+				 "lfs":{"sha256":"f9bddf294ef15c800000000000000000000000000000000000000000000000aa"}}]}`))
 		case strings.Contains(r.URL.Path, "Qwen2.5-Coder"):
 			w.Write([]byte(`{"gated":false,"cardData":{"license":"apache-2.0"},
 				"siblings":[{"rfilename":"qwen2.5-coder-1.5b-instruct-q4_k_m.gguf","size":1117320768,
@@ -93,6 +109,93 @@ func TestEngineResolveHuggingFace(t *testing.T) {
 	}
 	if _, aerr := engineResolveHF(ctx, engineIngestHF{Repo: "x/no-checksum", File: "absent.bin"}); aerr == nil {
 		t.Error("a file the repository does not list was accepted")
+	}
+}
+
+// The file list exists because a filename is something a person copies between two windows, and
+// 🔴 one letter short (`flux1-dev.safetensor`, measured 2026-09-09) is refused correctly and
+// looks exactly like a file that is not there.
+//
+// What it must NOT offer is as much of the point as what it offers: a README is not a model, and
+// a .gguf with no LFS pointer would be refused by the resolve a moment later, so putting either
+// in front of somebody is offering a dead end.
+func TestEngineIngestListOffersOnlyWhatCanBeTakenIn(t *testing.T) {
+	srv := hfStub(t)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	got, aerr := engineIngestList(context.Background(),
+		engineIngestSource{HF: &engineIngestHF{Repo: "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF"}}, "gguf")
+	if aerr != nil {
+		t.Fatalf("list: %v", aerr.message)
+	}
+	// Sorted by name, which is the order the quantisations read in.
+	want := []string{
+		"qwen2.5-coder-0.5b-instruct-q2_k.gguf",
+		"qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+		"qwen2.5-coder-0.5b-instruct-q8_0.gguf",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d candidates, want %d: %+v", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Errorf("candidate %d = %q, want %q", i, got[i].Name, w)
+		}
+	}
+	// The size rides along, because "which quantisation" is a question about size and the
+	// answer is otherwise a second trip to the model card.
+	if got[1].Bytes != 491400064 || got[1].SHA256 != "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32" {
+		t.Errorf("q4_k_m = %d bytes / %s", got[1].Bytes, got[1].SHA256)
+	}
+
+	// An image engine asks the same repository a different question, and gets nothing rather
+	// than a list of GGUFs it could not load.
+	if c, _ := engineIngestList(context.Background(),
+		engineIngestSource{HF: &engineIngestHF{Repo: "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF"}}, "checkpoint"); len(c) != 0 {
+		t.Errorf("a checkpoint engine was offered %d gguf files", len(c))
+	}
+
+	// A plain url addresses one file; there is nothing to list, and saying so beats an empty
+	// list that reads as "this repository is empty".
+	if _, aerr := engineIngestList(context.Background(),
+		engineIngestSource{URL: "https://example.invalid/m.gguf"}, "gguf"); aerr == nil {
+		t.Error("a plain url was listed as though it had files")
+	}
+}
+
+// 🔴 The context length is a CEILING, not a setting. Hugging Face answers what the architecture
+// allows (the 30B in this deployment says 262144); what fits in an L4 is a different question
+// and the deployment runs that model at 32768. So it rides as its own field for the panel to
+// OFFER, and nothing here or below ever writes it into a row by itself.
+func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
+	srv := hfStub(t)
+	old := engineIngestBase
+	engineIngestBase = srv.URL
+	t.Cleanup(func() { engineIngestBase = old })
+
+	got, aerr := engineResolveHF(context.Background(), engineIngestHF{
+		Repo: "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF", File: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"})
+	if aerr != nil {
+		t.Fatalf("resolve: %v", aerr.message)
+	}
+	if got.ContextLength != 32768 {
+		t.Errorf("context_length = %d, want 32768", got.ContextLength)
+	}
+	if row := engineResolvedRow(got, engineIngestDef{}); row["context_length"] != 32768 {
+		t.Errorf("the panel is not told the context length: %v", row["context_length"])
+	}
+
+	// A repository with no GGUF has no such field, and an absent one must not surface as 0 —
+	// the panel would offer a window of zero tokens as though it had been measured.
+	flux, aerr := engineResolveHF(context.Background(), engineIngestHF{
+		Repo: "black-forest-labs/FLUX.1-dev", File: "flux1-dev.safetensors"})
+	if aerr != nil {
+		t.Fatalf("gated resolve: %v", aerr.message)
+	}
+	if _, ok := engineResolvedRow(flux, engineIngestDef{})["context_length"]; ok {
+		t.Error("a repository with no gguf metadata reported a context length")
 	}
 }
 
