@@ -332,7 +332,15 @@ export function EnginesAdminView() {
 
   return (
     <div className="admin-stage">
-      {rows.length === 0 && <p className="muted pad">{tr("admin.engines_none")}</p>}
+      {rows.length === 0 && (
+        <section className="admin-panel">
+          <p className="muted">{tr("admin.engines_none")}</p>
+          {/* 🔴 "There is nothing here" is the worst possible answer to "what could I run?".
+              Looking at what Hugging Face has needs no engine — no token, no bucket, no task —
+              so the browse stays, and it says what it cannot do rather than pretending. */}
+          <EngineBrowse />
+        </section>
+      )}
       {rows.map((e) => (
         <section className="admin-panel" key={e.key}>
           <div className="usage-toolbar">
@@ -1219,6 +1227,137 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
  *    So every row is DATED and the list is headed. Without a time, a green "done" beside a
  *    model id reads as the current state of that model — i.e. as "this one is ready to use" —
  *    which is exactly wrong for a row whose model has been deleted. */
+/** Looking at what there is to stage, on a deployment with no engine to stage it INTO.
+ *
+ * The same read as the ingest form's picker (ADR 0072 decision 11) with no engine in the path:
+ * the CP holds no token, reads no bucket and starts no task to answer it, so nothing about it
+ * needs 60-engines to be deployed. What it cannot do is take anything in, and the note says so
+ * — an administrator deciding whether self-hosted inference is worth standing up is exactly the
+ * person who cannot see the catalogue today. */
+function EngineBrowse() {
+  const tr = useT();
+  const [q, setQ] = useState("");
+  const [kind, setKind] = useState("gguf");
+  const [sort, setSort] = useState("downloads");
+  const [source, setSource] = useState("hf");
+  const [hits, setHits] = useState<IngestHit[] | null>(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const run = async (opts: { kind?: string; sort?: string; source?: string } = {}) => {
+    setBusy(true);
+    setErr("");
+    try {
+      const k = opts.kind ?? kind;
+      const d = await apiJSON(`api/admin/engines/search?kind=${encodeURIComponent(k)}`, "POST", {
+        q,
+        source: opts.source ?? source,
+        sort: opts.sort ?? sort,
+      });
+      if (d?.error) {
+        setHits(null);
+        setErr(errDetail(d.error));
+        return;
+      }
+      setHits((Array.isArray(d?.hits) ? d.hits : []) as IngestHit[]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="engines-model-add engines-ingest">
+      <label className="engines-search-row">
+        <span>{tr("admin.engines_ingest_search")}</span>
+        <input
+          value={q}
+          placeholder={kind === "gguf" ? "qwen2.5 coder" : "sdxl"}
+          onChange={(ev) => setQ(ev.currentTarget.value)}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter") {
+              ev.preventDefault();
+              run();
+            }
+          }}
+        />
+      </label>
+      <div className="engines-model-add-actions">
+        {/* With no engine there is nothing to derive the kind from, so it is asked. */}
+        <span className="seg sm">
+          {(["gguf", "checkpoint"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              className={"seg-btn" + (kind === k ? " active" : "")}
+              onClick={() => {
+                setKind(k);
+                setHits(null);
+                // Civitai hosts image models only, so switching to GGUF has to take the source
+                // back with it — otherwise the next search is Civitai-for-LLM, which the CP
+                // correctly answers with nothing and which reads as a broken search.
+                if (k === "gguf") setSource("hf");
+              }}
+            >
+              {tr(("admin.engines_browse_kind_" + k) as never)}
+            </button>
+          ))}
+        </span>
+        {/* Civitai only for checkpoints — the same rule the ingest form follows. */}
+        {kind === "checkpoint" && (
+          <span className="seg sm">
+            {(["hf", "civitai"] as const).map((sr) => (
+              <button
+                key={sr}
+                type="button"
+                className={"seg-btn" + (source === sr ? " active" : "")}
+                onClick={() => {
+                  setSource(sr);
+                  setHits(null);
+                }}
+              >
+                {tr(("admin.engines_ingest_source_" + sr) as never)}
+              </button>
+            ))}
+          </span>
+        )}
+        <span className="seg sm">
+          {(["downloads", "trending", "likes"] as const).map((sr) => (
+            <button
+              key={sr}
+              type="button"
+              className={"seg-btn" + (sort === sr ? " active" : "")}
+              onClick={() => {
+                setSort(sr);
+                run({ sort: sr });
+              }}
+            >
+              {tr(("admin.engines_ingest_sort_" + sr) as never)}
+            </button>
+          ))}
+        </span>
+        <button type="button" className="ghost sm" onClick={() => run()} disabled={busy}>
+          {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
+        </button>
+      </div>
+      {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
+      {hits && hits.length > 0 && (
+        <ul className="engines-search-hits">
+          {hits.map((h) => (
+            <li key={h.source + ":" + h.ref}>
+              {/* Not a button: there is nowhere to put it. Picking one fills an ingest form,
+                  and this deployment has no role to ingest into. */}
+              <span className="mono">{h.name}</span>
+              <span className="muted">{ingestHitMeta(h, tr)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {err && <p className="form-err">{err}</p>}
+      <p className="muted">{tr("admin.engines_browse_note")}</p>
+    </div>
+  );
+}
+
 /** One line under a search result: how popular it is, whether it is gated, what licence it
  *  carries, how big it is. Every part is omitted rather than guessed — the two APIs answer
  *  different subsets, and a zero download count reads as a fact. */

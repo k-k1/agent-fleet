@@ -666,6 +666,24 @@ names move between versions — pin the tag and freeze the templates behind gold
       that was sorted on leaves "why is this here" unanswerable, and "everybody uses it" is not
       the same answer as "people are looking at it this week". Civitai publishes no trending
       score, so that field stays **empty rather than borrowing** another number.
+    - 🔴 **Browsing requires no engine.** A deployment that has not adopted 60-engines, and one
+      that has switched its engine off, can both still LOOK. The read needs no token, no bucket
+      and no task (decision 6) — the only thing an engine is needed for is a role to stage
+      INTO. So `POST /api/admin/engines/search` (with `kind` stated, since there is no engine to
+      derive it from) sits beside the per-engine route, and the panel shows it when there are
+      zero engines. **"There is nothing here" is the worst possible answer to "what could I
+      run?"**, and the administrator deciding whether to stand the stack up at all was exactly
+      the person who could not see the catalogue. Taking one in is the part that does not work,
+      so the panel says so (a note, not a button). Civitai is offered here too, for checkpoints.
+      - 🔴 **The real cause was where the routes were registered** (measured 2026-09-09 by
+        running the CP in this container): the whole admin route set sat INSIDE
+        `registerEngineRoutes`' `if reg == nil { return }`, so a deployment with no engine table
+        answered 404 to `GET /api/admin/engines` — the panel could not even say "no engines
+        here". The admin routes move outside that guard; every handler is nil-safe on the
+        registry and answers "no such engine" by itself.
+    - 🔴 **The narrow decode is worth 41x** (measured 2026-09-09, the same 20 rows): **211,015
+      bytes** raw upstream against **5,125 bytes** out of this route. Dropping `chat_template`
+      and `extra_gated_prompt` is not a marginal saving.
     - **Search is not a precondition for ingest.** Typing `owner/name` or a URL stays. A
       deployment with closed egress loses search too, and there decision 6's hand-run route
       simply goes back to being the main one.
