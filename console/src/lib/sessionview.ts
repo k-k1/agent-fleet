@@ -66,7 +66,7 @@ export interface SessionState {
   rateLimitResumeAt?: string;
   /** The interaction that was still awaiting an answer when the session was stopped (docs/log/75). Only set on stopped rows. */
   carried?: string;
-  /** The session proposed a handoff nobody has launched yet. Set on live and stopped rows alike. */
+  /** The last handoff this session proposed has not been launched. Live and stopped rows alike. */
   handoffPending?: boolean;
 }
 

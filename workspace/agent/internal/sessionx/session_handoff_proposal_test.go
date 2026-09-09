@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
@@ -155,17 +156,70 @@ func TestWireSessionFlagsAnUnlaunchedHandoffProposal(t *testing.T) {
 		t.Fatal("the flag survived the launch; the row would go on advertising work that has started")
 	}
 
-	// A second proposal raises it again, and one launched proposal must not mask an
-	// outstanding sibling (a single turn may fan out into several successors).
+	// A newer proposal raises it again — the launched one is history, this is the last thing
+	// the session handed on.
 	post(`{"prompt":"Continue with task D.","title":"Continue task D"}`)
 	if !pending() {
-		t.Fatal("a launched proposal masked an outstanding one; a fanned-out handoff would go unseen")
+		t.Fatal("a proposal made after a launched one did not raise the flag")
 	}
 
 	// A stopped session carries it too: one folded away with an unlaunched handoff is
 	// precisely the one nobody reopens.
 	if !wireSession(m, false).HandoffPending {
 		t.Fatal("a stopped row dropped the flag")
+	}
+}
+
+// The judgement is on the LAST proposal, not on "is any of them unlaunched". Proposals are kept
+// after launch, so a session that has handed work on repeatedly holds every card it ever made,
+// and a proposal a later one REPLACED would otherwise pin the badge for good — which is what
+// happened on the real store (2026-09-10: 5 of the 8 badged rows were exactly this).
+func TestWireSessionIgnoresASupersededHandoffProposal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const name = "handoff4"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
+	add := func(title string) string {
+		t.Helper()
+		body := `{"prompt":"Continue.","title":"` + title + `"}`
+		r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/handoff-proposal", strings.NewReader(body))
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		HandleSessionHandoffProposal(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("POST %s: status=%d body=%s", title, w.Code, w.Body.String())
+		}
+		var resp struct {
+			Proposal struct {
+				ID string `json:"id"`
+			} `json:"proposal"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode proposal: %v", err)
+		}
+		return resp.Proposal.ID
+	}
+	launch := func(id string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/handoff-proposal", strings.NewReader(`{"id":"`+id+`","launched":true}`))
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		HandleSessionHandoffProposal(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("mark launched: status=%d body=%s", w.Code, w.Body.String())
+		}
+	}
+
+	add("The first plan")
+	// CreatedAt has millisecond resolution, so give the second proposal a distinct one — two
+	// entries stamped the same millisecond are a tie the ordering rule resolves by position,
+	// which is not what this test is about.
+	time.Sleep(2 * time.Millisecond)
+	second := add("The plan that replaced it")
+	launch(second)
+
+	if wireSession(m, true).HandoffPending {
+		t.Fatal("a proposal that a later, launched one replaced still badges the row; that badge can never be cleared")
 	}
 }
 

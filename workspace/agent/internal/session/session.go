@@ -249,9 +249,10 @@ type Session struct {
 	// invisible in the list cannot be told apart from one silently lost. The card is there
 	// if you open the mirror, but nobody opens it without a reason to.
 	Carried string `json:"carried,omitempty"`
-	// HandoffPending: this session proposed a successor's first prompt
-	// (propose_session_handoff) that nobody has launched yet. It clears the moment the
-	// proposal is launched or discarded.
+	// HandoffPending: the LAST successor's first prompt this session proposed
+	// (propose_session_handoff) has not been launched. It clears the moment that proposal is
+	// launched or discarded — or a newer one is launched in its place, since proposals are
+	// kept after launch and an older one a later proposal replaced is not pending work.
 	//
 	// Why the list needs it, for the same reason as Carried above: the proposal exists only
 	// as a card in the mirror and raises no notification, while the session that made it goes

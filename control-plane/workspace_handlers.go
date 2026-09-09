@@ -646,8 +646,8 @@ type sessionWire struct {
 	// this Agent-supplied value, while stopped from the column baked in by ReplaceSessions.
 	// With only one of the two, the badge lies by vanishing the moment the Workspace stops.
 	Carried string `json:"carried,omitempty"`
-	// HandoffPending: the session proposed a successor's first prompt that nobody has
-	// launched yet. Missing here it is silently dropped, and the row goes back to the plain
+	// HandoffPending: the last successor's first prompt the session proposed has not been
+	// launched. Missing here it is silently dropped, and the row goes back to the plain
 	// "waiting for input" chip — which is the whole problem the flag exists for, since the
 	// proposal is a card in the mirror and raises no notification. No DB-mirror column: the
 	// proposals live in the Workspace's home, so while it is stopped there is nothing to read
