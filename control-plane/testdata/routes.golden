@@ -1,11 +1,14 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 440
+# count: 450
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
 GET /api/admin/audit
+DELETE /api/admin/brand
+GET /api/admin/brand
+PUT /api/admin/brand
 POST /api/admin/clean-home
 GET /api/admin/cloud-cost
 GET /api/admin/ec2-pool
@@ -393,6 +396,11 @@ POST /api/workspace/recreate
 POST /api/workspace/start
 GET /api/workspace/stats
 POST /api/workspace/stop
+GET /brand/apple-touch-icon.png
+GET /brand/icon-192.png
+GET /brand/icon-512.png
+GET /brand/icon-maskable-192.png
+GET /brand/icon-maskable-512.png
 ANY /git/{slug}/{repo...}
 GET /git/{slug}/{repo}/info/lfs/locks
 POST /git/{slug}/{repo}/info/lfs/locks
@@ -427,6 +435,7 @@ POST /internal/schedules/{id}/run-now
 GET /internal/schedules/{id}/runs
 GET /login
 GET /login/{slug}
+GET /manifest.webmanifest
 ANY /mcp
 GET /oauth2/callback
 GET /oauth2/link
@@ -442,3 +451,4 @@ GET /readyz
 GET /ws/browser
 GET /ws/browser-attachments
 GET /ws/terminal
+GET /{$}

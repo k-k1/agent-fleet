@@ -598,6 +598,12 @@ on either.
 `orange`, `green`, `slate`. The Control Plane recolours the shipped art when it serves it, so
 no separate image build is involved.
 
+Both are the stack's STARTING value. The same setting lives in the Console under **Admin >
+Deployment > Appearance**, where it is stored in the database and **wins over these
+parameters** — changing them in a later stack update moves nothing until the modal's "follow
+the environment" is pressed. That is the point: recolouring a favicon should not need a
+CloudFormation update.
+
 The label is a PREFIX because both places it has to survive truncate the END: a crowded tab
 strip and a phone launcher. Two caveats worth knowing before you rely on it:
 

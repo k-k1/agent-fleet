@@ -5,6 +5,8 @@
 //
 // Absent on an unbranded deployment, in the tests, and in any shell served untouched,
 // which is why every read below falls back to what the shipped files say.
+import { create } from "zustand";
+
 type InjectedBrand = { label?: string; color?: string; name?: string };
 
 const injected = (globalThis as { __AF_BRAND?: InjectedBrand }).__AF_BRAND;
@@ -28,7 +30,7 @@ export const appTitle = `${brandName} — Console`;
  */
 export const brandInk = readableInk(brandColor);
 
-function readableInk(hex: string): string {
+export function readableInk(hex: string): string {
   const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim());
   if (!m) return "#fff";
   const n = parseInt(m[1], 16);
@@ -42,4 +44,51 @@ function readableInk(hex: string): string {
   // Pure black, not the usual off-black ink: on blue and red the softer tone measures
   // 4.03:1 and 4.41:1, i.e. under the bar the whole helper exists to clear.
   return onWhite >= onBlack ? "#fff" : "#000";
+}
+
+// --- the live value -------------------------------------------------------------------
+//
+// The constants above are the value this document was SERVED with. An administrator who
+// changes the colour in the Admin modal is looking at the top bar while they do it, so the
+// chip has to move with them — being told to reload after picking a colour reads as "it
+// did not work". Everything the browser owns (the tab title, the favicon, the theme
+// colour) is re-pointed by applyBrand; the manifest and any other tab follow on reload.
+
+interface BrandStore {
+  label: string;
+  color: string;
+  name: string;
+  ink: string;
+}
+
+export const useBrandStore = create<BrandStore>(() => ({
+  label: brandLabel,
+  color: brandColor,
+  name: brandName,
+  ink: brandInk,
+}));
+
+/** Non-reactive read, for code outside React. */
+export const currentBrand = () => useBrandStore.getState();
+
+export function applyBrand(b: { label: string; color: string; name: string }) {
+  const label = b.label.trim();
+  const color = b.color.trim() || "#149ba7";
+  const name = b.name.trim() || "Agent Fleet";
+  useBrandStore.setState({ label, color, name, ink: readableInk(color) });
+  if (typeof document === "undefined") return;
+  // Only when no pane has claimed the tab (a pop-out sets its own title from the pane it
+  // shows — clobbering that here would rename someone else's window).
+  const title = `${name} — Console`;
+  if (document.title.endsWith("— Console")) document.title = title;
+  const theme = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+  if (theme) theme.content = color;
+  // The icon is served no-store, but the browser keeps the favicon it already painted, so
+  // the href has to change for it to fetch again.
+  for (const sel of ['link[rel="icon"]', 'link[rel="apple-touch-icon"]']) {
+    const link = document.querySelector<HTMLLinkElement>(sel);
+    if (!link) continue;
+    const href = link.getAttribute("href") || "";
+    link.setAttribute("href", href.split("?")[0] + "?b=" + encodeURIComponent(color));
+  }
 }

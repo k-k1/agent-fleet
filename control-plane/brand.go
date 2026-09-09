@@ -17,7 +17,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"image"
@@ -32,6 +34,9 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // brandBaseHex is the colour the shipped art is actually drawn in (the icons under
@@ -50,10 +55,18 @@ const brandLabelMax = 16
 // above this is ground to be recoloured.
 const brandGraySat = 0.06
 
-// brandPalette is the closed set AF_BRAND_COLOR chooses from. Deliberately a palette and
-// not a free hex: these are picked to sit at a similar saturation/lightness to the base,
-// so every deployment still looks like the same product.
-var brandPalette = []struct{ name, hex string }{
+// brandPreset is one entry of the palette, and the wire shape the Admin modal draws its
+// swatches from — the Console must never carry its own copy of these hexes, or the chip
+// and the favicon drift apart.
+type brandPreset struct {
+	Name string `json:"name"`
+	Hex  string `json:"hex"`
+}
+
+// brandPalette is the closed set AF_BRAND_COLOR and the Admin modal choose from.
+// Deliberately a palette and not a free hex: these are picked to sit at a similar
+// saturation/lightness to the base, so every deployment still looks like the same product.
+var brandPalette = []brandPreset{
 	{"teal", brandBaseHex}, // the shipped art — the default, and a no-op
 	{"blue", "#2f6fed"},
 	{"violet", "#7c4dff"},
@@ -85,24 +98,20 @@ type brandConfig struct {
 	lumScale float64
 }
 
-// newBrandConfig resolves AF_BRAND_COLOR / AF_BRAND_LABEL. Both are fail-soft: a typo in
-// the colour name must not stop a deployment from booting, so it logs the valid names and
-// leaves the shipped colour in place.
-func newBrandConfig(colorEnv, labelEnv string) brandConfig {
-	b := brandConfig{colorName: brandPalette[0].name, hex: brandPalette[0].hex, satScale: 1, lumScale: 1}
-	b.label = sanitizeBrandLabel(labelEnv)
-	name := strings.ToLower(strings.TrimSpace(colorEnv))
-	if name != "" {
-		found := false
+// buildBrand resolves a colour preset name and a label into the serving config. A colour
+// it does not know is not fatal — it reports ok=false and leaves the shipped teal — so
+// neither a typo in the environment nor a hand-edited database row can stop the CP.
+func buildBrand(color, label string) (brandConfig, bool) {
+	b := brandConfig{colorName: brandPalette[0].Name, hex: brandPalette[0].Hex, satScale: 1, lumScale: 1}
+	b.label = sanitizeBrandLabel(label)
+	ok := true
+	if name := strings.ToLower(strings.TrimSpace(color)); name != "" {
+		ok = false
 		for _, p := range brandPalette {
-			if p.name == name {
-				b.colorName, b.hex, found = p.name, p.hex, true
+			if p.Name == name {
+				b.colorName, b.hex, ok = p.Name, p.Hex, true
 				break
 			}
-		}
-		if !found {
-			log.Printf("AF_BRAND_COLOR=%q is not a known colour; using %s. Valid: %s",
-				colorEnv, b.colorName, strings.Join(brandColorNames(), ", "))
 		}
 	}
 	bh, bs, bl := hexToHSL(brandBaseHex)
@@ -114,13 +123,25 @@ func newBrandConfig(colorEnv, labelEnv string) brandConfig {
 	if bl > 0 {
 		b.lumScale = tl / bl
 	}
+	return b, ok
+}
+
+// newBrandConfig resolves AF_BRAND_COLOR / AF_BRAND_LABEL, saying out loud when the colour
+// name is one it does not know — the environment is set by hand, and a silent fallback
+// there reads as "the feature does not work".
+func newBrandConfig(colorEnv, labelEnv string) brandConfig {
+	b, ok := buildBrand(colorEnv, labelEnv)
+	if !ok {
+		log.Printf("AF_BRAND_COLOR=%q is not a known colour; using %s. Valid: %s",
+			colorEnv, b.colorName, strings.Join(brandColorNames(), ", "))
+	}
 	return b
 }
 
 func brandColorNames() []string {
 	out := make([]string, 0, len(brandPalette))
 	for _, p := range brandPalette {
-		out = append(out, p.name)
+		out = append(out, p.Name)
 	}
 	return out
 }
@@ -161,14 +182,125 @@ func (b brandConfig) name(s string) string {
 	return "[" + b.label + "] " + s
 }
 
+// --- where the live value comes from ---------------------------------------
+
+// brandSettingKey holds the Admin modal's choice in deployment_setting, as ONE json row
+// rather than a column per field. Presence is the decision: a row means the modal owns the
+// branding, its absence means AF_BRAND_* does. Split across two rows there would be no way
+// to say "no label on a deployment whose environment sets one" — an empty row and a missing
+// row read the same through GetSetting.
+const brandSettingKey = "brand"
+
+// brandCacheTTL bounds how long a change made straight in the database (not through the
+// API, which invalidates) stays invisible. Every asset request resolves the brand, so the
+// cache is what keeps that off the database on a page load.
+const brandCacheTTL = 30 * time.Second
+
+type brandOverride struct {
+	Color string `json:"color"`
+	Label string `json:"label"`
+}
+
+// brandResolver answers "what is this deployment called and coloured, right now". The
+// answer has to be live: an administrator who picks a colour in the modal must not be told
+// to restart the Control Plane.
+type brandResolver struct {
+	env      brandConfig         // AF_BRAND_* — the fallback, and the whole answer without a store
+	settings store.SettingsStore // nil in tests and before the store exists
+
+	mu  sync.Mutex
+	cur brandConfig
+	at  time.Time // zero = nothing cached
+}
+
+func newBrandResolver(env brandConfig, settings store.SettingsStore) *brandResolver {
+	return &brandResolver{env: env, settings: settings}
+}
+
+// get is called on every branded asset request, so it must never block on anything slow.
+func (b *brandResolver) get(ctx context.Context) brandConfig {
+	if b == nil {
+		return brandConfig{} // the zero config is inert: everything serves as shipped
+	}
+	if b.settings == nil {
+		return b.env
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.at.IsZero() && time.Since(b.at) < brandCacheTTL {
+		return b.cur
+	}
+	b.cur, b.at = b.resolve(ctx), time.Now()
+	return b.cur
+}
+
+// resolve reads the stored override. Any failure — unreadable store, unparsable row,
+// unknown colour — falls back to the environment: branding is decoration, and refusing to
+// serve the Console over it would not be.
+func (b *brandResolver) resolve(ctx context.Context) brandConfig {
+	v, err := b.settings.GetSetting(ctx, brandSettingKey)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return b.env
+	}
+	var o brandOverride
+	if err := json.Unmarshal([]byte(v), &o); err != nil {
+		log.Printf("brand: stored setting is not valid JSON (%v); using the environment", err)
+		return b.env
+	}
+	cfg, _ := buildBrand(o.Color, o.Label)
+	return cfg
+}
+
+// override is what the Admin API stores. A nil o clears the row, handing branding back to
+// AF_BRAND_*; either way the cache is dropped so the very next request serves the change.
+func (b *brandResolver) override(ctx context.Context, o *brandOverride) error {
+	if b == nil || b.settings == nil {
+		return errors.New("no settings store")
+	}
+	var err error
+	if o == nil {
+		err = b.settings.DeleteSetting(ctx, brandSettingKey)
+	} else {
+		var j []byte
+		if j, err = json.Marshal(o); err == nil {
+			err = b.settings.SetSetting(ctx, brandSettingKey, string(j))
+		}
+	}
+	if err != nil {
+		return err
+	}
+	b.mu.Lock()
+	b.at = time.Time{}
+	b.mu.Unlock()
+	return nil
+}
+
+// stored reports the override as saved (nil = none), for the Admin modal to show which of
+// the two sources is in charge.
+func (b *brandResolver) stored(ctx context.Context) *brandOverride {
+	if b == nil || b.settings == nil {
+		return nil
+	}
+	v, err := b.settings.GetSetting(ctx, brandSettingKey)
+	if err != nil || strings.TrimSpace(v) == "" {
+		return nil
+	}
+	var o brandOverride
+	if json.Unmarshal([]byte(v), &o) != nil {
+		return nil
+	}
+	return &o
+}
+
 // --- assets ----------------------------------------------------------------
 
 // brandIcons serves the recoloured PNGs. Recolouring a 512×512 icon is milliseconds, but
 // it happens on every page load, so the result is cached against the file's identity
-// (size+mtime) — a console rebuild under the same path therefore invalidates it, which is
-// what `npm run dev`'s rebuild-in-place needs.
+// (size+mtime) AND the colour in force — a console rebuild under the same path invalidates
+// it, which is what `npm run dev`'s rebuild-in-place needs, and so does an administrator
+// picking a different colour in the modal.
 type brandIcons struct {
-	b   brandConfig
+	b   *brandResolver
 	dir string // consoleDir
 
 	mu    sync.Mutex
@@ -180,11 +312,12 @@ type brandIcon struct {
 	body []byte
 }
 
-func newBrandIcons(b brandConfig, consoleDir string) *brandIcons {
+func newBrandIcons(b *brandResolver, consoleDir string) *brandIcons {
 	return &brandIcons{b: b, dir: consoleDir, cache: map[string]brandIcon{}}
 }
 
 func (ic *brandIcons) serve(w http.ResponseWriter, r *http.Request) {
+	brand := ic.b.get(r.Context())
 	name := path.Base(r.URL.Path)
 	full := filepath.Join(ic.dir, "brand", name)
 	st, err := os.Stat(full)
@@ -192,7 +325,7 @@ func (ic *brandIcons) serve(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	key := fmt.Sprintf("%d-%d", st.Size(), st.ModTime().UnixNano())
+	key := fmt.Sprintf("%d-%d-%s", st.Size(), st.ModTime().UnixNano(), brand.colorName)
 	ic.mu.Lock()
 	hit, ok := ic.cache[name]
 	ic.mu.Unlock()
@@ -202,7 +335,7 @@ func (ic *brandIcons) serve(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		body, err := ic.b.tintPNG(src)
+		body, err := brand.tintPNG(src)
 		if err != nil {
 			// Fail-soft: an icon in a format we cannot re-encode is a wrong colour,
 			// not a missing icon.
@@ -351,7 +484,8 @@ var brandDriftOnce sync.Once
 // because the file is served no-store anyway and `npm run dev` rebuilds it in place.
 func serveConsoleIndex(w http.ResponseWriter, r *http.Request, cfg config) {
 	idx := filepath.Join(cfg.consoleDir, "index.html")
-	if !cfg.brand.active() {
+	brand := cfg.brand.get(r.Context())
+	if !brand.active() {
 		http.ServeFile(w, r, idx)
 		return
 	}
@@ -360,7 +494,7 @@ func serveConsoleIndex(w http.ResponseWriter, r *http.Request, cfg config) {
 		http.NotFound(w, r)
 		return
 	}
-	out, hits := cfg.brand.rewriteIndexHTML(src)
+	out, hits := brand.rewriteIndexHTML(src)
 	if hits < brandIndexAnchors {
 		brandDriftOnce.Do(func() {
 			log.Printf("brand: only %d/%d anchors found in index.html — branding is incomplete",
@@ -378,7 +512,7 @@ func serveConsoleManifest(w http.ResponseWriter, r *http.Request, cfg config) {
 		http.NotFound(w, r)
 		return
 	}
-	out, err := cfg.brand.rewriteManifest(src)
+	out, err := cfg.brand.get(r.Context()).rewriteManifest(src)
 	if err != nil {
 		log.Printf("brand: manifest not branded (%v)", err)
 		out = src
