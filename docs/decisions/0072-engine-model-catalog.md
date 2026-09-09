@@ -1879,9 +1879,32 @@ GB/s and 91 s works out to an effective 204 MB/s, so most of it is GGUF processi
 transfer. Mounting therefore does not turn it into 33 s; expect the whole thing around
 **150-175 s**. The 98.5-second swap should fall similarly.
 
-**The next step is condition 3** — have llama.cpp load a GGUF off the mount, with and without
-`--no-mmap`, and compare against 91 s. Until then this is a promising candidate, **not a
-conclusion**.
+**Condition 3 was measured the same day (`harness/probe-llm-mount-load.sh`), and the answer is
+DO NOT ADOPT.** Same box, same task, with a copy-then-load pass as the control:
+
+| | copy | load | total |
+|---|---|---|---|
+| A today's path (S3 → instance store → VRAM) | 114 s | **94 s** | **208 s** |
+| B mounted, mmap (llama.cpp's default) | 0 | 150 s | **150 s** |
+| C mounted, `--no-mmap` | 0 | **130 s** | **130 s** |
+
+Three things fall out. **(1) llama.cpp only gets 123-142 MB/s through the mount** — nowhere near
+`dd`'s 567 MB/s, because its load pattern does not exploit Mountpoint's parallelism. **Condition
+3's worry was right.** **(2) mmap is expensive over FUSE** (150 s vs 130 s), so `--no-mmap` would
+be mandatory. **(3) The cold start alone still wins**: the copy disappears, 208 s → 130 s.
+
+🔴 **But the swap loses, and the swap matters more.** Today every enabled model sits on local
+disk, so a swap re-reads locally — measured 98.5 s. Mounting removes the local copy, so **every
+swap goes back to S3 at 130-150 s**. The trade is roughly 57 seconds off the cold start (275 s →
+about 218 s once the image pull can no longer overlap a fetch that is gone) in exchange for
+**making the swap 98.5 s → 130 s**. Decision 3 priced the swap, and the swap is what a person
+waits for.
+
+On top of that comes condition 2's cost: mount-s3 and libfuse2 baked into the engine image, and
+the loss of decision 1's shared wrapper. **It does not pay.** `useLocalStorage` gave 527-586 s →
+275 s for $0; this asks for a custom engine image, returns about 20%, and degrades the swap.
+**Not adopted** — recorded as numbers rather than as a verdict, because a role that loads once
+and never swaps would get a different answer.
 
 Incidentally, **g6.xlarge ran out in both ap-northeast-1 AZs** during these runs, and this
 deployment's `LlmAllowedInstanceTypes` had narrowed to the single type, so no box could launch.
