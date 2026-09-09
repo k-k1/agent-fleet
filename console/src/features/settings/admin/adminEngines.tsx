@@ -149,6 +149,7 @@ export function EnginesAdminView() {
   const [rows, setRows] = useState<EngineRow[] | null>(null);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
+  const [note, setNote] = useState("");
   const [jobs, setJobs] = useState<Record<string, IngestJob[]>>({});
 
   const load = useCallback(async () => {
@@ -256,8 +257,23 @@ export function EnginesAdminView() {
     await callModel(key + "/+", `api/admin/engines/${encodeURIComponent(key)}/models`, "POST", body, key);
   };
 
-  const forgetModel = async (key: string, id: string) => {
-    await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "DELETE", undefined, key);
+  /** Forget the row, and optionally the bytes with it.
+   *
+   * 🔴 The two really are separate acts and the panel has to offer both. Forgetting alone
+   * leaves the file in the bucket paying for itself with nothing able to reach it — measured on
+   * the dev deployment (2026-09-09): a 491 MB row was forgotten and the object was still there.
+   * `?purge=1` is what ADR 0072 decision 7 built the MODE=delete task for, and until now the
+   * Console had no way to ask for it. The CP answers with what it started, which is worth
+   * showing: the deletion is a Fargate task, not something that has already happened. */
+  const forgetModel = async (key: string, id: string, purge: boolean) => {
+    const q = purge ? "?purge=1" : "";
+    await callModel(
+      key + "/" + id,
+      `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}${q}`,
+      "DELETE",
+      undefined,
+      key,
+    );
   };
 
   const callModel = async (
@@ -275,6 +291,10 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
+      // What the CP started, in its own words ("deleting llm/x.gguf", or why it could not).
+      // Deleting the bytes is a task that has been LAUNCHED, and saying so beats a row that
+      // simply vanishes while gigabytes stay behind.
+      setNote(typeof d?.purge === "string" ? d.purge : "");
       setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
     } finally {
       setBusy("");
@@ -318,7 +338,7 @@ export function EnginesAdminView() {
             row={e}
             busy={busy}
             onChange={(id, patch) => setModel(e.key, id, patch)}
-            onForget={(id) => forgetModel(e.key, id)}
+            onForget={(id, purge) => forgetModel(e.key, id, purge)}
             onAdd={(body) => addModel(e.key, body)}
           />
           <EngineIngest
@@ -341,6 +361,7 @@ export function EnginesAdminView() {
         </section>
       ))}
       {err && <p className="form-err pad">{err}</p>}
+      {note && <p className="muted pad">{note}</p>}
       <p className="muted pad">{tr("admin.engines_note")}</p>
     </div>
   );
@@ -370,12 +391,17 @@ function EngineModels({
   row: EngineRow;
   busy: string;
   onChange: (id: string, patch: Record<string, boolean>) => void;
-  onForget: (id: string) => void;
+  onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
   const models = row.model_rows || [];
   const isImage = row.api === "images";
+  // Which row is mid-confirm, and whether the bytes go too. Deleting gigabytes is not something
+  // a single click should do, and "forget the row" and "delete the file" have to be told apart
+  // BEFORE the press rather than explained afterwards.
+  const [confirming, setConfirming] = useState("");
+  const [purge, setPurge] = useState(false);
   return (
     <div className="engines-models">
       {/* An engine with no catalogue at all is the interesting case, not an empty section: the
@@ -424,7 +450,10 @@ function EngineModels({
                     type="button"
                     className="ghost sm"
                     disabled={pending || started}
-                    onClick={() => onForget(m.id)}
+                    onClick={() => {
+                      setConfirming(m.id);
+                      setPurge(false);
+                    }}
                   >
                     {tr("admin.engines_model_forget")}
                   </button>
@@ -432,6 +461,41 @@ function EngineModels({
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
+              {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
+                  with nothing able to reach them (measured: a 491 MB file outlived its row);
+                  purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
+                  the CP has no s3:DeleteObject and is not getting one. */}
+              {confirming === m.id && (
+                <div className="engines-model-confirm">
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={purge}
+                      onChange={(ev) => setPurge(ev.currentTarget.checked)}
+                    />
+                    <span>{tr("admin.engines_model_forget_purge")}</span>
+                  </label>
+                  <p className="muted">
+                    {tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}
+                  </p>
+                  <span className="engines-model-actions">
+                    <button
+                      type="button"
+                      className={purge ? "primary sm" : "ghost sm"}
+                      disabled={pending}
+                      onClick={() => {
+                        setConfirming("");
+                        onForget(m.id, purge);
+                      }}
+                    >
+                      {tr("admin.engines_model_forget_go")}
+                    </button>
+                    <button type="button" className="ghost sm" onClick={() => setConfirming("")}>
+                      {tr("common.cancel")}
+                    </button>
+                  </span>
+                </div>
+              )}
             </li>
           );
         })}

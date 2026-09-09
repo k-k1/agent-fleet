@@ -465,6 +465,88 @@ describe("EnginesAdminView", () => {
 
   // "Forget" is the row, not the file: the CP has no s3:DeleteObject. The one the engine starts
   // with cannot be forgotten, or the role is left with no checkpoint at all.
+  // 🔴 Measured on the dev deployment (2026-09-09): a row was forgotten and its 491 MB file was
+  // still in the bucket afterwards, because the Console never asked for `?purge=1`. The CP had
+  // implemented it — ADR 0072 decision 7's MODE=delete task exists precisely because the CP has
+  // no s3:DeleteObject — and there was simply no way in from the UI.
+  //
+  // So the two acts are told apart BEFORE the press: forgetting alone leaves bytes nothing can
+  // reach and that keep being paid for, and deleting them is a task that has to be started.
+  it("tells forgetting the row apart from deleting the bytes, and can ask for both", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({
+                key: "llm",
+                api: "chat",
+                has_models: true,
+                model_rows: [{ id: "qwen2.5-coder-0.5b", enabled: false }],
+              }),
+            ],
+          },
+    );
+    await mount();
+
+    // Pressing "forget" asks rather than acting: nothing has been sent yet.
+    await click(
+      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+    );
+    expect(apiJSON).not.toHaveBeenCalled();
+    // The default is the SAFE one, and it says what it leaves behind.
+    const box = host!.querySelector(".engines-model-confirm input") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(host!.textContent).toContain("バケットのファイルはそのまま残り");
+
+    await act(async () => {
+      box.click();
+    });
+    // Ticking it changes what the sentence promises, because the act is now destructive.
+    expect(host!.textContent).toContain("バイト列を削除するタスクを起こします");
+
+    apiJSON.mockResolvedValueOnce({ purge: "deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
+    const call = apiJSON.mock.calls.at(-1)!;
+    expect(String(call[0])).toBe("api/admin/engines/llm/models/qwen2.5-coder-0.5b?purge=1");
+    expect(String(call[1])).toBe("DELETE");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The CP's own words: the deletion is a task that has been LAUNCHED, not a thing that has
+    // already happened, and a row that just vanished would not say so.
+    expect(host!.textContent).toContain("deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
+  });
+
+  // Leaving the box unticked must send NO purge — the destructive half has to be opt-in.
+  it("forgets the row alone when the bytes were not asked for", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({ key: "llm", api: "chat", has_models: true, model_rows: [{ id: "m1", enabled: false }] }),
+            ],
+          },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+    );
+    apiJSON.mockResolvedValueOnce({});
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/models/m1");
+  });
+
   it("forgets a row, and refuses to forget the one in use", async () => {
     api.mockResolvedValue({
       engines: [
@@ -485,6 +567,12 @@ describe("EnginesAdminView", () => {
     expect((forget[0] as HTMLButtonElement).disabled).toBe(true);
     expect((forget[1] as HTMLButtonElement).disabled).toBe(false);
     await click(forget[1] as HTMLElement);
+    // Forgetting now asks first (see the purge test above), and the default leaves the bytes.
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
     expect(apiJSON).toHaveBeenCalledWith(
       "api/admin/engines/image/models/parked",
       "DELETE",

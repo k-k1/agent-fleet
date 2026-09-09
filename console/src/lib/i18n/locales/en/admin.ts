@@ -46,6 +46,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 "Forget", not "Delete": the CP has no s3:DeleteObject and is not getting one (ADR 0072
   // decision 7 — deleting the file is the ingest task's job, phase P4). The file stays.
   "admin.engines_model_forget": "Forget",
+  // 🔴 Forgetting the row and deleting the file are different acts. The first alone leaves
+  // bytes in the bucket that nothing can reach and that keep being paid for (measured
+  // 2026-09-09: a 491 MB file outlived its row). The second is the ingest task's MODE=delete —
+  // the CP has no s3:DeleteObject (decision 7). Ask before the press, not after.
+  "admin.engines_model_forget_purge": "Delete the file from the bucket too (cannot be undone)",
+  "admin.engines_model_forget_note": "Forgets the catalogue row only. The file stays in the bucket and keeps costing storage.",
+  "admin.engines_model_forget_purge_note": "Forgets the row and starts a task that deletes the bytes. The deletion is the task's, so it takes a moment.",
+  "admin.engines_model_forget_go": "Forget it",
   // Not P4's ingest (which fetches from Hugging Face); just writing down what a file already in
   // the bucket IS. The seed creates one row per role, so without this there is no second
   // checkpoint to switch to without touching CloudFormation.
