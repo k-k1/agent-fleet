@@ -9,7 +9,9 @@ package status
 import (
 	"encoding/json"
 	"log"
+	"math/rand/v2"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/fstore"
@@ -30,6 +32,26 @@ type SessionStatus struct {
 	// unknown and the report waits for the next real end-of-turn (a miss costs a delay, a
 	// wrong answer costs a misdelivered report).
 	TurnEnd bool `json:"turnEnd,omitempty"`
+	// TurnEndAt is WHEN this turn ended (RFC3339) — the source of the listing's
+	// lastTurnEndAt (docs/log/89 §89.3). Set by PersistTurnEnd alongside TurnEnd, so it
+	// carries exactly that bit's evidence, and it is a field of its own because the value
+	// can be OBSERVED EARLIER than it is settled: on the four hook-less TUI kinds a poll of
+	// the sessions list sees the end first (observedEnds below), and PersistTurnEnd adopts
+	// that earlier observation rather than restamping. Both writes describe the same end, and
+	// a timestamp that moved forward would read, to a parent polling its children, as a
+	// SECOND turn having finished.
+	TurnEndAt string `json:"turnEndAt,omitempty"`
+	// Rev names THIS write of the record. Every write gets a fresh random one (persist), so
+	// it is the identity a poll's observation can be pinned to: an observation of the end of
+	// the turn this record describes stops counting the moment anything writes a new record
+	// (the next turn's working, a settle, a heal) — see ObservedTurnEnd.
+	//
+	// It is a nonce and not a counter or a timestamp on purpose. A counter would have to be
+	// incremented, i.e. read-modify-written, which is exactly what this store cannot do
+	// safely (ObservedTurnEnd). TS cannot serve either: it is RFC3339, so two writes in the
+	// same second are indistinguishable, and the writers here are two routes reaching the
+	// same turn boundary milliseconds apart.
+	Rev string `json:"rev,omitempty"`
 }
 
 // ExitInfo records WHY a session's agent process terminated, so the sessions list can
@@ -63,7 +85,18 @@ var (
 	lastTools        = fstore.Strings(paths.AgentConfigDir, "pending-perm", ".tool")
 	pendingTexts     = fstore.Strings(paths.AgentConfigDir, "pending-text", ".txt")
 	carriedFiles     = fstore.JSON[Carried](paths.AgentConfigDir, "carried-interaction", ".json")
+	// observedEnds holds the end of turn a POLL saw, apart from the status record so that
+	// recording it can never overwrite one — see ObservedTurnEnd for why that separation is
+	// load-bearing rather than tidy.
+	observedEnds = fstore.JSON[observedEnd](paths.AgentConfigDir, "session-turn-end", ".json")
 )
+
+// observedEnd is an end of turn a poll saw, tagged with the SessionStatus.Rev of the record
+// that was in force when it saw it. The tag is what makes it expire (ObservedTurnEnd).
+type observedEnd struct {
+	Rev string `json:"rev"`
+	At  string `json:"at"` // RFC3339
+}
 
 // PersistExit / ReadExit / RemoveExit manage the per-session exit record (keyed by
 // session name). PersistExit is called both at launch (baseline) and at exit (result).
@@ -113,10 +146,93 @@ func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
 // MarkTurnEnd's completed/failed/aborted). This is the only entry point that sets
 // TurnEnd: a write that only records "the current state" and a write that claims "the
 // turn ended" stay separate.
-func PersistTurnEnd(sid, state string) { persist(sid, SessionStatus{State: state, TurnEnd: true}) }
+//
+// An end a poll already observed is adopted rather than restamped (see TurnEndAt). Reading
+// the observation is a read of a DIFFERENT store: this still writes a COMPLETE record, blind,
+// which is what keeps concurrent writers harmless here (see observedEnds).
+func PersistTurnEnd(sid, state string) {
+	at := ObservedTurnEnd(sid)
+	if at == "" {
+		at = time.Now().Format(time.RFC3339)
+	}
+	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at})
+}
+
+// TurnEndUnrecorded reports whether sid has a turn in flight whose end has not been observed
+// yet, i.e. whether reading the live state could record anything at all. It is the CHEAP half
+// of RecordTurnEnd's guard, meant to be checked BEFORE the live-state source it would take to
+// answer "has it ended?" — that source is a SQLite query for agy and a 128KB tail scan for
+// copilot/cursor, on a list route polled for every session in the workspace.
+func TurnEndUnrecorded(sid string) bool {
+	st, ok := Read(sid)
+	return ok && st.State == "working" && ObservedTurnEnd(sid) == ""
+}
+
+// RecordTurnEnd stamps WHEN a poll observed the running turn end. It writes ONLY its own
+// store: the status record — State, TurnEnd, TS — is not touched, so this is invisible to
+// every consumer of the state machine (the notification gate in sessionx.DriveState, the
+// docs/log/51 reconciler, the pending sweep). That is what makes recording an end safe from a
+// route that must not have side effects (docs/log/89 §89.3).
+//
+// Its guard is deliberately NOT the notification gate's: recording consumes nothing, so the
+// end of that same turn is still notified exactly once by whichever route observes it next.
+// The guard's other half keeps a list polled every few seconds from rewriting the file: one
+// write per turn.
+func RecordTurnEnd(sid string) {
+	st, ok := Read(sid)
+	if !ok || st.State != "working" || st.Rev == "" || ObservedTurnEnd(sid) != "" {
+		return
+	}
+	_ = observedEnds.Write(sid, observedEnd{Rev: st.Rev, At: time.Now().Format(time.RFC3339)})
+}
+
+// ObservedTurnEnd returns the end a poll observed for the turn the status record is CURRENTLY
+// describing, or "" when there is none.
+//
+// Why the observation lives outside SessionStatus: two independent writers reach the end of the
+// same turn — a sessions-list poll and the notification route, which is a SEPARATE PROCESS on
+// the hook route (`workspace-agent session-status`, main.go) — and fstore.Write is a plain
+// os.WriteFile with no lock, no atomic rename and no CAS. Blind writes of complete records
+// survive that (last writer wins, and every writer's record is self-consistent); a
+// read-modify-write does not, and one here measurably destroyed the notification route's write
+// in 143 of 300 attempts, putting the state back to working and dropping TurnEnd.
+//
+// Nothing clears this store, and nothing needs to: an observation names the SessionStatus.Rev
+// it was taken against, and every write of the status record mints a new one — so the next
+// turn's working, a settle or a heal retires it on the spot.
+//
+// Identity, deliberately, and NOT which file is newer. That was the first rule here and it was
+// wrong: it holds only where the filesystem's mtime resolution is finer than the gap between
+// the two writes, and those two writes are milliseconds apart by construction (both are
+// triggered by the same working→idle transition). On a coarse-resolution filesystem they land
+// in one tick, the observation is discarded every time, and the end of a turn is reported one
+// poll late forever — measured as a CI failure, reproduced by truncating both mtimes to the
+// second.
+func ObservedTurnEnd(sid string) string {
+	rec, ok := observedEnds.Read(sid)
+	if !ok || rec.Rev == "" {
+		return ""
+	}
+	st, ok := Read(sid)
+	if !ok || st.Rev != rec.Rev {
+		return ""
+	}
+	return rec.At
+}
 
 func persist(sid string, s SessionStatus) {
 	s.TS = time.Now().Format(time.RFC3339)
+	s.Rev = newRev()
+	write(sid, s)
+}
+
+// newRev mints the identity of one write of the record (see SessionStatus.Rev). Not crypto:
+// it only has to differ from the previous write's value, including one made by another
+// process (the session-status hook), which is why it is random rather than derived from a
+// clock or a per-process counter.
+func newRev() string { return strconv.FormatUint(rand.Uint64(), 36) }
+
+func write(sid string, s SessionStatus) {
 	if err := statusFiles.Write(sid, s); err != nil {
 		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
 	}
@@ -139,6 +255,7 @@ func ModalState(state string) bool {
 
 func Remove(sid string) {
 	statusFiles.Remove(sid)
+	observedEnds.Remove(sid)
 	RemovePendingQuestion(sid)
 	RemovePendingPlan(sid)
 	RemovePendingPermission(sid)

@@ -350,6 +350,18 @@ the status store raises only on a real end of turn (`status.SessionStatus.TurnEn
 idle nobody can explain. It is empty rather than guessed, so `idle` with a timestamp and `idle`
 without one are finally different answers.
 
+**Amendment (2026-09-10, docs/log/89 §89.8): the listing poll records the end itself.** When the
+amendment above was written, `MarkTurnEnd` was fired from `DriveState` alone, so a child driven in
+its TUI on the four hook-less kinds (agy / copilot / cursor / kiro) carried **no `lastTurnEndAt`
+until somebody called `get_session_status` on it** — invisible to a parent that only polls the
+list. Closed by separating "record WHEN the turn ended" from "fire the notification and the
+operator's completion report". The source moved from the write time of the `TurnEnd` bit to a pair
+split off from it: `status.SessionStatus.TurnEndAt` for an end something settled, and a store of
+its own for an end a poll merely observed. What it means as evidence is unchanged — only a real
+end of turn writes it, an idle nobody can explain does not, and the next turn retires it.
+**The read route still has no side effects**: recording leaves the state machine untouched, so the
+notification and the report are still fired by `DriveState` alone, exactly once.
+
 **A server-fired completion notification was considered and rejected** (docs/log/88 §88.6-1).
 af's only route into a session is typing into its TUI, i.e. starting a turn — so it would save the
 child one turn and unconditionally spend one of the parent's, and delivery resumes a stopped
