@@ -484,6 +484,11 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     fi
   fi
 
+  # Retired when the Hugging Face token became a Console registration (ADR 0072 phase P5):
+  # the stack creates the secret itself now. A capture taken before that still carries the
+  # line, and `deploy` refuses a parameter the template does not declare.
+  af_param_drop HfTokenSecretArn
+
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then
     echo "DRY: cloudformation deploy --stack-name $AF_STACK_ENGINES --template-file $CFN_DIR/60-engines.yaml \\"

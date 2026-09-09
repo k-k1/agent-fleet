@@ -25,6 +25,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	"github.com/aws/aws-sdk-go-v2/service/secretsmanager"
 	"github.com/aws/aws-sdk-go-v2/service/ssm"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/envx"
@@ -88,9 +89,15 @@ type engineIngestDef struct {
 	// (a sha256 mismatch, a 401 on a gated repository, no space), and that sentence is what the
 	// panel shows.
 	LogGroup string `json:"logGroup"`
-	// HasToken is whether the deployment configured HF_TOKEN for the ingest task. It decides
-	// whether a GATED repository can be taken in at all, and the answer is worth having before
-	// a task is started rather than after it fails with a 401 (ADR 0072 decision 10).
+	// TokenSecret is the Secrets Manager secret the ingest task reads HF_TOKEN from. The stack
+	// always creates it and always injects it, holding a sentinel until somebody registers a
+	// token, so this is a place to WRITE and never a statement that a token exists (ADR 0072
+	// decision 6 as revised: the DB is the record of truth, this is the carrying path).
+	TokenSecret string `json:"tokenSecret"`
+	// HasToken is what a pre-P5 stack declared: HF_TOKEN came from a CloudFormation parameter,
+	// so the table itself knew whether a gated repository could be taken in. It survives because
+	// the CP is upgraded before the stack is — on such a table TokenSecret is empty, nothing can
+	// be registered, and this is the whole answer.
 	HasToken bool `json:"hasToken"`
 }
 
@@ -380,6 +387,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			logs:   newEngineIngestLogs(ac),
 			store:  mgr.store,
 			models: mgr.store,
+			tokens: newEngineHfTokens(table.Ingest, mgr.store, mgr, secretsmanager.NewFromConfig(ac)),
 			onDone: func(role string) {
 				if e := reg.get(role); e != nil {
 					e.catalog.invalidate()

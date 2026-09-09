@@ -288,7 +288,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if got.ContextLength != 32768 {
 		t.Errorf("context_length = %d, want 32768", got.ContextLength)
 	}
-	if row := engineResolvedRow(got, engineIngestDef{}); row["context_length"] != 32768 {
+	if row := engineResolvedRow(got, false); row["context_length"] != 32768 {
 		t.Errorf("the panel is not told the context length: %v", row["context_length"])
 	}
 
@@ -299,7 +299,7 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	if aerr != nil {
 		t.Fatalf("gated resolve: %v", aerr.message)
 	}
-	if _, ok := engineResolvedRow(flux, engineIngestDef{})["context_length"]; ok {
+	if _, ok := engineResolvedRow(flux, false)["context_length"]; ok {
 		t.Error("a repository with no gguf metadata reported a context length")
 	}
 }
@@ -554,18 +554,18 @@ func TestEngineIngestRecordsARefusedRunTask(t *testing.T) {
 // with no HF token is refused at the API, before anything is started.
 func TestEngineResolvedRowRefusesGatedWithoutAToken(t *testing.T) {
 	res := engineResolved{Gated: true, LicenseName: "flux-1-dev-non-commercial-license"}
-	row := engineResolvedRow(res, engineIngestDef{HasToken: false})
+	row := engineResolvedRow(res, false)
 	if row["can_ingest"] != false {
 		t.Error("a gated model read as ingestible with no token")
 	}
 	if row["commercial_use"] != "no" {
 		t.Errorf("commercial_use = %v", row["commercial_use"])
 	}
-	if engineResolvedRow(res, engineIngestDef{HasToken: true})["can_ingest"] != true {
+	if engineResolvedRow(res, true)["can_ingest"] != true {
 		t.Error("a gated model with a token configured was still refused")
 	}
 	// An ungated model needs no token at all.
-	if engineResolvedRow(engineResolved{}, engineIngestDef{})["can_ingest"] != true {
+	if engineResolvedRow(engineResolved{}, false)["can_ingest"] != true {
 		t.Error("an ungated model was refused")
 	}
 	b, _ := json.Marshal(row)

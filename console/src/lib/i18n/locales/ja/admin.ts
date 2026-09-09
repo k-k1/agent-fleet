@@ -87,7 +87,16 @@ export const admin = {
   "admin.engines_ingest_go": "取り込む",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
-  "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。スタックの HfTokenSecretArn に運用者のトークンを置いてください（読むのは取り込みタスクだけです）。",
+  "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
+  "admin.engines_hf_token": "Hugging Face のトークン",
+  "admin.engines_hf_token_field": "トークン",
+  "admin.engines_hf_token_save": "登録する",
+  "admin.engines_hf_token_remove": "削除する",
+  "admin.engines_hf_token_unset": "未登録です。gated ではないリポジトリだけ取り込めます。",
+  "admin.engines_hf_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
+  "admin.engines_hf_token_stack": "この配備のトークンは CloudFormation のパラメータで設定されています。Console からの登録・削除はできませんが、gated のリポジトリは取り込めます。",
+  "admin.engines_hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
+  "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンの箱には渡りません。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
   // 条項では何を縛るかが違い、生成物まで縛るかも一様ではないので、どちらが引き金かは

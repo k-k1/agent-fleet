@@ -31,6 +31,18 @@ Order matches the template.
 - [The engine table](#the-engine-table)
 - [Cost allocation](#cost-allocation--every-billed-resource-in-this-stack-carries-af-role)
 
+## What this stack is
+
+The fleet's own inference engines on GPU, normally scaled to zero (ADR 0071 P0: the `llm`
+role, llama.cpp; P1: the `image` role, stable-diffusion.cpp's sd-server). Optional, and each
+role is optional on its own: a deployment that does not want self-hosted inference deploys
+nothing and no engine model appears in any launch menu.
+
+It imports the VPC, private subnets and the CP security group from 00-network, and the
+cluster, execution role, Cloud Map namespace and the af-llamacpp / af-sdcpp ECR repositories
+from 20-platform; it does **not** depend on 30-ingress. Deploy it BEFORE 30-ingress and hand
+30-ingress this stack's `EnginesSsmParam` output.
+
 ## What this template learned the hard way
 
 **Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
@@ -730,25 +742,38 @@ role while the other is on its way out needs 12. A deployment that uses both rol
 
 ## Ingest
 
-### `HfTokenSecretArn`
+### The Hugging Face token
 
-Secrets Manager ARN holding `HF_TOKEN`, read by the INGEST task only (ADR 0071 decision 3: the
-token is the operator's, and it never lands on an engine box). Empty = only ungated repositories
-can be ingested, which covers every model in the ADR's table except FLUX.1-dev and SD 3.5.
+`HfTokenSecret` is a Secrets Manager secret this stack always creates, read by the INGEST task
+only (ADR 0071 decision 3: the token is the operator's, and it never lands on an engine box).
+Without a token only ungated repositories can be ingested, which covers every model in ADR
+0072's table except FLUX.1-dev and SD 3.5.
 
-🔴 **Setting this parameter also grants the EXECUTION role, not the task role.** ECS resolves a
-container's `Secrets` before the container exists, so it does so as the task execution role —
-and 20-platform scopes that role's `secretsmanager:GetSecretValue` to `secret:rds!*`, the
-database password. Handing this stack an ARN outside that prefix without the matching grant
-produces a task that dies at startup with `ResourceInitializationError: unable to pull secrets`
-— not a 401 on the download, and nothing in the ingest log, because no container ever ran.
-`ExecHfTokenPolicy` closes it: created only when an ARN is given, scoped to that one ARN, and
-attached to the imported exec role by name the same way `CpIngestPolicy` attaches to the CP's.
+**There is no parameter to set.** The token is registered in the Console (Settings → engines)
+and the Control Plane writes it into this secret — ADR 0072 decision 6 as revised: the DB is
+the record of truth and Secrets Manager is the carrying path, because `secrets[].valueFrom` is
+the only way ECS hands a value to a container without putting it in `environment`, which
+`DescribeTasks` returns in clear to anyone holding `ecs:DescribeTasks` (measured 2026-09-09).
+
+**Why the secret exists even when no token does.** A task definition is CloudFormation's and
+static, so a `Secrets` block that appeared with the token would put the CloudFormation round
+trip back exactly where registering from the Console was meant to remove it. The secret is
+created holding the sentinel `-`, the block is always there, and the fetch container reads `-`
+as "no token". A stack deleted with a token in it leaves the secret in Secrets Manager's
+recovery window; it is unnamed, so a re-created stack makes a new one rather than colliding.
+
+🔴 **The secret is resolved by the EXECUTION role, not the task role.** ECS resolves a
+container's `Secrets` before the container exists — and 20-platform scopes that role's
+`secretsmanager:GetSecretValue` to `secret:rds!*`, the database password. Without the matching
+grant the task dies at startup with `ResourceInitializationError: unable to pull secrets` — not
+a 401 on the download, and nothing in the ingest log, because no container ever ran.
+`ExecHfTokenPolicy` closes it, scoped to this one secret and attached to the imported exec role
+by name the same way `CpIngestPolicy` attaches to the CP's.
 
 The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wrapper and no trailing
 newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
 variable. A trailing newline travels into the `Authorization: Bearer` header and earns a 401
-that reads exactly like an unaccepted licence.
+that reads exactly like an unaccepted licence. (The CP trims what it is given for that reason.)
 
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
@@ -766,6 +791,13 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `ecs:RunTask` | this stack's ingest family, on this cluster | starting the fetch |
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
+| `secretsmanager:PutSecretValue` | `HfTokenSecret` only | carrying a registered token to the ingest task |
+
+**`GetSecretValue` is deliberately absent.** ADR 0072 decision 6 used to say "the CP never
+holds the token"; once the token is registered through the Console that weakens to "the CP
+cannot read back what it wrote", and this is what makes that auditable rather than a promise.
+It also means the CP has no way to show a registered token, or to check the secret against the
+DB — so it writes the value again before every ingest that needs it.
 
 The reads it already had (`DescribeTasks`, `ListTasks`) are what turn a running task into a
 finished one. The execution role's PassRole was already granted in 20-platform, so it is not
@@ -776,10 +808,11 @@ The log says `ingest: sha256 mismatch: got … want …` or a 401 on a gated rep
 two need completely different things from the person reading them — one is "the file changed
 upstream", the other is "this deployment has no token". The panel shows that line verbatim.
 
-⚠️ **The Control Plane still never holds the Hugging Face token and still never touches S3.**
+⚠️ **The Control Plane still never touches S3, and still never needs the token to resolve.**
 Measured 2026-09-09: a gated repository answers `api/models/<repo>?blobs=true` ANONYMOUSLY with
 its licence, its gating flag and every file's sha256 and size — only the download is 401. So the
-CP resolves, and the task (which has the token) fetches.
+CP resolves, and the task (which has the token) fetches. What changed with the Console
+registration is the token's storage, not this path.
 
 ### Running the ingest task by hand
 
