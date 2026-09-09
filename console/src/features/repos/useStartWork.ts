@@ -13,7 +13,7 @@ import { writeRepoLast, writeRepoSubdir } from "../../lib/repoLast.ts";
 import { autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { pushPromptHistory } from "../../lib/promptHistory.ts";
 import { setLaunchSeed } from "../../lib/launchSeed.ts";
-import { useReposStore } from "./store.ts";
+import { useLaunchSeed, useReposStore } from "./store.ts";
 import { useFilesStore } from "../files/store.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionChat, openSessionTerminal } from "../sessions/open.ts";
@@ -61,6 +61,18 @@ export function useStartWork(): (target: StartTarget, opts: LaunchOpts) => Promi
     // mounted, so switching tabs right after launch made the prompt appear to be sent the
     // moment the tab was reopened (panes in background tabs do not render).
     if (prompt && !withImages) body.initial_prompt = prompt;
+    // Lineage for a launch seeded by a session's handoff proposal (ADR 0073 decision 1,
+    // amendment 2026-09-10). The origin stays "user" — a person opened this session and that is
+    // what the accounting axis records — so only the lineage rides along. The Agent proves the
+    // pair against that session's stored proposals and drops it when it cannot, so this is a
+    // hint the server checks, never a claim it takes. Read from the store rather than through a
+    // prop because it is the same source StartHost badges the proposal from, and the two must
+    // not be able to disagree about which proposal this launch was.
+    const { handoffSession, handoffId } = useLaunchSeed.getState();
+    if (handoffSession && handoffId) {
+      body.origin_session = handoffSession;
+      body.origin_proposal = handoffId;
+    }
     if (worktree) {
       body.worktree = true;
       body.branch = base;

@@ -127,6 +127,27 @@ func OriginOf(m Meta) string {
 	return m.Origin
 }
 
+// InUnattendedChain reports whether m sits inside a chain of sessions that grew with nobody
+// opening one — the question the recursion limit answers (ADR 0073 decision 5).
+//
+// ⚠️ Never open-code this as `OriginSession != ""`. That WAS the whole predicate while
+// origin_session had a single producer, and it still reads as obviously right, which is
+// exactly why the check lives behind a name: OriginSession now also carries "which session
+// proposed the handoff a person launched from", and that session is origin=user.
+//
+// Both terms are load-bearing, in opposite directions:
+//   - a lineage alone is not enough — a handoff proposal's launch has one and IS a human
+//     re-entry, the one decision 5 deliberately leaves open;
+//   - origin alone is not enough either — forking a child stamps origin=handoff while keeping
+//     the lineage, so a rule reading origin would let the fork spawn.
+//
+// user is the only origin that reads as attended. handoff, session, schedule, operator and a
+// meta too old to say (unknown) all answer true when a lineage is present: when in doubt about
+// a chain nobody is watching, refuse.
+func InUnattendedChain(m Meta) bool {
+	return m.OriginSession != "" && OriginOf(m) != OriginUser
+}
+
 // tmux session naming: friendly name "slot01" <-> tmux "claude_slot01".
 const TmuxPrefix = "claude_"
 
@@ -151,7 +172,8 @@ type Session struct {
 	Subdir string `json:"subdir,omitempty"`
 	// Origin / OriginSession mirror Meta's provenance onto the wire (ADR 0073). Origin is
 	// always present (OriginOf, so a session older than the feature reads "unknown");
-	// OriginSession is the parent session's name and is empty unless origin=session.
+	// OriginSession is the session this one came from — the parent that spawned it
+	// (origin=session), or the one whose handoff proposal a person launched (origin=user).
 	//
 	// The consumer the earlier note here waited for is list_child_sessions (docs/log/89): a
 	// parent asking "which of these are mine" reads exactly this pair off GET /sessions, which
@@ -393,13 +415,21 @@ type Meta struct {
 	// originating assistant conversation's slug when origin=operator. A recreate inherits
 	// the original origin; a handoff sets handoff.
 	//
-	// OriginSession is the PARENT SESSION's name when origin=session (ADR 0073): a session
-	// started this one through create_session. It is resolved server-side from the calling
-	// MCP server's own $AF_SESSION_NAME, never from the wire, and it carries two rules that
-	// deliberately read it differently — steering needs origin==session AND a matching
-	// OriginSession (only your own children), while the recursion limit refuses on a
-	// non-empty OriginSession alone (so forking a child, which stamps origin=handoff, does
-	// not slip through). Only fork and recreate inherit it.
+	// OriginSession names the session this one CAME FROM. It has two producers, and Origin
+	// is what tells them apart (ADR 0073 decision 1 and its 2026-09-10 amendment):
+	//   - origin=session — a session started this one through create_session. Resolved
+	//     server-side from the calling MCP server's own $AF_SESSION_NAME, never from the wire.
+	//   - origin=user — a person launched this one from that session's handoff PROPOSAL.
+	//     Origin stays user because a person opened it, so ADR 0029 §6's accounting axis does
+	//     not move; the pair arrives on the wire and is verified against the proposing
+	//     session's stored proposals before it is recorded (CreateOrigin).
+	//
+	// Three rules read it and they deliberately do not agree. Steering and the child budget
+	// need origin==session AND a matching OriginSession (only your own children, and a
+	// person's fork must not spend your budget); the recursion limit asks the wider question
+	// InUnattendedChain — never `OriginSession != ""`, which would refuse the human re-entry
+	// the second producer records. Only fork and recreate inherit it, and fork only from a
+	// source that is itself in an unattended chain.
 	Origin     string `json:"origin,omitempty"`
 	OriginConv string `json:"originConv,omitempty"`
 	// OriginSession names the session that raised this one (ADR 0073). See Origin above.

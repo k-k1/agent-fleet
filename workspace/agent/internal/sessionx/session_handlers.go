@@ -280,10 +280,20 @@ type CreateReq struct {
 	// CP scheduler needs no new wire field. Whitelisted server-side (session.ValidOrigin).
 	Origin     string `json:"origin"`
 	OriginConv string `json:"origin_conv"`
-	// OriginSession is the parent session's name for origin=session (ADR 0073). The tool has
-	// no argument for it: the MCP layer fills it from its own $AF_SESSION_NAME, the way
-	// peer_from is filled, so the model cannot name a parent it is not. See CreateOrigin.
+	// OriginSession names the session this create came from (ADR 0073), under two origins:
+	//   - origin=session: the parent. The tool has no argument for it — the MCP layer fills it
+	//     from its own $AF_SESSION_NAME, the way peer_from is filled, so the model cannot name
+	//     a parent it is not.
+	//   - origin=user: the session whose handoff PROPOSAL the Console launch was seeded from,
+	//     sent with OriginProposal. This one really does arrive from a client, so it is proved
+	//     rather than believed. See CreateOrigin.
 	OriginSession string `json:"origin_session"`
+	// OriginProposal is which of OriginSession's outstanding handoff proposals seeded this
+	// launch. It is not stored — it exists so the lineage can be VERIFIED: proposals live in a
+	// file named after the session that made them, so a matching id proves that session really
+	// proposed this work. Without it, anyone who can reach the Console API could stamp any
+	// session as any other session's origin.
+	OriginProposal string `json:"origin_proposal"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -467,9 +477,10 @@ func commonPrefixLen(a, b string) int {
 //     that legitimately arrives unlabeled.
 //
 // The conversation slug is only meaningful for operator-started sessions ("which operator
-// conversation made this expensive purchase"), so it is dropped otherwise. The parent session
-// name is the same idea one axis over (ADR 0073): meaningful only for origin=session, so a
-// request that names a parent under any other origin loses it rather than growing a lineage
+// conversation made this expensive purchase"), so it is dropped otherwise. The session name is
+// the same idea one axis over (ADR 0073) and it is meaningful under exactly two origins —
+// session (the parent that spawned this) and user (the session whose handoff proposal a person
+// launched from). Under any other one the request loses it rather than growing a lineage
 // nobody can read.
 func CreateOrigin(req *CreateReq) (origin, conv, parent string) {
 	if req.Origin != "" {
@@ -490,8 +501,46 @@ func CreateOrigin(req *CreateReq) (origin, conv, parent string) {
 			return session.OriginUser, "", ""
 		}
 		parent = req.OriginSession
+	case session.OriginUser:
+		parent = handoffProposalLineage(req.OriginSession, req.OriginProposal)
 	}
 	return origin, conv, parent
+}
+
+// handoffProposalLineage answers which session's handoff proposal seeded a Console launch —
+// "" when the request cannot prove one (ADR 0073 decision 1, amendment 2026-09-10).
+//
+// The origin stays user and nothing else about the create changes: the session is not a child.
+// It does not spend the proposing session's budget, that session cannot steer it or see it in
+// list_child_sessions, and it may spawn children of its own — a person opened it, and decision
+// 5's re-entry is exactly that. What is recorded is only "this work came from over there".
+//
+// ⚠️ VERIFIED, not believed. Everywhere else origin_session is resolved from the MCP server's
+// own $AF_SESSION_NAME, which no model can write; this pair arrives from a browser, so taken on
+// trust it would let anyone who can reach POST /sessions stamp an arbitrary lineage on an
+// arbitrary session. The proof costs one small file read, because proposals are stored per
+// PROPOSING session (HandoffProposalPath): an id that is on that session's file could only have
+// been put there by that session. Naming another session's proposal id fails for the same
+// reason — it is not in the file being read.
+//
+// A proposal already badged as launched still counts. Launching is not consuming: the badge is
+// display, discarding is the user's call, and a second session grown from the same proposal has
+// the same provenance as the first.
+func handoffProposalLineage(from, proposalID string) string {
+	from, proposalID = strings.TrimSpace(from), strings.TrimSpace(proposalID)
+	if !session.ValidName(from) || proposalID == "" {
+		return ""
+	}
+	list, err := ReadHandoffProposals(from)
+	if err != nil {
+		return ""
+	}
+	for _, p := range list {
+		if p.ID == proposalID {
+			return from
+		}
+	}
+	return ""
 }
 
 // HandleCreateSession launches a claude session inside a detached tmux session.
@@ -1042,10 +1091,11 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		// source's origin would blend it into "sessions a human opened" and hide the spend
 		// handoffs add. The originating conversation IS inherited from the parent, so a
 		// handoff from an operator-started session stays traceable in the same chain.
-		// OriginSession rides along (ADR 0073): forking a child keeps the lineage, so the
-		// successor still cannot spawn (the recursion limit reads OriginSession alone) while
-		// its origin=handoff keeps it out of the parent's steering set.
-		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: src.OriginSession,
+		// OriginSession rides along only for a source in an unattended chain (forkLineage):
+		// forking a child keeps the lineage, so the successor still cannot spawn, while its
+		// origin=handoff keeps it out of the parent's steering set. Forking a session a person
+		// launched from a handoff proposal inherits nothing — see forkLineage.
+		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: forkLineage(src),
 	}
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
