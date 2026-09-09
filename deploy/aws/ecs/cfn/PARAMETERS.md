@@ -460,6 +460,16 @@ but it is now WRITTEN DOWN. Left implicit, the day the image gains an arm64 mani
 day the architecture becomes a property of whatever Fargate happened to pick, and nobody
 would see it in the template.
 
+⚠️ **This parameter is spelled `x86_64` / `arm64`, the task definition carries the ECS enum's
+`X86_64` / `ARM64`.** The template turns the case, so the value you write and the value you
+read back from `describe-task-definition` differ. ECS accepts the lowercase spelling and
+stores it verbatim, which is why a deployment whose task definition was registered before the
+template turned the case gets **one new revision on its next update** — a rolling deployment
+of the Control Plane, not an outage (old and new overlap for about 51 seconds, docs/log/72).
+The parameter
+itself is not raised to uppercase because every captured `params/30-ingress` holds the
+lowercase value, and a stricter `AllowedValues` would reject it on the next update.
+
 ### `SsmPrefix`
 
 SSM SecureString path prefix holding the CP secrets, created out of band before deploy (see

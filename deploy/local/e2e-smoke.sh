@@ -216,15 +216,28 @@ if [ "${1:-}" = "--inner" ]; then
   printf '%s\n' \
     '<!doctype html><meta charset="utf-8"><style>body{font-family:sans-serif;font-size:32px}</style>' \
     '<title>Agent Fleet Chromium smoke</title><p>Agent Fleet 日本語表示 ✓</p>' > "$page"
-  if chromium \
-      --headless=new --disable-gpu --disable-dev-shm-usage \
-      --user-data-dir="$profile/data" --window-size=800,600 \
-      --run-all-compositor-stages-before-draw --virtual-time-budget=1000 \
-      --screenshot="$screenshot" "file://$page" >/tmp/af-chromium-smoke.log 2>&1 \
-      && [ "$(od -An -tx1 -N8 "$screenshot" 2>/dev/null | tr -d ' \n')" = "89504e470d0a1a0a" ]; then
+  # ⚠️ --virtual-time-budget bounds the PAGE, not the PROCESS. A Chromium that hangs before
+  # it gets that far produces no output and never returns: compose-gate run 34314963170 sat
+  # in this one step for 46 minutes and died on the job's own timeout-minutes, which reads
+  # as "cancelled" rather than as a failure and takes the rest of the job's evidence with
+  # it. The same job passes in ~5 minutes, so bound the process too — a hang has to be a
+  # fast, named NG.
+  chromium_timeout=120
+  chromium_rc=0
+  timeout "$chromium_timeout" chromium \
+    --headless=new --disable-gpu --disable-dev-shm-usage \
+    --user-data-dir="$profile/data" --window-size=800,600 \
+    --run-all-compositor-stages-before-draw --virtual-time-budget=1000 \
+    --screenshot="$screenshot" "file://$page" >/tmp/af-chromium-smoke.log 2>&1 || chromium_rc=$?
+  if [ "$chromium_rc" = 0 ] \
+     && [ "$(od -An -tx1 -N8 "$screenshot" 2>/dev/null | tr -d ' \n')" = "89504e470d0a1a0a" ]; then
     echo "ok  Chromium headless Japanese-text screenshot"
+  elif [ "$chromium_rc" = 124 ]; then
+    # Expect this tail to be EMPTY — that is the signature of the hang, not a missing log.
+    echo "NG  Chromium headless screenshot hung, killed after ${chromium_timeout}s: $(tail -20 /tmp/af-chromium-smoke.log 2>/dev/null)"
+    fail=1
   else
-    echo "NG  Chromium headless screenshot failed: $(tail -20 /tmp/af-chromium-smoke.log 2>/dev/null)"
+    echo "NG  Chromium headless screenshot failed (exit $chromium_rc): $(tail -20 /tmp/af-chromium-smoke.log 2>/dev/null)"
     fail=1
   fi
   if fc-match 'sans-serif:lang=ja' | grep -Fq 'Noto Sans CJK'; then
@@ -234,10 +247,19 @@ if [ "${1:-}" = "--inner" ]; then
   fi
   # Exercise the product binary's pipe-CDP path with the sandbox enabled. Render two
   # animating Pages at once and confirm per-Page ACK pacing stays within the set fps.
-  if workspace-agent browser-smoke >/tmp/af-browser-manager-smoke.log 2>&1; then
+  # Bounded for the same reason as the screenshot above. Its own deadlines are seconds
+  # (15s to reach the first Page, 1250ms of pacing), so 180s only catches a launch that
+  # never returns at all.
+  smoke_timeout=180
+  smoke_rc=0
+  timeout "$smoke_timeout" workspace-agent browser-smoke >/tmp/af-browser-manager-smoke.log 2>&1 || smoke_rc=$?
+  if [ "$smoke_rc" = 0 ]; then
     echo "ok  $(tail -1 /tmp/af-browser-manager-smoke.log)"
+  elif [ "$smoke_rc" = 124 ]; then
+    echo "NG  BrowserManager sandbox/2-Page smoke hung, killed after ${smoke_timeout}s: $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
+    fail=1
   else
-    echo "NG  BrowserManager sandbox/2-Page smoke failed: $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
+    echo "NG  BrowserManager sandbox/2-Page smoke failed (exit $smoke_rc): $(tail -30 /tmp/af-browser-manager-smoke.log 2>/dev/null)"
     fail=1
   fi
   rm -rf "$profile"

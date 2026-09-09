@@ -398,6 +398,13 @@ Conditions:
   HasVoicevoxUrl: !Not [ !Equals [ !Ref VoicevoxUrl, "" ] ]
   # Self-hosted inference engines (ADR 0071). One parameter, so one condition.
   HasEnginesSsmParam: !Not [ !Equals [ !Ref EnginesSsmParam, "" ] ]
+  # CpArch is spelled the way an operator writes an architecture (and the way every
+  # captured params file already holds it), while the ECS enum is X86_64 / ARM64. ECS
+  # accepts the lowercase spelling but stores it verbatim, so the case has to be turned
+  # here rather than in the parameter — raising the AllowedValues to match 50-tts's own
+  # CpuArchitecture would reject the value every deployed stack carries on its next
+  # update, which is the one thing a captured parameter must survive. TaskDef below.
+  CpArm: !Equals [ !Ref CpArch, arm64 ]
   HasCpAlarms: !Not [ !Equals [ !Ref CpAlarmEmail, "" ] ]
   HasWaf: !Not [ !Equals [ !Ref WafRateLimitPer5Min, 0 ] ]
   HasWafReputation: !And [ !Condition HasWaf, !Equals [ !Ref WafIpReputation, "on" ] ]
@@ -655,8 +662,12 @@ Resources:
       # and a rolling deployment rather than a no-op.
       # ⚠️ EC2 does NOT share this default (docs/log/70 §70.8): there an omitted
       # runtimePlatform stays null and placement decides. Only Fargate fills it in.
+      # ⚠️ The value written here is the ECS enum's own spelling, not CpArch's — see the
+      # CpArm condition. Because it is part of the identity, a stack standing on the
+      # lowercase spelling gets ONE new revision on its next update (a rolling deployment,
+      # not an outage: old and new overlap for ~51 seconds, measured in docs/log/72).
       RuntimePlatform:
-        CpuArchitecture: !Ref CpArch
+        CpuArchitecture: !If [ CpArm, ARM64, X86_64 ]
         OperatingSystemFamily: LINUX
       ExecutionRoleArn:
         Fn::ImportValue: !Sub "${PlatformStackName}-ExecRoleArn"
