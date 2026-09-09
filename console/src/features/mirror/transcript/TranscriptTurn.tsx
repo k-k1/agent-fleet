@@ -115,7 +115,32 @@ export function TranscriptTurn({
   const workOpen = work.current.open;
   const edited = isUser ? [] : turnFiles(turn.parts);
   const copyText = split ? textOfParts(turn.parts.slice(split.at)) : turn.text;
-  const renderAssistantParts = (parts: Part[]) =>
+  // Shared files produced BEFORE the boundary, hoisted out of the fold (see the render below).
+  // Indices are the ones foldParts would hand out for the folded slice, so a lifted card keeps
+  // the key it had inside the disclosure.
+  const liftedFiles = split
+    ? turn.parts.slice(0, split.at).flatMap((p, i) => (p.kind === "userfile" ? [{ p, i }] : []))
+    : [];
+  const renderUserFile = (p: Part, key: number) =>
+    // Files the agent shared via SendUserFile, and the picture cards af's generate_image
+    // synthesizes from its result — a panel; a card opens in a pane, an image card enlarges
+    // in the lightbox instead. With no way to open one (shared view), the panel is not
+    // rendered at all.
+    caps.openFile ? (
+      <UserFileBlock
+        key={key}
+        files={p.files}
+        caption={p.caption}
+        onOpen={caps.openFile}
+        fileURL={caps.fileURL}
+        thumbURL={caps.thumbURL}
+        onZoom={caps.openImage}
+      />
+    ) : null;
+  // liftFiles: render this slice WITHOUT its shared-file panels, because the caller re-renders
+  // them outside the fold. The parts array itself is never filtered — foldParts' index is what
+  // keys every block and addresses turn.origins, so dropping a part would shift both.
+  const renderAssistantParts = (parts: Part[], liftFiles = false) =>
     foldParts(parts).map((item) =>
       // Consecutive tool traces collapse into one foldable row (Edit/Write bursts
       // between paragraphs). A lone tool renders inline (ToolRun handles length 1).
@@ -151,20 +176,7 @@ export function TranscriptTurn({
           sendDisabled={caps.planSendDisabled}
         />
       ) : item.p.kind === "userfile" ? (
-        // Files the agent shared via SendUserFile — a panel; a card opens in a pane, an
-        // image card enlarges in the lightbox instead. With no way to open one (shared
-        // view), the panel is not rendered at all.
-        caps.openFile ? (
-          <UserFileBlock
-            key={item.i}
-            files={item.p.files}
-            caption={item.p.caption}
-            onOpen={caps.openFile}
-            fileURL={caps.fileURL}
-            thumbURL={caps.thumbURL}
-            onZoom={caps.openImage}
-          />
-        ) : null
+        liftFiles ? null : renderUserFile(item.p, item.i)
       ) : item.p.kind === "thinking" ? (
         // The agent's chain-of-thought (codex reasoning / opencode reasoning),
         // collapsed unless this agent's behaviour setting asks for it expanded.
@@ -396,8 +408,15 @@ export function TranscriptTurn({
                 redrawWork();
               }}
             >
-              {renderAssistantParts(turn.parts.slice(0, split.at))}
+              {renderAssistantParts(turn.parts.slice(0, split.at), true)}
             </WorkDisclosure>
+            {/* Shared files the work produced, hoisted out of the closed disclosure and kept in
+                order just above the final answer. A shared file is a DELIVERABLE, and the
+                boundary sits after the LAST tool — so a picture with any tool after it (a second
+                generate_image call, or the agent simply opening the image it just made) would be
+                folded away, in a summary that counts only tools and interim texts. Same reason
+                the edited-file chips below report the turn's writes without unfolding it. */}
+            {liftedFiles.map(({ p, i }) => renderUserFile(p, i))}
             {renderAssistantParts(turn.parts.slice(split.at))}
           </>
         ) : (

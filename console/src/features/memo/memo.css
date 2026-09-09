@@ -321,6 +321,21 @@
   color: var(--muted2);
   margin-top: 5px;
 }
+/* Composer moved under a category header: it belongs to that group, so it indents with
+   the memos and drops the category field for a read-only label of where it writes. */
+.memo-add.targeted {
+  margin: 0 0 6px 3px;
+}
+.memo-add-target {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  align-self: center;
+  font-size: 11px;
+  color: var(--muted);
+}
 /* Category header: grip + checkbox + name (rename on click) + count + send + delete. */
 .memo-cat-grip,
 .memo-grip {
@@ -391,6 +406,25 @@
 }
 .memo-cat-head:hover .memo-cat-send {
   opacity: 1;
+}
+/* "add to this category": unlike send/delete this one stays visible (dimmed) — it is the
+   affordance that says a category can be written into, and a hover-only icon is invisible
+   on touch, where the header's other actions already are. */
+.memo-cat-add {
+  flex: none;
+  background: none;
+  border: none;
+  color: var(--muted2);
+  cursor: pointer;
+  padding: 1px 3px;
+  opacity: 0.55;
+  display: inline-flex;
+}
+.memo-cat-head:hover .memo-cat-add {
+  opacity: 1;
+}
+.memo-cat-add:hover {
+  color: var(--fg);
 }
 .memo-cat-del {
   flex: none;

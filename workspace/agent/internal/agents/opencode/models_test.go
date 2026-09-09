@@ -143,3 +143,68 @@ func TestRetiredRemembersDroppedIDs(t *testing.T) {
 		t.Fatal("a live / nonexistent id was judged retired")
 	}
 }
+
+// The catalog command must not let the AWS credential chain resolve. opencode turns its
+// built-in `amazon-bedrock` provider on whenever it does, and every ECS task carries
+// AWS_CONTAINER_CREDENTIALS_RELATIVE_URI — measured on the production deployment, that made
+// `opencode models` take 45 seconds against a 10-second budget, so it was killed every time
+// and the launch picker showed "default only" (docs/log/64 §64.43.8).
+func TestWithoutAWSCredentialChain(t *testing.T) {
+	t.Setenv("AF_OPENCODE_SHOW_BEDROCK", "")
+	got := withoutAWSCredentialChain([]string{
+		"PATH=/usr/bin",
+		"AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/v2/credentials/abc",
+		"AWS_ACCESS_KEY_ID=AKIAEXAMPLE",
+		"AWS_SECRET_ACCESS_KEY=secret",
+		"AWS_SESSION_TOKEN=token",
+		"AWS_PROFILE=default",
+		"AWS_REGION=ap-northeast-1",
+		"OPENCODE_API_KEY=stored",
+	})
+	want := []string{
+		"PATH=/usr/bin",
+		// AWS_REGION stays: it names a region, it does not authenticate. Dropping it would
+		// change behaviour for anything that legitimately reads it.
+		"AWS_REGION=ap-northeast-1",
+		"OPENCODE_API_KEY=stored",
+		"AWS_EC2_METADATA_DISABLED=true",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("withoutAWSCredentialChain = %v, want %v", got, want)
+	}
+}
+
+// IMDS is not an environment variable, and on ecs-ec2 the slot's instance profile answers it.
+// Dropping the container variables alone would therefore leave the chain resolvable.
+func TestWithoutAWSCredentialChainClosesIMDS(t *testing.T) {
+	t.Setenv("AF_OPENCODE_SHOW_BEDROCK", "")
+	got := withoutAWSCredentialChain([]string{"PATH=/usr/bin"})
+	if len(got) == 0 || got[len(got)-1] != "AWS_EC2_METADATA_DISABLED=true" {
+		t.Fatalf("IMDS not disabled: %v", got)
+	}
+}
+
+// The escape hatch has to be honoured here as well as in keepInMenu. Honouring it in only one
+// of the two would mean the flag puts amazon-bedrock/* back in the menu while this function
+// has already made the command unable to see it.
+func TestWithoutAWSCredentialChainRespectsShowBedrock(t *testing.T) {
+	t.Setenv("AF_OPENCODE_SHOW_BEDROCK", "1")
+	in := []string{"PATH=/usr/bin", "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI=/v2/credentials/abc"}
+	got := withoutAWSCredentialChain(in)
+	if !reflect.DeepEqual(got, in) {
+		t.Fatalf("AF_OPENCODE_SHOW_BEDROCK=1 must leave the chain alone: %v", got)
+	}
+}
+
+func TestFirstLine(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", ""},
+		{"   \n  ", ""},
+		{"boom", ": boom"},
+		{"first\nsecond", ": first"},
+	} {
+		if got := firstLine(tc.in); got != tc.want {
+			t.Fatalf("firstLine(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

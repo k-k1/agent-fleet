@@ -1034,9 +1034,12 @@ sha256 matters for the same reason: a truncated 17 GB GGUF loads and then answer
 and "the file got bigger" is what a truncated download looks like too.
 
 A gated repository (`gated: auto` on the HF API — FLUX.1-dev, SD 3.5) additionally needs the
-operator to have accepted the licence on Hugging Face and an `HF_TOKEN` in Secrets Manager,
-passed as `HfTokenSecretArn`. The token is read by the **ingest task only**; it never reaches
-an engine box.
+operator to have accepted the licence on Hugging Face and that account's token registered in
+**Settings → Admin → engines → "Hugging Face token"** (ADR 0072 phase P5 — no CloudFormation
+round trip: the control plane keeps the token sealed in its own database and writes it into a
+secret this stack always creates). The token is read by the **ingest task only**; it never
+reaches an engine box, and the control plane cannot read back what it wrote
+(`PutSecretValue` without `GetSecretValue`).
 
 ### What a member sees
 

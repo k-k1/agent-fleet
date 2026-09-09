@@ -71,6 +71,12 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// And what the repository HAS, so the filename is picked rather than copied by hand across
 	// two windows — the same read, filtered to the files this engine could actually load.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/files", a.withSuperAdmin(a.listIngestFiles))
+	// The operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5). Not under
+	// {key}: one token serves every role, because one ingest task does. There is no GET that
+	// returns it — only whether one is registered, by whom and when.
+	mux.HandleFunc("GET /api/admin/engines/hf-token", a.withSuperAdmin(a.getHfToken))
+	mux.HandleFunc("PUT /api/admin/engines/hf-token", a.withSuperAdmin(a.putHfToken))
+	mux.HandleFunc("DELETE /api/admin/engines/hf-token", a.withSuperAdmin(a.deleteHfToken))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -632,22 +638,22 @@ func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ 
 		writeAPIErr(w, aerr)
 		return
 	}
-	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.reg.ingestDef()))
+	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.hfTokens().configured(r.Context())))
 }
 
 // engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
 // verdict this route exists for: a gated repository on a deployment with no HF token cannot be
 // taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
 // a confused administrator.
-func engineResolvedRow(res engineResolved, def engineIngestDef) map[string]any {
+func engineResolvedRow(res engineResolved, hasToken bool) map[string]any {
 	row := map[string]any{
 		"sha256":           res.SHA256,
 		"bytes":            res.Bytes,
 		"gated":            res.Gated,
 		"commercial_use":   engineCommercialUse(res),
 		"source":           res.Source,
-		"can_ingest":       !res.Gated || def.HasToken,
-		"deployment_token": def.HasToken,
+		"can_ingest":       !res.Gated || hasToken,
+		"deployment_token": hasToken,
 	}
 	if res.License != "" {
 		row["license"] = res.License
@@ -758,10 +764,10 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	}
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes
 	// into a Fargate task, and the message that reaches the panel is an exit code.
-	if res.Gated && !ing.def.HasToken {
+	if res.Gated && !ing.tokens.configured(r.Context()) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestGatedNoToken,
 			"that repository is gated: accept its terms on Hugging Face with the operator's account " +
-				"and give the stack an HfTokenSecretArn — the token is read by the ingest task only"})
+				"and register that account's token below — it is read by the ingest task only"})
 		return
 	}
 	job, aerr := ing.start(r.Context(), engineIngestRequest{

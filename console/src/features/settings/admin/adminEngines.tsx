@@ -361,6 +361,7 @@ export function EnginesAdminView() {
           <EngineHistory engineKey={e.key} />
         </section>
       ))}
+      {rows.length > 0 && <HfTokenPanel />}
       {err && <p className="form-err pad">{err}</p>}
       {note && <p className="muted pad">{note}</p>}
       <p className="muted pad">{tr("admin.engines_note")}</p>
@@ -622,6 +623,130 @@ function EngineModelAdd({
           next cold start, so the panel says so rather than implying a check happened. */}
       <p className="muted">{tr("admin.engines_model_add_note")}</p>
     </div>
+  );
+}
+
+/** What the CP knows about the operator's Hugging Face token. Never the value: the CP cannot
+ *  read the secret it writes, and it does not offer to unseal the stored copy for a screen. */
+type HfTokenStatus = {
+  /** false on a stack that predates P5, where the token was a CloudFormation parameter and
+   *  there is nowhere for the CP to put one. */
+  available?: boolean;
+  configured?: boolean;
+  /** That older stack HAS a token: nothing to register, and gated repositories work. Without
+   *  this the same screen would have to read as "no token" and send somebody to fix what is
+   *  not broken. */
+  stack_token?: boolean;
+  updated_by?: string;
+  updated_at?: string;
+};
+
+/** Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5).
+ *
+ * One token for the whole deployment, so this sits below the engines rather than inside one:
+ * a single ingest task serves both roles, and a per-engine field would suggest a choice that
+ * does not exist.
+ *
+ * The field is write-only, and that is not a UI convention here — it is what the deployment
+ * can actually do. The CP holds `PutSecretValue` on one secret and never `GetSecretValue`, so
+ * "show the current token" is not something it could offer even if a screen wanted it. What
+ * can be shown is that one is registered, by whom and when. */
+function HfTokenPanel() {
+  const tr = useT();
+  const [st, setSt] = useState<HfTokenStatus | null>(null);
+  const [token, setToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  const load = useCallback(async () => {
+    const d = await api("api/admin/engines/hf-token");
+    if (d?.error) {
+      setErr(errDetail(d.error));
+      return;
+    }
+    setSt(d || {});
+  }, []);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const save = async () => {
+    setBusy(true);
+    try {
+      const d = await apiJSON("api/admin/engines/hf-token", "PUT", { token });
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      // Cleared on success only: a token that was refused is still in the box to be corrected,
+      // and retyping 40 characters because the deployment answered 502 is its own small insult.
+      setToken("");
+      setSt(d || {});
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async () => {
+    setBusy(true);
+    try {
+      const d = await apiJSON("api/admin/engines/hf-token", "DELETE");
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setSt(d || {});
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!st) return null;
+  return (
+    <section className="admin-panel">
+      <div className="usage-toolbar">
+        <span>{tr("admin.engines_hf_token")}</span>
+      </div>
+      {st.available === false ? (
+        <p className="muted">
+          {tr(st.stack_token ? "admin.engines_hf_token_stack" : "admin.engines_hf_token_unsupported")}
+        </p>
+      ) : (
+        <>
+          <p className="muted">
+            {st.configured
+              ? tr("admin.engines_hf_token_set")
+                  .replace("{who}", st.updated_by || "-")
+                  .replace("{when}", st.updated_at ? fmtDateTime(st.updated_at) : "-")
+              : tr("admin.engines_hf_token_unset")}
+          </p>
+          <label className="engines-hf-row">
+            <span>{tr("admin.engines_hf_token_field")}</span>
+            <input
+              type="password"
+              autoComplete="off"
+              value={token}
+              placeholder="hf_..."
+              onChange={(ev) => setToken(ev.currentTarget.value)}
+            />
+          </label>
+          <div className="engines-model-add-actions">
+            <button type="button" className="primary sm" disabled={busy || !token.trim()} onClick={save}>
+              {tr("admin.engines_hf_token_save")}
+            </button>
+            {st.configured && (
+              <button type="button" className="ghost sm" disabled={busy} onClick={remove}>
+                {tr("admin.engines_hf_token_remove")}
+              </button>
+            )}
+          </div>
+          <p className="muted">{tr("admin.engines_hf_token_note")}</p>
+        </>
+      )}
+      {err && <p className="form-err">{err}</p>}
+    </section>
   );
 }
 

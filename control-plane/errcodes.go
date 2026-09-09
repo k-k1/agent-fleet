@@ -49,4 +49,13 @@ const (
 	errCodeIngestNotAccepted   = "license_not_accepted"
 	errCodeIngestGatedNoToken  = "gated_no_token"
 	errCodeIngestIDExists      = "model_id_exists"
+
+	// Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised). The
+	// write reaches two places — the sealed setting and the stack's secret — and they fail
+	// for different reasons, so a single "could not save" would send the reader to the wrong
+	// place: no secret means the stack predates P5, a refused write means IAM.
+	errCodeHfTokenUnsupported = "hf_token_unsupported"
+	errCodeHfTokenEmpty       = "hf_token_empty"
+	errCodeHfTokenStoreFailed = "hf_token_store_failed"
+	errCodeHfTokenPutFailed   = "hf_token_put_failed"
 )

@@ -413,3 +413,21 @@ af_param_override() {
   [ "$found" = 1 ] || out+=("$key=$val")
   AF_PARAMS=("${out[@]}")
 }
+
+# af_param_drop <key> — remove one entry of AF_PARAMS[], for a parameter a template no
+# longer declares.
+#
+# `cloudformation deploy` REFUSES a --parameter-overrides key the template does not have, and
+# a capture is a snapshot of the stack as it was: a parameter retired in the repository stays
+# in params/<slug> until somebody edits the file by hand. Without this the next stand-up of a
+# deployment that predates the retirement stops on "Parameters: [X] do not exist".
+af_param_drop() {
+  local key="$1" out=() p
+  for p in ${AF_PARAMS[@]+"${AF_PARAMS[@]}"}; do
+    case "$p" in
+      "$key"=*) ;;
+      *) out+=("$p") ;;
+    esac
+  done
+  AF_PARAMS=(${out[@]+"${out[@]}"})
+}

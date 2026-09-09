@@ -34,6 +34,7 @@ export const memo = {
   "memo.add_title": "メモを追加（Ctrl/⌘+K → N → A）",
   "memo.composer_hint": "Ctrl+Enter で追加 · Esc で閉じる",
   "memo.add_category": "カテゴリを追加",
+  "memo.add_to_category": "「{name}」にメモを追加",
   "memo.new_category": "新しいカテゴリ",
   "memo.category_name_ph": "カテゴリ名",
   "memo.rename_category": "クリックでカテゴリ名を変更",
