@@ -712,18 +712,20 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // Image providers in the Agent's own built-in order (imagegen.providerOrder). agy is first
 // because it honours more of the request — a requested aspect ratio reaches its tool, where the
 // codex route lets the caller choose no dimension at all.
-// The image providers a member can rank, in the built-in order. `sdcpp` is the fleet's own
-// engine (ADR 0071): it is here because the Agent ranks it in the same list, and a UI that
-// omitted it would write a stored order that silently pushes it last — the one thing
+// The image providers a member can rank, in the built-in order. `sdcpp` and `comfy` are the
+// fleet's own engine (ADR 0071 / ADR 0072 decision 4) — a deployment runs the image role as ONE
+// of the two, never both, but a member's stored preference order should not care which, so both
+// are listed. Either is here because the Agent ranks it in the same list, and a UI that omitted
+// one would write a stored order that silently pushes it last — the one thing
 // normalizeImageProviderOrder exists to prevent. A deployment without that engine simply never
 // routes to it, the same way an unusable login is skipped.
-export const IMAGE_PROVIDERS = ["sdcpp", "agy", "codex"] as const;
+export const IMAGE_PROVIDERS = ["sdcpp", "comfy", "agy", "codex"] as const;
 
 // imageProviderLabel names one provider for the ordering list. agy and codex are agent kinds
-// and carry their own display name; sdcpp is not an agent at all — it is a service this
-// deployment runs — so it has its own label rather than a lookup that would return "sdcpp".
+// and carry their own display name; sdcpp/comfy are not agents at all — they are a service this
+// deployment runs — so they have their own label rather than a lookup that would return the id.
 export function imageProviderLabel(id: string): string {
-  if (id === "sdcpp") return "Agent Fleet (self-hosted)";
+  if (id === "sdcpp" || id === "comfy") return "Agent Fleet (self-hosted)";
   return "";
 }
 
