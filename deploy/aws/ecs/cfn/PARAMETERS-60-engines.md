@@ -577,6 +577,20 @@ Secrets Manager ARN holding `HF_TOKEN`, read by the INGEST task only (ADR 0071 d
 token is the operator's, and it never lands on an engine box). Empty = only ungated repositories
 can be ingested, which covers every model in the ADR's table except FLUX.1-dev and SD 3.5.
 
+🔴 **Setting this parameter also grants the EXECUTION role, not the task role.** ECS resolves a
+container's `Secrets` before the container exists, so it does so as the task execution role —
+and 20-platform scopes that role's `secretsmanager:GetSecretValue` to `secret:rds!*`, the
+database password. Handing this stack an ARN outside that prefix without the matching grant
+produces a task that dies at startup with `ResourceInitializationError: unable to pull secrets`
+— not a 401 on the download, and nothing in the ingest log, because no container ever ran.
+`ExecHfTokenPolicy` closes it: created only when an ARN is given, scoped to that one ARN, and
+attached to the imported exec role by name the same way `CpIngestPolicy` attaches to the CP's.
+
+The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wrapper and no trailing
+newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
+variable. A trailing newline travels into the `Authorization: Bearer` header and earns a 401
+that reads exactly like an unaccepted licence.
+
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
