@@ -182,6 +182,40 @@ documented precedence and it was measured: with `-c 32768` on the router, two mo
 sections said `c = 4096` and `c = 384` both came up `--ctx-size 32768`. One flag, and every
 model's declared window is silently gone. Windows belong to the catalogue.
 
+### `--no-mmap` is in the default `LlmExtraArgs`, and it is the second-biggest win in this stack
+
+llama.cpp memory-maps the GGUF by default and lets page faults pull it in. On this box that
+reaches only about half of what the disk can do, and `--no-mmap` — a plain sequential read —
+gets the rest. Measured cold both ways (two copies of the same 18.5 GB object, each load
+preceded by 18.5 GB of other I/O so a 14 GB cgroup cache is cycled and neither is warm):
+
+| | load | effective |
+|---|---|---|
+| mmap (llama.cpp's default) | 92 s | 201 MB/s |
+| **`--no-mmap`** | **50 s** | **371 MB/s** |
+| the instance store itself, `dd iflag=direct` | 47 s | 391 MB/s |
+
+**`--no-mmap` essentially saturates the disk; mmap leaves half of it on the table.** Then on the
+real deployment, end to end:
+
+| | before | with `--no-mmap` |
+|---|---|---|
+| cold start (RunTask → model loaded) | 267 s | **209 s** |
+| **swap back to the 18.5 GB model** | 98.5 s | **46.9 s** |
+| swap to the 1.1 GB model | 3.3 s | 1.6 s |
+
+The swap is the number ADR 0072 decision 3 put a price on, and it has now gone
+**276-282 s → 98.5 s → 46.9 s** across the two changes — six times faster than the shape this
+stack shipped with, for one parameter default and one capacity-provider flag.
+
+🔴 **The obvious worry does not bite**: without mmap, llama.cpp is not mapping a file it can drop
+pages from, so an 18.5 GB model on a task limited to 14,336 MiB looks like it should fail. It
+does not — with `-ngl 99` the weights stream tensor-by-tensor into VRAM and the host buffer is
+transient. Verified on the deployment's own task definition at its own memory limit, which is
+the only place that question could be answered honestly. **A role that did NOT offload every
+layer would be a different question**, so anything running without `-ngl 99` should re-measure
+before inheriting this default.
+
 ### `LlmModelsMax`
 
 How many models the router may hold at once (`--models-max`; upstream's default is 4, `0` =

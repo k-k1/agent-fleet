@@ -85,10 +85,10 @@ Parameters:
     Description: "SEED: the output cap advertised with it (0 does not mean unset)."
   LlmExtraArgs:
     Type: CommaDelimitedList
-    Default: "-ngl,99,--jinja"
+    Default: "-ngl,99,--jinja,--no-mmap"
     Description: >-
-      Extra llama-server flags, measured on an L4: all layers on the GPU, chat template applied
-      (the latter is what makes tool calls work). ⚠️ NEVER -c here: the router passes its own
+      Extra llama-server flags on an L4: all layers on the GPU, chat template (tool calls need
+      it), --no-mmap (halves the load). ⚠️ NEVER -c here: the router passes its own
       command line to every model instance and a command line WINS over the preset, so one -c
       silently gives every model that window (measured). Windows are the catalogue's.
   LlmModelsMax:
