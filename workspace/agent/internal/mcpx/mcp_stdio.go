@@ -807,8 +807,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"it away, leaving stop_session / resume_session / get_session_output nothing to name. Call it " +
 				"before your last turn too, to tell your user which children you left and how they stand. " +
 				"lastTurnEndAt separates a child that FINISHED from one that never started - idle means both. It " +
-				"is absent while a child is mid-turn, after a restart, and until a completion has been observed " +
-				"(get_session_status on that child records one). " +
+				"is absent while a child is mid-turn and after a restart. " +
 				"Archived sessions are not listed and hold no slot.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},

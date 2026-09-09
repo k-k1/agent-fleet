@@ -30,6 +30,26 @@ type SessionStatus struct {
 	// unknown and the report waits for the next real end-of-turn (a miss costs a delay, a
 	// wrong answer costs a misdelivered report).
 	TurnEnd bool `json:"turnEnd,omitempty"`
+	// TurnEndAt is WHEN the turn that has just ended ended (RFC3339) — the source of the
+	// listing's lastTurnEndAt (docs/log/89 §89.3).
+	//
+	// It carries the SAME evidence as TurnEnd (only a real end of turn writes it; the
+	// SessionStart reset and the TurnUnknown idle deliberately do not, because both are
+	// "we do not know", and Persist clears it by writing a fresh record), and it is a
+	// SECOND field rather than the TurnEnd bit's own TS because of who else has to be able
+	// to write it. The four hook-less TUI kinds (agy / copilot / cursor / kiro) can only have
+	// their turn end OBSERVED BY A POLL, and the sessions list is a poll that must stay free
+	// of side effects: it may record WHEN the turn ended, but it must not fire the
+	// notification and the operator's completion report (docs/log/51's arm) from a read the
+	// Console hammers. Splitting the timestamp off is what lets the list record the fact
+	// while leaving State/TurnEnd — and therefore the notification gate DriveState reads
+	// (LiveState == "working") — completely untouched. Writing idle from the list instead
+	// would consume that gate and silence the completion report of all four kinds.
+	//
+	// The first observation of a turn's end wins (PersistTurnEnd keeps an already-stamped
+	// value): both writers are describing the same end, and a timestamp that moved forward
+	// would read, to a parent polling its children, as a SECOND turn having finished.
+	TurnEndAt string `json:"turnEndAt,omitempty"`
 }
 
 // ExitInfo records WHY a session's agent process terminated, so the sessions list can
@@ -113,10 +133,57 @@ func Persist(sid, state string) { persist(sid, SessionStatus{State: state}) }
 // MarkTurnEnd's completed/failed/aborted). This is the only entry point that sets
 // TurnEnd: a write that only records "the current state" and a write that claims "the
 // turn ended" stay separate.
-func PersistTurnEnd(sid, state string) { persist(sid, SessionStatus{State: state, TurnEnd: true}) }
+//
+// An end already stamped by RecordTurnEnd is kept, not overwritten: a poll that saw this
+// same turn end before the notification route got to it observed it EARLIER, and moving the
+// timestamp forward would look like a second turn finished (see TurnEndAt).
+func PersistTurnEnd(sid, state string) {
+	at := time.Now().Format(time.RFC3339)
+	if prev, ok := Read(sid); ok && prev.TurnEndAt != "" {
+		at = prev.TurnEndAt
+	}
+	persist(sid, SessionStatus{State: state, TurnEnd: true, TurnEndAt: at})
+}
+
+// TurnEndUnrecorded reports whether sid has a turn in flight whose end has not been stamped
+// yet, i.e. whether observing the live state could record anything at all. It is the CHEAP
+// half of RecordTurnEnd's guard (one small read of a store the caller reads anyway), meant to
+// be checked BEFORE the live-state source it would take to answer "has it ended?" — that
+// source is a SQLite query for agy and a 128KB tail scan for copilot/cursor, on a list route
+// polled for every session in the workspace.
+func TurnEndUnrecorded(sid string) bool {
+	st, ok := Read(sid)
+	return ok && st.State == "working" && st.TurnEndAt == ""
+}
+
+// RecordTurnEnd stamps WHEN a poll observed the running turn end, and does nothing else:
+// State and TurnEnd are left exactly as they were, so this write is invisible to every
+// consumer of the state machine (the notification gate in sessionx.DriveState, the docs/log/51
+// reconciler, the pending sweep) and to the TS they judge by. That is the whole point — see
+// TurnEndAt. It is what makes recording an end safe from a route that must not have side
+// effects (docs/log/89 §89.3).
+//
+// Its guard is deliberately NOT the notification gate's: recording is idempotent (the stamp is
+// written once per turn, so a list polled every few seconds does not rewrite the file) and it
+// does not consume anything, so the end of that same turn is still notified exactly once by
+// whichever route observes it next.
+func RecordTurnEnd(sid string) {
+	st, ok := Read(sid)
+	if !ok || st.State != "working" || st.TurnEndAt != "" {
+		return
+	}
+	st.TurnEndAt = time.Now().Format(time.RFC3339)
+	// TS is left alone on purpose: it is the marker time the report reconciler judges by
+	// (chatx.collectReportSignals), and nothing about this write changes the state it dates.
+	write(sid, st)
+}
 
 func persist(sid string, s SessionStatus) {
 	s.TS = time.Now().Format(time.RFC3339)
+	write(sid, s)
+}
+
+func write(sid string, s SessionStatus) {
 	if err := statusFiles.Write(sid, s); err != nil {
 		log.Printf("session-status: write %s: %v", statusFiles.Path(sid), err)
 	}
