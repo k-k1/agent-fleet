@@ -127,16 +127,22 @@
    zoomed), which takes the edge swipe that pulls out the left pane with it. Measured at
    390px: the bar wanted 489px before the "restart required" pill even appears, 531px with
    it — i.e. it was already over, and the pill was what made it obvious.
-   So on a phone: drop the decorative caption, let the state chip size to its own text,
-   and tighten the gap/paddings. WsBar also stops rendering "split right" here (it is
-   permanently disabled on a phone). Measured after: 332px with the pill. */
+   So on a phone: shrink the decorative caption to "WS", let the state chip size to its
+   own text, and tighten the gap/paddings. WsBar also stops rendering "split right" here
+   (it is permanently disabled on a phone). Measured after: 332px with the pill. */
+.ws-label .lbl-short {
+  display: none;
+}
 @media (max-width: 760px) {
   .wsbar {
     gap: 6px;
     padding: 6px 8px;
   }
-  .ws-label {
+  .ws-label .lbl {
     display: none;
+  }
+  .ws-label .lbl-short {
+    display: inline;
   }
   .ws-state {
     /* The only shrinkable item on the row, deliberately: whatever is added to the bar

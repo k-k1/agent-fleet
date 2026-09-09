@@ -1384,7 +1384,10 @@ export function WsBar() {
 
   return (
     <div className="wsbar">
-      <span className="ws-label">Workspace</span>
+      <span className="ws-label">
+        <span className="lbl">Workspace</span>
+        <span className="lbl-short">WS</span>
+      </span>
       {/* Power toggle: a single icon-only ⏻ to the LEFT of the state chip — the chip
           says running/stopped, this starts or stops accordingly (no separate labeled
           button). The bar auto-syncs wsState from the 4s workspace poll, so an
