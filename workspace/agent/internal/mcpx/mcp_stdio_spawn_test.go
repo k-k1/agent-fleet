@@ -2,6 +2,7 @@ package mcpx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -79,6 +80,47 @@ func TestFleetSpawnAddsExactlyItsNineTools(t *testing.T) {
 	for name := range after {
 		if !before[name] && !contains(fleetSpawnToolNames, name) {
 			t.Errorf("%s appeared with --fleet-spawn but is not one of its nine tools", name)
+		}
+	}
+}
+
+// withSpawnChildLimit forces the configured child limit for one test.
+//
+// It sets the hook directly rather than writing a prefs file: this package does not link
+// uiprefs (mcpx reads prefs through deps.ReadUIPrefs), so there is nothing here to run the init
+// that wires it. That the wiring exists at all is fixed one package over —
+// uiprefs.TestSpawnChildLimitReachesTheSessionPackage — and the two together are the route.
+func withSpawnChildLimit(t *testing.T, n int) {
+	t.Helper()
+	old := session.SpawnChildLimitPref
+	t.Cleanup(func() { session.SpawnChildLimitPref = old })
+	session.SpawnChildLimitPref = func() int { return n }
+}
+
+// The child limit is a user setting, and this is the surface that SAYS it: create_session's
+// description states the ceiling so a caller learns it before planning around one it does not
+// have (ADR 0073 decision 6).
+//
+// A baked-in "3" passes every test of the advertised SET — the tool is there, its name is right,
+// its schema is right — while telling every session a number that is not in force. So the
+// assertion is on the sentence, at two configured values, and the second is what rules out a
+// coincidence with the default.
+func TestCreateSessionDescriptionStatesTheConfiguredLimit(t *testing.T) {
+	withFleetSpawn(t, true)
+	for _, limit := range []int{1, session.SpawnChildLimitMax} {
+		withSpawnChildLimit(t, limit)
+		desc := ""
+		for _, tool := range mcpStdioToolList() {
+			if name, _ := tool["name"].(string); name == "create_session" {
+				desc, _ = tool["description"].(string)
+			}
+		}
+		if desc == "" {
+			t.Fatal("create_session is not advertised")
+		}
+		want := fmt.Sprintf("at most %d children at a time", limit)
+		if !strings.Contains(desc, want) {
+			t.Errorf("description does not state the limit in force (%q): %s", want, desc)
 		}
 	}
 }
@@ -358,6 +400,9 @@ func TestOutputCursorScopedToTheSessionWithoutAConversation(t *testing.T) {
 // row shape are all exercised on the path a model actually takes.
 func TestListChildSessionsReturnsOnlyOwnChildrenAndTheSlotCount(t *testing.T) {
 	withFleetSpawn(t, true) // caller is parent1
+	// Deliberately NOT the default: slotLimit is the other place the budget is stated out loud,
+	// and against a limit of three a hardcoded three would look identical to a read one.
+	withSpawnChildLimit(t, 5)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/sessions" {
@@ -410,9 +455,9 @@ func TestListChildSessionsReturnsOnlyOwnChildrenAndTheSlotCount(t *testing.T) {
 	if strings.Join(names, ",") != "mine,folded" {
 		t.Fatalf("rows = %v, want only this session's own children", names)
 	}
-	if got.SlotLimit != session.SpawnChildLimit || got.SlotsLeft != session.SpawnChildLimit-2 {
-		t.Fatalf("slots = %d/%d, want %d left of %d", got.SlotsLeft, got.SlotLimit,
-			session.SpawnChildLimit-2, session.SpawnChildLimit)
+	limit := session.SpawnChildLimit()
+	if got.SlotLimit != limit || got.SlotsLeft != limit-2 {
+		t.Fatalf("slots = %d/%d, want %d left of %d", got.SlotsLeft, got.SlotLimit, limit-2, limit)
 	}
 
 	mine, folded := got.Sessions[0], got.Sessions[1]

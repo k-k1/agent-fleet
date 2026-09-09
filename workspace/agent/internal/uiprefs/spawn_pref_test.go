@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
 func writePrefs(t *testing.T, obj map[string]any) {
@@ -42,6 +44,35 @@ func TestFleetSpawnIsIndependentOfTheRetiredObserveKey(t *testing.T) {
 			writePrefs(t, tc.prefs)
 			if got := FleetSpawn(); got != tc.want {
 				t.Fatalf("FleetSpawn() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// The child limit, END TO END: a prefs file on disk changes what session.SpawnChildLimit()
+// answers. Asserting SpawnChildLimit() alone would pass with the init hook deleted — the
+// setting would be read by nobody and the budget would silently stay at three, which is the
+// "written but never called" shape this area has produced twice (docs/log/86 §86.10).
+func TestSpawnChildLimitReachesTheSessionPackage(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		obj  map[string]any
+		want int
+	}{
+		{"unset", map[string]any{}, session.SpawnChildLimitDefault},
+		{"one", map[string]any{"sessionSpawnChildLimit": 1}, 1},
+		{"the ceiling", map[string]any{"sessionSpawnChildLimit": session.SpawnChildLimitMax},
+			session.SpawnChildLimitMax},
+		// Past the ceiling, and the wrong type: neither is a value the Console can produce, and
+		// both fall back to the default rather than to a number nobody picked.
+		{"past the ceiling", map[string]any{"sessionSpawnChildLimit": 99}, session.SpawnChildLimitDefault},
+		{"a string", map[string]any{"sessionSpawnChildLimit": "5"}, session.SpawnChildLimitDefault},
+		{"zero", map[string]any{"sessionSpawnChildLimit": 0}, session.SpawnChildLimitDefault},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			writePrefs(t, tc.obj)
+			if got := session.SpawnChildLimit(); got != tc.want {
+				t.Fatalf("session.SpawnChildLimit() = %d, want %d", got, tc.want)
 			}
 		})
 	}

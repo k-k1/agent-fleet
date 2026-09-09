@@ -356,6 +356,13 @@ export interface Settings {
   // Default FALSE — this is the one that spends the shared host with nobody watching. (It used
   // to be offered only once observation was on; that prerequisite went with the switch.)
   sessionFleetSpawn: boolean;
+  // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
+  // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
+  //
+  // The Agent clamps it to 1..SPAWN_CHILD_LIMIT_MAX and falls back to the default outside that,
+  // so a value hand-edited into ui-prefs cannot raise the ceiling. Offered as a fixed set of
+  // choices rather than a free number precisely so the range is a property of the control.
+  sessionSpawnChildLimit: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -719,6 +726,12 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // routes to it, the same way an unusable login is skipped.
 export const IMAGE_PROVIDERS = ["sdcpp", "agy", "codex"] as const;
 
+// The child limits a user may pick (ADR 0073 decision 6). Keep the last entry equal to the
+// Agent's session.SpawnChildLimitMax: a choice past it is silently answered with the DEFAULT,
+// not with the ceiling, so an option this list offered and the Agent refused would set the
+// budget lower than the user asked for rather than higher.
+export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6] as const;
+
 // imageProviderLabel names one provider for the ordering list. agy and codex are agent kinds
 // and carry their own display name; sdcpp is not an agent at all — it is a service this
 // deployment runs — so it has its own label rather than a lookup that would return "sdcpp".
@@ -846,6 +859,7 @@ const DEFAULTS: Settings = {
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
+  sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   expandThinking: {},

@@ -2,11 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useToast } from "../../../ui/ToastProvider.tsx";
 import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Button } from "../../../ui/Button.tsx";
-import { OnOff, OrderList, Row } from "../parts/controls.tsx";
+import { Choice, OnOff, OrderList, Row } from "../parts/controls.tsx";
 import {
   useSettings,
   setSetting,
   IMAGE_PROVIDERS,
+  SPAWN_CHILD_LIMITS,
   normalizeImageProviderOrder,
   imageProviderLabel,
 } from "../../../lib/settings.ts";
@@ -116,6 +117,22 @@ export function AgentsTab() {
         <OnOff value={s.sessionFleetSpawn} onChange={(v) => setSetting("sessionFleetSpawn", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_fleet_spawn")}</p>
+      {/* The budget (ADR 0073 decision 6). Only with the switch on, for the reason the image
+          provider order is: with steering off nothing ever consults it. A fixed set of choices
+          rather than a number field — the Agent answers anything outside its range with the
+          default, so a range the control cannot express would read as a silent downgrade. */}
+      {s.sessionFleetSpawn && (
+        <>
+          <Row label={tr("agents.spawn_child_limit")}>
+            <Choice
+              value={s.sessionSpawnChildLimit}
+              options={SPAWN_CHILD_LIMITS.map((n) => [n, String(n)])}
+              onChange={(v) => setSetting("sessionSpawnChildLimit", v)}
+            />
+          </Row>
+          <p className="muted ds-note">{tr("agents.note_spawn_child_limit")}</p>
+        </>
+      )}
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>
