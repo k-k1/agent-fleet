@@ -1,6 +1,7 @@
 package sessionx
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,9 +20,24 @@ import (
 // passes just as happily when nothing calls it — the failure mode stage 1 wrote
 // TestGetSessionStatusTrimsOnlyForSessions for, one layer down.
 
+// spawnEnv is one test's isolated create endpoint plus the list of sessions IT started.
+type spawnEnv struct {
+	srv     *httptest.Server
+	home    string
+	t       *testing.T
+	started []string // tmux sessions this test launched, and the only ones it may kill
+}
+
 // spawnServer stands the create endpoint up with a stub agent CLI on PATH, so a launch really
 // completes without depending on a real claude.
-func spawnServer(t *testing.T) (*httptest.Server, string) {
+//
+// ⚠️ The tmux server is SHARED with every other session in this workspace. The session store is
+// per-test (AF_SESSIONS_DIR), but tmux names are not namespaced, so cleanup may only touch what
+// this test actually launched — never "every meta in the store", which includes hand-written
+// fixtures whose names (`busy`, `kid1`, …) could belong to somebody's real session. Kills are
+// also pinned with `=`: without it tmux resolves a target by prefix and fnmatch, so
+// `claude_kid1` would happily match a stranger's `claude_kid10`.
+func spawnServer(t *testing.T) *spawnEnv {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
 		t.Skip("tmux not available")
@@ -40,22 +56,44 @@ func spawnServer(t *testing.T) (*httptest.Server, string) {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", HandleCreateSession)
-	srv := httptest.NewServer(mux)
+	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t}
 	t.Cleanup(func() {
-		srv.Close()
-		// Whatever launched really is a tmux session on this host.
-		for _, m := range session.ListMetas() {
-			_ = exec.Command("tmux", "kill-session", "-t", session.TmuxName(m.Name)).Run()
+		env.srv.Close()
+		for _, name := range env.started {
+			_ = exec.Command("tmux", "kill-session", "-t", "="+session.TmuxName(name)).Run()
 		}
 	})
-	return srv, home
+	return env
+}
+
+// create POSTs one create and remembers the session it launched, so cleanup can kill exactly
+// that and nothing else. Returns the status and the raw body; the caller asserts on them.
+func (e *spawnEnv) create(body map[string]any) (int, []byte) {
+	e.t.Helper()
+	code, raw := roundtrip(e.t, e.srv, "POST", "/sessions", body)
+	if code == http.StatusCreated || code == http.StatusOK {
+		var s session.Session
+		if json.Unmarshal(raw, &s) == nil && s.Name != "" {
+			e.started = append(e.started, s.Name)
+		}
+	}
+	return code, raw
+}
+
+// spawnBody is the common create request, with per-test overrides.
+func spawnBody(extra map[string]any) map[string]any {
+	body := map[string]any{"kind": "claude", "origin": "session", "origin_session": "parent1"}
+	for k, v := range extra {
+		body[k] = v
+	}
+	return body
 }
 
 // The whole chain for one spawned child: provenance on the meta, the envelope on the delivered
 // task, and the injection record that gives the mirror its badge — written BEFORE delivery.
 func TestCreateSessionSpawnWiring(t *testing.T) {
-	srv, home := spawnServer(t)
-	repo := filepath.Join(home, "repos", "app")
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -75,12 +113,14 @@ func TestCreateSessionSpawnWiring(t *testing.T) {
 	}
 	t.Cleanup(func() { deliverInitialPromptFn = orig })
 
+	code, raw := env.create(spawnBody(map[string]any{"dir": repo, "initial_prompt": "rebase onto develop"}))
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %s", code, raw)
+	}
 	var created session.Session
-	do(t, srv, "POST", "/sessions", map[string]any{
-		"dir": repo, "kind": "claude", "initial_prompt": "rebase onto develop",
-		"origin": "session", "origin_session": "parent1",
-	}, http.StatusCreated, &created)
-
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatal(err)
+	}
 	if created.Origin != session.OriginSession || created.OriginSession != "parent1" {
 		t.Fatalf("wire origin = %q/%q, want session/parent1", created.Origin, created.OriginSession)
 	}
@@ -107,8 +147,8 @@ func TestCreateSessionSpawnWiring(t *testing.T) {
 // The budget is enforced by the handler, not merely computable by a helper — and it must not
 // answer a RETRY, which is the whole point of running after the idempotency claim.
 func TestCreateSessionSpawnBudgetAndRetry(t *testing.T) {
-	srv, home := spawnServer(t)
-	repo := filepath.Join(home, "repos", "app")
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -122,18 +162,28 @@ func TestCreateSessionSpawnBudgetAndRetry(t *testing.T) {
 	deliverInitialPromptFn = func(string, string) {}
 	t.Cleanup(func() { deliverInitialPromptFn = orig })
 
-	third := map[string]any{
-		"dir": repo, "kind": "claude", "initial_prompt": "the third task",
-		"origin": "session", "origin_session": "parent1", "idempotency_key": "cs_third",
+	third := spawnBody(map[string]any{
+		"dir": repo, "initial_prompt": "the third task", "idempotency_key": "cs_third",
+	})
+	code, raw := env.create(third)
+	if code != http.StatusCreated {
+		t.Fatalf("third child = %d %s", code, raw)
 	}
 	var created session.Session
-	do(t, srv, "POST", "/sessions", third, http.StatusCreated, &created)
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	// No slot is left held after the create. This catches a release that never happens; that it
+	// happens at the META WRITE rather than at the handler's return is pinned by
+	// TestSpawnSlotIsHandedOverToTheMeta, because the difference between the two is only
+	// visible from inside the launch window and the handler waits on nothing a test can hold.
+	if got := spawnInflight.n["parent1"]; got != 0 {
+		t.Fatalf("inflight after a completed create = %d, want 0 (leaked slot)", got)
+	}
 
 	// Four is refused, and the refusal names the ceiling.
-	code, raw := roundtrip(t, srv, "POST", "/sessions", map[string]any{
-		"dir": repo, "kind": "claude", "initial_prompt": "one too many",
-		"origin": "session", "origin_session": "parent1",
-	})
+	code, raw = env.create(spawnBody(map[string]any{"dir": repo, "initial_prompt": "one too many"}))
 	if code != http.StatusConflict || !strings.Contains(string(raw), "spawn_budget") {
 		t.Fatalf("fourth child = %d %s, want 409 spawn_budget", code, raw)
 	}
@@ -142,8 +192,14 @@ func TestCreateSessionSpawnBudgetAndRetry(t *testing.T) {
 	// that timed out mid-launch re-sends the same request, and by then its own child is on disk
 	// and counted: check the budget before the idempotency ledger and the caller is told it
 	// already has three, for a session it is still waiting to hear about.
+	code, raw = env.create(third)
+	if code != http.StatusOK {
+		t.Fatalf("retry = %d %s, want 200 (a replay of the first)", code, raw)
+	}
 	var replay session.Session
-	do(t, srv, "POST", "/sessions", third, http.StatusOK, &replay)
+	if err := json.Unmarshal(raw, &replay); err != nil {
+		t.Fatal(err)
+	}
 	if replay.Name != created.Name {
 		t.Fatalf("retry produced %q, want the first session %q", replay.Name, created.Name)
 	}
@@ -151,7 +207,8 @@ func TestCreateSessionSpawnBudgetAndRetry(t *testing.T) {
 
 // Two agents in one working copy, checked against the dir the session will REALLY run in.
 func TestCreateSessionSpawnWorkingCopyGuard(t *testing.T) {
-	srv, home := spawnServer(t)
+	env := spawnServer(t)
+	home := env.home
 	repo := filepath.Join(home, "repos", "app")
 	if err := os.MkdirAll(filepath.Join(repo, "console"), 0o755); err != nil {
 		t.Fatal(err)
@@ -170,13 +227,7 @@ func TestCreateSessionSpawnWorkingCopyGuard(t *testing.T) {
 	deliverInitialPromptFn = func(string, string) {}
 	t.Cleanup(func() { deliverInitialPromptFn = deliverOrig })
 
-	spawn := func(extra map[string]any) (int, []byte) {
-		body := map[string]any{"kind": "claude", "origin": "session", "origin_session": "parent1"}
-		for k, v := range extra {
-			body[k] = v
-		}
-		return roundtrip(t, srv, "POST", "/sessions", body)
-	}
+	spawn := func(extra map[string]any) (int, []byte) { return env.create(spawnBody(extra)) }
 
 	if code, raw := spawn(map[string]any{"dir": repo, "worktree": false}); code != http.StatusConflict ||
 		!strings.Contains(string(raw), "spawn_working_copy_busy") {
@@ -205,8 +256,8 @@ func TestCreateSessionSpawnWorkingCopyGuard(t *testing.T) {
 
 // The other refusals, over HTTP: a child cannot spawn, and no session can start a shell.
 func TestCreateSessionSpawnDepthAndKindOverHTTP(t *testing.T) {
-	srv, home := spawnServer(t)
-	repo := filepath.Join(home, "repos", "app")
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -226,11 +277,11 @@ func TestCreateSessionSpawnDepthAndKindOverHTTP(t *testing.T) {
 		{"no ssm either", map[string]any{"origin_session": "parent1", "kind": "ssm"}, "spawn_kind_refused"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body := map[string]any{"dir": repo, "kind": "claude", "origin": "session", "worktree": true}
+			body := spawnBody(map[string]any{"dir": repo, "worktree": true})
 			for k, v := range tc.body {
 				body[k] = v
 			}
-			code, raw := roundtrip(t, srv, "POST", "/sessions", body)
+			code, raw := env.create(body)
 			if code < 400 || !strings.Contains(string(raw), tc.code) {
 				t.Fatalf("= %d %s, want %s", code, raw, tc.code)
 			}

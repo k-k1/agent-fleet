@@ -2,7 +2,7 @@
 
 - 状態: **実装済み**（2026-09-09）。オペレーター専用だった操縦系 8 本をセッション面へ開放した。
   既定 OFF、opt-in は「セッションからのフリート観測」が ON のときだけ設定できる。
-  実装後に別セッションのレビューを 1 巡受け、5 件（P1×3・P2×2）を反映した（§87.9）。
+  実装後に別セッションのレビューを 2 巡受け、7 件を反映した（§87.9）。
 - 設計: [ADR 0073](../decisions/0073-session-spawned-sessions.ja.md)（本書は実装の記録で、
   なぜそう決めたかは全部そちら）。前段: [86-session-fleet-observe.md](86-session-fleet-observe.md)
   （段階 1・§86.2 の判断軸と §86.9 の宿題）。
@@ -146,6 +146,9 @@ AGENTS.md の既知事項）。exit code はパイプを通さずに取ってい
 | **ハンドラが封筒を適用しない** | `TestCreateSessionSpawnWiring` |
 | **ハンドラが枠を予約しない** | `TestCreateSessionSpawnBudgetAndRetry` |
 | **記録を配達の後に書く** | `TestCreateSessionSpawnWiring`（配達時点で無バッジ） |
+| 枠を meta 書き込み時に手放さない | `TestSpawnSlotIsHandedOverToTheMeta` |
+| `releaseOnce` が毎回解放する（二重解放） | 同上 |
+| ハンドラが枠を一度も解放しない | `TestCreateSessionSpawnBudgetAndRetry`（枠の漏れ） |
 
 「関数は書いたが呼ばれていない」は**単体テストでは原理的に見逃す**ので、経路を通すものを 2 層に
 置いた。`tools/call` を実際に通す 2 本（`TestCreateSessionFromSessionStampsLineageAndDefaults`・
@@ -183,3 +186,22 @@ AGENTS.md の既知事項）。exit code はパイプを通さずに取ってい
   操作で、利用者の fork が原因で親が起こせなくなるのはおかしい）なので ADR と本書を直した。
 - **[P2] 検証が実ハンドラの配線欠落を検出しなかった。** §87.7 のとおり、HTTP で create を叩く
   4 本と配達 seam を足した。
+
+## 87.10 実装レビュー 2 巡目（2026-09-09）
+
+- **[P1] テストの後片付けが、自分で起こしていない tmux セッションを殺し得た。** 後片付けが
+  「テスト用ストアの全 meta」を対象にしていたが、そこには手で書いた fixture（`busy` / `kid1` /
+  `parent1` …）が含まれる。**tmux サーバはワークスペース内で共有**なので、同名の実セッションが
+  あれば他人の作業を落とす。加えて `kill-session -t <名前>` は完全一致ではなく前方一致・
+  fnmatch で解決されるため、`claude_kid1` が他人の `claude_kid10` に当たり得た。ハーネスを
+  「**このテストが HTTP 経由で起こしたセッション名だけ**を記録し、`-t =<名前>` で殺す」形に
+  作り直した。運用指示の「自分が起こした PID / セッションだけを止める」がテストコードにも
+  掛かる、という当たり前を踏み外していた。
+- **[P2] meta 保存後もハンドラ復帰まで枠を予約したままだった。** 書き込んだ瞬間から
+  `countChildren` はその子を数えるので、予約と二重に計上され、**起動中（tmux や worktree の
+  作成で数秒）は実在しない台数で上限に当たる**。正当な並行 create が拒否される。予約は
+  **meta が書かれた時点で手放す**ようにし（`releaseOnce` で失敗経路の defer と二重解放を
+  両立）、契約を `TestSpawnSlotIsHandedOverToTheMeta` で固定した。
+  なお**ハンドラの呼び出し位置（復帰時ではなく meta 書き込み時）そのものはテストで固定できて
+  いない** — 差が出るのは起動中の窓の内側だけで、ハンドラはテストが掴める同期点で待たない。
+  代わりに「create 後に枠が漏れていない」ことだけ経路テストで見ている。

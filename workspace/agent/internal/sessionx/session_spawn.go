@@ -49,8 +49,13 @@ func countChildren(parent string) int {
 	return n
 }
 
-// reserveSpawnSlot claims one of parent's child slots, or reports why it cannot. The caller
-// must release it once the create has either written its meta or failed.
+// reserveSpawnSlot claims one of parent's child slots, or reports why it cannot.
+//
+// ⚠️ Release it the moment the child's META EXISTS, not when the create finishes. From the
+// write onwards countChildren sees the child, so holding the reservation as well counts it
+// twice: a parent with one child and one launch in flight reads as three, and the next
+// legitimate create is refused against a fleet that does not exist yet. The launch is the slow
+// part (tmux, a worktree), so that window is not small.
 func reserveSpawnSlot(parent string) error {
 	spawnInflight.mu.Lock()
 	defer spawnInflight.mu.Unlock()
@@ -61,6 +66,21 @@ func reserveSpawnSlot(parent string) error {
 	}
 	spawnInflight.n[parent]++
 	return nil
+}
+
+// releaseOnce wraps releaseSpawnSlot so the create can call it at the meta write AND defer it
+// for the failure paths without giving the slot back twice — the second release would free a
+// slot the child is now occupying, and the limit would drift upwards one create at a time.
+// Not concurrency-safe by design: one create, one goroutine.
+func releaseOnce(parent string) func() {
+	done := false
+	return func() {
+		if done {
+			return
+		}
+		done = true
+		releaseSpawnSlot(parent)
+	}
 }
 
 func releaseSpawnSlot(parent string) {

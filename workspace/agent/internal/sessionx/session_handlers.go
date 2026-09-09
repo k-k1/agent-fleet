@@ -551,6 +551,9 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusCreated, body)
 	}
+	// releaseSpawn hands this create's reserved child slot back. Replaced below for a spawn;
+	// a no-op for every other creation route.
+	releaseSpawn := func() {}
 	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
 	// (clone / worktree), so a refused spawn leaves nothing behind.
 	//
@@ -570,9 +573,11 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
 			return
 		}
-		// Held until this handler returns: by then the child's meta is either on disk (and
-		// counted from there) or the create failed and the slot was never used.
-		defer releaseSpawnSlot(spawnParent)
+		// The slot is handed over to the child's meta the moment that meta is written
+		// (releaseSpawnSlot's warning: holding both counts one child twice, and the launch is
+		// seconds long). The defer is the failure net — every path that ends without a meta.
+		releaseSpawn = releaseOnce(spawnParent)
+		defer releaseSpawn()
 	}
 	title, ok := CleanTitle(req.Title)
 	if !ok {
@@ -853,6 +858,8 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.WriteMeta(meta)
+		// The child exists now, so countChildren sees it: hand the reserved slot over.
+		releaseSpawn()
 		noteCreateOrigin(name, &req, spawnParent)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
@@ -869,6 +876,8 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(meta)
+	// The child exists now, so countChildren sees it: hand the reserved slot over.
+	releaseSpawn()
 
 	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
 	// against, and the turn can appear first (see noteCreateOrigin).

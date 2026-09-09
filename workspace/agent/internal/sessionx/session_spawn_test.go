@@ -199,6 +199,38 @@ func TestSpawnBudgetReservesBeforeTheMetaExists(t *testing.T) {
 	releaseSpawnSlot("root")
 }
 
+// The slot is handed over to the meta the moment the meta exists. Holding both counts one child
+// twice for the length of a launch (tmux, a worktree — seconds), and a parent well under the
+// limit is refused against a fleet that does not exist.
+func TestSpawnSlotIsHandedOverToTheMeta(t *testing.T) {
+	spawnFixture(t,
+		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
+		child("kid1", "root"),
+	)
+	// A create in flight: reserved, meta not yet written. One real child, one launching.
+	release := releaseOnce("root")
+	if err := reserveSpawnSlot("root"); err != nil {
+		t.Fatalf("second child refused: %v", err)
+	}
+	// Its meta lands, and the slot goes with it.
+	session.WriteMeta(child("kid2", "root"))
+	release()
+	if n := countChildren("root"); n != 2 {
+		t.Fatalf("children = %d, want 2", n)
+	}
+	// A third create is legitimate now — two children, limit three.
+	if err := reserveSpawnSlot("root"); err != nil {
+		t.Fatalf("third child refused although only two exist: %v (slot counted twice?)", err)
+	}
+	// The deferred release on the same create must not give a second slot back: that would
+	// free one the child now occupies and let the limit drift upwards.
+	release()
+	if got := spawnInflight.n["root"]; got != 1 {
+		t.Fatalf("inflight = %d, want 1 (a double release freed an occupied slot)", got)
+	}
+	releaseOnce("root")()
+}
+
 // The envelope (decision 14) is what tells the child this instruction came from another
 // session rather than from its user.
 func TestSpawnEnvelopeNamesTheParent(t *testing.T) {
