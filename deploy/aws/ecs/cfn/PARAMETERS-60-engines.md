@@ -390,20 +390,53 @@ The engine's initial mode, written into the SSM table as the DEFAULT only — on
 it the stored setting wins, because under on-demand the desired count is not the admin's intent
 (ADR 0070 decision 7).
 
-## The `image` role (stable-diffusion.cpp)
+## The `image` role (stable-diffusion.cpp, or ComfyUI since ADR 0072 P2)
 
 A mirror of the `llm` block, and deliberately a mirror rather than a shared set of parameters:
 decision 2 is that instance requirements are DECLARED per role, because the floor is a VRAM
 number (SDXL fp16 measured 7,379 MiB against the 30B's 20,943) and the two roles must never land
 on the same box — CUDA does not slow down when VRAM runs out, it crashes.
 
+### `ImageEngine`
+
+ADR 0072 decision 4: which server the role actually runs, `sdcpp` (stable-diffusion.cpp, one
+checkpoint chosen at start) or `comfy` (this deployment's own ComfyUI image, which switches
+checkpoints per REQUEST). One role, one task definition, one service either way — `!If` only
+switches the `engine` container's `Image` and `Command` and the engine table's `health`/
+`provider` fields, never the shape of the stack. A second container/service pair for `comfy`
+would need its own capacity-provider association and can never run at the same time as
+`sdcpp`'s (ADR 0071 decision 2 — the two roles never share a box, let alone the same role run
+twice), so there is nothing to gain from one.
+
+`ImageComfyImageTag` (default `v0.34.0`) is the tag inside `af-comfyui`, baked by
+`.github/workflows/comfyui-image.yml` (a dedicated `workflow_dispatch`, deliberately NOT part of
+`dev-image.yml`/`release.sh` — ComfyUI's pinned upstream revision moves on its own schedule, not
+the app's) and copied in by `standup.sh` the same way `af-sdcpp` is, gated on `ImageEngine=comfy`.
+
+### The `image` role's engine table fields, per `ImageEngine`
+
+| | `sdcpp` | `comfy` |
+|---|---|---|
+| `health` | `/v1/models` | `/system_stats` (unauthenticated, answers immediately — measured) |
+| `provider` | `sdcpp` | `comfy` |
+
+Neither engine is a router (`PRESET_FILE`/`ALIAS_FLAG`/`CTX_FLAG` stay empty for both), and the
+fetch sidecar does not otherwise know or care which one it is feeding — it already syncs every
+ENABLED model's files (`keys.start` then `keys.rest`), not just the selected one, which happens
+to be exactly what `comfy` needs (every enabled checkpoint on disk so a request can pick any of
+them) and is merely wasted bandwidth for `sdcpp` if an administrator enables more than one
+checkpoint while running it. `comfy`'s container command never reads `/models/cmdline`'s
+CONTENT (there is no `-m` flag to build — the checkpoint is chosen per request by the `comfy`
+provider's own graph JSON), only whether the file is non-empty, which is the same "something is
+enabled" gate `sdcpp` uses.
+
 ### `ImageImageTag`
 
 Tag inside the `af-sdcpp` ECR repository (the doubled word is the `image` ROLE's container image
-tag). Upstream is `ghcr.io/leejet/stable-diffusion.cpp:master-cuda`, 2.31 GB and **amd64 only** —
-there is no arm64 build and G-family instances have no arm64 member either, so this role is
-x86_64 by construction (ADR 0071 decision 12). `standup.sh` copies it in with `crane` before this
-stack is deployed, and only when `ImageModelS3Key` is set.
+tag), used when `ImageEngine=sdcpp`. Upstream is `ghcr.io/leejet/stable-diffusion.cpp:master-cuda`,
+2.31 GB and **amd64 only** — there is no arm64 build and G-family instances have no arm64 member
+either, so this role is x86_64 by construction (ADR 0071 decision 12). `standup.sh` copies it in
+with `crane` before this stack is deployed, and only when `ImageModelS3Key` is set.
 
 ### `ImageModelS3Key`
 
@@ -600,14 +633,15 @@ Four rules, each with a failure behind it:
 - **`ParameterNotFound` is EMPTY, not an error.** 60-engines is created BEFORE 30-ingress, so at
   stack-creation time there is no Control Plane and no parameter at all. A `set -e` that failed
   here would bring the two-pass stand-up back in a new shape (ADR 0072 decision 1(b)).
-- **The image role fetches only the STARTING checkpoint's files**, plus every enabled LoRA. S3
-  to EBS ran at 92–147 MB/s (measured), so syncing every enabled model would put minutes of
-  somebody else's checkpoint into every cold start. Enabling a model OFFERS it; selecting one
-  LOADS it, and sd-server holds exactly one.
-- **The llm role fetches EVERY enabled model**, because the router can be asked for any of them
-  at request time and a miss is a 500, not a wait (measured). The cold start therefore grows
-  with the sum of the enabled GGUFs — ADR 0072 decision 9, and what the panel's "sync +N s"
-  estimate is for.
+- **Both roles fetch the STARTING model first and every OTHER enabled model behind it** (see
+  "The START model gates the engine" below) — the sidecar does not distinguish by role. For
+  `sdcpp`, which holds exactly one checkpoint, an administrator who enables more than one pays
+  for a sync that never gets used; for the `llm` router and for `comfy` (ADR 0072 P2), every
+  enabled model really can be asked for, so the extra sync is not waste. Enabling a model
+  OFFERS it; `sdcpp`'s `selected` (or the llm router's `default`) decides what is LOADED first.
+- **The llm role's cold start therefore grows with the sum of the enabled GGUFs** — ADR 0072
+  decision 9, and what the panel's "sync +N s" estimate is for. The same is true of `comfy`'s
+  enabled checkpoints, for the same reason.
 - **A file already on the box is not re-fetched.** The volume is fresh per task today, so this
   is currently a no-op — it is what makes a warm box worth anything if ADR 0071 decision 7(c)
   ever gets one.
@@ -655,6 +689,14 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   `decideEngineAction` refuses to start — and stops — an engine whose catalogue is empty
   (`no_model`, ADR 0072 decision 1(c)). Without that half, `mode=on` buys $1.26/hour for
   `sleep infinity`.
+- **`comfy`'s wrapper (ADR 0072 P2) does not build a command-line flag for the checkpoint at
+  all.** ComfyUI reads `models/checkpoints`, `models/loras`, `models/vae`, `models/text_encoders`
+  and `models/diffusion_models` relative to its own working directory — which IS the S3 layout
+  ADR 0071 decision 6 already mirrors onto `/models/image`. So the wrapper's entire integration
+  is `ln -sfn /models/image /ComfyUI/models` before `exec`: no copying, and no need to tell
+  ComfyUI which checkpoint to load, because the `comfy` provider picks one per REQUEST in its own
+  graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this branch — only its
+  non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
 
 ## Editing this template
 
@@ -719,7 +761,9 @@ line is the whole of that failure).
 CloudFormation blocks on ECS service stabilisation, so a service that cannot pull leaves the
 stack in `CREATE_IN_PROGRESS` indefinitely. That is why the repositories live in 20-platform and
 `standup.sh` copies the images in during its images step, one stack earlier than this one
-(measured on 50-tts, 2026-09-06).
+(measured on 50-tts, 2026-09-06). The image role's single `engine` container (named that rather
+than `sd` since ADR 0072 P2, now that it can be either binary) pulls from `af-sdcpp` or
+`af-comfyui` depending on `ImageEngine`, and `standup.sh` only copies the ONE it needs.
 
 ⚠️ **`DesiredCount` is deliberately ABSENT, and this is load-bearing.** From the resource
 schema: for a NEW service an unspecified desired count defaults to 1; for an EXISTING one it is
@@ -902,6 +946,11 @@ the CP task role's SSM read scope.
 
 Not a parameter but the stack's real output: the one SSM value 30-ingress is handed, holding 0, 1
 or 2 rows (each role is staged independently), which the Control Plane reads once at startup.
+
+**`health` and `provider` on the image row follow `ImageEngine`** (ADR 0072 decision 4): `comfy`
+writes `/system_stats` and `comfy`, `sdcpp` writes `/v1/models` and `sdcpp`. Nothing else in the
+row changes — `url`, `capacityProvider` and `service` are the same regardless, because it is
+still one role, one service.
 
 **`api`** tells the reader what KIND of endpoint a row is, and it decides two things that would
 otherwise be guessed from the key: whether the Agent writes an opencode chat provider for it — an

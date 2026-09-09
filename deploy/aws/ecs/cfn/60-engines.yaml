@@ -18,31 +18,23 @@ Parameters:
   PlatformStackName:
     Type: String
     Default: af-ecs-platform
-    Description: >-
-      20-platform stack to import the cluster, execution role, namespace and the af-llamacpp
-      and af-sdcpp ECR repositories from.
+    Description: "20-platform stack: cluster, execution role, namespace, af-llamacpp/af-sdcpp/af-comfyui ECR."
   ServiceConnectNamespace:
     Type: String
     Default: af.internal
-    Description: >-
-      The private DNS namespace's NAME, which must match what 20-platform was given: the
-      namespace is imported by id, while the engine URLs are built from the name.
+    Description: "The private DNS namespace's NAME — must match what 20-platform was given."
   EnginesSsmParamName:
     Type: String
     Default: /af-ws/engines
     AllowedPattern: "^/af-ws/[A-Za-z0-9_.\\-/]+$"
-    Description: >-
-      SSM parameter this stack writes the engine table to, and the one value 30-ingress is
-      handed. MUST be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
+    Description: "SSM parameter for the engine table, handed to 30-ingress. MUST be under /af-ws/."
 
   # --- the llm role (llama.cpp) -------------------------------------------------
   LlmEnabled:
     Type: String
     Default: ""
     AllowedValues: [ "", "true", "false" ]
-    Description: >-
-      Create the llm role at all. "" (the default) = whatever LlmModelS3Key said, which is the
-      one release of compatibility ADR 0072 decision 1 allows. WHAT it loads is the catalogue's.
+    Description: "Create the llm role at all. \"\" = whatever LlmModelS3Key said (one release of compat)."
   LlmDiscoveryName:
     Type: String
     Default: llm
@@ -50,9 +42,7 @@ Parameters:
   LlmImageTag:
     Type: String
     Default: server-cuda
-    Description: >-
-      Tag inside the af-llamacpp ECR repository. standup.sh copies the upstream image in
-      before this stack is deployed.
+    Description: "Tag in the af-llamacpp ECR repository. standup.sh copies it in before deploy."
   # ⚠️ SEED PARAMETERS (ADR 0072 decision 7), read ONCE by a CP whose catalogue for the role is
   # empty — PARAMETERS-60-engines.md, "The seed parameters".
   LlmModelS3Key:
@@ -77,25 +67,16 @@ Parameters:
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja,--no-mmap"
-    Description: >-
-      Extra llama-server flags on an L4: all layers on the GPU, chat template (tool calls need
-      it), --no-mmap (halves the load). ⚠️ NEVER -c here: the router passes its own
-      command line to every model instance and a command line WINS over the preset, so one -c
-      silently gives every model that window (measured). Windows are the catalogue's.
+    Description: "Extra llama-server flags on an L4. ⚠️ NEVER -c here — PARAMETERS-60-engines.md."
   LlmModelsMax:
     Type: Number
     Default: 1
     MinValue: 0
-    Description: >-
-      Models the router may hold at once (llama-server --models-max; 0 = unlimited). 1 because
-      the router does not know about VRAM: a second 30B Q4 on an L4 does not run slowly, it
-      crashes. Raise it only for a box whose models fit side by side.
+    Description: "Models the router may hold at once (0 = unlimited). 1 — PARAMETERS-60-engines.md."
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
-    Description: >-
-      SSM SecureString holding llama-server's --api-key, which the CP presents upstream: the
-      second lock on an API that has none of its own. standup.sh creates it. Empty = no key.
+    Description: "SSM SecureString for llama-server's --api-key. standup.sh creates it. Empty = no key."
   LlmTaskCpu:
     Type: String
     Default: "4096"
@@ -103,22 +84,15 @@ Parameters:
   LlmTaskMemory:
     Type: String
     Default: "14336"
-    Description: >-
-      Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent — a task that
-      asks for all of it never places, which reads as a capacity problem.
+    Description: "Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent."
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
-    Description: >-
-      Instance types this role may buy — more than one, because a single type has nowhere to go
-      when an AZ is short of it. ⚠️ A FILTER, not an order of preference: MI has no allocation
-      strategy and the CHEAPEST member is bought, so a fallback belongs above the intended box.
+    Description: "Instance types this role may buy. ⚠️ A FILTER, not a preference order — PARAMETERS-60-engines.md."
   LlmAcceleratorMemMinMiB:
     Type: Number
     Default: 21000
-    Description: >-
-      VRAM floor (MiB): ADR 0071 decision 2's >= 20 GB, above the 30B's measured 20,943. Short
-      VRAM crashes CUDA rather than slowing it. 0 = do not ask (as GpuCount 0 does).
+    Description: "VRAM floor (MiB), above the 30B's measured 20,943. 0 = do not ask."
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -153,9 +127,7 @@ Parameters:
   LlmScaleInAfter:
     Type: Number
     Default: -2
-    Description: >-
-      infrastructureOptimization.scaleInAfter in seconds: -2 = leave it at AWS's default,
-      -1 = never tidy up, 0-3600 = that many seconds.
+    Description: "infrastructureOptimization.scaleInAfter in seconds. -2=default, -1=never, 0-3600=seconds."
   LlmIdleSec:
     Type: Number
     Default: 1800
@@ -163,9 +135,7 @@ Parameters:
   LlmStartDeadlineSec:
     Type: Number
     Default: 900
-    Description: >-
-      How long a start may take before the controller calls it failed. MUST exceed the real
-      cold start (measured 527-586 s for one model; a router syncs every enabled one).
+    Description: "How long a start may take before it's a failure. MUST exceed the real cold start (527-586 s)."
   LlmMode:
     Type: String
     Default: ondemand
@@ -180,25 +150,34 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", "true", "false" ]
-    Description: >-
-      Create the image role at all. "" = whatever ImageModelS3Key said (as LlmEnabled).
+    Description: "Create the image role at all. \"\" = whatever ImageModelS3Key said (as LlmEnabled)."
   ImageDiscoveryName:
     Type: String
     Default: image
     Description: DNS label the image engine answers on, i.e. <ImageDiscoveryName>.<namespace>.
+  ImageEngine:
+    Type: String
+    Default: sdcpp
+    AllowedValues: [ sdcpp, comfy ]
+    Description: >-
+      Which server the image role runs (ADR 0072 decision 4). sdcpp holds one checkpoint,
+      chosen at start; comfy (this deployment's own image) switches per request —
+      PARAMETERS-60-engines.md, "ImageEngine".
   ImageImageTag:
     Type: String
     Default: master-cuda
+    Description: "Tag in the af-sdcpp ECR repository (ImageEngine=sdcpp only). Amd64 only: no arm64 G-family."
+  ImageComfyImageTag:
+    Type: String
+    Default: v0.34.0
     Description: >-
-      Tag in the af-sdcpp ECR repository (the doubled word is the image ROLE's container image
-      tag). Upstream is amd64 only, which costs nothing: G-family has no arm64 member.
+      Tag in the af-comfyui ECR repository (ImageEngine=comfy only), baked by
+      comfyui-image.yml and copied in by standup.sh before deploy.
   # SEED parameters, as on the llm role above.
   ImageModelS3Key:
     Type: String
     Default: ""
-    Description: >-
-      SEED: the checkpoint this deployment already serves. Empty with ImageEnabled unset = no
-      image role, and standup.sh copies no sdcpp image.
+    Description: "SEED: the checkpoint already served. Empty + ImageEnabled unset = no image role."
   ImageModelIds:
     Type: CommaDelimitedList
     Default: "sdxl-base-1.0"
@@ -206,9 +185,7 @@ Parameters:
   ImageExtraArgs:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
-    Description: >-
-      Extra sd-server flags; --diffusion-fa is what the GPU measurement ran with. There is no
-      --api-key: sd-server has no authentication of its own.
+    Description: "Extra sd-server flags (ImageEngine=sdcpp only) — PARAMETERS-60-engines.md."
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -220,16 +197,11 @@ Parameters:
   ImageAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
-    Description: >-
-      Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
-      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4). Two types,
-      with the warning under LlmAllowedInstanceTypes attached.
+    Description: "Instance types this role may buy — PARAMETERS-60-engines.md (same filter warning as the llm role's)."
   ImageAcceleratorMemMinMiB:
     Type: Number
     Default: 8000
-    Description: >-
-      VRAM floor (MiB): ADR 0071 decision 2's >= 8 GB, above SDXL fp16's measured 7,379. Holding
-      the role to the 24 GB class is the type list's job. 0 = do not ask.
+    Description: "VRAM floor (MiB), above SDXL fp16's measured 7,379. 0 = do not ask."
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -253,33 +225,24 @@ Parameters:
   ImageStorageGiB:
     Type: Number
     Default: 60
-    Description: >-
-      EBS data volume per box when ImageUseLocalStorage is off. Smaller than the llm role's,
-      but not much: the anonymous model volume is re-allocated per task and never reclaimed.
+    Description: "EBS data volume per box when ImageUseLocalStorage is off — PARAMETERS-60-engines.md."
   ImageUseLocalStorage:
     Type: String
     Default: "true"
     AllowedValues: [ "true", "false" ]
-    Description: >-
-      Use the instance store instead of an EBS data volume. As on the llm role.
+    Description: "Use the instance store instead of an EBS data volume. As on the llm role."
   ImageScaleInAfter:
     Type: Number
     Default: -2
-    Description: >-
-      infrastructureOptimization.scaleInAfter in seconds. -1 ("never tidy up") is a trap with
-      an anonymous model volume — the kept box re-fetches anyway. See the task definition.
+    Description: "infrastructureOptimization.scaleInAfter in seconds. -1 is a trap here — PARAMETERS-60-engines.md."
   ImageIdleSec:
     Type: Number
     Default: 900
-    Description: >-
-      How long the engine goes unwanted before the controller stops it. Half the llm role's
-      window: an image is a 21-second request with no conversation around it.
+    Description: "How long unwanted before the controller stops it. Half the llm role's window."
   ImageStartDeadlineSec:
     Type: Number
     Default: 900
-    Description: >-
-      How long a start may take before the controller calls it failed. sd-server measured 195 s
-      from task creation to listen; the variable term is how long a GPU box takes to appear.
+    Description: "How long a start may take before it's a failure. sd-server measured 195 s to listen."
   ImageMode:
     Type: String
     Default: ondemand
@@ -379,6 +342,7 @@ Conditions:
   ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
+  ImageIsComfy: !Equals [ !Ref ImageEngine, "comfy" ]
 
 Resources:
   # --- IAM: three roles, all closed inside this stack (ADR 0071 decision 8) ------
@@ -911,9 +875,7 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
-            # sd-server holds ONE checkpoint, has no --alias, no -c and no router: all three
-            # empty, so the shared script writes a plain `-m` command line and syncs only the
-            # selected checkpoint.
+            # Neither engine is a router — PARAMETERS-60-engines.md, "The idle wrapper".
             - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
@@ -924,25 +886,42 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref "AWS::Region"
               awslogs-stream-prefix: image-fetch
-        - Name: sd
+        # ⚠️ ImageEngine picks the image AND the command (ADR 0072 decision 4) — one
+        # container, one task def: PARAMETERS-60-engines.md, "The idle wrapper".
+        - Name: engine
           Essential: true
-          Image: !Sub
-            - "${Uri}:${Tag}"
-            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
-              Tag: !Ref ImageImageTag
-          # ⚠️ Why the entry point is overridden, why sd-server's flags are spelled differently
-          # and why --lora-model-dir is stated: PARAMETERS-60-engines.md, "The idle wrapper".
+          Image: !If
+            - ImageIsComfy
+            - !Sub
+              - "${Uri}:${Tag}"
+              - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrComfyuiUri" }
+                Tag: !Ref ImageComfyImageTag
+            - !Sub
+              - "${Uri}:${Tag}"
+              - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrSdcppUri" }
+                Tag: !Ref ImageImageTag
           EntryPoint: [ "sh", "-c" ]
           Command:
-            - !Sub
+            - !If
+              - ImageIsComfy
+              # ln -sfn is the whole S3-layout integration — PARAMETERS-60-engines.md, "The
+              # idle wrapper". The checkpoint is picked per REQUEST by the provider's graph.
               - >-
-                mkdir -p /models/image/loras;
                 n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
-                if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
-                --listen-port 8080 --lora-model-dir /models/image/loras
-                ${Extra} $(cat /models/cmdline);
+                if [ -s /models/cmdline ]; then ln -sfn /models/image /ComfyUI/models;
+                exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch;
                 else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
-              - Extra: !Join [ " ", !Ref ImageExtraArgs ]
+              # ⚠️ Why sd-server's flags are spelled differently and why --lora-model-dir is
+              # stated: PARAMETERS-60-engines.md, "The idle wrapper".
+              - !Sub
+                - >-
+                  mkdir -p /models/image/loras;
+                  n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
+                  if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
+                  --listen-port 8080 --lora-model-dir /models/image/loras
+                  ${Extra} $(cat /models/cmdline);
+                  else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
+                - Extra: !Join [ " ", !Ref ImageExtraArgs ]
           ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
           DependsOn: [ { ContainerName: fetch, Condition: START } ]
@@ -1021,12 +1000,16 @@ Resources:
               - >-
                 {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
-                "health":"/v1/models","provider":"sdcpp","models":["${Models}"],
+                "health":"${Health}","provider":"${Provider}","models":["${Models}"],
                 "modelS3Key":"${ImageModelS3Key}",
                 "apiKeyParam":"","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
                 Cp: !Sub "af-${AWS::StackName}-image"
+                # ComfyUI has no OpenAI-compatible /v1/models; /system_stats is what it answers
+                # unauthenticated and immediately (ADR 0072, "実測で解けた点" 1 measured it up).
+                Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
+                Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
                 Models: !Join [ '","', !Ref ImageModelIds ]
             - ""
           Sep: !If [ HasBothModels, ",", "" ]
@@ -1050,23 +1033,19 @@ Outputs:
     Value: !Ref EnginesSsmParamName
     Export: { Name: !Sub "${AWS::StackName}-EnginesSsmParam" }
   LlmServiceName:
-    Description: >-
-      The llm engine's ECS service name (what the controller drives), or "-" while no model
-      is staged. Never empty: an empty Export fails the whole stack (check-cfn-exports.py).
+    Description: "The llm ECS service name, or \"-\" while no model is staged (never empty)."
     Value: !If [ HasLlmModel, !GetAtt LlmService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-LlmServiceName" }
   LlmCapacityProviderName:
-    Description: The llm capacity provider, i.e. what marks a container instance as NOT a workspace slot.
+    Description: "The llm capacity provider, i.e. what marks a box as NOT a workspace slot."
     Value: !Ref LlmCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
   ImageServiceName:
-    Description: >-
-      The image engine's ECS service name, or "-" while no checkpoint is staged. Never empty
-      for the same reason as the llm one: an empty Export fails the whole stack.
+    Description: "The image ECS service name, or \"-\" while no checkpoint is staged (never empty)."
     Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
   ImageCapacityProviderName:
-    Description: The image capacity provider (the other thing that marks a box as NOT a workspace slot).
+    Description: "The image capacity provider (same idea as the llm one)."
     Value: !Ref ImageCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
   ModelsBucket:
