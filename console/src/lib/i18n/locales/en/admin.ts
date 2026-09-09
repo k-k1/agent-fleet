@@ -91,6 +91,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
   "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
+  // 🔴 A log of EVENTS, not the catalogue. A job stays after its model is gone ("this ingest
+  // ran and finished" goes on being true), so it is headed and dated and reads as history.
+  // Undated, a "done" beside a deleted model's id reads as that model's current state.
+  "admin.engines_ingest_jobs_head": "Ingest history",
   "admin.engines_ingest_state_pending": "starting",
   "admin.engines_ingest_state_running": "fetching",
   "admin.engines_ingest_state_done": "done",

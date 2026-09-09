@@ -898,6 +898,39 @@ describe("EnginesAdminView", () => {
     expect(host!.textContent).toContain("モデルの上限 262144");
   });
 
+  // 🔴 Observed on the dev deployment (2026-09-09): after a model was forgotten AND its bytes
+  // purged, two finished jobs still sat under the ingest form — correctly, because a job is a
+  // record of an event and "this ingest ran and finished" goes on being true. But undated, a
+  // green "done" beside a model id reads as THAT MODEL's current state, i.e. as "ready to
+  // use", which is the opposite of the truth for a model that no longer exists anywhere.
+  it("dates the ingest history, so a finished job does not read as a model that is ready", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "qwen2.5-coder-0.5b-instruct",
+                state: "done",
+                source: "hf:Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/…",
+                bytes: 491400064,
+                created_at: "2026-09-09T02:59:30Z",
+              },
+            ],
+          }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    // Headed as history, not as a section of the catalogue above it.
+    expect(host!.textContent).toContain("取り込みの履歴");
+    const when = host!.querySelector(".engines-ingest-when");
+    expect(when).toBeTruthy();
+    expect(when!.textContent).toBeTruthy();
+    // The job survives a model that is not in the catalogue at all — that IS the case this
+    // dating exists for, so the row has to still be here.
+    expect(host!.textContent).toContain("qwen2.5-coder-0.5b-instruct");
+  });
+
   // 🔴 Measured on the dev deployment (2026-09-09): the filename was free text, and one letter
   // short of `flux1-dev.safetensors` is refused correctly while looking exactly like a file
   // that is not there. So "look it up" with no filename asks the repository what it HOLDS, and

@@ -98,6 +98,10 @@ export const admin = {
   "admin.engines_ingest_noncommercial":
     "🔴 非商用ライセンスです。商用の場面での利用と、生成物の商用利用が制限されえます。有効にする前にライセンス本文を確認してください。",
   "admin.engines_ingest_note": "リポジトリ名（`owner/name`）でも、モデルページの URL を貼っても構いません。sha256・サイズ・ライセンスは CP がその API から読みます。ダウンロードするのは取り込みタスクで、CP は S3 にもトークンにも触りません。取り込めた行は無効の状態で作られます。",
+  // 🔴 これは出来事の記録で、カタログではない。モデルを消してもジョブは残る（「この取り込みが
+  // 走って完了した」は真であり続ける）ので、見出しと日時を付けて「履歴」と読めるようにする。
+  // 日時が無いと、消えたモデルの隣の「完了」が現在の状態と読める。
+  "admin.engines_ingest_jobs_head": "取り込みの履歴",
   "admin.engines_ingest_state_pending": "開始中",
   "admin.engines_ingest_state_running": "取り込み中",
   "admin.engines_ingest_state_done": "完了",

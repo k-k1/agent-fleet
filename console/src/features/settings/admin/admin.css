@@ -312,6 +312,18 @@
   gap: 6px;
 }
 
+/* The heading and the timestamp that turn the job list into history rather than status. */
+.engines-ingest-jobs-head {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.engines-ingest-when {
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
 .engines-ingest-jobs {
   margin-top: 6px;
 }

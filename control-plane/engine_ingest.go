@@ -669,8 +669,11 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		Enabled:           false,
 		LicenseAcceptedBy: req.AcceptedBy, LicenseAcceptedAt: store.NowTS(),
 		CommercialUse: engineCommercialUse(req.Resolved),
-		// Where it came from, kept for as long as the model is — the job row that also holds
-		// this is a record of an EVENT and does not outlive the catalogue entry it created.
+		// Where it came from, kept for as long as the MODEL is. The job row holds it too, but a
+		// job is a record of an event on its own timeline — it outlives the row it created and
+		// says nothing about whether that model still exists (observed on the dev deployment,
+		// 2026-09-09: two finished jobs for a model that had been forgotten and purged). The
+		// question "which vendor is this model" has to be answerable from the model.
 		Source: req.Resolved.Source,
 	}
 	if err := g.models.PutEngineModel(ctx, m); err != nil {

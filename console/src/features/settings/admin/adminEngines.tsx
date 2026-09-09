@@ -5,6 +5,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
 import { secsUntil, windowIsPartial } from "./engineUptime.ts";
+import { fmtDateTime } from "../../../lib/intl.ts";
 
 // The self-hosted inference engines (ADR 0071): one row per engine, each with the same
 // off / on-demand / always-on control the VOICEVOX panel has, plus what that engine is
@@ -947,17 +948,31 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
 }
 
 /** The jobs this engine has run, newest first. Shown only when there are any: an empty list is
- *  the normal state and a heading over nothing reads as something being broken. */
+ *  the normal state and a heading over nothing reads as something being broken.
+ *
+ * 🔴 This is a LOG OF EVENTS, not the catalogue, and it outlives the rows it created — a job
+ *    stays after its model has been forgotten and its bytes deleted, because "this ingest ran
+ *    and finished" goes on being true. Observed on the dev deployment (2026-09-09): two
+ *    finished jobs sat under the form for a model that no longer existed anywhere.
+ *
+ *    So every row is DATED and the list is headed. Without a time, a green "done" beside a
+ *    model id reads as the current state of that model — i.e. as "this one is ready to use" —
+ *    which is exactly wrong for a row whose model has been deleted. */
 function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
   const tr = useT();
   if (jobs.length === 0) return null;
   return (
+    <>
+    <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
       {jobs.map((j) => (
         <li key={j.id} className="engines-model on">
           <div className="engines-model-head">
             <span className="mono">{j.model_id}</span>
             <span className="engines-model-tag">{tr(("admin.engines_ingest_state_" + j.state) as never)}</span>
+            {j.created_at && (
+              <span className="muted engines-ingest-when">{fmtDateTime(j.created_at)}</span>
+            )}
           </div>
           <p className="muted engines-model-meta">
             {j.source}
@@ -969,6 +984,7 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
         </li>
       ))}
     </ul>
+    </>
   );
 }
 
