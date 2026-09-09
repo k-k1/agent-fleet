@@ -251,18 +251,20 @@ codex は af builtin へ焼かれた `tool_timeout_sec=600` に収まり、**ope
   転写では通常入力にしか見えない**（ADR 0041 決定 11 の性質はここでは回避できない）。本文に
   載る封筒だけが、エージェントに出自を伝える。
 - **ミラー側（人が見る面）は注入記録で出せる。** `create_session` がセッション発のときは
-  `report_to` が空でも `recordInjection` を呼ぶ。ここは create 経路を af が握っているので、
-  peer と違い af 自身が出自を書ける。型に注意が要る:
+  `report_to` が空でも `recordInjection` を呼ぶ。**ここは peer との差ではない** — peer メッセージも
+  注入記録を持つ（`session_io.go:536` の `badgeOriginOf(peerFrom, …)` が peer バッジを返す）。
+  ミラーに出せる点で両者は同じで、違うのは 1 つ上の層（CLI の転写）だけである。型に注意が要る:
   - `recordInjection(name, text, source)` の `source` は `TurnSource*` の enum
     （`session_injections.go:24`）なので、**`TurnSourceSpawn`（`"spawn"`）を足す**。
   - `badgeOriginOf`（`:91`）は `reportTo` が空だと schedule しか通さないので、**spawn の分岐を
     足す**。足さなければ記録しても無バッジ＝利用者入力のままである。
   - **親の名前は記録に持たせない。** 記録は (本文, 出自種別) の対でしかなく、子の親は Meta の
     `origin_session` で一意に決まる。バッジの種別は記録から、名前は Meta から引く。
-- **記録は投入より前に走る。** `initial_prompt` の配達は非同期（`go deliverInitialPrompt`）で、
-  記録は create の中で先に行われる。これは既存の設計どおりで（`badgeOriginOf` の注記が
-  「記録を配達より前へ動かせるように」種別の判定を 1 か所へ寄せている）、記録は本文をキーにして
-  後から現れたターンへ突き合わせる。schedule が報告 OFF のときと同じ経路である。
+- **記録を投入より前へ動かすのは、本 ADR の実装要件である**（既存の挙動ではない）。いまの create は
+  `go deliverInitialPrompt` を先に起こしてから `recordInjection` を呼ぶ
+  （`session_handlers.go:825,833`）ので、配達が速ければターンが記録より先に現れ、**無バッジのまま
+  確定する**。送信経路は既に「打鍵の前に記録する」形になっている（`session_io.go:531`）ので、
+  create をそちらへ揃える。記録は本文をキーにして、後から現れたターンへ突き合わせる。
 - **根拠は出自の欠落そのものに置く。** ここから権限の洗浄（拒否されたセッションが子に代行させる）
   まで成立するかは、モデルの挙動に依存する推測である。実証されているのは「出自が落ちる」ことまで
   であり、それだけで塞ぐ理由になる。

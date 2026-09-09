@@ -283,8 +283,10 @@ job feels done.
   own transcript still shows plain input** (ADR 0041 decision 11's property is not escapable
   here). The envelope in the body is the only thing that tells the agent where this came from.
 - **On the mirror's side (what a human sees) the injection record carries it.** When the create
-  comes from a session, call `recordInjection` even though `report_to` is empty — here af does own
-  the create path, unlike peer messages, so af itself can write the provenance. The types matter:
+  comes from a session, call `recordInjection` even though `report_to` is empty. **This is not a
+  difference from peer messages** — they get an injection record too (`session_io.go:536`, where
+  `badgeOriginOf(peerFrom, …)` returns the peer badge). Both are equally visible in the mirror;
+  what differs is the layer above, the CLI transcript. The types matter:
   - `recordInjection(name, text, source)` takes `source` from the `TurnSource*` enum
     (`session_injections.go:24`), so **add `TurnSourceSpawn` (`"spawn"`)**.
   - `badgeOriginOf` (`:91`) passes only schedule through when `reportTo` is empty, so **add the
@@ -293,11 +295,12 @@ job feels done.
   - **The parent's name does not go into the record.** A record is a (text, origin kind) pair, and
     a child's parent is uniquely determined by the Meta's `origin_session`: take the badge kind
     from the record, the name from the Meta.
-- **The record is written before delivery.** `initial_prompt` is delivered asynchronously
-  (`go deliverInitialPrompt`) while the record is written inside create. That is the existing
-  design (`badgeOriginOf`'s own note says the kind decision was centralized so recording could
-  move ahead of delivery); the record is keyed by text and matched to the turn when it appears.
-  It is the route a schedule already takes with reporting off.
+- **Moving the record ahead of delivery is a requirement of this ADR**, not existing behaviour.
+  Create today kicks off `go deliverInitialPrompt` and only then calls `recordInjection`
+  (`session_handlers.go:825,833`), so a fast delivery makes the turn appear before the record and
+  **it settles unbadged**. The send path already records before typing (`session_io.go:531`);
+  create is brought into line with it. The record is keyed by text and matched to the turn when it
+  appears.
 - **The grounds are the missing provenance itself.** Whether it goes as far as permission
   laundering (a session that was denied something getting a child to do it) depends on model
   behaviour and is speculation. What is demonstrated is that the provenance is lost, and that is
