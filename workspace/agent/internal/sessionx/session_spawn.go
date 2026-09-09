@@ -173,11 +173,33 @@ func handOverSpawnLineage(name string) {
 	// the recreate archived it seconds ago and anything that touched it in between would be
 	// undone by writing a stale snapshot.
 	old, ok := session.ReadMeta(name)
-	if !ok || old.OriginSession == "" {
+	// Only a lineage that COSTS a slot is handed over. A session a person launched from a
+	// handoff proposal also carries origin_session (origin=user), and it holds no slot — for
+	// that one this would be pure loss: the superseded identity would forget who proposed it
+	// and nothing would be freed.
+	if !ok || !session.InUnattendedChain(old) {
 		return
 	}
 	old.OriginSession = ""
 	session.WriteMeta(old)
+}
+
+// forkLineage is the OriginSession a fork of src inherits (ADR 0073 decision 1).
+//
+// Forking a CHILD keeps the lineage on purpose: the fork is stamped origin=handoff, so without
+// it the successor would leave the unattended chain and be able to spawn — the exact gap the
+// depth rule's wider predicate exists to close.
+//
+// It stops at the second producer. A session a person launched from a handoff proposal is
+// origin=user WITH a lineage, and inheriting unconditionally turns its fork into
+// origin=handoff + lineage — which reads as unattended and silently takes away a capability
+// the fork's own source has. src's origin is what separates the two cases, so ask the same
+// question the depth rule asks.
+func forkLineage(src session.Meta) string {
+	if !session.InUnattendedChain(src) {
+		return ""
+	}
+	return src.OriginSession
 }
 
 // SpawnRefusal is a create that origin=session may not perform. Code is the wire error code,
@@ -192,16 +214,19 @@ type SpawnRefusal struct {
 // spawnDepthRefusal implements the recursion limit: a session that was itself started by a
 // session may not start one.
 //
-// The predicate is "OriginSession is set", NOT "origin == session" — deliberately wider than
-// the steering gate's (ADR 0073 decisions 4 and 5). Forking a child stamps origin=handoff while
-// keeping the lineage, so a rule reading origin alone would let the fork spawn.
+// The predicate is session.InUnattendedChain — deliberately wider than the steering gate's
+// origin==session (ADR 0073 decisions 4 and 5), because forking a child stamps origin=handoff
+// while keeping the lineage and a rule reading origin alone would let the fork spawn. It is
+// NOT "OriginSession is set": origin_session also records which session's handoff PROPOSAL a
+// person launched from, and refusing there would take capability away from a session a human
+// opened. Go through the named predicate — the bare field test reads as right and is not.
 //
 // One lookup, no walking: the answer is on the caller's own meta, so it cannot break when a
 // session in the middle of the chain has been deleted. What it does not bound is a chain that
 // passes through a human — a child may propose a handoff, and a session the user then launches
-// from the Console is origin=user with no lineage and may spawn again. That is the intended
-// re-entry, not a hole: closing it would mean stamping a false provenance onto a session a
-// person opened.
+// from the Console is origin=user and may spawn again. That is the intended re-entry, and the
+// lineage it now carries does not close it: what a person opened is a person's launch, whoever
+// suggested the work.
 func spawnDepthRefusal(parent string) *SpawnRefusal {
 	m, ok := session.ReadMeta(parent)
 	if !ok {
@@ -210,7 +235,7 @@ func spawnDepthRefusal(parent string) *SpawnRefusal {
 		return &SpawnRefusal{Status: 409, Code: "spawn_unknown_parent",
 			Message: fmt.Sprintf("起動元のセッション %q が見つかりません", parent)}
 	}
-	if m.OriginSession != "" {
+	if session.InUnattendedChain(m) {
 		return &SpawnRefusal{Status: 409, Code: "spawn_depth",
 			Message: fmt.Sprintf("このセッション自身が %s に起こされた子なので、さらに子は起こせません。"+
 				"作業を分けたいときは propose_session_handoff で利用者に引き継ぎを提案してください", m.OriginSession)}

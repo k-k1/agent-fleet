@@ -67,9 +67,15 @@ func spawnServer(t *testing.T) *spawnEnv {
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
+	// claude's config dir is pinned by its OWN env var (production points it outside home), so
+	// isolating HOME is not enough for anything that reads or writes it — here, the fork
+	// source's conversation log.
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(home, ".claude"))
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", HandleCreateSession)
 	mux.HandleFunc("POST /sessions/{name}/recreate", HandleRecreateSession)
+	mux.HandleFunc("POST /sessions/{name}/fork", HandleForkSession)
 	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t, planted: map[string]bool{}}
 	t.Cleanup(func() {
 		env.srv.Close()
