@@ -167,7 +167,11 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         >
           <Icon name="menu" />
         </button>
-        <div className="brand">
+        {/* brand-stacked only when there IS a label: on a phone the chip and the wordmark
+            do not fit on one line, and left alone the name wraps mid-word ("Agent" /
+            "Fleet") and the whole bar grows by a line. Stacked, they are two short lines
+            that stay under the button height (topbar.css). */}
+        <div className={"brand" + (brand.label ? " brand-stacked" : "")}>
           {/* The deployment label, in the same colour as this deployment's favicon — the
               in-app half of "which environment is this". From the store, not the module
               constants, so it follows a change made in the Admin modal without a reload. */}
@@ -180,7 +184,9 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
               {brand.label}
             </span>
           )}
-          Agent Fleet <span className="brand-sub">Console</span>
+          <span className="brand-name">
+            Agent Fleet <span className="brand-sub">Console</span>
+          </span>
         </div>
       </div>
       <div className="topbar-right">

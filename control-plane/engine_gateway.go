@@ -141,12 +141,23 @@ type engineGateway struct {
 	reg *engineRegistry
 }
 
-// registerEngineRoutes wires the gateway (called from buildMux). Nothing is registered when
-// the deployment has no engines: a 404 from an unregistered path and a 404 from a handler
-// that found no engine read the same to a client, and not registering keeps the surface off
-// a deployment that never asked for it.
+// registerEngineRoutes wires the gateway (called from buildMux).
+//
+// The GATEWAY is registered only when the deployment has engines: a 404 from an unregistered
+// path and a 404 from a handler that found no engine read the same to a client, and not
+// registering keeps the surface off a deployment that never asked for it.
+//
+// 🔴 The ADMIN routes are registered either way, and that is a deliberate exception. They used
+// to sit behind the same return, so a deployment without 60-engines answered 404 to
+// `GET /api/admin/engines` — the panel could not even say "no engines here", and ADR 0072
+// decision 11's browse (which needs no engine, no token and no bucket) was unreachable exactly
+// where it is most useful: deciding whether to stand the stack up at all. Every one of those
+// handlers is nil-safe on the registry and answers "there is no such engine" by itself.
 func registerEngineRoutes(mux *http.ServeMux, cfg config) {
 	reg := newEngineRegistry(context.Background(), cfg.mgr)
+	// The super-admin panel. Registered before the gateway's own guard because it is the one
+	// part that has something to say when there is no engine at all.
+	registerEngineAdminRoutes(mux, cfg, reg)
 	if reg == nil {
 		return
 	}
@@ -157,10 +168,6 @@ func registerEngineRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /internal/engine/token", g.issueSessionToken)
 	mux.HandleFunc("GET /internal/engine/catalog", g.catalog)
 	mux.HandleFunc("/engine/{key}/v1/{path...}", g.serve)
-	// The super-admin toggle. Registered here rather than in its own register* because it
-	// needs the same registry, and building a second one would mean a second SSM read and two
-	// answers to "what mode is this engine in".
-	registerEngineAdminRoutes(mux, cfg, reg)
 }
 
 // --- token issue --------------------------------------------------------------
