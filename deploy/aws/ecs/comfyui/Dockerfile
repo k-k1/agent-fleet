@@ -19,7 +19,16 @@
 # requirements.txt on TOP of that (rather than the other way around) is what stops pip silently
 # replacing a CUDA wheel with a CPU-only one from PyPI — the trap every "pip install -r
 # requirements.txt first" ComfyUI Dockerfile on the internet has hit at least once.
-FROM pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+#
+# 🔴 torch 2.5.1 measured BROKEN for v0.34.0 (real GPU, 2026-09-10): comfy-kitchen==0.2.31 (a
+# requirements.txt dependency since this ADR was drafted) registers a custom op with a
+# `list[int]`-typed parameter, and torch 2.5.1's `torch.library.infer_schema` does not
+# recognise that PEP 585 generic spelling — ComfyUI fails at import, before ever binding a
+# port (`ValueError: infer_schema(func): Parameter kernel_size has unsupported type
+# list[int]`). ComfyUI's own README states "torch 2.7 is minimally supported"; 2.9.1 is used
+# here as a comfortably-past-the-floor, non-bleeding-edge release (their own advice is against
+# anything less than two weeks old).
+FROM pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime
 
 ARG COMFYUI_REF=v0.34.0
 
