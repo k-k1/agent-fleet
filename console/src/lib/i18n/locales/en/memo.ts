@@ -36,6 +36,7 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.add_title": "Add memo (Ctrl/⌘+K → N → A)",
   "memo.composer_hint": "Ctrl+Enter to add · Esc to close",
   "memo.add_category": "Add category",
+  "memo.add_to_category": "Add a memo to “{name}”",
   "memo.new_category": "New category",
   "memo.category_name_ph": "Category name",
   "memo.rename_category": "Click to rename category",

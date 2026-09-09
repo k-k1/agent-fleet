@@ -247,5 +247,6 @@ say, jot down "want to fix that" items on your phone during the commute, then ha
 over in one go at your PC.
 
 - **Capture** — write into "Add a quick memo… (send them together later)" and press "Add". You can also open a file and capture from "Send" in [05](04-files.md). Memos are grouped by repository and category.
+- **Capture straight into a category** — the **+** at the right of a category heading opens the input under that heading, and what you write lands in that category (and repository). No need to type the category name again.
 - **Tidy up with AI** — select memos and hit **"Organize the selected memos with an assistant"**: it turns scribbles into clear instructions and suggests categories. The result is **always previewed** and nothing is applied until you approve with "Apply N item(s)" (nothing gets rewritten behind your back).
 - **Send** — pick a running destination session and send in bulk with **"Send selection"**. You can also send a whole category at once ("Send this category together"). If there's no running session to send to, start one first.
