@@ -17,8 +17,24 @@ import (
 	"log"
 	"time"
 
+	"github.com/k-k1/agent-fleet/workspace/agent/internal/agents/claude"
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
+
+// stopArmBackgroundBusy is the real background-process check the arm uses in production
+// (rc.stopBackgroundBusy's default — see the field's comment). It is direct, not
+// self-report/marker-based: SubagentBusy in collectReportSignals already covers an in-process
+// background subagent / Workflow agent, so what is left is the two detectors that need the
+// process tree — a run_in_background worker (claude.BackgroundBusy) and a background shell
+// loop (claude.BackgroundShellBusy, the Monitor-poll case BackgroundBusy's R/D-only test
+// misses). Both hit tmux + /proc, so — like reportPaneBusy — this is only worth paying once
+// the cheap evidence is already quiet.
+func stopArmBackgroundBusy(m session.Meta) bool {
+	if m.DriverKind() == session.DriverManaged || normalizeKind(m.Kind) != session.KindClaude {
+		return false // no tmux pane / process tree to read (same gate as reportPaneBusy)
+	}
+	return claude.BackgroundBusy(m.Name) || claude.BackgroundShellBusy(m.Name)
+}
 
 // stopArmSweepSessions lists the sessions currently armed. Reading the metas is the same
 // readdir the ledger sweep already does per tick, and an unarmed workspace costs one listing.
@@ -68,6 +84,13 @@ func (rc *reportReconciler) evaluateStopArm(name string, now time.Time) {
 	// the same order (and the same reason) as the report path.
 	if v.Quiet && !v.Terminal && reportPaneBusy(m) {
 		sig.PaneBusy = true
+		v = evalReportEvidence(sig)
+	}
+	// Same order, and the same reason not to skip it: haltSessionMeta is a tmux kill-session,
+	// and a run_in_background job or a background shell loop dies with the pane — silently,
+	// with no way for claude to learn of it on resume (see reportSignals.BackgroundBusy).
+	if v.Quiet && !v.Terminal && rc.stopBackgroundBusy(m) {
+		sig.BackgroundBusy = true
 		v = evalReportEvidence(sig)
 	}
 	if !v.Quiet {

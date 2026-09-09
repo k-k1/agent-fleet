@@ -623,6 +623,53 @@ names move between versions — pin the tag and freeze the templates behind gold
     - **The 60-second rule** (decision 4): a model without `syncSafe` is not offered on an
       sd-server deployment.
 
+11. **Sources can be searched. "You already know the repository name" must not be the only way
+    in.** (Added 2026-09-09, P5. P4 turned a free-text FILENAME — where a typo and a repository
+    that does not carry the file are the same refusal — into a picker; **the same hole was still
+    open on the repository name**: look `owner/name` up in another window, then paste it.)
+    - `POST …/ingest/search` (super_admin), taking `q` and a `source` that says which of Hugging
+      Face and Civitai to ask (HF by default). **Both APIs answer anonymously** (P4 measurements
+      1 and 2), so search needs a token no more than resolving does — decision 6's "the CP only
+      reads the source" extends unchanged.
+    - **Filtered per role** (measured 2026-09-09): `filter=gguf` for llm, `pipeline_tag=text-to-image`
+      for image, ordered by `sort=downloads&direction=-1`, 20 at most. Civitai uses
+      `types=Checkpoint` (image); `types=LORA` follows in P3. The filter exists for the same
+      reason `ingest/files` has one — **show no dead ends**: a repository this engine cannot
+      load is a refusal from `resolve` a moment later.
+    - 🔴 **One read carries everything the verdict needs, but none of it can be passed through.**
+      `expand[]` yields `gated`, `cardData`, `downloads`, `likes`, `lastModified` (and `gguf` for
+      llm). But **`cardData` carries `extra_gated_prompt` and `gguf` carries the whole
+      `chat_template`** (measured: FLUX.1-dev's gating prompt and Qwen2.5-Coder's chat template
+      each exceed 1 KB on their own). **The CP copies `license`, `license_name`, `gguf.total` and
+      `gguf.context_length` and nothing else** — a screen that draws 20 rows does not carry 20
+      kilobytes nobody reads.
+    - **A result is a destination, not an ingest.** Picking one feeds the existing
+      `ingest/files` → `ingest/resolve` → acceptance → `ingest`. **The sha256 and the licence of
+      record are what `resolve` read**; the list's values are a draft (HF cards move). For
+      Civitai the hit carries `modelVersions[0].id` — an ingest wants the **version id, not the
+      model id**.
+    - **With no words it is a ranking.** An empty `q` answers "the top of what this role can
+      load" — for somebody who does not know a name that is the only way in, and requiring `q`
+      rebuilds "only for those who already know" in a different shape. Three orders —
+      **downloads, trending, likes** — **mapped per upstream, never passed through**: Civitai
+      answers 400 to a sort it does not know (measured) and Hugging Face ignores one silently,
+      which is worse — **a list that looks ranked and is not**. HF takes `downloads` /
+      `trendingScore` / `likes`; Civitai takes `Most Downloaded`, `Most Downloaded` +
+      `period=Month` (it has no trending score, so "this month" is what trending means there)
+      and `Highest Rated`.
+    - 🔴 **There is no "newest".** Measured 2026-09-09: `sort=lastModified` and `sort=createdAt`
+      over `filter=gguf` return nothing but bulk automated re-quantisations
+      (`mradermacher/*-i1-GGUF`), every one at 0 downloads and 0 likes. A ranking whose first
+      screen is always the same uploader's robot is not a way in, and "trending" already answers
+      what somebody reaching for "new" wants.
+    - **All three numbers ride on every row, whichever order was used.** Showing only the one
+      that was sorted on leaves "why is this here" unanswerable, and "everybody uses it" is not
+      the same answer as "people are looking at it this week". Civitai publishes no trending
+      score, so that field stays **empty rather than borrowing** another number.
+    - **Search is not a precondition for ingest.** Typing `owner/name` or a URL stays. A
+      deployment with closed egress loses search too, and there decision 6's hand-run route
+      simply goes back to being the main one.
+
 ## Resolved by measurement (2026-09-08, the dev deployment's g6.xlarge)
 
 The harness is `deploy/aws/ecs/harness/bench-image-engine.sh` (+ `.py`). It runs **one task with

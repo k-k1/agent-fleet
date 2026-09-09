@@ -753,7 +753,7 @@ func memoWriteAllowed() bool {
 	return writeEnabled() || selfReportOnly()
 }
 
-// mcpStdioFleetSpawnTools — the eight session-steering tools, advertised only under
+// mcpStdioFleetSpawnTools — the nine session-steering tools, advertised only under
 // `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
 // operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
 // and points at tools a session does not get. The handlers are shared.
@@ -774,13 +774,14 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"Tell the user you are starting one, and what for. " +
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
-				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit) + " children at a time (stopping one does not free the slot - the user " +
-				"deletes it), a session you started cannot start its own, and shell sessions cannot be started " +
+				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit) + " children at a time (a slot frees when the user deletes or " +
+				"archives that child, or when one you left stopped expires - list_child_sessions shows what " +
+				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
 				"from here. " +
 				"You are NOT told when it finishes: poll get_session_status, or leave report_back on and it " +
 				"sends you one message when it is done. " +
-				"Children outlive you, so before your last turn tell your user which ones you left and what " +
-				"state they are in - only they can delete one. " +
+				"Children outlive you, so before your last turn list them and tell your user which ones you " +
+				"left and what state they are in - only they can delete one. " +
 				"Use list_repos for dir and list_models for model - do not guess a model id.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
@@ -797,6 +798,19 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"report_back":    map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
 				},
 			},
+		},
+		{
+			"name": "list_child_sessions",
+			"description": "Agent Fleet: list the sessions YOU started, each one's state and when its last turn " +
+				"ended, and how many child slots you have left. " +
+				"Call it whenever you need a child's name: create_session hands it out once and a compaction takes " +
+				"it away, leaving stop_session / resume_session / get_session_output nothing to name. Call it " +
+				"before your last turn too, to tell your user which children you left and how they stand. " +
+				"lastTurnEndAt separates a child that FINISHED from one that never started - idle means both. It " +
+				"is absent while a child is mid-turn, after a restart, and until a completion has been observed " +
+				"(get_session_status on that child records one). " +
+				"Archived sessions are not listed and hold no slot.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
 			"name": "list_repos",
@@ -850,7 +864,8 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"but whatever it was doing is cut off mid-turn. " +
 				"Use it for a child that is looping or working on something you no longer want. If it is simply " +
 				"busy with work you still want, use stop_session_after_turn instead. " +
-				"Stopping does NOT free one of your child slots; the user deletes a session for that.",
+				"Stopping does not free one of your child slots straight away - the user deleting or archiving " +
+				"the child does, and a child left stopped expires on its own after a while.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
@@ -890,17 +905,6 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 			},
 		},
 	}
-}
-
-// isFleetSpawnTool names the eight above: the tools whose handlers must accept a session
-// caller once --fleet-spawn is on.
-func isFleetSpawnTool(name string) bool {
-	switch name {
-	case "create_session", "list_repos", "list_models", "get_agent_usage",
-		"get_session_output", "stop_session", "stop_session_after_turn", "resume_session":
-		return true
-	}
-	return false
 }
 
 // sessionDriveAllowed authorizes a tool that ACTS ON a named session: reading its output,
@@ -2018,6 +2022,20 @@ func mcpStdioCall(req mcpReq) []byte {
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
 			inputs: a.Inputs, mask: a.Mask,
 		})
+	case "list_child_sessions":
+		// The only one of the nine that is NOT also an operator tool: the operator has
+		// list_my_sessions, which sees every session and needs no lineage filter. So the gate
+		// is the flag alone, refused on the call side for the same reason as the peer and
+		// image tools — a guessed name in tools/call must not reach a route this server does
+		// not advertise.
+		if !mcpFleetSpawnEnabled {
+			return mcpToolErr(req.ID, "このセッションはセッションの起動・操縦を許可されていません（設定 > エージェント）")
+		}
+		self, err := mcpOwningSession()
+		if err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		return mcpListChildSessions(req.ID, self)
 	case "list_peer_sessions":
 		self, err := mcpOwningSession()
 		if err != nil {
@@ -3227,6 +3245,69 @@ func SessionOutputTail() int {
 		return n
 	}
 	return SessionOutputTailBytes
+}
+
+// mcpListChildSessions answers list_child_sessions: the caller's own children, the state each
+// one is in, and how much of the budget is left (docs/log/89, ADR 0073 decision 6).
+//
+// It reads GET /sessions rather than the metas, for three reasons that all come from the
+// listing already doing the work. The live state (working / idle / stopped) is computed there
+// per kind and cannot be derived from a meta at all. The archived rows and the stopped children
+// whose StoppedTTL has expired are filtered — and the expiry is not merely filtered but PRUNED
+// by that handler, so the slot count this returns matches what the next create_session will
+// reserve against instead of being one poll behind it. And `origin` / `originSession` are on the
+// wire for exactly this question.
+//
+// The predicate is countChildren's and sessionDriveAllowed's: origin=session AND the lineage is
+// the caller. Deliberately not the wider one the recursion limit uses — a fork of a child keeps
+// the lineage but a person made it in the Console, it is not this session's to steer, and it
+// does not spend this session's budget.
+func mcpListChildSessions(id json.RawMessage, self string) []byte {
+	body, err := agentGET("/sessions")
+	if err != nil {
+		return mcpToolErr(id, "子セッション一覧の取得に失敗しました: "+err.Error())
+	}
+	var wire struct {
+		Sessions []session.Session `json:"sessions"`
+	}
+	if err := json.Unmarshal([]byte(body), &wire); err != nil {
+		return mcpToolErr(id, "子セッション一覧を読めませんでした: "+err.Error())
+	}
+	rows := make([]any, 0, session.SpawnChildLimit)
+	for _, s := range wire.Sessions {
+		if s.Origin != session.OriginSession || s.OriginSession != self {
+			continue
+		}
+		// Only what a parent decides on. Every key here is re-read on every poll for the rest
+		// of the conversation, so the rest of the DTO (context fill, colours, branch drift,
+		// exit codes) stays off: get_session_status and get_session_usage answer those when
+		// they are actually asked.
+		row := map[string]any{"name": s.Name, "kind": s.Kind, "dir": s.Dir, "createdAt": s.CreatedAt}
+		// The listing leaves State empty for a session that is not alive — "stopped" is
+		// carried by the Alive flag, and the drive endpoints spell it out (DriveState's first
+		// branch). Spell it out here too: a blank state next to a name reads as "unknown",
+		// which is the one thing this row must not say when it does know.
+		switch {
+		case !s.Alive:
+			row["state"] = "stopped"
+		case s.State != "":
+			row["state"] = s.State
+		}
+		if s.Title != "" {
+			row["title"] = s.Title
+		}
+		if s.LastTurnEndAt != "" {
+			row["lastTurnEndAt"] = s.LastTurnEndAt
+		}
+		rows = append(rows, row)
+	}
+	left := session.SpawnChildLimit - len(rows)
+	if left < 0 {
+		left = 0
+	}
+	return mcpStructuredResult(id, map[string]any{
+		"sessions": rows, "slotsLeft": left, "slotLimit": session.SpawnChildLimit,
+	})
 }
 
 // mcpSessionOutput handles get_session_output: it always passes the tail cap, and when

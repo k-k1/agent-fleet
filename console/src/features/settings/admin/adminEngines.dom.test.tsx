@@ -739,7 +739,7 @@ describe("EnginesAdminView", () => {
         el.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
     await type(inputs[0], "black-forest-labs/FLUX.1-dev");
     await type(inputs[1], "flux1-dev.safetensors");
     await type(inputs[2], "flux1-dev");
@@ -795,7 +795,7 @@ describe("EnginesAdminView", () => {
         el.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
     await type(inputs[0], "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF");
     await type(inputs[1], "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
     await type(inputs[2], "qwen2.5-coder-1.5b");
@@ -957,7 +957,7 @@ describe("EnginesAdminView", () => {
       ) as HTMLElement,
     );
     await act(async () => {
-      const el = host!.querySelector(".engines-ingest input")!;
+      const el = host!.querySelector(".engines-ingest .engines-model-add-row input")!;
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       setter.call(el, "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
       el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1010,7 +1010,7 @@ describe("EnginesAdminView", () => {
     // Attributed as the MODEL's number, never presented as the window this deployment chose.
     expect(host!.textContent).toContain("モデルの上限 32768");
 
-    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input")) as HTMLInputElement[];
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input")) as HTMLInputElement[];
     const ctxField = inputs.find((i) => i.value === "32768");
     expect(ctxField).toBeTruthy();
     const caps = Array.from(host!.querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
@@ -1039,7 +1039,7 @@ describe("EnginesAdminView", () => {
       ) as HTMLElement,
     );
     await act(async () => {
-      const el = host!.querySelector(".engines-ingest input")!;
+      const el = host!.querySelector(".engines-ingest .engines-model-add-row input")!;
       const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
       setter.call(el, "black-forest-labs/FLUX.1-dev");
       el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -1206,5 +1206,152 @@ describe("EnginesAdminView / the Hugging Face token", () => {
     // retyped from wherever it came from.
     expect(host!.textContent).toContain("未登録");
     expect(tokenInput()!.value).toBe("hf_typed_value");
+  });
+});
+
+// The repository picker (ADR 0072 decision 11).
+//
+// P4 turned the free-text FILENAME into a picker; the repository name above it was still
+// "look it up in another window and paste it". What these pin is that a result is a
+// DESTINATION — picking one fills the field somebody would have typed into, and the existing
+// resolve → accept → ingest road runs unchanged.
+describe("EnginesAdminView / searching for a model", () => {
+  const openIngest = async () => {
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLButtonElement,
+    );
+  };
+
+  const typeInto = async (el: HTMLInputElement, value: string) => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+  };
+
+  const field = (label: string) =>
+    (Array.from(host!.querySelectorAll("label.engines-model-add-row, label.engines-search-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    )?.querySelector("input") || null) as HTMLInputElement | null;
+
+  const button = (label: string) =>
+    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+      | HTMLButtonElement
+      | undefined;
+
+  it("fills the repository field from a hit, and says gated before anything is started", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "hf",
+          ref: "black-forest-labs/FLUX.1-dev",
+          name: "black-forest-labs/FLUX.1-dev",
+          downloads: 790579,
+          likes: 14538,
+          trending: 316,
+          gated: true,
+          license: "other",
+          license_name: "flux-1-dev-non-commercial-license",
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+
+    await typeInto(field("探す")!, "flux");
+    await click(button("検索"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "flux",
+      source: "hf",
+      sort: "downloads",
+    });
+    // The verdict rides with the row: gated and the real licence name, so the choice is made
+    // before a resolve, not after a refusal.
+    const hit = host!.querySelector(".engines-search-hits li")!;
+    expect(hit.textContent).toContain("gated");
+    expect(hit.textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(hit.textContent).toContain("791k");
+    // All three numbers, not only the one the list was ordered by: "everybody uses it" and
+    // "people are looking at it this week" are different answers to "why is this here".
+    expect(hit.textContent).toContain("15k");
+    expect(hit.textContent).toContain("316");
+
+    await click(hit.querySelector("button") as HTMLButtonElement);
+    // Picking only fills the field — nothing is resolved and nothing is started.
+    expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
+    expect(host!.querySelector(".engines-search-hits")).toBeNull();
+    expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  it("puts a Civitai hit in as its version id, which is what an ingest takes", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [{ source: "civitai", ref: "1759168", name: "Juggernaut XL — Ragnarok", base_model: "SDXL 1.0" }],
+    });
+    await mount();
+    await openIngest();
+    await click(button("Civitai"));
+    await typeInto(field("探す")!, "juggernaut");
+    await click(button("検索"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "juggernaut",
+      source: "civitai",
+      sort: "downloads",
+    });
+
+    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    // 🔴 `civitai:<versionId>`, the form the source parser reads. The model id on the page's
+    // URL is a different number and resolves to nothing.
+    expect(field("リポジトリ")!.value).toBe("civitai:1759168");
+  });
+
+  it("offers Civitai to the image role only", async () => {
+    api.mockResolvedValue({ engines: [row({ key: "llm", api: "chat", provider: "llamacpp" })] });
+    await mount();
+    await openIngest();
+    // The CP answers the llm role nothing from Civitai (it hosts image models), so a source
+    // switch there is a button that can only disappoint.
+    expect(button("Civitai")).toBeUndefined();
+    expect(field("探す")).toBeTruthy();
+  });
+
+  it("says so instead of leaving the box empty when nothing matches", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mount();
+    await openIngest();
+    await typeInto(field("探す")!, "zzzz");
+    await click(button("検索"));
+    expect(host!.textContent).toContain("見つかりませんでした");
+    // And the way in that never needed a search is still there.
+    expect(field("リポジトリ")).toBeTruthy();
+  });
+  it("browses a ranking with no words typed, and the button says so", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [{ source: "hf", ref: "stabilityai/sdxl-turbo", name: "stabilityai/sdxl-turbo", downloads: 4176022 }],
+    });
+    await mount();
+    await openIngest();
+
+    // Nothing typed: the button offers the ranking rather than sitting disabled, because
+    // "show me what people use" is the only way in for somebody with no name in hand.
+    const go = button("人気を見る")!;
+    expect(go).toBeTruthy();
+    expect(go.disabled).toBe(false);
+
+    await click(button("話題"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "",
+      source: "hf",
+      sort: "trending",
+    });
+    expect(host!.querySelector(".engines-search-hits li")!.textContent).toContain("stabilityai/sdxl-turbo");
+    // Pressing a ranking searches at once — it is a question, not a setting that waits for a
+    // second click somewhere else.
+    expect(apiJSON).toHaveBeenCalledTimes(1);
   });
 });
