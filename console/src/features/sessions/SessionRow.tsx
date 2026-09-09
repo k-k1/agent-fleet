@@ -59,10 +59,11 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // For a stopped session that ended abnormally, the reason detail (OOM / crash) rides
   // the row tooltip alongside the resume hint.
   const ex = !s.alive ? exitLabel(s) : null;
-  // question/plan/permission want the user — keep their text. Everything else
-  // (waiting for input / running / stopped …) collapses to an icon-only chip; the text
-  // moves to title.
-  const loud = st.cls.includes("question");
+  // question/plan/permission want the user — keep their text, and so does a handoff nobody
+  // has launched (the session is done; the next step is a press away and shows up nowhere
+  // else). Everything else (waiting for input / running / stopped …) collapses to an
+  // icon-only chip; the text moves to title.
+  const loud = st.cls.includes("question") || st.cls.includes("handoff");
   // Whether this session's answer is being read aloud. Mirror narration, summaries and
   // session notifications all put the originating session name into the tts store; a
   // pending synthesis (preparing) counts too.
@@ -162,7 +163,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
-          {loud && <> {st.text}</>}
+          {/* The rail is narrow, so a chip whose wording names both the run state and what is
+              waiting shows its short form here and keeps the full one in the tooltip. */}
+          {loud && <> {st.short ?? st.text}</>}
         </span>
       </button>
       {/* Ordinal badges: pane numbers for a session shown in ≥1 panes; click

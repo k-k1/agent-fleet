@@ -69,6 +69,10 @@ export interface StateInfo {
   icon: string;
   text: string;
   spin?: boolean;
+  /** A shorter label for the narrow rail row, where the full text is the tooltip. Only the
+   *  states whose text names both the run state and what is waiting ("waiting for input ·
+   *  handoff pending") set it; everywhere else the row shows `text` as-is. */
+  short?: string;
 }
 
 // Context passed to a kind's availability predicate.

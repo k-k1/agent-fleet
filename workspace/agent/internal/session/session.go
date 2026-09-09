@@ -227,6 +227,16 @@ type Session struct {
 	// invisible in the list cannot be told apart from one silently lost. The card is there
 	// if you open the mirror, but nobody opens it without a reason to.
 	Carried string `json:"carried,omitempty"`
+	// HandoffPending: this session proposed a successor's first prompt
+	// (propose_session_handoff) that nobody has launched yet. It clears the moment the
+	// proposal is launched or discarded.
+	//
+	// Why the list needs it, for the same reason as Carried above: the proposal exists only
+	// as a card in the mirror and raises no notification, while the session that made it goes
+	// idle — the chip of a session with nothing left to do. The next step of the work is then
+	// invisible until someone happens to open that conversation. Sent on stopped rows too: a
+	// session folded away with an unlaunched handoff is exactly the one nobody will reopen.
+	HandoffPending bool `json:"handoffPending,omitempty"`
 	// Locked mirrors Meta.Locked: the user pinned this session against deletion, so
 	// every removal path (stop=forget meta / delete / TTL prune / a working-copy
 	// delete that would take it down with it) refuses until it is unlocked. The
