@@ -65,10 +65,6 @@ Parameters:
     Default: ""
     Description: >-
       SEED: the key this deployment already serves. Empty with LlmEnabled unset = no llm role.
-  LlmModelFile:
-    Type: String
-    Default: model.gguf
-    Description: "Unused since ADR 0072 — the box mirrors the bucket. Kept for one release."
   LlmModelIds:
     Type: CommaDelimitedList
     Default: "qwen3-coder-30b-a3b"
@@ -208,10 +204,6 @@ Parameters:
     Description: >-
       SEED: the checkpoint this deployment already serves. Empty with ImageEnabled unset = no
       image role, and standup.sh copies no sdcpp image.
-  ImageModelFile:
-    Type: String
-    Default: sd_xl_base_1.0.safetensors
-    Description: "Unused since ADR 0072 (the box mirrors the bucket). Kept for one release."
   ImageModelIds:
     Type: CommaDelimitedList
     Default: "sdxl-base-1.0"

@@ -916,7 +916,6 @@ LlmContextTokens=32768
 LlmMaxOutputTokens=4096
 # The image role, if you want it. Leave every Image* line out and no image service exists.
 ImageModelIds=sdxl-base-1.0
-ImageModelFile=sd_xl_base_1.0.safetensors
 # Left out on the FIRST pass — see below. Same for both roles.
 # LlmModelS3Key=llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
 # ImageModelS3Key=image/sd_xl_base_1.0.safetensors

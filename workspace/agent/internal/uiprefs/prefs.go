@@ -171,13 +171,16 @@ func ImageGeneration() bool {
 	return v
 }
 
-// FleetObserve is the ON/OFF for the session-side fleet-observation tools (docs/log/86
-// stage 1, ui-prefs sessionFleetObserve). Missing/invalid ⇒ **false**, like PeerMessaging:
-// it lets a session read every sibling session's state and usage, and append to the user's
-// memo queue. None of that is destructive, but it is a wider surface than the self-report
-// contract a fleet has today, so it is chosen rather than inherited by upgrading.
-func FleetObserve() bool {
-	v, _ := Read()["sessionFleetObserve"].(bool)
+// FleetSpawn is the ON/OFF for session steering (ADR 0073, ui-prefs sessionFleetSpawn):
+// starting sessions and driving the ones started that way. Missing/invalid ⇒ **false**, and for
+// the strongest reason of the remaining switches — this is the one that spends real resources on
+// the shared host without a person in the loop.
+//
+// It used to require fleet observation, which is how a caller watches what it started. That
+// conjunction is gone because observation is no longer optional: every session has
+// get_session_status.
+func FleetSpawn() bool {
+	v, _ := Read()["sessionFleetSpawn"].(bool)
 	return v
 }
 
@@ -185,7 +188,7 @@ func FleetObserve() bool {
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
-	mcpreg.FleetObserveEnabled = FleetObserve
+	mcpreg.FleetSpawnEnabled = FleetSpawn
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,

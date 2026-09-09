@@ -318,6 +318,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No --ignore-checks: a warning here is a template edit, not a flag. The step runs
+      # under `bash -e`, so cfn-lint's exit 4 (warnings only) fails it too, which is the
+      # point — nothing accumulates.
       - name: cfn-lint (ecs cfn templates)
         run: |
           pip install --quiet cfn-lint

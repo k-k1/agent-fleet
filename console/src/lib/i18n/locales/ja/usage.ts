@@ -125,6 +125,7 @@ export const usage = {
   "usage.val.origin.operator": "オペレーターが作成",
   "usage.val.origin.schedule": "定時実行が作成",
   "usage.val.origin.handoff": "引き継ぎ",
+  "usage.val.origin.session": "セッションが起動",
   "usage.val.origin.unknown": "不明（計測前のセッション）",
 
   // rtk 効果カード（台帳とは別系・コンテナ内 rtk の計測）

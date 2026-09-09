@@ -77,8 +77,8 @@ cleanly and then reads AccessDenied at CP start.
 
 ## The seed parameters
 
-`LlmModelS3Key` / `LlmModelFile` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens`
-and the four `Image*` mirrors are **no longer what the engine loads** (ADR 0072 decision 1).
+`LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens` and the three
+`Image*` mirrors are **no longer what the engine loads** (ADR 0072 decision 1).
 The catalogue in the Control Plane's database is, and an administrator edits it from the admin
 panel while the GPU is asleep — the act these parameters made into a CloudFormation run.
 
@@ -93,10 +93,13 @@ the server-side copy AND update `ImageModelS3Key` in the same change: a seed poi
 key produces a row whose file is not there, and the failure surfaces in the fetch sidecar at the
 next cold start rather than at deploy time.
 
-`LlmModelFile` / `ImageModelFile` are unused outright. The box mirrors the bucket —
-`image/checkpoints/x.safetensors` lands at `/models/image/checkpoints/x.safetensors` — which is
-what keeps the active set inside SSM's 4,096 characters and leaves a tree ComfyUI reads
-unchanged.
+⚠️ **`LlmModelFile` / `ImageModelFile` are GONE from the template.** ADR 0072 left them unused —
+the box mirrors the bucket, so `image/checkpoints/x.safetensors` lands at
+`/models/image/checkpoints/x.safetensors`, which is what keeps the active set inside SSM's 4,096
+characters and leaves a tree ComfyUI reads unchanged — and they were kept for one release so an
+existing capture would still deploy. That release has passed. A `params/60-engines` that still
+carries either line now fails at `standup.sh` / `update.sh` with `Parameters: [ImageModelFile] do
+not exist in the template`: **delete the lines**, they were doing nothing.
 
 ### `LlmEnabled` / `ImageEnabled`
 
@@ -399,11 +402,6 @@ out under `LlmModelS3Key`: CloudFormation blocks on ECS service stabilisation, t
 of a service whose model is not in the bucket crash-loops on "Key … does not exist", and the
 stack then sits in `CREATE_IN_PROGRESS` with no later step able to rescue it (measured on the llm
 role during P0). Deploy once with this empty, run the ingest task, then deploy again with the key.
-
-### `ImageModelFile`
-
-File name the checkpoint is copied to on the box, i.e. `/models/<ImageModelFile>`. sd-server reads
-safetensors directly, so this is the file the ingest task uploaded and not a converted form.
 
 ### `ImageModelIds`
 

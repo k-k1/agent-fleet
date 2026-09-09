@@ -26,6 +26,38 @@ Keeping it current:
 
 ---
 
+## [0.17.0](0.17.0.md) — 2026-09-09
+
+**CLI pins** — Claude Code 2.1.266, OpenCode 1.18.30, Antigravity 1.1.28, Cursor 2026.09.08, Kiro 2.21.2
+
+**New / Improved**
+
+- **[engines]** The fleet runs its own inference engines on a GPU bought on demand: `llamacpp/<model>` in opencode's launch menu (`llm`) and `generate_image` served by the deployment (`image`); disabled / always-on / on-demand in Settings › Admin (ECS only, opt-in)
+- **[engines]** Models are ingested from Hugging Face and swapped from the Console, with no CloudFormation run
+- **[engines]** The engines panel shows start time, automatic stop time, recent demand, the model in VRAM and 14 days of occupancy
+- **[sessions]** A session can be told to stop once it is done: it finishes the running turn and then halts (⋯ menu, agents, operator)
+- **[schedules]** A scheduled run can stop its session afterwards, instead of leaving the workspace up until the idle timeout
+- **[sessions]** A session can observe the fleet it is part of — another session's state, its own context usage, reading and adding memos — and nothing that acts (off by default, Settings › Agents)
+- **[image generation]** Antigravity added as a second provider (a different plan, honours the aspect ratio) and tried first; a request can name the provider, and an automatic one falls through when a plan is out of quota
+- **[mirror › skills]** Claude's bundled skills are in the skill picker, folded below your own
+- **[cost]** The shared-cost card breaks inference engines and the speech engine out of the EC2 / ECS lumps
+- **[sessions]** Tabs of sessions archived elsewhere (cleanup screen, another device, operator, agent) close themselves
+- **[auth]** After re-authenticating, the card says so and the session resumes on its own
+- **[repos]** A worktree of a repository with large submodules is seeded from the local clone instead of re-downloading them
+- **[agents]** Antigravity is usable on hosts whose kernel has withdrawn RDRAND
+- **[sessions]** Agent Fleet's own tool descriptions cost each session less context
+
+**Fixed**
+
+- **[mirror]** In a long conversation the work process reopened by itself and the position jumped, on scroll and on loading older messages
+- **[question cards]** A half-written free-text answer was lost when the session stopped or resumed
+- **[viewer]** The font-size setting did not reach Markdown; dragging the minimap selected the text it passed
+- **[mirror]** A path could be swallowed by a commit link and stop opening (generated image paths in particular)
+- **[notifications]** A notification with no session to open said the session could not be found
+- **[ecs-ec2]** A launch that changed the slot type said it would never start, half a minute before it started
+- **[usage]** Codex's usage chip ignored image generation
+- **[agents]** opencode's launch menu listed `amazon-bedrock/*` models no workspace can reach
+
 ## [0.16.0](0.16.0.md) — 2026-09-07
 
 **CLI pins** — Claude Code 2.1.263

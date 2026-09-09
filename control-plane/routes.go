@@ -4,7 +4,6 @@ import (
 	"context"
 	"log"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -989,10 +988,25 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 	// logged-out deep link round-trips through /login?next=… and lands here.
 	shell := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		http.ServeFile(w, r, filepath.Join(cfg.consoleDir, "index.html"))
+		serveConsoleIndex(w, r, cfg)
 	}
 	mux.HandleFunc("GET /open/browser-attachment/{id}", shell)
 	mux.HandleFunc("GET /open/browser-attachment/{id}/{$}", shell)
+
+	// Per-deployment branding (brand.go). Registered only when something is actually
+	// branded, so an unbranded deployment keeps serving the built files untouched —
+	// including the FileServer's own index.html for "/". The icons stay auth-exempt
+	// under /brand/ (the login page needs them before there is a session).
+	if cfg.brand.active() {
+		mux.HandleFunc("GET /{$}", shell)
+		mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+			serveConsoleManifest(w, r, cfg)
+		})
+		icons := newBrandIcons(cfg.brand, cfg.consoleDir)
+		for _, name := range brandTintedIcons {
+			mux.HandleFunc("GET /brand/"+name, icons.serve)
+		}
+	}
 
 	fs := http.FileServer(http.Dir(cfg.consoleDir))
 	mux.Handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

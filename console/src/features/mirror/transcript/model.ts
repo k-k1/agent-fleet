@@ -66,6 +66,19 @@ export function peerIntentOf(text: string): PeerIntent | null {
   return m && PEER_INTENTS.includes(m) ? (m as PeerIntent) : null;
 }
 
+// spawnParentOf reads the parent session's name out of the envelope the Agent prepends to the
+// launch task of a session another SESSION started (session_spawn.go SpawnEnvelope, ADR 0073).
+//
+// Same reasoning as peerSenderOf, at the one moment it matters most: this is the FIRST turn of
+// the session, so a reader has no history to judge it against, and a session-spawned create
+// carries no report_to — without the envelope and the "spawn" source tag the launch task reads
+// as something the user typed. Reading the envelope as well as the tag also covers the turn
+// being fetched before the injection record was written.
+const SPAWN_ENVELOPE_RE = /^\[agent-fleet:spawn from=([A-Za-z0-9][A-Za-z0-9_-]*)\]/;
+export function spawnParentOf(text: string): string | null {
+  return SPAWN_ENVELOPE_RE.exec(text)?.[1] ?? null;
+}
+
 // A `!`-run shell command is logged by Claude as a user turn `<bash-input>cmd</bash-input>`,
 // its result as the next user turn `<bash-stdout>…</bash-stdout><bash-stderr>…</bash-stderr>`.
 // These are hidden by isNoise; parseBashInput/parseBashOutput recover the command + result

@@ -751,114 +751,122 @@ func TestHandoffDescriptionMentionsReportBackOnlyWithPeerMessaging(t *testing.T)
 	}
 }
 
-// --- fleet observation (docs/log/86 stage 1) ---
+// --- fleet observation (docs/log/86 stage 1; unconditional since 2026-09-09) ---
 
-func withFleetObserve(t *testing.T, on bool) {
+func asSession(t *testing.T) {
 	t.Helper()
-	oldObserve, oldSelfReport := mcpFleetObserveEnabled, selfReportOnly()
-	t.Cleanup(func() {
-		mcpFleetObserveEnabled = oldObserve
-		setSelfReportOnly(oldSelfReport)
-	})
+	old := selfReportOnly()
+	t.Cleanup(func() { setSelfReportOnly(old) })
 	setSelfReportOnly(true)
-	mcpFleetObserveEnabled = on
 }
 
-var fleetObserveToolNames = []string{"get_session_status", "get_session_usage", "list_memos", "add_memo"}
+var fleetObserveToolNames = []string{
+	"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo",
+}
 
-// The advertised set IS the scope boundary, so the four tools must be absent from a session
-// whose user did not opt in — the historical `--self-report` contract.
-func TestFleetObserveToolsAreOffByDefault(t *testing.T) {
-	withFleetObserve(t, false)
-
+// Fleet observation is part of the session surface, with no switch and nothing to opt into —
+// including for workspaces that had explicitly turned it OFF while it was a setting. The
+// advertised set is the authorization boundary, so this test IS the grant.
+func TestFleetObserveToolsAreAlwaysOnForSessions(t *testing.T) {
+	asSession(t)
 	names := advertisedNames(t)
 	for _, name := range fleetObserveToolNames {
-		if names[name] {
-			t.Errorf("%s is advertised to a session without the opt-in", name)
+		if !names[name] {
+			t.Errorf("%s is missing from the session surface", name)
 		}
 	}
-
-	withFleetObserve(t, true)
+	// No flag can take them away: an argv with no additive flags at all still has them.
+	oldWrite, oldSelf, oldChromium := writeEnabled(), selfReportOnly(), sessionChromiumEnabled()
+	t.Cleanup(func() { setFlags(oldWrite, oldSelf, oldChromium) })
+	parseStdioFlags([]string{"--self-report"})
 	names = advertisedNames(t)
 	for _, name := range fleetObserveToolNames {
 		if !names[name] {
-			t.Errorf("%s is missing although fleet observation is on", name)
+			t.Errorf("%s disappeared from a bare --self-report server", name)
+		}
+	}
+	// And a stale MCP config still passing the retired flag is harmless.
+	parseStdioFlags([]string{"--self-report", "--fleet-observe"})
+	if got := advertisedNames(t); !got["add_memo"] {
+		t.Error("the retired --fleet-observe flag changed the advertised set")
+	}
+}
+
+// Advertised and callable are different things — a tool can ship in the list with its handler
+// still gated at writeEnabled(), and tools/list cannot see it. That shipped once already
+// (list_models, ADR 0073), so every set gets this test.
+//
+// The Agent and the memo store are not stubbed: what is under test is the GATE, so any other
+// failure is fine as long as it is not "you are not allowed".
+func TestFleetObserveToolsAreCallableNotJustAdvertised(t *testing.T) {
+	asSession(t)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	mcpSourceSession = "slot01"
+	t.Cleanup(func() { mcpSourceSession = "" })
+
+	args := map[string]map[string]any{
+		"get_session_status": {"name": "slot01"},
+		"get_session_usage":  {},
+		"list_memos":         {},
+		"add_memo":           {"kind": "text", "body": "note"},
+		"update_memo":        {"id": "m1", "body": "corrected"},
+	}
+	for _, name := range fleetObserveToolNames {
+		a, _ := json.Marshal(args[name])
+		params, _ := json.Marshal(map[string]any{"name": name, "arguments": json.RawMessage(a)})
+		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+		if strings.Contains(resp, "許可されていません") {
+			t.Errorf("%s is advertised to a session but refuses the call: %s", name, resp)
 		}
 	}
 }
 
-// Stage 1 opens observation and nothing that drives, answers for or deletes another session.
-// Naming them explicitly is the point: this list is what a future stage has to argue with.
-func TestFleetObserveDoesNotOpenOperatorTools(t *testing.T) {
-	withFleetObserve(t, true)
+// What observation opens, and what it still does not: nothing that drives, answers for or
+// deletes another session. Naming them explicitly is the point — this list is what a future
+// change has to argue with, and it is what keeps --fleet-spawn's eight (ADR 0073) out of a
+// session that was not given them.
+func TestSessionSurfaceDoesNotOpenOperatorTools(t *testing.T) {
+	asSession(t)
 
 	names := advertisedNames(t)
 	for _, withheld := range []string{
 		"send_to_session", "answer_session_question", "respond_session_plan",
 		"create_session", "stop_session", "resume_session", "get_session_output",
 		"archive_session", "delete_session", "delete_worktree", "delete_branch",
-		"flush_memos", "update_memo", "delete_memo",
+		"flush_memos", "delete_memo",
 		"create_schedule", "restore_memory_snapshot", "get_chat_plan", "set_chat_plan",
 	} {
 		if names[withheld] {
-			t.Errorf("%s reached the session surface — stage 1 opens observation only", withheld)
+			t.Errorf("%s reached the session surface", withheld)
 		}
 	}
 }
 
-// The additive flag is only valid on the session-side server: a stray --fleet-observe on an
-// assistant invocation must not widen that assistant's scope (same conjunction as the other
-// three flags).
-func TestFleetObserveRequiresSelfReport(t *testing.T) {
-	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
-	oldChromium, oldObserve := sessionChromiumEnabled(), mcpFleetObserveEnabled
-	t.Cleanup(func() {
-		setFlags(oldWrite, oldSelfReport, oldChromium)
-		mcpFleetObserveEnabled = oldObserve
-	})
-
-	for _, args := range [][]string{
-		{"mcp-stdio", "--fleet-observe"},
-		{"mcp-stdio", "--write", "--fleet-observe"},
-	} {
-		mcpFleetObserveEnabled = false
-		parseStdioFlags(args[1:])
-		if mcpFleetObserveEnabled {
-			t.Errorf("%v enabled fleet observation without --self-report", args)
-		}
-	}
-
-	parseStdioFlags([]string{"--self-report", "--fleet-observe"})
-	if !mcpFleetObserveEnabled {
-		t.Error("--self-report --fleet-observe did not enable fleet observation")
-	}
-}
-
-// add_memo is a write tool. It has to accept the session surface it was opened to, and keep
-// refusing a read-only assistant.
+// add_memo and update_memo are write tools. They have to accept the session surface they were
+// opened to, and keep refusing a read-only assistant. delete_memo and flush_memos do not go
+// through this gate — emptying the queue or sending it stays with the user.
 func TestAddMemoGateAcceptsSessionAndRefusesReadOnlyAssistant(t *testing.T) {
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
-	oldObserve := mcpFleetObserveEnabled
 	t.Cleanup(func() {
 		setWriteEnabled(oldWrite)
 		setSelfReportOnly(oldSelfReport)
-		mcpFleetObserveEnabled = oldObserve
 	})
 
 	for _, tc := range []struct {
-		name                       string
-		write, selfReport, observe bool
-		want                       bool
+		name              string
+		write, selfReport bool
+		want              bool
 	}{
+		// A read-only assistant is the one caller that must still be refused: it is an
+		// operator surface without --write, and nothing about it was widened here.
 		{name: "read-only assistant", want: false},
 		{name: "operator", write: true, want: true},
-		{name: "session without opt-in", selfReport: true, want: false},
-		{name: "session with opt-in", selfReport: true, observe: true, want: true},
+		{name: "session", selfReport: true, want: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			setWriteEnabled(tc.write)
 			setSelfReportOnly(tc.selfReport)
-			mcpFleetObserveEnabled = tc.observe
 			if got := memoWriteAllowed(); got != tc.want {
 				t.Errorf("memoWriteAllowed() = %v, want %v", got, tc.want)
 			}
@@ -964,7 +972,7 @@ func TestGetSessionStatusTrimsOnlyForSessions(t *testing.T) {
 		return resp.Result.Content[0].Text
 	}
 
-	withFleetObserve(t, true)
+	asSession(t)
 	if got := call(); strings.Contains(got, "drop the table") {
 		t.Errorf("a session was handed the pending plan body: %s", got)
 	}

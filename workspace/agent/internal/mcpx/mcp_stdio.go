@@ -96,23 +96,30 @@ var mcpPeerMessagingEnabled bool
 // and neither may be frozen into the server's argv.
 var mcpImageGenEnabled bool
 
-// mcpFleetObserveEnabled adds ONLY the four fleet-observation tools to the session-side
-// server (docs/log/86 stage 1). Enabled by `--self-report --fleet-observe`, the same additive
-// shape as the three flags above.
+// Fleet observation — get_session_status / get_session_usage / list_memos / add_memo /
+// update_memo — is part of the session surface, unconditionally (docs/log/86 stage 1, made the
+// default 2026-09-09). It was opt-in for its first weeks; the switch is gone and existing
+// workspaces get it whether or not they had turned it on.
 //
-// The four are get_session_status / get_session_usage (look at the fleet you are part of) and
-// list_memos / add_memo (leave your user a note about what you saw). Reading and note-leaving
-// ride on one switch because they are one act: the note is the only channel a session has to
-// report an observation to a human who is not watching.
+// Why it is not a capability worth choosing: reading the fleet you are part of and leaving your
+// user a note are what a session needs to be a colleague rather than a process. Nothing here
+// drives, answers for or deletes another session — that is --fleet-spawn (ADR 0073), which
+// stayed a switch precisely because it spends the host.
 //
-// What it deliberately does NOT bring is every other operator tool. Opening those to sessions
-// runs into three properties a session does not have and the operator does: a conversation id
-// (so report_to / owner_conv are empty and completion reports go nowhere), an attending human
-// (the "confirm with the user first" clause in the operator descriptions is not enforcement,
-// and BridgeApprovalGate is a no-op without a conv), and a reply budget (the operator's
-// auto-reply cap has no session-side equivalent). Anything that drives, answers for, or
-// deletes another session stays on the operator surface until those are solved.
-var mcpFleetObserveEnabled bool
+// What is still NOT here: delete_memo and flush_memos. A session may add to its user's queue and
+// correct what is in it; emptying it or sending it is the user's.
+
+// mcpFleetSpawnEnabled adds the eight session-steering tools (ADR 0073), under
+// `--self-report --fleet-spawn`. It is the one session-side switch left, and it is a switch
+// because it is the one that spends the shared host with nobody watching. Observation above is
+// not: reading the fleet and writing your user a note cost nothing and are refused by nobody,
+// which is why that one stopped being a setting at all.
+//
+// What makes steering safe to open at all is not the flag but the CHILD RELATION. create_session
+// stamps origin=session plus the caller's own name (ADR 0073 decision 1), and every driving tool
+// refuses a target that is not one of the caller's own children (sessionDriveAllowed). Deletion
+// stays closed even for those.
+var mcpFleetSpawnEnabled bool
 
 // parseStdioFlags resolves the argv into this package's capability flags. It is separate from
 // RunStdio because RunStdio then blocks on stdin forever: the conjunctions below are the whole
@@ -127,9 +134,9 @@ func parseStdioFlags(args []string) {
 	setConvID("")
 	mcpPeerMessagingEnabled = false
 	mcpImageGenEnabled = false
-	mcpFleetObserveEnabled = false
+	mcpFleetSpawnEnabled = false
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
-	fleetObserveRequested := false
+	fleetSpawnRequested := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -143,7 +150,10 @@ func parseStdioFlags(args []string) {
 		case "--image-gen":
 			imageGenRequested = true
 		case "--fleet-observe":
-			fleetObserveRequested = true
+			// Accepted and ignored: observation is unconditional now, but an MCP config
+			// written before that change still passes the flag until it is re-materialized.
+		case "--fleet-spawn":
+			fleetSpawnRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -157,7 +167,7 @@ func parseStdioFlags(args []string) {
 	setSessionChromiumEnabled(selfReportOnly() && chromiumAttachRequested)
 	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
 	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
-	mcpFleetObserveEnabled = selfReportOnly() && fleetObserveRequested
+	mcpFleetSpawnEnabled = selfReportOnly() && fleetSpawnRequested
 }
 
 // RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
@@ -386,8 +396,9 @@ func mcpStdioToolList() []map[string]any {
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
-		if mcpFleetObserveEnabled {
-			tools = append(tools, mcpStdioFleetObserveTools()...)
+		tools = append(tools, mcpStdioFleetObserveTools()...)
+		if mcpFleetSpawnEnabled {
+			tools = append(tools, mcpStdioFleetSpawnTools()...)
 		}
 		if offer, ok := mcpImageGenAdvertise(); ok {
 			tools = append(tools, mcpStdioImageGenTools(offer)...)
@@ -450,6 +461,33 @@ func handoffReportBackNote() string {
 		"prompt and ask for one send_to_peer_session reply. A reply costs the successor a turn and resumes " +
 		"you if you have stopped, so keep it for fanning out to several successors and collecting the " +
 		"results; an ordinary handoff needs none, because the user sees the work in the Console."
+}
+
+// spawnPromptFor appends the report-back line to a spawned child's launch task (ADR 0073
+// decision 9): "when you are done, send one intent=answer peer message to <parent>".
+//
+// The server writes the sentence rather than telling the caller to write it, so whether the
+// parent hears back does not depend on the caller's prose. Three conditions:
+//   - peer messaging has to be ON, because that is what decides whether the CHILD will have
+//     send_to_peer_session at all — the same conjunction handoffReportBackNote makes, and for
+//     the same reason: an instruction its reader cannot obey costs a turn to discover.
+//   - report_back defaults to on but can be turned off, for a child whose result the parent
+//     will read in the Console anyway.
+//   - an empty launch task gets nothing. A child with no work to do but an instruction to
+//     report its completion is a turn spent on nothing.
+//
+// The line is a request to the child, not machinery: the parent's reliable route remains
+// polling get_session_status. intent=answer is a protocol terminal (ADR 0041 decision 13), so
+// the reply cannot start a round trip. The envelope naming the parent is added by the Agent
+// (SpawnEnvelope), which is also what makes "your parent" resolvable at the other end.
+func spawnPromptFor(parent, prompt string, reportBack *bool) string {
+	if strings.TrimSpace(prompt) == "" || !mcpPeerMessagingEnabled || (reportBack != nil && !*reportBack) {
+		return prompt
+	}
+	return prompt + "\n\nWhen this task is finished, send exactly one message back with " +
+		"send_to_peer_session(name=\"" + parent + "\", intent=\"answer\") saying what came of it " +
+		"(one short paragraph: what you did, what is left, what went wrong). Send it once, at the end - " +
+		"not on progress, and not to acknowledge this instruction."
 }
 
 // The tool descriptions a SESSION is advertised are written in English; the operator-side
@@ -598,8 +636,8 @@ func isPeerTool(name string) bool {
 	return name == "list_peer_sessions" || name == "send_to_peer_session"
 }
 
-// mcpStdioFleetObserveTools — the four fleet-observation tools, advertised only under
-// `--self-report --fleet-observe` (docs/log/86 stage 1).
+// mcpStdioFleetObserveTools — the fleet-observation tools, part of every session's surface
+// (docs/log/86 stage 1; unconditional since 2026-09-09).
 //
 // They are written out here rather than picked out of mcpStdioTools / mcpStdioWriteTools the
 // way the Chromium tools are, because the operator's descriptions answer a different question.
@@ -678,27 +716,234 @@ func mcpStdioFleetObserveTools() []map[string]any {
 				"required": []string{"kind"},
 			},
 		},
+		{
+			"name": "update_memo",
+			"description": "Agent Fleet: edit one memo already in your user's queue, by id from list_memos. " +
+				"Only the fields you pass change. " +
+				"Call it when what you queued turns out to be wrong or incomplete - the cause was something " +
+				"else, the file moved, the follow-up you noted is already done - rather than adding a second " +
+				"memo that contradicts the first. " +
+				"The queue is your user's, and it holds notes from them and from other sessions too: correct " +
+				"your own, and leave someone else's alone unless you are fixing the thing it is about. " +
+				"You cannot delete a memo or send the queue; that stays with the user in the Console.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"id":       map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
+					"body":     map[string]any{"type": "string", "description": "Replacement note text (optional)"},
+					"refPath":  map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
+					"repo":     map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled)"},
+					"category": map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 }
 
-// isFleetObserveTool names the four tools above. It is what lets their handlers accept a
-// session caller: the read handlers have no gate of their own (the advertised set is the
-// boundary — mcpStdioCall), but add_memo is a write tool and must not read as "any
-// --self-report server may write memos".
-func isFleetObserveTool(name string) bool {
+// memoWriteAllowed authorizes the memo writers a session may reach: add_memo and update_memo.
+// Both surfaces reach them — the operator under --write, and any session (observation is part
+// of the session surface).
+//
+// delete_memo and flush_memos keep the bare writeEnabled() check. The line is not "read vs
+// write" but what a mistake costs the user: adding a note and correcting one are recoverable
+// from the queue itself, while emptying it destroys what the user had not read yet and flushing
+// it sends work into a session on their behalf.
+func memoWriteAllowed() bool {
+	return writeEnabled() || selfReportOnly()
+}
+
+// mcpStdioFleetSpawnTools — the eight session-steering tools, advertised only under
+// `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
+// operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
+// and points at tools a session does not get. The handlers are shared.
+//
+// The descriptions carry the refusals (children only, three at a time, no grandchildren, no
+// shells) because a limit a model learns by hitting it costs a whole turn, and because these
+// are the sentences that make the difference between "start a session for every thought" and
+// "start one when the work genuinely splits".
+func mcpStdioFleetSpawnTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name": "create_session",
+			"description": "Agent Fleet: start a new session in this workspace and give it a task. It runs in " +
+				"parallel with you, with its own agent, model and context. " +
+				"Use it when work genuinely splits: a long independent subtask, a second repository, something " +
+				"that would fill your context and starve the rest. Do not use it for work you could just do - " +
+				"a session holds a whole agent's memory on a host shared with every other session. " +
+				"Tell the user you are starting one, and what for. " +
+				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
+				"worktree=false only for a directory nobody is working in. " +
+				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit) + " children at a time (stopping one does not free the slot - the user " +
+				"deletes it), a session you started cannot start its own, and shell sessions cannot be started " +
+				"from here. " +
+				"You are NOT told when it finishes: poll get_session_status, or leave report_back on and it " +
+				"sends you one message when it is done. " +
+				"Children outlive you, so before your last turn tell your user which ones you left and what " +
+				"state they are in - only they can delete one. " +
+				"Use list_repos for dir and list_models for model - do not guess a model id.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"dir":            map[string]any{"type": "string", "description": "Working directory (a path from list_repos, or your own). Default: home"},
+					"title":          map[string]any{"type": "string", "description": "Short display name saying what the task is (optional)"},
+					"kind":           map[string]any{"type": "string", "description": "Agent kind: claude (default) | codex | opencode | agy | copilot | cursor | kiro. shell/ssm are refused"},
+					"model":          map[string]any{"type": "string", "description": "Model id from list_models for that kind (optional)"},
+					"initial_prompt": map[string]any{"type": "string", "description": "The task, delivered as the child's first instruction. Write it for someone with none of your context: what to do, where, what done looks like"},
+					"worktree":       map[string]any{"type": "boolean", "description": "Start in a new worktree off dir. Default TRUE from a session - two agents in one working copy corrupt each other's work"},
+					"branch":         map[string]any{"type": "string", "description": "Base branch for the worktree (optional; default: current HEAD)"},
+					"new_branch":     map[string]any{"type": "string", "description": "Name of the branch to create in the worktree (optional; default: generated)"},
+					"subdir":         map[string]any{"type": "string", "description": "Relative path inside the working copy to start in, e.g. console (optional)"},
+					"report_back":    map[string]any{"type": "boolean", "description": "Ask the child to send you one message when it finishes. Default true. Turn it off when you will read the result in the Console instead"},
+				},
+			},
+		},
+		{
+			"name": "list_repos",
+			"description": "Agent Fleet: list the working copies in this workspace (path, repo, branch). " +
+				"Call it before create_session to pick dir - a path you remember may not exist here.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name": "list_models",
+			"description": "Agent Fleet: list the model ids currently selectable for one agent kind. " +
+				"Call it before passing model to create_session and use an id from the answer: the list already " +
+				"has the user's excluded models removed, and a create with an excluded or invented id is refused. " +
+				"For opencode the same model can appear on two billing routes - prefer the one listed first.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"kind": map[string]any{"type": "string", "description": "claude | codex | opencode | agy | copilot | cursor | kiro"},
+				},
+				"required": []string{"kind"},
+			},
+		},
+		{
+			"name": "get_agent_usage",
+			"description": "Agent Fleet: report each agent CLI's subscription usage and rate limits (claude / codex / agy). " +
+				"pct is how much of a window is used, resetsAt when it lifts, authed=false means that CLI is not " +
+				"signed in. " +
+				"Call it before handing a long task to a kind you do not normally use - starting a session on a " +
+				"CLI that is out of quota or signed out wastes the launch. Not the same as get_session_usage, " +
+				"which is about context, not the plan.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name": "get_session_output",
+			"description": "Agent Fleet: read the recent terminal output of a session YOU started. " +
+				"Only your own children - not peers, not your user's sessions. " +
+				"Call it when get_session_status says a child is idle or stopped and you need to know what came " +
+				"of the task. Long output is clipped to the tail; omit since to continue from where you last read.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name":  map[string]any{"type": "string", "minLength": 1, "description": "Child session name (from create_session's result)"},
+					"since": map[string]any{"type": "integer", "description": "Read from this output offset instead of continuing (optional; 0 = from the start)"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			"name": "stop_session",
+			"description": "Agent Fleet: stop a session you started, now. Only your own children. " +
+				"The stop is resumable - conversation and working copy stay, and resume_session brings it back - " +
+				"but whatever it was doing is cut off mid-turn. " +
+				"Use it for a child that is looping or working on something you no longer want. If it is simply " +
+				"busy with work you still want, use stop_session_after_turn instead. " +
+				"Stopping does NOT free one of your child slots; the user deletes a session for that.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Child session name"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			"name": "stop_session_after_turn",
+			"description": "Agent Fleet: book a child to stop once it finishes what it is doing. Only your own children. " +
+				"Unlike stop_session nothing is cut off: the turn ends, its report goes out, then the session folds " +
+				"away. This is the one to use when you fanned work out and want each child to release its memory as " +
+				"it finishes. " +
+				"It does not stop a session that is waiting on a question or an approval, and sending it new work " +
+				"releases the booking. on=false cancels it.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Child session name"},
+					"on":   map[string]any{"type": "boolean", "description": "true = book the stop (default), false = cancel it"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			"name": "resume_session",
+			"description": "Agent Fleet: restart a stopped child, keeping its conversation. Only your own children. " +
+				"Call it when you need more from a child you stopped. It only brings the session back - to give it " +
+				"work, send it a peer message afterwards. A running session is left alone.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Child session name"},
+				},
+				"required": []string{"name"},
+			},
+		},
+	}
+}
+
+// isFleetSpawnTool names the eight above: the tools whose handlers must accept a session
+// caller once --fleet-spawn is on.
+func isFleetSpawnTool(name string) bool {
 	switch name {
-	case "get_session_status", "get_session_usage", "list_memos", "add_memo":
+	case "create_session", "list_repos", "list_models", "get_agent_usage",
+		"get_session_output", "stop_session", "stop_session_after_turn", "resume_session":
 		return true
 	}
 	return false
 }
 
-// memoWriteAllowed authorizes add_memo. Two surfaces reach it: the operator under --write,
-// and a session whose user turned fleet observation on. The other memo writers
-// (update_memo / delete_memo / flush_memos) keep the bare writeEnabled() check — a session
-// may add to its user's queue, not rewrite or send it.
-func memoWriteAllowed() bool {
-	return writeEnabled() || mcpFleetObserveEnabled
+// sessionDriveAllowed authorizes a tool that ACTS ON a named session: reading its output,
+// stopping it, resuming it. The operator may drive anything; a session may drive only what it
+// started itself (ADR 0073 decision 4).
+//
+// The predicate is BOTH origin=session AND a matching parent, deliberately narrower than the
+// one guarding recursion. A fork of a child keeps the lineage but is origin=handoff — a person
+// made it in the Console, and nothing about being the fork source makes it the parent's to
+// stop. Everything else — peers, the user's own sessions, another session's children — is
+// simply not the caller's business.
+//
+// The advertised tool set is still the first boundary; this is the second, because unlike the
+// stage 1 read tools these name a target.
+func sessionDriveAllowed(name string) error {
+	// The operator surface is unrestricted — including read-only (--write absent), which still
+	// advertises get_session_output. The test is which SURFACE this server is, not which
+	// capability it holds: keying off writeEnabled() would put a read-only assistant through
+	// the child check and then refuse it for having no session of its own.
+	if !selfReportOnly() {
+		return nil
+	}
+	self, err := mcpOwningSession()
+	if err != nil {
+		return err
+	}
+	m, ok := session.ReadMeta(name)
+	if !ok {
+		return fmt.Errorf("セッション %q が見つかりません", name)
+	}
+	if session.OriginOf(m) != session.OriginSession || m.OriginSession != self {
+		return fmt.Errorf("セッション %q はこのセッションが起こした子ではないので操作できません。"+
+			"自分が create_session で起こしたセッションだけを止める・再開する・出力を読むことができます", name)
+	}
+	// An archived child is the user's decision to fold it away, and it has no row in the
+	// active list. Resuming one would put a live agent on the host that nobody can see, which
+	// is also how archiving would become a way around "no deleting, no archiving" (ADR 0073
+	// decision 13): archive from the Console, revive from here.
+	if m.Archived {
+		return fmt.Errorf("セッション %q は利用者がアーカイブ済みなので操作できません。"+
+			"戻すかどうかは利用者が Console で決めます", name)
+	}
+	return nil
 }
 
 // mcpToolGenerateImage is the one image generation tool (ADR 0069). Named as a constant
@@ -1674,10 +1919,18 @@ func mcpStdioCall(req mcpReq) []byte {
 		Kind          string `json:"kind"`
 		Model         string `json:"model"`
 		InitialPrompt string `json:"initial_prompt"`
-		Worktree      bool   `json:"worktree"`
-		Branch        string `json:"branch"`
-		NewBranch     string `json:"new_branch"`
-		Subdir        string `json:"subdir"`
+		// Worktree is a POINTER because the default differs by surface: false for the
+		// operator, true for a session (ADR 0073 decision 7). A plain bool cannot tell
+		// "worktree=false, work right here" from "not mentioned".
+		Worktree  *bool  `json:"worktree"`
+		Branch    string `json:"branch"`
+		NewBranch string `json:"new_branch"`
+		Subdir    string `json:"subdir"`
+		// ReportBack asks a spawned child to send one intent=answer peer message home when it
+		// finishes (ADR 0073 decision 9). A pointer for the same reason as On: omitted means
+		// on, and a plain bool would silently turn the report off for every caller that did
+		// not think about it.
+		ReportBack *bool `json:"report_back"`
 		// answer_session_question args: 1-based choice numbers, in question order.
 		Choices []int `json:"choices"`
 		// respond_session_plan args
@@ -1932,8 +2185,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
 		// Advertised in the write set, so the call is refused at the same boundary: the
-		// advertised set is the scope boundary (docs/log/19 Q2).
-		if !writeEnabled() {
+		// advertised set is the scope boundary (docs/log/19 Q2). --fleet-spawn advertises it
+		// too (ADR 0073 §3-b) — create_session's own description sends the caller here first,
+		// so a gate left at writeEnabled() breaks the spawn path at its first step.
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
 		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
@@ -1960,7 +2215,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "update_memo":
-		if !writeEnabled() {
+		if !memoWriteAllowed() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの編集を許可されていません")
 		}
 		if a.ID == "" {
@@ -2098,12 +2353,24 @@ func mcpStdioCall(req mcpReq) []byte {
 		// model on every plan write.
 		return mcpTextResult(req.ID, "作業計画を更新しました（以降の新しいセッションへ原文のまま引き継がれます）。")
 	case "create_session":
-		if !writeEnabled() {
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの作成を許可されていません")
 		}
+		// Who is launching decides the provenance, the idempotency scope, the report route and
+		// the worktree default. Everything below branches on this one answer (ADR 0073).
+		parent := ""
+		if selfReportOnly() {
+			self, err := mcpOwningSession()
+			if err != nil {
+				return mcpToolErr(req.ID, err.Error())
+			}
+			parent = self
+		}
 		// P3: a raw shell session executes arbitrary commands (no agent guardrails) — gate
-		// its creation on a Discord approval when this is an unattended operator turn.
-		if a.Kind == "shell" {
+		// its creation on a Discord approval when this is an unattended operator turn. A
+		// session never reaches it: the Agent refuses kind=shell for origin=session outright,
+		// because this gate is a no-op without a conversation (ADR 0073 decision 8).
+		if a.Kind == "shell" && parent == "" {
 			if err := bridgeApprovalGate(approvalLabel("create_session_shell"), shellCreateTarget(a.Dir, a.InitialPrompt)); err != nil {
 				return mcpToolErr(req.ID, err.Error())
 			}
@@ -2112,32 +2379,59 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Kind == "codex" || a.Kind == "opencode" || a.Kind == "copilot" || a.Kind == "cursor" || a.Kind == "kiro" {
 			driver = "managed"
 		}
-		// Deterministic idempotency key (conversation + launch intent): an LLM re-issuing
-		// the same create_session reproduces it, so a timed-out-then-retried create
-		// collapses onto the first session instead of spawning a duplicate.
-		idemKey := CreateSessionKey(convID(), a.Dir, a.Subdir, a.Kind, a.Model, a.InitialPrompt, a.Worktree, a.Branch, a.NewBranch)
+		// The worktree default differs by surface: the operator's is false (a person can say
+		// "work right here"), a session's is true. Two agents in one working copy is the
+		// accident the workspace policy forbids by name, and a session launching with defaults
+		// would otherwise put its child in its own checkout.
+		worktree := a.Worktree != nil && *a.Worktree
+		if parent != "" && a.Worktree == nil {
+			worktree = true
+		}
+		initialPrompt := a.InitialPrompt
+		if parent != "" {
+			initialPrompt = spawnPromptFor(parent, initialPrompt, a.ReportBack)
+		}
+		// Deterministic idempotency key (caller + launch intent): an LLM re-issuing the same
+		// create_session reproduces it, so a timed-out-then-retried create collapses onto the
+		// first session instead of spawning a duplicate. The caller scope is the conversation
+		// for an operator and the session's own name for a session — never empty, or two
+		// sessions launching the same thing would collapse into one (ADR 0073 decision 2).
+		scope := convID()
+		origin, originConv := session.OriginOperator, convID()
+		if parent != "" {
+			scope, origin, originConv = parent, session.OriginSession, ""
+		}
+		idemKey := CreateSessionKey(scope, a.Dir, a.Subdir, a.Kind, a.Model, initialPrompt, worktree, a.Branch, a.NewBranch)
 		reqBody, _ := json.Marshal(map[string]any{
 			"dir":             a.Dir,
 			"subdir":          a.Subdir,
 			"title":           a.Title,
 			"kind":            a.Kind,
 			"model":           a.Model,
-			"initial_prompt":  a.InitialPrompt,
-			"worktree":        a.Worktree,
+			"initial_prompt":  initialPrompt,
+			"worktree":        worktree,
 			"branch":          a.Branch,
 			"new_branch":      a.NewBranch,
 			"driver":          driver,
 			"report_to":       convID(), // docs/log/30: send the completion report to this conversation (empty = off)
 			"idempotency_key": idemKey,
-			// ADR 0029 §6: record explicitly that an operator started this session. That is
-			// the axis usage accounting needs to separate unattended spend (autopilot and
-			// schedules combined) from sessions a human opened.
-			"origin":      session.OriginOperator,
-			"origin_conv": convID(),
+			// ADR 0029 §6: record explicitly who started this session. That is the axis usage
+			// accounting needs to separate unattended spend (autopilot, schedules and now
+			// session-spawned children) from sessions a human opened. origin_session names the
+			// parent and is filled from the server's own $AF_SESSION_NAME, never from an
+			// argument — the model cannot claim a parent it is not (ADR 0073 decision 1).
+			"origin":         origin,
+			"origin_conv":    originConv,
+			"origin_session": parent,
 		})
+		// A create costs 40s + 45s at worst, over opencode's 60s per-call ceiling. The
+		// heartbeat resets that clock (measured, ADR 0069); claude ignores progress for
+		// timeouts and codex has tool_timeout_sec=600.
+		stop := startProgressHeartbeat(req, "セッションを起動しています…")
 		out, err := agentCreateSession(reqBody, idemKey)
+		stop()
 		if err != nil {
-			return mcpToolErr(req.ID, "セッションの作成に失敗しました: "+err.Error())
+			return mcpToolErr(req.ID, "セッションの作成に失敗しました: "+agentErrDetail(err))
 		}
 		return mcpTextResult(req.ID, out)
 	case "send_to_session":
@@ -2207,15 +2501,24 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "stop_session":
-		if !writeEnabled() {
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
 		}
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
+		if err := sessionDriveAllowed(a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		// disarm_report: an operator stop means the instruction is cancelled, so swallow the
 		// armed one-shot report — otherwise a later resume's completion delivers a stale one.
-		reqBody, _ := json.Marshal(map[string]bool{"disarm_report": true})
+		//
+		// A SESSION's stop does not send it (ADR 0073 decision 10). Disarming says "the
+		// instruction is withdrawn", and a parent folding up a child withdraws nothing the
+		// operator asked for; if the operator had steered this child, its report is still owed.
+		// (The stop still delays that report until the child is resumed — leaving the arm alone
+		// is not the same as having no effect.)
+		reqBody, _ := json.Marshal(map[string]bool{"disarm_report": !selfReportOnly()})
 		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/halt", reqBody)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの停止に失敗しました: "+err.Error())
@@ -2226,11 +2529,14 @@ func mcpStdioCall(req mcpReq) []byte {
 		// stop_session: this stop lets the instruction finish, so the report it owes is
 		// still owed — and the Agent delivers it before folding the session away
 		// (docs/log/85).
-		if !writeEnabled() {
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの停止を許可されていません")
 		}
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if err := sessionDriveAllowed(a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
 		}
 		on := a.On == nil || *a.On
 		armBody, _ := json.Marshal(map[string]bool{"on": on})
@@ -2298,11 +2604,14 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "resume_session":
-		if !writeEnabled() {
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはセッションの再開を許可されていません")
 		}
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		if err := sessionDriveAllowed(a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
 		}
 		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/start", nil)
 		if err != nil {
@@ -2438,6 +2747,11 @@ func mcpStdioCall(req mcpReq) []byte {
 		if a.Name == "" {
 			return mcpToolErr(req.ID, "name（セッション名）が必要です")
 		}
+		// Unlike the other reads a session is given, this one names a target and returns
+		// another session's raw output — so it is children only (ADR 0073 decision 4).
+		if err := sessionDriveAllowed(a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
 		return mcpSessionOutput(req.ID, a.Name, a.Since)
 	case "get_session_usage":
 		path = "/sessions/usage"
@@ -2501,6 +2815,26 @@ func withoutPendingInteraction(body string) string {
 		return body
 	}
 	return string(trimmed)
+}
+
+// outputCursorScope is what get_session_output's "continue from where I left off" is remembered
+// under. The operator has a conversation; a session does not, and --conv is not passed to the
+// session-side server — so keyed on convID() alone the session surface silently had NO cursor
+// and re-read the whole tail on every poll, which is the one surface whose description promises
+// otherwise and the one with no reply budget to absorb it (docs/log/86 §86.2).
+//
+// The session's own name is the right key for the same reason the conversation is the operator's:
+// it is the thing doing the reading. An unresolvable name yields "", i.e. no cursor memory,
+// which is the pre-existing behaviour rather than a wrong one.
+func outputCursorScope() string {
+	if !selfReportOnly() {
+		return convID()
+	}
+	self, err := mcpOwningSession()
+	if err != nil {
+		return ""
+	}
+	return self
 }
 
 // mcpOwningSession names the session this MCP process serves.
@@ -2901,10 +3235,11 @@ func SessionOutputTail() int {
 func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	eff := int64(-1)
 	fromStore := false
+	scope := outputCursorScope()
 	if since != nil {
 		eff = *since
-	} else if convID() != "" {
-		if cur, ok := OutputCursors.Read(convID()); ok {
+	} else if scope != "" {
+		if cur, ok := OutputCursors.Read(scope); ok {
 			if v, ok2 := cur[name]; ok2 {
 				eff, fromStore = v, true
 			}
@@ -2920,15 +3255,17 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	}
 	var resp map[string]any
 	if json.Unmarshal([]byte(body), &resp) == nil {
-		// Remember the returned cursor per conversation as the next default since.
-		if cursor, ok := resp["cursor"].(float64); ok && convID() != "" {
-			cur, _ := OutputCursors.Read(convID())
+		// Remember the returned cursor per SCOPE (conversation, or the reading session) as the
+		// next default since. Only the conversation side is ever cleaned up; a session's entry
+		// outlives it, holding one integer offset per session it read.
+		if cursor, ok := resp["cursor"].(float64); ok && scope != "" {
+			cur, _ := OutputCursors.Read(scope)
 			if cur == nil {
 				cur = map[string]int64{}
 			}
 			if cur[name] != int64(cursor) {
 				cur[name] = int64(cursor)
-				_ = OutputCursors.Write(convID(), cur)
+				_ = OutputCursors.Write(scope, cur)
 			}
 		}
 		// A default continue-read with no new output: returning an empty string reads as
@@ -3100,10 +3437,16 @@ func agentDoTimeoutHeaders(method, path string, body []byte, timeout time.Durati
 // CreateSessionKey derives a STABLE idempotency key from the launch intent so the LLM
 // re-issuing create_session with the same arguments reproduces it — that is what lets a
 // timed-out-then-retried create collapse onto the first session (see session_idempotency.go).
-// Scoped by the conversation id so unrelated conversations never collide.
-func CreateSessionKey(conv, dir, subdir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
+// Scoped by the CALLER so two unrelated callers never collide: the operator passes its
+// conversation id, a session its own name (ADR 0073 decision 2). The scope is not optional —
+// an empty one would fold two sessions' identical launches into a single child, and the second
+// caller would be handed the first's session as if it were the one it asked for.
+func CreateSessionKey(scope, dir, subdir, kind, model, prompt string, worktree bool, branch, newBranch string) string {
+	if scope == "" {
+		return ""
+	}
 	h := sha256.New()
-	for _, f := range []string{conv, dir, subdir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
+	for _, f := range []string{scope, dir, subdir, kind, model, prompt, strconv.FormatBool(worktree), branch, newBranch} {
 		h.Write([]byte(f))
 		h.Write([]byte{0})
 	}

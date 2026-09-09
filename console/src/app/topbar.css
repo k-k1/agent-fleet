@@ -59,6 +59,23 @@
   font-weight: 400;
   font-size: 11px;
 }
+/* Deployment label (AF_BRAND_LABEL). Background AND text colour are set inline from
+   lib/brand.ts, so the chip always matches the favicon and stays readable on a palette
+   that spans light orange to dark violet. */
+.brand-env {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.5;
+  max-width: 10ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: 1px;
+}
 .topbar-right {
   display: flex;
   align-items: center;

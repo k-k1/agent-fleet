@@ -349,6 +349,30 @@ CpArch=arm64  → :fa045a80   ERROR: … is a SINGLE manifest …（exit 1）   
 
 **結果**: ⏳ 未実施。
 
+### 72.6.7 ✅ ECS は `cpuArchitecture` を正規化しない（2026-09-09・sandbox 配備で実測）
+
+`30-ingress` の `CpArch` は小文字（`x86_64` / `arm64`）で、ECS の enum は
+`X86_64` / `ARM64` である。**ECS は小文字を受け取るが、大文字に直さずそのまま保存する。**
+
+```
+cloudformation describe-stacks af-ecs-ingress → CpArch = arm64
+ecs describe-task-definition af-af-ecs-ingress-cp:44
+  → runtimePlatform: {cpuArchitecture: "arm64", operatingSystemFamily: "LINUX"}
+```
+
+⚠️ **`LINUX` は大文字のまま、`arm64` は小文字のまま**という食い違いが、正規化されて
+いないことの証拠である（§72.6.3 の rev 19 でも同じ形で出ていた）。
+
+そのため cfn-lint は W1030 を出す（release-gate の ecs-gate は `bash -e` なので warning
+だけで赤くなる）。テンプレート側で `!If [ CpArm, ARM64, X86_64 ]` に直したが、
+**パラメータは小文字のまま**である——`AllowedValues` を大文字に上げると、小文字を保存
+済みのスタックが次の update（与えなかったパラメータは UsePreviousValue）で弾かれる。
+`Mappings` 経由も不可で、**CFN のマップキーは `_` を含められない**（`x86_64:` は E7001）。
+
+⚠️ **代償はリビジョン 1 つ**: レンダリング値が変わるので、小文字で登録された配備は
+次の update で新しいリビジョンを引き、CP が 1 度ローリングする（無停止・§72.7 の 51 秒）。
+0.18.0 の Upgrade notes に書いた。
+
 ## 72.7 CP のオートスケールと冗長化——実状
 
 アーキを切り替える操作はローリングデプロイであり、その挙動は台数の設計そのものである。

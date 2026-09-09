@@ -46,7 +46,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 
 af_env_init "$PROFILE" "$REGION" "$STACK"
 [ "$AF_LIVE" = 1 ] || {
@@ -103,7 +103,7 @@ save_params() {  # save_params <stack> <slug>
   while IFS= read -r line; do
     [ -n "$line" ] || continue
     key="${line%%=*}"; val="${line#*=}"
-    [ -n "$val" ] && [ "$val" != "None" ] || continue
+    if [ -z "$val" ] || [ "$val" = "None" ]; then continue; fi
     grep -q "^$key=\$" "$f" || continue          # only parameters captured empty
     sed -i "s|^$key=\$|$key=$val|" "$f"
     echo "  - $slug: $key taken from the Outputs (an empty parameter marks the 'create it' branch)"

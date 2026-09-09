@@ -609,7 +609,7 @@ func (c config) writeNewAccountPage(w http.ResponseWriter, r *http.Request, p au
 		`<a class="gbtn ghost" href="/oauth2/logout">` + t.NewSwitch + `</a>`
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", t.NewTitle,
+		"{{TITLE}}", html.EscapeString(c.brand.name(t.NewTitle)),
 		"{{NOTE}}", t.NewNote,
 		"{{ERROR}}", `<div class="msg">`+fmt.Sprintf(t.NewBody, html.EscapeString(p.Email))+`</div>`,
 		"{{BUTTONS}}", buttons,
@@ -753,7 +753,9 @@ func (c config) handleLogin(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", html.EscapeString(title),
+		// The deployment label goes first, before the tenant's name: the login page is
+		// where signing in to the wrong environment happens (brand.go).
+		"{{TITLE}}", html.EscapeString(c.brand.name(title)),
 		"{{NOTE}}", note,
 		"{{ERROR}}", auth.LoginErrorBlock(r.URL.Query().Get("error"), lang),
 		"{{BUTTONS}}", c.loginButtons(r.Context(), sanitizeNext(r.URL.Query().Get("next")), lang, slug,

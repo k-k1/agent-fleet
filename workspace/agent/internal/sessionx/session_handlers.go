@@ -280,6 +280,10 @@ type CreateReq struct {
 	// CP scheduler needs no new wire field. Whitelisted server-side (session.ValidOrigin).
 	Origin     string `json:"origin"`
 	OriginConv string `json:"origin_conv"`
+	// OriginSession is the parent session's name for origin=session (ADR 0073). The tool has
+	// no argument for it: the MCP layer fills it from its own $AF_SESSION_NAME, the way
+	// peer_from is filled, so the model cannot name a parent it is not. See CreateOrigin.
+	OriginSession string `json:"origin_session"`
 	// Optional clone-then-start: when remote_url is set, the repo is cloned
 	// (or reused) under ~/repos and its path becomes the session CWD, ignoring dir.
 	// RepoName overrides the target folder so two branches of the same repo can
@@ -463,8 +467,11 @@ func commonPrefixLen(a, b string) int {
 //     that legitimately arrives unlabeled.
 //
 // The conversation slug is only meaningful for operator-started sessions ("which operator
-// conversation made this expensive purchase"), so it is dropped otherwise.
-func CreateOrigin(req *CreateReq) (origin, conv string) {
+// conversation made this expensive purchase"), so it is dropped otherwise. The parent session
+// name is the same idea one axis over (ADR 0073): meaningful only for origin=session, so a
+// request that names a parent under any other origin loses it rather than growing a lineage
+// nobody can read.
+func CreateOrigin(req *CreateReq) (origin, conv, parent string) {
 	if req.Origin != "" {
 		origin = session.ValidOrigin(req.Origin)
 	} else if s := injectionSource(req.Source); s == TurnSourceSchedule || s == TurnSourceScheduleManual {
@@ -472,10 +479,19 @@ func CreateOrigin(req *CreateReq) (origin, conv string) {
 	} else {
 		origin = session.OriginUser
 	}
-	if origin == session.OriginOperator {
+	switch origin {
+	case session.OriginOperator:
 		conv = req.OriginConv
+	case session.OriginSession:
+		// A create claiming origin=session without naming a parent would produce a child
+		// nobody owns: no steering, no budget, and the recursion limit reads it as a root.
+		// Degrade to the unlabeled default rather than record that.
+		if !session.ValidName(req.OriginSession) {
+			return session.OriginUser, "", ""
+		}
+		parent = req.OriginSession
 	}
-	return origin, conv
+	return origin, conv, parent
 }
 
 // HandleCreateSession launches a claude session inside a detached tmux session.
@@ -483,6 +499,17 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	var req CreateReq
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
+	}
+	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
+	// spawn regime hangs off it. Resolved here; the refusals run further down.
+	spawnParent := ""
+	if origin, _, parent := CreateOrigin(&req); origin == session.OriginSession {
+		spawnParent = parent
+		// The child has to be able to tell this instruction from one its user typed
+		// (ADR 0073 decision 14). Applied before the idempotency key is derived, so the key
+		// covers what is actually delivered, and here rather than in the calling tool so it
+		// cannot be omitted or forged.
+		req.InitialPrompt = SpawnEnvelope(parent, req.InitialPrompt)
 	}
 	// Idempotency guard (session_idempotency.go): collapse a retried / concurrent create
 	// onto the first one so a client that timed out mid-launch can't spawn a duplicate.
@@ -523,6 +550,34 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		httpx.WriteJSON(w, http.StatusCreated, body)
+	}
+	// slot is this create's claim on one of the parent's child slots. Empty for every route
+	// that is not a spawn, and then every method is a plain meta write.
+	slot := &spawnSlot{}
+	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
+	// (clone / worktree), so a refused spawn leaves nothing behind.
+	//
+	// After the claim, because they must not answer a RETRY. A client whose create timed out
+	// re-sends the same request, and by then the first child exists: run the budget first and
+	// the retry is refused as "you already have three" instead of being replayed the session it
+	// actually created. The same for a create still in flight — the ledger answers that with
+	// create_in_progress, which the calling tool reconciles into the eventual session.
+	//
+	// The working-copy check is not here: it needs the RESOLVED dir (below), not the raw one.
+	if spawnParent != "" {
+		if ref := SpawnCreateRefusal(spawnParent, req.Kind); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+		if err := reserveSpawnSlot(spawnParent); err != nil {
+			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
+			return
+		}
+		// The slot is handed over to the child's meta as that meta is written (spawnSlot.publish
+		// — the two are one atomic step). The defer is the failure net: every path that ends
+		// without a meta.
+		slot = &spawnSlot{parent: spawnParent}
+		defer slot.release()
 	}
 	title, ok := CleanTitle(req.Title)
 	if !ok {
@@ -714,6 +769,18 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
 		return
 	}
+	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
+	// req.Dir, because that is the directory the session will actually run in: an empty dir
+	// becomes home and a relative one is joined onto home a few lines above, so comparing the
+	// raw request would let `dir: ""` walk straight past a session already running in home.
+	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
+	// which is why the check is scoped to the non-worktree case rather than the raw flag.
+	if spawnParent != "" && !req.Worktree {
+		if ref := spawnWorkingCopyRefusal(req.Dir); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+	}
 	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
 	// Validated AFTER Dir so a worktree launch checks the path inside the fresh worktree
 	// — the parent may well have a folder the new branch doesn't (or vice versa).
@@ -759,13 +826,13 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			ssm.Region = ssm.SSORegion
 		}
 	}
-	origin, originConv := CreateOrigin(&req)
+	origin, originConv, originSession := CreateOrigin(&req)
 	meta := session.Meta{
 		Name: name, Dir: req.Dir, Subdir: subdir, Model: req.Model, Effort: req.Effort, Mode: req.Mode, Kind: kind, Driver: driver, Title: title, Color: req.Color, Label: label,
 		SkipPermissions: req.SkipPermissions,
 		Repo:            filepath.Base(req.Dir), Branch: gitx.GitCurrentBranch(req.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: ssm,
-		Origin: origin, OriginConv: originConv,
+		Origin: origin, OriginConv: originConv, OriginSession: originSession,
 	}
 	// Armed here, before either launch path delivers the initial prompt (docs/log/85): the
 	// arm's instant is also the lower bound its completion evidence is cut by, and the launch
@@ -790,25 +857,14 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			writeRuntimeErr(w, err)
 			return
 		}
-		session.WriteMeta(meta)
+		slot.publish(meta)
+		noteCreateOrigin(name, &req, spawnParent)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
 				log.Printf("managed initial prompt %s: %v", name, err)
 			} else {
 				markSessionWorking(name)
 			}
-		}
-		// docs/log/51 Phase 2: add one row to the instruction ledger (the old one-bit arm).
-		// A managed session has no session-status hook, but completion is picked up through
-		// the notify seam and the reconciler.
-		if req.ReportTo != "" {
-			chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
-			recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
-		} else if s := scheduleInjectionSource(req.Source); s != "" {
-			// A session created by a schedule with reporting off: no ledger row (there is
-			// nowhere to report to), but remember where the first prompt came from —
-			// otherwise the initial_prompt turn alone loses its badge (docs/log/38).
-			recordInjection(name, req.InitialPrompt, s)
 		}
 		writeCreated(meta)
 		return
@@ -817,26 +873,51 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
-	session.WriteMeta(meta)
+	slot.publish(meta)
 
+	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
+	// against, and the turn can appear first (see noteCreateOrigin).
+	noteCreateOrigin(name, &req, spawnParent)
 	// Optional launch task: deliver it once the CLI has booted (async — the create
 	// response returns the session immediately so the caller can start polling).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
-		go deliverInitialPrompt(name, req.InitialPrompt)
-	}
-	// docs/log/51 Phase 2: raise one instruction row addressed to the launching conversation.
-	// Raised even without an initial_prompt: the operator may steer it by hand with
-	// send_to_session afterwards.
-	// The initial_prompt, when present, is an orchestrated injection (docs/log/30 ② /
-	// docs/log/38) — remember it with its origin so the mirror badges its user turn.
-	if req.ReportTo != "" {
-		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
-		recordInjection(name, req.InitialPrompt, injectionSource(req.Source))
-	} else if s := scheduleInjectionSource(req.Source); s != "" {
-		recordInjection(name, req.InitialPrompt, s) // schedule with reporting off (same as the managed path)
+		go deliverInitialPromptFn(name, req.InitialPrompt)
 	}
 
 	writeCreated(meta)
+}
+
+// noteCreateOrigin remembers who a new session's launch task came from, so the mirror can badge
+// its first user turn instead of rendering it as something the user typed.
+//
+// It must run BEFORE either launch path delivers the prompt. The record is matched to the turn
+// by text when the turn appears, and delivery is asynchronous on the tui path and immediate on
+// the managed one — recording afterwards is a race that loses the badge exactly when the turn
+// arrives quickly. (It used to sit after delivery on both paths; ADR 0073 decision 14 moved it,
+// which is also what badgeOriginOf's comment was written in anticipation of.)
+//
+// docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
+// initial_prompt, because the operator may steer the session by hand afterwards. The other two
+// branches record provenance only; there is nowhere for them to report to.
+// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering above — record,
+// THEN deliver — is a requirement, not an incidental line order (ADR 0073 decision 14), and the
+// only way to observe it from a test is to be the delivery.
+var deliverInitialPromptFn = deliverInitialPrompt
+
+func noteCreateOrigin(name string, req *CreateReq, spawnParent string) {
+	switch {
+	case req.ReportTo != "":
+		chatx.AddInstruction(name, req.ReportTo, injectionSource(req.Source))
+		recordInjection(name, req.InitialPrompt, injectionSource(req.Source)) // orchestrated start (docs/log/30 ② / docs/log/38)
+	case scheduleInjectionSource(req.Source) != "":
+		// A session created by a schedule with reporting off: no ledger row, but remember
+		// where the first prompt came from — otherwise that turn loses its badge (docs/log/38).
+		recordInjection(name, req.InitialPrompt, scheduleInjectionSource(req.Source))
+	case spawnParent != "":
+		// A child another session started (ADR 0073). Its create carries no report_to, so
+		// without this the launch task — envelope and all — renders as the user's own input.
+		recordInjection(name, req.InitialPrompt, TurnSourceSpawn)
+	}
 }
 
 // HandleIdempotencyLookup lets a client that lost the create response (a mid-launch
@@ -961,7 +1042,10 @@ func HandleForkSession(w http.ResponseWriter, r *http.Request) {
 		// source's origin would blend it into "sessions a human opened" and hide the spend
 		// handoffs add. The originating conversation IS inherited from the parent, so a
 		// handoff from an operator-started session stays traceable in the same chain.
-		Origin: session.OriginHandoff, OriginConv: src.OriginConv,
+		// OriginSession rides along (ADR 0073): forking a child keeps the lineage, so the
+		// successor still cannot spawn (the recursion limit reads OriginSession alone) while
+		// its origin=handoff keeps it out of the parent's steering set.
+		Origin: session.OriginHandoff, OriginConv: src.OriginConv, OriginSession: src.OriginSession,
 	}
 	if ag.Caps().UsesLabel {
 		meta.Label = sessionLabelFor(src.Dir, title, meta.Name)
@@ -1248,7 +1332,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		Title: m.Title, Color: m.Color, Repo: m.Repo, Branch: gitx.GitCurrentBranch(m.Dir),
 		CreatedAt: time.Now().Format(time.RFC3339), SSM: m.SSM,
 		// recreate means "make the same slot again, empty", so the origin is inherited (ADR 0029 §6).
-		Origin: session.OriginOf(m), OriginConv: m.OriginConv,
+		Origin: session.OriginOf(m), OriginConv: m.OriginConv, OriginSession: m.OriginSession,
 	}
 	if AgentOf(newMeta.Kind).Caps().UsesLabel {
 		newMeta.Label = sessionLabelFor(newMeta.Dir, newMeta.Title, newMeta.Name)
@@ -1271,6 +1355,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.WriteMeta(newMeta)
+		handOverSpawnLineage(m.Name)
 		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 		return
 	}
@@ -1283,5 +1368,6 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(newMeta)
+	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 }

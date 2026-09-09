@@ -460,6 +460,16 @@ but it is now WRITTEN DOWN. Left implicit, the day the image gains an arm64 mani
 day the architecture becomes a property of whatever Fargate happened to pick, and nobody
 would see it in the template.
 
+⚠️ **This parameter is spelled `x86_64` / `arm64`, the task definition carries the ECS enum's
+`X86_64` / `ARM64`.** The template turns the case, so the value you write and the value you
+read back from `describe-task-definition` differ. ECS accepts the lowercase spelling and
+stores it verbatim, which is why a deployment whose task definition was registered before the
+template turned the case gets **one new revision on its next update** — a rolling deployment
+of the Control Plane, not an outage (old and new overlap for about 51 seconds, docs/log/72).
+The parameter
+itself is not raised to uppercase because every captured `params/30-ingress` holds the
+lowercase value, and a stricter `AllowedValues` would reject it on the next update.
+
 ### `SsmPrefix`
 
 SSM SecureString path prefix holding the CP secrets, created out of band before deploy (see
@@ -573,3 +583,25 @@ and no alarm, and the only trace is the CP log.
 answering 200, the ALB target stayed healthy, ECS stayed at steady state, and nobody found
 out until a person tried to use the product. The metric is always collected; this parameter
 is what makes it reach someone. Set it.
+
+## Branding (telling this deployment apart)
+
+### `BrandColor` / `BrandLabel`
+
+Cosmetic, and worth setting the moment a second stack exists. `BrandColor` recolours the
+favicon, the PWA / home-screen icons and the Android task-switcher colour; `BrandLabel` (≤16
+characters) is prefixed onto the app name — `[staging] Agent Fleet` — in the browser tab, the
+installed PWA, the login page and the Console's top bar. Nothing about access or data depends
+on either.
+
+`BrandColor` is one of `teal` (the shipped default), `blue`, `violet`, `magenta`, `red`,
+`orange`, `green`, `slate`. The Control Plane recolours the shipped art when it serves it, so
+no separate image build is involved.
+
+The label is a PREFIX because both places it has to survive truncate the END: a crowded tab
+strip and a phone launcher. Two caveats worth knowing before you rely on it:
+
+- A PWA already installed on a phone keeps the icon and name it was installed with. Reinstall
+  it to pick up a change.
+- The login page carries the label too. That is deliberate — signing in to the wrong
+  environment is what this parameter exists to prevent.
