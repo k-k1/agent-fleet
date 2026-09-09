@@ -175,6 +175,16 @@ decision 5's predicate reads the lineage, deliberately the wider one.
   **increase the number of running children without going through `create_session`**. Counting
   until deletion puts the only way to grow the set back inside create.
 
+**A recreate stays one slot.** Recreate keeps the old meta (archived, restorable) and mints a
+new one, and both inherit the parent — so left alone **one child costs two slots**, and a user
+recreating their own child is the reason the parent may not spawn. Same objection that keeps
+forks out of the count, so the lineage is moved to the successor once it has launched
+(`handOverSpawnLineage`). **The consequence**: the replaced identity stays in the archive with
+`origin=session` and no lineage, so **if the user restores it, it may spawn**. Reaching that
+takes two deliberate Console-only human actions — recreate, then restore — so decision 5's "one
+generation between human launches" still holds. It is not closed off because closing it would
+mean keeping a slot charged to a session the user deliberately replaced.
+
 **The slot is reserved, not merely counted.** Running the count under the same lock as the create
 idempotency ledger (`session_idempotency.go:48`) is not enough: that ledger serializes one
 idempotency key, so two concurrent creates with different content run before either Meta is

@@ -106,12 +106,16 @@ type Session struct {
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
 	// sessions by copy and only shows this as extra "where inside it" detail.
 	Subdir string `json:"subdir,omitempty"`
-	// Origin / OriginSession mirror Meta's provenance onto the wire (ADR 0073), so a caller
-	// outside this process can answer "is this one of MY children" without reading metas off
-	// disk: the MCP server's steering gate and per-parent budget, and the Console's
-	// attribution for a spawned session. Origin is always present (OriginOf, so a session
-	// older than the feature reads "unknown"); OriginSession is the parent session's name and
-	// is empty unless origin=session.
+	// Origin / OriginSession mirror Meta's provenance onto the wire (ADR 0073). Origin is
+	// always present (OriginOf, so a session older than the feature reads "unknown");
+	// OriginSession is the parent session's name and is empty unless origin=session.
+	//
+	// ⚠️ Nothing reads them yet. The MCP server's steering gate and per-parent budget run in
+	// this container and read the metas directly, and the mirror's spawn badge comes from the
+	// injection record and the envelope — so these two keys exist for a list view that wants to
+	// say "started by X" without a second call, and that view does not exist. Kept rather than
+	// removed because the CP decodes this DTO as is and the pair is what makes lineage
+	// answerable from outside; delete them if a consumer still has not appeared.
 	Origin        string `json:"origin,omitempty"`
 	OriginSession string `json:"originSession,omitempty"`
 	Repo          string `json:"repo"` // working dir basename (display)

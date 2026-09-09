@@ -132,10 +132,21 @@ func (s *spawnSlot) releaseLocked() {
 // recursion limit reads this same field.
 //
 // Origin stays `session`: the accounting axis (unattended or human-opened) is unchanged, and it
-// is what usage rows bake in. What is dropped is the answer to "whose child was it" for a dead,
-// superseded session — the same thing deleting it would drop.
-func handOverSpawnLineage(old session.Meta) {
-	if old.OriginSession == "" {
+// is what usage rows bake in. What is dropped is the answer to "whose child was it" for the
+// superseded identity.
+//
+// ⚠️ That identity is archived, not gone — the user can restore it, and it comes back with
+// origin=session and NO lineage, which means it may spawn (the recursion limit reads this same
+// field). Reaching that takes two deliberate Console actions, recreate and restore, neither of
+// which is an MCP tool, so ADR 0073 decision 5 ("one generation between human launches") still
+// holds. It is recorded in decision 6 rather than defended against here: defending would mean
+// keeping the slot charged to a session the user replaced on purpose.
+func handOverSpawnLineage(name string) {
+	// Re-read rather than writing back the copy the caller has held since before the launch:
+	// the recreate archived it seconds ago and anything that touched it in between would be
+	// undone by writing a stale snapshot.
+	old, ok := session.ReadMeta(name)
+	if !ok || old.OriginSession == "" {
 		return
 	}
 	old.OriginSession = ""

@@ -1355,7 +1355,7 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		session.WriteMeta(newMeta)
-		handOverSpawnLineage(m)
+		handOverSpawnLineage(m.Name)
 		httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 		return
 	}
@@ -1368,6 +1368,6 @@ func HandleRecreateSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session.WriteMeta(newMeta)
-	handOverSpawnLineage(m)
+	handOverSpawnLineage(m.Name)
 	httpx.WriteJSON(w, http.StatusOK, wireSession(newMeta, true))
 }

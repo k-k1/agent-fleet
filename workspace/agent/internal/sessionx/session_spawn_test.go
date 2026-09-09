@@ -353,7 +353,7 @@ func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 		t.Fatalf("children before the hand-over = %d, want 3", n)
 	}
 
-	handOverSpawnLineage(old)
+	handOverSpawnLineage(old.Name)
 
 	if n := countChildren("root"); n != 2 {
 		t.Fatalf("children after the hand-over = %d, want 2 (one recreated child is one child)", n)
@@ -367,10 +367,16 @@ func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 	if m2, _ := session.ReadMeta("kid2b"); m2.OriginSession != "root" {
 		t.Fatalf("successor lost its parent: %q", m2.OriginSession)
 	}
+	// The predecessor can still be restored by the user, and it comes back able to spawn —
+	// recorded in ADR 0073 decision 6 rather than defended against, because reaching it takes
+	// two deliberate Console actions.
+	if r := spawnDepthRefusal("kid2"); r != nil {
+		t.Fatalf("the superseded identity is still lineage-bound: %v", r)
+	}
 	// Nothing happens to a session that was never a child.
 	plain := session.Meta{Name: "solo", Kind: session.KindClaude, Origin: session.OriginUser}
 	session.WriteMeta(plain)
-	handOverSpawnLineage(plain)
+	handOverSpawnLineage(plain.Name)
 	if m3, ok := session.ReadMeta("solo"); !ok || m3.Origin != session.OriginUser {
 		t.Fatalf("an unrelated session was rewritten: %+v", m3)
 	}

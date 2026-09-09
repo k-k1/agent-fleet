@@ -3249,7 +3249,9 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	}
 	var resp map[string]any
 	if json.Unmarshal([]byte(body), &resp) == nil {
-		// Remember the returned cursor per conversation as the next default since.
+		// Remember the returned cursor per SCOPE (conversation, or the reading session) as the
+		// next default since. Only the conversation side is ever cleaned up; a session's entry
+		// outlives it, holding one integer offset per session it read.
 		if cursor, ok := resp["cursor"].(float64); ok && scope != "" {
 			cur, _ := OutputCursors.Read(scope)
 			if cur == nil {

@@ -316,8 +316,12 @@ func TestCreateSessionSpawnDepthAndKindOverHTTP(t *testing.T) {
 }
 
 // A recreate of a spawned child must not cost the parent a second slot. The helper is tested in
-// session_spawn_test.go; this is here because the handler has to CALL it — and it has two
-// success paths (managed and tui) that are easy to fix one of.
+// session_spawn_test.go; this is here because the handler has to CALL it.
+//
+// ⚠️ This exercises the TUI success path only. The handler has two (managed launches through a
+// driver), and an implementation that fixed one of them would pass here. Covering managed needs
+// a driver fixture — noted with the other managed gap in docs/log/87 §87.11, not faked with a
+// comment that claims more than the test does.
 func TestRecreateSpawnedChildKeepsOneSlot(t *testing.T) {
 	env := spawnServer(t)
 	repo := filepath.Join(env.home, "repos", "app")
