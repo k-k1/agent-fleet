@@ -19,15 +19,17 @@ import (
 // hand-written approximation would have accepted enum:null, which Anthropic rejects
 // before starting the Claude turn.
 func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
-	const expectedAdvertisedToolCount = 55
+	const expectedAdvertisedToolCount = 56
 
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
+	oldSpawn := mcpFleetSpawnEnabled
 	t.Cleanup(func() {
 		setFlags(oldWrite, oldSelfReport, oldChromium)
 		mcpPeerMessagingEnabled = oldPeer
 		mcpImageGenEnabled, mcpSourceSession = oldImageGen, oldSource
+		mcpFleetSpawnEnabled = oldSpawn
 	})
 	// generate_image's tool list is not static: the server asks the Agent for the session's
 	// kind and the effective provider on every tools/list (ADR 0069 decision 8), so the
@@ -44,6 +46,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		write, selfReport, chromium bool
 		peer                        bool
 		imageGen                    bool
+		fleetSpawn                  bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -52,6 +55,10 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		{name: "session-all", selfReport: true, chromium: true, peer: true},
 		{name: "session-imagegen", selfReport: true, imageGen: true},
 		{name: "session-fleet-observe", selfReport: true},
+		// list_child_sessions is the one tool no operator variant can reach (the operator has
+		// list_my_sessions), so without this variant it would be declared and never
+		// advertised — and its schema would never be compiled.
+		{name: "session-fleet-spawn", selfReport: true, fleetSpawn: true},
 	}
 
 	advertised := make(map[string]struct{})
@@ -60,6 +67,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			setFlags(variant.write, variant.selfReport, variant.chromium)
 			mcpPeerMessagingEnabled = variant.peer
 			mcpImageGenEnabled = variant.imageGen
+			mcpFleetSpawnEnabled = variant.fleetSpawn
 			for _, tool := range mcpStdioToolList() {
 				name := tool["name"].(string)
 				advertised[name] = struct{}{}

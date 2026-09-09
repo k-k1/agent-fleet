@@ -36,6 +36,7 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		BackgroundBusy: li.BackgroundBusy, BackgroundBusyReason: li.BackgroundBusyReason,
 		Context: li.Context, Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
+		LastTurnEndAt: lastTurnEndAt(m),
 		// Origin / OriginSession ride the wire so a caller outside this process can answer
 		// "is this one of MY children" without reading metas off disk (ADR 0073): the MCP
 		// server's steering gate and per-parent budget, and the Console's mirror attribution
@@ -82,6 +83,34 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		}
 	}
 	return s
+}
+
+// lastTurnEndAt reads the moment this session's newest turn ENDED off the status store, or
+// "" when the store does not claim one (docs/log/89).
+//
+// The TurnEnd bit is the right source rather than a convenient one: it is written ONLY by an
+// actual end of turn — claude's Stop hook, the codex/opencode hooks, and MarkTurnEnd for the
+// managed drivers and for the TUIs whose completion is observed by polling (agy / copilot /
+// cursor / kiro, DriveState) — and deliberately NOT by the idles that mean "we do not know"
+// (the SessionStart reset, a driver that lost its handle). docs/log/51 needs exactly that
+// distinction to decide whether a report may go out, and a parent polling a child needs the
+// same one to decide whether its task is done.
+//
+// The other two candidates were weighed and are worse HERE. The transcript's last assistant
+// turn is durable but silent on three kinds (agy / cursor / kiro record no timestamp on an
+// assistant turn) and costs a whole transcript parse per row on a list endpoint. The meta
+// records creation and stopping, never a turn.
+//
+// Note what the bit's own lifecycle implies: a new turn overwrites the status with plain
+// "working", so this is empty for a session that is mid-turn, and a restart clears it. Empty
+// therefore means "nothing here ended a turn since it last started", never "it never
+// finished".
+func lastTurnEndAt(m session.Meta) string {
+	st, ok := status.Read(session.UUID(m.Dir, m.Name))
+	if !ok || !st.TurnEnd {
+		return ""
+	}
+	return st.TS
 }
 
 // remoteSessionURL (deriving the claude.ai Remote Control URL) lives in

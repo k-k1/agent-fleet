@@ -147,10 +147,15 @@ func TestSpawnRefusesSharedWorkingCopy(t *testing.T) {
 	}
 }
 
-// The budget (decision 6) counts every child whose meta still exists — stopped and ARCHIVED
-// included. Archiving is restorable, so freeing a slot for it would let a caller fold up,
-// spawn a replacement and restore: an unbounded fleet through a reversible operation.
-func TestSpawnBudgetCountsArchivedAndStoppedChildren(t *testing.T) {
+// The budget (decision 6, amended) counts a STOPPED child — the slot is held until that meta
+// goes — but not an ARCHIVED one.
+//
+// Archived used to count, so that "fold up, spawn a replacement, restore" could not walk past
+// the limit. The cost of that was permanent: StoppedTTL's prune skips archived metas, so an
+// archived child held its slot for ever and a parent that tidied three of them could never
+// spawn again. Archiving is a Console-only action a session cannot perform, which is the same
+// ground on which a fork and a recreate are kept out of this count.
+func TestSpawnBudgetCountsStoppedButNotArchivedChildren(t *testing.T) {
 	stopped := child("kid2", "root")
 	stopped.StoppedAt = "2026-09-09T11:00:00+09:00"
 	archived := child("kid3", "root")
@@ -165,8 +170,20 @@ func TestSpawnBudgetCountsArchivedAndStoppedChildren(t *testing.T) {
 		child("other", "elsewhere"),
 		session.Meta{Name: "forked", Kind: session.KindClaude, Origin: session.OriginHandoff, OriginSession: "root"},
 	)
+	if n := countChildren("root"); n != 2 {
+		t.Fatalf("children = %d, want 2 (live + stopped; the archived one holds no slot)", n)
+	}
+	// Two of three used, so the archived child's slot is genuinely available again.
+	if err := reserveSpawnSlot("root"); err != nil {
+		t.Fatalf("the slot an archived child used to pin was still refused: %v", err)
+	}
+	(&spawnSlot{parent: "root"}).release()
+
+	// Un-archiving takes the slot back, and the limit holds at three.
+	archived.Archived = false
+	session.WriteMeta(archived)
 	if n := countChildren("root"); n != 3 {
-		t.Fatalf("children = %d, want 3 (live + stopped + archived)", n)
+		t.Fatalf("children after restore = %d, want 3", n)
 	}
 	if err := reserveSpawnSlot("root"); err == nil {
 		t.Fatal("a fourth child was allowed")
@@ -336,9 +353,15 @@ func TestNoteCreateOriginRecordsSpawnOnly(t *testing.T) {
 	}
 }
 
-// A recreate replaces one child with another, and both metas carry the parent — so without the
-// hand-over ONE child costs TWO slots, and a user recreating their own child is the reason the
-// parent may not spawn again. Same objection that keeps forks out of the count.
+// A recreate replaces one child with another, and both metas carry the parent — so ONE child
+// would cost TWO slots, and a user recreating their own child would be the reason the parent
+// may not spawn again. Same objection that keeps forks out of the count.
+//
+// Since archived children stopped counting (decision 6, amended) the predecessor costs nothing
+// WHILE it is archived, which is where a recreate leaves it. What the hand-over still buys is
+// the restore: un-archiving the superseded identity would otherwise charge the parent a second
+// slot for a session it does not have. So the assertion is made after a restore — a count taken
+// with the predecessor archived cannot tell the hand-over from its absence.
 func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 	spawnFixture(t,
 		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
@@ -349,14 +372,16 @@ func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
 	old.Archived = true
 	session.WriteMeta(old)
 	session.WriteMeta(child("kid2b", "root"))
-	if n := countChildren("root"); n != 3 {
-		t.Fatalf("children before the hand-over = %d, want 3", n)
-	}
 
 	handOverSpawnLineage(old.Name)
 
+	// Restored by the user: the predecessor is back in the active list, and it must not bring a
+	// second slot charge with it.
+	restored, _ := session.ReadMeta("kid2")
+	restored.Archived = false
+	session.WriteMeta(restored)
 	if n := countChildren("root"); n != 2 {
-		t.Fatalf("children after the hand-over = %d, want 2 (one recreated child is one child)", n)
+		t.Fatalf("children after the hand-over and a restore = %d, want 2 (one recreated child is one child)", n)
 	}
 	// The successor is still the parent's to steer, and the predecessor keeps its accounting
 	// origin — only "whose child was it" is dropped, for a session that no longer stands for one.

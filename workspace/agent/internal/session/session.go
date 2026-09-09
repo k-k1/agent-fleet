@@ -110,12 +110,9 @@ type Session struct {
 	// always present (OriginOf, so a session older than the feature reads "unknown");
 	// OriginSession is the parent session's name and is empty unless origin=session.
 	//
-	// ⚠️ Nothing reads them yet. The MCP server's steering gate and per-parent budget run in
-	// this container and read the metas directly, and the mirror's spawn badge comes from the
-	// injection record and the envelope — so these two keys exist for a list view that wants to
-	// say "started by X" without a second call, and that view does not exist. Kept rather than
-	// removed because the CP decodes this DTO as is and the pair is what makes lineage
-	// answerable from outside; delete them if a consumer still has not appeared.
+	// The consumer the earlier note here waited for is list_child_sessions (docs/log/89): a
+	// parent asking "which of these are mine" reads exactly this pair off GET /sessions, which
+	// also gets it the live state and the archived/TTL filtering the list already applies.
 	Origin        string `json:"origin,omitempty"`
 	OriginSession string `json:"originSession,omitempty"`
 	Repo          string `json:"repo"` // working dir basename (display)
@@ -198,6 +195,18 @@ type Session struct {
 	// on stopped rows too — a pin that is set has to be visible before it expires, or it
 	// cannot be released.
 	KeepAwakeUntil string `json:"keepAwakeUntil,omitempty"`
+	// LastTurnEndAt is when this session's newest turn actually ENDED (RFC3339), and empty
+	// when nothing here can say so. It answers "is this one finished?" for a reader with no
+	// eyes on the mirror — a parent polling its children (ADR 0073 decision 9), where the
+	// state word alone cannot distinguish a child that has finished from one that has not
+	// started.
+	//
+	// ⚠️ It is present only while the newest thing that happened IS a turn ending: a session
+	// that is mid-turn, or that was restarted since (SessionStart resets the marker), reads
+	// empty. That is the point rather than a gap — the underlying bit exists precisely to keep
+	// "the turn ended" apart from "an idle we cannot explain" (status.SessionStatus.TurnEnd,
+	// docs/log/51), and a fabricated time would be read as evidence of completion.
+	LastTurnEndAt string `json:"lastTurnEndAt,omitempty"`
 	// StopAfterTurnAt mirrors Meta.StopAfterTurnAt: the session is armed to stop itself at
 	// the end of the running turn (docs/log/85). The row has to say so, because the arm is
 	// usually set from inside the conversation (the MCP tool) where the user only sees prose
