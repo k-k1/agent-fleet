@@ -1,0 +1,286 @@
+# 0074. エンジンが買う GPU は、運用者が宣言した梯子から実行時に選ぶ
+
+[English](0074-engine-instance-classes.md) | 日本語
+
+- 状態: **起草（未実装・未実機）**。2026-09-10。
+  **この文書のために新しく測ったものは無い。** 数字はすべて出所を書き分けてある——
+  (a) ADR 0071・0072 の実測、(b) この日にリポジトリのコードから読んだ事実、
+  (c) AWS の公開仕様として知っているだけで**この配備では確かめていない**もの（g6e の VRAM と
+  価格、リージョン別の在庫）。(c) は決定の根拠にしていない。決定が (c) に依存する箇所は
+  「未解決の点」に列挙し、どの決定がそれに依存するかを各項に書いた。
+- 関連: [0071-self-hosted-inference-engines.ja.md](0071-self-hosted-inference-engines.ja.md)
+  決定 2（役ごとに 1 つの capacity provider、VRAM の下限で箱を選ぶ）・決定 5・決定 9 /
+  [0072-engine-model-catalog.ja.md](0072-engine-model-catalog.ja.md) 決定 1・決定 7（スタックは
+  SEED、保存された選択が勝つ）・決定 10 /
+  [0045-ec2-persistent-workspace.ja.md](0045-ec2-persistent-workspace.ja.md) 決定 21
+  （梯子の数字は運用者が宣言する。EC2 には訊かない） /
+  [0048-member-cloud-cost.ja.md](0048-member-cloud-cost.ja.md) 決定 15（費用配賦のタグ） /
+  [70-slot-instance-classes.md](../log/70-slot-instance-classes.md)（スロットのクラス梯子の実装記録）
+
+## 背景
+
+要求は「LLM・画像の役が使う GPU インスタンスタイプを変えられるようにしたい。一時的に VRAM を
+大きく使うモデルを試したい。選んだモデルによっては警告しつつ、インスタンスを拡張できるとよい」。
+
+ADR 0072 がモデルを CloudFormation から外してカタログに移した結果、**モデルは実行時に差し替え
+られるのに、そのモデルを載せる箱は配備時に固定されたまま**になっている。FLUX.1-dev（23.8 GB・
+0072 P4 の実測）のような重いモデルを取り込むところまでは Console で完結するのに、それが載る
+カードは g6.xlarge（L4）のままで、起動しても CUDA が落ちる。
+
+### いまのコードが言っていること（2026-09-10 に読んだ）
+
+- **箱は capacity provider の `InstanceRequirements` が決める。** `60-engines.yaml` の
+  `LlmAllowedInstanceTypes`（既定 `g6.xlarge,g5.xlarge`）・`LlmAcceleratorMemMinMiB`（21000）・
+  `LlmVCpuMin/Max`（4/8）・`LlmMemMinMiB/MaxMiB`（15000/65536）と、image 役の鏡像。
+  **すべて CloudFormation パラメータ＝配備時固定**で、変えるにはスタック更新が要る。
+- **サービスは役の provider を名指ししている**（`CapacityProviderStrategy: [{CapacityProvider:
+  !Ref LlmCapacityProvider, Weight: 1}]`）。つまり箱を変える口は provider の要求だけである。
+- **51,200 バイトの壁。** `60-engines.yaml` は 49.7 KB。役ごとに capacity provider を段数ぶん
+  並べる設計は**入らない**（1 ブロックが約 1.5 KB）。
+- **`engineDef` は「箱はスタックのもの」と書いている**——「Everything else here (service, URL,
+  health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
+  the stack's to declare」。本 ADR はこの一文の一部を意図的に覆す。
+- **カタログには VRAM の欄が既にある。** `engine_models.vram_mib` は「運用者の実測、0 = 未測定」で、
+  いまは管理パネルにチップとして**表示されるだけ**。`EngineModelFile.Bytes` も宣言値としてある
+  （CP は S3 を見られないので、これは「誰かが宣言した大きさ」である）。
+- **VRAM は和ではなく最大で効く。** llm 役は `LlmModelsMax: 1`（「the router does not know about
+  VRAM: a second 30B Q4 on an L4 does not run slowly, it crashes」）、image 役の sd-server は
+  1 プロセス 1 チェックポイント。したがって同時に VRAM に載るのは**有効なモデルのうち 1 つ**である。
+- **価格が i18n に直書きされている。** `admin.engines_always_on_note` は日英とも「$1.26/時」と
+  書いている。箱が選べるようになった瞬間、この文は嘘になる。
+- **`engine_hourly` の主キーは `(engine_key, hour)`。** どの箱で走った時間かは記録していない。
+
+### 上流が持っているもの（aws-sdk-go-v2/service/ecs v1.87.0 を読んだ）
+
+- **`UpdateCapacityProvider` は Managed Instances provider を更新できる**
+  （`ManagedInstancesProvider *types.UpdateManagedInstancesProviderConfiguration`）。
+- 🔴 **「These changes only apply to new Amazon ECS Managed Instances, or EC2 instances, not
+  existing ones」**——**走っている箱は変わらない**。これが決定 4 の全部である。
+- `UpdateManagedInstancesProviderConfiguration` は `InfrastructureRoleArn` と
+  `InstanceLaunchTemplate` が**必須メンバー**。`InstanceLaunchTemplateUpdate` は
+  `InstanceRequirements` / `NetworkConfiguration` / `StorageConfiguration` /
+  `LocalStorageConfiguration` / `Ec2InstanceProfileArn` などを持つ。
+- 型が出力（`InstanceRequirements`）と入力（`InstanceRequirementsRequest`）で**別**なので、
+  読んで書き戻すには手で写す必要がある。写し漏れは**黙って落ちる**（決定 8）。
+
+### 既に踏んである罠（ADR 0071・0072 の実測）
+
+- **G 系 vCPU クォータは 8。** 止めた直後に起こすと退場中の箱が 4 vCPU を握って
+  `VcpuLimitExceeded`。退場は 427〜477 秒。
+- **MI に allocation strategy は無く、条件に合う中で最安が買われる。**
+  `AllowedInstanceTypes` は「優先順位」ではなく「絞り込み」である。
+- **MI の箱は `ec2 describe-instances` の一覧に出ない**（名指しなら返る）。箱の在否は
+  ECS の container instance で見る。
+- **コールドスタートは llm 586 秒 / image 165〜197 秒**、g6.xlarge は **$1.26/時**。
+- **SSM Standard tier は 4,096 文字**。エンジン表も active set も同じ制約下にある。
+- **VRAM の実測**: 30B Q4 が 20,943 MiB、SDXL fp16 が 7,379 MiB。
+
+## 決定
+
+### 1. 梯子は運用者が宣言する。CP は EC2 に訊かない
+
+役ごとに 1 本の文字列で「段（rung）」の梯子を宣言する。書式はスロットの梯子
+（`AF_ECS_EC2_SLOT_TYPES`、ADR 0045 決定 21・docs/log/70）と同じ流儀にする——`|` で欄、`;` で段。
+
+```
+id|表示名|vramMiB|instanceTypes|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour
+```
+
+```
+l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
+l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536|
+```
+
+- **`vramMiB` は 1 つの数で 2 つの役をする**——capacity provider に出す
+  `AcceleratorTotalMemoryMiB.Min`（＝どの箱を買うかの絞り込み）と、決定 6 の適合判定が
+  モデルの要求と比べる相手。カードの公称値より**わざと低く**宣言する（既存の 21000 が
+  L4 24 GB に対してそうであるように）。判定は早めに警告する側へ倒れる。
+- **`usdPerHour` は任意・表示専用**。EC2 にも Pricing API にも訊かない（ADR 0045 決定 21 の
+  踏襲——IAM を増やし、ラベルのためにスタックを更新することになる）。**空でよい**。空なら
+  金額を出さず、「クラスによって時間単価が変わります」とだけ言う（**嘘の数字より無い方がよい**）。
+- **`vcpu`・`mem` の範囲も段が持つ**。48 GB のカードは 32〜64 GiB の箱にしか居ないので、
+  1 本の広い範囲では上の段が買えない。
+- 段が 1 つも宣言されていない配備では、この機能は**存在しない**（決定 3）。
+
+⚠️ **`AllowedInstanceTypes` を広くして VRAM の下限だけで段を切り替える案は採らない。** 動きは
+するが、「条件に合う中で最安が買われる」規則に寄りかかることになり、AWS が新しい安い 48 GB の
+型を出した日に**黙って別の箱**になる。段は「要求の組」であって「下限 1 つ」ではない。
+
+### 2. 選択は保存された設定が勝ち、スタックの宣言は既定（SEED）である
+
+ADR 0072 決定 7 と同じ規則にする。`engine_<key>_class` を設定に持ち、
+**スタックが宣言する既定の段（梯子の先頭、または明示の既定 id）は「まだ選んでいない」ときだけ効く。**
+CP を再起動しても、スタックを更新しても、管理者の選択は上書きされない。
+
+これは 0072 が「モデルを CFN パラメータに戻さない」ために置いた規則そのものであり、同じ理由で
+必要になる——**管理者が 48 GB に上げた翌朝、無関係なスタック更新が黙って 24 GB に戻す**のが
+最悪の壊れ方だからである（戻ったことは、次のコールドスタートで CUDA が落ちるまで誰にも見えない）。
+
+### 3. 未宣言・未選択の配備では、CP は `UpdateCapacityProvider` を一度も呼ばない
+
+梯子が空、または選択が既定と同じで**一度も適用したことがない**なら、CP は capacity provider を
+**読みも書きもしない**。既存の配備は挙動が 1 ビットも変わらず、IAM を足していない配備で
+`AccessDenied` のログが出ることもない。
+
+### 4. 段の変更が効くのは「次に買う箱」から。切り替えは 停止 → 退場を待つ → 起動
+
+SDK の言う通り、走っている箱は変わらない。したがって導線は次の 3 段階で、**画面はこの 3 段階を
+そのまま見せる**（「変更しました」だけ出して古い箱で走り続けるのが、最も高くつく嘘である）。
+
+1. 段を保存する。エンジンが走っていなければ、これで終わり。次の起動から新しい箱。
+2. 走っているなら「**いま入れ替える**」を明示的に押させる。押すと desired 0。
+3. 🔴 **container instance が消えるまで待ってから起動する。** 待たずに起こすと、退場中の
+   4 vCPU と新しい 8 vCPU が並んで **G 系クォータ 8 を超え、`VcpuLimitExceeded` で*静かに配置
+   されない*** ——サービスのイベントを読むまで、ただ「起動が遅い」ようにしか見えない。
+   退場の実測は 427〜477 秒。
+
+⚠️ **入れ替えはコールドスタートを 1 回買う**（llm で 586 秒、image で 165〜197 秒の実測）。
+これは画面に書く。ADR 0071 の `offGrace: 0`（気が変わる代償はコールドスタート）と同じ立場である。
+
+### 5. 適用は Describe → 写す → Update の read-modify-write
+
+`InstanceLaunchTemplate` は必須メンバーなので、CP は現在の設定を
+`DescribeCapacityProviders` で読み、**`InstanceRequirements` の 4 項目
+（`AllowedInstanceTypes`・`AcceleratorTotalMemoryMiB.Min`・`VCpuCount`・`MemoryMiB`）だけを
+差し替えて**書き戻す。ネットワーク・ストレージ・インスタンスプロファイル・GPU の指定
+（`AcceleratorCount`・`AcceleratorTypes`・`AcceleratorManufacturers`）は**読んだ値をそのまま
+返す**。CP は箱の設計を持たない——持たせると、スタックが持つ設計と 2 つになる。
+
+### 6. 警告は「収まらないかもしれない」を指す。拒否はしない
+
+判定は **max(有効なモデルの VRAM 要求) vs 選択中の段の `vramMiB`**（和ではない——決定の根拠は
+背景の `LlmModelsMax: 1` と sd-server の 1 チェックポイント）。image 役では「選択中の 1 つ」。
+
+モデルの VRAM 要求は 3 段階で、**どれで答えたかを画面に書く**。
+
+| 出所 | 何を言えるか |
+|---|---|
+| `vram_mib` が宣言されている | 運用者の実測。そのまま比べる |
+| 宣言が無く、ファイルの `bytes` がある | **重みだけの下限**。KV キャッシュもコンテキストも含まない。「少なくとも N GiB」としか言わない |
+| どちらも無い | **不明**。「収まります」とは言わない |
+
+🔴 **「不明」を「大丈夫」と描かない**ことが、この決定の中身である。0 は「0 MiB 必要」ではない。
+
+出す場所は 3 つ:
+
+- モデルを**有効にするとき**（`PUT /models/{id}` の `enabled: true`）——ここが唯一、人が
+  選択している瞬間である。収まらない見込みなら確認を求め、**そこから段を変えられる**。
+- **エンジンのカードに常時**——有効なモデルの中に段を超えるものがあるなら、そう書く。
+- **起動を決めたとき**にログへ 1 行。CUDA の落ち方は診断可能な形をしていないので、
+  「この起動は 44,000 MiB の段に 47,000 MiB を載せようとしている」が事前に残っている必要がある。
+
+**拒否はしない。** ライセンスの扱い（0072 決定 10「パネルは指すのであって決めない」）と同じで、
+量子化・`--offload-to-cpu`・こちらが知らない事情で載ることはある。ただし**確認は求める**。
+
+### 7. 既定と違う段で走っていることは、常に画面に出る。戻すのは 1 クリック
+
+「一時的に大きい箱を試す」の**代償は、戻し忘れが時間単価に効き続けること**である。ADR 0071 の
+`off` が「一時停止ではなく永続設定」で、戻し忘れが箱の停止と見分けられなかったのと同じ形をした
+罠なので、同じ手当てをする——**スタックの既定と違う段のときはエンジンのカードにバッジを出し、
+「既定（{id}）に戻す」を隣に置く。**
+
+あわせて **i18n の `$1.26/時` 直書き（`admin.engines_always_on_note`、日英とも）を消す**。
+金額は梯子の宣言値から出す。宣言が無ければ金額を言わない。
+
+### 8. 写し漏れは、SDK が欄を増やした日に**テストが落ちる**ようにする
+
+決定 5 の read-modify-write は、`types.InstanceRequirements` の欄を 1 つ写し忘れると
+**その制約が黙って消える**（例えば `BurstablePerformance: excluded` を落とせば、GPU の要求は
+残るので気づかないまま条件が緩む）。SDK は上流の更新で欄が増える。
+
+したがって、**`types.InstanceRequirements` の全フィールドをリフレクションで走査し、
+写し取り側が扱っていない欄があれば落ちる**単体テストを置く（`wiremap_convert_test.go` が
+`was: map[string]any{…}` を grep して等価性の証明を要求しているのと同じ仕掛け）。
+欄が増えた日に、気づくのは人ではなくテストである。
+
+### 9. IAM は 2 つの capacity provider に限定する
+
+60-engines の `CpIngestPolicy` の隣に、同じ形（このスタックの資源に限定）で足す。
+
+- `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` — Resource は
+  このスタックが作る llm・image の capacity provider の ARN**だけ**。
+- `iam:PassRole` — `InfraRole` と `InstanceProfile` のロール**だけ**、
+  `Condition: {StringEquals: {"iam:PassedToService": "ecs.amazonaws.com"}}` つき。
+
+⚠️ **これは CP の権限を広げる決定である。** 決定 5 で書き戻す内容は「読んだものに 4 項目だけ
+上書き」だが、API としては起動テンプレートを再宣言できる（サブネットやセキュリティグループを
+含む）。だから資源を 2 つに限定することと、CP がこの API を**梯子に宣言された段の値でしか
+呼ばない**ことの両方が必要である（段は運用者が宣言したものだけ＝任意の値を書けない）。
+
+### 10. 稼働時間の表（`engine_hourly`）は今回触らない
+
+主キーが `(engine_key, hour)` なので、時間の途中で段が変わると 1 行に 2 つの箱が混ざる。
+正しくするには主キーを変えることになり、それは占有率の表の話であって費用の表の話ではない
+——**請求の正は Cost Explorer のタグ別（ADR 0048 決定 15、`af-role: engine-llm`）**であり、
+そちらは段が変われば自動的に追随する。段の変更は**監査ログ**（`engine.<key>.class`）に残す。
+
+「どの時間にどの箱で走っていたか」を後から言う必要が出たら、その時に主キーを含めて設計する
+（未解決 5）。
+
+### 11. タスク定義（`Cpu` / `Memory` / `--models-max`）は段に追随させない
+
+段を上げても、タスクは `LlmTaskCpu 4096` / `LlmTaskMemory 14336` のままにする。理由は 2 つ:
+
+- **必要が確かめられていない。** 18.5 GB のモデルが 14,336 MiB のタスクで載っている（0071 の
+  実測）。ホスト RAM は重みに比例していない。
+- 追随させるには CP が `RegisterTaskDefinition` でコンテナ定義を再構築することになり、
+  **タスク定義の設計がスタックと CP の 2 か所**に生まれる（決定 5 で避けたのと同じ形）。
+
+破れるときの兆候は書いておく——**タスクが箱に置けない**（`RESOURCE:MEMORY` のイベント）か、
+**コンテナが OOM で死ぬ**。どちらかが出たら、それは段ではなくタスク定義の話であり、
+CloudFormation で直す（未解決 6）。
+
+## 却下した案
+
+- **役ごとに段の数だけ capacity provider を CFN で並べ、サービスの
+  `capacityProviderStrategy` を差し替える。** `60-engines.yaml` は 49.7 KB / 51,200 バイトで、
+  1 ブロック約 1.5 KB が入らない。**容量の壁が設計を決めた**（0071 決定 8 と同じ経緯）。
+- **CloudFormation パラメータのままにして、Console は警告だけ出す。** IAM も増えず、ドリフトも
+  無い。却下の理由は 0072 が既に書いている——**差し替えを CFN 更新にすると、運用の齟齬に当たる**
+  （GPU が寝ている夜に管理者が押すものであって、配備担当者が朝に押すものではない）。
+  「一時的に試す」が毎回スタック更新なら、誰も試さない。
+- **`ec2:DescribeInstanceTypes` で VRAM と vCPU を引く。** 権威はあるが、CP task role に
+  IAM アクションを足し、ラベルのためにスタックを更新することになる。**梯子を書く運用者は
+  その数字を既に知っている**（ADR 0045 決定 21 をそのまま踏襲）。
+- **CP がモデルに合わせて段を自動で選ぶ。** 金額が黙って上がる。選ぶのは人である
+  （決定 7 のバッジと同じ理由）。
+- **段の変更で走っている箱を自動で入れ替える。** 生成中の要求を殺す。0072 の
+  「選び直しは次の起動から効きます。走っているエンジンは入れ替えません」と同じ立場を取り、
+  入れ替えは明示のボタンにする（決定 4）。
+
+## 未解決の点（測ってから決める）
+
+1. 🔴 **`UpdateCapacityProvider` に `InstanceLaunchTemplate` の一部だけを渡したとき、渡さな
+   かったサブフィールドは保持されるか、消えるか。** 決定 5 は「全部読んで全部書き戻す」ので
+   どちらでも成立する設計にしてあるが、**`DescribeCapacityProviders` の出力がそのまま
+   `Update` の入力に嵌るか**（型が別なので写しが必要）は実機で確かめていない。依存: 決定 5・8。
+2. **CloudFormation のドリフト。** CP が書き換えた後にスタックを更新すると、CFN は自分の
+   宣言に戻す。決定 2 は「保存された選択が勝つ」と言うが、**戻された状態のまま次に箱を買うと
+   古い段で買う**。起動の直前に毎回適用し直す（冪等）案が有力だが、ECS の呼び出しが起動経路に
+   1 本増える。依存: 決定 2・4。
+3. **g6e の VRAM・価格・在庫**（リージョン差）。梯子の既定値として何を書くかは、これが
+   分かってから決める。**この ADR の例示（`l40s|L40S 48GB|44000|…`）は提案であって実測ではない。**
+   依存: 決定 1。
+4. **G 系 vCPU クォータの引き上げが要るか。** 8 のままなら、実質選べる上限は 8 vCPU の型
+   （例: g6e.2xlarge）まで。**梯子にそれより大きい段を書くと、買えないのに選べる**——
+   宣言時に弾くべきか、選んだ後にサービスイベントで気づかせるかは未決。依存: 決定 1・4。
+5. 「どの時間にどの箱で走ったか」を `engine_hourly` に持たせるか（決定 10）。
+6. **重いモデルでタスクの `Memory` が足りるか**（決定 11）。18.5 GB では足りた、で止まっている。
+7. **VRAM 要求の見積り式。** 決定 6 の第 2 段は重みの合計バイトだけで、KV キャッシュを
+   含まない。係数を書くには測るしかない（コンテキスト長・層数・量子化に依存する）。
+   **測るまでは「下限」としか言わない。**
+
+## フェーズと完了の定義
+
+- **P0（この ADR の実装範囲）**: 梯子の宣言（60-engines → エンジン表）・選択の保存・
+  `UpdateCapacityProvider` の適用・停止/退場待ち/起動の導線・決定 6 の警告・決定 7 のバッジと
+  `$1.26` の除去・決定 8 のリフレクションテスト・決定 9 の IAM。**単体テストまで。**
+  完了の定義: (1) 梯子が空の配備で ECS の呼び出しが 1 本も増えないことがテストで言える、
+  (2) 段を選ぶと `UpdateCapacityProvider` に渡る `InstanceRequirements` が期待通りで、
+  **読んだ他の欄が全部そのまま戻る**ことがテストで言える、(3) 収まらないモデルを有効化すると
+  確認を求められ、`vram_mib` も `bytes` も無いモデルでは「不明」と出る。
+- **P1（実機）**: af-sandbox で段を切り替えて実際に箱を買い、**退場待ち・`VcpuLimitExceeded`・
+  コールドスタート**を実測する。未解決 1・2・3・4 はここで埋まる。GPU 時間の費用と、
+  クォータ引き上げ申請が要る可能性がある。
+- **P2（必要が出たら）**: タスク定義の追随（決定 11・未解決 6）、`--models-max` を段に応じて
+  上げる、`engine_hourly` の段別内訳（決定 10）。
