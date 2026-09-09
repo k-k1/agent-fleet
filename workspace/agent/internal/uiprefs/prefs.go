@@ -181,11 +181,26 @@ func FleetObserve() bool {
 	return v
 }
 
+// FleetSpawn is the ON/OFF for session steering (ADR 0073, ui-prefs sessionFleetSpawn):
+// starting sessions and driving the ones started that way. Missing/invalid ⇒ **false**, and
+// for the strongest reason of the four — this is the first session-side switch that spends
+// real resources on the shared host without a person in the loop. The Console additionally
+// keeps it behind fleet observation, because a caller that cannot poll get_session_status can
+// start a child and then never look at it again.
+func FleetSpawn() bool {
+	v, _ := Read()["sessionFleetSpawn"].(bool)
+	// The dependency is enforced here, not only in the Console, so a prefs file written by hand
+	// (or one left behind by turning observation off later) cannot produce the one combination
+	// that makes no sense: a session that can start children and then never look at them.
+	return v && FleetObserve()
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
 func init() {
 	mcpreg.PeerMessagingEnabled = PeerMessaging
 	mcpreg.FleetObserveEnabled = FleetObserve
+	mcpreg.FleetSpawnEnabled = FleetSpawn
 }
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,

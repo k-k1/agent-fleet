@@ -115,6 +115,14 @@ var FleetObserveEnabled func() bool
 
 func fleetObserveOn() bool { return FleetObserveEnabled != nil && FleetObserveEnabled() }
 
+// FleetSpawnEnabled is the same hook for session steering (ADR 0073 decision 3): starting
+// sessions and driving the ones you started. It is a separate switch from observation, not a
+// widening of it — stage 1's own wording promises the user that observation adds nothing that
+// acts, and riding on that flag would withdraw the promise silently.
+var FleetSpawnEnabled func() bool
+
+func fleetSpawnOn() bool { return FleetSpawnEnabled != nil && FleetSpawnEnabled() }
+
 // builtinRunArgsFor resolves a builtin's launch args, applying the switches that depend
 // on user settings rather than on the spec alone.
 func builtinRunArgsFor(id string, spec builtinSpec) []string {
@@ -130,6 +138,9 @@ func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	}
 	if fleetObserveOn() {
 		args = append(args, "--fleet-observe")
+	}
+	if fleetSpawnOn() {
+		args = append(args, "--fleet-spawn")
 	}
 	return args
 }

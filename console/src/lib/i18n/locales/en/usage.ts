@@ -126,6 +126,7 @@ export const usage: Record<keyof typeof jaUsage, string> = {
   "usage.val.origin.operator": "Created by the operator",
   "usage.val.origin.schedule": "Created by a schedule",
   "usage.val.origin.handoff": "Handoff",
+  "usage.val.origin.session": "Started by a session",
   "usage.val.origin.unknown": "Unknown (predates measurement)",
 
   // rtk savings card (separate from the ledger — measured by rtk inside the container)

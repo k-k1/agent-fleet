@@ -55,12 +55,19 @@
 |---|---|
 | `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
-| `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
+| `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
 | `measured` | `exact` / `partial` / `none` |
 
 `feature=unknown` を enum に含めるのは、**新しい補助機能がタグを付け忘れても必ず1行残す**ため。
 無記録（＝見えない消費）を作らないことを、タグの正しさより優先する。
+
+**追記（2026-09-09）。** `origin` に `session` を足した（[ADR 0073](0073-session-spawned-sessions.ja.md)）
+— **別のセッションが `create_session` で起こしたセッション**である。§6 の軸（無人の消費 か
+人が開いた消費 か）にとって、これは `operator` / `schedule` と同じ側であり、既存の 4 値の
+どれでも表せない: `operator` は嘘（オペレーターは関与していない）、`user` は無人の消費を
+人が開いたものとして数える。親セッション名は `Meta.OriginSession` に持つが、**行には焼かない**
+— 集計が必要とするのは「無人か」であって「誰の子か」ではなく、系譜は台帳・俯瞰図の問いだからである。
 
 **追記（2026-09-06）。** 上の `feature` 行に 2 値を足した。`plan.update`（明示的な作業計画の
 更新、docs/log/33 stage 5）は `usagex/ledger.go` に `FeaturePlanUpdate` として以前からあり、

@@ -411,23 +411,33 @@ func TestUsageMeasuredForKind(t *testing.T) {
 
 func TestCreateOriginResolution(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		req      sessionx.CreateReq
-		want     string
-		wantConv string
+		name       string
+		req        sessionx.CreateReq
+		want       string
+		wantConv   string
+		wantParent string
 	}{
-		{"Console (unmarked)", sessionx.CreateReq{}, session.OriginUser, ""},
-		{"MCP create_session", sessionx.CreateReq{Origin: "operator", OriginConv: "conv-1"}, session.OriginOperator, "conv-1"},
-		{"scheduled run", sessionx.CreateReq{Source: sessionx.TurnSourceSchedule}, session.OriginSchedule, ""},
-		{"fired by hand", sessionx.CreateReq{Source: sessionx.TurnSourceScheduleManual}, session.OriginSchedule, ""},
-		{"unknown value degrades to user", sessionx.CreateReq{Origin: "hacked"}, session.OriginUser, ""},
+		{"Console (unmarked)", sessionx.CreateReq{}, session.OriginUser, "", ""},
+		{"MCP create_session", sessionx.CreateReq{Origin: "operator", OriginConv: "conv-1"}, session.OriginOperator, "conv-1", ""},
+		{"scheduled run", sessionx.CreateReq{Source: sessionx.TurnSourceSchedule}, session.OriginSchedule, "", ""},
+		{"fired by hand", sessionx.CreateReq{Source: sessionx.TurnSourceScheduleManual}, session.OriginSchedule, "", ""},
+		{"unknown value degrades to user", sessionx.CreateReq{Origin: "hacked"}, session.OriginUser, "", ""},
 		// Outside origin=operator the conversation slug carries no meaning, so it is dropped.
-		{"conv only when operator", sessionx.CreateReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, ""},
+		{"conv only when operator", sessionx.CreateReq{Origin: "user", OriginConv: "conv-1"}, session.OriginUser, "", ""},
+		// ADR 0073: a session-started session records WHICH session started it.
+		{"spawned by a session", sessionx.CreateReq{Origin: "session", OriginSession: "slot07"}, session.OriginSession, "", "slot07"},
+		// The parent is the whole point of origin=session (steering, budget, recursion limit
+		// all read it), so a create that omits or malforms it is not recorded as one.
+		{"session without a parent degrades to user", sessionx.CreateReq{Origin: "session"}, session.OriginUser, "", ""},
+		{"malformed parent degrades to user", sessionx.CreateReq{Origin: "session", OriginSession: "../etc"}, session.OriginUser, "", ""},
+		// The parent name carries no meaning under any other origin.
+		{"parent only when session", sessionx.CreateReq{Origin: "user", OriginSession: "slot07"}, session.OriginUser, "", ""},
+		{"parent dropped for operator", sessionx.CreateReq{Origin: "operator", OriginConv: "c", OriginSession: "slot07"}, session.OriginOperator, "c", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, conv := sessionx.CreateOrigin(&tc.req)
-			if got != tc.want || conv != tc.wantConv {
-				t.Fatalf("origin = %q/%q, want %q/%q", got, conv, tc.want, tc.wantConv)
+			got, conv, parent := sessionx.CreateOrigin(&tc.req)
+			if got != tc.want || conv != tc.wantConv || parent != tc.wantParent {
+				t.Fatalf("origin = %q/%q/%q, want %q/%q/%q", got, conv, parent, tc.want, tc.wantConv, tc.wantParent)
 			}
 		})
 	}

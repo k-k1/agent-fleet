@@ -159,6 +159,17 @@ opt-in は後から切り替わるためで、転送しただけの env は何�
 
 ## 86.9 残り
 
+> **追記（2026-09-09）— 段階 2 は着手・実装済み。** 下の 1 点目は
+> [ADR 0073](../decisions/0073-session-spawned-sessions.ja.md) が設計として答え、
+> [87-session-spawn.md](87-session-spawn.md) が実装を記録している。宿題として挙げた 5 つの
+> うち 4 つはそのまま採られ（新しい origin 値・親子関係の検査・再帰の上限・ポーリング）、
+> 1 つは**前提が違っていた**: opencode の 60 秒上限に掛かるのは `create_session` だけで、
+> 30 秒＋45 秒を要する `agentResumeAndSend` は段階 2 で開けた 8 本に含まれない。
+> §86.5 の線引きのうち動いたのは `create_session` ほかセッション操縦系だけで、残りは据え置き。
+> 併せて `TestFleetObserveDoesNotOpenOperatorTools` の一覧は**そのまま維持**した — あの一覧に
+> `create_session` が並んでいることが「観測単独では出ない」を固定している当のものなので、
+> 段階 2 で 8 本を抜くのは性質を試験から取り除くことになる。
+
 - **段階 2（セッション操縦）は未着手。** `create_session` を中心に、帰属の新しい origin 値、
   親子関係の検査、再帰の上限、子の完了をどう親へ返すか（`get_session_status` の
   ポーリングか peer の `answer` 封筒か）、opencode の 60 秒ツール上限が設計課題として残る。

@@ -36,6 +36,11 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		BackgroundBusy: li.BackgroundBusy, BackgroundBusyReason: li.BackgroundBusyReason,
 		Context: li.Context, Locked: m.Locked, Archived: m.Archived,
 		KeepAwakeUntil: m.KeepAwakeUntil, StopAfterTurnAt: stopArmVisible(m),
+		// Origin / OriginSession ride the wire so a caller outside this process can answer
+		// "is this one of MY children" without reading metas off disk (ADR 0073): the MCP
+		// server's steering gate and per-parent budget, and the Console's mirror attribution
+		// for a spawned session's first turn.
+		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
 	}
 	// A claude whose limit-aborted turn has been cleaned up (the menu dismisses itself, and a
 	// per-model limit never raises one) leaves its pane back at the waiting prompt, so

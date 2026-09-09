@@ -355,6 +355,12 @@ export interface Settings {
   // Default FALSE. Nothing here is destructive, but it is a wider surface than the
   // report-when-done contract a fleet has today, so it is chosen rather than inherited.
   sessionFleetObserve: boolean;
+  // Session steering (ADR 0073): create_session plus the reads that choose where to launch,
+  // and driving the sessions this one started (output / stop / stop-after-turn / resume).
+  // Deletion stays closed even for a session's own children.
+  // Default FALSE, and the UI keeps it behind sessionFleetObserve: get_session_status is the
+  // only way to watch a child, so spawning without it starts sessions nobody can look at.
+  sessionFleetSpawn: boolean;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -845,6 +851,7 @@ const DEFAULTS: Settings = {
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetObserve: false, // opt-in (docs/log/86) — widens what a session may read
+  sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   expandThinking: {},

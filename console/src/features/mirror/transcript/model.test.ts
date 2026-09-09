@@ -9,6 +9,7 @@ import {
   parseCommand,
   peerIntentOf,
   peerSenderOf,
+  spawnParentOf,
 } from "./model.ts";
 import type { Turn } from "./types.ts";
 
@@ -171,6 +172,27 @@ describe("peerIntentOf", () => {
     expect(peerIntentOf("[agent-fleet:peer from=a] 旧い封筒")).toBeNull();
     expect(peerIntentOf("[agent-fleet:peer from=a intent=fyi] 未知")).toBeNull();
     expect(peerIntentOf("ふつうの発話")).toBeNull();
+  });
+});
+
+describe("spawnParentOf", () => {
+  it("reads the parent session out of a spawn envelope", () => {
+    expect(spawnParentOf("[agent-fleet:spawn from=build-api] develop に rebase して")).toBe("build-api");
+    expect(spawnParentOf("ふつうの発話")).toBeNull();
+  });
+
+  it("does not confuse a peer envelope for a spawn one", () => {
+    // The two badges say different things: a peer message interrupts a session that already had
+    // a user, a spawn envelope is the session's whole reason for existing.
+    expect(spawnParentOf("[agent-fleet:peer from=build-api intent=request reply=none] 直して")).toBeNull();
+    // The pre-intent peer envelope has the same shape as a spawn one apart from the word, so a
+    // parser that matched the word loosely would badge every old peer turn as a spawn.
+    expect(spawnParentOf("[agent-fleet:peer from=build-api] 直して")).toBeNull();
+    expect(peerSenderOf("[agent-fleet:spawn from=build-api] 直して")).toBeNull();
+  });
+
+  it("ignores a name that is not a session name", () => {
+    expect(spawnParentOf("[agent-fleet:spawn from=../etc] 直して")).toBeNull();
   });
 });
 

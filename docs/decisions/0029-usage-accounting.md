@@ -58,13 +58,22 @@ The wire shape of a row (frozen) — the meaning of each field is in docs/46 §2
 |---|---|
 | `feature` | `assistant.chat` / `assistant.ask` / `assistant.autoturn` / `assistant.bridge` / `compact` / `plan.update` / `title.session` / `title.chat` / `branch.suggest` / `suggest.session` / `suggest.chat` / `suggest.edit` / `session` / `tool.imagegen` / `unknown` |
 | `trigger` | `user` / `auto` / `manual` / `schedule` / `operator` / `bridge` / `recovery` |
-| `origin` | `user` / `operator` / `schedule` / `handoff` / `unknown` |
+| `origin` | `user` / `operator` / `schedule` / `handoff` / `session` / `unknown` |
 | `model_src` | `reported` / `requested` / `default_unknown` |
 | `measured` | `exact` / `partial` / `none` |
 
 `feature=unknown` is in the enum so that **a new auxiliary feature that forgets to tag itself still
 always leaves a row**. Not creating unrecorded (i.e. invisible) consumption takes priority over the
 tag being right.
+
+**Amendment (2026-09-09).** `session` was added to `origin`
+([ADR 0073](0073-session-spawned-sessions.md)) — a session another SESSION raised through
+`create_session`. On §6's axis (unattended spend versus spend a person opened) it sits with
+`operator` and `schedule`, and none of the four existing values can stand in for it: `operator`
+is a lie (no operator was involved) and `user` counts unattended spend as something a human
+opened. The parent session's name lives on `Meta.OriginSession` and is **not** baked into the
+rows — what the aggregate needs is "was this unattended", not "whose child was it", and lineage
+is a question for the ledger and the fleet overview.
 
 **Amendment (2026-09-06).** Two values were added to the `feature` row above. `plan.update` (the
 explicit work-plan refresh, docs/log/33 stage 5) had been in `usagex/ledger.go` as

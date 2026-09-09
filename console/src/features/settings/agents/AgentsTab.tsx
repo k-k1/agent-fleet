@@ -119,6 +119,22 @@ export function AgentsTab() {
         />
       </Row>
       <p className="muted ds-note">{tr("agents.note_fleet_observe")}</p>
+      {/* Session steering (ADR 0073) sits under observation and BEHIND it. get_session_status is
+          the only way a session can watch a child, so offering the switch while observation is
+          off would let a user start sessions that can never be looked at again. The row is not
+          hidden silently: with observation off the reason takes its place, because a capability
+          that simply is not there reads as a missing feature. The Agent enforces the same
+          dependency (uiprefs.FleetSpawn), so a prefs file written by hand cannot escape it. */}
+      {s.sessionFleetObserve ? (
+        <>
+          <Row label={tr("agents.fleet_spawn")}>
+            <OnOff value={s.sessionFleetSpawn} onChange={(v) => setSetting("sessionFleetSpawn", v)} />
+          </Row>
+          <p className="muted ds-note">{tr("agents.note_fleet_spawn")}</p>
+        </>
+      ) : (
+        <p className="muted ds-note">{tr("agents.note_fleet_spawn_needs_observe")}</p>
+      )}
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>
