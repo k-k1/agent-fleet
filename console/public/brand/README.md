@@ -4,6 +4,19 @@ Files here are copied verbatim into `dist/` by Vite (so they are served by the
 Control Plane at the site root) and are reachable **without authentication**
 (authGate exempts `/brand/`), since the login page must render before sign-in.
 
+## The icons are recoloured when they are served
+
+`icon-{192,512}.png`, `icon-maskable-{192,512}.png` and `apple-touch-icon.png` are
+served through `control-plane/brand.go`, which shifts every saturated pixel from
+this art's own `#149ba7` to whatever `AF_BRAND_COLOR` names — that is how two
+deployments of the same image get different favicons without a second build.
+
+It works because the art is **flat two-tone**: brand ground plus a white (fully
+unsaturated, hence skipped) glyph. Replacing these with something shaded, or with a
+glyph that carries colour of its own, quietly makes the recolour look wrong on every
+deployment that uses it. The base colour is a constant in `brand.go`, so a redraw in
+a different colour has to update it there too.
+
 ## `agent-fleet-banner.webp`
 
 The login landing page (`GET /login`, served by the CP — see

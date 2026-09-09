@@ -207,6 +207,34 @@ hours** (measured: 172 probes for `/actuator/heapdump`, `/.env` and friends in t
 - **If only your own people need it, narrow the door instead**: `00-network`'s
   `AlbIngressCidr` keeps probes from ever reaching the ALB, and it costs nothing.
 
+## Telling two deployments apart (colour and label)
+
+The moment a second deployment exists — staging beside production, or a laptop beside both —
+every tab in the strip and every icon on a phone's home screen is the same teal cat, and the
+login page gives no hint which one you are signing in to. Two settings on the Control Plane
+fix that; both are cosmetic, and nothing about access or data depends on them.
+
+| Setting | What it does |
+|---|---|
+| `AF_BRAND_COLOR` | Recolours the favicon, the PWA / home-screen icons and the colour Android paints the task switcher. One of `teal` (the shipped default), `blue`, `violet`, `magenta`, `red`, `orange`, `green`, `slate`. |
+| `AF_BRAND_LABEL` | A short label (≤16 characters) folded into the app name: `[staging] Agent Fleet`. It shows in the browser tab, the installed PWA's name, the login page and the Console's top bar, where it also appears as a chip in the same colour. |
+
+```
+AF_BRAND_COLOR=violet
+AF_BRAND_LABEL=staging
+```
+
+Compose reads them from `.env`; on AWS ECS they are the `BrandColor` / `BrandLabel` stack
+parameters; the native runtime and `run-dev.sh` take them from the environment. A restart is
+enough — there is no separate image to build, because the Control Plane recolours the shipped
+art as it serves it.
+
+- The label is a **prefix** on purpose: a crowded tab strip and a phone launcher both truncate
+  the END, so `[staging] Agent Fle…` still tells you where you are.
+- A PWA **already installed** on a phone keeps the icon and name it had at install time.
+  Reinstall it to pick up a change.
+- An unknown colour name is not fatal: the Control Plane logs it and stays on teal.
+
 ## Idle stop and force-stop
 
 - **Automatic idle stop (scale-to-zero)**: an idle claude session is halted after **1 hour**
