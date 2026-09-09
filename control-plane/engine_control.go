@@ -481,6 +481,11 @@ type engineController struct {
 	// engine has no catalogue — VOICEVOX, and any engine on a CP with no store — and is then
 	// treated as having something, so nothing about those engines changes.
 	hasModels func(ctx context.Context) bool
+	// startGate is asked immediately before a start and can refuse it, returning the reason
+	// (ADR 0074). It is not part of decideEngineAction because it is not a judgement over a
+	// snapshot: it calls AWS — it re-applies the chosen instance class — and that function is
+	// deliberately pure. nil = no gate, which is every engine without a GPU ladder.
+	startGate func(ctx context.Context) (bool, string)
 	demand    *engineDemand
 	settings  store.SettingsStore
 	audit     engineAuditor
@@ -664,6 +669,17 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	c.mu.Unlock()
 
 	action, reason := decideEngineAction(now, snap, c.cfg)
+	// The gate is consulted after the decision, never inside it: what it does — waiting for a
+	// box of the previous instance class to leave, and re-applying the class — is an act with
+	// AWS in it, and decideEngineAction is a pure function over one snapshot (ADR 0074).
+	if action == engineActionStart && c.startGate != nil {
+		if ok, why := c.startGate(ctx); !ok {
+			log.Printf("%s: holding the start back (%s after %s)", c.eng.logKey(), why, reason)
+			// Come back soon: the thing being waited for is a box going away, which takes
+			// minutes, and the person who pressed the button is watching.
+			return engineControlBusyInterval
+		}
+	}
 	switch action {
 	case engineActionStart:
 		c.apply(ctx, true, reason, "")

@@ -745,6 +745,17 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	if view.desired >= 1 {
 		return nil
 	}
+	// The third start path, and it needs the same gate as the controller's and the admin
+	// panel's (ADR 0074 decision 4): a request arriving right after an instance class change
+	// would otherwise buy the previous rung's box, or collide with the one still draining.
+	//
+	// Not an error. The caller is a wait loop that polls this, so "not yet" means it comes back
+	// — and the request ends in the retryable `503 engine_waking` the provider already knows
+	// how to answer, rather than in a failure that names a class change nobody asked about.
+	if ok, why := e.startGate(ctx); !ok {
+		log.Printf("%s: a request is waiting, but the start is held back (%s)", e.ecs.logKey(), why)
+		return nil
+	}
 	if err := e.ecs.setEnabled(ctx, true); err != nil {
 		return fmt.Errorf("could not start the engine: %w", err)
 	}

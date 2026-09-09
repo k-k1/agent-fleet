@@ -2,7 +2,7 @@
 
 [English](0074-engine-instance-classes.md) | 日本語
 
-- 状態: **起草（未実装・未実機）**。2026-09-10。
+- 状態: **採用・P0 実装済み・実機未検証**（2026-09-10）。P1（実機）は未着手。
   **この文書のために新しく測ったものは無い。** 数字はすべて出所を書き分けてある——
   (a) ADR 0071・0072 の実測、(b) この日にリポジトリのコードから読んだ事実、
   (c) AWS の公開仕様として知っているだけで**この配備では確かめていない**もの（g6e の VRAM と
@@ -14,6 +14,13 @@
   開発と af-sandbox は 8、そして CP はそれを読めない）。あわせて**出荷時の梯子は空**と
   決め（決定 1）、決定 4 に「待つ理由は読めない数に分岐を書かないため」と切替 1 回の費用
   （壁時計 15〜20 分・g6.xlarge 換算 $0.3〜0.4）を書いた。
+- 同日、**P0 を実装した**（実機は未了）。実装が本文を 3 か所直している——
+  🔴 **却下した案の理由が間違っていた**（容量の壁は `af_cfn_deploy` が S3 で越えるので
+  「入らない」ではない。本当の理由は決定 5 の冪等な再適用が service では成立しないこと）、
+  **写しの危険は `InstanceRequirements` ではなく `InstanceLaunchTemplate` にあった**
+  （要求の型は読み書きで同じだが、起動テンプレートは別の型で**2 欄が運べない**）、
+  **管理 API の `mode=on` も門を通す**（通さないとボタン 1 つで待ちを迂回する）。
+  詳細は決定の各項に追記した。
 - 関連: [0071-self-hosted-inference-engines.ja.md](0071-self-hosted-inference-engines.ja.md)
   決定 2（役ごとに 1 つの capacity provider、VRAM の下限で箱を選ぶ）・決定 5・決定 9 /
   [0072-engine-model-catalog.ja.md](0072-engine-model-catalog.ja.md) 決定 1・決定 7（スタックは
@@ -41,8 +48,10 @@ ADR 0072 がモデルを CloudFormation から外してカタログに移した�
   **すべて CloudFormation パラメータ＝配備時固定**で、変えるにはスタック更新が要る。
 - **サービスは役の provider を名指ししている**（`CapacityProviderStrategy: [{CapacityProvider:
   !Ref LlmCapacityProvider, Weight: 1}]`）。つまり箱を変える口は provider の要求だけである。
-- **51,200 バイトの壁。** `60-engines.yaml` は 49.7 KB。役ごとに capacity provider を段数ぶん
-  並べる設計は**入らない**（1 ブロックが約 1.5 KB）。
+- **51,200 バイトの壁。** `60-engines.yaml` は 49.7 KB で、1 ブロック約 1.5 KB の capacity
+  provider を段数ぶん並べる余地は無い。🔴 ただし**壁は越えられる**——`af_cfn_deploy` が
+  超過分を S3 経由に切り替える。越えられないのは `deploy/local/ecs-lifecycle-stub-test.sh`
+  3b-2 が出荷テンプレートに課している同じ数字のほうである（却下した案を参照）。
 - **`engineDef` は「箱はスタックのもの」と書いている**——「Everything else here (service, URL,
   health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
   the stack's to declare」。本 ADR はこの一文の一部を意図的に覆す。
@@ -66,8 +75,10 @@ ADR 0072 がモデルを CloudFormation から外してカタログに移した�
   `InstanceLaunchTemplate` が**必須メンバー**。`InstanceLaunchTemplateUpdate` は
   `InstanceRequirements` / `NetworkConfiguration` / `StorageConfiguration` /
   `LocalStorageConfiguration` / `Ec2InstanceProfileArn` などを持つ。
-- 型が出力（`InstanceRequirements`）と入力（`InstanceRequirementsRequest`）で**別**なので、
-  読んで書き戻すには手で写す必要がある。写し漏れは**黙って落ちる**（決定 8）。
+- 🔴 起票時に「要求の型が読みと書きで別」と書いたのは**誤り**（実装で確認）。要求は双方向とも
+  `InstanceRequirementsRequest` である。**別なのは 1 つ上の起動テンプレート**で、
+  `InstanceLaunchTemplateUpdate` には `CapacityOptionType` と `FipsEnabled` が無い。
+  写し漏れは**黙って落ちる**（決定 8）。
 
 ### 既に踏んである罠（ADR 0071・0072 の実測）
 
@@ -162,6 +173,19 @@ g6.xlarge 換算で $0.3〜0.4 程度になる。これは画面に書く。ADR 
 ⚠️ **段を保存しただけ・エンジンが止まっている**なら、ここまでの費用は一切かからない。
 次に誰かが使ったときのコールドスタートに吸収される。
 
+**実装で足したもの（P0）**:
+- 待ちは**箱の EC2 タイプ**で判定する。container instance の `ecs.instance-type` 属性が、
+  MI の箱の型を CP が読める唯一の場所である（`ec2 describe-instances` には出ない）。
+  選択中の段に含まれない型の箱が居る＝前の段の箱がまだ居る。
+- 🔴 **待ちには上限（20 分）を置く。** 待ちの終わりは AWS のもので、`scaleInAfter: -1`
+  （片付けない）なら**永久に起動できないエンジン**になり、証拠はログ 1 行しか残らない。
+  実測の退場は 427〜477 秒なので、20 分は遅い退場を待ち切ってなお諦める。
+- 入れ替えは**モードを触らない**専用の操作（`POST …/replace-box`）にする。「無効」を押させると
+  モードが off のまま残り、戻し忘れが箱の停止と区別できない ADR 0071 の罠を再生産する。
+- 🔴 **管理 API の `mode=on` も同じ門を通す。** ここは `setEnabled(true)` を直接呼ぶ経路なので、
+  通さないと**ボタン 1 つで待ちを迂回して古い箱を買う**。門が止めたときは要求を失敗させず、
+  モードだけ保存してコントローラに任せる（意図は記録され、箱が消えたら起動する）。
+
 ### 5. 適用は Describe → 写す → Update の read-modify-write
 
 `InstanceLaunchTemplate` は必須メンバーなので、CP は現在の設定を
@@ -183,6 +207,19 @@ CloudFormation が自分の宣言に戻すからである（スタック更新�
 なら、起動しない**（そのまま起こすと、選ばれた段のつもりで古い箱を買い、重いモデルなら
 CUDA が落ちて**コールドスタート 1 回ぶんを捨てる**）。同じなら、失敗をログに残して起動する
 （箱の仕様は既に正しい）。
+
+**実装で分かったこと（SDK v1.87.0 を読んで写した結果）**:
+- ✅ **`InstanceRequirements` は読みと書きで同じ型**（`InstanceRequirementsRequest`）だった。
+  起票時に危険視した「要求の写し漏れ」はここには無い——読んだ構造体をそのまま持ち、
+  4 欄だけ差し替える。
+- 🔴 **危険は 1 つ上の階層にあった。** `InstanceLaunchTemplate`（読み）と
+  `InstanceLaunchTemplateUpdate`（書き）は**別の型**で、**`CapacityOptionType`（ON_DEMAND /
+  SPOT）と `FipsEnabled` は書きの型に存在しない＝運べない**。ECS が保持するのか既定に
+  戻すのかは文書化されておらず、実機で確かめていない（未解決 1）。決定 8 のテストは
+  「運べない欄」を名前で列挙させ、**黙って消えることだけは起きないようにしている**。
+- **VRAM の下限は加速器を要求している役でしか書けない**（`AcceleratorTotalMemoryMiB` は
+  加速器の指定なしでは拒否される・0071 の実測）。段が 0 を宣言したときと CPU 役では下限を
+  **消す**（0 を要求すると誰も通らない条件になる）。
 
 ### 6. 警告は「収まらないかもしれない」を指す。拒否はしない
 
@@ -222,14 +259,19 @@ CUDA が落ちて**コールドスタート 1 回ぶんを捨てる**）。同�
 
 ### 8. 写し漏れは、SDK が欄を増やした日に**テストが落ちる**ようにする
 
-決定 5 の read-modify-write は、`types.InstanceRequirements` の欄を 1 つ写し忘れると
-**その制約が黙って消える**（例えば `BurstablePerformance: excluded` を落とせば、GPU の要求は
-残るので気づかないまま条件が緩む）。SDK は上流の更新で欄が増える。
+決定 5 の read-modify-write は、欄を 1 つ写し忘れると**その制約が黙って消える**
+（例えば `BurstablePerformance: excluded` を落とせば、GPU の要求は残るので気づかないまま
+条件が緩む）。SDK は上流の更新で欄が増える。
 
-したがって、**`types.InstanceRequirements` の全フィールドをリフレクションで走査し、
-写し取り側が扱っていない欄があれば落ちる**単体テストを置く（`wiremap_convert_test.go` が
+したがって、**`InstanceLaunchTemplate` の全フィールドをリフレクションで走査し、
+(a) 写し取り側が値を落としていれば落ちる・(b) 書きの型に存在しない欄は「運べない」として
+名前で列挙されていなければ落ちる**単体テストを置く（`wiremap_convert_test.go` が
 `was: map[string]any{…}` を grep して等価性の証明を要求しているのと同じ仕掛け）。
-欄が増えた日に、気づくのは人ではなくテストである。
+欄が増えた日に、気づくのは人ではなくテストである。**実装時点で列挙されているのは
+`CapacityOptionType` と `FipsEnabled` の 2 つ**（決定 5 の追記）。
+
+⚠️ 陽性対照を取ってある——写しから 1 行（`NetworkConfiguration`）を消すとこのテストは実際に
+落ちる。落ちないテストを「通った」と読まないこと。
 
 ### 9. IAM は 2 つの capacity provider に限定する
 
@@ -271,8 +313,17 @@ CloudFormation で直す（未解決 6）。
 ## 却下した案
 
 - **役ごとに段の数だけ capacity provider を CFN で並べ、サービスの
-  `capacityProviderStrategy` を差し替える。** `60-engines.yaml` は 49.7 KB / 51,200 バイトで、
-  1 ブロック約 1.5 KB が入らない。**容量の壁が設計を決めた**（0071 決定 8 と同じ経緯）。
+  `capacityProviderStrategy` を差し替える。** IAM を増やさずに済む（CP は `UpdateService` を
+  既に持つ）ので、起票時はこれを容量の壁だけで却下していた。🔴 **その理由は間違っている**
+  ——`deploy/aws/ecs/env.sh` の `af_cfn_deploy` は 51,200 バイトを超えると S3 経由へ切り替える
+  ので、越えること自体はできる（30-ingress が 54,681 バイトで実際に通っている）。
+  **本当の却下理由は決定 5 が成立しないことである**: ドリフトに備えて起動の直前に毎回
+  適用し直すとき、capacity provider への書き戻しは**何も動かさない**が、service の
+  `capacityProviderStrategy` の更新は**新しいデプロイを起こしてタスクを置き換える**。
+  この案では「冪等に適用し直す」が「生成中の要求を殺す」と同義になる。
+  （容量の壁は別の形で残っている——`deploy/local/ecs-lifecycle-stub-test.sh` の 3b-2 が
+  出荷テンプレートを 51,200 バイト以内に保つので、実装では散文を
+  PARAMETERS-60-engines.md へ移して枠を作った。）
 - **CloudFormation パラメータのままにして、Console は警告だけ出す。** IAM も増えず、ドリフトも
   無い。却下の理由は 0072 が既に書いている——**差し替えを CFN 更新にすると、運用の齟齬に当たる**
   （GPU が寝ている夜に管理者が押すものであって、配備担当者が朝に押すものではない）。

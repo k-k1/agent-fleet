@@ -5,8 +5,11 @@
 // after "off" they disagree. A panel that echoed ECS back would report the opposite of the
 // button just pressed.
 //
-// Plus the thing that is specific to this screen: a GPU box is $1.26/hour, so "always on" has
-// to be visibly different from the other two rather than just another segment.
+// Plus the thing that is specific to this screen: a GPU box costs real money by the hour, so
+// "always on" has to be visibly different from the other two rather than just another segment.
+// 🔴 The hourly figure is NOT written into the message any more (ADR 0074): the box is
+// selectable, so a number in the catalogue would be wrong for every deployment that moved off
+// its default rung. The price comes from the ladder the operator declared, or not at all.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -116,14 +119,124 @@ describe("EnginesAdminView", () => {
     expect(seg("常時稼働")?.className).not.toContain("active");
   });
 
-  it("warns about the bill only while an engine is pinned on", async () => {
+  it("warns about the bill only while an engine is pinned on, and names no price of its own", async () => {
     api.mockResolvedValue({ engines: [row({ mode: "ondemand" })] });
     await mount();
-    expect(host!.textContent).not.toContain("$1.26");
+    expect(host!.textContent).not.toContain("常時稼働は GPU");
 
     apiJSON.mockResolvedValue(row({ mode: "on", state: "running" }));
     await click(seg("常時稼働"));
-    expect(host!.textContent).toContain("$1.26");
+    expect(host!.textContent).toContain("常時稼働は GPU");
+    // 🔴 No hard-coded figure. The panel used to say "$1.26/時" here, which stopped being true
+    // the moment the instance class became a choice — and a wrong price is worse than none.
+    expect(host!.textContent).not.toContain("$1.26");
+  });
+
+  // --- the GPU class (ADR 0074) ---------------------------------------------------------
+
+  const withClasses = (over: Record<string, unknown> = {}) =>
+    row({
+      classes: [
+        { id: "l4", label: "L4 24GB", vram_mib: 21000, types: ["g6.xlarge"], usd_per_hour: 1.26 },
+        { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] },
+      ],
+      class: { id: "l4", label: "L4 24GB", vram_mib: 21000, types: ["g6.xlarge"], usd_per_hour: 1.26 },
+      class_default: "l4",
+      class_is_default: true,
+      ...over,
+    });
+
+  it("offers no class control at all where no ladder is declared", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    // Decision 3: a deployment that declares none must not see a control that does nothing.
+    expect(host!.querySelector(".engines-class")).toBeNull();
+  });
+
+  it("shows the rungs with their VRAM, and a price only where one was declared", async () => {
+    api.mockResolvedValue({ engines: [withClasses()] });
+    await mount();
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")).map((o) => o.textContent);
+    expect(opts[0]).toContain("L4 24GB");
+    expect(opts[0]).toContain("$1.26/h");
+    // 🔴 The rung the operator left without a price prints none, rather than $0.
+    expect(opts[1]).not.toContain("$");
+  });
+
+  it("says permanently when the engine is not on the deployment's default rung", async () => {
+    api.mockResolvedValue({
+      engines: [withClasses({ class_is_default: false, class: { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] } })],
+    });
+    await mount();
+    // The sentence that keeps "temporarily try a bigger box" from becoming a permanent bill.
+    expect(host!.textContent).toContain("既定と違います");
+    expect(host!.textContent).toContain("既定に戻す");
+  });
+
+  it("says the saved class has not reached the running box, and what replacing costs", async () => {
+    api.mockResolvedValue({
+      engines: [
+        withClasses({
+          class: { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] },
+          class_is_default: false,
+          state: "running",
+          box: { id: "i-1", status: "ACTIVE", instance_type: "g6.xlarge" },
+        }),
+      ],
+    });
+    await mount();
+    // The old box is named, because "changed" while the old card keeps answering is the
+    // expensive lie this screen exists to avoid.
+    expect(host!.textContent).toContain("g6.xlarge");
+    expect(host!.textContent).toContain("いま入れ替える");
+  });
+
+  it("asks before enabling a model that does not fit the chosen card, and never guesses", async () => {
+    api.mockResolvedValue({
+      engines: [
+        withClasses({
+          model_rows: [
+            { id: "flux-dev", enabled: false, vram_need_mib: 40000, vram_need_source: "declared" },
+            { id: "mystery", enabled: false, vram_need_source: "unknown" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const enable = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model")).find((li) =>
+        li.textContent?.includes(id),
+      )?.querySelector("button") as HTMLButtonElement | undefined;
+
+    await click(enable("flux-dev"));
+    // Nothing was sent: the question comes first, with both numbers in it.
+    expect(apiJSON).not.toHaveBeenCalled();
+    expect(host!.textContent).toContain("40000");
+    expect(host!.textContent).toContain("21000");
+
+    apiJSON.mockResolvedValue(withClasses());
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "承知のうえで有効にする",
+      ) as HTMLButtonElement,
+    );
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/flux-dev",
+      "PUT",
+      { enabled: true, confirm_vram: true },
+    );
+
+    // 🔴 A model nobody measured is NOT asked about: "unknown" is not "too big", and a panel
+    // that asked about every unmeasured model would teach people to click through the one
+    // that matters.
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(withClasses());
+    await click(enable("mystery"));
+    expect(apiJSON).toHaveBeenCalledWith(
+      "api/admin/engines/image/models/mystery",
+      "PUT",
+      { enabled: true },
+    );
   });
 
   it("says so rather than showing an empty screen when nothing is deployed", async () => {

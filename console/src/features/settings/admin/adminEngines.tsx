@@ -32,6 +32,9 @@ import { fmtDateTime } from "../../../lib/intl.ts";
 type EngineBox = {
   id?: string;
   status?: string;
+  /** The EC2 type this box actually is. After a class change it is NOT what the capacity
+   *  provider says: the change reaches the next box only (ADR 0074 decision 4). */
+  instance_type?: string;
   /** registeredAt: when the EC2 INSTANCE joined the cluster, which is a different fact from
    *  when the service last changed. See engineBox in control-plane/engine_ecs.go. */
   since?: string;
@@ -52,6 +55,12 @@ type EngineModel = {
   context_tokens?: number;
   max_output_tokens?: number;
   vram_mib?: number;
+  /** What this model would want on the card, and how well that is known (ADR 0074 decision 6):
+   *  "declared" = the operator measured it, "floor" = the weight files' size and nothing else
+   *  (no KV cache, no context), "unknown" = nobody said. 🔴 `unknown` must never be drawn as a
+   *  comfortable zero — it means the question was not answered. */
+  vram_need_mib?: number;
+  vram_need_source?: "declared" | "floor" | "unknown";
   /** BOTH are kept and both are shown: Hugging Face reports `other` for the two
    *  non-commercial models in ADR 0072's table, with the real terms in license_name. */
   license?: string;
@@ -131,6 +140,17 @@ type IngestJob = {
   created_at?: string;
 };
 
+/** One rung of the GPU ladder the operator declared (ADR 0074 decision 1). The CP asks neither
+ *  EC2 nor the Pricing API: every number here was written by whoever wrote the ladder, and
+ *  `usd_per_hour` is absent — not zero — when they left it out. */
+type EngineClass = {
+  id: string;
+  label: string;
+  vram_mib: number;
+  types: string[];
+  usd_per_hour?: number;
+};
+
 type EngineRow = {
   key: string;
   api?: string;
@@ -160,6 +180,22 @@ type EngineRow = {
   events?: string[];
   service_since?: string;
   box?: EngineBox;
+  /** The GPU ladder, and where this role sits on it. All absent on a deployment that declares
+   *  no ladder, which is what the panel reads as "this deployment does not choose its box". */
+  classes?: EngineClass[];
+  class?: EngineClass;
+  class_default?: string;
+  /** 🔴 Stated by the CP, not computed here: "you are not on the default" is the sentence that
+   *  keeps a temporary experiment from becoming a permanent hourly bill (decision 7). */
+  class_is_default?: boolean;
+  /** A box of another rung is still up, so the saved choice has reached nothing yet. */
+  class_replace_pending?: boolean;
+  /** The largest demand among the ENABLED models — a maximum, not a sum: one model is in VRAM
+   *  at a time (`--models-max 1`, one checkpoint). */
+  vram_need_mib?: number;
+  vram_need_source?: "declared" | "floor" | "unknown";
+  vram_need_model?: string;
+  vram_fits?: boolean;
   /** When the controller will stop it by itself. ABSENT is meaningful: pinned on, switched
    *  off, already stopped, or no demand mark yet — see engineStopETA. Never render a fallback. */
   stop_eta?: string;
@@ -272,6 +308,46 @@ export function EnginesAdminView() {
     }
   };
 
+  /** Stop the box so the next one is bought on the rung that is now chosen. It does NOT touch
+   *  the mode: an engine pinned `on` comes back by itself, an on-demand one with the next
+   *  request, and the control plane holds that start until the old box has left the cluster. */
+  const replaceBox = async (key: string) => {
+    setBusy(key);
+    try {
+      const d = await apiJSON(`api/admin/engines/${encodeURIComponent(key)}/replace-box`, "POST", {});
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((x) => (x.key === key ? { ...x, ...d } : x)));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /** Which GPU this role buys next (ADR 0074). It does NOT replace a running box — the API
+   *  reaches new instances only — so the answer carries class_replace_pending and the card
+   *  turns that into an explicit "replace it now", which costs a cold start. */
+  const setClass = async (key: string, cls: string) => {
+    setBusy(key);
+    try {
+      const d = await apiJSON(
+        `api/admin/engines/${encodeURIComponent(key)}/class`,
+        "PUT",
+        { class: cls },
+      );
+      if (d?.error) {
+        setErr(errDetail(d.error));
+        return;
+      }
+      setErr("");
+      setRows((cur) => (cur || []).map((e) => (e.key === key ? { ...e, ...d } : e)));
+    } finally {
+      setBusy("");
+    }
+  };
+
   /** Enable / disable a model, or make it the one the engine starts with. The CP answers with
    *  the whole engine row, so the panel takes its new state from the server rather than
    *  guessing at the exclusivity rule — selecting one model clears another, and reproducing
@@ -369,6 +445,12 @@ export function EnginesAdminView() {
             {e.models?.length ? " " + tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared") : ""}
           </p>
           <EngineStatus row={e} />
+          <EngineClassPicker
+            row={e}
+            busy={busy === e.key}
+            onPick={(cls) => setClass(e.key, cls)}
+            onReplace={() => replaceBox(e.key)}
+          />
           <EngineModels
             row={e}
             busy={busy}
@@ -401,6 +483,113 @@ export function EnginesAdminView() {
       <p className="muted pad">{tr("admin.engines_note")}</p>
     </div>
   );
+}
+
+/** Which GPU this role buys (ADR 0074).
+ *
+ * Absent entirely on a deployment that declares no ladder — that is decision 3, and it has to
+ * look like "there is no such choice here", not like a control that does nothing.
+ *
+ * Three things this section must keep saying, because each one is a bill somebody would
+ * otherwise only find later:
+ *
+ *   - a saved rung reaches the NEXT box only. Reporting success while the old card keeps
+ *     answering is the most expensive lie available here, so the replace step is separate,
+ *     explicit, and priced;
+ *   - running on something other than the default is stated permanently. "Temporarily try a
+ *     bigger box" turns into a permanent hourly bill exactly when nobody is reminded;
+ *   - a model that will not fit is pointed at, with the STRENGTH of the evidence attached:
+ *     a measured number and a weights-only floor are different claims, and "nobody measured
+ *     this" is never drawn as "it fits". */
+function EngineClassPicker({
+  row,
+  busy,
+  onPick,
+  onReplace,
+}: {
+  row: EngineRow;
+  busy: boolean;
+  onPick: (cls: string) => void;
+  onReplace: () => void;
+}) {
+  const tr = useT();
+  const classes = row.classes || [];
+  if (classes.length === 0) return null;
+  const current = row.class?.id || row.class_default || "";
+  // The box that is answering right now, when it is not one this rung covers. It is read from
+  // the container instance rather than from the capacity provider, because the provider
+  // describes the NEXT box.
+  const oldBox =
+    row.box?.instance_type && row.class && !row.class.types.includes(row.box.instance_type)
+      ? row.box.instance_type
+      : "";
+  return (
+    <div className="engines-class">
+      <div className="engines-class-head">
+        <span className="muted">{tr("admin.engines_class")}</span>
+        <select
+          className="sm"
+          value={current}
+          disabled={busy}
+          onChange={(ev) => onPick(ev.currentTarget.value)}
+        >
+          {classes.map((c) => (
+            <option key={c.id} value={c.id}>
+              {engineClassLabel(c, tr)}
+            </option>
+          ))}
+        </select>
+        {row.class_is_default === false && (
+          <>
+            <span className="engines-model-tag">{tr("admin.engines_class_not_default")}</span>
+            <button
+              type="button"
+              className="ghost sm"
+              disabled={busy}
+              onClick={() => onPick(row.class_default || "")}
+            >
+              {tr("admin.engines_class_reset")}
+            </button>
+          </>
+        )}
+      </div>
+      {/* The saved rung has reached nothing yet: a box of another type is still up. Both halves
+          are said — that the change is pending, and that acting on it costs a cold start. */}
+      {oldBox && (
+        <p className="form-err">
+          {tr("admin.engines_class_pending").replace("{t}", oldBox)}{" "}
+          <button type="button" className="ghost sm" disabled={busy} onClick={onReplace}>
+            {tr("admin.engines_class_replace")}
+          </button>
+        </p>
+      )}
+      <p className="muted">{engineClassVramNote(row, tr)}</p>
+    </div>
+  );
+}
+
+/** One rung as an option: the operator's label, its VRAM, and the price only when they declared
+ *  one. A missing price prints nothing — an invented 0 would read as free. */
+function engineClassLabel(c: EngineClass, tr: (k: never) => string): string {
+  const bits = [c.label, (tr("admin.engines_model_vram" as never) as string).replace("{n}", String(c.vram_mib))];
+  if (c.usd_per_hour) bits.push("$" + c.usd_per_hour + "/h");
+  return bits.join(" · ");
+}
+
+/** What the enabled models want against what the card has. Three sentences, because the three
+ *  cases are not the same claim (ADR 0074 decision 6). */
+function engineClassVramNote(row: EngineRow, tr: (k: never) => string): string {
+  const have = row.class?.vram_mib || 0;
+  if (!have) return "";
+  if (row.vram_need_source === "unknown" || !row.vram_need_mib) {
+    return tr("admin.engines_class_vram_unknown" as never) as string;
+  }
+  const key = row.vram_fits === false ? "admin.engines_class_vram_over" : "admin.engines_class_vram_ok";
+  return (tr(key as never) as string)
+    .replace("{n}", String(row.vram_need_mib))
+    .replace("{m}", String(have))
+    .replace("{id}", row.vram_need_model || "")
+    .replace("{src}", tr(("admin.engines_vram_src_" + (row.vram_need_source || "unknown")) as never) as string);
 }
 
 /** The model catalogue for one engine (ADR 0072 decision 7).
@@ -438,6 +627,24 @@ function EngineModels({
   // BEFORE the press rather than explained afterwards.
   const [confirming, setConfirming] = useState("");
   const [purge, setPurge] = useState(false);
+  // Which model is waiting on "yes, I know it may not fit" (ADR 0074 decision 6). The dialog is
+  // raised HERE, before the request, because this is where the numbers are — the CP refuses the
+  // unconfirmed call as well, for any other client.
+  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean> } | null>(null);
+  const cardMiB = row.class?.vram_mib || 0;
+  /** True when this model's own demand is known AND larger than the card. `unknown` is not
+   *  "too big": asking about every unmeasured model teaches people to click through the one
+   *  that matters. */
+  const tooBig = (m: EngineModel) =>
+    cardMiB > 0 && m.kind !== "lora" && !!m.vram_need_mib && m.vram_need_mib > cardMiB;
+  const change = (m: EngineModel, patch: Record<string, boolean>) => {
+    const loading = !!(patch.enabled || patch.selected || patch.default);
+    if (loading && tooBig(m)) {
+      setVramAsk({ id: m.id, patch });
+      return;
+    }
+    onChange(m.id, patch);
+  };
   return (
     <div className="engines-models">
       {/* An engine with no catalogue at all is the interesting case, not an empty section: the
@@ -463,7 +670,7 @@ function EngineModels({
                     type="button"
                     className="ghost sm"
                     disabled={pending}
-                    onClick={() => onChange(m.id, { enabled: !m.enabled })}
+                    onClick={() => change(m, { enabled: !m.enabled })}
                   >
                     {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
                   </button>
@@ -474,7 +681,7 @@ function EngineModels({
                       type="button"
                       className="ghost sm"
                       disabled={pending}
-                      onClick={() => onChange(m.id, isImage ? { selected: true } : { default: true })}
+                      onClick={() => change(m, isImage ? { selected: true } : { default: true })}
                     >
                       {tr("admin.engines_model_select")}
                     </button>
@@ -501,6 +708,40 @@ function EngineModels({
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
                   purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
                   the CP has no s3:DeleteObject and is not getting one. */}
+              {/* ⚠️ A warning, not a refusal — quantisation, --offload-to-cpu and things this
+                  deployment has not measured are real, so the panel points and the person
+                  decides (the position ADR 0072 decision 10 takes on licences). */}
+              {vramAsk?.id === m.id && (
+                <div className="engines-model-confirm">
+                  <p className="form-err">
+                    {(tr("admin.engines_vram_confirm" as never) as string)
+                      .replace("{id}", m.id)
+                      .replace("{n}", String(m.vram_need_mib || 0))
+                      .replace("{m}", String(cardMiB))
+                      .replace(
+                        "{src}",
+                        tr(("admin.engines_vram_src_" + (m.vram_need_source || "unknown")) as never) as string,
+                      )}
+                  </p>
+                  <span className="engines-model-actions">
+                    <button
+                      type="button"
+                      className="primary sm"
+                      disabled={pending}
+                      onClick={() => {
+                        const ask = vramAsk;
+                        setVramAsk(null);
+                        onChange(ask.id, { ...ask.patch, confirm_vram: true });
+                      }}
+                    >
+                      {tr("admin.engines_vram_confirm_go")}
+                    </button>
+                    <button type="button" className="ghost sm" onClick={() => setVramAsk(null)}>
+                      {tr("common.cancel")}
+                    </button>
+                  </span>
+                </div>
+              )}
               {confirming === m.id && (
                 <div className="engines-model-confirm">
                   <label>

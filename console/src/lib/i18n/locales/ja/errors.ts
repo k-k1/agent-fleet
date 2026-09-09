@@ -209,6 +209,8 @@ export const errors = {
   "err.bad_body": "要求の内容が不正です",
   "err.engine_ecs_error": "ECS の更新に失敗しました",
   "err.engine_publish_failed": "カタログを配備に反映できませんでした",
+  "err.engine_class_unknown": "そのインスタンスクラスは宣言されていません",
+  "err.engine_vram_confirm": "そのモデルは選択中のインスタンスクラスの VRAM を超えます",
   "err.bad_source": "取り込み元の指定が不正です",
   "err.file_unknown": "そのリポジトリにそのファイルがありません",
   "err.no_checksum": "取り込み元が sha256 を公開していません。url と sha256 を直接指定してください",

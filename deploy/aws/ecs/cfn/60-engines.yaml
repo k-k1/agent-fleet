@@ -19,21 +19,21 @@ Parameters:
     Type: String
     Default: af-ecs-platform
     Description: >-
-      20-platform stack to import the cluster, execution role, namespace and the af-llamacpp
-      and af-sdcpp ECR repositories from.
+      20-platform stack to import the cluster, execution role, namespace and the two engine
+      ECR repositories from.
   ServiceConnectNamespace:
     Type: String
     Default: af.internal
     Description: >-
-      The private DNS namespace's NAME, which must match what 20-platform was given: the
-      namespace is imported by id, while the engine URLs are built from the name.
+      The private DNS namespace's NAME, which must match what 20-platform was given (it is
+      imported by id; the engine URLs are built from the name).
   EnginesSsmParamName:
     Type: String
     Default: /af-ws/engines
     AllowedPattern: "^/af-ws/[A-Za-z0-9_.\\-/]+$"
     Description: >-
       SSM parameter this stack writes the engine table to, and the one value 30-ingress is
-      handed. MUST be under /af-ws/ — that is the whole of the CP task role's SSM read scope.
+      handed. MUST be under /af-ws/: the whole of the CP task role's SSM read scope.
 
   # --- the llm role (llama.cpp) -------------------------------------------------
   LlmEnabled:
@@ -41,8 +41,8 @@ Parameters:
     Default: ""
     AllowedValues: [ "", "true", "false" ]
     Description: >-
-      Create the llm role at all. "" (the default) = whatever LlmModelS3Key said, which is the
-      one release of compatibility ADR 0072 decision 1 allows. WHAT it loads is the catalogue's.
+      Create the llm role at all. "" = whatever LlmModelS3Key said. WHAT it loads is the
+      catalogue's (ADR 0072 decision 1).
   LlmDiscoveryName:
     Type: String
     Default: llm
@@ -63,12 +63,12 @@ Parameters:
   LlmModelIds:
     Type: CommaDelimitedList
     Default: "qwen3-coder-30b-a3b"
-    Description: "SEED: the catalogue id for that model. The FIRST is the one that is seeded."
+    Description: "SEED: the catalogue id. The FIRST is the one seeded."
   LlmContextTokens:
     Type: Number
     Default: 32768
     MinValue: 512
-    Description: "SEED: that model's context window (llama-server's -c, and what is advertised)."
+    Description: "SEED: that model's window (llama-server's -c, and what is advertised)."
   LlmMaxOutputTokens:
     Type: Number
     Default: 4096
@@ -78,24 +78,29 @@ Parameters:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja,--no-mmap"
     Description: >-
-      Extra llama-server flags on an L4: all layers on the GPU, chat template (tool calls need
-      it), --no-mmap (halves the load). ⚠️ NEVER -c here: the router passes its own
-      command line to every model instance and a command line WINS over the preset, so one -c
-      silently gives every model that window (measured). Windows are the catalogue's.
+      Extra llama-server flags on an L4. ⚠️ NEVER -c here: a command line WINS over the
+      preset, so one -c gives every model that window (measured). PARAMETERS-60-engines.md.
   LlmModelsMax:
     Type: Number
     Default: 1
     MinValue: 0
     Description: >-
-      Models the router may hold at once (llama-server --models-max; 0 = unlimited). 1 because
-      the router does not know about VRAM: a second 30B Q4 on an L4 does not run slowly, it
-      crashes. Raise it only for a box whose models fit side by side.
+      Models the router may hold at once (--models-max; 0 = unlimited). 1: the router does
+      not know about VRAM, and a second 30B Q4 on an L4 crashes.
+  LlmInstanceClasses:
+    Type: String
+    Default: ""
+    Description: >-
+      GPU rungs this role may be switched between (ADR 0074):
+      id|label|vramMiB|types|vcpuMin-vcpuMax|memMinMiB-memMaxMiB[|usd], ";" between rungs. EMPTY
+      = no choice, and the CP never touches the capacity provider. The FIRST rung is the default
+      and must restate the parameters above. PARAMETERS-60-engines.md.
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
     Description: >-
-      SSM SecureString holding llama-server's --api-key, which the CP presents upstream: the
-      second lock on an API that has none of its own. standup.sh creates it. Empty = no key.
+      SSM SecureString holding llama-server's --api-key: the second lock on an API with none
+      of its own. standup.sh creates it. Empty = no key.
   LlmTaskCpu:
     Type: String
     Default: "4096"
@@ -104,21 +109,20 @@ Parameters:
     Type: String
     Default: "14336"
     Description: >-
-      Task memory (MiB), below the instance's 16 GiB by enough for the ECS agent — a task that
-      asks for all of it never places, which reads as a capacity problem.
+      Task memory (MiB), below the instance's by enough for the ECS agent: a task that asks
+      for all of it never places. PARAMETERS-60-engines.md.
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
     Description: >-
-      Instance types this role may buy — more than one, because a single type has nowhere to go
-      when an AZ is short of it. ⚠️ A FILTER, not an order of preference: MI has no allocation
-      strategy and the CHEAPEST member is bought, so a fallback belongs above the intended box.
+      Instance types this role may buy (the DEFAULT rung; LlmInstanceClasses moves it).
+      ⚠️ A FILTER, not a preference: MI buys the CHEAPEST member.
   LlmAcceleratorMemMinMiB:
     Type: Number
     Default: 21000
     Description: >-
-      VRAM floor (MiB): ADR 0071 decision 2's >= 20 GB, above the 30B's measured 20,943. Short
-      VRAM crashes CUDA rather than slowing it. 0 = do not ask (as GpuCount 0 does).
+      VRAM floor (MiB) of the DEFAULT rung: >= 20 GB, above the 30B's measured 20,943. Short
+      VRAM crashes CUDA rather than slowing it. 0 = do not ask.
   LlmGpuCount:
     Type: Number
     Default: 1
@@ -142,14 +146,14 @@ Parameters:
   LlmStorageGiB:
     Type: Number
     Default: 120
-    Description: "EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE."
+    Description: "EBS volume per box when UseLocalStorage is off. MI exposes only the SIZE."
   LlmUseLocalStorage:
     Type: String
     Default: "true"
     AllowedValues: [ "true", "false" ]
     Description: >-
-      Use the 250 GB instance store instead of an EBS data volume. On since the measurement
-      halved the cold start (PARAMETERS-60-engines.md).
+      Use the 250 GB instance store instead of an EBS volume. On: it halved the cold start
+      (measured; PARAMETERS-60-engines.md).
   LlmScaleInAfter:
     Type: Number
     Default: -2
@@ -165,7 +169,7 @@ Parameters:
     Default: 900
     Description: >-
       How long a start may take before the controller calls it failed. MUST exceed the real
-      cold start (measured 527-586 s for one model; a router syncs every enabled one).
+      cold start (measured 527-586 s for one model).
   LlmMode:
     Type: String
     Default: ondemand
@@ -190,9 +194,8 @@ Parameters:
     Type: String
     Default: master-cuda
     Description: >-
-      Tag in the af-sdcpp ECR repository (the doubled word is the image ROLE's container image
-      tag). Upstream is amd64 only, which costs nothing: G-family has no arm64 member.
-  # SEED parameters, as on the llm role above.
+      Tag in the af-sdcpp ECR repository (the doubled word is the image ROLE's container
+      image tag). Upstream is amd64 only; G-family has no arm64 member anyway.
   ImageModelS3Key:
     Type: String
     Default: ""
@@ -202,13 +205,18 @@ Parameters:
   ImageModelIds:
     Type: CommaDelimitedList
     Default: "sdxl-base-1.0"
-    Description: "SEED: the catalogue id for that checkpoint. The FIRST is the one seeded."
+    Description: "SEED: the catalogue id. The FIRST is the one seeded."
   ImageExtraArgs:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
     Description: >-
-      Extra sd-server flags; --diffusion-fa is what the GPU measurement ran with. There is no
-      --api-key: sd-server has no authentication of its own.
+      Extra sd-server flags; --diffusion-fa is what the GPU measurement ran with. sd-server
+      has no --api-key of its own.
+  ImageInstanceClasses:
+    Type: String
+    Default: ""
+    Description: >-
+      The image role's ladder, as LlmInstanceClasses. Empty = no choice is offered.
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -221,15 +229,14 @@ Parameters:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
     Description: >-
-      Instance types this role may buy. SDXL fp16 measured 7,379 MiB of VRAM; whether
-      --offload-to-cpu or quantisation fits a smaller card is unmeasured (P4). Two types,
-      with the warning under LlmAllowedInstanceTypes attached.
+      Instance types this role may buy (the DEFAULT rung), with the warning under
+      LlmAllowedInstanceTypes attached. PARAMETERS-60-engines.md.
   ImageAcceleratorMemMinMiB:
     Type: Number
     Default: 8000
     Description: >-
-      VRAM floor (MiB): ADR 0071 decision 2's >= 8 GB, above SDXL fp16's measured 7,379. Holding
-      the role to the 24 GB class is the type list's job. 0 = do not ask.
+      VRAM floor (MiB) of the DEFAULT rung: >= 8 GB, above SDXL fp16's measured 7,379.
+      0 = do not ask.
   ImageGpuCount:
     Type: Number
     Default: 1
@@ -254,8 +261,8 @@ Parameters:
     Type: Number
     Default: 60
     Description: >-
-      EBS data volume per box when ImageUseLocalStorage is off. Smaller than the llm role's,
-      but not much: the anonymous model volume is re-allocated per task and never reclaimed.
+      EBS data volume per box when ImageUseLocalStorage is off. Not much smaller than the llm
+      role's: PARAMETERS-60-engines.md.
   ImageUseLocalStorage:
     Type: String
     Default: "true"
@@ -266,8 +273,8 @@ Parameters:
     Type: Number
     Default: -2
     Description: >-
-      infrastructureOptimization.scaleInAfter in seconds. -1 ("never tidy up") is a trap with
-      an anonymous model volume — the kept box re-fetches anyway. See the task definition.
+      scaleInAfter in seconds. -1 ("never tidy up") is a trap here: the kept box re-fetches
+      anyway. PARAMETERS-60-engines.md.
   ImageIdleSec:
     Type: Number
     Default: 900
@@ -278,8 +285,8 @@ Parameters:
     Type: Number
     Default: 900
     Description: >-
-      How long a start may take before the controller calls it failed. sd-server measured 195 s
-      from task creation to listen; the variable term is how long a GPU box takes to appear.
+      How long a start may take before the controller calls it failed. sd-server measured
+      195 s from task creation to listen.
   ImageMode:
     Type: String
     Default: ondemand
@@ -298,7 +305,7 @@ Parameters:
   IngestDiskGiB:
     Type: Number
     Default: 80
-    Description: "Ephemeral storage for the ingest task: the largest model this deployment can take in."
+    Description: "Ephemeral storage for the ingest task: the largest model it can take in."
   LogRetentionDays:
     Type: Number
     Default: 14
@@ -514,6 +521,18 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
+          # Moving a role between the rungs of Llm/ImageInstanceClasses (ADR 0074 decision 9).
+          # THIS STACK's providers only: the API re-declares a launch template, subnets and
+          # security groups included, so the resource scope IS the boundary. Never called while
+          # no ladder is declared. PassRole because that re-declaration names the two roles the
+          # provider already runs on.
+          - Effect: Allow
+            Action: [ ecs:DescribeCapacityProviders, ecs:UpdateCapacityProvider ]
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:capacity-provider/af-${AWS::StackName}-*"
+          - Effect: Allow
+            Action: [ iam:PassRole ]
+            Resource: [ !GetAtt InfraRole.Arn, !GetAtt InstanceRole.Arn ]
+            Condition: { StringEquals: { "iam:PassedToService": ecs.amazonaws.com } }
 
   # Always created, holding the sentinel until somebody registers a token in the Console —
   # a task definition is static, so a Secrets block that appeared with the token would still
@@ -1009,7 +1028,8 @@ Resources:
                 "health":"/health","warmPath":"/models","provider":"llamacpp","models":["${Models}"],
                 "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
                 "modelS3Key":"${LlmModelS3Key}",
-                "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
+                "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}",
+                "idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
                 Cp: !Sub "af-${AWS::StackName}-llm"
@@ -1023,7 +1043,7 @@ Resources:
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/v1/models","provider":"sdcpp","models":["${Models}"],
                 "modelS3Key":"${ImageModelS3Key}",
-                "apiKeyParam":"","idleSec":${ImageIdleSec},
+                "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
                 Cp: !Sub "af-${AWS::StackName}-image"
@@ -1051,22 +1071,22 @@ Outputs:
     Export: { Name: !Sub "${AWS::StackName}-EnginesSsmParam" }
   LlmServiceName:
     Description: >-
-      The llm engine's ECS service name (what the controller drives), or "-" while no model
-      is staged. Never empty: an empty Export fails the whole stack (check-cfn-exports.py).
+      The llm engine's ECS service name, or "-" while no model is staged. Never empty: an
+      empty Export fails the whole stack (check-cfn-exports.py).
     Value: !If [ HasLlmModel, !GetAtt LlmService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-LlmServiceName" }
   LlmCapacityProviderName:
-    Description: The llm capacity provider, i.e. what marks a container instance as NOT a workspace slot.
+    Description: The llm capacity provider — what marks a box as NOT a workspace slot.
     Value: !Ref LlmCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
   ImageServiceName:
     Description: >-
-      The image engine's ECS service name, or "-" while no checkpoint is staged. Never empty
-      for the same reason as the llm one: an empty Export fails the whole stack.
+      The image engine's ECS service name, or "-" while none is staged. Never empty, for the
+      llm one's reason.
     Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
   ImageCapacityProviderName:
-    Description: The image capacity provider (the other thing that marks a box as NOT a workspace slot).
+    Description: The image capacity provider (the other such marker).
     Value: !Ref ImageCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
   ModelsBucket:
@@ -1074,6 +1094,6 @@ Outputs:
     Value: !Ref ModelsBucket
     Export: { Name: !Sub "${AWS::StackName}-ModelsBucket" }
   IngestTaskDefFamily:
-    Description: Task definition family to `aws ecs run-task` for taking a model in from Hugging Face.
+    Description: Task definition family to `aws ecs run-task` to take a model in.
     Value: !Ref IngestTaskDef
     Export: { Name: !Sub "${AWS::StackName}-IngestTaskDefFamily" }

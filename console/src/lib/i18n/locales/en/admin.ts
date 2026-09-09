@@ -34,7 +34,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
   "admin.engines_state_prefix": "State: ",
   "admin.engines_models_sep": " / models: ",
-  "admin.engines_always_on_note": "Always-on keeps the GPU box up ($1.26/hour). Put it back on demand when you are done.",
+  "admin.engines_always_on_note": "Always-on keeps the GPU box up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys a box only when something asks, and it stops itself once idle.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
@@ -137,6 +137,21 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_state_running": "fetching",
   "admin.engines_ingest_state_done": "done",
   "admin.engines_ingest_state_failed": "failed",
+  // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
+  // operator declared, never from a number written here: the box is selectable now.
+  "admin.engines_class": "Instance class: ",
+  "admin.engines_class_not_default": "not the default",
+  "admin.engines_class_reset": "Back to the default",
+  "admin.engines_class_pending": "What is running is a {t} box. The class you chose applies to the NEXT box. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new box does not start until the old one has left.",
+  "admin.engines_class_replace": "Replace it now",
+  "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
+  "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",
+  "admin.engines_class_vram_unknown": "How much VRAM the enabled models need is not known — nobody measured it. That is not the same as saying they fit.",
+  "admin.engines_vram_src_declared": "measured",
+  "admin.engines_vram_src_floor": "a weights-only floor",
+  "admin.engines_vram_src_unknown": "unknown",
+  "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
+  "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
   // slow end. For a router role every enabled model is synced, so this really is what enabling

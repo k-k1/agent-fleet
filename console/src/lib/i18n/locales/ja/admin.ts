@@ -32,7 +32,7 @@ export const admin = {
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
   "admin.engines_state_prefix": "状態: ",
   "admin.engines_models_sep": " / モデル: ",
-  "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（$1.26/時）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
@@ -144,6 +144,21 @@ export const admin = {
   "admin.engines_ingest_state_running": "取り込み中",
   "admin.engines_ingest_state_done": "完了",
   "admin.engines_ingest_state_failed": "失敗",
+  // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
+  // operator declared, never from a number written here: the box is selectable now.
+  "admin.engines_class": "インスタンスクラス: ",
+  "admin.engines_class_not_default": "既定と違います",
+  "admin.engines_class_reset": "既定に戻す",
+  "admin.engines_class_pending": "いま動いているのは {t} の箱です。選んだクラスは次に買う箱から効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧い箱が退場するまで新しい箱は起動しません。",
+  "admin.engines_class_replace": "いま入れ替える",
+  "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
+  "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
+  "admin.engines_class_vram_unknown": "有効なモデルが必要とする VRAM は分かりません（誰も測っていません）。「収まる」という意味ではありません。",
+  "admin.engines_vram_src_declared": "実測",
+  "admin.engines_vram_src_floor": "重みだけの下限",
+  "admin.engines_vram_src_unknown": "不明",
+  "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
+  "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
   // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。

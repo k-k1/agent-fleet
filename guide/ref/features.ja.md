@@ -119,6 +119,7 @@ updated: "2026-08"
 | 監査ログと egress 統制 | 配備管理者 | 管理 | [operator 03](../operate/04-secure.ja.md) |
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../member/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
+| 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [admin 04](../admin/04-mcp-egress.ja.md) |
 | コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |
 
 ## 詳細が「—」の行

@@ -471,6 +471,16 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if m.VramMiB > 0 {
 		row["vram_mib"] = m.VramMiB
 	}
+	// What this model would want on the card, and how well that is known (ADR 0074 decision 6).
+	// Computed here rather than in the panel because the file sizes it is derived from are not
+	// on the wire — and because "unknown" has to be a value the client receives, not the absence
+	// of one, which is what would let it be drawn as a comfortable 0.
+	if need, source := engineModelVramNeed(m); source != engineVramUnknown {
+		row["vram_need_mib"] = need
+		row["vram_need_source"] = source
+	} else {
+		row["vram_need_source"] = engineVramUnknown
+	}
 	if m.License != "" {
 		row["license"] = m.License
 	}

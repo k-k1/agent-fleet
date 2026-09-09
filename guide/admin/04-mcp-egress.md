@@ -90,6 +90,45 @@ minutes, the time it takes to buy a box and load the model (the call itself comp
 go — nothing has to be retried). Before time-critical work you can warm it up by switching to
 Always on — **and remember to switch it back.**
 
+### The GPU instance class
+
+The selector under the modes appears only where the deployment **declares instance classes**. On
+a deployment that declares none, **there is no such control** — the box is whatever was fixed at
+deployment time.
+
+It is for **temporarily moving a role onto a bigger GPU** in order to try a model that wants
+more VRAM.
+
+- **Choosing one does not change the box that is running.** It applies to **the next box
+  bought**. While one is up the panel says "What is running is a g6.xlarge box" and puts
+  **"Replace it now"** next to it.
+- **Replacing costs one cold start** (about 9 minutes for llm, 3 for image); the new box fetches
+  the model again. And **the new box does not start until the old one has left the cluster** —
+  starting sooner runs into the account's GPU limit, where the placement *silently never
+  happens* and it merely looks like a slow start.
+- **On a stopped engine, choosing costs nothing.** It is picked up by the start whoever uses it
+  next was going to pay for anyway.
+- 🔴 **Left on a non-default class, the hourly rate stays up.** That is why a "not the default"
+  tag and **"Back to the default"** are shown permanently while it is. **Put it back when you
+  are done.**
+- **Some classes cannot be bought.** Choose one above the account's GPU limit and the box never
+  arrives; the ECS reason (`VcpuLimitExceeded`) is printed under the state as it came. Ask the
+  deployment admin for a limit increase.
+
+### The warning about whether a model fits
+
+**When a model is enabled**, if what it wants exceeds the chosen class you are asked to confirm.
+**It is not a refusal** — quantisation and offloading may still fit it, so you can go on
+knowingly. Running short of VRAM does not slow CUDA down: it **crashes** it.
+
+Where the figure came from is printed with it, and the three are not equally strong.
+
+| Shown as | What it means |
+|---|---|
+| measured | The operator measured this model. |
+| a weights-only floor | Derived from the file sizes: a **floor**, with nothing for the context. "At least this much". |
+| unknown | Nobody measured it. 🔴 **That is not the same as saying it fits.** |
+
 ### Reading the current state
 
 Below the setting is what that engine is doing right now. **A line that is not there means "not

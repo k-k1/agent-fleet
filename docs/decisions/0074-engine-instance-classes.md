@@ -2,7 +2,7 @@
 
 English | [日本語](0074-engine-instance-classes.ja.md)
 
-- Status: **drafted (not implemented, not run on real hardware)**. 2026-09-10.
+- Status: **accepted; P0 implemented, not yet run on real hardware** (2026-09-10). P1 is not started.
   **Nothing was measured for this document.** Every number says where it comes from —
   (a) measurements in ADR 0071 and 0072, (b) facts read out of the repository's code on the
   same day, (c) things known only as AWS's published specification and **not confirmed on this
@@ -17,6 +17,14 @@ English | [日本語](0074-engine-instance-classes.ja.md)
   shipped ladder is **empty** (decision 1), and decision 4 gained both the reason for always
   waiting (no branch on a number we cannot read) and the price of one switch (15-20 minutes of
   wall clock, $0.3-0.4 at g6.xlarge rates).
+- Implemented P0 the same day (no real hardware yet). The implementation corrected the text in
+  three places — 🔴 **the rejected alternative was rejected for the wrong reason** (the template
+  wall is crossed by `af_cfn_deploy` via S3; the real reason is that decision 5's idempotent
+  re-application cannot work on a service), **the copying risk was in
+  `InstanceLaunchTemplate`, not `InstanceRequirements`** (the requirement type is the same in
+  both directions; the launch template is not, and **two fields cannot be carried**), and **the
+  admin `mode=on` route consults the gate too** (without it one button walks around the wait).
+  Each is written into the decision it belongs to.
 - Related: [0071-self-hosted-inference-engines.md](0071-self-hosted-inference-engines.md)
   decision 2 (one capacity provider per role, the box chosen by a VRAM floor), decision 5,
   decision 9 / [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 1,
@@ -47,8 +55,11 @@ to end — and the card it would run on is still a g6.xlarge (L4), so starting i
 - **The service names its role's provider** (`CapacityProviderStrategy: [{CapacityProvider:
   !Ref LlmCapacityProvider, Weight: 1}]`), so the provider's requirements are the only door
   to a different box.
-- **The 51,200-byte wall.** `60-engines.yaml` is 49.7 KB. A design with one capacity provider
-  per rung per role **does not fit** (a block is about 1.5 KB).
+- **The 51,200-byte wall.** `60-engines.yaml` is 49.7 KB, with no room for one ~1.5 KB capacity
+  provider per rung per role. 🔴 The wall itself CAN be crossed — `af_cfn_deploy` switches to S3
+  above it. What cannot be crossed is the same number in
+  `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2, which holds the shipped templates to it
+  (see the rejected alternatives).
 - **`engineDef` says the vessel belongs to the stack** — "Everything else here (service, URL,
   health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
   the stack's to declare". This ADR deliberately overturns part of that sentence.
@@ -75,9 +86,10 @@ to end — and the card it would run on is still a g6.xlarge (L4), so starting i
   `InstanceLaunchTemplate` as **required members**. `InstanceLaunchTemplateUpdate` carries
   `InstanceRequirements`, `NetworkConfiguration`, `StorageConfiguration`,
   `LocalStorageConfiguration`, `Ec2InstanceProfileArn` and more.
-- The output type (`InstanceRequirements`) and the input type (`InstanceRequirementsRequest`)
-  are **different**, so reading and writing back means copying field by field. A missed field
-  **disappears silently** (decision 8).
+- 🔴 The draft's claim that the requirement types differ between read and write is **wrong**
+  (checked while implementing): both directions use `InstanceRequirementsRequest`. **The level
+  above is what differs** — `InstanceLaunchTemplateUpdate` has no `CapacityOptionType` and no
+  `FipsEnabled`. A missed field **disappears silently** (decision 8).
 
 ### Traps already paid for (measured in ADR 0071 and 0072)
 
@@ -186,6 +198,23 @@ the mode.
 ⚠️ **Saving a rung while the engine is stopped costs nothing at all.** It is absorbed by the
 cold start whoever uses it next was going to pay anyway.
 
+**What the implementation added (P0)**:
+- The wait is judged from the **box's EC2 type**, read from the container instance's
+  `ecs.instance-type` attribute — the only place the CP can read the type of a Managed
+  Instances box (it does not appear in `ec2 describe-instances`). A box whose type the selected
+  rung does not cover is the previous rung's box, still there.
+- 🔴 **The wait is bounded at 20 minutes.** Its end belongs to AWS, and with
+  `scaleInAfter: -1` ("never tidy up") an unbounded gate is **an engine that can never start
+  again**, with one log line as the evidence. Measured draining is 427-477 s, so 20 minutes
+  waits out a slow one and still gives up.
+- Replacing is its own act (`POST …/replace-box`) and **does not touch the mode**. Making
+  somebody press "off" instead would leave the mode off afterwards, reproducing ADR 0071's trap
+  where forgetting to switch it back is indistinguishable from a stopped box.
+- 🔴 **The admin `mode=on` route consults the same gate.** It calls `setEnabled(true)` directly,
+  so without this one button **walks around the wait and buys the old rung's box**. A gate that
+  says wait does not fail the request: the mode is stored and the controller starts the engine
+  once the old box has gone.
+
 ### 5. Applying it is a read-modify-write: Describe → copy → Update
 
 Because `InstanceLaunchTemplate` is a required member, the CP reads the current configuration
@@ -208,6 +237,21 @@ neither the running box nor the desired count. The price is one more call on the
 applied, do not start** — starting anyway buys the old box while believing it is the new one,
 and with a heavy model CUDA dies and **a whole cold start is thrown away**. If they are the
 same, log the failure and start (the box's specification is already right).
+
+**What the implementation found (copying against SDK v1.87.0)**:
+- ✅ **`InstanceRequirements` is the same type in both directions**
+  (`InstanceRequirementsRequest`). The "missed requirement field" the draft feared is not here:
+  the struct that was read is carried whole and four fields are replaced in it.
+- 🔴 **The risk is one level up.** `InstanceLaunchTemplate` (read) and
+  `InstanceLaunchTemplateUpdate` (write) are **different types**, and **`CapacityOptionType`
+  (ON_DEMAND / SPOT) and `FipsEnabled` do not exist on the write type — they cannot be
+  carried**. Whether ECS preserves them or resets them is undocumented and unmeasured (open
+  question 1). Decision 8's test makes the uncarriable ones a NAMED list, so that the only
+  thing that cannot happen is one of them disappearing quietly.
+- **The VRAM floor is only expressible on a role that asks for an accelerator**
+  (`AcceleratorTotalMemoryMiB` is refused without the accelerator fields, measured in ADR
+  0071). A rung declaring 0, and a CPU-only role, **clear** it rather than asking for zero VRAM
+  — which would be a filter nothing passes.
 
 ### 6. The warning POINTS at "this may not fit". It does not refuse
 
@@ -253,15 +297,19 @@ declaration; with nothing declared, no figure is named.
 
 ### 8. A missed field must fail a TEST on the day the SDK grows one
 
-Decision 5's read-modify-write silently **drops a constraint** for every field of
-`types.InstanceRequirements` the copier forgets — lose `BurstablePerformance: excluded` and the
-GPU requirements still hold, so nothing looks wrong while the filter has quietly loosened. The
-SDK grows fields upstream.
+Decision 5's read-modify-write silently **drops a constraint** for every field the copier
+forgets — lose `BurstablePerformance: excluded` and the GPU requirements still hold, so nothing
+looks wrong while the filter has quietly loosened. The SDK grows fields upstream.
 
-So there is a unit test that **walks every field of `types.InstanceRequirements` by reflection
-and fails when the copier does not handle one** — the same device as `wiremap_convert_test.go`
-grepping for `was: map[string]any{…}` to decide which types owe an equivalence proof. On the day
-a field is added, what notices is the test, not a person.
+So there is a unit test that **walks every field of `InstanceLaunchTemplate` by reflection** and
+fails when (a) the copier leaves one zero, or (b) a field has no counterpart on the write type
+and is not listed as uncarriable — the same device as `wiremap_convert_test.go` grepping for
+`was: map[string]any{…}` to decide which types owe an equivalence proof. On the day a field is
+added, what notices is the test, not a person. **The list at implementation time is
+`CapacityOptionType` and `FipsEnabled`** (see decision 5).
+
+⚠️ It has a positive control: deleting one line (`NetworkConfiguration`) from the copier does
+make this test fail. A test that cannot fail is not a test that passed.
 
 ### 9. The IAM grant is scoped to the two capacity providers
 
@@ -307,9 +355,15 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
 ## Rejected
 
 - **One capacity provider per rung per role in CloudFormation, switching the service's
-  `capacityProviderStrategy`.** `60-engines.yaml` is 49.7 KB against 51,200 bytes and a block is
-  about 1.5 KB. **The template-size wall decided the design** (the same path ADR 0071 decision 8
-  took).
+  `capacityProviderStrategy`.** It needs no new IAM (the CP already holds `UpdateService`), and
+  the draft rejected it on template size alone. 🔴 **That reason is wrong**: `af_cfn_deploy` in
+  `deploy/aws/ecs/env.sh` switches to S3 above 51,200 bytes, and 30-ingress went through it at
+  54,681. **The real reason is that decision 5 cannot hold**: re-applying the choice before
+  every start is inert on a capacity provider and **forces a new deployment on a service**, so
+  "apply again, idempotently" would mean "kill whatever generation is in flight". (The wall is
+  still there in another form — `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2 holds the
+  shipped templates inside it — so the implementation moved prose to PARAMETERS-60-engines.md
+  to make room.)
 - **Leave it a CloudFormation parameter and have the Console only warn.** No IAM change, no
   drift. Rejected for the reason 0072 already wrote down: **making a swap a CloudFormation
   update collides with who actually does it** — an administrator at night while the GPU sleeps,

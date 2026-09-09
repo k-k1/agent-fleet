@@ -58,6 +58,9 @@ type engineTestECS struct {
 	running  int32
 	updates  int
 	instance string // capacity provider of the one container instance, if any
+	// instanceType is what that instance registers itself as (`ecs.instance-type`). Empty is a
+	// real answer too — ADR 0074's start gate must not read a missing attribute as a match.
+	instanceType string
 }
 
 func (f *engineTestECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
@@ -81,9 +84,13 @@ func (f *engineTestECS) ListContainerInstances(context.Context, *ecs.ListContain
 }
 
 func (f *engineTestECS) DescribeContainerInstances(context.Context, *ecs.DescribeContainerInstancesInput, ...func(*ecs.Options)) (*ecs.DescribeContainerInstancesOutput, error) {
-	return &ecs.DescribeContainerInstancesOutput{ContainerInstances: []ecstypes.ContainerInstance{{
+	ci := ecstypes.ContainerInstance{
 		ContainerInstanceArn: aws.String("arn:ci/i-1"), CapacityProviderName: aws.String(f.instance),
-	}}}, nil
+	}
+	if f.instanceType != "" {
+		ci.Attributes = []ecstypes.Attribute{{Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType)}}
+	}
+	return &ecs.DescribeContainerInstancesOutput{ContainerInstances: []ecstypes.ContainerInstance{ci}}, nil
 }
 
 // newTestEngine wires a gateway around one stubbed engine, with no store behind it: the

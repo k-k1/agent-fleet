@@ -74,7 +74,19 @@ type engineBox struct {
 	arn        string    // the container instance ARN
 	status     string    // ACTIVE while it can take tasks, DRAINING once it is going away
 	since      time.Time // registeredAt: when the box joined the cluster
+	// instanceType is the box's EC2 type, read from the container instance's own
+	// `ecs.instance-type` attribute (ADR 0074). It answers a question the capacity provider
+	// cannot: the provider says what the NEXT box will be, and after a rung change the two
+	// differ for as long as the old box lives. Empty when ECS did not report the attribute,
+	// and empty must never be read as "it matches" — see startGate.
+	instanceType string
 }
+
+// engineBoxTypeAttr is the container-instance attribute holding the EC2 instance type. ECS
+// registers it on every instance; it is the only place the CP can read the type of a Managed
+// Instances box, which does not appear in an unfiltered `ec2 describe-instances` at all
+// (measured, ADR 0071).
+const engineBoxTypeAttr = "ecs.instance-type"
 
 // engineBoxTTL is the cache in front of the two container-instance calls. Longer than
 // engineViewTTL because it answers a slower question: a box takes minutes to appear and 427-477
@@ -127,6 +139,16 @@ func (t *engineECS) view(ctx context.Context) (engineServiceView, error) {
 func (t *engineECS) invalidate() {
 	t.mu.Lock()
 	t.cachAt = time.Time{}
+	t.mu.Unlock()
+}
+
+// invalidateBox drops the container-instance cache. Its 20-second TTL answers a question that
+// normally moves in minutes; after a start or a stop the box is exactly what has changed, and
+// an admin panel reading a stale one reports the previous box's instance type as the current
+// one (ADR 0074).
+func (t *engineECS) invalidateBox() {
+	t.mu.Lock()
+	t.cachBoxAt = time.Time{}
 	t.mu.Unlock()
 }
 
@@ -289,6 +311,12 @@ func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 			if ci.RegisteredAt != nil {
 				b.since = *ci.RegisteredAt
 			}
+			for _, at := range ci.Attributes {
+				if aws.ToString(at.Name) == engineBoxTypeAttr {
+					b.instanceType = strings.TrimSpace(aws.ToString(at.Value))
+					break
+				}
+			}
 			return b, true
 		}
 		arns = arns[n:]
@@ -344,5 +372,8 @@ func (t *engineECS) setEnabled(ctx context.Context, on bool) error {
 		DesiredCount: aws.Int32(desired),
 	})
 	t.invalidate()
+	// The box too: a stop is the beginning of one going away and a start may buy a different
+	// one, so the cached container instance is the reading most likely to be wrong from here.
+	t.invalidateBox()
 	return err
 }
