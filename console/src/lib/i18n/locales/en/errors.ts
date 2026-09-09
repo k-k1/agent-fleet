@@ -203,4 +203,24 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.bad_key": "Enter the key.",
   "err.bad_env": "That environment variable name is invalid (use capitals and _, like ANTHROPIC_API_KEY).",
   "err.bad_workspace_id": "The workspace ID is invalid.",
+  // --- Engine administration and model ingest (ADR 0072 decisions 6, 7 and 10) ---
+  // 🔴 Each says only WHAT. Which file, which host, which engine lives in the CP's message
+  // alone, so the panel reads these with errDetail rather than errText — a translation on
+  // its own would replace the reason with a generality.
+  "err.engine_unknown": "This deployment has no such engine.",
+  "err.model_unknown": "That model is not in this engine's catalogue.",
+  "err.bad_body": "The request was malformed.",
+  "err.engine_ecs_error": "The ECS update failed.",
+  "err.engine_publish_failed": "The catalogue could not be published to the deployment.",
+  "err.bad_source": "The source is not a valid one.",
+  "err.file_unknown": "The repository does not list that file.",
+  "err.no_checksum": "The source publishes no sha256 — take it in with an explicit url and sha256.",
+  "err.source_unreachable": "The source could not be reached.",
+  "err.source_forbidden": "The source refused to be read from this deployment.",
+  "err.source_error": "The source answered with something unexpected.",
+  "err.ingest_start_failed": "The ingest task could not be started.",
+  "err.ingest_unavailable": "Ingest from the Console is not configured on this deployment.",
+  "err.license_not_accepted": "The licence has to be accepted first.",
+  "err.gated_no_token": "The repository is gated and this deployment has no Hugging Face token.",
+  "err.model_id_exists": "This engine already has a model with that id.",
 };

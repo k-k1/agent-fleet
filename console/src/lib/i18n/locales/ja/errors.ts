@@ -201,4 +201,23 @@ export const errors = {
   "err.bad_key": "キーを入力してください",
   "err.bad_env": "環境変数名が不正です（ANTHROPIC_API_KEY のように大文字と _ で指定してください）",
   "err.bad_workspace_id": "ワークスペース ID が不正です",
+  // --- 推論エンジンの管理とモデルの取り込み（ADR 0072 決定 6・7・10）---
+  // 🔴 どれも「何が」だけを言う。「どのファイルが」「どのホストが」は CP の message 側に
+  // しか無いので、パネルは errText ではなく errDetail で読む（訳だけ足すと理由が消える）。
+  "err.engine_unknown": "そのエンジンはこの配備にありません",
+  "err.model_unknown": "そのモデルはこのエンジンのカタログにありません",
+  "err.bad_body": "要求の内容が不正です",
+  "err.engine_ecs_error": "ECS の更新に失敗しました",
+  "err.engine_publish_failed": "カタログを配備に反映できませんでした",
+  "err.bad_source": "取り込み元の指定が不正です",
+  "err.file_unknown": "そのリポジトリにそのファイルがありません",
+  "err.no_checksum": "取り込み元が sha256 を公開していません。url と sha256 を直接指定してください",
+  "err.source_unreachable": "取り込み元に接続できませんでした",
+  "err.source_forbidden": "取り込み元がこの配備からの読み取りを拒否しました",
+  "err.source_error": "取り込み元が想定外の応答を返しました",
+  "err.ingest_start_failed": "取り込みタスクを起動できませんでした",
+  "err.ingest_unavailable": "この配備では Console からの取り込みが構成されていません",
+  "err.license_not_accepted": "ライセンスへの同意が必要です",
+  "err.gated_no_token": "gated のリポジトリですが、この配備に Hugging Face のトークンがありません",
+  "err.model_id_exists": "その id のモデルはこのエンジンに既にあります",
 };

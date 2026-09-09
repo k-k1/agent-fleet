@@ -283,6 +283,51 @@
   }
 }
 
+/* The ingest form sits inside the same bordered block as the register one; what it adds is a
+   place for the resolved facts and the acceptance, which have to be READ rather than skimmed. */
+.engines-ingest-accept {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+}
+
+/* The two-step forget. Indented and boxed so it reads as belonging to the row above it, and
+   laid out in a column: the checkbox decides whether gigabytes go, so it gets its own line
+   rather than sitting beside the buttons. */
+.engines-model-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.engines-model-confirm label {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+/* The heading and the timestamp that turn the job list into history rather than status. */
+.engines-ingest-jobs-head {
+  margin-top: 10px;
+  font-size: 12px;
+}
+
+.engines-ingest-when {
+  margin-left: auto;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.engines-ingest-jobs {
+  margin-top: 6px;
+}
+
 .engines-history {
   margin-top: 10px;
 }

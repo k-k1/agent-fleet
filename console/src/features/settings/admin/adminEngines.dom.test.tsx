@@ -13,14 +13,16 @@ import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
 const apiJSON = vi.fn();
-vi.mock("../../../core/api/client.ts", () => ({
+// Only the transport is stubbed. errDetail is the REAL one, because how this panel words a
+// refusal is part of what is under test: a hand-written stub that echoed `message` back would
+// have reported the English developer text as a pass.
+vi.mock("../../../core/api/client.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../../../core/api/client.ts")>()),
   api: (...args: unknown[]) => api(...args),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
-  errText: (e: { message?: string }) => e?.message || "",
-  rel: (p: string) => p,
 }));
 
-import { EnginesAdminView } from "./adminEngines.tsx";
+import { EnginesAdminView, engineIdFromFile } from "./adminEngines.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -73,6 +75,24 @@ afterEach(() => {
   api.mockReset();
   apiJSON.mockReset();
   vi.useRealTimers();
+});
+
+// 🔴 A PROPOSAL, not an answer: it fills an empty id field and the field stays editable. What
+// it has to get exactly right is the single-file checkpoint, which has no ambiguity at all —
+// and it must drop the quantisation tag, which names the FILE and not the model (the same model
+// at q4 and q8 is one model with two files).
+describe("engineIdFromFile", () => {
+  it("proposes the stem, without the quantisation that names the file", () => {
+    expect(engineIdFromFile("flux1-dev.safetensors")).toBe("flux1-dev");
+    expect(engineIdFromFile("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf")).toBe("qwen2.5-coder-0.5b-instruct");
+    // Two quantisations of one model propose one id — the CP then refuses the second as a
+    // duplicate (409 model_id_exists), which is the correct conversation to have.
+    expect(engineIdFromFile("qwen2.5-coder-0.5b-instruct-q8_0.gguf")).toBe(
+      engineIdFromFile("qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"),
+    );
+    expect(engineIdFromFile("Model-BF16.safetensors")).toBe("model");
+    expect(engineIdFromFile("vae/diffusion_pytorch_model.safetensors")).toBe("diffusion_pytorch_model");
+  });
 });
 
 describe("EnginesAdminView", () => {
@@ -225,7 +245,17 @@ describe("EnginesAdminView", () => {
   it("does not fetch the history until the section is opened", async () => {
     api.mockResolvedValue({ engines: [row(), row({ key: "llm" })] });
     await mount();
-    expect(api.mock.calls.map((c) => String(c[0]))).toEqual(["api/admin/engines"]);
+    const called = api.mock.calls.map((c) => String(c[0]));
+    // The heatmap is a 14-day query per engine and nothing on screen shows it yet.
+    expect(called.filter((p) => p.includes("/hourly"))).toEqual([]);
+    // The ingest list IS fetched, once per engine: a download started before lunch has to be
+    // visible on the panel that is opened after it, and the call is a cheap read that also
+    // reconciles a finished job.
+    expect(called.sort()).toEqual([
+      "api/admin/engines",
+      "api/admin/engines/image/ingest",
+      "api/admin/engines/llm/ingest",
+    ]);
   });
 
   it("lists every engine, each with its own control", async () => {
@@ -435,6 +465,88 @@ describe("EnginesAdminView", () => {
 
   // "Forget" is the row, not the file: the CP has no s3:DeleteObject. The one the engine starts
   // with cannot be forgotten, or the role is left with no checkpoint at all.
+  // 🔴 Measured on the dev deployment (2026-09-09): a row was forgotten and its 491 MB file was
+  // still in the bucket afterwards, because the Console never asked for `?purge=1`. The CP had
+  // implemented it — ADR 0072 decision 7's MODE=delete task exists precisely because the CP has
+  // no s3:DeleteObject — and there was simply no way in from the UI.
+  //
+  // So the two acts are told apart BEFORE the press: forgetting alone leaves bytes nothing can
+  // reach and that keep being paid for, and deleting them is a task that has to be started.
+  it("tells forgetting the row apart from deleting the bytes, and can ask for both", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({
+                key: "llm",
+                api: "chat",
+                has_models: true,
+                model_rows: [{ id: "qwen2.5-coder-0.5b", enabled: false }],
+              }),
+            ],
+          },
+    );
+    await mount();
+
+    // Pressing "forget" asks rather than acting: nothing has been sent yet.
+    await click(
+      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+    );
+    expect(apiJSON).not.toHaveBeenCalled();
+    // The default is the SAFE one, and it says what it leaves behind.
+    const box = host!.querySelector(".engines-model-confirm input") as HTMLInputElement;
+    expect(box.checked).toBe(false);
+    expect(host!.textContent).toContain("バケットのファイルはそのまま残り");
+
+    await act(async () => {
+      box.click();
+    });
+    // Ticking it changes what the sentence promises, because the act is now destructive.
+    expect(host!.textContent).toContain("バイト列を削除するタスクを起こします");
+
+    apiJSON.mockResolvedValueOnce({ purge: "deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
+    const call = apiJSON.mock.calls.at(-1)!;
+    expect(String(call[0])).toBe("api/admin/engines/llm/models/qwen2.5-coder-0.5b?purge=1");
+    expect(String(call[1])).toBe("DELETE");
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    // The CP's own words: the deletion is a task that has been LAUNCHED, not a thing that has
+    // already happened, and a row that just vanished would not say so.
+    expect(host!.textContent).toContain("deleting llm/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf");
+  });
+
+  // Leaving the box unticked must send NO purge — the destructive half has to be opt-in.
+  it("forgets the row alone when the bytes were not asked for", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({ key: "llm", api: "chat", has_models: true, model_rows: [{ id: "m1", enabled: false }] }),
+            ],
+          },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === "登録を消す") as HTMLElement,
+    );
+    apiJSON.mockResolvedValueOnce({});
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/models/m1");
+  });
+
   it("forgets a row, and refuses to forget the one in use", async () => {
     api.mockResolvedValue({
       engines: [
@@ -455,6 +567,12 @@ describe("EnginesAdminView", () => {
     expect((forget[0] as HTMLButtonElement).disabled).toBe(true);
     expect((forget[1] as HTMLButtonElement).disabled).toBe(false);
     await click(forget[1] as HTMLElement);
+    // Forgetting now asks first (see the purge test above), and the default leaves the bytes.
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-confirm button")).find(
+        (b) => b.textContent === "消す",
+      ) as HTMLElement,
+    );
     expect(apiJSON).toHaveBeenCalledWith(
       "api/admin/engines/image/models/parked",
       "DELETE",
@@ -595,5 +713,405 @@ describe("EnginesAdminView", () => {
     const body = apiJSON.mock.calls.at(-1)![2] as Record<string, number>;
     expect(body.context_tokens).toBe(0);
     expect(body.max_output_tokens).toBe(0);
+  });
+
+  // ADR 0072 decision 6 / 10. The order is the whole point: look the source up, SEE the licence
+  // and the gating, and only then is there a checkbox to accept it — an acceptance offered
+  // before the terms is not one.
+  it("shows the licence before offering to accept it, and refuses a gated repo with no token", async () => {
+    api.mockResolvedValue({
+      engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })],
+    });
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    await type(inputs[0], "black-forest-labs/FLUX.1-dev");
+    await type(inputs[1], "flux1-dev.safetensors");
+    await type(inputs[2], "flux1-dev");
+
+    // Nothing to accept yet: the source has not been read.
+    expect(host!.querySelector(".engines-ingest-accept")).toBe(null);
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "4610115bb0c89560703c892c59ac2742fa821e60ef5871b33493ba544683abd7",
+      bytes: 23802932552,
+      gated: true,
+      license: "other",
+      license_name: "flux-1-dev-non-commercial-license",
+      commercial_use: "no",
+      can_ingest: false,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    // The two licence fields, the size and both warnings — the non-commercial one because the
+    // deployment may be charging, the gated one because it cannot be fetched at all here.
+    expect(host!.textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(host!.textContent).toContain("23.8 GB");
+    expect(host!.textContent).toContain("非商用ライセンス");
+    expect(host!.textContent).toContain("トークンがありません");
+    // 🔴 And the acceptance is unusable: pressing on would spend a Fargate task to earn a 401.
+    const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+    expect(box.disabled).toBe(true);
+    const go = Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+      (b) => b.textContent === "取り込む",
+    ) as HTMLButtonElement;
+    expect(go.disabled).toBe(true);
+  });
+
+  it("starts an ingest once the licence is accepted, and shows the job", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input"));
+    await type(inputs[0], "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF");
+    await type(inputs[1], "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
+    await type(inputs[2], "qwen2.5-coder-1.5b");
+    await type(inputs[4], "32768");
+    // The output cap is a select over fractions of the window, not a free number — 1/8 of
+    // 32,768 is the 4,096 both models here were already being run at.
+    await act(async () => {
+      const sel = host!.querySelectorAll(".engines-ingest select")[0] as HTMLSelectElement;
+      sel.value = "4096";
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+
+    apiJSON.mockResolvedValueOnce({ sha256: "cc32", bytes: 1117320768, gated: false,
+      license: "apache-2.0", commercial_use: "yes", can_ingest: true });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+      box.click();
+    });
+    apiJSON.mockResolvedValueOnce({ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running" });
+    // After starting, the panel re-reads the job list — which is how a running download appears.
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [{ id: "j1", model_id: "qwen2.5-coder-1.5b", state: "running", source: "hf:Qwen/…", bytes: 1117320768 }] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/llm/ingest");
+    expect(body[2]).toMatchObject({
+      id: "qwen2.5-coder-1.5b",
+      kind: "gguf",
+      s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf",
+      context_tokens: 32768,
+      max_output_tokens: 4096,
+      license_accepted: true,
+      source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
+    });
+    expect(host!.textContent).toContain("取り込み中");
+  });
+
+  /** The input of the form row with this label. By label rather than by index, because the
+   *  filename row turns from an input into a select the moment a listing arrives. */
+  const fieldByLabel = (label: string) =>
+    Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row")).find(
+      (l) => l.querySelector("span")?.textContent === label,
+    )!;
+
+  // 🔴 The context length Hugging Face publishes is the ARCHITECTURE's ceiling, and this
+  // deployment already runs a model well below it: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF
+  // says 262144 and is run at 32768, because 262k does not fit an L4. So a number somebody
+  // entered has to outrank the one off the model card — silently replacing it is how a window
+  // that was chosen for the GPU becomes one that was chosen by the publisher.
+  it("never overwrites a window that was typed with the model's ceiling", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const set = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await set(fieldByLabel("リポジトリ").querySelector("input")!, "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF");
+    await set(fieldByLabel("ファイル名").querySelector("input")!, "Q4_K_M.gguf");
+    // Chosen deliberately, for the GPU this deployment has.
+    await set(fieldByLabel("コンテキストウィンドウ").querySelector("input")!, "32768");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "a".repeat(64),
+      bytes: 18556689568,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 262144,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+
+    const ctx = fieldByLabel("コンテキストウィンドウ").querySelector("input") as HTMLInputElement;
+    expect(ctx.value).toBe("32768");
+    // Still SAID, because it is a fact worth knowing — just not one that overwrites a decision.
+    expect(host!.textContent).toContain("モデルの上限 262144");
+  });
+
+  // 🔴 Observed on the dev deployment (2026-09-09): after a model was forgotten AND its bytes
+  // purged, two finished jobs still sat under the ingest form — correctly, because a job is a
+  // record of an event and "this ingest ran and finished" goes on being true. But undated, a
+  // green "done" beside a model id reads as THAT MODEL's current state, i.e. as "ready to
+  // use", which is the opposite of the truth for a model that no longer exists anywhere.
+  it("dates the ingest history, so a finished job does not read as a model that is ready", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "qwen2.5-coder-0.5b-instruct",
+                state: "done",
+                source: "hf:Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/…",
+                bytes: 491400064,
+                created_at: "2026-09-09T02:59:30Z",
+              },
+            ],
+          }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    // Headed as history, not as a section of the catalogue above it.
+    expect(host!.textContent).toContain("取り込みの履歴");
+    const when = host!.querySelector(".engines-ingest-when");
+    expect(when).toBeTruthy();
+    expect(when!.textContent).toBeTruthy();
+    // The job survives a model that is not in the catalogue at all — that IS the case this
+    // dating exists for, so the row has to still be here.
+    expect(host!.textContent).toContain("qwen2.5-coder-0.5b-instruct");
+  });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): the filename was free text, and one letter
+  // short of `flux1-dev.safetensors` is refused correctly while looking exactly like a file
+  // that is not there. So "look it up" with no filename asks the repository what it HOLDS, and
+  // the answer becomes a picker.
+  //
+  // The two numbers ride along from the same answer: Hugging Face has already parsed the GGUF
+  // header, so the window is offered rather than copied off a model card by hand, and the cap
+  // follows at an eighth of it. Both stay editable — the window especially, because it is the
+  // MODEL's ceiling and not what fits in this deployment's GPU.
+  it("lists what the repository holds, and offers the window off the file that is picked", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "llm", api: "chat", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const el = host!.querySelector(".engines-ingest input")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, "Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    // No filename yet, so the first call asks what there is — and starts nothing.
+    apiJSON.mockResolvedValueOnce({
+      files: [
+        { name: "qwen2.5-coder-0.5b-instruct-q2_k.gguf", bytes: 415182720 },
+        { name: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf", bytes: 491400064 },
+      ],
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/files");
+    const picker = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    expect(Array.from(picker.options).map((o) => o.value)).toEqual([
+      "",
+      "qwen2.5-coder-0.5b-instruct-q2_k.gguf",
+      "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf",
+    ]);
+    // The size is on the option, because "which quantisation" IS a question about size.
+    expect(picker.textContent).toContain("491 MB");
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "1d9614638d18024d0fbb36575a15f1302a3adf044df10345688ec4f6e1c4ff32",
+      bytes: 491400064,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+      context_length: 32768,
+    });
+    await act(async () => {
+      picker.value = "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf";
+      picker.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    // Picking resolves that file, and the resolve is where the licence comes from.
+    expect(String(apiJSON.mock.calls.at(-1)![0])).toBe("api/admin/engines/llm/ingest/resolve");
+    expect(apiJSON.mock.calls.at(-1)![2]).toMatchObject({
+      source: { hf: { file: "qwen2.5-coder-0.5b-instruct-q4_k_m.gguf" } },
+    });
+    // Attributed as the MODEL's number, never presented as the window this deployment chose.
+    expect(host!.textContent).toContain("モデルの上限 32768");
+
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest input")) as HTMLInputElement[];
+    const ctxField = inputs.find((i) => i.value === "32768");
+    expect(ctxField).toBeTruthy();
+    const caps = Array.from(host!.querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
+    expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
+  });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
+  // "the repository does not list flux1-dev.safetensor" — the CP's developer message, in
+  // English, on a Japanese screen. Every code this panel can raise was a string literal in
+  // engine_ingest.go, and the catalogue gate reads only the constants in errcodes.go, so none
+  // of them had ever been checked for a translation.
+  //
+  // Both halves are pinned here: the sentence has to be Japanese, and the file the CP named has
+  // to survive into it. Translating alone would have answered "そのリポジトリにそのファイルが
+  // ありません" over a form with no way to tell WHICH file was wrong.
+  it("says why an ingest was refused in the user's language, without losing the detail", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const el = host!.querySelector(".engines-ingest input")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, "black-forest-labs/FLUX.1-dev");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    apiJSON.mockResolvedValueOnce({
+      error: { code: "file_unknown", message: "the repository does not list flux1-dev.safetensor" },
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    const shown = host!.querySelector(".engines-ingest .form-err")!.textContent!;
+    expect(shown).toContain("そのリポジトリにそのファイルがありません");
+    expect(shown).toContain("flux1-dev.safetensor");
+  });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): the ingest finished in 72 seconds, the job
+  // said 完了 — and the model list went on showing the two rows it already had. The row an
+  // ingest creates is disabled by design, so it is precisely the row an administrator came here
+  // to switch on, and it was reachable only by pressing refresh. Nothing else re-reads it: the
+  // job poll reads only the job list, and the engine poll is off because an on-demand engine
+  // parked at "stopped" is a settled state.
+  it("re-reads the catalogue when an ingest finishes, so the new disabled row appears", async () => {
+    vi.useFakeTimers();
+    const catalogue = (extra: Record<string, unknown>[]) =>
+      row({
+        key: "llm",
+        api: "chat",
+        has_models: true,
+        model_rows: [{ id: "qwen2.5-coder-1.5b", enabled: true }, ...extra],
+      });
+    let finished = false;
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "qwen2.5-coder-0.5b",
+                state: finished ? "done" : "running",
+                source: "hf:Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/…",
+                bytes: 491400064,
+              },
+            ],
+          }
+        : {
+            engines: [
+              catalogue(finished ? [{ id: "qwen2.5-coder-0.5b", enabled: false }] : []),
+            ],
+          },
+    );
+    await mount();
+
+    // The catalogue rows only — the job list is the other <ul> and it names the model too, so
+    // asserting on the panel's whole text would pass with the bug still in place.
+    const catalogueIds = () =>
+      Array.from(
+        host!.querySelectorAll("ul.engines-model-list:not(.engines-ingest-jobs) .mono"),
+      ).map((n) => n.textContent);
+    expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b"]);
+    expect(host!.textContent).toContain("取り込み中");
+
+    finished = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(host!.textContent).toContain("完了");
+    expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b", "qwen2.5-coder-0.5b"]);
+    // Disabled, so what it offers is the switch-on — decision 6: taken in is not the same as
+    // on offer.
+    const fresh = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (li) => li.querySelector(".mono")?.textContent === "qwen2.5-coder-0.5b",
+    )!;
+    expect(fresh.className).not.toContain("on");
+    expect(fresh.textContent).toContain("有効にする");
   });
 });

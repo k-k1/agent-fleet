@@ -1,0 +1,22 @@
+-- Where a catalogue row's bytes came from (ADR 0072 decisions 6 and 10, phase P4).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`. This has happened twice.
+--
+-- The row already keeps a SNAPSHOT of the licence — license, license_name, license_url, who
+-- accepted it and when — because a model card can change and the terms somebody agreed to
+-- cannot. It did not keep the one fact those are a property OF: which repository the file was
+-- taken from.
+--
+-- That gap has a name. An id only has to be unique within a role in one deployment, so it is
+-- kept short and readable: it is what a member reads in the launch menu, and every character
+-- also rides in the 4,096-character SSM active set the box reads. Two vendors publishing a
+-- model under the same name is then a collision the ingest refuses (model_id_exists) rather
+-- than one the id prevents by being long. But refusing the second is not the same as saying
+-- which vendor the FIRST came from, and after the job list has aged out nothing did.
+--
+-- engine_ingest_jobs.source holds it while a job exists. This copies it onto the row, where it
+-- lives as long as the model does. Empty for rows that predate this and for the seed, which
+-- comes from the stack rather than from anywhere with a URL.
+ALTER TABLE engine_models ADD COLUMN source TEXT NOT NULL DEFAULT '';

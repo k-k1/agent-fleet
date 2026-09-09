@@ -69,6 +69,33 @@ type engineDef struct {
 
 type engineTable struct {
 	Engines []engineDef `json:"engines"`
+	// Ingest is deployment-wide rather than per engine: one Fargate task definition stages a
+	// file for whichever role asked for it (ADR 0072 decision 6). Absent on a table written
+	// before phase P4, which is why every field is checked before use rather than assumed.
+	Ingest engineIngestDef `json:"ingest"`
+}
+
+// engineIngestDef is what the Control Plane needs to START an ingest and to say why one failed.
+//
+// Declared by the stack, like everything else here (ADR 0053): a `RunTask` needs a task
+// definition, subnets and a security group, and the CP cannot ask CloudFormation for them at
+// request time.
+type engineIngestDef struct {
+	TaskDef        string   `json:"taskDef"`
+	Subnets        []string `json:"subnets"`
+	SecurityGroups []string `json:"securityGroups"`
+	// LogGroup is where the task writes. The exit code says a container failed; this says why
+	// (a sha256 mismatch, a 401 on a gated repository, no space), and that sentence is what the
+	// panel shows.
+	LogGroup string `json:"logGroup"`
+	// HasToken is whether the deployment configured HF_TOKEN for the ingest task. It decides
+	// whether a GATED repository can be taken in at all, and the answer is worth having before
+	// a task is started rather than after it fails with a 401 (ADR 0072 decision 10).
+	HasToken bool `json:"hasToken"`
+}
+
+func (d engineIngestDef) ok() bool {
+	return strings.TrimSpace(d.TaskDef) != "" && len(d.Subnets) > 0
 }
 
 // The API families an engine can speak. It is declared by the stack rather than guessed from
@@ -170,6 +197,27 @@ type engineRegistry struct {
 	mu      sync.RWMutex
 	byKey   map[string]*engineRuntimeState
 	signKey []byte
+	// ingest is deployment-wide (one task definition serves both roles), so it hangs off the
+	// registry rather than off an engine. Nil when the stack declares none — a deployment
+	// running an ADR 0071 table, or one whose CP has no AWS at all.
+	ing *engineIngester
+}
+
+// ingester is the ingest runner, or nil when this deployment has none.
+func (r *engineRegistry) ingester() *engineIngester {
+	if r == nil {
+		return nil
+	}
+	return r.ing
+}
+
+// ingestDef is what the stack declared about taking models in. The zero value is a complete
+// answer: `hasToken` false and `ok()` false mean "no gated repositories, no ingest".
+func (r *engineRegistry) ingestDef() engineIngestDef {
+	if r == nil || r.ing == nil {
+		return engineIngestDef{}
+	}
+	return r.ing.def
 }
 
 func (r *engineRegistry) get(key string) *engineRuntimeState {
@@ -322,6 +370,27 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	}
 	ecsc := ecs.NewFromConfig(ac)
 	cluster := firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")
+	// Taking models in (ADR 0072 decision 6). Only wired when the stack declared an ingest task
+	// AND there is somewhere to keep the jobs: without either, the panel says so and the manual
+	// route stays. The reconcile loop is started here rather than per engine — one task
+	// definition serves both roles.
+	if mgr != nil && mgr.store != nil && table.Ingest.ok() {
+		reg.ing = &engineIngester{
+			def: table.Ingest, cluster: cluster, ecs: ecsc,
+			logs:   newEngineIngestLogs(ac),
+			store:  mgr.store,
+			models: mgr.store,
+			onDone: func(role string) {
+				if e := reg.get(role); e != nil {
+					e.catalog.invalidate()
+					if err := e.publishActiveSet(context.Background()); err != nil {
+						log.Printf("engines: %v", err)
+					}
+				}
+			},
+		}
+		go reg.ing.run(context.Background())
+	}
 	for _, d := range table.Engines {
 		// The seed runs before anything reads the catalogue, so an upgrade from ADR 0071 comes
 		// up serving what it served before rather than as an engine with nothing to load

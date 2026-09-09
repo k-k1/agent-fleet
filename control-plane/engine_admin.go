@@ -55,16 +55,22 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// entry in the agent-proxy allowlist in routes.go — that list exists for endpoints the
 	// Workspace Agent implements and the CP forwards.
 	mux.HandleFunc("PUT /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.putModel))
-	// Registering a file that is ALREADY in the bucket, and forgetting one. Not the ingest of
-	// ADR 0072 decision 6 — that fetches from Hugging Face, needs ecs:RunTask and is phase P4.
-	// This is the other half of what P4 will do: write down what a staged file is.
-	//
-	// P0 cannot do without it. The seed creates exactly ONE row per role (the model the stack
-	// was already serving), so with only that and the toggles there is no second checkpoint to
-	// select — and "select another checkpoint without touching CloudFormation" is P0's own
-	// definition of done.
+	// Registering a file that is ALREADY in the bucket, and forgetting one. The ingest below
+	// fetches; this only writes down what a staged file is, and it stays because it is the
+	// route that needs no `ecs:RunTask` and works on a deployment whose egress is closed.
 	mux.HandleFunc("POST /api/admin/engines/{key}/models", a.withSuperAdmin(a.postModel))
 	mux.HandleFunc("DELETE /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.deleteModel))
+	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
+	// and watching the jobs that does.
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withSuperAdmin(a.postIngest))
+	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withSuperAdmin(a.listIngest))
+	// Resolving a source WITHOUT starting anything: what the licence is, whether the repository
+	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
+	// licence they are about to accept is on screen BEFORE the button that accepts it.
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/resolve", a.withSuperAdmin(a.resolveIngest))
+	// And what the repository HAS, so the filename is picked rather than copied by hand across
+	// two windows — the same read, filtered to the files this engine could actually load.
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/files", a.withSuperAdmin(a.listIngestFiles))
 }
 
 // get (GET /api/admin/engines) lists every engine with its mode and what ECS is doing.
@@ -217,7 +223,7 @@ func (a engineAdminAPI) uptime(w http.ResponseWriter, r *http.Request, _ store.I
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -265,7 +271,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	var b struct {
@@ -273,7 +279,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		Enabled *bool  `json:"enabled"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	val, aerr := engineModeFromBody(b.Mode, b.Enabled)
@@ -297,7 +303,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	e.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
 	if e.ecs != nil && (val == engineModeOn || val == engineModeOff) {
 		if err := e.ecs.setEnabled(r.Context(), val == engineModeOn); err != nil {
-			writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_ecs_error", "ecs update failed: " + err.Error()})
+			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, "ecs update failed: " + err.Error()})
 			return
 		}
 	}
@@ -331,7 +337,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	id := strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -344,7 +350,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		Default  *bool `json:"default"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 
@@ -370,7 +376,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	default:
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "enabled, selected or default is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected or default is required"})
 		return
 	}
 	if err != nil {
@@ -378,7 +384,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
 		return
 	}
 	e.catalog.invalidate()
@@ -388,7 +394,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// starting with the old one — which is the exact failure "publish the active set" exists to
 	// prevent, and it would only be noticed at the next cold start.
 	if perr := e.publishActiveSet(ctx); perr != nil {
-		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
 	a.audit(ctx, ident, "engine."+key+".model", action+" "+id)
@@ -414,7 +420,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -442,12 +448,12 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		BaseModel       string   `json:"base_model"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	id := strings.TrimSpace(b.ID)
 	if id == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "id is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "id is required"})
 		return
 	}
 	m := store.EngineModel{
@@ -466,7 +472,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		}
 	}
 	if len(m.Files) == 0 {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "at least one file (s3Key) is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
 	}
 	if err := a.mgr.store.PutEngineModel(r.Context(), m); err != nil {
@@ -490,12 +496,27 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	id := strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
 		writeAPIErr(w, internalErr(errors.New("no store")))
 		return
+	}
+	// The row has to be read BEFORE it is deleted: the S3 keys are in it, and a purge with no
+	// keys silently deletes nothing while reporting success.
+	var keys []string
+	if rows, lerr := a.mgr.store.ListEngineModels(r.Context(), key); lerr == nil {
+		for _, m := range rows {
+			if m.ID != id {
+				continue
+			}
+			for _, f := range m.Files {
+				if f.S3Key != "" {
+					keys = append(keys, f.S3Key)
+				}
+			}
+		}
 	}
 	found, err := a.mgr.store.DeleteEngineModel(r.Context(), key, id)
 	if err != nil {
@@ -503,18 +524,38 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
 		return
+	}
+	// ?purge=1 also deletes the bytes — and the CP cannot: it has no s3:DeleteObject and is not
+	// getting one (ADR 0072 decision 7). The ingest task does it, in MODE=delete, because that
+	// task is the one principal in the deployment allowed to write in that bucket at all.
+	purged := ""
+	if r.URL.Query().Get("purge") == "1" && len(keys) > 0 {
+		if ing := a.reg.ingester(); ing != nil {
+			if err := ing.deleteObjects(r.Context(), keys); err != nil {
+				purged = "the row is gone; the files are not: " + err.Error()
+			} else {
+				purged = "deleting " + strings.Join(keys, " ")
+			}
+		} else {
+			purged = "this deployment declares no ingest task, so the files stay in the bucket"
+		}
+		a.audit(r.Context(), ident, "engine."+key+".model", "purge "+id+": "+purged)
 	}
 	e.catalog.invalidate()
 	// A deleted row may have been enabled, so the box's active set really has changed.
 	if perr := e.publishActiveSet(r.Context()); perr != nil {
-		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
 	a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
 	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
-	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
+	row := a.row(r.Context(), e)
+	if purged != "" {
+		row["purge"] = purged
+	}
+	writeJSON(w, http.StatusOK, row)
 }
 
 // audit records one super-admin action against the catalogue. Same ledger, same shape as the
@@ -538,13 +579,262 @@ func engineModeFromBody(mode string, enabled *bool) (string, *apiError) {
 		return mode, nil
 	case "":
 		if enabled == nil {
-			return "", &apiError{http.StatusBadRequest, "bad_body", "mode is required"}
+			return "", &apiError{http.StatusBadRequest, errCodeEngineBadBody, "mode is required"}
 		}
 		if *enabled {
 			return engineModeOn, nil
 		}
 		return engineModeOff, nil
 	default:
-		return "", &apiError{http.StatusBadRequest, "bad_body", "unknown mode: " + mode}
+		return "", &apiError{http.StatusBadRequest, errCodeEngineBadBody, "unknown mode: " + mode}
 	}
+}
+
+// --- taking a model in (ADR 0072 decision 6, phase P4) -------------------------
+
+// engineIngestBody is what the panel posts. The SOURCE is one of three shapes; everything else
+// is what the catalogue row should say once the bytes are in the bucket.
+type engineIngestBody struct {
+	ID     string             `json:"id"`
+	Kind   string             `json:"kind"`
+	S3Key  string             `json:"s3Key"`
+	Source engineIngestSource `json:"source"`
+
+	Description     string   `json:"description"`
+	BaseModel       string   `json:"base_model"`
+	ContextTokens   int      `json:"context_tokens"`
+	MaxOutputTokens int      `json:"max_output_tokens"`
+	Sizes           []string `json:"sizes"`
+	// LicenseAccepted is REQUIRED, and it is not a formality (ADR 0072 decision 10). A gated
+	// repository distributes only to accounts that accepted its terms, and on a multi-tenant
+	// deployment the operator accepts on behalf of every member — so the answer is recorded
+	// against a person, in the row and in the audit log.
+	LicenseAccepted bool `json:"license_accepted"`
+}
+
+// resolveIngest (POST …/ingest/resolve) answers "what is this file" without starting anything.
+//
+// It exists so that the licence, the gating and the size are on screen BEFORE the checkbox that
+// accepts the licence — an acceptance offered ahead of the terms is not one.
+func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
+		return
+	}
+	var b engineIngestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	res, aerr := engineIngestResolve(r.Context(), b.Source)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, engineResolvedRow(res, a.reg.ingestDef()))
+}
+
+// engineResolvedRow is what the panel draws before anything is started. `can_ingest` is the
+// verdict this route exists for: a gated repository on a deployment with no HF token cannot be
+// taken in, and saying so here costs nothing — finding out from a 401 costs a Fargate task and
+// a confused administrator.
+func engineResolvedRow(res engineResolved, def engineIngestDef) map[string]any {
+	row := map[string]any{
+		"sha256":           res.SHA256,
+		"bytes":            res.Bytes,
+		"gated":            res.Gated,
+		"commercial_use":   engineCommercialUse(res),
+		"source":           res.Source,
+		"can_ingest":       !res.Gated || def.HasToken,
+		"deployment_token": def.HasToken,
+	}
+	if res.License != "" {
+		row["license"] = res.License
+	}
+	if res.LicenseName != "" {
+		row["license_name"] = res.LicenseName
+	}
+	if res.LicenseURL != "" {
+		row["license_url"] = res.LicenseURL
+	}
+	if res.BaseModel != "" {
+		row["base_model"] = res.BaseModel
+	}
+	// The model's own maximum, offered so nobody reads it off a model card by hand. Sent as
+	// what it is — a ceiling, not a setting: 🔴 the 30B in this deployment publishes 262144 and
+	// is run at 32768, because the architecture's limit and what fits in an L4 are different
+	// questions and only one of them is Hugging Face's to answer.
+	if res.ContextLength > 0 {
+		row["context_length"] = res.ContextLength
+	}
+	return row
+}
+
+// engineIngestKindFor says what an engine takes in, which is what the file list is filtered by.
+// The catalogue's `kind` is the same word the panel sends when it starts one.
+func engineIngestKindFor(e *engineRuntimeState) string {
+	if e.def.api() == engineAPIImages {
+		return "checkpoint"
+	}
+	return "gguf"
+}
+
+// listIngestFiles (POST …/ingest/files) answers "what does this repository offer", so the
+// filename is chosen instead of retyped. 🔴 Measured 2026-09-09: a name one letter short
+// (`flux1-dev.safetensor`) is refused correctly and looks exactly like a file that is not
+// there, and the person is left comparing two strings across two windows.
+//
+// It starts nothing, like the resolve, and it is the same read: whatever is picked here is
+// resolved out of an answer with the same shape a moment later.
+func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
+		return
+	}
+	var b engineIngestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	files, aerr := engineIngestList(r.Context(), b.Source, engineIngestKindFor(e))
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"files": files})
+}
+
+// postIngest (POST …/ingest) resolves the source and starts the task.
+func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	ing := a.reg.ingester()
+	if ing == nil {
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
+			"this deployment's engine stack declares no ingest task — stage the file by hand and register it"})
+		return
+	}
+	var b engineIngestBody
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	id, s3key := strings.TrimSpace(b.ID), strings.TrimSpace(b.S3Key)
+	if id == "" || s3key == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "id and s3Key are required"})
+		return
+	}
+	if !b.LicenseAccepted {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestNotAccepted,
+			"the licence has to be accepted before a model is taken in"})
+		return
+	}
+	// 🔴 An id already in the catalogue is REFUSED, because the row is written by PutEngineModel
+	// and that is an upsert on (role, id) — correct for the seed and for registering a staged
+	// file, catastrophic here. The job would download for minutes and then replace a working
+	// row's files and licence with the new ones AND set enabled=false, so the engine would lose
+	// the checkpoint it starts with and nobody would connect the two events.
+	//
+	// Refusing is also the honest reading of what an ingest is: it CREATES a row (disabled, for
+	// an administrator to turn on). Replacing the bytes under an id is a different act, and
+	// forgetting the old row first says so out loud.
+	for _, m := range e.catalog.list(r.Context()) {
+		if m.ID == id {
+			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
+				"this engine already has a model called " + id + " — forget that row first, or choose another id"})
+			return
+		}
+	}
+	res, aerr := engineIngestResolve(r.Context(), b.Source)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes
+	// into a Fargate task, and the message that reaches the panel is an exit code.
+	if res.Gated && !ing.def.HasToken {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestGatedNoToken,
+			"that repository is gated: accept its terms on Hugging Face with the operator's account " +
+				"and give the stack an HfTokenSecretArn — the token is read by the ingest task only"})
+		return
+	}
+	job, aerr := ing.start(r.Context(), engineIngestRequest{
+		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
+		Description:   strings.TrimSpace(b.Description),
+		BaseModel:     engineFirstNonEmpty(strings.TrimSpace(b.BaseModel), res.BaseModel),
+		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
+		AcceptedBy: ident.ID, Resolved: res,
+	})
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	// The acceptance is audited whether or not the download later succeeds: the operator agreed
+	// to the terms at this moment, and that is true even if Hugging Face then times out.
+	a.audit(r.Context(), ident, "engine."+key+".ingest",
+		id+" from "+res.Source+" (licence "+engineLicenceLabel(res)+" accepted)")
+	writeJSON(w, http.StatusOK, engineIngestJobRow(job))
+}
+
+// listIngest (GET …/ingest) is the job list, reconciled against ECS first so that what it
+// reports is what ECS thinks rather than what this table last heard.
+func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	if a.reg.get(key) == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if ing := a.reg.ingester(); ing != nil {
+		ing.reconcile(r.Context())
+	}
+	if a.mgr == nil || a.mgr.store == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"jobs": []any{}})
+		return
+	}
+	jobs, err := a.mgr.store.ListEngineIngestJobs(r.Context(), key, 20)
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	out := make([]map[string]any, 0, len(jobs))
+	for _, j := range jobs {
+		out = append(out, engineIngestJobRow(j))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"jobs": out})
+}
+
+// engineIngestJobRow is one job as the panel reads it. The SPEC is not on the wire: it is this
+// process's own shape, it holds nothing the panel does not already have, and a job list is not
+// where a catalogue row should be edited.
+func engineIngestJobRow(j store.EngineIngestJob) map[string]any {
+	row := map[string]any{
+		"id": j.ID, "model_id": j.ModelID, "s3_key": j.S3Key,
+		"source": j.Source, "state": j.State, "created_at": j.CreatedAt,
+	}
+	if j.Message != "" {
+		row["message"] = j.Message
+	}
+	if j.Bytes > 0 {
+		row["bytes"] = j.Bytes
+	}
+	return row
+}
+
+func engineLicenceLabel(res engineResolved) string {
+	return engineFirstNonEmpty(res.LicenseName, res.License, "unstated")
+}
+
+func engineFirstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if strings.TrimSpace(s) != "" {
+			return strings.TrimSpace(s)
+		}
+	}
+	return ""
 }

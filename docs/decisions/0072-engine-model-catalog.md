@@ -2,7 +2,8 @@
 
 English | [日本語](0072-engine-model-catalog.ja.md)
 
-- Status: **P0 and P1 implemented and verified on hardware (2026-09-08). P2 onwards not started.**
+- Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). P2, P3
+  and P5 not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -47,6 +48,18 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   (a command-line flag beats the preset, so one `-c` gives every model the same window), and
   **warm is "any model loaded", not "the default model loaded"** (a box that swapped models would
   read as answering-but-not-warm, and the `unwarmed` rule would stop it mid-conversation).
+- The next day (2026-09-09), **P4 was implemented and pressed on hardware** (*P4 measurements*,
+  *P4 on hardware*). **All three halves of the definition of done passed** — one ungated model
+  (491 MB, 72 seconds from button to row), the gated refusal (which starts no task at all), and
+  a gated ingest (FLUX.1-dev, 23.8 GB, 15 minutes 51 seconds). 🔴 **Six defects appeared that
+  only pressing could find, one of which had killed an entire path**: `HfTokenSecretArn` alone
+  does not start the ingest task, because ECS resolves `Secrets` as the **execution role** and
+  that role had no grant. The other five: a finished ingest does not put its row on the list; a
+  failure reaches a Japanese screen in English (the guard read only constants, and these codes
+  were literals); a free-text filename, and shards in the picker; an upsert on an existing id;
+  and **no way at all to ask for `purge`**. Four things hardware needed that the decisions did
+  not name: the candidate-listing API, the window read off the model with the output cap as a
+  fraction, the `source` column, and a two-step delete.
 - The same day, the **review before P0** landed at the end ("Review (2026-09-08, before P0)") and
   the text was revised on it. Four premises fell — 🔴 **the CP task role holds no S3 permission
   at all** (decisions 6 and 7 had the CP reading manifests and deleting S3 files), 🔴 **SSM's
@@ -489,6 +502,12 @@ names move between versions — pin the tag and freeze the templates behind gold
      the sha256 check was done by `fetch`, and that is enough. The manifest is **for the box**. The
      row is created as `enabled: false` — **ingested is not offered**; an admin enables it. In
      progress and failure reasons (sha256 mismatch, 401, disk) show on the panel's row.
+   - 🔴 **A gated repository publishes its metadata anonymously** (P4 measurement 1):
+     `api/models/<repo>?blobs=true` answers with the licence, the gating flag and **every file's
+     sha256 and size** with no token, and only the DOWNLOAD is 401. So the CP resolves without
+     ever holding the operator's token, and a gated repository on a deployment with no token is
+     refused BEFORE a task is started — nine minutes of Fargate ending in a 401 costs money and
+     explains nothing.
    - **Civitai** (the de-facto home of SDXL LoRAs): downloads authenticate with an
      `Authorization: Bearer` API key; the sha256 is `files[].hashes.SHA256` of the
      `model-versions` API. The key is an operator secret in Secrets Manager like HF's, read by
@@ -926,6 +945,155 @@ credentials cannot drive it (the same wall as P0 measurement 5).
   different question from "is it healthy". Not derived from the provider name (ADR 0053): a second
   engine speaking the same API would otherwise inherit a probe nobody chose for it.
 
+## P4 measurements (2026-09-09, while implementing)
+
+Ingest from the Console (decision 6), gating and licence acceptance (decision 10), and
+`MODE=delete` (decision 7). This splits in two: **the upstream measuring that changed the design
+and what the implementation turned up** (below), and **what pressing the buttons on hardware
+produced** (the next section). The second list is the longer one.
+
+1. 🔴 **A gated repository publishes its metadata anonymously.** Checked on FLUX.1-dev and
+   SD 3.5 Medium: `api/models/<repo>?blobs=true` returned `gated: "auto"`, `license: "other"`,
+   the `license_name` (`flux-1-dev-non-commercial-license` / `stabilityai-ai-community`) and
+   **the sha256 and size of all 29 files** with no token — and only
+   `resolve/main/<file>` answered 401. That decided the shape: **the Control Plane does not hold
+   the Hugging Face token.** The CP resolves, the ingest task (which has the token) fetches, and
+   decision 6's "the token never lands on a box" now covers the CP as well.
+2. **Civitai's API is alive** (open question 4). `api/v1/model-versions/128713` answered
+   anonymously with `files[].hashes.SHA256` (upper case), `sizeKB` (**fractional kilobytes** —
+   multiply by 1024), `downloadUrl`, `baseModel` and `model.type`, and the download 302'd to a
+   signed R2 URL that needed no key. There is no licence field of the kind Hugging Face has, so
+   the catalogue says "see the model page" — **a guessed licence name must not sit next to real
+   ones**.
+3. **`commercial_use` is read off the licence name** (decision 10): `no` for anything containing
+   `non-commercial` / `-nc`, `yes` for Apache-2.0 / MIT / OpenRAIL++ / CreativeML OpenRAIL-M,
+   `unknown` otherwise. **`unknown` is a real answer** — cheaper than a list of every licence in
+   the world, and far cheaper than a wrong `yes`.
+4. 🔴 **A semicolon in a migration comment stopped the Control Plane booting — again.** The
+   runner splits the file on semicolons with no SQL parser, so one inside a comment cut a
+   `CREATE TABLE` in half and every test failed with `incomplete input`. It is a known trap, and
+   it was walked into **inside the warning written to explain it** (which contained a literal
+   `;`). The file now says, in words, that no comment in it may contain one.
+5. **A job is a row, and it carries the catalogue row it will create.** A download runs for
+   minutes (Hugging Face: 4–236 MB/s) and a CP can be replaced inside one. The first cut kept
+   the pending row in a map in the process, which leaves "the bytes are in the bucket and the
+   row is nobody's to create". The job row now holds the spec as JSON, and a test pins that a
+   DIFFERENT process finishes the job and writes the row.
+6. **A failure reports the task's own words.** `DescribeTasks` says "fetch exited 1". Reading the
+   log (a `logs:GetLogEvents` grant scoped to this stack's group) says
+   `ingest: sha256 mismatch: got … want …`, and that is what the panel shows — "the file changed
+   upstream" and "this deployment has no token" need completely different things from the reader.
+7. **Deleting the bytes is still the ingest task's job** (decision 7). The CP has no
+   `s3:DeleteObject` and gains none; `DELETE …/models/{id}?purge=1` forgets the row and then
+   starts the task in `MODE=delete`. The row is READ before it is deleted — the keys exist
+   nowhere else, and doing it the other way round reports success and deletes nothing.
+
+### What P4 needed that the decisions did not name
+
+- **Resolve and start are two API calls.** An "I accept" offered before the licence and the
+  gating are on screen is not an acceptance. `POST …/ingest/resolve` starts nothing and answers
+  the licence, the size, the sha256, the gating and `can_ingest`; the panel draws that first and
+  only then offers the checkbox.
+- **`engine_ingest_jobs`** (sqlite `0058` / pg `0043`), and `license_accepted_by` /
+  `license_accepted_at` / `commercial_use` on `engine_models`. An acceptance is the record of a
+  HUMAN act, and it cannot be reconstructed from the model card afterwards.
+
+## P4 on hardware (2026-09-09, the dev deployment)
+
+The Console buttons were pressed by a person and corroborated from ECS, S3 and both log groups
+(the admin API needs a super_admin browser session and cannot be driven with AWS credentials).
+**All three halves of the definition of done passed** — one ungated ingest, the gated refusal,
+and a gated ingest. And 🔴 **six defects appeared that only pressing could find, one of which
+had killed an entire path.**
+
+1. **One ungated model (`qwen2.5-coder-0.5b`, 491,400,064 bytes). Button to row: 72 seconds.**
+   `POST …/ingest` answered in 1.198 s having called RunTask, +16 s to pull start, 6.7 s to
+   pull, **13 s** from Hugging Face (37.8 MB/s), 2.1 s to verify the sha256 (234 MB/s), **2 s**
+   to S3 (245 MB/s), and +26 s for the CP to notice (a 10-second poll plus the ECS
+   reconciliation). The S3 object was **the declared size to the byte** and the sha256 matched
+   what the upstream API was independently asked for. The row arrived **disabled**.
+2. **The gated refusal starts nothing.** On a `hasToken:false` deployment, looking up FLUX.1-dev
+   answered `can_ingest:false` with the non-commercial warning and "no token here", and the
+   acceptance checkbox could not be ticked. **Zero tasks existed in the ingest family, RUNNING
+   or STOPPED.** The same observation settles "looking it up starts nothing".
+3. 🔴 **A gated repository reading anonymously was confirmed on the deployed CP too**
+   (corroborating measurement 1). A CP holding no token answered
+   `POST …/image/ingest/resolve` **200 in 186 ms**; the ungated resolve took 264 ms. The
+   premise holds in a deployment, not just on paper.
+4. **A gated model really was taken in (FLUX.1-dev, 23,802,932,552 bytes). Button to row:
+   15 minutes 51 seconds.** 7.4 s to pull, **536 s** from Hugging Face (44.4 MB/s, with the
+   token), 179 s to verify the sha256 (133 MB/s), **178 s** to S3 (134 MB/s), +2 s for the CP.
+   `fetch` and `upload` both exited 0.
+5. **The ingest task runs on Fargate (2 vCPU / 4 GB) and starts no GPU box.** `launchType:
+   FARGATE`, no capacity provider: taking in 23.8 GB buys nothing at $1.26/hour. Decision 6's
+   "ingest is out of the start path" is directly observable. `IngestDiskGiB=80` was enough.
+6. 🔴 **`HfTokenSecretArn` alone does not work — the task never starts. The parameter and the
+   documentation were both there; the IAM that makes them work was not.** ECS resolves a
+   container's `Secrets` **before the container exists**, so it does so as the **execution
+   role, not the task role** — and 20-platform scopes that role's
+   `secretsmanager:GetSecretValue` to `secret:rds!*` (the database password), while the attached
+   `AmazonECSTaskExecutionRolePolicy` contains no Secrets Manager at all. Passing an ARN would
+   have died with `ResourceInitializationError` — **not a 401 on the download, and nothing in
+   the ingest log**, because no container ever runs. `ExecHfTokenPolicy` was added to
+   60-engines: created only when an ARN is given, scoped to that one ARN, attached to the
+   imported execution role by name the way `CpIngestPolicy` attaches to the CP's. It stays
+   inside decision 6's "only permissions that affect this stack's own resources". **Finding it
+   before pressing was luck.**
+7. 🔴 **A finished ingest does not put its row on the list.** The job says "done" and the model
+   list goes on showing what it had. Nothing re-reads it: the job poll runs only while a job is
+   `running`/`pending` and reads only jobs, and the engine poll runs only for
+   `starting`/`stopping` or `ondemand`+`running` — **an on-demand engine parked at "stopped"
+   matches neither**. The row an ingest creates is disabled by design, so this is exactly the
+   row an administrator came to switch on, and it lands on P4's definition of done.
+8. 🔴 **An ingest failure reaches a Japanese screen in English.** A filename typed one letter
+   short answered `the repository does not list flux1-dev.safetensor` — the CP's developer
+   message, verbatim. `errText` looks up `err.<code>` and falls back to the message, and **none
+   of the 15 codes the ingest can raise had a translation**; worse, the existing guard
+   (`TestCPEmittedErrCodesHaveConsoleCatalogEntry`) **reads only the constants in
+   `errcodes.go`**, so codes written as string literals in `engine_ingest.go` had **never been
+   checked**. They were promoted to constants, translated, and the panel moved from `errText` to
+   `errDetail` — which file is wrong lives in the message alone, so translating without it
+   replaces the reason with a generality.
+9. 🔴 **A free-text filename makes a typo indistinguishable from a refusal.** The letter above
+   is correctly a 404 and looks exactly like a file that is not there. The Hugging Face answer
+   already carries every file's name, size and sha256, and **the CP was receiving and
+   discarding it**. `POST …/ingest/files` turned it into a picker. 🔴 **The first filter was too
+   loose: FLUX.1-dev offered nine files, five of them `…-00001-of-00003.safetensors` shards** —
+   one shard is not a model, so the filter written to avoid dead ends was showing them. Dropping
+   shards and putting the repository's top level first leaves four.
+10. 🔴 **Ingesting onto an existing id silently replaces that row.** `PutEngineModel` is an
+    upsert on `(role, id)` — right for the seed and for registering a staged file, and here it
+    would replace a working row's files, licence and sha256 and set `enabled=false`. Minutes
+    after a button press the engine loses the checkpoint it starts with, **with nothing linking
+    the two events**. It is now refused with a 409 before RunTask.
+11. 🔴 **There was no way to delete an ingested file.** Decision 7's `?purge=1` was fully
+    implemented in the CP (read the row first, start `MODE=delete`, audit it) and **the word
+    `purge` appeared nowhere in the Console**. On hardware, "forget" removed the row, the 491 MB
+    object stayed in the bucket, and no `MODE=delete` task ran. Server-side with no way in. It
+    is now a two-step confirmation where deleting the bytes is ticked deliberately.
+
+### What hardware needed that the decisions did not name
+
+- **`POST …/ingest/files`** (the candidates). From the same single read the resolve uses, it
+  returns only the files this engine could load that carry a sha256. Shards and files with no
+  LFS pointer are left out — offering either is offering a dead end the resolve refuses a
+  moment later.
+- **The window read off the model, and the output cap as a fraction.** Hugging Face parses the
+  GGUF header itself and publishes `gguf.context_length` (checked against four repositories from
+  three publishers). 🔴 **It is the architecture's ceiling, not the window this deployment can
+  run** — the 30B declares 262144 and does not fit an L4, so it runs at 32768. It is offered as
+  "the model's maximum is N" and only into an empty field. The output cap is published nowhere
+  (it is a deployment's policy, not a property of the model), so it is a choice among fractions
+  of the window (1/4, 1/8, 1/16) — an eighth of 32,768 is the 4,096 already in use.
+- **`engine_models.source`** (migration `0060` / pg `0045`). The row kept a snapshot of the
+  licence but not the fact the licence is a property OF: which repository it came from. An id
+  only has to be unique within one role in one deployment and is what a member reads in the
+  launch menu, so it stays short — **the same name from another vendor is refused with a 409,
+  and the provenance lives on the row**.
+- **A two-step delete.** Forgetting the row and deleting the file are different acts, and the
+  first alone leaves bytes nothing can reach that keep being paid for (measured: a 491 MB file
+  outlived its row). The safe option is the default and is reset every time it opens.
+
 ## Options rejected
 
 - **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
@@ -960,7 +1128,7 @@ credentials cannot drive it (the same wall as P0 measurement 5).
   itself reads its database.
 - **EFS for the catalogue.** Rejected in ADR 0071.
 
-## Open questions — measure 8 and 9 before P2 (2 and 6 only when an sd-server deployment needs them)
+## Open questions — measure 8 and 9 before P2 (10-12 are a separate session; 2 and 6 only when an sd-server deployment needs them)
 
 1. ~~**The router's four points** (decision 3 depends on them)~~ **Resolved (review R1, on a
    CPU)**: `/health` ok while empty, autoload waits, `--models-max 1` evicts the idle LRU and
@@ -977,8 +1145,12 @@ credentials cannot drive it (the same wall as P0 measurement 5).
    **without waiting for the next start** — a resident sidecar re-syncing the active set, and
    does the router rescan `--models-dir` (or is there a reload endpoint)? If not, llm also
    swaps "at the next start" to begin with, and this is P4.
-4. **Civitai's API** (decision 6): the authentication form (header or `?token=`),
-   `files[].hashes.SHA256`, the `model.type` and `baseModel` values.
+4. ~~**Civitai's API** (decision 6)~~ **Resolved (P4 measurement 2, 2026-09-09)**: the developer
+   site is still 404, but `GET https://civitai.com/api/v1/model-versions/<id>` answers
+   ANONYMOUSLY with `files[].hashes.SHA256` (upper-case hex), `files[].sizeKB` (**fractional
+   kilobytes**), `files[].downloadUrl`, `baseModel` (a display name such as `"SD 1.5"`) and
+   `model.type` (`Checkpoint` / `LORA`). The download 302s to a signed R2 URL and answered 200
+   with no key for the public model tried — some models do need one.
 5. ~~**`engine_models` as a table or as a settings-store value.**~~ **A table (review, answer
    6)**. Two writers (the admin's toggles and the ingest job's `ingesting → ready / failed`), and
    one JSON read whole and written whole has no CAS, so one of them loses; `files[]` / `args[]` /
@@ -1006,6 +1178,66 @@ credentials cannot drive it (the same wall as P0 measurement 5).
    `useLocalStorage` is back to being a start-time question. `bench-image-engine.sh` measures
    both as they are, and since the answer changes P2's definition of done (the price of a
    switch), it is measured **before P2**.
+10. **Re-examine where the models live at all (raised while verifying P4 on hardware; a separate
+    session takes it).** The starting point is the measurement that the sync dominates every
+    cold start — and **S3 is not the bottleneck**. ADR 0071's open question 1 already says the
+    g6.xlarge's 125 MB/s EBS baseline binds both the S3 fetch (104–147 MB/s, **which looks like
+    the EBS write ceiling**) and the VRAM load, and that an instance store frees both. Cheapest
+    first:
+    - **(a) `useLocalStorage`** (the same as open question 9(1)). **One parameter update**, and
+      it removes the EBS write ceiling, so it pays on both the sync and the switch. **Measure
+      this first.**
+    - **(b) The warm box.** ADR 0071 decision 7(c) is **still unproven**, and the failure is
+      written down (`PARAMETERS-60-engines.md`, "The model volume"): the anonymous host volume
+      gives a fresh directory per task, so **a restart onto the very same instance MI had kept
+      re-fetched all 18.5 GB** (126 s), and a named `SourcePath` lands on the root filesystem and
+      dies with `No space left`. What blocks it is only "the path MI's data volume is actually
+      mounted at" — **one GPU hour of investigation**.
+    - **(c) Re-measure EFS (a candidate for lifting a 0071 rejection).** The rejection booked its
+      own reconsideration: "reconsider if the sync turns out to hurt in P0". **P0 measured that
+      it hurts.** On top of that, 🔴 the $0.36/GB-month figure carries the note "third-party
+      transcription, needs re-checking" and is **unverified**, and the throughput argument ("NFS
+      throughput, an order of magnitude slower") is **an assumption, never measured**. If the
+      ceiling is the EBS *write*, EFS removes the write entirely and could be structurally
+      better. Arithmetic (assuming $0.36 is right): the bucket measures 99.5 GB, so S3 $2.49/mo
+      against EFS Standard $35.8/mo — a $33/mo delta, i.e. **26 GPU-hours**. If it removes 350 s
+      from every cold start, that is $0.12 a start, so **more than ~9 starts a day pays for
+      itself in GPU time alone** (never mind the person waiting). IA/Archive lifecycles lower the
+      storage side further.
+11. **Where the tenant axis belongs (same origin, separate session).** The catalogue's key is
+    `(role, id)` with no tenant, and "a tenant picks a model from Hugging Face and places it" is
+    the right direction for usability — but **on a shared box four things multiply**: the active
+    set is one per engine so it becomes the **union** of every tenant's enabled models (which is
+    where the 4,096 characters finally bite; it is at 6% today), the cold start syncs *every*
+    enabled model so it grows with the tenant count, `LlmModelsMax=1` means more swapping at
+    1–2.5 minutes each, and one shared active set makes one tenant's model ids visible to
+    another. A box per tenant removes all four at $1.26/hour per tenant, which discards the
+    premise ADR 0071 was built on (one shared box, asleep). **The middle:** keep the catalogue
+    deployment-wide and put the tenant axis on **who may ingest and who accepted the licence**.
+    Nothing multiplies and most of the usability is won; `source` and `license_accepted_by` are
+    already half of that shape.
+    - **A bucket per tenant is not recommended.** A bucket is not the boundary that matters —
+      whichever one they came from, the models land on **the same box's same disk and are read by
+      the same process**. The boundary is the GPU box. It also duplicates shared models per
+      tenant and loosens the engine task role's grant, which is scoped to one bucket ARN today.
+      If isolation is wanted, **prefixes in one bucket** (IAM scopes by prefix, nothing is
+      duplicated).
+12. **Let the Hugging Face token be registered from the Console (same origin, separate
+    session).** Today it is the `HfTokenSecretArn` CloudFormation parameter, so putting one in
+    means **a CloudFormation run and a CP restart** — the very path that ran into measurement 6's
+    IAM hole. "It is a secret, therefore Secrets Manager" is not an argument: this product keeps
+    git OAuth tokens and MCP headers in its own encrypted store. The real constraint is
+    **transport** — ECS can put a value in a container in exactly two ways, `secrets[].valueFrom`
+    (**only a Secrets Manager or SSM ARN**) or `environment` (plaintext). 🔴 Measured:
+    `DescribeTasks` hands the RunTask environment back **verbatim** to anyone holding
+    `ecs:DescribeTasks`, so passing a long-lived PAT that way is not worth it. **The shape is
+    "the DB is the source of truth and Secrets Manager is the transport"**: register it in the
+    Console, and when an ingest starts the CP writes the value into the secret and references it
+    by ARN. The price is that decision 6's "the CP does not hold the token" becomes "the CP can
+    write it and never reads it back" — **a judgement that needs an ADR revision**. It should
+    **not** be per-tenant: the ingest's result (the bucket and the row) is deployment-wide, so a
+    tenant's personal acceptance would stage a model every other tenant uses, which is the very
+    thing decision 10 warns about.
 
 ## Phases
 
@@ -1053,11 +1285,16 @@ credentials cannot drive it (the same wall as P0 measurement 5).
   needs it, after open question 2. **Definition of done: the same prompt and seed give a
   different picture with and without the LoRA, and an SD 1.5 LoRA does not appear in the enum
   on SDXL.**
-- **P4 — ingest from the Console.** The `ingest` API, the RunTask IAM (inside `60-engines`;
-  PassRole for the ingest role only), HF sha256 / `license` / `license_name` resolution, the
-  gating sentence and licence-acceptance UI (who and when, the commercial axis; decision 10),
-  progress and failure display, the ingest task's `MODE=delete` (decision 7), Civitai (after
-  open question 4). Until then, `harness/ingest-model.sh`.
+- **P4 — ingest from the Console. Implemented and verified on hardware (see *P4 measurements*
+  and *P4 on hardware*).** The `ingest` API
+  (resolve and start as two calls, plus a job list), the RunTask IAM (inside `60-engines`;
+  PassRole for the ingest role only, plus `logs:GetLogEvents` so a failure can say why), HF
+  resolution of sha256 / `license` / `license_name` / size / gating, Civitai (open question 4
+  turned out to be answerable, so it went in at the same time), the gating sentence and the
+  licence-acceptance UI (who and when, the commercial axis; decision 10), progress and failure
+  in the panel, and the ingest task's `MODE=delete` (decision 7). A job is a row
+  (`engine_ingest_jobs`) carrying the catalogue row it will create, so a Control Plane replaced
+  mid-download still ends with a row for the bytes that landed.
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6).**
 

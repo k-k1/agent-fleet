@@ -46,6 +46,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 "Forget", not "Delete": the CP has no s3:DeleteObject and is not getting one (ADR 0072
   // decision 7 — deleting the file is the ingest task's job, phase P4). The file stays.
   "admin.engines_model_forget": "Forget",
+  // 🔴 Forgetting the row and deleting the file are different acts. The first alone leaves
+  // bytes in the bucket that nothing can reach and that keep being paid for (measured
+  // 2026-09-09: a 491 MB file outlived its row). The second is the ingest task's MODE=delete —
+  // the CP has no s3:DeleteObject (decision 7). Ask before the press, not after.
+  "admin.engines_model_forget_purge": "Delete the file from the bucket too (cannot be undone)",
+  "admin.engines_model_forget_note": "Forgets the catalogue row only. The file stays in the bucket and keeps costing storage.",
+  "admin.engines_model_forget_purge_note": "Forgets the row and starts a task that deletes the bytes. The deletion is the task's, so it takes a moment.",
+  "admin.engines_model_forget_go": "Forget it",
   // Not P4's ingest (which fetches from Hugging Face); just writing down what a file already in
   // the bucket IS. The seed creates one row per role, so without this there is no second
   // checkpoint to switch to without touching CloudFormation.
@@ -55,12 +63,42 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_desc": "description",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
-  "admin.engines_model_add_ctx": "window",
+  "admin.engines_model_add_ctx": "context window",
   "admin.engines_model_add_out": "output cap",
   // The control plane cannot look in S3, so a declared size is the only source for "sync +N s".
   "admin.engines_model_add_bytes": "size",
   "admin.engines_model_add_go": "Register",
   "admin.engines_model_add_note": "The id is what a member picks, the key is the path inside the bucket, the description is the one line an agent reads. The window and the output cap only count when BOTH are given (one alone is ignored — without a cap it is read as 32,000, which leaves a 32k model 768 usable tokens). The size in bytes is optional and only feeds the \"sync +N s\" estimate. The control plane does not look in S3 (it holds no permission to), so a mistyped key shows up in the fetch log at the next start. The row is created disabled.",
+  // --- ingest (ADR 0072 decision 6, phase P4) ---
+  // 🔴 Resolve, then accept. An "I agree" offered before the licence and the gating are on
+  // screen is not an acceptance, and a gated repository with no token is refused here rather
+  // than by a 401 nine minutes into a task.
+  "admin.engines_ingest_open": "Take one in from Hugging Face",
+  "admin.engines_ingest_repo": "repository",
+  "admin.engines_ingest_file": "file name",
+  "admin.engines_ingest_resolve": "Look it up",
+  // Not having the filename in hand is the normal state, so "look it up" starts by asking the
+  // repository what it holds.
+  "admin.engines_ingest_pick": "Choose one",
+  "admin.engines_ingest_no_files": "This repository offers nothing this engine could load with a sha256.",
+  // 🔴 The MODEL's ceiling, not the window this deployment can run. The 30B declares 262144 and
+  // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
+  "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
+  "admin.engines_ingest_go": "Take it in",
+  "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
+  "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
+  "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Put the operator's token in the stack's HfTokenSecretArn — it is read by the ingest task only.",
+  "admin.engines_ingest_noncommercial":
+    "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
+  "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
+  // 🔴 A log of EVENTS, not the catalogue. A job stays after its model is gone ("this ingest
+  // ran and finished" goes on being true), so it is headed and dated and reads as history.
+  // Undated, a "done" beside a deleted model's id reads as that model's current state.
+  "admin.engines_ingest_jobs_head": "Ingest history",
+  "admin.engines_ingest_state_pending": "starting",
+  "admin.engines_ingest_state_running": "fetching",
+  "admin.engines_ingest_state_done": "done",
+  "admin.engines_ingest_state_failed": "failed",
   "admin.engines_model_vram": "VRAM {n} MiB",
   // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
   // slow end. For a router role every enabled model is synced, so this really is what enabling

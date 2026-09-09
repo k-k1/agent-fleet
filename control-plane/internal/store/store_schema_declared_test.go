@@ -179,3 +179,57 @@ func columnsOf(body string) []string {
 }
 
 func ident(s string) string { return strings.ToLower(strings.Trim(strings.TrimSpace(s), `"`)) }
+
+// A migration whose CREATE has no IF NOT EXISTS cannot be renumbered without breaking every
+// deployment that already applied it under the old number — the new version re-runs a CREATE
+// against a table that is already there, and the Control Plane stops booting on `already
+// exists` (measured on the development deployment, 2026-09-09).
+//
+// This does NOT ask every migration to be idempotent: a CREATE that has only ever had one
+// number is fine as it is, and blanket IF NOT EXISTS would hide a genuine collision. What it
+// pins is the pair of files that HAVE been renumbered, so the clause cannot be tidied away by
+// somebody who was not there.
+func TestRenumberedMigrationsStayReplayable(t *testing.T) {
+	renumbered := map[string][]string{
+		// engine_models moved 0056 -> 0057 (pg 0041 -> 0042) when it collided with
+		// cloud_cost_role on the way to develop, after it had been deployed.
+		"migrations/0057_engine_models.sql":    {"CREATE TABLE IF NOT EXISTS engine_models"},
+		"migrations-pg/0042_engine_models.sql": {"CREATE TABLE IF NOT EXISTS engine_models"},
+		// The repair for the file the collision silently swallowed.
+		"migrations/0059_cost_role_repair.sql":    {"CREATE TABLE IF NOT EXISTS cloud_cost_role_daily"},
+		"migrations-pg/0044_cost_role_repair.sql": {"CREATE TABLE IF NOT EXISTS cloud_cost_role_daily"},
+	}
+	for name, wants := range renumbered {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Errorf("%s: %v", name, err)
+			continue
+		}
+		for _, want := range wants {
+			if !strings.Contains(string(raw), want) {
+				t.Errorf("%s no longer says %q — a deployment that ran its old number cannot boot", name, want)
+			}
+		}
+	}
+}
+
+// The other half of the same incident: a version may appear once. The runner records the
+// version, not the file, so two files sharing one means whichever loses is skipped in silence
+// — which is exactly how a deployment ended up without cloud_cost_role_daily.
+func TestMigrationVersionsAreUnique(t *testing.T) {
+	for _, dir := range []string{"migrations", "migrations-pg"} {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		seen := map[string]string{}
+		for _, e := range entries {
+			v, _, _ := strings.Cut(e.Name(), "_")
+			if prev, dup := seen[v]; dup {
+				t.Errorf("%s/%s and %s share version %s: one of them would be silently skipped",
+					dir, e.Name(), prev, v)
+			}
+			seen[v] = e.Name()
+		}
+	}
+}

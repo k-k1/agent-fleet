@@ -577,11 +577,50 @@ Secrets Manager ARN holding `HF_TOKEN`, read by the INGEST task only (ADR 0071 d
 token is the operator's, and it never lands on an engine box). Empty = only ungated repositories
 can be ingested, which covers every model in the ADR's table except FLUX.1-dev and SD 3.5.
 
+🔴 **Setting this parameter also grants the EXECUTION role, not the task role.** ECS resolves a
+container's `Secrets` before the container exists, so it does so as the task execution role —
+and 20-platform scopes that role's `secretsmanager:GetSecretValue` to `secret:rds!*`, the
+database password. Handing this stack an ARN outside that prefix without the matching grant
+produces a task that dies at startup with `ResourceInitializationError: unable to pull secrets`
+— not a 401 on the download, and nothing in the ingest log, because no container ever ran.
+`ExecHfTokenPolicy` closes it: created only when an ARN is given, scoped to that one ARN, and
+attached to the imported exec role by name the same way `CpIngestPolicy` attaches to the CP's.
+
+The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wrapper and no trailing
+newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
+variable. A trailing newline travels into the `Authorization: Bearer` header and earns a 401
+that reads exactly like an unaccepted licence.
+
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
 disk is the largest model the deployment can take in — 80 GiB covers the 22 GB FLUX checkpoint
 with room for the filesystem.
+
+### The ingest permissions
+
+The Control Plane's ONLY new IAM in this repository (ADR 0072 decision 6), and it lives in this
+stack so that a deployment which does not adopt 60-engines gains nothing:
+
+| Action | Scope | Why |
+|---|---|---|
+| `ecs:RunTask` | this stack's ingest family, on this cluster | starting the fetch |
+| `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
+| `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
+
+The reads it already had (`DescribeTasks`, `ListTasks`) are what turn a running task into a
+finished one. The execution role's PassRole was already granted in 20-platform, so it is not
+repeated here.
+
+**Why the log grant is worth an IAM statement.** `DescribeTasks` says a container exited 1.
+The log says `ingest: sha256 mismatch: got … want …` or a 401 on a gated repository, and those
+two need completely different things from the person reading them — one is "the file changed
+upstream", the other is "this deployment has no token". The panel shows that line verbatim.
+
+⚠️ **The Control Plane still never holds the Hugging Face token and still never touches S3.**
+Measured 2026-09-09: a gated repository answers `api/models/<repo>?blobs=true` ANONYMOUSLY with
+its licence, its gating flag and every file's sha256 and size — only the download is 401. So the
+CP resolves, and the task (which has the token) fetches.
 
 ### Running the ingest task by hand
 
@@ -595,8 +634,9 @@ aws ecs run-task --cluster <cluster> --launch-type FARGATE \
      {"name":"upload","environment":[{"name":"KEY","value":"image/checkpoints/x.safetensors"}]}]}'
 ```
 
-`harness/ingest-model.sh` is the same thing with the sha256 and the license resolved for you;
-ADR 0072 phase P4 moves the whole flow into the Console.
+Since ADR 0072 phase P4 the Console does all of that — **Settings → Admin → engines → "take one
+in from Hugging Face"** — and the hand-written form above stays for a deployment whose Control
+Plane cannot reach the internet, or one that has not adopted the ingest permissions below.
 
 ⚠️ **Overriding a command here takes ONE string**, because the `EntryPoint` is already
 `["sh","-c"]`. Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which does nothing
