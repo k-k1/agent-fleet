@@ -563,6 +563,48 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
       VRAM に入らず、S3 から引く 180 秒と VRAM へのロードを払ってから落ちる。
     - **60 秒規則**（決定 4）: `syncSafe` を宣言しないモデルは sd-server の配備には出ない。
 
+11. **取り込み元は検索できる。「リポジトリ名を知っている人」しか主経路を通れない形にしない。**
+    （2026-09-09 に追加・P5。P4 が「ファイル名の自由入力＝打ち間違いと区別できない拒否」を
+    選択式に直したのと**同じ穴がリポジトリ名の側に残っていた**——`owner/name` を別の窓で
+    調べてから貼る、が唯一の入口だった。）
+    - `POST …/ingest/search`（super_admin）。`q` と、HF と Civitai のどちらを引くかの `source`
+      （既定 HF）を受ける。**どちらの API も匿名で引ける**（P4 実測 1・2）ので、検索も解決と
+      同じく**トークンを必要としない**——決定 6 の「CP は取り込み元を読むだけ」がそのまま伸びる。
+    - **役ごとに絞る**（2026-09-09 に実測）: llm は `filter=gguf`、image は
+      `pipeline_tag=text-to-image`。並びは `sort=downloads&direction=-1`、上限 20 件。
+      Civitai は `types=Checkpoint`（image）で、LoRA は P3 で `types=LORA` を足す。
+      絞りの理由は `ingest/files` と同じ——**行き止まりを見せない**。このエンジンが読めない
+      リポジトリを一覧に出すのは、少し後で resolve が断る行き止まりを見せることである。
+    - 🔴 **1 回の読みで判断材料は揃うが、素通しはできない。** `expand[]` で `gated`・
+      `cardData`・`downloads`・`likes`・`lastModified`（llm は `gguf` も）が取れる。ただし
+      **`cardData` には `extra_gated_prompt` が、`gguf` には `chat_template` が丸ごと入る**
+      （実測: FLUX.1-dev の gated 文面、Qwen2.5-Coder の chat template は単独で 1 KB を超える）。
+      **CP が写すのは `license`・`license_name`・`gguf.total`・`gguf.context_length` だけ**にする。
+      20 行を描く画面に、読まれない KB を 20 回運ばない。
+    - **検索結果は行き先であって取り込みではない。** 選ぶと既存の `ingest/files` →
+      `ingest/resolve` → 受諾 → `ingest` にそのまま入る。**sha256 とライセンスの正本は
+      resolve が読んだ値**で、一覧の値は下書きにすぎない（HF の card は動く）。Civitai は
+      `modelVersions[0].id` を渡す——取り込みが要求するのは **version id であって model id
+      ではない**。
+    - **言葉が無いときはランキングである。** `q` が空なら「この役が読めるものの上位」を返す
+      ——名前を知らない人にとってはこれが唯一の入口で、`q` 必須は「知っている人だけ」を
+      別の形で作り直すことになる。並びは **DL 数・話題・いいね**の 3 つで、**上流ごとに
+      写像し、素通ししない**: Civitai は知らない `sort` に 400 を返し（実測）、HF は黙って
+      無視する——**並んでいないのに並んで見える一覧**のほうが悪い。
+      HF は `downloads` / `trendingScore` / `likes`、Civitai は `Most Downloaded` /
+      `Most Downloaded`＋`period=Month`（トレンドの得点を持たないので「今月」が話題である）/
+      `Highest Rated`。
+    - 🔴 **「新着」は出さない。** 実測 2026-09-09: `filter=gguf` に `sort=lastModified` /
+      `createdAt` を掛けると、返ってくるのは**自動再量子化の一括アップロード**
+      （`mradermacher/*-i1-GGUF`）ばかりで、DL 数もいいねも 0 である。最初の 1 画面が毎回
+      同じ投稿者のロボットになる並びは入口にならない。「新しいものを見たい」に答えるのは
+      話題のほうである。
+    - **3 つの数はどの並びでも全部出す。** 並び替えに使った 1 つだけを出すと「なぜこれが
+      ここに居るのか」が読めない。「みんなが使っている」と「今週みんなが見ている」は
+      別の答えである（Civitai は話題の得点を持たないので、その欄は**借りずに空**にする）。
+    - **検索は取り込みの前提にしない。** `owner/name` と URL の直接入力は残る。外向きを絞った
+      配備では検索も落ちるが、そこでは決定 6 のとおり手打ちの経路が主経路に戻るだけである。
+
 ## 実測で解けた点（2026-09-08・開発配備の g6.xlarge）
 
 ハーネスは `deploy/aws/ecs/harness/bench-image-engine.sh`（+ `.py`）。image 役の capacity
