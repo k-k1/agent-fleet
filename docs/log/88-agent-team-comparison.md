@@ -396,6 +396,11 @@ running across turns and re-invokes you when it exits`、⑵ 上の実測、の 
 この結論は反転しうる**。順序は「§87.8 を測る → そのうえで再検討し、採るなら §88.9.5 の形」で
 ある。
 
+🔴 **追記（2026-09-09・[87](87-session-spawn.md) §87.15）: 測った。** n=3（claude ×2・
+codex ×1、短いタスクと長めのタスク）で遵守率 **3/3（100%）**。§88.9.2 の前提を支持する方向に
+出て、反転させる根拠は無かった——ただし n=3 は「反転しない」を証明する規模ではないので、
+「本案を採らない」の判断はこの数字では覆らないが、覆す材料も出なかった、という以上には言えない。
+
 **本案とは独立の欠陥候補を 1 件、別途起票する**: `tier1` は `BackgroundBusy` を machineBusy と
 して尊重するのに、stop-after-turn の settle 述語 `busyEvidence()` はそれを数えていない
 （`workspace/agent/internal/chatx/chat_report_reconcile.go:142`）。詳細はそちらの調査で拾う。
