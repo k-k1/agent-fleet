@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -180,6 +181,12 @@ type fakeCapacityAPI struct {
 
 func (f *fakeCapacityAPI) DescribeCapacityProviders(_ context.Context, in *ecs.DescribeCapacityProvidersInput, _ ...func(*ecs.Options)) (*ecs.DescribeCapacityProvidersOutput, error) {
 	f.describe++
+	// The real API refuses both at once, and says so with an InvalidParameterException — which
+	// is how ADR 0074 P1 found it on the deployment, after every unit test here had passed
+	// against a fake that accepted anything. The fake now refuses what ECS refuses.
+	if in.Cluster != nil && len(in.CapacityProviders) > 0 {
+		return nil, fmt.Errorf("InvalidParameterException: Cannot specify both capacity providers and cluster in the same request")
+	}
 	if f.descErr != nil {
 		return nil, f.descErr
 	}
@@ -226,6 +233,37 @@ func testCapacityProvider(name string) ecstypes.CapacityProvider {
 				},
 			},
 		},
+	}
+}
+
+// The name is asked for without a cluster (the API allows only one of the two), so the cluster
+// the answer names is the only thing that says this provider is the engine's. A name that
+// resolved elsewhere must not be written to — the update re-declares subnets and security
+// groups, so writing to the wrong provider is not a read-only mistake.
+func TestApplyEngineClassRefusesAProviderInAnotherCluster(t *testing.T) {
+	p := testCapacityProvider("af-eng-llm")
+	p.Cluster = aws.String("arn:aws:ecs:ap-northeast-1:1:cluster/somebody-elses")
+	f := &fakeCapacityAPI{provider: p}
+	err := applyEngineClass(t.Context(), f, "af-af-ecs-platform", "af-eng-llm", engineClass{ID: "x", VramMiB: 1, Types: []string{"g6.xlarge"}})
+	if err == nil {
+		t.Fatal("a provider in another cluster was written to")
+	}
+	if len(f.updates) != 0 {
+		t.Errorf("refused, yet %d update(s) were sent", len(f.updates))
+	}
+}
+
+// The same provider named by ARN rather than by name is the same provider.
+func TestApplyEngineClassAcceptsTheClusterByArn(t *testing.T) {
+	p := testCapacityProvider("af-eng-llm")
+	p.Cluster = aws.String("arn:aws:ecs:ap-northeast-1:1:cluster/af-af-ecs-platform")
+	f := &fakeCapacityAPI{provider: p}
+	c := parseEngineClasses("l4|L4|21000|g6.xlarge|4-8|15000-65536")[0]
+	if err := applyEngineClass(t.Context(), f, "af-af-ecs-platform", "af-eng-llm", c); err != nil {
+		t.Fatalf("applying: %v", err)
+	}
+	if len(f.updates) != 1 {
+		t.Fatalf("updates = %d, want 1", len(f.updates))
 	}
 }
 

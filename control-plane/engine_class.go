@@ -281,8 +281,12 @@ func applyEngineClass(ctx context.Context, api engineCapacityAPI, cluster, provi
 	if api == nil || strings.TrimSpace(provider) == "" {
 		return fmt.Errorf("no capacity provider to update")
 	}
+	// 🔴 NAMES ONLY. `DescribeCapacityProviders` refuses a request that carries both a cluster
+	// and a list of names ("Cannot specify both capacity providers and cluster in the same
+	// request", InvalidParameterException, measured on the deployment — ADR 0074 P1). Neither
+	// the API reference nor the SDK's own comment says so, and every unit test passed because a
+	// fake accepts anything. The cluster is checked below, on the answer, instead.
 	out, err := api.DescribeCapacityProviders(ctx, &ecs.DescribeCapacityProvidersInput{
-		Cluster:           aws.String(cluster),
 		CapacityProviders: []string{provider},
 	})
 	if err != nil {
@@ -299,6 +303,11 @@ func applyEngineClass(ctx context.Context, api engineCapacityAPI, cluster, provi
 		// A Fargate or Auto Scaling provider has no instance requirements to move. Refusing
 		// beats writing an MI configuration onto something that is not one.
 		return fmt.Errorf("capacity provider %s is not a Managed Instances provider", provider)
+	}
+	// The name was asked for without a cluster, so the answer's own cluster is what says this is
+	// the provider this engine runs on. A name that resolved somewhere else is not written to.
+	if got := aws.ToString(cur.Cluster); cluster != "" && got != "" && !sameECSCluster(got, cluster) {
+		return fmt.Errorf("capacity provider %s belongs to cluster %s, not %s", provider, got, cluster)
 	}
 	mi := cur.ManagedInstancesProvider
 	tpl := mi.InstanceLaunchTemplate
@@ -322,6 +331,18 @@ func applyEngineClass(ctx context.Context, api engineCapacityAPI, cluster, provi
 		return fmt.Errorf("updating the capacity provider %s: %w", provider, err)
 	}
 	return nil
+}
+
+// sameECSCluster compares two cluster references that may be a name or an ARN. ECS answers with
+// whichever form it likes, and the CP is configured with a name.
+func sameECSCluster(a, b string) bool {
+	name := func(s string) string {
+		if i := strings.LastIndex(s, "/"); i >= 0 {
+			return s[i+1:]
+		}
+		return s
+	}
+	return name(a) == name(b)
 }
 
 // instanceLaunchTemplateUpdate carries the launch template ECS returned into the shape the
