@@ -3,7 +3,9 @@
 English | [日本語](0073-session-spawned-sessions.ja.md)
 
 - Status: **accepted and implemented** (2026-09-09; the implementation record is
-  [87-session-spawn.md](../log/87-session-spawn.md)). The design took two rounds of review by
+  [87-session-spawn.md](../log/87-session-spawn.md), and the four follow-ups are
+  [89-child-session-listing.md](../log/89-child-session-listing.md); amendments: `list_child_sessions`
+  in §3-b, archiving in decision 6, the completion timestamp in decision 9). The design took two rounds of review by
   another session and the implementation a third (round 1: decisions 1, 4, 5, 6, 7, 10 and 11
   corrected, decision 14 and §3-b added; round 2: archiving and reservation in decision 6, the
   comparison unit in decision 7, splitting the two surfaces in decision 14, the rejection
@@ -106,14 +108,24 @@ satisfied and was removed from the UI and from `uiprefs.FleetSpawn()`. What the 
 protecting — never being able to start something you cannot watch — holds more strongly than
 before.
 
-### 3-b. The eight tools stage 2 advertises (the whole set, by flag)
+### 3-b. The nine tools stage 2 advertises (the whole set, by flag)
 
 | Tool | Advertised by | Extra gate |
 |---|---|---|
 | `create_session` | `--fleet-spawn` | decisions 5, 6, 7, 8 (the pre-launch refusals) |
+| `list_child_sessions` | `--fleet-spawn` | decision 4's predicate, as the row filter |
 | `list_repos` / `list_models` / `get_agent_usage` | `--fleet-spawn` | none (reads for choosing where and which agent) |
 | `get_session_output` | `--fleet-spawn` | decision 4 (children only) |
 | `stop_session` / `stop_session_after_turn` / `resume_session` | `--fleet-spawn` | decision 4 (children only), decision 10 |
+
+**Amendment (2026-09-09, docs/log/89): `list_child_sessions` is the ninth.** Stage 2 shipped
+with eight, and every tool that names a target took a name the caller could only have got from
+one `create_session` result — so a compaction left the parent unable to name its own children,
+and the instruction added with it ("before your last turn, name the children you left") became
+impossible to carry out. It reads `GET /sessions`, which already computes live state per kind
+and already drops archived rows and prunes expired stopped ones, and filters it by decision 4's
+predicate. It is the only one of the nine that is not also an operator tool (the operator has
+`list_my_sessions`), so it is also the only one whose call-side gate is the flag alone.
 
 - Stage 1's four (`get_session_status` / `get_session_usage` / `list_memos` / `add_memo`) stay on
   `--fleet-observe` unchanged.
@@ -122,7 +134,7 @@ before.
   `create_session` / `stop_session` / `resume_session` / `get_session_output` standing in that
   list is exactly the property stage 2 wants pinned (without `--fleet-spawn` they do not appear).
   Taking the eight out of the list is taking the property out of the test.
-- **Add a test instead pinning that raising `--fleet-spawn` adds exactly those eight.** The pair
+- **Add a test instead pinning that raising `--fleet-spawn` adds exactly those nine.** The pair
   keeps both halves: "observation alone does not open them" and "adding spawning opens these eight
   and nothing else".
 
@@ -162,19 +174,19 @@ plumbed through the proposal store and the Console launch flow.
 So what this decision guarantees is not a tree depth but that **between one human launch and the
 next, sessions alone can extend the chain by one**. Nothing grows without a person in the loop.
 
-### 6. At most three children per caller — a budget counting stopped and archived ones too
+### 6. At most three children per caller — a budget counting stopped children, but not archived ones
 
 Count the children the caller **created** — `origin=session` with `origin_session` equal to the
-caller — **whose Meta still exists**, and refuse at three. Not `origin_session` alone: that would
+caller — **whose Meta still exists and is not archived**, and refuse at three. Not `origin_session` alone: that would
 also count a fork of a child (lineage kept, `origin=handoff`), and a fork is something a person
 does in the Console, so charging it to the parent would let the user's own fork be the reason the
 parent may not spawn. Nothing escapes there — a fork of a child cannot spawn either, because
 decision 5's predicate reads the lineage, deliberately the wider one.
 
-- **Only deletion (`RemoveMeta`) frees a slot.** Archiving keeps the Meta and merely hides it from
-  the active list (the `Archived` flag, `session_handlers.go:134`), and **there is a restore
+- ~~**Only deletion (`RemoveMeta`) frees a slot.** Archiving keeps the Meta and merely hides it
+  from the active list (the `Archived` flag, `session_handlers.go:134`), and **there is a restore
   route**. Let archiving free a slot and the limit is beaten by folding up, spawning, and
-  restoring.
+  restoring.~~ **Amended 2026-09-09 — see the amendment below.**
 - Counting "live children" fails too. `resume_session` (`mcp_stdio.go:2300`) and the auto-resume
   behind a peer send (`:1789` → `agentResumeAndSend:3246`) both hit `/start` directly and so
   **increase the number of running children without going through `create_session`**. Counting
@@ -199,6 +211,31 @@ ledger's `begin` lock **before launching, and roll it back on failure**. What is
 
 **Three is provisional, not a measured resource limit.** Until measurement replaces it, the number
 goes into the refusal text so it never becomes an invisible limit.
+
+#### Amendment (2026-09-09, docs/log/89): archived children stop counting
+
+The original rule counted archived children so that "fold up, spawn a replacement, restore"
+could not beat the limit. What it missed is that **the slot never comes back**. The stopped-session
+TTL prune (`session.StoppedTTL`, 7 days by default) explicitly skips archived metas
+(`if m.Archived { continue }` in the sessions listing), so **an archived child holds its slot for
+ever**. Measured in one real workspace: 209 archived sessions. Under that, a parent that archived
+three children can never spawn again — **the user who tidies up is punished hardest**, which is the
+opposite of what the rule was for.
+
+The loophole it was defending against is not shaped like one. Archiving is **not open to a
+session** (decision 13), and restoring means finding one row among a couple of hundred in the
+Console. Both ends are a person's deliberate action, which is precisely the ground on which forks
+are kept out of this count and on which a recreate hands the slot to its successor: a person's
+action must not spend a session's budget.
+
+**So a slot frees on deletion, on archiving, and — for a child left stopped — when `StoppedTTL`
+expires and the listing prunes its meta.** "Only deletion frees a slot" was wrong about the TTL
+even before this amendment, and the refusal text, the tool descriptions and the Console note said
+so; they are corrected (docs/log/89 §89.5).
+
+**`handOverSpawnLineage` (above) stays, with a different reason.** The double count it was written
+for no longer happens while the predecessor is archived. What it still prevents is the double count
+that would come back **when the user restores that predecessor**.
 
 ### 7. `worktree` defaults to true, and `worktree=false` is refused on another live session's directory
 
@@ -243,6 +280,21 @@ operator surface does not exist on the session surface**.
 - The server appends the wording rather than **asking the model to write it**, so whether the
   report arrives does not depend on the caller's prose.
 - The provenance of that initial prompt, appended line included, is decision 14.
+
+**Amendment (2026-09-09, docs/log/89): the polling route carries a completion timestamp.** The
+weakness of "poll `get_session_status`" is that idle means both "finished" and "started and never
+given anything", and a machine idle is not a semantic completion — a child goes idle at the end of
+every turn (docs/log/51 exists because of that gap). `list_child_sessions` therefore carries
+`lastTurnEndAt` per row: the moment that child's newest turn ACTUALLY ended, taken from the one bit
+the status store raises only on a real end of turn (`status.SessionStatus.TurnEnd`) and never on an
+idle nobody can explain. It is empty rather than guessed, so `idle` with a timestamp and `idle`
+without one are finally different answers.
+
+**A server-fired completion notification was considered and rejected** (docs/log/88 §88.6-1).
+af's only route into a session is typing into its TUI, i.e. starting a turn — so it would save the
+child one turn and unconditionally spend one of the parent's, and delivery resumes a stopped
+parent, making "the parent wakes up every time a child finishes" the default. Detection is worth
+having; delivery is not. A row on a list the parent already polls costs no envelope and no wake-up.
 
 ### 10. A session-issued `stop_session` does not send `disarm_report`
 

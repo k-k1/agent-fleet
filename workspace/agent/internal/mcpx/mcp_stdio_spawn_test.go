@@ -11,9 +11,9 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// Session steering (ADR 0073): the eight tools opened by `--self-report --fleet-spawn`.
+// Session steering (ADR 0073): the nine tools opened by `--self-report --fleet-spawn`.
 var fleetSpawnToolNames = []string{
-	"create_session", "list_repos", "list_models", "get_agent_usage",
+	"create_session", "list_child_sessions", "list_repos", "list_models", "get_agent_usage",
 	"get_session_output", "stop_session", "stop_session_after_turn", "resume_session",
 }
 
@@ -57,10 +57,10 @@ func TestFleetSpawnRequiresSelfReport(t *testing.T) {
 	}
 }
 
-// The advertised set IS the authorization boundary, so the eight appear only with the opt-in —
-// and the opt-in adds those eight and NOTHING else. The second half is the half that catches a
+// The advertised set IS the authorization boundary, so the nine appear only with the opt-in —
+// and the opt-in adds those nine and NOTHING else. The second half is the half that catches a
 // future edit reaching for a neighbouring operator tool while it is in the area.
-func TestFleetSpawnAddsExactlyItsEightTools(t *testing.T) {
+func TestFleetSpawnAddsExactlyItsNineTools(t *testing.T) {
 	withFleetSpawn(t, false)
 	before := advertisedNames(t)
 	for _, name := range fleetSpawnToolNames {
@@ -78,7 +78,7 @@ func TestFleetSpawnAddsExactlyItsEightTools(t *testing.T) {
 	}
 	for name := range after {
 		if !before[name] && !contains(fleetSpawnToolNames, name) {
-			t.Errorf("%s appeared with --fleet-spawn but is not one of its eight tools", name)
+			t.Errorf("%s appeared with --fleet-spawn but is not one of its nine tools", name)
 		}
 	}
 }
@@ -283,6 +283,7 @@ func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
 	// Arguments good enough to get past validation; the target is always this session's child.
 	args := map[string]map[string]any{
 		"create_session":          {"dir": "/repos/app", "initial_prompt": "task"},
+		"list_child_sessions":     {},
 		"list_repos":              {},
 		"list_models":             {"kind": "claude"},
 		"get_agent_usage":         {},
@@ -299,6 +300,13 @@ func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
 		// surface answering "you are not allowed" is the contradiction.
 		if strings.Contains(resp, "許可されていません") {
 			t.Errorf("%s is advertised to a session but refuses the call: %s", name, resp)
+		}
+		// The other way the same hole opens, and the one the first check misses entirely: the
+		// tool is advertised and gated correctly but has no case at all, so the dispatch falls
+		// through to "unknown tool". Found by breaking it (docs/log/89) — renaming the new
+		// tool's case left this test green.
+		if strings.Contains(resp, "unknown tool") {
+			t.Errorf("%s is advertised to a session but has no handler: %s", name, resp)
 		}
 	}
 }
@@ -339,5 +347,132 @@ func TestOutputCursorScopedToTheSessionWithoutAConversation(t *testing.T) {
 	t.Cleanup(func() { setConvID("") })
 	if got := outputCursorScope(); got != "conv-1" {
 		t.Fatalf("operator cursor scope = %q, want conv-1", got)
+	}
+}
+
+// list_child_sessions (docs/log/89) is the answer to "a parent cannot enumerate its own
+// children": every steering tool takes a name, and the only place a name was ever handed out
+// was one create_session result, which a compaction throws away.
+//
+// Driven through tools/call against a stub Agent, so the routing, the lineage filter and the
+// row shape are all exercised on the path a model actually takes.
+func TestListChildSessionsReturnsOnlyOwnChildrenAndTheSlotCount(t *testing.T) {
+	withFleetSpawn(t, true) // caller is parent1
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions" {
+			t.Errorf("list_child_sessions asked for %q, want the sessions listing", r.URL.Path)
+		}
+		// The listing itself already drops archived rows and prunes expired stopped ones, so
+		// what arrives here is what still holds a slot.
+		_, _ = w.Write([]byte(`{"sessions":[
+			{"name":"mine","kind":"claude","dir":"/repos/app","title":"the split-out task",
+			 "createdAt":"2026-09-09T10:00:00+09:00","state":"idle","alive":true,
+			 "lastTurnEndAt":"2026-09-09T11:30:00+09:00",
+			 "origin":"session","originSession":"parent1"},
+			{"name":"folded","kind":"codex","dir":"/repos/app","createdAt":"2026-09-09T09:00:00+09:00",
+			 "state":"","alive":false,"origin":"session","originSession":"parent1"},
+			{"name":"theirs","kind":"claude","dir":"/repos/b","createdAt":"2026-09-09T08:00:00+09:00",
+			 "state":"working","alive":true,"origin":"session","originSession":"parent2"},
+			{"name":"forked","kind":"claude","dir":"/repos/c","createdAt":"2026-09-09T07:00:00+09:00",
+			 "state":"idle","alive":true,"origin":"handoff","originSession":"parent1"},
+			{"name":"theusers","kind":"claude","dir":"/repos/d","createdAt":"2026-09-09T06:00:00+09:00",
+			 "state":"idle","alive":true,"origin":"user"}
+		]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	params, _ := json.Marshal(map[string]any{"name": "list_child_sessions", "arguments": json.RawMessage(`{}`)})
+	raw := mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params})
+
+	var resp struct {
+		Result struct {
+			StructuredContent struct {
+				Sessions  []map[string]any `json:"sessions"`
+				SlotsLeft int              `json:"slotsLeft"`
+				SlotLimit int              `json:"slotLimit"`
+			} `json:"structuredContent"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		t.Fatalf("decode %s: %v", raw, err)
+	}
+	got := resp.Result.StructuredContent
+	names := []string{}
+	for _, row := range got.Sessions {
+		names = append(names, row["name"].(string))
+	}
+	// theirs = another parent's child; forked = a fork of a child, which keeps the lineage but
+	// was made by a person in the Console (the same two conditions sessionDriveAllowed uses);
+	// theusers = not a spawned session at all.
+	if strings.Join(names, ",") != "mine,folded" {
+		t.Fatalf("rows = %v, want only this session's own children", names)
+	}
+	if got.SlotLimit != session.SpawnChildLimit || got.SlotsLeft != session.SpawnChildLimit-2 {
+		t.Fatalf("slots = %d/%d, want %d left of %d", got.SlotsLeft, got.SlotLimit,
+			session.SpawnChildLimit-2, session.SpawnChildLimit)
+	}
+
+	mine, folded := got.Sessions[0], got.Sessions[1]
+	if mine["title"] != "the split-out task" || mine["dir"] != "/repos/app" ||
+		mine["kind"] != "claude" || mine["createdAt"] != "2026-09-09T10:00:00+09:00" {
+		t.Errorf("row lost a field a parent decides on: %v", mine)
+	}
+	// The one field the whole design turns on: without it "idle" cannot tell a child that
+	// finished from one that never started (ADR 0073 decision 9).
+	if mine["lastTurnEndAt"] != "2026-09-09T11:30:00+09:00" {
+		t.Errorf("lastTurnEndAt did not reach the row: %v", mine)
+	}
+	// The listing carries "stopped" as alive=false with an empty state; a blank state next to
+	// a name reads as "unknown", which is the one thing this row must not say.
+	if folded["state"] != "stopped" {
+		t.Errorf("stopped child's state = %v, want stopped", folded["state"])
+	}
+	if _, present := folded["lastTurnEndAt"]; present {
+		t.Errorf("an absent turn end was filled in anyway: %v", folded)
+	}
+}
+
+// The one tool of the nine that is NOT also an operator tool, so it is the one whose gate
+// cannot be inherited from the write set. Both surfaces have to refuse it, and they refuse it
+// at different layers: a session by the advertised-set check that fronts every call, an
+// assistant by the case's own flag test (that check does not run on the operator surface, so
+// without the flag test a --write assistant would reach the listing and get an empty answer
+// keyed on a session name it does not have).
+func TestListChildSessionsRefusedWithoutTheOptIn(t *testing.T) {
+	params, _ := json.Marshal(map[string]any{"name": "list_child_sessions", "arguments": json.RawMessage(`{}`)})
+	// A reachable Agent and a resolvable caller, so that a missing gate FAILS here instead of
+	// falling over on something incidental: without them the write-assistant case would refuse
+	// itself for having no session name and the control would look like it passed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"sessions":[]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	for _, tc := range []struct {
+		surface     string
+		write, self bool
+	}{
+		{"session without --fleet-spawn", false, true},
+		{"write assistant", true, false},
+	} {
+		oldWrite, oldSelf, oldSpawn := writeEnabled(), selfReportOnly(), mcpFleetSpawnEnabled
+		oldSource := mcpSourceSession
+		setWriteEnabled(tc.write)
+		setSelfReportOnly(tc.self)
+		mcpFleetSpawnEnabled = false
+		mcpSourceSession = "parent1"
+		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+		setWriteEnabled(oldWrite)
+		setSelfReportOnly(oldSelf)
+		mcpFleetSpawnEnabled = oldSpawn
+		mcpSourceSession = oldSource
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Errorf("%s: list_child_sessions answered without the opt-in: %s", tc.surface, resp)
+		}
 	}
 }

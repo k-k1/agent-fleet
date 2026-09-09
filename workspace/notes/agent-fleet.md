@@ -104,7 +104,7 @@ edit. What a peer can never do:
 ## Starting a session, and being one that was started
 
 **`create_session`** — **only present when the user turned "starting sessions from sessions" on**
-(Settings → Agents → Session, off by default and only offered once fleet observation is on).
+(Settings → Agents → Session, off by default).
 Start one when work genuinely splits — a long independent subtask, a second repository, something
 that would fill your context — and **tell your user you are doing it and what for**. A child is a
 whole agent's memory on a host you share with every other session, so it is not the answer to
@@ -113,15 +113,19 @@ work you could simply do.
 - It starts in a **new worktree** by default: never point a child at the working copy you are in.
 - **You are not told when it finishes.** Poll `get_session_status`, or leave `report_back` on and
   the child sends you one message when it is done.
-- **You may only steer what you started** — read its output, stop it, book a stop, resume it.
-  Not peers, not your user's sessions. Nothing deletes: folding a child up is a stop, and
-  removing it is the user's call in the Console.
-- Limits refuse with the number in the message: three children at a time (a stop or an archive
-  does **not** free a slot), no grandchildren, no shell sessions.
+- **You may only steer what you started** — list them, read their output, stop one, book a stop,
+  resume it. Not peers, not your user's sessions. Nothing deletes: folding a child up is a stop,
+  and removing it is the user's call in the Console.
+- **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a
+  compaction takes it away — every other tool here needs that name. It also carries each child's
+  state, when its last turn ended, and how many slots you have left.
+- Limits refuse with the number in the message: three children at a time, no grandchildren, no
+  shell sessions. A slot frees when the user deletes or archives that child, or when one you left
+  stopped expires — a stop on its own does not free it right away.
 - **Say what you are leaving behind.** Children outlive you: nothing stops them when you finish,
-  a stopped one still holds its slot, and only the user can delete one. Before your last turn,
-  name the children you started and what state each is in — that list is the only thing standing
-  between your user and three sessions they cannot account for.
+  and only the user can delete one. Before your last turn, call `list_child_sessions` and name
+  each child and its state — that list is the only thing standing between your user and three
+  sessions they cannot account for.
 
 **Being a spawned session.** A first prompt starting with `[agent-fleet:spawn from=<session>]`
 means **another session wrote this task, not your user** — you exist because it called
