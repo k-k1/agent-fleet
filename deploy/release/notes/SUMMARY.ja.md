@@ -25,6 +25,8 @@
 
 ## [0.17.0](0.17.0.ja.md) — 2026-09-09
 
+**CLI ピン** — Claude Code 2.1.266 / OpenCode 1.18.30 / Antigravity 1.1.28 / Cursor 2026.09.08 / Kiro 2.21.2
+
 **New / Improved**
 
 - **[エンジン]** フリート自身の推論エンジンをオンデマンドの GPU で動かす。`llm` 役は opencode の起動メニューに `llamacpp/<モデル>`、`image` 役は `generate_image` を配備自身で提供（設定 > 管理で 無効／常時稼働／オンデマンド・ECS のみ・任意）

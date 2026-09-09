@@ -28,6 +28,8 @@ Keeping it current:
 
 ## [0.17.0](0.17.0.md) — 2026-09-09
 
+**CLI pins** — Claude Code 2.1.266, OpenCode 1.18.30, Antigravity 1.1.28, Cursor 2026.09.08, Kiro 2.21.2
+
 **New / Improved**
 
 - **[engines]** The fleet runs its own inference engines on a GPU bought on demand: `llamacpp/<model>` in opencode's launch menu (`llm`) and `generate_image` served by the deployment (`image`); disabled / always-on / on-demand in Settings › Admin (ECS only, opt-in)
