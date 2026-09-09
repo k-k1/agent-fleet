@@ -3688,6 +3688,40 @@ Console で選ばれていた `juggernaut-xl-v9` が `start` のまま残った�
 それを読むのは CP の起動だけなので、**substrate の更新が製品に届かない**。
 直すなら定期再読み込みか、管理パネルからの再読み込みである。
 
+### 64.43.6.1 🔴 boot の壁は 2 枚ある——CP を直しても opencode にはまだ出ない
+
+CP を再起動して管理パネルに llm が出たあと、**opencode の起動メニューにはまだ
+モデルが出なかった**（「既定のモデルのみ利用できます」）。§64.43.6 と同じ形が
+**もう 1 段下でも起きている**。エンジン表が製品に届くには **boot の壁を 2 枚**越える。
+
+| 境界 | 読む主体 | いつ読むか |
+|---|---|---|
+| CFN → SSM | 60-engines がエンジン表を書く | 2 パス目 |
+| SSM → **CP** | `loadEngineTable` | **CP の boot のみ**（§64.43.6） |
+| CP → **ワークスペース** | `syncEngineProviders` が opencode の config に provider を書く | **agent の boot のみ** |
+
+`workspace/agent/main.go` の `go syncEngineProviders()` は agent の起動時に 1 回だけで、
+その関数のコメントはこう書いてある:
+
+> Called once at boot: the catalogue only changes when the 60-engines stack does,
+> and that replaces the CP task, whose next workspace start runs this again.
+
+🔴 **この前提が成り立っていない。** 60-engines が変わっても **CP タスクは置き換わらない**
+——エンジン表は SSM にあり、CP は 30-ingress の持ち物だからである。だから
+「60-engines を触れば CP が入れ替わり、次のワークスペース起動で拾われる」という
+連鎖が**どこにも存在しない**。⇒ **走っているワークスペースは Stop→Start が要る。**
+
+★ **`generate_image` だけが動いていたのは偶然ではない。** image 側は
+`engineCatalogRows` の **10 分 TTL のキャッシュ**を通るので boot に縛られない
+（`Ready()` が毎ターン呼ばれる経路なので、そもそもキャッシュが要る）。
+**opencode の provider 書き出しだけが boot 固定**である。同じエンジン表から来た
+2 つの機能が、**片方は勝手に追いつき、片方は永久に追いつかない。**
+
+⚠️ したがってエンジンを増やしたときの完全な手順は
+**60-engines 2 パス目 → CP 入れ替え → 各ワークスペースの Stop→Start** である。
+最後の 1 つは利用者本人のタイミングなので、**運用者が「配備した」と言った時点と、
+利用者が使えるようになる時点はずれる**。
+
 ### 64.43.7 それでも「起動した」を完了と読んではいけない
 
 有効モデルが無い状態のエンジンは、**モデルを 1 つも読まないまま起動して健全性検査を通り、
