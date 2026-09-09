@@ -653,6 +653,17 @@ type sessionWire struct {
 	// proposals live in the Workspace's home, so while it is stopped there is nothing to read
 	// them from and no launch can happen anyway.
 	HandoffPending bool `json:"handoffPending,omitempty"`
+	// OriginSession: the session this one came from (ADR 0073). The left rail derives its
+	// whole worktree hierarchy and its family colours from this one key (docs/log/94), and
+	// it is the only link there is — a worktree's folder and branch carry a random slug.
+	// Absent here it is silently dropped, every family collapses to size 1, and NOTHING of
+	// that display appears; because the Console declares it optional, the type check never
+	// complains either. No DB-mirror column: while the whole Workspace is stopped the repo
+	// list 502s and the rail has no working copies to nest under at all, so what is lost is
+	// the family colour on the flat session list, not the tree. Stopped SESSIONS are
+	// unaffected — the Agent is authoritative whenever the Workspace runs and reports them
+	// with their lineage intact.
+	OriginSession string `json:"originSession,omitempty"`
 }
 
 func fmtStarted(createdAt string) string {

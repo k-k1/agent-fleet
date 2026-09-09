@@ -1,8 +1,8 @@
 # 94. 左ペインに系譜を出す — worktree の入れ子とセッション families の縦線
 
-Console だけの変更。バックエンドには触っていない。必要な値
-（`dir` / `createdAt` / `originSession` / `repo.parent` / `repo.worktree`）は
-すべて既に wire に来ている。
+ほぼ Console だけの変更。ただし**「必要な値はすべて既に wire に来ている」という前提は
+間違いだった** — `originSession` は Agent までしか来ておらず、control-plane の中継で
+黙って落ちていた。§94.10 を見ること。
 
 関連: [0073-session-spawned-sessions](../decisions/0073-session-spawned-sessions.ja.md)
 決定 1 の 2026-09-10 補遺（引き継ぎ提案が `origin_session` を継ぐようになった。
@@ -106,6 +106,7 @@ mtime である。ストアを作っても手で `git worktree add` したもの
 | `console/src/features/project/RepoNode.tsx` | `childRepos={members.slice(1)}` の 1 段渡しをやめ、`RepoTreeNode` を**再帰**。畳んだときのバッジ集計と reveal も部分木全体へ |
 | `console/src/features/sessions/SessionRow.tsx` | family の縦線。行は自分の色だけを select するので、無関係なセッションの更新では再描画しない |
 | `tokens.css` / `project.css` / `sessions.css` | ランプと 2 本の縦線 |
+| `control-plane/workspace_handlers.go` ほか | `sessionWire` に `OriginSession`。§94.10（初版で抜けていた） |
 
 **i18n の追加は無し**（新しい文字列を足していない）。色だけの手がかりに文字の等価物を
 付けるかは、入れ子そのものが関係を語るので今回は見送った。
@@ -146,8 +147,11 @@ mtime である。ストアを作っても手で `git worktree add` したもの
 🔥 **Console 側の欠落は Console 側の試験にしか映らない**（#469 / §87.18.6 と同じ）。
 上表の「`originSession` を読むこと自体」を壊したまま
 `(cd workspace/agent && go test ./internal/session/... ./internal/sessionx/... -count=1)`
-を回すと **exit 0・両パッケージ `ok`** のままだった（実測）。今回は Go を 1 行も
-触っていないので、この変更は Go の試験からは**原理的に見えない**。
+を回すと **exit 0・両パッケージ `ok`** のままだった（実測）。
+
+🔥 **そして裏側も同じだけ真だった。**上の表は 14 件が全部効いているのに、**この機能が
+本番で 1 つも動かない欠陥をどれ 1 つ捕まえなかった**——落ちていたのは Console より手前、
+CP の中継である。§94.10 を見ること。
 
 全量: `cd console && npm test` → 2278 passed / 1 failed、落ちる 6 ファイルは
 `src/features/viewer/` の `Denied ID`（親の `node_modules` を symlink で共有している
@@ -181,10 +185,87 @@ headless Chromium を自分で駆動して確認した。判定は目視では�
 
 ## 94.9 やらなかったこと
 
-- バックエンドの変更。`originSession` の意味・述語（`session.InUnattendedChain` は
-  深さ判定の話で表示とは無関係）にも触っていない。
+- `originSession` の意味・述語（`session.InUnattendedChain` は深さ判定の話で表示とは
+  無関係）に触ること。バックエンドは §94.10 の中継 1 フィールドだけで、
+  それ以外は 1 行も動かしていない。
+- DB mirror への `origin_session` 列（§94.10.1 の決定）。
 - worktree のメタデータストア（§94.2 ①）。
 - 作業セット（52）の仕組み。別軸の機能なので入れ子と競合させていない。
 - `filter.ts` の `sessionMatches` に親名を足すこと（任意とされていた）。
   この一帯のレビュー 2 巡目・3 巡目で出た追加欠陥はどちらも「ついでの変更」が原因だったので、
   範囲を広げていない。
+
+## 94.10 🔥 前提が間違っていた — CP の中継で `originSession` が落ちていた
+
+初版は「必要な値は全部 wire に来ている」を前提に Console だけを直した。**来ていなかった。**
+PR #472 の CI（`control-plane` の `TestContractFamilies/sessionWire`）が両方向で名指しした:
+
+```
+Session has gained "originSession" - add it to the table too
+Session declares "originSession" but sessionWire does not emit it
+  - the Console reads undefined forever (it is optional, so the type check never complains)
+```
+
+`control-plane/workspace_handlers.go` の `sessionWire` は Agent の応答を decode して
+re-emit する**中継**で、**この構造体に無いフィールドは黙って落ちる**（構造体自身の
+コメントが Driver・Subdir・Title・Color・Locked それぞれで同じ事故を書いている）。
+`originSession` が無いので Console は永久に `undefined` を読み、**全 family が size 1 に
+なって入れ子も縦線も 1 つも出ない**。本番で一切動かない状態だった。
+
+**dom 試験で捕まらなかった理由**: あれは `Session` オブジェクトを直接組んで
+`useSessionsStore.setState` している。実経路は Agent → control-plane → Console で、
+落ちるのは 2 本目の矢印である。§94.7 に「Console 側の欠落は Console 側の試験にしか
+映らない」と書いたが、**その裏側**——Console の試験は Console より手前の欠落を映さない——
+も同じだけ真だった。型が optional なので `npm run typecheck` も黙る。
+
+直したのは 3 か所。試験が両方向を名指ししているので、表にも載せないと通らない。
+
+| 場所 | 何を |
+|---|---|
+| `workspace_handlers.go` の `sessionWire` | `OriginSession string \`json:"originSession,omitempty"\`` を追加 |
+| `contract_session_test.go` | `sessionWireBinding` に `"OriginSession": "originSession"`、`tsKeys` に `"originSession"` |
+| `session_wire_test.go` | Agent 形の payload と往復後の期待値に `originSession` を追加（落とし戻りの回帰止め） |
+| `testdata/wire.golden` | 再生成（count 175 → 176） |
+
+陽性対照——`sessionWire` から 1 行消して、3 本が別々の理由で落ちること:
+
+| 試験 | 落ち方 | exit |
+|---|---|---|
+| `TestContractFamilies/sessionWire` | TS が宣言しているのに Go が emit しない（対応の突き合わせ） | 1 |
+| `TestAgentSessionsRelayKeepsFields` | `relayed originSession = <nil>, want sparent`（実際の decode→re-emit 往復） | 1 |
+| `TestWireShapeGolden` | `- sessionWire.originSession string,omitempty`（キー集合の golden） | 1 |
+
+`(cd control-plane && go test ./... -count=1 -p 2)` exit 0。
+
+### 94.10.1 DB mirror に列は足さない（決定）
+
+`sessionWire` の同じ構造体が Driver・Subdir・Title・Color について
+「DB mirror（Workspace 停止中に再供給する側）には列が無いので停止中は落ちる」と書いている。
+`originSession` も同じで、**列は足さないことにした。**
+
+まず前提を 2 つに割る必要がある。「停止中」には別のものが 2 つある。
+
+- **停止中の*セッション*** — Workspace は動いている。`sessionsPayload` は
+  `res.rt.State(ctx) == "running"` なら Agent の一覧をそのまま返すので、停止した
+  セッションも `originSession` を持ったまま届く。**系譜は失われない。**
+  左ペインに溜まって見えているのはこちらである。
+- **停止中の*Workspace*** — このときだけ DB mirror が一覧の唯一の出所になる。
+
+失われるのは後者だけで、そしてその窓では**入れ子はどのみち出ない**。
+`GET /api/repos` は `agentProxyAPI.rest`（`proxy.go:144`）を通り、Agent へ届かないので
+プレーンテキストの 502 になる（`proxy.go:189`）。`ProjectTree` の `useRetryLoad` は
+running でないと判れば `clearRepos()` で空に落とす（そうしないと rail が
+「リポジトリがありません」で固まる）。**作業コピーが 1 つも無いので、入れ子にする木が
+そもそも無い。**残るのは「その他のセッション」の平らな一覧で、そこで消えるのは
+**family の色だけ**である。
+
+列を足す対価は 2 方言のマイグレーション + `SessionRow` + sqlite / postgres 双方の
+INSERT/SELECT + スキーマ整合の試験で、得るのは「木の無い窓での平らな一覧の色」。
+`Carried` が列を得たのは、あれが**停止したセッションについての主張**で、停止中にこそ
+見られるものだったからである（列が無いと「Workspace が止まった瞬間にバッジが消えて嘘を
+つく」）。系譜は木と一緒に消えるので、その形の嘘にはならない。Driver・Subdir・Title・
+Color と同じ扱いに揃えた。
+
+**制限として書き下す**: Workspace が停止しているあいだ、左ペインの family の色は出ない。
+Workspace が起き、Agent が最初のポーリングに答えた時点で戻る。停止したセッションの系譜は
+（Workspace が動いてさえいれば）いつでも正しい。
