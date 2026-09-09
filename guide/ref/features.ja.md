@@ -91,7 +91,7 @@ updated: "2026-08"
 
 ## テナントの管理
 
-いずれも**テナント設定**の中。棚は [admin/](../admin/README.ja.md)、
+いずれも**テナント設定**の中。セクションは [admin/](../admin/README.ja.md)、
 どれが読み取り専用かは [roles.md](roles.ja.md)。
 
 | 機能 | 誰が | どこ | 詳細 |

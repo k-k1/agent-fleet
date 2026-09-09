@@ -202,7 +202,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.40
+ARG AWSCLI_VERSION=2.36.41
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -301,8 +301,8 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.263
-ARG OPENCODE_VERSION=1.18.29
+ARG CLAUDE_CODE_VERSION=2.1.266
+ARG OPENCODE_VERSION=1.18.30
 ARG CODEX_VERSION=0.153.4
 ARG COPILOT_VERSION=1.0.83
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
@@ -330,10 +330,10 @@ ENV COPILOT_AUTO_UPDATE=false
 # 当てるのと同じ OPENSSL_ia32cap マスクで検証する（0008 の 2026-09-07 決定）ので、
 # --version 検証を飛ばすのは x86 以外のビルドホストだけ（arm64 のクロスビルドは
 # バイナリを走らせられるとは限らない）。
-ARG AGY_VERSION=1.1.26
-ARG AGY_RELEASE_BUILD=5550154686791680
-ARG AGY_SHA256_X64=c47c0726266b3513660b7094bceceecbd03d8ae907786aa269c507ceb7e4ee54
-ARG AGY_SHA256_ARM64=f595d2f1ae23001afffab9cb9012d054f0e8a02a1e848537f73239ae8d3fbd6d
+ARG AGY_VERSION=1.1.28
+ARG AGY_RELEASE_BUILD=5576113066475520
+ARG AGY_SHA256_X64=074ff4f732a750ad727aeed5fc82ed34b1fb72fda2a6ceba6c8e652ffd0a94b0
+ARG AGY_SHA256_ARM64=789420d2937393498eb158c4af8321d78c387e31c861db0c79627879509aa8a8
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -377,9 +377,9 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=true
 # setTimeout(...).unref() で走るが `disableAutoUpdate || channel==="static"` でスキップ）。
 # 焼き込みでは AF が起動フラグ `--disable-auto-update`（全経路）＋ entrypoint の
 # cli-config.json `channel:"static"` 再固定の二重で封じる（詳細 docs/log/40 Track B）。
-ARG CURSOR_VERSION=2026.09.02-c22c1a3
-ARG CURSOR_SHA256_X64=b73b59854762535c0fc20d7ccc51c3b5a356a851491088d60a362be48750f53c
-ARG CURSOR_SHA256_ARM64=fb7bc635be6172ebcf68f907fd9217e3614da51916455c6d7fdb66690997884c
+ARG CURSOR_VERSION=2026.09.08-6caf4ff
+ARG CURSOR_SHA256_X64=0d7a11dd01b652b8b92d05cc14f769fbc5a3442b786cd8b636041f189ab81f1e
+ARG CURSOR_SHA256_ARM64=153ae182db90814748d544f2a26abc073e4e4e5df0b867abfd69def0ff77aa71
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \
@@ -419,9 +419,9 @@ RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
 # `app.disableAutoupdates` で止める設定型なので、封殺は runtime（entrypoint 起動毎再固定
 # ＋ 縦割りの ensureSettings）に寄せる（copilot の COPILOT_AUTO_UPDATE とは違い build ENV
 # では止められない）。
-ARG KIRO_VERSION=2.21.1
-ARG KIRO_SHA256_X64=1f81a69b2a5d49fc74793d8805e6c31650b78e957ebcf54e90877a8e72f4b0a1
-ARG KIRO_SHA256_ARM64=7f5df29bd3a1097a387a4e0c88e035e5a26d56aa59cea8c5c78123608b4549c0
+ARG KIRO_VERSION=2.21.2
+ARG KIRO_SHA256_X64=e0a841103aaca507c4a62f734639de47284398ff1c4abd725d3e9045024df4e6
+ARG KIRO_SHA256_ARM64=97f493492750e7e50aa3e82524509bdb6c58c97a6813b3e2947fe676f8d97530
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux; \
       arch="$(dpkg --print-architecture)"; \
       case "$arch" in \

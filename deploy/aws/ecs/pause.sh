@@ -60,7 +60,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 export AF_YES AF_DRY   # read by af_confirm / af_run in env.sh
 af_env_init "$PROFILE" "$REGION" "$STACK"
 [ "$AF_LIVE" = 1 ] || { echo "ERROR: $STACK not found in $PROFILE/$REGION (use standup.sh for a deployment that was torn down)" >&2; exit 1; }

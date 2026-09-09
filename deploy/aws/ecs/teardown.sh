@@ -81,7 +81,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 export AF_YES AF_DRY
 af_env_init "$PROFILE" "$REGION" "$STACK"
 CLUSTER="$(af_cluster)"

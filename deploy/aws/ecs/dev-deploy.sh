@@ -91,7 +91,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 case "$IMAGE" in auto|cp|both) ;; *) echo "--image takes auto|cp|both (got '$IMAGE')" >&2; exit 2 ;; esac
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -216,8 +216,9 @@ if [ "$need_bake" = 1 ]; then
         --jq "[.[] | select(.displayTitle | contains(\"$TAG\"))] | first | .databaseId" 2>/dev/null || true)"
       [ -n "$run_id" ] && [ "$run_id" != "null" ] && break
     done
-    [ -n "$run_id" ] && [ "$run_id" != "null" ] || {
-      echo "ERROR: could not find the dev-image run for $TAG (look at the Actions tab)" >&2; exit 1; }
+    if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+      echo "ERROR: could not find the dev-image run for $TAG (look at the Actions tab)" >&2; exit 1
+    fi
     echo "==> watching run $run_id"
     gh run watch "$run_id" --exit-status --interval 20
     # Did it really bake that commit? If develop moved between the dispatch and the checkout,

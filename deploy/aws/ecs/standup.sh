@@ -83,7 +83,7 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-[ -n "$PROFILE" ] && [ -n "$REGION" ] || { usage; exit 2; }
+if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 export AF_YES AF_DRY
 af_env_init "$PROFILE" "$REGION" "$STACK"
 if [ ! -r "$AF_ENV_DIR/params/30-ingress" ]; then
@@ -177,7 +177,7 @@ command -v crane >/dev/null || say_missing "no crane (needed to carry GHCR -> EC
 # "0 required" where every parameter has a Default.
 for slug in 00-network 10-data 20-platform 30-ingress 40-ec2-pool 50-tts 60-engines; do
   f="$(af_params_file "$slug")"; t="$CFN_DIR/$slug.yaml"
-  [ -r "$f" ] && [ -r "$t" ] || continue
+  if [ ! -r "$f" ] || [ ! -r "$t" ]; then continue; fi
   missing=""; has_section=0; parsed=0
   while read -r kind a b; do
     case "$kind" in
@@ -444,10 +444,8 @@ fi
 # than added to. Only one stack in a deployment may do that — take the measurement harness
 # down first (deploy/aws/ecs/harness/probe-managed-instances.sh down).
 if [ -n "${AF_STACK_ENGINES:-}" ]; then
-  engines_existed=0
   ENGINES_LLM_BEFORE=""; ENGINES_IMAGE_BEFORE=""
   if af_stack_exists "$AF_STACK_ENGINES"; then
-    engines_existed=1
     # Which engine services existed BEFORE this run. Asked here rather than after the deploy
     # because that is the only moment the answer is knowable, and it is what decides whether
     # a service may be scaled to 0 below: a role staged on this run is new even though the
