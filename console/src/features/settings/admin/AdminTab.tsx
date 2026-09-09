@@ -13,6 +13,7 @@ import { SignInMethodRegister } from "../tenant/tenantSignInMethods.tsx";
 // The per-tenant surface (both the rail order and the body) is shared with the tenant settings
 // modal: the same tenant seen from a different entry point must not get a different IA.
 import { TenantScopeBody, tenantScopeGroups } from "../tenant/tenantScope.tsx";
+import { BrandAdminView } from "./adminBrand.tsx";
 import { EgressView } from "./adminEgress.tsx";
 import { TtsAdminView } from "./adminTts.tsx";
 import { EnginesAdminView } from "./adminEngines.tsx";
@@ -56,6 +57,10 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
       items: [
         ["egress", "admin.mode_egress"],
         ["tts", "admin.mode_tts"],
+        // Which deployment this is (favicon colour + app-name label). Unconditional: it
+        // works the same on every runtime, and it is the one item here that is about
+        // telling this deployment from the next one.
+        ["brand", "admin.mode_brand"],
         // Self-hosted inference (ADR 0071) is opt-in and most deployments run none. An empty
         // "engines" item would read as "my engines disappeared" — the same reason the slot
         // pool item is conditional.
@@ -197,6 +202,7 @@ export function AdminTab() {
     if (rootSection === "register") return <SignInMethodRegister />;
     if (rootSection === "egress") return <EgressView />;
     if (rootSection === "tts") return <TtsAdminView />;
+    if (rootSection === "brand") return <BrandAdminView />;
     if (rootSection === "engines" && hasEngines) return <EnginesAdminView />;
     if (rootSection === "pool" && hasPool) return <PoolView />;
     if (rootSection === "sessions") return <AllSessionsView tenants={tenants} isSuper={isSuper} />;

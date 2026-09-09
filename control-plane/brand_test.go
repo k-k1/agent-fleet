@@ -184,7 +184,7 @@ func TestBrandedRoutesServeThroughTheMux(t *testing.T) {
 
 	b := newBrandConfig("violet", "dev")
 	mux := http.NewServeMux()
-	registerStatic(mux, config{consoleDir: dir, brand: b})
+	registerStatic(mux, config{consoleDir: dir, brand: newBrandResolver(b, nil)})
 
 	get := func(path string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()

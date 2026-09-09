@@ -44,6 +44,7 @@ func buildMux(cfg config) *http.ServeMux {
 	registerInternalGitRoutes(mux, cfg)
 	registerBrowserRoutes(mux, cfg)
 	registerDrawioStencilRoutes(mux, cfg)
+	registerBrandAdminRoutes(mux, cfg)
 	registerTerminalPreviewRoutes(mux, cfg)
 	registerLegacyRedirect(mux)
 	registerStatic(mux, cfg)
@@ -993,19 +994,18 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("GET /open/browser-attachment/{id}", shell)
 	mux.HandleFunc("GET /open/browser-attachment/{id}/{$}", shell)
 
-	// Per-deployment branding (brand.go). Registered only when something is actually
-	// branded, so an unbranded deployment keeps serving the built files untouched —
-	// including the FileServer's own index.html for "/". The icons stay auth-exempt
-	// under /brand/ (the login page needs them before there is a session).
-	if cfg.brand.active() {
-		mux.HandleFunc("GET /{$}", shell)
-		mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
-			serveConsoleManifest(w, r, cfg)
-		})
-		icons := newBrandIcons(cfg.brand, cfg.consoleDir)
-		for _, name := range brandTintedIcons {
-			mux.HandleFunc("GET /brand/"+name, icons.serve)
-		}
+	// Per-deployment branding (brand.go). Always registered, because branding is switched
+	// on from the Admin modal at run time — a route table that depended on the value at
+	// boot would mean "your colour appears after the next restart". Each handler falls
+	// straight through to the shipped bytes while nothing is branded. The icons stay
+	// auth-exempt under /brand/ (the login page needs them before there is a session).
+	mux.HandleFunc("GET /{$}", shell)
+	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
+		serveConsoleManifest(w, r, cfg)
+	})
+	icons := newBrandIcons(cfg.brand, cfg.consoleDir)
+	for _, name := range brandTintedIcons {
+		mux.HandleFunc("GET /brand/"+name, icons.serve)
 	}
 
 	fs := http.FileServer(http.Dir(cfg.consoleDir))

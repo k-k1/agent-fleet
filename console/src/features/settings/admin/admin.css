@@ -367,6 +367,39 @@
   color: var(--dialog-muted);
 }
 
+
+/* Deployment branding (adminBrand.tsx). The chip preview reuses .brand-env from
+   topbar.css so what is previewed here is literally what the top bar will draw. */
+.brand-field {
+  margin-top: 14px;
+}
+.brand-field > label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--dialog-muted);
+}
+.brand-field input[type="text"] {
+  width: min(100%, 260px);
+}
+.brand-preview {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.brand-preview-title {
+  font-weight: 600;
+}
+.brand-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
 @media (max-width: 760px) {
   .tenant-cards {
     grid-template-columns: 1fr;

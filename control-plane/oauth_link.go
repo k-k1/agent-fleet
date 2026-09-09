@@ -265,7 +265,7 @@ func (c config) writeLinkResult(w http.ResponseWriter, r *http.Request, res link
 	w.Header().Set("Cache-Control", "no-store")
 	page := strings.NewReplacer(
 		"{{LANG}}", lang,
-		"{{TITLE}}", html.EscapeString(c.brand.name(t.LinkTitle)),
+		"{{TITLE}}", html.EscapeString(c.brand.get(r.Context()).name(t.LinkTitle)),
 		"{{NOTE}}", t.LinkNote,
 		"{{ERROR}}", `<div class="`+class+`">`+body+`</div>`,
 		"{{BUTTONS}}", `<a class="gbtn" href="`+html.EscapeString(next)+`">`+t.LinkBack+`</a>`,

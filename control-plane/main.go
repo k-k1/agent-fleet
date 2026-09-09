@@ -73,9 +73,10 @@ type config struct {
 	// previewDomain mirrors manager.previewDomain (AF_PREVIEW_DOMAIN) — the parent of
 	// the per-start preview subdomains (docs/log/81). Empty = host-mode preview is off.
 	previewDomain string
-	// Per-deployment favicon/PWA colour and app-name label (AF_BRAND_COLOR /
-	// AF_BRAND_LABEL, brand.go). Zero value = the assets ship exactly as built.
-	brand brandConfig
+	// Per-deployment favicon/PWA colour and app-name label (brand.go): AF_BRAND_* as the
+	// boot value, the Admin modal's stored choice on top of it. nil = the assets ship
+	// exactly as built.
+	brand *brandResolver
 }
 
 func main() {
@@ -257,9 +258,10 @@ func main() {
 		// off — it cannot work without wildcard DNS and a wildcard certificate — and only
 		// the path-based route remains.
 		previewDomain: mgr.previewDomain,
-		// brand.go: tells two deployments of the same image apart in a tab strip and on
-		// a home screen. Unset = the shipped teal and the plain "Agent Fleet".
-		brand: newBrandConfig(os.Getenv("AF_BRAND_COLOR"), os.Getenv("AF_BRAND_LABEL")),
+		// brand.go: tells two deployments of the same image apart in a tab strip and on a
+		// home screen. AF_BRAND_* is the boot value; the Admin modal's choice lives in
+		// deployment_setting and wins over it, so this is a resolver, not a fixed value.
+		brand: newBrandResolver(newBrandConfig(os.Getenv("AF_BRAND_COLOR"), os.Getenv("AF_BRAND_LABEL")), mgr.store),
 	}
 
 	// P3-9 idle-stop (docs/log/19): a background reaper halts idle claude sessions
@@ -477,8 +479,8 @@ func main() {
 	}
 	log.Printf("control-plane %s on %s (console=%s, ws image=%s, auth=%s, runtime=%s)", buildVersion, cfg.addr, cfg.consoleDir, wsImage, cfg.mgr.authMode, rtProfile)
 	log.Print("edge: " + clientIPBanner())
-	if cfg.brand.active() {
-		log.Printf("brand: colour=%s (%s) label=%q", cfg.brand.colorName, cfg.brand.hex, cfg.brand.label)
+	if b := cfg.brand.get(context.Background()); b.active() {
+		log.Printf("brand: colour=%s (%s) label=%q", b.colorName, b.hex, b.label)
 	}
 	// Host-mode preview (docs/log/81). The dispatcher sits OUTSIDE authGate (the preview
 	// hosts carry their own handshake cookie, and going through the gate would bounce

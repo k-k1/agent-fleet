@@ -214,6 +214,14 @@ every tab in the strip and every icon on a phone's home screen is the same teal 
 login page gives no hint which one you are signing in to. Two settings on the Control Plane
 fix that; both are cosmetic, and nothing about access or data depends on them.
 
+**Where to set it.** The quickest route is the Console: **Admin → Deployment → Appearance**
+(super_admin only) — pick a colour, type a label, save. It takes effect on the next request,
+with no restart, and the tab you are looking at updates on the spot. The two settings below
+are the same thing on the deployment side: they are the value a fresh deployment starts
+from, and what the modal falls back to when you press "Follow the environment". **A choice
+saved in the modal wins over them** — change the environment afterwards and nothing moves
+until you reset.
+
 | Setting | What it does |
 |---|---|
 | `AF_BRAND_COLOR` | Recolours the favicon, the PWA / home-screen icons and the colour Android paints the task switcher. One of `teal` (the shipped default), `blue`, `violet`, `magenta`, `red`, `orange`, `green`, `slate`. |

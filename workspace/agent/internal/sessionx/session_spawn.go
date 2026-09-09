@@ -27,7 +27,7 @@ var spawnInflight = struct {
 	n  map[string]int
 }{n: map[string]int{}}
 
-// countChildren returns how many sessions this parent CREATED and still exist.
+// countChildren returns how many sessions this parent CREATED and still hold a slot.
 //
 // Both halves of the predicate are meant. origin_session alone would also count a fork of a
 // child (which keeps the lineage but is origin=handoff), and a fork is a person's action in the
@@ -35,13 +35,23 @@ var spawnInflight = struct {
 // parent may not spawn. Nothing escapes through that gap: a fork of a child cannot spawn either
 // (the depth rule reads the lineage, deliberately the wider predicate).
 //
-// Archived children ARE counted. Archiving hides a session from the active list but keeps it
-// restorable, so treating it as a freed slot would make the limit meaningless: fold up, spawn a
-// replacement, restore. Only deleting the meta frees a slot, which is also the only operation
-// that makes the child stop existing in any sense the user can undo.
+// ARCHIVED children are NOT counted (ADR 0073 decision 6, amended 2026-09-09). They were, on
+// the reasoning that archiving is reversible and freeing its slot would allow "fold up, spawn a
+// replacement, restore". What that missed is that nothing ever takes the slot back: the stopped
+// TTL prune skips archived metas outright (HandleListSessions), so an archived child holds a
+// slot FOREVER and a parent that tidied three of them can never spawn again — the user who
+// cleans up is punished hardest. Archiving is a Console-only action a session cannot perform
+// (decision 13), which is the same basis on which forks and recreates are kept out of this
+// count: a person's action must not spend a session's budget.
+//
+// What still frees a slot: deleting the meta, archiving it, and — for a child left stopped —
+// session.StoppedTTL expiring, which prunes the meta on the next listing.
 func countChildren(parent string) int {
 	n := 0
 	for _, m := range session.ListMetas() {
+		if m.Archived {
+			continue
+		}
 		if m.OriginSession == parent && session.OriginOf(m) == session.OriginSession {
 			n++
 		}
@@ -61,11 +71,24 @@ func reserveSpawnSlot(parent string) error {
 	defer spawnInflight.mu.Unlock()
 	if have := countChildren(parent) + spawnInflight.n[parent]; have >= session.SpawnChildLimit {
 		return fmt.Errorf("このセッションは既に子セッションを %d 本持っています（上限 %d）。"+
-			"不要な子を Console で削除してから起こしてください（停止やアーカイブでは枠は空きません）",
-			have, session.SpawnChildLimit)
+			"list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください"+
+			"（停止したままの子は %s で自動的に枠が空きます）",
+			have, session.SpawnChildLimit, stoppedTTLPhrase())
 	}
 	spawnInflight.n[parent]++
 	return nil
+}
+
+// stoppedTTLPhrase renders session.StoppedTTL for the refusal above. The figure is spelled out
+// because ADR 0073 refuses to have invisible limits, and read from the setting rather than
+// written as "7 days" because AF_SESSION_STOPPED_TTL moves it (and the tests set it to
+// minutes).
+func stoppedTTLPhrase() string {
+	d := session.StoppedTTL()
+	if h := d.Hours(); h >= 24 {
+		return fmt.Sprintf("%d 日", int(h/24))
+	}
+	return d.String()
 }
 
 // spawnSlot is one create's claim on a child slot. Zero parent = this create is not a spawn, and

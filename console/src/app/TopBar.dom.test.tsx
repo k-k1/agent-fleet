@@ -35,6 +35,7 @@ vi.mock("../features/notifications/NotificationCenter.tsx", () => ({
 vi.mock("../features/settings/hostUpdate.ts", () => ({ useHostUpdate: () => null }));
 
 import { TopBar } from "./TopBar.tsx";
+import { useBrandStore } from "../lib/brand.ts";
 import { resetDeploymentVersionCache } from "../features/settings/deploymentVersion.ts";
 
 const ECS_PAYLOAD = {
@@ -78,6 +79,9 @@ const versionRows = () => Array.from(host!.querySelectorAll(".acct-build")).map(
 beforeEach(() => {
   api.mockReset();
   resetDeploymentVersionCache();
+  // The brand store is module-global: leave it set and the next test mounts a top bar
+  // that still thinks it is on a labelled deployment.
+  useBrandStore.setState({ label: "", color: "#149ba7", name: "Agent Fleet", ink: "#000" });
 });
 
 afterEach(() => {
@@ -141,5 +145,25 @@ describe("TopBar version zone", () => {
     expect(written).toContain("control-plane: af-control-plane:9.9.9 (cafe123)");
     expect(written).toContain("workspace: af-workspace:9.9.9");
     expect(written).toContain("console: ");
+  });
+
+  // The two-line brand on a phone (topbar.css). The class is what selects that layout, and
+  // it must appear ONLY with a label: without one the wordmark fits on a single line, and
+  // stacking it there would change the bar for every unbranded deployment. The heights the
+  // layout has to hit are CSS, measured in a browser — jsdom can only pin the switch.
+  it("stacks the brand only when the deployment has a label", async () => {
+    api.mockResolvedValue({ version: "9.9.9", runtime: "local" });
+    await mount();
+    expect(host!.querySelector(".brand")!.className).toBe("brand");
+    expect(host!.querySelector(".brand-env")).toBeNull();
+
+    await act(async () => {
+      useBrandStore.setState({ label: "staging", color: "#e07a1f", name: "[staging] Agent Fleet", ink: "#000" });
+    });
+    expect(host!.querySelector(".brand")!.className).toContain("brand-stacked");
+    expect(host!.querySelector(".brand-env")!.textContent).toBe("staging");
+    // The wordmark is its own element so it can ellipsise instead of pushing the buttons
+    // off the bar.
+    expect(host!.querySelector(".brand-name")).not.toBeNull();
   });
 });

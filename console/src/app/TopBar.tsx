@@ -13,7 +13,7 @@ import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS
 import { useT, getLocale } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
-import { brandColor, brandInk, brandLabel } from "../lib/brand.ts";
+import { useBrandStore } from "../lib/brand.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
@@ -108,6 +108,8 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
   const openSettings = useSettingsUI((st) => st.openSettings);
   const openAdmin = useSettingsUI((st) => st.openAdmin);
   const openTenantSettings = useSettingsUI((st) => st.openTenantSettings);
+  // Which deployment this is (lib/brand.ts) — the chip beside the wordmark.
+  const brand = useBrandStore();
   // Native host self-update (docs/log/42): null on non-native deployments. When a newer
   // version is staged we surface it here — next to the build stamp — as a nudge into
   // Settings -> Toolchains, where the actual "restart and apply" action lives.
@@ -165,19 +167,26 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
         >
           <Icon name="menu" />
         </button>
-        <div className="brand">
-          {/* The deployment label (AF_BRAND_LABEL), in the same colour as this
-              deployment's favicon — the in-app half of "which environment is this". */}
-          {brandLabel && (
+        {/* brand-stacked only when there IS a label: on a phone the chip and the wordmark
+            do not fit on one line, and left alone the name wraps mid-word ("Agent" /
+            "Fleet") and the whole bar grows by a line. Stacked, they are two short lines
+            that stay under the button height (topbar.css). */}
+        <div className={"brand" + (brand.label ? " brand-stacked" : "")}>
+          {/* The deployment label, in the same colour as this deployment's favicon — the
+              in-app half of "which environment is this". From the store, not the module
+              constants, so it follows a change made in the Admin modal without a reload. */}
+          {brand.label && (
             <span
               className="brand-env"
-              style={{ background: brandColor, color: brandInk }}
-              title={brandLabel}
+              style={{ background: brand.color, color: brand.ink }}
+              title={brand.label}
             >
-              {brandLabel}
+              {brand.label}
             </span>
           )}
-          Agent Fleet <span className="brand-sub">Console</span>
+          <span className="brand-name">
+            Agent Fleet <span className="brand-sub">Console</span>
+          </span>
         </div>
       </div>
       <div className="topbar-right">
