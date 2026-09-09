@@ -355,9 +355,10 @@ amendment above was written, `MarkTurnEnd` was fired from `DriveState` alone, so
 its TUI on the four hook-less kinds (agy / copilot / cursor / kiro) carried **no `lastTurnEndAt`
 until somebody called `get_session_status` on it** — invisible to a parent that only polls the
 list. Closed by separating "record WHEN the turn ended" from "fire the notification and the
-operator's completion report". The source moved from the write time of the `TurnEnd` bit to
-`status.SessionStatus.TurnEndAt`, split off from it; what it means as evidence is unchanged — only
-a real end of turn writes it, an idle nobody can explain does not, and the next turn clears it.
+operator's completion report". The source moved from the write time of the `TurnEnd` bit to a pair
+split off from it: `status.SessionStatus.TurnEndAt` for an end something settled, and a store of
+its own for an end a poll merely observed. What it means as evidence is unchanged — only a real
+end of turn writes it, an idle nobody can explain does not, and the next turn retires it.
 **The read route still has no side effects**: recording leaves the state machine untouched, so the
 notification and the report are still fired by `DriveState` alone, exactly once.
 

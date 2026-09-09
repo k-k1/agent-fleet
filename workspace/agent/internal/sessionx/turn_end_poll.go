@@ -19,8 +19,10 @@ package sessionx
 // MarkTurnEnd's write (status.PersistTurnEnd) settles the state to idle, and the notification
 // gate below is `the persisted state is still working` — so a list poll that persisted idle
 // would consume the gate, and the completion notification and report of all four kinds would
-// silently stop arriving. status.RecordTurnEnd therefore stamps the timestamp ONLY, leaving the
-// state machine untouched, and the two gates below stay deliberately different:
+// silently stop arriving. status.RecordTurnEnd therefore records the time in a store of its
+// own, touching no part of the status record — not even to add a field to it, which as a
+// read-modify-write destroyed the notification route's concurrent write outright
+// (status.ObservedTurnEnd). The two gates below stay deliberately different:
 //
 //	notify: the persisted state is "working"                (fires once per turn, unchanged)
 //	record: … and this turn's end is not stamped yet        (idempotent, consumes nothing)

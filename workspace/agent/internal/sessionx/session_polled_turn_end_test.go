@@ -108,9 +108,11 @@ func TestSessionsListRecordsAPolledTurnEndWithoutGetSessionStatus(t *testing.T) 
 		t.Fatalf("the listing changed the state machine: %+v — the notification gate is consumed", st)
 	}
 
-	// A read route may not keep writing. The list is polled for every session in the
-	// workspace, every few seconds, so a stamp per poll would be a file write per session
-	// per poll.
+	// The listing must not write the status file AT ALL — not even to add a field to it. That
+	// write is what raced the notification route's (status.ObservedTurnEnd), and it is also
+	// what a read route polled for every session in the workspace has no business doing.
+	// "Recorded once per turn" itself is pinned in the status package, which can see the
+	// observation store's own mtime.
 	at, ok := status.StateAt(sid)
 	if !ok {
 		t.Fatal("no status file")
@@ -120,7 +122,7 @@ func TestSessionsListRecordsAPolledTurnEndWithoutGetSessionStatus(t *testing.T) 
 		t.Errorf("lastTurnEndAt moved between polls: %q → %q", got.LastTurnEndAt, again.LastTurnEndAt)
 	}
 	if at2, _ := status.StateAt(sid); !at2.Equal(at) {
-		t.Errorf("a second listing poll rewrote the status file (%v → %v); recording must happen once per turn", at, at2)
+		t.Errorf("a listing poll wrote the status file (%v → %v)", at, at2)
 	}
 }
 
@@ -251,8 +253,8 @@ func TestPolledTurnEndIgnoresKindsThatReportTheirOwnEnd(t *testing.T) {
 
 	recordPolledTurnEnd(m, "idle")
 
-	if st, _ := status.Read(sid); st.TurnEndAt != "" {
-		t.Fatalf("an unexplained idle was recorded as the end of a turn (%+v)", st)
+	if got := status.ObservedTurnEnd(sid); got != "" {
+		t.Fatalf("an unexplained idle was recorded as the end of a turn (%q)", got)
 	}
 }
 

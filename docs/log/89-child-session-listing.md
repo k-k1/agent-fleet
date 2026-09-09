@@ -241,10 +241,16 @@ TUI で動かした agy / copilot / cursor / kiro の子は、`get_session_statu
 `status.SessionStatus` に **`TurnEndAt`（RFC3339）** を足し、行の出どころをそこへ移した。
 `State` と `TurnEnd` の状態機械には**いっさい触れない**。
 
+> 🔴 **ポーリング側の記録の置き場所は §89.9 で変わった**（レビュー指摘）。観測した時刻は
+> `SessionStatus` の中ではなく**専用のストア**（`session-turn-end/<sid>.txt`）に置く。
+> 「状態機械に触れない」という意図は同じだが、**同じファイルへの read-modify-write** が
+> 通知経路の書き込みを実測 143/300 で破壊した。下の表の `RecordTurnEnd` の行と
+> 「最初の観測が勝つ」の実現方法は §89.9 の形で読むこと。
+
 | 関数 | 何をするか | ゲート |
 |---|---|---|
 | `status.PersistTurnEnd` | 従来どおり `{idle, TurnEnd}` を settle し、あわせて `TurnEndAt` を打つ | 変更なし（hooks・managed・`DriveState`） |
-| `status.RecordTurnEnd` | **`TurnEndAt` だけ**を打つ。`State` / `TurnEnd` / `TS` は不動 | 「working で、まだ打たれていない」 |
+| `status.RecordTurnEnd` | 観測した時刻を**専用ストアへ**打つ。status レコードには触れない（§89.9） | 「working で、まだ打たれていない」 |
 | `sessionx.notifyPolledTurnEnd` | 従来の `MarkTurnEnd`。4 か所の重複ゲートを 1 本にまとめた | `LiveState == "working"`（**不変**） |
 | `sessionx.recordPolledTurnEnd` | 一覧（`wireSession`）から `RecordTurnEnd` を呼ぶ | 上記＋「終端を観測した kind か」 |
 
@@ -342,3 +348,87 @@ agy / cursor / kiro は同じ 2 つの呼び口を通る。
 - **kiro だけ経路試験が無い**。状態源が実 TUI の文字列契約なので、実 CLI 無しでは再現できない。
   呼び口は 4 種で共通（`turn_end_poll.go` の 2 関数）なので、固定されていないのは kiro 固有の
   状態源だけである。
+
+## 89.9 🔥 §89.8 の記録が通知経路の書き込みを潰していた（レビュー指摘・修正済み）
+
+- 状態: **修正済み**（2026-09-10、PR 前）。§89.8 の実装をレビューで止められた。
+- 実測: 2 経路を同時に走らせて **300 回中 143 回**（指摘元は 193/300）、settle が消えた。
+
+### 何が起きたか
+
+§89.8 の `RecordTurnEnd` は `Read` → 構造体を書き換え → `write` の **read-modify-write** だった。
+`fstore.Store.Write` は素の `os.WriteFile` で、**ロックも atomic rename も CAS も無い**
+（`fstore.go:30`）。読んでから書くまでに通知経路の `PersistTurnEnd` が `{idle, TurnEnd:true}` を
+書くと、こちらが読んだ古い `{working}` で**丸ごと上書きする**。
+
+**この変更が status ストアに read-modify-write を初めて持ち込んだ**のが効いている。従来の
+`Persist` / `PersistTurnEnd` は毎回**完全なレコードをブラインド書き**していたので、競合しても
+last-writer-wins で壊れなかった。
+
+窓が狭いから起きない、ではない。**両方の書き込みは同じ working→idle 遷移で誘発される**ので
+時間的に相関する。被害はどれも docs/log/51 の一帯である: 永続状態が working に戻って Console の
+バッジが止まり、`TurnEnd` が消えて照合器が marker-working で settle を禁じ（＝完了報告が出ない）、
+次のポーリングで `LiveState=="working"` が再び真になって**同じターンで `MarkTurnEnd` が 2 度**走る。
+
+### ロックではなく read-modify-write を無くした
+
+**まず「このストアに書くのは Agent プロセスだけか」を確かめた。違う。** claude の hooks は
+`workspace-agent session-status <state>` を起動する——`main.go:91` の**別プロセス**である
+（`memoryx/memory_trigger.go` のコメントも "a separate hook process" と書いている）。したがって
+プロセス内ロックでは守れない。
+
+観測した時刻を **`session-turn-end/<sid>.txt` という専用ストア**へ出した。
+
+- `RecordTurnEnd` は**自分のファイルだけをブラインド書き**する。status レコードには 1 バイトも
+  触れない。読み手（通知ゲート・照合器・pending 掃き出し）から不可視という §89.8 の性質は、
+  より強い形で保たれる。
+- `PersistTurnEnd` は観測ストアを**読んで**、従来どおり**完全なレコードをブラインド書き**する。
+  読むのは別ストアなので、status ファイルへの書き込みは §89.8 以前と同じ性質のままである。
+- **「最初の観測が勝つ」は維持**（`PersistTurnEnd` が観測値を採用する）。
+
+### 期限切れは mtime で決める（クリアしない）
+
+観測ストアは**誰もクリアしない**。かわりに `ObservedTurnEnd` が
+「**観測ファイルが status ファイルより新しいときだけ有効**」と判定する。
+
+- status レコードへの**あらゆる書き込み**——次のターンの `working`、settle、heal——が、それ以前の
+  観測を自動的に無効化する。「次のターン開始時に消す」という**2 ファイルにまたがる原子性**を
+  必要としない形にするための判定である。
+- `Persist` のホットパス（claude の PostToolUse ハートビートは毎ツール `working` を書き直す）に
+  unlink を足さずに済むという副次的な利点もある。
+- **同時刻は無効側に倒す**。取りこぼしは遅延、誤判定は誤配達である（docs/log/51）。
+- `status.Remove`（heal・停止・削除）は観測も一緒に落とす。
+
+### 89.9.1 検証
+
+`(cd workspace/agent && go test ./...)` 全緑（37 パッケージ、exit code はパイプを通さずに取得）。
+
+**回帰ガードは指摘の再現をそのまま試験にした**: `{working}` を書いてから `RecordTurnEnd` と
+`PersistTurnEnd` を 2 本の goroutine で 300 回ぶつけ、毎回 `{idle, TurnEnd}` が残ることを見る
+（`TestRecordingAnEndNeverDestroysTheSettle`）。**§89.8 の試験がこの形を捕まえられなかったのは、
+2 経路を順番に呼んでいたからである。**
+
+| 壊した箇所 | 落ちたテスト |
+|-----------|------------|
+| 🔥 `RecordTurnEnd` を status レコードの read-modify-write に戻す | `TestRecordingAnEndNeverDestroysTheSettle`（275/300 で消失） |
+| `ObservedTurnEnd` が「どちらのファイルが新しいか」を見ない | `TestAnObservationDiesWithTheRecordItWasTakenAgainst`・`TestPersistTurnEndAdoptsTheObservedEnd` |
+| `PersistTurnEnd` が観測を採用せず打ち直す | `TestPersistTurnEndAdoptsTheObservedEnd` |
+| `status.Remove` が観測を残す | `TestRemoveDropsTheObservation` |
+| `RecordTurnEnd` の冪等ゲートを外す | `TestRecordTurnEndWritesOncePerTurn` |
+| `wireSession` が `recordPolledTurnEnd` を呼ばない | 経路試験 3 本 |
+| `lastTurnEndAt` が観測を見ない | 経路試験 3 本 |
+| `notifyPolledTurnEnd` から `LiveState=="working"` を外す | `…StillReportsExactlyOnce…`（2 回発火） |
+| `recordPolledTurnEnd` の kind 制限を外す | `…IgnoresKindsThatReportTheirOwnEnd` |
+
+#### 🔴 陽性対照が、自分の試験の陳腐化を 1 件見つけた
+
+「kind 制限を外す」の対照が**緑のままだった**。試験が `SessionStatus.TurnEndAt` を見たままで、
+記録先が専用ストアへ移ったことに追随していなかった——**壊したのに落ちない**のではなく、
+**そもそも記録を見ていない**試験になっていた。`status.ObservedTurnEnd` を見る形へ直してから
+測り直した。設計を変えたら、その設計を固定していた試験の**主張の対象**も点検すること。
+
+### 89.9.2 判断の記録
+
+**ロックは採らなかった。** プロセス内 mutex は上のとおり hooks の別プロセスに効かない。ファイル
+ロックなら効くが、`fstore` は 7 系統のストアが共有する基盤で、そこにロックを持ち込むのは本件の
+範囲を超える。**書き込みを競合しない形にするほうが、守るものが少ない。**
