@@ -258,3 +258,86 @@ func TestStopSessionDisarmsOnlyForTheOperator(t *testing.T) {
 		t.Fatalf("the operator's stop no longer disarms its own report: %v", body["disarm_report"])
 	}
 }
+
+// Advertising a tool and being able to CALL it are different things, and the gap between them
+// is invisible to a tools/list test: list_models shipped advertised but refusing, and
+// create_session's own description sends the caller there first.
+//
+// So: call all eight on the session surface and refuse to accept a permission error from any of
+// them. The Agent is stubbed, so what is under test is the gate, not the backend.
+func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
+	session.WriteMeta(session.Meta{Name: "mine", Kind: session.KindClaude,
+		Origin: session.OriginSession, OriginSession: "parent1"})
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true,"models":[],"repos":[],"output":"x","cursor":1}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	// Arguments good enough to get past validation; the target is always this session's child.
+	args := map[string]map[string]any{
+		"create_session":          {"dir": "/repos/app", "initial_prompt": "task"},
+		"list_repos":              {},
+		"list_models":             {"kind": "claude"},
+		"get_agent_usage":         {},
+		"get_session_output":      {"name": "mine"},
+		"stop_session":            {"name": "mine"},
+		"stop_session_after_turn": {"name": "mine"},
+		"resume_session":          {"name": "mine"},
+	}
+	for _, name := range fleetSpawnToolNames {
+		a, _ := json.Marshal(args[name])
+		params, _ := json.Marshal(map[string]any{"name": name, "arguments": json.RawMessage(a)})
+		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+		// The refusals this catches all read "許可されていません" — a tool advertised to this
+		// surface answering "you are not allowed" is the contradiction.
+		if strings.Contains(resp, "許可されていません") {
+			t.Errorf("%s is advertised to a session but refuses the call: %s", name, resp)
+		}
+	}
+}
+
+// A child the user archived is out of the parent's hands. Reviving one would put a live agent on
+// the host with no row in the active list — and would make archiving a way around ADR 0073
+// decision 13, which keeps archive and delete closed even for one's own children.
+func TestSessionDriveRefusesArchivedChild(t *testing.T) {
+	withFleetSpawn(t, true)
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
+	session.WriteMeta(session.Meta{Name: "live", Kind: session.KindClaude,
+		Origin: session.OriginSession, OriginSession: "parent1"})
+	session.WriteMeta(session.Meta{Name: "shelved", Kind: session.KindClaude, Archived: true,
+		Origin: session.OriginSession, OriginSession: "parent1"})
+
+	if err := sessionDriveAllowed("live"); err != nil {
+		t.Fatalf("a live child was refused: %v", err)
+	}
+	if err := sessionDriveAllowed("shelved"); err == nil {
+		t.Fatal("an archived child could still be driven (resume would revive it unseen)")
+	}
+}
+
+// The output cursor has to have a scope on the session surface, or "omit since to continue from
+// where you last read" is false exactly where it is advertised — and every poll re-reads the
+// whole tail into the caller's context.
+func TestOutputCursorScopedToTheSessionWithoutAConversation(t *testing.T) {
+	withFleetSpawn(t, true)
+	setConvID("")
+	if got := outputCursorScope(); got != "parent1" {
+		t.Fatalf("session-side cursor scope = %q, want the session's own name", got)
+	}
+	// The operator keeps its conversation as the scope.
+	setSelfReportOnly(false)
+	setConvID("conv-1")
+	t.Cleanup(func() { setConvID("") })
+	if got := outputCursorScope(); got != "conv-1" {
+		t.Fatalf("operator cursor scope = %q, want conv-1", got)
+	}
+}

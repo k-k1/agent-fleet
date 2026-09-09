@@ -47,8 +47,9 @@ type spawnEnv struct {
 //     meta is written before the response, so the store — not the response — is the honest
 //     record of what was started.
 //
-// Kills are pinned with `=`: without it tmux resolves a target by prefix and fnmatch, so
-// `claude_kid1` would happily match a stranger's `claude_kid10`.
+// Kills go through session.ExactTarget (the repo's own `=`-pinned form): without it tmux
+// resolves a target by prefix and fnmatch, so `claude_kid1` would happily match a stranger's
+// `claude_kid10`.
 func spawnServer(t *testing.T) *spawnEnv {
 	t.Helper()
 	if _, err := exec.LookPath("tmux"); err != nil {
@@ -68,6 +69,7 @@ func spawnServer(t *testing.T) *spawnEnv {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", HandleCreateSession)
+	mux.HandleFunc("POST /sessions/{name}/recreate", HandleRecreateSession)
 	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t, planted: map[string]bool{}}
 	t.Cleanup(func() {
 		env.srv.Close()
@@ -75,7 +77,7 @@ func spawnServer(t *testing.T) *spawnEnv {
 			if env.planted[m.Name] {
 				continue
 			}
-			_ = exec.Command("tmux", "kill-session", "-t", "="+session.TmuxName(m.Name)).Run()
+			_ = exec.Command("tmux", "kill-session", "-t", session.ExactTarget(session.TmuxName(m.Name))).Run()
 		}
 	})
 	return env
@@ -310,5 +312,50 @@ func TestCreateSessionSpawnDepthAndKindOverHTTP(t *testing.T) {
 				t.Fatalf("= %d %s, want %s", code, raw, tc.code)
 			}
 		})
+	}
+}
+
+// A recreate of a spawned child must not cost the parent a second slot. The helper is tested in
+// session_spawn_test.go; this is here because the handler has to CALL it — and it has two
+// success paths (managed and tui) that are easy to fix one of.
+func TestRecreateSpawnedChildKeepsOneSlot(t *testing.T) {
+	env := spawnServer(t)
+	repo := filepath.Join(env.home, "repos", "app")
+	if err := os.MkdirAll(repo, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude,
+		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
+	orig := deliverInitialPromptFn
+	deliverInitialPromptFn = func(string, string) {}
+	t.Cleanup(func() { deliverInitialPromptFn = orig })
+
+	code, raw := env.create(spawnBody(map[string]any{"dir": repo, "initial_prompt": "task"}))
+	if code != http.StatusCreated {
+		t.Fatalf("create = %d %s", code, raw)
+	}
+	var created session.Session
+	if err := json.Unmarshal(raw, &created); err != nil {
+		t.Fatal(err)
+	}
+	if n := countChildren("parent1"); n != 1 {
+		t.Fatalf("children after create = %d, want 1", n)
+	}
+
+	code, raw = roundtrip(t, env.srv, "POST", "/sessions/"+created.Name+"/recreate", nil)
+	if code != http.StatusOK {
+		t.Fatalf("recreate = %d %s", code, raw)
+	}
+	// Two metas exist now (the archived predecessor and its successor) but they are ONE child.
+	if n := countChildren("parent1"); n != 1 {
+		t.Fatalf("children after recreate = %d, want 1 (a recreated child is still one child)", n)
+	}
+	// And the successor is still the parent's to steer.
+	var recreated session.Session
+	if err := json.Unmarshal(raw, &recreated); err != nil {
+		t.Fatal(err)
+	}
+	if m, ok := session.ReadMeta(recreated.Name); !ok || m.OriginSession != "parent1" {
+		t.Fatalf("successor lineage = %q (ok=%v)", m.OriginSession, ok)
 	}
 }

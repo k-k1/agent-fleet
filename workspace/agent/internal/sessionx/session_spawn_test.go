@@ -335,3 +335,43 @@ func TestNoteCreateOriginRecordsSpawnOnly(t *testing.T) {
 		})
 	}
 }
+
+// A recreate replaces one child with another, and both metas carry the parent — so without the
+// hand-over ONE child costs TWO slots, and a user recreating their own child is the reason the
+// parent may not spawn again. Same objection that keeps forks out of the count.
+func TestRecreateHandsTheChildSlotToTheSuccessor(t *testing.T) {
+	spawnFixture(t,
+		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
+		child("kid1", "root"),
+	)
+	// The archived predecessor of a recreate, plus the successor that replaced it.
+	old := child("kid2", "root")
+	old.Archived = true
+	session.WriteMeta(old)
+	session.WriteMeta(child("kid2b", "root"))
+	if n := countChildren("root"); n != 3 {
+		t.Fatalf("children before the hand-over = %d, want 3", n)
+	}
+
+	handOverSpawnLineage(old)
+
+	if n := countChildren("root"); n != 2 {
+		t.Fatalf("children after the hand-over = %d, want 2 (one recreated child is one child)", n)
+	}
+	// The successor is still the parent's to steer, and the predecessor keeps its accounting
+	// origin — only "whose child was it" is dropped, for a session that no longer stands for one.
+	m, _ := session.ReadMeta("kid2")
+	if m.OriginSession != "" || session.OriginOf(m) != session.OriginSession {
+		t.Fatalf("predecessor = %q/%q, want session/(no parent)", m.Origin, m.OriginSession)
+	}
+	if m2, _ := session.ReadMeta("kid2b"); m2.OriginSession != "root" {
+		t.Fatalf("successor lost its parent: %q", m2.OriginSession)
+	}
+	// Nothing happens to a session that was never a child.
+	plain := session.Meta{Name: "solo", Kind: session.KindClaude, Origin: session.OriginUser}
+	session.WriteMeta(plain)
+	handOverSpawnLineage(plain)
+	if m3, ok := session.ReadMeta("solo"); !ok || m3.Origin != session.OriginUser {
+		t.Fatalf("an unrelated session was rewritten: %+v", m3)
+	}
+}

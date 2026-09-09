@@ -118,6 +118,30 @@ func (s *spawnSlot) releaseLocked() {
 	spawnInflight.n[s.parent]--
 }
 
+// handOverSpawnLineage moves a spawned child's lineage from the archived predecessor of a
+// recreate onto the successor that replaced it.
+//
+// Recreate keeps the old meta (archived, restorable) and mints a new one, and both inherit the
+// parent — so without this ONE child costs the parent TWO slots, and a user recreating their
+// own child is the reason the parent may not spawn again. That is the same objection that keeps
+// forks out of the count (countChildren): a person's action must not spend a session's budget.
+//
+// Called only after the successor has actually launched. The failure paths un-archive the old
+// session, and clearing the lineage before knowing which of the two survives would leave a
+// restored child that its parent can no longer steer — and that could spawn, because the
+// recursion limit reads this same field.
+//
+// Origin stays `session`: the accounting axis (unattended or human-opened) is unchanged, and it
+// is what usage rows bake in. What is dropped is the answer to "whose child was it" for a dead,
+// superseded session — the same thing deleting it would drop.
+func handOverSpawnLineage(old session.Meta) {
+	if old.OriginSession == "" {
+		return
+	}
+	old.OriginSession = ""
+	session.WriteMeta(old)
+}
+
 // SpawnRefusal is a create that origin=session may not perform. Code is the wire error code,
 // Status the HTTP status; both are surfaced to the calling model verbatim, so the message says
 // what to do instead rather than only what went wrong.

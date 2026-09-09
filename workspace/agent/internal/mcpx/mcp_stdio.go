@@ -773,6 +773,8 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"from here. " +
 				"You are NOT told when it finishes: poll get_session_status, or leave report_back on and it " +
 				"sends you one message when it is done. " +
+				"Children outlive you, so before your last turn tell your user which ones you left and what " +
+				"state they are in - only they can delete one. " +
 				"Use list_repos for dir and list_models for model - do not guess a model id.",
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
@@ -926,6 +928,14 @@ func sessionDriveAllowed(name string) error {
 	if session.OriginOf(m) != session.OriginSession || m.OriginSession != self {
 		return fmt.Errorf("セッション %q はこのセッションが起こした子ではないので操作できません。"+
 			"自分が create_session で起こしたセッションだけを止める・再開する・出力を読むことができます", name)
+	}
+	// An archived child is the user's decision to fold it away, and it has no row in the
+	// active list. Resuming one would put a live agent on the host that nobody can see, which
+	// is also how archiving would become a way around "no deleting, no archiving" (ADR 0073
+	// decision 13): archive from the Console, revive from here.
+	if m.Archived {
+		return fmt.Errorf("セッション %q は利用者がアーカイブ済みなので操作できません。"+
+			"戻すかどうかは利用者が Console で決めます", name)
 	}
 	return nil
 }
@@ -2169,8 +2179,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpTextResult(req.ID, string(b))
 	case "list_models":
 		// Advertised in the write set, so the call is refused at the same boundary: the
-		// advertised set is the scope boundary (docs/log/19 Q2).
-		if !writeEnabled() {
+		// advertised set is the scope boundary (docs/log/19 Q2). --fleet-spawn advertises it
+		// too (ADR 0073 §3-b) — create_session's own description sends the caller here first,
+		// so a gate left at writeEnabled() breaks the spawn path at its first step.
+		if !writeEnabled() && !mcpFleetSpawnEnabled {
 			return mcpToolErr(req.ID, "このアシスタントはモデル一覧の取得を許可されていません")
 		}
 		if a.Kind != "claude" && a.Kind != "codex" && a.Kind != "opencode" && a.Kind != "agy" && a.Kind != "copilot" && a.Kind != "cursor" && a.Kind != "kiro" {
@@ -2799,6 +2811,26 @@ func withoutPendingInteraction(body string) string {
 	return string(trimmed)
 }
 
+// outputCursorScope is what get_session_output's "continue from where I left off" is remembered
+// under. The operator has a conversation; a session does not, and --conv is not passed to the
+// session-side server — so keyed on convID() alone the session surface silently had NO cursor
+// and re-read the whole tail on every poll, which is the one surface whose description promises
+// otherwise and the one with no reply budget to absorb it (docs/log/86 §86.2).
+//
+// The session's own name is the right key for the same reason the conversation is the operator's:
+// it is the thing doing the reading. An unresolvable name yields "", i.e. no cursor memory,
+// which is the pre-existing behaviour rather than a wrong one.
+func outputCursorScope() string {
+	if !selfReportOnly() {
+		return convID()
+	}
+	self, err := mcpOwningSession()
+	if err != nil {
+		return ""
+	}
+	return self
+}
+
 // mcpOwningSession names the session this MCP process serves.
 //
 // AF_SESSION_NAME is the contract, and it arrives two ways. TERMINAL sessions get it
@@ -3197,10 +3229,11 @@ func SessionOutputTail() int {
 func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	eff := int64(-1)
 	fromStore := false
+	scope := outputCursorScope()
 	if since != nil {
 		eff = *since
-	} else if convID() != "" {
-		if cur, ok := OutputCursors.Read(convID()); ok {
+	} else if scope != "" {
+		if cur, ok := OutputCursors.Read(scope); ok {
 			if v, ok2 := cur[name]; ok2 {
 				eff, fromStore = v, true
 			}
@@ -3217,14 +3250,14 @@ func mcpSessionOutput(id json.RawMessage, name string, since *int64) []byte {
 	var resp map[string]any
 	if json.Unmarshal([]byte(body), &resp) == nil {
 		// Remember the returned cursor per conversation as the next default since.
-		if cursor, ok := resp["cursor"].(float64); ok && convID() != "" {
-			cur, _ := OutputCursors.Read(convID())
+		if cursor, ok := resp["cursor"].(float64); ok && scope != "" {
+			cur, _ := OutputCursors.Read(scope)
 			if cur == nil {
 				cur = map[string]int64{}
 			}
 			if cur[name] != int64(cursor) {
 				cur[name] = int64(cursor)
-				_ = OutputCursors.Write(convID(), cur)
+				_ = OutputCursors.Write(scope, cur)
 			}
 		}
 		// A default continue-read with no new output: returning an empty string reads as

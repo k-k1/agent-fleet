@@ -118,6 +118,10 @@ work you could simply do.
   removing it is the user's call in the Console.
 - Limits refuse with the number in the message: three children at a time (a stop or an archive
   does **not** free a slot), no grandchildren, no shell sessions.
+- **Say what you are leaving behind.** Children outlive you: nothing stops them when you finish,
+  a stopped one still holds its slot, and only the user can delete one. Before your last turn,
+  name the children you started and what state each is in — that list is the only thing standing
+  between your user and three sessions they cannot account for.
 
 **Being a spawned session.** A first prompt starting with `[agent-fleet:spawn from=<session>]`
 means **another session wrote this task, not your user** — you exist because it called
