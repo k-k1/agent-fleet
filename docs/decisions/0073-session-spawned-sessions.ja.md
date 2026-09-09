@@ -1,0 +1,180 @@
+# 0073. セッションからのセッション操縦は「自分が起こした子」に限り、新しい出自 `session` で記録する
+
+[English](0073-session-spawned-sessions.md) | 日本語
+
+- 状態: 採用・未実装（段階 2 の設計。実装は本 ADR の合意後）
+- 関連: [86-session-fleet-observe.md](../log/86-session-fleet-observe.md)（段階 1・§86.2 の判断軸と
+  §86.9 の宿題） / [0041-cross-session-messaging.md](0041-cross-session-messaging.ja.md)（加算
+  フラグの型・決定 4 の arm 不可侵・決定 5 の shell 除外・決定 13 の intent） /
+  [0029-usage-accounting.md](0029-usage-accounting.ja.md) §6（出自の軸） /
+  [46-usage-accounting.md](../log/46-usage-accounting.md) §2-c /
+  [51-session-report-v2-ledger.md](../log/51-session-report-v2-ledger.md)（指示台帳と arm の所有者） /
+  [0056-tool-permission-choice.md](0056-tool-permission-choice.ja.md) 決定 1（セッションは既定で
+  権限確認をスキップする） / [0069-image-generation-providers.md](0069-image-generation-providers.ja.md)
+  （progress ハートビート） / [44-operator-interaction-graph.md](../log/44-operator-interaction-graph.md)
+
+## 背景
+
+段階 1（docs/log/86）で、オペレーター専用だった MCP ツールのうち観測系 4 本をセッション面へ
+開けた。残る要求は**セッション操縦**、すなわち `create_session` を中心とした一群である。
+
+そのまま配れない理由は、ツール個別の危険性ではなく、**セッションが構造的に持たない 3 性質**
+（§86.2）が `create_session` の配管そのものに埋まっていることにある。
+
+- 現在の `create_session` は `origin=operator` と `origin_conv=convID()` を刻む。セッション発だと
+  **「オペレーターが起動した」という嘘**になり、ADR 0029 §6 が「無人の消費」と「人が開いた消費」を
+  分けるために置いた軸が狂う。
+- 冪等キー `CreateSessionKey(convID(), …)` は conv 込みである。セッションは conv を持たないので
+  第 1 引数が空になり、**別セッション同士の同一内容の起動が 1 本に畳まれる**。
+- `report_to` も conv であるため空になり、**起こした子の完了はどこにも届かない**。
+- `BridgeApprovalGate`（shell 宛の承認）は conv が無いと即 no-op で、承認ゲートは存在しないのと
+  同じになる。セッションは加えて既定で権限確認をスキップして走る（ADR 0056 決定 1）。
+
+さらに `create_session` には、他のどのツールにも無い性質が 2 つある。**再帰する**（子がさらに子を
+起こせる）ことと、**共有・メモリ制約下のホストの資源を実際に消費する**ことである。上限を設計に
+組み込まないなら、これは開けてはいけない。
+
+## 決定
+
+### 1. 新しい出自 `session` と `origin_session` を足す
+
+`session.Meta` に `OriginSession`（ワイヤ `origin_session`）を足し、出自の enum に `session` を
+加える（ADR 0029 §6 の凍結表への追記。追記は実装と同じコミットで入れる）。
+
+- `origin_session` を埋めるのは**サーバであって呼び手ではない**。値は MCP サーバ自身の
+  `AF_SESSION_NAME`（コンテナ env であって、モデルが書ける入力ではない）から解決する。
+  peer の `peer_from` と同じ扱いで、ワイヤから来た値は信用しない。
+- `origin_conv` は**空のまま**にする。親セッション名を `origin_conv` に流用すれば新しい
+  フィールドは要らないが、凍結された集計軸に嘘を入れることになる。
+- **使用量の行に焼き込むのは `origin` だけ**とし、`origin_session` は Meta に留める。ADR 0029 §6 が
+  必要としている軸は「無人か、人が開いたか」であって、`session` はその問いに答えている。**系譜は
+  集計の次元ではなく台帳・俯瞰図の問い**（ADR 0041 決定 9 / docs/44）であり、Meta は永続なので
+  後から辿れる。
+- `recreate` と handoff は `origin_conv` を継承しているので、`origin_session` も同じく継承する
+  （出自は「同じ枠をもう一度」で変わらない）。
+
+### 2. 冪等キーの名前空間を conv から「呼び手」へ一般化する
+
+`CreateSessionKey` の第 1 引数を conv からスコープ文字列へ一般化し、オペレーターは conv を、
+セッションは自分のセッション名を渡す。**空スコープでキーを作ることを許さない**（空のまま通せば、
+別々のセッションが同じ内容で起こした 2 本が 1 本に畳まれる）。
+
+### 3. 加算フラグは独立の `--fleet-spawn`（既定 OFF）
+
+`--self-report` との論理積で、`--chromium-attach` / `--peer-messaging` / `--image-gen` /
+`--fleet-observe` と同じ加算パターン（ADR 0041 決定 3）。ui-prefs のキーは `sessionFleetSpawn`。
+
+`--fleet-observe` に相乗りさせない。段階 1 の説明文は利用者に**「動かす操作は一切増えません」**と
+約束しており、相乗りはその約束を無言で撤回する。
+
+ただし **Console 上では観測 ON を前提条件にする**。子の様子を見る唯一の経路が
+`get_session_status`（段階 1）であり、観測 OFF のまま起動だけ開けると「起こせるが二度と見られない」
+状態を作るためである。
+
+### 4. 操縦できるのは自分が起こした子だけ
+
+`get_session_output` / `stop_session` / `stop_session_after_turn` / `resume_session` は、対象の
+Meta が **`origin == "session"` かつ `origin_session == 呼び手`** のときだけ通す。判定は段階 1 の
+`memoWriteAllowed()` と同じ形のハンドラ側ゲート（`sessionDriveAllowed(target)`）に置く。
+広告されたツール集合が第一の境界、これが第二の境界である。
+
+2 条件にするのは、**引き継ぎ（handoff）先を子に含めない**ためである。handoff は人が Console で
+起こす操作なので、`origin=handoff` を親が操縦できてよい理由が無い。
+
+### 5. 深さは 1 世代（孫は作れない）
+
+**`origin_session` が空でないセッションは `create_session` を呼べない。** 呼び手自身の Meta を
+1 回引くだけで判定でき、系譜を辿らないので途中のセッションが消えていても壊れない。
+
+判定条件を「`origin == session`」ではなく「`origin_session` が空でない」にするのは、子を handoff
+した先が `origin=handoff` になって条件をすり抜けるからである（決定 4 とは**わざと違う述語**を
+使っている。操縦は狭く、再帰の抑止は広く)。
+
+### 6. 同時に持てる生きた子は 3 本
+
+呼び手を `origin_session` に持つ**停止中でないセッション**を数え、3 本で拒否する。停止中を
+数えないのは、資源を実際に食っているのは走っているセッションだからである。決定 5 と併せて、
+フリート全体の本数は「人が開いたセッション数 × 3」に閉じる。
+
+### 7. worktree は既定 true、`worktree=false` は他の生きたセッションの作業ディレクトリへは拒否
+
+オペレーター面の既定は `false`（人が「ここで動かして」と言える）だが、セッション面の既定は
+`true` にする。既定のまま呼ぶと親と子が**同じ作業コピーを 2 つのエージェントで共有**し、それは
+運用指示が全セッションに対して名指しで禁じている事故そのものだからである。明示的な
+`worktree=false` も、対象ディレクトリで別の生きたセッションが動いているときは拒否する。
+
+### 8. `kind=shell` / `ssm` は拒否する
+
+ADR 0041 決定 5 と同じ理由。shell への起動は任意コマンド実行であり、汚染されたリポジトリを
+読んだセッションが任意のコマンドを他所で走らせられる形を作らない。`BridgeApprovalGate` は
+conv が無いと no-op なので、**オペレーター面にある承認ゲートはセッション面には存在しない**。
+
+### 9. 完了は親のポーリングを正とし、子からの `intent=answer` 封筒を任意の補助にする
+
+- `report_to` は**空のまま置く**。セッション宛の報告チャネルは新設しない — ADR 0041 が
+  「報告の宛先は会話であってセッションではない」として却下した案であり、arm の所有者
+  （docs/log/51）を壊す。
+- 正の経路は**親が `get_session_status` をポーリングする**こと。決定 3 の前提条件はこのためにある。
+- 補助として、**peer messaging が ON のときに限り**、`create_session` は `initial_prompt` の末尾に
+  「終わったら親（名前）へ `send_to_peer_session` の `intent=answer` で 1 通返せ」の 1 行を足す
+  （引数 `report_back`、既定 ON。`initial_prompt` が空のときは足さない）。
+- **arm は一切触らない**（ADR 0041 決定 4）。`answer` はプロトコル上の終端（決定 13）なので、
+  この 1 行が往復ループを生むことはない。
+- 文言を**モデルに書かせずサーバが足す**のは、届く/届かないが呼び手の作文に依存しないためである。
+
+### 10. セッション発の `stop_session` は `disarm_report` を送らない
+
+オペレーターの `stop_session` は `disarm_report:true` を送る。あれは「オペレーターが自分の指示を
+取り下げた」の意味であって、**親セッションが子を畳むことはオペレーターの指示を取り下げない**。
+省略すれば既定 false なので、セッション面は単に送らない。これは決定 4 の「arm を触らない」を
+別の入口で守ることでもある。
+
+### 11. 遅い呼び出しには progress ハートビートを出す
+
+`create_session` は最悪 40 秒（POST）＋ 45 秒（冪等ルックアップの待ち）、`resume_session` は
+再開待ちを含み、どちらも **opencode の 60 秒ツール上限**を越える。ADR 0069 が画像生成のために
+入れた `startProgressHeartbeat`（10 秒間隔の `notifications/progress`）をそのまま使う。claude は
+progress を timeout に使わず、codex は af builtin へ焼かれた `tool_timeout_sec=600` に収まる。
+
+### 12. 説明文は英語で新規に書き、ハンドラは共有する
+
+段階 1 と同じ（docs/log/86 §86.6）。オペレーターの文面は配らないツール（`send_to_session` /
+`answer_session_question`）へ誘導しており、かつセッション面の説明文は**全セッションの初回ターンに
+乗る固定費**である（日本語比 40% 減の実測は `b367ae51`）。
+
+### 13. 開けないものは段階 1 の一覧のまま。子であっても削除・アーカイブは開けない
+
+`send_to_session` / `answer_session_question` / `respond_session_plan` / 掃除破壊系 8 本 /
+スケジュール 6 本 / `get_chat_plan` / `set_chat_plan` / `flush_memos` は据え置き（docs/log/86 §86.5）。
+
+**自分が起こした子に対してすら `delete_session` / `archive_session` / `delete_worktree` /
+`delete_branch` は開けない。** 子の机も机であり、worktree の削除は object store を worktree 間で
+共有している以上、他所を壊し得る。畳むのは停止までで足りる。
+
+## 却下した案
+
+- **`report_to` にセッション名を入れられるようにする。** ADR 0041 が既に却下している。報告の
+  宛先は会話であり、セッション宛の報告チャネルを新設すると arm の所有者が二重になる。
+- **`origin_conv` に親セッション名を流用する。** 新フィールドは不要になるが、凍結された集計軸に
+  嘘が入り、`by=origin_conv` の集計が会話名とセッション名の混在になる。
+- **`--fleet-observe` に相乗りさせる。** スイッチ 1 つで済み、決定 3 の前提条件も自動的に満たされる
+  が、既に ON にしている利用者に**告知なしにセッション起動権が生える**。
+- **深さ・本数を資源の実測から動的に決める。** 見えない上限は、踏んだときに理由が分からない。
+  固定値で拒否し、拒否の文面に上限を書く。
+- **起動時に承認ゲートを掛ける。** conv が無い以上 `BridgeApprovalGate` は no-op で、掛けたつもりに
+  なるだけである（ADR 0041 の補遺が env の遮断について記録したのと同じ失敗の形）。
+- **子の完了を親の転写へ直接注入する。** 投入経路は TUI への打鍵しか無く、受信側では通常入力と
+  区別が付かない（ADR 0041 決定 11）。peer 封筒を通すほうが、少なくとも出自が本文に載る。
+
+## 影響 / 未解決
+
+- **ADR 0029 の enum に追記が要る**（`origin` に `session`）。Console 側は `usage/colors.ts` の
+  固定表が凍結順を持っているので、そこにも足す。追記は実装と同じコミットで入れる。
+- **docs/44 の俯瞰図は `origin_session` を読めば系譜を描ける。** ADR 0041 決定 9 の
+  `DispatchEntry` に `kind:"spawn"` を足す案は採らない — Meta のほうが永続で、jsonl より後から
+  辿りやすい。
+- 段階 1 と同じく、**実機での発火確認は未実施**。説明文は「いつ呼ぶか」を規定して発火率を
+  上げる意図で書くので、実セッションで呼ばれることを確かめたい。
+- 子が親より長生きしたときの掃除は利用者の手に残る（決定 13）。生きた子が 3 本たまったまま親が
+  終わると、次に同じ親から起こせなくなるのではなく、**親が消えれば上限も消える**（上限は
+  呼び手ごとの数え上げであって予約ではない）。
