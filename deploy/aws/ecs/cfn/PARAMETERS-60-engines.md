@@ -185,6 +185,40 @@ documented precedence and it was measured: with `-c 32768` on the router, two mo
 sections said `c = 4096` and `c = 384` both came up `--ctx-size 32768`. One flag, and every
 model's declared window is silently gone. Windows belong to the catalogue.
 
+### `--no-mmap` is in the default `LlmExtraArgs`, and it is the second-biggest win in this stack
+
+llama.cpp memory-maps the GGUF by default and lets page faults pull it in. On this box that
+reaches only about half of what the disk can do, and `--no-mmap` — a plain sequential read —
+gets the rest. Measured cold both ways (two copies of the same 18.5 GB object, each load
+preceded by 18.5 GB of other I/O so a 14 GB cgroup cache is cycled and neither is warm):
+
+| | load | effective |
+|---|---|---|
+| mmap (llama.cpp's default) | 92 s | 201 MB/s |
+| **`--no-mmap`** | **50 s** | **371 MB/s** |
+| the instance store itself, `dd iflag=direct` | 47 s | 391 MB/s |
+
+**`--no-mmap` essentially saturates the disk; mmap leaves half of it on the table.** Then on the
+real deployment, end to end:
+
+| | before | with `--no-mmap` |
+|---|---|---|
+| cold start (RunTask → model loaded) | 267 s | **209 s** |
+| **swap back to the 18.5 GB model** | 98.5 s | **46.9 s** |
+| swap to the 1.1 GB model | 3.3 s | 1.6 s |
+
+The swap is the number ADR 0072 decision 3 put a price on, and it has now gone
+**276-282 s → 98.5 s → 46.9 s** across the two changes — six times faster than the shape this
+stack shipped with, for one parameter default and one capacity-provider flag.
+
+🔴 **The obvious worry does not bite**: without mmap, llama.cpp is not mapping a file it can drop
+pages from, so an 18.5 GB model on a task limited to 14,336 MiB looks like it should fail. It
+does not — with `-ngl 99` the weights stream tensor-by-tensor into VRAM and the host buffer is
+transient. Verified on the deployment's own task definition at its own memory limit, which is
+the only place that question could be answered honestly. **A role that did NOT offload every
+layer would be a different question**, so anything running without `-ngl 99` should re-measure
+before inheriting this default.
+
 ### `LlmModelsMax`
 
 How many models the router may hold at once (`--models-max`; upstream's default is 4, `0` =
@@ -246,6 +280,17 @@ the intended box, never below it.
 Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole default
 8-vCPU G-family quota by itself, and then the other role cannot launch at all.
 
+⚠️ **When that quota bites, the boxes spending it are invisible where you would look for them.**
+Measured 2026-09-09, chasing a `VcpuLimitExceeded` on a deployment that appeared to have no GPU
+boxes at all: **Managed Instances runs its instances in an AWS-managed account**, so
+`aws ec2 describe-instances --filters Name=instance-type,Values=g6.*` returns **nothing** while
+the quota is fully spent. The count that matters is
+`aws ecs list-container-instances`/`describe-container-instances` (which does report
+`ec2InstanceId` and `ecs.instance-type`). And the quota is not freed the moment a task stops:
+a terminating box holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
+minutes after the cluster looks idle. Wait for the container instance to leave the cluster
+rather than for the task to stop.
+
 ⚠️ `InstanceRequirements` refuses this alongside `InstanceGenerations`.
 
 ### `LlmAcceleratorMemMinMiB`
@@ -272,20 +317,47 @@ asked for (measured against the API), which is why `UseLocalStorage` exists.
 
 ### `LlmUseLocalStorage`
 
-Use the instance store instead of an EBS data volume. ADR 0071 open question 1: on g6.xlarge the
-EBS baseline is 125 MB/s, and that one number bounds BOTH the S3 fetch (measured 104-147 MB/s,
-i.e. the write side saturates) and the 267-second load of 18.5 GB into VRAM. The instance store
-is 250 GB of local NVMe. Off by default until the measurement in the ADR says otherwise — an
-instance store is also wiped on every box, which costs a fresh S3 fetch per cold start.
+Use the instance store instead of an EBS data volume. **On by default since 2026-09-09, when the
+measurement ADR 0071 open question 1 asked for was finally taken.** The premise held: on
+g6.xlarge the EBS baseline of 125 MB/s bounded both halves of a cold start, and taking it away
+roughly halves the whole thing. Measured on the deployment's own `llm` role, same box, same two
+models, against the numbers recorded for the EBS setting:
+
+| | EBS (recorded) | instance store | |
+|---|---|---|---|
+| S3 → disk, 1.1 GB | 8 s (140 MB/s) | **5 s (223 MB/s)** | 1.6× |
+| S3 → disk, 18.5 GB | 159 s (117 MB/s) | **117 s (159 MB/s)** | 1.4× |
+| disk → VRAM, 18.5 GB | 267 s | **91 s** | **2.9×** |
+| RunTask → model loaded | 527-586 s | **275 s** | ~2× |
+| swap to the 1.1 GB model | 10.0-10.1 s | **3.3 s** | 3.0× |
+| swap back to the 18.5 GB model | 276-282 s | **98.5 s** | **2.8×** |
+
+Two things worth reading off that table rather than the headline. **The win is the VRAM load,
+not the fetch**: taking the EBS write cap away only moved the 18.5 GB fetch 1.4×, because the
+next limit — S3 and the CLI, around 160 MB/s — was right behind it. And the swap is where a user
+actually feels it: ADR 0072 decision 3 priced "one model per box, swap on demand" at 276-282
+seconds, and it now costs 98.5.
+
+The costs are unchanged and both are real: an instance store is wiped with the box (so every
+cold start still pays a fresh S3 fetch — but so did the EBS data volume, which MI also deletes),
+and `LlmStorageGiB` stops meaning anything while this is on. The box gets whatever the instance
+type carries, which on g6.xlarge is 250 GB — measured as a 245 GB ext4 filesystem, i.e. MORE
+than the 120 GiB the EBS setting asked for, which is why the disk ceiling on how many models can
+be enabled at once went up rather than down (ADR 0072 open question 11).
+
+⚠️ It follows that `*AllowedInstanceTypes` may only name types that HAVE an instance store. Every
+g6 and g5 size does; a type without one cannot satisfy the capacity provider.
 
 ### `LlmScaleInAfter`
 
 `infrastructureOptimization.scaleInAfter`, in seconds: how long MI leaves an idle box before
 terminating it. `-2` = do not set it, i.e. AWS's default (measured drain: 427 and 463 seconds on
-a GPU box, 93 on a CPU box). `-1` = never tidy up. `0`-`3600` = that many seconds. Worth having
-as a knob because a box kept a little longer would be a warm start — but see the task
-definition's volume comment: with an anonymous host volume the kept box re-fetches anyway, so
-ADR 0071 decision 7(c) is unproven and the default is the right setting today.
+a GPU box, 93 on a CPU box). `-1` = never tidy up. `0`-`3600` = that many seconds. It was worth
+having as a knob while a box kept a little longer might have been a warm start; since 2026-09-09
+it is not, because a kept box cannot hold its models at all — see [The model
+volume](#the-model-volume), where decision 7(c) is disproven rather than merely unproven. Keeping
+a GPU box past its work now buys the image layers and nothing else, at $1.26/hour, so the AWS
+default is the right setting and `-1` is a way to spend money on nothing.
 
 ### `LlmIdleSec`
 
@@ -412,6 +484,95 @@ active set the Control Plane published to SSM, syncs the files the engine is abo
 writes `/models/cmdline` — the model-specific half of the argument list. Everything
 role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
 and `ALIAS_FLAG` / `CTX_FLAG`.
+
+### The START model gates the engine; the rest are synced behind it
+
+Since 2026-09-09 the sidecar does **not** fetch everything before the engine may start. It syncs
+the starting model (and every LoRA — they are small and decide what the engine can be asked for),
+writes the preset and `/models/cmdline`, **touches `/models/ready`**, and only then fetches the
+remaining enabled models. The engine containers wait for that MARKER rather than for the sidecar
+to exit, so `DependsOn` on both engines is `START`, not `SUCCESS`.
+
+Why: a router syncs every enabled model (decision 9) but loads one, and the sync is serial. On
+the deployment the starting model cost 117 s and the second 5 s — but the cost is per model, so
+five enabled models put minutes of weights nobody asked for in front of the first token. This is
+the "time wall" that ADR 0072 open question 11 measured at about five models for a ten-minute
+cold start; moving it off the critical path is what makes a bigger catalogue survivable.
+
+Measured on the deployment the day it went in, same two models as every other number here:
+
+| | old order | start-first |
+|---|---|---|
+| sidecar reads the active set | +50 s | +50 s |
+| starting model (18.5 GB) on disk | +171 s (after the 1.1 GB one) | **+165 s** |
+| **llama-server listening** | +184 s | **+169 s** |
+| the other model (1.1 GB) lands | before the engine | **+171 s, engine already up** |
+| model in VRAM | +275 s | **+267 s** |
+
+⚠️ **With this catalogue the win is only about 8-15 seconds, and that is the honest number** —
+the deferred model is 1.1 GB, so there was barely anything to defer. What the run proves is the
+MECHANISM (`engine may start; 1 file(s) still to sync`, then the engine listening four seconds
+later, then the second model arriving behind it). The saving is one deferred model's sync time,
+so it grows with the catalogue and is worth nothing on a single-model deployment.
+
+Two consequences to keep in mind:
+
+- **A request for a model that has not landed yet fails rather than waits.** llama.cpp's router
+  starts happily with preset paths that do not exist (measured, ADR 0072 P1 point 6) and errors
+  only on a request for that model. The window is the sync time of the models after the first.
+- 🔴 **Every exit from the sidecar must leave the marker**, which is why it opens with
+  `trap 'touch $MODELS_DIR/ready' EXIT`. Without it a failed fetch — or an empty catalogue —
+  leaves the engine waiting out its whole hour-long loop on a box billing at $1.26/h, and the
+  service never stabilises (decision 1(b)). With it, the wrapper finds no `cmdline` and idles,
+  which is the case everything downstream already understands.
+  `deploy/local/engine-sidecar-test.sh` asserts both the ordering and the marker, and each
+  assertion was checked against the defect it is meant to catch.
+
+### Tuning the AWS CLI is NOT worth it — measured
+
+The obvious next lever after start-first sync was the copy itself: 18.5 GB at an effective
+161 MB/s looked slow next to the 567 MB/s Mountpoint got off the same class of box. It is slow,
+but **the AWS CLI's settings are not why**. `harness/probe-s3-fetch-tuning.sh`, one box, the same
+object four times, stock first:
+
+| `max_concurrent_requests` / `multipart_chunksize` | | |
+|---|---|---|
+| stock (10 / 8 MB) | 93 s | 199 MB/s |
+| 20 / 16 MB | 85 s | **218 MB/s** |
+| 40 / 32 MB | 86 s | 215 MB/s |
+| 64 / 64 MB | 85 s | **218 MB/s** |
+
+**It plateaus at concurrency 20 and never moves again** — 40 and 64 buy nothing. The whole
+tuning is worth about 9%, i.e. 8 seconds off a 267-second cold start, in exchange for the
+sidecar writing an `~/.aws/config` and this template spending budget it does not have. **Not
+adopted.**
+
+**s5cmd was then measured, and it revises that reading.** The Go client, same object, same box,
+same task as an `aws s3 cp` control (`harness/probe-fetch-client.sh`):
+
+| | | |
+|---|---|---|
+| `aws s3 cp` (control) | 115 s | 161 MB/s |
+| **s5cmd v2.2.2** | **91 s** | **203 MB/s** |
+
+26% — worth 24 seconds, real but modest. And note where it lands: **203 MB/s, next to the tuned
+CLI's 218 MB/s.** Two clients with nothing in common — Python and Go — converging within 7% is
+not what a client-side ceiling looks like. 🔴 So **"the CLI is the bottleneck" was wrong**: the
+limit is downstream of it, and the likeliest candidate is the write into the instance store,
+since the 567 MB/s Mountpoint figure was a read to `/dev/null` with no file being written and
+the disk's own direct READ measured 391 MB/s. Not proven — no one has measured the write side on
+its own — but a client swap is clearly not where the remaining time is.
+
+**Not adopted.** 24 seconds off 209 needs either a custom image for the fetch sidecar or a
+version-pinned binary bootstrapped out of the models bucket (which is how the probe does it,
+because the engine subnet has no egress to github — measured), and this template has 38 bytes of
+headroom. Worth revisiting only if the cold start becomes the thing that matters again.
+
+And **stock here was 199 MB/s while the real sidecar sees 161 MB/s**. The likely difference is
+that on a real cold start the engine image is still being pulled: ECS starts each container as
+its own image lands, so the small aws-cli image is fetching while the 2.47 GB llama.cpp image is
+still coming down (measured: fetch logging at +54 s, `pullStoppedAt` at +88 s). That contention
+is not removable — the pull has to happen.
 
 ⚠️ **It is a LITERAL block (`|-`), never a folded one (`>-`).** YAML folding keeps a
 MORE-INDENTED line literal, so a continuation line indented to line up with its command silently
@@ -665,10 +826,34 @@ Both halves of that are measured, and both are counter-intuitive:
   very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
   never reclaimed, so four starts on one kept box filled the disk.
 
-ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `*ScaleInAfter` is left at the
-AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
-at, which is not documented and was not worth another GPU hour to find; `useLocalStorage`, where
-the 250 GB instance store is the whole disk, is where to pick it up (ADR 0072 open question 9).
+**2026-09-09: decision 7(c)'s "warm box" is no longer unproven — it is DISPROVEN**, and
+`*ScaleInAfter` stays at the AWS default rather than `-1` for a reason that can now be stated
+instead of suspected. Four measurements, about four minutes of GPU:
+
+- **why the anonymous form re-fetches**, which used to be an observation without a mechanism. A
+  container cannot see the host path of its own bind mount from `df`, but `/proc/self/mountinfo`
+  can, and it says: `/._mnt_task/volumes/<TASK-ID>/volumes/models → /models  ext4 /dev/nvme1n1`.
+  **The task id is IN the path.** Every task gets a new empty directory by construction; no
+  setting changes that, and only a NAMED volume could.
+- **a named `SourcePath` does persist.** Two tasks in a row on the same instance, mounting
+  `/var/lib/af-warm-models`: run 1 MISS and fetched, run 2 **HIT** with the same mtime. The half
+  of decision 7(c) everyone assumed was the hard half works fine.
+- **but it lands on 3.1 GB.** That same mount is `/dev/nvme0n1p8`, a small partition on the ROOT
+  volume — not `/dev/nvme1n1`, the 245 GB data volume where the anonymous volumes live. The
+  1.1 GB probe object fit at 38% full; an 18.5 GB model reproduces the "No space left" above
+  exactly. Persistence without capacity is what this question kept mistaking for progress.
+- **and the data volume has no nameable path.** The AMI is Bottlerocket: mounting the host root
+  gives a 2.7 GB, 100%-full, read-only dm-verity image, and EVERY top-level directory a
+  `SourcePath` could name — `/local`, `/mnt`, `/data`, `/opt`, `/var` — resolves inside that
+  image rather than into the live host's mounts. `/._mnt_task` cannot even be created
+  ("read-only file system"). `useLocalStorage`, which was where this was to be picked up, does
+  not change it: it changes what the data volume IS, not where a `SourcePath` may point.
+
+So on Managed Instances a warm model volume cannot be built out of host volumes at all, and
+keeping a box buys only the image layers. The harness is `harness/probe-warm-volume.sh`, which
+prints the DEVICE as well as HIT/MISS so the distinction that took three sessions to see is the
+first thing the next reader gets. What DID pay off is the other half of ADR 0072 open question
+10 — see `LlmUseLocalStorage`.
 
 ## The engine table
 

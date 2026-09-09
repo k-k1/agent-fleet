@@ -1128,7 +1128,7 @@ had killed an entire path.**
   itself reads its database.
 - **EFS for the catalogue.** Rejected in ADR 0071.
 
-## Open questions — measure 8 and 9 before P2 (10-12 are a separate session; 2 and 6 only when an sd-server deployment needs them)
+## Open questions — measure 8 before P2 (**9, 10, 11 and 12 were settled on 2026-09-09**; 2 and 6 only when an sd-server deployment needs them)
 
 1. ~~**The router's four points** (decision 3 depends on them)~~ **Resolved (review R1, on a
    CPU)**: `/health` ok while empty, autoload waits, `--models-max 1` evicts the idle LRU and
@@ -1167,8 +1167,12 @@ had killed an entire path.**
    at start (20–26 s, NAT-dependent). A self-built image pins v0.34.0 and carries no Manager.
    The GGUF-reading node (`ComfyUI-GGUF`) was not needed (fp8 safetensors sufficed); bundling
    one means **a pinned revision written into the Dockerfile** (ADR 0071 decision 6).
-9. **Can the switch re-read (*Resolved* 5) be shortened? — two candidates, one GPU hour, before
-   P2** (review, answer 7 and R9). (1) `useLocalStorage` (ADR 0071 open question 1): the
+9. ~~**Can the switch re-read (*Resolved* 5) be shortened? — two candidates, one GPU hour, before
+   P2**~~ **(1) is settled (review 2026-09-09, section 1) — `useLocalStorage` took the swap from
+   276-282 s to 98.5 s and is now the default. (2) (solve it with RAM: raise `ImageMemMinMiB`
+   so a g6.2xlarge is chosen) is still unmeasured, but with (1) working it is no longer a
+   premise that could change P2's definition of done.** What follows is the original text:
+   (review, answer 7 and R9). (1) `useLocalStorage` (ADR 0071 open question 1): the
    capacity provider's `LocalStorageConfiguration` is not create-only, so `ImageUseLocalStorage=true`
    lands in one stack update (R9). It pays not only on the switch (12.3 GB at 92 MB/s → NVMe)
    but on **the cold start's 33 GB S3 → EBS at 332–360 s**, a number pinned to EBS's write
@@ -1178,8 +1182,15 @@ had killed an entire path.**
    `useLocalStorage` is back to being a start-time question. `bench-image-engine.sh` measures
    both as they are, and since the answer changes P2's definition of done (the price of a
    switch), it is measured **before P2**.
-10. **Re-examine where the models live at all (raised while verifying P4 on hardware; a separate
-    session takes it).** The starting point is the measurement that the sync dominates every
+10. ~~**Re-examine where the models live at all**~~ **Settled (review 2026-09-09, sections 1-3)**:
+    **(a) adopted** (`useLocalStorage` — cold start 527-586 s → 275 s, swap 276-282 s → 98.5 s,
+    now the default), **(b) disproven** (a warm box cannot be built on MI at all: Bottlerocket's
+    read-only root means a named `SourcePath` can only land on 3.1 GB), **(c) rejection upheld**,
+    but on verified unit prices instead of an assumption about throughput — Elastic's $0.04/GB is
+    $0.74 a cold start, 17-21× the GPU time it saves. What follows is the original text, whose
+    premise **"S3 is not the bottleneck" was only half right** (removing EBS exposes the next
+    wall at about 160 MB/s):
+    (raised while verifying P4 on hardware; a separate session takes it.) The starting point is the measurement that the sync dominates every
     cold start — and **S3 is not the bottleneck**. ADR 0071's open question 1 already says the
     g6.xlarge's 125 MB/s EBS baseline binds both the S3 fetch (104–147 MB/s, **which looks like
     the EBS write ceiling**) and the VRAM load, and that an instance store frees both. Cheapest
@@ -1204,7 +1215,11 @@ had killed an entire path.**
       from every cold start, that is $0.12 a start, so **more than ~9 starts a day pays for
       itself in GPU time alone** (never mind the person waiting). IA/Archive lifecycles lower the
       storage side further.
-11. **Where the tenant axis belongs (same origin, separate session).** The catalogue's key is
+11. ~~**Where the tenant axis belongs**~~ **Decided (review 2026-09-09, section 4) — the middle
+    option is adopted.** Measurement showed **the walls come in a different order than the text
+    below says**: **time (~5 models) → disk (~13) → SSM (~38)**, so 4,096 characters is the last
+    wall, not the first. What follows is the original text:
+    The catalogue's key is
     `(role, id)` with no tenant, and "a tenant picks a model from Hugging Face and places it" is
     the right direction for usability — but **on a shared box four things multiply**: the active
     set is one per engine so it becomes the **union** of every tenant's enabled models (which is
@@ -1222,8 +1237,12 @@ had killed an entire path.**
       tenant and loosens the engine task role's grant, which is scoped to one bucket ARN today.
       If isolation is wanted, **prefixes in one bucket** (IAM scopes by prefix, nothing is
       duplicated).
-12. **Let the Hugging Face token be registered from the Console (same origin, separate
-    session).** Today it is the `HfTokenSecretArn` CloudFormation parameter, so putting one in
+12. ~~**Let the Hugging Face token be registered from the Console**~~ **Decided (review
+    2026-09-09, section 5) — "DB as the source of truth, Secrets Manager as transport" is adopted,
+    and "never reads back" is enforced by IAM (`PutSecretValue` only, `GetSecretValue` never
+    granted).** Implementation is P5, entry condition: **free up a resource's worth of headroom in
+    `60-engines.yaml`**. What follows is the original text:
+    (same origin, separate session.) Today it is the `HfTokenSecretArn` CloudFormation parameter, so putting one in
     means **a CloudFormation run and a CP restart** — the very path that ran into measurement 6's
     IAM hole. "It is a secret, therefore Secrets Manager" is not an argument: this product keeps
     git OAuth tokens and MCP headers in its own encrypted store. The real constraint is
@@ -1612,3 +1631,289 @@ Once decisions 2, 5, 6, 7 and 10 above are reflected in the text, change the sta
 the catalogue is empty"** and **"at stack creation (no CP, no active set) both roles'
 services stabilise"** — the former is R6's hole, the latter is the observation of decision
 1's own claim.
+
+## Review (2026-09-09, open questions 10, 11 and 12)
+
+The three the user raised while P4 was being pushed through on hardware — **where the models
+live (10), the tenant axis (11), and registering the HF token (12)** — settled in a separate
+session. 10 was measured on hardware; 11 and 12 were decided as design, without waking a box.
+GPU spend: about 35 minutes, **$0.74**.
+
+The premise this started from — "**S3 is not the bottleneck, the disk receiving it is**" — was
+**only half right**. The EBS write ceiling was indeed binding, but taking it away put the **next
+wall (S3 and the CLI, about 160 MB/s) right behind it**. What actually paid was not the fetch
+but the read from disk **into VRAM**.
+
+### 1. Open question 10(a) — `useLocalStorage` works. The default is now `true`
+
+First, **`LocalStorageConfiguration` is confirmed not create-only** on the real API (backing up
+R9's claim). **One update, about two minutes**, took the stack to `UPDATE_COMPLETE` and the
+capacity provider to `storageConfiguration: null` / `localStorageConfiguration.useLocalStorage:
+true`. No stack rebuild, no new capacity provider.
+
+What was measured is **the deployment's own `llm` role** — not a bench box, but the very path
+decision 3 put a price on. Same two models, same files, against the numbers already recorded for
+the EBS setting:
+
+| | EBS (recorded) | instance store | |
+|---|---|---|---|
+| S3 → disk, 1.1 GB | 8 s (140 MB/s) | **5 s (223 MB/s)** | 1.6× |
+| S3 → disk, 18.5 GB | 159 s (117 MB/s) | **117 s (159 MB/s)** | 1.4× |
+| disk → VRAM, 18.5 GB | 267 s | **91 s** | **2.9×** |
+| RunTask → model loaded | 527-586 s | **275 s** | ~2× |
+| swap to the 1.1 GB model | 10.0-10.1 s | **3.3 s** | 3.0× |
+| swap back to the 18.5 GB model | 276-282 s | **98.5 s** | **2.8×** |
+
+One point came off the `image` role too (the bench died for an unrelated reason, but its fetch
+ran): SDXL, 6.94 GB in **29 s = 239 MB/s**, against the 92-100 MB/s band of measured point 7 —
+2.4×.
+
+🔴 **Read the swap, not the fetch.** Decision 3 priced "one model per box, swap on demand" at
+**276-282 seconds**, and measured point 5 put the image role's switch at 1-2.5 minutes. That
+price is now **98.5 seconds**. The swap is where a person waits; the cold start (275 s) is next.
+
+Both costs are real and neither is new: an instance store is wiped with the box — but **MI
+deletes the EBS data volume too**, so a cold start always paid a fresh S3 fetch. And `*StorageGiB`
+stops meaning anything: the box gets whatever the instance type carries, which on g6.xlarge is a
+**245 GB ext4 filesystem**, i.e. *more* than the EBS setting's 120 GiB. ⚠️ It follows that
+`*AllowedInstanceTypes` may only name types that HAVE an instance store (every g6 and g5 size
+does).
+
+**Adopted**: the default of `LlmUseLocalStorage` / `ImageUseLocalStorage` is now `true`, and the
+dev deployment is in that state. Reverting is one parameter.
+
+### 2. Open question 10(b) — the warm box is not "unproven", it is DISPROVEN
+
+Decision 7(c) of ADR 0071 sat at "unproven" for two sessions, and
+`PARAMETERS-60-engines.md` called it "a GPU hour of investigation" blocked only on where MI's
+data volume is mounted. **It took about four minutes, and the answer is that it cannot be done.**
+The new tools are `harness/probe-warm-volume.sh` and the `mountinfo:` line the bench's fetch now
+prints.
+
+- **Why the anonymous form re-fetches** went from an observation to a mechanism. A container
+  cannot see the host path of its own bind mount through `df`, but `/proc/self/mountinfo` can:
+  `/._mnt_task/volumes/<TASK-ID>/volumes/models → /models  ext4 /dev/nvme1n1`. **The task id is
+  in the path.** An anonymous volume is a fresh empty directory per task *by construction*; no
+  setting changes it, and only a named volume could.
+- **A named `SourcePath` does persist.** Two tasks in a row on the same instance mounting
+  `/var/lib/af-warm-models`: run 1 MISS and fetched, run 2 **HIT**, same mtime. The half everyone
+  assumed was hard works fine.
+- 🔴 **But it lands on 3.1 GB.** That mount is `/dev/nvme0n1p8`, a small partition on the **root**
+  volume — not the 245 GB `/dev/nvme1n1` where anonymous volumes live. The 1.1 GB probe object
+  fit at 38% full; **an 18.5 GB model reproduces the recorded `No space left` exactly**. What
+  this question kept mistaking for progress was **persistence without capacity**.
+- **And the data volume has no nameable path.** The AMI is **Bottlerocket**: mounting the host
+  root shows a **2.7 GB, 100%-full, read-only** dm-verity image, and **every** top-level
+  directory a `SourcePath` could name — `/local`, `/mnt`, `/data`, `/opt`, `/var` — resolves
+  inside that image rather than into the live host's mounts. `/._mnt_task` cannot even be created
+  (`read-only file system`). **`useLocalStorage` does not change this**: it changes what the data
+  volume *is*, not where a `SourcePath` may point.
+
+**Consequence**: on Managed Instances a warm model volume **cannot be built out of host volumes
+at all**. Keeping a box buys the image layers and nothing else, so `*ScaleInAfter: -1` is a way
+to spend $1.26/hour on nothing. ADR 0071 decision 7(c) is closed as **disproven**, and
+`PARAMETERS-60-engines.md` now says so.
+
+### 3. Open question 10(c) — EFS stays rejected, but the GROUNDS are replaced
+
+The rejection's own conditional ("reconsider if sync turns out to hurt in P0") had been met, so
+it was reconsidered. **The unit price was checked first** — the number the ADR flagged 🔴 "a
+third-party transcription, needs re-checking". AWS Pricing API, ap-northeast-1, 2026-09-09:
+
+| | price | |
+|---|---|---|
+| EFS Standard (General Purpose) | **$0.36/GB-mo** | 🔴 **the ADR's number was right** |
+| EFS One Zone | $0.192/GB-mo | |
+| EFS IA / One Zone-IA | $0.0272 / $0.0145/GB-mo | reads and writes $0.012/GB |
+| **EFS Elastic Throughput data access** | **read $0.04/GB, write $0.07/GB** | the line the ADR never saw |
+| EFS Provisioned Throughput | $7.20/MiBps-mo | |
+| S3 Standard | $0.025/GB-mo | matches the ADR's $2.49/mo |
+
+**The stated reason for rejecting — "throughput is NFS's, an order of magnitude slower" — was
+wrong**; EFS on Elastic Throughput is fast. The rejection nevertheless stands, on a different and
+now *verified* reason. EFS has exactly three billing modes and **none of them work**:
+
+- **Elastic**: one cold start reads 18.5 GB = **$0.74**. The GPU time it removes is at most
+  100-125 s = **$0.035-0.044**. That is **17-21× underwater**, and volume does not help — the
+  loss scales per start. **There is no break-even.**
+- **Bursting** (the only mode where reads are free): baseline is 50 MiB/s per TiB stored, so at
+  the measured 99.5 GB it is **about 5 MiB/s**. Burst is 100 MiB/s — **slower than the 125 MB/s
+  EBS ceiling this whole exercise is escaping** — and reading 18.5 GB spends credit that takes
+  about 63 minutes to earn back. A second cold start within the hour falls toward 5 MiB/s (over
+  an hour for one model).
+- **Provisioned**: buying 250 MiB/s to match NVMe costs **$1,800/month**.
+
+Storage compounds it: 99.5 GB is **$35.8/mo** on EFS Standard against **$2.49/mo** on S3 (14.4×).
+One Zone-IA would be $1.44/mo — cheaper than S3 — but its reads are $0.012/GB = **$0.22 a start**,
+still 5-6× the GPU time saved.
+
+**FSx for Lustre was priced too** (a better-shaped fit than EFS): persistent SSD runs
+$0.188-0.848/GB-mo with minimum capacities, and Intelligent-Tiering charges $0.656/MBps-mo for
+throughput. **That is HPC-cluster pricing, not the price of one sleeping GPU box.**
+
+🔴 **And the decisive point: the very thing EFS was to fix — the 350-second sync — was mostly
+fixed for $0 by `useLocalStorage`.** What is left to chase is about 100 seconds, at $0.74 a time.
+**The rejection is upheld**, and the grounds in ADR 0071's rejected-options list change from "an
+assumption about throughput" to "**verified unit prices**". The only axis on which EFS wins is
+human waiting time, and a deployment that wants to buy it would pay about $200/month at nine
+starts a day — **which is at least now a decision someone can make.**
+
+### 4. Open question 11 — the tenant axis goes on ingest and acceptance (the ADR's own middle option)
+
+The ADR's middle option — **the catalogue stays one per deployment; "who may ingest" and "who
+accepted" carry the tenant axis** — is **adopted**. Beyond the ADR's four reasons, today's
+measurements show **the walls come in a different order than the text says**.
+
+The text named the 4,096-character SSM limit as the first wall ("this is where 4,096 characters
+finally bites; 6% today"). Measured, **it is the third**. One model in an active set is about
+**105 characters** (llm: 242 for two models; image: 216):
+
+| wall | limit | bites |
+|---|---|---|
+| **time** (the sync is serial, measured 159 MB/s) | **~5 models** for a 10-minute cold start (95 GB) | **first** |
+| **disk** (instance store, 245 GB) | **~13 models** (6 on the old 120 GiB EBS) | second |
+| SSM (4,096 chars, 32-char envelope) | **~38 models** | last |
+
+So a per-tenant catalogue pushes the cold start past ten minutes at **about five tenants even at
+one model each**. Watching the character limit (38) is a 7× optimism. As long as every enabled
+model is synced on every start, **there is no way out but to avoid the multiplication** — and
+note that `useLocalStorage` widened the disk wall from 6 to 13 while **leaving the time wall
+where it was** (only 1.4× faster).
+
+Decided:
+
+- `engine_models` keeps **`(role, id)`** as its primary key — one per deployment. No change.
+- The tenant axis attaches to **(1) whether a tenant may start an ingest** (a permission) and
+  **(2) who accepted the licence** — widening `license_accepted_by` to `(tenant_id, member_id,
+  accepted_at, license)`. `source` already records provenance; half of this shape shipped in P4.
+- 🔴 **Do not hide the cost**: because the catalogue is one per deployment, **every tenant can see
+  every model id.** That is an accepted price and it belongs in the user guide — concealing it
+  invites operations built on a privacy that is not there.
+- **Per-tenant S3 buckets stay unrecommended** (the ADR's reasoning holds: the boundary is the
+  GPU box, not the bucket). If isolation is needed, prefixes within the one bucket.
+
+### 5. Open question 12 — DB as the source of truth, Secrets Manager as transport. **"Never reads back" enforced by IAM**
+
+The ADR's recommendation is **adopted**, with three additions.
+
+1. 🔴 **Make "the CP can write but never read back" an IAM fact, not a convention.** Grant the CP
+   task role `secretsmanager:PutSecretValue` on **that one ARN only**, and **never**
+   `GetSecretValue`. The property decision 6 gives up ("the CP does not hold the token") then
+   survives as an **auditable boundary** rather than a promise. It goes in the `AWS::IAM::Policy`
+   decision 6 already creates inside `60-engines` for `ecs:RunTask` and `iam:PassRole`, so no new
+   resource — and it fits ADR 0071 decision 8's refinement ("only permissions that bite on that
+   stack's own resources").
+2. **Passing it in `environment` was never available.** As P4 measured, `DescribeTasks` returns
+   RunTask environment variables in plaintext, so the transport is `secrets[].valueFrom` and
+   nothing else. The CP cannot hand the token over as a per-ingest override.
+3. 🔴 **There are two shapes and they cost differently.** Today the whole `Secrets` block
+   disappears behind `!If` when `HfTokenSecretArn` is empty. Once the token is a DB fact,
+   `hasToken` becomes one too — but **the task definition is CloudFormation's, and static**. So:
+   - **(a) the small change**: the secret stays operator-created and the Console only **updates
+     its value**. One `PutSecretValue` statement — but **a deployment that never set
+     `HfTokenSecretArn` still makes one CloudFormation round trip**, so the user's complaint
+     ("running CloudFormation just to enter a token") is only half answered.
+   - **(b) the change that meets the request**: the stack **always** creates the secret with a
+     sentinel value, so the `Secrets` block always exists, `hasToken` is purely a DB fact and
+     **the round trip is gone**. The ingest script treats the sentinel as unset. The cost is **one
+     new resource** in `60-engines`.
+   - **(b) is recommended** — it is the only one that answers the request. ⚠️ But
+     **`60-engines.yaml` had 29 bytes of headroom**. Shortening the `UseLocalStorage` descriptions
+     in this session brought it back to **96**, which is still not a resource. **Moving prose to
+     `PARAMETERS-60-engines.md` is the first task of that work**, and belongs in its estimate.
+4. **Not a per-tenant token** (the ADR's reasoning holds): an ingest's results belong to the whole
+   deployment, which is the same direction as open question 11's conclusion.
+
+### The revision to decision 6
+
+Decision 6's "**the token stays inside the ingest task; the CP does not hold it**" becomes:
+
+> **The token's source of truth is the CP's DB (sealed with `custodian`, the same place as git
+> OAuth and MCP headers), and Secrets Manager is the transport for a value ECS accepts no other
+> way. The CP holds `PutSecretValue` on that secret and NOT `GetSecretValue`** — it cannot read
+> back what it wrote, so decision 6's "the CP does not hold the token" is **weakened but not
+> lost**. Only the ingest task reads the value, exactly as before.
+
+P4's measured point 1 (gated metadata is readable anonymously) **stays live** — the CP will still
+never need a token to resolve a model. Only the **registration path** changes.
+
+### 6. Follow-up — mounting S3 directly (Mountpoint for Amazon S3, 2026-09-09)
+
+EFS lost in 10(c) on **billing** ($0.04/GB under Elastic Throughput, $0.74 a cold start), not on
+the **shape** of shared storage. S3 has no per-GB read charge at all and the gateway VPC endpoint
+keeps the bytes off the NAT, so **the argument that killed EFS does not exist here**. So it was
+measured. The harness is `harness/probe-s3-mount.sh`.
+
+🔴 **Condition 1 holds.** On Bottlerocket under Managed Instances `/dev/fuse` is present, ECS
+really does grant `linuxParameters.capabilities.add: [SYS_ADMIN]`, and `mount-s3 1.24.0`
+**mounted** (`fuse mountpoint-s3 ro,...`). Everything else was moot if this failed, which is why
+it was the first and cheapest thing tried.
+
+**Measured — same box, same task, the cli pass first so a warm page cache cannot flatter the
+mount:**
+
+| | the 18.5 GB GGUF | |
+|---|---|---|
+| control: `aws s3 cp` (what the sidecar does today) | **88 s = 210 MB/s** | |
+| **sequential read through Mountpoint** | **32.7 s = 567 MB/s** | **2.7×** |
+
+The byte count is dd's own — 18,556,689,568, the **whole file** — so a short read is not being
+mistaken for a fast one. Note the same `aws s3 cp` measured 158 MB/s in measurement 1 and 210 MB/s
+here: it moves with the box and the hour, **which is exactly why the control lives inside the same
+task**.
+
+🔴 **Condition 2 turned out to be "you need a custom engine image", not merely "it costs
+something".** Installing the RPM with `--nodeps` produced `libfuse.so.2: cannot open shared object
+file` — **mount-s3 is not a dependency-free static binary; it links libfuse2**
+(`fuse-libs-2.9.9`). A FUSE mount is invisible to other containers, so `mount-s3` has to run
+inside the **engine** container, i.e. **llama.cpp / sd-server images would have to carry mount-s3
+and libfuse2**. That is not a task-definition change, and it costs decision 1's "both roles start
+through the same wrapper".
+
+**Condition 3 is untested.** 567 MB/s is a `dd` sequential read, **not llama.cpp opening and
+loading a GGUF through mmap**.
+
+**Projection (not a measurement)**: of today's 275-second cold start the 117-second copy
+disappears. But **the 91-second VRAM load is not purely disk-bound even on NVMe** — NVMe does
+GB/s and 91 s works out to an effective 204 MB/s, so most of it is GGUF processing and the PCIe
+transfer. Mounting therefore does not turn it into 33 s; expect the whole thing around
+**150-175 s**. The 98.5-second swap should fall similarly.
+
+**Condition 3 was measured the same day (`harness/probe-llm-mount-load.sh`), and the answer is
+DO NOT ADOPT.** Same box, same task, with a copy-then-load pass as the control:
+
+| | copy | load | total |
+|---|---|---|---|
+| A today's path (S3 → instance store → VRAM) | 114 s | **94 s** | **208 s** |
+| B mounted, mmap (llama.cpp's default) | 0 | 150 s | **150 s** |
+| C mounted, `--no-mmap` | 0 | **130 s** | **130 s** |
+
+Three things fall out. **(1) llama.cpp only gets 123-142 MB/s through the mount** — nowhere near
+`dd`'s 567 MB/s, because its load pattern does not exploit Mountpoint's parallelism. **Condition
+3's worry was right.** **(2) mmap is expensive over FUSE** (150 s vs 130 s), so `--no-mmap` would
+be mandatory. **(3) The cold start alone still wins**: the copy disappears, 208 s → 130 s.
+
+🔴 **But the swap loses, and the swap matters more.** Today every enabled model sits on local
+disk, so a swap re-reads locally — measured 98.5 s. Mounting removes the local copy, so **every
+swap goes back to S3 at 130-150 s**. The trade is roughly 57 seconds off the cold start (275 s →
+about 218 s once the image pull can no longer overlap a fetch that is gone) in exchange for
+**making the swap 98.5 s → 130 s**. Decision 3 priced the swap, and the swap is what a person
+waits for.
+
+On top of that comes condition 2's cost: mount-s3 and libfuse2 baked into the engine image, and
+the loss of decision 1's shared wrapper. **It does not pay.** `useLocalStorage` gave 527-586 s →
+275 s for $0; this asks for a custom engine image, returns about 20%, and degrades the swap.
+**Not adopted** — recorded as numbers rather than as a verdict, because a role that loads once
+and never swaps would get a different answer.
+
+Incidentally, **g6.xlarge ran out in both ap-northeast-1 AZs** during these runs, and this
+deployment's `LlmAllowedInstanceTypes` had narrowed to the single type, so no box could launch.
+Restoring the template default (`g6.xlarge,g5.xlarge`) fixed it — a re-run of exactly what ADR
+0071 recorded under "the box will not launch because the candidate list was one type".
+
+### Suggested status line
+
+Mark open question **10 as settled** ((a) adopted, (b) disproven, (c) rejection upheld) and **11
+and 12 as decided**. Implementation of 11 and 12 is P5, and **12's entry condition is "free up a
+resource's worth of headroom in `60-engines.yaml`"**. Open question 9(1) is the same thing as
+10(a) and closes with it.

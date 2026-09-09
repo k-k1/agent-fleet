@@ -128,8 +128,13 @@ MODELS=(
 FETCH_LIST=""
 for m in "${MODELS[@]}"; do FETCH_LIST="$FETCH_LIST '$m'"; done
 
+# The `disk:` and `mountinfo:` lines answer a question the model volume is blocked on (ADR 0071
+# decision 7(c), the warm box): a container cannot see the host path of its own bind mount from
+# `df`, but /proc/self/mountinfo CAN — field 4 is the source path INSIDE the backing filesystem,
+# which is where Managed Instances mounts its data volume. Free to collect, and the answer is
+# different under `UseLocalStorage` (250 GB instance store) than on an EBS data volume.
 # shellcheck disable=SC2016
-FETCH_CMD="set -e; B=s3://$BUCKET; mkdir -p /models/checkpoints /models/diffusion_models /models/text_encoders /models/vae /models/loras /out; aws s3 cp \$B/bench/bench.py /out/bench.py --only-show-errors; T0=\$(date +%s); for p in $FETCH_LIST; do set -- \$p; s=\$(date +%s); aws s3 cp \$B/\$1 /models/\$2 --only-show-errors; echo \"fetch: \$2 \$(stat -c %s /models/\$2) bytes in \$(( \$(date +%s) - s ))s\"; done; echo \"fetch: all in \$(( \$(date +%s) - T0 ))s\"; df -h /models | tail -1"
+FETCH_CMD="set -e; B=s3://$BUCKET; mkdir -p /models/checkpoints /models/diffusion_models /models/text_encoders /models/vae /models/loras /out; echo \"fetch: disk: \$(df -PH | tail -n +2 | tr '\n' '|')\"; echo \"fetch: mountinfo: \$(grep -E ' /models | /out ' /proc/self/mountinfo | tr '\n' '|')\"; aws s3 cp \$B/bench/bench.py /out/bench.py --only-show-errors; T0=\$(date +%s); for p in $FETCH_LIST; do set -- \$p; s=\$(date +%s); aws s3 cp \$B/\$1 /models/\$2 --only-show-errors; echo \"fetch: \$2 \$(stat -c %s /models/\$2) bytes in \$(( \$(date +%s) - s ))s\"; done; echo \"fetch: all in \$(( \$(date +%s) - T0 ))s\"; df -h /models | tail -1"
 
 # The comfy container: update the baked checkout, then one ComfyUI per label:flags pair.
 # Between pairs it waits for the bench to touch /out/next. ⚠️ Never add --cache-none here to
