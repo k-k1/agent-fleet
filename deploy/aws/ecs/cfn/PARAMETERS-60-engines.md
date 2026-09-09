@@ -243,6 +243,17 @@ the intended box, never below it.
 Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole default
 8-vCPU G-family quota by itself, and then the other role cannot launch at all.
 
+⚠️ **When that quota bites, the boxes spending it are invisible where you would look for them.**
+Measured 2026-09-09, chasing a `VcpuLimitExceeded` on a deployment that appeared to have no GPU
+boxes at all: **Managed Instances runs its instances in an AWS-managed account**, so
+`aws ec2 describe-instances --filters Name=instance-type,Values=g6.*` returns **nothing** while
+the quota is fully spent. The count that matters is
+`aws ecs list-container-instances`/`describe-container-instances` (which does report
+`ec2InstanceId` and `ecs.instance-type`). And the quota is not freed the moment a task stops:
+a terminating box holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
+minutes after the cluster looks idle. Wait for the container instance to leave the cluster
+rather than for the task to stop.
+
 ⚠️ `InstanceRequirements` refuses this alongside `InstanceGenerations`.
 
 ### `LlmAcceleratorMemMinMiB`
