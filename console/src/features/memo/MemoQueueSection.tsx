@@ -61,6 +61,8 @@ interface RepoBlock {
 
 const repoLabel = (repo: string) => repo || t("memo.common");
 const catLabel = (cat: string) => cat || t("memo.uncategorized");
+// Identity of a rendered group (fold state, drop highlight, composer placement).
+const groupKey = (repo: string, category: string) => repo + "\x00" + category;
 
 // Keep memo composition fields as compact as their content permits, while letting a
 // longer note grow without the user having to drag the resize handle first.
@@ -156,6 +158,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   const [editing, setEditing] = useState<string | null>(null);
   const [renameCat, setRenameCat] = useState<string | null>(null); // category id being renamed
   const [composerOpen, setComposerOpen] = useState(false);
+  // Where the composer writes. null = the section-top composer, whose free-form category
+  // field decides; a target = the composer moved under that category header ("+" on the
+  // row), writing straight into that (repo, category).
+  const [composeTarget, setComposeTarget] = useState<{ repo: string; category: string } | null>(null);
   const [newText, setNewText] = useDraft("af.memo-draft");
   const [newCat, setNewCat] = useDraft("af.memo-draft-cat");
   // Images attached to the memo being composed (uploaded to the container immediately;
@@ -204,8 +210,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   useEffect(() => {
     if (composeReq === 0) return;
     setOpen(true);
+    setComposeTarget(null);
     setComposerOpen(true);
-    requestAnimationFrame(() => composerTextRef.current?.focus());
   }, [composeReq]);
 
   const setSectionOpen = (o: boolean) => {
@@ -214,6 +220,15 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
   };
 
   const blocks = useMemo(() => groupMemos(memos, cats), [memos, cats]);
+  // The composer only follows a target that is still on screen: a category deleted (or
+  // renamed) while it was open would otherwise leave an open composer nowhere to render.
+  const target = useMemo(() => {
+    if (!composeTarget) return null;
+    const key = groupKey(composeTarget.repo, composeTarget.category);
+    const alive = blocks.some((rb) => rb.groups.some((g) => groupKey(rb.repo, g.category) === key));
+    return alive ? composeTarget : null;
+  }, [composeTarget, blocks]);
+  const targetKey = target ? groupKey(target.repo, target.category) : "";
   const unsent = useMemo(() => memos.filter((m) => !m.sentAt), [memos]);
   const catNames = useMemo(() => [...new Set(cats.map((c) => c.name))], [cats]);
   const selectedIds = useMemo(() => memos.filter((m) => sel[m.id]).map((m) => m.id), [memos, sel]);
@@ -223,9 +238,22 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
 
   // ---- composer ----------------------------------------------------------------
   const openComposer = () => {
+    setComposeTarget(null);
     setComposerOpen(true);
-    requestAnimationFrame(() => composerTextRef.current?.focus());
   };
+  // "+" on a category header: write into that group, with the composer rendered under its
+  // header (and the group unfolded, or the composer would be hidden with its memos).
+  const openComposerFor = (repo: string, category: string) => {
+    setComposeTarget({ repo, category });
+    setComposerOpen(true);
+    const key = groupKey(repo, category);
+    if (collapsedCats[key]) toggleCollapse(key);
+  };
+  // Focus on open AND whenever the composer moves to another category: it is one node
+  // re-parented into the target group, so it remounts and loses focus.
+  useEffect(() => {
+    if (composerOpen) requestAnimationFrame(() => composerTextRef.current?.focus());
+  }, [composerOpen, targetKey]);
 
   // Upload image files (paste / drop / picker) into the container's memo-images dir and
   // append them to the composer's attachments. Non-image files are ignored — memo
@@ -265,10 +293,14 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     if ((!body && newImages.length === 0) || busy) return;
     setBusy(true);
     try {
-      const category = newCat.trim();
+      // A targeted composer writes into its own group; the section-top one takes the
+      // repo-less common bucket and whatever the category field says.
+      const repo = target ? target.repo : "";
+      const category = target ? target.category : newCat.trim();
       const res = await memoCreate({
         kind: "text",
         body,
+        repo,
         category,
         ...(newImages.length ? { attachments: newImages } : {}),
       });
@@ -276,8 +308,11 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         toast(t("memo.add_failed"));
         return;
       }
-      // A brand-new category becomes first-class so it's reorderable straight away.
-      if (category && !catNames.includes(category)) await memoCategoryCreate({ repo: "", name: category }).catch(() => {});
+      // A brand-new category becomes first-class so it's reorderable straight away. Match
+      // on (repo, name) — that is the server's uniqueness key, and a name alone would skip
+      // creating the row for a repo bucket that borrows a common-bucket category's name.
+      if (category && !cats.some((c) => c.repo === repo && c.name === category))
+        await memoCategoryCreate({ repo, name: category }).catch(() => {});
       setNewText("");
       setNewImages([]);
       bumpMemos();
@@ -295,10 +330,10 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     void consumeShare().then((s) => {
       if (!alive || !s || (!s.text && s.files.length === 0)) return;
       setOpen(true);
+      setComposeTarget(null);
       setComposerOpen(true);
       if (s.text) setNewText((prev) => (prev ? prev + "\n" + s.text : s.text));
       if (s.files.length) void attachImages(s.files);
-      requestAnimationFrame(() => composerTextRef.current?.focus());
     });
     return () => {
       alive = false;
@@ -550,6 +585,115 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
     </>
   );
 
+  // One composer, rendered either at the top of the section or under the header of the
+  // category it targets — never both, so the draft text and in-flight uploads stay put.
+  const composer = composerOpen && (
+    <div
+      className={"memo-add" + (target ? " targeted" : "")}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes("Files")) e.preventDefault();
+      }}
+      onDrop={(e) => {
+        if (e.dataTransfer.files.length) {
+          e.preventDefault();
+          void attachImages(e.dataTransfer.files);
+        }
+      }}
+    >
+      <textarea
+        ref={composerTextRef}
+        className="memo-add-text"
+        value={newText}
+        rows={2}
+        placeholder={tr("memo.add_ph")}
+        onChange={(e) => setNewText(e.target.value)}
+        onPaste={(e) => {
+          const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
+          if (imgs.length) {
+            e.preventDefault();
+            void attachImages(imgs);
+          }
+        }}
+        onKeyDown={(e) => {
+          if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+            e.preventDefault();
+            void addMemo();
+          } else if (e.key === "Escape") {
+            setComposerOpen(false);
+          }
+        }}
+      />
+      {(newImages.length > 0 || imgBusy) && (
+        <div className="memo-add-thumbs">
+          {newImages.map((a) => (
+            <MemoImageThumb key={a.name} name={a.name} onRemove={() => removeNewImage(a.name)} />
+          ))}
+          {imgBusy && (
+            <span className="memo-thumb loading">
+              <Icon name="loading" spin />
+            </span>
+          )}
+        </div>
+      )}
+      <div className="memo-add-row">
+        {/* The category is the field only for the section-top composer; a targeted
+            one sits under its category header, which says where the memo lands. */}
+        {target ? (
+          <span className="memo-add-target">{catLabel(target.category)}</span>
+        ) : (
+          <input
+            className="memo-add-cat"
+            list="memo-cat-suggest"
+            value={newCat}
+            placeholder={tr("memo.category_ph")}
+            onChange={(e) => setNewCat(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                e.preventDefault();
+                void addMemo();
+              } else if (e.key === "Escape") setComposerOpen(false);
+            }}
+          />
+        )}
+        <input
+          ref={imgInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          hidden
+          onChange={(e) => {
+            if (e.target.files?.length) void attachImages(e.target.files);
+            e.target.value = "";
+          }}
+        />
+        <Button
+          small
+          variant="ghost"
+          title={tr("memo.attach_image")}
+          aria-label={tr("memo.attach_image")}
+          disabled={imgBusy}
+          onClick={() => imgInputRef.current?.click()}
+        >
+          <Icon name="device-camera" />
+        </Button>
+        <Button
+          small
+          variant="primary"
+          disabled={(!newText.trim() && newImages.length === 0) || busy}
+          onClick={() => void addMemo()}
+        >
+          {tr("memo.add")}
+        </Button>
+      </div>
+      <div className="memo-add-hint">{tr("memo.composer_hint")}</div>
+      <datalist id="memo-cat-suggest">
+        {catNames.map((c) => (
+          <option key={c} value={c} />
+        ))}
+      </datalist>
+    </div>
+  );
+
   return (
     <>
       <Section
@@ -561,106 +705,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         open={open}
         onToggle={() => setSectionOpen(!open)}
       >
-        {composerOpen && (
-          <div
-            className="memo-add"
-            onDragOver={(e) => {
-              if (e.dataTransfer.types.includes("Files")) e.preventDefault();
-            }}
-            onDrop={(e) => {
-              if (e.dataTransfer.files.length) {
-                e.preventDefault();
-                void attachImages(e.dataTransfer.files);
-              }
-            }}
-          >
-            <textarea
-              ref={composerTextRef}
-              className="memo-add-text"
-              value={newText}
-              rows={2}
-              placeholder={tr("memo.add_ph")}
-              onChange={(e) => setNewText(e.target.value)}
-              onPaste={(e) => {
-                const imgs = [...e.clipboardData.files].filter((f) => f.type.startsWith("image/"));
-                if (imgs.length) {
-                  e.preventDefault();
-                  void attachImages(imgs);
-                }
-              }}
-              onKeyDown={(e) => {
-                if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  void addMemo();
-                } else if (e.key === "Escape") {
-                  setComposerOpen(false);
-                }
-              }}
-            />
-            {(newImages.length > 0 || imgBusy) && (
-              <div className="memo-add-thumbs">
-                {newImages.map((a) => (
-                  <MemoImageThumb key={a.name} name={a.name} onRemove={() => removeNewImage(a.name)} />
-                ))}
-                {imgBusy && (
-                  <span className="memo-thumb loading">
-                    <Icon name="loading" spin />
-                  </span>
-                )}
-              </div>
-            )}
-            <div className="memo-add-row">
-              <input
-                className="memo-add-cat"
-                list="memo-cat-suggest"
-                value={newCat}
-                placeholder={tr("memo.category_ph")}
-                onChange={(e) => setNewCat(e.target.value)}
-                onKeyDown={(e) => {
-                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-                    e.preventDefault();
-                    void addMemo();
-                  } else if (e.key === "Escape") setComposerOpen(false);
-                }}
-              />
-              <input
-                ref={imgInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => {
-                  if (e.target.files?.length) void attachImages(e.target.files);
-                  e.target.value = "";
-                }}
-              />
-              <Button
-                small
-                variant="ghost"
-                title={tr("memo.attach_image")}
-                aria-label={tr("memo.attach_image")}
-                disabled={imgBusy}
-                onClick={() => imgInputRef.current?.click()}
-              >
-                <Icon name="device-camera" />
-              </Button>
-              <Button
-                small
-                variant="primary"
-                disabled={(!newText.trim() && newImages.length === 0) || busy}
-                onClick={() => void addMemo()}
-              >
-                {tr("memo.add")}
-              </Button>
-            </div>
-            <div className="memo-add-hint">{tr("memo.composer_hint")}</div>
-            <datalist id="memo-cat-suggest">
-              {catNames.map((c) => (
-                <option key={c} value={c} />
-              ))}
-            </datalist>
-          </div>
-        )}
+        {!target && composer}
 
         {memos.length === 0 && cats.length === 0 ? (
           <div className="pane-empty">{tr("memo.empty")}</div>
@@ -678,7 +723,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                   const ids = g.memos.map((m) => m.id);
                   const allSel = ids.length > 0 && ids.every((id) => sel[id]);
                   const cat = g.catId ? cats.find((c) => c.id === g.catId) : undefined;
-                  const dropKey = rb.repo + "\x00" + g.category;
+                  const dropKey = groupKey(rb.repo, g.category);
                   const collapsed = !!collapsedCats[dropKey];
                   return (
                     <div
@@ -789,6 +834,18 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                             {tr("common.send")}
                           </button>
                         )}
+                        <button
+                          type="button"
+                          className="memo-cat-add"
+                          title={tr("memo.add_to_category", { name: catLabel(g.category) })}
+                          aria-label={tr("memo.add_to_category", { name: catLabel(g.category) })}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            openComposerFor(rb.repo, g.category);
+                          }}
+                        >
+                          <Icon name="add" />
+                        </button>
                         {cat && (
                           <button
                             type="button"
@@ -804,6 +861,8 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                           </button>
                         )}
                       </div>
+
+                      {targetKey === dropKey && composer}
 
                       {!collapsed && (
                         <div className="memo-cat-items">
