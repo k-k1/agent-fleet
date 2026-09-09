@@ -201,7 +201,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	ctx, cancel := context.WithTimeout(ctx, sdcppTimeout)
 	defer cancel()
 
-	promptID, err := p.submit(ctx, conn, graph)
+	promptID, err := p.submit(ctx, conn, graph, model)
 	if err != nil {
 		return Result{}, err
 	}
@@ -254,7 +254,7 @@ func comfyRandomSeed() (int64, error) {
 // submit is POST /prompt, with the same retry-on-503-engine_waking loop as sdcpp.go's send —
 // this is the ONE call of the three that can hit a stopped engine, so it is the one that has to
 // survive the wake.
-func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfyGraph) (string, error) {
+func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfyGraph, model string) (string, error) {
 	body, err := json.Marshal(map[string]any{"prompt": graph, "client_id": "af-agent"})
 	if err != nil {
 		return "", err
@@ -267,6 +267,10 @@ func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfy
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+		// Declares which checkpoint this request used, for the gateway's warm-model tracking
+		// (ADR 0072 decision 7) — ComfyUI's /prompt answer carries only a queue id, never a
+		// model name, so this header is the only way the CP learns what became warm.
+		httpReq.Header.Set("X-AF-Model", model)
 
 		respBody, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {

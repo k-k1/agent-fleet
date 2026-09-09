@@ -235,15 +235,22 @@ func sdcppSizes(model string) []string {
 	}
 }
 
+// sdcppRequestModel is what this call names the checkpoint as: the caller's own choice, or the
+// engine's started-with default (sd-server holds one, chosen at startup — there is no other).
+func sdcppRequestModel(conn EngineConn, req Request) string {
+	model := strings.TrimSpace(req.Model)
+	if model == "" && len(conn.Models) > 0 {
+		model = conn.Models[0]
+	}
+	return model
+}
+
 func (p *sdcppProvider) Generate(ctx context.Context, req Request) (Result, error) {
 	conn, ok := p.conn(ctx)
 	if !ok {
 		return Result{}, errors.New("this deployment runs no self-hosted image engine")
 	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" && len(conn.Models) > 0 {
-		model = conn.Models[0]
-	}
+	model := sdcppRequestModel(conn, req)
 	caps := p.Caps(model)
 	if !caps.Supports(req.Op) {
 		return Result{}, fmt.Errorf("the self-hosted image engine cannot do %s", req.Op)
@@ -330,6 +337,13 @@ func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) 
 			return nil, err
 		}
 		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+		// Declares which checkpoint this request used, for the gateway's warm-model tracking
+		// (ADR 0072 decision 7) — sd-server's own answer carries no such field (pixels, not a
+		// model name), so without this header the admin panel's warm_model never fires for the
+		// image role at all, sdcpp or comfy alike.
+		if m := sdcppRequestModel(conn, req); m != "" {
+			httpReq.Header.Set("X-AF-Model", m)
+		}
 
 		body, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {

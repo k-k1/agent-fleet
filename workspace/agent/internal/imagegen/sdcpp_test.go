@@ -54,11 +54,12 @@ func sdcppAnswer(t *testing.T, images ...[]byte) string {
 }
 
 func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
-	var gotPath, gotAuth, gotCType string
+	var gotPath, gotAuth, gotCType, gotModelHeader string
 	var gotBody map[string]any
 	p := sdcppStub(t, func(w http.ResponseWriter, r *http.Request) {
 		gotPath, gotAuth = r.URL.Path, r.Header.Get("Authorization")
 		gotCType = r.Header.Get("Content-Type")
+		gotModelHeader = r.Header.Get("X-AF-Model")
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		_, _ = io.WriteString(w, sdcppAnswer(t, tinyPNG(t, 64, 32), tinyPNG(t, 64, 32)))
 	})
@@ -85,6 +86,12 @@ func TestSdcppGenerateSendsTheOpenAIShapeAndDecodesTheAnswer(t *testing.T) {
 	// flag, and a model id on the request would suggest it could be switched.
 	if _, sent := gotBody["model"]; sent {
 		t.Error("a model id was sent to an engine that holds exactly one checkpoint")
+	}
+	// X-AF-Model IS sent, on the header rather than the OpenAI-shaped body — it is what lets
+	// the gateway's warm-model tracking (ADR 0072 decision 7) work for the image role at all,
+	// since sd-server's own answer carries pixels, never a model name.
+	if gotModelHeader != "sdxl-base-1.0" {
+		t.Errorf("X-AF-Model = %q, want the engine's started-with checkpoint", gotModelHeader)
 	}
 	if len(res.Images) != 2 {
 		t.Fatalf("got %d images, want 2", len(res.Images))

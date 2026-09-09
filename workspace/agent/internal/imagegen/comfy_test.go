@@ -76,10 +76,11 @@ func sdxlConn() EngineConn {
 }
 
 func TestComfyGenerateRunsThePromptHistoryViewSequence(t *testing.T) {
-	var gotAuth string
+	var gotAuth, gotModelHeader string
 	var gotGraph map[string]any
 	p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
 		gotAuth = r.Header.Get("Authorization")
+		gotModelHeader = r.Header.Get("X-AF-Model")
 		gotGraph, _ = body["prompt"].(map[string]any)
 		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
 	})
@@ -90,6 +91,9 @@ func TestComfyGenerateRunsThePromptHistoryViewSequence(t *testing.T) {
 	}
 	if gotAuth != "Bearer afe_test" {
 		t.Errorf("Authorization = %q", gotAuth)
+	}
+	if gotModelHeader != "sdxl-base-1.0" {
+		t.Errorf("X-AF-Model = %q, want the resolved model (the gateway's warm-model tracking reads this, ADR 0072 decision 7)", gotModelHeader)
 	}
 	if _, ok := gotGraph["ckpt"]; !ok {
 		t.Errorf("the graph sent to /prompt has no ckpt node: %v", gotGraph)

@@ -402,7 +402,12 @@ func engineSeedKind(d engineDef) string {
 //
 // The window is omitted rather than zeroed when it was never declared. A zero reaches opencode
 // as a context of 0, which switches auto-compaction off — the state the field exists to fix.
-func engineCatalogModelRow(m store.EngineModel) map[string]any {
+// warm is the id of the model the Control Plane last saw THIS engine actually answer with
+// (ADR 0072 decision 7's warm_model) — "" when nothing is known warm, in which case no row ever
+// gets the flag. It rides on this function rather than being read off m itself because warmth is
+// an in-memory, per-CP-process fact (engineServed), never a stored column: a served model column
+// would say something is warm when it might not even be the CP process that watched it happen.
+func engineCatalogModelRow(m store.EngineModel, warm string) map[string]any {
 	row := map[string]any{"id": m.ID}
 	if m.ContextTokens > 0 {
 		row["context_tokens"] = m.ContextTokens
@@ -424,6 +429,19 @@ func engineCatalogModelRow(m store.EngineModel) map[string]any {
 	}
 	if m.Default {
 		row["default"] = true
+	}
+	if warm != "" && m.ID == warm {
+		row["warm"] = true
+	}
+	// Files (ADR 0072 P2): the comfy provider is the first reader, to fill in a workflow
+	// template's loader nodes. Kept in sd.cpp's own flag spelling (EngineModelFile's own
+	// comment) rather than translated into a second vocabulary for the same fact.
+	if len(m.Files) > 0 {
+		files := make([]map[string]any, 0, len(m.Files))
+		for _, f := range m.Files {
+			files = append(files, map[string]any{"flag": f.Flag, "s3_key": f.S3Key})
+		}
+		row["files"] = files
 	}
 	return row
 }
