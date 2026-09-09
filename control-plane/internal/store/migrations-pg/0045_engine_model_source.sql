@@ -1,0 +1,11 @@
+-- Where a catalogue row's bytes came from (ADR 0072 decisions 6 and 10, phase P4).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`. This has happened twice.
+--
+-- The sqlite counterpart is migrations/0060_engine_model_source.sql and the reasoning is there.
+-- In short: the row already keeps a snapshot of the licence, but not the one fact the licence
+-- is a property OF — the repository the file came from. engine_ingest_jobs.source holds it only
+-- while a job exists.
+ALTER TABLE engine_models ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT '';

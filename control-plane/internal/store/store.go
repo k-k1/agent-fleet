@@ -249,11 +249,22 @@ type EngineModel struct {
 	// multi-tenant deployment the operator accepts on behalf of every member — so the
 	// question an audit asks is who did that, which the model card cannot answer.
 	LicenseAcceptedBy, LicenseAcceptedAt string
-	// CommercialUse is "yes" | "no" | "unknown", resolved from the licence at ingest. It is a
-	// statement about what THIS DEPLOYMENT may do, which a licence name alone does not make
-	// obvious — FLUX.1-dev is non-commercial, and a deployment that charges its members is in
-	// breach by using it.
-	CommercialUse        string
+	// CommercialUse is "yes" | "no" | "unknown", resolved from the licence at ingest. It says
+	// what may be restricted rather than naming the act: which of "running the model" and
+	// "selling what it generates" a given non-commercial licence forbids differs between them,
+	// and the panel points at the licence rather than deciding.
+	CommercialUse string
+	// Source is where the bytes came from — `hf:<repo>/<file>`, `civitai:<id>` or a URL.
+	//
+	// A snapshot like the licence beside it, and it answers the question the id cannot. An id
+	// only has to be unique within one role in one deployment, so it stays short and readable
+	// (it is what a member sees in the launch menu); two vendors publishing a model of the same
+	// name is a collision the ingest REFUSES rather than one a longer id prevents. But refusing
+	// the second is not the same as recording which vendor the first came from, and
+	// engine_ingest_jobs.source keeps that only for as long as the job row lives.
+	//
+	// Empty for a seeded row, which comes from the stack and not from anywhere with a URL.
+	Source               string
 	CreatedAt, UpdatedAt string
 }
 

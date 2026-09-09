@@ -483,6 +483,12 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if m.BaseModel != "" {
 		row["base_model"] = m.BaseModel
 	}
+	// Which vendor's model of that name this is. Absent for a seeded row, which came from the
+	// stack rather than from anywhere with a URL — and absent rather than "unknown", so the
+	// panel omits the line instead of asserting a provenance nobody recorded.
+	if m.Source != "" {
+		row["source"] = m.Source
+	}
 	if m.Precision != "" {
 		row["precision"] = m.Precision
 	}

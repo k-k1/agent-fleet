@@ -226,6 +226,50 @@ func TestEngineIngestListDropsShardsAndPutsTheCheckpointFirst(t *testing.T) {
 	}
 }
 
+// Where a row came from outlives the job that created it.
+//
+// 🔴 The id is deliberately short — unique only within one role in one deployment, because it is
+// what a member reads in the launch menu and every character also rides in the 4,096-character
+// SSM active set. Two vendors publishing a model of the same name is therefore a collision the
+// ingest refuses, not one the id prevents. What refusing does NOT do is say which vendor the
+// row that is already there came from, and engine_ingest_jobs.source answers that only while
+// the job row lives.
+func TestEngineIngestRowRemembersWhereItCameFrom(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+	req := ingestReq()
+	req.Resolved.Source = "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors"
+	job, aerr := ing.start(ctx, req)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	api.tasks = []ecstypes.Task{{
+		TaskArn: aws.String(job.TaskArn), LastStatus: aws.String("STOPPED"),
+		Containers: []ecstypes.Container{
+			{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+			{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+		},
+	}}
+	ing.reconcile(ctx)
+
+	rows, err := st.ListEngineModels(ctx, req.Role)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d (%v)", len(rows), err)
+	}
+	if rows[0].Source != "hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors" {
+		t.Errorf("source = %q — the catalogue cannot say which vendor this model is", rows[0].Source)
+	}
+	// And the panel says it. A column nothing renders is a column nobody can use.
+	if engineAdminModelRow(rows[0])["source"] != rows[0].Source {
+		t.Error("the provenance is stored but never shown")
+	}
+	// Absent, not "unknown", for a row that came from the stack rather than a URL.
+	if _, ok := engineAdminModelRow(store.EngineModel{ID: "seeded"})["source"]; ok {
+		t.Error("a seeded row claims a provenance nobody recorded")
+	}
+}
+
 // 🔴 The context length is a CEILING, not a setting. Hugging Face answers what the architecture
 // allows (the 30B in this deployment says 262144); what fits in an L4 is a different question
 // and the deployment runs that model at 32768. So it rides as its own field for the panel to

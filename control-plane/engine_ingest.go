@@ -669,6 +669,9 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		Enabled:           false,
 		LicenseAcceptedBy: req.AcceptedBy, LicenseAcceptedAt: store.NowTS(),
 		CommercialUse: engineCommercialUse(req.Resolved),
+		// Where it came from, kept for as long as the model is — the job row that also holds
+		// this is a record of an EVENT and does not outlive the catalogue entry it created.
+		Source: req.Resolved.Source,
 	}
 	if err := g.models.PutEngineModel(ctx, m); err != nil {
 		log.Printf("engines: ingest %s finished but the row could not be written: %v", j.ID, err)

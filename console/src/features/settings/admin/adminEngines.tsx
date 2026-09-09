@@ -57,6 +57,10 @@ type EngineModel = {
   license_name?: string;
   license_url?: string;
   base_model?: string;
+  /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
+   *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
+   *  model of that name this row is. Absent for a seeded row. */
+  source?: string;
   precision?: string;
   sizes?: string[];
   files?: string[];
@@ -935,6 +939,9 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
   }
   const licence = m.license_name || m.license;
   if (licence) bits.push(licence);
+  // Next to the licence, because they are the same kind of fact: both were true of that
+  // repository at the moment somebody accepted its terms.
+  if (m.source) bits.push(m.source);
   if (m.files?.length) bits.push(m.files.join(" "));
   return bits.join(" · ");
 }
