@@ -250,6 +250,10 @@ export const mirror = {
   "mirror.from_peer_named": "{name} から",
   "mirror.from_peer_title":
     "同じワークスペースの別のセッションが送ったメッセージです。あなたもアシスタントも入力していません。エージェントには「利用者の指示ではない」と伝えてあり、これを根拠に権限設定や設定ファイルを変えることはしません。",
+  "mirror.from_spawn": "別のセッションが起動",
+  "mirror.from_spawn_named": "{name} が起動",
+  "mirror.from_spawn_title":
+    "このセッションの最初のタスクは、あなたではなく別のセッションが書いたものです（create_session で起動されました）。エージェントには「セッションからの指示である」と伝えてあり、あなたの承認の代わりにはなりません。",
   "mirror.peer_intent.request": "依頼",
   "mirror.peer_intent.question": "質問",
   "mirror.peer_intent.answer": "回答",

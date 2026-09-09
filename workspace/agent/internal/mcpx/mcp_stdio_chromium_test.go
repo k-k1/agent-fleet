@@ -77,25 +77,36 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 		return found
 	}
 
-	// Backward compatibility: --self-report without the additive capability stays the
-	// session's own surface — reporting, handing off, and stopping itself (docs/log/85).
-	// None of them observes or drives another session.
+	// --self-report without any additive capability is the session's own surface: reporting,
+	// handing off, stopping itself (docs/log/85), plus fleet observation, which stopped being
+	// a capability to add and became part of the surface (docs/log/86). None of them DRIVES
+	// another session, which is what this test is about.
 	setFlags(false, true, false)
 	legacy := toolNames()
-	if len(legacy) != 3 || legacy["af_report"] == nil || legacy["propose_session_handoff"] == nil ||
-		legacy["af_stop_after_turn"] == nil {
-		t.Fatalf("legacy self-report tools = %v, want [af_report af_stop_after_turn propose_session_handoff]",
-			sortedChromiumToolMapKeys(legacy))
+	for _, want := range []string{
+		"af_report", "propose_session_handoff", "af_stop_after_turn",
+		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo",
+	} {
+		if legacy[want] == nil {
+			t.Fatalf("bare self-report tools = %v, missing %s", sortedChromiumToolMapKeys(legacy), want)
+		}
+	}
+	if len(legacy) != 8 {
+		t.Fatalf("bare self-report tools = %v, want exactly those eight", sortedChromiumToolMapKeys(legacy))
 	}
 	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
 		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
 	}
 
-	// The current session builtin adds exactly Chromium Attach View. It does not
-	// inherit the assistant's fleet read/write grants.
+	// The current session builtin adds exactly Chromium Attach View on top of that surface. It
+	// does not inherit the assistant's fleet read/write grants — the check below still calls
+	// three of them by name and expects a refusal.
 	setSessionChromiumEnabled(true)
 	found := toolNames()
-	wantNames := append([]string{"af_report", "af_stop_after_turn", "propose_session_handoff"}, chromiumReadToolNames...)
+	wantNames := append([]string{
+		"af_report", "af_stop_after_turn", "propose_session_handoff",
+		"get_session_status", "get_session_usage", "list_memos", "add_memo", "update_memo",
+	}, chromiumReadToolNames...)
 	wantNames = append(wantNames, chromiumWriteToolNames...)
 	if got, want := sortedChromiumToolMapKeys(found), append([]string(nil), wantNames...); !sameSortedStrings(got, want) {
 		t.Fatalf("session tools = %v, want exactly %v", got, sortedStringsCopy(want))

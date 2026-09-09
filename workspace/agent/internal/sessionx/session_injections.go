@@ -47,6 +47,13 @@ const (
 	// injection store holds nothing for them; docs/log/58 §58.16). Writing "peer" separately on
 	// each side would make the badge appear on some paths and not others.
 	turnSourcePeer = transcript.SourcePeer
+	// TurnSourceSpawn is the first instruction of a session another SESSION started
+	// (ADR 0073 decision 14). Same need as the peer badge, at the one moment a session has no
+	// history to read it against: without it the launch task of a spawned child renders as
+	// input its user typed, because a session-spawned create carries no report_to and an empty
+	// Source reads as the user's own. It is recorded ONLY for origin=session, so no other
+	// create route changes shape.
+	TurnSourceSpawn = "spawn"
 )
 
 // injectionSource maps a caller-supplied source onto the recordable vocabulary. The
@@ -92,6 +99,11 @@ func badgeOriginOf(peerFrom, reportTo, source string) string {
 	switch {
 	case peerFrom != "":
 		return turnSourcePeer
+	case source == TurnSourceSpawn:
+		// A spawned child's launch task (ADR 0073). Ahead of the report_to branch because it
+		// is decided by the source alone: a session-spawned create has no report_to, so
+		// falling through would drop the badge exactly where it is the only provenance.
+		return TurnSourceSpawn
 	case reportTo != "":
 		return injectionSource(source)
 	default:
