@@ -59,13 +59,18 @@ aws --profile p1 --region ap-northeast-1 sts get-caller-identity --query Account
 aws --profile p1 --region ap-northeast-1 ecr describe-repositories --repository-names af-control-plane af-workspace
 aws --profile p1 --region ap-northeast-1 ecr get-login-password
 docker login --username AWS --password-stdin $H
+docker image inspect agent-fleet/control-plane:1.2.3
 docker tag agent-fleet/control-plane:1.2.3 $H/af-control-plane:1.2.3
 docker push $H/af-control-plane:1.2.3
+docker image inspect agent-fleet/workspace:1.2.3
 docker tag agent-fleet/workspace:1.2.3 $H/af-workspace:1.2.3
 docker push $H/af-workspace:1.2.3
 EOF
 expect_set "$WORK/want1"
 expect_order "ecr describe-repositories" "docker tag agent-fleet/control-plane:1.2.3"
+# The inspect is a pre-flight guard: a multi-arch build never loads locally, and without
+# it `docker tag` fails with "No such image", which reads like a failed build.
+expect_order "docker image inspect agent-fleet/control-plane:1.2.3" "docker tag agent-fleet/control-plane:1.2.3"
 expect_order "docker login" "docker push $H/af-control-plane:1.2.3"
 expect_order "docker tag agent-fleet/control-plane:1.2.3" "docker push $H/af-control-plane:1.2.3"
 grep -q "ImageTag=1.2.3" "$WORK/out1.txt" || fail "next-step hint missing"
@@ -82,8 +87,10 @@ aws --profile p2 --region us-east-1 ecr describe-repositories --repository-names
 aws --profile p2 --region us-east-1 ecr get-login-password
 docker login --username AWS --password-stdin $H2
 docker load -i $WORK/images.tar.gz
+docker image inspect agent-fleet/control-plane:2.0.0
 docker tag agent-fleet/control-plane:2.0.0 $H2/af-control-plane:2.0.0
 docker push $H2/af-control-plane:2.0.0
+docker image inspect agent-fleet/workspace:2.0.0
 docker tag agent-fleet/workspace:2.0.0 $H2/af-workspace:2.0.0
 docker push $H2/af-workspace:2.0.0
 EOF

@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.17.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.17.0) — 2026-09-09
+
+An ECS deployment can now run inference on its own GPU, on a box that only exists while
+somebody is using it: a model that appears in opencode's launch menu, and image generation
+that needs no external account. Sessions can also be told to stop themselves once the work
+is done, and image generation gained a second provider.
+
 ## [0.16.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.16.0) — 2026-09-07
 
 Sessions that cannot draw can now generate images, and the pictures land in the
