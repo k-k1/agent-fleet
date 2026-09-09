@@ -907,23 +907,6 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 	}
 }
 
-// isFleetSpawnTool names the nine above: the tools whose handlers must accept a session
-// caller once --fleet-spawn is on.
-//
-// ⚠️ Nothing calls this. Each of those handlers carries its own gate instead
-// (`!writeEnabled() && !mcpFleetSpawnEnabled`, or `!mcpFleetSpawnEnabled` for the one tool
-// the operator does not get), which is what the callable-not-just-advertised test actually
-// exercises. Kept as the single written-down roster of the set, and listed here so the next
-// reader does not take it for a live gate.
-func isFleetSpawnTool(name string) bool {
-	switch name {
-	case "create_session", "list_child_sessions", "list_repos", "list_models", "get_agent_usage",
-		"get_session_output", "stop_session", "stop_session_after_turn", "resume_session":
-		return true
-	}
-	return false
-}
-
 // sessionDriveAllowed authorizes a tool that ACTS ON a named session: reading its output,
 // stopping it, resuming it. The operator may drive anything; a session may drive only what it
 // started itself (ADR 0073 decision 4).
