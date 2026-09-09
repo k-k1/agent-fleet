@@ -101,9 +101,9 @@ type engineSearchHit struct {
 
 // engineHFSearchRow is one row of `GET /api/models`. 🔴 What is NOT here is the point: asking
 // for `cardData` also delivers `extra_gated_prompt` and asking for `gguf` delivers the whole
-// `chat_template`, each over a kilobyte on its own (measured 2026-09-09 on FLUX.1-dev and
-// Qwen2.5-Coder-7B-Instruct-GGUF). Decoding into a narrow struct drops them before they can be
-// copied onward — a screen that draws 20 rows must not carry 20 kilobytes nobody reads.
+// `chat_template`. Decoding into a narrow struct drops them before they can be copied onward,
+// and the difference is not marginal — measured end to end on 2026-09-09, the same 20 rows are
+// **211,015 bytes upstream and 5,125 bytes out of this route (41x)**.
 type engineHFSearchRow struct {
 	ID            string `json:"id"`
 	Downloads     int64  `json:"downloads"`
@@ -262,7 +262,8 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 	return out, nil
 }
 
-// searchIngest (POST …/ingest/search) is the repository picker behind the ingest form.
+// searchIngest (POST …/{key}/ingest/search) is the repository picker behind one engine's
+// ingest form: the engine decides what kind of file is worth offering.
 //
 // It starts nothing and writes nothing: a bad search costs one metadata read, which is why it
 // is safe to call while somebody is typing.
@@ -272,6 +273,38 @@ func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ s
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
 		return
 	}
+	// Deliberately NOT gated on the engine's mode. An engine switched off is a deployment
+	// deciding not to pay for a GPU right now, which has nothing to do with whether an
+	// administrator may look at what there is to stage for when it comes back.
+	a.answerSearch(w, r, engineIngestKindFor(e))
+}
+
+// browseSearch (POST /api/admin/engines/search) is the same read with no engine in the path.
+//
+// 🔴 It exists because the panel it lives on is EMPTY on a deployment that has not adopted
+// 60-engines, and "there is nothing here" is the worst possible answer to "what could I run?".
+// Nothing about asking Hugging Face what exists needs an engine: the CP holds no token, reads
+// no bucket and starts no task (decision 6). Staging one still needs a role to stage it INTO,
+// so this is browsing and the panel says so.
+func (a engineAdminAPI) browseSearch(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+	// With no engine there is nothing to derive the kind from, so the caller states it. An
+	// unknown one is not defaulted: quietly answering GGUFs to somebody who asked for
+	// checkpoints is a list that looks like an answer.
+	kind := strings.TrimSpace(r.URL.Query().Get("kind"))
+	switch kind {
+	case "", "gguf":
+		kind = "gguf"
+	case "checkpoint":
+	default:
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"unknown kind " + kind + " (gguf or checkpoint)"})
+		return
+	}
+	a.answerSearch(w, r, kind)
+}
+
+// answerSearch is the body both routes share.
+func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kind string) {
 	var b struct {
 		Q      string `json:"q"`
 		Source string `json:"source"`
@@ -285,7 +318,6 @@ func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ s
 	// load, which is the only way in for somebody who does not know what to type.
 	q := strings.TrimSpace(b.Q)
 	sort := strings.TrimSpace(b.Sort)
-	kind := engineIngestKindFor(e)
 	var (
 		hits []engineSearchHit
 		aerr *apiError

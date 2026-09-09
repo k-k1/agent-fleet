@@ -129,7 +129,14 @@ describe("EnginesAdminView", () => {
   it("says so rather than showing an empty screen when nothing is deployed", async () => {
     api.mockResolvedValue({ engines: [] });
     await mount();
-    expect(host!.querySelectorAll(".seg-btn").length).toBe(0);
+    // No ENGINE control: there is no engine to switch off, on-demand or always-on. (The browse
+    // below it has segments of its own — a read that needs no engine — so the count of every
+    // .seg-btn on the page would no longer say anything about engines.)
+    for (const mode of ["無効", "オンデマンド", "常時稼働"]) {
+      expect(
+        Array.from(host!.querySelectorAll(".seg-btn")).some((b) => b.textContent === mode),
+      ).toBe(false);
+    }
     expect(host!.textContent).toContain("動かしていません");
   });
 
@@ -1353,5 +1360,72 @@ describe("EnginesAdminView / searching for a model", () => {
     // Pressing a ranking searches at once — it is a question, not a setting that waits for a
     // second click somewhere else.
     expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+});
+
+// 🔴 A deployment that has not adopted 60-engines has an EMPTY panel, and "there is nothing
+// here" is the worst possible answer to "what could I run?". Looking at what Hugging Face has
+// needs no engine at all — no token, no bucket, no task — so the browse stays.
+describe("EnginesAdminView / browsing with no engine deployed", () => {
+  const button = (label: string) =>
+    Array.from(host!.querySelectorAll("button")).find((b) => b.textContent === label) as
+      | HTMLButtonElement
+      | undefined;
+
+  it("still offers a look at what there is, and says it cannot take anything in", async () => {
+    api.mockResolvedValue({ engines: [] });
+    apiJSON.mockResolvedValue({
+      hits: [{ source: "hf", ref: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", name: "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", downloads: 12623435 }],
+    });
+    await mount();
+    // The "nothing deployed" sentence stays — the browse is added beside it, not instead of it.
+    expect(host!.textContent).toContain("動かしていません");
+
+    await click(button("人気を見る"));
+    // The keyless route, with the kind stated rather than derived: there is no engine to
+    // derive it from.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/search?kind=gguf", "POST", {
+      q: "",
+      source: "hf",
+      sort: "downloads",
+    });
+    expect(host!.querySelector(".engines-search-hits")!.textContent).toContain("Qwen3-Coder-30B");
+    expect(host!.textContent).toContain("12.6M");
+    // 🔴 A hit is NOT clickable here: picking one fills an ingest form, and this deployment has
+    // no role to ingest into. The note says so instead of offering a button that cannot work.
+    expect(host!.querySelector(".engines-search-hits li button")).toBeNull();
+    expect(host!.textContent).toContain("閲覧だけです");
+  });
+
+  it("asks for the kind, because there is no engine to derive it from", async () => {
+    api.mockResolvedValue({ engines: [] });
+    apiJSON.mockResolvedValue({ hits: [] });
+    await mount();
+    await click(button("画像（checkpoint）"));
+    await click(button("人気を見る"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/search?kind=checkpoint", "POST", {
+      q: "",
+      source: "hf",
+      sort: "downloads",
+    });
+
+    // Civitai is offered here too, and only for checkpoints.
+    await click(button("Civitai"));
+    await click(button("人気を見る"));
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/search?kind=checkpoint", "POST", {
+      q: "",
+      source: "civitai",
+      sort: "downloads",
+    });
+    // Going back to GGUF takes the source with it: Civitai hosts no GGUFs, and a search that
+    // can only answer nothing reads as a broken one.
+    await click(button("LLM（GGUF）"));
+    expect(button("Civitai")).toBeUndefined();
+    await click(button("人気を見る"));
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/search?kind=gguf", "POST", {
+      q: "",
+      source: "hf",
+      sort: "downloads",
+    });
   });
 });

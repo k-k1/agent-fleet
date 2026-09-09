@@ -277,3 +277,77 @@ func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
 		t.Error("an unknown ranking reached Civitai, which answers 400")
 	}
 }
+
+// 🔴 Looking at what exists must not depend on having an engine, or on its being switched on.
+//
+// The WIRING half of this is pinned by `testdata/routes.golden`, which is taken with no engine
+// table: these routes appear in it only because they are registered outside
+// registerEngineRoutes' `if reg == nil` guard. Re-nesting them puts the golden back to 440
+// routes, which is what made the panel answer 404 on a deployment without 60-engines.
+//
+// Two different deployments hit this: one that has not adopted 60-engines at all (the panel is
+// empty, and "there is nothing here" is the worst answer to "what could I run?"), and one that
+// switched its GPU off to stop paying for it — a decision about this month's bill, not about
+// whether an administrator may look at the catalogue.
+func TestBrowsingNeedsNoEngineAndSurvivesOneBeingOff(t *testing.T) {
+	a, e, _ := engineModelAdminAPI(t)
+	hfSearchStub(t, hfSearchBody)
+
+	post := func(path string, h func(http.ResponseWriter, *http.Request, store.Identity),
+		key, body string) (int, map[string]any) {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", path, strings.NewReader(body))
+		if key != "" {
+			r.SetPathValue("key", key)
+		}
+		h(rec, r, store.Identity{ID: "u1"})
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		return rec.Code, out
+	}
+
+	// (1) An engine that is OFF still answers. The mode is not consulted anywhere on this path,
+	// and this is what pins that: switching the engine off must not take the picker with it.
+	if err := a.settings.SetSetting(t.Context(), engineSettingsFor(e.def.Key).mode, engineModeOff); err != nil {
+		t.Fatalf("off: %v", err)
+	}
+	if got := e.mode(t.Context()); got != engineModeOff {
+		t.Fatalf("the fixture engine is %q, not off — the case below would prove nothing", got)
+	}
+	code, out := post("/api/admin/engines/image/ingest/search", a.searchIngest, "image", `{"q":"flux"}`)
+	if code != http.StatusOK || len(out["hits"].([]any)) != 2 {
+		t.Errorf("search on a switched-off engine = %d %v", code, out)
+	}
+
+	// (2) No engine in the path at all, which is the deployment with no engine table.
+	code, out = post("/api/admin/engines/search?kind=gguf", a.browseSearch, "", `{"q":"qwen"}`)
+	if code != http.StatusOK || len(out["hits"].([]any)) != 2 {
+		t.Fatalf("browse = %d %v", code, out)
+	}
+	// The kind is asked for rather than guessed: quietly answering GGUFs to somebody who asked
+	// for checkpoints is a list that looks like an answer.
+	if code, out := post("/api/admin/engines/search?kind=lora", a.browseSearch, "", `{"q":"x"}`); code != http.StatusBadRequest {
+		t.Errorf("unknown kind = %d %v, want 400", code, out)
+	}
+}
+
+// The kind reaches the upstream filter on the keyless route too — otherwise "image" would
+// browse GGUF repositories and look like it worked.
+func TestBrowseKindPicksTheUpstreamFilter(t *testing.T) {
+	a, _, _ := engineModelAdminAPI(t)
+	_, q := hfSearchStub(t, `[]`)
+	for _, tc := range []struct{ kind, filter, pipeline string }{
+		{"gguf", "gguf", ""},
+		{"checkpoint", "", "text-to-image"},
+	} {
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("POST", "/api/admin/engines/search?kind="+tc.kind, strings.NewReader(`{}`))
+		a.browseSearch(rec, r, store.Identity{ID: "u1"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: %d %s", tc.kind, rec.Code, rec.Body.String())
+		}
+		if q.Get("filter") != tc.filter || q.Get("pipeline_tag") != tc.pipeline {
+			t.Errorf("kind %q asked %v, want filter=%q pipeline_tag=%q", tc.kind, *q, tc.filter, tc.pipeline)
+		}
+	}
+}

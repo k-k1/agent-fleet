@@ -74,6 +74,10 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	// And WHICH repository, for somebody who does not already know the name (ADR 0072
 	// decision 11). Reads only, filtered to what this engine could load.
 	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/search", a.withSuperAdmin(a.searchIngest))
+	// The same read with no engine in the path: a deployment that has not adopted 60-engines
+	// has an EMPTY panel, and "there is nothing here" is the worst answer to "what could I
+	// run?". Browsing needs no engine because it needs no token, no bucket and no task.
+	mux.HandleFunc("POST /api/admin/engines/search", a.withSuperAdmin(a.browseSearch))
 	// The operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5). Not under
 	// {key}: one token serves every role, because one ingest task does. There is no GET that
 	// returns it — only whether one is registered, by whom and when.
