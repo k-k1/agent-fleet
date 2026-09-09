@@ -244,7 +244,31 @@
   border-radius: 6px;
 }
 
+/* The search results. A list of buttons rather than a <select>: each row carries a meta line
+   (downloads, gated, licence, size) that decides whether it is worth choosing, and an option
+   element cannot hold one. */
+.engines-search-hits {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  font-size: 12px;
+}
+
+.engines-search-hits > li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.engines-search-hits > li > button {
+  text-align: left;
+}
+
 .engines-model-add-row,
+.engines-search-row,
 .engines-hf-row {
   display: flex;
   align-items: center;
@@ -256,12 +280,14 @@
    each field means, and the rule that the window only counts in pairs, is the paragraph under
    the form; a label long enough to explain itself wraps to two lines in both locales. */
 .engines-model-add-row > span,
+.engines-search-row > span,
 .engines-hf-row > span {
   flex: 0 0 8ch;
   color: var(--dialog-muted);
 }
 
 .engines-model-add-row > input,
+.engines-search-row > input,
 .engines-hf-row > input {
   flex: 1 1 auto;
   min-width: 0;

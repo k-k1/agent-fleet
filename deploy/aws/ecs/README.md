@@ -955,8 +955,11 @@ Two steps since ADR 0072, and they are separate on purpose: **staging** puts the
 facts, and deriving the second from the first is what ADR 0053 forbids.
 
 1. stage the file — **Settings → Admin → engines → "take one in from Hugging Face"** does it
-   for you since ADR 0072 P4 (paste `owner/name` or a model-page URL; the control plane reads the
-   sha256, the size and the licence from that source's API and starts the ingest task). The
+   for you since ADR 0072 P4 (search for a model, or paste `owner/name` or a model-page URL; the
+   control plane reads the sha256, the size and the licence from that source's API and starts the
+   ingest task). The search (ADR 0072 decision 11) is filtered to what the engine can load —
+   GGUF repositories for `llm`, text-to-image for `image` — and each hit says up front whether
+   it is gated and what licence it carries. The
    `run-task` below is the same thing by hand, for a deployment whose control plane cannot reach
    the internet;
 2. switch the row on in the same panel. It arrives DISABLED whichever way it was staged —

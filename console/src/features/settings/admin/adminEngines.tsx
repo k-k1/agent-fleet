@@ -90,6 +90,28 @@ type ResolvedSource = {
   context_length?: number;
 };
 
+/** One search result (POST …/ingest/search, ADR 0072 decision 11).
+ *
+ * A DESTINATION, not an ingest: picking one fills the repository field and the existing
+ * resolve → accept → ingest road runs unchanged. The numbers here are the listing's, i.e. a
+ * draft — the licence and the sha256 of record are what the resolve of the chosen FILE reads,
+ * because a Hugging Face card can move between the two calls. */
+type IngestHit = {
+  /** "hf" or "civitai" — decides how `ref` is turned into a repository field. */
+  source: string;
+  /** The repository for HF; the VERSION id for Civitai (not the model id on the page's URL). */
+  ref: string;
+  name: string;
+  downloads?: number;
+  likes?: number;
+  gated?: boolean;
+  license?: string;
+  license_name?: string;
+  base_model?: string;
+  bytes?: number;
+  context_length?: number;
+};
+
 /** One file a repository offers (POST …/ingest/files), already filtered to the ones this
  *  engine could load and that carry a sha256. */
 type IngestCandidate = { name: string; bytes?: number; sha256?: string };
@@ -779,6 +801,9 @@ function EngineIngest({
   const [files, setFiles] = useState<IngestCandidate[] | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [err, setErr] = useState("");
+  const [q, setQ] = useState("");
+  const [hits, setHits] = useState<IngestHit[] | null>(null);
+  const [searchSource, setSearchSource] = useState("hf");
 
   const source = (name = file) => {
     const r = repo.trim();
@@ -846,6 +871,33 @@ function EngineIngest({
     await resolveFile(file);
   };
 
+  /** 「探す」 — for somebody who does not already know `owner/name`. Reads only: it starts
+   *  nothing, writes nothing and needs no token (both APIs answer anonymously). */
+  const search = async () => {
+    setErr("");
+    const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/search`, "POST", {
+      q,
+      source: searchSource,
+    });
+    if (d?.error) {
+      setHits(null);
+      setErr(errDetail(d.error));
+      return;
+    }
+    setHits((Array.isArray(d?.hits) ? d.hits : []) as IngestHit[]);
+  };
+
+  /** Choosing a result only fills the repository field — the same field somebody would have
+   *  typed into — so everything downstream is the road that was already there. Civitai goes in
+   *  as `civitai:<versionId>`, which is the form the source parser above already reads. */
+  const pickHit = (h: IngestHit) => {
+    setRepo(h.source === "civitai" ? "civitai:" + h.ref : h.ref);
+    setFiles(null);
+    setFile("");
+    setFound(null);
+    setHits(null);
+  };
+
   const pick = async (name: string) => {
     setErr("");
     setFile(name);
@@ -901,6 +953,63 @@ function EngineIngest({
   );
   return (
     <div className="engines-model-add engines-ingest">
+      {/* The repository picker (ADR 0072 decision 11). It sits ABOVE the field it fills, and
+          the field stays typeable: search is a way in, never a precondition — a deployment with
+          closed egress loses the search and keeps the ingest. */}
+      <label className="engines-search-row">
+        <span>{tr("admin.engines_ingest_search")}</span>
+        <input
+          value={q}
+          placeholder={isImage ? "sdxl" : "qwen2.5 coder"}
+          onChange={(ev) => setQ(ev.currentTarget.value)}
+          onKeyDown={(ev) => {
+            if (ev.key === "Enter" && q.trim()) {
+              ev.preventDefault();
+              search();
+            }
+          }}
+        />
+      </label>
+      <div className="engines-model-add-actions">
+        {/* Civitai is only offered to the image role: it hosts image models, and the CP answers
+            the llm role nothing at all rather than checkpoints llama.cpp cannot load. */}
+        {isImage && (
+          <span className="seg sm">
+            {(["hf", "civitai"] as const).map((sr) => (
+              <button
+                key={sr}
+                type="button"
+                className={"seg-btn" + (searchSource === sr ? " active" : "")}
+                onClick={() => {
+                  setSearchSource(sr);
+                  setHits(null);
+                }}
+              >
+                {tr(("admin.engines_ingest_source_" + sr) as never)}
+              </button>
+            ))}
+          </span>
+        )}
+        <button type="button" className="ghost sm" onClick={search} disabled={busy || !q.trim()}>
+          {tr("admin.engines_ingest_search_go")}
+        </button>
+      </div>
+      {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
+      {hits && hits.length > 0 && (
+        <ul className="engines-search-hits">
+          {hits.map((h) => (
+            <li key={h.source + ":" + h.ref}>
+              <button type="button" className="ghost sm" onClick={() => pickHit(h)}>
+                <span className="mono">{h.name}</span>
+              </button>
+              {/* The gating flag and the licence ride here because they decide whether this row
+                  is takeable at all, and finding that out from a refusal one step later is the
+                  dead end the whole picker exists to avoid. */}
+              <span className="muted">{ingestHitMeta(h, tr)}</span>
+            </li>
+          ))}
+        </ul>
+      )}
       {/* Editing the repository drops the list and the verdict with it: a filename picked out
           of the previous repository's answer would resolve against the new one. */}
       {field(tr("admin.engines_ingest_repo"), repo, (v) => {
@@ -1083,6 +1192,28 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
  *    So every row is DATED and the list is headed. Without a time, a green "done" beside a
  *    model id reads as the current state of that model — i.e. as "this one is ready to use" —
  *    which is exactly wrong for a row whose model has been deleted. */
+/** One line under a search result: how popular it is, whether it is gated, what licence it
+ *  carries, how big it is. Every part is omitted rather than guessed — the two APIs answer
+ *  different subsets, and a zero download count reads as a fact. */
+function ingestHitMeta(h: IngestHit, tr: (k: never) => string): string {
+  const bits: string[] = [];
+  if (h.downloads) bits.push(fmtCount(h.downloads) + tr("admin.engines_ingest_hit_downloads" as never));
+  if (h.gated) bits.push(tr("admin.engines_ingest_hit_gated" as never));
+  const lic = h.license_name || h.license;
+  if (lic) bits.push(lic);
+  if (h.base_model) bits.push(h.base_model);
+  if (h.bytes) bits.push(fmtBytes(h.bytes));
+  if (h.context_length) bits.push((tr("admin.engines_ingest_ctx_max" as never)).replace("{n}", String(h.context_length)));
+  return bits.join(" · ");
+}
+
+/** 1,632,949 → 1.6M. The exact number is noise next to "is this the one everybody uses". */
+function fmtCount(n: number): string {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
+  if (n >= 1_000) return Math.round(n / 1_000) + "k";
+  return String(n);
+}
+
 function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
   const tr = useT();
   if (jobs.length === 0) return null;

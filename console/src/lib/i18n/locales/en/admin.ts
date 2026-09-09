@@ -74,6 +74,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // screen is not an acceptance, and a gated repository with no token is refused here rather
   // than by a 401 nine minutes into a task.
   "admin.engines_ingest_open": "Take one in from Hugging Face",
+  "admin.engines_ingest_search": "find",
+  "admin.engines_ingest_search_go": "Search",
+  "admin.engines_ingest_search_none": "Nothing found. Try other words, or type the repository name in directly.",
+  "admin.engines_ingest_source_hf": "Hugging Face",
+  "admin.engines_ingest_source_civitai": "Civitai",
+  "admin.engines_ingest_hit_downloads": " downloads",
+  "admin.engines_ingest_hit_gated": "gated",
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
   "admin.engines_ingest_resolve": "Look it up",
