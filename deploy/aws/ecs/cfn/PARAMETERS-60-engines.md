@@ -269,20 +269,47 @@ asked for (measured against the API), which is why `UseLocalStorage` exists.
 
 ### `LlmUseLocalStorage`
 
-Use the instance store instead of an EBS data volume. ADR 0071 open question 1: on g6.xlarge the
-EBS baseline is 125 MB/s, and that one number bounds BOTH the S3 fetch (measured 104-147 MB/s,
-i.e. the write side saturates) and the 267-second load of 18.5 GB into VRAM. The instance store
-is 250 GB of local NVMe. Off by default until the measurement in the ADR says otherwise — an
-instance store is also wiped on every box, which costs a fresh S3 fetch per cold start.
+Use the instance store instead of an EBS data volume. **On by default since 2026-09-09, when the
+measurement ADR 0071 open question 1 asked for was finally taken.** The premise held: on
+g6.xlarge the EBS baseline of 125 MB/s bounded both halves of a cold start, and taking it away
+roughly halves the whole thing. Measured on the deployment's own `llm` role, same box, same two
+models, against the numbers recorded for the EBS setting:
+
+| | EBS (recorded) | instance store | |
+|---|---|---|---|
+| S3 → disk, 1.1 GB | 8 s (140 MB/s) | **5 s (223 MB/s)** | 1.6× |
+| S3 → disk, 18.5 GB | 159 s (117 MB/s) | **117 s (159 MB/s)** | 1.4× |
+| disk → VRAM, 18.5 GB | 267 s | **91 s** | **2.9×** |
+| RunTask → model loaded | 527-586 s | **275 s** | ~2× |
+| swap to the 1.1 GB model | 10.0-10.1 s | **3.3 s** | 3.0× |
+| swap back to the 18.5 GB model | 276-282 s | **98.5 s** | **2.8×** |
+
+Two things worth reading off that table rather than the headline. **The win is the VRAM load,
+not the fetch**: taking the EBS write cap away only moved the 18.5 GB fetch 1.4×, because the
+next limit — S3 and the CLI, around 160 MB/s — was right behind it. And the swap is where a user
+actually feels it: ADR 0072 decision 3 priced "one model per box, swap on demand" at 276-282
+seconds, and it now costs 98.5.
+
+The costs are unchanged and both are real: an instance store is wiped with the box (so every
+cold start still pays a fresh S3 fetch — but so did the EBS data volume, which MI also deletes),
+and `LlmStorageGiB` stops meaning anything while this is on. The box gets whatever the instance
+type carries, which on g6.xlarge is 250 GB — measured as a 245 GB ext4 filesystem, i.e. MORE
+than the 120 GiB the EBS setting asked for, which is why the disk ceiling on how many models can
+be enabled at once went up rather than down (ADR 0072 open question 11).
+
+⚠️ It follows that `*AllowedInstanceTypes` may only name types that HAVE an instance store. Every
+g6 and g5 size does; a type without one cannot satisfy the capacity provider.
 
 ### `LlmScaleInAfter`
 
 `infrastructureOptimization.scaleInAfter`, in seconds: how long MI leaves an idle box before
 terminating it. `-2` = do not set it, i.e. AWS's default (measured drain: 427 and 463 seconds on
-a GPU box, 93 on a CPU box). `-1` = never tidy up. `0`-`3600` = that many seconds. Worth having
-as a knob because a box kept a little longer would be a warm start — but see the task
-definition's volume comment: with an anonymous host volume the kept box re-fetches anyway, so
-ADR 0071 decision 7(c) is unproven and the default is the right setting today.
+a GPU box, 93 on a CPU box). `-1` = never tidy up. `0`-`3600` = that many seconds. It was worth
+having as a knob while a box kept a little longer might have been a warm start; since 2026-09-09
+it is not, because a kept box cannot hold its models at all — see [The model
+volume](#the-model-volume), where decision 7(c) is disproven rather than merely unproven. Keeping
+a GPU box past its work now buys the image layers and nothing else, at $1.26/hour, so the AWS
+default is the right setting and `-1` is a way to spend money on nothing.
 
 ### `LlmIdleSec`
 
@@ -667,10 +694,34 @@ Both halves of that are measured, and both are counter-intuitive:
   very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
   never reclaimed, so four starts on one kept box filled the disk.
 
-ADR 0071 decision 7(c)'s "warm box" therefore stays UNPROVEN, and `*ScaleInAfter` is left at the
-AWS default rather than `-1`. Making it work needs the path MI's data volume is actually mounted
-at, which is not documented and was not worth another GPU hour to find; `useLocalStorage`, where
-the 250 GB instance store is the whole disk, is where to pick it up (ADR 0072 open question 9).
+**2026-09-09: decision 7(c)'s "warm box" is no longer unproven — it is DISPROVEN**, and
+`*ScaleInAfter` stays at the AWS default rather than `-1` for a reason that can now be stated
+instead of suspected. Four measurements, about four minutes of GPU:
+
+- **why the anonymous form re-fetches**, which used to be an observation without a mechanism. A
+  container cannot see the host path of its own bind mount from `df`, but `/proc/self/mountinfo`
+  can, and it says: `/._mnt_task/volumes/<TASK-ID>/volumes/models → /models  ext4 /dev/nvme1n1`.
+  **The task id is IN the path.** Every task gets a new empty directory by construction; no
+  setting changes that, and only a NAMED volume could.
+- **a named `SourcePath` does persist.** Two tasks in a row on the same instance, mounting
+  `/var/lib/af-warm-models`: run 1 MISS and fetched, run 2 **HIT** with the same mtime. The half
+  of decision 7(c) everyone assumed was the hard half works fine.
+- **but it lands on 3.1 GB.** That same mount is `/dev/nvme0n1p8`, a small partition on the ROOT
+  volume — not `/dev/nvme1n1`, the 245 GB data volume where the anonymous volumes live. The
+  1.1 GB probe object fit at 38% full; an 18.5 GB model reproduces the "No space left" above
+  exactly. Persistence without capacity is what this question kept mistaking for progress.
+- **and the data volume has no nameable path.** The AMI is Bottlerocket: mounting the host root
+  gives a 2.7 GB, 100%-full, read-only dm-verity image, and EVERY top-level directory a
+  `SourcePath` could name — `/local`, `/mnt`, `/data`, `/opt`, `/var` — resolves inside that
+  image rather than into the live host's mounts. `/._mnt_task` cannot even be created
+  ("read-only file system"). `useLocalStorage`, which was where this was to be picked up, does
+  not change it: it changes what the data volume IS, not where a `SourcePath` may point.
+
+So on Managed Instances a warm model volume cannot be built out of host volumes at all, and
+keeping a box buys only the image layers. The harness is `harness/probe-warm-volume.sh`, which
+prints the DEVICE as well as HIT/MISS so the distinction that took three sessions to see is the
+first thing the next reader gets. What DID pay off is the other half of ADR 0072 open question
+10 — see `LlmUseLocalStorage`.
 
 ## The engine table
 

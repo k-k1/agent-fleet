@@ -154,11 +154,11 @@ Parameters:
     Description: "EBS data volume per box when UseLocalStorage is off. MI exposes only the SIZE."
   LlmUseLocalStorage:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues: [ "true", "false" ]
     Description: >-
-      Use the 250 GB instance store instead of an EBS data volume. Off until measured
-      (ADR 0071 open question 1, ADR 0072 open question 9).
+      Use the 250 GB instance store instead of an EBS data volume. On since the measurement
+      halved the cold start (PARAMETERS-60-engines.md).
   LlmScaleInAfter:
     Type: Number
     Default: -2
@@ -271,11 +271,10 @@ Parameters:
       but not much: the anonymous model volume is re-allocated per task and never reclaimed.
   ImageUseLocalStorage:
     Type: String
-    Default: "false"
+    Default: "true"
     AllowedValues: [ "true", "false" ]
     Description: >-
-      Use the instance store instead of an EBS data volume. Less pressing than on the llm
-      role: 6.5 GB from S3 is under a minute either way.
+      Use the instance store instead of an EBS data volume. As on the llm role.
   ImageScaleInAfter:
     Type: Number
     Default: -2
