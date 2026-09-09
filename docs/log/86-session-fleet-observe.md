@@ -1,7 +1,9 @@
 # 86. セッションへのフリート観測ツール開放（段階 1）
 
 - 状態: **段階 1 実装済み**（2026-09-09）。これまでフリート・オペレーターにしか配られて
-  いなかった MCP ツールのうち、観測系 4 本をセッション側サーバへ開放した。既定 OFF。
+  いなかった MCP ツールのうち、観測系 4 本をセッション側サーバへ開放した。~~既定 OFF~~
+  **→ 同日中に既定 ON・設定項目ごと廃止・`update_memo` 追加（§86.10）**。本文の
+  「opt-in」「`--fleet-observe`」「既定 OFF」の記述は当時のもので、いまは §86.10 が正。
 - 関連: [19-assistant-chat.md](19-assistant-chat.md)（`af_write` = オペレーター面の由来）/
   [51-session-report-v2-ledger.md](51-session-report-v2-ledger.md)（`--self-report` の
   1 本限定契約と指示台帳の arm）/ [58-cross-session-messaging.md](58-cross-session-messaging.md)
@@ -53,6 +55,7 @@ docs/30 以来の前提が重なる。開放したツールは「汚染リポジ
 ## 86.3 段階 1 で開けた 4 本
 
 `--self-report --fleet-observe` で加算する。既定 OFF、ui-prefs の `sessionFleetObserve`。
+（**§86.10 で撤回**: フラグも設定も無くなり、`--self-report` の面そのものになった。）
 
 | ツール | セッションでの用途 | 開けた理由 |
 |--------|------------------|-----------|
@@ -69,6 +72,7 @@ docs/30 以来の前提が重なる。開放したツールは「汚染リポジ
 `memoWriteAllowed()`（= `writeEnabled() || mcpFleetObserveEnabled`）へ広げた。
 `update_memo` / `delete_memo` / `flush_memos` は素の `writeEnabled()` のまま
 — **セッションは利用者のキューに足せるが、書き換えも送信もできない**。
+（**§86.10 で `update_memo` は開けた**。境界は「消せない・送れない」へ動いた。）
 
 ## 86.4 `get_session_status` から `questions` と `plan` を落とす
 
@@ -147,9 +151,9 @@ opt-in は後から切り替わるためで、転送しただけの env は何�
 
 | 壊した箇所 | 落ちたテスト |
 |-----------|------------|
-| `--self-report` との論理積を外す | `TestFleetObserveRequiresSelfReport` |
+| `--self-report` との論理積を外す | `TestFleetObserveRequiresSelfReport`（§86.10 で廃止） |
 | メモのゲートを `writeEnabled()` だけに戻す | `TestAddMemoGateAcceptsSessionAndRefusesReadOnlyAssistant` |
-| 4 本を無条件広告にする | `TestFleetObserveToolsAreOffByDefault` |
+| 4 本を無条件広告にする | `TestFleetObserveToolsAreOffByDefault`（§86.10 で意味が反転し `TestFleetObserveToolsAreAlwaysOnForSessions` に） |
 | `plan` の削りを外す | `TestSessionStatusDropsPendingQuestionAndPlan` |
 | 削りを**書いたが配線しない** | `TestGetSessionStatusTrimsOnlyForSessions` |
 | en カタログのキーを消す | Console の i18n パリティ検査 |
@@ -177,3 +181,46 @@ opt-in は後から切り替わるためで、転送しただけの env は何�
 - **実機での発火確認は未実施。** 説明文は「いつ呼ぶか」を規定して発火率を上げる意図で
   書かれているので、`b367ae51` がやったように実セッションで呼ばれることを確かめたい。
 - control-plane 側の `/mcp`（PAT 認証・外部クライアント向け）は別系統で、本書の範囲外。
+
+## 86.10 追記（2026-09-09）— 観測は設定をやめ、既定になった。`update_memo` も開けた
+
+段階 1 の中心的な判断（**既定 OFF の opt-in にする**）を、実装から 1 日で取り下げた。
+利用者の指示は「規定 ON にして、既存ユーザーも ON にして、設定項目から消したい」。
+
+**何が変わったか**
+
+- `--fleet-observe` フラグ・ui-prefs の `sessionFleetObserve`・Console の設定行・`mcpreg` の
+  フックを**すべて削除**した。観測系は `--self-report` の面そのものになった。
+- **既存ワークスペースも ON になる。** 保存済みの `sessionFleetObserve: false` は読まれない。
+  「設定から消す」を「既定値を true にする」で実装すると、**明示的に false を書いた利用者だけが
+  取り残される**——それが最も多いはずの、この機能を見送った利用者である。値ごと無視するのが
+  「消す」の正しい実装。
+- **`update_memo` を追加**した（利用者の指示）。セッションはキューに足すだけでなく、
+  自分が足した内容を直せる。`delete_memo` / `flush_memos` は据え置き。
+- 退役したフラグは `parseStdioFlags` で**受け取って無視する**。MCP 設定は再 materialize まで
+  古い argv を渡し続けるため。
+
+**§86.3 の「観測と書き残しを 1 つのスイッチに載せた理由」は、スイッチが無くなっても生きている**
+——観測だけ開いて出口を閉じない、という形は保たれている。`update_memo` はその出口を
+「足す」から「足して直す」に広げたもので、境界（**消せない・送れない**）は動いていない。
+
+**取り下げた理由の記録。** §86.2 の 3 性質は観測を危険にしない。危険なのは**動かす操作**で、
+それは ADR 0073 の `--fleet-spawn` に分かれた。観測を opt-in のままにしていたのは、
+段階 1 の時点で「セッション面を広げること」自体が新しかったからで、性質の分析からの帰結では
+なかった。分けた今、観測側にスイッチを残す理由は残っていない。
+
+**代償として認識しておくこと**: 説明文 5 本分が全セッションの初回ターンに乗る固定費になった
+（利用者が外す手段は無い）。`add_memo` / `update_memo` は**全セッションが利用者のメモキューへ
+書ける**ことを意味する。どちらも取り消せる（キューは人が読んでから送る）が、既定になった以上
+「気づいたら誰かが書いていた」は起こる。
+
+**検証**（§86.8 と同じ作法）。退行を入れて落ちることを確認した。
+
+| 壊した箇所 | 落ちたテスト |
+|-----------|------------|
+| 観測系をフラグの後ろへ戻す（opt-in していない面から消える） | `TestFleetObserveToolsAreAlwaysOnForSessions` |
+| `update_memo` を広告しない | 同上 |
+| **`update_memo` を広告したままゲートを `writeEnabled()` に戻す** | `TestFleetObserveToolsAreCallableNotJustAdvertised` |
+
+3 つ目は ADR 0073 の実装レビューで見つかった型（`list_models` が広告されているのに呼べなかった）
+そのもので、**広告集合を見る試験では絶対に捕まらない**。5 本を実際に呼ぶ試験を足した。

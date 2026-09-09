@@ -96,29 +96,24 @@ var mcpPeerMessagingEnabled bool
 // and neither may be frozen into the server's argv.
 var mcpImageGenEnabled bool
 
-// mcpFleetObserveEnabled adds ONLY the four fleet-observation tools to the session-side
-// server (docs/log/86 stage 1). Enabled by `--self-report --fleet-observe`, the same additive
-// shape as the three flags above.
+// Fleet observation — get_session_status / get_session_usage / list_memos / add_memo /
+// update_memo — is part of the session surface, unconditionally (docs/log/86 stage 1, made the
+// default 2026-09-09). It was opt-in for its first weeks; the switch is gone and existing
+// workspaces get it whether or not they had turned it on.
 //
-// The four are get_session_status / get_session_usage (look at the fleet you are part of) and
-// list_memos / add_memo (leave your user a note about what you saw). Reading and note-leaving
-// ride on one switch because they are one act: the note is the only channel a session has to
-// report an observation to a human who is not watching.
+// Why it is not a capability worth choosing: reading the fleet you are part of and leaving your
+// user a note are what a session needs to be a colleague rather than a process. Nothing here
+// drives, answers for or deletes another session — that is --fleet-spawn (ADR 0073), which
+// stayed a switch precisely because it spends the host.
 //
-// What it deliberately does NOT bring is every other operator tool. Opening those to sessions
-// runs into three properties a session does not have and the operator does: a conversation id
-// (so report_to / owner_conv are empty and completion reports go nowhere), an attending human
-// (the "confirm with the user first" clause in the operator descriptions is not enforcement,
-// and BridgeApprovalGate is a no-op without a conv), and a reply budget (the operator's
-// auto-reply cap has no session-side equivalent). Anything that drives, answers for, or
-// deletes another session stays on the operator surface until those are solved.
-var mcpFleetObserveEnabled bool
+// What is still NOT here: delete_memo and flush_memos. A session may add to its user's queue and
+// correct what is in it; emptying it or sending it is the user's.
 
 // mcpFleetSpawnEnabled adds the eight session-steering tools (ADR 0073), under
-// `--self-report --fleet-spawn`. It is the first session-side switch that spends resources on
-// the shared host with nobody watching, so it is its own flag rather than a widening of
-// --fleet-observe: stage 1 told the user in as many words that observation adds nothing that
-// acts, and that sentence has to keep being true.
+// `--self-report --fleet-spawn`. It is the one session-side switch left, and it is a switch
+// because it is the one that spends the shared host with nobody watching. Observation above is
+// not: reading the fleet and writing your user a note cost nothing and are refused by nobody,
+// which is why that one stopped being a setting at all.
 //
 // What makes steering safe to open at all is not the flag but the CHILD RELATION. create_session
 // stamps origin=session plus the caller's own name (ADR 0073 decision 1), and every driving tool
@@ -139,10 +134,9 @@ func parseStdioFlags(args []string) {
 	setConvID("")
 	mcpPeerMessagingEnabled = false
 	mcpImageGenEnabled = false
-	mcpFleetObserveEnabled = false
 	mcpFleetSpawnEnabled = false
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
-	fleetObserveRequested, fleetSpawnRequested := false, false
+	fleetSpawnRequested := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -156,7 +150,8 @@ func parseStdioFlags(args []string) {
 		case "--image-gen":
 			imageGenRequested = true
 		case "--fleet-observe":
-			fleetObserveRequested = true
+			// Accepted and ignored: observation is unconditional now, but an MCP config
+			// written before that change still passes the flag until it is re-materialized.
 		case "--fleet-spawn":
 			fleetSpawnRequested = true
 		case "--conv":
@@ -172,7 +167,6 @@ func parseStdioFlags(args []string) {
 	setSessionChromiumEnabled(selfReportOnly() && chromiumAttachRequested)
 	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
 	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
-	mcpFleetObserveEnabled = selfReportOnly() && fleetObserveRequested
 	mcpFleetSpawnEnabled = selfReportOnly() && fleetSpawnRequested
 }
 
@@ -402,9 +396,7 @@ func mcpStdioToolList() []map[string]any {
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
-		if mcpFleetObserveEnabled {
-			tools = append(tools, mcpStdioFleetObserveTools()...)
-		}
+		tools = append(tools, mcpStdioFleetObserveTools()...)
 		if mcpFleetSpawnEnabled {
 			tools = append(tools, mcpStdioFleetSpawnTools()...)
 		}
@@ -644,8 +636,8 @@ func isPeerTool(name string) bool {
 	return name == "list_peer_sessions" || name == "send_to_peer_session"
 }
 
-// mcpStdioFleetObserveTools — the four fleet-observation tools, advertised only under
-// `--self-report --fleet-observe` (docs/log/86 stage 1).
+// mcpStdioFleetObserveTools — the fleet-observation tools, part of every session's surface
+// (docs/log/86 stage 1; unconditional since 2026-09-09).
 //
 // They are written out here rather than picked out of mcpStdioTools / mcpStdioWriteTools the
 // way the Chromium tools are, because the operator's descriptions answer a different question.
@@ -724,27 +716,41 @@ func mcpStdioFleetObserveTools() []map[string]any {
 				"required": []string{"kind"},
 			},
 		},
+		{
+			"name": "update_memo",
+			"description": "Agent Fleet: edit one memo already in your user's queue, by id from list_memos. " +
+				"Only the fields you pass change. " +
+				"Call it when what you queued turns out to be wrong or incomplete - the cause was something " +
+				"else, the file moved, the follow-up you noted is already done - rather than adding a second " +
+				"memo that contradicts the first. " +
+				"The queue is your user's, and it holds notes from them and from other sessions too: correct " +
+				"your own, and leave someone else's alone unless you are fixing the thing it is about. " +
+				"You cannot delete a memo or send the queue; that stays with the user in the Console.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"id":       map[string]any{"type": "string", "minLength": 1, "description": "Memo id from list_memos"},
+					"body":     map[string]any{"type": "string", "description": "Replacement note text (optional)"},
+					"refPath":  map[string]any{"type": "string", "description": "Replacement ~/repos/... path (optional)"},
+					"repo":     map[string]any{"type": "string", "description": "Move it to another repo bucket (optional; '' = unfiled)"},
+					"category": map[string]any{"type": "string", "description": "Change the sub-project label (optional)"},
+				},
+				"required": []string{"id"},
+			},
+		},
 	}
 }
 
-// isFleetObserveTool names the four tools above. It is what lets their handlers accept a
-// session caller: the read handlers have no gate of their own (the advertised set is the
-// boundary — mcpStdioCall), but add_memo is a write tool and must not read as "any
-// --self-report server may write memos".
-func isFleetObserveTool(name string) bool {
-	switch name {
-	case "get_session_status", "get_session_usage", "list_memos", "add_memo":
-		return true
-	}
-	return false
-}
-
-// memoWriteAllowed authorizes add_memo. Two surfaces reach it: the operator under --write,
-// and a session whose user turned fleet observation on. The other memo writers
-// (update_memo / delete_memo / flush_memos) keep the bare writeEnabled() check — a session
-// may add to its user's queue, not rewrite or send it.
+// memoWriteAllowed authorizes the memo writers a session may reach: add_memo and update_memo.
+// Both surfaces reach them — the operator under --write, and any session (observation is part
+// of the session surface).
+//
+// delete_memo and flush_memos keep the bare writeEnabled() check. The line is not "read vs
+// write" but what a mistake costs the user: adding a note and correcting one are recoverable
+// from the queue itself, while emptying it destroys what the user had not read yet and flushing
+// it sends work into a session on their behalf.
 func memoWriteAllowed() bool {
-	return writeEnabled() || mcpFleetObserveEnabled
+	return writeEnabled() || selfReportOnly()
 }
 
 // mcpStdioFleetSpawnTools — the eight session-steering tools, advertised only under
@@ -2209,7 +2215,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "update_memo":
-		if !writeEnabled() {
+		if !memoWriteAllowed() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの編集を許可されていません")
 		}
 		if a.ID == "" {

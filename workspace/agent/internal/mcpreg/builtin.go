@@ -108,13 +108,6 @@ var ImageGenEnabled func() bool
 
 func imageGenOn() bool { return ImageGenEnabled != nil && ImageGenEnabled() }
 
-// FleetObserveEnabled is the same hook for the four fleet-observation tools (docs/log/86
-// stage 1), off by default like the other two: it lets a session read its siblings' state and
-// write into the user's memo queue, which is a wider surface than "report when you are done".
-var FleetObserveEnabled func() bool
-
-func fleetObserveOn() bool { return FleetObserveEnabled != nil && FleetObserveEnabled() }
-
 // FleetSpawnEnabled is the same hook for session steering (ADR 0073 decision 3): starting
 // sessions and driving the ones you started. It is a separate switch from observation, not a
 // widening of it — stage 1's own wording promises the user that observation adds nothing that
@@ -135,9 +128,6 @@ func builtinRunArgsFor(id string, spec builtinSpec) []string {
 	}
 	if imageGenOn() {
 		args = append(args, "--image-gen")
-	}
-	if fleetObserveOn() {
-		args = append(args, "--fleet-observe")
 	}
 	if fleetSpawnOn() {
 		args = append(args, "--fleet-spawn")

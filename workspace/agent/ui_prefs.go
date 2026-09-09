@@ -237,7 +237,6 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	before := uiprefs.OpencodeCatalog()
 	peerBefore := uiprefs.PeerMessaging()
 	imageGenBefore := uiprefs.ImageGeneration()
-	fleetObserveBefore := uiprefs.FleetObserve()
 	fleetSpawnBefore := uiprefs.FleetSpawn()
 	if err := os.WriteFile(uiprefs.Path(), body, 0o600); err != nil {
 		httpx.WriteErr(w, http.StatusInternalServerError, "write_failed", err.Error())
@@ -252,10 +251,11 @@ func handlePutUIPrefs(w http.ResponseWriter, r *http.Request) {
 	// session-side af server, so the toggle does nothing until each CLI's native MCP config is
 	// rewritten. Both toggles share one re-materialize — it is idempotent, and writing the
 	// configs twice for a PUT that flipped both would be pure noise in the log.
-	// Fleet observation (docs/log/86) joins them for the same reason: --fleet-observe is the
-	// third launch argument of that one server, and session steering (ADR 0073) is the fourth.
+	// Session steering (ADR 0073) joins them for the same reason: --fleet-spawn is the third
+	// launch argument of that one server. (Fleet observation was the fourth until it stopped
+	// being a setting at all.)
 	if uiprefs.PeerMessaging() != peerBefore || uiprefs.ImageGeneration() != imageGenBefore ||
-		uiprefs.FleetObserve() != fleetObserveBefore || uiprefs.FleetSpawn() != fleetSpawnBefore {
+		uiprefs.FleetSpawn() != fleetSpawnBefore {
 		mcpx.MaterializeAll()
 	}
 	// Switching the tier changes the env that is injected (the free tier drops

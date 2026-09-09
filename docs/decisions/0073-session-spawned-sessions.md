@@ -97,9 +97,14 @@ A conjunction with `--self-report`, the same additive pattern as `--chromium-att
 It does not ride on `--fleet-observe`. Stage 1's own description promises the user that
 **"nothing that acts is added"**; piggybacking would silently withdraw that promise.
 
-It does, however, **require fleet observation in the Console**. `get_session_status` (stage 1) is
-the only way to watch a child, so opening spawning while observation is off would create sessions
-that can be started and then never looked at again.
+~~It does, however, **require fleet observation in the Console**~~ — the prerequisite itself is
+gone (2026-09-09). It existed because `get_session_status` is the only way to watch a child, so
+spawning with observation off would create sessions that could be started and then never looked
+at again. **Observation then stopped being a setting at all**, and every session has
+`get_session_status` (see the amendment in docs/log/86), so the prerequisite is permanently
+satisfied and was removed from the UI and from `uiprefs.FleetSpawn()`. What the decision was
+protecting — never being able to start something you cannot watch — holds more strongly than
+before.
 
 ### 3-b. The eight tools stage 2 advertises (the whole set, by flag)
 

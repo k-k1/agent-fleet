@@ -19,23 +19,27 @@ func writePrefs(t *testing.T, obj map[string]any) {
 	}
 }
 
-// Session steering depends on fleet observation (ADR 0073 decision 3), and the dependency is
-// enforced HERE rather than only in the Console: a prefs file written by hand, restored from an
-// export, or left over from turning observation off later must not produce the one combination
-// that makes no sense — a session that can start children and then never look at them.
-func TestFleetSpawnRequiresFleetObserve(t *testing.T) {
+// Session steering is its own switch, read straight from the prefs.
+//
+// It used to be conjoined with fleet observation, which is how a caller watches what it
+// started. That conjunction is gone because observation is no longer a setting — every session
+// has get_session_status — so a workspace that never turned observation on can still turn
+// steering on, and a stored sessionFleetObserve (of either value) changes nothing.
+func TestFleetSpawnIsIndependentOfTheRetiredObserveKey(t *testing.T) {
 	for _, tc := range []struct {
-		name           string
-		spawn, observe bool
-		want           bool
+		name  string
+		prefs map[string]any
+		want  bool
 	}{
-		{"both on", true, true, true},
-		{"spawn without observation", true, false, false},
-		{"observation alone opens nothing extra", false, true, false},
-		{"neither", false, false, false},
+		{"on", map[string]any{"sessionFleetSpawn": true}, true},
+		{"off", map[string]any{"sessionFleetSpawn": false}, false},
+		{"on, with the retired key left behind as false",
+			map[string]any{"sessionFleetSpawn": true, "sessionFleetObserve": false}, true},
+		{"off, with the retired key left behind as true",
+			map[string]any{"sessionFleetSpawn": false, "sessionFleetObserve": true}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			writePrefs(t, map[string]any{"sessionFleetSpawn": tc.spawn, "sessionFleetObserve": tc.observe})
+			writePrefs(t, tc.prefs)
 			if got := FleetSpawn(); got != tc.want {
 				t.Fatalf("FleetSpawn() = %v, want %v", got, tc.want)
 			}
@@ -48,9 +52,8 @@ func TestFleetSpawnRequiresFleetObserve(t *testing.T) {
 func TestFleetSpawnDefaultsOff(t *testing.T) {
 	for _, obj := range []map[string]any{
 		{},
-		{"sessionFleetObserve": true},
-		{"sessionFleetSpawn": "true", "sessionFleetObserve": true},
-		{"sessionFleetSpawn": 1, "sessionFleetObserve": true},
+		{"sessionFleetSpawn": "true"},
+		{"sessionFleetSpawn": 1},
 	} {
 		writePrefs(t, obj)
 		if FleetSpawn() {
