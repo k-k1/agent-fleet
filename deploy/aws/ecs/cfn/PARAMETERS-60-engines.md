@@ -569,10 +569,32 @@ card. The wait is bounded at 20 minutes, because `scaleInAfter: -1` would otherw
 never end.
 
 **Permissions.** `ecs:DescribeCapacityProviders` + `ecs:UpdateCapacityProvider` on this stack's
-own capacity providers, and `iam:PassRole` on `InfraRole` and `InstanceRole` — the update
-re-declares the launch template, which names both. The resource scope IS the boundary: that API
-can also move subnets and security groups, so it is pinned to `af-<stack>-*` and the CP only
-ever sends values that came out of the ladder above.
+own capacity providers, `ecs:PutClusterCapacityProviders` on the cluster, and `iam:PassRole` on
+`InfraRole` and `InstanceRole` — the update re-declares the launch template, which names both.
+The resource scope IS the boundary: that API can also move subnets and security groups, so it is
+pinned to `af-<stack>-*` and the CP only ever sends values that came out of the ladder above.
+
+🔴 **`PutClusterCapacityProviders` is an API the Control Plane never calls.** ECS authorizes an
+update of a **Managed Instances** provider as that action **on the cluster**, so without the
+grant the update fails with an `AccessDeniedException` naming an action that appears nowhere in
+the code:
+
+```
+AccessDeniedException: User: …/af-<stack>-cp-task/… is not authorized to perform:
+ecs:PutClusterCapacityProviders on resource: …:cluster/af-<platform-stack>
+```
+
+Neither the API reference nor the SDK says so; it was measured on a deployment (ADR 0074 P1),
+and it is the reason a rung change cannot be proven to work by unit tests. Note what it widens:
+that action is also how the cluster's whole provider ASSOCIATION list is replaced, so the grant
+is cluster-scoped where the other three are provider-scoped. It is on the same cluster this
+stack already owns the associations of (README, "60-engines").
+
+⚠️ **`DescribeCapacityProviders` takes a cluster or a list of names — never both.** A request
+carrying both is refused with `InvalidParameterException: Cannot specify both capacity providers
+and cluster in the same request`, which is documented nowhere. The CP asks by name and checks
+the cluster on the ANSWER instead (`applyEngineClass`); a provider that answered with another
+cluster is not written to.
 
 ## The fetch sidecar
 

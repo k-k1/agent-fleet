@@ -276,9 +276,8 @@ Parameters:
     Description: CloudWatch retention for the engine and ingest log group.
 
 Mappings:
-  # ONE fetch sidecar for both roles: the active set from SSM in, `/models/cmdline` (and a
-  # router preset) out. ⚠️ A LITERAL block (`|-`), never folded — PARAMETERS-60-engines.md,
-  # "The fetch sidecar". `deploy/local/engine-sidecar-test.sh` runs it for real, and CI runs that.
+  # ONE fetch sidecar for both roles. ⚠️ A LITERAL block (`|-`), never folded —
+  # PARAMETERS-60-engines.md, "The fetch sidecar" (engine-sidecar-test.sh runs it for real).
   Engine:
     fetch:
       script: |-
@@ -486,19 +485,22 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
-          # Rung changes (ADR 0074 decision 9). THIS STACK's providers only: the update
-          # re-declares the whole launch template, so the resource scope IS the boundary.
+          # Rung changes (ADR 0074 decision 9). 🔴 The third action is one the CP never calls:
+          # ECS authorizes an MI provider update as PutClusterCapacityProviders on the CLUSTER
+          # (measured, P1) — PARAMETERS-60-engines.md, "The instance classes".
           - Effect: Allow
             Action: [ ecs:DescribeCapacityProviders, ecs:UpdateCapacityProvider ]
             Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:capacity-provider/af-${AWS::StackName}-*"
+          - Effect: Allow
+            Action: [ ecs:PutClusterCapacityProviders ]
+            Resource: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
           - Effect: Allow
             Action: [ iam:PassRole ]
             Resource: [ !GetAtt InfraRole.Arn, !GetAtt InstanceRole.Arn ]
             Condition: { StringEquals: { "iam:PassedToService": ecs.amazonaws.com } }
 
   # Always created, holding the sentinel until somebody registers a token in the Console —
-  # a task definition is static, so a Secrets block that appeared with the token would still
-  # cost a CloudFormation round trip. PARAMETERS-60-engines.md, "The Hugging Face token".
+  # PARAMETERS-60-engines.md, "The Hugging Face token".
   HfTokenSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
