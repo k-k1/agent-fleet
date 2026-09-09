@@ -169,3 +169,61 @@ member 層の両方＝3 面の意味論を揃える従来どおりの置き方�
 止める妨げになっていない）ので、恒常化して前倒しできるのは tier1 のタイムアウトぶんの
 **メモリ解放のタイミングだけ**である。それは arm を張り直す実装ではなく、**reaper 側の
 セッション単位 idle timeout 上書き**として設計すべきもので、この機能の延長ではない。
+
+## 85.9 欠陥修正（2026-09-09）: `busyEvidence()` が `run_in_background` を見ていなかった
+
+別セッション（`swbhqnh`）が「親が子をバックグラウンドタスクで待つ」案（不採用）を検討する
+過程で見つけた、その案とは独立に存在した非対称の調査・修正。
+
+**症状**: §85.3 の「判定」は `evalReportEvidence`（`chat_report_reconcile.go` の
+`busyEvidence()`）をそのまま借用している。この述語は `SubagentBusy`（in-process のサブ
+エージェント / Workflow）は見るが、`claude.BackgroundBusy`（`run_in_background` のワーカー
+プロセス）と `claude.BackgroundShellBusy`（Monitor ループ等の背景シェル）は**見ていない**。
+一方 control-plane の `session_activity.go` の `sessionActivity` は `BackgroundBusy`
+（3 検出器を `BackgroundWork` で束ねた wire 値）を `activityMachineBusy` として尊重し、
+tier1（`POST /sessions/{name}/halt`）から除外している（docs/47 の話ではなく docs/75 §75.11.2
+の「`idle`＋`backgroundBusy` は畳まない」の行）。
+
+**帰結**: `af_stop_after_turn` で予約したセッションが、ターン自体は終わっていても
+`run_in_background` ジョブや背景シェルがまだ動いているうちに `evaluateStopArm` から
+`stopArmedSession` → `haltSessionMeta` → `tmux kill-session` が発火し得た。これは
+tier1 の halt と同じ「ペインを殺す」動作で、殺せば背景ジョブも道連れに死ぬ。claude は
+殺されたことを知らないので、再開後の会話は「起動したまま何も報告されないタスク」になる
+＝無言の作業喪失（docs/75 §75.11.2 と同じ損失）。
+
+**なぜ見落とされたか**: `busyEvidence()` が `run_in_background` を含まないこと自体は
+**意図的な決定**である（docs/51 の「穴E」— 常駐 dev サーバと区別が付かないので、含めると
+その指示の**報告が永久に来なくなる**。報告は非破壊的な遅延で済むので、これは正しい）。
+§85.4 決定2「判定を二度書かない」に従って stop-after-turn がこの述語をそのまま借りたとき、
+**報告という非破壊的な動作のために選んだ除外**が、**halt という破壊的な動作**にまで
+引き継がれてしまった。stop の実行（`haltSessionMeta`）は tier1 の halt と同一の関数系統
+であり、tier1 側は逆に `BackgroundBusy` を尊重している——つまり「2 箇所に書いた busy 定義が
+食い違う」という docs/75 の `holdersOf` 事故（§75 が既に警戒していた形）と同型のものが、
+報告と停止の間の借用を通じて発生していた。
+
+**直したこと**: `busyEvidence()`／`reportSignals` 自体（＝報告の述語）には手を入れていない
+（穴E の決定は今も正しい）。代わりに `reportSignals.BackgroundBusy` を**新設のフィールドと
+して**足し、`chat_stop_after_turn.go` の `evaluateStopArm` だけがこれを立てる
+（`stopArmBackgroundBusy`＝`claude.BackgroundBusy || claude.BackgroundShellBusy`、
+`reportPaneBusy` と同じ「安い証拠が静かになってから tmux/proc を読む」順序）。report 側の
+`evaluate()` はこのフィールドを一切書かないので、穴E の挙動（dev サーバ常駐中でも報告は
+2 tick で出る）は変わらない。
+
+`reportReconciler` に `stopBackgroundBusy func(session.Meta) bool` を足し、実体は
+`newReportReconciler` が `stopArmBackgroundBusy` を既定で束ねる。テストが実 tmux / 実
+プロセスツリーを起こさずに「背景ジョブが終わるまで止まらない」を検証できるようにするため
+（`reportPaneBusy` は既存テストでは real tmux が無いために常に false 側しか通っておらず、
+同じ弱さを繰り返さないための seam）。
+
+**退行確認**: `TestStopArmHeldByBackgroundBusy`
+（`workspace/agent/internal/chatx/chat_stop_after_turn_test.go`）を追加し、ゲートの行を
+`if false && …` に潰して**実際に red になることを確認**してから戻した（docs/87 §87.7 の
+作法）。
+
+**採らなかった案**: 「stop-after-turn は明示的な利用者の指示なので、背景ジョブを理由に
+無期限に止まらないほうが困る」という逆方向の見方も検討した。しかし arm 自体に
+`StopArmMaxAge`（6h）という期限が既にあり、`StopArmedAt` が `live=false` を返せば
+そもそも `stopArmSweepSessions` の掃引対象から外れて何も起きない（強制停止ではなく黙って
+諦める）。これは ADR 0055 の「理由のある滞留は期限付き」と同じ形の安全弁で、6h を超えて
+動き続ける背景ジョブがあるケースはこの期限がそのまま吸収する。無期限に居座る心配は無いので、
+`BackgroundBusy` を尊重する側（tier1 と揃える側）を採った。
