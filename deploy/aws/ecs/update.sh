@@ -229,26 +229,26 @@ fi
 # `cloudformation deploy` keeps parameters it was not given at UsePreviousValue, so never add
 # another parameter here — adding one overwrites that "previous value".
 echo "==> cloudformation deploy $STACK (ImageTag=$VERSION)"
-out=""
+deploy_out=""
 if [ "$DRY" = 1 ]; then
   echo "DRY: aws cloudformation deploy --stack-name $STACK --template-file $TEMPLATE --parameter-overrides ImageTag=$VERSION"
 else
   set +e
   # Always go through af_cfn_deploy (env.sh): it switches to S3 once a template passes 51,200
   # bytes. 30-ingress crossed that line once and every release deployment stopped dead.
-  out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
+  deploy_out="$(af_cfn_deploy "$STACK" "$TEMPLATE" \
     --parameter-overrides "ImageTag=$VERSION" \
     --no-fail-on-empty-changeset 2>&1)"
   rc=$?
   set -e
-  echo "$out"
+  echo "$deploy_out"
   [ $rc -eq 0 ] || exit $rc
 fi
 
 # --- 3) what a mutable tag's "no changes" would drop (pitfall 2) -------------
 # An update re-pushed to the same tag has zero template diff, so CFN does nothing and succeeds.
 # Detect that here and fall back to an ECS force-new-deployment (which re-pulls the new image).
-if [ "$FORCE" = 1 ] || echo "$out" | grep -qi "No changes to deploy"; then
+if [ "$FORCE" = 1 ] || echo "$deploy_out" | grep -qi "No changes to deploy"; then
   echo "==> forcing a new CP deployment (mutable tag / --force): $CP_SERVICE"
   run "${AWS[@]}" ecs update-service --cluster "$CLUSTER" --service "$CP_SERVICE" \
     --force-new-deployment >/dev/null
