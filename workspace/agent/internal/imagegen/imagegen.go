@@ -170,6 +170,13 @@ const (
 	// ProviderSdcpp is the fleet's OWN engine (ADR 0071): stable-diffusion.cpp on a GPU this
 	// deployment pays for, reached through the Control Plane's engine gateway.
 	ProviderSdcpp = "sdcpp"
+	// ProviderComfy is the fleet's own engine, the ComfyUI alternative (ADR 0072 decision 4,
+	// phase P2). Same transport as sdcpp — the Control Plane's engine gateway — but it holds
+	// several checkpoints at once and switches per REQUEST, which is what makes `model` a real
+	// choice instead of a fixed fact about the deployment. A deployment runs the `image` role
+	// as sdcpp OR comfy, never both (60-engines.yaml's `ImageEngine`), so exactly one of the
+	// two ever answers Ready().
+	ProviderComfy = "comfy"
 )
 
 // providerOrder is the BUILT-IN order "auto" walks. The first two entries are Tier-1 (ADR 0069
@@ -192,7 +199,7 @@ const (
 // only applies once there are such users. There are none yet (this has not shipped), so the
 // default is chosen on the merits instead, while that is still free. A stored
 // `imageProviderOrder` outranks this list, so anyone who does have a preference keeps it.
-var providerOrder = []string{ProviderSdcpp, ProviderAgy, ProviderCodex}
+var providerOrder = []string{ProviderSdcpp, ProviderComfy, ProviderAgy, ProviderCodex}
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
 // same hook shape as Enabled). nil, or a list that names nothing known, simply means the
@@ -232,7 +239,7 @@ func effectiveOrder() []string {
 // changed environment (a Codex login that arrived after boot, an engine stack deployed since)
 // is picked up, and a var so a test can drive Run without a Codex CLI on PATH.
 var Providers = func() []Provider {
-	return []Provider{newSdcppProvider(), newCodexProvider(), newAgyProvider()}
+	return []Provider{newSdcppProvider(), newComfyProvider(), newCodexProvider(), newAgyProvider()}
 }
 
 // chooseImageProviders decides what "auto" (the default) routes to, in order — the same shape
