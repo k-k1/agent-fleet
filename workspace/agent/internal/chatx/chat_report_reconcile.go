@@ -71,6 +71,21 @@ type reportSignals struct {
 	TranscriptBusy bool // freshness of the main transcript (claude — covers thinking gaps)
 	PaneBusy       bool // the pane's interrupt affordance (tmuxx.IsBusy, TUI only)
 
+	// BackgroundBusy is a run_in_background worker process or a background shell loop still
+	// running under the pane (claude's process-tree detectors, claude.BackgroundBusy /
+	// claude.BackgroundShellBusy — SubagentBusy above already covers the in-process case).
+	//
+	// Populated ONLY by the stop-after-turn path (chat_stop_after_turn.go), never by
+	// collectReportSignals. docs/log/51 §穴E deliberately leaves it out of the REPORT
+	// predicate: counting a persistent dev server as busy would mean a report never settles
+	// while one keeps running. Stopping is not the same action — the arm's execution is
+	// haltSessionMeta == tmux kill-session, the exact action control-plane's tier1 reaper
+	// refuses to take while backgroundBusy (docs/log/75 §75.11.2, the `idle`+`backgroundBusy`
+	// row: killing the pane kills that job silently, and claude never learns it died). Reusing
+	// the report predicate wholesale for the stop decision would inherit an exclusion reasoned
+	// for a non-destructive delay and apply it to a destructive one.
+	BackgroundBusy bool
+
 	Stopped bool   // stopped on purpose (rows are kept — the v1 rule is to report on completion after a resume)
 	Exit    string // abnormal exit since the instruction (oom/crashed/killed) — a terminal fact
 	ExitAt  string // that abnormal exit's RFC3339
@@ -165,6 +180,9 @@ func (s reportSignals) busyEvidence() []string {
 	}
 	if s.PaneBusy {
 		ev = append(ev, "pane-busy")
+	}
+	if s.BackgroundBusy {
+		ev = append(ev, "background-busy")
 	}
 	return ev
 }
@@ -566,19 +584,24 @@ type reportReconciler struct {
 	// bounds (the instruction row vs the arm), so quiet ticks counted for one of them say
 	// nothing about the other.
 	stops map[string]reportSettleState
+	// stopBackgroundBusy is the arm-only background-process check (chat_stop_after_turn.go).
+	// A field rather than a bare function call so tests can fake a run_in_background job
+	// without a real tmux pane / proc tree.
+	stopBackgroundBusy func(m session.Meta) bool
 }
 
 func newReportReconciler(interval time.Duration) *reportReconciler {
 	return &reportReconciler{
-		interval: interval,
-		clock:    reportRealClock{},
-		sink:     deliverReportCard,
-		wake:     make(chan struct{}, 1),
-		swept:    make(chan struct{}, 1),
-		hints:    map[string]string{},
-		selfs:    map[string]string{},
-		states:   map[string]reportSettleState{},
-		stops:    map[string]reportSettleState{},
+		interval:           interval,
+		clock:              reportRealClock{},
+		sink:               deliverReportCard,
+		wake:               make(chan struct{}, 1),
+		swept:              make(chan struct{}, 1),
+		hints:              map[string]string{},
+		selfs:              map[string]string{},
+		states:             map[string]reportSettleState{},
+		stops:              map[string]reportSettleState{},
+		stopBackgroundBusy: stopArmBackgroundBusy,
 	}
 }
 

@@ -108,6 +108,38 @@ func TestStopArmHeldByBusyEvidence(t *testing.T) {
 	}
 }
 
+// TestStopArmHeldByBackgroundBusy: a run_in_background job (or a background shell loop) is
+// still running under the pane when the armed turn itself ends. Stopping is haltSessionMeta,
+// i.e. a tmux kill-session — the exact action control-plane's tier1 reaper refuses to take
+// while backgroundBusy (docs/log/75 §75.11.2), because it kills that job silently and claude
+// never learns it died on resume. The arm must wait for it too, not just for the turn.
+func TestStopArmHeldByBackgroundBusy(t *testing.T) {
+	m, sid, _ := ledgerFixture(t, "slot85")
+	var h haltRecorder
+	withHaltRecorder(t, &h)
+	rc, clock := newFakeReconciler(t, reportTickDefault, (&countingSink{}).sink)
+
+	busy := true
+	rc.stopBackgroundBusy = func(session.Meta) bool { return busy }
+
+	armStop(t, m, time.Now())
+	status.PersistTurnEnd(sid, "idle") // the armed turn ended, but a background job is still running
+
+	for i := 0; i < 4; i++ {
+		clock.advance(t, rc, reportTickDefault)
+	}
+	if h.count() != 0 {
+		t.Fatalf("halted while a run_in_background job was still running: %d calls", h.count())
+	}
+
+	busy = false
+	clock.advance(t, rc, reportTickDefault)
+	clock.advance(t, rc, reportTickDefault)
+	if h.count() != 1 {
+		t.Fatalf("must stop once the background job finished: %d calls", h.count())
+	}
+}
+
 // TestStopArmReportsBeforeStopping: an instruction that owes a report is reported first.
 // Stopping first parks the report until someone resumes the session (evalReportEvidence
 // refuses to settle a stopped session), which for the operator waiting on it is
