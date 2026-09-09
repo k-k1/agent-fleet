@@ -391,11 +391,37 @@ func mcpStdioToolAdvertised(name string) bool {
 // Not a package variable, because the inputSchema embeds values from Deps: building the map
 // before package main's init has called Configure would capture SessionTitleMaxRunes' zero
 // value forever.
+// handoffReportBackNote tells a handing-off session how to be told when its successor is done.
+//
+// It is appended only when peer messaging is on, because that is what decides whether the
+// SUCCESSOR will have send_to_peer_session at all (the setting is per workspace, and the same
+// variable gates the peer tools in mcpStdioToolList, so the advice and the tools cannot
+// drift). Writing "message me when you are done" into a prompt whose reader has no such tool
+// produces a successor that either ignores the line or spends a turn discovering it cannot
+// comply.
+//
+// It is conditional a second time in its own wording — "only when you need the report".
+// Delivery to a STOPPED session resumes it, and a session that hands off has usually spent its
+// context and is about to be stopped, so a report-back habit would wake finished sessions for
+// something the user can already read in the Console. The case that needs it is the
+// coordinator that fans out to several successors in one turn — the same case the "call it
+// several times" sentence is written for.
+func handoffReportBackNote() string {
+	if !mcpPeerMessagingEnabled {
+		return ""
+	}
+	return "完了の報告が要るときだけ、引き継ぎ本文に自分のセッション名（$AF_SESSION_NAME の値）と" +
+		"「終わったら send_to_peer_session で1本返す」ことを明記する。" +
+		"報告は相手の1ターンを使い、自分が停止していれば再開されるので、" +
+		"複数へ並行に引き継いで結果を集約するときに限る（普通の引き継ぎでは書かない。作業は Console で見える）。"
+}
+
 func mcpStdioSelfReportTools() []map[string]any {
 	return []map[string]any{
 		{
-			"name":        "propose_session_handoff",
-			"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。起動時に利用者が選べば、今の作業コピーではなく新しい worktree で次セッションが始まることがある — その場合、未コミットの変更は引き継がれない（新しい worktree はブランチの commit 済み状態から作られる）ので、未コミットの変更点がある時はプロンプトにその旨を書くか、提案前に commit/push しておくこと。呼ぶたびに新しい提案が追加される（複数の後続セッションへ並行して引き継ぐ場合は複数回呼んでよい。上書きはされない）。",
+			"name": "propose_session_handoff",
+			"description": "Agent Fleet: 次の新規セッションへ渡す初回プロンプトを利用者へ提案する。セッションは起動しない。作業の区切りで、未完了事項・変更点・次の手順を次のエージェントがそのまま実行できるプロンプトにまとめて渡す。利用者が Console で内容を確認・編集し、エージェントとモデルを選んでから起動する。起動時に利用者が選べば、今の作業コピーではなく新しい worktree で次セッションが始まることがある — その場合、未コミットの変更は引き継がれない（新しい worktree はブランチの commit 済み状態から作られる）ので、未コミットの変更点がある時はプロンプトにその旨を書くか、提案前に commit/push しておくこと。呼ぶたびに新しい提案が追加される（複数の後続セッションへ並行して引き継ぐ場合は複数回呼んでよい。上書きはされない）。" +
+				handoffReportBackNote(),
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{
