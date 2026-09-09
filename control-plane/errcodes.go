@@ -22,4 +22,30 @@ const (
 	errCodeFSReadFailed         = "read_failed"
 	errCodeFSWriteFailed        = "write_failed"
 	errCodeFSWriteStateUnknown  = "write_state_unknown"
+
+	// The engine admin panel and the model catalogue (ADR 0072). These were string
+	// literals until the ingest shipped, which is exactly why they had no Japanese: the
+	// check below only sees constants declared here, so a literal is a code nobody is
+	// watching. 🔴 Measured on the dev deployment (2026-09-09): a mistyped filename
+	// answered "the repository does not list flux1-dev.safetensor" — the developer
+	// message, in English, on a Japanese screen.
+	//
+	// Every one of these carries the WHY in its message (which file, which host, which
+	// engine), so the catalogue supplies the framing only and the panel reads them with
+	// errDetail. A translation alone would replace the reason with a generality.
+	errCodeEngineUnknown       = "engine_unknown"
+	errCodeEngineModelUnknown  = "model_unknown"
+	errCodeEngineBadBody       = "bad_body"
+	errCodeEngineECSError      = "engine_ecs_error"
+	errCodeEnginePublishFailed = "engine_publish_failed"
+	errCodeIngestBadSource     = "bad_source"
+	errCodeIngestFileUnknown   = "file_unknown"
+	errCodeIngestNoChecksum    = "no_checksum"
+	errCodeIngestSourceUnreach = "source_unreachable"
+	errCodeIngestSourceForbid  = "source_forbidden"
+	errCodeIngestSourceError   = "source_error"
+	errCodeIngestStartFailed   = "ingest_start_failed"
+	errCodeIngestUnavailable   = "ingest_unavailable"
+	errCodeIngestNotAccepted   = "license_not_accepted"
+	errCodeIngestGatedNoToken  = "gated_no_token"
 )

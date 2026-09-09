@@ -98,17 +98,17 @@ func engineIngestResolve(ctx context.Context, src engineIngestSource) (engineRes
 	case strings.TrimSpace(src.URL) != "":
 		u := strings.TrimSpace(src.URL)
 		if !strings.HasPrefix(u, "https://") {
-			return engineResolved{}, &apiError{http.StatusBadRequest, "bad_source", "the url must be https"}
+			return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "the url must be https"}
 		}
 		// ⚠️ Not optional here, unlike on the two APIs that publish one. Nothing else in this
 		// path can tell a truncated download from a complete one.
 		if len(strings.TrimSpace(src.SHA256)) != 64 {
-			return engineResolved{}, &apiError{http.StatusBadRequest, "bad_source",
+			return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 				"a plain url needs its sha256 (64 hex characters) — nothing else can verify the download"}
 		}
 		return engineResolved{DownloadURL: u, SHA256: strings.ToLower(strings.TrimSpace(src.SHA256)), Source: u}, nil
 	}
-	return engineResolved{}, &apiError{http.StatusBadRequest, "bad_source", "one of hf, civitai or url is required"}
+	return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "one of hf, civitai or url is required"}
 }
 
 // engineResolveHF reads the model card and the file's LFS metadata.
@@ -120,7 +120,7 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	repo := strings.Trim(strings.TrimSpace(hf.Repo), "/")
 	file := strings.TrimPrefix(strings.TrimSpace(hf.File), "/")
 	if repo == "" || file == "" {
-		return engineResolved{}, &apiError{http.StatusBadRequest, "bad_source", "hf needs a repo and a file"}
+		return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "hf needs a repo and a file"}
 	}
 	rev := strings.TrimSpace(hf.Revision)
 	if rev == "" {
@@ -164,7 +164,7 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 		break
 	}
 	if !found {
-		return engineResolved{}, &apiError{http.StatusNotFound, "file_unknown",
+		return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
 			"the repository does not list " + file}
 	}
 	if out.LicenseURL == "" {
@@ -174,7 +174,7 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 	// A repository may list a file with no LFS pointer (a small config, or a plain upload). The
 	// download would still work; the verification would not, and that is the half that matters.
 	if len(out.SHA256) != 64 {
-		return engineResolved{}, &apiError{http.StatusBadGateway, "no_checksum",
+		return engineResolved{}, &apiError{http.StatusBadGateway, errCodeIngestNoChecksum,
 			"Hugging Face publishes no sha256 for " + file + " — take it in with an explicit url and sha256"}
 	}
 	return out, nil
@@ -188,7 +188,7 @@ func engineResolveHF(ctx context.Context, hf engineIngestHF) (engineResolved, *a
 // `files[].downloadUrl`, `baseModel` and `model.type`.
 func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineResolved, *apiError) {
 	if c.VersionID <= 0 {
-		return engineResolved{}, &apiError{http.StatusBadRequest, "bad_source", "civitai needs a versionId"}
+		return engineResolved{}, &apiError{http.StatusBadRequest, errCodeIngestBadSource, "civitai needs a versionId"}
 	}
 	var doc struct {
 		BaseModel string `json:"baseModel"`
@@ -234,7 +234,7 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			Source:      "civitai:" + id,
 		}, nil
 	}
-	return engineResolved{}, &apiError{http.StatusNotFound, "file_unknown",
+	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
 		"that version publishes no file with a sha256" + engineIngestNamed(want)}
 }
 
@@ -274,27 +274,27 @@ func engineFirstString(v any) string {
 func engineIngestGetJSON(ctx context.Context, target string, out any) *apiError {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
-		return &apiError{http.StatusBadRequest, "bad_source", err.Error()}
+		return &apiError{http.StatusBadRequest, errCodeIngestBadSource, err.Error()}
 	}
 	resp, err := engineIngestHTTP.Do(req)
 	if err != nil {
 		// The CP reaches these through the NAT. A deployment that blocks outbound traffic gets
 		// this, and the answer is the manual `run-task`, so say which way the call was going.
-		return &apiError{http.StatusBadGateway, "source_unreachable",
+		return &apiError{http.StatusBadGateway, errCodeIngestSourceUnreach,
 			"could not reach " + engineIngestHost(target) + ": " + err.Error()}
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-		return &apiError{http.StatusBadGateway, "source_forbidden",
+		return &apiError{http.StatusBadGateway, errCodeIngestSourceForbid,
 			engineIngestHost(target) + " refused the lookup (" + resp.Status + ")"}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return &apiError{http.StatusBadGateway, "source_error",
+		return &apiError{http.StatusBadGateway, errCodeIngestSourceError,
 			engineIngestHost(target) + " answered " + resp.Status}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
-		return &apiError{http.StatusBadGateway, "source_error", "unreadable answer from " + engineIngestHost(target)}
+		return &apiError{http.StatusBadGateway, errCodeIngestSourceError, "unreadable answer from " + engineIngestHost(target)}
 	}
 	return nil
 }
@@ -361,7 +361,7 @@ func (g *engineIngester) start(ctx context.Context, req engineIngestRequest) (st
 	if err != nil {
 		job.State, job.Message = store.EngineIngestFailed, err.Error()
 		_ = g.store.PutEngineIngestJob(ctx, job)
-		return job, &apiError{http.StatusBadGateway, "ingest_start_failed", err.Error()}
+		return job, &apiError{http.StatusBadGateway, errCodeIngestStartFailed, err.Error()}
 	}
 	job.TaskArn, job.State = arn, store.EngineIngestRunning
 	if err := g.store.PutEngineIngestJob(ctx, job); err != nil {

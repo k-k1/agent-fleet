@@ -13,11 +13,13 @@ import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
 const apiJSON = vi.fn();
-vi.mock("../../../core/api/client.ts", () => ({
+// Only the transport is stubbed. errDetail is the REAL one, because how this panel words a
+// refusal is part of what is under test: a hand-written stub that echoed `message` back would
+// have reported the English developer text as a pass.
+vi.mock("../../../core/api/client.ts", async (importActual) => ({
+  ...(await importActual<typeof import("../../../core/api/client.ts")>()),
   api: (...args: unknown[]) => api(...args),
   apiJSON: (...args: unknown[]) => apiJSON(...args),
-  errText: (e: { message?: string }) => e?.message || "",
-  rel: (p: string) => p,
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
@@ -725,6 +727,46 @@ describe("EnginesAdminView", () => {
       source: { hf: { repo: "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF", file: "qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", revision: "" } },
     });
     expect(host!.textContent).toContain("取り込み中");
+  });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
+  // "the repository does not list flux1-dev.safetensor" — the CP's developer message, in
+  // English, on a Japanese screen. Every code this panel can raise was a string literal in
+  // engine_ingest.go, and the catalogue gate reads only the constants in errcodes.go, so none
+  // of them had ever been checked for a translation.
+  //
+  // Both halves are pinned here: the sentence has to be Japanese, and the file the CP named has
+  // to survive into it. Translating alone would have answered "そのリポジトリにそのファイルが
+  // ありません" over a form with no way to tell WHICH file was wrong.
+  it("says why an ingest was refused in the user's language, without losing the detail", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const el = host!.querySelector(".engines-ingest input")!;
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      setter.call(el, "black-forest-labs/FLUX.1-dev");
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    apiJSON.mockResolvedValueOnce({
+      error: { code: "file_unknown", message: "the repository does not list flux1-dev.safetensor" },
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    const shown = host!.querySelector(".engines-ingest .form-err")!.textContent!;
+    expect(shown).toContain("そのリポジトリにそのファイルがありません");
+    expect(shown).toContain("flux1-dev.safetensor");
   });
 
   // 🔴 Measured on the dev deployment (2026-09-09): the ingest finished in 72 seconds, the job

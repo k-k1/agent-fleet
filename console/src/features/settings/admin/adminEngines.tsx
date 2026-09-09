@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { api, apiJSON, errText } from "../../../core/api/client.ts";
+import { api, apiJSON, errDetail } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { EngineUptimePanel, Sep, useDuration } from "./EngineUptime.tsx";
@@ -143,7 +143,7 @@ export function EnginesAdminView() {
     try {
       const d = await api("api/admin/engines");
       if (d?.error) {
-        setErr(errText(d.error));
+        setErr(errDetail(d.error));
         return;
       }
       setErr("");
@@ -222,7 +222,7 @@ export function EnginesAdminView() {
     try {
       const d = await apiJSON("api/admin/engines/" + encodeURIComponent(key), "PUT", { mode });
       if (d?.error) {
-        setErr(errText(d.error));
+        setErr(errDetail(d.error));
         return;
       }
       setErr("");
@@ -259,7 +259,7 @@ export function EnginesAdminView() {
     try {
       const d = await apiJSON(path, method, body);
       if (d?.error) {
-        setErr(errText(d.error));
+        setErr(errDetail(d.error));
         return;
       }
       setErr("");
@@ -596,7 +596,7 @@ function EngineIngest({
     });
     if (d?.error) {
       setFound(null);
-      setErr(errText(d.error));
+      setErr(errDetail(d.error));
       return;
     }
     setFound(d as ResolvedSource);
@@ -623,7 +623,7 @@ function EngineIngest({
       license_accepted: true,
     });
     if (d?.error) {
-      setErr(errText(d.error));
+      setErr(errDetail(d.error));
       return;
     }
     setOpen(false);

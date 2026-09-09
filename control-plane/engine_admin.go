@@ -220,7 +220,7 @@ func (a engineAdminAPI) uptime(w http.ResponseWriter, r *http.Request, _ store.I
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -268,7 +268,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	var b struct {
@@ -276,7 +276,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		Enabled *bool  `json:"enabled"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	val, aerr := engineModeFromBody(b.Mode, b.Enabled)
@@ -300,7 +300,7 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	e.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
 	if e.ecs != nil && (val == engineModeOn || val == engineModeOff) {
 		if err := e.ecs.setEnabled(r.Context(), val == engineModeOn); err != nil {
-			writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_ecs_error", "ecs update failed: " + err.Error()})
+			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, "ecs update failed: " + err.Error()})
 			return
 		}
 	}
@@ -334,7 +334,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	id := strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -347,7 +347,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		Default  *bool `json:"default"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 
@@ -373,7 +373,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	default:
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "enabled, selected or default is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected or default is required"})
 		return
 	}
 	if err != nil {
@@ -381,7 +381,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
 		return
 	}
 	e.catalog.invalidate()
@@ -391,7 +391,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// starting with the old one — which is the exact failure "publish the active set" exists to
 	// prevent, and it would only be noticed at the next cold start.
 	if perr := e.publishActiveSet(ctx); perr != nil {
-		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
 	a.audit(ctx, ident, "engine."+key+".model", action+" "+id)
@@ -417,7 +417,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -445,12 +445,12 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		BaseModel       string   `json:"base_model"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	id := strings.TrimSpace(b.ID)
 	if id == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "id is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "id is required"})
 		return
 	}
 	m := store.EngineModel{
@@ -469,7 +469,7 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		}
 	}
 	if len(m.Files) == 0 {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "at least one file (s3Key) is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
 	}
 	if err := a.mgr.store.PutEngineModel(r.Context(), m); err != nil {
@@ -493,7 +493,7 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	id := strings.TrimSpace(r.PathValue("id"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if a.mgr == nil || a.mgr.store == nil {
@@ -521,7 +521,7 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 		return
 	}
 	if !found {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "model_unknown", "no model " + id + " for engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineModelUnknown, "no model " + id + " for engine " + key})
 		return
 	}
 	// ?purge=1 also deletes the bytes — and the CP cannot: it has no s3:DeleteObject and is not
@@ -543,7 +543,7 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	e.catalog.invalidate()
 	// A deleted row may have been enabled, so the box's active set really has changed.
 	if perr := e.publishActiveSet(r.Context()); perr != nil {
-		writeAPIErr(w, &apiError{http.StatusBadGateway, "engine_publish_failed", perr.Error()})
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEnginePublishFailed, perr.Error()})
 		return
 	}
 	a.audit(r.Context(), ident, "engine."+key+".model", "forget "+id)
@@ -576,14 +576,14 @@ func engineModeFromBody(mode string, enabled *bool) (string, *apiError) {
 		return mode, nil
 	case "":
 		if enabled == nil {
-			return "", &apiError{http.StatusBadRequest, "bad_body", "mode is required"}
+			return "", &apiError{http.StatusBadRequest, errCodeEngineBadBody, "mode is required"}
 		}
 		if *enabled {
 			return engineModeOn, nil
 		}
 		return engineModeOff, nil
 	default:
-		return "", &apiError{http.StatusBadRequest, "bad_body", "unknown mode: " + mode}
+		return "", &apiError{http.StatusBadRequest, errCodeEngineBadBody, "unknown mode: " + mode}
 	}
 }
 
@@ -616,12 +616,12 @@ type engineIngestBody struct {
 func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no such engine"})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
 		return
 	}
 	var b engineIngestBody
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
@@ -666,27 +666,27 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	ing := a.reg.ingester()
 	if ing == nil {
-		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, "ingest_unavailable",
+		writeAPIErr(w, &apiError{http.StatusServiceUnavailable, errCodeIngestUnavailable,
 			"this deployment's engine stack declares no ingest task — stage the file by hand and register it"})
 		return
 	}
 	var b engineIngestBody
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "invalid JSON"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
 		return
 	}
 	id, s3key := strings.TrimSpace(b.ID), strings.TrimSpace(b.S3Key)
 	if id == "" || s3key == "" {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_body", "id and s3Key are required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "id and s3Key are required"})
 		return
 	}
 	if !b.LicenseAccepted {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "license_not_accepted",
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestNotAccepted,
 			"the licence has to be accepted before a model is taken in"})
 		return
 	}
@@ -698,7 +698,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes
 	// into a Fargate task, and the message that reaches the panel is an exit code.
 	if res.Gated && !ing.def.HasToken {
-		writeAPIErr(w, &apiError{http.StatusBadRequest, "gated_no_token",
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestGatedNoToken,
 			"that repository is gated: accept its terms on Hugging Face with the operator's account " +
 				"and give the stack an HfTokenSecretArn — the token is read by the ingest task only"})
 		return
@@ -726,7 +726,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	if a.reg.get(key) == nil {
-		writeAPIErr(w, &apiError{http.StatusNotFound, "engine_unknown", "no engine " + key})
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
 		return
 	}
 	if ing := a.reg.ingester(); ing != nil {
