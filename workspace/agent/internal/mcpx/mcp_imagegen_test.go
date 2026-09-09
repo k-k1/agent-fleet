@@ -218,7 +218,7 @@ func TestImageGenDescriptionNamesTheServices(t *testing.T) {
 		desc, _ := tools[0]["description"].(string)
 		// The route it HAS, the one it does not, and what to do instead. Without the last two a
 		// refusal to compare reads as "that service is unreachable from here".
-		for _, want := range []string{"Gemini の画像生成", "GPT Image", "内蔵"} {
+		for _, want := range []string{"Gemini の画像生成", "GPT Image", "built-in"} {
 			if !strings.Contains(desc, want) {
 				t.Fatalf("description does not mention %q: %s", want, desc)
 			}
@@ -244,7 +244,7 @@ func TestImageGenDescriptionNamesTheServices(t *testing.T) {
 				t.Fatalf("description does not map %q: %s", want, desc)
 			}
 		}
-		if strings.Contains(desc, "使えない") {
+		if strings.Contains(desc, "not reachable from this tool") {
 			t.Fatalf("description claims a route is missing when none is: %s", desc)
 		}
 	})

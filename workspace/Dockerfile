@@ -606,12 +606,9 @@ RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/af-sc
 # seeded/removed by the agent per the ~/.config/agent-fleet/rtk.json toggle).
 COPY opencode-plugin/ /usr/local/share/agent-fleet/opencode-plugin/
 
-# Workspace 利用ガイド（やってはいけないこと等）を各エージェントの「常時読込」位置へ。
-# claude は managed-policy ファイル /etc/claude-code/CLAUDE.md（毎セッション読込・除外不可）
-# として焼き込み、codex/opencode/agy/copilot/kiro 分は home 永続なので agent が毎起動で
-# 合成する（agent_instructions.go）。常時読込は禁止事項と罠だけの短い本体で、手順の長文は
-# notes/<topic>.md に分けて必要時にエージェント自身が読む（本体末尾の索引が指す。claude /
-# codex / opencode には agent が起動時に同じファイルを af-<topic> スキルとしても登録する）。
+# Claude reads the baked managed policy; other CLIs receive it through reconciliation
+# because their instruction files live on persistent home storage. Topic files are
+# read on demand through the policy index and registered as skills where supported.
 COPY workspace-notes.md /usr/local/share/agent-fleet/workspace-notes.md
 COPY notes/ /usr/local/share/agent-fleet/notes/
 RUN mkdir -p /etc/claude-code \

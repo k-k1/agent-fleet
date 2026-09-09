@@ -714,3 +714,39 @@ func withMCPWriteConv(t *testing.T, conv string) {
 	setConvID(conv)
 	t.Cleanup(func() { setWriteEnabled(oldWrite); setConvID(oldConv) })
 }
+
+// The handoff description only teaches the report-back convention when the successor will
+// actually have the tool to answer with: peer messaging is off by default, and a prompt that
+// asks for a reply through a missing tool costs the successor a turn to discover that.
+func TestHandoffDescriptionMentionsReportBackOnlyWithPeerMessaging(t *testing.T) {
+	old := mcpPeerMessagingEnabled
+	t.Cleanup(func() { mcpPeerMessagingEnabled = old })
+
+	desc := func() string {
+		for _, tool := range mcpStdioSelfReportTools() {
+			if tool["name"] == "propose_session_handoff" {
+				s, _ := tool["description"].(string)
+				return s
+			}
+		}
+		t.Fatal("propose_session_handoff is not advertised")
+		return ""
+	}
+
+	mcpPeerMessagingEnabled = false
+	off := desc()
+	if strings.Contains(off, "send_to_peer_session") {
+		t.Fatalf("peer messaging is off, so the description must not send the successor to a tool it lacks: %s", off)
+	}
+
+	mcpPeerMessagingEnabled = true
+	on := desc()
+	for _, want := range []string{"send_to_peer_session", "$AF_SESSION_NAME"} {
+		if !strings.Contains(on, want) {
+			t.Fatalf("description does not mention %q: %s", want, on)
+		}
+	}
+	if !strings.HasPrefix(on, off) {
+		t.Fatal("the report-back note must be appended to the base description, not replace it")
+	}
+}
