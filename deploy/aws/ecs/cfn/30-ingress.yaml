@@ -360,6 +360,20 @@ Parameters:
       purpose: six per engine would not fit in what is left of this template, and the CP
       task role's SSM read is already scoped to /af-ws/* so nothing new is granted. Empty =
       no self-hosted engines, and no llamacpp model appears in any launch menu. ADR 0071.
+  BrandColor:
+    Type: String
+    Default: ""
+    AllowedValues: [ "", teal, blue, violet, magenta, red, orange, green, slate ]
+    Description: >-
+      AF_BRAND_COLOR — favicon / PWA icon colour, so this stack is not a fourth identical
+      teal cat in the tab strip. Empty = the shipped teal. PARAMETERS.md.
+  BrandLabel:
+    Type: String
+    Default: ""
+    MaxLength: 16
+    Description: >-
+      AF_BRAND_LABEL — short deployment label prefixed onto the app name ("[staging] Agent
+      Fleet") in the tab title, the installed PWA and the login page. PARAMETERS.md.
   CpAlarmEmail:
     Type: String
     Default: ""
@@ -721,6 +735,9 @@ Resources:
             # docs/81: parent domain for the preview subdomains. Empty and the CP registers
             # no host-mode routing at all (only the existing path mode remains).
             - { Name: AF_PREVIEW_DOMAIN, Value: !Ref PreviewDomain }
+            # Per-deployment favicon colour and app-name label (control-plane/brand.go).
+            - { Name: AF_BRAND_COLOR, Value: !Ref BrandColor }
+            - { Name: AF_BRAND_LABEL, Value: !Ref BrandLabel }
             - { Name: GOOGLE_OAUTH_CLIENT_ID, Value: !Ref GoogleClientId }
             - { Name: AF_OAUTH_ALLOWED_EMAILS, Value: !Ref AllowedEmails }
             - { Name: AF_OAUTH_ALLOWED_DOMAINS, Value: !Ref AllowedDomains }

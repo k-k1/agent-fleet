@@ -13,8 +13,11 @@ import { setPopoutMode } from "../../lib/popoutMode.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { IconButton } from "../../ui/Button.tsx";
 import { paneTitle } from "./paneTitle.ts";
+import { appTitle, brandName } from "../../lib/brand.ts";
 
-const BASE_TITLE = "Agent Fleet — Console";
+// The deployment's own name (lib/brand.ts), so a pop-out from staging does not sit in the
+// tab strip claiming to be the production one.
+const BASE_TITLE = appTitle;
 
 export function PopoutTitleBar() {
   const tr = useT();
@@ -36,7 +39,7 @@ export function PopoutTitleBar() {
   // The tab's browser title mirrors the pane so the tab strip stays readable
   // with several pop-outs. Restored when the bar unmounts (expanded to full).
   useEffect(() => {
-    document.title = title ? `${title} — Agent Fleet` : BASE_TITLE;
+    document.title = title ? `${title} — ${brandName}` : BASE_TITLE;
     return () => {
       document.title = BASE_TITLE;
     };

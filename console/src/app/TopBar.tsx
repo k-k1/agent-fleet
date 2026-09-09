@@ -13,6 +13,7 @@ import { useSettings, setSetting, THEMES, SURFACE_TARGETS, LOCALES, PANE_LAYOUTS
 import { useT, getLocale } from "../lib/i18n/index.ts";
 import { useIsMobile, isStandalonePWA } from "../lib/device.ts";
 import { buildInfo, buildLabel } from "../lib/version.ts";
+import { brandColor, brandInk, brandLabel } from "../lib/brand.ts";
 import { Icon } from "../ui/Icon.tsx";
 import { SwatchGrid } from "../ui/SwatchGrid.tsx";
 import { useDismiss } from "../lib/useDismiss.ts";
@@ -165,6 +166,17 @@ export function TopBar({ toggleNav, toggleLeft, toggleLeftMode }: TopBarProps) {
           <Icon name="menu" />
         </button>
         <div className="brand">
+          {/* The deployment label (AF_BRAND_LABEL), in the same colour as this
+              deployment's favicon — the in-app half of "which environment is this". */}
+          {brandLabel && (
+            <span
+              className="brand-env"
+              style={{ background: brandColor, color: brandInk }}
+              title={brandLabel}
+            >
+              {brandLabel}
+            </span>
+          )}
           Agent Fleet <span className="brand-sub">Console</span>
         </div>
       </div>

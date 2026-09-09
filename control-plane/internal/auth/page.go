@@ -218,6 +218,10 @@ const genericIconSVG = `<svg viewBox="0 0 24 24" aria-hidden="true" fill="none" 
 const LoginPageHTML = `<!doctype html><html lang="{{LANG}}"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{{TITLE}}</title>
+<!-- The Console's icon, which the CP recolours per deployment (control-plane/brand.go).
+     Without it the login tab falls back to the browser's generic globe, and the one page
+     where "which environment is this?" matters most is the one page that never says. -->
+<link rel="icon" type="image/png" href="/brand/icon-192.png">
 <style>
 :root{--teal:#2aa79b;--ink:#e8eef6;--muted:#9fb0c4}
 *{box-sizing:border-box}
