@@ -119,13 +119,15 @@ work you could simply do.
 - **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a
   compaction takes it away — every other tool here needs that name. It also carries each child's
   state, when its last turn ended, and how many slots you have left.
-- Limits refuse with the number in the message: three children at a time, no grandchildren, no
-  shell sessions. A slot frees when the user deletes or archives that child, or when one you left
-  stopped expires — a stop on its own does not free it right away.
+- Limits refuse with the number in the message: a few children at a time (the user sets how many;
+  `create_session`'s own description and `list_child_sessions`'s `slotsLeft` both state the figure
+  in force, so never assume one), no grandchildren, no shell sessions. A slot frees when the user
+  deletes or archives that child, or when one you left stopped expires — a stop on its own does
+  not free it right away.
 - **Say what you are leaving behind.** Children outlive you: nothing stops them when you finish,
   and only the user can delete one. Before your last turn, call `list_child_sessions` and name
-  each child and its state — that list is the only thing standing between your user and three
-  sessions they cannot account for.
+  each child and its state — that list is the only thing standing between your user and a handful
+  of sessions they cannot account for.
 
 **Being a spawned session.** A first prompt starting with `[agent-fleet:spawn from=<session>]`
 means **another session wrote this task, not your user** — you exist because it called

@@ -94,6 +94,21 @@ type engineCatalogModel struct {
 	BaseModel       string   `json:"base_model"`
 	Selected        bool     `json:"selected"`
 	Default         bool     `json:"default"`
+	// Files are the on-disk basenames ADR 0072 decision 2 declares, only sent for the image
+	// role's non-LoRA models — the comfy provider (ADR 0072 P2) is the first reader; sdcpp
+	// never asked because it holds one checkpoint and never chooses which file to load.
+	Files []engineCatalogFile `json:"files"`
+	// Warm is whether the Control Plane last saw the engine actually answer with THIS model
+	// (ADR 0072 decision 7's warm_model). At most one row per engine has it true.
+	Warm bool `json:"warm"`
+}
+
+// engineCatalogFile is one file of engineCatalogModel — see imagegen.EngineFile, which this is
+// translated into. The wire keeps sd.cpp's own flag spelling (control-plane/engine_catalog.go),
+// so a reader does not need a second vocabulary for a fact the catalogue already states once.
+type engineCatalogFile struct {
+	Flag  string `json:"flag"`
+	S3Key string `json:"s3_key"`
 }
 
 // api defaults to chat, matching the CP's own reading of a table written before the field
@@ -372,13 +387,13 @@ func engineToken(ctx context.Context, key, session string) string {
 // Agent's own process. What the CP does with the session claim is label a usage row, and for
 // images the row is written here instead (feature tool.imagegen, with the session as its ref),
 // so a session-scoped token would buy nothing and cost one credential per session.
-func engineImageConn(ctx context.Context) (imagegen.EngineConn, bool) {
+func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn, bool) {
 	base := strings.TrimRight(strings.TrimSpace(os.Getenv("AF_CP_BASE_URL")), "/")
 	if base == "" {
 		return imagegen.EngineConn{}, false
 	}
 	for _, e := range engineCatalogRows(ctx) {
-		if e.api() != engineAPIImages || e.Provider != imagegen.ProviderSdcpp {
+		if e.api() != engineAPIImages || e.Provider != provider {
 			continue
 		}
 		tok := engineToken(ctx, e.Key, "")
@@ -386,10 +401,14 @@ func engineImageConn(ctx context.Context) (imagegen.EngineConn, bool) {
 			return imagegen.EngineConn{}, false
 		}
 		return imagegen.EngineConn{
-			BaseURL: base + e.BaseURL,
-			Token:   tok,
-			Models:  engineImageModelIDs(e),
-			Sizes:   engineImageSizes(e),
+			BaseURL:      base + e.BaseURL,
+			Token:        tok,
+			Models:       engineImageModelIDs(e),
+			Sizes:        engineImageSizes(e),
+			BaseModel:    engineImageBaseModels(e),
+			Files:        engineImageFiles(e),
+			Warm:         engineImageWarm(e),
+			Descriptions: engineImageDescriptions(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
@@ -422,6 +441,80 @@ func engineImageSizes(e engineCatalogRow) map[string][]string {
 	for _, m := range e.ModelRows {
 		if m.ID != "" && len(m.Sizes) > 0 {
 			out[m.ID] = m.Sizes
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageBaseModels is the declared checkpoint family per model id (ADR 0072 decision 2),
+// which the comfy provider (ADR 0072 P2) reads to pick a workflow template. nil on a catalogue
+// that declares no family at all — sdcpp never reads this field, so there is nothing to degrade.
+func engineImageBaseModels(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && m.BaseModel != "" {
+			out[m.ID] = m.BaseModel
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageFiles is the declared file list per model id, translated from the wire's sd.cpp
+// flag spelling into imagegen.EngineFile — see EngineFile's own comment for why comfy re-reads
+// that vocabulary rather than a second one. nil on a catalogue with no files declared, which is
+// every catalogue sdcpp alone has ever needed to read.
+func engineImageFiles(e engineCatalogRow) map[string][]imagegen.EngineFile {
+	out := map[string][]imagegen.EngineFile{}
+	for _, m := range e.ModelRows {
+		if m.ID == "" || len(m.Files) == 0 {
+			continue
+		}
+		files := make([]imagegen.EngineFile, 0, len(m.Files))
+		for _, f := range m.Files {
+			name := f.S3Key
+			if i := strings.LastIndex(name, "/"); i >= 0 {
+				name = name[i+1:]
+			}
+			if name == "" {
+				continue
+			}
+			files = append(files, imagegen.EngineFile{Flag: f.Flag, Name: name})
+		}
+		if len(files) > 0 {
+			out[m.ID] = files
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageWarm is the id of the model the Control Plane last saw this engine actually answer
+// with (ADR 0072 decision 7's warm_model), or "" when nothing is known to be warm — a
+// just-started engine, or a catalogue from a CP that predates the field.
+func engineImageWarm(e engineCatalogRow) string {
+	for _, m := range e.ModelRows {
+		if m.Warm {
+			return m.ID
+		}
+	}
+	return ""
+}
+
+// engineImageDescriptions is the catalogue's own per-model line (ADR 0072 decision 2) — the
+// sentence an agent reads when choosing a checkpoint. nil when the catalogue declares none.
+func engineImageDescriptions(e engineCatalogRow) map[string]string {
+	out := map[string]string{}
+	for _, m := range e.ModelRows {
+		if m.ID != "" && m.Description != "" {
+			out[m.ID] = m.Description
 		}
 	}
 	if len(out) == 0 {

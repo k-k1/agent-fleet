@@ -381,7 +381,7 @@ func TestEngineUsageUnreportedIsNotZero(t *testing.T) {
 		t.Error(`an unreported call must be measured="none", never a zero-token "exact" row`)
 	}
 	g.recordUsage(t.Context(), newTestEngine(t, "http://127.0.0.1:1", &engineTestECS{}),
-		engineSessionClaims{}, testMembership(), s.usage, time.Second, true)
+		engineSessionClaims{}, testMembership(), s.usage, time.Second, true, "")
 }
 
 func TestParseEngineUsageFromAWholeBody(t *testing.T) {
@@ -558,6 +558,95 @@ func newTestImageEngine(t *testing.T, url string, api engineECSAPI) *engineRunti
 	return e
 }
 
+// newTestComfyEngine is the `image` row when ImageEngine=comfy (ADR 0072 decision 4, phase P2):
+// same gateway, same api family, but ComfyUI's native API has no /v1 of its own.
+func newTestComfyEngine(t *testing.T, url string, api engineECSAPI) *engineRuntimeState {
+	t.Helper()
+	e := &engineRuntimeState{
+		def: engineDef{
+			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
+			Health: "/system_stats", Provider: "comfy", Models: []string{"sdxl-base-1.0", "klein-4b"},
+			IdleSec: 900, StartDeadlineSec: 900,
+		},
+		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
+	}
+	e.demand = newEngineDemand(nil, engineSettingsFor("image").demandAt, 5*time.Minute)
+	return e
+}
+
+// ADR 0072 decision 4: ComfyUI's native API (/prompt, /history/<id>, /view) lives at the
+// engine's ROOT, unlike llama-server/sd-server's OpenAI-compatible /v1/*. dial must not prepend
+// /v1/ for this one provider, or every comfy request 404s upstream.
+func TestEngineGatewayDoesNotPrependV1ForComfy(t *testing.T) {
+	var gotPath string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "p1"})
+	}))
+	defer up.Close()
+
+	st := newTestComfyEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r.SetPathValue("path", "prompt")
+	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+	}
+	if gotPath != "/prompt" {
+		t.Errorf("upstream path = %q, want /prompt (no /v1 prefix for comfy)", gotPath)
+	}
+}
+
+// The SAME route still prepends /v1/ for sdcpp — this pins that the change is provider-scoped,
+// not a regression that broke the OpenAI-compatible engines while fixing comfy.
+func TestEngineGatewayStillPrependsV1ForSdcpp(t *testing.T) {
+	var gotPath string
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = w.Write([]byte(`{"created":1,"output_format":"png","data":[{"b64_json":"AA=="}]}`))
+	}))
+	defer up.Close()
+
+	st := newTestImageEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/image/v1/images/generations", strings.NewReader(`{}`))
+	r.SetPathValue("path", "images/generations")
+	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
+
+	if gotPath != "/v1/images/generations" {
+		t.Errorf("upstream path = %q, want /v1/images/generations", gotPath)
+	}
+}
+
+// X-AF-Model is the only way the gateway learns which checkpoint an IMAGE request used — the
+// image role's own answer never carries a model field the way a chat completion does — and
+// ADR 0072 decision 7's warm-model tracking is blind without it.
+func TestEngineGatewayTracksServedModelFromTheHeaderOnImageRequests(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "p1"})
+	}))
+	defer up.Close()
+
+	st := newTestComfyEngine(t, up.URL, &engineTestECS{desired: 1, running: 1})
+	g := engineGateway{reg: &engineRegistry{byKey: map[string]*engineRuntimeState{"image": st}}}
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/engine/image/v1/prompt", strings.NewReader(`{}`))
+	r.Header.Set("X-AF-Model", "klein-4b")
+	r.SetPathValue("path", "prompt")
+	g.plain(rec, r, st, engineSessionClaims{Key: "image"}, testMembership(), []byte(`{}`))
+
+	if served, _ := st.servedModel(); served != "klein-4b" {
+		t.Errorf("servedModel() = %q, want klein-4b (read off X-AF-Model)", served)
+	}
+}
+
 // /v1/images/edits is multipart/form-data, and the boundary that makes the body readable
 // lives in the Content-Type header. Stamping application/json on everything — which is what
 // this gateway did while `llm` was the only role — turns an edit into an unparseable body at
@@ -710,7 +799,7 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	row := engineCatalogRowFor(d, []store.EngineModel{{
 		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
 		ContextTokens: 32768, MaxOutputTokens: 4096,
-	}})
+	}}, "")
 	if row["context_tokens"] != 32768 || row["max_output_tokens"] != 4096 {
 		t.Errorf("catalogue row = %v", row)
 	}
@@ -723,14 +812,14 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	// Reporting the zero would make the Agent advertise a context of 0, which is what turns
 	// opencode's auto-compaction off — worse than the silence it replaced.
 	old := engineCatalogRowFor(engineDef{Key: "llm", Provider: "llamacpp"},
-		[]store.EngineModel{{Role: "llm", ID: "m", Enabled: true}})
+		[]store.EngineModel{{Role: "llm", ID: "m", Enabled: true}}, "")
 	if _, ok := old["context_tokens"]; ok {
 		t.Errorf("an undeclared window was reported anyway: %v", old)
 	}
 
 	// Nothing enabled is not an engine with an empty model list: it is an engine that must not
 	// appear at all, or a launch menu offers a model whose every request answers 503.
-	if none := engineCatalogRowFor(d, nil); none != nil {
+	if none := engineCatalogRowFor(d, nil, ""); none != nil {
 		t.Errorf("an engine with an empty catalogue was offered: %v", none)
 	}
 }

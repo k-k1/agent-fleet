@@ -4,8 +4,11 @@ English | [日本語](0072-engine-model-catalog.ja.md)
 
 - Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
   registering the Hugging Face token from the Console (open question 12) is implemented, and
-  not yet verified on hardware (2026-09-09, "P5 implementation"). P2, P3 and the rest of P5
-  are not started.**
+  not yet verified on hardware (2026-09-09, "P5 implementation"). P2 (ComfyUI) is implemented
+  AND verified on hardware as of 2026-09-10 (see the Japanese edition's "P2 の実装" section —
+  this English edition has not been fully re-synced with that write-up yet, including a real
+  bug it found: torch 2.5.1 cannot run ComfyUI v0.34.0 at all, fixed by moving to 2.9.1). P3
+  and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -1434,19 +1437,31 @@ an `HF_TOKEN`".
   0.4–0.7 s, 10 s and 276–282 s; and with the second row registered and enabled in the Console,
   the picker offered two models and a session started on the second). Only the row-creating step
   needs a person — it is a super_admin screen, which AWS credentials cannot drive.
-- **P2 — ComfyUI (ADR 0071's P2, moved forward to here).** Open question 9 first, one GPU hour.
-  The self-built image (pinned tag, no Manager, open question 8; including the `20-platform` ECR
-  repository and the CI bake), the `ImageEngine=comfy` `!If` (decision 4), the `comfy` provider
-  (generate / edit / inpaint mapped onto per-family workflow templates, driving `/prompt` →
-  `/history` → `/view` with progress notifications), templates for five families — SDXL,
-  SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden tests, and
-  `generate_image`'s `model` argument (enum = the enabled checkpoints; several for the first
-  time — and **the description names the model that is warm now**: a switch is a 1–2.5 minute
-  re-read, so the agent can prefer the warm one when the default will do; *Resolved* 5). The
+- **P2 — ComfyUI (ADR 0071's P2, moved forward to here). Implemented AND verified on hardware
+  2026-09-10** (see the Japanese edition's "P2 の実装" section for the full write-up; not yet
+  re-synced into this English edition). The self-built image (pinned tag `v0.34.0`, no
+  Manager; the `20-platform` `af-comfyui` ECR repository and a dedicated CI workflow — the CI
+  bake itself was confirmed to succeed), the `ImageEngine=comfy` `!If` (decision 4), the `comfy`
+  provider (**generate only** — edit/inpaint need a per-family image-to-image graph nobody has
+  measured yet, so they are out of scope this round; the definition of done only needs generate;
+  driving `/prompt` → `/history` → `/view` with progress notifications), templates for five
+  families — SDXL, SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden
+  tests (SDXL/Z-Image/klein are ports of the GPU-verified graphs from *Resolved by measurement*;
+  FLUX.1/SD3.5 are new and not yet run on hardware), and `generate_image`'s `model` argument
+  (enum = the enabled checkpoints; several for the first time — and **the description names the
+  model that is warm now**: a switch is a 1–2.5 minute re-read, so the agent can prefer the warm
+  one when the default will do; *Resolved* 5). The
   pane (`/engine/comfy/` over WebSocket) is **not included** — `generate_image` needs only the API;
-  the screen is P5. **Definition of done: on one box, SDXL and klein 4B (or Z-Image-Turbo)
-  alternate per request and return pictures with no service restart in between, and 1024px
-  SDXL comes back in the 8-second range of ADR 0071 measurement 7.**
+  the screen is P5. **Definition of done: on one box, SDXL and
+  klein 4B (or Z-Image-Turbo) alternate per request and return pictures with no service restart
+  in between, and 1024px SDXL comes back in the 8-second range of ADR 0071 measurement 7. VERIFIED
+  ON HARDWARE**: warm SDXL 8.02 s, warm klein 4.01 s, warm Z-Image 10.74 s, all 13 scenarios
+  (including three checkpoint switches) succeeded on one g6.xlarge with no restart. A real bug
+  surfaced along the way and is fixed: torch 2.5.1 (the original base image) cannot even import
+  ComfyUI v0.34.0 (a `comfy-kitchen` dependency needs `torch.library.infer_schema` to understand
+  PEP 585 `list[int]`, which 2.5.1 does not) — moved to `pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime`.
+  **Not yet verified on hardware: the Go `comfy` provider's own call through the real CP gateway**
+  (this run drove ComfyUI directly; unit/integration tests cover the provider code).
 - **P3 — LoRA.** On ComfyUI: the image role's `loras/` sync, `generate_image`'s `loras`, the
   `LoraLoader` chain in the templates, refusal on a `baseModel` mismatch; fixed preset LoRAs
   for llm. sd-server's `<sd_cpp_extra_args>` path only when an `ImageEngine=sdcpp` deployment

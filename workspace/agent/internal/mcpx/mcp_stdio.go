@@ -774,7 +774,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"Tell the user you are starting one, and what for. " +
 				"It starts in a NEW worktree by default, so it never shares your working copy; pass " +
 				"worktree=false only for a directory nobody is working in. " +
-				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit) + " children at a time (a slot frees when the user deletes or " +
+				"Limits: at most " + strconv.Itoa(session.SpawnChildLimit()) + " children at a time (a slot frees when the user deletes or " +
 				"archives that child, or when one you left stopped expires - list_child_sessions shows what " +
 				"you have), a session you started cannot start its own, and shell sessions cannot be started " +
 				"from here. " +
@@ -807,8 +807,7 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 				"it away, leaving stop_session / resume_session / get_session_output nothing to name. Call it " +
 				"before your last turn too, to tell your user which children you left and how they stand. " +
 				"lastTurnEndAt separates a child that FINISHED from one that never started - idle means both. It " +
-				"is absent while a child is mid-turn, after a restart, and until a completion has been observed " +
-				"(get_session_status on that child records one). " +
+				"is absent while a child is mid-turn and after a restart. " +
 				"Archived sessions are not listed and hold no slot.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
@@ -1016,6 +1015,29 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"What they can do differs too (only some take an aspect ratio). " +
 				"**The enum values are CLI names, not service names** - look up which reaches which image service in the table at the start of this tool's description"}
 	}
+	// model, like provider, is offered only when there is a real choice (ADR 0072 decision 5,
+	// phase P2) — a single-entry list is the fleet's own image engine holding one checkpoint,
+	// and an argument that can only ever mean the default is not a choice.
+	if len(offer.Models) > 1 {
+		enum := make([]string, 0, len(offer.Models))
+		var lines []string
+		for _, m := range offer.Models {
+			enum = append(enum, m.ID)
+			line := m.ID
+			if m.Description != "" {
+				line += " — " + m.Description
+			}
+			if m.Warm {
+				line += "（現在ロード済み。切り替え不要）"
+			}
+			lines = append(lines, line)
+		}
+		props["model"] = map[string]any{"type": "string", "enum": enum,
+			"description": "Which checkpoint to use. **Leaving it unset uses whichever is currently loaded, if any — the cheapest choice.** " +
+				"Naming a different one makes the engine switch, which can take 1-2.5 minutes on top of the actual generation (this shows up in warnings, not as a hang). " +
+				"**Specify it only when the user asked for a specific look** — otherwise prefer the one marked as already loaded. " +
+				"Available: " + strings.Join(lines, " / ")}
+	}
 	return []map[string]any{
 		{
 			"name": "generate_image",
@@ -1093,6 +1115,13 @@ type imageGenOffer struct {
 	// that. What a NAMED provider cannot do is refused by name at call time, and an
 	// unhonourable aspect ratio comes back in warnings, so the union promises nothing false.
 	Ops, AspectRatios []string
+	// Models is the UNION of every offered provider's checkpoints (ADR 0072 decision 5, phase
+	// P2), by the same reasoning as Ops/AspectRatios above. In practice at most one ready
+	// provider ever has more than a single entry (the fleet's own image engine, sdcpp XOR
+	// comfy — 60-engines.yaml never runs both), so this is rarely a real union in fact, but it
+	// is still the right SHAPE: a session offered two model-bearing providers must not have one
+	// silently hidden.
+	Models []mcpImageGenModel
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1138,7 +1167,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		// dropping the tool: one provider is what the feature shipped with.
 		ready = []mcpImageGenProvider{{ID: st.Provider, Service: st.Service, Model: st.Model, Ops: st.Ops, AspectRatios: st.AspectRatios}}
 	}
-	seenOp, seenRatio := map[string]bool{}, map[string]bool{}
+	seenOp, seenRatio, seenModel := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	offer.Services = map[string]string{}
 	for _, p := range ready {
 		if p.Service != "" {
@@ -1161,6 +1190,12 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 			if !seenRatio[r] {
 				seenRatio[r] = true
 				offer.AspectRatios = append(offer.AspectRatios, r)
+			}
+		}
+		for _, m := range p.Models {
+			if !seenModel[m.ID] {
+				seenModel[m.ID] = true
+				offer.Models = append(offer.Models, m)
 			}
 		}
 	}
@@ -2020,7 +2055,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
-			inputs: a.Inputs, mask: a.Mask,
+			inputs: a.Inputs, mask: a.Mask, model: a.Model,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has
@@ -3273,7 +3308,8 @@ func mcpListChildSessions(id json.RawMessage, self string) []byte {
 	if err := json.Unmarshal([]byte(body), &wire); err != nil {
 		return mcpToolErr(id, "子セッション一覧を読めませんでした: "+err.Error())
 	}
-	rows := make([]any, 0, session.SpawnChildLimit)
+	limit := session.SpawnChildLimit()
+	rows := make([]any, 0, limit)
 	for _, s := range wire.Sessions {
 		if s.Origin != session.OriginSession || s.OriginSession != self {
 			continue
@@ -3301,12 +3337,12 @@ func mcpListChildSessions(id json.RawMessage, self string) []byte {
 		}
 		rows = append(rows, row)
 	}
-	left := session.SpawnChildLimit - len(rows)
+	left := limit - len(rows)
 	if left < 0 {
 		left = 0
 	}
 	return mcpStructuredResult(id, map[string]any{
-		"sessions": rows, "slotsLeft": left, "slotLimit": session.SpawnChildLimit,
+		"sessions": rows, "slotsLeft": left, "slotLimit": limit,
 	})
 }
 

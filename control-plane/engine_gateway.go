@@ -224,7 +224,8 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 		if e.mode(r.Context()) == engineModeOff {
 			continue // an engine an admin switched off is not offered, rather than offered and refused
 		}
-		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()))
+		served, _ := e.servedModel()
+		row := engineCatalogRowFor(e.def, e.catalog.enabled(r.Context()), served)
 		if row == nil {
 			continue // nothing enabled: the same as switched off, from a Workspace's point of view
 		}
@@ -251,17 +252,17 @@ func (g engineGateway) catalog(w http.ResponseWriter, r *http.Request) {
 //
 // nil when nothing is enabled. An engine with an empty catalogue cannot serve anything, so
 // offering it would put a model in a launch menu that answers 503 (decision 1).
-func engineCatalogRowFor(d engineDef, models []store.EngineModel) map[string]any {
+func engineCatalogRowFor(d engineDef, models []store.EngineModel, warm string) map[string]any {
 	ids := []string{}
 	rows := []map[string]any{}
 	loras := []map[string]any{}
 	for _, m := range models {
 		if engineModelIsLora(m) {
-			loras = append(loras, engineCatalogModelRow(m))
+			loras = append(loras, engineCatalogModelRow(m, warm))
 			continue
 		}
 		ids = append(ids, m.ID)
-		rows = append(rows, engineCatalogModelRow(m))
+		rows = append(rows, engineCatalogModelRow(m, warm))
 	}
 	if len(ids) == 0 {
 		return nil
@@ -602,7 +603,7 @@ func (g engineGateway) streamed(w http.ResponseWriter, r *http.Request, eng *eng
 			break
 		}
 	}
-	g.recordUsage(r.Context(), eng, claims, mv, scan.usage, time.Since(started), true)
+	g.recordUsage(r.Context(), eng, claims, mv, scan.usage, time.Since(started), true, r.Header.Get("X-AF-Model"))
 }
 
 // writeEngineStreamError puts a failure into an already-open event stream, then closes it
@@ -654,7 +655,7 @@ func (g engineGateway) plain(w http.ResponseWriter, r *http.Request, eng *engine
 	full := append(append([]byte{}, start.first...), rest...)
 	_, _ = w.Write(full)
 	g.recordUsage(r.Context(), eng, claims, mv, parseEngineUsage(full), time.Since(started),
-		start.resp.StatusCode < 300)
+		start.resp.StatusCode < 300, r.Header.Get("X-AF-Model"))
 }
 
 // dial waits for the engine and sends the request, returning once its first byte is in hand.
@@ -663,9 +664,15 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 	if err := g.ensureReady(ctx, eng); err != nil {
 		return upstreamStart{err: err}
 	}
-	// The path after /engine/<key> is passed through verbatim, so /v1/chat/completions,
-	// /v1/models and llama.cpp's /v1/messages all work without this file knowing about them.
-	target := strings.TrimRight(eng.def.URL, "/") + "/v1/" + r.PathValue("path")
+	// The path after /engine/<key>/v1/ is passed through verbatim, so /v1/chat/completions,
+	// /v1/models and llama.cpp's /v1/messages all work without this file knowing about them —
+	// PROVIDED the upstream engine's own API actually lives under /v1, which llama-server and
+	// sd-server's OpenAI-compatible faces do. ComfyUI's native API (ADR 0072 decision 4, phase
+	// P2) does not: /prompt, /history/<id> and /view live at the engine's root. The route's own
+	// literal `/v1/` stays fixed either way — only what gets prepended to the UPSTREAM path
+	// differs — so a comfy provider's request still arrives at /engine/<key>/v1/prompt and the
+	// Workspace side never needs to know this distinction exists.
+	target := strings.TrimRight(eng.def.URL, "/") + engineUpstreamPrefix(eng.def.Provider) + r.PathValue("path")
 	if q := r.URL.RawQuery; q != "" {
 		target += "?" + q
 	}
@@ -705,6 +712,16 @@ func (g engineGateway) dial(ctx context.Context, eng *engineRuntimeState, r *htt
 		return upstreamStart{err: rerr}
 	}
 	return upstreamStart{resp: resp, first: first[:n]}
+}
+
+// engineUpstreamPrefix is what dial prepends to the path after /engine/<key>/v1/ before
+// forwarding upstream. "/v1/" for every OpenAI-compatible engine (llamacpp, sdcpp); "/" for
+// comfy, whose native API has no /v1 of its own (ADR 0072 decision 4, phase P2).
+func engineUpstreamPrefix(provider string) string {
+	if provider == "comfy" {
+		return "/"
+	}
+	return "/v1/"
 }
 
 // ensureReady starts the engine if it is stopped and waits until it answers its health

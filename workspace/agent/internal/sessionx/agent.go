@@ -97,9 +97,9 @@ func DriveState(m session.Meta, alive, heal bool) string {
 			// the hook route, so "which transition counts" stays one implementation.
 			// Gated on previous=="working" so repeated polls report once; a duplicate
 			// from two concurrent polls is absorbed by handleChatReport's disarm.
-			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
-				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
-			}
+			// (The sessions list observes the same end, but only RECORDS when it
+			// happened — turn_end_poll.go.)
+			notifyPolledTurnEnd(m, st)
 			return st
 		}
 	}
@@ -110,9 +110,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// managed the driver's runTurn already fired it and status is idle — no double fire.
 	if m.Kind == session.KindCopilot {
 		if st := copilot.LiveState(m); st != "" {
-			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
-				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
-			}
+			notifyPolledTurnEnd(m, st)
 			return st
 		}
 	}
@@ -123,9 +121,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// it and status is idle — no double fire.
 	if m.Kind == session.KindCursor {
 		if st := cursor.LiveState(m); st != "" {
-			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
-				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
-			}
+			notifyPolledTurnEnd(m, st)
 			return st
 		}
 	}
@@ -139,9 +135,7 @@ func DriveState(m session.Meta, alive, heal bool) string {
 	// back to the generic route (/input's optimistic working).
 	if m.Kind == session.KindKiro {
 		if st := kiro.LiveState(m); st != "" {
-			if st == "idle" && status.LiveState(session.UUID(m.Dir, m.Name)) == "working" {
-				agents.MarkTurnEnd(session.UUID(m.Dir, m.Name), agents.TurnCompleted)
-			}
+			notifyPolledTurnEnd(m, st)
 			return st
 		}
 	}

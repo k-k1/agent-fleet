@@ -1,0 +1,137 @@
+{
+  "clip": {
+    "class_type": "DualCLIPLoader",
+    "inputs": {
+      "clip_name1": "t5xxl_fp8.safetensors",
+      "clip_name2": "clip_l.safetensors",
+      "device": "default",
+      "type": "flux"
+    }
+  },
+  "dec": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "sca",
+        0
+      ],
+      "vae": [
+        "vae",
+        0
+      ]
+    }
+  },
+  "guidance": {
+    "class_type": "FluxGuidance",
+    "inputs": {
+      "conditioning": [
+        "pos",
+        0
+      ],
+      "guidance": 3.5
+    }
+  },
+  "guider": {
+    "class_type": "BasicGuider",
+    "inputs": {
+      "conditioning": [
+        "guidance",
+        0
+      ],
+      "model": [
+        "unet",
+        0
+      ]
+    }
+  },
+  "lat": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "noise": {
+    "class_type": "RandomNoise",
+    "inputs": {
+      "noise_seed": 1234
+    }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "text": "a red fox sitting on a mossy rock in a misty forest at dawn, detailed fur, soft light"
+    }
+  },
+  "sampler": {
+    "class_type": "KSamplerSelect",
+    "inputs": {
+      "sampler_name": "euler"
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "af-flux1",
+      "images": [
+        "dec",
+        0
+      ]
+    }
+  },
+  "sca": {
+    "class_type": "SamplerCustomAdvanced",
+    "inputs": {
+      "guider": [
+        "guider",
+        0
+      ],
+      "latent_image": [
+        "lat",
+        0
+      ],
+      "noise": [
+        "noise",
+        0
+      ],
+      "sampler": [
+        "sampler",
+        0
+      ],
+      "sigmas": [
+        "scheduler",
+        0
+      ]
+    }
+  },
+  "scheduler": {
+    "class_type": "BasicScheduler",
+    "inputs": {
+      "denoise": 1,
+      "model": [
+        "unet",
+        0
+      ],
+      "scheduler": "simple",
+      "steps": 20
+    }
+  },
+  "unet": {
+    "class_type": "UNETLoader",
+    "inputs": {
+      "unet_name": "flux1-dev.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "vae": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    }
+  }
+}

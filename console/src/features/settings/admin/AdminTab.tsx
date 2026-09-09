@@ -61,9 +61,12 @@ function rootGroups(opts: { pool: boolean; cost: boolean; engines: boolean }): R
         // works the same on every runtime, and it is the one item here that is about
         // telling this deployment from the next one.
         ["brand", "admin.mode_brand"],
-        // Self-hosted inference (ADR 0071) is opt-in and most deployments run none. An empty
-        // "engines" item would read as "my engines disappeared" — the same reason the slot
-        // pool item is conditional.
+        // Self-hosted inference (ADR 0071) is opt-in, and this item used to be hidden unless
+        // the deployment actually ran an engine — an empty one would have read as "my engines
+        // disappeared". 🔴 Since ADR 0072 decision 11 the panel has something to say with zero
+        // engines: what there is to run, browsed straight from Hugging Face / Civitai, which is
+        // exactly what somebody deciding whether to stand 60-engines up needs. So the condition
+        // is now "this Control Plane serves the panel", not "it has engines".
         ...(opts.engines ? ([["engines", "admin.mode_engines"]] as [string, string][]) : []),
         // The slot pool exists on one runtime only. An empty "slots" item on a Fargate
         // deployment reads as "my slots disappeared".
@@ -94,8 +97,11 @@ export function AdminTab() {
   // Whether this deployment HAS a slot pool. One cheap probe at mount; the endpoint
   // answers {"runtime":"other"} everywhere else.
   const [hasPool, setHasPool] = useState(false);
-  // Whether this deployment RUNS self-hosted engines. The route only exists where the engine
-  // table does, so a non-empty list is the evidence — never the absence of an error.
+  // Whether this Control Plane serves the engines panel — NOT whether the deployment runs an
+  // engine. An answer carrying an `engines` array is the evidence, empty or not (ADR 0072
+  // decision 11: browsing what there is to run needs no engine, no token and no bucket). Still
+  // never the absence of an error: a CP from before the routes moved out of the engine
+  // registry's guard answers 404 here, and there the panel would be an empty room.
   const [hasEngines, setHasEngines] = useState(false);
   // Whether this deployment HAS an AWS bill. Runtime-declared, not configured.
   const costProfile = useCostProfile();
@@ -146,7 +152,7 @@ export function AdminTab() {
       .then((d) => setHasPool(d?.runtime === "ecs-ec2"))
       .catch(() => setHasPool(false));
     api("api/admin/engines")
-      .then((d) => setHasEngines(Array.isArray(d?.engines) && d.engines.length > 0))
+      .then((d) => setHasEngines(Array.isArray(d?.engines)))
       .catch(() => setHasEngines(false));
   }, []);
 

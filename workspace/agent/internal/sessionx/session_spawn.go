@@ -69,11 +69,15 @@ func countChildren(parent string) int {
 func reserveSpawnSlot(parent string) error {
 	spawnInflight.mu.Lock()
 	defer spawnInflight.mu.Unlock()
-	if have := countChildren(parent) + spawnInflight.n[parent]; have >= session.SpawnChildLimit {
+	// Read the limit here, not once at startup: it is a user setting now (Settings > Agents >
+	// Session), and a refusal quoting yesterday's number is the invisible limit ADR 0073
+	// decision 6 refuses to have.
+	limit := session.SpawnChildLimit()
+	if have := countChildren(parent) + spawnInflight.n[parent]; have >= limit {
 		return fmt.Errorf("このセッションは既に子セッションを %d 本持っています（上限 %d）。"+
 			"list_child_sessions で状態を確かめ、不要な子は利用者に Console での削除・アーカイブを頼んでください"+
 			"（停止したままの子は %s で自動的に枠が空きます）",
-			have, session.SpawnChildLimit, stoppedTTLPhrase())
+			have, limit, stoppedTTLPhrase())
 	}
 	spawnInflight.n[parent]++
 	return nil

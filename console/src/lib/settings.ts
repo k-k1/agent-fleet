@@ -356,6 +356,13 @@ export interface Settings {
   // Default FALSE — this is the one that spends the shared host with nobody watching. (It used
   // to be offered only once observation was on; that prerequisite went with the switch.)
   sessionFleetSpawn: boolean;
+  // How many children ONE session may have at a time (ADR 0073 decision 6, AgentsTab > Session).
+  // Per parent, not per workspace: two parents at the ceiling is twice that many agents.
+  //
+  // The Agent clamps it to 1..SPAWN_CHILD_LIMIT_MAX and falls back to the default outside that,
+  // so a value hand-edited into ui-prefs cannot raise the ceiling. Offered as a fixed set of
+  // choices rather than a free number precisely so the range is a property of the control.
+  sessionSpawnChildLimit: number;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -712,18 +719,26 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // Image providers in the Agent's own built-in order (imagegen.providerOrder). agy is first
 // because it honours more of the request — a requested aspect ratio reaches its tool, where the
 // codex route lets the caller choose no dimension at all.
-// The image providers a member can rank, in the built-in order. `sdcpp` is the fleet's own
-// engine (ADR 0071): it is here because the Agent ranks it in the same list, and a UI that
-// omitted it would write a stored order that silently pushes it last — the one thing
+// The image providers a member can rank, in the built-in order. `sdcpp` and `comfy` are the
+// fleet's own engine (ADR 0071 / ADR 0072 decision 4) — a deployment runs the image role as ONE
+// of the two, never both, but a member's stored preference order should not care which, so both
+// are listed. Either is here because the Agent ranks it in the same list, and a UI that omitted
+// one would write a stored order that silently pushes it last — the one thing
 // normalizeImageProviderOrder exists to prevent. A deployment without that engine simply never
 // routes to it, the same way an unusable login is skipped.
-export const IMAGE_PROVIDERS = ["sdcpp", "agy", "codex"] as const;
+export const IMAGE_PROVIDERS = ["sdcpp", "comfy", "agy", "codex"] as const;
+
+// The child limits a user may pick (ADR 0073 decision 6). Keep the last entry equal to the
+// Agent's session.SpawnChildLimitMax: a choice past it is silently answered with the DEFAULT,
+// not with the ceiling, so an option this list offered and the Agent refused would set the
+// budget lower than the user asked for rather than higher.
+export const SPAWN_CHILD_LIMITS = [1, 2, 3, 4, 5, 6] as const;
 
 // imageProviderLabel names one provider for the ordering list. agy and codex are agent kinds
-// and carry their own display name; sdcpp is not an agent at all — it is a service this
-// deployment runs — so it has its own label rather than a lookup that would return "sdcpp".
+// and carry their own display name; sdcpp/comfy are not agents at all — they are a service this
+// deployment runs — so they have their own label rather than a lookup that would return the id.
 export function imageProviderLabel(id: string): string {
-  if (id === "sdcpp") return "Agent Fleet (self-hosted)";
+  if (id === "sdcpp" || id === "comfy") return "Agent Fleet (self-hosted)";
   return "";
 }
 
@@ -846,6 +861,7 @@ const DEFAULTS: Settings = {
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
   sessionFleetSpawn: false, // opt-in (ADR 0073) — lets a session spend host resources unattended
+  sessionSpawnChildLimit: 3, // the value the limit had while it was a constant (ADR 0073 decision 6)
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   expandThinking: {},

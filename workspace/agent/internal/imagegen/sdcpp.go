@@ -68,11 +68,46 @@ type EngineConn struct {
 	// whose catalogue entry says nothing, and for a Control Plane older than the catalogue,
 	// in which case sdcppSizes falls back to reading the id.
 	Sizes map[string][]string
+	// BaseModel is decision 2's family label per model id ("sdxl", "sd35", "flux1",
+	// "flux2-klein", "zimage", …). sdcpp never reads this — it holds one checkpoint and never
+	// asks which family it belongs to — but comfy uses it to pick which workflow template
+	// renders the request (ADR 0072 decision 4, phase P2).
+	BaseModel map[string]string
+	// Files are the on-disk names decision 2 declares for one model — see EngineFile. sdcpp
+	// does not use this (it never chooses a checkpoint at request time); comfy reads it to fill
+	// in a workflow template's loader nodes.
+	Files map[string][]EngineFile
+	// Warm is the model id the Control Plane last saw this engine actually answer with (ADR
+	// 0072 decision 7's warm_model), or "" when nothing is known to be warm. comfy uses it to
+	// pick the default when the caller names no model — a switch costs 1-2.5 minutes of disk
+	// re-read (measured), so answering with whatever is already warm is free and answering
+	// with an arbitrary "first enabled" model is not.
+	Warm string
+	// Descriptions is the catalogue's own per-model line (ADR 0072 decision 2), the sentence an
+	// agent reads when CHOOSING a checkpoint — "photoreal, SDXL fine-tune" and the like. Empty
+	// for a model the catalogue says nothing about, which is not an error: the id alone is a
+	// usable, if less helpful, choice.
+	Descriptions map[string]string
 }
 
-// EngineLookup is the seam the Agent fills in. nil — the normal case — means this deployment
-// runs no self-hosted engines, and the provider is simply never ready.
-var EngineLookup func(ctx context.Context) (EngineConn, bool)
+// EngineFile is one file ADR 0072 decision 2 declares for a model: the on-disk basename (the
+// fetch sidecar mirrors S3 keys onto disk verbatim, so this is also what ComfyUI's loader nodes
+// see under their configured model directory) and, for a split model, the flag sd.cpp's own
+// spelling gives that part (`--vae` / `--clip_l` / `--t5xxl` / `--diffusion-model`). Empty Flag
+// means a single-file model (a plain checkpoint). comfy re-reads sd.cpp's vocabulary rather than
+// inventing a second one for the same fact — decision 2 already declares "which flag" per file,
+// and sd.cpp's flags already say what each part IS regardless of which engine loads them.
+type EngineFile struct {
+	Flag string
+	Name string
+}
+
+// EngineLookup is the seam the Agent fills in, keyed by the CALLING provider's id so that
+// sdcpp and comfy — mutually exclusive on one deployment (ADR 0072 decision 4) — each get the
+// engine row that actually matches them rather than whichever the `image` role happens to be
+// running today. nil, or a lookup that finds no row for this id, means this deployment does
+// not run that provider, and it is simply never ready.
+var EngineLookup func(ctx context.Context, provider string) (EngineConn, bool)
 
 // sdcppTimeout bounds one call, and it is deliberately LONGER than the gateway's own wake
 // timeout (AF_ENGINE_WAKE_TIMEOUT, 900 s by default). The chain is
@@ -96,7 +131,18 @@ type sdcppProvider struct {
 }
 
 func newSdcppProvider() *sdcppProvider {
-	return &sdcppProvider{lookup: EngineLookup, client: sdcppClient}
+	return &sdcppProvider{lookup: engineLookupFor(ProviderSdcpp), client: sdcppClient}
+}
+
+// engineLookupFor binds the package-level, provider-keyed EngineLookup to one id, giving each
+// provider struct the single-argument shape its own tests already construct directly. nil when
+// EngineLookup itself is nil (the normal case for a deployment with no engines at all), so a
+// provider's lookup field is never a closure that panics on a nil call.
+func engineLookupFor(provider string) func(ctx context.Context) (EngineConn, bool) {
+	if EngineLookup == nil {
+		return nil
+	}
+	return func(ctx context.Context) (EngineConn, bool) { return EngineLookup(ctx, provider) }
 }
 
 func (p *sdcppProvider) ID() string { return ProviderSdcpp }
@@ -194,15 +240,22 @@ func sdcppSizes(model string) []string {
 	}
 }
 
+// sdcppRequestModel is what this call names the checkpoint as: the caller's own choice, or the
+// engine's started-with default (sd-server holds one, chosen at startup — there is no other).
+func sdcppRequestModel(conn EngineConn, req Request) string {
+	model := strings.TrimSpace(req.Model)
+	if model == "" && len(conn.Models) > 0 {
+		model = conn.Models[0]
+	}
+	return model
+}
+
 func (p *sdcppProvider) Generate(ctx context.Context, req Request) (Result, error) {
 	conn, ok := p.conn(ctx)
 	if !ok {
 		return Result{}, errors.New("this deployment runs no self-hosted image engine")
 	}
-	model := strings.TrimSpace(req.Model)
-	if model == "" && len(conn.Models) > 0 {
-		model = conn.Models[0]
-	}
+	model := sdcppRequestModel(conn, req)
 	caps := p.Caps(model)
 	if !caps.Supports(req.Op) {
 		return Result{}, fmt.Errorf("the self-hosted image engine cannot do %s", req.Op)
@@ -289,8 +342,15 @@ func (p *sdcppProvider) send(ctx context.Context, conn EngineConn, req Request) 
 			return nil, err
 		}
 		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+		// Declares which checkpoint this request used, for the gateway's warm-model tracking
+		// (ADR 0072 decision 7) — sd-server's own answer carries no such field (pixels, not a
+		// model name), so without this header the admin panel's warm_model never fires for the
+		// image role at all, sdcpp or comfy alike.
+		if m := sdcppRequestModel(conn, req); m != "" {
+			httpReq.Header.Set("X-AF-Model", m)
+		}
 
-		body, status, retryAfter, err := p.attempt(httpReq)
+		body, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {
 			// A transport error with the budget already gone is the same event as the one below
 			// — the wait ended — and it must not be reported as a bare "context deadline
@@ -334,8 +394,10 @@ func sdcppGaveUp(attempts int, lastWaking string) error {
 
 // attempt is one round trip, with the body fully read so the connection can be reused for the
 // next one. status is 0 only when err is set.
-func (p *sdcppProvider) attempt(httpReq *http.Request) (body []byte, status int, retryAfter time.Duration, err error) {
-	resp, err := p.client.Do(httpReq)
+// engineHTTPAttempt is shared with comfy.go — the same gateway, the same retry contract
+// (503 engine_waking, 502/504 from an ingress), so one round-trip helper is enough for both.
+func engineHTTPAttempt(client *http.Client, httpReq *http.Request) (body []byte, status int, retryAfter time.Duration, err error) {
+	resp, err := client.Do(httpReq)
 	if err != nil {
 		return nil, 0, 0, fmt.Errorf("reaching the image engine failed: %w", err)
 	}

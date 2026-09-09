@@ -189,6 +189,70 @@ func TestImageGenAdvertisedByKindAndProvider(t *testing.T) {
 
 // An unreachable Agent means the tool could not work anyway; advertising it would produce a
 // tool whose every call fails.
+// ADR 0072 decision 5, phase P2: model follows the exact same "only with a real choice" rule
+// provider already does, and the enum/warm marker have to survive the round trip through
+// mcpImageGenAdvertise into the tool schema.
+func TestImageGenModelOfferedOnlyWithARealChoice(t *testing.T) {
+	sdxl := mcpImageGenModel{ID: "sdxl-base-1.0", Description: "photoreal, general purpose"}
+	klein := mcpImageGenModel{ID: "klein-4b", Warm: true}
+
+	for _, tc := range []struct {
+		name       string
+		status     mcpImageGenStatus
+		wantModels []mcpImageGenModel
+	}{
+		{
+			// offer.Models is still the union (same as Ops/AspectRatios) — the "real choice"
+			// gate is a SCHEMA-layer decision below, not something the offer itself narrows.
+			name: "one model is not a choice",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Models: []mcpImageGenModel{sdxl}}}},
+			wantModels: []mcpImageGenModel{sdxl},
+		},
+		{
+			name: "two models on the same provider is a real choice",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Models: []mcpImageGenModel{sdxl, klein}}}},
+			wantModels: []mcpImageGenModel{sdxl, klein},
+		},
+		{
+			name: "a provider with no Models field at all offers none",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "agy", Ops: []string{"generate"}}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, tc.status)
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			if !reflect.DeepEqual(offer.Models, tc.wantModels) {
+				t.Fatalf("models = %+v, want %+v", offer.Models, tc.wantModels)
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			model, has := props["model"].(map[string]any)
+			if has != (len(tc.wantModels) > 1) {
+				t.Fatalf("model in schema = %v, want %v", has, len(tc.wantModels) > 1)
+			}
+			if has {
+				enum, _ := model["enum"].([]string)
+				if len(enum) != len(tc.wantModels) {
+					t.Fatalf("model enum = %v, want %d entries", enum, len(tc.wantModels))
+				}
+				desc, _ := model["description"].(string)
+				if !strings.Contains(desc, "photoreal, general purpose") {
+					t.Errorf("description does not carry the catalogue's own line: %s", desc)
+				}
+				if !strings.Contains(desc, "klein-4b") {
+					t.Errorf("description does not name the warm model: %s", desc)
+				}
+			}
+		})
+	}
+}
+
 func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	withImageGen(t, true)
 	t.Setenv("AGENT_ADDR", ":1") // nothing listens
@@ -284,9 +348,12 @@ func TestGenerateImageReturnsPathAndWarnings(t *testing.T) {
 			_, _ = w.Write([]byte(`{"files":[{"path":"/home/u/.cache/agent-fleet/generated/sid/image-1.png","name":"image-1.png","mime":"image/png","bytes":848000,"width":1254,"height":1254}],"provider":"codex","model":"gpt-5.4-mini","warnings":["size=1024x1024 requested, 1254x1254 produced"]}`))
 		})
 
-	resp := callGenerateImage(t, map[string]any{"prompt": "a cat", "size": "1024x1024", "count": 1})
+	resp := callGenerateImage(t, map[string]any{"prompt": "a cat", "size": "1024x1024", "count": 1, "model": "klein-4b"})
 	if got["session"] != "slot01" || got["prompt"] != "a cat" || got["size"] != "1024x1024" {
 		t.Fatalf("forwarded body = %v", got)
+	}
+	if got["model"] != "klein-4b" {
+		t.Fatalf("forwarded body's model = %v, want klein-4b (ADR 0072 decision 5)", got["model"])
 	}
 	for _, want := range []string{"image-1.png", "1254x1254", "codex"} {
 		if !strings.Contains(resp, want) {

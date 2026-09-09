@@ -89,6 +89,18 @@ VRAM 使用が 280 MiB に戻るのがその印）。`--highvram` を足して�
 ⚠️ **実行中のこのスクリプトを編集しないこと**（上と同じ）。`bench-image-engine.py` は起動時に
 S3 へ写されるので、こちらは編集しても走行中の回には効かない。
 
+**`--baked`**（ADR 0072 P2）: コミュニティイメージ＋起動時 checkout の代わりに、フリート自身の
+自前イメージ（`deploy/aws/ecs/comfyui/Dockerfile`）を測る。`--image` が必須（自前イメージは
+`COMFYUI_REF` が変わるたびタグも変わるので、既定の1本は無い）。checkout/pip をしない・
+作業ディレクトリが `/opt/comfyui` でなく `/ComfyUI`・モデルボリュームを直接 `/ComfyUI/models`
+へマウントする点だけが違う：
+
+```bash
+AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
+  deploy/aws/ecs/harness/bench-image-engine.sh --baked \
+  --image ghcr.io/k-k1/agent-fleet/comfyui:v0.34.0 --phases "default:"
+```
+
 ## `probe-image-engine.sh` / `probe-llm-engine.sh` —— 走っているエンジンに、VPC の中から 1 回聞く
 
 [ADR 0072](../../../../docs/decisions/0072-engine-model-catalog.ja.md) の完了の定義を観測する

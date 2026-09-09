@@ -798,10 +798,18 @@ func TestFleetObserveToolsAreAlwaysOnForSessions(t *testing.T) {
 //
 // The Agent and the memo store are not stubbed: what is under test is the GATE, so any other
 // failure is fine as long as it is not "you are not allowed".
+//
+// Redirecting HOME does not isolate the memo tools: cpMemoDo posts to the CP over
+// AF_CP_BASE_URL/AF_MEMO_TOKEN, which the CP injects live into every Workspace container.
+// Measured: with the two vars left alone, every run of this test files a real memo reading
+// "note" into the developer's own queue. Emptying them closes the write and costs the test
+// nothing — the gate under test is checked before cpMemoDo is ever reached.
 func TestFleetObserveToolsAreCallableNotJustAdvertised(t *testing.T) {
 	asSession(t)
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	t.Setenv("AF_CP_BASE_URL", "")
+	t.Setenv("AF_MEMO_TOKEN", "")
 	mcpSourceSession = "slot01"
 	t.Cleanup(func() { mcpSourceSession = "" })
 
@@ -818,6 +826,14 @@ func TestFleetObserveToolsAreCallableNotJustAdvertised(t *testing.T) {
 		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
 		if strings.Contains(resp, "許可されていません") {
 			t.Errorf("%s is advertised to a session but refuses the call: %s", name, resp)
+		}
+		// The guard for the paragraph above: a memo tool that got PAST cpMemoDo's own
+		// unset-CP check reached a real CP with a real membership token. Failing here is
+		// what stops the next edit from quietly filing memos again.
+		if strings.HasSuffix(name, "_memo") || name == "list_memos" {
+			if !strings.Contains(resp, "メモ機能はこの環境では利用できません") {
+				t.Errorf("%s talked to a CP instead of stopping at the unset bridge: %s", name, resp)
+			}
 		}
 	}
 }

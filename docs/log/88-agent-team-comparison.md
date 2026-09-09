@@ -108,6 +108,18 @@ Agent Team 側は出典。**すべて確認できた事実**である。
 | **完了通知** | **親のポーリングが正**（`get_session_status`）。補助として peer messaging が ON のときだけ、`create_session` が初期指示末尾に「終わったら親へ `intent=answer` で 1 通返せ」を足す＝**モデル発火**（ADR 0073 決定 9、docs/log/87 §87.5）。セッション宛の報告チャネルは作らない（ADR 0041 が却下した案。arm の所有者が二重になる） | **イベント駆動。** `when a teammate finishes and stops, it automatically notifies the lead and includes its final answer in the notification` — **[AT] Context and communication**。別機能の `notify_when_idle` は `Claude Code subscribes without starting a turn or spending tokens in the watched session` / `The notice is one-shot... neither session polls the other` / 12 時間で失効 — **[CSM]** | **向こうがハーネス層で解いている。§88.6-1 の示唆はここ** |
 | **異種エージェント** | claude / codex / opencode / cursor / kiro / agy / copilot をまたぐ（`kind` 引数。`mcpx/mcp_stdio.go:765` の `create_session` 説明文） | **Claude Code セッションのみ。** ページ全体を通じて他社 CLI・他社モデルへの言及は無い（`Teammates` は `Separate Claude Code instances` — **[AT] Architecture**） | **af 固有。** 「起こせる種類が 1 つしかない」ことは向こうの他の判断（shell の軸が無い等）にも効いている |
 
+🔴 **上記「上限」欄の訂正（2 点・本文は残す）。** どちらも本記録より後の変更で、比較の結論
+（守っている対象が違う）は変わらない。
+
+1. **「停止中もアーカイブ済みも数え、削除だけが枠を空ける」は誤り。** アーカイブ済みは数えず
+   （2026-09-09・ADR 0073 決定 6 補遺・[89](89-child-session-listing.md) §89.4）、停止したままの
+   子は `StoppedTTL` の満了でも枠が空く。起票時に「削除だけ」と書いたのは、TTL の prune が
+   アーカイブ済みを対象外にしていることを**規則の側からしか読んでいなかった**ためである
+   （一覧の実装を読めば分かった）。
+2. **「同時 3 本」は既定 3 本。** 2026-09-10 に利用者設定になった（1〜6・[87](87-session-spawn.md)
+   §87.16）。左欄の読み方は変わらない — 3 は当時も「資源の実測値ではない暫定値」で、
+   設定化はその暫定値を**誰が選ぶか**を移しただけである。
+
 ## 88.5 向こうが解いていて af が解いていない問題
 
 **2 件。1 件は af への示唆になり（§88.6-1）、1 件は非スコープでよい。**
@@ -310,6 +322,16 @@ running across turns and re-invokes you when it exits`、⑵ 上の実測、の 
 費用ではなく、**コンテナの RAM とプロセスが即座に返ること**」——と正面から噛み合う。本案は
 その逆をやる。af がこの一帯で守っている制約はトークンではなくメモリである（ADR 0073 決定 6 の
 「同時 3 本」も同じ理由）。
+
+🔴 **訂正（2026-09-10・[87](87-session-spawn.md) §87.17.2）: 「6 本で 2.2 GB」は RSS の単純和
+（過大評価）だった。本文は残す。** RSS はプロセス間で共有しているページ（同じ claude バイナリ・
+node ランタイムの mmap、実測で 1 プロセスあたり約 117〜119 MB）を**プロセスごとに二重に数える**。
+`smaps_rollup` の PSS（共有分を実際の共有者数で按分）で親 1 本＋子 3 本を同時に測ったところ
+合計 869 MB で、`memory.current` の差分（+616 MB / -811 MB）ともオーダーが一致した——RSS 単純和
+（同じ 4 本で 1272 MB）だけが外れ値だった。6 本への外挿は 1.5〜1.9 GB 程度になり、当初の
+2.4〜3.0 GiB（ADR 0073 決定 6 補遺）より低い。**この段落の結論（「高いのは畳めなくなる親の
+ほう」）は変わらない**——訂正が動かすのは絶対値であって、待ちプロセスが安く親が高いという
+向きではない。詳細と一般化の限界は §87.17 を見ること。
 
 ### 88.9.3 採らない理由 2 — ADR 0055 決定 1 の側面口が開く
 

@@ -28,6 +28,13 @@ func wireSession(m session.Meta, alive bool) session.Session {
 	// The live-dependent fields (state / remote URL / context / resumable / bg-busy)
 	// diverge by kind — the agent computes them (see WireLive per implementation).
 	li := AgentOf(m.Kind).WireLive(m, alive)
+	// For the four hook-less TUI kinds this poll may be the first (and for a session nobody
+	// opens in the Console, the ONLY) place that sees the turn end, so record WHEN it ended —
+	// and nothing else, notification included (turn_end_poll.go, docs/log/89 §89.3). It runs
+	// before LastTurnEndAt is read below so the very poll that observes the end also reports it.
+	if alive {
+		recordPolledTurnEnd(m, li.State)
+	}
 	s := session.Session{
 		Name: m.Name, Tmux: session.TmuxName(m.Name), Dir: m.Dir, Subdir: m.Subdir, Kind: m.Kind, Driver: m.Driver,
 		Repo: m.Repo, WorkingCopyID: gitx.WorkingCopyID(m.Dir), Title: m.Title, Display: session.Display(m), Color: m.Color, Label: m.Label,
@@ -88,13 +95,14 @@ func wireSession(m session.Meta, alive bool) session.Session {
 // lastTurnEndAt reads the moment this session's newest turn ENDED off the status store, or
 // "" when the store does not claim one (docs/log/89).
 //
-// The TurnEnd bit is the right source rather than a convenient one: it is written ONLY by an
-// actual end of turn — claude's Stop hook, the codex/opencode hooks, and MarkTurnEnd for the
-// managed drivers and for the TUIs whose completion is observed by polling (agy / copilot /
-// cursor / kiro, DriveState) — and deliberately NOT by the idles that mean "we do not know"
-// (the SessionStart reset, a driver that lost its handle). docs/log/51 needs exactly that
-// distinction to decide whether a report may go out, and a parent polling a child needs the
-// same one to decide whether its task is done.
+// The status store is the right source rather than a convenient one: a time appears there ONLY
+// through an actual end of turn — claude's Stop hook, the codex/opencode hooks, MarkTurnEnd for
+// the managed drivers, and the polls that observe the four hook-less TUIs finish (agy / copilot
+// / cursor / kiro — DriveState notifies, this listing merely records: turn_end_poll.go) — and
+// deliberately NOT through the idles that mean "we do not know" (the SessionStart reset, a
+// driver that lost its handle). docs/log/51 needs exactly that distinction to decide whether a
+// report may go out, and a parent polling a child needs the same one to decide whether its task
+// is done.
 //
 // The other two candidates were weighed and are worse HERE. The transcript's last assistant
 // turn is durable but silent on three kinds (agy / cursor / kiro record no timestamp on an
@@ -106,11 +114,22 @@ func wireSession(m session.Meta, alive bool) session.Session {
 // therefore means "nothing here ended a turn since it last started", never "it never
 // finished".
 func lastTurnEndAt(m session.Meta) string {
-	st, ok := status.Read(session.UUID(m.Dir, m.Name))
-	if !ok || !st.TurnEnd {
+	sid := session.UUID(m.Dir, m.Name)
+	st, ok := status.Read(sid)
+	if !ok {
 		return ""
 	}
-	return st.TS
+	if st.TurnEnd {
+		return st.TurnEndAt // settled by the route that notifies; it adopted the time below
+	}
+	// Not settled yet: on the four hook-less TUI kinds a poll of this very listing may have
+	// seen the end first, and until something calls DriveState nothing settles it. The
+	// observation counts only while a turn was in flight and only while it is newer than the
+	// status record it was taken against (status.ObservedTurnEnd).
+	if st.State != "working" {
+		return ""
+	}
+	return status.ObservedTurnEnd(sid)
 }
 
 // remoteSessionURL (deriving the claude.ai Remote Control URL) lives in

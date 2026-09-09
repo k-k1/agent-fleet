@@ -174,7 +174,7 @@ plumbed through the proposal store and the Console launch flow.
 So what this decision guarantees is not a tree depth but that **between one human launch and the
 next, sessions alone can extend the chain by one**. Nothing grows without a person in the loop.
 
-### 6. At most three children per caller — a budget counting stopped children, but not archived ones
+### 6. Three children per caller by default — a budget counting stopped children, but not archived ones
 
 Count the children the caller **created** — `origin=session` with `origin_session` equal to the
 caller — **whose Meta still exists and is not archived**, and refuse at three. Not `origin_session` alone: that would
@@ -237,6 +237,66 @@ so; they are corrected (docs/log/89 §89.5).
 for no longer happens while the predecessor is archived. What it still prevents is the double count
 that would come back **when the user restores that predecessor**.
 
+#### Amendment (2026-09-10, docs/log/87 §87.16): the number is a setting now (1..6, default 3)
+
+**Three stopped being a compile-time constant and became a setting** under Settings > Agents >
+Session. The ground for it is what this decision already said about itself — **three is provisional,
+not a measured resource limit** — and there is no reason to make someone rebuild the binary to
+change a provisional number. **Making it configurable is not the same as having measured a safe
+value**: nothing has been measured, and all that changed is who picks the provisional number.
+
+- **The default is three.** No existing workspace changes behaviour. This runs the opposite way to
+  docs/log/86 §86.10, so that amendment's "ignore the stored value outright" does not apply: as
+  long as the default equals the old constant, a workspace with nothing stored behaves exactly as
+  before.
+- **The ceiling is six (`session.SpawnChildLimitMax`); unlimited is not on offer.** A live claude
+  session measures 340-435 MB RSS and this host's cgroup is 10 GiB (docs/log/88 §88.9.2), so the
+  host holds roughly 23. Six children plus their parent is seven, 2.4-3.0 GiB — under a third of
+  the host, leaving room for the sessions the user opened themselves.
+
+  **Amendment (2026-09-10, docs/log/87 §87.17): the count got measured. The numbers do not
+  change.** The RSS sum above turned out to be an overestimate — PSS, measured under the same
+  conditions, comes in lower. One parent's margin was bigger than the original estimate said, but
+  the reason a ceiling is needed is that nothing bounds the number of parents (next bullet), and
+  more margin per parent does not weaken that reason. **Measurement argued for changing neither
+  the default of three nor the ceiling of six.**
+
+  ⚠️ **The two numbers do not rest on equally strong ground.** What was actually run and measured
+  is **one parent plus three children** — the worst case at the default of three. **The ceiling of
+  six is an extrapolation** from a linear model fitted to those three (docs/log/87 §87.17.4). So
+  **three rests on measurement and six rests on extrapolation from it**: neither is the
+  "provisional value nobody measured" any more, but six must not be read as "measured." Limits to
+  how far this generalizes (this one 10 GiB workspace, the claude kind only) are in
+  docs/log/87 §87.17.6.
+- **The reason a ceiling is needed is not running out of memory as such.** This budget is **per
+  parent**, and nothing bounds the number of parents (two at six is thirteen agents). The
+  workspace total is therefore not bounded by this setting at all, which is exactly why one
+  parent's ceiling has to sit well below what the host can hold. On top of that, the whole point
+  of `SpawnChildLimit` was to be **a number a refusal can name**. Offering "unlimited" would give
+  that property back and return the ceiling to an invisible one — the host's OOM killer.
+- **Out of range, wrong type and missing all fall back to the default** (`NormalizeSpawnChildLimit`),
+  not to the nearest bound. The Console offers a fixed set of choices, so a value outside them can
+  only be a hand-edited or stale ui-prefs, and "what the workspace does with no setting" is a
+  better answer to that than a number nobody picked. Same rule as the other uiprefs accessors.
+
+**The plumbing**: `session` is a leaf package and `uiprefs` depends on it, so it cannot read the
+prefs itself. It takes the same **hook** shape as `mcpreg.PeerMessagingEnabled` — `uiprefs`'s
+`init` wires `session.SpawnChildLimitPref`. The MCP server is a separate process from the Agent
+but **the same binary**, so that `init` runs in both and the two ends cannot give different
+answers.
+
+**Nothing bakes the number in**, the same discipline as putting `StoppedTTL` into the refusal text.
+There are three such places: the reservation and its refusal (`reserveSpawnSlot`),
+`create_session`'s description, and `list_child_sessions`'s `slotLimit`. All three call
+`session.SpawnChildLimit()` at the moment they need it — hold it in a variable and the next turn
+after the user changes the setting names a ceiling that is not in force.
+
+**Depth (decision 5) is deliberately NOT made configurable.** It is a different kind of rule. The
+count is a provisional number about the host's resources; one generation is the design judgement
+that **no shape may grow without bound with nobody watching**, which is not a resource question at
+all. Making the two settings together would quietly withdraw decision 5, so it was confirmed with
+the user and kept out of scope.
+
 ### 7. `worktree` defaults to true, and `worktree=false` is refused on another live session's directory
 
 The operator surface defaults to `false` (a person can say "work right here"), but the session
@@ -289,6 +349,18 @@ every turn (docs/log/51 exists because of that gap). `list_child_sessions` there
 the status store raises only on a real end of turn (`status.SessionStatus.TurnEnd`) and never on an
 idle nobody can explain. It is empty rather than guessed, so `idle` with a timestamp and `idle`
 without one are finally different answers.
+
+**Amendment (2026-09-10, docs/log/89 §89.8): the listing poll records the end itself.** When the
+amendment above was written, `MarkTurnEnd` was fired from `DriveState` alone, so a child driven in
+its TUI on the four hook-less kinds (agy / copilot / cursor / kiro) carried **no `lastTurnEndAt`
+until somebody called `get_session_status` on it** — invisible to a parent that only polls the
+list. Closed by separating "record WHEN the turn ended" from "fire the notification and the
+operator's completion report". The source moved from the write time of the `TurnEnd` bit to a pair
+split off from it: `status.SessionStatus.TurnEndAt` for an end something settled, and a store of
+its own for an end a poll merely observed. What it means as evidence is unchanged — only a real
+end of turn writes it, an idle nobody can explain does not, and the next turn retires it.
+**The read route still has no side effects**: recording leaves the state machine untouched, so the
+notification and the report are still fired by `DriveState` alone, exactly once.
 
 **A server-fired completion notification was considered and rejected** (docs/log/88 §88.6-1).
 af's only route into a session is typing into its TUI, i.e. starting a turn — so it would save the
