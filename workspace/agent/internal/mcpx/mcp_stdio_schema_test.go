@@ -24,10 +24,12 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
 	oldChromium, oldPeer := sessionChromiumEnabled(), mcpPeerMessagingEnabled
 	oldImageGen, oldSource := mcpImageGenEnabled, mcpSourceSession
+	oldFleetObserve := mcpFleetObserveEnabled
 	t.Cleanup(func() {
 		setFlags(oldWrite, oldSelfReport, oldChromium)
 		mcpPeerMessagingEnabled = oldPeer
 		mcpImageGenEnabled, mcpSourceSession = oldImageGen, oldSource
+		mcpFleetObserveEnabled = oldFleetObserve
 	})
 	// generate_image's tool list is not static: the server asks the Agent for the session's
 	// kind and the effective provider on every tools/list (ADR 0069 decision 8), so the
@@ -44,6 +46,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		write, selfReport, chromium bool
 		peer                        bool
 		imageGen                    bool
+		fleetObserve                bool
 	}{
 		{name: "assistant-read"},
 		{name: "assistant-write", write: true},
@@ -51,6 +54,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 		{name: "session-chromium", selfReport: true, chromium: true},
 		{name: "session-all", selfReport: true, chromium: true, peer: true},
 		{name: "session-imagegen", selfReport: true, imageGen: true},
+		{name: "session-fleet-observe", selfReport: true, fleetObserve: true},
 	}
 
 	advertised := make(map[string]struct{})
@@ -59,6 +63,7 @@ func TestMCPAdvertisedInputSchemasAreValid(t *testing.T) {
 			setFlags(variant.write, variant.selfReport, variant.chromium)
 			mcpPeerMessagingEnabled = variant.peer
 			mcpImageGenEnabled = variant.imageGen
+			mcpFleetObserveEnabled = variant.fleetObserve
 			for _, tool := range mcpStdioToolList() {
 				name := tool["name"].(string)
 				advertised[name] = struct{}{}

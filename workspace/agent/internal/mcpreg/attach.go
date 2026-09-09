@@ -206,7 +206,16 @@ func extraEnvVars(d ServerDef) []string {
 		// local Agent REST directly. Codex
 		// starts stdio MCP children with a default-deny environment, so both the
 		// bearer token and a non-default listen address must be forwarded.
-		return []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME"}
+		//
+		// The memo tools (docs/log/86 stage 1) are the exception to "local Agent REST":
+		// the queue lives in the CP store, so they hairpin out to AF_CP_BASE_URL with the
+		// per-membership AF_MEMO_TOKEN (cpMemoDo). Both are workspace-level env, present
+		// for every other kind by inheritance and dropped only by codex's default-deny.
+		// They are listed unconditionally rather than behind the opt-in: this list is
+		// resolved once per boot into codex's config, while the opt-in can be toggled
+		// afterwards, and a var that is merely forwarded grants nothing on its own — the
+		// advertised tool set is still the boundary.
+		return []string{"AGENT_TOKEN", "AGENT_ADDR", "AF_SESSION_NAME", "AF_CP_BASE_URL", "AF_MEMO_TOKEN"}
 	}
 	return []string{"AF_SECRET_KEY"}
 }

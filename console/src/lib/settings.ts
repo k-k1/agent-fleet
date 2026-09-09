@@ -347,6 +347,14 @@ export interface Settings {
   // than a text turn — from sessions that are not Codex sessions and would otherwise never
   // touch it, so it is chosen rather than inherited on upgrade.
   imageGeneration: boolean;
+  // Global ON/OFF for the session-side fleet-observation tools (AgentsTab > Sessions,
+  // docs/log/86 stage 1). Same shape as the two above: not per-agent, read by the Agent from
+  // ui-prefs to decide whether the session-side MCP server is launched with --fleet-observe.
+  // It adds four tools — get_session_status / get_session_usage / list_memos / add_memo — and
+  // nothing that drives, answers for or deletes another session.
+  // Default FALSE. Nothing here is destructive, but it is a wider surface than the
+  // report-when-done contract a fleet has today, so it is chosen rather than inherited.
+  sessionFleetObserve: boolean;
   // Which image provider generate_image tries first (AgentsTab > Sessions, ADR 0069). The
   // Agent normalizes whatever is stored into a TOTAL order — unknown ids and duplicates drop,
   // unmentioned providers append in the built-in order — so a list saved before a provider
@@ -836,6 +844,7 @@ const DEFAULTS: Settings = {
   autoTitleSuggest: true,
   peerMessaging: false, // opt-in (docs/log/58 / ADR 0041) — not a surface to widen by default
   imageGeneration: false, // opt-in (ADR 0069) — it spends the ChatGPT plan quota
+  sessionFleetObserve: false, // opt-in (docs/log/86) — widens what a session may read
   imageProviderOrder: [...IMAGE_PROVIDERS],
   opencodeCatalog: "off",
   expandThinking: {},

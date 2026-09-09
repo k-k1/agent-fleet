@@ -96,20 +96,40 @@ var mcpPeerMessagingEnabled bool
 // and neither may be frozen into the server's argv.
 var mcpImageGenEnabled bool
 
-// RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
-// Pass --write to additionally expose the write tools (docs/log/19 Q2 af_write opt-in),
-// or --self-report for the session-side server (docs/log/51 Phase 3). Combining
-// --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
-// tools without granting any other read/write tool (docs/log/53 §53.8).
-func RunStdio(args []string) {
+// mcpFleetObserveEnabled adds ONLY the four fleet-observation tools to the session-side
+// server (docs/log/86 stage 1). Enabled by `--self-report --fleet-observe`, the same additive
+// shape as the three flags above.
+//
+// The four are get_session_status / get_session_usage (look at the fleet you are part of) and
+// list_memos / add_memo (leave your user a note about what you saw). Reading and note-leaving
+// ride on one switch because they are one act: the note is the only channel a session has to
+// report an observation to a human who is not watching.
+//
+// What it deliberately does NOT bring is every other operator tool. Opening those to sessions
+// runs into three properties a session does not have and the operator does: a conversation id
+// (so report_to / owner_conv are empty and completion reports go nowhere), an attending human
+// (the "confirm with the user first" clause in the operator descriptions is not enforcement,
+// and BridgeApprovalGate is a no-op without a conv), and a reply budget (the operator's
+// auto-reply cap has no session-side equivalent). Anything that drives, answers for, or
+// deletes another session stays on the operator surface until those are solved.
+var mcpFleetObserveEnabled bool
+
+// parseStdioFlags resolves the argv into this package's capability flags. It is separate from
+// RunStdio because RunStdio then blocks on stdin forever: the conjunctions below are the whole
+// scope boundary between the assistant and session surfaces, and they have to be reachable by
+// a test without standing a server up.
+//
+// Every flag is reset first, so a caller cannot inherit a capability from a previous parse.
+func parseStdioFlags(args []string) {
 	setWriteEnabled(false)
 	setSelfReportOnly(false)
 	setSessionChromiumEnabled(false)
-	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
 	setConvID("")
 	mcpPeerMessagingEnabled = false
 	mcpImageGenEnabled = false
+	mcpFleetObserveEnabled = false
 	chromiumAttachRequested, peerMessagingRequested, imageGenRequested := false, false, false
+	fleetObserveRequested := false
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "--write":
@@ -122,6 +142,8 @@ func RunStdio(args []string) {
 			peerMessagingRequested = true
 		case "--image-gen":
 			imageGenRequested = true
+		case "--fleet-observe":
+			fleetObserveRequested = true
 		case "--conv":
 			if i+1 < len(args) {
 				i++
@@ -135,6 +157,17 @@ func RunStdio(args []string) {
 	setSessionChromiumEnabled(selfReportOnly() && chromiumAttachRequested)
 	mcpPeerMessagingEnabled = selfReportOnly() && peerMessagingRequested
 	mcpImageGenEnabled = selfReportOnly() && imageGenRequested
+	mcpFleetObserveEnabled = selfReportOnly() && fleetObserveRequested
+}
+
+// RunStdio is the `workspace-agent mcp-stdio` subcommand: a blocking stdio loop.
+// Pass --write to additionally expose the write tools (docs/log/19 Q2 af_write opt-in),
+// or --self-report for the session-side server (docs/log/51 Phase 3). Combining
+// --self-report with --chromium-attach adds the narrowly scoped Chromium Attach View
+// tools without granting any other read/write tool (docs/log/53 §53.8).
+func RunStdio(args []string) {
+	mcpSourceSession = os.Getenv("AF_SESSION_NAME")
+	parseStdioFlags(args)
 	r := bufio.NewReaderSize(os.Stdin, 1<<20)
 	stdioOut = &stdioWriter{w: bufio.NewWriter(os.Stdout)}
 	for {
@@ -353,6 +386,9 @@ func mcpStdioToolList() []map[string]any {
 		if mcpPeerMessagingEnabled {
 			tools = append(tools, mcpStdioPeerTools()...)
 		}
+		if mcpFleetObserveEnabled {
+			tools = append(tools, mcpStdioFleetObserveTools()...)
+		}
 		if offer, ok := mcpImageGenAdvertise(); ok {
 			tools = append(tools, mcpStdioImageGenTools(offer)...)
 		}
@@ -560,6 +596,109 @@ func mcpStdioPeerTools() []map[string]any {
 
 func isPeerTool(name string) bool {
 	return name == "list_peer_sessions" || name == "send_to_peer_session"
+}
+
+// mcpStdioFleetObserveTools — the four fleet-observation tools, advertised only under
+// `--self-report --fleet-observe` (docs/log/86 stage 1).
+//
+// They are written out here rather than picked out of mcpStdioTools / mcpStdioWriteTools the
+// way the Chromium tools are, because the operator's descriptions answer a different question.
+// The operator is told to call get_session_status "before answer_session_question /
+// respond_session_plan" — tools a session does not get — and its text is Japanese, which the
+// session surface deliberately is not (a session-advertised description is a fixed cost on
+// every session's first turn; measured 40% cheaper in English, b367ae51). Sharing the entries
+// would either mislead the session or make the operator's text worse.
+//
+// The handlers are NOT duplicated: mcpStdioCall dispatches these names to the same cases the
+// operator reaches, so there is one implementation and one place a fix lands.
+func mcpStdioFleetObserveTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name": "get_session_status",
+			"description": "Agent Fleet: report the live state of one session in this workspace - yours or another. " +
+				"state is working / idle / question / plan / stopped. " +
+				"Call it when you need to know whether a peer is still busy: after send_to_peer_session, " +
+				"before deciding whether to wait on work you handed over, or when your user asks what another " +
+				"session is doing. " +
+				"You cannot answer another session's pending question or approve its plan - those stay with the " +
+				"user and the fleet operator. If a peer is stuck on one, tell your user; do not try to unblock it.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "minLength": 1, "description": "Session name (the name from list_peer_sessions, or your own $AF_SESSION_NAME)"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			"name": "get_session_usage",
+			"description": "Agent Fleet: report context usage and cumulative token spend per session. " +
+				"Pass name for one session, omit it for all of them. " +
+				"context.pct is how full the context window is now; cumulative is what the session has spent " +
+				"so far. " +
+				"Call it on yourself when a task is running long, to decide whether to hand the rest over " +
+				"(propose_session_handoff) instead of pushing a full context further. " +
+				"A high pct is the signal to summarize and hand over while you still have room to write the " +
+				"summary - not after. agy and cursor report no context, so they come back without it.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name": map[string]any{"type": "string", "description": "Session name (optional; omit for every session)"},
+				},
+			},
+		},
+		{
+			"name": "list_memos",
+			"description": "Agent Fleet: list the memo queue - the notes your user collects and later sends into " +
+				"a session in one batch. Each memo has id / repo / category / kind (file|text) / body / refPath. " +
+				"Call it before add_memo to see whether the point is already queued, and to match the repo and " +
+				"category labels already in use.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name": "add_memo",
+			"description": "Agent Fleet: add one note to your user's memo queue. It is a message to the HUMAN, " +
+				"read in the Console later - not a message to another session (that is send_to_peer_session) and " +
+				"not a way to give yourself a to-do. " +
+				"Use it for something worth acting on that is outside what you were asked to do: a bug you had to " +
+				"step around, a stale document you noticed, follow-up work your change implies. " +
+				"Say what you found and where (repo, file:line); the queue is read away from this conversation, " +
+				"so nothing here is context the reader already has. " +
+				"Do not log progress, completion or thanks - your report and the Console already carry those. " +
+				"kind=text needs body; kind=file needs refPath (a ~/repos/... path) and takes body as a comment.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"kind":     map[string]any{"type": "string", "enum": []string{"text", "file"}, "description": "text | file"},
+					"body":     map[string]any{"type": "string", "description": "The note (kind=text), or a comment on the file (kind=file)"},
+					"refPath":  map[string]any{"type": "string", "description": "A ~/repos/... path (kind=file)"},
+					"repo":     map[string]any{"type": "string", "description": "Which repo bucket it belongs to (optional; '' = unfiled)"},
+					"category": map[string]any{"type": "string", "description": "Free-form sub-project label (optional; reuse one from list_memos)"},
+				},
+				"required": []string{"kind"},
+			},
+		},
+	}
+}
+
+// isFleetObserveTool names the four tools above. It is what lets their handlers accept a
+// session caller: the read handlers have no gate of their own (the advertised set is the
+// boundary — mcpStdioCall), but add_memo is a write tool and must not read as "any
+// --self-report server may write memos".
+func isFleetObserveTool(name string) bool {
+	switch name {
+	case "get_session_status", "get_session_usage", "list_memos", "add_memo":
+		return true
+	}
+	return false
+}
+
+// memoWriteAllowed authorizes add_memo. Two surfaces reach it: the operator under --write,
+// and a session whose user turned fleet observation on. The other memo writers
+// (update_memo / delete_memo / flush_memos) keep the bare writeEnabled() check — a session
+// may add to its user's queue, not rewrite or send it.
+func memoWriteAllowed() bool {
+	return writeEnabled() || mcpFleetObserveEnabled
 }
 
 // mcpToolGenerateImage is the one image generation tool (ADR 0069). Named as a constant
@@ -1812,7 +1951,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		}
 		return mcpTextResult(req.ID, out)
 	case "add_memo":
-		if !writeEnabled() {
+		if !memoWriteAllowed() {
 			return mcpToolErr(req.ID, "このアシスタントはメモの追加を許可されていません")
 		}
 		out, err := cpMemoDo(http.MethodPost, "/internal/memos", []byte(p.Args))
@@ -2323,9 +2462,45 @@ func mcpStdioCall(req mcpReq) []byte {
 	if err != nil {
 		return mcpToolErr(req.ID, "Agent への問い合わせに失敗しました: "+err.Error())
 	}
+	if p.Name == "get_session_status" && selfReportOnly() {
+		body = withoutPendingInteraction(body)
+	}
 	return mcpResult(req.ID, map[string]any{
 		"content": []any{map[string]any{"type": "text", "text": body}},
 	})
+}
+
+// withoutPendingInteraction drops `questions` and `plan` from a session status before a
+// SESSION sees it (the operator keeps both — it can act on them).
+//
+// A session gets get_session_status to learn whether a peer is busy, and stage 1 withholds
+// answer_session_question / respond_session_plan on purpose: answering another session's
+// question, or approving its plan, is standing in for the user's approval. Handing over the
+// pending text anyway would leave the model holding exactly the input it needs to do that
+// through some other route — relaying the plan into a peer message, say — while the tool that
+// would have done it honestly is missing. These two fields are also the largest and the most
+// attacker-influenced part of the payload (they are another session's output, which docs/30
+// treats as attacker-influenced), and a plan body is unbounded.
+//
+// Unparseable input is returned untouched rather than blanked: this is a display trim, and a
+// status the caller cannot read at all is worse than one carrying a field it must not act on.
+func withoutPendingInteraction(body string) string {
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		return body
+	}
+	_, hasQuestions := m["questions"]
+	_, hasPlan := m["plan"]
+	if !hasQuestions && !hasPlan {
+		return body
+	}
+	delete(m, "questions")
+	delete(m, "plan")
+	trimmed, err := json.Marshal(m)
+	if err != nil {
+		return body
+	}
+	return string(trimmed)
 }
 
 // mcpOwningSession names the session this MCP process serves.

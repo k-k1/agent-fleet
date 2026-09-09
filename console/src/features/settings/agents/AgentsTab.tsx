@@ -108,6 +108,17 @@ export function AgentsTab() {
         <OnOff value={s.peerMessaging} onChange={(v) => setSetting("peerMessaging", v)} />
       </Row>
       <p className="muted ds-note">{tr("agents.note_peer_messaging")}</p>
+      {/* Fleet observation (docs/log/86) sits directly under peer messaging because the two
+          answer the same question — what may a session know about the rest of the fleet — and
+          are most often turned on together: messaging a peer is worth more once the session can
+          see whether that peer is busy. */}
+      <Row label={tr("agents.fleet_observe")}>
+        <OnOff
+          value={s.sessionFleetObserve}
+          onChange={(v) => setSetting("sessionFleetObserve", v)}
+        />
+      </Row>
+      <p className="muted ds-note">{tr("agents.note_fleet_observe")}</p>
       {/* Image generation (ADR 0069) sits next to it for the same reason: one tool distributed
           to every kind through af's own MCP server, not any one agent's setting. */}
       <Row label={tr("agents.image_generation")}>
