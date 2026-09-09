@@ -39,6 +39,9 @@ function respond(superAdmin: boolean) {
       return Promise.resolve({ tenants: TENANTS, super_admin: superAdmin });
     }
     if (path === "api/admin/ec2-pool") return Promise.resolve({ runtime: "other" });
+    // A Control Plane from before ADR 0072 decision 11 has no engines route at all: it 404s,
+    // which `api` turns into a rejection. The default here is that older deployment.
+    if (path === "api/admin/engines") return Promise.reject(new Error("404"));
     if (path === "api/cost/profile") return Promise.resolve({ runtime: "", available: false, verified: false });
     if (path.endsWith("/members")) return Promise.resolve({ members: [] });
     if (path.endsWith("/idp")) return Promise.resolve({ providers: [] });
@@ -123,5 +126,31 @@ describe("AdminTab rail", () => {
     await click(byText(".tenant-card", "Acme"));
     expect(host!.querySelector(".tenant-summary")).toBeTruthy();
     expect(host!.querySelector(".admin-actions")).toBeNull();
+  });
+});
+
+// 🔴 The engines item used to appear only when the deployment already RAN an engine, so the
+// one screen that says "here is what you could run" was unreachable on every deployment that
+// had not adopted 60-engines yet — which is exactly who needs it (ADR 0072 decision 11).
+describe("AdminTab / the engines item", () => {
+  const railLabels = () =>
+    Array.from(host!.querySelectorAll(".settings-rail-item")).map((n) => n.textContent);
+
+  it("is offered when the Control Plane serves the panel, even with zero engines", async () => {
+    respond(true);
+    const base = api.getMockImplementation()!;
+    api.mockImplementation((path: string) =>
+      path === "api/admin/engines" ? Promise.resolve({ engines: [] }) : base(path),
+    );
+    await mount();
+    expect(railLabels().join(" ")).toContain("推論エンジン");
+  });
+
+  it("stays hidden on a Control Plane that does not serve it", async () => {
+    respond(true);
+    await mount();
+    // The default stub rejects the probe, which is what an older CP's 404 looks like: the item
+    // would open an empty room.
+    expect(railLabels().join(" ")).not.toContain("推論エンジン");
   });
 });
