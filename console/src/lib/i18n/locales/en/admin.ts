@@ -55,7 +55,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_desc": "description",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
-  "admin.engines_model_add_ctx": "window",
+  "admin.engines_model_add_ctx": "context window",
   "admin.engines_model_add_out": "output cap",
   // The control plane cannot look in S3, so a declared size is the only source for "sync +N s".
   "admin.engines_model_add_bytes": "size",
@@ -73,7 +73,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Put the operator's token in the stack's HfTokenSecretArn — it is read by the ingest task only.",
-  "admin.engines_ingest_noncommercial": "🔴 A non-commercial licence. On a deployment that charges its members, taking this in puts the operator in breach.",
+  "admin.engines_ingest_noncommercial":
+    "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
   "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
   "admin.engines_ingest_state_pending": "starting",
   "admin.engines_ingest_state_running": "fetching",
