@@ -26,10 +26,10 @@ shown as text as well, not just an icon.
 | Spend limit — needs a raise | The spend / credit limit was reached. Waiting will not clear it — the limit has to be raised or credit added |
 | Ready | Ready to take the next instruction |
 | Ready · running in background | Accepts input, but background processing is still running |
-| Ready · handoff to launch | The session proposed the next session's first prompt and nobody has launched it yet. Open the conversation and start it (or discard it) from the handoff card ([02](02-sessions.md)) |
+| Ready · handoff to launch | The **last** next-session prompt this session proposed has not been launched. Open the conversation and start it (or discard it) from the handoff card ([02](02-sessions.md)). An older proposal that a newer, launched one replaced does not raise it |
 | Running | A shell / ssm with no detailed progress state is running |
 | Stopped | The process is stopped |
-| Stopped · handoff to launch | Stopped, and still holding a handoff nobody has launched |
+| Stopped · handoff to launch | Stopped, and the last handoff it proposed is still unlaunched |
 | Folder missing — can't resume | The working folder is gone and the same conversation can't be resumed |
 | Ended (out of memory) | May have been force-killed by a memory limit or similar |
 | Force-killed / Crashed | A SIGKILL, a signal, a non-zero exit, or similar was detected |

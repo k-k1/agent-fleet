@@ -87,9 +87,23 @@ func ReadHandoffProposals(name string) ([]*sessionHandoffProposal, error) {
 	return out, nil
 }
 
-// handoffPending reports whether name still has a proposal nobody has launched. It runs
-// once per row on every /sessions poll, so the common case has to stay cheap: a session that
-// never proposed anything has no file at all, which ReadHandoffProposals answers with one
+// handoffPending reports whether the LAST handoff this session proposed is still unlaunched.
+//
+// The newest one, not "is any of them unlaunched" — which is what this first shipped as, and it
+// was wrong. A proposal is kept after it is launched (re-reading a handoff is useful), so a
+// session that has handed work on many times holds every card it ever made, and a proposal that
+// a later, launched one REPLACED then pins the badge forever. Measured on one real store
+// (2026-09-10, 77 sessions holding proposals): "any unlaunched" badged 8 rows, of which 5 were a
+// single superseded leftover sitting behind newer launched proposals — including the row that
+// was reported.
+//
+// The cost, accepted deliberately: a turn that fans out into several successors and then has
+// only its NEWEST launched stops badging while the older siblings are unstarted. The mirror
+// renders the cards oldest first, so launching them in the order they are read keeps the badge
+// up until the last one is started, and the cards themselves never disappear either way.
+//
+// It runs once per row on every /sessions poll, so the common case has to stay cheap: a session
+// that never proposed anything has no file at all, which ReadHandoffProposals answers with one
 // failed open. A read error counts as "nothing pending" — the flag only adds a badge, and a
 // transient failure must not make a row claim work that may not exist.
 func handoffPending(name string) bool {
@@ -97,12 +111,16 @@ func handoffPending(name string) bool {
 	if err != nil {
 		return false
 	}
+	// By CreatedAt rather than by position: that is the moment the mirror orders the cards by,
+	// and an edit rewrites a proposal in place without moving it. >= so that the later entry
+	// wins a tie, matching the append order the file is written in.
+	var newest *sessionHandoffProposal
 	for _, p := range list {
-		if p.LaunchedAt == 0 {
-			return true
+		if newest == nil || p.CreatedAt >= newest.CreatedAt {
+			newest = p
 		}
 	}
-	return false
+	return newest != nil && newest.LaunchedAt == 0
 }
 
 // writeHandoffProposals persists list as-is, oldest first. An empty list removes the
