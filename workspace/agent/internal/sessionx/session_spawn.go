@@ -27,9 +27,15 @@ var spawnInflight = struct {
 	n  map[string]int
 }{n: map[string]int{}}
 
-// countChildren returns how many sessions name parent as the one that started them.
+// countChildren returns how many sessions this parent CREATED and still exist.
 //
-// Archived children are counted. Archiving hides a session from the active list but keeps it
+// Both halves of the predicate are meant. origin_session alone would also count a fork of a
+// child (which keeps the lineage but is origin=handoff), and a fork is a person's action in the
+// Console — charging it to the parent's budget would let the user's own fork be the reason the
+// parent may not spawn. Nothing escapes through that gap: a fork of a child cannot spawn either
+// (the depth rule reads the lineage, deliberately the wider predicate).
+//
+// Archived children ARE counted. Archiving hides a session from the active list but keeps it
 // restorable, so treating it as a freed slot would make the limit meaningless: fold up, spawn a
 // replacement, restore. Only deleting the meta frees a slot, which is also the only operation
 // that makes the child stop existing in any sense the user can undo.
@@ -105,27 +111,45 @@ func spawnDepthRefusal(parent string) *SpawnRefusal {
 	return nil
 }
 
+// sessionAliveFn is SessionAlive behind a seam: liveness means "a tmux session or a managed
+// runtime handle exists", neither of which a unit test can stage.
+var sessionAliveFn = SessionAlive
+
+// workingCopyKey is the identity a working copy is compared BY. Two spellings that reach the
+// same directory have to produce the same key or the check below is decorative: one checkout
+// can be named `/home/dev/repos/app`, a symlink to it, or a path with `..` in it.
+//
+// EvalSymlinks is the part that matters and the part that can fail (a path that does not exist,
+// a broken link). On failure the cleaned absolute path is still a better key than the raw
+// string, so it degrades rather than giving up — giving up would mean "no session is here".
+func workingCopyKey(dir string) string {
+	abs, err := filepath.Abs(filepath.Clean(dir))
+	if err != nil {
+		return filepath.Clean(dir)
+	}
+	if real, err := filepath.EvalSymlinks(abs); err == nil {
+		return real
+	}
+	return abs
+}
+
 // spawnWorkingCopyRefusal keeps two agents out of one working copy.
+//
+// ⚠️ Call it with the RESOLVED dir — the one the session will actually run in — never the raw
+// request. The create turns an empty dir into home and joins a relative one onto home, so
+// checking the request as sent lets `dir: ""` walk past a session already running in home.
 //
 // The comparison is the working copy — dir — and subdir takes no part in it: one session at the
 // root and another under console/ still share a checkout, an index and a branch, which is the
 // accident this refuses. Stopped sessions do not count; what is guarded here is two processes
 // running at once, not a quota (that is SpawnChildLimit, which counts the other way round).
-// sessionAliveFn is SessionAlive behind a seam: liveness means "a tmux session or a managed
-// runtime handle exists", neither of which a unit test can stage.
-var sessionAliveFn = SessionAlive
-
 func spawnWorkingCopyRefusal(dir string) *SpawnRefusal {
-	target, err := filepath.Abs(filepath.Clean(dir))
-	if err != nil {
-		return nil // an unreadable path fails later, in the create itself, with a better message
-	}
+	target := workingCopyKey(dir)
 	for _, m := range session.ListMetas() {
 		if m.Archived || m.Dir == "" {
 			continue
 		}
-		other, err := filepath.Abs(filepath.Clean(m.Dir))
-		if err != nil || other != target || !sessionAliveFn(m) {
+		if workingCopyKey(m.Dir) != target || !sessionAliveFn(m) {
 			continue
 		}
 		return &SpawnRefusal{Status: 409, Code: "spawn_working_copy_busy",
@@ -168,19 +192,16 @@ func SpawnEnvelope(parent, prompt string) string {
 	return "[agent-fleet:spawn from=" + parent + "] " + prompt
 }
 
-// SpawnCreateRefusal runs every origin=session refusal that does not need a slot reserved.
-// Split from the reservation so the caller can validate before taking a slot it may not keep.
-func SpawnCreateRefusal(parent, kind, dir string, worktree bool) *SpawnRefusal {
+// SpawnCreateRefusal runs the origin=session refusals that depend only on the REQUEST: who is
+// asking and what kind of session it wants.
+//
+// The working-copy refusal is deliberately not among them. It needs the resolved working
+// directory, which the create only knows further down (an empty dir becomes home, a relative
+// one is joined onto home, a worktree launch replaces it outright), so it is called separately
+// at that point. Folding it in here would mean checking a path nobody will run in.
+func SpawnCreateRefusal(parent, kind string) *SpawnRefusal {
 	if r := spawnDepthRefusal(parent); r != nil {
 		return r
 	}
-	if r := spawnKindRefusal(kind); r != nil {
-		return r
-	}
-	if !worktree {
-		if r := spawnWorkingCopyRefusal(dir); r != nil {
-			return r
-		}
-	}
-	return nil
+	return spawnKindRefusal(kind)
 }

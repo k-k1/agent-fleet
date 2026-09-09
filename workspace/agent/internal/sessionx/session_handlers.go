@@ -500,27 +500,15 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !httpx.DecodeJSON(w, r, &req) {
 		return
 	}
-	// A create raised by another SESSION (ADR 0073) answers to refusals no other route has:
-	// recursion depth, the per-parent budget, raw shells, and sharing a working copy. They run
-	// before the idempotency claim and before any side effect (clone / worktree), so a refused
-	// spawn leaves nothing behind.
+	// A create raised by another SESSION (ADR 0073) carries the parent's name, and the whole
+	// spawn regime hangs off it. Resolved here; the refusals run further down.
 	spawnParent := ""
 	if origin, _, parent := CreateOrigin(&req); origin == session.OriginSession {
 		spawnParent = parent
-		if ref := SpawnCreateRefusal(parent, req.Kind, req.Dir, req.Worktree); ref != nil {
-			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
-			return
-		}
-		if err := reserveSpawnSlot(parent); err != nil {
-			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
-			return
-		}
-		// Held until this handler returns: by then the child's meta is either on disk (and
-		// counted from there) or the create failed and the slot was never used.
-		defer releaseSpawnSlot(parent)
 		// The child has to be able to tell this instruction from one its user typed
-		// (ADR 0073 decision 14). Applied here rather than in the calling tool so it cannot
-		// be omitted, and before the ledger so the key covers what is actually delivered.
+		// (ADR 0073 decision 14). Applied before the idempotency key is derived, so the key
+		// covers what is actually delivered, and here rather than in the calling tool so it
+		// cannot be omitted or forged.
 		req.InitialPrompt = SpawnEnvelope(parent, req.InitialPrompt)
 	}
 	// Idempotency guard (session_idempotency.go): collapse a retried / concurrent create
@@ -562,6 +550,29 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		httpx.WriteJSON(w, http.StatusCreated, body)
+	}
+	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
+	// (clone / worktree), so a refused spawn leaves nothing behind.
+	//
+	// After the claim, because they must not answer a RETRY. A client whose create timed out
+	// re-sends the same request, and by then the first child exists: run the budget first and
+	// the retry is refused as "you already have three" instead of being replayed the session it
+	// actually created. The same for a create still in flight — the ledger answers that with
+	// create_in_progress, which the calling tool reconciles into the eventual session.
+	//
+	// The working-copy check is not here: it needs the RESOLVED dir (below), not the raw one.
+	if spawnParent != "" {
+		if ref := SpawnCreateRefusal(spawnParent, req.Kind); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+		if err := reserveSpawnSlot(spawnParent); err != nil {
+			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
+			return
+		}
+		// Held until this handler returns: by then the child's meta is either on disk (and
+		// counted from there) or the create failed and the slot was never used.
+		defer releaseSpawnSlot(spawnParent)
 	}
 	title, ok := CleanTitle(req.Title)
 	if !ok {
@@ -753,6 +764,18 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_dir", "dir does not exist: "+req.Dir)
 		return
 	}
+	// Two agents in one working copy (ADR 0073 decision 7). Checked HERE, against the resolved
+	// req.Dir, because that is the directory the session will actually run in: an empty dir
+	// becomes home and a relative one is joined onto home a few lines above, so comparing the
+	// raw request would let `dir: ""` walk straight past a session already running in home.
+	// A worktree launch has replaced req.Dir with the fresh worktree by now and cannot collide,
+	// which is why the check is scoped to the non-worktree case rather than the raw flag.
+	if spawnParent != "" && !req.Worktree {
+		if ref := spawnWorkingCopyRefusal(req.Dir); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+	}
 	// Subdir (optional): the CWD narrows to a folder beneath the resolved working copy.
 	// Validated AFTER Dir so a worktree launch checks the path inside the fresh worktree
 	// — the parent may well have a folder the new branch doesn't (or vice versa).
@@ -853,7 +876,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 	// Optional launch task: deliver it once the CLI has booted (async — the create
 	// response returns the session immediately so the caller can start polling).
 	if strings.TrimSpace(req.InitialPrompt) != "" {
-		go deliverInitialPrompt(name, req.InitialPrompt)
+		go deliverInitialPromptFn(name, req.InitialPrompt)
 	}
 
 	writeCreated(meta)
@@ -871,6 +894,11 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 // docs/log/51 Phase 2: the instruction ledger row is raised only for report_to — even with no
 // initial_prompt, because the operator may steer the session by hand afterwards. The other two
 // branches record provenance only; there is nowhere for them to report to.
+// deliverInitialPromptFn is deliverInitialPrompt behind a seam. The ordering above — record,
+// THEN deliver — is a requirement, not an incidental line order (ADR 0073 decision 14), and the
+// only way to observe it from a test is to be the delivery.
+var deliverInitialPromptFn = deliverInitialPrompt
+
 func noteCreateOrigin(name string, req *CreateReq, spawnParent string) {
 	switch {
 	case req.ReportTo != "":

@@ -2,6 +2,7 @@
 
 - 状態: **実装済み**（2026-09-09）。オペレーター専用だった操縦系 8 本をセッション面へ開放した。
   既定 OFF、opt-in は「セッションからのフリート観測」が ON のときだけ設定できる。
+  実装後に別セッションのレビューを 1 巡受け、5 件（P1×3・P2×2）を反映した（§87.9）。
 - 設計: [ADR 0073](../decisions/0073-session-spawned-sessions.ja.md)（本書は実装の記録で、
   なぜそう決めたかは全部そちら）。前段: [86-session-fleet-observe.md](86-session-fleet-observe.md)
   （段階 1・§86.2 の判断軸と §86.9 の宿題）。
@@ -49,16 +50,27 @@ MCP ツールではなく `sessionx`（`session_spawn.go`）に置いた。ツ�
 すべて `origin=session` の create だけに掛かるので、Console・オペレーター・スケジュール・
 fork・recreate の経路は形が変わらない。
 
+**実行順が効く。** 拒否と枠の予約は**冪等照合の後**に走らせる。前に置くと、**再送を拒否する**:
+create がタイムアウトしたクライアントが同じ要求を送り直すころには自分の子が既に居るので、先に
+予算を見ると「もう 3 本ある」と返り、自分が作ったセッションを受け取れない（進行中の再送も同じで、
+本来は `create_in_progress` として台帳が答え、呼び手側がそれを最終的なセッションへ解決する）。
+作業コピーの検査だけは**解決後の `dir`** が要るのでさらに後ろにある。
+
 - **深さ**: `origin_session` が空でないセッションは起こせない。**述語が決定 4 とわざと違う**
   （操縦は `origin==session` かつ親一致、再帰抑止は `origin_session` が非空）。子を fork すると
   `origin=handoff` になるので、origin だけを見る規則ではすり抜ける。
-- **枠**: 同時 3 本（`session.SpawnChildLimit`）。**停止中もアーカイブ済みも数え、削除だけが
+- **枠**: 同時 3 本（`session.SpawnChildLimit`）。数えるのは**呼び手が起こした子**
+  （`origin=session` かつ親一致）で、子を fork した先は数えない（fork は人の操作なので、
+  利用者の fork が原因で親が起こせなくなる形にしない。fork した先も起こせないので抜け道は無い）。
+  **停止中もアーカイブ済みも数え、削除だけが
   枠を空ける** — アーカイブは Meta を残す復元可能な操作なので、枠を空けると「畳んで起こして
   復元」で無限に越えられる。数えるだけでなく**予約する**（冪等台帳は同一キーしか直列化せず、
   内容の違う並行 create は互いの Meta が書かれる前に走る）。
 - **worktree**: セッション面の既定は `true`。明示 `false` は、その作業コピーで別の生きた
-  セッションが動いているときに拒否する。**比較は `dir` の正規化絶対パスのみで `subdir` は
-  含めない**（同じ作業コピーなら `console/` でも直下でも事故は同じ）。
+  セッションが動いているときに拒否する。**比較は `dir` のみで `subdir` は含めない**（同じ作業
+  コピーなら `console/` でも直下でも事故は同じ）。比べるのは**解決後の `dir`** ＋ symlink 解決の
+  結果である（`workingCopyKey`）: create は空の dir をホームに、相対パスをホーム基準に直すので、
+  要求のまま比べると `dir: ""` がホームで走っているセッションを素通りする。
 - **kind**: `shell` / `ssm` は拒否。`BridgeApprovalGate` は conv が無いと no-op なので、
   セッション面に承認ゲートは存在しない。
 
@@ -128,10 +140,20 @@ AGENTS.md の既知事項）。exit code はパイプを通さずに取ってい
 | run-arg を argv に足さない | `TestFleetSpawnRunArg` |
 | 観測との依存を外す | `TestFleetSpawnRequiresFleetObserve` |
 | spawn の封筒パーサを緩くする | Console `spawnParentOf` |
+| 拒否・予約を冪等照合より前へ戻す | `TestCreateSessionSpawnBudgetAndRetry`（再送が拒否される） |
+| 作業コピー検査を解決前の dir で行う | `TestCreateSessionSpawnWorkingCopyGuard`（`dir: ""` が通る） |
+| symlink を解決しない | `TestSpawnRefusesSharedWorkingCopy` |
+| **ハンドラが封筒を適用しない** | `TestCreateSessionSpawnWiring` |
+| **ハンドラが枠を予約しない** | `TestCreateSessionSpawnBudgetAndRetry` |
+| **記録を配達の後に書く** | `TestCreateSessionSpawnWiring`（配達時点で無バッジ） |
 
-「関数は書いたが呼ばれていない」を捕まえるのは、`tools/call` を実際に通す 2 本
-（`TestCreateSessionFromSessionStampsLineageAndDefaults` と
-`TestStopSessionDisarmsOnlyForTheOperator` の拒否経路）である。単体テストだけでは見逃す。
+「関数は書いたが呼ばれていない」は**単体テストでは原理的に見逃す**ので、経路を通すものを 2 層に
+置いた。`tools/call` を実際に通す 2 本（`TestCreateSessionFromSessionStampsLineageAndDefaults`・
+`TestStopSessionDisarmsOnlyForTheOperator` の拒否経路）と、**実物の create ハンドラを HTTP で
+叩く 4 本**（`session_spawn_wiring_test.go`）である。後者は PATH に stub の `claude` を置いて
+起動まで通し、封筒・注入記録・予約・拒否の**配線**を見る。配達前記録の順序だけは外から観測
+できないので、`deliverInitialPromptFn` をテスト seam にして「配達時点で記録が既にあるか」を
+そのものとして確かめている。
 
 ## 87.8 残り
 
@@ -142,3 +164,22 @@ AGENTS.md の既知事項）。exit code はパイプを通さずに取ってい
 - 子が親より長生きしたときの掃除は利用者の手に残る（削除ツールは子にも開けていない）。
 - ADR 0073 が開けないと決めたもの（`send_to_session`・承認の肩代わり・掃除破壊系・
   スケジュール・chat_plan・`flush_memos`）は据え置き。
+
+## 87.9 実装レビューで直したもの（2026-09-09）
+
+別セッションのレビュー。3 件は実装の欠陥、2 件は文書と実装の食い違いだった。
+
+- **[P1] 拒否・枠予約が冪等照合より前だった。** 成功済み／進行中の create の**再送を拒否**して
+  いた（§87.3）。順序を入れ替え、再送が replay されることをテストで固定した。
+- **[P1] 作業コピー検査の dir が解決前だった。** create は空 dir をホームに、相対パスをホーム
+  基準に直すので、`dir: ""` や相対パスで共有拒否を迂回できた。symlink も解決していなかった。
+  検査を解決後の位置へ移し、`workingCopyKey` で symlink まで畳んで比べるようにした。
+- **[P1] spawn 封筒に対応する受信側の作法が運用指示に無かった。** 封筒だけ作って、それを受け
+  取ったセッションが従うべき 4 禁止をどこにも書いていなかった。`workspace/workspace-notes.md`
+  と `notes/agent-fleet.md`（＝ af-agent-fleet スキル）に、起動する側の作法と
+  「起動された側」の 4 禁止を足した。
+- **[P2] 予算の述語が ADR と食い違っていた。** 実装は「呼び手が起こした子」（`origin=session`
+  かつ親一致）を数えるが、ADR は `origin_session` だけで書いていた。**実装が正**（fork は人の
+  操作で、利用者の fork が原因で親が起こせなくなるのはおかしい）なので ADR と本書を直した。
+- **[P2] 検証が実ハンドラの配線欠落を検出しなかった。** §87.7 のとおり、HTTP で create を叩く
+  4 本と配達 seam を足した。

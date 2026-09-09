@@ -1,6 +1,8 @@
 package sessionx
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,7 +62,7 @@ func TestSpawnDepthRefusesChildrenAndTheirForks(t *testing.T) {
 		{"forked", "spawn_depth"},
 		{"ghost", "spawn_unknown_parent"},
 	} {
-		got := SpawnCreateRefusal(tc.parent, session.KindClaude, "/repos/x", true)
+		got := SpawnCreateRefusal(tc.parent, session.KindClaude)
 		switch {
 		case tc.want == "" && got != nil:
 			t.Errorf("%s: refused with %s, want allowed", tc.parent, got.Code)
@@ -75,12 +77,12 @@ func TestSpawnDepthRefusesChildrenAndTheirForks(t *testing.T) {
 func TestSpawnRefusesShellAndSSM(t *testing.T) {
 	spawnFixture(t, session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser})
 	for _, kind := range []string{session.KindShell, session.KindSSM} {
-		got := SpawnCreateRefusal("root", kind, "/repos/x", true)
+		got := SpawnCreateRefusal("root", kind)
 		if got == nil || got.Code != "spawn_kind_refused" {
 			t.Errorf("kind %s: got %v, want spawn_kind_refused", kind, got)
 		}
 	}
-	if got := SpawnCreateRefusal("root", session.KindClaude, "/repos/x", true); got != nil {
+	if got := SpawnCreateRefusal("root", session.KindClaude); got != nil {
 		t.Errorf("claude refused: %v", got)
 	}
 }
@@ -89,29 +91,56 @@ func TestSpawnRefusesShellAndSSM(t *testing.T) {
 // The comparison is the working copy, so a different subdir is still the same copy; a stopped
 // session is not in the way.
 func TestSpawnRefusesSharedWorkingCopy(t *testing.T) {
-	alive := session.Meta{Name: "busy", Kind: session.KindShell, Dir: "/repos/app", Subdir: "console",
-		Origin: session.OriginUser}
+	// Real directories, because the comparison resolves symlinks: the whole point is that two
+	// spellings of one checkout cannot read as two different targets.
+	root := t.TempDir()
+	repo := filepath.Join(root, "repos", "app")
+	if err := os.MkdirAll(filepath.Join(repo, "console"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "app-link")
+	if err := os.Symlink(repo, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	free := filepath.Join(root, "repos", "other")
+	if err := os.MkdirAll(free, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	spawnFixture(t,
 		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
-		alive,
+		// The busy session is registered under the REAL path, and it sits in a subdir.
+		session.Meta{Name: "busy", Kind: session.KindShell, Dir: repo, Subdir: "console",
+			Origin: session.OriginUser},
 	)
 	orig := sessionAliveFn
 	sessionAliveFn = func(m session.Meta) bool { return m.Name == "busy" }
 	t.Cleanup(func() { sessionAliveFn = orig })
 
-	if got := SpawnCreateRefusal("root", session.KindClaude, "/repos/app", false); got == nil || got.Code != "spawn_working_copy_busy" {
+	// Subdir takes no part: the same checkout is the same checkout.
+	if got := spawnWorkingCopyRefusal(repo); got == nil || got.Code != "spawn_working_copy_busy" {
 		t.Fatalf("same working copy: got %v, want spawn_working_copy_busy", got)
 	}
-	// The path is normalized before comparison, so an equivalent spelling is caught too.
-	if got := SpawnCreateRefusal("root", session.KindClaude, "/repos/app/../app", false); got == nil {
-		t.Fatal("an equivalent path spelling walked past the check")
+	// A `..` spelling and a SYMLINK to the same checkout are the same target. Without resolving
+	// them the refusal is decorative — a caller only has to spell the path differently.
+	if got := spawnWorkingCopyRefusal(filepath.Join(repo, "console", "..")); got == nil {
+		t.Fatal("a `..` spelling walked past the check")
 	}
-	// A worktree create never touches the parent's copy.
-	if got := SpawnCreateRefusal("root", session.KindClaude, "/repos/app", true); got != nil {
-		t.Fatalf("worktree create refused: %v", got)
+	if got := spawnWorkingCopyRefusal(link); got == nil {
+		t.Fatal("a symlink to the busy working copy walked past the check")
 	}
+	// The reverse direction too: the session registered under a symlinked path, the spawn
+	// naming the real one.
+	spawnFixture(t,
+		session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser},
+		session.Meta{Name: "busy", Kind: session.KindShell, Dir: link, Origin: session.OriginUser},
+	)
+	if got := spawnWorkingCopyRefusal(repo); got == nil {
+		t.Fatal("a session registered under a symlinked path was not seen")
+	}
+	// That a worktree create skips this check entirely is the CALLER's decision, so it is
+	// asserted where the caller is: TestCreateSessionSpawnWorkingCopyGuard.
 	// Somewhere nobody is working.
-	if got := SpawnCreateRefusal("root", session.KindClaude, "/repos/other", false); got != nil {
+	if got := spawnWorkingCopyRefusal(free); got != nil {
 		t.Fatalf("free working copy refused: %v", got)
 	}
 }

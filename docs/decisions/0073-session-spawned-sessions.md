@@ -2,11 +2,13 @@
 
 English | [日本語](0073-session-spawned-sessions.ja.md)
 
-- Status: accepted, not implemented (the stage 2 design; implementation follows agreement on
-  this ADR). **Two rounds of review by another session have been folded in** (2026-09-09. Round 1:
-  decisions 1, 4, 5, 6, 7, 10 and 11 corrected, decision 14 and §3-b added. Round 2: archiving and
-  reservation in decision 6, the comparison unit in decision 7, splitting the two surfaces in
-  decision 14, the rejection reasoning in decision 5, the test policy in §3-b)
+- Status: **accepted and implemented** (2026-09-09; the implementation record is
+  [87-session-spawn.md](../log/87-session-spawn.md)). The design took two rounds of review by
+  another session and the implementation a third (round 1: decisions 1, 4, 5, 6, 7, 10 and 11
+  corrected, decision 14 and §3-b added; round 2: archiving and reservation in decision 6, the
+  comparison unit in decision 7, splitting the two surfaces in decision 14, the rejection
+  reasoning in decision 5, the test policy in §3-b; implementation review: decision 6's predicate,
+  which value decision 7 compares, and the order the refusals run in)
 - Related: [86-session-fleet-observe.md](../log/86-session-fleet-observe.md) (stage 1 — the test
   in §86.2, the leftovers in §86.9) /
   [0041-cross-session-messaging.md](0041-cross-session-messaging.md) (the additive-flag shape,
@@ -157,8 +159,12 @@ next, sessions alone can extend the chain by one**. Nothing grows without a pers
 
 ### 6. At most three children per caller — a budget counting stopped and archived ones too
 
-Count the children **whose Meta exists** with `origin_session` equal to the caller and refuse at
-three.
+Count the children the caller **created** — `origin=session` with `origin_session` equal to the
+caller — **whose Meta still exists**, and refuse at three. Not `origin_session` alone: that would
+also count a fork of a child (lineage kept, `origin=handoff`), and a fork is something a person
+does in the Console, so charging it to the parent would let the user's own fork be the reason the
+parent may not spawn. Nothing escapes there — a fork of a child cannot spawn either, because
+decision 5's predicate reads the lineage, deliberately the wider one.
 
 - **Only deletion (`RemoveMeta`) frees a slot.** Archiving keeps the Meta and merely hides it from
   the active list (the `Archived` flag, `session_handlers.go:134`), and **there is a restore
@@ -186,11 +192,18 @@ surface defaults to `true`. Called with defaults otherwise, parent and child **s
 copy between two agents** — precisely the accident the workspace policy forbids by name to every
 session.
 
-An explicit `worktree=false` is refused when another live session is working on the target. **The
-comparison is equality of `dir`'s normalized absolute path** — the working copy itself — and
-`subdir` takes no part in it: the same working copy is the same working copy whether the other
-session sits in `console/` or at the root. Stopped sessions do not count:
-what this guards is two processes running at once, not a quota (decision 6 has the other purpose).
+An explicit `worktree=false` is refused when another live session is working on the target.
+
+- **What is compared is `dir`** — the working copy itself — and `subdir` takes no part in it: the
+  same working copy is the same working copy whether the other session sits in `console/` or at
+  the root.
+- **The value compared is the RESOLVED `dir`**, the directory the session will actually run in.
+  The create turns an empty dir into home and joins a relative one onto home, so **comparing the
+  request as sent lets `dir: ""` walk past a session already running in home**. Symlinks are
+  resolved too: letting two spellings of one directory read as different targets makes the check
+  decorative.
+- Stopped sessions do not count: what this guards is two processes running at once, not a quota
+  (decision 6 has the other purpose).
 
 ### 8. `kind=shell` and `ssm` are refused
 
