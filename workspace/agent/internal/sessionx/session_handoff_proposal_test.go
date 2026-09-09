@@ -108,6 +108,67 @@ func TestSessionHandoffProposalRoundTrip(t *testing.T) {
 	}
 }
 
+// The session row has to say that a handoff is waiting to be launched. Without it the session
+// that proposed one is idle, i.e. it shows the chip of a session with nothing left to do, and
+// the proposal — a card in the mirror, with no notification behind it — is seen only by
+// somebody who happens to open that conversation.
+func TestWireSessionFlagsAnUnlaunchedHandoffProposal(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const name = "handoff3"
+	m := session.Meta{Name: name, Dir: t.TempDir(), Kind: session.KindClaude}
+	session.WriteMeta(m)
+	post := func(body string) {
+		t.Helper()
+		r := httptest.NewRequest(http.MethodPost, "/sessions/"+name+"/handoff-proposal", strings.NewReader(body))
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		HandleSessionHandoffProposal(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("POST %s: status=%d body=%s", body, w.Code, w.Body.String())
+		}
+	}
+	pending := func() bool {
+		t.Helper()
+		return wireSession(m, true).HandoffPending
+	}
+
+	if pending() {
+		t.Fatal("a session that has proposed nothing must not claim a pending handoff")
+	}
+	post(`{"prompt":"Continue with task B.","title":"Continue task B"}`)
+	if !pending() {
+		t.Fatal("an outstanding proposal did not reach the wire; the row still reads as plain idle")
+	}
+
+	// Launching is what clears it — the proposal itself is KEPT (re-reading a handoff is
+	// useful and discarding is the user's call), so the flag has to read launched_at rather
+	// than the file's existence.
+	id, _ := decodeProposalsField(t, func() string {
+		r := httptest.NewRequest(http.MethodGet, "/sessions/"+name+"/handoff-proposal", nil)
+		r.SetPathValue("name", name)
+		w := httptest.NewRecorder()
+		HandleSessionHandoffProposal(w, r)
+		return w.Body.String()
+	}())[0]["id"].(string)
+	post(`{"id":"` + id + `","launched":true}`)
+	if pending() {
+		t.Fatal("the flag survived the launch; the row would go on advertising work that has started")
+	}
+
+	// A second proposal raises it again, and one launched proposal must not mask an
+	// outstanding sibling (a single turn may fan out into several successors).
+	post(`{"prompt":"Continue with task D.","title":"Continue task D"}`)
+	if !pending() {
+		t.Fatal("a launched proposal masked an outstanding one; a fanned-out handoff would go unseen")
+	}
+
+	// A stopped session carries it too: one folded away with an unlaunched handoff is
+	// precisely the one nobody reopens.
+	if !wireSession(m, false).HandoffPending {
+		t.Fatal("a stopped row dropped the flag")
+	}
+}
+
 // decodeProposalsField pulls the proposals array out of a {"proposals":[…]} response.
 func decodeProposalsField(t *testing.T, body string) []map[string]any {
 	t.Helper()

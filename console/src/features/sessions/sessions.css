@@ -511,6 +511,22 @@
 .session-state.question.limited {
   font-weight: 400;
 }
+/* A handoff the session proposed and nobody has launched. It takes the accent colour rather
+   than the question warn, and no pulse: this is not the agent asking for something, it is the
+   next piece of work sitting there — but it does keep the bold and the visible text, because
+   the row underneath is otherwise the calm "waiting for input" of a session with nothing left
+   to do. Declared after .on / .off so it overrides their colours at equal specificity. */
+.session-state.handoff {
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+  font-weight: 600;
+}
+/* Stopped and holding one: same reading as .off.question — at the weight of a session that is
+   live and waiting, "start this when you like" would shout as loudly as work in progress. */
+.session-state.off.handoff {
+  font-weight: 400;
+}
 @keyframes af-pulse {
   0%,
   100% {

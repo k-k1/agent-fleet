@@ -161,6 +161,51 @@ describe("stateInfo (carried-over state while stopped)", () => {
   });
 });
 
+// An unlaunched handoff proposal. A session that hands its next step on goes idle, so its row is
+// the row of a session with nothing left to do — and the proposal itself is a card inside the
+// mirror that raises no notification. Without this chip the work simply stops there.
+describe("stateInfo (an unlaunched handoff proposal)", () => {
+  const idle = { kind: "claude", alive: true, state: "idle", handoffPending: true };
+  const dead = { kind: "claude", alive: false, handoffPending: true };
+
+  it("replaces the idle and stopped chips, and says so in the rail's short form", () => {
+    expect(stateInfo(idle).text).toBe(t("state.idle_handoff"));
+    expect(stateInfo(idle).short).toBe(t("state.handoff_short"));
+    expect(stateInfo(dead).text).toBe(t("state.stopped_handoff"));
+    expect(stateInfo(dead).short).toBe(t("state.handoff_short"));
+  });
+
+  // The class is what SessionRow reads to decide the chip shows its text at all, and what tells
+  // a live row (accent on green) from a folded one (accent on the muted stopped chip).
+  it("carries the handoff class, keeping on / off as the run state", () => {
+    expect(stateInfo(idle).cls).toBe("on handoff");
+    expect(stateInfo(dead).cls).toBe("off handoff");
+  });
+
+  // Launching (or discarding) the proposal clears the flag, and the row goes straight back to
+  // the ordinary chip — that is the whole lifecycle of this state.
+  it("is the plain chip again once nothing is outstanding", () => {
+    expect(stateInfo({ ...idle, handoffPending: false }).text).toBe(t("state.idle"));
+    expect(stateInfo({ ...dead, handoffPending: false }).text).toBe(t("state.stopped"));
+  });
+
+  // Ranked below background work (which finishes on its own and hands the chip over when it
+  // does) and below a carried interaction (someone is waiting on a reply there).
+  it("yields to background work and to a carried interaction", () => {
+    expect(stateInfo({ ...idle, backgroundBusy: true }).text).toBe(t("state.idle_bg"));
+    expect(stateInfo({ ...dead, carried: "question" }).text).toBe(t("state.stopped_question"));
+    expect(stateInfo({ ...dead, exitReason: "oom" }).text).toBe(t("exit.oom.text"));
+    expect(stateInfo({ ...dead, resumable: false }).text).toBe(t("state.folder_missing"));
+  });
+
+  // A running turn is not the moment to advertise the successor: the session is still moving,
+  // and the chip returns the moment it stops.
+  it("does not displace a live state that describes what the session is doing now", () => {
+    expect(stateInfo({ ...idle, state: "working" }).text).toBe(t("state.working"));
+    expect(stateInfo({ ...idle, state: "question" }).text).toBe(t("state.question"));
+  });
+});
+
 // Time left on a keep-alive pin (docs/log/75). The point is that an expired pin must not stay on
 // the badge: left there, the user believes the session is protected and leaves it, and the next
 // sweep folds it away.

@@ -49,6 +49,11 @@ func wireSession(m session.Meta, alive bool) session.Session {
 		// server's steering gate and per-parent budget, and the Console's mirror attribution
 		// for a spawned session's first turn.
 		Origin: session.OriginOf(m), OriginSession: m.OriginSession,
+		// An outstanding handoff proposal is work this session has already described and
+		// handed on, and it is the row's only trace: the card lives in the mirror and nothing
+		// notifies. Read for stopped rows as well — a folded session with an unlaunched
+		// handoff is the one nobody reopens.
+		HandoffPending: handoffPending(m.Name),
 	}
 	// A claude whose limit-aborted turn has been cleaned up (the menu dismisses itself, and a
 	// per-model limit never raises one) leaves its pane back at the waiting prompt, so

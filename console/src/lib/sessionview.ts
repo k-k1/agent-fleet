@@ -66,7 +66,20 @@ export interface SessionState {
   rateLimitResumeAt?: string;
   /** The interaction that was still awaiting an answer when the session was stopped (docs/log/75). Only set on stopped rows. */
   carried?: string;
+  /** The session proposed a handoff nobody has launched yet. Set on live and stopped rows alike. */
+  handoffPending?: boolean;
 }
+
+// handoffChip is the "…, and a handoff is waiting to be launched" chip, in the two run states
+// where the session itself is not going to move again on its own. The full wording names both
+// halves ("waiting for input · handoff pending") because that is what the tooltip and the pane
+// head have room for; `short` is what the rail row shows next to the icon.
+const handoffChip = (idle: boolean): StateInfo => ({
+  cls: idle ? "on handoff" : "off handoff",
+  icon: "git-branch",
+  text: idle ? t("state.idle_handoff") : t("state.stopped_handoff"),
+  short: t("state.handoff_short"),
+});
 
 // resumeClock renders a reserved resume instant for the rate-limited chip: "19:50",
 // or "08/20 07:15" when it is not today (a weekly window can land days out, and a bare
@@ -130,6 +143,11 @@ export const stateInfo = (s: SessionState): StateInfo => {
       case "permission":
         return { cls: "off question", icon: "shield", text: t("state.stopped_permission") };
     }
+    // A handoff the session proposed and nobody launched. Ranked below a carried interaction —
+    // an unanswered question is someone waiting on a reply, a handoff is work that can be
+    // started whenever — but above the plain stopped chip, which is what makes a session look
+    // finished when its next step has not been started.
+    if (s.handoffPending) return handoffChip(false);
     return { cls: "off", icon: "debug-pause", text: t("state.stopped") };
   }
   // shell has no working/idle state model — alive means it's running.
@@ -196,6 +214,11 @@ export const stateInfo = (s: SessionState): StateInfo => {
       // back to the generic text rather than showing nothing.
       if (s.backgroundBusy)
         return { cls: "bg", icon: "loading", spin: true, text: t(backgroundBusyKey(s.backgroundBusyReason)) };
+      // Idle, and the turn left a handoff proposal behind that nobody has launched. Ranked
+      // BELOW backgroundBusy on purpose: background work still finishes on its own and the
+      // handoff chip takes its place as soon as it does, whereas a session showing the plain
+      // idle chip is one the user has no reason to open again.
+      if (s.handoffPending) return handoffChip(true);
       return { cls: "on", icon: "check", text: t("state.idle") };
   }
 };

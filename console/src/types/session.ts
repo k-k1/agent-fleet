@@ -72,6 +72,11 @@ export interface Session {
   // (docs/log/75). Only set on stopped rows, where it turns the list badge into "stopped,
   // question pending". While the session is alive, `state` says the same thing.
   carried?: "question" | "plan" | "permission" | string;
+  // The session proposed a successor's first prompt (propose_session_handoff) that nobody has
+  // launched yet; it clears on launch or discard. Set on live AND stopped rows: the proposal
+  // is a card in the mirror and raises no notification, so without this the row of a session
+  // that handed its next step on is the row of one with nothing left to do.
+  handoffPending?: boolean;
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible

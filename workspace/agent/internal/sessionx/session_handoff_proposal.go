@@ -87,6 +87,24 @@ func ReadHandoffProposals(name string) ([]*sessionHandoffProposal, error) {
 	return out, nil
 }
 
+// handoffPending reports whether name still has a proposal nobody has launched. It runs
+// once per row on every /sessions poll, so the common case has to stay cheap: a session that
+// never proposed anything has no file at all, which ReadHandoffProposals answers with one
+// failed open. A read error counts as "nothing pending" — the flag only adds a badge, and a
+// transient failure must not make a row claim work that may not exist.
+func handoffPending(name string) bool {
+	list, err := ReadHandoffProposals(name)
+	if err != nil {
+		return false
+	}
+	for _, p := range list {
+		if p.LaunchedAt == 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // writeHandoffProposals persists list as-is, oldest first. An empty list removes the
 // file rather than leaving an empty array behind.
 func writeHandoffProposals(name string, list []*sessionHandoffProposal) error {
