@@ -276,7 +276,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	asked := engineCatalogStub(t, engineRowLlm+","+engineRowImage)
 	base := os.Getenv("AF_CP_BASE_URL")
 
-	conn, ok := engineImageConn(context.Background())
+	conn, ok := engineImageConn(context.Background(), "sdcpp")
 	if !ok {
 		t.Fatal("no image engine found in a catalogue that has one")
 	}
@@ -292,7 +292,7 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 	}
 	// A second call is served from the caches: this sits behind Ready(), which a client calls
 	// on every tools/list.
-	if _, _ = engineImageConn(context.Background()); len(*asked) != 1 {
+	if _, _ = engineImageConn(context.Background(), "sdcpp"); len(*asked) != 1 {
 		t.Errorf("asks after a second lookup = %v — the token cache is not holding", *asked)
 	}
 }
@@ -301,8 +301,62 @@ func TestEngineImageConnFindsTheImagesEngine(t *testing.T) {
 // is staged — has no image provider, and that is a quiet no, not an error.
 func TestEngineImageConnIsAbsentWithoutAnImageEngine(t *testing.T) {
 	engineCatalogStub(t, engineRowLlm)
-	if _, ok := engineImageConn(context.Background()); ok {
+	if _, ok := engineImageConn(context.Background(), "sdcpp"); ok {
 		t.Fatal("found an image engine in a catalogue that has none")
+	}
+}
+
+// ADR 0072 P2: sdcpp and comfy are mutually exclusive on one deployment (60-engines.yaml's
+// ImageEngine), so engineImageConn must key off the row's OWN provider — asking for the wrong
+// one must come back exactly as if the role did not exist, not find the other provider's row.
+func TestEngineImageConnKeysByProvider(t *testing.T) {
+	engineCatalogStub(t, engineRowLlm+","+engineRowImage)
+	if _, ok := engineImageConn(context.Background(), "comfy"); ok {
+		t.Fatal("a provider=sdcpp row answered a comfy lookup")
+	}
+	if _, ok := engineImageConn(context.Background(), "sdcpp"); !ok {
+		t.Fatal("the provider=sdcpp row did not answer its own lookup")
+	}
+}
+
+// The comfy provider (ADR 0072 P2) reads BaseModel, Files and Warm off the catalogue — none of
+// which sdcpp ever asked for. This fixes the wire-to-EngineConn translation, including the
+// sd.cpp flag spelling surviving unchanged (imagegen.EngineFile's own contract) and the S3 key
+// being cut down to its basename (what the fetch sidecar actually names the file on disk).
+func TestEngineImageConnTranslatesComfyFields(t *testing.T) {
+	const row = `{"key":"image","api":"images","provider":"comfy","base_url":"/engine/image/v1",` +
+		`"models":["klein-4b","sdxl-base-1.0"],"model_rows":[` +
+		`{"id":"klein-4b","base_model":"flux2-klein","warm":true,"files":[` +
+		`{"flag":"--diffusion-model","s3_key":"image/diffusion_models/flux-2-klein-4b.safetensors"},` +
+		`{"flag":"--clip_l","s3_key":"image/text_encoders/qwen_3_4b.safetensors"},` +
+		`{"flag":"--vae","s3_key":"image/vae/flux2-vae.safetensors"}]},` +
+		`{"id":"sdxl-base-1.0","base_model":"sdxl","files":[` +
+		`{"s3_key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}]}`
+	engineCatalogStub(t, engineRowLlm+","+row)
+
+	conn, ok := engineImageConn(context.Background(), "comfy")
+	if !ok {
+		t.Fatal("no comfy engine found")
+	}
+	if conn.Warm != "klein-4b" {
+		t.Errorf("warm = %q, want klein-4b", conn.Warm)
+	}
+	if got := conn.BaseModel["klein-4b"]; got != "flux2-klein" {
+		t.Errorf("base model = %q", got)
+	}
+	if got := conn.BaseModel["sdxl-base-1.0"]; got != "sdxl" {
+		t.Errorf("base model = %q", got)
+	}
+	kleinFiles := conn.Files["klein-4b"]
+	if len(kleinFiles) != 3 {
+		t.Fatalf("klein files = %#v", kleinFiles)
+	}
+	if kleinFiles[0].Flag != "--diffusion-model" || kleinFiles[0].Name != "flux-2-klein-4b.safetensors" {
+		t.Errorf("klein diffusion-model file = %#v", kleinFiles[0])
+	}
+	sdxlFiles := conn.Files["sdxl-base-1.0"]
+	if len(sdxlFiles) != 1 || sdxlFiles[0].Flag != "" || sdxlFiles[0].Name != "sd_xl_base_1.0.safetensors" {
+		t.Errorf("sdxl files = %#v", sdxlFiles)
 	}
 }
 

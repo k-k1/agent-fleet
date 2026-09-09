@@ -362,14 +362,31 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # ⚠️ amd64 only upstream; there is no arm64 G-family instance either (decision 12).
   sd_key="$(af_read_one_param 60-engines ImageModelS3Key)"
   if [ -n "$sd_key" ]; then
-    sd_tag="$(af_read_one_param 60-engines ImageImageTag)"
-    : "${sd_tag:=master-cuda}"
-    if "${AWS[@]}" ecr describe-images --repository-name af-sdcpp \
-        --image-ids "imageTag=$sd_tag" >/dev/null 2>&1; then
-      echo "    · af-sdcpp:$sd_tag is already in ECR"
+    image_engine="$(af_read_one_param 60-engines ImageEngine)"
+    : "${image_engine:=sdcpp}"
+    if [ "$image_engine" = comfy ]; then
+      # Our OWN build (ADR 0072 decision 4, phase P2), baked by comfyui-image.yml to the same
+      # GHCR namespace as control-plane/workspace — not a third-party crane copy like the two
+      # engines above.
+      comfy_tag="$(af_read_one_param 60-engines ImageComfyImageTag)"
+      : "${comfy_tag:=v0.34.0}"
+      if "${AWS[@]}" ecr describe-images --repository-name af-comfyui \
+          --image-ids "imageTag=$comfy_tag" >/dev/null 2>&1; then
+        echo "    · af-comfyui:$comfy_tag is already in ECR"
+      else
+        echo "    · crane copy $FROM/comfyui:$comfy_tag"
+        af_run crane copy "$FROM/comfyui:$comfy_tag" "$ECR_HOST/af-comfyui:$comfy_tag"
+      fi
     else
-      echo "    · crane copy $SD_ENGINE_FROM:$sd_tag (about 2.3 GB)"
-      af_run crane copy "$SD_ENGINE_FROM:$sd_tag" "$ECR_HOST/af-sdcpp:$sd_tag"
+      sd_tag="$(af_read_one_param 60-engines ImageImageTag)"
+      : "${sd_tag:=master-cuda}"
+      if "${AWS[@]}" ecr describe-images --repository-name af-sdcpp \
+          --image-ids "imageTag=$sd_tag" >/dev/null 2>&1; then
+        echo "    · af-sdcpp:$sd_tag is already in ECR"
+      else
+        echo "    · crane copy $SD_ENGINE_FROM:$sd_tag (about 2.3 GB)"
+        af_run crane copy "$SD_ENGINE_FROM:$sd_tag" "$ECR_HOST/af-sdcpp:$sd_tag"
+      fi
     fi
   fi
 fi

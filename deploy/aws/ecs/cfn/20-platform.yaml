@@ -111,6 +111,20 @@ Resources:
       RepositoryName: af-sdcpp
       EmptyOnDelete: true
       ImageScanningConfiguration: { ScanOnPush: false }
+  # ComfyUI, self-built and pinned rather than copied from a third party (ADR 0072 decision 4,
+  # phase P2 — the community image measured 5.36 GB and a runtime checkout). Same trap as the
+  # two above: 60-engines cannot create the repository its own service pulls from. .github/
+  # workflows/comfyui-image.yml bakes it to GHCR; standup.sh copies it in only when
+  # ImageEngine=comfy, the same way EcrSdcpp is only filled when a checkpoint is staged.
+  EcrComfyui:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-comfyui
+      EmptyOnDelete: true
+      # Our own build, scanned like the other first-party images (unlike the pinned
+      # third-party ones above, whose scan findings nobody here can fix).
+      ImageScanningConfiguration: { ScanOnPush: true }
 
   # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
   Namespace:
@@ -429,6 +443,9 @@ Outputs:
   EcrSdcppUri:
     Value: !GetAtt EcrSdcpp.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrSdcppUri" }
+  EcrComfyuiUri:
+    Value: !GetAtt EcrComfyui.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrComfyuiUri" }
   ClusterName:
     Value: !Ref Cluster
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }

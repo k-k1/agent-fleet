@@ -187,14 +187,26 @@ func engineUsageRowFor(def engineDef, claims engineSessionClaims, u engineUsage,
 	return row, true
 }
 
+// headerModel is X-AF-Model, the Workspace's own declaration of which model it asked for. Chat
+// responses carry `model` in their own JSON (u.Model already has it); an image engine's answer
+// never does — sd-server and ComfyUI both answer with pixels, not a model field — so a header is
+// the only way this file can learn what an IMAGE request actually used. It only ever WIDENS what
+// is known (u.Model wins when the response itself said something), never overrides it, and it
+// changes nothing for the ledger row below (engineUsageRowFor still only counts chat engines) —
+// it exists purely so warm-model tracking (ADR 0072 decision 7) is not blind to every image
+// request the way it always has been.
 func (g engineGateway) recordUsage(ctx context.Context, eng *engineRuntimeState,
-	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool) {
+	claims engineSessionClaims, mv store.MembershipView, u engineUsage, took time.Duration, ok bool, headerModel string) {
 
+	if strings.TrimSpace(u.Model) == "" {
+		u.Model = strings.TrimSpace(headerModel)
+	}
 	row, count := engineUsageRowFor(eng.def, claims, u, took, ok)
 	// Before the ledger, and whether or not there is one to write to: this is where the CP finds
 	// out which model the router actually answered as, and the swap count that comes out of it
-	// is the visible price of --models-max 1 (ADR 0072 decision 3).
-	eng.noteServed(row.Model, ok)
+	// is the visible price of --models-max 1 (ADR 0072 decision 3) — or, for comfy, simply which
+	// checkpoint is now loaded (ADR 0072 decision 7's warm_model).
+	eng.noteServed(u.Model, ok)
 	if !count || g.mgr == nil {
 		return
 	}

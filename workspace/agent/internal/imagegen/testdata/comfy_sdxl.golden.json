@@ -1,0 +1,86 @@
+{
+  "ckpt": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd_xl_base_1.0.safetensors"
+    }
+  },
+  "dec": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "ks",
+        0
+      ],
+      "vae": [
+        "ckpt",
+        2
+      ]
+    }
+  },
+  "ks": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 7,
+      "denoise": 1,
+      "latent_image": [
+        "lat",
+        0
+      ],
+      "model": [
+        "ckpt",
+        0
+      ],
+      "negative": [
+        "neg",
+        0
+      ],
+      "positive": [
+        "pos",
+        0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "karras",
+      "seed": 1234,
+      "steps": 20
+    }
+  },
+  "lat": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "ckpt",
+        1
+      ],
+      "text": "blurry, lowres, deformed, watermark, text"
+    }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "ckpt",
+        1
+      ],
+      "text": "a red fox sitting on a mossy rock in a misty forest at dawn, detailed fur, soft light"
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "af-sdxl",
+      "images": [
+        "dec",
+        0
+      ]
+    }
+  }
+}

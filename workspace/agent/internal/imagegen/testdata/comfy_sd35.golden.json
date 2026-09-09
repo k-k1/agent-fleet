@@ -1,0 +1,94 @@
+{
+  "ckpt": {
+    "class_type": "CheckpointLoaderSimple",
+    "inputs": {
+      "ckpt_name": "sd3.5_large.safetensors"
+    }
+  },
+  "clip": {
+    "class_type": "TripleCLIPLoader",
+    "inputs": {
+      "clip_name1": "sd3.5_large.safetensors",
+      "clip_name2": "sd3.5_large.safetensors",
+      "clip_name3": "t5xxl_fp16.safetensors"
+    }
+  },
+  "dec": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": [
+        "ks",
+        0
+      ],
+      "vae": [
+        "ckpt",
+        2
+      ]
+    }
+  },
+  "ks": {
+    "class_type": "KSampler",
+    "inputs": {
+      "cfg": 4.5,
+      "denoise": 1,
+      "latent_image": [
+        "lat",
+        0
+      ],
+      "model": [
+        "ckpt",
+        0
+      ],
+      "negative": [
+        "neg",
+        0
+      ],
+      "positive": [
+        "pos",
+        0
+      ],
+      "sampler_name": "dpmpp_2m",
+      "scheduler": "sgm_uniform",
+      "seed": 1234,
+      "steps": 28
+    }
+  },
+  "lat": {
+    "class_type": "EmptySD3LatentImage",
+    "inputs": {
+      "batch_size": 1,
+      "height": 1024,
+      "width": 1024
+    }
+  },
+  "neg": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "text": "blurry, lowres, deformed, watermark, text"
+    }
+  },
+  "pos": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": [
+        "clip",
+        0
+      ],
+      "text": "a red fox sitting on a mossy rock in a misty forest at dawn, detailed fur, soft light"
+    }
+  },
+  "save": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "filename_prefix": "af-sd35",
+      "images": [
+        "dec",
+        0
+      ]
+    }
+  }
+}

@@ -45,6 +45,20 @@ type mcpImageGenProvider struct {
 	Model        string   `json:"model"`
 	Ops          []string `json:"ops"`
 	AspectRatios []string `json:"aspectRatios"`
+	// Models is every checkpoint this provider may be asked for by name (ADR 0072 decision 5,
+	// phase P2) — absent for a provider with nothing to choose between, the same rule
+	// `provider` itself follows for a session with only one route.
+	Models []mcpImageGenModel `json:"models,omitempty"`
+}
+
+// mcpImageGenModel is one checkpoint `model` may name.
+type mcpImageGenModel struct {
+	ID          string `json:"id"`
+	Description string `json:"description,omitempty"`
+	// Warm is the checkpoint a request naming none would get (ADR 0072 decision 7) — surfaced
+	// so an agent can say "the warm one is fine" instead of naming a cold one and paying a
+	// 1-2.5 minute switch it did not need to ask for.
+	Warm bool `json:"warm,omitempty"`
 }
 
 // agentImageGenStatus asks the Agent over the loopback REST every other session tool already
@@ -73,6 +87,9 @@ type imageGenArgs struct {
 	// has no mask parameter produces a picture OF the mask, which is why the Codex provider
 	// refuses it outright (ADR 0069) and the self-hosted one requires it (ADR 0071 P1).
 	mask string
+	// model names a checkpoint (ADR 0072 decision 5, phase P2) — "" leaves it to the provider's
+	// own default, which for the fleet's own engines is the warm one when known (decision 7).
+	model string
 }
 
 // mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED every
@@ -108,7 +125,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 	body, _ := json.Marshal(map[string]any{
 		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
-		"count": a.count, "inputs": a.inputs, "mask": a.mask,
+		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
