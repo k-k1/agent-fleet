@@ -89,14 +89,19 @@ type engineSearchHit struct {
 	Likes     int64 `json:"likes,omitempty"`
 	// Trending is Hugging Face's own score. Civitai publishes none, so a Civitai hit leaves it
 	// empty rather than borrowing another number and calling it trending.
-	Trending      int64  `json:"trending,omitempty"`
-	Gated         bool   `json:"gated,omitempty"`
-	License       string `json:"license,omitempty"`
-	LicenseName   string `json:"license_name,omitempty"`
-	BaseModel     string `json:"base_model,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
-	Bytes         int64  `json:"bytes,omitempty"`
-	ContextLength int    `json:"context_length,omitempty"`
+	//
+	// 🔴 A score, not a count, and it is FRACTIONAL. Measured 2026-09-10 on `search=WAI`:
+	// two of twenty rows answered 0.1 and 0.7000000000000001, and an int64 field made
+	// encoding/json refuse the whole array — the panel showed "unreadable answer from
+	// huggingface.co" and no results at all, for a search that was working perfectly.
+	Trending      float64 `json:"trending,omitempty"`
+	Gated         bool    `json:"gated,omitempty"`
+	License       string  `json:"license,omitempty"`
+	LicenseName   string  `json:"license_name,omitempty"`
+	BaseModel     string  `json:"base_model,omitempty"`
+	UpdatedAt     string  `json:"updated_at,omitempty"`
+	Bytes         int64   `json:"bytes,omitempty"`
+	ContextLength int     `json:"context_length,omitempty"`
 }
 
 // engineHFSearchRow is one row of `GET /api/models`. 🔴 What is NOT here is the point: asking
@@ -105,10 +110,11 @@ type engineSearchHit struct {
 // and the difference is not marginal — measured end to end on 2026-09-09, the same 20 rows are
 // **211,015 bytes upstream and 5,125 bytes out of this route (41x)**.
 type engineHFSearchRow struct {
-	ID            string `json:"id"`
-	Downloads     int64  `json:"downloads"`
-	Likes         int64  `json:"likes"`
-	TrendingScore int64  `json:"trendingScore"`
+	ID        string `json:"id"`
+	Downloads int64  `json:"downloads"`
+	Likes     int64  `json:"likes"`
+	// Fractional — see engineSearchHit.Trending. One row of twenty is enough to lose the page.
+	TrendingScore float64 `json:"trendingScore"`
 	// Gated is `false`, `"auto"` or `"manual"` — a bool or a string on the same field, which is
 	// why the existing engineHFGated is reused rather than a typed one written here.
 	Gated        any    `json:"gated"`

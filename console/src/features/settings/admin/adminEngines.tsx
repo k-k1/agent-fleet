@@ -1375,11 +1375,15 @@ function ingestHitMeta(h: IngestHit, tr: (k: never) => string): string {
   return bits.join(" · ");
 }
 
-/** 1,632,949 → 1.6M. The exact number is noise next to "is this the one everybody uses". */
+/** 1,632,949 → 1.6M. The exact number is noise next to "is this the one everybody uses".
+ *
+ * 🔴 The small end is rounded because one of these numbers is a SCORE, not a count: Hugging
+ * Face's `trendingScore` comes back fractional, and 0.7000000000000001 is what a raw
+ * `String(n)` puts on the row. */
 function fmtCount(n: number): string {
   if (n >= 1_000_000) return (n / 1_000_000).toFixed(1).replace(/\.0$/, "") + "M";
   if (n >= 1_000) return Math.round(n / 1_000) + "k";
-  return String(n);
+  return String(Math.round(n * 10) / 10);
 }
 
 function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {

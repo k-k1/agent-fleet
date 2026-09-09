@@ -1293,6 +1293,29 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(apiJSON).toHaveBeenCalledTimes(1);
   });
 
+  it("rounds a fractional trending score instead of printing its float noise", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "hf",
+          ref: "John6666/wai-nsfw-illustrious-v80-sdxl",
+          name: "John6666/wai-nsfw-illustrious-v80-sdxl",
+          downloads: 1884,
+          // What the live API answers — it is a score, not a count.
+          trending: 0.7000000000000001,
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+    await typeInto(field("探す")!, "WAI");
+    await click(button("検索"));
+    const hit = host!.querySelector(".engines-search-hits li")!;
+    expect(hit.textContent).toContain("0.7");
+    expect(hit.textContent).not.toContain("0.7000000000000001");
+  });
+
   it("puts a Civitai hit in as its version id, which is what an ingest takes", async () => {
     api.mockResolvedValue({ engines: [row()] });
     apiJSON.mockResolvedValue({
