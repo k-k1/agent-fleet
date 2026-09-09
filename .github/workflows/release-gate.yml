@@ -318,25 +318,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # Two warnings are answered by suppression rather than by a template edit, and
-      # each is narrowed to the one file that owns it so nothing else loses the check.
-      # They are not in the templates themselves because cfn-lint's in-template config
-      # cannot express either: W2001 has no per-parameter Metadata (it is not valid
-      # CloudFormation), and 60-engines.yaml is 29 bytes under the 51,200-byte wall,
-      # so a template-level Metadata block does not fit.
-      #   W1030 (30-ingress): CpArch's allowed values are lowercase while the ECS enum
-      #     is uppercase. ECS accepts either, and raising the case would reject the
-      #     value already stored in every deployed stack on its next update.
-      #   W2001 (60-engines): LlmModelFile / ImageModelFile are unused on purpose —
-      #     deleting them would reject every `params/60-engines` that still sets one.
-      #     Drop this ignore with the parameters when the compatibility window closes.
+      # No --ignore-checks: a warning here is a template edit, not a flag. The step runs
+      # under `bash -e`, so cfn-lint's exit 4 (warnings only) fails it too, which is the
+      # point — nothing accumulates.
       - name: cfn-lint (ecs cfn templates)
         run: |
           pip install --quiet cfn-lint
-          cfn-lint deploy/aws/ecs/cfn/*.yaml \
-            --ignore-templates deploy/aws/ecs/cfn/30-ingress.yaml deploy/aws/ecs/cfn/60-engines.yaml
-          cfn-lint deploy/aws/ecs/cfn/30-ingress.yaml --ignore-checks W1030
-          cfn-lint deploy/aws/ecs/cfn/60-engines.yaml --ignore-checks W2001
+          cfn-lint deploy/aws/ecs/cfn/*.yaml
 
       # cfn-lint passes a template that exports an empty value (measured, 1.53.1) and
       # so does validate-template — the failure only appears at CREATE, after every
