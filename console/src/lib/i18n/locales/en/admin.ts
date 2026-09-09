@@ -153,6 +153,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_vram_confirm": "{id} wants {n} MiB ({src}) and the class you have chosen has {m} MiB. Short VRAM does not slow CUDA down, it crashes it. Quantisation or offloading may still fit it — continue if you know that.",
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
+  "admin.engines_model_vram_floor": "VRAM at least {n} MiB (a weights-only floor)",
   // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
   // slow end. For a router role every enabled model is synced, so this really is what enabling
   // it adds to the next cold start.

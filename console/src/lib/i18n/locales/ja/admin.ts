@@ -160,6 +160,7 @@ export const admin = {
   "admin.engines_vram_confirm": "{id} は {n} MiB（{src}）を必要としますが、いま選んでいるクラスは {m} MiB です。CUDA は VRAM が足りないと遅くなるのではなく落ちます。量子化やオフロードで載ることもあるので、承知のうえなら続けてください。",
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
+  "admin.engines_model_vram_floor": "VRAM 少なくとも {n} MiB（重みだけの下限）",
   // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
   // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。
   "admin.engines_model_sync": "同期 +{n} 秒（推定）",

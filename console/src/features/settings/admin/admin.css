@@ -181,6 +181,15 @@
   margin-top: 10px;
 }
 
+/* The saved-but-not-applied notice and the button that acts on it. Stacked, so the button is
+   a button: inline after the sentence it read as part of the paragraph (measured headless). */
+.engines-class-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
 .engines-class-head {
   display: flex;
   align-items: center;

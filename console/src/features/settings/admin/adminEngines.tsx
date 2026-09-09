@@ -556,12 +556,15 @@ function EngineClassPicker({
       {/* The saved rung has reached nothing yet: a box of another type is still up. Both halves
           are said — that the change is pending, and that acting on it costs a cold start. */}
       {oldBox && (
-        <p className="form-err">
-          {tr("admin.engines_class_pending").replace("{t}", oldBox)}{" "}
+        <div className="engines-class-pending">
+          <p className="form-err">{tr("admin.engines_class_pending").replace("{t}", oldBox)}</p>
+          {/* On its own line rather than trailing the sentence. Rendered headless it read as
+              part of the paragraph — and this is the button that costs a cold start, so it has
+              to look like one before somebody presses it by accident. */}
           <button type="button" className="ghost sm" disabled={busy} onClick={onReplace}>
             {tr("admin.engines_class_replace")}
           </button>
-        </p>
+        </div>
       )}
       <p className="muted">{engineClassVramNote(row, tr)}</p>
     </div>
@@ -1676,6 +1679,13 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
   if (m.precision) bits.push(m.precision);
   if (m.vram_mib) {
     bits.push((tr("admin.engines_model_vram" as never) as string).replace("{n}", String(m.vram_mib)));
+  } else if (m.vram_need_mib) {
+    // Nobody measured this one, but its files say it cannot be smaller than this. The wording
+    // follows the SOURCE rather than the absence of a measurement — the confirmation dialog
+    // quotes the same number, and a row that mentioned none would make it appear from nowhere.
+    const key =
+      m.vram_need_source === "floor" ? "admin.engines_model_vram_floor" : "admin.engines_model_vram";
+    bits.push((tr(key as never) as string).replace("{n}", String(m.vram_need_mib)));
   }
   // What this model costs the next cold start. Stated as an estimate because it is one: S3 to
   // the box ran at 104–147 MB/s over four measured starts, and this uses the slow end.
@@ -1759,6 +1769,12 @@ function EngineStatus({ row }: { row: EngineRow }) {
           <Sep />
           {tr("admin.engines_up_for").replace("{d}", dur(upSecs))}
           {row.box?.id ? <span className="mono engines-boxid"> {row.box.id}</span> : null}
+          {/* WHICH card is answering. Once the class is selectable this is not derivable from
+              the class shown above: that one describes the next box, and after a change the
+              two disagree until this one is replaced (ADR 0074 decision 4). */}
+          {row.box?.instance_type ? (
+            <span className="mono engines-boxid"> {row.box.instance_type}</span>
+          ) : null}
           {/* DRAINING is stopped-but-still-billing: the task is gone, the instance is not.
               Measured 427-477 s on a GPU box, and it is money already spent — which is why
               shortening the idle window below it buys nothing (ADR 0071 決定 7). */}

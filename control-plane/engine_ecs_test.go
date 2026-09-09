@@ -22,6 +22,10 @@ type fakeTTSECS struct {
 	// registered is the registeredAt the box reports, i.e. when it joined the cluster. Zero
 	// leaves it unset, which is the shape of a cluster that has no box at all.
 	registered time.Time
+	// instanceType is reported the way ECS reports it — as an ATTRIBUTE, not a field — because
+	// that is the only place a Managed Instances box's type can be read (ADR 0074). Empty
+	// leaves the attribute off entirely, which is a real answer and not a match.
+	instanceType string
 	listCalls  int
 }
 
@@ -61,6 +65,12 @@ func (f *fakeTTSECS) DescribeContainerInstances(_ context.Context, in *ecs.Descr
 		}
 		if cp := f.instances[arn]; cp != "" {
 			ci.CapacityProviderName = aws.String(cp)
+		}
+		if f.instanceType != "" {
+			ci.Attributes = []ecstypes.Attribute{
+				{Name: aws.String("ecs.availability-zone"), Value: aws.String("ap-northeast-1a")},
+				{Name: aws.String(engineBoxTypeAttr), Value: aws.String(f.instanceType)},
+			}
 		}
 		out.ContainerInstances = append(out.ContainerInstances, ci)
 	}
@@ -273,5 +283,40 @@ func TestTTSEngineFromEnvUnset(t *testing.T) {
 	t.Setenv("AF_TTS_ECS_SERVICE", "")
 	if eng := newTTSEngineFromEnv(); eng != nil {
 		t.Error("engine control should be nil without AF_TTS_ECS_SERVICE")
+	}
+}
+
+// Which EC2 type the box actually is (ADR 0074). It decides whether a start has to wait for a
+// box of the previous instance class to leave, so reading it from the wrong place — or reading
+// nothing and calling that a match — buys the old card for another cold start.
+//
+// ECS reports it as an ATTRIBUTE among others, never as a field, and a Managed Instances box is
+// absent from `ec2 describe-instances` altogether: this is the only source there is.
+func TestEngineECSBoxReadsTheInstanceType(t *testing.T) {
+	f := &fakeTTSECS{
+		svc:          &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
+		instances:    map[string]string{"arn:ci/i-08a9": "af-engines-llm"},
+		instanceType: "g6e.2xlarge",
+	}
+	eng := &engineECS{api: f, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	b, ok := eng.box(t.Context())
+	if !ok {
+		t.Fatal("no box found")
+	}
+	// Picked out of a list that holds other attributes too — matching on position rather than
+	// on the name would read the availability zone as an instance type.
+	if b.instanceType != "g6e.2xlarge" {
+		t.Fatalf("instanceType = %q, want g6e.2xlarge", b.instanceType)
+	}
+
+	// 🔴 And the negative: no attribute means the type is UNKNOWN, which startGate must not
+	// treat as "it matches the chosen class".
+	f2 := &fakeTTSECS{
+		svc:       &ecstypes.Service{Status: aws.String("ACTIVE"), DesiredCount: 1, RunningCount: 1},
+		instances: map[string]string{"arn:ci/i-08a9": "af-engines-llm"},
+	}
+	eng2 := &engineECS{api: f2, key: "llm", cluster: "c", service: "llm", capacityProvider: "af-engines-llm"}
+	if b2, ok := eng2.box(t.Context()); !ok || b2.instanceType != "" {
+		t.Fatalf("box = %+v %v, want a box with no type rather than an invented one", b2, ok)
 	}
 }
