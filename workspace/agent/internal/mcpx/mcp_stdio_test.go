@@ -750,3 +750,231 @@ func TestHandoffDescriptionMentionsReportBackOnlyWithPeerMessaging(t *testing.T)
 		t.Fatal("the report-back note must be appended to the base description, not replace it")
 	}
 }
+
+// --- fleet observation (docs/log/86 stage 1) ---
+
+func withFleetObserve(t *testing.T, on bool) {
+	t.Helper()
+	oldObserve, oldSelfReport := mcpFleetObserveEnabled, selfReportOnly()
+	t.Cleanup(func() {
+		mcpFleetObserveEnabled = oldObserve
+		setSelfReportOnly(oldSelfReport)
+	})
+	setSelfReportOnly(true)
+	mcpFleetObserveEnabled = on
+}
+
+var fleetObserveToolNames = []string{"get_session_status", "get_session_usage", "list_memos", "add_memo"}
+
+// The advertised set IS the scope boundary, so the four tools must be absent from a session
+// whose user did not opt in — the historical `--self-report` contract.
+func TestFleetObserveToolsAreOffByDefault(t *testing.T) {
+	withFleetObserve(t, false)
+
+	names := advertisedNames(t)
+	for _, name := range fleetObserveToolNames {
+		if names[name] {
+			t.Errorf("%s is advertised to a session without the opt-in", name)
+		}
+	}
+
+	withFleetObserve(t, true)
+	names = advertisedNames(t)
+	for _, name := range fleetObserveToolNames {
+		if !names[name] {
+			t.Errorf("%s is missing although fleet observation is on", name)
+		}
+	}
+}
+
+// Stage 1 opens observation and nothing that drives, answers for or deletes another session.
+// Naming them explicitly is the point: this list is what a future stage has to argue with.
+func TestFleetObserveDoesNotOpenOperatorTools(t *testing.T) {
+	withFleetObserve(t, true)
+
+	names := advertisedNames(t)
+	for _, withheld := range []string{
+		"send_to_session", "answer_session_question", "respond_session_plan",
+		"create_session", "stop_session", "resume_session", "get_session_output",
+		"archive_session", "delete_session", "delete_worktree", "delete_branch",
+		"flush_memos", "update_memo", "delete_memo",
+		"create_schedule", "restore_memory_snapshot", "get_chat_plan", "set_chat_plan",
+	} {
+		if names[withheld] {
+			t.Errorf("%s reached the session surface — stage 1 opens observation only", withheld)
+		}
+	}
+}
+
+// The additive flag is only valid on the session-side server: a stray --fleet-observe on an
+// assistant invocation must not widen that assistant's scope (same conjunction as the other
+// three flags).
+func TestFleetObserveRequiresSelfReport(t *testing.T) {
+	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
+	oldChromium, oldObserve := sessionChromiumEnabled(), mcpFleetObserveEnabled
+	t.Cleanup(func() {
+		setFlags(oldWrite, oldSelfReport, oldChromium)
+		mcpFleetObserveEnabled = oldObserve
+	})
+
+	for _, args := range [][]string{
+		{"mcp-stdio", "--fleet-observe"},
+		{"mcp-stdio", "--write", "--fleet-observe"},
+	} {
+		mcpFleetObserveEnabled = false
+		parseStdioFlags(args[1:])
+		if mcpFleetObserveEnabled {
+			t.Errorf("%v enabled fleet observation without --self-report", args)
+		}
+	}
+
+	parseStdioFlags([]string{"--self-report", "--fleet-observe"})
+	if !mcpFleetObserveEnabled {
+		t.Error("--self-report --fleet-observe did not enable fleet observation")
+	}
+}
+
+// add_memo is a write tool. It has to accept the session surface it was opened to, and keep
+// refusing a read-only assistant.
+func TestAddMemoGateAcceptsSessionAndRefusesReadOnlyAssistant(t *testing.T) {
+	oldWrite, oldSelfReport := writeEnabled(), selfReportOnly()
+	oldObserve := mcpFleetObserveEnabled
+	t.Cleanup(func() {
+		setWriteEnabled(oldWrite)
+		setSelfReportOnly(oldSelfReport)
+		mcpFleetObserveEnabled = oldObserve
+	})
+
+	for _, tc := range []struct {
+		name                       string
+		write, selfReport, observe bool
+		want                       bool
+	}{
+		{name: "read-only assistant", want: false},
+		{name: "operator", write: true, want: true},
+		{name: "session without opt-in", selfReport: true, want: false},
+		{name: "session with opt-in", selfReport: true, observe: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			setWriteEnabled(tc.write)
+			setSelfReportOnly(tc.selfReport)
+			mcpFleetObserveEnabled = tc.observe
+			if got := memoWriteAllowed(); got != tc.want {
+				t.Errorf("memoWriteAllowed() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// A session may see THAT a peer is waiting, never the question or the plan body it is waiting
+// on: stage 1 withholds the tools that answer those, and handing over the text anyway leaves
+// the model holding the input for an approval it must not stand in for.
+func TestSessionStatusDropsPendingQuestionAndPlan(t *testing.T) {
+	const full = `{"name":"s7","state":"plan","alive":true,` +
+		`"questions":[{"question":"delete prod?"}],"plan":"## step 1\ndrop the table"}`
+
+	trimmed := withoutPendingInteraction(full)
+	// The BODIES must be gone. "plan" as a bare word must not be searched for: it is also the
+	// value of state, which the caller is meant to see.
+	for _, leaked := range []string{"delete prod?", "drop the table"} {
+		if strings.Contains(trimmed, leaked) {
+			t.Errorf("%q survived the trim: %s", leaked, trimmed)
+		}
+	}
+	var got map[string]any
+	if err := json.Unmarshal([]byte(trimmed), &got); err != nil {
+		t.Fatalf("the trim produced invalid JSON: %v (%s)", err, trimmed)
+	}
+	for _, key := range []string{"questions", "plan"} {
+		if _, present := got[key]; present {
+			t.Errorf("the %q key survived the trim: %s", key, trimmed)
+		}
+	}
+	for key, want := range map[string]any{"name": "s7", "state": "plan", "alive": true} {
+		if got[key] != want {
+			t.Errorf("%s = %v, want %v — the trim must keep the state fields", key, got[key], want)
+		}
+	}
+
+	// A status the caller cannot read at all is worse than one carrying a field it must not
+	// act on, so anything unparseable is passed through untouched.
+	if got := withoutPendingInteraction("not json"); got != "not json" {
+		t.Errorf("unparseable input was rewritten to %q", got)
+	}
+}
+
+// The session-side descriptions are a fixed cost on every session's first turn and are
+// deliberately English (b367ae51). They must also not send a session to a tool stage 1
+// withholds.
+func TestFleetObserveDescriptionsAreEnglishAndSelfConsistent(t *testing.T) {
+	for _, tool := range mcpStdioFleetObserveTools() {
+		name := tool["name"].(string)
+		desc := tool["description"].(string)
+		for _, r := range desc {
+			if r > 0x2000 {
+				t.Errorf("%s: session-advertised descriptions are English, found %q: %s", name, r, desc)
+				break
+			}
+		}
+		for _, withheld := range []string{"answer_session_question", "respond_session_plan", "flush_memos"} {
+			if strings.Contains(desc, withheld) && !strings.Contains(desc, "cannot") {
+				t.Errorf("%s points a session at %s, which stage 1 does not advertise", name, withheld)
+			}
+		}
+	}
+}
+
+// withoutPendingInteraction is only worth anything if the get_session_status path actually
+// calls it, and only for a session. This drives the real tools/call dispatch against a stubbed
+// Agent so a trim that is written but never wired shows up as a failure.
+func TestGetSessionStatusTrimsOnlyForSessions(t *testing.T) {
+	const status = `{"name":"s7","state":"plan","questions":[{"question":"delete prod?"}],"plan":"drop the table"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sessions/s7/status" {
+			http.NotFound(w, r)
+			return
+		}
+		_, _ = io.WriteString(w, status)
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	call := func() string {
+		raw := mcpStdioCall(mcpReq{
+			ID:     json.RawMessage(`1`),
+			Params: json.RawMessage(`{"name":"get_session_status","arguments":{"name":"s7"}}`),
+		})
+		var resp struct {
+			Result struct {
+				Content []struct {
+					Text string `json:"text"`
+				} `json:"content"`
+			} `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &resp); err != nil {
+			t.Fatalf("unmarshal tools/call response: %v (%s)", err, raw)
+		}
+		if len(resp.Result.Content) == 0 {
+			t.Fatalf("no content in tools/call response: %s", raw)
+		}
+		return resp.Result.Content[0].Text
+	}
+
+	withFleetObserve(t, true)
+	if got := call(); strings.Contains(got, "drop the table") {
+		t.Errorf("a session was handed the pending plan body: %s", got)
+	}
+
+	// The operator keeps both fields — it has the tools to act on them.
+	oldWrite := writeEnabled()
+	t.Cleanup(func() { setWriteEnabled(oldWrite) })
+	setSelfReportOnly(false)
+	setWriteEnabled(true)
+	if got := call(); !strings.Contains(got, "drop the table") {
+		t.Errorf("the operator lost the pending plan body it needs: %s", got)
+	}
+}

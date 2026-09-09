@@ -69,7 +69,8 @@ func TestCodexThreadServersForwardsCredentialsByName(t *testing.T) {
 	got, _ := CodexThreadServers([]ServerDef{threadAFDef()}, CodexThreadOpts{SessionName: "slot01"})
 	af, _ := got[BuiltinAF].(map[string]any)
 
-	if want := []any{"AGENT_ADDR", "AGENT_TOKEN"}; !reflect.DeepEqual(af["env_vars"], want) {
+	want := []any{"AF_CP_BASE_URL", "AF_MEMO_TOKEN", "AGENT_ADDR", "AGENT_TOKEN"}
+	if !reflect.DeepEqual(af["env_vars"], want) {
 		t.Fatalf("af env_vars = %v, want %v", af["env_vars"], want)
 	}
 	// Forwarded AND literal would be two answers to one question; the daemon has no

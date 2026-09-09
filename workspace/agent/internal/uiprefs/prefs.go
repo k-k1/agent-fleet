@@ -171,9 +171,22 @@ func ImageGeneration() bool {
 	return v
 }
 
+// FleetObserve is the ON/OFF for the session-side fleet-observation tools (docs/log/86
+// stage 1, ui-prefs sessionFleetObserve). Missing/invalid ⇒ **false**, like PeerMessaging:
+// it lets a session read every sibling session's state and usage, and append to the user's
+// memo queue. None of that is destructive, but it is a wider surface than the self-report
+// contract a fleet has today, so it is chosen rather than inherited by upgrading.
+func FleetObserve() bool {
+	v, _ := Read()["sessionFleetObserve"].(bool)
+	return v
+}
+
 // mcpreg builds the session-side af server's launch args and must not read main's
 // config files itself, so it takes the answer as a hook (same shape as opencode.UsagePref).
-func init() { mcpreg.PeerMessagingEnabled = PeerMessaging }
+func init() {
+	mcpreg.PeerMessagingEnabled = PeerMessaging
+	mcpreg.FleetObserveEnabled = FleetObserve
+}
 
 // imagegen needs the same answer twice over: mcpreg to decide the af server's launch args,
 // and imagegen itself to refuse the REST route. The second one is not redundant — the Agent

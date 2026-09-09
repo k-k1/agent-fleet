@@ -255,7 +255,9 @@ func TestMaterializeCodexBuiltinAFForwardsAgentAuth(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := readFile(t, codexConfigPath())
-	if want := `env_vars = ["AF_SESSION_NAME","AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
+	// AF_CP_BASE_URL / AF_MEMO_TOKEN join them for the memo tools (docs/log/86 stage 1),
+	// which are the one pair that leaves the local Agent for the CP's queue.
+	if want := `env_vars = ["AF_CP_BASE_URL","AF_MEMO_TOKEN","AF_SESSION_NAME","AGENT_ADDR","AGENT_TOKEN"]`; !strings.Contains(got, want) {
 		t.Fatalf("af's Agent auth environment is not forwarded to the Codex MCP child:\n%s", got)
 	}
 	if strings.Contains(got, "AF_SECRET_KEY") {

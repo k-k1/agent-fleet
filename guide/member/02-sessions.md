@@ -384,6 +384,35 @@ no longer closed it). If something does arrive over Claude's own channel anyway,
 the chat view as an incoming message**, with the sending session's name. It is closed, and a leak is
 made visible.
 
+## Letting a session see the fleet
+
+You can let a session see **the fleet it is part of**. If the messaging above is for telling,
+this is for looking.
+
+It is **off by default**. Turn it on under **Settings > Agents > Sessions > "Fleet observation
+from sessions"**. The change applies **from the next session you start**; sessions already
+running keep their current tools until restarted.
+
+It opens exactly four things.
+
+- **Another session's state** — working, waiting for input, or stopped. A session can check
+  whether the peer it handed work to is still going, without asking you.
+- **Context usage** — how full its own context has become. It can decide to hand the rest
+  over to a fresh session before it runs out mid-task (that is the handoff above).
+- **Reading the memo queue** — what is already waiting there.
+- **Adding one memo** — leaving you a note about something outside what you asked for. "There
+  is another bug next to the function I fixed", "this runbook is out of date": **a report set
+  down without interrupting the work**. When and where the queue gets sent stays your call.
+
+**Nothing that acts is added.** Instructing another session, answering its questions, approving
+its plans, starting, stopping or deleting sessions, and sending the memo queue all remain the
+job of the fleet operator ([08](08-organising.md)) and Console.
+
+There is one deliberate limit. A session can see **that** another session is stopped on a
+question or waiting for plan approval, **but not the text of it**. Being able to read it would
+give the session the material to answer, on your behalf, a question meant for you. **Approval
+is your job** — a session that finds a stopped peer goes as far as telling you.
+
 ## Having a session generate an image
 
 A session can **generate an image from a prompt** — a rough diagram, a stand-in mock, a
