@@ -9,6 +9,14 @@ English | [日本語](0074-engine-instance-classes.ja.md)
   deployment** (g6e's VRAM and price, per-region availability). Nothing in (c) is load-bearing:
   the decisions that depend on it are listed under "Open questions", each naming the decision
   that waits on it.
+- Revised the same day after one round of review. **Open questions 2 and 4 became decisions** —
+  when to apply is now part of decision 5 (idempotently, just before a start; it costs nothing
+  extra, and a failure refuses the start only when the rung differs from the last one applied),
+  and decision 1 now says a rung over the quota is not rejected at declaration time (**the
+  production quota is 96**, dev and af-sandbox are 8, and the CP cannot read either). The
+  shipped ladder is **empty** (decision 1), and decision 4 gained both the reason for always
+  waiting (no branch on a number we cannot read) and the price of one switch (15-20 minutes of
+  wall clock, $0.3-0.4 at g6.xlarge rates).
 - Related: [0071-self-hosted-inference-engines.md](0071-self-hosted-inference-engines.md)
   decision 2 (one capacity provider per role, the box chosen by a VRAM floor), decision 5,
   decision 9 / [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 1,
@@ -112,6 +120,15 @@ l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536|
 - **Each rung carries its own vCPU and memory bounds.** A 48 GB card only exists in boxes with
   32-64 GiB of RAM, so one wide range cannot buy the upper rung.
 - On a deployment that declares no rung, this feature **does not exist** (decision 3).
+- 🔴 **The shipped default is an empty ladder.** The example above is a proposal, not a
+  measurement (open question 3). Baking defaults in waits until g6e's VRAM, price and
+  availability have been confirmed on this deployment (P1). **A default nobody measured makes
+  decision 1's own premise — that the operator declared it — a lie.**
+- **A rung above the quota is not rejected at declaration time.** The CP cannot read the
+  G-family vCPU quota (reading it means adding `service-quotas` to the IAM grant, the very shape
+  decision 1 avoids), and the quota differs per deployment (96 in production, 8 in dev and
+  af-sandbox). When an unbuyable rung is chosen, the service events say so
+  (`VcpuLimitExceeded`) and the panel shows them as they are.
 
 ⚠️ **The "widen `AllowedInstanceTypes` and switch rungs with the VRAM floor alone" variant is
 rejected.** It works, but it leans on "the cheapest member that fits is bought", so the day AWS
@@ -147,13 +164,27 @@ lie available here).
 2. If it IS running, make the operator press **"replace it now"** explicitly. That sets
    desired 0.
 3. 🔴 **Wait for the container instance to disappear before starting.** Starting sooner puts a
-   draining 4 vCPU box next to a new 8 vCPU one, exceeds **the G-family quota of 8, and fails
-   with `VcpuLimitExceeded` — silently, as a placement that never happens**: until somebody
-   reads the service events it merely looks like a slow start. Draining measured at 427-477 s.
+   draining 4 vCPU box next to a new 8 vCPU one, exceeds **the quota, and fails with
+   `VcpuLimitExceeded` — silently, as a placement that never happens**: until somebody reads
+   the service events it merely looks like a slow start. Draining measured at 427-477 s (about
+   8 minutes from desired 0 to the box being gone, on the image role).
 
-⚠️ **A replacement buys one cold start** (measured 586 s for llm, 165-197 s for image). The
-screen says so. It is ADR 0071's `offGrace: 0` position — changing your mind costs a cold
-start — applied to the box instead of the mode.
+**It waits on a deployment with headroom too.** The G-family vCPU quota differs per deployment
+(96 in production, 8 in dev and af-sandbox) and **the CP cannot read it** (no `service-quotas`
+in the IAM grant, for decision 1's reason). A branch on a number we cannot read **fails silently
+exactly on the deployment where the branch is wrong**. One order is safe on both, so that order
+is the behaviour. It costs wall clock and nothing else: **the two boxes never bill at once**,
+because the new one is bought after the old one is gone.
+
+⚠️ **A replacement buys one cold start** (measured 527-586 s for llm, 165-197 s for image).
+Storage is the instance store, so **the new box fetches the model from S3 again** — measured at
+6.62 GiB in 66 s (102.7 MiB/s). With the drain, one switch is 15-20 minutes of wall clock and
+roughly $0.3-0.4 of GPU time at g6.xlarge rates. The screen says so. It is ADR 0071's
+`offGrace: 0` position — changing your mind costs a cold start — applied to the box instead of
+the mode.
+
+⚠️ **Saving a rung while the engine is stopped costs nothing at all.** It is absorbed by the
+cold start whoever uses it next was going to pay anyway.
 
 ### 5. Applying it is a read-modify-write: Describe → copy → Update
 
@@ -163,6 +194,20 @@ fields replaced** (`AllowedInstanceTypes`, `AcceleratorTotalMemoryMiB.Min`, `VCp
 `MemoryMiB`). Network, storage, instance profile and the GPU declaration (`AcceleratorCount`,
 `AcceleratorTypes`, `AcceleratorManufacturers`) **go back exactly as they were read**. The CP
 holds no design for the box — giving it one would make two designs, its own and the stack's.
+
+**It is applied at two moments** — when a rung is saved, and **idempotently, just before a start
+is decided**. The second exists because CloudFormation puts its own declaration back (a stack
+update does not replace the CP, so decision 2's "a stored choice wins" alone would let the next
+box be bought on the reverted rung).
+
+**Re-applying costs nothing.** `UpdateCapacityProvider` does not buy a box, it rewrites what the
+next box will look like; ECS API calls are free, and writing the same values back touches
+neither the running box nor the desired count. The price is one more call on the start path.
+
+🔴 **When re-applying fails**: **if the chosen rung differs from the last one this process
+applied, do not start** — starting anyway buys the old box while believing it is the new one,
+and with a heavy model CUDA dies and **a whole cold start is thrown away**. If they are the
+same, log the failure and start (the box's specification is already right).
 
 ### 6. The warning POINTS at "this may not fit". It does not refuse
 
@@ -286,17 +331,19 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
    back, so it holds either way — but **whether `DescribeCapacityProviders`' output fits
    `Update`'s input** (the types differ, so it is copied) has not been tried on real hardware.
    Depends on: decisions 5 and 8.
-2. **CloudFormation drift.** A stack update after the CP wrote takes it back to the stack's
-   declaration. Decision 2 says a stored choice wins, but **a box bought while it is reverted is
-   bought on the old rung**. Re-applying (idempotently) just before each start is the likely
-   answer, at the cost of one more ECS call on the start path. Depends on: decisions 2 and 4.
+2. **How CloudFormation drift actually shows.** Decision 5's "apply again, idempotently, just
+   before a start" covers it, except for **a box bought between the moment a stack update
+   reverts the capacity provider and the moment the CP re-applies** (a `mode=on` deployment).
+   How long that window really is has not been measured. Depends on: decisions 2 and 5.
 3. **g6e's VRAM, price and availability** per region. What the default ladder should say waits
    on this. **The example in this ADR (`l40s|L40S 48GB|44000|…`) is a proposal, not a
-   measurement.** Depends on: decision 1.
-4. **Whether the G-family vCPU quota has to be raised.** At 8, the highest usable rung is an
-   8 vCPU type (g6e.2xlarge, say). **A larger rung in the ladder is selectable but unbuyable** —
-   whether to refuse it at declaration time or let the service events say so is undecided.
-   Depends on: decisions 1 and 4.
+   measurement.** The shipped ladder is empty (decision 1). Depends on: decision 1.
+4. **Whether the G-family vCPU quota has to be raised — settled (2026-09-10, answered by the
+   operator in review).** Production's quota is 96, so rungs above 8 vCPU can be bought.
+   **Rejecting them at declaration time is not the design** (decision 1's last bullet): the CP
+   cannot read the quota and it differs per deployment. Dev and af-sandbox stay at 8, which is
+   why the drain wait (decision 4) is the behaviour everywhere. What is left is an
+   experiment-design question: what P1 can actually measure inside af-sandbox's 8.
 5. Whether `engine_hourly` should carry the box after all (decision 10).
 6. **Whether the task's `Memory` holds for a heavy model** (decision 11). "18.5 GB was fine" is
    as far as the evidence goes.
@@ -315,8 +362,9 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
   returns every other field exactly as it was read**, (3) enabling a model that will not fit
   asks for confirmation, and a model with neither `vram_mib` nor `bytes` reads as "unknown".
 - **P1 (real hardware)**: switch a rung on af-sandbox, buy the box, and measure **the drain
-  wait, `VcpuLimitExceeded` and the cold start**. Open questions 1, 2, 3 and 4 close here. It
-  costs GPU hours and may need a quota increase.
+  wait, `VcpuLimitExceeded` and the cold start**; close open question 3 and settle the ladder's
+  defaults. Open questions 1 and 2 close here too. It costs GPU hours, and af-sandbox's quota is
+  8, so **actually buying an upper rung there needs an increase** (production is 96).
 - **P2 (if it turns out to be needed)**: the task definition following the rung (decision 11,
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).
