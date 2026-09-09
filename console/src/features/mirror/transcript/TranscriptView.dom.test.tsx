@@ -363,6 +363,57 @@ describe("the work boundary never disappears once a turn has one", () => {
   });
 });
 
+// A shared file is a deliverable, and the fold would eat it: workSplit's boundary sits after the
+// LAST tool, so a picture card with any tool after it lands inside a closed disclosure whose
+// summary counts only tools and interim texts — nothing on screen says an image is in there.
+// Measured on a real session (5 generated images over two generate_image calls): only the last
+// call's card was visible. Generating twice is not even needed — the agent opening the picture it
+// just made is one more tool, and buries it the same way.
+describe("a shared file is never folded into the work trace", () => {
+  const IMAGES = ["out/curry-1.png", "out/curry-2.png"];
+  const TWO_CALLS: Turn[] = [
+    { role: "user", text: "カレーの画像を作って", idx: 1 },
+    {
+      role: "assistant",
+      idx: 2,
+      parts: [
+        { kind: "tool", tool: "mcp__af_40ed9852__generate_image", info: "curry" },
+        { kind: "userfile", files: IMAGES },
+        { kind: "text", text: "もう1枚作ります" },
+        { kind: "tool", tool: "mcp__af_40ed9852__generate_image", info: "curry" },
+        { kind: "userfile", files: ["out/curry-3.png"] },
+        { kind: "text", text: "3枚のカレー画像が生成できました。" },
+      ],
+    },
+  ];
+  // Folded content stays in the DOM (aria-hidden + inert), so presence proves nothing here —
+  // only placement does.
+  const inWork = (el: HTMLElement) => el.querySelectorAll(".mt-work .mt-files").length;
+
+  it("hoists every card out of the closed disclosure, exactly once", () => {
+    const el = render(TWO_CALLS, OWNER, { working: false, autoCollapseWork: true });
+    expect(el.querySelector<HTMLButtonElement>(".mt-work-head")!.getAttribute("aria-expanded")).toBe("false");
+    expect(el.querySelectorAll(".mt-files").length).toBe(2); // both calls' cards, no duplicate inside the fold
+    expect(inWork(el)).toBe(0);
+    // In order, and above the final answer.
+    const cards = [...el.querySelectorAll(".mt-files")];
+    expect(cards[0].querySelectorAll(".mt-file-item").length).toBe(IMAGES.length);
+    const work = el.querySelector(".mt-work")!;
+    expect(work.compareDocumentPosition(cards[0]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("leaves the tool traces folded", () => {
+    const el = render(TWO_CALLS, OWNER, { working: false, autoCollapseWork: true });
+    expect(el.querySelectorAll(".mt-work .mt-tool, .mt-work .mt-toolrun").length).toBeGreaterThan(0);
+  });
+
+  it("renders the cards once inline while the turn is still unfolded", () => {
+    const el = render(TWO_CALLS, OWNER, { working: true, autoCollapseWork: true });
+    expect(el.querySelector(".mt-work-head")).toBeNull(); // no disclosure yet
+    expect(el.querySelectorAll(".mt-files").length).toBe(2);
+  });
+});
+
 // An expanded work trace or thinking block runs to several screens, so with the only control in
 // the head there is no way to fold it without scrolling all the way back up from where you
 // finished reading. The same toggle is repeated at the bottom of the body.
