@@ -25,6 +25,12 @@ English | [日本語](0074-engine-instance-classes.ja.md)
   both directions; the launch template is not, and **two fields cannot be carried**), and **the
   admin `mode=on` route consults the gate too** (without it one button walks around the wait).
   Each is written into the decision it belongs to.
+- Added the P1 experiment plan the same day (the section "The P1 experiment"). The operator
+  decided to run it **with the quota left at 8**, so what 8 vCPUs can and cannot show is written
+  down first — **a 4-vCPU upper rung needs no quota increase**, but then **decision 4's necessity
+  cannot be shown by a 4→4 switch** (the two fit in exactly 8), so **the 8-vCPU rung becomes the
+  positive control**, and **verifying the machinery needs no bigger card at all** (g5.xlarge
+  measures everything if g6e is absent).
 - Related: [0071-self-hosted-inference-engines.md](0071-self-hosted-inference-engines.md)
   decision 2 (one capacity provider per role, the box chosen by a VRAM floor), decision 5,
   decision 9 / [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 1,
@@ -405,6 +411,92 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
    and no KV cache. Writing a coefficient means measuring one (it depends on context length,
    layer count and quantisation). **Until then it says "a floor" and nothing else.**
 
+## The P1 experiment (with the quota left at 8, 2026-09-10)
+
+The operator has decided **not to raise the G-family vCPU quota**: it stays at 8. That is a
+constraint and **also a test of the design** — 8 is the ordinary state of a development
+deployment, and a feature that breaks there breaks in production too, in some other shape. What
+follows starts from what the number 8 does to this experiment.
+
+### What 8 vCPUs allow and forbid
+
+| Combination | Total vCPU | Possible at 8 |
+|---|---|---|
+| One g6.xlarge (L4 24GB, 4) | 4 | yes — ordinary running |
+| g6.xlarge draining + a new g6e.xlarge (L40S 48GB, 4) | 8 | yes — **exactly at the limit** (i.e. buyable without waiting) |
+| g6.xlarge draining + g6e.2xlarge (8) | 12 | no — `VcpuLimitExceeded` (**this is decision 4's positive control**) |
+| Both roles on an upper rung at once | over 8 | no — **one role at a time** |
+
+⚠️ Three things follow.
+
+1. **With a 4-vCPU upper rung (g6e.xlarge) the whole experiment fits inside 8.** No quota
+   increase is needed.
+2. **A 4→4 switch cannot demonstrate that decision 4 is necessary** — the two boxes add up to
+   exactly 8 and both fit. Showing the need means choosing the **8-vCPU rung (g6e.2xlarge) as
+   the new one and starting without waiting** (`update-service --desired-count 1` straight
+   through the AWS CLI). That is the positive control, and **if `VcpuLimitExceeded` does not
+   appear, the experiment is measuring something else.**
+3. **One role at a time**, and it should be **image**: its cold start is 165-197 s against the
+   llm role's 527-586 s, so the same facts cost three times the time and money there.
+
+### The candidate rungs, and what to do if g6e is not there
+
+```
+ImageInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
+                     l40s|L40S 48GB|44000|g6e.xlarge|4-8|30000-65536
+```
+
+🔴 **Whether `g6e.xlarge` exists in this deployment's region has not been established** (open
+question 3). If it does not, the box simply never arrives — an
+`InsufficientInstanceCapacity`, or no matching type at all — **which is indistinguishable from
+the feature failing**. Check the offering first:
+`aws ec2 describe-instance-type-offerings --location-type availability-zone --filters
+Name=instance-type,Values=g6e.xlarge`.
+
+⭐ **Verifying the machinery needs no bigger card.** If g6e is absent or expensive, make the
+upper rung **`g5.xlarge` (A10G 24GB, 4 vCPU)**. The VRAM is the same but the TYPE is different,
+so applying a rung, the box changing type, the drain wait and the drift all measure exactly the
+same. **The only thing 48 GB is needed for is the single claim that decision 6's warning saved
+a start**, and that can be added after everything else has passed.
+
+### The order (parts of it work in no other order)
+
+1. **Deploy 60-engines first** (`Image/LlmInstanceClasses` and the IAM).
+2. **Replace the CP** (this branch's control-plane image). The engine table is **read once, at
+   startup**, so adding `classes` to it exists nowhere in the product until then — the same trap
+   as ADR 0071's "the second pass is not visible until the CP is restarted".
+3. Open the Console and check **that the ladder appears at all**. If it does not, step 1 or 2 did
+   not land.
+4. Then measure.
+
+### What to measure (with the open question each closes)
+
+| # | To measure | Where / how it is judged |
+|---|---|---|
+| 1 | 🔴 **Open question 1**: are `CapacityOptionType` and `FipsEnabled` preserved or cleared? | `describe-capacity-providers` **before and after** a switch, diffed. If they are cleared, decision 5 needs "write the uncarriable fields back explicitly" — which today it cannot |
+| 2 | Whether the read-modify-write actually fits (the types differ, so it is copied) | The switch answers 200 and `instanceRequirements` matches the rung **with every other field still there** |
+| 3 | **Whether the IAM grant is enough** | The switch is not `AccessDenied`. A missing PassRole shows up here and nowhere else |
+| 4 | 🔴 **Open question 2**: CloudFormation drift | Re-`deploy` 60-engines after a switch, then describe the provider — did it revert? If it did, start the engine once and confirm **the CP re-applies before the next box is bought** |
+| 5 | **Decision 4's drain wait** | "Replace it now" → seconds until the container instance is gone (expect 427-477), and that the CP does not start during it (the log line `holding the start back (class_swap_wait…)`) |
+| 6 | **Decision 4's positive control** | Select the 8-vCPU rung and start **without waiting** via `update-service --desired-count 1`. `VcpuLimitExceeded` must appear in the service events. **If it does not, the experiment is wrong** |
+| 7 | The cold start on the new rung | The box's type really changed (`ecs.instance-type` on the container instance), seconds to listening, seconds to fetch the model |
+| 8 | Open question 3 (the defaults) | The upper rung's **actual hourly rate** (Cost Explorer by tag, the next day) and its availability. Both go into the ladder's `usdPerHour` |
+| 9 | The panel | The "not the default" badge, the replace flow and the VRAM warning **against a real CP** (P0 checked the rendering against a stub) |
+
+### Stop conditions and cost
+
+- **Rough cost**: one 4-vCPU GPU box for two or three hours, **$3-5** (g6.xlarge at $1.26/hour;
+  the upper rung's rate is unconfirmed). ⚠️ **"Stopped" and "gone" are different times** —
+  billing continues for about 8 minutes after the service reaches 0. When the measuring is
+  finished, set the mode to off **and watch until the container instance disappears**.
+- **Stop conditions**: (a) #3 fails → suspect that 60-engines was not redeployed;
+  (b) the upper rung's box does not arrive within 15 minutes → suspect availability or a typo in
+  the type, and fall back to `g5.xlarge`; (c) #6's positive control does not fire → **suspect the
+  experiment**, and read the real quota with
+  `service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BB`.
+- **Afterwards**: put the rung back to the default (the Console's "Back to the default"), set the
+  mode to off, and decide whether the ladder goes back to empty (empty removes the feature).
+
 ## Phases and the definition of done
 
 - **P0 (what this ADR implements)**: the declared ladder (60-engines → the engine table), the
@@ -416,9 +508,9 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
   returns every other field exactly as it was read**, (3) enabling a model that will not fit
   asks for confirmation, and a model with neither `vram_mib` nor `bytes` reads as "unknown".
 - **P1 (real hardware)**: switch a rung on af-sandbox, buy the box, and measure **the drain
-  wait, `VcpuLimitExceeded` and the cold start**; close open question 3 and settle the ladder's
-  defaults. Open questions 1 and 2 close here too. It costs GPU hours, and af-sandbox's quota is
-  8, so **actually buying an upper rung there needs an increase** (production is 96).
+  wait, `VcpuLimitExceeded` and the cold start**; close open questions 1 and 2, and close open
+  question 3 to settle the ladder's defaults. The plan, under the operator's decision to **leave
+  the quota at 8**, is the section above.
 - **P2 (if it turns out to be needed)**: the task definition following the rung (decision 11,
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).
