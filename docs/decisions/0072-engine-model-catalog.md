@@ -684,6 +684,14 @@ names move between versions — pin the tag and freeze the templates behind gold
         answered 404 to `GET /api/admin/engines` — the panel could not even say "no engines
         here". The admin routes move outside that guard; every handler is nil-safe on the
         registry and answers "no such engine" by itself.
+    - 🔴 **`trendingScore` comes back fractional.** Measured 2026-09-10 (`search=WAI`, the image
+      role): two rows of twenty answered `0.1` and `0.7000000000000001`, an `int64` field made
+      **the whole array fail to unmarshal**, and the panel showed only "unreadable answer from
+      huggingface.co" — **a search that worked the day before, lost entirely depending on which
+      rows came back**. It is a score, not a count, so it is taken as `float64`, and the panel
+      rounds it (a raw `String(0.7000000000000001)` is what lands on the row otherwise). The
+      lesson sits on the other side of the narrow decode's win: **a narrowed type that does not
+      match the upstream's real range fails all-or-nothing**.
     - 🔴 **The narrow decode is worth 41x** (measured 2026-09-09, the same 20 rows): **211,015
       bytes** raw upstream against **5,125 bytes** out of this route. Dropping `chat_template`
       and `extra_gated_prompt` is not a marginal saving.

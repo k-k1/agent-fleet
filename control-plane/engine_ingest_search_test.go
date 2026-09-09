@@ -41,6 +41,7 @@ const hfSearchBody = `[
    "gguf":{"total":7615616512,"context_length":131072,
            "chat_template":"TEMPLATE-PADDING-TEMPLATE-PADDING"}},
   {"id":"black-forest-labs/FLUX.1-dev","downloads":790579,"likes":14538,
+   "trendingScore":0.7000000000000001,
    "gated":"auto","lastModified":"2025-06-27T16:22:19.000Z",
    "cardData":{"license":"other","license_name":"flux-1-dev-non-commercial-license"}}
 ]`
@@ -72,7 +73,7 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	// All three ranking numbers ride on every row, whichever one the list was ordered by:
 	// sorting by one and showing only that one leaves "why is this here" unanswerable.
 	if h.Likes != 435 || h.Trending != 22 {
-		t.Errorf("likes/trending = %d/%d, want 435/22", h.Likes, h.Trending)
+		t.Errorf("likes/trending = %d/%v, want 435/22", h.Likes, h.Trending)
 	}
 	if h.Gated {
 		t.Error("an ungated repository is reported as gated")
@@ -349,5 +350,39 @@ func TestBrowseKindPicksTheUpstreamFilter(t *testing.T) {
 		if q.Get("filter") != tc.filter || q.Get("pipeline_tag") != tc.pipeline {
 			t.Errorf("kind %q asked %v, want filter=%q pipeline_tag=%q", tc.kind, *q, tc.filter, tc.pipeline)
 		}
+	}
+}
+
+// 🔴 `trendingScore` is a SCORE and it comes back fractional. Measured 2026-09-10 on a live
+// search for "WAI": two rows of twenty answered 0.1 and 0.7000000000000001, an int64 field made
+// encoding/json refuse the WHOLE array, and the panel said "unreadable answer from
+// huggingface.co" with no results — for a search that had worked the day before, because the
+// popular GGUF rows the earlier probes hit all happened to score whole numbers.
+func TestSearchSurvivesAFractionalTrendingScore(t *testing.T) {
+	hfSearchStub(t, `[
+	  {"id":"John6666/wai-nsfw-illustrious-sdxl-v150-sdxl","downloads":2862,"likes":23,
+	   "trendingScore":0.1,"gated":false,"cardData":{"license":"other","license_name":"faipl-1.0-sd"}},
+	  {"id":"John6666/wai-nsfw-illustrious-v80-sdxl","downloads":1884,"likes":57,
+	   "trendingScore":0.7000000000000001,"gated":false,"cardData":{"license":"other"}},
+	  {"id":"martineux/waiIllustriousSDXL_v160","downloads":3134,"likes":5,"trendingScore":1,
+	   "gated":false,"cardData":null}]`)
+
+	hits, aerr := engineSearchHF(t.Context(), "WAI", "checkpoint", engineSortDownloads)
+	if aerr != nil {
+		t.Fatalf("a fractional score lost the whole page: %s", aerr.message)
+	}
+	if len(hits) != 3 {
+		t.Fatalf("hits = %d, want 3", len(hits))
+	}
+	// Compared through float64 so this test still COMPILES if the field is put back to an
+	// integer — then it fails on the line above with the message the panel showed, which is the
+	// failure worth keeping, rather than refusing to build.
+	if float64(hits[0].Trending) != 0.1 || float64(hits[1].Trending) != 0.7000000000000001 {
+		t.Errorf("scores = %v / %v, want them carried as they came", hits[0].Trending, hits[1].Trending)
+	}
+	// A null cardData is the other shape in that same answer, and it must not take the row with
+	// it: the licence is simply unknown there.
+	if hits[2].Ref != "martineux/waiIllustriousSDXL_v160" || hits[2].License != "" {
+		t.Errorf("row with cardData:null = %+v", hits[2])
 	}
 }
