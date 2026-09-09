@@ -68,29 +68,54 @@ func reserveSpawnSlot(parent string) error {
 	return nil
 }
 
-// releaseOnce wraps releaseSpawnSlot so the create can call it at the meta write AND defer it
-// for the failure paths without giving the slot back twice — the second release would free a
-// slot the child is now occupying, and the limit would drift upwards one create at a time.
-// Not concurrency-safe by design: one create, one goroutine.
-func releaseOnce(parent string) func() {
-	done := false
-	return func() {
-		if done {
-			return
-		}
-		done = true
-		releaseSpawnSlot(parent)
-	}
+// spawnSlot is one create's claim on a child slot. Zero parent = this create is not a spawn, and
+// every method is a plain meta write with no bookkeeping, so the create path reads the same
+// either way.
+type spawnSlot struct {
+	parent string
+	done   bool
 }
 
-func releaseSpawnSlot(parent string) {
-	spawnInflight.mu.Lock()
-	defer spawnInflight.mu.Unlock()
-	if spawnInflight.n[parent] <= 1 {
-		delete(spawnInflight.n, parent)
+// publish writes the child's meta and hands the slot back **in one critical section**.
+//
+// The two have to be atomic together. reserveSpawnSlot counts metas and in-flight creates under
+// this same lock, so a concurrent create must never see an in-between state: meta written but
+// slot still held counts one child twice (a parent under the limit is refused), and slot freed
+// but meta not yet written counts it zero (the limit is exceeded). Writing then releasing as two
+// steps only narrows that window — it does not close it.
+func (s *spawnSlot) publish(m session.Meta) {
+	if s.parent == "" {
+		session.WriteMeta(m)
 		return
 	}
-	spawnInflight.n[parent]--
+	spawnInflight.mu.Lock()
+	defer spawnInflight.mu.Unlock()
+	session.WriteMeta(m)
+	s.releaseLocked()
+}
+
+// release is the failure net: every path that ends without a meta. Idempotent, because the
+// create defers it AND publish has usually already done it — releasing twice would free a slot
+// the child now occupies, and the limit would drift upwards one create at a time.
+func (s *spawnSlot) release() {
+	if s.parent == "" {
+		return
+	}
+	spawnInflight.mu.Lock()
+	defer spawnInflight.mu.Unlock()
+	s.releaseLocked()
+}
+
+func (s *spawnSlot) releaseLocked() {
+	if s.done {
+		return
+	}
+	s.done = true
+	if spawnInflight.n[s.parent] <= 1 {
+		delete(spawnInflight.n, s.parent)
+		return
+	}
+	spawnInflight.n[s.parent]--
 }
 
 // SpawnRefusal is a create that origin=session may not perform. Code is the wire error code,

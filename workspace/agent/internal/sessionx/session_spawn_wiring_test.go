@@ -2,12 +2,14 @@ package sessionx
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -20,22 +22,32 @@ import (
 // passes just as happily when nothing calls it — the failure mode stage 1 wrote
 // TestGetSessionStatusTrimsOnlyForSessions for, one layer down.
 
-// spawnEnv is one test's isolated create endpoint plus the list of sessions IT started.
+// spawnTestSeq makes idempotency keys unique per run within one process.
+var spawnTestSeq atomic.Int64
+
+// spawnEnv is one test's isolated create endpoint, plus the fixture names it planted.
 type spawnEnv struct {
 	srv     *httptest.Server
 	home    string
 	t       *testing.T
-	started []string // tmux sessions this test launched, and the only ones it may kill
+	planted map[string]bool // metas written by hand: NOT ours to kill
 }
 
 // spawnServer stands the create endpoint up with a stub agent CLI on PATH, so a launch really
 // completes without depending on a real claude.
 //
-// ⚠️ The tmux server is SHARED with every other session in this workspace. The session store is
-// per-test (AF_SESSIONS_DIR), but tmux names are not namespaced, so cleanup may only touch what
-// this test actually launched — never "every meta in the store", which includes hand-written
-// fixtures whose names (`busy`, `kid1`, …) could belong to somebody's real session. Kills are
-// also pinned with `=`: without it tmux resolves a target by prefix and fnmatch, so
+// ⚠️ The tmux server is SHARED with every other session in this workspace, and tmux names are
+// not namespaced even though the session store is (AF_SESSIONS_DIR). Cleanup therefore works by
+// EXCLUSION: kill every meta in this test's private store except the fixtures the test planted
+// by hand. Two mistakes it exists to avoid —
+//   - killing by fixture name (`busy`, `kid1`, `parent1`, …) reaches a stranger's real session
+//     that happens to share the name;
+//   - killing only what a create RESPONSE named leaks the session whenever the launch succeeded
+//     but the response did not arrive intact, or the test failed before it could record it. The
+//     meta is written before the response, so the store — not the response — is the honest
+//     record of what was started.
+//
+// Kills are pinned with `=`: without it tmux resolves a target by prefix and fnmatch, so
 // `claude_kid1` would happily match a stranger's `claude_kid10`.
 func spawnServer(t *testing.T) *spawnEnv {
 	t.Helper()
@@ -56,28 +68,36 @@ func spawnServer(t *testing.T) *spawnEnv {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /sessions", HandleCreateSession)
-	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t}
+	env := &spawnEnv{srv: httptest.NewServer(mux), home: home, t: t, planted: map[string]bool{}}
 	t.Cleanup(func() {
 		env.srv.Close()
-		for _, name := range env.started {
-			_ = exec.Command("tmux", "kill-session", "-t", "="+session.TmuxName(name)).Run()
+		for _, m := range session.ListMetas() {
+			if env.planted[m.Name] {
+				continue
+			}
+			_ = exec.Command("tmux", "kill-session", "-t", "="+session.TmuxName(m.Name)).Run()
 		}
 	})
 	return env
 }
 
-// create POSTs one create and remembers the session it launched, so cleanup can kill exactly
-// that and nothing else. Returns the status and the raw body; the caller asserts on them.
+// fixture plants a meta by hand — a session that was never launched here, and so must never be
+// killed here. Every hand-written meta goes through this; writing one directly would hand its
+// name to the cleanup above.
+func (e *spawnEnv) fixture(m session.Meta) {
+	e.t.Helper()
+	if m.CreatedAt == "" {
+		m.CreatedAt = "2026-09-09T10:00:00+09:00"
+	}
+	e.planted[m.Name] = true
+	session.WriteMeta(m)
+}
+
+// create POSTs one create. Cleanup reads the store rather than this result, so a launch is
+// covered even when the response is not.
 func (e *spawnEnv) create(body map[string]any) (int, []byte) {
 	e.t.Helper()
-	code, raw := roundtrip(e.t, e.srv, "POST", "/sessions", body)
-	if code == http.StatusCreated || code == http.StatusOK {
-		var s session.Session
-		if json.Unmarshal(raw, &s) == nil && s.Name != "" {
-			e.started = append(e.started, s.Name)
-		}
-	}
-	return code, raw
+	return roundtrip(e.t, e.srv, "POST", "/sessions", body)
 }
 
 // spawnBody is the common create request, with per-test overrides.
@@ -97,7 +117,7 @@ func TestCreateSessionSpawnWiring(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude,
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude,
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
 
 	// Be the delivery, so the ordering requirement is observable: what did the record say at
@@ -152,18 +172,22 @@ func TestCreateSessionSpawnBudgetAndRetry(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude,
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude,
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
 	for _, n := range []string{"kid1", "kid2"} {
-		session.WriteMeta(session.Meta{Name: n, Kind: session.KindClaude, Dir: repo,
+		env.fixture(session.Meta{Name: n, Kind: session.KindClaude, Dir: repo,
 			Origin: session.OriginSession, OriginSession: "parent1", CreatedAt: "2026-09-09T10:00:00+09:00"})
 	}
 	orig := deliverInitialPromptFn
 	deliverInitialPromptFn = func(string, string) {}
 	t.Cleanup(func() { deliverInitialPromptFn = orig })
 
+	// The idempotency ledger is process-global, so a fixed key replays across repeated runs in
+	// one process (`-count=2`) instead of creating — and t.TempDir() restarts its numbering for
+	// each iteration, so even the home path is not unique. A counter is.
 	third := spawnBody(map[string]any{
-		"dir": repo, "initial_prompt": "the third task", "idempotency_key": "cs_third",
+		"dir": repo, "initial_prompt": "the third task",
+		"idempotency_key": fmt.Sprintf("cs_third_%d", spawnTestSeq.Add(1)),
 	})
 	code, raw := env.create(third)
 	if code != http.StatusCreated {
@@ -213,12 +237,12 @@ func TestCreateSessionSpawnWorkingCopyGuard(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(repo, "console"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude,
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude,
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
 	// One session already working: in the repo, and one in home.
-	session.WriteMeta(session.Meta{Name: "busy", Kind: session.KindShell, Dir: repo, Subdir: "console",
+	env.fixture(session.Meta{Name: "busy", Kind: session.KindShell, Dir: repo, Subdir: "console",
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
-	session.WriteMeta(session.Meta{Name: "athome", Kind: session.KindShell, Dir: home,
+	env.fixture(session.Meta{Name: "athome", Kind: session.KindShell, Dir: home,
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
 	aliveOrig := sessionAliveFn
 	sessionAliveFn = func(m session.Meta) bool { return m.Name == "busy" || m.Name == "athome" }
@@ -261,9 +285,9 @@ func TestCreateSessionSpawnDepthAndKindOverHTTP(t *testing.T) {
 	if err := os.MkdirAll(repo, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude,
+	env.fixture(session.Meta{Name: "parent1", Kind: session.KindClaude,
 		Origin: session.OriginUser, CreatedAt: "2026-09-09T10:00:00+09:00"})
-	session.WriteMeta(session.Meta{Name: "kid", Kind: session.KindClaude, Dir: repo,
+	env.fixture(session.Meta{Name: "kid", Kind: session.KindClaude, Dir: repo,
 		Origin: session.OriginSession, OriginSession: "parent1", CreatedAt: "2026-09-09T10:00:00+09:00"})
 
 	for _, tc := range []struct {

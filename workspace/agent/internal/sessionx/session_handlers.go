@@ -551,9 +551,9 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		}
 		httpx.WriteJSON(w, http.StatusCreated, body)
 	}
-	// releaseSpawn hands this create's reserved child slot back. Replaced below for a spawn;
-	// a no-op for every other creation route.
-	releaseSpawn := func() {}
+	// slot is this create's claim on one of the parent's child slots. Empty for every route
+	// that is not a spawn, and then every method is a plain meta write.
+	slot := &spawnSlot{}
 	// The spawn refusals (ADR 0073) run AFTER the idempotency claim and before any side effect
 	// (clone / worktree), so a refused spawn leaves nothing behind.
 	//
@@ -573,11 +573,11 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			httpx.WriteErr(w, http.StatusConflict, "spawn_budget", err.Error())
 			return
 		}
-		// The slot is handed over to the child's meta the moment that meta is written
-		// (releaseSpawnSlot's warning: holding both counts one child twice, and the launch is
-		// seconds long). The defer is the failure net — every path that ends without a meta.
-		releaseSpawn = releaseOnce(spawnParent)
-		defer releaseSpawn()
+		// The slot is handed over to the child's meta as that meta is written (spawnSlot.publish
+		// — the two are one atomic step). The defer is the failure net: every path that ends
+		// without a meta.
+		slot = &spawnSlot{parent: spawnParent}
+		defer slot.release()
 	}
 	title, ok := CleanTitle(req.Title)
 	if !ok {
@@ -857,9 +857,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 			writeRuntimeErr(w, err)
 			return
 		}
-		session.WriteMeta(meta)
-		// The child exists now, so countChildren sees it: hand the reserved slot over.
-		releaseSpawn()
+		slot.publish(meta)
 		noteCreateOrigin(name, &req, spawnParent)
 		if p := strings.TrimSpace(req.InitialPrompt); p != "" {
 			if err := h.Send(agents.TurnInput{Prompt: p}); err != nil {
@@ -875,9 +873,7 @@ func HandleCreateSession(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusInternalServerError, "tmux_failed", err.Error())
 		return
 	}
-	session.WriteMeta(meta)
-	// The child exists now, so countChildren sees it: hand the reserved slot over.
-	releaseSpawn()
+	slot.publish(meta)
 
 	// BEFORE the delivery below, not after: the record is what the mirror matches the turn
 	// against, and the turn can appear first (see noteCreateOrigin).

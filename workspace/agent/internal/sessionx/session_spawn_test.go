@@ -1,9 +1,11 @@
 package sessionx
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
@@ -172,7 +174,7 @@ func TestSpawnBudgetCountsArchivedAndStoppedChildren(t *testing.T) {
 	if err := reserveSpawnSlot("elsewhere"); err != nil {
 		t.Fatalf("another parent's budget was consumed: %v", err)
 	}
-	releaseSpawnSlot("elsewhere")
+	(&spawnSlot{parent: "elsewhere"}).release()
 }
 
 // Two creates that differ in content are not serialized by the idempotency ledger (it keys on
@@ -192,11 +194,11 @@ func TestSpawnBudgetReservesBeforeTheMetaExists(t *testing.T) {
 		t.Fatal("a concurrent create took a fourth slot while the third was still launching")
 	}
 	// A failed launch gives its slot back.
-	releaseSpawnSlot("root")
+	(&spawnSlot{parent: "root"}).release()
 	if err := reserveSpawnSlot("root"); err != nil {
 		t.Fatalf("the slot was not released after a failed create: %v", err)
 	}
-	releaseSpawnSlot("root")
+	(&spawnSlot{parent: "root"}).release()
 }
 
 // The slot is handed over to the meta the moment the meta exists. Holding both counts one child
@@ -208,27 +210,73 @@ func TestSpawnSlotIsHandedOverToTheMeta(t *testing.T) {
 		child("kid1", "root"),
 	)
 	// A create in flight: reserved, meta not yet written. One real child, one launching.
-	release := releaseOnce("root")
+	slot := &spawnSlot{parent: "root"}
 	if err := reserveSpawnSlot("root"); err != nil {
 		t.Fatalf("second child refused: %v", err)
 	}
-	// Its meta lands, and the slot goes with it.
-	session.WriteMeta(child("kid2", "root"))
-	release()
+	// The meta lands and the slot goes with it, as ONE step: a concurrent create holding the
+	// same lock sees either "meta absent, one in flight" or "meta present, none in flight", and
+	// both count this child exactly once.
+	slot.publish(child("kid2", "root"))
 	if n := countChildren("root"); n != 2 {
 		t.Fatalf("children = %d, want 2", n)
 	}
+	if got := spawnInflight.n["root"]; got != 0 {
+		t.Fatalf("inflight after publish = %d, want 0 (the slot was not handed over)", got)
+	}
 	// A third create is legitimate now — two children, limit three.
+	third := &spawnSlot{parent: "root"}
 	if err := reserveSpawnSlot("root"); err != nil {
 		t.Fatalf("third child refused although only two exist: %v (slot counted twice?)", err)
 	}
-	// The deferred release on the same create must not give a second slot back: that would
-	// free one the child now occupies and let the limit drift upwards.
-	release()
+	// The deferred release on the create that already published must not give a second slot
+	// back: that would free one the child now occupies and let the limit drift upwards.
+	slot.release()
 	if got := spawnInflight.n["root"]; got != 1 {
 		t.Fatalf("inflight = %d, want 1 (a double release freed an occupied slot)", got)
 	}
-	releaseOnce("root")()
+	third.release()
+}
+
+// Concurrent creates must not overshoot the limit. This is the direction that matters: a
+// spurious refusal costs a caller one retry, while an overshoot puts agents on the host that the
+// budget exists to prevent.
+//
+// It does NOT prove the reserve/publish pair is atomic — the interleaving that double-counts
+// produces a spurious refusal, and another goroutine simply takes the slot instead, so the
+// totals look the same. What it does catch is the opposite mistake: releasing before the meta is
+// visible, where a window exists in which the child is counted by nobody.
+func TestSpawnBudgetHoldsUnderConcurrentCreates(t *testing.T) {
+	spawnFixture(t, session.Meta{Name: "root", Kind: session.KindClaude, Origin: session.OriginUser})
+
+	const racers = 12
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	won := 0
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if err := reserveSpawnSlot("root"); err != nil {
+				return
+			}
+			mu.Lock()
+			won++
+			mu.Unlock()
+			(&spawnSlot{parent: "root"}).publish(child(fmt.Sprintf("kid%d", i), "root"))
+		}(i)
+	}
+	wg.Wait()
+
+	if won != session.SpawnChildLimit {
+		t.Fatalf("%d creates got a slot, want exactly %d", won, session.SpawnChildLimit)
+	}
+	if n := countChildren("root"); n != session.SpawnChildLimit {
+		t.Fatalf("children = %d, want %d", n, session.SpawnChildLimit)
+	}
+	if err := reserveSpawnSlot("root"); err == nil {
+		t.Fatal("the limit is not in force after the race")
+	}
 }
 
 // The envelope (decision 14) is what tells the child this instruction came from another
