@@ -258,10 +258,16 @@ value**: nothing has been measured, and all that changed is who picks the provis
   change.** The RSS sum above turned out to be an overestimate — PSS, measured under the same
   conditions, comes in lower. One parent's margin was bigger than the original estimate said, but
   the reason a ceiling is needed is that nothing bounds the number of parents (next bullet), and
-  more margin per parent does not weaken that reason. **Neither the default of three nor the
-  ceiling of six was overturned by measurement** — what changed is that the ground moved from
-  "provisional" to "confirmed by measurement." Limits to how far this generalizes (this one 10 GiB
-  workspace, the claude kind only) are in docs/log/87 §87.17.6.
+  more margin per parent does not weaken that reason. **Measurement argued for changing neither
+  the default of three nor the ceiling of six.**
+
+  ⚠️ **The two numbers do not rest on equally strong ground.** What was actually run and measured
+  is **one parent plus three children** — the worst case at the default of three. **The ceiling of
+  six is an extrapolation** from a linear model fitted to those three (docs/log/87 §87.17.4). So
+  **three rests on measurement and six rests on extrapolation from it**: neither is the
+  "provisional value nobody measured" any more, but six must not be read as "measured." Limits to
+  how far this generalizes (this one 10 GiB workspace, the claude kind only) are in
+  docs/log/87 §87.17.6.
 - **The reason a ceiling is needed is not running out of memory as such.** This budget is **per
   parent**, and nothing bounds the number of parents (two at six is thirteen agents). The
   workspace total is therefore not bounded by this setting at all, which is exactly why one
