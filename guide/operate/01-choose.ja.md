@@ -64,9 +64,9 @@ tarball だけ持っていてリポジトリを持たない顧客の手元にも
 | ecs / ecs-ec2 | [deploy/aws/ecs/README.md](../../deploy/aws/ecs/README.md) |
 | ec2-single | [deploy/aws/ec2-single/README.md](../../deploy/aws/ec2-single/README.md) |
 
-ワークスペースの中では、同じファイルがこの棚の隣の `operate/runbooks/` に置かれます。
+ワークスペースの中では、同じファイルがこのセクションと並んで `operate/runbooks/` に置かれます。
 
-**この棚はそのコマンドを繰り返しません。**各手順が何を決めていて、何に注意するかを書きます
+**ここではそのコマンドを再掲しません。**各手順が何を決めていて、何に注意するかを書きます
 （[02 導入](02-install.ja.md) が compose の道をその調子で辿ります）。
 **ここのコマンドが、それが説明しているスクリプトと食い違ったら、正しいのはスクリプトで、
 このページがバグです。**
