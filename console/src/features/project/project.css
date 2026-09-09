@@ -130,6 +130,14 @@
 .proj-node.wt {
   border-left: 2px solid color-mix(in srgb, var(--lp-accent, var(--accent)) 45%, transparent);
 }
+/* …and takes its FAMILY's colour once the working copy belongs to a spawn lineage
+   (ADR 0073, --lineage-* in tokens.css). Only the rule's colour changes — a fill
+   would fight hover, selection, the active row and the working-set dimming, none of
+   which the rail can give up. A copy with no family keeps the neutral accent above,
+   so a colour on screen always means "there is a relative of this somewhere". */
+.proj-node.wt.lineage {
+  border-left-color: var(--proj-lineage);
+}
 
 /* Header line: expand caret + the repo row. */
 .proj-node-head {
@@ -153,6 +161,16 @@
      repo header (and under the filter) instead of covering them when scrolled. */
   z-index: 1;
   background: var(--leftpane-bg);
+}
+/* Only the FIRST level of worktrees pins. There are just two tiers of sticky offset
+   below the filter bar, and a spawn chain has no bound — a third and fourth pinned
+   header would stack on the second, cover each other, and eat the rail. Reached by
+   two nested .proj-children so the shared tree (sharing.css, one level deep) keeps
+   the rule above. */
+.proj-children .proj-children .proj-node.wt > .proj-node-head {
+  position: relative;
+  top: auto;
+  z-index: 0;
 }
 .proj-node-caret {
   flex: none;
@@ -202,6 +220,12 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* Indentation stops after three levels (RepoNode's MAX_INDENT_DEPTH). A handoff
+   chain can grow without bound and the rail is ~260px wide, so past that the rows
+   stay where they are and the spine colour carries the relation on its own. */
+.proj-children.flat {
+  margin-left: 0;
 }
 
 /* Nested session list under a node: no extra outer padding. */

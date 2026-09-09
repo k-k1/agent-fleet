@@ -22,7 +22,7 @@ import { RepoJobRow } from "../repos/RepoJobRow.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useSessionUI } from "../sessions/ui.ts";
 import { useSessionActions } from "../sessions/useSessionActions.tsx";
-import { groupedRepos, sessionsInFolder } from "../../lib/project.ts";
+import { repoTree, filterRepoTree, countRepoNodes, sessionsInFolder } from "../../lib/project.ts";
 import { useActiveWorkingSet, repoInSet, autoAddToActiveWorkingSet } from "../../lib/workingSetsStore.ts";
 import { useProjectFilter, normQuery, repoMatches, sessionMatches } from "./filter.ts";
 import { RepoNode } from "./RepoNode.tsx";
@@ -71,17 +71,14 @@ export const ProjectTree = memo(function ProjectTree() {
   );
 
   // Working sets (docs/log/52): scope to the active set first — a whole project
-  // (base + its worktrees) is in or out by the base's membership.
+  // (base + everything nested under it) is in or out by the base's membership.
   const wset = useActiveWorkingSet();
-  const scoped = groupedRepos(repos).filter((g) => !wset || repoInSet(wset, g[0]));
+  const scoped = repoTree(repos, sessions).filter((t) => !wset || repoInSet(wset, t.repo));
   // Filtering: a working copy is visible when it matches itself or hosts a
-  // matching session; a base also stays as the anchor of a matching worktree.
-  // While filtering, only the visible worktrees are passed down as children.
+  // matching session; an ancestor also stays as the anchor of a matching descendant.
   const visible = (r: (typeof repos)[number]) =>
     repoMatches(r, nq) || sessionsInFolder(sessions, r.name).some((s) => sessionMatches(s, nq));
-  const groups = scoped
-    .filter((g) => !nq || g.some(visible))
-    .map((g) => (nq ? [g[0], ...g.slice(1).filter(visible)] : g));
+  const roots = nq ? filterRepoTree(scoped, visible) : scoped;
 
   // The Agent-side job is the source of truth for import progress (docs/log/78). This only
   // starts it and awaits the outcome; the "importing" row is rendered from the job list by
@@ -118,7 +115,7 @@ export const ProjectTree = memo(function ProjectTree() {
       id="repos"
       title={tr("pj.repos")}
       icon="repo"
-      count={wset ? scoped.reduce((n, g) => n + g.length, 0) : repos.length}
+      count={wset ? countRepoNodes(scoped) : repos.length}
       actions={
         <>
           <Button
@@ -178,7 +175,7 @@ export const ProjectTree = memo(function ProjectTree() {
         {jobs.map((j) => (
           <RepoJobRow key={j.id} job={j} />
         ))}
-        {groups.length === 0 && jobs.length === 0 && (
+        {roots.length === 0 && jobs.length === 0 && (
           nq ? (
             <li className="proj-sub-empty">{tr("pj.no_match", { q: q.trim() })}</li>
           ) : wset && repos.length > 0 ? (
@@ -195,10 +192,10 @@ export const ProjectTree = memo(function ProjectTree() {
             </EmptyState>
           )
         )}
-        {/* One top-level node per base clone; its worktrees nest inside as child
-            nodes (an orphaned worktree group has the worktree itself at [0]). */}
-        {groups.map((members) => (
-          <RepoNode key={members[0].name} r={members[0]} childRepos={members.slice(1)} ctx={ctx} actions={actions} />
+        {/* One top-level node per base clone; its worktrees nest inside by spawn
+            lineage, recursively (an orphaned worktree is its own root). */}
+        {roots.map((t) => (
+          <RepoNode key={t.repo.name} node={t} depth={0} ctx={ctx} actions={actions} />
         ))}
       </ul>
     </Section>

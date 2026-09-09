@@ -1,12 +1,17 @@
 // RepoNode — one working-copy node in the project tree: a collapsible node whose
 // header is the repo row (RepoRowConnected: launch / SCM / branch / delete) and
 // whose body nests the sessions running in that folder (directly — no
-// "sessions" sub-header: it only duplicated the node's own fold) and, for a
-// base clone, its worktrees as child nodes. Collapsing a node hides the whole
-// project — folding is how you focus on one project. The open state
-// persists per folder (af-proj-<repo>). File browsing lives in the rail-bottom
-// files section (FilesSection), not inside the node.
+// "sessions" sub-header: it only duplicated the node's own fold) and the worktrees
+// that hang off it. Collapsing a node hides the whole subtree — folding is how you
+// focus on one project. The open state persists per folder (af-proj-<repo>). File
+// browsing lives in the rail-bottom files section (FilesSection), not inside the node.
+//
+// The node RECURSES: a worktree's own worktrees (a child session's copy, and its
+// child's) nest one level further, so a spawn chain reads as a chain. Indentation
+// stops at three levels — a handoff chain has no bound and the rail is narrow — and
+// past that the spine colour alone carries the relation.
 import { useEffect } from "react";
+import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { useSessionsStore } from "../sessions/store.ts";
 import { SessionRow } from "../sessions/SessionRow.tsx";
@@ -14,44 +19,50 @@ import type { SessionActions } from "../sessions/useSessionActions.tsx";
 import { RepoRowConnected } from "../repos/RepoRowConnected.tsx";
 import { useRepoReveal } from "../repos/store.ts";
 import type { RepoRailContext } from "../repos/useRepoRail.ts";
-import type { Repo } from "../repos/store.ts";
 import type { Session } from "../../types/session.ts";
 import { sessionsInFolder } from "../../lib/project.ts";
+import type { RepoTreeNode } from "../../lib/project.ts";
 import { usePersistedOpen } from "../../lib/usePersistedOpen.ts";
 import { useProjectFilter, normQuery, sessionMatches } from "./filter.ts";
 import { useT } from "../../lib/i18n/index.ts";
 
+/** Deepest level that still adds indentation; below it nodes stay at this inset. */
+const MAX_INDENT_DEPTH = 3;
+
+/** Folder names of every working copy below this node (its own excluded). */
+const descendantFolders = (n: RepoTreeNode): string[] =>
+  n.children.flatMap((c) => [c.repo.name, ...descendantFolders(c)]);
+
 interface RepoNodeProps {
-  r: Repo;
-  /** This base clone's worktrees — rendered as nested child nodes, so folding the
-   * base folds the whole project. Absent/empty for worktree nodes themselves. */
-  childRepos?: Repo[];
+  node: RepoTreeNode;
+  /** 0 for a group's root; each nested worktree adds one. */
+  depth: number;
   ctx: RepoRailContext;
   actions: SessionActions;
 }
 
-export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
+export function RepoNode({ node: n, depth, ctx, actions }: RepoNodeProps) {
+  const r = n.repo;
   const tr = useT();
   const sessions = useSessionsStore((s) => s.sessions);
   const nq = normQuery(useProjectFilter((f) => f.q));
   const mine = sessionsInFolder(sessions, r.name);
+  const below = descendantFolders(n);
   // Empty repos (no sessions anywhere under them, worktrees included) default
   // folded — an unused clone shouldn't take up rail space. The default is live
   // until the user pins a choice (see usePersistedOpen).
-  const subtreeTotal =
-    mine.length + (childRepos ?? []).reduce((n, c) => n + sessionsInFolder(sessions, c.name).length, 0);
-  const node = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
+  const subtreeTotal = mine.length + below.reduce((c, f) => c + sessionsInFolder(sessions, f).length, 0);
+  const openState = usePersistedOpen(`af-proj-${r.name}`, subtreeTotal > 0);
   // Reveal-in-rail (command palette repo row): expand this node when it's the target —
-  // or the base of a target worktree, so the worktree child mounts and focuses itself —
-  // then scroll + focus the target's row. Keyed on the reveal counter so a repeat reveal
-  // of the same repo still fires.
+  // or an ancestor of a target worktree, so the chain down to it mounts and the target
+  // focuses itself — then scroll + focus the target's row. Keyed on the reveal counter
+  // so a repeat reveal of the same repo still fires.
   const revealN = useRepoReveal((s) => s.n);
   useEffect(() => {
     const target = useRepoReveal.getState().name;
     if (!target) return;
     const isTarget = target === r.name;
-    const isBaseOfTarget = (childRepos ?? []).some((c) => c.name === target);
-    if (isTarget || isBaseOfTarget) node.set(true);
+    if (isTarget || below.includes(target)) openState.set(true);
     if (isTarget) {
       requestAnimationFrame(() => {
         const sel = `[data-rail-repo="${typeof CSS !== "undefined" && CSS.escape ? CSS.escape(r.name) : r.name}"]`;
@@ -62,26 +73,25 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
         }
       });
     }
-    // node.set identity is stable enough; depend on the reveal counter only.
+    // openState.set identity is stable enough; depend on the reveal counter only.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [revealN]);
   // While filtering, every visible node is forced open (the parent already
   // pruned the tree to matches) and only matching sessions render.
-  const open = nq ? true : node.open;
+  const open = nq ? true : openState.open;
   const shownSessions = nq ? mine.filter((s) => sessionMatches(s, nq)) : mine;
   // Session tally for the repo row's badge — real counts, not the filtered view:
-  // own folder while open (the rows are visible right below); the worktrees'
-  // sessions fold in while collapsed, so a folded project still shows what's
-  // running inside.
+  // own folder while open (the rows are visible right below); the whole subtree folds
+  // in while collapsed, so a folded project still shows what's running inside.
   let sessAlive = mine.filter((s) => s.alive).length;
   let sessTotal = mine.length;
   // The right-click "archive all stopped sessions" applies only to the sessions in this node's
   // own folder: mine comes from sessionsInFolder(r.name), so a worktree counts as a separate
   // folder name and is naturally excluded from the base repo's bulk action.
   const stoppedMine = mine.filter((s) => !s.alive && !s.locked);
-  if (!open && childRepos) {
-    for (const c of childRepos) {
-      const cs = sessionsInFolder(sessions, c.name);
+  if (!open) {
+    for (const f of below) {
+      const cs = sessionsInFolder(sessions, f);
       sessAlive += cs.filter((s) => s.alive).length;
       sessTotal += cs.length;
     }
@@ -98,12 +108,21 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
     />
   );
   return (
-    <li className={"proj-node" + (open ? "" : " collapsed") + (r.worktree ? " wt" : " base")}>
+    <li
+      className={
+        "proj-node" +
+        (open ? "" : " collapsed") +
+        (r.worktree ? " wt" : " base") +
+        (n.spine ? " lineage" : "")
+      }
+      // The spine reads this; a node without a family leaves the default accent alone.
+      style={n.spine ? ({ "--proj-lineage": n.spine } as CSSProperties) : undefined}
+    >
       <div className="proj-node-head">
         <button
           type="button"
           className="proj-node-caret"
-          onClick={node.toggle}
+          onClick={openState.toggle}
           aria-expanded={open}
           title={open ? tr("pj.collapse") : tr("pj.expand")}
         >
@@ -113,7 +132,7 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
           <RepoRowConnected
             r={r}
             ctx={ctx}
-            onToggle={node.toggle}
+            onToggle={openState.toggle}
             sess={{ alive: sessAlive, total: sessTotal }}
             stoppedCount={stoppedMine.length}
             onArchiveStopped={() => void actions.archiveStopped(stoppedMine)}
@@ -135,11 +154,12 @@ export function RepoNode({ r, childRepos, ctx, actions }: RepoNodeProps) {
           {/* Worktrees as real child nodes — each carries its own accent spine,
               so they hang directly off the node (NOT wrapped in the bordered
               body) to avoid a second, redundant gray guide left of the spine.
-              The spine is indented to sit where that guide used to be. */}
-          {childRepos && childRepos.length > 0 && (
-            <ul className="proj-children">
-              {childRepos.map((c) => (
-                <RepoNode key={c.name} r={c} ctx={ctx} actions={actions} />
+              The spine is indented to sit where that guide used to be, and stops
+              being indented once the chain is deeper than MAX_INDENT_DEPTH. */}
+          {n.children.length > 0 && (
+            <ul className={"proj-children" + (depth >= MAX_INDENT_DEPTH ? " flat" : "")}>
+              {n.children.map((c) => (
+                <RepoNode key={c.repo.name} node={c} depth={depth + 1} ctx={ctx} actions={actions} />
               ))}
             </ul>
           )}
