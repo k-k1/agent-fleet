@@ -509,6 +509,10 @@ AGENTS.md の既知事項）。`npm run typecheck` / `npm run i18n:lint` も緑�
 | **強制は設定に従うが、拒否文だけ定数のまま** | 同上 |
 | `create_session` の説明文に古い定数を焼き込む | `mcpx.TestCreateSessionDescriptionStatesTheConfiguredLimit` |
 | `list_child_sessions` の `slotLimit` を定数にする | `mcpx.TestListChildSessionsReturnsOnlyOwnChildrenAndTheSlotCount` |
+| **Go の上限を 6→4 に下げる**（Console は 5・6 を出したまま） | `main.TestDriftSpawnChildLimitChoices` |
+| Console の選択肢から 6 を落とす | 同上 |
+| `SPAWN_CHILD_LIMITS` を改名する（＝スキップに落ちないこと） | 同上 |
+| Console の既定を 3→2 にする | `main.TestDriftSpawnChildLimitDefault` |
 
 太字の 3 つが、この一帯で 2 度出ている「**広告されているのに効いていない**」型
 （[86](86-session-fleet-observe.md) §86.10 の 3 つ目と同じ形）への対策である。とくに
@@ -516,6 +520,23 @@ AGENTS.md の既知事項）。`npm run typecheck` / `npm run i18n:lint` も緑�
 文字列そのものを見る必要がある。既存試験は `slotLimit` を `session.SpawnChildLimit` と
 比較していたので、**既定 3 のままでは定数と読み値の区別がつかなかった**。設定値を 5 に
 振ってから比べるように変えている。
+
+表の下 4 行は**取りまとめ側（PR 化時）で足したドリフト試験**である。範囲は両端に別々に書かれて
+いた — Console の `SPAWN_CHILD_LIMITS`（ボタンの並び）と Go の `session.SpawnChildLimitMax`
+（Agent が受け付ける数）で、両者を結んでいたのは**コメント 1 行だけ**だった。効くのは
+**Go 側を下げたとき**である: Console は古い最大値を出し続け、それを選ぶと範囲外の値が保存され、
+`NormalizeSpawnChildLimit` はそれを**最も近い境界ではなく既定へ**倒す。つまり利用者が 6 を
+選んで黙って 3 になる。上げる側は容量を遊ばせるだけだが、下げる側は**利用者の選択そのものの
+黙った切り下げ**で、決定 6 が拒んでいる形に戻る。`console_catalog_test.go` と同じ作法で、
+`console/` の無い配布ではスキップし、**`console/` があって読めないときは fatal** にしている
+（改名がスキップに落ちるドリフト試験は、無いのと同じ）。
+
+🔴 **陽性対照そのものの罠を 1 つ踏んだ。** `go test -run … .` で対照 2・3 を取ったとき、壊した
+のが `console/src/lib/settings.ts`（＝ Go モジュールの外のファイル）だったため、**Go のテスト
+キャッシュが過去の PASS をそのまま返した** — `ok … (cached)` で exit 0。壊したのに緑なので
+「対照が取れた」と読み違えかねない形である。**モジュール外のファイルを壊す対照では `-count=1`
+が要る**（上の 4 行は取り直したもの）。この repo の「新規テストは壊して落ちることを確かめる」
+作法は、対照が**本当に走ったこと**まで確かめて初めて成立する。
 
 `uiprefs` の試験だけは**実際に ui-prefs.json を書いて** `session.SpawnChildLimit()` を見る。
 フックを手で差すだけの試験は、`init` の 1 行を消しても通ってしまう。`sessionx` 側も同じ理由で
