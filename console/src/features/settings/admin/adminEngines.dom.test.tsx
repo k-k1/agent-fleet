@@ -1250,6 +1250,8 @@ describe("EnginesAdminView / searching for a model", () => {
           ref: "black-forest-labs/FLUX.1-dev",
           name: "black-forest-labs/FLUX.1-dev",
           downloads: 790579,
+          likes: 14538,
+          trending: 316,
           gated: true,
           license: "other",
           license_name: "flux-1-dev-non-commercial-license",
@@ -1264,6 +1266,7 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
       q: "flux",
       source: "hf",
+      sort: "downloads",
     });
     // The verdict rides with the row: gated and the real licence name, so the choice is made
     // before a resolve, not after a refusal.
@@ -1271,6 +1274,10 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(hit.textContent).toContain("gated");
     expect(hit.textContent).toContain("flux-1-dev-non-commercial-license");
     expect(hit.textContent).toContain("791k");
+    // All three numbers, not only the one the list was ordered by: "everybody uses it" and
+    // "people are looking at it this week" are different answers to "why is this here".
+    expect(hit.textContent).toContain("15k");
+    expect(hit.textContent).toContain("316");
 
     await click(hit.querySelector("button") as HTMLButtonElement);
     // Picking only fills the field — nothing is resolved and nothing is started.
@@ -1292,6 +1299,7 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
       q: "juggernaut",
       source: "civitai",
+      sort: "downloads",
     });
 
     await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
@@ -1320,5 +1328,30 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(host!.textContent).toContain("見つかりませんでした");
     // And the way in that never needed a search is still there.
     expect(field("リポジトリ")).toBeTruthy();
+  });
+  it("browses a ranking with no words typed, and the button says so", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [{ source: "hf", ref: "stabilityai/sdxl-turbo", name: "stabilityai/sdxl-turbo", downloads: 4176022 }],
+    });
+    await mount();
+    await openIngest();
+
+    // Nothing typed: the button offers the ranking rather than sitting disabled, because
+    // "show me what people use" is the only way in for somebody with no name in hand.
+    const go = button("人気を見る")!;
+    expect(go).toBeTruthy();
+    expect(go.disabled).toBe(false);
+
+    await click(button("話題"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/search", "POST", {
+      q: "",
+      source: "hf",
+      sort: "trending",
+    });
+    expect(host!.querySelector(".engines-search-hits li")!.textContent).toContain("stabilityai/sdxl-turbo");
+    // Pressing a ranking searches at once — it is a question, not a setting that waits for a
+    // second click somewhere else.
+    expect(apiJSON).toHaveBeenCalledTimes(1);
   });
 });

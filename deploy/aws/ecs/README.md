@@ -959,7 +959,9 @@ facts, and deriving the second from the first is what ADR 0053 forbids.
    control plane reads the sha256, the size and the licence from that source's API and starts the
    ingest task). The search (ADR 0072 decision 11) is filtered to what the engine can load —
    GGUF repositories for `llm`, text-to-image for `image` — and each hit says up front whether
-   it is gated and what licence it carries. The
+   it is gated, what licence it carries and how many downloads, likes and trending points it
+   has. With the box empty it is a **ranking** (downloads / trending / likes) instead, which is
+   the way in when no name is in hand. The
    `run-task` below is the same thing by hand, for a deployment whose control plane cannot reach
    the internet;
 2. switch the row on in the same panel. It arrives DISABLED whichever way it was staged —

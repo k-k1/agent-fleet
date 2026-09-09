@@ -648,6 +648,24 @@ names move between versions — pin the tag and freeze the templates behind gold
       record are what `resolve` read**; the list's values are a draft (HF cards move). For
       Civitai the hit carries `modelVersions[0].id` — an ingest wants the **version id, not the
       model id**.
+    - **With no words it is a ranking.** An empty `q` answers "the top of what this role can
+      load" — for somebody who does not know a name that is the only way in, and requiring `q`
+      rebuilds "only for those who already know" in a different shape. Three orders —
+      **downloads, trending, likes** — **mapped per upstream, never passed through**: Civitai
+      answers 400 to a sort it does not know (measured) and Hugging Face ignores one silently,
+      which is worse — **a list that looks ranked and is not**. HF takes `downloads` /
+      `trendingScore` / `likes`; Civitai takes `Most Downloaded`, `Most Downloaded` +
+      `period=Month` (it has no trending score, so "this month" is what trending means there)
+      and `Highest Rated`.
+    - 🔴 **There is no "newest".** Measured 2026-09-09: `sort=lastModified` and `sort=createdAt`
+      over `filter=gguf` return nothing but bulk automated re-quantisations
+      (`mradermacher/*-i1-GGUF`), every one at 0 downloads and 0 likes. A ranking whose first
+      screen is always the same uploader's robot is not a way in, and "trending" already answers
+      what somebody reaching for "new" wants.
+    - **All three numbers ride on every row, whichever order was used.** Showing only the one
+      that was sorted on leaves "why is this here" unanswerable, and "everybody uses it" is not
+      the same answer as "people are looking at it this week". Civitai publishes no trending
+      score, so that field stays **empty rather than borrowing** another number.
     - **Search is not a precondition for ingest.** Typing `owner/name` or a URL stays. A
       deployment with closed egress loses search too, and there decision 6's hand-run route
       simply goes back to being the main one.

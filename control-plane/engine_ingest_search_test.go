@@ -35,7 +35,7 @@ func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
 }
 
 const hfSearchBody = `[
-  {"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":256578,"likes":435,
+  {"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":256578,"likes":435,"trendingScore":22,
    "gated":false,"lastModified":"2024-11-01T00:00:00.000Z",
    "cardData":{"license":"apache-2.0","extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
    "gguf":{"total":7615616512,"context_length":131072,
@@ -50,7 +50,7 @@ const hfSearchBody = `[
 // and this list is drawn 20 rows at a time.
 func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	_, q := hfSearchStub(t, hfSearchBody)
-	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf")
+	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", "")
 	if aerr != nil {
 		t.Fatalf("search: %v", aerr.message)
 	}
@@ -68,6 +68,11 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	if h.Ref != "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF" || h.Downloads != 256578 ||
 		h.License != "apache-2.0" || h.Bytes != 7615616512 || h.ContextLength != 131072 {
 		t.Errorf("hit = %+v", h)
+	}
+	// All three ranking numbers ride on every row, whichever one the list was ordered by:
+	// sorting by one and showing only that one leaves "why is this here" unanswerable.
+	if h.Likes != 435 || h.Trending != 22 {
+		t.Errorf("likes/trending = %d/%d, want 435/22", h.Likes, h.Trending)
 	}
 	if h.Gated {
 		t.Error("an ungated repository is reported as gated")
@@ -89,7 +94,7 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 // cannot load is a dead end that `resolve` refuses a moment later.
 func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	_, q := hfSearchStub(t, `[]`)
-	if _, aerr := engineSearchHF(t.Context(), "qwen", "gguf"); aerr != nil {
+	if _, aerr := engineSearchHF(t.Context(), "qwen", "gguf", ""); aerr != nil {
 		t.Fatalf("gguf: %v", aerr.message)
 	}
 	if q.Get("filter") != "gguf" || q.Get("pipeline_tag") != "" {
@@ -98,7 +103,7 @@ func TestSearchFiltersByWhatTheEngineCanLoad(t *testing.T) {
 	if q.Get("sort") != "downloads" || q.Get("direction") != "-1" {
 		t.Errorf("not ordered by downloads: %v", *q)
 	}
-	if _, aerr := engineSearchHF(t.Context(), "sdxl", "checkpoint"); aerr != nil {
+	if _, aerr := engineSearchHF(t.Context(), "sdxl", "checkpoint", ""); aerr != nil {
 		t.Fatalf("checkpoint: %v", aerr.message)
 	}
 	if q.Get("pipeline_tag") != "text-to-image" || q.Get("filter") != "" {
@@ -132,7 +137,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "checkpoint")
+	hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "checkpoint", "")
 	if aerr != nil {
 		t.Fatalf("search: %v", aerr.message)
 	}
@@ -149,7 +154,7 @@ func TestCivitaiSearchCarriesTheVersionIdNotTheModelId(t *testing.T) {
 	}
 	// Civitai is not asked for GGUFs at all: it hosts image models, and llama.cpp can load none
 	// of them.
-	if hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "gguf"); aerr != nil || len(hits) != 0 {
+	if hits, aerr := engineSearchCivitai(t.Context(), "juggernaut", "gguf", ""); aerr != nil || len(hits) != 0 {
 		t.Errorf("civitai for the llm role = %v %v, want nothing", hits, aerr)
 	}
 }
@@ -167,7 +172,7 @@ func TestCivitaiSearchMarksNonCommercial(t *testing.T) {
 	engineCivitaiBase = srv.URL
 	defer func() { engineCivitaiBase = old }()
 
-	hits, aerr := engineSearchCivitai(t.Context(), "x", "checkpoint")
+	hits, aerr := engineSearchCivitai(t.Context(), "x", "checkpoint", "")
 	if aerr != nil || len(hits) != 1 {
 		t.Fatalf("search: %v %v", hits, aerr)
 	}
@@ -199,12 +204,76 @@ func TestSearchRouteAnswersHitsAndRefusesAnEmptyQuery(t *testing.T) {
 	if len(hits) != 2 {
 		t.Fatalf("hits = %v", out["hits"])
 	}
-	// A blank search would ask the upstream for its most-downloaded models, which is not a
-	// search and is not what the button says.
-	if code, out := call(`{"q":"   "}`); code != http.StatusBadRequest {
-		t.Errorf("empty q = %d %v, want 400", code, out)
+	// A blank query is the RANKING, not a mistake: it is the only way in for somebody who does
+	// not know what to type, and it was a 400 until decision 11 grew its second half.
+	if code, out := call(`{"q":"   ","sort":"trending"}`); code != http.StatusOK {
+		t.Errorf("ranking with no words = %d %v, want 200", code, out)
 	}
 	if code, out := call(`{"q":"flux","source":"elsewhere"}`); code != http.StatusBadRequest {
 		t.Errorf("unknown source = %d %v, want 400", code, out)
+	}
+	// An unknown ranking is refused rather than passed on: Civitai answers 400 to one it does
+	// not know (measured) and Hugging Face silently ignores it, which is worse — an unranked
+	// list that looks ranked.
+	if code, out := call(`{"q":"flux","sort":"newest"}`); code != http.StatusBadRequest {
+		t.Errorf("unknown sort = %d %v, want 400", code, out)
+	}
+}
+
+// The rankings are mapped per upstream, never passed through, and a query with no words in it
+// is the point of them.
+func TestSearchRanksWithoutAQuery(t *testing.T) {
+	_, q := hfSearchStub(t, `[]`)
+	for _, tc := range []struct{ sort, want string }{
+		{"", "downloads"},
+		{engineSortDownloads, "downloads"},
+		{engineSortTrending, "trendingScore"},
+		{engineSortLikes, "likes"},
+	} {
+		if _, aerr := engineSearchHF(t.Context(), "", "gguf", tc.sort); aerr != nil {
+			t.Fatalf("%q: %v", tc.sort, aerr.message)
+		}
+		if q.Get("sort") != tc.want {
+			t.Errorf("sort %q asked for %q, want %q", tc.sort, q.Get("sort"), tc.want)
+		}
+		// 🔴 No `search=` at all. An empty one is not the same as none on this API, and a
+		// ranking is what the caller asked for.
+		if _, ok := (*q)["search"]; ok {
+			t.Errorf("a wordless ranking still sent search=%q", q.Get("search"))
+		}
+	}
+	if _, aerr := engineSearchHF(t.Context(), "", "gguf", "newest"); aerr == nil {
+		t.Error("an unknown ranking was passed to the upstream, which ignores it silently")
+	}
+}
+
+// Civitai has no trending score, so trending is "most downloaded THIS MONTH" — measured to be
+// a genuinely different list from the all-time one.
+func TestCivitaiRankingUsesThePeriodForTrending(t *testing.T) {
+	var got url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.URL.Query()
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	defer srv.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	defer func() { engineCivitaiBase = old }()
+
+	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", engineSortTrending); aerr != nil {
+		t.Fatalf("trending: %v", aerr.message)
+	}
+	if got.Get("sort") != "Most Downloaded" || got.Get("period") != "Month" {
+		t.Errorf("trending asked %v, want sort=Most Downloaded&period=Month", got)
+	}
+	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", engineSortLikes); aerr != nil {
+		t.Fatalf("likes: %v", aerr.message)
+	}
+	if got.Get("sort") != "Highest Rated" || got.Get("period") != "" {
+		t.Errorf("likes asked %v, want sort=Highest Rated with no period", got)
+	}
+	// 🔴 Not passed through: this API answers 400 to a sort it does not know (measured).
+	if _, aerr := engineSearchCivitai(t.Context(), "", "checkpoint", "newest"); aerr == nil {
+		t.Error("an unknown ranking reached Civitai, which answers 400")
 	}
 }

@@ -102,8 +102,12 @@ type IngestHit = {
   /** The repository for HF; the VERSION id for Civitai (not the model id on the page's URL). */
   ref: string;
   name: string;
+  /** The three numbers a ranking is built on. All three ride on every row, whichever one the
+   *  list was ordered by — sorting by one and showing only that one leaves "why is this here"
+   *  unanswerable. `trending` is Hugging Face's own score; Civitai publishes none. */
   downloads?: number;
   likes?: number;
+  trending?: number;
   gated?: boolean;
   license?: string;
   license_name?: string;
@@ -804,6 +808,7 @@ function EngineIngest({
   const [q, setQ] = useState("");
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [searchSource, setSearchSource] = useState("hf");
+  const [sort, setSort] = useState("downloads");
 
   const source = (name = file) => {
     const r = repo.trim();
@@ -873,11 +878,14 @@ function EngineIngest({
 
   /** 「探す」 — for somebody who does not already know `owner/name`. Reads only: it starts
    *  nothing, writes nothing and needs no token (both APIs answer anonymously). */
-  const search = async () => {
+  const search = async (opts: { source?: string; sort?: string } = {}) => {
     setErr("");
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/search`, "POST", {
       q,
-      source: searchSource,
+      source: opts.source ?? searchSource,
+      // With no words this IS the request: a ranking of what this engine can load, which is the
+      // only way in for somebody who does not know what to type.
+      sort: opts.sort ?? sort,
     });
     if (d?.error) {
       setHits(null);
@@ -990,8 +998,27 @@ function EngineIngest({
             ))}
           </span>
         )}
-        <button type="button" className="ghost sm" onClick={search} disabled={busy || !q.trim()}>
-          {tr("admin.engines_ingest_search_go")}
+        {/* The ranking, which is also what an empty box asks for. Pressing one searches
+            immediately: a ranking that needed a second click on another button would read as a
+            setting rather than as the question it is. */}
+        <span className="seg sm">
+          {(["downloads", "trending", "likes"] as const).map((sr) => (
+            <button
+              key={sr}
+              type="button"
+              className={"seg-btn" + (sort === sr ? " active" : "")}
+              onClick={() => {
+                setSort(sr);
+                search({ sort: sr });
+              }}
+            >
+              {tr(("admin.engines_ingest_sort_" + sr) as never)}
+            </button>
+          ))}
+        </span>
+        {/* Enabled with an empty box on purpose — that is the ranking. */}
+        <button type="button" className="ghost sm" onClick={() => search()} disabled={busy}>
+          {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
         </button>
       </div>
       {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
@@ -1198,6 +1225,8 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
 function ingestHitMeta(h: IngestHit, tr: (k: never) => string): string {
   const bits: string[] = [];
   if (h.downloads) bits.push(fmtCount(h.downloads) + tr("admin.engines_ingest_hit_downloads" as never));
+  if (h.likes) bits.push(fmtCount(h.likes) + tr("admin.engines_ingest_hit_likes" as never));
+  if (h.trending) bits.push(fmtCount(h.trending) + tr("admin.engines_ingest_hit_trending" as never));
   if (h.gated) bits.push(tr("admin.engines_ingest_hit_gated" as never));
   const lic = h.license_name || h.license;
   if (lic) bits.push(lic);
