@@ -19,7 +19,7 @@ import { MarkdownView } from "../../viewer/MarkdownView.tsx";
 import { textOfParts, workSplit, type WorkSplit } from "../mirrorParts.ts";
 import { authResolved, footTime } from "../turnTime.ts";
 import { canBranchFrom } from "../forkAt.ts";
-import { foldParts, peerIntentOf, peerSenderOf, spendOf } from "./model.ts";
+import { foldParts, peerIntentOf, peerSenderOf, spawnParentOf, spendOf } from "./model.ts";
 import { paintTurnMarks } from "./markPaint.ts";
 import { chipPart, turnFiles } from "./turnFiles.ts";
 import type { Group, Part } from "./types.ts";
@@ -234,6 +234,10 @@ export function TranscriptTurn({
   const peerFrom = isUser ? (peerSenderOf(turn.text ?? "") ?? turn.peerFrom ?? null) : null;
   const fromPeer = isUser && (turn.source === "peer" || !!peerFrom);
   const peerIntent = fromPeer ? peerIntentOf(turn.text ?? "") : null;
+  // Spawn origin (ADR 0073): this session's launch task came from ANOTHER SESSION's
+  // create_session. Read the envelope first, like peer, so the badge survives a missing tag.
+  const spawnParent = isUser ? spawnParentOf(turn.text ?? "") : null;
+  const fromSpawn = isUser && (turn.source === "spawn" || !!spawnParent);
   // Chat-bridge origin (docs/log/37 P2a): a reply the user sent from Discord/Slack, injected
   // into the session — badged distinctly from self-typed input, like operator turns.
   const chatProvider = isUser
@@ -287,6 +291,15 @@ export function TranscriptTurn({
           <span className="mt-op mt-peer" title={tr("mirror.from_peer_title")}>
             <Icon name="arrow-swap" />{" "}
             {peerFrom ? tr("mirror.from_peer_named", { name: peerFrom }) : tr("mirror.from_peer")}
+          </span>
+        )}
+        {fromSpawn && (
+          // The launch task of a session another session started (ADR 0073). Its own badge
+          // rather than the peer one: a peer message interrupts a session that already had a
+          // user, while this IS the session's reason for existing.
+          <span className="mt-op mt-peer" title={tr("mirror.from_spawn_title")}>
+            <Icon name="rocket" />{" "}
+            {spawnParent ? tr("mirror.from_spawn_named", { name: spawnParent }) : tr("mirror.from_spawn")}
           </span>
         )}
         {peerIntent && (

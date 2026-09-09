@@ -48,9 +48,20 @@ const (
 	OriginOperator = "operator" // create_session by the af_write assistant (and its conversation)
 	OriginSchedule = "schedule" // raised by scheduled execution (docs/log/38)
 	OriginHandoff  = "handoff"  // grown out of a handoff (formerly fork)
+	OriginSession  = "session"  // create_session by another SESSION (ADR 0073) — see OriginSession field
 	// OriginUnknown is a session that predates this feature. It keeps "neither zero nor user".
 	OriginUnknown = "unknown"
 )
+
+// SpawnChildLimit is how many children one session may have at a time (ADR 0073 decision 6).
+// Deliberately a constant and deliberately small: this is the first session-side capability
+// that consumes the shared host's memory with nobody watching.
+//
+// It is NOT a measured resource limit — it is the number a refusal can name, and the tool
+// description states it so a caller learns the ceiling before planning around one it does not
+// have. Whatever replaces it has to keep that property. It lives in this leaf package because
+// both ends need it: the Agent enforces it, the MCP layer advertises it.
+const SpawnChildLimit = 3
 
 // ValidOrigin narrows an origin arriving from outside into the recordable vocabulary. The
 // create wire field is reachable from any client, so an unknown value degrades to user (a
@@ -58,7 +69,7 @@ const (
 // dimension.
 func ValidOrigin(s string) string {
 	switch s {
-	case OriginUser, OriginOperator, OriginSchedule, OriginHandoff, OriginUnknown:
+	case OriginUser, OriginOperator, OriginSchedule, OriginHandoff, OriginSession, OriginUnknown:
 		return s
 	}
 	return OriginUser
@@ -94,7 +105,19 @@ type Session struct {
 	// Subdir mirrors Meta.Subdir: the folder beneath Dir the agent actually runs in
 	// ("" = Dir itself). Dir stays the working copy, so the Console keeps grouping
 	// sessions by copy and only shows this as extra "where inside it" detail.
-	Subdir        string `json:"subdir,omitempty"`
+	Subdir string `json:"subdir,omitempty"`
+	// Origin / OriginSession mirror Meta's provenance onto the wire (ADR 0073). Origin is
+	// always present (OriginOf, so a session older than the feature reads "unknown");
+	// OriginSession is the parent session's name and is empty unless origin=session.
+	//
+	// ⚠️ Nothing reads them yet. The MCP server's steering gate and per-parent budget run in
+	// this container and read the metas directly, and the mirror's spawn badge comes from the
+	// injection record and the envelope — so these two keys exist for a list view that wants to
+	// say "started by X" without a second call, and that view does not exist. Kept rather than
+	// removed because the CP decodes this DTO as is and the pair is what makes lineage
+	// answerable from outside; delete them if a consumer still has not appeared.
+	Origin        string `json:"origin,omitempty"`
+	OriginSession string `json:"originSession,omitempty"`
 	Repo          string `json:"repo"` // working dir basename (display)
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
 	Title         string `json:"title"`     // user-supplied display title (optional, any kind)
@@ -317,8 +340,18 @@ type Meta struct {
 	// reads as unknown rather than folding it into the default user. OriginConv is the
 	// originating assistant conversation's slug when origin=operator. A recreate inherits
 	// the original origin; a handoff sets handoff.
+	//
+	// OriginSession is the PARENT SESSION's name when origin=session (ADR 0073): a session
+	// started this one through create_session. It is resolved server-side from the calling
+	// MCP server's own $AF_SESSION_NAME, never from the wire, and it carries two rules that
+	// deliberately read it differently — steering needs origin==session AND a matching
+	// OriginSession (only your own children), while the recursion limit refuses on a
+	// non-empty OriginSession alone (so forking a child, which stamps origin=handoff, does
+	// not slip through). Only fork and recreate inherit it.
 	Origin     string `json:"origin,omitempty"`
 	OriginConv string `json:"originConv,omitempty"`
+	// OriginSession names the session that raised this one (ADR 0073). See Origin above.
+	OriginSession string `json:"originSession,omitempty"`
 	// SSM holds the (non-secret) coordinates for a kind=ssm session: which instance,
 	// run-as document, region, and the SSO profile to authenticate with. Persisted so
 	// a relaunch regenerates ~/.aws/config and re-runs `aws sso login` (if the cached

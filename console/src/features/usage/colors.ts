@@ -83,7 +83,7 @@ export const KIND_STACK_ORDER = ["cursor", "agy", "claude", "copilot", "codex", 
 /** Fixed order for the small enumerated axes (slots are assigned in order, starting at 1). */
 const ENUM_ORDER: Record<string, string[]> = {
   trigger: ["user", "auto", "manual", "schedule", "operator", "bridge", "recovery"],
-  origin: ["user", "operator", "schedule", "handoff", "unknown"],
+  origin: ["user", "operator", "schedule", "handoff", "session", "unknown"],
   model_src: ["reported", "requested", "default_unknown"],
   measured: ["exact", "partial", "none"],
   verb: ["", "translate", "summarize"],
