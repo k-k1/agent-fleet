@@ -68,6 +68,13 @@ COMFY_TAG=v0.34.0
 IMAGE=""
 PRINT=0
 TEXT_ENCODER=qwen_3_4b_fp8_mixed.safetensors
+# --baked: measure the fleet's OWN pinned image (deploy/aws/ecs/comfyui/Dockerfile, ADR 0072
+# decision 4) instead of the community image + runtime checkout this script was written
+# against. No git/pip at start (already baked in), ComfyUI's cwd is /ComfyUI not /opt/comfyui,
+# and the models volume mounts straight onto /ComfyUI/models — --image is REQUIRED with this
+# (there is no default: unlike the community image there is no one canonical "af-engbench"
+# copy of a self-built image, since the tag changes with every COMFYUI_REF bump).
+BAKED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -77,6 +84,7 @@ while [ $# -gt 0 ]; do
     --comfy-tag) COMFY_TAG="${2:?--comfy-tag needs a value}"; shift ;;
     --image) IMAGE="${2:?--image needs a value}"; shift ;;
     --text-encoder) TEXT_ENCODER="${2:?--text-encoder needs a value}"; shift ;;
+    --baked) BAKED=1 ;;
     --print) PRINT=1 ;;
     -h|--help) sed -n '2,40p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -109,6 +117,7 @@ LOG_GROUP="$(jq -r '.containerDefinitions[0].logConfiguration.options["awslogs-g
 # into the bucket, and the engine role can only read it.
 TASK_ROLE="$("${AWS[@]}" ecs describe-task-definition --task-definition "$INGEST_TD" --query 'taskDefinition.taskRoleArn' --output text)"
 if [ -z "$IMAGE" ]; then
+  [ "$BAKED" = 1 ] && { echo "--baked needs --image (no default self-built copy — the tag moves with COMFYUI_REF)" >&2; exit 2; }
   ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
   IMAGE="$ACCOUNT.dkr.ecr.$REGION.amazonaws.com/af-engbench:comfyui"
 fi
@@ -142,7 +151,24 @@ FETCH_CMD="set -e; B=s3://$BUCKET; mkdir -p /models/checkpoints /models/diffusio
 # the weights from disk (a warm SDXL took 57 s instead of 19). The Manager symlink the image's entrypoint
 # creates is removed on purpose (ADR 0071 decision 6: no Manager on a fleet box).
 # shellcheck disable=SC2016
-COMFY_CMD='set -e; cd /opt/comfyui; echo "comfy: baked $(git describe --tags --always)"; if [ -n "$COMFY_TAG" ]; then s=$(date +%s); git fetch --depth 1 origin tag $COMFY_TAG -q && git checkout -q $COMFY_TAG && echo "comfy: checkout $COMFY_TAG in $(( $(date +%s) - s ))s"; s=$(date +%s); pip install -q -r requirements.txt 2>&1 | grep -v "pip as the" | tail -3; echo "comfy: pip in $(( $(date +%s) - s ))s"; fi; rm -rf /opt/comfyui/custom_nodes/ComfyUI-Manager; for d in checkpoints clip clip_vision configs controlnet diffusers diffusion_models embeddings gligen hypernetworks loras photomaker style_models text_encoders unet upscale_models vae vae_approx; do mkdir -p /opt/comfyui/models/$d; done; rm -f /out/next; IFS=,; for PH in $FLAGS; do IFS=" "; F="${PH#*:}"; echo "comfy: starting $(date +%T) phase=${PH%%:*} flags=[$F]"; /opt/conda/bin/python main.py --port 8188 --listen 0.0.0.0 --disable-auto-launch --output-directory /out $F & P=$!; while [ ! -f /out/next ]; do sleep 2; if ! kill -0 $P 2>/dev/null; then echo "comfy: server died"; break; fi; done; rm -f /out/next; kill $P 2>/dev/null; wait $P || true; echo "comfy: stopped $(date +%T)"; IFS=,; done; echo "comfy: all phases done"'
+if [ "$BAKED" = 1 ]; then
+  # The fleet's own image (deploy/aws/ecs/comfyui/Dockerfile): v0.34.0 is already checked out,
+  # requirements are already installed, there is no Manager to remove, and the workdir is
+  # /ComfyUI, not /opt/comfyui. --output-directory still points at the shared /out volume so
+  # bench-image-engine.py finds the pictures the same way either mode.
+  # shellcheck disable=SC2016
+  COMFY_CMD='set -e; cd /ComfyUI; echo "comfy: baked $(git describe --tags --always 2>/dev/null || cat .af-pinned-ref)"; rm -f /out/next; IFS=,; for PH in $FLAGS; do IFS=" "; F="${PH#*:}"; echo "comfy: starting $(date +%T) phase=${PH%%:*} flags=[$F]"; python3 main.py --port 8188 --listen 0.0.0.0 --disable-auto-launch --output-directory /out $F & P=$!; while [ ! -f /out/next ]; do sleep 2; if ! kill -0 $P 2>/dev/null; then echo "comfy: server died"; break; fi; done; rm -f /out/next; kill $P 2>/dev/null; wait $P || true; echo "comfy: stopped $(date +%T)"; IFS=,; done; echo "comfy: all phases done"'
+  COMFY_MODELS_PATH=/ComfyUI/models
+else
+  # The comfy container: update the baked checkout, then one ComfyUI per label:flags pair.
+  # Between pairs it waits for the bench to touch /out/next. ⚠️ Never add --cache-none here to
+  # "save memory": measured, it drops the loader nodes' outputs and every prompt then re-reads
+  # the weights from disk (a warm SDXL took 57 s instead of 19). The Manager symlink the image's entrypoint
+  # creates is removed on purpose (ADR 0071 decision 6: no Manager on a fleet box).
+  # shellcheck disable=SC2016
+  COMFY_CMD='set -e; cd /opt/comfyui; echo "comfy: baked $(git describe --tags --always)"; if [ -n "$COMFY_TAG" ]; then s=$(date +%s); git fetch --depth 1 origin tag $COMFY_TAG -q && git checkout -q $COMFY_TAG && echo "comfy: checkout $COMFY_TAG in $(( $(date +%s) - s ))s"; s=$(date +%s); pip install -q -r requirements.txt 2>&1 | grep -v "pip as the" | tail -3; echo "comfy: pip in $(( $(date +%s) - s ))s"; fi; rm -rf /opt/comfyui/custom_nodes/ComfyUI-Manager; for d in checkpoints clip clip_vision configs controlnet diffusers diffusion_models embeddings gligen hypernetworks loras photomaker style_models text_encoders unet upscale_models vae vae_approx; do mkdir -p /opt/comfyui/models/$d; done; rm -f /out/next; IFS=,; for PH in $FLAGS; do IFS=" "; F="${PH#*:}"; echo "comfy: starting $(date +%T) phase=${PH%%:*} flags=[$F]"; /opt/conda/bin/python main.py --port 8188 --listen 0.0.0.0 --disable-auto-launch --output-directory /out $F & P=$!; while [ ! -f /out/next ]; do sleep 2; if ! kill -0 $P 2>/dev/null; then echo "comfy: server died"; break; fi; done; rm -f /out/next; kill $P 2>/dev/null; wait $P || true; echo "comfy: stopped $(date +%T)"; IFS=,; done; echo "comfy: all phases done"'
+  COMFY_MODELS_PATH=/opt/comfyui/models
+fi
 
 # The labels alone, for the bench's result names.
 PHASE_LABELS="$(tr ',' '\n' <<<"$PHASES" | sed 's/:.*//' | paste -sd, -)"
@@ -152,7 +178,7 @@ logcfg() { jq -n --arg g "$LOG_GROUP" --arg r "$REGION" --arg p "$1" '{logDriver
 TASKDEF="$(jq -n \
   --arg exec "$EXEC_ROLE" --arg task "$TASK_ROLE" --arg image "$IMAGE" --arg bucket "$BUCKET" --arg run "$RUN" \
   --arg fetch "$FETCH_CMD" --arg comfy "$COMFY_CMD" --arg tag "$COMFY_TAG" --arg flags "$PHASES" \
-  --arg phases "$PHASE_LABELS" --arg te "$TEXT_ENCODER" \
+  --arg phases "$PHASE_LABELS" --arg te "$TEXT_ENCODER" --arg modelspath "$COMFY_MODELS_PATH" \
   --argjson lf "$(logcfg bench-fetch)" --argjson lc "$(logcfg bench-comfy)" --argjson lb "$(logcfg bench)" --argjson lu "$(logcfg bench-upload)" '
 {
   family: "af-engbench-comfy",
@@ -171,7 +197,7 @@ TASKDEF="$(jq -n \
     {name: "comfy", essential: false, image: $image, entryPoint: ["/bin/bash","-c"], command: [$comfy],
      environment: [{name: "COMFY_TAG", value: $tag}, {name: "FLAGS", value: $flags}],
      portMappings: [{containerPort: 8188}], resourceRequirements: [{type: "GPU", value: "1"}],
-     mountPoints: [{sourceVolume: "models", containerPath: "/opt/comfyui/models"}, {sourceVolume: "out", containerPath: "/out"}],
+     mountPoints: [{sourceVolume: "models", containerPath: $modelspath}, {sourceVolume: "out", containerPath: "/out"}],
      dependsOn: [{containerName: "fetch", condition: "SUCCESS"}], logConfiguration: $lc},
     {name: "bench", essential: false, image: "public.ecr.aws/docker/library/python:3.12-slim", command: ["python3","-u","/out/bench.py"],
      environment: [{name: "PHASES", value: $phases}, {name: "TEXT_ENCODER", value: $te}],
