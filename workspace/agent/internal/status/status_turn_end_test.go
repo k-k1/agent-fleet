@@ -2,9 +2,9 @@ package status
 
 // When a turn ended is recorded in two places on purpose: the status record's TurnEndAt for a
 // turn something SETTLED, and the observedEnds store for one a POLL merely saw (docs/log/89
-// §89.3, §89.9). These tests pin that separation from inside the package — the route tests
-// cannot see it, because two writes a few milliseconds apart produce the same RFC3339 second
-// and a rewrite of the same value cannot be told from no write at all.
+// §89.3, §89.9, §89.10). These tests pin that separation from inside the package — the route
+// tests cannot see it, because two writes a few milliseconds apart produce the same RFC3339
+// second and a rewrite of the same value cannot be told from no write at all.
 
 import (
 	"strings"
@@ -16,24 +16,17 @@ import (
 const stampedEarlier = "2020-01-01T00:00:00Z"
 
 // inFlight seeds sid with a turn in flight (what /input's optimistic working leaves) and
-// optionally an end a poll already observed. observed is written AFTER the status record, since
-// that ordering is what makes an observation count.
+// optionally an end a poll already observed. It goes through the real Persist so the record
+// carries a Rev — nothing can be observed against a record that has no identity.
 func inFlight(t *testing.T, sid string, observed bool) {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
-	write(sid, SessionStatus{State: "working", TS: stampedEarlier})
+	Persist(sid, "working")
 	if observed {
-		mustWriteObserved(t, sid, stampedEarlier)
-	}
-}
-
-func mustWriteObserved(t *testing.T, sid, at string) {
-	t.Helper()
-	// The stores are compared by mtime, and a temp filesystem can stamp two writes in the
-	// same instant; separate them so the fixture means what it says.
-	time.Sleep(5 * time.Millisecond)
-	if err := observedEnds.Write(sid, at); err != nil {
-		t.Fatal(err)
+		st, _ := Read(sid)
+		if err := observedEnds.Write(sid, observedEnd{Rev: st.Rev, At: stampedEarlier}); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -51,7 +44,7 @@ func TestRecordingAnEndNeverDestroysTheSettle(t *testing.T) {
 	for i := 0; i < rounds; i++ {
 		t.Setenv("HOME", t.TempDir())
 		const sid = "slot-race"
-		write(sid, SessionStatus{State: "working", TS: stampedEarlier})
+		Persist(sid, "working")
 
 		var wg sync.WaitGroup
 		wg.Add(2)
@@ -81,8 +74,13 @@ func TestRecordTurnEndLeavesTheStatusRecordAlone(t *testing.T) {
 	if got := ObservedTurnEnd(sid); got == "" {
 		t.Fatal("the end of the turn was not recorded")
 	}
+	before, _ := Read(sid)
+	RecordTurnEnd(sid) // again: whatever it does, it must not be to the status record
 	st, _ := Read(sid)
-	if st.State != "working" || st.TurnEnd || st.TS != stampedEarlier || st.TurnEndAt != "" {
+	if st != before {
+		t.Fatalf("recording moved the status record: %+v → %+v", before, st)
+	}
+	if st.State != "working" || st.TurnEnd || st.TurnEndAt != "" {
 		t.Fatalf("recording moved the state machine: %+v", st)
 	}
 }
@@ -104,6 +102,11 @@ func TestRecordTurnEndWritesOncePerTurn(t *testing.T) {
 	if got := ObservedTurnEnd(sid); got != stampedEarlier {
 		t.Errorf("observation = %q, want the first one %q", got, stampedEarlier)
 	}
+	// The value above is the real assertion (a rewrite would carry now, not the fixture's
+	// time). This one adds the case a rewrite with the SAME value would slip past, and it is
+	// best-effort by nature: where mtime is coarse it simply cannot tell, so it is lenient and
+	// never falsely red — which is why the production rule does not decide anything this way
+	// (ObservedTurnEnd).
 	if at, _ := observedEnds.ModTime(sid); !at.Equal(before) {
 		t.Errorf("the file was rewritten (%v → %v) for an end already recorded", before, at)
 	}
@@ -115,7 +118,7 @@ func TestRecordTurnEndWritesOncePerTurn(t *testing.T) {
 func TestRecordTurnEndNeedsATurnInFlight(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	const idle, unknown = "slot-idle", "slot-unknown"
-	write(idle, SessionStatus{State: "idle"})
+	Persist(idle, "idle")
 
 	RecordTurnEnd(idle)
 	RecordTurnEnd(unknown) // nothing recorded for it at all
@@ -129,20 +132,64 @@ func TestRecordTurnEndNeedsATurnInFlight(t *testing.T) {
 }
 
 // An observation belongs to the turn it was taken during, and nothing clears the store. What
-// makes a stale one inert is that ANY later write to the status record outlives it — the next
-// turn's working here. Without that, a parent would read the previous turn's end as this one's.
-func TestAnObservationDiesWithTheRecordItWasTakenAgainst(t *testing.T) {
+// makes a stale one inert is that ANY later write to the status record mints a new Rev. Without
+// that, a parent would read the previous turn's end as this one's.
+//
+// 🔥 Back to back, with no sleep and no distinguishable content: the next turn's record here
+// says the same thing as the previous one (State working) and lands in the same RFC3339 second
+// and, on a coarse filesystem, the same mtime tick. Retiring the observation may therefore not
+// depend on ANY of those — the rule that did (whichever file is newer) shipped, and the
+// listing's first poll after a turn ended silently stopped recording wherever mtime resolution
+// was coarser than the gap between the two writes (a CI failure; reproduced by truncating both
+// mtimes to the second).
+func TestAnObservationIsRetiredByIdentityNotByTiming(t *testing.T) {
 	const sid = "slot-stale"
 	inFlight(t, sid, true)
 	if ObservedTurnEnd(sid) == "" {
 		t.Fatal("the fixture's observation does not count")
 	}
 
-	time.Sleep(5 * time.Millisecond)
-	Persist(sid, "working") // the next turn starts
+	Persist(sid, "working") // the next turn starts, in the same instant
 
 	if got := ObservedTurnEnd(sid); got != "" {
 		t.Fatalf("the previous turn's end survived into the next turn: %q", got)
+	}
+}
+
+// The other half of the same rule, and the one the CI failure was actually about: an
+// observation taken in the SAME instant as the record it belongs to has to COUNT. Every real
+// one is — the poll reads the record and records the end microseconds later.
+func TestAnObservationCountsInTheInstantItWasTaken(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "slot-instant"
+	Persist(sid, "working")
+
+	RecordTurnEnd(sid) // no sleep anywhere: same second, plausibly the same mtime tick
+
+	if got := ObservedTurnEnd(sid); got == "" {
+		t.Fatal("an observation taken in the same instant as its record was discarded; the end of a turn is then reported a poll late, forever, wherever mtime is coarse")
+	}
+}
+
+// Rev is the identity, so a record without one cannot be observed against: an observation
+// stored with an empty Rev would match every other record that has none. Records written
+// before Rev existed are exactly that case, and they are on disk during an upgrade.
+func TestARecordWithNoIdentityIsNeverObserved(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	const sid = "slot-legacy"
+	write(sid, SessionStatus{State: "working", TS: stampedEarlier}) // pre-Rev on-disk shape
+
+	RecordTurnEnd(sid)
+
+	if got := ObservedTurnEnd(sid); got != "" {
+		t.Fatalf("an observation was pinned to a record with no identity: %q", got)
+	}
+	// And nothing was written. An observation that can never be read back would also never
+	// satisfy the "already recorded" half of the guard, so the poll would rewrite the file
+	// every few seconds for as long as the record stays identity-less — which, during an
+	// upgrade, is a whole turn.
+	if _, ok := observedEnds.Read(sid); ok {
+		t.Fatal("an unreadable observation was written; every later poll rewrites it")
 	}
 }
 
@@ -158,7 +205,7 @@ func TestPersistTurnEndAdoptsTheObservedEnd(t *testing.T) {
 	if st.TurnEndAt != stampedEarlier {
 		t.Errorf("TurnEndAt = %q, want the observed end %q", st.TurnEndAt, stampedEarlier)
 	}
-	if st.State != "idle" || !st.TurnEnd || st.TS == stampedEarlier {
+	if st.State != "idle" || !st.TurnEnd {
 		t.Errorf("the settled end of turn is wrong: %+v", st)
 	}
 	// And the settle outlives the observation, so nothing reads it twice.
