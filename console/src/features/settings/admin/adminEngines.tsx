@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -175,6 +175,31 @@ export function EnginesAdminView() {
     const t = setInterval(() => live.forEach(([key]) => loadJobs(key)), 10000);
     return () => clearInterval(t);
   }, [jobs, loadJobs]);
+
+  // A job that has just finished created a catalogue row — disabled, and invisible until the
+  // engine list is read again. Nothing else on this screen does that: the job poll above reads
+  // only the job list, and the engine poll below is off because an on-demand engine parked at
+  // "stopped" is a settled state. Measured on the dev deployment: the job reached "done" and the
+  // panel went on showing the two models it already had, so the row an administrator has to
+  // enable was reachable only by pressing refresh.
+  const liveJobIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const live = new Set<string>();
+    for (const [key, js] of Object.entries(jobs)) {
+      for (const j of js) {
+        if (j.state === "running" || j.state === "pending") live.add(key + "/" + j.id);
+      }
+    }
+    // Only a transition out of "live" reloads. Failure counts too: it creates no row, but the
+    // list is one request and re-reading it is cheaper than reasoning about which failures
+    // could still have left one behind.
+    let settled = false;
+    liveJobIds.current.forEach((id) => {
+      if (!live.has(id)) settled = true;
+    });
+    liveJobIds.current = live;
+    if (settled) load();
+  }, [jobs, load]);
 
   // Poll only while something is actually moving. An engine parked at "off", or stopped under
   // on-demand with nobody asking, is a settled state, and a GPU panel that polls forever is a

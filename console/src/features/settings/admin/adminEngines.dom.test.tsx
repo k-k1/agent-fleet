@@ -726,4 +726,66 @@ describe("EnginesAdminView", () => {
     });
     expect(host!.textContent).toContain("取り込み中");
   });
+
+  // 🔴 Measured on the dev deployment (2026-09-09): the ingest finished in 72 seconds, the job
+  // said 完了 — and the model list went on showing the two rows it already had. The row an
+  // ingest creates is disabled by design, so it is precisely the row an administrator came here
+  // to switch on, and it was reachable only by pressing refresh. Nothing else re-reads it: the
+  // job poll reads only the job list, and the engine poll is off because an on-demand engine
+  // parked at "stopped" is a settled state.
+  it("re-reads the catalogue when an ingest finishes, so the new disabled row appears", async () => {
+    vi.useFakeTimers();
+    const catalogue = (extra: Record<string, unknown>[]) =>
+      row({
+        key: "llm",
+        api: "chat",
+        has_models: true,
+        model_rows: [{ id: "qwen2.5-coder-1.5b", enabled: true }, ...extra],
+      });
+    let finished = false;
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "qwen2.5-coder-0.5b",
+                state: finished ? "done" : "running",
+                source: "hf:Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/…",
+                bytes: 491400064,
+              },
+            ],
+          }
+        : {
+            engines: [
+              catalogue(finished ? [{ id: "qwen2.5-coder-0.5b", enabled: false }] : []),
+            ],
+          },
+    );
+    await mount();
+
+    // The catalogue rows only — the job list is the other <ul> and it names the model too, so
+    // asserting on the panel's whole text would pass with the bug still in place.
+    const catalogueIds = () =>
+      Array.from(
+        host!.querySelectorAll("ul.engines-model-list:not(.engines-ingest-jobs) .mono"),
+      ).map((n) => n.textContent);
+    expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b"]);
+    expect(host!.textContent).toContain("取り込み中");
+
+    finished = true;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10000);
+    });
+
+    expect(host!.textContent).toContain("完了");
+    expect(catalogueIds()).toEqual(["qwen2.5-coder-1.5b", "qwen2.5-coder-0.5b"]);
+    // Disabled, so what it offers is the switch-on — decision 6: taken in is not the same as
+    // on offer.
+    const fresh = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (li) => li.querySelector(".mono")?.textContent === "qwen2.5-coder-0.5b",
+    )!;
+    expect(fresh.className).not.toContain("on");
+    expect(fresh.textContent).toContain("有効にする");
+  });
 });
