@@ -29,6 +29,19 @@
 # `iflag=direct` is the whole point of the dd: without it the 18.5 GB would come partly out of
 # the page cache and report a disk far faster than the one llama.cpp meets on a cold box.
 #
+# ## Staging s5cmd
+#
+# The engine subnet has NO EGRESS TO GITHUB — measured, and the reason the first version of this
+# probe could not answer question 1 at all. So the binary is staged into the models bucket once,
+# from a machine that does have egress:
+#
+#   deploy/aws/ecs/harness/probe-fetch-client.sh --stage-s5cmd
+#
+# and the probe then pulls it with the task role's existing `s3:GetObject` on that bucket. That
+# keeps the measurement inside the permissions the engine already has: no egress rule, no new
+# policy, no custom image. The staged copy is LEFT in place: it is 15 MB (about $0.0004 a
+# month) and it is what makes this probe repeatable without egress.
+#
 # ## Cost
 #
 # One GPU box for about eight minutes — two downloads, a re-read and one model load. ~$0.20.
@@ -44,12 +57,14 @@ PLATFORM_STACK=af-ecs-platform
 KEY=""
 S5V=2.2.2
 PRINT=0
+STAGE=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --stack) STACK="${2:?}"; shift ;;
     --key) KEY="${2:?}"; shift ;;
     --s5cmd-version) S5V="${2:?}"; shift ;;
+    --stage-s5cmd) STAGE=1 ;;
     --print) PRINT=1 ;;
     -h|--help) sed -n '2,34p' "$0"; exit 0 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
@@ -84,6 +99,18 @@ CPU="$(jq -r '.cpu' <<<"$TD_JSON")"; MEM="$(jq -r '.memory' <<<"$TD_JSON")"
 
 say "cluster=$CLUSTER cp=$CP bucket=$BUCKET key=$KEY size=$SZ s5cmd=$S5V"
 
+if [ "$STAGE" = 1 ]; then
+  # Run this once, from somewhere with egress to github, before the first measurement.
+  T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+  curl -fsSL "https://github.com/peak/s5cmd/releases/download/v$S5V/s5cmd_${S5V}_Linux-64bit.tar.gz" \
+    | tar -xz -C "$T" s5cmd || { echo "no egress to github from here either" >&2; exit 1; }
+  chmod +x "$T/s5cmd"
+  say "staging $("$T/s5cmd" version) -> s3://$BUCKET/bench/s5cmd"
+  "${AWS[@]}" s3 cp "$T/s5cmd" "s3://$BUCKET/bench/s5cmd" --only-show-errors
+  say "staged. Re-run without --stage-s5cmd to measure."
+  exit 0
+fi
+
 # shellcheck disable=SC2016
 FETCH_CMD='
 echo "fc: nproc=$(nproc); $(aws --version 2>&1)"
@@ -94,7 +121,11 @@ t0=$(date +%s); aws s3 cp "s3://$BUCKET/$KEY" /models/a.gguf --only-show-errors;
 G=$(stat -c %s /models/a.gguf 2>/dev/null || echo 0)
 [ "$G" = "$SZ" ] && echo "fc: RESULT aws-s3-cp ${t}s = $(( SZ / (t>0?t:1) / 1000000 )) MB/s" || echo "fc: aws s3 cp FAILED ($G of $SZ)"
 echo "fc: === 2: s5cmd ==="
-if curl -fsSL --max-time 60 "https://github.com/peak/s5cmd/releases/download/v$S5V/s5cmd_${S5V}_Linux-64bit.tar.gz" | tar -xz -C /usr/local/bin s5cmd 2>/dev/null && command -v s5cmd >/dev/null; then
+# ⚠️ NOT from github: the engine subnet has no egress to it (measured -- the first run of this
+# probe reported s5cmd UNAVAILABLE and nothing else). The binary is staged in the bucket the
+# task role can already read, by the --stage-s5cmd pass of this script, which runs where there
+# IS egress. No new egress, no new permission, no new image.
+if aws s3 cp "s3://$BUCKET/bench/s5cmd" /usr/local/bin/s5cmd --only-show-errors 2>/dev/null && chmod +x /usr/local/bin/s5cmd && command -v s5cmd >/dev/null; then
   echo "fc: $(s5cmd version 2>&1 | head -1)"
   t0=$(date +%s); s5cmd cp "s3://$BUCKET/$KEY" /models/b.gguf >/dev/null; t=$(( $(date +%s) - t0 ))
   G=$(stat -c %s /models/b.gguf 2>/dev/null || echo 0)
