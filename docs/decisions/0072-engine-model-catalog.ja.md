@@ -4,7 +4,7 @@
 
 - 状態: **P0・P1・P4 実装済み・実機検証済み（2026-09-08〜09）。P5 のうち HF トークンの
   Console 登録（未解決 12）は実装済み・実機未検証（2026-09-09。「P5 の実装」節）。P2
-  （ComfyUI）は 2026-09-10 に実装済み・実機未検証（「P2 の実装」節）。P3 と P5 の残りは
+  （ComfyUI）は 2026-09-10 に実装済み・実機検証済み（「P2 の実装」節）。P3 と P5 の残りは
   未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -61,7 +61,8 @@
   `mode=on` でカタログ空なら起こさない）、決定 2 に 4 KB の規則、決定 6 に PassRole の範囲と
   0071 決定 8 の精密化、決定 7 に `warm_model`、決定 10 に `license_name` と受諾の記録と商用の
   軸を足した。**未解決 1 はレビューが CPU で全部解いた**（R1）。状態を承認済みに改めた。
-- 2026-09-10、**P2（ComfyUI）を実装した**（「P2 の実装」節。実機未検証）。自前 Dockerfile
+- 2026-09-10、**P2（ComfyUI）を実装し、g6.xlarge の実機で完了の定義まで通した**
+  （「P2 の実装」節）。自前 Dockerfile
   （v0.34.0 固定・Manager 無し）と専用 CI（`comfyui-image.yml`。CI で実際にビルドが通ることは
   確認した）、`20-platform.yaml` の ECR リポジトリ `af-comfyui`、`60-engines.yaml` の
   `ImageEngine`（sdcpp/comfy）による `!If` 切り替え、provider `comfy`（`/prompt` →
@@ -1184,9 +1185,39 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
    差し込んでいたが、ComfyUI のネイティブ API はそれを持たない——provider が `comfy` の
    ときだけ差し込みを止める `engineUpstreamPrefix` を追加した（sdcpp/llamacpp は無変更）。
 
-**完了の定義（フェーズ節）に対する実機検証はまだ**——次の GPU セッションで
-`bench-image-engine.sh` を通し、SDXL と klein（または Z-Image）が同じ箱で要求毎に切り替わり、
-サービスの再起動が無く、SDXL の 1024px が 0071 実測 7（8 秒台）と同程度で出ることを確かめる。
+7. 🔴 **実機で押してすぐ壊れた——自前イメージが起動すらしなかった。** `bench-image-engine.sh`
+   に `--baked`（自前イメージをコミュニティイメージの代わりに測るモード。checkout/pip をせず
+   `/ComfyUI` を直接ワークディレクトリにする）を足して g6.xlarge に流したところ、ComfyUI が
+   import の時点でクラッシュ: `comfy-kitchen==0.2.31`（`requirements.txt` の依存）が
+   `list[int]` 型引数を持つカスタム op を登録し、**torch 2.5.1 の
+   `torch.library.infer_schema` がその PEP 585 ジェネリック綴りを認識しない**
+   （`ValueError: infer_schema(func): Parameter kernel_size has unsupported type list[int]`）。
+   ComfyUI 本家の README は「torch 2.7 が最低限のサポート」と明記していた——CI は
+   「ビルドが通る」しか確認しておらず、**ビルドが通ることと起動することは別**だった。
+   ベースイメージを `pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime` に上げて再ビルド・
+   再実機検証し、**通った**。
+
+**完了の定義（フェーズ節）を実機で満たした**（2026-09-10・g6.xlarge・`--baked`）。同じ
+ComfyUI プロセス 1 つ（サービス／タスクの再起動無し）の中で SDXL → Z-Image-Turbo →
+FLUX.2 klein 4B → SDXL → Z-Image-Turbo → klein 4B と切り替え、13 シナリオすべて成功:
+
+| | 温まった1枚 | 実測で解けた点（コミュニティイメージ）との比較 |
+|---|---|---|
+| SDXL 1024px（20 step） | **8.02 秒** | 実測で解けた点3の 8.0 秒・0071 実測7の「8 秒台」と一致 |
+| klein 4B（4 step） | **4.01 秒** | 実測で解けた点3の 3.7〜4.0 秒と一致 |
+| Z-Image-Turbo（8 step） | **10.74 秒** | 実測で解けた点3の 10.4〜10.6 秒と一致 |
+| SDXL 512px | 3.01 秒 | — |
+| SDXL＋LoRA（温まった状態） | 8.02 秒（LoRA 無しと同じ） | 実測で解けた点3の「温まっていれば LoRA は無料」と一致 |
+
+コールドの1枚（切り替えを含む）は SDXL 26 秒・Z-Image 55〜57 秒・klein 39〜40 秒で、
+実測で解けた点5の「切り替えは1〜2.5分」より速かった——`LlmUseLocalStorage`/
+`ImageUseLocalStorage` の既定が `true`（未解決9・10で解決済み）になっている分、EBS では
+なくインスタンスストアから読んでいるためと考えられる（今回はモデルがそもそも1本目の
+フェッチで載ったばかりで、キャッシュ済みではない状態からの初回ロード）。13 シナリオ
+すべて `ok: true`、エラー無し。自前イメージ・CFN の `ImageEngine=comfy` 切り替え・
+S3 レイアウト（`ln -sfn` 相当のマウント）・ワークフローグラフの4点が実機で噛み合うことを
+確認した——確認していないのは Go の `comfy` provider 自体（CP ゲートウェイ経由の
+`/prompt`→`/history`→`/view`）で、これは単体・結合テスト止まり（次回への持ち越し）。
 
 ## 却下した案
 
@@ -1360,9 +1391,9 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
   0.4〜0.7 秒／10 秒／276〜282 秒で答え、Console で 2 行目を登録・有効化するとピッカーに
   `llamacpp/` が 2 つ並び、2 つ目でセッションが起動した）。行を作る口だけは AWS の資格情報では
   駆動できず、そこは人が押した。
-- **P2 — ComfyUI（0071 P2 をここへ前倒し）。実装済み（2026-09-10・「P2 の実装」節）、
-  実機未検証。** 自前イメージ（タグ固定・Manager 無し。`20-platform` の ECR リポジトリと
-  専用 CI——CI でのビルドは確認済み）、`ImageEngine=comfy` の `!If`（決定 4）、
+- **P2 — ComfyUI（0071 P2 をここへ前倒し）。実装済み・実機検証済み（2026-09-10・
+  「P2 の実装」節）。** 自前イメージ（タグ固定・Manager 無し。`20-platform` の ECR リポジトリと
+  専用 CI）、`ImageEngine=comfy` の `!If`（決定 4）、
   provider `comfy`（**generate のみ**。edit/inpaint は族ごとの image-to-image グラフが
   未検証のため今回は対象外——完了の定義自体は generate だけで満たせる。`/prompt` →
   `/history` → `/view` を進捗通知つきで回す）、テンプレートは SDXL / SD3.5 / FLUX.1 /
@@ -1372,9 +1403,12 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
   初めて複数になる。**いま温まっているモデルを説明に出す**——切り替えは 1〜2.5 分の
   読み直しなので、エージェントが「既定でよければ温かいほう」を選べるようにする。実測で
   解けた点 5）。ペイン（`/engine/comfy/` の WebSocket）は**含めない**——
-  `generate_image` に要るのは API だけで、画面は P5。**完了の定義（未検証）: 同じ箱で
+  `generate_image` に要るのは API だけで、画面は P5。**完了の定義: 同じ箱で
   SDXL と klein 4B（または Z-Image-Turbo）を要求毎に切り替えて絵が返り、その間にサービスの
-  再起動が無く、1024px の SDXL が 0071 実測 7 の 8 秒台で出る。**
+  再起動が無く、1024px の SDXL が 0071 実測 7 の 8 秒台で出る。実機で通った**
+  （SDXL 8.02 秒・klein 4.01 秒・Z-Image 10.74 秒、切り替え含め 13 シナリオすべて成功。
+  「P2 の実装」節7）。**Go の `comfy` provider 自体（CP ゲートウェイ経由の実呼び出し）は
+  単体・結合テスト止まりで、実機では未検証のまま残る。**
 - **P3 — LoRA。** ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
   テンプレートの `LoraLoader` 連鎖、baseModel 不一致の拒否；llm の preset 固定 LoRA。
   sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、
