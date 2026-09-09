@@ -93,7 +93,9 @@ const textLen = (p: MirrorPartLike): number => (isText(p) ? p.text!.trim().lengt
 
 // Split only when a real final text exists after the last work boundary. Questions and
 // plans are tool interactions represented by dedicated part kinds; userfile is deliberately
-// not a boundary because a shared file is a final deliverable and should remain visible.
+// not a boundary — a shared file is a deliverable, and moving the boundary past one would fold
+// it away. Staying visible is not this function's doing either: a card BEFORE the boundary is
+// inside the folded region, so TranscriptTurn hoists those out of the disclosure.
 //
 // The naive boundary is "after the last tool", but a post-answer housekeeping action — the
 // agent gives its real answer, then writes a memory note (a Write/Edit tool) and adds a short
