@@ -456,6 +456,46 @@
   .brand-sub {
     display: none;
   }
+  /* With a deployment label there is no room for chip + wordmark on one phone line: the
+     name wraps mid-word ("Agent" / "Fleet") and the whole bar grows by a line. Stack them
+     deliberately instead — chip above, wordmark below — at sizes that keep the pair UNDER
+     the height of the round buttons next to it, so the bar keeps exactly the height it has
+     with no label (measured at 390px: 26px stack vs 27.5px buttons). */
+  /* Direct-child :has, never the descendant form — panes.css records that a descendant
+     :has() re-tests the subject on any subtree change and is pathologically slow in Chrome.
+     Without this the left group keeps its min-width:auto, the nowrap wordmark cannot
+     shrink, and the buttons get pushed off the right edge instead. */
+  .topbar-left:has(> .brand-stacked) {
+    min-width: 0;
+    gap: 4px; /* the pixels the wordmark needs to stay whole at 390px (measured) */
+  }
+  .brand-stacked {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: center;
+    font-size: 11px;
+    line-height: 12px;
+    /* min-width:0 + the ellipsis below: with nowrap and the default min-width:auto a long
+       label would refuse to shrink and push the buttons off the bar instead of truncating.
+       The floor keeps the wordmark from being squeezed to nothing on a very narrow phone. */
+    min-width: 3.5rem;
+    flex: 0 1 auto;
+  }
+  .brand-stacked .brand-name {
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+  }
+  .brand-stacked .brand-env {
+    margin-right: 0;
+    padding: 0 4px;
+    font-size: 10px;
+    line-height: 13px;
+    max-width: 9ch;
+    vertical-align: baseline;
+  }
   .topbar-right {
     gap: 8px;
   }
