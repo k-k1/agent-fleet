@@ -19,8 +19,8 @@ export const admin = {
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
   "admin.engines_state_prefix": "状態: ",
   "admin.engines_models_sep": " / モデル: ",
-  "admin.engines_always_on_note": "常時稼働は GPU の箱を止めません（$1.26/時）。用が済んだらオンデマンドへ戻してください。",
-  "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけ箱を買い、アイドルで自分で止まります。",
+  "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（$1.26/時）。用が済んだらオンデマンドへ戻してください。",
+  "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
   // ⚠️ ここの文言は「分からないことは書かない」で通っている。CP が答えを持たない行は
   // そもそも出さないので、「不明」「0」「予定なし」といった穴埋めの語を足さないこと。
@@ -30,7 +30,7 @@ export const admin = {
   // --- モデルカタログ（ADR 0072）---
   // 「有効/無効」と「これで起動する」は別の問い。前者は配備が使ってよいか、後者は
   // sd-server が抱える 1 つのチェックポイント（llm なら model 未指定の既定）。
-  "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、箱も起動しません。",
+  "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、インスタンスも起動しません。",
   "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
   "admin.engines_model_started": "起動時に読み込む",
   "admin.engines_model_enable": "有効にする",
@@ -116,7 +116,7 @@ export const admin = {
   "admin.engines_model_swaps": "この CP が起きてからのモデル交替: {n} 回",
   // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
   // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
-  "admin.engines_since_box": "箱の起動 ",
+  "admin.engines_since_box": "インスタンスの起動 ",
   "admin.engines_since_service": "サービスの更新 ",
   "admin.engines_up_for": "{d} 経過",
   "admin.engines_stops_at": "自動停止 ",
@@ -133,7 +133,7 @@ export const admin = {
   "admin.engines_history": "稼働実績（14 日）",
   "admin.engines_metric_label": "濃さが表すもの",
   "admin.engines_metric_running": "応答できた時間",
-  "admin.engines_metric_up": "箱があった時間",
+  "admin.engines_metric_up": "インスタンスがあった時間",
   "admin.engines_state_down": "停止",
   "admin.engines_ro_detail": "応答 {run} ・ 起動中 {start} ・ 後始末 {drain}",
   "admin.engines_col_running": "応答",
@@ -144,7 +144,7 @@ export const admin = {
   "admin.engines_uptime_none": "この期間に動いていた記録はありません。",
   "admin.engines_uptime_error": "稼働実績を読み込めませんでした。",
   "admin.engines_uptime_note":
-    "約 {n} 秒ごとのサンプリングです。「箱があった時間」には、まだ応答できない起動中（実測 165〜197 秒）と、タスクが消えたあとインスタンスが残っている後始末（実測 427〜477 秒）が入ります——どちらも課金されますが、要求には答えていません。記録を始める前の時間は空白のままで、後から取ることはできません。金額ではありません。",
+    "約 {n} 秒ごとのサンプリングです。「インスタンスがあった時間」には、まだ応答できない起動中（実測 165〜197 秒）と、タスクが消えたあともインスタンスが残っている後始末（実測 427〜477 秒）が入ります——どちらも課金されますが、要求には答えていません。記録を始める前の時間は空白のままで、後から取ることはできません。金額ではありません。",
   // 左レールのグループ見出し（ルート）。テナント＝一覧と登録簿、デプロイ全体＝
   // デプロイに 1 つしかない面、横断で見る＝全テナントを跨いで数える面。
   "admin.group_tenants": "テナント",
