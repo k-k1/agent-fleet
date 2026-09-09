@@ -1837,6 +1837,57 @@ Decision 6's "**the token stays inside the ingest task; the CP does not hold it*
 P4's measured point 1 (gated metadata is readable anonymously) **stays live** — the CP will still
 never need a token to resolve a model. Only the **registration path** changes.
 
+### 6. Follow-up — mounting S3 directly (Mountpoint for Amazon S3, 2026-09-09)
+
+EFS lost in 10(c) on **billing** ($0.04/GB under Elastic Throughput, $0.74 a cold start), not on
+the **shape** of shared storage. S3 has no per-GB read charge at all and the gateway VPC endpoint
+keeps the bytes off the NAT, so **the argument that killed EFS does not exist here**. So it was
+measured. The harness is `harness/probe-s3-mount.sh`.
+
+🔴 **Condition 1 holds.** On Bottlerocket under Managed Instances `/dev/fuse` is present, ECS
+really does grant `linuxParameters.capabilities.add: [SYS_ADMIN]`, and `mount-s3 1.24.0`
+**mounted** (`fuse mountpoint-s3 ro,...`). Everything else was moot if this failed, which is why
+it was the first and cheapest thing tried.
+
+**Measured — same box, same task, the cli pass first so a warm page cache cannot flatter the
+mount:**
+
+| | the 18.5 GB GGUF | |
+|---|---|---|
+| control: `aws s3 cp` (what the sidecar does today) | **88 s = 210 MB/s** | |
+| **sequential read through Mountpoint** | **32.7 s = 567 MB/s** | **2.7×** |
+
+The byte count is dd's own — 18,556,689,568, the **whole file** — so a short read is not being
+mistaken for a fast one. Note the same `aws s3 cp` measured 158 MB/s in measurement 1 and 210 MB/s
+here: it moves with the box and the hour, **which is exactly why the control lives inside the same
+task**.
+
+🔴 **Condition 2 turned out to be "you need a custom engine image", not merely "it costs
+something".** Installing the RPM with `--nodeps` produced `libfuse.so.2: cannot open shared object
+file` — **mount-s3 is not a dependency-free static binary; it links libfuse2**
+(`fuse-libs-2.9.9`). A FUSE mount is invisible to other containers, so `mount-s3` has to run
+inside the **engine** container, i.e. **llama.cpp / sd-server images would have to carry mount-s3
+and libfuse2**. That is not a task-definition change, and it costs decision 1's "both roles start
+through the same wrapper".
+
+**Condition 3 is untested.** 567 MB/s is a `dd` sequential read, **not llama.cpp opening and
+loading a GGUF through mmap**.
+
+**Projection (not a measurement)**: of today's 275-second cold start the 117-second copy
+disappears. But **the 91-second VRAM load is not purely disk-bound even on NVMe** — NVMe does
+GB/s and 91 s works out to an effective 204 MB/s, so most of it is GGUF processing and the PCIe
+transfer. Mounting therefore does not turn it into 33 s; expect the whole thing around
+**150-175 s**. The 98.5-second swap should fall similarly.
+
+**The next step is condition 3** — have llama.cpp load a GGUF off the mount, with and without
+`--no-mmap`, and compare against 91 s. Until then this is a promising candidate, **not a
+conclusion**.
+
+Incidentally, **g6.xlarge ran out in both ap-northeast-1 AZs** during these runs, and this
+deployment's `LlmAllowedInstanceTypes` had narrowed to the single type, so no box could launch.
+Restoring the template default (`g6.xlarge,g5.xlarge`) fixed it — a re-run of exactly what ADR
+0071 recorded under "the box will not launch because the candidate list was one type".
+
 ### Suggested status line
 
 Mark open question **10 as settled** ((a) adopted, (b) disproven, (c) rejection upheld) and **11
