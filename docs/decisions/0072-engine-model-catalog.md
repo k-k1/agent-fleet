@@ -585,6 +585,27 @@ names move between versions — pin the tag and freeze the templates behind gold
      running today has today's model in the catalogue the moment the CP comes up; nothing
      changes for it.
 
+   > ✅ **Addendum (2026-09-11) — a row can be read back.** The admin row said what a model IS
+   > and not how it was DECLARED: `files` was base names, and the S3 keys, the flags, the sizes
+   > and `args` were nowhere on the wire. With P6 making the catalogue the **only** declaration
+   > there is, that means a forgotten row could be rebuilt only from a copy whoever deleted it
+   > happened to keep — walked into once on the real deployment, where it worked because the row
+   > was a single-file GGUF; FLUX.1's four keys and four flags would not have survived it.
+   > Unlike P5's token, **being unreadable was not the design here**: the CP holds the values.
+   > The row now carries `file_rows` (`{s3Key, flag, bytes}`) and `args` **in the shape
+   > `POST …/models` reads**, so the JSON that was read posts straight back and rebuilds the same
+   > declaration. The round trip is pinned by a test (positive controls: drop `file_rows` and the
+   > re-registration is refused with a 400; drop only the flags and four unlabelled files come
+   > back). `files` (base names) stays as it is because the Console reads it, and the new fields
+   > are on the super-admin row alone — the Agent's catalogue is built by
+   > `engineCatalogModelRow` and carries no S3 key. Three things deliberately do NOT survive the
+   > round trip: `enabled` / `selected` (a re-registration is always disabled), the licence
+   > acceptance (a record of a human act, not a field to copy) and `created_at`.
+   > **The Console shows the keys in exactly one place** — the "forget this row" confirmation.
+   > On the row's meta line they would add four lines to a split model for a value nobody reads
+   > while choosing between rows; in the confirmation they are the **last moment anyone can read
+   > what this row was**, and with purge ticked they are also the list the delete task is handed.
+
 8. **Provenance and usage carry the model and the LoRAs.** `generate_image`'s result has `model`
    = the checkpoint id and `provenance` with `loras: [{name, weight}]` and `sha256` (from the
    manifest; ADR 0071 decision 10's "file name and sha256"). The llm usage row's `model` is what

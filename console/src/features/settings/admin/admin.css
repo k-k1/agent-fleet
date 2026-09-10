@@ -469,6 +469,18 @@
   margin-inline-end: 3px;
 }
 
+/* The S3 keys, shown only in the forget confirmation. Small and dense: they are there to be
+   copied before the row goes, not to be read at a glance, and a split model is four of them. */
+.engines-model-keys {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--dialog-muted);
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+
 .engines-hit-tags {
   display: flex;
   flex-wrap: wrap;

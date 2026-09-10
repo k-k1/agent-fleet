@@ -767,6 +767,39 @@ func engineFilesGuard(ctx context.Context, e *engineRuntimeState, id string) *ap
 	return nil
 }
 
+// engineModelFileBody is one file as the register route takes it — and as the row answers it
+// back (`file_rows`), which is what makes "read the row, post it again" a round trip rather
+// than a translation.
+type engineModelFileBody struct {
+	Flag  string `json:"flag"`
+	S3Key string `json:"s3Key"`
+	Bytes int64  `json:"bytes"`
+}
+
+// engineFilesFromBody reads the files out of a register body, from whichever of the two names
+// carries them.
+//
+// `files` is the form's own field and wins. When it is there but is not a list of objects, it
+// is the row's human-readable `files` riding along in a body that was read back from a row —
+// `file_rows` is then the declaration, and the base names are dropped rather than guessed at
+// (a base name is not a key: two directories hold `model.safetensors`). With neither, the
+// caller gets the shape it got wrong rather than "at least one file is required", which for a
+// hand-written body would send them looking in the wrong place.
+func engineFilesFromBody(raw json.RawMessage, rows []engineModelFileBody) ([]engineModelFileBody, *apiError) {
+	var files []engineModelFileBody
+	if len(raw) > 0 && string(raw) != "null" {
+		if err := json.Unmarshal(raw, &files); err == nil && len(files) > 0 {
+			return files, nil
+		}
+		if len(rows) == 0 {
+			return nil, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+				`files has to be a list of {"s3Key":…,"flag":…,"bytes":…} — a list of names is what a` +
+					` row ANSWERS with, and its machine-readable half is file_rows`}
+		}
+	}
+	return rows, nil
+}
+
 // postModel (POST /api/admin/engines/{key}/models) registers a file that is already in the
 // models bucket. It is the manual half of what phase P4's ingest will do for itself.
 //
@@ -791,24 +824,28 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		return
 	}
 	var b struct {
-		ID    string `json:"id"`
-		Kind  string `json:"kind"`
-		Files []struct {
-			Flag  string `json:"flag"`
-			S3Key string `json:"s3Key"`
-			Bytes int64  `json:"bytes"`
-		} `json:"files"`
-		Args            []string `json:"args"`
-		ContextTokens   int      `json:"context_tokens"`
-		MaxOutputTokens int      `json:"max_output_tokens"`
-		Sizes           []string `json:"sizes"`
-		Description     string   `json:"description"`
-		VramMiB         int      `json:"vram_mib"`
-		License         string   `json:"license"`
-		LicenseName     string   `json:"license_name"`
-		LicenseURL      string   `json:"license_url"`
-		Precision       string   `json:"precision"`
-		BaseModel       string   `json:"base_model"`
+		ID   string `json:"id"`
+		Kind string `json:"kind"`
+		// 🔴 Raw, because the ROW answers a `files` of its own and it is a list of base NAMES
+		// for a person to read. A body posted back from that row therefore carries a `files`
+		// this route cannot mean, and a typed field would fail the whole decode with "invalid
+		// JSON" — which is what the round trip below hit first.
+		Files json.RawMessage `json:"files"`
+		// FileRows is the machine-readable half the row answers with, and the one this route
+		// reads when `files` is not a list of objects: the JSON a super_admin read out of
+		// `GET /api/admin/engines` posts straight back and rebuilds the row (ADR 0072 P6 R2).
+		FileRows        []engineModelFileBody `json:"file_rows"`
+		Args            []string              `json:"args"`
+		ContextTokens   int                   `json:"context_tokens"`
+		MaxOutputTokens int                   `json:"max_output_tokens"`
+		Sizes           []string              `json:"sizes"`
+		Description     string                `json:"description"`
+		VramMiB         int                   `json:"vram_mib"`
+		License         string                `json:"license"`
+		LicenseName     string                `json:"license_name"`
+		LicenseURL      string                `json:"license_url"`
+		Precision       string                `json:"precision"`
+		BaseModel       string                `json:"base_model"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
@@ -839,7 +876,12 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	if m.License != "" || m.LicenseName != "" {
 		m.CommercialUse = engineCommercialUse(engineResolved{License: m.License, LicenseName: m.LicenseName})
 	}
-	for _, f := range b.Files {
+	files, aerr := engineFilesFromBody(b.Files, b.FileRows)
+	if aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
+	for _, f := range files {
 		if k := strings.TrimSpace(f.S3Key); k != "" {
 			m.Files = append(m.Files, store.EngineModelFile{
 				Flag: strings.TrimSpace(f.Flag), S3Key: k, Bytes: f.Bytes,
