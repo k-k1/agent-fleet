@@ -2538,3 +2538,80 @@ By-product: one of the two ways to create a row with **no licence, no `source` a
 disappears. The other is the hand-registration form, which sends no licence fields although
 `POST …/engines/{key}/models` accepts them — worth closing in the same pass, since decision 10
 put the licence on the panel row and the panel can only show what was recorded.
+
+## Follow-up — phase P3's LoRAs, the Agent's half (2026-09-10)
+
+**Only the Agent's half landed in this pass.** P3's completion definition in the Phases section
+— "the same prompt and the same seed produce a different picture with the LoRA than without, and
+an SD1.5 LoRA does not appear in SDXL's enum" — is **not met**. The first half can only be
+measured on hardware, and no GPU was woken here.
+
+### What landed
+
+- `loras: [{name, weight}]` on `generate_image` (weight 0-2, 1 when unstated, at most four per
+  request), and `Loras []{name, description, baseModel}` on `Caps` — exactly the shape decision 5
+  predicted in R7.
+- A `LoraLoader` chain in all five family templates. Nothing is added when nothing is asked for,
+  so a graph without LoRAs is byte-for-byte the one the golden fixtures already pin.
+- The base-model refusal, placed in the **Agent** (レビュー決定 5). Three refusals — a name the
+  catalogue does not hold, a family that differs from the checkpoint's, and a LoRA that declares
+  no family at all — and none of them reaches the gateway or wakes a GPU.
+- The Control Plane's catalogue wire **already carried everything**: `loras` is its own array
+  next to `model_rows` (`engineCatalogRowFor` in `engine_gateway.go`), and each row goes through
+  `engineCatalogModelRow`, so it has `base_model`, `description` and `files`. Not one line was
+  added to the CP; a test pins that none of it is dropped
+  (`TestEngineCatalogRowSeparatesLorasFromCheckpoints`).
+- The other side of the same separation — a LoRA never reaching `model`'s enum — is pinned too.
+  The CP puts a LoRA row in neither `models` nor `model_rows`, so the Agent's
+  `engineImageModelIDs` cannot see one by construction.
+
+### Where decision 5's two rules appear to collide
+
+The Phases section's completion definition says an SD1.5 LoRA **must not appear in SDXL's enum**,
+while decision 5's revision says that **an enum cannot depend on another argument**, so `loras`
+enumerates every enabled LoRA, each description states its `baseModel`, and the Agent checks the
+combination. The two cannot both hold.
+
+**The latter was taken.** A tool schema is built at tools/list, where no `model` value exists yet.
+`Caps(model)` is per (provider, model) and could technically narrow the list, but narrowing it
+means **only the LoRAs that fit whatever is warm are visible**, and a LoRA for another checkpoint
+the caller may perfectly well name disappears without a word. That is precisely what decision 5
+forbids.
+
+So the enum is every enabled LoRA, each line names its family (`watercolor-v2（sdxl 用）— …`), and
+a pairing that cannot work is refused by name while the request is assembled. The second half of
+the completion definition is met as "**a mismatched pair produces no picture and an explanation**"
+rather than as "it is missing from the enum".
+
+### Left for hardware (untouched here)
+
+- **The same prompt and seed producing a different picture with the LoRA than without** — the
+  body of P3's completion definition. Hardware only.
+  🔴 This is the dangerous one, because 残作業 5's lesson applies unchanged: **a golden fixture
+  pins the shape of a graph nobody has run**, which is not a proof of correctness. SD3.5 failed
+  exactly there. To avoid the same rut, `LoraLoader`'s node definition was read off ComfyUI
+  v0.34.0's own source (`nodes.py`: required inputs `model`, `clip`, `lora_name`,
+  `strength_model`, `strength_clip`; returns MODEL and CLIP). That still is not "it ran".
+- 🔴 **`lora_name` enumerates `<models>/loras` RECURSIVELY, each entry a path relative to that
+  directory** (`recursive_search` in `folder_paths.py`). The box links `/ComfyUI/models` to
+  `/models/image` (`60-engines.yaml`), so `image/loras/x.safetensors` is listed as
+  `x.safetensors` — which is the basename the Agent sends. **A key nested one level deeper is
+  listed as `sub/x.safetensors` and a basename would be rejected as `Value not in list`.** LoRAs
+  landing flat under `image/loras/` is the premise.
+- **The sidecar sync already works** (verified in this pass, no code changed). The fetch sidecar
+  in `60-engines.yaml` puts `.loras[]?` into `keys.start`, and `buildEngineActiveSet` publishes
+  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the box" gap**; what
+  is unverified is only whether ComfyUI enumerates them once they are there.
+- **The llm role's preset-pinned LoRAs and virtual model ids** (decision 5's second half) are
+  untouched.
+- So is sd-server's `<sd_cpp_extra_args>` route, on the body's own condition: only when an
+  `ImageEngine=sdcpp` deployment needs it, and only after open question 2 is measured.
+
+### Fixed alongside — 欠落 9
+
+`/history`'s 503 is now waited out and retried (a separate commit in the same pass). One state a
+retry cannot recover was added with it: a restarted ComfyUI holds no history for a prompt id the
+previous process accepted, so once `engine_waking` has been seen, a 200 that does not carry this
+prompt is reported at once as a lost queue. Adding the retry alone would have turned 欠落 9 from
+"says retry and does not retry" into **"stays silent for sixteen minutes"** — the poll would keep
+receiving 200s and report nothing until the request's whole budget ran out.

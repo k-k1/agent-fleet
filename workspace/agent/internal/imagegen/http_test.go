@@ -91,6 +91,63 @@ func TestStatusNamesTheServiceBehindEachProvider(t *testing.T) {
 	}
 }
 
+// The LoRAs a provider accepts reach the tool surface with the family each was trained for
+// (ADR 0072 decision 5, phase P3). Without baseModel on the wire the enum would be a list of
+// names an agent cannot pair with a checkpoint, and every mismatch would cost a refused call.
+func TestStatusListsTheProvidersLoras(t *testing.T) {
+	withImagegenSession(t, session.KindClaude, stubProvider{id: ProviderComfy, caps: &Caps{
+		Ops: []Op{OpGenerate},
+		Loras: []LoraInfo{
+			{Name: "watercolor-v2", Description: "soft watercolour", BaseModel: "sdxl"},
+			{Name: "klein-lineart", BaseModel: "flux2-klein"},
+		},
+	}})
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status is not JSON: %v (%s)", err, rec.Body)
+	}
+	if len(got.Providers) != 1 || len(got.Providers[0].Loras) != 2 {
+		t.Fatalf("loras = %+v, want both on the wire", got.Providers)
+	}
+	first := got.Providers[0].Loras[0]
+	if first.Name != "watercolor-v2" || first.BaseModel != "sdxl" || first.Description != "soft watercolour" {
+		t.Errorf("lora = %+v, want name, family and description all carried", first)
+	}
+	// A provider with none says nothing rather than an empty list — the same rule the other
+	// optional capabilities follow.
+	withImagegenSession(t, session.KindClaude, stubProvider{id: ProviderCodex})
+	rec = httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+	if strings.Contains(rec.Body.String(), "loras") {
+		t.Errorf("body = %s, want no loras key for a route that has none", rec.Body)
+	}
+}
+
+// The other half of the same wire: `loras` in the POST body reaches the provider's Request. A
+// field the REST layer drops is a field the tool advertises and nothing applies.
+func TestGenerateForwardsLoras(t *testing.T) {
+	var got Request
+	withImagegenSession(t, session.KindClaude, stubProvider{
+		id:     ProviderComfy,
+		gotReq: &got,
+		res:    Result{Images: []Image{{Bytes: tinyPNG(t, 1, 1), MIME: "image/png"}}, Provider: ProviderComfy},
+		caps:   &Caps{Ops: []Op{OpGenerate}, Loras: []LoraInfo{{Name: "watercolor-v2", BaseModel: "sdxl"}}},
+	})
+	body := `{"session":"slot01","prompt":"a cat","loras":[{"name":"watercolor-v2","weight":0.6}]}`
+	rec := httptest.NewRecorder()
+	HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(body)))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+	}
+	if len(got.Loras) != 1 || got.Loras[0].Name != "watercolor-v2" || got.Loras[0].Weight != 0.6 {
+		t.Errorf("request loras = %+v, want the one that was asked for", got.Loras)
+	}
+}
+
 // A named provider may not be the caller's own CLI. The tool's enum already leaves it out, but
 // the advertised set is a scope boundary — a guessed name in tools/call must not cross it and
 // spend the plan twice for a picture this session can make with its own built-in tool.

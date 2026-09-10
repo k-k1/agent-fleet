@@ -511,6 +511,172 @@ func TestComfyGenerateRefusesAModelWithNoDeclaredFamily(t *testing.T) {
 	}
 }
 
+// --- LoRAs (ADR 0072 decision 5, phase P3) --------------------------------------------------
+
+// loraConn is an engine holding two checkpoints of different families and one LoRA for each, so
+// every pairing — right and wrong — can be asked for.
+func loraConn() EngineConn {
+	c := sdxlConn()
+	c.Models = []string{"sdxl-base-1.0", "klein-4b"}
+	c.BaseModel["klein-4b"] = "flux2-klein"
+	c.Loras = []EngineLora{
+		{ID: "watercolor-v2", File: "watercolor-v2.safetensors", BaseModel: "sdxl", Description: "soft watercolour"},
+		{ID: "klein-lineart", File: "klein-lineart.safetensors", BaseModel: "flux2-klein"},
+	}
+	return c
+}
+
+// The whole enum, not the subset that fits the model, even though Caps is per (provider, model):
+// the tool schema is built once per tools/list, before any checkpoint is chosen, so an enum that
+// depended on `model` would be a promise this layer cannot keep (ADR 0072 決定 5 の改訂).
+func TestComfyCapsListsEveryLoraRegardlessOfModel(t *testing.T) {
+	p, _ := comfyStub(t, loraConn(), nil)
+	for _, model := range []string{"sdxl-base-1.0", "klein-4b", ""} {
+		got := p.Caps(model).Loras
+		if len(got) != 2 {
+			t.Fatalf("Caps(%q).Loras = %v, want both LoRAs", model, got)
+		}
+		if got[0].BaseModel != "sdxl" || got[1].BaseModel != "flux2-klein" {
+			t.Errorf("Caps(%q).Loras = %+v, want each entry to carry its own family (the caller pairs them)", model, got)
+		}
+		if got[0].Description == "" {
+			t.Errorf("Caps(%q).Loras[0] lost the catalogue's description", model)
+		}
+	}
+}
+
+// The refusal ADR 0072 レビュー決定 5 moved out of the Control Plane and into the Agent: a LoRA
+// trained for another family does not fail on the engine, it quietly does nothing to the picture.
+func TestComfyGenerateRefusesALoraFromAnotherFamily(t *testing.T) {
+	p, _ := comfyStub(t, loraConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		t.Error("the engine was called for a pairing that cannot work")
+	})
+	_, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "klein-lineart"}},
+	})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	for _, want := range []string{"klein-lineart", "flux2-klein", "sdxl-base-1.0"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to name %q", err, want)
+		}
+	}
+}
+
+// A LoRA row nobody finished declaring is refused too, and separately: pairing it with anything
+// would be a guess, which is the same reason a checkpoint with no declared family is refused.
+func TestComfyGenerateRefusesALoraWithNoDeclaredFamily(t *testing.T) {
+	conn := loraConn()
+	conn.Loras = append(conn.Loras, EngineLora{ID: "mystery", File: "mystery.safetensors"})
+	p, _ := comfyStub(t, conn, nil)
+	_, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", Loras: []LoraRef{{Name: "mystery"}},
+	})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	if !strings.Contains(err.Error(), "declares no checkpoint family") || !strings.Contains(err.Error(), "base_model") {
+		t.Errorf("err = %v, want it to say what is missing and where to set it", err)
+	}
+}
+
+// An unknown name says what IS enabled, with each one's family — without that, finding out costs
+// the caller another turn.
+func TestComfyGenerateRefusesAnUnknownLoraAndNamesTheAlternatives(t *testing.T) {
+	p, _ := comfyStub(t, loraConn(), nil)
+	_, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0", Loras: []LoraRef{{Name: "made-up"}},
+	})
+	if err == nil {
+		t.Fatal("expected a refusal")
+	}
+	for _, want := range []string{"made-up", "watercolor-v2 (sdxl)", "klein-lineart (flux2-klein)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to contain %q", err, want)
+		}
+	}
+}
+
+// A matching pairing reaches the graph: the node carries the on-disk basename, not the catalogue
+// id, because lora_name is an enumeration over what the box actually holds.
+func TestComfyGenerateSendsAMatchingLoraToTheEngine(t *testing.T) {
+	var gotGraph map[string]any
+	p, _ := comfyStub(t, loraConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		gotGraph, _ = body["prompt"].(map[string]any)
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	if _, err := p.Generate(context.Background(), Request{
+		Op: OpGenerate, Prompt: "a fox", Model: "sdxl-base-1.0",
+		Loras: []LoraRef{{Name: "watercolor-v2", Weight: 0.6}},
+	}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	node, ok := gotGraph["lora1"].(map[string]any)
+	if !ok {
+		t.Fatalf("no lora1 node in the graph sent to /prompt: %v", gotGraph)
+	}
+	inputs, _ := node["inputs"].(map[string]any)
+	if inputs["lora_name"] != "watercolor-v2.safetensors" {
+		t.Errorf("lora_name = %v, want the file name the box holds", inputs["lora_name"])
+	}
+	if inputs["strength_model"] != 0.6 {
+		t.Errorf("strength_model = %v, want the requested weight", inputs["strength_model"])
+	}
+}
+
+// The rest of comfyResolveLoras' contract, in one table: an unstated weight is decision 5's
+// default of 1, the range is 0-2, and neither a repeat nor an unbounded pile is accepted.
+func TestComfyResolveLoras(t *testing.T) {
+	conn := loraConn()
+	t.Run("an unstated weight is 1", func(t *testing.T) {
+		got, err := comfyResolveLoras(conn, ComfyFamilySDXL, "sdxl-base-1.0", []LoraRef{{Name: "watercolor-v2"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 1 || got[0].Weight != 1 {
+			t.Errorf("resolved %+v, want the default strength of 1", got)
+		}
+	})
+	t.Run("out of range is refused", func(t *testing.T) {
+		for _, w := range []float64{-1, 2.5} {
+			_, err := comfyResolveLoras(conn, ComfyFamilySDXL, "sdxl-base-1.0", []LoraRef{{Name: "watercolor-v2", Weight: w}})
+			if err == nil {
+				t.Errorf("strength %g was accepted, want the 0-2 range enforced", w)
+			}
+		}
+	})
+	t.Run("the same LoRA twice is refused", func(t *testing.T) {
+		_, err := comfyResolveLoras(conn, ComfyFamilySDXL, "sdxl-base-1.0",
+			[]LoraRef{{Name: "watercolor-v2"}, {Name: "watercolor-v2", Weight: 0.5}})
+		if err == nil {
+			t.Error("a repeated LoRA was accepted")
+		}
+	})
+	t.Run("more than the cap is refused", func(t *testing.T) {
+		want := make([]LoraRef, comfyMaxLoras+1)
+		for i := range want {
+			want[i] = LoraRef{Name: "watercolor-v2"}
+		}
+		if _, err := comfyResolveLoras(conn, ComfyFamilySDXL, "sdxl-base-1.0", want); err == nil {
+			t.Error("an unbounded chain was accepted")
+		}
+	})
+	t.Run("an engine with none says so", func(t *testing.T) {
+		_, err := comfyResolveLoras(sdxlConn(), ComfyFamilySDXL, "sdxl-base-1.0", []LoraRef{{Name: "watercolor-v2"}})
+		if err == nil || !strings.Contains(err.Error(), "no LoRA is enabled") {
+			t.Errorf("err = %v, want it to say the catalogue enables none", err)
+		}
+	})
+	t.Run("asking for none stays empty", func(t *testing.T) {
+		got, err := comfyResolveLoras(conn, ComfyFamilySDXL, "sdxl-base-1.0", nil)
+		if err != nil || got != nil {
+			t.Errorf("resolved %+v, %v — want nothing at all", got, err)
+		}
+	})
+}
+
 // Ready is "we hold a token for this engine", never "the engine is up" — the same rule sdcpp
 // follows, for the same reason: an asleep engine is normal and must not drop the tool from
 // tools/list.

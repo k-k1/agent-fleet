@@ -2320,3 +2320,73 @@ GGUF を開いてロードする経路ではない**。
 もう 1 つは手登録のフォームで、`POST …/engines/{key}/models` はライセンス欄を受け付けるのに
 **Console が送っていない**——決定 10 がライセンスをパネルの行に出すと決めており、パネルは記録
 されたものしか出せない以上、同じ回で塞ぐ価値がある。
+
+## 追記 — P3 の LoRA、Agent 側の実装（2026-09-10）
+
+**この回で入ったのは Agent 側だけである。** フェーズ節の P3 の完了の定義——「同じ prompt・
+同じ seed で LoRA の有無が絵を変え、SD1.5 の LoRA が SDXL で enum に出ない」——は**まだ
+満たしていない**。前半は実機でしか測れず、この回では GPU を一度も起こしていない。
+
+### 入ったもの
+
+- `generate_image` に `loras: [{name, weight}]`（weight は 0〜2、既定 1、1 要求あたり 4 本まで）。
+  `Caps` に `Loras []{name, description, baseModel}`（決定 5 が R7 で予告していた形そのまま）。
+- 族ごとのテンプレート 5 つすべてに `LoraLoader` の連鎖。要求されなければノードは 1 つも
+  増えないので、LoRA 無しのグラフはゴールデンと 1 バイトも変わらない。
+- baseModel 不一致の拒否を **Agent 側**に置いた（レビュー決定 5）。拒否は 3 種類——名前が
+  カタログに無い／族がチェックポイントと違う／LoRA が族を宣言していない——で、どれも
+  ゲートウェイを通らず、GPU を起こす前に返る。
+- CP → Agent の catalog wire は**既に足りていた**。`loras` は `model_rows` と別の配列で出ており
+  （`engine_gateway.go` の `engineCatalogRowFor`）、各行は `engineCatalogModelRow` を通るので
+  `base_model`・`description`・`files` を持つ。CP には 1 行も足していない。落ちないことを
+  試験で固定した（`TestEngineCatalogRowSeparatesLorasFromCheckpoints`）。
+- LoRA が `model` の enum に出ないことも、同じ分離の裏返しとして固定した。CP が LoRA 行を
+  `models` にも `model_rows` にも入れないので、Agent の `engineImageModelIDs` は構造上それを
+  見ない。
+
+### 決定 5 の 2 つの規則が、ここで衝突して見える
+
+フェーズ節の完了の定義は「SD1.5 の LoRA が SDXL で **enum に出ない**」だが、決定 5 の改訂は
+「**enum は他の引数に依存できない**ので、`loras` の enum は有効な LoRA 全部で、説明に各 LoRA の
+`baseModel` を書き、組み合わせの検査は Agent がする」と書いている。両立しない。
+
+**後者を採った。** ツールのスキーマは tools/list の時点で作られ、そこには `model` の値がまだ
+無い。`Caps(model)` は (provider, model) 毎なので技術的には絞れるが、絞ると
+「**いま温まっているモデルに合う LoRA しか見えない**」になり、呼び出し側が名指しできる
+別のチェックポイント用の LoRA が黙って消える。決定 5 が禁じているのはまさにこれである。
+
+なので `loras` の enum は有効な LoRA 全部、説明の各行が `watercolor-v2（sdxl 用）— …` の形で
+族を名乗り、合わない組は組み立ての段階で名指しで断る。完了の定義の後半は「enum から消す」
+ではなく「**合わない組は絵にならず、理由が返る**」として満たす。
+
+### 実機に残したこと（この回では触っていない）
+
+- **同じ prompt・同じ seed で LoRA の有無が絵を変える**——P3 の完了の定義の本体。実機のみ。
+  🔴 ここが特に危ないのは、残作業 5 の教訓がそのまま当てはまるからである: **ゴールデンは
+  「誰も走らせたことの無いグラフの形」を固定しているだけ**で、正しさの証明ではない。
+  SD3.5 はそれで落ちた。今回は同じ轍を避けるために、`LoraLoader` のノード定義を ComfyUI
+  v0.34.0 の上流ソースから読んで突き合わせた（`nodes.py`: 必須入力は
+  `model`・`clip`・`lora_name`・`strength_model`・`strength_clip`、返りは MODEL と CLIP）。
+  それでも「走らせた」ことにはならない。
+- 🔴 **`lora_name` は `<models>/loras` の再帰列挙で、各要素はそのディレクトリからの相対パス**
+  （`folder_paths.py` の `recursive_search`）。箱は `/ComfyUI/models` を `/models/image` に
+  張っている（`60-engines.yaml`）ので、`image/loras/x.safetensors` は `x.safetensors` として
+  出る——Agent が渡している basename と一致する。**ただし 1 段でも深い鍵は
+  `sub/x.safetensors` として出るので、basename では `Value not in list` になる**。
+  LoRA は `image/loras/` に平置きする、が前提である。
+- **サイドカーの同期は既に通っている**（この回の確認、コード変更なし）。`60-engines.yaml` の
+  fetch サイドカーは `.loras[]?` を `keys.start` に入れており、active set 側も
+  `buildEngineActiveSet` が有効な LoRA を S3 鍵の裸配列として積んでいる。つまり
+  **「LoRA が箱に降りない」という穴は無い**。降りた後に ComfyUI が列挙できるかだけが未検証。
+- **llm 側の preset 固定 LoRA と仮想モデル id**（決定 5 の後半）は手つかず。
+- sd-server の `<sd_cpp_extra_args>` 経路も手つかず（`ImageEngine=sdcpp` の配備が要るときだけ、
+  未解決 2 を測ってから、という本文の条件のまま）。
+
+### ついでに直した——欠落 9
+
+`/history` の 503 を待って再試行するようにした（同じ回の別コミット）。あわせて、待っても
+取り戻せない状態を 1 つ足している: 再起動した ComfyUI は前のプロセスが受け付けた prompt id の
+history を持たないので、一度 `engine_waking` を見た後に prompt id を含まない 200 が返ったら、
+その場で「キューが失われた」と返す。再試行だけを足すと、**欠落 9 は「retry と言って retry
+しない」から「16 分黙る」に化ける**——ポーリングは 200 を受け取り続け、要求の予算を使い切る
+までどこにも報告しない。

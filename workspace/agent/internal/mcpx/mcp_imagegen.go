@@ -49,6 +49,10 @@ type mcpImageGenProvider struct {
 	// phase P2) — absent for a provider with nothing to choose between, the same rule
 	// `provider` itself follows for a session with only one route.
 	Models []mcpImageGenModel `json:"models,omitempty"`
+	// Loras is every fine-tune this provider will accept (ADR 0072 decision 5, phase P3). One
+	// entry is already a choice — with it or without it — so unlike Models there is no
+	// "more than one" rule.
+	Loras []mcpImageGenLora `json:"loras,omitempty"`
 }
 
 // mcpImageGenModel is one checkpoint `model` may name.
@@ -59,6 +63,16 @@ type mcpImageGenModel struct {
 	// so an agent can say "the warm one is fine" instead of naming a cold one and paying a
 	// 1-2.5 minute switch it did not need to ask for.
 	Warm bool `json:"warm,omitempty"`
+}
+
+// mcpImageGenLora is one fine-tune `loras` may name. baseModel is on the wire because the enum
+// cannot be narrowed to the chosen checkpoint (it is built at tools/list, before `model` exists),
+// so the description has to say which family each one belongs to and the Agent refuses the
+// pairings that do not fit.
+type mcpImageGenLora struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	BaseModel   string `json:"baseModel,omitempty"`
 }
 
 // agentImageGenStatus asks the Agent over the loopback REST every other session tool already
@@ -90,6 +104,16 @@ type imageGenArgs struct {
 	// model names a checkpoint (ADR 0072 decision 5, phase P2) — "" leaves it to the provider's
 	// own default, which for the fleet's own engines is the warm one when known (decision 7).
 	model string
+	// loras are the fine-tunes to apply on top of it (phase P3), forwarded as they arrived: an
+	// unknown name and a family that does not match the checkpoint are the Agent's refusals to
+	// make, by name, rather than something to drop here.
+	loras []imageGenLoraArg
+}
+
+// imageGenLoraArg is one entry of the tool's `loras` argument.
+type imageGenLoraArg struct {
+	Name   string  `json:"name"`
+	Weight float64 `json:"weight,omitempty"`
 }
 
 // mcpImageGenCallTimeout is this layer's budget for one generation. It must EXCEED every
@@ -126,6 +150,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
+		"loras": a.loras,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the

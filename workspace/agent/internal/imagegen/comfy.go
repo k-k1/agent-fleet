@@ -106,7 +106,29 @@ func (p *comfyProvider) Caps(model string) Caps {
 		Sizes:     comfySizesFor(conn, model),
 		MaxInputs: 0,
 		MaxCount:  4,
+		Loras:     comfyLoraInfos(conn),
 	}
+}
+
+// comfyLoraInfos is every LoRA the catalogue enables for this engine (ADR 0072 decision 5, phase
+// P3), NOT the ones that fit `model` — see Caps.Loras for why an enum may not depend on another
+// argument. The family goes out with each entry so the caller can pair them itself; a pairing
+// that does not fit is refused by comfyResolveLoras when the request arrives.
+func comfyLoraInfos(conn EngineConn) []LoraInfo {
+	if len(conn.Loras) == 0 {
+		return nil
+	}
+	out := make([]LoraInfo, 0, len(conn.Loras))
+	for _, l := range conn.Loras {
+		if strings.TrimSpace(l.ID) == "" || strings.TrimSpace(l.File) == "" {
+			continue // a row with no id or no file cannot be named or loaded
+		}
+		out = append(out, LoraInfo{Name: l.ID, Description: l.Description, BaseModel: l.BaseModel})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Models implements ModelLister (ADR 0072 decision 5, phase P2): every checkpoint the catalogue
@@ -167,6 +189,95 @@ func errUnknownComfyFamily(family comfyFamily) error {
 	return fmt.Errorf("no workflow template for checkpoint family %q", string(family))
 }
 
+// comfyMaxLoras bounds one request's chain. Each entry is a node ComfyUI loads a file for, and
+// four already stacks more style than anyone can steer; the cap exists so a caller cannot turn
+// one call into an unbounded pile of disk reads on a box the deployment pays for by the hour.
+const comfyMaxLoras = 4
+
+// comfyMaxLoraWeight is decision 5's declared range, 0-2. LoraLoader itself accepts -100 to 100,
+// which is a knob for someone watching the result, not for a model that cannot see the picture.
+const comfyMaxLoraWeight = 2.0
+
+// comfyResolveLoras turns the request's LoRA names into the chain a template renders, and is
+// where ADR 0072's refusal lives (decision 5, レビュー決定 5): it is the AGENT that says no, not
+// the Control Plane, because the pairing ends up inside a workflow graph and the gateway must
+// not read request bodies to police one (decision 4's "素通し").
+//
+// The mismatch it refuses — an SD1.5 LoRA asked for on an SDXL checkpoint — has no failure of its
+// own: the tensor names simply do not match, and the engine either warns and ignores them or
+// produces a quietly degraded picture. Both reach the caller as "the LoRA did nothing", which is
+// indistinguishable from a bug in the prompt. So it is refused before any GPU is woken.
+func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want []LoraRef) ([]comfyLora, error) {
+	if len(want) == 0 {
+		return nil, nil
+	}
+	if len(conn.Loras) == 0 {
+		return nil, fmt.Errorf("no LoRA is enabled on this engine, so %q cannot be applied"+
+			" — enable one in the admin panel's model catalogue first", want[0].Name)
+	}
+	if len(want) > comfyMaxLoras {
+		return nil, fmt.Errorf("%d LoRAs asked for, and this route applies at most %d in one request", len(want), comfyMaxLoras)
+	}
+	byName := map[string]EngineLora{}
+	for _, l := range conn.Loras {
+		byName[l.ID] = l
+	}
+	out := make([]comfyLora, 0, len(want))
+	seen := map[string]bool{}
+	for _, w := range want {
+		l, ok := byName[w.Name]
+		if !ok || strings.TrimSpace(l.File) == "" {
+			return nil, fmt.Errorf("no LoRA named %q on this engine — the catalogue enables %s",
+				w.Name, comfyLoraNameList(conn))
+		}
+		if seen[w.Name] {
+			return nil, fmt.Errorf("LoRA %q asked for twice; name it once with the strength you want", w.Name)
+		}
+		seen[w.Name] = true
+		if got := comfyFamily(strings.TrimSpace(l.BaseModel)); got != family {
+			return nil, errComfyLoraFamilyMismatch(w.Name, l.BaseModel, model, family)
+		}
+		weight := w.Weight
+		if weight == 0 {
+			weight = 1 // "not stated" — see LoraRef.Weight
+		}
+		if weight < 0 || weight > comfyMaxLoraWeight {
+			return nil, fmt.Errorf("LoRA %q asked for at strength %g, and the range is 0-%g",
+				w.Name, w.Weight, comfyMaxLoraWeight)
+		}
+		out = append(out, comfyLora{Name: l.File, Weight: weight})
+	}
+	return out, nil
+}
+
+// errComfyLoraFamilyMismatch separates the two ways a pairing fails, because an operator fixes
+// them differently: a LoRA that declares a DIFFERENT family was registered for other checkpoints
+// and is being used on the wrong one, while a LoRA that declares NOTHING is a catalogue row
+// nobody finished — and that row would otherwise be paired with anything at all.
+func errComfyLoraFamilyMismatch(name, declared, model string, family comfyFamily) error {
+	if d := strings.TrimSpace(declared); d != "" {
+		return fmt.Errorf("LoRA %s was trained for the %s checkpoint family and %s is %s"+
+			" — they cannot be combined; a mismatched LoRA does not fail, it quietly does nothing to the picture",
+			name, d, model, string(family))
+	}
+	return fmt.Errorf("LoRA %s declares no checkpoint family, so there is no way to tell whether it fits %s (%s)"+
+		" — set the catalogue's base_model to one of %s", name, model, string(family), comfyFamilyList())
+}
+
+// comfyLoraNameList spells the enabled LoRAs with the family each belongs to, because "that name
+// does not exist" without the alternatives costs the caller another turn to find out what does.
+func comfyLoraNameList(conn EngineConn) string {
+	out := make([]string, 0, len(conn.Loras))
+	for _, l := range conn.Loras {
+		if l.BaseModel != "" {
+			out = append(out, l.ID+" ("+l.BaseModel+")")
+			continue
+		}
+		out = append(out, l.ID)
+	}
+	return strings.Join(out, ", ")
+}
+
 func errComfyMissingFile(family, role string) error {
 	return fmt.Errorf("the %s checkpoint's catalogue entry has no %s file declared", family, role)
 }
@@ -212,6 +323,10 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, errComfyFamilyNotDeclared(model, conn.BaseModel[model])
 	}
 	files := resolveComfyFiles(conn.Files[model])
+	loras, err := comfyResolveLoras(conn, family, model, req.Loras)
+	if err != nil {
+		return Result{}, err
+	}
 
 	w, h, ok := parseSize(req.Size)
 	if !ok {
@@ -225,7 +340,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	graph, err := comfyBuildGraph(family, files, comfyParams{Prompt: req.Prompt, Seed: seed, Width: w, Height: h, BatchSize: count})
+	graph, err := comfyBuildGraph(family, files, comfyParams{
+		Prompt: req.Prompt, Seed: seed, Width: w, Height: h, BatchSize: count, Loras: loras})
 	if err != nil {
 		return Result{}, err
 	}

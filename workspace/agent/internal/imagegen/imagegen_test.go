@@ -124,6 +124,18 @@ func TestRequestWarnings(t *testing.T) {
 	if got := requestWarnings(Request{AspectRatio: "16:9", Count: 1}, res, withRatios); len(got) != 0 {
 		t.Fatalf("warnings = %v, want none from the core", got)
 	}
+	// A LoRA is the same shape of silent loss (ADR 0072 phase P3): the picture that comes back
+	// without it looks perfectly fine, so nothing but this says it was dropped.
+	loraReq := Request{Count: 1, Size: "1254x1254", Loras: []LoraRef{{Name: "watercolor-v2"}}}
+	if got := requestWarnings(loraReq, res, none); len(got) != 1 ||
+		got[0] != "loras=watercolor-v2 requested, but this route cannot apply a LoRA" {
+		t.Fatalf("warnings = %v, want the lora one", got)
+	}
+	// A route that can apply them refuses an unusable pairing itself, so the core stays quiet.
+	withLoras := Caps{Loras: []LoraInfo{{Name: "watercolor-v2", BaseModel: "sdxl"}}}
+	if got := requestWarnings(loraReq, res, withLoras); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from the core", got)
+	}
 }
 
 // --- the codex route ----------------------------------------------------------------------
@@ -363,6 +375,9 @@ type stubProvider struct {
 	// caps overrides the default generate-only capability, for the tests that are about what a
 	// provider ADVERTISES rather than what it produces.
 	caps *Caps
+	// gotReq captures the Request the core handed over, for the tests that are about what
+	// survives the wire between the tool and the provider.
+	gotReq *Request
 }
 
 func (s stubProvider) ID() string { return s.id }
@@ -373,9 +388,12 @@ func (s stubProvider) Caps(string) Caps {
 	return Caps{Ops: []Op{OpGenerate}}
 }
 func (s stubProvider) Ready(context.Context) bool { return !s.notReady }
-func (s stubProvider) Generate(context.Context, Request) (Result, error) {
+func (s stubProvider) Generate(_ context.Context, req Request) (Result, error) {
 	if s.calls != nil {
 		*s.calls = append(*s.calls, s.id)
+	}
+	if s.gotReq != nil {
+		*s.gotReq = req
 	}
 	return s.res, s.err
 }
