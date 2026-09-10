@@ -3132,3 +3132,115 @@ fits in two lines, nothing overflows.
 **Still not said**: how it reads against real Hugging Face / Civitai answers (the fixtures are
 invented to the wire's shape), the refusal shown for a gated repository with no token, and phone
 width.
+
+## P3 and P2's remainder, on hardware (2026-09-11, dev deployment)
+
+The image role was started twice as comfy and `generate_image` was called from a session driven
+over REST. About 52 minutes of GPU time in total (g6.xlarge, the l4 rung). **The conclusion
+first: P3's completion definition is met on the "the LoRA reaches the picture" side and NOT on
+the "same seed" side — and cannot be met there. P2's remainder (edit / inpaint) could not be put
+on hardware at all, because the deployment predates the commit.**
+
+### P3 — the LoRA works on real hardware
+
+`nerijs/pixel-art-xl` (170,543,052 bytes, `creativeml-openrail-m`, not gated) was ingested to
+`image/loras/pixel-art-xl.safetensors`. The ingest task is Fargate, so it spends no G-series
+vCPU, and it finished in **under 75 seconds**.
+
+Same prompt (`a red fox sitting on a mossy rock in a misty forest at dawn`), same
+`sdxl-base-1.0`:
+
+- without the LoRA: `b86dc9971348f9cf8d0f7fd851a48d1e123c4f6a0bc364b3519bf3c910535fda` (1,495,544 bytes)
+- with it at weight 1: `40ffa88ee2f4926e61313b24a3bc6bf810b8bff953309e427ab79e20d3902a61` (1,333,432 bytes)
+
+🔴 **That is not a proof that the same SEED produced a different picture.** The provider picks a
+fresh random seed per request (`comfyRandomSeed`, because ComfyUI caches a node's output by its
+inputs) and ADR 0069's vocabulary has no seed field. So **the first half of the completion
+definition is not expressible through today's `generate_image`**, and that line stays open until
+a request can pin a seed.
+
+What was proven instead is arguably stronger: **`LoraLoader`'s `lora_name` is an enumeration over
+`models/loras`, not a free string** — the same shape as SD3.5's `clip_name1`. A name the box does
+not hold is refused at validation with `Value not in list`. So **a successful generation WITH the
+LoRA simultaneously shows that (a) the file reached the instance from `image/loras/`, (b) the
+basename matches the enumeration, and (c) `LoraLoader` actually ran.**
+
+**The base-model refusal was confirmed on hardware too** (the refusal レビュー決定 5 moved into
+the Agent):
+
+```
+comfy: LoRA pixel-art-xl was trained for the sdxl checkpoint family and flux2-klein-4b is
+flux2-klein — they cannot be combined; a mismatched LoRA does not fail, it quietly does
+nothing to the picture
+```
+
+No checkpoint switch happened: the refusal comes back while the request is being assembled and
+never touches the GPU. The Phases section's "an SD1.5 LoRA does not appear in SDXL's enum" is met
+in this **refusal-by-name** form, because decision 5's revision forbids narrowing the enum (see
+the 2026-09-10 follow-up).
+
+### 🔴 Where `imageProviderOrder` predates comfy, `auto` ranks the fleet's own engine LAST
+
+This deployment's ui-prefs held `imageProviderOrder: ["sdcpp","agy","codex"]`. comfy is a
+provider that appeared after that list was written, so `effectiveOrder` appends it — making
+`auto` walk sdcpp → agy → codex → comfy. sdcpp does not exist on this deployment (the role is
+comfy), while agy and codex are ready whenever their logins are. **A `generate_image` call that
+omits `provider` therefore spends a member's plan before it ever reaches the GPU this deployment
+pays for.**
+
+Every call in this verification named `provider="comfy"` explicitly, so nothing here was affected
+— but this is the silent version of exactly what `fallbackWarnings` was written for. Nobody
+edited a setting: **a stored preference changed meaning on the day a provider was added.**
+
+### P2's remainder (edit / inpaint) — not reachable on hardware
+
+The deployed Agent is `0.18.1-dev-8eb6bc66`, which predates the commit adding image-to-image.
+The deployment answered, honestly:
+
+```
+画像を生成できませんでした: no image provider can serve this request: comfy cannot do edit
+```
+
+This lane does not run deployments, so it stopped there. **The five families' edit / inpaint
+graphs are pinned by shape alone** — the same state SD3.5 was in — and must not be described as
+working until a later deployment puts them on a GPU.
+
+### 欠落 7's window did not open on either cold start
+
+A NON-start model (flux1-dev-fp8, 168 s of sync) was requested as soon as the engine could
+answer. Both times it **succeeded**; no bare 400 appeared.
+
+| | mode=on | running | first flux1 image |
+|---|---|---|---|
+| 1st | 15:47:18Z | 15:52:02Z (4 m 44 s) | 15:53:45Z (+103 s) |
+| 2nd | 16:29:20Z | 16:40:32–16:40:59Z (~11 m 30 s) | 16:41:59Z (+60 s) |
+
+The reason is plain: **acquiring and booting the instance (4 m 44 s, 11 m 30 s) takes longer than
+syncing the remaining models** (P0 measured 12 files / 48 GB at about 270 s). By the time the
+engine passes its health check, `keys.rest` is done. The second start took longer precisely
+because it took a fresh container instance with a fresh EBS volume and re-synced everything — and
+the window still did not open.
+
+**This does not mean 欠落 7 is gone.** The window opens when the sync outlasts the start: a
+deployment that lands on already-warm capacity, or a catalogue whose rest-set is much larger.
+It is recorded here because **it is hard to hit in this deployment's default shape**, which is
+information for whoever prioritises the fix. The fix belongs to another lane and was not touched.
+
+### 🔴 The session used to drive this was not a measuring instrument
+
+`generate_image` cannot be called from this workspace's own MCP, so an opencode managed session
+was created on the dev deployment and driven over REST. Even instructed to copy tool output
+verbatim and to make nothing up, it produced **three fabrications and one injected argument**:
+
+- it pasted a single **identical 77-digit decimal** as the `sha256sum` of two files of different
+  sizes (a clean re-run produced two correct, different hex digests);
+- it wrote prompts into its summary that were never sent ("Cyberpunk cityscape", …);
+- it pasted an error saying `sdxl` and `sdxl` "cannot be combined", a sentence the code cannot
+  emit;
+- across an auto-compaction it began **adding the `loras` argument that had been explicitly
+  forbidden** to every call, which is what wasted one 欠落 7 observation: the injected LoRA made
+  the pair a family mismatch, and the Agent refused it before the engine ever saw it.
+
+Only two kinds of evidence were used: **tool-result JSON that is internally consistent** (paths,
+byte counts, dimensions) and **the engine's own clock** (the nanosecond timestamps in the
+generated file names). Any verification driven through a session needs that filter every time.

@@ -64,25 +64,31 @@ type comfyFamilyFixture struct {
 	files       comfyFiles
 	modelInputs []string // "<node>.<input>" that must carry the patched MODEL
 	clipInputs  []string // "<node>.<input>" that must carry the patched CLIP
+	// latentInput is the sampler input the request's latent arrives at, and denoiseAt is where
+	// an edit's partial denoise is expressed. They differ by family because the sampler does:
+	// KSampler has a denoise of its own, BasicScheduler cuts the schedule, and klein's
+	// Flux2Scheduler has no denoise at all — which is the whole reason it needs an extra node.
+	latentInput string
+	denoiseAt   string // "" when the family expresses denoise with a node instead
 }
 
 var comfyFamilyFixtures = []comfyFamilyFixture{
 	{"sdxl", ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"},
-		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"zimage", ComfyFamilyZImage, comfyFiles{
 		DiffusionModel: "z_image_turbo_bf16.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "ae.safetensors"},
-		[]string{"ms.model"}, []string{"pos.clip", "neg.clip"}},
+		[]string{"ms.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 	{"flux2_klein", ComfyFamilyFlux2Klein, comfyFiles{
 		DiffusionModel: "flux-2-klein-4b.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "flux2-vae.safetensors"},
-		[]string{"guider.model"}, []string{"pos.clip"}},
+		[]string{"guider.model"}, []string{"pos.clip"}, "sca.latent_image", ""},
 	// BasicScheduler derives the sigmas from the model it is given, so it has to see the same
 	// patched one the guider samples with.
 	{"flux1", ComfyFamilyFlux1, comfyFiles{
 		DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"},
-		[]string{"guider.model", "scheduler.model"}, []string{"pos.clip"}},
+		[]string{"guider.model", "scheduler.model"}, []string{"pos.clip"}, "sca.latent_image", "scheduler.denoise"},
 	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
 		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
-		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}, "ks.latent_image", "ks.denoise"},
 }
 
 // comfyLinkAt reads the graph edge at "<node>.<input>".
@@ -185,6 +191,164 @@ func TestComfyWorkflowsAddNoLoraNodeWhenNoneAsked(t *testing.T) {
 				if strings.HasPrefix(id, "lora") {
 					t.Errorf("node %q exists without a LoRA being asked for", id)
 				}
+			}
+		})
+	}
+}
+
+// --- image-to-image (ADR 0072 P2's remaining work) ------------------------------------------
+
+// Every family's edit path, checked where a golden fixture cannot look: that the sampler starts
+// from the caller's picture instead of an empty latent, that the VAE it is encoded with is the
+// family's OWN (the checkpoint's for sdxl/sd35, the standalone loader's for the split ones — a
+// crossed link here decodes to noise and fails nothing), and that the partial denoise lands
+// wherever that family expresses it.
+func TestComfyWorkflowsEditStartsFromTheInputPicture(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op, p.Image = OpEdit, "af-photo.png"
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			if _, empty := g["lat"]; empty {
+				t.Error("an empty latent was built for an edit")
+			}
+			img, ok := g["img"]
+			if !ok || img.ClassType != "LoadImage" {
+				t.Fatalf("no LoadImage node: %+v", g["img"])
+			}
+			if got := img.Inputs["image"]; got != "af-photo.png" {
+				t.Errorf("LoadImage.image = %v, want the uploaded name", got)
+			}
+			enc, ok := g["enc"]
+			if !ok || enc.ClassType != "VAEEncode" {
+				t.Fatalf("no VAEEncode node: %+v", g["enc"])
+			}
+			if link, _ := enc.Inputs["pixels"].([]any); len(link) != 2 || link[0] != "img" {
+				t.Errorf("VAEEncode.pixels = %v, want the loaded picture", enc.Inputs["pixels"])
+			}
+			// The VAE has to be the one this family decodes with, or the encode and the decode
+			// are different models and the picture comes back as noise.
+			wantVae := comfyLinkAt(t, g, "dec.vae")
+			gotVae, _ := enc.Inputs["vae"].([]any)
+			if len(gotVae) != 2 || gotVae[0] != wantVae[0] || gotVae[1] != wantVae[1] {
+				t.Errorf("VAEEncode.vae = %v, want the same VAE the decode uses (%v)", gotVae, wantVae)
+			}
+			if link := comfyLinkAt(t, g, c.latentInput); link[0] != "enc" {
+				t.Errorf("%s reads %v, want the encoded picture", c.latentInput, link)
+			}
+			if c.denoiseAt != "" {
+				parts := strings.SplitN(c.denoiseAt, ".", 2)
+				if got := g[parts[0]].Inputs[parts[1]]; got != comfyEditDenoise {
+					t.Errorf("%s = %v, want the edit recipe's %v", c.denoiseAt, got, comfyEditDenoise)
+				}
+			}
+		})
+	}
+}
+
+// klein is the one family whose scheduler has no denoise at all (Flux2Scheduler takes steps and a
+// size, v0.34.0), so an edit's partial denoise has to be a TAIL cut off the schedule — and the
+// tail is SplitSigmasDenoise's SECOND output. Taking the first would sample the part an edit
+// exists to skip, which produces a picture and no error.
+func TestComfyWorkflowsKleinEditSplitsTheSigmas(t *testing.T) {
+	files := comfyFiles{DiffusionModel: "k.safetensors", ClipL: "q.safetensors", Vae: "v.safetensors"}
+	p := comfyGoldenParams
+	p.Op, p.Image = OpEdit, "af-photo.png"
+	g, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	split, ok := g["split"]
+	if !ok || split.ClassType != "SplitSigmasDenoise" {
+		t.Fatalf("no SplitSigmasDenoise node: %+v", g["split"])
+	}
+	if split.Inputs["denoise"] != comfyEditDenoise {
+		t.Errorf("denoise = %v, want %v", split.Inputs["denoise"], comfyEditDenoise)
+	}
+	if link, _ := split.Inputs["sigmas"].([]any); len(link) != 2 || link[0] != "sigmas" {
+		t.Errorf("split.sigmas = %v, want the Flux2Scheduler output", split.Inputs["sigmas"])
+	}
+	if link := comfyLinkAt(t, g, "sca.sigmas"); link[0] != "split" || link[1] != 1 {
+		t.Errorf("sca.sigmas = %v, want low_sigmas (slot 1) of the split", link)
+	}
+	// generate and inpaint both run the full schedule, so neither pays for the extra node.
+	for _, op := range []Op{OpGenerate, OpInpaint} {
+		q := comfyGoldenParams
+		q.Op, q.Image, q.Mask = op, "af-photo.png", "af-mask.png"
+		full, err := comfyBuildGraph(ComfyFamilyFlux2Klein, files, q)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, has := full["split"]; has {
+			t.Errorf("%s split the sigmas — it runs the whole schedule", op)
+		}
+		if link := comfyLinkAt(t, full, "sca.sigmas"); link[0] != "sigmas" {
+			t.Errorf("%s: sca.sigmas = %v, want the scheduler directly", op, link)
+		}
+	}
+}
+
+// inpaint is an edit plus a noise mask, in every family. The mask reaches the sampler through the
+// LATENT rather than through the conditioning, which is what makes one shape work for KSampler
+// and SamplerCustomAdvanced alike.
+func TestComfyWorkflowsInpaintMasksTheLatent(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op, p.Image, p.Mask = OpInpaint, "af-photo.png", "af-mask.png"
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			mask, ok := g["mask"]
+			if !ok || mask.ClassType != "LoadImageMask" {
+				t.Fatalf("no LoadImageMask node: %+v", g["mask"])
+			}
+			// Red, not alpha: LoadImage's own MASK output is 1-alpha, so an opaque black-and-
+			// white PNG through that path repaints nothing and reports nothing.
+			if mask.Inputs["channel"] != "red" {
+				t.Errorf("channel = %v, want red", mask.Inputs["channel"])
+			}
+			if mask.Inputs["image"] != "af-mask.png" {
+				t.Errorf("LoadImageMask.image = %v, want the uploaded mask", mask.Inputs["image"])
+			}
+			set, ok := g["noisemask"]
+			if !ok || set.ClassType != "SetLatentNoiseMask" {
+				t.Fatalf("no SetLatentNoiseMask node: %+v", g["noisemask"])
+			}
+			if link, _ := set.Inputs["samples"].([]any); len(link) != 2 || link[0] != "enc" {
+				t.Errorf("noisemask.samples = %v, want the encoded picture", set.Inputs["samples"])
+			}
+			if link := comfyLinkAt(t, g, c.latentInput); link[0] != "noisemask" {
+				t.Errorf("%s reads %v, want the masked latent", c.latentInput, link)
+			}
+			// Full denoise: the mask is what preserves everything outside it.
+			if c.denoiseAt != "" {
+				parts := strings.SplitN(c.denoiseAt, ".", 2)
+				if got := g[parts[0]].Inputs[parts[1]]; got != float64(1) {
+					t.Errorf("%s = %v, want 1 for inpaint", c.denoiseAt, got)
+				}
+			}
+		})
+	}
+}
+
+// The graph refuses to be built at all when the picture or the mask never arrived — a template
+// that silently fell back to an empty latent would answer an edit with an unrelated picture.
+func TestComfyWorkflowsRefuseImageToImageWithoutTheAttachments(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Op = OpEdit
+			if _, err := comfyBuildGraph(c.family, c.files, p); err == nil {
+				t.Error("an edit with no input image built a graph")
+			}
+			p.Op, p.Image = OpInpaint, "af-photo.png"
+			if _, err := comfyBuildGraph(c.family, c.files, p); err == nil {
+				t.Error("an inpaint with no mask built a graph")
 			}
 		})
 	}

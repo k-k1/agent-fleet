@@ -27,6 +27,7 @@ package imagegen
 // picture with the LoRA than without" (ADR 0072 phase P3), on real hardware.
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -91,14 +92,90 @@ func resolveComfyFiles(files []EngineFile) comfyFiles {
 
 // comfyParams is the request-shaped input every template renders against.
 type comfyParams struct {
+	// Op decides what the sampler starts from: an empty latent (generate), or the caller's own
+	// picture encoded back into one (edit / inpaint). Empty means generate — the zero value has
+	// to be the operation every template was written for first.
+	Op        Op
 	Prompt    string
 	Seed      int64
 	Width     int
 	Height    int
 	BatchSize int
+	// Image and Mask are names ComfyUI's own input directory holds, NOT paths in this container:
+	// LoadImage's `image` input is an enumeration over that directory (nodes.py), so the bytes
+	// have to be uploaded before a graph can name them. comfyProvider.uploadImage does that and
+	// fills these in with whatever name the engine answered with.
+	Image string
+	Mask  string
 	// Loras are already resolved against the catalogue and checked against this model's family
 	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
 	Loras []comfyLora
+}
+
+// isImageToImage is "the sampler starts from the caller's picture rather than from noise".
+func (p comfyParams) isImageToImage() bool { return p.Op == OpEdit || p.Op == OpInpaint }
+
+// comfyEditDenoise is how much of the caller's picture an edit keeps. A fixed part of the recipe,
+// like steps and cfg: ADR 0069's vocabulary has no strength field, so there is nothing for a
+// caller to turn, and a value that leaves the composition recognisable is the honest default.
+const comfyEditDenoise = 0.6
+
+// comfyDenoiseFor is the denoise every family's sampler runs at.
+//
+// Inpaint stays at 1: the area OUTSIDE the mask is preserved by the noise mask, not by a partial
+// denoise, so lowering it would only make the repainted area a weak echo of what was there.
+func comfyDenoiseFor(op Op) float64 {
+	if op == OpEdit {
+		return comfyEditDenoise
+	}
+	return 1
+}
+
+// comfyRequestLatent builds what the sampler starts from, and is the whole of the image-to-image
+// difference (ADR 0072 P2's remaining work): an empty latent for generate, and for edit / inpaint
+// the caller's own picture run back through the model's VAE.
+//
+// emptyClass is the family's own empty-latent node — the three spellings (EmptyLatentImage,
+// EmptySD3LatentImage, EmptyFlux2LatentImage) take the same three inputs, so they differ by name
+// alone. VAEEncode does not: it is one node for every family, and the vae link is what makes it
+// the right one.
+//
+// Node definitions checked against ComfyUI v0.34.0 rather than assumed (nodes.py):
+// VAEEncode(pixels: IMAGE, vae: VAE) -> LATENT; SetLatentNoiseMask(samples: LATENT, mask: MASK)
+// -> LATENT; LoadImage(image) -> (IMAGE, MASK); LoadImageMask(image, channel) -> MASK.
+//
+// 🔴 The mask is read off the RED channel, not alpha. LoadImage's own MASK output is `1.0 -
+// alpha`, so an ordinary opaque black-and-white PNG — which is what a caller draws and what
+// sd-server's route takes — would arrive as an all-zero mask and repaint nothing at all, with no
+// error anywhere. Red gives the channel verbatim: white is the area to repaint, which is what
+// this tool's own description promises.
+//
+// VAEEncodeForInpaint is deliberately NOT used. It blanks the masked pixels before encoding,
+// which is what an inpainting-specific checkpoint expects; none of the five families here is one,
+// and handing an ordinary checkpoint a blanked hole is how inpainting produces grey mush.
+func comfyRequestLatent(g comfyGraph, p comfyParams, vae []any, emptyClass string) ([]any, error) {
+	if !p.isImageToImage() {
+		g["lat"] = comfyNode{ClassType: emptyClass, Inputs: map[string]any{
+			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+		return comfyLink("lat", 0), nil
+	}
+	if p.Image == "" {
+		return nil, fmt.Errorf("%s needs an input image, and none reached the graph", p.Op)
+	}
+	g["img"] = comfyNode{ClassType: "LoadImage", Inputs: map[string]any{"image": p.Image}}
+	g["enc"] = comfyNode{ClassType: "VAEEncode", Inputs: map[string]any{
+		"pixels": comfyLink("img", 0), "vae": vae}}
+	if p.Op != OpInpaint {
+		return comfyLink("enc", 0), nil
+	}
+	if p.Mask == "" {
+		return nil, fmt.Errorf("inpaint needs a mask image, and none reached the graph")
+	}
+	g["mask"] = comfyNode{ClassType: "LoadImageMask", Inputs: map[string]any{
+		"image": p.Mask, "channel": "red"}}
+	g["noisemask"] = comfyNode{ClassType: "SetLatentNoiseMask", Inputs: map[string]any{
+		"samples": comfyLink("enc", 0), "mask": comfyLink("mask", 0)}}
+	return comfyLink("noisemask", 0), nil
 }
 
 // comfyLora is one LoRA to chain into a template: the name ComfyUI knows it by on disk, and the
@@ -225,12 +302,15 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": comfyNegativePrompt, "clip": clip}}
-	g["lat"] = comfyNode{ClassType: "EmptyLatentImage", Inputs: map[string]any{
-		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	lat, err := comfyRequestLatent(g, p, comfyLink("ckpt", 2), "EmptyLatentImage")
+	if err != nil {
+		return nil, err
+	}
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 20, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1,
-		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-		"latent_image": comfyLink("lat", 0)}}
+		"seed": p.Seed, "steps": 20, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras",
+		"denoise": comfyDenoiseFor(p.Op),
+		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-sdxl", "images": comfyLink("dec", 0)}}
@@ -262,12 +342,15 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": "", "clip": clip}}
-	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	lat, err := comfyRequestLatent(g, p, comfyLink("vae", 0), "EmptySD3LatentImage")
+	if err != nil {
+		return nil, err
+	}
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1,
-		"model": comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-		"latent_image": comfyLink("lat", 0)}}
+		"seed": p.Seed, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple",
+		"denoise": comfyDenoiseFor(p.Op),
+		"model":   comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-zimage", "images": comfyLink("dec", 0)}}
@@ -300,12 +383,24 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
 	g["sigmas"] = comfyNode{ClassType: "Flux2Scheduler", Inputs: map[string]any{
 		"steps": 4, "width": p.Width, "height": p.Height}}
-	g["lat"] = comfyNode{ClassType: "EmptyFlux2LatentImage", Inputs: map[string]any{
-		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	// Flux2Scheduler has no denoise of its own — it takes steps and a size and nothing else
+	// (comfy_extras/nodes_flux.py, v0.34.0) — so an edit's partial denoise is a TAIL of that
+	// schedule, cut by SplitSigmasDenoise. Its second output (low_sigmas) is the tail; taking
+	// the first would sample the part an edit is meant to skip.
+	sigmas := comfyLink("sigmas", 0)
+	if d := comfyDenoiseFor(p.Op); d < 1 {
+		g["split"] = comfyNode{ClassType: "SplitSigmasDenoise", Inputs: map[string]any{
+			"sigmas": sigmas, "denoise": d}}
+		sigmas = comfyLink("split", 1)
+	}
+	lat, err := comfyRequestLatent(g, p, comfyLink("vae", 0), "EmptyFlux2LatentImage")
+	if err != nil {
+		return nil, err
+	}
 	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
 	g["sca"] = comfyNode{ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
 		"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
-		"sigmas": comfyLink("sigmas", 0), "latent_image": comfyLink("lat", 0)}}
+		"sigmas": sigmas, "latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-klein", "images": comfyLink("dec", 0)}}
@@ -345,17 +440,22 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"text": p.Prompt, "clip": clip}}
 	g["guidance"] = comfyNode{ClassType: "FluxGuidance", Inputs: map[string]any{
 		"conditioning": comfyLink("pos", 0), "guidance": 3.5}}
-	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	lat, err := comfyRequestLatent(g, p, comfyLink("vae", 0), "EmptySD3LatentImage")
+	if err != nil {
+		return nil, err
+	}
 	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
+	// BasicScheduler DOES have a denoise (unlike klein's Flux2Scheduler), and it cuts the tail
+	// itself: total_steps = steps/denoise, then the last steps+1 sigmas. So an edit needs no
+	// extra node here.
 	g["scheduler"] = comfyNode{ClassType: "BasicScheduler", Inputs: map[string]any{
-		"model": model, "scheduler": "simple", "steps": 20, "denoise": 1}}
+		"model": model, "scheduler": "simple", "steps": 20, "denoise": comfyDenoiseFor(p.Op)}}
 	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
 	g["guider"] = comfyNode{ClassType: "BasicGuider", Inputs: map[string]any{
 		"model": model, "conditioning": comfyLink("guidance", 0)}}
 	g["sca"] = comfyNode{ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
 		"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
-		"sigmas": comfyLink("scheduler", 0), "latent_image": comfyLink("lat", 0)}}
+		"sigmas": comfyLink("scheduler", 0), "latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-flux1", "images": comfyLink("dec", 0)}}
@@ -403,12 +503,15 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"text": p.Prompt, "clip": clip}}
 	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
 		"text": comfyNegativePrompt, "clip": clip}}
-	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	lat, err := comfyRequestLatent(g, p, comfyLink("ckpt", 2), "EmptySD3LatentImage")
+	if err != nil {
+		return nil, err
+	}
 	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
-		"seed": p.Seed, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "sgm_uniform", "denoise": 1,
-		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-		"latent_image": comfyLink("lat", 0)}}
+		"seed": p.Seed, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "sgm_uniform",
+		"denoise": comfyDenoiseFor(p.Op),
+		"model":   model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": lat}}
 	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
 	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
 		"filename_prefix": "af-sd35", "images": comfyLink("dec", 0)}}
