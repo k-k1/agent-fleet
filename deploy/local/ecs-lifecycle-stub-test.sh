@@ -93,6 +93,13 @@ args="$*"
 case "$args" in
   *"sts get-caller-identity"*) echo "123456789012" ;;
   *"cloudformation list-exports"*"SlotLaunchTemplateId"*) echo "t-pool-SlotLaunchTemplateId" ;;
+  # How update.sh finds the engine stack: the ingress stack's EnginesSsmParam, then the export
+  # that carries the same value. Answer the generic list-exports here and update.sh never sees
+  # an engine stack at all, so the P6 gate below cannot be tested. Behind a flag because
+  # standup.sh reads the same pair: resolve an engine stack for a profile whose capture has no
+  # params/60-engines and its preflight refuses to build at all.
+  *"cloudformation list-exports"*"EnginesSsmParam"*)
+    [ "${STUB_ENGINES_LIVE:-0}" = 1 ] && echo "af-ecs-engines-EnginesSsmParam" || echo "" ;;
   *"cloudformation list-exports"*) echo "t-cluster" ;;
   *"--profile p2"*"describe-stack-resource"*) echo "t-db" ;;
   *"describe-stack-resource"*) echo "None" ;;
@@ -118,6 +125,17 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
   *"ParameterKey=='LlmImageTag'"*) echo "server-cuda" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
+  *"ParameterKey=='EnginesSsmParam'"*)
+    [ "${STUB_ENGINES_LIVE:-0}" = 1 ] && echo "/af-ws/engines" || echo "" ;;
+  # A LIVE engine stack from before ADR 0072 P6: both roles were switched on by naming a model
+  # key, and `<Role>Enabled` was never set. This is the state the production deployment was
+  # measured in on 2026-09-11, and the one an update silently deletes both roles from.
+  # STUB_ENGINES_PRE_P6 unset = a stack already through P6: the key is not a parameter any more.
+  *"ParameterKey=='LlmEnabled'"*|*"ParameterKey=='ImageEnabled'"*) echo "" ;;
+  *"ParameterKey=='LlmModelS3Key'"*)
+    [ "${STUB_ENGINES_PRE_P6:-0}" = 1 ] && echo "llm/model.gguf" || echo "" ;;
+  *"ParameterKey=='ImageModelS3Key'"*)
+    [ "${STUB_ENGINES_PRE_P6:-0}" = 1 ] && echo "image/checkpoints/sd_xl_base_1.0.safetensors" || echo "" ;;
   # For capture-env.sh: the parameter and output listings (join form). NatEipAllocationId
   # reproduces exactly the shape that was hit for real — empty as a parameter, but with a
   # real value in the outputs.
@@ -423,6 +441,55 @@ grep -q "CapacityOptionType: !Ref ImageCapacityOptionType" "$ECS/cfn/60-engines.
   || fail "the image provider no longer reads ImageCapacityOptionType"
 grep -q 'Sub "af-${AWS::StackName}-image-spot"' "$ECS/cfn/60-engines.yaml" \
   || fail "the image provider's name does not move with the option type (a switch cannot deploy)"
+
+echo "== case 3h: update.sh carries a pre-P6 role over instead of deleting it =="
+#
+# update.sh redeploys 60-engines on every release and passes NO parameters, which is normally
+# the safe thing: CloudFormation keeps every parameter at its previous value. ADR 0072 phase P6
+# turned that into a hazard. `<Role>ModelS3Key` used to decide whether the role's SERVICE
+# existed, and it is gone; a deployment that switched a role on by naming a key has
+# `<Role>Enabled` empty, so "keep the previous value" now means NO SERVICE. The failure mode is
+# the bad one: the update SUCCEEDS and the engine is deleted. Measured 2026-09-11 - the
+# production deployment has both roles in exactly that state.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h" 2>&1 \
+  || { cat "$WORK/out3h"; fail "update.sh failed against a pre-P6 engine stack"; }
+grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$LOG" \
+  || fail "update.sh did not carry the roles over (this update would delete both engine services)"
+grep -q "LlmEnabled=true (it was implied by LlmModelS3Key" "$WORK/out3h" \
+  || fail "the translation happened without saying so (an operator cannot see what changed)"
+# The retired parameters themselves must never be passed: the template no longer declares them
+# and `deploy` refuses a key it does not know.
+if grep -qE "deploy --stack-name af-ecs-engines .*(LlmModelS3Key|ImageModelS3Key|LlmModelIds)=" "$LOG"; then
+  fail "update.sh passed a parameter retired in ADR 0072 P6"
+fi
+# And 30-ingress still gets ImageTag and nothing else - the engine gate must not leak into the
+# call the comment above it says never to add a parameter to.
+grep -q "deploy --stack-name t-ingress .*--parameter-overrides ImageTag=9.9.9-dev-test --no-fail" "$LOG" \
+  || fail "the ingress deploy no longer overrides ImageTag alone"
+
+# A deployment already through P6 has no model key to read, and then this is byte for byte the
+# update it always was. Without this the gate could pass by always sending the parameter, which
+# would overwrite an administrator who deliberately switched a role OFF.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3h2" 2>&1 \
+  || { cat "$WORK/out3h2"; fail "update.sh failed against a post-P6 engine stack"; }
+grep -q "deploy --stack-name af-ecs-engines" "$LOG" || fail "60-engines was not deployed at all"
+if grep -q "deploy --stack-name af-ecs-engines .*--parameter-overrides" "$LOG"; then
+  fail "a post-P6 stack was given parameters it does not need"
+fi
+
+# --dry-run has to SHOW the translation. An operator reads the plan to decide whether to run it,
+# and "Enabled is about to be set" is the one thing in this deploy worth reading.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --dry-run > "$WORK/out3h3" 2>&1 \
+  || { cat "$WORK/out3h3"; fail "update.sh --dry-run failed"; }
+grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
+  || fail "--dry-run did not show the planned translation"
+hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #
