@@ -170,10 +170,10 @@ predicate. It is the only one of the nine that is not also an operator tool (the
   (`mcp_stdio_test.go:792`). That test looks at what observation advertises **on its own**, and
   `create_session` / `stop_session` / `resume_session` / `get_session_output` standing in that
   list is exactly the property stage 2 wants pinned (without `--fleet-spawn` they do not appear).
-  Taking the eight out of the list is taking the property out of the test.
+  Taking the ~~eight~~ nine (see the addendum above) out of the list is taking the property out of the test.
 - **Add a test instead pinning that raising `--fleet-spawn` adds exactly those nine.** The pair
-  keeps both halves: "observation alone does not open them" and "adding spawning opens these eight
-  and nothing else".
+  keeps both halves: "observation alone does not open them" and "adding spawning opens these ~~eight~~
+  nine and nothing else" (the test is named `TestFleetSpawnAddsExactlyItsNineTools`).
 
 ### 4. A session may steer only the children it started
 
@@ -389,8 +389,9 @@ operator surface does not exist on the session surface**.
 - `report_to` **stays empty**. No session-addressed report channel is created — ADR 0041 rejected
   exactly that ("a report is addressed to a conversation, not to a session"), and it would break
   who owns the arm (docs/log/51).
-- The primary route is **the parent polling `get_session_status`**. That is what decision 3's
-  prerequisite is for.
+- The primary route is **the parent polling `get_session_status`**. ~~That is what decision 3's
+  prerequisite is for.~~ → The prerequisite went away on 2026-09-09 (decision 3's addendum): every
+  session has `get_session_status`, so this route is open regardless of settings.
 - As an aid, **only when peer messaging is on**, `create_session` appends one line to
   `initial_prompt`: when you are done, send the parent (named) one `send_to_peer_session` with
   `intent=answer` (argument `report_back`, default on; nothing is appended when `initial_prompt`
@@ -457,7 +458,7 @@ every progress notification** (10 s intervals took a 90 s call through). So the 
 **`resume_session` needs no heartbeat.** It is a 15 s `AgentPOST /sessions/<n>/start`
 (`mcp_stdio.go:2300`), well inside 60 s. What costs 30 s + 45 s is `agentResumeAndSend`
 (`:3246` — a 30 s readiness wait plus 45 s delivery confirmation), used by the peer send path,
-which is **not among the eight tools stage 2 opens**.
+which is **not among the ~~eight~~ nine tools stage 2 opens**.
 
 ### 12. Descriptions are written fresh in English; handlers are shared
 
@@ -578,6 +579,8 @@ job feels done.
   → **Done on 2026-09-09** (docs/log/87 §87.15). `report_back` was honoured **3/3 (100%, n=3)**.
   ⚠️ **n=3 is not "the firing rate was measured"** — what was confirmed is that a real session calls
   them at all, not how often.
-- Cleaning up children that outlive their parent stays with the user (decision 13). Decision 6's
-  budget is a count over a caller's children, not a reservation, so **when the parent goes, so does
-  the limit**.
+- Cleaning up children that outlive their parent stays with the user (decision 13). ~~Decision 6's
+  budget is a count over a caller's children, not a reservation, so~~ Decision 6's budget is a
+  reservation, but the parent holds it, not the child (`reserveSpawnSlot` counts under the parent's
+  name; a child's Meta carries no slot), so **when the parent goes, so does the limit**. The
+  conclusion stands; only the wording predated round 2 (reservation).
