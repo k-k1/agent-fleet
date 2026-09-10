@@ -96,6 +96,20 @@ func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enable
 	return affected(res, err)
 }
 
+// SetEngineModelBaseModel corrects ONE column, and exists because a row can be complete in
+// every other way and still unusable: ComfyUI picks its workflow graph from the family and
+// refuses to guess one, so a seeded row (the seed cannot know a family) or one written before
+// the family was validated has to be fixable without being re-typed. A targeted UPDATE rather
+// than a read-modify-write through PutEngineModel: the row carries a licence acceptance, a
+// source and a sha256 that nothing else in this request knows, and a round trip would have to
+// carry them back out and in again to change one word.
+func (s *SQL) SetEngineModelBaseModel(ctx context.Context, role, id, baseModel string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`UPDATE engine_models SET base_model=?, updated_at=? WHERE role=? AND id=?`,
+		baseModel, NowTS(), role, id)
+	return affected(res, err)
+}
+
 // SetEngineModelSelected and SetEngineModelDefault clear the role's other rows in the SAME
 // transaction as the one they set. Doing it in two calls leaves a window in which the image
 // role has two selected checkpoints, and the sidecar reading the active set in that window

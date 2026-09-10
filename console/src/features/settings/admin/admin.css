@@ -479,10 +479,51 @@
 }
 
 .engines-model-add-row > input,
+.engines-model-add-row > select,
 .engines-search-row > input,
 .engines-hf-row > input {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* One model can be several FILES — FLUX.2 klein is a diffusion model, a text encoder and a VAE
+   (ADR 0072 decision 2). 🔴 A left rule was not enough: on a real render of three files the rule
+   was invisible in both themes, and what the form showed was part/key/size repeated three times
+   with nothing saying where a file began. So each file is a BOX. (Caught by looking at it —
+   fifty-seven passing DOM tests could not see it.) */
+.engines-model-add-file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+}
+
+/* ⚠️ Not stretched. A button is a flex child here, and a full-width one centres its label —
+   which is what made "remove this file" read as a separator floating between two groups, so it
+   could have belonged to either. Inside its own box and right-aligned, it belongs to one. */
+.engines-model-add-file > button {
+  align-self: flex-end;
+}
+
+.engines-model-add > button {
+  align-self: flex-start;
+}
+
+/* The family picker on a row that is missing one. It sits under the warning it answers, so it
+   reads as the fix rather than as one more field — and it only ever appears there: a row whose
+   family is already declared shows it in the meta line and needs no control. */
+.engines-model-family {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-family > span {
+  color: var(--dialog-muted);
 }
 
 .engines-model-add-actions {

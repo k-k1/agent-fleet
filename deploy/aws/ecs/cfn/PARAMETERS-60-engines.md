@@ -608,6 +608,36 @@ writes `/models/cmdline` — the model-specific half of the argument list. Every
 role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
 and `ALIAS_FLAG` / `CTX_FLAG`.
 
+### `SYNC_ALL`: which engines need more than the starting model on the box
+
+Whether a role syncs the OTHER enabled models is a per-engine question, and it is asked through
+`SYNC_ALL` rather than inferred:
+
+| engine | switches models? | `PRESET_FILE` | `SYNC_ALL` | on the box |
+|---|---|---|---|---|
+| llama.cpp | yes, it is a router | a path | — | every enabled model |
+| sd.cpp | no, one checkpoint at start | `""` | `""` | the starting model only |
+| ComfyUI | **yes, per request** | `""` | `"1"` | every enabled model |
+
+Enabling a model OFFERS it and selecting one LOADS it, so a role that cannot switch must not
+pay to stage models nobody can reach — S3 to EBS is 92-147 MB/s measured, and that is somebody
+else's checkpoint on every cold start. That is why sd.cpp stays at the starting model.
+
+⚠️ **The trap this table exists to prevent.** `/tmp/keys.rest` used to be written only inside
+`if [ -n "$PRESET_FILE" ]`, which read as "only a router needs the others" — true while the only
+two engines were llama.cpp (a router, and it has a preset) and sd.cpp (neither). **`comfy` broke
+the equivalence: it is a router with no preset file.** The image container sets `PRESET_FILE: ""`,
+so `keys.rest` was empty and only the starting checkpoint was fetched. Every other model then
+400s at the engine with `Value not in list: unet_name: 'flux-2-klein-4b.safetensors' not in []`
+— the file is in the active set, in S3, and named correctly in the graph; it was simply never
+downloaded. The sidecar printed `every enabled model is on this box` while that was false, which
+is why the fetch log read as healthy. (Measured on af-sandbox, ADR 0072 P2 実機検証; the message
+now says `sync done`, and `engine-sidecar-test.sh` covers both settings.)
+
+The rule to hold onto: **`PRESET_FILE` says how one engine is CONFIGURED, never what has to be
+on the box.** It still gates the preset file and the `START` re-derivation that goes with it —
+those really are router-with-a-preset concerns — and nothing else.
+
 ### The START model gates the engine; the rest are synced behind it
 
 Since 2026-09-09 the sidecar does **not** fetch everything before the engine may start. It syncs
@@ -771,10 +801,31 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   all.** ComfyUI reads `models/checkpoints`, `models/loras`, `models/vae`, `models/text_encoders`
   and `models/diffusion_models` relative to its own working directory — which IS the S3 layout
   ADR 0071 decision 6 already mirrors onto `/models/image`. So the wrapper's entire integration
-  is `ln -sfn /models/image /ComfyUI/models` before `exec`: no copying, and no need to tell
-  ComfyUI which checkpoint to load, because the `comfy` provider picks one per REQUEST in its own
-  graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this branch — only its
-  non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
+  is `rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models` before `exec`: no copying,
+  and no need to tell ComfyUI which checkpoint to load, because the `comfy` provider picks one
+  per REQUEST in its own graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this
+  branch — only its non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
+
+  ⚠️ **Both halves of that line are load-bearing, and each is a trap the other creates.**
+
+  - **`rm -rf` FIRST.** ComfyUI's repository TRACKS `models/` — every subdirectory
+    (`checkpoints/`, `diffusion_models/`, `text_encoders/`, `vae/`, …) exists in the clone,
+    each holding a `put_..._here` placeholder. So `deploy/aws/ecs/comfyui/Dockerfile`'s
+    `git clone` bakes a REAL directory, and `ln -sfn` against a real directory links INSIDE
+    it (`/ComfyUI/models/image`) instead of replacing it. `-n` does not help: it only changes
+    behaviour when the link name is a symlink to a directory. The engine then starts, answers
+    `/system_stats`, passes health — and 400s every request with
+    `Value not in list: ckpt_name: 'sd_xl_base_1.0.safetensors' not in []`, an EMPTY list,
+    because it is reading the clone's placeholder `models/checkpoints/`.
+  - **Never a trailing slash.** After the first start `/ComfyUI/models` IS a symlink;
+    `rm -rf /ComfyUI/models/` would follow it and delete the CONTENTS of the shared model
+    volume — every checkpoint the fetch sidecar just spent minutes pulling from S3.
+
+  **Why the bench did not catch it** (and why "measured on a real GPU" was not enough):
+  `harness/bench-image-engine.sh --baked` bind-MOUNTS the models volume onto `/ComfyUI/models`,
+  and a mount replaces a directory where a symlink cannot. The bench and the task definition
+  differed in exactly this one line, so 13/13 bench scenarios passed against an integration
+  path nothing had ever run. Measured on af-sandbox, ADR 0072 P2 実機検証.
 
 ## Editing this template
 

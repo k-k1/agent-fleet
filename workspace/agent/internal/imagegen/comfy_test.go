@@ -324,12 +324,38 @@ func TestComfyCapsIsGenerateOnly(t *testing.T) {
 
 // A model with no declared baseModel is refused rather than guessed at — decision 2 exists so
 // the family is a stated fact, and comfy has no fallback the way sdcpp's id-sniffing guess does.
+//
+// The refusal has to separate the two ways it happens, because they need different fixes and
+// only one of them LOOKS wrong on the admin screen: nothing declared (a seeded row) versus an
+// upstream display name that names no template ("SDXL 1.0" — what Civitai publishes, and what
+// the ingest path stored until ADR 0072 P2's 実機検証). Either way it names the vocabulary,
+// because "declare a family" is useless without the five spellings.
 func TestComfyGenerateRefusesAModelWithNoDeclaredFamily(t *testing.T) {
-	conn := EngineConn{Models: []string{"mystery-model"}}
-	p, _ := comfyStub(t, conn, nil)
-	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Model: "mystery-model"})
-	if err == nil || !strings.Contains(err.Error(), "baseModel") {
-		t.Errorf("err = %v, want a refusal naming the missing baseModel", err)
+	for _, c := range []struct{ name, declared, want string }{
+		{"undeclared", "", "declares no checkpoint family"},
+		{"an upstream display name", "SDXL 1.0", `declares the checkpoint family "SDXL 1.0"`},
+		{"a plausible id that names no template", "sdxl-turbo", `"sdxl-turbo"`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			conn := EngineConn{Models: []string{"mystery-model"}}
+			if c.declared != "" {
+				conn.BaseModel = map[string]string{"mystery-model": c.declared}
+			}
+			p, _ := comfyStub(t, conn, nil)
+			_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Model: "mystery-model"})
+			if err == nil {
+				t.Fatal("no error — the graph was built from a family nothing declared")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to contain %q", err, c.want)
+			}
+			// Without the list, an operator is told to declare something and not what.
+			for _, fam := range []string{"sdxl", "flux2-klein", "zimage"} {
+				if !strings.Contains(err.Error(), fam) {
+					t.Errorf("err = %v, does not name %q as a choice", err, fam)
+				}
+			}
+		})
 	}
 }
 

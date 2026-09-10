@@ -49,10 +49,14 @@ RUN git clone --depth 1 --branch "${COMFYUI_REF}" https://github.com/comfyanonym
 # only what is actually missing (numpy, pillow, the transformers/tokenizers pair, etc.).
 RUN pip install --no-cache-dir -r requirements.txt
 
-# The models directory is NEVER baked in — the fetch sidecar in the image role's task
-# definition (60-engines.yaml) points it at the shared model volume at container start
-# (`ln -sfn /models/image /ComfyUI/models`), which is what makes the S3 layout ADR 0071
-# decision 6 already follows ("ComfyUI's own convention") work with zero copying.
+# ⚠️ The clone DOES bake a models directory: ComfyUI's repo tracks models/ with every
+# subdirectory (checkpoints/, diffusion_models/, …, each holding a put_..._here file). No
+# weights are in it, but the directory is real, and that is enough to break a naive
+# `ln -s` — which is why the image role's task definition (60-engines.yaml) removes it
+# before linking /ComfyUI/models at the shared model volume. Read that command's comment
+# before changing either side; the two are one mechanism, and it is what makes the S3
+# layout ADR 0071 decision 6 already follows ("ComfyUI's own convention") work with zero
+# copying.
 #
 # No EXPOSE/CMD pinning the port: like the llama.cpp and stable-diffusion.cpp roles, the ECS
 # task definition's own idle wrapper decides the port and every other flag at container start,

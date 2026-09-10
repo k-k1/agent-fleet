@@ -127,11 +127,21 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	catalogue := e.catalog.list(ctx)
 	ids := []string{}
 	modelRows := []map[string]any{}
+	families := engineBaseModelsFor(e.def.Provider)
 	for _, m := range catalogue {
 		if m.Enabled && !engineModelIsLora(m) {
 			ids = append(ids, m.ID)
 		}
-		modelRows = append(modelRows, engineAdminModelRow(m))
+		mr := engineAdminModelRow(m)
+		// Rows this provider cannot generate from, named as such (ADR 0072 decision 2). Only
+		// ever true for a provider that dispatches on the family, and it is the ONE thing a
+		// panel cannot work out on its own about a row that otherwise looks complete: a seeded
+		// row (the seed cannot know the family) and every row written before this was validated
+		// look exactly like a working one until somebody waits out a cold start.
+		if families != nil && !engineModelIsLora(m) && !engineBaseModelValid(e.def.Provider, m.BaseModel) {
+			mr["base_model_missing"] = true
+		}
+		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{
 		"key":      e.def.Key,
@@ -155,6 +165,18 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// AF_ENGINE_<KEY>_WINDOW_SEC, and it is the window the START decision is made on.
 		"window_secs": int(cfg.window.Seconds()),
 		"idle_secs":   int(engineIdleWindow(cfg).Seconds()),
+	}
+	// The families this provider dispatches on, so the panel can offer a CHOICE instead of a
+	// free-text box that lets an upstream display name through (ADR 0072 decision 2). Absent
+	// for a provider with no opinion, which is what the panel reads as "do not ask".
+	if families != nil {
+		row["base_models"] = families
+	}
+	// And how a row may label its FILES. A split model (a diffusion model, a text encoder and a
+	// VAE) cannot be declared without these, so a panel that only knew about an S3 key could
+	// register no FLUX.2 klein and no Z-Image at all.
+	if flags := engineFileFlagsFor(e.def.Provider); flags != nil {
+		row["file_flags"] = flags
 	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
@@ -357,6 +379,21 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 			log.Printf("engines: recording the mode change time for %s failed: %v", key, err)
 		}
 	}
+	// The mode decides whether this engine is IN /internal/engine/catalog at all (see this
+	// file's header), so it changes what a Workspace may offer just as much as enabling a model
+	// does — and the Agent caches the catalogue for ten minutes. Without this push, `off` leaves
+	// every running session offering an engine that now answers 503 engine_off, and `on` leaves
+	// generate_image hiding an engine that is ready, for up to that whole TTL. Placed BEFORE the
+	// class gate's early return: the mode is stored on that path too. (Measured on af-sandbox,
+	// ADR 0072 P2 実機検証: `mode=ondemand` did not reach a running session until the TTL.)
+	// The mode decides whether this engine is IN /internal/engine/catalog at all (see this
+	// file's header), so it changes what a Workspace may offer just as much as enabling a model
+	// does — and the Agent caches the catalogue for ten minutes. Without this push, `off` leaves
+	// every running session offering an engine that now answers 503 engine_off, and `on` leaves
+	// generate_image hiding an engine that is ready, for up to that whole TTL. Placed BEFORE the
+	// class gate's early return: the mode is stored on that path too. (Measured on af-sandbox,
+	// ADR 0072 P2 実機検証: `mode=ondemand` did not reach a running session until the TTL.)
+	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
 	e.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
 	// ON starts the box HERE, so the class gate has to be consulted HERE as well: without it
 	// this route is a way around the wait, and the box it buys is the previous rung's (ADR 0074
@@ -537,6 +574,12 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		Enabled  *bool `json:"enabled"`
 		Selected *bool `json:"selected"`
 		Default  *bool `json:"default"`
+		// BaseModel corrects the declared checkpoint family, and is the only FIELD this route
+		// edits rather than a flag it flips. It is here because a row can be missing one while
+		// looking complete in every other way — a seeded row always is, since the seed cannot
+		// know a family — and the alternative is registering the whole row again from scratch,
+		// which for a split model means re-typing three S3 keys to change one word.
+		BaseModel *string `json:"base_model"`
 		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
 		// only when the model's declared demand exceeds the chosen instance class.
 		ConfirmVram bool `json:"confirm_vram"`
@@ -564,6 +607,26 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		action string
 	)
 	switch {
+	case b.BaseModel != nil:
+		want := strings.TrimSpace(*b.BaseModel)
+		isLora := false
+		for _, m := range e.catalog.list(ctx) {
+			if m.ID == id {
+				isLora = engineModelIsLora(m)
+			}
+		}
+		// The same rule the register route applies, for the same reason: a family that names no
+		// template leaves a row that can be enabled, appears by name in generate_image's list,
+		// and is refused only at generation.
+		if !isLora && !engineBaseModelValid(e.def.Provider, want) {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+				"base_model must be one of %s (this engine runs %s, which picks a workflow by family"+
+					" and will not guess one); %q is not a family",
+				strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider, want)})
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelBaseModel(ctx, key, id, want)
+		action = "base_model " + want
 	case b.Selected != nil && *b.Selected:
 		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
 		action = "select"
@@ -579,7 +642,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	default:
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
-		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected or default is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected, default or base_model is required"})
 		return
 	}
 	if err != nil {
@@ -713,6 +776,17 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 	}
 	if len(m.Files) == 0 {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
+		return
+	}
+	// The family, for a provider that dispatches on one (ADR 0072 decision 2). Refused HERE, in
+	// the operator's own words, rather than as a ComfyUI validation error a cold start and a
+	// generation later. LoRAs are exempt: their base_model is a compatibility target for a
+	// future phase, not a workflow template, so an upstream spelling is legitimate there.
+	if !engineModelIsLora(m) && !engineBaseModelValid(e.def.Provider, m.BaseModel) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+			"base_model must be one of %s (this engine runs %s, which picks a workflow by family and"+
+				" will not guess one); %q is not a family",
+			strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider, m.BaseModel)})
 		return
 	}
 	if err := a.mgr.store.PutEngineModel(r.Context(), m); err != nil {
@@ -1004,10 +1078,29 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 				"and register that account's token below — it is read by the ingest task only"})
 		return
 	}
+	// ⚠️ The operator's declaration first, and the repository's own string ONLY when it happens
+	// to be a family this provider knows. Hugging Face and Civitai publish a display name —
+	// "SDXL 1.0", "Flux.1 D" — which is descriptive metadata, not the dispatch key ADR 0072
+	// decision 2 defines; storing it as the family produced rows that looked complete in the
+	// panel and then refused to generate (measured on af-sandbox, ADR 0072 P2 実機検証). For a
+	// provider with no vocabulary nothing dispatches on it, so the upstream string rides as
+	// before and is worth keeping.
+	base := strings.TrimSpace(b.BaseModel)
+	if base == "" && engineBaseModelValid(e.def.Provider, res.BaseModel) {
+		base = strings.TrimSpace(res.BaseModel)
+	}
+	if !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+
+				" and will not guess one%s",
+			strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider,
+			engineBaseModelHint(res.BaseModel))})
+		return
+	}
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
 		Description:   strings.TrimSpace(b.Description),
-		BaseModel:     engineFirstNonEmpty(strings.TrimSpace(b.BaseModel), res.BaseModel),
+		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
 		AcceptedBy: ident.ID, Resolved: res,
 	})
@@ -1075,6 +1168,16 @@ func engineFirstNonEmpty(v ...string) string {
 		if strings.TrimSpace(s) != "" {
 			return strings.TrimSpace(s)
 		}
+	}
+	return ""
+}
+
+// engineBaseModelHint quotes what the repository called this model, so the refusal above ends
+// with the one fact that makes the choice obvious. Silent when the repository said nothing —
+// a dangling "(the repository says "")" would be noise where the operator needs a decision.
+func engineBaseModelHint(upstream string) string {
+	if u := strings.TrimSpace(upstream); u != "" {
+		return fmt.Sprintf(" (the repository calls it %q)", u)
 	}
 	return ""
 }

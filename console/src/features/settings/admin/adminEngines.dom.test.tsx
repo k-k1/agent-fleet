@@ -604,9 +604,12 @@ describe("EnginesAdminView", () => {
         el.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
+    // ⚠️ The size belongs to its FILE and now sits with it, so the order is
+    // id / key / size / description. A model can be several files (ADR 0072 decision 2) and a
+    // single size field at the bottom of the form could not say which one it measured.
     await type(inputs[0], "juggernaut-xl-v9");
     await type(inputs[1], "image/checkpoints/juggernaut_xl_v9.safetensors");
-    await type(inputs[2], "a photographic SDXL fine-tune");
+    await type(inputs[3], "a photographic SDXL fine-tune");
 
     // ⚠️ The form must not imply the key was checked. The CP holds no S3 permission at all
     // (ADR 0072 review R3), so a typo only surfaces at the next cold start. Asserted while the
@@ -620,8 +623,11 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
       id: "juggernaut-xl-v9",
       kind: "checkpoint",
-      files: [{ s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors", bytes: 0 }],
+      files: [{ flag: "", s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors", bytes: 0 }],
       description: "a photographic SDXL fine-tune",
+      // Empty because THIS engine declared no vocabulary: sd.cpp holds one checkpoint and never
+      // reads a family, so the panel offered no choice and there is nothing to send.
+      base_model: "",
       context_tokens: 0,
       max_output_tokens: 0,
     });
@@ -826,10 +832,10 @@ describe("EnginesAdminView", () => {
     };
     await type(inputs[0], "qwen2.5-coder-1.5b");
     await type(inputs[1], "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
-    await type(inputs[2], "small and quick");
-    await type(inputs[3], "32768");
-    await type(inputs[4], "4096");
-    await type(inputs[5], "1117320768");
+    await type(inputs[2], "1117320768");
+    await type(inputs[3], "small and quick");
+    await type(inputs[4], "32768");
+    await type(inputs[5], "4096");
     await click(
       Array.from(host!.querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
@@ -838,10 +844,141 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models", "POST", {
       id: "qwen2.5-coder-1.5b",
       kind: "gguf",
-      files: [{ s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", bytes: 1117320768 }],
+      files: [{ flag: "", s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", bytes: 1117320768 }],
       description: "small and quick",
+      base_model: "",
       context_tokens: 32768,
       max_output_tokens: 4096,
+    });
+  });
+
+  // A ComfyUI engine picks its workflow graph from the model's FAMILY and refuses to guess one
+  // from a name, so the panel has to ask — and it asks with a CHOICE, because what a repository
+  // calls a model ("SDXL 1.0") is a display name that names no graph.
+  //
+  // 🔴 Until this existed the form had one key field and no family at all, so the two things
+  // ComfyUI needs were both unreachable from the Console: on af-sandbox the catalogue had to be
+  // written by calling the admin API by hand (ADR 0072 P2 実機検証).
+  it("asks a comfy engine for a family, and lets one model be several files", async () => {
+    const comfy = row({
+      provider: "comfy",
+      base_models: ["sdxl", "sd35", "flux1", "flux2-klein", "zimage"],
+      file_flags: ["", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+      has_models: true,
+      model_rows: [],
+    });
+    api.mockResolvedValue({ engines: [comfy] });
+    apiJSON.mockResolvedValue(comfy);
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const pick = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    const go = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLButtonElement;
+
+    let inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    await type(inputs[0], "flux2-klein-4b");
+    await type(inputs[1], "image/diffusion_models/flux-2-klein-4b.safetensors");
+
+    // ⚠️ The family is not optional here, and the form says so by refusing rather than by
+    // letting the CP answer 400 after the press.
+    expect(go().disabled).toBe(true);
+
+    const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
+    await pick(selects()[0], "flux2-klein");
+    expect(go().disabled).toBe(false);
+    // The first file's part, then two more files with their own.
+    await pick(selects()[1], "--diffusion-model");
+
+    const more = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "ファイルを追加する",
+      ) as HTMLElement;
+    await click(more());
+    await click(more());
+    inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    // id, then (key, size) per file, then the description: three files is eight inputs.
+    expect(inputs.length).toBe(8);
+    await type(inputs[3], "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors");
+    await type(inputs[5], "image/vae/flux2-vae.safetensors");
+    await pick(selects()[2], "--clip_l");
+    await pick(selects()[3], "--vae");
+
+    await click(go());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
+      id: "flux2-klein-4b",
+      kind: "checkpoint",
+      files: [
+        { flag: "--diffusion-model", s3Key: "image/diffusion_models/flux-2-klein-4b.safetensors", bytes: 0 },
+        { flag: "--clip_l", s3Key: "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors", bytes: 0 },
+        { flag: "--vae", s3Key: "image/vae/flux2-vae.safetensors", bytes: 0 },
+      ],
+      description: "",
+      base_model: "flux2-klein",
+      context_tokens: 0,
+      max_output_tokens: 0,
+    });
+  });
+
+  // The row the SEED writes, and every row written before the CP validated one: complete in
+  // every way this panel can see, and unable to generate. The CP states it because the panel
+  // cannot know the vocabulary.
+  it("says so on a row whose family names no workflow", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [
+            { id: "seeded", kind: "checkpoint", enabled: true, base_model_missing: true },
+            { id: "declared", kind: "checkpoint", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const warnings = Array.from(host!.querySelectorAll(".form-err")).filter((e) =>
+      e.textContent?.includes("モデルファミリー"),
+    );
+    expect(warnings.length).toBe(1);
+
+    // The FIX sits under the warning it answers, and only there — the row that already declares
+    // one shows it in its meta line and needs no control.
+    const pickers = Array.from(host!.querySelectorAll(".engines-model-family"));
+    expect(pickers.length).toBe(1);
+
+    // 🔴 One field, not the whole row. Before this the only way to give a row a family was to
+    // register it again from scratch: that lands it disabled and, for a split model, means
+    // re-typing three S3 keys to change one word.
+    apiJSON.mockResolvedValue(row({ provider: "comfy", base_models: ["sdxl"], has_models: true, model_rows: [] }));
+    const sel = pickers[0].querySelector("select")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel, "sdxl");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/seeded", "PUT", {
+      base_model: "sdxl",
     });
   });
 
