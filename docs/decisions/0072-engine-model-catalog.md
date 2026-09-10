@@ -2101,3 +2101,46 @@ Mark open question **10 as settled** ((a) adopted, (b) disproven, (c) rejection 
 and 12 as decided**. Implementation of 11 and 12 is P5, and **12's entry condition is "free up a
 resource's worth of headroom in `60-engines.yaml`"**. Open question 9(1) is the same thing as
 10(a) and closes with it.
+
+## Follow-up — retiring the seed and its four parameters (2026-09-10)
+
+Asked while reviewing the `llamacpp` panel: **why does the seed exist at all? Let the catalogue
+start empty, and register a model from the admin modal when somebody wants one.**
+
+That is what this ADR already decided; the only open part is timing. Decision 1 keeps the twelve
+parameters "one release for compatibility, read as the **seed** of an empty catalogue (decision
+7)" and states that the parameters **shrink to `LlmEnabled` / `ImageEnabled`**. Decision 1's own
+sub-point makes an empty catalogue a first-class state: the fetch sidecar treats "nothing to
+load" as success, the wrapper idles (`if [ -s /models/cmdline ]; … else sleep infinity`), and the
+gateway does not wake a role whose catalogue is empty (`503 engine_unavailable`). The first half
+has shipped — **`LlmModelFile` / `ImageModelFile` were removed in 0.18.0.**
+
+What is left to retire:
+
+- `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens`, and the image
+  role's `ImageModelS3Key` / `ImageModelIds`. **`*ExtraArgs` stays** — those are the BOX's flags
+  (`-ngl 99`, `--diffusion-fa`), not a model's;
+- `seedEngineCatalog` and `engineSeedKind` in the Control Plane, and the engine table's `models`
+  / `contextTokens`.
+
+**Why now rather than "eventually".** `60-engines.yaml` is **51,119 bytes, 81 short of the
+51,200-byte wall**, and this ADR's own estimate for the twelve parameters plus the old command
+lines is **about 3,000 bytes**. Phase P2's remaining work (per-family image-to-image graphs) and
+ADR 0074's ladder both have to fit inside that same template.
+
+🔴 **The trap: `*ModelS3Key` is not only a seed.** `HasLlmModel` / `HasImageModel` are
+`!Or [ <Role>Enabled = "true", <Role>Enabled = "" AND <Role>ModelS3Key ≠ "" ]`, so the key also
+decides **whether the role's service is created at all**. Removing the parameter without making
+`LlmEnabled` / `ImageEnabled` the only gate **deletes the role** on every deployment that set
+only the key — silently, as an ordinary stack update. The removal and its upgrade note are one
+change, not two.
+
+**The migration window is narrow.** The seed runs only on an EMPTY catalogue, so any deployment
+that has passed through the release which seeded it already has rows and would not notice the
+removal. The condition to state is "upgrade through 0.18.0 first"; only a jump from a
+pre-catalogue Control Plane straight to the version without the seed comes up idle.
+
+By-product: one of the two ways to create a row with **no licence, no `source` and no VRAM**
+disappears. The other is the hand-registration form, which sends no licence fields although
+`POST …/engines/{key}/models` accepts them — worth closing in the same pass, since decision 10
+put the licence on the panel row and the panel can only show what was recorded.

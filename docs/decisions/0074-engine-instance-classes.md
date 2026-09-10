@@ -729,6 +729,31 @@ before and after.
 - ⚠️ A deleted capacity provider is kept by ECS as an `INACTIVE` record (it does leave the
   cluster's list). Deleting is not quite trace-free.
 
+## Backlog from a Console review of the llm panel (2026-09-10)
+
+Two findings from reading the `llamacpp` panel against this ADR. Neither changes a decision;
+both are P2 work.
+
+**1. 🔴 Decision 6's floor counts the weights only, and on the llm role the KV cache is what does
+not fit.** `engineModelVramNeed` answers `floor` as the sum of the files' `bytes` — honest about
+what it measures, silent about what it omits. A 13.1 GB GGUF registered with a 262,144-token
+window reads as "at least about 12,500 MiB", which fits an L4's declared 21,000, while the KV
+cache at that window is a multiple of the weights. So the warning can wave through exactly the
+case it exists for. The window is already on the row (`context_tokens`), so the material for a
+second term is stored; what is missing is a measurement to turn it into a number. Decision 6's
+own rule holds over the addition: a demand whose window was never declared stays `unknown`
+rather than becoming a confident sum. The image role is unaffected — a checkpoint's VRAM does
+not scale with a context window.
+
+**2. The maximum (not the sum) is exact for llm and sd-server, and CONSERVATIVE for comfy.**
+Decision 6 reads "for the image role it is the one selected checkpoint", which was true of
+sd-server. On an `ImageEngine=comfy` deployment every enabled model is on disk (the fetch
+sidecar's `SYNC_ALL`), the checkpoint is chosen per request, and ComfyUI keeps what it has
+loaded until it needs the room — so several can be resident at once. **This is deliberately not
+changed to a sum**: comfy evicts rather than dies, and a sum would warn on every start of a
+deployment with four enabled models, which is the kind of warning nobody reads. What is missing
+is one sentence on the panel saying that a comfy engine may hold more than one.
+
 ## Phases and the definition of done
 
 - **P0 (what this ADR implements)**: the declared ladder (60-engines → the engine table), the
@@ -747,3 +772,6 @@ before and after.
 - **P2 (if it turns out to be needed)**: the task definition following the rung (decision 11,
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).
+  - Added 2026-09-10 from the Console review above: counting the KV cache in decision 6's demand
+    (finding 1), and saying on the panel that a comfy engine may hold several models at once
+    (finding 2).
