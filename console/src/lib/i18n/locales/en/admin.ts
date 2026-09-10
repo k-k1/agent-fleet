@@ -49,6 +49,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no box is started.",
   "admin.engines_catalog_none_enabled": "No model is enabled. This engine will not start until one is.",
   "admin.engines_model_started": "loaded at start",
+  // The state is said in a badge. The button's label says what pressing it would do, not
+  // which state the row is in; dimming the row instead is what a disabled control looks like.
+  "admin.engines_model_is_on": "enabled",
+  "admin.engines_model_is_off": "disabled",
   "admin.engines_model_enable": "Enable",
   "admin.engines_model_disable": "Disable",
   "admin.engines_model_select": "Start with this",
@@ -103,6 +107,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_hit_likes": " likes",
   "admin.engines_ingest_hit_trending": " trending",
   "admin.engines_ingest_hit_gated": "gated",
+  // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
+  // ingest still runs from there unchanged.
+  "admin.engines_ingest_hit_pick": "Use this",
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
   "admin.engines_ingest_resolve": "Look it up",

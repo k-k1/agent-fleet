@@ -46,6 +46,10 @@ export const admin = {
   "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、インスタンスも起動しません。",
   "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
   "admin.engines_model_started": "起動時に読み込む",
+  // 状態はバッジで言う。ボタンの文言（「有効にする」）は押したら何が起きるかであって、
+  // 今どちらであるかではない。行を薄くして表すのは disabled なコントロールと同じ見た目になる。
+  "admin.engines_model_is_on": "有効",
+  "admin.engines_model_is_off": "無効",
   "admin.engines_model_enable": "有効にする",
   "admin.engines_model_disable": "無効にする",
   "admin.engines_model_select": "これで起動する",
@@ -104,6 +108,9 @@ export const admin = {
   "admin.engines_ingest_hit_likes": " いいね",
   "admin.engines_ingest_hit_trending": " 話題度",
   "admin.engines_ingest_hit_gated": "gated",
+  // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
+  // 調べる・同意する・取り込む はこの後もそのまま通る。
+  "admin.engines_ingest_hit_pick": "これにする",
   "admin.engines_ingest_repo": "リポジトリ",
   "admin.engines_ingest_file": "ファイル名",
   "admin.engines_ingest_resolve": "調べる",

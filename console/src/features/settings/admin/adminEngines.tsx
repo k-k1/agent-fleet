@@ -544,7 +544,7 @@ function EngineClassPicker({
             <span className="engines-model-tag">{tr("admin.engines_class_not_default")}</span>
             <button
               type="button"
-              className="ghost sm"
+              className="sm"
               disabled={busy}
               onClick={() => onPick(row.class_default || "")}
             >
@@ -561,7 +561,7 @@ function EngineClassPicker({
           {/* On its own line rather than trailing the sentence. Rendered headless it read as
               part of the paragraph — and this is the button that costs a cold start, so it has
               to look like one before somebody presses it by accident. */}
-          <button type="button" className="ghost sm" disabled={busy} onClick={onReplace}>
+          <button type="button" className="sm" disabled={busy} onClick={onReplace}>
             {tr("admin.engines_class_replace")}
           </button>
         </div>
@@ -665,13 +665,21 @@ function EngineModels({
           return (
             <li key={m.id} className={m.enabled ? "engines-model on" : "engines-model"}>
               <div className="engines-model-head">
-                <span className="mono">{m.id}</span>
-                {started && <span className="engines-model-tag">{tr("admin.engines_model_started")}</span>}
+                <span className="mono engines-model-id">{m.id}</span>
+                {/* On or off is stated, never left to the label of the button that would
+                    change it — that label says the OPPOSITE of the state it describes. Dimming
+                    the row instead is what a disabled control looks like (admin.css). */}
+                <span className={m.enabled ? "engines-model-tag on" : "engines-model-tag off"}>
+                  {tr(m.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}
+                </span>
+                {started && (
+                  <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>
+                )}
                 {isLora && <span className="engines-model-tag">LoRA</span>}
                 <span className="engines-model-actions">
                   <button
                     type="button"
-                    className="ghost sm"
+                    className="sm"
                     disabled={pending}
                     onClick={() => change(m, { enabled: !m.enabled })}
                   >
@@ -682,7 +690,7 @@ function EngineModels({
                   {!isLora && !started && (
                     <button
                       type="button"
-                      className="ghost sm"
+                      className="sm"
                       disabled={pending}
                       onClick={() => change(m, isImage ? { selected: true } : { default: true })}
                     >
@@ -694,7 +702,7 @@ function EngineModels({
                       label says "forget", not "delete", and the note below says why. */}
                   <button
                     type="button"
-                    className="ghost sm"
+                    className="sm danger"
                     disabled={pending || started}
                     onClick={() => {
                       setConfirming(m.id);
@@ -739,7 +747,7 @@ function EngineModels({
                     >
                       {tr("admin.engines_vram_confirm_go")}
                     </button>
-                    <button type="button" className="ghost sm" onClick={() => setVramAsk(null)}>
+                    <button type="button" className="sm" onClick={() => setVramAsk(null)}>
                       {tr("common.cancel")}
                     </button>
                   </span>
@@ -761,7 +769,7 @@ function EngineModels({
                   <span className="engines-model-actions">
                     <button
                       type="button"
-                      className={purge ? "primary sm" : "ghost sm"}
+                      className={purge ? "primary sm" : "sm"}
                       disabled={pending}
                       onClick={() => {
                         setConfirming("");
@@ -770,7 +778,7 @@ function EngineModels({
                     >
                       {tr("admin.engines_model_forget_go")}
                     </button>
-                    <button type="button" className="ghost sm" onClick={() => setConfirming("")}>
+                    <button type="button" className="sm" onClick={() => setConfirming("")}>
                       {tr("common.cancel")}
                     </button>
                   </span>
@@ -824,7 +832,7 @@ function EngineModelAdd({
 
   if (!open) {
     return (
-      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_model_add")}
       </button>
     );
@@ -892,7 +900,7 @@ function EngineModelAdd({
         <button type="button" className="primary sm" disabled={busy} onClick={submit}>
           {tr("admin.engines_model_add_go")}
         </button>
-        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+        <button type="button" className="sm" onClick={() => setOpen(false)}>
           {tr("common.cancel")}
         </button>
       </div>
@@ -1015,7 +1023,7 @@ function HfTokenPanel() {
               {tr("admin.engines_hf_token_save")}
             </button>
             {st.configured && (
-              <button type="button" className="ghost sm" disabled={busy} onClick={remove}>
+              <button type="button" className="sm" disabled={busy} onClick={remove}>
                 {tr("admin.engines_hf_token_remove")}
               </button>
             )}
@@ -1200,7 +1208,7 @@ function EngineIngest({
 
   if (!open) {
     return (
-      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_ingest_open")}
       </button>
     );
@@ -1269,7 +1277,7 @@ function EngineIngest({
           ))}
         </span>
         {/* Enabled with an empty box on purpose — that is the ranking. */}
-        <button type="button" className="ghost sm" onClick={() => search()} disabled={busy}>
+        <button type="button" className="primary sm" onClick={() => search()} disabled={busy}>
           {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
         </button>
       </div>
@@ -1277,15 +1285,7 @@ function EngineIngest({
       {hits && hits.length > 0 && (
         <ul className="engines-search-hits">
           {hits.map((h) => (
-            <li key={h.source + ":" + h.ref}>
-              <button type="button" className="ghost sm" onClick={() => pickHit(h)}>
-                <span className="mono">{h.name}</span>
-              </button>
-              {/* The gating flag and the licence ride here because they decide whether this row
-                  is takeable at all, and finding that out from a refusal one step later is the
-                  dead end the whole picker exists to avoid. */}
-              <span className="muted">{ingestHitMeta(h, tr)}</span>
-            </li>
+            <HitCard key={h.source + ":" + h.ref} hit={h} onPick={() => pickHit(h)} />
           ))}
         </ul>
       )}
@@ -1326,10 +1326,10 @@ function EngineIngest({
           half-fill. */}
       {!isImage && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
-        <button type="button" className="ghost sm" onClick={resolve} disabled={busy || !repo.trim()}>
+        <button type="button" className="sm" onClick={resolve} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
         </button>
-        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+        <button type="button" className="sm" onClick={() => setOpen(false)}>
           {tr("common.cancel")}
         </button>
       </div>
@@ -1579,20 +1579,17 @@ function EngineBrowse() {
             </button>
           ))}
         </span>
-        <button type="button" className="ghost sm" onClick={() => run()} disabled={busy}>
+        <button type="button" className="primary sm" onClick={() => run()} disabled={busy}>
           {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
         </button>
       </div>
       {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
       {hits && hits.length > 0 && (
         <ul className="engines-search-hits">
+          {/* No pick button: there is nowhere to put it. Picking one fills an ingest form, and
+              this deployment has no role to ingest into. */}
           {hits.map((h) => (
-            <li key={h.source + ":" + h.ref}>
-              {/* Not a button: there is nowhere to put it. Picking one fills an ingest form,
-                  and this deployment has no role to ingest into. */}
-              <span className="mono">{h.name}</span>
-              <span className="muted">{ingestHitMeta(h, tr)}</span>
-            </li>
+            <HitCard key={h.source + ":" + h.ref} hit={h} />
           ))}
         </ul>
       )}
@@ -1602,21 +1599,59 @@ function EngineBrowse() {
   );
 }
 
-/** One line under a search result: how popular it is, whether it is gated, what licence it
- *  carries, how big it is. Every part is omitted rather than guessed — the two APIs answer
- *  different subsets, and a zero download count reads as a fact. */
-function ingestHitMeta(h: IngestHit, tr: (k: never) => string): string {
-  const bits: string[] = [];
-  if (h.downloads) bits.push(fmtCount(h.downloads) + tr("admin.engines_ingest_hit_downloads" as never));
-  if (h.likes) bits.push(fmtCount(h.likes) + tr("admin.engines_ingest_hit_likes" as never));
-  if (h.trending) bits.push(fmtCount(h.trending) + tr("admin.engines_ingest_hit_trending" as never));
-  if (h.gated) bits.push(tr("admin.engines_ingest_hit_gated" as never));
-  const lic = h.license_name || h.license;
-  if (lic) bits.push(lic);
-  if (h.base_model) bits.push(h.base_model);
-  if (h.bytes) bits.push(fmtBytes(h.bytes));
-  if (h.context_length) bits.push((tr("admin.engines_ingest_ctx_max" as never)).replace("{n}", String(h.context_length)));
-  return bits.join(" · ");
+/** One search result, as a card.
+ *
+ * The three kinds of fact are told apart by KIND rather than by a separator character — what
+ * it is called, the numbers a ranking is built on, the terms it comes with — because twenty
+ * results as one "・"-joined line each are a wall of text with nothing to scan by.
+ *
+ * Every part is omitted rather than guessed: the two APIs answer different subsets, and a zero
+ * download count reads as a fact.
+ *
+ * The gating flag and the licence stay on the card rather than moving behind a detail view.
+ * They decide whether this row is takeable at all, and learning that from a refusal one step
+ * later is the dead end the whole picker exists to avoid. */
+function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
+  const tr = useT();
+  const stat = (n: number | undefined, key: string) =>
+    n ? (
+      <span className="engines-hit-stat">
+        <b>{fmtCount(n)}</b>
+        {(tr(key as never) as string).trim()}
+      </span>
+    ) : null;
+  const lic = hit.license_name || hit.license;
+  return (
+    <li className="engines-hit">
+      <div className="engines-hit-head">
+        <span className="mono engines-hit-name">{hit.name}</span>
+        {onPick && (
+          <button type="button" className="sm engines-hit-pick" onClick={onPick}>
+            {tr("admin.engines_ingest_hit_pick")}
+          </button>
+        )}
+      </div>
+      <div className="engines-hit-stats">
+        {stat(hit.downloads, "admin.engines_ingest_hit_downloads")}
+        {stat(hit.likes, "admin.engines_ingest_hit_likes")}
+        {stat(hit.trending, "admin.engines_ingest_hit_trending")}
+      </div>
+      <div className="engines-hit-tags">
+        {/* Gated first and in its own colour: it is the one tag that can turn into a refusal. */}
+        {hit.gated && (
+          <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>
+        )}
+        {lic && <span className="engines-model-tag">{lic}</span>}
+        {hit.base_model && <span className="engines-model-tag">{hit.base_model}</span>}
+        {!!hit.bytes && <span className="engines-model-tag">{fmtBytes(hit.bytes)}</span>}
+        {!!hit.context_length && (
+          <span className="engines-model-tag">
+            {(tr("admin.engines_ingest_ctx_max" as never) as string).replace("{n}", String(hit.context_length))}
+          </span>
+        )}
+      </div>
+    </li>
+  );
 }
 
 /** 1,632,949 → 1.6M. The exact number is noise next to "is this the one everybody uses".
@@ -1638,10 +1673,14 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
     <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
       {jobs.map((j) => (
-        <li key={j.id} className="engines-model on">
+        <li key={j.id} className="engines-model">
           <div className="engines-model-head">
-            <span className="mono">{j.model_id}</span>
-            <span className="engines-model-tag">{tr(("admin.engines_ingest_state_" + j.state) as never)}</span>
+            <span className="mono engines-model-id">{j.model_id}</span>
+            {/* The outcome carries a colour, because that is what the list is scanned for: a
+                row that failed and a row that finished look identical in a neutral pill. */}
+            <span className={"engines-model-tag " + engineJobTone(j.state)}>
+              {tr(("admin.engines_ingest_state_" + j.state) as never)}
+            </span>
             {j.created_at && (
               <span className="muted engines-ingest-when">{fmtDateTime(j.created_at)}</span>
             )}
@@ -1658,6 +1697,15 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
     </ul>
     </>
   );
+}
+
+/** Which badge colour an ingest job's state earns. An unknown state gets the neutral pill
+ *  rather than a guess: the CP may grow one, and drawing it green would be a claim. */
+function engineJobTone(state: string): string {
+  if (state === "done") return "on";
+  if (state === "failed") return "bad";
+  if (state === "pending" || state === "running") return "lead";
+  return "";
 }
 
 function fmtBytes(n: number): string {

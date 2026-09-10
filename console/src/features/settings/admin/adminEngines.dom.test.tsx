@@ -491,6 +491,33 @@ describe("EnginesAdminView", () => {
     });
   });
 
+  // 🔴 Which state a row is IN and what pressing its button WOULD DO are different sentences,
+  // and only the second was ever written down: the state was carried by dimming the row to 0.6
+  // opacity — indistinguishable from a disabled control, and in the light theme barely a
+  // difference at all — leaving "有効にする" as the evidence for a row that is not enabled.
+  it("says on or off in a badge, not only in the label of the button that would change it", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "parked", kind: "checkpoint", enabled: false },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const badge = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model"))
+        .find((li) => li.querySelector(".engines-model-id")?.textContent === id)
+        ?.querySelector(".engines-model-tag");
+    expect(badge("sdxl-base-1.0")?.textContent).toBe("有効");
+    expect(badge("sdxl-base-1.0")?.className).toContain("on");
+    expect(badge("parked")?.textContent).toBe("無効");
+    expect(badge("parked")?.className).toContain("off");
+  });
+
   // A LoRA is never something an engine is started with, so the control that would say so is
   // not offered — the check the Agent also makes when it builds the tool's enum.
   it("does not offer to start with a LoRA", async () => {
@@ -1404,6 +1431,44 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
     expect(host!.querySelector(".engines-search-hits")).toBeNull();
     expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  // The three kinds of fact on a hit are told apart by kind, not by a "・": twenty results as
+  // one line each — name, counts, licence, size at the same weight, wrapping into one another
+  // — are a wall of text with nothing to scan by.
+  it("splits a hit into a name, the numbers and the terms", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "hf",
+          ref: "stabilityai/stable-diffusion-xl-base-1.0",
+          name: "stabilityai/stable-diffusion-xl-base-1.0",
+          downloads: 1632949,
+          likes: 6612,
+          license: "openrail++",
+          bytes: 6_939_000_000,
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+    await click(button("人気を見る"));
+
+    const hit = host!.querySelector(".engines-hit")!;
+    expect(hit.querySelector(".engines-hit-name")!.textContent).toBe(
+      "stabilityai/stable-diffusion-xl-base-1.0",
+    );
+    // The counts carry their unit but are not joined to the licence and the size.
+    expect(Array.from(hit.querySelectorAll(".engines-hit-stat")).map((s) => s.textContent)).toEqual([
+      "1.6MDL",
+      "7kいいね",
+    ]);
+    // …which ride as their own badges, so a card with neither draws no empty row.
+    expect(Array.from(hit.querySelectorAll(".engines-hit-tags .engines-model-tag")).map((s) => s.textContent)).toEqual([
+      "openrail++",
+      "6.9 GB",
+    ]);
   });
 
   it("rounds a fractional trending score instead of printing its float noise", async () => {
