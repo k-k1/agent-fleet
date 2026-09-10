@@ -796,6 +796,11 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   (`LlmModelsMax`) while everything per-model comes from the catalogue.
 - **`$(cat …)` is deliberately unquoted** — the file IS an argument list. The Control Plane
   refuses to publish an S3 key containing whitespace for exactly this reason.
+- **`LLAMA_CACHE=/tmp/llama-cache` on the llm container.** `-hf` is never used (ADR 0072
+  decision 3) -- every model arrives through the fetch sidecar -- but llama-server writes to its
+  cache directory regardless of how the model got there, and the default is under the model
+  volume. Pointing it at `/tmp` keeps it off the volume whose free space the next cold start
+  depends on.
 - **Idling is not free**, and the template is not what makes it cheap. A placeholder container
   reaches RUNNING and never warms, and `running && !warmed` is not a failure state, so the
   controller would re-examine it every five seconds for ever. The Control Plane's
@@ -846,6 +851,60 @@ each cost a stand-up:
   `wc -c deploy/aws/ecs/cfn/60-engines.yaml`. `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2
   fails the moment a shipped template crosses the line.
 
+### Where the remaining bytes are, and what it would cost to move them (2026-09-11)
+
+The prose pass took the template from 49,298 to 41,133 bytes: comments 8,643 -> 2,073 and
+`Description` 6,115 -> 4,515, with **every block scalar byte-identical** (7,418 bytes, unchanged).
+What is left is mostly structure, and the one large movable block is the embedded shell:
+
+| Block | Bytes |
+|---|---|
+| `Mappings.Engine.fetch.script` (the fetch sidecar) | 3,553 |
+| ingest `fetch` / `upload` commands | 979 / 523 |
+| llm idle wrapper | 383 |
+| image idle wrapper, `comfy` / `sdcpp` | 423 / 479 |
+| engine-table JSON fragments (not shell) | 1,078 |
+
+**Nothing below is implemented, and none of it should be without a decision.** Each option is
+written with what it saves, whether it can be believed without a GPU, and what it does to the
+supply chain.
+
+**Option A -- bake the scripts into the images.** The fetch sidecar and the two idle wrappers
+become files in `af-llamacpp` / `af-sdcpp` / `af-comfyui` (and the ingest pair into a small image
+of our own), and the template holds a path. It removes about **6,300 bytes**, the largest single
+win available, and it is the only option that costs nothing at runtime. The price is that the
+script and the template stop shipping together: a stack update that expects new behaviour now
+needs the matching image tag, and `standup.sh` copies images one stack earlier than it deploys
+this one, so a mismatch shows up as an engine that starts and does the OLD thing. It also widens
+what ADR 0071 decision 6 pins down -- the S3 layout is a CONTRACT between the sidecar, the
+provider and the ingest, and today the template is where that contract is written in one place.
+
+**Option B -- fetch the scripts from the models bucket at start.** The sidecar downloads
+`s3://<models>/_boot/fetch.sh` before running it. Saves the same ~6,300 bytes, keeps the scripts
+in this repository, and versions them independently of the image. But it adds a network round
+trip to the front of every cold start, it needs a new writer (nothing publishes to `_boot/`
+today, so `standup.sh` or the CP grows the job), and 🔴 **it makes the start path depend on an
+object a person can edit**: the models bucket is where the ingest writes, and an engine that
+executes what it finds there is a different security boundary from one that executes what
+CloudFormation shipped. `EngineTaskRole` already holds `s3:GetObject` on the whole bucket, so
+this would be free of new IAM -- which is exactly why it is worth saying out loud rather than
+discovering later.
+
+**Option C -- an SSM parameter, next to the engine table.** Saves the same bytes without a new
+storage system and without touching the images, and the CP task role already writes under
+`/af-ws/*`. The ceiling is the objection: a Standard parameter holds 4 KB and the fetch script
+alone is 3,553 bytes, so it fits today and stops fitting on the next feature; Advanced
+parameters are 8 KB and are billed per parameter per month.
+
+🔴 **Whichever is chosen, it cannot be believed without a real GPU.** The fetch sidecar and the
+idle wrapper are precisely the two places ADR 0072 P2 broke on hardware after 13/13 bench
+scenarios passed -- the bench bind-MOUNTED the models volume where the task definition symlinks
+it, and it handed the model to the engine a different way. The lesson recorded there is that a
+harness which does not deliver the script the way the task definition delivers it proves nothing
+about the deployment, and every option above changes exactly that delivery. `engine-sidecar-test.sh`
+runs the script for real and would keep working (it reads the block out of the template), so it
+would have to learn the new source first, or it silently starts testing a copy nobody runs.
+
 ## The task roles
 
 **Engine tasks READ the model catalogue; the ingest task WRITES it and holds the Hugging Face
@@ -873,6 +932,13 @@ The image role's capacity provider is created even when no image model is staged
 costs nothing while nothing runs on it, it is named in the association list (which is replaced
 wholesale, so it cannot be added conditionally without churning the list), and deleting one a
 service used is a stack update that has to wait for the service to go first.
+
+## The engine security group
+
+**Reachability IS the access control** (ADR 0071 decision 4): port 8080, from the Control
+Plane's security group and from nothing else. sd-server has no authentication of its own, so
+for the image role this is the whole of it; the llm role adds `--api-key` on top
+([`LlmApiKeySsmParam`](#llmapikeyssmparam)).
 
 ## The capacity providers
 
@@ -910,6 +976,16 @@ creation.
 ⚠️ **And no `LaunchType` either**: a capacity provider strategy and a launch type are mutually
 exclusive. These are the ONE pair of services in the deployment allowed to omit `LaunchType`,
 and only because they name their provider explicitly.
+
+**`DeploymentConfiguration` is `MinimumHealthyPercent: 0` / `MaximumPercent: 100`** so a
+redeploy stops the old task BEFORE starting the new one. One engine has one DNS name, and two
+tasks behind it during a rollout split requests between a warm engine and a cold one -- the
+caller sees a random 500-second first token. Stopping first costs a gap; overlapping costs a
+lie about which engine answered.
+
+**`HealthCheckCustomConfig: { FailureThreshold: 1 }` on the Cloud Map service is not optional**:
+Cloud Map refuses to register an ECS service that has no load balancer without it. There is
+nothing to tune -- ECS is the only thing that ever reports the instance's health here.
 
 ## The G-family quota
 
@@ -963,6 +1039,20 @@ the model's terms with the operator's account (and, for a fine-grained token, gr
 access to the contents of public gated repos). Accepting the terms and retrying the same file
 passed.
 
+### The ingest containers
+
+Two containers, `fetch` then `upload`, sharing a `scratch` volume.
+
+🔴 **`fetch` runs as `User: "0"`.** The shared volume is root-owned and `curlimages/curl` runs
+as uid 100, so without it curl cannot write the blob -- and it says so as
+`curl: (23) client returned ERROR on write`, which reads like a network fault and is a
+permission one (measured).
+
+**`upload` depends on `fetch` with `Condition: SUCCESS`, not `COMPLETE`.** A download that
+failed its sha256 must not reach the bucket; `COMPLETE` would upload it and the catalogue would
+carry a row for a truncated file. (The ENGINE containers use `START` instead, for the opposite
+reason -- see [The fetch sidecar](#the-fetch-sidecar).)
+
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
@@ -980,6 +1070,11 @@ stack so that a deployment which does not adopt 60-engines gains nothing:
 | `iam:PassRole` | `IngestTaskRole` only | a task cannot be started without passing its role |
 | `logs:GetLogEvents` / `DescribeLogStreams` | this stack's log group | WHY a job failed |
 | `secretsmanager:PutSecretValue` | `HfTokenSecret` only | carrying a registered token to the ingest task |
+
+**`s3:DeleteObject` is on the INGEST task role, and on nothing else.** `MODE=delete` (ADR 0072
+decision 7) is how bytes leave the bucket, and the Control Plane does not hold the permission:
+forgetting a catalogue row and deleting the file it points at are different acts by different
+principals, which is what lets the Console offer them as two separate presses.
 
 **`GetSecretValue` is deliberately absent.** ADR 0072 decision 6 used to say "the CP never
 holds the token"; once the token is registered through the Console that weakens to "the CP
@@ -1122,6 +1217,16 @@ an autoload nor resets the router's idle timer (upstream README), so polling it 
 carries them, because the CP is upgraded before the stack is, and ignores what they say. What is
 left is the vessel (service, URL, health path, warm path, capacity provider, classes, idle
 window, start deadline, mode), which really is the stack's to declare.
+
+**The `ingest` object in the same value** is what the Control Plane needs to START an ingest
+and to read why one failed: the task-definition family, the subnets, the security group, the log
+group and the token secret. Declared rather than derived (ADR 0053) -- the CP cannot ask
+CloudFormation for any of it at request time.
+
+**The outputs are non-empty by construction.** `EnginesSsmParam` is a parameter with a non-empty
+default, and the two service names fall back to `"-"` when their role is off, because
+`deploy/aws/ecs/check-cfn-exports.py` fails a template that can export an empty string: an empty
+`Fn::ImportValue` is a stand-up that dies one stack later with nothing pointing at the cause.
 
 **The active set is a different parameter, and the stack does not write it.** The Control Plane
 publishes `<EnginesSsmParamName>/<key>/active` whenever the catalogue changes, and the box's
