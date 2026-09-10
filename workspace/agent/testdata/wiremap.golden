@@ -6,7 +6,7 @@
 #   partial = the variable is assigned more than once, so the key set is not fully opened
 #   dyn     = a non-literal key is present, so the key set is not statically known and it cannot become a struct
 # A key gained or lost in this diff IS the wire possibly changing. State in the PR why it was retaken.
-# count: 188
+# count: 191
 agent_instructions.go handleUserNotesPreview x1 {content,exists,kind,path}
 agent_models.go handleAgentModels x1 {models}
 agent_rtk.go handleAgentRTKGain x1 {available}
@@ -191,6 +191,9 @@ share_operation.go handleShareOperationLookup x1 {state,statusCode,updatedAt}
 ssm_instances.go handleSSMInstances x1 {instances}
 svn.go handleDeleteSvnConn x1 {forgot}
 svn.go handleSvnCheckout x1 {job}
+svn_auth.go handleGetSvnAuth x1 {hasCred,trustCert,url,urlPrefix,username} cond{hasCred,trustCert,username}
+svn_auth.go handlePutSvnConn x1 {trustCert,urlPrefix,username}
+svn_auth.go handleSvnAuth x1 {trustCert,urlPrefix,username}
 ui_prefs.go handleGetUIPrefs x1 {} dyn
 ui_prefs.go handlePutUIPrefs x1 {} dyn
 workitems.go handleWorkItemsFetch x2 {errors,items}

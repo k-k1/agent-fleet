@@ -89,6 +89,8 @@ export interface RepoRowProps {
   /** SVN (docs/log/41): update to the latest revision / clear a wedged working-copy lock. */
   onUpdate?: () => void;
   onCleanup?: () => void;
+  /** SVN only: open the re-authentication dialog (docs/log/41 amendment). */
+  onReauth?: () => void;
   onLaunch: (kind: string, split: boolean) => void;
   onStartWork: (opts: LaunchOpts) => Promise<LaunchResult>;
   onBranchChanged?: () => void;
@@ -96,7 +98,7 @@ export interface RepoRowProps {
   onFocusPane?: (id: string) => void;
 }
 
-export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0 }: RepoRowProps) {
+export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, selected, sess, onOpen, onToggle, onOpenFolder, onOpenChanges, onFF, onParentFF, onDelete, onToggleLock, onUpdate, onCleanup, onReauth, onLaunch, onStartWork, onBranchChanged, opens, onFocusPane, onArchiveStopped, stoppedCount = 0 }: RepoRowProps) {
   // SVN working copies (docs/log/41) are flat: no branch/SCM view/worktree, so the card
   // never opens Source Control and the menu shows svn actions (update/cleanup) instead
   // of git ones (branch switch / FF / commit).
@@ -422,6 +424,16 @@ export function RepoRow({ r, kinds = repoLaunchKinds, running = true, active, se
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onCleanup(); }}>
                   <Icon name="unlock" /> {tr("repo.svn_cleanup")}
+                </button>
+              </li>
+            )}
+            {/* Re-authenticate: the way back from a checkout that did not save its
+                credentials (docs/log/41 amendment). Named for the act, not for the store —
+                what the user has in hand is an update that just failed. */}
+            {isSvn && onReauth && (
+              <li>
+                <button type="button" className="ui-menu-item" onClick={() => { setMenu(null); onReauth(); }}>
+                  <Icon name="key" /> {tr("repo.svn_reauth")}
                 </button>
               </li>
             )}

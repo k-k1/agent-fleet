@@ -299,3 +299,7 @@
 .conn-reauth {
   font-size: 12px;
 }
+
+/* Subversion — the project's own logo blue. Light enough for the default near-black
+   monogram (7:1 measured against #0c0c0c). */
+.p-badge.pb-svn { background: #809cc9; }

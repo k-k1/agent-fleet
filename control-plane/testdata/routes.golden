@@ -1,7 +1,7 @@
 # Every (method, path) buildMux() registers. Generated - do not edit by hand.
 # Update: cd control-plane && go test -run TestRouteTableGolden -update-routes-golden ./...
 # ANY = registered without a method. Taken with AF_MCP_ENABLED=true.
-# count: 467
+# count: 470
 ANY /
 ANY /agent-fleet
 ANY /agent-fleet/
@@ -193,6 +193,7 @@ PUT /api/connections/slack
 POST /api/connections/slack/channels
 POST /api/connections/slack/inspect
 DELETE /api/connections/svn
+PUT /api/connections/svn
 GET /api/copilot/usage
 GET /api/cost/me
 GET /api/cost/profile
@@ -298,6 +299,8 @@ GET /api/repos/{name}/prompt-templates
 GET /api/repos/{name}/show
 POST /api/repos/{name}/stage
 GET /api/repos/{name}/status
+GET /api/repos/{name}/svn-auth
+POST /api/repos/{name}/svn-auth
 POST /api/repos/{name}/svn-cleanup
 POST /api/repos/{name}/svn-update
 POST /api/repos/{name}/unstage

@@ -41,12 +41,31 @@ func isSvnRepo(dir string) bool {
 	return err == nil && fi.IsDir()
 }
 
-// svnAvailable reports whether the `svn` binary is on PATH. It is baked into the
-// Workspace image, but the native (WSL) runtime relies on host tools, so a clear
-// error beats a cryptic exec failure there.
-func svnAvailable() bool {
-	_, err := exec.LookPath("svn")
-	return err == nil
+// svnAvailable reports whether a REAL svn binary exists. It is baked into the Workspace
+// image, but the native (WSL) runtime relies on host tools, so a clear error beats a
+// cryptic exec failure there.
+//
+// Not a PATH lookup: `svn` on PATH is our own transparent-auth shim (svn_wrapper.go),
+// which is present whether or not subversion is installed — asking PATH would answer
+// "yes" and turn a missing subversion into an exec failure deep inside a handler,
+// exactly the cryptic error this check exists to prevent.
+func svnAvailable() bool { return realSvnPath() != "" }
+
+// svnCmd builds an `svn` command that goes STRAIGHT to the real binary.
+//
+// /usr/local/bin/svn is the transparent-auth shim (svn_wrapper.go), and it is ahead of
+// /usr/bin/svn on PATH — including for this process. Everything here already injects the
+// credential it wants, so letting the shim re-resolve one would add a process hop and an
+// `svn info` per call to reach the same argv. The guard env is what the shim looks at.
+func svnCmd(ctx context.Context, args ...string) *exec.Cmd {
+	var cmd *exec.Cmd
+	if ctx == nil {
+		cmd = exec.Command("svn", args...)
+	} else {
+		cmd = exec.CommandContext(ctx, "svn", args...)
+	}
+	cmd.Env = append(os.Environ(), svnWrappedEnv+"=1")
+	return cmd
 }
 
 // runSvn runs a LOCAL svn subcommand (info/status/cleanup) that needs no network
@@ -54,7 +73,7 @@ func svnAvailable() bool {
 // blocking on a prompt.
 func runSvn(dir string, args ...string) (string, error) {
 	full := append([]string{"--non-interactive"}, args...)
-	out, err := exec.Command("svn", full...).CombinedOutput()
+	out, err := svnCmd(nil, full...).CombinedOutput()
 	_ = dir // args carry an explicit path; cwd is irrelevant
 	return strings.TrimSpace(string(out)), err
 }
@@ -63,7 +82,7 @@ func runSvn(dir string, args ...string) (string, error) {
 // the size of the working copy (status), where an unbounded run would hold a handler.
 func runSvnCtx(ctx context.Context, args ...string) (string, error) {
 	full := append([]string{"--non-interactive"}, args...)
-	out, err := exec.CommandContext(ctx, "svn", full...).CombinedOutput()
+	out, err := svnCmd(ctx, full...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
 
@@ -115,7 +134,7 @@ func runSvnAuthed(ctx context.Context, creds *secrets.SVNCred, args ...string) (
 // "N files, last: …" and keeps only the tail for the error message.
 func runSvnAuthedSink(ctx context.Context, sink *repoJobSink, creds *secrets.SVNCred, args ...string) (string, error) {
 	full, authed := svnAuthedArgs(creds, args...)
-	cmd := exec.CommandContext(ctx, "svn", full...)
+	cmd := svnCmd(ctx, full...)
 	if authed {
 		cmd.Stdin = strings.NewReader(creds.Password + "\n")
 	}
@@ -538,6 +557,13 @@ func handleSvnUpdate(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	out, err := runSvnAuthedHealing(ctx, dir, creds, "update", dir)
 	if err != nil {
+		// Separate "the server refused the credential" from every other failure, so the
+		// Console can offer re-authentication instead of a dead-end toast. The classifier
+		// lives here because it reads svn's own words (svn_auth.go).
+		if svnAuthFailure(out) {
+			httpx.WriteErr(w, http.StatusUnauthorized, errCodeSvnAuth, fmt.Sprintf("%v: %s", err, out))
+			return
+		}
 		httpx.WriteErr(w, http.StatusBadGateway, "update_failed", fmt.Sprintf("%v: %s", err, out))
 		return
 	}

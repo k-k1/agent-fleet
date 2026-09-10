@@ -47,6 +47,10 @@ func auditActionTarget(r *http.Request) (action, target string, ok bool) {
 			return "repo.svn.update", name, true
 		case name != "" && strings.HasSuffix(p, "/svn-cleanup"):
 			return "repo.svn.cleanup", name, true
+		case name != "" && strings.HasSuffix(p, "/svn-auth"):
+			// Storing a credential for this working copy's server. The target is the
+			// working copy; the credential itself is in the body, which is never read.
+			return "repo.svn.auth", name, true
 		case name != "" && strings.HasSuffix(p, "/commit"):
 			return "git.commit", name, true
 		case name != "" && strings.HasSuffix(p, "/discard"):
