@@ -825,6 +825,50 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	}
 }
 
+// The LoRAs the Agent reads (ADR 0072 decision 5, phase P3). Two claims, and neither fails
+// loudly if it breaks: a LoRA that reached `models` would appear in generate_image's checkpoint
+// enum and be started with, and a `loras` row without base_model would leave the Agent no way to
+// tell whether a LoRA fits the chosen checkpoint — which is the one refusal decision 5 puts on
+// the Agent's side rather than here (a mismatched LoRA does not fail, it quietly does nothing).
+func TestEngineCatalogRowSeparatesLorasFromCheckpoints(t *testing.T) {
+	d := engineDef{Key: "image", API: engineAPIImages, Provider: "comfy"}
+	row := engineCatalogRowFor(d, []store.EngineModel{
+		{Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+			BaseModel: "sdxl", Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}}},
+		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl",
+			Description: "soft watercolour",
+			Files:       []store.EngineModelFile{{S3Key: "image/loras/watercolor_v2.safetensors"}}},
+	}, "")
+	if row == nil {
+		t.Fatal("no row for an engine with a checkpoint and a LoRA")
+	}
+	ids, _ := row["models"].([]string)
+	if len(ids) != 1 || ids[0] != "sdxl-base-1.0" {
+		t.Errorf("models = %v, want the checkpoint alone — a LoRA is not something to start with", ids)
+	}
+	if rows, _ := row["model_rows"].([]map[string]any); len(rows) != 1 {
+		t.Errorf("model_rows = %v, want the checkpoint alone", row["model_rows"])
+	}
+	loras, _ := row["loras"].([]map[string]any)
+	if len(loras) != 1 {
+		t.Fatalf("loras = %v, want the one LoRA", row["loras"])
+	}
+	if loras[0]["id"] != "watercolor-v2" || loras[0]["base_model"] != "sdxl" || loras[0]["description"] != "soft watercolour" {
+		t.Errorf("lora row = %v, want id, family and description all on the wire", loras[0])
+	}
+	files, _ := loras[0]["files"].([]map[string]any)
+	if len(files) != 1 || files[0]["s3_key"] != "image/loras/watercolor_v2.safetensors" {
+		t.Errorf("lora files = %v — the Agent derives the name ComfyUI loads it by from this key", loras[0]["files"])
+	}
+	// An engine holding LoRAs and no checkpoint is still an engine with nothing to serve.
+	only := engineCatalogRowFor(d, []store.EngineModel{
+		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl"},
+	}, "")
+	if only != nil {
+		t.Errorf("an engine with only LoRAs was offered: %v", only)
+	}
+}
+
 // A chat request naming a model the catalogue does not hold is refused before anything is
 // woken (ADR 0072 decision 7). Three things are pinned, and each one is a way this could go
 // wrong on a live deployment rather than in a test:

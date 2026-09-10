@@ -253,6 +253,72 @@ func TestImageGenModelOfferedOnlyWithARealChoice(t *testing.T) {
 	}
 }
 
+// ADR 0072 decision 5, phase P3. Two rules that differ from `model` on purpose: ONE LoRA is
+// already a choice (applying it or not are two pictures), and the enum is every LoRA rather than
+// the ones that fit the chosen checkpoint — a schema is built at tools/list, before `model`
+// exists, so it cannot depend on it. That is why each line has to carry its own family.
+func TestImageGenLorasOfferedWithTheirFamilies(t *testing.T) {
+	water := mcpImageGenLora{Name: "watercolor-v2", Description: "soft watercolour", BaseModel: "sdxl"}
+	lineart := mcpImageGenLora{Name: "klein-lineart", BaseModel: "flux2-klein"}
+
+	for _, tc := range []struct {
+		name      string
+		status    mcpImageGenStatus
+		wantLoras []mcpImageGenLora
+	}{
+		{
+			name: "one LoRA is already a choice",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Loras: []mcpImageGenLora{water}}}},
+			wantLoras: []mcpImageGenLora{water},
+		},
+		{
+			name: "LoRAs of both families are offered together",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Loras: []mcpImageGenLora{water, lineart}}}},
+			wantLoras: []mcpImageGenLora{water, lineart},
+		},
+		{
+			name: "a provider with none offers none",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "agy", Ops: []string{"generate"}}}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, tc.status)
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			if !reflect.DeepEqual(offer.Loras, tc.wantLoras) {
+				t.Fatalf("loras = %+v, want %+v", offer.Loras, tc.wantLoras)
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			loras, has := props["loras"].(map[string]any)
+			if has != (len(tc.wantLoras) > 0) {
+				t.Fatalf("loras in schema = %v, want %v", has, len(tc.wantLoras) > 0)
+			}
+			if !has {
+				return
+			}
+			items, _ := loras["items"].(map[string]any)
+			itemProps, _ := items["properties"].(map[string]any)
+			nameProp, _ := itemProps["name"].(map[string]any)
+			enum, _ := nameProp["enum"].([]string)
+			if len(enum) != len(tc.wantLoras) {
+				t.Fatalf("name enum = %v, want %d entries", enum, len(tc.wantLoras))
+			}
+			desc, _ := loras["description"].(string)
+			for _, want := range []string{"watercolor-v2", "sdxl", "soft watercolour"} {
+				if !strings.Contains(desc, want) {
+					t.Errorf("description does not carry %q: %s", want, desc)
+				}
+			}
+		})
+	}
+}
+
 func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	withImageGen(t, true)
 	t.Setenv("AGENT_ADDR", ":1") // nothing listens
@@ -355,6 +421,9 @@ func TestGenerateImageReturnsPathAndWarnings(t *testing.T) {
 	if got["model"] != "klein-4b" {
 		t.Fatalf("forwarded body's model = %v, want klein-4b (ADR 0072 decision 5)", got["model"])
 	}
+	if got["loras"] != nil {
+		t.Fatalf("forwarded body's loras = %v, want nothing when none was asked for", got["loras"])
+	}
 	for _, want := range []string{"image-1.png", "1254x1254", "codex"} {
 		if !strings.Contains(resp, want) {
 			t.Fatalf("result = %s, want it to contain %q", resp, want)
@@ -364,6 +433,32 @@ func TestGenerateImageReturnsPathAndWarnings(t *testing.T) {
 	// would ride in the session's context for the rest of the conversation.
 	if strings.Contains(resp, `"type":"image"`) || strings.Contains(resp, "base64") {
 		t.Fatalf("result carried image bytes: %s", resp)
+	}
+}
+
+// The `loras` argument reaches the Agent as it was written, name and strength both (ADR 0072
+// decision 5, phase P3). Whether the pairing works is the Agent's refusal to make, by name —
+// this layer dropping it would advertise a knob that moves nothing.
+func TestGenerateImageForwardsLoras(t *testing.T) {
+	withImageGen(t, true)
+	var got map[string]any
+	stubAgentForImageGen(t,
+		mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/image-1.png","name":"image-1.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
+		})
+
+	callGenerateImage(t, map[string]any{"prompt": "a cat",
+		"loras": []any{map[string]any{"name": "watercolor-v2", "weight": 0.6}}})
+
+	loras, _ := got["loras"].([]any)
+	if len(loras) != 1 {
+		t.Fatalf("forwarded body's loras = %v", got["loras"])
+	}
+	first, _ := loras[0].(map[string]any)
+	if first["name"] != "watercolor-v2" || first["weight"] != 0.6 {
+		t.Fatalf("forwarded lora = %v, want the name and the strength", first)
 	}
 }
 

@@ -73,6 +73,10 @@ type providerStatus struct {
 	// or that currently has zero or one (nothing to choose between). comfy is the first
 	// provider for which this is ever more than one entry.
 	Models []modelStatus `json:"models,omitempty"`
+	// Loras is every fine-tune this provider will accept (ADR 0072 decision 5, phase P3). Unlike
+	// Models a single entry is still a real choice — with it or without it are two different
+	// pictures — so there is no "more than one" rule here.
+	Loras []loraStatus `json:"loras,omitempty"`
 }
 
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
@@ -81,6 +85,15 @@ type modelStatus struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
 	Warm        bool   `json:"warm,omitempty"`
+}
+
+// loraStatus is one entry of providerStatus.Loras — see imagegen.LoraInfo. baseModel rides along
+// because the tool schema cannot narrow the enum per chosen checkpoint (Caps.Loras), so the
+// caller is the one that has to read which family each belongs to.
+type loraStatus struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	BaseModel   string `json:"baseModel,omitempty"`
 }
 
 // HandleStatus answers GET /imagegen/status?session=<name>.
@@ -111,6 +124,9 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, op := range caps.Ops {
 			st.Ops = append(st.Ops, string(op))
+		}
+		for _, l := range caps.Loras {
+			st.Loras = append(st.Loras, loraStatus{Name: l.Name, Description: l.Description, BaseModel: l.BaseModel})
 		}
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
@@ -187,6 +203,14 @@ type generateRequest struct {
 	Inputs      []string `json:"inputs"`
 	Mask        string   `json:"mask"`
 	Model       string   `json:"model"`
+	// Loras are the fine-tunes to apply (ADR 0072 decision 5, phase P3). Whether they fit the
+	// chosen checkpoint is the PROVIDER's call, not this layer's — see comfyResolveLoras.
+	Loras []loraRequest `json:"loras"`
+}
+
+type loraRequest struct {
+	Name   string  `json:"name"`
+	Weight float64 `json:"weight"`
 }
 
 // HandleGenerate answers POST /imagegen/generate. It blocks for the whole generation: P0 is
@@ -243,6 +267,10 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	loras := make([]LoraRef, 0, len(body.Loras))
+	for _, l := range body.Loras {
+		loras = append(loras, LoraRef{Name: l.Name, Weight: l.Weight})
+	}
 	job := Job{
 		Session: body.Session,
 		SID:     session.UUID(meta.Dir, body.Session),
@@ -250,7 +278,7 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		Request: Request{
 			Op: op, Prompt: body.Prompt, Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
-			Mask: body.Mask, Model: body.Model,
+			Mask: body.Mask, Model: body.Model, Loras: loras,
 		},
 	}
 	out, err := Run(r.Context(), job)

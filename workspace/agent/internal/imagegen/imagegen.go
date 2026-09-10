@@ -76,6 +76,21 @@ type Request struct {
 	// hard-coded into a caller, because ids move (ADR 0069 Context: "treat the vendor figures
 	// as dated").
 	Model string
+	// Loras are the fine-tunes to apply on top of Model, in the order given (ADR 0072 decision
+	// 5, phase P3). Only the fleet's own engines have any; a route with none reports the request
+	// back as a warning rather than dropping it silently.
+	Loras []LoraRef
+}
+
+// LoraRef is one LoRA a request asks for: a name out of Caps.Loras, and how strongly to apply
+// it. A LoRA whose base model does not match the chosen checkpoint is refused by the PROVIDER
+// while it assembles the request (ADR 0072 decision 5, レビュー決定 5) — the Control Plane never
+// sees it, because the pairing lives inside a workflow graph the gateway must not read.
+type LoraRef struct {
+	Name string
+	// Weight is 0-2, and 0 means "not stated": a LoRA asked for at strength zero is a LoRA that
+	// does nothing, which nobody means, so the provider reads it as decision 5's default of 1.
+	Weight float64
 }
 
 // Image is one produced picture, in memory. A provider hands these back and never decides
@@ -142,6 +157,27 @@ type Caps struct {
 	Backgrounds  []string
 	MaxCount     int
 	MaxInputs    int
+	// Loras is every fine-tune this provider will accept in Request.Loras (ADR 0072 decision 5,
+	// phase P3). Empty means the caller cannot pick, exactly as with Sizes.
+	//
+	// It is EVERY enabled LoRA, not the ones that fit `model`, even though Caps is per (provider,
+	// model) and could narrow it. The tool schema this feeds is built once per tools/list, before
+	// any model is chosen, and decision 5's revision says so outright: an enum cannot depend on
+	// another argument. So each entry carries its own BaseModel for the caller to read, and the
+	// provider refuses a pairing that does not match while it assembles the request.
+	Loras []LoraInfo
+}
+
+// LoraInfo is one LoRA as the tool surface needs to see it: the name to send back, the line an
+// agent reads when choosing, and the checkpoint family it may be combined with.
+type LoraInfo struct {
+	Name        string
+	Description string
+	// BaseModel is decision 2's family label ("sdxl", "flux1", …) — the same vocabulary a
+	// checkpoint declares, which is what makes the two comparable at all. Empty for a catalogue
+	// row that declares none, which the provider refuses rather than guessing at: an SD1.5 LoRA
+	// on an SDXL checkpoint produces a quietly wrong picture, never an error.
+	BaseModel string
 }
 
 func (c Caps) Supports(op Op) bool {
@@ -438,6 +474,17 @@ func normalizeRequest(r Request) Request {
 	r.Size = strings.TrimSpace(r.Size)
 	r.AspectRatio = strings.TrimSpace(r.AspectRatio)
 	r.Background = strings.TrimSpace(r.Background)
+	// Whitespace only: an unknown name stays in the request so the provider refuses it BY NAME
+	// rather than having it quietly disappear here — the same rule the size follows.
+	if len(r.Loras) > 0 {
+		loras := make([]LoraRef, 0, len(r.Loras))
+		for _, l := range r.Loras {
+			if l.Name = strings.TrimSpace(l.Name); l.Name != "" {
+				loras = append(loras, l)
+			}
+		}
+		r.Loras = loras
+	}
 	return r
 }
 
@@ -452,6 +499,16 @@ func requestWarnings(req Request, res Result, caps Caps) []string {
 	// picture is only visibly wrong to someone who knows what they asked for.
 	if r := req.AspectRatio; r != "" && r != "auto" && len(caps.AspectRatios) == 0 {
 		out = append(out, fmt.Sprintf("aspect_ratio=%s requested, but this route cannot choose an aspect ratio", r))
+	}
+	// Same shape, and for the same reason a ratio needs one: a picture generated without the
+	// LoRA that was asked for looks fine, so nothing else would ever say it was dropped. A route
+	// that CAN apply them refuses an unusable pairing instead (ADR 0072 decision 5).
+	if len(req.Loras) > 0 && len(caps.Loras) == 0 {
+		names := make([]string, 0, len(req.Loras))
+		for _, l := range req.Loras {
+			names = append(names, l.Name)
+		}
+		out = append(out, fmt.Sprintf("loras=%s requested, but this route cannot apply a LoRA", strings.Join(names, ", ")))
 	}
 	if n := len(res.Images); req.Count > 0 && n != req.Count {
 		out = append(out, fmt.Sprintf("count=%d requested, %d produced", req.Count, n))
