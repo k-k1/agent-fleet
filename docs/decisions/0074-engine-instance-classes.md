@@ -833,3 +833,64 @@ Pinned by tests:
 **Verified by rendering it** (headless Chromium, the real bundle): the red sentence carries the
 provider's words, and "apply it again" stands on its own line above the existing "replace it
 now" — a different act, so it is not put beside it.
+
+## Follow-up — open question 7 for the image role, points 2 and after (2026-09-11, dev deployment, comfy)
+
+P1's first point came from sd-server (sd.cpp). With the role switched to ComfyUI, SDXL was run on
+the l4 rung (g6.xlarge) across resolutions and batch sizes. **Following "do not build a
+coefficient from one point", there are now more points — but 🔴 the peak VRAM itself could not be
+read. The reason is below.**
+
+### What was measured — all seven points succeeded, no OOM
+
+`sdxl-base-1.0`, 20 steps, one prompt. Seconds are deltas between the nanosecond timestamps of
+consecutive generated files, so they include the MCP and HTTP round trips (but not a checkpoint
+load: the checkpoint stayed warm).
+
+| size | batch | seconds | produced PNG bytes |
+|---|---|---|---|
+| 768×768 | 1 | 7.57 | 873,660 |
+| 1024×1024 | 1 | ~11.5 | 1,548,285 |
+| 1024×1536 | 1 | 15.85 | 2,051,213 |
+| 512×512 | 2 | 7.73 | 342,432 / 301,093 |
+| 1024×1024 | 2 | 19.07 | 1,707,092 / 1,486,304 |
+| 1024×1536 | 2 | 29.32 | 2,165,517 / 2,090,950 |
+
+512×512 batch 1 is left without a time because it could not be separated from the preceding call
+in the same turn (it did succeed, at 338,392 bytes). **Nothing OOMs on the l4 rung up to
+1024×1536 at batch 2.**
+
+### 🔴 What could not be measured — ComfyUI does not log the VRAM breakdown at INFO
+
+P1's first point was obtainable because sd.cpp writes `total params memory size = 6624.11MB` and
+its auto-fit reserve (DiT 2,048 / Conditioner 2,048 / VAE 1,024) to its own stdout. ComfyUI
+v0.34.0 does not:
+
+- the measured weights are in one line, `Model loaded: patcher=… model=… ram_mb=… vram_mb=…`,
+  emitted through `detail()` in `comfy/internal_logging.py` — whose level is **DETAIL = 15**,
+  **below** `logging.INFO` (20);
+- `setup_logger` in `app/logger.py` defaults the console to INFO and sends DETAIL only to a file
+  inside the container, `comfyui_detail.log`. It never reaches CloudWatch;
+- what INFO does carry is `Total VRAM {x} MB, total RAM {y} MB` at startup,
+  `Requested to load {ClassName}`, `{n} models unloaded.` and `Prompt executed in N seconds`.
+
+So **a deployment running the image role as comfy cannot answer open question 7 in the same shape
+as the first point** (real weights plus the compute reserve). The fix is one thing — adding
+`--verbose DETAIL` to the ComfyUI start command in `60-engines.yaml` — but it touches the same
+template that is against its size wall (see ADR 0072's follow-up), so it belongs in the pass that
+declares the ladder. Recorded here; nothing was changed.
+
+### 🔴 The l4 rung declares 8,000 MiB, which does not describe what actually fits
+
+The same deployment declares `l4` as `{"label":"L4 24GB (g6.xlarge)", "vram_mib": 8000}`. The
+label says 24 GB and the card is 24 GB, but **the ladder declares 8,000 MiB**. As a result:
+
+- `vram_fits` is false (`flux1-dev-fp8`'s floor of 16,571 MiB > 8,000);
+- and `flux1-dev-fp8` nevertheless generated normally on the l4 rung, twice, at 1024×1024.
+
+Decision 6's gate only runs when a model is ENABLED, so `mode=on` passed straight through and no
+harm was done. But a declared value **less than half of the real card** tips the gate the other
+way: it says a model does not fit when it does. That is the opposite error from P1's "the floor
+explains 58% of real use", and this one is in **the rung's own declaration**. Before a coefficient
+for open question 7 is written down, the ladder's `vram_mib` needs a settled meaning — the card's
+physical size, or an operational cap — or there is nothing definite to multiply.
