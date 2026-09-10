@@ -53,6 +53,10 @@ Measured:
 
 - The test runner works through the link in both projects, and so does the production
   build. **Bundlers follow symlinks by default**, so resolution needs no help.
+- ⚠️ One exception, and it needs a config line: a Vite `…?url` import resolves to the
+  link's *target*, which is outside the project root — the only thing `server.fs.allow`
+  permits by default — and is refused with `Error: Denied ID …`. `console/vite.config.js`
+  adds `node_modules`' real path to that list (a no-op for a real install).
 - ⚠️ **Running a clean install through the link empties the parent's tree.** The link is
   replaced by a real directory and **every other session sharing it is destroyed**.
   Always remove the link before any install.

@@ -82,15 +82,14 @@ cmp -s package-lock.json ~/repos/agent-fleet/console/package-lock.json \
   && ln -s ~/repos/agent-fleet/console/node_modules node_modules
 ```
 
-`npm run build` and the whole node project resolve through the link (measured).
+`npm run build`, the tests and the whole node project resolve through the link
+(measured: the full suite is green, 242 files, and the production build succeeds).
 
-⚠️ **The `viewer` dom tests do not.** They import assets out of `node_modules` by URL
-(`…?url`), and Vite's default `server.fs.allow` is the project root — through the link
-those resolve *outside* this worktree and are refused with `Error: Denied ID …`. It
-reads as a broken viewer and is not: the same tests pass against a real install
-(measured, whole suite green). Everything else is unaffected, so only reach for a real
-install (`rm -rf node_modules` — no trailing slash — then `npm ci --prefer-offline`)
-when you touch the viewer or need those files green.
+`vite.config.js` is what makes the tests work: it adds `node_modules`' real path to
+`server.fs.allow`, because the assets the viewer imports by URL (`…?url`) resolve to
+the link's target, outside this worktree, and the stock allow-list is the project root
+alone. Without that, six `src/features/viewer/` dom files fail with
+`Error: Denied ID …` and read as a broken viewer.
 
 - **Remove the link before any `npm ci` / `npm install`**: `rm -rf node_modules` — *without* a
   trailing slash. `npm ci` through the link empties the parent's `node_modules` and breaks
