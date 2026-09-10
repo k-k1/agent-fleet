@@ -31,6 +31,10 @@ export interface Tenant {
   // "" = deploy default, "0" = no backups). ADR 0045 decision 17.
   home_backup_every?: string;
   allow_agent_self_update?: boolean;
+  // Whether this tenant's tenant_admins may take models into the engine catalogue
+  // (ADR 0072 open question 11). The catalogue itself stays one per deployment — this only
+  // says who may add to it, and every tenant sees every id either way.
+  allow_engine_ingest?: boolean;
   terminal_history_retention_days?: number;
   // Per-tenant login rules, stored as CSV (docs/log/61 §61.9.7).
   allowed_providers?: string;

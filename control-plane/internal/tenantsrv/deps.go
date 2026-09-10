@@ -149,6 +149,7 @@ type Limits struct {
 	HomeHibernateAfter           string
 	HomeBackupEvery              string
 	AllowAgentSelfUpdate         bool
+	AllowEngineIngest            bool
 	TerminalHistoryRetentionDays int
 }
 

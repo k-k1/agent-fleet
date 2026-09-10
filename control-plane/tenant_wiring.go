@@ -279,6 +279,7 @@ func tenantLimitsOut(l tenantLimits) tenantsrv.Limits {
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
+		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
 	}
 }
@@ -300,6 +301,7 @@ func tenantLimitsIn(l tenantsrv.Limits) tenantLimits {
 		HomeHibernateAfter:           l.HomeHibernateAfter,
 		HomeBackupEvery:              l.HomeBackupEvery,
 		AllowAgentSelfUpdate:         l.AllowAgentSelfUpdate,
+		AllowEngineIngest:            l.AllowEngineIngest,
 		TerminalHistoryRetentionDays: l.TerminalHistoryRetentionDays,
 	}
 }

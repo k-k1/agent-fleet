@@ -36,6 +36,11 @@ func TestEngineModelRoundTrip(t *testing.T) {
 		Description: "FLUX.2 klein 4B", VramMiB: 11600,
 		License: "apache-2.0", LicenseName: "", LicenseURL: "https://example.invalid/license",
 		Precision: "bf16", BaseModel: "flux2-klein",
+		// The licence acceptance as a whole tuple (ADR 0072 open question 11). The tenant is
+		// what says on whose behalf it was accepted, and the licence beside it is the wording
+		// that was accepted rather than the model's current one.
+		LicenseAcceptedBy: "u1", LicenseAcceptedAt: "2026-09-10T00:00:00Z",
+		LicenseAcceptedTenant: "t-acme", LicenseAcceptedLicense: "apache-2.0",
 	}
 	if err := st.PutEngineModel(ctx, want); err != nil {
 		t.Fatalf("put: %v", err)
@@ -51,6 +56,10 @@ func TestEngineModelRoundTrip(t *testing.T) {
 	}
 	if len(g.Args) != 2 || len(g.Sizes) != 2 || g.VramMiB != 11600 || g.BaseModel != "flux2-klein" {
 		t.Fatalf("scalars did not survive: %+v", g)
+	}
+	if g.LicenseAcceptedTenant != "t-acme" || g.LicenseAcceptedLicense != "apache-2.0" ||
+		g.LicenseAcceptedBy != "u1" {
+		t.Fatalf("the licence acceptance did not survive: %+v", g)
 	}
 	if g.CreatedAt == "" || g.UpdatedAt == "" {
 		t.Fatalf("timestamps unset: %+v", g)
