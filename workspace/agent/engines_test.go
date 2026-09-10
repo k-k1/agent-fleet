@@ -360,6 +360,42 @@ func TestEngineImageConnTranslatesComfyFields(t *testing.T) {
 	}
 }
 
+// ADR 0072 phase P3: the LoRAs ride a list of their own next to model_rows, and the two must
+// stay apart at both ends — a LoRA reaches generate_image's `loras` and must never reach its
+// `model` enum, because a LoRA is not something an engine can be started with.
+func TestEngineImageConnTranslatesLoras(t *testing.T) {
+	const row = `{"key":"image","api":"images","provider":"comfy","base_url":"/engine/image/v1",` +
+		`"models":["sdxl-base-1.0"],"model_rows":[` +
+		`{"id":"sdxl-base-1.0","base_model":"sdxl","files":[{"s3_key":"image/checkpoints/sd_xl_base_1.0.safetensors"}]}],` +
+		`"loras":[` +
+		`{"id":"watercolor-v2","base_model":"sdxl","description":"soft watercolour",` +
+		`"files":[{"s3_key":"image/loras/watercolor_v2.safetensors"}]},` +
+		`{"id":"no-file","base_model":"sdxl"}]}`
+	engineCatalogStub(t, engineRowLlm+","+row)
+
+	conn, ok := engineImageConn(context.Background(), "comfy")
+	if !ok {
+		t.Fatal("no comfy engine found")
+	}
+	if len(conn.Loras) != 1 {
+		t.Fatalf("loras = %#v, want the one with a file (a row that cannot be loaded is dropped)", conn.Loras)
+	}
+	got := conn.Loras[0]
+	if got.ID != "watercolor-v2" || got.BaseModel != "sdxl" || got.Description != "soft watercolour" {
+		t.Errorf("lora = %#v", got)
+	}
+	// The basename, because ComfyUI's lora_name is an enumeration over its own models/loras
+	// directory — which is what the box's `image/loras/` prefix is mounted as.
+	if got.File != "watercolor_v2.safetensors" {
+		t.Errorf("lora file = %q, want the on-disk basename", got.File)
+	}
+	for _, id := range conn.Models {
+		if id == "watercolor-v2" {
+			t.Error("a LoRA reached the checkpoint list — it would appear in generate_image's model enum")
+		}
+	}
+}
+
 // One token per (engine, scope). Presenting the llm token to /engine/image/v1 is refused by
 // the gateway — the claim doing its job — so the cache must not hand the same value to both.
 func TestEngineTokenIsCachedPerEngine(t *testing.T) {

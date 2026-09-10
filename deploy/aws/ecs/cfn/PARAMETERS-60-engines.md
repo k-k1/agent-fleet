@@ -15,7 +15,7 @@ Order matches the template.
 
 - [What this template learned the hard way](#what-this-template-learned-the-hard-way)
 - [Shared](#shared)
-- [The seed parameters](#the-seed-parameters)
+- [Upgrading: the model parameters are gone](#upgrading-the-model-parameters-are-gone)
 - [The `llm` role (llama.cpp)](#the-llm-role-llamacpp)
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
 - [The fetch sidecar](#the-fetch-sidecar)
@@ -104,38 +104,52 @@ SSM parameter this stack writes the engine table to, and the single value 30-ing
 `parameter/af-ws/*` (20-platform, Sid `SsmWorkspaceParams`), and a name outside it deploys
 cleanly and then reads AccessDenied at CP start.
 
-## The seed parameters
+## Upgrading: the model parameters are gone
 
-`LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens` and the three
-`Image*` mirrors are **no longer what the engine loads** (ADR 0072 decision 1).
-The catalogue in the Control Plane's database is, and an administrator edits it from the admin
-panel while the GPU is asleep — the act these parameters made into a CloudFormation run.
+**Nothing in this template says what an engine loads any more** (ADR 0072 decision 1, completed
+in phase P6). The catalogue in the Control Plane's database says it, and an administrator edits
+it from the admin panel while the GPU is asleep — the act these parameters made into a
+CloudFormation run. Eight parameters were retired, in two steps:
 
-They survive as the **seed** (decision 7). A Control Plane whose catalogue for a role is EMPTY
-reads them once and creates the one row the deployment was already serving, so an upgrade from
-ADR 0071 comes up unchanged. After that they are ignored, which is the point: the seed must not
-overwrite an administrator's choice on every stack update.
+| Retired | In | What replaces it |
+| --- | --- | --- |
+| `LlmModelFile` / `ImageModelFile` | 0.18.0 | nothing — the box mirrors the bucket's layout |
+| `LlmModelS3Key` / `ImageModelS3Key` | P6 | a model's files, in the catalogue row |
+| `LlmModelIds` / `ImageModelIds` | P6 | the catalogue row's id |
+| `LlmContextTokens` / `LlmMaxOutputTokens` | P6 | the row's own window, per MODEL |
 
-⚠️ **The S3 layout move and the seed happen together** (decision 2(f)). The bucket now follows
-ComfyUI's layout, so `image/sd_xl_base_1.0.safetensors` belongs under `image/checkpoints/`. Do
-the server-side copy AND update `ImageModelS3Key` in the same change: a seed pointing at the old
-key produces a row whose file is not there, and the failure surfaces in the fetch sidecar at the
-next cold start rather than at deploy time.
+`LlmExtraArgs` / `ImageExtraArgs` **stay**: those are the BOX's flags (`-ngl 99`,
+`--diffusion-fa`), not a model's.
 
-⚠️ **`LlmModelFile` / `ImageModelFile` are GONE from the template.** ADR 0072 left them unused —
-the box mirrors the bucket, so `image/checkpoints/x.safetensors` lands at
-`/models/image/checkpoints/x.safetensors`, which is what keeps the active set inside SSM's 4,096
-characters and leaves a tree ComfyUI reads unchanged — and they were kept for one release so an
-existing capture would still deploy. That release has passed. A `params/60-engines` that still
-carries either line now fails at `standup.sh` / `update.sh` with `Parameters: [ImageModelFile] do
-not exist in the template`: **delete the lines**, they were doing nothing.
+🔴 **Before updating a deployment that named a model key, add `<role>Enabled=true`.** Until P6
+`<role>ModelS3Key` decided two things — which model was seeded, and **whether the role's service
+existed at all** (`HasLlmModel` read the key when `LlmEnabled` was unset). `LlmEnabled` /
+`ImageEnabled` is the whole answer now, so a `params/60-engines` that switched a role on by
+naming a key and left `Enabled` empty **loses the role**: the service, its Cloud Map name and its
+row in the engine table are deleted by an ordinary stack update, silently, taking a running GPU
+engine with them. Add the line first:
+
+```
+LlmEnabled=true          # and/or ImageEnabled=true
+```
+
+`standup.sh` does this translation for you and then drops the retired keys (`af_param_drop`,
+because `cloudformation deploy` refuses a `--parameter-overrides` key the template does not
+declare). **`update.sh` and a hand-run `cloudformation deploy` do not** — they pass no parameters
+at all, so the stack falls straight to the new default. Edit the file.
+
+**The seed is gone with them.** A Control Plane whose catalogue was empty used to read those
+parameters once and create the row the deployment was already serving. Anything that has run a
+release between ADR 0071 and P6 therefore has its rows already and notices nothing. A deployment
+that jumps from a pre-catalogue Control Plane straight to this one comes up with an EMPTY
+catalogue: the role exists, the engine idles, and the panel is where the first model is
+registered. That is a supported state, not a broken one.
 
 ### `LlmEnabled` / `ImageEnabled`
 
 Whether the ROLE exists at all: its service, its Cloud Map name, its row in the engine table.
-`""` (the default) means "whatever `*ModelS3Key` said", which is the one release of
-compatibility decision 1 allows — an existing `params/60-engines` that switched a role off by
-emptying its model key still does.
+Only `"true"` creates it; `""` (the default) and `"false"` are the same "no". `""` survives as a
+value because a capture taken from a stack that never set it carries the empty line.
 
 Under ADR 0071 an empty model key meant NO SERVICE, because a service whose fetch container
 could not find a file never stabilised and CloudFormation blocked on it — the two-pass stand-up.
@@ -152,41 +166,17 @@ Tag inside the `af-llamacpp` ECR repository. The upstream image
 rather than pulled at task start: measured, GHCR through this NAT runs at 12-14 MB/s, which put
 178 of a 527-second cold start into the pull alone.
 
-### `LlmModelS3Key`
+### Where the model and its window come from (not from here)
 
-Key inside this stack's models bucket, e.g. `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf`. The
-engine never talks to Hugging Face (ADR 0071 decision 3 — measured at 4-236 MB/s with no way to
-tell which until you pull, against S3's steady 104-147 MB/s), so a model gets there through the
-ingest task.
+A model reaches the bucket through the ingest task — the engine never talks to Hugging Face
+(ADR 0071 decision 3: measured at 4-236 MB/s with no way to tell which until you pull, against
+S3's steady 104-147 MB/s) — and its S3 keys, its id and its window are the catalogue row's. The
+llm role runs llama-server in router mode, where each model carries its own `c` into its preset
+section, so a window is per MODEL: ADR 0071's rule that two windows meant two engines and two
+provider ids is gone with the parameters that created it.
 
-⚠️ **EMPTY with `LlmEnabled` unset still means NO `llm` SERVICE IS CREATED** — that is the one
-release of compatibility described under [the seed parameters](#the-seed-parameters). It no
-longer means a two-pass stand-up, though: since ADR 0072 the sidecar treats "nothing staged" as
-success and the engine idles, so the role can be created before anything is in the bucket. Say
-`LlmEnabled=true` for that.
-
-### `LlmModelIds`
-
-The catalogue id of the model this deployment was already serving, and nothing more since ADR
-0072 — the ids a member picks come from the catalogue, which is also where the launch menu is
-drawn from while the box is asleep (ADR 0053 unchanged: nothing asks the engine). Only the FIRST
-id is used, as the seeded row's id. Under router mode `--alias` is set by the router itself, per
-preset section.
-
-### `LlmContextTokens` / `LlmMaxOutputTokens`
-
-The context `llama-server` is started with (`-c`) **and** the window the client is told the model
-has. One parameter feeds both, so "served" and "advertised" cannot drift — the flag used to live
-inside `LlmExtraArgs`, where CloudFormation cannot read it back out to put it in the engine table,
-and the table therefore said nothing at all. 32,768 is what was measured on an L4 (opencode's
-request is 18.7k tokens with the fleet's `AGENTS.md` included).
-
-⚠️ **Do not also pass `-c` in `LlmExtraArgs`.** The command line is built as
-`… -c <LlmContextTokens> <LlmExtraArgs…>`, so a second `-c` wins for the engine while the table
-keeps advertising this one — the exact drift the split exists to prevent.
-
-Both numbers travel, and the second is not decoration. Measured against opencode 1.18.29, which is
-what a workspace drives this engine with:
+Both halves of the window travel, and the second is not decoration. Measured against opencode
+1.18.29, which is what a workspace drives this engine with:
 
 - a model the client has never heard of and that declares no `limit` is read as **context 0**, and
   auto-compaction is **switched off** at 0. The session then grows until `llama-server` rejects the
@@ -194,13 +184,10 @@ what a workspace drives this engine with:
 - the usable window is `context − output cap`, and an output cap of **0 is not "unset"** there — it
   substitutes 32,000. Declaring a 32,768-token context without the output half would leave **768**
   usable tokens, i.e. compaction thrashing from the first turn. That is why the Agent writes both
-  or neither, and why both carry a `MinValue`.
+  or neither, and why the panel's registration form refuses one without the other.
 
-🔴 **Since ADR 0072 P1 these are SEED values and the window is per MODEL.** The llm role runs
-llama-server in router mode, where each catalogue model carries its own `c` into the preset, so
-"one window per engine" — and the rule above it, that two windows mean two engines and two
-provider ids — is gone. These two parameters are read once, to build the row a deployment
-upgrading from ADR 0071 was already serving.
+32,768 is what was measured on an L4 (opencode's request is 18.7k tokens with the fleet's
+`AGENTS.md` included), and it is what a row registered by hand is worth starting from.
 
 ### `LlmExtraArgs`
 
@@ -467,25 +454,10 @@ Tag inside the `af-sdcpp` ECR repository (the doubled word is the `image` ROLE's
 tag), used when `ImageEngine=sdcpp`. Upstream is `ghcr.io/leejet/stable-diffusion.cpp:master-cuda`,
 2.31 GB and **amd64 only** — there is no arm64 build and G-family instances have no arm64 member
 either, so this role is x86_64 by construction (ADR 0071 decision 12). `standup.sh` copies it in
-with `crane` before this stack is deployed, and only when `ImageModelS3Key` is set.
-
-### `ImageModelS3Key`
-
-Key inside this stack's models bucket, e.g. `image/sd_xl_base_1.0.safetensors`.
-
-⚠️ **EMPTY (the default) means NO `image` SERVICE IS CREATED**, for exactly the reason spelled
-out under `LlmModelS3Key`: CloudFormation blocks on ECS service stabilisation, the fetch sidecar
-of a service whose model is not in the bucket crash-loops on "Key … does not exist", and the
-stack then sits in `CREATE_IN_PROGRESS` with no later step able to rescue it (measured on the llm
-role during P0). Deploy once with this empty, run the ingest task, then deploy again with the key.
-
-### `ImageModelIds`
-
-Model ids the gateway advertises for this engine. DECLARED, never derived (ADR 0053): sd-server
-does have a `/sdcpp/v1/capabilities` endpoint, but asking it means waking a $1.26/hour box to
-read one string, and the Agent needs this answer while the engine is asleep. The FIRST id is the
-provider's default model, and the Agent's `sdcpp` provider keys its capabilities off it (ADR 0069
-decision 5 — `Caps` is per (provider, model)).
+with `crane` before this stack is deployed, and only when `ImageEnabled=true` — the same switch
+that decides whether the service exists, read the same way, because a role created against an
+empty ECR repository sits in `CREATE_IN_PROGRESS` repeating `CannotPullContainerError` with no
+later step able to rescue it.
 
 ### `ImageExtraArgs`
 
@@ -1144,15 +1116,12 @@ than derived from the provider name, for the usual reason (ADR 0053): a second e
 the same API would otherwise inherit a probe nobody chose for it. `GET /models` neither triggers
 an autoload nor resets the router's idle timer (upstream README), so polling it is free.
 
-**The llm row carries `contextTokens` / `maxOutputTokens`** — see those parameters above. Nothing
-downstream can ask the engine for them: the box is asleep when the launch menu is drawn, which is
-the whole point of an on-demand engine. A row from a stack older than the fields omits them, and
-both the gateway and the Agent then say nothing rather than advertising a zero.
-
-**`models`, `contextTokens`, `maxOutputTokens` and `modelS3Key` are SEED fields** since ADR 0072
-— see [The seed parameters](#the-seed-parameters). Everything else in the row is a property of
-the vessel (service, URL, health path, capacity provider, idle window, start deadline, mode) and
-stays the stack's to declare.
+**A row says nothing about models.** `models`, `contextTokens`, `maxOutputTokens` and
+`modelS3Key` were written here until ADR 0072 phase P6 retired them
+([above](#upgrading-the-model-parameters-are-gone)); the Control Plane still parses a table that
+carries them, because the CP is upgraded before the stack is, and ignores what they say. What is
+left is the vessel (service, URL, health path, warm path, capacity provider, classes, idle
+window, start deadline, mode), which really is the stack's to declare.
 
 **The active set is a different parameter, and the stack does not write it.** The Control Plane
 publishes `<EnginesSsmParamName>/<key>/active` whenever the catalogue changes, and the box's

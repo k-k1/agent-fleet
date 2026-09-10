@@ -16,11 +16,20 @@ package imagegen
 //
 // Every template takes comfyFiles (the on-disk basenames ADR 0072 decision 2 declares, resolved
 // from the catalogue's Flag vocabulary — see EngineFile) and comfyParams (the request-shaped
-// knobs: prompt, seed, size, batch count). Nothing else varies: sampler, steps, cfg and scheduler
-// are the family's own fixed recipe, not a caller's choice (P2 scope decision — a future phase
-// may widen this, ADR 0072 phase P2 note).
+// knobs: prompt, seed, size, batch count, and the LoRAs to chain in). Nothing else varies:
+// sampler, steps, cfg and scheduler are the family's own fixed recipe, not a caller's choice
+// (P2 scope decision — a future phase may widen this, ADR 0072 phase P2 note).
+//
+// 🔴 None of the LoRA chains (P3) has been run on a GPU. The golden test pins their shape, which
+// is the same claim it made about SD3.5 before that family turned out not to generate at all —
+// so the loader node and its input names were read off ComfyUI v0.34.0's own source rather than
+// assumed, and the completion definition stays "the same prompt and seed produce a different
+// picture with the LoRA than without" (ADR 0072 phase P3), on real hardware.
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
 
 // comfyNegativePrompt is the same negative prompt bench-image-engine.py measured with, for the
 // families that use one (SDXL, SD3.5). Never exposed to the caller: `Request` has no negative-
@@ -87,6 +96,50 @@ type comfyParams struct {
 	Width     int
 	Height    int
 	BatchSize int
+	// Loras are already resolved against the catalogue and checked against this model's family
+	// (comfyResolveLoras) — a template applies them, it does not decide whether they fit.
+	Loras []comfyLora
+}
+
+// comfyLora is one LoRA to chain into a template: the name ComfyUI knows it by on disk, and the
+// strength both halves of LoraLoader get.
+type comfyLora struct {
+	Name   string
+	Weight float64
+}
+
+// comfyApplyLoras chains one LoraLoader per requested LoRA between the loaders and everything
+// downstream, and answers with the links that now carry MODEL and CLIP. Nothing is added when
+// nothing was asked for, so the graph of a request without LoRAs is byte-for-byte the one the
+// golden test already pins.
+//
+// The node is `LoraLoader` for every family, which is checked against ComfyUI v0.34.0's own
+// definition rather than assumed (nodes.py, the pinned ref in deploy/aws/ecs/comfyui/Dockerfile):
+// required inputs `model` (MODEL), `clip` (CLIP), `lora_name`, `strength_model`, `strength_clip`;
+// returns (MODEL, CLIP). All five families here have a CLIP to hand it — the split ones from
+// their own text-encoder loader — so none of them needs LoraLoaderModelOnly.
+//
+// 🔴 `lora_name` is an ENUMERATION over folder_paths' "loras" list, i.e. `<models>/loras`
+// searched RECURSIVELY, each entry a path relative to that directory (folder_paths.py's
+// recursive_search). The box mounts the bucket's `image/` prefix as ComfyUI's models directory
+// (60-engines.yaml links /ComfyUI/models -> /models/image), so a key `image/loras/x.safetensors`
+// is listed as `x.safetensors` and the basename EngineLora carries is exactly right — while a key
+// nested any deeper would be listed as `sub/x.safetensors` and rejected as `Value not in list`,
+// the same way SD3.5's clip_name1 was (ADR 0072 P2 残作業 5). LoRAs land flat under
+// `image/loras/`; that is the premise this depends on.
+//
+// One strength for both halves: that is what the published per-family LoRA workflows do, and
+// load_lora_for_models only patches the keys a LoRA actually carries, so a text encoder the LoRA
+// never touched is unaffected by naming a strength for it.
+func comfyApplyLoras(g comfyGraph, loras []comfyLora, model, clip []any) (modelOut, clipOut []any) {
+	for i, l := range loras {
+		id := "lora" + strconv.Itoa(i+1)
+		g[id] = comfyNode{ClassType: "LoraLoader", Inputs: map[string]any{
+			"lora_name": l.Name, "strength_model": l.Weight, "strength_clip": l.Weight,
+			"model": model, "clip": clip}}
+		model, clip = comfyLink(id, 0), comfyLink(id, 1)
+	}
+	return model, clip
 }
 
 // comfyGraph is the API-format document /prompt takes: node id -> {class_type, inputs}.
@@ -164,20 +217,23 @@ func comfyGraphSDXL(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	}
 	g := comfyGraph{
 		"ckpt": {ClassType: "CheckpointLoaderSimple", Inputs: map[string]any{"ckpt_name": f.Checkpoint}},
-		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": p.Prompt, "clip": comfyLink("ckpt", 1)}},
-		"neg": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": comfyNegativePrompt, "clip": comfyLink("ckpt", 1)}},
-		"lat": {ClassType: "EmptyLatentImage", Inputs: map[string]any{
-			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}},
-		"ks": {ClassType: "KSampler", Inputs: map[string]any{
-			"seed": p.Seed, "steps": 20, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1,
-			"model": comfyLink("ckpt", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-			"latent_image": comfyLink("lat", 0)}},
-		"dec": {ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}},
-		"save": {ClassType: "SaveImage", Inputs: map[string]any{
-			"filename_prefix": "af-sdxl", "images": comfyLink("dec", 0)}},
 	}
+	// CheckpointLoaderSimple returns (MODEL, CLIP, VAE), so the LoRA chain hangs off slots 0
+	// and 1 and the VAE keeps coming straight from the checkpoint — a LoRA never touches it.
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("ckpt", 0), comfyLink("ckpt", 1))
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": comfyNegativePrompt, "clip": clip}}
+	g["lat"] = comfyNode{ClassType: "EmptyLatentImage", Inputs: map[string]any{
+		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": 20, "cfg": 7, "sampler_name": "dpmpp_2m", "scheduler": "karras", "denoise": 1,
+		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": comfyLink("lat", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-sdxl", "images": comfyLink("dec", 0)}}
 	return g, nil
 }
 
@@ -197,21 +253,24 @@ func comfyGraphZImage(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
 		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "lumina2", "device": "default"}},
 		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
-		"ms":   {ClassType: "ModelSamplingAuraFlow", Inputs: map[string]any{"shift": 3, "model": comfyLink("unet", 0)}},
-		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": p.Prompt, "clip": comfyLink("clip", 0)}},
-		"neg": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": "", "clip": comfyLink("clip", 0)}},
-		"lat": {ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}},
-		"ks": {ClassType: "KSampler", Inputs: map[string]any{
-			"seed": p.Seed, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1,
-			"model": comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-			"latent_image": comfyLink("lat", 0)}},
-		"dec": {ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}},
-		"save": {ClassType: "SaveImage", Inputs: map[string]any{
-			"filename_prefix": "af-zimage", "images": comfyLink("dec", 0)}},
 	}
+	// Before ModelSamplingAuraFlow, not after: the LoRA patches the diffusion model's weights,
+	// while that node rewrites the sampling schedule of whatever model it is handed.
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	g["ms"] = comfyNode{ClassType: "ModelSamplingAuraFlow", Inputs: map[string]any{"shift": 3, "model": model}}
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": "", "clip": clip}}
+	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
+		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": 8, "cfg": 1, "sampler_name": "res_multistep", "scheduler": "simple", "denoise": 1,
+		"model": comfyLink("ms", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": comfyLink("lat", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-zimage", "images": comfyLink("dec", 0)}}
 	return g, nil
 }
 
@@ -231,24 +290,25 @@ func comfyGraphFlux2Klein(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"unet": {ClassType: "UNETLoader", Inputs: map[string]any{"unet_name": f.DiffusionModel, "weight_dtype": "default"}},
 		"clip": {ClassType: "CLIPLoader", Inputs: map[string]any{"clip_name": f.ClipL, "type": "flux2", "device": "default"}},
 		"vae":  {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
-		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": p.Prompt, "clip": comfyLink("clip", 0)}},
-		"zero": {ClassType: "ConditioningZeroOut", Inputs: map[string]any{"conditioning": comfyLink("pos", 0)}},
-		"guider": {ClassType: "CFGGuider", Inputs: map[string]any{
-			"model": comfyLink("unet", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("zero", 0), "cfg": 1}},
-		"sampler": {ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}},
-		"sigmas": {ClassType: "Flux2Scheduler", Inputs: map[string]any{
-			"steps": 4, "width": p.Width, "height": p.Height}},
-		"lat": {ClassType: "EmptyFlux2LatentImage", Inputs: map[string]any{
-			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}},
-		"noise": {ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}},
-		"sca": {ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
-			"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
-			"sigmas": comfyLink("sigmas", 0), "latent_image": comfyLink("lat", 0)}},
-		"dec": {ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}},
-		"save": {ClassType: "SaveImage", Inputs: map[string]any{
-			"filename_prefix": "af-klein", "images": comfyLink("dec", 0)}},
 	}
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["zero"] = comfyNode{ClassType: "ConditioningZeroOut", Inputs: map[string]any{"conditioning": comfyLink("pos", 0)}}
+	g["guider"] = comfyNode{ClassType: "CFGGuider", Inputs: map[string]any{
+		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("zero", 0), "cfg": 1}}
+	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
+	g["sigmas"] = comfyNode{ClassType: "Flux2Scheduler", Inputs: map[string]any{
+		"steps": 4, "width": p.Width, "height": p.Height}}
+	g["lat"] = comfyNode{ClassType: "EmptyFlux2LatentImage", Inputs: map[string]any{
+		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
+	g["sca"] = comfyNode{ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
+		"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
+		"sigmas": comfyLink("sigmas", 0), "latent_image": comfyLink("lat", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-klein", "images": comfyLink("dec", 0)}}
 	return g, nil
 }
 
@@ -276,25 +336,29 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 		"clip": {ClassType: "DualCLIPLoader", Inputs: map[string]any{
 			"clip_name1": f.T5xxl, "clip_name2": f.ClipL, "type": "flux", "device": "default"}},
 		"vae": {ClassType: "VAELoader", Inputs: map[string]any{"vae_name": f.Vae}},
-		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": p.Prompt, "clip": comfyLink("clip", 0)}},
-		"guidance": {ClassType: "FluxGuidance", Inputs: map[string]any{
-			"conditioning": comfyLink("pos", 0), "guidance": 3.5}},
-		"lat": {ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}},
-		"sampler": {ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}},
-		"scheduler": {ClassType: "BasicScheduler", Inputs: map[string]any{
-			"model": comfyLink("unet", 0), "scheduler": "simple", "steps": 20, "denoise": 1}},
-		"noise": {ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}},
-		"guider": {ClassType: "BasicGuider", Inputs: map[string]any{
-			"model": comfyLink("unet", 0), "conditioning": comfyLink("guidance", 0)}},
-		"sca": {ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
-			"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
-			"sigmas": comfyLink("scheduler", 0), "latent_image": comfyLink("lat", 0)}},
-		"dec": {ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}},
-		"save": {ClassType: "SaveImage", Inputs: map[string]any{
-			"filename_prefix": "af-flux1", "images": comfyLink("dec", 0)}},
 	}
+	// BasicScheduler gets the patched model too, not the bare one: it derives the sigmas FROM
+	// the model it is handed, so feeding it a different model than the guider samples with would
+	// schedule one network and denoise another.
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("unet", 0), comfyLink("clip", 0))
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["guidance"] = comfyNode{ClassType: "FluxGuidance", Inputs: map[string]any{
+		"conditioning": comfyLink("pos", 0), "guidance": 3.5}}
+	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
+		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	g["sampler"] = comfyNode{ClassType: "KSamplerSelect", Inputs: map[string]any{"sampler_name": "euler"}}
+	g["scheduler"] = comfyNode{ClassType: "BasicScheduler", Inputs: map[string]any{
+		"model": model, "scheduler": "simple", "steps": 20, "denoise": 1}}
+	g["noise"] = comfyNode{ClassType: "RandomNoise", Inputs: map[string]any{"noise_seed": p.Seed}}
+	g["guider"] = comfyNode{ClassType: "BasicGuider", Inputs: map[string]any{
+		"model": model, "conditioning": comfyLink("guidance", 0)}}
+	g["sca"] = comfyNode{ClassType: "SamplerCustomAdvanced", Inputs: map[string]any{
+		"noise": comfyLink("noise", 0), "guider": comfyLink("guider", 0), "sampler": comfyLink("sampler", 0),
+		"sigmas": comfyLink("scheduler", 0), "latent_image": comfyLink("lat", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("sca", 0), "vae": comfyLink("vae", 0)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-flux1", "images": comfyLink("dec", 0)}}
 	return g, nil
 }
 
@@ -331,19 +395,22 @@ func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 			// sd3_clip identifies each encoder from its state dict — but matching the published
 			// recipe is what makes this graph comparable to one a person would build by hand.
 			"clip_name1": f.ClipG, "clip_name2": f.ClipL, "clip_name3": f.T5xxl}},
-		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": p.Prompt, "clip": comfyLink("clip", 0)}},
-		"neg": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
-			"text": comfyNegativePrompt, "clip": comfyLink("clip", 0)}},
-		"lat": {ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
-			"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}},
-		"ks": {ClassType: "KSampler", Inputs: map[string]any{
-			"seed": p.Seed, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "sgm_uniform", "denoise": 1,
-			"model": comfyLink("ckpt", 0), "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
-			"latent_image": comfyLink("lat", 0)}},
-		"dec": {ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}},
-		"save": {ClassType: "SaveImage", Inputs: map[string]any{
-			"filename_prefix": "af-sd35", "images": comfyLink("dec", 0)}},
 	}
+	// The MODEL comes from the checkpoint and the CLIP from TripleCLIPLoader — this is the one
+	// family where the two halves LoraLoader wants come from different nodes.
+	model, clip := comfyApplyLoras(g, p.Loras, comfyLink("ckpt", 0), comfyLink("clip", 0))
+	g["pos"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": p.Prompt, "clip": clip}}
+	g["neg"] = comfyNode{ClassType: "CLIPTextEncode", Inputs: map[string]any{
+		"text": comfyNegativePrompt, "clip": clip}}
+	g["lat"] = comfyNode{ClassType: "EmptySD3LatentImage", Inputs: map[string]any{
+		"width": p.Width, "height": p.Height, "batch_size": p.BatchSize}}
+	g["ks"] = comfyNode{ClassType: "KSampler", Inputs: map[string]any{
+		"seed": p.Seed, "steps": 28, "cfg": 4.5, "sampler_name": "dpmpp_2m", "scheduler": "sgm_uniform", "denoise": 1,
+		"model": model, "positive": comfyLink("pos", 0), "negative": comfyLink("neg", 0),
+		"latent_image": comfyLink("lat", 0)}}
+	g["dec"] = comfyNode{ClassType: "VAEDecode", Inputs: map[string]any{"samples": comfyLink("ks", 0), "vae": comfyLink("ckpt", 2)}}
+	g["save"] = comfyNode{ClassType: "SaveImage", Inputs: map[string]any{
+		"filename_prefix": "af-sd35", "images": comfyLink("dec", 0)}}
 	return g, nil
 }

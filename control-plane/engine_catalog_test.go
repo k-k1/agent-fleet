@@ -151,53 +151,6 @@ func TestBuildEngineActiveSet(t *testing.T) {
 	}
 }
 
-// The seed is what makes an upgrade from ADR 0071 a no-op: the deployment comes up serving
-// what it served before, from the stack's own parameters, and never again.
-func TestSeedEngineCatalog(t *testing.T) {
-	ctx := context.Background()
-	st := catalogStore(t)
-	d := engineDef{
-		Key: "image", API: engineAPIImages, Provider: "sdcpp",
-		Models: []string{"sdxl-base-1.0"}, ModelS3Key: "image/checkpoints/sd_xl_base_1.0.safetensors",
-	}
-	if err := seedEngineCatalog(ctx, st, d); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-	rows, err := st.ListEngineModels(ctx, "image")
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("rows = %v %+v", err, rows)
-	}
-	m := rows[0]
-	if m.ID != "sdxl-base-1.0" || !m.Enabled || !m.Selected || m.Kind != "checkpoint" {
-		t.Fatalf("seeded row = %+v", m)
-	}
-	if len(m.Files) != 1 || m.Files[0].S3Key != "image/checkpoints/sd_xl_base_1.0.safetensors" {
-		t.Fatalf("seeded files = %+v", m.Files)
-	}
-
-	// Seeding again must NOT undo an administrator's choice. This is the whole point of the
-	// "only when empty" rule: the seed comes from a CloudFormation parameter, and the CP
-	// restarts on every stack update.
-	if _, err := st.SetEngineModelEnabled(ctx, "image", "sdxl-base-1.0", false); err != nil {
-		t.Fatalf("disable: %v", err)
-	}
-	if err := seedEngineCatalog(ctx, st, d); err != nil {
-		t.Fatalf("re-seed: %v", err)
-	}
-	rows, _ = st.ListEngineModels(ctx, "image")
-	if len(rows) != 1 || rows[0].Enabled {
-		t.Fatalf("the seed overwrote an administrator's choice: %+v", rows)
-	}
-
-	// A stack that stages no model seeds nothing at all, rather than a row pointing at "".
-	if err := seedEngineCatalog(ctx, st, engineDef{Key: "llm", Models: []string{"m"}}); err != nil {
-		t.Fatalf("empty seed: %v", err)
-	}
-	if rows, _ := st.ListEngineModels(ctx, "llm"); len(rows) != 0 {
-		t.Fatalf("a row was seeded with no S3 key: %+v", rows)
-	}
-}
-
 // A database error must never read as "there are no models": that answer stops a running GPU
 // and answers 503 to everybody using it (see the engineCatalog type comment).
 func TestEngineCatalogHasModels(t *testing.T) {

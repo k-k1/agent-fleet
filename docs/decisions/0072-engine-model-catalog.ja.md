@@ -13,6 +13,7 @@
   「P2 の残作業 4・5 を実機で押した」節。3 つとも生成できるようになったが、**SD3.5 は
   テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
   欠落はさらに 6 件（5〜10）。**5 ファミリーすべてがこの配備の GPU で provider を通って絵を返した。**
+  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・実機未検証**（「P6 の実装」節）。
   P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -1810,7 +1811,8 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
   取り込みタスクのログに 401 が出ない。**（**2026-09-10 に実機で満たした**——「P5 の実装」節と
   「P5 を実機で押した」節。P5 の他の項目は未着手のまま。）
-- **P6 — seed と残り 4 パラメータの撤去**（2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
+- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機未検証（補遺「P6 の実装」）。**
+  （2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
   追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
   `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
   エンジン表の `models` / `contextTokens`。
@@ -2457,3 +2459,167 @@ tenant_admin は次の要求で落ちる）。許可を取り消したら次の�
 モード・クラス・インスタンスの状態を落とした縮小版が要り、それは同じ回でやるには広すぎる。
 super_admin 側の運用（許可の付与と、その結果の受諾記録の閲覧）は今回で閉じている。
 実機検証も残っている（この節の変更は配備を触っていない）。
+
+## P6 の実装——seed と 6 パラメータを撤去した（2026-09-10）
+
+上の追記節が挙げた撤去を実装した。**実機未検証。**
+
+1. **テンプレート。** `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` /
+   `LlmMaxOutputTokens` / `ImageModelS3Key` / `ImageModelIds` を消し、`HasLlmModel` /
+   `HasImageModel` を `<役>Enabled = "true"` の 1 条件にした。エンジン表からは `models` /
+   `contextTokens` / `maxOutputTokens` / `modelS3Key` の 4 欄が消えた。`*ExtraArgs` は残した。
+   **50,997 → 49,298 バイト**（1,699 空き、壁まで 1,902）。**空いた分は使っていない**——P2 の
+   残り（族ごとの image-to-image グラフ）と ADR 0074 の梯子の取り分である。
+
+2. 🔴 **罠への手当ては 3 か所で、ノートだけでは足りなかった。**
+   - アップグレードノートは `cfn/PARAMETERS-60-engines.md` の「Upgrading: the model parameters
+     are gone」（0.18.0 で `*ModelFile` を消したときと同じ場所）。`<役>ModelS3Key` だけを
+     書いていた配備は**先に `<役>Enabled=true` を足せ**と書いた。
+   - `standup.sh` は `af_param_drop` で 6 つを落とす**前に**、捕捉に `<役>ModelS3Key` があって
+     `<役>Enabled` が空なら `<役>Enabled=true` へ翻訳する。落とすだけでは、ノートを読まなかった
+     配備で役が黙って消える——`deploy` が「そんなパラメータは無い」と拒否して止まるのではなく、
+     ふつうの更新として**成功して**サービスが消える。
+   - 同じ翻訳を **sd-server イメージの `crane copy` 側でも読む**（standup の前半）。ここだけ
+     `ImageEnabled` を素直に読むと、役は作られるのに ECR が空で `CannotPullContainerError`。
+   `update.sh` と手打ちの `cloudformation deploy` はパラメータを渡さないので翻訳のしようがない。
+   ノートが要るのはそのためである。
+
+3. **Control Plane。** `seedEngineCatalog` / `engineSeedKind` と `engineDef` の 4 欄を削除した。
+   古いスタックが書いた表は**今も読める**（欄は黙って無視される）——CP はスタックより先に上がる
+   ので、その形は現に生きている。空カタログの挙動（`503 engine_unavailable`、`no_model`、
+   `TestDecideEngineAction` の固定）は変えていない。
+
+4. **手登録フォームのライセンス欄は、このレーンが着手する前に閉じていた**（同日の commit
+   `2a998f11`）。フォームは `license_name` / `license_url` を送り、CP が商用可否をそこから読む。
+   追記節が挙げた副産物は済みである。
+
+5. **検証。** control-plane と workspace/agent の Go テスト、Console のテスト、
+   `deploy/local/ecs-lifecycle-stub-test.sh`（3b-2 のサイズ検査を含む）、`cfn-ascii-test.sh`、
+   `engine-sidecar-test.sh`、`check-cfn-exports.py`。stub テストに pre-P6 の捕捉を通す場合を
+   足し、(a) 撤去したキーが `deploy` に渡らないこと、(b) `<役>Enabled=true` が渡ることを見る。
+   翻訳を外す陽性対照で、この検査が実際に落ちることを確かめた。
+
+**実機で確かめること（完了の定義）。** モデル系パラメータを 1 つも書かずに `LlmEnabled=true`
+だけで配備し、その役のサービスが安定すること。空のカタログへ Console からモデルを登録し、
+エンジンがそれで起動すること。加えて移行の側——`<役>ModelS3Key` を持つ捕捉から standup を
+通し、役が消えずに `<役>Enabled=true` へ翻訳されること。
+
+## 追記 — P3 の LoRA、Agent 側の実装（2026-09-10）
+
+**この回で入ったのは Agent 側だけである。** フェーズ節の P3 の完了の定義——「同じ prompt・
+同じ seed で LoRA の有無が絵を変え、SD1.5 の LoRA が SDXL で enum に出ない」——は**まだ
+満たしていない**。前半は実機でしか測れず、この回では GPU を一度も起こしていない。
+
+### 入ったもの
+
+- `generate_image` に `loras: [{name, weight}]`（weight は 0〜2、既定 1、1 要求あたり 4 本まで）。
+  `Caps` に `Loras []{name, description, baseModel}`（決定 5 が R7 で予告していた形そのまま）。
+- 族ごとのテンプレート 5 つすべてに `LoraLoader` の連鎖。要求されなければノードは 1 つも
+  増えないので、LoRA 無しのグラフはゴールデンと 1 バイトも変わらない。
+- baseModel 不一致の拒否を **Agent 側**に置いた（レビュー決定 5）。拒否は 3 種類——名前が
+  カタログに無い／族がチェックポイントと違う／LoRA が族を宣言していない——で、どれも
+  ゲートウェイを通らず、GPU を起こす前に返る。
+- CP → Agent の catalog wire は**既に足りていた**。`loras` は `model_rows` と別の配列で出ており
+  （`engine_gateway.go` の `engineCatalogRowFor`）、各行は `engineCatalogModelRow` を通るので
+  `base_model`・`description`・`files` を持つ。CP には 1 行も足していない。落ちないことを
+  試験で固定した（`TestEngineCatalogRowSeparatesLorasFromCheckpoints`）。
+- LoRA が `model` の enum に出ないことも、同じ分離の裏返しとして固定した。CP が LoRA 行を
+  `models` にも `model_rows` にも入れないので、Agent の `engineImageModelIDs` は構造上それを
+  見ない。
+
+### 決定 5 の 2 つの規則が、ここで衝突して見える
+
+フェーズ節の完了の定義は「SD1.5 の LoRA が SDXL で **enum に出ない**」だが、決定 5 の改訂は
+「**enum は他の引数に依存できない**ので、`loras` の enum は有効な LoRA 全部で、説明に各 LoRA の
+`baseModel` を書き、組み合わせの検査は Agent がする」と書いている。両立しない。
+
+**後者を採った。** ツールのスキーマは tools/list の時点で作られ、そこには `model` の値がまだ
+無い。`Caps(model)` は (provider, model) 毎なので技術的には絞れるが、絞ると
+「**いま温まっているモデルに合う LoRA しか見えない**」になり、呼び出し側が名指しできる
+別のチェックポイント用の LoRA が黙って消える。決定 5 が禁じているのはまさにこれである。
+
+なので `loras` の enum は有効な LoRA 全部、説明の各行が `watercolor-v2（sdxl 用）— …` の形で
+族を名乗り、合わない組は組み立ての段階で名指しで断る。完了の定義の後半は「enum から消す」
+ではなく「**合わない組は絵にならず、理由が返る**」として満たす。
+
+### 実機に残したこと（この回では触っていない）
+
+- **同じ prompt・同じ seed で LoRA の有無が絵を変える**——P3 の完了の定義の本体。実機のみ。
+  🔴 ここが特に危ないのは、残作業 5 の教訓がそのまま当てはまるからである: **ゴールデンは
+  「誰も走らせたことの無いグラフの形」を固定しているだけ**で、正しさの証明ではない。
+  SD3.5 はそれで落ちた。今回は同じ轍を避けるために、`LoraLoader` のノード定義を ComfyUI
+  v0.34.0 の上流ソースから読んで突き合わせた（`nodes.py`: 必須入力は
+  `model`・`clip`・`lora_name`・`strength_model`・`strength_clip`、返りは MODEL と CLIP）。
+  それでも「走らせた」ことにはならない。
+- 🔴 **`lora_name` は `<models>/loras` の再帰列挙で、各要素はそのディレクトリからの相対パス**
+  （`folder_paths.py` の `recursive_search`）。箱は `/ComfyUI/models` を `/models/image` に
+  張っている（`60-engines.yaml`）ので、`image/loras/x.safetensors` は `x.safetensors` として
+  出る——Agent が渡している basename と一致する。**ただし 1 段でも深い鍵は
+  `sub/x.safetensors` として出るので、basename では `Value not in list` になる**。
+  LoRA は `image/loras/` に平置きする、が前提である。
+- **サイドカーの同期は既に通っている**（この回の確認、コード変更なし）。`60-engines.yaml` の
+  fetch サイドカーは `.loras[]?` を `keys.start` に入れており、active set 側も
+  `buildEngineActiveSet` が有効な LoRA を S3 鍵の裸配列として積んでいる。つまり
+  **「LoRA が箱に降りない」という穴は無い**。降りた後に ComfyUI が列挙できるかだけが未検証。
+- **llm 側の preset 固定 LoRA と仮想モデル id**（決定 5 の後半）は手つかず。
+- sd-server の `<sd_cpp_extra_args>` 経路も手つかず（`ImageEngine=sdcpp` の配備が要るときだけ、
+  未解決 2 を測ってから、という本文の条件のまま）。
+
+### ついでに直した——欠落 9
+
+`/history` の 503 を待って再試行するようにした（同じ回の別コミット）。あわせて、待っても
+取り戻せない状態を 1 つ足している: 再起動した ComfyUI は前のプロセスが受け付けた prompt id の
+history を持たないので、一度 `engine_waking` を見た後に prompt id を含まない 200 が返ったら、
+その場で「キューが失われた」と返す。再試行だけを足すと、**欠落 9 は「retry と言って retry
+しない」から「16 分黙る」に化ける**——ポーリングは 200 を受け取り続け、要求の予算を使い切る
+までどこにも報告しない。
+
+## 追記 — 取り込みフォームを初めて描いた（2026-09-10）
+
+「P2 の残作業 4・5」の末尾が残した **「測っていないこと: Console の取り込みフォームの実描画」**
+を埋めた。**wire は変えていない**。直したのは、描いて初めて見えた 1 件だけである。
+
+**辿り着けなかった理由。** 管理モーダルの位置は React の state であって localStorage ではない
+（`AdminTab` の `rootSection`）。だから「開いた状態」を種として仕込むことはできず、
+**アカウントメニュー →「管理」→ 左レールの「推論エンジン」を実際にクリックする**しか道が無い。
+そこまで分かれば残りは既存の README ハーネスと同じで、`console/scripts/shots/server.mjs` を
+写して `/api/tenants` の `super_admin` を立て、`/api/admin/engines` と `…/ingest`・
+`…/ingest/files`・`…/ingest/resolve`・`…/ingest/search`・`…/hf-token` の fixture を足し、
+`npm run build` の実バンドルを headless Chromium（生 CDP）に描かせた。**ハーネスはリポジトリに
+入れていない**——`~/.cache` の使い捨てである。
+
+**初めて見えたもの**（image 役は comfy、llm 役は llama.cpp）:
+
+- 取り込みフォームの一本道が実際に通る: リポジトリ → 「調べる」 → ファイル一覧 → 選択 →
+  resolve → ライセンス同意 → 「取り込む」。id は `flux1-dev-fp8.safetensors` から `flux1-dev`
+  が提案され、量子化タグは落ちている。
+- **決定 2 のヒントが意図どおり出る。** `resolve` が返した `Flux.1 D` は**ピッカーに入らず**、
+  「リポジトリ側はこれを『Flux.1 D』と呼んでいます」として横に出る。ファミリーの選択肢は
+  `base_models`（`sdxl` / `flux1` / `flux2` / …）で、綴りは CP のものである。
+- **決定 3 の対も実バンドルで成立する。** llm 役で `context_length: 262144` を返すと、
+  コンテキストは 262144 で埋まり、出力上限の select は「1/8（32768）」を選んだ状態になる。
+  片方だけが埋まる状態は作れない。
+- 登録フォームの分割モデル: `file_flags` が「役割」の select になり、ファイルごとに箱が立つ。
+- 非商用ライセンスの赤い一文と、ファミリー未宣言の行に出る修復用 select。
+
+**直した 1 件（描かなければ出なかった）。** フォームのラベル列は `8ch` 固定で、12px では
+**61px**。実測すると **「コンテキストウィンドウ」と "licence URL (optional)" が 3 行に折れる**。
+`align-items: center` なので、ラベルより低い入力欄がラベルの真ん中に浮き、フォームが段違いに
+なる。CSS 自身が「2 行に折れる」と書いていた予算を超えていた。**`10ch`（76px）に広げた**——
+ja / en × image / llm の 4 通りで測って、どのラベルも 2 行以内、はみ出しゼロ。
+
+**ハーネスが出した偽の欠陥 3 件**（どれも「画面が悪い」に見えた）:
+
+- **出力上限が空のまま**に見えた。原因はハーネスで、2 番目の `<select>` を**添字で**掴んで
+  いた——llm 役にはファミリーの select が無いので、それは出力上限だった。存在しない値を入れる
+  と `selectedIndex = -1` になり、`change` が空文字を書き戻す。**ラベルで掴んだら正しく
+  埋まった。** 添字で DOM を掴むハーネスは、役ごとに欄が違う画面では嘘をつく。
+- **切り抜き画像の左端に別の場所の文字が写り込む。** `Page.captureScreenshot` の `clip` の
+  産物である。DOM の矩形（`getBoundingClientRect`）ではそこに要素が無く、同じ場所を狭く
+  切り抜き直すと何も無い。**見えた汚れは、必ず矩形か切り抜き直しで確かめる。**
+- **🔴 が豆腐（□）になる。** このコンテナに絵文字フォントが 1 つも無いだけで
+  （`fc-match 🔴` が DejaVu Sans に落ちる）、利用者のブラウザの話ではない。**ヘッドレスは
+  フォントについては何も証明しない。**
+
+**まだ言えないこと**: 実際の Hugging Face / Civitai の応答での見え方（fixture は wire の形に
+合わせた作り物である）、gated リポジトリでトークンが無いときの拒否表示、そして phone 幅。

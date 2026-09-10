@@ -688,7 +688,8 @@ drain (150 s) + quota wait (up to ~6 min) + cold start.
   setting before applying, so a failure still leaves the choice stored, and the Console — seeing
   no change — sends nothing. Recovery is to pick another rung and come back. The order is
   deliberate (so the panel can say the apply failed), so the fix belongs in the Console: a
-  retry affordance.
+  retry affordance. → ✅ **Fixed the same day** (see "Follow-up — retrying a rung whose apply
+  failed" below).
 - **A ladder's `usdPerHour` taken from list price reads cheaper than the bill** (open question 3).
 
 ## Follow-up (2026-09-10, same day, $0 of GPU)
@@ -791,3 +792,44 @@ is one sentence on the panel saying that a comfy engine may hold more than one.
   - **The first rung must restate what the stack already buys** (`<Role>AllowedInstanceTypes`,
     `AcceleratorMemMinMiB`, `VCpu*`, `Mem*`): it is what "back to the default" returns to, and
     nothing checks that the two agree.
+
+## Follow-up — retrying a rung whose apply failed (2026-09-10)
+
+The first item under "Known and deliberately not fixed" is fixed. **The CP's order is
+unchanged** — storing the choice before applying it is exactly what lets the panel say the apply
+failed. What was added is the one field needed so a failure is not carried silently, plus the
+retry affordance in the Console.
+
+**Why re-picking is not a retry.** Because the save comes first, the GET
+`/api/admin/engines` right after a failure already carries the new rung as `class`. The panel's
+`<select>` shows the stored rung, and picking it again fires no `change` event — so there is
+**exactly one request the UI cannot send**: "the rung already on screen, once more". Recovery
+meant moving to another rung and back, and that detour **writes a rung nobody wanted** to the
+capacity provider on the way.
+
+What was added:
+
+- `engineRuntimeState.classApplyErr` (`engines.go`), recorded at both exits of `applyClass`
+  (`engine_class.go`): set on failure, cleared on success. **In this process's memory only**, for
+  the same reason `appliedClass` is, and **its absence reads as "no claim", never as "applied"** —
+  a restarted CP must not assert a failure it did not see. What makes that gap safe is that the
+  rung is applied again before every start (decision 5).
+- `class_apply_error` in the answer (`row`, `engine_admin.go`), present only on a deployment with
+  a ladder and only when there is something to report.
+- Console: after a refused `PUT …/class`, **re-read the row**. Without that the picker snaps back
+  to the old rung although the choice is already stored, so the screen agrees with neither the CP
+  nor the provider. Then, only where `class_apply_error` is set, offer "apply it again", which
+  **re-sends the rung already selected**.
+
+Pinned by tests:
+
+- Go: `TestPutClassSaysWhyTheApplyFailedAndARetryClearsIt` — a process that has applied nothing
+  says nothing; a failure puts the provider's own words in `class_apply_error`; **re-sending the
+  same rung** clears it and writes to `UpdateCapacityProvider` a second time. Positive control:
+  deleting the one line in `row` fails it (checked).
+- dom: the retry appears where the CP reports a failed apply and nowhere else. Positive control:
+  removing either the panel block or the `await load()` fails it (both checked).
+
+**Verified by rendering it** (headless Chromium, the real bundle): the red sentence carries the
+provider's words, and "apply it again" stands on its own line above the existing "replace it
+now" — a different act, so it is not put beside it.

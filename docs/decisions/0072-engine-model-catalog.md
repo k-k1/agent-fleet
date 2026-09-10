@@ -18,7 +18,9 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   pushed through on hardware the same day ("P2's remaining work 4 and 5, on hardware"): ALL FIVE
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
-  Six further gaps (5 to 10) are recorded there. P3 and the rest of P5 are not started.**
+  Six further gaps (5 to 10) are recorded there. **P6 (retiring the seed and six parameters)
+  is implemented as of 2026-09-10 and not verified on hardware** ("P6 implementation").
+  P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -1981,7 +1983,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   registered in the Console, a gated repository is taken in without CloudFormation being
   touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
   "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
-- **P6 — retiring the seed and the four remaining parameters** (added 2026-09-10; the reasoning,
+- **P6 — retiring the seed and the four remaining parameters. Implemented, not verified on
+  hardware ("P6 implementation").** (Added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
   `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
@@ -2685,3 +2688,183 @@ through the API but has no screen**: opening the panel to a non-super caller nee
 with the mode, the class and the instance's state taken out, which is wider than this pass. The
 operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
 verification is also outstanding (nothing here touched a deployment).
+
+## P6 implementation — the seed and six parameters are gone (2026-09-10)
+
+The removal the follow-up section above called for, implemented. **Not verified on hardware.**
+
+1. **The template.** `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` /
+   `LlmMaxOutputTokens` / `ImageModelS3Key` / `ImageModelIds` are gone, and `HasLlmModel` /
+   `HasImageModel` are now the single test `<Role>Enabled = "true"`. Four fields left the engine
+   table with them (`models`, `contextTokens`, `maxOutputTokens`, `modelS3Key`). `*ExtraArgs`
+   stays. **50,997 → 49,298 bytes** (1,699 freed, 1,902 short of the wall). **The room is left
+   unspent** — it belongs to P2's remaining work (per-family image-to-image graphs) and ADR
+   0074's ladder.
+
+2. 🔴 **The trap needed three answers, not just a note.**
+   - The upgrade note is in `cfn/PARAMETERS-60-engines.md`, "Upgrading: the model parameters are
+     gone" — the same place 0.18.0's `*ModelFile` removal was written up. It tells a deployment
+     that set only `<Role>ModelS3Key` to **add `<Role>Enabled=true` first**.
+   - `standup.sh` translates BEFORE it drops: a captured `<Role>ModelS3Key` with an empty
+     `<Role>Enabled` becomes `<Role>Enabled=true`, and only then does `af_param_drop` remove the
+     six. Dropping alone would delete the role on any deployment that did not read the note — not
+     by refusing the deploy ("Parameters: [X] do not exist"), but by **succeeding** as an ordinary
+     stack update with the service gone.
+   - The sd-server `crane copy` reads it the same way (earlier in the same script). Read plain
+     `ImageEnabled` there and the role is created while its ECR repository is empty:
+     `CannotPullContainerError`, with CloudFormation blocked on stabilisation.
+   `update.sh` and a hand-run `cloudformation deploy` pass no parameters at all, so nothing can
+   translate for them. That is what the note is for.
+
+3. **The Control Plane.** `seedEngineCatalog` / `engineSeedKind` and `engineDef`'s four fields
+   are deleted. A table written by an older stack **still parses** (the fields are ignored) —
+   the CP is upgraded before the stack is, so that shape is live. The empty-catalogue behaviour
+   (`503 engine_unavailable`, `no_model`, `TestDecideEngineAction`'s fixture) is unchanged.
+
+4. **The hand-registration form's licence fields were already closed** before this work started
+   (commit `2a998f11`, the same day): the form sends `license_name` / `license_url` and the CP
+   derives the commercial-use verdict from them. The by-product the follow-up asked for is done.
+
+5. **Verification.** The Go suites in control-plane and workspace/agent, the Console tests,
+   `deploy/local/ecs-lifecycle-stub-test.sh` (including 3b-2's size check), `cfn-ascii-test.sh`,
+   `engine-sidecar-test.sh` and `check-cfn-exports.py`. The stub test gained a case that runs a
+   pre-P6 capture through stand-up and checks (a) that no retired key reaches `deploy` and (b)
+   that `<Role>Enabled=true` does. A positive control that removes the translation shows the
+   check actually fails.
+
+**What hardware has to confirm (the definition of done).** A deployment made with
+`LlmEnabled=true` and not one model parameter comes up and its role's service stabilises; a model
+registered from the Console into an empty catalogue starts the engine. And the migration side —
+a stand-up from a capture holding `<Role>ModelS3Key` keeps the role and translates it into
+`<Role>Enabled=true`.
+
+## Follow-up — phase P3's LoRAs, the Agent's half (2026-09-10)
+
+**Only the Agent's half landed in this pass.** P3's completion definition in the Phases section
+— "the same prompt and the same seed produce a different picture with the LoRA than without, and
+an SD1.5 LoRA does not appear in SDXL's enum" — is **not met**. The first half can only be
+measured on hardware, and no GPU was woken here.
+
+### What landed
+
+- `loras: [{name, weight}]` on `generate_image` (weight 0-2, 1 when unstated, at most four per
+  request), and `Loras []{name, description, baseModel}` on `Caps` — exactly the shape decision 5
+  predicted in R7.
+- A `LoraLoader` chain in all five family templates. Nothing is added when nothing is asked for,
+  so a graph without LoRAs is byte-for-byte the one the golden fixtures already pin.
+- The base-model refusal, placed in the **Agent** (レビュー決定 5). Three refusals — a name the
+  catalogue does not hold, a family that differs from the checkpoint's, and a LoRA that declares
+  no family at all — and none of them reaches the gateway or wakes a GPU.
+- The Control Plane's catalogue wire **already carried everything**: `loras` is its own array
+  next to `model_rows` (`engineCatalogRowFor` in `engine_gateway.go`), and each row goes through
+  `engineCatalogModelRow`, so it has `base_model`, `description` and `files`. Not one line was
+  added to the CP; a test pins that none of it is dropped
+  (`TestEngineCatalogRowSeparatesLorasFromCheckpoints`).
+- The other side of the same separation — a LoRA never reaching `model`'s enum — is pinned too.
+  The CP puts a LoRA row in neither `models` nor `model_rows`, so the Agent's
+  `engineImageModelIDs` cannot see one by construction.
+
+### Where decision 5's two rules appear to collide
+
+The Phases section's completion definition says an SD1.5 LoRA **must not appear in SDXL's enum**,
+while decision 5's revision says that **an enum cannot depend on another argument**, so `loras`
+enumerates every enabled LoRA, each description states its `baseModel`, and the Agent checks the
+combination. The two cannot both hold.
+
+**The latter was taken.** A tool schema is built at tools/list, where no `model` value exists yet.
+`Caps(model)` is per (provider, model) and could technically narrow the list, but narrowing it
+means **only the LoRAs that fit whatever is warm are visible**, and a LoRA for another checkpoint
+the caller may perfectly well name disappears without a word. That is precisely what decision 5
+forbids.
+
+So the enum is every enabled LoRA, each line names its family (`watercolor-v2（sdxl 用）— …`), and
+a pairing that cannot work is refused by name while the request is assembled. The second half of
+the completion definition is met as "**a mismatched pair produces no picture and an explanation**"
+rather than as "it is missing from the enum".
+
+### Left for hardware (untouched here)
+
+- **The same prompt and seed producing a different picture with the LoRA than without** — the
+  body of P3's completion definition. Hardware only.
+  🔴 This is the dangerous one, because 残作業 5's lesson applies unchanged: **a golden fixture
+  pins the shape of a graph nobody has run**, which is not a proof of correctness. SD3.5 failed
+  exactly there. To avoid the same rut, `LoraLoader`'s node definition was read off ComfyUI
+  v0.34.0's own source (`nodes.py`: required inputs `model`, `clip`, `lora_name`,
+  `strength_model`, `strength_clip`; returns MODEL and CLIP). That still is not "it ran".
+- 🔴 **`lora_name` enumerates `<models>/loras` RECURSIVELY, each entry a path relative to that
+  directory** (`recursive_search` in `folder_paths.py`). The box links `/ComfyUI/models` to
+  `/models/image` (`60-engines.yaml`), so `image/loras/x.safetensors` is listed as
+  `x.safetensors` — which is the basename the Agent sends. **A key nested one level deeper is
+  listed as `sub/x.safetensors` and a basename would be rejected as `Value not in list`.** LoRAs
+  landing flat under `image/loras/` is the premise.
+- **The sidecar sync already works** (verified in this pass, no code changed). The fetch sidecar
+  in `60-engines.yaml` puts `.loras[]?` into `keys.start`, and `buildEngineActiveSet` publishes
+  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the box" gap**; what
+  is unverified is only whether ComfyUI enumerates them once they are there.
+- **The llm role's preset-pinned LoRAs and virtual model ids** (decision 5's second half) are
+  untouched.
+- So is sd-server's `<sd_cpp_extra_args>` route, on the body's own condition: only when an
+  `ImageEngine=sdcpp` deployment needs it, and only after open question 2 is measured.
+
+### Fixed alongside — 欠落 9
+
+`/history`'s 503 is now waited out and retried (a separate commit in the same pass). One state a
+retry cannot recover was added with it: a restarted ComfyUI holds no history for a prompt id the
+previous process accepted, so once `engine_waking` has been seen, a 200 that does not carry this
+prompt is reported at once as a lost queue. Adding the retry alone would have turned 欠落 9 from
+"says retry and does not retry" into **"stays silent for sixteen minutes"** — the poll would keep
+receiving 200s and report nothing until the request's whole budget ran out.
+
+## Follow-up — the ingest form was rendered for the first time (2026-09-10)
+
+This closes the last line of "P2's remaining work 4 and 5": **"not measured: what the Console's
+ingest form actually renders as"**. **The wire is unchanged.** One defect was found by looking,
+and only that was fixed.
+
+**Why it could not be reached before.** The admin modal's position is React state, not
+localStorage (`rootSection` in `AdminTab`), so "already open" cannot be seeded — the only road is
+to actually click **account menu → Admin → "Inference engines" in the left rail**. With that
+known the rest is the existing README harness: copy `console/scripts/shots/server.mjs`, set
+`super_admin` on `/api/tenants`, add fixtures for `/api/admin/engines` and `…/ingest`,
+`…/ingest/files`, `…/ingest/resolve`, `…/ingest/search` and `…/hf-token`, and let headless
+Chromium (raw CDP) draw the **real `npm run build` bundle**. **The harness is not in the
+repository** — it is a throwaway under `~/.cache`.
+
+**Seen for the first time** (the image role on comfy, the llm role on llama.cpp):
+
+- The ingest road runs end to end: repository → "look it up" → the file listing → a pick →
+  resolve → accepting the licence → "ingest". The id is proposed as `flux1-dev` from
+  `flux1-dev-fp8.safetensors`, with the quantisation tag dropped.
+- **Decision 2's hint behaves as designed.** The `Flux.1 D` that `resolve` returned does **not**
+  go into the picker; it rides beside it as "the repository calls this 'Flux.1 D'". The picker's
+  options are `base_models` (`sdxl` / `flux1` / `flux2` / …), i.e. the CP's spelling.
+- **Decision 3's pair holds on the real bundle.** With `context_length: 262144` from the llm
+  role's resolve, the window fills with 262144 and the output-cap select lands on "1/8 (32768)".
+  Half-filling the pair is not reachable.
+- The register form's split model: `file_flags` becomes the "part" select, one box per file.
+- The red non-commercial sentence, and the repair select on a row with no family.
+
+**The one defect, and it needed a render.** The forms' label column is a fixed `8ch`, which at
+12px is **61px**. Measured, **「コンテキストウィンドウ」 and "licence URL (optional)" each wrap
+to THREE lines**; with `align-items: center` the shorter input then floats halfway down a label
+taller than itself and the form goes ragged. That is over the budget the CSS itself states ("wraps
+to two lines"). **Widened to `10ch` (76px)** — measured across ja/en × image/llm: every label
+fits in two lines, nothing overflows.
+
+**Three false defects the harness itself produced** (each looked like a broken screen):
+
+- **The output cap looked stuck at empty.** The harness's fault: it grabbed the second `<select>`
+  **by index**, and the llm role has no family picker, so that was the output cap. Setting a value
+  no option carries leaves `selectedIndex = -1`, and the `change` handler writes the empty string
+  back. **Grabbed by label, it fills correctly.** A harness that addresses the DOM by index lies
+  on a screen whose fields differ per role.
+- **A clipped screenshot painted a glyph from elsewhere at the clip's left edge.** An artifact of
+  `Page.captureScreenshot`'s `clip`: `getBoundingClientRect` puts no element there, and a tighter
+  re-capture of the same region is empty. **A smudge is settled by a rectangle or a re-capture,
+  never by eye.**
+- **🔴 rendered as tofu.** This container ships no emoji font at all (`fc-match 🔴` falls to
+  DejaVu Sans); it says nothing about a user's browser. **Headless proves nothing about fonts.**
+
+**Still not said**: how it reads against real Hugging Face / Civitai answers (the fixtures are
+invented to the wire's shape), the refusal shown for a gated repository with no token, and phone
+width.

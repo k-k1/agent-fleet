@@ -565,6 +565,61 @@ func TestPutClassStoresAndApplies(t *testing.T) {
 	}
 }
 
+// 🔴 A failed apply has to leave the panel able to try again.
+//
+// putClass stores the choice BEFORE it applies it, on purpose — that is what lets the screen say
+// the card was not applied. The price is that a failed apply leaves the stored rung already
+// changed: the picker then shows the rung the capacity provider does NOT hold, and selecting it
+// again is "no change", so the Console sends nothing and the only recovery is a detour through
+// another rung (ADR 0074, 直さなかったが分かっていること). `class_apply_error` is what makes the
+// retry reachable, and a retry is the same rung a second time.
+func TestPutClassSaysWhyTheApplyFailedAndARetryClearsIt(t *testing.T) {
+	st := testSettingsStore(t)
+	f := &fakeCapacityAPI{provider: testCapacityProvider("af-eng-image")}
+	e := newClassTestEngine(t, &engineTestECS{}, f,
+		"l4|L4|21000|g6.xlarge|4-8|15000-65536;l40s|L40S 48GB|44000|g6e.xlarge|4-8|30000-65536", st)
+	a := classAdminAPI(t, e, st)
+
+	// A process that has not tried claims nothing. The field is in memory, so a restarted CP
+	// reporting a failure it never saw would be worse than reporting none.
+	if _, said := a.row(t.Context(), e)["class_apply_error"]; said {
+		t.Fatalf("class_apply_error present before anything was applied: %v", a.row(t.Context(), e))
+	}
+
+	f.updErr = fmt.Errorf("AccessDeniedException: not authorized to perform ecs:UpdateCapacityProvider")
+	if code, _ := putClass(t, a, `{"class":"l40s"}`); code != http.StatusBadGateway {
+		t.Fatalf("put with a refusing capacity provider = %d, want 502", code)
+	}
+	if v, _ := st.GetSetting(t.Context(), engineClassSettingKey("image")); v != "l40s" {
+		t.Fatalf("stored class = %q — the save comes first, and that is the state the retry exists for", v)
+	}
+	row := a.row(t.Context(), e)
+	msg, _ := row["class_apply_error"].(string)
+	if !strings.Contains(msg, "ecs:UpdateCapacityProvider") {
+		t.Fatalf("class_apply_error = %q, want the provider's own words", msg)
+	}
+	// The picker shows the SAVED rung, which is precisely why "pick it again" cannot be the
+	// retry: the client sees no change to send.
+	if cls, _ := row["class"].(map[string]any); cls == nil || cls["id"] != "l40s" {
+		t.Fatalf("class in the row = %v, want the stored l40s", row["class"])
+	}
+
+	f.updErr = nil
+	code, out := putClass(t, a, `{"class":"l40s"}`)
+	if code != http.StatusOK {
+		t.Fatalf("retry of the same rung = %d (%v), want the apply to run again", code, out)
+	}
+	if _, said := out["class_apply_error"]; said {
+		t.Errorf("the answer to a successful retry still carries class_apply_error: %v", out)
+	}
+	if _, said := a.row(t.Context(), e)["class_apply_error"]; said {
+		t.Errorf("class_apply_error survived a successful apply")
+	}
+	if len(f.updates) != 2 {
+		t.Errorf("%d capacity provider updates, want the retry to have written one", len(f.updates))
+	}
+}
+
 func TestPutClassIsNotFoundWithoutALadder(t *testing.T) {
 	st := testSettingsStore(t)
 	e := newClassTestEngine(t, &engineTestECS{}, nil, "", st)

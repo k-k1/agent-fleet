@@ -1042,6 +1042,46 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"**Specify it only when the user asked for a specific look** — otherwise prefer the one marked as already loaded. " +
 				"Available: " + strings.Join(lines, " / ")}
 	}
+	// loras is offered as soon as ONE exists, unlike model: applying it or not applying it are
+	// already two different pictures, so a single-entry list is a real choice (ADR 0072
+	// decision 5, phase P3).
+	//
+	// The enum is every LoRA, not the ones that fit the checkpoint, because a tool schema is
+	// built here — at tools/list, before `model` is chosen — and an enum cannot depend on
+	// another argument. That is why each line carries the family it was trained for: the caller
+	// pairs them, and the Agent refuses a pairing that cannot work rather than generating a
+	// picture in which the LoRA silently did nothing.
+	if len(offer.Loras) > 0 {
+		enum := make([]string, 0, len(offer.Loras))
+		var lines []string
+		for _, l := range offer.Loras {
+			enum = append(enum, l.Name)
+			line := l.Name
+			if l.BaseModel != "" {
+				line += "（" + l.BaseModel + " 用）"
+			}
+			if l.Description != "" {
+				line += " — " + l.Description
+			}
+			lines = append(lines, line)
+		}
+		props["loras"] = map[string]any{
+			// The cap is a literal for the same reason the op names are: this package cannot
+			// import internal/imagegen, where comfyMaxLoras enforces it for real. This one only
+			// saves a caller the round trip.
+			"type": "array", "maxItems": 4,
+			"items": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name":   map[string]any{"type": "string", "enum": enum},
+					"weight": map[string]any{"type": "number", "minimum": 0, "maximum": 2, "description": "How strongly to apply it, 0-2 (1 when omitted)"},
+				},
+				"required": []string{"name"},
+			},
+			"description": "Fine-tunes to apply on top of the checkpoint, in order. **Leave it unset unless the user asked for that look** — each one is a style, not an improvement. " +
+				"A LoRA only works on the checkpoint family it was trained for; asking for a mismatched pair is refused by name, so pick one whose family matches the model you chose. " +
+				"Available: " + strings.Join(lines, " / ")}
+	}
 	return []map[string]any{
 		{
 			"name": "generate_image",
@@ -1126,6 +1166,9 @@ type imageGenOffer struct {
 	// is still the right SHAPE: a session offered two model-bearing providers must not have one
 	// silently hidden.
 	Models []mcpImageGenModel
+	// Loras is the union of every offered provider's fine-tunes (ADR 0072 decision 5, phase P3),
+	// by the same reasoning as Models.
+	Loras []mcpImageGenLora
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1172,6 +1215,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 		ready = []mcpImageGenProvider{{ID: st.Provider, Service: st.Service, Model: st.Model, Ops: st.Ops, AspectRatios: st.AspectRatios}}
 	}
 	seenOp, seenRatio, seenModel := map[string]bool{}, map[string]bool{}, map[string]bool{}
+	seenLora := map[string]bool{}
 	offer.Services = map[string]string{}
 	for _, p := range ready {
 		if p.Service != "" {
@@ -1200,6 +1244,12 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 			if !seenModel[m.ID] {
 				seenModel[m.ID] = true
 				offer.Models = append(offer.Models, m)
+			}
+		}
+		for _, l := range p.Loras {
+			if l.Name != "" && !seenLora[l.Name] {
+				seenLora[l.Name] = true
+				offer.Loras = append(offer.Loras, l)
 			}
 		}
 	}
@@ -2029,6 +2079,10 @@ func mcpStdioCall(req mcpReq) []byte {
 		Count       int      `json:"count"`
 		Inputs      []string `json:"inputs"`
 		Mask        string   `json:"mask"`
+		// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
+		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
+		// BY NAME, which is a better answer than a silently shortened list.
+		Loras []imageGenLoraArg `json:"loras"`
 	}
 	_ = json.Unmarshal(p.Args, &a)
 
@@ -2059,7 +2113,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
-			inputs: a.Inputs, mask: a.Mask, model: a.Model,
+			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has

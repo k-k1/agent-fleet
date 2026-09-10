@@ -488,17 +488,44 @@ func (e *engineRuntimeState) lastAppliedClass() string {
 func (e *engineRuntimeState) noteAppliedClass(id string) {
 	e.appliedMu.Lock()
 	e.appliedClass = id
+	e.classApplyErr = ""
+	e.appliedMu.Unlock()
+}
+
+// classApplyError is why the last attempt to write the rung to the capacity provider failed,
+// "" when the last one succeeded or when this process has not tried.
+//
+// 🔴 The panel needs this because the ORDER in putClass is deliberate: the choice is stored
+// first, so a failed apply leaves the stored rung already changed and the picker showing the
+// rung nobody managed to apply. Selecting it again is then "no change" and the Console sends
+// nothing, which used to leave moving to another rung and back as the only way to retry
+// (ADR 0074, 直さなかったが分かっていること). Stated here, the panel can offer the retry directly.
+func (e *engineRuntimeState) classApplyError() string {
+	e.appliedMu.Lock()
+	defer e.appliedMu.Unlock()
+	return e.classApplyErr
+}
+
+func (e *engineRuntimeState) noteClassApplyError(err error) {
+	e.appliedMu.Lock()
+	e.classApplyErr = err.Error()
 	e.appliedMu.Unlock()
 }
 
 // applyClass writes the selected rung to the capacity provider. Idempotent, and cheap enough to
 // call before every start: ECS API calls are not billed, and re-sending the same requirements
 // buys no box and moves no desired count.
+//
+// Both outcomes are recorded, not just the rung: every caller that could report the failure to
+// somebody goes through here, and a retry has to be able to clear the note it left.
 func (e *engineRuntimeState) applyClass(ctx context.Context, c engineClass) error {
 	if e.capacity == nil {
-		return fmt.Errorf("no ECS client for %s", e.def.Key)
+		err := fmt.Errorf("no ECS client for %s", e.def.Key)
+		e.noteClassApplyError(err)
+		return err
 	}
 	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.def.CapacityProvider, c); err != nil {
+		e.noteClassApplyError(err)
 		return err
 	}
 	e.noteAppliedClass(c.ID)

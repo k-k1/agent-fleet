@@ -409,6 +409,7 @@ func engineImageConn(ctx context.Context, provider string) (imagegen.EngineConn,
 			Files:        engineImageFiles(e),
 			Warm:         engineImageWarm(e),
 			Descriptions: engineImageDescriptions(e),
+			Loras:        engineImageLoras(e),
 		}, true
 	}
 	return imagegen.EngineConn{}, false
@@ -489,6 +490,46 @@ func engineImageFiles(e engineCatalogRow) map[string][]imagegen.EngineFile {
 		if len(files) > 0 {
 			out[m.ID] = files
 		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// engineImageLoras is the enabled LoRAs the catalogue declares for this engine (ADR 0072
+// decision 5, phase P3). They ride a list of their OWN on the wire, next to model_rows rather
+// than in it, because a LoRA is not something an engine can be started with — which is also why
+// they never reach generate_image's `model` enum: engineImageModelIDs reads models/model_rows
+// and the Control Plane puts a LoRA row in neither (control-plane/engine_gateway.go).
+//
+// The name sent to the engine is the file's basename, the same rule engineImageFiles follows:
+// the box mirrors bucket keys onto disk verbatim, and `image/loras/x.safetensors` is what
+// ComfyUI lists as `x.safetensors` under its own models directory. A row with no file is dropped
+// — it could be named and never loaded.
+func engineImageLoras(e engineCatalogRow) []imagegen.EngineLora {
+	out := make([]imagegen.EngineLora, 0, len(e.Loras))
+	for _, m := range e.Loras {
+		if m.ID == "" {
+			continue
+		}
+		name := ""
+		for _, f := range m.Files {
+			if i := strings.LastIndex(f.S3Key, "/"); i >= 0 {
+				name = f.S3Key[i+1:]
+			} else {
+				name = f.S3Key
+			}
+			if name != "" {
+				break
+			}
+		}
+		if name == "" {
+			continue
+		}
+		out = append(out, imagegen.EngineLora{
+			ID: m.ID, File: name, Description: m.Description, BaseModel: m.BaseModel,
+		})
 	}
 	if len(out) == 0 {
 		return nil
