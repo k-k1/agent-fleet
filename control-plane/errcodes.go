@@ -43,7 +43,12 @@ const (
 	// not say it knew that (ADR 0074 decision 6). A REFUSAL TO GUESS, not a refusal: repeating
 	// the call with confirm_vram succeeds, because quantisation and offloading are real and the
 	// panel points rather than decides.
-	errCodeEngineVramConfirm   = "engine_vram_confirm"
+	errCodeEngineVramConfirm = "engine_vram_confirm"
+	// The row's declared family names a workflow that reads files the row does not have (ADR
+	// 0072 P2 欠落 10). Unlike the VRAM one this has no confirm: it is not a risk, it is
+	// `comfyBuildGraph` refusing before it dials anything, so enabling would only put an id in
+	// generate_image's list that every request bounces off.
+	errCodeEngineFilesMissing  = "engine_files_missing"
 	errCodeIngestBadSource     = "bad_source"
 	errCodeIngestFileUnknown   = "file_unknown"
 	errCodeIngestNoChecksum    = "no_checksum"
@@ -54,7 +59,18 @@ const (
 	errCodeIngestUnavailable   = "ingest_unavailable"
 	errCodeIngestNotAccepted   = "license_not_accepted"
 	errCodeIngestGatedNoToken  = "gated_no_token"
-	errCodeIngestIDExists      = "model_id_exists"
+	// The token DID reach the ingest task and Hugging Face still refused (403): that account
+	// has not accepted this repository's terms. Measured on af-sandbox (ADR 0072 P5 実機検証):
+	// one token, FLUX.1-dev through and SD3.5 Medium refused, and accepting on the model page
+	// fixed it. A different act from registering a token, so a different code — the two share
+	// the word "gated" and nothing else.
+	errCodeIngestGatedNotAccepted = "gated_not_accepted"
+	errCodeIngestIDExists         = "model_id_exists"
+	// A Civitai asset whose uploader requires a logged-in account (ADR 0072 P2 欠落 5). The
+	// counterpart of `gated_no_token`, and deliberately not the same code: gating is the
+	// repository's terms and a registered token satisfies them, while this deployment has no
+	// Civitai account at all and no field in which to put one.
+	errCodeIngestCivitaiLogin = "civitai_login_required"
 
 	// Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised). The
 	// write reaches two places — the sealed setting and the stack's secret — and they fail

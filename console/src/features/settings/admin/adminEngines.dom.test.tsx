@@ -25,7 +25,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { EnginesAdminView, engineIdFromFile } from "./adminEngines.tsx";
+import { EnginesAdminView, engineIdFromFile, engineJobAdvice } from "./adminEngines.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -95,6 +95,23 @@ describe("engineIdFromFile", () => {
     );
     expect(engineIdFromFile("Model-BF16.safetensors")).toBe("model");
     expect(engineIdFromFile("vae/diffusion_pytorch_model.safetensors")).toBe("diffusion_pytorch_model");
+  });
+});
+
+// 🔴 The two gated refusals arrive one character apart in the task's log and need opposite
+// screens: 401 = no token reached the ingest task, 403 = one did and that account has not
+// accepted THAT repository (measured on af-sandbox, ADR 0072 P5 実機検証: the same token took
+// FLUX.1-dev in and was refused SD3.5 Medium; accepting on the model page fixed the retry).
+// Both are asserted, because with only one a table with no branch passes.
+describe("engineJobAdvice", () => {
+  it("sends 401 to the token field and 403 to the model page", () => {
+    expect(engineJobAdvice("gated_no_token")).toBe("admin.engines_ingest_job_no_token");
+    expect(engineJobAdvice("gated_not_accepted")).toBe("admin.engines_ingest_job_not_accepted");
+    expect(engineJobAdvice("gated_no_token")).not.toBe(engineJobAdvice("gated_not_accepted"));
+    expect(engineJobAdvice("civitai_login_required")).toBe("admin.engines_ingest_civitai_login");
+    // A job the CP could not classify says nothing extra — the task's own words are still there.
+    expect(engineJobAdvice(undefined)).toBe("");
+    expect(engineJobAdvice("something_else")).toBe("");
   });
 });
 
@@ -1153,6 +1170,43 @@ describe("EnginesAdminView", () => {
     });
   });
 
+  // 🔴 ADR 0072 P2 欠落 10. Declaring a family cleared the only mark this panel had, and the
+  // row still could not generate: `flux1-dev` was one unflagged 22.2 GiB checkpoint and the
+  // flux1 template reads four other files. The row came out of the fix looking healthier.
+  it("keeps saying so when a row's family reads files the row does not have", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl", "flux1"],
+          has_models: true,
+          model_rows: [
+            {
+              id: "flux1-dev",
+              kind: "checkpoint",
+              base_model: "flux1",
+              files_missing: ["--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+            },
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const li = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (n) => n.querySelector(".mono")?.textContent === "flux1-dev",
+    )!;
+    const said = li.querySelector(".form-err")!.textContent!;
+    // The family it has, and every part it still needs — those are what have to be taken in.
+    expect(said).toContain("flux1");
+    expect(said).toContain("--t5xxl");
+    // The row that holds what its family reads says nothing: a mark on every row is no mark.
+    const ok = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (n) => n.querySelector(".mono")?.textContent === "sdxl-base-1.0",
+    )!;
+    expect(ok.querySelector(".form-err")).toBe(null);
+  });
+
   // Half a window is worse than none: opencode reads an output cap of 0 as 32,000, so a 32k
   // context declared alone leaves 768 usable tokens. Both halves or neither.
   it("drops a context declared without an output cap", async () => {
@@ -1485,6 +1539,83 @@ describe("EnginesAdminView", () => {
     expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
   });
 
+  // The advice sits BESIDE the task's own words, never instead of them: `curl: (22) … 403` is
+  // sometimes the only detail there is, and it is what a search of the logs matches on.
+  it("says what to do about a job that failed because the terms were not accepted", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "sd35-medium",
+                state: "failed",
+                source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+                message: "curl: (22) The requested URL returned error: 403",
+                code: "gated_not_accepted",
+              },
+            ],
+          }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    const job = host!.querySelector("ul.engines-ingest-jobs li")!;
+    expect(job.textContent).toContain("error: 403");
+    expect(job.textContent).toContain("条項にまだ同意していません");
+    // Not the token sentence: registering one again fixes nothing here.
+    expect(job.textContent).not.toContain("トークンが取り込みタスクに届いていません");
+  });
+
+  // 🔴 ADR 0072 P2 欠落 5. Civitai's uploader — not the model, not the licence — can require a
+  // logged-in account, and the metadata call says 200 about it either way. The panel used to
+  // offer the button; nine minutes later a Fargate task died with `curl: (22) … 401`.
+  //
+  // What is pinned is that it is NOT drawn as gating: the Hugging Face sentence sends somebody
+  // to register a token, and no token registered anywhere here changes this answer.
+  it("says a Civitai asset needs an account, and does not offer to fetch it", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+    for (const [el, v] of [
+      [inputs[0], "civitai:128713"],
+      // Named, so the resolve goes straight at the file rather than asking for a listing first.
+      [inputs[1], "dreamshaper_8.safetensors"],
+    ] as const) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        (el as Element).dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    apiJSON.mockResolvedValueOnce({
+      sha256: "879db523c30d3b9017143d56705015e15a2cb5628762c11d086fed9538abd7fd",
+      bytes: 2132625894,
+      gated: false,
+      login_required: true,
+      can_ingest: false,
+      license_name: "see civitai model page",
+      commercial_use: "unknown",
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    expect(host!.textContent).toContain("ログイン済みのアカウント");
+    // Not the token sentence: a token cannot open this one.
+    expect(host!.textContent).not.toContain("トークンがありません");
+    expect((host!.querySelector(".engines-ingest-accept input") as HTMLInputElement).disabled).toBe(true);
+  });
+
   // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
   // "the repository does not list flux1-dev.safetensor" — the CP's developer message, in
   // English, on a Japanese screen. Every code this panel can raise was a string literal in
@@ -1585,6 +1716,100 @@ describe("EnginesAdminView", () => {
     )!;
     expect(fresh.className).not.toContain("on");
     expect(fresh.textContent).toContain("有効にする");
+  });
+
+  // 🔴 ADR 0072 P2 欠落 6. An ingest wrote one unlabelled file, so a split model could not be
+  // assembled by taking its parts in: on af-sandbox the four files of `flux1-dev-fp8` were
+  // staged as three throwaway rows and the real row was re-typed key by key through
+  // `POST /models` — with the throwaway rows left pointing at the same objects.
+  //
+  // Two halves are pinned here, and both were unreachable from this form: WHAT the file is
+  // (which also decides its directory, and a text encoder under `image/checkpoints/` is
+  // invisible to every loader that would read it), and that it joins the row that is already
+  // there instead of being refused as a duplicate id.
+  it("takes a part in and attaches it to the row that already holds the model", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({
+                provider: "comfy",
+                base_models: ["sdxl", "sd35", "flux1", "flux2-klein", "zimage"],
+                file_flags: ["", "--diffusion-model", "--clip_l", "--clip_g", "--t5xxl", "--vae"],
+                has_models: true,
+                model_rows: [{ id: "flux1-dev-fp8", enabled: false, base_model: "flux1" }],
+              }),
+            ],
+          },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+    await type(inputs[0], "comfyanonymous/flux_text_encoders");
+    await type(inputs[1], "clip_l.safetensors");
+    // The id of the row this part belongs to, which the catalogue already holds.
+    await type(inputs[2], "flux1-dev-fp8");
+
+    // Said before anything is fetched: as it stands this ingest is the one the CP answers 409
+    // to, and the button is not offered.
+    expect(host!.textContent).toContain("この id はもう使われています");
+
+    const partSelect = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    await act(async () => {
+      partSelect.value = "--clip_l";
+      partSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+      box.click();
+    });
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "5555555555555555555555555555555555555555555555555555555555555555",
+      bytes: 246144152,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click(); // the licence
+    });
+
+    apiJSON.mockResolvedValueOnce({ id: "j2", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    expect(body[2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "--clip_l",
+      attach: true,
+      // 🔴 text_encoders, not checkpoints: the directory is what puts the file in
+      // DualCLIPLoader's menu at all.
+      s3Key: "image/text_encoders/clip_l.safetensors",
+    });
   });
 });
 

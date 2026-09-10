@@ -1338,6 +1338,17 @@ ADR and `PARAMETERS-60-engines.md` both write 401 as the symptom of "no token", 
 newline got in); 403 means that account has not accepted that repository. The panel shows the
 line verbatim, so only the person reading it can tell the two apart.
 
+> ✅ **Fixed (2026-09-10)**: telling them apart is no longer left to the reader. The job row
+> names itself — 403 as the new `gated_not_accepted`, 401 as the existing `gated_no_token`,
+> anything from Civitai as `civitai_login_required` — read by `engineIngestFailureCode` out of
+> the task's own words (curl's `error: 403`, a verbose run's `HTTP/1.1 403`). The Console keeps
+> the log line and puts the two different destinations beside it in ja and en (403 → the
+> Hugging Face model page, 401 → the token field). The `resolve` side **cannot** carry a code:
+> the CP resolves anonymously and has no way to ask whether the registered token's account
+> accepted a given repository, so it goes as far as an up-front `gated_needs_acceptance`
+> warning whenever a repository is gated and a token is registered. Both statuses are tested;
+> with only one, an implementation with no branch passes.
+
 **What was deleted and what was left.** The three rows the verification created
 (`r1-flux1-vae-probe`, `r1-sd35-vae-probe2`, `r1-anon-probe`) were never enabled, and afterwards
 **only the rows** were deleted — `?purge=1` was not used, because a purge silently deletes bytes
@@ -1577,6 +1588,24 @@ download it"}` — **it is a per-uploader setting**. Across five assets the answ
 Unless `resolve` checks "can this asset be fetched anonymously" (one `HEAD` would do), what the
 operator gets is a bare curl exit code nine minutes later.
 
+> ✅ **Fixed (2026-09-10)**: `resolve` now sends **one `HEAD`** at the Civitai download URL and
+> raises `login_required` on 401 / 403 (`engineCivitaiAnonymous`). The panel drops
+> `can_ingest`, and the ingest refuses with `civitai_login_required` **before a task is
+> started**. It is a DIFFERENT code from Hugging Face's `gated_no_token` not because the key is
+> different but because there is none: gating is the repository's terms and a token satisfies
+> them, while this is a per-uploader switch and this deployment has no Civitai account at all.
+> So the Console's sentence is "pick another asset, or stage it by hand", not "register a
+> token". It **fails open** in every direction it cannot read — a CDN that dislikes HEAD (405)
+> and a probe that could not be made are not login walls; only 401 and 403 are. The tests cover
+> 401, 403, 405 and **an asset with no wall going through** (the positive control).
+>
+> **No Civitai token field is being added (out of scope).** Three reasons: this deployment has
+> no Civitai account, and creating one raises "in whose name, and who takes the terms on" with
+> the same weight decision 10 gives licence acceptance; keeping the value means a second copy
+> of the Hugging Face token machinery, which touches the 60-engines size wall (~200 bytes
+> left); and two assets out of five hit this, all of them **avoidable by choosing another
+> asset** — building the field after that stops being true is the cheaper order.
+
 🔴 **Gap 6 — ingest cannot write a file's Flag.** The row `engineIngester` creates holds one
 element, `Files: [{S3Key, Bytes}]`, and the Flag is always empty, i.e. "the whole checkpoint".
 So **a split model cannot be assembled by ingest alone**. Building FLUX.1's four-file row meant
@@ -1584,6 +1613,18 @@ ingesting three of the parts as throwaway rows (purely to get the bytes into S3)
 the real row with its flags through `POST /models`, and then forgetting the throwaway rows.
 Decision 2 says "the operator declares it at ingest time", but the only thing that can be
 declared there is the family — **not the role**.
+
+> ✅ **Fixed (2026-09-10)**: an ingest request now carries `file_flag` and `attach`. The first is
+> validated against the row's own `file_flags` (the list already served to the Console); the
+> second — "add this file to the row that is already there", the only shape in which a split
+> model can be assembled by ingest alone — is the **one** route allowed past the duplicate-id
+> 409 (`engineAttachAllowed` refuses a missing row, a missing flag and a role the row already
+> fills, all **before** the download). The append is one transaction in
+> `AppendEngineModelFile` and touches neither the licence, the family nor the enabled flag of
+> the row (turning it back into an upsert would recreate exactly what this section's
+> duplicate-id refusal exists to prevent). The Console's ingest form has the role selector, and
+> **derives the bucket directory from the role** (`engineIngestPrefix`) — a text encoder staged
+> under `image/checkpoints/` appears in no loader's menu, so this is not cosmetic.
 
 🔴 **A consequence of gap 6 — `?purge=1` can silently delete a file another row is using.** The
 `purge` on forgetting a row hands that row's `files[]` S3 keys straight to the ingest task
@@ -1593,6 +1634,17 @@ normal procedure for a split model, this is easy to walk into: in this very sess
 `clip_l.safetensors` was pointed at by both the throwaway `tmp-flux-clip-l` and the real
 `flux1-dev-fp8`, and forgetting the former with purge would have silently broken the latter. They
 were forgotten without purge.
+
+> ✅ **Fixed (2026-09-10)**: `deleteModel` reads the catalogue of EVERY role **before** the row
+> goes, and no longer hands MODE=delete a key another row points at (`engineKeysStillUsed`).
+> What survived rides in the answer's `purge` string together with the row that keeps it alive
+> — "kept" with no name is not something an operator can act on. When the catalogue read
+> FAILS, nothing is deleted at all: deleting while it is unknown whether a file is shared is
+> precisely this section's accident. Every role is read because nothing says the two rows are
+> in the same one. The sharing itself is what decision 2 intended (`text_encoders/`: SD3.5 and
+> FLUX.1 read the same T5-XXL and CLIP-L) and does not go away with gap 6. The test pins both
+> directions — the shared key survives, and **the key whose last reference has gone is really
+> deleted** (the positive control).
 
 ### Remaining work 5 — Z-Image and FLUX.1 went through. SD3.5's template was wrong
 
@@ -1700,6 +1752,18 @@ it is a refusal at generation time, for a row the panel has stopped flagging —
 worse than the state before the family was declared. The CP holds both halves of the fact (the
 family, and each file's flag), so the check belongs where the family is declared or where the row
 is enabled.
+
+> ✅ **Fixed (2026-09-10)**: it went in **both** places. Where the row is ENABLED it refuses —
+> `engineFilesGuard` answers 409 `engine_files_missing` and names the roles that are missing.
+> There is no confirm, unlike the VRAM gate: this is not a bet under uncertainty, it is the
+> same fact `comfyBuildGraph` refuses on before it dials anything, and enabling would only put
+> an id in `generate_image`'s enum that every request bounces off. Where the family is
+> DECLARED it does not refuse — refusing the one act that repairs a broken row would leave it
+> broken and unfixable — it puts `files_missing` on the row instead, and the Console names the
+> parts. The authority for what a family reads is still the per-template guards in
+> `comfy_workflows.go`; `engine_catalog_test.go` builds the list **out of those guards**
+> (`f.X == ""` plus `resolveComfyFiles`' switch) and fails on any drift, Fatally if it cannot
+> read all five families.
 
 `flux1-dev` was deleted with `?purge=1` afterwards, reclaiming the 22.2 GiB — its P4 purpose was
 served in 2026-09-09 and the FLUX.1 row that generates is the separately ingested

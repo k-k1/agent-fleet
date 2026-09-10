@@ -83,6 +83,13 @@ type EngineModel = {
    *  vocabulary — and because the row looks complete without it and fails only at generation,
    *  after a cold start somebody waited through. */
   base_model_missing?: boolean;
+  /** The row HAS a family, and the workflow that family names reads files this row does not
+   *  declare (ADR 0072 P2 欠落 10) — listed as the roles that are missing. It is the mark that
+   *  used to disappear the moment a family was chosen: `flux1-dev` was one unflagged 22.2 GiB
+   *  checkpoint, the flux1 template reads four other files, and choosing any family at all
+   *  made the panel go quiet about a row that still could not generate. The CP refuses to
+   *  enable one of these. */
+  files_missing?: string[];
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
    *  model of that name this row is. Absent for a seeded row. */
@@ -106,9 +113,20 @@ type ResolvedSource = {
   license_url?: string;
   base_model?: string;
   commercial_use?: string;
-  /** false when the repository is gated and this deployment has no Hugging Face token. The
-   *  button is disabled on it rather than letting a task run nine minutes into a 401. */
+  /** false when the repository is gated and this deployment has no Hugging Face token, or when
+   *  Civitai's uploader requires an account. The button is disabled on it rather than letting a
+   *  task run nine minutes into a 401. */
   can_ingest?: boolean;
+  /** The Civitai uploader requires a logged-in account to download this asset (ADR 0072 P2
+   *  欠落 5). Its own field rather than `gated`, because the two have different answers: a
+   *  registered Hugging Face token satisfies gating and cannot touch this one, so folding them
+   *  would send somebody to the token field to fix what a token does not fix. */
+  login_required?: boolean;
+  /** Gated, and a token IS registered — which is still not a yes. The CP resolves anonymously
+   *  and cannot ask whether that account accepted THIS repository's terms; when it has not,
+   *  the answer is a 403 on the download minutes later. So this is a warning before the press,
+   *  not a verdict (ADR 0072 P5 実機検証). */
+  gated_needs_acceptance?: boolean;
   /** The model's OWN maximum, off the GGUF header. 🔴 A ceiling, not a setting: the 30B in
    *  this deployment publishes 262144 and is run at 32768, because what the architecture
    *  allows and what fits in the GPU are different questions. Offered, never applied. */
@@ -152,6 +170,12 @@ type IngestJob = {
   source?: string;
   state: string;
   message?: string;
+  /** What the operator has to DO about a failure, read by the CP out of the status in the
+   *  message. 🔴 `gated_no_token` and `gated_not_accepted` are one line of curl apart and need
+   *  opposite screens: 401 is a token that never reached the task, 403 is a token that did and
+   *  an account that has not accepted THAT repository (measured, ADR 0072 P5 実機検証 — one
+   *  token, FLUX.1-dev through and SD3.5 Medium refused). */
+  code?: string;
   bytes?: number;
   created_at?: string;
 };
@@ -510,6 +534,8 @@ export function EnginesAdminView() {
             engineKey={e.key}
             isImage={e.api === "images"}
             baseModels={e.base_models}
+            fileFlags={e.file_flags}
+            modelIds={(e.model_rows || []).map((m) => m.id)}
             busy={busy === e.key + "/ingest"}
             onStarted={() => loadJobs(e.key)}
           />
@@ -834,6 +860,22 @@ function EngineModels({
                     </label>
                   )}
                 </>
+              )}
+              {/* 🔴 The other half of "this row cannot generate", and the one declaring a
+                  family used to hide. The parts are named because taking them in and attaching
+                  them to this row is exactly what has to happen next; enabling is refused
+                  until then, so the sentence is not advice. */}
+              {!!m.files_missing?.length && (
+                <p className="form-err">
+                  {(tr("admin.engines_model_files_missing") as string)
+                    .replace("{n}", m.base_model || "")
+                    .replace(
+                      "{f}",
+                      m.files_missing
+                        .map((f) => (f === "" ? (tr("admin.engines_model_add_part_whole") as string) : f))
+                        .join(", "),
+                    )}
+                </p>
               )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
@@ -1271,6 +1313,8 @@ function EngineIngest({
   engineKey,
   isImage,
   baseModels,
+  fileFlags,
+  modelIds,
   busy,
   onStarted,
 }: {
@@ -1280,6 +1324,13 @@ function EngineIngest({
    *  repository's OWN answer is a display name and is shown as a hint, never submitted — the
    *  CP refuses an ingest whose family is not one of these. */
   baseModels?: string[];
+  /** What this file IS within the model, same vocabulary and same source as the register
+   *  form's. Empty = this provider loads one whole checkpoint and has no parts to name. */
+  fileFlags?: string[];
+  /** The ids this engine's catalogue already holds. Only used to offer "add it to that row"
+   *  when the id names one: the CP refuses a plain ingest onto an existing id, and without the
+   *  offer the only way to build a split model is three throwaway rows (ADR 0072 P2 欠落 6). */
+  modelIds?: string[];
   busy: boolean;
   onStarted: () => void;
 }) {
@@ -1303,7 +1354,16 @@ function EngineIngest({
   const [searchSource, setSearchSource] = useState("hf");
   const [sort, setSort] = useState("downloads");
   const [baseModel, setBaseModel] = useState("");
+  /** What this file is within the model, and — when the id names a row that already exists —
+   *  whether it JOINS that row instead of making a new one. */
+  const [fileFlag, setFileFlag] = useState("");
+  const [attach, setAttach] = useState(false);
   const families = baseModels || [];
+  const flags = fileFlags || [];
+  /** True when the typed id is one this engine already has. The CP refuses a plain ingest onto
+   *  it (409 model_id_exists), so this is where the second act — attaching a part — is
+   *  offered rather than left as an error to read. */
+  const known = (modelIds || []).includes(id.trim());
   /** Which read of a source is the current one. Picking a second result before the first has
    *  answered is one click, and the two answers come back in whatever order the two APIs feel
    *  like — so the older one is dropped rather than allowed to describe the row on screen. */
@@ -1492,7 +1552,7 @@ function EngineIngest({
     };
     const c = n(ctx);
     const o = n(out);
-    const key = (isImage ? "image/checkpoints/" : "llm/") + (file.trim() || id.trim());
+    const key = engineIngestPrefix(isImage, fileFlag) + (file.trim() || id.trim());
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
       id: id.trim(),
       kind: isImage ? "checkpoint" : "gguf",
@@ -1500,6 +1560,8 @@ function EngineIngest({
       source: source(),
       description: desc.trim(),
       base_model: baseModel,
+      file_flag: fileFlag,
+      attach: attach && known,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
       license_accepted: true,
@@ -1516,6 +1578,8 @@ function EngineIngest({
     setFile("");
     setFiles(null);
     setId("");
+    setFileFlag("");
+    setAttach(false);
     onStarted();
   };
 
@@ -1665,11 +1729,50 @@ function EngineIngest({
         setId,
         isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
       )}
+      {/* What this file IS within the model. Until this existed every ingest wrote one
+          unlabelled file, so a split model could not be assembled by taking its parts in — the
+          three components of a FLUX.1 row had to be staged as throwaway rows and the real row
+          re-typed key by key (ADR 0072 P2 欠落 6). It also decides the bucket directory, which
+          is what makes the file visible to the right loader at all. */}
+      {flags.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>{tr("admin.engines_model_add_part")}</span>
+          <select
+            value={fileFlag}
+            onChange={(ev) => {
+              setFileFlag(ev.currentTarget.value);
+              // A whole checkpoint is never a part of another row.
+              if (!ev.currentTarget.value) setAttach(false);
+            }}
+          >
+            {flags.map((fl) => (
+              <option key={fl} value={fl}>
+                {fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {/* The id names a row that is already there. The CP refuses a plain ingest onto it — it
+          would upsert that row's files, licence and enabled flag away — so the choice is made
+          here, before the download: a new id, or this file as one more part of that row. */}
+      {known && (
+        <label className="engines-ingest-accept">
+          <input
+            type="checkbox"
+            checked={attach}
+            disabled={!fileFlag}
+            onChange={(ev) => setAttach(ev.currentTarget.checked)}
+          />
+          <span>{(tr("admin.engines_ingest_attach") as string).replace("{id}", id.trim())}</span>
+        </label>
+      )}
+      {known && !attach && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
       {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
           answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
           Hugging Face and Civitai publish, and storing one of those as the family produced rows
           that looked complete and refused to generate (P2 実機検証). */}
-      {families.length > 0 && (
+      {!attach && families.length > 0 && (
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_model_add_family")}</span>
           <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
@@ -1682,7 +1785,7 @@ function EngineIngest({
           </select>
         </label>
       )}
-      {families.length > 0 && found?.base_model && (
+      {!attach && families.length > 0 && found?.base_model && (
         <p className="muted">
           {(tr("admin.engines_ingest_family_hint") as string).replace("{n}", found.base_model)}
         </p>
@@ -1723,7 +1826,17 @@ function EngineIngest({
           <button
             type="button"
             className="primary sm"
-            disabled={busy || !accepted || !id.trim() || found.can_ingest === false}
+            disabled={
+              busy ||
+              !accepted ||
+              !id.trim() ||
+              found.can_ingest === false ||
+              // An id the catalogue already holds goes in as a PART or not at all; the CP
+              // refuses both of these too, and a button that let the press happen would spend
+              // a resolve and a refusal to say so.
+              (known && !attach) ||
+              (attach && !fileFlag)
+            }
             onClick={start}
           >
             {tr("admin.engines_ingest_go")}
@@ -1734,6 +1847,32 @@ function EngineIngest({
       <p className="muted">{tr("admin.engines_ingest_note")}</p>
     </div>
   );
+}
+
+/** Where in the bucket a taken-in file goes, from what it IS within the model.
+ *
+ * 🔴 Not cosmetic, and not a place a wrong answer is ever reported: the box mirrors the bucket
+ * and ComfyUI builds each loader's menu from its own directory, so a text encoder staged under
+ * `image/checkpoints/` is one `UNETLoader` list it can never appear in. Measured on af-sandbox
+ * (ADR 0072 P2 残作業 5): a 22.2 GiB FLUX.1 checkpoint sat in `image/checkpoints/` and no flux1
+ * template could reach it, which read as "the model does not work".
+ *
+ * The layout is ADR 0072 decision 2's, which is ComfyUI's own convention (ADR 0071 decision 6). */
+export function engineIngestPrefix(isImage: boolean, flag: string): string {
+  if (!isImage) return "llm/";
+  switch (flag) {
+    case "--diffusion-model":
+      return "image/diffusion_models/";
+    // All three encoders live in one directory — that IS what TripleCLIPLoader enumerates.
+    case "--clip_l":
+    case "--clip_g":
+    case "--t5xxl":
+      return "image/text_encoders/";
+    case "--vae":
+      return "image/vae/";
+    default:
+      return "image/checkpoints/";
+  }
 }
 
 /** A catalogue id proposed from the filename that was picked.
@@ -1825,6 +1964,17 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
         <p className={found.can_ingest === false ? "form-err" : "muted"}>
           {tr(found.can_ingest === false ? "admin.engines_ingest_gated_no_token" : "admin.engines_ingest_gated")}
         </p>
+      )}
+      {/* 🔴 A different wall from the one above, and there is no key to it here: Civitai's
+          metadata answers 200 for everybody and the BYTES are per uploader, so this used to
+          be found nine minutes into a Fargate task as a bare curl exit code. The sentence
+          says what can be done instead, because registering a token is not it. */}
+      {found.login_required && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {/* Gated WITH a token is not a yes: the terms also have to have been accepted by that
+          token's own account, on this repository, and nothing here can check that. Said before
+          the press because the alternative is finding out from a 403 minutes later. */}
+      {found.gated_needs_acceptance && (
+        <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>
       )}
     </>
   );
@@ -2035,6 +2185,24 @@ function fmtCount(n: number): string {
   return String(Math.round(n * 10) / 10);
 }
 
+/** The sentence that says what to do about a failed job, or "" when the CP could not tell.
+ *
+ * A table rather than one key per code so that the two gated refusals cannot end up sharing a
+ * sentence: 401 sends somebody to the token field and 403 sends them to the model page, and
+ * they arrive one character apart in the task's log. */
+export function engineJobAdvice(code?: string): string {
+  switch (code) {
+    case "gated_not_accepted":
+      return "admin.engines_ingest_job_not_accepted";
+    case "gated_no_token":
+      return "admin.engines_ingest_job_no_token";
+    case "civitai_login_required":
+      return "admin.engines_ingest_civitai_login";
+    default:
+      return "";
+  }
+}
+
 function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
   const tr = useT();
   if (jobs.length === 0) return null;
@@ -2062,6 +2230,11 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
           {/* The task's own words, not an exit code: "sha256 mismatch" and "401 on a gated
               repository" need different things from the person reading them. */}
           {j.message && <p className="form-err engines-model-meta">{j.message}</p>}
+          {/* And what to do about it, when the status says. The curl line above is the task's
+              own words and stays; this is the action, in the reader's language. */}
+          {!!engineJobAdvice(j.code) && (
+            <p className="form-err engines-model-meta">{tr(engineJobAdvice(j.code) as never)}</p>
+          )}
         </li>
       ))}
     </ul>

@@ -81,6 +81,11 @@ export const admin = {
   "admin.engines_model_add_part_more": "ファイルを追加する",
   "admin.engines_model_add_part_drop": "この行を削除",
   "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。下から選んでください。",
+  // 🔴 ファミリーを宣言すると `base_model_missing` の印は消えるが、そのファミリーの
+  // テンプレートが要求するファイルが行に揃っているかは別の話。実機の `flux1-dev` は
+  // `image/checkpoints/` の Flag 無し 1 ファイルで、flux1 は別に 4 本を読む——どれを
+  // 選んでも動かないのに、選んだ瞬間に印だけが消えていた。
+  "admin.engines_model_files_missing": "この行は「{n}」のワークフローが読むファイルを持っていません（不足: {f}）。取り込みでこの行の部品として足すまで、有効にはできません。",
   "admin.engines_model_add_desc": "説明",
   // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
   // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。
@@ -137,9 +142,24 @@ export const admin = {
   // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
   "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
   "admin.engines_ingest_go": "取り込む",
+  // 分割モデルは 1 回の取り込みでは組み上がらない（FLUX.1 は unet + clip_l + t5 + vae の 4 本）。
+  // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を
+  // 上書きしてしまうため——ので、「その行の部品として足す」をここで選ばせる。
+  "admin.engines_ingest_attach": "「{id}」の部品として足す（新しい行は作らない）",
+  "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」を選んでください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",
+  // 🔴 Hugging Face の gated とは別物で、こちらには鍵が無い。CivitAI のメタデータは誰にでも
+  // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
+  // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
+  "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため取得できません（Hugging Face のトークンでは解決しません）。別の資産を選ぶか、手でバケットに置いて「バケットのファイルを登録する」から登録してください。",
+  // 🔴 gated の 401 と 403 は「1 行の curl」の差で、直す場所が正反対。401 はトークンが
+  // 取り込みタスクに届いていない、403 は届いたうえでそのアカウントが**このリポジトリの**
+  // 条項に未同意（実機: 同じトークンで FLUX.1-dev は通り SD3.5 Medium が 403）。
+  "admin.engines_ingest_job_not_accepted": "トークンは届いていますが、そのアカウントはこのリポジトリの条項にまだ同意していません。Hugging Face のモデルページで同意してから、もう一度取り込んでください。",
+  "admin.engines_ingest_job_no_token": "トークンが取り込みタスクに届いていません。下の「Hugging Face のトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
+  "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で落ちるので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_hf_token": "Hugging Face のトークン",
   "admin.engines_hf_token_field": "トークン",
   "admin.engines_hf_token_save": "登録する",

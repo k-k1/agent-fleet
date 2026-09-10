@@ -310,6 +310,10 @@ type EngineModelStore interface {
 	ListEngineModels(ctx context.Context, role string) ([]EngineModel, error)
 	// PutEngineModel inserts or replaces one row wholesale.
 	PutEngineModel(ctx context.Context, m EngineModel) error
+	// AppendEngineModelFile adds one file to an existing row, so a split model can be built up
+	// part by part by the ingest instead of being re-typed through the register route. Reports
+	// false when there is no such row.
+	AppendEngineModelFile(ctx context.Context, role, id string, f EngineModelFile) (bool, error)
 	// SetEngineModelEnabled toggles one row. Reports false when there is no such row, so a
 	// caller can answer 404 rather than 200 for a model that does not exist.
 	SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error)

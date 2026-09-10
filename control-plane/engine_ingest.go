@@ -87,7 +87,13 @@ type engineResolved struct {
 	LicenseURL  string
 	BaseModel   string
 	Gated       bool
-	Source      string // what a person reads in the job list
+	// LoginRequired is Civitai's answer to "may anybody download this", and it is a DIFFERENT
+	// fact from Gated: gating is a repository's terms, which an operator's token satisfies,
+	// while this is a per-uploader switch with no token to satisfy it here at all (ADR 0072 P2
+	// 欠落 5). Measured on af-sandbox: five assets split 200 / 401 / 403, and the metadata call
+	// that says everything else about them answers 200 for all five.
+	LoginRequired bool
+	Source        string // what a person reads in the job list
 	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
 	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
 	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
@@ -378,9 +384,10 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			continue
 		}
 		return engineResolved{
-			DownloadURL: f.DownloadURL,
-			SHA256:      strings.ToLower(f.Hashes.SHA256),
-			Bytes:       int64(f.SizeKB * 1024),
+			DownloadURL:   f.DownloadURL,
+			SHA256:        strings.ToLower(f.Hashes.SHA256),
+			Bytes:         int64(f.SizeKB * 1024),
+			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
 			// Civitai publishes no licence field of the kind Hugging Face does — the terms are
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
@@ -392,6 +399,39 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 	}
 	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
 		"that version publishes no file with a sha256" + engineIngestNamed(want)}
+}
+
+// engineCivitaiAnonymous asks the one question the metadata call cannot answer: may these bytes
+// be fetched by somebody with no account?
+//
+// 🔴 ADR 0072 P2 欠落 5. `api/v1/model-versions/<id>` answers 200 with the hash, the size and
+// the download URL for assets whose uploader has switched "you must be logged in to download"
+// on — so `resolve` said `can_ingest: true`, the job ran, and the Fargate task died nine
+// minutes later with `curl: (22) … error: 401`. What reaches the operator is an exit code.
+// Measured on af-sandbox: five assets, answers split 200 / 401 / 403, per uploader.
+//
+// One HEAD, short timeout, and it FAILS OPEN in every direction but the two it can read: a
+// probe that could not run must not stop an ingest that would have worked, and a CDN that
+// dislikes HEAD (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers
+// with — are read as "not anonymously".
+func engineCivitaiAnonymous(ctx context.Context, target string) bool {
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		return true
+	}
+	// Its own budget, well under engineIngestHTTP's: this rides on the admin path while
+	// somebody is typing, and the answer is a status line.
+	c, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodHead, target, nil)
+	if err != nil {
+		return true
+	}
+	resp, err := engineIngestHTTP.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden
 }
 
 func engineIngestNamed(f string) string {
@@ -517,6 +557,15 @@ type engineIngestRequest struct {
 	// deserializes with them empty. That is the right answer, not a gap: nobody recorded them.
 	AcceptedBy, AcceptedTenant, AcceptedLicense string
 	Resolved                                    engineResolved
+	// FileFlag is what this file IS within the model — the literal engine flag it is passed to
+	// (`--vae`, `--t5xxl`), empty for a whole checkpoint. Without it every ingest produced a
+	// one-file, unlabelled row and no split model could be assembled by taking parts in (ADR
+	// 0072 P2 欠落 6).
+	FileFlag string
+	// Attach adds this file to the row ModelID already names instead of creating one. The two
+	// are separate acts and only one of them may land on an id the catalogue already holds:
+	// creating would upsert a working row's files, licence and enabled flag away.
+	Attach bool
 }
 
 // start creates the job row and launches the task. The row is written FIRST: a RunTask that
@@ -681,9 +730,32 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 			j.ID, j.S3Key)
 		return
 	}
+	file := store.EngineModelFile{Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes}
+	if req.Attach {
+		// One PART of a model that already has a row. Only the file is written: the licence
+		// acceptance, the family and the enabled flag on that row were decided when it was
+		// created, and this download knows none of them.
+		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
+		if err != nil {
+			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
+			return
+		}
+		if !found {
+			// The row was forgotten while the download ran. The bytes are in the bucket and
+			// nothing points at them, which is the one outcome worth spelling out.
+			log.Printf("engines: ingest %s finished but %s/%s no longer exists: register %s by hand",
+				j.ID, req.Role, req.ModelID, j.S3Key)
+			return
+		}
+		log.Printf("engines: ingest %s done: %s added to %s/%s", j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
+		if g.onDone != nil {
+			g.onDone(req.Role)
+		}
+		return
+	}
 	m := store.EngineModel{
 		Role: req.Role, ID: req.ModelID, Kind: req.Kind,
-		Files:       []store.EngineModelFile{{S3Key: req.S3Key, Bytes: req.Resolved.Bytes}},
+		Files:       []store.EngineModelFile{file},
 		Description: req.Description, BaseModel: req.BaseModel,
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutput, Sizes: req.Sizes,
 		License:     req.Resolved.License,
@@ -715,6 +787,52 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	if g.onDone != nil {
 		g.onDone(req.Role)
 	}
+}
+
+// engineIngestFailureCode reads the ONE actionable thing out of a failed task's own words: the
+// HTTP status the download earned, which for a gated repository is the difference between two
+// completely different fixes.
+//
+// 🔴 Measured on af-sandbox (ADR 0072 P5 実機検証): with one registered token, FLUX.1-dev came
+// down and SD3.5 Medium died on `curl: (22) The requested URL returned error: 403`, and
+// accepting that repository's terms on Hugging Face with the token's own account fixed it.
+// **401 and 403 are not the same failure**: 401 is a token that is not reaching the task
+// (register one, check the secret), 403 is a token that arrived and an account that has not
+// accepted THIS repository. A panel that said "gated" to both sends half its readers to the
+// wrong screen.
+//
+// Read out of the message rather than carried on the job row: the status is the task's, the
+// row has no column for it, and the classification is a pure function this file can be tested
+// on with both statuses. Anchored on the phrasings the fetch container actually prints, so a
+// filename containing 403 is not a diagnosis.
+func engineIngestFailureCode(source, msg string) string {
+	switch m := engineIngestStatusRe.FindStringSubmatch(msg); {
+	case m == nil:
+		return ""
+	case strings.HasPrefix(source, "civitai:"):
+		// Civitai has no token at all, so both statuses mean the same act (ADR 0072 P2 欠落 5).
+		// A job started before the resolve probe existed still lands here.
+		return errCodeIngestCivitaiLogin
+	case !strings.HasPrefix(source, "hf:"):
+		return "" // a plain URL's 401 is the operator's own server, and this cannot advise on it
+	case m[1] == "403":
+		return errCodeIngestGatedNotAccepted
+	default:
+		return errCodeIngestGatedNoToken
+	}
+}
+
+// engineIngestStatusRe matches the status in what the fetch container prints — curl's
+// `The requested URL returned error: 403`, and the bare `HTTP/1.1 401` of a verbose run.
+var engineIngestStatusRe = regexp.MustCompile(`(?i)(?:error:\s*|HTTP/[\d.]+\s+)(401|403)\b`)
+
+// engineFlagLabel names a file's role in a log line. The empty flag is a whole checkpoint, and
+// printing it as `""` reads as a bug in the line rather than as the normal case it is.
+func engineFlagLabel(flag string) string {
+	if strings.TrimSpace(flag) == "" {
+		return "the checkpoint"
+	}
+	return flag
 }
 
 // why reads the last words of the failed container's log.

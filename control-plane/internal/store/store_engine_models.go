@@ -95,6 +95,50 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	return err
 }
 
+// AppendEngineModelFile adds one file to a row that already exists, which is what lets a SPLIT
+// model be assembled by taking its parts in one at a time (ADR 0072 decision 2's
+// `text_encoders/`). Without it an ingest could only ever create a row of one file, and a
+// four-file FLUX.1 had to be staged as three throwaway rows and then re-typed through
+// `POST /models`.
+//
+// Read-modify-write inside a transaction rather than through PutEngineModel: the row carries a
+// licence acceptance, a source and an enabled flag that the ingest that is appending knows
+// nothing about, and an upsert would carry them back out and in again — the failure that
+// refusing an ingest onto an existing id exists to prevent.
+//
+// A key already listed is a no-op reporting success: the caller is a job reconciler that may
+// see the same finished task twice, and a second append would put the same file in the active
+// set twice.
+func (s *SQL) AppendEngineModelFile(ctx context.Context, role, id string, f EngineModelFile) (bool, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	var raw string
+	switch err := tx.QueryRowContext(ctx,
+		`SELECT files FROM engine_models WHERE role=? AND id=?`, role, id).Scan(&raw); {
+	case err == sql.ErrNoRows:
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	var files []EngineModelFile
+	_ = json.Unmarshal([]byte(raw), &files)
+	for _, e := range files {
+		if e.S3Key == f.S3Key {
+			return true, tx.Commit()
+		}
+	}
+	files = append(files, f)
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE engine_models SET files=?, updated_at=? WHERE role=? AND id=?`,
+		jsonList(files), NowTS(), role, id); err != nil {
+		return false, err
+	}
+	return true, tx.Commit()
+}
+
 func (s *SQL) SetEngineModelEnabled(ctx context.Context, role, id string, enabled bool) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
 		`UPDATE engine_models SET enabled=?, updated_at=? WHERE role=? AND id=?`,

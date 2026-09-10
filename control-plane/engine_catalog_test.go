@@ -343,6 +343,75 @@ func TestComfyFamiliesMatchTheAgent(t *testing.T) {
 	assertSameVocabulary(t, "file flags", engineComfyFileFlags, theirFlags)
 }
 
+// Which files each family NEEDS, which the CP now refuses to enable a row without (ADR 0072 P2
+// 欠落 10) — and which lives in the Agent as one guard per template, not as a list.
+//
+// So this test builds the list out of those guards: every `f.X == ""` inside a comfyGraph*
+// function is a file that family's template reads, and resolveComfyFiles' own switch is what
+// says which flag fills `f.X`. Reading the guards rather than a list the Agent could keep in
+// step by hand is the point — the guards ARE what refuses at generation, and a copy that
+// tracked anything else would drift towards agreeing with itself.
+//
+// ⚠️ Every parse step is Fatal on an empty result. A rename here must fail loudly rather than
+// turn this into an empty set comparing equal to an empty set.
+func TestComfyRequiredFilesMatchTheAgent(t *testing.T) {
+	const src = "../workspace/agent/internal/imagegen/comfy_workflows.go"
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("reading %s: %v — this test is the only thing pinning the two copies together", src, err)
+	}
+	text := string(b)
+
+	// `case "--clip_l":` → `f.ClipL = name`, i.e. which field a flag fills.
+	flagOf := map[string]string{}
+	for _, m := range regexp.MustCompile(`case\s+"([^"]*)":\s*\n\s*f\.(\w+)\s*=\s*name`).FindAllStringSubmatch(text, -1) {
+		flagOf[m[2]] = m[1]
+	}
+	if len(flagOf) == 0 {
+		t.Fatalf("resolveComfyFiles' switch in %s parsed as empty — the flag-to-field map is gone", src)
+	}
+
+	// One template at a time: the family it names in its refusals, and the fields it refuses on.
+	bodies := regexp.MustCompile(`(?s)func comfyGraph\w+\(f comfyFiles[^)]*\)[^{]*\{(.*?)\n\}`).FindAllStringSubmatch(text, -1)
+	if len(bodies) == 0 {
+		t.Fatalf("no comfyGraph* templates found in %s", src)
+	}
+	famRe := regexp.MustCompile(`errComfyMissingFile\("([a-z0-9.-]+)"`)
+	needRe := regexp.MustCompile(`f\.(\w+)\s*==\s*""`)
+	theirs := map[string][]string{}
+	for _, body := range bodies {
+		fam := famRe.FindStringSubmatch(body[1])
+		if fam == nil {
+			continue // a template with no required file at all would be legitimate
+		}
+		for _, n := range needRe.FindAllStringSubmatch(body[1], -1) {
+			flag, ok := flagOf[n[1]]
+			if !ok {
+				t.Fatalf("%s requires f.%s, which resolveComfyFiles fills from no flag at all", fam[1], n[1])
+			}
+			theirs[fam[1]] = append(theirs[fam[1]], flag)
+		}
+	}
+	if len(theirs) != len(engineComfyFamilies) {
+		t.Fatalf("read requirements for %d families out of %d (%v) — the templates were restructured"+
+			" and this check stopped measuring them", len(theirs), len(engineComfyFamilies), theirs)
+	}
+	for fam, want := range theirs {
+		mine, ok := engineComfyRequiredFlags[fam]
+		if !ok {
+			t.Errorf("the CP declares no required files for %q, so it would enable a row that"+
+				" cannot generate", fam)
+			continue
+		}
+		assertSameVocabulary(t, "required files for "+fam, mine, want)
+	}
+	for fam := range engineComfyRequiredFlags {
+		if _, ok := theirs[fam]; !ok {
+			t.Errorf("the CP requires files for %q, which is not a family the Agent dispatches on", fam)
+		}
+	}
+}
+
 func assertSameVocabulary(t *testing.T, what string, mine, theirs []string) {
 	t.Helper()
 	a := append([]string(nil), mine...)

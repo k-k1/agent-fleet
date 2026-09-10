@@ -84,6 +84,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_part_more": "Add a file",
   "admin.engines_model_add_part_drop": "Remove",
   "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Choose one below.",
+  // 🔴 Declaring a family clears `base_model_missing`; whether the row holds the files that
+  // family's template reads is a different question. On the real deployment `flux1-dev` was one
+  // unflagged file in `image/checkpoints/` and flux1 reads four others — no answer in the
+  // selector could work, and choosing one made the only mark disappear.
+  "admin.engines_model_files_missing": "This row does not hold the files the \u201c{n}\u201d workflow reads (missing: {f}). It cannot be enabled until they are taken in and attached to it.",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
   // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
@@ -137,9 +142,24 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
   "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
   "admin.engines_ingest_go": "Take it in",
+  // A split model is not one download (FLUX.1 is a unet, a clip_l, a t5 and a vae). The CP
+  // refuses a plain ingest onto an id it already has — that would upsert the row's files,
+  // licence and enabled flag away — so the other act is offered here instead.
+  "admin.engines_ingest_attach": "Add it to “{id}” as a part (no new row)",
+  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” above.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
+  // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
+  // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
+  // split 200/401/403). No token field is being added, so the sentence says what to do instead.
+  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so it cannot be fetched (a Hugging Face token does not help). Pick another asset, or stage the file in the bucket by hand and register it.",
+  // 🔴 401 and 403 on a gated repository are one line of curl apart and need opposite screens:
+  // 401 is a token that never reached the ingest task, 403 is a token that did and an account
+  // that has not accepted THAT repository (measured: one token, FLUX.1-dev through, SD3.5 403).
+  "admin.engines_ingest_job_not_accepted": "The token reached the task, and that account has not accepted this repository's terms yet. Accept them on the Hugging Face model page and take it in again.",
+  "admin.engines_ingest_job_no_token": "No token reached the ingest task. Register the operator's token under \u201cHugging Face token\u201d below and take it in again.",
+  "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
   "admin.engines_hf_token_save": "Register",

@@ -304,20 +304,38 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	}
 }
 
+// civitaiStub answers a model VERSION and the HEAD on its download URL. The download answer is
+// the caller's, because THAT is the split this API has: the metadata is 200 for everybody and
+// the bytes are per uploader (ADR 0072 P2 欠落 5).
+func civitaiStub(t *testing.T, download int) *httptest.Server {
+	t.Helper()
+	var base string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/download/") {
+			if r.Method != http.MethodHead {
+				t.Errorf("the probe used %s, want HEAD — a GET here downloads gigabytes", r.Method)
+			}
+			w.WriteHeader(download)
+			return
+		}
+		w.Write([]byte(`{"baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},
+			"files":[{"name":"config.json","sizeKB":1.5,"type":"Config","downloadUrl":"` + base + `/c"},
+			{"name":"dreamshaper_8.safetensors","sizeKB":2082642.474609375,"type":"Model",
+			 "downloadUrl":"` + base + `/api/download/models/128713",
+			 "hashes":{"SHA256":"879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD"}}]}`))
+	}))
+	base = s.URL
+	t.Cleanup(s.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+	return s
+}
+
 // Civitai publishes sizes in fractional KILOBYTES and its hashes in upper case, and the version
 // carries files that are not the model (measured 2026-09-09, ADR 0072 open question 4).
 func TestEngineResolveCivitai(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},
-			"files":[{"name":"config.json","sizeKB":1.5,"type":"Config","downloadUrl":"https://x/c"},
-			{"name":"dreamshaper_8.safetensors","sizeKB":2082642.474609375,"type":"Model",
-			 "downloadUrl":"https://civitai.com/api/download/models/128713",
-			 "hashes":{"SHA256":"879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD"}}]}`))
-	}))
-	defer srv.Close()
-	old := engineCivitaiBase
-	engineCivitaiBase = srv.URL
-	t.Cleanup(func() { engineCivitaiBase = old })
+	civitaiStub(t, http.StatusOK)
 
 	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
 	if aerr != nil {
@@ -331,6 +349,107 @@ func TestEngineResolveCivitai(t *testing.T) {
 	}
 	if got.BaseModel != "SD 1.5" {
 		t.Errorf("baseModel = %q", got.BaseModel)
+	}
+	// 🔴 The positive control for the probe below: an asset anybody can download must not be
+	// marked, or the panel refuses every Civitai ingest and the check is indistinguishable from
+	// a check that never runs.
+	if got.LoginRequired {
+		t.Error("a downloadable asset was marked as needing an account")
+	}
+	if row := engineResolvedRow(got, false); row["can_ingest"] != true {
+		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 5. Civitai's metadata call answers 200 with the hash, the size and the
+// download URL for assets whose UPLOADER requires a logged-in account — so the resolve said
+// `can_ingest: true`, a Fargate task ran for nine minutes and died with
+// `curl: (22) The requested URL returned error: 401`, which is what reached the operator.
+// Measured on af-sandbox: five assets, split 200 / 401 / 403.
+//
+// Hugging Face's equivalent is refused up front (`gated_no_token`) and this now is too — with
+// its own code, because no token registered anywhere on this deployment would change the
+// answer.
+func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		civitaiStub(t, status)
+		got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
+		if aerr != nil {
+			// Not an error: everything the panel shows about the asset is still true, and the
+			// licence has to be on screen before the refusal makes sense.
+			t.Fatalf("resolve of a %d asset: %v", status, aerr.message)
+		}
+		if !got.LoginRequired {
+			t.Errorf("a %d download resolved as freely fetchable", status)
+		}
+		row := engineResolvedRow(got, true)
+		if row["can_ingest"] != false || row["login_required"] != true {
+			t.Errorf("the panel is not told (%d): %v", status, row)
+		}
+		// NOT reported as gated: that word sends somebody to the Hugging Face token field,
+		// which cannot help here. A registered token does not change can_ingest either.
+		if row["gated"] == true {
+			t.Errorf("a Civitai login wall was reported as a gated repository (%d)", status)
+		}
+	}
+
+	// It fails OPEN in the directions it cannot read. A CDN that dislikes HEAD is not a login
+	// wall, and neither is a probe that could not be made at all.
+	civitaiStub(t, http.StatusMethodNotAllowed)
+	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
+	if aerr != nil || got.LoginRequired {
+		t.Errorf("a 405 was read as a login wall (%v)", aerr)
+	}
+}
+
+// 🔴 401 and 403 on a gated Hugging Face repository are two different failures with two
+// different fixes, and the ingest task reports both as one line of curl.
+//
+// Measured on af-sandbox (ADR 0072 P5 実機検証): with ONE registered token, FLUX.1-dev came
+// down and SD3.5 Medium died on `curl: (22) The requested URL returned error: 403`; accepting
+// that repository's terms on Hugging Face with the token's account made the retry work. So 403
+// is "the token arrived and that account has not accepted THIS repository" — nothing to do
+// with registering a token, which is what 401 means.
+//
+// Both statuses are asserted: with only one, a classifier with no branch at all passes.
+func TestEngineIngestFailureTellsTheTwoGatedRefusalsApart(t *testing.T) {
+	const curl403 = "curl: (22) The requested URL returned error: 403"
+	const curl401 = "curl: (22) The requested URL returned error: 401"
+	for _, c := range []struct {
+		source, msg, want, why string
+	}{
+		{"hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors", curl403,
+			errCodeIngestGatedNotAccepted, "the token arrived; that account has not accepted the terms"},
+		{"hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors", curl401,
+			errCodeIngestGatedNoToken, "no token reached the task at all"},
+		{"hf:x/y/z.gguf", "HTTP/1.1 403 Forbidden", errCodeIngestGatedNotAccepted,
+			"a verbose run prints the status line instead of curl's sentence"},
+		{"civitai:128713", curl401, errCodeIngestCivitaiLogin,
+			"Civitai has no token, so both statuses mean the same act — and a job started before" +
+				" the resolve probe existed still ends up here"},
+		{"https://example.com/m.gguf", curl403, "",
+			"somebody's own server refusing is not something this can advise on"},
+		{"hf:x/y/z.gguf", "sha256 mismatch: got aa… want bb…", "",
+			"the failure that is not about access at all"},
+		{"hf:x/y/model-403b.gguf", "curl: (56) connection reset", "",
+			"a filename is not a diagnosis"},
+	} {
+		if got := engineIngestFailureCode(c.source, c.msg); got != c.want {
+			t.Errorf("engineIngestFailureCode(%q, %q) = %q, want %q — %s", c.source, c.msg, got, c.want, c.why)
+		}
+	}
+
+	// And it reaches the panel beside the task's own words rather than instead of them: the
+	// curl line is sometimes the only detail there is.
+	row := engineIngestJobRow(store.EngineIngestJob{
+		ID: "j1", ModelID: "sd35-medium", State: store.EngineIngestFailed,
+		Source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors", Message: curl403,
+	})
+	if row["code"] != errCodeIngestGatedNotAccepted || row["message"] != curl403 {
+		t.Errorf("job row = %v", row)
+	}
+	if _, ok := engineIngestJobRow(store.EngineIngestJob{ID: "j2", State: store.EngineIngestDone})["code"]; ok {
+		t.Error("a job that did not fail carries a diagnosis")
 	}
 }
 
@@ -490,6 +609,101 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	}
 	if got, _, _ := st.GetEngineIngestJob(ctx, job.ID); got.State != store.EngineIngestDone {
 		t.Errorf("job state = %q", got.State)
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 6. The row an ingest wrote was always `[{S3Key, Bytes}]` with no flag —
+// "one whole checkpoint" — so a SPLIT model could not be assembled by taking its parts in.
+// Measured on af-sandbox: the four files of `flux1-dev-fp8` had to be staged as three throwaway
+// rows and the real row re-typed through `POST /models`, which is also how two rows came to
+// point at the same `clip_l.safetensors`.
+//
+// Both halves are pinned: the flag reaches the row, and a second download joins the row that is
+// already there rather than replacing it.
+func TestEngineIngestDeclaresWhatTheFileIsAndAttachesTheRest(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	stopped := func(arn string) {
+		api.tasks = []ecstypes.Task{{
+			TaskArn: aws.String(arn), LastStatus: aws.String("STOPPED"),
+			Containers: []ecstypes.Container{
+				{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+				{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+			},
+		}}
+		ing.reconcile(ctx)
+	}
+
+	unet := ingestReq()
+	unet.Role, unet.ModelID, unet.Kind = "image", "flux1-dev-fp8", "checkpoint"
+	unet.BaseModel, unet.FileFlag = "flux1", "--diffusion-model"
+	unet.S3Key = "image/diffusion_models/flux1-dev-fp8.safetensors"
+	unet.Resolved.Bytes = 11900000000
+	job, aerr := ing.start(ctx, unet)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	stopped(job.TaskArn)
+
+	rows, _ := st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 || len(rows[0].Files) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Files[0].Flag != "--diffusion-model" {
+		t.Fatalf("the file's role was not recorded: %+v — the row reads as a whole checkpoint", rows[0].Files[0])
+	}
+
+	// The text encoder is a second download onto the SAME row.
+	clip := unet
+	clip.FileFlag, clip.S3Key = "--clip_l", "image/text_encoders/clip_l.safetensors"
+	clip.Resolved.Bytes = 246144152
+	clip.Attach = true
+	clip.BaseModel = "" // an attach declares no family: the row settled that when it was created
+	job2, aerr := ing.start(ctx, clip)
+	if aerr != nil {
+		t.Fatalf("attach start: %v", aerr.message)
+	}
+	stopped(job2.TaskArn)
+
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 {
+		t.Fatalf("the attach created a second row: %+v", rows)
+	}
+	m := rows[0]
+	if len(m.Files) != 2 || m.Files[1].Flag != "--clip_l" || m.Files[1].Bytes != 246144152 {
+		t.Fatalf("files = %+v", m.Files)
+	}
+	// Everything the row already said is still what it says: an attach carries a file and
+	// nothing else, which is the whole reason it is not an upsert.
+	if m.BaseModel != "flux1" || m.Kind != "checkpoint" || m.LicenseAcceptedBy != "u1" {
+		t.Errorf("the attach rewrote the row: %+v", m)
+	}
+	if m.Files[0].S3Key != "image/diffusion_models/flux1-dev-fp8.safetensors" {
+		t.Errorf("the first file was disturbed: %+v", m.Files)
+	}
+
+	// A reconcile that sees the same finished task twice must not list the file twice — the
+	// active set would then pass `--clip_l` to the engine two times.
+	stopped(job2.TaskArn)
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows[0].Files) != 2 {
+		t.Errorf("a re-reconciled attach duplicated the file: %+v", rows[0].Files)
+	}
+
+	// And attaching to a row that is not there says so rather than writing one: the bytes are
+	// in the bucket and the operator has to be told which id they were meant for.
+	orphan := clip
+	orphan.ModelID, orphan.S3Key = "forgotten", "image/text_encoders/t5xxl_fp8.safetensors"
+	job3, aerr := ing.start(ctx, orphan)
+	if aerr != nil {
+		t.Fatalf("orphan start: %v", aerr.message)
+	}
+	stopped(job3.TaskArn)
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 {
+		t.Errorf("an attach to a missing row created one: %+v", rows)
 	}
 }
 

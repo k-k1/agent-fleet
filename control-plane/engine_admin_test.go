@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -409,6 +410,306 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	a.postIngest(rec2, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec2.Code == http.StatusConflict {
 		t.Errorf("a free id was refused as a duplicate: %s", rec2.Body.String())
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 6, at the door. The ingest could say nothing about what a file IS within
+// the model, so `attach` — this file joins the row that is already there — is the act that
+// makes a split model buildable by ingest alone. It is also the one act allowed to name an id
+// the catalogue already holds, and everything about it is decided BEFORE the download: nine
+// minutes of Fargate is a bad place to learn that a flag was misspelt.
+func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+	}
+
+	post := func(extra string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{"id":"flux1-dev-fp8","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors",
+		  "license_accepted":true,"source":{"url":"https://example.invalid/clip_l.safetensors",
+		  "sha256":"` + strings.Repeat("b", 64) + `"}` + extra + `}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+		return rec.Code, rec.Body.String()
+	}
+
+	// Without it, the existing id is still refused — that check is what stops an ingest from
+	// upserting a working row's files, licence and enabled flag away.
+	if code, body := post(`,"file_flag":"--clip_l"`); code != http.StatusConflict {
+		t.Fatalf("a plain ingest onto an existing id = %d, want 409 (%s)", code, body)
+	}
+	// With it and no role, refused too: the unlabelled slot IS the checkpoint and a row has
+	// one, so a second would leave the last writer deciding what the loader gets.
+	if code, body := post(`,"attach":true`); code != http.StatusBadRequest {
+		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
+	}
+	// A role this provider does not read is refused rather than stored: the Agent's resolver
+	// drops an unknown flag (a catalogue newer than the box has to degrade), so the file would
+	// be downloaded, listed on the row and passed to nothing.
+	code, body := post(`,"attach":true,"file_flag":"--clip-l"`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "--clip_l") {
+		t.Fatalf("a misspelt flag = %d, and the refusal does not name the vocabulary: %s", code, body)
+	}
+	// A role the row already fills.
+	if code, body := post(`,"attach":true,"file_flag":"--diffusion-model"`); code != http.StatusConflict {
+		t.Fatalf("attaching a second --diffusion-model = %d, want 409 (%s)", code, body)
+	}
+	// An id nothing holds: an attach names its target, and a typo must not write a row.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"typo","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors","attach":true,
+		  "file_flag":"--clip_l","license_accepted":true,
+		  "source":{"url":"https://example.invalid/c","sha256":"`+strings.Repeat("b", 64)+`"}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("an attach to an id nothing holds = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// And the one that is right starts a job — with no family declared, because the row
+	// settled that when it was created.
+	if code, body := post(`,"attach":true,"file_flag":"--clip_l"`); code != http.StatusOK {
+		t.Fatalf("the attach = %d, want 200 (%s)", code, body)
+	}
+	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	}
+}
+
+// The refusal for a Civitai asset that needs an account has to happen HERE, before RunTask:
+// after it, the answer is a 401 nine minutes into a Fargate task and an exit code on the panel
+// (ADR 0072 P2 欠落 5).
+func TestEngineIngestRefusesACivitaiAssetThatNeedsAnAccount(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	civitaiStub(t, http.StatusUnauthorized)
+	ecsAPI := &fakeIngestECS{}
+	a.reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+	e.catalog.invalidate()
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"dreamshaper-8","kind":"checkpoint","s3Key":"image/checkpoints/dreamshaper_8.safetensors",
+		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ingest of a login-walled asset = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "civitai_login_required") {
+		t.Errorf("the refusal does not name itself: %s", rec.Body.String())
+	}
+	if len(ecsAPI.run) != 0 {
+		t.Error("a task was started for a download that answers 401")
+	}
+	if jobs, _ := st.ListEngineIngestJobs(t.Context(), "image", 10); len(jobs) != 0 {
+		t.Errorf("a job row was left behind: %+v", jobs)
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 10. Declaring a family clears `base_model_missing` — and NOTHING looked
+// at whether the row held the files that family's template reads, so the row came out of the
+// fix looking healthier and generating just as little.
+//
+// Measured on af-sandbox: `flux1-dev` was one unflagged 22.2 GiB file in `image/checkpoints/`,
+// and the flux1 template reads a diffusion model, two text encoders and a VAE — no answer in
+// the family selector could have saved that row, and after any answer the panel said nothing.
+func TestEngineAdminRowMustHoldWhatItsFamilyReads(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev", Kind: "checkpoint",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/flux1-dev.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	// Declaring the family is ACCEPTED — it is an improvement to a broken row, and refusing it
+	// would leave the row both broken and unfixable.
+	code, out := adminModel(t, a, "PUT", "image", "flux1-dev", `{"base_model":"flux1"}`)
+	if code != http.StatusOK {
+		t.Fatalf("declaring the family = %d (%v)", code, out)
+	}
+	// But the panel does not go quiet: the mark that replaces `base_model_missing` names the
+	// files the row still needs.
+	rowOf := func(out map[string]any, id string) map[string]any {
+		t.Helper()
+		rows, _ := out["model_rows"].([]any)
+		for _, r := range rows {
+			m, _ := r.(map[string]any)
+			if m["id"] == id {
+				return m
+			}
+		}
+		t.Fatalf("no row %s in %v", id, out)
+		return nil
+	}
+	mr := rowOf(out, "flux1-dev")
+	if mr["base_model_missing"] == true {
+		t.Error("the family did not stick")
+	}
+	missing, _ := mr["files_missing"].([]any)
+	// All four: the one file this row does have is an unflagged checkpoint, and flux1's
+	// template reads no such thing — which is why no answer in the selector could save it.
+	if len(missing) != 4 {
+		t.Fatalf("files_missing = %v, want every file the flux1 template reads", mr["files_missing"])
+	}
+
+	// And switching it on is refused, without a confirm: this is not a risk to weigh, it is
+	// comfyBuildGraph refusing before it dials anything.
+	code, out = adminModel(t, a, "PUT", "image", "flux1-dev", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a row that cannot generate = %d (%v), want 409", code, out)
+	}
+	msg, _ := out["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "--t5xxl") {
+		t.Errorf("the refusal does not name what is missing: %s", msg)
+	}
+	if code, out = adminModel(t, a, "PUT", "image", "flux1-dev", `{"selected":true}`); code != http.StatusConflict {
+		t.Errorf("selecting it = %d (%v), want the same refusal — select enables too", code, out)
+	}
+
+	// 🔴 The positive control. A row that HAS what its family reads goes on, and a single-file
+	// SDXL row is complete with the one unflagged file — a guard that refused everything would
+	// pass every assertion above.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = adminModel(t, a, "PUT", "image", "sdxl-base-1.0", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enabling a complete row = %d (%v), want 200", code, out)
+	}
+	if _, marked := rowOf(out, "sdxl-base-1.0")["files_missing"]; marked {
+		t.Error("a complete single-file row is marked as missing something")
+	}
+	// A LoRA has no template and no requirements; refusing one would block a registration that
+	// has nothing to do with graphs.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "detailed-eyes", Kind: "lora", BaseModel: "SDXL 1.0",
+		Files: []store.EngineModelFile{{S3Key: "image/loras/detailed_eyes.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = adminModel(t, a, "PUT", "image", "detailed-eyes", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enabling a LoRA = %d (%v), want 200", code, out)
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 6 の帰結. `?purge=1` handed the forgotten row's S3 keys straight to
+// MODE=delete without asking whether anything else pointed at them — and decision 2 shares
+// `text_encoders/` ON PURPOSE: SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one ingest
+// is referenced from both rows. Measured on af-sandbox: `clip_l.safetensors` was pointed at by
+// both `tmp-flux-clip-l` and `flux1-dev-fp8`, and purging the first would have broken the
+// second silently, at the next cold start.
+//
+// Both directions are pinned, because "kept everything" and "checked nothing" look identical
+// from the outside: the shared file survives, and the one nothing else uses is deleted.
+func TestEngineModelPurgeSparesFilesAnotherRowUses(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := t.Context()
+	shared := "image/text_encoders/clip_l.safetensors"
+	own := "image/diffusion_models/flux1-dev-fp8.safetensors"
+	for _, m := range []store.EngineModel{
+		{Role: "image", ID: "tmp-flux-clip-l", Kind: "checkpoint", BaseModel: "flux1",
+			Files: []store.EngineModelFile{{Flag: "--clip_l", S3Key: shared}}},
+		{Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+			Files: []store.EngineModelFile{
+				{Flag: "--diffusion-model", S3Key: own},
+				{Flag: "--clip_l", S3Key: shared},
+			}},
+	} {
+		if err := st.PutEngineModel(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.catalog.invalidate()
+	ecsAPI := &fakeIngestECS{}
+	a.reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+
+	deleted := func() string {
+		t.Helper()
+		if len(ecsAPI.run) == 0 {
+			return ""
+		}
+		for _, c := range ecsAPI.run[len(ecsAPI.run)-1].Overrides.ContainerOverrides {
+			for _, kv := range c.Environment {
+				if aws.ToString(kv.Name) == "KEY" {
+					return aws.ToString(kv.Value)
+				}
+			}
+		}
+		return ""
+	}
+	purge := func(id string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("DELETE", "/api/admin/engines/image/models/"+id+"?purge=1", nil)
+		r.SetPathValue("key", "image")
+		r.SetPathValue("id", id)
+		a.deleteModel(rec, r, store.Identity{ID: "u1"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("forget %s = %d (%s)", id, rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		note, _ := out["purge"].(string)
+		return note
+	}
+
+	// The throwaway row's only file is the shared one, so NOTHING is deleted — and the answer
+	// names the row that is keeping it, because "kept" with no name is not actionable.
+	note := purge("tmp-flux-clip-l")
+	if len(ecsAPI.run) != 0 {
+		t.Fatalf("a delete task was started for a file another row uses: %q", deleted())
+	}
+	if !strings.Contains(note, shared) || !strings.Contains(note, "flux1-dev-fp8") {
+		t.Errorf("the answer does not say what survived or why: %q", note)
+	}
+	e.catalog.invalidate()
+
+	// 🔴 The positive control. With the last reference gone, the same file IS deleted — without
+	// this half, a check that refused every purge would pass the test above.
+	note = purge("flux1-dev-fp8")
+	if len(ecsAPI.run) != 1 {
+		t.Fatalf("nothing was deleted for a row nothing else references (note %q)", note)
+	}
+	got := strings.Fields(deleted())
+	sort.Strings(got)
+	if want := []string{own, shared}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("deleted %v, want both files of the last row that referenced them", got)
 	}
 }
 

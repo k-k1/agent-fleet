@@ -164,6 +164,54 @@ var engineComfyFamilies = []string{"sdxl", "sd35", "flux1", "flux2-klein", "zima
 // list is served to the Console rather than hard-coded there.
 var engineComfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--clip_g", "--t5xxl", "--vae"}
 
+// engineComfyRequiredFlags is which files each family's TEMPLATE actually needs, and it is the
+// difference between a row that has a family and a row that can generate.
+//
+// 🔴 Declaring the family clears `base_model_missing`, and until this existed nothing looked at
+// whether the row held the files that family reads — so the panel went quiet about a row that
+// was still refused at generation. Measured on af-sandbox (ADR 0072 P2 欠落 10): `flux1-dev` was
+// a single unflagged 22.2 GiB file in `image/checkpoints/`, and the flux1 template wants a
+// diffusion model, two text encoders and a VAE — no answer in the family selector could save it.
+//
+// Same duplication and same drift test as the two vocabularies above: the AUTHORITY is
+// comfy_workflows.go's per-family guards, and engine_catalog_test.go reads them out of that
+// file. Adding a family here without adding it there (or the reverse) fails that test.
+var engineComfyRequiredFlags = map[string][]string{
+	"sdxl":        {""},
+	"sd35":        {"", "--clip_l", "--clip_g", "--t5xxl"},
+	"flux1":       {"--diffusion-model", "--clip_l", "--t5xxl", "--vae"},
+	"flux2-klein": {"--diffusion-model", "--clip_l", "--vae"},
+	"zimage":      {"--diffusion-model", "--clip_l", "--vae"},
+}
+
+// engineMissingFileFlags answers "what would this row still be refused for", as the list of
+// file roles its declared family needs and the row does not have. Empty for everything the
+// question cannot be asked about: a provider that does not dispatch on a family, a LoRA, and a
+// row whose family is not one of the vocabulary (`base_model_missing` is that row's answer, and
+// two marks saying the same thing is one too many).
+func engineMissingFileFlags(provider string, m store.EngineModel) []string {
+	if engineBaseModelsFor(provider) == nil || engineModelIsLora(m) {
+		return nil
+	}
+	want, ok := engineComfyRequiredFlags[strings.TrimSpace(m.BaseModel)]
+	if !ok {
+		return nil
+	}
+	have := make(map[string]bool, len(m.Files))
+	for _, f := range m.Files {
+		if strings.TrimSpace(f.S3Key) != "" {
+			have[strings.TrimSpace(f.Flag)] = true
+		}
+	}
+	var missing []string
+	for _, w := range want {
+		if !have[w] {
+			missing = append(missing, w)
+		}
+	}
+	return missing
+}
+
 // engineFileFlagsFor is the file vocabulary an engine's provider understands, or nil when a row
 // is always one unlabelled file (sdcpp loads a single checkpoint with -m).
 func engineFileFlagsFor(provider string) []string {
