@@ -174,6 +174,11 @@ export const admin = {
   "admin.engines_class_reset": "既定に戻す",
   "admin.engines_class_pending": "いま動いているのは {t} の箱です。選んだクラスは次に買う箱から効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧い箱が退場するまで新しい箱は起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
+  // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
+  // class the capacity provider does not hold — and picking it again is no change at all. The
+  // retry has to be a button of its own, or the only way out is a detour through another class.
+  "admin.engines_class_apply_failed": "クラスは保存しましたが、キャパシティプロバイダへの書き込みに失敗しました。次に買う箱はまだ前のクラスのままです: {m}",
+  "admin.engines_class_apply_retry": "もう一度適用する",
   "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
   "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
   "admin.engines_class_vram_unknown": "有効なモデルが必要とする VRAM は分かりません（誰も測っていません）。「収まる」という意味ではありません。",

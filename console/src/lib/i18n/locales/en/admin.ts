@@ -167,6 +167,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class_reset": "Back to the default",
   "admin.engines_class_pending": "What is running is a {t} box. The class you chose applies to the NEXT box. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new box does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
+  // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
+  // class the capacity provider does not hold — and picking it again is no change at all. The
+  // retry has to be a button of its own, or the only way out is a detour through another class.
+  "admin.engines_class_apply_failed": "The class was saved, but writing it to the capacity provider failed, so the next box is still bought on the previous one: {m}",
+  "admin.engines_class_apply_retry": "Apply it again",
   "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
   "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",
   "admin.engines_class_vram_unknown": "How much VRAM the enabled models need is not known — nobody measured it. That is not the same as saying they fit.",

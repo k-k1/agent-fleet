@@ -212,6 +212,11 @@ type EngineRow = {
   class_is_default?: boolean;
   /** A box of another rung is still up, so the saved choice has reached nothing yet. */
   class_replace_pending?: boolean;
+  /** 🔴 Why the capacity provider does not hold the rung above. The CP saves the choice BEFORE
+   *  it applies it, so a failed apply leaves this picker showing a rung nothing was written for
+   *  — and picking that same rung again is no change, so nothing is sent. This field is what
+   *  the retry hangs off. In-memory at the CP: absent means "no claim", never "it was applied". */
+  class_apply_error?: string;
   /** The largest demand among the ENABLED models — a maximum, not a sum: one model is in VRAM
    *  at a time (`--models-max 1`, one checkpoint). */
   vram_need_mib?: number;
@@ -361,6 +366,12 @@ export function EnginesAdminView() {
       );
       if (d?.error) {
         setErr(errDetail(d.error));
+        // 🔴 A refusal here is not a request that did nothing: the CP stores the choice before
+        // it applies it, so the rung on screen is already stale and the failure it should be
+        // showing is only in the fresh row. Without this re-read the picker snaps back to the
+        // OLD rung — which is neither what is stored nor what the provider holds — and the
+        // retry below has nothing to appear beside.
+        await load();
         return;
       }
       setErr("");
@@ -538,7 +549,11 @@ export function EnginesAdminView() {
  *     bigger box" turns into a permanent hourly bill exactly when nobody is reminded;
  *   - a model that will not fit is pointed at, with the STRENGTH of the evidence attached:
  *     a measured number and a weights-only floor are different claims, and "nobody measured
- *     this" is never drawn as "it fits". */
+ *     this" is never drawn as "it fits";
+ *   - a rung that was saved but could not be APPLIED offers its own retry. The select cannot be
+ *     one: the choice is stored before it is applied, so after a failure this picker already
+ *     shows that rung and re-picking it fires no change event at all. Recovery was a detour
+ *     through another rung until this button existed (ADR 0074). */
 function EngineClassPicker({
   row,
   busy,
@@ -591,6 +606,20 @@ function EngineClassPicker({
           </>
         )}
       </div>
+      {/* Saved, not applied. The provider's own words are quoted rather than summarised: a
+          missing IAM grant and a throttle need different things from the person reading them.
+          The retry re-sends the rung already selected, which is the one request the select can
+          never produce. */}
+      {row.class_apply_error && (
+        <div className="engines-class-pending">
+          <p className="form-err">
+            {tr("admin.engines_class_apply_failed").replace("{m}", row.class_apply_error)}
+          </p>
+          <button type="button" className="sm" disabled={busy} onClick={() => onPick(current)}>
+            {tr("admin.engines_class_apply_retry")}
+          </button>
+        </div>
+      )}
       {/* The saved rung has reached nothing yet: a box of another type is still up. Both halves
           are said — that the change is pending, and that acting on it costs a cold start. */}
       {oldBox && (
