@@ -530,6 +530,7 @@ func ingestReq() engineIngestRequest {
 	return engineIngestRequest{
 		Role: "llm", ModelID: "qwen2.5-coder-1.5b", Kind: "gguf",
 		S3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", AcceptedBy: "u1",
+		AcceptedTenant: "t-acme", AcceptedLicense: "apache-2.0",
 		ContextTokens: 32768, MaxOutput: 4096,
 		Resolved: engineResolved{
 			DownloadURL: "https://huggingface.co/x/y/resolve/main/f.gguf",
@@ -593,8 +594,15 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	if len(m.Files) != 1 || m.Files[0].Bytes != 1117320768 {
 		t.Errorf("files = %+v", m.Files)
 	}
+	// The whole tuple ADR 0072 open question 11 asks for — (tenant, member, when, licence) —
+	// and it has to survive the round trip through job.Spec, which is where it actually lives
+	// between the request and the row minutes later.
 	if m.LicenseAcceptedBy != "u1" || m.LicenseAcceptedAt == "" {
 		t.Errorf("acceptance not recorded: %q / %q", m.LicenseAcceptedBy, m.LicenseAcceptedAt)
+	}
+	if m.LicenseAcceptedTenant != "t-acme" || m.LicenseAcceptedLicense != "apache-2.0" {
+		t.Errorf("the tenant axis of the acceptance was lost: tenant=%q licence=%q",
+			m.LicenseAcceptedTenant, m.LicenseAcceptedLicense)
 	}
 	if m.CommercialUse != "yes" || m.ContextTokens != 32768 {
 		t.Errorf("row = %+v", m)

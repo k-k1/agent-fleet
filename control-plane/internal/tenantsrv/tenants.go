@@ -147,6 +147,7 @@ func (a Admin) ListTenants(w http.ResponseWriter, r *http.Request, ident store.I
 			"home_hibernate_after":            lim.HomeHibernateAfter,
 			"home_backup_every":               lim.HomeBackupEvery,
 			"allow_agent_self_update":         lim.AllowAgentSelfUpdate,
+			"allow_engine_ingest":             lim.AllowEngineIngest,
 			"terminal_history_retention_days": lim.TerminalHistoryRetentionDays,
 			// Per-tenant login rules (docs/log/61 §61.9.7), for the admin editor.
 			"allowed_providers": t.AllowedProviders,
@@ -951,7 +952,11 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		// Tier-4 home backup (ecs-ec2 only): the tenant's RPO. Same resolution.
 		HomeBackupEvery string `json:"home_backup_every"`
 		// Operator gate for member CLI self-update (claude/opencode/codex).
-		AllowAgentSelfUpdate         bool `json:"allow_agent_self_update"`
+		AllowAgentSelfUpdate bool `json:"allow_agent_self_update"`
+		// Operator gate for taking models into the engine catalogue (ADR 0072 open
+		// question 11). The catalogue stays deployment-wide -- this only says whose
+		// tenant_admins may add to it.
+		AllowEngineIngest            bool `json:"allow_engine_ingest"`
 		TerminalHistoryRetentionDays int  `json:"terminal_history_retention_days"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1022,6 +1027,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		HomeHibernateAfter:           body.HomeHibernateAfter,
 		HomeBackupEvery:              body.HomeBackupEvery,
 		AllowAgentSelfUpdate:         body.AllowAgentSelfUpdate,
+		AllowEngineIngest:            body.AllowEngineIngest,
 		TerminalHistoryRetentionDays: body.TerminalHistoryRetentionDays,
 	}
 	if err := a.cp.StoreTenantLimits(r.Context(), t.ID, lim); err != nil {
@@ -1057,6 +1063,7 @@ func (a Admin) SetTenantLimits(w http.ResponseWriter, r *http.Request, _ store.I
 		"home_hibernate_after":            body.HomeHibernateAfter,
 		"home_backup_every":               body.HomeBackupEvery,
 		"allow_agent_self_update":         body.AllowAgentSelfUpdate,
+		"allow_engine_ingest":             body.AllowEngineIngest,
 		"terminal_history_retention_days": body.TerminalHistoryRetentionDays,
 	}
 	// A failure to read it is not a reason to fail the save — the save is done, and the

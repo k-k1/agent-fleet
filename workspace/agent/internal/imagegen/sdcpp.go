@@ -88,6 +88,23 @@ type EngineConn struct {
 	// for a model the catalogue says nothing about, which is not an error: the id alone is a
 	// usable, if less helpful, choice.
 	Descriptions map[string]string
+	// Loras are the enabled fine-tunes this engine holds (ADR 0072 decision 5, phase P3). A flat
+	// list rather than a map by model: a LoRA is not owned by a checkpoint, it declares the
+	// FAMILY it was trained against and any checkpoint of that family may use it.
+	Loras []EngineLora
+}
+
+// EngineLora is one LoRA row of the catalogue as the provider needs it. File is what the engine
+// sees on disk — the same basename rule EngineFile follows — while ID is what the catalogue,
+// the panel and the tool's enum all call it.
+type EngineLora struct {
+	ID          string
+	File        string
+	Description string
+	// BaseModel is the checkpoint family this LoRA was trained against, in decision 2's own
+	// vocabulary. "" when the catalogue declares none, which the comfy provider refuses to pair
+	// with anything rather than guess.
+	BaseModel string
 }
 
 // EngineFile is one file ADR 0072 decision 2 declares for a model: the on-disk basename (the

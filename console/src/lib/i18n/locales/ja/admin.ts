@@ -194,6 +194,11 @@ export const admin = {
   "admin.engines_class_reset": "既定に戻す",
   "admin.engines_class_pending": "いま動いているのは {t} の箱です。選んだクラスは次に買う箱から効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧い箱が退場するまで新しい箱は起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
+  // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
+  // class the capacity provider does not hold — and picking it again is no change at all. The
+  // retry has to be a button of its own, or the only way out is a detour through another class.
+  "admin.engines_class_apply_failed": "クラスは保存しましたが、キャパシティプロバイダへの書き込みに失敗しました。次に買う箱はまだ前のクラスのままです: {m}",
+  "admin.engines_class_apply_retry": "もう一度適用する",
   "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
   "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
   "admin.engines_class_vram_unknown": "有効なモデルが必要とする VRAM は分かりません（誰も測っていません）。「収まる」という意味ではありません。",
@@ -480,6 +485,10 @@ export const admin = {
   "admin.allow_self_update": "メンバーがエージェント CLI と rtk を自分で最新へ更新するのを許可",
   "admin.allow_self_update_hint":
     "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
+  "admin.engine_ingest_title": "推論エンジンのモデル取り込み",
+  "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
+  "admin.allow_engine_ingest_hint":
+    "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",

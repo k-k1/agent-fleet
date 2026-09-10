@@ -208,6 +208,66 @@ describe("EnginesAdminView", () => {
     expect(host!.textContent).toContain("いま入れ替える");
   });
 
+  // 🔴 A rung that was SAVED but not APPLIED must be recoverable from this screen.
+  //
+  // The CP stores the choice before it writes it to the capacity provider (deliberately — that
+  // is what lets the panel say the card was not applied), so after a refusal the picker already
+  // shows the rung nothing was written for, and re-picking it fires no change event at all.
+  // Until this button existed the only recovery was a detour through another rung (ADR 0074,
+  // 直さなかったが分かっていること).
+  it("offers a retry when the class was saved but could not be applied", async () => {
+    let served: Record<string, unknown> = withClasses();
+    api.mockImplementation(() => Promise.resolve({ engines: [served] }));
+    await mount();
+
+    // What the CP holds after the refusal: the new rung stored, and why it did not land.
+    served = withClasses({
+      class: { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"] },
+      class_is_default: false,
+      class_apply_error: "AccessDeniedException: ecs:UpdateCapacityProvider",
+    });
+    apiJSON.mockResolvedValue({
+      error: { code: "engine_ecs_error", message: "AccessDeniedException: ecs:UpdateCapacityProvider" },
+    });
+    const sel = () => host!.querySelector(".engines-class select") as HTMLSelectElement;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel(), "l40s");
+      sel().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "l40s" });
+
+    // The refusal is RE-READ rather than assumed to have changed nothing: the picker shows what
+    // the CP stored, not the rung that was on screen before the press.
+    expect(sel().value).toBe("l40s");
+    // In the provider's own words — a missing IAM grant and a throttle need different things
+    // from whoever is reading this.
+    expect(host!.textContent).toContain("キャパシティプロバイダへの書き込みに失敗");
+    expect(host!.textContent).toContain("ecs:UpdateCapacityProvider");
+
+    // And the retry sends the rung the select can no longer produce a change event for.
+    apiJSON.mockClear();
+    apiJSON.mockResolvedValue(served);
+    await click(
+      Array.from(host!.querySelectorAll(".engines-class button")).find(
+        (b) => b.textContent === "もう一度適用する",
+      ) as HTMLElement,
+    );
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "l40s" });
+  });
+
+  it("says nothing about applying when the Control Plane reports no failure", async () => {
+    // Absence is "no claim", not "it was applied": the CP's note is in memory, so a restarted
+    // one has nothing to say and must not be drawn as either verdict.
+    api.mockResolvedValue({ engines: [withClasses()] });
+    await mount();
+    expect(host!.textContent).not.toContain("もう一度適用する");
+  });
+
   it("asks before enabling a model that does not fit the chosen card, and never guesses", async () => {
     api.mockResolvedValue({
       engines: [

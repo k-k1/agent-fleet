@@ -70,22 +70,26 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("DELETE /api/admin/engines/{key}/models/{id}", a.withSuperAdmin(a.deleteModel))
 	// Taking a model IN from Hugging Face / Civitai / a URL (ADR 0072 decision 6, phase P4),
 	// and watching the jobs that does.
-	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withSuperAdmin(a.postIngest))
-	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withSuperAdmin(a.listIngest))
+	//
+	// These six are the ONLY engine routes that are not super_admin: a tenant_admin of a tenant
+	// the operator granted `allow_engine_ingest` may drive them too (ADR 0072 open question 11 —
+	// engine_ingest_perm.go says why the axis stops here).
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.postIngest))
+	mux.HandleFunc("GET /api/admin/engines/{key}/ingest", a.withIngestAdmin(a.listIngest))
 	// Resolving a source WITHOUT starting anything: what the licence is, whether the repository
 	// is gated, how big the file is. The panel calls it while somebody is typing, so that the
 	// licence they are about to accept is on screen BEFORE the button that accepts it.
-	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/resolve", a.withSuperAdmin(a.resolveIngest))
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/resolve", a.withIngestAdmin(a.resolveIngest))
 	// And what the repository HAS, so the filename is picked rather than copied by hand across
 	// two windows — the same read, filtered to the files this engine could actually load.
-	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/files", a.withSuperAdmin(a.listIngestFiles))
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/files", a.withIngestAdmin(a.listIngestFiles))
 	// And WHICH repository, for somebody who does not already know the name (ADR 0072
 	// decision 11). Reads only, filtered to what this engine could load.
-	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/search", a.withSuperAdmin(a.searchIngest))
+	mux.HandleFunc("POST /api/admin/engines/{key}/ingest/search", a.withIngestAdmin(a.searchIngest))
 	// The same read with no engine in the path: a deployment that has not adopted 60-engines
 	// has an EMPTY panel, and "there is nothing here" is the worst answer to "what could I
 	// run?". Browsing needs no engine because it needs no token, no bucket and no task.
-	mux.HandleFunc("POST /api/admin/engines/search", a.withSuperAdmin(a.browseSearch))
+	mux.HandleFunc("POST /api/admin/engines/search", a.withIngestAdmin(a.browseSearch))
 	// The operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5). Not under
 	// {key}: one token serves every role, because one ingest task does. There is no GET that
 	// returns it — only whether one is registered, by whom and when.
@@ -212,6 +216,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// is the sentence that stops a temporary experiment from becoming a permanent bill
 		// (decision 7), and it must not depend on a client remembering to compute it.
 		row["class_is_default"] = sel.ID == def.ID
+		// The rung above is what was CHOSEN; this is why the capacity provider does not hold it.
+		// Omitted whenever this process has nothing to report, which is what the panel reads as
+		// "no claim" — never as "it was applied" (see classApplyError). It is what turns the
+		// picker's dead end into a retry: without it, re-selecting the stored rung is "no change"
+		// and the Console sends nothing at all.
+		if msg := e.classApplyError(); msg != "" {
+			row["class_apply_error"] = msg
+		}
 		if need, source, id := engineVramDemand(catalogue); source != engineVramUnknown {
 			// What the largest enabled model wants, and how well that is known. A maximum,
 			// not a sum: one model is in VRAM at a time (`--models-max 1`, one checkpoint).
@@ -1067,7 +1079,7 @@ type engineIngestBody struct {
 //
 // It exists so that the licence, the gating and the size are on screen BEFORE the checkbox that
 // accepts the licence — an acceptance offered ahead of the terms is not one.
-func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a engineAdminAPI) resolveIngest(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
 	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
@@ -1154,7 +1166,7 @@ func engineIngestKindFor(e *engineRuntimeState) string {
 //
 // It starts nothing, like the resolve, and it is the same read: whatever is picked here is
 // resolved out of an answer with the same shape a moment later.
-func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
 	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
@@ -1174,7 +1186,7 @@ func (a engineAdminAPI) listIngestFiles(w http.ResponseWriter, r *http.Request, 
 }
 
 // postIngest (POST …/ingest) resolves the source and starts the task.
-func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g engineIngestGrant) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	e := a.reg.get(key)
 	if e == nil {
@@ -1293,23 +1305,31 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 		Description:   strings.TrimSpace(b.Description),
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
-		AcceptedBy: ident.ID, Resolved: res,
-		FileFlag: flag, Attach: b.Attach,
+		// The acceptance, as the tuple ADR 0072 open question 11 asks for. The licence is
+		// carried as a STRING rather than re-read from the row later: it is what was on
+		// screen when the box was ticked, and upstream relicensing must not rewrite what
+		// somebody agreed to.
+		AcceptedBy: g.ident.ID, AcceptedTenant: g.tenantID,
+		AcceptedLicense: engineLicenceLabel(res),
+		Resolved:        res,
+		FileFlag:        flag, Attach: b.Attach,
 	})
 	if aerr != nil {
 		writeAPIErr(w, aerr)
 		return
 	}
-	// The acceptance is audited whether or not the download later succeeds: the operator agreed
+	// The acceptance is audited whether or not the download later succeeds: the person agreed
 	// to the terms at this moment, and that is true even if Hugging Face then times out.
-	a.audit(r.Context(), ident, "engine."+key+".ingest",
+	// Scoped to the granting tenant, so a tenant_admin's ingest is readable in that tenant's
+	// own audit view rather than only in the deployment-wide one.
+	a.auditFor(r, g, "engine."+key+".ingest",
 		id+" from "+res.Source+" (licence "+engineLicenceLabel(res)+" accepted)")
 	writeJSON(w, http.StatusOK, engineIngestJobRow(job))
 }
 
 // listIngest (GET …/ingest) is the job list, reconciled against ECS first so that what it
 // reports is what ECS thinks rather than what this table last heard.
-func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a engineAdminAPI) listIngest(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
 	key := strings.TrimSpace(r.PathValue("key"))
 	if a.reg.get(key) == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})

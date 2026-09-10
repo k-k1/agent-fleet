@@ -36,7 +36,7 @@ platform changes:
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS **Managed Instances** services that are normally scaled to zero: one MI capacity provider per role (never one box for both — VRAM), the three IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>ModelS3Key` is set (or `<Role>Enabled`, ADR 0072). Imports 00-network and 20-platform (including whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs, which must already hold the image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
+| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS **Managed Instances** services that are normally scaled to zero: one MI capacity provider per role (never one box for both — VRAM), the three IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (including whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs, which must already hold the image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
 | `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
@@ -854,7 +854,7 @@ only exists while somebody is using it**. It has two independent roles:
 | `llm` | llama.cpp (`llama-server`) | `llamacpp/<model>` in opencode's launch picker | ~527–586 s |
 | `image` | stable-diffusion.cpp (`sd-server`) | the `generate_image` tool, provider `sdcpp` — generate, edit and inpaint | ~195 s + the box |
 
-Each is optional on its own (an empty `<Role>ModelS3Key` means that role's service is not
+Each is optional on its own (without `<Role>Enabled=true` that role's service is not
 created at all), and **the two never share a box**: CUDA does not slow down when VRAM runs
 out, it crashes, and the two measured footprints — 20.9 GB for the 30B, 7.4 GB for SDXL — do
 not both fit on one L4. Everything here is opt-in, because unlike the speech engine it is not
@@ -891,8 +891,8 @@ box once the task is gone — which is the property ADR 0070's whole design rest
    `crane copy ghcr.io/leejet/stable-diffusion.cpp:master-cuda <acct>.dkr.ecr.<region>.amazonaws.com/af-sdcpp:master-cuda`.
    It is also worth doing for a measured reason: **GHCR through this NAT runs at 12–14 MB/s**,
    which put 178 seconds of a 527-second cold start into the pull alone. (`standup.sh` copies
-   the sd-server image only when `ImageModelS3Key` is set — an LLM-only deployment does not
-   pay for 2.3 GB it will never start.)
+   the sd-server image only when `ImageEnabled=true` — an LLM-only deployment does not pay for
+   2.3 GB it will never start.)
 
 ### Turning it on
 
@@ -904,7 +904,9 @@ the captured state — the same shape as the pool and speech layers:
 # Every parameter has a default; standup.sh overrides NetworkStackName /
 # PlatformStackName / ServiceConnectNamespace from what it already knows.
 ServiceConnectNamespace=af.internal
-LlmModelIds=qwen3-coder-30b-a3b
+# Whether each role exists at all: its service, its DNS name, its row in the engine table.
+# This is the WHOLE switch since ADR 0072 P6 - nothing here says what the engine loads.
+LlmEnabled=true
 # More than one type, or a shortfall in one AZ is the whole of "the engine never arrives".
 # The list is a filter and not a preference order (MI has no allocation strategy), so the
 # cheapest member is the one normally bought: keep the intended box cheapest and put a
@@ -915,15 +917,8 @@ LlmAllowedInstanceTypes=g6.xlarge,g5.xlarge
 # bought — the Control Plane then never touches the capacity provider at all. The FIRST rung is
 # the default and has to restate them. PARAMETERS-60-engines.md, "The instance classes".
 # LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
-# The context llama-server is started with, and what the client is told it has. One knob for
-# both, so they cannot drift; move them together when the model changes.
-LlmContextTokens=32768
-LlmMaxOutputTokens=4096
-# The image role, if you want it. Leave every Image* line out and no image service exists.
-ImageModelIds=sdxl-base-1.0
-# Left out on the FIRST pass — see below. Same for both roles.
-# LlmModelS3Key=llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
-# ImageModelS3Key=image/sd_xl_base_1.0.safetensors
+# The image role, if you want it. Leave this out and no image service exists.
+ImageEnabled=true
 ```
 
 `standup.sh` then copies the images into ECR, generates the llm engine's own API key into SSM
@@ -933,25 +928,21 @@ speech engine and before `30-ingress`, scales each **newly created** service to 
 sd-server has no authentication option at all, so its security group — 8080 from the CP and
 nothing else — is the whole of its access control.
 
-⚠️ **The first stand-up is two passes, and `<Role>ModelS3Key` is what separates them.** The
-bucket a model is staged in is created by this stack, and the service that serves the model
-is created by this stack — so on the very first deploy there is nothing in the bucket yet,
-and CloudFormation blocks on ECS service stabilisation. Measured, on this stack's first real
-create: the fetch sidecar answered `Key … does not exist` and the task crash-looped every
-60 seconds while the stack sat in `CREATE_IN_PROGRESS`, with no later step able to rescue it.
-So:
+**The first stand-up is ONE pass, and it stands up empty.** It used to be two: the bucket and
+the service that serves out of it are created by the same stack, so on the very first deploy
+there was nothing to load and CloudFormation blocked on ECS service stabilisation — measured on
+this stack's first real create, the fetch sidecar answered `Key … does not exist` and the task
+crash-looped every 60 seconds while the stack sat in `CREATE_IN_PROGRESS`, with no later step
+able to rescue it. Since ADR 0072 the sidecar treats "nothing staged" as success and the engine
+idles, so `LlmEnabled=true` on an empty bucket gives a role that comes up, is scaled to 0, and
+waits for its first model. Adding a role later is the same one line.
 
-1. deploy with **`LlmModelS3Key` and `ImageModelS3Key` empty** (the default). You get the
-   bucket, the ingest task, both capacity providers, the roles and an engine table that says
-   `{"engines":[]}` — and no service to hang;
-2. run the ingest task below to put a model in the bucket;
-3. set the key in `params/60-engines` and run `standup.sh` again (or `update.sh`, which
-   re-deploys this stack every release). The service is created, comes up once, and is scaled
-   back to 0.
-
-The same two steps apply to a role added later: staging an SDXL checkpoint and setting
-`ImageModelS3Key` on a deployment that has been running the llm role for months creates the
-image service on that run, and `standup.sh` scales it to 0 without touching the llm one.
+🔴 **Upgrading a deployment that predates ADR 0072 P6: add `<Role>Enabled=true` before you
+update.** `LlmModelS3Key` / `ImageModelS3Key` used to decide whether the role's service existed,
+and they are gone. `standup.sh` translates a captured key into the switch; `update.sh` and a
+hand-run `cloudformation deploy` pass no parameters at all, so without that line the update
+**deletes the running engine service** — silently, as an ordinary stack update.
+`cfn/PARAMETERS-60-engines.md`, "Upgrading: the model parameters are gone".
 
 ### Getting a model into the catalogue
 
@@ -979,8 +970,9 @@ the bucket — `image/checkpoints/x.safetensors` becomes `/models/image/checkpoi
 — so the key IS the path and there is no second name to keep in step.
 
 ⚠️ **A deployment staged before ADR 0072 has `image/sd_xl_base_1.0.safetensors` at the top
-level.** Move it with a server-side copy (no NAT, no re-download) and update `ImageModelS3Key` in
-the SAME change, because that parameter is what seeds the catalogue row:
+level.** Move it with a server-side copy (no NAT, no re-download) and correct the catalogue row's
+key in the admin panel in the SAME change — the row points at the key verbatim, and a row whose
+file is not there fails in the fetch sidecar at the next cold start, not at deploy time:
 
 ```bash
 aws s3 cp "s3://$BUCKET/image/sd_xl_base_1.0.safetensors" \

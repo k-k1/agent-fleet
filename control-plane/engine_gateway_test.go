@@ -100,8 +100,8 @@ func newTestEngine(t *testing.T, url string, api engineECSAPI) *engineRuntimeSta
 	t.Helper()
 	def := engineDef{
 		Key: "llm", Service: "af-llm", URL: url, Health: "/health",
-		Provider: "llamacpp", Models: []string{"qwen3-coder-30b-a3b"},
-		IdleSec: 1800, StartDeadlineSec: 900,
+		Provider: "llamacpp",
+		IdleSec:  1800, StartDeadlineSec: 900,
 	}
 	e := &engineRuntimeState{
 		def: def,
@@ -549,7 +549,7 @@ func newTestImageEngine(t *testing.T, url string, api engineECSAPI) *engineRunti
 	e := &engineRuntimeState{
 		def: engineDef{
 			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
-			Health: "/v1/models", Provider: "sdcpp", Models: []string{"sdxl-base-1.0"},
+			Health: "/v1/models", Provider: "sdcpp",
 			IdleSec: 900, StartDeadlineSec: 900,
 		},
 		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
@@ -565,7 +565,7 @@ func newTestComfyEngine(t *testing.T, url string, api engineECSAPI) *engineRunti
 	e := &engineRuntimeState{
 		def: engineDef{
 			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
-			Health: "/system_stats", Provider: "comfy", Models: []string{"sdxl-base-1.0", "klein-4b"},
+			Health: "/system_stats", Provider: "comfy",
 			IdleSec: 900, StartDeadlineSec: 900,
 		},
 		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
@@ -775,26 +775,27 @@ func TestParseEngineTableReadsBothRoles(t *testing.T) {
 	}
 }
 
-// The context window the llm role is STARTED with travels in the table, because nobody
-// downstream can ask for it: llama-server holds it, and the whole design is that the box is
-// asleep when the launch menu is drawn.
+// The context window comes from the CATALOGUE and from nowhere else (ADR 0072 phase P6). It has
+// to travel because nobody downstream can ask for it: llama-server holds it, and the whole design
+// is that the box is asleep when the launch menu is drawn.
 //
-// Since ADR 0072 the window is per MODEL and the table's copy is the SEED of that (the row a
-// deployment upgrading from ADR 0071 already had). What the Agent reads comes from the
-// catalogue, and the engine-wide pair describes the model the engine will start with.
+// The table parsed here is an OLD one, still carrying the model ids, the window and the S3 key a
+// pre-P6 stack wrote. Two facts at once: such a table still parses (the CP is upgraded before the
+// stack is, so this shape is live), and what it says about models is ignored — the window in the
+// row below is the catalogue's, and it wins even where the two disagree.
 func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	raw := `{"engines":[{"key":"llm","api":"chat","service":"s","capacityProvider":"cp",
 	 "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
-	 "models":["qwen3-coder-30b-a3b"], "contextTokens":32768,"maxOutputTokens":4096,
-	 "modelS3Key":"llm/qwen.gguf",
+	 "models":["gone"], "contextTokens":512,"maxOutputTokens":256,
+	 "modelS3Key":"llm/gone.gguf",
 	 "apiKeyParam":"","idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"}]}`
 	tab, err := parseEngineTable(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	d := tab.Engines[0]
-	if d.ContextTokens != 32768 || d.MaxOutputTokens != 4096 || d.ModelS3Key != "llm/qwen.gguf" {
-		t.Fatalf("seed = %d/%d %q", d.ContextTokens, d.MaxOutputTokens, d.ModelS3Key)
+	if d.Key != "llm" || d.Provider != "llamacpp" || d.IdleSec != 1800 {
+		t.Fatalf("a table written by a pre-P6 stack no longer parses: %+v", d)
 	}
 	row := engineCatalogRowFor(d, []store.EngineModel{{
 		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
@@ -821,6 +822,50 @@ func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	// appear at all, or a launch menu offers a model whose every request answers 503.
 	if none := engineCatalogRowFor(d, nil, ""); none != nil {
 		t.Errorf("an engine with an empty catalogue was offered: %v", none)
+	}
+}
+
+// The LoRAs the Agent reads (ADR 0072 decision 5, phase P3). Two claims, and neither fails
+// loudly if it breaks: a LoRA that reached `models` would appear in generate_image's checkpoint
+// enum and be started with, and a `loras` row without base_model would leave the Agent no way to
+// tell whether a LoRA fits the chosen checkpoint — which is the one refusal decision 5 puts on
+// the Agent's side rather than here (a mismatched LoRA does not fail, it quietly does nothing).
+func TestEngineCatalogRowSeparatesLorasFromCheckpoints(t *testing.T) {
+	d := engineDef{Key: "image", API: engineAPIImages, Provider: "comfy"}
+	row := engineCatalogRowFor(d, []store.EngineModel{
+		{Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", Enabled: true, Selected: true,
+			BaseModel: "sdxl", Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}}},
+		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl",
+			Description: "soft watercolour",
+			Files:       []store.EngineModelFile{{S3Key: "image/loras/watercolor_v2.safetensors"}}},
+	}, "")
+	if row == nil {
+		t.Fatal("no row for an engine with a checkpoint and a LoRA")
+	}
+	ids, _ := row["models"].([]string)
+	if len(ids) != 1 || ids[0] != "sdxl-base-1.0" {
+		t.Errorf("models = %v, want the checkpoint alone — a LoRA is not something to start with", ids)
+	}
+	if rows, _ := row["model_rows"].([]map[string]any); len(rows) != 1 {
+		t.Errorf("model_rows = %v, want the checkpoint alone", row["model_rows"])
+	}
+	loras, _ := row["loras"].([]map[string]any)
+	if len(loras) != 1 {
+		t.Fatalf("loras = %v, want the one LoRA", row["loras"])
+	}
+	if loras[0]["id"] != "watercolor-v2" || loras[0]["base_model"] != "sdxl" || loras[0]["description"] != "soft watercolour" {
+		t.Errorf("lora row = %v, want id, family and description all on the wire", loras[0])
+	}
+	files, _ := loras[0]["files"].([]map[string]any)
+	if len(files) != 1 || files[0]["s3_key"] != "image/loras/watercolor_v2.safetensors" {
+		t.Errorf("lora files = %v — the Agent derives the name ComfyUI loads it by from this key", loras[0]["files"])
+	}
+	// An engine holding LoRAs and no checkpoint is still an engine with nothing to serve.
+	only := engineCatalogRowFor(d, []store.EngineModel{
+		{Role: "image", ID: "watercolor-v2", Kind: "lora", Enabled: true, BaseModel: "sdxl"},
+	}, "")
+	if only != nil {
+		t.Errorf("an engine with only LoRAs was offered: %v", only)
 	}
 }
 
