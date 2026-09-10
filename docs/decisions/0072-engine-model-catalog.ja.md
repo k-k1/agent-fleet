@@ -6,7 +6,12 @@
   Console 登録（未解決 12）は実装済み・実機未検証（2026-09-09。「P5 の実装」節）。P2
   （ComfyUI）は 2026-09-10 に実装済み。**provider の実機検証も同日に完了した**——
   「P2 を実機で押した」節。そこで実装の欠落を 4 件踏み、うち 2 件は本文の記述そのものが
-  誤っていた（同節と、その 2 件を指す 🔴 訂正）。P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
+  誤っていた（同節と、その 2 件を指す 🔴 訂正）。**残作業だった取り込み経路と、provider を
+  通っていなかった 3 族（Z-Image・FLUX.1・SD3.5）も同日に実機で押し切った**——
+  「P2 の残作業 4・5 を実機で押した」節。3 族とも生成できるようになったが、**SD3.5 は
+  テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
+  欠落はさらに 5 件（5〜9）。**5 族すべてがこの配備の GPU で provider を通って絵を返した。**
+  P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
   `examples/server/api.md`・`docs/lora.md` から読んだ——起草の時点で**この文書のために新しく
@@ -1332,6 +1337,151 @@ ComfyUI を直接叩いたときが 8.02 秒——差 0.4 秒が `/prompt`→`/h
 作られないまま P2 が完了扱いになりかけていた。
 
 
+## P2 の残作業 4・5 を実機で押した（2026-09-10・af-sandbox）
+
+前節が残した 2 つ——**取り込み（ingest）を実際に HF / CivitAI から走らせる**（残作業 4）と、
+**provider 経由で一度も動かしていない 3 族**（残作業 5: Z-Image・FLUX.1・SD3.5）——を
+同じ日のうちに押した。結論から言うと **3 族すべてが動くようになった**が、SD3.5 だけは
+テンプレートが誤っており、直すまで 1 枚も出せなかった。加えて欠落を 5 件（5〜9）踏んだ——
+うち 1 件（8）は未解決 3 がそのまま出たもので、新発見ではない。
+
+### 残作業 4——取り込みは通る。ただし「通らない」の伝え方に穴が 2 つある
+
+**拒否は運用者にとって行動可能だった。** ファミリー未宣言のチェックポイントを CivitAI から
+取り込もうとすると、タスクを起こす前に 400 で断り、メッセージは 3 つを同時に言う:
+
+```
+declare base_model as one of sdxl, sd35, flux1, flux2-klein, zimage: this engine runs comfy,
+which picks a workflow by family and will not guess one (the repository calls it "SDXL 1.0")
+```
+
+族の綴り一覧・なぜ要るのか・**上流が何と呼んでいるか**。最後の 1 つが効く——運用者の手元に
+あるのは「SDXL 1.0」という表示名だけで、それを `sdxl` に対応づけるのが唯一の仕事だからである。
+`base_model` に表示名をそのまま入れても同じ 400 になる。どちらの場合もジョブ行は 1 本も
+作られない（ジョブ一覧で確認した）。
+
+**完走も確認した。** Hugging Face から 4 件（clip_l 246 MB / t5xxl_fp8 4.89 GB /
+flux1-dev-fp8 11.9 GB / sd3.5_medium 5.11 GB）、CivitAI から 1 件（DetailedEyes_XL の
+LoRA 93 MB）。そして **CivitAI 由来の行の `base_model` は空**だった——上流は
+`"SDXL 1.0"` を返しているのに格納していない。P2 の変更が実経路で効いていることの、
+いちばん直接の証拠である。
+
+🔴 **欠落 5——CivitAI の「ログインが要る資産」が `resolve` から見えない。** 最初に選んだ
+LoRA は `resolve` が `gated: false` / `can_ingest: true` と答え、ジョブが走り、Fargate タスクが
+`curl: (22) The requested URL returned error: 401` で落ちた。手で叩くと CivitAI は
+`{"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to
+download it"}` と言う——**投稿者ごとの設定**である。5 資産を試したら 200 / 401 / 403 に割れた。
+Hugging Face の gated には事前に断る経路がある（`ingest_gated_no_token`、決定 6・P5）のに、
+CivitAI には概念もトークン欄も無い。`resolve` が「この資産は匿名で取れるか」を
+（`HEAD` 1 本で）確かめないかぎり、運用者が受け取るのは 9 分後の裸の curl 終了コードになる。
+
+🔴 **欠落 6——取り込みはファイルの Flag を書けない。** `engineIngester` が作る行は
+`Files: [{S3Key, Bytes}]` の 1 要素で、Flag は常に空＝「まるごとのチェックポイント」である。
+つまり **分割モデルは取り込みだけでは組み立てられない**。FLUX.1 の 4 ファイル行を作るのに、
+部品を 3 つ捨て行として取り込み（S3 に置くためだけ）、`POST /models` で Flag 付きの本番行を
+作り直し、捨て行を忘れる、という手順を踏んだ。決定 2 は「取り込み時に運用者が宣言する」と
+言うが、宣言できるのは族だけで、**役割は宣言できない**。
+
+🔴 **欠落 6 の帰結——`?purge=1` は他の行が使っているファイルを黙って消せる。** 行を忘れる
+ときの `purge` は、その行の `files[]` の S3 キーをそのまま ingest タスクに渡す
+（`deleteModel`）。**他の行が同じキーを参照していないかは見ていない。** 欠落 6 のせいで
+「部品を捨て行として取り込み、本番行から同じキーを参照する」が分割モデルの通常手順に
+なった今、これは踏みやすい: 今回の検証でも `clip_l.safetensors` は捨て行
+`tmp-flux-clip-l` と本番行 `flux1-dev-fp8` の両方が指しており、前者を purge 付きで忘れると
+後者が黙って壊れる。今回は purge 無しで忘れた。
+
+### 残作業 5——Z-Image と FLUX.1 は通った。SD3.5 はテンプレートが誤っていた
+
+| 族 | 結果 | 実測（ComfyUI 側の `Prompt executed`） |
+|---|---|---|
+| Z-Image-Turbo | ✅ 生成 | 1 回目は下の欠落 7 で 400、2 回目に成功 |
+| FLUX.1 dev（fp8 分割） | ✅ 生成（初回） | **78.19 秒**（切り替え込みのコールド） |
+| SD3.5 medium | ❌ → テンプレート修正 → ✅ 生成 | **46.90 秒**（切り替え込みのコールド） |
+
+**これで 5 族すべてが、この配備の GPU で、Go の provider を通って絵を返した。**
+
+FLUX.1 は S3 にあった 22.2 GiB の fp16 transformer（P4 の gated 検証で入れたもの）を
+**使わなかった**。flux1 テンプレートは `UNETLoader` ＋ `DualCLIPLoader` ＋ `VAELoader` の
+分割構成を要求するのに、その行は `checkpoints/` に置かれた単一ファイルで、text encoder が
+1 つも無いからである。ファイルの basename が ComfyUI のローダに渡る名前で、S3 キーの
+**ディレクトリ**がどのローダの一覧に載るかを決める（`engineImageFiles`）——つまり
+`image/checkpoints/` にある物は `UNETLoader` からは永久に見えない。fp8 の分割一式
+（unet 11.9 GB ＋ clip_l ＋ t5xxl_fp8、VAE は Z-Image が使っている `ae.safetensors` を共有）を
+新たに取り込んだ。L4 24 GB に fp16 の 23.8 GB を載せる賭けを避ける意味もある。
+
+🔴 **SD3.5 のテンプレートは、走らせるまで誤っていることが分からなかった。**
+
+```
+Value not in list: clip_name1: 'sd3.5_medium.safetensors'
+  not in ['clip_l.safetensors', 'qwen_3_4b_fp8_mixed.safetensors', 't5xxl_fp8_e4m3fn.safetensors']
+```
+
+`comfyGraphSD35` は「Stability の公式リリースは UNet+VAE+CLIP-L+CLIP-G を 1 ファイルに
+束ねる」という前提で、`TripleCLIPLoader` の `clip_name1`/`clip_name2` に**チェックポイント
+自身のファイル名**を渡し、「ローダが必要なテンソルだけ読むだろう」と書いていた。読まない。
+**読めない**——`TripleCLIPLoader` の 3 入力は `models/text_encoders` の列挙であって、
+`models/checkpoints` にある名前は候補ですらない。前提そのものが誤りだった。
+
+修正は語彙に `--clip_g` を足すこと。これは第 5 の語彙の発明ではなく**取りこぼしの回収**である:
+`EngineFile` が借りている stable-diffusion.cpp の語彙には元から `--clip_g` があり、写す際に
+落ちていた。SD3.5 の 3 つのエンコーダは 3 つの別ファイルで、clip_g を名指す手段が無い以上、
+この族は最初から生成できなかった。CP 側の一覧（Console に配る正本）にも同じ 1 語を足し、
+ドリフト検査が両者を揃えることを——片側だけ直して実際に落として——確かめた。
+
+**ゴールデンテストはこれを捕まえられない。** 固定していたのは「誰も走らせたことの無い
+グラフの形」で、ADR 本文が P2 の時点でそう断っていたとおりである。形の固定は差分を
+読ませるためのもので、正しさの証明ではない——今回それが具体例になった。
+
+### 配備そのものの欠落 3 件（族とは無関係に、誰でも踏む）
+
+🔴 **欠落 7——エンジンは「まだ箱に無いモデル」への要求を受け付けてしまう。** fetch
+サイドカーは start モデル（selected な 1 本）を落とした時点で `engine may start; 6 file(s)
+still to sync` と宣言し、残りを裏で落とし続ける。Z-Image の 1 回目はその最中に届き、
+ComfyUI が「ファイルが無い」と 400 を返した:
+
+```
+Value not in list: unet_name: 'z_image_turbo_bf16.safetensors' not in ['flux-2-klein-4b.safetensors']
+```
+
+エンジンは health を通しており、ゲートウェイの `engine_waking`（リトライ対象）でもない。
+**運用者にも呼び出し側にも「まだ降りて来ていない」と分かる手掛かりが無い。** 2 箱目では
+12 ファイル・48 GB を約 270 秒（≒180 MB/s）かけて同期しており、その 270 秒はまるごと
+この窓である。要求されたモデルの files が箱に揃っているかは CP が知っている事実なので、
+`engine_waking` 相当で待たせるのが素直な直し方に見える。
+
+**欠落 8——稼働中の箱にモデルを足しても同期されない。これは新発見ではない**——未解決 3
+（「サービス起動後の追加同期」）がそのまま出たもので、P5 に送られている既知の穴である。
+ただし image 役で実際に踏むと何が起きるかは初めて測った: `flux1-dev-fp8` と `sd35-medium` を
+有効化してもファイルは降りて来ず、`mode` を `off` → `on` して**箱を作り直す**しかなかった。
+llm 役では「次の起動まで待つ」で済むが、image 役では**有効化した族が箱に無いまま
+`generate_image` の `model` enum に出る**ので、欠落 7 と重なって「選べるのに 400 が返る」に
+なる。P5 でこれを解くときは、enum に出す条件を「有効」ではなく「箱にある」に寄せるか、
+欠落 7 側で待たせるかのどちらかが要る。
+
+🔴 **欠落 9——`/history` の 503 はリトライされない。** provider は `/prompt` の 503
+（`engine_waking`）を待って再送するが、その後のポーリングは待たない。箱がポーリング中に
+入れ替わると、呼び出し側に届くのは
+`the image engine's /history answered 503 Service Unavailable: the fleet's own inference
+engine is starting; retry` という、**自分で retry と言っておきながら retry しない**メッセージに
+なる（実測）。生成はコールドで 47〜78 秒かかるので、その窓は現実に開く。
+
+**運用上の注意（今回自分で踏んだ）**: `mode=on` で箱を起こしてから `ondemand` に戻すと、
+`last_demand` が古いままなので**コントローラが即座にその箱を止める**。48 GB 同期しなおしに
+なるので、箱を温めたいなら `ondemand` のまま要求で起こすのが正しい。
+
+### ついでに測れたこと
+
+- `warm_model` が `z-image-turbo` を返した。P2 の `X-AF-Model` 修正は実配備で効いている。
+- ADR 0074 の VRAM 門は正しく作動した（`flux1-dev-fp8 wants at least 16571 MiB … the l4 class
+  declares 8000 MiB`）。ただし **`l4` の宣言値 8000 MiB は実機と合っていない**——エンジンは
+  `Total VRAM 22563 MB` と言う。`l40s` は 48 GB のカードに 44000 を宣言しているので、
+  L4 の段だけ桁が違う。結果として 8 GB を超える画像モデルすべてで `confirm_vram` が要る。
+- **測っていないこと**: モード変更時のカタログ押し込みが稼働セッションへ 10 分待たずに届くか。
+  モードは 4 回変えたが、セッション側のツール表示は観測していない。
+- **測っていないこと**: Console の取り込みフォームの実描画。CP が `base_models` と
+  `file_flags` を wire に載せていることと、`resolve` がヒントに差し込む表示名を返すことは
+  実測したが、ヘッドレスのクリック導線が管理モーダルに辿り着けず、画面そのものは見ていない。
+
 ## 却下した案
 
 - **vLLM を llm 役のエンジンにする（今は）。** 1 プロセス 1 モデルでルーターが無く、切替＝
@@ -1520,8 +1670,10 @@ ComfyUI を直接叩いたときが 8.02 秒——差 0.4 秒が `/prompt`→`/h
   SDXL と klein 4B（または Z-Image-Turbo）を要求毎に切り替えて絵が返り、その間にサービスの
   再起動が無く、1024px の SDXL が 0071 実測 7 の 8 秒台で出る。実機で通った**
   （SDXL 8.02 秒・klein 4.01 秒・Z-Image 10.74 秒、切り替え含め 13 シナリオすべて成功。
-  「P2 の実装」節7）。**Go の `comfy` provider 自体（CP ゲートウェイ経由の実呼び出し）は
-  単体・結合テスト止まりで、実機では未検証のまま残る。**
+  「P2 の実装」節7）。Go の `comfy` provider 自体（CP ゲートウェイ経由の実呼び出し）も
+  2026-09-10 に実機で通した（「P2 を実機で押した」節）。**残っていた取り込み経路と 3 族
+  （Z-Image・FLUX.1・SD3.5）も同日に押し切り、P2 は実機で閉じた**——「P2 の残作業 4・5 を
+  実機で押した」節。SD3.5 だけはテンプレートが誤っていたので直した（`--clip_g`）。
 - **P3 — LoRA。** ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
   テンプレートの `LoraLoader` 連鎖、baseModel 不一致の拒否；llm の preset 固定 LoRA。
   sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、

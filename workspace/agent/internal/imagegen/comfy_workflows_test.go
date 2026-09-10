@@ -7,8 +7,9 @@ package imagegen
 // has to read before merging.
 //
 // sdxl / zimage / flux2_klein are pinned against the SAME inputs bench-image-engine.py measured
-// working on a real GPU (ADR 0072 "実測で解けた点"); flux1 / sd35 are pinned too, but nobody has
-// run them on this deployment's hardware yet (see comfy_workflows.go's own comment on each).
+// working on a real GPU (ADR 0072 "実測で解けた点"); flux1 / sd35 are pinned against inputs that
+// have since been run on this deployment's hardware too (ADR 0072 P2 残作業 5) — sd35's shape
+// here is the CORRECTED one, after the first version was refused by ComfyUI at validation.
 
 import (
 	"encoding/json"
@@ -40,7 +41,8 @@ func TestComfyWorkflowsMatchGoldenFixtures(t *testing.T) {
 			DiffusionModel: "flux-2-klein-4b.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "flux2-vae.safetensors"}},
 		{"flux1", ComfyFamilyFlux1, comfyFiles{
 			DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"}},
-		{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors", T5xxl: "t5xxl_fp16.safetensors"}},
+		{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
+			ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -81,8 +83,12 @@ func TestComfyWorkflowsRefuseMissingFiles(t *testing.T) {
 		{"zimage needs a vae", ComfyFamilyZImage, comfyFiles{DiffusionModel: "x", ClipL: "y"}},
 		{"klein needs a diffusion model", ComfyFamilyFlux2Klein, comfyFiles{ClipL: "x", Vae: "y"}},
 		{"flux1 needs both text encoders", ComfyFamilyFlux1, comfyFiles{DiffusionModel: "x", ClipL: "y", Vae: "z"}},
-		{"sd35 needs a checkpoint", ComfyFamilySD35, comfyFiles{T5xxl: "x"}},
-		{"sd35 needs a standalone t5xxl", ComfyFamilySD35, comfyFiles{Checkpoint: "x"}},
+		{"sd35 needs a checkpoint", ComfyFamilySD35, comfyFiles{ClipL: "x", ClipG: "y", T5xxl: "z"}},
+		{"sd35 needs a standalone t5xxl", ComfyFamilySD35, comfyFiles{Checkpoint: "x", ClipL: "y", ClipG: "z"}},
+		// The one that was missing. Without --clip_g in the vocabulary this case could not even
+		// be expressed, and the template pointed TripleCLIPLoader at the checkpoint instead.
+		{"sd35 needs clip_g", ComfyFamilySD35, comfyFiles{Checkpoint: "x", ClipL: "y", T5xxl: "z"}},
+		{"sd35 needs clip_l", ComfyFamilySD35, comfyFiles{Checkpoint: "x", ClipG: "y", T5xxl: "z"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -100,13 +106,14 @@ func TestComfyBuildGraphRefusesAnUnknownFamily(t *testing.T) {
 }
 
 // The catalogue's Flag vocabulary is sd.cpp's own spelling (EngineFile's contract) — this pins
-// that resolveComfyFiles reads exactly those four flags and drops the rest silently rather than
-// erroring on a fifth, forward-compatible with a catalogue newer than this Agent.
+// that resolveComfyFiles reads exactly those flags and drops the rest silently rather than
+// erroring on an unknown one, forward-compatible with a catalogue newer than this Agent.
 func TestResolveComfyFiles(t *testing.T) {
 	files := []EngineFile{
 		{Flag: "", Name: "ckpt.safetensors"},
 		{Flag: "--diffusion-model", Name: "unet.safetensors"},
 		{Flag: "--clip_l", Name: "clip.safetensors"},
+		{Flag: "--clip_g", Name: "clipg.safetensors"},
 		{Flag: "--t5xxl", Name: "t5.safetensors"},
 		{Flag: "--vae", Name: "vae.safetensors"},
 		{Flag: "--lora-model-dir", Name: "ignored.safetensors"}, // unrecognised flag: dropped
@@ -115,7 +122,8 @@ func TestResolveComfyFiles(t *testing.T) {
 	got := resolveComfyFiles(files)
 	want := comfyFiles{
 		Checkpoint: "ckpt.safetensors", DiffusionModel: "unet.safetensors",
-		ClipL: "clip.safetensors", T5xxl: "t5.safetensors", Vae: "vae.safetensors",
+		ClipL: "clip.safetensors", ClipG: "clipg.safetensors",
+		T5xxl: "t5.safetensors", Vae: "vae.safetensors",
 	}
 	if got != want {
 		t.Errorf("resolveComfyFiles = %+v, want %+v", got, want)
