@@ -1072,6 +1072,9 @@ function EngineIngest({
   const tr = useT();
   const [open, setOpen] = useState(false);
   const [repo, setRepo] = useState("");
+  /** The revision a pasted `/blob/<rev>/…` URL named. Held here because splitting the URL into
+   *  the fields leaves nowhere else for it, and dropping it would silently resolve `main`. */
+  const [rev, setRev] = useState("");
   const [file, setFile] = useState("");
   const [id, setId] = useState("");
   const [desc, setDesc] = useState("");
@@ -1089,13 +1092,54 @@ function EngineIngest({
   const source = (name = file) => {
     const r = repo.trim();
     // A pasted https://huggingface.co/<repo>/blob|resolve/<rev>/<file> is what a person
-    // actually has in hand, so it is accepted as-is rather than asked for in pieces.
+    // actually has in hand, so it is accepted as-is rather than asked for in pieces. Normally
+    // splitPasted has already taken it apart into the fields; this stays for the URL that was
+    // never blurred.
     const m = r.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)(?:\/(?:blob|resolve)\/([^/]+)\/(.+))?$/);
-    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: m[3] || name.trim() } };
+    // 🔴 The NAMED file wins over the one in the URL. The other way round, a blob URL for one
+    // file plus a pick of another out of the list resolved the first one while the picker
+    // showed the second — silently, because nothing on screen carried the URL's own filename.
+    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: name.trim() || m[3] || "" } };
     const civ = r.match(/civitai\.com\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
     if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: name.trim() } };
     if (/^https?:\/\//.test(r)) return { url: r, sha256: name.trim() };
-    return { hf: { repo: r, file: name.trim(), revision: "" } };
+    return { hf: { repo: r, file: name.trim(), revision: rev } };
+  };
+
+  /** What an address names, or null when it is not one. The two shapes a person has in hand:
+   *  a Hugging Face model page (optionally pointing straight at a file) and a Civitai page
+   *  carrying `modelVersionId` — which is the id an ingest takes, unlike the model id in the
+   *  path next to it. */
+  const splitPasted = (raw: string): { repo: string; rev: string; file: string } | null => {
+    const t = raw.trim();
+    const hf = t.match(
+      /^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?(?:[?#].*)?$/,
+    );
+    if (hf) return { repo: hf[1], rev: hf[2] || "", file: hf[3] || "" };
+    const civ = t.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/\S*[?&]modelVersionId=(\d+)/);
+    if (civ) return { repo: "civitai:" + civ[1], rev: "", file: "" };
+    return null;
+  };
+
+  /** Take a pasted address apart into the fields it names, once the box is left.
+   *
+   * `source()` has always understood one, but only at the moment the request was built — so
+   * what would actually be fetched was never on screen, the file the URL named was not the one
+   * the picker showed, and the id was proposed from neither. Splitting it into the fields
+   * leaves one source of truth and makes the rest of the form behave as if it had been typed.
+   *
+   * On blur rather than on every keystroke: `huggingface.co/Qwen/Q` is a legal `owner/name`
+   * halfway through typing one, and rewriting the box under a cursor is worse than waiting. */
+  const splitRepoField = () => {
+    const s = splitPasted(repo);
+    if (!s) return;
+    setRepo(s.repo);
+    setRev(s.rev);
+    setFiles(null);
+    setFound(null);
+    // Fills an empty box, never overwrites a typed one — the same rule the id and the window
+    // follow further down.
+    if (s.file && !file.trim()) setFile(s.file);
   };
 
   /** A plain url addresses one file and has no listing; the field carries its sha256 there. */
@@ -1176,6 +1220,7 @@ function EngineIngest({
    *  as `civitai:<versionId>`, which is the form the source parser above already reads. */
   const pickHit = (h: IngestHit) => {
     setRepo(h.source === "civitai" ? "civitai:" + h.ref : h.ref);
+    setRev("");
     setFiles(null);
     setFile("");
     setFound(null);
@@ -1216,6 +1261,7 @@ function EngineIngest({
     setFound(null);
     setAccepted(false);
     setRepo("");
+    setRev("");
     setFile("");
     setFiles(null);
     setId("");
@@ -1229,10 +1275,21 @@ function EngineIngest({
       </button>
     );
   }
-  const field = (label: string, value: string, set: (v: string) => void, placeholder = "") => (
+  const field = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder = "",
+    onBlur?: () => void,
+  ) => (
     <label className="engines-model-add-row">
       <span>{label}</span>
-      <input value={value} placeholder={placeholder} onChange={(ev) => set(ev.currentTarget.value)} />
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(ev) => set(ev.currentTarget.value)}
+        onBlur={onBlur}
+      />
     </label>
   );
   return (
@@ -1313,6 +1370,7 @@ function EngineIngest({
           are not what sd-server loads, and following it costs a resolve and a refusal. */}
       {field(tr("admin.engines_ingest_repo"), repo, (v) => {
         setRepo(v);
+        setRev("");
         setFiles(null);
         setFile("");
         setFound(null);
@@ -1320,7 +1378,8 @@ function EngineIngest({
         ? "civitai:782002"
         : isImage
           ? "stabilityai/stable-diffusion-xl-base-1.0"
-          : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
+          : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      splitRepoField)}
       {/* The filename is a picker as soon as the repository has been asked what it holds. The
           text field stays underneath it: a plain url has no listing, and there the field
           carries the SHA256 instead — so it is labelled as one. Offering "name.safetensors"

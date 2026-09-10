@@ -1401,6 +1401,55 @@ describe("EnginesAdminView / searching for a model", () => {
       | HTMLButtonElement
       | undefined;
 
+  // React delegates onBlur from `focusout`; a raw non-bubbling `blur` never reaches it.
+  const leave = async (el: HTMLInputElement) => {
+    await act(async () => {
+      el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+  };
+
+  // 🔴 An address is what a person actually has in hand, and pasting one used to leave the
+  // form looking untouched: the URL was taken apart only when the request was built, so what
+  // would be fetched was never on screen, and the file it named was not the one the picker
+  // showed. Splitting it into the fields leaves one source of truth.
+  it("takes a pasted model-page URL apart into the fields it names", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+
+    await typeInto(
+      field("リポジトリ")!,
+      "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors",
+    );
+    await leave(field("リポジトリ")!);
+    expect(field("リポジトリ")!.value).toBe("stabilityai/stable-diffusion-xl-base-1.0");
+    expect(field("ファイル名")!.value).toBe("sd_xl_base_1.0.safetensors");
+
+    // The file is named, so "look it up" resolves it rather than asking what the repo holds —
+    // and the revision the URL carried survives the split (dropping it resolves `main`, which
+    // is a different file whenever the URL pointed at anything else).
+    apiJSON.mockResolvedValue({ sha256: "a".repeat(64), bytes: 6_939_000_000, license: "openrail++" });
+    await click(button("調べる"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/resolve", "POST", {
+      source: {
+        hf: { repo: "stabilityai/stable-diffusion-xl-base-1.0", file: "sd_xl_base_1.0.safetensors", revision: "main" },
+      },
+    });
+    // …and the id is proposed off that file, exactly as it is for one picked from a list.
+    expect(field("id")!.value).toBe("sd_xl_base_1.0");
+  });
+
+  // The version id, not the model id in the path next to it: an ingest takes the former and
+  // the two are different numbers on the same page.
+  it("turns a pasted Civitai page into its version id", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+    await typeInto(field("リポジトリ")!, "https://civitai.com/models/133005?modelVersionId=782002");
+    await leave(field("リポジトリ")!);
+    expect(field("リポジトリ")!.value).toBe("civitai:782002");
+  });
+
   // What a field ASKS FOR has to be something that field can take. On the image role the
   // repository and the id offered a GGUF example (`Qwen/…-GGUF`, `qwen2.5-coder-1.5b`) — not a
   // hint but a wrong answer, since sd-server cannot load one and following it costs a resolve
