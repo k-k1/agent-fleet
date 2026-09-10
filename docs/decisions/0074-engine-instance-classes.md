@@ -776,3 +776,18 @@ is one sentence on the panel saying that a comfy engine may hold more than one.
     (finding 1). Finding 2 — saying on the panel that a comfy engine may hold several models at
     once — is ✅ **done the same day** (`admin.engines_class_vram_many`, shown only where the
     provider is `comfy`); the figure itself stays a maximum.
+- **Not a phase — the operational act that is still outstanding.** 🔴 **No deployment declares a
+  ladder**, so the class control is on nothing anywhere (decision 3, and the shipped default is
+  empty by decision 1) — the feature exists and nobody can see it. Declaring one is a per
+  deployment act, in that deployment's `params/60-engines`, and three things decide what to
+  write:
+  - **The G-family vCPU quota, which is per account and per purchase model.** af-sandbox is
+    on-demand 8 / Spot 0 (an increase to 16 pending); acrt is 64 / 64 (measured 2026-09-10 —
+    "Follow-up"; the earlier "production is 96" no longer matches). A rung above the quota is
+    selectable and simply never places, as `VcpuLimitExceeded` in the service events.
+  - **`usdPerHour` is what was BILLED or nothing** (ECS Managed Instances adds a management fee
+    of about 8% over the list price — measured). A missing price prints nothing, which beats a
+    wrong one.
+  - **The first rung must restate what the stack already buys** (`<Role>AllowedInstanceTypes`,
+    `AcceleratorMemMinMiB`, `VCpu*`, `Mem*`): it is what "back to the default" returns to, and
+    nothing checks that the two agree.

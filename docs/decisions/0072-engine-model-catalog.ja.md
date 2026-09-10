@@ -1718,6 +1718,14 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   gated（SD3.5 全部・FLUX.1 全部）が取り込めるかどうかを直接決めるため。**完了の定義:
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
   取り込みタスクのログに 401 が出ない。**（実機未検証。「P5 の実装」節）
+- **P6 — seed と残り 4 パラメータの撤去**（2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
+  追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
+  `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
+  エンジン表の `models` / `contextTokens`。
+  **完了の定義: `LlmEnabled=true` だけでモデル系パラメータを 1 つも書かずに配備し、その役の
+  サービスが安定し、空のカタログへ Console からモデルを登録して、エンジンがそれで起動する。**
+  🔴 加えてアップグレードノートが、`<役>ModelS3Key` だけを書いていた配備に対して**先に
+  `<役>Enabled=true` を足せ**と言っていること——サービスを作る条件が今はその鍵を読んでいる。
 
 ## 確認した出典（2026-09-08）
 
