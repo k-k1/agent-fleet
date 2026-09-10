@@ -1884,6 +1884,16 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   registered in the Console, a gated repository is taken in without CloudFormation being
   touched, and the ingest task's log carries no 401.** (Not verified on hardware — see "P5
   implementation".)
+- **P6 — retiring the seed and the four remaining parameters** (added 2026-09-10; the reasoning,
+  the trap and the migration window are in the follow-up section at the end of this ADR). This is
+  decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
+  `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
+  the engine table's `models` / `contextTokens`.
+  **Done when: a stack deployed with `LlmEnabled=true` and no model parameters at all comes up,
+  its role's service stabilises, the Console registers a model into an empty catalogue and the
+  engine starts on it** — and 🔴 the upgrade note tells a deployment that set only
+  `<Role>ModelS3Key` to add `<Role>Enabled=true` FIRST, because the condition that creates the
+  service reads that key today.
 
 ## Sources checked (2026-09-08)
 
