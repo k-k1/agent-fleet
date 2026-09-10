@@ -351,10 +351,18 @@ func sameECSCluster(a, b string) bool {
 // disappearing from a live capacity provider.
 //
 // ⚠️ TWO fields of the read type have NO counterpart in the update type and therefore cannot
-// be carried: `CapacityOptionType` (ON_DEMAND / SPOT) and `FipsEnabled`. Whether ECS preserves
-// them across an update or resets them to their defaults is not documented and has not been
-// measured (ADR 0074 open question 1) — which is why the ADR's P1 verifies the provider after
-// the first real switch instead of trusting this.
+// be carried: `CapacityOptionType` (ON_DEMAND / SPOT) and `FipsEnabled`. ECS is not documented
+// either way, but both are now measured (ADR 0074, "Follow-up", 2026-09-10):
+//
+//   - `CapacityOptionType` IS preserved across an update. Measured against a provider created
+//     with the non-default `SPOT`, which survived two rung switches while the requirements
+//     fields moved as intended. (P1 had only ever seen the default `ON_DEMAND`, which cannot
+//     tell "preserved" apart from "reset to the default".)
+//   - `FipsEnabled` cannot be set at all in ap-northeast-1 — CreateCapacityProvider answers
+//     `Managed Instances Provider does not support FIPS in this region`. Deployments in other
+//     regions have not been measured.
+//
+// The reflection test below stays regardless: it is the guard for a field the SDK grows later.
 func instanceLaunchTemplateUpdate(in *ecstypes.InstanceLaunchTemplate) *ecstypes.InstanceLaunchTemplateUpdate {
 	if in == nil {
 		return &ecstypes.InstanceLaunchTemplateUpdate{}

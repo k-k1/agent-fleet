@@ -337,6 +337,9 @@ $0.73・`tts-engine` $0.17 で、**請求全体の 19%** が「見えないま�
 - **acrt（member アカウント）でも人の作業は不要。** `af-role` は payer が既に有効化済みで、
   `GetCostAndUsage` の `GroupBy Type=TAG` は member から通る（実測）。acrt に 60-engines は
   無く、`tts-engine` の $0.07/7 日だけが出る。
+  ℹ️ **最後の 1 文は古びた**（測った時点では正しい）。2026-09-10 現在、acrt には 60-engines が
+  入っていて、`image` と `llm` の capacity provider が両方 `ACTIVE` である。ただし GPU の支出は
+  依然ほぼゼロで、`APN1-BoxUsage:g6.xlarge` は **30 日で $0.58**（EBS gp3 $39・NAT $36 に対して）。
 
 ## 捨てた選択肢
 

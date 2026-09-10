@@ -44,6 +44,14 @@ English | [日本語](0074-engine-instance-classes.ja.md)
   `VcpuLimitExceeded`** — bypass the gate and the task lands straight back on the old card,
   with no error anywhere. And **waiting for the box to leave is necessary but not sufficient**:
   EC2 released the vCPU quota more than five minutes after ECS deregistered the instance.
+- The same day, **a follow-up was added** (the "Follow-up" section; a throwaway provider,
+  **$0 of GPU**). 🔴 **Open question 1's ✅ was an inference** — what was seen was the default
+  `ON_DEMAND`, which does not separate "preserved" from "reset" (a flaw the record had already
+  spotted for `fipsEnabled`). **Re-measured with the non-default `SPOT`: preserved**, turning the
+  inference into a measurement. Also: **`fipsEnabled` cannot be set at all in ap-northeast-1**
+  (the homework disappears), 🔴 **`L-DB2E81BB` is not a real quota code** (P1's *correction* was
+  itself wrong), and 🔴 **"production's quota is 96" no longer matches** (acrt measures 64
+  on-demand and 64 Spot).
 - Related: [0071-self-hosted-inference-engines.md](0071-self-hosted-inference-engines.md)
   decision 2 (one capacity provider per role, the box chosen by a VRAM floor), decision 5,
   decision 9 / [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 1,
@@ -293,6 +301,9 @@ same, log the failure and start (the box's specification is already right).
   `instanceMetadataTagsPropagation` all came back identical.
 - ✅ **The fields that cannot be carried are not cleared** (open question 1). `capacityOptionType`
   stayed `ON_DEMAND`; a same-values write left the whole `managedInstancesProvider` identical.
+  🔴 **This observation had no positive control** (`ON_DEMAND` is the default). The same-day
+  follow-up re-measured it with the non-default `SPOT` and confirmed the conclusion holds — see
+  the "Follow-up" section.
 - ✅ **The re-apply before a start really did repair a CloudFormation revert.** Started from a
   drifted state (choice `l40s`, provider back at the stack's declaration), the CP rewrote the
   rung before starting and **the box bought was a `g6e.xlarge`**.
@@ -481,6 +492,13 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
    that uses FIPS should confirm this one before switching rungs.
    Whether the copy fits (the types differ) is settled too: it does. But **`Describe` was being
    called wrongly** — see decision 5's P1 measurements. Depends on: decisions 5 and 8.
+   🔴 **A follow-up the same day found that this "measurement" was the same inference.**
+   `ON_DEMAND` is the **default** for `capacityOptionType`, so the sentence written just above
+   about `fipsEnabled` — a silent reset is indistinguishable from "was that already" — applies
+   verbatim to it: **the flaw was spotted in the sibling field and the same yardstick was never
+   held against the field itself.** Re-measured with a non-default value; it is preserved. The
+   `fipsEnabled` homework disappears too, because the field **cannot be set at all** in Tokyo.
+   See the "Follow-up" section.
 2. ✅ **Settled (2026-09-10, measured in P1): there are two kinds of drift and one of them does
    not happen.**
    - **A plain redeploy does not revert anything.** With no property of the provider changed the
@@ -611,6 +629,8 @@ a start**, and that can be added after everything else has passed.
   `service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA`.
   🔴 **The `L-DB2E81BB` written when this was filed is wrong** — that is the Spot quota (0 on
   this deployment). On-demand G/VT is `L-DB2E81BA`, measured at 8 on af-sandbox.
+  🔴 **That correction is wrong too** (same-day follow-up) — `L-DB2E81BB` **does not exist**
+  (`NoSuchResourceException` on both accounts). Spot is `L-3819A6DF`. See "Follow-up".
 - **Afterwards**: put the rung back to the default (the Console's "Back to the default"), set the
   mode to off, and decide whether the ladder goes back to empty (empty removes the feature).
 
@@ -670,6 +690,44 @@ drain (150 s) + quota wait (up to ~6 min) + cold start.
   deliberate (so the panel can say the apply failed), so the fix belongs in the Console: a
   retry affordance.
 - **A ladder's `usdPerHour` taken from list price reads cheaper than the bill** (open question 3).
+
+## Follow-up (2026-09-10, same day, $0 of GPU)
+
+Four things were measured after P1, while weighing a move to Spot. **No GPU was bought** — the
+live providers were not touched. A **throwaway capacity provider** (`af-spot-probe-0074`) was
+created, measured and deleted: five minutes, $0, and the cluster's provider list was identical
+before and after.
+
+- 🔴 **Open question 1's "measurement" was an inference.** What P1 saw was `capacityOptionType`
+  staying `ON_DEMAND` — but **`ON_DEMAND` is that field's default**, so the observation does not
+  separate "preserved" from "reset to the default". The record spotted exactly this flaw for
+  `fipsEnabled` and **never held the same yardstick against the field it was reasoning from**.
+  ✅ **Re-measured with a non-default value: it is preserved.** A provider created with
+  `capacityOptionType: SPOT` survived **two** updates that passed only the eight fields
+  `instanceLaunchTemplateUpdate` can carry. **Positive control**: the same updates moved
+  `allowedInstanceTypes` (`g6.xlarge`→`g6e.xlarge`) and `acceleratorTotalMemoryMiB`
+  (8000→40000) as intended, and nothing else differed — so the update was not a no-op. The
+  conclusion stands: decision 5 needs no repair.
+- ✅ **The `fipsEnabled` homework disappears in Tokyo.** Creating a provider with
+  `fipsEnabled: true` is refused — `ClientException: Managed Instances Provider does not support
+  FIPS in this region`. In ap-northeast-1 the field **cannot be set at all**, so the fields that
+  cannot be carried are a live concern in zero cases. Deployments in other regions still need it.
+- 🔴 **The quota code, corrected again: `L-DB2E81BB` does not exist.** Stop condition (c) of the
+  P1 experiment plan and docs/log/95 *correct* the filed code to "`L-DB2E81BB`, the Spot quota
+  (0)" — and that correction is itself wrong. Both accounts answer `NoSuchResourceException`.
+  ap-northeast-1 has exactly two G/VT quotas: **`L-DB2E81BA` (on-demand) and `L-3819A6DF` (All G
+  and VT Spot Instance Requests, default 0)**. **"A 0 came back" does not separate "this is the
+  Spot quota" from "this quota does not exist"** — a one-character slip produced a second error of
+  the same shape.
+- 🔴 **"Production's quota is 96" no longer matches.** Measured: acrt (production) is
+  **on-demand 64, Spot 64**; af-sandbox is on-demand 8, Spot 0 (an increase to 16 is pending).
+  Decision 1 ("do not reject a declaration on quota grounds") does not rest on these numbers, so
+  the decision is unchanged.
+- By-product: **a provider with `capacityOptionType: SPOT` can be created while the Spot quota is
+  0.** The quota only bites when a box is launched, so **verifying the configuration side does not
+  have to wait for a quota increase.**
+- ⚠️ A deleted capacity provider is kept by ECS as an `INACTIVE` record (it does leave the
+  cluster's list). Deleting is not quite trace-free.
 
 ## Phases and the definition of done
 

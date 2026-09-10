@@ -38,6 +38,13 @@
   迂回して起こすと、タスクは**古いカードにそのまま着地し、エラーはどこにも出ない**。
   そして**「箱が消えるまで待つ」は必要条件であって十分条件ではない**（EC2 のクォータ解放は
   ECS の登録解除より 5 分以上遅れた）。
+- 同日、**追試を 1 本足した**（「追試」節・使い捨て provider・**GPU 課金 $0**）。
+  🔴 **未解決 1 の ✅ は、実は推定だった**——見たのが既定値の `ON_DEMAND` だったので
+  「保持された」と「既定に戻された」を区別していない（同じ欠陥を `fipsEnabled` については
+  自分で指摘していた）。**非既定値 `SPOT` で測り直して保持を確認**し、推定を測定へ上げた。
+  あわせて **`fipsEnabled` は ap-northeast-1 では設定そのものができない**（宿題が消える）、
+  🔴 **`L-DB2E81BB` は存在しないコード**（P1 の*訂正*のほうが誤りだった）、
+  🔴 **「本番のクォータは 96」は現況と違う**（acrt 実測は On-Demand 64・Spot 64）ことが分かった。
 - 関連: [0071-self-hosted-inference-engines.ja.md](0071-self-hosted-inference-engines.ja.md)
   決定 2（役ごとに 1 つの capacity provider、VRAM の下限で箱を選ぶ）・決定 5・決定 9 /
   [0072-engine-model-catalog.ja.md](0072-engine-model-catalog.ja.md) 決定 1・決定 7（スタックは
@@ -259,6 +266,8 @@ CUDA が落ちて**コールドスタート 1 回ぶんを捨てる**）。同�
   `instanceMetadataTagsPropagation` は**1 つも動かなかった**。
 - ✅ **運べない欄は消えない**（未解決 1）。`capacityOptionType` は `ON_DEMAND` のまま。
   同値の書き戻しでは `managedInstancesProvider` 全体が前後で完全一致した。
+  🔴 **これは陽性対照の無い観測だった**（`ON_DEMAND` は既定値）。同日の追試で非既定値
+  `SPOT` を使って測り直し、結論自体は正しいことを確認した——「追試」節。
 - ✅ **CFN が戻した provider を、起動直前の再適用が実際に直した。** ドリフトを作った状態
   （選択は `l40s`、provider は既定）から起こしたところ、CP は起動前に `l40s` を書き直し、
   **買われた箱は `g6e.xlarge` だった**。決定 5 の後半は実機で効いている。
@@ -438,6 +447,11 @@ CloudFormation で直す（未解決 6）。
    段を切り替える前には、ここだけもう一度確かめること。
    写しが嵌るか（型が別）も同時に解決した——嵌る。ただし**`Describe` の呼び方が別に
    間違っていた**（決定 5 の P1 実測を参照）。依存: 決定 5・8。
+   🔴 **追試（2026-09-10・同日）で、この「実測」が実は同じ推定だったことが分かった。**
+   `ON_DEMAND` は `capacityOptionType` の**既定値**なので、上で `fipsEnabled` について書いた
+   「黙って戻されても元から false と区別がつかない」がそのまま当てはまる——**兄弟の欄の欠陥に
+   気づきながら、本人の欄に同じ物差しを当てていなかった。** 非既定値で測り直して保持を確認済み。
+   `fipsEnabled` の宿題も、東京では**設定そのものができない**ため消える。「追試」節を参照。
 2. ✅ **解決（2026-09-10・P1 で実測）。ドリフトは 2 通りあり、片方は起きない。**
    - **素の再 deploy（provider の性質が 1 つも変わらない）では戻らない。** 空の changeset に
      なり、CloudFormation は provider を読みもしない（1.9 秒）。つまり「無関係なスタック更新が
@@ -555,6 +569,8 @@ ImageInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
   `service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA` で確かめる。
   🔴 **起票時に書いた `L-DB2E81BB` は誤り**——それは Spot 用（この配備では 0）。On-Demand の
   G/VT は `L-DB2E81BA` で、af-sandbox の実測値は 8 だった）。
+  🔴 **この訂正のほうも誤り**（同日の追試）——`L-DB2E81BB` は**存在しない**（両アカウントで
+  `NoSuchResourceException`）。Spot は `L-3819A6DF`。「追試」節を参照。
 - **後片付け**: 段を既定へ戻す（Console の「既定に戻す」）・mode を off・
   梯子を空に戻すかは運用者の判断（空に戻すと機能ごと消える）。
 
@@ -613,6 +629,40 @@ ImageInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
   送らない。回復するには別の段へ移してから戻す。順序自体は意図どおり（適用できなかった
   ことを画面で言うため）なので、直すなら Console 側に再試行の口を足すことになる。
 - **梯子の `usdPerHour` に list price を書くと請求より安く見える**（未解決 3）。
+
+## 追試（2026-09-10・同日・GPU 課金 $0）
+
+P1 の後、Spot への切り替えを検討する過程で 4 件を実測した。**GPU は 1 台も買っていない**——
+live の provider には触れず、`af-spot-probe-0074` という**使い捨ての capacity provider を 1 本
+作って**測り、消した。所要 5 分・$0・クラスタの provider 一覧は前後で完全一致。
+
+- 🔴 **未解決 1 の「実測」は、実は推定だった。** P1 が見たのは `capacityOptionType` が
+  `ON_DEMAND` のまま、という観測だが、**`ON_DEMAND` はこの欄の既定値**である。つまり
+  「保持された」と「既定に戻された」を区別していない。同じ欠陥を `fipsEnabled` については
+  文中で指摘していたのに、**その物差しを本人の欄に当てていなかった**。
+  ✅ **非既定値で測り直した結果、保持される。** `capacityOptionType: SPOT` で provider を作り、
+  `instanceLaunchTemplateUpdate`（＝運べない欄を落とした 8 欄）だけを渡す更新を **2 回**かけて、
+  どちらも `SPOT` のままだった。**陽性対照**: 同じ更新で `allowedInstanceTypes`
+  （`g6.xlarge`→`g6e.xlarge`）と `acceleratorTotalMemoryMiB`（8000→40000）は狙いどおり変わり、
+  差分はその 2 欄だけ。更新が空振りしたのではないことが言える。決定 5 に手当てが要らない
+  という結論は変わらない。
+- ✅ **`fipsEnabled` の宿題は、東京では消える。** `fipsEnabled: true` で provider を作ろうとすると
+  ECS が拒否する——`ClientException: Managed Instances Provider does not support FIPS in this
+  region`。ap-northeast-1 では**設定そのものができない**ので、運べない欄が問題になるのは
+  実質 0 件。他リージョンの配備では引き続き確認が要る。
+- 🔴 **クォータコードの再訂正: `L-DB2E81BB` は存在しない。** 「P1 の実験計画」の中止条件 (c) と
+  docs/log/95 は「`L-DB2E81BB` は Spot 用（値 0）」と*訂正*しているが、その訂正のほうが誤り。
+  両アカウントで `NoSuchResourceException` が返る。ap-northeast-1 の G/VT クォータは
+  **`L-DB2E81BA`（On-Demand）と `L-3819A6DF`（All G and VT Spot Instance Requests・既定 0）の
+  2 つだけ**。**「値 0 が返った」は「Spot である」と「存在しない」を区別しない**——
+  最初の 1 文字の誤りが、同じ形の推測で 2 度目の誤りを生んでいる。
+- 🔴 **「本番のクォータは 96」は現況と違う。** acrt（production）の実測は **On-Demand 64・
+  Spot 64**、af-sandbox は On-Demand 8・Spot 0（16 へ引き上げ申請中）。決定 1「クォータで宣言を
+  弾かない」はこの数字に依存していないので、決定は変わらない。
+- 副産物: **Spot クォータが 0 でも `capacityOptionType: SPOT` の provider は作れる。**
+  クォータが効くのは箱を起動する時だけなので、**設定側の検証はクォータ引き上げを待たなくてよい。**
+- ⚠️ 削除した capacity provider は ECS が `INACTIVE` レコードとして残す（クラスタの一覧からは
+  消える）。跡が残らないわけではない。
 
 ## フェーズと完了の定義
 
