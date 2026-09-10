@@ -8,8 +8,8 @@
   "clip": {
     "class_type": "TripleCLIPLoader",
     "inputs": {
-      "clip_name1": "sd3.5_large.safetensors",
-      "clip_name2": "sd3.5_large.safetensors",
+      "clip_name1": "clip_g.safetensors",
+      "clip_name2": "clip_l.safetensors",
       "clip_name3": "t5xxl_fp16.safetensors"
     }
   },

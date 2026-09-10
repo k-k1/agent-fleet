@@ -157,7 +157,12 @@ var engineComfyFamilies = []string{"sdxl", "sd35", "flux1", "flux2-klein", "zima
 // cannot describe FLUX.2 klein or Z-Image at all — they are a diffusion model, a text encoder
 // and a VAE, three files that must each be labelled — which is why a panel offering only an S3
 // key could register neither. Same duplication and same drift test as engineComfyFamilies.
-var engineComfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"}
+//
+// `--clip_g` was added after SD3.5 was first run on real hardware (ADR 0072 P2 残作業 5): with no
+// way to name that file, SD3.5's TripleCLIPLoader had nothing to point at and the family could
+// not generate at all. A missing flag is a family that silently does not work, which is why this
+// list is served to the Console rather than hard-coded there.
+var engineComfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--clip_g", "--t5xxl", "--vae"}
 
 // engineFileFlagsFor is the file vocabulary an engine's provider understands, or nil when a row
 // is always one unlabelled file (sdcpp loads a single checkpoint with -m).
