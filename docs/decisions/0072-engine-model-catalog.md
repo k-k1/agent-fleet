@@ -1758,7 +1758,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
       itself in GPU time alone** (never mind the person waiting). IA/Archive lifecycles lower the
       storage side further.
 11. ~~**Where the tenant axis belongs**~~ **Decided (review 2026-09-09, section 4) — the middle
-    option is adopted.** Measurement showed **the walls come in a different order than the text
+    option is adopted.** **Implemented (2026-09-10 — "Follow-up: the tenant axis, implemented" at
+    the end of this ADR; not verified on hardware).** Measurement showed **the walls come in a different order than the text
     below says**: **time (~5 models) → disk (~13) → SSM (~38)**, so 4,096 characters is the last
     wall, not the first. What follows is the original text:
     The catalogue's key is
@@ -1878,6 +1879,12 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6), the tenant
   axis (open question 11).**
+  **The tenant axis (open question 11) is implemented** (2026-09-10 — "Follow-up: the tenant
+  axis, implemented" at the end of this ADR; not verified on hardware): the permission gate on
+  ingest, and the four-part acceptance. **Done when: a tenant_admin of a granted tenant can start
+  an ingest, a tenant_admin of an ungranted tenant and a plain member of the granted one are both
+  refused with 403, and the row that results records which tenant, which person, when and which
+  licence.**
   **Registering the Hugging Face token from the Console (open question 12) was implemented
   ahead of the rest** — it depends on nothing else here and it decides outright whether gated
   repositories (all of SD 3.5, all of FLUX.1) can be taken in at all. **Done when: a token is
@@ -2538,3 +2545,53 @@ By-product: one of the two ways to create a row with **no licence, no `source` a
 disappears. The other is the hand-registration form, which sends no licence fields although
 `POST …/engines/{key}/models` accepts them — worth closing in the same pass, since decision 10
 put the licence on the panel row and the panel can only show what was recorded.
+
+## Follow-up: the tenant axis, implemented (2026-09-10)
+
+Open question 11 was settled in the 2026-09-09 review ("adopt the middle option") but never
+built. What went in is exactly the two things that were settled — **the primary key stays
+`(role, id)`** and the catalogue stays one per deployment.
+
+**1. Who may start an ingest.** A tenant's `limits` gains `allow_engine_ingest` (`tenantLimits`,
+toggled by a super_admin on the tenant's settings screen). Of the engine admin routes, **only the
+six ingest ones** go through the new gate (`ingestAdminFor` in `engine_ingest_perm.go`):
+`POST …/{key}/ingest`, `GET …/{key}/ingest`, `…/ingest/resolve`, `…/ingest/files`,
+`…/ingest/search` and `POST /api/admin/engines/search`. Through it come a super_admin, and a
+**tenant_admin** of a tenant with the flag — those two and nobody else.
+
+**Enabling a model, the selected checkpoint, forgetting a row and the Hugging Face token stay
+super_admin**, because each of them decides what every *other* tenant runs. Only ingest stops at
+"add to the catalogue".
+
+The gate is read **per request** (`ListMemberships` returns active rows only, so a tenant_admin
+taken off the roster stops passing on the next call). A test pins that withdrawing the grant
+gives 403 on the next request.
+
+**2. The four-part acceptance.** `license_accepted_by` / `_at` gain
+**`license_accepted_tenant` and `license_accepted_license`**, making the
+`(tenant_id, member_id, accepted_at, license)` the review asked for. The migration is written in
+both series — sqlite `0061` and postgres `0046` — and
+`TestMigrationSeriesDeclareTheSameSchema` compares the two without a Postgres server
+(`TestSchemaDialectParity`, which needs `AF_TEST_DATABASE_URL`, skips).
+
+- **An empty tenant is not a gap.** A super_admin accepts on behalf of the whole deployment and
+  has no tenant to be acting for. Writing in whichever tenant header the Console happened to send
+  would **put a tenant's name on an act it did not perform**.
+- **Holding the licence a second time is not duplication.** `license` / `license_name` next door
+  **describe the model** and are corrected when the model card is. This one is **evidence about a
+  past act** and must not move when upstream relicenses.
+- The audit row gets a tenant here for the first time (`auditFor`). Every other engine action — a
+  mode, a class — really is deployment-wide, so those stay unscoped.
+
+**3. The cost is not hidden.** The review said to write down that **every model id is visible from
+every tenant**, so `guide/admin/04` (ja and en) gains a section and the tenant-limits list in
+`guide/admin/02` points at it. The reason is given as the number it is: since every enabled model
+is synced on every start, a per-tenant catalogue pushes the cold start **past ten minutes at about
+five tenants, even with one model each**.
+
+**What is left.** The Console's **engines panel itself is still super_admin** (`GET
+/api/admin/engines` keeps `withSuperAdmin`). A tenant_admin of a granted tenant **can ingest
+through the API but has no screen**: opening the panel to a non-super caller needs a reduced row
+with the mode, the class and the box's state taken out, which is wider than this pass. The
+operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
+verification is also outstanding (nothing here touched a deployment).
