@@ -138,6 +138,48 @@ func engineModelIsLora(m store.EngineModel) bool {
 	return strings.EqualFold(strings.TrimSpace(m.Kind), engineModelKindLora)
 }
 
+// engineComfyFamilies is the checkpoint-family vocabulary ADR 0072 decision 2 declares, and the
+// ONLY spellings the comfy provider dispatches on: it picks one of five workflow graphs by this
+// string and REFUSES rather than guessing a family from the model id, because a naming
+// convention eventually collides. So a catalogue row whose base_model is anything else — an
+// upstream display name like "SDXL 1.0", or nothing at all — is a row ComfyUI cannot generate
+// from, and the honest place to say so is where the row is written.
+//
+// ⚠️ Duplicated from workspace/agent/internal/imagegen/comfy_workflows.go's comfyFamily
+// constants. Go cannot share it: the two are separate modules (the same situation as the shared
+// contract machinery in contract_wire_test.go). engine_catalog_test.go reads that file and fails
+// when the two drift, which is the only thing standing between "a sixth family was added" and
+// "the Console never offers it".
+var engineComfyFamilies = []string{"sdxl", "sd35", "flux1", "flux2-klein", "zimage"}
+
+// engineBaseModelsFor is the vocabulary an engine's provider understands, or nil when the
+// provider has no opinion. Nil is not "anything goes" by accident: sdcpp genuinely ignores
+// base_model (it holds one checkpoint and never switches), so there is nothing to validate and
+// nothing for a panel to offer.
+func engineBaseModelsFor(provider string) []string {
+	if strings.TrimSpace(provider) == "comfy" {
+		return engineComfyFamilies
+	}
+	return nil
+}
+
+// engineBaseModelValid answers whether a row may be written for this provider. An empty family
+// is refused for a provider that HAS a vocabulary, because the row would be registered,
+// enabled, offered in generate_image's `model` enum — and then fail at generation with a
+// message about a workflow template, minutes and a cold start later.
+func engineBaseModelValid(provider, baseModel string) bool {
+	vocab := engineBaseModelsFor(provider)
+	if vocab == nil {
+		return true
+	}
+	for _, f := range vocab {
+		if f == strings.TrimSpace(baseModel) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- the active set the box reads ------------------------------------------------
 
 // engineActiveSet is what one engine's box is told to load. Every field name is short and

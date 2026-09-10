@@ -500,3 +500,96 @@ func TestEngineAdminModelRefusesAnEmptyBody(t *testing.T) {
 		t.Errorf("no id = %d, want 400", code)
 	}
 }
+
+// A comfy engine picks its workflow graph from the model's family and REFUSES to guess one, so
+// a catalogue row without a valid family is a row that will be registered, enabled, offered in
+// generate_image's `model` enum — and then fail at generation, after a cold start. This is the
+// refusal moved to where the operator can act on it (ADR 0072 decision 2, P2 実機検証).
+func TestEngineAdminComfyDemandsADeclaredFamily(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings = st
+	e.ctrl = nil
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	e.catalog = newEngineCatalog(st, "image")
+
+	body := func(extra string) string {
+		return `{"id":"m1","kind":"checkpoint","files":[{"s3Key":"image/checkpoints/m.safetensors"}]` + extra + `}`
+	}
+
+	// No family at all — the shape the SEED writes, and the shape every row had before this.
+	code, out := adminModel(t, a, "POST", "image", "", body(""))
+	if code != http.StatusBadRequest {
+		t.Fatalf("a checkpoint with no family = %d (%v), want 400 — it cannot generate", code, out)
+	}
+	msg, _ := out["error"].(map[string]any)["message"].(string)
+	for _, want := range []string{"flux2-klein", "comfy"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("the refusal does not mention %q, so it does not say what to declare: %s", want, msg)
+		}
+	}
+
+	// Civitai's display name. The ingest path used to store exactly this, which is why a row
+	// could look complete in the panel and still refuse to generate.
+	if code, out = adminModel(t, a, "POST", "image", "", body(`,"base_model":"SDXL 1.0"`)); code != http.StatusBadRequest {
+		t.Fatalf("base_model=\"SDXL 1.0\" = %d (%v), want 400 — that is a display name, not a family", code, out)
+	}
+
+	// The declared family.
+	if code, out = adminModel(t, a, "POST", "image", "", body(`,"base_model":"sdxl"`)); code != http.StatusOK {
+		t.Fatalf("base_model=sdxl = %d (%v), want 200", code, out)
+	}
+
+	// ⚠️ A LoRA is exempt: its base_model is a compatibility target for a later phase, not a
+	// workflow template, so an upstream spelling is legitimate and refusing it would block a
+	// registration that has nothing to do with graphs.
+	lora := `{"id":"w1","kind":"lora","files":[{"s3Key":"image/loras/w.safetensors"}]}`
+	if code, out = adminModel(t, a, "POST", "image", "", lora); code != http.StatusOK {
+		t.Fatalf("a LoRA with no family = %d (%v), want 200", code, out)
+	}
+}
+
+// The panel cannot work either of these out on its own: which families this provider knows
+// (there is no list anywhere else), and which existing rows predate the rule above.
+func TestEngineAdminRowCarriesTheFamilyVocabulary(t *testing.T) {
+	st := testSettingsStore(t)
+	comfy := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	comfy.settings, comfy.ctrl = st, nil
+	comfy.catalog = newEngineCatalog(st, "image")
+	// A row of the shape the seed writes: complete in every way a panel can see, except that
+	// ComfyUI cannot use it.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "seeded", Kind: "checkpoint", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": comfy}}, st}
+	row := a.row(t.Context(), comfy)
+	fams, _ := row["base_models"].([]string)
+	if len(fams) == 0 {
+		t.Fatal("no base_models on a comfy row — the Console has nothing to build a selector from")
+	}
+	rows, _ := row["model_rows"].([]map[string]any)
+	if len(rows) != 1 {
+		t.Fatalf("model_rows = %d, want the seeded row", len(rows))
+	}
+	if rows[0]["base_model_missing"] != true {
+		t.Errorf("the seeded row is not flagged: %v — it looks like a working row until a cold start says otherwise", rows[0])
+	}
+
+	// sdcpp holds one checkpoint and never reads the family, so offering a choice there would
+	// ask for a decision that changes nothing.
+	sd := newTestImageEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	sd.settings, sd.ctrl = st, nil
+	sd.catalog = newEngineCatalog(st, "image")
+	sdRow := a.row(t.Context(), sd)
+	if _, ok := sdRow["base_models"]; ok {
+		t.Error("sdcpp was given a family vocabulary")
+	}
+	sdRows, _ := sdRow["model_rows"].([]map[string]any)
+	if len(sdRows) > 0 && sdRows[0]["base_model_missing"] == true {
+		t.Error("sdcpp flagged a row for a family it never reads")
+	}
+}

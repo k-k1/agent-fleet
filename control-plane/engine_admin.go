@@ -127,11 +127,21 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	catalogue := e.catalog.list(ctx)
 	ids := []string{}
 	modelRows := []map[string]any{}
+	families := engineBaseModelsFor(e.def.Provider)
 	for _, m := range catalogue {
 		if m.Enabled && !engineModelIsLora(m) {
 			ids = append(ids, m.ID)
 		}
-		modelRows = append(modelRows, engineAdminModelRow(m))
+		mr := engineAdminModelRow(m)
+		// Rows this provider cannot generate from, named as such (ADR 0072 decision 2). Only
+		// ever true for a provider that dispatches on the family, and it is the ONE thing a
+		// panel cannot work out on its own about a row that otherwise looks complete: a seeded
+		// row (the seed cannot know the family) and every row written before this was validated
+		// look exactly like a working one until somebody waits out a cold start.
+		if families != nil && !engineModelIsLora(m) && !engineBaseModelValid(e.def.Provider, m.BaseModel) {
+			mr["base_model_missing"] = true
+		}
+		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{
 		"key":      e.def.Key,
@@ -155,6 +165,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// AF_ENGINE_<KEY>_WINDOW_SEC, and it is the window the START decision is made on.
 		"window_secs": int(cfg.window.Seconds()),
 		"idle_secs":   int(engineIdleWindow(cfg).Seconds()),
+	}
+	// The families this provider dispatches on, so the panel can offer a CHOICE instead of a
+	// free-text box that lets an upstream display name through (ADR 0072 decision 2). Absent
+	// for a provider with no opinion, which is what the panel reads as "do not ask".
+	if families != nil {
+		row["base_models"] = families
 	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
@@ -730,6 +746,17 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "at least one file (s3Key) is required"})
 		return
 	}
+	// The family, for a provider that dispatches on one (ADR 0072 decision 2). Refused HERE, in
+	// the operator's own words, rather than as a ComfyUI validation error a cold start and a
+	// generation later. LoRAs are exempt: their base_model is a compatibility target for a
+	// future phase, not a workflow template, so an upstream spelling is legitimate there.
+	if !engineModelIsLora(m) && !engineBaseModelValid(e.def.Provider, m.BaseModel) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+			"base_model must be one of %s (this engine runs %s, which picks a workflow by family and"+
+				" will not guess one); %q is not a family",
+			strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider, m.BaseModel)})
+		return
+	}
 	if err := a.mgr.store.PutEngineModel(r.Context(), m); err != nil {
 		writeAPIErr(w, internalErr(err))
 		return
@@ -1019,10 +1046,29 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 				"and register that account's token below — it is read by the ingest task only"})
 		return
 	}
+	// ⚠️ The operator's declaration first, and the repository's own string ONLY when it happens
+	// to be a family this provider knows. Hugging Face and Civitai publish a display name —
+	// "SDXL 1.0", "Flux.1 D" — which is descriptive metadata, not the dispatch key ADR 0072
+	// decision 2 defines; storing it as the family produced rows that looked complete in the
+	// panel and then refused to generate (measured on af-sandbox, ADR 0072 P2 実機検証). For a
+	// provider with no vocabulary nothing dispatches on it, so the upstream string rides as
+	// before and is worth keeping.
+	base := strings.TrimSpace(b.BaseModel)
+	if base == "" && engineBaseModelValid(e.def.Provider, res.BaseModel) {
+		base = strings.TrimSpace(res.BaseModel)
+	}
+	if !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+
+				" and will not guess one%s",
+			strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider,
+			engineBaseModelHint(res.BaseModel))})
+		return
+	}
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
 		Description:   strings.TrimSpace(b.Description),
-		BaseModel:     engineFirstNonEmpty(strings.TrimSpace(b.BaseModel), res.BaseModel),
+		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
 		AcceptedBy: ident.ID, Resolved: res,
 	})
@@ -1090,6 +1136,16 @@ func engineFirstNonEmpty(v ...string) string {
 		if strings.TrimSpace(s) != "" {
 			return strings.TrimSpace(s)
 		}
+	}
+	return ""
+}
+
+// engineBaseModelHint quotes what the repository called this model, so the refusal above ends
+// with the one fact that makes the choice obvious. Silent when the repository said nothing —
+// a dangling "(the repository says "")" would be noise where the operator needs a decision.
+func engineBaseModelHint(upstream string) string {
+	if u := strings.TrimSpace(upstream); u != "" {
+		return fmt.Sprintf(" (the repository calls it %q)", u)
 	}
 	return ""
 }

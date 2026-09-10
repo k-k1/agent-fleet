@@ -102,6 +102,23 @@ const (
 	ComfyFamilyZImage     comfyFamily = "zimage"
 )
 
+// comfyFamilies is every family comfyBuildGraph dispatches on. One list, so the acceptance
+// check and the error message that tells an operator what to declare cannot disagree with the
+// switch below. The Control Plane validates catalogue rows against the same five spellings and
+// keeps its copy honest by reading THIS file (engine_catalog_test.go).
+var comfyFamilies = []comfyFamily{
+	ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
+}
+
+// comfyFamilyList spells the vocabulary for a human: what to put in the catalogue's base_model.
+func comfyFamilyList() string {
+	out := make([]string, len(comfyFamilies))
+	for i, f := range comfyFamilies {
+		out[i] = string(f)
+	}
+	return strings.Join(out, ", ")
+}
+
 // comfyBuildGraph dispatches to the family's template, after checking every file the family
 // needs is actually declared. A missing file is refused HERE, in the caller's language, rather
 // than surfacing 100 requests later as a ComfyUI "node has no ckpt_name" validation error.
