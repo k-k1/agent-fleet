@@ -92,14 +92,27 @@ type engineSearchHit struct {
 	// two of twenty rows answered 0.1 and 0.7000000000000001, and an int64 field made
 	// encoding/json refuse the whole array — the panel showed "unreadable answer from
 	// huggingface.co" and no results at all, for a search that was working perfectly.
-	Trending      float64 `json:"trending,omitempty"`
-	Gated         bool    `json:"gated,omitempty"`
-	License       string  `json:"license,omitempty"`
-	LicenseName   string  `json:"license_name,omitempty"`
-	BaseModel     string  `json:"base_model,omitempty"`
-	UpdatedAt     string  `json:"updated_at,omitempty"`
-	Bytes         int64   `json:"bytes,omitempty"`
-	ContextLength int     `json:"context_length,omitempty"`
+	Trending    float64 `json:"trending,omitempty"`
+	Gated       bool    `json:"gated,omitempty"`
+	License     string  `json:"license,omitempty"`
+	LicenseName string  `json:"license_name,omitempty"`
+	BaseModel   string  `json:"base_model,omitempty"`
+	UpdatedAt   string  `json:"updated_at,omitempty"`
+	// PublishedAt is when the thing first appeared, beside UpdatedAt's "when it last changed".
+	// Both, because for a quantisation repository they are a year apart and only the pair
+	// answers "is this maintained": measured 2026-09-11, the 30B this deployment runs was
+	// created 2025-07-31 and last touched 2026-01-30.
+	//
+	// 🔴 Display only. The note on engineSortHF stands — ordering by a date returns nothing but
+	// bulk automated re-quantisations — so there is still no "newest" ranking to sort by.
+	PublishedAt string `json:"published_at,omitempty"`
+	// URL is the upstream page, composed HERE and used by the panel as an href verbatim. Not
+	// left to the client: the two sources spell it differently and Civitai's needs the MODEL
+	// id, which is not Ref (that is the version's) and reaches the panel nowhere else. A third
+	// source then costs one change in one place.
+	URL           string `json:"url,omitempty"`
+	Bytes         int64  `json:"bytes,omitempty"`
+	ContextLength int    `json:"context_length,omitempty"`
 }
 
 // engineHFSearchRow is one row of `GET /api/models`. 🔴 What is NOT here is the point: asking
@@ -117,7 +130,11 @@ type engineHFSearchRow struct {
 	// why the existing engineHFGated is reused rather than a typed one written here.
 	Gated        any    `json:"gated"`
 	LastModified string `json:"lastModified"`
-	CardData     struct {
+	// When the repository was created. Measured live 2026-09-11: `expand[]=createdAt` answers
+	// `"createdAt":"2025-07-31T10:27:38.000Z"` next to `lastModified`, so the pair costs one
+	// more expansion on the same read.
+	CreatedAt string `json:"createdAt"`
+	CardData  struct {
 		License     any    `json:"license"`
 		LicenseName string `json:"license_name"`
 	} `json:"cardData"`
@@ -130,9 +147,17 @@ type engineHFSearchRow struct {
 // engineCivitaiSearchDoc is one page of `GET /api/v1/models`.
 type engineCivitaiSearchDoc struct {
 	Items []struct {
-		Name  string `json:"name"`
-		Type  string `json:"type"`
-		Stats struct {
+		// ID is the MODEL id — the number in the page's URL, and not the one an ingest takes.
+		// It is read for exactly that: the link back to the page.
+		ID   int    `json:"id"`
+		Name string `json:"name"`
+		Type string `json:"type"`
+		// CreatedAt is a fallback for the version's publication date. 🔴 Measured live
+		// 2026-09-11: `/api/v1/models` answers neither this nor a version `createdAt` —
+		// `publishedAt` is the only date on the page — so this is empty in practice and is
+		// decoded rather than assumed away.
+		CreatedAt string `json:"createdAt"`
+		Stats     struct {
 			DownloadCount int64 `json:"downloadCount"`
 			ThumbsUpCount int64 `json:"thumbsUpCount"`
 		} `json:"stats"`
@@ -140,10 +165,15 @@ type engineCivitaiSearchDoc struct {
 		// is the non-commercial case decision 10 wants on screen.
 		AllowCommercialUse []string `json:"allowCommercialUse"`
 		ModelVersions      []struct {
-			ID          int    `json:"id"`
-			Name        string `json:"name"`
-			BaseModel   string `json:"baseModel"`
+			ID        int    `json:"id"`
+			Name      string `json:"name"`
+			BaseModel string `json:"baseModel"`
+			// The version's own dates. 🔴 Measured live 2026-09-11 on `/api/v1/models`: a
+			// version answers `publishedAt` and nothing else — no `updatedAt`, no `createdAt`.
+			// Both are still decoded, because a version fetched by id does carry more and this
+			// struct must not silently drop a date that appears.
 			PublishedAt string `json:"publishedAt"`
+			UpdatedAt   string `json:"updatedAt"`
 		} `json:"modelVersions"`
 	} `json:"items"`
 }
@@ -178,7 +208,7 @@ func engineSearchHF(ctx context.Context, q, kind, sort string) ([]engineSearchHi
 	v.Set("limit", strconv.Itoa(engineSearchLimit))
 	// `expand[]` is what makes one read enough: without it the rows carry neither the gating
 	// flag nor the licence, and the panel would have to resolve 20 repositories to draw a list.
-	expand := []string{"gated", "downloads", "likes", "trendingScore", "cardData", "lastModified"}
+	expand := []string{"gated", "downloads", "likes", "trendingScore", "cardData", "lastModified", "createdAt"}
 	if kind == "gguf" {
 		expand = append(expand, "gguf")
 	}
@@ -201,6 +231,8 @@ func engineSearchHF(ctx context.Context, q, kind, sort string) ([]engineSearchHi
 			License:     engineFirstString(r.CardData.License),
 			LicenseName: strings.TrimSpace(r.CardData.LicenseName),
 			UpdatedAt:   strings.TrimSpace(r.LastModified),
+			PublishedAt: strings.TrimSpace(r.CreatedAt),
+			URL:         engineIngestBase + "/" + r.ID,
 			// The GGUF numbers are the repository's, i.e. one of its files — a draft for the
 			// form, never the value. The resolve of the chosen FILE is what the row is built
 			// from (decision 11).
@@ -209,6 +241,20 @@ func engineSearchHF(ctx context.Context, q, kind, sort string) ([]engineSearchHi
 		})
 	}
 	return out, nil
+}
+
+// engineCivitaiModelURL is the page a person opens for a hit: the MODEL's page, pointed at the
+// VERSION the hit is for.
+//
+// Both ids are needed and they are different numbers — `/models/<model>` alone opens on
+// whatever version is newest today, which is not the one this row's `ref` would take in. A
+// model with no id falls back to the version-only form the licence link already uses, which
+// Civitai resolves.
+func engineCivitaiModelURL(modelID, versionID int) string {
+	if modelID <= 0 {
+		return engineCivitaiBase + "/models/?modelVersionId=" + strconv.Itoa(versionID)
+	}
+	return engineCivitaiBase + "/models/" + strconv.Itoa(modelID) + "?modelVersionId=" + strconv.Itoa(versionID)
 }
 
 // engineSearchCivitai asks Civitai. The hit carries the newest VERSION's id, because that is
@@ -253,7 +299,13 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 			Source: "civitai", Ref: strconv.Itoa(ver.ID), Name: name,
 			Downloads: m.Stats.DownloadCount, Likes: m.Stats.ThumbsUpCount,
 			BaseModel: strings.TrimSpace(ver.BaseModel),
-			UpdatedAt: strings.TrimSpace(ver.PublishedAt),
+			// 🔴 `publishedAt` is the PUBLICATION date, and it used to ride as `updated_at` —
+			// the one thing it is not. Civitai answers no `updatedAt` here at all (measured
+			// 2026-09-11), so carrying it as both would print one date twice under two labels,
+			// one of them wrong.
+			UpdatedAt:   strings.TrimSpace(ver.UpdatedAt),
+			PublishedAt: engineFirstNonEmpty(ver.PublishedAt, m.CreatedAt),
+			URL:         engineCivitaiModelURL(m.ID, ver.ID),
 		}
 		// Civitai has no licence field in Hugging Face's sense (P4 measurement 2), so the one
 		// thing it does say about terms is carried as itself: an empty allowCommercialUse is

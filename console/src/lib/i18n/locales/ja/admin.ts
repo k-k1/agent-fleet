@@ -125,6 +125,14 @@ export const admin = {
   "admin.engines_ingest_hit_likes": " いいね",
   "admin.engines_ingest_hit_trending": " 話題度",
   "admin.engines_ingest_hit_gated": "gated",
+  // 公開日と更新日は別の問いに答える（「新しいモデルか」と「まだ手が入っているか」）ので、
+  // 同じ行に両方・それぞれラベル付きで出す。片方だけだと、1 年前に公開されて先週まで
+  // 更新されているモデルと、先週公開されたモデルの区別がつかない。
+  "admin.engines_ingest_hit_published": "公開",
+  "admin.engines_ingest_hit_updated": "更新",
+  // 元のページへ。CP が組み立てた URL をそのまま開く（Console 側では組まない）。
+  "admin.engines_ingest_hit_open_hf": "HF で開く",
+  "admin.engines_ingest_hit_open_civitai": "CivitAI で開く",
   // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
   // 調べる・同意する・取り込む はこの後もそのまま通る。
   "admin.engines_ingest_hit_pick": "これにする",

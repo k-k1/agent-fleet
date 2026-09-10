@@ -123,6 +123,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_hit_likes": " likes",
   "admin.engines_ingest_hit_trending": " trending",
   "admin.engines_ingest_hit_gated": "gated",
+  // Published and updated answer different questions ("is this new" and "is it still being
+  // worked on"), so both ride, each labelled. One alone cannot tell a model published a year
+  // ago and touched last week from one published last week.
+  "admin.engines_ingest_hit_published": "Published",
+  "admin.engines_ingest_hit_updated": "Updated",
+  // Back to the page it came from, opening the URL the CP composed (never one built here).
+  "admin.engines_ingest_hit_open_hf": "Open on HF",
+  "admin.engines_ingest_hit_open_civitai": "Open on CivitAI",
   // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
   // ingest still runs from there unchanged.
   "admin.engines_ingest_hit_pick": "Use this",

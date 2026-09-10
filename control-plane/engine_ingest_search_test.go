@@ -37,13 +37,13 @@ func hfSearchStub(t *testing.T, body string) (*httptest.Server, *url.Values) {
 
 const hfSearchBody = `[
   {"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":256578,"likes":435,"trendingScore":22,
-   "gated":false,"lastModified":"2024-11-01T00:00:00.000Z",
+   "gated":false,"lastModified":"2024-11-01T00:00:00.000Z","createdAt":"2024-09-18T09:12:03.000Z",
    "cardData":{"license":"apache-2.0","extra_gated_prompt":"PROMPT-PADDING-PROMPT-PADDING"},
    "gguf":{"total":7615616512,"context_length":131072,
            "chat_template":"TEMPLATE-PADDING-TEMPLATE-PADDING"}},
   {"id":"black-forest-labs/FLUX.1-dev","downloads":790579,"likes":14538,
    "trendingScore":0.7000000000000001,
-   "gated":"auto","lastModified":"2025-06-27T16:22:19.000Z",
+   "gated":"auto","lastModified":"2025-06-27T16:22:19.000Z","createdAt":"2024-07-31T15:04:01.000Z",
    "cardData":{"license":"other","license_name":"flux-1-dev-non-commercial-license"}}
 ]`
 
@@ -89,6 +89,86 @@ func TestSearchCopiesOnlyTheFieldsThePanelDraws(t *testing.T) {
 	}
 	if q.Get("expand[]") == "" || !strings.Contains(strings.Join((*q)["expand[]"], ","), "gated") {
 		t.Errorf("no expand[]=gated in %v — without it a row carries neither gating nor licence", *q)
+	}
+}
+
+// Where a hit came FROM, and when it first appeared (ADR 0072 decision 11).
+//
+// The link is composed by the CP and used by the panel as an href verbatim, so what has to be
+// right is here: the two sources spell a page differently, and Civitai's needs the MODEL id —
+// a number the panel never otherwise sees, because `ref` is the version's.
+//
+// 🔴 The dates are DISPLAY ONLY. The vocabulary still has no "newest" (see engineSortHF: every
+// date-ordered page is bulk automated re-quantisations), and this must not become one.
+func TestSearchHitsCarryTheirPageAndPublicationDate(t *testing.T) {
+	_, q := hfSearchStub(t, hfSearchBody)
+	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", "")
+	if aerr != nil {
+		t.Fatalf("search: %v", aerr.message)
+	}
+	// Asked for on the same read: without the expansion the field is simply absent, and the
+	// panel would show a repository with no age (measured live 2026-09-11 that this is the
+	// spelling that answers it).
+	if !strings.Contains(strings.Join((*q)["expand[]"], ","), "createdAt") {
+		t.Errorf("createdAt was not expanded: %v", (*q)["expand[]"])
+	}
+	if hits[0].PublishedAt != "2024-09-18T09:12:03.000Z" {
+		t.Errorf("published_at = %q, want the repository's createdAt", hits[0].PublishedAt)
+	}
+	// Both dates, and they are NOT the same one twice: created a year before it was last
+	// touched is the shape that says "maintained".
+	if hits[0].UpdatedAt != "2024-11-01T00:00:00.000Z" {
+		t.Errorf("updated_at = %q, want lastModified", hits[0].UpdatedAt)
+	}
+	if hits[0].URL != engineIngestBase+"/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF" {
+		t.Errorf("url = %q", hits[0].URL)
+	}
+
+	// Civitai: the MODEL id is in the path and the VERSION id in the query, because
+	// `/models/<model>` alone opens on whatever version is newest today — not the one this row
+	// would take in. Verified against the live site 2026-09-11: the composed form answers 200.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"items":[
+		  {"id":133005,"name":"Juggernaut XL","type":"Checkpoint","allowCommercialUse":["Image"],
+		   "modelVersions":[{"id":1759168,"name":"Ragnarok","baseModel":"SDXL 1.0",
+		                     "publishedAt":"2025-05-07T21:02:16.940Z"}]}]}`))
+	}))
+	defer srv.Close()
+	old := engineCivitaiBase
+	engineCivitaiBase = srv.URL
+	defer func() { engineCivitaiBase = old }()
+
+	civ, aerr := engineSearchCivitai(t.Context(), "juggernaut", "checkpoint", "")
+	if aerr != nil || len(civ) != 1 {
+		t.Fatalf("civitai search: %v %v", civ, aerr)
+	}
+	if civ[0].URL != srv.URL+"/models/133005?modelVersionId=1759168" {
+		t.Errorf("url = %q, want the model page pointed at this version", civ[0].URL)
+	}
+	// 🔴 `publishedAt` is the PUBLICATION date and it used to ride as `updated_at`. Civitai
+	// answers no `updatedAt` at all here (measured live 2026-09-11), so a row that carried it
+	// as both would print one date twice, under two labels, one of them wrong.
+	if civ[0].PublishedAt != "2025-05-07T21:02:16.940Z" {
+		t.Errorf("published_at = %q, want the version's publishedAt", civ[0].PublishedAt)
+	}
+	if civ[0].UpdatedAt != "" {
+		t.Errorf("updated_at = %q — Civitai published no such date, so the row must not claim one",
+			civ[0].UpdatedAt)
+	}
+}
+
+// A model with no id still gets a page: the version-only form Civitai resolves, which is what
+// the licence link has always used. Nothing measured answers that, but the id is upstream's to
+// omit and a row whose link is `/models/0?…` is worse than one that is a little less precise.
+func TestCivitaiModelURLFallsBackToTheVersion(t *testing.T) {
+	old := engineCivitaiBase
+	engineCivitaiBase = "https://civitai.example"
+	defer func() { engineCivitaiBase = old }()
+	if got := engineCivitaiModelURL(0, 501240); got != "https://civitai.example/models/?modelVersionId=501240" {
+		t.Errorf("url with no model id = %q", got)
+	}
+	if got := engineCivitaiModelURL(4201, 501240); got != "https://civitai.example/models/4201?modelVersionId=501240" {
+		t.Errorf("url = %q", got)
 	}
 }
 

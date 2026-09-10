@@ -2059,6 +2059,52 @@ describe("EnginesAdminView / searching for a model", () => {
     });
   });
 
+  // Where a hit came from and how old it is (ADR 0072 decision 11). Both dates ride, because
+  // "published a year ago, touched last week" and "published last week" are different models
+  // to choose between and either date alone says neither.
+  //
+  // 🔴 The link must not double as the pick: the card is the "choose this result" surface, and
+  // an anchor that also filled the form would send somebody to the page AND start a resolve.
+  it("links each hit to its page and dates it, without the link choosing the result", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "civitai",
+          ref: "1759168",
+          name: "Juggernaut XL — Ragnarok",
+          downloads: 1632949,
+          url: "https://civitai.com/models/133005?modelVersionId=1759168",
+          published_at: "2025-05-07T21:02:16.940Z",
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+    await typeInto(field("探す")!, "juggernaut");
+    await click(button("検索"));
+
+    const hit = host!.querySelector(".engines-search-hits li")!;
+    const link = hit.querySelector("a") as HTMLAnchorElement;
+    // The CP's string verbatim — the panel never builds one, because Civitai's needs the model
+    // id and `ref` is the version's.
+    expect(link.getAttribute("href")).toBe("https://civitai.com/models/133005?modelVersionId=1759168");
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")).toContain("noopener");
+    expect(link.textContent).toBe("CivitAI で開く");
+    // Dated, with the year: a 2025 model printed as "5/7 21:02" reads as this year's.
+    expect(hit.textContent).toContain("公開");
+    expect(hit.textContent).toContain("2025");
+    // Civitai publishes no update date, and an empty label reads as "never".
+    expect(hit.textContent).not.toContain("更新");
+
+    // Following the link starts nothing: only the search call has been made.
+    const before = apiJSON.mock.calls.length;
+    await click(link);
+    expect(apiJSON.mock.calls.length).toBe(before);
+    expect(field("リポジトリ")!.value).toBe("");
+  });
+
   // 🔴 The trap that comes with resolving on the pick: `repo` still holds the PREVIOUS pick in
   // the handler that set the new one, so a request built from the state asks about the model
   // somebody chose a moment ago — with the new name on screen and no error anywhere.

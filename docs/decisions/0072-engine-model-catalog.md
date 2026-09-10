@@ -712,6 +712,23 @@ names move between versions — pin the tag and freeze the templates behind gold
     - **Search is not a precondition for ingest.** Typing `owner/name` or a URL stays. A
       deployment with closed egress loses search too, and there decision 6's hand-run route
       simply goes back to being the main one.
+    - **A link back to the page, and the publication date** (added 2026-09-11). Every row
+      opens its upstream page, and `published_at` (HF's `createdAt`, Civitai's version
+      `publishedAt`) rides **as a pair** with `updated_at`: one alone cannot tell a model
+      published a year ago and touched last week from one published last week. 🔴 **Display
+      only — the order does not change**; "no newest ranking" above still holds. **The URL is
+      composed by the CP** (`url`): the two upstreams spell a page differently, and Civitai's
+      is `/models/<model id>?modelVersionId=<version id>` — it needs the MODEL id, while a
+      row's `ref` is the version's, so the Console could not build it. A third source then
+      costs one change in one place. `updated_at` is now **empty for Civitai**: the only date
+      `/api/v1/models` answers is `publishedAt` (measured 2026-09-11), and serving that as
+      "updated" was the same date under the wrong name.
+      Measured on a real render (#496's harness, ja and en): **ja gains no wrapped line at
+      all** (cards stay 118/118/104 px). What buys that is keeping the two dates in **one**
+      flex item — as two, the busiest card came to 392 px against the strip's 390 and broke
+      to a second line, growing the card 118 → 146 px. **en does grow** (145/145/131 px):
+      "Published", "Updated" and " downloads" are wide enough that the pair cannot share the
+      line. It moves down whole rather than splitting, so the reading survives.
 
 ## Resolved by measurement (2026-09-08, the dev deployment's g6.xlarge)
 
