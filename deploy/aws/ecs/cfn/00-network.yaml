@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter (P3-7) — network substrate: VPC, 2-AZ public/private
+  agent-fleet ECS adapter (P3-7) - network substrate: VPC, 2-AZ public/private
   subnets, IGW, one NAT gateway, the (free) S3 gateway endpoint, and the base
   security groups (alb -> cp -> ws).
   Static substrate only; per-workspace resources are created by the Control Plane
@@ -27,12 +27,12 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      Elastic IP allocation id (eipalloc-…) to give the NAT gateway — that address is
+      Elastic IP allocation id (eipalloc-...) to give the NAT gateway - that address is
       the deployment's ONLY egress source IP, so it is what a customer registers in a
       corporate firewall allow-list. Empty = the stack allocates one and retains it.
       Pass an address allocated OUTSIDE this stack (or one retained from an earlier
       one) to keep the same egress IP across a full teardown and rebuild, so the
-      registered value never has to change. ⚠️ Changing it on a live stack REPLACES
+      registered value never has to change. !! Changing it on a live stack REPLACES
       the NAT gateway: egress drops for the duration and the source IP becomes the
       new address.
 
@@ -116,13 +116,13 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PublicSubnet1, RouteTableId: !Ref PublicRt }
 
-  # One NAT gateway (single-AZ) — the main standing cost. Enough for a dev loop;
+  # One NAT gateway (single-AZ) - the main standing cost. Enough for a dev loop;
   # a prod env would put one NAT per AZ. Workspaces egress to git/Anthropic through it.
-  # ⚠️ Retained on purpose. This address is the deployment's ONLY egress source IP
+  # !! Retained on purpose. This address is the deployment's ONLY egress source IP
   # (every workspace reaches git / the model APIs through it), so it is the value a
   # customer registers in a corporate firewall allow-list. Releasing it silently cuts
   # everyone's outbound traffic and the replacement is a different address, so the
-  # stack must never take it away — not on delete, not on replacement. Retaining it
+  # stack must never take it away - not on delete, not on replacement. Retaining it
   # is also what makes the address reusable: hand it back as NatEipAllocationId and
   # the rebuilt deployment egresses from the same IP.
   NatEip:
@@ -157,9 +157,9 @@ Resources:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties: { SubnetId: !Ref PrivateSubnet1, RouteTableId: !Ref PrivateRt }
 
-  # S3 gateway endpoint — the one VPC endpoint that is free (no hourly charge, no
+  # S3 gateway endpoint - the one VPC endpoint that is free (no hourly charge, no
   # ENI). ECR stores layer blobs in S3, so every cold Fargate image pull (a fresh
-  # pull on EVERY task start — Fargate keeps no image cache) would otherwise cross
+  # pull on EVERY task start - Fargate keeps no image cache) would otherwise cross
   # the NAT gateway and pay its $0.045/GB data processing. Routing the S3 prefix
   # list off the private route table takes the bulk of those bytes off the NAT.
   # Interface endpoints (ecr.api / ecr.dkr / logs / ssm) are deliberately NOT here:

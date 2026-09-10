@@ -1,16 +1,16 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter — the fleet's own inference engines on GPU, normally scaled to zero
+  agent-fleet ECS adapter - the fleet's own inference engines on GPU, normally scaled to zero
   (ADR 0071). Optional, each role on its own. What it imports and why it is deployed before
   30-ingress: PARAMETERS-60-engines.md, "What this stack is".
 
-# ⚠️ Read PARAMETERS-60-engines.md, "What this template learned the hard way", before editing
+# !! Read PARAMETERS-60-engines.md, "What this template learned the hard way", before editing
 # the capacity providers or the services.
 
 Parameters:
-  # ⚠️ The long-form reasoning is in cfn/PARAMETERS-60-engines.md (a comment costs what a
+  # !! The long-form reasoning is in cfn/PARAMETERS-60-engines.md (a comment costs what a
   # Description does, and this file is at the 51,200-byte wall). Write every parameter in BLOCK
-  # form — see that file, "Editing this template".
+  # form - see that file, "Editing this template".
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -22,7 +22,7 @@ Parameters:
   ServiceConnectNamespace:
     Type: String
     Default: af.internal
-    Description: "The private DNS namespace's NAME — must match what 20-platform was given."
+    Description: "The private DNS namespace's NAME - must match what 20-platform was given."
   EnginesSsmParamName:
     Type: String
     Default: /af-ws/engines
@@ -43,8 +43,8 @@ Parameters:
     Type: String
     Default: server-cuda
     Description: "Tag in the af-llamacpp ECR repository. standup.sh copies it in before deploy."
-  # ⚠️ SEED PARAMETERS (ADR 0072 decision 7), read ONCE by a CP whose catalogue for the role is
-  # empty — PARAMETERS-60-engines.md, "The seed parameters".
+  # !! SEED PARAMETERS (ADR 0072 decision 7), read ONCE by a CP whose catalogue for the role is
+  # empty - PARAMETERS-60-engines.md, "The seed parameters".
   LlmModelS3Key:
     Type: String
     Default: ""
@@ -67,18 +67,18 @@ Parameters:
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja,--no-mmap"
-    Description: "Extra llama-server flags on an L4. ⚠️ NEVER -c here — PARAMETERS-60-engines.md."
+    Description: "Extra llama-server flags on an L4. !! NEVER -c here - PARAMETERS-60-engines.md."
   LlmModelsMax:
     Type: Number
     Default: 1
     MinValue: 0
-    Description: "Models the router may hold at once (0 = unlimited). 1 — PARAMETERS-60-engines.md."
+    Description: "Models the router may hold at once (0 = unlimited). 1 - PARAMETERS-60-engines.md."
   LlmInstanceClasses:
     Type: String
     Default: ""
     Description: >-
       GPU rungs this role may be switched between (ADR 0074). EMPTY = no choice, and the CP
-      never touches the capacity provider — PARAMETERS-60-engines.md, "The instance classes".
+      never touches the capacity provider - PARAMETERS-60-engines.md, "The instance classes".
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -94,7 +94,7 @@ Parameters:
   LlmAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
-    Description: "Instance types this role may buy. ⚠️ A FILTER, not a preference order — PARAMETERS-60-engines.md."
+    Description: "Instance types this role may buy. !! A FILTER, not a preference order - PARAMETERS-60-engines.md."
   LlmAcceleratorMemMinMiB:
     Type: Number
     Default: 21000
@@ -145,10 +145,10 @@ Parameters:
     Default: ondemand
     AllowedValues: [ off, on, ondemand ]
     Description: >-
-      The engine's initial mode, written into the SSM table as the DEFAULT only — once an
+      The engine's initial mode, written into the SSM table as the DEFAULT only - once an
       admin sets it, the stored setting wins (ADR 0070 decision 7).
 
-  # --- the image role (stable-diffusion.cpp — ADR 0071 P1) ----------------------
+  # --- the image role (stable-diffusion.cpp - ADR 0071 P1) ----------------------
   # A mirror of the llm block on purpose: the instance floor is a VRAM number, per role.
   ImageEnabled:
     Type: String
@@ -163,7 +163,7 @@ Parameters:
     Type: String
     Default: sdcpp
     AllowedValues: [ sdcpp, comfy ]
-    Description: Which server the image role runs — PARAMETERS-60-engines.md, "ImageEngine".
+    Description: Which server the image role runs - PARAMETERS-60-engines.md, "ImageEngine".
   ImageImageTag:
     Type: String
     Default: master-cuda
@@ -186,7 +186,7 @@ Parameters:
   ImageExtraArgs:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
-    Description: "Extra sd-server flags (ImageEngine=sdcpp only) — PARAMETERS-60-engines.md."
+    Description: "Extra sd-server flags (ImageEngine=sdcpp only) - PARAMETERS-60-engines.md."
   ImageInstanceClasses:
     Type: String
     Default: ""
@@ -202,7 +202,7 @@ Parameters:
   ImageAllowedInstanceTypes:
     Type: CommaDelimitedList
     Default: "g6.xlarge,g5.xlarge"
-    Description: "Instance types this role may buy — PARAMETERS-60-engines.md (same filter warning as the llm role's)."
+    Description: "Instance types this role may buy - PARAMETERS-60-engines.md (same filter warning as the llm role's)."
   ImageAcceleratorMemMinMiB:
     Type: Number
     Default: 8000
@@ -230,7 +230,7 @@ Parameters:
   ImageStorageGiB:
     Type: Number
     Default: 60
-    Description: "EBS data volume per box when ImageUseLocalStorage is off — PARAMETERS-60-engines.md."
+    Description: "EBS data volume per box when ImageUseLocalStorage is off - PARAMETERS-60-engines.md."
   ImageUseLocalStorage:
     Type: String
     Default: "true"
@@ -239,7 +239,7 @@ Parameters:
   ImageScaleInAfter:
     Type: Number
     Default: -2
-    Description: "infrastructureOptimization.scaleInAfter in seconds. -1 is a trap here — PARAMETERS-60-engines.md."
+    Description: "infrastructureOptimization.scaleInAfter in seconds. -1 is a trap here - PARAMETERS-60-engines.md."
   ImageIdleSec:
     Type: Number
     Default: 900
@@ -273,7 +273,7 @@ Parameters:
     Description: CloudWatch retention for the engine and ingest log group.
 
 Mappings:
-  # ONE fetch sidecar for both roles. ⚠️ A LITERAL block (`|-`), never folded —
+  # ONE fetch sidecar for both roles. !! A LITERAL block (`|-`), never folded -
   # PARAMETERS-60-engines.md, "The fetch sidecar" (engine-sidecar-test.sh runs it for real).
   Engine:
     fetch:
@@ -338,7 +338,7 @@ Conditions:
   HasScaleInAfter: !Not [ !Equals [ !Ref LlmScaleInAfter, -2 ] ]
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
   # The same four for the image role, and the pair that decides the shape of the engine table
-  # (0, 1 or 2 rows — the comma between them only exists when both are there).
+  # (0, 1 or 2 rows - the comma between them only exists when both are there).
   HasImageModel: !Or
     - !Equals [ !Ref ImageEnabled, "true" ]
     - !And [ !Equals [ !Ref ImageEnabled, "" ], !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ] ]
@@ -454,7 +454,7 @@ Resources:
                 Resource: !Sub "${ModelsBucket.Arn}/*"
 
   # The CP's only new permissions (ADR 0072 decision 6), all pinned to THIS stack's
-  # resources — PARAMETERS-60-engines.md, "The ingest permissions".
+  # resources - PARAMETERS-60-engines.md, "The ingest permissions".
   CpIngestPolicy:
     Type: AWS::IAM::Policy
     Properties:
@@ -483,9 +483,9 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
-          # Rung changes (ADR 0074 decision 9). 🔴 The third action is one the CP never calls:
+          # Rung changes (ADR 0074 decision 9). !! The third action is one the CP never calls:
           # ECS authorizes an MI provider update as PutClusterCapacityProviders on the CLUSTER
-          # (measured, P1) — PARAMETERS-60-engines.md, "The instance classes".
+          # (measured, P1) - PARAMETERS-60-engines.md, "The instance classes".
           - Effect: Allow
             Action: [ ecs:DescribeCapacityProviders, ecs:UpdateCapacityProvider ]
             Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:capacity-provider/af-${AWS::StackName}-*"
@@ -497,7 +497,7 @@ Resources:
             Resource: [ !GetAtt InfraRole.Arn, !GetAtt InstanceRole.Arn ]
             Condition: { StringEquals: { "iam:PassedToService": ecs.amazonaws.com } }
 
-  # Always created, holding the sentinel until somebody registers a token in the Console —
+  # Always created, holding the sentinel until somebody registers a token in the Console -
   # PARAMETERS-60-engines.md, "The Hugging Face token".
   HfTokenSecret:
     Type: AWS::SecretsManager::Secret
@@ -505,7 +505,7 @@ Resources:
       Description: !Sub "HF_TOKEN for af-${AWS::StackName} ingest, written by the Control Plane"
       SecretString: "-"
 
-  # 🔴 ECS injects Secrets with the EXECUTION role, which reads `secret:rds!*` only — without
+  # !! ECS injects Secrets with the EXECUTION role, which reads `secret:rds!*` only - without
   # this the task dies at startup. PARAMETERS-60-engines.md, "The Hugging Face token".
   ExecHfTokenPolicy:
     Type: AWS::IAM::Policy
@@ -572,7 +572,7 @@ Resources:
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
   # --- capacity: one provider per engine role (ADR 0071 decision 2) -------------
-  # ⚠️ PARAMETERS-60-engines.md, "The capacity providers" and "The G-family quota".
+  # !! PARAMETERS-60-engines.md, "The capacity providers" and "The G-family quota".
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -657,7 +657,7 @@ Resources:
         - { Key: af-role, Value: engine-image }
         - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
 
-  # ⚠️ This REPLACES the cluster's provider list, and its empty default strategy is
+  # !! This REPLACES the cluster's provider list, and its empty default strategy is
   # load-bearing: PARAMETERS-60-engines.md, "The capacity providers".
   Associations:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
@@ -705,7 +705,7 @@ Resources:
                 [ "$got" = "$SHA256" ] || { echo "ingest: sha256 mismatch: got $got want $SHA256"; exit 1; };
                 echo "ingest: sha256 ok $got";
               else
-                echo "ingest: WARNING no SHA256 given — the upload is unverified";
+                echo "ingest: WARNING no SHA256 given - the upload is unverified";
               fi
           Environment:
             - { Name: URL, Value: "" }
@@ -759,7 +759,7 @@ Resources:
       ExecutionRoleArn: !ImportValue { "Fn::Sub": "${PlatformStackName}-ExecRoleArn" }
       TaskRoleArn: !GetAtt EngineTaskRole.Arn
       Volumes:
-        # An ANONYMOUS host volume — empty `Host`, no SourcePath, both measured:
+        # An ANONYMOUS host volume - empty `Host`, no SourcePath, both measured:
         # PARAMETERS-60-engines.md, "The model volume".
         - Name: models
           Host: {}
@@ -776,7 +776,7 @@ Resources:
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
             # ROUTER MODE (ADR 0072 decision 3): everything model-specific moves into a preset
-            # section named after the catalogue id — hence ALIAS_FLAG and CTX_FLAG empty.
+            # section named after the catalogue id - hence ALIAS_FLAG and CTX_FLAG empty.
             - { Name: PRESET_FILE, Value: /models/llm/presets.ini }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }
@@ -789,14 +789,14 @@ Resources:
               awslogs-stream-prefix: llm-fetch
         - Name: llama
           Essential: true
-          # ⚠️ The image must ALREADY be in that repository when this stack is created, or the
+          # !! The image must ALREADY be in that repository when this stack is created, or the
           # stack blocks in CREATE_IN_PROGRESS: PARAMETERS-60-engines.md, "The engine services".
           Image: !Sub
             - "${Uri}:${Tag}"
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
               Tag: !Ref LlmImageTag
           PortMappings: [ { ContainerPort: 8080 } ]
-          # ⚠️ The idle wrapper (ADR 0072 decision 1(a)) — PARAMETERS-60-engines.md.
+          # !! The idle wrapper (ADR 0072 decision 1(a)) - PARAMETERS-60-engines.md.
           EntryPoint: [ "sh", "-c" ]
           Command:
             - !Sub
@@ -804,7 +804,7 @@ Resources:
                 n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
                 if [ -s /models/cmdline ]; then exec /app/llama-server --host 0.0.0.0 --port 8080
                 --models-max ${LlmModelsMax} ${Extra} $(cat /models/cmdline);
-                else echo "llm: no model in the catalogue — idling"; sleep infinity; fi
+                else echo "llm: no model in the catalogue - idling"; sleep infinity; fi
               - Extra: !Join [ " ", !Ref LlmExtraArgs ]
           ResourceRequirements: !If [ HasGpu, [ { Type: GPU, Value: !Ref LlmGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
@@ -826,7 +826,7 @@ Resources:
               awslogs-stream-prefix: llm
 
   # Cloud Map DNS, not Service Connect (ADR 0070 decision 8). At desired 0 the name has no A
-  # record at all — the normal state of an engine nobody is using, not an error.
+  # record at all - the normal state of an engine nobody is using, not an error.
   LlmDiscovery:
     Type: AWS::ServiceDiscovery::Service
     Condition: HasLlmModel
@@ -847,7 +847,7 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-llm"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref LlmTaskDef
-      # ⚠️ No DesiredCount (declaring 0 kills a GPU box mid-answer on every update) and no
+      # !! No DesiredCount (declaring 0 kills a GPU box mid-answer on every update) and no
       # LaunchType. Both load-bearing: PARAMETERS-60-engines.md, "The engine services".
       CapacityProviderStrategy:
         - { CapacityProvider: !Ref LlmCapacityProvider, Weight: 1 }
@@ -892,7 +892,7 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
-            # comfy IS a router, per request, with no preset — PARAMETERS, "The fetch sidecar".
+            # comfy IS a router, per request, with no preset - PARAMETERS, "The fetch sidecar".
             - { Name: SYNC_ALL, Value: !If [ ImageIsComfy, "1", "" ] }
             - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }
@@ -904,7 +904,7 @@ Resources:
               awslogs-group: !Ref LogGroup
               awslogs-region: !Ref "AWS::Region"
               awslogs-stream-prefix: image-fetch
-        # ⚠️ ImageEngine picks the image AND the command (ADR 0072 decision 4) — one
+        # !! ImageEngine picks the image AND the command (ADR 0072 decision 4) - one
         # container, one task def: PARAMETERS-60-engines.md, "The idle wrapper".
         - Name: engine
           Essential: true
@@ -922,14 +922,14 @@ Resources:
           Command:
             - !If
               - ImageIsComfy
-              # The symlink and its `rm -rf` (⚠️ two traps, both in PARAMETERS-60-engines.md,
+              # The symlink and its `rm -rf` (!! two traps, both in PARAMETERS-60-engines.md,
               # "The idle wrapper") ARE the S3-layout integration. Checkpoint: per request.
               - >-
                 n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
                 if [ -s /models/cmdline ]; then rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models;
                 exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch;
-                else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
-              # ⚠️ Why sd-server's flags are spelled differently and why --lora-model-dir is
+                else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
+              # !! Why sd-server's flags are spelled differently and why --lora-model-dir is
               # stated: PARAMETERS-60-engines.md, "The idle wrapper".
               - !Sub
                 - >-
@@ -938,7 +938,7 @@ Resources:
                   if [ -s /models/cmdline ]; then exec /sd-server --listen-ip 0.0.0.0
                   --listen-port 8080 --lora-model-dir /models/image/loras
                   ${Extra} $(cat /models/cmdline);
-                  else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
+                  else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
                 - Extra: !Join [ " ", !Ref ImageExtraArgs ]
           ResourceRequirements: !If [ HasImageGpu, [ { Type: GPU, Value: !Ref ImageGpuCount } ], !Ref "AWS::NoValue" ]
           MountPoints: [ { SourceVolume: models, ContainerPath: /models } ]
@@ -968,7 +968,7 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-image"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref ImageTaskDef
-      # DesiredCount deliberately ABSENT — see the llm service. standup.sh scales a NEWLY
+      # DesiredCount deliberately ABSENT - see the llm service. standup.sh scales a NEWLY
       # created service to 0; a later update leaves whatever count the controller set.
       CapacityProviderStrategy:
         - { CapacityProvider: !Ref ImageCapacityProvider, Weight: 1 }
@@ -1025,7 +1025,7 @@ Resources:
               - Service: !GetAtt ImageService.Name
                 Cp: !Sub "af-${AWS::StackName}-image"
                 # ComfyUI has no OpenAI-compatible /v1/models; /system_stats is what it answers
-                # unauthenticated and immediately (ADR 0072, "実測で解けた点" 1 measured it up).
+                # unauthenticated and immediately (ADR 0072, "Resolved by measurement" 1 measured it up).
                 Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
                 Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
                 Models: !Join [ '","', !Ref ImageModelIds ]

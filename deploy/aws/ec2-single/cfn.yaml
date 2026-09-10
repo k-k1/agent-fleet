@@ -1,10 +1,10 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  Agent Fleet — single EC2 VM to run the on-prem Docker Compose deployment
+  Agent Fleet - single EC2 VM to run the on-prem Docker Compose deployment
   (deploy/compose). Provisions an Ubuntu 24.04 instance with Docker, a security
   group (SSH + 80/443), a stable Elastic IP, an auto-generated SSH key pair (the
   private key is stored in SSM Parameter Store), and a Route53 A record. This is
-  a single-VM host for the compose stack — NOT the ECS adapter (P3-7). Tear down
+  a single-VM host for the compose stack - NOT the ECS adapter (P3-7). Tear down
   with a single `aws cloudformation delete-stack`.
 
 Parameters:
@@ -13,7 +13,7 @@ Parameters:
     Description: Existing Route53 public hosted zone, WITH trailing dot (e.g. example.com.)
   Fqdn:
     Type: String
-    Description: Fully-qualified host for the Console (e.g. af.example.com) — used for TLS + OAuth redirect.
+    Description: Fully-qualified host for the Console (e.g. af.example.com) - used for TLS + OAuth redirect.
   SSHLocation:
     Type: String
     Default: 0.0.0.0/0
@@ -35,7 +35,7 @@ Parameters:
     Type: String
     Description: >-
       SSH public key to import (contents of your *.pub). The private key stays on
-      your machine — nothing is stored in AWS/SSM, so only ec2:ImportKeyPair is
+      your machine - nothing is stored in AWS/SSM, so only ec2:ImportKeyPair is
       needed. Generate with: ssh-keygen -t ed25519 -f agent-fleet-test-key
 
 Resources:
