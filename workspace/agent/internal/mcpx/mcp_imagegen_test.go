@@ -319,6 +319,65 @@ func TestImageGenLorasOfferedWithTheirFamilies(t *testing.T) {
 	}
 }
 
+// seed is offered only where a route takes one, and the union is an OR across the offered
+// providers — the same "advertise it where it reaches something" rule as aspect_ratio.
+func TestImageGenSeedOfferedOnlyWhereARouteTakesOne(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		status   mcpImageGenStatus
+		wantSeed bool
+	}{
+		{
+			name: "a route that takes one",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}, Seed: true}}},
+			wantSeed: true,
+		},
+		{
+			name: "no route takes one",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{{ID: "agy", Ops: []string{"generate"}}}},
+		},
+		{
+			name: "one of two takes one",
+			status: mcpImageGenStatus{Enabled: true, Ready: true, Kind: "claude",
+				Providers: []mcpImageGenProvider{
+					{ID: "agy", Ops: []string{"generate"}},
+					{ID: "comfy", Ops: []string{"generate"}, Seed: true},
+				}},
+			wantSeed: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			stubImageGenStatus(t, tc.status)
+			offer, ok := mcpImageGenAdvertise()
+			if !ok {
+				t.Fatal("expected the tool to be advertised")
+			}
+			if offer.Seed != tc.wantSeed {
+				t.Fatalf("offer.Seed = %v, want %v", offer.Seed, tc.wantSeed)
+			}
+			props := imageGenSchemaProps(mcpStdioImageGenTools(offer))
+			seed, has := props["seed"].(map[string]any)
+			if has != tc.wantSeed {
+				t.Fatalf("seed in schema = %v, want %v", has, tc.wantSeed)
+			}
+			if !has {
+				return
+			}
+			if seed["type"] != "integer" {
+				t.Errorf("seed type = %v, want integer", seed["type"])
+			}
+			// The ceiling is JavaScript's safe-integer limit: a bigger number comes back from a
+			// JSON client as a DIFFERENT seed, which breaks the one thing a seed is for.
+			if seed["maximum"] != 9007199254740991 {
+				t.Errorf("seed maximum = %v, want the JS safe-integer limit", seed["maximum"])
+			}
+		})
+	}
+}
+
 func TestImageGenNotAdvertisedWhenAgentUnreachable(t *testing.T) {
 	withImageGen(t, true)
 	t.Setenv("AGENT_ADDR", ":1") // nothing listens
@@ -459,6 +518,35 @@ func TestGenerateImageForwardsLoras(t *testing.T) {
 	first, _ := loras[0].(map[string]any)
 	if first["name"] != "watercolor-v2" || first["weight"] != 0.6 {
 		t.Fatalf("forwarded lora = %v, want the name and the strength", first)
+	}
+}
+
+// The seed reaches the Agent as a number, and an omitted one is absent from the body rather
+// than sent as 0 — the wire has to keep the same distinction the Request type does.
+func TestGenerateImageForwardsTheSeed(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+		want any
+	}{
+		{"a pinned seed", map[string]any{"prompt": "a cat", "seed": 1234}, float64(1234)},
+		{"seed zero", map[string]any{"prompt": "a cat", "seed": 0}, float64(0)},
+		{"no seed", map[string]any{"prompt": "a cat"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withImageGen(t, true)
+			var got map[string]any
+			stubAgentForImageGen(t,
+				mcpImageGenStatus{Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"}},
+				func(w http.ResponseWriter, r *http.Request) {
+					_ = json.NewDecoder(r.Body).Decode(&got)
+					_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
+				})
+			callGenerateImage(t, tc.args)
+			if got["seed"] != tc.want {
+				t.Fatalf("forwarded seed = %v (%T), want %v", got["seed"], got["seed"], tc.want)
+			}
+		})
 	}
 }
 

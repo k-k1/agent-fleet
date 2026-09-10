@@ -76,6 +76,14 @@ type Request struct {
 	// hard-coded into a caller, because ids move (ADR 0069 Context: "treat the vendor figures
 	// as dated").
 	Model string
+	// Seed pins the sampler's starting noise, so that two requests differing in ONE thing can be
+	// compared (ADR 0072 phase P3's completion definition needs exactly that: the same prompt and
+	// the same seed, with the LoRA and without).
+	//
+	// A POINTER rather than "0 means unset", because 0 is a perfectly good seed and a caller who
+	// pins it deserves to get it rather than a random one. nil is the default and keeps the old
+	// behaviour: every route that has a seed at all picks a fresh one per request.
+	Seed *int64
 	// Loras are the fine-tunes to apply on top of Model, in the order given (ADR 0072 decision
 	// 5, phase P3). Only the fleet's own engines have any; a route with none reports the request
 	// back as a warning rather than dropping it silently.
@@ -157,6 +165,11 @@ type Caps struct {
 	Backgrounds  []string
 	MaxCount     int
 	MaxInputs    int
+	// Seed is whether Request.Seed reaches this route at all. FALSE is the common answer and it
+	// is not a gap: the vendor routes take no seed, and sd-server's OpenAI-compatible endpoint
+	// documents only prompt/n/size (checked against its own source — see the ADR 0069 follow-up
+	// for why the one undocumented channel that would carry it is deliberately not used).
+	Seed bool
 	// Loras is every fine-tune this provider will accept in Request.Loras (ADR 0072 decision 5,
 	// phase P3). Empty means the caller cannot pick, exactly as with Sizes.
 	//
@@ -509,6 +522,12 @@ func requestWarnings(req Request, res Result, caps Caps) []string {
 			names = append(names, l.Name)
 		}
 		out = append(out, fmt.Sprintf("loras=%s requested, but this route cannot apply a LoRA", strings.Join(names, ", ")))
+	}
+	// A dropped seed is the most invisible of the three: the picture is fine, and the caller only
+	// finds out when the SECOND request — the whole point of pinning one — comes back different.
+	if req.Seed != nil && !caps.Seed {
+		out = append(out, fmt.Sprintf(
+			"seed=%d requested, but this route cannot pin a seed — two calls with the same seed will not match", *req.Seed))
 	}
 	if n := len(res.Images); req.Count > 0 && n != req.Count {
 		out = append(out, fmt.Sprintf("count=%d requested, %d produced", req.Count, n))
