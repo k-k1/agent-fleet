@@ -3,8 +3,10 @@
 English | [日本語](0072-engine-model-catalog.ja.md)
 
 - Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
-  registering the Hugging Face token from the Console (open question 12) is implemented, and
-  not yet verified on hardware (2026-09-09, "P5 implementation"). P2 (ComfyUI) is implemented
+  registering the Hugging Face token from the Console (open question 12) is implemented, and it
+  was **verified on hardware on 2026-09-10** ("P5 implementation", "P5 on hardware": all three
+  things worth pressing passed, and one gap surfaced — a gated repository does not only refuse
+  with 401, it refuses with 403, and the two mean different things). P2 (ComfyUI) is implemented
   and CLOSED on hardware as of 2026-09-10, provider included ("P2 implementation", "P2 on
   hardware"). Four gaps surfaced only on the deployment, all of them green in CI and green on
   the bench: torch 2.5.1 cannot run ComfyUI v0.34.0 at all (fixed by moving to 2.9.1);
@@ -1261,6 +1263,87 @@ Medium, FLUX.1-dev) is taken in without a 401 once a token is registered. The th
 open question 7's outstanding half — "measure the two gated defaults on a deployment that has
 an `HF_TOKEN`".
 
+(**All three were pressed on hardware on 2026-09-10** — next section. All three passed.)
+
+## P5 on hardware — registering the Hugging Face token from the Console (2026-09-10, the dev deployment)
+
+The three things the previous section left "not verified on hardware", pressed **without waking
+a GPU** (an ingest is a Fargate task; the image role stayed `mode: off` throughout and never
+came up). **All three passed.** Times are UTC; seconds and byte counts are the ingest task's log
+verbatim.
+
+1. **`PutSecretValue` really passes on a deployment.** Registering from the admin panel makes
+   `GET /api/admin/engines/hf-token` answer
+   `{"available":true,"configured":true,"updated_by":"…","updated_at":"2026-09-10T13:50:14Z"}`,
+   and the secret's `LastChangedDate` is the same 13:50:14Z. **The policy's `Roles:` — carving
+   the role name out of an imported ARN — resolves on a real deployment.** The version list also
+   shows item 6 (written again before every ingest) actually running:
+   `list-secret-version-ids` returns four versions, and after the stack's sentinel and the
+   13:50:14Z registration come **13:52:59Z and 13:53:05Z** — the exact moments the two
+   `POST …/ingest` calls below were made. `stage` adds one version per ingest.
+
+2. **An ingest under the `-` sentinel succeeds as anonymous.** `DELETE hf-token` answers
+   `{"available":true,"configured":false}` and the secret goes back to the sentinel at
+   14:02:56Z. With the deployment in that state, an ungated repository
+   (`madebyollin/taesdxl`, `taesdxl_decoder.safetensors`, 4,895,612 B) is taken in and the job
+   reaches `done` on three log lines:
+
+   ```
+   ingest: fetched 4895612 bytes in 2s
+   ingest: sha256 ok f6013131e7eb412ef20113f1acc2ea7d3e47e53196ca0530fa65d9b61d814b61
+   ingest: uploaded image/vae/r1-taesdxl-decoder.safetensors in 1s
+   ```
+
+   Not one line comes from Authorization. **The secret's `LastChangedDate` did not move for that
+   ingest** (still 14:02:56Z), which is the measurement behind "with no token stored, `stage`
+   writes nothing". Under the sentinel the gated verdict flips too: `resolve` answers
+   `can_ingest:false` / `deployment_token:false`, and `POST …/ingest` refuses with
+   400 `gated_no_token` **before a task is started**.
+
+3. **A gated repository is taken in without a 401** (open question 7's outstanding half). One
+   file from each of SD 3.5 Medium and FLUX.1-dev, and in both cases **the smallest one**:
+   `vae/diffusion_pytorch_model.safetensors`, 167,666,902 B — smaller than FLUX.1-dev's
+   `ae.safetensors` (335,304,388 B). Gating is decided per repository, so one file settles it —
+   **the 23.8 GB `flux1-dev.safetensors` was not taken in, because it does not fit an L4.**
+
+   ```
+   13:53:50  ingest: fetched 167666902 bytes in 5s          # FLUX.1-dev
+   13:53:51  ingest: sha256 ok f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3
+   13:53:53  ingest: uploaded image/vae/r1-flux1-dev-vae.safetensors in 1s
+   14:00:27  ingest: fetched 167666902 bytes in 8s          # SD 3.5 Medium
+   14:00:28  ingest: sha256 ok 8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc
+   14:00:29  ingest: uploaded image/vae/r1-sd35-medium-vae.safetensors in 1s
+   ```
+
+   Neither log holds a 401. **The anonymous resolve holds up on gated repositories too**: the CP
+   read sha256, size, licence (`stabilityai-ai-community` / `flux-1-dev-non-commercial-license`)
+   and `gated: true` from `?blobs=true` with no key, and only the task did the download — the
+   division of labour decision 6 describes, confirmed on the real path.
+
+🔴 **A gated repository does not only refuse with 401 — there is a 403, and it means something
+else.** SD 3.5 Medium's first attempt failed, on this one log line:
+
+```
+curl: (22) The requested URL returned error: 403
+```
+
+FLUX.1-dev had gone through in the same minute on the same token, so **the token was arriving**.
+403 is "authenticated, but no access to this repository" — the operator's account had not
+accepted `stabilityai-ai-community` (a fine-grained token missing "read access to the contents
+of public gated repos" looks identical). Accepting it and retrying the same file passed. This
+ADR and `PARAMETERS-60-engines.md` both write 401 as the symptom of "no token", but **401 and
+403 hand the reader different homework**: 401 means the deployment has no token (or a trailing
+newline got in); 403 means that account has not accepted that repository. The panel shows the
+line verbatim, so only the person reading it can tell the two apart.
+
+**What was deleted and what was left.** The three rows the verification created
+(`r1-flux1-vae-probe`, `r1-sd35-vae-probe2`, `r1-anon-probe`) were never enabled, and afterwards
+**only the rows** were deleted — `?purge=1` was not used, because a purge silently deletes bytes
+another row still points at when they share an S3 key. Three objects are still in the bucket:
+`image/vae/r1-flux1-dev-vae.safetensors` and `image/vae/r1-sd35-medium-vae.safetensors`
+(167,666,902 B each) and `image/vae/r1-taesdxl-decoder.safetensors` (4,895,612 B) — about
+340 MB in total.
+
 ## P2 implementation — ComfyUI (2026-09-10)
 
 Two days after open questions 8 and 9 were settled, the P2 list in the phases section was
@@ -1704,6 +1787,13 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
    60-second rule — without changing the order (ComfyUI first).
 7. ~~**Measuring the default** (decision 10)~~ **Resolved** (*Resolved* 3–5). What remains is the
    two gated ones — SD3.5 Medium and FLUX.1-dev — on a deployment that has an `HF_TOKEN`.
+   **The ingest half was settled on 2026-09-10** ("P5 on hardware"): with a registered token,
+   both `stabilityai/stable-diffusion-3.5-medium` and `black-forest-labs/FLUX.1-dev` were taken
+   in with no 401. What was taken in is **one smallest file per repository** (the 167,666,902 B
+   VAE in both), which is what settles a per-repository gating question — **the checkpoints
+   themselves were not taken in and not drawn with** (the 23.8 GB `flux1-dev.safetensors` does
+   not fit an L4). Generating with these two families is already done, from the ungated mirrors,
+   under "P2's remaining work 4 and 5, on hardware".
 8. **ComfyUI's own image** (phase P2) — half resolved (*Resolved* 7 and 8): the community image
    is 5.36 GB compressed and a 205-second pull, and its baked v0.8.2 needed the checkout + pip
    at start (20–26 s, NAT-dependent). A self-built image pins v0.34.0 and carries no Manager.
@@ -1783,7 +1873,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
     2026-09-09, section 5) — "DB as the source of truth, Secrets Manager as transport" is adopted,
     and "never reads back" is enforced by IAM (`PutSecretValue` only, `GetSecretValue` never
     granted).** **Implemented (2026-09-09, "P5 implementation" — shape (b), the always-created
-    secret; not verified on hardware).** The entry condition — **headroom in
+    secret; **verified on hardware on 2026-09-10** — "P5 on hardware").** The entry condition — **headroom in
     `60-engines.yaml`** — was paid by deleting one parameter and moving the stack `Description`
     prose into `PARAMETERS-60-engines.md` (50,842 → 50,869 bytes against the 51,200 wall).
     What follows is the original text:
@@ -1882,8 +1972,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   ahead of the rest** — it depends on nothing else here and it decides outright whether gated
   repositories (all of SD 3.5, all of FLUX.1) can be taken in at all. **Done when: a token is
   registered in the Console, a gated repository is taken in without CloudFormation being
-  touched, and the ingest task's log carries no 401.** (Not verified on hardware — see "P5
-  implementation".)
+  touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
+  "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
 - **P6 — retiring the seed and the four remaining parameters** (added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is

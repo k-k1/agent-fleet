@@ -965,6 +965,16 @@ newline, since `ValueFrom` with no JSON key passes the whole string through as t
 variable. A trailing newline travels into the `Authorization: Bearer` header and earns a 401
 that reads exactly like an unaccepted licence. (The CP trims what it is given for that reason.)
 
+🔴 **A gated repository refuses with 401 OR 403, and the two send you to different places.**
+Measured on the dev deployment 2026-09-10 (ADR 0072, "P5 on hardware"): with a token registered,
+FLUX.1-dev went through while `stabilityai/stable-diffusion-3.5-medium` failed on the single log
+line `curl: (22) The requested URL returned error: 403`. **401 means the token did not arrive**
+— none registered, or the trailing newline above. **403 means it did**: the request authenticated
+and that account simply has no access to that repository, so the fix is on Hugging Face — accept
+the model's terms with the operator's account (and, for a fine-grained token, grant it read
+access to the contents of public gated repos). Accepting the terms and retrying the same file
+passed.
+
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 
 Fargate sizing for the ingest task. It stages the whole file on disk before uploading, so the
