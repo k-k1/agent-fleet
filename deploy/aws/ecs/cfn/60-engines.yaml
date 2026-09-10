@@ -923,11 +923,11 @@ Resources:
           Command:
             - !If
               - ImageIsComfy
-              # ln -sfn is the whole S3-layout integration — PARAMETERS-60-engines.md, "The
-              # idle wrapper". The checkpoint is picked per REQUEST by the provider's graph.
+              # The symlink and its `rm -rf` (⚠️ two traps, both in PARAMETERS-60-engines.md,
+              # "The idle wrapper") ARE the S3-layout integration. Checkpoint: per request.
               - >-
                 n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
-                if [ -s /models/cmdline ]; then ln -sfn /models/image /ComfyUI/models;
+                if [ -s /models/cmdline ]; then rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models;
                 exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch;
                 else echo "image: no checkpoint in the catalogue — idling"; sleep infinity; fi
               # ⚠️ Why sd-server's flags are spelled differently and why --lora-model-dir is

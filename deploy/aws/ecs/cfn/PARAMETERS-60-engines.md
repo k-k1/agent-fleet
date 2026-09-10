@@ -771,10 +771,31 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   all.** ComfyUI reads `models/checkpoints`, `models/loras`, `models/vae`, `models/text_encoders`
   and `models/diffusion_models` relative to its own working directory — which IS the S3 layout
   ADR 0071 decision 6 already mirrors onto `/models/image`. So the wrapper's entire integration
-  is `ln -sfn /models/image /ComfyUI/models` before `exec`: no copying, and no need to tell
-  ComfyUI which checkpoint to load, because the `comfy` provider picks one per REQUEST in its own
-  graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this branch — only its
-  non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
+  is `rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models` before `exec`: no copying,
+  and no need to tell ComfyUI which checkpoint to load, because the `comfy` provider picks one
+  per REQUEST in its own graph JSON. `/models/cmdline`'s CONTENT is therefore irrelevant to this
+  branch — only its non-emptiness is read, as the same "something is enabled" gate `sdcpp` uses.
+
+  ⚠️ **Both halves of that line are load-bearing, and each is a trap the other creates.**
+
+  - **`rm -rf` FIRST.** ComfyUI's repository TRACKS `models/` — every subdirectory
+    (`checkpoints/`, `diffusion_models/`, `text_encoders/`, `vae/`, …) exists in the clone,
+    each holding a `put_..._here` placeholder. So `deploy/aws/ecs/comfyui/Dockerfile`'s
+    `git clone` bakes a REAL directory, and `ln -sfn` against a real directory links INSIDE
+    it (`/ComfyUI/models/image`) instead of replacing it. `-n` does not help: it only changes
+    behaviour when the link name is a symlink to a directory. The engine then starts, answers
+    `/system_stats`, passes health — and 400s every request with
+    `Value not in list: ckpt_name: 'sd_xl_base_1.0.safetensors' not in []`, an EMPTY list,
+    because it is reading the clone's placeholder `models/checkpoints/`.
+  - **Never a trailing slash.** After the first start `/ComfyUI/models` IS a symlink;
+    `rm -rf /ComfyUI/models/` would follow it and delete the CONTENTS of the shared model
+    volume — every checkpoint the fetch sidecar just spent minutes pulling from S3.
+
+  **Why the bench did not catch it** (and why "measured on a real GPU" was not enough):
+  `harness/bench-image-engine.sh --baked` bind-MOUNTS the models volume onto `/ComfyUI/models`,
+  and a mount replaces a directory where a symlink cannot. The bench and the task definition
+  differed in exactly this one line, so 13/13 bench scenarios passed against an integration
+  path nothing had ever run. Measured on af-sandbox, ADR 0072 P2 実機検証.
 
 ## Editing this template
 
