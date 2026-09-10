@@ -16,7 +16,7 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   pushed through on hardware the same day ("P2's remaining work 4 and 5, on hardware"): ALL FIVE
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
-  Five further gaps (5 to 9) are recorded there. P3 and the rest of P5 are not started.**
+  Six further gaps (5 to 10) are recorded there. P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -1456,8 +1456,9 @@ The two things the previous section left behind — **running an ingest for real
 CivitAI** (remaining work 4), and **the three families that had never once gone through the
 provider** (remaining work 5: Z-Image, FLUX.1, SD3.5) — were pushed through the same day. The
 conclusion first: **all three families work now**, but SD3.5's template was wrong and could not
-produce a single image until it was fixed. Five further gaps (5 to 9) were walked into — one of
-them (8) is open question 3 surfacing as written, not a new discovery.
+produce a single image until it was fixed. Six further gaps (5 to 10) were walked into — one of
+them (8) is open question 3 surfacing as written, not a new discovery, and the last (10) turned
+up only afterwards, from watching the fix for gap 1 being used.
 
 ### Remaining work 4 — ingest works. How it says "this will not work" has two holes
 
@@ -1590,6 +1591,34 @@ generation takes 47 to 78 s, so that window genuinely opens.
 **An operational note (walked into here)**: waking a box with `mode=on` and then putting it back
 to `ondemand` makes **the controller stop that box immediately**, because `last_demand` is stale.
 That costs a 48 GB re-sync, so to warm a box, leave it on `ondemand` and wake it with a request.
+
+### Gap 10 — declaring a family clears the badge without making the row usable
+
+Found after the fact, by watching an operator use the in-row family editor this very PR added.
+
+`flux1-dev` — the 22.2 GiB checkpoint ingested on 2026-09-09 purely to prove that a gated
+Hugging Face download works (P4), never enabled, never used to generate — carried
+`base_model_missing`, so the row offered the family picker. Picking a family cleared the badge.
+
+**The row still cannot generate, and now nothing says so.** The only check is
+`engineBaseModelValid`, which answers "is this one of the five spellings". Nothing checks that
+the files the declared family's template requires are actually on the row. `flux1-dev` is a
+single unflagged file under `image/checkpoints/`, and the `flux1` template needs
+`--diffusion-model` + `--clip_l` + `--t5xxl` + `--vae` — so no correct answer to the picker makes
+that row work. (The family it was actually given was `flux2-klein`, which is a different
+generation of a different model, but that is beside the point: `flux1` would not have helped
+either.)
+
+The failure is at least safe and early-ish: `comfyBuildGraph` refuses with `errComfyMissingFile`
+before any HTTP call, so a wrong row produces a readable refusal rather than a wrong picture. But
+it is a refusal at generation time, for a row the panel has stopped flagging — which is strictly
+worse than the state before the family was declared. The CP holds both halves of the fact (the
+family, and each file's flag), so the check belongs where the family is declared or where the row
+is enabled.
+
+`flux1-dev` was deleted with `?purge=1` afterwards, reclaiming the 22.2 GiB — its P4 purpose was
+served in 2026-09-09 and the FLUX.1 row that generates is the separately ingested
+`flux1-dev-fp8`.
 
 ### Measured in passing
 
