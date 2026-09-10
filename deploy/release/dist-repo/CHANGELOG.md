@@ -3,6 +3,13 @@
 Release notes index for [Agent Fleet](https://github.com/k-k1/agent-fleet-dist). Each entry links
 to the release, where the full notes are. 日本語は [CHANGELOG.ja.md](CHANGELOG.ja.md)。
 
+## [0.18.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.18.0) — 2026-09-10
+
+A session can now start sessions of its own and look after them, models for the
+self-hosted engines are found and taken in without leaving the Console, image generation
+can run on the deployment's own ComfyUI, and a deployment can be given a colour and a name
+so several environments are told apart at a glance.
+
 ## [0.17.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.17.0) — 2026-09-09
 
 An ECS deployment can now run inference on its own GPU, on a box that only exists while

@@ -26,6 +26,29 @@ Keeping it current:
 
 ---
 
+## [0.18.0](0.18.0.md) — 2026-09-10
+
+**New / Improved**
+
+- **[sessions]** A session can start sessions of its own and look after them — handing over a task, listing them, reading their output, stopping and resuming them; it cannot instruct, answer for or delete any session (off by default, Settings › Agents; 1–6 children per session, default 3)
+- **[sessions]** Fleet observation is on for every session and its setting is gone; sessions can edit a memo as well as add one
+- **[sessions]** The left pane nests worktrees and related sessions by lineage, one colour of vertical line per family; a session launched from a handoff proposal joins the family it came from
+- **[sessions]** A row holding a handoff nobody launched has its own status, instead of reading as a session with nothing left to do
+- **[settings › admin]** A deployment's own colour and name (Settings › Admin › Appearance) reach the favicon, the home-screen icon, the login screen and the app name, with no redeploy
+- **[engines]** Hugging Face and Civitai are searched from the ingest screen, with licence, size and context length on each row
+- **[engines]** The model catalogue is browsable on a deployment running no engines at all
+- **[engines]** A Hugging Face token is entered in the Console, so gated repositories (SD3.5, FLUX.1) need no CloudFormation run
+- **[engines]** The GPU class an engine buys is picked in the Console, from a ladder of classes the operator declared (`LlmInstanceClasses` / `ImageInstanceClasses`)
+- **[engines]** An engine wakes with only the model that was asked for and fetches the rest behind you; swapping models is faster
+- **[image generation]** The deployment's own ComfyUI as a provider (SDXL, SD3.5, FLUX.1, FLUX.2 klein, Z-Image; `ImageEngine=comfy`); a request can name the model and is told which one is loaded
+- **[memos]** A ＋ on each category heading adds straight into that category, carrying the draft and any uploaded image
+
+**Fixed**
+
+- **[mirror]** Generated images never reached the conversation when anything ran after them — the card was swallowed by the collapsed work process
+- **[agents]** opencode's launch menu offered only the default model and blamed the connection and plan
+- **[sessions]** "Stop when done" halted a session while a background command was still running
+
 ## [0.17.0](0.17.0.md) — 2026-09-09
 
 **CLI pins** — Claude Code 2.1.266, OpenCode 1.18.30, Antigravity 1.1.28, Cursor 2026.09.08, Kiro 2.21.2
