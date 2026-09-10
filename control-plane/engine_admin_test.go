@@ -383,7 +383,7 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	  "sha256":"` + strings.Repeat("a", 64) + `"}}`
 	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
 	r.SetPathValue("key", "image")
-	a.postIngest(rec, r, store.Identity{ID: "u1"})
+	a.postIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("ingest onto an existing id = %d, want 409 (body %s)", rec.Code, rec.Body.String())
 	}
@@ -406,7 +406,7 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	body2 := strings.Replace(body, `"id":"sdxl-base-1.0"`, `"id":"sdxl-base-1.1"`, 1)
 	r2 := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body2))
 	r2.SetPathValue("key", "image")
-	a.postIngest(rec2, r2, store.Identity{ID: "u1"})
+	a.postIngest(rec2, r2, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 	if rec2.Code == http.StatusConflict {
 		t.Errorf("a free id was refused as a duplicate: %s", rec2.Body.String())
 	}

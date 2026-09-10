@@ -83,7 +83,7 @@ STATE4="$AF_DEPLOY_STATE_DIR/p4.ap-northeast-1.t-ingress"
 mkdir -p "$STATE4/params"
 cp -a "$STATE/params/." "$STATE4/params/"
 cp "$STATE/env" "$STATE4/env"
-printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\nImageModelS3Key=image/sd_xl_base_1.0.safetensors\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
 # --- fake aws. Answers queries in the same shape the real one does ----------
 cat > "$STUB/aws" <<'FAKE'
@@ -372,13 +372,37 @@ hasnt "--service af-af-ecs-engines-image --desired-count 0"
 # replacing it under a running engine locks the gateway out of it.
 hasnt "ssm put-parameter"
 # A deployment that runs only an LLM must not pay for the 2.3 GB image it will never start.
-# The condition is the same one that decides whether the service exists at all — an empty
-# ImageModelS3Key means 60-engines creates no image service, so there is nothing to pull.
+# The condition is the same one that decides whether the service exists at all — without
+# ImageEnabled 60-engines creates no image service, so there is nothing to pull.
 : > "$LOG"
-printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\n' > "$STATE4/params/60-engines"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
 hasnt "crane copy ghcr.io/leejet/stable-diffusion.cpp"
 has "crane copy ghcr.io/ggml-org/llama.cpp:server-cuda"
+
+# A capture taken before ADR 0072 phase P6 names a model key and says nothing about Enabled,
+# because until P6 the key ALSO decided whether the role's service existed. Two things have to
+# happen at once here, and either one alone is an outage:
+#
+#   - the retired parameters must not reach `deploy`, which refuses a key the template does not
+#     declare ("Parameters: [LlmModelS3Key] do not exist in the template");
+#   - what they implied must be carried over as `<role>Enabled=true`. Drop them without that and
+#     the roles fall to the template default, i.e. a plain stack update DELETES a running engine
+#     service — silently, with a nine-minute cold start and a GPU box behind it.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmModelS3Key=llm/model.gguf\nImageModelS3Key=image/checkpoints/sd_xl_base_1.0.safetensors\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+if grep -qE "deploy --stack-name af-ecs-engines .*(LlmModelS3Key|LlmModelIds|LlmContextTokens|LlmMaxOutputTokens|ImageModelS3Key|ImageModelIds)=" "$LOG"; then
+  fail "a parameter retired in ADR 0072 P6 was passed to deploy (the CLI refuses it)"
+fi
+grep -q "deploy --stack-name af-ecs-engines .*LlmEnabled=true" "$LOG" \
+  || fail "the llm role implied by LlmModelS3Key was not carried over (the update would delete it)"
+grep -q "deploy --stack-name af-ecs-engines .*ImageEnabled=true" "$LOG" \
+  || fail "the image role implied by ImageModelS3Key was not carried over"
+# And the sd-server image is read the same way, so the role is never created against an empty
+# ECR repository — the stabilisation trap the ordering above exists for.
+has "crane copy ghcr.io/leejet/stable-diffusion.cpp"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #

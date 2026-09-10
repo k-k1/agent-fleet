@@ -34,7 +34,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", "true", "false" ]
-    Description: "Create the llm role at all. \"\" = whatever LlmModelS3Key said (one release of compat)."
+    Description: "Create the llm role (service, DNS name, table row). Only \"true\" creates it."
   LlmDiscoveryName:
     Type: String
     Default: llm
@@ -43,27 +43,6 @@ Parameters:
     Type: String
     Default: server-cuda
     Description: "Tag in the af-llamacpp ECR repository. standup.sh copies it in before deploy."
-  # !! SEED PARAMETERS (ADR 0072 decision 7), read ONCE by a CP whose catalogue for the role is
-  # empty - PARAMETERS-60-engines.md, "The seed parameters".
-  LlmModelS3Key:
-    Type: String
-    Default: ""
-    Description: >-
-      SEED: the key this deployment already serves. Empty with LlmEnabled unset = no llm role.
-  LlmModelIds:
-    Type: CommaDelimitedList
-    Default: "qwen3-coder-30b-a3b"
-    Description: "SEED: the catalogue id for that model. The FIRST is the one that is seeded."
-  LlmContextTokens:
-    Type: Number
-    Default: 32768
-    MinValue: 512
-    Description: "SEED: that model's context window (llama-server's -c, and what is advertised)."
-  LlmMaxOutputTokens:
-    Type: Number
-    Default: 4096
-    MinValue: 256
-    Description: "SEED: the output cap advertised with it (0 does not mean unset)."
   LlmExtraArgs:
     Type: CommaDelimitedList
     Default: "-ngl,99,--jinja,--no-mmap"
@@ -154,7 +133,7 @@ Parameters:
     Type: String
     Default: ""
     AllowedValues: [ "", "true", "false" ]
-    Description: "Create the image role at all. \"\" = whatever ImageModelS3Key said (as LlmEnabled)."
+    Description: "Create the image role, as LlmEnabled does for the llm role. Only \"true\"."
   ImageDiscoveryName:
     Type: String
     Default: image
@@ -174,15 +153,6 @@ Parameters:
     Description: >-
       Tag in the af-comfyui ECR repository (ImageEngine=comfy only), baked by
       comfyui-image.yml and copied in by standup.sh before deploy.
-  # SEED parameters, as on the llm role above.
-  ImageModelS3Key:
-    Type: String
-    Default: ""
-    Description: "SEED: the checkpoint already served. Empty + ImageEnabled unset = no image role."
-  ImageModelIds:
-    Type: CommaDelimitedList
-    Default: "sdxl-base-1.0"
-    Description: "SEED: the catalogue id for that checkpoint. The FIRST is the one seeded."
   ImageExtraArgs:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
@@ -327,11 +297,10 @@ Mappings:
         echo "engine fetch: sync done"
 
 Conditions:
-  # Whether the ROLE exists. WHAT it loads is the catalogue's (ADR 0072 decision 1); `""` keeps
-  # the old "empty model key = no role" meaning for one release. PARAMETERS-60-engines.md.
-  HasLlmModel: !Or
-    - !Equals [ !Ref LlmEnabled, "true" ]
-    - !And [ !Equals [ !Ref LlmEnabled, "" ], !Not [ !Equals [ !Ref LlmModelS3Key, "" ] ] ]
+  # Whether the ROLE exists - its service, its DNS name, its row in the engine table. WHAT it
+  # loads is the catalogue's (ADR 0072 decision 1), so this switch is the WHOLE answer: the
+  # model key that used to double as one was retired in phase P6. PARAMETERS-60-engines.md.
+  HasLlmModel: !Equals [ !Ref LlmEnabled, "true" ]
   HasGpu: !Not [ !Equals [ !Ref LlmGpuCount, 0 ] ]
   HasLlmAcceleratorMem: !And [ !Condition HasGpu, !Not [ !Equals [ !Ref LlmAcceleratorMemMinMiB, 0 ] ] ]
   UseLocalStorage: !Equals [ !Ref LlmUseLocalStorage, "true" ]
@@ -339,9 +308,7 @@ Conditions:
   HasLlmApiKey: !Not [ !Equals [ !Ref LlmApiKeySsmParam, "" ] ]
   # The same four for the image role, and the pair that decides the shape of the engine table
   # (0, 1 or 2 rows - the comma between them only exists when both are there).
-  HasImageModel: !Or
-    - !Equals [ !Ref ImageEnabled, "true" ]
-    - !And [ !Equals [ !Ref ImageEnabled, "" ], !Not [ !Equals [ !Ref ImageModelS3Key, "" ] ] ]
+  HasImageModel: !Equals [ !Ref ImageEnabled, "true" ]
   HasImageGpu: !Not [ !Equals [ !Ref ImageGpuCount, 0 ] ]
   HasImageAcceleratorMem: !And [ !Condition HasImageGpu, !Not [ !Equals [ !Ref ImageAcceleratorMemMinMiB, 0 ] ] ]
   ImageUsesLocalStorage: !Equals [ !Ref ImageUseLocalStorage, "true" ]
@@ -1003,14 +970,11 @@ Resources:
               - >-
                 {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
-                "health":"/health","warmPath":"/models","provider":"llamacpp","models":["${Models}"],
-                "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
-                "modelS3Key":"${LlmModelS3Key}",
+                "health":"/health","warmPath":"/models","provider":"llamacpp",
                 "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}","idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
                 Cp: !Sub "af-${AWS::StackName}-llm"
-                Models: !Join [ '","', !Ref LlmModelIds ]
             - ""
           Image: !If
             - HasImageModel
@@ -1018,8 +982,7 @@ Resources:
               - >-
                 {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
-                "health":"${Health}","provider":"${Provider}","models":["${Models}"],
-                "modelS3Key":"${ImageModelS3Key}",
+                "health":"${Health}","provider":"${Provider}",
                 "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
@@ -1028,7 +991,6 @@ Resources:
                 # unauthenticated and immediately (ADR 0072, "Resolved by measurement" 1 measured it up).
                 Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
                 Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
-                Models: !Join [ '","', !Ref ImageModelIds ]
             - ""
           Sep: !If [ HasBothModels, ",", "" ]
           # What the CP needs to start an ingest and read why one failed. Declared, not
@@ -1051,7 +1013,7 @@ Outputs:
     Value: !Ref EnginesSsmParamName
     Export: { Name: !Sub "${AWS::StackName}-EnginesSsmParam" }
   LlmServiceName:
-    Description: "The llm ECS service name, or \"-\" while no model is staged (never empty)."
+    Description: "The llm ECS service name, or \"-\" when the role is off (never empty)."
     Value: !If [ HasLlmModel, !GetAtt LlmService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-LlmServiceName" }
   LlmCapacityProviderName:
@@ -1059,7 +1021,7 @@ Outputs:
     Value: !Ref LlmCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-LlmCapacityProviderName" }
   ImageServiceName:
-    Description: "The image ECS service name, or \"-\" while no checkpoint is staged (never empty)."
+    Description: "The image ECS service name, or \"-\" when the role is off (never empty)."
     Value: !If [ HasImageModel, !GetAtt ImageService.Name, "-" ]
     Export: { Name: !Sub "${AWS::StackName}-ImageServiceName" }
   ImageCapacityProviderName:

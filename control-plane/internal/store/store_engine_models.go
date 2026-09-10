@@ -19,7 +19,8 @@ import (
 const engineModelCols = `role, id, kind, files, enabled, selected, is_default, args,
 	context_tokens, max_output_tokens, sizes, description, vram_mib,
 	license, license_name, license_url, model_precision, base_model,
-	license_accepted_by, license_accepted_at, commercial_use, source, created_at, updated_at`
+	license_accepted_by, license_accepted_at, license_accepted_tenant, license_accepted_license,
+	commercial_use, source, created_at, updated_at`
 
 func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel, error) {
 	q := `SELECT ` + engineModelCols + ` FROM engine_models`
@@ -44,7 +45,9 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 		if err := rows.Scan(&m.Role, &m.ID, &m.Kind, &files, &enabled, &selected, &isDef, &argsJSON,
 			&m.ContextTokens, &m.MaxOutputTokens, &sizes, &m.Description, &m.VramMiB,
 			&m.License, &m.LicenseName, &m.LicenseURL, &m.Precision, &m.BaseModel,
-			&m.LicenseAcceptedBy, &m.LicenseAcceptedAt, &m.CommercialUse, &m.Source,
+			&m.LicenseAcceptedBy, &m.LicenseAcceptedAt,
+			&m.LicenseAcceptedTenant, &m.LicenseAcceptedLicense,
+			&m.CommercialUse, &m.Source,
 			&m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -70,7 +73,7 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	sizes := jsonList(m.Sizes)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO UPDATE SET
 		   kind=excluded.kind, files=excluded.files, enabled=excluded.enabled,
 		   selected=excluded.selected, is_default=excluded.is_default, args=excluded.args,
@@ -80,12 +83,15 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		   license_url=excluded.license_url, model_precision=excluded.model_precision,
 		   base_model=excluded.base_model, license_accepted_by=excluded.license_accepted_by,
 		   license_accepted_at=excluded.license_accepted_at,
+		   license_accepted_tenant=excluded.license_accepted_tenant,
+		   license_accepted_license=excluded.license_accepted_license,
 		   commercial_use=excluded.commercial_use, source=excluded.source,
 		   updated_at=excluded.updated_at`,
 		m.Role, m.ID, m.Kind, files, boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), args,
 		m.ContextTokens, m.MaxOutputTokens, sizes, m.Description, m.VramMiB,
 		m.License, m.LicenseName, m.LicenseURL, m.Precision, m.BaseModel,
-		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.CommercialUse, m.Source, m.CreatedAt, now)
+		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
+		m.CommercialUse, m.Source, m.CreatedAt, now)
 	return err
 }
 

@@ -37,13 +37,13 @@ import (
 // rather than derived here (ADR 0053): the engine is asleep most of the time, so anything
 // the CP would have to ask the engine for is something it cannot ask.
 //
-// ⚠️ What the engine LOADS is no longer here. Models, ContextTokens, MaxOutputTokens and
-// ModelS3Key are now the SEED of the catalogue (ADR 0072 decision 7): they are read once, when
-// a role's catalogue is empty, so a deployment upgrading from ADR 0071 comes up serving exactly
-// what it served before. After that the catalogue is the declaration and these are ignored —
-// which is what stops a CloudFormation parameter overwriting an administrator's choice on every
-// CP restart. Everything else here (service, URL, health, capacity provider, idle, deadline,
-// mode) really is a property of the vessel and stays the stack's to declare.
+// ⚠️ What the engine LOADS is not here at all. The catalogue is the whole declaration (ADR 0072
+// decision 1), and phase P6 retired the last of the stack's copies — the model ids, the window
+// and the S3 key that were read once as a seed. A table written by an older stack still carries
+// those fields; they are ignored, which is the point: a CloudFormation parameter must not
+// overwrite an administrator's choice on every CP restart. Everything else here (service, URL,
+// health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
+// the stack's to declare.
 type engineDef struct {
 	Key              string `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
 	API              string `json:"api"`              // "chat" | "images" — see engineAPI* below
@@ -56,13 +56,9 @@ type engineDef struct {
 	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
 	// with ok while holding nothing at all (ADR 0072 P1, measured), so warmth is read from each
 	// model's `status.value` instead.
-	WarmPath        string   `json:"warmPath"`
-	Provider        string   `json:"provider"`        // "llamacpp" — the provider id a Workspace configures
-	Models          []string `json:"models"`          // SEED ONLY: the model ids ADR 0071's stack declared
-	ContextTokens   int      `json:"contextTokens"`   // SEED ONLY: the window that model was started with
-	MaxOutputTokens int      `json:"maxOutputTokens"` // SEED ONLY
-	ModelS3Key      string   `json:"modelS3Key"`      // SEED ONLY: where that model's one file is in the bucket
-	APIKeyParam     string   `json:"apiKeyParam"`     // SSM SecureString the engine's own --api-key is in
+	WarmPath    string `json:"warmPath"`
+	Provider    string `json:"provider"`    // "llamacpp" — the provider id a Workspace configures
+	APIKeyParam string `json:"apiKeyParam"` // SSM SecureString the engine's own --api-key is in
 	// Classes is the ladder of GPU rungs this role may buy, as the operator declared it
 	// (ADR 0074 decision 1; the format is parseEngineClasses'). Empty — the shipped default —
 	// means the box is whatever CloudFormation put in the capacity provider and nothing here
@@ -425,14 +421,6 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		go reg.ing.run(context.Background())
 	}
 	for _, d := range table.Engines {
-		// The seed runs before anything reads the catalogue, so an upgrade from ADR 0071 comes
-		// up serving what it served before rather than as an engine with nothing to load
-		// (decision 7). A failure is logged and not fatal: an empty catalogue stops the engine
-		// starting, which is visible in the panel, and refusing to boot the whole CP over an
-		// optional feature is the larger outage.
-		if err := seedEngineCatalog(ctx, models, d); err != nil {
-			log.Printf("engines: seeding the %s catalogue failed: %v", d.Key, err)
-		}
 		st := &engineRuntimeState{
 			def: d,
 			ecs: &engineECS{

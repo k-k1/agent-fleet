@@ -3,8 +3,10 @@
 English | [日本語](0072-engine-model-catalog.ja.md)
 
 - Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
-  registering the Hugging Face token from the Console (open question 12) is implemented, and
-  not yet verified on hardware (2026-09-09, "P5 implementation"). P2 (ComfyUI) is implemented
+  registering the Hugging Face token from the Console (open question 12) is implemented, and it
+  was **verified on hardware on 2026-09-10** ("P5 implementation", "P5 on hardware": all three
+  things worth pressing passed, and one gap surfaced — a gated repository does not only refuse
+  with 401, it refuses with 403, and the two mean different things). P2 (ComfyUI) is implemented
   and CLOSED on hardware as of 2026-09-10, provider included ("P2 implementation", "P2 on
   hardware"). Four gaps surfaced only on the deployment, all of them green in CI and green on
   the bench: torch 2.5.1 cannot run ComfyUI v0.34.0 at all (fixed by moving to 2.9.1);
@@ -16,7 +18,9 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   pushed through on hardware the same day ("P2's remaining work 4 and 5, on hardware"): ALL FIVE
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
-  Six further gaps (5 to 10) are recorded there. P3 and the rest of P5 are not started.**
+  Six further gaps (5 to 10) are recorded there. **P6 (retiring the seed and six parameters)
+  is implemented as of 2026-09-10 and not verified on hardware** ("P6 implementation").
+  P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -1261,6 +1265,87 @@ Medium, FLUX.1-dev) is taken in without a 401 once a token is registered. The th
 open question 7's outstanding half — "measure the two gated defaults on a deployment that has
 an `HF_TOKEN`".
 
+(**All three were pressed on hardware on 2026-09-10** — next section. All three passed.)
+
+## P5 on hardware — registering the Hugging Face token from the Console (2026-09-10, the dev deployment)
+
+The three things the previous section left "not verified on hardware", pressed **without waking
+a GPU** (an ingest is a Fargate task; the image role stayed `mode: off` throughout and never
+came up). **All three passed.** Times are UTC; seconds and byte counts are the ingest task's log
+verbatim.
+
+1. **`PutSecretValue` really passes on a deployment.** Registering from the admin panel makes
+   `GET /api/admin/engines/hf-token` answer
+   `{"available":true,"configured":true,"updated_by":"…","updated_at":"2026-09-10T13:50:14Z"}`,
+   and the secret's `LastChangedDate` is the same 13:50:14Z. **The policy's `Roles:` — carving
+   the role name out of an imported ARN — resolves on a real deployment.** The version list also
+   shows item 6 (written again before every ingest) actually running:
+   `list-secret-version-ids` returns four versions, and after the stack's sentinel and the
+   13:50:14Z registration come **13:52:59Z and 13:53:05Z** — the exact moments the two
+   `POST …/ingest` calls below were made. `stage` adds one version per ingest.
+
+2. **An ingest under the `-` sentinel succeeds as anonymous.** `DELETE hf-token` answers
+   `{"available":true,"configured":false}` and the secret goes back to the sentinel at
+   14:02:56Z. With the deployment in that state, an ungated repository
+   (`madebyollin/taesdxl`, `taesdxl_decoder.safetensors`, 4,895,612 B) is taken in and the job
+   reaches `done` on three log lines:
+
+   ```
+   ingest: fetched 4895612 bytes in 2s
+   ingest: sha256 ok f6013131e7eb412ef20113f1acc2ea7d3e47e53196ca0530fa65d9b61d814b61
+   ingest: uploaded image/vae/r1-taesdxl-decoder.safetensors in 1s
+   ```
+
+   Not one line comes from Authorization. **The secret's `LastChangedDate` did not move for that
+   ingest** (still 14:02:56Z), which is the measurement behind "with no token stored, `stage`
+   writes nothing". Under the sentinel the gated verdict flips too: `resolve` answers
+   `can_ingest:false` / `deployment_token:false`, and `POST …/ingest` refuses with
+   400 `gated_no_token` **before a task is started**.
+
+3. **A gated repository is taken in without a 401** (open question 7's outstanding half). One
+   file from each of SD 3.5 Medium and FLUX.1-dev, and in both cases **the smallest one**:
+   `vae/diffusion_pytorch_model.safetensors`, 167,666,902 B — smaller than FLUX.1-dev's
+   `ae.safetensors` (335,304,388 B). Gating is decided per repository, so one file settles it —
+   **the 23.8 GB `flux1-dev.safetensors` was not taken in, because it does not fit an L4.**
+
+   ```
+   13:53:50  ingest: fetched 167666902 bytes in 5s          # FLUX.1-dev
+   13:53:51  ingest: sha256 ok f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3
+   13:53:53  ingest: uploaded image/vae/r1-flux1-dev-vae.safetensors in 1s
+   14:00:27  ingest: fetched 167666902 bytes in 8s          # SD 3.5 Medium
+   14:00:28  ingest: sha256 ok 8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc
+   14:00:29  ingest: uploaded image/vae/r1-sd35-medium-vae.safetensors in 1s
+   ```
+
+   Neither log holds a 401. **The anonymous resolve holds up on gated repositories too**: the CP
+   read sha256, size, licence (`stabilityai-ai-community` / `flux-1-dev-non-commercial-license`)
+   and `gated: true` from `?blobs=true` with no key, and only the task did the download — the
+   division of labour decision 6 describes, confirmed on the real path.
+
+🔴 **A gated repository does not only refuse with 401 — there is a 403, and it means something
+else.** SD 3.5 Medium's first attempt failed, on this one log line:
+
+```
+curl: (22) The requested URL returned error: 403
+```
+
+FLUX.1-dev had gone through in the same minute on the same token, so **the token was arriving**.
+403 is "authenticated, but no access to this repository" — the operator's account had not
+accepted `stabilityai-ai-community` (a fine-grained token missing "read access to the contents
+of public gated repos" looks identical). Accepting it and retrying the same file passed. This
+ADR and `PARAMETERS-60-engines.md` both write 401 as the symptom of "no token", but **401 and
+403 hand the reader different homework**: 401 means the deployment has no token (or a trailing
+newline got in); 403 means that account has not accepted that repository. The panel shows the
+line verbatim, so only the person reading it can tell the two apart.
+
+**What was deleted and what was left.** The three rows the verification created
+(`r1-flux1-vae-probe`, `r1-sd35-vae-probe2`, `r1-anon-probe`) were never enabled, and afterwards
+**only the rows** were deleted — `?purge=1` was not used, because a purge silently deletes bytes
+another row still points at when they share an S3 key. Three objects are still in the bucket:
+`image/vae/r1-flux1-dev-vae.safetensors` and `image/vae/r1-sd35-medium-vae.safetensors`
+(167,666,902 B each) and `image/vae/r1-taesdxl-decoder.safetensors` (4,895,612 B) — about
+340 MB in total.
+
 ## P2 implementation — ComfyUI (2026-09-10)
 
 Two days after open questions 8 and 9 were settled, the P2 list in the phases section was
@@ -1704,6 +1789,13 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
    60-second rule — without changing the order (ComfyUI first).
 7. ~~**Measuring the default** (decision 10)~~ **Resolved** (*Resolved* 3–5). What remains is the
    two gated ones — SD3.5 Medium and FLUX.1-dev — on a deployment that has an `HF_TOKEN`.
+   **The ingest half was settled on 2026-09-10** ("P5 on hardware"): with a registered token,
+   both `stabilityai/stable-diffusion-3.5-medium` and `black-forest-labs/FLUX.1-dev` were taken
+   in with no 401. What was taken in is **one smallest file per repository** (the 167,666,902 B
+   VAE in both), which is what settles a per-repository gating question — **the checkpoints
+   themselves were not taken in and not drawn with** (the 23.8 GB `flux1-dev.safetensors` does
+   not fit an L4). Generating with these two families is already done, from the ungated mirrors,
+   under "P2's remaining work 4 and 5, on hardware".
 8. **ComfyUI's own image** (phase P2) — half resolved (*Resolved* 7 and 8): the community image
    is 5.36 GB compressed and a 205-second pull, and its baked v0.8.2 needed the checkout + pip
    at start (20–26 s, NAT-dependent). A self-built image pins v0.34.0 and carries no Manager.
@@ -1758,7 +1850,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
       itself in GPU time alone** (never mind the person waiting). IA/Archive lifecycles lower the
       storage side further.
 11. ~~**Where the tenant axis belongs**~~ **Decided (review 2026-09-09, section 4) — the middle
-    option is adopted.** Measurement showed **the walls come in a different order than the text
+    option is adopted.** **Implemented (2026-09-10 — "Follow-up: the tenant axis, implemented" at
+    the end of this ADR; not verified on hardware).** Measurement showed **the walls come in a different order than the text
     below says**: **time (~5 models) → disk (~13) → SSM (~38)**, so 4,096 characters is the last
     wall, not the first. What follows is the original text:
     The catalogue's key is
@@ -1783,7 +1876,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
     2026-09-09, section 5) — "DB as the source of truth, Secrets Manager as transport" is adopted,
     and "never reads back" is enforced by IAM (`PutSecretValue` only, `GetSecretValue` never
     granted).** **Implemented (2026-09-09, "P5 implementation" — shape (b), the always-created
-    secret; not verified on hardware).** The entry condition — **headroom in
+    secret; **verified on hardware on 2026-09-10** — "P5 on hardware").** The entry condition — **headroom in
     `60-engines.yaml`** — was paid by deleting one parameter and moving the stack `Description`
     prose into `PARAMETERS-60-engines.md` (50,842 → 50,869 bytes against the 51,200 wall).
     What follows is the original text:
@@ -1878,13 +1971,20 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
 - **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6), the tenant
   axis (open question 11).**
+  **The tenant axis (open question 11) is implemented** (2026-09-10 — "Follow-up: the tenant
+  axis, implemented" at the end of this ADR; not verified on hardware): the permission gate on
+  ingest, and the four-part acceptance. **Done when: a tenant_admin of a granted tenant can start
+  an ingest, a tenant_admin of an ungranted tenant and a plain member of the granted one are both
+  refused with 403, and the row that results records which tenant, which person, when and which
+  licence.**
   **Registering the Hugging Face token from the Console (open question 12) was implemented
   ahead of the rest** — it depends on nothing else here and it decides outright whether gated
   repositories (all of SD 3.5, all of FLUX.1) can be taken in at all. **Done when: a token is
   registered in the Console, a gated repository is taken in without CloudFormation being
-  touched, and the ingest task's log carries no 401.** (Not verified on hardware — see "P5
-  implementation".)
-- **P6 — retiring the seed and the four remaining parameters** (added 2026-09-10; the reasoning,
+  touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
+  "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
+- **P6 — retiring the seed and the four remaining parameters. Implemented, not verified on
+  hardware ("P6 implementation").** (Added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
   `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
@@ -2538,6 +2638,105 @@ By-product: one of the two ways to create a row with **no licence, no `source` a
 disappears. The other is the hand-registration form, which sends no licence fields although
 `POST …/engines/{key}/models` accepts them — worth closing in the same pass, since decision 10
 put the licence on the panel row and the panel can only show what was recorded.
+
+## Follow-up: the tenant axis, implemented (2026-09-10)
+
+Open question 11 was settled in the 2026-09-09 review ("adopt the middle option") but never
+built. What went in is exactly the two things that were settled — **the primary key stays
+`(role, id)`** and the catalogue stays one per deployment.
+
+**1. Who may start an ingest.** A tenant's `limits` gains `allow_engine_ingest` (`tenantLimits`,
+toggled by a super_admin on the tenant's settings screen). Of the engine admin routes, **only the
+six ingest ones** go through the new gate (`ingestAdminFor` in `engine_ingest_perm.go`):
+`POST …/{key}/ingest`, `GET …/{key}/ingest`, `…/ingest/resolve`, `…/ingest/files`,
+`…/ingest/search` and `POST /api/admin/engines/search`. Through it come a super_admin, and a
+**tenant_admin** of a tenant with the flag — those two and nobody else.
+
+**Enabling a model, the selected checkpoint, forgetting a row and the Hugging Face token stay
+super_admin**, because each of them decides what every *other* tenant runs. Only ingest stops at
+"add to the catalogue".
+
+The gate is read **per request** (`ListMemberships` returns active rows only, so a tenant_admin
+taken off the roster stops passing on the next call). A test pins that withdrawing the grant
+gives 403 on the next request.
+
+**2. The four-part acceptance.** `license_accepted_by` / `_at` gain
+**`license_accepted_tenant` and `license_accepted_license`**, making the
+`(tenant_id, member_id, accepted_at, license)` the review asked for. The migration is written in
+both series — sqlite `0061` and postgres `0046` — and
+`TestMigrationSeriesDeclareTheSameSchema` compares the two without a Postgres server
+(`TestSchemaDialectParity`, which needs `AF_TEST_DATABASE_URL`, skips).
+
+- **An empty tenant is not a gap.** A super_admin accepts on behalf of the whole deployment and
+  has no tenant to be acting for. Writing in whichever tenant header the Console happened to send
+  would **put a tenant's name on an act it did not perform**.
+- **Holding the licence a second time is not duplication.** `license` / `license_name` next door
+  **describe the model** and are corrected when the model card is. This one is **evidence about a
+  past act** and must not move when upstream relicenses.
+- The audit row gets a tenant here for the first time (`auditFor`). Every other engine action — a
+  mode, a class — really is deployment-wide, so those stay unscoped.
+
+**3. The cost is not hidden.** The review said to write down that **every model id is visible from
+every tenant**, so `guide/admin/04` (ja and en) gains a section and the tenant-limits list in
+`guide/admin/02` points at it. The reason is given as the number it is: since every enabled model
+is synced on every start, a per-tenant catalogue pushes the cold start **past ten minutes at about
+five tenants, even with one model each**.
+
+**What is left.** The Console's **engines panel itself is still super_admin** (`GET
+/api/admin/engines` keeps `withSuperAdmin`). A tenant_admin of a granted tenant **can ingest
+through the API but has no screen**: opening the panel to a non-super caller needs a reduced row
+with the mode, the class and the box's state taken out, which is wider than this pass. The
+operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
+verification is also outstanding (nothing here touched a deployment).
+
+## P6 implementation — the seed and six parameters are gone (2026-09-10)
+
+The removal the follow-up section above called for, implemented. **Not verified on hardware.**
+
+1. **The template.** `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` /
+   `LlmMaxOutputTokens` / `ImageModelS3Key` / `ImageModelIds` are gone, and `HasLlmModel` /
+   `HasImageModel` are now the single test `<Role>Enabled = "true"`. Four fields left the engine
+   table with them (`models`, `contextTokens`, `maxOutputTokens`, `modelS3Key`). `*ExtraArgs`
+   stays. **50,997 → 49,298 bytes** (1,699 freed, 1,902 short of the wall). **The room is left
+   unspent** — it belongs to P2's remaining work (per-family image-to-image graphs) and ADR
+   0074's ladder.
+
+2. 🔴 **The trap needed three answers, not just a note.**
+   - The upgrade note is in `cfn/PARAMETERS-60-engines.md`, "Upgrading: the model parameters are
+     gone" — the same place 0.18.0's `*ModelFile` removal was written up. It tells a deployment
+     that set only `<Role>ModelS3Key` to **add `<Role>Enabled=true` first**.
+   - `standup.sh` translates BEFORE it drops: a captured `<Role>ModelS3Key` with an empty
+     `<Role>Enabled` becomes `<Role>Enabled=true`, and only then does `af_param_drop` remove the
+     six. Dropping alone would delete the role on any deployment that did not read the note — not
+     by refusing the deploy ("Parameters: [X] do not exist"), but by **succeeding** as an ordinary
+     stack update with the service gone.
+   - The sd-server `crane copy` reads it the same way (earlier in the same script). Read plain
+     `ImageEnabled` there and the role is created while its ECR repository is empty:
+     `CannotPullContainerError`, with CloudFormation blocked on stabilisation.
+   `update.sh` and a hand-run `cloudformation deploy` pass no parameters at all, so nothing can
+   translate for them. That is what the note is for.
+
+3. **The Control Plane.** `seedEngineCatalog` / `engineSeedKind` and `engineDef`'s four fields
+   are deleted. A table written by an older stack **still parses** (the fields are ignored) —
+   the CP is upgraded before the stack is, so that shape is live. The empty-catalogue behaviour
+   (`503 engine_unavailable`, `no_model`, `TestDecideEngineAction`'s fixture) is unchanged.
+
+4. **The hand-registration form's licence fields were already closed** before this work started
+   (commit `2a998f11`, the same day): the form sends `license_name` / `license_url` and the CP
+   derives the commercial-use verdict from them. The by-product the follow-up asked for is done.
+
+5. **Verification.** The Go suites in control-plane and workspace/agent, the Console tests,
+   `deploy/local/ecs-lifecycle-stub-test.sh` (including 3b-2's size check), `cfn-ascii-test.sh`,
+   `engine-sidecar-test.sh` and `check-cfn-exports.py`. The stub test gained a case that runs a
+   pre-P6 capture through stand-up and checks (a) that no retired key reaches `deploy` and (b)
+   that `<Role>Enabled=true` does. A positive control that removes the translation shows the
+   check actually fails.
+
+**What hardware has to confirm (the definition of done).** A deployment made with
+`LlmEnabled=true` and not one model parameter comes up and its role's service stabilises; a model
+registered from the Console into an empty catalogue starts the engine. And the migration side —
+a stand-up from a capture holding `<Role>ModelS3Key` keeps the role and translates it into
+`<Role>Enabled=true`.
 
 ## Follow-up — phase P3's LoRAs, the Agent's half (2026-09-10)
 
