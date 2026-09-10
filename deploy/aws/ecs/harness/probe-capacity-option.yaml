@@ -1,0 +1,94 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  THROWAWAY probe (ADR 0074): one ECS Managed Instances capacity provider shaped exactly like
+  60-engines.yaml's ImageCapacityProvider, so that a change set can answer whether
+  CloudFormation REPLACES a provider when CapacityOptionType changes. Launches nothing: no
+  instance, no service, no association. Delete it as soon as the answer is in.
+
+Parameters:
+  NetworkStackName:
+    Type: String
+    Default: af-ecs-network
+  PlatformStackName:
+    Type: String
+    Default: af-ecs-platform
+
+Resources:
+  # The three IAM resources 60-engines creates for the same purpose, name shape included.
+  InfraRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-infra"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ecs.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInfrastructureRolePolicyForManagedInstances
+      Policies:
+        - PolicyName: pass-instance-role
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: iam:PassRole
+                Resource: !Sub "arn:aws:iam::${AWS::AccountId}:role/af-${AWS::StackName}-mi-instance"
+                Condition: { StringLike: { "iam:PassedToService": "ec2.*" } }
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "af-${AWS::StackName}-mi-instance"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal: { Service: ec2.amazonaws.com }
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonECSInstanceRolePolicyForManagedInstances
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub "af-${AWS::StackName}-mi-instance"
+      Roles: [ !Ref InstanceRole ]
+
+  # The provider under test. A copy of 60-engines.yaml's ImageCapacityProvider, with the
+  # hardcoded Name kept in the same shape: if CloudFormation replaces rather than updating in
+  # place, the new provider asks for a name the old one still holds, and THAT is the failure
+  # this probe exists to see. The security group is imported rather than created because
+  # nothing is ever launched into it.
+  ImageCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-image"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: CAPACITY_PROVIDER
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !ImportValue { "Fn::Sub": "${NetworkStackName}-CpSgId" } ]
+          LocalStorageConfiguration:
+            UseLocalStorage: true
+          InstanceRequirements:
+            VCpuCount: { Min: 4, Max: 8 }
+            MemoryMiB: { Min: 15000, Max: 65536 }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: [ g6.xlarge, g5.xlarge ]
+            AcceleratorCount: { Min: 1, Max: 1 }
+            AcceleratorTypes: [ gpu ]
+            AcceleratorManufacturers: [ nvidia ]
+            AcceleratorTotalMemoryMiB: { Min: 8000 }
+      Tags:
+        - { Key: af-role, Value: engine-image-probe }
+
+Outputs:
+  ProviderName:
+    Value: !Ref ImageCapacityProvider

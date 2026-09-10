@@ -955,6 +955,56 @@ property and is deliberately EMPTY: with a default strategy in place, a service 
 spell out `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
 line is the whole of that failure).
 
+⚠️ **Creating a Managed Instances provider ADDS it to the cluster's list by itself.** Measured
+2026-09-11: a throwaway stack holding nothing but one provider (no
+`ClusterCapacityProviderAssociations` anywhere in it) put its provider into
+`DescribeClusters.capacityProviders`, and deleting the stack took it back out. So "one stack
+owns the associations" is a rule about who REPLACES the list, not a fence around it — a second
+stack that creates a provider against this cluster is visible in the list until the next time
+this stack's `Associations` resource is updated, which silently drops it.
+
+### `CapacityOptionType` is a CREATE-time field. Switching a role to Spot is a two-stage change
+
+🔴 **Editing `CapacityOptionType` in place fails the stack update.** The change set looks
+survivable — `Modify`, `Replacement: Conditional`, `ManagedInstancesProvider` /
+`RequiresRecreation: Conditionally` — but executing it stops on:
+
+```
+CloudFormation cannot update a stack when a custom-named resource requires replacing.
+Rename af-<stack>-image and update the stack again.
+```
+
+and the stack goes to `UPDATE_ROLLBACK_COMPLETE`. Measured 2026-09-11 on a throwaway stack
+holding a copy of `ImageCapacityProvider`, `Name` included, so the refusal is this template's
+and not an accident of the probe. Nothing is lost — the refusal comes BEFORE anything is
+created, the provider keeps its ARN and stays `ON_DEMAND` — but on a live deployment the whole
+60-engines update rolls back, including whatever else was in it.
+
+Two facts under it: the ECS API has no such field on `UpdateCapacityProvider` at all
+(`InstanceLaunchTemplateUpdate` does not carry it — ADR 0074), and a provider's ARN is derived
+from its `Name`, so a replacement is a same-name collision by construction.
+
+**The safe path is to add a provider rather than edit one**, in this order:
+
+1. add a SECOND `AWS::ECS::CapacityProvider` (new logical id, `Name` ending `-image-spot`,
+   `CapacityOptionType: SPOT`) and name it in `Associations` alongside the old one. Measured on
+   the same probe: `Add`, no replacement, `UPDATE_COMPLETE`;
+2. point the image service's `CapacityProviderStrategy` at the new provider **and** change the
+   engine table row's `capacityProvider` in the same change — the table builds that string with
+   `!Sub`, not `!Ref`, so it does not follow the resource. Get it wrong and nothing fails: the
+   Control Plane simply watches a provider nobody uses, which is where `draining` and the
+   instance-class ladder (ADR 0074) both read from;
+3. once the role has come up on the new provider, delete the old resource in a later change.
+
+Do the role that can afford an interruption. **The `llm` role stays `ON_DEMAND`**: Spot's
+two-minute termination notice lands mid-conversation, and a 527–586-second cold start is what
+follows it.
+
+⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a
+`SPOT` provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys
+a box. `L-3819A6DF` ("All G and VT Spot Instance Requests", default 0) is the one to hold —
+acrt has 64, af-sandbox has 0. `L-DB2E81BB` does not exist; do not look for it.
+
 ## The engine services
 
 ⚠️ **The engine image must ALREADY be in its ECR repository when this stack is created.**

@@ -192,3 +192,42 @@ CloudFormation の作法で踏むもの 3 つ:
   `aws ssm start-session --target ecs:<cluster>_<task-id>_<runtime-id> --document-name
   AWS-StartPortForwardingSession --parameters '{"portNumber":["8080"],"localPortNumber":["18100"]}'`。
   `EnableExecuteCommand: true` とタスクロールの `ssmmessages:*` が前提。
+
+## `probe-capacity-option.yaml` —— capacity provider の欄が「更新で書き換わるか」を live 抜きで測る
+
+change set が `Replacement: Conditional` としか言わない欄について、**流したらどうなるか**を
+本番に当てずに確かめるための使い捨てスタック。`60-engines.yaml` の `ImageCapacityProvider` を
+`Name: !Sub "af-${AWS::StackName}-image"` のハードコードごと写した provider 1 本と、それが要る
+IAM 3 本だけ。**service も `ClusterCapacityProviderAssociations` も置かない**ので、live の
+関連付けを置き換える事故が起きない。インスタンスは 1 台も起動しない＝ **$0**、所要 10 分。
+
+```bash
+P="--profile af-sandbox --region ap-northeast-1"
+S=af-spotprobe-$AF_SESSION_NAME       # 自分のセッション名。他レーンとぶつからないように
+aws $P cloudformation create-stack --stack-name "$S" --capabilities CAPABILITY_NAMED_IAM \
+  --template-body file://deploy/aws/ecs/harness/probe-capacity-option.yaml
+aws $P cloudformation wait stack-create-complete --stack-name "$S"
+aws $P ecs describe-capacity-providers --capacity-providers "af-$S-image" \
+  --query 'capacityProviders[].[capacityProviderArn,managedInstancesProvider.instanceLaunchTemplate.capacityOptionType]'
+# 測りたい 1 欄だけを書き換えた版で change set を作り、describe で Replacement を控えてから実行する
+sed 's/CapacityOptionType: ON_DEMAND/CapacityOptionType: SPOT/' \
+  deploy/aws/ecs/harness/probe-capacity-option.yaml > /tmp/probe-spot.yaml
+aws $P cloudformation create-change-set --stack-name "$S" --change-set-name spot-1 \
+  --change-set-type UPDATE --capabilities CAPABILITY_NAMED_IAM --template-body file:///tmp/probe-spot.yaml
+aws $P cloudformation describe-change-set --stack-name "$S" --change-set-name spot-1 \
+  --query 'Changes[].ResourceChange.[LogicalResourceId,Action,Replacement]'
+aws $P cloudformation execute-change-set --stack-name "$S" --change-set-name spot-1
+aws $P cloudformation delete-stack --stack-name "$S"   # 終わったら必ず。跡は下記のとおり
+```
+
+🔴 **`describe-capacity-providers` に `--cluster` と名前を同時に渡してはいけない**
+（`InvalidParameterException`。ADR 0074 の実測）。名前だけで引く。
+
+2026-09-11 の実測（ADR 0074 の追記節に詳しい）: **`CapacityOptionType` の書き換えは
+置き換えに転び、`UPDATE_FAILED` で止まる**——`CloudFormation cannot update a stack when a
+custom-named resource requires replacing.`。拒否は作成の前に出るので provider は無傷のまま
+ロールバックする。**別名で 2 本目を足すのは `Add`・置き換え無しで通る。**
+
+⚠️ 跡: 削除してもクラスタの provider 一覧は元に戻るが、**ECS は provider を `INACTIVE` の
+レコードとして残す**（消せない）。使い捨ての名前にセッション名を入れておくと、後から誰の
+実験かが分かる。

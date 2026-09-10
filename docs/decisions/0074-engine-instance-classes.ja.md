@@ -759,3 +759,47 @@ KV キャッシュは重みの何倍にもなる。つまり警告は、**それ
 **実描画で確認した**（ヘッドレス Chromium・実バンドル）: 赤い一文が provider の言葉ごと出て、
 その下に「もう一度適用する」が独立した行で立つ。既存の「いま入れ替える」とは別の行為なので
 並べず、上に置いた。
+
+## 追記 — Spot への切り替えは CloudFormation が拒む（2026-09-11・実測・$0）
+
+image 役を Spot に移す検討の前段。「追試」節は **ECS の API** の側を測って
+`capacityOptionType` が `UpdateCapacityProvider` を跨いで保持されることを確かめたが、
+**CloudFormation の側**——スタック更新でこの欄を書き換えられるのか——は測っていなかった。
+`60-engines.yaml` の `ImageCapacityProvider` を SPOT にする change set は本番でも
+`Modify` / `Replacement: Conditional` と出る。CFN のドキュメントは "Some interruptions"
+（置き換えない）と読めるが、`UpdateCapacityProvider` の型にこの欄が無いことと矛盾する。
+**流すまで分からない**ので、live に触れずに測った。
+
+方法: `ImageCapacityProvider` を（`Name: !Sub "af-${AWS::StackName}-image"` のハードコードごと）
+写した使い捨てスタック 1 枚を af-sandbox に作る。IAM 3 本と provider 1 本だけで、
+service も `ClusterCapacityProviderAssociations` も置かない。インスタンスは 1 台も起動しない
+＝ $0。所要 10 分。
+
+- 🔴 **その場更新は失敗する。置き換えに転ぶ。** change set は本番と同じ
+  `Modify` / `Replacement: Conditional` / `ManagedInstancesProvider` は
+  `RequiresRecreation: Conditionally`。**実行すると `UPDATE_FAILED`**:
+  `CloudFormation cannot update a stack when a custom-named resource requires replacing.
+  Rename af-af-spotprobe-s2hpl5k-image and update the stack again.` → `UPDATE_ROLLBACK_COMPLETE`。
+  **失うものは無い**——拒否は作成の**前**に出るので、provider は ARN も `ON_DEMAND` も
+  そのまま（前後の `describe-capacity-providers` で確認）。ただし本番では
+  60-engines の更新が**まるごとロールバックする**。同じ回に載せた別の変更も道連れになる。
+- ✅ **別名で足すのは通る（安全な手順の第 1 段）。** 論理 ID と `Name` を変えた 2 本目
+  （`-image-spot`・SPOT）を足す change set は `Add`・置き換え無し・`UPDATE_COMPLETE`。
+  Spot クォータ 0 の af-sandbox でも作れる（「追試」の副産物どおり、クォータは起動時にしか効かない）。
+- 🔴 **MI の provider を作ると、それだけでクラスタの provider 一覧に載る。**
+  使い捨てスタックには `Associations` が無いのに、`DescribeClusters.capacityProviders` に
+  2 本とも現れた（削除で消えた）。「関連付けを持つスタックは 1 つだけ」は**置き換える側**の
+  規則であって、他のスタックが provider を足せないという意味ではない。次に live の
+  `Associations` が更新された時点で黙って外れる。
+- 片付け: スタック削除でクラスタの一覧は live の 4 本に完全一致で戻り、IAM ロールと
+  インスタンスプロファイルも残っていない。provider は ECS が `INACTIVE` レコードとして残す
+  （「追試」節と同じ）。
+
+**本番（acrt）で切り替えるならこの順**（`cfn/PARAMETERS-60-engines.md`「The capacity
+providers」に手順として書いた）: ①別名の SPOT provider を足して `Associations` に並べる →
+②image サービスの `CapacityProviderStrategy` と**エンジン表の `capacityProvider` を同じ回で**
+新しい名前へ（表は `!Ref` ではなく `!Sub` の文字列なので資源に追随しない。間違えても何も
+落ちず、CP が誰も使っていない provider を見続けるだけ——`draining` と段の適用の両方がそこを
+読む） → ③旧 provider を後の回で消す。**llm 役は `ON_DEMAND` のまま**（Spot の 2 分前予告は
+会話の途中で来て、その後に 527〜586 秒のコールドスタートが続く）。acrt の Spot クォータは
+`L-3819A6DF` が 64 で、申請は要らない。
