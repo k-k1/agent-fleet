@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -490,6 +491,94 @@ func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
 	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
 	if err != nil || len(jobs) != 1 {
 		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 6 の帰結. `?purge=1` handed the forgotten row's S3 keys straight to
+// MODE=delete without asking whether anything else pointed at them — and decision 2 shares
+// `text_encoders/` ON PURPOSE: SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one ingest
+// is referenced from both rows. Measured on af-sandbox: `clip_l.safetensors` was pointed at by
+// both `tmp-flux-clip-l` and `flux1-dev-fp8`, and purging the first would have broken the
+// second silently, at the next cold start.
+//
+// Both directions are pinned, because "kept everything" and "checked nothing" look identical
+// from the outside: the shared file survives, and the one nothing else uses is deleted.
+func TestEngineModelPurgeSparesFilesAnotherRowUses(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := t.Context()
+	shared := "image/text_encoders/clip_l.safetensors"
+	own := "image/diffusion_models/flux1-dev-fp8.safetensors"
+	for _, m := range []store.EngineModel{
+		{Role: "image", ID: "tmp-flux-clip-l", Kind: "checkpoint", BaseModel: "flux1",
+			Files: []store.EngineModelFile{{Flag: "--clip_l", S3Key: shared}}},
+		{Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+			Files: []store.EngineModelFile{
+				{Flag: "--diffusion-model", S3Key: own},
+				{Flag: "--clip_l", S3Key: shared},
+			}},
+	} {
+		if err := st.PutEngineModel(ctx, m); err != nil {
+			t.Fatal(err)
+		}
+	}
+	e.catalog.invalidate()
+	ecsAPI := &fakeIngestECS{}
+	a.reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+
+	deleted := func() string {
+		t.Helper()
+		if len(ecsAPI.run) == 0 {
+			return ""
+		}
+		for _, c := range ecsAPI.run[len(ecsAPI.run)-1].Overrides.ContainerOverrides {
+			for _, kv := range c.Environment {
+				if aws.ToString(kv.Name) == "KEY" {
+					return aws.ToString(kv.Value)
+				}
+			}
+		}
+		return ""
+	}
+	purge := func(id string) string {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := httptest.NewRequest("DELETE", "/api/admin/engines/image/models/"+id+"?purge=1", nil)
+		r.SetPathValue("key", "image")
+		r.SetPathValue("id", id)
+		a.deleteModel(rec, r, store.Identity{ID: "u1"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("forget %s = %d (%s)", id, rec.Code, rec.Body.String())
+		}
+		var out map[string]any
+		_ = json.Unmarshal(rec.Body.Bytes(), &out)
+		note, _ := out["purge"].(string)
+		return note
+	}
+
+	// The throwaway row's only file is the shared one, so NOTHING is deleted — and the answer
+	// names the row that is keeping it, because "kept" with no name is not actionable.
+	note := purge("tmp-flux-clip-l")
+	if len(ecsAPI.run) != 0 {
+		t.Fatalf("a delete task was started for a file another row uses: %q", deleted())
+	}
+	if !strings.Contains(note, shared) || !strings.Contains(note, "flux1-dev-fp8") {
+		t.Errorf("the answer does not say what survived or why: %q", note)
+	}
+	e.catalog.invalidate()
+
+	// 🔴 The positive control. With the last reference gone, the same file IS deleted — without
+	// this half, a check that refused every purge would pass the test above.
+	note = purge("flux1-dev-fp8")
+	if len(ecsAPI.run) != 1 {
+		t.Fatalf("nothing was deleted for a row nothing else references (note %q)", note)
+	}
+	got := strings.Fields(deleted())
+	sort.Strings(got)
+	if want := []string{own, shared}; strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("deleted %v, want both files of the last row that referenced them", got)
 	}
 }
 

@@ -831,16 +831,18 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	}
 	// The row has to be read BEFORE it is deleted: the S3 keys are in it, and a purge with no
 	// keys silently deletes nothing while reporting success.
+	//
+	// Every ROLE is read, not just this one, because what decides whether a key may be deleted
+	// is whether anything else points at it, and nothing says the two rows are in the same role.
+	rows, lerr := a.mgr.store.ListEngineModels(r.Context(), "")
 	var keys []string
-	if rows, lerr := a.mgr.store.ListEngineModels(r.Context(), key); lerr == nil {
-		for _, m := range rows {
-			if m.ID != id {
-				continue
-			}
-			for _, f := range m.Files {
-				if f.S3Key != "" {
-					keys = append(keys, f.S3Key)
-				}
+	for _, m := range rows {
+		if m.ID != id || m.Role != key {
+			continue
+		}
+		for _, f := range m.Files {
+			if f.S3Key != "" {
+				keys = append(keys, f.S3Key)
 			}
 		}
 	}
@@ -858,14 +860,42 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 	// task is the one principal in the deployment allowed to write in that bucket at all.
 	purged := ""
 	if r.URL.Query().Get("purge") == "1" && len(keys) > 0 {
-		if ing := a.reg.ingester(); ing != nil {
-			if err := ing.deleteObjects(r.Context(), keys); err != nil {
-				purged = "the row is gone; the files are not: " + err.Error()
-			} else {
-				purged = "deleting " + strings.Join(keys, " ")
+		// 🔴 A file may belong to more than one row, and decision 2 says so on purpose:
+		// `text_encoders/` is SHARED — SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one
+		// ingest is pointed at from both rows' `files[]`. Handing this row's keys straight to
+		// MODE=delete therefore breaks models nobody touched, silently and at the next cold
+		// start (measured on af-sandbox: `clip_l.safetensors` was pointed at by two rows).
+		//
+		// Which is why a read that FAILED is not treated as "nothing else uses these": with no
+		// answer the only safe act is to leave the bytes alone and say so.
+		switch keep, kerr := engineKeysStillUsed(rows, key, id, keys, lerr); {
+		case kerr != nil:
+			purged = "the row is gone; the files are not: the catalogue could not be read, so" +
+				" whether another model still uses these files is unknown (" + kerr.Error() + ")"
+		default:
+			free := make([]string, 0, len(keys))
+			for _, k := range keys {
+				if _, shared := keep[k]; !shared {
+					free = append(free, k)
+				}
 			}
-		} else {
-			purged = "this deployment declares no ingest task, so the files stay in the bucket"
+			switch ing := a.reg.ingester(); {
+			case len(free) == 0:
+				purged = "no file was deleted: " + engineKeptBecause(keys, keep)
+			case ing == nil:
+				purged = "this deployment declares no ingest task, so the files stay in the bucket"
+			default:
+				if err := ing.deleteObjects(r.Context(), free); err != nil {
+					purged = "the row is gone; the files are not: " + err.Error()
+				} else {
+					purged = "deleting " + strings.Join(free, " ")
+				}
+				// What was NOT deleted rides along whatever happened to the rest: a purge that
+				// reported only the deletions would read as "all of it went".
+				if len(free) < len(keys) {
+					purged += "; " + engineKeptBecause(keys, keep)
+				}
+			}
 		}
 		a.audit(r.Context(), ident, "engine."+key+".model", "purge "+id+": "+purged)
 	}
@@ -882,6 +912,46 @@ func (a engineAdminAPI) deleteModel(w http.ResponseWriter, r *http.Request, iden
 		row["purge"] = purged
 	}
 	writeJSON(w, http.StatusOK, row)
+}
+
+// engineKeysStillUsed answers, for the row being forgotten, which of its S3 keys some OTHER row
+// also points at. Keyed by S3 key, valued by the model that keeps it alive, because "kept" with
+// no name is an answer an operator cannot act on.
+//
+// The catalogue read is passed in rather than repeated: it has to be the one taken BEFORE the
+// row was deleted, or the row being forgotten would be its own reference.
+func engineKeysStillUsed(rows []store.EngineModel, role, id string, keys []string, rerr error) (map[string]string, error) {
+	if rerr != nil {
+		return nil, rerr
+	}
+	want := make(map[string]struct{}, len(keys))
+	for _, k := range keys {
+		want[k] = struct{}{}
+	}
+	used := map[string]string{}
+	for _, m := range rows {
+		if m.ID == id && m.Role == role {
+			continue // the row on its way out is not a reference to itself
+		}
+		for _, f := range m.Files {
+			if _, ok := want[f.S3Key]; ok {
+				used[f.S3Key] = m.Role + "/" + m.ID
+			}
+		}
+	}
+	return used, nil
+}
+
+// engineKeptBecause names each surviving file and what still points at it, in the order the row
+// declared them so the sentence reads against the panel.
+func engineKeptBecause(keys []string, keep map[string]string) string {
+	out := make([]string, 0, len(keep))
+	for _, k := range keys {
+		if by, ok := keep[k]; ok {
+			out = append(out, k+" is still used by "+by)
+		}
+	}
+	return strings.Join(out, ", ")
 }
 
 // audit records one super-admin action against the catalogue. Same ledger, same shape as the

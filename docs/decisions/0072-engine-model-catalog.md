@@ -1521,6 +1521,17 @@ normal procedure for a split model, this is easy to walk into: in this very sess
 `flux1-dev-fp8`, and forgetting the former with purge would have silently broken the latter. They
 were forgotten without purge.
 
+> ✅ **Fixed (2026-09-10)**: `deleteModel` reads the catalogue of EVERY role **before** the row
+> goes, and no longer hands MODE=delete a key another row points at (`engineKeysStillUsed`).
+> What survived rides in the answer's `purge` string together with the row that keeps it alive
+> — "kept" with no name is not something an operator can act on. When the catalogue read
+> FAILS, nothing is deleted at all: deleting while it is unknown whether a file is shared is
+> precisely this section's accident. Every role is read because nothing says the two rows are
+> in the same one. The sharing itself is what decision 2 intended (`text_encoders/`: SD3.5 and
+> FLUX.1 read the same T5-XXL and CLIP-L) and does not go away with gap 6. The test pins both
+> directions — the shared key survives, and **the key whose last reference has gone is really
+> deleted** (the positive control).
+
 ### Remaining work 5 — Z-Image and FLUX.1 went through. SD3.5's template was wrong
 
 | family | result | measured (ComfyUI's own `Prompt executed`) |
