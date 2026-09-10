@@ -150,6 +150,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",
+  // 🔴 A different wall from Hugging Face's gating, and there is no key to it: Civitai answers
+  // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
+  // split 200/401/403). No token field is being added, so the sentence says what to do instead.
+  "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so it cannot be fetched (a Hugging Face token does not help). Pick another asset, or stage the file in the bucket by hand and register it.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
   "admin.engines_hf_token_save": "Register",

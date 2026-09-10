@@ -113,9 +113,15 @@ type ResolvedSource = {
   license_url?: string;
   base_model?: string;
   commercial_use?: string;
-  /** false when the repository is gated and this deployment has no Hugging Face token. The
-   *  button is disabled on it rather than letting a task run nine minutes into a 401. */
+  /** false when the repository is gated and this deployment has no Hugging Face token, or when
+   *  Civitai's uploader requires an account. The button is disabled on it rather than letting a
+   *  task run nine minutes into a 401. */
   can_ingest?: boolean;
+  /** The Civitai uploader requires a logged-in account to download this asset (ADR 0072 P2
+   *  欠落 5). Its own field rather than `gated`, because the two have different answers: a
+   *  registered Hugging Face token satisfies gating and cannot touch this one, so folding them
+   *  would send somebody to the token field to fix what a token does not fix. */
+  login_required?: boolean;
   /** The model's OWN maximum, off the GGUF header. 🔴 A ceiling, not a setting: the 30B in
    *  this deployment publishes 262144 and is run at 32768, because what the architecture
    *  allows and what fits in the GPU are different questions. Offered, never applied. */
@@ -1919,6 +1925,11 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
           {tr(found.can_ingest === false ? "admin.engines_ingest_gated_no_token" : "admin.engines_ingest_gated")}
         </p>
       )}
+      {/* 🔴 A different wall from the one above, and there is no key to it here: Civitai's
+          metadata answers 200 for everybody and the BYTES are per uploader, so this used to
+          be found nine minutes into a Fargate task as a bare curl exit code. The sentence
+          says what can be done instead, because registering a token is not it. */}
+      {found.login_required && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
     </>
   );
 }

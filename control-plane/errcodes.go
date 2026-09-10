@@ -60,6 +60,11 @@ const (
 	errCodeIngestNotAccepted   = "license_not_accepted"
 	errCodeIngestGatedNoToken  = "gated_no_token"
 	errCodeIngestIDExists      = "model_id_exists"
+	// A Civitai asset whose uploader requires a logged-in account (ADR 0072 P2 欠落 5). The
+	// counterpart of `gated_no_token`, and deliberately not the same code: gating is the
+	// repository's terms and a registered token satisfies them, while this deployment has no
+	// Civitai account at all and no field in which to put one.
+	errCodeIngestCivitaiLogin = "civitai_login_required"
 
 	// Registering the operator's Hugging Face token (ADR 0072 decision 6 as revised). The
 	// write reaches two places — the sealed setting and the stack's secret — and they fail

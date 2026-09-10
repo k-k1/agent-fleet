@@ -1097,8 +1097,15 @@ func engineResolvedRow(res engineResolved, hasToken bool) map[string]any {
 		"gated":            res.Gated,
 		"commercial_use":   engineCommercialUse(res),
 		"source":           res.Source,
-		"can_ingest":       !res.Gated || hasToken,
+		"can_ingest":       (!res.Gated || hasToken) && !res.LoginRequired,
 		"deployment_token": hasToken,
+	}
+	// Told apart from `gated` on purpose. Gating is the repository's terms and a registered
+	// token satisfies them; this is a Civitai uploader's switch, and there is nothing on this
+	// deployment that could satisfy it — so a panel that folded the two would send somebody to
+	// the token field to fix something a token cannot fix (ADR 0072 P2 欠落 5).
+	if res.LoginRequired {
+		row["login_required"] = true
 	}
 	if res.License != "" {
 		row["license"] = res.License
@@ -1231,6 +1238,16 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	res, aerr := engineIngestResolve(r.Context(), b.Source)
 	if aerr != nil {
 		writeAPIErr(w, aerr)
+		return
+	}
+	// ⚠️ Refused BEFORE a task is started, for the same reason as the gated case below — except
+	// that no token exists that would help. The asset's uploader requires an account, this
+	// deployment has none for Civitai, and the alternative is the bare `curl: (22) … 401` nine
+	// minutes in that ADR 0072 P2 欠落 5 measured.
+	if res.LoginRequired {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestCivitaiLogin,
+			"the person who uploaded this asset requires a logged-in account to download it, and this " +
+				"deployment ingests anonymously — pick another asset, or stage the file by hand and register it"})
 		return
 	}
 	// ⚠️ Refused BEFORE a task is started. Without the token the download is a 401 nine minutes

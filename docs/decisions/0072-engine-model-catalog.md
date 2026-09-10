@@ -1492,6 +1492,24 @@ download it"}` — **it is a per-uploader setting**. Across five assets the answ
 Unless `resolve` checks "can this asset be fetched anonymously" (one `HEAD` would do), what the
 operator gets is a bare curl exit code nine minutes later.
 
+> ✅ **Fixed (2026-09-10)**: `resolve` now sends **one `HEAD`** at the Civitai download URL and
+> raises `login_required` on 401 / 403 (`engineCivitaiAnonymous`). The panel drops
+> `can_ingest`, and the ingest refuses with `civitai_login_required` **before a task is
+> started**. It is a DIFFERENT code from Hugging Face's `gated_no_token` not because the key is
+> different but because there is none: gating is the repository's terms and a token satisfies
+> them, while this is a per-uploader switch and this deployment has no Civitai account at all.
+> So the Console's sentence is "pick another asset, or stage it by hand", not "register a
+> token". It **fails open** in every direction it cannot read — a CDN that dislikes HEAD (405)
+> and a probe that could not be made are not login walls; only 401 and 403 are. The tests cover
+> 401, 403, 405 and **an asset with no wall going through** (the positive control).
+>
+> **No Civitai token field is being added (out of scope).** Three reasons: this deployment has
+> no Civitai account, and creating one raises "in whose name, and who takes the terms on" with
+> the same weight decision 10 gives licence acceptance; keeping the value means a second copy
+> of the Hugging Face token machinery, which touches the 60-engines size wall (~200 bytes
+> left); and two assets out of five hit this, all of them **avoidable by choosing another
+> asset** — building the field after that stops being true is the cheaper order.
+
 🔴 **Gap 6 — ingest cannot write a file's Flag.** The row `engineIngester` creates holds one
 element, `Files: [{S3Key, Bytes}]`, and the Flag is always empty, i.e. "the whole checkpoint".
 So **a split model cannot be assembled by ingest alone**. Building FLUX.1's four-file row meant

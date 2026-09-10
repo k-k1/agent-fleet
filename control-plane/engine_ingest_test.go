@@ -304,20 +304,38 @@ func TestEngineResolveCarriesTheModelsOwnContextLength(t *testing.T) {
 	}
 }
 
+// civitaiStub answers a model VERSION and the HEAD on its download URL. The download answer is
+// the caller's, because THAT is the split this API has: the metadata is 200 for everybody and
+// the bytes are per uploader (ADR 0072 P2 欠落 5).
+func civitaiStub(t *testing.T, download int) *httptest.Server {
+	t.Helper()
+	var base string
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/api/download/") {
+			if r.Method != http.MethodHead {
+				t.Errorf("the probe used %s, want HEAD — a GET here downloads gigabytes", r.Method)
+			}
+			w.WriteHeader(download)
+			return
+		}
+		w.Write([]byte(`{"baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},
+			"files":[{"name":"config.json","sizeKB":1.5,"type":"Config","downloadUrl":"` + base + `/c"},
+			{"name":"dreamshaper_8.safetensors","sizeKB":2082642.474609375,"type":"Model",
+			 "downloadUrl":"` + base + `/api/download/models/128713",
+			 "hashes":{"SHA256":"879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD"}}]}`))
+	}))
+	base = s.URL
+	t.Cleanup(s.Close)
+	old := engineCivitaiBase
+	engineCivitaiBase = s.URL
+	t.Cleanup(func() { engineCivitaiBase = old })
+	return s
+}
+
 // Civitai publishes sizes in fractional KILOBYTES and its hashes in upper case, and the version
 // carries files that are not the model (measured 2026-09-09, ADR 0072 open question 4).
 func TestEngineResolveCivitai(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte(`{"baseModel":"SD 1.5","model":{"name":"DreamShaper","type":"Checkpoint"},
-			"files":[{"name":"config.json","sizeKB":1.5,"type":"Config","downloadUrl":"https://x/c"},
-			{"name":"dreamshaper_8.safetensors","sizeKB":2082642.474609375,"type":"Model",
-			 "downloadUrl":"https://civitai.com/api/download/models/128713",
-			 "hashes":{"SHA256":"879DB523C30D3B9017143D56705015E15A2CB5628762C11D086FED9538ABD7FD"}}]}`))
-	}))
-	defer srv.Close()
-	old := engineCivitaiBase
-	engineCivitaiBase = srv.URL
-	t.Cleanup(func() { engineCivitaiBase = old })
+	civitaiStub(t, http.StatusOK)
 
 	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
 	if aerr != nil {
@@ -331,6 +349,56 @@ func TestEngineResolveCivitai(t *testing.T) {
 	}
 	if got.BaseModel != "SD 1.5" {
 		t.Errorf("baseModel = %q", got.BaseModel)
+	}
+	// 🔴 The positive control for the probe below: an asset anybody can download must not be
+	// marked, or the panel refuses every Civitai ingest and the check is indistinguishable from
+	// a check that never runs.
+	if got.LoginRequired {
+		t.Error("a downloadable asset was marked as needing an account")
+	}
+	if row := engineResolvedRow(got, false); row["can_ingest"] != true {
+		t.Errorf("can_ingest = %v for an asset with no wall at all", row["can_ingest"])
+	}
+}
+
+// 🔴 ADR 0072 P2 欠落 5. Civitai's metadata call answers 200 with the hash, the size and the
+// download URL for assets whose UPLOADER requires a logged-in account — so the resolve said
+// `can_ingest: true`, a Fargate task ran for nine minutes and died with
+// `curl: (22) The requested URL returned error: 401`, which is what reached the operator.
+// Measured on af-sandbox: five assets, split 200 / 401 / 403.
+//
+// Hugging Face's equivalent is refused up front (`gated_no_token`) and this now is too — with
+// its own code, because no token registered anywhere on this deployment would change the
+// answer.
+func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		civitaiStub(t, status)
+		got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
+		if aerr != nil {
+			// Not an error: everything the panel shows about the asset is still true, and the
+			// licence has to be on screen before the refusal makes sense.
+			t.Fatalf("resolve of a %d asset: %v", status, aerr.message)
+		}
+		if !got.LoginRequired {
+			t.Errorf("a %d download resolved as freely fetchable", status)
+		}
+		row := engineResolvedRow(got, true)
+		if row["can_ingest"] != false || row["login_required"] != true {
+			t.Errorf("the panel is not told (%d): %v", status, row)
+		}
+		// NOT reported as gated: that word sends somebody to the Hugging Face token field,
+		// which cannot help here. A registered token does not change can_ingest either.
+		if row["gated"] == true {
+			t.Errorf("a Civitai login wall was reported as a gated repository (%d)", status)
+		}
+	}
+
+	// It fails OPEN in the directions it cannot read. A CDN that dislikes HEAD is not a login
+	// wall, and neither is a probe that could not be made at all.
+	civitaiStub(t, http.StatusMethodNotAllowed)
+	got, aerr := engineResolveCivitai(context.Background(), engineIngestCivitai{VersionID: 128713})
+	if aerr != nil || got.LoginRequired {
+		t.Errorf("a 405 was read as a login wall (%v)", aerr)
 	}
 }
 

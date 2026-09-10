@@ -494,6 +494,39 @@ func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
 	}
 }
 
+// The refusal for a Civitai asset that needs an account has to happen HERE, before RunTask:
+// after it, the answer is a 401 nine minutes into a Fargate task and an exit code on the panel
+// (ADR 0072 P2 欠落 5).
+func TestEngineIngestRefusesACivitaiAssetThatNeedsAnAccount(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	civitaiStub(t, http.StatusUnauthorized)
+	ecsAPI := &fakeIngestECS{}
+	a.reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: ecsAPI, store: st, models: st,
+	}
+	e.catalog.invalidate()
+
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"dreamshaper-8","kind":"checkpoint","s3Key":"image/checkpoints/dreamshaper_8.safetensors",
+		  "license_accepted":true,"base_model":"sdxl","source":{"civitai":{"versionId":128713}}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, store.Identity{ID: "u1"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("ingest of a login-walled asset = %d, want 400 (%s)", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "civitai_login_required") {
+		t.Errorf("the refusal does not name itself: %s", rec.Body.String())
+	}
+	if len(ecsAPI.run) != 0 {
+		t.Error("a task was started for a download that answers 401")
+	}
+	if jobs, _ := st.ListEngineIngestJobs(t.Context(), "image", 10); len(jobs) != 0 {
+		t.Errorf("a job row was left behind: %+v", jobs)
+	}
+}
+
 // 🔴 ADR 0072 P2 欠落 10. Declaring a family clears `base_model_missing` — and NOTHING looked
 // at whether the row held the files that family's template reads, so the row came out of the
 // fix looking healthier and generating just as little.

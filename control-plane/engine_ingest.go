@@ -87,7 +87,13 @@ type engineResolved struct {
 	LicenseURL  string
 	BaseModel   string
 	Gated       bool
-	Source      string // what a person reads in the job list
+	// LoginRequired is Civitai's answer to "may anybody download this", and it is a DIFFERENT
+	// fact from Gated: gating is a repository's terms, which an operator's token satisfies,
+	// while this is a per-uploader switch with no token to satisfy it here at all (ADR 0072 P2
+	// 欠落 5). Measured on af-sandbox: five assets split 200 / 401 / 403, and the metadata call
+	// that says everything else about them answers 200 for all five.
+	LoginRequired bool
+	Source        string // what a person reads in the job list
 	// The model's OWN maximum, straight off the GGUF header Hugging Face has already parsed
 	// (`gguf.context_length` on the same call this reads everything else from). 🔴 It is a
 	// suggestion, never the value: unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF says 262144 and
@@ -378,9 +384,10 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 			continue
 		}
 		return engineResolved{
-			DownloadURL: f.DownloadURL,
-			SHA256:      strings.ToLower(f.Hashes.SHA256),
-			Bytes:       int64(f.SizeKB * 1024),
+			DownloadURL:   f.DownloadURL,
+			SHA256:        strings.ToLower(f.Hashes.SHA256),
+			Bytes:         int64(f.SizeKB * 1024),
+			LoginRequired: !engineCivitaiAnonymous(ctx, f.DownloadURL),
 			// Civitai publishes no licence field of the kind Hugging Face does — the terms are
 			// per model on the site. Saying "unknown" is the honest answer; guessing one would
 			// put a made-up licence in the panel next to the real ones.
@@ -392,6 +399,39 @@ func engineResolveCivitai(ctx context.Context, c engineIngestCivitai) (engineRes
 	}
 	return engineResolved{}, &apiError{http.StatusNotFound, errCodeIngestFileUnknown,
 		"that version publishes no file with a sha256" + engineIngestNamed(want)}
+}
+
+// engineCivitaiAnonymous asks the one question the metadata call cannot answer: may these bytes
+// be fetched by somebody with no account?
+//
+// 🔴 ADR 0072 P2 欠落 5. `api/v1/model-versions/<id>` answers 200 with the hash, the size and
+// the download URL for assets whose uploader has switched "you must be logged in to download"
+// on — so `resolve` said `can_ingest: true`, the job ran, and the Fargate task died nine
+// minutes later with `curl: (22) … error: 401`. What reaches the operator is an exit code.
+// Measured on af-sandbox: five assets, answers split 200 / 401 / 403, per uploader.
+//
+// One HEAD, short timeout, and it FAILS OPEN in every direction but the two it can read: a
+// probe that could not run must not stop an ingest that would have worked, and a CDN that
+// dislikes HEAD (405) is not a login wall. Only 401 and 403 — the two Civitai actually answers
+// with — are read as "not anonymously".
+func engineCivitaiAnonymous(ctx context.Context, target string) bool {
+	if !strings.HasPrefix(target, "http://") && !strings.HasPrefix(target, "https://") {
+		return true
+	}
+	// Its own budget, well under engineIngestHTTP's: this rides on the admin path while
+	// somebody is typing, and the answer is a status line.
+	c, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(c, http.MethodHead, target, nil)
+	if err != nil {
+		return true
+	}
+	resp, err := engineIngestHTTP.Do(req)
+	if err != nil {
+		return true
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode != http.StatusUnauthorized && resp.StatusCode != http.StatusForbidden
 }
 
 func engineIngestNamed(f string) string {

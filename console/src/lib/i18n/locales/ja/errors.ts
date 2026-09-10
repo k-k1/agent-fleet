@@ -212,6 +212,7 @@ export const errors = {
   "err.engine_class_unknown": "そのインスタンスクラスは宣言されていません",
   "err.engine_vram_confirm": "そのモデルは選択中のインスタンスクラスの VRAM を超えます",
   "err.engine_files_missing": "そのモデルファミリーのワークフローが読むファイルが、この行に揃っていません",
+  "err.civitai_login_required": "この資産は投稿者がログイン済みのアカウントからのダウンロードだけを許しています",
   "err.bad_source": "取り込み元の指定が不正です",
   "err.file_unknown": "そのリポジトリにそのファイルがありません",
   "err.no_checksum": "取り込み元が sha256 を公開していません。url と sha256 を直接指定してください",

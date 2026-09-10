@@ -1462,6 +1462,56 @@ describe("EnginesAdminView", () => {
     expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
   });
 
+  // 🔴 ADR 0072 P2 欠落 5. Civitai's uploader — not the model, not the licence — can require a
+  // logged-in account, and the metadata call says 200 about it either way. The panel used to
+  // offer the button; nine minutes later a Fargate task died with `curl: (22) … 401`.
+  //
+  // What is pinned is that it is NOT drawn as gating: the Hugging Face sentence sends somebody
+  // to register a token, and no token registered anywhere here changes this answer.
+  it("says a Civitai asset needs an account, and does not offer to fetch it", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+    for (const [el, v] of [
+      [inputs[0], "civitai:128713"],
+      // Named, so the resolve goes straight at the file rather than asking for a listing first.
+      [inputs[1], "dreamshaper_8.safetensors"],
+    ] as const) {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        (el as Element).dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    apiJSON.mockResolvedValueOnce({
+      sha256: "879db523c30d3b9017143d56705015e15a2cb5628762c11d086fed9538abd7fd",
+      bytes: 2132625894,
+      gated: false,
+      login_required: true,
+      can_ingest: false,
+      license_name: "see civitai model page",
+      commercial_use: "unknown",
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    expect(host!.textContent).toContain("ログイン済みのアカウント");
+    // Not the token sentence: a token cannot open this one.
+    expect(host!.textContent).not.toContain("トークンがありません");
+    expect((host!.querySelector(".engines-ingest-accept input") as HTMLInputElement).disabled).toBe(true);
+  });
+
   // 🔴 Measured on the dev deployment (2026-09-09): a filename typed one letter short answered
   // "the repository does not list flux1-dev.safetensor" — the CP's developer message, in
   // English, on a Japanese screen. Every code this panel can raise was a string literal in
