@@ -583,6 +583,24 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if files := engineModelFileNames(m); len(files) > 0 {
 		row["files"] = files
 	}
+	// 🔴 And the row as it was DECLARED — the S3 keys, the flags and the sizes, in the shape
+	// `POST …/models` reads back. `files` above is base names for a person to read, which is
+	// not enough to rebuild anything: since P6 the catalogue is the only declaration there is,
+	// so a forgotten row was recoverable only by whoever happened to have kept a copy. One
+	// file could be retyped from a note (measured on the dev deployment, ADR 0072 P6 R2); a
+	// FLUX.1 row is four keys and four flags and could not.
+	//
+	// Super-admin only, which is what this whole map is (GET /api/admin/engines is
+	// withSuperAdmin) — the Agent's catalogue is built by engineCatalogModelRow and carries
+	// none of this.
+	if rows := engineModelFileRows(m); len(rows) > 0 {
+		row["file_rows"] = rows
+	}
+	// The per-model flags, for the same reason: they are part of the declaration and nothing
+	// else on the wire carries them.
+	if len(m.Args) > 0 {
+		row["args"] = m.Args
+	}
 	if s := engineSyncSecs(m); s > 0 {
 		row["sync_secs"] = s
 	}
@@ -609,8 +627,35 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	return row
 }
 
+// engineModelFileRows is the file list a MACHINE reads: the whole declaration, keyed exactly
+// as `POST …/models` takes it, so the answer to "what was this row" can be posted straight
+// back. `s3Key` rather than `s3_key` for that reason alone — it is the spelling the register
+// route already reads, and a round trip that needed a rename would not be one.
+//
+// Empty fields are omitted: a flagless file is the whole checkpoint, and a size nobody
+// declared must stay undeclared rather than come back as a measured 0.
+func engineModelFileRows(m store.EngineModel) []map[string]any {
+	out := make([]map[string]any, 0, len(m.Files))
+	for _, f := range m.Files {
+		k := strings.TrimSpace(f.S3Key)
+		if k == "" {
+			continue
+		}
+		row := map[string]any{"s3Key": k}
+		if flag := strings.TrimSpace(f.Flag); flag != "" {
+			row["flag"] = flag
+		}
+		if f.Bytes > 0 {
+			row["bytes"] = f.Bytes
+		}
+		out = append(out, row)
+	}
+	return out
+}
+
 // engineModelFileNames is the file list a person reads — base names, not keys. The full key is
-// in the bucket and in the active set; a panel row is not where somebody reconstructs a path.
+// in the bucket, in the active set and in file_rows above; a row's meta line is not where
+// somebody reconstructs a path.
 func engineModelFileNames(m store.EngineModel) []string {
 	out := make([]string, 0, len(m.Files))
 	for _, f := range m.Files {

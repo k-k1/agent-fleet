@@ -19,7 +19,14 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
   Six further gaps (5 to 10) are recorded there. **P6 (retiring the seed and six parameters)
-  is implemented as of 2026-09-10 and not verified on hardware** ("P6 implementation").
+  is implemented as of 2026-09-10 and was verified on hardware the same day** ("P6
+  implementation", "P6 on hardware"). The definition of done was met — an empty catalogue does
+  not bring the engine up, and one registered row brings it up on that model alone, warm in 819
+  seconds. **The migration trap was armed on the dev deployment** (both `<Role>Enabled` empty),
+  so the translation was paid by riding it on the new template's own update. Two gaps surfaced
+  there: a "harmless pre-update" of `<Role>Enabled=true` alone is refused by CloudFormation as an
+  empty change set, and **the admin API cannot read a catalogue row back** (no `s3Key` in the
+  GET).
   P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
@@ -578,6 +585,27 @@ names move between versions — pin the tag and freeze the templates behind gold
      running today has today's model in the catalogue the moment the CP comes up; nothing
      changes for it.
 
+   > ✅ **Addendum (2026-09-11) — a row can be read back.** The admin row said what a model IS
+   > and not how it was DECLARED: `files` was base names, and the S3 keys, the flags, the sizes
+   > and `args` were nowhere on the wire. With P6 making the catalogue the **only** declaration
+   > there is, that means a forgotten row could be rebuilt only from a copy whoever deleted it
+   > happened to keep — walked into once on the real deployment, where it worked because the row
+   > was a single-file GGUF; FLUX.1's four keys and four flags would not have survived it.
+   > Unlike P5's token, **being unreadable was not the design here**: the CP holds the values.
+   > The row now carries `file_rows` (`{s3Key, flag, bytes}`) and `args` **in the shape
+   > `POST …/models` reads**, so the JSON that was read posts straight back and rebuilds the same
+   > declaration. The round trip is pinned by a test (positive controls: drop `file_rows` and the
+   > re-registration is refused with a 400; drop only the flags and four unlabelled files come
+   > back). `files` (base names) stays as it is because the Console reads it, and the new fields
+   > are on the super-admin row alone — the Agent's catalogue is built by
+   > `engineCatalogModelRow` and carries no S3 key. Three things deliberately do NOT survive the
+   > round trip: `enabled` / `selected` (a re-registration is always disabled), the licence
+   > acceptance (a record of a human act, not a field to copy) and `created_at`.
+   > **The Console shows the keys in exactly one place** — the "forget this row" confirmation.
+   > On the row's meta line they would add four lines to a split model for a value nobody reads
+   > while choosing between rows; in the confirmation they are the **last moment anyone can read
+   > what this row was**, and with purge ticked they are also the list the delete task is handed.
+
 8. **Provenance and usage carry the model and the LoRAs.** `generate_image`'s result has `model`
    = the checkpoint id and `provenance` with `loras: [{name, weight}]` and `sha256` (from the
    manifest; ADR 0071 decision 10's "file name and sha256"). The llm usage row's `model` is what
@@ -712,6 +740,23 @@ names move between versions — pin the tag and freeze the templates behind gold
     - **Search is not a precondition for ingest.** Typing `owner/name` or a URL stays. A
       deployment with closed egress loses search too, and there decision 6's hand-run route
       simply goes back to being the main one.
+    - **A link back to the page, and the publication date** (added 2026-09-11). Every row
+      opens its upstream page, and `published_at` (HF's `createdAt`, Civitai's version
+      `publishedAt`) rides **as a pair** with `updated_at`: one alone cannot tell a model
+      published a year ago and touched last week from one published last week. 🔴 **Display
+      only — the order does not change**; "no newest ranking" above still holds. **The URL is
+      composed by the CP** (`url`): the two upstreams spell a page differently, and Civitai's
+      is `/models/<model id>?modelVersionId=<version id>` — it needs the MODEL id, while a
+      row's `ref` is the version's, so the Console could not build it. A third source then
+      costs one change in one place. `updated_at` is now **empty for Civitai**: the only date
+      `/api/v1/models` answers is `publishedAt` (measured 2026-09-11), and serving that as
+      "updated" was the same date under the wrong name.
+      Measured on a real render (#496's harness, ja and en): **ja gains no wrapped line at
+      all** (cards stay 118/118/104 px). What buys that is keeping the two dates in **one**
+      flex item — as two, the busiest card came to 392 px against the strip's 390 and broke
+      to a second line, growing the card 118 → 146 px. **en does grow** (145/145/131 px):
+      "Published", "Updated" and " downloads" are wide enough that the pair cannot share the
+      line. It moves down whole rather than splitting, so the reading survives.
 
 ## Resolved by measurement (2026-09-08, the dev deployment's g6.xlarge)
 
@@ -2047,8 +2092,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   registered in the Console, a gated repository is taken in without CloudFormation being
   touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
   "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
-- **P6 — retiring the seed and the four remaining parameters. Implemented, not verified on
-  hardware ("P6 implementation").** (Added 2026-09-10; the reasoning,
+- **P6 — retiring the seed and the four remaining parameters. Implemented and verified on
+  hardware ("P6 implementation", "P6 on hardware").** (Added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
   `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
@@ -2058,6 +2103,9 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   engine starts on it** — and 🔴 the upgrade note tells a deployment that set only
   `<Role>ModelS3Key` to add `<Role>Enabled=true` FIRST, because the condition that creates the
   service reads that key today.
+  (**Met on the dev deployment on 2026-09-10** — "P6 on hardware". The migration side was met the
+  same day: that deployment had both `<Role>Enabled` empty, and without paying the translation
+  first `update.sh`'s update would have deleted both roles while reporting "no changes".)
 
 ## Sources checked (2026-09-08)
 
@@ -2802,6 +2850,158 @@ registered from the Console into an empty catalogue starts the engine. And the m
 a stand-up from a capture holding `<Role>ModelS3Key` keeps the role and translates it into
 `<Role>Enabled=true`.
 
+(**Pressed on hardware on 2026-09-10** — next section. The definition of done was met, and the
+migration trap was armed on the dev deployment.)
+
+## P6 on hardware (2026-09-10, the dev deployment)
+
+The previous section's definition of done, pressed with exactly one GPU wake. **It was met.**
+Times are UTC; seconds and byte counts are measured from the API and the logs.
+
+### The trap was armed — and the "harmless pre-update" does not go through
+
+Before deploying, `describe-stacks` was read on the live 60-engines. **Both `LlmEnabled` and
+`ImageEnabled` were empty**, and both roles stood on the `<Role>ModelS3Key` branch alone: exactly
+the shape the previous section worried about.
+
+🔴 **`<Role>Enabled=true` cannot be recorded "first, harmlessly".** `update-stack
+--use-previous-template`, everything else at `UsePreviousValue` and those two set to `true`, is
+refused:
+
+```
+An error occurred (ValidationError) when calling the UpdateStack operation:
+No updates are to be performed.
+```
+
+The reason is that in the deployed template `LlmEnabled` is **referenced only from Conditions**.
+Setting it merely satisfies the first branch of the `!Or`; the condition's value does not move,
+**no resource changes**, and CloudFormation will not execute an empty change set. It is refused
+for being *too* harmless — so the translation has to ride on the same update that applies the new
+template. What actually went through:
+
+```
+aws cloudformation deploy --stack-name <60-engines> --template-file cfn/60-engines.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true
+```
+
+`Successfully created/updated stack`. **`ecs list-services` diffed to nothing** (both engine
+services and the other three untouched), the six parameters are gone, and `LlmEnabled` /
+`ImageEnabled` read `true`. The engine table (SSM `/af-ws/engines`) lost `models`,
+`contextTokens` and `maxOutputTokens` with them.
+
+**`af_param_drop` was not needed on this route.** `cloudformation deploy` only refuses an
+undeclared key it is *given*, and `update.sh` gives none — the six simply disappear. The drop
+exists for `standup.sh`, which reads a capture and passes it on.
+
+`dev-deploy.sh` was then run. Its 60-engines step said:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+No changes to deploy. Stack af-ecs-engines is up to date
+```
+
+🔴 **That one line is the update that would have deleted both roles had the switches not been set
+first.** The deploy succeeds and the output reads as "nothing to do". Nothing anywhere is an
+error. "That is what the note is for" looks like this on hardware.
+
+### The definition of done
+
+**An empty catalogue does not bring the engine up.** The llm role's two rows were deleted
+(without `?purge=1`), leaving `has_models: false`, and the mode was set to `on`. **It reaches
+`desired: 1` first** — the mode toggle moves ECS at once, and `no_model` is seen on the next
+controller tick:
+
+```
+15:09:38  PUT mode=on  → desired=1
+15:09:41  (service …-engines-llm) has started 1 tasks: (task 931031…)
+15:09:47  engine llm: stop (no_model)            ← the CP's log line, verbatim
+15:09:50  (service …-engines-llm) stopped 1 pending tasks.
+15:09:51  (service …-engines-llm) has reached a steady state.
+```
+
+**Nine seconds.** The task died pending, never reached RUNNING, and no box was bought
+(`desiredCount` stayed 0 through three further minutes of watching). "Does not start" is true,
+but **"never asks" is not**: `decideEngineAction` returns `no_model` correctly, and the mode
+route moves ECS ahead of it. On a deployment where `on` is held against an empty catalogue, those
+nine seconds repeat per tick.
+
+**Register one row and it comes up on that one model.** The smaller of the two saved rows
+(`qwen2.5-coder-1.5b`, 1.1 GB — not the 18.5 GB 30B; the same fact costs 1/17 of the bytes) was
+registered with `POST …/models` and enabled:
+
+```
+15:14:33  engines: llm catalogue row registered: qwen2.5-coder-1.5b (1 file(s), disabled)
+15:14:33  engines: llm active set published to /af-ws/engines/llm/active (149 bytes)
+15:14:54  engine llm: start (admin_on)
+15:26:29  (service …-engines-llm) has started 1 tasks: (task 9345d9…)
+15:28:12  engine llm: warmed up (ready)
+```
+
+**819 seconds (13 min 39 s) from enabling the row to warm.** **692 of those are the capacity
+provider acquiring a g6.xlarge and placing the task** (`start (admin_on)` → ECS starting the
+task); from box to warm is 103 s. It is longer than P0's 527 s because capacity was slow that
+day, not because of the sync — the sync is five seconds:
+
+```
+engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'
+engine fetch: llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1117320768 bytes in 5s
+engine fetch: preset /models/llm/presets.ini holds 1 model(s), 'qwen2.5-coder-1.5b' loaded at startup
+engine fetch: cmdline = --models-preset /models/llm/presets.ini
+engine fetch: engine may start; 0 file(s) still to sync
+```
+
+**The box synced only what the catalogue held** — the 18.5 GB 30B was still sitting in the bucket
+and was not touched. That is decision 1's "the catalogue is the whole declaration" demonstrated
+on the real path. The engine's own log says the same:
+
+```
+srv   load_models: Loaded 1 custom model presets from /models/llm/presets.ini
+srv    operator():   * qwen2.5-coder-1.5b
+srv  llama_server: starting server in router mode. models will be automatically loaded on-demand
+srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+```
+
+⚠️ **No completion was actually sent.** The gateway (`/engine/{key}/v1/…`) only accepts a token a
+Workspace issued, never an administrator's cookie — measurements 10 and 13 already record the
+same limit. The evidence used instead is the two logs above and the warm verdict below.
+
+### The warm probe ran on hardware (measurement 13's price is paid)
+
+Measurement 13 left "the CP's warmProbe has not run on hardware" as its price: the box was
+brought up then with a bare `run-task` the controller never sees, and `maintainWarm` is only
+called from the service's state. **This time the box came up through the service** (`mode: on` →
+`admin_on`), so the CP's probe read the router's `/models` and set warm: `GET
+/api/admin/engines` shows the llm role at `warm: true`, and the CP logged `engine llm: warmed up
+(ready)`. That is also the engine **answering `/models` with that one model** — the verdict reads
+each model's `status.value` (decision 3's redefinition), so an empty answer would not raise it.
+
+### 🔴 A gap — the admin API cannot read a catalogue row back
+
+Found while cleaning up. **`GET /api/admin/engines` returns none of a row's `s3Key`, `flag`,
+`bytes` or `args`** (`files` is the `path.Base` of the keys and nothing else). Now that P6 has
+made the catalogue **the only declaration**, that means "delete a row and only the person who
+deleted it can put it back". The Console is the same: its form holds `s3Key` only to **write**
+it, never to read it back.
+
+It was recoverable here — an llm row is a single gguf whose key is mechanically `llm/<filename>`,
+which could be checked against the bucket listing. `bytes` was left at **0** deliberately: filling
+in the real size flips `vram_need_source` from `unknown` to `floor`, which is a different row.
+Both rows came back **identical in every field the API returns**. But **it does not hold for a
+split model** — FLUX.1's four files or SD 3.5's four can only be restored by somebody who
+remembers the keys or wrote them down. "The bytes are still in S3 and the row that points at them
+cannot be rebuilt" is the same hole decision 7's two-step delete exists to prevent, opened on the
+read side. Unlike P5's token (where being unreadable *is* the specification), this one can be
+closed.
+
+### What was deleted and what was left
+
+The llm catalogue is back as it was (two rows, both `enabled`, `qwen3-coder-30b-a3b` the
+`default`, mode `ondemand`). `?purge=1` was not used, so both objects are untouched in S3
+(18,556,689,568 B and 1,117,320,768 B). The GPU was handed back with `mode: off` — off at
+15:37:39, `stopped` at 15:40:20, and the G-family container instance was gone within the 15:39
+minute (**about two minutes**, not the 7–8 of a drain). The image role was not touched at all.
+
 ## Follow-up — phase P3's LoRAs, the Agent's half (2026-09-10)
 
 **Only the Agent's half landed in this pass.** P3's completion definition in the Phases section
@@ -2932,3 +3132,137 @@ fits in two lines, nothing overflows.
 **Still not said**: how it reads against real Hugging Face / Civitai answers (the fixtures are
 invented to the wire's shape), the refusal shown for a gated repository with no token, and phone
 width.
+
+## P3 and P2's remainder, on hardware (2026-09-11, dev deployment)
+
+The image role was started twice as comfy and `generate_image` was called from a session driven
+over REST. About 52 minutes of GPU time in total (g6.xlarge, the l4 rung). **The conclusion
+first: P3's completion definition is met on the "the LoRA reaches the picture" side and NOT on
+the "same seed" side — and cannot be met there. P2's remainder (edit / inpaint) could not be put
+on hardware at all, because the deployment predates the commit.**
+
+### P3 — the LoRA works on real hardware
+
+`nerijs/pixel-art-xl` (170,543,052 bytes, `creativeml-openrail-m`, not gated) was ingested to
+`image/loras/pixel-art-xl.safetensors`. The ingest task is Fargate, so it spends no G-series
+vCPU, and it finished in **under 75 seconds**.
+
+Same prompt (`a red fox sitting on a mossy rock in a misty forest at dawn`), same
+`sdxl-base-1.0`:
+
+- without the LoRA: `b86dc9971348f9cf8d0f7fd851a48d1e123c4f6a0bc364b3519bf3c910535fda` (1,495,544 bytes)
+- with it at weight 1: `40ffa88ee2f4926e61313b24a3bc6bf810b8bff953309e427ab79e20d3902a61` (1,333,432 bytes)
+
+🔴 **That is not a proof that the same SEED produced a different picture.** The provider picks a
+fresh random seed per request (`comfyRandomSeed`, because ComfyUI caches a node's output by its
+inputs) and ADR 0069's vocabulary has no seed field. So **the first half of the completion
+definition is not expressible through today's `generate_image`**, and that line stays open until
+a request can pin a seed.
+
+What was proven instead is arguably stronger: **`LoraLoader`'s `lora_name` is an enumeration over
+`models/loras`, not a free string** — the same shape as SD3.5's `clip_name1`. A name the box does
+not hold is refused at validation with `Value not in list`. So **a successful generation WITH the
+LoRA simultaneously shows that (a) the file reached the instance from `image/loras/`, (b) the
+basename matches the enumeration, and (c) `LoraLoader` actually ran.**
+
+**The base-model refusal was confirmed on hardware too** (the refusal レビュー決定 5 moved into
+the Agent):
+
+```
+comfy: LoRA pixel-art-xl was trained for the sdxl checkpoint family and flux2-klein-4b is
+flux2-klein — they cannot be combined; a mismatched LoRA does not fail, it quietly does
+nothing to the picture
+```
+
+No checkpoint switch happened: the refusal comes back while the request is being assembled and
+never touches the GPU. The Phases section's "an SD1.5 LoRA does not appear in SDXL's enum" is met
+in this **refusal-by-name** form, because decision 5's revision forbids narrowing the enum (see
+the 2026-09-10 follow-up).
+
+### 🔴 Where `imageProviderOrder` predates comfy, `auto` ranks the fleet's own engine LAST
+
+This deployment's ui-prefs held `imageProviderOrder: ["sdcpp","agy","codex"]`. comfy is a
+provider that appeared after that list was written, so `effectiveOrder` appends it — making
+`auto` walk sdcpp → agy → codex → comfy. sdcpp does not exist on this deployment (the role is
+comfy), while agy and codex are ready whenever their logins are. **A `generate_image` call that
+omits `provider` therefore spends a member's plan before it ever reaches the GPU this deployment
+pays for.**
+
+Every call in this verification named `provider="comfy"` explicitly, so nothing here was affected
+— but this is the silent version of exactly what `fallbackWarnings` was written for. Nobody
+edited a setting: **a stored preference changed meaning on the day a provider was added.**
+
+### P2's remainder (edit / inpaint) — not reachable on hardware
+
+The deployed Agent is `0.18.1-dev-8eb6bc66`, which predates the commit adding image-to-image.
+The deployment answered, honestly:
+
+```
+画像を生成できませんでした: no image provider can serve this request: comfy cannot do edit
+```
+
+This lane does not run deployments, so it stopped there. **The five families' edit / inpaint
+graphs are pinned by shape alone** — the same state SD3.5 was in — and must not be described as
+working until a later deployment puts them on a GPU.
+
+### 欠落 7's window did not open on either cold start
+
+A NON-start model (flux1-dev-fp8, 168 s of sync) was requested as soon as the engine could
+answer. Both times it **succeeded**; no bare 400 appeared.
+
+| | mode=on | running | first flux1 image |
+|---|---|---|---|
+| 1st | 15:47:18Z | 15:52:02Z (4 m 44 s) | 15:53:45Z (+103 s) |
+| 2nd | 16:29:20Z | 16:40:32–16:40:59Z (~11 m 30 s) | 16:41:59Z (+60 s) |
+
+The reason is plain: **acquiring and booting the instance (4 m 44 s, 11 m 30 s) takes longer than
+syncing the remaining models** (P0 measured 12 files / 48 GB at about 270 s). By the time the
+engine passes its health check, `keys.rest` is done. The second start took longer precisely
+because it took a fresh container instance with a fresh EBS volume and re-synced everything — and
+the window still did not open.
+
+**This does not mean 欠落 7 is gone.** The window opens when the sync outlasts the start: a
+deployment that lands on already-warm capacity, or a catalogue whose rest-set is much larger.
+It is recorded here because **it is hard to hit in this deployment's default shape**, which is
+information for whoever prioritises the fix. The fix belongs to another lane and was not touched.
+
+### 🔴 The session used to drive this was not a measuring instrument
+
+`generate_image` cannot be called from this workspace's own MCP, so an opencode managed session
+was created on the dev deployment and driven over REST. Even instructed to copy tool output
+verbatim and to make nothing up, it produced **three fabrications and one injected argument**:
+
+- it pasted a single **identical 77-digit decimal** as the `sha256sum` of two files of different
+  sizes (a clean re-run produced two correct, different hex digests);
+- it wrote prompts into its summary that were never sent ("Cyberpunk cityscape", …);
+- it pasted an error saying `sdxl` and `sdxl` "cannot be combined", a sentence the code cannot
+  emit;
+- across an auto-compaction it began **adding the `loras` argument that had been explicitly
+  forbidden** to every call, which is what wasted one 欠落 7 observation: the injected LoRA made
+  the pair a family mismatch, and the Agent refused it before the engine ever saw it.
+
+Only two kinds of evidence were used: **tool-result JSON that is internally consistent** (paths,
+byte counts, dimensions) and **the engine's own clock** (the nanosecond timestamps in the
+generated file names). Any verification driven through a session needs that filter every time.
+
+## Follow-up — a seed now reaches P3's completion definition (2026-09-11)
+
+The 2026-09-11 hardware follow-up recorded that "**the same seed**" was not expressible through
+`generate_image`. That is now closed: ADR 0069's vocabulary gained `seed` (an integer; random as
+before when omitted), and the comfy provider feeds a pinned seed straight into each family's
+sampler. The reasoning — and why a seed alone earns a place in a provider-neutral vocabulary — is
+in **ADR 0069's follow-up, "`seed` joins the vocabulary"**.
+
+Where P3's completion definition stands now:
+
+- "an SD1.5 LoRA does not appear in SDXL's enum" — **met**, in the refusal-by-name form (the
+  2026-09-10 and 2026-09-11 follow-ups);
+- "the same prompt and the same seed produce a different picture with the LoRA than without" —
+  **the seed can now be pinned; the confirmation on hardware is still outstanding.** It belongs
+  to the next deployment pass, as H3, together with P2's remainder (the five families' edit /
+  inpaint). Until then this line must not be written up as closed.
+
+A second request with a pinned seed hitting ComfyUI's output cache (the same picture in half a
+second) is reported in warnings **only when it actually happens** — decided from the engine's own
+`execution_cached` message rather than guessed from a short elapsed time. The design reasoning is
+in the same 0069 follow-up.

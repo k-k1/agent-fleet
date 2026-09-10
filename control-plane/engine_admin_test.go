@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -710,6 +711,167 @@ func TestEngineModelPurgeSparesFilesAnotherRowUses(t *testing.T) {
 	sort.Strings(got)
 	if want := []string{own, shared}; strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Errorf("deleted %v, want both files of the last row that referenced them", got)
+	}
+}
+
+// 🔴 ADR 0072 P6 R2. The admin row said what a model IS but not what it was DECLARED as: the
+// files were base names, and the S3 keys, the flags, the sizes and the args were nowhere on
+// the wire. Since P6 the catalogue is the only declaration in the deployment, so a row that
+// was forgotten could be rebuilt only by whoever had kept a copy — and on the real deployment
+// one was, from a note, because it happened to be a single-file GGUF. A FLUX.1 row is four
+// keys with four flags and no note would have held it.
+//
+// So the row answers `file_rows` and `args` in the shape the register route reads, and this
+// is the round trip that has to keep working: read the row, forget it, post the same JSON,
+// get the same declaration back.
+func TestEngineAdminRowCanBePostedBackToRebuildIt(t *testing.T) {
+	a, e, st := engineModelAdminAPI(t)
+	ctx := t.Context()
+	e.def.Provider = "" // sdcpp-shaped: no family vocabulary to satisfy on the way back in
+	body := `{"id":"flux1-dev-fp8","kind":"checkpoint",
+	  "files":[
+	    {"flag":"--diffusion-model","s3Key":"image/diffusion_models/flux1-dev-fp8.safetensors","bytes":11901933568},
+	    {"flag":"--clip_l","s3Key":"image/text_encoders/clip_l.safetensors","bytes":246144152},
+	    {"flag":"--t5xxl","s3Key":"image/text_encoders/t5xxl_fp8_e4m3fn.safetensors","bytes":4893934592},
+	    {"flag":"--vae","s3Key":"image/vae/ae.safetensors","bytes":335304388}],
+	  "args":["--offload-to-cpu","--type","q8_0"],
+	  "sizes":["1024x1024","1216x832"],"description":"FLUX.1 dev, fp8, split",
+	  "vram_mib":16571,"license":"other","license_name":"flux-1-dev-non-commercial-license",
+	  "license_url":"https://huggingface.co/black-forest-labs/FLUX.1-dev","precision":"fp8"}`
+	if code, out := adminModel(t, a, "POST", "image", "", body); code != http.StatusOK {
+		t.Fatalf("register = %d (%v)", code, out)
+	}
+	declared := func() store.EngineModel {
+		t.Helper()
+		rows, err := st.ListEngineModels(ctx, "image")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, m := range rows {
+			if m.ID == "flux1-dev-fp8" {
+				// The parts a re-registration cannot and must not carry back: when the row was
+				// created, and by whom the licence was accepted. Compared out rather than
+				// silently ignored — see the note below on what the round trip is FOR.
+				m.CreatedAt, m.UpdatedAt = "", ""
+				return m
+			}
+		}
+		t.Fatal("the row is gone")
+		return store.EngineModel{}
+	}
+	before := declared()
+	if len(before.Files) != 4 {
+		t.Fatalf("the seed did not land: %+v", before.Files)
+	}
+
+	// What a super_admin can actually read back.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/api/admin/engines", nil)
+	a.get(rec, r, store.Identity{ID: "u1"})
+	var listed struct {
+		Engines []struct {
+			ModelRows []map[string]any `json:"model_rows"`
+		} `json:"engines"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("list: %v (%s)", err, rec.Body.String())
+	}
+	var got map[string]any
+	for _, m := range listed.Engines[0].ModelRows {
+		if m["id"] == "flux1-dev-fp8" {
+			got = m
+		}
+	}
+	if got == nil {
+		t.Fatal("the row is not in the admin answer at all")
+	}
+
+	// Forget it — the situation this exists for — and post back exactly what was read.
+	restore := func(row map[string]any) (int, store.EngineModel) {
+		t.Helper()
+		// 404 is fine: a refused restore leaves nothing to forget, and that is the state the
+		// next attempt starts from.
+		if code, out := adminModel(t, a, "DELETE", "image", "flux1-dev-fp8", ""); code != http.StatusOK &&
+			code != http.StatusNotFound {
+			t.Fatalf("forget = %d (%v)", code, out)
+		}
+		raw, err := json.Marshal(row)
+		if err != nil {
+			t.Fatal(err)
+		}
+		code, out := adminModel(t, a, "POST", "image", "", string(raw))
+		if code != http.StatusOK {
+			return code, store.EngineModel{}
+		}
+		_ = out
+		return code, declared()
+	}
+	code, after := restore(got)
+	if code != http.StatusOK {
+		t.Fatalf("posting the row back = %d — the whole point is that this works", code)
+	}
+
+	// Everything a DECLARATION is. Not `enabled`/`selected` (a re-registered row is disabled on
+	// purpose — "the file is in the bucket" and "members may use it" are different facts) and
+	// not the licence acceptance, which is a record of a human act and not a field to copy.
+	if fmt.Sprint(after.Files) != fmt.Sprint(before.Files) {
+		t.Errorf("files did not survive the round trip:\n before %+v\n after  %+v", before.Files, after.Files)
+	}
+	for _, c := range []struct{ what, before, after string }{
+		{"args", fmt.Sprint(before.Args), fmt.Sprint(after.Args)},
+		{"sizes", fmt.Sprint(before.Sizes), fmt.Sprint(after.Sizes)},
+		{"kind", before.Kind, after.Kind},
+		{"description", before.Description, after.Description},
+		{"precision", before.Precision, after.Precision},
+		{"licence", before.License + "/" + before.LicenseName + "/" + before.LicenseURL,
+			after.License + "/" + after.LicenseName + "/" + after.LicenseURL},
+		{"vram", fmt.Sprint(before.VramMiB), fmt.Sprint(after.VramMiB)},
+	} {
+		if c.before != c.after {
+			t.Errorf("%s did not survive: %q -> %q", c.what, c.before, c.after)
+		}
+	}
+
+	// 🔴 The positive controls. Without them, a test posting a body the handler ignored would
+	// pass just as happily — the row would be rebuilt by whatever else is in the JSON.
+	//
+	// Take `file_rows` out and there is nothing to rebuild from: what is left is `files`, the
+	// base names, which are not keys (two directories hold `model.safetensors`). The route
+	// says so rather than registering a row with no files or inventing paths.
+	without := map[string]any{}
+	for k, v := range got {
+		without[k] = v
+	}
+	delete(without, "file_rows")
+	if code, lost := restore(without); code != http.StatusBadRequest {
+		t.Errorf("a body with no file_rows = %d and rebuilt %+v — the files are coming from"+
+			" somewhere other than the round trip", code, lost.Files)
+	}
+	// And with the flags stripped, the same four keys come back UNLABELLED: a row ComfyUI can
+	// make nothing of, which is the failure the flags exist to prevent and which must not be
+	// papered over by anything reconstructing them.
+	flagless := map[string]any{}
+	for k, v := range got {
+		flagless[k] = v
+	}
+	stripped := []map[string]any{}
+	for _, f := range got["file_rows"].([]any) {
+		fm := f.(map[string]any)
+		stripped = append(stripped, map[string]any{"s3Key": fm["s3Key"], "bytes": fm["bytes"]})
+	}
+	flagless["file_rows"] = stripped
+	code, lost := restore(flagless)
+	if code != http.StatusOK {
+		t.Fatalf("a flagless body = %d, want it accepted (an unflagged row is legal — it is a"+
+			" whole checkpoint)", code)
+	}
+	if fmt.Sprint(lost.Files) == fmt.Sprint(before.Files) {
+		t.Error("dropping every flag changed nothing — the flags are not coming from the body")
+	}
+	for _, f := range lost.Files {
+		if f.Flag != "" {
+			t.Errorf("a flag survived a body that carried none: %+v", f)
+		}
 	}
 }
 

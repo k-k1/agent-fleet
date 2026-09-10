@@ -837,7 +837,8 @@ Resources:
               - >-
                 n=0; while [ ! -f /models/ready ] && [ $n -lt 3600 ]; do n=$((n+1)); sleep 1; done;
                 if [ -s /models/cmdline ]; then rm -rf /ComfyUI/models; ln -sfn /models/image /ComfyUI/models;
-                exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch;
+                exec python3 /ComfyUI/main.py --listen 0.0.0.0 --port 8080 --disable-auto-launch
+                --verbose DETAIL;
                 else echo "image: no checkpoint in the catalogue - idling"; sleep infinity; fi
               - !Sub
                 - >-

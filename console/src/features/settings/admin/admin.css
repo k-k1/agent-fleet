@@ -429,6 +429,29 @@
   flex: 0 0 auto;
 }
 
+/* The link out sits beside the button and must not compete with it: the card's action is
+   choosing this result, and opening the page is the aside. Same 11px as the stats row, and
+   nowrap so a two-word label ("CivitAI で開く") cannot push the pick button onto a second
+   line — the cards are a grid and one taller card sets the row's height. */
+.engines-hit-link {
+  flex: 0 0 auto;
+  font-size: 11px;
+  white-space: nowrap;
+  color: var(--dialog-muted);
+}
+
+.engines-hit-link:hover {
+  color: var(--accent);
+}
+
+/* The two dates are one flex item and they wrap together or not at all: split, the pair reads
+   as one date and a stray number on the next line. The inner gap is the strip's own. */
+.engines-hit-date {
+  display: flex;
+  gap: 10px;
+  white-space: nowrap;
+}
+
 /* The three numbers a ranking is built on. Tabular figures so the columns of a grid of cards
    line up; the count is the loud part and its unit is not. */
 .engines-hit-stats {
@@ -444,6 +467,18 @@
   font-size: 12px;
   color: var(--fg);
   margin-inline-end: 3px;
+}
+
+/* The S3 keys, shown only in the forget confirmation. Small and dense: they are there to be
+   copied before the row goes, not to be read at a glance, and a split model is four of them. */
+.engines-model-keys {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  font-size: 11px;
+  color: var(--dialog-muted);
+  overflow-wrap: anywhere;
+  user-select: text;
 }
 
 .engines-hit-tags {

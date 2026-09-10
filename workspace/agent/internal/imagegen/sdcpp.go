@@ -221,6 +221,13 @@ func (p *sdcppProvider) Caps(model string) Caps {
 		// more, but a capability nobody has run is a promise, so this says one.
 		MaxInputs: 1,
 		MaxCount:  4,
+		// No seed, and deliberately not a gap. sd-server's OpenAI-compatible generations route
+		// reads prompt, n and size out of the body and nothing else (checked against its own
+		// source, examples/server/routes_openai.cpp). The one channel that WOULD carry a seed is
+		// `<sd_cpp_extra_args>` inside the prompt text — the same hole ADR 0072 decision 5 says
+		// must be REFUSED when a caller's prompt contains it, because it also passes `lora.path`,
+		// a server-side file path. Writing into that hole ourselves would build the injection
+		// surface the decision closes. The core reports the dropped seed as a warning instead.
 	}
 }
 

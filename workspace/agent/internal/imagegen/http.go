@@ -77,6 +77,9 @@ type providerStatus struct {
 	// Models a single entry is still a real choice — with it or without it are two different
 	// pictures — so there is no "more than one" rule here.
 	Loras []loraStatus `json:"loras,omitempty"`
+	// Seed is whether this route lets the caller pin the sampler's seed. Only the fleet's own
+	// ComfyUI route does, so the tool offers the argument only where it reaches something.
+	Seed bool `json:"seed,omitempty"`
 }
 
 // modelStatus is one entry of providerStatus.Models — see imagegen.ModelInfo, which this rides
@@ -128,6 +131,7 @@ func HandleStatus(w http.ResponseWriter, r *http.Request) {
 		for _, l := range caps.Loras {
 			st.Loras = append(st.Loras, loraStatus{Name: l.Name, Description: l.Description, BaseModel: l.BaseModel})
 		}
+		st.Seed = caps.Seed
 		// Only when there is a REAL choice (ADR 0072 decision 5's own rule for `model`, the
 		// same one `provider` already follows) — a list of zero or one is not something a
 		// caller can meaningfully pick between, and advertising it anyway would put an enum in
@@ -206,6 +210,9 @@ type generateRequest struct {
 	// Loras are the fine-tunes to apply (ADR 0072 decision 5, phase P3). Whether they fit the
 	// chosen checkpoint is the PROVIDER's call, not this layer's — see comfyResolveLoras.
 	Loras []loraRequest `json:"loras"`
+	// Seed is a POINTER on the wire too: `"seed": 0` and an absent key are different requests,
+	// and collapsing them here would make seed 0 unpinnable.
+	Seed *int64 `json:"seed"`
 }
 
 type loraRequest struct {
@@ -278,7 +285,7 @@ func HandleGenerate(w http.ResponseWriter, r *http.Request) {
 		Request: Request{
 			Op: op, Prompt: body.Prompt, Size: body.Size, AspectRatio: body.AspectRatio,
 			Background: body.Background, Count: body.Count, Inputs: body.Inputs,
-			Mask: body.Mask, Model: body.Model, Loras: loras,
+			Mask: body.Mask, Model: body.Model, Loras: loras, Seed: body.Seed,
 		},
 	}
 	out, err := Run(r.Context(), job)

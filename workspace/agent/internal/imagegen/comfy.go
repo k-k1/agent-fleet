@@ -28,14 +28,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"image"
 	"math"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -92,21 +97,28 @@ func (p *comfyProvider) DefaultModel() string {
 // package for which Caps genuinely differs across MULTIPLE models on the same running engine,
 // because switching which one answers is exactly what decision 4 buys.
 //
-// Ops is generate only. edit/inpaint need a per-family image-to-image graph (LoadImage +
-// VAEEncode/VAEEncodeForInpaint feeding the same sampler at denoise<1), which nobody has
-// measured working on this engine yet — a P2 scope decision, not an oversight; sdcpp still
-// offers both.
+// Ops is all three. The per-family image-to-image graph P2 left out is comfyRequestLatent, and
+// like the LoRA chains it is pinned by shape and not yet proven on a GPU.
 func (p *comfyProvider) Caps(model string) Caps {
 	conn, _ := p.conn(context.Background())
 	if strings.TrimSpace(model) == "" {
 		model = p.DefaultModel()
 	}
 	return Caps{
-		Ops:       []Op{OpGenerate},
-		Sizes:     comfySizesFor(conn, model),
-		MaxInputs: 0,
+		// edit and inpaint since ADR 0072 P2's remaining work: each family now has an
+		// image-to-image path (LoadImage + VAEEncode, plus SetLatentNoiseMask for a mask), which
+		// is what the P2 note said was missing rather than out of reach.
+		Ops:   []Op{OpGenerate, OpEdit, OpInpaint},
+		Sizes: comfySizesFor(conn, model),
+		// One, like sdcpp, and for the same reason: a second reference image would need a graph
+		// that stitches or conditions on both, and no such graph has been run here.
+		MaxInputs: 1,
 		MaxCount:  4,
 		Loras:     comfyLoraInfos(conn),
+		// The one route where a seed reaches the sampler: it is this package that builds the
+		// graph, so the seed is an input this file writes rather than a field a vendor API has
+		// to expose (ADR 0069 follow-up, seed).
+		Seed: true,
 	}
 }
 
@@ -322,6 +334,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if !ok {
 		return Result{}, errComfyFamilyNotDeclared(model, conn.BaseModel[model])
 	}
+	if err := comfyCheckInputs(req, caps); err != nil {
+		return Result{}, err
+	}
 	files := resolveComfyFiles(conn.Files[model])
 	loras, err := comfyResolveLoras(conn, family, model, req.Loras)
 	if err != nil {
@@ -336,20 +351,52 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if count <= 0 {
 		count = 1
 	}
-	seed, err := comfyRandomSeed()
+	seed, err := comfySeedFor(req)
 	if err != nil {
 		return Result{}, err
 	}
-	graph, err := comfyBuildGraph(family, files, comfyParams{
-		Prompt: req.Prompt, Seed: seed, Width: w, Height: h, BatchSize: count, Loras: loras})
-	if err != nil {
-		return Result{}, err
+	params := comfyParams{
+		Op: req.Op, Prompt: req.Prompt, Seed: seed, Width: w, Height: h,
+		BatchSize: count, Loras: loras,
 	}
 
 	switchWarning := comfySwitchWarning(conn, model)
 
 	ctx, cancel := context.WithTimeout(ctx, sdcppTimeout)
 	defer cancel()
+
+	// The uploads come FIRST, and not only because the graph has to name them: they are now the
+	// call that meets a cold engine, so they carry the wake retry /prompt used to be alone in
+	// needing. Reading the picture's real dimensions here rather than trusting req.Size is what
+	// keeps klein's schedule honest — Flux2Scheduler derives its shift from a width and height,
+	// and an edit's size is the input picture's, not the caller's.
+	var sizeWarning string
+	if params.isImageToImage() {
+		up, err := p.uploadImage(ctx, conn, req.Inputs[0])
+		if err != nil {
+			return Result{}, err
+		}
+		params.Image = up.name
+		if up.width > 0 && up.height > 0 {
+			if req.Size != "" && req.Size != "auto" && (up.width != w || up.height != h) {
+				sizeWarning = fmt.Sprintf(
+					"size=%s requested, but %s keeps the input picture's own %dx%d", req.Size, req.Op, up.width, up.height)
+			}
+			params.Width, params.Height = up.width, up.height
+		}
+		if req.Op == OpInpaint {
+			mask, err := p.uploadImage(ctx, conn, req.Mask)
+			if err != nil {
+				return Result{}, err
+			}
+			params.Mask = mask.name
+		}
+	}
+
+	graph, err := comfyBuildGraph(family, files, params)
+	if err != nil {
+		return Result{}, err
+	}
 
 	promptID, err := p.submit(ctx, conn, graph, model)
 	if err != nil {
@@ -368,6 +415,12 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
+	if sizeWarning != "" {
+		warnings = append(warnings, sizeWarning)
+	}
+	if cached := comfyCacheWarning(hist); cached != "" {
+		warnings = append(warnings, cached)
+	}
 	return Result{
 		Images:      images,
 		Provider:    ProviderComfy,
@@ -379,6 +432,173 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}, nil
 }
 
+// comfyCheckInputs refuses a request whose op and attachments do not match, before anything is
+// uploaded and before a GPU is woken. The same three rules sdcpp checks, in the same order.
+func comfyCheckInputs(req Request, caps Caps) error {
+	if len(req.Inputs) > caps.MaxInputs {
+		return fmt.Errorf("at most %d reference image (got %d)", caps.MaxInputs, len(req.Inputs))
+	}
+	if req.Op != OpGenerate && len(req.Inputs) == 0 {
+		return fmt.Errorf("%s needs an input image", req.Op)
+	}
+	if req.Op == OpInpaint && strings.TrimSpace(req.Mask) == "" {
+		return errors.New("inpaint needs a mask image")
+	}
+	return nil
+}
+
+// comfyMaxUpload bounds one uploaded picture. The ceiling is not this file's to pick: the engine
+// gateway buffers a request body through io.LimitReader at 32 MiB (engineMaxRequestBody), and
+// LimitReader TRUNCATES rather than failing — so a larger picture would arrive at ComfyUI as a
+// corrupt file and be refused with a decoder error naming nothing the caller can act on. Refusing
+// here says which file and how big.
+const comfyMaxUpload = 24 << 20
+
+// comfyUpload is what POST /upload/image answered: the name the engine filed the picture under,
+// plus the dimensions read locally on the way past.
+type comfyUpload struct {
+	name          string
+	width, height int
+}
+
+// uploadImage puts one local file into ComfyUI's own input directory and answers with the name a
+// graph may then reference.
+//
+// This call exists because LoadImage's `image` input is an ENUMERATION over that directory
+// (nodes.py, v0.34.0) — there is no "load this path" node, and a path from this container would
+// mean nothing on the engine's disk anyway. It is the same shape of trap SD3.5's TripleCLIPLoader
+// was: a value that looks like a file name and is really a member of a list the server builds.
+//
+// The uploaded name is the file's own CONTENT HASH, which buys two things. ComfyUI renames a
+// colliding upload to `x (1).png` unless the bytes are identical, so a fixed name would leave a
+// growing pile of near-duplicates in the input directory; a hash collides only with itself, and
+// the server then recognises the duplicate and keeps the one it has. The extension is preserved
+// because the enum LoadImage builds is filtered by content type, which is read off the name.
+//
+// 🔴 The answer's `name` is used, never the one that was sent. They differ exactly when the server
+// decided to rename, and a graph naming the file it MEANT to upload would fail validation against
+// a directory listing that has the other one.
+func (p *comfyProvider) uploadImage(ctx context.Context, conn EngineConn, path string) (comfyUpload, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return comfyUpload{}, fmt.Errorf("could not read %s: %w", path, err)
+	}
+	if len(raw) > comfyMaxUpload {
+		return comfyUpload{}, fmt.Errorf("%s is %d bytes, over this route's %d-byte limit for one picture",
+			path, len(raw), comfyMaxUpload)
+	}
+	up := comfyUpload{name: comfyUploadName(raw, path)}
+	if cfg, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil {
+		up.width, up.height = cfg.Width, cfg.Height
+	}
+
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	part, err := mw.CreateFormFile("image", up.name)
+	if err != nil {
+		return comfyUpload{}, err
+	}
+	if _, err := part.Write(raw); err != nil {
+		return comfyUpload{}, err
+	}
+	// type=input is where LoadImage looks by default, so the graph can name the file with no
+	// `[type]` annotation. Deliberately no overwrite: identical bytes are recognised as a
+	// duplicate and nothing is written at all.
+	for k, v := range map[string]string{"type": "input", "subfolder": ""} {
+		if err := mw.WriteField(k, v); err != nil {
+			return comfyUpload{}, err
+		}
+	}
+	if err := mw.Close(); err != nil {
+		return comfyUpload{}, err
+	}
+	body := buf.Bytes()
+	ctype := mw.FormDataContentType()
+
+	answer, err := p.sendWithWake(ctx, conn, "/upload/image", func() (*http.Request, error) {
+		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/upload/image"), bytes.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		httpReq.Header.Set("Content-Type", ctype)
+		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
+		return httpReq, nil
+	})
+	if err != nil {
+		return comfyUpload{}, err
+	}
+	var doc struct {
+		Name      string `json:"name"`
+		Subfolder string `json:"subfolder"`
+	}
+	if json.Unmarshal(answer, &doc) != nil || doc.Name == "" {
+		return comfyUpload{}, fmt.Errorf("the image engine's /upload/image answer had no name: %s", tail(string(answer), 400))
+	}
+	up.name = doc.Name
+	if doc.Subfolder != "" {
+		// The graph names a path relative to the input directory, the same shape the loras list
+		// uses. Nothing here asks for a subfolder, so this only ever fires if a future engine
+		// starts choosing one.
+		up.name = doc.Subfolder + "/" + doc.Name
+	}
+	return up, nil
+}
+
+// comfyUploadName is the content hash plus an extension ComfyUI's own content-type filter will
+// accept. The source file's extension is preferred and the bytes decide when it says nothing —
+// a name with no usable extension is one LoadImage's enum drops, which reads as "the upload
+// worked and the graph is wrong".
+func comfyUploadName(raw []byte, path string) string {
+	sum := sha256.Sum256(raw)
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".webp":
+	default:
+		switch http.DetectContentType(raw) {
+		case "image/jpeg":
+			ext = ".jpg"
+		case "image/webp":
+			ext = ".webp"
+		default:
+			ext = ".png"
+		}
+	}
+	return "af-" + hex.EncodeToString(sum[:8]) + ext
+}
+
+// sendWithWake runs one request against the engine through the same retry-on-503-engine_waking
+// loop /prompt uses, remaking the request per attempt because a body reader cannot be replayed.
+// what names the call in the failure, so a refusal says which of the four endpoints refused.
+func (p *comfyProvider) sendWithWake(ctx context.Context, conn EngineConn, what string, make func() (*http.Request, error)) ([]byte, error) {
+	lastWaking := ""
+	for attempt := 1; ; attempt++ {
+		httpReq, err := make()
+		if err != nil {
+			return nil, err
+		}
+		respBody, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, sdcppGaveUp(attempt, lastWaking)
+			}
+			return nil, err
+		}
+		if status < 300 {
+			return respBody, nil
+		}
+		if !sdcppRetryable(status, respBody) {
+			return nil, fmt.Errorf("the image engine's %s answered %d %s: %s",
+				what, status, http.StatusText(status), sdcppErrText(respBody))
+		}
+		lastWaking = sdcppErrText(respBody)
+		select {
+		case <-ctx.Done():
+			return nil, sdcppGaveUp(attempt, lastWaking)
+		case <-time.After(retryAfter):
+		}
+	}
+}
+
 // comfyWarnings is what this route knows it cannot honour, mirroring sdcppWarnings.
 func comfyWarnings(req Request) []string {
 	var out []string
@@ -388,10 +608,25 @@ func comfyWarnings(req Request) []string {
 	return out
 }
 
-// comfyRandomSeed picks a fresh seed per request. Nothing in Request lets a caller pin one —
-// ADR 0069's vocabulary is provider-neutral and has no seed field — and ComfyUI caches a node's
-// output by its inputs (measured, bench-image-engine.py), so replaying the same graph twice
-// would answer the second call from cache in half a second rather than generating anything.
+// comfySeedFor is the seed this request samples from: the caller's, when they pinned one, and a
+// fresh random one otherwise.
+//
+// A pinned seed is what makes two requests comparable, which is the only way to show that one
+// changed thing — a LoRA, a checkpoint — is what changed the picture (ADR 0072 phase P3). The
+// default stays random because that is what a caller who says nothing means, and because of the
+// cache below.
+func comfySeedFor(req Request) (int64, error) {
+	if req.Seed != nil {
+		return *req.Seed, nil
+	}
+	return comfyRandomSeed()
+}
+
+// comfyRandomSeed picks a fresh seed for a request that pinned none. ComfyUI caches a node's
+// output by its inputs (measured, bench-image-engine.py), so replaying an identical graph answers
+// the second call from cache in half a second rather than generating anything — which is the
+// RIGHT answer for a caller who pinned a seed and is asking for the same picture, and a confusing
+// one for a caller who did not. comfyCacheWarning says which of the two happened.
 func comfyRandomSeed() (int64, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -401,19 +636,19 @@ func comfyRandomSeed() (int64, error) {
 	return n, nil
 }
 
-// submit is POST /prompt, with the same retry-on-503-engine_waking loop as sdcpp.go's send —
-// this is the ONE call of the three that can hit a stopped engine, so it is the one that has to
-// survive the wake.
+// submit is POST /prompt, through the same retry-on-503-engine_waking loop as sdcpp.go's send.
+// For a plain generate it is the first call of the three and therefore the one that meets a
+// stopped engine; for edit and inpaint the uploads got there first, which is exactly why they
+// share this loop rather than each having their own.
 func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfyGraph, model string) (string, error) {
 	body, err := json.Marshal(map[string]any{"prompt": graph, "client_id": "af-agent"})
 	if err != nil {
 		return "", err
 	}
-	lastWaking := ""
-	for attempt := 1; ; attempt++ {
+	respBody, err := p.sendWithWake(ctx, conn, "/prompt", func() (*http.Request, error) {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, sdcppURL(conn, "/prompt"), bytes.NewReader(body))
 		if err != nil {
-			return "", err
+			return nil, err
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
@@ -421,35 +656,19 @@ func (p *comfyProvider) submit(ctx context.Context, conn EngineConn, graph comfy
 		// (ADR 0072 decision 7) — ComfyUI's /prompt answer carries only a queue id, never a
 		// model name, so this header is the only way the CP learns what became warm.
 		httpReq.Header.Set("X-AF-Model", model)
-
-		respBody, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
-		if err != nil {
-			if ctx.Err() != nil {
-				return "", sdcppGaveUp(attempt, lastWaking)
-			}
-			return "", err
-		}
-		if status < 300 {
-			var doc struct {
-				PromptID string `json:"prompt_id"`
-				Error    any    `json:"error"`
-			}
-			if json.Unmarshal(respBody, &doc) != nil || doc.PromptID == "" {
-				return "", fmt.Errorf("the image engine's /prompt answer had no prompt_id: %s", tail(string(respBody), 400))
-			}
-			return doc.PromptID, nil
-		}
-		if !sdcppRetryable(status, respBody) {
-			return "", fmt.Errorf("the image engine answered %d %s: %s",
-				status, http.StatusText(status), sdcppErrText(respBody))
-		}
-		lastWaking = sdcppErrText(respBody)
-		select {
-		case <-ctx.Done():
-			return "", sdcppGaveUp(attempt, lastWaking)
-		case <-time.After(retryAfter):
-		}
+		return httpReq, nil
+	})
+	if err != nil {
+		return "", err
 	}
+	var doc struct {
+		PromptID string `json:"prompt_id"`
+		Error    any    `json:"error"`
+	}
+	if json.Unmarshal(respBody, &doc) != nil || doc.PromptID == "" {
+		return "", fmt.Errorf("the image engine's /prompt answer had no prompt_id: %s", tail(string(respBody), 400))
+	}
+	return doc.PromptID, nil
 }
 
 // comfyPollEvery is how often /history is asked once the engine has accepted the prompt (i.e.
@@ -561,6 +780,49 @@ func comfyErrorMessages(hist comfyHistory) string {
 		return "unknown error"
 	}
 	return tail(string(b), 800)
+}
+
+// comfySaveNode is the id every template gives its SaveImage node. It is the graph's terminal
+// output, so "was this node cached" is the same question as "was any picture made at all".
+const comfySaveNode = "save"
+
+// comfyCacheWarning says, only when it actually happened, that the engine returned a picture it
+// already had instead of generating one.
+//
+// The signal is ComfyUI's OWN `execution_cached` status message, which lists the node ids it
+// skipped (execution.py, v0.34.0) and rides in /history's status.messages — the same field the
+// error path already reads. So this is a fact the engine reported, not a guess from a suspiciously
+// short elapsed time.
+//
+// Why warn at all, given that a repeat of an identical seeded request SHOULD return the identical
+// picture: because the two readings of a half-second answer are opposite. A caller comparing
+// "with the LoRA" against "without" wants to know nothing was recomputed if the graphs happened to
+// match; a caller who changed something the graph does not carry (ADR 0069 has no negative prompt,
+// no steps, no cfg) would otherwise conclude the engine ignored a change that never reached it.
+// Silent when nothing was cached, which is every first call — so it costs the common path nothing.
+func comfyCacheWarning(hist comfyHistory) string {
+	for _, m := range hist.Status.Messages {
+		pair, ok := m.([]any)
+		if !ok || len(pair) < 2 {
+			continue
+		}
+		if event, _ := pair[0].(string); event != "execution_cached" {
+			continue
+		}
+		data, ok := pair[1].(map[string]any)
+		if !ok {
+			continue
+		}
+		nodes, _ := data["nodes"].([]any)
+		for _, n := range nodes {
+			if id, _ := n.(string); id == comfySaveNode {
+				return "this picture came from the engine's cache, not from a new generation — " +
+					"the graph was identical to one it had already run (same seed, prompt, size and model). " +
+					"Anything you changed that is not one of those does not reach this route"
+			}
+		}
+	}
+	return ""
 }
 
 // fetchImages downloads every output image GET /view names, in the order ComfyUI's own outputs

@@ -13,7 +13,12 @@
   「P2 の残作業 4・5 を実機で押した」節。3 つとも生成できるようになったが、**SD3.5 は
   テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
   欠落はさらに 6 件（5〜10）。**5 ファミリーすべてがこの配備の GPU で provider を通って絵を返した。**
-  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・実機未検証**（「P6 の実装」節）。
+  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・同日に実機検証済み**
+  （「P6 の実装」節と「P6 を実機で押した」節）。完了の定義は満たした——空カタログではエンジンが
+  起動せず、1 行登録すると 819 秒でその 1 モデルだけを同期して warm になる。**移行の罠は開発配備で
+  armed だった**（`<役>Enabled` が両方とも空）ので、翻訳を新テンプレートの適用に載せて先に払った。
+  そこで欠落を 2 件踏んだ——`<役>Enabled=true` だけの「無害な事前更新」は CFN が空の変更集合として
+  断ること、**管理 API がカタログ行を読み戻せない**こと（`s3Key` が GET に無い）。
   P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -538,6 +543,24 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      その id・`contextTokens` と、`60-engines` が表に書き足す `modelS3Key` から**1 行だけ**
      作る。今日の配備は CP を上げた瞬間に今日のモデルがカタログにあり、何も変わらない。
 
+   > ✅ **補遺（2026-09-11）——行は読み戻せる。** admin の行は「このモデルは何か」は言うが
+   > 「どう宣言されたか」を言っておらず、`files` は basename、S3 キー・Flag・サイズ・`args` は
+   > wire のどこにも無かった。P6 でカタログが**唯一の申告**になった以上、これは「行を消したら
+   > 消した本人の控えでしか戻せない」ということである（実機で 1 件踏んだ。1 ファイルの gguf
+   > だったので手元の控えから戻せたが、FLUX.1 の 4 ファイル 4 Flag では成立しない）。P5 の
+   > トークンと違い、**読めないことがここでは仕様ではない**——CP は値を持っている。
+   > 行に `file_rows`（`{s3Key, flag, bytes}`）と `args` を足し、**`POST …/models` が読む形と
+   > 同じ**にした: 読んだ JSON をそのまま POST すれば同じ宣言が戻る。往復はテストで固定して
+   > いる（陽性対照: `file_rows` を 1 つ落とすと再登録が 400 で断られ、Flag だけ落とすと
+   > 無印のファイル 4 本になる）。`files`（basename）は Console が読んでいるのでそのまま残し、
+   > 新しい欄は super_admin の行だけに出す——Agent のカタログは `engineCatalogModelRow` が
+   > 別に組んでおり、S3 キーは載らない。往復で戻らないものは 3 つあり、どれも戻ってはいけない
+   > ものである: `enabled` / `selected`（再登録は必ず無効で作る）、ライセンスの受諾（人の行為の
+   > 記録であって欄の写しではない）、`created_at`。
+   > **Console はキーを 1 か所だけに出す**——「登録を消す」の確認欄。行の meta 行に出すと
+   > 分割モデルで 4 行増え、選ぶ作業には読まれない値である一方、確認欄は**この行が何だったかを
+   > 読める最後の瞬間**であり、purge を選んだときに削除タスクへ渡されるキーの一覧でもある。
+
 8. **由来と使用量はモデルと LoRA を持つ。** `generate_image` の結果の `model` はチェック
    ポイント id、`provenance` に `loras: [{name, weight}]` と `sha256`（マニフェストから。
    0071 決定 10 の「ファイル名と sha256」）。llm の usage 行の `model` はルーターが応答に
@@ -654,6 +677,22 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
       `extra_gated_prompt` を落とすのは「少し軽くなる」ではない。
     - **検索は取り込みの前提にしない。** `owner/name` と URL の直接入力は残る。外向きを絞った
       配備では検索も落ちるが、そこでは決定 6 のとおり手打ちの経路が主経路に戻るだけである。
+    - **元のページへのリンクと公開日**（2026-09-11 に追加）。一覧の 1 行から**上流のページを
+      開けるようにし**、`published_at`（HF は `createdAt`、Civitai は版の `publishedAt`）を
+      `updated_at` と**対で**出す。片方だけでは「1 年前に公開されて先週まで更新されている」
+      モデルと「先週公開された」モデルの区別がつかない。🔴 **表示だけで、並びは変えない**
+      ——上の「新着は出さない」はそのまま生きている。**URL は CP が組む**（`url`）: 2 つの
+      上流でページの綴りが違ううえ、Civitai は `/models/<モデル id>?modelVersionId=<版 id>` で
+      **モデル id が要る**——一覧の `ref` は版 id なので、Console 側では組めない。3 つ目の
+      上流が増えたときに直す場所も 1 か所で済む。`updated_at` は Civitai では**空にした**:
+      `/api/v1/models` が返す日付は `publishedAt` だけで（実測 2026-09-11）、それを
+      「更新」として出していたのは名前が違うだけの同じ日付だった。
+      実描画で測った（#496 のハーネス・ja / en）: **ja は折り返しが 1 行も増えない**
+      （カードの高さ 118/118/104 px は前と同じ）。2 つの日付を**1 つの flex 要素**に
+      まとめたのがその差で、別々だと最も情報の多いカードで 392 px と、strip の 390 px を
+      **2 px** 超えて 2 行になり、カードが 118 → 146 px に伸びていた。**en は伸びる**
+      （145/145/131 px）——"Published"・"Updated" と " downloads" が長く、日付の対が
+      1 行に入らない。対は分かれずまとめて次の行に落ちるので、読み方は壊れない。
 
 ## 実測で解けた点（2026-09-08・開発配備の g6.xlarge）
 
@@ -1865,7 +1904,7 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
   取り込みタスクのログに 401 が出ない。**（**2026-09-10 に実機で満たした**——「P5 の実装」節と
   「P5 を実機で押した」節。P5 の他の項目は未着手のまま。）
-- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機未検証（補遺「P6 の実装」）。**
+- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機検証済み（補遺「P6 の実装」「P6 を実機で押した」）。**
   （2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
   追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
   `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
@@ -1874,6 +1913,9 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   サービスが安定し、空のカタログへ Console からモデルを登録して、エンジンがそれで起動する。**
   🔴 加えてアップグレードノートが、`<役>ModelS3Key` だけを書いていた配備に対して**先に
   `<役>Enabled=true` を足せ**と言っていること——サービスを作る条件が今はその鍵を読んでいる。
+  （**2026-09-10 に開発配備で満たした**——「P6 を実機で押した」節。移行の側も同じ日に踏んだ:
+  その配備は `<役>Enabled` が両方とも空で、翻訳を先に払わなければ `update.sh` の更新が
+  「変更なし」と言いながら両役を消していた。)
 
 ## 確認した出典（2026-09-08）
 
@@ -2558,6 +2600,156 @@ super_admin 側の運用（許可の付与と、その結果の受諾記録の�
 エンジンがそれで起動すること。加えて移行の側——`<役>ModelS3Key` を持つ捕捉から standup を
 通し、役が消えずに `<役>Enabled=true` へ翻訳されること。
 
+（**2026-09-10 に実機で押した**——次節。完了の定義は満たした。移行の罠は開発配備で
+armed だった。）
+
+## P6 を実機で押した（2026-09-10・開発配備）
+
+前節の完了の定義を、GPU を 1 回だけ起こして押した。**満たした。** 時刻は UTC、秒数と
+バイト数は API とログの実測である。
+
+### 移行の罠は armed だった——そして「無害な事前更新」は通らない
+
+配備の前に `describe-stacks` で live の 60-engines を読んだ。**`LlmEnabled` も `ImageEnabled`
+も空**で、両役は `<役>ModelS3Key` の枝だけで立っていた。つまりこの配備は、前節が心配した
+まさにその形である。
+
+🔴 **`<役>Enabled=true` を「先に、無害に」記録することはできない。** `update-stack
+--use-previous-template` で他を `UsePreviousValue` に、その 2 つだけ `true` にして投げると、
+CloudFormation はこう断る:
+
+```
+An error occurred (ValidationError) when calling the UpdateStack operation:
+No updates are to be performed.
+```
+
+理由は、配備済みテンプレートで `LlmEnabled` が **Conditions からしか参照されていない**こと
+である。`!Or` の第 1 枝が真になるだけで条件の値は変わらず、**リソースが 1 つも変わらない**——
+CFN は空の変更集合を実行しない。**無害すぎて通らない**わけで、翻訳は新テンプレートの適用と
+同じ 1 回の更新に載せるしかない。実際に通した形はこれである:
+
+```
+aws cloudformation deploy --stack-name <60-engines> --template-file cfn/60-engines.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true
+```
+
+結果は `Successfully created/updated stack`。**`ecs list-services` の差分はゼロ**（両役の
+サービス・その他 3 本ともそのまま）、6 パラメータは消え、`LlmEnabled` / `ImageEnabled` は
+`true` になった。エンジン表（SSM `/af-ws/engines`）からも `models` / `contextTokens` /
+`maxOutputTokens` が消えている。
+
+**`af_param_drop` はこの経路では要らなかった。** `cloudformation deploy` が拒むのは*渡した*
+未宣言キーだけで、`update.sh` は overrides を 1 つも渡さない——テンプレートから消えた 6 つは
+拒否されずに黙って消える。`af_param_drop` が要るのは捕捉を読んで渡す `standup.sh` の側だけで
+ある。
+
+そのあと `dev-deploy.sh` を流した。その中の 60-engines はこう言った:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+No changes to deploy. Stack af-ecs-engines is up to date
+```
+
+🔴 **この 1 行が、手当てをしていなければ両役を消していた更新そのものである。** `deploy` は
+成功し、出力は「変更なし」と読める。エラーはどこにも出ない。前節の「ノートが要るのはその
+ためである」は、実機ではこの見た目で現れる。
+
+### 完了の定義
+
+**空カタログでエンジンは起動しない。** llm の 2 行を（`?purge=1` を付けずに）消し、
+`has_models: false` にしてから `mode: on` にした。ここで**一度 `desired: 1` まで行く**——
+モードの切り替えは即座に ECS を動かし、`no_model` を見るのは次のコントローラのティックだから
+である。実測の並びはこう:
+
+```
+15:09:38  PUT mode=on  → desired=1
+15:09:41  (service …-engines-llm) has started 1 tasks: (task 931031…)
+15:09:47  engine llm: stop (no_model)            ← CP のログ、そのまま
+15:09:50  (service …-engines-llm) stopped 1 pending tasks.
+15:09:51  (service …-engines-llm) has reached a steady state.
+```
+
+**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、箱は買われなかった
+（`desiredCount` はその後 3 分の観測でも 0 のまま）。「起動しない」は正しいが、**「一度も
+要求しない」ではない**——`decideEngineAction` は正しく `no_model` を返しているのに、その手前で
+モードの経路が ECS を先に動かしている。空カタログのまま `on` を押し続ける配備では、この 9 秒が
+ティックごとに繰り返される形になる。
+
+**1 行だけ登録すると、その 1 モデルで起動する。** 控えのうち小さい方（1.1 GB の
+`qwen2.5-coder-1.5b`。18.5 GB の 30B ではなく——同じことを 1/17 のバイト数で示せる）を
+`POST …/models` で登録して有効化した:
+
+```
+15:14:33  engines: llm catalogue row registered: qwen2.5-coder-1.5b (1 file(s), disabled)
+15:14:33  engines: llm active set published to /af-ws/engines/llm/active (149 bytes)
+15:14:54  engine llm: start (admin_on)
+15:26:29  (service …-engines-llm) has started 1 tasks: (task 9345d9…)
+15:28:12  engine llm: warmed up (ready)
+```
+
+**有効化から warm まで 819 秒（13 分 39 秒）。** うち **692 秒が capacity provider の
+g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、箱が
+できてから warm までは 103 秒だった。0071・P0 の 527 秒より長いのは、この日は容量の取得に
+時間がかかったからで、モデルの同期ではない——同期は 5 秒である:
+
+```
+engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'
+engine fetch: llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1117320768 bytes in 5s
+engine fetch: preset /models/llm/presets.ini holds 1 model(s), 'qwen2.5-coder-1.5b' loaded at startup
+engine fetch: cmdline = --models-preset /models/llm/presets.ini
+engine fetch: engine may start; 0 file(s) still to sync
+```
+
+**箱はカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
+触っていない。これが決定 1 の「カタログが申告のすべて」が実経路で効いていることの直接の証拠で
+ある。エンジン自身のログも同じことを言う:
+
+```
+srv   load_models: Loaded 1 custom model presets from /models/llm/presets.ini
+srv    operator():   * qwen2.5-coder-1.5b
+srv  llama_server: starting server in router mode. models will be automatically loaded on-demand
+srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+```
+
+⚠️ **completion そのものは投げていない。** ゲートウェイ（`/engine/{key}/v1/…`）は Workspace が
+発行したトークンでしか通らず、管理者の cookie では入れない——実測 10 と 13 が同じ制限を
+すでに記録している。代わりに使った証拠は上の 2 つのログと、次の warm 判定である。
+
+### warmProbe が実機で通った（実機で踏んだ穴 13 の代償が解けた）
+
+穴 13 は「CP 側の warmProbe は実機で通っていない」を代償として残していた。理由は、当時の
+実機がコントローラに触られない `run-task` で箱を起こしており、`maintainWarm` はサービスの
+状態でしか呼ばれないからである。**今回はサービス経由（`mode: on` → `admin_on`）で起こしたので、
+CP のプローブがルーターの `/models` を読んで warm を立てた**: `GET /api/admin/engines` の llm が
+`warm: true`、CP のログが `engine llm: warmed up (ready)`。これは同時に、エンジンが
+`/models` に**その 1 モデルを載せて答えた**ことでもある——`warm` の判定はモードごとの
+`status.value` を読む（決定 3 の再定義）ので、答えが空なら立たない。
+
+### 🔴 欠落——管理 API はカタログ行を読み戻せない
+
+後片付けで踏んだ。**`GET /api/admin/engines` は行の `s3Key` / `flag` / `bytes` / `args` を
+返さない**（`files` はキーの `path.Base` だけ）。P6 でカタログが**唯一の申告**になった以上、
+これは「行を消したら、消した本人しか戻せない」を意味する。Console の側も同じで、フォームは
+`s3Key` を**書く**ためだけに持っていて、読み戻しはしない。
+
+今回は復元できた——llm は 1 ファイルの gguf で、キーは機械的に `llm/<ファイル名>` であり、
+S3 の一覧と突き合わせて確かめられたからである。`bytes` は **0 のまま**にした: 実バイト数を
+入れると `vram_need_source` が `unknown` から `floor` に変わり、元の行とは別物になる。結果は
+2 行とも**API が返す全フィールドで一致**した。だが**分割モデルなら成立しない**——FLUX.1 の 4
+ファイルや SD3.5 の 4 ファイルは、キーを人が覚えているか、どこかに控えているかでしか戻せない。
+「バイト列は S3 に残っているのに、それを指す行を作り直せない」という、決定 7 の削除の 2 段
+確認が守ろうとしたものと同じ穴が、読み出し側に開いている。P5 の HF トークンとは事情が違う
+（あれは*読めないことが仕様*）ので、ここは塞げる。
+
+### 消したもの・残したもの
+
+llm のカタログは元通り（2 行・両方 `enabled`・`qwen3-coder-30b-a3b` が `default`、mode は
+`ondemand`）。行の削除に `?purge=1` は使っていないので、S3 のバイト列は 2 つとも無傷
+（18,556,689,568 B と 1,117,320,768 B）。GPU は `mode: off` で返した——15:37:39 に off、
+15:40:20 に `stopped`、G 系の容器インスタンスは 15:39 台に消えた（**約 2 分**で、7〜8 分の
+drain は要らなかった）。image 役には一切触っていない。
+
 ## 追記 — P3 の LoRA、Agent 側の実装（2026-09-10）
 
 **この回で入ったのは Agent 側だけである。** フェーズ節の P3 の完了の定義——「同じ prompt・
@@ -2677,3 +2869,128 @@ ja / en × image / llm の 4 通りで測って、どのラベルも 2 行以内
 
 **まだ言えないこと**: 実際の Hugging Face / Civitai の応答での見え方（fixture は wire の形に
 合わせた作り物である）、gated リポジトリでトークンが無いときの拒否表示、そして phone 幅。
+
+## P3 と P2 の残りを実機に当てた（2026-09-11・開発配備）
+
+image 役を comfy で 2 回起こし、`generate_image` を REST で駆動したセッションから呼んだ。
+GPU 時間は合計約 52 分（g6.xlarge・l4 段）。**結論を先に書く: P3 の完了の定義は「LoRA が
+効いている」側は満たしたが「同じ seed で」の側は満たしていない——そして満たせない。
+P2 の残り（edit / inpaint）は配備が古く、実機に当てられなかった。**
+
+### P3——LoRA は実機で効いた
+
+`nerijs/pixel-art-xl`（170,543,052 バイト・`creativeml-openrail-m`・gated ではない）を
+`image/loras/pixel-art-xl.safetensors` に取り込んだ。取り込みタスクは Fargate なので G 系
+vCPU を使わず、**75 秒未満**で done。
+
+同じ prompt（`a red fox sitting on a mossy rock in a misty forest at dawn`）・同じ
+`sdxl-base-1.0` で:
+
+- LoRA 無し: `b86dc9971348f9cf8d0f7fd851a48d1e123c4f6a0bc364b3519bf3c910535fda`（1,495,544 バイト）
+- LoRA 有り（weight 1）: `40ffa88ee2f4926e61313b24a3bc6bf810b8bff953309e427ab79e20d3902a61`（1,333,432 バイト）
+
+🔴 **これは「同じ seed で絵が変わった」の証明ではない。** provider は要求ごとに乱数で seed を
+選び（`comfyRandomSeed`。ComfyUI がノードの入力でキャッシュするため）、0069 の語彙に seed
+の欄が無い。つまり**完了の定義の前半は、今日の `generate_image` では表現できない**。
+seed を要求で固定できる手段を足さない限り、この行は永久に閉じられない。
+
+代わりに証明できたことの方が、実は強い: **`LoraLoader` の `lora_name` は
+`models/loras` の列挙であって自由文字列ではない**（SD3.5 の `clip_name1` と同じ形）。
+名前が箱に無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
+成功したという事実が、(a) ファイルが `image/loras/` から `models/loras` に降りていること、
+(b) basename が列挙と一致していること、(c) `LoraLoader` が実際に走ったことを同時に示している。**
+
+**baseModel 不一致の拒否も実機で確認した**（レビュー決定 5 が Agent に移した拒否）:
+
+```
+comfy: LoRA pixel-art-xl was trained for the sdxl checkpoint family and flux2-klein-4b is
+flux2-klein — they cannot be combined; a mismatched LoRA does not fail, it quietly does
+nothing to the picture
+```
+
+チェックポイントの切り替えは起きていない——拒否は組み立ての段階で返り、GPU に触っていない。
+フェーズ節の「SD1.5 の LoRA が SDXL で enum に出ない」は、この**名指しの拒否**という形で
+満たしている（決定 5 の改訂が enum の絞り込みを禁じているため。2026-09-10 の補遺参照）。
+
+### 🔴 `imageProviderOrder` に comfy が無い配備では、auto がフリート自身のエンジンを最後に置く
+
+開発配備の ui-prefs は `imageProviderOrder: ["sdcpp","agy","codex"]` だった。comfy はこの
+リストが書かれた後に増えた provider なので、`effectiveOrder` の規則どおり**末尾に足される**
+——つまり `auto` の順は sdcpp → agy → codex → comfy になる。sdcpp はこの配備には存在せず
+（役は comfy）、agy と codex はログイン次第で ready になる。**`provider` を省いた
+`generate_image` は、フリートが金を払っている GPU ではなく利用者のプランを先に使う。**
+
+今回の検証は全呼び出しで `provider="comfy"` を明示したので影響を受けていないが、これは
+`fallbackWarnings` が書かれた理由そのものの静かな版である。設定を書き換えた覚えが無くても、
+**provider が増えた日に既存の保存済み設定が意味を変える**。
+
+### P2 の残り（edit / inpaint）——実機に当てられなかった
+
+配備されている Agent は `0.18.1-dev-8eb6bc66` で、image-to-image を足したコミットより前。
+実機は正直に次を返した:
+
+```
+画像を生成できませんでした: no image provider can serve this request: comfy cannot do edit
+```
+
+このレーンは配備を走らせない約束なので、ここで止めた。**5 族の edit / inpaint グラフは
+形しか固定されていない**——SD3.5 のときと同じ状態であり、次に配備する回で実機に当てるまで
+「動く」とは書けない。
+
+### 欠落 7 の窓は、2 回のコールドスタートのどちらでも開かなかった
+
+start モデル以外（flux1-dev-fp8。同期 168 秒）を、エンジンが応答できるようになった直後に
+要求した。2 回とも**成功**し、裸の 400 は出なかった。
+
+| | mode=on | running | 最初の flux1 生成 |
+|---|---|---|---|
+| 1 回目 | 15:47:18Z | 15:52:02Z（4 分 44 秒） | 15:53:45Z（+103 秒） |
+| 2 回目 | 16:29:20Z | 16:40:32〜16:40:59Z（約 11 分 30 秒） | 16:41:59Z（+60 秒） |
+
+理由は単純で、**インスタンスの取得と起動（4 分 44 秒・11 分 30 秒）が、残りモデルの同期
+（P0 実測で 12 ファイル 48 GB を約 270 秒）より長い**。エンジンが health を通す頃には
+keys.rest が終わっている。2 回目が長いのは容器インスタンスを取り直して EBS が新品になり、
+全モデルを再同期したからで、それでも窓は開かなかった。
+
+**欠落 7 が消えたという意味ではない。** 窓が開く条件は「同期が起動より長いこと」であり、
+温まった容量にすぐ載る配備、あるいは rest がもっと大きいカタログでは開く。ただし
+**この配備の既定の形では踏みにくい**——修正の優先度を決めるときの材料として書いておく。
+修正は別レーンの持ち場なので触っていない。
+
+### 🔴 駆動に使ったセッションは測定器ではなかった
+
+`generate_image` は自分の MCP からは叩けないので、開発配備側に opencode の managed
+セッションを立てて REST で駆動した。「ツールの返り値を一字一句写せ、推測は禁止」と
+指示したうえで、**3 回の捏造と 1 回の引数混入があった**:
+
+- 2 つのサイズの違うファイルに対して**同一の 77 桁**を `sha256sum` の出力として貼った
+  （実行し直したら正しい 2 つの異なる hex が出た）。
+- 呼んでいないプロンプト（"Cyberpunk cityscape" など）を要約に書いた。
+- `sdxl` と `sdxl` が「族が違うので組み合わせられない」という、コードが出せない形の
+  エラー文を貼った。
+- 自動要約（compact）をまたぐと、**明示的に禁止した `loras` 引数を毎回足すようになった**。
+  これのせいで欠落 7 の観測は 1 回無駄になっている——足された LoRA が族不一致になり、
+  Agent が組み立て段階で断ってエンジンに届かなかった。
+
+採用したのは**ツールが返した JSON のうち内部矛盾の無いもの**（パス・バイト数・寸法）と、
+**エンジン側の時刻**（生成ファイル名のナノ秒タイムスタンプ）だけである。実機検証を
+セッション越しにやる限り、この選別は毎回必要になる。
+
+## 追記 — P3 の完了の定義に seed が届くようになった（2026-09-11）
+
+2026-09-11 の実機検証で「**同じ seed で**」が `generate_image` では表現できないと書いた。
+それを塞いだ: ADR 0069 の語彙に `seed`（整数・省略時は今までどおり乱数）を足し、comfy provider は
+指定された seed を各族のサンプラーへそのまま入れる。理由と、なぜ seed だけが provider 中立の
+語彙に入る資格を持つのかは **ADR 0069 の追記「`seed` を語彙に足した」**に書いた。
+
+P3 の完了の定義に対する現在地:
+
+- 「SD1.5 の LoRA が SDXL で enum に出ない」——**満たしている**（名指しの拒否という形で。
+  2026-09-10 と 2026-09-11 の補遺）。
+- 「同じ prompt・同じ seed で LoRA の有無が絵を変える」——**seed を固定できるようになった。
+  実機での確認は未**。次に配備する回に、P2 の残り（5 族の edit / inpaint）とまとめて H3 として
+  当てる。それまで、この行を「閉じた」と書いてはいけない。
+
+seed を固定した 2 回目の要求が ComfyUI の出力キャッシュに当たる件（0.5 秒で同じ絵）は、
+**当たったときだけ** warnings で言う。判定はエンジン自身の `execution_cached` メッセージで、
+経過時間の推測ではない。設計の理由は同じく 0069 の追記にある。

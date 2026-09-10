@@ -136,6 +136,23 @@ func TestRequestWarnings(t *testing.T) {
 	if got := requestWarnings(loraReq, res, withLoras); len(got) != 0 {
 		t.Fatalf("warnings = %v, want none from the core", got)
 	}
+	// A dropped seed is the most invisible loss of the three: the picture is fine, and the caller
+	// only finds out on the SECOND call, which is the whole reason they pinned one.
+	seed := int64(1234)
+	seedReq := Request{Count: 1, Size: "1254x1254", Seed: &seed}
+	if got := requestWarnings(seedReq, res, none); len(got) != 1 ||
+		!strings.Contains(got[0], "seed=1234 requested") {
+		t.Fatalf("warnings = %v, want the seed one", got)
+	}
+	if got := requestWarnings(seedReq, res, Caps{Seed: true}); len(got) != 0 {
+		t.Fatalf("warnings = %v, want none from a route that pins it", got)
+	}
+	// Seed 0 warns as loudly as any other, which it would not if the check read the value
+	// instead of whether one was given.
+	zero := int64(0)
+	if got := requestWarnings(Request{Count: 1, Size: "1254x1254", Seed: &zero}, res, none); len(got) != 1 {
+		t.Fatalf("warnings = %v, want seed 0 reported too", got)
+	}
 }
 
 // --- the codex route ----------------------------------------------------------------------

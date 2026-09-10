@@ -1042,6 +1042,19 @@ func mcpStdioImageGenTools(offer imageGenOffer) []map[string]any {
 				"**Specify it only when the user asked for a specific look** — otherwise prefer the one marked as already loaded. " +
 				"Available: " + strings.Join(lines, " / ")}
 	}
+	// seed is offered only where a route actually takes one — today the fleet's own ComfyUI
+	// engine alone. One line of description on purpose: every advertised tool's text is a fixed
+	// cost paid by every session on every tools/list, so a parameter earns words by being hard
+	// to use rather than by existing.
+	//
+	// The ceiling is JavaScript's safe-integer limit rather than the sampler's own range: this
+	// number is carried as JSON to clients that parse it into a double, and anything above 2^53-1
+	// comes back as a DIFFERENT seed than the one that was sent — which would silently break the
+	// one property a seed exists to provide.
+	if offer.Seed {
+		props["seed"] = map[string]any{"type": "integer", "minimum": 0, "maximum": 9007199254740991,
+			"description": "Fix the sampler's starting noise so two calls differing in ONE thing can be compared. Omit it and every call is a different picture"}
+	}
 	// loras is offered as soon as ONE exists, unlike model: applying it or not applying it are
 	// already two different pictures, so a single-entry list is a real choice (ADR 0072
 	// decision 5, phase P3).
@@ -1169,6 +1182,10 @@ type imageGenOffer struct {
 	// Loras is the union of every offered provider's fine-tunes (ADR 0072 decision 5, phase P3),
 	// by the same reasoning as Models.
 	Loras []mcpImageGenLora
+	// Seed is true when ANY offered provider takes a pinned seed. A union like the rest: the
+	// argument is advertised when it reaches something, and a route that ignores it says so in
+	// the result's warnings rather than dropping it silently.
+	Seed bool
 	// Services maps a provider id to the image service it reaches, for EVERY ready provider —
 	// including the one dropped below, which the description has to be able to name.
 	Services map[string]string
@@ -1252,6 +1269,7 @@ func mcpImageGenAdvertise() (offer imageGenOffer, ok bool) {
 				offer.Loras = append(offer.Loras, l)
 			}
 		}
+		offer.Seed = offer.Seed || p.Seed
 	}
 	if len(offer.Providers) == 0 || len(offer.Ops) == 0 {
 		return imageGenOffer{}, false
@@ -2079,6 +2097,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		Count       int      `json:"count"`
 		Inputs      []string `json:"inputs"`
 		Mask        string   `json:"mask"`
+		Seed        *int64   `json:"seed"`
 		// Loras (ADR 0072 decision 5, phase P3). Passed on as written for the same reason as the
 		// rest: the Agent refuses an unknown name or a family that does not match the checkpoint
 		// BY NAME, which is a better answer than a silently shortened list.
@@ -2113,7 +2132,7 @@ func mcpStdioCall(req mcpReq) []byte {
 		return mcpGenerateImage(req, imageGenArgs{
 			op: a.Op, provider: a.Provider, prompt: a.Prompt, size: a.Size,
 			aspectRatio: a.AspectRatio, background: a.Background, count: a.Count,
-			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras,
+			inputs: a.Inputs, mask: a.Mask, model: a.Model, loras: a.Loras, seed: a.Seed,
 		})
 	case "list_child_sessions":
 		// The only one of the nine that is NOT also an operator tool: the operator has
