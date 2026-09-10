@@ -50,7 +50,15 @@
   align-items: center;
   gap: 10px;
 }
+/* A flex row purely so the chip is centred on the wordmark. Inline flow cannot do it: the
+   chip carries overflow:hidden for its ellipsis, and that makes an inline-block's baseline
+   its bottom margin edge instead of its text baseline — so the chip's *box bottom* sat on
+   the wordmark's baseline and the label rode high (measured: its cap centre 5.5px above the
+   wordmark's; 0 after). Centring also makes the brand box the same height with and without
+   a label (31.75px bottom edge either way), which the baseline trick did not. */
 .brand {
+  display: flex;
+  align-items: center;
   font-size: 15px;
   font-weight: 600;
 }
@@ -74,7 +82,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  vertical-align: 1px;
 }
 .topbar-right {
   display: flex;
@@ -494,7 +501,6 @@
     font-size: 10px;
     line-height: 13px;
     max-width: 9ch;
-    vertical-align: baseline;
   }
   .topbar-right {
     gap: 8px;
