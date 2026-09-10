@@ -170,7 +170,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
   // class the capacity provider does not hold — and picking it again is no change at all. The
   // retry has to be a button of its own, or the only way out is a detour through another class.
-  "admin.engines_class_apply_failed": "The class was saved, but writing it to the capacity provider failed, so the next box is still bought on the previous one: {m}",
+  "admin.engines_class_apply_failed": "The class was saved, but writing it to the capacity provider failed, so the next instance is still bought on the previous one: {m}",
   "admin.engines_class_apply_retry": "Apply it again",
   "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
   "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",

@@ -2552,7 +2552,7 @@ super_admin 側の運用（許可の付与と、その結果の受諾記録の�
   `model`・`clip`・`lora_name`・`strength_model`・`strength_clip`、返りは MODEL と CLIP）。
   それでも「走らせた」ことにはならない。
 - 🔴 **`lora_name` は `<models>/loras` の再帰列挙で、各要素はそのディレクトリからの相対パス**
-  （`folder_paths.py` の `recursive_search`）。箱は `/ComfyUI/models` を `/models/image` に
+  （`folder_paths.py` の `recursive_search`）。インスタンスは `/ComfyUI/models` を `/models/image` に
   張っている（`60-engines.yaml`）ので、`image/loras/x.safetensors` は `x.safetensors` として
   出る——Agent が渡している basename と一致する。**ただし 1 段でも深い鍵は
   `sub/x.safetensors` として出るので、basename では `Value not in list` になる**。
@@ -2560,7 +2560,7 @@ super_admin 側の運用（許可の付与と、その結果の受諾記録の�
 - **サイドカーの同期は既に通っている**（この回の確認、コード変更なし）。`60-engines.yaml` の
   fetch サイドカーは `.loras[]?` を `keys.start` に入れており、active set 側も
   `buildEngineActiveSet` が有効な LoRA を S3 鍵の裸配列として積んでいる。つまり
-  **「LoRA が箱に降りない」という穴は無い**。降りた後に ComfyUI が列挙できるかだけが未検証。
+  **「LoRA がインスタンスに降りない」という穴は無い**。降りた後に ComfyUI が列挙できるかだけが未検証。
 - **llm 側の preset 固定 LoRA と仮想モデル id**（決定 5 の後半）は手つかず。
 - sd-server の `<sd_cpp_extra_args>` 経路も手つかず（`ImageEngine=sdcpp` の配備が要るときだけ、
   未解決 2 を測ってから、という本文の条件のまま）。
@@ -2599,7 +2599,7 @@ history を持たないので、一度 `engine_waking` を見た後に prompt id
 - **決定 3 の対も実バンドルで成立する。** llm 役で `context_length: 262144` を返すと、
   コンテキストは 262144 で埋まり、出力上限の select は「1/8（32768）」を選んだ状態になる。
   片方だけが埋まる状態は作れない。
-- 登録フォームの分割モデル: `file_flags` が「役割」の select になり、ファイルごとに箱が立つ。
+- 登録フォームの分割モデル: `file_flags` が「役割」の select になり、ファイルごとに枠が立つ。
 - 非商用ライセンスの赤い一文と、ファミリー未宣言の行に出る修復用 select。
 
 **直した 1 件（描かなければ出なかった）。** フォームのラベル列は `8ch` 固定で、12px では

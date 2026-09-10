@@ -2792,14 +2792,14 @@ rather than as "it is missing from the enum".
   v0.34.0's own source (`nodes.py`: required inputs `model`, `clip`, `lora_name`,
   `strength_model`, `strength_clip`; returns MODEL and CLIP). That still is not "it ran".
 - 🔴 **`lora_name` enumerates `<models>/loras` RECURSIVELY, each entry a path relative to that
-  directory** (`recursive_search` in `folder_paths.py`). The box links `/ComfyUI/models` to
+  directory** (`recursive_search` in `folder_paths.py`). The instance links `/ComfyUI/models` to
   `/models/image` (`60-engines.yaml`), so `image/loras/x.safetensors` is listed as
   `x.safetensors` — which is the basename the Agent sends. **A key nested one level deeper is
   listed as `sub/x.safetensors` and a basename would be rejected as `Value not in list`.** LoRAs
   landing flat under `image/loras/` is the premise.
 - **The sidecar sync already works** (verified in this pass, no code changed). The fetch sidecar
   in `60-engines.yaml` puts `.loras[]?` into `keys.start`, and `buildEngineActiveSet` publishes
-  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the box" gap**; what
+  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the instance" gap**; what
   is unverified is only whether ComfyUI enumerates them once they are there.
 - **The llm role's preset-pinned LoRAs and virtual model ids** (decision 5's second half) are
   untouched.
@@ -2841,7 +2841,7 @@ repository** — it is a throwaway under `~/.cache`.
 - **Decision 3's pair holds on the real bundle.** With `context_length: 262144` from the llm
   role's resolve, the window fills with 262144 and the output-cap select lands on "1/8 (32768)".
   Half-filling the pair is not reachable.
-- The register form's split model: `file_flags` becomes the "part" select, one box per file.
+- The register form's split model: `file_flags` becomes the "part" select, one bordered block per file.
 - The red non-commercial sentence, and the repair select on a row with no family.
 
 **The one defect, and it needed a render.** The forms' label column is a fixed `8ch`, which at
