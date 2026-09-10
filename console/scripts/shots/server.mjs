@@ -73,6 +73,13 @@ const exact = {
     opencode: { connected: true },
     github: { connected: true },
     bitbucket: { connected: true },
+    // Saved Subversion servers (docs/log/41 amendment). A LIST, not a ProviderConn —
+    // one entry with an account and one trust-only entry, which is the state a checkout
+    // that declined "save credentials" leaves behind.
+    svn: [
+      { urlPrefix: "https://svn.example.com/design", username: "taro" },
+      { urlPrefix: "https://svn.internal.example/legacy", username: "", trustCert: "1" },
+    ],
   }),
   "/api/notifications-shaped": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
   "/api/notifications": () => ({ items: [], maxSeq: 0, unseenCount: 0, sourceState: "ready" }),
@@ -197,6 +204,18 @@ const re = [
   [/^\/api\/repos\/([^/]+)\/status$/, (m) => fx.scmStatus(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/changes$/, (m) => fx.changes(LOCALE, decodeURIComponent(m[1]))],
   [/^\/api\/repos\/([^/]+)\/submodules$/, () => ({ submodules: [] })],
+  // What the SVN re-authentication dialog opens with (docs/log/41 amendment): the server
+  // this working copy talks to, and the fact that nothing is stored for it yet.
+  [
+    /^\/api\/repos\/([^/]+)\/svn-auth$/,
+    () => ({
+      url: "https://svn.example.com/design/trunk",
+      urlPrefix: "https://svn.example.com/design",
+      username: "",
+      hasCred: false,
+      trustCert: false,
+    }),
+  ],
   [/^\/api\/repos\/([^/]+)\/identity$/, () => ({ name: "Demo User", email: "demo@example.com" })],
   [/^\/api\/repos\/([^/]+)\/show$/, (m, q) => fx.show(LOCALE, q.get("sha") || "")],
   [/^\/api\/repos\/([^/]+)\/diff$/, (m, q) => fx.diff(LOCALE, q.get("path") || "")],

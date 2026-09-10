@@ -464,6 +464,17 @@ export const tools = {
   "git.identity_saved": "コミット identity を保存しました",
   "git.name_placeholder_ex": "name（例: 山田太郎）",
   "git.identity_help": "空欄なら接続アカウントを使用。端末 / claude のコミットにも適用され、リポジトリごとに上書きできます。",
+  // --- Subversion credentials (GitTab, docs/log/41 amendment) ---
+  "git.cat_svn": "Subversion",
+  "git.svn_saved_n": "{n} 件保存済み",
+  "git.svn_no_user": "アカウント無し（証明書の信頼のみ）",
+  "git.svn_trusted_cert": "証明書を信頼",
+  "git.svn_prefix_ph": "リポジトリ URL",
+  "git.svn_user_ph": "ユーザー名",
+  "git.svn_pass_ph": "パスワード",
+  "git.svn_trust": "このサーバーの証明書を信頼する（自己署名・不明な CA）",
+  "git.svn_hint":
+    "リポジトリまたはサーバー全体の URL（例: https://svn.example.com/proj）。最長プレフィックス一致で選ばれるので、リポジトリ単位の登録がサーバー全体の登録より優先されます。チェックアウトと更新のほか、セッションで自分が叩く `svn` でも使われます。",
   "git.global_identity_cat": "既定のコミット identity（すべての git）",
   "git.global_identity_saved": "既定 identity を保存しました",
   "git.global_identity_help":

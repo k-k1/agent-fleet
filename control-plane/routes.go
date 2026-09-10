@@ -640,6 +640,9 @@ func registerRepoFSRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/repos/svn", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-update", rest)
 	mux.HandleFunc("POST /api/repos/{name}/svn-cleanup", rest)
+	// Re-authentication of an existing SVN working copy (docs/log/41 amendment).
+	mux.HandleFunc("GET /api/repos/{name}/svn-auth", rest)
+	mux.HandleFunc("POST /api/repos/{name}/svn-auth", rest)
 	// Launch prompt templates (repo launch modal) — proxied to the Agent.
 	mux.HandleFunc("GET /api/repos/{name}/prompt-templates", rest)
 	// Project-scope MCP servers (docs/log/56 P0/P1) — proxied to the Agent.
@@ -835,7 +838,9 @@ func registerConnectionRoutes(mux *http.ServeMux, cfg config) {
 	mux.HandleFunc("POST /api/connections/opencode/oauth/cancel", rest)
 	mux.HandleFunc("DELETE /api/connections/opencode/oauth", rest)
 	mux.HandleFunc("PUT /api/connections/opencode/workspace", rest)
-	// SVN saved basic-auth creds (docs/log/41) — forget a stored server credential.
+	// SVN saved basic-auth creds (docs/log/41) — add/correct, and forget, a stored server
+	// credential. The CP is an explicit allowlist, so PUT needs its own line.
+	mux.HandleFunc("PUT /api/connections/svn", rest)
 	mux.HandleFunc("DELETE /api/connections/svn", rest)
 	// Codex auth — proxied to the Agent (codex owns auth.json; no public callback,
 	// device-auth polls OpenAI from inside the container).

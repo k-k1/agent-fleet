@@ -50,7 +50,10 @@ export function HandoffOfferRow({ offer, onDone }: { offer: HandoffOffer; onDone
     // Carry which offer this is into the launch path. StartHost sends the accept once the
     // launch succeeds: a cancelled launch must not mark the offer accepted.
     useLaunchSeed.getState().set(offer.prompt || "", offer.title, "", "", offer.id);
-    useLaunchTarget.getState().open({ name: repo.name, path: repo.path, branch: offer.branch || repo.branch, worktree: repo.worktree });
+    // The whole row, not a hand-picked subset: the dialog gates the worktree choice on
+    // `vcs`/`unborn`, and a copy of the row that drops them offers git actions on an SVN
+    // checkout (docs/log/41), which has no worktrees at all.
+    useLaunchTarget.getState().open({ ...repo, branch: offer.branch || repo.branch });
     onDone();
   };
   const decline = async () => {

@@ -236,6 +236,12 @@ func buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /repos/svn", handleSvnCheckout)
 	mux.HandleFunc("POST /repos/{name}/svn-update", handleSvnUpdate)
 	mux.HandleFunc("POST /repos/{name}/svn-cleanup", handleSvnCleanup)
+	// Re-authenticate an existing SVN working copy (docs/log/41 amendment): GET reports
+	// which server it talks to and whether a credential matches, POST proves a credential
+	// against that server and stores it. The route is repo-scoped because the URL must
+	// come from the working copy, never from the browser.
+	mux.HandleFunc("GET /repos/{name}/svn-auth", handleGetSvnAuth)
+	mux.HandleFunc("POST /repos/{name}/svn-auth", handleSvnAuth)
 	// Launch prompt templates (repo launch modal): .claude/commands, .claude/skills,
 	// .agent-fleet/launch-prompts.md — aggregated read-only from the working copy.
 	mux.HandleFunc("GET /repos/{name}/prompt-templates", handleRepoPromptTemplates)
@@ -392,7 +398,10 @@ func buildMux() *http.ServeMux {
 	// The id behind the link to the quota page (opencode.ai/workspace/{id}/go). Filled either
 	// by hand or learned automatically from a limit / balance error (docs/log/54 §54.7).
 	mux.HandleFunc("PUT /connections/opencode/workspace", opencode.HandlePutWorkspace)
-	// SVN saved basic-auth creds (docs/log/41): saved at checkout time; forget them here.
+	// SVN saved basic-auth creds (docs/log/41): saved at checkout time, added or corrected
+	// here (docs/log/41 amendment — declining the checkout opt-in used to be a one-way
+	// door), and forgotten here.
+	mux.HandleFunc("PUT /connections/svn", handlePutSvnConn)
 	mux.HandleFunc("DELETE /connections/svn", handleDeleteSvnConn)
 	// agy quota gauge for the Console's AgyCard (docs/log/32 Track C — the Starter
 	// Quota is an experimental pool, so the card always shows what's left).

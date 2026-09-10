@@ -23,6 +23,7 @@ export const BADGE_SHORT: Record<string, string> = {
   jira: "ji",
   cloudwatch: "cw",
   aws: "aw",
+  svn: "sv",
 };
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The

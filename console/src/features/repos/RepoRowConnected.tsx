@@ -3,6 +3,7 @@
 // copy appears (the flat Repos list, each node of the project tree). All the launch
 // / clone-target / delete / fast-forward / open-SCM logic that used to live inline
 // in ReposSection lives here once.
+import { useState } from "react";
 import { apiJSON, raw, errDetail, errText, repoSetLock } from "../../core/api/client.ts";
 import { useT } from "../../lib/i18n/index.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
@@ -18,6 +19,7 @@ import { useSessionsStore } from "../sessions/store.ts";
 import { openSessionTerminal, openSessionTerminalSplit, openSessionChat, openSessionChatSplit } from "../sessions/open.ts";
 import { RepoRow } from "./RepoRow.tsx";
 import { useStartWork } from "./useStartWork.ts";
+import { SvnAuthModal } from "./SvnAuthModal.tsx";
 import type { RepoRailContext } from "./useRepoRail.ts";
 
 interface RepoRowConnectedProps {
@@ -44,8 +46,30 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
   const refreshRepos = useReposStore((s) => s.refresh);
   const refreshSessions = useSessionsStore((s) => s.refresh);
   const startWork = useStartWork();
+  // SVN re-authentication (docs/log/41 amendment). Owned here rather than in RepoRow
+  // because both routes into it are here: the menu item, and an update that came back
+  // svn_auth_required — the failure IS the moment to ask, and answering it retries.
+  const [authOpen, setAuthOpen] = useState(false);
+
+  const svnUpdate = async () => {
+    const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
+    if (res && res.error) {
+      const code = typeof res.error === "object" ? (res.error as { code?: string }).code : "";
+      if (code === "svn_auth_required") {
+        // No credential, or one the server rejected: offer the fix instead of a toast
+        // that only restates the failure.
+        setAuthOpen(true);
+        return;
+      }
+      toast(tr("rp.svn_update_failed", { err: errText(res.error) }));
+      return;
+    }
+    void refreshRepos();
+    toast(tr("rp.svn_update_success", { name: r.name, rev: res?.revision || "?" }), { kind: "success" });
+  };
 
   return (
+    <>
     <RepoRow
       r={r}
       kinds={ctx.launchKinds}
@@ -86,15 +110,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         toast(tr("rp.parent_ff_success", { name: r.name }), { kind: "success" });
       } : undefined}
       // SVN (docs/log/41): update to the latest revision (auto-heals a wedged lock server-side).
-      onUpdate={r.vcs === "svn" ? async () => {
-        const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-update`, "POST", {});
-        if (res && res.error) {
-          toast(tr("rp.svn_update_failed", { err: errText(res.error) }));
-          return;
-        }
-        void refreshRepos();
-        toast(tr("rp.svn_update_success", { name: r.name, rev: res?.revision || "?" }), { kind: "success" });
-      } : undefined}
+      onUpdate={r.vcs === "svn" ? () => void svnUpdate() : undefined}
       // SVN: explicitly clear a wedged working-copy lock (local; no auth needed).
       onCleanup={r.vcs === "svn" ? async () => {
         const res = await apiJSON(`api/repos/${encodeURIComponent(r.name)}/svn-cleanup`, "POST", {});
@@ -105,6 +121,7 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         void refreshRepos();
         toast(tr("rp.svn_cleanup_success", { name: r.name }), { kind: "success" });
       } : undefined}
+      onReauth={r.vcs === "svn" ? () => setAuthOpen(true) : undefined}
       // Deletion lock (docs/log/45): pin/unpin a working copy (worktrees included) against deletion.
       onToggleLock={async (locked) => {
         const res = await repoSetLock(r.name, locked);
@@ -203,5 +220,15 @@ export function RepoRowConnected({ r, ctx, onToggle, sess, onArchiveStopped, sto
         useFilesStore.getState().bump();
       }}
     />
+    {authOpen && (
+      <SvnAuthModal
+        repo={r.name}
+        onClose={() => setAuthOpen(false)}
+        // Saved means proven: run the update that failed, so the dialog ends in the
+        // outcome the user asked for rather than in "now try again".
+        onSaved={() => void svnUpdate()}
+      />
+    )}
+    </>
   );
 }
