@@ -850,6 +850,9 @@ each cost a stand-up:
 - **Move prose out BEFORE adding anything**, and check the size afterwards:
   `wc -c deploy/aws/ecs/cfn/60-engines.yaml`. `deploy/local/ecs-lifecycle-stub-test.sh` case 3b-2
   fails the moment a shipped template crosses the line.
+- **Prove the pass changed only prose**: `deploy/local/cfn-equiv.py 60-engines.yaml` compares the
+  working tree against `HEAD` with the descriptions dropped and everything else -- including a
+  resource's own `Description` -- compared; `--self-test` re-runs its seven positive controls.
 
 ### Where the remaining bytes are, and what it would cost to move them (2026-09-11)
 
