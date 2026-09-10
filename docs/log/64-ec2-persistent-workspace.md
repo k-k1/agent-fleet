@@ -3811,3 +3811,69 @@ list = opencode.Catalog(opencode.Models(), uiprefs.OpencodeCatalog())
 ⚠️ **残っている穴:** 「正常な空」と「取れなかった空」を**画面で**区別することは、まだ
 していない（Agent が理由を返す設計変更になる）。今回入れたのはログだけなので、
 次に同じことが起きたら**運用者は気づけるが、利用者はまだ気づけない。**
+
+## 64.44 0.18.0 を本番配備へ適用する（実測・2026-09-10）
+
+`update.sh` で 0.17.0 → 0.18.0。手順は §64.42 と同じなので、記録する価値があるのは
+**リリースノートが警告した事故を踏むかどうかを、踏む前にどう確かめたか**の方である。
+
+### 64.44.1 「テンプレートから消えたパラメータ」は、渡さなければ落ちるだけ
+
+0.18.0 は 60-engines から `LlmModelFile` / `ImageModelFile` を削った。ノートは
+**渡したまま更新すると `Parameters: [ImageModelFile] do not exist in the template` で
+止まる**と警告している。この配備の live スタックは 2 つとも持っていた。
+
+`update.sh` は 60-engines を `--parameter-overrides` **無し**で deploy し
+（`deploy/aws/ecs/update.sh` の「1d」）、`af_env_init` も呼ばないので捕捉 params を
+そもそも読まない。だから踏まない——**という読みだけで本番を走らせない。**
+
+先に changeset だけ作って確かめた:
+
+```
+aws cloudformation deploy --stack-name af-ecs-engines \
+  --template-file cfn/60-engines.yaml --capabilities CAPABILITY_NAMED_IAM \
+  --no-fail-on-empty-changeset --no-execute-changeset
+aws cloudformation describe-change-set --change-set-name <arn> --query Parameters
+```
+
+作成は成功し、`Parameters` に 2 つとも**現れない**。つまり **CFN はテンプレートから
+消えたパラメータを黙って落とすだけ**で、あのエラーは**明示的に渡したときだけ**出る。
+ノートの指示は「捕捉 params を `--parameter-overrides` で渡す経路」（`standup.sh`）に
+向いたもので、`update.sh` 経路には掛からない。
+
+⭐ **`--no-execute-changeset` は、この種の「踏むか踏まないか」を本番で 1 分で判定する。**
+`update.sh --dry-run` は 60-engines について `DRY: aws cloudformation deploy …` と
+**印字するだけ**で API を呼ばない＝**dry-run はこの問いに答えない**。dry-run が何を
+確かめて何を確かめないかは、毎回コードで見る。
+
+なお捕捉ファイル `params/60-engines` からは 2 行を手で消した（`.bak-pre-0.18.0` を残した）。
+この版上げには不要だったが、次に**対象を絞った** deploy を打つときの地雷を先に外している。
+
+### 64.44.2 60-engines の changeset（想定どおりだったもの）
+
+| 変化 | 中身 |
+|---|---|
+| Replacement=True | `LlmTaskDef` / `ImageTaskDef` / `IngestTaskDef`（DesiredCount は不在なのでエンジンは止まらない） |
+| Add | `HfTokenSecret`(SecretsManager) と `ExecHfTokenPolicy`＝HF トークンを Console から入れる導線 |
+| Modify | `CpIngestPolicy`・SSM `EnginesParam` |
+| 新パラメータ | `ImageEngine=sdcpp`（＝従来挙動）・`Llm/ImageInstanceClasses` 空（opt-in なので入れない） |
+| 据え置き | `LlmMode`/`ImageMode`=ondemand ほかは UsePreviousValue |
+
+SSM の表は各行に `"classes":""` が増え、`ingest` の `hasToken: false` が
+`tokenSecret: <ARN>` に変わった。**この表は CFN が全文を組み立てて持つ**＝Console が
+書く場所ではないので、スタック更新で消える「Console 登録の行」は無い。
+
+### 64.44.3 確かめたこと
+
+| 確かめたこと | 実測 |
+|---|---|
+| CP が新しい版で走っている | タスク定義 `…-ingress-cp:**28**`・`RUNNING` / `HEALTHY` |
+| タスク定義が指す先の digest | `sha256:bd6725ecd9…`（GHCR の index と一致） |
+| ワークスペース像 | `af-workspace:0.18.0` `sha256:20d6e08ff1…`（GHCR と一致） |
+| 予告された CP 入れ替え | `runtimePlatform.cpuArchitecture` が `arm64` → **`ARM64`**（綴りだけ・無停止） |
+| golden home の焼き直し | 両アーキとも 0.18.0 で completed（deploy 完了の**約 6 分後**・CP の自動焼き） |
+| エンドポイント | `/healthz` `/readyz` 200 ／ `/` 401 ／ `/oauth2/login` 302（Google へ） |
+
+所要は crane copy 2 本が約 1 分（差分だけ）、`update.sh` 全体が約 9 分
+（50-tts は No changes・60-engines 約 2 分・CP の blue/green 約 5 分）。
+稼働中の 5 ワークスペースは §64.42.1 のとおり次の Stop→Start まで 0.17.0 のまま。
