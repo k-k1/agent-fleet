@@ -18,7 +18,9 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   pushed through on hardware the same day ("P2's remaining work 4 and 5, on hardware"): ALL FIVE
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
-  Six further gaps (5 to 10) are recorded there. P3 and the rest of P5 are not started.**
+  Six further gaps (5 to 10) are recorded there. **P6 (retiring the seed and six parameters)
+  is implemented as of 2026-09-10 and not verified on hardware** ("P6 implementation").
+  P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -1981,7 +1983,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   registered in the Console, a gated repository is taken in without CloudFormation being
   touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
   "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
-- **P6 — retiring the seed and the four remaining parameters** (added 2026-09-10; the reasoning,
+- **P6 — retiring the seed and the four remaining parameters. Implemented, not verified on
+  hardware ("P6 implementation").** (Added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
   `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
@@ -2685,3 +2688,52 @@ through the API but has no screen**: opening the panel to a non-super caller nee
 with the mode, the class and the box's state taken out, which is wider than this pass. The
 operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
 verification is also outstanding (nothing here touched a deployment).
+
+## P6 implementation — the seed and six parameters are gone (2026-09-10)
+
+The removal the follow-up section above called for, implemented. **Not verified on hardware.**
+
+1. **The template.** `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` /
+   `LlmMaxOutputTokens` / `ImageModelS3Key` / `ImageModelIds` are gone, and `HasLlmModel` /
+   `HasImageModel` are now the single test `<Role>Enabled = "true"`. Four fields left the engine
+   table with them (`models`, `contextTokens`, `maxOutputTokens`, `modelS3Key`). `*ExtraArgs`
+   stays. **50,997 → 49,298 bytes** (1,699 freed, 1,902 short of the wall). **The room is left
+   unspent** — it belongs to P2's remaining work (per-family image-to-image graphs) and ADR
+   0074's ladder.
+
+2. 🔴 **The trap needed three answers, not just a note.**
+   - The upgrade note is in `cfn/PARAMETERS-60-engines.md`, "Upgrading: the model parameters are
+     gone" — the same place 0.18.0's `*ModelFile` removal was written up. It tells a deployment
+     that set only `<Role>ModelS3Key` to **add `<Role>Enabled=true` first**.
+   - `standup.sh` translates BEFORE it drops: a captured `<Role>ModelS3Key` with an empty
+     `<Role>Enabled` becomes `<Role>Enabled=true`, and only then does `af_param_drop` remove the
+     six. Dropping alone would delete the role on any deployment that did not read the note — not
+     by refusing the deploy ("Parameters: [X] do not exist"), but by **succeeding** as an ordinary
+     stack update with the service gone.
+   - The sd-server `crane copy` reads it the same way (earlier in the same script). Read plain
+     `ImageEnabled` there and the role is created while its ECR repository is empty:
+     `CannotPullContainerError`, with CloudFormation blocked on stabilisation.
+   `update.sh` and a hand-run `cloudformation deploy` pass no parameters at all, so nothing can
+   translate for them. That is what the note is for.
+
+3. **The Control Plane.** `seedEngineCatalog` / `engineSeedKind` and `engineDef`'s four fields
+   are deleted. A table written by an older stack **still parses** (the fields are ignored) —
+   the CP is upgraded before the stack is, so that shape is live. The empty-catalogue behaviour
+   (`503 engine_unavailable`, `no_model`, `TestDecideEngineAction`'s fixture) is unchanged.
+
+4. **The hand-registration form's licence fields were already closed** before this work started
+   (commit `2a998f11`, the same day): the form sends `license_name` / `license_url` and the CP
+   derives the commercial-use verdict from them. The by-product the follow-up asked for is done.
+
+5. **Verification.** The Go suites in control-plane and workspace/agent, the Console tests,
+   `deploy/local/ecs-lifecycle-stub-test.sh` (including 3b-2's size check), `cfn-ascii-test.sh`,
+   `engine-sidecar-test.sh` and `check-cfn-exports.py`. The stub test gained a case that runs a
+   pre-P6 capture through stand-up and checks (a) that no retired key reaches `deploy` and (b)
+   that `<Role>Enabled=true` does. A positive control that removes the translation shows the
+   check actually fails.
+
+**What hardware has to confirm (the definition of done).** A deployment made with
+`LlmEnabled=true` and not one model parameter comes up and its role's service stabilises; a model
+registered from the Console into an empty catalogue starts the engine. And the migration side —
+a stand-up from a capture holding `<Role>ModelS3Key` keeps the role and translates it into
+`<Role>Enabled=true`.

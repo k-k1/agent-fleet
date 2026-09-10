@@ -353,15 +353,19 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
     echo "    · crane copy $LLM_ENGINE_FROM:$llm_tag (about 2.5 GB)"
     af_run crane copy "$LLM_ENGINE_FROM:$llm_tag" "$ECR_HOST/af-llamacpp:$llm_tag"
   fi
-  # The sd-server image, for the `image` role (ADR 0071 P1). Copied ONLY when a checkpoint is
-  # staged, which is the same condition that decides whether the service exists at all: with
-  # ImageModelS3Key empty 60-engines creates no image service, so there is nothing to pull and
-  # a deployment that only wants an LLM should not spend minutes copying 2.3 GB it will never
-  # run. When the key IS set, this runs before the stack — the ordering that matters, because
-  # a service that cannot pull leaves CREATE_IN_PROGRESS with no way back.
+  # The sd-server image, for the `image` role (ADR 0071 P1). Copied ONLY when that role exists,
+  # which since ADR 0072 phase P6 is what ImageEnabled alone says: a deployment that only wants
+  # an LLM should not spend minutes copying 2.3 GB it will never run. When the role IS on, this
+  # runs before the stack — the ordering that matters, because a service that cannot pull leaves
+  # CREATE_IN_PROGRESS with no way back.
   # ⚠️ amd64 only upstream; there is no arm64 G-family instance either (decision 12).
-  sd_key="$(af_read_one_param 60-engines ImageModelS3Key)"
-  if [ -n "$sd_key" ]; then
+  # Read the same way the deploy below translates a pre-P6 capture (`ImageModelS3Key` implied
+  # the role): read it any other way and the role is created with no image in ECR to pull.
+  image_on="$(af_read_one_param 60-engines ImageEnabled)"
+  if [ -z "$image_on" ] && [ -n "$(af_read_one_param 60-engines ImageModelS3Key)" ]; then
+    image_on=true
+  fi
+  if [ "$image_on" = true ]; then
     image_engine="$(af_read_one_param 60-engines ImageEngine)"
     : "${image_engine:=sdcpp}"
     if [ "$image_engine" = comfy ]; then
@@ -505,6 +509,29 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   # the stack creates the secret itself now. A capture taken before that still carries the
   # line, and `deploy` refuses a parameter the template does not declare.
   af_param_drop HfTokenSecretArn
+
+  # The seed parameters, retired in ADR 0072 phase P6 — the catalogue is the declaration and
+  # the panel is where a model is registered.
+  #
+  # 🔴 `<role>ModelS3Key` was not only a seed: until P6 it also decided whether the role's
+  # SERVICE existed (`HasLlmModel`), so a capture that switched a role on by naming a key and
+  # left `<role>Enabled` empty would come back from this stand-up with the role DELETED — a
+  # plain stack update, silently. Translate it into the switch that decides that now, then
+  # drop. Deployments updated by any other route need the same line by hand, which is what
+  # the upgrade note in cfn/PARAMETERS-60-engines.md says.
+  for af_role in Llm Image; do
+    if [ -n "$(af_read_one_param 60-engines "${af_role}ModelS3Key")" ] \
+       && [ -z "$(af_read_one_param 60-engines "${af_role}Enabled")" ]; then
+      echo "    · ${af_role}Enabled=true (it was implied by ${af_role}ModelS3Key, retired in ADR 0072 P6)"
+      af_param_override "${af_role}Enabled" true
+    fi
+  done
+  af_param_drop LlmModelS3Key
+  af_param_drop LlmModelIds
+  af_param_drop LlmContextTokens
+  af_param_drop LlmMaxOutputTokens
+  af_param_drop ImageModelS3Key
+  af_param_drop ImageModelIds
 
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then
