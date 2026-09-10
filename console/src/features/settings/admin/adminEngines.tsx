@@ -155,6 +155,15 @@ type IngestHit = {
   license?: string;
   license_name?: string;
   base_model?: string;
+  /** When it first appeared, beside `updated_at`'s "when it last changed". Both, because for a
+   *  quantisation repository they are a year apart and only the pair answers "is this
+   *  maintained". 🔴 Display only — there is deliberately no "newest" ranking to sort by (the
+   *  CP's engineSortHF says why: every date-ordered page is bulk automated re-quantisations). */
+  published_at?: string;
+  updated_at?: string;
+  /** The upstream page, composed by the CP and used here VERBATIM. Not built in the panel: the
+   *  two sources spell it differently and Civitai's needs the model id, which `ref` is not. */
+  url?: string;
   bytes?: number;
   context_length?: number;
 };
@@ -2131,6 +2140,10 @@ function EngineBrowse() {
  * The gating flag and the licence stay on the card rather than moving behind a detail view.
  * They decide whether this row is takeable at all, and learning that from a refusal one step
  * later is the dead end the whole picker exists to avoid. */
+/** Date only, with the year: a search result's dates are months or years old, and the default
+ *  "M/D HH:MM" of fmtDateTime would print a 2024 model as if it were this year. */
+const HIT_DATE: Intl.DateTimeFormatOptions = { year: "numeric", month: "numeric", day: "numeric" };
+
 function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
   const tr = useT();
   const stat = (n: number | undefined, key: string) =>
@@ -2140,11 +2153,37 @@ function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
         {(tr(key as never) as string).trim()}
       </span>
     ) : null;
+  /** Published and last-updated, as ONE flex item rather than two.
+   *
+   * 🔴 Measured on the real bundle (ja, the modal's width): the busiest card's strip is 390px
+   * and its three counts plus two separate dates come to 392 — two over, so the pair split
+   * across a line break and the card grew 118px → 146px. Kept together they are 382 and the
+   * line holds; when a locale's labels are wider they move down as a pair, which is the
+   * legible way to lose the race. */
+  const dates = [
+    { k: "published", iso: hit.published_at, label: "admin.engines_ingest_hit_published" },
+    { k: "updated", iso: hit.updated_at, label: "admin.engines_ingest_hit_updated" },
+  ].filter((d) => !!d.iso);
   const lic = hit.license_name || hit.license;
   return (
     <li className="engines-hit">
       <div className="engines-hit-head">
         <span className="mono engines-hit-name">{hit.name}</span>
+        {/* The page this row came from. The href is the CP's string as it stands — building it
+            here would mean the panel learning both sources' spellings, and Civitai's needs an
+            id this row does not carry. stopPropagation because the card is the "choose this
+            result" surface: a link that also chose would send somebody two places at once. */}
+        {hit.url && (
+          <a
+            className="engines-hit-link"
+            href={hit.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(ev) => ev.stopPropagation()}
+          >
+            {tr(hit.source === "civitai" ? "admin.engines_ingest_hit_open_civitai" : "admin.engines_ingest_hit_open_hf")}
+          </a>
+        )}
         {onPick && (
           <button type="button" className="sm engines-hit-pick" onClick={onPick}>
             {tr("admin.engines_ingest_hit_pick")}
@@ -2155,6 +2194,19 @@ function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
         {stat(hit.downloads, "admin.engines_ingest_hit_downloads")}
         {stat(hit.likes, "admin.engines_ingest_hit_likes")}
         {stat(hit.trending, "admin.engines_ingest_hit_trending")}
+        {/* The pair, in the same row as the counts and each labelled: "published in 2024, last
+            touched last week" and "published last week" are different models to choose
+            between, and one date alone says neither. Absent is absent — Civitai publishes no
+            update date at all, and an empty label would read as "never". */}
+        {dates.length > 0 && (
+          <span className="engines-hit-stat engines-hit-date">
+            {dates.map((d) => (
+              <span key={d.k}>
+                {(tr(d.label as never) as string).trim()} <b>{fmtDateTime(d.iso as string, HIT_DATE)}</b>
+              </span>
+            ))}
+          </span>
+        )}
       </div>
       <div className="engines-hit-tags">
         {/* Gated first and in its own colour: it is the one tag that can turn into a refusal. */}
