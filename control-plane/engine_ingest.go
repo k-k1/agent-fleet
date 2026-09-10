@@ -511,6 +511,15 @@ type engineIngestRequest struct {
 	Sizes                      []string
 	AcceptedBy                 string
 	Resolved                   engineResolved
+	// FileFlag is what this file IS within the model — the literal engine flag it is passed to
+	// (`--vae`, `--t5xxl`), empty for a whole checkpoint. Without it every ingest produced a
+	// one-file, unlabelled row and no split model could be assembled by taking parts in (ADR
+	// 0072 P2 欠落 6).
+	FileFlag string
+	// Attach adds this file to the row ModelID already names instead of creating one. The two
+	// are separate acts and only one of them may land on an id the catalogue already holds:
+	// creating would upsert a working row's files, licence and enabled flag away.
+	Attach bool
 }
 
 // start creates the job row and launches the task. The row is written FIRST: a RunTask that
@@ -675,9 +684,32 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 			j.ID, j.S3Key)
 		return
 	}
+	file := store.EngineModelFile{Flag: req.FileFlag, S3Key: req.S3Key, Bytes: req.Resolved.Bytes}
+	if req.Attach {
+		// One PART of a model that already has a row. Only the file is written: the licence
+		// acceptance, the family and the enabled flag on that row were decided when it was
+		// created, and this download knows none of them.
+		found, err := g.models.AppendEngineModelFile(ctx, req.Role, req.ModelID, file)
+		if err != nil {
+			log.Printf("engines: ingest %s finished but %s could not take the file: %v", j.ID, req.ModelID, err)
+			return
+		}
+		if !found {
+			// The row was forgotten while the download ran. The bytes are in the bucket and
+			// nothing points at them, which is the one outcome worth spelling out.
+			log.Printf("engines: ingest %s finished but %s/%s no longer exists: register %s by hand",
+				j.ID, req.Role, req.ModelID, j.S3Key)
+			return
+		}
+		log.Printf("engines: ingest %s done: %s added to %s/%s", j.ID, engineFlagLabel(req.FileFlag), req.Role, req.ModelID)
+		if g.onDone != nil {
+			g.onDone(req.Role)
+		}
+		return
+	}
 	m := store.EngineModel{
 		Role: req.Role, ID: req.ModelID, Kind: req.Kind,
-		Files:       []store.EngineModelFile{{S3Key: req.S3Key, Bytes: req.Resolved.Bytes}},
+		Files:       []store.EngineModelFile{file},
 		Description: req.Description, BaseModel: req.BaseModel,
 		ContextTokens: req.ContextTokens, MaxOutputTokens: req.MaxOutput, Sizes: req.Sizes,
 		License:     req.Resolved.License,
@@ -704,6 +736,15 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	if g.onDone != nil {
 		g.onDone(req.Role)
 	}
+}
+
+// engineFlagLabel names a file's role in a log line. The empty flag is a whole checkpoint, and
+// printing it as `""` reads as a bug in the line rather than as the normal case it is.
+func engineFlagLabel(flag string) string {
+	if strings.TrimSpace(flag) == "" {
+		return "the checkpoint"
+	}
+	return flag
 }
 
 // why reads the last words of the failed container's log.

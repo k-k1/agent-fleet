@@ -1500,6 +1500,18 @@ the real row with its flags through `POST /models`, and then forgetting the thro
 Decision 2 says "the operator declares it at ingest time", but the only thing that can be
 declared there is the family — **not the role**.
 
+> ✅ **Fixed (2026-09-10)**: an ingest request now carries `file_flag` and `attach`. The first is
+> validated against the row's own `file_flags` (the list already served to the Console); the
+> second — "add this file to the row that is already there", the only shape in which a split
+> model can be assembled by ingest alone — is the **one** route allowed past the duplicate-id
+> 409 (`engineAttachAllowed` refuses a missing row, a missing flag and a role the row already
+> fills, all **before** the download). The append is one transaction in
+> `AppendEngineModelFile` and touches neither the licence, the family nor the enabled flag of
+> the row (turning it back into an upsert would recreate exactly what this section's
+> duplicate-id refusal exists to prevent). The Console's ingest form has the role selector, and
+> **derives the bucket directory from the role** (`engineIngestPrefix`) — a text encoder staged
+> under `image/checkpoints/` appears in no loader's menu, so this is not cosmetic.
+
 🔴 **A consequence of gap 6 — `?purge=1` can silently delete a file another row is using.** The
 `purge` on forgetting a row hands that row's `files[]` S3 keys straight to the ingest task
 (`deleteModel`). **Whether another row references the same key is not checked.** Now that gap 6

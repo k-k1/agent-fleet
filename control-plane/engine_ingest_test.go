@@ -485,6 +485,101 @@ func TestEngineIngestJobCreatesTheRowOnlyWhenTheTaskSucceeds(t *testing.T) {
 	}
 }
 
+// 🔴 ADR 0072 P2 欠落 6. The row an ingest wrote was always `[{S3Key, Bytes}]` with no flag —
+// "one whole checkpoint" — so a SPLIT model could not be assembled by taking its parts in.
+// Measured on af-sandbox: the four files of `flux1-dev-fp8` had to be staged as three throwaway
+// rows and the real row re-typed through `POST /models`, which is also how two rows came to
+// point at the same `clip_l.safetensors`.
+//
+// Both halves are pinned: the flag reaches the row, and a second download joins the row that is
+// already there rather than replacing it.
+func TestEngineIngestDeclaresWhatTheFileIsAndAttachesTheRest(t *testing.T) {
+	api := &fakeIngestECS{}
+	ing, st := testIngester(t, api, nil)
+	ctx := context.Background()
+
+	stopped := func(arn string) {
+		api.tasks = []ecstypes.Task{{
+			TaskArn: aws.String(arn), LastStatus: aws.String("STOPPED"),
+			Containers: []ecstypes.Container{
+				{Name: aws.String("fetch"), ExitCode: aws.Int32(0)},
+				{Name: aws.String("upload"), ExitCode: aws.Int32(0)},
+			},
+		}}
+		ing.reconcile(ctx)
+	}
+
+	unet := ingestReq()
+	unet.Role, unet.ModelID, unet.Kind = "image", "flux1-dev-fp8", "checkpoint"
+	unet.BaseModel, unet.FileFlag = "flux1", "--diffusion-model"
+	unet.S3Key = "image/diffusion_models/flux1-dev-fp8.safetensors"
+	unet.Resolved.Bytes = 11900000000
+	job, aerr := ing.start(ctx, unet)
+	if aerr != nil {
+		t.Fatalf("start: %v", aerr.message)
+	}
+	stopped(job.TaskArn)
+
+	rows, _ := st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 || len(rows[0].Files) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Files[0].Flag != "--diffusion-model" {
+		t.Fatalf("the file's role was not recorded: %+v — the row reads as a whole checkpoint", rows[0].Files[0])
+	}
+
+	// The text encoder is a second download onto the SAME row.
+	clip := unet
+	clip.FileFlag, clip.S3Key = "--clip_l", "image/text_encoders/clip_l.safetensors"
+	clip.Resolved.Bytes = 246144152
+	clip.Attach = true
+	clip.BaseModel = "" // an attach declares no family: the row settled that when it was created
+	job2, aerr := ing.start(ctx, clip)
+	if aerr != nil {
+		t.Fatalf("attach start: %v", aerr.message)
+	}
+	stopped(job2.TaskArn)
+
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 {
+		t.Fatalf("the attach created a second row: %+v", rows)
+	}
+	m := rows[0]
+	if len(m.Files) != 2 || m.Files[1].Flag != "--clip_l" || m.Files[1].Bytes != 246144152 {
+		t.Fatalf("files = %+v", m.Files)
+	}
+	// Everything the row already said is still what it says: an attach carries a file and
+	// nothing else, which is the whole reason it is not an upsert.
+	if m.BaseModel != "flux1" || m.Kind != "checkpoint" || m.LicenseAcceptedBy != "u1" {
+		t.Errorf("the attach rewrote the row: %+v", m)
+	}
+	if m.Files[0].S3Key != "image/diffusion_models/flux1-dev-fp8.safetensors" {
+		t.Errorf("the first file was disturbed: %+v", m.Files)
+	}
+
+	// A reconcile that sees the same finished task twice must not list the file twice — the
+	// active set would then pass `--clip_l` to the engine two times.
+	stopped(job2.TaskArn)
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows[0].Files) != 2 {
+		t.Errorf("a re-reconciled attach duplicated the file: %+v", rows[0].Files)
+	}
+
+	// And attaching to a row that is not there says so rather than writing one: the bytes are
+	// in the bucket and the operator has to be told which id they were meant for.
+	orphan := clip
+	orphan.ModelID, orphan.S3Key = "forgotten", "image/text_encoders/t5xxl_fp8.safetensors"
+	job3, aerr := ing.start(ctx, orphan)
+	if aerr != nil {
+		t.Fatalf("orphan start: %v", aerr.message)
+	}
+	stopped(job3.TaskArn)
+	rows, _ = st.ListEngineModels(ctx, "image")
+	if len(rows) != 1 {
+		t.Errorf("an attach to a missing row created one: %+v", rows)
+	}
+}
+
 // A CP replaced mid-download still writes the row: the spec is on the job, not in memory.
 func TestEngineIngestSurvivesAControlPlaneRestart(t *testing.T) {
 	api := &fakeIngestECS{}

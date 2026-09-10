@@ -137,6 +137,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // does not fit an L4, so it runs at 32768. Never shown without saying whose number it is.
   "admin.engines_ingest_ctx_max": "the model's maximum is {n}",
   "admin.engines_ingest_go": "Take it in",
+  // A split model is not one download (FLUX.1 is a unet, a clip_l, a t5 and a vae). The CP
+  // refuses a plain ingest onto an id it already has — that would upsert the row's files,
+  // licence and enabled flag away — so the other act is offered here instead.
+  "admin.engines_ingest_attach": "Add it to “{id}” as a part (no new row)",
+  "admin.engines_ingest_id_taken": "That id is taken. Choose another, or tick “add it as a part” above.",
   "admin.engines_ingest_accept": "I accept this model's licence (on behalf of everyone this deployment serves)",
   "admin.engines_ingest_gated": "A gated repository. It is fetched with the operator's token, which has accepted its terms.",
   "admin.engines_ingest_gated_no_token": "A gated repository, and this deployment has no Hugging Face token. Register the operator's token under \u201cHugging Face token\u201d below — it is read by the ingest task only.",

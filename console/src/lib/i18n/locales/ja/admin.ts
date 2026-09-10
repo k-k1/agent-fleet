@@ -137,6 +137,11 @@ export const admin = {
   // L4 には入らないので 32768 で走らせている。誰の数字かを言わずに出さない。
   "admin.engines_ingest_ctx_max": "モデルの上限 {n}",
   "admin.engines_ingest_go": "取り込む",
+  // 分割モデルは 1 回の取り込みでは組み上がらない（FLUX.1 は unet + clip_l + t5 + vae の 4 本）。
+  // 既にある id を指すと CP は新規作成を断る——行のファイル・ライセンス・有効状態を
+  // 上書きしてしまうため——ので、「その行の部品として足す」をここで選ばせる。
+  "admin.engines_ingest_attach": "「{id}」の部品として足す（新しい行は作らない）",
+  "admin.engines_ingest_id_taken": "この id はもう使われています。別の id にするか、上で「部品として足す」を選んでください。",
   "admin.engines_ingest_accept": "このモデルのライセンスに同意します（配備の全メンバーの代わりに引き受けることになります）",
   "admin.engines_ingest_gated": "gated のリポジトリです。運用者のアカウントで条項に同意済みのトークンを使って取り込みます。",
   "admin.engines_ingest_gated_no_token": "gated のリポジトリですが、この配備には Hugging Face のトークンがありません。下の「Hugging Face のトークン」で運用者のトークンを登録してください（読むのは取り込みタスクだけです）。",

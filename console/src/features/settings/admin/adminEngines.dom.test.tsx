@@ -1526,6 +1526,100 @@ describe("EnginesAdminView", () => {
     expect(fresh.className).not.toContain("on");
     expect(fresh.textContent).toContain("有効にする");
   });
+
+  // 🔴 ADR 0072 P2 欠落 6. An ingest wrote one unlabelled file, so a split model could not be
+  // assembled by taking its parts in: on af-sandbox the four files of `flux1-dev-fp8` were
+  // staged as three throwaway rows and the real row was re-typed key by key through
+  // `POST /models` — with the throwaway rows left pointing at the same objects.
+  //
+  // Two halves are pinned here, and both were unreachable from this form: WHAT the file is
+  // (which also decides its directory, and a text encoder under `image/checkpoints/` is
+  // invisible to every loader that would read it), and that it joins the row that is already
+  // there instead of being refused as a duplicate id.
+  it("takes a part in and attaches it to the row that already holds the model", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? { jobs: [] }
+        : {
+            engines: [
+              row({
+                provider: "comfy",
+                base_models: ["sdxl", "sd35", "flux1", "flux2-klein", "zimage"],
+                file_flags: ["", "--diffusion-model", "--clip_l", "--clip_g", "--t5xxl", "--vae"],
+                has_models: true,
+                model_rows: [{ id: "flux1-dev-fp8", enabled: false, base_model: "flux1" }],
+              }),
+            ],
+          },
+    );
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "Hugging Face などから取り込む",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const inputs = Array.from(host!.querySelectorAll(".engines-ingest .engines-model-add-row input"));
+    await type(inputs[0], "comfyanonymous/flux_text_encoders");
+    await type(inputs[1], "clip_l.safetensors");
+    // The id of the row this part belongs to, which the catalogue already holds.
+    await type(inputs[2], "flux1-dev-fp8");
+
+    // Said before anything is fetched: as it stands this ingest is the one the CP answers 409
+    // to, and the button is not offered.
+    expect(host!.textContent).toContain("この id はもう使われています");
+
+    const partSelect = host!.querySelector(".engines-ingest select") as HTMLSelectElement;
+    await act(async () => {
+      partSelect.value = "--clip_l";
+      partSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      const box = host!.querySelector(".engines-ingest-accept input") as HTMLInputElement;
+      box.click();
+    });
+
+    apiJSON.mockResolvedValueOnce({
+      sha256: "5555555555555555555555555555555555555555555555555555555555555555",
+      bytes: 246144152,
+      gated: false,
+      license: "apache-2.0",
+      commercial_use: "yes",
+      can_ingest: true,
+    });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "調べる",
+      ) as HTMLElement,
+    );
+    await act(async () => {
+      const boxes = Array.from(host!.querySelectorAll(".engines-ingest-accept input")) as HTMLInputElement[];
+      boxes[boxes.length - 1].click(); // the licence
+    });
+
+    apiJSON.mockResolvedValueOnce({ id: "j2", model_id: "flux1-dev-fp8", state: "running" });
+    await click(
+      Array.from(host!.querySelectorAll(".engines-ingest button")).find(
+        (b) => b.textContent === "取り込む",
+      ) as HTMLElement,
+    );
+    const body = apiJSON.mock.calls.at(-1)!;
+    expect(String(body[0])).toBe("api/admin/engines/image/ingest");
+    expect(body[2]).toMatchObject({
+      id: "flux1-dev-fp8",
+      file_flag: "--clip_l",
+      attach: true,
+      // 🔴 text_encoders, not checkpoints: the directory is what puts the file in
+      // DualCLIPLoader's menu at all.
+      s3Key: "image/text_encoders/clip_l.safetensors",
+    });
+  });
 });
 
 // The operator's Hugging Face token (ADR 0072 decision 6 as revised, phase P5).

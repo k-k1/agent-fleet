@@ -931,6 +931,13 @@ type engineIngestBody struct {
 	ContextTokens   int      `json:"context_tokens"`
 	MaxOutputTokens int      `json:"max_output_tokens"`
 	Sizes           []string `json:"sizes"`
+	// FileFlag is what this file is WITHIN the model, from the same `file_flags` vocabulary the
+	// row already serves to the register form. Empty is a whole checkpoint, which is what every
+	// ingest used to be able to say (ADR 0072 P2 欠落 6).
+	FileFlag string `json:"file_flag"`
+	// Attach says the file joins the row `id` already names rather than creating one. It is the
+	// other half of the flag: a FLUX.1 row is four files and they arrive as four downloads.
+	Attach bool `json:"attach"`
 	// LicenseAccepted is REQUIRED, and it is not a formality (ADR 0072 decision 10). A gated
 	// repository distributes only to accounts that accepted its terms, and on a multi-tenant
 	// deployment the operator accepts on behalf of every member — so the answer is recorded
@@ -1061,6 +1068,15 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 			"the licence has to be accepted before a model is taken in"})
 		return
 	}
+	// What this file IS within the model. Checked against the provider's own vocabulary rather
+	// than taken as text: an unknown flag is silently dropped by the Agent's resolver (a
+	// catalogue newer than the box must degrade, not fail), so a typo here would produce a row
+	// whose part is simply never passed to any loader.
+	flag := strings.TrimSpace(b.FileFlag)
+	if aerr := engineFileFlagValid(e.def.Provider, flag); aerr != nil {
+		writeAPIErr(w, aerr)
+		return
+	}
 	// 🔴 An id already in the catalogue is REFUSED, because the row is written by PutEngineModel
 	// and that is an upsert on (role, id) — correct for the seed and for registering a staged
 	// file, catastrophic here. The job would download for minutes and then replace a working
@@ -1070,10 +1086,27 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	// Refusing is also the honest reading of what an ingest is: it CREATES a row (disabled, for
 	// an administrator to turn on). Replacing the bytes under an id is a different act, and
 	// forgetting the old row first says so out loud.
+	//
+	// `attach` is that other act, said out loud: the file joins the named row as one more PART
+	// and nothing else about the row is touched. It is what makes a split model assemblable by
+	// ingest alone (欠落 6) — until it existed, the three components of a FLUX.1 row had to be
+	// taken in as throwaway rows and the real row re-typed through `POST /models`.
+	var existing *store.EngineModel
 	for _, m := range e.catalog.list(r.Context()) {
-		if m.ID == id {
+		if m.ID != id {
+			continue
+		}
+		if !b.Attach {
 			writeAPIErr(w, &apiError{http.StatusConflict, errCodeIngestIDExists,
 				"this engine already has a model called " + id + " — forget that row first, or choose another id"})
+			return
+		}
+		row := m
+		existing = &row
+	}
+	if b.Attach {
+		if aerr := engineAttachAllowed(existing, id, key, flag); aerr != nil {
+			writeAPIErr(w, aerr)
 			return
 		}
 	}
@@ -1101,7 +1134,9 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 	if base == "" && engineBaseModelValid(e.def.Provider, res.BaseModel) {
 		base = strings.TrimSpace(res.BaseModel)
 	}
-	if !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
+	// An attach writes no family: the row it joins declared one when it was created, and asking
+	// for it again is asking for a second answer to a question already settled.
+	if !b.Attach && !strings.EqualFold(strings.TrimSpace(b.Kind), engineModelKindLora) && !engineBaseModelValid(e.def.Provider, base) {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
 			"declare base_model as one of %s: this engine runs %s, which picks a workflow by family"+
 				" and will not guess one%s",
@@ -1115,6 +1150,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, ident
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
 		AcceptedBy: ident.ID, Resolved: res,
+		FileFlag: flag, Attach: b.Attach,
 	})
 	if aerr != nil {
 		writeAPIErr(w, aerr)
@@ -1182,6 +1218,62 @@ func engineFirstNonEmpty(v ...string) string {
 		}
 	}
 	return ""
+}
+
+// engineFileFlagValid checks a declared file role against the provider's vocabulary.
+//
+// The empty flag — a whole checkpoint — is always allowed, including for a provider with no
+// vocabulary at all: that is what every ingest wrote before this field existed, and a
+// deployment whose engine is sdcpp must keep taking models in.
+func engineFileFlagValid(provider, flag string) *apiError {
+	if flag == "" {
+		return nil
+	}
+	vocab := engineFileFlagsFor(provider)
+	if vocab == nil {
+		return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"this engine runs " + provider + ", which loads one whole checkpoint — it has no file roles to declare"}
+	}
+	for _, f := range vocab {
+		if f == flag {
+			return nil
+		}
+	}
+	named := make([]string, 0, len(vocab))
+	for _, f := range vocab {
+		if f != "" {
+			named = append(named, f)
+		}
+	}
+	return &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+		"file_flag must be empty (a whole checkpoint) or one of %s; %q is not a file role %s reads",
+		strings.Join(named, ", "), flag, provider)}
+}
+
+// engineAttachAllowed is the gate on adding a part to an existing row. Three refusals, each of
+// which would otherwise be discovered as a row that generates nothing:
+//
+//   - no such row. An attach names its target by id, and a typo would otherwise download for
+//     minutes and then write a file nothing points at;
+//   - no flag. The unlabelled slot is THE checkpoint and a row has one; attaching a second
+//     would leave the last writer deciding which file the loader gets;
+//   - that role is taken. Same reason, said before the download rather than after it.
+func engineAttachAllowed(row *store.EngineModel, id, key, flag string) *apiError {
+	if row == nil {
+		return &apiError{http.StatusNotFound, errCodeEngineModelUnknown,
+			"no model " + id + " for engine " + key + " to attach this file to"}
+	}
+	if flag == "" {
+		return &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"attaching a file to " + id + " needs file_flag: an unlabelled file is the checkpoint itself, and a row has one"}
+	}
+	for _, f := range row.Files {
+		if strings.TrimSpace(f.Flag) == flag {
+			return &apiError{http.StatusConflict, errCodeIngestIDExists,
+				id + " already declares a " + flag + " file (" + f.S3Key + ") — forget the row, or take this in as its own"}
+		}
+	}
+	return nil
 }
 
 // engineBaseModelHint quotes what the repository called this model, so the refusal above ends

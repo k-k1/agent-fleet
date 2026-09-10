@@ -499,6 +499,8 @@ export function EnginesAdminView() {
             engineKey={e.key}
             isImage={e.api === "images"}
             baseModels={e.base_models}
+            fileFlags={e.file_flags}
+            modelIds={(e.model_rows || []).map((m) => m.id)}
             busy={busy === e.key + "/ingest"}
             onStarted={() => loadJobs(e.key)}
           />
@@ -1242,6 +1244,8 @@ function EngineIngest({
   engineKey,
   isImage,
   baseModels,
+  fileFlags,
+  modelIds,
   busy,
   onStarted,
 }: {
@@ -1251,6 +1255,13 @@ function EngineIngest({
    *  repository's OWN answer is a display name and is shown as a hint, never submitted — the
    *  CP refuses an ingest whose family is not one of these. */
   baseModels?: string[];
+  /** What this file IS within the model, same vocabulary and same source as the register
+   *  form's. Empty = this provider loads one whole checkpoint and has no parts to name. */
+  fileFlags?: string[];
+  /** The ids this engine's catalogue already holds. Only used to offer "add it to that row"
+   *  when the id names one: the CP refuses a plain ingest onto an existing id, and without the
+   *  offer the only way to build a split model is three throwaway rows (ADR 0072 P2 欠落 6). */
+  modelIds?: string[];
   busy: boolean;
   onStarted: () => void;
 }) {
@@ -1274,7 +1285,16 @@ function EngineIngest({
   const [searchSource, setSearchSource] = useState("hf");
   const [sort, setSort] = useState("downloads");
   const [baseModel, setBaseModel] = useState("");
+  /** What this file is within the model, and — when the id names a row that already exists —
+   *  whether it JOINS that row instead of making a new one. */
+  const [fileFlag, setFileFlag] = useState("");
+  const [attach, setAttach] = useState(false);
   const families = baseModels || [];
+  const flags = fileFlags || [];
+  /** True when the typed id is one this engine already has. The CP refuses a plain ingest onto
+   *  it (409 model_id_exists), so this is where the second act — attaching a part — is
+   *  offered rather than left as an error to read. */
+  const known = (modelIds || []).includes(id.trim());
   /** Which read of a source is the current one. Picking a second result before the first has
    *  answered is one click, and the two answers come back in whatever order the two APIs feel
    *  like — so the older one is dropped rather than allowed to describe the row on screen. */
@@ -1463,7 +1483,7 @@ function EngineIngest({
     };
     const c = n(ctx);
     const o = n(out);
-    const key = (isImage ? "image/checkpoints/" : "llm/") + (file.trim() || id.trim());
+    const key = engineIngestPrefix(isImage, fileFlag) + (file.trim() || id.trim());
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
       id: id.trim(),
       kind: isImage ? "checkpoint" : "gguf",
@@ -1471,6 +1491,8 @@ function EngineIngest({
       source: source(),
       description: desc.trim(),
       base_model: baseModel,
+      file_flag: fileFlag,
+      attach: attach && known,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
       license_accepted: true,
@@ -1487,6 +1509,8 @@ function EngineIngest({
     setFile("");
     setFiles(null);
     setId("");
+    setFileFlag("");
+    setAttach(false);
     onStarted();
   };
 
@@ -1636,11 +1660,50 @@ function EngineIngest({
         setId,
         isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
       )}
+      {/* What this file IS within the model. Until this existed every ingest wrote one
+          unlabelled file, so a split model could not be assembled by taking its parts in — the
+          three components of a FLUX.1 row had to be staged as throwaway rows and the real row
+          re-typed key by key (ADR 0072 P2 欠落 6). It also decides the bucket directory, which
+          is what makes the file visible to the right loader at all. */}
+      {flags.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>{tr("admin.engines_model_add_part")}</span>
+          <select
+            value={fileFlag}
+            onChange={(ev) => {
+              setFileFlag(ev.currentTarget.value);
+              // A whole checkpoint is never a part of another row.
+              if (!ev.currentTarget.value) setAttach(false);
+            }}
+          >
+            {flags.map((fl) => (
+              <option key={fl} value={fl}>
+                {fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {/* The id names a row that is already there. The CP refuses a plain ingest onto it — it
+          would upsert that row's files, licence and enabled flag away — so the choice is made
+          here, before the download: a new id, or this file as one more part of that row. */}
+      {known && (
+        <label className="engines-ingest-accept">
+          <input
+            type="checkbox"
+            checked={attach}
+            disabled={!fileFlag}
+            onChange={(ev) => setAttach(ev.currentTarget.checked)}
+          />
+          <span>{(tr("admin.engines_ingest_attach") as string).replace("{id}", id.trim())}</span>
+        </label>
+      )}
+      {known && !attach && <p className="form-err">{tr("admin.engines_ingest_id_taken")}</p>}
       {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
           answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
           Hugging Face and Civitai publish, and storing one of those as the family produced rows
           that looked complete and refused to generate (P2 実機検証). */}
-      {families.length > 0 && (
+      {!attach && families.length > 0 && (
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_model_add_family")}</span>
           <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
@@ -1653,7 +1716,7 @@ function EngineIngest({
           </select>
         </label>
       )}
-      {families.length > 0 && found?.base_model && (
+      {!attach && families.length > 0 && found?.base_model && (
         <p className="muted">
           {(tr("admin.engines_ingest_family_hint") as string).replace("{n}", found.base_model)}
         </p>
@@ -1694,7 +1757,17 @@ function EngineIngest({
           <button
             type="button"
             className="primary sm"
-            disabled={busy || !accepted || !id.trim() || found.can_ingest === false}
+            disabled={
+              busy ||
+              !accepted ||
+              !id.trim() ||
+              found.can_ingest === false ||
+              // An id the catalogue already holds goes in as a PART or not at all; the CP
+              // refuses both of these too, and a button that let the press happen would spend
+              // a resolve and a refusal to say so.
+              (known && !attach) ||
+              (attach && !fileFlag)
+            }
             onClick={start}
           >
             {tr("admin.engines_ingest_go")}
@@ -1705,6 +1778,32 @@ function EngineIngest({
       <p className="muted">{tr("admin.engines_ingest_note")}</p>
     </div>
   );
+}
+
+/** Where in the bucket a taken-in file goes, from what it IS within the model.
+ *
+ * 🔴 Not cosmetic, and not a place a wrong answer is ever reported: the box mirrors the bucket
+ * and ComfyUI builds each loader's menu from its own directory, so a text encoder staged under
+ * `image/checkpoints/` is one `UNETLoader` list it can never appear in. Measured on af-sandbox
+ * (ADR 0072 P2 残作業 5): a 22.2 GiB FLUX.1 checkpoint sat in `image/checkpoints/` and no flux1
+ * template could reach it, which read as "the model does not work".
+ *
+ * The layout is ADR 0072 decision 2's, which is ComfyUI's own convention (ADR 0071 decision 6). */
+export function engineIngestPrefix(isImage: boolean, flag: string): string {
+  if (!isImage) return "llm/";
+  switch (flag) {
+    case "--diffusion-model":
+      return "image/diffusion_models/";
+    // All three encoders live in one directory — that IS what TripleCLIPLoader enumerates.
+    case "--clip_l":
+    case "--clip_g":
+    case "--t5xxl":
+      return "image/text_encoders/";
+    case "--vae":
+      return "image/vae/";
+    default:
+      return "image/checkpoints/";
+  }
 }
 
 /** A catalogue id proposed from the filename that was picked.

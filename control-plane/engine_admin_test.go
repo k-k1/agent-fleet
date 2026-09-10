@@ -412,6 +412,87 @@ func TestEngineIngestRefusesAnIdTheCatalogueAlreadyHas(t *testing.T) {
 	}
 }
 
+// 🔴 ADR 0072 P2 欠落 6, at the door. The ingest could say nothing about what a file IS within
+// the model, so `attach` — this file joins the row that is already there — is the act that
+// makes a split model buildable by ingest alone. It is also the one act allowed to name an id
+// the catalogue already holds, and everything about it is decided BEFORE the download: nine
+// minutes of Fargate is a bad place to learn that a flag was misspelt.
+func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev-fp8", Kind: "checkpoint", BaseModel: "flux1", Enabled: true,
+		Files: []store.EngineModelFile{{Flag: "--diffusion-model", S3Key: "image/diffusion_models/flux1.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	reg.ing = &engineIngester{
+		def:     engineIngestDef{TaskDef: "af-ingest", Subnets: []string{"subnet-1"}, SecurityGroups: []string{"sg-1"}},
+		cluster: "c", ecs: &fakeIngestECS{}, store: st, models: st,
+	}
+
+	post := func(extra string) (int, string) {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		body := `{"id":"flux1-dev-fp8","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors",
+		  "license_accepted":true,"source":{"url":"https://example.invalid/clip_l.safetensors",
+		  "sha256":"` + strings.Repeat("b", 64) + `"}` + extra + `}`
+		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(body))
+		r.SetPathValue("key", "image")
+		a.postIngest(rec, r, store.Identity{ID: "u1"})
+		return rec.Code, rec.Body.String()
+	}
+
+	// Without it, the existing id is still refused — that check is what stops an ingest from
+	// upserting a working row's files, licence and enabled flag away.
+	if code, body := post(`,"file_flag":"--clip_l"`); code != http.StatusConflict {
+		t.Fatalf("a plain ingest onto an existing id = %d, want 409 (%s)", code, body)
+	}
+	// With it and no role, refused too: the unlabelled slot IS the checkpoint and a row has
+	// one, so a second would leave the last writer deciding what the loader gets.
+	if code, body := post(`,"attach":true`); code != http.StatusBadRequest {
+		t.Fatalf("an attach with no file_flag = %d, want 400 (%s)", code, body)
+	}
+	// A role this provider does not read is refused rather than stored: the Agent's resolver
+	// drops an unknown flag (a catalogue newer than the box has to degrade), so the file would
+	// be downloaded, listed on the row and passed to nothing.
+	code, body := post(`,"attach":true,"file_flag":"--clip-l"`)
+	if code != http.StatusBadRequest || !strings.Contains(body, "--clip_l") {
+		t.Fatalf("a misspelt flag = %d, and the refusal does not name the vocabulary: %s", code, body)
+	}
+	// A role the row already fills.
+	if code, body := post(`,"attach":true,"file_flag":"--diffusion-model"`); code != http.StatusConflict {
+		t.Fatalf("attaching a second --diffusion-model = %d, want 409 (%s)", code, body)
+	}
+	// An id nothing holds: an attach names its target, and a typo must not write a row.
+	rec := httptest.NewRecorder()
+	r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest", strings.NewReader(
+		`{"id":"typo","kind":"checkpoint","s3Key":"image/text_encoders/clip_l.safetensors","attach":true,
+		  "file_flag":"--clip_l","license_accepted":true,
+		  "source":{"url":"https://example.invalid/c","sha256":"`+strings.Repeat("b", 64)+`"}}`))
+	r.SetPathValue("key", "image")
+	a.postIngest(rec, r, store.Identity{ID: "u1"})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("an attach to an id nothing holds = %d, want 404 (%s)", rec.Code, rec.Body.String())
+	}
+
+	// And the one that is right starts a job — with no family declared, because the row
+	// settled that when it was created.
+	if code, body := post(`,"attach":true,"file_flag":"--clip_l"`); code != http.StatusOK {
+		t.Fatalf("the attach = %d, want 200 (%s)", code, body)
+	}
+	jobs, err := st.ListEngineIngestJobs(ctx, "image", 10)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("jobs = %d (%v) — the refusals above must not have left one", len(jobs), err)
+	}
+}
+
 // The whole P0 flow through the API: register a staged file, enable it, make it the one the
 // engine starts with — and see the previous one stop being it. This is the sequence behind
 // ADR 0072 P0's definition of done, minus the GPU.
