@@ -50,6 +50,7 @@ Keeping it current:
 - **[mirror]** Generated images never reached the conversation when anything ran after them — the card was swallowed by the collapsed work process
 - **[agents]** opencode's launch menu offered only the default model and blamed the connection and plan
 - **[sessions]** "Stop when done" halted a session while a background command was still running
+- **[memos]** Asking a session to add a memo could file it in the agent's own memory instead of the memo queue
 
 ## [0.17.0](0.17.0.md) — 2026-09-09
 
