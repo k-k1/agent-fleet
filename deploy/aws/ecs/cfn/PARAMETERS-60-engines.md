@@ -875,6 +875,22 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   differed in exactly this one line, so 13/13 bench scenarios passed against an integration
   path nothing had ever run. Measured on af-sandbox, ADR 0072 P2 実機検証.
 
+  **`--verbose DETAIL` is what puts the VRAM a model actually took into CloudWatch.** ComfyUI
+  logs `Model loaded: patcher=… model=… ram_mb=… vram_mb=…` at its own DETAIL level
+  (`comfy/model_management.py`, v0.34.0), which sits BELOW `INFO` in
+  `LOG_LEVELS = ('DEBUG', 'DETAIL', 'INFO', …)`. Without the flag the console handler is at
+  `INFO`, so the line is not written **anywhere**: `main.py` passes an explicit (empty) file-output
+  list, which stops `app/logger.py` from ever falling back to its `comfyui_detail.log` default.
+  The measured VRAM of a checkpoint is the one number ADR 0074's rung warnings are short of on
+  the image side, and it cannot be recovered afterwards.
+
+  The level is deliberately sparse rather than a per-step firehose — in the whole v0.34.0 tree
+  there are six `detail(...)` call sites, and the sampler's is guarded by `first_step`, so a
+  generation adds about **three lines** (sampler summary, first step, cache evictions) plus one
+  per model LOAD, against the 80 `logging.info` sites already writing at `INFO`. At
+  `LogRetentionDays` (14 by default) that is not a cost worth a parameter. It also drops nothing:
+  DETAIL raises the console level, and `WARNING`/`ERROR` keep going where they went.
+
 ## Editing this template
 
 It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so
