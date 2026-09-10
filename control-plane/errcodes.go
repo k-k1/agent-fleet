@@ -43,7 +43,12 @@ const (
 	// not say it knew that (ADR 0074 decision 6). A REFUSAL TO GUESS, not a refusal: repeating
 	// the call with confirm_vram succeeds, because quantisation and offloading are real and the
 	// panel points rather than decides.
-	errCodeEngineVramConfirm   = "engine_vram_confirm"
+	errCodeEngineVramConfirm = "engine_vram_confirm"
+	// The row's declared family names a workflow that reads files the row does not have (ADR
+	// 0072 P2 欠落 10). Unlike the VRAM one this has no confirm: it is not a risk, it is
+	// `comfyBuildGraph` refusing before it dials anything, so enabling would only put an id in
+	// generate_image's list that every request bounces off.
+	errCodeEngineFilesMissing  = "engine_files_missing"
 	errCodeIngestBadSource     = "bad_source"
 	errCodeIngestFileUnknown   = "file_unknown"
 	errCodeIngestNoChecksum    = "no_checksum"

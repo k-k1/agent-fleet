@@ -494,6 +494,104 @@ func TestEngineIngestAttachesAPartToAnExistingRow(t *testing.T) {
 	}
 }
 
+// 🔴 ADR 0072 P2 欠落 10. Declaring a family clears `base_model_missing` — and NOTHING looked
+// at whether the row held the files that family's template reads, so the row came out of the
+// fix looking healthier and generating just as little.
+//
+// Measured on af-sandbox: `flux1-dev` was one unflagged 22.2 GiB file in `image/checkpoints/`,
+// and the flux1 template reads a diffusion model, two text encoders and a VAE — no answer in
+// the family selector could have saved that row, and after any answer the panel said nothing.
+func TestEngineAdminRowMustHoldWhatItsFamilyReads(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	reg := &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+	ctx := t.Context()
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "flux1-dev", Kind: "checkpoint",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/flux1-dev.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+
+	// Declaring the family is ACCEPTED — it is an improvement to a broken row, and refusing it
+	// would leave the row both broken and unfixable.
+	code, out := adminModel(t, a, "PUT", "image", "flux1-dev", `{"base_model":"flux1"}`)
+	if code != http.StatusOK {
+		t.Fatalf("declaring the family = %d (%v)", code, out)
+	}
+	// But the panel does not go quiet: the mark that replaces `base_model_missing` names the
+	// files the row still needs.
+	rowOf := func(out map[string]any, id string) map[string]any {
+		t.Helper()
+		rows, _ := out["model_rows"].([]any)
+		for _, r := range rows {
+			m, _ := r.(map[string]any)
+			if m["id"] == id {
+				return m
+			}
+		}
+		t.Fatalf("no row %s in %v", id, out)
+		return nil
+	}
+	mr := rowOf(out, "flux1-dev")
+	if mr["base_model_missing"] == true {
+		t.Error("the family did not stick")
+	}
+	missing, _ := mr["files_missing"].([]any)
+	// All four: the one file this row does have is an unflagged checkpoint, and flux1's
+	// template reads no such thing — which is why no answer in the selector could save it.
+	if len(missing) != 4 {
+		t.Fatalf("files_missing = %v, want every file the flux1 template reads", mr["files_missing"])
+	}
+
+	// And switching it on is refused, without a confirm: this is not a risk to weigh, it is
+	// comfyBuildGraph refusing before it dials anything.
+	code, out = adminModel(t, a, "PUT", "image", "flux1-dev", `{"enabled":true}`)
+	if code != http.StatusConflict {
+		t.Fatalf("enabling a row that cannot generate = %d (%v), want 409", code, out)
+	}
+	msg, _ := out["error"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "--t5xxl") {
+		t.Errorf("the refusal does not name what is missing: %s", msg)
+	}
+	if code, out = adminModel(t, a, "PUT", "image", "flux1-dev", `{"selected":true}`); code != http.StatusConflict {
+		t.Errorf("selecting it = %d (%v), want the same refusal — select enables too", code, out)
+	}
+
+	// 🔴 The positive control. A row that HAS what its family reads goes on, and a single-file
+	// SDXL row is complete with the one unflagged file — a guard that refused everything would
+	// pass every assertion above.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "sdxl-base-1.0", Kind: "checkpoint", BaseModel: "sdxl",
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = adminModel(t, a, "PUT", "image", "sdxl-base-1.0", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enabling a complete row = %d (%v), want 200", code, out)
+	}
+	if _, marked := rowOf(out, "sdxl-base-1.0")["files_missing"]; marked {
+		t.Error("a complete single-file row is marked as missing something")
+	}
+	// A LoRA has no template and no requirements; refusing one would block a registration that
+	// has nothing to do with graphs.
+	if err := st.PutEngineModel(ctx, store.EngineModel{
+		Role: "image", ID: "detailed-eyes", Kind: "lora", BaseModel: "SDXL 1.0",
+		Files: []store.EngineModelFile{{S3Key: "image/loras/detailed_eyes.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = adminModel(t, a, "PUT", "image", "detailed-eyes", `{"enabled":true}`); code != http.StatusOK {
+		t.Fatalf("enabling a LoRA = %d (%v), want 200", code, out)
+	}
+}
+
 // 🔴 ADR 0072 P2 欠落 6 の帰結. `?purge=1` handed the forgotten row's S3 keys straight to
 // MODE=delete without asking whether anything else pointed at them — and decision 2 shares
 // `text_encoders/` ON PURPOSE: SD3.5 and FLUX.1 read the same T5-XXL and CLIP-L, so one ingest

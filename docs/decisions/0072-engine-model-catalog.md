@@ -1639,6 +1639,18 @@ worse than the state before the family was declared. The CP holds both halves of
 family, and each file's flag), so the check belongs where the family is declared or where the row
 is enabled.
 
+> ✅ **Fixed (2026-09-10)**: it went in **both** places. Where the row is ENABLED it refuses —
+> `engineFilesGuard` answers 409 `engine_files_missing` and names the roles that are missing.
+> There is no confirm, unlike the VRAM gate: this is not a bet under uncertainty, it is the
+> same fact `comfyBuildGraph` refuses on before it dials anything, and enabling would only put
+> an id in `generate_image`'s enum that every request bounces off. Where the family is
+> DECLARED it does not refuse — refusing the one act that repairs a broken row would leave it
+> broken and unfixable — it puts `files_missing` on the row instead, and the Console names the
+> parts. The authority for what a family reads is still the per-template guards in
+> `comfy_workflows.go`; `engine_catalog_test.go` builds the list **out of those guards**
+> (`f.X == ""` plus `resolveComfyFiles`' switch) and fails on any drift, Fatally if it cannot
+> read all five families.
+
 `flux1-dev` was deleted with `?purge=1` afterwards, reclaiming the 22.2 GiB — its P4 purpose was
 served in 2026-09-09 and the FLUX.1 row that generates is the separately ingested
 `flux1-dev-fp8`.

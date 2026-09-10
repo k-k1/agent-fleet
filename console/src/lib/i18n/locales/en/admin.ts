@@ -84,6 +84,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_part_more": "Add a file",
   "admin.engines_model_add_part_drop": "Remove",
   "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Choose one below.",
+  // 🔴 Declaring a family clears `base_model_missing`; whether the row holds the files that
+  // family's template reads is a different question. On the real deployment `flux1-dev` was one
+  // unflagged file in `image/checkpoints/` and flux1 reads four others — no answer in the
+  // selector could work, and choosing one made the only mark disappear.
+  "admin.engines_model_files_missing": "This row does not hold the files the \u201c{n}\u201d workflow reads (missing: {f}). It cannot be enabled until they are taken in and attached to it.",
   "admin.engines_model_add_desc": "description",
   // Optional. This route has no source to read a licence from, so it is the one place a person
   // types one. Left blank, the row says "licence not recorded" rather than showing a gap.

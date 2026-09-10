@@ -1093,6 +1093,43 @@ describe("EnginesAdminView", () => {
     });
   });
 
+  // 🔴 ADR 0072 P2 欠落 10. Declaring a family cleared the only mark this panel had, and the
+  // row still could not generate: `flux1-dev` was one unflagged 22.2 GiB checkpoint and the
+  // flux1 template reads four other files. The row came out of the fix looking healthier.
+  it("keeps saying so when a row's family reads files the row does not have", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl", "flux1"],
+          has_models: true,
+          model_rows: [
+            {
+              id: "flux1-dev",
+              kind: "checkpoint",
+              base_model: "flux1",
+              files_missing: ["--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+            },
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const li = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (n) => n.querySelector(".mono")?.textContent === "flux1-dev",
+    )!;
+    const said = li.querySelector(".form-err")!.textContent!;
+    // The family it has, and every part it still needs — those are what have to be taken in.
+    expect(said).toContain("flux1");
+    expect(said).toContain("--t5xxl");
+    // The row that holds what its family reads says nothing: a mark on every row is no mark.
+    const ok = Array.from(host!.querySelectorAll("li.engines-model")).find(
+      (n) => n.querySelector(".mono")?.textContent === "sdxl-base-1.0",
+    )!;
+    expect(ok.querySelector(".form-err")).toBe(null);
+  });
+
   // Half a window is worse than none: opencode reads an output cap of 0 as 32,000, so a 32k
   // context declared alone leaves 768 usable tokens. Both halves or neither.
   it("drops a context declared without an output cap", async () => {

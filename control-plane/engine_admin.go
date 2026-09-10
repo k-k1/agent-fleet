@@ -141,6 +141,13 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		if families != nil && !engineModelIsLora(m) && !engineBaseModelValid(e.def.Provider, m.BaseModel) {
 			mr["base_model_missing"] = true
 		}
+		// And the other half of "this row cannot generate", which declaring a family used to
+		// HIDE: the template picked by that family reads files this row does not have (ADR 0072
+		// P2 欠落 10). Named as the roles that are missing, because that is what the operator
+		// then has to take in.
+		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
+			mr["files_missing"] = missing
+		}
 		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{
@@ -601,6 +608,17 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 			return
 		}
 	}
+	// And whether the row could generate at all. Unlike the VRAM guard this one REFUSES and has
+	// no confirm: a template that reads a file the row does not declare is not a judgement call
+	// under uncertainty, it is `comfyBuildGraph` returning errComfyMissingFile before it dials
+	// anything. Switching such a row on puts its id in generate_image's `model` enum and buys a
+	// cold start for a request that cannot succeed (ADR 0072 P2 欠落 10).
+	if loading {
+		if aerr := engineFilesGuard(ctx, e, id); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
 	var (
 		found  bool
 		err    error
@@ -703,6 +721,36 @@ func engineVramGuard(ctx context.Context, e *engineRuntimeState, id string) *api
 		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
 			"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
 			m.ID, at, need, sel.ID, sel.VramMiB)}
+	}
+	return nil
+}
+
+// engineFilesGuard refuses to switch on a row whose declared family reads files it does not
+// have (ADR 0072 P2 欠落 10).
+//
+// The check lives HERE rather than where the family is declared, because declaring one is an
+// improvement to a broken row and refusing it would leave the row broken AND unfixable. What
+// the declaration does instead is put `files_missing` on the panel — the mark that used to
+// disappear the moment a family was chosen, which is how `flux1-dev` came to look healthier
+// after being told what it was.
+func engineFilesGuard(ctx context.Context, e *engineRuntimeState, id string) *apiError {
+	for _, m := range e.catalog.list(ctx) {
+		if m.ID != id {
+			continue
+		}
+		missing := engineMissingFileFlags(e.def.Provider, m)
+		if len(missing) == 0 {
+			return nil
+		}
+		named := make([]string, 0, len(missing))
+		for _, f := range missing {
+			named = append(named, engineFlagLabel(f))
+		}
+		return &apiError{http.StatusConflict, errCodeEngineFilesMissing, fmt.Sprintf(
+			"%s declares base_model %s, and that workflow reads %s — this row has no such file,"+
+				" so it would be offered by name and refused at generation. Take the missing"+
+				" part(s) in and attach them to this row first",
+			m.ID, m.BaseModel, strings.Join(named, ", "))}
 	}
 	return nil
 }

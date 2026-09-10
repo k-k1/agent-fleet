@@ -83,6 +83,13 @@ type EngineModel = {
    *  vocabulary — and because the row looks complete without it and fails only at generation,
    *  after a cold start somebody waited through. */
   base_model_missing?: boolean;
+  /** The row HAS a family, and the workflow that family names reads files this row does not
+   *  declare (ADR 0072 P2 欠落 10) — listed as the roles that are missing. It is the mark that
+   *  used to disappear the moment a family was chosen: `flux1-dev` was one unflagged 22.2 GiB
+   *  checkpoint, the flux1 template reads four other files, and choosing any family at all
+   *  made the panel go quiet about a row that still could not generate. The CP refuses to
+   *  enable one of these. */
+  files_missing?: string[];
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
    *  model of that name this row is. Absent for a seeded row. */
@@ -807,6 +814,22 @@ function EngineModels({
                     </label>
                   )}
                 </>
+              )}
+              {/* 🔴 The other half of "this row cannot generate", and the one declaring a
+                  family used to hide. The parts are named because taking them in and attaching
+                  them to this row is exactly what has to happen next; enabling is refused
+                  until then, so the sentence is not advice. */}
+              {!!m.files_missing?.length && (
+                <p className="form-err">
+                  {(tr("admin.engines_model_files_missing") as string)
+                    .replace("{n}", m.base_model || "")
+                    .replace(
+                      "{f}",
+                      m.files_missing
+                        .map((f) => (f === "" ? (tr("admin.engines_model_add_part_whole") as string) : f))
+                        .join(", "),
+                    )}
+                </p>
               )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
