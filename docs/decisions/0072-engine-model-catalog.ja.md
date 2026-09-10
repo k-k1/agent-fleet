@@ -2678,6 +2678,112 @@ ja / en × image / llm の 4 通りで測って、どのラベルも 2 行以内
 **まだ言えないこと**: 実際の Hugging Face / Civitai の応答での見え方（fixture は wire の形に
 合わせた作り物である）、gated リポジトリでトークンが無いときの拒否表示、そして phone 幅。
 
+## P3 と P2 の残りを実機に当てた（2026-09-11・開発配備）
+
+image 役を comfy で 2 回起こし、`generate_image` を REST で駆動したセッションから呼んだ。
+GPU 時間は合計約 52 分（g6.xlarge・l4 段）。**結論を先に書く: P3 の完了の定義は「LoRA が
+効いている」側は満たしたが「同じ seed で」の側は満たしていない——そして満たせない。
+P2 の残り（edit / inpaint）は配備が古く、実機に当てられなかった。**
+
+### P3——LoRA は実機で効いた
+
+`nerijs/pixel-art-xl`（170,543,052 バイト・`creativeml-openrail-m`・gated ではない）を
+`image/loras/pixel-art-xl.safetensors` に取り込んだ。取り込みタスクは Fargate なので G 系
+vCPU を使わず、**75 秒未満**で done。
+
+同じ prompt（`a red fox sitting on a mossy rock in a misty forest at dawn`）・同じ
+`sdxl-base-1.0` で:
+
+- LoRA 無し: `b86dc9971348f9cf8d0f7fd851a48d1e123c4f6a0bc364b3519bf3c910535fda`（1,495,544 バイト）
+- LoRA 有り（weight 1）: `40ffa88ee2f4926e61313b24a3bc6bf810b8bff953309e427ab79e20d3902a61`（1,333,432 バイト）
+
+🔴 **これは「同じ seed で絵が変わった」の証明ではない。** provider は要求ごとに乱数で seed を
+選び（`comfyRandomSeed`。ComfyUI がノードの入力でキャッシュするため）、0069 の語彙に seed
+の欄が無い。つまり**完了の定義の前半は、今日の `generate_image` では表現できない**。
+seed を要求で固定できる手段を足さない限り、この行は永久に閉じられない。
+
+代わりに証明できたことの方が、実は強い: **`LoraLoader` の `lora_name` は
+`models/loras` の列挙であって自由文字列ではない**（SD3.5 の `clip_name1` と同じ形）。
+名前が箱に無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
+成功したという事実が、(a) ファイルが `image/loras/` から `models/loras` に降りていること、
+(b) basename が列挙と一致していること、(c) `LoraLoader` が実際に走ったことを同時に示している。**
+
+**baseModel 不一致の拒否も実機で確認した**（レビュー決定 5 が Agent に移した拒否）:
+
+```
+comfy: LoRA pixel-art-xl was trained for the sdxl checkpoint family and flux2-klein-4b is
+flux2-klein — they cannot be combined; a mismatched LoRA does not fail, it quietly does
+nothing to the picture
+```
+
+チェックポイントの切り替えは起きていない——拒否は組み立ての段階で返り、GPU に触っていない。
+フェーズ節の「SD1.5 の LoRA が SDXL で enum に出ない」は、この**名指しの拒否**という形で
+満たしている（決定 5 の改訂が enum の絞り込みを禁じているため。2026-09-10 の補遺参照）。
+
+### 🔴 `imageProviderOrder` に comfy が無い配備では、auto がフリート自身のエンジンを最後に置く
+
+開発配備の ui-prefs は `imageProviderOrder: ["sdcpp","agy","codex"]` だった。comfy はこの
+リストが書かれた後に増えた provider なので、`effectiveOrder` の規則どおり**末尾に足される**
+——つまり `auto` の順は sdcpp → agy → codex → comfy になる。sdcpp はこの配備には存在せず
+（役は comfy）、agy と codex はログイン次第で ready になる。**`provider` を省いた
+`generate_image` は、フリートが金を払っている GPU ではなく利用者のプランを先に使う。**
+
+今回の検証は全呼び出しで `provider="comfy"` を明示したので影響を受けていないが、これは
+`fallbackWarnings` が書かれた理由そのものの静かな版である。設定を書き換えた覚えが無くても、
+**provider が増えた日に既存の保存済み設定が意味を変える**。
+
+### P2 の残り（edit / inpaint）——実機に当てられなかった
+
+配備されている Agent は `0.18.1-dev-8eb6bc66` で、image-to-image を足したコミットより前。
+実機は正直に次を返した:
+
+```
+画像を生成できませんでした: no image provider can serve this request: comfy cannot do edit
+```
+
+このレーンは配備を走らせない約束なので、ここで止めた。**5 族の edit / inpaint グラフは
+形しか固定されていない**——SD3.5 のときと同じ状態であり、次に配備する回で実機に当てるまで
+「動く」とは書けない。
+
+### 欠落 7 の窓は、2 回のコールドスタートのどちらでも開かなかった
+
+start モデル以外（flux1-dev-fp8。同期 168 秒）を、エンジンが応答できるようになった直後に
+要求した。2 回とも**成功**し、裸の 400 は出なかった。
+
+| | mode=on | running | 最初の flux1 生成 |
+|---|---|---|---|
+| 1 回目 | 15:47:18Z | 15:52:02Z（4 分 44 秒） | 15:53:45Z（+103 秒） |
+| 2 回目 | 16:29:20Z | 16:40:32〜16:40:59Z（約 11 分 30 秒） | 16:41:59Z（+60 秒） |
+
+理由は単純で、**インスタンスの取得と起動（4 分 44 秒・11 分 30 秒）が、残りモデルの同期
+（P0 実測で 12 ファイル 48 GB を約 270 秒）より長い**。エンジンが health を通す頃には
+keys.rest が終わっている。2 回目が長いのは容器インスタンスを取り直して EBS が新品になり、
+全モデルを再同期したからで、それでも窓は開かなかった。
+
+**欠落 7 が消えたという意味ではない。** 窓が開く条件は「同期が起動より長いこと」であり、
+温まった容量にすぐ載る配備、あるいは rest がもっと大きいカタログでは開く。ただし
+**この配備の既定の形では踏みにくい**——修正の優先度を決めるときの材料として書いておく。
+修正は別レーンの持ち場なので触っていない。
+
+### 🔴 駆動に使ったセッションは測定器ではなかった
+
+`generate_image` は自分の MCP からは叩けないので、開発配備側に opencode の managed
+セッションを立てて REST で駆動した。「ツールの返り値を一字一句写せ、推測は禁止」と
+指示したうえで、**3 回の捏造と 1 回の引数混入があった**:
+
+- 2 つのサイズの違うファイルに対して**同一の 77 桁**を `sha256sum` の出力として貼った
+  （実行し直したら正しい 2 つの異なる hex が出た）。
+- 呼んでいないプロンプト（"Cyberpunk cityscape" など）を要約に書いた。
+- `sdxl` と `sdxl` が「族が違うので組み合わせられない」という、コードが出せない形の
+  エラー文を貼った。
+- 自動要約（compact）をまたぐと、**明示的に禁止した `loras` 引数を毎回足すようになった**。
+  これのせいで欠落 7 の観測は 1 回無駄になっている——足された LoRA が族不一致になり、
+  Agent が組み立て段階で断ってエンジンに届かなかった。
+
+採用したのは**ツールが返した JSON のうち内部矛盾の無いもの**（パス・バイト数・寸法）と、
+**エンジン側の時刻**（生成ファイル名のナノ秒タイムスタンプ）だけである。実機検証を
+セッション越しにやる限り、この選別は毎回必要になる。
+
 ## 追記 — P3 の完了の定義に seed が届くようになった（2026-09-11）
 
 2026-09-11 の実機検証で「**同じ seed で**」が `generate_image` では表現できないと書いた。

@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -63,6 +65,15 @@ func comfyStub(t *testing.T, conn EngineConn, promptHandler func(w http.Response
 		lookup: func(context.Context) (EngineConn, bool) { return conn, true },
 	}
 	return p, srv
+}
+
+// comfyEditStub is comfyStub plus POST /upload/image, which is the call an edit or an inpaint
+// makes before the graph can name the picture at all.
+func comfyEditStub(t *testing.T, conn EngineConn, uploadHandler http.HandlerFunc, promptHandler func(w http.ResponseWriter, r *http.Request, body map[string]any)) *comfyProvider {
+	t.Helper()
+	p, srv := comfyStub(t, conn, promptHandler)
+	srv.Config.Handler.(*http.ServeMux).HandleFunc("/engine/image/v1/upload/image", uploadHandler)
+	return p
 }
 
 func sdxlConn() EngineConn {
@@ -461,16 +472,200 @@ func TestComfyAwaitHistoryKeepsPollingAnUnknownPromptWithoutAWake(t *testing.T) 
 	}
 }
 
-// Caps advertises generate only (P2 scope decision) even though sdcpp, the other self-hosted
-// provider, offers edit and inpaint too.
-func TestComfyCapsIsGenerateOnly(t *testing.T) {
+// Caps advertises all three ops since P2's remaining work (the per-family image-to-image path),
+// and one reference image — the same shape sdcpp reports, because a second one would need a
+// graph nobody has run.
+func TestComfyCapsOffersImageToImage(t *testing.T) {
 	p, _ := comfyStub(t, sdxlConn(), nil)
 	caps := p.Caps("sdxl-base-1.0")
-	if len(caps.Ops) != 1 || caps.Ops[0] != OpGenerate {
-		t.Errorf("ops = %v, want [generate] only", caps.Ops)
+	for _, op := range []Op{OpGenerate, OpEdit, OpInpaint} {
+		if !caps.Supports(op) {
+			t.Errorf("ops = %v, want %s among them", caps.Ops, op)
+		}
 	}
-	if caps.Supports(OpEdit) || caps.Supports(OpInpaint) {
-		t.Error("comfy must not claim edit/inpaint yet — no template exists for either")
+	if caps.Supports(OpOutpaint) || caps.Supports(OpUpscale) {
+		t.Errorf("ops = %v — comfy must not claim an op with no template", caps.Ops)
+	}
+	if caps.MaxInputs != 1 {
+		t.Errorf("max inputs = %d, want 1", caps.MaxInputs)
+	}
+}
+
+// The three refusals that must land before anything is uploaded and before a GPU is woken.
+func TestComfyGenerateRefusesMismatchedAttachments(t *testing.T) {
+	for _, c := range []struct {
+		name, want string
+		req        Request
+	}{
+		{"edit with no input", "needs an input image",
+			Request{Op: OpEdit, Prompt: "a fox"}},
+		{"inpaint with no mask", "needs a mask image",
+			Request{Op: OpInpaint, Prompt: "a fox", Inputs: []string{"/tmp/x.png"}}},
+		{"two reference images", "at most 1 reference image",
+			Request{Op: OpEdit, Prompt: "a fox", Inputs: []string{"/tmp/x.png", "/tmp/y.png"}}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+				t.Error("the engine was called for a request that cannot be built")
+			})
+			_, err := p.Generate(context.Background(), c.req)
+			if err == nil {
+				t.Fatal("expected a refusal")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Errorf("err = %v, want it to contain %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The whole image-to-image round trip, and the part of it a graph fixture cannot show: the bytes
+// go to ComfyUI's own input directory FIRST (LoadImage's `image` is an enumeration over that
+// directory, not a path), and the graph names what came back.
+func TestComfyEditUploadsTheInputAndNamesItInTheGraph(t *testing.T) {
+	dir := t.TempDir()
+	in := filepath.Join(dir, "photo.png")
+	if err := os.WriteFile(in, tinyPNG(t, 640, 480), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploadedField, uploadedType, gotCType string
+	var uploads int32
+	var gotGraph map[string]any
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			atomic.AddInt32(&uploads, 1)
+			gotCType = r.Header.Get("Content-Type")
+			if err := r.ParseMultipartForm(8 << 20); err != nil {
+				t.Errorf("the upload was not multipart: %v", err)
+			}
+			for name := range r.MultipartForm.File {
+				uploadedField = name
+			}
+			uploadedType = r.FormValue("type")
+			// The engine renames a colliding upload, so the graph must use THIS name and not
+			// the one that was sent.
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": "renamed-by-engine.png", "subfolder": "", "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			gotGraph, _ = body["prompt"].(map[string]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+
+	res, err := p.Generate(context.Background(), Request{
+		Op: OpEdit, Prompt: "make it snow", Inputs: []string{in}, Size: "1024x1024",
+	})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if uploads != 1 || uploadedField != "image" || uploadedType != "input" {
+		t.Errorf("uploads = %d, field = %q, type = %q", uploads, uploadedField, uploadedType)
+	}
+	if !strings.HasPrefix(gotCType, "multipart/form-data") {
+		t.Errorf("Content-Type = %q, want multipart (the gateway forwards it verbatim)", gotCType)
+	}
+	img, ok := gotGraph["img"].(map[string]any)
+	if !ok {
+		t.Fatalf("no LoadImage node in the graph: %v", gotGraph)
+	}
+	inputs, _ := img["inputs"].(map[string]any)
+	if img["class_type"] != "LoadImage" || inputs["image"] != "renamed-by-engine.png" {
+		t.Errorf("LoadImage = %v, want it to name what /upload/image answered", img)
+	}
+	// The sampler has to start from the encoded picture, not from an empty latent.
+	if _, empty := gotGraph["lat"]; empty {
+		t.Error("an empty latent was built for an edit")
+	}
+	ks, _ := gotGraph["ks"].(map[string]any)
+	ksIn, _ := ks["inputs"].(map[string]any)
+	if link, _ := ksIn["latent_image"].([]any); len(link) != 2 || link[0] != "enc" {
+		t.Errorf("latent_image = %v, want the VAEEncode output", ksIn["latent_image"])
+	}
+	if ksIn["denoise"] != comfyEditDenoise {
+		t.Errorf("denoise = %v, want the edit recipe's %v", ksIn["denoise"], comfyEditDenoise)
+	}
+	// The size an edit produces is the input picture's, so a request that asked for another one
+	// is told rather than left to notice.
+	found := false
+	for _, warning := range res.Warnings {
+		if strings.Contains(warning, "640x480") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want the input picture's own size named", res.Warnings)
+	}
+}
+
+// inpaint adds the mask, and the mask is read off the RED channel: LoadImage's own MASK output is
+// 1-alpha, so an opaque black-and-white PNG through the alpha path would repaint nothing at all
+// and say nothing about it.
+func TestComfyInpaintUploadsTheMaskAndSetsTheNoiseMask(t *testing.T) {
+	dir := t.TempDir()
+	in, mask := filepath.Join(dir, "photo.png"), filepath.Join(dir, "mask.png")
+	if err := os.WriteFile(in, tinyPNG(t, 64, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(mask, tinyPNG(t, 64, 64), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var uploads int32
+	var gotGraph map[string]any
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) {
+			n := atomic.AddInt32(&uploads, 1)
+			_ = r.ParseMultipartForm(8 << 20)
+			_ = json.NewEncoder(w).Encode(map[string]any{"name": fmt.Sprintf("up-%d.png", n), "type": "input"})
+		},
+		func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+			gotGraph, _ = body["prompt"].(map[string]any)
+			_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+		})
+
+	if _, err := p.Generate(context.Background(), Request{
+		Op: OpInpaint, Prompt: "a hat", Inputs: []string{in}, Mask: mask,
+	}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if uploads != 2 {
+		t.Fatalf("uploads = %d, want the picture and the mask", uploads)
+	}
+	maskNode, ok := gotGraph["mask"].(map[string]any)
+	if !ok {
+		t.Fatalf("no mask node in the graph: %v", gotGraph)
+	}
+	maskIn, _ := maskNode["inputs"].(map[string]any)
+	if maskNode["class_type"] != "LoadImageMask" || maskIn["channel"] != "red" {
+		t.Errorf("mask node = %v, want LoadImageMask on the red channel", maskNode)
+	}
+	if maskIn["image"] != "up-2.png" {
+		t.Errorf("the mask node names %v, want the SECOND upload (the first is the picture)", maskIn["image"])
+	}
+	ks, _ := gotGraph["ks"].(map[string]any)
+	ksIn, _ := ks["inputs"].(map[string]any)
+	if link, _ := ksIn["latent_image"].([]any); len(link) != 2 || link[0] != "noisemask" {
+		t.Errorf("latent_image = %v, want the masked latent", ksIn["latent_image"])
+	}
+	// Inpaint stays at full denoise: the mask preserves what is outside it, not a partial one.
+	if ksIn["denoise"] != float64(1) {
+		t.Errorf("denoise = %v, want 1 for inpaint", ksIn["denoise"])
+	}
+}
+
+// A picture larger than what the engine gateway will buffer is refused BY NAME here. The gateway
+// truncates at 32 MiB rather than failing, so without this the file would arrive corrupt and come
+// back as a decoder error naming nothing the caller can act on.
+func TestComfyRefusesAnOversizedUpload(t *testing.T) {
+	dir := t.TempDir()
+	big := filepath.Join(dir, "big.png")
+	if err := os.WriteFile(big, make([]byte, comfyMaxUpload+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p := comfyEditStub(t, sdxlConn(),
+		func(w http.ResponseWriter, r *http.Request) { t.Error("an oversized picture reached the engine") },
+		nil)
+	_, err := p.Generate(context.Background(), Request{Op: OpEdit, Prompt: "x", Inputs: []string{big}})
+	if err == nil || !strings.Contains(err.Error(), "limit for one picture") {
+		t.Errorf("err = %v, want a refusal naming the limit", err)
 	}
 }
 
