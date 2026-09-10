@@ -121,6 +121,7 @@ Every row is under **Tenant settings**. [admin/](../admin/README.md) is the shel
 | Audit log and egress control | deployment admin | Admin | [operator 03](../operate/04-secure.md) |
 | Monitoring integrations | deployment admin | Settings → Ops & monitoring | [member 10](../member/13-ops-tooling.md) |
 | Slot pool and instance classes | deployment admin | Admin | [deploy-targets.md](deploy-targets.md) |
+| The inference engines' GPU class | deployment admin (super_admin) | Admin → Inference engines | [admin 04](../admin/04-mcp-egress.md) |
 | Role-scoped documentation in containers | — | automatic | [roles.md](roles.md) |
 
 ## Rows with no Details yet

@@ -522,6 +522,84 @@ should be tuned against (ADR 0071, P0 measurement 1).
 
 As `LlmMode`: the initial mode, a default the stored setting overrides.
 
+## The instance classes
+
+`LlmInstanceClasses` / `ImageInstanceClasses` (ADR 0074) are the ladder of GPU rungs an
+administrator may switch a role between from the Console, without a stack update. **Both default
+to empty, and empty means the feature does not exist**: the box is whatever the parameters above
+bought, and the Control Plane never calls `DescribeCapacityProviders` or `UpdateCapacityProvider`
+at all.
+
+One rung per `;`, seven `|`-separated fields, the last optional:
+
+```
+id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB[|usdPerHour]
+```
+
+```
+LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
+```
+
+- **The FIRST rung is the default**, and it should restate `LlmAllowedInstanceTypes`,
+  `LlmAcceleratorMemMinMiB`, `LlmVCpu*` and `LlmMem*`. Nothing checks that it does — the two
+  are separate declarations, and the first is what the Console offers as "back to the default".
+- **`vramMiB` is both the floor asked of the card (`AcceleratorTotalMemoryMiB.Min`) and what a
+  model's demand is compared against.** Declare it BELOW the card's nominal size, as the
+  existing 21,000 does for an L4's 24 GB: the comparison then warns early rather than late.
+- **`usdPerHour` is display-only and optional.** Nothing computes with it and neither EC2 nor
+  the Pricing API is asked (ADR 0045 decision 21). Leave it out and the panel names no price,
+  which beats naming a wrong one.
+  ⚠️ **Do not copy a list price into it.** The Pricing API's Tokyo on-demand figure for a
+  g6.xlarge is $1.1672, while the bill measured in ADR 0071 was **$1.26** — ECS Managed
+  Instances charges a management fee on top of EC2, so a list price makes the panel about 8%
+  cheaper than reality (measured 2026-09-10, ADR 0074 P1). Declare what was billed, or nothing.
+- A malformed rung is dropped with a log line; a malformed PRICE only drops the price.
+- ⚠️ The ladder is not checked against the account's **G-family vCPU quota**, and it cannot be:
+  the CP has no `service-quotas` permission and the quota differs per deployment (96 in
+  production, 8 on a fresh account). A rung above it is selectable and simply never places —
+  which surfaces as `VcpuLimitExceeded` in the service events, where the panel shows it.
+
+**What changing a rung does.** The Control Plane rewrites four fields of the capacity provider's
+instance requirements (`AllowedInstanceTypes`, `AcceleratorTotalMemoryMiB.Min`, `VCpuCount`,
+`MemoryMiB`) and hands everything else back exactly as it read it. It applies the choice when it
+is saved and again immediately before every start, because a stack update puts this template's
+declaration back and nothing tells the CP that happened.
+
+⚠️ **It reaches the NEXT box only** — the API's own words are "These changes only apply to new
+Amazon ECS Managed Instances". So a running engine keeps its card until it is replaced, and the
+Control Plane will not start a new task while a box of another rung is still registered: that is
+the `VcpuLimitExceeded` above, and it is also how a task would land straight back on the old
+card. The wait is bounded at 20 minutes, because `scaleInAfter: -1` would otherwise make it
+never end.
+
+**Permissions.** `ecs:DescribeCapacityProviders` + `ecs:UpdateCapacityProvider` on this stack's
+own capacity providers, `ecs:PutClusterCapacityProviders` on the cluster, and `iam:PassRole` on
+`InfraRole` and `InstanceRole` — the update re-declares the launch template, which names both.
+The resource scope IS the boundary: that API can also move subnets and security groups, so it is
+pinned to `af-<stack>-*` and the CP only ever sends values that came out of the ladder above.
+
+🔴 **`PutClusterCapacityProviders` is an API the Control Plane never calls.** ECS authorizes an
+update of a **Managed Instances** provider as that action **on the cluster**, so without the
+grant the update fails with an `AccessDeniedException` naming an action that appears nowhere in
+the code:
+
+```
+AccessDeniedException: User: …/af-<stack>-cp-task/… is not authorized to perform:
+ecs:PutClusterCapacityProviders on resource: …:cluster/af-<platform-stack>
+```
+
+Neither the API reference nor the SDK says so; it was measured on a deployment (ADR 0074 P1),
+and it is the reason a rung change cannot be proven to work by unit tests. Note what it widens:
+that action is also how the cluster's whole provider ASSOCIATION list is replaced, so the grant
+is cluster-scoped where the other three are provider-scoped. It is on the same cluster this
+stack already owns the associations of (README, "60-engines").
+
+⚠️ **`DescribeCapacityProviders` takes a cluster or a list of names — never both.** A request
+carrying both is refused with `InvalidParameterException: Cannot specify both capacity providers
+and cluster in the same request`, which is documented nowhere. The CP asks by name and checks
+the cluster on the ANSWER instead (`applyEngineClass`); a provider that answered with another
+cluster is not written to.
+
 ## The fetch sidecar
 
 One script for both roles, in the template's `Mappings` (ADR 0072 decision 1(a)). It reads the

@@ -56,16 +56,25 @@ type engineDef struct {
 	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
 	// with ok while holding nothing at all (ADR 0072 P1, measured), so warmth is read from each
 	// model's `status.value` instead.
-	WarmPath         string   `json:"warmPath"`
-	Provider         string   `json:"provider"`        // "llamacpp" — the provider id a Workspace configures
-	Models           []string `json:"models"`          // SEED ONLY: the model ids ADR 0071's stack declared
-	ContextTokens    int      `json:"contextTokens"`   // SEED ONLY: the window that model was started with
-	MaxOutputTokens  int      `json:"maxOutputTokens"` // SEED ONLY
-	ModelS3Key       string   `json:"modelS3Key"`      // SEED ONLY: where that model's one file is in the bucket
-	APIKeyParam      string   `json:"apiKeyParam"`     // SSM SecureString the engine's own --api-key is in
-	IdleSec          int      `json:"idleSec"`
-	StartDeadlineSec int      `json:"startDeadlineSec"`
-	Mode             string   `json:"mode"` // the DEFAULT mode; a stored setting wins
+	WarmPath        string   `json:"warmPath"`
+	Provider        string   `json:"provider"`        // "llamacpp" — the provider id a Workspace configures
+	Models          []string `json:"models"`          // SEED ONLY: the model ids ADR 0071's stack declared
+	ContextTokens   int      `json:"contextTokens"`   // SEED ONLY: the window that model was started with
+	MaxOutputTokens int      `json:"maxOutputTokens"` // SEED ONLY
+	ModelS3Key      string   `json:"modelS3Key"`      // SEED ONLY: where that model's one file is in the bucket
+	APIKeyParam     string   `json:"apiKeyParam"`     // SSM SecureString the engine's own --api-key is in
+	// Classes is the ladder of GPU rungs this role may buy, as the operator declared it
+	// (ADR 0074 decision 1; the format is parseEngineClasses'). Empty — the shipped default —
+	// means the box is whatever CloudFormation put in the capacity provider and nothing here
+	// ever calls ECS about it.
+	//
+	// It sits with the vessel rather than with the catalogue because a rung IS the vessel: the
+	// stack owns the capacity provider, and this only says which of the shapes the operator
+	// blessed may be selected. WHICH one is selected is a stored setting (decision 2).
+	Classes          string `json:"classes"`
+	IdleSec          int    `json:"idleSec"`
+	StartDeadlineSec int    `json:"startDeadlineSec"`
+	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
 }
 
 type engineTable struct {
@@ -150,6 +159,22 @@ type engineRuntimeState struct {
 	ssm         engineSSMWriteAPI
 	activeParam string
 	served      engineServed
+	// classes is the GPU ladder (ADR 0074). Empty on every deployment that declares none, and
+	// then nothing in engine_class.go ever runs. capacity and cluster are how a rung reaches
+	// the capacity provider; capacity is nil on a CP with no AWS.
+	classes  []engineClass
+	capacity engineCapacityAPI
+	cluster  string
+	// appliedClass is the rung THIS PROCESS last wrote to the capacity provider, and nothing
+	// else. It is in memory on purpose: what the provider currently holds is a fact about AWS,
+	// and a CP that restarted has not observed it — so a restarted CP re-applies once before
+	// the next start rather than trusting a note it wrote before.
+	appliedMu    sync.Mutex
+	appliedClass string
+	// swapWaitSince is when this process first refused to start because a box of the previous
+	// rung was still registered. It bounds that wait (engineClassSwapWaitMax): the end of the
+	// wait belongs to AWS, and `scaleInAfter: -1` would otherwise make it never end.
+	swapWaitSince time.Time
 }
 
 // engineServed is which model this engine last answered with, and how often that changed.
@@ -419,6 +444,15 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			catalog:     newEngineCatalog(models, d.Key),
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
+			classes:     parseEngineClasses(d.Classes),
+			cluster:     cluster,
+		}
+		// The ECS client is attached only when there is a ladder to apply. Not an optimisation:
+		// it is what makes ADR 0074 decision 3 checkable — with no rung declared there is no
+		// path from here to DescribeCapacityProviders at all, so a deployment that never
+		// configures this cannot log an AccessDenied for it.
+		if len(st.classes) > 0 {
+			st.capacity = ecsc
 		}
 		// Published at start as well as on every change: the box reads it when it starts, and a
 		// CP that came up after a catalogue edit it never saw (another replica's, or one made
@@ -434,6 +468,11 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// (`sleep infinity`) and the controller then watches it for ever at 5-second intervals,
 		// because `running && !warmed` is not a failure state (ADR 0072 decision 1(c)).
 		st.ctrl.hasModels = st.catalog.hasModels
+		// Attached only when a ladder exists, so an engine without one keeps exactly the start
+		// path it had before this ADR (ADR 0074 decision 3).
+		if len(st.classes) > 0 {
+			st.ctrl.startGate = st.startGate
+		}
 		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
 		// not inside newEngineController because the VOICEVOX controller shares that
 		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series

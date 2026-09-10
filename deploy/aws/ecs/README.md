@@ -910,6 +910,11 @@ LlmModelIds=qwen3-coder-30b-a3b
 # cheapest member is the one normally bought: keep the intended box cheapest and put a
 # fallback ABOVE it, never below. PARAMETERS-60-engines.md has the argument.
 LlmAllowedInstanceTypes=g6.xlarge,g5.xlarge
+# Optional (ADR 0074): the GPU rungs an administrator may switch the role between from the
+# Console, without a stack update. Leave it out and the box is exactly what the lines above
+# bought — the Control Plane then never touches the capacity provider at all. The FIRST rung is
+# the default and has to restate them. PARAMETERS-60-engines.md, "The instance classes".
+# LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
 # The context llama-server is started with, and what the client is told it has. One knob for
 # both, so they cannot drift; move them together when the model changes.
 LlmContextTokens=32768

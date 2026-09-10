@@ -38,6 +38,12 @@ const (
 	errCodeEngineBadBody       = "bad_body"
 	errCodeEngineECSError      = "engine_ecs_error"
 	errCodeEnginePublishFailed = "engine_publish_failed"
+	errCodeEngineClassUnknown  = "engine_class_unknown"
+	// The model wants more VRAM than the chosen instance class declares, and the request did
+	// not say it knew that (ADR 0074 decision 6). A REFUSAL TO GUESS, not a refusal: repeating
+	// the call with confirm_vram succeeds, because quantisation and offloading are real and the
+	// panel points rather than decides.
+	errCodeEngineVramConfirm   = "engine_vram_confirm"
 	errCodeIngestBadSource     = "bad_source"
 	errCodeIngestFileUnknown   = "file_unknown"
 	errCodeIngestNoChecksum    = "no_checksum"

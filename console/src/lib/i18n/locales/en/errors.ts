@@ -212,6 +212,8 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.bad_body": "The request was malformed.",
   "err.engine_ecs_error": "The ECS update failed.",
   "err.engine_publish_failed": "The catalogue could not be published to the deployment.",
+  "err.engine_class_unknown": "No such instance class is declared for this engine.",
+  "err.engine_vram_confirm": "That model wants more VRAM than the chosen instance class has.",
   "err.bad_source": "The source is not a valid one.",
   "err.file_unknown": "The repository does not list that file.",
   "err.no_checksum": "The source publishes no sha256 — take it in with an explicit url and sha256.",

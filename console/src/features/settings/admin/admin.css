@@ -174,6 +174,29 @@
    omitted rather than blanked when they are unknown, and a table would draw an empty cell for
    each of them — which is exactly the "a plausible blank reads as a fact" problem the status
    block above is written to avoid. */
+/* Which GPU this role buys (ADR 0074). One row that wraps rather than a grid: the select, the
+   "not the default" tag and the way back to the default are one sentence, and on a phone they
+   have to stack in that order. */
+.engines-class {
+  margin-top: 10px;
+}
+
+/* The saved-but-not-applied notice and the button that acts on it. Stacked, so the button is
+   a button: inline after the sentence it read as part of the paragraph (measured headless). */
+.engines-class-pending {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.engines-class-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .engines-models {
   margin-top: 10px;
 }

@@ -23,6 +23,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -51,6 +52,13 @@ func registerEngineAdminRoutes(mux *http.ServeMux, cfg config, reg *engineRegist
 	mux.HandleFunc("GET /api/admin/engines", a.withSuperAdmin(a.get))
 	mux.HandleFunc("PUT /api/admin/engines/{key}", a.withSuperAdmin(a.put))
 	mux.HandleFunc("GET /api/admin/engines/{key}/hourly", a.withSuperAdmin(a.uptime))
+	// The GPU this role buys (ADR 0074). A separate route from the mode toggle above because
+	// it is a separate act with a separate cost: the mode buys a box now, this says what the
+	// NEXT box will be.
+	mux.HandleFunc("PUT /api/admin/engines/{key}/class", a.withSuperAdmin(a.putClass))
+	// Stopping the BOX without changing the mode — the second half of a class change, since a
+	// new rung reaches new instances only.
+	mux.HandleFunc("POST /api/admin/engines/{key}/replace-box", a.withSuperAdmin(a.replaceBox))
 	// The model catalogue (ADR 0072 decision 7). A CP route, not an Agent one, so it needs no
 	// entry in the agent-proxy allowlist in routes.go — that list exists for endpoints the
 	// Workspace Agent implements and the CP forwards.
@@ -158,6 +166,36 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		}
 		row["model_swaps"] = swaps
 	}
+	// The GPU ladder (ADR 0074). Absent in full on a deployment that declares none, which is
+	// what the panel reads as "this deployment does not choose its box" — as opposed to a
+	// ladder of one, which is a real declaration and is shown.
+	if classes := e.classList(); len(classes) > 0 {
+		sel, _ := e.selectedClass(ctx)
+		def, _ := e.defaultClass()
+		rungs := make([]map[string]any, 0, len(classes))
+		for _, c := range classes {
+			rungs = append(rungs, engineClassRow(c))
+		}
+		row["classes"] = rungs
+		row["class"] = engineClassRow(sel)
+		row["class_default"] = def.ID
+		// Stated rather than left to a comparison in the client: "you are not on the default"
+		// is the sentence that stops a temporary experiment from becoming a permanent bill
+		// (decision 7), and it must not depend on a client remembering to compute it.
+		row["class_is_default"] = sel.ID == def.ID
+		if need, source, id := engineVramDemand(catalogue); source != engineVramUnknown {
+			// What the largest enabled model wants, and how well that is known. A maximum,
+			// not a sum: one model is in VRAM at a time (`--models-max 1`, one checkpoint).
+			row["vram_need_mib"] = need
+			row["vram_need_source"] = source
+			row["vram_need_model"] = id
+			row["vram_fits"] = engineClassFits(sel, need)
+		} else if len(catalogue) > 0 {
+			// 🔴 Absent numbers with a present catalogue is its own answer, and it is NOT
+			// "it fits": nobody declared what these models need.
+			row["vram_need_source"] = engineVramUnknown
+		}
+	}
 	if e.demand != nil {
 		row["window_units"] = e.demand.units()
 		// ⚠️ How much of that window this process can actually speak for. The buckets are in
@@ -205,6 +243,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		box := map[string]any{"id": b.instanceID, "status": b.status}
 		if !b.since.IsZero() {
 			box["since"] = b.since.UTC().Format(time.RFC3339)
+		}
+		// What is running RIGHT NOW, which after a class change is not what the capacity
+		// provider says: the change reaches the next box only, so these two disagree for as
+		// long as the old one lives (ADR 0074 decision 4).
+		if b.instanceType != "" {
+			box["instance_type"] = b.instanceType
 		}
 		row["box"] = box
 	}
@@ -314,6 +358,14 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		}
 	}
 	e.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
+	// ON starts the box HERE, so the class gate has to be consulted HERE as well: without it
+	// this route is a way around the wait, and the box it buys is the previous rung's (ADR 0074
+	// decision 4). Refusing to start is not refusing the request — the mode is stored, and the
+	// controller starts the engine as soon as the old box has gone.
+	if val == engineModeOn && e.classStartHeld(r.Context()) {
+		writeJSON(w, http.StatusOK, a.row(r.Context(), e))
+		return
+	}
 	if e.ecs != nil && (val == engineModeOn || val == engineModeOff) {
 		if err := e.ecs.setEnabled(r.Context(), val == engineModeOn); err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, "ecs update failed: " + err.Error()})
@@ -328,6 +380,130 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	}
 	log.Printf("engines: %s set to %s by %s", key, val, ident.ID)
 	writeJSON(w, http.StatusOK, a.row(r.Context(), e))
+}
+
+// engineClassRow is one rung as the panel reads it. The price rides only when the operator
+// declared one: a missing figure is printed as nothing, never as 0 (ADR 0074 decision 1).
+func engineClassRow(c engineClass) map[string]any {
+	row := map[string]any{
+		"id":       c.ID,
+		"label":    c.label(),
+		"vram_mib": c.VramMiB,
+		"types":    c.Types,
+	}
+	if c.UsdPerHour > 0 {
+		row["usd_per_hour"] = c.UsdPerHour
+	}
+	return row
+}
+
+// putClass (PUT /api/admin/engines/{key}/class) takes {"class":"<id>"} and records which GPU
+// this role buys next (ADR 0074 decision 2).
+//
+// What it does NOT do is replace a running box. The API is explicit that a change "only
+// applies to new Amazon ECS Managed Instances", so a panel that reported success while the old
+// card kept answering would be stating the opposite of the truth; the answer carries
+// `class_replace_pending` instead, and replacing is the mode toggle — an act with a cold start
+// attached, pressed by somebody who has been told so.
+//
+// The rung is written to the capacity provider here as well as before every start. Here so the
+// operator learns at once that it could not be written (a missing IAM grant is otherwise
+// discovered at the next cold start, on the wrong card); before every start because a
+// CloudFormation update puts the stack's declaration back and tells nobody.
+func (a engineAdminAPI) putClass(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	var b struct {
+		Class string `json:"class"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
+		return
+	}
+	id := strings.TrimSpace(b.Class)
+	list := e.classList()
+	if len(list) == 0 {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineClassUnknown,
+			"engine " + key + " declares no instance classes"})
+		return
+	}
+	c, ok := engineClassByID(list, id)
+	if !ok {
+		// A rung nobody declared does not exist. This is also the line that keeps the CP from
+		// writing arbitrary instance requirements: everything reaching the capacity provider
+		// came out of the operator's ladder.
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineClassUnknown,
+			"no instance class " + id + " for engine " + key})
+		return
+	}
+	ctx := r.Context()
+	if a.settings != nil {
+		if err := a.settings.SetSetting(ctx, engineClassSettingKey(key), c.ID); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	if err := e.applyClass(ctx, c); err != nil {
+		// Reported, not logged: the setting was written, so a panel that showed success would
+		// promise a card the next start will not buy.
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, err.Error()})
+		return
+	}
+	a.audit(ctx, ident, "engine."+key+".class", c.ID)
+	log.Printf("engines: %s instance class set to %s by %s", key, c.ID, ident.ID)
+	row := a.row(ctx, e)
+	// True when a box is up that this rung does not cover: the change is saved and has not
+	// reached anything yet.
+	//
+	// The Console does not read this one — it derives the same fact from `box.instance_type`
+	// against the rung's types, which is what keeps it correct after a later refresh merges a
+	// row that carries no flag. It rides for the client that only sees this answer, and it is
+	// computed from exactly the same two inputs so the two can never disagree.
+	if b, on := e.ecs.box(ctx); on && b.instanceType != "" && !engineClassHasType(c, b.instanceType) {
+		row["class_replace_pending"] = true
+	}
+	writeJSON(w, http.StatusOK, row)
+}
+
+// replaceBox (POST /api/admin/engines/{key}/replace-box) stops the running box so the next one
+// is bought on the rung that is now chosen (ADR 0074 decision 4).
+//
+// It moves the desired count and NOTHING else — in particular it does not touch the mode, which
+// is the whole difference from pressing "off": an engine pinned `on` must come back by itself,
+// and an on-demand one must come back with the next request. What holds the restart until the
+// old box has actually left the cluster is the start gate, not this handler.
+//
+// ⚠️ This buys a cold start (measured 527-586 s for llm, 165-197 s for image) and the panel says
+// so before the press. It is the price ADR 0071's `offGrace: 0` already charges for changing
+// one's mind about a GPU.
+func (a engineAdminAPI) replaceBox(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	key := strings.TrimSpace(r.PathValue("key"))
+	e := a.reg.get(key)
+	if e == nil {
+		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no engine " + key})
+		return
+	}
+	if e.ecs == nil {
+		writeAPIErr(w, &apiError{http.StatusConflict, errCodeEngineECSError, "engine " + key + " is not managed here"})
+		return
+	}
+	ctx := r.Context()
+	// A cooldown must never refuse the person who pressed the button, exactly as the mode
+	// toggle does not.
+	if e.ctrl != nil {
+		e.ctrl.noteAdminAction()
+	}
+	if err := e.ecs.setEnabled(ctx, false); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, "ecs update failed: " + err.Error()})
+		return
+	}
+	a.audit(ctx, ident, "engine."+key+".replace_box", e.selectedClassID(ctx))
+	log.Printf("engines: %s box replacement requested by %s", key, ident.ID)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
 }
 
 // putModel (PUT /api/admin/engines/{key}/models/{id}) is the catalogue's one mutation route
@@ -361,6 +537,9 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		Enabled  *bool `json:"enabled"`
 		Selected *bool `json:"selected"`
 		Default  *bool `json:"default"`
+		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
+		// only when the model's declared demand exceeds the chosen instance class.
+		ConfirmVram bool `json:"confirm_vram"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
@@ -368,6 +547,17 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	}
 
 	ctx := r.Context()
+	// Anything that puts weights on the card is checked, and all three of these do: enabling
+	// syncs the model onto the box, and both `selected` and `default` enable as a side effect.
+	// It is checked BEFORE the write, so a refusal leaves the catalogue as it was.
+	loading := (b.Enabled != nil && *b.Enabled) ||
+		(b.Selected != nil && *b.Selected) || (b.Default != nil && *b.Default)
+	if loading && !b.ConfirmVram {
+		if aerr := engineVramGuard(ctx, e, id); aerr != nil {
+			writeAPIErr(w, aerr)
+			return
+		}
+	}
 	var (
 		found  bool
 		err    error
@@ -415,6 +605,43 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	// workspace that misses the push catches up on the catalogue's own 10-minute TTL.
 	go notifyEngineCatalogChanged(context.WithoutCancel(ctx), a.mgr, key)
 	writeJSON(w, http.StatusOK, a.row(ctx, e))
+}
+
+// engineVramGuard is the one place a model is compared with the card before it is switched on
+// (ADR 0074 decision 6).
+//
+// It returns an error ONLY for the case it can state: a demand that is known and that exceeds
+// the chosen rung. Three things it deliberately does not do:
+//
+//   - it does not refuse. The answer names the numbers and the same call with confirm_vram goes
+//     through, because quantisation, --offload-to-cpu and things this deployment has not
+//     measured are real (the same position ADR 0072 decision 10 takes on licences);
+//   - it does not stop a model nobody has measured. `unknown` is not "too big", and asking
+//     about every unmeasured model would teach people to click through the one that matters;
+//   - it does not run at all where there is no ladder, because then there is no rung to compare
+//     against and the box is whatever CloudFormation bought.
+func engineVramGuard(ctx context.Context, e *engineRuntimeState, id string) *apiError {
+	sel, ok := e.selectedClass(ctx)
+	if !ok || sel.VramMiB <= 0 {
+		return nil
+	}
+	for _, m := range e.catalog.list(ctx) {
+		if m.ID != id || engineModelIsLora(m) {
+			continue
+		}
+		need, source := engineModelVramNeed(m)
+		if source == engineVramUnknown || engineClassFits(sel, need) {
+			return nil
+		}
+		at := "at least "
+		if source == engineVramDeclared {
+			at = ""
+		}
+		return &apiError{http.StatusConflict, errCodeEngineVramConfirm, fmt.Sprintf(
+			"%s wants %s%d MiB of VRAM and the %s class declares %d MiB; repeat with confirm_vram to enable it anyway",
+			m.ID, at, need, sel.ID, sel.VramMiB)}
+	}
+	return nil
 }
 
 // postModel (POST /api/admin/engines/{key}/models) registers a file that is already in the

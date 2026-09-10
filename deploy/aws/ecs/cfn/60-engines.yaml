@@ -73,6 +73,12 @@ Parameters:
     Default: 1
     MinValue: 0
     Description: "Models the router may hold at once (0 = unlimited). 1 — PARAMETERS-60-engines.md."
+  LlmInstanceClasses:
+    Type: String
+    Default: ""
+    Description: >-
+      GPU rungs this role may be switched between (ADR 0074). EMPTY = no choice, and the CP
+      never touches the capacity provider — PARAMETERS-60-engines.md, "The instance classes".
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -121,9 +127,7 @@ Parameters:
     Type: String
     Default: "true"
     AllowedValues: [ "true", "false" ]
-    Description: >-
-      Use the 250 GB instance store instead of an EBS data volume. On since the measurement
-      halved the cold start (PARAMETERS-60-engines.md).
+    Description: "Use the 250 GB instance store, not an EBS volume. On: it halved the cold start."
   LlmScaleInAfter:
     Type: Number
     Default: -2
@@ -186,6 +190,10 @@ Parameters:
     Type: CommaDelimitedList
     Default: "--diffusion-fa"
     Description: "Extra sd-server flags (ImageEngine=sdcpp only) — PARAMETERS-60-engines.md."
+  ImageInstanceClasses:
+    Type: String
+    Default: ""
+    Description: "The image role's ladder, as LlmInstanceClasses. Empty = no choice."
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -268,9 +276,8 @@ Parameters:
     Description: CloudWatch retention for the engine and ingest log group.
 
 Mappings:
-  # ONE fetch sidecar for both roles: the active set from SSM in, `/models/cmdline` (and a
-  # router preset) out. ⚠️ A LITERAL block (`|-`), never folded — PARAMETERS-60-engines.md,
-  # "The fetch sidecar". `deploy/local/engine-sidecar-test.sh` runs it for real, and CI runs that.
+  # ONE fetch sidecar for both roles. ⚠️ A LITERAL block (`|-`), never folded —
+  # PARAMETERS-60-engines.md, "The fetch sidecar" (engine-sidecar-test.sh runs it for real).
   Engine:
     fetch:
       script: |-
@@ -478,10 +485,22 @@ Resources:
           - Effect: Allow
             Action: [ secretsmanager:PutSecretValue ]
             Resource: !Ref HfTokenSecret
+          # Rung changes (ADR 0074 decision 9). 🔴 The third action is one the CP never calls:
+          # ECS authorizes an MI provider update as PutClusterCapacityProviders on the CLUSTER
+          # (measured, P1) — PARAMETERS-60-engines.md, "The instance classes".
+          - Effect: Allow
+            Action: [ ecs:DescribeCapacityProviders, ecs:UpdateCapacityProvider ]
+            Resource: !Sub "arn:aws:ecs:${AWS::Region}:${AWS::AccountId}:capacity-provider/af-${AWS::StackName}-*"
+          - Effect: Allow
+            Action: [ ecs:PutClusterCapacityProviders ]
+            Resource: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
+          - Effect: Allow
+            Action: [ iam:PassRole ]
+            Resource: [ !GetAtt InfraRole.Arn, !GetAtt InstanceRole.Arn ]
+            Condition: { StringEquals: { "iam:PassedToService": ecs.amazonaws.com } }
 
   # Always created, holding the sentinel until somebody registers a token in the Console —
-  # a task definition is static, so a Secrets block that appeared with the token would still
-  # cost a CloudFormation round trip. PARAMETERS-60-engines.md, "The Hugging Face token".
+  # PARAMETERS-60-engines.md, "The Hugging Face token".
   HfTokenSecret:
     Type: AWS::SecretsManager::Secret
     Properties:
@@ -988,7 +1007,7 @@ Resources:
                 "health":"/health","warmPath":"/models","provider":"llamacpp","models":["${Models}"],
                 "contextTokens":${LlmContextTokens},"maxOutputTokens":${LlmMaxOutputTokens},
                 "modelS3Key":"${LlmModelS3Key}",
-                "apiKeyParam":"${LlmApiKeySsmParam}","idleSec":${LlmIdleSec},
+                "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}","idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
                 Cp: !Sub "af-${AWS::StackName}-llm"
@@ -1002,7 +1021,7 @@ Resources:
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"${Health}","provider":"${Provider}","models":["${Models}"],
                 "modelS3Key":"${ImageModelS3Key}",
-                "apiKeyParam":"","idleSec":${ImageIdleSec},
+                "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
                 Cp: !Sub "af-${AWS::StackName}-image"
@@ -1053,6 +1072,6 @@ Outputs:
     Value: !Ref ModelsBucket
     Export: { Name: !Sub "${AWS::StackName}-ModelsBucket" }
   IngestTaskDefFamily:
-    Description: Task definition family to `aws ecs run-task` for taking a model in from Hugging Face.
+    Description: Task definition family to `aws ecs run-task` to take a model in.
     Value: !Ref IngestTaskDef
     Export: { Name: !Sub "${AWS::StackName}-IngestTaskDefFamily" }
