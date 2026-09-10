@@ -701,3 +701,153 @@ func TestComfyReadyIsTokenOnly(t *testing.T) {
 		t.Error("base url + token must be ready")
 	}
 }
+
+// --- the pinned seed (ADR 0069 follow-up) ---------------------------------------------------
+
+// comfySeedIn reads the seed out of whichever node the family's sampler keeps it in.
+func comfySeedIn(t *testing.T, graph map[string]any, node, field string) any {
+	t.Helper()
+	n, ok := graph[node].(map[string]any)
+	if !ok {
+		t.Fatalf("the graph has no %s node: %v", node, graph)
+	}
+	in, _ := n["inputs"].(map[string]any)
+	return in[field]
+}
+
+// A pinned seed reaches the sampler verbatim — which is the whole point: two requests differing
+// in one thing can only be compared when everything else, the noise included, is identical.
+func TestComfyGeneratePinsTheRequestedSeed(t *testing.T) {
+	var gotGraph map[string]any
+	p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		gotGraph, _ = body["prompt"].(map[string]any)
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	seed := int64(1234)
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Seed: &seed}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if got := comfySeedIn(t, gotGraph, "ks", "seed"); got != float64(1234) {
+		t.Errorf("KSampler seed = %v, want the pinned 1234", got)
+	}
+}
+
+// Seed 0 is a seed, not "unset". A provider that read the zero value as absent would hand back a
+// random picture to the one caller who was most explicit about what they wanted.
+func TestComfyGeneratePinsSeedZero(t *testing.T) {
+	var gotGraph map[string]any
+	p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		gotGraph, _ = body["prompt"].(map[string]any)
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	seed := int64(0)
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Seed: &seed}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if got := comfySeedIn(t, gotGraph, "ks", "seed"); got != float64(0) {
+		t.Errorf("KSampler seed = %v, want the pinned 0", got)
+	}
+}
+
+// The positive control for both tests above: with no seed pinned, two requests must differ. A
+// provider that quietly reused one value would make the tests above pass for the wrong reason.
+func TestComfyGenerateWithoutASeedIsRandomEachTime(t *testing.T) {
+	var seeds []any
+	p, _ := comfyStub(t, sdxlConn(), func(w http.ResponseWriter, r *http.Request, body map[string]any) {
+		g, _ := body["prompt"].(map[string]any)
+		seeds = append(seeds, comfySeedIn(t, g, "ks", "seed"))
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": "af-test-prompt"})
+	})
+	for i := 0; i < 2; i++ {
+		if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"}); err != nil {
+			t.Fatalf("Generate() = %v", err)
+		}
+	}
+	if len(seeds) != 2 || seeds[0] == seeds[1] {
+		t.Errorf("seeds = %v, want two different random ones", seeds)
+	}
+}
+
+// comfy is the only route that takes a seed, because it is the only one whose request body this
+// package writes in full.
+func TestComfyCapsTakesASeed(t *testing.T) {
+	p, _ := comfyStub(t, sdxlConn(), nil)
+	if !p.Caps("sdxl-base-1.0").Seed {
+		t.Error("comfy must advertise that it takes a pinned seed")
+	}
+}
+
+// A picture the engine did not generate is reported as such, and only when the engine itself
+// said so: ComfyUI's `execution_cached` names the nodes it skipped, and the SaveImage node being
+// among them means nothing was made. A caller who pinned a seed on purpose wants this; a caller
+// who changed something the graph does not carry needs it.
+func TestComfyGenerateWarnsWhenTheEngineServedFromCache(t *testing.T) {
+	const promptID = "af-test-prompt"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{promptID: map[string]any{
+			"status": map[string]any{"completed": true, "status_str": "success",
+				"messages": []any{
+					[]any{"execution_start", map[string]any{"prompt_id": promptID}},
+					[]any{"execution_cached", map[string]any{"nodes": []any{"ckpt", "pos", "ks", "save"}}},
+				}},
+			"outputs": map[string]any{"save": map[string]any{"images": []map[string]any{
+				{"filename": "af-sdxl_00001_.png"}}}},
+		}})
+	})
+	mux.HandleFunc("/engine/image/v1/view", func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(tinyPNG(t, 1, 1))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	p := &comfyProvider{client: srv.Client(), lookup: func(context.Context) (EngineConn, bool) {
+		c := sdxlConn()
+		c.BaseURL, c.Token = srv.URL+"/engine/image/v1", "afe_test"
+		return c, true
+	}}
+
+	seed := int64(7)
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox", Seed: &seed})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	found := false
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "cache") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("warnings = %v, want one naming the engine's cache", res.Warnings)
+	}
+}
+
+// The negative control: a normal run caches nothing, and must stay silent. Without this the
+// warning could be unconditional and the test above would still pass.
+func TestComfyGenerateSaysNothingAboutCacheOnANormalRun(t *testing.T) {
+	p, _ := comfyStub(t, sdxlConn(), nil)
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	for _, w := range res.Warnings {
+		if strings.Contains(w, "cache") {
+			t.Errorf("unexpected cache warning on a fresh generation: %v", res.Warnings)
+		}
+	}
+}
+
+// A cache hit that skipped SOME nodes but still ran the output node is a normal partial reuse
+// (the checkpoint loader, the text encode) and is not worth a word: a picture was made.
+func TestComfyCacheWarningIgnoresAPartialReuse(t *testing.T) {
+	var hist comfyHistory
+	hist.Status.Messages = []any{
+		[]any{"execution_cached", map[string]any{"nodes": []any{"ckpt", "pos", "neg"}}},
+	}
+	if got := comfyCacheWarning(hist); got != "" {
+		t.Errorf("comfyCacheWarning = %q, want silence when the output node still ran", got)
+	}
+}

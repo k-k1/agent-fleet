@@ -2932,3 +2932,25 @@ fits in two lines, nothing overflows.
 **Still not said**: how it reads against real Hugging Face / Civitai answers (the fixtures are
 invented to the wire's shape), the refusal shown for a gated repository with no token, and phone
 width.
+
+## Follow-up — a seed now reaches P3's completion definition (2026-09-11)
+
+The 2026-09-11 hardware follow-up recorded that "**the same seed**" was not expressible through
+`generate_image`. That is now closed: ADR 0069's vocabulary gained `seed` (an integer; random as
+before when omitted), and the comfy provider feeds a pinned seed straight into each family's
+sampler. The reasoning — and why a seed alone earns a place in a provider-neutral vocabulary — is
+in **ADR 0069's follow-up, "`seed` joins the vocabulary"**.
+
+Where P3's completion definition stands now:
+
+- "an SD1.5 LoRA does not appear in SDXL's enum" — **met**, in the refusal-by-name form (the
+  2026-09-10 and 2026-09-11 follow-ups);
+- "the same prompt and the same seed produce a different picture with the LoRA than without" —
+  **the seed can now be pinned; the confirmation on hardware is still outstanding.** It belongs
+  to the next deployment pass, as H3, together with P2's remainder (the five families' edit /
+  inpaint). Until then this line must not be written up as closed.
+
+A second request with a pinned seed hitting ComfyUI's output cache (the same picture in half a
+second) is reported in warnings **only when it actually happens** — decided from the engine's own
+`execution_cached` message rather than guessed from a short elapsed time. The design reasoning is
+in the same 0069 follow-up.

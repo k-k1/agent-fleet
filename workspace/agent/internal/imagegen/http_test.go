@@ -126,6 +126,62 @@ func TestStatusListsTheProvidersLoras(t *testing.T) {
 	}
 }
 
+// The seed rides the same wire, and it has to survive as a POINTER: a route that folded an
+// absent seed and `"seed": 0` together would make 0 the one seed nobody can pin.
+func TestGenerateForwardsTheSeed(t *testing.T) {
+	for _, tc := range []struct {
+		name, body string
+		want       *int64
+	}{
+		{"a pinned seed", `{"session":"slot01","prompt":"a cat","seed":1234}`, ptrInt64(1234)},
+		{"seed zero is a seed", `{"session":"slot01","prompt":"a cat","seed":0}`, ptrInt64(0)},
+		{"no seed stays nil", `{"session":"slot01","prompt":"a cat"}`, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got Request
+			withImagegenSession(t, session.KindClaude, stubProvider{
+				id:     ProviderComfy,
+				gotReq: &got,
+				res:    Result{Images: []Image{{Bytes: tinyPNG(t, 1, 1), MIME: "image/png"}}, Provider: ProviderComfy},
+				caps:   &Caps{Ops: []Op{OpGenerate}, Seed: true},
+			})
+			rec := httptest.NewRecorder()
+			HandleGenerate(rec, httptest.NewRequest(http.MethodPost, "/imagegen/generate", strings.NewReader(tc.body)))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", rec.Code, rec.Body)
+			}
+			switch {
+			case tc.want == nil && got.Seed != nil:
+				t.Errorf("seed = %d, want none", *got.Seed)
+			case tc.want != nil && got.Seed == nil:
+				t.Errorf("seed = nil, want %d", *tc.want)
+			case tc.want != nil && *got.Seed != *tc.want:
+				t.Errorf("seed = %d, want %d", *got.Seed, *tc.want)
+			}
+		})
+	}
+}
+
+func ptrInt64(v int64) *int64 { return &v }
+
+// The status says which routes take a seed, so the tool offers the argument only where it
+// reaches something.
+func TestStatusReportsWhichRoutesTakeASeed(t *testing.T) {
+	withImagegenSession(t, session.KindClaude,
+		stubProvider{id: ProviderComfy, caps: &Caps{Ops: []Op{OpGenerate}, Seed: true}},
+		stubProvider{id: ProviderAgy, caps: &Caps{Ops: []Op{OpGenerate}}},
+	)
+	rec := httptest.NewRecorder()
+	HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+	var got statusResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("status is not JSON: %v", err)
+	}
+	if len(got.Providers) != 2 || !got.Providers[0].Seed || got.Providers[1].Seed {
+		t.Fatalf("seed flags = %+v, want it on comfy alone", got.Providers)
+	}
+}
+
 // The other half of the same wire: `loras` in the POST body reaches the provider's Request. A
 // field the REST layer drops is a field the tool advertises and nothing applies.
 func TestGenerateForwardsLoras(t *testing.T) {

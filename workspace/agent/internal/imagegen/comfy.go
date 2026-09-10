@@ -107,6 +107,10 @@ func (p *comfyProvider) Caps(model string) Caps {
 		MaxInputs: 0,
 		MaxCount:  4,
 		Loras:     comfyLoraInfos(conn),
+		// The one route where a seed reaches the sampler: it is this package that builds the
+		// graph, so the seed is an input this file writes rather than a field a vendor API has
+		// to expose (ADR 0069 follow-up, seed).
+		Seed: true,
 	}
 }
 
@@ -336,7 +340,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if count <= 0 {
 		count = 1
 	}
-	seed, err := comfyRandomSeed()
+	seed, err := comfySeedFor(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -368,6 +372,9 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if switchWarning != "" {
 		warnings = append(warnings, switchWarning)
 	}
+	if cached := comfyCacheWarning(hist); cached != "" {
+		warnings = append(warnings, cached)
+	}
 	return Result{
 		Images:      images,
 		Provider:    ProviderComfy,
@@ -388,10 +395,25 @@ func comfyWarnings(req Request) []string {
 	return out
 }
 
-// comfyRandomSeed picks a fresh seed per request. Nothing in Request lets a caller pin one —
-// ADR 0069's vocabulary is provider-neutral and has no seed field — and ComfyUI caches a node's
-// output by its inputs (measured, bench-image-engine.py), so replaying the same graph twice
-// would answer the second call from cache in half a second rather than generating anything.
+// comfySeedFor is the seed this request samples from: the caller's, when they pinned one, and a
+// fresh random one otherwise.
+//
+// A pinned seed is what makes two requests comparable, which is the only way to show that one
+// changed thing — a LoRA, a checkpoint — is what changed the picture (ADR 0072 phase P3). The
+// default stays random because that is what a caller who says nothing means, and because of the
+// cache below.
+func comfySeedFor(req Request) (int64, error) {
+	if req.Seed != nil {
+		return *req.Seed, nil
+	}
+	return comfyRandomSeed()
+}
+
+// comfyRandomSeed picks a fresh seed for a request that pinned none. ComfyUI caches a node's
+// output by its inputs (measured, bench-image-engine.py), so replaying an identical graph answers
+// the second call from cache in half a second rather than generating anything — which is the
+// RIGHT answer for a caller who pinned a seed and is asking for the same picture, and a confusing
+// one for a caller who did not. comfyCacheWarning says which of the two happened.
 func comfyRandomSeed() (int64, error) {
 	var b [8]byte
 	if _, err := rand.Read(b[:]); err != nil {
@@ -561,6 +583,49 @@ func comfyErrorMessages(hist comfyHistory) string {
 		return "unknown error"
 	}
 	return tail(string(b), 800)
+}
+
+// comfySaveNode is the id every template gives its SaveImage node. It is the graph's terminal
+// output, so "was this node cached" is the same question as "was any picture made at all".
+const comfySaveNode = "save"
+
+// comfyCacheWarning says, only when it actually happened, that the engine returned a picture it
+// already had instead of generating one.
+//
+// The signal is ComfyUI's OWN `execution_cached` status message, which lists the node ids it
+// skipped (execution.py, v0.34.0) and rides in /history's status.messages — the same field the
+// error path already reads. So this is a fact the engine reported, not a guess from a suspiciously
+// short elapsed time.
+//
+// Why warn at all, given that a repeat of an identical seeded request SHOULD return the identical
+// picture: because the two readings of a half-second answer are opposite. A caller comparing
+// "with the LoRA" against "without" wants to know nothing was recomputed if the graphs happened to
+// match; a caller who changed something the graph does not carry (ADR 0069 has no negative prompt,
+// no steps, no cfg) would otherwise conclude the engine ignored a change that never reached it.
+// Silent when nothing was cached, which is every first call — so it costs the common path nothing.
+func comfyCacheWarning(hist comfyHistory) string {
+	for _, m := range hist.Status.Messages {
+		pair, ok := m.([]any)
+		if !ok || len(pair) < 2 {
+			continue
+		}
+		if event, _ := pair[0].(string); event != "execution_cached" {
+			continue
+		}
+		data, ok := pair[1].(map[string]any)
+		if !ok {
+			continue
+		}
+		nodes, _ := data["nodes"].([]any)
+		for _, n := range nodes {
+			if id, _ := n.(string); id == comfySaveNode {
+				return "this picture came from the engine's cache, not from a new generation — " +
+					"the graph was identical to one it had already run (same seed, prompt, size and model). " +
+					"Anything you changed that is not one of those does not reach this route"
+			}
+		}
+	}
+	return ""
 }
 
 // fetchImages downloads every output image GET /view names, in the order ComfyUI's own outputs

@@ -745,3 +745,65 @@ unless real" rules; `internal/imagegen` covers the status list and the REST refu
 suite now drives the agy generation with `provider: "agy"` named explicitly, and its
 codex-session test runs both halves — with agy ready the tool survives, without it the tool is
 gone (against `af_report` as the positive control).
+
+## Follow-up — `seed` joins the vocabulary (2026-09-11)
+
+This ADR's vocabulary is provider-neutral and deliberately had no `seed`: the knobs that decide
+how a picture LOOKS differ too much between providers to become shared words. One is added
+anyway, and the reason is not appearance but **comparability**.
+
+ADR 0072's phase P3 defines done as "the same prompt and **the same seed** produce a different
+picture with the LoRA than without", and the hardware verification (0072's 2026-09-11 follow-up)
+stalled exactly there. The provider picks a fresh random seed per request, so when two pictures
+differ there is no way to separate "the LoRA did that" from "the seed did that". The smallest
+unit of verification — **two requests differing in one thing** — does not exist. That is a
+precondition for decision 7's "say what actually happened", not a matter of taste.
+
+**The shape.** `Request.Seed *int64` and `Caps.Seed bool`. A pointer because **0 is a legitimate
+seed**: an implementation reading zero as "unset" hands a random picture to precisely the caller
+who was most explicit. The tool argument's ceiling is not the sampler's range but **JavaScript's
+safe-integer limit (2^53-1)** — this number travels as JSON, and a client that parses it into a
+double returns a DIFFERENT seed than the one it was sent above 2^53, silently destroying the one
+property a seed exists to provide.
+
+**Which routes take it.** comfy alone. This package builds the graph itself, so the seed is an
+input we write rather than a field a vendor API has to expose.
+- **sdcpp cannot take one.** sd-server's OpenAI-compatible `/v1/images/generations` reads only
+  `prompt`, `n` and `size` out of the body (checked against upstream
+  `examples/server/routes_openai.cpp`). The one channel that would carry a seed is
+  `<sd_cpp_extra_args>` embedded in the prompt text — **the hole ADR 0072 decision 5 decided must
+  be REFUSED when a caller's prompt contains it**, because it also passes `lora.path`, a
+  server-side file path. Writing into it ourselves would build the injection surface that
+  decision closes. So it is not sent, and **the drop is stated in warnings**.
+- agy and codex cannot take one either, and get the same warning.
+
+**Never a silent downgrade** is the shared rule for all three such arguments (aspect_ratio,
+loras, seed), but a dropped seed is the least visible of them: the picture is fine, and the
+caller only finds out on the **second** call — which is the whole reason they pinned one.
+
+### The cache warning fires only when the cache was actually hit
+
+ComfyUI caches a node's output by its inputs (measured, 0072). A second request with the same
+seed, prompt and graph returns the same picture in half a second without generating anything.
+Whether to warn about that every time was a real question; the answer is **only when it
+happened**.
+
+- For a caller who pinned a seed, "the same picture came back" is **the desired outcome**, and
+  warning on every such call is noise on the correct path. Like tool description text, warnings
+  are close to a fixed cost every session pays.
+- But one shape is genuinely confusing: **calling again after changing something the graph does
+  not carry**. This ADR's vocabulary has no negative prompt, no steps and no cfg, so a caller who
+  believes they changed one of those sends an identical graph and gets the identical picture back
+  in half a second. It reads as "the engine ignored me" when in truth the change never reached
+  this route.
+- The detection is **a fact rather than a guess**: ComfyUI emits an `execution_cached` status
+  message listing the node ids it skipped (`execution.py`, v0.34.0), and that rides in
+  `/history`'s `status.messages` — the field this package already reads for errors. If the
+  SaveImage node is in that list, no picture was made. No "suspiciously fast" heuristic was
+  needed.
+- A partial reuse (only the checkpoint load or the text encode hitting the cache) says **nothing**.
+  A picture was produced, so there is nothing to report.
+
+None of this has been on hardware yet. Confirming that two pictures with the same prompt and the
+same seed differ only by the LoRA belongs with 0072's five families of edit / inpaint, in the next
+deployment pass (H3).

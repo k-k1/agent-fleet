@@ -53,6 +53,8 @@ type mcpImageGenProvider struct {
 	// entry is already a choice — with it or without it — so unlike Models there is no
 	// "more than one" rule.
 	Loras []mcpImageGenLora `json:"loras,omitempty"`
+	// Seed is whether this route lets the caller pin the sampler's seed (ADR 0069 follow-up).
+	Seed bool `json:"seed,omitempty"`
 }
 
 // mcpImageGenModel is one checkpoint `model` may name.
@@ -108,6 +110,9 @@ type imageGenArgs struct {
 	// unknown name and a family that does not match the checkpoint are the Agent's refusals to
 	// make, by name, rather than something to drop here.
 	loras []imageGenLoraArg
+	// seed pins the sampler's starting noise. A POINTER, because 0 is a usable seed and an
+	// absent argument is not the same request as `"seed": 0`.
+	seed *int64
 }
 
 // imageGenLoraArg is one entry of the tool's `loras` argument.
@@ -150,7 +155,7 @@ func mcpGenerateImage(req mcpReq, a imageGenArgs) []byte {
 		"session": self, "op": a.op, "provider": a.provider, "prompt": a.prompt,
 		"size": a.size, "aspectRatio": a.aspectRatio, "background": a.background,
 		"count": a.count, "inputs": a.inputs, "mask": a.mask, "model": a.model,
-		"loras": a.loras,
+		"loras": a.loras, "seed": a.seed,
 	})
 
 	// The heartbeat runs for as long as the Agent is working. Without it opencode cuts the
