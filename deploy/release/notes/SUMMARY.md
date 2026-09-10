@@ -28,6 +28,8 @@ Keeping it current:
 
 ## [0.18.0](0.18.0.md) — 2026-09-10
 
+**CLI pins** — Claude Code 2.1.267, Codex 0.154.0
+
 **New / Improved**
 
 - **[sessions]** A session can start sessions of its own and look after them — handing over a task, listing them, reading their output, stopping and resuming them; it cannot instruct, answer for or delete any session (off by default, Settings › Agents; 1–6 children per session, default 3)
