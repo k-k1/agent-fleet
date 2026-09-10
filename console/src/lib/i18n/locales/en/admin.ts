@@ -33,8 +33,8 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mode_engines": "Inference engines",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
   "admin.engines_models_label": "Models",
-  "admin.engines_always_on_note": "Always-on keeps the GPU box up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
-  "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys a box only when something asks, and it stops itself once idle.",
+  "admin.engines_always_on_note": "Always-on keeps the GPU instance up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
+  "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
   // answer for is omitted entirely, so do not add filler like "unknown", "0" or "not
@@ -45,7 +45,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // "enabled" and "started with" are different questions: the first is whether this deployment
   // may use it, the second is the one checkpoint sd-server holds (or, for llm, the model a
   // request that named none gets).
-  "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no box is started.",
+  "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no instance is started.",
   "admin.engines_catalog_none_enabled": "No model is enabled. This engine will not start until one is.",
   "admin.engines_model_started": "loaded at start",
   // The state is said in a badge. The button's label says what pressing it would do, not
@@ -55,7 +55,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_enable": "Enable",
   "admin.engines_model_disable": "Disable",
   "admin.engines_model_select": "Start with this",
-  // 🔴 Choosing another one does NOT swap a running box. It holds the one chosen at start, and
+  // 🔴 Choosing another one does NOT swap a running instance. It holds the one chosen at start, and
   // redeploying here would kill a generation in flight (ADR 0072 decision 4). Say so first.
   "admin.engines_model_next_start": "A new choice takes effect at the next start. A running engine is not swapped (that would kill a generation in flight).",
   "admin.engines_model_window": "context {c} / output {o}",
@@ -148,7 +148,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_hf_token_set": "Registered ({who} / {when}). The value cannot be shown — the Control Plane can write it and has no permission to read it back.",
   "admin.engines_hf_token_stack": "This deployment's token comes from a CloudFormation parameter. It cannot be registered or removed from the Console, but gated repositories can be taken in.",
   "admin.engines_hf_token_unsupported": "This deployment's engine stack has nowhere to keep a token. Update 60-engines and it can be registered from here.",
-  "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine box.",
+  "admin.engines_hf_token_note": "One token for the whole deployment. It is stored encrypted and written into the deployment's secret before every ingest — read by the ingest task only, and never handed to an engine instance.",
   "admin.engines_ingest_noncommercial":
     "🔴 A non-commercial licence. Both commercial use of the model and commercial use of what it generates may be restricted — read the licence before enabling this.",
   "admin.engines_ingest_note": "A repository name (`owner/name`) or a pasted model-page URL both work. The sha256, the size and the licence are read from that source's own API by the control plane; the download is the ingest task's, which is also the only thing that touches S3 or the token. A row that arrives is created disabled.",
@@ -161,11 +161,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_state_done": "done",
   "admin.engines_ingest_state_failed": "failed",
   // The GPU rung this role buys (ADR 0074). The hourly figure comes from the ladder the
-  // operator declared, never from a number written here: the box is selectable now.
+  // operator declared, never from a number written here: the instance is selectable now.
   "admin.engines_class": "Instance class: ",
   "admin.engines_class_not_default": "not the default",
   "admin.engines_class_reset": "Back to the default",
-  "admin.engines_class_pending": "What is running is a {t} box. The class you chose applies to the NEXT box. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new box does not start until the old one has left.",
+  "admin.engines_class_pending": "What is running is a {t} instance. The class you chose applies to the NEXT instance. Replacing it costs one cold start (about 9 minutes for llm, 3 for image), and the new instance does not start until the old one has left.",
   "admin.engines_class_replace": "Replace it now",
   "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
   "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",
@@ -188,18 +188,18 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_noncommercial": "non-commercial",
   "admin.engines_model_license_by": "accepted by {who} / {when}",
   "admin.engines_model_license_unknown": "licence not recorded",
-  // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
-  // slow end. For a router role every enabled model is synced, so this really is what enabling
-  // it adds to the next cold start.
+  // An ESTIMATE, and it says so: S3 to the instance was measured at 104–147 MB/s and this
+  // uses the slow end. For a router role every enabled model is synced, so this really is what
+  // enabling it adds to the next cold start.
   "admin.engines_model_sync": "sync +{n} s (est.)",
   // Which model has weights in VRAM, and how often that changed — the price of holding one
   // model at a time, rather than a uniformly "warm" engine.
   "admin.engines_warm_model": "In VRAM: ",
   "admin.engines_model_swaps": "model changes since this control plane started: {n}",
-  // The box's clock and the service's clock are different facts: the first is when the EC2
-  // instance registered, the second when the deployment last changed — which moves without any
-  // box being bought.
-  "admin.engines_since_box": "Box started ",
+  // The instance's clock and the service's clock are different facts: the first is when the
+  // EC2 instance registered, the second when the deployment last changed — which moves without
+  // any new instance being bought.
+  "admin.engines_since_box": "Instance started ",
   "admin.engines_since_service": "Service updated ",
   "admin.engines_up_for": "{d} ago",
   "admin.engines_stops_at": "Stops by itself at ",
@@ -217,7 +217,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_history": "History (14 days)",
   "admin.engines_metric_label": "What the shade means",
   "admin.engines_metric_running": "Able to answer",
-  "admin.engines_metric_up": "A box existed",
+  "admin.engines_metric_up": "An instance existed",
   "admin.engines_state_down": "Down",
   "admin.engines_ro_detail": "answering {run} · starting {start} · draining {drain}",
   "admin.engines_col_running": "Answering",
@@ -228,7 +228,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_uptime_none": "Nothing was recorded as running in this period.",
   "admin.engines_uptime_error": "Could not load the history.",
   "admin.engines_uptime_note":
-    "Sampled about every {n} seconds. \"A box existed\" includes the cold start, when it cannot answer yet (165-197 s measured), and the drain, when the task is gone but the instance is not (427-477 s measured) — both bill, neither answers a request. Hours from before recording began stay blank and cannot be filled in later. This is not money.",
+    "Sampled about every {n} seconds. \"An instance existed\" includes the cold start, when it cannot answer yet (165-197 s measured), and the drain, when the task is gone but the instance is not (427-477 s measured) — both bill, neither answers a request. Hours from before recording began stay blank and cannot be filled in later. This is not money.",
   "admin.group_tenants": "Tenants",
   "admin.group_deployment": "Deployment",
   "admin.group_across": "Across tenants",
@@ -500,7 +500,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_slot_lands": "→ {type} ({spec}, dedicated)",
   "admin.ws_slot_zero": "0 = smallest slot ({type})",
   "admin.ws_slot_usable": "{n} (of {box})",
-  "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole box is available — this number only chooses which box.",
+  "admin.ws_slot_note": "The slot is used by one person and the task reserves nothing, so the whole instance is available — this number only chooses which instance.",
   "tenant.machine_title": "Default machine",
   "tenant.machine_note":
     "Which machine this tenant's members land on when they have no choice of their own. A per-member choice is made from the member's page and wins over this.",
@@ -513,7 +513,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_machine_tenant_default": "Tenant default",
   "admin.ws_machine_arch_warn":
     "This machine has a different CPU family. On the next start the home reinstalls the tools that were built for the old one (the agent CLIs, node, Chromium — a few minutes). Anything under ~/repos is left alone, so node_modules / target / .venv survive but will not run until you reinstall them yourself.",
-  "admin.ws_cpu_na": "CPU is not selectable on this runtime: a workspace gets the whole box.",
+  "admin.ws_cpu_na": "CPU is not selectable on this runtime: a workspace gets the whole instance.",
   "admin.ws_disk_home": "Workspace home (persistent)",
   "admin.ws_disk_home_hint": "0 = deployment default {n} GiB. Applied when the home volume is created, and it cannot be shrunk afterwards.",
   "admin.ws_disk_quota_hint": "0 = no quota. Reported for reference only — nothing enforces it.",
