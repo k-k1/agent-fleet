@@ -73,6 +73,14 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add": "Register a file from the bucket",
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "key",
+  "admin.engines_model_add_family": "family",
+  "admin.engines_ingest_family_hint": "The repository calls this \"{n}\". That is a display name, so pick the family it corresponds to above.",
+  "admin.engines_model_add_family_pick": "choose one",
+  "admin.engines_model_add_part": "part",
+  "admin.engines_model_add_part_whole": "checkpoint (single file)",
+  "admin.engines_model_add_part_more": "Add a file",
+  "admin.engines_model_add_part_drop": "Remove",
+  "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Register it again and choose a family.",
   "admin.engines_model_add_desc": "description",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).

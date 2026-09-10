@@ -368,13 +368,38 @@ func TestComfyFamiliesMatchTheAgent(t *testing.T) {
 	for _, m := range found {
 		theirs = append(theirs, m[1])
 	}
-	mine := append([]string(nil), engineComfyFamilies...)
-	sort.Strings(mine)
-	sort.Strings(theirs)
-	if strings.Join(mine, ",") != strings.Join(theirs, ",") {
-		t.Fatalf("the checkpoint families have drifted apart:\n  control-plane: %v\n  agent:         %v\n"+
-			" - the CP validates what a row may declare, the Agent picks the workflow graph from it."+
-			" Make the same change in both", mine, theirs)
+	assertSameVocabulary(t, "checkpoint families", engineComfyFamilies, theirs)
+
+	// The FILE vocabulary rides the same wire to the same panel and drifts the same way. Parsed
+	// from the Agent's own list rather than from resolveComfyFiles' switch: the switch maps each
+	// flag onto a different struct field, so it cannot BE the list, and comfy_workflows_test.go
+	// is what pins the list to the switch.
+	flagRe := regexp.MustCompile(`(?s)comfyFileFlags\s*=\s*\[\]string\{(.*?)\}`)
+	fm := flagRe.FindStringSubmatch(string(b))
+	if fm == nil {
+		t.Fatalf("no `comfyFileFlags = []string{...}` in %s — renamed, and this check stopped measuring it", src)
+	}
+	lit := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(fm[1], -1)
+	if len(lit) == 0 {
+		t.Fatalf("comfyFileFlags in %s parsed as empty", src)
+	}
+	theirFlags := make([]string, 0, len(lit))
+	for _, m := range lit {
+		theirFlags = append(theirFlags, m[1])
+	}
+	assertSameVocabulary(t, "file flags", engineComfyFileFlags, theirFlags)
+}
+
+func assertSameVocabulary(t *testing.T, what string, mine, theirs []string) {
+	t.Helper()
+	a := append([]string(nil), mine...)
+	b := append([]string(nil), theirs...)
+	sort.Strings(a)
+	sort.Strings(b)
+	if strings.Join(a, ",") != strings.Join(b, ",") {
+		t.Fatalf("the %s have drifted apart:\n  control-plane: %q\n  agent:         %q\n"+
+			" - the CP serves this list to the Console and validates rows against it; the Agent is"+
+			" what actually reads it. Make the same change in both", what, a, b)
 	}
 }
 

@@ -110,6 +110,13 @@ var comfyFamilies = []comfyFamily{
 	ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage,
 }
 
+// comfyFileFlags is the Flag vocabulary resolveComfyFiles understands, in the order a panel
+// should offer them. "" is a single-file checkpoint (SDXL, SD3.5); the rest each name one part
+// of a split model, which is the ONLY way FLUX.2 klein and Z-Image can be declared at all.
+// comfy_test.go pins that every one of these actually resolves, and the Control Plane serves
+// the list to the Console so the two cannot disagree about what a flag is called.
+var comfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"}
+
 // comfyFamilyList spells the vocabulary for a human: what to put in the catalogue's base_model.
 func comfyFamilyList() string {
 	out := make([]string, len(comfyFamilies))

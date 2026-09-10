@@ -172,6 +172,12 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	if families != nil {
 		row["base_models"] = families
 	}
+	// And how a row may label its FILES. A split model (a diffusion model, a text encoder and a
+	// VAE) cannot be declared without these, so a panel that only knew about an S3 key could
+	// register no FLUX.2 klein and no Z-Image at all.
+	if flags := engineFileFlagsFor(e.def.Provider); flags != nil {
+		row["file_flags"] = flags
+	}
 	// Which model is actually in VRAM, and how often that changed. Both are IN-MEMORY facts of
 	// this CP process (see engineServed), and `warm_model` is absent rather than stale whenever
 	// the engine is not warm — a named model would say "this request is cheap" about a box that

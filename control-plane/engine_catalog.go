@@ -152,6 +152,22 @@ func engineModelIsLora(m store.EngineModel) bool {
 // "the Console never offers it".
 var engineComfyFamilies = []string{"sdxl", "sd35", "flux1", "flux2-klein", "zimage"}
 
+// engineComfyFileFlags is the per-file Flag vocabulary a comfy row may declare: "" for a
+// single-file checkpoint, and one flag per part of a split model. Without these a catalogue row
+// cannot describe FLUX.2 klein or Z-Image at all — they are a diffusion model, a text encoder
+// and a VAE, three files that must each be labelled — which is why a panel offering only an S3
+// key could register neither. Same duplication and same drift test as engineComfyFamilies.
+var engineComfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"}
+
+// engineFileFlagsFor is the file vocabulary an engine's provider understands, or nil when a row
+// is always one unlabelled file (sdcpp loads a single checkpoint with -m).
+func engineFileFlagsFor(provider string) []string {
+	if strings.TrimSpace(provider) == "comfy" {
+		return engineComfyFileFlags
+	}
+	return nil
+}
+
 // engineBaseModelsFor is the vocabulary an engine's provider understands, or nil when the
 // provider has no opinion. Nil is not "anything goes" by accident: sdcpp genuinely ignores
 // base_model (it holds one checkpoint and never switches), so there is nothing to validate and

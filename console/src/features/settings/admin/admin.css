@@ -310,10 +310,23 @@
 }
 
 .engines-model-add-row > input,
+.engines-model-add-row > select,
 .engines-search-row > input,
 .engines-hf-row > input {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* One model can be several FILES — FLUX.2 klein is a diffusion model, a text encoder and a VAE
+   (ADR 0072 decision 2) — so each file's part/key/size rows are grouped behind one rule. Without
+   the grouping a three-file model is nine loose rows and which key belongs to which part is
+   guesswork. */
+.engines-model-add-file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border2);
 }
 
 .engines-model-add-actions {
