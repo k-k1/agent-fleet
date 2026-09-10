@@ -7,6 +7,7 @@ package main
 // `gguf.chat_template`, each over a kilobyte on a real row.
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -384,5 +385,32 @@ func TestSearchSurvivesAFractionalTrendingScore(t *testing.T) {
 	// it: the licence is simply unknown there.
 	if hits[2].Ref != "martineux/waiIllustriousSDXL_v160" || hits[2].License != "" {
 		t.Errorf("row with cardData:null = %+v", hits[2])
+	}
+}
+
+// The next shape upstream changes will look EXACTLY like the one above from the panel — the
+// sentence "unreadable answer from huggingface.co" is the same whatever field moved. The
+// decoder's own complaint names it, so it goes to the log: without it the fractional score
+// above had to be found by re-fetching the API by hand.
+func TestUnreadableAnswerLogsWhichFieldItWas(t *testing.T) {
+	hfSearchStub(t, `[{"id":"Qwen/Qwen2.5-Coder-7B-Instruct-GGUF","downloads":"many"}]`)
+
+	var logged bytes.Buffer
+	defer captureLog(&logged)()
+
+	hits, aerr := engineSearchHF(t.Context(), "qwen", "gguf", engineSortDownloads)
+	if aerr == nil {
+		t.Fatalf("a string where a count belongs was accepted: %+v", hits)
+	}
+	// What reaches the administrator stays the host and nothing else: a decoder's complaint is
+	// not something anybody can act on from the panel.
+	if !strings.HasPrefix(aerr.message, "unreadable answer from ") || strings.Contains(aerr.message, "unmarshal") {
+		t.Errorf("panel message = %q, want the host-only sentence", aerr.message)
+	}
+	line := logged.String()
+	for _, want := range []string{"downloads", "engineHFSearchRow", "/api/models"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log line %q does not say %q — the field has to be findable from it", line, want)
+		}
 	}
 }

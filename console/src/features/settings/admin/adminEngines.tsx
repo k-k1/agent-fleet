@@ -438,12 +438,27 @@ export function EnginesAdminView() {
               <Icon name="refresh" />
             </button>
           </div>
-          <p className="muted">
-            {tr("admin.engines_state_prefix")}
-            {engineStateLabel(e, tr)}
-            {e.models?.length ? tr("admin.engines_models_sep") + e.models.join(", ") : ""}
-            {e.models?.length ? " " + tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared") : ""}
-          </p>
+          {/* What ECS is doing, and what the engine would hold if it were up. A badge and chips
+              rather than one sentence: the state is the fact the rest of this panel is read
+              against, and inside "状態: 停止中 / モデル: a, b （宣言。…）" it was a phrase like
+              any other. The model names carry no tone of their own — whether they are in VRAM
+              is the note that follows them, and it is not the same claim. */}
+          <div className="engines-state">
+            <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
+            {e.models?.length ? (
+              <>
+                <span className="engines-fact-label">{tr("admin.engines_models_label")}</span>
+                {e.models.map((m) => (
+                  <span key={m} className="mono engines-model-tag">
+                    {m}
+                  </span>
+                ))}
+                <span className="muted">
+                  {tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared")}
+                </span>
+              </>
+            ) : null}
+          </div>
           <EngineStatus row={e} />
           <EngineClassPicker
             row={e}
@@ -544,7 +559,7 @@ function EngineClassPicker({
             <span className="engines-model-tag">{tr("admin.engines_class_not_default")}</span>
             <button
               type="button"
-              className="ghost sm"
+              className="sm"
               disabled={busy}
               onClick={() => onPick(row.class_default || "")}
             >
@@ -561,7 +576,7 @@ function EngineClassPicker({
           {/* On its own line rather than trailing the sentence. Rendered headless it read as
               part of the paragraph — and this is the button that costs a cold start, so it has
               to look like one before somebody presses it by accident. */}
-          <button type="button" className="ghost sm" disabled={busy} onClick={onReplace}>
+          <button type="button" className="sm" disabled={busy} onClick={onReplace}>
             {tr("admin.engines_class_replace")}
           </button>
         </div>
@@ -665,36 +680,45 @@ function EngineModels({
           return (
             <li key={m.id} className={m.enabled ? "engines-model on" : "engines-model"}>
               <div className="engines-model-head">
-                <span className="mono">{m.id}</span>
-                {started && <span className="engines-model-tag">{tr("admin.engines_model_started")}</span>}
+                <span className="mono engines-model-id">{m.id}</span>
+                {/* On or off is stated, never left to the label of the button that would
+                    change it — that label says the OPPOSITE of the state it describes. Dimming
+                    the row instead is what a disabled control looks like (admin.css). */}
+                <span className={m.enabled ? "engines-model-tag on" : "engines-model-tag off"}>
+                  {tr(m.enabled ? "admin.engines_model_is_on" : "admin.engines_model_is_off")}
+                </span>
+                {started && (
+                  <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>
+                )}
                 {isLora && <span className="engines-model-tag">LoRA</span>}
                 <span className="engines-model-actions">
-                  <button
-                    type="button"
-                    className="ghost sm"
-                    disabled={pending}
-                    onClick={() => change(m, { enabled: !m.enabled })}
-                  >
-                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
-                  </button>
-                  {/* A LoRA is never something an engine is started with, so the control that
-                      would say so is not offered for one. */}
+                  {/* "Start with this one" leads: it is the thing somebody came to this list to
+                      do, and it implies the enable behind it. A LoRA is never what an engine is
+                      started with, so the control that would say so is not offered for one. */}
                   {!isLora && !started && (
                     <button
                       type="button"
-                      className="ghost sm"
+                      className="sm"
                       disabled={pending}
                       onClick={() => change(m, isImage ? { selected: true } : { default: true })}
                     >
                       {tr("admin.engines_model_select")}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="sm"
+                    disabled={pending}
+                    onClick={() => change(m, { enabled: !m.enabled })}
+                  >
+                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
+                  </button>
                   {/* Forgetting the ROW. The file stays in the bucket — the CP has no
                       s3:DeleteObject and is not getting one (ADR 0072 decision 7) — so the
                       label says "forget", not "delete", and the note below says why. */}
                   <button
                     type="button"
-                    className="ghost sm"
+                    className="sm danger"
                     disabled={pending || started}
                     onClick={() => {
                       setConfirming(m.id);
@@ -739,7 +763,7 @@ function EngineModels({
                     >
                       {tr("admin.engines_vram_confirm_go")}
                     </button>
-                    <button type="button" className="ghost sm" onClick={() => setVramAsk(null)}>
+                    <button type="button" className="sm" onClick={() => setVramAsk(null)}>
                       {tr("common.cancel")}
                     </button>
                   </span>
@@ -761,7 +785,7 @@ function EngineModels({
                   <span className="engines-model-actions">
                     <button
                       type="button"
-                      className={purge ? "primary sm" : "ghost sm"}
+                      className={purge ? "primary sm" : "sm"}
                       disabled={pending}
                       onClick={() => {
                         setConfirming("");
@@ -770,7 +794,7 @@ function EngineModels({
                     >
                       {tr("admin.engines_model_forget_go")}
                     </button>
-                    <button type="button" className="ghost sm" onClick={() => setConfirming("")}>
+                    <button type="button" className="sm" onClick={() => setConfirming("")}>
                       {tr("common.cancel")}
                     </button>
                   </span>
@@ -824,7 +848,7 @@ function EngineModelAdd({
 
   if (!open) {
     return (
-      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_model_add")}
       </button>
     );
@@ -892,7 +916,7 @@ function EngineModelAdd({
         <button type="button" className="primary sm" disabled={busy} onClick={submit}>
           {tr("admin.engines_model_add_go")}
         </button>
-        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+        <button type="button" className="sm" onClick={() => setOpen(false)}>
           {tr("common.cancel")}
         </button>
       </div>
@@ -1015,7 +1039,7 @@ function HfTokenPanel() {
               {tr("admin.engines_hf_token_save")}
             </button>
             {st.configured && (
-              <button type="button" className="ghost sm" disabled={busy} onClick={remove}>
+              <button type="button" className="sm" disabled={busy} onClick={remove}>
                 {tr("admin.engines_hf_token_remove")}
               </button>
             )}
@@ -1048,6 +1072,9 @@ function EngineIngest({
   const tr = useT();
   const [open, setOpen] = useState(false);
   const [repo, setRepo] = useState("");
+  /** The revision a pasted `/blob/<rev>/…` URL named. Held here because splitting the URL into
+   *  the fields leaves nowhere else for it, and dropping it would silently resolve `main`. */
+  const [rev, setRev] = useState("");
   const [file, setFile] = useState("");
   const [id, setId] = useState("");
   const [desc, setDesc] = useState("");
@@ -1065,13 +1092,54 @@ function EngineIngest({
   const source = (name = file) => {
     const r = repo.trim();
     // A pasted https://huggingface.co/<repo>/blob|resolve/<rev>/<file> is what a person
-    // actually has in hand, so it is accepted as-is rather than asked for in pieces.
+    // actually has in hand, so it is accepted as-is rather than asked for in pieces. Normally
+    // splitPasted has already taken it apart into the fields; this stays for the URL that was
+    // never blurred.
     const m = r.match(/^https?:\/\/huggingface\.co\/([^/]+\/[^/]+)(?:\/(?:blob|resolve)\/([^/]+)\/(.+))?$/);
-    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: m[3] || name.trim() } };
+    // 🔴 The NAMED file wins over the one in the URL. The other way round, a blob URL for one
+    // file plus a pick of another out of the list resolved the first one while the picker
+    // showed the second — silently, because nothing on screen carried the URL's own filename.
+    if (m) return { hf: { repo: m[1], revision: m[2] || "", file: name.trim() || m[3] || "" } };
     const civ = r.match(/civitai\.com\/.*modelVersionId=(\d+)|^civitai:(\d+)$/);
     if (civ) return { civitai: { versionId: Number(civ[1] || civ[2]), file: name.trim() } };
     if (/^https?:\/\//.test(r)) return { url: r, sha256: name.trim() };
-    return { hf: { repo: r, file: name.trim(), revision: "" } };
+    return { hf: { repo: r, file: name.trim(), revision: rev } };
+  };
+
+  /** What an address names, or null when it is not one. The two shapes a person has in hand:
+   *  a Hugging Face model page (optionally pointing straight at a file) and a Civitai page
+   *  carrying `modelVersionId` — which is the id an ingest takes, unlike the model id in the
+   *  path next to it. */
+  const splitPasted = (raw: string): { repo: string; rev: string; file: string } | null => {
+    const t = raw.trim();
+    const hf = t.match(
+      /^https?:\/\/huggingface\.co\/([^/?#]+\/[^/?#]+)(?:\/(?:blob|resolve)\/([^/?#]+)\/([^?#]+))?(?:[?#].*)?$/,
+    );
+    if (hf) return { repo: hf[1], rev: hf[2] || "", file: hf[3] || "" };
+    const civ = t.match(/^https?:\/\/(?:[\w-]+\.)*civitai\.com\/\S*[?&]modelVersionId=(\d+)/);
+    if (civ) return { repo: "civitai:" + civ[1], rev: "", file: "" };
+    return null;
+  };
+
+  /** Take a pasted address apart into the fields it names, once the box is left.
+   *
+   * `source()` has always understood one, but only at the moment the request was built — so
+   * what would actually be fetched was never on screen, the file the URL named was not the one
+   * the picker showed, and the id was proposed from neither. Splitting it into the fields
+   * leaves one source of truth and makes the rest of the form behave as if it had been typed.
+   *
+   * On blur rather than on every keystroke: `huggingface.co/Qwen/Q` is a legal `owner/name`
+   * halfway through typing one, and rewriting the box under a cursor is worse than waiting. */
+  const splitRepoField = () => {
+    const s = splitPasted(repo);
+    if (!s) return;
+    setRepo(s.repo);
+    setRev(s.rev);
+    setFiles(null);
+    setFound(null);
+    // Fills an empty box, never overwrites a typed one — the same rule the id and the window
+    // follow further down.
+    if (s.file && !file.trim()) setFile(s.file);
   };
 
   /** A plain url addresses one file and has no listing; the field carries its sha256 there. */
@@ -1152,6 +1220,7 @@ function EngineIngest({
    *  as `civitai:<versionId>`, which is the form the source parser above already reads. */
   const pickHit = (h: IngestHit) => {
     setRepo(h.source === "civitai" ? "civitai:" + h.ref : h.ref);
+    setRev("");
     setFiles(null);
     setFile("");
     setFound(null);
@@ -1192,6 +1261,7 @@ function EngineIngest({
     setFound(null);
     setAccepted(false);
     setRepo("");
+    setRev("");
     setFile("");
     setFiles(null);
     setId("");
@@ -1200,15 +1270,26 @@ function EngineIngest({
 
   if (!open) {
     return (
-      <button type="button" className="ghost sm" onClick={() => setOpen(true)}>
+      <button type="button" className="sm engines-open" onClick={() => setOpen(true)}>
         {tr("admin.engines_ingest_open")}
       </button>
     );
   }
-  const field = (label: string, value: string, set: (v: string) => void, placeholder = "") => (
+  const field = (
+    label: string,
+    value: string,
+    set: (v: string) => void,
+    placeholder = "",
+    onBlur?: () => void,
+  ) => (
     <label className="engines-model-add-row">
       <span>{label}</span>
-      <input value={value} placeholder={placeholder} onChange={(ev) => set(ev.currentTarget.value)} />
+      <input
+        value={value}
+        placeholder={placeholder}
+        onChange={(ev) => set(ev.currentTarget.value)}
+        onBlur={onBlur}
+      />
     </label>
   );
   return (
@@ -1269,7 +1350,7 @@ function EngineIngest({
           ))}
         </span>
         {/* Enabled with an empty box on purpose — that is the ranking. */}
-        <button type="button" className="ghost sm" onClick={() => search()} disabled={busy}>
+        <button type="button" className="primary sm" onClick={() => search()} disabled={busy}>
           {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
         </button>
       </div>
@@ -1277,29 +1358,32 @@ function EngineIngest({
       {hits && hits.length > 0 && (
         <ul className="engines-search-hits">
           {hits.map((h) => (
-            <li key={h.source + ":" + h.ref}>
-              <button type="button" className="ghost sm" onClick={() => pickHit(h)}>
-                <span className="mono">{h.name}</span>
-              </button>
-              {/* The gating flag and the licence ride here because they decide whether this row
-                  is takeable at all, and finding that out from a refusal one step later is the
-                  dead end the whole picker exists to avoid. */}
-              <span className="muted">{ingestHitMeta(h, tr)}</span>
-            </li>
+            <HitCard key={h.source + ":" + h.ref} hit={h} onPick={() => pickHit(h)} />
           ))}
         </ul>
       )}
       {/* Editing the repository drops the list and the verdict with it: a filename picked out
-          of the previous repository's answer would resolve against the new one. */}
+          of the previous repository's answer would resolve against the new one.
+
+          The example follows the ROLE and the source that is selected. A GGUF repository
+          offered to the image engine is not a hint, it is a wrong answer: llama.cpp's files
+          are not what sd-server loads, and following it costs a resolve and a refusal. */}
       {field(tr("admin.engines_ingest_repo"), repo, (v) => {
         setRepo(v);
+        setRev("");
         setFiles(null);
         setFile("");
         setFound(null);
-      }, "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
+      }, searchSource === "civitai"
+        ? "civitai:782002"
+        : isImage
+          ? "stabilityai/stable-diffusion-xl-base-1.0"
+          : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF",
+      splitRepoField)}
       {/* The filename is a picker as soon as the repository has been asked what it holds. The
           text field stays underneath it: a plain url has no listing, and there the field
-          carries the sha256 instead. */}
+          carries the SHA256 instead — so it is labelled as one. Offering "name.safetensors"
+          there asks for the one thing that field must not be given. */}
       {files && files.length > 0 && (
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_ingest_file")}</span>
@@ -1315,8 +1399,21 @@ function EngineIngest({
         </label>
       )}
       {files && files.length === 0 && <p className="form-err">{tr("admin.engines_ingest_no_files")}</p>}
-      {!files && field(tr("admin.engines_ingest_file"), file, setFile, isImage ? "name.safetensors" : "name.gguf")}
-      {field(tr("admin.engines_model_add_id"), id, setId, "qwen2.5-coder-1.5b")}
+      {!files &&
+        (listable()
+          ? field(
+              tr("admin.engines_ingest_file"),
+              file,
+              setFile,
+              isImage ? "name.safetensors" : "name.gguf",
+            )
+          : field(tr("admin.engines_ingest_sha256"), file, setFile, tr("admin.engines_ingest_sha256_ph")))}
+      {field(
+        tr("admin.engines_model_add_id"),
+        id,
+        setId,
+        isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
+      )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
       {/* The output cap is a FRACTION of the window, never a free number. It is not published
@@ -1326,10 +1423,10 @@ function EngineIngest({
           half-fill. */}
       {!isImage && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
-        <button type="button" className="ghost sm" onClick={resolve} disabled={busy || !repo.trim()}>
+        <button type="button" className="sm" onClick={resolve} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
         </button>
-        <button type="button" className="ghost sm" onClick={() => setOpen(false)}>
+        <button type="button" className="sm" onClick={() => setOpen(false)}>
           {tr("common.cancel")}
         </button>
       </div>
@@ -1579,20 +1676,17 @@ function EngineBrowse() {
             </button>
           ))}
         </span>
-        <button type="button" className="ghost sm" onClick={() => run()} disabled={busy}>
+        <button type="button" className="primary sm" onClick={() => run()} disabled={busy}>
           {q.trim() ? tr("admin.engines_ingest_search_go") : tr("admin.engines_ingest_browse_go")}
         </button>
       </div>
       {hits && hits.length === 0 && <p className="muted">{tr("admin.engines_ingest_search_none")}</p>}
       {hits && hits.length > 0 && (
         <ul className="engines-search-hits">
+          {/* No pick button: there is nowhere to put it. Picking one fills an ingest form, and
+              this deployment has no role to ingest into. */}
           {hits.map((h) => (
-            <li key={h.source + ":" + h.ref}>
-              {/* Not a button: there is nowhere to put it. Picking one fills an ingest form,
-                  and this deployment has no role to ingest into. */}
-              <span className="mono">{h.name}</span>
-              <span className="muted">{ingestHitMeta(h, tr)}</span>
-            </li>
+            <HitCard key={h.source + ":" + h.ref} hit={h} />
           ))}
         </ul>
       )}
@@ -1602,21 +1696,59 @@ function EngineBrowse() {
   );
 }
 
-/** One line under a search result: how popular it is, whether it is gated, what licence it
- *  carries, how big it is. Every part is omitted rather than guessed — the two APIs answer
- *  different subsets, and a zero download count reads as a fact. */
-function ingestHitMeta(h: IngestHit, tr: (k: never) => string): string {
-  const bits: string[] = [];
-  if (h.downloads) bits.push(fmtCount(h.downloads) + tr("admin.engines_ingest_hit_downloads" as never));
-  if (h.likes) bits.push(fmtCount(h.likes) + tr("admin.engines_ingest_hit_likes" as never));
-  if (h.trending) bits.push(fmtCount(h.trending) + tr("admin.engines_ingest_hit_trending" as never));
-  if (h.gated) bits.push(tr("admin.engines_ingest_hit_gated" as never));
-  const lic = h.license_name || h.license;
-  if (lic) bits.push(lic);
-  if (h.base_model) bits.push(h.base_model);
-  if (h.bytes) bits.push(fmtBytes(h.bytes));
-  if (h.context_length) bits.push((tr("admin.engines_ingest_ctx_max" as never)).replace("{n}", String(h.context_length)));
-  return bits.join(" · ");
+/** One search result, as a card.
+ *
+ * The three kinds of fact are told apart by KIND rather than by a separator character — what
+ * it is called, the numbers a ranking is built on, the terms it comes with — because twenty
+ * results as one "・"-joined line each are a wall of text with nothing to scan by.
+ *
+ * Every part is omitted rather than guessed: the two APIs answer different subsets, and a zero
+ * download count reads as a fact.
+ *
+ * The gating flag and the licence stay on the card rather than moving behind a detail view.
+ * They decide whether this row is takeable at all, and learning that from a refusal one step
+ * later is the dead end the whole picker exists to avoid. */
+function HitCard({ hit, onPick }: { hit: IngestHit; onPick?: () => void }) {
+  const tr = useT();
+  const stat = (n: number | undefined, key: string) =>
+    n ? (
+      <span className="engines-hit-stat">
+        <b>{fmtCount(n)}</b>
+        {(tr(key as never) as string).trim()}
+      </span>
+    ) : null;
+  const lic = hit.license_name || hit.license;
+  return (
+    <li className="engines-hit">
+      <div className="engines-hit-head">
+        <span className="mono engines-hit-name">{hit.name}</span>
+        {onPick && (
+          <button type="button" className="sm engines-hit-pick" onClick={onPick}>
+            {tr("admin.engines_ingest_hit_pick")}
+          </button>
+        )}
+      </div>
+      <div className="engines-hit-stats">
+        {stat(hit.downloads, "admin.engines_ingest_hit_downloads")}
+        {stat(hit.likes, "admin.engines_ingest_hit_likes")}
+        {stat(hit.trending, "admin.engines_ingest_hit_trending")}
+      </div>
+      <div className="engines-hit-tags">
+        {/* Gated first and in its own colour: it is the one tag that can turn into a refusal. */}
+        {hit.gated && (
+          <span className="engines-model-tag warn">{tr("admin.engines_ingest_hit_gated")}</span>
+        )}
+        {lic && <span className="engines-model-tag">{lic}</span>}
+        {hit.base_model && <span className="engines-model-tag">{hit.base_model}</span>}
+        {!!hit.bytes && <span className="engines-model-tag">{fmtBytes(hit.bytes)}</span>}
+        {!!hit.context_length && (
+          <span className="engines-model-tag">
+            {(tr("admin.engines_ingest_ctx_max" as never) as string).replace("{n}", String(hit.context_length))}
+          </span>
+        )}
+      </div>
+    </li>
+  );
 }
 
 /** 1,632,949 → 1.6M. The exact number is noise next to "is this the one everybody uses".
@@ -1638,10 +1770,14 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
     <p className="muted engines-ingest-jobs-head">{tr("admin.engines_ingest_jobs_head")}</p>
     <ul className="engines-model-list engines-ingest-jobs">
       {jobs.map((j) => (
-        <li key={j.id} className="engines-model on">
+        <li key={j.id} className="engines-model">
           <div className="engines-model-head">
-            <span className="mono">{j.model_id}</span>
-            <span className="engines-model-tag">{tr(("admin.engines_ingest_state_" + j.state) as never)}</span>
+            <span className="mono engines-model-id">{j.model_id}</span>
+            {/* The outcome carries a colour, because that is what the list is scanned for: a
+                row that failed and a row that finished look identical in a neutral pill. */}
+            <span className={"engines-model-tag " + engineJobTone(j.state)}>
+              {tr(("admin.engines_ingest_state_" + j.state) as never)}
+            </span>
             {j.created_at && (
               <span className="muted engines-ingest-when">{fmtDateTime(j.created_at)}</span>
             )}
@@ -1658,6 +1794,15 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
     </ul>
     </>
   );
+}
+
+/** Which badge colour an ingest job's state earns. An unknown state gets the neutral pill
+ *  rather than a guess: the CP may grow one, and drawing it green would be a claim. */
+function engineJobTone(state: string): string {
+  if (state === "done") return "on";
+  if (state === "failed") return "bad";
+  if (state === "pending" || state === "running") return "lead";
+  return "";
 }
 
 function fmtBytes(n: number): string {
@@ -1910,6 +2055,22 @@ function localStamp(iso: string): string {
 function engineTitle(e: EngineRow): string {
   const provider = e.provider || e.key;
   return e.api === "images" ? `${provider} (${e.key}) — image` : `${provider} (${e.key})`;
+}
+
+/** The badge colour for a state. `stopped` is the resting state of an on-demand GPU, not a
+ *  fault, so it stays neutral — a red one there would cry wolf on every panel load. */
+function engineStateTone(e: EngineRow): string {
+  if (!e.managed) return "";
+  switch (e.state) {
+    case "running":
+      return "on";
+    case "starting":
+      return "lead";
+    case "stopping":
+      return "warn";
+    default:
+      return "off";
+  }
 }
 
 function engineStateLabel(e: EngineRow, tr: (k: never) => string): string {

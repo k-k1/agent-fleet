@@ -450,6 +450,15 @@ func engineIngestGetJSON(ctx context.Context, target string, out any) *apiError 
 			engineIngestHost(target) + " answered " + resp.Status}
 	}
 	if err := json.Unmarshal(body, out); err != nil {
+		// 🔴 The panel gets the host and nothing else — an administrator can do nothing with a
+		// decoder's complaint — so without this line the ONE thing worth knowing is written
+		// down nowhere: "unreadable answer from huggingface.co" is the same sentence whatever
+		// upstream changed shape. Measured 2026-09-10: a fractional `trendingScore` emptied
+		// every text-to-image search and the field had to be found by re-fetching the API by
+		// hand. encoding/json names the field, the value and the Go type it would not fit; the
+		// target rides along because that is what makes the row fetchable again, and it
+		// carries no token (decision 6: the CP only ever reads the source anonymously).
+		log.Printf("engines: unreadable answer from %s: %v", target, err)
 		return &apiError{http.StatusBadGateway, errCodeIngestSourceError, "unreadable answer from " + engineIngestHost(target)}
 	}
 	return nil

@@ -32,8 +32,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mode_pool": "Slots",
   "admin.mode_engines": "Inference engines",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
-  "admin.engines_state_prefix": "State: ",
-  "admin.engines_models_sep": " / models: ",
+  "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU box up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys a box only when something asks, and it stops itself once idle.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
@@ -49,6 +48,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_catalog_empty": "This engine's catalogue is empty. Until a model is ingested, requests are refused with 503 and no box is started.",
   "admin.engines_catalog_none_enabled": "No model is enabled. This engine will not start until one is.",
   "admin.engines_model_started": "loaded at start",
+  // The state is said in a badge. The button's label says what pressing it would do, not
+  // which state the row is in; dimming the row instead is what a disabled control looks like.
+  "admin.engines_model_is_on": "enabled",
+  "admin.engines_model_is_off": "disabled",
   "admin.engines_model_enable": "Enable",
   "admin.engines_model_disable": "Disable",
   "admin.engines_model_select": "Start with this",
@@ -103,8 +106,16 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_hit_likes": " likes",
   "admin.engines_ingest_hit_trending": " trending",
   "admin.engines_ingest_hit_gated": "gated",
+  // Fills the ingest form from a search card. Not "ingest": it fills, and resolve → accept →
+  // ingest still runs from there unchanged.
+  "admin.engines_ingest_hit_pick": "Use this",
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
+  // With a plain https URL pasted above, this field is the sha256 rather than a file name
+  // (listable()). Keeping the label and offering "name.safetensors" asks for the one thing
+  // that field must not be given, so the label is swapped with it.
+  "admin.engines_ingest_sha256": "sha256",
+  "admin.engines_ingest_sha256_ph": "64 hex characters",
   "admin.engines_ingest_resolve": "Look it up",
   // Not having the filename in hand is the normal state, so "look it up" starts by asking the
   // repository what it holds.
