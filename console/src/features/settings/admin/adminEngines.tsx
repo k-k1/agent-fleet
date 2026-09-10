@@ -66,6 +66,17 @@ type EngineModel = {
   license?: string;
   license_name?: string;
   license_url?: string;
+  /** "yes" | "no" | "unknown", resolved from the licence at ingest (ADR 0072 decision 10). The
+   *  row says what may be RESTRICTED and points at the licence; it does not decide, because
+   *  which of "running the model" and "selling what it makes" a non-commercial licence forbids
+   *  differs between them. */
+  commercial_use?: string;
+  /** Who took the licence on for every member of this deployment, and when (ADR 0072 decision
+   *  10). A record of a HUMAN act, which is the question an audit asks and the model card
+   *  cannot answer — so it belongs on the row and not only in the ingest form that recorded it.
+   *  Absent for a seeded row and for one registered by hand. */
+  license_accepted_by?: string;
+  license_accepted_at?: string;
   base_model?: string;
   /** The provider dispatches on base_model and THIS row's is missing or names no workflow
    *  template (ADR 0072 decision 2). Stated by the CP, because the panel cannot know the
@@ -611,15 +622,25 @@ function engineClassLabel(c: EngineClass, tr: (k: never) => string): string {
 function engineClassVramNote(row: EngineRow, tr: (k: never) => string): string {
   const have = row.class?.vram_mib || 0;
   if (!have) return "";
+  // ⚠️ What the comparison above is, on an engine that can hold more than one model at a time.
+  // The number is a MAXIMUM and not a sum (ADR 0074 decision 6, `--models-max 1` and sd-server's
+  // one checkpoint) — but comfy chooses a checkpoint per REQUEST, keeps what it loaded cached
+  // and only evicts when it needs the room, so several can be resident. The rule is not changed
+  // to a sum: comfy evicts rather than dies, and a sum would warn on every start of a deployment
+  // with four enabled models, which is the warning nobody reads.
+  const many = row.provider === "comfy" ? " " + (tr("admin.engines_class_vram_many" as never) as string) : "";
   if (row.vram_need_source === "unknown" || !row.vram_need_mib) {
-    return tr("admin.engines_class_vram_unknown" as never) as string;
+    return (tr("admin.engines_class_vram_unknown" as never) as string) + many;
   }
   const key = row.vram_fits === false ? "admin.engines_class_vram_over" : "admin.engines_class_vram_ok";
-  return (tr(key as never) as string)
-    .replace("{n}", String(row.vram_need_mib))
-    .replace("{m}", String(have))
-    .replace("{id}", row.vram_need_model || "")
-    .replace("{src}", tr(("admin.engines_vram_src_" + (row.vram_need_source || "unknown")) as never) as string);
+  return (
+    (tr(key as never) as string)
+      .replace("{n}", String(row.vram_need_mib))
+      .replace("{m}", String(have))
+      .replace("{id}", row.vram_need_model || "")
+      .replace("{src}", tr(("admin.engines_vram_src_" + (row.vram_need_source || "unknown")) as never) as string) +
+    many
+  );
 }
 
 /** The model catalogue for one engine (ADR 0072 decision 7).
@@ -706,6 +727,14 @@ function EngineModels({
                   <span className="engines-model-tag lead">{tr("admin.engines_model_started")}</span>
                 )}
                 {isLora && <span className="engines-model-tag">LoRA</span>}
+                {/* 🔴 In the head, not in the meta line: this is the one fact on the row that
+                    can make offering the model somebody's own breach, and it has to be legible
+                    without reading a licence name nobody recognises. The ingest form says the
+                    same thing before the bytes are fetched (ADR 0072 decision 10); a row that
+                    arrived before that check existed, or by hand, says it here. */}
+                {m.commercial_use === "no" && (
+                  <span className="engines-model-tag warn">{tr("admin.engines_model_noncommercial")}</span>
+                )}
                 <span className="engines-model-actions">
                   {/* "Start with this one" leads: it is the thing somebody came to this list to
                       do, and it implies the enable behind it. A LoRA is never what an engine is
@@ -904,6 +933,14 @@ function EngineModelAdd({
   const [ctx, setCtx] = useState("");
   const [out, setOut] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  /** The licence, in the words of whoever staged the file. OPTIONAL, and deliberately so: this
+   *  route registers a file already in the bucket, and there is no API to read a licence off —
+   *  the ingest road is the one that records it from the source (ADR 0072 decision 6). Left
+   *  empty, the row says "licence not recorded" rather than nothing, which is the honest state.
+   *  Given, the CP derives the commercial-use verdict from it exactly as the ingest does, so
+   *  the same model does not lose its "non-commercial" mark by coming in through this door. */
+  const [licence, setLicence] = useState("");
+  const [licenceURL, setLicenceURL] = useState("");
   // One row PER FILE, always — a single-file checkpoint is this list with one entry, so the
   // common case is not a second code path. Until this existed the form held one key, which made
   // a split model impossible to register at all: FLUX.2 klein is a diffusion model, a text
@@ -919,6 +956,8 @@ function EngineModelAdd({
     setCtx("");
     setOut("");
     setBaseModel("");
+    setLicence("");
+    setLicenceURL("");
     setFiles(blank);
   };
 
@@ -951,6 +990,12 @@ function EngineModelAdd({
       base_model: baseModel,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
+      // 🔴 `license_name`, not `license`: the panel reads `license_name || license`, and the
+      // pair exists because Hugging Face answers `other` for both non-commercial models in ADR
+      // 0072's table. What a person types here is the terms, so it goes in the field that holds
+      // them. Empty stays empty — an unrecorded licence is a state the row states.
+      license_name: licence.trim(),
+      license_url: licenceURL.trim(),
     });
     reset();
   };
@@ -1038,6 +1083,11 @@ function EngineModelAdd({
         </button>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
+      {/* Optional, and the only route where a licence has to be TYPED — there is no source here
+          to read one from. Left blank the row says "licence not recorded"; filled, the CP reads
+          the commercial-use verdict off it the same way the ingest does. */}
+      {field(tr("admin.engines_model_add_license"), licence, setLicence, "apache-2.0")}
+      {field(tr("admin.engines_model_add_license_url"), licenceURL, setLicenceURL)}
       {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
           context at all, so offering the field there would ask for a number nothing reads. */}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
@@ -1225,9 +1275,20 @@ function EngineIngest({
   const [sort, setSort] = useState("downloads");
   const [baseModel, setBaseModel] = useState("");
   const families = baseModels || [];
+  /** Which read of a source is the current one. Picking a second result before the first has
+   *  answered is one click, and the two answers come back in whatever order the two APIs feel
+   *  like — so the older one is dropped rather than allowed to describe the row on screen. */
+  const asked = useRef(0);
 
-  const source = (name = file) => {
-    const r = repo.trim();
+  /** 🔴 The repository is a PARAMETER here, not a read of `repo`.
+   *
+   * Picking a search result sets the field and resolves in the same handler, and React still
+   * has the previous render's `repo` in scope at that point — so reading the state resolved the
+   * repository somebody chose a moment ago, with the new name on screen and nothing to see. The
+   * same is true of `file`, which the pick clears. Every caller that changes either one passes
+   * it. */
+  const source = (name = file, repoOverride?: string) => {
+    const r = (repoOverride ?? repo).trim();
     // A pasted https://huggingface.co/<repo>/blob|resolve/<rev>/<file> is what a person
     // actually has in hand, so it is accepted as-is rather than asked for in pieces. Normally
     // splitPasted has already taken it apart into the fields; this stays for the URL that was
@@ -1280,12 +1341,19 @@ function EngineIngest({
   };
 
   /** A plain url addresses one file and has no listing; the field carries its sha256 there. */
-  const listable = () => !/^https?:\/\//.test(repo.trim()) || /huggingface\.co|civitai\.com/.test(repo.trim());
+  const listable = (repoOverride?: string) => {
+    const r = (repoOverride ?? repo).trim();
+    return !/^https?:\/\//.test(r) || /huggingface\.co|civitai\.com/.test(r);
+  };
 
-  const resolveFile = async (name: string) => {
+  const resolveFile = async (name: string, repoOverride?: string) => {
+    const seq = ++asked.current;
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/resolve`, "POST", {
-      source: source(name),
+      source: source(name, repoOverride),
     });
+    // A second pick while this one was in flight: its answer is the one on screen, and this
+    // late one would overwrite the licence, the sha256 and the window of a different model.
+    if (seq !== asked.current) return;
     if (d?.error) {
       setFound(null);
       setErr(errDetail(d.error));
@@ -1310,13 +1378,20 @@ function EngineIngest({
 
   /** 「調べる」. With no file named yet this ASKS WHAT THERE IS, because a filename retyped from
    *  another window is where the mistakes are. One candidate resolves straight through — a
-   *  picker over a single option is a question with one answer. */
-  const resolve = async () => {
+   *  picker over a single option is a question with one answer.
+   *
+   * `over` is how a caller that has just changed the repository or the file says so; see
+   * `source`. Called from an onClick as `() => resolve()`, never bare — the click event would
+   * arrive as the override. */
+  const resolve = async (over?: { repo?: string; file?: string }) => {
     setErr("");
-    if (!file.trim() && listable()) {
+    const named = (over?.file ?? file).trim();
+    if (!named && listable(over?.repo)) {
+      const seq = ++asked.current;
       const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest/files`, "POST", {
-        source: source(""),
+        source: source("", over?.repo),
       });
+      if (seq !== asked.current) return;
       if (d?.error) {
         setFiles(null);
         setErr(errDetail(d.error));
@@ -1326,11 +1401,11 @@ function EngineIngest({
       setFiles(list);
       if (list.length === 1) {
         setFile(list[0].name);
-        await resolveFile(list[0].name);
+        await resolveFile(list[0].name, over?.repo);
       }
       return;
     }
-    await resolveFile(file);
+    await resolveFile(named, over?.repo);
   };
 
   /** 「探す」 — for somebody who does not already know `owner/name`. Reads only: it starts
@@ -1352,16 +1427,25 @@ function EngineIngest({
     setHits((Array.isArray(d?.hits) ? d.hits : []) as IngestHit[]);
   };
 
-  /** Choosing a result only fills the repository field — the same field somebody would have
-   *  typed into — so everything downstream is the road that was already there. Civitai goes in
-   *  as `civitai:<versionId>`, which is the form the source parser above already reads. */
-  const pickHit = (h: IngestHit) => {
-    setRepo(h.source === "civitai" ? "civitai:" + h.ref : h.ref);
+  /** Choosing a result fills the repository field — the same field somebody would have typed
+   *  into — so everything downstream is the road that was already there. Civitai goes in as
+   *  `civitai:<versionId>`, which is the form the source parser above already reads.
+   *
+   * And then it asks what is in there, which is what pressing 「調べる」 did by hand: the pick
+   * has already said which model this is, so the button was a second confirmation of a decision
+   * already taken. A repository with several loadable files still lands on the picker — the
+   * same list, one press earlier — and one with none says so at the moment of choosing rather
+   * than after another click. The search is still only a way IN: the field stays typeable and a
+   * deployment with no egress loses the search and keeps the ingest. */
+  const pickHit = async (h: IngestHit) => {
+    const ref = h.source === "civitai" ? "civitai:" + h.ref : h.ref;
+    setRepo(ref);
     setRev("");
     setFiles(null);
     setFile("");
     setFound(null);
     setHits(null);
+    await resolve({ repo: ref, file: "" });
   };
 
   const pick = async (name: string) => {
@@ -1583,7 +1667,7 @@ function EngineIngest({
           half-fill. */}
       {!isImage && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
-        <button type="button" className="sm" onClick={resolve} disabled={busy || !repo.trim()}>
+        <button type="button" className="sm" onClick={() => resolve()} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
         </button>
         <button type="button" className="sm" onClick={() => setOpen(false)}>
@@ -2002,7 +2086,25 @@ function engineModelMeta(m: EngineModel, tr: (k: never) => string): string {
     bits.push((tr("admin.engines_model_sync" as never) as string).replace("{n}", String(m.sync_secs)));
   }
   const licence = m.license_name || m.license;
-  if (licence) bits.push(licence);
+  if (licence) {
+    bits.push(licence);
+    // Who took those terms on for every member, and when. Only an INGESTED row has it: the
+    // acceptance is a human act the ingest form recorded, and a row that never passed through
+    // it says nothing rather than implying somebody agreed to something.
+    if (m.license_accepted_by) {
+      bits.push(
+        (tr("admin.engines_model_license_by" as never) as string)
+          .replace("{who}", m.license_accepted_by)
+          .replace("{when}", m.license_accepted_at ? fmtDateTime(m.license_accepted_at) : "—"),
+      );
+    }
+  } else if (m.kind !== "lora") {
+    // 🔴 Said, not left blank. Nothing recorded a licence for this row — a seed cannot know one
+    // and the hand-registration form does not ask — and an empty space where every ingested row
+    // carries a name reads as "no restrictions", which is not what it means. Same rule ADR 0074
+    // decision 6 applies to an unmeasured VRAM demand.
+    bits.push(tr("admin.engines_model_license_unknown" as never) as string);
+  }
   // Next to the licence, because they are the same kind of fact: both were true of that
   // repository at the moment somebody accepted its terms.
   if (m.source) bits.push(m.source);

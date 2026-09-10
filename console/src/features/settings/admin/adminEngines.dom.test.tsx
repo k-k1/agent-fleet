@@ -243,6 +243,60 @@ describe("EnginesAdminView", () => {
     );
   });
 
+  // ⚠️ The comparison is a MAXIMUM, not a sum, and on comfy that is conservative rather than
+  // exact: a checkpoint is chosen per request and loaded ones stay cached, so several can be
+  // resident. Said in a sentence — turning the figure into a sum would warn on every start of a
+  // deployment with four enabled models, which is the warning nobody reads.
+  it("says a per-request engine may hold several models, and says it only there", async () => {
+    const enabled = { model_rows: [{ id: "sdxl", enabled: true, vram_need_mib: 7000, vram_need_source: "declared" }], vram_need_mib: 7000, vram_need_source: "declared", vram_need_model: "sdxl", vram_fits: true };
+    api.mockResolvedValue({ engines: [withClasses({ provider: "comfy", ...enabled })] });
+    await mount();
+    expect(host!.querySelector(".engines-class")!.textContent).toContain("複数が同時に載る");
+
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({ engines: [withClasses({ provider: "sdcpp", ...enabled })] });
+    await mount();
+    // sd-server holds ONE checkpoint chosen at start, so the sentence would be false there.
+    expect(host!.querySelector(".engines-class")!.textContent).not.toContain("複数が同時に載る");
+  });
+
+  // The licence facts of a row (ADR 0072 decision 10). All three are things the CP already
+  // sends and the panel used to drop, and the last one is the reason this is not cosmetic: a
+  // blank where every ingested row names a licence reads as "no restrictions".
+  it("shows the licence, who accepted it, and says when nothing recorded one", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          model_rows: [
+            {
+              id: "flux-dev",
+              enabled: true,
+              license: "other",
+              license_name: "flux-1-dev-non-commercial-license",
+              commercial_use: "no",
+              license_accepted_by: "ops@example.com",
+              license_accepted_at: "2026-09-09T02:00:00Z",
+            },
+            { id: "seeded", enabled: true },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const li = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model")).find((e) =>
+        e.textContent?.includes(id),
+      ) as HTMLElement;
+    // 🔴 In the head next to the state, not buried in the meta line: this is the one fact that
+    // can make offering the model somebody's own breach.
+    expect(li("flux-dev").querySelector(".engines-model-tag.warn")!.textContent).toBe("非商用");
+    expect(li("flux-dev").textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(li("flux-dev").textContent).toContain("ops@example.com");
+    // A seeded row cannot know a licence and the hand-registration form does not ask.
+    expect(li("seeded").textContent).toContain("ライセンスの記録なし");
+    expect(li("seeded").querySelector(".engines-model-tag.warn")).toBeNull();
+  });
+
   it("says so rather than showing an empty screen when nothing is deployed", async () => {
     api.mockResolvedValue({ engines: [] });
     await mount();
@@ -591,9 +645,10 @@ describe("EnginesAdminView", () => {
     );
     await click(open as HTMLElement);
 
-    // id, key, description, size. The WINDOW fields are chat-only, and this is the image role.
+    // id, key, size, description, licence, licence URL. The WINDOW fields are chat-only, and
+    // this is the image role.
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    expect(inputs.length).toBe(4);
+    expect(inputs.length).toBe(6);
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(
@@ -630,6 +685,56 @@ describe("EnginesAdminView", () => {
       base_model: "",
       context_tokens: 0,
       max_output_tokens: 0,
+      // 🔴 Empty because nobody typed one, and it is SENT empty: an unrecorded licence is a
+      // state the row states ("licence not recorded"), not a gap the panel fills in.
+      license_name: "",
+      license_url: "",
+    });
+  });
+
+  // The one route where a licence has to be typed — there is no source here to read one from
+  // (ADR 0072 decision 6 vs. decision 10). Optional, and what it buys is the verdict: the CP
+  // reads "may this be used commercially" off the words, exactly as the ingest does, so the
+  // same model does not lose its mark by coming in through this door.
+  it("takes a licence with a hand-registered row, and sends it as the terms", async () => {
+    api.mockResolvedValue({ engines: [row({ has_models: true, model_rows: [] })] });
+    apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type(inputs[0], "flux-dev-local");
+    await type(inputs[1], "image/checkpoints/flux1-dev.safetensors");
+    await type(inputs[4], "flux-1-dev-non-commercial-license");
+    await type(inputs[5], "https://example.com/LICENSE.md");
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLElement,
+    );
+    // 🔴 `license_name`, not `license`: the row reads `license_name || license`, and what a
+    // person types here is the TERMS. Sent as `license` it would be shadowed by nothing and
+    // read as Hugging Face's slug.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
+      id: "flux-dev-local",
+      kind: "checkpoint",
+      files: [{ flag: "", s3Key: "image/checkpoints/flux1-dev.safetensors", bytes: 0 }],
+      description: "",
+      base_model: "",
+      context_tokens: 0,
+      max_output_tokens: 0,
+      license_name: "flux-1-dev-non-commercial-license",
+      license_url: "https://example.com/LICENSE.md",
     });
   });
 
@@ -816,13 +921,13 @@ describe("EnginesAdminView", () => {
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
-    // One field per ROW, each with its own label: six labelled rows, not a strip of six
+    // One field per ROW, each with its own label: eight labelled rows, not a strip of eight
     // look-alike boxes whose placeholder captions vanish as soon as somebody types into them.
     const rows = Array.from(host!.querySelectorAll(".engines-model-add-row"));
-    expect(rows.length).toBe(6);
+    expect(rows.length).toBe(8);
     expect(rows.every((r) => r.querySelector("span") && r.querySelector("input"))).toBe(true);
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    expect(inputs.length).toBe(6);
+    expect(inputs.length).toBe(8);
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -834,8 +939,9 @@ describe("EnginesAdminView", () => {
     await type(inputs[1], "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
     await type(inputs[2], "1117320768");
     await type(inputs[3], "small and quick");
-    await type(inputs[4], "32768");
-    await type(inputs[5], "4096");
+    // 4 and 5 are the optional licence pair; the window is the last two.
+    await type(inputs[6], "32768");
+    await type(inputs[7], "4096");
     await click(
       Array.from(host!.querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
@@ -849,6 +955,8 @@ describe("EnginesAdminView", () => {
       base_model: "",
       context_tokens: 32768,
       max_output_tokens: 4096,
+      license_name: "",
+      license_url: "",
     });
   });
 
@@ -916,8 +1024,9 @@ describe("EnginesAdminView", () => {
     await click(more());
     await click(more());
     inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    // id, then (key, size) per file, then the description: three files is eight inputs.
-    expect(inputs.length).toBe(8);
+    // id, then (key, size) per file, then the description and the optional licence pair: three
+    // files is ten inputs.
+    expect(inputs.length).toBe(10);
     await type(inputs[3], "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors");
     await type(inputs[5], "image/vae/flux2-vae.safetensors");
     await pick(selects()[2], "--clip_l");
@@ -936,6 +1045,8 @@ describe("EnginesAdminView", () => {
       base_model: "flux2-klein",
       context_tokens: 0,
       max_output_tokens: 0,
+      license_name: "",
+      license_url: "",
     });
   });
 
@@ -1652,10 +1763,41 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(hit.textContent).toContain("316");
 
     await click(hit.querySelector("button") as HTMLButtonElement);
-    // Picking only fills the field — nothing is resolved and nothing is started.
+    // Picking fills the field AND asks what is in that repository: the choice has already been
+    // made, so 「調べる」 was a second confirmation of it. Nothing is STARTED — this is the
+    // same read-only listing the button ran.
     expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
     expect(host!.querySelector(".engines-search-hits")).toBeNull();
-    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "black-forest-labs/FLUX.1-dev", file: "", revision: "" } },
+    });
+  });
+
+  // 🔴 The trap that comes with resolving on the pick: `repo` still holds the PREVIOUS pick in
+  // the handler that set the new one, so a request built from the state asks about the model
+  // somebody chose a moment ago — with the new name on screen and no error anywhere.
+  it("asks about the repository just picked, not the one still in the field", async () => {
+    const hits = ["a/first", "b/second"].map((ref) => ({ source: "hf", ref, name: ref }));
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({ hits });
+    await mount();
+    await openIngest();
+
+    await typeInto(field("探す")!, "x");
+    await click(button("検索"));
+    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "a/first", file: "", revision: "" } },
+    });
+
+    await click(button("検索"));
+    const second = host!.querySelectorAll(".engines-search-hits li")[1];
+    await click(second.querySelector("button") as HTMLButtonElement);
+    expect(field("リポジトリ")!.value).toBe("b/second");
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "b/second", file: "", revision: "" } },
+    });
   });
 
   // The three kinds of fact on a hit are told apart by kind, not by a "・": twenty results as

@@ -85,6 +85,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_part_drop": "Remove",
   "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Choose one below.",
   "admin.engines_model_add_desc": "description",
+  // Optional. This route has no source to read a licence from, so it is the one place a person
+  // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
+  "admin.engines_model_add_license": "licence (optional)",
+  "admin.engines_model_add_license_url": "licence URL (optional)",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
   "admin.engines_model_add_ctx": "context window",
@@ -166,6 +170,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_class_vram_ok": "The largest enabled model is {id} at {n} MiB ({src}); this class has {m} MiB.",
   "admin.engines_class_vram_over": "The largest enabled model is {id} at {n} MiB ({src}) and this class has {m} MiB. It may not fit.",
   "admin.engines_class_vram_unknown": "How much VRAM the enabled models need is not known — nobody measured it. That is not the same as saying they fit.",
+  // ⚠️ The comparison above is a maximum, not a sum, because one model is in VRAM at a time.
+  // That is exactly true of llm and sd-server and CONSERVATIVE of comfy, which picks a
+  // checkpoint per request and keeps loaded ones cached — so this sentence is added there
+  // rather than the number being turned into a sum nobody would read past.
+  "admin.engines_class_vram_many": "This engine chooses a checkpoint per request and keeps loaded ones in VRAM, so several can be resident at once — the figure above is the largest ONE of them.",
   "admin.engines_vram_src_declared": "measured",
   "admin.engines_vram_src_floor": "a weights-only floor",
   "admin.engines_vram_src_unknown": "unknown",
@@ -173,6 +182,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_vram_confirm_go": "Enable it anyway",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM at least {n} MiB (a weights-only floor)",
+  // The licence facts a row can carry (ADR 0072 decision 10). "Not recorded" is stated rather
+  // than left blank: a seeded row cannot know a licence and the hand-registration form does not
+  // ask, and a gap where every ingested row names one reads as "no restrictions".
+  "admin.engines_model_noncommercial": "non-commercial",
+  "admin.engines_model_license_by": "accepted by {who} / {when}",
+  "admin.engines_model_license_unknown": "licence not recorded",
   // An ESTIMATE, and it says so: S3 to the box was measured at 104–147 MB/s and this uses the
   // slow end. For a router role every enabled model is synced, so this really is what enabling
   // it adds to the next cold start.
