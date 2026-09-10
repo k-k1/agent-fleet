@@ -544,6 +544,16 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if m.LicenseAcceptedBy != "" {
 		row["license_accepted_by"] = m.LicenseAcceptedBy
 		row["license_accepted_at"] = m.LicenseAcceptedAt
+		// Under whose grant it was accepted, and to what (ADR 0072 open question 11). Both
+		// stay ABSENT rather than empty: no tenant means a super_admin accepted for the
+		// deployment, which the panel draws differently from "a tenant did", and a blank
+		// licence means nobody wrote one down rather than "no terms".
+		if m.LicenseAcceptedTenant != "" {
+			row["license_accepted_tenant"] = m.LicenseAcceptedTenant
+		}
+		if m.LicenseAcceptedLicense != "" {
+			row["license_accepted_license"] = m.LicenseAcceptedLicense
+		}
 	}
 	if m.CommercialUse != "" {
 		row["commercial_use"] = m.CommercialUse

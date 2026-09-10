@@ -17,8 +17,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-
-	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
 // engineSearchLimit is how many hits are asked for and returned. Twenty is a screen; the
@@ -273,7 +271,7 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 //
 // It starts nothing and writes nothing: a bad search costs one metadata read, which is why it
 // is safe to call while somebody is typing.
-func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
 	e := a.reg.get(strings.TrimSpace(r.PathValue("key")))
 	if e == nil {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineUnknown, "no such engine"})
@@ -292,7 +290,7 @@ func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ s
 // Nothing about asking Hugging Face what exists needs an engine: the CP holds no token, reads
 // no bucket and starts no task (decision 6). Staging one still needs a role to stage it INTO,
 // so this is browsing and the panel says so.
-func (a engineAdminAPI) browseSearch(w http.ResponseWriter, r *http.Request, _ store.Identity) {
+func (a engineAdminAPI) browseSearch(w http.ResponseWriter, r *http.Request, _ engineIngestGrant) {
 	// With no engine there is nothing to derive the kind from, so the caller states it. An
 	// unknown one is not defaulted: quietly answering GGUFs to somebody who asked for
 	// checkpoints is a list that looks like an answer.

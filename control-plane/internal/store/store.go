@@ -249,6 +249,17 @@ type EngineModel struct {
 	// multi-tenant deployment the operator accepts on behalf of every member — so the
 	// question an audit asks is who did that, which the model card cannot answer.
 	LicenseAcceptedBy, LicenseAcceptedAt string
+	// The other two halves of the tuple ADR 0072 open question 11 asks for — the acceptance
+	// is (tenant_id, member_id, accepted_at, license) and the two above carry the middle pair.
+	//
+	// LicenseAcceptedTenant is EMPTY for a super_admin: the operator acts for the deployment
+	// and has no tenant to be acting for. A tenant id means a tenant_admin accepted under the
+	// grant their operator gave that tenant (tenantLimits.AllowEngineIngest).
+	//
+	// LicenseAcceptedLicense is the licence as it read at that moment, held apart from
+	// License/LicenseName next door because those describe the MODEL and are corrected when
+	// the model card is, while this is evidence about a past act and must not move with it.
+	LicenseAcceptedTenant, LicenseAcceptedLicense string
 	// CommercialUse is "yes" | "no" | "unknown", resolved from the licence at ingest. It says
 	// what may be restricted rather than naming the act: which of "running the model" and
 	// "selling what it generates" a given non-commercial licence forbids differs between them,

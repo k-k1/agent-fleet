@@ -460,6 +460,10 @@ export const admin = {
   "admin.allow_self_update": "メンバーがエージェント CLI と rtk を自分で最新へ更新するのを許可",
   "admin.allow_self_update_hint":
     "対象は claude / opencode / codex / Copilot / Antigravity（agy）/ rtk。OFF（既定）は全員がこのデプロイのイメージ版で固定。ON にすると各メンバーが自分の設定で「起動時に最新へ更新」を選べます（コンテナ内 in-place 更新・Stop → Start で反映／戻せます）。",
+  "admin.engine_ingest_title": "推論エンジンのモデル取り込み",
+  "admin.allow_engine_ingest": "このテナントの管理者がモデルを取り込むのを許可",
+  "admin.allow_engine_ingest_hint":
+    "OFF（既定）では取り込みを起動できるのは super_admin だけです。ON にすると、このテナントの tenant_admin が Hugging Face / Civitai / URL からモデルを取り込めます。有効化・選択中チェックポイントの変更・行の削除・デプロイの Hugging Face トークンは super_admin のままです。カタログはデプロイに 1 つなので、取り込まれたモデルの id はどのテナントからも見えます。",
   "admin.saved": "保存しました",
   "admin.no_members": "メンバーがいません。下のフォームから追加してください。",
   "admin.add_failed": "追加に失敗: {msg}",

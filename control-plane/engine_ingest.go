@@ -509,8 +509,14 @@ type engineIngestRequest struct {
 	Description, BaseModel     string
 	ContextTokens, MaxOutput   int
 	Sizes                      []string
-	AcceptedBy                 string
-	Resolved                   engineResolved
+	// The licence acceptance, as (tenant, member, licence) — the fourth part of the tuple
+	// (the timestamp) is taken when the row is finally written. AcceptedTenant is empty for a
+	// super_admin, who acts for the deployment and has no tenant to act for.
+	//
+	// ⚠️ This struct is what job.Spec holds, so a job started before these fields existed
+	// deserializes with them empty. That is the right answer, not a gap: nobody recorded them.
+	AcceptedBy, AcceptedTenant, AcceptedLicense string
+	Resolved                                    engineResolved
 }
 
 // start creates the job row and launches the task. The row is written FIRST: a RunTask that
@@ -688,7 +694,12 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// press of Enable — which is also the moment somebody reads the licence line.
 		Enabled:           false,
 		LicenseAcceptedBy: req.AcceptedBy, LicenseAcceptedAt: store.NowTS(),
-		CommercialUse: engineCommercialUse(req.Resolved),
+		// Under whose grant, and to what. The tenant is what makes the acceptance auditable
+		// after this job row is gone (ADR 0072 open question 11); the licence string is the
+		// wording that was accepted, which the row's own License may no longer match.
+		LicenseAcceptedTenant:  req.AcceptedTenant,
+		LicenseAcceptedLicense: req.AcceptedLicense,
+		CommercialUse:          engineCommercialUse(req.Resolved),
 		// Where it came from, kept for as long as the MODEL is. The job row holds it too, but a
 		// job is a record of an event on its own timeline — it outlives the row it created and
 		// says nothing about whether that model still exists (observed on the dev deployment,

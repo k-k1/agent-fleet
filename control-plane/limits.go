@@ -86,6 +86,20 @@ type tenantLimits struct {
 	// editing toolchains.json can't bypass. Stop→Start recreates from the image, so
 	// turning the toggle off reverts to the baked versions.
 	AllowAgentSelfUpdate bool `json:"allow_agent_self_update,omitempty"`
+	// AllowEngineIngest lets this tenant's tenant_admins take models INTO the engine
+	// catalogue (ADR 0072 open question 11). super_admin-set, like the gate above, and false
+	// by default: without it the operator is the only one who can start an ingest, which is
+	// how the deployment behaved before the flag existed.
+	//
+	// It is the ONLY tenant axis on the catalogue. The catalogue itself stays one per
+	// deployment — every model id is visible from every tenant — because a per-tenant one
+	// multiplies the cold-start sync, and measured, ~5 models already fill a ten-minute cold
+	// start. Which tenant this is a grant of is recorded on the row it produces
+	// (EngineModel.LicenseAcceptedTenant), so "who let this model in" survives the job row.
+	//
+	// It grants no more than that: enabling a model, choosing the selected checkpoint,
+	// deleting a row and registering the deployment's Hugging Face token stay super_admin.
+	AllowEngineIngest bool `json:"allow_engine_ingest,omitempty"`
 	// TerminalHistoryRetentionDays promotes the default container-local terminal
 	// history into the workspace home volume for this many days. 0 keeps the
 	// standard short-lived /tmp history only.
