@@ -583,7 +583,7 @@ func memberTools() []mcpTool {
 		},
 		{
 			name: "add_memo", minScope: scopeWrite,
-			desc: "Add a note to your memo queue. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later.",
+			desc: "Add a note to your memo queue - what the user means by \"memo\" (メモ) here, not your own agent memory or notes file. kind=text needs `body`; kind=file needs `refPath` (a ~/repos/... path) with `body` as an optional comment. `repo` ('' = 共通/未分類) and `category` (free label) group it. Capture TODOs/ideas here to flush together later.",
 			schema: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
