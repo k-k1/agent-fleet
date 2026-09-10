@@ -7,10 +7,10 @@
   （ComfyUI）は 2026-09-10 に実装済み。**provider の実機検証も同日に完了した**——
   「P2 を実機で押した」節。そこで実装の欠落を 4 件踏み、うち 2 件は本文の記述そのものが
   誤っていた（同節と、その 2 件を指す 🔴 訂正）。**残作業だった取り込み経路と、provider を
-  通っていなかった 3 族（Z-Image・FLUX.1・SD3.5）も同日に実機で押し切った**——
-  「P2 の残作業 4・5 を実機で押した」節。3 族とも生成できるようになったが、**SD3.5 は
+  通っていなかった 3 ファミリー（Z-Image・FLUX.1・SD3.5）も同日に実機で押し切った**——
+  「P2 の残作業 4・5 を実機で押した」節。3 つとも生成できるようになったが、**SD3.5 は
   テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
-  欠落はさらに 5 件（5〜9）。**5 族すべてがこの配備の GPU で provider を通って絵を返した。**
+  欠落はさらに 5 件（5〜9）。**5 ファミリーすべてがこの配備の GPU で provider を通って絵を返した。**
   P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -72,8 +72,8 @@
   （v0.34.0 固定・Manager 無し）と専用 CI（`comfyui-image.yml`。CI で実際にビルドが通ることは
   確認した）、`20-platform.yaml` の ECR リポジトリ `af-comfyui`、`60-engines.yaml` の
   `ImageEngine`（sdcpp/comfy）による `!If` 切り替え、provider `comfy`（`/prompt` →
-  `/history/<id>` → `/view`。generate のみ——edit/inpaint は族ごとの image-to-image グラフが
-  未検証のため今回は対象外で、完了の定義自体は generate だけで満たせる）、5 族の
+  `/history/<id>` → `/view`。generate のみ——edit/inpaint はモデルファミリーごとの image-to-image グラフが
+  未検証のため今回は対象外で、完了の定義自体は generate だけで満たせる）、5 ファミリーの
   ワークフローテンプレート（SDXL・Z-Image・FLUX.2 klein は実測で解けた点の GPU 検証済みグラフの
   移植、FLUX.1・SD3.5 は新規で実機未検証、ゴールデンテストで全部固定）、`generate_image` の
   `model` 引数（決定 5・7。今温かいチェックポイントを説明文に出す）。🔴 副産物として
@@ -212,7 +212,7 @@ Qwen3-Coder-30B-A3B の公式 FP8 は約 30 GB）、そして**強みが効か�
 **2.5 倍速い**（7.9 秒対 20.8 秒）、**チェックポイントも LoRA もワークフロー毎に選べてロード済みを
 キャッシュする**（sd-server の「1 つ・次の起動」と「LoRA 切替コスト未測」はどちらも消える）、
 **API が非同期**（`/prompt` が即返り `/history` を短く叩くので、ALB の 60 秒アイドルに当たらない）、
-**新モデルの参照実装が先に載る**。払うものは自前イメージ・族ごとのワークフローテンプレート・
+**新モデルの参照実装が先に載る**。払うものは自前イメージ・モデルファミリーごとのワークフローテンプレート・
 provider `comfy`・そして API 契約が OpenAI 互換のように版で守られていないこと（ノード名が版で
 変わるので、タグを固定しテンプレートをゴールデンテストで固定する）。
 
@@ -259,7 +259,7 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      `text_encoder` / `diffusion_model`）・`baseModel`（`sdxl` / `sd35` / `flux1` / `flux2-klein` /
      `zimage` / `qwen-image` / …。LoRA の**適合先**であり、取り込み時に運用者が宣言する）・
      `precision`（`fp16` / `fp8` / `q8_0` / `q4_k` …。**12B 以上は L4 で量子化前提**なので、同じ
-     モデルの別精度が別ファイルとして並ぶ）・`ingestedAt`。`text_encoders/` は族をまたいで
+     モデルの別精度が別ファイルとして並ぶ）・`ingestedAt`。`text_encoders/` はモデルファミリーをまたいで
      共有する——SD3.5 と FLUX.1 は同じ T5-XXL と CLIP-L を読むので、1 回取り込めば両方の
      `files[]` から指せる。「ファイルが
      ある＝使える」ではなく、**マニフェストが揃っているものだけ**がカタログの候補になる
@@ -413,7 +413,7 @@ provider `comfy`・そして API 契約が OpenAI 互換のように版で守ら
      （`name` の enum＝**選択中のチェックポイントと `baseModel` が一致する** LoRA だけ。
      `weight` は 0〜2、既定 1）。ツールの説明文にカタログの `description` を並べ、
      エージェントが「水彩風なら `watercolor-v2`」と選べるようにする。
-     - **本命は ComfyUI**（決定 4）: provider `comfy` が族ごとのワークフローテンプレートに
+     - **本命は ComfyUI**（決定 4）: provider `comfy` がモデルファミリーごとのワークフローテンプレートに
        チェックポイント名と `LoraLoader` の連鎖（name・strength）を差して `/prompt` に投げる。
        LoRA はノードとして差し替わるので、組が変わるコストは ComfyUI のキャッシュの話になり、
        sd-server のマージ方式（未解決 2）を測る必要が無い。
@@ -666,7 +666,7 @@ ECR に複製し、起動時に **v0.34.0 へ checkout**（1〜2 秒）して `p
    ワークフローは公式テンプレートのサブグラフを API 形式に写したもの（`bench-image-engine.py`）。
    klein 4B は distilled を 4 ステップ・cfg 1、Z-Image-Turbo は 8 ステップ・cfg 1・shift 3。
 2. **`qwen_3_4b.safetensors` は Z-Image と klein で sha256 が同一**（`6c671498…`）。決定 2 の
-   「`text_encoders/` は族をまたいで共有」は実証になった。
+   「`text_encoders/` はモデルファミリーをまたいで共有」は実証になった。
 3. **温まった 1 枚（1024px）**: SDXL 20 ステップ **8.0 秒**（0071 実測 7 の 7.9 秒と一致）、
    Z-Image-Turbo **10.4〜10.6 秒**、klein 4B **3.7〜4.0 秒**、SDXL 512px 2.1〜2.7 秒。
    SDXL＋LoRA は 7.8〜8.1 秒で、**温まっていれば LoRA は無料**。既定フラグと `--highvram` で
@@ -762,7 +762,7 @@ P0 を実装しながら、開発配備（`af-sandbox` / ap-northeast-1）に実
    |---|---|---|
    | S3 → EBS | 6,938,078,334 B を **64 秒**（108 MB/s） | 7,105,348,188 B を **39 秒**（182 MB/s） |
    | cmdline | `-m /models/image/checkpoints/sd_xl_base_1.0.safetensors` | `-m /models/image/checkpoints/juggernaut_xl_v9.safetensors` |
-   | VRAM | 6,624 MB | 同族なので同程度 |
+   | VRAM | 6,624 MB | 同じモデルファミリーなので同程度 |
    | 起動後 1 枚目（512px） | **11.4 秒** | **21.5 秒** |
    | PNG | 455,316 B | 430,587 B（**絵は明らかに別物**） |
 
@@ -1214,17 +1214,17 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
      に**直接 bind mount** するため。mount はディレクトリを置き換えるが symlink は置き換えない。
 4. **provider `comfy`**（`workspace/agent/internal/imagegen/comfy.go`）。`/prompt`
    （sdcpp と同じ 503 engine_waking リトライ）→ `/history/<id>`（ポーリング）→ `/view`
-   の3段。**generate のみ**——edit/inpaint は族ごとの image-to-image グラフ（LoadImage +
+   の3段。**generate のみ**——edit/inpaint はモデルファミリーごとの image-to-image グラフ（LoadImage +
    VAEEncode 系）が誰にも測られていないので、今回のスコープから明示的に外した
    （完了の定義自体が generate だけで満たせるため）。
-5. **5 族のワークフローテンプレート**（`comfy_workflows.go`）。SDXL・Z-Image-Turbo・
+5. **5 ファミリーのワークフローテンプレート**（`comfy_workflows.go`）。SDXL・Z-Image-Turbo・
    FLUX.2 klein は bench-image-engine.py（実測で解けた点、GPU 検証済み）からの移植で、
    入力（プロンプト・seed）も同一——ゴールデンテストは実測と同じグラフを固定している。
    FLUX.1・SD3.5 は公開されている標準レシピからの新規実装で、**このセッションでは
    実機未検証**。ゴールデンテストは「今の形」を固定するだけで、正しさの証明ではない。
    カタログの `files[]` は sd.cpp 由来の `Flag` 語彙（`--diffusion-model`・`--clip_l`・
    `--t5xxl`・`--vae`）をそのまま再利用し、ComfyUI 用の第二の語彙を作らなかった——
-   klein/Z-Image のような sd.cpp が対応していない族でも、取り込み時に同じ4値から選べる。
+   klein/Z-Image のような sd.cpp が対応していないモデルファミリーでも、取り込み時に同じ4値から選べる。
 6. **`generate_image` の `model` 引数**（決定 5・7）。`provider` と同じ「本当に選べるときだけ
    出す」規則で、有効なチェックポイントが2つ以上のときだけ enum が現れる。説明文に
    カタログの `description` と、今ロードされているモデル（`warm`）を書く。
@@ -1298,11 +1298,12 @@ ComfyUI を直接叩いたときが 8.02 秒——差 0.4 秒が `/prompt`→`/h
 
 ### 踏んだ 4 件
 
-1. **`base_model` を族の綴りで書く経路が存在しなかった。** comfy は 5 族のテンプレートを
-   `base_model` で選び、ID からの推測を設計上拒否する（決定 2 がそのためにある）。ところが
-   `sdxl` / `flux2-klein` … を書き込む経路がどこにも無かった——`seedEngineCatalog` は
-   `BaseModel` を設定せず（種にはファミリーが分からない）、取り込みは HF / Civitai の
-   **表示名**（`"SDXL 1.0"`）をそのまま格納し、Console には入力欄が無い（表示のみ）。
+1. **`base_model` をモデルファミリーの綴りで書く経路が存在しなかった。** comfy は 5 つの
+   テンプレートを `base_model` で選び、ID からの推測を設計上拒否する（決定 2 がそのために
+   ある）。ところが `sdxl` / `flux2-klein` … を書き込む経路がどこにも無かった——
+   `seedEngineCatalog` は `BaseModel` を設定せず（種にはファミリーが分からない）、取り込みは
+   HF / Civitai の**表示名**（`"SDXL 1.0"`）をそのまま格納し、Console には入力欄が無い
+   （表示のみ）。
    つまり **Console だけを使う限り comfy は 1 枚も生成できない**。今回は管理 API を手で
    叩いてカタログを書いた。CP に語彙と検証を入れ、Console に選択欄を足して直した。
 2. **Console のカタログ UI が ADR 以前の世界のままだった。** 登録フォームはファイル 1 本
@@ -1340,8 +1341,8 @@ ComfyUI を直接叩いたときが 8.02 秒——差 0.4 秒が `/prompt`→`/h
 ## P2 の残作業 4・5 を実機で押した（2026-09-10・af-sandbox）
 
 前節が残した 2 つ——**取り込み（ingest）を実際に HF / CivitAI から走らせる**（残作業 4）と、
-**provider 経由で一度も動かしていない 3 族**（残作業 5: Z-Image・FLUX.1・SD3.5）——を
-同じ日のうちに押した。結論から言うと **3 族すべてが動くようになった**が、SD3.5 だけは
+**provider 経由で一度も動かしていない 3 ファミリー**（残作業 5: Z-Image・FLUX.1・SD3.5）——を
+同じ日のうちに押した。結論から言うと **3 つすべてが動くようになった**が、SD3.5 だけは
 テンプレートが誤っており、直すまで 1 枚も出せなかった。加えて欠落を 5 件（5〜9）踏んだ——
 うち 1 件（8）は未解決 3 がそのまま出たもので、新発見ではない。
 
@@ -1355,7 +1356,7 @@ declare base_model as one of sdxl, sd35, flux1, flux2-klein, zimage: this engine
 which picks a workflow by family and will not guess one (the repository calls it "SDXL 1.0")
 ```
 
-族の綴り一覧・なぜ要るのか・**上流が何と呼んでいるか**。最後の 1 つが効く——運用者の手元に
+ファミリーの綴り一覧・なぜ要るのか・**上流が何と呼んでいるか**。最後の 1 つが効く——運用者の手元に
 あるのは「SDXL 1.0」という表示名だけで、それを `sdxl` に対応づけるのが唯一の仕事だからである。
 `base_model` に表示名をそのまま入れても同じ 400 になる。どちらの場合もジョブ行は 1 本も
 作られない（ジョブ一覧で確認した）。
@@ -1380,7 +1381,7 @@ CivitAI には概念もトークン欄も無い。`resolve` が「この資産�
 つまり **分割モデルは取り込みだけでは組み立てられない**。FLUX.1 の 4 ファイル行を作るのに、
 部品を 3 つ捨て行として取り込み（S3 に置くためだけ）、`POST /models` で Flag 付きの本番行を
 作り直し、捨て行を忘れる、という手順を踏んだ。決定 2 は「取り込み時に運用者が宣言する」と
-言うが、宣言できるのは族だけで、**役割は宣言できない**。
+言うが、宣言できるのはモデルファミリーだけで、**ファイルの役割は宣言できない**。
 
 🔴 **欠落 6 の帰結——`?purge=1` は他の行が使っているファイルを黙って消せる。** 行を忘れる
 ときの `purge` は、その行の `files[]` の S3 キーをそのまま ingest タスクに渡す
@@ -1392,13 +1393,13 @@ CivitAI には概念もトークン欄も無い。`resolve` が「この資産�
 
 ### 残作業 5——Z-Image と FLUX.1 は通った。SD3.5 はテンプレートが誤っていた
 
-| 族 | 結果 | 実測（ComfyUI 側の `Prompt executed`） |
+| モデルファミリー | 結果 | 実測（ComfyUI 側の `Prompt executed`） |
 |---|---|---|
 | Z-Image-Turbo | ✅ 生成 | 1 回目は下の欠落 7 で 400、2 回目に成功 |
 | FLUX.1 dev（fp8 分割） | ✅ 生成（初回） | **78.19 秒**（切り替え込みのコールド） |
 | SD3.5 medium | ❌ → テンプレート修正 → ✅ 生成 | **46.90 秒**（切り替え込みのコールド） |
 
-**これで 5 族すべてが、この配備の GPU で、Go の provider を通って絵を返した。**
+**これで 5 ファミリーすべてが、この配備の GPU で、Go の provider を通って絵を返した。**
 
 FLUX.1 は S3 にあった 22.2 GiB の fp16 transformer（P4 の gated 検証で入れたもの）を
 **使わなかった**。flux1 テンプレートは `UNETLoader` ＋ `DualCLIPLoader` ＋ `VAELoader` の
@@ -1425,14 +1426,14 @@ Value not in list: clip_name1: 'sd3.5_medium.safetensors'
 修正は語彙に `--clip_g` を足すこと。これは第 5 の語彙の発明ではなく**取りこぼしの回収**である:
 `EngineFile` が借りている stable-diffusion.cpp の語彙には元から `--clip_g` があり、写す際に
 落ちていた。SD3.5 の 3 つのエンコーダは 3 つの別ファイルで、clip_g を名指す手段が無い以上、
-この族は最初から生成できなかった。CP 側の一覧（Console に配る正本）にも同じ 1 語を足し、
+このモデルファミリーは最初から生成できなかった。CP 側の一覧（Console に配る正本）にも同じ 1 語を足し、
 ドリフト検査が両者を揃えることを——片側だけ直して実際に落として——確かめた。
 
 **ゴールデンテストはこれを捕まえられない。** 固定していたのは「誰も走らせたことの無い
 グラフの形」で、ADR 本文が P2 の時点でそう断っていたとおりである。形の固定は差分を
 読ませるためのもので、正しさの証明ではない——今回それが具体例になった。
 
-### 配備そのものの欠落 3 件（族とは無関係に、誰でも踏む）
+### 配備そのものの欠落 3 件（モデルファミリーとは無関係に、誰でも踏む）
 
 🔴 **欠落 7——エンジンは「まだ箱に無いモデル」への要求を受け付けてしまう。** fetch
 サイドカーは start モデル（selected な 1 本）を落とした時点で `engine may start; 6 file(s)
@@ -1453,7 +1454,7 @@ Value not in list: unet_name: 'z_image_turbo_bf16.safetensors' not in ['flux-2-k
 （「サービス起動後の追加同期」）がそのまま出たもので、P5 に送られている既知の穴である。
 ただし image 役で実際に踏むと何が起きるかは初めて測った: `flux1-dev-fp8` と `sd35-medium` を
 有効化してもファイルは降りて来ず、`mode` を `off` → `on` して**箱を作り直す**しかなかった。
-llm 役では「次の起動まで待つ」で済むが、image 役では**有効化した族が箱に無いまま
+llm 役では「次の起動まで待つ」で済むが、image 役では**有効化したモデルが箱に無いまま
 `generate_image` の `model` enum に出る**ので、欠落 7 と重なって「選べるのに 400 が返る」に
 なる。P5 でこれを解くときは、enum に出す条件を「有効」ではなく「箱にある」に寄せるか、
 欠落 7 側で待たせるかのどちらかが要る。
@@ -1657,10 +1658,10 @@ engine is starting; retry` という、**自分で retry と言っておきな�
 - **P2 — ComfyUI（0071 P2 をここへ前倒し）。実装済み・実機検証済み（2026-09-10・
   「P2 の実装」節と「P2 を実機で押した」節。後者で欠落 4 件を修正）。** 自前イメージ（タグ固定・Manager 無し。`20-platform` の ECR リポジトリと
   専用 CI）、`ImageEngine=comfy` の `!If`（決定 4）、
-  provider `comfy`（**generate のみ**。edit/inpaint は族ごとの image-to-image グラフが
+  provider `comfy`（**generate のみ**。edit/inpaint はモデルファミリーごとの image-to-image グラフが
   未検証のため今回は対象外——完了の定義自体は generate だけで満たせる。`/prompt` →
   `/history` → `/view` を進捗通知つきで回す）、テンプレートは SDXL / SD3.5 / FLUX.1 /
-  FLUX.2 klein / Z-Image の 5 族をリポジトリに置いてゴールデンテストで固定（SDXL・
+  FLUX.2 klein / Z-Image の 5 ファミリーをリポジトリに置いてゴールデンテストで固定（SDXL・
   Z-Image・klein は実測で解けた点の GPU 検証済みグラフの移植、FLUX.1・SD3.5 は新規で
   実機未検証）、`generate_image` の `model` 引数（enum＝有効なチェックポイント。ここで
   初めて複数になる。**いま温まっているモデルを説明に出す**——切り替えは 1〜2.5 分の
@@ -1671,7 +1672,7 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   再起動が無く、1024px の SDXL が 0071 実測 7 の 8 秒台で出る。実機で通った**
   （SDXL 8.02 秒・klein 4.01 秒・Z-Image 10.74 秒、切り替え含め 13 シナリオすべて成功。
   「P2 の実装」節7）。Go の `comfy` provider 自体（CP ゲートウェイ経由の実呼び出し）も
-  2026-09-10 に実機で通した（「P2 を実機で押した」節）。**残っていた取り込み経路と 3 族
+  2026-09-10 に実機で通した（「P2 を実機で押した」節）。**残っていた取り込み経路と 3 ファミリー
   （Z-Image・FLUX.1・SD3.5）も同日に押し切り、P2 は実機で閉じた**——「P2 の残作業 4・5 を
   実機で押した」節。SD3.5 だけはテンプレートが誤っていたので直した（`--clip_g`）。
 - **P3 — LoRA。** ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
