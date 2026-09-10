@@ -37,7 +37,7 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   revisiting). The sd-server LoRA path (`<sd_cpp_extra_args>`) is demoted to a fallback.
 - The same day, **ComfyUI was measured on the dev deployment's GPU (g6.xlarge, L4)** (*Resolved by
   measurement*; the harness is `deploy/aws/ecs/harness/bench-image-engine.sh`). klein 4B,
-  Z-Image-Turbo and SDXL all draw on one box, a warm picture takes 4–11 seconds, and **a switch
+  Z-Image-Turbo and SDXL all draw on one instance, a warm picture takes 4–11 seconds, and **a switch
   is a re-read from EBS, 1–2.5 minutes**. Open questions 7 and 8 were filled in and decision 10's
   default became klein 4B. 🔴 Two of the runs had to be repeated — `--cache-none` makes every
   prompt re-read the weights from disk, and a second prompt with the same seed hits the output
@@ -49,21 +49,21 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   hardware** (same prompt and seed, SDXL to Juggernaut-XL v9, with `describe-stacks` reporting an
   unchanged last-update time; and the services stabilising with no Control Plane and no active
   set); the second is unit-tested only. 🔴 Three things bit on the way: **a YAML folded block
-  left the sidecar doing nothing** (measurement 2), **nothing stopped a box that reaches RUNNING
+  left the sidecar doing nothing** (measurement 2), **nothing stopped an instance that reaches RUNNING
   and never warms** (4), and **the straightforward active set did not fit 4,096 characters at 20
   models and 20 LoRAs** (1). Two things P0 needed that the decisions did not name — a way to
   create a catalogue row, and a harness for seeing a picture — are at the end of that section.
 - The same day, **P1 (the llm role's router mode) was implemented and measured, on a CPU and on
   hardware** (the "P1 measurements" section): preset generation, syncing every enabled model,
   `LlmModelsMax`, the redefinition of `warm`, and per-model windows. **All three definitions of done were driven on
-  hardware** (two GGUFs usable on one box, the swap answering on one attempt, and — once the
+  hardware** (two GGUFs usable on one instance, the swap answering on one attempt, and — once the
   second row was registered and enabled in the Console — two models in the launch menu with a
   session started on the second). Only creating the row needs a person: it is a super_admin
   screen, the same wall P0 hit. 🔴 Three points of the
   text were corrected by measurement: **`--models-dir` is not used** (it would list names the
   catalogue does not hold and count `llm/loras/` as a model), **`-c` must leave `LlmExtraArgs`**
   (a command-line flag beats the preset, so one `-c` gives every model the same window), and
-  **warm is "any model loaded", not "the default model loaded"** (a box that swapped models would
+  **warm is "any model loaded", not "the default model loaded"** (an instance that swapped models would
   read as answering-but-not-warm, and the `unwarmed` rule would stop it mid-conversation).
 - The next day (2026-09-09), **P4 was implemented and pressed on hardware** (*P4 measurements*,
   *P4 on hardware*). **All three halves of the definition of done passed** — one ungated model
@@ -92,7 +92,7 @@ English | [日本語](0072-engine-model-catalog.ja.md)
 
 ## Context
 
-ADR 0071 shipped the foundation — inference on the fleet's own boxes — in P0 and P1. The `llm`
+ADR 0071 shipped the foundation — inference on the fleet's own instances — in P0 and P1. The `llm`
 role runs Qwen3-Coder-30B-A3B and the `image` role SDXL base 1.0, **one model each**. The
 request is: make the models swappable, and make LoRAs applicable.
 
@@ -259,9 +259,9 @@ names move between versions — pin the tag and freeze the templates behind gold
      does not start an engine whose catalogue is empty even at `mode=on`**
      (`engineSnapshot.hasModels`, `decideEngineAction` answering `engineReasonNoModel`) —
      `engine_control.go` polls `running && !warmed` every 5 seconds forever (R6), so a `mode=on`
-     deployment would otherwise keep buying a `sleep infinity` box at $1.26/hour. The panel shows
+     deployment would otherwise keep buying a `sleep infinity` instance at $1.26/hour. The panel shows
      "no enabled model" in place of the toggle. What disappears is the second pass; **the one
-     GPU box bought for stabilisation, ten minutes, stays** (the placeholder carries the `GPU`
+     GPU instance bought for stabilisation, ten minutes, stays** (the placeholder carries the `GPU`
      resource requirement too; review, decision 1(d)).
 
 2. **The catalogue's truth is two-layered: S3 says what exists, the CP's database says how it
@@ -290,15 +290,15 @@ names move between versions — pin the tag and freeze the templates behind gold
      guess), `description` (**one line the agent reads** — for a LoRA, what the picture becomes),
      `vramMiB` (optional; the operator's measured figure, absent when unmeasured),
      `lastUsedAt`.
-   - **The active set — what the box loads now — is written by the CP to SSM**:
+   - **The active set — what the instance loads now — is written by the CP to SSM**:
      `/af-ws/engines/<key>/active`, a JSON of the enabled models' and LoRAs' S3 keys plus the
      material for the preset. The CP task role **already** has `ssm:PutParameter` on `/af-ws/*`
-     (`20-platform`, `SsmWorkspaceParams`), so the CP side adds no IAM; the box side adds
+     (`20-platform`, `SsmWorkspaceParams`), so the CP side adds no IAM; the instance side adds
      `ssm:GetParameter` (that path only) to `EngineTaskRole` **inside `60-engines`** (ADR 0071
      decision 8: new IAM stays closed inside the stack). The fetch sidecar reads it, syncs,
      builds the preset and the command line. SSM rather than S3 writes from the CP (a bucket
      policy) because it is **a permission the CP already holds** (confirmed, R2(a)), the value is
-     small, and the box does not need a live CP at the moment it reads. 🔴 **The Standard tier
+     small, and the instance does not need a live CP at the moment it reads. 🔴 **The Standard tier
      caps a value at 4,096 characters** (R2(c): 4,200 characters is a `ValidationException`;
      today's engine table is 666 bytes). So the active set carries **only S3 keys, local names,
      flags and the preset's material**; `description` and `license` stay in the database. A test
@@ -341,14 +341,14 @@ names move between versions — pin the tag and freeze the templates behind gold
      into VRAM) and no crash. Two sessions alternating between two models pay 267 seconds each
      time — that is **this design's price**, shown rather than hidden: the admin panel counts
      "model switches: N". A deployment staging several small models raises it (whether the
-     catalogue's `vramMiB` sum fits the box is the operator's call; the CP only helps with the
+     catalogue's `vramMiB` sum fits the instance is the operator's call; the CP only helps with the
      addition).
    - **`warm` changes meaning.** Today `/health` ok = weights in VRAM. Under the router, warm is
      "`GET /models` shows **at least one model as `loaded`**", and the health path stays
      `/health`. The default is the one catalogue entry flagged `default`, written into the preset
-     as `load-on-startup = true`. Without it the first request pays "box start 527 s + load
+     as `load-on-startup = true`. Without it the first request pays "instance start 527 s + load
      267 s".
-     - 🔴 **Not "the DEFAULT model is loaded"** (P1 measurement 4). Under `--models-max 1` a box
+     - 🔴 **Not "the DEFAULT model is loaded"** (P1 measurement 4). Under `--models-max 1` an instance
        serving the other model has unloaded the default, so tying warm to the default reads as
        answering-but-not-warm — and `running && !warmed` for 900 seconds is what P0's `unwarmed`
        rule stops, mid-conversation. `sleeping` and `loading` are not warm either: both mean the
@@ -380,8 +380,8 @@ names move between versions — pin the tag and freeze the templates behind gold
 4. **The image role holds one checkpoint; a swap takes effect at the next start; one at a
    time.** sd-server has no switch, extra roles are ruled out by the wall, co-tenancy by VRAM.
    So among the image catalogue's entries **exactly one is `selected`**, by an admin.
-   - Changed **while stopped** — the usual state, a $1.26/hour box sleeps — the next request wakes
-     the new checkpoint. **No extra wait**: the box fetches from S3 at every start anyway (ADR
+   - Changed **while stopped** — the usual state, a $1.26/hour instance sleeps — the next request wakes
+     the new checkpoint. **No extra wait**: the instance fetches from S3 at every start anyway (ADR
      0071 decision 3), and 6.9 GB is 45–60 seconds.
    - Changed **while running**, the admin panel makes the person choose: "at the next stop"
      (default) or "restart now — a generation in flight will fail". Never a silent restart: the
@@ -436,7 +436,7 @@ names move between versions — pin the tag and freeze the templates behind gold
 
 5. **A LoRA is a catalogue entry, chosen per request. The agent can only name what the
    catalogue has.**
-   - **image.** The box syncs the **enabled** entries of `image/loras/` and starts with
+   - **image.** The instance syncs the **enabled** entries of `image/loras/` and starts with
      `--lora-model-dir /models/image/loras`. `generate_image` gains two arguments: `model` (enum =
      the enabled checkpoints; on the `sdcpp` provider that is **one today** — decision 4 — but the
      argument's shape allows several from the start, for the Codex / agy routes and for ComfyUI)
@@ -463,7 +463,7 @@ names move between versions — pin the tag and freeze the templates behind gold
        assembling the request**. 🔴 **Not the CP** (review, decision 5): the LoRA sits inside
        the prompt's `<sd_cpp_extra_args>` or inside the workflow JSON, so a CP refusal means
        reading the body, which contradicts decision 4's "verbatim". The second line of defence is
-       **the box**: only enabled LoRAs are synced, so a name outside the enum fails at the engine,
+       **the instance**: only enabled LoRAs are synced, so a name outside the enum fails at the engine,
        and `--lora-model-dir` with `models/loras/` bounds the path.
      - **The arguments fit ADR 0069** (R7): `imagegen.Request.Model` already exists, and `Caps`
        gains `Loras []{name, description, baseModel}`. Two rules: **an argument appears only
@@ -516,7 +516,7 @@ names move between versions — pin the tag and freeze the templates behind gold
    - 🔴 **the CP does not read the manifest — it cannot** (R3: the CP task role has no S3 action at
      all, and none is added). The row is built from **what the CP itself resolved from HF (sha256,
      licence, bytes) and the exit codes in `DescribeTasks` (`fetch` SUCCESS → `upload` SUCCESS)**;
-     the sha256 check was done by `fetch`, and that is enough. The manifest is **for the box**. The
+     the sha256 check was done by `fetch`, and that is enough. The manifest is **for the instance**. The
      row is created as `enabled: false` — **ingested is not offered**; an admin enables it. In
      progress and failure reasons (sha256 mismatch, 401, disk) show on the panel's row.
    - 🔴 **A gated repository publishes its metadata anonymously** (P4 measurement 1):
@@ -582,7 +582,7 @@ names move between versions — pin the tag and freeze the templates behind gold
    = the checkpoint id and `provenance` with `loras: [{name, weight}]` and `sha256` (from the
    manifest; ADR 0071 decision 10's "file name and sha256"). The llm usage row's `model` is what
    the router returns in the response (= the catalogue id). `engine_hourly` (ADR 0071 decision
-   13) is untouched — uptime is a property of the box, not of the model.
+   13) is untouched — uptime is a property of the instance, not of the model.
 
 9. **The effect on the cold start is stated in numbers, and what is synced differs by role.**
    S3 → EBS is a steady 104–147 MB/s (ADR 0071 measurement 8; P1 measurement 9 adds 116.7 and
@@ -721,7 +721,7 @@ client → upload to S3 — and never uses ECS Exec. ComfyUI is the community im
 `ghcr.io/lecode-official/comfyui-docker:latest` (5.36 GB compressed, **v0.8.2** baked in), copied
 to ECR, **checked out at v0.34.0 at start** (1–2 s) plus `pip install -r requirements.txt`
 (19–24 s). The text encoder is fp8 (`qwen_3_4b_fp8_mixed`, 5.6 GB). The numbers are from the
-last two phases (stock flags, `--highvram`) of four runs on the same box shape; the pictures
+last two phases (stock flags, `--highvram`) of four runs on the same instance shape; the pictures
 were checked by eye.
 
 1. **klein 4B, Z-Image-Turbo and SDXL draw on one L4.** All 26 pictures succeeded, nothing
@@ -736,7 +736,7 @@ were checked by eye.
 4. **VRAM**: SDXL 6.9 GB, Z-Image 12.2 GB (17.5 GB with the stock flags, which keep the text
    encoder too), klein 11.6–13.2 GB. The three cannot sit in VRAM together; ComfyUI swaps.
 5. 🔴 **A switch is a re-read from EBS every time, 1–2.5 minutes.** The first visit and the
-   return visit cost the same: SDXL 56–63 s, klein 106–110 s, Z-Image 133–154 s. The box's
+   return visit cost the same: SDXL 56–63 s, klein 106–110 s, Z-Image 133–154 s. The instance's
    15 GB of RAM cannot keep three models (27 GB), so a model leaving VRAM goes back to disk.
    **Decision 4's "switch per request" holds, but a request that switches pays 10–30 warm
    pictures.** The dominant term is the EBS gp3 read (12.3 GB in 133 s = 92 MB/s) — one more
@@ -757,11 +757,11 @@ were checked by eye.
    help. The first two runs were measured that way.
 9. 🔴 **Sending the same graph twice hits the output cache: 0.5 s and nothing executed.** A
    warm measurement needs a different seed. That invalidated the third run.
-10. **The box**: a g6.xlarge registers **15,000 MiB** with ECS. **A second task on the same box
+10. **The instance**: a g6.xlarge registers **15,000 MiB** with ECS. **A second task on the same instance
     fails with `No space left`** (the anonymous host volume is never reclaimed — ADR 0071
-    decision 7's note). A task placed on a box that had just stopped one sat **9.5 minutes in
-    PENDING** before its pull started (33 s on a fresh box). Waiting for Managed Instances to
-    reclaim the box is faster.
+    decision 7's note). A task placed on an instance that had just stopped one sat **9.5 minutes in
+    PENDING** before its pull started (33 s on a fresh instance). Waiting for Managed Instances to
+    reclaim the instance is faster.
 11. **Ingest (HF → S3) ran at 7.8–44 MB/s** with no way to predict which (12.3 GB in 283 s,
     5.6 GB in 722 s), then 27–93 s to S3 — four more points for ADR 0071 decision 3.
 
@@ -794,7 +794,7 @@ g6.xlarge, under $1.
    **132–152 characters against the 4,096 of R2(c).** The pinned "20 models and 20 LoRAs" comes
    to 3,200 — but the straightforward shape **did not fit at 4,280**, even while obeying
    decision 2's "S3 keys and flags only". It took two more cuts: LoRAs became bare S3 keys (the
-   box scans a directory, so it needs no name and no description) and a flagless file became a
+   instance scans a directory, so it needs no name and no description) and a flagless file became a
    bare string. 4 KB is not headroom to be careful with; it is what decides the shape.
 
 2. 🔴 **The sidecar came up doing nothing. A YAML FOLDED block (`>-`) does not fold a
@@ -802,12 +802,12 @@ g6.xlarge, under $1.
    newline, so the shell ran `jq -r --arg s "$START"` (which dumps the whole document) and then
    looked for a command called `[(.models[]?|…`. `/models/cmdline` stayed empty, the engine came
    up as the placeholder, **the service reached a steady state and nothing anywhere said why**.
-   That is a GPU box and ten minutes spent arriving at "no picture, no reason". Fixed by a
+   That is a GPU instance and ten minutes spent arriving at "no picture, no reason". Fixed by a
    literal block (`|-`). What stops it happening again is
    `deploy/local/engine-sidecar-test.sh`, which **pulls the script out of the template as it is
    actually deployed and runs it** against a stub `aws` and the real `jq`: shell inside a
    CloudFormation `Mappings` entry has no type check, no linter, and its only feedback is a GPU
-   box ten minutes later.
+   instance ten minutes later.
 
 3. **Decision 1(b) and 1(d) were observed as they stand.** A task that started during the stack
    update (10:17:25), before the Control Plane had been replaced and before any active set
@@ -863,9 +863,9 @@ g6.xlarge, under $1.
    same step, per decision 2(f) — a seed still pointing at the old key produces a row whose file
    is not there, and the first start fails in the fetch sidecar.
 
-8. 🔴 **The G-family vCPU quota of 8 was hit.** Waking a box straight after stopping one fails
+8. 🔴 **The G-family vCPU quota of 8 was hit.** Waking an instance straight after stopping one fails
    placement for minutes with `VcpuLimitExceeded: your current vCPU limit of 8`, because the
-   draining box still holds its 4 vCPU. It is exactly what `PARAMETERS-60-engines.md`'s "The
+   draining instance still holds its 4 vCPU. It is exactly what `PARAMETERS-60-engines.md`'s "The
    G-family quota" describes, and the practical consequence is that **a start/stop/start
    verification cannot proceed until the drain (456 s measured) is over**.
 
@@ -935,7 +935,7 @@ credentials cannot drive it (the same wall as P0 measurement 5).
    `downloading` — and `sleeping` (the `--sleep-idle-seconds` auto-unload, disabled by default at
    -1) is also a state where the next request pays for weights. So warm is **at least one
    `loaded`**. 🔴 **Not "the default is `loaded`"**, which is what the drafted decision 3 said: a
-   box that swapped models under `--models-max 1` would read as answering-but-not-warm, and 900
+   instance that swapped models under `--models-max 1` would read as answering-but-not-warm, and 900
    seconds of `running && !warmed` is exactly what P0's `unwarmed` rule stops — **mid-conversation.**
 5. **`GET /models` triggers no autoload and does not reset the router's idle timer** (upstream's
    exemption list), which makes it safe as the target of a probe that runs every 30 seconds.
@@ -960,7 +960,7 @@ credentials cannot drive it (the same wall as P0 measurement 5).
    **1,117,320,768 bytes from Hugging Face in 35 s** (31.9 MB/s), sha256 matched, **2 s** to S3.
    One more point for ADR 0071 decision 3's "Hugging Face is unpredictable" (inside the 4–236 MB/s
    band).
-9. **The sidecar wrote the router's preset on the real box**, and its log is the evidence:
+9. **The sidecar wrote the router's preset on the real instance**, and its log is the evidence:
    `llm/Qwen3-…-Q4_K_M.gguf 18556689568 bytes in 159s` (116.7 MB/s),
    `llm/qwen2.5-coder-1.5b-…gguf 1117320768 bytes in 8s` (139.7 MB/s),
    `preset /models/llm/presets.ini holds 2 model(s), 'qwen3-coder-30b-a3b' loaded at startup`,
@@ -1059,7 +1059,7 @@ produced** (the next section). The second list is the longer one.
    **the sha256 and size of all 29 files** with no token — and only
    `resolve/main/<file>` answered 401. That decided the shape: **the Control Plane does not hold
    the Hugging Face token.** The CP resolves, the ingest task (which has the token) fetches, and
-   decision 6's "the token never lands on a box" now covers the CP as well.
+   decision 6's "the token never lands on an instance" now covers the CP as well.
 2. **Civitai's API is alive** (open question 4). `api/v1/model-versions/128713` answered
    anonymously with `files[].hashes.SHA256` (upper case), `sizeKB` (**fractional kilobytes** —
    multiply by 1024), `downloadUrl`, `baseModel` and `model.type`, and the download 302'd to a
@@ -1125,7 +1125,7 @@ had killed an entire path.**
    15 minutes 51 seconds.** 7.4 s to pull, **536 s** from Hugging Face (44.4 MB/s, with the
    token), 179 s to verify the sha256 (133 MB/s), **178 s** to S3 (134 MB/s), +2 s for the CP.
    `fetch` and `upload` both exited 0.
-5. **The ingest task runs on Fargate (2 vCPU / 4 GB) and starts no GPU box.** `launchType:
+5. **The ingest task runs on Fargate (2 vCPU / 4 GB) and starts no GPU instance.** `launchType:
    FARGATE`, no capacity provider: taking in 23.8 GB buys nothing at $1.26/hour. Decision 6's
    "ingest is out of the start path" is directly observable. `IngestDiskGiB=80` was enough.
 6. 🔴 **`HfTokenSecretArn` alone does not work — the task never starts. The parameter and the
@@ -1395,7 +1395,7 @@ outstanding** (the definition of done became the next hardware session's homewor
      engines were llama.cpp (a router, with a preset) and sd.cpp (neither, and it holds one
      checkpoint), because "has a preset" implied "is a router" implied "wants other models too".
      **comfy is a router with no preset, and it breaks that equation.** Models other than the
-     starting one never reach the box, and ComfyUI answers
+     starting one never reach the instance, and ComfyUI answers
      `Value not in list: unet_name: 'flux-2-klein-4b.safetensors' not in []` — while the file is
      in the active set AND in S3, and the name in the graph is right. Worse, the sidecar printed
      `every enabled model is on this box`, which made the ingest log look healthy. Fixed with
@@ -1693,7 +1693,7 @@ to prove correctness — and this is now the worked example.
 
 ### Three gaps in the deployment itself (nothing to do with families; anyone hits them)
 
-🔴 **Gap 7 — the engine accepts requests for models that are not on the box yet.** The fetch
+🔴 **Gap 7 — the engine accepts requests for models that are not on the instance yet.** The fetch
 sidecar declares `engine may start; 6 file(s) still to sync` as soon as the starting model (the
 selected one) is down, and keeps fetching the rest in the background. Z-Image's first request
 landed in the middle of that, and ComfyUI answered 400 with "the file is not there":
@@ -1704,30 +1704,30 @@ Value not in list: unet_name: 'z_image_turbo_bf16.safetensors' not in ['flux-2-k
 
 The engine passes health, and this is not the gateway's `engine_waking` (which is retryable).
 **Neither the operator nor the caller is given any hint that the model has not come down yet.**
-On the second box, 12 files and 48 GB took about 270 s (≈180 MB/s) to sync, and all 270 s of that
-is this window. Whether the requested model's files are on the box is a fact the CP already
+On the second instance, 12 files and 48 GB took about 270 s (≈180 MB/s) to sync, and all 270 s of that
+is this window. Whether the requested model's files are on the instance is a fact the CP already
 knows, so making it wait as an `engine_waking` equivalent looks like the straightforward fix.
 
-**Gap 8 — enabling a model on a running box never syncs it. This is not a new discovery** — it is
+**Gap 8 — enabling a model on a running instance never syncs it. This is not a new discovery** — it is
 open question 3 ("additional sync after the service is up") surfacing as written, a known hole
 already deferred to P5. What is measured for the first time is what it does in the image role:
 enabling `flux1-dev-fp8` and `sd35-medium` brought no files down, and the only way through was
-`mode` `off` → `on` to **rebuild the box**. In the llm role "wait for the next start" is enough;
+`mode` `off` → `on` to **rebuild the instance**. In the llm role "wait for the next start" is enough;
 in the image role **an enabled family appears in `generate_image`'s `model` enum while not being
-on the box**, so together with gap 7 it becomes "selectable, and answers 400". Solving this in P5
-needs either the enum's condition moved from "enabled" to "on the box", or the waiting added on
+on the instance**, so together with gap 7 it becomes "selectable, and answers 400". Solving this in P5
+needs either the enum's condition moved from "enabled" to "on the instance", or the waiting added on
 gap 7's side.
 
 🔴 **Gap 9 — a 503 from `/history` is not retried.** The provider waits out and re-sends on a 503
-from `/prompt` (`engine_waking`), but the polling that follows does not wait. If the box is
+from `/prompt` (`engine_waking`), but the polling that follows does not wait. If the instance is
 replaced mid-poll, what reaches the caller is
 `the image engine's /history answered 503 Service Unavailable: the fleet's own inference engine
 is starting; retry` — a message that **says retry and does not retry** (measured). A cold
 generation takes 47 to 78 s, so that window genuinely opens.
 
-**An operational note (walked into here)**: waking a box with `mode=on` and then putting it back
-to `ondemand` makes **the controller stop that box immediately**, because `last_demand` is stale.
-That costs a 48 GB re-sync, so to warm a box, leave it on `ondemand` and wake it with a request.
+**An operational note (walked into here)**: waking an instance with `mode=on` and then putting it back
+to `ondemand` makes **the controller stop that instance immediately**, because `last_demand` is stale.
+That costs a 48 GB re-sync, so to warm an instance, leave it on `ondemand` and wake it with a request.
 
 ### Gap 10 — declaring a family clears the badge without making the row usable
 
@@ -1797,8 +1797,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   that day as a second `llm` engine on the same S3 layout.
 
 - **A row (service set) per model in `60-engines`.** Does not fit the wall, and if it did, one
-  sleeping service per model and two boxes when two models wake. The router answers for llm,
-  "the next start" for image, on the same box.
+  sleeping service per model and two instances when two models wake. The router answers for llm,
+  "the next start" for image, on the same instance.
 - **Swapping through a new task-definition revision.** Gives the CP `RegisterTaskDefinition` and
   drifts from the task definition CloudFormation owns; the next stack update silently puts it
   back.
@@ -1812,10 +1812,10 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
 - **Deriving the catalogue from S3 (`ListObjects` → `/v1/models`).** "Exists" and "offered" are
   different (ingested but unverified, licence not accepted, does not fit VRAM), and ADR 0053 says
   never derive. Manifest plus `enabled`, two steps.
-- **The box pulling from HF / Civitai directly.** ADR 0071 decision 3 stands (4–236 MB/s with no
-  way to know which, and a token on the box).
+- **The instance pulling from HF / Civitai directly.** ADR 0071 decision 3 stands (4–236 MB/s with no
+  way to know which, and a token on the instance).
 - **The gateway reading the catalogue from SSM.** An SSM call per request (the reason
-  `engines.go` reads once at startup). SSM carries only **the active set the box reads**; the CP
+  `engines.go` reads once at startup). SSM carries only **the active set the instance reads**; the CP
   itself reads its database.
 - **EFS for the catalogue.** Rejected in ADR 0071.
 
@@ -1832,7 +1832,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
    `/v1/images/edits` (multipart), and what a `baseModel` mismatch does (silent breakage or a
    warning). The `<sd_cpp_extra_args>` path and the mismatch can be measured on the CPU SD1.5
    Q4.
-3. **Syncing into a running box.** Can a newly enabled model be added to a running box
+3. **Syncing into a running instance.** Can a newly enabled model be added to a running instance
    **without waiting for the next start** — a resident sidecar re-syncing the active set, and
    does the router rescan `--models-dir` (or is there a reload endpoint)? If not, llm also
    swaps "at the next start" to begin with, and this is P4.
@@ -1875,14 +1875,14 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
    lands in one stack update (R9). It pays not only on the switch (12.3 GB at 92 MB/s → NVMe)
    but on **the cold start's 33 GB S3 → EBS at 332–360 s**, a number pinned to EBS's write
    ceiling (125 MB/s baseline on a g6.xlarge). (2) **Solve it with RAM**: the three models
-   (27 GB) leave the page cache because the box has 15 GB; `ImageMemMinMiB=30000` selects a
+   (27 GB) leave the page cache because the instance has 15 GB; `ImageMemMinMiB=30000` selects a
    g6.2xlarge (32 GiB) with no code change. If a switch becomes RAM → VRAM (seconds),
    `useLocalStorage` is back to being a start-time question. `bench-image-engine.sh` measures
    both as they are, and since the answer changes P2's definition of done (the price of a
    switch), it is measured **before P2**.
 10. ~~**Re-examine where the models live at all**~~ **Settled (review 2026-09-09, sections 1-3)**:
     **(a) adopted** (`useLocalStorage` — cold start 527-586 s → 275 s, swap 276-282 s → 98.5 s,
-    now the default), **(b) disproven** (a warm box cannot be built on MI at all: Bottlerocket's
+    now the default), **(b) disproven** (a warm instance cannot be built on MI at all: Bottlerocket's
     read-only root means a named `SourcePath` can only land on 3.1 GB), **(c) rejection upheld**,
     but on verified unit prices instead of an assumption about throughput — Elastic's $0.04/GB is
     $0.74 a cold start, 17-21× the GPU time it saves. What follows is the original text, whose
@@ -1896,7 +1896,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
     - **(a) `useLocalStorage`** (the same as open question 9(1)). **One parameter update**, and
       it removes the EBS write ceiling, so it pays on both the sync and the switch. **Measure
       this first.**
-    - **(b) The warm box.** ADR 0071 decision 7(c) is **still unproven**, and the failure is
+    - **(b) The warm instance.** ADR 0071 decision 7(c) is **still unproven**, and the failure is
       written down (`PARAMETERS-60-engines.md`, "The model volume"): the anonymous host volume
       gives a fresh directory per task, so **a restart onto the very same instance MI had kept
       re-fetched all 18.5 GB** (126 s), and a named `SourcePath` lands on the root filesystem and
@@ -1920,19 +1920,19 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
     wall, not the first. What follows is the original text:
     The catalogue's key is
     `(role, id)` with no tenant, and "a tenant picks a model from Hugging Face and places it" is
-    the right direction for usability — but **on a shared box four things multiply**: the active
+    the right direction for usability — but **on a shared instance four things multiply**: the active
     set is one per engine so it becomes the **union** of every tenant's enabled models (which is
     where the 4,096 characters finally bite; it is at 6% today), the cold start syncs *every*
     enabled model so it grows with the tenant count, `LlmModelsMax=1` means more swapping at
     1–2.5 minutes each, and one shared active set makes one tenant's model ids visible to
-    another. A box per tenant removes all four at $1.26/hour per tenant, which discards the
-    premise ADR 0071 was built on (one shared box, asleep). **The middle:** keep the catalogue
+    another. An instance per tenant removes all four at $1.26/hour per tenant, which discards the
+    premise ADR 0071 was built on (one shared instance, asleep). **The middle:** keep the catalogue
     deployment-wide and put the tenant axis on **who may ingest and who accepted the licence**.
     Nothing multiplies and most of the usability is won; `source` and `license_accepted_by` are
     already half of that shape.
     - **A bucket per tenant is not recommended.** A bucket is not the boundary that matters —
-      whichever one they came from, the models land on **the same box's same disk and are read by
-      the same process**. The boundary is the GPU box. It also duplicates shared models per
+      whichever one they came from, the models land on **the same instance's same disk and are read by
+      the same process**. The boundary is the GPU instance. It also duplicates shared models per
       tenant and loosens the engine task role's grant, which is scoped to one bucket ARN today.
       If isolation is wanted, **prefixes in one bucket** (IAM scopes by prefix, nothing is
       duplicated).
@@ -1983,7 +1983,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   syncing every enabled model with the panel's "sync +N s (estimate)", and `warm_model` with the
   switch count. **Definition of done: two `llamacpp/` models in the launch menu, each usable in
   turn, and the reload of a switch answered on the first attempt** (ADR 0071 P0's observation,
-  taken across a switch). **All three were driven on hardware** (two GGUFs on one box, answering in
+  taken across a switch). **All three were driven on hardware** (two GGUFs on one instance, answering in
   0.4–0.7 s, 10 s and 276–282 s; and with the second row registered and enabled in the Console,
   the picker offered two models and a session started on the second). Only the row-creating step
   needs a person — it is a super_admin screen, which AWS credentials cannot drive.
@@ -2003,7 +2003,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   model that is warm now**: a switch is a 1–2.5 minute re-read, so the agent can prefer the warm
   one when the default will do; *Resolved* 5). The
   pane (`/engine/comfy/` over WebSocket) is **not included** — `generate_image` needs only the API;
-  the screen is P5. **Definition of done: on one box, SDXL and
+  the screen is P5. **Definition of done: on one instance, SDXL and
   klein 4B (or Z-Image-Turbo) alternate per request and return pictures with no service restart
   in between, and 1024px SDXL comes back in the 8-second range of ADR 0071 measurement 7. VERIFIED
   ON HARDWARE**: warm SDXL 8.02 s, warm klein 4.01 s, warm Z-Image 10.74 s, all 13 scenarios
@@ -2032,7 +2032,7 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   in the panel, and the ingest task's `MODE=delete` (decision 7). A job is a row
   (`engine_ingest_jobs`) carrying the catalogue row it will create, so a Control Plane replaced
   mid-download still ends with a row for the bytes that landed.
-- **P5 — syncing into a running box (open question 3), virtual model ids for llm (the second
+- **P5 — syncing into a running instance (open question 3), virtual model ids for llm (the second
   half of decision 5), the ComfyUI pane, sd-server's async API (open question 6), the tenant
   axis (open question 11).**
   **The tenant axis (open question 11) is implemented** (2026-09-10 — "Follow-up: the tenant
@@ -2181,7 +2181,7 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   **not a failure and is polled every 5 s indefinitely** (`engineControlBusyInterval` in
   `tick`). Once decision 1's placeholder (`sleep infinity`) reaches RUNNING, an ondemand
   deployment is harmless as long as the gateway never wakes it, but **under `mode=on` an
-  administrator keeps buying a "no model" box at $1.26/hour and the panel says "starting"
+  administrator keeps buying a "no model" instance at $1.26/hour and the panel says "starting"
   forever**.
 - **R7. `generate_image` as it is.** `imagegen.Request` **already has `Model`** ("Empty means
   the provider's own default") and `Caps(model)` is per (provider, model) — decision 5's
@@ -2222,10 +2222,10 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   `hasModels`, and `decideEngineAction` answers `engineReasonNoModel` even under `mode=on`.
   The panel shows "no model enabled" instead of a toggle. The gateway's `503
   engine_unavailable` alone leaves the `mode=on` hole open. (d) Stand-up **still buys one GPU
-  box for stabilisation, as today** (the placeholder carries the `GPU`
+  instance for stabilisation, as today** (the placeholder carries the `GPU`
   `ResourceRequirements` too) — what disappears is the second pass, not the first ten minutes
   and $0.2. Write it down. (e) Under those conditions the two-pass stand-up really does go.
-- **Decision 2** — (a) The IAM premise is correct (R2(a)), and adding the box-side
+- **Decision 2** — (a) The IAM premise is correct (R2(a)), and adding the instance-side
   `GetParameter` to `EngineTaskRole` inside `60-engines` matches 0071 decision 8's "new IAM
   closes inside the stack". (b) 🔴 **Change "a few KB" to "4,096 characters"** (R2(c)). Keep
   only S3 keys, local names, flags and preset material in the active set; `description` and
@@ -2264,7 +2264,7 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   prompt's `<sd_cpp_extra_args>`; on the ComfyUI route inside the workflow JSON's nodes — for
   the CP to reject, it would have to parse the prompt or the graph. Move the rejection to
   **the Agent** (refuse names outside the enum and `baseModel` mismatches at assembly) and
-  **the box** (only enabled LoRAs are synced, so an absent name fails in the engine;
+  **the instance** (only enabled LoRAs are synced, so an absent name fails in the engine;
   `--lora-model-dir` and `models/loras/` bound the path), and delete the CP line. `model` /
   `loras` fit 0069 (R7): `Request.Model` exists; add `Loras []{name, description, baseModel}`
   to `Caps`. Two rules to write: **an argument is offered only when there is a real choice**
@@ -2279,7 +2279,7 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   (no S3 permission). Build the row from **the sha256, license and bytes the CP itself
   resolved from HF, plus `DescribeTasks`' exit codes (`fetch` SUCCESS → `upload` SUCCESS)** —
   that is enough (`fetch` has already verified the sha256). State that the manifest is what
-  the box reads and the CP never does. (c) The alternative that keeps "zero CP IAM" is
+  the instance reads and the CP never does. (c) The alternative that keeps "zero CP IAM" is
   **EventBridge**: the CP writes `/af-ws/engines/ingest/job` (existing PutParameter), an
   `AWS::Events::Rule` in `60-engines` (`aws.ssm` Parameter Store Change) calls `RunTask`
   with a role inside the stack, and the CP follows with `ListTasks --family`. It keeps the CP
@@ -2320,7 +2320,7 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
   `useLocalStorage`: per R9 it goes in with one parameter. It affects not only the swap
   (12.3 GB at 92 MB/s → NVMe) but **the cold start's S3 → EBS 33 GB at 332-360 s**, a number
   pinned to the EBS write ceiling (g6.xlarge's 125 MB/s baseline). (2) Measure **solving it
-  with RAM** alongside: the three models (27 GB) fall out of the page cache because the box
+  with RAM** alongside: the three models (27 GB) fall out of the page cache because the instance
   has 15 GB; raising `ImageMemMinMiB` to 30,000 selects a g6.2xlarge (32 GiB) and changes no
   code. If the swap becomes RAM → VRAM (seconds), `useLocalStorage` goes back to being about
   start-up time only. `bench-image-engine.sh` measures both as it is (two phases include the
@@ -2335,18 +2335,18 @@ manifest) and decision 7 (delete the S3 file) were written without noticing (R3)
 ### Answers to the questions asked
 
 1. **Decision 2's SSM closes** (R2(a)) — zero additions on the CP side, one `GetParameter`
-   statement inside `60-engines` on the box side, consistent with 0071 decision 8. What does
+   statement inside `60-engines` on the instance side, consistent with 0071 decision 8. What does
    not close is **the size of the value**: 4,096 characters (R2(c)).
 2. **It stabilises, under three conditions** (decision 1's revisions (a)(b)(c)): both roles on
    the wrapper, `ParameterNotFound` as empty, the `mode=on` hole closed. There is no container
    health check (ECS's RUNNING means "the essential container started") and that is all
    CloudFormation waits for, so `sleep infinity` stabilises. The second pass goes; the one GPU
-   box for stabilisation stays.
+   instance for stabilisation stays.
 3. **It does not fit.** 3,400 freed against 5,450 added (4,350 with `Mappings` sharing),
    about 1-2 KB over (R4). Moving 3 KB of the 15.5 KB of comments to
    `PARAMETERS-60-engines.md` makes it fit. `20-platform` also needs an ECR repository.
 4. **The rejection sits in the wrong place** (decision 5's revision) — the CP does not read
-   the body, so the Agent and the box reject. `model` fits `Request.Model`, `loras` fits with
+   the body, so the Agent and the instance reject. `model` fits `Request.Model`, `loras` fits with
    an addition to `Caps` (R7). Arguments only "when there is a real choice", values only the
    fleet's catalogue ids.
 5. **There is an alternative** (EventBridge), not recommended. Accept the `AWS::IAM::Policy`
@@ -2378,7 +2378,7 @@ services stabilise"** — the former is R6's hole, the latter is the observation
 
 The three the user raised while P4 was being pushed through on hardware — **where the models
 live (10), the tenant axis (11), and registering the HF token (12)** — settled in a separate
-session. 10 was measured on hardware; 11 and 12 were decided as design, without waking a box.
+session. 10 was measured on hardware; 11 and 12 were decided as design, without waking an instance.
 GPU spend: about 35 minutes, **$0.74**.
 
 The premise this started from — "**S3 is not the bottleneck, the disk receiving it is**" — was
@@ -2393,7 +2393,7 @@ R9's claim). **One update, about two minutes**, took the stack to `UPDATE_COMPLE
 capacity provider to `storageConfiguration: null` / `localStorageConfiguration.useLocalStorage:
 true`. No stack rebuild, no new capacity provider.
 
-What was measured is **the deployment's own `llm` role** — not a bench box, but the very path
+What was measured is **the deployment's own `llm` role** — not a bench instance, but the very path
 decision 3 put a price on. Same two models, same files, against the numbers already recorded for
 the EBS setting:
 
@@ -2410,13 +2410,13 @@ One point came off the `image` role too (the bench died for an unrelated reason,
 ran): SDXL, 6.94 GB in **29 s = 239 MB/s**, against the 92-100 MB/s band of measured point 7 —
 2.4×.
 
-🔴 **Read the swap, not the fetch.** Decision 3 priced "one model per box, swap on demand" at
+🔴 **Read the swap, not the fetch.** Decision 3 priced "one model per instance, swap on demand" at
 **276-282 seconds**, and measured point 5 put the image role's switch at 1-2.5 minutes. That
 price is now **98.5 seconds**. The swap is where a person waits; the cold start (275 s) is next.
 
-Both costs are real and neither is new: an instance store is wiped with the box — but **MI
+Both costs are real and neither is new: an instance store is wiped with the instance — but **MI
 deletes the EBS data volume too**, so a cold start always paid a fresh S3 fetch. And `*StorageGiB`
-stops meaning anything: the box gets whatever the instance type carries, which on g6.xlarge is a
+stops meaning anything: the instance gets whatever the instance type carries, which on g6.xlarge is a
 **245 GB ext4 filesystem**, i.e. *more* than the EBS setting's 120 GiB. ⚠️ It follows that
 `*AllowedInstanceTypes` may only name types that HAVE an instance store (every g6 and g5 size
 does).
@@ -2424,7 +2424,7 @@ does).
 **Adopted**: the default of `LlmUseLocalStorage` / `ImageUseLocalStorage` is now `true`, and the
 dev deployment is in that state. Reverting is one parameter.
 
-### 2. Open question 10(b) — the warm box is not "unproven", it is DISPROVEN
+### 2. Open question 10(b) — the warm instance is not "unproven", it is DISPROVEN
 
 Decision 7(c) of ADR 0071 sat at "unproven" for two sessions, and
 `PARAMETERS-60-engines.md` called it "a GPU hour of investigation" blocked only on where MI's
@@ -2452,7 +2452,7 @@ prints.
   volume *is*, not where a `SourcePath` may point.
 
 **Consequence**: on Managed Instances a warm model volume **cannot be built out of host volumes
-at all**. Keeping a box buys the image layers and nothing else, so `*ScaleInAfter: -1` is a way
+at all**. Keeping an instance buys the image layers and nothing else, so `*ScaleInAfter: -1` is a way
 to spend $1.26/hour on nothing. ADR 0071 decision 7(c) is closed as **disproven**, and
 `PARAMETERS-60-engines.md` now says so.
 
@@ -2491,7 +2491,7 @@ still 5-6× the GPU time saved.
 
 **FSx for Lustre was priced too** (a better-shaped fit than EFS): persistent SSD runs
 $0.188-0.848/GB-mo with minimum capacities, and Intelligent-Tiering charges $0.656/MBps-mo for
-throughput. **That is HPC-cluster pricing, not the price of one sleeping GPU box.**
+throughput. **That is HPC-cluster pricing, not the price of one sleeping GPU instance.**
 
 🔴 **And the decisive point: the very thing EFS was to fix — the 350-second sync — was mostly
 fixed for $0 by `useLocalStorage`.** What is left to chase is about 100 seconds, at $0.74 a time.
@@ -2532,7 +2532,7 @@ Decided:
   every model id.** That is an accepted price and it belongs in the user guide — concealing it
   invites operations built on a privacy that is not there.
 - **Per-tenant S3 buckets stay unrecommended** (the ADR's reasoning holds: the boundary is the
-  GPU box, not the bucket). If isolation is needed, prefixes within the one bucket.
+  GPU instance, not the bucket). If isolation is needed, prefixes within the one bucket.
 
 ### 5. Open question 12 — DB as the source of truth, Secrets Manager as transport. **"Never reads back" enforced by IAM**
 
@@ -2591,7 +2591,7 @@ really does grant `linuxParameters.capabilities.add: [SYS_ADMIN]`, and `mount-s3
 **mounted** (`fuse mountpoint-s3 ro,...`). Everything else was moot if this failed, which is why
 it was the first and cheapest thing tried.
 
-**Measured — same box, same task, the cli pass first so a warm page cache cannot flatter the
+**Measured — same instance, same task, the cli pass first so a warm page cache cannot flatter the
 mount:**
 
 | | the 18.5 GB GGUF | |
@@ -2601,7 +2601,7 @@ mount:**
 
 The byte count is dd's own — 18,556,689,568, the **whole file** — so a short read is not being
 mistaken for a fast one. Note the same `aws s3 cp` measured 158 MB/s in measurement 1 and 210 MB/s
-here: it moves with the box and the hour, **which is exactly why the control lives inside the same
+here: it moves with the instance and the hour, **which is exactly why the control lives inside the same
 task**.
 
 🔴 **Condition 2 turned out to be "you need a custom engine image", not merely "it costs
@@ -2622,7 +2622,7 @@ transfer. Mounting therefore does not turn it into 33 s; expect the whole thing 
 **150-175 s**. The 98.5-second swap should fall similarly.
 
 **Condition 3 was measured the same day (`harness/probe-llm-mount-load.sh`), and the answer is
-DO NOT ADOPT.** Same box, same task, with a copy-then-load pass as the control:
+DO NOT ADOPT.** Same instance, same task, with a copy-then-load pass as the control:
 
 | | copy | load | total |
 |---|---|---|---|
@@ -2649,9 +2649,9 @@ the loss of decision 1's shared wrapper. **It does not pay.** `useLocalStorage` 
 and never swaps would get a different answer.
 
 Incidentally, **g6.xlarge ran out in both ap-northeast-1 AZs** during these runs, and this
-deployment's `LlmAllowedInstanceTypes` had narrowed to the single type, so no box could launch.
+deployment's `LlmAllowedInstanceTypes` had narrowed to the single type, so no instance could launch.
 Restoring the template default (`g6.xlarge,g5.xlarge`) fixed it — a re-run of exactly what ADR
-0071 recorded under "the box will not launch because the candidate list was one type".
+0071 recorded under "the instance will not launch because the candidate list was one type".
 
 ### Suggested status line
 
@@ -2676,7 +2676,7 @@ has shipped — **`LlmModelFile` / `ImageModelFile` were removed in 0.18.0.**
 What is left to retire:
 
 - `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` / `LlmMaxOutputTokens`, and the image
-  role's `ImageModelS3Key` / `ImageModelIds`. **`*ExtraArgs` stays** — those are the BOX's flags
+  role's `ImageModelS3Key` / `ImageModelIds`. **`*ExtraArgs` stays** — those are the INSTANCE's flags
   (`-ngl 99`, `--diffusion-fa`), not a model's;
 - `seedEngineCatalog` and `engineSeedKind` in the Control Plane, and the engine table's `models`
   / `contextTokens`.
@@ -2749,7 +2749,7 @@ five tenants, even with one model each**.
 **What is left.** The Console's **engines panel itself is still super_admin** (`GET
 /api/admin/engines` keeps `withSuperAdmin`). A tenant_admin of a granted tenant **can ingest
 through the API but has no screen**: opening the panel to a non-super caller needs a reduced row
-with the mode, the class and the box's state taken out, which is wider than this pass. The
+with the mode, the class and the instance's state taken out, which is wider than this pass. The
 operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
 verification is also outstanding (nothing here touched a deployment).
 
@@ -2856,14 +2856,14 @@ rather than as "it is missing from the enum".
   v0.34.0's own source (`nodes.py`: required inputs `model`, `clip`, `lora_name`,
   `strength_model`, `strength_clip`; returns MODEL and CLIP). That still is not "it ran".
 - 🔴 **`lora_name` enumerates `<models>/loras` RECURSIVELY, each entry a path relative to that
-  directory** (`recursive_search` in `folder_paths.py`). The box links `/ComfyUI/models` to
+  directory** (`recursive_search` in `folder_paths.py`). The instance links `/ComfyUI/models` to
   `/models/image` (`60-engines.yaml`), so `image/loras/x.safetensors` is listed as
   `x.safetensors` — which is the basename the Agent sends. **A key nested one level deeper is
   listed as `sub/x.safetensors` and a basename would be rejected as `Value not in list`.** LoRAs
   landing flat under `image/loras/` is the premise.
 - **The sidecar sync already works** (verified in this pass, no code changed). The fetch sidecar
   in `60-engines.yaml` puts `.loras[]?` into `keys.start`, and `buildEngineActiveSet` publishes
-  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the box" gap**; what
+  the enabled LoRAs as bare S3 keys. There is **no "the LoRA never reaches the instance" gap**; what
   is unverified is only whether ComfyUI enumerates them once they are there.
 - **The llm role's preset-pinned LoRAs and virtual model ids** (decision 5's second half) are
   untouched.
@@ -2905,7 +2905,7 @@ repository** — it is a throwaway under `~/.cache`.
 - **Decision 3's pair holds on the real bundle.** With `context_length: 262144` from the llm
   role's resolve, the window fills with 262144 and the output-cap select lands on "1/8 (32768)".
   Half-filling the pair is not reachable.
-- The register form's split model: `file_flags` becomes the "part" select, one box per file.
+- The register form's split model: `file_flags` becomes the "part" select, one bordered block per file.
 - The red non-commercial sentence, and the repair select on a row with no family.
 
 **The one defect, and it needed a render.** The forms' label column is a fixed `8ch`, which at

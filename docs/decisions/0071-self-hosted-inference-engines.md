@@ -9,7 +9,7 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   parts that can still change the shape.
 - Revised the next day (2026-09-07) with measurements: open questions 1–3 were measured and
   moved under *Resolved*, and decisions 5, 7 and 8 took their consequences. opencode cuts at
-  300 s; Managed Instances start in 109 s and terminate in 93 s on a CPU box; the G-family
+  300 s; Managed Instances start in 109 s and terminate in 93 s on a CPU instance; the G-family
   quota was 0 in the test account (increase requested).
 - Revised again the same day, once the quota was granted, after **running it end to end on a
   GPU** (g6.xlarge, L4): llama.cpp served Qwen3-Coder-30B-A3B and opencode drove it through
@@ -25,12 +25,12 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   Two premises fell to the review's own measurements: 🔴 **opencode's 300 s is not a wall-clock
   wall but a cut after 300 s of a silent body — with an SSE comment line every 10 s a 400 s
   hold was answered within a single attempt** (decision 5 is proposed for replacement), and
-  🔴 **8 vCPU of quota does build two g6.xlarge; what blocked the second was a draining box
+  🔴 **8 vCPU of quota does build two g6.xlarge; what blocked the second was a draining instance
   still holding its quota** (decision 2). Decision 3's corrected reason — "what is slow is HF
   serving that file" — fell to a third data point, the same SDXL at 39.6 MB/s from Fargate.
   The review proposes approval (P0 may start); changing the status line is left to the author.
 - Revised the same day after that review: decision 5 was replaced with a heartbeat design (the
-  300 s is a body-silence limit, not a wall clock), decision 2's "8 vCPU builds one box" and
+  300 s is a body-silence limit, not a wall clock), decision 2's "8 vCPU builds one instance" and
   decision 3's "it depends on the file" were corrected (both were generalisations from two
   points), and decisions 1, 6, 7 and 8, the open questions and the phases took the review's
   findings. Status changed to approved.
@@ -38,7 +38,7 @@ English | [日本語](0071-self-hosted-inference-engines.ja.md)
   then **P1 (the `image` role and the `sdcpp` provider) was implemented and its engine side
   measured** ("What P1 measured"). The Phases entry for P1 records the three things the
   implementation added. 🔴 P0's measurement 10 used `describe-instances` as evidence for "no GPU
-  boxes"; it **does not list MI boxes at all** — corrected in P1's measurement 2.
+  instances"; it **does not list MI instances at all** — corrected in P1's measurement 2.
 - One correction added the next day (2026-09-08). 🔴 **The provider block P0 and P1 shipped
   declared no window for the model at all** — opencode reads a model with no `limit` as having a
   context of 0, and it **switches auto-compaction off at 0**. Fixed by splitting
@@ -67,7 +67,7 @@ Workspace":
 
 1. **Stable Diffusion**, as a provider behind `generate_image` (ADR 0069).
 2. **llama.cpp**, as a model provider opencode can connect to.
-3. **ComfyUI**, on the same box — including its UI.
+3. **ComfyUI**, on the same instance — including its UI.
 
 Models are fetched from Hugging Face. ADR 0070 gave VOICEVOX the shape "build it when asked,
 tear it down when the room goes quiet". That shape is copied here, but **its first decision
@@ -179,16 +179,16 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    With no GPU on Fargate, 0070's decision 1 is re-read as "**a placement where no instance
    exists while no task does**". MI guarantees that (zero tasks → instance terminated).
    Self-managed EC2 stop/start is rejected (below): owning AMIs and NVIDIA drivers, EBS billed
-   while stopped, and care on every path to keep the box outside ADR 0045's sweeps
+   while stopped, and care on every path to keep the instance outside ADR 0045's sweeps
    (`af-role=slot`) and `Ec2MaxSlots`. The MI capacity providers are **added** to the cluster
    and **`defaultCapacityProviderStrategy` is never set** — the moment it is, a service that
-   forgot `LaunchType` lands on the GPU box (the mirror image of 0070 decision 1's "one missing
+   forgot `LaunchType` lands on the GPU instance (the mirror image of 0070 decision 1's "one missing
    line is the whole failure"). The slot pool keeps `LaunchType: EC2` and is untouched. ADR 0045
    decision 6 rejected MI for Workspaces (ECS owns the lifecycle, there is no stop, volumes take
    only a size); **an engine holds no state it cannot lose**, so the same properties are an
    advantage here — a difference of subject, not a contradiction. One caveat: the slot pool's
-   container-instance walks (`registeredSlots`, `sweepGhostInstances`) list every box in the
-   cluster unconditionally, MI boxes included. P0 excludes them by `capacityProviderName` from
+   container-instance walks (`registeredSlots`, `sweepGhostInstances`) list every instance in the
+   cluster unconditionally, MI instances included. P0 excludes them by `capacityProviderName` from
    `DescribeContainerInstances` and pins that with a test (review R7).
 
 2. **Two engine roles (`llm`, `image`), one capacity provider each, never co-located.** `llm`
@@ -198,10 +198,10 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    default to **g6.xlarge (L4 24 GB, $1.26/h all-in)**; the floor for a cheaper `image` role is
    decided after measuring. **The instance
    requirement is a stack parameter per role** (declared, never inferred — ADR 0053). Not
-   sharing a box: running out of VRAM under CUDA does not slow down, it **crashes**. Measured,
+   sharing an instance: running out of VRAM under CUDA does not slow down, it **crashes**. Measured,
    the 30B Q4 takes **20.9 GB** and SDXL **7.4 GB**, so both do not fit one L4's 23 GB. Most of
-   the time only one role is awake, so splitting costs almost nothing extra. **8 vCPU does build two boxes; but for
-   7-8 minutes after a stop the previous box still holds its 4 vCPU**, so restarting one role
+   the time only one role is awake, so splitting costs almost nothing extra. **8 vCPU does build two instances; but for
+   7-8 minutes after a stop the previous instance still holds its 4 vCPU**, so restarting one role
    while the other starts collides in `VcpuLimitExceeded` (Resolved 6 and review R2). A
    deployment that wakes both roles asks for 16 vCPU as one drain's worth of headroom. ComfyUI is **a second
    engine of the `image` role** (decision 6) and never runs alongside sd-server (same VRAM).
@@ -209,7 +209,7 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 3. **Models go HF → S3 once, and S3 → local disk on every start. HF is never on the start
    path.** Measurement moved this decision's reason from cost to **speed and unpredictability**
    (Resolved 5): behind the same NAT, HF delivered at **4-236 MB/s**, and **the same file
-   differed 6x** (SDXL: 236 MB/s by curl on the MI box, 39.6 MB/s by curl on Fargate; the GGUF:
+   differed 6x** (SDXL: 236 MB/s by curl on the MI instance, 39.6 MB/s by curl on Fargate; the GGUF:
    9.6 MB/s by `-hf`, 4.2 MB/s by curl on Fargate). Four points cannot say whether file, path
    or time decides it; all they say is **you do not know until you pull**. That is not a speed
    the start path can be built on. S3 delivered **104-147 MB/s** all three times (Resolved 8). The cost ($1.05
@@ -296,7 +296,7 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    - ComfyUI: no official image, so the fleet keeps **a Dockerfile pinned to a ComfyUI tag**,
      in the same manner as `workspace/` (the community images are 4–11 GB and the fleet cannot
      vouch for what is inside). **ComfyUI-Manager is not installed** — arbitrary custom nodes
-     are arbitrary code on the fleet's box. The UI is served through a CP reverse proxy
+     are arbitrary code on the fleet's instance. The UI is served through a CP reverse proxy
      (`/engine/comfy/`, WebSocket included, the `preview_host_serve.go` shape) into a Console
      pane. The `generate_image` provider `comfy` fills a fleet-owned workflow JSON template with
      prompt / size / seed, posts it to `/prompt` and waits on `/history`.
@@ -314,12 +314,12 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    **added** to 0070 decision 7's state set (keeping `stopping`'s undo window and `tts_ecs.go`'s
    `none`). The start deadline is per engine and **at least the measured cold start** — left at
    0070's 300 s default every GPU start would count as failed and the cooldown would double.
-   `draining` is **93 s** on a CPU box and **427 s and 463 s** on GPU boxes (Resolved 4) — but
+   `draining` is **93 s** on a CPU instance and **427 s and 463 s** on GPU instances (Resolved 4) — but
    those were measured with MI's `infrastructureOptimization.scaleInAfter` (null = default, −1 =
    never, 0-3,600 s) at its default, so calling it an MI fixed cost is premature. P0 measures 0
-   and −1 once each; −1 is material for a "keep the box" design: a request arriving while the
-   box still exists after desired 0 should wake without an S3 fetch, since image and model file
-   are both on the box. Modes
+   and −1 once each; −1 is material for a "keep the instance" design: a request arriving while the
+   instance still exists after desired 0 should wake without an S3 fetch, since image and model file
+   are both on the instance. Modes
    are 0070 decision 7's `off / on / ondemand`, per engine.
 
 8. **The stack is `60-engines.yaml` (optional). What `30-ingress` receives is one SSM parameter
@@ -359,7 +359,7 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 
 10. **Provenance is part of the result (0069 decision 11).** Providers are `llamacpp` / `sdcpp`
     / `comfy`; the model is **the file name and its sha256** (the ingestion job also keeps the
-    HF repo id and revision). The prompt does leave the container — to a fleet-owned box, and
+    HF repo id and revision). The prompt does leave the container — to a fleet-owned instance, and
     that is recorded too.
 
 11. **The licence is a catalogue attribute the operator accepts at ingestion.** SDXL is
@@ -379,14 +379,14 @@ can come from an environment variable via `apiKey: "{env:…}"`.
     "Inference engines" panel gains when the engine started, when it will stop by itself, what
     has been asked of it lately, which model is loaded, and a heatmap of its history (P1.5). A
     screen with nothing but a toggle cannot answer "is it safe to switch this off" — a
-    $1.26/hour box is asleep most of the time, so **everything visible before the button is
+    $1.26/hour instance is asleep most of the time, so **everything visible before the button is
     pressed is whatever this panel says**. Most of the design turned out to be rules about what
     NOT to show:
-    - **The start time is the box's `registeredAt`** (ECS `describe-container-instances`),
-      falling back to the service's `lastStart` only when there is no box. They are **different
-      facts**: `lastStart` moves on a stack update or a replaced task, without any box being
-      bought. 🔴 Not `ec2 describe-instances` (P1's measurement 2: **an MI box does not appear
-      in the listing**, so an EC2-side implementation would answer "no box" for a running GPU).
+    - **The start time is the instance's `registeredAt`** (ECS `describe-container-instances`),
+      falling back to the service's `lastStart` only when there is no instance. They are **different
+      facts**: `lastStart` moves on a stack update or a replaced task, without any instance being
+      bought. 🔴 Not `ec2 describe-instances` (P1's measurement 2: **an MI instance does not appear
+      in the listing**, so an EC2-side implementation would answer "no instance" for a running GPU).
     - **The stop time is omitted whenever there is no answer.** An engine pinned `on` does not
       stop, so showing a countdown there is a promise of a saving that will not arrive. Same for
       `off`, for an engine that is already stopped, and for one with no demand mark yet — the
@@ -424,7 +424,7 @@ can come from an environment variable via `apiKey: "{env:…}"`.
       - ⚠️ **`running` / `starting` / `draining` are separate columns.** The last two bill and
         answer nothing (measured: 165-197 s to start, 427-477 s to drain). Summing them into
         running would claim the engine was serving; dropping them would make spent money vanish.
-        The heatmap can show either reading ("able to answer" and "a box existed").
+        The heatmap can show either reading ("able to answer" and "an instance existed").
     - **No money is drawn** (ADR 0048 decision 2). An hourly figure could only be seconds times
       a rate somebody typed in once, which is why the existing view is an uptime view and not a
       cost view.
@@ -445,14 +445,14 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    back-off). The author reproduced it with the same kind of stub: 200 and SSE headers at once,
    `: keepalive` every 10 s, a 400 s hold — **both requests (tools=0 and tools=21) were answered
    at 405 s with no re-send, exit 0**. Decision 5 was replaced with the heartbeat design.
-2. **Managed Instances cold start is 109 s on a CPU box, drain 93 s.** A throwaway stack
+2. **Managed Instances cold start is 109 s on a CPU instance, drain 93 s.** A throwaway stack
    (`deploy/aws/ecs/harness/engprobe.yaml`, driven by `probe-managed-instances.sh`) on the
    shared cluster of the test account (`af-sandbox`) ran the 297 MB CPU llama.cpp image on a
    c6a.large (AMI `ecs-managed-instances-standard-x86_64-20260827`), fetching a 1.1 GB model
    from HF at start. From desired 1: **task at +6 s, instance launched at +10 s, pull started
    at +32 s, RUNNING at +68 s (35 s pull), model loaded and listening at +109 s**. From
    desired 0: **tasks gone at +10 s, shutting-down at +79 s, terminated at +93 s**. The 13
-   minutes in AWS's reference come from its 2-minute alarm and 14 GB image. The GPU box
+   minutes in AWS's reference come from its 2-minute alarm and 14 GB image. The GPU instance
    (2.3 GB CUDA image, 17 GB model) is unmeasured — see 3.
 3. **The G-family vCPU quota was 0 in the test account.** The increase request (8 vCPU) was
    not auto-approved and became a **support case** (`CASE_OPENED`). It is written into the
@@ -462,12 +462,12 @@ can come from an environment variable via `apiKey: "{env:…}"`.
 4. **Cold start and drain on a GPU (g6.xlarge, L4 24 GB).** The AMI is
    `ecs-managed-instances-nvidia-x86_64-20260827` — NVIDIA drivers included, nothing to bake.
    From desired 1: **instance at +15 s, pull started at +43 s, pull done at +214 s (171 s for
-   the 2.47 GB `server-cuda`), task RUNNING at +232 s** — the same shape as the CPU box. What
+   the 2.47 GB `server-cuda`), task RUNNING at +232 s** — the same shape as the CPU instance. What
    follows is the problem: **1,846 s to fetch the model and 272 s to load it into VRAM, 2,351 s
    (39 minutes) in total**, which is what Resolved 5 is about. **Drain took 427 s and 463 s**,
-   four to five times the CPU box's 93 s: the g6.xlarge and its management fee keep running for
+   four to five times the CPU instance's 93 s: the g6.xlarge and its management fee keep running for
    7-8 minutes after desired 0, so trimming the idle window can only ever recover that much
-   ($0.15 of drain against $0.65 for a 30-minute window). On the same box sd-server went from
+   ($0.15 of drain against $0.65 for a 30-minute window). On the same instance sd-server went from
    **task created to listening in 195 s** (135 s pull plus a 28 s model fetch).
 5. 🔴 **HF's delivery speed differs 50x between files, and the Qwen3-Coder GGUF is slow
    whatever pulls it.** Behind the same NAT, `llama-server -hf` pulled 18.5 GB at **9.6 MB/s
@@ -481,7 +481,7 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    does not change, but the reason does. The wrong version is kept for the next person tempted
    to draw the same conclusion from the same two points. 🔴 **Review R6: the corrected version
    was itself a generalisation from two points** — the same SDXL came at **39.6 MB/s** through
-   the ingestion task's curl on Fargate (236 MB/s through curl on the MI box). Neither "unsloth
+   the ingestion task's curl on Fargate (236 MB/s through curl on the MI instance). Neither "unsloth
    is slow" nor "it depends on the file" holds; four points allow only "4-236 MB/s, unknown
    until you pull". Decision 3 now says that.
 6. **VRAM and the G-family quota.** Qwen3-Coder-30B-A3B Q4_K_M used **20,943 MiB** and SDXL
@@ -489,11 +489,11 @@ can come from an environment variable via `apiKey: "{env:…}"`.
    `image` to a g6f.2xlarge (6 GB) is not an option (half the answer to the old open question).
    And **8 vCPU of quota only builds one g6.xlarge**: starting `image` while `llm` was up
    produced repeated `VcpuLimitExceeded: your current vCPU limit of 8`, and placement succeeded
-   **408 s later**, after the first box terminated. A deployment that wakes both roles asks for
-   16 vCPU. 🔴 **Review R2 overturned "only one box"**: re-ordering CloudTrail, the three
-   `VcpuLimitExceeded` events (07:19-07:20) fell while a box MI had just retired (terminated
-   07:17:13) was still counted for 4 vCPU, and the image box launched at 07:26:04 while the llm
-   box was still shutting down. **8 vCPU builds two.** The reason for 16 vCPU becomes "one
+   **408 s later**, after the first instance terminated. A deployment that wakes both roles asks for
+   16 vCPU. 🔴 **Review R2 overturned "only one instance"**: re-ordering CloudTrail, the three
+   `VcpuLimitExceeded` events (07:19-07:20) fell while an instance MI had just retired (terminated
+   07:17:13) was still counted for 4 vCPU, and the image instance launched at 07:26:04 while the llm
+   instance was still shutting down. **8 vCPU builds two.** The reason for 16 vCPU becomes "one
    drain's worth of headroom", and decision 2 was corrected accordingly.
 
 7. **ComfyUI draws SDXL in 8 s on the same L4, at the same 6.9 GB of VRAM as sd-server.** The
@@ -592,7 +592,7 @@ Also measured the same day:
   care to stay outside ADR 0045's sweeps and `Ec2MaxSlots`. And g6's local NVMe is wiped on
   stop, so only the image layers stay warm. **Kept as the fallback** for a deployment in a
   region without MI.
-- **Co-locating the engines on one box.** Saves at most $1.26/h; VRAM contention shows up as a
+- **Co-locating the engines on one instance.** Saves at most $1.26/h; VRAM contention shows up as a
   crash (decision 2).
 - **Models on EFS (reusing 10-data).** Mount-and-go with no sync step is attractive, but
   Standard is $0.36/GB-month ($36/month for 100 GB, 14× S3), IA still charges $0.012/GB read
@@ -608,7 +608,7 @@ Also measured the same day:
 - **Using a community ComfyUI image as is.** The fleet cannot vouch for the contents, and the
   ones bundling ComfyUI-Manager are an arbitrary-code entry point (decision 6).
 - **`llama-server -hf` straight from HF.** $1 and 9 minutes through the NAT on every start, and
-  the gate `HF_TOKEN` lands on the engine box (decision 3).
+  the gate `HF_TOKEN` lands on the engine instance (decision 3).
 - **Lambda / SageMaker Serverless / Bedrock custom models.** A 17 GB GGUF and the ComfyUI UI
   are not functions, and Bedrock already exists as ADR 0069's first layer (a different request
   from "run it ourselves").
@@ -618,32 +618,32 @@ Also measured the same day:
 `60-engines` was deployed for real onto the shared `af-sandbox` cluster while P0 was being
 written. The five things the Phases section said P0 would measure are settled here, and **two
 of them contradicted what the body expected** — a `Host: {}` volume does not survive a task
-even on a box that was deliberately kept (4), and the gain from copying the image into ECR
+even on an instance that was deliberately kept (4), and the gain from copying the image into ECR
 disappeared inside the variance of placement (1). The whole exercise cost about 1.4 hours of
 g6.xlarge, roughly $2.
 
 1. **The production-shaped cold start is 586 seconds** (`desired 1` → listening), with the
-   image in ECR, the model in S3 and no box. Broken down: **+88 s to task creation and
+   image in ECR, the model in S3 and no instance. Broken down: **+88 s to task creation and
    placement**, pull **79 s** (99 s less than GHCR's 178 s), S3 fetch **161 s** (18.5 GB =
    115 MB/s), RUNNING at +350 s, **`model loaded` and listening at +586 s** (236 s loading
    into VRAM). 🔴 **The expectation that re-measuring after the ECR copy would beat 527 s was
    wrong.** The pull really did shrink by 99 s, but placement took 88 s where an earlier start
-   the same day took 8 — what dominates is not the pull but **how long it takes for a box to
+   the same day took 8 — what dominates is not the pull but **how long it takes for an instance to
    exist at all**. `AF_ENGINE_WAKE_TIMEOUT` stays at 900 s (314 s of headroom over 586). Avoiding
    a generalisation from two points, all that can be said is "**500-600 seconds, and it moves
    both ways**".
 2. **Drain with the default `scaleInAfter` is 456 seconds** (shutting-down begins at +95-104 s).
    That is the same range as the harness's 427 s and 463 s — a third point in agreement.
-3. **`scaleInAfter: -1` really does keep the box.** 583 seconds after `desired 0` it was still
+3. **`scaleInAfter: -1` really does keep the instance.** 583 seconds after `desired 0` it was still
    `running` (the default had terminated at 456 s). 🔴 But **changing `scaleInAfter` afterwards
-   does not reclaim a box that already went idle under `-1`** — set to `0`, it was still
+   does not reclaim an instance that already went idle under `-1`** — set to `0`, it was still
    `running` 497 seconds later. What does retire one is
    `ecs update-container-instances-state --status DRAINING`, which had it **shutting down in 90
    seconds** (`ec2 terminate-instances` is refused outright by MI's resource-based policy). CloudFormation's
    `AWS::ECS::CapacityProvider` carries **both** `InfrastructureOptimization.ScaleInAfter` and
    `InstanceLaunchTemplate.LocalStorageConfiguration.UseLocalStorage` — review R5 only
    established that the API had them — so both became stack parameters.
-4. 🔴 **Decision 7(c)'s warm box could not be made to work in P0, and is left unproven.** It
+4. 🔴 **Decision 7(c)'s warm instance could not be made to work in P0, and is left unproven.** It
    failed twice over:
    - a restart that landed **back on the very same instance** kept by `-1` pulled all 18.5 GB
      from S3 again (126 s; the restart itself took 410 s, 176 s less than the 586 s cold start
@@ -651,19 +651,19 @@ g6.xlarge, roughly $2.
      allocates **a fresh anonymous directory per task**, so `/models` was empty as far as the
      new task was concerned;
    - changing it to `Host: { SourcePath: /var/lib/af-engine-models }` then made the service
-     fail to start at all — **`No space left on device` on a brand-new 120 GiB box**. 🔴 So
+     fail to start at all — **`No space left on device` on a brand-new 120 GiB instance**. 🔴 So
      `StorageConfiguration.storageSizeGiB` sizes the **data volume MI attaches** (the one the
      container runtime uses), while an arbitrary host path like `/var/lib/…` lands on the
      **root filesystem**. Reverted to `Host: {}` with both measurements written down.
-   On top of that the anonymous directories are **never reclaimed**: four starts on one box
+   On top of that the anonymous directories are **never reclaimed**: four starts on one instance
    kept by `-1` filled its disk with 18.5 GB apiece. P0's answer is therefore "**leave
-   `scaleInAfter` at the default**". Making the warm box work needs the path MI's data volume
+   `scaleInAfter` at the default**". Making the warm instance work needs the path MI's data volume
    is actually mounted at, which is undocumented and not worth another GPU hour; P4 picks it up
    with `useLocalStorage`, where the 250 GB instance store is the whole disk.
-5. **That the pool walk sees MI boxes** was confirmed against the real cluster.
+5. **That the pool walk sees MI instances** was confirmed against the real cluster.
    `DescribeContainerInstances` returns, side by side, `i-0abeb…/None` and `i-0075e…/None` (slots,
    `agentConnected=false`) and `i-059d9…/af-af-ecs-engines-llm` (the engine,
-   `agentConnected=true`). Without a filter, `registeredSlots` counts the engine box as a free
+   `agentConnected=true`). Without a filter, `registeredSlots` counts the engine instance as a free
    slot, and the moment it starts draining `sweepGhostInstances` deregisters it. Whether
    `capacityProviderName` is empty is the only thing that tells them apart, and that is where P0
    cuts (decision 1, review R7(a)).
@@ -697,7 +697,7 @@ g6.xlarge, roughly $2.
 
 10. ✅ **The second half of the definition of done — "the first request to a stopped engine is
     answered on one attempt" — was carried out for real.** P0's code was deployed to
-    af-sandbox (`0.16.1-dev-5b62a9b4`) and, with **no GPU box in existence at all** (desired 0,
+    af-sandbox (`0.16.1-dev-5b62a9b4`) and, with **no GPU instance in existence at all** (desired 0,
     `describe-instances` empty, the Cloud Map name unregistered), a **single** curl sent
     `POST https://<fqdn>/engine/llm/v1/chat/completions` with `stream:true`:
     - **`HTTP/2 200` and `content-type: text/event-stream` immediately** (the same second).
@@ -750,7 +750,7 @@ g6.xlarge, roughly $2.
 
 Also measured while writing P0:
 
-- **S3 to a box runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the
+- **S3 to an instance runs at 115-147 MB/s** (18.5 GB in 126 s and in 161 s). The same range as the
   harness's 104-147 MB/s; a fifth data point has not broken "it does not depend on the file".
 - **A server-side S3-to-S3 copy moves 17.3 GiB in 52 seconds** (same region, free). Moving an
   already-ingested model between buckets is not comparable to the 31-74 minutes of fetching it
@@ -774,7 +774,7 @@ Also measured while writing P0:
 
 The `image` role and the `sdcpp` provider were written against the same af-sandbox stack, with
 the role actually deployed and driven. One P0 expectation held — **the image role fits inside
-one attempt** — and one broke: 🔴 **an MI box does not appear in a `describe-instances`
+one attempt** — and one broke: 🔴 **an MI instance does not appear in a `describe-instances`
 listing**, so the check P0 relied on to say "no GPU is running" was not evidence of that at
 all. The exercise cost 15 minutes of g6.xlarge (launched 13:32:05Z, terminated 13:47:04Z), roughly $0.31.
 
@@ -786,14 +786,14 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
 (a claude session a user drove themselves) close the definition of done on real hardware.
 
 1. **The image role's cold start is 197 seconds** (`execute-change-set` to
-   `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no box). Broken down:
-   **+57 s to task creation**, +61 s for the box to register as a container instance, pull
+   `listening on: http://0.0.0.0:8080`; image in ECR, checkpoint in S3, no instance). Broken down:
+   **+57 s to task creation**, +61 s for the instance to register as a container instance, pull
    **55 s** (from ECR, against the 135 s the P0 harness spent pulling from GHCR), S3 fetch
    **6.94 GB in 65 s = 107 MB/s**, and **listening at +197 s**. That is a third of the llm
    role's 586 s and it **fits inside opencode's 300 seconds** — measured-and-settled point 9's
    "the image role, on sd-server, fits in the first attempt at 195 s" was right. The whole
    stack update, service creation included, took 5 minutes 4 seconds.
-2. 🔴 **An MI box is absent from `ec2 describe-instances` listings; asked for by id, it is
+2. 🔴 **An MI instance is absent from `ec2 describe-instances` listings; asked for by id, it is
    there.** While the task was RUNNING and `describe-container-instances` was returning
    `i-08a9…/af-af-ecs-engines-image`, calling `describe-instances` **with no filter** and
    counting the raw JSON gave three instances (the slot pool's m8g/m7i) and not that id. Yet
@@ -803,10 +803,10 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
    consequences:
    - **"`describe-instances` shows none, so no GPU is running" does not hold.** P0's
      measurement 10 and the operating notes are written that way, so this corrects them. What
-     does confirm a stopped box is **`describe-instances --instance-ids <id>`** (take the id
+     does confirm a stopped instance is **`describe-instances --instance-ids <id>`** (take the id
      from ECS's `describe-container-instances`) or watching the container instance disappear on
      the ECS side. Another "zero results" that had to be doubted at the tool, not the fact.
-   - The cost-allocation tagging works — the box carried `af-role=engine-image` (decision 9).
+   - The cost-allocation tagging works — the instance carried `af-role=engine-image` (decision 9).
 3. **sd-server's surface works over the production path.** From a throwaway Fargate task placed
    in the CP's security group (the production task role gets no `ssmmessages:*`, so this is
    P0's technique again): `GET /v1/models` answered **200 in 4.6 ms**,
@@ -814,7 +814,7 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
    at 512px took **10.7 s and returned two images** — 5.4 s each once warm, so the first call's
    11.2 s includes warm-up — and `/v1/images/edits` (image plus mask, multipart) took **5.2 s
    at 512px**. **No key is needed** (200 with no header at all). P0's 7.8 s / 20.8 s were a
-   different box on a different day, so all that can be said is a band: **5-11 s at 512px,
+   different instance on a different day, so all that can be said is a band: **5-11 s at 512px,
    17-21 s at 1024px**.
 4. ✅ **`size` is honoured.** The PNG returned for a 1024x1024 request has IHDR
    `00 00 04 00 00 00 04 00` = **1024×1024**, and a 512x512 edit came back **512×512**. ADR
@@ -824,9 +824,9 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
 5. **VRAM is 6,624 MB of params** (the same figure as P0). auto-fit put DiT 4,897 MiB,
    Conditioner 1,559 MiB and VAE 159 MiB all on CUDA0, against the L4's 22,369 MiB free. Add
    the llm role's 20.9 GB and it does not fit — decision 2's grounds, measured again on
-   another box on another day.
+   another instance on another day.
 6. **Drain: 71-164 seconds to shutting-down, 477 s to terminated.** At +71 s after
-   `desired 0` the box was still ACTIVE; by +164 s it was `shutting-down`. That is the same
+   `desired 0` the instance was still ACTIVE; by +164 s it was `shutting-down`. That is the same
    band as P0's "shutting-down begins at +95-104 s", agreeing as a third point.
 7. **The CloudFormation change is four additions and two modifications, and it does not touch
    the llm role.** The change set adds `ImageCapacityProvider`, `ImageTaskDef`,
@@ -887,7 +887,7 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
       **This is the first time the gateway's Content-Type passthrough met the real thing**, and
       the boundary survived — the third of P1's additions to the body, now measured.
     - The CP logged one line each: `200 23.396s` and `200 5.236s`.
-    - **The faces that answer without waking anything were confirmed too**: with zero boxes
+    - **The faces that answer without waking anything were confirmed too**: with zero instances
       running, `/imagegen/status` returns `provider:"sdcpp"` `ready:true`
       `model:"sdxl-base-1.0"` `ops:[generate,edit,inpaint]` `order:["sdcpp","agy","codex"]`.
       `tools/list` advertises a `provider` enum of `["sdcpp","agy"]` and an `op` enum of
@@ -904,7 +904,7 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
 
 13. ✅ **Re-measured after the fix, the other half of the definition of done holds on real
     hardware (2026-09-08).** `0.16.1-dev-2e501835` (decision 5's split) was deployed and
-    `generate_image` called once from **zero boxes** — with `sdcpp` named explicitly, so that a
+    `generate_image` called once from **zero instances** — with `sdcpp` named explicitly, so that a
     failure could not spend a member's quota through the fall-through of measurement 10. In UTC:
     - 01:03:30 the request → `engine image: started on demand`
     - 01:04:15 `503 45.012s`, 01:05:06 `503 45.007s`, 01:05:57 `503 45.007s` — **folded three
@@ -940,17 +940,17 @@ saying so (10). The second g6.xlarge came up at 15:26, again about $0.3. Measure
     02:41:05 `stop (idle)` (**the controller stopping it by itself** — the idle path confirmed
     on the way past) → 02:46:52 `image set to off` → 02:46:54 `set to on` →
     **02:49:53 `warmed up (ready)`** → six images between 02:50:11 and 02:53:33 (11.361 s for
-    the first, 5.4-5.5 s after) → 02:58:31 `set to off` (the box stopped) → 03:03:30
+    the first, 5.4-5.5 s after) → 02:58:31 `set to off` (the instance stopped) → 03:03:30
     `set to ondemand`. **Off stops it, on starts it, and the mode persists** — all three seen
     on the real thing. The start from `on` took **179 seconds**, making cold start
     **165 / 172 / 173 / 179 / 197 seconds** across five points.
     - 🔴 **This did NOT verify the reasoning behind `offGrace: 0`.** An OFF→ON two seconds
-      apart did happen, but the box had already been idle-stopped at 02:41:05, so `off` had
+      apart did happen, but the instance had already been idle-stopped at 02:41:05, so `off` had
       nothing to throw away. "OFF→ON buys a whole cold start" remains unmeasured.
     - 🔴 An operational trap was walked into: **`off` is a persisted setting, not a pause.** It
       was left off for five minutes after the test, and during that time `generate_image` was
       refused with `503 engine_off` and the engine was gone from the catalogue. It is hard to
-      tell apart from "the box is merely stopped" — both are desired 0. The panel's wording
+      tell apart from "the instance is merely stopped" — both are desired 0. The panel's wording
       says as much, but the shape where the person who pressed it forgets to press back
       remains. Worth considering a separate "pause" in P4.
 
@@ -963,7 +963,7 @@ Also verified in P1:
   enough. Run Python with `-u`, or buffered output dies with the process. Note the Workspace
   task role has **no `ssmmessages:*`** — correctly so — hence a temporary inline policy
   `af-adr0071-p1-temp-exec` alongside `enableExecuteCommand`, **both removed afterwards**.
-- **A follow-on to "don't read a `describe-instances` listing"** (measurement 2): the engine box
+- **A follow-on to "don't read a `describe-instances` listing"** (measurement 2): the engine instance
   was again only findable on the ECS side, through `describe-container-instances`.
 - **Copying GHCR → ECR took 177 seconds for 2.42 GB** (`crane copy` from this container), the
   same rate as P0's llama.cpp (2.59 GB in 179 s).
@@ -982,7 +982,7 @@ Also verified in P1:
 ## A correction after P1 — nobody was ever told the engine's window (2026-09-08)
 
 The provider block P0 and P1 shipped writes nothing but `{"name": …}` for the model. What using
-it on a real box showed is that this is **not read as "no window declared" but as "the window is
+it on a real instance showed is that this is **not read as "no window declared" but as "the window is
 zero"**.
 
 🔴 **Measured against opencode 1.18.29** (af's own provider shape written into an isolated HOME,
@@ -1018,7 +1018,7 @@ model could not carry through; it finished by writing an untrue conclusion ("che
 connection"). The fetch itself returned 200. That is opencode behaving as specified and outside
 this ADR, but **the window is a separate, real hole found while looking into it**.
 
-## The box would not launch — the candidate list held one instance type (2026-09-08)
+## The instance would not launch — the candidate list held one instance type (2026-09-08)
 
 Waking the image role produced this run of service events:
 
@@ -1031,9 +1031,9 @@ Availability Zone in your request or choosing ap-northeast-1c.
 ```
 
 The same thing came back for 1c — the AZ the message had just recommended. **This is not the
-quota**; that answers `VcpuLimitExceeded`. There simply was no L4 box in either AZ at that
+quota**; that answers `VcpuLimitExceeded`. There simply was no L4 instance in either AZ at that
 minute. A `has started 1 tasks` sits between the two failures, so one of the retries did get a
-box.
+instance.
 
 The advice attached to the message has nothing to offer here. **The provider is already handed
 both of 00-network's private subnets, and that VPC has only two AZs** (`!Select [0/1, !GetAZs
@@ -1046,13 +1046,13 @@ field (checked with `aws ecs create-capacity-provider --generate-cli-skeleton`: 
 `instanceRequirements` and the price protection `onDemandMaxPricePercentageOverLowestPrice`,
 and nothing corresponding to EC2 Fleet's `prioritized` + `Priority`). `allowedInstanceTypes` is
 **a filter, not a preference order** — and that price-protection knob is itself the tell that
-selection looks at price. So **express the priority as price and keep the intended box the
+selection looks at price. So **express the priority as price and keep the intended instance the
 cheapest member of the set**: by the table above g6.xlarge is $1.258 against g5.xlarge's
 $1.573, so the L4 is what arrives while an L4 exists.
 
 ⚠️ **A cheaper type added here becomes the default, not the fallback.** g4dn.xlarge is $0.765,
 under g6.xlarge, so it would win every placement that has capacity — on half the VRAM, and
-unmeasured for these roles. A fallback belongs *above* the intended box. The same care keeps
+unmeasured for these roles. A fallback belongs *above* the intended instance. The same care keeps
 8-vCPU types out of the default: one g6.2xlarge fills the whole 8-vCPU quota, and then the
 other role cannot launch at all (the other side of R2).
 
@@ -1112,7 +1112,7 @@ for whether or not it is used — which is the scale-to-zero premise traded away
   `ImageMode`) — a CloudFormation run, which is not what anyone reaches for while a GPU is
   misbehaving. `GET /api/admin/engines` and `PUT /api/admin/engines/{key}` were added behind
   super_admin, the same shape as TTS's `/api/admin/tts`. One thing differs: **Disabled stops
-  the box immediately.** TTS debounces it because a mistaken OFF→ON there costs a 2 GB pull and
+  the instance immediately.** TTS debounces it because a mistaken OFF→ON there costs a 2 GB pull and
   80 seconds; a GPU is $1.26/hour and an undo window is time you pay for.
   🔴 One defect surfaced while building it: `engineRuntimeState.mode` **only consulted the
   stored setting when a controller existed**. Harmless in production, where one always does,
@@ -1121,7 +1121,7 @@ for whether or not it is used — which is the scale-to-zero premise traded away
   15).
   **The current state was then added to the same screen (decision 13)** — a toggle on its own
   does not tell anyone whether it is safe to switch an engine off. The `GET /api/admin/engines`
-  row gained the box's start time, the automatic stop time, recent demand and `warm`, and
+  row gained the instance's start time, the automatic stop time, recent demand and `warm`, and
   `GET /api/admin/engines/{key}/hourly` plus the new `engine_hourly` table drive an occupancy
   heatmap. The sampler is the controller's own tick, because **engine uptime was recorded
   nowhere at all** until then. The details — never drawing unobserved as stopped, storing the
@@ -1130,7 +1130,7 @@ for whether or not it is used — which is the scale-to-zero premise traded away
   workflow template, mutual exclusion with sd-server.
 - **P3 — llm for codex and claude.** codex via `model_providers` with `base_url` and
   `wire_api = "responses"`, claude via `ANTHROPIC_BASE_URL`. Both **change what choosing a
-  model means** (billing moves from the user's login to the fleet's box), so the launch menu's
+  model means** (billing moves from the user's login to the fleet's instance), so the launch menu's
   presentation and consent are designed first. llama.cpp's `/v1/messages` has a known issue
   dropping thinking blocks (#20090), and Claude Code sends many background Haiku requests.
 - **P4 — cheaper, with evidence.** MI Spot, shrinking `image` to a g6f (g6f.2xlarge only after
@@ -1200,7 +1200,7 @@ was needed, only a re-reading.
   review's reproduction saw **six attempts** (five re-sends) before its 1,900 s cut-off, the
   gaps growing 302, 310, 316, 330 s — waits of 2, 4, 8, 16, 32 s after each cut, the AI SDK's
   exponential backoff — with no sign of giving up; whether there is a cap remains unknown).
-- **R2. 8 vCPU builds two g6.xlarge. Only one was built because a draining box was holding
+- **R2. 8 vCPU builds two g6.xlarge. Only one was built because a draining instance was holding
   its quota.** CloudTrail (read-only) `RunInstances` / `TerminateInstances`, re-ordered (JST):
   06:42:25 A launched (llm, straight from HF) → 07:12:32 B launched (by all appearances image's
   first attempt — the run whose fetch sidecar could not write as uid 100, the measurement
@@ -1208,10 +1208,10 @@ was needed, only a re-reading.
   07:19:24, 07:20:01, 07:20:43 `VcpuLimitExceeded` (A running, **B shutting down and still
   counted at 4 vCPU**: A 4 + B 4 + new 4 > 8) → 07:25:05 A terminated → **07:26:04 C launched
   successfully** — while A's EC2 instance was still on its way out (drain is 427-463 s). So two
-  boxes (8 vCPU) do coexist; what cannot be built is a box **inside the 7-8 minutes after one
+  instances (8 vCPU) do coexist; what cannot be built is an instance **inside the 7-8 minutes after one
   was dropped**. "16 vCPU for both roles" survives, but the reason changes from "only one
-  builds" to "**headroom for one draining box**". B's 07:12:32 → 07:17:13 (281 s) is also a
-  measurement of MI's default clock clearing a box whose task had died (R5).
+  builds" to "**headroom for one draining instance**". B's 07:12:32 → 07:17:13 (281 s) is also a
+  measurement of MI's default clock clearing an instance whose task had died (R5).
 - **R3. g6f VRAM, official: 5,722 MiB (2xlarge), 11,444 MiB (4xlarge), 2,861 MiB (xlarge and
   large); g6.xlarge 22,888 MiB.** From `describe-instance-types`, replacing the table's
   third-party "≈3 / ≈6 / ≈12 GB". The same call gives g6.xlarge an instance store of **250 GB**
@@ -1220,10 +1220,10 @@ was needed, only a re-reading.
   fee g6.xlarge $0.0910, g6f.2xlarge $0.0537, g6f.4xlarge $0.1075, c6a.large $0.0116. Total
   $1.258/h, a 30-minute window $0.63 (the text's $0.65 is slightly generous), a 427-464 s
   drain $0.15, always-on 730 h $918/month, NAT for 17 GB $1.05, EFS 100 GB $36, EFS IA reads
-  of 17 GB $0.20 — no arithmetic error. The GPU measurement bill: six boxes on CloudTrail add
+  of 17 GB $0.20 — no arithmetic error. The GPU measurement bill: six instances on CloudTrail add
   up to about 1.5 hours (more than the text's "about one hour"), roughly $3.5 with NAT.
 - **R5. The MI API has two knobs the ADR does not mention** (aws-cli 2.36.40 service model):
-  `infrastructureOptimization.scaleInAfter` (**seconds before an idle box is cleared**; null =
+  `infrastructureOptimization.scaleInAfter` (**seconds before an idle instance is cleared**; null =
   default, −1 = never, 0-3,600) and
   `instanceLaunchTemplate.localStorageConfiguration.useLocalStorage` (**use the instance store
   as the data volume and provision no EBS**). `storageConfiguration`, on the other hand, has
@@ -1232,7 +1232,7 @@ was needed, only a re-reading.
   (undocumented) default, so **calling it a fixed MI cost is premature**.
 - **R6. HF's speed cannot be said to be "set by the file" either.** The same log group
   (`/af/af-ecs-engprobe/engine`) holds a third point: **the same SDXL (6,938,078,334 bytes)
-  came to the ingestion task (curl on Fargate) in 175 s = 39.6 MB/s** — the file the MI box's
+  came to the ingestion task (curl on Fargate) in 175 s = 39.6 MB/s** — the file the MI instance's
   sidecar (same curl, same NAT) pulled at 236 MB/s. GGUF: 9.6 and 4.2 MB/s; SDXL: 236 and
   39.6 MB/s. Four points support "**4-236 MB/s, and what decides it is unknown**" and no more;
   "the unsloth repository is slow" is a generalisation from two points (the corrected sentence
@@ -1240,7 +1240,7 @@ was needed, only a re-reading.
   ran at 104-147 MB/s on all three pulls (Resolved 8).
 - **R7. The code as it is.** (a) The slot pool's `registeredSlots` and `sweepGhostInstances`
   (`runtime_ecs_ec2.go`) **walk every container instance in the cluster with no filter** — MI
-  boxes are in that list (the harness's first run timing a slot box is the mirror image). The
+  instances are in that list (the harness's first run timing a slot instance is the mirror image). The
   EC2-tag sweeps (`af-role=slot`, `Ec2MaxSlots`) are unaffected, but these two calls sit
   outside decision 1's "untouched". (b) The CP task role's SSM read is **scoped to
   `parameter/af-ws/*`** (`SsmWorkspaceParams` in `20-platform.yaml`). (c)
@@ -1259,18 +1259,18 @@ was needed, only a re-reading.
   lifecycle, there is no stop, the volume takes only a size). **An engine holds no state it
   would miss**, so the same properties are an advantage here — a difference of subject, not a
   contradiction." And from R7(a): "The slot pool's container-instance walks (`registeredSlots`,
-  `sweepGhostInstances`) see MI boxes too. P0 excludes them by `capacityProviderName` from
+  `sweepGhostInstances`) see MI instances too. P0 excludes them by `capacityProviderName` from
   `DescribeContainerInstances` and pins that with a test."
 - **Decision 2** — rewrite "at 8 vCPU only one g6.xlarge exists … 408 s" per R2: "8 vCPU
-  builds two. But **for the 7-8 minutes after a stop the previous box keeps its 4 vCPU**, so a
+  builds two. But **for the 7-8 minutes after a stop the previous instance keeps its 4 vCPU**, so a
   restart of one role that overlaps the other role's start hits `VcpuLimitExceeded`. A
-  deployment that uses both roles asks for 16 vCPU as headroom for one draining box." Replace
+  deployment that uses both roles asks for 16 vCPU as headroom for one draining instance." Replace
   the table's g6f VRAM with R3's official values, and soften "g6f.2xlarge's 6 GB does not fit
   it" to "**fp16 without offload does not fit 5,722 MiB** (`--offload-to-cpu` and quantisation
   are unmeasured — P4)": the original open question 2 asked exactly those two, and closing it
   as "not an option" without measuring them is the same kind of leap.
 - **Decision 3** — design unchanged; fix the reason per R6: "Behind the same NAT HF ran at
-  **4-236 MB/s, 6x apart for the same file** (SDXL: 236 MB/s by curl on the MI box, 39.6 MB/s
+  **4-236 MB/s, 6x apart for the same file** (SDXL: 236 MB/s by curl on the MI instance, 39.6 MB/s
   by curl on Fargate). Four points cannot say whether file, path or time decides it; what they
   say is **you do not know until you pull**. S3 ran at 104-147 MB/s on all three pulls." Keep
   Resolved 5's "what is slow is HF serving that file (the unsloth repository)" under 🔴 and note
@@ -1300,10 +1300,10 @@ was needed, only a re-reading.
   300 s every GPU start would be a "failure" and the cooldown would double away (the same
   presentation as the `createdAt` incident). (c) The drain was measured at `scaleInAfter`'s
   default (R5), so **P0 measures 0 and −1 once each** ($0.15 each). −1 is material for a
-  "keep the box" design: a request that arrives while the box still exists after desired 0
+  "keep the instance" design: a request that arrives while the instance still exists after desired 0
   should come up without the S3 fetch, since **both the image and the model file are on the
-  box** (the VRAM load only). "Trimming the idle window can only ever recover the drain" reads
-  the drain as pure waste — whether it can be designed in as a warm-box window is one P0
+  instance** (the VRAM load only). "Trimming the idle window can only ever recover the drain" reads
+  the drain as pure waste — whether it can be designed in as a warm-instance window is one P0
   measurement: stop, then re-request inside the drain.
 - **Decision 8** — (a) "SSM reads are already in the CP task role" holds **only under
   `/af-ws/*`** (R7(b)); decide whether the parameter is named `/af-ws/engines` or the

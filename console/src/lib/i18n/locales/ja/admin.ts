@@ -52,8 +52,9 @@ export const admin = {
   "admin.engines_model_enable": "有効にする",
   "admin.engines_model_disable": "無効にする",
   "admin.engines_model_select": "これで起動する",
-  // 🔴 選び直しても走っている箱は入れ替えない。抱えているのは起動時に決めた 1 つで、
-  // ここで再デプロイすると生成中の要求を殺す（ADR 0072 決定 4）。だから先に言っておく。
+  // 🔴 Choosing another one does NOT swap the running instance. It holds the one chosen at
+  // start, and redeploying here would kill a generation in flight (ADR 0072 decision 4) — so
+  // this is said before the press rather than explained after it.
   "admin.engines_model_next_start": "選び直しは次の起動から効きます。走っているエンジンは入れ替えません（生成中の要求を殺さないため）。",
   "admin.engines_model_window": "コンテキスト {c} / 出力 {o}",
   // 🔴 「削除」ではなく「登録を消す」。CP に `s3:DeleteObject` は無く、足すつもりも無い
@@ -168,7 +169,7 @@ export const admin = {
   "admin.engines_hf_token_set": "登録済み（{who} / {when}）。値は表示できません——Control Plane は書き込みだけができ、読み戻す権限を持ちません。",
   "admin.engines_hf_token_stack": "この配備のトークンは CloudFormation のパラメータで設定されています。Console からの登録・削除はできませんが、gated のリポジトリは取り込めます。",
   "admin.engines_hf_token_unsupported": "この配備のエンジンスタックにはトークンの置き場がありません。60-engines を更新すると Console から登録できるようになります。",
-  "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンの箱には渡りません。",
+  "admin.engines_hf_token_note": "配備全体で 1 つです。値は暗号化して保存し、取り込みのたびに配備の秘密へ書き込みます——読むのは取り込みタスクだけで、エンジンのインスタンスには渡りません。",
   // 🔴 この赤い行は FLUX 専用ではなくクラス全体に出る（engineCommercialUse が
   // non-commercial / -nc / cc-by-nc を含む名前すべてに `no` を返す）。CC-BY-NC と BFL の
   // 条項では何を縛るかが違い、生成物まで縛るかも一様ではないので、どちらが引き金かは
@@ -192,12 +193,12 @@ export const admin = {
   "admin.engines_class": "インスタンスクラス: ",
   "admin.engines_class_not_default": "既定と違います",
   "admin.engines_class_reset": "既定に戻す",
-  "admin.engines_class_pending": "いま動いているのは {t} の箱です。選んだクラスは次に買う箱から効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧い箱が退場するまで新しい箱は起動しません。",
+  "admin.engines_class_pending": "いま動いているのは {t} のインスタンスです。選んだクラスは次に買うインスタンスから効きます。入れ替えるとコールドスタート 1 回ぶん（llm 約 9 分・image 約 3 分）かかり、旧いインスタンスが退場するまで新しいインスタンスは起動しません。",
   "admin.engines_class_replace": "いま入れ替える",
   // 🔴 The choice is SAVED before it is applied, so a failed apply leaves the picker showing a
   // class the capacity provider does not hold — and picking it again is no change at all. The
   // retry has to be a button of its own, or the only way out is a detour through another class.
-  "admin.engines_class_apply_failed": "クラスは保存しましたが、キャパシティプロバイダへの書き込みに失敗しました。次に買う箱はまだ前のクラスのままです: {m}",
+  "admin.engines_class_apply_failed": "クラスは保存しましたが、キャパシティプロバイダへの書き込みに失敗しました。次に買うインスタンスはまだ前のクラスのままです: {m}",
   "admin.engines_class_apply_retry": "もう一度適用する",
   "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
   "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
@@ -219,15 +220,17 @@ export const admin = {
   "admin.engines_model_noncommercial": "非商用",
   "admin.engines_model_license_by": "同意 {who} / {when}",
   "admin.engines_model_license_unknown": "ライセンスの記録なし",
-  // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
-  // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。
+  // An ESTIMATE, and it says so: S3 to the instance measured 104-147 MB/s and this uses the
+  // slow end. The router role syncs every enabled model, so this rides straight onto the next
+  // cold start.
   "admin.engines_model_sync": "同期 +{n} 秒（推定）",
   // いま VRAM に載っているモデルと、その入れ替わりの回数。1 度に 1 つしか抱えない設計の
   // 価格で、「warm」だけを出していると見えなくなる。
   "admin.engines_warm_model": "VRAM 上: ",
   "admin.engines_model_swaps": "この CP が起きてからのモデル交替: {n} 回",
-  // 箱の実時刻とサービスの時刻は別物。前者は EC2 インスタンスが登録された時刻で、
-  // 後者はデプロイの状態が最後に動いた時刻＝箱を買い直していなくても動く。
+  // The instance's clock and the service's are different facts: the first is when the EC2
+  // instance joined the cluster, the second is when the deployment last changed — which moves
+  // without a new instance being bought.
   "admin.engines_since_box": "インスタンスの起動 ",
   "admin.engines_since_service": "サービスの更新 ",
   "admin.engines_up_for": "{d} 経過",
@@ -531,10 +534,11 @@ export const admin = {
   "admin.ws_mem_req": "ワークスペースのメモリ（必要量）",
   "admin.ws_slot_lands": "→ {type}（{spec}・専有）",
   "admin.ws_slot_zero": "0 = 最小スロット（{type}）",
-  // 上限が入って以降、箱の容量とワークスペースが使える量は別の数になった（ADR 0045 決定 28）。
-  // 本人が使えるのは後者なので、そちらを先に出し、箱は括弧で添える。
-  "admin.ws_slot_usable": "{n}（箱 {box}）",
-  "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないので箱を丸ごと使えます。この値は箱を選ぶだけです。",
+  // Since the cap arrived, what the instance HAS and what a workspace may use are two numbers
+  // (ADR 0045 decision 28). The second is the one that belongs to the person reading it, so it
+  // leads and the instance's own figure follows in brackets.
+  "admin.ws_slot_usable": "{n}（インスタンス {box}）",
+  "admin.ws_slot_note": "スロットは 1 人で専有し、タスクに予約を掛けないのでインスタンスを丸ごと使えます。この値はインスタンスを選ぶだけです。",
   "tenant.machine_title": "既定のマシン種別",
   "tenant.machine_note":
     "このテナントのメンバーが、自分の指定を持たないときに載るマシンです。メンバー毎の指定はメンバー詳細から行い、そちらが優先されます。",
@@ -547,7 +551,7 @@ export const admin = {
   "admin.ws_machine_tenant_default": "テナントの既定",
   "admin.ws_machine_arch_warn":
     "この種類は CPU の系統が変わります。次回起動時に、ホーム内のこの系統向けでない導入物（各エージェント CLI・node・Chromium など）を入れ直します（数分）。~/repos 配下の node_modules / target / .venv は消えませんが、そのままでは動かないので各自で入れ直してください。",
-  "admin.ws_cpu_na": "このランタイムでは CPU を選べません（箱を丸ごと使うため）。",
+  "admin.ws_cpu_na": "このランタイムでは CPU を選べません（インスタンスを丸ごと使うため）。",
   "admin.ws_disk_home": "ワークスペースの home（永続）",
   "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",
   "admin.ws_disk_quota_hint": "0 = 制限なし。表示用の目安で、強制はされません。",

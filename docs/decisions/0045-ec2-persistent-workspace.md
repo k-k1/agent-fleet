@@ -393,7 +393,7 @@ Details in docs/64 §64.17.
    concurrent machine count 24/7**.
    ⚠️ **It is a different thing from the existing reaper** (`AF_WS_IDLE_TIMEOUT` / a tenant's
    `ws_idle_timeout`). That one **watches people and stops the workspace** (runtime-independent). This is
-   **a second tier that takes effect after it** and **stops the box of a stopped workspace**. They are in
+   **a second tier that takes effect after it** and **stops the instance of a stopped workspace**. They are in
    series, so the actual wait is "the reaper's setting + 15 minutes". They are named differently so as
    not to be lumped together as "idle".
 3. **Eviction only at the cap**: below the cap, grow the pool (with idle stop in place, the waiting cost
@@ -436,7 +436,7 @@ pull is eaten by awsvpc's ENI plus Service Connect (about 20s), the CP's mount (
 > disappear, measured at 10–23 seconds, overlapping the 18s wait for the slot's ECS registration) → (2)
 > `desiredCount=1`. The A/B is measured (one call = 2 tasks; split = 1 task). ⚠️ **Sending
 > `ForceNewDeployment` in (2) puts it back.** The saving differs by path: waking or building saves the
-> whole ~40 seconds, while **moving onto a running free box exposes the wait and saves 20–30 seconds**.
+> whole ~40 seconds, while **moving onto a running free instance exposes the wait and saves 20–30 seconds**.
 > Alongside that, **the fingerprint is baked into the revision's docker labels so a `lastTaskDef` miss is
 > re-asked of AWS** (`serviceTaskDefIfFingerprint`). A process-local cache is always lost on a CP restart
 > = on every deployment, and it **registered a new revision and rolled the service even when the contents
@@ -611,7 +611,7 @@ outage from outside).
 
 - **For new homes only, if `RunInstances` returns insufficient capacity, try the next AZ** (`growPool`).
   An existing home stays pinned to its own AZ and fails — **standing up a slot somewhere it cannot go only
-  adds a box that cannot be attached to**.
+  adds an instance that cannot be attached to**.
 - **Do not retry on failures other than capacity.** An invalid launch template or a quota overrun fails
   the same way in every AZ, and trying three times buries the real reason in the last one.
 - **The substance is a change to the order of creation.** Previously the AZ was decided and **the volume
@@ -718,7 +718,7 @@ the root rather than the instance, and **the way to have a warm root with no ins
 - ⚠️ **Delete `/var/lib/ecs/data/*` before baking.** Leaving it makes **every** instance from this AMI
   believe it is already registered — exactly the trap already hit in decision 3-1.
 - ⚠️ **Do not bake with `af-role=slot`.** The CP builds its world from that tag, so somebody's home would
-  land on the box being baked. The script uses `af-role=bake`.
+  land on the instance being baked. The script uses `af-role=bake`.
 - **Staleness is handled exactly as for the golden (decision 9).** `af-image` is stamped on the AMI and the
   CP reconciles it and keeps saying so in the slots tab. Forgetting does not break anything, only slows it
   down, and there is nowhere else to notice. The reconciliation reads **from the instance's ImageId** (so
@@ -797,16 +797,16 @@ Start went there and failed the same way** — one machine's kernel jam silently
   once. No state is added on the CP side (ADR 0012).
 - **Detach home and drop the claim too.** So that the person's next Start can go to a different slot
   without waiting out the claim TTL.
-- **Stop the box.** Do not leave a box that cannot accept tasks billing by the hour. Terminating is left to
+- **Stop the instance.** Do not leave an instance that cannot accept tasks billing by the hour. Terminating is left to
   the operator's judgement (this adapter has no `TerminateInstances`, §64.22.1). **Note that on real hardware
   this stop actually completed the stuck detach** (stopping → stopped returned the volume to `available`).
-- **Keep it on screen.** It is removed from the pool's counts but not from the table — a box that is still
+- **Keep it on screen.** It is removed from the pool's counts but not from the table — an instance that is still
   billing disappearing from the screen is a bill the operator cannot notice. The reason and the time are
   kept in tags too.
 - Whether it can be repaired is outside the CP's remit (the kernel is jammed). **All it can do is stop it
   taking others down** — that is what quarantine is.
 
-## Decision 21 — size stays "one axis, memory". The instance type is not chosen; **the box it lands on is displayed as a result**
+## Decision 21 — size stays "one axis, memory". The instance type is not chosen; **the instance it lands on is displayed as a result**
 
 The same settings UI faces four runtimes (docker / native / ecs (Fargate) / ecs-ec2). Putting `ecs-ec2`'s
 vocabulary (`m7i.xlarge`) in there adds an item meaningless to the other three. Conversely, as it stands
@@ -821,7 +821,7 @@ details in [docs/64](../log/64-ec2-persistent-workspace.md) §64.27):
    `slotTypeFor(memBytes)` looks only at memory. CPU does not enter the task definition either. **"Workspace
    CPU" on screen is an input field that does nothing on this runtime.**
 2. **Memory is not a cap.** An EC2 task has only `memoryReservation: 512` (soft) with no hard limit
-   (decision 8: one person per box). `mem_limit` is **a "requirement" for choosing a box**, not a cgroup
+   (decision 8: one person per instance). `mem_limit` is **a "requirement" for choosing an instance**, not a cgroup
    cap. Someone who entered 4 GiB can use **the whole 8 GiB** of an m7i.large.
 3. **The disk axis means a different thing.** On Fargate it is the working disk (ephemeral, lost on stop),
    but on `ecs-ec2` `homeGiB()` means **the persistent home's EBS size**. The on-screen note said "the
@@ -856,7 +856,7 @@ details in [docs/64](../log/64-ec2-persistent-workspace.md) §64.27):
 - **Do not show the CPU field on `ecs-ec2`.** Do not leave an input field that does nothing. But **send back
   the value that was read when saving** (so that hiding the field does not, as a side effect, zero a value
   configured for another runtime — a shape already hit with the disk field).
-- **The memory field says "requirement" and shows the box below it** (e.g. `→ m7i.large (8 GiB, dedicated)`).
+- **The memory field says "requirement" and shows the instance below it** (e.g. `→ m7i.large (8 GiB, dedicated)`).
   **0 (unset) means the smallest slot** — different from Fargate's "0 = the deployment default" — so that is
   stated too: "0 = the smallest slot (m7i.large)".
 - **Presets are built from the ladder.** On `ecs-ec2` only, the slots' memory values are listed instead of
@@ -877,7 +877,7 @@ details in [docs/64](../log/64-ec2-persistent-workspace.md) §64.27):
 **Decision 11-2 only stopped slots dormant with a home attached.** The sweep loop's sleep check lives inside
 `sweepVolume`, i.e. **inside a walk rooted at `af-role=home` volumes**, and **the moment a slot is
 `releaseSlot`ed it leaves that walk**. After that no path issues `StopInstances` (`quarantineSlot` is only
-for faulty boxes, and `sweepGhostInstances` merely deregisters container instances **whose EC2 instance is
+for faulty instances, and `sweepGhostInstances` merely deregisters container instances **whose EC2 instance is
 already gone**).
 
 ⚠️ **Hit on a real deployment** (the development deployment, 2026-08-23): **three `m*.large` machines with
@@ -888,7 +888,7 @@ seed/probe finish**. The three machines on the development deployment were resid
 
 1. **Add a slot-rooted walk** (`sweepFreeSlots`). It looks at instances with `af-pool` plus `af-role=slot`
    that are running, and stops those with **no home attached, no live claim, and zero ECS tasks** after
-   `slotSleepAfter`. Because it queries `af-role=slot`, **quarantined boxes are naturally excluded**.
+   `slotSleepAfter`. Because it queries `af-role=slot`, **quarantined instances are naturally excluded**.
 2. **⚠️ The `taskENIsAttached` guard must apply to the free path too.** Decision 3-3 says "stopping with a
    task ENI attached brings it back MULTI-ENI and silently loses the public IPv4 and egress", and that has
    actually been hit on real hardware. **Free slots are in the same window.**
@@ -903,9 +903,9 @@ seed/probe finish**. The three machines on the development deployment were resid
    previous free time behind).
    ⇒ The answer is the same across a CP restart and across the two replicas that overlap for 51 seconds on
    every deployment (ADR 0053), and `StopInstances` is idempotent so a double call is harmless.
-4. **Do not keep a single warm free box** (extending decision 11-4's "no pre-warming" directly).
+4. **Do not keep a single warm free instance** (extending decision 11-4's "no pre-warming" directly).
    Measurement (docs/64 §64.17.5) gives **a hot free slot 43.2s / waking a stopped slot 110.1s / growing the
-   pool 135.4s**. **Keeping boxes as stopped already buys "not paying the 135s"**, and leaving them running
+   pool 135.4s**. **Keeping instances as stopped already buys "not paying the 135s"**, and leaving them running
    buys only **67 seconds** at a price of **$95 versus $9.6 a month**. The right way to put it is that the
    implementation so far was **unlimited pre-warming with nobody deciding the count**. A deployment that
    wants it can keep every machine warm with `Ec2SlotSleepSec=0`.
@@ -929,93 +929,93 @@ seed/probe finish**. The three machines on the development deployment were resid
 
 **What was not done**: a second grace parameter just for free slots (`slotSleepAfter` suffices; a free
 slot's warmth is **worth less** than an occupied dormant one, so making it longer would be backwards).
-~~**Terminating** (this adapter by design has no `TerminateInstances` — discarding a box is the operator's
+~~**Terminating** (this adapter by design has no `TerminateInstances` — discarding an instance is the operator's
 judgement, and discarding the image cache turns 110s back into 135s).~~
-→ **Withdrawn (decision 23).** "Discarding a box is the operator's judgement" also meant **the root volume
+→ **Withdrawn (decision 23).** "Discarding an instance is the operator's judgement" also meant **the root volume
 keeps billing until the operator notices and deletes it by hand**. That was hit on a real deployment
 (docs/64 §64.32).
 
 ## Decision 23 — a stopped slot is **terminated** once more time passes (the next tier after decision 22, 2026-08-26)
 
 Decision 22 made free slots sleep too, but **there is nowhere beyond sleeping**. This adapter has no path to
-delete a box, so **the number of retained root volumes grows monotonically and sticks at `Ec2MaxSlots`**.
+delete an instance, so **the number of retained root volumes grows monotonically and sticks at `Ec2MaxSlots`**.
 Raising `Ec2MaxSlots` from 6 to 30 on the live `<prod-deployment>` was simultaneously signing up to "buying
 30 roots indefinitely" (30 × 40 GiB × $0.096/GB-month = **about $115/month**). Three stopped slots were
 **terminated by hand** to bring EBS back from 900 to 600 GiB.
 
 **Add `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` / `Ec2SlotTerminateAfterSec` (default 0 = disabled), which
-terminates a box N after it stopped.** The recommended value is 4h.
+terminates an instance N after it stopped.** The recommended value is 4h.
 
 - **Stopping and terminating stop different bills.** Stopped costs $0 for compute, but the root ($3.84/month)
-  remains until the box is gone. ⚠️ The root is `/dev/xvda` with `DeleteOnTermination: true` so **it cannot
+  remains until the instance is gone. ⚠️ The root is `/dev/xvda` with `DeleteOnTermination: true` so **it cannot
   be deleted on its own** — "delete the root" *is* "terminate", and it is **one inseparable decision**.
-- **What is lost is 25 seconds.** Waking a dormant box is 110s versus creating a new one at 135s (§64.17.4),
+- **What is lost is 25 seconds.** Waking a dormant instance is 110s versus creating a new one at 135s (§64.17.4),
   because the 32s of cold pull the image cache saves is eaten by instance start 19s plus ECS re-registration.
   Under an operating policy of "slower is better than unusable", that is affordable.
-- ⚠️ **No warm floor (a minimum warm count).** A box with a home attached is reported busy by
+- ⚠️ **No warm floor (a minimum warm count).** An instance with a home attached is reported busy by
   `occupiedInstances` even when stopped, so it never appears in `freeSlots`, and **keeping it warm only helps
   the last N people**. Conversely, detaching home to make it generic means the next person pays wake plus
   attach plus mount = **115–117s** (⚠️ originally estimated at 123–143s using a 10–30s mount, i.e. about the
   same as a new one at 135s; replaced with the measured 2–4s, docs/64 §64.38), i.e. **taking 25 seconds from
   the owner to give 19 seconds to somebody else** — **a difference of 6 seconds**, not "nobody gets it".
   Even so the trade of giving up affinity is poor, and a fixed cost remains through the dormant period. The
-  92 seconds worth buying are on **the running free box** side ($95/month), and that is a reconsideration of
+  92 seconds worth buying are on **the running free instance** side ($95/month), and that is a reconsideration of
   decision 11-4's "no pre-warming", not this decision.
 - ⚠️ **Detach home with `releaseSlot` before terminating.** With `DeleteOnTermination: False` it is not
   deleted either way, but if the owner Starts within terminate's ~60-second window, `placeHome`
-  **derives placement from the attachment** and reads the shutting-down box as "my slot", claims it, and then
+  **derives placement from the attachment** and reads the shutting-down instance as "my slot", claims it, and then
   fails at `StartInstances`. `releaseSlot` is **anchored to the Start generation** so a racing Start falls
   back to re-mounting — `TerminateInstances` has no such undo.
 - ⚠️ **Widen `sweepFreeSlots`'s instance-state filter to `running, stopped`.** While stopping was the last
-  thing that happened to a box, `running` alone was correct, but adding the terminate tier means **a box
-  disappears from the walk forever the moment it stops** — precisely the boxes we want to collect.
+  thing that happened to an instance, `running` alone was correct, but adding the terminate tier means **an instance
+  disappears from the walk forever the moment it stops** — precisely the instances we want to collect.
 - ⚠️ **When terminating ourselves, `DeregisterContainerInstance` (`Force: true`) first.** As decision 3-2
   says, the registration remains `ACTIVE / agentConnected=false`, and **a ghost that looks ACTIVE satisfies
-  placement constraints**. `sweepGhostInstances` is the repair path for "boxes that disappeared for other
+  placement constraints**. `sweepGhostInstances` is the repair path for "instances that disappeared for other
   reasons"; there is no reason to leave the window open when we are the ones deleting it.
 
 **As a result `Ec2MaxSlots` sheds one role.** It served as **A** the cap on concurrency, **B** the number of
-retained roots, and **C** the eviction threshold, and A and B coincided only "because boxes are never
-terminated". The steady-state box count now follows "activity plus the threshold", and **B falls away**.
+retained roots, and **C** the eviction threshold, and A and B coincided only "because instances are never
+terminated". The steady-state instance count now follows "activity plus the threshold", and **B falls away**.
 
 **What was not done**: a warm floor (above). Separate thresholds for free and occupied (both answer the same
-single question, "how many hours to keep a box", and splitting them only adds operational surface).
-Automatically terminating quarantined boxes (`af-role=quarantined` is excluded from both walks — **the
+single question, "how many hours to keep an instance", and splitting them only adds operational surface).
+Automatically terminating quarantined instances (`af-role=quarantined` is excluded from both walks — **the
 evidence is deliberately kept**).
 
-## Decision 24 — eviction takes only "boxes you can ride". But it **does cross tenants** (2026-08-26)
+## Decision 24 — eviction takes only "instances you can ride". But it **does cross tenants** (2026-08-26)
 
 Two rough edges in decision 11-3 (eviction at the cap) found while working on decision 23. One is a bug, the
 other an undocumented design judgement (docs/64 §64.33 / §64.34).
 
 **(1) The type was not being checked (a bug; fixed).** `freeSlots` has filtered on instance-type from the
-start, but `evictLongestIdle` filtered only on AZ and on itself. `placeHome` puts the home onto the box won by
+start, but `evictLongestIdle` filtered only on AZ and on itself. `placeHome` puts the home onto the instance won by
 eviction directly with `attachHomeWithRetry` (it does not re-query `freeSlots`), so `slotTypeMatches` is not
 consulted either. The result: **an xlarge user takes a large and lands on it, and ECS keeps refusing placement
 with `no container instance met all of its requirements`** — stuck forever at desired 1 / running 0. The same
 symptom as decision 21's "observed across architectures on real hardware".
 
-**It survived because it is only exposed at the cap** (below the cap `growPool` runs, and a new box is by
+**It survived because it is only exposed at the cap** (below the cap `growPool` runs, and a new instance is by
 definition the right type). ⚠️ The fix is **making two copies into one** (`slotsOfMyType`) — as in §64.31.6,
 the root cause is "the same judgement in two places, only one of which is right". A consequence is that
 **the global longest-dormant is no longer necessarily the victim**.
 
 **(2) It crosses tenants (left as is).** Tenant A's Start may reclaim tenant B's dormant slot. Forbidding it
-produces the rule "tenant B cannot use a box tenant A is not using", which creates "members who cannot start"
+produces the rule "tenant B cannot use an instance tenant A is not using", which creates "members who cannot start"
 at the cap — the one outcome the operator stated they would absolutely avoid. What binds a tenant is
-`max_workspaces` (how many may run **concurrently**), not which physical box they land on. The victim's data
+`max_workspaces` (how many may run **concurrently**), not which physical instance they land on. The victim's data
 is not exposed (`releaseSlot` completes umount then detach; the root is "shared with the previous user" by
 design anyway). ⚠️ **On a deployment where the sum of tenant caps exceeds the pool cap, this path surfaces as
 "stealing from another tenant"**, but what should be closed is validation on the tenant-cap side, not a
 restriction on eviction.
 
-~~**What was not done**: terminating a wrong-type dormant box while pinned at the cap and rebuilding the right
+~~**What was not done**: terminating a wrong-type dormant instance while pinned at the cap and rebuilding the right
 type.~~ → **Implemented in decision 26.** "Failing explicitly" still leaves **people who cannot start unable
 to start**, which is the one outcome the operator explicitly said to avoid.
 
-## Decision 26 — if the cap is filled with boxes you cannot ride, clear one and rebuild (continuing decision 24, 2026-08-26)
+## Decision 26 — if the cap is filled with instances you cannot ride, clear one and rebuild (continuing decision 24, 2026-08-26)
 
-Adding the type check to eviction in decision 24 turned "at the cap with every dormant box the wrong type"
+Adding the type check to eviction in decision 24 turned "at the cap with every dormant instance the wrong type"
 from "silently stuck" into "explicitly failing". Diagnosis became possible, but **from the user's point of
 view both mean they cannot start**. The policy is "slower is acceptable, unusable is not", so this must not
 fail.
@@ -1024,34 +1024,34 @@ A tier is added after ⑤ in `placeHome`: `evictLongestIdle` → (on failure) **
 in order of speed (moving 109.7s → clearing and rebuilding 135s plus a terminate), and **the last one became a
 "slow success" instead of a "failure"** — that is the whole of this decision.
 
-- **Terminate rather than take.** The instance type is not an attribute a running box can change.
-  `evictLongestIdle` **has first refusal over every correctly sized box**, so not finding one there means the
-  rest are "boxes that cannot be ridden however they are reused", and one of them is holding a slot.
-  **The only way to free the slot is to delete the box** (as in decision 23, the root cannot be deleted on
+- **Terminate rather than take.** The instance type is not an attribute a running instance can change.
+  `evictLongestIdle` **has first refusal over every correctly sized instance**, so not finding one there means the
+  rest are "instances that cannot be ridden however they are reused", and one of them is holding a slot.
+  **The only way to free the slot is to delete the instance** (as in decision 23, the root cannot be deleted on
   its own).
-- ⚠️ **Do not filter by AZ (the opposite of eviction).** Eviction **reuses** the box and so is bound to
-  home's AZ, whereas this **destroys a box to buy a slot**, and since `Ec2MaxSlots` counts the whole pool,
-  **freeing a box in another AZ is worth the same**. Filtering would leave a requester stuck while a box
+- ⚠️ **Do not filter by AZ (the opposite of eviction).** Eviction **reuses** the instance and so is bound to
+  home's AZ, whereas this **destroys an instance to buy a slot**, and since `Ec2MaxSlots` counts the whole pool,
+  **freeing an instance in another AZ is worth the same**. Filtering would leave a requester stuck while an instance
   could have been freed.
 - ⚠️ **Do not gate it on `Ec2SlotTerminateAfterSec`.** That is a knob for **idle cost**, where 0 means "keep
-  the box". This is about **people who cannot start**, and it only runs when the alternative is "the Start
+  the instance". This is about **people who cannot start**, and it only runs when the alternative is "the Start
   fails". The victim loses only the image cache (110s→135s next time) and not home (`releaseSlot` detaches
   first; `DeleteOnTermination: False`). And **the default is 0**, and **deployments with 0 are exactly the
-  ones whose boxes grow to the cap and stick there** (decision 23) — a gate would leave it ineffective on
+  ones whose instances grow to the cap and stick there** (decision 23) — a gate would leave it ineffective on
   precisely the deployments that need this path most.
-- **Take an empty box before one with an owner** (it uses nobody's affinity, so it is free). Among owned
+- **Take an empty instance before one with an owner** (it uses nobody's affinity, so it is free). Among owned
   ones, the longest dormant.
-- **Do not take a box with a live claim** (a landing Start has no attachment yet, and the claim is the only
+- **Do not take an instance with a live claim** (a landing Start has no attachment yet, and the claim is the only
   evidence). **Do not take one with even one ECS task** (a task can run without a home — the bake's probe).
-  **Do not consider boxes of your own type** (eviction has first refusal; destroying one would throw away a
-  box that could have been reused, and rebuild it). Quarantined boxes stay out of both walks (decision 20).
+  **Do not consider instances of your own type** (eviction has first refusal; destroying one would throw away a
+  instance that could have been reused, and rebuild it). Quarantined instances stay out of both walks (decision 20).
 - Right after terminating, `DescribeInstances` may still say `stopped`, so **wait until it drops out of
   `poolSize`** (`runSlot` re-reads the cap; without waiting, your own Start fails as "full" because of the
   slot you just freed).
 
-**If there is not a single box that can be cleared, return eviction's original error as it is** — "the pool
+**If there is not a single instance that can be cleared, return eviction's original error as it is** — "the pool
 is full" is the one sentence that points at what the operator can do. That `makeRoom` does not become "delete
-any box at all" is pinned by tests. A stage was added to the launch dialogue too (`slot: making room`) —
+any instance at all" is pinned by tests. A stage was added to the launch dialogue too (`slot: making room`) —
 **it is the longest wait in the product**, and falling back to something generic would leave the longest wait
 the only one that does not name its reason.
 
@@ -1083,7 +1083,7 @@ Why it is not a refusal:
 it is emitted as **a separate warning** from "exceeded" (`unbounded_tenants`).
 
 ⚠️ **The denominators differ.** `max_workspaces` counts *running/starting* workspaces, while `Ec2MaxSlots`
-counts *boxes that exist*, and **a stopped workspace holds a box while counting against neither tenant's
+counts *instances that exist*, and **a stopped workspace holds an instance while counting against neither tenant's
 allowance** (deferred return). So Σ ≤ capacity is **necessary but not sufficient**. Decision 23 narrows the gap
 to "the last N hours" but not to zero. **Do not use one word for the two on screen either** — the cap field is
 annotated "the number running concurrently", and the warning always carries this proviso.
@@ -1093,17 +1093,17 @@ which means "there is no such question", not "everything is fine". There are two
 the pool screen, and both **only carry it when there is a problem** (an "all fine" every time is not read when
 it finally does appear).
 
-## Decision 27 — put a time limit on "not registered yet". **If the box's OS dies, discard it and re-place rather than wait** (a production incident, 2026-08-27)
+## Decision 27 — put a time limit on "not registered yet". **If the instance's OS dies, discard it and re-place rather than wait** (a production incident, 2026-08-27)
 
-Decision 20 quarantined "a box that could not mount home". This time the same thing happened one step earlier,
-**while ECS was being asked whether the box could accept a task** — in a form nobody could notice.
+Decision 20 quarantined "an instance that could not mount home". This time the same thing happened one step earlier,
+**while ECS was being asked whether the instance could accept a task** — in a form nobody could notice.
 
 It happened on real hardware (docs/64 §64.40): something inside a workspace held several GB of anonymous
 memory, and **with zero swap the kernel's only means of reclaim was to shave the page cache**, so every process
 thereafter kept re-reading its executable pages. **The root volume holds only 8.0 GB of data, yet it did
 39.34 GB per 5 minutes for 3 hours** — **re-reading the disk's contents 4.9 times every five minutes** (refault
-thrash). The box's management stack (efs-utils' stunnel → the ECS agent → the SSM agent) **all died within 15
-seconds**. All three EC2 status checks stayed `passed`, i.e. **from outside the box was healthy**.
+thrash). The instance's management stack (efs-utils' stunnel → the ECS agent → the SSM agent) **all died within 15
+seconds**. All three EC2 status checks stayed `passed`, i.e. **from outside the instance was healthy**.
 
 ⚠️ **The OOM killer never fired once** (`hung_task` is 0 too; `OOMKilled=false`). **It does not fire in this
 state** — because reclaim keeps succeeding, by destroying the cache.
@@ -1112,28 +1112,28 @@ state** — because reclaim keeps succeeding, by destroying the cache.
 
 **So, in addition to decision 20 (quarantine), containment is needed**: `MemBytes` (a per-workspace RAM cap)
 already exists and is used on the docker runtime, yet **only ecs-ec2 leaves `Memory: nil` and does not apply
-it**. With a cap, the eviction pressure would have been **confined to that container's cgroup** and the box's
+it**. With a cap, the eviction pressure would have been **confined to that container's cgroup** and the instance's
 management stack would have survived.
-⚠️ But the "size" a user chooses is the box's size, so putting `MemBytes` in directly makes the cap equal to
-the whole box and **leaves no headroom for the management stack**. It only means anything as
-**"the box's memory minus the management stack's share"**. (That containment is out of scope for decision 27
+⚠️ But the "size" a user chooses is the instance's size, so putting `MemBytes` in directly makes the cap equal to
+the whole instance and **leaves no headroom for the management stack**. It only means anything as
+**"the instance's memory minus the management stack's share"**. (That containment is out of scope for decision 27
 and is raised as a separate decision.) And with all three layers behaving correctly, the result was **a
 deadlock nobody could recover from**: ECS cannot stop a task whose agent is gone → the task ENI is never
-detached → the sweep correctly backs off with "do not stop a box with an ENI" (decision 3-3) → Start reuses the
-same box by affinity and waits forever for registration → **the ingress cuts it at 60 seconds and the user gets
+detached → the sweep correctly backs off with "do not stop an instance with an ENI" (decision 3-3) → Start reuses the
+same instance by affinity and waits forever for registration → **the ingress cuts it at 60 seconds and the user gets
 a 504.** Four presses gave four 504s, and the CP's log says only `500 1m0.0s` (two sides of the same event).
 
 - **Add ECS registration to the `deferred` check.** The homeless path looked at `running && registered` from the
   start, but the affinity-reuse branch looked only at EC2's `running`. `deferred` is the flag deciding "run it
-  on the caller's thread", and Start is inside a 60-second ingress. **On a healthy pool a running box is
+  on the caller's thread", and Start is inside a 60-second ingress. **On a healthy pool a running instance is
   registered, so this asymmetry is completely invisible in normal operation** — it only appears in an incident.
 - **Once the grace (`AF_ECS_EC2_SLOT_LOST_AFTER_SEC`, default 5 minutes) has passed and EC2 still says
-  `running`, the box is not slow but lost.** `pending` boxes are excluded — destroying a box that is still
+  `running`, the instance is not slow but lost.** `pending` instances are excluded — destroying an instance that is still
   booting turns "a slow Start" into "a broken Start", and the cost of being wrong is asymmetric (waiting too
   long only costs a few minutes).
 - **Decision 20's teardown cannot be reused.** That was written on the premise that "nothing is running yet and
-  the kernel is alive". On a box whose OS is dead, every step quietly does the wrong thing — `DetachVolume`
-  against a running box never returns, an ordinary `StopInstances` waits for an ACPI shutdown nobody is
+  the kernel is alive". On an instance whose OS is dead, every step quietly does the wrong thing — `DetachVolume`
+  against a running instance never returns, an ordinary `StopInstances` waits for an ACPI shutdown nobody is
   listening for, and **stopping with a task ENI attached loses egress via multi-ENI (decision 3-3)**.
   So the order is reversed and one step is added at the front: **tag → force deregister → wait for the ENI to
   disappear → force stop → a normal detach after it has stopped.** Force deregistering is permissible because
@@ -1143,8 +1143,8 @@ a 504.** Four presses gave four 504s, and the CP's log says only `500 1m0.0s` (t
   unlike decision 20 (whose purpose was "stop it taking others down", with the person rescued by their next
   Start). Here the Start the person pressed is the thing failing, so we re-place and bring it back up.
   ⚠️ **The budget of one is the crux** — if the whole pool is broken for a reason this code does not
-  understand, an unlimited budget would quarantine one box per Start and **turn "a degraded deployment" into
-  "an empty deployment"**. After two boxes it gives up and returns to `stopped` (a state the user can retry
+  understand, an unlimited budget would quarantine one instance per Start and **turn "a degraded deployment" into
+  "an empty deployment"**. After two instances it gives up and returns to `stopped` (a state the user can retry
   from).
 - **The claim is not dropped at quarantine time** (the only place this is the reverse of decision 20).
   `State()` looks at the claim and answers `starting`. Dropping it mid-re-placement would make the Console show
@@ -1155,16 +1155,16 @@ a 504.** Four presses gave four 504s, and the CP's log says only `500 1m0.0s` (t
 
 ⚠️ **The hole that remains is being unable to prove afterwards why memory ran out.** The slots have no host
 memory metrics (neither CWAgent nor Container Insights is installed), and the journal is on tmpfs so dmesg and
-any OOM killer record vanish the moment the box is stopped. Even this time, memory exhaustion remained
+any OOM killer record vanish the moment the instance is stopped. Even this time, memory exhaustion remained
 **an inference from the shape of exploding EBS reads with zero writes**.
 
-## Decision 28 — **detach the workspace from the box**. The cap exists not to stop a runaway but to **stop the collateral damage** (2026-08-27)
+## Decision 28 — **detach the workspace from the instance**. The cap exists not to stop a runaway but to **stop the collateral damage** (2026-08-27)
 
 Decision 8 said "an EC2 slot is used by one person, so the task reserves nothing", and decision 21 made size
-"one axis, memory, with the box it lands on as a result". Both are right, but **as a consequence of the two the
-workspace's container can take the whole box** (`Memory: nil`). The incident in docs/64 §64.40 happened there —
+"one axis, memory, with the instance it lands on as a result". Both are right, but **as a consequence of the two the
+workspace's container can take the whole instance** (`Memory: nil`). The incident in docs/64 §64.40 happened there —
 something inside the workspace held several GB of anonymous memory, and with zero swap the kernel's only reclaim
-was shaving the page cache, so **the box's management stack (dockerd / containerd / the ECS agent / SSM / efs
+was shaving the page cache, so **the instance's management stack (dockerd / containerd / the ECS agent / SSM / efs
 stunnel) kept re-reading its executable pages and all died within 15 seconds.**
 
 ★ **What we fix is not "stopping the runaway".** A user making their own workspace heavy is normal use of this
@@ -1188,10 +1188,10 @@ product and is not to be stopped. **What must be stopped is only the collateral 
   confirmed**, so using it would mean reordering `launch()` — a precision that a thicker reserve absorbs.
   If a rung is too small to share, **do not apply a cap at all** (leaving that deployment as it was is better
   than creating an unusable workspace).
-- **Make the size display honest.** Before the cap, "8 GiB" meant both the box and the workspace and was honest
-  as one number. Afterwards they are different numbers, so **showing only the box promises the person memory the
+- **Make the size display honest.** Before the cap, "8 GiB" meant both the instance and the workspace and was honest
+  as one number. Afterwards they are different numbers, so **showing only the instance promises the person memory the
   cgroup will not give them**. `usable_mem_mib` is added, and the Console shows **what they can use first, with
-  the box in parentheses**. ⚠️ **Omit it on deployments with no cap** — there the box is the answer, and showing
+  the instance in parentheses**. ⚠️ **Omit it on deployments with no cap** — there the instance is the answer, and showing
   two would be the lie.
 - **The means of noticing only works once the cap is in.** The agent already returns `mem_used` / `mem_max` /
   `oom_kill_total`, and **`mem_max` is implemented to be deliberately dropped when the cgroup is unlimited**

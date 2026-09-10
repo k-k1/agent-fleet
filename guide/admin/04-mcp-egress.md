@@ -77,33 +77,33 @@ Each role takes one of three settings.
 
 | | What it does |
 |---|---|
-| **Disabled** | The engine disappears from the launch menu and from `generate_image`, and requests are refused with 503. The box stops right away. |
-| **On demand** | A GPU box is bought only when something asks, and it stops itself once nobody has used it for a while. **This is the default.** |
-| **Always on** | The box is never stopped. Answers are faster, but **you are billed while nothing is using it**. |
+| **Disabled** | The engine disappears from the launch menu and from `generate_image`, and requests are refused with 503. The instance stops right away. |
+| **On demand** | A GPU instance is bought only when something asks, and it stops itself once nobody has used it for a while. **This is the default.** |
+| **Always on** | The instance is never stopped. Answers are faster, but **you are billed while nothing is using it**. |
 
 "State" is not the setting you chose — it is what is actually running. Right after you press
-Disabled the mode is disabled and the state says stopping, because the box does not vanish the
+Disabled the mode is disabled and the state says stopping, because the instance does not vanish the
 instant you press it. That is not a disagreement.
 
 ⚠️ **The first request waits.** A request to a stopped engine answers after roughly three
-minutes, the time it takes to buy a box and load the model (the call itself completes in one
+minutes, the time it takes to buy an instance and load the model (the call itself completes in one
 go — nothing has to be retried). Before time-critical work you can warm it up by switching to
 Always on — **and remember to switch it back.**
 
 ### The GPU instance class
 
 The selector under the modes appears only where the deployment **declares instance classes**. On
-a deployment that declares none, **there is no such control** — the box is whatever was fixed at
+a deployment that declares none, **there is no such control** — the instance is whatever was fixed at
 deployment time.
 
 It is for **temporarily moving a role onto a bigger GPU** in order to try a model that wants
 more VRAM.
 
-- **Choosing one does not change the box that is running.** It applies to **the next box
-  bought**. While one is up the panel says "What is running is a g6.xlarge box" and puts
+- **Choosing one does not change the instance that is running.** It applies to **the next instance
+  bought**. While one is up the panel says "What is running is a g6.xlarge instance" and puts
   **"Replace it now"** next to it.
-- **Replacing costs one cold start** (about 9 minutes for llm, 3 for image); the new box fetches
-  the model again. And **the new box does not start until the old one has left the cluster** —
+- **Replacing costs one cold start** (about 9 minutes for llm, 3 for image); the new instance fetches
+  the model again. And **the new instance does not start until the old one has left the cluster** —
   starting sooner runs into the account's GPU limit, where the placement *silently never
   happens* and it merely looks like a slow start.
 - **On a stopped engine, choosing costs nothing.** It is picked up by the start whoever uses it
@@ -111,7 +111,7 @@ more VRAM.
 - 🔴 **Left on a non-default class, the hourly rate stays up.** That is why a "not the default"
   tag and **"Back to the default"** are shown permanently while it is. **Put it back when you
   are done.**
-- **Some classes cannot be bought.** Choose one above the account's GPU limit and the box never
+- **Some classes cannot be bought.** Choose one above the account's GPU limit and the instance never
   arrives; the ECS reason (`VcpuLimitExceeded`) is printed under the state as it came. Ask the
   deployment admin for a limit increase.
 
@@ -145,10 +145,10 @@ granted or not:
 - Registering the deployment's **Hugging Face token**
 
 🔴 **The catalogue is one per deployment and is not split per tenant. The id of a model taken in is
-visible from every tenant.** That is deliberate: the GPU box is shared between tenants, and every
+visible from every tenant.** That is deliberate: the GPU instance is shared between tenants, and every
 enabled model is synced onto it at every start — so a per-tenant catalogue would push the cold start
 past ten minutes **at about five tenants, even with one model each** (measured; the sync is serial at
-roughly 159 MB/s). The boundary worth having is the GPU box, not the catalogue. **Do not read this
+roughly 159 MB/s). The boundary worth having is the GPU instance, not the catalogue. **Do not read this
 grant as isolation between tenants.**
 
 Who accepted which licence is kept on the row: **which tenant, which person, when, and which
@@ -160,9 +160,9 @@ it, which means "the operator accepted on behalf of the whole deployment".
 Below the setting is what that engine is doing right now. **A line that is not there means "not
 known"** — nothing is padded out with a zero or a "not scheduled", so read the absences that way.
 
-- **Box started** — when the GPU instance joined the cluster, how long ago that was, and the
-  instance id. If it says **Service updated** instead, no box was found; that timestamp also
-  moves on a deployment update, so it is not the box's own lifetime.
+- **Instance started** — when the GPU instance joined the cluster, how long ago that was, and the
+  instance id. If it says **Service updated** instead, no instance was found; that timestamp also
+  moves on a deployment update, so it is not the instance's own lifetime.
 - **Stops by itself** — shown only for an engine running on demand. **It is absent under Always
   on**, because it does not stop. Same for Disabled and for an engine that is already stopped:
   the absence is the answer.
@@ -183,8 +183,8 @@ Opening **History** shows a heatmap of **24 hours down by date across**. One cel
 and the darker it is the longer the engine was up in that hour.
 
 - The shade can mean one of two things. **Able to answer** is the time it could serve requests;
-  **A box existed** adds the cold start (not able to answer yet) and the drain (the task is gone
-  but the instance is not). **Those two also bill**, so use "a box existed" when reconciling
+  **An instance existed** adds the cold start (not able to answer yet) and the drain (the task is gone
+  but the instance is not). **Those two also bill**, so use "an instance existed" when reconciling
   against an invoice.
 - 🔴 **A blank cell means "no record", not "it was stopped".** The control plane was not running,
   or the engine did not exist yet, and it cannot be filled in afterwards. Time the engine spent
