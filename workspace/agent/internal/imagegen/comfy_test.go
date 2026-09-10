@@ -309,6 +309,158 @@ func TestComfyAwaitHistoryPollsUntilComplete(t *testing.T) {
 	}
 }
 
+// comfyPollStub answers the three-call sequence with a scripted /history: historyHandler decides
+// what each poll sees, so a test can make the box go away mid-poll.
+func comfyPollStub(t *testing.T, historyHandler http.HandlerFunc) *comfyProvider {
+	t.Helper()
+	const promptID = "af-test-prompt"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/engine/image/v1/prompt", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"prompt_id": promptID})
+	})
+	mux.HandleFunc("/engine/image/v1/history/"+promptID, historyHandler)
+	mux.HandleFunc("/engine/image/v1/view", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(tinyPNG(t, 1, 1))
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return &comfyProvider{
+		client: srv.Client(),
+		lookup: func(context.Context) (EngineConn, bool) {
+			c := sdxlConn()
+			c.BaseURL = srv.URL + "/engine/image/v1"
+			c.Token = "afe_test"
+			return c, true
+		},
+	}
+}
+
+// comfyHistoryDone is the /history answer for a finished prompt.
+func comfyHistoryDone(w http.ResponseWriter) {
+	_ = json.NewEncoder(w).Encode(map[string]any{"af-test-prompt": map[string]any{
+		"status":  map[string]any{"completed": true, "status_str": "success"},
+		"outputs": map[string]any{"save": map[string]any{"images": []map[string]any{{"filename": "af-sdxl_00001_.png"}}}},
+	}})
+}
+
+// comfyWaking writes the gateway's own 503 engine_waking — the answer whose message ends in
+// "retry".
+func comfyWaking(w http.ResponseWriter) {
+	w.Header().Set("Retry-After", "1")
+	w.WriteHeader(http.StatusServiceUnavailable)
+	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{
+		"code": "engine_waking", "message": "the fleet's own inference engine is starting; retry"}})
+}
+
+// ADR 0072 欠落 9: a box replaced mid-poll made /history answer 503 engine_waking, and the caller
+// was handed a message that says "retry" by a loop that did not. It is waited out like /prompt's.
+func TestComfyAwaitHistoryRetriesOnEngineWaking(t *testing.T) {
+	oldMin, oldMax := sdcppRetryMin, sdcppRetryMax
+	sdcppRetryMin, sdcppRetryMax = time.Millisecond, 5*time.Millisecond
+	t.Cleanup(func() { sdcppRetryMin, sdcppRetryMax = oldMin, oldMax })
+
+	var polls int32
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&polls, 1) < 3 {
+			comfyWaking(w)
+			return
+		}
+		comfyHistoryDone(w)
+	})
+	res, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if polls != 3 {
+		t.Errorf("polls = %d, want 3 (two waited-out 503s, then the answer)", polls)
+	}
+	if len(res.Images) != 1 {
+		t.Errorf("images = %d, want 1", len(res.Images))
+	}
+}
+
+// The other direction, and the reason this is a code check rather than a status check: a 503 the
+// gateway does NOT mean to be retried has to surface at once, not fifteen minutes later.
+func TestComfyAwaitHistoryDoesNotRetryANonRetryableRefusal(t *testing.T) {
+	var polls int32
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&polls, 1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"code": "engine_off", "message": "switched off"}})
+	})
+	_, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"})
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if polls != 1 {
+		t.Errorf("polls = %d, want exactly 1", polls)
+	}
+	if !strings.Contains(err.Error(), "/history") {
+		t.Errorf("error = %v, want it to name the call that refused", err)
+	}
+}
+
+// Retrying cannot bring a queue back: a restarted ComfyUI holds no history for a prompt the
+// previous process accepted. Polling on for the request's whole budget would be silence, so the
+// loss is reported as soon as the engine answers again without this prompt.
+func TestComfyAwaitHistoryReportsALostQueueAfterARestart(t *testing.T) {
+	oldMin, oldMax := sdcppRetryMin, sdcppRetryMax
+	oldPoll := comfyPollEvery
+	sdcppRetryMin, sdcppRetryMax = time.Millisecond, 5*time.Millisecond
+	comfyPollEvery = time.Millisecond
+	t.Cleanup(func() {
+		sdcppRetryMin, sdcppRetryMax = oldMin, oldMax
+		comfyPollEvery = oldPoll
+	})
+
+	var polls int32
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&polls, 1) == 1 {
+			comfyWaking(w)
+			return
+		}
+		// The new box is up and knows nothing about the prompt the old one queued.
+		_ = json.NewEncoder(w).Encode(map[string]any{})
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	_, err := p.Generate(ctx, Request{Op: OpGenerate, Prompt: "a fox"})
+	if err == nil {
+		t.Fatal("expected an error rather than a poll that runs out the whole budget")
+	}
+	if !strings.Contains(err.Error(), "restarted") || !strings.Contains(err.Error(), "ask again") {
+		t.Errorf("error = %v, want it to say the engine restarted and the request has to be made again", err)
+	}
+	if ctx.Err() != nil {
+		t.Error("the request's own budget ran out: the loss was polled for rather than reported")
+	}
+}
+
+// An unknown prompt id on its own is NOT a loss — ComfyUI's history holds finished prompts only,
+// so every poll before the picture exists looks exactly like this. The negative control for the
+// test above: without the wake, the same answer has to keep polling.
+func TestComfyAwaitHistoryKeepsPollingAnUnknownPromptWithoutAWake(t *testing.T) {
+	oldPoll := comfyPollEvery
+	comfyPollEvery = time.Millisecond
+	t.Cleanup(func() { comfyPollEvery = oldPoll })
+
+	var polls int32
+	p := comfyPollStub(t, func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&polls, 1) < 3 {
+			_ = json.NewEncoder(w).Encode(map[string]any{})
+			return
+		}
+		comfyHistoryDone(w)
+	})
+	if _, err := p.Generate(context.Background(), Request{Op: OpGenerate, Prompt: "a fox"}); err != nil {
+		t.Fatalf("Generate() = %v", err)
+	}
+	if polls != 3 {
+		t.Errorf("polls = %d, want 3 (an empty history is a picture still being made)", polls)
+	}
+}
+
 // Caps advertises generate only (P2 scope decision) even though sdcpp, the other self-hosted
 // provider, offers edit and inpaint too.
 func TestComfyCapsIsGenerateOnly(t *testing.T) {
