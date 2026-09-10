@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter — EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/log/64 §64.12 /
-  §64.15, ADR 0045 decision 10). Owns what a SLOT is: the launch template (ECS-optimized
+  agent-fleet ECS adapter - EC2 slot pool for AF_RUNTIME=ecs-ec2 (docs/log/64 sec.64.12 /
+  sec.64.15, ADR 0045 decision 10). Owns what a SLOT is: the launch template (ECS-optimized
   AMI, the cluster-join user-data, the af-mount/af-umount helpers), the instance role
-  and the slot security group. It creates NO instances — the Control Plane runs them
+  and the slot security group. It creates NO instances - the Control Plane runs them
   on demand and tags them af-pool/af-role=slot, exactly as it creates services and
   access points at runtime. Optional: deploy this only for the ecs-ec2 profile.
 
@@ -21,26 +21,26 @@ Parameters:
     Default: /aws/service/ecs/optimized-ami/amazon-linux-2023/recommended/image_id
     Description: ECS-optimized AMI. Resolved at stack update, so re-deploying this
       stack is how slots get patched (the one operational cost the EC2 launch type
-      really does add — ADR 0045 decision 7).
+      really does add - ADR 0045 decision 7).
   SlotAmiIdArm64:
     Type: String
     Default: ""
     Description: >-
       arm64 ECS-optimized AMI, for slot classes that declare arch=arm64 (docs/log/70
-      §70.8). Leave EMPTY unless AF_ECS_EC2_SLOT_TYPES actually declares an arm64
-      class — the Control Plane refuses to start when one is declared and this is
+      sec.70.8). Leave EMPTY unless AF_ECS_EC2_SLOT_TYPES actually declares an arm64
+      class - the Control Plane refuses to start when one is declared and this is
       not set, which is deliberate: a class that appears in the admin UI and cannot
       launch is worse than a deployment that says so at boot.
 
       To turn it on, set this to the SSM value
       /aws/service/ecs/optimized-ami/amazon-linux-2023/arm64/recommended/image_id
-      (`aws ssm get-parameter --name … --query Parameter.Value --output text`).
+      (`aws ssm get-parameter --name ... --query Parameter.Value --output text`).
       A plain String rather than an SSM::Parameter::Value type because that type
       cannot be left empty, and empty is the default this has to have.
 
-      ⚠️ There is NO second launch template. Everything about a slot except the AMI —
+      !! There is NO second launch template. Everything about a slot except the AMI -
       instance profile, security group, root volume, and the user-data that joins the
-      cluster and installs af-mount/af-umount — is architecture-neutral, so the CP
+      cluster and installs af-mount/af-umount - is architecture-neutral, so the CP
       passes this as a RunInstances ImageId override on the one template below.
       Patching it is still "redeploy this stack" (ADR 0045 decision 7).
   SlotRootVolumeGiB:
@@ -49,7 +49,7 @@ Parameters:
     MinValue: 40
     Description: Root volume of a slot. This is the IMAGE CACHE (a warm pull is 0.045s
       vs 32s cold) plus every container's write layer, and it is SHARED with whoever
-      had the slot before — /tmp is a tmpfs precisely so it does not land here.
+      had the slot before - /tmp is a tmpfs precisely so it does not land here.
   TaskCleanupWait:
     Type: String
     Default: 5m
@@ -118,7 +118,7 @@ Resources:
         SecurityGroupIds: [ !Ref SlotSg ]
         # Private subnets + NAT only. A slot must never depend on an auto-assigned
         # public IPv4: a task ENI that survives a stop makes the instance multi-ENI and
-        # the address silently stops being assigned — measured as 11 minutes of a
+        # the address silently stops being assigned - measured as 11 minutes of a
         # disconnected agent (ADR 0045 decision 3-3).
         MetadataOptions:
           HttpTokens: required
@@ -140,7 +140,7 @@ Resources:
               #!/bin/bash
               # agent-fleet slot bootstrap. A slot is generic: it joins the cluster and
               # installs the two helpers the CP drives over SSM. It deliberately does
-              # NOT touch any data volume and writes NO fstab entry — whose home is on
+              # NOT touch any data volume and writes NO fstab entry - whose home is on
               # this box changes several times a day, and a stale fstab would make a
               # slot fail to boot for the NEXT user.
               exec > /var/log/af-userdata.log 2>&1
@@ -193,21 +193,21 @@ Resources:
                 Fn::ImportValue: !Sub "${PlatformStackName}-ClusterName"
               Cleanup: !Ref TaskCleanupWait
 
-  # --- Slot I/O alarms (ADR 0045 decision 28 / docs/log/64 §64.41.4) ---
+  # --- Slot I/O alarms (ADR 0045 decision 28 / docs/log/64 sec.64.41.4) ---
   #
-  # 🔥 What they are for: on 2026-08-27 one workspace's runaway drove its slot into
-  # refault thrash — the root volume, which holds 8.0 GB of data in total, was read at
-  # 39.34 GB every five minutes for three hours (docs/log/64 §64.40). Every daemon on the
+  # !!! What they are for: on 2026-08-27 one workspace's runaway drove its slot into
+  # refault thrash - the root volume, which holds 8.0 GB of data in total, was read at
+  # 39.34 GB every five minutes for three hours (docs/log/64 sec.64.40). Every daemon on the
   # box starved and the workspace could not be started again for hours.
   #
-  # ⚠️ The metrics were ALL there the whole time. `VolumeQueueLength` went from 0.005
-  # to a flat 2.0 at the first minute of it; `EBSByteBalance%` fell 99 → 70. Nothing was
-  # missing except somebody looking. That is the whole reason these exist — the fix for
+  # !! The metrics were ALL there the whole time. `VolumeQueueLength` went from 0.005
+  # to a flat 2.0 at the first minute of it; `EBSByteBalance%` fell 99 -> 70. Nothing was
+  # missing except somebody looking. That is the whole reason these exist - the fix for
   # "we could not see it" is not more telemetry, it is an alarm on the telemetry.
   #
-  # ⚠️ THE CAVEAT, and it is a real one: CloudWatch cannot scope these to this stack.
+  # !! THE CAVEAT, and it is a real one: CloudWatch cannot scope these to this stack.
   # The metrics are dimensioned by VolumeId / InstanceId, the pool creates those at
-  # runtime, and Metrics Insights filters on dimension VALUES — not on tags. So the
+  # runtime, and Metrics Insights filters on dimension VALUES - not on tags. So the
   # queries below are ACCOUNT-WIDE within the region: another workload's busy volume
   # will trip them. Off by default for exactly that reason; turn them on where the
   # account is the deployment's own.
@@ -221,7 +221,7 @@ Resources:
         - Protocol: email
           Endpoint: !Ref PoolAlarmEmail
 
-  # The FAST one. A queue this deep, sustained, is a device that cannot keep up — which
+  # The FAST one. A queue this deep, sustained, is a device that cannot keep up - which
   # is what thrash looks like from outside. Measured for the threshold: an ordinary busy
   # workspace peaked at 1.52 for a single five-minute bucket, while the incident sat at
   # a flat 2.0 (root) and 6.7 (home) for three hours. Requiring THREE consecutive
@@ -233,7 +233,7 @@ Resources:
       AlarmName: !Sub "af-${AWS::StackName}-slot-io-queue"
       AlarmDescription: >-
         An EBS volume has had a deep queue for 15 minutes. On the slot pool this means a
-        workspace is thrashing its box; see docs/log/64 §64.40 for what that does to it.
+        workspace is thrashing its box; see docs/log/64 sec.64.40 for what that does to it.
       Metrics:
         - Id: q
           # No GROUP BY on purpose: the aggregate collapses every volume into the one
@@ -252,7 +252,7 @@ Resources:
 
   # The UNAMBIGUOUS one, and the slower of the two. Burning EBS byte credits is not
   # something a healthy slot does at all: the pool sat at 99% for its whole life and
-  # only the incident moved it (99 → 83 in 35 minutes, → 70 by the third hour). It needs
+  # only the incident moved it (99 -> 83 in 35 minutes, -> 70 by the third hour). It needs
   # no per-instance-type tuning because it is already a percentage.
   SlotIoAlarmByteBalance:
     Type: AWS::CloudWatch::Alarm
@@ -277,7 +277,7 @@ Resources:
 
 Outputs:
   # Conditional because CloudFormation REFUSES an empty export ("Exported values must
-  # not be empty or whitespace-only") and empty is this parameter's whole point — an
+  # not be empty or whitespace-only") and empty is this parameter's whole point - an
   # unconditional export made the stack impossible to create at all without an arm64
   # AMI, rolling back on the very last step (measured on a fresh 0.10.0 deployment).
   SlotAmiIdArm64:

@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter (P3-7) — ingress + Control Plane service. ACM cert (DNS-
+  agent-fleet ECS adapter (P3-7) - ingress + Control Plane service. ACM cert (DNS-
   validated via Route53), an internet-facing ALB that only terminates TLS (auth is
-  the CP-native login, AUTH=oauth — no ALB OIDC), the CP/Console Fargate service
+  the CP-native login, AUTH=oauth - no ALB OIDC), the CP/Console Fargate service
   (Service Connect client so it can reach the workspace Agents it provisions), and
   the Route53 alias. Imports 00-network, 10-data (EFS + RDS) and 20-platform. The CP
   is wired with AF_ECS_* so the stage-2 ecsRuntime provisions workspaces on demand, and
@@ -12,7 +12,7 @@ Parameters:
   # Anything too long for one line is in PARAMETERS.md next door (measurements, trade-offs,
   # traps). These are terse because of the 51,200-byte template limit: a YAML comment counts
   # toward the body exactly like a Description, so moving prose into a `#` does not shrink
-  # the template — only moving it out of the file does.
+  # the template - only moving it out of the file does.
   NetworkStackName:
     Type: String
     Default: af-ecs-network
@@ -41,14 +41,14 @@ Parameters:
     Default: "2048"
     Description: >-
       Default workspace task memory in MiB. Must be a valid pair with WsTaskCpu (1 vCPU
-      allows 2048-8192 in 1024 steps). 2048 is tight for real use — see PARAMETERS.md.
+      allows 2048-8192 in 1024 steps). 2048 is tight for real use - see PARAMETERS.md.
   WsDiskGiB:
     Type: String
     Default: "50"
     Description: >-
       Default per-workspace WORKING disk in GiB (wiped on stop; only the EFS home persists).
-      0 keeps Fargate's free 20 GiB; 21-200 sets ephemeral storage. ⚠️ Also the switch that
-      moves caches and build artifacts off EFS — it arms only at 30 or more. PARAMETERS.md.
+      0 keeps Fargate's free 20 GiB; 21-200 sets ephemeral storage. !! Also the switch that
+      moves caches and build artifacts off EFS - it arms only at 30 or more. PARAMETERS.md.
   WsRuntime:
     Type: String
     Default: ecs
@@ -61,29 +61,29 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      SlotLaunchTemplateId output of the 40-ec2-pool stack (lt-…). Required when
-      WsRuntime=ecs-ec2 — the CP refuses to boot on that profile without it.
+      SlotLaunchTemplateId output of the 40-ec2-pool stack (lt-...). Required when
+      WsRuntime=ecs-ec2 - the CP refuses to boot on that profile without it.
   Ec2SlotTypes:
     Type: String
     Default: "standard|Standard (Intel)|x86_64|m7i.large:8192:2,m7i.xlarge:16384:4,m7i.2xlarge:32768:8;saver|Lower cost (Intel, previous gen)|x86_64|m6i.large:8192:2,m6i.xlarge:16384:4,m6i.2xlarge:32768:8"
     Description: >-
       The slot sizes the pool may run; a workspace lands on the smallest rung that holds its
-      memory request and gets the whole box. Either `instanceType:memoryMiB[:vcpu],…` (one
-      unnamed x86_64 class) or `id|label|arch|<ladder>[;…]` (one class per entry). arch is
-      declared, never guessed. ⚠️ Changing it moves nobody — see Ec2DefaultSlotClass. Adding
+      memory request and gets the whole box. Either `instanceType:memoryMiB[:vcpu],...` (one
+      unnamed x86_64 class) or `id|label|arch|<ladder>[;...]` (one class per entry). arch is
+      declared, never guessed. !! Changing it moves nobody - see Ec2DefaultSlotClass. Adding
       an arm64 class needs an arm64 workspace image AND Ec2SlotAmiArm64. PARAMETERS.md.
   Ec2SlotAmiArm64:
     Type: String
     Default: ""
     Description: >-
       SlotAmiIdArm64 output of the 40-ec2-pool stack. Required only when Ec2SlotTypes
-      declares an arm64 class — the CP refuses to boot otherwise.
+      declares an arm64 class - the CP refuses to boot otherwise.
   Ec2DefaultSlotClass:
     Type: String
     Default: ""
     Description: >-
       The class id a member lands on with no per-user and no per-tenant value. Empty = the
-      first class in Ec2SlotTypes. ⚠️ Moving it moves EVERY member who has not chosen.
+      first class in Ec2SlotTypes. !! Moving it moves EVERY member who has not chosen.
   Ec2MaxSlots:
     Type: String
     Default: "8"
@@ -102,7 +102,7 @@ Parameters:
     Default: "900"
     Description: >-
       How long a slot may sit with no running task before the instance is STOPPED (the image
-      cache lives on its root volume). Not the per-person idle-stop — this starts counting
+      cache lives on its root volume). Not the per-person idle-stop - this starts counting
       after that. Sleeping ~$9.6/month vs ~$95 running; the owner wakes it in ~110s.
       0 = keep every slot running forever. PARAMETERS.md.
   Ec2SlotTerminateAfterSec:
@@ -111,7 +111,7 @@ Parameters:
     Description: >-
       The step after Ec2SlotSleepSec on the same clock, and the only one that gives the ROOT
       VOLUME back. 0 (default) = never terminate, so retained roots only grow to Ec2MaxSlots
-      × SlotRootVolumeGiB of gp3. 14400 (4h) is the recommended value; it costs the next
+      x SlotRootVolumeGiB of gp3. 14400 (4h) is the recommended value; it costs the next
       arrival 25s. Must be >= Ec2SlotSleepSec. PARAMETERS.md.
   Ec2HibernateAfterSec:
     Type: String
@@ -119,16 +119,16 @@ Parameters:
     Description: >-
       Deployment default for how long a home may sit unopened before it is snapshotted and
       its volume deleted; the next start restores it (~122s). A tenant overrides it from the
-      Console. ⚠️ The only automatic path that moves a user's HOME — hence 0 (off) by
+      Console. !! The only automatic path that moves a user's HOME - hence 0 (off) by
       default, and it snapshots before deleting. 2160h (90d) is a sane start. PARAMETERS.md.
   Ec2HomeGiB:
     Type: String
     Default: "50"
     Description: >-
       Default size of a user's persistent home volume (gp3). Billed on PROVISIONED size, so
-      the break-even fill rate against EFS is 26.7% — do not over-provision.
+      the break-even fill rate against EFS is 26.7% - do not over-provision.
   # --- Scheduled execution (docs/log/38) ------------------------------------
-  # ⚠️ EMPTY means "keep the product default" for all four; the defaults live in the CP
+  # !! EMPTY means "keep the product default" for all four; the defaults live in the CP
   # (control-plane/main.go). Copying them here would freeze this deployment on whatever they
   # were the day the stack was written.
   SchedulerInterval:
@@ -142,7 +142,7 @@ Parameters:
     Default: ""
     Description: >-
       How long one fire waits for the woken workspace's Agent to answer (Go duration,
-      default 300s). ⚠️ Do not lower this on ecs-ec2 without measuring — the clock starts
+      default 300s). !! Do not lower this on ecs-ec2 without measuring - the clock starts
       ~20s before the adapter's own, and the same workspace measured 65-131s. PARAMETERS.md.
   ScheduleSettle:
     Type: String
@@ -159,16 +159,16 @@ Parameters:
       and {{time}} still show the requested time.
 
   # --- WAF (optional, OFF by default) ---------------------------------------
-  # ⚠️ ONLY rate limiting and IP reputation. The signature rule sets (Core rule set, SQLi,
+  # !! ONLY rate limiting and IP reputation. The signature rule sets (Core rule set, SQLi,
   # XSS, LFI) are deliberately NOT offered: this product carries source code and shell
   # commands in ordinary request bodies, so they would 403 real work at random and look like
-  # a product bug. The stronger control is upstream — 00-network's AlbIngressCidr.
+  # a product bug. The stronger control is upstream - 00-network's AlbIngressCidr.
   WafRateLimitPer5Min:
     Type: Number
     Default: 0
     Description: >-
       Requests per 5 minutes from one IP before WAF blocks it (0 = no WAF at all). Counts
-      Console polling too, so keep it well above one office behind one NAT — 3000 to start.
+      Console polling too, so keep it well above one office behind one NAT - 3000 to start.
   WafIpReputation:
     Type: String
     Default: "off"
@@ -180,11 +180,11 @@ Parameters:
     Type: String
     Description: >-
       Public host for the Console/API (ACM cert + Route53 alias), e.g.
-      af.example.com. Required — pass your own domain.
+      af.example.com. Required - pass your own domain.
   HostedZoneId:
     Type: String
     Description: >-
-      Route53 hosted zone id for the Fqdn's domain. Required — the zone must be
+      Route53 hosted zone id for the Fqdn's domain. Required - the zone must be
       in this account (ACM DNS validation + alias record are created in it).
   PreviewDomain:
     Type: String
@@ -192,8 +192,8 @@ Parameters:
     Description: >-
       Parent domain for the per-start preview subdomains (docs/81), e.g. pv.example.com;
       services become reachable at https://{slug}-{port}.{PreviewDomain}. Empty (default) =
-      the feature is off and only path-mode /preview/{port} exists. ⚠️ Use a SIBLING of the
-      Console FQDN, not a child (cookie scope — ADR 0062 decision 13), and make sure a zone you
+      the feature is off and only path-mode /preview/{port} exists. !! Use a SIBLING of the
+      Console FQDN, not a child (cookie scope - ADR 0062 decision 13), and make sure a zone you
       pass here or in PreviewHostedZoneId contains it, or ACM validation never finishes and
       the stack stalls rather than fails. PARAMETERS.md.
   PreviewHostedZoneId:
@@ -218,7 +218,7 @@ Parameters:
     AllowedValues: [ x86_64, arm64 ]
     Description: >-
       CPU architecture of the Control Plane's own Fargate task (docs/log/72). arm64 =
-      Graviton, ~20% cheaper per vCPU-hour. ⚠️ The one prerequisite is the IMAGE: the tag in
+      Graviton, ~20% cheaper per vCPU-hour. !! The one prerequisite is the IMAGE: the tag in
       ImageTag must carry an arm64 manifest, and an ordinary release is amd64-only, so check
       first or the service cannot place its task at all. Independent of the slots'
       architecture (Ec2SlotTypes). PARAMETERS.md.
@@ -226,7 +226,7 @@ Parameters:
     Type: String
     Default: /af-cp
     Description: SSM SecureString path prefix holding the CP secrets (created out of
-      band before deploy — see README). Params - cookie-secret, master-key, plus
+      band before deploy - see README). Params - cookie-secret, master-key, plus
       google-client-secret / oidc-client-secret / github-client-secret depending on
       the IdPs in use.
   GoogleClientId:
@@ -240,7 +240,7 @@ Parameters:
     AllowedPattern: "^[A-Z0-9_]*$"
     Description: >-
       Enable an OIDC IdP (Entra ID / Okta / Keycloak / Auth0 / Cognito / GitLab)
-      under this id — UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
+      under this id - UPPERCASE, e.g. ENTRA (it names the AF_OIDC_<ID>_* env). Empty
       = Google only. Its client secret must exist at <SsmPrefix>/oidc-client-secret.
       docs/log/61.
   OidcIssuer:
@@ -248,7 +248,7 @@ Parameters:
     Default: ""
     Description: >-
       AF_OIDC_<ID>_ISSUER, e.g. https://login.microsoftonline.com/<tenant-guid>/v2.0.
-      ★ Pin Entra to your tenant guid — with /common/ or /organizations/ every
+      * Pin Entra to your tenant guid - with /common/ or /organizations/ every
       Microsoft account in the world reaches the login and personal accounts can
       rewrite their own email, so the CP refuses to start unless OidcAllowedTids is set.
   OidcClientId:
@@ -260,13 +260,13 @@ Parameters:
     Default: issuer
     AllowedValues: [ issuer, email_verified ]
     Description: >-
-      AF_OIDC_<ID>_TRUST — why this IdP's email may be believed. issuer = the issuer
+      AF_OIDC_<ID>_TRUST - why this IdP's email may be believed. issuer = the issuer
       is pinned to one tenant (Entra ID, which never emits email_verified).
       email_verified = accept only when the IdP asserts that claim (Okta / Keycloak / Auth0).
   OidcAllowedTids:
     Type: String
     Default: ""
-    Description: AF_OIDC_<ID>_ALLOWED_TIDS — accepted Entra tenant ids. Required only
+    Description: AF_OIDC_<ID>_ALLOWED_TIDS - accepted Entra tenant ids. Required only
       when the issuer is the /common/ or /organizations/ endpoint.
   OidcLabelJa:
     Type: String
@@ -280,22 +280,22 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      AF_GITHUB_ALLOWED_ORGS — comma-separated GitHub orgs whose ACTIVE members may sign in.
+      AF_GITHUB_ALLOWED_ORGS - comma-separated GitHub orgs whose ACTIVE members may sign in.
       Setting this is what enables the GitHub button; its OAuth App secret must exist at
       <SsmPrefix>/github-client-secret and the app needs the redirect URI
-      https://<Fqdn>/oauth2/callback. ★ An org that restricts third-party OAuth apps must
-      approve it or everyone is rejected. docs/log/61 §61.7.
+      https://<Fqdn>/oauth2/callback. * An org that restricts third-party OAuth apps must
+      approve it or everyone is rejected. docs/log/61 sec.61.7.
   GithubClientId:
     Type: String
     Default: ""
     Description: GITHUB_OAUTH_CLIENT_ID (not secret; the secret comes from SSM). Sign-in
-      only since docs/log/71 — the Console's GitHub "Connect" button reads the OAuth app the
+      only since docs/log/71 - the Console's GitHub "Connect" button reads the OAuth app the
       TENANT registered (Tenant settings -> Integrations), not this one.
   GithubAllowedDomains:
     Type: String
     Default: ""
     Description: >-
-      AF_GITHUB_ALLOWED_DOMAINS — strongly recommended. GitHub hands us the account's PRIMARY
+      AF_GITHUB_ALLOWED_DOMAINS - strongly recommended. GitHub hands us the account's PRIMARY
       VERIFIED address, personal for most people, and a personal address is a DIFFERENT
       person here: they get a new empty workspace. Empty = the deployment-wide allowlist.
   AllowedEmails:
@@ -332,14 +332,14 @@ Parameters:
     AllowedValues: [ oauth, dev ]
     Description: >-
       CP auth mode. oauth (default) = the CP-native login (Google and/or OIDC). dev = fixed dev
-      identity with NO login — sandbox/E2E gates only: restrict the ALB security
+      identity with NO login - sandbox/E2E gates only: restrict the ALB security
       group to your own IP before using it (an internet-facing ALB with dev auth
       hands out an authenticated session to anyone who reaches it).
   TtsEcsService:
     Type: String
     Default: ""
     Description: >-
-      AF_TTS_ECS_SERVICE — the ECS service of the VOICEVOX engine (50-tts's TtsEcsService
+      AF_TTS_ECS_SERVICE - the ECS service of the VOICEVOX engine (50-tts's TtsEcsService
       output). Setting it is what puts the engine under the CP's control: the admin toggle
       then flips its desired count. Empty = no managed engine, and `auto` routes every
       Japanese sentence to Polly. Cluster and region ride on AF_ECS_*, so they are not
@@ -348,14 +348,14 @@ Parameters:
     Type: String
     Default: ""
     Description: >-
-      AF_VOICEVOX_URL — where the engine answers (50-tts's VoicevoxUrl output, a Cloud Map
+      AF_VOICEVOX_URL - where the engine answers (50-tts's VoicevoxUrl output, a Cloud Map
       DNS name such as http://voicevox.af.internal:50021). Empty leaves the CP on its
       compose-era default of http://127.0.0.1:50021, where nothing listens on ECS.
   EnginesSsmParam:
     Type: String
     Default: ""
     Description: >-
-      AF_ENGINES_SSM_PARAM — the SSM parameter holding 60-engines' engine table
+      AF_ENGINES_SSM_PARAM - the SSM parameter holding 60-engines' engine table
       (EnginesSsmParam output; a name under /af-ws/). ONE parameter for every engine on
       purpose: six per engine would not fit in what is left of this template, and the CP
       task role's SSM read is already scoped to /af-ws/* so nothing new is granted. Empty =
@@ -365,30 +365,30 @@ Parameters:
     Default: ""
     AllowedValues: [ "", teal, blue, violet, magenta, red, orange, green, slate ]
     Description: >-
-      AF_BRAND_COLOR — favicon / PWA icon colour, so this stack is not a fourth identical
+      AF_BRAND_COLOR - favicon / PWA icon colour, so this stack is not a fourth identical
       teal cat in the tab strip. Empty = the shipped teal. PARAMETERS.md.
   BrandLabel:
     Type: String
     Default: ""
     MaxLength: 16
     Description: >-
-      AF_BRAND_LABEL — short deployment label prefixed onto the app name ("[staging] Agent
+      AF_BRAND_LABEL - short deployment label prefixed onto the app name ("[staging] Agent
       Fleet") in the tab title, the installed PWA and the login page. PARAMETERS.md.
   CpAlarmEmail:
     Type: String
     Default: ""
     Description: >-
       Where to send "the Control Plane cannot reach its database". Empty (the default) = no
-      topic and no alarm, and the only trace is the CP log. ⚠️ That is exactly how the
-      2026-09-01 outage stayed silent — /healthz kept answering 200. Set it.
+      topic and no alarm, and the only trace is the CP log. !! That is exactly how the
+      2026-09-01 outage stayed silent - /healthz kept answering 200. Set it.
 
 Conditions:
   # Each IdP's client secret is pulled from SSM, and a Secrets entry pointing at a
-  # parameter that doesn't exist stops the task from starting — so wire each one in
+  # parameter that doesn't exist stops the task from starting - so wire each one in
   # only when that IdP is actually configured.
   HasGoogle: !Not [ !Equals [ !Ref GoogleClientId, "" ] ]
   HasOidc: !Not [ !Equals [ !Ref OidcProviderId, "" ] ]
-  # The org list, not the client id — historically GITHUB_OAUTH_CLIENT_ID also drove
+  # The org list, not the client id - historically GITHUB_OAUTH_CLIENT_ID also drove
   # the Console's git-connect device flow, which many deployments set without wanting a
   # login. That flow reads the tenant's own app since docs/log/71, but the switch stays the
   # org list: it is the thing that authorizes the sign-in.
@@ -405,7 +405,7 @@ Conditions:
   HasScheduleSettle: !Not [ !Equals [ !Ref ScheduleSettle, "" ] ]
   HasScheduleJitter: !Not [ !Equals [ !Ref ScheduleJitter, "" ] ]
   # Speech (ADR 0070). Each is passed ONLY when 50-tts was deployed, so a deployment
-  # without the engine stack carries neither variable and the CP keeps its own defaults —
+  # without the engine stack carries neither variable and the CP keeps its own defaults -
   # no managed engine, and Polly reads. The two are separate conditions because they are
   # separately meaningful: a URL alone points at an engine somebody else runs.
   HasTtsEcsService: !Not [ !Equals [ !Ref TtsEcsService, "" ] ]
@@ -415,7 +415,7 @@ Conditions:
   # CpArch is spelled the way an operator writes an architecture (and the way every
   # captured params file already holds it), while the ECS enum is X86_64 / ARM64. ECS
   # accepts the lowercase spelling but stores it verbatim, so the case has to be turned
-  # here rather than in the parameter — raising the AllowedValues to match 50-tts's own
+  # here rather than in the parameter - raising the AllowedValues to match 50-tts's own
   # CpuArchitecture would reject the value every deployed stack carries on its next
   # update, which is the one thing a captured parameter must survive. TaskDef below.
   CpArm: !Equals [ !Ref CpArch, arm64 ]
@@ -444,9 +444,9 @@ Resources:
         - Fn::ImportValue: !Sub "${NetworkStackName}-AlbSgId"
       # Spelled out at the AWS default (60s) rather than left implicit: it is the
       # hard ceiling on every CP request, and a handler that outran it is what
-      # turned a cold workspace Start into a 504 (docs/log/62 §62.5). The CP now
+      # turned a cold workspace Start into a 504 (docs/log/62 sec.62.5). The CP now
       # answers Start immediately and reports convergence through GET
-      # /api/workspace, so raise this only for a NEW long-poll — never to let a
+      # /api/workspace, so raise this only for a NEW long-poll - never to let a
       # handler block longer.
       LoadBalancerAttributes:
         - { Key: idle_timeout.timeout_seconds, Value: "60" }
@@ -529,7 +529,7 @@ Resources:
   # --- preview subdomains (docs/81), only when PreviewDomain is set -----------
   # Never touch the existing Cert: adding a SAN replaces the certificate, rebuilding the TLS
   # the Console already serves just to add previews. A listener can pick extra certificates
-  # by SNI, so attach this as a second one — turning previews off is then only a removal
+  # by SNI, so attach this as a second one - turning previews off is then only a removal
   # (decision 4).
   PreviewCert:
     Type: AWS::CertificateManager::Certificate
@@ -593,7 +593,7 @@ Resources:
   # existed at all was a line in this log group.
   #
   # So: turn that line into a metric. The marker is a constant shared with
-  # control-plane/store_postgres_secret.go (logDBUnavailable) — change one and you
+  # control-plane/store_postgres_secret.go (logDBUnavailable) - change one and you
   # change the other, and nothing will tell you if you don't.
   #
   # Unconditional on purpose. A filter that matches nothing publishes nothing and
@@ -622,7 +622,7 @@ Resources:
           Endpoint: !Ref CpAlarmEmail
 
   # One breach is enough. The CP rate-limits this line to one a minute, so a single
-  # datapoint already means "for a whole minute, connections were failing" — not a
+  # datapoint already means "for a whole minute, connections were failing" - not a
   # blip. Waiting for a second period would only add five minutes to an outage in
   # which the product returns 500 to everybody.
   CpDbUnavailableAlarm:
@@ -633,7 +633,7 @@ Resources:
       AlarmDescription: >-
         The Control Plane could not open a database connection. If this coincides with
         the RDS secret's rotation schedule, the credential refresh
-        (control-plane/store_postgres_secret.go) did not work — check the log for
+        (control-plane/store_postgres_secret.go) did not work - check the log for
         DB_SECRET_REFRESH_FAILED, which usually means CpTaskRole lost
         secretsmanager:GetSecretValue. Recovery of last resort, ~4 minutes and no
         outage because it is blue/green:
@@ -650,7 +650,7 @@ Resources:
       AlarmActions: [ !Ref CpAlarmTopic ]
       OKActions: [ !Ref CpAlarmTopic ]
 
-  # Workspace tasks (created by the CP at runtime) log here — the CP passes this
+  # Workspace tasks (created by the CP at runtime) log here - the CP passes this
   # group name to each task definition via AF_ECS_LOG_GROUP.
   WsLogGroup:
     Type: AWS::Logs::LogGroup
@@ -668,15 +668,15 @@ Resources:
       Cpu: !Ref CpCpu
       Memory: !Ref CpMemory
       # Declared, not inferred (docs/log/72). Fargate defaults an omitted cpuArchitecture
-      # to X86_64 — which is why leaving this out has worked so far — but that default
+      # to X86_64 - which is why leaving this out has worked so far - but that default
       # is applied when the TASK STARTS, not when the definition is registered, so
       # `describe-task-definition` shows runtimePlatform: null and the architecture the
       # CP actually runs on is nowhere in the template. Stating it also makes the value
       # part of the definition's identity, so switching CpArch produces a new revision
       # and a rolling deployment rather than a no-op.
-      # ⚠️ EC2 does NOT share this default (docs/log/70 §70.8): there an omitted
+      # !! EC2 does NOT share this default (docs/log/70 sec.70.8): there an omitted
       # runtimePlatform stays null and placement decides. Only Fargate fills it in.
-      # ⚠️ The value written here is the ECS enum's own spelling, not CpArch's — see the
+      # !! The value written here is the ECS enum's own spelling, not CpArch's - see the
       # CpArm condition. Because it is part of the identity, a stack standing on the
       # lowercase spelling gets ONE new revision on its next update (a rolling deployment,
       # not an outage: old and new overlap for ~51 seconds, measured in docs/log/72).
@@ -698,7 +698,7 @@ Resources:
             - ContainerPort: !Ref CpPort
           Environment:
             # ECS/awsvpc: the ALB reaches the task over its ENI, so CP must bind
-            # non-loopback (the CpSg restricts 8099 ingress to the ALB SG — the
+            # non-loopback (the CpSg restricts 8099 ingress to the ALB SG - the
             # network isolation the compose loopback bind gives on a single box).
             - { Name: CP_ADDR, Value: !Sub "0.0.0.0:${CpPort}" }
             - { Name: WS_DATA, Value: /tmp }   # unused for state now (store = RDS/Postgres, below)
@@ -709,21 +709,21 @@ Resources:
             - { Name: AF_DB_PORT, Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbPort" } }
             - { Name: AF_DB_NAME, Value: agentfleet }
             - { Name: AF_DB_USER, Value: afadmin }
-            # …and where to go and read the password AGAIN when the injected one stops
+            # ...and where to go and read the password AGAIN when the injected one stops
             # working, because RDS rotates it every 7 days and `secrets` below is
             # resolved once, at task start (the 2026-09-01 outage; ADR 0065).
             #
-            # ⚠️ Environment, NOT Secrets. An ARN is not a credential, and putting it
-            # under `secrets` would make it another start-time snapshot — which is the
+            # !! Environment, NOT Secrets. An ARN is not a credential, and putting it
+            # under `secrets` would make it another start-time snapshot - which is the
             # very thing being fixed. Unset = the CP keeps using the injected value and
             # nothing else changes, which is how every non-RDS deployment behaves.
             - Name: AF_DB_PASSWORD_SECRET_ARN
               Value: !ImportValue { "Fn::Sub": "${DataStackName}-DbSecretArn" }
-            # The JSON field inside the RDS-managed secret — the same `password` the
+            # The JSON field inside the RDS-managed secret - the same `password` the
             # `:password::` suffix picks out below.
             - { Name: AF_DB_PASSWORD_SECRET_KEY, Value: password }
-            # ⚠️ Exactly one proxy sits in front of the CP here: this ALB. The CP needs
-            # to be TOLD, because it cannot tell — without this, r.RemoteAddr is the load
+            # !! Exactly one proxy sits in front of the CP here: this ALB. The CP needs
+            # to be TOLD, because it cannot tell - without this, r.RemoteAddr is the load
             # balancer and every request looks like it comes from the same private
             # address. That is what a tenant's source-network restriction is matched
             # against (docs/log/66, ADR 0047 decision 2), so a wrong value here is either "the
@@ -752,17 +752,17 @@ Resources:
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_ALLOWED_TIDS", Value: !Ref OidcAllowedTids }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_JA", Value: !Ref OidcLabelJa }, !Ref "AWS::NoValue" ]
             - !If [ HasOidc, { Name: !Sub "AF_OIDC_${OidcProviderId}_LABEL_EN", Value: !Ref OidcLabelEn }, !Ref "AWS::NoValue" ]
-            # GitHub sign-in (docs/log/61 §61.7).
+            # GitHub sign-in (docs/log/61 sec.61.7).
             - { Name: GITHUB_OAUTH_CLIENT_ID, Value: !Ref GithubClientId }
             - { Name: AF_GITHUB_ALLOWED_ORGS, Value: !Ref GithubAllowedOrgs }
             - { Name: AF_GITHUB_ALLOWED_DOMAINS, Value: !Ref GithubAllowedDomains }
-            # ★ No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
+            # * No BITBUCKET_OAUTH_* and no workspace GITHUB_OAUTH_CLIENT_ID: the git
             # providers' OAuth apps are per-tenant rows since docs/log/71, registered in the
             # Console under Tenant settings -> Integrations -> Git provider OAuth. The CP
             # still owns the Bitbucket callback and derives it from PUBLIC_BASE_URL above.
             # AF_RUNTIME=ecs = the P3-7 stage-2 adapter (Fargate). AF_RUNTIME=ecs-ec2
             # keeps the same substrate but puts workspaces on a pool of EC2 slots with a
-            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) — deploy the
+            # persistent per-user EBS home (docs/log/64, ADR 0045 decision 10) - deploy the
             # 40-ec2-pool stack and set WsRuntime=ecs-ec2 + Ec2SlotLaunchTemplate.
             # Rolling back is this one parameter. The AF_ECS_* below are shared by both.
             - { Name: AF_RUNTIME, Value: !Ref WsRuntime }
@@ -813,7 +813,7 @@ Resources:
                 - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrWorkspaceUri" }
                   Tag: !Ref ImageTag
           Secrets:
-            # RDS-managed master password (Secrets Manager JSON → the `password` key).
+            # RDS-managed master password (Secrets Manager JSON -> the `password` key).
             - Name: AF_DB_PASSWORD
               ValueFrom: !Sub
                 - "${Arn}:password::"

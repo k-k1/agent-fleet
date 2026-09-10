@@ -1,9 +1,9 @@
 AWSTemplateFormatVersion: "2010-09-09"
-# LanguageExtensions: lets DeletionPolicy/UpdateReplacePolicy take Fn::If — the
+# LanguageExtensions: lets DeletionPolicy/UpdateReplacePolicy take Fn::If - the
 # Persistence parameter below flips them without duplicating resources.
 Transform: AWS::LanguageExtensions
 Description: >-
-  agent-fleet ECS adapter (P3-7) — data substrate: one encrypted EFS filesystem
+  agent-fleet ECS adapter (P3-7) - data substrate: one encrypted EFS filesystem
   (per-workspace access points are created by the Control Plane at runtime, not
   here) and an RDS PostgreSQL instance for the MetadataStore. Imports network from
   the 00-network stack. Persistence=delete (default) is dev-ephemeral (DeletionPolicy
@@ -31,7 +31,7 @@ Parameters:
     Type: String
     Default: afadmin
     Description: Master username. The password is generated and managed by RDS in
-      Secrets Manager (ManageMasterUserPassword) — never passed as a parameter.
+      Secrets Manager (ManageMasterUserPassword) - never passed as a parameter.
   Persistence:
     Type: String
     Default: delete

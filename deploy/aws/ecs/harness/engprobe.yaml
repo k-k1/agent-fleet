@@ -1,4 +1,4 @@
-# ADR 0071 probe — a throwaway ECS Managed Instances capacity provider plus one llama.cpp
+# ADR 0071 probe - a throwaway ECS Managed Instances capacity provider plus one llama.cpp
 # service, used only to measure cold start and drain on a real cluster. Not a deliverable
 # stack: 60-engines.yaml is the real thing. Deploy with probe-managed-instances.sh.
 #
@@ -8,11 +8,11 @@
 #   - AmazonECSInfrastructureRolePolicyForManagedInstances passes only roles named
 #     ecsInstanceRole*, so a fleet-named instance role needs an explicit iam:PassRole;
 #   - ClusterCapacityProviderAssociations REPLACES the cluster's provider list and requires
-#     DefaultCapacityProviderStrategy — pass the full list and an EMPTY strategy, or a service
+#     DefaultCapacityProviderStrategy - pass the full list and an EMPTY strategy, or a service
 #     that forgot LaunchType lands on the GPU box (ADR 0070 decision 1).
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ADR 0071 probe — a throwaway ECS Managed Instances capacity provider and one
+  agent-fleet ADR 0071 probe - a throwaway ECS Managed Instances capacity provider and one
   llama.cpp (CPU) service, used only to measure cold start and drain. Delete the stack after.
 Parameters:
   NetworkStackName: { Type: String, Default: af-ecs-network }
@@ -188,7 +188,7 @@ Resources:
   # One-off Fargate task: curl an HF file into ephemeral storage, then `aws s3 cp` it up.
   #   aws ecs run-task --launch-type FARGATE --task-definition af-<stack>-ingest \
   #     --network-configuration "awsvpcConfiguration={subnets=[...],securityGroups=[...],assignPublicIp=DISABLED}" \
-  #     --overrides '{"containerOverrides":[{"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/…"},{"name":"KEY","value":"llm/model.gguf"}]}]}'
+  #     --overrides '{"containerOverrides":[{"name":"fetch","environment":[{"name":"URL","value":"https://huggingface.co/..."},{"name":"KEY","value":"llm/model.gguf"}]}]}'
   IngestTaskDef:
     Type: AWS::ECS::TaskDefinition
     Properties:
@@ -238,7 +238,7 @@ Resources:
           Host: {}
       ContainerDefinitions:
         # S3 mode only: the sidecar copies the model from the stack bucket onto the host volume
-        # (gateway endpoint, multipart, no NAT) and logs how long it took — that number IS open
+        # (gateway endpoint, multipart, no NAT) and logs how long it took - that number IS open
         # question 1 of ADR 0071.
         - !If
           - LlamaFromS3

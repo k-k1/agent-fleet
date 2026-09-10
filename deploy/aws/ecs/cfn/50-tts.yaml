@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter — the VOICEVOX (Zundamon) speech engine as an ECS service
+  agent-fleet ECS adapter - the VOICEVOX (Zundamon) speech engine as an ECS service
   that is normally scaled to zero (ADR 0070 P0). Optional: a deployment that does not
   want Japanese speech deploys nothing and `auto` keeps routing every sentence to
   Polly. Imports the VPC, private subnets and the CP security group from 00-network,
@@ -24,7 +24,7 @@ Parameters:
     Type: String
     Default: af.internal
     Description: >-
-      The private DNS namespace's NAME — it has to be the same value 20-platform was
+      The private DNS namespace's NAME - it has to be the same value 20-platform was
       given, because the namespace is imported by id (which carries no name) while the
       URL handed to the CP is built from the name. Wrong here and everything deploys
       cleanly while AF_VOICEVOX_URL points at a name that does not resolve.
@@ -56,7 +56,7 @@ Parameters:
     Description: >-
       Declared, never inferred (ADR 0053, ADR 0070 decision 11). The image is a
       two-architecture index and ARM Fargate is 20.0 % cheaper, so the question was whether
-      ONNX inference on Graviton pays for itself. Measured in P0: it does not — arm64 is
+      ONNX inference on Graviton pays for itself. Measured in P0: it does not - arm64 is
       20 % cheaper and 52 % SLOWER (6.73 s against 4.42 s for the same sentence), and at a
       real-time ratio of 0.92 a short sentence stops keeping up with playback. Leave it on
       X86_64; the parameter stays for a future architecture, not for this one.
@@ -80,18 +80,18 @@ Parameters:
     AllowedValues: [ "on", "off" ]
     Description: >-
       Fargate Spot for the engine (ADR 0070 P3). About 70 % cheaper, and an interruption
-      merely falls back to Polly — the engine holds no state, and the controller already
+      merely falls back to Polly - the engine holds no state, and the controller already
       treats a task that disappears as a replacement rather than a failed start. Off by
       default because with idle-stop the remaining bill is small and a capacity shortfall
       shows up as an engine that never arrives.
-      ⚠️ Spot and LaunchType are mutually exclusive, so "on" replaces `LaunchType: FARGATE`
-      with an explicit capacity provider strategy. That is equally binding — measured on a
+      !! Spot and LaunchType are mutually exclusive, so "on" replaces `LaunchType: FARGATE`
+      with an explicit capacity provider strategy. That is equally binding - measured on a
       real cluster: a task run with `capacityProvider=FARGATE_SPOT` and no LaunchType was
       placed on FARGATE_SPOT, and an explicit strategy overrides the cluster default, so
       decision 1's invariant (the engine never lands in the EC2 slot pool) still holds. It
       is the OMISSION of both that breaks it.
-      ⚠️ Switching this on or off changes the service's placement, which CloudFormation
-      applies by REPLACING the service — and a newly created service starts at desired 1
+      !! Switching this on or off changes the service's placement, which CloudFormation
+      applies by REPLACING the service - and a newly created service starts at desired 1
       (the DesiredCount contract below), so expect one cold start and scale it back to 0.
   LogRetentionDays:
     Type: Number
@@ -105,7 +105,7 @@ Conditions:
 Resources:
   # The VOICEVOX HTTP API is unauthenticated and has mutating endpoints, so reachability
   # is the whole of its access control: port 50021 from the CP security group and nothing
-  # else — no load balancer, private subnets, no public IP (decision 14). The engine also
+  # else - no load balancer, private subnets, no public IP (decision 14). The engine also
   # runs with --disable_mutable_api below; this is the layer that does not depend on a flag.
   EngineSg:
     Type: AWS::EC2::SecurityGroup
@@ -133,7 +133,7 @@ Resources:
   # Envoy sidecar in the synthesis path.
   #
   # While the service is at desired 0 the name simply has no A record and the lookup is
-  # NXDOMAIN — voicevoxProvider.Ready goes false and Polly reads. The namespace's SOA TTL
+  # NXDOMAIN - voicevoxProvider.Ready goes false and Polly reads. The namespace's SOA TTL
   # (measured: 15 s) bounds how long a start stays hidden behind negative caching, and the
   # A record's own 10 s bounds how long a stop stays hidden the other way.
   #
@@ -167,10 +167,10 @@ Resources:
       ContainerDefinitions:
         - Name: voicevox
           Essential: true
-          # ⚠️ The image must ALREADY be in that repository when this stack is created.
+          # !! The image must ALREADY be in that repository when this stack is created.
           # CloudFormation blocks on ECS service stabilisation, so a service that cannot
           # pull leaves the stack in CREATE_IN_PROGRESS indefinitely (measured 2026-09-06,
-          # on the very first stand-up of this template) — which is why the repository
+          # on the very first stand-up of this template) - which is why the repository
           # lives in 20-platform and standup.sh copies the image in during its images
           # step, one stack earlier than this one.
           Image: !Sub
@@ -199,7 +199,7 @@ Resources:
           # A wedged engine should be replaced by ECS, not sit RUNNING and unreachable
           # while the CP reports it as up (decision 16). `curl` is in the image (measured:
           # the Dockerfile's `apt-get install -y curl gosu`), so no python/wget fallback is
-          # needed. StartPeriod covers the model load — failures before it do not count.
+          # needed. StartPeriod covers the model load - failures before it do not count.
           HealthCheck:
             Command: [ "CMD-SHELL", "curl -fsS http://127.0.0.1:50021/version || exit 1" ]
             Interval: 30
@@ -219,13 +219,13 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-voicevox"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref TaskDef
-      # ⚠️ The placement must stay SPELLED OUT — as LaunchType here, or as the capacity
+      # !! The placement must stay SPELLED OUT - as LaunchType here, or as the capacity
       # provider strategy below when UseSpot is on. A service that says neither gets the
       # API default, EC2, which puts the engine inside the workspace slot pool, breaks the
       # sweeper's "an instance with zero ECS tasks is idle" premise, and consumes a seat
       # that someone's Workspace needed (ADR 0070 decision 1). One missing line is the
       # whole of that failure, and a cluster that later gains a default capacity provider
-      # strategy changes what "the default" even means — so neither is inferred here.
+      # strategy changes what "the default" even means - so neither is inferred here.
       LaunchType: !If [ HasSpot, !Ref "AWS::NoValue", FARGATE ]
       CapacityProviderStrategy:
         !If
@@ -233,10 +233,10 @@ Resources:
           - - CapacityProvider: FARGATE_SPOT
               Weight: 1
           - !Ref "AWS::NoValue"
-      # ⚠️ DesiredCount is deliberately ABSENT, and this is load-bearing. From the
+      # !! DesiredCount is deliberately ABSENT, and this is load-bearing. From the
       # resource schema: for a NEW service an unspecified desired count defaults to 1;
       # for an EXISTING one it is omitted from the update call. So CloudFormation creates
-      # the service running and then never touches the count again — which is what lets
+      # the service running and then never touches the count again - which is what lets
       # the engine be started and stopped out from under the template. Declaring `0`
       # instead would reset the count on every task-definition or tag change, i.e. stop
       # the engine in the middle of somebody listening. standup.sh scales the new service
@@ -244,7 +244,7 @@ Resources:
       DeploymentConfiguration:
         # One engine, addressed by one DNS name: two tasks during a redeploy would mean
         # two A records and requests split between a warm engine and a cold one. Stop the
-        # old task first and accept the gap — Polly reads through it.
+        # old task first and accept the gap - Polly reads through it.
         MinimumHealthyPercent: 0
         MaximumPercent: 100
       NetworkConfiguration:
@@ -254,7 +254,7 @@ Resources:
           SecurityGroups: [ !Ref EngineSg ]
       ServiceRegistries:
         # awsvpc + an A record: ECS registers the task ENI's address under the Cloud Map
-        # name. No ContainerName/ContainerPort — those are for SRV records.
+        # name. No ContainerName/ContainerPort - those are for SRV records.
         - RegistryArn: !GetAtt DiscoveryService.Arn
       # The engine is shared cost and is shown as such, never apportioned to members
       # (ADR 0048, ADR 0070 decision 15). Both keys are already in the CP's cost-allocation

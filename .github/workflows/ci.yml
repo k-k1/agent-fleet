@@ -206,6 +206,13 @@ jobs:
       # later. This pulls it out of the template and runs it (ADR 0072 P0).
       - name: engine fetch sidecar (real script, stub aws)
         run: ./deploy/local/engine-sidecar-test.sh
+      # CloudFormation replaces every non-ASCII codepoint in a template with `?`, server-side
+      # and silently -- so a warning sign in a parameter Description reaches operators as `?`,
+      # and one inside a Mappings shell block reaches the engine log the same way. Nothing
+      # else in CI reads a template as text, and the mangling is invisible until somebody
+      # diffs a deployed stack against the repo (which is how it was found).
+      - name: CloudFormation templates are ASCII-only
+        run: ./deploy/local/cfn-ascii-test.sh
 
   console:
     runs-on: ubuntu-latest

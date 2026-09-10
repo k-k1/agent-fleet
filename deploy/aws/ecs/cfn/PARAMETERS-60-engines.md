@@ -45,6 +45,23 @@ from 20-platform; it does **not** depend on 30-ingress. Deploy it BEFORE 30-ingr
 
 ## What this template learned the hard way
 
+**Templates are ASCII-only, and CloudFormation is why.** A template body does not survive
+non-ASCII: CloudFormation replaces **every non-ASCII codepoint with `?`**, server-side. The
+file on disk is fine, the AWS CLI sends correct UTF-8 declaring `charset=utf-8`, and
+`get-template` hands back `?`. Measured 2026-09-10 on two live deployments -- both held zero
+non-ASCII where the source had 69 -- with the positive control that pins it on the service:
+the same CLI, account and machine round-trip the identical string through SSM untouched.
+
+It is not only cosmetic. The `?` lands in parameter `Description` values, which operators read
+in the CloudFormation console, and inside the shell embedded in `Mappings` -- this template
+shipped four `echo` lines containing a literal `?` to the engine log before anyone noticed. A
+non-ASCII character in a path, a pattern or a comparison would be a defect, not a blemish.
+
+Write `-`, `!!`, `->`, `...`, `sec.` instead; comments are English anyway (`AGENTS.md`), so
+Japanese belongs in `docs/`. `deploy/local/cfn-ascii-test.sh` enforces this per PR. Dropping
+the 281 characters it was written for also freed 454 bytes, which matters here: this template
+is the one that lives closest to the 51,200-byte inline limit `af_cfn_deploy` measures.
+
 **Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
 containers-roadmap #88, open since 2019), so ADR 0070's shape — "an ECS service whose desired
 count is 0 while nobody wants it" — is bought here from ECS Managed Instances instead: AWS owns

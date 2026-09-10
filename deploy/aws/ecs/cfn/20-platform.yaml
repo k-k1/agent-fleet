@@ -1,11 +1,11 @@
 AWSTemplateFormatVersion: "2010-09-09"
 Description: >-
-  agent-fleet ECS adapter (P3-7) — platform identity/compute core: ECR repos, the
+  agent-fleet ECS adapter (P3-7) - platform identity/compute core: ECR repos, the
   ECS cluster, the Service Connect (Cloud Map private DNS) namespace, and the IAM
   roles the Control Plane and workspace tasks assume. No ALB / services here (that
   is 30-ingress). Imports the VPC from 00-network. Per-workspace ECS Services,
   task definitions, EFS access points and SSM params are created by the CP at
-  runtime (stage 2) — not by CloudFormation.
+  runtime (stage 2) - not by CloudFormation.
 
 Parameters:
   NetworkStackName:
@@ -22,13 +22,13 @@ Resources:
   # --- CFN template staging ---
   # CloudFormation refuses a template body over 51,200 bytes; anything bigger has to be
   # handed over via S3 (`aws cloudformation deploy --s3-bucket`). 30-ingress crossed that
-  # line on 2026-09-01 (54,681 bytes) and every path that deploys it — standup.sh and
-  # update.sh, i.e. stand-up AND every release — stopped working at that moment. Nobody
+  # line on 2026-09-01 (54,681 bytes) and every path that deploys it - standup.sh and
+  # update.sh, i.e. stand-up AND every release - stopped working at that moment. Nobody
   # saw it because the CLI refuses on file size before it calls the API, and the last
-  # successful deploy predates the growth (docs/log/73 §73.7.2: stand-up had never been
+  # successful deploy predates the growth (docs/log/73 sec.73.7.2: stand-up had never been
   # exercised end to end).
   #
-  # ⚠️ The bucket lives HERE, in 20-platform, because that stack is created before
+  # !! The bucket lives HERE, in 20-platform, because that stack is created before
   # 30-ingress and outlives it. Putting it in 30-ingress would need the bucket to deploy
   # the stack that creates the bucket.
   CfnTemplates:
@@ -73,8 +73,8 @@ Resources:
   # The pinned VOICEVOX engine image (ADR 0070). It belongs to the optional 50-tts stack by
   # every other measure, and it is HERE for one reason, measured the hard way: CloudFormation
   # blocks on ECS service stabilisation, so a service whose repository is created in its own
-  # stack has nothing to pull and the CREATE never converges — the stack sits
-  # CREATE_IN_PROGRESS while `CannotPullContainerError: … not found` repeats, and the step
+  # stack has nothing to pull and the CREATE never converges - the stack sits
+  # CREATE_IN_PROGRESS while `CannotPullContainerError: ... not found` repeats, and the step
   # that would have copied the image in cannot run until that returns. The repository has to
   # exist one stack earlier so the image is already there when the service first starts.
   # An unused repository holds no images and costs nothing, so deployments without speech
@@ -89,7 +89,7 @@ Resources:
       # would report findings nobody here can fix.
       ImageScanningConfiguration: { ScanOnPush: false }
   # The pinned llama.cpp CUDA server image (ADR 0071), here for the same reason as the one
-  # above — a repository created in 60-engines itself would be empty when that stack's
+  # above - a repository created in 60-engines itself would be empty when that stack's
   # service first tries to pull, and the CREATE would never converge. It is also the
   # measured difference between a 527-second cold start and a worse one: at 12-14 MB/s
   # through the NAT, pulling 2.47 GB from GHCR at task start cost 178 seconds.
@@ -102,7 +102,7 @@ Resources:
       ImageScanningConfiguration: { ScanOnPush: false }
   # The pinned stable-diffusion.cpp CUDA image (ADR 0071 P1, the `image` role). Same trap,
   # same remedy: 60-engines cannot create the repository it pulls from. Unlike the two above
-  # it is filled only when a deployment actually stages an image checkpoint — 2.31 GB copied
+  # it is filled only when a deployment actually stages an image checkpoint - 2.31 GB copied
   # into every stand-up that only wants an LLM is a pull nobody asked for.
   EcrSdcpp:
     Type: AWS::ECR::Repository
@@ -112,7 +112,7 @@ Resources:
       EmptyOnDelete: true
       ImageScanningConfiguration: { ScanOnPush: false }
   # ComfyUI, self-built and pinned rather than copied from a third party (ADR 0072 decision 4,
-  # phase P2 — the community image measured 5.36 GB and a runtime checkout). Same trap as the
+  # phase P2 - the community image measured 5.36 GB and a runtime checkout). Same trap as the
   # two above: 60-engines cannot create the repository its own service pulls from. .github/
   # workflows/comfyui-image.yml bakes it to GHCR; standup.sh copies it in only when
   # ImageEngine=comfy, the same way EcrSdcpp is only filled when a checkpoint is staged.
@@ -163,7 +163,7 @@ Resources:
             Version: "2012-10-17"
             Statement:
               # Injects AGENT_TOKEN / AF_SECRET_KEY into workspace tasks via
-              # `secrets: valueFrom` (frozen spec §20b.7.5). aws/ssm managed key
+              # `secrets: valueFrom` (frozen spec sec.20b.7.5). aws/ssm managed key
               # needs no explicit kms grant.
               - Effect: Allow
                 Action: [ ssm:GetParameters ]
@@ -177,7 +177,7 @@ Resources:
                 Action: [ secretsmanager:GetSecretValue ]
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
 
-  # --- IAM: workspace task role — Agent needs NO AWS APIs (least privilege) ---
+  # --- IAM: workspace task role - Agent needs NO AWS APIs (least privilege) ---
   WsTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -190,7 +190,7 @@ Resources:
             Action: sts:AssumeRole
       # No policies attached on purpose.
 
-  # --- IAM: Control Plane task role — drives ECS/EFS/SSM for per-workspace ops ---
+  # --- IAM: Control Plane task role - drives ECS/EFS/SSM for per-workspace ops ---
   CpTaskRole:
     Type: AWS::IAM::Role
     Properties:
@@ -224,11 +224,11 @@ Resources:
               # --- Backend drift ("restart required" badge; control-plane/runtime_ecs_stale.go) ---
               # Read-only, one repository: resolve the workspace image TAG to the content
               # it points at now, so the CP can tell that a running workspace was launched
-              # from an older image and the Console can offer a stop→start.
+              # from an older image and the Console can offer a stop->start.
               #
               # This role, not the deployer's. The whole class of bug ADR 0045 decision 21 /
-              # docs/log/64 §64.22 documents is "it passed against real AWS" while the live
-              # test ran as the deployer — the CP task role is the only identity that
+              # docs/log/64 sec.64.22 documents is "it passed against real AWS" while the live
+              # test ran as the deployer - the CP task role is the only identity that
               # matters here. Without this statement the probe fails with AccessDenied,
               # which the CP treats as "unknown" and the badge simply never appears: a
               # silent loss of the feature, not an error anyone would see.
@@ -257,7 +257,7 @@ Resources:
                   - ssm:AddTagsToResource
                 Resource: !Sub "arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/af-ws/*"
               # --- Re-reading the database password while the task runs ---
-              # 🔥 2026-09-01: RDS rotated its managed master password (every 7 days)
+              # !!! 2026-09-01: RDS rotated its managed master password (every 7 days)
               # and a production deployment served 500 on every /api/* until the CP
               # service was force-new-deployment'd. ECS resolves a task definition's `secrets`
               # ONCE, at task start, so the injected AF_DB_PASSWORD is a snapshot of a
@@ -266,7 +266,7 @@ Resources:
               #
               # THIS role, not the exec role. The exec role's identical statement
               # (above) is what injects the env var at task start and does nothing
-              # afterwards — the running process has its own identity. Missing this is
+              # afterwards - the running process has its own identity. Missing this is
               # the silent kind of failure ADR 0045 decision 21 keeps warning about: the CP
               # falls back to the injected value, works perfectly, and only stops
               # working at the next rotation. Grep the log for DB_SECRET_REFRESH_FAILED
@@ -277,7 +277,7 @@ Resources:
                 Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:rds!*"
               # --- EC2 slot pool (AF_RUNTIME=ecs-ec2 only; harmless on Fargate) ---
               # The CP owns the whole swap: find slots and volumes by tag, attach the
-              # user's home, mount it over SSM, and hand the slot back. docs/log/64 §64.15.8.
+              # user's home, mount it over SSM, and hand the slot back. docs/log/64 sec.64.15.8.
               - Sid: Ec2SlotPool
                 Effect: Allow
                 Action:
@@ -297,19 +297,19 @@ Resources:
                   # (Ec2SlotTerminateAfterSec): stopping a slot ends the compute
                   # charge, only terminating it ends the ROOT VOLUME charge, and
                   # nothing else in the product ever removes a box. Without this the
-                  # sweeper's terminate stage fails with AccessDenied on every pass —
+                  # sweeper's terminate stage fails with AccessDenied on every pass -
                   # visible only in the CP log, while the bill keeps growing to
-                  # Ec2MaxSlots x SlotRootVolumeGiB (docs/log/64 §64.32).
+                  # Ec2MaxSlots x SlotRootVolumeGiB (docs/log/64 sec.64.32).
                   - ec2:TerminateInstances
-                  # ⚠️ Snapshots were MISSING here until 2026-08-16, and nothing caught it:
+                  # !! Snapshots were MISSING here until 2026-08-16, and nothing caught it:
                   # the live E2E runs with a deployer credential, not with this role. Every
-                  # snapshot path would have failed with AccessDenied on a real deployment —
+                  # snapshot path would have failed with AccessDenied on a real deployment -
                   # and not only the optional ones. createHomeVolume asks for the user's
                   # hibernation snapshot FIRST, so a brand-new user's Start would have failed
-                  # outright, not merely started slowly. (docs/log/64 §64.22.)
-                  #   DescribeSnapshots — restore (decision 4), golden lookup (decision 9), backups (decision 17)
-                  #   CreateSnapshot    — hibernation and backups
-                  #   DeleteSnapshot    — retention, superseded captures, Destroy
+                  # outright, not merely started slowly. (docs/log/64 sec.64.22.)
+                  #   DescribeSnapshots - restore (decision 4), golden lookup (decision 9), backups (decision 17)
+                  #   CreateSnapshot    - hibernation and backups
+                  #   DeleteSnapshot    - retention, superseded captures, Destroy
                   - ec2:DescribeSnapshots
                   - ec2:CreateSnapshot
                   - ec2:DeleteSnapshot
@@ -365,51 +365,51 @@ Resources:
               # invoice.
               #
               # Read-only, one action. Cost Explorer has no resource-level scoping, so
-              # Resource must be "*" — but what comes back is aggregated amounts, not
+              # Resource must be "*" - but what comes back is aggregated amounts, not
               # access to any resource or secret.
               #
               # Account prerequisite, not expressible here: an IAM role can only call
               # the Billing APIs when the account has "IAM user and role access to Billing
               # Information" enabled. Without it this policy is present and every call
-              # still fails — see deploy/aws/ecs/README.md.
+              # still fails - see deploy/aws/ecs/README.md.
               - Sid: CostExplorerRead
                 Effect: Allow
                 Action:
                   - ce:GetCostAndUsage
                   - ce:ListCostAllocationTags
                 Resource: "*"
-              # ACCOUNT-LEVEL BILLING CONFIGURATION — the one place the Control Plane
+              # ACCOUNT-LEVEL BILLING CONFIGURATION - the one place the Control Plane
               # writes something outside the resources it created itself. Read the reason
-              # before removing it (docs/log/67 §67.5, ADR 0048 decision 11).
+              # before removing it (docs/log/67 sec.67.5, ADR 0048 decision 11).
               #
               # A cost allocation tag only applies from the moment it is switched on, and
-              # AWS will not activate a key it has not yet discovered on a real resource —
+              # AWS will not activate a key it has not yet discovered on a real resource -
               # so the step cannot be done at deploy time, only a day later, by hand, by
               # someone who remembers. Every day it is missed is spend that can never be
               # attributed to anyone. That is the trade this grant buys.
               #
               # What bounds it, in code (cost_tags.go), not in policy:
-              #   - a fixed allow-list of five keys. `af-workspace` is NEVER activated —
+              #   - a fixed allow-list of five keys. `af-workspace` is NEVER activated -
               #     its value is built from a member's email address.
               #   - a key a human set to Inactive is left alone (AWS stamps
               #     LastUpdatedDate on any deliberate change).
               #
-              # ⚠️ Removing this statement does NOT break the cost views. The CP reports
+              # !! Removing this statement does NOT break the cost views. The CP reports
               # "cannot activate" and the operator runs the CLI command instead.
               - Sid: CostAllocationTagActivation
                 Effect: Allow
                 Action:
                   - ce:UpdateCostAllocationTagsStatus
                 Resource: "*"
-              # Text-to-speech (docs/log/24). The CP calls Polly with the task role — no key
+              # Text-to-speech (docs/log/24). The CP calls Polly with the task role - no key
               # is ever stored (ADR 0013). SynthesizeSpeech has no resource-level
               # permissions, hence "*".
               #
-              # ⚠️ Do not remove this "because nobody uses TTS": the provider reports
+              # !! Do not remove this "because nobody uses TTS": the provider reports
               # itself READY on the presence of a region alone (tts_polly.go Ready()),
               # and AF_ECS_REGION is always set by 30-ingress. Without the grant the
               # Console still offers voice playback and every attempt fails with a 502
-              # at synthesize time — a silent-looking capability, not a disabled one.
+              # at synthesize time - a silent-looking capability, not a disabled one.
               # On a deployment with no VOICEVOX service (AF_TTS_ECS_SERVICE unset),
               # `auto` routes EVERY utterance here, Japanese included.
               #
