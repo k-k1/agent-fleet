@@ -1296,3 +1296,73 @@ exactly like normal operation.
 Code: `control-plane/golden_bake.go` (`destroy` / `sweep` / `warn`),
 `control-plane/runtime_ecs_ec2_golden.go` (`sweepOrphans` / `snapshotInProgress`),
 `control-plane/runtime_ecs_ec2.go` (`DRAINING` in `upsertService`).
+
+## Addendum (2026-09-11) — decision 21's fourth finding is reversed: a home grows
+
+Decision 21 listed five discrepancies between what the size editor said and what the runtime did, and
+fixed four of them by making the runtime *describe itself*. The fourth it only described:
+
+> **The disk value only takes effect when home is created.** `ModifyVolume` is not in this adapter (a
+> comment says "it can be grown online", but that is a property of EBS, not of the implementation).
+> Changing an existing user's value does nothing. **And EBS cannot be shrunk.**
+
+Honest, and it left the request that actually arrives — *"please make my home bigger"* — with no answer
+but destroy the workspace and recreate it, i.e. lose the home in order to enlarge it. **The implementation
+is now the one the comment described.**
+
+**What was added.** `ResizeHome` on the `ecs-ec2` adapter, probed as an optional capability the way
+`MachineProfile` and `SizingProfile` are, and called by both writers of a quota row (the admin API's
+`PUT /api/admin/user-limits` and the MCP `set_user_quota` tool) **after** the row is written.
+
+**Six decisions, and the reasons that are not obvious:**
+
+1. **It reports, it does not fail.** Every path returns a `HomeResize` and a nil error. The quota row is
+   the administrator's *intent* and is kept whatever AWS can do with it today; failing the save would roll
+   back an intent over something the save did not get wrong. The five outcomes are `growing` / `same` /
+   `shrink` / `no_home` / `failed`.
+2. **The Console switches on the outcome, never on the numbers.** `same` and `no_home` both present as two
+   equal or absent figures and call for opposite sentences ("nothing to do" versus "this is the size the
+   home will be created at"). A screen that derives the sentence from the numbers gets one of them wrong.
+3. **Only one direction acts, and the asymmetry is EBS's.** A larger number grows the volume that exists; a
+   smaller one is stored and reaches only the *next* home this member is given. There is no shrink to
+   implement — so the disk axis is now declared `disk_grow_only` (replacing `disk_create_only`) and the
+   field says which direction does what *before* anything is typed.
+4. **`ModifyVolume` is synchronous, the filesystem is not.** The API call is the part that costs money and
+   the part an administrator is standing in front of, so its refusal is visible; `xfs_growfs` cannot run
+   until the modification reaches `optimizing` (seconds, occasionally minutes) and is handed to the
+   background. **`optimizing`, not `completed`** — completed is EBS's background re-layout, which on a large
+   volume runs for hours, while the capacity is already readable by the guest.
+5. **`af-mount` runs `xfs_growfs` on every mount.** That is what makes losing the background step cheap: a
+   home grown while it was *detached*, or one whose growfs did not land, catches up at the member's next
+   start. Without it, a volume that grew and a filesystem that did not is the one failure mode that looks
+   exactly like success — the member is told the disk went up and keeps seeing the old capacity.
+6. **The volume is grown to the CLAMPED figure**, resolved through `resolveWorkspaceSize`, not to the number
+   in the request body. The tenant cap (`max_workspace_disk_gb`, super_admin's to set) is otherwise enforced
+   only at container start, and here it has to hold at the moment the money is spent.
+
+**Two failures that are not ours and are surfaced verbatim.** EBS refuses a second modification of one
+volume within **6 hours**, and a service quota can refuse as well. They are only distinguishable by their
+message, so `HomeResize.Detail` carries AWS's text untranslated.
+
+**The IAM statement is part of the feature.** `ec2:ModifyVolume` and `ec2:DescribeVolumesModifications` were
+added to the CP's task role (`20-platform.yaml`). Without them the save stores the number, reports that the
+volume is growing, and grows nothing — the same shape of silent `AccessDenied` as the missing snapshot
+permissions in decision 4's note, and for the same reason: the live E2E runs as a deployer credential, not
+as this role.
+
+**And the screen was rearranged, by consequence rather than by "these are all buttons".** The member
+detail's lower half was one *Operations* row in which "Set limits" stood between force-stop and wiping a
+home, with the size editor unfolding *inside* that row of destructive controls. The control an
+administrator reaches for weekly was mixed in with the four they must never press by accident, and the
+form itself put the session cap — a different unit, mechanism and moment of effect — in the same pile as
+the three size axes, because both happen to be stored on one quota row. Now: **Size and limits** is its own
+card directly under the meters it explains, split into *Workspace size* and *Session limit* and still saved
+by one request (the endpoint writes the whole row, so a separate save would erase the other half);
+**Operations** holds force-stop, which is a pause and is no longer painted the danger colour; and clean
+home / remove / discard / delete sit below a rule under **Cannot be undone**.
+
+Code: `control-plane/internal/runtime/runtime_ecs_ec2.go` (`ResizeHome` / `growHomeFilesystem` /
+`waitVolumeModified`), `control-plane/workspace_home_resize.go`,
+`control-plane/internal/runtime/profiles.go` (`HomeResize` / `DiskGrowOnly`),
+`deploy/aws/ecs/cfn/40-ec2-pool.yaml` (`af-mount`), `deploy/aws/ecs/cfn/20-platform.yaml` (IAM),
+`console/src/features/settings/tenant/tenantMemberDetail.tsx`.

@@ -35,9 +35,17 @@ type WorkspaceSizing struct {
 	// DiskDefaultGB is what 0 on the disk axis actually gives (0 = "the backend's own
 	// default", which is all docker/native can say).
 	DiskDefaultGB int `json:"disk_default_gb"`
-	// DiskCreateOnly: the value is read when the volume is created and never again.
-	// ecs-ec2 has no ModifyVolume call, and EBS cannot shrink in any case.
-	DiskCreateOnly bool `json:"disk_create_only"`
+	// DiskGrowOnly: raising the number grows the EXISTING disk, lowering it reaches
+	// only the next one that gets created. True on ecs-ec2, where the axis is a
+	// persistent EBS volume: EBS grows online and cannot shrink at all, so the two
+	// directions of one input do genuinely different things and the screen has to say
+	// which is which before the admin types.
+	//
+	// It replaced DiskCreateOnly (`disk_create_only`), which said the value was read
+	// at creation and never again. That was true of the adapter, not of EBS, and it
+	// left a member's "please make my home bigger" with no answer but destroy-and-
+	// recreate. See ResizeHome and ADR 0045's addendum.
+	DiskGrowOnly bool `json:"disk_grow_only"`
 	// Slots is the ladder a memory request lands on, ascending. Only ecs-ec2 has one;
 	// everywhere else it is absent and the Console shows no box.
 	//
@@ -134,7 +142,7 @@ func (f *ecsEC2Factory) SizingProfile() WorkspaceSizing {
 	p := WorkspaceSizing{
 		Runtime: "ecs-ec2", CPUEffective: false,
 		MemMeaning: MemMeaningSlot, DiskMeaning: DiskMeaningHome,
-		DiskDefaultGB: int(f.pool.homeGiB), DiskCreateOnly: true,
+		DiskDefaultGB: int(f.pool.homeGiB), DiskGrowOnly: true,
 		DefaultSlotClass: f.pool.defaultClass,
 		Slots:            rungs(f.pool.classFor(f.pool.defaultClass).slots),
 	}
@@ -207,6 +215,49 @@ func (e *ecsEC2Runtime) MachineProfile() WorkspaceMachine {
 	}
 	return m
 }
+
+// --- growing a home ---------------------------------------------------------------
+
+// HomeResize is what happened when an admin's stored disk request was pushed at the
+// home that already exists — the third optional capability, probed like the two above.
+//
+// It reports rather than fails, because every outcome below is a legitimate end state
+// of a save that has ALREADY been written: the quota row is the admin's intent and is
+// kept whatever the volume can do with it today. The Console turns Outcome into a
+// sentence; the caller must never build one from the numbers, since "50 → 50" and
+// "there is no volume yet" both show two equal numbers and mean different things.
+type HomeResize struct {
+	// Outcome is one of the HomeResize* constants. "" = the runtime has no home to
+	// grow (every runtime but ecs-ec2), and the Console then says nothing at all.
+	Outcome string `json:"outcome,omitempty"`
+	FromGiB int32  `json:"from_gib,omitempty"`
+	ToGiB   int32  `json:"to_gib,omitempty"`
+	// Detail carries the AWS refusal verbatim on HomeResizeFailed. Not translated and
+	// not parsed: the two failures that actually happen (the 6-hour cooldown between
+	// modifications of one volume, and a service quota) are only distinguishable by
+	// their message, so swallowing it would leave an admin with "it did not work".
+	Detail string `json:"detail,omitempty"`
+}
+
+const (
+	// HomeResizeGrowing — ModifyVolume was accepted. The VOLUME is bigger from that
+	// moment; the filesystem follows a few seconds later (xfs_growfs on the slot, or
+	// the next af-mount when the home is not attached to one).
+	HomeResizeGrowing = "growing"
+	// HomeResizeSame — the volume is already that size. The ordinary result of saving
+	// this form for any other reason, so it must not read as an error.
+	HomeResizeSame = "same"
+	// HomeResizeShrink — the request is SMALLER than the volume. EBS cannot shrink,
+	// full stop; the number is still stored and reaches the next home created for this
+	// member (after a destroy), which is the only place it can mean anything.
+	HomeResizeShrink = "shrink"
+	// HomeResizeNoHome — the member has no home volume yet, so the stored number will
+	// simply be the size it is created at. Not a failure and not a no-op.
+	HomeResizeNoHome = "no_home"
+	// HomeResizeFailed — AWS refused. The quota row is written and the admin can
+	// press save again later; Detail says why.
+	HomeResizeFailed = "failed"
+)
 
 // --- cost -----------------------------------------------------------------------
 

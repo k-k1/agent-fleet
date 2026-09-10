@@ -349,6 +349,12 @@ type ec2API interface {
 	DescribeSubnets(context.Context, *ec2.DescribeSubnetsInput, ...func(*ec2.Options)) (*ec2.DescribeSubnetsOutput, error)
 	CreateVolume(context.Context, *ec2.CreateVolumeInput, ...func(*ec2.Options)) (*ec2.CreateVolumeOutput, error)
 	DeleteVolume(context.Context, *ec2.DeleteVolumeInput, ...func(*ec2.Options)) (*ec2.DeleteVolumeOutput, error)
+	// Growing a home that already exists (ResizeHome). ModifyVolume is online — the
+	// volume stays attached and the workspace stays up — but the guest sees the new
+	// size only once the modification reaches `optimizing`, which is what the second
+	// call is polled for before the filesystem is stretched over it.
+	ModifyVolume(context.Context, *ec2.ModifyVolumeInput, ...func(*ec2.Options)) (*ec2.ModifyVolumeOutput, error)
+	DescribeVolumesModifications(context.Context, *ec2.DescribeVolumesModificationsInput, ...func(*ec2.Options)) (*ec2.DescribeVolumesModificationsOutput, error)
 	AttachVolume(context.Context, *ec2.AttachVolumeInput, ...func(*ec2.Options)) (*ec2.AttachVolumeOutput, error)
 	DetachVolume(context.Context, *ec2.DetachVolumeInput, ...func(*ec2.Options)) (*ec2.DetachVolumeOutput, error)
 	CreateTags(context.Context, *ec2.CreateTagsInput, ...func(*ec2.Options)) (*ec2.CreateTagsOutput, error)
@@ -2158,6 +2164,107 @@ func (e *ecsEC2Runtime) createHomeVolume(ctx context.Context, az string) (*ec2ty
 		AvailabilityZone: out.AvailabilityZone,
 		State:            out.State,
 	}, nil
+}
+
+// ResizeHome grows this member's home to the size their stored disk request resolves to
+// (e.homeGiB — already clamped to the tenant cap by the CP before this runtime was
+// built). It is the answer to the one thing ADR 0045 decision 4 left with no answer at
+// all, "please make my home bigger", whose only previous route was destroy and recreate.
+//
+// Only one direction acts, and that asymmetry is EBS's, not a policy: a volume grows
+// online and cannot shrink by any means. A smaller number is still stored — it is the
+// admin's intent and it sizes the NEXT home this member gets — and is reported back as
+// HomeResizeShrink so nobody is left believing a disk got smaller.
+//
+// The work is split at the point where the admin stops waiting:
+//
+//	synchronous   ModifyVolume. One call. It is the part that costs money and the part
+//	              somebody is standing in front of, so its refusal must be visible.
+//	background    the filesystem. xfs_growfs cannot run until the modification reaches
+//	              `optimizing` — seconds, occasionally minutes — and holding a save open
+//	              for that would be the whole latency of the feature. Losing it is
+//	              cheap: `af-mount` runs xfs_growfs on every mount, so a filesystem that
+//	              does not catch up now catches up at the member's next start.
+func (e *ecsEC2Runtime) ResizeHome(ctx context.Context) (HomeResize, error) {
+	vol, err := e.homeVolume(ctx)
+	if err != nil {
+		return HomeResize{}, err
+	}
+	want := e.homeGiB
+	if vol == nil {
+		return HomeResize{Outcome: HomeResizeNoHome, ToGiB: want}, nil
+	}
+	have := aws.ToInt32(vol.Size)
+	switch {
+	case want == have:
+		return HomeResize{Outcome: HomeResizeSame, FromGiB: have, ToGiB: want}, nil
+	case want < have:
+		return HomeResize{Outcome: HomeResizeShrink, FromGiB: have, ToGiB: want}, nil
+	}
+	volID := aws.ToString(vol.VolumeId)
+	if _, err := e.ec2.ModifyVolume(ctx, &ec2.ModifyVolumeInput{
+		VolumeId: aws.String(volID), Size: aws.Int32(want),
+	}); err != nil {
+		// Reported, not returned. The quota row was written before this ran, and the
+		// two refusals that happen in practice — EBS's 6-hour cooldown between two
+		// modifications of one volume, and a service quota — are fixed by waiting
+		// rather than by pressing save again, so failing the save would roll back the
+		// admin's intent over something the save did not get wrong.
+		log.Printf("ecs-ec2: could not grow %s (%d -> %d GiB) for %s: %v", volID, have, want, e.base.name, err)
+		return HomeResize{Outcome: HomeResizeFailed, FromGiB: have, ToGiB: want, Detail: err.Error()}, nil
+	}
+	log.Printf("ecs-ec2: growing %s %d -> %d GiB for %s", volID, have, want, e.base.name)
+	// A detached home has no mountpoint to stretch a filesystem over, and needs none:
+	// af-mount grows it when it is next mounted.
+	if inst := attachedInstance(vol); inst != "" {
+		e.bg(ctx, func(ctx context.Context) {
+			if err := e.growHomeFilesystem(ctx, volID, inst); err != nil {
+				log.Printf("ecs-ec2: %s grew but its filesystem did not follow on %s; the next mount will do it: %v",
+					volID, inst, err)
+			}
+		})
+	}
+	return HomeResize{Outcome: HomeResizeGrowing, FromGiB: have, ToGiB: want}, nil
+}
+
+// growHomeFilesystem stretches the mounted filesystem over a volume that has just been
+// grown. XFS grows in place and only while MOUNTED, which is why this takes the slot the
+// home is attached to rather than the volume alone.
+func (e *ecsEC2Runtime) growHomeFilesystem(ctx context.Context, volumeID, instanceID string) error {
+	if err := e.waitVolumeModified(ctx, volumeID); err != nil {
+		return err
+	}
+	return e.runOnSlot(ctx, instanceID, "xfs_growfs "+e.homeMountPoint())
+}
+
+// waitVolumeModified polls until a ModifyVolume has gone far enough for the GUEST to see
+// the new size.
+//
+// `optimizing` is that point and `completed` is not the bar: optimizing is EBS's
+// background re-layout of the volume, which on a large one runs for hours, while the
+// capacity is already there and xfs_growfs already works. Waiting for completed would
+// turn a 10-second operation into an all-afternoon one for no gain.
+func (e *ecsEC2Runtime) waitVolumeModified(ctx context.Context, volumeID string) error {
+	for i := 0; ; i++ {
+		out, err := e.ec2.DescribeVolumesModifications(ctx, &ec2.DescribeVolumesModificationsInput{
+			VolumeIds: []string{volumeID},
+		})
+		if err == nil && len(out.VolumesModifications) > 0 {
+			m := out.VolumesModifications[0]
+			switch m.ModificationState {
+			case ec2types.VolumeModificationStateOptimizing, ec2types.VolumeModificationStateCompleted:
+				return nil
+			case ec2types.VolumeModificationStateFailed:
+				return fmt.Errorf("volume %s modification failed: %s", volumeID, aws.ToString(m.StatusMessage))
+			}
+		}
+		if i >= 60 {
+			return fmt.Errorf("volume %s is still modifying", volumeID)
+		}
+		if err := e.sleep(ctx, 2*time.Second); err != nil {
+			return err
+		}
+	}
 }
 
 // waitVolumeAttachable polls until the volume leaves `creating`. Measured at ~3s for a

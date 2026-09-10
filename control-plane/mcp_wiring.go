@@ -43,6 +43,10 @@ func (d cpDeps) WorkspaceStateByMembership(ctx context.Context, mid string) (str
 	return d.m.workspaceStateByMembership(ctx, mid)
 }
 
+func (d cpDeps) ResizeHomeByMembership(ctx context.Context, mid string) (runtime.HomeResize, error) {
+	return d.m.resizeHomeByMembership(ctx, mid)
+}
+
 func (d cpDeps) ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (int64, int, int) {
 	return d.m.resolveWorkspaceSize(ctx, ws)
 }

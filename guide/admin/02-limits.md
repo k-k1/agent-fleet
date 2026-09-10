@@ -41,23 +41,29 @@ currently in effect. When you want it changed, ask your IT department / deployme
 
 ### Per-member session limits (you can set these)
 
-What you can adjust is the per-member **session limit**. Pressing **"Set limits"** in the
-"Operations" section of the member detail lets you enter "Max sessions (0 = unlimited)"; once
-saved, it applies to that person only. Members with a personal limit show "s≤ N" on their member
-row in the roster.
+What you can adjust is the per-member **session limit**. In the member detail, the
+**"Size and limits"** card (right under the resource meters) has a **"Change"** button; under
+**"Session limit"** you enter "Max sessions (0 = unlimited)", and once saved it applies to that
+person only. Members with a personal limit show "s≤ N" on their member row in the roster.
 
 Between a personal session limit and the tenant-wide limit, whichever is stricter kicks in first.
 
-### Workspace size (memory, CPU, working disk)
+### Workspace size (memory, CPU, disk)
 
-The same "Set limits" panel also decides how big that member's workspace is. The three axes are
-independent.
+The top half of that same "Change" form, **"Workspace size"**, decides how big that member's
+workspace is. The three axes are independent (and one save writes them together with the session
+limit).
 
 | Axis | Unit | When 0 |
 |---|---|---|
 | Memory | MB | deployment default |
 | CPU | Fargate CPU units (1024 = 1 vCPU) | deployment default |
-| Working disk | GB | the deployment default (50 GiB on the reference AWS stack) |
+| Disk | GB | the deployment default (50 GiB on the reference AWS stack) |
+
+**What the disk axis means differs by deployment, and the screen says which.** "Workspace working
+disk" is scratch space that is wiped when the workspace stops; "Workspace home (persistent)" is the
+home directory itself. On the latter, raising this number **grows the home they are using right
+now** (next section). The line under the field always states which one you are looking at.
 
 The **S / M / L / XL / 2XL** buttons are a shortcut that fills all three at once. You can also enter
 them individually.
@@ -67,7 +73,33 @@ example). An entry that is not a valid combination is rounded up to the nearest 
 save, which is why **raising CPU can also raise memory**. The response after saving shows the values
 that will actually be applied.
 
-Changes take effect **from the next workspace start**; a running workspace is not resized.
+Memory, CPU and the machine take effect **from the next workspace start**; a running workspace is
+not resized. **The disk is the exception**: on a deployment that grows the home, the expansion
+starts the moment you save.
+
+### When someone says their home (`~`) is full
+
+"Please make my home bigger" is something **you can do yourself**, with no ticket to IT. This is the
+procedure on a deployment where the disk axis reads "Workspace home (persistent)".
+
+1. Open **"Size and limits" → "Change"** in the member detail.
+2. Enter a larger number (GB) under **"Workspace home (persistent)"** and save.
+3. **"Growing the home from N to M GiB"** under the card means it was accepted. **The workspace
+   keeps running**; the extra room shows up on their side within a minute or so.
+
+Three constraints are worth knowing.
+
+- **It cannot go down.** Saving a smaller number leaves the existing home exactly as it is (cloud
+  disks cannot shrink). The number you saved is what the *next* home created for that person will
+  be. If you genuinely need to shrink one, that means giving up the home — talk to IT.
+- **One disk can only be changed once every 6 hours.** A second expansion in a row is refused. The
+  setting is saved either way, so saving again later goes through, and the reason for the refusal
+  is shown under the card verbatim.
+- **You cannot go past the tenant-wide limit.** It caps out there (raising the limit itself is
+  super_admin / IT territory).
+
+Growing a home **does not touch its contents** — it only raises the denominator of the usage meter
+in the next section.
 
 ### Machine (available on some deployments)
 
@@ -174,10 +206,13 @@ pressed while the workspace is running). After a confirmation dialog, that membe
 container stops. **The work (home) is not lost.** The member can start it again from the Console.
 It is strictly a "pause for now" operation, not destructive.
 
-Note that the "Clean home" button, which cleans home itself, is super_admin only and is not shown
-to you. **Situations that need heavier measures** — the container is broken and restarting doesn't
-fix it, host-side intervention is needed — **are the domain of your IT department / deployment
-administrator** ([operator/README.md](../operate/README.md)).
+Below it, ruled off under **"Cannot be undone"**, are exactly what the heading says: "Clean home",
+"Remove member", "Discard workspace" and "Delete member permanently". **All of them are yours to
+run** — the point is that an employee leaving should not become a ticket for IT. Read what each
+confirmation dialog says it keeps and deletes before you press it. **Situations that need heavier
+measures** — the container is broken and restarting doesn't fix it, host-side intervention is
+needed — **are the domain of your IT department / deployment administrator**
+([operator/README.md](../operate/README.md)).
 
 ## What members experience when a limit is hit
 

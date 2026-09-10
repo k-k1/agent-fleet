@@ -626,6 +626,13 @@
   color: var(--warn);
 }
 
+/* The other direction: a save that reached beyond the database and did what it said —
+   currently only "the home is growing". Green because the ordinary hint colour reads as
+   a caveat, and this one is the confirmation an admin came for. */
+.admin-hint.ok {
+  color: var(--ok);
+}
+
 .state-dot {
   width: 8px;
   height: 8px;

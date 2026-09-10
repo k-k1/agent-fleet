@@ -1,8 +1,9 @@
-// Pins the view that sets the workspace size (memory / CPU / work disk)
+// Pins the view that sets the workspace size (memory / CPU / disk)
 // (docs/log/63 §63.5, ADR 0044 decisions 1 and 2). Two things only:
 //   1. A save sends all three axes. The API writes the whole quota row, so any axis the UI
 //      omits drops to 0 — an implementation leaving out disk_gb silently erases a disk that
-//      was set through MCP or the API.
+//      was set through MCP or the API. Splitting the form into "size" and "session limit"
+//      (ADR 0045's addendum) made that the live risk: two visual groups, still one request.
 //   2. The named sizes (S/M/L, ...) are a shortcut that fills the three inputs, not a storage
 //      format. If pressing one does not land as numbers in the fields, the size carries state
 //      of its own.
@@ -63,9 +64,7 @@ const buttonWith = (text: string) =>
   );
 
 const openEditor = async () => {
-  const open = Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((b) =>
-    (b.textContent || "").includes("上限を設定"),
-  );
+  const open = document.querySelector<HTMLButtonElement>(".ws-size .ws-size-edit");
   await act(async () => open!.click());
 };
 
@@ -92,8 +91,9 @@ describe("member limit editing", () => {
   it("sends all three axes on save, since an omitted axis drops to 0", async () => {
     await mount();
     await openEditor();
-    // Current values in order: max sessions / memory (MB) / CPU (units) / disk (GB).
-    expect(numbers()).toEqual(["2", "4096", "1024", "40"]);
+    // Current values in the order the two groups put them: memory (MB) / CPU (units) /
+    // disk (GB), then the session limit.
+    expect(numbers()).toEqual(["4096", "1024", "40", "2"]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
@@ -117,7 +117,7 @@ describe("member limit editing", () => {
     const xl = buttonWith("XL");
     await act(async () => xl!.click());
     // XL = 4 vCPU / 16 GiB / 80 GB, a combination Fargate actually accepts.
-    expect(numbers()).toEqual(["2", "16384", "4096", "80"]);
+    expect(numbers()).toEqual(["16384", "4096", "80", "2"]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
@@ -171,7 +171,7 @@ const SIZING_EC2 = {
   mem_meaning: "slot",
   disk_meaning: "home",
   disk_default_gb: 50,
-  disk_create_only: true,
+  disk_grow_only: true,
   slots: [
     { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
     { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },
@@ -191,8 +191,8 @@ describe("member limit editing (ecs-ec2)", () => {
   it("hides the CPU field but still sends the stored cpu_limit back on save", async () => {
     await mount();
     await openEditor();
-    // Max sessions / memory (MB) / disk (GB): the CPU field is gone.
-    expect(numbers()).toEqual(["2", "4096", "40"]);
+    // Memory (MB) / disk (GB) / max sessions: the CPU field is gone.
+    expect(numbers()).toEqual(["4096", "40", "2"]);
 
     const save = buttonWith("保存");
     await act(async () => save!.click());
@@ -209,7 +209,7 @@ describe("member limit editing (ecs-ec2)", () => {
     expect(chips).toEqual(["8 GiB", "16 GiB", "32 GiB"]);
 
     await act(async () => buttonWith("16 GiB")!.click());
-    expect(numbers()).toEqual(["2", "16384", "40"]);
+    expect(numbers()).toEqual(["16384", "40", "2"]);
   });
 
   it("states the instance actually landed on, not a cap, in the memory field", async () => {
@@ -220,8 +220,9 @@ describe("member limit editing (ecs-ec2)", () => {
     );
     // 4096 MB lands on an m7i.large, and the whole 8 GiB is usable.
     expect(units).toContain("→ m7i.large（2 vCPU / 8 GiB・専有）");
-    // The disk is stated to be the persistent home, not the work disk.
-    expect(units.some((u) => u.includes("home の作成時にだけ反映され"))).toBe(true);
+    // The disk is stated to be the persistent home, not the work disk — and, since this
+    // runtime can grow one, as something that GROWS rather than as write-once.
+    expect(units.some((u) => u.includes("増やすと今ある home がそのまま拡張されます"))).toBe(true);
     expect(units.some((u) => u.includes("作業ディスクは停止すると消えます"))).toBe(false);
   });
 });
@@ -356,7 +357,7 @@ describe("saved values survive reopening the editor", () => {
     await openEditor();
     expect(buttonWith("省コスト（Arm）")!.className).toContain("on");
     expect(buttonWith("テナントの既定")!.className).not.toContain("on");
-    expect(numbers()[1]).toBe("16384");
+    expect(numbers()[0]).toBe("16384");
   });
 
   it("stops showing the architecture-change warning right after a save", async () => {
@@ -439,5 +440,105 @@ describe("workspace resource tiles", () => {
     const [, cpu, disk] = tiles();
     expect(cpu.value).toBe("–");
     expect(disk.value).toBe("–");
+  });
+});
+
+// The member detail's lower half is arranged by CONSEQUENCE (ADR 0045's addendum). What is
+// pinned is the boundary, because it is the whole point: the editor and force-stop are
+// things an admin does often and can take back, and the four below the rule are not.
+describe("member detail information architecture", () => {
+  const inDangerZone = (text: string) =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".danger-zone button")).some(
+      (b) => (b.textContent || "").trim() === text,
+    );
+
+  it("keeps the size editor out of the operations panel entirely", async () => {
+    await mount();
+    // It opens from the size card, which sits above cost/uptime rather than at the bottom.
+    expect(document.querySelector(".ws-size .ws-size-edit")).toBeTruthy();
+    await openEditor();
+    expect(document.querySelector(".ws-size .limit-edit")).toBeTruthy();
+    expect(document.querySelector(".danger-zone .limit-edit")).toBeFalsy();
+  });
+
+  // Force-stop keeps the work: the home survives and the member starts it again. Painting
+  // it the same red as wiping a home is what teaches people to read past the red.
+  it("does not treat force-stop as destructive", async () => {
+    await mount();
+    expect(inDangerZone("ワークスペースを強制停止")).toBe(false);
+    const stop = buttonWith("ワークスペースを強制停止");
+    expect(stop!.className).not.toContain("danger-btn");
+  });
+
+  it("puts cleaning a home and removing a member below the rule", async () => {
+    await mount();
+    expect(inDangerZone("home を掃除")).toBe(true);
+    expect(inDangerZone("メンバーを外す")).toBe(true);
+  });
+
+  // One request, still, after the split into two groups: the endpoint writes the whole
+  // quota row, so a session limit posted separately would erase the three size axes.
+  it("saves the size and the session limit in one request", async () => {
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("保存")!.click());
+    const calls = apiJSON.mock.calls.filter((c) => c[0] === "api/admin/user-limits");
+    expect(calls).toHaveLength(1);
+    expect(calls[0][2]).toMatchObject({ max_sessions: 2, mem_limit: 4 * 1024 ** 3, disk_gb: 40 });
+  });
+});
+
+// What the save DID to the home that already exists (`home_resize`). The disk field is the
+// only one on this form that reaches a resource outside the database, and two of the five
+// outcomes mean "stored, but your disk did not change" — silence there is exactly what
+// makes an admin believe it grew.
+describe("home resize outcome", () => {
+  const saveWith = async (home_resize: unknown) => {
+    apiJSON.mockImplementation((p: string) =>
+      p === "api/admin/user-limits" ? Promise.resolve({ home_resize }) : Promise.resolve({}),
+    );
+    await mount();
+    await openEditor();
+    await act(async () => buttonWith("保存")!.click());
+  };
+  const note = () => document.querySelector(".ws-size .admin-hint")?.textContent ?? "";
+
+  it("reports a growing volume", async () => {
+    await saveWith({ outcome: "growing", from_gib: 50, to_gib: 100 });
+    expect(note()).toContain("50");
+    expect(note()).toContain("100");
+    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("ok");
+  });
+
+  // EBS cannot shrink. The number is stored and the disk is untouched, which is the one
+  // outcome most likely to be read as "done" if it were not said.
+  it("warns that a smaller number left the existing home alone", async () => {
+    await saveWith({ outcome: "shrink", from_gib: 100, to_gib: 50 });
+    expect(document.querySelector(".ws-size .admin-hint")!.className).toContain("warn");
+    expect(note()).toContain("100");
+  });
+
+  it("says the size applies at creation when there is no home yet", async () => {
+    await saveWith({ outcome: "no_home", to_gib: 80 });
+    expect(note()).toContain("80");
+  });
+
+  it("carries AWS's refusal, since only its text tells the two refusals apart", async () => {
+    await saveWith({ outcome: "failed", detail: "VolumeModificationRateExceeded" });
+    expect(note()).toContain("VolumeModificationRateExceeded");
+  });
+
+  // Saving this form for any other reason lands on `same` every time, so it must be silent
+  // rather than report a non-event on every save.
+  it("says nothing when the volume is already that size", async () => {
+    await saveWith({ outcome: "same", from_gib: 50, to_gib: 50 });
+    expect(document.querySelector(".ws-size .admin-hint")).toBeFalsy();
+  });
+
+  // Every other runtime omits the field: there is no persistent home to grow, and a
+  // sentence about one would be a claim about a disk that does not exist.
+  it("says nothing at all on a runtime with no home to grow", async () => {
+    await saveWith(undefined);
+    expect(document.querySelector(".ws-size .admin-hint")).toBeFalsy();
   });
 });

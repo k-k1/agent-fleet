@@ -1138,14 +1138,26 @@ func (a Admin) SetUserLimit(w http.ResponseWriter, r *http.Request) {
 	a.cp.EvictMembershipCache(mem.ID)
 	effMem, effCPU, effDisk := a.cp.ResolveWorkspaceSize(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
 	effClass, classNote := a.cp.ResolveSlotClass(r.Context(), store.Workspace{MembershipID: mem.ID, TenantID: t.ID})
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"user_key": key, "tenant": t.Slug, "max_sessions": body.MaxSessions, "disk_gb": body.DiskGB,
 		"mem_limit": body.MemLimit, "mem_effective": effMem,
 		"cpu_limit": body.CPULimit, "cpu_effective": effCPU, "disk_effective": effDisk,
 		// The class the member will actually land on, and why it is not what was asked
 		// for when it is not. A substituted class is otherwise invisible until the bill.
 		"slot_class": q.SlotClass, "slot_class_effective": effClass, "slot_class_note": classNote,
-	})
+	}
+	// The disk axis is the one that also reaches a resource that ALREADY EXISTS: on the
+	// EC2 slot pool it is the member's persistent home, and raising the number grows that
+	// volume online. AFTER the save, so the stored row is the admin's intent either way,
+	// and reported rather than enforced — see resizeHomeByMembership.
+	//
+	// The error is dropped on purpose and the note simply omitted: a lookup that failed
+	// is not a reason to fail a save that succeeded, and saying nothing beats saying
+	// something wrong about somebody's disk.
+	if hr, err := a.cp.ResizeHomeByMembership(r.Context(), mem.ID); err == nil && hr.Outcome != "" {
+		resp["home_resize"] = hr
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // SetMembershipRole (PUT /api/admin/membership-role

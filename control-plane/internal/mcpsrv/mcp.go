@@ -1310,11 +1310,18 @@ func (a API) mcpSetUserQuota(ctx context.Context, ac *adminCtx, userKey string, 
 	effClass, classNote := a.cp.ResolveSlotClass(ctx, ws)
 	a.mcpAudit(ctx, ac, "set_user_quota", userKey, fmt.Sprintf("max_sessions=%d disk_gb=%d mem=%s cpu=%d class=%s",
 		q.MaxSessions, effDisk, formatMemHuman(effMem), effCPU, effClass))
-	return jsonText(map[string]any{
+	out := map[string]any{
 		"user_key": userKey, "tenant": ac.tenant.Slug, "max_sessions": q.MaxSessions,
 		"disk_gb": q.DiskGB, "disk_effective_gb": effDisk,
 		"mem_mib": q.MemLimit / mib, "mem_effective_mib": effMem / mib,
 		"cpu_units": q.CPULimit, "cpu_effective_units": effCPU,
 		"slot_class": q.SlotClass, "slot_class_effective": effClass, "slot_class_note": classNote,
-	})
+	}
+	// Same step, and the same order, as the admin API's save: the disk axis is the only
+	// one that reaches a resource that already exists. Without it this tool would be the
+	// route by which a disk request is stored and quietly never applied.
+	if hr, err := a.cp.ResizeHomeByMembership(ctx, mem.ID); err == nil && hr.Outcome != "" {
+		out["home_resize"] = hr
+	}
+	return jsonText(out)
 }

@@ -1,5 +1,16 @@
 // Member detail: one person's surface — uptime, cost, size, role and removal in one place.
 // Renders whoever was selected on the roster (tenantMembers.tsx).
+//
+// The bottom of this screen is arranged by CONSEQUENCE, not by "these are all buttons"
+// (ADR 0045's addendum). It used to be one "Operations" row where changing a memory number
+// stood between force-stop and wiping somebody's home, with the size editor unfolding
+// inside that row — so the one control an admin reaches for weekly was mixed in with the
+// four they must never press by accident. Now:
+//
+//	Size and limits   its own card, directly under the meters it explains. Editing a
+//	                  number is not an operation on anybody.
+//	Operations        force-stop, which is a pause and takes the work with it.
+//	  Cannot be undone   ruled off below it: clean home, remove, discard, delete.
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, apiJSON, errText } from "../../../core/api/client.ts";
 import { Icon } from "../../../ui/Icon.tsx";
@@ -10,9 +21,9 @@ import { MemberCostPanel } from "../../cost/CloudCostView.tsx";
 import { MemberUptimePanel } from "../../usage/UptimeHeatmap.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { stateInfo, stripLabelTag } from "../../../lib/sessionview.ts";
-import type { Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
+import type { HomeResize, Member, WsSizing, WsSlot } from "../parts/adminShared.ts";
 import { fmtG, fmtPct, fmtGbHint, ladderFor, slotFor, slotMemLabel, WS_SIZE_PRESETS, WS_SIZING_FALLBACK } from "../parts/adminShared.ts";
-import { MemberIdleDetail } from "./tenantMembers.tsx";
+import { MemberIdleDetail, MemberSizeChips } from "./tenantMembers.tsx";
 
 export function MemberView({
   slug,
@@ -67,6 +78,11 @@ export function MemberView({
   // input (an unknown class is refused, a number is clamped).
   const [savedLimits, setSavedLimits] = useState<Partial<Member> | null>(null);
   const cur = { ...member, ...(savedLimits ?? {}) };
+  // What the last save DID to the home that already exists. Kept until the editor is
+  // opened again rather than shown as a toast: three of the five outcomes are things the
+  // admin has to act on later (wait for it, ask for a restart, save again in six hours),
+  // and a toast is gone before any of that is decided.
+  const [resize, setResize] = useState<HomeResize | null>(null);
   // What those three numbers actually DO on this deployment's runtime (ADR 0045 decision 21).
   // Fetched rather than assumed: the same editor is shown for docker, native, Fargate and
   // the EC2 slot pool, and it used to describe all four as Fargate.
@@ -168,7 +184,13 @@ export function MemberView({
   const diskDefault = sizing.disk_default_gb ?? 0;
   const diskHint =
     sizing.disk_meaning === "home"
-      ? tr("admin.ws_disk_home_hint", { n: String(diskDefault) })
+      ? // On a runtime that can grow a home in place, the field is no longer write-once,
+        // and saying it is would send an admin to destroy-and-recreate for a member who
+        // just wants more room. The two directions still differ, which is what the
+        // grow-only wording is for.
+        sizing.disk_grow_only
+        ? tr("admin.ws_disk_home_grow_hint", { n: String(diskDefault) })
+        : tr("admin.ws_disk_home_hint", { n: String(diskDefault) })
       : sizing.disk_meaning === "quota"
         ? tr("admin.ws_disk_quota_hint")
         : +diskGb > 0
@@ -221,6 +243,7 @@ export function MemberView({
       // silently rewritten into the control.
       slot_class: typeof res?.slot_class === "string" ? res.slot_class : slotClass,
     });
+    setResize(res?.home_resize ?? null);
     setLimitOpen(false);
     poll(); // mem_max reflects the new cap after the next start; refresh sessions/stats
     onChanged();
@@ -360,118 +383,43 @@ export function MemberView({
         </div>
       </section>
 
-      {/* Cost over a period sits right after resources right now, in a separate card. Keeping
-          them apart is ADR 0048 decision 2 (do not put time and dollars side by side): the
-          tiles above are measured every 4 seconds, this is billing roughly 24 hours behind,
-          and they are read differently. */}
-      <MemberCostPanel slug={slug} userKey={key} />
-
-      {/* Directly below cost: the same period's uptime broken down by hour (docs/log/83). Side
-          by side, the reason one day is expensive can be read on the spot — a band running all
-          night means someone forgot to stop it, dense only in the daytime means they were
-          working. Unlike cost, this needs no capability check: uptime exists even on a
-          deployment with no billing. */}
-      <MemberUptimePanel slug={slug} userKey={key} />
-
-      <section className="admin-panel">
-        <h4>{tr("admin.sessions_heading")} {sessions ? `(${sessions.length})` : ""}</h4>
-        {sessions === null ? (
-          <p className="muted">{tr("common.loading")}</p>
-        ) : sessions.length === 0 ? (
-          <p className="muted">{tr("admin.no_sessions")}</p>
-        ) : (
-          <div className="admin-sessions">
-            {sessions.map((s: any) => {
-              const st = stateInfo(s);
-              return (
-                <div key={s.name} className="adm-session">
-                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
-                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
-                  </span>
-                  <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
-                  <span className="as-repo muted">{s.repo || ""}</span>
-                  <span className={"session-state " + st.cls}>
-                    <Icon name={st.icon} spin={st.spin} /> {st.text}
-                  </span>
-                  <span className="as-time muted">{s.started || ""}</span>
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </section>
-
-      {isSuper && (
-        <section className="admin-panel">
-          <h4>{tr("admin.permissions")}</h4>
-          {member.super_admin ? (
-            <p className="muted">
-              <Icon name="star-full" className="mr-star" /> {tr("admin.super_admin_note_1")}<code>SUPER_ADMIN_EMAILS</code>{tr("admin.super_admin_note_2")}
-            </p>
-          ) : (
-            <div className="member-actions">
-              {role === "tenant_admin" ? (
-                <>
-                  <span className="role-now"><Icon name="shield" /> {tr("admin.tenant_admin_role")}</span>
-                  <button disabled={busy} onClick={() => setRoleTo("member")}>
-                    {tr("admin.revoke_admin")}
-                  </button>
-                </>
-              ) : (
-                <button className="primary" disabled={busy} onClick={() => setConfirmGrant(true)}>
-                  <Icon name="shield" /> {tr("admin.make_admin")}
-                </button>
-              )}
-            </div>
+      {/* Size and limits, directly under the meters. The meters say how much is being used
+          and this says of what — read together, and neither is an operation on anybody,
+          which is why they are no longer separated by the cost and uptime cards with the
+          editor hidden at the bottom of the page among the destructive buttons. */}
+      <section className="admin-panel ws-size">
+        <h4>{tr("admin.ws_size_heading")}</h4>
+        <div className="ws-size-now">
+          <MemberSizeChips m={cur} sizing={sizing} />
+          {!cur.mem_limit && !cur.disk_gb && !cur.max_sessions && (
+            <span className="muted">{tr("admin.ws_size_unset")}</span>
           )}
-          <p className="muted role-hint">
-            {tr("admin.tenant_admin_hint_1")}<b>{slug}</b>{tr("admin.tenant_admin_hint_2")}
-          </p>
-        </section>
-      )}
-
-      <section className="admin-panel">
-        <h4>{tr("admin.operations")}</h4>
-        <div className="member-actions">
-          <button className="danger-btn" disabled={!running} onClick={() => setConfirmStop(true)}>
-            <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
-          </button>
-          <button onClick={() => {
-            setLimit(cur.max_sessions ?? 0);
-            setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
-            setCpuUnits(cur.cpu_limit ?? 0);
-            setDiskGb(cur.disk_gb ?? 0);
-            setSlotClass(cur.slot_class ?? "");
-            setLimitOpen(true);
-          }}>
-            <Icon name="settings" /> {tr("admin.set_limits")}
-          </button>
-          {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / decision 26):
-              the department knows who left, so the whole offboarding sequence
-              belongs to it rather than half of it being a ticket to IT. */}
-          <button className="danger-btn" onClick={() => setConfirmClean(true)}>
-            <Icon name="trash" /> {tr("admin.clean_home")}
-          </button>
-          {member.status !== "removed" ? (
-            <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
-              <Icon name="close" /> {tr("admin.remove_member")}
-            </button>
-          ) : member.state !== "none" ? (
-            <button className="danger-btn" disabled={busy} onClick={() => setConfirmDestroy(true)}>
-              <Icon name="trash" /> {tr("admin.destroy_ws")}
-            </button>
-          ) : (
-            <button className="danger-btn" disabled={busy} onClick={() => setConfirmPurgeRow(true)}>
-              <Icon name="trash" /> {tr("admin.delete_member_row")}
+          {/* Hidden while the editor is open: pressing it again re-seeds every field from
+              the stored values, so it would throw away whatever was typed with no warning
+              and no undo. Cancel is the way out, and it says so. */}
+          {!limitOpen && (
+            <button
+              className="ws-size-edit"
+              onClick={() => {
+                setLimit(cur.max_sessions ?? 0);
+                setMemMb(cur.mem_limit ? Math.round(cur.mem_limit / 1048576) : 0);
+                setCpuUnits(cur.cpu_limit ?? 0);
+                setDiskGb(cur.disk_gb ?? 0);
+                setSlotClass(cur.slot_class ?? "");
+                setResize(null); // the last save's outcome is about the values being replaced
+                setLimitOpen(true);
+              }}
+            >
+              <Icon name="settings" /> {tr("admin.ws_size_change")}
             </button>
           )}
         </div>
         {limitOpen && (
           <div className="limit-edit">
-            <div className="le-head">{tr("admin.limits_edit_title")}</div>
             {/* Which KIND of machine, above the numbers — it changes what the numbers
                 below mean (docs/log/70 §70.10). The operator's own label is what is shown;
                 the instance type appears only in the "you land on" line. */}
+            <div className="le-head">{tr("admin.ws_size_group")}</div>
             {classes.length > 0 && (
               <div className="le-presets">
                 <span className="af-cap">{tr("admin.ws_machine")}</span>
@@ -494,14 +442,9 @@ export function MemberView({
             )}
             <div className="admin-fgrid">
               <label className="admin-fld">
-                <span className="af-cap">{tr("admin.max_sessions_label")}</span>
-                <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} autoFocus />
-                <span className="af-unit">{tr("admin.zero_unlimited")}</span>
-              </label>
-              <label className="admin-fld">
                 <span className="af-cap">{onSlots ? tr("admin.ws_mem_req") : tr("admin.ws_memory")}</span>
                 <span className="af-inputwrap">
-                  <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} />
+                  <input type="number" min="0" step="256" value={memMb} onChange={(e) => setMemMb(e.target.value)} autoFocus />
                   <span className="af-suffix">MB</span>
                 </span>
                 <span className="af-unit">{memHint}</span>
@@ -576,12 +519,134 @@ export function MemberView({
             <p className="admin-hint">
               {tr("admin.mem_clamp_1")}<b>{tr("admin.ws_mem_hint_bold")}</b>{tr("admin.mem_clamp_2")}
             </p>
+            {/* The session cap is not a size and shares nothing with the three axes above
+                — different unit, different mechanism, different moment of effect. It rode
+                in the same form only because both are stored on one quota row, and the
+                form read as a pile. It is still saved by the one request below. */}
+            <div className="le-head">{tr("admin.session_limit_group")}</div>
+            <div className="admin-fgrid">
+              <label className="admin-fld">
+                <span className="af-cap">{tr("admin.max_sessions_label")}</span>
+                <input type="number" min="0" value={limit} onChange={(e) => setLimit(e.target.value)} />
+                <span className="af-unit">{tr("admin.zero_unlimited")}</span>
+              </label>
+            </div>
             <div className="le-actions">
               <button className="primary" onClick={saveLimit}>{tr("common.save")}</button>
               <button className="ghost" onClick={() => setLimitOpen(false)}>{tr("common.cancel")}</button>
             </div>
           </div>
         )}
+        <HomeResizeNote resize={resize} />
+      </section>
+
+      {/* Cost over a period sits right after resources right now, in a separate card. Keeping
+          them apart is ADR 0048 decision 2 (do not put time and dollars side by side): the
+          tiles above are measured every 4 seconds, this is billing roughly 24 hours behind,
+          and they are read differently. */}
+      <MemberCostPanel slug={slug} userKey={key} />
+
+      {/* Directly below cost: the same period's uptime broken down by hour (docs/log/83). Side
+          by side, the reason one day is expensive can be read on the spot — a band running all
+          night means someone forgot to stop it, dense only in the daytime means they were
+          working. Unlike cost, this needs no capability check: uptime exists even on a
+          deployment with no billing. */}
+      <MemberUptimePanel slug={slug} userKey={key} />
+
+      <section className="admin-panel">
+        <h4>{tr("admin.sessions_heading")} {sessions ? `(${sessions.length})` : ""}</h4>
+        {sessions === null ? (
+          <p className="muted">{tr("common.loading")}</p>
+        ) : sessions.length === 0 ? (
+          <p className="muted">{tr("admin.no_sessions")}</p>
+        ) : (
+          <div className="admin-sessions">
+            {sessions.map((s: any) => {
+              const st = stateInfo(s);
+              return (
+                <div key={s.name} className="adm-session">
+                  <span className={"kind-tag kind-" + kindClass(s.kind)}>
+                    <Icon name={kindIcon(s.kind)} /> {kindLabel(s.kind)}
+                  </span>
+                  <span className="as-name mono" title={s.dir || ""}>{s.label ? stripLabelTag(s.label) : s.name}</span>
+                  <span className="as-repo muted">{s.repo || ""}</span>
+                  <span className={"session-state " + st.cls}>
+                    <Icon name={st.icon} spin={st.spin} /> {st.text}
+                  </span>
+                  <span className="as-time muted">{s.started || ""}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </section>
+
+      {isSuper && (
+        <section className="admin-panel">
+          <h4>{tr("admin.permissions")}</h4>
+          {member.super_admin ? (
+            <p className="muted">
+              <Icon name="star-full" className="mr-star" /> {tr("admin.super_admin_note_1")}<code>SUPER_ADMIN_EMAILS</code>{tr("admin.super_admin_note_2")}
+            </p>
+          ) : (
+            <div className="member-actions">
+              {role === "tenant_admin" ? (
+                <>
+                  <span className="role-now"><Icon name="shield" /> {tr("admin.tenant_admin_role")}</span>
+                  <button disabled={busy} onClick={() => setRoleTo("member")}>
+                    {tr("admin.revoke_admin")}
+                  </button>
+                </>
+              ) : (
+                <button className="primary" disabled={busy} onClick={() => setConfirmGrant(true)}>
+                  <Icon name="shield" /> {tr("admin.make_admin")}
+                </button>
+              )}
+            </div>
+          )}
+          <p className="muted role-hint">
+            {tr("admin.tenant_admin_hint_1")}<b>{slug}</b>{tr("admin.tenant_admin_hint_2")}
+          </p>
+        </section>
+      )}
+
+      <section className="admin-panel">
+        <h4>{tr("admin.operations")}</h4>
+        {/* Force-stop is NOT destructive — the home survives and the member starts it
+            again themselves — so it does not wear the danger colour or sit below the
+            rule. Painting a pause the same red as wiping a home is what teaches people
+            to read past the red. */}
+        <div className="member-actions">
+          <button disabled={!running} onClick={() => setConfirmStop(true)}>
+            <Icon name="debug-stop" /> {tr("admin.force_stop_ws")}
+          </button>
+        </div>
+        <div className="danger-zone">
+          <div className="danger-zone-title">
+            <Icon name="warning" /> {tr("admin.danger_zone")}
+          </div>
+          <div className="member-actions">
+            {/* clean-home is a tenant_admin action now (docs/log/61 §61.10.6 / decision 26):
+                the department knows who left, so the whole offboarding sequence
+                belongs to it rather than half of it being a ticket to IT. */}
+            <button className="danger-btn" onClick={() => setConfirmClean(true)}>
+              <Icon name="trash" /> {tr("admin.clean_home")}
+            </button>
+            {member.status !== "removed" ? (
+              <button className="danger-btn" disabled={busy} onClick={() => setConfirmRemove(true)}>
+                <Icon name="close" /> {tr("admin.remove_member")}
+              </button>
+            ) : member.state !== "none" ? (
+              <button className="danger-btn" disabled={busy} onClick={() => setConfirmDestroy(true)}>
+                <Icon name="trash" /> {tr("admin.destroy_ws")}
+              </button>
+            ) : (
+              <button className="danger-btn" disabled={busy} onClick={() => setConfirmPurgeRow(true)}>
+                <Icon name="trash" /> {tr("admin.delete_member_row")}
+              </button>
+            )}
+          </div>
+        </div>
       </section>
 
       {confirmStop && (
@@ -667,6 +732,38 @@ export function MemberView({
       )}
     </div>
   );
+}
+
+// HomeResizeNote — what the last save did to the home that already exists.
+//
+// It exists because the disk field is the only one on that form whose save reaches a
+// resource outside the database, and the five things that can come back are not
+// derivable from the numbers on screen. In particular "the setting is stored but the
+// disk did not change" is a real, correct and non-obvious outcome in two of them — a
+// shrink, which EBS cannot do at all, and a member with no home yet — and silence there
+// is what makes an admin believe the disk grew.
+//
+// Switch on the outcome, never on from/to: `same` and `no_home` both show two equal or
+// missing numbers, and they call for opposite sentences.
+function HomeResizeNote({ resize }: { resize: HomeResize | null }) {
+  const tr = useT();
+  if (!resize) return null;
+  const from = String(resize.from_gib ?? 0);
+  const to = String(resize.to_gib ?? 0);
+  switch (resize.outcome) {
+    case "growing":
+      return <p className="admin-hint ok">{tr("admin.home_resize_growing", { from, to })}</p>;
+    case "shrink":
+      return <p className="admin-hint warn">{tr("admin.home_resize_shrink", { from, to })}</p>;
+    case "no_home":
+      return <p className="admin-hint">{tr("admin.home_resize_no_home", { to })}</p>;
+    case "failed":
+      return <p className="admin-hint warn">{tr("admin.home_resize_failed", { detail: resize.detail ?? "" })}</p>;
+    default:
+      // `same` — saving this form for any other reason lands here every time, so it says
+      // nothing at all rather than reporting a non-event.
+      return null;
+  }
 }
 
 // One resource tile: label, big value, sub-line, and a fill bar tinted by level.

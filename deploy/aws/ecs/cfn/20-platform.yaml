@@ -313,6 +313,13 @@ Resources:
                   - ec2:DescribeSnapshots
                   - ec2:CreateSnapshot
                   - ec2:DeleteSnapshot
+                  # Growing a member's home in place (ResizeHome). Without these a tenant
+                  # admin's "make my home bigger" saves the number, reports that the volume
+                  # is growing, and grows nothing - the same shape of silent AccessDenied
+                  # the snapshot note above is about, and for the same reason: the live E2E
+                  # runs as a deployer, not as this role.
+                  - ec2:ModifyVolume
+                  - ec2:DescribeVolumesModifications
                 Resource: "*"          # Describe* cannot be resource-scoped; tags are the fence
               - Sid: EcsContainerInstances
                 Effect: Allow

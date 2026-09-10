@@ -54,6 +54,14 @@ type fakeEC2 struct {
 	// describeVolumesErr makes the volume lookup fail, for the paths that must keep
 	// working (degraded) when it does rather than failing a Start.
 	describeVolumesErr error
+	// modifications is the in-flight ModifyVolume per volume id, keyed the way
+	// DescribeVolumesModifications reads it.
+	modifications map[string]*ec2types.VolumeModification
+	// modificationState overrides the state a fresh modification starts in, so a test
+	// can hold one at `modifying` and drive the wait before the filesystem grows.
+	modificationState ec2types.VolumeModificationState
+	// modifyErr forces ModifyVolume to fail, standing in for EBS's 6-hour cooldown.
+	modifyErr error
 }
 
 func newFakeEC2() *fakeEC2 {
@@ -64,6 +72,8 @@ func newFakeEC2() *fakeEC2 {
 		attachErr: map[string]bool{},
 		snapshots: map[string]*ec2types.Snapshot{},
 		runErr:    map[string]error{},
+
+		modifications: map[string]*ec2types.VolumeModification{},
 	}
 }
 
@@ -299,6 +309,45 @@ func (f *fakeEC2) CreateVolume(_ context.Context, in *ec2.CreateVolumeInput, _ .
 		VolumeId: aws.String(id), AvailabilityZone: in.AvailabilityZone,
 		State: ec2types.VolumeStateAvailable, Tags: tags,
 	}, nil
+}
+
+// ModifyVolume grows a volume the way EBS does: the new size is on the record at once,
+// and a modification record starts at `modifying` — the state the guest may NOT yet
+// read the extra room in. modifyErr stands in for the refusals that happen in practice
+// (the 6-hour cooldown between two modifications of one volume, a service quota).
+func (f *fakeEC2) ModifyVolume(_ context.Context, in *ec2.ModifyVolumeInput, _ ...func(*ec2.Options)) (*ec2.ModifyVolumeOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	id := aws.ToString(in.VolumeId)
+	f.log("ModifyVolume %s size=%d", id, aws.ToInt32(in.Size))
+	if f.modifyErr != nil {
+		return nil, f.modifyErr
+	}
+	v, ok := f.volumes[id]
+	if !ok {
+		return nil, fmt.Errorf("volume %s not found", id)
+	}
+	v.Size = in.Size
+	state := f.modificationState
+	if state == "" {
+		state = ec2types.VolumeModificationStateOptimizing
+	}
+	f.modifications[id] = &ec2types.VolumeModification{
+		VolumeId: in.VolumeId, TargetSize: in.Size, ModificationState: state,
+	}
+	return &ec2.ModifyVolumeOutput{VolumeModification: f.modifications[id]}, nil
+}
+
+func (f *fakeEC2) DescribeVolumesModifications(_ context.Context, in *ec2.DescribeVolumesModificationsInput, _ ...func(*ec2.Options)) (*ec2.DescribeVolumesModificationsOutput, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []ec2types.VolumeModification
+	for _, id := range in.VolumeIds {
+		if m, ok := f.modifications[id]; ok {
+			out = append(out, *m)
+		}
+	}
+	return &ec2.DescribeVolumesModificationsOutput{VolumesModifications: out}, nil
 }
 
 func (f *fakeEC2) DeleteVolume(_ context.Context, in *ec2.DeleteVolumeInput, _ ...func(*ec2.Options)) (*ec2.DeleteVolumeOutput, error) {
@@ -4209,8 +4258,8 @@ func TestECSEC2SizingProfile(t *testing.T) {
 	if p.MemMeaning != MemMeaningSlot || p.DiskMeaning != DiskMeaningHome {
 		t.Errorf("axis meanings wrong: %+v", p)
 	}
-	if !p.DiskCreateOnly || p.DiskDefaultGB != 50 {
-		t.Errorf("home size is honoured only at creation and defaults to the pool value: %+v", p)
+	if !p.DiskGrowOnly || p.DiskDefaultGB != 50 {
+		t.Errorf("the home grows but never shrinks, and defaults to the pool value: %+v", p)
 	}
 	if len(p.Slots) != 2 || p.Slots[0].InstanceType != "m7i.large" || p.Slots[0].VCPU != 2 {
 		t.Errorf("ladder not reported: %+v", p.Slots)
@@ -4613,5 +4662,169 @@ func TestECSEC2UncappedTaskDefinitionOmitsMemory(t *testing.T) {
 	}
 	if m := h.ecs.regCalls[0].ContainerDefinitions[0].Memory; m != nil {
 		t.Errorf("container Memory = %d, want unset", *m)
+	}
+}
+
+// --- growing a home (ResizeHome) ---
+//
+// The capability ADR 0045 decision 4 said this adapter did not have. What is pinned is
+// the asymmetry, because it is EBS's and not a policy anyone may relax later: a bigger
+// number grows the volume that exists, a smaller one touches nothing at all. Every path
+// REPORTS — the quota row was already written by the caller, so a resize that cannot
+// happen must not turn into a failed save.
+
+func TestECSEC2ResizeHomeGrowsAndStretchesTheFilesystem(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(50)
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, true)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.rt.homeGiB = 100
+
+	got, err := h.rt.ResizeHome(ctx)
+	if err != nil {
+		t.Fatalf("ResizeHome: %v", err)
+	}
+	if got.Outcome != HomeResizeGrowing || got.FromGiB != 50 || got.ToGiB != 100 {
+		t.Fatalf("got %+v, want growing 50 -> 100", got)
+	}
+	if sz := aws.ToInt32(h.ec2.volumes["vol-1"].Size); sz != 100 {
+		t.Errorf("volume is %d GiB, want 100", sz)
+	}
+	// The filesystem is stretched in the BACKGROUND: xfs_growfs cannot run until the
+	// modification reaches `optimizing`, and an admin's save must not wait for it.
+	if len(h.ssmc.commands) != 0 {
+		t.Fatalf("grew the filesystem inline: %v", h.ssmc.commands)
+	}
+	h.runDeferred(ctx)
+	if len(h.ssmc.commands) != 1 || !strings.HasPrefix(h.ssmc.commands[0], "xfs_growfs ") {
+		t.Fatalf("commands = %v, want one xfs_growfs", h.ssmc.commands)
+	}
+}
+
+// A home nobody is holding has no mountpoint to stretch a filesystem over, and needs
+// none — af-mount runs xfs_growfs on every mount, so the next start picks it up.
+func TestECSEC2ResizeHomeDetachedGrowsTheVolumeOnly(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(50)
+	h.rt.homeGiB = 80
+
+	got, err := h.rt.ResizeHome(ctx)
+	if err != nil {
+		t.Fatalf("ResizeHome: %v", err)
+	}
+	if got.Outcome != HomeResizeGrowing {
+		t.Fatalf("got %+v, want growing", got)
+	}
+	if len(h.deferred) != 0 {
+		t.Errorf("deferred %d steps for a detached home; there is nothing to run on", len(h.deferred))
+	}
+}
+
+// EBS cannot shrink. The number is still the admin's intent and stays stored — it sizes
+// the next home this member is given — so the answer is a report, never an error.
+func TestECSEC2ResizeHomeRefusesToShrinkAndTouchesNothing(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(100)
+	h.rt.homeGiB = 50
+
+	got, err := h.rt.ResizeHome(ctx)
+	if err != nil {
+		t.Fatalf("ResizeHome: %v", err)
+	}
+	if got.Outcome != HomeResizeShrink || got.FromGiB != 100 || got.ToGiB != 50 {
+		t.Fatalf("got %+v, want shrink 100 -> 50", got)
+	}
+	if sz := aws.ToInt32(h.ec2.volumes["vol-1"].Size); sz != 100 {
+		t.Errorf("volume is %d GiB; a shrink must not touch it", sz)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "ModifyVolume") {
+			t.Fatalf("called %s for a shrink", c)
+		}
+	}
+}
+
+// Saving the form for any other reason lands here, so it must be silent and cheap.
+func TestECSEC2ResizeHomeSameSizeIsANoOp(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(50)
+	h.rt.homeGiB = 50
+
+	got, _ := h.rt.ResizeHome(ctx)
+	if got.Outcome != HomeResizeSame {
+		t.Fatalf("got %+v, want same", got)
+	}
+	for _, c := range h.ec2.calls {
+		if strings.HasPrefix(c, "ModifyVolume") {
+			t.Fatalf("called %s when nothing changed", c)
+		}
+	}
+}
+
+// A member who has never started has no volume: the stored number is simply the size the
+// home will be CREATED at. Distinct from "same" on purpose — the two are the only
+// outcomes with nothing to grow, and they call for opposite sentences on screen.
+func TestECSEC2ResizeHomeWithNoVolumeYet(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.rt.homeGiB = 80
+
+	got, err := h.rt.ResizeHome(ctx)
+	if err != nil {
+		t.Fatalf("ResizeHome: %v", err)
+	}
+	if got.Outcome != HomeResizeNoHome || got.ToGiB != 80 {
+		t.Fatalf("got %+v, want no_home -> 80", got)
+	}
+}
+
+// EBS refuses a second modification of one volume within 6 hours. The save that led here
+// already succeeded, so the refusal is carried back as a note WITH the message — the two
+// refusals that happen in practice (the cooldown, a service quota) are only tellable
+// apart by their text.
+func TestECSEC2ResizeHomeReportsAWSRefusalWithoutFailing(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(50)
+	h.ec2.modifyErr = fmt.Errorf("VolumeModificationRateExceeded: too soon")
+	h.rt.homeGiB = 100
+
+	got, err := h.rt.ResizeHome(ctx)
+	if err != nil {
+		t.Fatalf("ResizeHome returned an error instead of reporting: %v", err)
+	}
+	if got.Outcome != HomeResizeFailed || !strings.Contains(got.Detail, "VolumeModificationRateExceeded") {
+		t.Fatalf("got %+v, want failed carrying the AWS message", got)
+	}
+}
+
+// The guest may not read the extra room while the modification is still `modifying`, so
+// the filesystem step waits for it. Growing too early leaves the volume bigger and the
+// filesystem the size it was — the one failure mode that looks like success.
+func TestECSEC2ResizeHomeWaitsForTheModificationBeforeGrowingTheFilesystem(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	v := h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	v.Size = aws.Int32(50)
+	h.ec2.addSlot("i-hot", "ap-northeast-1a", "m7i.large", true, true)
+	h.ec2.attach("vol-1", "i-hot", time.Now())
+	h.ec2.modificationState = ec2types.VolumeModificationStateModifying
+	h.rt.homeGiB = 100
+
+	if _, err := h.rt.ResizeHome(ctx); err != nil {
+		t.Fatalf("ResizeHome: %v", err)
+	}
+	h.runDeferred(ctx)
+	if len(h.ssmc.commands) != 0 {
+		t.Fatalf("grew the filesystem while the modification was still pending: %v", h.ssmc.commands)
 	}
 }

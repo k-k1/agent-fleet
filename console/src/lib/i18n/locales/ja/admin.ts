@@ -495,10 +495,9 @@ export const admin = {
   "admin.revoke_admin": "管理者権限を解除",
   "admin.make_admin": "このテナントの管理者にする",
   "admin.tenant_admin_hint_1": "テナント管理者は ",
-  "admin.tenant_admin_hint_2": " 内のメンバー管理・リソース閲覧・ワークスペース強制停止・セッション上限設定ができます（テナント作成・上限変更・home掃除・権限付与は不可）。",
+  "admin.tenant_admin_hint_2": " 内のメンバー管理・リソース閲覧・ワークスペースの強制停止と破棄・home 掃除・メンバー毎のサイズとセッション上限の設定ができます（テナントの作成、テナント全体の上限、権限の付与は不可）。",
   "admin.operations": "操作",
   "admin.force_stop_ws": "ワークスペースを強制停止",
-  "admin.set_limits": "上限を設定",
   "admin.clean_home": "home を掃除",
   "admin.ws_cpu": "ワークスペースの CPU",
   "admin.ws_disk": "ワークスペースの作業ディスク",
@@ -532,7 +531,24 @@ export const admin = {
   "admin.ws_disk_home_hint": "0 = デプロイ既定 {n} GiB。home の作成時にだけ反映され、あとから縮められません。",
   "admin.ws_disk_quota_hint": "0 = 制限なし。表示用の目安で、強制はされません。",
   "admin.ws_disk_work_hint": "0 = デプロイ既定 {n} GiB",
-  "admin.limits_edit_title": "上限の設定",
+  // --- サイズと上限（ADR 0045 補遺）。「操作」から独立した 1 枚に出す。並んでいた
+  // 相手が home 掃除とメンバー削除で、設定の変更が取り消せない操作と同じ列にいた。---
+  "admin.ws_size_heading": "サイズと上限",
+  "admin.ws_size_change": "変更",
+  "admin.ws_size_unset": "すべてデプロイの既定",
+  "admin.ws_size_group": "ワークスペースのサイズ",
+  "admin.session_limit_group": "セッション上限",
+  "admin.danger_zone": "取り消せない操作",
+  // home が拡張できるランタイム（ecs-ec2）での言い方。増やす方向だけが今ある home に
+  // 効き、減らす方向は次に作り直したときにしか効かない——EBS の制約で、方針ではない。
+  "admin.ws_disk_home_grow_hint":
+    "0 = デプロイ既定 {n} GiB。増やすと今ある home がそのまま拡張されます。減らしても今ある home は変わりません（EBS は縮小できません）。",
+  "admin.home_resize_growing": "home を {from} → {to} GiB へ拡張しています。ワークスペースは止まりません。",
+  "admin.home_resize_shrink":
+    "今ある home は {from} GiB のままです（EBS は縮小できません）。{to} GiB は次に home を作り直したときに使われます。",
+  "admin.home_resize_no_home": "home はまだありません。次に作られるときに {to} GiB になります。",
+  "admin.home_resize_failed":
+    "home を拡張できませんでした。設定は保存済みなので、時間をおいて保存し直してください（同じボリュームは 6 時間に 1 度しか変更できません）: {detail}",
   "admin.max_sessions_label": "最大セッション数",
   "admin.ws_memory": "ワークスペースのメモリ",
   "admin.eq_hint": "= {hint}",
@@ -551,7 +567,7 @@ export const admin = {
   "admin.grant_confirm": "管理者にする",
   "admin.grant_body_1": "このメンバーに ",
   "admin.grant_body_2": " のテナント管理者権限を付与します。",
-  "admin.grant_note": "付与後はこのテナント内のメンバー管理・リソース閲覧・ワークスペース強制停止・セッション上限設定ができるようになります（他テナントには影響しません）。",
+  "admin.grant_note": "付与後はこのテナント内のメンバー管理・リソース閲覧・ワークスペースの強制停止と破棄・home 掃除・メンバー毎のサイズとセッション上限の設定ができるようになります（他テナントには影響しません）。",
 
   // --- テナント毎のログイン（docs/log/61 §61.9・P3）。3 つの規則は似て非なるもので、
   // とくに「招待できるドメイン」を「使えるドメイン」と読み違えると運用が壊れる。---

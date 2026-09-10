@@ -193,7 +193,11 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
   );
 }
 
-// MemberSizeChips — what this member is sized to, on the roster row.
+// MemberSizeChips — what this member is sized to.
+//
+// Exported because the member detail's "Size and limits" card states the same thing above
+// its edit button. Two renderings of one fact drift, and this one already carries the
+// three rules below that make the fact readable at all.
 //
 // It shows the BOX on a slot runtime and the NUMBERS everywhere else, because those
 // are different statements. On ecs-ec2 the memory figure is a requirement that picks a
@@ -207,7 +211,7 @@ export function MemberIdleDetail({ idle, state }: { idle?: MemberIdle; state?: s
 //
 // Everything here is "unset → say nothing". A roster of rows all reading "0" teaches
 // people to stop reading the column.
-function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
+export function MemberSizeChips({ m, sizing }: { m: Member; sizing: WsSizing }) {
   const tr = useT();
   const onSlots = sizing.mem_meaning === "slot" && !!sizing.slots?.length;
   const cls = (sizing.slot_classes ?? []).find((c) => c.id === (m.slot_class || sizing.default_slot_class));

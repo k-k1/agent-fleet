@@ -101,7 +101,11 @@ export interface WsSizing {
   /** "work" = wiped on stop · "home" = the persistent home · "quota" = display only. */
   disk_meaning: "work" | "home" | "quota";
   disk_default_gb?: number;
-  disk_create_only?: boolean;
+  /** Raising the number grows the disk that ALREADY EXISTS; lowering it reaches only the
+   *  next one created. True on ecs-ec2, where the axis is a persistent EBS volume — EBS
+   *  grows online and cannot shrink — so the two directions of one input do different
+   *  things and the field has to say so before anything is typed. */
+  disk_grow_only?: boolean;
   /** The DEFAULT class's ladder when there is more than one class. */
   slots?: WsSlot[];
   /** The machine classes this deployment offers. Absent on a deployment that declared
@@ -109,6 +113,21 @@ export interface WsSizing {
    *  answer, so there is no picker at all (docs/log/70 §70.10). */
   slot_classes?: WsSlotClass[];
   default_slot_class?: string;
+}
+
+/** What a save DID to the home that already exists (the `home_resize` half of
+ *  PUT /api/admin/user-limits, ADR 0045's addendum). Absent on every runtime with no
+ *  persistent home to grow, and then nothing is said at all.
+ *
+ *  Read the outcome, never the numbers: "50 → 50" is what both "already that size" and
+ *  "there is no volume yet" look like, and they call for opposite sentences. */
+export interface HomeResize {
+  outcome: "growing" | "same" | "shrink" | "no_home" | "failed";
+  from_gib?: number;
+  to_gib?: number;
+  /** AWS's refusal verbatim, on "failed" only. Not translated: the two that happen in
+   *  practice (the 6-hour cooldown, a service quota) are only tellable apart by it. */
+  detail?: string;
 }
 
 /** One declared machine class: the operator's own label, a CPU architecture and its

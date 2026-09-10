@@ -49,6 +49,10 @@ type CP interface {
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
+	// ResizeHomeByMembership pushes a just-saved disk request at the home the member
+	// already has, after PutUserLimit and never instead of it. The zero value means
+	// this runtime has no persistent home to grow.
+	ResizeHomeByMembership(ctx context.Context, membershipID string) (runtime.HomeResize, error)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)
 	EvictMembershipCache(membershipID string)
 	CountRunningInTenant(ctx context.Context, tenantID string) (int, error)
