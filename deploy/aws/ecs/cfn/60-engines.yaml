@@ -150,6 +150,11 @@ Parameters:
     Type: String
     Default: ""
     Description: The image role's ladder, as LlmInstanceClasses. Empty = no choice.
+  ImageCapacityOptionType:
+    Type: String
+    Default: ON_DEMAND
+    AllowedValues: [ ON_DEMAND, SPOT ]
+    Description: "Buy the image role's box on Spot. !! Changing it REPLACES the provider - PARAMETERS-60-engines.md."
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -298,6 +303,11 @@ Conditions:
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
   ImageIsComfy: !Equals [ !Ref ImageEngine, "comfy" ]
+  # The provider's NAME carries the option type, and it has to: the field itself is create-only,
+  # so a switch is a replacement, and CloudFormation refuses to replace a resource that keeps a
+  # custom name (measured - PARAMETERS-60-engines.md, "The capacity providers"). ON_DEMAND keeps
+  # the historic name, so a deployment that never asks for Spot is not replaced at all.
+  ImageIsSpot: !Equals [ !Ref ImageCapacityOptionType, SPOT ]
 
 Resources:
   # --- IAM: three roles, closed inside this stack - PARAMETERS, "The task roles" ---
@@ -542,7 +552,10 @@ Resources:
   ImageCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
-      Name: !Sub "af-${AWS::StackName}-image"
+      Name: !If
+        - ImageIsSpot
+        - !Sub "af-${AWS::StackName}-image-spot"
+        - !Sub "af-${AWS::StackName}-image"
       ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
       ManagedInstancesProvider:
         InfrastructureRoleArn: !GetAtt InfraRole.Arn
@@ -553,7 +566,7 @@ Resources:
           - !Ref "AWS::NoValue"
         InstanceLaunchTemplate:
           Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: ON_DEMAND
+          CapacityOptionType: !Ref ImageCapacityOptionType
           NetworkConfiguration:
             Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
             SecurityGroups: [ !Ref EngineSg ]
@@ -897,7 +910,7 @@ Resources:
                 "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}","idleSec":${LlmIdleSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
-                Cp: !Sub "af-${AWS::StackName}-llm"
+                Cp: !Ref LlmCapacityProvider
             - ""
           Image: !If
             - HasImageModel
@@ -909,7 +922,11 @@ Resources:
                 "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
-                Cp: !Sub "af-${AWS::StackName}-image"
+                # !Ref on a capacity provider is its NAME. Written this way and not restated as
+                # a !Sub because the image role's name moves with ImageCapacityOptionType, and a
+                # table naming a provider nobody uses fails SILENTLY: the CP would watch the
+                # wrong one for draining and apply the ADR 0074 rungs to it.
+                Cp: !Ref ImageCapacityProvider
                 Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
                 Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
             - ""

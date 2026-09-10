@@ -145,6 +145,25 @@ that jumps from a pre-catalogue Control Plane straight to this one comes up with
 catalogue: the role exists, the engine idles, and the panel is where the first model is
 registered. That is a supported state, not a broken one.
 
+### 0.18.1: the image role can be bought on Spot
+
+New parameter, `ImageCapacityOptionType` (`ON_DEMAND` by default, so **nothing changes for a
+deployment that leaves it alone**). Set it to `SPOT` and the image role's box is bought on Spot —
+in ap-northeast-1 that was measured at 30 days without one on-demand hour: `g6.xlarge` at
+$0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before setting it:
+
+- the switch **replaces the capacity provider**, which moves the image service onto it. Do it
+  while the image role is stopped, or a generation in flight is lost and the next request pays
+  the cold start again. Details and the measurements:
+  [the capacity providers](#the-capacity-providers);
+- Spot has **its own quota**, `L-3819A6DF`, whose default is 0. The provider is created happily
+  without it and then never buys a box — an engine that will not start, with nothing to read.
+  Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
+  L-3819A6DF`.
+
+The `llm` role is not offered this and is not going to be: a two-minute termination notice
+mid-conversation costs a 527-586-second cold start to recover from.
+
 ### `LlmEnabled` / `ImageEnabled`
 
 Whether the ROLE exists at all: its service, its Cloud Map name, its row in the engine table.
@@ -966,47 +985,49 @@ owns the associations" is a rule about who REPLACES the list, not a fence around
 stack that creates a provider against this cluster is visible in the list until the next time
 this stack's `Associations` resource is updated, which silently drops it.
 
-### `CapacityOptionType` is a CREATE-time field. Switching a role to Spot is a two-stage change
+### `ImageCapacityOptionType` — Spot for the image role, and why it renames the provider
 
-🔴 **Editing `CapacityOptionType` in place fails the stack update.** The change set looks
-survivable — `Modify`, `Replacement: Conditional`, `ManagedInstancesProvider` /
-`RequiresRecreation: Conditionally` — but executing it stops on:
+`ON_DEMAND` (the default) or `SPOT`, for the `image` role only. **The `llm` role is deliberately
+not offered it**: Spot's two-minute termination notice arrives mid-conversation, and a
+527-586-second cold start is what follows it. An image request is one call that can be made
+again.
 
-```
-CloudFormation cannot update a stack when a custom-named resource requires replacing.
-Rename af-<stack>-image and update the stack again.
-```
+Switching it **replaces the capacity provider**, and the template is written so that the
+replacement can actually happen. Two measurements from 2026-09-11 (a throwaway stack holding a
+copy of this resource, `deploy/aws/ecs/harness/probe-capacity-option.yaml`):
 
-and the stack goes to `UPDATE_ROLLBACK_COMPLETE`. Measured 2026-09-11 on a throwaway stack
-holding a copy of `ImageCapacityProvider`, `Name` included, so the refusal is this template's
-and not an accident of the probe. Nothing is lost — the refusal comes BEFORE anything is
-created, the provider keeps its ARN and stays `ON_DEMAND` — but on a live deployment the whole
-60-engines update rolls back, including whatever else was in it.
+- 🔴 **changing the field alone fails.** The change set reads `Modify` /
+  `Replacement: Conditional`, which looks survivable, and then execution stops on
+  `CloudFormation cannot update a stack when a custom-named resource requires replacing. Rename
+  af-<stack>-image and update the stack again.` -> `UPDATE_ROLLBACK_COMPLETE`. The field is
+  create-only (`UpdateCapacityProvider`'s `InstanceLaunchTemplateUpdate` has no such member) and
+  a provider's ARN is derived from its `Name`, so a replacement is a same-name collision;
+- ✅ **changing the field AND the name works.** `Replacement: True`, `Name` /
+  `RequiresRecreation: Always`, and the update creates `af-<stack>-image-spot`, moves everything
+  that points at it, then deletes the old one in the cleanup phase (`UPDATE_COMPLETE`). The
+  round trip back to `ON_DEMAND` works the same way, reusing the original name even though ECS
+  still holds the retired provider as an `INACTIVE` record.
 
-Two facts under it: the ECS API has no such field on `UpdateCapacityProvider` at all
-(`InstanceLaunchTemplateUpdate` does not carry it — ADR 0074), and a provider's ARN is derived
-from its `Name`, so a replacement is a same-name collision by construction.
+So the name carries the option type — but only on the Spot side. `ON_DEMAND` keeps the historic
+`af-<stack>-image`, so **a deployment that never asks for Spot is not replaced at all**; the
+resolved template is byte for byte what it was (`deploy/local/cfn-equiv.py`).
 
-**The safe path is to add a provider rather than edit one**, in this order:
+⚠️ **Switch it while the image role is stopped.** The replacement moves the service's
+`CapacityProviderStrategy`, which is a new deployment: a box that is up drains, and the next
+request pays the cold start again (about 195 s plus the model sync). Nothing is lost, but a
+generation in flight is.
 
-1. add a SECOND `AWS::ECS::CapacityProvider` (new logical id, `Name` ending `-image-spot`,
-   `CapacityOptionType: SPOT`) and name it in `Associations` alongside the old one. Measured on
-   the same probe: `Add`, no replacement, `UPDATE_COMPLETE`;
-2. point the image service's `CapacityProviderStrategy` at the new provider **and** change the
-   engine table row's `capacityProvider` in the same change — the table builds that string with
-   `!Sub`, not `!Ref`, so it does not follow the resource. Get it wrong and nothing fails: the
-   Control Plane simply watches a provider nobody uses, which is where `draining` and the
-   instance-class ladder (ADR 0074) both read from;
-3. once the role has come up on the new provider, delete the old resource in a later change.
+Everything that names the provider follows the resource — the service's strategy, the cluster
+associations, and the engine table row, which is `!Ref ImageCapacityProvider` (on a capacity
+provider, `!Ref` is its NAME). 🔴 **Keep it that way.** A table that restates the name as a
+`!Sub` fails SILENTLY when the name moves: the Control Plane goes on watching a provider nobody
+uses, and that is where both `draining` and the ADR 0074 rung application read from.
 
-Do the role that can afford an interruption. **The `llm` role stays `ON_DEMAND`**: Spot's
-two-minute termination notice lands mid-conversation, and a 527–586-second cold start is what
-follows it.
-
-⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a
-`SPOT` provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys
-a box. `L-3819A6DF` ("All G and VT Spot Instance Requests", default 0) is the one to hold —
-acrt has 64, af-sandbox has 0. `L-DB2E81BB` does not exist; do not look for it.
+⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a `SPOT`
+provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys a box,
+which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and VT Spot
+Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox has 0.
+`L-DB2E81BB` does not exist; do not look for it.
 
 ## The engine services
 

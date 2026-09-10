@@ -404,6 +404,26 @@ grep -q "deploy --stack-name af-ecs-engines .*ImageEnabled=true" "$LOG" \
 has "crane copy ghcr.io/leejet/stable-diffusion.cpp"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
+# Buying the image role's box on Spot is a captured parameter like any other, and it has to
+# travel: it is the ONE parameter of this stack whose change replaces a resource, so a path
+# that quietly dropped it would leave the box on demand while the capture says otherwise.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nImageCapacityOptionType=SPOT\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+grep -q "deploy --stack-name af-ecs-engines .*ImageCapacityOptionType=SPOT" "$LOG" \
+  || fail "ImageCapacityOptionType did not reach the deploy (the box would stay on demand)"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
+
+# 🔴 And in the template the type and the NAME move together. The field is create-only, so a
+# switch is a replacement, and CloudFormation refuses to replace a custom-named resource that
+# keeps its name (measured 2026-09-11: `cannot update a stack when a custom-named resource
+# requires replacing`). Change one of these two without the other and every Spot deployment
+# stops on that refusal, having already rolled back — which no test above would notice.
+grep -q "CapacityOptionType: !Ref ImageCapacityOptionType" "$ECS/cfn/60-engines.yaml" \
+  || fail "the image provider no longer reads ImageCapacityOptionType"
+grep -q 'Sub "af-${AWS::StackName}-image-spot"' "$ECS/cfn/60-engines.yaml" \
+  || fail "the image provider's name does not move with the option type (a switch cannot deploy)"
+
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #
 # Without this it happens all over again. The moment 30-ingress.yaml went over 51,200 bytes,
