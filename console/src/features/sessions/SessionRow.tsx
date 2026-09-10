@@ -7,6 +7,7 @@
 // Lifecycle ops come from useSessionActions; the menu items themselves live in
 // SessionMenu, shared with the tabbed grid's tab right-click.
 import { useRef, useState } from "react";
+import type { CSSProperties } from "react";
 import { Icon } from "../../ui/Icon.tsx";
 import { placeFixed } from "../../lib/placeFixed.ts";
 import { usePaneHover } from "../../lib/panehover.tsx";
@@ -17,6 +18,8 @@ import { agentOf } from "../../agents/registry.ts";
 import { useLayoutStore } from "../../layout/store.ts";
 import { ordClass } from "../../layout/badges.ts";
 import { useTtsStore } from "../../core/store/tts.ts";
+import { lineageColorOf } from "../../lib/project.ts";
+import { useSessionsStore } from "./store.ts";
 import { openSessionFromList } from "./open.ts";
 import { SessionMenu } from "./SessionMenu.tsx";
 import { useMySharesStore } from "../sharing/store.ts";
@@ -59,14 +62,23 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
   // For a stopped session that ended abnormally, the reason detail (OOM / crash) rides
   // the row tooltip alongside the resume hint.
   const ex = !s.alive ? exitLabel(s) : null;
-  // question/plan/permission want the user — keep their text. Everything else
-  // (waiting for input / running / stopped …) collapses to an icon-only chip; the text
-  // moves to title.
-  const loud = st.cls.includes("question");
+  // question/plan/permission want the user — keep their text, and so does a handoff nobody
+  // has launched (the session is done; the next step is a press away and shows up nowhere
+  // else). Everything else (waiting for input / running / stopped …) collapses to an
+  // icon-only chip; the text moves to title.
+  const loud = st.cls.includes("question") || st.cls.includes("handoff");
   // Whether this session's answer is being read aloud. Mirror narration, summaries and
   // session notifications all put the originating session name into the tts store; a
   // pending synthesis (preparing) counts too.
   const speaking = useTtsStore((t) => t.sessionName === s.name && (t.speaking || t.preparing));
+  // Spawn lineage (ADR 0073): a 2px spine in the family's colour, so a parent and the
+  // sessions it raised read as one group wherever they sit — including the two places
+  // the tree's nesting cannot reach, a child started in ANOTHER repository and a family
+  // that shares one working copy (no worktree, so nothing to nest). "" for a session
+  // with no family. The selector returns the colour string, so a row only re-renders
+  // when its own family colour changes. A stripe, never a fill: hover / selection /
+  // the active row and the working-set dimming all own the row's background.
+  const lineage = useSessionsStore((st) => lineageColorOf(st.sessions, s.name));
 
   return (
     <li
@@ -75,8 +87,10 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         (selected ? " active" : "") +
         (hl ? " hover" : "") +
         (s.alive ? "" : " stopped") +
-        (inert ? " dead" : "")
+        (inert ? " dead" : "") +
+        (lineage ? " lineage" : "")
       }
+      style={lineage ? ({ "--sess-lineage": lineage } as CSSProperties) : undefined}
       onMouseEnter={open ? () => setHover({ session: s.name }) : undefined}
       onMouseLeave={open ? () => setHover(null) : undefined}
       // Right-click opens the same ⋯ menu (open on the trailing contextMenu event
@@ -162,7 +176,9 @@ export function SessionRow({ s, selected, opens, multi, running, actions, readOn
         {isShared && <Icon name="broadcast" className="sess-shared" title={tr("srow.shared_badge")} />}
         <span className={"session-state " + st.cls + (loud ? "" : " mini")} title={st.text}>
           <Icon name={st.icon} spin={st.spin} />
-          {loud && <> {st.text}</>}
+          {/* The rail is narrow, so a chip whose wording names both the run state and what is
+              waiting shows its short form here and keeps the full one in the tooltip. */}
+          {loud && <> {st.short ?? st.text}</>}
         </span>
       </button>
       {/* Ordinal badges: pane numbers for a session shown in ≥1 panes; click

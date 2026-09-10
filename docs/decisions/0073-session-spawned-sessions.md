@@ -5,7 +5,8 @@ English | [日本語](0073-session-spawned-sessions.ja.md)
 - Status: **accepted and implemented** (2026-09-09; the implementation record is
   [87-session-spawn.md](../log/87-session-spawn.md), and the four follow-ups are
   [89-child-session-listing.md](../log/89-child-session-listing.md); amendments: `list_child_sessions`
-  in §3-b, archiving in decision 6, the completion timestamp in decision 9). The design took two rounds of review by
+  in §3-b, archiving in decision 6, the completion timestamp in decision 9, the handoff-proposal
+  lineage in the terminology table and decisions 1 and 5). The design took two rounds of review by
   another session and the implementation a third (round 1: decisions 1, 4, 5, 6, 7, 10 and 11
   corrected, decision 14 and §3-b added; round 2: archiving and reservation in decision 6, the
   comparison unit in decision 7, splitting the two surfaces in decision 14, the rejection
@@ -62,6 +63,12 @@ decisions 1, 4 and 5.
 | **fork (formerly "handoff")** | `HandleForkSession` (`session_handlers.go:964`) — branches directly off an existing session | `origin=handoff`, inherits `origin_conv` |
 | **handoff proposal** | `propose_session_handoff`. **It starts nothing.** The user reviews it in the Console and launches it through the ordinary flow (`HandoffProposal.tsx:212` → `StartHost.tsx:94` → `useStartWork.ts:40,70` → an ordinary `POST /sessions`) | the source session's provenance is not passed, so `origin=user` (`session_handlers.go:467`) |
 
+**Amendment (2026-09-10, docs/log/87 §87.18): the handoff-proposal row's Origin column is
+corrected.** `origin=user` is **unchanged** — that part is still right. What is corrected is the
+**lineage**: `origin_session` now carries the proposing session's name (see the amendment to
+decision 1). "The source session's provenance is not passed" is still true of `origin` and is no
+longer true of `origin_session`.
+
 ## Decision
 
 ### 1. Add a new origin, `session`, and an `origin_session` field
@@ -80,9 +87,39 @@ enum — an amendment to the frozen table in ADR 0029 §6, landing in the same c
 - Only **two routes inherit it: recreate (`session_handlers.go:1251`) and fork (`:964`)**. Both
   already inherit `origin_conv`, and neither "the same slot again" nor "branched from there"
   changes where the work came from.
-- **A handoff proposal does not inherit** (see the terminology table). Once the user launches it
+- ~~**A handoff proposal does not inherit** (see the terminology table).~~ Once the user launches it
   from the Console it is `origin=user`, and that is **correct** — it is a human-opened session.
-  What follows from the lineage ending there is decision 5.
+  ~~What follows from the lineage ending there is decision 5.~~
+  **Changed on 2026-09-10 — see the amendment below.**
+
+#### Amendment (2026-09-10, docs/log/87 §87.18): three routes inherit, and the handoff proposal inherits `origin_session` only
+
+**The inheriting routes are recreate, fork and the handoff proposal.** The proposal row is the one
+that inherits one thing rather than two.
+
+- **`origin` is not inherited; it stays `user`.** The user launched it from the Console, so that
+  is simply the fact, and ADR 0029 §6's accounting axis does not move by one bit. The part of the
+  line above that called this "correct" is still correct; only "the lineage ends there" is
+  corrected.
+- **Only `origin_session` is filled, with the proposing session's name.** This is precisely the
+  shape decision 5 described as "technically available, since the two fields are independent".
+  The reason it was not taken — stripping a session the user explicitly launched of the ability
+  to spawn — is gone, because the lineage is now recorded **without** taking that ability away.
+  That is what made decision 5's predicate a two-term one (see its amendment).
+- **The motivation is the overview** (the left pane's "related sessions and worktrees"). Grouping
+  by lineage shows nothing for the route operators actually use most — propose, then the user
+  launches — because only `create_session`'s children carried a lineage at all.
+- **"Never trust the wire" is met by other means.** Of the three routes this is the only one
+  whose value arrives **from a browser** rather than from the MCP server's own `AF_SESSION_NAME`.
+  Taken on trust, anyone who can reach the Console API could forge any lineage. So it arrives
+  **paired with a proposal id, and is recorded only after that id is found on the proposing
+  session's own file** (`HandoffProposalPath`). Proposals are stored per proposing session, so an
+  id on that file is **proof that that session proposed this work** (naming another session's
+  proposal id fails, because a different file is read). A pair that cannot be proved is **dropped
+  silently** — the launch itself still succeeds, since a missing lineage is not a failed launch.
+- **It does not become a child.** It spends no budget (decision 6), the proposing session cannot
+  steer it (decision 4), and it does not appear in `list_child_sessions`. All three predicates
+  require `origin==session`, which this `origin=user` row is not.
 
 ### 2. Generalize the idempotency key's namespace from the conversation to the caller
 
@@ -173,6 +210,29 @@ plumbed through the proposal store and the Console launch flow.
 
 So what this decision guarantees is not a tree depth but that **between one human launch and the
 next, sessions alone can extend the chain by one**. Nothing grows without a person in the loop.
+
+#### Amendment (2026-09-10, docs/log/87 §87.18): the predicate went from one term to two. The guarantee did not change
+
+**"`origin_session` is non-empty" is no longer the depth question.** The amendment to decision 1
+gives a session the user launched from a handoff proposal a lineage while it stays `origin=user`.
+The check moved to `session.InUnattendedChain(m)` — **a lineage is present AND `origin` is not
+user**.
+
+- **The guarantee is unchanged, word for word.** Between one human launch and the next, sessions
+  alone still extend the chain by one. What changed is only **what carries that decision**; the
+  paragraph above about grandchildren, and its reasoning, still stand. **Gaining a lineage does
+  not close the re-entry** — that a person opened it is independent of who suggested the work.
+- **Of the two reasons given above for not taking this, one is void and one was paid.** "Strips
+  the ability to spawn" does not happen, because the predicate has two terms. "Needs plumbing" was
+  correct, and the plumbing was built: through the proposal store and the Console launch flow.
+- **Fork asks the same question** (`forkLineage`). A fork of a child is `origin=handoff` with a
+  lineage and still may not spawn. **A fork of a proposal launch inherits no lineage** — inheriting
+  unconditionally would make it `origin=handoff` plus a lineage, which would **silently cost the
+  fork a capability its own source has**.
+- ⚠️ **Never write a bare `OriginSession != ""`.** The one-term spelling still reads as obviously
+  right, so the question is sealed behind a single named predicate. For the same reason
+  `handOverSpawnLineage` (decision 6) consults it too: clearing a lineage that holds no slot frees
+  nothing and only forgets who proposed the work.
 
 ### 6. Three children per caller by default — a budget counting stopped children, but not archived ones
 
@@ -469,6 +529,12 @@ job feels done.
   taken because it strips a session the user explicitly launched of the ability to spawn merely
   because the proposal came from a child, and it needs lineage plumbed through the proposal store
   and the Console launch flow (decision 5).
+
+  **Half of this was taken on 2026-09-10.** The lineage half is in (see the amendment to
+  decision 1; the plumbing was built). **Closing grandchildren completely was not taken** — the
+  reason for rejecting it, stripping the ability to spawn, is gone now that the depth predicate
+  has two terms and does not count an `origin=user` lineage, so the ability is untouched (see the
+  amendment to decision 5).
 - **Count the limit over live children / let archiving free a slot.** The first fails because
   `resume_session` and the peer auto-resume add running children without going through create; the
   second is beaten by folding up, spawning and restoring (decision 6).
@@ -497,10 +563,21 @@ job feels done.
   `origin` baked into usage rows survives, so **"this was unattended spend" remains and "whose
   child it was" is gone**. Durable lineage would need another home (a ledger); this ADR does not
   take that on.
+
+  **Amendment (2026-09-10, docs/log/94): the call stands, but its price is now visible.** The left
+  rail nests worktrees by lineage and draws one colour per family, so **deleting a single session
+  takes the nesting and the colour of its children with it, there and then** (the children stay;
+  with no parent they fall back to the group's root). What this bullet described as a ledger
+  question is now something **the user can see**. Not building the ledger is unchanged — betting on
+  the overview being drawable within the retention is this ADR's position — but **the order things
+  are cleaned up in now shows up on screen**, and that is worth recording.
 - **The docs/44 overview can draw lineage by reading `origin_session`** (within that retention).
   Adding `kind:"spawn"` to ADR 0041 decision 9's `DispatchEntry` is not taken up.
-- As in stage 1, **firing has not been confirmed on a real session**. The descriptions are written
-  to specify *when* to call, so it is worth confirming a real session calls them.
+- ~~As in stage 1, **firing has not been confirmed on a real session**. The descriptions are written
+  to specify *when* to call, so it is worth confirming a real session calls them.~~
+  → **Done on 2026-09-09** (docs/log/87 §87.15). `report_back` was honoured **3/3 (100%, n=3)**.
+  ⚠️ **n=3 is not "the firing rate was measured"** — what was confirmed is that a real session calls
+  them at all, not how often.
 - Cleaning up children that outlive their parent stays with the user (decision 13). Decision 6's
   budget is a count over a caller's children, not a reservation, so **when the parent goes, so does
   the limit**.

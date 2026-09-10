@@ -115,6 +115,21 @@
   --kind-opencode: #aab4be; /* light slate grey — lighter than copilot's charcoal for clear separation */
   --kind-shell: #46c9d0;
   --kind-ssm: #6d8bf5;
+  /* Spawn-lineage spines (ADR 0073) — the 2px rule the left rail draws down the side
+     of every working copy and session row of one family (lib/project.ts's
+     lineageColor picks the slot from the family root's name). NOT a third session
+     palette: the kind hues above already say which agent, and a session's own `color`
+     is filled in for SSM host bookmarks only, so it would leave nearly every family
+     colourless. Deliberately low-chroma — a spine has to be findable, not loud, next
+     to a kind icon and a state chip. Six slots: families collide beyond that, which
+     the nesting still disambiguates.
+     Measured against this theme's rail surface (--panel #181818): 6.1–7.1:1. */
+  --lineage-0: #7f9cc4; /* dusty blue */
+  --lineage-1: #b9906a; /* dusty amber */
+  --lineage-2: #7fae92; /* dusty green */
+  --lineage-3: #a98fbe; /* dusty violet */
+  --lineage-4: #c489a4; /* dusty rose — pulled toward magenta, away from slot 1 */
+  --lineage-5: #86a8a8; /* dusty teal */
   /* Data-viz categorical slots (docs/log/46 P4 — the usage view). A validated 8-hue
      categorical palette: fixed slot ORDER is the colorblind-safety mechanism, so
      series are always painted (and stacked) in slot order — never re-ordered by
@@ -250,6 +265,14 @@
   --kind-opencode: #575e68; /* mid slate grey (light) — lighter than copilot's near-black */
   --kind-shell: #0f676d;
   --kind-ssm: #2c39a3;
+  /* Lineage spines, dark steps of the same six hues — a 2px rule on a near-white rail
+     has to go dark, not light (measured against --panel #f4f5f7: 4.6–5.4:1). */
+  --lineage-0: #4a6a95;
+  --lineage-1: #8a6035;
+  --lineage-2: #3f7a5c;
+  --lineage-3: #715a8c;
+  --lineage-4: #8f5175;
+  --lineage-5: #47726f;
   /* Data-viz slots, light steps of the SAME eight hues (not an automatic flip —
      selected and validated for the light modal surface --panel #f4f5f7: worst
      adjacent CVD ΔE 9.1, normal-vision ΔE 19.6). Four slots sit below 3:1 on the

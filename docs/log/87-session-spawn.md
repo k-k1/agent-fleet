@@ -717,3 +717,111 @@ prefs ファイルを書いている（`spawnLimitPref`）。`mcpx` は uiprefs 
 **§87.17.5 で触れた「親の数を縛らない」という決定 6 の 2 つ目の理由は解決しない**——
 1 台のホストの cgroup を読めても、そのホストで何台の親が同時に子を持つかは分からないからで
 ある。**選択肢として記録し、判断は利用者に返す。**
+
+## 87.18 引き継ぎ提案から起こしたセッションに系譜を持たせる（2026-09-10）
+
+**上位の要求は左ペインの「関連するセッション・worktree」**——系譜で束ねた表示を出したい——だが、
+そのままでは**ほぼ何も出ない**。系譜（`origin_session`）を持っているのは `create_session` で
+起こした子だけで、実際の運用でいちばん多い「引き継ぎ提案 → 利用者が Console から起動」の経路は
+空だからである。本節はそこを埋める。**表示そのものは本節の範囲外**（後続 2 件）。
+
+### 87.18.1 「偽の出自」ではない — `origin` は動かさない
+
+`session_spawn.go` のコメントはこの案に反対しているように読めた（「塞ぐことは人が開いた
+セッションに**偽の出自**を刻むことを意味する」）。**偽の出自が指しているのは `origin` を
+書き換えることで、本節は `origin=user` を保つ。** 人が開いた消費であることは事実のままで、
+ADR 0029 §6 の集計軸は 1 ビットも動かない。再入口も閉じない（§87.18.3）。
+コメント自身は変更後の状態に合わせて書き直した——放置すれば嘘になる。
+
+真の論点は、`origin_session` が 2 つの意味を兼ねていたことである。
+
+| 意味 | 読み手 |
+|---|---|
+| 私の親は誰か（操縦・予算・表示） | 決定 4 のゲート・決定 6 の予算・俯瞰 |
+| 私は無人の連鎖の中にいる | 深さ判定（決定 5）の 1 行 |
+
+本節は **(1) が真で (2) が偽**という状態を初めて作る。**兼務の解消**であって、意味を捻じ曲げた
+のではない。
+
+### 87.18.2 読み手の全数と、壊れた 1 か所
+
+| 箇所 | 述語 | 影響 |
+|---|---|---|
+| 操縦ゲート（決定 4・`mcp_stdio.go:937`） | `origin==session && originSession==self` | 無影響。**正しい**——利用者が起こしたものを提案元が止められては困る |
+| `list_child_sessions`（`mcp_stdio.go:3278`） | 同上 | 無影響。**変えない**——操縦できないものを子として並べるのは誤り |
+| 予算（決定 6・`countChildren`） | `originSession==parent && OriginOf==session` | 無影響。**正しい**——人が開いた消費は提案元の枠を食わない |
+| 使用量の行 | `origin` だけ | 無影響 |
+| **深さ（決定 5・`spawnDepthRefusal`）** | `originSession != ""` | 🔥 **ここだけ壊れる** |
+
+深さを直さないと**引き継ぎ先が子を起こせなくなる**——機能の後退である。新しい述語は
+`session.InUnattendedChain(m)` ＝「系譜があり、かつ `origin` が user でない」。
+
+### 87.18.3 落とし穴 2 つ
+
+**① fork の無条件継承。** `HandleForkSession` は `OriginSession: src.OriginSession` を無条件に
+継いでいた。引き継ぎ先（`origin=user` ＋系譜）を fork すると **`origin=handoff` ＋系譜**になり、
+新しい述語に引っかかって**子を起こせなくなる**。いまは起こせるので、これも後退である。
+`forkLineage(src)` を挟み、**元が無人の連鎖の中にあるときだけ継ぐ**形にした。子を fork した先が
+系譜を継ぐ（＝起こせないまま）ことは変わっていない。
+
+**② 一行不変条件が失われる。** 「`origin_session` が立っている＝無人の連鎖の中」で読み切れる
+性質は、この変更で終わる。**将来の呼び出し側が `!= ""` だけ見て間違える**ので、判定は
+`session.InUnattendedChain` 1 本に閉じ込め、深さ判定はそれを呼ぶだけにした。
+**product code に裸の `OriginSession != ""` は残っていない**——`handOverSpawnLineage`
+（recreate が枠を 1 本に保つやつ）も同じ述語を引く。あれが枠を食っていない系譜まで消すと、
+空く枠は無く、**アーカイブされた前任が提案元を忘れるだけ**になるからである。
+
+### 87.18.4 系譜は検証する。自己申告では刻まない
+
+`CreateOrigin` はこれまで `req.OriginSession` を **`origin==session` のときだけ**採っていた。
+そこは MCP サーバの `AF_SESSION_NAME` から来る値なのでモデルには書けないが、**本節が新設した
+`origin=user` の枝は、値がブラウザから届く**。素通しにすれば Console API を叩ける者が任意の
+系譜を捏造できる。
+
+検証は安く済む。**引き継ぎ提案は提案元セッション名のファイルに保管されている**
+（`HandoffProposalPath(name)`）ので、`origin_proposal`（提案 ID）と対で受け取り、
+`ReadHandoffProposals(<提案元>)` にその ID が実在することを照合してから刻む。**別セッションの
+提案 ID を名乗っても、読むファイルが違うので落ちる。** ADR 0073 決定 1 の「サーバが埋める・
+ワイヤの値は信用しない」を、別の手段で同じ水準に保った。
+
+- **`origin_proposal` は保存しない。** 証明のためだけに受け取る値であって、系譜ではない。
+- **照合できない対は黙って捨てる**（起動は通す）。系譜が付かないことは起動の失敗ではない。
+- **launched 済みの提案でも通す。** 起動は提案を消費しない（カードは残り、破棄は利用者の判断）。
+  同じ提案から 2 本目を起こしても出自は同じである。
+
+### 87.18.5 配管は半分できていた
+
+Console 側は `HandoffProposal.tsx:212` が既に**提案元セッション名と提案 ID を起動ダイアログまで
+運んで**いた（`StartHost` が成功時に提案へ launched バッジを付けるため）。足りなかったのは
+最後の一跳ね——`useStartWork.ts` が組み立てる POST body に載っていなかっただけである。
+`useLaunchSeed` から読んで `origin_session` / `origin_proposal` を足した。**バッジと create が
+同じ 1 つの出どころを読む**ので、両者が別の提案を指すことはない。
+
+他メンバーからの引き継ぎ（`HandoffOfferRow`）は提案元セッション名を**空**で seed するので、
+対の片方だけでは何も載らない。
+
+### 87.18.6 試験と陽性対照
+
+**経路試験を必ず 1 本。** 「関数は書いたが呼ばれていない」は単体試験では原理的に見逃す。
+提案を実際に置き、実物の create ハンドラへ POST し、出来た Meta が `origin=user` **かつ**
+`originSession=<提案元>` になることを見る（`TestCreateFromHandoffProposalRecordsLineage`）。
+fork も実物のハンドラを通した（claude の会話 jsonl を植えて `ForkSource` を満たす）。
+
+陽性対照——新しい試験が、対応するコードを壊したときに落ちること:
+
+| 壊した箇所 | 壊し方 | 落ちた試験 | exit |
+|---|---|---|---|
+| `session.InUnattendedChain` | `&& OriginOf(m) != OriginUser` を削る（1 項に戻す） | `TestSpawnDepthAcrossHandoffLineage` / `TestInUnattendedChain` | 1 |
+| fork の継承 | `forkLineage(src)` → `src.OriginSession`（変更前の行） | `TestSpawnDepthAcrossHandoffLineage`（fork が系譜を継いだ） | 1 |
+| 捏造の拒否 | `handoffProposalLineage` の照合を消し `return from` | `TestCreateHandoffLineageRefusesForgery` 3 例 | 1 |
+| `CreateOrigin` | `case session.OriginUser:` の枝を削る | `TestCreateFromHandoffProposalRecordsLineage` | 1 |
+| Console の POST body | `origin_session` / `origin_proposal` の 2 行を削る | `handoffLineage.dom.test.tsx` | 1 |
+
+🔥 **最後の 1 行が、この表を作る理由である。** 壊した対象が Go モジュールの外
+（`console/*.ts`）なので、**同じ破壊のまま Go の経路試験は `ok` のまま緑**だった（確認済み・
+exit 0）。Console 側の欠落は Console 側の試験にしか映らない。Go 試験は `-count=1` で走らせて
+いる——キャッシュが過去の PASS を返すと、壊したのに `ok (cached)` で exit 0 になる。
+
+全量: `(cd workspace/agent && go test ./... -count=1)` exit 0。`cd console && npm test` は
+2235 passed / 1 failed で、落ちる 6 ファイルは `src/features/viewer/` の `Denied ID`
+（親の `node_modules` を symlink で共有していることによる既知・無関係。AGENTS.md）。

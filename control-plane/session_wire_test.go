@@ -45,7 +45,8 @@ const agentSessionsPayload = `{"sessions":[{
 	"backgroundBusy":true,"backgroundBusyReason":"subagent","authOkAt":"2026-08-14T09:00:00+09:00",
 	"context":{"read":1000,"create":200,"fresh":30,"model":"claude-fable-5"},
 	"branch":"main","currentBranch":"dev","branchDrift":true,"worktree":true,
-	"exitReason":"oom","exitCode":137,"exitSignal":9
+	"exitReason":"oom","exitCode":137,"exitSignal":9,"handoffPending":true,
+	"originSession":"sparent"
 }]}`
 
 // TestAgentSessionsRelayKeepsFields pins that the CP's decode→re-emit round trip drops none
@@ -110,6 +111,16 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// cannot tell an auth failure the user has already fixed from a live one, and goes on
 		// asking them to re-authenticate for the rest of the conversation's life.
 		"authOkAt": "2026-08-14T09:00:00+09:00",
+		// An unlaunched handoff proposal. Dropped here the row falls back to the plain
+		// waiting-for-input chip, and the handoff stays invisible to anyone not reading the
+		// mirror — the only place it appears.
+		"handoffPending": true,
+		// Spawn lineage (ADR 0073). The left rail builds its whole worktree hierarchy and
+		// its family colours out of this one key (docs/log/94), and there is no other link
+		// to fall back on — folder and branch carry a random slug. Dropped here, every
+		// family collapses to size 1 and neither the nesting nor the spines appear at all,
+		// while the Console's optional declaration keeps the type check quiet.
+		"originSession": "sparent",
 	}
 	for k, v := range want {
 		if got[k] != v {

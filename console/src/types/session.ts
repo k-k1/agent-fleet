@@ -55,6 +55,18 @@ export interface Session {
   // the mirror's error block stop offering a fix the user already applied (docs/log/47 §4-11).
   authOkAt?: string;
   createdAt?: string; // ISO timestamp
+  // The session this one CAME FROM (ADR 0073) — the parent that spawned it with
+  // create_session, the session a fork branched off, or the one whose handoff proposal
+  // was launched into this session. Empty when nobody raised it.
+  //
+  // This is the ONLY reliable link between related working copies: a worktree's folder
+  // ("<base>@wip-<slug>") and branch ("temp/<slug>") carry a random slug that has nothing
+  // to do with any session name, and the branch is renamed afterwards while the folder
+  // stays put. Read it through `dir` (see lib/project.ts), never through the names.
+  //
+  // NOT a "is this unattended" predicate — `origin` is a separate axis and a handoff
+  // proposal keeps origin=user while carrying this (ADR 0073 決定 1 の 2026-09-10 補遺).
+  originSession?: string;
   model?: string; // claude model
   context?: SessionContextUsage; // claude context-window usage (the Agent's session.ContextUsage)
   branch?: string; // git branch the working copy was on when the session started
@@ -72,6 +84,12 @@ export interface Session {
   // (docs/log/75). Only set on stopped rows, where it turns the list badge into "stopped,
   // question pending". While the session is alive, `state` says the same thing.
   carried?: "question" | "plan" | "permission" | string;
+  // The LAST successor's first prompt this session proposed (propose_session_handoff) has not
+  // been launched; it clears on launch, on discard, or when a newer proposal is launched in its
+  // place. Set on live AND stopped rows: the proposal is a card in the mirror and raises no
+  // notification, so without this the row of a session that handed its next step on is the row
+  // of one with nothing left to do.
+  handoffPending?: boolean;
   // Deletion lock (docs/log/45): while true, the Agent answers 403 to anything that deletes
   // (delete = forget the metadata, purge, the 7-day auto-prune of stopped sessions, and
   // removal as a side effect of deleting the working copy). Stop and archive are reversible
