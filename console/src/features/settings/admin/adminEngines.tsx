@@ -97,6 +97,12 @@ type EngineModel = {
   precision?: string;
   sizes?: string[];
   files?: string[];
+  /** The row as it was DECLARED — the S3 keys, the flags and the sizes, in the shape
+   *  `POST …/models` reads back (ADR 0072 P6 R2). `files` above is base names to read; these
+   *  are what a forgotten row is rebuilt from, and since P6 the catalogue is the only place
+   *  the declaration exists at all. Super-admin only, like the rest of this row. */
+  file_rows?: { s3Key: string; flag?: string; bytes?: number }[];
+  args?: string[];
   /** What enabling this model adds to the next cold start, in seconds, from the file sizes
    *  whoever staged them declared. Absent when nobody declared one — the CP cannot look in S3
    *  (ADR 0072 review R3), so this is an estimate and is labelled as one. */
@@ -928,6 +934,22 @@ function EngineModels({
                   <p className="muted">
                     {tr(purge ? "admin.engines_model_forget_purge_note" : "admin.engines_model_forget_note")}
                   </p>
+                  {/* 🔴 The keys, HERE and nowhere else on the row. This is the one moment they
+                      are needed: since P6 the catalogue is the only declaration there is, so
+                      forgetting a row is the last time anyone can read what it was — and with
+                      purge ticked, this is also the list of objects the delete task is handed.
+                      A row's meta line stays base names; a split model is four paths and would
+                      push every row to four lines for a value nobody reads while choosing. */}
+                  {!!m.file_rows?.length && (
+                    <ul className="engines-model-keys mono">
+                      {m.file_rows.map((f) => (
+                        <li key={f.s3Key}>
+                          {f.flag ? f.flag + " " : ""}
+                          {f.s3Key}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
                   <span className="engines-model-actions">
                     <button
                       type="button"

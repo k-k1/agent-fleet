@@ -1170,6 +1170,50 @@ describe("EnginesAdminView", () => {
     });
   });
 
+  // 🔴 ADR 0072 P6 R2. Since P6 the catalogue is the only declaration in the deployment, so
+  // the moment a row is forgotten is the last moment anyone can read what it WAS — and on the
+  // real deployment a row was forgotten and rebuilt from a note, which worked only because it
+  // was one file. A FLUX.1 row is four keys with four flags.
+  //
+  // The keys are shown HERE and nowhere else: with purge ticked this is also the list the
+  // delete task is handed, and a row's meta line stays base names so that choosing between
+  // rows does not cost four lines each.
+  it("shows the S3 keys of a row at the moment it is about to be forgotten", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            {
+              id: "flux1-dev-fp8",
+              kind: "checkpoint",
+              base_model: "flux1",
+              files: ["flux1-dev-fp8.safetensors", "clip_l.safetensors"],
+              file_rows: [
+                { flag: "--diffusion-model", s3Key: "image/diffusion_models/flux1-dev-fp8.safetensors" },
+                { flag: "--clip_l", s3Key: "image/text_encoders/clip_l.safetensors" },
+              ],
+            },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    // Not on the row itself: base names are what a person chooses between.
+    expect(host!.querySelector(".engines-model-keys")).toBe(null);
+    expect(host!.textContent).not.toContain("image/text_encoders/clip_l.safetensors");
+
+    await click(
+      Array.from(host!.querySelectorAll("li.engines-model button")).find(
+        (b) => b.textContent === "登録を消す",
+      ) as HTMLElement,
+    );
+    const keys = host!.querySelector(".engines-model-keys")!;
+    expect(keys.textContent).toContain("image/diffusion_models/flux1-dev-fp8.safetensors");
+    // With the flag, because a key alone does not say which loader the part was for.
+    expect(keys.textContent).toContain("--clip_l");
+  });
+
   // 🔴 ADR 0072 P2 欠落 10. Declaring a family cleared the only mark this panel had, and the
   // row still could not generate: `flux1-dev` was one unflagged 22.2 GiB checkpoint and the
   // flux1 template reads four other files. The row came out of the fix looking healthier.
