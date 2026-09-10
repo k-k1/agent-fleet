@@ -463,6 +463,17 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "git.identity_saved": "Saved the commit identity",
   "git.name_placeholder_ex": "name (e.g. Taro Yamada)",
   "git.identity_help": "Blank uses the connected account. It applies to terminal / claude commits too, and each repository can override it.",
+  // --- Subversion credentials (GitTab, docs/log/41 amendment) ---
+  "git.cat_svn": "Subversion",
+  "git.svn_saved_n": "{n} saved",
+  "git.svn_no_user": "no account (certificate trust only)",
+  "git.svn_trusted_cert": "certificate trusted",
+  "git.svn_prefix_ph": "Repository URL",
+  "git.svn_user_ph": "username",
+  "git.svn_pass_ph": "password",
+  "git.svn_trust": "Trust this server's certificate (self-signed / unknown CA)",
+  "git.svn_hint":
+    "The URL of a repository or a whole server (e.g. https://svn.example.com/proj). Matched by longest prefix, so an entry for one repository overrides a broader one for the whole server. Used by checkout and update, and by the `svn` you run yourself in a session.",
   "git.global_identity_cat": "Default commit identity (all git)",
   "git.global_identity_saved": "Saved the default identity",
   "git.global_identity_help":

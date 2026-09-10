@@ -87,5 +87,76 @@ Agent（`workspace/agent/routes.go`）・CP 許可リスト（`control-plane/rou
 
 ## 8. 残（環境依存）
 
-- セッション内エージェント直 `svn` の透過認証（構造的に非対応・ADR 0024 の限界）。
+- 🔴 セッション内エージェント直 `svn` の透過認証（構造的に非対応・ADR 0024 の限界）。
+  → **2026-09-10 に解消**。§9 を参照（PATH ラッパーで、平文を置かずに透過認証する）。
 - 実フリート再ビルド後の実機目視（実 SVN サーバでの basic 認証／更新／ロック解除／自己署名証明書の信頼）。
+
+## 9. 追補（2026-09-10）— 再認証の経路と、直 `svn` の透過認証
+
+利用者からの報告 2 件が起点。**「チェックアウト時に保存しなかった場合、認証情報がどこにも無いので
+`svn` の認証が通らない。再入力・認証する経路が無い」**。§2 の「任意保存（opt-in）」は**片道**だった
+——保存しなければパスワードは 1 回使われて捨てられ、`--no-auth-cache` により `~/.subversion` にも
+残らないので、以後の更新は必ず失敗し、入れ直す画面がどこにも無い。作業コピーを消して取り直すのが
+唯一の回避だった。
+
+### 9.1 再認証（既存の作業コピーに対して後から入れる）
+
+- `GET /repos/{name}/svn-auth` — この作業コピーがどのサーバを見ているか＋認証情報が当たっているか。
+- `POST /repos/{name}/svn-auth` — **サーバに当ててから**保存する。`svn info <url>` が通らなければ
+  保存しない。「保存した」が「打ち間違いを保存した」になり得ないこと自体が要件（それが利用者を
+  ここへ来させた失敗そのものだから）。
+- `PUT /connections/svn` — 設定 › 接続からの追加・修正（作業コピーがまだ無い場合／パスワード変更）。
+- **保存先の prefix は、いま効いているエントリがあればそれ**。無ければリポジトリルート
+  （`svn info --show-item repos-root-url`）。トランク単位で無効なエントリを積むと、壊れた広い
+  エントリが残ったまま影に隠れるだけで直らない。§2 の trust-only エントリ（証明書だけ信頼して
+  パスワードは保存しなかった状態）が、まさに「効いているが認証できない」エントリである。
+- **`svn` の出力の分類はサーバ側で行う**（`svnAuthFailure`）。`update` は認証で落ちたときだけ
+  `401 svn_auth_required` を返し、Console はそれを見て再認証モーダルを出す。ブラウザで
+  svn のメッセージを文字列照合しない。⚠️ `E170013`（Unable to connect）は**認証失敗に数えない**
+  ——到達不能なホストでも同じ文字列が出るので、ネットワーク障害に「パスワードを入れてください」
+  と答えることになる。数えるのは `E170001` / `E215004` / `E175013`。
+
+### 9.2 直 `svn` の透過認証（PATH ラッパー）
+
+git は credential helper、`gh` は PATH ラッパー（`gh-auth-wrapper.sh`）で透過認証している。SVN は
+helper プロトコルを持たず、自力で見に行く先は `~/.subversion/auth`（＝平文）だけなので、ADR 0024 は
+「非対応」とした。**平文を置かずに済ませる第三の道が `gh` と同じ形**だった: `/usr/local/bin/svn` を
+シム（`workspace/svn-auth-wrapper.sh`）にし、`workspace-agent svn-run` が暗号ストアから creds を
+引いて**本物の svn に stdin で**渡す。ディスクにも `ps` にも平文は出ない。
+
+判断は Go（`workspace/agent/svn_wrapper.go`・`planSvnWrapper` は純関数）に置く。原則は 3 つ:
+
+1. **注入するか、素通しするか、しかない。** 打たれたコマンドと違うことをする分岐を作らない。
+2. **stdin を横取りしない。** `--password-from-stdin` は stdin を食うので、`-F -` / `--targets -` /
+   `svn patch -` は素通し。⚠️ **`-m` の無い `commit` も素通し**——エディタが開き、その stdin が
+   こちらのパイプだと `vim` が「Input is not from a terminal」でハングする。
+3. **明示指定が常に勝つ。** `--password` / `--password-from-stdin` があれば触らない
+   （Agent 自身の REST 経路がまさにこの形で svn を呼ぶ）。
+
+⚠️ **svn はオプションを*サブコマンドごとに*検証する**（`svn add --username x` は
+「Subcommand 'add' doesn't accept option '--username'」）。したがって注入先は `--username` を
+受け付けるサブコマンドの明示リストのみ。ローカル専用（`add` / `revert` / `cleanup` / `patch` …）に
+足すと、動いていたローカル操作が usage エラーに変わる。
+
+⚠️ **Agent 自身の svn 呼び出しは `AF_SVN_WRAPPED=1` でシムを迂回する**（`svnCmd`）。PATH は
+Agent プロセスにも効くので、放っておくと自分の注入済みコマンドがラッパーを一往復し、
+`svn info` が 1 回余計に走る。
+
+### 9.3 検証
+
+- `TestSvnWrapperAuthenticatesAgainstRealServer` — 匿名を拒否する `svnserve` を立て、
+  checkout / update / commit / log を**コマンドラインに認証情報を一切書かずに**通す。
+  **陽性対照が本体**: 保存前の checkout が `svn_auth_failure` で落ちることを先に確かめる。
+  これが無いと「認証を要求しないサーバ」でも緑になる。
+- `TestSvnReauthenticateWorkingCopy` — 「保存せずにチェックアウトした」状態から始めて、
+  update が 401 `svn_auth_required`、誤ったパスワードは保存されない、正しいものは
+  リポジトリルート prefix で保存され update が通る、まで通す。
+
+### 9.4 追加・改修ファイル
+
+- 追加: `workspace/agent/svn_auth.go`, `workspace/agent/svn_wrapper.go`,
+  `workspace/svn-auth-wrapper.sh`, `console/src/features/repos/SvnAuthModal.tsx`
+- 改修: `workspace/agent/{svn.go,routes.go,main.go}`, `workspace/Dockerfile`,
+  `control-plane/{routes.go,proxy.go}`（`repo.svn.auth`）,
+  `console/src/features/repos/{RepoRow,RepoRowConnected}.tsx`,
+  `console/src/features/settings/connect/GitTab.tsx`（Subversion カード＝一覧・追加・失効）

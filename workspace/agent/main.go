@@ -40,6 +40,14 @@ func main() {
 		runCredHelper(os.Args[2:])
 		return
 	}
+	// Transparent SVN auth: the PATH shim at /usr/local/bin/svn re-enters this binary as
+	// `workspace-agent svn-run <svn args…>`, which fills in the credential from the
+	// encrypted store and execs the real svn. Same shape as the cred helper above — the
+	// process svn's caller sees is still svn. See svn_wrapper.go.
+	if len(os.Args) > 1 && os.Args[1] == "svn-run" {
+		runSvnWrapper(os.Args[2:])
+		return
+	}
 	// JDK provisioner: `workspace-agent install-jdk <major>` downloads the latest GA
 	// Temurin for the container arch into the per-user home volume (temurin-<major>-
 	// jdk-<arch>), the common JDK location the toolchain resolver + entrypoint search

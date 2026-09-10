@@ -1082,3 +1082,17 @@
   font-size: 12px;
   font-weight: 400;
 }
+
+/* SVN re-authentication dialog (docs/log/41 amendment). The URL is shown, never typed:
+   it comes from the working copy, so it is a fact to read rather than a field to fill. */
+.svn-auth-url {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 12px;
+  padding: 4px 6px;
+  border-radius: 4px;
+  background: var(--code-bg, rgba(127, 127, 127, 0.12));
+}
+.svn-auth-err {
+  color: var(--danger, #d33);
+}

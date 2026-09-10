@@ -68,6 +68,7 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "repo.delete_wc": "Delete the working copy",
   "repo.svn_update": "Update (svn)",
   "repo.svn_cleanup": "Clean up lock (svn)",
+  "repo.svn_reauth": "Re-authenticate (svn)",
   "repo.revision": "Revision {rev}",
   "repo.project_settings": "Project settings…",
   "repo.share": "Share…",
@@ -233,6 +234,20 @@ export const repos: Record<keyof typeof jaRepos, string> = {
   "rp.svn_trust_hint": "Disable certificate verification for this server (accepts self-signed / unknown CA / hostname mismatch). For dev servers. Later updates keep trusting it.",
   "rp.svn_checkout": "Check out",
   "rp.import_no_job": "Could not start the import (unexpected response from the workspace)",
+  // --- SVN re-authentication (docs/log/41 amendment) ---
+  "rp.svn_auth_title": "Re-authenticate {name}",
+  "rp.svn_auth_intro":
+    "Enter the credentials for this working copy's Subversion server. They are checked against the server before being stored (encrypted).",
+  "rp.svn_auth_server": "Server",
+  "rp.svn_auth_none_saved": "No credentials are stored for this server yet.",
+  "rp.svn_auth_user": "Username",
+  "rp.svn_auth_password": "Password",
+  "rp.svn_auth_scope_hint":
+    "Stored for the whole repository, so every working copy checked out of it is covered — including the `svn` you run yourself in a session.",
+  "rp.svn_auth_rejected": "The server rejected these credentials. Check the username and password.",
+  "rp.svn_auth_saved": "Authenticated {name}",
+  "rp.svn_auth_checking": "Checking…",
+  "rp.svn_auth_submit": "Authenticate and save",
   "rp.svn_checkout_failed": "Checkout failed: {err}",
   "rp.svn_update_failed": "Update failed: {err}",
   "rp.svn_update_success": "Updated {name} to r{rev}",
