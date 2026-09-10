@@ -163,10 +163,7 @@ Parameters:
     Type: String
     Default: sdcpp
     AllowedValues: [ sdcpp, comfy ]
-    Description: >-
-      Which server the image role runs (ADR 0072 decision 4). sdcpp holds one checkpoint,
-      chosen at start; comfy (this deployment's own image) switches per request —
-      PARAMETERS-60-engines.md, "ImageEngine".
+    Description: Which server the image role runs — PARAMETERS-60-engines.md, "ImageEngine".
   ImageImageTag:
     Type: String
     Default: master-cuda
@@ -294,9 +291,10 @@ Mappings:
         echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
         if [ -n "$PRESET_FILE" ]; then
           START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
+        fi
+        : > /tmp/keys.rest
+        if [ -n "$PRESET_FILE$SYNC_ALL" ]; then
           printf '%s' "$V" | jq -r --arg s "$START" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > /tmp/keys.rest
-        else
-          : > /tmp/keys.rest
         fi
         printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys.start
         fetch_keys() {
@@ -326,7 +324,7 @@ Mappings:
         touch "$MODELS_DIR/ready"
         echo "engine fetch: engine may start; $(grep -c . /tmp/keys.rest || true) file(s) still to sync"
         fetch_keys /tmp/keys.rest
-        echo "engine fetch: every enabled model is on this box"
+        echo "engine fetch: sync done"
 
 Conditions:
   # Whether the ROLE exists. WHAT it loads is the catalogue's (ADR 0072 decision 1); `""` keeps
@@ -894,7 +892,8 @@ Resources:
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }
-            # Neither engine is a router — PARAMETERS-60-engines.md, "The idle wrapper".
+            # comfy IS a router, per request, with no preset — PARAMETERS, "The fetch sidecar".
+            - { Name: SYNC_ALL, Value: !If [ ImageIsComfy, "1", "" ] }
             - { Name: PRESET_FILE, Value: "" }
             - { Name: ALIAS_FLAG, Value: "" }
             - { Name: CTX_FLAG, Value: "" }

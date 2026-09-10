@@ -608,6 +608,36 @@ writes `/models/cmdline` — the model-specific half of the argument list. Every
 role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
 and `ALIAS_FLAG` / `CTX_FLAG`.
 
+### `SYNC_ALL`: which engines need more than the starting model on the box
+
+Whether a role syncs the OTHER enabled models is a per-engine question, and it is asked through
+`SYNC_ALL` rather than inferred:
+
+| engine | switches models? | `PRESET_FILE` | `SYNC_ALL` | on the box |
+|---|---|---|---|---|
+| llama.cpp | yes, it is a router | a path | — | every enabled model |
+| sd.cpp | no, one checkpoint at start | `""` | `""` | the starting model only |
+| ComfyUI | **yes, per request** | `""` | `"1"` | every enabled model |
+
+Enabling a model OFFERS it and selecting one LOADS it, so a role that cannot switch must not
+pay to stage models nobody can reach — S3 to EBS is 92-147 MB/s measured, and that is somebody
+else's checkpoint on every cold start. That is why sd.cpp stays at the starting model.
+
+⚠️ **The trap this table exists to prevent.** `/tmp/keys.rest` used to be written only inside
+`if [ -n "$PRESET_FILE" ]`, which read as "only a router needs the others" — true while the only
+two engines were llama.cpp (a router, and it has a preset) and sd.cpp (neither). **`comfy` broke
+the equivalence: it is a router with no preset file.** The image container sets `PRESET_FILE: ""`,
+so `keys.rest` was empty and only the starting checkpoint was fetched. Every other model then
+400s at the engine with `Value not in list: unet_name: 'flux-2-klein-4b.safetensors' not in []`
+— the file is in the active set, in S3, and named correctly in the graph; it was simply never
+downloaded. The sidecar printed `every enabled model is on this box` while that was false, which
+is why the fetch log read as healthy. (Measured on af-sandbox, ADR 0072 P2 実機検証; the message
+now says `sync done`, and `engine-sidecar-test.sh` covers both settings.)
+
+The rule to hold onto: **`PRESET_FILE` says how one engine is CONFIGURED, never what has to be
+on the box.** It still gates the preset file and the `START` re-derivation that goes with it —
+those really are router-with-a-preset concerns — and nothing else.
+
 ### The START model gates the engine; the rest are synced behind it
 
 Since 2026-09-09 the sidecar does **not** fetch everything before the engine may start. It syncs

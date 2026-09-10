@@ -78,10 +78,10 @@ STUB
 chmod +x "$WORK/bin/aws"
 export PATH="$WORK/bin:$PATH"
 
-run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] -> writes $WORK/models/cmdline
+run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] [sync-all] -> writes $WORK/models/cmdline
   rm -rf "$WORK/models"; mkdir -p "$WORK/models"
   : > "$WORK/fetched"
-  ACTIVE_SET_FIXTURE="$1" ALIAS_FLAG="$2" CTX_FLAG="$3" PRESET_FILE="${4:-}" \
+  ACTIVE_SET_FIXTURE="$1" ALIAS_FLAG="$2" CTX_FLAG="$3" PRESET_FILE="${4:-}" SYNC_ALL="${5:-}" \
   MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
   AF_TEST_FETCHED="$WORK/fetched" \
     sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 || fail "the sidecar exited non-zero: $(cat "$WORK/out")"
@@ -134,6 +134,23 @@ grep -q "image/loras/w.safetensors" "$WORK/fetched" || fail "an enabled LoRA was
 if grep -q "image/checkpoints/b.safetensors" "$WORK/fetched"; then
   fail "a model that is merely enabled was fetched — that is minutes of cold start per start"
 fi
+
+echo "== SYNC_ALL: an engine that switches per REQUEST stages every enabled model =="
+# The other half of the rule above. comfy has no preset file, so PRESET_FILE cannot be the
+# signal — `enabled` has to mean `on the box` or the engine answers `Value not in list: … not
+# in []` for everything but the starting model (measured on af-sandbox, ADR 0072 P2).
+run "$MANY" "" "" "" 1
+grep -q "image/checkpoints/a.safetensors" "$WORK/fetched" || fail "SYNC_ALL lost the starting checkpoint"
+grep -q "image/checkpoints/b.safetensors" "$WORK/fetched" || fail "SYNC_ALL did not stage a merely-enabled model"
+
+echo "== SYNC_ALL: a SPLIT model that is not the starting one lands file by file =="
+# The shape that actually failed: FLUX.2 klein is three files under their own flags, and the
+# non-start branch has to read `.k` out of each object exactly as the start branch does.
+SPLITREST='{"v":1,"key":"image","start":"a","models":[{"id":"a","f":["image/checkpoints/a.safetensors"]},{"id":"k","f":[{"g":"--diffusion-model","k":"image/diffusion_models/k.safetensors"},{"g":"--clip_l","k":"image/text_encoders/q.safetensors"},{"g":"--vae","k":"image/vae/v.safetensors"}]}]}'
+run "$SPLITREST" "" "" "" 1
+for k in image/diffusion_models/k.safetensors image/text_encoders/q.safetensors image/vae/v.safetensors; do
+  grep -q "$k" "$WORK/fetched" || fail "SYNC_ALL did not stage $k from a split non-start model"
+done
 
 echo "== a start id that names nothing leaves an EMPTY command line, not a broken one =="
 # The engine then idles instead of being handed half an argument list. Reachable when a row is
