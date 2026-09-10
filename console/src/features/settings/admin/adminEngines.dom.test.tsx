@@ -645,9 +645,10 @@ describe("EnginesAdminView", () => {
     );
     await click(open as HTMLElement);
 
-    // id, key, description, size. The WINDOW fields are chat-only, and this is the image role.
+    // id, key, size, description, licence, licence URL. The WINDOW fields are chat-only, and
+    // this is the image role.
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    expect(inputs.length).toBe(4);
+    expect(inputs.length).toBe(6);
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(
@@ -684,6 +685,56 @@ describe("EnginesAdminView", () => {
       base_model: "",
       context_tokens: 0,
       max_output_tokens: 0,
+      // 🔴 Empty because nobody typed one, and it is SENT empty: an unrecorded licence is a
+      // state the row states ("licence not recorded"), not a gap the panel fills in.
+      license_name: "",
+      license_url: "",
+    });
+  });
+
+  // The one route where a licence has to be typed — there is no source here to read one from
+  // (ADR 0072 decision 6 vs. decision 10). Optional, and what it buys is the verdict: the CP
+  // reads "may this be used commercially" off the words, exactly as the ingest does, so the
+  // same model does not lose its mark by coming in through this door.
+  it("takes a licence with a hand-registered row, and sends it as the terms", async () => {
+    api.mockResolvedValue({ engines: [row({ has_models: true, model_rows: [] })] });
+    apiJSON.mockResolvedValue(row({ has_models: true, model_rows: [] }));
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+    const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    await type(inputs[0], "flux-dev-local");
+    await type(inputs[1], "image/checkpoints/flux1-dev.safetensors");
+    await type(inputs[4], "flux-1-dev-non-commercial-license");
+    await type(inputs[5], "https://example.com/LICENSE.md");
+    await click(
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLElement,
+    );
+    // 🔴 `license_name`, not `license`: the row reads `license_name || license`, and what a
+    // person types here is the TERMS. Sent as `license` it would be shadowed by nothing and
+    // read as Hugging Face's slug.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
+      id: "flux-dev-local",
+      kind: "checkpoint",
+      files: [{ flag: "", s3Key: "image/checkpoints/flux1-dev.safetensors", bytes: 0 }],
+      description: "",
+      base_model: "",
+      context_tokens: 0,
+      max_output_tokens: 0,
+      license_name: "flux-1-dev-non-commercial-license",
+      license_url: "https://example.com/LICENSE.md",
     });
   });
 
@@ -870,13 +921,13 @@ describe("EnginesAdminView", () => {
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
-    // One field per ROW, each with its own label: six labelled rows, not a strip of six
+    // One field per ROW, each with its own label: eight labelled rows, not a strip of eight
     // look-alike boxes whose placeholder captions vanish as soon as somebody types into them.
     const rows = Array.from(host!.querySelectorAll(".engines-model-add-row"));
-    expect(rows.length).toBe(6);
+    expect(rows.length).toBe(8);
     expect(rows.every((r) => r.querySelector("span") && r.querySelector("input"))).toBe(true);
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    expect(inputs.length).toBe(6);
+    expect(inputs.length).toBe(8);
     const type = async (el: Element, v: string) => {
       await act(async () => {
         const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
@@ -888,8 +939,9 @@ describe("EnginesAdminView", () => {
     await type(inputs[1], "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
     await type(inputs[2], "1117320768");
     await type(inputs[3], "small and quick");
-    await type(inputs[4], "32768");
-    await type(inputs[5], "4096");
+    // 4 and 5 are the optional licence pair; the window is the last two.
+    await type(inputs[6], "32768");
+    await type(inputs[7], "4096");
     await click(
       Array.from(host!.querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
@@ -903,6 +955,8 @@ describe("EnginesAdminView", () => {
       base_model: "",
       context_tokens: 32768,
       max_output_tokens: 4096,
+      license_name: "",
+      license_url: "",
     });
   });
 
@@ -970,8 +1024,9 @@ describe("EnginesAdminView", () => {
     await click(more());
     await click(more());
     inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
-    // id, then (key, size) per file, then the description: three files is eight inputs.
-    expect(inputs.length).toBe(8);
+    // id, then (key, size) per file, then the description and the optional licence pair: three
+    // files is ten inputs.
+    expect(inputs.length).toBe(10);
     await type(inputs[3], "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors");
     await type(inputs[5], "image/vae/flux2-vae.safetensors");
     await pick(selects()[2], "--clip_l");
@@ -990,6 +1045,8 @@ describe("EnginesAdminView", () => {
       base_model: "flux2-klein",
       context_tokens: 0,
       max_output_tokens: 0,
+      license_name: "",
+      license_url: "",
     });
   });
 

@@ -767,6 +767,18 @@ func (a engineAdminAPI) postModel(w http.ResponseWriter, r *http.Request, ident 
 		LicenseURL: strings.TrimSpace(b.LicenseURL),
 		Precision:  strings.TrimSpace(b.Precision), BaseModel: strings.TrimSpace(b.BaseModel),
 	}
+	// The commercial-use verdict is READ FROM the licence here exactly as the ingest reads it
+	// (ADR 0072 decision 10), rather than being a field this route accepts. Two reasons: the
+	// answer is a property of the licence and not of whoever typed it, and a row registered by
+	// hand would otherwise be the one place the panel cannot say "non-commercial" — the same
+	// model, taken in by the other door, says it.
+	//
+	// 🔴 Only when a licence was actually given. An empty licence stays an EMPTY verdict rather
+	// than `unknown`: "nobody recorded one" and "recorded, and the terms could not be read" are
+	// different facts, and the panel draws them differently.
+	if m.License != "" || m.LicenseName != "" {
+		m.CommercialUse = engineCommercialUse(engineResolved{License: m.License, LicenseName: m.LicenseName})
+	}
 	for _, f := range b.Files {
 		if k := strings.TrimSpace(f.S3Key); k != "" {
 			m.Files = append(m.Files, store.EngineModelFile{

@@ -447,6 +447,12 @@ func TestEngineAdminModelLifecycle(t *testing.T) {
 	if jugg.License != "creativeml-openrail-m" {
 		t.Errorf("licence was dropped: %+v", jugg)
 	}
+	// 🔴 The verdict is READ FROM the licence on this route too, not only on the ingest. A row
+	// registered by hand was the one place the panel could not say "non-commercial" about a
+	// model it says it about when the same file arrives through the other door.
+	if jugg.CommercialUse != "yes" {
+		t.Errorf("openrail-m read as commercial_use=%q", jugg.CommercialUse)
+	}
 
 	// Selecting is what an administrator presses to change the checkpoint, and it is exclusive.
 	if code, out = adminModel(t, a, "PUT", "image", "jugg", `{"selected":true}`); code != http.StatusOK {
@@ -659,5 +665,44 @@ func TestEngineAdminModelBaseModelPatch(t *testing.T) {
 	e.catalog.invalidate()
 	if code, out = adminModel(t, a, "PUT", "image", "w1", `{"base_model":"SDXL 1.0"}`); code != http.StatusOK {
 		t.Fatalf("a LoRA's base_model = %d (%v), want 200", code, out)
+	}
+}
+
+// The licence a hand-registered row carries decides its commercial-use verdict, and an ABSENT
+// licence leaves the verdict absent too (ADR 0072 decision 10).
+//
+// 🔴 The empty case is the point. "Nobody recorded a licence" and "recorded, and the terms could
+// not be read" are different facts: the first is what a seeded row and every row staged before
+// this field existed are in, and writing `unknown` there would claim the question was asked. The
+// panel draws them differently — "licence not recorded" against the licence's own name.
+func TestEngineAdminModelReadsTheVerdictOffTheLicence(t *testing.T) {
+	a, _, st := engineModelAdminAPI(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct{ id, body, want string }{
+		{"nc", `"license_name":"flux-1-dev-non-commercial-license",`, "no"},
+		{"ok", `"license_name":"apache-2.0",`, "yes"},
+		{"odd", `"license_name":"some-house-licence-v3",`, "unknown"},
+		{"none", "", ""},
+	} {
+		body := `{"id":"` + tc.id + `","kind":"checkpoint",` + tc.body +
+			`"files":[{"s3Key":"image/checkpoints/` + tc.id + `.safetensors"}]}`
+		if code, out := adminModel(t, a, "POST", "image", "", body); code != http.StatusOK {
+			t.Fatalf("register %s = %d (%v)", tc.id, code, out)
+		}
+		rows, _ := st.ListEngineModels(ctx, "image")
+		var got string
+		found := false
+		for _, m := range rows {
+			if m.ID == tc.id {
+				got, found = m.CommercialUse, true
+			}
+		}
+		if !found {
+			t.Fatalf("%s was not registered", tc.id)
+		}
+		if got != tc.want {
+			t.Errorf("%s: commercial_use = %q, want %q", tc.id, got, tc.want)
+		}
 	}
 }

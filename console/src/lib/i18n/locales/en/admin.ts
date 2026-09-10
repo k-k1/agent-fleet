@@ -85,6 +85,10 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_part_drop": "Remove",
   "admin.engines_model_no_family": "No checkpoint family is declared. This engine picks a workflow from the family and will not guess one from a name, so this row can be enabled and will appear as a model — and then fail when something asks it to generate. Choose one below.",
   "admin.engines_model_add_desc": "description",
+  // Optional. This route has no source to read a licence from, so it is the one place a person
+  // types one. Left blank, the row says "licence not recorded" rather than showing a gap.
+  "admin.engines_model_add_license": "licence (optional)",
+  "admin.engines_model_add_license_url": "licence URL (optional)",
   // 🔴 Both halves of the window or neither: with a context and no output cap, opencode reads
   // the cap as 32,000 and a 32k model is left with 768 usable tokens (ADR 0072 decision 3).
   "admin.engines_model_add_ctx": "context window",

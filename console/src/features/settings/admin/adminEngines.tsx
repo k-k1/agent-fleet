@@ -933,6 +933,14 @@ function EngineModelAdd({
   const [ctx, setCtx] = useState("");
   const [out, setOut] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  /** The licence, in the words of whoever staged the file. OPTIONAL, and deliberately so: this
+   *  route registers a file already in the bucket, and there is no API to read a licence off —
+   *  the ingest road is the one that records it from the source (ADR 0072 decision 6). Left
+   *  empty, the row says "licence not recorded" rather than nothing, which is the honest state.
+   *  Given, the CP derives the commercial-use verdict from it exactly as the ingest does, so
+   *  the same model does not lose its "non-commercial" mark by coming in through this door. */
+  const [licence, setLicence] = useState("");
+  const [licenceURL, setLicenceURL] = useState("");
   // One row PER FILE, always — a single-file checkpoint is this list with one entry, so the
   // common case is not a second code path. Until this existed the form held one key, which made
   // a split model impossible to register at all: FLUX.2 klein is a diffusion model, a text
@@ -948,6 +956,8 @@ function EngineModelAdd({
     setCtx("");
     setOut("");
     setBaseModel("");
+    setLicence("");
+    setLicenceURL("");
     setFiles(blank);
   };
 
@@ -980,6 +990,12 @@ function EngineModelAdd({
       base_model: baseModel,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
+      // 🔴 `license_name`, not `license`: the panel reads `license_name || license`, and the
+      // pair exists because Hugging Face answers `other` for both non-commercial models in ADR
+      // 0072's table. What a person types here is the terms, so it goes in the field that holds
+      // them. Empty stays empty — an unrecorded licence is a state the row states.
+      license_name: licence.trim(),
+      license_url: licenceURL.trim(),
     });
     reset();
   };
@@ -1067,6 +1083,11 @@ function EngineModelAdd({
         </button>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
+      {/* Optional, and the only route where a licence has to be TYPED — there is no source here
+          to read one from. Left blank the row says "licence not recorded"; filled, the CP reads
+          the commercial-use verdict off it the same way the ingest does. */}
+      {field(tr("admin.engines_model_add_license"), licence, setLicence, "apache-2.0")}
+      {field(tr("admin.engines_model_add_license_url"), licenceURL, setLicenceURL)}
       {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
           context at all, so offering the field there would ask for a number nothing reads. */}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}

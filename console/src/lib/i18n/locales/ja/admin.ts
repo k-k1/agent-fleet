@@ -82,6 +82,10 @@ export const admin = {
   "admin.engines_model_add_part_drop": "この行を削除",
   "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。下から選んでください。",
   "admin.engines_model_add_desc": "説明",
+  // 任意。この経路には読み取る出所が無いので、ライセンスを人が書く唯一の場所になる。
+  // 空のままなら行は「ライセンスの記録なし」と言う（空白のままにはしない）。
+  "admin.engines_model_add_license": "ライセンス（任意）",
+  "admin.engines_model_add_license_url": "ライセンスの URL（任意）",
   // 🔴 コンテキストウィンドウは「両方か、どちらも書かないか」。context だけだと opencode は
   // 出力上限 0 を 32,000 と読み、32k のモデルが使えるウィンドウ 768 トークンになる
   // （ADR 0072 決定 3）。
