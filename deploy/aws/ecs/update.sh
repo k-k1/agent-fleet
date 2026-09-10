@@ -217,11 +217,36 @@ fi
 ENGINES_STACK="$(af_engines_stack || true)"
 if [ -n "$ENGINES_STACK" ]; then
   echo "==> cloudformation deploy $ENGINES_STACK (60-engines, parameters unchanged)"
+  # 🔴 ONE parameter cannot be left unchanged, and this is the only path that can repair it.
+  # ADR 0072 phase P6 retired `<Role>ModelS3Key`, which until then ALSO decided whether the
+  # role's SERVICE existed. Passing no parameters means `<Role>Enabled` keeps its previous
+  # value, and for a deployment that switched a role on by naming a key that value is `""` —
+  # so this update DELETES the engine service. Not by failing: as an ordinary, successful
+  # stack update, with a GPU engine and a 527-586-second cold start behind it. Measured
+  # 2026-09-11: the production deployment has BOTH roles in exactly that state.
+  #
+  # Read off the LIVE stack because this script deliberately works without a local capture
+  # (see the note at the top). standup.sh does the same translation from `params/60-engines`.
+  # A deployment that has already been through P6 has no `<Role>ModelS3Key` to read, so
+  # nothing is passed and the deploy is byte for byte what it was.
+  eng_params=()
+  for eng_role in Llm Image; do
+    if [ -z "$(af_stack_param "$ENGINES_STACK" "${eng_role}Enabled")" ] &&
+       [ -n "$(af_stack_param "$ENGINES_STACK" "${eng_role}ModelS3Key")" ]; then
+      echo "    · ${eng_role}Enabled=true (it was implied by ${eng_role}ModelS3Key, retired in ADR 0072 P6)"
+      eng_params+=("${eng_role}Enabled=true")
+    fi
+  done
+  eng_deploy=(--capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset)
+  eng_shown=""
+  if [ "${#eng_params[@]}" -gt 0 ]; then
+    eng_deploy+=(--parameter-overrides "${eng_params[@]}")
+    eng_shown=" --parameter-overrides ${eng_params[*]}"
+  fi
   if [ "$DRY" = 1 ]; then
-    echo "DRY: aws cloudformation deploy --stack-name $ENGINES_STACK --template-file $HERE/cfn/60-engines.yaml"
+    echo "DRY: aws cloudformation deploy --stack-name $ENGINES_STACK --template-file $HERE/cfn/60-engines.yaml$eng_shown"
   else
-    af_cfn_deploy "$ENGINES_STACK" "$HERE/cfn/60-engines.yaml" \
-      --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset
+    af_cfn_deploy "$ENGINES_STACK" "$HERE/cfn/60-engines.yaml" "${eng_deploy[@]}"
   fi
 fi
 
