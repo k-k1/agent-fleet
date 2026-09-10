@@ -594,12 +594,18 @@ COPY --from=agentbuild /out/workspace-agent /usr/local/bin/workspace-agent
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 # gh 透過認証ラッパー（実体は /usr/local/libexec/gh）。§8.3 参照。
 COPY gh-auth-wrapper.sh /usr/local/bin/gh
+# svn transparent-auth wrapper. Same shape as the gh one, except the real binary stays
+# where apt put it (/usr/bin/svn) and the shim only takes precedence through PATH order —
+# /usr/local/bin comes first. It resolves the credential from the encrypted store, so an
+# `svn update` typed in a session authenticates like the Console's own update button
+# (docs/log/41 amendment).
+COPY svn-auth-wrapper.sh /usr/local/bin/svn
 # ビルド生成物をタスクローカルの作業ディスクへ逃がすヘルパー（ADR 0044 決定 3）。
 COPY af-scratch.sh /usr/local/bin/af-scratch
 # アーキ変更後に利用者自身の ~/.local 導入物を同じ版で戻す（entrypoint から呼ばれる）。
 # entrypoint に埋めず別ファイルにしてあるのは、単体で走らせて検証できるようにするため。
 COPY af-arch-repair.sh /usr/local/bin/af-arch-repair
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/af-scratch /usr/local/bin/af-arch-repair
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gh /usr/local/bin/svn /usr/local/bin/af-scratch /usr/local/bin/af-arch-repair
 # opencode plugins source (seeded into ~/.config/opencode/plugin at runtime):
 # agent-fleet-status.js (session working/idle bridge — seeded by the entrypoint) +
 # rtk.ts (token-saving command rewrite, the opencode analog of claude's rtk hook —

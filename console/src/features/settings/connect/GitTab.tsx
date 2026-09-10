@@ -81,10 +81,125 @@ export function GitTab() {
               the app is registered, yet there is no button. */}
           <GithubRow st={conns.github} reload={reload} oauthAvailable={oauth?.github?.configured !== false} />
           <BitbucketRow st={conns.bitbucket} reload={reload} oauthAvailable={oauth?.bitbucket?.configured !== false} />
+          <div className="conn-cat">{tr("git.cat_svn")}</div>
+          <SvnCard servers={svnServers(conns)} reload={reload} />
           <GlobalIdentity />
         </>
       )}
     </div>
+  );
+}
+
+/** One saved Subversion server (docs/log/41): the URL prefix a credential is matched by,
+ *  the account, and whether this server's certificate is trusted. Never the password. */
+interface SvnServer {
+  urlPrefix: string;
+  username?: string;
+  /** "1" when set — the Agent folds these into GET /connections as plain strings. */
+  trustCert?: string;
+}
+
+/** SVN rides along on GET /connections as a LIST, which ConnectionsStatus's index
+ *  signature (one ProviderConn per key) cannot express. Read through a cast here rather
+ *  than widening that type for every other card. */
+function svnServers(c: unknown): SvnServer[] {
+  const list = (c as { svn?: SvnServer[] } | null)?.svn;
+  return Array.isArray(list) ? list : [];
+}
+
+// SvnCard — saved Subversion credentials (docs/log/41 amendment).
+//
+// SVN has no OAuth and no device flow: a server is a URL and a password, so this card is
+// a small table rather than a connect button. It exists because until now the ONLY place a
+// credential could be entered was the checkout dialog, and declining its "save" opt-in
+// left no way back — the per-working-copy "re-authenticate" action covers a copy that
+// exists, and this covers the rest (adding one before the checkout, or fixing a password
+// that was rotated on the server).
+function SvnCard({ servers, reload }: { servers: SvnServer[]; reload: () => void }) {
+  const tr = useT();
+  const toast = useToast();
+  const [prefix, setPrefix] = useState("");
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [trust, setTrust] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    const p = prefix.trim();
+    if (!p || busy) return;
+    setBusy(true);
+    try {
+      const res = await apiJSON("api/connections/svn", "PUT", {
+        urlPrefix: p,
+        username: user.trim(),
+        password: pass,
+        trustCert: trust,
+      });
+      if (res && res.error) {
+        toast(tr("common.save_failed_msg", { msg: String(res.error.message || res.error) }));
+        return;
+      }
+      setPrefix("");
+      setUser("");
+      setPass("");
+      setTrust(false);
+      reload();
+    } finally {
+      setBusy(false);
+    }
+  };
+  const forget = async (p: string) => {
+    await raw(`api/connections/svn?prefix=${encodeURIComponent(p)}`, { method: "DELETE" });
+    reload();
+  };
+
+  return (
+    <ProviderCard
+      id="svn"
+      name="Subversion"
+      status={
+        <StatusPill on={servers.length > 0}>
+          {servers.length ? tr("git.svn_saved_n", { n: String(servers.length) }) : tr("conn.disconnected")}
+        </StatusPill>
+      }
+    >
+      {servers.map((s) => (
+        <div className="p-who" key={s.urlPrefix}>
+          <span className="p-em">{s.urlPrefix}</span>
+          {/* A trust-only entry (cert trusted, no account) is a real and confusing state —
+              updates work against a self-signed server yet nothing authenticates — so it is
+              named rather than shown as a blank column. */}
+          <span className="p-pl">{s.username || tr("git.svn_no_user")}</span>
+          {s.trustCert && <span className="p-pl">{tr("git.svn_trusted_cert")}</span>}
+          <DisconnectButton onClick={() => void forget(s.urlPrefix)} />
+        </div>
+      ))}
+      <div className="gi-row">
+        <input
+          className="cinput"
+          placeholder={tr("git.svn_prefix_ph")}
+          value={prefix}
+          onChange={(e) => setPrefix(e.target.value)}
+        />
+        <input className="cinput" placeholder={tr("git.svn_user_ph")} value={user} onChange={(e) => setUser(e.target.value)} />
+        <input
+          className="cinput"
+          type="password"
+          placeholder={tr("git.svn_pass_ph")}
+          value={pass}
+          onChange={(e) => setPass(e.target.value)}
+          autoComplete="off"
+        />
+        <button disabled={busy || !prefix.trim()} onClick={save}>
+          {tr("common.save")}
+        </button>
+      </div>
+      <label className="pmcp-secrets-toggle">
+        <input type="checkbox" checked={trust} onChange={(e) => setTrust(e.target.checked)} />
+        {tr("git.svn_trust")}
+      </label>
+      <Hint>{tr("git.svn_hint")}</Hint>
+    </ProviderCard>
   );
 }
 

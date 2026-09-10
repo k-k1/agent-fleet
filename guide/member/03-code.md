@@ -185,6 +185,10 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
 - **Saving credentials (optional)** — if you check the save option, credentials are stored in
   the encrypted store and reused automatically for subsequent updates. The password never
   appears in the process list or in a plaintext cache.
+- **Entering credentials later** — you do not have to check out again if you declined. Use
+  **"Re-authenticate (svn)"** on the row menu (an update that fails on authentication offers it
+  by itself). What you enter is checked against the server before it is saved. Servers saved this
+  way are listed under Settings › Connections › Git, where you can also add or forget one.
 - **Self-signed certificates** — if the certificate cannot be trusted (e.g. an in-house server),
   turn on "Trust self-signed certificate" in the modal. This is a per-server opt-in that
   **disables certificate verification for that server**, and it persists across future updates.
@@ -193,6 +197,8 @@ toggle** to select SVN, then enter the **Repository URL** and, if needed, a **su
   checkout / update automatically attempts one recovery. If the lock remains, use
   **"Clean up lock"** from the row menu.
 - The svn row shows the current revision (`r1234`). Branch switch and the commit graph view
-  (stage / commit) are git-only, so commit with `svn commit` inside a session. **Saved
-  credentials are not passed through to svn commands inside sessions**, so add `--username`
-  when needed.
+  (stage / commit) are git-only, so commit with `svn commit` inside a session — **the saved
+  credentials apply there too**, so `svn update` / `svn commit -m "…"` typed in a session
+  authenticate without a `--username`. Two cases still ask for the password themselves: a
+  `commit` with no `-m` (svn opens an editor and keeps the terminal), and a command you gave an
+  explicit `--username` / `--password` — an explicit credential always wins.

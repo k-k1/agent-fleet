@@ -66,3 +66,29 @@ not put on the provider abstraction.
   certificate verification for that server is disabled, so it stays an explicit, per-server opt-in.
 - **An environmental limit**: the native (WSL) runtime needs `svn` on the host (absent, it is an
   explicit `svn_missing` error).
+
+## Amendment (2026-09-10) — credentials can be entered afterwards, and direct `svn` does authenticate
+
+Two reports from use, both descending from the same decision above.
+
+**Optional saving was a one-way door.** Declining it at checkout time left the password nowhere:
+not in the store, and (by `--no-auth-cache`) not under `~/.subversion` either. Every later update
+then failed with no surface to supply it. So a credential can now be entered against a working
+copy that already exists (`POST /repos/{name}/svn-auth`, offered as "re-authenticate" on the
+row and raised automatically when an update comes back `svn_auth_required`) or from the
+connections screen (`PUT /connections/svn`). It is **proven against the server before it is
+stored** — "saved" must not be able to mean "saved a typo", which is the failure that sends
+people here.
+
+**The rejected option was rejected for the right reason, and the wrong conclusion was drawn from
+it.** Caching in `~/.subversion/auth` is indeed plaintext at rest and stays rejected. But
+transparent authentication does not require it: `/usr/local/bin/svn` is now a shim that hands the
+call to `workspace-agent svn-run`, which resolves the credential from the ENCRYPTED store and
+passes it to the real svn on stdin — the same shape `gh` already uses (`gh-auth-wrapper.sh`), with
+nothing on disk and nothing in `ps`. So "the `svn` an agent runs itself is not transparently
+authenticated" is **no longer a limit of this design**.
+
+The wrapper only ever injects or passes through, never changes what a command means; it never
+takes stdin from a command that reads it (`-F -`, `--targets -`, a `commit` with no `-m`, which
+would open an editor); and an explicit credential on the command line always wins. Design and the
+traps found in the process: [docs/41 §9](../log/41-svn-checkout.md).

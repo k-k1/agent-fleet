@@ -7,10 +7,12 @@ package imagegen
 // Node ids are words rather than numbers so a validation error names something readable, the
 // same choice `bench-image-engine.py` made. sdxl / zimage / klein are PORTED, byte-for-byte in
 // shape, from that harness — the same graphs ADR 0072's "実測で解けた点" measured working on a
-// real GPU (26/26 images, both checkpoints and both LoRA states). flux1 / sd35 are new: built
-// from the checkpoint families' standard published ComfyUI recipes, but NOT yet run on this
-// deployment's hardware — comfy_workflows_test.go pins their exact JSON shape so a future
-// change is visible in the diff, which is a different claim from "this graph is correct".
+// real GPU (26/26 images, both checkpoints and both LoRA states). flux1 / sd35 were written from
+// the checkpoint families' standard published ComfyUI recipes and have since been run on this
+// deployment's hardware too (ADR 0072 P2 残作業 5, af-sandbox): flux1 generated on the first
+// attempt, sd35 did NOT — see its own note below for what the golden test could not see.
+// comfy_workflows_test.go pins each template's exact JSON shape so a future change is visible in
+// the diff, which remains a different claim from "this graph is correct".
 //
 // Every template takes comfyFiles (the on-disk basenames ADR 0072 decision 2 declares, resolved
 // from the catalogue's Flag vocabulary — see EngineFile) and comfyParams (the request-shaped
@@ -32,19 +34,25 @@ const comfyNegativePrompt = "blurry, lowres, deformed, watermark, text"
 type comfyFiles struct {
 	Checkpoint     string // Flag == ""
 	DiffusionModel string // --diffusion-model
-	// ClipL is the flag `--clip_l` names. Dual/triple-encoder families (flux1, sd35) read it as
-	// the first of two text encoders; single-encoder families (zimage, flux2-klein) read it as
+	// ClipL is the flag `--clip_l` names. Multi-encoder families (flux1, sd35) read it as one of
+	// their named text encoders; single-encoder families (zimage, flux2-klein) read it as
 	// THE text encoder — there is no second flag for "the only one", so the catalogue entry for
 	// those families' text encoder file is declared with `--clip_l` by convention (documented
 	// at the ingest UI, not a new flag this system did not already have).
 	ClipL string
+	// ClipG is `--clip_g`, and only SD3.5 reads it. It was missing from the first cut of this
+	// vocabulary, which cost that family its whole template: SD3.5's three encoders are three
+	// separate files and TripleCLIPLoader enumerates models/text_encoders alone, so with no way
+	// to name clip_g the graph had to hand it the CHECKPOINT's filename — and ComfyUI answered
+	// `Value not in list: clip_name1` (measured on af-sandbox, ADR 0072 P2 残作業 5).
+	ClipG string
 	T5xxl string // --t5xxl
 	Vae   string // --vae
 }
 
 // resolveComfyFiles turns the catalogue's flat, sd.cpp-flavoured file list into the named roles
 // the templates read. Files with an unrecognised or empty Name are silently dropped — decision 2
-// only ever declares the four flags in EngineFile's own comment, and a fifth would mean a
+// only ever declares the flags in EngineFile's own comment, and one outside that set would mean a
 // catalogue newer than this Agent, which should degrade by ignoring the extra field rather than
 // by refusing every request from this engine.
 func resolveComfyFiles(files []EngineFile) comfyFiles {
@@ -61,6 +69,8 @@ func resolveComfyFiles(files []EngineFile) comfyFiles {
 			f.DiffusionModel = name
 		case "--clip_l":
 			f.ClipL = name
+		case "--clip_g":
+			f.ClipG = name
 		case "--t5xxl":
 			f.T5xxl = name
 		case "--vae":
@@ -115,7 +125,7 @@ var comfyFamilies = []comfyFamily{
 // of a split model, which is the ONLY way FLUX.2 klein and Z-Image can be declared at all.
 // comfy_test.go pins that every one of these actually resolves, and the Control Plane serves
 // the list to the Console so the two cannot disagree about what a flag is called.
-var comfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"}
+var comfyFileFlags = []string{"", "--diffusion-model", "--clip_l", "--clip_g", "--t5xxl", "--vae"}
 
 // comfyFamilyList spells the vocabulary for a human: what to put in the catalogue's base_model.
 func comfyFamilyList() string {
@@ -288,29 +298,39 @@ func comfyGraphFlux1(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	return g, nil
 }
 
-// --- SD3.5 — NOT YET RUN ON THIS DEPLOYMENT'S HARDWARE ---------------------------------------
+// --- SD3.5 — run on this deployment's hardware (ADR 0072 P2 残作業 5) --------------------------
 //
-// The single-checkpoint form (Stability's official release bundles UNet+VAE+CLIP-L+CLIP-G in
-// one file), which is the only shape this system's four-flag vocabulary (EngineFile) can
-// express without a fifth flag for clip_g. A catalogue entry that also declares `--t5xxl` is
-// read for a HIGHER-quality standalone T5 (Stability documents the bundled one as a smaller,
-// lower-quality default) via TripleCLIPLoader; without one this template does not build at all,
-// since CheckpointLoaderSimple's own CLIP output cannot be partially overridden.
+// The checkpoint carries the MMDiT and the VAE; all THREE text encoders are separate files.
+//
+// 🔴 The first cut of this template assumed Stability shipped one bundle (UNet+VAE+CLIP-L+CLIP-G)
+// and handed TripleCLIPLoader the checkpoint's own filename for clip_name1/clip_name2, on the
+// theory that the loader would read whichever tensors it needed out of it. It does not, and it
+// never could: TripleCLIPLoader's three inputs are enumerations over models/text_encoders, so a
+// name that lives in models/checkpoints is not a value they accept. Measured on af-sandbox with
+// `sd3.5_medium.safetensors`:
+//
+//	Value not in list: clip_name1: 'sd3.5_medium.safetensors'
+//	  not in ['clip_l.safetensors', 'qwen_3_4b_fp8_mixed.safetensors', 't5xxl_fp8_e4m3fn.safetensors']
+//
+// The golden test could not have caught it — it pinned the shape of a graph nobody had run. The
+// fix declares clip_g as its own file, which is what ComfyUI's published SD3.5 recipe does and
+// what stable-diffusion.cpp's flag vocabulary (the one EngineFile borrows from) already spelled;
+// `--clip_g` was simply left out when that vocabulary was copied across.
 
 func comfyGraphSD35(f comfyFiles, p comfyParams) (comfyGraph, error) {
 	if f.Checkpoint == "" {
 		return nil, errComfyMissingFile("sd35", "checkpoint")
 	}
-	if f.T5xxl == "" {
-		return nil, errComfyMissingFile("sd35", "t5xxl (this template needs a standalone T5, ADR 0072 P2 note)")
+	if f.ClipL == "" || f.ClipG == "" || f.T5xxl == "" {
+		return nil, errComfyMissingFile("sd35", "clip_l, clip_g and t5xxl text encoders (SD3.5 declares all three as separate files)")
 	}
 	g := comfyGraph{
 		"ckpt": {ClassType: "CheckpointLoaderSimple", Inputs: map[string]any{"ckpt_name": f.Checkpoint}},
 		"clip": {ClassType: "TripleCLIPLoader", Inputs: map[string]any{
-			// clip_l and clip_g ride on the checkpoint's own bundle; only t5xxl is swapped in,
-			// which is why clip_name1/clip_name2 name the SAME checkpoint file twice — the
-			// loader reads the specific tensors it needs out of whichever file it is given.
-			"clip_name1": f.Checkpoint, "clip_name2": f.Checkpoint, "clip_name3": f.T5xxl}},
+			// The order is ComfyUI's own published SD3.5 template. It is not load-bearing —
+			// sd3_clip identifies each encoder from its state dict — but matching the published
+			// recipe is what makes this graph comparable to one a person would build by hand.
+			"clip_name1": f.ClipG, "clip_name2": f.ClipL, "clip_name3": f.T5xxl}},
 		"pos": {ClassType: "CLIPTextEncode", Inputs: map[string]any{
 			"text": p.Prompt, "clip": comfyLink("clip", 0)}},
 		"neg": {ClassType: "CLIPTextEncode", Inputs: map[string]any{

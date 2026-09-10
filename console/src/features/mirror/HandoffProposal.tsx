@@ -14,7 +14,8 @@ import { Icon } from "../../ui/Icon.tsx";
 import { useT } from "../../lib/i18n/index.ts";
 import { SESSION_TITLE_MAX, clampSessionTitle } from "../../lib/sessionTitle.ts";
 import { useToast } from "../../ui/ToastProvider.tsx";
-import { useLaunchSeed, useLaunchTarget, useReposStore, type Repo } from "../repos/store.ts";
+import { useLaunchSeed, useLaunchTarget, useReposStore } from "../repos/store.ts";
+import { handoffLaunchTarget } from "./handoffLaunch.ts";
 import { HandoffOfferModal } from "../sharing/HandoffOfferModal.tsx";
 import { offerForSession, useHandoffStore } from "../sharing/handoffStore.ts";
 import type { Session } from "../../types/session.ts";
@@ -184,30 +185,14 @@ export function HandoffProposal({
         return;
       }
     }
-    const path = sessionMeta?.dir || sessionMeta?.path || "";
-    if (!path) {
-      toast(tr("mirror.handoff_no_dir"));
+    // The target working copy is carried WHOLE (handoffLaunch.ts): the dialog reads `vcs`
+    // and `unborn` off it to decide whether a worktree may be offered at all.
+    const target = handoffLaunchTarget(sessionMeta, repos, newWorktree);
+    if ("error" in target) {
+      toast(tr(target.error === "no_parent" ? "mirror.handoff_no_parent" : "mirror.handoff_no_dir"));
       return;
     }
-    let repo: Repo;
-    if (newWorktree && sessionMeta?.worktree) {
-      // Resolve the base clone from the repos rail's list (it carries `parent` for a
-      // worktree row) — the new worktree is created off that, not off this worktree.
-      const mine = repos.find((r) => r.name === sessionMeta?.repo);
-      const base = mine?.parent ? repos.find((r) => r.name === mine.parent) : undefined;
-      if (!base?.path) {
-        toast(tr("mirror.handoff_no_parent"));
-        return;
-      }
-      repo = { name: base.name, path: base.path, branch: sessionMeta?.currentBranch || sessionMeta?.branch };
-    } else {
-      repo = {
-        name: sessionMeta?.repo || path.split("/").filter(Boolean).at(-1) || session,
-        path,
-        branch: sessionMeta?.currentBranch || sessionMeta?.branch,
-        worktree: sessionMeta?.worktree,
-      };
-    }
+    const repo = target.repo;
     // Carry WHICH session/proposal this is, so the dialog's success path can badge it.
     useLaunchSeed.getState().set(proposal.prompt, proposal.title, session, proposal.id);
     useLaunchTarget.getState().open(repo);

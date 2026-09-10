@@ -66,6 +66,7 @@ export const repos = {
   "repo.delete_wc": "作業コピーを削除",
   "repo.svn_update": "更新（svn）",
   "repo.svn_cleanup": "ロックを解除（svn）",
+  "repo.svn_reauth": "再認証（svn）",
   "repo.revision": "リビジョン {rev}",
   "repo.project_settings": "プロジェクト設定…",
   "repo.share": "共有する…",
@@ -231,6 +232,20 @@ export const repos = {
   "rp.svn_trust_hint": "このサーバーの証明書検証を無効化します（自己署名・不明な CA・ホスト名不一致を許可）。開発用サーバー向け。以後の更新でも信頼を継続します。",
   "rp.svn_checkout": "チェックアウト",
   "rp.import_no_job": "取り込みを開始できませんでした（ワークスペースの応答が想定と違います）",
+  // --- SVN re-authentication (docs/log/41 amendment) ---
+  "rp.svn_auth_title": "{name} の再認証",
+  "rp.svn_auth_intro":
+    "この作業コピーの Subversion サーバーの認証情報を入力してください。サーバーに接続して確認してから暗号化して保存します。",
+  "rp.svn_auth_server": "サーバー",
+  "rp.svn_auth_none_saved": "このサーバーの認証情報はまだ保存されていません。",
+  "rp.svn_auth_user": "ユーザー名",
+  "rp.svn_auth_password": "パスワード",
+  "rp.svn_auth_scope_hint":
+    "リポジトリ全体に対して保存するので、そこからチェックアウトした作業コピーすべてで使われます。セッションで自分が叩く `svn` も同じ認証情報を使います。",
+  "rp.svn_auth_rejected": "サーバーに拒否されました。ユーザー名とパスワードを確認してください。",
+  "rp.svn_auth_saved": "{name} の認証に成功しました",
+  "rp.svn_auth_checking": "確認中…",
+  "rp.svn_auth_submit": "認証して保存",
   "rp.svn_checkout_failed": "チェックアウトに失敗: {err}",
   "rp.svn_update_failed": "更新に失敗: {err}",
   "rp.svn_update_success": "{name} を r{rev} に更新しました",
