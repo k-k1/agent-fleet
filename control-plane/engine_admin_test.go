@@ -93,6 +93,38 @@ func TestEngineAdminModes(t *testing.T) {
 	}
 }
 
+// The mode decides whether the engine is IN /internal/engine/catalog at all, and the Agent
+// caches that answer for ten minutes — so this route has to PUSH the change to running
+// Workspaces exactly as enabling a model does. Without it, `off` leaves every open session
+// offering an engine that now answers 503 engine_off, and `on` hides a ready one from
+// generate_image, for up to the whole TTL. (Measured on af-sandbox, ADR 0072 P2 実機検証.)
+func TestEngineAdminModePushesTheCatalogue(t *testing.T) {
+	pushed := make(chan string, 4)
+	orig := notifyEngineCatalogChanged
+	notifyEngineCatalogChanged = func(_ context.Context, _ *manager, key string) { pushed <- key }
+	t.Cleanup(func() { notifyEngineCatalogChanged = orig })
+
+	st := testSettingsStore(t)
+	reg, _ := newAdminTestRegistry(t, &engineTestECS{desired: 1, running: 1}, st)
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, reg, st}
+
+	// All three, because each reaches the end of the handler by a different path and the mode
+	// is stored on every one of them.
+	for _, mode := range []string{"off", "ondemand", "on"} {
+		if code, out := adminPut(t, a, "image", `{"mode":"`+mode+`"}`); code != http.StatusOK {
+			t.Fatalf("mode=%s: %d (%v)", mode, code, out)
+		}
+		select {
+		case key := <-pushed:
+			if key != "image" {
+				t.Errorf("mode=%s pushed %q, want image", mode, key)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("mode=%s never told running sessions the catalogue changed", mode)
+		}
+	}
+}
+
 // The gateway and the catalogue are where "off" has to be felt. Without this the toggle
 // would be a setting nobody consults.
 func TestEngineAdminOffTakesItOutOfTheCatalogueAndRefusesRouting(t *testing.T) {
