@@ -112,6 +112,11 @@ export const admin = {
   "admin.engines_ingest_hit_pick": "これにする",
   "admin.engines_ingest_repo": "リポジトリ",
   "admin.engines_ingest_file": "ファイル名",
+  // 素の https URL を貼ったときだけ、この欄はファイル名ではなく sha256 になる（listable()）。
+  // 同じラベルのまま「name.safetensors」を例示すると、この欄に入れてはいけない唯一のものを
+  // 求めることになる。ラベルごと差し替える。
+  "admin.engines_ingest_sha256": "sha256",
+  "admin.engines_ingest_sha256_ph": "64 桁の 16 進",
   "admin.engines_ingest_resolve": "調べる",
   // ファイル名を持っていない状態が普通なので、「調べる」は最初にリポジトリの中身を聞く。
   "admin.engines_ingest_pick": "選んでください",

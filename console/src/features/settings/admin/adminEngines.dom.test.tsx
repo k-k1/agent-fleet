@@ -1401,6 +1401,32 @@ describe("EnginesAdminView / searching for a model", () => {
       | HTMLButtonElement
       | undefined;
 
+  // What a field ASKS FOR has to be something that field can take. On the image role the
+  // repository and the id offered a GGUF example (`Qwen/…-GGUF`, `qwen2.5-coder-1.5b`) — not a
+  // hint but a wrong answer, since sd-server cannot load one and following it costs a resolve
+  // and a refusal.
+  it("offers examples that belong to this engine's role", async () => {
+    api.mockResolvedValue({ engines: [row()] }); // api: "images"
+    await mount();
+    await openIngest();
+    expect(field("探す")!.placeholder).toBe("sdxl");
+    expect(field("リポジトリ")!.placeholder).toBe("stabilityai/stable-diffusion-xl-base-1.0");
+    expect(field("ファイル名")!.placeholder).toBe("name.safetensors");
+    expect(field("id")!.placeholder).toBe("sdxl-base-1.0");
+  });
+
+  // 🔴 With a plain https URL above it, the same box is not the file name — it is the sha256,
+  // the only thing that can verify a download nothing else describes. A label and an example
+  // that still say "name.safetensors" there ask for the one value it must not be given.
+  it("relabels the file box as the sha256 when the source is a plain url", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+    await typeInto(field("リポジトリ")!, "https://example.com/some-model.safetensors");
+    expect(field("ファイル名")).toBeNull();
+    expect(field("sha256")!.placeholder).toBe("64 桁の 16 進");
+  });
+
   it("fills the repository field from a hit, and says gated before anything is started", async () => {
     api.mockResolvedValue({ engines: [row()] });
     apiJSON.mockResolvedValue({

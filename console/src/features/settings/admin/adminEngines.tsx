@@ -1306,16 +1306,25 @@ function EngineIngest({
         </ul>
       )}
       {/* Editing the repository drops the list and the verdict with it: a filename picked out
-          of the previous repository's answer would resolve against the new one. */}
+          of the previous repository's answer would resolve against the new one.
+
+          The example follows the ROLE and the source that is selected. A GGUF repository
+          offered to the image engine is not a hint, it is a wrong answer: llama.cpp's files
+          are not what sd-server loads, and following it costs a resolve and a refusal. */}
       {field(tr("admin.engines_ingest_repo"), repo, (v) => {
         setRepo(v);
         setFiles(null);
         setFile("");
         setFound(null);
-      }, "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
+      }, searchSource === "civitai"
+        ? "civitai:782002"
+        : isImage
+          ? "stabilityai/stable-diffusion-xl-base-1.0"
+          : "Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF")}
       {/* The filename is a picker as soon as the repository has been asked what it holds. The
           text field stays underneath it: a plain url has no listing, and there the field
-          carries the sha256 instead. */}
+          carries the SHA256 instead — so it is labelled as one. Offering "name.safetensors"
+          there asks for the one thing that field must not be given. */}
       {files && files.length > 0 && (
         <label className="engines-model-add-row">
           <span>{tr("admin.engines_ingest_file")}</span>
@@ -1331,8 +1340,21 @@ function EngineIngest({
         </label>
       )}
       {files && files.length === 0 && <p className="form-err">{tr("admin.engines_ingest_no_files")}</p>}
-      {!files && field(tr("admin.engines_ingest_file"), file, setFile, isImage ? "name.safetensors" : "name.gguf")}
-      {field(tr("admin.engines_model_add_id"), id, setId, "qwen2.5-coder-1.5b")}
+      {!files &&
+        (listable()
+          ? field(
+              tr("admin.engines_ingest_file"),
+              file,
+              setFile,
+              isImage ? "name.safetensors" : "name.gguf",
+            )
+          : field(tr("admin.engines_ingest_sha256"), file, setFile, tr("admin.engines_ingest_sha256_ph")))}
+      {field(
+        tr("admin.engines_model_add_id"),
+        id,
+        setId,
+        isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
+      )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
       {/* The output cap is a FRACTION of the window, never a free number. It is not published

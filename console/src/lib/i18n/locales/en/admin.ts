@@ -111,6 +111,11 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_ingest_hit_pick": "Use this",
   "admin.engines_ingest_repo": "repository",
   "admin.engines_ingest_file": "file name",
+  // With a plain https URL pasted above, this field is the sha256 rather than a file name
+  // (listable()). Keeping the label and offering "name.safetensors" asks for the one thing
+  // that field must not be given, so the label is swapped with it.
+  "admin.engines_ingest_sha256": "sha256",
+  "admin.engines_ingest_sha256_ph": "64 hex characters",
   "admin.engines_ingest_resolve": "Look it up",
   // Not having the filename in hand is the normal state, so "look it up" starts by asking the
   // repository what it holds.
