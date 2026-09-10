@@ -11,6 +11,7 @@
   「P2 の残作業 4・5 を実機で押した」節。3 つとも生成できるようになったが、**SD3.5 は
   テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
   欠落はさらに 6 件（5〜10）。**5 ファミリーすべてがこの配備の GPU で provider を通って絵を返した。**
+  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・実機未検証**（「P6 の実装」節）。
   P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -1718,7 +1719,8 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   gated（SD3.5 全部・FLUX.1 全部）が取り込めるかどうかを直接決めるため。**完了の定義:
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
   取り込みタスクのログに 401 が出ない。**（実機未検証。「P5 の実装」節）
-- **P6 — seed と残り 4 パラメータの撤去**（2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
+- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機未検証（補遺「P6 の実装」）。**
+  （2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
   追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
   `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
   エンジン表の `models` / `contextTokens`。
@@ -2320,3 +2322,47 @@ GGUF を開いてロードする経路ではない**。
 もう 1 つは手登録のフォームで、`POST …/engines/{key}/models` はライセンス欄を受け付けるのに
 **Console が送っていない**——決定 10 がライセンスをパネルの行に出すと決めており、パネルは記録
 されたものしか出せない以上、同じ回で塞ぐ価値がある。
+
+## P6 の実装——seed と 6 パラメータを撤去した（2026-09-10）
+
+上の追記節が挙げた撤去を実装した。**実機未検証。**
+
+1. **テンプレート。** `LlmModelS3Key` / `LlmModelIds` / `LlmContextTokens` /
+   `LlmMaxOutputTokens` / `ImageModelS3Key` / `ImageModelIds` を消し、`HasLlmModel` /
+   `HasImageModel` を `<役>Enabled = "true"` の 1 条件にした。エンジン表からは `models` /
+   `contextTokens` / `maxOutputTokens` / `modelS3Key` の 4 欄が消えた。`*ExtraArgs` は残した。
+   **50,997 → 49,298 バイト**（1,699 空き、壁まで 1,902）。**空いた分は使っていない**——P2 の
+   残り（族ごとの image-to-image グラフ）と ADR 0074 の梯子の取り分である。
+
+2. 🔴 **罠への手当ては 3 か所で、ノートだけでは足りなかった。**
+   - アップグレードノートは `cfn/PARAMETERS-60-engines.md` の「Upgrading: the model parameters
+     are gone」（0.18.0 で `*ModelFile` を消したときと同じ場所）。`<役>ModelS3Key` だけを
+     書いていた配備は**先に `<役>Enabled=true` を足せ**と書いた。
+   - `standup.sh` は `af_param_drop` で 6 つを落とす**前に**、捕捉に `<役>ModelS3Key` があって
+     `<役>Enabled` が空なら `<役>Enabled=true` へ翻訳する。落とすだけでは、ノートを読まなかった
+     配備で役が黙って消える——`deploy` が「そんなパラメータは無い」と拒否して止まるのではなく、
+     ふつうの更新として**成功して**サービスが消える。
+   - 同じ翻訳を **sd-server イメージの `crane copy` 側でも読む**（standup の前半）。ここだけ
+     `ImageEnabled` を素直に読むと、役は作られるのに ECR が空で `CannotPullContainerError`。
+   `update.sh` と手打ちの `cloudformation deploy` はパラメータを渡さないので翻訳のしようがない。
+   ノートが要るのはそのためである。
+
+3. **Control Plane。** `seedEngineCatalog` / `engineSeedKind` と `engineDef` の 4 欄を削除した。
+   古いスタックが書いた表は**今も読める**（欄は黙って無視される）——CP はスタックより先に上がる
+   ので、その形は現に生きている。空カタログの挙動（`503 engine_unavailable`、`no_model`、
+   `TestDecideEngineAction` の固定）は変えていない。
+
+4. **手登録フォームのライセンス欄は、このレーンが着手する前に閉じていた**（同日の commit
+   `2a998f11`）。フォームは `license_name` / `license_url` を送り、CP が商用可否をそこから読む。
+   追記節が挙げた副産物は済みである。
+
+5. **検証。** control-plane と workspace/agent の Go テスト、Console のテスト、
+   `deploy/local/ecs-lifecycle-stub-test.sh`（3b-2 のサイズ検査を含む）、`cfn-ascii-test.sh`、
+   `engine-sidecar-test.sh`、`check-cfn-exports.py`。stub テストに pre-P6 の捕捉を通す場合を
+   足し、(a) 撤去したキーが `deploy` に渡らないこと、(b) `<役>Enabled=true` が渡ることを見る。
+   翻訳を外す陽性対照で、この検査が実際に落ちることを確かめた。
+
+**実機で確かめること（完了の定義）。** モデル系パラメータを 1 つも書かずに `LlmEnabled=true`
+だけで配備し、その役のサービスが安定すること。空のカタログへ Console からモデルを登録し、
+エンジンがそれで起動すること。加えて移行の側——`<役>ModelS3Key` を持つ捕捉から standup を
+通し、役が消えずに `<役>Enabled=true` へ翻訳されること。

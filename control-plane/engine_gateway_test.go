@@ -100,8 +100,8 @@ func newTestEngine(t *testing.T, url string, api engineECSAPI) *engineRuntimeSta
 	t.Helper()
 	def := engineDef{
 		Key: "llm", Service: "af-llm", URL: url, Health: "/health",
-		Provider: "llamacpp", Models: []string{"qwen3-coder-30b-a3b"},
-		IdleSec: 1800, StartDeadlineSec: 900,
+		Provider: "llamacpp",
+		IdleSec:  1800, StartDeadlineSec: 900,
 	}
 	e := &engineRuntimeState{
 		def: def,
@@ -549,7 +549,7 @@ func newTestImageEngine(t *testing.T, url string, api engineECSAPI) *engineRunti
 	e := &engineRuntimeState{
 		def: engineDef{
 			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
-			Health: "/v1/models", Provider: "sdcpp", Models: []string{"sdxl-base-1.0"},
+			Health: "/v1/models", Provider: "sdcpp",
 			IdleSec: 900, StartDeadlineSec: 900,
 		},
 		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
@@ -565,7 +565,7 @@ func newTestComfyEngine(t *testing.T, url string, api engineECSAPI) *engineRunti
 	e := &engineRuntimeState{
 		def: engineDef{
 			Key: "image", API: engineAPIImages, Service: "af-image", URL: url,
-			Health: "/system_stats", Provider: "comfy", Models: []string{"sdxl-base-1.0", "klein-4b"},
+			Health: "/system_stats", Provider: "comfy",
 			IdleSec: 900, StartDeadlineSec: 900,
 		},
 		ecs: &engineECS{api: api, key: "image", cluster: "c", service: "af-image"},
@@ -775,26 +775,27 @@ func TestParseEngineTableReadsBothRoles(t *testing.T) {
 	}
 }
 
-// The context window the llm role is STARTED with travels in the table, because nobody
-// downstream can ask for it: llama-server holds it, and the whole design is that the box is
-// asleep when the launch menu is drawn.
+// The context window comes from the CATALOGUE and from nowhere else (ADR 0072 phase P6). It has
+// to travel because nobody downstream can ask for it: llama-server holds it, and the whole design
+// is that the box is asleep when the launch menu is drawn.
 //
-// Since ADR 0072 the window is per MODEL and the table's copy is the SEED of that (the row a
-// deployment upgrading from ADR 0071 already had). What the Agent reads comes from the
-// catalogue, and the engine-wide pair describes the model the engine will start with.
+// The table parsed here is an OLD one, still carrying the model ids, the window and the S3 key a
+// pre-P6 stack wrote. Two facts at once: such a table still parses (the CP is upgraded before the
+// stack is, so this shape is live), and what it says about models is ignored — the window in the
+// row below is the catalogue's, and it wins even where the two disagree.
 func TestEngineTableCarriesTheDeclaredWindow(t *testing.T) {
 	raw := `{"engines":[{"key":"llm","api":"chat","service":"s","capacityProvider":"cp",
 	 "url":"http://llm.af.internal:8080","health":"/health","provider":"llamacpp",
-	 "models":["qwen3-coder-30b-a3b"], "contextTokens":32768,"maxOutputTokens":4096,
-	 "modelS3Key":"llm/qwen.gguf",
+	 "models":["gone"], "contextTokens":512,"maxOutputTokens":256,
+	 "modelS3Key":"llm/gone.gguf",
 	 "apiKeyParam":"","idleSec":1800,"startDeadlineSec":900,"mode":"ondemand"}]}`
 	tab, err := parseEngineTable(raw)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
 	d := tab.Engines[0]
-	if d.ContextTokens != 32768 || d.MaxOutputTokens != 4096 || d.ModelS3Key != "llm/qwen.gguf" {
-		t.Fatalf("seed = %d/%d %q", d.ContextTokens, d.MaxOutputTokens, d.ModelS3Key)
+	if d.Key != "llm" || d.Provider != "llamacpp" || d.IdleSec != 1800 {
+		t.Fatalf("a table written by a pre-P6 stack no longer parses: %+v", d)
 	}
 	row := engineCatalogRowFor(d, []store.EngineModel{{
 		Role: "llm", ID: "qwen3-coder-30b-a3b", Kind: "gguf", Enabled: true, Default: true,
