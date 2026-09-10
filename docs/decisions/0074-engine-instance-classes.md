@@ -2,7 +2,7 @@
 
 English | [日本語](0074-engine-instance-classes.ja.md)
 
-- Status: **accepted; P0 implemented, not yet run on real hardware** (2026-09-10). P1 is not started.
+- Status: **accepted; P0 implemented, P1 measured on real hardware** (2026-09-10).
   **Nothing was measured for this document.** Every number says where it comes from —
   (a) measurements in ADR 0071 and 0072, (b) facts read out of the repository's code on the
   same day, (c) things known only as AWS's published specification and **not confirmed on this
@@ -31,6 +31,19 @@ English | [日本語](0074-engine-instance-classes.ja.md)
   cannot be shown by a 4→4 switch** (the two fit in exactly 8), so **the 8-vCPU rung becomes the
   positive control**, and **verifying the machinery needs no bigger card at all** (g5.xlarge
   measures everything if g6e is absent).
+- Same day, **P1 was run on real hardware** (af-sandbox, the image role, 100 GPU-minutes, $4.6).
+  The results are under "What P1 measured"; **open questions 1, 2 and 3 are closed and
+  decisions 4, 5 and 9 changed.**
+  🔴 **Two things were broken in the implementation, and neither could be found any other way** —
+  `DescribeCapacityProviders` does not accept a cluster and a list of names together (every unit
+  test passed because a fake accepts anything), and **calling `UpdateCapacityProvider` on a
+  Managed Instances provider is also authorized as `ecs:PutClusterCapacityProviders` on the
+  cluster** (an API the CP never calls, so neither the code nor the policy shows it). Decision
+  9's "two actions plus PassRole is enough" was wrong.
+  🔴 **Decision 4's necessity shows up as something other than the expected
+  `VcpuLimitExceeded`** — bypass the gate and the task lands straight back on the old card,
+  with no error anywhere. And **waiting for the box to leave is necessary but not sufficient**:
+  EC2 released the vCPU quota more than five minutes after ECS deregistered the instance.
 - Related: [0071-self-hosted-inference-engines.md](0071-self-hosted-inference-engines.md)
   decision 2 (one capacity provider per role, the box chosen by a VRAM floor), decision 5,
   decision 9 / [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 1,
@@ -204,6 +217,32 @@ the mode.
 ⚠️ **Saving a rung while the engine is stopped costs nothing at all.** It is absorbed by the
 cold start whoever uses it next was going to pay anyway.
 
+**What P1 measured (2026-09-10, the image role)**:
+
+- **The drain took 157 seconds** (`DEREGISTERING` at 133); the second one took 149. That is
+  much faster than ADR 0071's 427–477. The 20-minute bound stays reasonable, but its
+  justification is now "eight times the measurement", not a guess.
+- 🔴 **Bypassing the gate does not first produce a quota error. It produces a silent return to
+  the old card.** Forcing `update-service --desired-count 1` without waiting placed the task
+  **straight back onto the previous rung's box** that was still registered (`steady state` in
+  64 s). What the provider asks for decides **what is bought**, never **where a task is
+  placed**. Nothing appears in the service events or the log, and the panel says "running".
+  **Without decision 4 an administrator who raised the rung keeps running on the old card** —
+  the most expensive lie available.
+- The positive control (`VcpuLimitExceeded`) needs the old box to be **busy**. With a task
+  running on the previous rung's box, asking for a second one produces it exactly as expected:
+  `VcpuLimitExceeded: ... current vCPU limit of 8 ... for the instance bucket`. The P1 plan's
+  "start without waiting and it appears" was **wrong**: while an idle box of any rung is
+  registered, ECS does not try to buy a second one at all.
+- 🔴 **There is a stretch where waiting was not enough.** Buying an 8 vCPU rung right after the
+  4 vCPU box left ECS kept failing with `VcpuLimitExceeded` for **more than five minutes**
+  (gone 09:19:43; failures at 09:19:50 / 09:20:30 / 09:21:11; success 09:26:12, +389 s).
+  **EC2 releases the quota later than ECS deregisters the instance**, and "is a box registered"
+  — the only thing the CP can see — is not EC2's accounting. ECS retries, so nothing breaks,
+  but **a start that raises the rung costs drain (150 s) + quota wait (up to ~6 min) + cold
+  start**, and `StartDeadlineSec` has to exceed the sum (measured 497 s against a 900 s
+  default). It does not happen on a 4→4 swap.
+
 **What the implementation added (P0)**:
 - The wait is judged from the **box's EC2 type**, read from the container instance's
   `ecs.instance-type` attribute — the only place the CP can read the type of a Managed
@@ -243,6 +282,25 @@ neither the running box nor the desired count. The price is one more call on the
 applied, do not start** — starting anyway buys the old box while believing it is the new one,
 and with a heavy model CUDA dies and **a whole cold start is thrown away**. If they are the
 same, log the failure and start (the box's specification is already right).
+
+**What P1 measured (2026-09-10)**:
+
+- ✅ **The read-modify-write is faithful.** Moving `l4`→`l40s` changed three of the four fields
+  (`allowedInstanceTypes` `g6.xlarge`→`g6e.xlarge`, `acceleratorTotalMemoryMiB.min` 8000→44000,
+  `memoryMiB.min` 15000→30000; `vCpuCount` is 4-8 on both rungs) and **nothing else moved** —
+  `acceleratorCount`, `acceleratorTypes`, `acceleratorManufacturers`, `burstablePerformance`,
+  `ec2InstanceProfileArn`, `localStorageConfiguration`, `networkConfiguration` and
+  `instanceMetadataTagsPropagation` all came back identical.
+- ✅ **The fields that cannot be carried are not cleared** (open question 1). `capacityOptionType`
+  stayed `ON_DEMAND`; a same-values write left the whole `managedInstancesProvider` identical.
+- ✅ **The re-apply before a start really did repair a CloudFormation revert.** Started from a
+  drifted state (choice `l40s`, provider back at the stack's declaration), the CP rewrote the
+  rung before starting and **the box bought was a `g6e.xlarge`**.
+- 🔴 **The implementation was wrong here**: it passed `Cluster` and `CapacityProviders` to
+  `DescribeCapacityProviders` **together**, which ECS refuses (`InvalidParameterException:
+  Cannot specify both capacity providers and cluster in the same request`). The constraint is
+  in neither the API reference nor the SDK's comment, and **every unit test passed because the
+  fake accepted anything**. It now asks by name and **checks the cluster on the answer**.
 
 **What the implementation found (copying against SDK v1.87.0)**:
 - ✅ **`InstanceRequirements` is the same type in both directions**
@@ -289,6 +347,18 @@ It appears in three places:
 points, it does not decide) — quantisation, `--offload-to-cpu`, or something we do not know
 about may well make it fit. It does ask for confirmation.
 
+**What P1 measured (2026-09-10)**: all three places were seen against a real CP — the standing
+line on the card, the log line before a start (`starting on l40s (44000 MiB VRAM declared);
+largest model juggernaut-xl-v9 wants 6776 MiB (floor)`), and the confirmation when enabling
+`flux1-dev` (22,700 MiB) on an 8,000 MiB rung.
+
+🔴 **The weights-only floor is accurate about weights and accounts for 58% of the real
+demand.** Against juggernaut-xl-v9's declared floor of 6,776 MiB, sd.cpp reported
+`total params memory size = 6624.11MB` (within 2%) — but auto-fit reserved **5,120 MiB more for
+compute** (DiT 2,048, Conditioner 2,048, VAE 1,024), for about **11.7 GiB in use**. Read the
+floor as "it fits" and you are about 5 GiB short. This is open question 7's first measurement,
+and it says the decision to call it nothing but a floor was right.
+
 ### 7. Running on a non-default rung is always visible, and one click puts it back
 
 The price of "temporarily try a bigger box" is that **forgetting to put it back keeps costing by
@@ -324,8 +394,24 @@ resources).
 
 - `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` — Resource is the ARN of
   **only** the llm and image capacity providers this stack creates.
+- 🔴 `ecs:PutClusterCapacityProviders` — **the cluster's ARN** (added by P1, 2026-09-10).
 - `iam:PassRole` — **only** `InfraRole` and `InstanceProfile`'s role, with
   `Condition: {StringEquals: {"iam:PassedToService": "ecs.amazonaws.com"}}`.
+
+🔴 **The third one is a permission this ADR did not know about until P1.** ECS authorizes
+`UpdateCapacityProvider` **on a Managed Instances provider** as `PutClusterCapacityProviders`
+**on the cluster** as well. The CP never calls that API, so grepping the code does not find it:
+
+```
+AccessDeniedException: User: .../af-<stack>-cp-task/... is not authorized to perform:
+ecs:PutClusterCapacityProviders on resource: .../cluster/af-<platform-stack>
+```
+
+⚠️ **It partly betrays this decision's own heading.** The other three are provider-scoped; this
+one is **cluster-scoped**, and the same action is how a cluster's whole provider ASSOCIATION
+list is replaced. The only thing that makes it acceptable is that 60-engines already owns that
+list (README: "⚠️ It owns the cluster's capacity-provider associations"). Leaving it out was
+not an option — without it the feature does not work at all.
 
 ⚠️ **This widens the CP's authority.** What decision 5 writes back is "what was read, with four
 fields replaced", but the API itself can re-declare a launch template, subnets and security
@@ -386,18 +472,41 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
 
 ## Open questions (to be settled by measurement)
 
-1. 🔴 **When `UpdateCapacityProvider` is given only part of an `InstanceLaunchTemplate`, are the
-   sub-fields left out preserved or cleared?** Decision 5 reads everything and writes everything
-   back, so it holds either way — but **whether `DescribeCapacityProviders`' output fits
-   `Update`'s input** (the types differ, so it is copied) has not been tried on real hardware.
-   Depends on: decisions 5 and 8.
-2. **How CloudFormation drift actually shows.** Decision 5's "apply again, idempotently, just
-   before a start" covers it, except for **a box bought between the moment a stack update
-   reverts the capacity provider and the moment the CP re-applies** (a `mode=on` deployment).
-   How long that window really is has not been measured. Depends on: decisions 2 and 5.
-3. **g6e's VRAM, price and availability** per region. What the default ladder should say waits
-   on this. **The example in this ADR (`l40s|L40S 48GB|44000|…`) is a proposal, not a
-   measurement.** The shipped ladder is empty (decision 1). Depends on: decision 1.
+1. ✅ **Settled (2026-09-10, measured in P1): the fields that cannot be carried are preserved.**
+   `capacityOptionType` stayed `ON_DEMAND`, and a same-values write left the whole
+   `managedInstancesProvider` byte-identical. Decision 5 needs no repair.
+   ⚠️ **`fipsEnabled` was never set on this deployment, so it was not measured directly** — this
+   is an inference from its sibling in the same hole (absent from the write type). Its default
+   is false, so a silent reset would be indistinguishable from "was false already". A deployment
+   that uses FIPS should confirm this one before switching rungs.
+   Whether the copy fits (the types differ) is settled too: it does. But **`Describe` was being
+   called wrongly** — see decision 5's P1 measurements. Depends on: decisions 5 and 8.
+2. ✅ **Settled (2026-09-10, measured in P1): there are two kinds of drift and one of them does
+   not happen.**
+   - **A plain redeploy does not revert anything.** With no property of the provider changed the
+     changeset is empty and CloudFormation does not touch it (1.9 s). The filed worry — "an
+     unrelated stack update quietly puts it back the next morning" — **does not occur**.
+   - **Change any parameter that touches the provider and the whole `InstanceRequirements` goes
+     back to the declaration.** An update that moved `ImageMemMinMiB` by 1 took
+     `allowedInstanceTypes` and the VRAM floor back to the defaults with it (48 s). It is
+     total, not partial.
+   - The re-apply before a start repaired exactly that state (decision 5).
+   - **The window that remains** is a box bought between the CP applying and ECS buying, which
+     the CP cannot close (buying is asynchronous). Its length tracks the CFN update (48 s here).
+   Depends on: decisions 2 and 5.
+3. ✅ **Settled (2026-09-10, measured in P1) — and the shipped ladder stays empty.**
+   - **Availability**: `g6e.xlarge` and `g6e.2xlarge` are both offered in ap-northeast-1a and 1c.
+   - **VRAM**: the L40S reports **45,457 MiB** (`ggml_cuda_init`). The ladder's 44,000 follows
+     the "declare below nominal" rule and is right.
+   - **Price** (Pricing API, Tokyo, Linux, on-demand, 2026-09-10): `g6.xlarge` $1.1672,
+     `g5.xlarge` $1.4590, `g6e.xlarge` $2.6990, `g6e.2xlarge` $3.2517.
+   - 🔴 **Those are not the numbers to put in a ladder.** ADR 0071's measured **$1.26** for a
+     g6.xlarge is **8% above** list, which is consistent with the ECS Managed Instances
+     management fee being charged on top of EC2. **List price makes the panel cheaper than the
+     bill.** One data point does not give a coefficient, so the advice is: **declare what was
+     measured, and leave the field empty otherwise.** Cost Explorer's next-day figures are the
+     only thing that closes the rest.
+   Depends on: decision 1.
 4. **Whether the G-family vCPU quota has to be raised — settled (2026-09-10, answered by the
    operator in review).** Production's quota is 96, so rungs above 8 vCPU can be bought.
    **Rejecting them at declaration time is not the design** (decision 1's last bullet): the CP
@@ -410,6 +519,12 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
 7. **The estimator for VRAM demand.** Decision 6's second tier is the sum of the weight files
    and no KV cache. Writing a coefficient means measuring one (it depends on context length,
    layer count and quantisation). **Until then it says "a floor" and nothing else.**
+   **First measurement (2026-09-10, P1)**: for SDXL-family weights (juggernaut-xl-v9, fp16) the
+   declared floor was 6,776 MiB, the weights really were 6,624 MiB, **compute reserves added
+   5,120 MiB** (DiT 2,048, Conditioner 2,048, VAE 1,024) and the total in use was about
+   11.7 GiB. **The floor is 58% of the demand.** The reserve should scale with resolution and
+   batch, so no coefficient is derived from one point. The llm role (where the KV cache is the
+   term that matters) is still unmeasured.
 
 ## The P1 experiment (with the quota left at 8, 2026-09-10)
 
@@ -493,9 +608,68 @@ a start**, and that can be added after everything else has passed.
   (b) the upper rung's box does not arrive within 15 minutes → suspect availability or a typo in
   the type, and fall back to `g5.xlarge`; (c) #6's positive control does not fire → **suspect the
   experiment**, and read the real quota with
-  `service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BB`.
+  `service-quotas get-service-quota --service-code ec2 --quota-code L-DB2E81BA`.
+  🔴 **The `L-DB2E81BB` written when this was filed is wrong** — that is the Spot quota (0 on
+  this deployment). On-demand G/VT is `L-DB2E81BA`, measured at 8 on af-sandbox.
 - **Afterwards**: put the rung back to the default (the Console's "Back to the default"), set the
   mode to off, and decide whether the ladder goes back to empty (empty removes the feature).
+
+## What P1 measured (2026-09-10, af-sandbox, the image role)
+
+Run as planned: the image role only, with the quota left at 8. **100 GPU-minutes, $4.6**
+(`g6e.xlarge` 90.5 min = $4.07, `g6e.2xlarge` 10.2 min = $0.55 — the measurements themselves
+took 13 minutes; the rest is a box idling while a human was asked to click). The record is
+[docs/log/94-engine-instance-classes.md](../log/94-engine-instance-classes.md) (Japanese).
+
+| # | Measured | Result |
+|---|---|---|
+| 1 | Open question 1 (`capacityOptionType` / `fipsEnabled`) | **Preserved**. `fipsEnabled` inferred, never set here |
+| 2 | Does the RMW fit | **It does.** Four fields move, the other eight do not |
+| 3 | Is the IAM enough | 🔴 **It was not.** `PutClusterCapacityProviders` is required (decision 9) |
+| 4 | Open question 2 (CFN drift) | **A plain redeploy reverts nothing; a provider-touching update reverts all of it.** The re-apply before a start repaired it |
+| 5 | The drain wait | **157 s** (149 s the second time). The gate logged `class_swap_wait after admin_on` |
+| 6 | The positive control | **It appeared** — but only with the old box **busy** (the plan's premise was wrong) |
+| 7 | Cold start on the new rung | The type really changes. 118 s the first time, 497 s the second (the difference is quota wait) |
+| 8 | Open question 3 (defaults) | Availability, VRAM and price all obtained. **List price is 8% under the bill** |
+| 9 | The panel | Badge, replace flow, VRAM warning and confirmation all seen against a real CP |
+
+### The two defects only real hardware could show
+
+**Every P0 unit test stayed green through both.**
+
+1. **`DescribeCapacityProviders` was being given a cluster and a list of names.** ECS refuses
+   that (`InvalidParameterException: Cannot specify both capacity providers and cluster in the
+   same request`) — a constraint in neither the API reference nor the SDK comment, and **a test
+   whose fake accepts anything can never notice**. The fake is now as strict as the API, which
+   makes every existing test a guard (with a positive control).
+2. **`ecs:PutClusterCapacityProviders` is required** (decision 9's correction). It is **an API
+   the CP never calls**, so neither the code nor the policy leads to it.
+
+**These two are why P1 exists.** Neither is reachable by reading the implementation, and both
+take thirty seconds to find once something is actually started.
+
+### Where the plan was wrong about decision 4
+
+The plan said "start without waiting and `VcpuLimitExceeded` appears". **It did not.** While an
+idle box of the previous rung is registered, ECS does not try to buy a second one — it **places
+the task on the old box**. So the first failure decision 4 prevents is not a quota error but a
+**silent return to the old card**: the service reports `steady state`, the panel says running,
+and an administrator who thought they had moved up a rung keeps running on the old one. The
+positive control was taken instead with the old box **busy**, asking for a second task.
+
+And **waiting for the box to leave is necessary but not sufficient.** After the 4 vCPU box left
+ECS, `VcpuLimitExceeded` continued for **more than five minutes** (gone 09:19:43, bought
+09:26:12). **EC2 releases the quota later than ECS deregisters.** Budget a rung-raising start as
+drain (150 s) + quota wait (up to ~6 min) + cold start.
+
+### Known and deliberately not fixed
+
+- **A rung whose apply failed cannot be retried by choosing it again.** `putClass` stores the
+  setting before applying, so a failure still leaves the choice stored, and the Console — seeing
+  no change — sends nothing. Recovery is to pick another rung and come back. The order is
+  deliberate (so the panel can say the apply failed), so the fix belongs in the Console: a
+  retry affordance.
+- **A ladder's `usdPerHour` taken from list price reads cheaper than the bill** (open question 3).
 
 ## Phases and the definition of done
 
@@ -507,10 +681,11 @@ a start**, and that can be added after everything else has passed.
   call, (2) a test can say that choosing a rung sends the expected `InstanceRequirements` **and
   returns every other field exactly as it was read**, (3) enabling a model that will not fit
   asks for confirmation, and a model with neither `vram_mib` nor `bytes` reads as "unknown".
-- **P1 (real hardware)**: switch a rung on af-sandbox, buy the box, and measure **the drain
-  wait, `VcpuLimitExceeded` and the cold start**; close open questions 1 and 2, and close open
-  question 3 to settle the ladder's defaults. The plan, under the operator's decision to **leave
-  the quota at 8**, is the section above.
+- **P1 (real hardware)**: ✅ **done (2026-09-10)**. Rungs were switched on af-sandbox, real
+  boxes were bought, and the drain wait, `VcpuLimitExceeded` and the cold start were measured;
+  open questions 1, 2 and 3 are closed. **The shipped ladder stays empty** (decision 1) — price
+  differs from the bill and availability differs per region, so "do not ship a number nobody
+  measured" survives P1 intact. Results: "What P1 measured"; record: docs/log/94.
 - **P2 (if it turns out to be needed)**: the task definition following the rung (decision 11,
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).

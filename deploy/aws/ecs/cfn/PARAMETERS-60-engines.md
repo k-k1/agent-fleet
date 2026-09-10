@@ -549,6 +549,10 @@ LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40
 - **`usdPerHour` is display-only and optional.** Nothing computes with it and neither EC2 nor
   the Pricing API is asked (ADR 0045 decision 21). Leave it out and the panel names no price,
   which beats naming a wrong one.
+  ⚠️ **Do not copy a list price into it.** The Pricing API's Tokyo on-demand figure for a
+  g6.xlarge is $1.1672, while the bill measured in ADR 0071 was **$1.26** — ECS Managed
+  Instances charges a management fee on top of EC2, so a list price makes the panel about 8%
+  cheaper than reality (measured 2026-09-10, ADR 0074 P1). Declare what was billed, or nothing.
 - A malformed rung is dropped with a log line; a malformed PRICE only drops the price.
 - ⚠️ The ladder is not checked against the account's **G-family vCPU quota**, and it cannot be:
   the CP has no `service-quotas` permission and the quota differs per deployment (96 in
