@@ -632,7 +632,7 @@ Resources:
           - !Ref "AWS::NoValue"
         InstanceLaunchTemplate:
           Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: ON_DEMAND
+          CapacityOptionType: SPOT
           NetworkConfiguration:
             Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
             SecurityGroups: [ !Ref EngineSg ]
