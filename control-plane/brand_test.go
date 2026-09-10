@@ -215,6 +215,23 @@ func TestBrandedRoutesServeThroughTheMux(t *testing.T) {
 	}
 }
 
+// The manifest has to answer without a session. An installed PWA on Android is a WebAPK
+// that froze theme_color, the icons and the name at install time, and the only thing that
+// thaws them is Chrome re-fetching this path in the background — where there is no page
+// and the cookie may well have expired. A 401 there is indistinguishable from "nothing
+// changed", so the home screen keeps the previous deployment's colour for good.
+func TestManifestIsAuthExempt(t *testing.T) {
+	smokeEnv(t) // buildMux registers the exemptions
+	if !isAuthExempt("/manifest.webmanifest") {
+		t.Error("/manifest.webmanifest must be auth-exempt, or a re-branded deployment never reaches an installed PWA")
+	}
+	// The control: the shell that links it stays session-gated. The exemption is this one
+	// document — name, colour and icon paths, the same triple /login already shows.
+	if isAuthExempt("/") {
+		t.Error("/ must stay session-gated")
+	}
+}
+
 func TestHSLRoundTrip(t *testing.T) {
 	for _, c := range []color.NRGBA{{0x14, 0x9b, 0xa7, 0xff}, {0x7c, 0x4d, 0xff, 0xff}, {0, 0, 0, 0xff}, {0xff, 0xff, 0xff, 0xff}} {
 		h, s, l := rgbToHSL(c.R, c.G, c.B)

@@ -239,8 +239,12 @@ art as it serves it.
 
 - The label is a **prefix** on purpose: a crowded tab strip and a phone launcher both truncate
   the END, so `[staging] Agent Fle…` still tells you where you are.
-- A PWA **already installed** on a phone keeps the icon and name it had at install time.
-  Reinstall it to pick up a change.
+- A PWA **already installed** on a phone keeps the colour, icon and name it had at install
+  time. On Android those are baked into the installed app, which is why the status bar
+  inside it can stay on the old colour while the same deployment is correctly coloured in a
+  browser tab. Chrome rebuilds the installed app in the background eventually, but that
+  takes days; **reinstall it** — long-press the icon, uninstall, then install again from the
+  browser — to see the change now.
 - An unknown colour name is not fatal: the Control Plane logs it and stays on teal.
 
 ## Idle stop and force-stop
