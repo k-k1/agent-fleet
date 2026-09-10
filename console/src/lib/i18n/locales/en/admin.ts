@@ -520,10 +520,9 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.revoke_admin": "Revoke admin",
   "admin.make_admin": "Make an admin of this tenant",
   "admin.tenant_admin_hint_1": "A tenant admin can manage members, view resources, force-stop workspaces, and set session limits within ",
-  "admin.tenant_admin_hint_2": " (they can't create tenants, change limits, clean home, or grant roles).",
+  "admin.tenant_admin_hint_2": " — including cleaning a home, discarding a workspace, and setting a member's size and session limit (they can't create tenants, change the tenant-wide limits, or grant roles).",
   "admin.operations": "Operations",
   "admin.force_stop_ws": "Force-stop the workspace",
-  "admin.set_limits": "Set limits",
   "admin.clean_home": "Clean home",
   "admin.ws_cpu": "Workspace CPU",
   "admin.ws_disk": "Workspace working disk",
@@ -555,7 +554,25 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.ws_disk_home_hint": "0 = deployment default {n} GiB. Applied when the home volume is created, and it cannot be shrunk afterwards.",
   "admin.ws_disk_quota_hint": "0 = no quota. Reported for reference only — nothing enforces it.",
   "admin.ws_disk_work_hint": "0 = deployment default {n} GiB",
-  "admin.limits_edit_title": "Set limits",
+  // --- Size and limits (ADR 0045 addendum). Its own card, out of "Operations": what it
+  // used to sit next to was cleaning a home and removing a member, which put changing a
+  // setting in the same row as the actions that cannot be taken back. ---
+  "admin.ws_size_heading": "Size and limits",
+  "admin.ws_size_change": "Change",
+  "admin.ws_size_unset": "All deployment defaults",
+  "admin.ws_size_group": "Workspace size",
+  "admin.session_limit_group": "Session limit",
+  "admin.danger_zone": "Cannot be undone",
+  // How to say it on a runtime whose home can grow (ecs-ec2). Only the raising direction
+  // reaches the home that exists; lowering reaches the next one. EBS's rule, not a policy.
+  "admin.ws_disk_home_grow_hint":
+    "0 = deployment default {n} GiB. Raising this grows the home they already have. Lowering it leaves that home as it is — EBS cannot shrink.",
+  "admin.home_resize_growing": "Growing the home from {from} to {to} GiB. The workspace keeps running.",
+  "admin.home_resize_shrink":
+    "The existing home stays at {from} GiB — EBS cannot shrink. {to} GiB is what the next home created for this member will be.",
+  "admin.home_resize_no_home": "There is no home yet. The next one created will be {to} GiB.",
+  "admin.home_resize_failed":
+    "The home could not be grown. The setting is saved, so try saving again later — one volume can only be modified once every 6 hours: {detail}",
   "admin.max_sessions_label": "Max sessions",
   "admin.ws_memory": "Workspace memory",
   "admin.eq_hint": "= {hint}",
@@ -574,7 +591,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.grant_confirm": "Make admin",
   "admin.grant_body_1": "This grants this member tenant-admin rights for ",
   "admin.grant_body_2": ".",
-  "admin.grant_note": "After granting, they can manage members, view resources, force-stop workspaces, and set session limits within this tenant (other tenants are unaffected).",
+  "admin.grant_note": "After granting, they can manage members, view resources, force-stop and discard workspaces, clean a home, and set a member's size and session limit within this tenant (other tenants are unaffected).",
 
   // --- per-tenant login (docs/log/61 §61.9 · P3). The three rules look alike and are
   // not: reading "invite domains" as "domains that may use this tenant" is the

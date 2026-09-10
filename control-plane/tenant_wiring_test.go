@@ -66,6 +66,7 @@ var cpTenantDelegates = map[string]string{
 	"StopWorkspaceByMembership":    "stopWorkspaceByMembership",    // ↕ same type; swap = wiped home
 	"CleanHomeByMembership":        "cleanHomeByMembership",        // ↕
 	"DestroyWorkspaceByMembership": "destroyWorkspaceByMembership", // ↕
+	"ResizeHomeByMembership":       "resizeHomeByMembership",
 	"ResolveWorkspaceSize":         "resolveWorkspaceSize",
 	"ResolveSlotClass":             "resolveSlotClass",
 	"PoolBudget":                   "poolBudget",

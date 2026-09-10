@@ -467,6 +467,45 @@
   gap: 5px;
 }
 
+/* Size and limits: the current values on one line, with the control that changes them at
+   the end of it. The summary is the SAME chips the roster row draws (MemberSizeChips), so
+   the two screens cannot come to describe one member differently. */
+.ws-size-now {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.ws-size-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: auto;
+}
+
+/* Destructive actions, ruled off below the operations that can be taken back. Same visual
+   language as the workspace tab's danger zone.
+   ⚠️ That one declares `.danger-zone` / `.danger-zone-title` BARE (workspace.css), and every
+   stylesheet here ends up in one bundle — so it already reaches this markup whether or not
+   these rules exist. They are scoped and kept anyway: what this block looks like must not
+   be decided by another tab's file, which can retune its own spacing at any time and would
+   silently retune the member detail with it (the lesson of .view-head). */
+.member-detail .danger-zone {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.member-detail .danger-zone-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: var(--del);
+}
+
 .role-now {
   display: inline-flex;
   align-items: center;

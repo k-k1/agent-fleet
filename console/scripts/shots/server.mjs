@@ -114,6 +114,10 @@ const exact = {
     mem_meaning: "slot",
     disk_meaning: "home",
     disk_default_gb: 50,
+    // This runtime grows a home in place (ADR 0045's addendum). Without it the disk field
+    // in the member detail describes itself as write-once, which is no longer true of the
+    // runtime the rest of this stub is imitating.
+    disk_grow_only: true,
     slots: [
       { instance_type: "m7i.large", mem_mib: 8192, vcpu: 2 },
       { instance_type: "m7i.xlarge", mem_mib: 16384, vcpu: 4 },

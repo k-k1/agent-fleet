@@ -170,6 +170,13 @@ Resources:
               if [ "$MKFS" = --mkfs ] && ! blkid "$DEV" >/dev/null 2>&1; then mkfs.xfs -q "$DEV"; fi
               mkdir -p "$MP"
               mountpoint -q "$MP" || mount -o nouuid "$DEV" "$MP"
+              # Take whatever room the volume has now. A home that was grown while it was
+              # detached - or whose growfs did not land at the time - carries a filesystem
+              # smaller than its device, and nothing else would ever notice: the member
+              # just keeps seeing the old capacity after being told it went up. xfs_growfs
+              # on a filesystem that is already the full size is a no-op, so this is safe
+              # on every mount, and its failure must not fail the mount.
+              xfs_growfs "$MP" || true
               mkdir -p "$MP/dev"; chown 1000:1000 "$MP/dev"
               echo "mounted $DEV ($1) -> $MP"
               SH

@@ -55,6 +55,12 @@ type CP interface {
 	WorkspaceStateByMembership(ctx context.Context, membershipID string) (container, state string)
 	StopWorkspaceByMembership(ctx context.Context, membershipID string) error
 	CleanHomeByMembership(ctx context.Context, membershipID string) error
+	// ResizeHomeByMembership pushes a member's just-saved disk request at the home
+	// they already have. Called after PutUserLimit, never instead of it: the row is
+	// the intent and is kept whatever the volume can do today (runtime.HomeResize
+	// reports rather than fails). The zero value means the runtime has no home to
+	// grow, which is every runtime but the EC2 slot pool.
+	ResizeHomeByMembership(ctx context.Context, membershipID string) (runtime.HomeResize, error)
 	DestroyWorkspaceByMembership(ctx context.Context, membershipID string) ([]string, error)
 	ResolveWorkspaceSize(ctx context.Context, ws store.Workspace) (memBytes int64, cpuUnits, diskGB int)
 	ResolveSlotClass(ctx context.Context, ws store.Workspace) (id, note string)

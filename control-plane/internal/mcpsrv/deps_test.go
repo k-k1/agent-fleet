@@ -77,6 +77,11 @@ func (c testCP) StopWorkspaceByMembership(context.Context, string) error {
 	return nil
 }
 
+func (c testCP) ResizeHomeByMembership(context.Context, string) (runtime.HomeResize, error) {
+	unwired("ResizeHomeByMembership")
+	return runtime.HomeResize{}, nil
+}
+
 func (c testCP) ResolveWorkspaceSize(context.Context, store.Workspace) (int64, int, int) {
 	unwired("ResolveWorkspaceSize")
 	return 0, 0, 0

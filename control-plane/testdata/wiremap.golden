@@ -60,7 +60,7 @@ internal/tenantsrv/tenants.go Admin.PoolStatus x1 {runtime}
 internal/tenantsrv/tenants.go Admin.RemoveMembership x1 {leftovers,purged,removed,tenant}
 internal/tenantsrv/tenants.go Admin.SetMembershipRole x1 {role,tenant,user_key}
 internal/tenantsrv/tenants.go Admin.SetTenantLimits x1 {allow_agent_self_update,allow_engine_ingest,allowed_slot_classes,home_backup_every,home_hibernate_after,interaction_idle_timeout,max_sessions,max_workspace_cpu,max_workspace_disk_gb,max_workspace_mem,max_workspaces,pool_budget,session_idle_timeout,tenant,terminal_history_retention_days,ws_idle_timeout} cond{pool_budget}
-internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key}
+internal/tenantsrv/tenants.go Admin.SetUserLimit x1 {cpu_effective,cpu_limit,disk_effective,disk_gb,home_resize,max_sessions,mem_effective,mem_limit,slot_class,slot_class_effective,slot_class_note,tenant,user_key} cond{home_resize}
 internal/tenantsrv/tenants.go Admin.StopWorkspace x1 {stopped,tenant}
 internal/tenantsrv/tenants.go Tenants.List x2 {super_admin,tenants}
 internal_git.go gitServerAPI.branches x1 {branches,default_branch}

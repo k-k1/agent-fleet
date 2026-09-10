@@ -193,6 +193,10 @@ func (d cpTenant) CleanHomeByMembership(ctx context.Context, mid string) error {
 	return d.m.cleanHomeByMembership(ctx, mid)
 }
 
+func (d cpTenant) ResizeHomeByMembership(ctx context.Context, mid string) (runtime.HomeResize, error) {
+	return d.m.resizeHomeByMembership(ctx, mid)
+}
+
 func (d cpTenant) DestroyWorkspaceByMembership(ctx context.Context, mid string) ([]string, error) {
 	return d.m.destroyWorkspaceByMembership(ctx, mid)
 }
