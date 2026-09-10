@@ -834,6 +834,55 @@ Pinned by tests:
 provider's words, and "apply it again" stands on its own line above the existing "replace it
 now" — a different act, so it is not put beside it.
 
+## Follow-up — CloudFormation refuses to switch a provider to Spot (2026-09-11, measured, $0)
+
+Groundwork for moving the `image` role to Spot. The "Follow-up measurements" section measured
+the **ECS API** side and showed that `capacityOptionType` survives `UpdateCapacityProvider`. The
+**CloudFormation** side — can a stack update change that field at all — was never measured. A
+change set that flips `60-engines.yaml`'s `ImageCapacityProvider` to SPOT reads `Modify` /
+`Replacement: Conditional` on the live stack too. The CFN documentation says "Some
+interruptions" (i.e. no replacement), which contradicts the field's absence from
+`UpdateCapacityProvider`'s shape. **Nothing tells you which until you execute it**, so it was
+executed somewhere that costs nothing.
+
+Method: one throwaway stack in af-sandbox holding a copy of `ImageCapacityProvider` — the
+hardcoded `Name: !Sub "af-${AWS::StackName}-image"` included — plus the three IAM resources it
+needs. No service, no `ClusterCapacityProviderAssociations`. Not one instance is launched, so
+$0. Ten minutes.
+
+- 🔴 **The in-place edit fails: it goes for a replacement.** The change set is the same shape as
+  the live one (`Modify`, `Replacement: Conditional`, `ManagedInstancesProvider` /
+  `RequiresRecreation: Conditionally`). Executing it gives `UPDATE_FAILED`:
+  `CloudFormation cannot update a stack when a custom-named resource requires replacing. Rename
+  af-af-spotprobe-s2hpl5k-image and update the stack again.` → `UPDATE_ROLLBACK_COMPLETE`.
+  **Nothing is lost** — the refusal lands BEFORE anything is created, and the provider keeps its
+  ARN and its `ON_DEMAND` (compared before and after with `describe-capacity-providers`). On a
+  live deployment, though, the whole 60-engines update rolls back, taking anything else in that
+  change with it.
+- ✅ **Adding one under a different name works** — stage 1 of the safe path. A second resource
+  (new logical id, `Name` ending `-image-spot`, SPOT) is `Add`, no replacement,
+  `UPDATE_COMPLETE`. It is created even in af-sandbox, whose Spot quota is 0: as the earlier
+  follow-up found, the quota bites at launch and not at configuration.
+- 🔴 **Creating an MI provider puts it in the cluster's provider list on its own.** The
+  throwaway stack has no `Associations` resource anywhere, yet both of its providers appeared in
+  `DescribeClusters.capacityProviders` and left when the stack was deleted. "Exactly one stack
+  owns the associations" is a rule about who REPLACES the list, not a fence that stops another
+  stack adding to it — and the next update of the owning stack silently drops the newcomer.
+- Cleanup: after the delete the cluster's list matches the live four exactly, and no IAM role or
+  instance profile is left. ECS keeps the providers as `INACTIVE` records, as the earlier
+  follow-up already found.
+
+**The order for switching acrt**, written up as a procedure in
+`cfn/PARAMETERS-60-engines.md`, "The capacity providers": (1) add the differently-named SPOT
+provider and name it in `Associations`; (2) move the image service's `CapacityProviderStrategy`
+**and the engine table row's `capacityProvider` in the same change** — the table builds that
+string with `!Sub` rather than `!Ref`, so it does not follow the resource, and getting it wrong
+fails silently: the Control Plane watches a provider nobody uses, which is where both `draining`
+and this ADR's rung application read from; (3) delete the old resource in a later change. **The
+`llm` role stays `ON_DEMAND`** — Spot's two-minute notice arrives mid-conversation and a
+527-586-second cold start follows it. acrt already holds 64 of `L-3819A6DF`, so no quota case is
+needed.
+
 ## Follow-up — open question 7 for the image role, points 2 and after (2026-09-11, dev deployment, comfy)
 
 P1's first point came from sd-server (sd.cpp). With the role switched to ComfyUI, SDXL was run on
