@@ -30,6 +30,10 @@ in the Admin modal and never appears for you. What you can read is the current v
   built-in git and the total LFS capacity.
 - **Idle auto-stop** — how long before neglected sessions and workspaces are stopped automatically
   (next section).
+- **Inference engine model ingest** — whether this tenant's tenant_admins may take engine models in
+  from Hugging Face and the like. Off by default. Even where it is granted, **the catalogue stays one
+  per deployment** and the id of a model taken in is visible from every tenant
+  ([04](04-mcp-egress.md#taking-models-in-and-what-that-has-to-do-with-tenants)).
 
 The "Limits — Workspace: X / Session: Y" shown under **Tenant › Limits & idle** is the value
 currently in effect. When you want it changed, ask your IT department / deployment administrator

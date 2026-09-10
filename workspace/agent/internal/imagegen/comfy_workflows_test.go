@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -29,22 +30,7 @@ var comfyGoldenParams = comfyParams{
 }
 
 func TestComfyWorkflowsMatchGoldenFixtures(t *testing.T) {
-	cases := []struct {
-		name   string
-		family comfyFamily
-		files  comfyFiles
-	}{
-		{"sdxl", ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"}},
-		{"zimage", ComfyFamilyZImage, comfyFiles{
-			DiffusionModel: "z_image_turbo_bf16.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "ae.safetensors"}},
-		{"flux2_klein", ComfyFamilyFlux2Klein, comfyFiles{
-			DiffusionModel: "flux-2-klein-4b.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "flux2-vae.safetensors"}},
-		{"flux1", ComfyFamilyFlux1, comfyFiles{
-			DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"}},
-		{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
-			ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"}},
-	}
-	for _, c := range cases {
+	for _, c := range comfyFamilyFixtures {
 		t.Run(c.name, func(t *testing.T) {
 			g, err := comfyBuildGraph(c.family, c.files, comfyGoldenParams)
 			if err != nil {
@@ -63,6 +49,142 @@ func TestComfyWorkflowsMatchGoldenFixtures(t *testing.T) {
 			if string(got) != string(want) {
 				t.Errorf("%s's graph no longer matches %s.\nGot:\n%s\nIf this change is intended, "+
 					"overwrite the fixture and explain why in the commit.", c.name, path, got)
+			}
+		})
+	}
+}
+
+// comfyFamilyFixture is one family's files plus the nodes that must end up reading the LoRA
+// chain: everything downstream of the model loader, and everything downstream of the CLIP one.
+// Naming them per family is the point — a chain that is BUILT but not consumed is exactly the
+// failure a golden fixture cannot see, because the lora node is present either way.
+type comfyFamilyFixture struct {
+	name        string
+	family      comfyFamily
+	files       comfyFiles
+	modelInputs []string // "<node>.<input>" that must carry the patched MODEL
+	clipInputs  []string // "<node>.<input>" that must carry the patched CLIP
+}
+
+var comfyFamilyFixtures = []comfyFamilyFixture{
+	{"sdxl", ComfyFamilySDXL, comfyFiles{Checkpoint: "sd_xl_base_1.0.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}},
+	{"zimage", ComfyFamilyZImage, comfyFiles{
+		DiffusionModel: "z_image_turbo_bf16.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "ae.safetensors"},
+		[]string{"ms.model"}, []string{"pos.clip", "neg.clip"}},
+	{"flux2_klein", ComfyFamilyFlux2Klein, comfyFiles{
+		DiffusionModel: "flux-2-klein-4b.safetensors", ClipL: "qwen_3_4b_fp8_mixed.safetensors", Vae: "flux2-vae.safetensors"},
+		[]string{"guider.model"}, []string{"pos.clip"}},
+	// BasicScheduler derives the sigmas from the model it is given, so it has to see the same
+	// patched one the guider samples with.
+	{"flux1", ComfyFamilyFlux1, comfyFiles{
+		DiffusionModel: "flux1-dev.safetensors", ClipL: "clip_l.safetensors", T5xxl: "t5xxl_fp8.safetensors", Vae: "ae.safetensors"},
+		[]string{"guider.model", "scheduler.model"}, []string{"pos.clip"}},
+	{"sd35", ComfyFamilySD35, comfyFiles{Checkpoint: "sd3.5_large.safetensors",
+		ClipL: "clip_l.safetensors", ClipG: "clip_g.safetensors", T5xxl: "t5xxl_fp16.safetensors"},
+		[]string{"ks.model"}, []string{"pos.clip", "neg.clip"}},
+}
+
+// comfyLinkAt reads the graph edge at "<node>.<input>".
+func comfyLinkAt(t *testing.T, g comfyGraph, ref string) []any {
+	t.Helper()
+	parts := strings.SplitN(ref, ".", 2)
+	node, ok := g[parts[0]]
+	if !ok {
+		t.Fatalf("the graph has no node %q", parts[0])
+	}
+	link, ok := node.Inputs[parts[1]].([]any)
+	if !ok {
+		t.Fatalf("%s is not a link: %#v", ref, node.Inputs[parts[1]])
+	}
+	return link
+}
+
+// Every family's LoRA chain, checked where a golden fixture cannot look: that the nodes
+// downstream actually READ the chain rather than the bare loader they used to (ADR 0072 decision
+// 5, phase P3). The node class and its input names are ComfyUI v0.34.0's own (nodes.py:
+// LoraLoader takes model/clip/lora_name/strength_model/strength_clip and returns MODEL, CLIP).
+func TestComfyWorkflowsChainLoras(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			p := comfyGoldenParams
+			p.Loras = []comfyLora{{Name: "watercolor-v2.safetensors", Weight: 0.8}}
+			g, err := comfyBuildGraph(c.family, c.files, p)
+			if err != nil {
+				t.Fatalf("comfyBuildGraph(%s) = %v", c.family, err)
+			}
+			lora, ok := g["lora1"]
+			if !ok {
+				t.Fatal("no lora1 node in the graph")
+			}
+			if lora.ClassType != "LoraLoader" {
+				t.Errorf("class_type = %q, want LoraLoader", lora.ClassType)
+			}
+			if got := lora.Inputs["lora_name"]; got != "watercolor-v2.safetensors" {
+				t.Errorf("lora_name = %v, want the on-disk basename", got)
+			}
+			for _, in := range []string{"strength_model", "strength_clip"} {
+				if got := lora.Inputs[in]; got != 0.8 {
+					t.Errorf("%s = %v, want the requested weight", in, got)
+				}
+			}
+			// The chain's own inputs must be links, i.e. it sits BETWEEN the loaders and the
+			// rest rather than floating unconnected.
+			for _, in := range []string{"model", "clip"} {
+				if _, ok := lora.Inputs[in].([]any); !ok {
+					t.Errorf("lora1.%s = %#v, want a link to a loader", in, lora.Inputs[in])
+				}
+			}
+			for _, ref := range c.modelInputs {
+				if got := comfyLinkAt(t, g, ref); got[0] != "lora1" || got[1] != 0 {
+					t.Errorf("%s reads %v, want the patched MODEL [lora1 0]", ref, got)
+				}
+			}
+			for _, ref := range c.clipInputs {
+				if got := comfyLinkAt(t, g, ref); got[0] != "lora1" || got[1] != 1 {
+					t.Errorf("%s reads %v, want the patched CLIP [lora1 1]", ref, got)
+				}
+			}
+		})
+	}
+}
+
+// Several LoRAs stack: each one patches the output of the one before it. Chained in the order
+// asked for, because "sketch then watercolour" and the reverse are different pictures.
+func TestComfyWorkflowsChainSeveralLorasInOrder(t *testing.T) {
+	p := comfyGoldenParams
+	p.Loras = []comfyLora{{Name: "a.safetensors", Weight: 1}, {Name: "b.safetensors", Weight: 0.5}}
+	g, err := comfyBuildGraph(ComfyFamilySDXL, comfyFiles{Checkpoint: "x.safetensors"}, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := g["lora1"].Inputs["lora_name"]; got != "a.safetensors" {
+		t.Errorf("lora1 = %v, want the first one asked for", got)
+	}
+	if got, _ := g["lora2"].Inputs["model"].([]any); len(got) != 2 || got[0] != "lora1" {
+		t.Errorf("lora2.model reads %v, want lora1's output", g["lora2"].Inputs["model"])
+	}
+	if got, _ := g["lora2"].Inputs["clip"].([]any); len(got) != 2 || got[0] != "lora1" {
+		t.Errorf("lora2.clip reads %v, want lora1's output", g["lora2"].Inputs["clip"])
+	}
+	if got := comfyLinkAt(t, g, "ks.model"); got[0] != "lora2" {
+		t.Errorf("ks.model reads %v, want the LAST link of the chain", got)
+	}
+}
+
+// The negative control for the golden fixtures above: a request with no LoRA has to produce the
+// graph that was pinned before this feature existed, node for node.
+func TestComfyWorkflowsAddNoLoraNodeWhenNoneAsked(t *testing.T) {
+	for _, c := range comfyFamilyFixtures {
+		t.Run(c.name, func(t *testing.T) {
+			g, err := comfyBuildGraph(c.family, c.files, comfyGoldenParams)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for id := range g {
+				if strings.HasPrefix(id, "lora") {
+					t.Errorf("node %q exists without a LoRA being asked for", id)
+				}
 			}
 		})
 	}

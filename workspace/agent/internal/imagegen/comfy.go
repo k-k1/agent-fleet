@@ -14,8 +14,10 @@ package imagegen
 // The engine gateway (control-plane/engine_gateway.go's dial) still holds the FIRST of those
 // three calls while a stopped engine wakes, the same way it holds sdcpp's single call — so the
 // retry-on-503-engine_waking loop below is a straight port of sdcpp.go's send(), reused rather
-// than reinvented. Only /prompt can hit a cold engine; by the time it answers, ComfyUI is up, so
-// the poll and view calls that follow do not repeat the wake dance.
+// than reinvented. /prompt is where a COLD engine is met, but it is not the only call that can
+// meet a waking one: the box can be replaced between the submit and the poll that follows, and
+// a caller was measured receiving `/history answered 503 … retry` from a poll that then retried
+// nothing (ADR 0072 欠落 9). So awaitHistory waits a retryable answer out too.
 //
 // Every checkpoint switch — including the very first request against a just-started engine — is
 // EBS-read time on top of generation (measured 1-2.5 minutes, ADR 0072 "実測で解けた点" 5), which
@@ -104,7 +106,29 @@ func (p *comfyProvider) Caps(model string) Caps {
 		Sizes:     comfySizesFor(conn, model),
 		MaxInputs: 0,
 		MaxCount:  4,
+		Loras:     comfyLoraInfos(conn),
 	}
+}
+
+// comfyLoraInfos is every LoRA the catalogue enables for this engine (ADR 0072 decision 5, phase
+// P3), NOT the ones that fit `model` — see Caps.Loras for why an enum may not depend on another
+// argument. The family goes out with each entry so the caller can pair them itself; a pairing
+// that does not fit is refused by comfyResolveLoras when the request arrives.
+func comfyLoraInfos(conn EngineConn) []LoraInfo {
+	if len(conn.Loras) == 0 {
+		return nil
+	}
+	out := make([]LoraInfo, 0, len(conn.Loras))
+	for _, l := range conn.Loras {
+		if strings.TrimSpace(l.ID) == "" || strings.TrimSpace(l.File) == "" {
+			continue // a row with no id or no file cannot be named or loaded
+		}
+		out = append(out, LoraInfo{Name: l.ID, Description: l.Description, BaseModel: l.BaseModel})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Models implements ModelLister (ADR 0072 decision 5, phase P2): every checkpoint the catalogue
@@ -165,6 +189,95 @@ func errUnknownComfyFamily(family comfyFamily) error {
 	return fmt.Errorf("no workflow template for checkpoint family %q", string(family))
 }
 
+// comfyMaxLoras bounds one request's chain. Each entry is a node ComfyUI loads a file for, and
+// four already stacks more style than anyone can steer; the cap exists so a caller cannot turn
+// one call into an unbounded pile of disk reads on a box the deployment pays for by the hour.
+const comfyMaxLoras = 4
+
+// comfyMaxLoraWeight is decision 5's declared range, 0-2. LoraLoader itself accepts -100 to 100,
+// which is a knob for someone watching the result, not for a model that cannot see the picture.
+const comfyMaxLoraWeight = 2.0
+
+// comfyResolveLoras turns the request's LoRA names into the chain a template renders, and is
+// where ADR 0072's refusal lives (decision 5, レビュー決定 5): it is the AGENT that says no, not
+// the Control Plane, because the pairing ends up inside a workflow graph and the gateway must
+// not read request bodies to police one (decision 4's "素通し").
+//
+// The mismatch it refuses — an SD1.5 LoRA asked for on an SDXL checkpoint — has no failure of its
+// own: the tensor names simply do not match, and the engine either warns and ignores them or
+// produces a quietly degraded picture. Both reach the caller as "the LoRA did nothing", which is
+// indistinguishable from a bug in the prompt. So it is refused before any GPU is woken.
+func comfyResolveLoras(conn EngineConn, family comfyFamily, model string, want []LoraRef) ([]comfyLora, error) {
+	if len(want) == 0 {
+		return nil, nil
+	}
+	if len(conn.Loras) == 0 {
+		return nil, fmt.Errorf("no LoRA is enabled on this engine, so %q cannot be applied"+
+			" — enable one in the admin panel's model catalogue first", want[0].Name)
+	}
+	if len(want) > comfyMaxLoras {
+		return nil, fmt.Errorf("%d LoRAs asked for, and this route applies at most %d in one request", len(want), comfyMaxLoras)
+	}
+	byName := map[string]EngineLora{}
+	for _, l := range conn.Loras {
+		byName[l.ID] = l
+	}
+	out := make([]comfyLora, 0, len(want))
+	seen := map[string]bool{}
+	for _, w := range want {
+		l, ok := byName[w.Name]
+		if !ok || strings.TrimSpace(l.File) == "" {
+			return nil, fmt.Errorf("no LoRA named %q on this engine — the catalogue enables %s",
+				w.Name, comfyLoraNameList(conn))
+		}
+		if seen[w.Name] {
+			return nil, fmt.Errorf("LoRA %q asked for twice; name it once with the strength you want", w.Name)
+		}
+		seen[w.Name] = true
+		if got := comfyFamily(strings.TrimSpace(l.BaseModel)); got != family {
+			return nil, errComfyLoraFamilyMismatch(w.Name, l.BaseModel, model, family)
+		}
+		weight := w.Weight
+		if weight == 0 {
+			weight = 1 // "not stated" — see LoraRef.Weight
+		}
+		if weight < 0 || weight > comfyMaxLoraWeight {
+			return nil, fmt.Errorf("LoRA %q asked for at strength %g, and the range is 0-%g",
+				w.Name, w.Weight, comfyMaxLoraWeight)
+		}
+		out = append(out, comfyLora{Name: l.File, Weight: weight})
+	}
+	return out, nil
+}
+
+// errComfyLoraFamilyMismatch separates the two ways a pairing fails, because an operator fixes
+// them differently: a LoRA that declares a DIFFERENT family was registered for other checkpoints
+// and is being used on the wrong one, while a LoRA that declares NOTHING is a catalogue row
+// nobody finished — and that row would otherwise be paired with anything at all.
+func errComfyLoraFamilyMismatch(name, declared, model string, family comfyFamily) error {
+	if d := strings.TrimSpace(declared); d != "" {
+		return fmt.Errorf("LoRA %s was trained for the %s checkpoint family and %s is %s"+
+			" — they cannot be combined; a mismatched LoRA does not fail, it quietly does nothing to the picture",
+			name, d, model, string(family))
+	}
+	return fmt.Errorf("LoRA %s declares no checkpoint family, so there is no way to tell whether it fits %s (%s)"+
+		" — set the catalogue's base_model to one of %s", name, model, string(family), comfyFamilyList())
+}
+
+// comfyLoraNameList spells the enabled LoRAs with the family each belongs to, because "that name
+// does not exist" without the alternatives costs the caller another turn to find out what does.
+func comfyLoraNameList(conn EngineConn) string {
+	out := make([]string, 0, len(conn.Loras))
+	for _, l := range conn.Loras {
+		if l.BaseModel != "" {
+			out = append(out, l.ID+" ("+l.BaseModel+")")
+			continue
+		}
+		out = append(out, l.ID)
+	}
+	return strings.Join(out, ", ")
+}
+
 func errComfyMissingFile(family, role string) error {
 	return fmt.Errorf("the %s checkpoint's catalogue entry has no %s file declared", family, role)
 }
@@ -210,6 +323,10 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 		return Result{}, errComfyFamilyNotDeclared(model, conn.BaseModel[model])
 	}
 	files := resolveComfyFiles(conn.Files[model])
+	loras, err := comfyResolveLoras(conn, family, model, req.Loras)
+	if err != nil {
+		return Result{}, err
+	}
 
 	w, h, ok := parseSize(req.Size)
 	if !ok {
@@ -223,7 +340,8 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	graph, err := comfyBuildGraph(family, files, comfyParams{Prompt: req.Prompt, Seed: seed, Width: w, Height: h, BatchSize: count})
+	graph, err := comfyBuildGraph(family, files, comfyParams{
+		Prompt: req.Prompt, Seed: seed, Width: w, Height: h, BatchSize: count, Loras: loras})
 	if err != nil {
 		return Result{}, err
 	}
@@ -359,42 +477,80 @@ type comfyHistory struct {
 // awaitHistory polls until ComfyUI reports the queued prompt done (success or error), bounded by
 // ctx — the same overall budget submit's caller set, so a generation that never finishes is cut
 // off by the request's own timeout rather than looping forever.
+//
+// A retryable answer here is waited out exactly as submit waits one out, and the reason is a
+// message a caller actually received (ADR 0072 欠落 9): a box swapped out mid-poll made the
+// gateway answer `503 engine_waking`, whose own text ends in "retry" — and this loop returned it
+// as a failure without retrying anything. Generation is 47-78 seconds cold (measured), so the
+// window in which the box can change under a poll is wide open, not theoretical.
+//
+// What a retry cannot recover is the QUEUE: a restarted ComfyUI holds no history for a prompt id
+// the previous process accepted, so once a wake has been seen, a 200 that does not carry this
+// prompt means the work is gone. That is reported rather than polled for, because the alternative
+// is silence until the request's whole 16-minute budget runs out.
 func (p *comfyProvider) awaitHistory(ctx context.Context, conn EngineConn, promptID string) (comfyHistory, error) {
+	lastWaking, sawWaking := "", false
 	for {
 		httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, sdcppURL(conn, "/history/"+url.PathEscape(promptID)), nil)
 		if err != nil {
 			return comfyHistory{}, err
 		}
 		httpReq.Header.Set("Authorization", "Bearer "+conn.Token)
-		body, status, _, err := engineHTTPAttempt(p.client, httpReq)
+		body, status, retryAfter, err := engineHTTPAttempt(p.client, httpReq)
 		if err != nil {
 			if ctx.Err() != nil {
-				return comfyHistory{}, fmt.Errorf("waiting for the image engine timed out: %w", ctx.Err())
+				return comfyHistory{}, comfyPollTimedOut(lastWaking, ctx.Err())
 			}
 			return comfyHistory{}, err
 		}
-		if status >= 300 {
+		wait := comfyPollEvery
+		switch {
+		case status >= 300 && !sdcppRetryable(status, body):
 			return comfyHistory{}, fmt.Errorf("the image engine's /history answered %d %s: %s",
 				status, http.StatusText(status), sdcppErrText(body))
-		}
-		var byID map[string]comfyHistory
-		if err := json.Unmarshal(body, &byID); err != nil {
-			return comfyHistory{}, fmt.Errorf("the image engine's /history answer was not JSON: %w", err)
-		}
-		if hist, ok := byID[promptID]; ok {
-			if hist.Status.StatusStr == "error" {
-				return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s", comfyErrorMessages(hist))
+		case status >= 300:
+			lastWaking, sawWaking = sdcppErrText(body), true
+			// The gateway's own Retry-After, not the poll interval: it is answering for a box
+			// that is being started, and asking every second only adds requests to a wake.
+			wait = retryAfter
+		default:
+			var byID map[string]comfyHistory
+			if err := json.Unmarshal(body, &byID); err != nil {
+				return comfyHistory{}, fmt.Errorf("the image engine's /history answer was not JSON: %w", err)
 			}
-			if hist.Status.Completed {
-				return hist, nil
+			hist, known := byID[promptID]
+			if known {
+				if hist.Status.StatusStr == "error" {
+					return comfyHistory{}, fmt.Errorf("the image engine failed the request: %s", comfyErrorMessages(hist))
+				}
+				if hist.Status.Completed {
+					return hist, nil
+				}
+			}
+			// An UNKNOWN prompt id is normal while the picture is being made — ComfyUI's history
+			// holds finished prompts only, and the queued one lives in /queue. It stops being
+			// normal once this engine has restarted under us.
+			if !known && sawWaking {
+				return comfyHistory{}, fmt.Errorf(
+					"the image engine restarted while this picture was being made, and the queued request did not survive it (%s)"+
+						" — ask again; nothing was generated", lastWaking)
 			}
 		}
 		select {
 		case <-ctx.Done():
-			return comfyHistory{}, fmt.Errorf("waiting for the image engine timed out: %w", ctx.Err())
-		case <-time.After(comfyPollEvery):
+			return comfyHistory{}, comfyPollTimedOut(lastWaking, ctx.Err())
+		case <-time.After(wait):
 		}
 	}
+}
+
+// comfyPollTimedOut names the engine's own last word when the wait ran out during a wake, so a
+// timeout that happened BECAUSE the box was being replaced does not read as a stalled generation.
+func comfyPollTimedOut(lastWaking string, err error) error {
+	if lastWaking == "" {
+		return fmt.Errorf("waiting for the image engine timed out: %w", err)
+	}
+	return fmt.Errorf("waiting for the image engine timed out while it was still starting (%s): %w", lastWaking, err)
 }
 
 // comfyErrorMessages renders ComfyUI's execution_error message list, capped: it carries a full

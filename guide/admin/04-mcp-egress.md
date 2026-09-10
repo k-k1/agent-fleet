@@ -129,6 +129,32 @@ Where the figure came from is printed with it, and the three are not equally str
 | a weights-only floor | Derived from the file sizes: a **floor**, with nothing for the context. "At least this much". |
 | unknown | Nobody measured it. 🔴 **That is not the same as saying it fits.** |
 
+### Taking models in, and what that has to do with tenants
+
+Taking a model in from Hugging Face / Civitai / a URL — putting it in the bucket and creating a
+catalogue row — can be started by a **super_admin only**, by default. Where the operator grants it
+to a tenant, that tenant's **tenant_admins can take models in too** (Admin modal → the tenant →
+"Limits & idle" → **Inference engine model ingest**).
+
+The grant covers **starting an ingest and nothing else**. These four stay super_admin whether it is
+granted or not:
+
+- **Enabling** a model (making it something members can choose)
+- Changing the image role's **selected checkpoint**
+- **Forgetting** a row
+- Registering the deployment's **Hugging Face token**
+
+🔴 **The catalogue is one per deployment and is not split per tenant. The id of a model taken in is
+visible from every tenant.** That is deliberate: the GPU box is shared between tenants, and every
+enabled model is synced onto it at every start — so a per-tenant catalogue would push the cold start
+past ten minutes **at about five tenants, even with one model each** (measured; the sync is serial at
+roughly 159 MB/s). The boundary worth having is the GPU box, not the catalogue. **Do not read this
+grant as isolation between tenants.**
+
+Who accepted which licence is kept on the row: **which tenant, which person, when, and which
+licence** — the same four in the audit log. A model taken in by a super_admin has no tenant against
+it, which means "the operator accepted on behalf of the whole deployment".
+
 ### Reading the current state
 
 Below the setting is what that engine is doing right now. **A line that is not there means "not

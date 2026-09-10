@@ -402,60 +402,6 @@ func (e *engineRuntimeState) publishActiveSet(ctx context.Context) error {
 	return nil
 }
 
-// --- the seed (decision 7) --------------------------------------------------------
-
-// seedEngineCatalog creates the catalogue row a deployment upgrading from ADR 0071 already has
-// in its stack, so that CP comes up serving exactly what it served before.
-//
-// It runs only when the role's catalogue is EMPTY. Anything else would overwrite an
-// administrator's own choices with a CloudFormation parameter on every restart, which is
-// precisely the direction this ADR is moving away from.
-//
-// ⚠️ The seed and the S3 layout move go together (decision 2(f)). The row points at
-// `modelS3Key` verbatim, so a deployment that moves `image/x.safetensors` under
-// `image/checkpoints/` without updating that parameter seeds a row whose file is not there,
-// and the first start fails in the fetch sidecar rather than at deploy time.
-func seedEngineCatalog(ctx context.Context, st store.EngineModelStore, d engineDef) error {
-	if st == nil || strings.TrimSpace(d.ModelS3Key) == "" || len(d.Models) == 0 {
-		return nil
-	}
-	rows, err := st.ListEngineModels(ctx, d.Key)
-	if err != nil {
-		return err
-	}
-	if len(rows) > 0 {
-		return nil
-	}
-	id := strings.TrimSpace(d.Models[0])
-	if id == "" {
-		return nil
-	}
-	m := store.EngineModel{
-		Role: d.Key, ID: id,
-		Kind:  engineSeedKind(d),
-		Files: []store.EngineModelFile{{S3Key: strings.TrimSpace(d.ModelS3Key)}},
-		// Enabled AND started with: this is the model the deployment is already running, so
-		// seeding it switched off would turn an upgrade into an outage.
-		Enabled: true, Selected: d.api() == engineAPIImages, Default: d.api() == engineAPIChat,
-		ContextTokens: d.ContextTokens, MaxOutputTokens: d.MaxOutputTokens,
-		Description: "seeded from the 60-engines stack (ADR 0072 decision 7)",
-	}
-	if err := st.PutEngineModel(ctx, m); err != nil {
-		return err
-	}
-	log.Printf("engines: %s catalogue seeded from the stack: %s -> %s", d.Key, id, d.ModelS3Key)
-	return nil
-}
-
-// engineSeedKind names what the stack staged, from the API family rather than from the file
-// name: `chat` is a GGUF llama.cpp loads, `images` is a checkpoint sd-server loads.
-func engineSeedKind(d engineDef) string {
-	if d.api() == engineAPIImages {
-		return "checkpoint"
-	}
-	return "gguf"
-}
-
 // --- the shapes the Agent and the panel read --------------------------------------
 
 // engineCatalogModelRow is one model as /internal/engine/catalog reports it. The Agent turns
@@ -598,6 +544,16 @@ func engineAdminModelRow(m store.EngineModel) map[string]any {
 	if m.LicenseAcceptedBy != "" {
 		row["license_accepted_by"] = m.LicenseAcceptedBy
 		row["license_accepted_at"] = m.LicenseAcceptedAt
+		// Under whose grant it was accepted, and to what (ADR 0072 open question 11). Both
+		// stay ABSENT rather than empty: no tenant means a super_admin accepted for the
+		// deployment, which the panel draws differently from "a tenant did", and a blank
+		// licence means nobody wrote one down rather than "no terms".
+		if m.LicenseAcceptedTenant != "" {
+			row["license_accepted_tenant"] = m.LicenseAcceptedTenant
+		}
+		if m.LicenseAcceptedLicense != "" {
+			row["license_accepted_license"] = m.LicenseAcceptedLicense
+		}
 	}
 	if m.CommercialUse != "" {
 		row["commercial_use"] = m.CommercialUse
