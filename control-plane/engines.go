@@ -167,6 +167,11 @@ type engineRuntimeState struct {
 	// the next start rather than trusting a note it wrote before.
 	appliedMu    sync.Mutex
 	appliedClass string
+	// classApplyErr is why the last write to the capacity provider failed, "" when the last one
+	// succeeded. In memory for the same reason appliedClass is, and the absence of one is never
+	// read as "it worked": a restarted CP has applied nothing and must not claim a failure it
+	// did not see. What makes that gap safe is that a start applies the rung again anyway.
+	classApplyErr string
 	// swapWaitSince is when this process first refused to start because a box of the previous
 	// rung was still registered. It bounds that wait (engineClassSwapWaitMax): the end of the
 	// wait belongs to AWS, and `scaleInAfter: -1` would otherwise make it never end.

@@ -209,6 +209,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// is the sentence that stops a temporary experiment from becoming a permanent bill
 		// (decision 7), and it must not depend on a client remembering to compute it.
 		row["class_is_default"] = sel.ID == def.ID
+		// The rung above is what was CHOSEN; this is why the capacity provider does not hold it.
+		// Omitted whenever this process has nothing to report, which is what the panel reads as
+		// "no claim" — never as "it was applied" (see classApplyError). It is what turns the
+		// picker's dead end into a retry: without it, re-selecting the stored rung is "no change"
+		// and the Console sends nothing at all.
+		if msg := e.classApplyError(); msg != "" {
+			row["class_apply_error"] = msg
+		}
 		if need, source, id := engineVramDemand(catalogue); source != engineVramUnknown {
 			// What the largest enabled model wants, and how well that is known. A maximum,
 			// not a sum: one model is in VRAM at a time (`--models-max 1`, one checkpoint).

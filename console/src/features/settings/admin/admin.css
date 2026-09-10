@@ -470,11 +470,15 @@
 
 /* A fixed label column so the inputs line up. The labels are single words on purpose — what
    each field means, and the rule that the window only counts in pairs, is the paragraph under
-   the form; a label long enough to explain itself wraps to two lines in both locales. */
+   the form; a label long enough to explain itself wraps to two lines in both locales.
+   🔴 Two lines is the budget, and 8ch broke it: measured on the real bundle at 12px, the column
+   was 61px and「コンテキストウィンドウ」and "licence URL (optional)" each took THREE, which
+   with align-items:center floats their input halfway down a label taller than itself. 10ch is
+   the smallest width at which every label in both locales fits in two. */
 .engines-model-add-row > span,
 .engines-search-row > span,
 .engines-hf-row > span {
-  flex: 0 0 8ch;
+  flex: 0 0 10ch;
   color: var(--dialog-muted);
 }
 

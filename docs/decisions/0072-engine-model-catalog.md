@@ -2814,3 +2814,57 @@ previous process accepted, so once `engine_waking` has been seen, a 200 that doe
 prompt is reported at once as a lost queue. Adding the retry alone would have turned 欠落 9 from
 "says retry and does not retry" into **"stays silent for sixteen minutes"** — the poll would keep
 receiving 200s and report nothing until the request's whole budget ran out.
+
+## Follow-up — the ingest form was rendered for the first time (2026-09-10)
+
+This closes the last line of "P2's remaining work 4 and 5": **"not measured: what the Console's
+ingest form actually renders as"**. **The wire is unchanged.** One defect was found by looking,
+and only that was fixed.
+
+**Why it could not be reached before.** The admin modal's position is React state, not
+localStorage (`rootSection` in `AdminTab`), so "already open" cannot be seeded — the only road is
+to actually click **account menu → Admin → "Inference engines" in the left rail**. With that
+known the rest is the existing README harness: copy `console/scripts/shots/server.mjs`, set
+`super_admin` on `/api/tenants`, add fixtures for `/api/admin/engines` and `…/ingest`,
+`…/ingest/files`, `…/ingest/resolve`, `…/ingest/search` and `…/hf-token`, and let headless
+Chromium (raw CDP) draw the **real `npm run build` bundle**. **The harness is not in the
+repository** — it is a throwaway under `~/.cache`.
+
+**Seen for the first time** (the image role on comfy, the llm role on llama.cpp):
+
+- The ingest road runs end to end: repository → "look it up" → the file listing → a pick →
+  resolve → accepting the licence → "ingest". The id is proposed as `flux1-dev` from
+  `flux1-dev-fp8.safetensors`, with the quantisation tag dropped.
+- **Decision 2's hint behaves as designed.** The `Flux.1 D` that `resolve` returned does **not**
+  go into the picker; it rides beside it as "the repository calls this 'Flux.1 D'". The picker's
+  options are `base_models` (`sdxl` / `flux1` / `flux2` / …), i.e. the CP's spelling.
+- **Decision 3's pair holds on the real bundle.** With `context_length: 262144` from the llm
+  role's resolve, the window fills with 262144 and the output-cap select lands on "1/8 (32768)".
+  Half-filling the pair is not reachable.
+- The register form's split model: `file_flags` becomes the "part" select, one box per file.
+- The red non-commercial sentence, and the repair select on a row with no family.
+
+**The one defect, and it needed a render.** The forms' label column is a fixed `8ch`, which at
+12px is **61px**. Measured, **「コンテキストウィンドウ」 and "licence URL (optional)" each wrap
+to THREE lines**; with `align-items: center` the shorter input then floats halfway down a label
+taller than itself and the form goes ragged. That is over the budget the CSS itself states ("wraps
+to two lines"). **Widened to `10ch` (76px)** — measured across ja/en × image/llm: every label
+fits in two lines, nothing overflows.
+
+**Three false defects the harness itself produced** (each looked like a broken screen):
+
+- **The output cap looked stuck at empty.** The harness's fault: it grabbed the second `<select>`
+  **by index**, and the llm role has no family picker, so that was the output cap. Setting a value
+  no option carries leaves `selectedIndex = -1`, and the `change` handler writes the empty string
+  back. **Grabbed by label, it fills correctly.** A harness that addresses the DOM by index lies
+  on a screen whose fields differ per role.
+- **A clipped screenshot painted a glyph from elsewhere at the clip's left edge.** An artifact of
+  `Page.captureScreenshot`'s `clip`: `getBoundingClientRect` puts no element there, and a tighter
+  re-capture of the same region is empty. **A smudge is settled by a rectangle or a re-capture,
+  never by eye.**
+- **🔴 rendered as tofu.** This container ships no emoji font at all (`fc-match 🔴` falls to
+  DejaVu Sans); it says nothing about a user's browser. **Headless proves nothing about fonts.**
+
+**Still not said**: how it reads against real Hugging Face / Civitai answers (the fixtures are
+invented to the wire's shape), the refusal shown for a gated repository with no token, and phone
+width.
