@@ -91,10 +91,10 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # `test -x` では捕まらない壊れ方があるので import まで踏む: 0.1.4 の依存宣言は
 # `mcp[cli]>=1.23.0` と上限が無く、mcp 2.0.0 が出た今ビルドすると 2.0.0 が入って
 # `mcp.server.fastmcp` を失い、実行時に ModuleNotFoundError で即死した（実測）。
-# 0.1.8 は `<2.0.0` で上限を持ち 1.x に留まる。0.2.0 は逆に `>=2.0.0,<3.0.0` へ移り、
-# mcp 2.x 側の API へ移植済み（system python 3.11 + mcp 2.1.1 の解決で下の import が
-# 通ることを bump 時に実測）。ピンは版だけでなく解決結果まで含めて検証する。
-ARG CLOUDWATCH_MCP_VERSION=0.2.0
+# 0.1.8 は `<2.0.0` で上限を持ち 1.x に留まる。0.2.0 以降は逆に `>=2.0.0,<3.0.0` へ移り、
+# mcp 2.x 側の API へ移植済み（0.2.1 は system python 3.13 + mcp 2.2.0 の解決で下の
+# import が通ることを bump 時に実測）。ピンは版だけでなく解決結果まで含めて検証する。
+ARG CLOUDWATCH_MCP_VERSION=0.2.1
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -113,7 +113,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # `/usr/bin/python3` へのリンクなので、interpreter の major が動いた日に**リンクは切れず、
 # 黙って新しい python で起動して site-packages を見失う**——`test -x` は通ってしまう型で
 # ある（docs/decisions/0068 決定 4）。import 名は実インストールで確認済み。
-ARG AWS_MCP_PROXY_VERSION=1.6.5
+ARG AWS_MCP_PROXY_VERSION=1.6.6
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     UV_TOOL_DIR=/usr/local/share/uv/tools UV_TOOL_BIN_DIR=/usr/local/bin \
     UV_PYTHON_DOWNLOADS=never UV_NO_CACHE=1 \
@@ -202,7 +202,7 @@ RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
 # volume; the Control Plane only resolves non-secret host bookmarks. arch auto-detected.
 # 版は ARG でピン止め（versioned URL — かつては latest URL で未ピンだった。docs/log/35
 # §35.9-7(c)。bump は下の ARG を書き換えて再ビルド）。
-ARG AWSCLI_VERSION=2.36.41
+ARG AWSCLI_VERSION=2.36.42
 ARG SESSION_MANAGER_PLUGIN_VERSION=1.2.835.0
 RUN if [ "${BAKE_OPTIONAL_TOOLS}" = "1" ]; then set -eux; \
     arch="$(dpkg --print-architecture)"; \
@@ -301,9 +301,9 @@ RUN if [ "${BAKE_RTK}" = "1" ] && [ "${BAKE_AGENT_CLIS}" = "1" ]; then set -eux;
 # 換えて再ビルド → 各 Workspace を Stop→Start。latest の確認は `npm view <pkg> version`。
 # 未ピン時代は同一 RUN 行が Docker レイヤキャッシュに当たり、再ビルドしても古い版の
 # ままになる罠があった（ピン止めなら ARG 変更が確実にキャッシュを破る）。
-ARG CLAUDE_CODE_VERSION=2.1.266
+ARG CLAUDE_CODE_VERSION=2.1.267
 ARG OPENCODE_VERSION=1.18.30
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.154.0
 ARG COPILOT_VERSION=1.0.83
 RUN if [ "${BAKE_AGENT_CLIS}" = "1" ]; then \
       npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \

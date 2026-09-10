@@ -3,6 +3,12 @@
 [Agent Fleet](https://github.com/k-k1/agent-fleet-dist) のリリースノート索引です。各項目はリリース
 ページへのリンクで、完全なノートはそちらにあります。English: [CHANGELOG.md](CHANGELOG.md).
 
+## [0.18.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.18.0) — 2026-09-10
+
+セッションが自分でセッションを起こして世話できるようになり、自前エンジンのモデルを
+Console から離れずに探して取り込めるようになりました。画像生成は配備自身の ComfyUI で
+動かせるようになり、配備ごとに色と名前を付けて複数の環境を一目で見分けられます。
+
 ## [0.17.0](https://github.com/k-k1/agent-fleet-dist/releases/tag/v0.17.0) — 2026-09-09
 
 ECS の配備で、推論をフリート自身の GPU で動かせるようになりました。インスタンスは誰かが使って
