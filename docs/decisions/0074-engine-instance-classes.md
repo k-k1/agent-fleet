@@ -773,5 +773,6 @@ is one sentence on the panel saying that a comfy engine may hold more than one.
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).
   - Added 2026-09-10 from the Console review above: counting the KV cache in decision 6's demand
-    (finding 1), and saying on the panel that a comfy engine may hold several models at once
-    (finding 2).
+    (finding 1). Finding 2 — saying on the panel that a comfy engine may hold several models at
+    once — is ✅ **done the same day** (`admin.engines_class_vram_many`, shown only where the
+    provider is `comfy`); the figure itself stays a maximum.

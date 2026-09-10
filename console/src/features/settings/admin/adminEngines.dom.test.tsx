@@ -243,6 +243,60 @@ describe("EnginesAdminView", () => {
     );
   });
 
+  // ⚠️ The comparison is a MAXIMUM, not a sum, and on comfy that is conservative rather than
+  // exact: a checkpoint is chosen per request and loaded ones stay cached, so several can be
+  // resident. Said in a sentence — turning the figure into a sum would warn on every start of a
+  // deployment with four enabled models, which is the warning nobody reads.
+  it("says a per-request engine may hold several models, and says it only there", async () => {
+    const enabled = { model_rows: [{ id: "sdxl", enabled: true, vram_need_mib: 7000, vram_need_source: "declared" }], vram_need_mib: 7000, vram_need_source: "declared", vram_need_model: "sdxl", vram_fits: true };
+    api.mockResolvedValue({ engines: [withClasses({ provider: "comfy", ...enabled })] });
+    await mount();
+    expect(host!.querySelector(".engines-class")!.textContent).toContain("複数が同時に載る");
+
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({ engines: [withClasses({ provider: "sdcpp", ...enabled })] });
+    await mount();
+    // sd-server holds ONE checkpoint chosen at start, so the sentence would be false there.
+    expect(host!.querySelector(".engines-class")!.textContent).not.toContain("複数が同時に載る");
+  });
+
+  // The licence facts of a row (ADR 0072 decision 10). All three are things the CP already
+  // sends and the panel used to drop, and the last one is the reason this is not cosmetic: a
+  // blank where every ingested row names a licence reads as "no restrictions".
+  it("shows the licence, who accepted it, and says when nothing recorded one", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          model_rows: [
+            {
+              id: "flux-dev",
+              enabled: true,
+              license: "other",
+              license_name: "flux-1-dev-non-commercial-license",
+              commercial_use: "no",
+              license_accepted_by: "ops@example.com",
+              license_accepted_at: "2026-09-09T02:00:00Z",
+            },
+            { id: "seeded", enabled: true },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const li = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model")).find((e) =>
+        e.textContent?.includes(id),
+      ) as HTMLElement;
+    // 🔴 In the head next to the state, not buried in the meta line: this is the one fact that
+    // can make offering the model somebody's own breach.
+    expect(li("flux-dev").querySelector(".engines-model-tag.warn")!.textContent).toBe("非商用");
+    expect(li("flux-dev").textContent).toContain("flux-1-dev-non-commercial-license");
+    expect(li("flux-dev").textContent).toContain("ops@example.com");
+    // A seeded row cannot know a licence and the hand-registration form does not ask.
+    expect(li("seeded").textContent).toContain("ライセンスの記録なし");
+    expect(li("seeded").querySelector(".engines-model-tag.warn")).toBeNull();
+  });
+
   it("says so rather than showing an empty screen when nothing is deployed", async () => {
     api.mockResolvedValue({ engines: [] });
     await mount();
@@ -1652,10 +1706,41 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(hit.textContent).toContain("316");
 
     await click(hit.querySelector("button") as HTMLButtonElement);
-    // Picking only fills the field — nothing is resolved and nothing is started.
+    // Picking fills the field AND asks what is in that repository: the choice has already been
+    // made, so 「調べる」 was a second confirmation of it. Nothing is STARTED — this is the
+    // same read-only listing the button ran.
     expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
     expect(host!.querySelector(".engines-search-hits")).toBeNull();
-    expect(apiJSON).toHaveBeenCalledTimes(1);
+    expect(apiJSON).toHaveBeenCalledTimes(2);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "black-forest-labs/FLUX.1-dev", file: "", revision: "" } },
+    });
+  });
+
+  // 🔴 The trap that comes with resolving on the pick: `repo` still holds the PREVIOUS pick in
+  // the handler that set the new one, so a request built from the state asks about the model
+  // somebody chose a moment ago — with the new name on screen and no error anywhere.
+  it("asks about the repository just picked, not the one still in the field", async () => {
+    const hits = ["a/first", "b/second"].map((ref) => ({ source: "hf", ref, name: ref }));
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({ hits });
+    await mount();
+    await openIngest();
+
+    await typeInto(field("探す")!, "x");
+    await click(button("検索"));
+    await click(host!.querySelector(".engines-search-hits li button") as HTMLButtonElement);
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "a/first", file: "", revision: "" } },
+    });
+
+    await click(button("検索"));
+    const second = host!.querySelectorAll(".engines-search-hits li")[1];
+    await click(second.querySelector("button") as HTMLButtonElement);
+    expect(field("リポジトリ")!.value).toBe("b/second");
+    expect(apiJSON).toHaveBeenLastCalledWith("api/admin/engines/image/ingest/files", "POST", {
+      source: { hf: { repo: "b/second", file: "", revision: "" } },
+    });
   });
 
   // The three kinds of fact on a hit are told apart by kind, not by a "・": twenty results as

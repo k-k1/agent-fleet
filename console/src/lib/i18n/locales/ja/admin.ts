@@ -173,6 +173,10 @@ export const admin = {
   "admin.engines_class_vram_ok": "有効なモデルのうち最大は {id} で {n} MiB（{src}）、このクラスは {m} MiB です。",
   "admin.engines_class_vram_over": "有効なモデルのうち最大は {id} で {n} MiB（{src}）ですが、このクラスは {m} MiB です。載らない可能性があります。",
   "admin.engines_class_vram_unknown": "有効なモデルが必要とする VRAM は分かりません（誰も測っていません）。「収まる」という意味ではありません。",
+  // ⚠️ 上の比較は「和」ではなく「最大」である（VRAM に載るのは 1 つずつだから）。llm と
+  // sd-server には正確だが、comfy は要求ごとに選んで読み込み済みを保持するので保守的すぎる。
+  // 数字を和に変えるのではなく、この 1 文を足す——和にすると毎回警告が出て誰も読まなくなる。
+  "admin.engines_class_vram_many": "このエンジンは要求ごとにチェックポイントを選び、読み込んだものを VRAM に保持します。余裕があれば複数が同時に載るので、上の数字はそのうち最大の 1 つです。",
   "admin.engines_vram_src_declared": "実測",
   "admin.engines_vram_src_floor": "重みだけの下限",
   "admin.engines_vram_src_unknown": "不明",
@@ -180,6 +184,12 @@ export const admin = {
   "admin.engines_vram_confirm_go": "承知のうえで有効にする",
   "admin.engines_model_vram": "VRAM {n} MiB",
   "admin.engines_model_vram_floor": "VRAM 少なくとも {n} MiB（重みだけの下限）",
+  // 行が持ちうるライセンスの事実（ADR 0072 決定 10）。「記録なし」は空白にせず書く——seed の
+  // 行はライセンスを知りようがなく、手登録のフォームは訊いていない。取り込んだ行が必ず名前を
+  // 出している中の空白は「制限なし」と読めてしまう。
+  "admin.engines_model_noncommercial": "非商用",
+  "admin.engines_model_license_by": "同意 {who} / {when}",
+  "admin.engines_model_license_unknown": "ライセンスの記録なし",
   // 推定であることを言う。S3 から箱へは実測 104〜147 MB/s で、遅いほうを使っている。
   // ルーターの役では有効なモデルを全部同期するので、これがそのまま次のコールドスタートに乗る。
   "admin.engines_model_sync": "同期 +{n} 秒（推定）",
