@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { execSync } from "node:child_process";
-import { defineConfig } from "vite";
+import { defineConfig, searchForWorkspaceRoot } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
 
@@ -74,6 +74,25 @@ function afPdfjsAssets(version) {
   };
 }
 
+// A worktree usually shares the parent clone's console/node_modules through a symlink
+// (AGENTS.md). Vite resolves an `import … from "pkg/file?url"` to the link's *target*,
+// and the default `server.fs.allow` is this project root alone — so every asset the
+// viewer imports by URL came back as `Error: Denied ID …` and read as a broken viewer.
+// Allowing node_modules' real path as well is a no-op for a real install (it is already
+// inside the root) and makes the shared tree behave like one.
+function afFsAllow() {
+  const root = fileURLToPath(new URL(".", import.meta.url));
+  // searchForWorkspaceRoot is what Vite itself defaults to, so a real install keeps
+  // exactly the stock bounds.
+  const allow = [searchForWorkspaceRoot(root)];
+  try {
+    allow.push(fs.realpathSync(path.join(root, "node_modules")));
+  } catch {
+    /* no node_modules yet — nothing to allow beyond the root */
+  }
+  return allow;
+}
+
 // The Console is served as static files by the Control Plane and may live behind
 // a path-stripping proxy (Tailscale Funnel + Caddy strips /agent-fleet). All asset
 // URLs must therefore be *relative*, so we set base:'./'. The app additionally
@@ -88,6 +107,7 @@ export default defineConfig({
   // Build id available to the client as a compile-time constant (src/lib/version.ts).
   define: { __AF_BUILD__: JSON.stringify(AF_BUILD), __AF_PDFJS_VERSION__: JSON.stringify(pdfjsVersion) },
   plugins: [react(), afVersionManifest(AF_BUILD), afPdfjsAssets(pdfjsVersion)],
+  server: { fs: { allow: afFsAllow() } },
   resolve: {
     alias: [
       { find: /^mathjax-full(\/.*)?$/, replacement: mathStub },
