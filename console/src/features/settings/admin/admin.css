@@ -498,6 +498,21 @@
   border-left: 2px solid var(--border2);
 }
 
+/* The family picker on a row that is missing one. It sits under the warning it answers, so it
+   reads as the fix rather than as one more field — and it only ever appears there: a row whose
+   family is already declared shows it in the meta line and needs no control. */
+.engines-model-family {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-family > span {
+  color: var(--dialog-muted);
+}
+
 .engines-model-add-actions {
   display: flex;
   gap: 6px;

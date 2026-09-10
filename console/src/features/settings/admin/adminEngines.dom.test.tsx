@@ -961,6 +961,25 @@ describe("EnginesAdminView", () => {
       e.textContent?.includes("モデルファミリー"),
     );
     expect(warnings.length).toBe(1);
+
+    // The FIX sits under the warning it answers, and only there — the row that already declares
+    // one shows it in its meta line and needs no control.
+    const pickers = Array.from(host!.querySelectorAll(".engines-model-family"));
+    expect(pickers.length).toBe(1);
+
+    // 🔴 One field, not the whole row. Before this the only way to give a row a family was to
+    // register it again from scratch: that lands it disabled and, for a split model, means
+    // re-typing three S3 keys to change one word.
+    apiJSON.mockResolvedValue(row({ provider: "comfy", base_models: ["sdxl"], has_models: true, model_rows: [] }));
+    const sel = pickers[0].querySelector("select")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel, "sdxl");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/seeded", "PUT", {
+      base_model: "sdxl",
+    });
   });
 
   // Half a window is worse than none: opencode reads an output cap of 0 as 32,000, so a 32k

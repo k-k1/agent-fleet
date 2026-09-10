@@ -308,6 +308,9 @@ type EngineModelStore interface {
 	SetEngineModelSelected(ctx context.Context, role, id string) (bool, error)
 	// SetEngineModelDefault is the same exclusivity for the llm role's default model.
 	SetEngineModelDefault(ctx context.Context, role, id string) (bool, error)
+	// SetEngineModelBaseModel corrects the declared checkpoint family of one row, which is the
+	// one field a row can be missing while looking complete (ADR 0072 decision 2).
+	SetEngineModelBaseModel(ctx context.Context, role, id, baseModel string) (bool, error)
 	DeleteEngineModel(ctx context.Context, role, id string) (bool, error)
 }
 

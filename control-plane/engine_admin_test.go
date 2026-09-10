@@ -593,3 +593,71 @@ func TestEngineAdminRowCarriesTheFamilyVocabulary(t *testing.T) {
 		t.Error("sdcpp flagged a row for a family it never reads")
 	}
 }
+
+// Giving an EXISTING row its family. Before this the only way was to register the whole row
+// again — which lands it disabled and, for a split model, means re-typing three S3 keys to
+// change one word. A seeded row is always in this state, because the seed cannot know a family.
+func TestEngineAdminModelBaseModelPatch(t *testing.T) {
+	st := testSettingsStore(t)
+	e := newTestComfyEngine(t, "http://127.0.0.1:1", &engineTestECS{})
+	e.settings, e.ctrl = st, nil
+	e.catalog = newEngineCatalog(st, "image")
+	a := engineAdminAPI{memberAuth{&manager{store: st}}, &engineRegistry{byKey: map[string]*engineRuntimeState{"image": e}}, st}
+
+	seeded := store.EngineModel{
+		Role: "image", ID: "seeded", Kind: "checkpoint", Enabled: true, Selected: true,
+		Files: []store.EngineModelFile{{S3Key: "image/checkpoints/sd_xl_base_1.0.safetensors"}},
+		// Everything a licence acceptance and an ingest wrote down. A read-modify-write through
+		// the register route would have to carry all of it back out and in again.
+		Source: "hf:stabilityai/x", LicenseName: "openrail", LicenseAcceptedBy: "u0",
+	}
+	if err := st.PutEngineModel(t.Context(), seeded); err != nil {
+		t.Fatal(err)
+	}
+
+	// A family that names no template is refused, exactly as at registration.
+	code, out := adminModel(t, a, "PUT", "image", "seeded", `{"base_model":"SDXL 1.0"}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf(`base_model="SDXL 1.0" = %d (%v), want 400`, code, out)
+	}
+
+	if code, out = adminModel(t, a, "PUT", "image", "seeded", `{"base_model":"sdxl"}`); code != http.StatusOK {
+		t.Fatalf("base_model=sdxl = %d (%v), want 200", code, out)
+	}
+	rows, err := st.ListEngineModels(t.Context(), "image")
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("list = %v, %v", rows, err)
+	}
+	if rows[0].BaseModel != "sdxl" {
+		t.Errorf("base_model = %q, want sdxl", rows[0].BaseModel)
+	}
+	// ⚠️ Nothing ELSE may move. The whole point of a targeted update is that a licence
+	// acceptance and a source survive a one-word correction.
+	if !rows[0].Enabled || !rows[0].Selected {
+		t.Errorf("the row was disabled or deselected by a family change: %+v", rows[0])
+	}
+	if rows[0].Source != "hf:stabilityai/x" || rows[0].LicenseAcceptedBy != "u0" {
+		t.Errorf("the ingest's own fields were lost: source=%q acceptedBy=%q", rows[0].Source, rows[0].LicenseAcceptedBy)
+	}
+	if len(rows[0].Files) != 1 || rows[0].Files[0].S3Key != "image/checkpoints/sd_xl_base_1.0.safetensors" {
+		t.Errorf("the files were lost: %+v", rows[0].Files)
+	}
+
+	// The row stops being flagged, which is what the panel reads.
+	mr, _ := a.row(t.Context(), e)["model_rows"].([]map[string]any)
+	if len(mr) != 1 || mr[0]["base_model_missing"] == true {
+		t.Errorf("still flagged after the correction: %v", mr)
+	}
+
+	// A LoRA is exempt here as it is at registration: its base_model is a compatibility target.
+	if err := st.PutEngineModel(t.Context(), store.EngineModel{
+		Role: "image", ID: "w1", Kind: "lora",
+		Files: []store.EngineModelFile{{S3Key: "image/loras/w.safetensors"}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	e.catalog.invalidate()
+	if code, out = adminModel(t, a, "PUT", "image", "w1", `{"base_model":"SDXL 1.0"}`); code != http.StatusOK {
+		t.Fatalf("a LoRA's base_model = %d (%v), want 200", code, out)
+	}
+}

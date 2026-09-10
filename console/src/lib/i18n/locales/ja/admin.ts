@@ -80,7 +80,7 @@ export const admin = {
   "admin.engines_model_add_part_whole": "チェックポイント（単一ファイル）",
   "admin.engines_model_add_part_more": "ファイルを追加する",
   "admin.engines_model_add_part_drop": "この行を削除",
-  "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。登録し直してファミリーを選んでください。",
+  "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。下から選んでください。",
   "admin.engines_model_add_desc": "説明",
   // 🔴 コンテキストウィンドウは「両方か、どちらも書かないか」。context だけだと opencode は
   // 出力上限 0 を 32,000 と読み、32k のモデルが使えるウィンドウ 768 トークンになる

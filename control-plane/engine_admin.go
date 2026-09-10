@@ -574,6 +574,12 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		Enabled  *bool `json:"enabled"`
 		Selected *bool `json:"selected"`
 		Default  *bool `json:"default"`
+		// BaseModel corrects the declared checkpoint family, and is the only FIELD this route
+		// edits rather than a flag it flips. It is here because a row can be missing one while
+		// looking complete in every other way — a seeded row always is, since the seed cannot
+		// know a family — and the alternative is registering the whole row again from scratch,
+		// which for a split model means re-typing three S3 keys to change one word.
+		BaseModel *string `json:"base_model"`
 		// ConfirmVram is "I have read that this may not fit" (ADR 0074 decision 6). Required
 		// only when the model's declared demand exceeds the chosen instance class.
 		ConfirmVram bool `json:"confirm_vram"`
@@ -601,6 +607,26 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 		action string
 	)
 	switch {
+	case b.BaseModel != nil:
+		want := strings.TrimSpace(*b.BaseModel)
+		isLora := false
+		for _, m := range e.catalog.list(ctx) {
+			if m.ID == id {
+				isLora = engineModelIsLora(m)
+			}
+		}
+		// The same rule the register route applies, for the same reason: a family that names no
+		// template leaves a row that can be enabled, appears by name in generate_image's list,
+		// and is refused only at generation.
+		if !isLora && !engineBaseModelValid(e.def.Provider, want) {
+			writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, fmt.Sprintf(
+				"base_model must be one of %s (this engine runs %s, which picks a workflow by family"+
+					" and will not guess one); %q is not a family",
+				strings.Join(engineBaseModelsFor(e.def.Provider), ", "), e.def.Provider, want)})
+			return
+		}
+		found, err = a.mgr.store.SetEngineModelBaseModel(ctx, key, id, want)
+		action = "base_model " + want
 	case b.Selected != nil && *b.Selected:
 		found, err = a.mgr.store.SetEngineModelSelected(ctx, key, id)
 		action = "select"
@@ -616,7 +642,7 @@ func (a engineAdminAPI) putModel(w http.ResponseWriter, r *http.Request, ident s
 	default:
 		// An empty body must not be read as "switch it off", for the same reason the mode
 		// route refuses one.
-		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected or default is required"})
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "enabled, selected, default or base_model is required"})
 		return
 	}
 	if err != nil {

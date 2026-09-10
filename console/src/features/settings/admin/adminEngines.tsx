@@ -363,7 +363,7 @@ export function EnginesAdminView() {
    *  the whole engine row, so the panel takes its new state from the server rather than
    *  guessing at the exclusivity rule — selecting one model clears another, and reproducing
    *  that here would be a second copy of a rule that has to be enforced in a transaction. */
-  const setModel = async (key: string, id: string, patch: Record<string, boolean>) => {
+  const setModel = async (key: string, id: string, patch: Record<string, boolean | string>) => {
     await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
   };
 
@@ -645,13 +645,16 @@ function EngineModels({
 }: {
   row: EngineRow;
   busy: string;
-  onChange: (id: string, patch: Record<string, boolean>) => void;
+  onChange: (id: string, patch: Record<string, boolean | string>) => void;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
   const models = row.model_rows || [];
   const isImage = row.api === "images";
+  // Only a provider that dispatches on the family declares one, and only then is there
+  // anything to choose between (see EngineRow.base_models).
+  const families = row.base_models || [];
   // Which row is mid-confirm, and whether the bytes go too. Deleting gigabytes is not something
   // a single click should do, and "forget the row" and "delete the file" have to be told apart
   // BEFORE the press rather than explained afterwards.
@@ -660,14 +663,14 @@ function EngineModels({
   // Which model is waiting on "yes, I know it may not fit" (ADR 0074 decision 6). The dialog is
   // raised HERE, before the request, because this is where the numbers are — the CP refuses the
   // unconfirmed call as well, for any other client.
-  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean> } | null>(null);
+  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean | string> } | null>(null);
   const cardMiB = row.class?.vram_mib || 0;
   /** True when this model's own demand is known AND larger than the card. `unknown` is not
    *  "too big": asking about every unmeasured model teaches people to click through the one
    *  that matters. */
   const tooBig = (m: EngineModel) =>
     cardMiB > 0 && m.kind !== "lora" && !!m.vram_need_mib && m.vram_need_mib > cardMiB;
-  const change = (m: EngineModel, patch: Record<string, boolean>) => {
+  const change = (m: EngineModel, patch: Record<string, boolean | string>) => {
     const loading = !!(patch.enabled || patch.selected || patch.default);
     if (loading && tooBig(m)) {
       setVramAsk({ id: m.id, patch });
@@ -748,7 +751,31 @@ function EngineModels({
                   list — and the request fails, because the provider will not guess a workflow
                   from a name. A seeded row is always in this state: the seed cannot know. */}
               {m.base_model_missing && (
-                <p className="form-err">{tr("admin.engines_model_no_family")}</p>
+                <>
+                  <p className="form-err">{tr("admin.engines_model_no_family")}</p>
+                  {/* The fix, right where the problem is stated. Before this the only way to
+                      give a row a family was to register the WHOLE row again — which for a
+                      split model means re-typing three S3 keys to change one word, and lands
+                      it disabled. The VRAM guard does not apply: declaring a family puts
+                      nothing on the card. */}
+                  {families.length > 0 && (
+                    <label className="engines-model-family">
+                      <span>{tr("admin.engines_model_add_family")}</span>
+                      <select
+                        value={m.base_model || ""}
+                        disabled={pending}
+                        onChange={(ev) => onChange(m.id, { base_model: ev.currentTarget.value })}
+                      >
+                        <option value="">{tr("admin.engines_model_add_family_pick")}</option>
+                        {families.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </>
               )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
