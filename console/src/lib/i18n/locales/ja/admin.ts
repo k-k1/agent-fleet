@@ -73,7 +73,7 @@ export const admin = {
   "admin.engines_model_add": "バケットのファイルを登録する",
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "キー",
-  "admin.engines_model_add_family": "モデルファミリー",
+  "admin.engines_model_add_family": "ファミリー",
   "admin.engines_ingest_family_hint": "リポジトリ側はこれを「{n}」と呼んでいます。表示名なので、対応するモデルファミリーを上から選んでください。",
   "admin.engines_model_add_family_pick": "選んでください",
   "admin.engines_model_add_part": "役割",
