@@ -203,10 +203,14 @@ describe("EnginesAdminView", () => {
       ],
     });
     await mount();
+    // By its label, not by position: "start with this one" leads the row, and a positional
+    // helper silently tested that button instead the moment the order changed.
     const enable = (id: string) =>
-      Array.from(host!.querySelectorAll(".engines-model")).find((li) =>
-        li.textContent?.includes(id),
-      )?.querySelector("button") as HTMLButtonElement | undefined;
+      Array.from(
+        Array.from(host!.querySelectorAll(".engines-model"))
+          .find((li) => li.textContent?.includes(id))
+          ?.querySelectorAll("button") ?? [],
+      ).find((b) => b.textContent === "有効にする") as HTMLButtonElement | undefined;
 
     await click(enable("flux-dev"));
     // Nothing was sent: the question comes first, with both numbers in it.
@@ -516,6 +520,15 @@ describe("EnginesAdminView", () => {
     expect(badge("sdxl-base-1.0")?.className).toContain("on");
     expect(badge("parked")?.textContent).toBe("無効");
     expect(badge("parked")?.className).toContain("off");
+
+    // "Start with this one" leads: it is what somebody came to this list to do, and enabling
+    // is implied by it. Forgetting the row is last.
+    const row0 = Array.from(host!.querySelectorAll(".engines-model")).find(
+      (li) => li.querySelector(".engines-model-id")?.textContent === "parked",
+    )!;
+    expect(
+      Array.from(row0.querySelectorAll(".engines-model-actions button")).map((b) => b.textContent),
+    ).toEqual(["これで起動する", "有効にする", "登録を消す"]);
   });
 
   // A LoRA is never something an engine is started with, so the control that would say so is

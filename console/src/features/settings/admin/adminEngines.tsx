@@ -438,12 +438,27 @@ export function EnginesAdminView() {
               <Icon name="refresh" />
             </button>
           </div>
-          <p className="muted">
-            {tr("admin.engines_state_prefix")}
-            {engineStateLabel(e, tr)}
-            {e.models?.length ? tr("admin.engines_models_sep") + e.models.join(", ") : ""}
-            {e.models?.length ? " " + tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared") : ""}
-          </p>
+          {/* What ECS is doing, and what the engine would hold if it were up. A badge and chips
+              rather than one sentence: the state is the fact the rest of this panel is read
+              against, and inside "状態: 停止中 / モデル: a, b （宣言。…）" it was a phrase like
+              any other. The model names carry no tone of their own — whether they are in VRAM
+              is the note that follows them, and it is not the same claim. */}
+          <div className="engines-state">
+            <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
+            {e.models?.length ? (
+              <>
+                <span className="engines-fact-label">{tr("admin.engines_models_label")}</span>
+                {e.models.map((m) => (
+                  <span key={m} className="mono engines-model-tag">
+                    {m}
+                  </span>
+                ))}
+                <span className="muted">
+                  {tr(e.warm ? "admin.engines_model_loaded" : "admin.engines_model_declared")}
+                </span>
+              </>
+            ) : null}
+          </div>
           <EngineStatus row={e} />
           <EngineClassPicker
             row={e}
@@ -677,16 +692,9 @@ function EngineModels({
                 )}
                 {isLora && <span className="engines-model-tag">LoRA</span>}
                 <span className="engines-model-actions">
-                  <button
-                    type="button"
-                    className="sm"
-                    disabled={pending}
-                    onClick={() => change(m, { enabled: !m.enabled })}
-                  >
-                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
-                  </button>
-                  {/* A LoRA is never something an engine is started with, so the control that
-                      would say so is not offered for one. */}
+                  {/* "Start with this one" leads: it is the thing somebody came to this list to
+                      do, and it implies the enable behind it. A LoRA is never what an engine is
+                      started with, so the control that would say so is not offered for one. */}
                   {!isLora && !started && (
                     <button
                       type="button"
@@ -697,6 +705,14 @@ function EngineModels({
                       {tr("admin.engines_model_select")}
                     </button>
                   )}
+                  <button
+                    type="button"
+                    className="sm"
+                    disabled={pending}
+                    onClick={() => change(m, { enabled: !m.enabled })}
+                  >
+                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
+                  </button>
                   {/* Forgetting the ROW. The file stays in the bucket — the CP has no
                       s3:DeleteObject and is not getting one (ADR 0072 decision 7) — so the
                       label says "forget", not "delete", and the note below says why. */}
@@ -1958,6 +1974,22 @@ function localStamp(iso: string): string {
 function engineTitle(e: EngineRow): string {
   const provider = e.provider || e.key;
   return e.api === "images" ? `${provider} (${e.key}) — image` : `${provider} (${e.key})`;
+}
+
+/** The badge colour for a state. `stopped` is the resting state of an on-demand GPU, not a
+ *  fault, so it stays neutral — a red one there would cry wolf on every panel load. */
+function engineStateTone(e: EngineRow): string {
+  if (!e.managed) return "";
+  switch (e.state) {
+    case "running":
+      return "on";
+    case "starting":
+      return "lead";
+    case "stopping":
+      return "warn";
+    default:
+      return "off";
+  }
 }
 
 function engineStateLabel(e: EngineRow, tr: (k: never) => string): string {

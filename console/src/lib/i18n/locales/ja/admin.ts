@@ -30,8 +30,7 @@ export const admin = {
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
-  "admin.engines_state_prefix": "状態: ",
-  "admin.engines_models_sep": " / モデル: ",
+  "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---

@@ -32,8 +32,7 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.mode_pool": "Slots",
   "admin.mode_engines": "Inference engines",
   "admin.engines_none": "This deployment runs no self-hosted inference engines.",
-  "admin.engines_state_prefix": "State: ",
-  "admin.engines_models_sep": " / models: ",
+  "admin.engines_models_label": "Models",
   "admin.engines_always_on_note": "Always-on keeps the GPU box up, at whatever the instance class costs per hour. Put it back on demand when you are done.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys a box only when something asks, and it stops itself once idle.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
