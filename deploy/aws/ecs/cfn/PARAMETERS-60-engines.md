@@ -401,11 +401,25 @@ or every start is recorded as a failure and the cooldown doubles away (measured 
 with the image pulled over NAT, 586 s with it pulled from ECR; ADR 0070's 300 s default would
 fail all of them).
 
+Once this deployment declares an instance-class ladder (`LlmInstanceClasses`, ADR 0074), a start
+that changes the rung also has to cover the old box draining (150 s) plus the EC2 quota release,
+which lags the ECS deregistration by up to 6 minutes (measured: `VcpuLimitExceeded` for 389 s
+after the old box had left the cluster), before the cold start even begins — 497 s measured
+against the 900 s default. Do not lower this below the default in a deployment that declares a
+ladder; a rung change would then be recorded as a failed start every time.
+
 ### `LlmMode`
 
 The engine's initial mode, written into the SSM table as the DEFAULT only — once an admin sets
 it the stored setting wins, because under on-demand the desired count is not the admin's intent
 (ADR 0070 decision 7).
+
+Switching a running engine from `on` back to `ondemand` stops its box on the controller's next
+tick: the demand mark (`engine_<key>_demand_at`) is stale after an admin-driven start, so the
+idle rule fires at once. For the `image` role that throws away a box that just synced up to
+48 GB and costs the full sync again. To warm a box that should then stay on demand, leave the
+mode at `ondemand` and wake it with a request through the gateway (measured, ADR 0072 "P2 の残作業
+4・5 を実機で押した").
 
 ## The `image` role (stable-diffusion.cpp, or ComfyUI since ADR 0072 P2)
 
@@ -533,11 +547,13 @@ making.
 How long a start may take before the controller calls it failed. sd-server measured 195 s from
 task creation to listen (135 s of that a GHCR pull, so less from ECR) — but the dominant term is
 how long the BOX takes to appear, measured anywhere from 8 to 88 s and not something a deadline
-should be tuned against (ADR 0071, P0 measurement 1).
+should be tuned against (ADR 0071, P0 measurement 1). With an `ImageInstanceClasses` ladder
+declared, the rung-change budget under `LlmStartDeadlineSec` applies here unchanged.
 
 ### `ImageMode`
 
-As `LlmMode`: the initial mode, a default the stored setting overrides.
+As `LlmMode`: the initial mode, a default the stored setting overrides — including the `on` →
+`ondemand` trap described there, which is where it was actually stepped on.
 
 ## The instance classes
 
@@ -964,6 +980,16 @@ The secret's value is the token and nothing else — no `{"HF_TOKEN":"…"}` wra
 newline, since `ValueFrom` with no JSON key passes the whole string through as the environment
 variable. A trailing newline travels into the `Authorization: Bearer` header and earns a 401
 that reads exactly like an unaccepted licence. (The CP trims what it is given for that reason.)
+
+🔴 **A gated repository refuses with 401 OR 403, and the two send you to different places.**
+Measured on the dev deployment 2026-09-10 (ADR 0072, "P5 on hardware"): with a token registered,
+FLUX.1-dev went through while `stabilityai/stable-diffusion-3.5-medium` failed on the single log
+line `curl: (22) The requested URL returned error: 403`. **401 means the token did not arrive**
+— none registered, or the trailing newline above. **403 means it did**: the request authenticated
+and that account simply has no access to that repository, so the fix is on Hugging Face — accept
+the model's terms with the operator's account (and, for a fine-grained token, grant it read
+access to the contents of public gated repos). Accepting the terms and retrying the same file
+passed.
 
 ### `IngestCpu` / `IngestMemory` / `IngestDiskGiB`
 

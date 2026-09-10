@@ -143,6 +143,7 @@ export function TenantLimits({
   const [homeHib, setHomeHib] = useState(tenant?.home_hibernate_after || "");
   const [homeBackup, setHomeBackup] = useState(tenant?.home_backup_every || "");
   const [allowUpd, setAllowUpd] = useState(!!tenant?.allow_agent_self_update);
+  const [allowIngest, setAllowIngest] = useState(!!tenant?.allow_engine_ingest);
   const [termRetention, setTermRetention] = useState(tenant?.terminal_history_retention_days || 0);
   const [saved, setSaved] = useState(false);
   // Set only when the save response reports that the tenant limits no longer fit in the pool.
@@ -160,6 +161,7 @@ export function TenantLimits({
     setHomeHib(tenant?.home_hibernate_after || "");
     setHomeBackup(tenant?.home_backup_every || "");
     setAllowUpd(!!tenant?.allow_agent_self_update);
+    setAllowIngest(!!tenant?.allow_engine_ingest);
     setTermRetention(tenant?.terminal_history_retention_days || 0);
   }, [slug, tenant]);
 
@@ -176,6 +178,7 @@ export function TenantLimits({
       home_hibernate_after: homeHib.trim(),
       home_backup_every: homeBackup.trim(),
       allow_agent_self_update: allowUpd,
+      allow_engine_ingest: allowIngest,
       terminal_history_retention_days: termRetention,
     });
     if (res?.error) {
@@ -308,6 +311,19 @@ export function TenantLimits({
           <span>{tr("admin.allow_self_update")}</span>
         </label>
         <p className="admin-hint">{tr("admin.allow_self_update_hint")}</p>
+      </div>
+
+      {/* The one tenant axis the engine model catalogue has (ADR 0072 open question 11). The
+          catalogue is deployment-wide and stays that way, so this grants the right to ADD to it
+          and nothing else — the hint says so, because reading it as isolation is the mistake
+          that is expensive to discover later. */}
+      <div className="admin-fgroup">
+        <h4>{tr("admin.engine_ingest_title")}</h4>
+        <label className="admin-check">
+          <input type="checkbox" checked={allowIngest} onChange={(e) => setAllowIngest(e.target.checked)} />
+          <span>{tr("admin.allow_engine_ingest")}</span>
+        </label>
+        <p className="admin-hint">{tr("admin.allow_engine_ingest_hint")}</p>
       </div>
 
       <div className="admin-actions">

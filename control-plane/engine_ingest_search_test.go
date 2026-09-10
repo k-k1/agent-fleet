@@ -192,7 +192,7 @@ func TestSearchRouteAnswersHitsAndRefusesAnEmptyQuery(t *testing.T) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/api/admin/engines/image/ingest/search", strings.NewReader(body))
 		r.SetPathValue("key", "image")
-		a.searchIngest(rec, r, store.Identity{ID: "u1"})
+		a.searchIngest(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		var out map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, out
@@ -295,14 +295,14 @@ func TestBrowsingNeedsNoEngineAndSurvivesOneBeingOff(t *testing.T) {
 	a, e, _ := engineModelAdminAPI(t)
 	hfSearchStub(t, hfSearchBody)
 
-	post := func(path string, h func(http.ResponseWriter, *http.Request, store.Identity),
+	post := func(path string, h func(http.ResponseWriter, *http.Request, engineIngestGrant),
 		key, body string) (int, map[string]any) {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", path, strings.NewReader(body))
 		if key != "" {
 			r.SetPathValue("key", key)
 		}
-		h(rec, r, store.Identity{ID: "u1"})
+		h(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		var out map[string]any
 		_ = json.Unmarshal(rec.Body.Bytes(), &out)
 		return rec.Code, out
@@ -344,7 +344,7 @@ func TestBrowseKindPicksTheUpstreamFilter(t *testing.T) {
 	} {
 		rec := httptest.NewRecorder()
 		r := httptest.NewRequest("POST", "/api/admin/engines/search?kind="+tc.kind, strings.NewReader(`{}`))
-		a.browseSearch(rec, r, store.Identity{ID: "u1"})
+		a.browseSearch(rec, r, engineIngestGrant{ident: store.Identity{ID: "u1"}})
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: %d %s", tc.kind, rec.Code, rec.Body.String())
 		}
