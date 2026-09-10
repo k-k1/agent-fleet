@@ -999,6 +999,14 @@ func registerStatic(mux *http.ServeMux, cfg config) {
 	// boot would mean "your colour appears after the next restart". Each handler falls
 	// straight through to the shipped bytes while nothing is branded. The icons stay
 	// auth-exempt under /brand/ (the login page needs them before there is a session).
+	//
+	// The manifest joins them. An installed PWA is a WebAPK that froze the manifest's
+	// colour, icons and name at install time; the only thing that refreshes them is
+	// Chrome re-fetching this path in the background, and a 401 there leaves the home
+	// screen on the previous deployment's colour forever. It is the same brand triple the
+	// login page already shows an anonymous caller — no tenant, session or workspace data
+	// is in it — so exempting costs nothing that /brand/ has not already given away.
+	exemptExact("/manifest.webmanifest")
 	mux.HandleFunc("GET /{$}", shell)
 	mux.HandleFunc("GET /manifest.webmanifest", func(w http.ResponseWriter, r *http.Request) {
 		serveConsoleManifest(w, r, cfg)
