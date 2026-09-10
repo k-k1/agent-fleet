@@ -5,15 +5,18 @@ English | [日本語](0072-engine-model-catalog.ja.md)
 - Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
   registering the Hugging Face token from the Console (open question 12) is implemented, and
   not yet verified on hardware (2026-09-09, "P5 implementation"). P2 (ComfyUI) is implemented
-  AND verified on hardware as of 2026-09-10, provider included (see the Japanese edition's
-  "P2 の実装" and "P2 を実機で押した" sections — this English edition has not been fully
-  re-synced with either write-up yet). Four gaps surfaced only on the deployment, all of them
-  green in CI and green on the bench: torch 2.5.1 cannot run ComfyUI v0.34.0 at all (fixed by
-  moving to 2.9.1); `ln -sfn` linked INTO the models directory the clone bakes, so every request
-  400'd; the fetch sidecar used `PRESET_FILE` as a proxy for "is a router" and never staged any
-  model but the starting one; and nothing anywhere could write a checkpoint family in the
-  spelling the provider dispatches on, so ComfyUI was unusable from the Console alone. P3
-  and the rest of P5 are not started.**
+  and CLOSED on hardware as of 2026-09-10, provider included ("P2 implementation", "P2 on
+  hardware"). Four gaps surfaced only on the deployment, all of them green in CI and green on
+  the bench: torch 2.5.1 cannot run ComfyUI v0.34.0 at all (fixed by moving to 2.9.1);
+  `ln -sfn` linked INTO the models directory the clone bakes, so every request 400'd; the fetch
+  sidecar used `PRESET_FILE` as a proxy for "is a router" and never staged any model but the
+  starting one; and nothing anywhere could write a checkpoint family in the spelling the
+  provider dispatches on, so ComfyUI was unusable from the Console alone. The ingest route and
+  the three families that had never gone through the provider (Z-Image, FLUX.1, SD3.5) were
+  pushed through on hardware the same day ("P2's remaining work 4 and 5, on hardware"): ALL FIVE
+  families now return an image through the provider, but SD3.5 could not produce one at all
+  until its template was fixed (`--clip_g` was missing from the file vocabulary).
+  Five further gaps (5 to 9) are recorded there. P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
   stable-diffusion.cpp) were read that day from the repositories' `tools/server/README.md`,
@@ -584,8 +587,10 @@ names move between versions — pin the tag and freeze the templates behind gold
    - **The llm role (a router) syncs every enabled model.** It is expected to answer for any of
      them, and a model whose file is missing does not wait — it fails with 500 (P1 measurement 6).
      So on this role enabling a model literally means "the next start takes N seconds longer".
-   - **The image role syncs only the selected checkpoint.** sd-server holds one, so there is no
-     reason to put somebody else's checkpoint into every cold start.
+   - **The image role (sd-server) syncs only the selected checkpoint.** sd-server holds one, so
+     there is no reason to put somebody else's checkpoint into every cold start. (comfy is a
+     router with no preset and breaks this — see the `SYNC_ALL` correction under "P2
+     implementation".)
    - The admin panel shows "sync +N s (estimate)" next to the toggle. **The size is declared when
      the row is registered** — the CP cannot look in S3 (R3) — so it lives in `files[].bytes`,
      the same posture as the manifest, and as with `observed_secs` **it says estimate**.
@@ -1256,6 +1261,352 @@ Medium, FLUX.1-dev) is taken in without a 401 once a token is registered. The th
 open question 7's outstanding half — "measure the two gated defaults on a deployment that has
 an `HF_TOKEN`".
 
+## P2 implementation — ComfyUI (2026-09-10)
+
+Two days after open questions 8 and 9 were settled, the P2 list in the phases section was
+implemented as written. It could be verified in CI; **verifying it on a GPU was still
+outstanding** (the definition of done became the next hardware session's homework).
+
+1. **Own Dockerfile and CI.** `deploy/aws/ecs/comfyui/Dockerfile` clones ComfyUI pinned at
+   `v0.34.0` on top of `pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime` (raised to
+   `2.9.1-cuda12.8` in 6 below — on torch 2.5.1 `comfy-kitchen` dies on import) and does not
+   install the Manager (0071 decision 6). Baking it is NOT folded into `dev-image.yml` /
+   `release.sh` but given its own `workflow_dispatch` (`.github/workflows/comfyui-image.yml`) —
+   pinning ComfyUI has nothing to do with the application's release cadence, and folding them
+   together would re-bake the same content on every release.
+   🔴 **`gh workflow run` cannot start a workflow that is not on the default branch** (found by
+   trying to fire one that was not yet on develop). There is no Docker in this sandbox either,
+   so the Dockerfile and the CI file were sent to develop as a small PR of their own first, and
+   only then was the build confirmed — **it passed** (pushed under the tag `v0.34.0-test1`).
+2. `20-platform.yaml` gains the ECR repository `af-comfyui` (R4's premise). `standup.sh`'s
+   images stage reads `ImageEngine` and copies exactly one of `af-sdcpp` / `af-comfyui`.
+3. `60-engines.yaml` gains `ImageEngine` (`sdcpp` / `comfy`, default `sdcpp`). The image role's
+   container (renamed from `sd` to `engine`) switches its `Image`/`Command`, and the engine
+   table its `health`/`provider`, through `!If` — no extra role, task definition or service
+   (decision 4). 🔴 **The 51,200-byte wall** was met the same way as in decision 12 (moving
+   duplicated long-form Description text and comments out to `PARAMETERS-60-engines.md`) to make
+   room before adding anything (331 bytes free before the work, 1,094 after). `cfn-lint`,
+   `ecs-lifecycle-stub-test.sh` and `engine-sidecar-test.sh` are green (and the byte overflow was
+   deliberately triggered once to confirm it is caught).
+   - The fetch sidecar **needed no change** — with an empty PRESET_FILE its path never
+     distinguished roles and syncs the files of every enabled model ("start" first, "rest"
+     after). Decision 9's prose saying "image syncs only the selected one" had already been
+     contradicted by the 2026-09-09 change (adding "rest" in the background), so it was corrected
+     in passing.
+     🔴 **Correction (2026-09-10): it did need a change.** The line that writes "rest" sits
+     **inside** `if [ -n "$PRESET_FILE" ]`, and the `else` empties `keys.rest`. The image role
+     has `PRESET_FILE=""` and therefore always takes the `else`. That was correct while the only
+     engines were llama.cpp (a router, with a preset) and sd.cpp (neither, and it holds one
+     checkpoint), because "has a preset" implied "is a router" implied "wants other models too".
+     **comfy is a router with no preset, and it breaks that equation.** Models other than the
+     starting one never reach the box, and ComfyUI answers
+     `Value not in list: unet_name: 'flux-2-klein-4b.safetensors' not in []` — while the file is
+     in the active set AND in S3, and the name in the graph is right. Worse, the sidecar printed
+     `every enabled model is on this box`, which made the ingest log look healthy. Fixed with
+     `SYNC_ALL` (item 4 of "P2 on hardware" below).
+   - comfy's start command does not read the **contents** of `/models/cmdline` (there is no
+     equivalent of `-m` — the checkpoint is chosen inside the graph JSON the provider builds per
+     request). That the file is non-empty is used only as the "there is an enabled model" gate.
+     The integration is the single line `ln -sfn /models/image /ComfyUI/models` — 0071 decision
+     6's S3 layout is already ComfyUI's own convention, so that is all it takes.
+     🔴 **Correction (2026-09-10): one line was not enough.** ComfyUI's repository **tracks
+     `models/` as a real directory** (`checkpoints/` and friends exist, with `put_..._here`
+     files), so the Dockerfile's `git clone` bakes it in. When the link name is a real directory,
+     `ln -sfn` only creates `/ComfyUI/models/image` **inside** it, and `models/checkpoints/`
+     stays the shipped empty placeholder (`-n` only affects a symlink *to* a directory). The
+     engine starts, answers `/system_stats`, passes health, and 400s every request with
+     `ckpt_name: 'sd_xl_base_1.0.safetensors' not in []`. `rm -rf /ComfyUI/models` has to come
+     first — **never with a trailing slash** (from the second run on it is a symlink, and the
+     slash would empty the shared model volume). The bench missed this because `--baked` bind
+     mounts the volume **directly onto** `/ComfyUI/models`: a mount replaces a directory, a
+     symlink does not.
+4. **The `comfy` provider** (`workspace/agent/internal/imagegen/comfy.go`): `/prompt` (with the
+   same 503 `engine_waking` retry as sdcpp) → `/history/<id>` (polling) → `/view`.
+   **generate only** — edit/inpaint need per-family image-to-image graphs (LoadImage + VAEEncode)
+   that nobody has measured, so they are explicitly out of scope here (the definition of done is
+   satisfiable with generate alone).
+5. **Workflow templates for the five families** (`comfy_workflows.go`). SDXL, Z-Image-Turbo and
+   FLUX.2 klein are ports from bench-image-engine.py (GPU-verified under "Resolved by
+   measurement"), inputs (prompt, seed) included — the golden tests pin the same graphs that were
+   measured. FLUX.1 and SD3.5 are new implementations from the published standard recipes and
+   **were not verified on hardware in this session**. A golden test pins today's shape; it is not
+   proof of correctness. The catalogue's `files[]` reuses sd.cpp's `Flag` vocabulary
+   (`--diffusion-model`, `--clip_l`, `--t5xxl`, `--vae`) rather than inventing a second one for
+   ComfyUI — so even families sd.cpp cannot run (klein, Z-Image) are declared from the same four
+   values at ingest time.
+6. **`generate_image`'s `model` argument** (decisions 5 and 7). Same "only offer it when there is
+   really a choice" rule as `provider`: the enum appears only with two or more enabled
+   checkpoints. The description carries the catalogue's `description` and which model is loaded
+   right now (`warm`).
+   🔴 **Side discovery**: `warm_model` (decision 7) had never once worked for the image role —
+   neither sd-server nor ComfyUI carries `usage.model` in its response, so `recordUsage`'s early
+   return always called `noteServed("", ok)`. The fix matters for sdcpp too (the image engine's
+   `warm_model` panel field had always been empty): both Workspace-side providers now send an
+   `X-AF-Model` header.
+   One more: `engine_gateway.go`'s `dial()` always inserted `/v1/` when composing the upstream
+   path, and ComfyUI's native API has no such prefix — `engineUpstreamPrefix` stops the insertion
+   for the `comfy` provider only (sdcpp and llamacpp unchanged).
+7. 🔴 **It broke the moment it was pushed to hardware — the own image would not even start.**
+   `bench-image-engine.sh` gained `--baked` (measure the own image instead of the community one:
+   no checkout, no pip, `/ComfyUI` used directly as the working directory) and was run on a
+   g6.xlarge, where ComfyUI crashed at import: `comfy-kitchen==0.2.31` (a `requirements.txt`
+   dependency) registers a custom op with a `list[int]` argument, and **torch 2.5.1's
+   `torch.library.infer_schema` does not recognise that PEP 585 generic spelling**
+   (`ValueError: infer_schema(func): Parameter kernel_size has unsupported type list[int]`).
+   ComfyUI's own README states torch 2.7 as the minimum supported — CI only checked that the
+   build passes, and **passing a build and starting are different things**. Rebuilt on
+   `pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime`, re-verified on hardware, **and it passed**.
+
+**The definition of done (phases section) was met on hardware** (2026-09-10, g6.xlarge,
+`--baked`). Inside one and the same ComfyUI process (no service or task restart) the checkpoint
+was switched SDXL → Z-Image-Turbo → FLUX.2 klein 4B → SDXL → Z-Image-Turbo → klein 4B, and all
+13 scenarios succeeded:
+
+| | one warm image | against "Resolved by measurement" (community image) |
+|---|---|---|
+| SDXL 1024px (20 steps) | **8.02 s** | matches 8.0 s in measurement 3 and 0071 measurement 7's "8-something seconds" |
+| klein 4B (4 steps) | **4.01 s** | matches measurement 3's 3.7-4.0 s |
+| Z-Image-Turbo (8 steps) | **10.74 s** | matches measurement 3's 10.4-10.6 s |
+| SDXL 512px | 3.01 s | — |
+| SDXL + LoRA (warm) | 8.02 s (same as without) | matches measurement 3's "a LoRA is free once warm" |
+
+Cold single images (switch included) were SDXL 26 s, Z-Image 55-57 s and klein 39-40 s — faster
+than measurement 5's "a switch costs 1 to 2.5 minutes", presumably because
+`LlmUseLocalStorage`/`ImageUseLocalStorage` now default to `true` (settled in open questions 9
+and 10), so the read comes from instance store rather than EBS (and these models had only just
+landed from their first fetch, so this is a first load, not a cached one). All 13 scenarios
+returned `ok: true` with no errors. Four things were confirmed to fit together on hardware: the
+own image, the CFN `ImageEngine=comfy` switch, the S3 layout (the `ln -sfn` equivalent mount) and
+the workflow graphs. What was NOT confirmed is the Go `comfy` provider itself (a real call
+through the CP gateway: `/prompt` → `/history` → `/view`), which stopped at unit and integration
+tests — carried over.
+
+## P2 on hardware (2026-09-10, af-sandbox)
+
+P2's homework — **calling the Go `comfy` provider for real, through the CP gateway, from a
+member session's `generate_image`** — was done. The conclusion first: the provider is correct,
+and both `sdxl-base-1.0` (1024x1024) and `flux2-klein-4b` (3 images) generated. Getting there
+meant walking into **four gaps in the implementation**. All four were green in CI, green on the
+bench, and failed only on the deployment.
+
+### What worked
+
+| measurement | measured | control |
+|---|---|---|
+| SDXL, one image, cold | 42.33 s | reads `SDXLClipModel`/`SDXL`/`AutoencoderKL` from EBS |
+| SDXL, one image, warm | **8.42 s** | ComfyUI on its own ("Resolved by measurement") was 8.02 s |
+| klein, 3 images, switch from SDXL included | 35.89 s | klein warm on its own was 4.01 s per image |
+
+**The Go provider's overhead is too small to measure.** A warm SDXL takes 8.42 s against 8.02 s
+when ComfyUI is called directly — that 0.4 s difference is the whole `/prompt` → `/history` →
+`/view` round trip plus building the graph. It is the plainest evidence that the provider is not
+doing anything extra.
+
+**The switch warning is too pessimistic for this configuration.** `comfySwitchWarning` follows
+measurement 5 and says "1 to 2.5 minutes (an EBS re-read)"; the reality was 35.89 s, and that
+includes generating 3 images. At klein's warm 4.01 s per image, 3 images ≈ 12 s, so **the switch
+itself was about 24 s**. That is for a 7.75 GB klein and very likely does not hold for FLUX.1 dev
+(22.2 GB), so the warning's wording is left as it is.
+
+### The four gaps
+
+1. **No route existed for writing `base_model` in a family's spelling.** comfy picks one of five
+   templates by `base_model` and refuses by design to infer it from an id (decision 2 exists for
+   that reason). Yet nothing anywhere wrote `sdxl` / `flux2-klein` / … — `seedEngineCatalog` does
+   not set `BaseModel` (a seed cannot know the family), ingest stored HF / Civitai's **display
+   name** (`"SDXL 1.0"` ) verbatim, and the Console had no input for it (display only). In other
+   words, **using the Console alone, comfy could not generate a single image**. The catalogue was
+   written by hand through the admin API this time. Fixed by putting the vocabulary and its
+   validation in the CP and adding a picker to the Console.
+2. **The Console's catalogue UI was still from a pre-ADR world.** The registration form held one
+   fixed file and **could not even register** a three-file model (diffusion model + text encoder +
+   VAE) such as klein or Z-Image. The API and the wire had supported it from the start; only the
+   UI was missing. Fixed by adding multiple file rows, each with its role flag.
+3. **`ln -sfn` created the link inside the baked-in `models/`** (correction 2 above). Every
+   request 400'd.
+4. **`PRESET_FILE` was used as a proxy for "is a router"** (correction 1 above). Models other
+   than the starting one never came down. Fixed by splitting out `SYNC_ALL` (`"1"` when
+   `ImageIsComfy`).
+
+Also found in passing: changing an engine's mode never pushed a catalogue invalidation to running
+workspaces. `notifyEngineCatalogChanged` fired only from `putModel` and `deleteModel`, never from
+the mode route. The Agent caches the catalogue for 10 minutes, so after `mode=off` a session keeps
+offering the engine for up to 10 minutes and calling it returns `503 engine_off` (a refusal, not
+the retryable `engine_waking`). The mirror image of that — setting `mode=ondemand` and the tool
+NOT appearing — was the very first thing that held this session up.
+
+### What to take from these four
+
+**"13/13 on a real GPU" was not evidence that the wiring being shipped had been measured.** There
+are only two differences between the bench (`bench-image-engine.sh --baked`) and the production
+task definition: how the models are handed over (bind mount vs symlink), and the ingest route
+(the bench fetches for itself). **And those two are exactly where it failed.** That 3 and 4 both
+happen to be "the part the bench routed around" is not a coincidence.
+
+The harness was enough to measure "does the engine work", but it never measured "does the engine
+work on this deployment". The minimum defence when writing the next harness of this kind is to
+**keep at least the model hand-over identical to the task definition** (no taking the easy bind
+mount). For 1 and 2 the lesson is simpler still — **the API and the wire supporting something
+does not mean the UI does**. Decision 2 said "the operator declares it at ingest time", and P2
+had nearly been called complete without the place to declare it ever being built.
+
+## P2's remaining work 4 and 5, on hardware (2026-09-10, af-sandbox)
+
+The two things the previous section left behind — **running an ingest for real, from HF and from
+CivitAI** (remaining work 4), and **the three families that had never once gone through the
+provider** (remaining work 5: Z-Image, FLUX.1, SD3.5) — were pushed through the same day. The
+conclusion first: **all three families work now**, but SD3.5's template was wrong and could not
+produce a single image until it was fixed. Five further gaps (5 to 9) were walked into — one of
+them (8) is open question 3 surfacing as written, not a new discovery.
+
+### Remaining work 4 — ingest works. How it says "this will not work" has two holes
+
+**The refusal was actionable for an operator.** Trying to take in a checkpoint from CivitAI with
+no family declared is refused with a 400 before any task is started, and the message says three
+things at once:
+
+```
+declare base_model as one of sdxl, sd35, flux1, flux2-klein, zimage: this engine runs comfy,
+which picks a workflow by family and will not guess one (the repository calls it "SDXL 1.0")
+```
+
+The spellings, why one is needed, and **what upstream calls it**. The last is what does the work:
+all the operator has in hand is the display name "SDXL 1.0", and mapping that onto `sdxl` is the
+entire job. Putting the display name into `base_model` verbatim earns the same 400. In neither
+case is a job row created (checked against the job list).
+
+**Completion was confirmed too.** Four from Hugging Face (clip_l 246 MB, t5xxl_fp8 4.89 GB,
+flux1-dev-fp8 11.9 GB, sd3.5_medium 5.11 GB) and one from CivitAI (the DetailedEyes_XL LoRA,
+93 MB). And **the CivitAI row's `base_model` was empty** — upstream returns `"SDXL 1.0"` and it
+is no longer stored. That is the most direct evidence there is that P2's change works on the real
+route.
+
+🔴 **Gap 5 — CivitAI's "you must be logged in" assets are invisible to `resolve`.** For the first
+LoRA chosen, `resolve` answered `gated: false` / `can_ingest: true`, the job ran, and the Fargate
+task died with `curl: (22) The requested URL returned error: 401`. Called by hand, CivitAI says
+`{"error":"Unauthorized","message":"The creator of this asset requires you to be logged in to
+download it"}` — **it is a per-uploader setting**. Across five assets the answers split 200 / 401
+/ 403. Hugging Face's gated repositories have a route that refuses up front
+(`ingest_gated_no_token`, decision 6 and P5); CivitAI has neither the concept nor a token field.
+Unless `resolve` checks "can this asset be fetched anonymously" (one `HEAD` would do), what the
+operator gets is a bare curl exit code nine minutes later.
+
+🔴 **Gap 6 — ingest cannot write a file's Flag.** The row `engineIngester` creates holds one
+element, `Files: [{S3Key, Bytes}]`, and the Flag is always empty, i.e. "the whole checkpoint".
+So **a split model cannot be assembled by ingest alone**. Building FLUX.1's four-file row meant
+ingesting three of the parts as throwaway rows (purely to get the bytes into S3), re-registering
+the real row with its flags through `POST /models`, and then forgetting the throwaway rows.
+Decision 2 says "the operator declares it at ingest time", but the only thing that can be
+declared there is the family — **not the role**.
+
+🔴 **A consequence of gap 6 — `?purge=1` can silently delete a file another row is using.** The
+`purge` on forgetting a row hands that row's `files[]` S3 keys straight to the ingest task
+(`deleteModel`). **Whether another row references the same key is not checked.** Now that gap 6
+has made "ingest the parts as throwaway rows and reference the same keys from the real row" the
+normal procedure for a split model, this is easy to walk into: in this very session
+`clip_l.safetensors` was pointed at by both the throwaway `tmp-flux-clip-l` and the real
+`flux1-dev-fp8`, and forgetting the former with purge would have silently broken the latter. They
+were forgotten without purge.
+
+### Remaining work 5 — Z-Image and FLUX.1 went through. SD3.5's template was wrong
+
+| family | result | measured (ComfyUI's own `Prompt executed`) |
+|---|---|---|
+| Z-Image-Turbo | ✅ generated | the first attempt 400'd on gap 7 below; the second worked |
+| FLUX.1 dev (fp8, split) | ✅ generated (first attempt) | **78.19 s** (cold, switch included) |
+| SD3.5 medium | ❌ → template fixed → ✅ generated | **46.90 s** (cold, switch included) |
+
+**All five families have now returned an image on this deployment's GPU, through the Go
+provider.**
+
+FLUX.1 **did not use** the 22.2 GiB fp16 transformer already in S3 (put there for P4's gated
+verification). The flux1 template requires the split form — `UNETLoader` + `DualCLIPLoader` +
+`VAELoader` — while that row is a single file under `checkpoints/` with no text encoder at all.
+A file's basename is the name handed to ComfyUI's loader, and the S3 key's **directory** decides
+which loader's enumeration it appears in (`engineImageFiles`) — so anything under
+`image/checkpoints/` is permanently invisible to `UNETLoader`. The fp8 split set was ingested
+instead (unet 11.9 GB + clip_l + t5xxl_fp8, sharing the `ae.safetensors` VAE Z-Image already
+uses). It also avoids betting that fp16's 23.8 GB fits on a 24 GB L4.
+
+🔴 **SD3.5's template could not be known to be wrong until it was run.**
+
+```
+Value not in list: clip_name1: 'sd3.5_medium.safetensors'
+  not in ['clip_l.safetensors', 'qwen_3_4b_fp8_mixed.safetensors', 't5xxl_fp8_e4m3fn.safetensors']
+```
+
+`comfyGraphSD35` assumed "Stability's official release bundles UNet+VAE+CLIP-L+CLIP-G in one
+file", handed `TripleCLIPLoader`'s `clip_name1`/`clip_name2` **the checkpoint's own filename**,
+and wrote that the loader would read out only the tensors it needed. It does not. It **cannot** —
+`TripleCLIPLoader`'s three inputs are enumerations over `models/text_encoders`, and a name that
+lives in `models/checkpoints` is not even a candidate. The premise itself was wrong.
+
+The fix adds `--clip_g` to the file vocabulary. That is not the invention of a fifth flag but
+**recovering one that was dropped**: the stable-diffusion.cpp vocabulary `EngineFile` borrows
+from has always had `--clip_g`, and it was left out when that vocabulary was copied across.
+SD3.5's three encoders are three separate files, and with no way to name clip_g this family could
+never have generated. The same word was added to the CP's list (the copy served to the Console),
+and the drift test was confirmed to hold the two together — by breaking one side and watching it
+fail.
+
+**A golden test cannot catch this.** What it pinned was the shape of a graph nobody had run,
+exactly as this ADR said at the time of P2. Pinning a shape exists to make a diff readable, not
+to prove correctness — and this is now the worked example.
+
+### Three gaps in the deployment itself (nothing to do with families; anyone hits them)
+
+🔴 **Gap 7 — the engine accepts requests for models that are not on the box yet.** The fetch
+sidecar declares `engine may start; 6 file(s) still to sync` as soon as the starting model (the
+selected one) is down, and keeps fetching the rest in the background. Z-Image's first request
+landed in the middle of that, and ComfyUI answered 400 with "the file is not there":
+
+```
+Value not in list: unet_name: 'z_image_turbo_bf16.safetensors' not in ['flux-2-klein-4b.safetensors']
+```
+
+The engine passes health, and this is not the gateway's `engine_waking` (which is retryable).
+**Neither the operator nor the caller is given any hint that the model has not come down yet.**
+On the second box, 12 files and 48 GB took about 270 s (≈180 MB/s) to sync, and all 270 s of that
+is this window. Whether the requested model's files are on the box is a fact the CP already
+knows, so making it wait as an `engine_waking` equivalent looks like the straightforward fix.
+
+**Gap 8 — enabling a model on a running box never syncs it. This is not a new discovery** — it is
+open question 3 ("additional sync after the service is up") surfacing as written, a known hole
+already deferred to P5. What is measured for the first time is what it does in the image role:
+enabling `flux1-dev-fp8` and `sd35-medium` brought no files down, and the only way through was
+`mode` `off` → `on` to **rebuild the box**. In the llm role "wait for the next start" is enough;
+in the image role **an enabled family appears in `generate_image`'s `model` enum while not being
+on the box**, so together with gap 7 it becomes "selectable, and answers 400". Solving this in P5
+needs either the enum's condition moved from "enabled" to "on the box", or the waiting added on
+gap 7's side.
+
+🔴 **Gap 9 — a 503 from `/history` is not retried.** The provider waits out and re-sends on a 503
+from `/prompt` (`engine_waking`), but the polling that follows does not wait. If the box is
+replaced mid-poll, what reaches the caller is
+`the image engine's /history answered 503 Service Unavailable: the fleet's own inference engine
+is starting; retry` — a message that **says retry and does not retry** (measured). A cold
+generation takes 47 to 78 s, so that window genuinely opens.
+
+**An operational note (walked into here)**: waking a box with `mode=on` and then putting it back
+to `ondemand` makes **the controller stop that box immediately**, because `last_demand` is stale.
+That costs a 48 GB re-sync, so to warm a box, leave it on `ondemand` and wake it with a request.
+
+### Measured in passing
+
+- `warm_model` returned `z-image-turbo`. P2's `X-AF-Model` fix works on the real deployment.
+- ADR 0074's VRAM gate fired correctly (`flux1-dev-fp8 wants at least 16571 MiB … the l4 class
+  declares 8000 MiB`). But **`l4`'s declared 8000 MiB does not match the hardware** — the engine
+  says `Total VRAM 22563 MB`. `l40s` declares 44000 for a 48 GB card, so the L4 rung is the one
+  that is an order of magnitude out. The result is that every image model over 8 GB needs
+  `confirm_vram`.
+- **Not measured**: whether the catalogue push on a mode change reaches a running session in less
+  than 10 minutes. The mode was changed five times, but the session's tool listing was never
+  observed.
+- **Not measured**: the Console ingest form actually drawing. That the CP puts `base_models` and
+  `file_flags` on the wire, and that `resolve` returns the display name the hint interpolates,
+  were both measured — but a headless click-through could not reach the admin modal, so the
+  screen itself was never seen.
+
 ## Options rejected
 
 - **vLLM as the llm role's engine (for now).** One process, one model, no router — a switch is a
@@ -1451,8 +1802,8 @@ an `HF_TOKEN`".
   the picker offered two models and a session started on the second). Only the row-creating step
   needs a person — it is a super_admin screen, which AWS credentials cannot drive.
 - **P2 — ComfyUI (ADR 0071's P2, moved forward to here). Implemented AND verified on hardware
-  2026-09-10** (see the Japanese edition's "P2 の実装" section for the full write-up; not yet
-  re-synced into this English edition). The self-built image (pinned tag `v0.34.0`, no
+  2026-09-10** ("P2 implementation", "P2 on hardware", "P2's remaining work 4 and 5, on
+  hardware"). The self-built image (pinned tag `v0.34.0`, no
   Manager; the `20-platform` `af-comfyui` ECR repository and a dedicated CI workflow — the CI
   bake itself was confirmed to succeed), the `ImageEngine=comfy` `!If` (decision 4), the `comfy`
   provider (**generate only** — edit/inpaint need a per-family image-to-image graph nobody has
@@ -1460,7 +1811,8 @@ an `HF_TOKEN`".
   driving `/prompt` → `/history` → `/view` with progress notifications), templates for five
   families — SDXL, SD3.5, FLUX.1, FLUX.2 klein, Z-Image — kept in the repository behind golden
   tests (SDXL/Z-Image/klein are ports of the GPU-verified graphs from *Resolved by measurement*;
-  FLUX.1/SD3.5 are new and not yet run on hardware), and `generate_image`'s `model` argument
+  FLUX.1/SD3.5 were new, and have since been run on hardware too), and `generate_image`'s `model`
+  argument
   (enum = the enabled checkpoints; several for the first time — and **the description names the
   model that is warm now**: a switch is a 1–2.5 minute re-read, so the agent can prefer the warm
   one when the default will do; *Resolved* 5). The
@@ -1473,8 +1825,11 @@ an `HF_TOKEN`".
   surfaced along the way and is fixed: torch 2.5.1 (the original base image) cannot even import
   ComfyUI v0.34.0 (a `comfy-kitchen` dependency needs `torch.library.infer_schema` to understand
   PEP 585 `list[int]`, which 2.5.1 does not) — moved to `pytorch/pytorch:2.9.1-cuda12.8-cudnn9-runtime`.
-  **Not yet verified on hardware: the Go `comfy` provider's own call through the real CP gateway**
-  (this run drove ComfyUI directly; unit/integration tests cover the provider code).
+  The Go `comfy` provider's own call through the real CP gateway was verified on hardware the
+  same day ("P2 on hardware"). **The remaining ingest route and the three families that had never
+  gone through the provider were pushed through as well, and P2 is closed on hardware** ("P2's
+  remaining work 4 and 5, on hardware"): all five families generate. SD3.5 alone had a wrong
+  template and was fixed (`--clip_g`).
 - **P3 — LoRA.** On ComfyUI: the image role's `loras/` sync, `generate_image`'s `loras`, the
   `LoraLoader` chain in the templates, refusal on a `baseModel` mismatch; fixed preset LoRAs
   for llm. sd-server's `<sd_cpp_extra_args>` path only when an `ImageEngine=sdcpp` deployment
