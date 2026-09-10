@@ -563,10 +563,21 @@ job feels done.
   `origin` baked into usage rows survives, so **"this was unattended spend" remains and "whose
   child it was" is gone**. Durable lineage would need another home (a ledger); this ADR does not
   take that on.
+
+  **Amendment (2026-09-10, docs/log/94): the call stands, but its price is now visible.** The left
+  rail nests worktrees by lineage and draws one colour per family, so **deleting a single session
+  takes the nesting and the colour of its children with it, there and then** (the children stay;
+  with no parent they fall back to the group's root). What this bullet described as a ledger
+  question is now something **the user can see**. Not building the ledger is unchanged — betting on
+  the overview being drawable within the retention is this ADR's position — but **the order things
+  are cleaned up in now shows up on screen**, and that is worth recording.
 - **The docs/44 overview can draw lineage by reading `origin_session`** (within that retention).
   Adding `kind:"spawn"` to ADR 0041 decision 9's `DispatchEntry` is not taken up.
-- As in stage 1, **firing has not been confirmed on a real session**. The descriptions are written
-  to specify *when* to call, so it is worth confirming a real session calls them.
+- ~~As in stage 1, **firing has not been confirmed on a real session**. The descriptions are written
+  to specify *when* to call, so it is worth confirming a real session calls them.~~
+  → **Done on 2026-09-09** (docs/log/87 §87.15). `report_back` was honoured **3/3 (100%, n=3)**.
+  ⚠️ **n=3 is not "the firing rate was measured"** — what was confirmed is that a real session calls
+  them at all, not how often.
 - Cleaning up children that outlive their parent stays with the user (decision 13). Decision 6's
   budget is a count over a caller's children, not a reservation, so **when the parent goes, so does
   the limit**.
