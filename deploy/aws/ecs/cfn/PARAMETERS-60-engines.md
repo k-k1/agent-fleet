@@ -133,10 +133,21 @@ engine with them. Add the line first:
 LlmEnabled=true          # and/or ImageEnabled=true
 ```
 
-`standup.sh` does this translation for you and then drops the retired keys (`af_param_drop`,
-because `cloudformation deploy` refuses a `--parameter-overrides` key the template does not
-declare). **`update.sh` and a hand-run `cloudformation deploy` do not** — they pass no parameters
-at all, so the stack falls straight to the new default. Edit the file.
+**`standup.sh` and `update.sh` both do this translation for you**, from the two places each of
+them can see: standup from the capture (`params/60-engines`), and update from the LIVE stack's
+own parameters, because it deliberately runs without a capture. Both say on stdout which role
+they carried over. standup additionally drops the retired keys (`af_param_drop`, because
+`cloudformation deploy` refuses a `--parameter-overrides` key the template does not declare);
+update never passes them in the first place.
+
+A deployment where `<role>ModelS3Key` is empty too is not translated, and that is the right
+answer rather than a gap: with no key and no `Enabled`, **that role never existed** — there is
+no service to lose. A role that has already been through P6 has no `<role>ModelS3Key` parameter
+left to read, so nothing is passed and the deploy is what it always was.
+
+⚠️ **A hand-run `cloudformation deploy` has neither.** It passes no parameters, so the stack
+falls straight to the new default and the role goes. Edit `params/60-engines` — or add
+`--parameter-overrides <role>Enabled=true` — before running one.
 
 **The seed is gone with them.** A Control Plane whose catalogue was empty used to read those
 parameters once and create the row the deployment was already serving. Anything that has run a
