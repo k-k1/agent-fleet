@@ -33,6 +33,14 @@ l40s2x|L40S 48GB 8vCPU (g6e.2xlarge)|44000|g6e.2xlarge|8|30000-65536
 （代替の `g5.xlarge` は要らなかった）。そして **ADR が書いていたクォータコード `L-DB2E81BB`
 は誤り**で、それは Spot 用（値 0）。On-Demand の G/VT は **`L-DB2E81BA`＝8** だった。
 
+> 🔴 **訂正（2026-09-10・同日の追試）。この訂正の後半が誤りである。** `L-DB2E81BB` は
+> 「Spot 用」ではなく、**存在しない**（af-sandbox・af-acrt の両方で `NoSuchResourceException`）。
+> ap-northeast-1 の G/VT クォータは `L-DB2E81BA`（On-Demand）と `L-3819A6DF`（All G and VT Spot
+> Instance Requests・既定 0）の 2 つだけ。**間違えた理由**は、`get-service-quota` が返した 0 を
+> 「Spot だから 0」と読んだこと——**0 という観測は「Spot である」と「そのコードが無い」を区別
+> しない**。存在しないコードを引いたときは例外が返るので、値を読む前に呼び出しが成功したかを
+> 見ること。§95.9 を参照。
+
 ## 95.2 事故: 同じ配備を 2 つのセッションが同時に deploy した
 
 **最初にやったのは計測ではなく、他人の配備を壊すことだった。**
@@ -251,6 +259,88 @@ AWS 資格情報では止められない（`desired-count 0` は 30 秒で取り
 - **`fipsEnabled` はこの配備が一度も設定していないので、直接は測れていない。** 兄弟の欄
   （`capacityOptionType`）が保持されたことからの推定である。FIPS を使う配備で段を切り替える
   前に、ここだけもう一度確かめること。
+
+  > 🔴 **訂正（2026-09-10・同日の追試）。この推定は、寄りかかっている足のほうも推定だった。**
+  > `capacityOptionType` について見たのは `ON_DEMAND` のままという観測だが、**`ON_DEMAND` は
+  > この欄の既定値**なので、ここで `fipsEnabled` について正しく書いた「既定が false なので
+  > 黙って戻されても区別がつかない」がそのまま当てはまる。**欠陥に気づいていたのに、隣の欄に
+  > 同じ物差しを当てなかった。** 非既定値 `SPOT` で測り直し、保持されることを確認済み（§95.9）。
+  > `fipsEnabled` 自体は **ap-northeast-1 では設定できない**ため、この宿題は東京では消える。
 - **llm 役は 1 度も起こしていない。** コールドスタートが 3 倍（527〜586 秒）で、同じことを
   3 倍の時間と費用で測ることになるため、実験計画のとおり image 役だけで行った。llm 役の
   梯子は空のままで、決定 3 の対照として使った。
+
+## 95.9 追試: 使い捨ての provider で測り直した（同日・GPU 課金 $0）
+
+P1 のあと、Spot への切り替えを検討する過程で 4 件を測り直した。**GPU は 1 台も買っていない。**
+
+### 95.9.1 やり方——live に触らずに測る
+
+`af-spot-probe-0074` という **capacity provider を 1 本作って、測って、消した**。live の
+`af-af-ecs-engines-image` / `-llm` には一切触れていない。
+
+```
+create-capacity-provider  (--cluster 必須・capacityOptionType: SPOT)
+  → describe                 (前)
+  → update-capacity-provider (段の切替を 2 回)
+  → describe                 (後)
+  → delete-capacity-provider
+```
+
+所要 5 分・**$0**・クラスタの provider 一覧は前後で完全一致。**CFN の再デプロイが要らない**ので、
+§95.2 で起こした「同じ配備を 2 セッションで取り合う」事故の危険もない。**provider の設定だけを
+問う実験なら、これが既定の道具にできる。**
+
+⚠️ 削除した provider は ECS が `INACTIVE` レコードとして残す（クラスタの一覧からは消える）。
+
+### 95.9.2 未解決 1 を、陽性対照つきで測り直した
+
+P1 の観測は「`capacityOptionType` が `ON_DEMAND` のまま」だったが、**`ON_DEMAND` はこの欄の
+既定値**なので、「保持された」と「既定に戻された」を区別していない。§95.8 で `fipsEnabled` に
+ついてはこの欠陥を正しく指摘していたのに、**その物差しを、推論の足にしていた欄そのものには
+当てていなかった。**
+
+非既定値で測り直した結果は **保持される**。
+
+| | before | after（2 回の切替後） |
+|---|---|---|
+| `capacityOptionType` | `SPOT` | **`SPOT`** |
+| `allowedInstanceTypes` | `[g6.xlarge]` | `[g6e.xlarge]` → `[g6.xlarge]` |
+| `acceleratorTotalMemoryMiB.min` | 8000 | 40000 → 8000 |
+
+**陽性対照**: 同じ更新で下 2 行は狙いどおり動き、差分はその 2 欄だけだった。更新が空振りした
+のではないことが言える。渡したのは `instanceLaunchTemplateUpdate` が運べる 8 欄のみ
+（`control-plane/engine_class.go` と同じ形）。**結論は P1 と同じ——決定 5 に手当ては要らない。**
+
+### 95.9.3 `fipsEnabled` は、東京では設定そのものができない
+
+```
+ClientException: Managed Instances Provider does not support FIPS in this region
+```
+
+`fipsEnabled: true` で作ろうとすると ECS が拒否する。**§95.8 が残した「FIPS を使う配備で確かめる
+こと」という宿題は、ap-northeast-1 では消える**（他リージョンでは残る）。運べない 2 欄のうち
+片方は保持が実測され、もう片方はこの配備で値を持ち得ないので、**運べない欄が問題になるのは
+実質 0 件**である。
+
+### 95.9.4 クォータの実値（両アカウント）
+
+| | af-sandbox | af-acrt（production） |
+|---|---|---|
+| `L-DB2E81BA` On-Demand G/VT | 8（24 への申請が `CASE_OPENED`・09-07 起票） | **64** |
+| `L-3819A6DF` Spot G/VT | 0 → **16 を申請**（`PENDING`） | **64** |
+
+- ADR 0074 が繰り返す「**本番のクォータは 96**」は acrt の実値（64）と合わない。決定 1 は
+  この数字に依存していないので決定は動かない。
+- 🔴 `L-DB2E81BB` は存在しない（§95.1 の訂正を参照）。
+- **クォータ引き上げ申請の「同時 1 件」制限はクォータ単位**だった。On-Demand の申請が開いた
+  ままでも Spot の申請は受理された。
+- **Spot クォータが 0 でも `capacityOptionType: SPOT` の provider は作れる。** クォータが効くのは
+  箱を起動する時だけなので、**設定側の検証は引き上げを待たなくてよい。** §95.9.2 はクォータ 0 の
+  まま行った。
+
+### 95.9.5 測っていないこと
+
+**Spot の箱が実際に起動して、エンジンが載って動くところは見ていない。** af-sandbox のクォータ
+引き上げ待ちで、通しの検証は未着手である。§95.9.2 が言えるのは「provider の設定が更新を跨いで
+保持される」ことまでで、**Spot で運用できる根拠にはならない。**

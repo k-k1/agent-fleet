@@ -367,6 +367,10 @@ person is 22.3% (decision 4), so this is a block of the same order.
 - **No manual step on acrt (a member account) either.** `af-role` is already activated by the payer, and
   `GetCostAndUsage` with `GroupBy Type=TAG` works from a member account (measured). acrt does not run
   60-engines, so only `tts-engine` shows up, at $0.07 over 7 days.
+  ℹ️ **That last sentence has aged** (it was true when measured): 60-engines is deployed on acrt as
+  of 2026-09-10, with both the `image` and `llm` capacity providers `ACTIVE`. GPU spend there is
+  still nearly nothing — `APN1-BoxUsage:g6.xlarge` came to **$0.58 over 30 days**, against
+  EBS gp3 $39 and NAT Gateway $36.
 
 ## Options discarded
 
