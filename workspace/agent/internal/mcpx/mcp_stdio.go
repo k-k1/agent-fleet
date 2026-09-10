@@ -687,8 +687,9 @@ func mcpStdioFleetObserveTools() []map[string]any {
 		},
 		{
 			"name": "list_memos",
-			"description": "Agent Fleet: list the memo queue - the notes your user collects and later sends into " +
-				"a session in one batch. Each memo has id / repo / category / kind (file|text) / body / refPath. " +
+			"description": "Agent Fleet: list your user's memo queue - what they call their \"memo\": the notes " +
+				"they collect and later send into a session in one batch. " +
+				"Each memo has id / repo / category / kind (file|text) / body / refPath. " +
 				"Call it before add_memo to see whether the point is already queued, and to match the repo and " +
 				"category labels already in use.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
@@ -698,6 +699,9 @@ func mcpStdioFleetObserveTools() []map[string]any {
 			"description": "Agent Fleet: add one note to your user's memo queue. It is a message to the HUMAN, " +
 				"read in the Console later - not a message to another session (that is send_to_peer_session) and " +
 				"not a way to give yourself a to-do. " +
+				"When your user asks you to note something down - \"add this to my memo\", \"memo it\" - THIS " +
+				"queue is what they mean, not your own agent memory or notes file: write there only when they " +
+				"say memory, or name the file. " +
 				"Use it for something worth acting on that is outside what you were asked to do: a bug you had to " +
 				"step around, a stale document you noticed, follow-up work your change implies. " +
 				"Say what you found and where (repo, file:line); the queue is read away from this conversation, " +
