@@ -3,7 +3,9 @@
 [English](0072-engine-model-catalog.md) | 日本語
 
 - 状態: **P0・P1・P4 実装済み・実機検証済み（2026-09-08〜09）。P5 のうち HF トークンの
-  Console 登録（未解決 12）は実装済み・実機未検証（2026-09-09。「P5 の実装」節）。P2
+  Console 登録（未解決 12）は実装済みで、**2026-09-10 に実機検証済み**（「P5 の実装」節と
+  「P5 を実機で押した」節。確かめたかった 3 点は 3 つとも通り、gated の断り方が 401 だけでは
+  ない——403 がある——という欠落を 1 件踏んだ）。P2
   （ComfyUI）は 2026-09-10 に実装済み。**provider の実機検証も同日に完了した**——
   「P2 を実機で押した」節。そこで実装の欠落を 4 件踏み、うち 2 件は本文の記述そのものが
   誤っていた（同節と、その 2 件を指す 🔴 訂正）。**残作業だった取り込み経路と、provider を
@@ -1158,6 +1160,82 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
 こと、そして gated（SD3.5 Medium・FLUX.1-dev）が登録後に 401 なしで取り込めること。3 つ目は
 未解決 7 の「gated の 2 つを `HF_TOKEN` のある配備で測る」がそのまま残っている宿題でもある。
 
+（**この 3 つは 2026-09-10 に実機で押した**——次節。3 つとも通った。）
+
+## P5 を実機で押した——HF トークンの Console 登録（2026-09-10・開発配備）
+
+前節が「実機では未検証」として挙げた 3 点を、**GPU を起こさずに**押した（取り込みは Fargate の
+タスクだけで、image の役は `mode: off` のまま一度も起きていない）。**3 つとも通った。** 時刻は
+すべて UTC、秒数とバイト数は取り込みタスクのログそのままである。
+
+1. **`PutSecretValue` は実配備でも通る。** Console の管理パネルから登録すると
+   `GET /api/admin/engines/hf-token` が
+   `{"available":true,"configured":true,"updated_by":"…","updated_at":"2026-09-10T13:50:14Z"}`
+   を返し、秘密の `LastChangedDate` も同じ 13:50:14Z。**IAM の `Roles:`——インポートした ARN から
+   ロール名を切り出す形——は実配備で解けている。** さらに項目 6（取り込みのたびに書き直す）が
+   実際に走っていることが版の並びで見えた: `list-secret-version-ids` は版を 4 本返し、スタックが
+   作った番兵と 13:50:14Z の登録のあとに **13:52:59Z と 13:53:05Z** が並ぶ。この 2 つは下の
+   `POST …/ingest` を出した時刻そのもので、`stage` が取り込み 1 回につき 1 版増やしている。
+
+2. **番兵 `-` の取り込みは匿名として成功する。** `DELETE hf-token` は
+   `{"available":true,"configured":false}` を返し、秘密は 14:02:56Z に番兵へ戻る。その状態で
+   公開リポジトリ（`madebyollin/taesdxl` の `taesdxl_decoder.safetensors`・4,895,612 B）を
+   取り込むとジョブは `done` になり、ログは 3 行だけ:
+
+   ```
+   ingest: fetched 4895612 bytes in 2s
+   ingest: sha256 ok f6013131e7eb412ef20113f1acc2ea7d3e47e53196ca0530fa65d9b61d814b61
+   ingest: uploaded image/vae/r1-taesdxl-decoder.safetensors in 1s
+   ```
+
+   Authorization 由来の行は 1 つも無い。**この取り込みで秘密の `LastChangedDate` は動かなかった**
+   （14:02:56Z のまま）——トークンが無いとき `stage` は何も書かない、が実測で裏づいた。番兵の下では
+   gated の判定も反転する: `resolve` が `can_ingest:false` / `deployment_token:false` を返し、
+   `POST …/ingest` は **タスクを起こす前に** 400 `gated_no_token` で断る。
+
+3. **gated は 401 なしで取り込める（未解決 7 の残り半分）。** SD3.5 Medium と FLUX.1-dev の
+   gated リポジトリから、それぞれ**最小のファイル**を 1 つ。どちらも
+   `vae/diffusion_pytorch_model.safetensors`（167,666,902 B）で、FLUX.1-dev では
+   `ae.safetensors`（335,304,388 B）より小さい。gated はリポジトリ単位の判定なので 1 ファイルで
+   足りる——**23.8 GB の `flux1-dev.safetensors` は L4 に載らないので取り込んでいない。**
+
+   ```
+   13:53:50  ingest: fetched 167666902 bytes in 5s          # FLUX.1-dev
+   13:53:51  ingest: sha256 ok f5b59a26851551b67ae1fe58d32e76486e1e812def4696a4bea97f16604d40a3
+   13:53:53  ingest: uploaded image/vae/r1-flux1-dev-vae.safetensors in 1s
+   14:00:27  ingest: fetched 167666902 bytes in 8s          # SD3.5 Medium
+   14:00:28  ingest: sha256 ok 8f53304a79335b55e13ec50f63e5157fee4deb2f30d5fae0654e2b2653c109dc
+   14:00:29  ingest: uploaded image/vae/r1-sd35-medium-vae.safetensors in 1s
+   ```
+
+   どちらのログにも 401 は無い。**匿名の解決は gated でもそのまま効いている**——CP は
+   `?blobs=true` から sha256・サイズ・ライセンス（`stabilityai-ai-community` /
+   `flux-1-dev-non-commercial-license`）・`gated:true` を鍵無しで取り、落とすのはタスクだけ、
+   という決定 6 の分業が実経路で確かめられた。
+
+🔴 **gated が断るのは 401 とは限らない——403 があり、意味が違う。** SD3.5 Medium の最初の試行は
+失敗し、ログはこの 1 行だけだった:
+
+```
+curl: (22) The requested URL returned error: 403
+```
+
+同じトークンで FLUX.1-dev が同じ分のうちに通っていたので、**トークンは届いている**。403 は
+「認証は通ったが、このリポジトリへのアクセスが無い」——操作者のアカウントが
+`stabilityai-ai-community` に同意していなかった（fine-grained トークンで「public gated repos の
+内容を読む」権限が欠けている場合も同じ姿になる）。同意を入れてから同じファイルを再試行して通った。
+本 ADR と `PARAMETERS-60-engines.md` は 401 を「トークンが無い」の症状として書いているが、
+**401 と 403 は読む人に別の宿題を出す**: 401 は配備にトークンが無い（または末尾改行が混じった）、
+403 はそのアカウントがそのリポジトリに同意していない。パネルはログの行をそのまま出すので、
+区別できるのは読む人だけである。
+
+**消したもの・残したもの。** 検証で作った 3 行（`r1-flux1-vae-probe`・`r1-sd35-vae-probe2`・
+`r1-anon-probe`）はどれも `enabled` にせず、検証後に**行だけ**消した——`?purge=1` は使っていない
+（同じ S3 キーを他の行が参照していると purge が黙って消す欠陥の修正が別にある）。バケットには
+3 つのバイト列が残っている: `image/vae/r1-flux1-dev-vae.safetensors` と
+`image/vae/r1-sd35-medium-vae.safetensors`（各 167,666,902 B）、
+`image/vae/r1-taesdxl-decoder.safetensors`（4,895,612 B）——合計約 340 MB。
+
 ## P2 の実装——ComfyUI（2026-09-10）
 
 未解決の点 8・9 が解けた翌々日、フェーズ節の P2 一覧をそのまま実装した。CI での検証は
@@ -1570,6 +1648,13 @@ engine is starting; retry` という、**自分で retry と言っておきな�
    本命（ComfyUI）の順序は変えない。
 7. ~~**既定モデルの実測**（決定 10）~~ **解けた**（実測で解けた点 3〜5）。残るのは gated の
    2 つ——SD3.5 Medium と FLUX.1-dev——で、`HF_TOKEN` のある配備で測る。
+   **2026-09-10 に取り込みの側を解いた**（「P5 を実機で押した」節）: 登録したトークンで
+   `stabilityai/stable-diffusion-3.5-medium` と `black-forest-labs/FLUX.1-dev` の両方から
+   401 なしで取り込めた。ただし取ったのは各リポジトリの**最小ファイル 1 つ**（どちらも
+   167,666,902 B の VAE）で、gated の判定がリポジトリ単位だから足りる、という確認である——
+   **本体を入れて描かせたわけではない**（23.8 GB の `flux1-dev.safetensors` は L4 に載らない）。
+   この 2 族の生成そのものは、ungated の鏡から入れたファイルで「P2 の残作業 4・5 を実機で
+   押した」節が済ませている。
 8. **ComfyUI の自前イメージ**（フェーズ P2）——半分解けた（実測で解けた点 7・8）: コミュニティ
    イメージは 5.36 GB 圧縮で pull 205 秒、焼き込みが v0.8.2 なので起動時の checkout＋pip
    （20〜26 秒・NAT 依存）が要った。自前で焼くなら v0.34.0 を固定し、Manager を入れない。
@@ -1639,7 +1724,8 @@ engine is starting; retry` という、**自分で retry と言っておきな�
 12. ~~**HF トークンを Console から登録できるようにする**~~ **決まった（レビュー 2026-09-09 の
     5）——「DB を正本に、Secrets Manager を運搬路に」を採り、「読み戻さない」を IAM
     （`PutSecretValue` だけ・`GetSecretValue` は与えない）で縛る。実装済み（2026-09-09・
-    「P5 の実装」節。形 (b)＝常に秘密を作る。実機未検証）。** 着手条件だった
+    「P5 の実装」節。形 (b)＝常に秘密を作る。**実機検証は 2026-09-10**——「P5 を実機で押した」
+    節）。** 着手条件だった
     **`60-engines.yaml` の余白**は、パラメータ 1 つを消し、スタックの `Description` の散文を
     `PARAMETERS-60-engines.md` へ移して空けた（50,842 → 50,869 バイト／壁 51,200）。
     以下は当時の記述:
@@ -1722,7 +1808,8 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   **HF トークンの Console 登録（未解決 12）だけ先に実装済み**——ここだけ他に依存が無く、
   gated（SD3.5 全部・FLUX.1 全部）が取り込めるかどうかを直接決めるため。**完了の定義:
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
-  取り込みタスクのログに 401 が出ない。**（実機未検証。「P5 の実装」節）
+  取り込みタスクのログに 401 が出ない。**（**2026-09-10 に実機で満たした**——「P5 の実装」節と
+  「P5 を実機で押した」節。P5 の他の項目は未着手のまま。）
 - **P6 — seed と残り 4 パラメータの撤去**（2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
   追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
   `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
