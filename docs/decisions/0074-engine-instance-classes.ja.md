@@ -563,7 +563,7 @@ ImageInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
 実験計画のとおり image 役だけで、クォータ 8 のまま行った。**GPU は 100 分・$4.6**
 （`g6e.xlarge` 90.5 分＝$4.07、`g6e.2xlarge` 10.2 分＝$0.55。計測そのものは 13 分で、
 残りは人の確認を待つあいだ箱が遊んでいた時間である）。記録は
-[docs/log/94-engine-instance-classes.md](../log/94-engine-instance-classes.md)。
+[docs/log/95-engine-instance-classes.md](../log/95-engine-instance-classes.md)。
 
 | # | 測ったもの | 結果 |
 |---|---|---|
@@ -627,6 +627,6 @@ ImageInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;
   退場待ち・`VcpuLimitExceeded`・コールドスタートを実測し、未解決 1・2・3 を埋めた。
   **梯子の出荷時の既定は空のまま**（決定 1）——価格は請求とずれ、在庫はリージョンごとに
   違うので、「測っていない値を既定にしない」という前提は P1 の後もそのまま生きている。
-  実測は「P1 の実測」節、記録は docs/log/94。
+  実測は「P1 の実測」節、記録は docs/log/95。
 - **P2（必要が出たら）**: タスク定義の追随（決定 11・未解決 6）、`--models-max` を段に応じて
   上げる、`engine_hourly` の段別内訳（決定 10）。

@@ -26,7 +26,7 @@ type fakeTTSECS struct {
 	// that is the only place a Managed Instances box's type can be read (ADR 0074). Empty
 	// leaves the attribute off entirely, which is a real answer and not a match.
 	instanceType string
-	listCalls  int
+	listCalls    int
 }
 
 func (f *fakeTTSECS) DescribeServices(_ context.Context, in *ecs.DescribeServicesInput, _ ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {

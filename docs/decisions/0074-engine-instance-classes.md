@@ -619,7 +619,7 @@ a start**, and that can be added after everything else has passed.
 Run as planned: the image role only, with the quota left at 8. **100 GPU-minutes, $4.6**
 (`g6e.xlarge` 90.5 min = $4.07, `g6e.2xlarge` 10.2 min = $0.55 — the measurements themselves
 took 13 minutes; the rest is a box idling while a human was asked to click). The record is
-[docs/log/94-engine-instance-classes.md](../log/94-engine-instance-classes.md) (Japanese).
+[docs/log/95-engine-instance-classes.md](../log/95-engine-instance-classes.md) (Japanese).
 
 | # | Measured | Result |
 |---|---|---|
@@ -685,7 +685,7 @@ drain (150 s) + quota wait (up to ~6 min) + cold start.
   boxes were bought, and the drain wait, `VcpuLimitExceeded` and the cold start were measured;
   open questions 1, 2 and 3 are closed. **The shipped ladder stays empty** (decision 1) — price
   differs from the bill and availability differs per region, so "do not ship a number nobody
-  measured" survives P1 intact. Results: "What P1 measured"; record: docs/log/94.
+  measured" survives P1 intact. Results: "What P1 measured"; record: docs/log/95.
 - **P2 (if it turns out to be needed)**: the task definition following the rung (decision 11,
   open question 6), raising `--models-max` with the rung, and a per-rung breakdown in
   `engine_hourly` (decision 10).
