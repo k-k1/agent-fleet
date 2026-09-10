@@ -154,6 +154,12 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   // its metadata 200 for everybody and only the DOWNLOAD is per uploader (five assets measured,
   // split 200/401/403). No token field is being added, so the sentence says what to do instead.
   "admin.engines_ingest_civitai_login": "The person who uploaded this asset only allows downloads from a logged-in account. This deployment ingests anonymously, so it cannot be fetched (a Hugging Face token does not help). Pick another asset, or stage the file in the bucket by hand and register it.",
+  // 🔴 401 and 403 on a gated repository are one line of curl apart and need opposite screens:
+  // 401 is a token that never reached the ingest task, 403 is a token that did and an account
+  // that has not accepted THAT repository (measured: one token, FLUX.1-dev through, SD3.5 403).
+  "admin.engines_ingest_job_not_accepted": "The token reached the task, and that account has not accepted this repository's terms yet. Accept them on the Hugging Face model page and take it in again.",
+  "admin.engines_ingest_job_no_token": "No token reached the ingest task. Register the operator's token under \u201cHugging Face token\u201d below and take it in again.",
+  "admin.engines_ingest_gated_accept_first": "A gated repository. A token is registered, but whether that account has accepted this repository's terms is something the Control Plane cannot check (it resolves anonymously). If it has not, the ingest fails with a 403 — so accept them on the Hugging Face model page first.",
   "admin.engines_hf_token": "Hugging Face token",
   "admin.engines_hf_token_field": "Token",
   "admin.engines_hf_token_save": "Register",

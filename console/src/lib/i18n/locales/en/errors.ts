@@ -215,6 +215,7 @@ export const errors: Record<keyof typeof jaErrors, string> = {
   "err.engine_class_unknown": "No such instance class is declared for this engine.",
   "err.engine_vram_confirm": "That model wants more VRAM than the chosen instance class has.",
   "err.engine_files_missing": "This row does not hold the files its family's workflow reads.",
+  "err.gated_not_accepted": "That account has not accepted this repository's terms yet.",
   "err.civitai_login_required": "That asset's uploader only allows downloads from a logged-in account.",
   "err.bad_source": "The source is not a valid one.",
   "err.file_unknown": "The repository does not list that file.",

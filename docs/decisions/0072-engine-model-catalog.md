@@ -1261,6 +1261,20 @@ Medium, FLUX.1-dev) is taken in without a 401 once a token is registered. The th
 open question 7's outstanding half — "measure the two gated defaults on a deployment that has
 an `HF_TOKEN`".
 
+> ✅ **Gap (on hardware, 2026-09-10, observed by another lane): a gated refusal is not one
+> thing.** With the same registered token FLUX.1-dev came down and SD3.5 Medium's ingest task
+> died on one line — `curl: (22) The requested URL returned error: 403` — and a retry after
+> accepting the terms on Hugging Face went through. **401 and 403 need opposite screens**: 401
+> is a token that never reached the task, 403 is one that did and an account that has not
+> accepted THAT repository's terms — and the panel showed the same curl line for both. The job
+> row now names itself `gated_no_token` / `gated_not_accepted` (`engineIngestFailureCode`;
+> anything from Civitai answers `civitai_login_required`) and the Console says the two
+> different things in ja and en. The `resolve` side **cannot** carry a code — the CP resolves
+> anonymously and has no way to ask whether the registered token's account accepted a given
+> repository — so it goes as far as an up-front `gated_needs_acceptance` warning whenever a
+> repository is gated and a token is registered. Both statuses are tested; with only one, an
+> implementation with no branch passes.
+
 ## P2 implementation — ComfyUI (2026-09-10)
 
 Two days after open questions 8 and 9 were settled, the P2 list in the phases section was

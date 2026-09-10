@@ -25,7 +25,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { EnginesAdminView, engineIdFromFile } from "./adminEngines.tsx";
+import { EnginesAdminView, engineIdFromFile, engineJobAdvice } from "./adminEngines.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -95,6 +95,23 @@ describe("engineIdFromFile", () => {
     );
     expect(engineIdFromFile("Model-BF16.safetensors")).toBe("model");
     expect(engineIdFromFile("vae/diffusion_pytorch_model.safetensors")).toBe("diffusion_pytorch_model");
+  });
+});
+
+// 🔴 The two gated refusals arrive one character apart in the task's log and need opposite
+// screens: 401 = no token reached the ingest task, 403 = one did and that account has not
+// accepted THAT repository (measured on af-sandbox, ADR 0072 P5 実機検証: the same token took
+// FLUX.1-dev in and was refused SD3.5 Medium; accepting on the model page fixed the retry).
+// Both are asserted, because with only one a table with no branch passes.
+describe("engineJobAdvice", () => {
+  it("sends 401 to the token field and 403 to the model page", () => {
+    expect(engineJobAdvice("gated_no_token")).toBe("admin.engines_ingest_job_no_token");
+    expect(engineJobAdvice("gated_not_accepted")).toBe("admin.engines_ingest_job_not_accepted");
+    expect(engineJobAdvice("gated_no_token")).not.toBe(engineJobAdvice("gated_not_accepted"));
+    expect(engineJobAdvice("civitai_login_required")).toBe("admin.engines_ingest_civitai_login");
+    // A job the CP could not classify says nothing extra — the task's own words are still there.
+    expect(engineJobAdvice(undefined)).toBe("");
+    expect(engineJobAdvice("something_else")).toBe("");
   });
 });
 
@@ -1460,6 +1477,33 @@ describe("EnginesAdminView", () => {
     expect(ctxField).toBeTruthy();
     const caps = Array.from(host!.querySelectorAll(".engines-ingest select")) as HTMLSelectElement[];
     expect(caps[caps.length - 1].value).toBe("4096"); // 1/8 of 32768
+  });
+
+  // The advice sits BESIDE the task's own words, never instead of them: `curl: (22) … 403` is
+  // sometimes the only detail there is, and it is what a search of the logs matches on.
+  it("says what to do about a job that failed because the terms were not accepted", async () => {
+    api.mockImplementation(async (p: string) =>
+      p.endsWith("/ingest")
+        ? {
+            jobs: [
+              {
+                id: "j1",
+                model_id: "sd35-medium",
+                state: "failed",
+                source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors",
+                message: "curl: (22) The requested URL returned error: 403",
+                code: "gated_not_accepted",
+              },
+            ],
+          }
+        : { engines: [row({ key: "image", has_models: true, model_rows: [] })] },
+    );
+    await mount();
+    const job = host!.querySelector("ul.engines-ingest-jobs li")!;
+    expect(job.textContent).toContain("error: 403");
+    expect(job.textContent).toContain("条項にまだ同意していません");
+    // Not the token sentence: registering one again fixes nothing here.
+    expect(job.textContent).not.toContain("トークンが取り込みタスクに届いていません");
   });
 
   // 🔴 ADR 0072 P2 欠落 5. Civitai's uploader — not the model, not the licence — can require a

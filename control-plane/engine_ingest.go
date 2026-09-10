@@ -778,6 +778,43 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 	}
 }
 
+// engineIngestFailureCode reads the ONE actionable thing out of a failed task's own words: the
+// HTTP status the download earned, which for a gated repository is the difference between two
+// completely different fixes.
+//
+// 🔴 Measured on af-sandbox (ADR 0072 P5 実機検証): with one registered token, FLUX.1-dev came
+// down and SD3.5 Medium died on `curl: (22) The requested URL returned error: 403`, and
+// accepting that repository's terms on Hugging Face with the token's own account fixed it.
+// **401 and 403 are not the same failure**: 401 is a token that is not reaching the task
+// (register one, check the secret), 403 is a token that arrived and an account that has not
+// accepted THIS repository. A panel that said "gated" to both sends half its readers to the
+// wrong screen.
+//
+// Read out of the message rather than carried on the job row: the status is the task's, the
+// row has no column for it, and the classification is a pure function this file can be tested
+// on with both statuses. Anchored on the phrasings the fetch container actually prints, so a
+// filename containing 403 is not a diagnosis.
+func engineIngestFailureCode(source, msg string) string {
+	switch m := engineIngestStatusRe.FindStringSubmatch(msg); {
+	case m == nil:
+		return ""
+	case strings.HasPrefix(source, "civitai:"):
+		// Civitai has no token at all, so both statuses mean the same act (ADR 0072 P2 欠落 5).
+		// A job started before the resolve probe existed still lands here.
+		return errCodeIngestCivitaiLogin
+	case !strings.HasPrefix(source, "hf:"):
+		return "" // a plain URL's 401 is the operator's own server, and this cannot advise on it
+	case m[1] == "403":
+		return errCodeIngestGatedNotAccepted
+	default:
+		return errCodeIngestGatedNoToken
+	}
+}
+
+// engineIngestStatusRe matches the status in what the fetch container prints — curl's
+// `The requested URL returned error: 403`, and the bare `HTTP/1.1 401` of a verbose run.
+var engineIngestStatusRe = regexp.MustCompile(`(?i)(?:error:\s*|HTTP/[\d.]+\s+)(401|403)\b`)
+
 // engineFlagLabel names a file's role in a log line. The empty flag is a whole checkpoint, and
 // printing it as `""` reads as a bug in the line rather than as the normal case it is.
 func engineFlagLabel(flag string) string {

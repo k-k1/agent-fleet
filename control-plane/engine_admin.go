@@ -1107,6 +1107,15 @@ func engineResolvedRow(res engineResolved, hasToken bool) map[string]any {
 	if res.LoginRequired {
 		row["login_required"] = true
 	}
+	// A gated repository WITH a token registered is not yet a yes, and this is the one place
+	// that can say so in advance. 🔴 The CP resolves anonymously (decision 6) — it never holds
+	// the token — so it cannot ask whether that account accepted THIS repository's terms, and
+	// the answer arrives as a 403 on the download instead (measured, ADR 0072 P5 実機検証: one
+	// token, FLUX.1-dev through and SD3.5 Medium refused). A warning is therefore all this can
+	// honestly be; the CODE for it exists on the failed job, where the status is known.
+	if res.Gated && hasToken {
+		row["gated_needs_acceptance"] = true
+	}
 	if res.License != "" {
 		row["license"] = res.License
 	}
@@ -1338,6 +1347,12 @@ func engineIngestJobRow(j store.EngineIngestJob) map[string]any {
 	}
 	if j.Bytes > 0 {
 		row["bytes"] = j.Bytes
+	}
+	// What the operator has to DO about it, when the task's own words say. The message stays as
+	// it is — it is the task's sentence and sometimes the only detail there is — and this rides
+	// beside it so the panel can add the action in the reader's language.
+	if code := engineIngestFailureCode(j.Source, j.Message); code != "" {
+		row["code"] = code
 	}
 	return row
 }

@@ -122,6 +122,11 @@ type ResolvedSource = {
    *  registered Hugging Face token satisfies gating and cannot touch this one, so folding them
    *  would send somebody to the token field to fix what a token does not fix. */
   login_required?: boolean;
+  /** Gated, and a token IS registered — which is still not a yes. The CP resolves anonymously
+   *  and cannot ask whether that account accepted THIS repository's terms; when it has not,
+   *  the answer is a 403 on the download minutes later. So this is a warning before the press,
+   *  not a verdict (ADR 0072 P5 実機検証). */
+  gated_needs_acceptance?: boolean;
   /** The model's OWN maximum, off the GGUF header. 🔴 A ceiling, not a setting: the 30B in
    *  this deployment publishes 262144 and is run at 32768, because what the architecture
    *  allows and what fits in the GPU are different questions. Offered, never applied. */
@@ -165,6 +170,12 @@ type IngestJob = {
   source?: string;
   state: string;
   message?: string;
+  /** What the operator has to DO about a failure, read by the CP out of the status in the
+   *  message. 🔴 `gated_no_token` and `gated_not_accepted` are one line of curl apart and need
+   *  opposite screens: 401 is a token that never reached the task, 403 is a token that did and
+   *  an account that has not accepted THAT repository (measured, ADR 0072 P5 実機検証 — one
+   *  token, FLUX.1-dev through and SD3.5 Medium refused). */
+  code?: string;
   bytes?: number;
   created_at?: string;
 };
@@ -1930,6 +1941,12 @@ function ResolvedNote({ found }: { found: ResolvedSource }) {
           be found nine minutes into a Fargate task as a bare curl exit code. The sentence
           says what can be done instead, because registering a token is not it. */}
       {found.login_required && <p className="form-err">{tr("admin.engines_ingest_civitai_login")}</p>}
+      {/* Gated WITH a token is not a yes: the terms also have to have been accepted by that
+          token's own account, on this repository, and nothing here can check that. Said before
+          the press because the alternative is finding out from a 403 minutes later. */}
+      {found.gated_needs_acceptance && (
+        <p className="muted">{tr("admin.engines_ingest_gated_accept_first")}</p>
+      )}
     </>
   );
 }
@@ -2139,6 +2156,24 @@ function fmtCount(n: number): string {
   return String(Math.round(n * 10) / 10);
 }
 
+/** The sentence that says what to do about a failed job, or "" when the CP could not tell.
+ *
+ * A table rather than one key per code so that the two gated refusals cannot end up sharing a
+ * sentence: 401 sends somebody to the token field and 403 sends them to the model page, and
+ * they arrive one character apart in the task's log. */
+export function engineJobAdvice(code?: string): string {
+  switch (code) {
+    case "gated_not_accepted":
+      return "admin.engines_ingest_job_not_accepted";
+    case "gated_no_token":
+      return "admin.engines_ingest_job_no_token";
+    case "civitai_login_required":
+      return "admin.engines_ingest_civitai_login";
+    default:
+      return "";
+  }
+}
+
 function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
   const tr = useT();
   if (jobs.length === 0) return null;
@@ -2166,6 +2201,11 @@ function EngineIngestJobs({ jobs }: { jobs: IngestJob[] }) {
           {/* The task's own words, not an exit code: "sha256 mismatch" and "401 on a gated
               repository" need different things from the person reading them. */}
           {j.message && <p className="form-err engines-model-meta">{j.message}</p>}
+          {/* And what to do about it, when the status says. The curl line above is the task's
+              own words and stays; this is the action, in the reader's language. */}
+          {!!engineJobAdvice(j.code) && (
+            <p className="form-err engines-model-meta">{tr(engineJobAdvice(j.code) as never)}</p>
+          )}
         </li>
       ))}
     </ul>

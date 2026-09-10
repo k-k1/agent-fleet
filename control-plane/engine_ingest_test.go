@@ -402,6 +402,57 @@ func TestEngineResolveCivitaiSpotsAnAssetThatNeedsAnAccount(t *testing.T) {
 	}
 }
 
+// 🔴 401 and 403 on a gated Hugging Face repository are two different failures with two
+// different fixes, and the ingest task reports both as one line of curl.
+//
+// Measured on af-sandbox (ADR 0072 P5 実機検証): with ONE registered token, FLUX.1-dev came
+// down and SD3.5 Medium died on `curl: (22) The requested URL returned error: 403`; accepting
+// that repository's terms on Hugging Face with the token's account made the retry work. So 403
+// is "the token arrived and that account has not accepted THIS repository" — nothing to do
+// with registering a token, which is what 401 means.
+//
+// Both statuses are asserted: with only one, a classifier with no branch at all passes.
+func TestEngineIngestFailureTellsTheTwoGatedRefusalsApart(t *testing.T) {
+	const curl403 = "curl: (22) The requested URL returned error: 403"
+	const curl401 = "curl: (22) The requested URL returned error: 401"
+	for _, c := range []struct {
+		source, msg, want, why string
+	}{
+		{"hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors", curl403,
+			errCodeIngestGatedNotAccepted, "the token arrived; that account has not accepted the terms"},
+		{"hf:black-forest-labs/FLUX.1-dev/flux1-dev.safetensors", curl401,
+			errCodeIngestGatedNoToken, "no token reached the task at all"},
+		{"hf:x/y/z.gguf", "HTTP/1.1 403 Forbidden", errCodeIngestGatedNotAccepted,
+			"a verbose run prints the status line instead of curl's sentence"},
+		{"civitai:128713", curl401, errCodeIngestCivitaiLogin,
+			"Civitai has no token, so both statuses mean the same act — and a job started before" +
+				" the resolve probe existed still ends up here"},
+		{"https://example.com/m.gguf", curl403, "",
+			"somebody's own server refusing is not something this can advise on"},
+		{"hf:x/y/z.gguf", "sha256 mismatch: got aa… want bb…", "",
+			"the failure that is not about access at all"},
+		{"hf:x/y/model-403b.gguf", "curl: (56) connection reset", "",
+			"a filename is not a diagnosis"},
+	} {
+		if got := engineIngestFailureCode(c.source, c.msg); got != c.want {
+			t.Errorf("engineIngestFailureCode(%q, %q) = %q, want %q — %s", c.source, c.msg, got, c.want, c.why)
+		}
+	}
+
+	// And it reaches the panel beside the task's own words rather than instead of them: the
+	// curl line is sometimes the only detail there is.
+	row := engineIngestJobRow(store.EngineIngestJob{
+		ID: "j1", ModelID: "sd35-medium", State: store.EngineIngestFailed,
+		Source: "hf:stabilityai/stable-diffusion-3.5-medium/sd3.5_medium.safetensors", Message: curl403,
+	})
+	if row["code"] != errCodeIngestGatedNotAccepted || row["message"] != curl403 {
+		t.Errorf("job row = %v", row)
+	}
+	if _, ok := engineIngestJobRow(store.EngineIngestJob{ID: "j2", State: store.EngineIngestDone})["code"]; ok {
+		t.Error("a job that did not fail carries a diagnosis")
+	}
+}
+
 // A plain URL is the escape hatch, and the sha256 is not optional on it: no API published one,
 // so nothing else in the path can tell a truncated download from a complete one.
 func TestEngineResolvePlainURLNeedsASha(t *testing.T) {

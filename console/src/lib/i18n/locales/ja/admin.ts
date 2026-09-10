@@ -154,6 +154,12 @@ export const admin = {
   // 200 を返し、ダウンロードの可否だけが投稿者ごとに分かれる（実機で 5 資産が 200/401/403）。
   // トークン欄を作らない判断なので、「別の資産を選ぶ・手で置いて登録する」を言い切る。
   "admin.engines_ingest_civitai_login": "この資産は、投稿者がログイン済みのアカウントからのダウンロードだけを許しています。この配備は匿名で取り込むため取得できません（Hugging Face のトークンでは解決しません）。別の資産を選ぶか、手でバケットに置いて「バケットのファイルを登録する」から登録してください。",
+  // 🔴 gated の 401 と 403 は「1 行の curl」の差で、直す場所が正反対。401 はトークンが
+  // 取り込みタスクに届いていない、403 は届いたうえでそのアカウントが**このリポジトリの**
+  // 条項に未同意（実機: 同じトークンで FLUX.1-dev は通り SD3.5 Medium が 403）。
+  "admin.engines_ingest_job_not_accepted": "トークンは届いていますが、そのアカウントはこのリポジトリの条項にまだ同意していません。Hugging Face のモデルページで同意してから、もう一度取り込んでください。",
+  "admin.engines_ingest_job_no_token": "トークンが取り込みタスクに届いていません。下の「Hugging Face のトークン」に運用者のトークンを登録してから、もう一度取り込んでください。",
+  "admin.engines_ingest_gated_accept_first": "gated のリポジトリです。トークンは登録済みですが、そのアカウントがこのリポジトリの条項に同意しているかは Control Plane からは確かめられません（匿名で調べているため）。未同意だと取り込みは 403 で落ちるので、先に Hugging Face のモデルページで同意しておいてください。",
   "admin.engines_hf_token": "Hugging Face のトークン",
   "admin.engines_hf_token_field": "トークン",
   "admin.engines_hf_token_save": "登録する",

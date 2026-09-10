@@ -59,7 +59,13 @@ const (
 	errCodeIngestUnavailable   = "ingest_unavailable"
 	errCodeIngestNotAccepted   = "license_not_accepted"
 	errCodeIngestGatedNoToken  = "gated_no_token"
-	errCodeIngestIDExists      = "model_id_exists"
+	// The token DID reach the ingest task and Hugging Face still refused (403): that account
+	// has not accepted this repository's terms. Measured on af-sandbox (ADR 0072 P5 実機検証):
+	// one token, FLUX.1-dev through and SD3.5 Medium refused, and accepting on the model page
+	// fixed it. A different act from registering a token, so a different code — the two share
+	// the word "gated" and nothing else.
+	errCodeIngestGatedNotAccepted = "gated_not_accepted"
+	errCodeIngestIDExists         = "model_id_exists"
 	// A Civitai asset whose uploader requires a logged-in account (ADR 0072 P2 欠落 5). The
 	// counterpart of `gated_no_token`, and deliberately not the same code: gating is the
 	// repository's terms and a registered token satisfies them, while this deployment has no
