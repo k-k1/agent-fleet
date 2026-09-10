@@ -121,3 +121,26 @@ func TestResolveComfyFiles(t *testing.T) {
 		t.Errorf("resolveComfyFiles = %+v, want %+v", got, want)
 	}
 }
+
+// comfyFileFlags is served to the Console (through the Control Plane) as the list of parts a
+// split model may declare, so a flag on that list which resolveComfyFiles quietly drops would
+// be an option an operator can pick and then watch fail at generation. Every declared flag has
+// to land somewhere in comfyFiles, and nothing else may.
+func TestComfyFileFlagsAllResolve(t *testing.T) {
+	for _, flag := range comfyFileFlags {
+		got := resolveComfyFiles([]EngineFile{{Flag: flag, Name: "x.safetensors"}})
+		if got == (comfyFiles{}) {
+			t.Errorf("flag %q resolves to nothing — it is offered in the panel and dropped here", flag)
+		}
+	}
+	// The other direction: an unknown flag is DROPPED rather than refused (a catalogue newer
+	// than this Agent must degrade, not fail every request), which is exactly why the list
+	// above has to be complete.
+	if got := resolveComfyFiles([]EngineFile{{Flag: "--controlnet", Name: "x.safetensors"}}); got != (comfyFiles{}) {
+		t.Errorf("an unknown flag resolved to %+v, want it dropped", got)
+	}
+	// Positive control for the check above: the assertion must be able to fail.
+	if got := resolveComfyFiles([]EngineFile{{Flag: "--vae", Name: "v.safetensors"}}); got.Vae != "v.safetensors" {
+		t.Fatalf("--vae did not resolve (%+v) — the comparison above proves nothing", got)
+	}
+}

@@ -137,12 +137,28 @@ func comfySizesFor(conn EngineConn, model string) []string {
 // legacy fallback does, because decision 2 exists precisely so a family is a declared fact, not
 // something read off a naming convention that will eventually collide.
 func comfyFamilyFor(conn EngineConn, model string) (comfyFamily, bool) {
-	switch f := comfyFamily(strings.TrimSpace(conn.BaseModel[model])); f {
-	case ComfyFamilySDXL, ComfyFamilySD35, ComfyFamilyFlux1, ComfyFamilyFlux2Klein, ComfyFamilyZImage:
-		return f, true
-	default:
-		return "", false
+	got := comfyFamily(strings.TrimSpace(conn.BaseModel[model]))
+	for _, f := range comfyFamilies {
+		if f == got {
+			return f, true
+		}
 	}
+	return "", false
+}
+
+// errComfyFamilyNotDeclared separates the two ways this fails, because the fix differs and only
+// one of them looks wrong on the admin screen. NOTHING declared is a row the catalogue seeded
+// (the seed cannot know a family) or one written before the Control Plane validated it. SOMETHING
+// declared that names no template is almost always an upstream display name — "SDXL 1.0",
+// "Flux.1 D" — which is what Hugging Face and Civitai publish and what the ingest path used to
+// store; that row looks complete in the panel and fails only here.
+func errComfyFamilyNotDeclared(model, declared string) error {
+	if d := strings.TrimSpace(declared); d != "" {
+		return fmt.Errorf("model %s declares the checkpoint family %q, which names no workflow template"+
+			" — the catalogue's base_model has to be one of %s", model, d, comfyFamilyList())
+	}
+	return fmt.Errorf("model %s declares no checkpoint family, so there is no workflow template to build"+
+		" — set the catalogue's base_model to one of %s", model, comfyFamilyList())
 }
 
 func errUnknownComfyFamily(family comfyFamily) error {
@@ -191,7 +207,7 @@ func (p *comfyProvider) Generate(ctx context.Context, req Request) (Result, erro
 	}
 	family, ok := comfyFamilyFor(conn, model)
 	if !ok {
-		return Result{}, fmt.Errorf("model %s has no declared checkpoint family (baseModel) in the catalogue", model)
+		return Result{}, errComfyFamilyNotDeclared(model, conn.BaseModel[model])
 	}
 	files := resolveComfyFiles(conn.Files[model])
 

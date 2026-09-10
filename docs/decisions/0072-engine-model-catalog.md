@@ -5,9 +5,14 @@ English | [日本語](0072-engine-model-catalog.ja.md)
 - Status: **P0, P1 and P4 implemented and verified on hardware (2026-09-08..09). Of P5, only
   registering the Hugging Face token from the Console (open question 12) is implemented, and
   not yet verified on hardware (2026-09-09, "P5 implementation"). P2 (ComfyUI) is implemented
-  AND verified on hardware as of 2026-09-10 (see the Japanese edition's "P2 の実装" section —
-  this English edition has not been fully re-synced with that write-up yet, including a real
-  bug it found: torch 2.5.1 cannot run ComfyUI v0.34.0 at all, fixed by moving to 2.9.1). P3
+  AND verified on hardware as of 2026-09-10, provider included (see the Japanese edition's
+  "P2 の実装" and "P2 を実機で押した" sections — this English edition has not been fully
+  re-synced with either write-up yet). Four gaps surfaced only on the deployment, all of them
+  green in CI and green on the bench: torch 2.5.1 cannot run ComfyUI v0.34.0 at all (fixed by
+  moving to 2.9.1); `ln -sfn` linked INTO the models directory the clone bakes, so every request
+  400'd; the fetch sidecar used `PRESET_FILE` as a proxy for "is a router" and never staged any
+  model but the starting one; and nothing anywhere could write a checkpoint family in the
+  spelling the provider dispatches on, so ComfyUI was unusable from the Console alone. P3
   and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,

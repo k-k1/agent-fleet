@@ -4,8 +4,9 @@
 
 - 状態: **P0・P1・P4 実装済み・実機検証済み（2026-09-08〜09）。P5 のうち HF トークンの
   Console 登録（未解決 12）は実装済み・実機未検証（2026-09-09。「P5 の実装」節）。P2
-  （ComfyUI）は 2026-09-10 に実装済み・実機検証済み（「P2 の実装」節）。P3 と P5 の残りは
-  未着手。** 起草・レビュー・改訂・
+  （ComfyUI）は 2026-09-10 に実装済み。**provider の実機検証も同日に完了した**——
+  「P2 を実機で押した」節。そこで実装の欠落を 4 件踏み、うち 2 件は本文の記述そのものが
+  誤っていた（同節と、その 2 件を指す 🔴 訂正）。P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
   `examples/server/api.md`・`docs/lora.md` から読んだ——起草の時点で**この文書のために新しく
@@ -1158,7 +1159,8 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
 できたが、**GPU での実機検証はまだ**（完了の定義は次の実機セッションの宿題）。
 
 1. **自前 Dockerfile とCI。** `deploy/aws/ecs/comfyui/Dockerfile` は `pytorch/pytorch:
-   2.5.1-cuda12.4-cudnn9-runtime` の上に ComfyUI を `v0.34.0` 固定でクローンし、Manager は
+   2.5.1-cuda12.4-cudnn9-runtime`（→ 下記 6 で `2.9.1-cuda12.8` に上げた。torch 2.5.1 では
+   `comfy-kitchen` が import で落ちる）の上に ComfyUI を `v0.34.0` 固定でクローンし、Manager は
    入れない（0071 決定 6）。焼くのは `dev-image.yml`/`release.sh` に統合せず、専用の
    `workflow_dispatch`（`.github/workflows/comfyui-image.yml`）にした——ComfyUI のピン留めは
    アプリのリリース周期と無関係で、統合すると毎リリースで同じ内容を焼き直すことになる。
@@ -1180,11 +1182,31 @@ Console のボタンは利用者に押してもらい、こちらは ECS・S3・
      区別しておらず、有効な全モデルの files を同期する（「start」を先に、「rest」を後で）。
      decision 9 の文章が「image は selected だけ同期する」と書いていたのは 2026-09-09 の
      変更（「rest」をバックグラウンドで足す）で既に事実と食い違っていたので、ついでに直した。
+     🔴 **訂正（2026-09-10）: 無改造では足りていなかった。** 「rest」を書く行は
+     `if [ -n "$PRESET_FILE" ]` の**中**にあり、`else` は `keys.rest` を空にする。image ロールは
+     `PRESET_FILE=""` なので必ず `else` を通る。当時これが正しかったのは、エンジンが
+     llama.cpp（ルータ・preset あり）と sd.cpp（どちらも無し・1 枚しか載せない）の 2 つだけで、
+     「preset を持つ＝ルータ＝他のモデルも要る」という等式が成り立っていたから。**comfy は
+     preset を持たないルータで、その等式を破る。** start 以外のモデルは箱に降りて来ず、
+     ComfyUI は `Value not in list: unet_name: 'flux-2-klein-4b.safetensors' not in []` を返す
+     ——ファイルは active set にも S3 にもあり、グラフ中の名前も正しいのに。しかもサイドカーは
+     事実に反して `every enabled model is on this box` と出力しており、それが取り込みログを
+     健全に見せていた。`SYNC_ALL` で直した（下の「P2 を実機で押した」の 4）。
    - comfy の起動コマンドは `/models/cmdline` の**中身**を読まない（`-m` に相当するものが
      無い——チェックポイントは要求ごとに provider が組む グラフ JSON の中で選ぶ）。
      ファイルが空でないことだけを「有効なモデルがある」ゲートとして使う。統合は
      `ln -sfn /models/image /ComfyUI/models` の 1 行——0071 決定 6 の S3 配置がそのまま
      ComfyUI の規約なので、これだけで済む。
+     🔴 **訂正（2026-09-10）: 1 行では済まなかった。** ComfyUI のリポジトリは `models/` を
+     **実ディレクトリとして追跡している**（`checkpoints/` などが `put_..._here` 付きで存在する）
+     ので、Dockerfile の `git clone` がそれを焼き込む。リンク名が実ディレクトリのとき `ln -sfn`
+     は**その中に** `/ComfyUI/models/image` を作るだけで、`models/checkpoints/` は同梱の空
+     プレースホルダのまま残る（`-n` は「ディレクトリへの symlink」にしか効かない）。エンジンは
+     起動し `/system_stats` に答えヘルスも通り、全リクエストが
+     `ckpt_name: 'sd_xl_base_1.0.safetensors' not in []` で 400 になる。`rm -rf /ComfyUI/models`
+     が先に要る——**末尾スラッシュ厳禁**（2 回目以降は symlink なので、付けると共有モデル
+     ボリュームの中身を消す）。bench が見逃したのは `--baked` がボリュームを `/ComfyUI/models`
+     に**直接 bind mount** するため。mount はディレクトリを置き換えるが symlink は置き換えない。
 4. **provider `comfy`**（`workspace/agent/internal/imagegen/comfy.go`）。`/prompt`
    （sdcpp と同じ 503 engine_waking リトライ）→ `/history/<id>`（ポーリング）→ `/view`
    の3段。**generate のみ**——edit/inpaint は族ごとの image-to-image グラフ（LoadImage +
@@ -1243,6 +1265,72 @@ FLUX.2 klein 4B → SDXL → Z-Image-Turbo → klein 4B と切り替え、13 シ
 S3 レイアウト（`ln -sfn` 相当のマウント）・ワークフローグラフの4点が実機で噛み合うことを
 確認した——確認していないのは Go の `comfy` provider 自体（CP ゲートウェイ経由の
 `/prompt`→`/history`→`/view`）で、これは単体・結合テスト止まり（次回への持ち越し）。
+
+## P2 を実機で押した（2026-09-10・af-sandbox）
+
+P2 の宿題——**Go の `comfy` provider を、CP ゲートウェイ経由で、メンバーセッションの
+`generate_image` から実際に叩く**——を果たした。結論から言うと provider は正しく、
+`sdxl-base-1.0`（1024×1024）も `flux2-klein-4b`（3 枚）も生成できた。ただしそこへ到達する
+までに**実装の欠落を 4 件**踏んだ。4 件とも CI では緑で、bench では緑で、実機でだけ落ちた。
+
+### 何が動いたか
+
+| 計測 | 実測 | 対照 |
+|---|---|---|
+| SDXL 1 枚・コールド | 42.33 秒 | `SDXLClipModel`/`SDXL`/`AutoencoderKL` を EBS から読む |
+| SDXL 1 枚・warm | **8.42 秒** | ComfyUI 単独検証（実測で解けた点）は 8.02 秒 |
+| klein 3 枚・SDXL からの切り替え込み | 35.89 秒 | klein warm は単独検証で 4.01 秒／枚 |
+
+**Go provider のオーバーヘッドは測れないほど小さい。** warm の SDXL が 8.42 秒に対し
+ComfyUI を直接叩いたときが 8.02 秒——差 0.4 秒が `/prompt`→`/history`→`/view` の往復と
+グラフ組み立ての全部である。provider が余計なことをしていないことの、いちばん素直な証拠。
+
+**切り替え警告の見積もりは、この構成では悲観的すぎる。** `comfySwitchWarning` は実測で
+解けた点 5 に従って「1〜2.5 分（EBS 再読み込み）」と言うが、実際は 35.89 秒で、しかも
+そこに 3 枚分の生成が入っている。klein warm 4.01 秒／枚で 3 枚 ≒ 12 秒なので、**切り替え
+自体は約 24 秒**。7.75 GB の klein での話であり、FLUX.1 dev（22.2 GB）には当てはまらない
+可能性が高いので、警告の文面はそのままにしてある。
+
+### 踏んだ 4 件
+
+1. **`base_model` を族の綴りで書く経路が存在しなかった。** comfy は 5 族のテンプレートを
+   `base_model` で選び、ID からの推測を設計上拒否する（決定 2 がそのためにある）。ところが
+   `sdxl` / `flux2-klein` … を書き込む経路がどこにも無かった——`seedEngineCatalog` は
+   `BaseModel` を設定せず（種にはファミリーが分からない）、取り込みは HF / Civitai の
+   **表示名**（`"SDXL 1.0"`）をそのまま格納し、Console には入力欄が無い（表示のみ）。
+   つまり **Console だけを使う限り comfy は 1 枚も生成できない**。今回は管理 API を手で
+   叩いてカタログを書いた。CP に語彙と検証を入れ、Console に選択欄を足して直した。
+2. **Console のカタログ UI が ADR 以前の世界のままだった。** 登録フォームはファイル 1 本
+   固定で、klein や Z-Image のような「拡散モデル＋テキストエンコーダ＋VAE」の 3 本構成を
+   **登録することすらできない**。API と wire は最初から対応していたので、欠けていたのは
+   UI だけ。複数ファイル行（役割 flag 付き）を足して直した。
+3. **`ln -sfn` が焼き込み済みの `models/` の中にリンクを作っていた**（上の訂正 2）。
+   全リクエストが 400。
+4. **`PRESET_FILE` をルータ判定の代理に使っていた**（上の訂正 1）。start 以外のモデルが
+   永久に降りて来ない。`SYNC_ALL`（`ImageIsComfy` のとき `"1"`）に分離して直した。
+
+ついでに、エンジンのモード変更が稼働中ワークスペースにカタログの無効化を押し込んで
+いなかったことも判った。`notifyEngineCatalogChanged` の発火は `putModel` と `deleteModel`
+だけで、モードのルートには無い。Agent はカタログを 10 分キャッシュするので、`mode=off`
+の後もセッションは最大 10 分エンジンを提供し続け、呼ぶと `503 engine_off`（リトライ対象の
+`engine_waking` ではなく拒否）が返る。`mode=ondemand` にしたのにツールに現れなかったのが
+その裏返しで、これが今回いちばん最初の足止めだった。
+
+### この 4 件から取るべき教訓
+
+**「実機の GPU で 13/13 成功」は、出荷される配線を測った証拠ではなかった。** bench
+（`bench-image-engine.sh --baked`）と本番タスク定義の差は 2 箇所しかない——モデルの
+渡し方（bind mount か symlink か）と、取り込みの経路（bench は自前で fetch する）。
+そして**落ちたのは、まさにその 2 箇所だけ**である。3 と 4 は偶然どちらも「bench が
+迂回していた部分」であり、偶然ではない。
+
+ハーネスは「エンジンが動くか」を測るには十分だったが、「この配備でエンジンが動くか」は
+測っていなかった。次に同種のハーネスを書くときは、**モデルの渡し方だけはタスク定義と
+同じにする**（bind mount で楽をしない）のが最小の防御になる。1 と 2 については、
+**API と wire が対応していることは UI が対応していることを意味しない**という、もっと
+単純な話——決定 2 は「取り込み時に運用者が宣言する」と書いてあったのに、宣言する場所が
+作られないまま P2 が完了扱いになりかけていた。
+
 
 ## 却下した案
 
@@ -1417,7 +1505,7 @@ S3 レイアウト（`ln -sfn` 相当のマウント）・ワークフローグ�
   `llamacpp/` が 2 つ並び、2 つ目でセッションが起動した）。行を作る口だけは AWS の資格情報では
   駆動できず、そこは人が押した。
 - **P2 — ComfyUI（0071 P2 をここへ前倒し）。実装済み・実機検証済み（2026-09-10・
-  「P2 の実装」節）。** 自前イメージ（タグ固定・Manager 無し。`20-platform` の ECR リポジトリと
+  「P2 の実装」節と「P2 を実機で押した」節。後者で欠落 4 件を修正）。** 自前イメージ（タグ固定・Manager 無し。`20-platform` の ECR リポジトリと
   専用 CI）、`ImageEngine=comfy` の `!If`（決定 4）、
   provider `comfy`（**generate のみ**。edit/inpaint は族ごとの image-to-image グラフが
   未検証のため今回は対象外——完了の定義自体は generate だけで満たせる。`/prompt` →

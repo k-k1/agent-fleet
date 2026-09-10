@@ -67,6 +67,11 @@ type EngineModel = {
   license_name?: string;
   license_url?: string;
   base_model?: string;
+  /** The provider dispatches on base_model and THIS row's is missing or names no workflow
+   *  template (ADR 0072 decision 2). Stated by the CP, because the panel cannot know the
+   *  vocabulary — and because the row looks complete without it and fails only at generation,
+   *  after a cold start somebody waited through. */
+  base_model_missing?: boolean;
   /** Where the bytes came from (`hf:<repo>/<file>`, `civitai:<id>`, a URL). The id is short and
    *  unique only inside this deployment, so this is the only thing that says WHICH vendor's
    *  model of that name this row is. Absent for a seeded row. */
@@ -162,6 +167,12 @@ type EngineRow = {
   /** Whether anything is enabled at all. Stated by the CP rather than inferred from the list,
    *  because it is the reason the controller refuses to start the engine. */
   has_models?: boolean;
+  /** The checkpoint families this provider picks a workflow graph from, and the labels a split
+   *  model's files may carry. BOTH absent for a provider with no opinion (sd.cpp holds one
+   *  unlabelled checkpoint and never reads a family), which is what the panel reads as "do not
+   *  ask" — offering a choice that changes nothing is worse than offering none. */
+  base_models?: string[];
+  file_flags?: string[];
   mode: string;
   enabled: boolean;
   managed: boolean;
@@ -352,7 +363,7 @@ export function EnginesAdminView() {
    *  the whole engine row, so the panel takes its new state from the server rather than
    *  guessing at the exclusivity rule — selecting one model clears another, and reproducing
    *  that here would be a second copy of a rule that has to be enforced in a transaction. */
-  const setModel = async (key: string, id: string, patch: Record<string, boolean>) => {
+  const setModel = async (key: string, id: string, patch: Record<string, boolean | string>) => {
     await callModel(key + "/" + id, `api/admin/engines/${encodeURIComponent(key)}/models/${encodeURIComponent(id)}`, "PUT", patch, key);
   };
 
@@ -476,6 +487,7 @@ export function EnginesAdminView() {
           <EngineIngest
             engineKey={e.key}
             isImage={e.api === "images"}
+            baseModels={e.base_models}
             busy={busy === e.key + "/ingest"}
             onStarted={() => loadJobs(e.key)}
           />
@@ -633,13 +645,16 @@ function EngineModels({
 }: {
   row: EngineRow;
   busy: string;
-  onChange: (id: string, patch: Record<string, boolean>) => void;
+  onChange: (id: string, patch: Record<string, boolean | string>) => void;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
   const models = row.model_rows || [];
   const isImage = row.api === "images";
+  // Only a provider that dispatches on the family declares one, and only then is there
+  // anything to choose between (see EngineRow.base_models).
+  const families = row.base_models || [];
   // Which row is mid-confirm, and whether the bytes go too. Deleting gigabytes is not something
   // a single click should do, and "forget the row" and "delete the file" have to be told apart
   // BEFORE the press rather than explained afterwards.
@@ -648,14 +663,14 @@ function EngineModels({
   // Which model is waiting on "yes, I know it may not fit" (ADR 0074 decision 6). The dialog is
   // raised HERE, before the request, because this is where the numbers are — the CP refuses the
   // unconfirmed call as well, for any other client.
-  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean> } | null>(null);
+  const [vramAsk, setVramAsk] = useState<{ id: string; patch: Record<string, boolean | string> } | null>(null);
   const cardMiB = row.class?.vram_mib || 0;
   /** True when this model's own demand is known AND larger than the card. `unknown` is not
    *  "too big": asking about every unmeasured model teaches people to click through the one
    *  that matters. */
   const tooBig = (m: EngineModel) =>
     cardMiB > 0 && m.kind !== "lora" && !!m.vram_need_mib && m.vram_need_mib > cardMiB;
-  const change = (m: EngineModel, patch: Record<string, boolean>) => {
+  const change = (m: EngineModel, patch: Record<string, boolean | string>) => {
     const loading = !!(patch.enabled || patch.selected || patch.default);
     if (loading && tooBig(m)) {
       setVramAsk({ id: m.id, patch });
@@ -731,6 +746,37 @@ function EngineModels({
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
               <p className="muted engines-model-meta">{engineModelMeta(m, tr)}</p>
+              {/* 🔴 The one thing wrong with this row that nothing else on it shows. Every other
+                  field is filled in, the toggle works, the id appears in generate_image's model
+                  list — and the request fails, because the provider will not guess a workflow
+                  from a name. A seeded row is always in this state: the seed cannot know. */}
+              {m.base_model_missing && (
+                <>
+                  <p className="form-err">{tr("admin.engines_model_no_family")}</p>
+                  {/* The fix, right where the problem is stated. Before this the only way to
+                      give a row a family was to register the WHOLE row again — which for a
+                      split model means re-typing three S3 keys to change one word, and lands
+                      it disabled. The VRAM guard does not apply: declaring a family puts
+                      nothing on the card. */}
+                  {families.length > 0 && (
+                    <label className="engines-model-family">
+                      <span>{tr("admin.engines_model_add_family")}</span>
+                      <select
+                        value={m.base_model || ""}
+                        disabled={pending}
+                        onChange={(ev) => onChange(m.id, { base_model: ev.currentTarget.value })}
+                      >
+                        <option value="">{tr("admin.engines_model_add_family_pick")}</option>
+                        {families.map((f) => (
+                          <option key={f} value={f}>
+                            {f}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                </>
+              )}
               {/* 🔴 The two acts, told apart. Forgetting alone leaves the bytes in the bucket
                   with nothing able to reach them (measured: a 491 MB file outlived its row);
                   purging starts the MODE=delete task ADR 0072 decision 7 exists for, because
@@ -805,7 +851,13 @@ function EngineModels({
         })}
       </ul>
       <p className="muted">{tr("admin.engines_model_next_start")}</p>
-      <EngineModelAdd busy={busy === row.key + "/+"} isImage={isImage} onAdd={onAdd} />
+      <EngineModelAdd
+        busy={busy === row.key + "/+"}
+        isImage={isImage}
+        baseModels={row.base_models}
+        fileFlags={row.file_flags}
+        onAdd={onAdd}
+      />
     </div>
   );
 }
@@ -831,20 +883,44 @@ function EngineModels({
 function EngineModelAdd({
   busy,
   isImage,
+  baseModels,
+  fileFlags,
   onAdd,
 }: {
   busy: boolean;
   isImage: boolean;
+  /** The checkpoint families this provider dispatches on, served by the CP so the panel and
+   *  the engine cannot disagree about the spelling. Empty = this provider has no opinion. */
+  baseModels?: string[];
+  /** The labels a split model's files may carry, same source and same rule. Empty = a row is
+   *  always one unlabelled file. */
+  fileFlags?: string[];
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
   const [open, setOpen] = useState(false);
   const [id, setId] = useState("");
-  const [s3Key, setS3Key] = useState("");
   const [desc, setDesc] = useState("");
   const [ctx, setCtx] = useState("");
   const [out, setOut] = useState("");
-  const [bytes, setBytes] = useState("");
+  const [baseModel, setBaseModel] = useState("");
+  // One row PER FILE, always — a single-file checkpoint is this list with one entry, so the
+  // common case is not a second code path. Until this existed the form held one key, which made
+  // a split model impossible to register at all: FLUX.2 klein is a diffusion model, a text
+  // encoder and a VAE, and each has to be labelled with the flag its loader reads.
+  const blank = () => [{ flag: "", s3Key: "", bytes: "" }];
+  const [files, setFiles] = useState(blank);
+  const families = baseModels || [];
+  const flags = fileFlags || [];
+  const reset = () => {
+    setOpen(false);
+    setId("");
+    setDesc("");
+    setCtx("");
+    setOut("");
+    setBaseModel("");
+    setFiles(blank);
+  };
 
   if (!open) {
     return (
@@ -853,8 +929,12 @@ function EngineModelAdd({
       </button>
     );
   }
+  const rows = files.filter((f) => f.s3Key.trim());
+  // The family is required exactly when the provider has one, and the button says so by being
+  // disabled rather than by letting the CP refuse after the press.
+  const incomplete = !id.trim() || rows.length === 0 || (families.length > 0 && !baseModel);
   const submit = () => {
-    if (!id.trim() || !s3Key.trim()) return;
+    if (incomplete) return;
     const n = (v: string) => {
       const parsed = Number(v.trim().replace(/[_,]/g, ""));
       return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
@@ -866,19 +946,16 @@ function EngineModelAdd({
     onAdd({
       id: id.trim(),
       kind: isImage ? "checkpoint" : "gguf",
-      files: [{ s3Key: s3Key.trim(), bytes: n(bytes) }],
+      files: rows.map((f) => ({ flag: f.flag, s3Key: f.s3Key.trim(), bytes: n(f.bytes) })),
       description: desc.trim(),
+      base_model: baseModel,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
     });
-    setOpen(false);
-    setId("");
-    setS3Key("");
-    setDesc("");
-    setCtx("");
-    setOut("");
-    setBytes("");
+    reset();
   };
+  const setFile = (i: number, patch: Partial<{ flag: string; s3Key: string; bytes: string }>) =>
+    setFiles((prev) => prev.map((f, j) => (j === i ? { ...f, ...patch } : f)));
   // One field per ROW, each with its own label. The fields are not interchangeable — an S3 key,
   // a token count and a byte count look nothing alike and mistyping one into another is silent —
   // so they are not laid out as a strip of look-alike boxes with placeholder text that vanishes
@@ -904,16 +981,69 @@ function EngineModelAdd({
     <div className="engines-model-add">
       {field(tr("admin.engines_model_add_id"), id, setId,
         isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
-      {field(tr("admin.engines_model_add_key"), s3Key, setS3Key,
-        isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf")}
+      {/* ⚠️ A CHOICE, never a text box. What the repository calls a model — "SDXL 1.0",
+          "Flux.1 D" — is a display name, and typing one here produced rows that looked complete
+          and refused to generate (ADR 0072 P2 実機検証). The list comes from the CP, which
+          validates against the same one. */}
+      {families.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>{tr("admin.engines_model_add_family")}</span>
+          <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
+            <option value="">{tr("admin.engines_model_add_family_pick")}</option>
+            {families.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {files.map((f, i) => (
+        <div className="engines-model-add-file" key={i}>
+          {flags.length > 0 && (
+            <label className="engines-model-add-row">
+              <span>{tr("admin.engines_model_add_part")}</span>
+              <select value={f.flag} onChange={(ev) => setFile(i, { flag: ev.currentTarget.value })}>
+                {flags.map((fl) => (
+                  <option key={fl} value={fl}>
+                    {fl === "" ? (tr("admin.engines_model_add_part_whole") as string) : fl}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {field(tr("admin.engines_model_add_key"), f.s3Key, (v) => setFile(i, { s3Key: v }),
+            isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf")}
+          {field(tr("admin.engines_model_add_bytes"), f.bytes, (v) => setFile(i, { bytes: v }),
+            "1117320768", true)}
+          {files.length > 1 && (
+            <button
+              type="button"
+              className="ghost sm"
+              onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+            >
+              {tr("admin.engines_model_add_part_drop")}
+            </button>
+          )}
+        </div>
+      ))}
+      {/* Offered only where a split model is a thing this provider can load. */}
+      {flags.length > 0 && (
+        <button
+          type="button"
+          className="ghost sm"
+          onClick={() => setFiles((prev) => [...prev, { flag: "", s3Key: "", bytes: "" }])}
+        >
+          {tr("admin.engines_model_add_part_more")}
+        </button>
+      )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
           context at all, so offering the field there would ask for a number nothing reads. */}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
       {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096", true)}
-      {field(tr("admin.engines_model_add_bytes"), bytes, setBytes, "1117320768", true)}
       <div className="engines-model-add-actions">
-        <button type="button" className="primary sm" disabled={busy} onClick={submit}>
+        <button type="button" className="primary sm" disabled={busy || incomplete} onClick={submit}>
           {tr("admin.engines_model_add_go")}
         </button>
         <button type="button" className="sm" onClick={() => setOpen(false)}>
@@ -1061,11 +1191,16 @@ function HfTokenPanel() {
 function EngineIngest({
   engineKey,
   isImage,
+  baseModels,
   busy,
   onStarted,
 }: {
   engineKey: string;
   isImage: boolean;
+  /** As on the register form: the families this provider dispatches on, from the CP. The
+   *  repository's OWN answer is a display name and is shown as a hint, never submitted — the
+   *  CP refuses an ingest whose family is not one of these. */
+  baseModels?: string[];
   busy: boolean;
   onStarted: () => void;
 }) {
@@ -1088,6 +1223,8 @@ function EngineIngest({
   const [hits, setHits] = useState<IngestHit[] | null>(null);
   const [searchSource, setSearchSource] = useState("hf");
   const [sort, setSort] = useState("downloads");
+  const [baseModel, setBaseModel] = useState("");
+  const families = baseModels || [];
 
   const source = (name = file) => {
     const r = repo.trim();
@@ -1249,6 +1386,7 @@ function EngineIngest({
       s3Key: key,
       source: source(),
       description: desc.trim(),
+      base_model: baseModel,
       context_tokens: c && o ? c : 0,
       max_output_tokens: c && o ? o : 0,
       license_accepted: true,
@@ -1413,6 +1551,28 @@ function EngineIngest({
         id,
         setId,
         isImage ? "sdxl-base-1.0" : "qwen2.5-coder-1.5b",
+      )}
+      {/* ⚠️ Declared by the OPERATOR (ADR 0072 decision 2), which is why the repository's own
+          answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
+          Hugging Face and Civitai publish, and storing one of those as the family produced rows
+          that looked complete and refused to generate (P2 実機検証). */}
+      {families.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>{tr("admin.engines_model_add_family")}</span>
+          <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
+            <option value="">{tr("admin.engines_model_add_family_pick")}</option>
+            {families.map((f) => (
+              <option key={f} value={f}>
+                {f}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+      {families.length > 0 && found?.base_model && (
+        <p className="muted">
+          {(tr("admin.engines_ingest_family_hint") as string).replace("{n}", found.base_model)}
+        </p>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
       {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
