@@ -13,7 +13,12 @@
   「P2 の残作業 4・5 を実機で押した」節。3 つとも生成できるようになったが、**SD3.5 は
   テンプレートが誤っており（`--clip_g` が語彙から欠けていた）、直すまで 1 枚も出せなかった**。
   欠落はさらに 6 件（5〜10）。**5 ファミリーすべてがこの配備の GPU で provider を通って絵を返した。**
-  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・実機未検証**（「P6 の実装」節）。
+  **P6（seed と 6 パラメータの撤去）は 2026-09-10 に実装済み・同日に実機検証済み**
+  （「P6 の実装」節と「P6 を実機で押した」節）。完了の定義は満たした——空カタログではエンジンが
+  起動せず、1 行登録すると 819 秒でその 1 モデルだけを同期して warm になる。**移行の罠は開発配備で
+  armed だった**（`<役>Enabled` が両方とも空）ので、翻訳を新テンプレートの適用に載せて先に払った。
+  そこで欠落を 2 件踏んだ——`<役>Enabled=true` だけの「無害な事前更新」は CFN が空の変更集合として
+  断ること、**管理 API がカタログ行を読み戻せない**こと（`s3Key` が GET に無い）。
   P3 と P5 の残りは未着手。** 起草・レビュー・改訂・
   実装のすべてが同日である。**起草時点の数字はすべて** ADR 0071 の実測から引き、上流
   （llama.cpp・stable-diffusion.cpp）の仕様は同日にリポジトリの `tools/server/README.md`・
@@ -1881,7 +1886,7 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   Console でトークンを登録し、CloudFormation を触らずに gated のリポジトリが取り込め、
   取り込みタスクのログに 401 が出ない。**（**2026-09-10 に実機で満たした**——「P5 の実装」節と
   「P5 を実機で押した」節。P5 の他の項目は未着手のまま。）
-- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機未検証（補遺「P6 の実装」）。**
+- **P6 — seed と残り 4 パラメータの撤去。実装済み・実機検証済み（補遺「P6 の実装」「P6 を実機で押した」）。**
   （2026-09-10 に追加。理由・罠・移行の窓は本 ADR 末尾の
   追記節）。新しい案ではなく**決定 1 の仕上げ**である——`*ModelFile` は 0.18.0 で消し、残るのは
   `<役>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`、`seedEngineCatalog`、
@@ -1890,6 +1895,9 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   サービスが安定し、空のカタログへ Console からモデルを登録して、エンジンがそれで起動する。**
   🔴 加えてアップグレードノートが、`<役>ModelS3Key` だけを書いていた配備に対して**先に
   `<役>Enabled=true` を足せ**と言っていること——サービスを作る条件が今はその鍵を読んでいる。
+  （**2026-09-10 に開発配備で満たした**——「P6 を実機で押した」節。移行の側も同じ日に踏んだ:
+  その配備は `<役>Enabled` が両方とも空で、翻訳を先に払わなければ `update.sh` の更新が
+  「変更なし」と言いながら両役を消していた。)
 
 ## 確認した出典（2026-09-08）
 
@@ -2573,6 +2581,156 @@ super_admin 側の運用（許可の付与と、その結果の受諾記録の�
 だけで配備し、その役のサービスが安定すること。空のカタログへ Console からモデルを登録し、
 エンジンがそれで起動すること。加えて移行の側——`<役>ModelS3Key` を持つ捕捉から standup を
 通し、役が消えずに `<役>Enabled=true` へ翻訳されること。
+
+（**2026-09-10 に実機で押した**——次節。完了の定義は満たした。移行の罠は開発配備で
+armed だった。）
+
+## P6 を実機で押した（2026-09-10・開発配備）
+
+前節の完了の定義を、GPU を 1 回だけ起こして押した。**満たした。** 時刻は UTC、秒数と
+バイト数は API とログの実測である。
+
+### 移行の罠は armed だった——そして「無害な事前更新」は通らない
+
+配備の前に `describe-stacks` で live の 60-engines を読んだ。**`LlmEnabled` も `ImageEnabled`
+も空**で、両役は `<役>ModelS3Key` の枝だけで立っていた。つまりこの配備は、前節が心配した
+まさにその形である。
+
+🔴 **`<役>Enabled=true` を「先に、無害に」記録することはできない。** `update-stack
+--use-previous-template` で他を `UsePreviousValue` に、その 2 つだけ `true` にして投げると、
+CloudFormation はこう断る:
+
+```
+An error occurred (ValidationError) when calling the UpdateStack operation:
+No updates are to be performed.
+```
+
+理由は、配備済みテンプレートで `LlmEnabled` が **Conditions からしか参照されていない**こと
+である。`!Or` の第 1 枝が真になるだけで条件の値は変わらず、**リソースが 1 つも変わらない**——
+CFN は空の変更集合を実行しない。**無害すぎて通らない**わけで、翻訳は新テンプレートの適用と
+同じ 1 回の更新に載せるしかない。実際に通した形はこれである:
+
+```
+aws cloudformation deploy --stack-name <60-engines> --template-file cfn/60-engines.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true
+```
+
+結果は `Successfully created/updated stack`。**`ecs list-services` の差分はゼロ**（両役の
+サービス・その他 3 本ともそのまま）、6 パラメータは消え、`LlmEnabled` / `ImageEnabled` は
+`true` になった。エンジン表（SSM `/af-ws/engines`）からも `models` / `contextTokens` /
+`maxOutputTokens` が消えている。
+
+**`af_param_drop` はこの経路では要らなかった。** `cloudformation deploy` が拒むのは*渡した*
+未宣言キーだけで、`update.sh` は overrides を 1 つも渡さない——テンプレートから消えた 6 つは
+拒否されずに黙って消える。`af_param_drop` が要るのは捕捉を読んで渡す `standup.sh` の側だけで
+ある。
+
+そのあと `dev-deploy.sh` を流した。その中の 60-engines はこう言った:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+No changes to deploy. Stack af-ecs-engines is up to date
+```
+
+🔴 **この 1 行が、手当てをしていなければ両役を消していた更新そのものである。** `deploy` は
+成功し、出力は「変更なし」と読める。エラーはどこにも出ない。前節の「ノートが要るのはその
+ためである」は、実機ではこの見た目で現れる。
+
+### 完了の定義
+
+**空カタログでエンジンは起動しない。** llm の 2 行を（`?purge=1` を付けずに）消し、
+`has_models: false` にしてから `mode: on` にした。ここで**一度 `desired: 1` まで行く**——
+モードの切り替えは即座に ECS を動かし、`no_model` を見るのは次のコントローラのティックだから
+である。実測の並びはこう:
+
+```
+15:09:38  PUT mode=on  → desired=1
+15:09:41  (service …-engines-llm) has started 1 tasks: (task 931031…)
+15:09:47  engine llm: stop (no_model)            ← CP のログ、そのまま
+15:09:50  (service …-engines-llm) stopped 1 pending tasks.
+15:09:51  (service …-engines-llm) has reached a steady state.
+```
+
+**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、箱は買われなかった
+（`desiredCount` はその後 3 分の観測でも 0 のまま）。「起動しない」は正しいが、**「一度も
+要求しない」ではない**——`decideEngineAction` は正しく `no_model` を返しているのに、その手前で
+モードの経路が ECS を先に動かしている。空カタログのまま `on` を押し続ける配備では、この 9 秒が
+ティックごとに繰り返される形になる。
+
+**1 行だけ登録すると、その 1 モデルで起動する。** 控えのうち小さい方（1.1 GB の
+`qwen2.5-coder-1.5b`。18.5 GB の 30B ではなく——同じことを 1/17 のバイト数で示せる）を
+`POST …/models` で登録して有効化した:
+
+```
+15:14:33  engines: llm catalogue row registered: qwen2.5-coder-1.5b (1 file(s), disabled)
+15:14:33  engines: llm active set published to /af-ws/engines/llm/active (149 bytes)
+15:14:54  engine llm: start (admin_on)
+15:26:29  (service …-engines-llm) has started 1 tasks: (task 9345d9…)
+15:28:12  engine llm: warmed up (ready)
+```
+
+**有効化から warm まで 819 秒（13 分 39 秒）。** うち **692 秒が capacity provider の
+g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、箱が
+できてから warm までは 103 秒だった。0071・P0 の 527 秒より長いのは、この日は容量の取得に
+時間がかかったからで、モデルの同期ではない——同期は 5 秒である:
+
+```
+engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'
+engine fetch: llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1117320768 bytes in 5s
+engine fetch: preset /models/llm/presets.ini holds 1 model(s), 'qwen2.5-coder-1.5b' loaded at startup
+engine fetch: cmdline = --models-preset /models/llm/presets.ini
+engine fetch: engine may start; 0 file(s) still to sync
+```
+
+**箱はカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
+触っていない。これが決定 1 の「カタログが申告のすべて」が実経路で効いていることの直接の証拠で
+ある。エンジン自身のログも同じことを言う:
+
+```
+srv   load_models: Loaded 1 custom model presets from /models/llm/presets.ini
+srv    operator():   * qwen2.5-coder-1.5b
+srv  llama_server: starting server in router mode. models will be automatically loaded on-demand
+srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+```
+
+⚠️ **completion そのものは投げていない。** ゲートウェイ（`/engine/{key}/v1/…`）は Workspace が
+発行したトークンでしか通らず、管理者の cookie では入れない——実測 10 と 13 が同じ制限を
+すでに記録している。代わりに使った証拠は上の 2 つのログと、次の warm 判定である。
+
+### warmProbe が実機で通った（実機で踏んだ穴 13 の代償が解けた）
+
+穴 13 は「CP 側の warmProbe は実機で通っていない」を代償として残していた。理由は、当時の
+実機がコントローラに触られない `run-task` で箱を起こしており、`maintainWarm` はサービスの
+状態でしか呼ばれないからである。**今回はサービス経由（`mode: on` → `admin_on`）で起こしたので、
+CP のプローブがルーターの `/models` を読んで warm を立てた**: `GET /api/admin/engines` の llm が
+`warm: true`、CP のログが `engine llm: warmed up (ready)`。これは同時に、エンジンが
+`/models` に**その 1 モデルを載せて答えた**ことでもある——`warm` の判定はモードごとの
+`status.value` を読む（決定 3 の再定義）ので、答えが空なら立たない。
+
+### 🔴 欠落——管理 API はカタログ行を読み戻せない
+
+後片付けで踏んだ。**`GET /api/admin/engines` は行の `s3Key` / `flag` / `bytes` / `args` を
+返さない**（`files` はキーの `path.Base` だけ）。P6 でカタログが**唯一の申告**になった以上、
+これは「行を消したら、消した本人しか戻せない」を意味する。Console の側も同じで、フォームは
+`s3Key` を**書く**ためだけに持っていて、読み戻しはしない。
+
+今回は復元できた——llm は 1 ファイルの gguf で、キーは機械的に `llm/<ファイル名>` であり、
+S3 の一覧と突き合わせて確かめられたからである。`bytes` は **0 のまま**にした: 実バイト数を
+入れると `vram_need_source` が `unknown` から `floor` に変わり、元の行とは別物になる。結果は
+2 行とも**API が返す全フィールドで一致**した。だが**分割モデルなら成立しない**——FLUX.1 の 4
+ファイルや SD3.5 の 4 ファイルは、キーを人が覚えているか、どこかに控えているかでしか戻せない。
+「バイト列は S3 に残っているのに、それを指す行を作り直せない」という、決定 7 の削除の 2 段
+確認が守ろうとしたものと同じ穴が、読み出し側に開いている。P5 の HF トークンとは事情が違う
+（あれは*読めないことが仕様*）ので、ここは塞げる。
+
+### 消したもの・残したもの
+
+llm のカタログは元通り（2 行・両方 `enabled`・`qwen3-coder-30b-a3b` が `default`、mode は
+`ondemand`）。行の削除に `?purge=1` は使っていないので、S3 のバイト列は 2 つとも無傷
+（18,556,689,568 B と 1,117,320,768 B）。GPU は `mode: off` で返した——15:37:39 に off、
+15:40:20 に `stopped`、G 系の容器インスタンスは 15:39 台に消えた（**約 2 分**で、7〜8 分の
+drain は要らなかった）。image 役には一切触っていない。
 
 ## 追記 — P3 の LoRA、Agent 側の実装（2026-09-10）
 

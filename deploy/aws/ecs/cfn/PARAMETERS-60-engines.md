@@ -149,6 +149,33 @@ left to read, so nothing is passed and the deploy is what it always was.
 falls straight to the new default and the role goes. Edit `params/60-engines` — or add
 `--parameter-overrides <role>Enabled=true` — before running one.
 
+🔴 **On the `update.sh` route, set the switch in the SAME update that carries the new template.**
+Measured on the dev deployment 2026-09-10 (ADR 0072, "P6 on hardware"), where both `<Role>Enabled`
+were empty and both roles stood on their model key alone. Two things came out of it:
+
+- **A separate "harmless" pre-update is refused.** `update-stack --use-previous-template` with
+  everything at `UsePreviousValue` and just the two switches set to `true` answers
+  `ValidationError … No updates are to be performed`, because on the OLD template `<Role>Enabled`
+  is referenced only from `Conditions`: setting it satisfies the first branch of an `!Or` that was
+  already true, no resource changes, and CloudFormation will not execute an empty change set. It
+  is refused for being too harmless. So:
+
+  ```
+  aws cloudformation deploy --stack-name <engines> --template-file cfn/60-engines.yaml \
+    --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true
+  ```
+
+  after which `update.sh` keeps `true` at `UsePreviousValue` like any other parameter.
+- **`af_param_drop` is not needed here.** `deploy` only refuses an undeclared key it is *given*,
+  and this route gives none — the retired six just disappear. The drop is `standup.sh`'s, which
+  passes a captured file on.
+
+What the accident looks like if you skip it: `update.sh` reports an ordinary successful deploy of
+60-engines and the two services are gone. Nothing is an error anywhere. (On the run that was
+measured the switches had been set first, so the same step printed
+`No changes to deploy. Stack … is up to date` — that line is what a deployment which was already
+paid for looks like, not a check that anything was.)
+
 **The seed is gone with them.** A Control Plane whose catalogue was empty used to read those
 parameters once and create the row the deployment was already serving. Anything that has run a
 release between ADR 0071 and P6 therefore has its rows already and notices nothing. A deployment

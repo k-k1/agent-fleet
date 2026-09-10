@@ -19,7 +19,14 @@ English | [日本語](0072-engine-model-catalog.ja.md)
   families now return an image through the provider, but SD3.5 could not produce one at all
   until its template was fixed (`--clip_g` was missing from the file vocabulary).
   Six further gaps (5 to 10) are recorded there. **P6 (retiring the seed and six parameters)
-  is implemented as of 2026-09-10 and not verified on hardware** ("P6 implementation").
+  is implemented as of 2026-09-10 and was verified on hardware the same day** ("P6
+  implementation", "P6 on hardware"). The definition of done was met — an empty catalogue does
+  not bring the engine up, and one registered row brings it up on that model alone, warm in 819
+  seconds. **The migration trap was armed on the dev deployment** (both `<Role>Enabled` empty),
+  so the translation was paid by riding it on the new template's own update. Two gaps surfaced
+  there: a "harmless pre-update" of `<Role>Enabled=true` alone is refused by CloudFormation as an
+  empty change set, and **the admin API cannot read a catalogue row back** (no `s3Key` in the
+  GET).
   P3 and the rest of P5 are not started.**
   Drafting, review, revision and implementation all happened the same day. **As drafted**, every
   number was quoted from ADR 0071's measurements and the upstream facts (llama.cpp,
@@ -2064,8 +2071,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   registered in the Console, a gated repository is taken in without CloudFormation being
   touched, and the ingest task's log carries no 401.** (**Met on hardware on 2026-09-10** — see
   "P5 implementation" and "P5 on hardware". The rest of P5 is not started.)
-- **P6 — retiring the seed and the four remaining parameters. Implemented, not verified on
-  hardware ("P6 implementation").** (Added 2026-09-10; the reasoning,
+- **P6 — retiring the seed and the four remaining parameters. Implemented and verified on
+  hardware ("P6 implementation", "P6 on hardware").** (Added 2026-09-10; the reasoning,
   the trap and the migration window are in the follow-up section at the end of this ADR). This is
   decision 1 finishing rather than a new idea: `*ModelFile` went in 0.18.0, and what is left is
   `<Role>ModelS3Key` / `ModelIds` / `ContextTokens` / `MaxOutputTokens`, `seedEngineCatalog` and
@@ -2075,6 +2082,9 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   engine starts on it** — and 🔴 the upgrade note tells a deployment that set only
   `<Role>ModelS3Key` to add `<Role>Enabled=true` FIRST, because the condition that creates the
   service reads that key today.
+  (**Met on the dev deployment on 2026-09-10** — "P6 on hardware". The migration side was met the
+  same day: that deployment had both `<Role>Enabled` empty, and without paying the translation
+  first `update.sh`'s update would have deleted both roles while reporting "no changes".)
 
 ## Sources checked (2026-09-08)
 
@@ -2818,6 +2828,158 @@ The removal the follow-up section above called for, implemented. **Not verified 
 registered from the Console into an empty catalogue starts the engine. And the migration side —
 a stand-up from a capture holding `<Role>ModelS3Key` keeps the role and translates it into
 `<Role>Enabled=true`.
+
+(**Pressed on hardware on 2026-09-10** — next section. The definition of done was met, and the
+migration trap was armed on the dev deployment.)
+
+## P6 on hardware (2026-09-10, the dev deployment)
+
+The previous section's definition of done, pressed with exactly one GPU wake. **It was met.**
+Times are UTC; seconds and byte counts are measured from the API and the logs.
+
+### The trap was armed — and the "harmless pre-update" does not go through
+
+Before deploying, `describe-stacks` was read on the live 60-engines. **Both `LlmEnabled` and
+`ImageEnabled` were empty**, and both roles stood on the `<Role>ModelS3Key` branch alone: exactly
+the shape the previous section worried about.
+
+🔴 **`<Role>Enabled=true` cannot be recorded "first, harmlessly".** `update-stack
+--use-previous-template`, everything else at `UsePreviousValue` and those two set to `true`, is
+refused:
+
+```
+An error occurred (ValidationError) when calling the UpdateStack operation:
+No updates are to be performed.
+```
+
+The reason is that in the deployed template `LlmEnabled` is **referenced only from Conditions**.
+Setting it merely satisfies the first branch of the `!Or`; the condition's value does not move,
+**no resource changes**, and CloudFormation will not execute an empty change set. It is refused
+for being *too* harmless — so the translation has to ride on the same update that applies the new
+template. What actually went through:
+
+```
+aws cloudformation deploy --stack-name <60-engines> --template-file cfn/60-engines.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true
+```
+
+`Successfully created/updated stack`. **`ecs list-services` diffed to nothing** (both engine
+services and the other three untouched), the six parameters are gone, and `LlmEnabled` /
+`ImageEnabled` read `true`. The engine table (SSM `/af-ws/engines`) lost `models`,
+`contextTokens` and `maxOutputTokens` with them.
+
+**`af_param_drop` was not needed on this route.** `cloudformation deploy` only refuses an
+undeclared key it is *given*, and `update.sh` gives none — the six simply disappear. The drop
+exists for `standup.sh`, which reads a capture and passes it on.
+
+`dev-deploy.sh` was then run. Its 60-engines step said:
+
+```
+==> cloudformation deploy af-ecs-engines (60-engines, parameters unchanged)
+No changes to deploy. Stack af-ecs-engines is up to date
+```
+
+🔴 **That one line is the update that would have deleted both roles had the switches not been set
+first.** The deploy succeeds and the output reads as "nothing to do". Nothing anywhere is an
+error. "That is what the note is for" looks like this on hardware.
+
+### The definition of done
+
+**An empty catalogue does not bring the engine up.** The llm role's two rows were deleted
+(without `?purge=1`), leaving `has_models: false`, and the mode was set to `on`. **It reaches
+`desired: 1` first** — the mode toggle moves ECS at once, and `no_model` is seen on the next
+controller tick:
+
+```
+15:09:38  PUT mode=on  → desired=1
+15:09:41  (service …-engines-llm) has started 1 tasks: (task 931031…)
+15:09:47  engine llm: stop (no_model)            ← the CP's log line, verbatim
+15:09:50  (service …-engines-llm) stopped 1 pending tasks.
+15:09:51  (service …-engines-llm) has reached a steady state.
+```
+
+**Nine seconds.** The task died pending, never reached RUNNING, and no box was bought
+(`desiredCount` stayed 0 through three further minutes of watching). "Does not start" is true,
+but **"never asks" is not**: `decideEngineAction` returns `no_model` correctly, and the mode
+route moves ECS ahead of it. On a deployment where `on` is held against an empty catalogue, those
+nine seconds repeat per tick.
+
+**Register one row and it comes up on that one model.** The smaller of the two saved rows
+(`qwen2.5-coder-1.5b`, 1.1 GB — not the 18.5 GB 30B; the same fact costs 1/17 of the bytes) was
+registered with `POST …/models` and enabled:
+
+```
+15:14:33  engines: llm catalogue row registered: qwen2.5-coder-1.5b (1 file(s), disabled)
+15:14:33  engines: llm active set published to /af-ws/engines/llm/active (149 bytes)
+15:14:54  engine llm: start (admin_on)
+15:26:29  (service …-engines-llm) has started 1 tasks: (task 9345d9…)
+15:28:12  engine llm: warmed up (ready)
+```
+
+**819 seconds (13 min 39 s) from enabling the row to warm.** **692 of those are the capacity
+provider acquiring a g6.xlarge and placing the task** (`start (admin_on)` → ECS starting the
+task); from box to warm is 103 s. It is longer than P0's 527 s because capacity was slow that
+day, not because of the sync — the sync is five seconds:
+
+```
+engine fetch: active set for /af-ws/engines/llm/active starts with 'qwen2.5-coder-1.5b'
+engine fetch: llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf 1117320768 bytes in 5s
+engine fetch: preset /models/llm/presets.ini holds 1 model(s), 'qwen2.5-coder-1.5b' loaded at startup
+engine fetch: cmdline = --models-preset /models/llm/presets.ini
+engine fetch: engine may start; 0 file(s) still to sync
+```
+
+**The box synced only what the catalogue held** — the 18.5 GB 30B was still sitting in the bucket
+and was not touched. That is decision 1's "the catalogue is the whole declaration" demonstrated
+on the real path. The engine's own log says the same:
+
+```
+srv   load_models: Loaded 1 custom model presets from /models/llm/presets.ini
+srv    operator():   * qwen2.5-coder-1.5b
+srv  llama_server: starting server in router mode. models will be automatically loaded on-demand
+srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+```
+
+⚠️ **No completion was actually sent.** The gateway (`/engine/{key}/v1/…`) only accepts a token a
+Workspace issued, never an administrator's cookie — measurements 10 and 13 already record the
+same limit. The evidence used instead is the two logs above and the warm verdict below.
+
+### The warm probe ran on hardware (measurement 13's price is paid)
+
+Measurement 13 left "the CP's warmProbe has not run on hardware" as its price: the box was
+brought up then with a bare `run-task` the controller never sees, and `maintainWarm` is only
+called from the service's state. **This time the box came up through the service** (`mode: on` →
+`admin_on`), so the CP's probe read the router's `/models` and set warm: `GET
+/api/admin/engines` shows the llm role at `warm: true`, and the CP logged `engine llm: warmed up
+(ready)`. That is also the engine **answering `/models` with that one model** — the verdict reads
+each model's `status.value` (decision 3's redefinition), so an empty answer would not raise it.
+
+### 🔴 A gap — the admin API cannot read a catalogue row back
+
+Found while cleaning up. **`GET /api/admin/engines` returns none of a row's `s3Key`, `flag`,
+`bytes` or `args`** (`files` is the `path.Base` of the keys and nothing else). Now that P6 has
+made the catalogue **the only declaration**, that means "delete a row and only the person who
+deleted it can put it back". The Console is the same: its form holds `s3Key` only to **write**
+it, never to read it back.
+
+It was recoverable here — an llm row is a single gguf whose key is mechanically `llm/<filename>`,
+which could be checked against the bucket listing. `bytes` was left at **0** deliberately: filling
+in the real size flips `vram_need_source` from `unknown` to `floor`, which is a different row.
+Both rows came back **identical in every field the API returns**. But **it does not hold for a
+split model** — FLUX.1's four files or SD 3.5's four can only be restored by somebody who
+remembers the keys or wrote them down. "The bytes are still in S3 and the row that points at them
+cannot be rebuilt" is the same hole decision 7's two-step delete exists to prevent, opened on the
+read side. Unlike P5's token (where being unreadable *is* the specification), this one can be
+closed.
+
+### What was deleted and what was left
+
+The llm catalogue is back as it was (two rows, both `enabled`, `qwen3-coder-30b-a3b` the
+`default`, mode `ondemand`). `?purge=1` was not used, so both objects are untouched in S3
+(18,556,689,568 B and 1,117,320,768 B). The GPU was handed back with `mode: off` — off at
+15:37:39, `stopped` at 15:40:20, and the G-family container instance was gone within the 15:39
+minute (**about two minutes**, not the 7–8 of a drain). The image role was not touched at all.
 
 ## Follow-up — phase P3's LoRAs, the Agent's half (2026-09-10)
 
