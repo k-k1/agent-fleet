@@ -270,7 +270,9 @@ const engineCatalogPushConcurrency = 8
 // Best-effort by construction. A workspace that is stopped, unreachable or running an image
 // older than the route simply catches up at its next TTL, so nothing here retries and nothing
 // blocks the administrator's request.
-func notifyEngineCatalogChanged(ctx context.Context, mgr *manager, key string) {
+// A var, like gitBackendServe: the push is a goroutine reaching real Workspaces, so the only
+// way a test can state "this route tells running sessions" is to watch the call.
+var notifyEngineCatalogChanged = func(ctx context.Context, mgr *manager, key string) {
 	if mgr == nil || mgr.store == nil {
 		return
 	}

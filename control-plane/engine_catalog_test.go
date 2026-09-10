@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 
@@ -336,5 +339,95 @@ func TestEngineActiveSetForTheDevDeploymentLlm(t *testing.T) {
 	// Undeclared sizes print nothing rather than "+0 s".
 	if s := engineSyncSecs(store.EngineModel{Files: []store.EngineModelFile{{S3Key: "llm/x.gguf"}}}); s != 0 {
 		t.Errorf("an undeclared size estimated %d s", s)
+	}
+}
+
+// The comfy family vocabulary lives twice — here and in the Agent, which is the side that
+// actually dispatches on it — because Go cannot share a constant across two modules. This is
+// the check that keeps the copies honest: add a sixth family to the Agent and forget the CP,
+// and the Console never offers it while ComfyUI happily supports it; drop one from the Agent
+// and the CP keeps accepting rows that can no longer generate.
+//
+// Reading the Agent's SOURCE rather than importing it is the same trade
+// TestSharedContractMachineryIsIdentical makes. ⚠️ A parse that finds NOTHING is Fatal, not an
+// empty set that compares equal to an empty set: a rename of the constant type would otherwise
+// turn this test green at the exact moment it stopped measuring anything.
+func TestComfyFamiliesMatchTheAgent(t *testing.T) {
+	const src = "../workspace/agent/internal/imagegen/comfy_workflows.go"
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("reading %s: %v — this test is the only thing pinning the two copies together", src, err)
+	}
+	re := regexp.MustCompile(`comfyFamily\s*=\s*"([a-z0-9-]+)"`)
+	found := re.FindAllStringSubmatch(string(b), -1)
+	if len(found) == 0 {
+		t.Fatalf("no `comfyFamily = \"...\"` constants in %s — the declaration was renamed and this"+
+			" check silently stopped measuring the vocabulary", src)
+	}
+	theirs := make([]string, 0, len(found))
+	for _, m := range found {
+		theirs = append(theirs, m[1])
+	}
+	assertSameVocabulary(t, "checkpoint families", engineComfyFamilies, theirs)
+
+	// The FILE vocabulary rides the same wire to the same panel and drifts the same way. Parsed
+	// from the Agent's own list rather than from resolveComfyFiles' switch: the switch maps each
+	// flag onto a different struct field, so it cannot BE the list, and comfy_workflows_test.go
+	// is what pins the list to the switch.
+	flagRe := regexp.MustCompile(`(?s)comfyFileFlags\s*=\s*\[\]string\{(.*?)\}`)
+	fm := flagRe.FindStringSubmatch(string(b))
+	if fm == nil {
+		t.Fatalf("no `comfyFileFlags = []string{...}` in %s — renamed, and this check stopped measuring it", src)
+	}
+	lit := regexp.MustCompile(`"([^"]*)"`).FindAllStringSubmatch(fm[1], -1)
+	if len(lit) == 0 {
+		t.Fatalf("comfyFileFlags in %s parsed as empty", src)
+	}
+	theirFlags := make([]string, 0, len(lit))
+	for _, m := range lit {
+		theirFlags = append(theirFlags, m[1])
+	}
+	assertSameVocabulary(t, "file flags", engineComfyFileFlags, theirFlags)
+}
+
+func assertSameVocabulary(t *testing.T, what string, mine, theirs []string) {
+	t.Helper()
+	a := append([]string(nil), mine...)
+	b := append([]string(nil), theirs...)
+	sort.Strings(a)
+	sort.Strings(b)
+	if strings.Join(a, ",") != strings.Join(b, ",") {
+		t.Fatalf("the %s have drifted apart:\n  control-plane: %q\n  agent:         %q\n"+
+			" - the CP serves this list to the Console and validates rows against it; the Agent is"+
+			" what actually reads it. Make the same change in both", what, a, b)
+	}
+}
+
+// What the vocabulary is FOR: refusing a row that would be registered, enabled, offered in
+// generate_image's model enum, and only then fail at generation.
+func TestEngineBaseModelValidation(t *testing.T) {
+	for _, c := range []struct {
+		provider, baseModel string
+		want                bool
+		why                 string
+	}{
+		{"comfy", "sdxl", true, "a declared family"},
+		{"comfy", "flux2-klein", true, "a declared family with a dash"},
+		{"comfy", "", false, "no family at all — the seeded row's shape, and ComfyUI cannot use it"},
+		{"comfy", "SDXL 1.0", false, "Civitai's display name, which is what the ingest path used to store"},
+		{"comfy", "sdxl-turbo", false, "a plausible-looking id that names no template"},
+		{"sdcpp", "", true, "sdcpp holds one checkpoint and never reads this"},
+		{"sdcpp", "SDXL 1.0", true, "and so has no opinion about how it is spelled"},
+		{"llamacpp", "anything", true, "nor has any other provider"},
+	} {
+		if got := engineBaseModelValid(c.provider, c.baseModel); got != c.want {
+			t.Errorf("engineBaseModelValid(%q, %q) = %v, want %v — %s", c.provider, c.baseModel, got, c.want, c.why)
+		}
+	}
+	if engineBaseModelsFor("sdcpp") != nil {
+		t.Error("sdcpp was given a vocabulary; a panel would then offer a choice that changes nothing")
+	}
+	if len(engineBaseModelsFor("comfy")) == 0 {
+		t.Error("comfy has no vocabulary — the Console has nothing to build a selector from")
 	}
 }

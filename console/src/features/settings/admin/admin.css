@@ -126,19 +126,51 @@
   min-width: 120px;
 }
 
+/* What ECS is doing and what the engine would hold: a state badge, then the model names as
+   chips. A sentence put all three at the same weight, and the state is what the rest of the
+   panel is read against. */
+.engines-state {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+/* The word in front of a group of chips. Not a chip itself — it names them. */
+.engines-fact-label {
+  color: var(--dialog-muted);
+  font-size: 11px;
+}
+
 /* Inference-engine status (ADR 0071, adminEngines.tsx).
  *
  * A list rather than a paragraph: each line is a separate fact that may or may not be there,
  * and a run of conditional spans in one paragraph reflows into a different sentence every time
- * one of them is absent. */
+ * one of them is absent.
+ *
+ * Boxed, and two columns where there is room. These four short lines sat directly under four
+ * other paragraphs of the same size and colour, so nothing said where the status ended and the
+ * catalogue began; and a column of 12px text half the width of the panel wastes the half that
+ * would let them be read two at a time.
+ *
+ * `auto-fit` rather than a fixed two, because the rule this block is written to is that a line
+ * the CP has no answer for is OMITTED: with one fact left, one full-width row is right. */
 .engines-status {
   list-style: none;
-  margin: 4px 0 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  display: grid;
+  /* min() so the track never demands more than the panel has: below ~700px this collapses to
+     one column instead of overflowing it. */
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
+  gap: 3px 16px;
   font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
+  font-variant-numeric: tabular-nums;
 }
 
 /* The caveat on a count this control plane cannot fully vouch for. Deliberately not an error
@@ -210,17 +242,23 @@
   gap: 6px;
 }
 
-/* A disabled model is dimmed rather than hidden. This panel is the only place one can be turned
-   on, so filtering them out would put them out of reach. */
+/* A disabled model is kept, not hidden. This panel is the only place one can be turned on, so
+   filtering them out would put them out of reach.
+
+   🔴 It must not be DIMMED to say so: `opacity: 0.6` on a whole row is the look of a disabled
+   control ("you cannot touch this" rather than "this one is off"), and in the light theme it
+   was barely a difference at all. The state is a badge (.engines-model-tag.off); the row keeps
+   full contrast, and an enabled one is marked by the accent rule down its leading edge. */
 .engines-model {
-  border: 1px solid var(--dialog-border, #30363d);
-  border-radius: 6px;
-  padding: 6px 8px;
-  opacity: 0.6;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--panel2);
+  border-inline-start: 3px solid var(--border);
 }
 
 .engines-model.on {
-  opacity: 1;
+  border-inline-start-color: var(--accent);
 }
 
 .engines-model-head {
@@ -230,19 +268,91 @@
   flex-wrap: wrap;
 }
 
+/* The id carries the row. It was the same 12px as the three facts under it, which left nothing
+   to scan a list of five by. */
+.engines-model-id {
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
 /* Pushes the buttons to the trailing edge and keeps them there when the id wraps. */
 .engines-model-actions {
   margin-inline-start: auto;
   display: flex;
-  gap: 4px;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 
+/* Real buttons, not ghosts: three `.ghost` actions in a row (transparent, borderless, muted)
+   read as a sentence rather than as three things one can press.
+
+   The size is set here per container rather than by giving `.sm` a rule of its own — the
+   markup asks for one and there is none anywhere, but that name is global and a definition
+   would land on every other verbatim-ported control in the dialog. */
+.engines-model-actions button,
+.engines-model-add-actions button,
+.engines-class-head button,
+.engines-model-confirm button,
+.engines-hit-pick,
+.engines-open,
+.engines-class-pending button {
+  font-size: 12px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+
+/* Forgetting a row is the destructive one, and it says so on hover rather than permanently:
+   the list is five rows long and five red buttons down the trailing edge out-shout the two
+   actions somebody actually came for. The confirm step below it is where the decision is
+   made anyway, so this only has to be recognisable at the moment of reaching for it.
+   (The shell's own `button.danger:hover` is a dark-theme fill; this is the light one too.) */
+.engines-model-actions button.danger:hover:not(:disabled) {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 45%, var(--btn-border));
+  background: color-mix(in srgb, var(--del) 10%, var(--btn));
+}
+
+/* The badges. One pill, four tones — a tone is a claim, so an unknown state keeps the neutral
+   one rather than borrowing a colour (engineJobTone). */
 .engines-model-tag {
   font-size: 11px;
-  border: 1px solid var(--dialog-border, #30363d);
+  line-height: 18px;
+  border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 0 6px;
+  padding: 0 8px;
   color: var(--dialog-muted);
+  background: var(--bg);
+  white-space: nowrap;
+}
+
+.engines-model-tag.on {
+  color: var(--ok, #1a7f37);
+  border-color: color-mix(in srgb, var(--ok, #1a7f37) 40%, var(--border));
+  background: color-mix(in srgb, var(--ok, #1a7f37) 10%, var(--bg));
+}
+
+.engines-model-tag.off {
+  color: var(--dialog-muted);
+}
+
+.engines-model-tag.lead {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  font-weight: 600;
+}
+
+.engines-model-tag.warn {
+  color: var(--warn, #d29922);
+  border-color: color-mix(in srgb, var(--warn, #d29922) 45%, var(--border));
+  background: color-mix(in srgb, var(--warn, #d29922) 12%, var(--bg));
+}
+
+.engines-model-tag.bad {
+  color: var(--del);
+  border-color: color-mix(in srgb, var(--del) 40%, var(--border));
+  background: color-mix(in srgb, var(--del) 10%, var(--bg));
 }
 
 .engines-model-desc,
@@ -267,27 +377,86 @@
   border-radius: 6px;
 }
 
-/* The search results. A list of buttons rather than a <select>: each row carries a meta line
-   (downloads, gated, licence, size) that decides whether it is worth choosing, and an option
-   element cannot hold one. */
+/* The search results. Cards rather than a <select>: each hit carries the numbers and the terms
+   that decide whether it is worth choosing, and an option element cannot hold them.
+
+   Cards rather than one line each, too. Twenty rows of "name ・ counts ・ licence ・ size" are
+   a wall of text — every part at the same weight, wrapping into the next — with nothing to
+   scan by. Two columns where there is room: a repository name is long and its numbers short. */
 .engines-search-hits {
   list-style: none;
-  margin: 4px 0;
-  padding: 0;
-  max-height: 220px;
+  margin: 6px 0;
+  padding: 2px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 8px;
+  max-height: 320px;
   overflow-y: auto;
   font-size: 12px;
 }
 
-.engines-search-hits > li {
+.engines-hit {
   display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel2);
 }
 
-.engines-search-hits > li > button {
-  text-align: left;
+.engines-hit:hover {
+  border-color: var(--accent);
+}
+
+.engines-hit-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+/* `owner/name` is the identity of the row, so it wraps in full rather than being clipped: the
+   half that tells two quantisations of one model apart is at the end. */
+.engines-hit-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 12px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.engines-hit-pick {
+  flex: 0 0 auto;
+}
+
+/* The three numbers a ranking is built on. Tabular figures so the columns of a grid of cards
+   line up; the count is the loud part and its unit is not. */
+.engines-hit-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--dialog-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.engines-hit-stat > b {
+  font-size: 12px;
+  color: var(--fg);
+  margin-inline-end: 3px;
+}
+
+.engines-hit-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+/* An empty row of either kind must not leave a gap the card is judged by: a Civitai hit has no
+   trending score, and a repository nobody has licensed carries no tag at all. */
+.engines-hit-stats:empty,
+.engines-hit-tags:empty {
+  display: none;
 }
 
 .engines-model-add-row,
@@ -310,10 +479,51 @@
 }
 
 .engines-model-add-row > input,
+.engines-model-add-row > select,
 .engines-search-row > input,
 .engines-hf-row > input {
   flex: 1 1 auto;
   min-width: 0;
+}
+
+/* One model can be several FILES — FLUX.2 klein is a diffusion model, a text encoder and a VAE
+   (ADR 0072 decision 2). 🔴 A left rule was not enough: on a real render of three files the rule
+   was invisible in both themes, and what the form showed was part/key/size repeated three times
+   with nothing saying where a file began. So each file is a BOX. (Caught by looking at it —
+   fifty-seven passing DOM tests could not see it.) */
+.engines-model-add-file {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border: 1px solid var(--dialog-border, #30363d);
+  border-radius: 6px;
+}
+
+/* ⚠️ Not stretched. A button is a flex child here, and a full-width one centres its label —
+   which is what made "remove this file" read as a separator floating between two groups, so it
+   could have belonged to either. Inside its own box and right-aligned, it belongs to one. */
+.engines-model-add-file > button {
+  align-self: flex-end;
+}
+
+.engines-model-add > button {
+  align-self: flex-start;
+}
+
+/* The family picker on a row that is missing one. It sits under the warning it answers, so it
+   reads as the fix rather than as one more field — and it only ever appears there: a row whose
+   family is already declared shows it in the meta line and needs no control. */
+.engines-model-family {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.engines-model-family > span {
+  color: var(--dialog-muted);
 }
 
 .engines-model-add-actions {

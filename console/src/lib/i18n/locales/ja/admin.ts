@@ -30,8 +30,7 @@ export const admin = {
   "admin.mode_pool": "スロット",
   "admin.mode_engines": "推論エンジン",
   "admin.engines_none": "この配備は自前の推論エンジンを動かしていません。",
-  "admin.engines_state_prefix": "状態: ",
-  "admin.engines_models_sep": " / モデル: ",
+  "admin.engines_models_label": "モデル",
   "admin.engines_always_on_note": "常時稼働は GPU のインスタンスを止めません（時間単価はインスタンスクラスによります）。用が済んだらオンデマンドへ戻してください。",
   "admin.engines_note": "「無効」にすると、そのエンジンは起動メニューからも generate_image からも消え、要求は 503 で断られます。「オンデマンド」は要求が来たときだけインスタンスを買い、アイドルで自分で止まります。",
   // --- エンジンの現況（features/settings/admin/adminEngines.tsx の EngineStatus）---
@@ -46,6 +45,10 @@ export const admin = {
   "admin.engines_catalog_empty": "このエンジンのカタログは空です。モデルを取り込むまで、要求は 503 で断られ、インスタンスも起動しません。",
   "admin.engines_catalog_none_enabled": "有効なモデルがありません。1 つ有効にするまで、このエンジンは起動しません。",
   "admin.engines_model_started": "起動時に読み込む",
+  // 状態はバッジで言う。ボタンの文言（「有効にする」）は押したら何が起きるかであって、
+  // 今どちらであるかではない。行を薄くして表すのは disabled なコントロールと同じ見た目になる。
+  "admin.engines_model_is_on": "有効",
+  "admin.engines_model_is_off": "無効",
   "admin.engines_model_enable": "有効にする",
   "admin.engines_model_disable": "無効にする",
   "admin.engines_model_select": "これで起動する",
@@ -70,6 +73,14 @@ export const admin = {
   "admin.engines_model_add": "バケットのファイルを登録する",
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "キー",
+  "admin.engines_model_add_family": "ファミリー",
+  "admin.engines_ingest_family_hint": "リポジトリ側はこれを「{n}」と呼んでいます。表示名なので、対応するモデルファミリーを上から選んでください。",
+  "admin.engines_model_add_family_pick": "選んでください",
+  "admin.engines_model_add_part": "役割",
+  "admin.engines_model_add_part_whole": "チェックポイント（単一ファイル）",
+  "admin.engines_model_add_part_more": "ファイルを追加する",
+  "admin.engines_model_add_part_drop": "この行を削除",
+  "admin.engines_model_no_family": "モデルファミリーが宣言されていません。このエンジンはファミリーを見てワークフローを選び、名前からの推測はしません。この行は有効にでき、モデル名としても現れますが、生成しようとすると失敗します。下から選んでください。",
   "admin.engines_model_add_desc": "説明",
   // 🔴 コンテキストウィンドウは「両方か、どちらも書かないか」。context だけだと opencode は
   // 出力上限 0 を 32,000 と読み、32k のモデルが使えるウィンドウ 768 トークンになる
@@ -104,8 +115,16 @@ export const admin = {
   "admin.engines_ingest_hit_likes": " いいね",
   "admin.engines_ingest_hit_trending": " 話題度",
   "admin.engines_ingest_hit_gated": "gated",
+  // 検索結果のカードから取り込みフォームへ入れる操作。「取り込む」ではない——埋めるだけで、
+  // 調べる・同意する・取り込む はこの後もそのまま通る。
+  "admin.engines_ingest_hit_pick": "これにする",
   "admin.engines_ingest_repo": "リポジトリ",
   "admin.engines_ingest_file": "ファイル名",
+  // 素の https URL を貼ったときだけ、この欄はファイル名ではなく sha256 になる（listable()）。
+  // 同じラベルのまま「name.safetensors」を例示すると、この欄に入れてはいけない唯一のものを
+  // 求めることになる。ラベルごと差し替える。
+  "admin.engines_ingest_sha256": "sha256",
+  "admin.engines_ingest_sha256_ph": "64 桁の 16 進",
   "admin.engines_ingest_resolve": "調べる",
   // ファイル名を持っていない状態が普通なので、「調べる」は最初にリポジトリの中身を聞く。
   "admin.engines_ingest_pick": "選んでください",

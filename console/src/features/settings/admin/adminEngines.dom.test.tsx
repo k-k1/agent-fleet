@@ -203,10 +203,14 @@ describe("EnginesAdminView", () => {
       ],
     });
     await mount();
+    // By its label, not by position: "start with this one" leads the row, and a positional
+    // helper silently tested that button instead the moment the order changed.
     const enable = (id: string) =>
-      Array.from(host!.querySelectorAll(".engines-model")).find((li) =>
-        li.textContent?.includes(id),
-      )?.querySelector("button") as HTMLButtonElement | undefined;
+      Array.from(
+        Array.from(host!.querySelectorAll(".engines-model"))
+          .find((li) => li.textContent?.includes(id))
+          ?.querySelectorAll("button") ?? [],
+      ).find((b) => b.textContent === "有効にする") as HTMLButtonElement | undefined;
 
     await click(enable("flux-dev"));
     // Nothing was sent: the question comes first, with both numbers in it.
@@ -491,6 +495,42 @@ describe("EnginesAdminView", () => {
     });
   });
 
+  // 🔴 Which state a row is IN and what pressing its button WOULD DO are different sentences,
+  // and only the second was ever written down: the state was carried by dimming the row to 0.6
+  // opacity — indistinguishable from a disabled control, and in the light theme barely a
+  // difference at all — leaving "有効にする" as the evidence for a row that is not enabled.
+  it("says on or off in a badge, not only in the label of the button that would change it", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          has_models: true,
+          model_rows: [
+            { id: "sdxl-base-1.0", kind: "checkpoint", enabled: true, selected: true },
+            { id: "parked", kind: "checkpoint", enabled: false },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const badge = (id: string) =>
+      Array.from(host!.querySelectorAll(".engines-model"))
+        .find((li) => li.querySelector(".engines-model-id")?.textContent === id)
+        ?.querySelector(".engines-model-tag");
+    expect(badge("sdxl-base-1.0")?.textContent).toBe("有効");
+    expect(badge("sdxl-base-1.0")?.className).toContain("on");
+    expect(badge("parked")?.textContent).toBe("無効");
+    expect(badge("parked")?.className).toContain("off");
+
+    // "Start with this one" leads: it is what somebody came to this list to do, and enabling
+    // is implied by it. Forgetting the row is last.
+    const row0 = Array.from(host!.querySelectorAll(".engines-model")).find(
+      (li) => li.querySelector(".engines-model-id")?.textContent === "parked",
+    )!;
+    expect(
+      Array.from(row0.querySelectorAll(".engines-model-actions button")).map((b) => b.textContent),
+    ).toEqual(["これで起動する", "有効にする", "登録を消す"]);
+  });
+
   // A LoRA is never something an engine is started with, so the control that would say so is
   // not offered — the check the Agent also makes when it builds the tool's enum.
   it("does not offer to start with a LoRA", async () => {
@@ -564,9 +604,12 @@ describe("EnginesAdminView", () => {
         el.dispatchEvent(new Event("input", { bubbles: true }));
       });
     };
+    // ⚠️ The size belongs to its FILE and now sits with it, so the order is
+    // id / key / size / description. A model can be several files (ADR 0072 decision 2) and a
+    // single size field at the bottom of the form could not say which one it measured.
     await type(inputs[0], "juggernaut-xl-v9");
     await type(inputs[1], "image/checkpoints/juggernaut_xl_v9.safetensors");
-    await type(inputs[2], "a photographic SDXL fine-tune");
+    await type(inputs[3], "a photographic SDXL fine-tune");
 
     // ⚠️ The form must not imply the key was checked. The CP holds no S3 permission at all
     // (ADR 0072 review R3), so a typo only surfaces at the next cold start. Asserted while the
@@ -580,8 +623,11 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
       id: "juggernaut-xl-v9",
       kind: "checkpoint",
-      files: [{ s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors", bytes: 0 }],
+      files: [{ flag: "", s3Key: "image/checkpoints/juggernaut_xl_v9.safetensors", bytes: 0 }],
       description: "a photographic SDXL fine-tune",
+      // Empty because THIS engine declared no vocabulary: sd.cpp holds one checkpoint and never
+      // reads a family, so the panel offered no choice and there is nothing to send.
+      base_model: "",
       context_tokens: 0,
       max_output_tokens: 0,
     });
@@ -786,10 +832,10 @@ describe("EnginesAdminView", () => {
     };
     await type(inputs[0], "qwen2.5-coder-1.5b");
     await type(inputs[1], "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf");
-    await type(inputs[2], "small and quick");
-    await type(inputs[3], "32768");
-    await type(inputs[4], "4096");
-    await type(inputs[5], "1117320768");
+    await type(inputs[2], "1117320768");
+    await type(inputs[3], "small and quick");
+    await type(inputs[4], "32768");
+    await type(inputs[5], "4096");
     await click(
       Array.from(host!.querySelectorAll(".engines-model-add button")).find(
         (b) => b.textContent === "登録する",
@@ -798,10 +844,141 @@ describe("EnginesAdminView", () => {
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models", "POST", {
       id: "qwen2.5-coder-1.5b",
       kind: "gguf",
-      files: [{ s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", bytes: 1117320768 }],
+      files: [{ flag: "", s3Key: "llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf", bytes: 1117320768 }],
       description: "small and quick",
+      base_model: "",
       context_tokens: 32768,
       max_output_tokens: 4096,
+    });
+  });
+
+  // A ComfyUI engine picks its workflow graph from the model's FAMILY and refuses to guess one
+  // from a name, so the panel has to ask — and it asks with a CHOICE, because what a repository
+  // calls a model ("SDXL 1.0") is a display name that names no graph.
+  //
+  // 🔴 Until this existed the form had one key field and no family at all, so the two things
+  // ComfyUI needs were both unreachable from the Console: on af-sandbox the catalogue had to be
+  // written by calling the admin API by hand (ADR 0072 P2 実機検証).
+  it("asks a comfy engine for a family, and lets one model be several files", async () => {
+    const comfy = row({
+      provider: "comfy",
+      base_models: ["sdxl", "sd35", "flux1", "flux2-klein", "zimage"],
+      file_flags: ["", "--diffusion-model", "--clip_l", "--t5xxl", "--vae"],
+      has_models: true,
+      model_rows: [],
+    });
+    api.mockResolvedValue({ engines: [comfy] });
+    apiJSON.mockResolvedValue(comfy);
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const pick = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    const go = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLButtonElement;
+
+    let inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    await type(inputs[0], "flux2-klein-4b");
+    await type(inputs[1], "image/diffusion_models/flux-2-klein-4b.safetensors");
+
+    // ⚠️ The family is not optional here, and the form says so by refusing rather than by
+    // letting the CP answer 400 after the press.
+    expect(go().disabled).toBe(true);
+
+    const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
+    await pick(selects()[0], "flux2-klein");
+    expect(go().disabled).toBe(false);
+    // The first file's part, then two more files with their own.
+    await pick(selects()[1], "--diffusion-model");
+
+    const more = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "ファイルを追加する",
+      ) as HTMLElement;
+    await click(more());
+    await click(more());
+    inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    // id, then (key, size) per file, then the description: three files is eight inputs.
+    expect(inputs.length).toBe(8);
+    await type(inputs[3], "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors");
+    await type(inputs[5], "image/vae/flux2-vae.safetensors");
+    await pick(selects()[2], "--clip_l");
+    await pick(selects()[3], "--vae");
+
+    await click(go());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
+      id: "flux2-klein-4b",
+      kind: "checkpoint",
+      files: [
+        { flag: "--diffusion-model", s3Key: "image/diffusion_models/flux-2-klein-4b.safetensors", bytes: 0 },
+        { flag: "--clip_l", s3Key: "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors", bytes: 0 },
+        { flag: "--vae", s3Key: "image/vae/flux2-vae.safetensors", bytes: 0 },
+      ],
+      description: "",
+      base_model: "flux2-klein",
+      context_tokens: 0,
+      max_output_tokens: 0,
+    });
+  });
+
+  // The row the SEED writes, and every row written before the CP validated one: complete in
+  // every way this panel can see, and unable to generate. The CP states it because the panel
+  // cannot know the vocabulary.
+  it("says so on a row whose family names no workflow", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          provider: "comfy",
+          base_models: ["sdxl"],
+          has_models: true,
+          model_rows: [
+            { id: "seeded", kind: "checkpoint", enabled: true, base_model_missing: true },
+            { id: "declared", kind: "checkpoint", enabled: true, base_model: "sdxl" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const warnings = Array.from(host!.querySelectorAll(".form-err")).filter((e) =>
+      e.textContent?.includes("モデルファミリー"),
+    );
+    expect(warnings.length).toBe(1);
+
+    // The FIX sits under the warning it answers, and only there — the row that already declares
+    // one shows it in its meta line and needs no control.
+    const pickers = Array.from(host!.querySelectorAll(".engines-model-family"));
+    expect(pickers.length).toBe(1);
+
+    // 🔴 One field, not the whole row. Before this the only way to give a row a family was to
+    // register it again from scratch: that lands it disabled and, for a split model, means
+    // re-typing three S3 keys to change one word.
+    apiJSON.mockResolvedValue(row({ provider: "comfy", base_models: ["sdxl"], has_models: true, model_rows: [] }));
+    const sel = pickers[0].querySelector("select")!;
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel, "sdxl");
+      sel.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models/seeded", "PUT", {
+      base_model: "sdxl",
     });
   });
 
@@ -1361,6 +1538,81 @@ describe("EnginesAdminView / searching for a model", () => {
       | HTMLButtonElement
       | undefined;
 
+  // React delegates onBlur from `focusout`; a raw non-bubbling `blur` never reaches it.
+  const leave = async (el: HTMLInputElement) => {
+    await act(async () => {
+      el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+    });
+  };
+
+  // 🔴 An address is what a person actually has in hand, and pasting one used to leave the
+  // form looking untouched: the URL was taken apart only when the request was built, so what
+  // would be fetched was never on screen, and the file it named was not the one the picker
+  // showed. Splitting it into the fields leaves one source of truth.
+  it("takes a pasted model-page URL apart into the fields it names", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+
+    await typeInto(
+      field("リポジトリ")!,
+      "https://huggingface.co/stabilityai/stable-diffusion-xl-base-1.0/blob/main/sd_xl_base_1.0.safetensors",
+    );
+    await leave(field("リポジトリ")!);
+    expect(field("リポジトリ")!.value).toBe("stabilityai/stable-diffusion-xl-base-1.0");
+    expect(field("ファイル名")!.value).toBe("sd_xl_base_1.0.safetensors");
+
+    // The file is named, so "look it up" resolves it rather than asking what the repo holds —
+    // and the revision the URL carried survives the split (dropping it resolves `main`, which
+    // is a different file whenever the URL pointed at anything else).
+    apiJSON.mockResolvedValue({ sha256: "a".repeat(64), bytes: 6_939_000_000, license: "openrail++" });
+    await click(button("調べる"));
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/ingest/resolve", "POST", {
+      source: {
+        hf: { repo: "stabilityai/stable-diffusion-xl-base-1.0", file: "sd_xl_base_1.0.safetensors", revision: "main" },
+      },
+    });
+    // …and the id is proposed off that file, exactly as it is for one picked from a list.
+    expect(field("id")!.value).toBe("sd_xl_base_1.0");
+  });
+
+  // The version id, not the model id in the path next to it: an ingest takes the former and
+  // the two are different numbers on the same page.
+  it("turns a pasted Civitai page into its version id", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+    await typeInto(field("リポジトリ")!, "https://civitai.com/models/133005?modelVersionId=782002");
+    await leave(field("リポジトリ")!);
+    expect(field("リポジトリ")!.value).toBe("civitai:782002");
+  });
+
+  // What a field ASKS FOR has to be something that field can take. On the image role the
+  // repository and the id offered a GGUF example (`Qwen/…-GGUF`, `qwen2.5-coder-1.5b`) — not a
+  // hint but a wrong answer, since sd-server cannot load one and following it costs a resolve
+  // and a refusal.
+  it("offers examples that belong to this engine's role", async () => {
+    api.mockResolvedValue({ engines: [row()] }); // api: "images"
+    await mount();
+    await openIngest();
+    expect(field("探す")!.placeholder).toBe("sdxl");
+    expect(field("リポジトリ")!.placeholder).toBe("stabilityai/stable-diffusion-xl-base-1.0");
+    expect(field("ファイル名")!.placeholder).toBe("name.safetensors");
+    expect(field("id")!.placeholder).toBe("sdxl-base-1.0");
+  });
+
+  // 🔴 With a plain https URL above it, the same box is not the file name — it is the sha256,
+  // the only thing that can verify a download nothing else describes. A label and an example
+  // that still say "name.safetensors" there ask for the one value it must not be given.
+  it("relabels the file box as the sha256 when the source is a plain url", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    await mount();
+    await openIngest();
+    await typeInto(field("リポジトリ")!, "https://example.com/some-model.safetensors");
+    expect(field("ファイル名")).toBeNull();
+    expect(field("sha256")!.placeholder).toBe("64 桁の 16 進");
+  });
+
   it("fills the repository field from a hit, and says gated before anything is started", async () => {
     api.mockResolvedValue({ engines: [row()] });
     apiJSON.mockResolvedValue({
@@ -1404,6 +1656,44 @@ describe("EnginesAdminView / searching for a model", () => {
     expect(field("リポジトリ")!.value).toBe("black-forest-labs/FLUX.1-dev");
     expect(host!.querySelector(".engines-search-hits")).toBeNull();
     expect(apiJSON).toHaveBeenCalledTimes(1);
+  });
+
+  // The three kinds of fact on a hit are told apart by kind, not by a "・": twenty results as
+  // one line each — name, counts, licence, size at the same weight, wrapping into one another
+  // — are a wall of text with nothing to scan by.
+  it("splits a hit into a name, the numbers and the terms", async () => {
+    api.mockResolvedValue({ engines: [row()] });
+    apiJSON.mockResolvedValue({
+      hits: [
+        {
+          source: "hf",
+          ref: "stabilityai/stable-diffusion-xl-base-1.0",
+          name: "stabilityai/stable-diffusion-xl-base-1.0",
+          downloads: 1632949,
+          likes: 6612,
+          license: "openrail++",
+          bytes: 6_939_000_000,
+        },
+      ],
+    });
+    await mount();
+    await openIngest();
+    await click(button("人気を見る"));
+
+    const hit = host!.querySelector(".engines-hit")!;
+    expect(hit.querySelector(".engines-hit-name")!.textContent).toBe(
+      "stabilityai/stable-diffusion-xl-base-1.0",
+    );
+    // The counts carry their unit but are not joined to the licence and the size.
+    expect(Array.from(hit.querySelectorAll(".engines-hit-stat")).map((s) => s.textContent)).toEqual([
+      "1.6MDL",
+      "7kいいね",
+    ]);
+    // …which ride as their own badges, so a card with neither draws no empty row.
+    expect(Array.from(hit.querySelectorAll(".engines-hit-tags .engines-model-tag")).map((s) => s.textContent)).toEqual([
+      "openrail++",
+      "6.9 GB",
+    ]);
   });
 
   it("rounds a fractional trending score instead of printing its float noise", async () => {
