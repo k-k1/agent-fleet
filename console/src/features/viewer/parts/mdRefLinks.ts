@@ -5,6 +5,7 @@ import { resolvePathRefs, type ResolvedPathRef } from "../pathResolve.ts";
 import { api } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
+import { displayName } from "../../../lib/sessionview.ts";
 import { useChatStore } from "../../chat/store.ts";
 import { openCommit } from "../../scm/open.ts";
 
@@ -213,6 +214,17 @@ function makeConversationLink(
   return a;
 }
 
+// sessionLinkTooltip is what hovering a linked slug says: the session's display name
+// (its title, or what the rail shows in place of one) above the open hint. A slug alone
+// says nothing about which session it is, and that is the question a reader has before
+// deciding to click. A slug whose session vanished after the document rendered falls back
+// to the bare hint rather than a name that is no longer true.
+function sessionLinkTooltip(name: string): string {
+  const hint = t("view.open_session", { name });
+  const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
+  return s ? `${displayName(s)}\n${hint}` : hint;
+}
+
 // makeSessionLink builds a non-navigating anchor that opens a session's chat mirror.
 // Modifier keys follow the same convention as file links (wireLinks): a plain click / Enter
 // is the default open, while Ctrl/Cmd-click and a middle click force a new pane (openInNew).
@@ -222,7 +234,15 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
   a.textContent = name;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
-  a.title = t("view.open_session", { name });
+  a.title = sessionLinkTooltip(name);
+  // The anchor is built once, when the document renders, but a session is renamed (and
+  // stopped, and deleted) while that document stays on screen — recompute on the way into
+  // the hover so the tooltip shows the name the session has now, not at render time.
+  const refreshTooltip = () => {
+    a.title = sessionLinkTooltip(name);
+  };
+  a.addEventListener("mouseenter", refreshTooltip);
+  a.addEventListener("focus", refreshTooltip);
   a.addEventListener("click", (e) => {
     e.preventDefault();
     openSession(name, e.ctrlKey || e.metaKey);
