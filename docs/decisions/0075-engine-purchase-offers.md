@@ -876,3 +876,110 @@ Four lanes — CP (Go; the CP side of both contracts), CFN (`60-engines.yaml`, P
 migration), Console (the display side of the admin contract), and hardware run 0 (open question
 1 for $0 with a throwaway provider; **may start before any code, and if it is red it stops the
 other three**). Hardware runs 1 onward wait for all three to land and go serially on one lane.
+
+## Follow-up — P0 hardware run 0: open question 1, measured (2026-09-11, the dev deployment, $0)
+
+Before a single line of P0 code, open question 1 — the one that decides the skeleton — was
+measured on the dev deployment's image role. **No GPU was bought**: the service's `desiredCount`
+was 0 from first command to last; all that happened is that one throwaway capacity provider was
+created, the strategy was moved there and back, and the provider was deleted.
+Elapsed: **10 minutes 42 seconds** (18:36:06-18:46:48 JST).
+
+**Verdict: green. The skeleton stands. But decision 4 (a)'s "don't pass force" does not, as written.**
+
+### Preconditions (checked before measuring)
+
+- No session was deploying (`pgrep -af dev-deploy.sh` matched only the `pgrep` itself).
+- The image role's service was `desiredCount` 0, `runningCount` 0, `pendingCount` 0, `status` ACTIVE.
+- Saved first: strategy `[{capacityProvider: <the image role's provider>, weight: 1, base: 0}]`,
+  PRIMARY deployment `id` `ecs-svc/0995585233792941490`, `updatedAt`
+  `2026-09-11T15:15:38.591000+09:00`.
+- The dev deployment's image provider is `capacityOptionType: SPOT` (still as 0074 "The cleanup,
+  and what was left behind" left it). The throwaway was made **`ON_DEMAND`**, so what was measured
+  is **a Spot provider to an on-demand provider** — exactly the transition decision 4 (b) performs.
+
+### The steps and what came back
+
+| Time (JST) | What was done | What came back |
+|---|---|---|
+| 18:36:32 | `create-capacity-provider` (`ON_DEMAND`, every other field copied from the existing image provider) | 200. `status: PROVISIONING` / `updateStatus: CREATE_IN_PROGRESS` |
+| 18:37:00 | `describe-capacity-providers` / `describe-clusters --include ATTACHMENTS` | `ACTIVE` / `CREATE_COMPLETE`. The cluster's list went from 4 to **5** (0074's "creating one adds it by itself", reproduced) |
+| 18:37:10 | **(a)** `update-service --capacity-provider-strategy ...` (neither `--desired-count` nor `--force-new-deployment`) | **HTTP 400 `InvalidParameterException`** (full text below) |
+| 18:37:21 | `describe-services` after that call | neither the strategy nor `updatedAt` (`15:15:38.591`) moved **by one field** |
+| 18:37:47 | **(b)** the same update plus `--force-new-deployment` | **200**. The strategy is the throwaway provider, `desiredCount` still 0. New PRIMARY `ecs-svc/5816081513831620451` (`createdAt` = `updatedAt` = `2026-09-11T18:37:48.588000+09:00`, `rolloutState: IN_PROGRESS`); the old `ecs-svc/0995585233792941490` went `ACTIVE` then `DRAINING` |
+| 18:39:17 | the same deployment settling | `deployment completed` / `has reached a steady state` (`18:39:17.427`). **89 seconds with not one task to replace** |
+| 18:40:32 | `update-service` back to the original (**no force**) | **the same 400. Direction makes no difference** |
+| 18:40:34 | `update-service` back to the original (with force) | 200. The strategy matches the saved copy. New PRIMARY `ecs-svc/5931469680924617986` (`createdAt` = `updatedAt` = `2026-09-11T18:40:35.549000+09:00`) |
+| 18:42:02 | the same deployment settling | `deployment completed` (`18:42:02.134`). **87 seconds** |
+| 18:44:05 / 18:45:58 | `list-container-instances` then `describe-container-instances` | 4 instances. **None carries a `capacityProviderName`** and all registered on 09-06, 09-07 or 10:30 the same day — none belongs to either provider. **Not one new box arrived** |
+| 18:45:58 | `delete-capacity-provider` | 200. `DEPROVISIONING` / `DELETE_IN_PROGRESS` |
+| 18:46:37 | `describe-clusters` / `describe-capacity-providers` | The list is back to **the original 4**. The throwaway is `INACTIVE` / `DELETE_COMPLETE` (0074's "the trace does remain") |
+
+What (a) returned (kept with its `x-amzn-RequestId`):
+
+```
+HTTP 400
+{"__type":"InvalidParameterException","message":"When switching from launch type to capacity
+provider strategy on an existing service, or making a change to a capacity provider strategy
+on a service that is already using one, you must force a new deployment."}
+```
+
+### The verdict
+
+- **(a) green.** The transition between two MI providers is not refused as such — the same
+  transition went through with 200 once `forceNewDeployment` was added, and the strategy became
+  what was written. What was refused is only **the way it was passed** (without force), which is
+  the shape review R1 already declared "not red". **The skeleton of this ADR is not rewritten**,
+  and there is no need to fall back to the rejected "one service per purchase option".
+- **(b) green. The service is unharmed.** The refused call moved nothing (`updatedAt` stayed at
+  the saved value). After the round trip the strategy matches the saved copy **exactly**, down to
+  `weight` and `base`; `taskDefinition` is identical; `desiredCount` was 0 throughout, as were
+  `runningCount` and `pendingCount`; no box ever arrived. The live image provider's
+  `describe-capacity-providers` response is **byte-identical before and after**.
+- **(c) it moves — but the question could not be asked as posed.** There is **no such path** as
+  "an update of the strategy *alone*": (a) refuses it with 400. The path that does work (with
+  force) **creates a new PRIMARY deployment**, so the `id` changes and `updatedAt` moves with it.
+  Which means that on decision 4 (b)'s path the `StartDeadlineSec` clock (0070 decision 6,
+  `describe()` in `engine_ecs.go`) **is reset for certain** — the CP does not need a per-offer
+  clock of its own.
+
+### What is new (and it lands on decision 4 (a))
+
+1. **How public spec (c) has to be read.** The `UpdateService` API Reference says
+   `capacityProviderStrategy` "doesn't trigger a new service deployment", but that does **not**
+   mean "the strategy can be updated without force". On a service already using a strategy, ECS
+   refuses a force-less strategy update **at the API's front door, with 400**. Both directions of
+   the round trip returned the same wording.
+2. 🔴 **Decision 4 (a) says "don't pass `forceNewDeployment`" — but if the strategy ends up
+   different from the current one, (a) hits the same 400.** The error text says nothing about
+   `desiredCount`; the only condition it names is "a service that is already using one". **A call
+   that sets `desiredCount` to 1 buys a box, so this $0 run cannot measure it** (it gets measured
+   with the same call in hardware run 3, desired 0 to 1). The implementation can simply be safe:
+   **pass `forceNewDeployment` in (a) too when the strategy changes, and don't send
+   `capacityProviderStrategy` at all when it doesn't.** running is 0 either way, so there is
+   nothing to kill (decision 4's guard is unaffected).
+   → **Open question 1 is settled as (a), (b) and (c). What remains is this one point** — whether
+   force is required when `desiredCount` 0 to 1 and the strategy travel in the same
+   `UpdateService` — and it is carried here, as a new open question, not in the body.
+3. ⚠️ **A deployment does not finish instantly even with no task to replace** (89 seconds out,
+   87 back). Whether ECS starts placing on the new provider **after** the deployment reaches
+   `completed` or **as soon as** the new PRIMARY exists, when `desiredCount` is 1, was **not
+   measured**. If it is the former, half of the per-offer budget (decision 5, 180 seconds by
+   default) is spent on the switch itself. **Hardware run 4 (the fallback positive control) must
+   record the gap between those two timestamps.**
+4. Decision 11 confirmed: the service's strategy shows up in `DescribeServices` immediately after
+   it is written. A panel that says "what it is running on now" from there does work.
+
+### The cleanup
+
+- The throwaway provider is deleted. The cluster's `capacityProviders` is back to **the original
+  four**, and the throwaway remains only as an `INACTIVE` record (as in 0074's follow-up; it does
+  not prevent recreating the same name).
+- The service's strategy, `taskDefinition` and `desiredCount` are identical to the saved copy, and
+  the live image provider is untouched.
+- ⚠️ **What did not come back**: the PRIMARY deployment's `id` (`ecs-svc/0995585233792941490` to
+  `ecs-svc/5931469680924617986`) and four added service events. Forcing a deployment recreates it,
+  so there is nothing to restore. It does not affect starting the engine (`describe()` does not
+  remember the PRIMARY by id).
+- The raw responses (JSON, and the `--debug` log) are in `~/.cache/adr0075-run0/` of the session
+  that measured this.
