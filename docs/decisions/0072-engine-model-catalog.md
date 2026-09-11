@@ -3533,6 +3533,16 @@ direct evidence there is that the task definitions could pull the image. **The r
 (`update.sh`) still has none of these three steps, so the next version bump hits the same
 hole.**
 
+**Closed (2026-09-11, same day).** Two of the three are in `update.sh` now, in the order this
+section says is the dependency: it deploys 20-platform first — through a change set it prints,
+and only executes when nothing is replaced — then carries `af-engine-tools:<EngineToolsImageTag>`
+from GHCR into ECR when it is not already there, then deploys 60-engines. `release-ecr.sh`
+carries the image too (it is the step of a release that fills ECR), and the shared part sits in
+`env.sh` so `dev-deploy.sh` uses the same code. The bake is the one step left by hand, because
+nothing on a release route may produce an image: with the tag in neither registry, `update.sh`
+stops and names the workflow. `deploy/local/ecs-lifecycle-stub-test.sh` case 3i holds the order
+(positive controls: swap the two steps, drop the copy, remove the 20-platform deploy).
+
 ### #518's checklist
 
 | # | Item | Result |

@@ -202,6 +202,19 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
 The `llm` role is not offered this and is not going to be: a two-minute termination notice
 mid-conversation costs a 527-586-second cold start to recover from.
 
+### 0.18.1: the first update also updates 20-platform
+
+The release that moves the fetch and ingest steps into an image needs a new ECR repository
+(`af-engine-tools`), and that repository is 20-platform's. So the first `update.sh` run on this
+release deploys 20-platform as well — as a change set it prints before executing, and only when
+it replaces nothing (`Add EcrEngineTools` and `Modify CpTaskRole`, no replacement, is what it
+looked like on a real deployment). Nothing to do, other than reading the two lines it prints;
+later releases skip the step entirely, because an empty change set is exactly the fact that
+nothing moved. A change set that WOULD replace something is handed back instead of executed —
+replacing an ECR repository throws its images away.
+
+The image itself is carried over in the same run: [The engine tools image](#the-engine-tools-image).
+
 ### `LlmEnabled` / `ImageEnabled`
 
 Whether the ROLE exists at all: its service, its Cloud Map name, its row in the engine table.
@@ -1048,27 +1061,30 @@ traps are written down.
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
 `EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
 
-🔴 **Only `standup.sh` puts the image where the stack can reach it on the release path.
-`update.sh` does not, and neither it nor `dev-deploy.sh` deploys 20-platform** (`dev-deploy.sh`
-carries the image, below, but not the repository). So on any deployment that is
-UPDATED rather than stood up, three things have to happen by hand, in this order, before the
-60-engines update that references a new tag — measured 2026-09-11, when the dev deployment had
-neither the GHCR image nor the ECR repository (ADR 0072, "#518 and #512, confirmed on
-hardware"):
+**Getting the image into a deployment is not a hand-run step.** All three routes do it, in the
+one order that works — **ECR repository (20-platform) → image (`crane copy`) → stack
+(60-engines)**:
 
-1. `gh workflow run engine-tools-image.yml -f tag=<tag>` — bakes to GHCR. Touches no
-   deployment.
-2. `cloudformation deploy` 20-platform, which owns the `af-engine-tools` ECR repository.
-   (`update.sh` only deploys 50-tts, 60-engines and 30-ingress, so a repository added to
-   20-platform never appears on an updated deployment.) Take a change set first: on the run
-   that was measured it was two changes, `Add EcrEngineTools` and `Modify CpTaskRole`, with no
-   replacement.
-3. `crane copy ghcr.io/<owner>/agent-fleet/engine-tools:<tag> <account>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<tag>`
+| route | what it does |
+| --- | --- |
+| `standup.sh` | copies the tag `params/60-engines` names, before deploying the stack |
+| `update.sh` / `release-ecr.sh` | deploys 20-platform (through a change set it prints), then copies the tag 60-engines asks for when ECR has not got it, then deploys 60-engines |
+| `dev-deploy.sh` | the same, plus it BAKES a per-commit tag when `engine-tools/` has moved on |
 
-Skip them and the update still "succeeds": CloudFormation writes task definitions pointing at
-an image that is not there, and both roles' fetch containers and both ingest containers fail
-with `CannotPullContainerError`. It is the same trap the sd-server `crane copy` carries in
-`standup.sh`, on a path that has no `standup.sh` to carry it.
+🔴 Reversed, nothing fails at the time. The stack deploys perfectly and both roles' fetch
+containers and the ingest task sit in `CannotPullContainerError` while the service reports a
+steady state — which is how this was found, on the deployment, the first time 0.18.1 was put on
+one (2026-09-11: GHCR empty, ECR empty, 20-platform not updated, three hand-run steps to get
+out of it, and none of them in a script). `deploy/local/ecs-lifecycle-stub-test.sh` case 3i
+holds the order, with the two positive controls (swap the steps, drop the copy).
+
+**The one step you still run by hand is the bake**, and only when GHCR has not got the tag:
+nothing on a release route may produce an image, so `update.sh` and `release-ecr.sh` stop there
+and say to run `engine-tools-image.yml` with that tag first. On a standard release GHCR has it
+already — the workflow is dispatched when `deploy/aws/ecs/engine-tools/` changes. Of the three
+steps that were run by hand on 2026-09-11 (ADR 0072, "#518 and #512, confirmed on hardware"),
+that `gh workflow run engine-tools-image.yml -f tag=<tag>` is the only one left; `update.sh`
+does the 20-platform deploy and the `crane copy` itself, in that order.
 
 **On a development deployment `dev-deploy.sh` does the middle two for you.** It bakes a
 per-commit tag when `deploy/aws/ecs/engine-tools/` has changed since the deployed commit, and

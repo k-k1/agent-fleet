@@ -124,6 +124,10 @@ case "$args" in
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='LlmServiceName']"*) echo "af-af-ecs-engines-llm" ;;
   *"cloudformation describe-stacks"*"Outputs[?OutputKey=='ImageServiceName']"*) echo "af-af-ecs-engines-image" ;;
   *"ParameterKey=='LlmImageTag'"*) echo "server-cuda" ;;
+  # The engine tools tag the LIVE stack asks for. Settable to empty on purpose: that is the
+  # state of every stack on the update that INTRODUCES the parameter, and then the value the
+  # stack is about to take is cfn/60-engines.yaml's own Default.
+  *"ParameterKey=='EngineToolsImageTag'"*) echo "${STUB_ET_WANT-2026-09-11}" ;;
   *"ParameterKey=='LlmApiKeySsmParam'"*) echo "/af-ws/engine-llm-key" ;;
   *"ParameterKey=='EnginesSsmParam'"*)
     [ "${STUB_ENGINES_LIVE:-0}" = 1 ] && echo "/af-ws/engines" || echo "" ;;
@@ -159,6 +163,23 @@ case "$args" in
   *"ParameterKey=='SsmPrefix'"*) echo "/af-cp" ;;
   *"ParameterKey=='HostedZoneId'"*) echo "ZTEST" ;;
   *"ParameterKey=='Ec2SlotSleepSec'"*) echo "900" ;;
+  # --- 20-platform through a change set (update.sh step 1a). `deploy --no-execute-changeset`
+  # answers with the review command, and the ARN inside it is the only handle to what it built;
+  # describe-change-set is then what says whether anything is REPLACED. Both knobs default to
+  # the ordinary case (there are changes, nothing is replaced).
+  *"cloudformation deploy"*"--no-execute-changeset"*)
+    if [ "${STUB_PLATFORM_CHANGES:-1}" = 0 ]; then
+      echo "No changes to deploy. Stack t-platform is up to date"
+    else
+      echo "Waiting for changeset to be created.."
+      echo "Changeset created successfully. Run the following command to review changes:"
+      echo "aws cloudformation describe-change-set --change-set-name arn:aws:cloudformation:ap-northeast-1:123456789012:changeSet/awscli-cloudformation-package-deploy-1/abcd"
+    fi ;;
+  *"cloudformation describe-change-set"*)
+    printf 'Add\tEcrEngineTools\tNone\n'
+    printf 'Modify\tCpTaskRole\tFalse\n'
+    [ "${STUB_PLATFORM_REPLACE:-0}" = 1 ] && printf 'Modify\tEcrControlPlane\tTrue\n'
+    : ;;
   *"cloudformation describe-stacks"*) echo "STACK" ;;
   *"ecs list-services"*) echo "arn:aws:ecs:x:1:service/t-cluster/af-ws-alice" ;;
   # Do not confuse the runningCount query (waiting for the CP to stop) with the listing of
@@ -174,6 +195,10 @@ case "$args" in
   *"ec2 describe-snapshots"*) echo "snap-1" ;;
   *"efs describe-access-points"*) echo "fsap-1" ;;
   *"ssm describe-parameters"*) echo "/af-ws/alice" ;;
+  # af-engine-tools has its own knob, separate from the release images: the case that matters
+  # is "the release tag IS in ECR and this one is not", which is exactly what happened on the
+  # deployment (nothing had ever copied it there).
+  *"ecr describe-images"*af-engine-tools*) [ "${STUB_ET_IN_ECR:-0}" = 1 ] || exit 1 ;;
   *"ecr describe-images"*)
     # After a teardown the ECR is empty. Forces standup down the crane copy path.
     [ "${STUB_ECR_HAS:-0}" = 1 ] || exit 1 ;;
@@ -200,7 +225,13 @@ echo "crane $*" >> "$STUB_LOG"
 case "$1" in
   # Return a two-architecture index (the shape of a released CP image). Return only one and
   # the --cp-arch arm64 path fails preflight, so what comes after it is never exercised.
-  manifest) echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
+  manifest)
+    # "is it in GHCR" is asked through the manifest. engine-tools has to be able to answer no:
+    # nothing on the release route may bake an image, so that answer is where update.sh stops.
+    case "$*" in
+      *engine-tools*) [ "${STUB_ET_IN_GHCR:-1}" = 1 ] || exit 1 ;;
+    esac
+    echo '{"manifests":[{"platform":{"architecture":"amd64","os":"linux"}},{"platform":{"architecture":"arm64","os":"linux"}}]}' ;;
   auth) cat >/dev/null ;;
 esac
 FAKE
@@ -490,6 +521,109 @@ VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ENGINES_PRE_P6=1 
 grep -q "DRY: aws cloudformation deploy --stack-name af-ecs-engines .*--parameter-overrides LlmEnabled=true ImageEnabled=true" "$WORK/out3h3" \
   || fail "--dry-run did not show the planned translation"
 hasnt "cloudformation deploy --stack-name af-ecs-engines --template-file"   # nothing was run
+
+echo "== case 3i: update.sh does repository -> image -> stack, in that order =="
+#
+# 🔴 ECR REPOSITORY (20-platform) -> IMAGE (crane copy) -> STACK (60-engines). 0.18.1 moved the
+# engine's fetch and ingest steps into `af-engine-tools`, and the only thing that ever copied
+# that image into ECR was `standup.sh` — which a release does not go through. What the hardware
+# lane found on 2026-09-11, before it deployed: GHCR and ECR both empty, and 20-platform (which
+# owns the repository) not updated either. Run in that state, 60-engines deploys perfectly and
+# both roles' fetch containers plus the ingest task sit in CannotPullContainerError while the
+# service reports a steady state. It took three hand-run steps that existed in no script.
+#
+# The order is the whole assertion, so it is checked as an order and not as a call set.
+ET_DEFAULT="$(sed -n '/^  EngineToolsImageTag:$/,/^  [A-Za-z]/p' "$ECS/cfn/60-engines.yaml" \
+  | sed -n 's/^ *Default: *//p' | head -1 | tr -d '"')"
+[ -n "$ET_DEFAULT" ] || fail "cfn/60-engines.yaml declares no Default for EngineToolsImageTag"
+ET_GHCR="crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11"
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i" 2>&1 \
+  || { cat "$WORK/out3i"; fail "update.sh failed while carrying the engine tools image over"; }
+order "cloudformation deploy --stack-name t-platform" "cloudformation execute-change-set"
+order "cloudformation execute-change-set" "$ET_GHCR"   # the repository exists only after this
+order "$ET_GHCR" "cloudformation deploy --stack-name af-ecs-engines"
+# And the change set is READ OUT before it is executed — an unreviewed update to the stack that
+# owns the repositories, the cluster and the task roles is not something a release does.
+grep -q "· Add EcrEngineTools" "$WORK/out3i" || fail "the 20-platform change set was executed without showing it"
+order "cloudformation describe-change-set" "cloudformation execute-change-set"
+
+echo "== case 3i-2: a tag that is already in ECR is not copied again =="
+# The control for the case above. A step that copies on every run passes 3i and is still wrong:
+# it pulls an image that is already there on every release, and teaches the reader that the
+# copy means nothing.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_IN_ECR=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i2" 2>&1 \
+  || { cat "$WORK/out3i2"; fail "update.sh failed with the engine tools image already in ECR"; }
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools"
+grep -q "af-engine-tools:2026-09-11 is already in ECR" "$WORK/out3i2" \
+  || fail "it did not say why it copied nothing"
+has "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3i-3: GHCR has not got it either -- stop, and deploy nothing =="
+# Nothing on the release route may bake an image (engine-tools-image.yml is dispatched by hand
+# or by dev-deploy.sh), so this is where it has to stop. Stopping BEFORE 60-engines is the
+# point: deploying it here is what produces a steady-state service that cannot pull.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_IN_GHCR=0 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i3" 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "update.sh carried on with no engine tools image anywhere"
+grep -q "engine-tools-image.yml" "$WORK/out3i3" || fail "it did not say how to produce the image"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+hasnt "cloudformation deploy --stack-name t-ingress"
+
+echo "== case 3i-4: on the update that INTRODUCES the parameter, the template's Default is used =="
+# The live stack has no EngineToolsImageTag to read on the release that adds it, and the value
+# it is about to take is the new template's Default. Read only the live stack and the copy is
+# either skipped or made under an empty tag — either way the stack comes up pointing at nothing.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_ET_WANT="" \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i4" 2>&1 \
+  || { cat "$WORK/out3i4"; fail "update.sh failed against a stack without the parameter"; }
+has "crane copy ghcr.io/k-k1/agent-fleet/engine-tools:$ET_DEFAULT"
+
+echo "== case 3i-5: a 20-platform change set that REPLACES something is handed back =="
+# Replacing an ECR repository throws its images away and replacing a role breaks every task
+# that names it. Neither is something a release does on its own, and the refusal has to come
+# before anything else runs.
+: > "$LOG"
+rc=0
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_PLATFORM_REPLACE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i5" 2>&1 || rc=$?
+[ "$rc" != 0 ] || fail "update.sh executed a change set that replaces a resource"
+grep -q "EcrControlPlane" "$WORK/out3i5" || fail "it did not name what would be replaced"
+hasnt "cloudformation execute-change-set"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools"
+hasnt "cloudformation deploy --stack-name af-ecs-engines"
+
+echo "== case 3i-6: 20-platform is deployed only on the round where something moved =="
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 STUB_PLATFORM_CHANGES=0 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress > "$WORK/out3i6" 2>&1 \
+  || { cat "$WORK/out3i6"; fail "update.sh failed on an empty 20-platform change set"; }
+hasnt "cloudformation execute-change-set"
+grep -q "nothing moved in 20-platform" "$WORK/out3i6" || fail "an empty change set was not reported"
+# The rest of the release is unaffected by it.
+has "cloudformation deploy --stack-name af-ecs-engines"
+has "cloudformation deploy --stack-name t-ingress"
+
+echo "== case 3i-7: --dry-run shows the order and the plan, and runs none of it =="
+# 🔴 Assert on the OUTPUT here, not on the call log: a dry run executes nothing, so an
+# assertion on the log passes just as happily for a step that decided to do nothing at all.
+: > "$LOG"
+VERSION=9.9.9-dev-test STUB_ECR_HAS=1 STUB_ENGINES_LIVE=1 \
+  "$ECS/update.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --dry-run > "$WORK/out3i7" 2>&1 \
+  || { cat "$WORK/out3i7"; fail "update.sh --dry-run failed"; }
+grep -q "1. t-platform (20-platform" "$WORK/out3i7" || fail "the plan did not name 20-platform first"
+grep -q "4. af-engine-tools:2026-09-11 into ECR, then af-ecs-engines" "$WORK/out3i7" \
+  || fail "the plan did not show the image going in before the engines stack"
+grep -q "DRY: crane copy ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11" "$WORK/out3i7" \
+  || fail "the dry run did not show the copy it would make"
+hasnt "cloudformation execute-change-set"
+hasnt "crane copy ghcr.io/k-k1/agent-fleet/engine-tools"
 
 echo "== case 3b: a template over 51,200 bytes is handed over via S3 =="
 #

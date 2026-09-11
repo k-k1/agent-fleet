@@ -11,7 +11,15 @@
 # 20-platform CFN stack; an out-of-band create breaks the later CFN deploy with
 # AlreadyExists) -> docker login -> (docker load the air-gap B tar when --images-tar
 # is given) -> tag/push the local images agent-fleet/{control-plane,workspace}:$VERSION
-# as af-{control-plane,workspace}:$VERSION.
+# as af-{control-plane,workspace}:$VERSION -> carry the engine tools image over from
+# GHCR when this deployment runs engines.
+#
+# ⚠️ That last one is in the ledger below but not in the loop, because it does not
+# travel the same way: `af-engine-tools` is baked by engine-tools-image.yml straight to
+# GHCR (never into a local docker, never into a distribution), so it is a registry-to-
+# registry `crane copy` rather than a tag-and-push. It is here for the reason the other
+# two are: this is the step of a release that fills ECR, and 60-engines names a tag that
+# nothing else on the release route would put there.
 #
 # Prerequisites: 20-platform deployed (ECR repos), and the images to push either
 # present in the local docker or supplied via --images-tar. Building the images
@@ -22,16 +30,20 @@ usage() {
   cat >&2 <<'EOF'
 usage: VERSION=<v> release-ecr.sh --profile <p> --region <r> [--account <acct>]
                                   [--images-tar <B.tar.gz>] [--registry <local-prefix>]
+                                  [--stack <af-ecs-ingress>]
   --profile     aws cli profile (required)
   --region      ECR region (required)
   --account     account ID (resolved via sts get-caller-identity when omitted)
   --images-tar  docker load the air-gap images tar (B) before pushing
   --registry    local image name prefix (default agent-fleet — pairs with release.sh's default)
+  --stack       ingress stack name (default af-ecs-ingress) — only used to find the
+                engines stack, i.e. which engine tools tag this deployment asks for
 EOF
 }
 
 VERSION="${VERSION:?set VERSION=<semver> (e.g. VERSION=0.2.0)}"
 PROFILE=""; REGION=""; ACCOUNT=""; IMAGES_TAR=""; LOCAL_REGISTRY="agent-fleet"
+STACK="af-ecs-ingress"
 while [ $# -gt 0 ]; do
   case "$1" in
     --profile)    PROFILE="${2:?--profile needs a value}"; shift ;;
@@ -39,6 +51,7 @@ while [ $# -gt 0 ]; do
     --account)    ACCOUNT="${2:?--account needs a value}"; shift ;;
     --images-tar) IMAGES_TAR="${2:?--images-tar needs a path}"; shift ;;
     --registry)   LOCAL_REGISTRY="${2:?--registry needs a value}"; shift ;;
+    --stack)      STACK="${2:?--stack needs a value}"; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown arg: $1" >&2; usage; exit 2 ;;
   esac
@@ -46,7 +59,13 @@ while [ $# -gt 0 ]; do
 done
 if [ -z "$PROFILE" ] || [ -z "$REGION" ]; then usage; exit 2; fi
 
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AWS=(aws --profile "$PROFILE" --region "$REGION")
+# For the engine tools step alone (af_engines_stack / af_engine_tools_ensure). af_env_init is
+# not called: like update.sh, this script works against a live deployment with no local capture.
+# shellcheck source=deploy/aws/ecs/env.sh
+. "$HERE/env.sh"
+AF_STACK_INGRESS="$STACK"
 
 if [ -z "$ACCOUNT" ]; then
   ACCOUNT="$("${AWS[@]}" sts get-caller-identity --query Account --output text)"
@@ -90,6 +109,37 @@ for pair in "control-plane=af-control-plane" "workspace=af-workspace"; do
   docker tag "$local_name" "$ecr_uri"
   docker push "$ecr_uri"
 done
+
+# --- the engine tools image, when this deployment runs engines (ADR 0072) ---
+#
+# 🔴 ECR REPOSITORY (20-platform) -> IMAGE (here) -> STACK (60-engines). The tag comes from the
+# engines stack itself, or — on the release that INTRODUCES the parameter — from the default the
+# new template brings. Skipped entirely by a deployment with no engines stack, which is most of
+# them.
+ENGINES_STACK="$(af_engines_stack || true)"
+if [ -n "$ENGINES_STACK" ]; then
+  ET_TAG="$(af_stack_param "$ENGINES_STACK" EngineToolsImageTag)"
+  [ -n "$ET_TAG" ] || ET_TAG="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" EngineToolsImageTag)"
+  echo "==> engine tools image for $ENGINES_STACK: af-engine-tools:$ET_TAG"
+  if ! "${AWS[@]}" ecr describe-repositories --repository-names af-engine-tools >/dev/null 2>&1; then
+    echo "ERROR: ECR repo af-engine-tools not found in $ACCOUNT/$REGION." >&2
+    echo "       Deploy cfn/20-platform.yaml first (it owns the repository; update.sh does it" >&2
+    echo "       before calling this script)." >&2
+    exit 1
+  fi
+  et_rc=0
+  af_engine_tools_ensure "$ECR_HOST" "$ET_TAG" || et_rc=$?
+  case "$et_rc" in
+    0) ;;
+    1)
+      echo "ERROR: engine-tools:$ET_TAG is in neither ECR nor GHCR — run engine-tools-image.yml with tag=$ET_TAG first." >&2
+      exit 1 ;;
+    *)
+      echo "ERROR: af-engine-tools:$ET_TAG is not in ECR and there is no crane to carry it over." >&2
+      echo "       crane copy $AF_GHCR_DEFAULT/engine-tools:$ET_TAG $ECR_HOST/af-engine-tools:$ET_TAG" >&2
+      exit 1 ;;
+  esac
+fi
 
 cat <<EOF
 ==> done: pushed :$VERSION to $ECR_HOST/af-{control-plane,workspace}

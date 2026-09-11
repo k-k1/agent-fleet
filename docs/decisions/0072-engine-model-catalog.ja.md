@@ -3232,6 +3232,16 @@ ingest の 2 コンテナが `CannotPullContainerError` になる。** P6 の「
 ——タスク定義がイメージを引けたことの、いちばん直接の証拠である。**リリース経路
 （`update.sh`）にこの 3 手が無いことは、次にタグを上げるときに同じ穴になる。**
 
+**解消（同日 2026-09-11）。** 3 手のうち 2 手が `update.sh` に入った。順序はこの節が
+依存だと言っているとおり——まず 20-platform を配備し（change set を印字し、置換が出なければ
+実行）、次に `af-engine-tools:<EngineToolsImageTag>` が ECR に無ければ GHCR から写し、
+最後に 60-engines を配備する。`release-ecr.sh` もイメージを写す（リリースで ECR を満たす
+のはこの段だから）。共通部分は `env.sh` にあり、`dev-deploy.sh` も同じコードを使う。
+手で残るのは焼く 1 手だけ——リリース経路はイメージを焼いてはならないので、どちらの
+レジストリにも無ければ `update.sh` は止まってワークフロー名を出す。順序は
+`deploy/local/ecs-lifecycle-stub-test.sh` の case 3i が押さえている（陽性対照は
+2 手の入れ替え・copy の削除・20-platform の削除）。
+
 ### #518 の確認項目
 
 | # | 項目 | 結果 |

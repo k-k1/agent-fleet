@@ -137,7 +137,16 @@ Java 版を選ぶと、entrypoint が未導入分をここへ自動導入し `JA
 - リストアはパス再ルート可: `DATA_DIR` の親パスが変わっても CP が Workspace 起動時に現在値へ付け替える
   （basename は維持する契約）。
 - アップグレード: migration は CP 埋め込み・起動時自動適用・**ダウングレード非対応** → 更新前に必ずバックアップ。
-- 実手順（backup.sh / restore.sh / upgrade / air-gapped）: [compose runbook](../../deploy/compose/README.md)。
+- **ECS のアップグレードはアプリのタグだけではない**: リリースが新しい ECR リポジトリと、まだ誰も
+  写していないイメージを必要とすることがある（0.18.1 で engines の fetch / ingest が
+  `af-engine-tools` に出た）。そのため `update.sh` は順序を 1 本に固定する——**リポジトリ
+  （20-platform、change set を出してから、置換が無いときだけ実行）→ イメージ（GHCR から
+  `crane copy`）→ それを参照するスタック（60-engines）**。逆順でもその場では何も失敗せず、
+  スタックは配備でき、fetch コンテナだけが `CannotPullContainerError` のまま——サービスは
+  steady state を報告する。イメージを*焼く*ことだけは意図的にやらない: GHCR にも無ければ
+  止まり、焼くワークフロー名を出す。
+- 実手順（backup.sh / restore.sh / upgrade / air-gapped）: [compose runbook](../../deploy/compose/README.md)、
+  ECS は [ecs runbook](../../deploy/aws/ecs/README.md) の §Upgrade。
 
 ## 9.8 コスト特性（ec2-single / ECS）
 

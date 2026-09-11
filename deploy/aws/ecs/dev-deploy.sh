@@ -107,6 +107,8 @@ GHCR="${AF_DEV_GHCR:-ghcr.io/k-k1/agent-fleet}"
 GIT=(git -C "$ROOT")
 
 run() { if [ "$DRY" = 1 ]; then echo "DRY: $*"; return 0; fi; "$@"; }
+# env.sh's helpers write through af_run, which reads this — same rule as `run` above.
+export AF_DRY="$DRY"
 
 for tool in gh crane aws git; do
   command -v "$tool" >/dev/null || { echo "ERROR: $tool is not installed" >&2; exit 1; }
@@ -305,19 +307,20 @@ fi
 # exactly what would pass silently.)
 if [ -n "${AF_STACK_ENGINES:-}" ]; then
   et_want="$(af_stack_param "$AF_STACK_ENGINES" EngineToolsImageTag)"
-  : "${et_want:=2026-09-11}"
+  # A stack that predates the parameter takes the template's own default on its next update.
+  [ -n "$et_want" ] || et_want="$(af_cfn_param_default "$HERE/cfn/60-engines.yaml" EngineToolsImageTag)"
   et_changed=""
   if [ "$have_base" = 1 ]; then
     et_changed="$(changed_since deploy/aws/ecs/engine-tools/)"
   fi
-  et_in_ecr="$(ecr_digest af-engine-tools "$et_want")"
-  case "$et_in_ecr" in None|none) et_in_ecr="" ;; esac
+  et_in_ecr=0
+  af_ecr_has af-engine-tools "$et_want" && et_in_ecr=1
 
   if [ -n "$et_changed" ]; then
     et_tag="$TAG"
     echo "==> engine-tools/ changed since $CUR_TAG — baking $et_tag:"
     show_changed "$et_changed"
-  elif [ -z "$et_in_ecr" ]; then
+  elif [ "$et_in_ecr" = 0 ]; then
     et_tag="$et_want"
     echo "==> af-engine-tools:$et_tag is not in ECR — carrying it over"
   else
@@ -328,7 +331,11 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   if [ -n "$et_tag" ]; then
     # Bake only when GHCR does not already hold that tag. A re-bake of an unchanged tag is
     # minutes of CI for bytes that exist.
-    if [ "$SKIP_BAKE" != 1 ] && ! crane digest "$GHCR/engine-tools:$et_tag" >/dev/null 2>&1; then
+    #
+    # This is where the dev route parts company with the release route (update.sh /
+    # release-ecr.sh): they STOP when GHCR has not got the tag, because nothing on a release
+    # may bake an image. Everything after the decision is shared (env.sh).
+    if [ "$SKIP_BAKE" != 1 ] && ! af_ghcr_has engine-tools "$et_tag"; then
       echo "==> gh workflow run engine-tools-image.yml (tag=$et_tag, ref=$REF)"
       run gh -R "$("${GIT[@]}" remote get-url origin | sed -E 's#.*github\.com[:/]##; s#\.git$##')" \
         workflow run engine-tools-image.yml --ref "$REF" -f tag="$et_tag"
@@ -352,7 +359,7 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
       echo "==> $GHCR/engine-tools:$et_tag is already in GHCR — skipping the bake"
     fi
     echo "==> crane copy engine-tools"
-    run crane copy "$GHCR/engine-tools:$et_tag" "$ECR_HOST/af-engine-tools:$et_tag"
+    af_engine_tools_copy "$ECR_HOST" "$et_tag"
     if [ "$et_tag" != "$et_want" ]; then
       echo "    🔴 the engines stack still asks for EngineToolsImageTag=$et_want."
       echo "       Set EngineToolsImageTag=$et_tag in params/60-engines and re-run standup.sh,"

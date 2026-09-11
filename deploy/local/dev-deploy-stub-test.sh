@@ -74,8 +74,10 @@ FAKE
 cat > "$STUB/crane" <<'FAKE'
 #!/usr/bin/env bash
 echo "crane $*" >> "$STUB_LOG"
+# `manifest` as well as `digest`: "is that tag in GHCR" is asked through env.sh's af_ghcr_has,
+# which reads the manifest (one place asks, and the teardown path asks the same way).
 case "$1 $2" in
-  "digest "*)
+  "digest "*|"manifest "*)
     case "$*" in
       *engine-tools*) [ -n "${STUB_ET_IN_GHCR:-}" ] || exit 1 ;;
     esac

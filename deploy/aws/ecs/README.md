@@ -352,7 +352,15 @@ VERSION=<v> ./release-ecr.sh --profile af-sandbox --region <region> \
 
 The script only *verifies* the ECR repositories exist — they are owned by
 `20-platform.yaml`, so deploy that stack first (creating them out of band would
-make the later CFN deploy fail with AlreadyExists).
+make the later CFN deploy fail with AlreadyExists). `update.sh` calls it *after*
+deploying 20-platform for that reason.
+
+A deployment that runs its own engines gets a third image here: `af-engine-tools`,
+under the tag 60-engines asks for. It does not travel the same way — it is baked to
+GHCR by `engine-tools-image.yml` and never built locally or shipped in a
+distribution — so it is a registry-to-registry `crane copy` rather than a
+tag-and-push. If neither ECR nor GHCR has that tag the script stops: run
+`engine-tools-image.yml` with it first.
 
 Manual equivalent:
 
@@ -406,7 +414,7 @@ VERSION=<v> ./update.sh --profile <p> --region <r> --push   # push to ECR first
 VERSION=<v> ./update.sh --profile <p> --region <r> --dry-run
 ```
 
-It does the three things the hand-typed sequence gets wrong:
+It does the things the hand-typed sequence gets wrong:
 
 - **Refuses a tag that is not in ECR.** CloudFormation only stores a string, so a
   forgotten (or wrong-region) push *succeeds* and the CP task then dies with
@@ -419,6 +427,18 @@ It does the three things the hand-typed sequence gets wrong:
 - **Lists the workspaces that are still on the old image**, because nothing moves
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
+- **Keeps the ECR repository, the image and the stack in that order.** A release can
+  need a repository that did not exist and an image nothing has copied in: 0.18.1 moved
+  the engine's fetch and ingest steps into `af-engine-tools`. So `update.sh` deploys
+  **20-platform** first (which owns the ECR repositories), through a change set it prints
+  and only executes when nothing is replaced — and only on the round where the template
+  or a parameter actually moved; then carries `af-engine-tools:<EngineToolsImageTag>`
+  from GHCR into ECR when it is not already there; then deploys 60-engines. Reversed,
+  none of it fails at the time: the stack deploys perfectly and both roles' fetch
+  containers sit in `CannotPullContainerError` while the service reports a steady state
+  (measured on a real deployment, 2026-09-11). `--dry-run` prints the plan in that order.
+  The one thing it cannot do is *bake* the image — nothing on a release route may — so if
+  GHCR has not got the tag either it stops and says to run `engine-tools-image.yml` first.
 - **Points out a golden snapshot left behind** (`ecs-ec2` only). A golden baked from
   the previous image is not used at all — the CP builds new users' homes empty
   instead (ADR 0045 decision 9), which is not a failure, just a slow first start that

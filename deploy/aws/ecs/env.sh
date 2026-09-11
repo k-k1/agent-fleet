@@ -276,6 +276,66 @@ af_ghcr_has() {
   return 1
 }
 
+# af_ecr_has <repo> <tag> — is that tag in this deployment's ECR?
+af_ecr_has() {
+  "${AWS[@]}" ecr describe-images --repository-name "$1" --image-ids "imageTag=$2" >/dev/null 2>&1
+}
+
+# --- The engine tools image (af-engine-tools, ADR 0072) --------------------------------
+#
+# Three callers put this image into ECR — `standup.sh` (a stand-up), `dev-deploy.sh` (today's
+# develop) and `update.sh` / `release-ecr.sh` (a release) — and they disagree about only one
+# thing: what to do when GHCR does not have the tag either. dev-deploy bakes it; the release
+# path stops and hands it back. Everything before that decision is the same, so it lives here:
+# get it wrong in one caller and that route silently deploys task definitions naming an image
+# nothing has put there.
+#
+# 🔴 The order this is part of is ECR REPOSITORY (20-platform) -> IMAGE -> STACK (60-engines).
+# Copy after the stack and both roles' fetch containers sit in CannotPullContainerError while
+# the service reports a steady state.
+
+# af_engine_tools_copy <ecr-host> <tag> — carry GHCR's engine-tools:<tag> into this
+# deployment's af-engine-tools repository, index and all (`docker pull` + `push` would flatten
+# it to one architecture). The caller has already decided that this has to happen.
+af_engine_tools_copy() {
+  local host="$1" tag="$2"
+  echo "    · crane copy $AF_GHCR_DEFAULT/engine-tools:$tag"
+  af_run crane copy "$AF_GHCR_DEFAULT/engine-tools:$tag" "$host/af-engine-tools:$tag"
+}
+
+# af_engine_tools_ensure <ecr-host> <tag> — make sure af-engine-tools:<tag> is in ECR.
+#   0 = it is there (already, or copied just now)
+#   1 = GHCR has not got it either — nothing here can produce it, the caller says so
+#   2 = could not tell (no crane), which is NOT the same fact as "absent"
+# Logging into ECR for crane is part of it, and only happens on the round that copies: a
+# release whose tag is already there must not need crane at all.
+af_engine_tools_ensure() {
+  local host="$1" tag="$2" ghcr
+  if af_ecr_has af-engine-tools "$tag"; then
+    echo "    · af-engine-tools:$tag is already in ECR"
+    return 0
+  fi
+  af_ghcr_has engine-tools "$tag"; ghcr=$?
+  [ "$ghcr" = 2 ] && return 2
+  [ "$ghcr" = 0 ] || return 1
+  if [ "${AF_DRY:-0}" != 1 ]; then
+    "${AWS[@]}" ecr get-login-password | crane auth login "$host" -u AWS --password-stdin
+  fi
+  af_engine_tools_copy "$host" "$tag"
+}
+
+# af_cfn_param_default <template> <key> — the `Default:` a template declares for a parameter.
+#
+# For the update that INTRODUCES a parameter. The live stack has no value to read yet, and the
+# value it is about to take is the template's default — so reading only the live stack would
+# carry the image for the tag the stack asked for yesterday, i.e. none at all.
+# Depends on parameters being written in BLOCK form, which is already a rule of these templates
+# (standup.sh's preflight reads them the same way).
+af_cfn_param_default() {
+  sed -n "/^  $2:[[:space:]]*\$/,/^  [A-Za-z]/p" "$1" \
+    | sed -n 's/^[[:space:]]*Default:[[:space:]]*//p' | head -1 | tr -d '"'"'"
+}
+
 # af_image_recoverable <tag> — can that tag be pulled again after teardown empties ECR?
 # Both control-plane and workspace are required (one alone will not stand up).
 #   Prints yes / no / unknown.
