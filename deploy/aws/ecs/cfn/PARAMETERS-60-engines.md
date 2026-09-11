@@ -18,6 +18,8 @@ Order matches the template.
 - [Upgrading: the model parameters are gone](#upgrading-the-model-parameters-are-gone)
 - [The `llm` role (llama.cpp)](#the-llm-role-llamacpp)
 - [The `image` role (stable-diffusion.cpp)](#the-image-role-stable-diffusioncpp)
+- [The instance classes](#the-instance-classes)
+- [The offers](#the-offers)
 - [The fetch sidecar](#the-fetch-sidecar)
 - [The idle wrapper](#the-idle-wrapper)
 - [Editing this template](#editing-this-template)
@@ -183,42 +185,54 @@ that jumps from a pre-catalogue Control Plane straight to this one comes up with
 catalogue: the role exists, the engine idles, and the panel is where the first model is
 registered. That is a supported state, not a broken one.
 
-### 0.18.1: the image role can be bought on Spot
+### 0.18.1: the image role's box comes from an offers list
 
-New parameter, `ImageCapacityOptionType` (`ON_DEMAND` by default, so **nothing changes for a
-deployment that leaves it alone**). Set it to `SPOT` and the image role's instance is bought on Spot —
-in ap-northeast-1 that was measured at 30 days without one on-demand hour: `g6.xlarge` at
-$0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before setting it:
+Three new parameters — `ImageOffers` / `LlmOffers` and `ImageOfferBudgetSec` /
+`LlmOfferBudgetSec` — and **`ImageCapacityOptionType` is gone** (ADR 0075). A deployment that
+leaves all of them alone is unchanged in behaviour: with no offers declared the Control Plane
+reads `<Role>InstanceClasses` as a list of on-demand offers, and with neither declared it does
+not ask ECS about capacity at all.
 
-- the switch **replaces the capacity provider**, which moves the image service onto it. Do it
-  while the image role is stopped, or a generation in flight is lost and the next request pays
-  the cold start again. Details and the measurements:
-  [the capacity providers](#the-capacity-providers);
-- a replacement **renames** the provider. **Put this release's Control Plane image on before
-  switching**: from 0.18.1 the running CP takes the new name off the engine table and needs no
-  restart, but a 0.18.0 CP keeps addressing the deleted one — the rung never reaches the
-  instance, the panel shows no box while one is billing, and only a
-  `force-new-deployment` clears it (measured 217 s; ADR 0074);
-- Spot has **its own quota**, `L-3819A6DF`, whose default is 0. The provider is created happily
-  without it and then never buys an instance — an engine that will not start, with nothing to read.
-  Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
-  L-3819A6DF`.
+What the list buys is the failure this replaces: a role whose Spot request finds no stock used to
+be a role that did not start, with `UnfulfillableCapacity` in the service events and a human in
+the loop. Now the Control Plane tries the offers in the order written, gives each one
+`<Role>OfferBudgetSec` (180 s by default), and lands on the on-demand one when the Spot one
+cannot be filled. The saving is secondary and small — in ap-northeast-1 Spot ran 30 days without
+one on-demand hour, `g6.xlarge` at $0.45-0.58 (ADR 0074), against a total GPU spend of $0.58 for
+those 30 days on acrt. **The point is that the engine starts.**
+
+Three things to do, in this order:
+
+1. 🔴 **If the stack is running `ImageCapacityOptionType=SPOT`, deploy `ON_DEMAND` FIRST**, on
+   the template it is still running, and only then this one. The Spot provider is a new resource
+   asking for the name the old one currently holds, and CloudFormation creates before it deletes
+   — skip the step and the update fails on the name collision and rolls back. The round trip was
+   measured at 147 seconds. Full procedure:
+   [migrating off `ImageCapacityOptionType`](#migrating-off-imagecapacityoptiontype).
+   A deployment on the default (`ON_DEMAND`) needs none of this: one update, one `Add`.
+2. **Put this release's Control Plane image on before the stack**, as with any provider rename:
+   a 0.18.0 CP addresses the deleted name, so the rung never reaches the instance and the panel
+   shows no box while one is billing (measured; `force-new-deployment` clears it in 217 s).
+   The same applies the first time a deployment with **no** ladder declares offers — that one
+   needs a `force-new-deployment` regardless of version, because the rung gate is built at
+   construction.
+3. **Before writing a `spot` row, check `L-3819A6DF`** (default **0** — a provider is created
+   happily without the quota and then never buys anything) and create
+   `AWSServiceRoleForEC2Spot` if the account has never launched a Spot instance. Both, and the
+   type-set rule that moved a placement score from 1/10 to 9/10, are under
+   [before declaring a `spot` offer](#before-declaring-a-spot-offer-check-these-three-all-measured-2026-09-11-adr-0074).
 
 🔴 **The quota being right is not enough, and neither is the price.** Rehearsed on the dev
 deployment 2026-09-11 with the quota at 8: the first attempt bought **nothing** for seventeen
 minutes, answering `UnfulfillableCapacity` — a third error code, neither `VcpuLimitExceeded` nor
 `InsufficientInstanceCapacity` — while `describe-spot-price-history` went on quoting
 $0.563-0.577. **A published price is not evidence of stock.** The second attempt, with the
-Spot service-linked role created and the type list widened to three, got one in **42 seconds**.
-So there are three things to check before switching, and they are written out under
-[`ImageCapacityOptionType`](#imagecapacityoptiontype--spot-for-the-image-role-and-why-it-renames-the-provider).
+service-linked role created and the type list widened to three, got one in **42 seconds**. That
+seventeen-minute wait is exactly what an offer's budget now bounds.
 
-🔴 **On acrt, create the Spot service-linked role before the switch** — `AWSServiceRoleForEC2Spot`
-is absent in any account that has never launched a Spot instance, and nothing in this stack
-creates it.
-
-The `llm` role is not offered this and is not going to be: a two-minute termination notice
-mid-conversation costs a 527-586-second cold start to recover from.
+The `llm` role takes the parameters (one format for both roles) but **gets no Spot provider and
+should be given no `spot` row**: a two-minute termination notice mid-conversation costs a
+527-586-second cold start to recover from.
 
 ### 0.18.1: the first update also updates 20-platform
 
@@ -701,6 +715,69 @@ carrying both is refused with `InvalidParameterException: Cannot specify both ca
 and cluster in the same request`, which is documented nowhere. The CP asks by name and checks
 the cluster on the ANSWER instead (`applyEngineClass`); a provider that answered with another
 cluster is not written to.
+
+## The offers
+
+`LlmOffers` / `ImageOffers` (ADR 0075) are the ladder above with an eighth field: **how the box
+is bought**. The Control Plane narrows the list to the offers whose `vramMiB` covers the demand
+of the enabled models and then tries what is left **in the order written**, giving each one
+[`<Role>OfferBudgetSec`](#roleofferbudgetsec) to produce an instance before it moves to the next.
+
+```
+id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|buy
+```
+
+```
+ImageOffers=spot3|22GB+ Spot (g6/g5/g6e)|22000|g6.xlarge,g5.xlarge,g6e.xlarge|4-8|15000-65536|1.57|spot;l4|L4 24GB|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|od;l40s|L40S 48GB|44000|g6e.xlarge|4-8|30000-65536|2.91|od
+```
+
+⚠️ **One line, separated by `;`.** The value is pasted verbatim into the engine table's JSON, and
+a raw newline inside a JSON string is not legal there — the same constraint the ladder has always
+had, and the same reason a deployment capture is one `key=value` per line.
+
+- **`buy` is `od` or `spot`; empty and absent both mean `od`.** So a seven-field line is a valid
+  offer, which is the whole migration: **`<Role>InstanceClasses` can be copied into
+  `<Role>Offers` unchanged** and reads as "all on demand". Leave `<Role>Offers` empty and the
+  Control Plane reads the ladder itself the same way — nothing in this template chooses between
+  them, and a deployment that declares neither never calls ECS about capacity at all (ADR 0074
+  decision 3, inherited).
+- 🔴 **`spot` belongs to the `image` role only.** `LlmOffers` takes the field because the format
+  is one format, but there is no Spot provider for the llm role to buy through
+  ([the capacity providers](#the-capacity-providers)), and a `spot` row there is an offer that
+  can never be filled.
+- 🔴 **The list is tried in the order WRITTEN — the Control Plane does not sort by price.**
+  Cheapest-first is an operator convention, not a mechanism. Three reasons it stays that way, and
+  all three are reasons a sort would hurt: a row with no price would sort last exactly when it is
+  the row most worth trying (a Spot row's billed price is by definition unknown at first); the
+  order and the prices are written by the same person, so a sort lets one number silently
+  overrule a deliberate order; and **one row does not have one price** — Managed Instances has no
+  allocation strategy and buys the cheapest member that fits (ADR 0071), so the three-type Spot
+  row above is $0.67-ish on a g6.xlarge and $1.36 on a g6e.xlarge.
+- **`usdPerHour` is therefore declared as the price of the DEAREST type the row can buy**, all-in
+  (the ECS Managed Instances management fee included, measured at 7.80% over EC2 — never a list
+  price; the rule is under [the instance classes](#the-instance-classes)). Understating it makes
+  the panel's comparison useless in the direction that costs money. ⚠️ The `1.57` above is
+  arithmetic, not a bill: the only Spot box this deployment ever bought ran for 403 seconds, so
+  Cost Explorer has nothing final yet. **Rewrite it from the bill when there is one.**
+- **The id is what an administrator's saved choice names.** Keep ids stable across a migration
+  from `<Role>InstanceClasses` and nothing moves for the deployments that had already chosen one;
+  an unsaved choice now means *automatic*, and a saved one means *pinned to that offer, with no
+  fall-through* (ADR 0075 decision 8).
+- A malformed offer is dropped with a log line, as a malformed rung is.
+
+### `<Role>OfferBudgetSec`
+
+How long one offer may wait for an instance before the Control Plane tries the next, default
+**180 seconds**, counted from the moment desired goes to 1. It is not the whole wait: with three
+offers the worst case is three budgets plus a cold start, and the bound a caller actually sees is
+the gateway's `AF_ENGINE_WAKE_TIMEOUT` (900 s, ADR 0071 decision 5) — a deployment that falls to
+its third offer has already given the first request up, and the next request finds a warm box.
+
+⚠️ **The budget is not always spent.** The service event decides: `UnfulfillableCapacity` is a
+verdict on the request's own configuration and is not worth waiting out, so the CP moves on at
+once; `VcpuLimitExceeded` skips the rest of that purchase option (the quotas are separate, so the
+other option's offers are still worth trying); `InsufficientInstanceCapacity` is the hour's
+answer and waits out the budget. No event at all means wait. The table is in ADR 0075.
 
 ## The fetch sidecar
 
@@ -1242,15 +1319,54 @@ for the image role this is the whole of it; the llm role adds `--api-key` on top
 
 ## The capacity providers
 
-**One provider per role, and the two roles never share an instance.** CUDA does not slow down when
-VRAM runs out, it crashes, and the two measured footprints (20.9 GB for the 30B, 7.4 GB for
-SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2). Two providers is also what
-makes `draining` observable per role — and what makes the deployment want 16 of the G-family
-quota, see below.
+**The two roles never share an instance, and the image role has two providers rather than one.**
+CUDA does not slow down when VRAM runs out, it crashes, and the two measured footprints (20.9 GB
+for the 30B, 7.4 GB for SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2).
+A provider per role is also what makes `draining` observable per role — and what makes the
+deployment want 16 of the G-family quota, see below.
+
+| Provider | Bought on | Used by |
+| --- | --- | --- |
+| `af-<stack>-llm` | on demand | the `llm` role, always |
+| `af-<stack>-image` | on demand | the `image` role — **what the template declares** |
+| `af-<stack>-image-spot` | Spot | the `image` role, when the Control Plane picks a `spot` offer |
+
+**Why two wallets and not one that switches.** `CapacityOptionType` is **create-only** — the
+measurements are under [the migration below](#migrating-off-imagecapacityoptiontype) — so the
+only way to choose the purchase option at run time is to have both providers standing and move
+the *service's* strategy between them. That is ADR 0075 decision 3; it overrides ADR 0071
+decision 2 in COUNT only, not in the rule that the two roles stay on separate instances. The two
+are one role's two wallets, and only one of them ever appears in the service's strategy.
+
+**The `llm` role gets no Spot provider, deliberately** (ADR 0075 decision 9). Spot's two-minute
+termination notice arrives mid-conversation and a 527-586-second cold start is what follows it.
+An image request is one call that can be made again; a conversation is not. The guard is doubled:
+no `spot` row belongs in `LlmOffers` either, and the Control Plane only buys what the list names.
+
+⚠️ **A provider costs nothing while nothing runs on it** (measured, ADR 0074: creating one buys
+no instance), which is why the Spot one is created even in a deployment that declares no offers
+at all. What it needs before it can buy anything is [its own quota](#the-g-family-quota).
+
+🔴 **The declared strategy is the ON-DEMAND provider, and CloudFormation puts it back.** The
+service's `CapacityProviderStrategy` is this template's property, so every update that touches
+`ImageService` — every release with a new task definition — rewrites it to
+`af-<stack>-image` and starts a new deployment. A box running on Spot is replaced by an
+on-demand box, and the Control Plane does not participate. **One release runs on demand once**;
+the next time the engine goes from desired 0 to 1 the CP picks from the offers again (ADR 0075
+decision 12, review R7). The panel reads the live strategy rather than remembering the choice,
+so it says so correctly while that is true.
+
+**The Control Plane's IAM does not grow for the second provider** (ADR 0075 review R4).
+`ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` are scoped to
+`capacity-provider/af-${AWS::StackName}-*` — a prefix, not the two ARNs — and
+`af-<stack>-image-spot` is inside it. `ecs:PutClusterCapacityProviders` is cluster-scoped and
+`iam:PassRole` names the two roles the launch template names; neither changes.
 
 ⚠️ **`ClusterCapacityProviderAssociations` REPLACES the cluster's provider list** — the API is
 not additive — so `FARGATE` and `FARGATE_SPOT` have to be named alongside ours or every Fargate
-service in the deployment loses its provider. `DefaultCapacityProviderStrategy` is a REQUIRED
+service in the deployment loses its provider. The list is **five** names since the image role
+gained its Spot wallet, and a provider missing from it cannot be named by any service's
+strategy. `DefaultCapacityProviderStrategy` is a REQUIRED
 property and is deliberately EMPTY: with a default strategy in place, a service that does not
 spell out `LaunchType: FARGATE` lands on the GPU instance instead (ADR 0070 decision 1 — one missing
 line is the whole of that failure).
@@ -1263,16 +1379,38 @@ owns the associations" is a rule about who REPLACES the list, not a fence around
 stack that creates a provider against this cluster is visible in the list until the next time
 this stack's `Associations` resource is updated, which silently drops it.
 
-### `ImageCapacityOptionType` — Spot for the image role, and why it renames the provider
+### Migrating off `ImageCapacityOptionType`
 
-`ON_DEMAND` (the default) or `SPOT`, for the `image` role only. **The `llm` role is deliberately
-not offered it**: Spot's two-minute termination notice arrives mid-conversation, and a
-527-586-second cold start is what follows it. An image request is one call that can be made
-again.
+**The parameter is gone.** It was one switch that moved the single provider between purchase
+options; the offers list decides per start now, against two providers that both stand
+([`ImageOffers`](#the-offers)). Nothing to set, and **the default deployment updates in one
+pass** — `Add ImageSpotCapacityProvider`, no replacement (measured on the throwaway stack of ADR
+0074 open question 1).
 
-Switching it **replaces the capacity provider**, and the template is written so that the
-replacement can actually happen. Two measurements from 2026-09-11 (a throwaway stack holding a
-copy of this resource, `deploy/aws/ecs/harness/probe-capacity-option.yaml`):
+🔴 **A stack currently running `ImageCapacityOptionType=SPOT` needs TWO updates, in this order.**
+There, the logical resource `ImageCapacityProvider` is already *named* `af-<stack>-image-spot`
+(that is what the switch did), and the new template asks for that same name on a **different**
+resource. CloudFormation creates before it deletes, so the second one cannot be created, and the
+update fails and rolls back.
+
+1. **Set `ImageCapacityOptionType=ON_DEMAND` on the template it is still running** and deploy
+   that. It is a replacement back to `af-<stack>-image` — measured at **147 seconds** — and the
+   name is reusable even though ECS keeps the retired provider as an `INACTIVE` record.
+2. **Then deploy this template.** Now `af-<stack>-image-spot` is free and arrives as an `Add`.
+
+Do step 1 with the image role stopped: a replacement moves the service's strategy, which is a
+new deployment, so an instance that is up drains and the next request pays the cold start again
+(about 195 s plus the model sync). Nothing is lost but a generation in flight.
+
+⚠️ **Rebuilding the deployment capture (`params/60-engines`) drops the line too** — a captured
+`ImageCapacityOptionType=` is a parameter this template does not declare, and
+`cloudformation deploy` refuses a key it is given and does not know. `standup.sh` drops it for
+you (`af_param_drop`, as it does for the parameters ADR 0072 P6 retired); a hand-run `deploy`
+needs the line removed.
+
+**The measurements that made the parameter a dead end** are worth keeping, because they are the
+whole reason two providers stand instead of one that switches. From 2026-09-11, a throwaway
+stack holding a copy of this resource (`deploy/aws/ecs/harness/probe-capacity-option.yaml`):
 
 - 🔴 **changing the field alone fails.** The change set reads `Modify` /
   `Replacement: Conditional`, which looks survivable, and then execution stops on
@@ -1286,20 +1424,17 @@ copy of this resource, `deploy/aws/ecs/harness/probe-capacity-option.yaml`):
   round trip back to `ON_DEMAND` works the same way, reusing the original name even though ECS
   still holds the retired provider as an `INACTIVE` record.
 
-So the name carries the option type — but only on the Spot side. `ON_DEMAND` keeps the historic
-`af-<stack>-image`, so **a deployment that never asks for Spot is not replaced at all**; the
-resolved template is byte for byte what it was (`deploy/local/cfn-equiv.py`).
+A name is therefore a create-time decision, which is why the two providers carry **fixed**
+names now: `af-<stack>-image` and `af-<stack>-image-spot`, neither of them computed from a
+parameter. Nothing replaces either of them again.
 
-⚠️ **Switch it while the image role is stopped.** The replacement moves the service's
-`CapacityProviderStrategy`, which is a new deployment: an instance that is up drains, and the next
-request pays the cold start again (about 195 s plus the model sync). Nothing is lost, but a
-generation in flight is.
-
-Everything that names the provider follows the resource — the service's strategy, the cluster
-associations, and the engine table row, which is `!Ref ImageCapacityProvider` (on a capacity
-provider, `!Ref` is its NAME). 🔴 **Keep it that way.** A table that restates the name as a
-`!Sub` fails SILENTLY when the name moves: the Control Plane goes on watching a provider nobody
-uses, and that is where both `draining` and the ADR 0074 rung application read from.
+**Both names travel in the engine table as `!Ref`** — the service's strategy, the cluster
+associations and the row's `capacityProvider` / `spotCapacityProvider` pair all point at the
+resources. 🔴 **Keep it that way.** A table that restates a name as a `!Sub` string fails
+SILENTLY: the Control Plane goes on watching a provider nobody uses, and that is where both
+`draining` and the ADR 0074 rung application read from. Watching only ONE of the pair has the
+same shape — a box bought through the other provider reads as `box: null`, which is exactly what
+the 2026-09-11 rename produced while it was wrong.
 
 ⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a `SPOT`
 provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys an instance,
@@ -1307,11 +1442,12 @@ which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and
 Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox 8.
 `L-DB2E81BB` does not exist; do not look for it.
 
-### Before switching a role to Spot, check these three (all measured 2026-09-11, ADR 0074)
+### Before declaring a `spot` offer, check these three (all measured 2026-09-11, ADR 0074)
 
-**Switching this parameter is not done when the stack update succeeds** — it is done when an
-instance has been bought after it. A deployment left on `SPOT` without that is a deployment whose
-image role does not start, and its failure has an error code of its own:
+**Declaring one is not done when the stack update succeeds** — it is done when an instance has
+been bought through the Spot provider. Until then the offer is a row the Control Plane tries,
+waits [its budget](#the-offers) on, and falls past, on every wake. Its failure has an error code
+of its own:
 
 ```
 UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
@@ -1330,39 +1466,31 @@ out by measurement, and the quota was right at the time. What actually moved the
    instance arrived 42 seconds after a 9 was recorded. A score for one type says nothing about a
    provider that buys from three. The score also reads low for a whole account, so read the
    *difference* a type set makes rather than the absolute number.
-3. 🔴 **Widen `<Role>AllowedInstanceTypes` AND the ladder's first rung together.** The Control
-   Plane overwrites the provider's four fields from the rung before every start, so widening the
-   parameter alone snaps back at start. Keep the intended type the cheapest member (the rule under
+3. 🔴 **Write the WHOLE type set into the offer, not one type.** The Control Plane overwrites the
+   provider's four instance-requirement fields from the offer it picked before every start, so
+   widening `<Role>AllowedInstanceTypes` alone snaps back at start — the offer is the declaration
+   that reaches the box. Keep the intended type the cheapest member (the rule under
    [`LlmAllowedInstanceTypes`](#llmallowedinstancetypes)) — measured Spot prices in Tokyo were
    g6.xlarge $0.563-0.577, g5.xlarge $0.74-0.79, g6e.xlarge $1.35, so g6 stays the default pick.
    ⚠️ g6e's Spot is ABOVE g6's on-demand $1.26: Spot is cheap for the type you got, not for
-   everything you widened to.
+   everything you widened to. That is also why an offer's declared `usdPerHour` is the price of
+   the **dearest** type it can buy ([the offers](#the-offers)).
 
-✅ **No Control Plane restart is needed — as long as the CP is 0.18.1 or newer.** The replacement
-renames the provider, and the running CP takes that name live off the engine table, on the same
-poll the ladder rides (`engine_table_reload.go`). The rename also re-runs the `box` match under
-the new name, drops the cached lookup, and forgets the rung this process applied to the OLD
-provider — so the next start re-applies it to the new one. Nothing to do.
+✅ **Declaring an offer needs no Control Plane restart**, and neither does the migration above,
+as long as the CP is 0.18.1 or newer: both provider names ride the engine table and the running
+CP takes them live on the same poll the ladder rides (`engine_table_reload.go`), re-running the
+`box` match and dropping the rung it had applied to the old name. 🔴 **On 0.18.0 or earlier a
+rename is still a PAIR with `update-service --force-new-deployment`** (blue/green, no outage,
+measured 217 s) — the old process bakes the name in at start, and then the rung application 400s
+against the deleted name, the `box` lookup finds nothing while an instance is billing, and the
+panel says the rung is in force. It logs `changed in the table in a way this process cannot take
+live (capacity provider) - restart the Control Plane` and surfaces `class_apply_error`, and
+neither stops anything. **Order it: the new Control Plane image first, the stack second.**
 
-🔴 **On a CP from 0.18.0 or earlier it is still a PAIR with a restart.** That is not a stale
-deployment's problem only: `ImageCapacityOptionType` arrives with 60-engines, and a stack update
-can put SPOT on the table while the CP service is still running the previous release's image.
-The old CP bakes the provider name in at start, so woken after a rename the engine still starts
-and three things disagree at
-once: the rung application 400s against the deleted old name (`The capacity provider could not be
-updated because it has been deleted.`), so the new provider keeps the TEMPLATE's
-`<Role>AcceleratorMemMinMiB` instead of the rung's; the `box` lookup matches the old name, so the
-panel shows no instance while one is billing; and the panel still says the rung is in force. It
-does log `changed in the table in a way this process cannot take live (capacity provider) -
-restart the Control Plane` and does surface `class_apply_error`, but neither stops anything.
-`update-service --force-new-deployment` (blue/green, no outage, measured 217 s) clears all three —
-verified with a $0 positive control: the same `PUT …/class` that 400'd before the restart moved
-the provider's floor to the rung's value after it. **So order the upgrade: put the new Control
-Plane image on first, then switch to SPOT.**
-
-The way back to `ON_DEMAND` is one more stack update (measured: 147 seconds, and the original
-provider name is reusable even though ECS keeps the retired one as `INACTIVE`). It is another
-rename, so the same rule applies to it: nothing to do on 0.18.1 or later, a restart before that.
+⚠️ **A deployment that had no ladder at all and declares offers for the first time needs the
+same `force-new-deployment`.** The rung gate is built at construction, so going from 0 rungs to N
+only logs that a restart is required (`engine_table_reload.go`; ADR 0075's migration note). A
+deployment that already declares `<Role>InstanceClasses` carries the change live.
 
 ⚠️ **`describe-instances` can PROVE Spot, but only by id.** Filtering by instance type returns
 `[]` for Managed Instances (they run in an AWS-managed account). Asking for the id instead — the
@@ -1370,10 +1498,10 @@ rename, so the same rule applies to it: nothing to do on 0.18.1 or later, a rest
 `InstanceLifecycle: spot` and `SpotInstanceRequestId` included. That is the only route from the
 calling account to a proof.
 
-⚠️ **A replacement rebuilds the provider from the TEMPLATE**, so a deployment that declares an
-ADR 0074 ladder loses the rung the Control Plane had applied: `AcceleratorTotalMemoryMiB.Min`
-comes back as `<Role>AcceleratorMemMinMiB`. The CP re-applies the rung before every start, so it
-heals — but not until then.
+⚠️ **A replacement rebuilds the provider from the TEMPLATE** — which the migration above is
+one of — so a deployment that declares a ladder loses the rung the Control Plane had applied:
+`AcceleratorTotalMemoryMiB.Min` comes back as `<Role>AcceleratorMemMinMiB`. The CP re-applies it
+before every start, so it heals — but not until then.
 
 ## The engine services
 
@@ -1409,10 +1537,31 @@ nothing to tune -- ECS is the only thing that ever reports the instance's health
 
 ## The G-family quota
 
-Two capacity providers means two instances, i.e. 8 vCPU of the G-family quota at once — and an instance
+Two roles running means two instances, i.e. 8 vCPU of the G-family quota at once — and an instance
 that was just stopped holds its 4 vCPU for the 7–8 minutes it spends draining, so waking one
 role while the other is on its way out needs 12. A deployment that uses both roles should hold
 16 or more (quota `L-DB2E81BA`, which is a support case and not auto-approved).
+
+🔴 **On-demand and Spot are SEPARATE quotas**, and the three image providers being two does not
+change the arithmetic above: a role runs one box, on one side or the other.
+
+| What is bought | Quota | Default | Held by |
+| --- | --- | --- | --- |
+| on demand | `L-DB2E81BA` "Running On-Demand G and VT instances" | 8 in a fresh account | acrt 64, af-sandbox 8 |
+| Spot | `L-3819A6DF` "All G and VT Spot Instance Requests" | **0** | acrt 64, af-sandbox 8 |
+
+⚠️ **A deployment that declares a `spot` offer must check `L-3819A6DF` first.** The provider is
+created happily with it at 0 and then simply never buys anything (measured, ADR 0074) — which
+reads as an engine that will not start, with the offer falling through on every wake and nothing
+in the stack to point at. `L-DB2E81BB` does not exist; do not look for it.
+
+```
+aws service-quotas get-service-quota --service-code ec2 --quota-code L-3819A6DF
+```
+
+✅ The separation is also what makes the fall-through real rather than cosmetic: on-demand vCPU
+held by a box that is still draining (measured at over five minutes of `VcpuLimitExceeded` after
+ECS deregistered it, ADR 0074 P1) does not touch the Spot side, and the other way round.
 
 ## Ingest
 
@@ -1614,6 +1763,22 @@ writes `/system_stats` and `comfy`, `sdcpp` writes `/v1/models` and `sdcpp`. Not
 row changes — `url`, `capacityProvider` and `service` are the same regardless, because it is
 still one role, one service.
 
+**Three fields carry ADR 0075's offers** (the contract between this template and the Control
+Plane; the existing fields are untouched, so a CP that predates them reads the table it always
+did):
+
+| Field | Value | Empty means |
+| --- | --- | --- |
+| `spotCapacityProvider` | `!Ref ImageSpotCapacityProvider` on the image row, `""` on the llm row | this role has no Spot wallet — it buys on demand or not at all |
+| `offers` | `<Role>Offers` verbatim | read `classes` as the offer list, every row on demand |
+| `offerBudgetSec` | `<Role>OfferBudgetSec` | — (a number, never empty) |
+
+🔴 **`capacityProvider` and `spotCapacityProvider` are a PAIR and are read as one.** The box the
+role is running on is behind whichever of the two the service's strategy currently names, so the
+`draining` watch and the `box` match have to accept both — a match against one name only reports
+`box: null` for a box that exists and is billing, which is the shape the 2026-09-11 rename
+produced ([the capacity providers](#the-capacity-providers)).
+
 **`api`** tells the reader what KIND of endpoint a row is, and it decides two things that would
 otherwise be guessed from the key: whether the Agent writes an opencode chat provider for it — an
 image engine there would put `sdcpp/sdxl-base-1.0` in the launch menu as something to hold a
@@ -1638,8 +1803,8 @@ an autoload nor resets the router's idle timer (upstream README), so polling it 
 `modelS3Key` were written here until ADR 0072 phase P6 retired them
 ([above](#upgrading-the-model-parameters-are-gone)); the Control Plane still parses a table that
 carries them, because the CP is upgraded before the stack is, and ignores what they say. What is
-left is the vessel (service, URL, health path, warm path, capacity provider, classes, idle
-window, start deadline, mode), which really is the stack's to declare.
+left is the vessel (service, URL, health path, warm path, the two capacity providers, classes,
+offers, idle window, start deadline, mode), which really is the stack's to declare.
 
 **The `ingest` object in the same value** is what the Control Plane needs to START an ingest
 and to read why one failed: the task-definition family, the subnets, the security group, the log

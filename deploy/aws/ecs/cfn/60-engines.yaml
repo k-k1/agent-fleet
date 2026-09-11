@@ -56,6 +56,14 @@ Parameters:
     Type: String
     Default: ""
     Description: GPU rungs this role may be switched between. EMPTY = no choice.
+  LlmOffers:
+    Type: String
+    Default: ""
+    Description: Purchase offers, tried in the order written. EMPTY = the rungs above, all on demand.
+  LlmOfferBudgetSec:
+    Type: Number
+    Default: 180
+    Description: Seconds one offer may wait for a box before the next is tried.
   LlmApiKeySsmParam:
     Type: String
     Default: /af-ws/engine-llm-key
@@ -154,11 +162,14 @@ Parameters:
     Type: String
     Default: ""
     Description: The image role's ladder, as LlmInstanceClasses. Empty = no choice.
-  ImageCapacityOptionType:
+  ImageOffers:
     Type: String
-    Default: ON_DEMAND
-    AllowedValues: [ ON_DEMAND, SPOT ]
-    Description: "Buy the image role's box on Spot. !! Changing it REPLACES the provider - PARAMETERS-60-engines.md."
+    Default: ""
+    Description: The image role's offers, as LlmOffers. This is the role Spot is offered on.
+  ImageOfferBudgetSec:
+    Type: Number
+    Default: 180
+    Description: Seconds per offer, as LlmOfferBudgetSec.
   ImageTaskCpu:
     Type: String
     Default: "4096"
@@ -254,11 +265,6 @@ Conditions:
   HasImageScaleInAfter: !Not [ !Equals [ !Ref ImageScaleInAfter, -2 ] ]
   HasBothModels: !And [ !Condition HasLlmModel, !Condition HasImageModel ]
   ImageIsComfy: !Equals [ !Ref ImageEngine, "comfy" ]
-  # The provider's NAME carries the option type, and it has to: the field itself is create-only,
-  # so a switch is a replacement, and CloudFormation refuses to replace a resource that keeps a
-  # custom name (measured - PARAMETERS-60-engines.md, "The capacity providers"). ON_DEMAND keeps
-  # the historic name, so a deployment that never asks for Spot is not replaced at all.
-  ImageIsSpot: !Equals [ !Ref ImageCapacityOptionType, SPOT ]
 
 Resources:
   # --- IAM: three roles, closed inside this stack - PARAMETERS, "The task roles" ---
@@ -466,7 +472,7 @@ Resources:
           Description: engine port from the Control Plane only
       Tags: [ { Key: Name, Value: !Sub "af-${AWS::StackName}-engine-sg" } ]
 
-  # --- capacity, one provider per role - PARAMETERS, "The capacity providers" ---
+  # --- capacity, one WALLET per purchase option - PARAMETERS, "The capacity providers" ---
   LlmCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
@@ -509,10 +515,7 @@ Resources:
   ImageCapacityProvider:
     Type: AWS::ECS::CapacityProvider
     Properties:
-      Name: !If
-        - ImageIsSpot
-        - !Sub "af-${AWS::StackName}-image-spot"
-        - !Sub "af-${AWS::StackName}-image"
+      Name: !Sub "af-${AWS::StackName}-image"
       ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
       ManagedInstancesProvider:
         InfrastructureRoleArn: !GetAtt InfraRole.Arn
@@ -523,7 +526,49 @@ Resources:
           - !Ref "AWS::NoValue"
         InstanceLaunchTemplate:
           Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
-          CapacityOptionType: !Ref ImageCapacityOptionType
+          CapacityOptionType: ON_DEMAND
+          NetworkConfiguration:
+            Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
+            SecurityGroups: [ !Ref EngineSg ]
+          StorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - !Ref "AWS::NoValue"
+            - StorageSizeGiB: !Ref ImageStorageGiB
+          LocalStorageConfiguration: !If
+            - ImageUsesLocalStorage
+            - UseLocalStorage: true
+            - !Ref "AWS::NoValue"
+          InstanceRequirements:
+            VCpuCount: { Min: !Ref ImageVCpuMin, Max: !Ref ImageVCpuMax }
+            MemoryMiB: { Min: !Ref ImageMemMinMiB, Max: !Ref ImageMemMaxMiB }
+            BurstablePerformance: excluded
+            AllowedInstanceTypes: !Ref ImageAllowedInstanceTypes
+            AcceleratorCount: !If [ HasImageGpu, { Min: !Ref ImageGpuCount, Max: !Ref ImageGpuCount }, !Ref "AWS::NoValue" ]
+            AcceleratorTypes: !If [ HasImageGpu, [ gpu ], !Ref "AWS::NoValue" ]
+            AcceleratorManufacturers: !If [ HasImageGpu, [ nvidia ], !Ref "AWS::NoValue" ]
+            AcceleratorTotalMemoryMiB: !If [ HasImageAcceleratorMem, { Min: !Ref ImageAcceleratorMemMinMiB }, !Ref "AWS::NoValue" ]
+      Tags:
+        - { Key: af-role, Value: engine-image }
+        - { Key: af-pool, Value: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" } }
+
+  # !! The image role's SECOND wallet, identical but for CapacityOptionType: the option is
+  # create-only, so the only way to choose at run time is to have both standing (ADR 0075
+  # decision 3). The llm role gets none, deliberately - PARAMETERS, "The capacity providers".
+  ImageSpotCapacityProvider:
+    Type: AWS::ECS::CapacityProvider
+    Properties:
+      Name: !Sub "af-${AWS::StackName}-image-spot"
+      ClusterName: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
+      ManagedInstancesProvider:
+        InfrastructureRoleArn: !GetAtt InfraRole.Arn
+        PropagateTags: CAPACITY_PROVIDER
+        InfrastructureOptimization: !If
+          - HasImageScaleInAfter
+          - ScaleInAfter: !Ref ImageScaleInAfter
+          - !Ref "AWS::NoValue"
+        InstanceLaunchTemplate:
+          Ec2InstanceProfileArn: !GetAtt InstanceProfile.Arn
+          CapacityOptionType: SPOT
           NetworkConfiguration:
             Subnets: !Split [ ",", !ImportValue { "Fn::Sub": "${NetworkStackName}-PrivateSubnets" } ]
             SecurityGroups: [ !Ref EngineSg ]
@@ -553,7 +598,8 @@ Resources:
     Type: AWS::ECS::ClusterCapacityProviderAssociations
     Properties:
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterName" }
-      CapacityProviders: [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider, !Ref ImageCapacityProvider ]
+      CapacityProviders:
+        [ FARGATE, FARGATE_SPOT, !Ref LlmCapacityProvider, !Ref ImageCapacityProvider, !Ref ImageSpotCapacityProvider ]
       DefaultCapacityProviderStrategy: []
 
   # --- ingest: HF -> S3, out of the start path - PARAMETERS, "Ingest" ---
@@ -835,6 +881,9 @@ Resources:
       ServiceName: !Sub "af-${AWS::StackName}-image"
       Cluster: !ImportValue { "Fn::Sub": "${PlatformStackName}-ClusterArn" }
       TaskDefinition: !Ref ImageTaskDef
+      # !! The DECLARED wallet is the on-demand one (ADR 0075 decision 12). The CP may move the
+      # strategy to the Spot provider, but only while running is 0, and every update that touches
+      # this resource puts this line back - so a release runs on demand once.
       CapacityProviderStrategy:
         - { CapacityProvider: !Ref ImageCapacityProvider, Weight: 1 }
       DeploymentConfiguration: { MinimumHealthyPercent: 0, MaximumPercent: 100 }
@@ -864,9 +913,11 @@ Resources:
             - !Sub
               - >-
                 {"key":"llm","api":"chat","service":"${Service}","capacityProvider":"${Cp}",
+                "spotCapacityProvider":"",
                 "url":"http://${LlmDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"/health","warmPath":"/models","provider":"llamacpp",
                 "apiKeyParam":"${LlmApiKeySsmParam}","classes":"${LlmInstanceClasses}","idleSec":${LlmIdleSec},
+                "offers":"${LlmOffers}","offerBudgetSec":${LlmOfferBudgetSec},
                 "startDeadlineSec":${LlmStartDeadlineSec},"mode":"${LlmMode}"}
               - Service: !GetAtt LlmService.Name
                 Cp: !Ref LlmCapacityProvider
@@ -876,16 +927,19 @@ Resources:
             - !Sub
               - >-
                 {"key":"image","api":"images","service":"${Service}","capacityProvider":"${Cp}",
+                "spotCapacityProvider":"${SpotCp}",
                 "url":"http://${ImageDiscoveryName}.${ServiceConnectNamespace}:8080",
                 "health":"${Health}","provider":"${Provider}",
                 "apiKeyParam":"","classes":"${ImageInstanceClasses}","idleSec":${ImageIdleSec},
+                "offers":"${ImageOffers}","offerBudgetSec":${ImageOfferBudgetSec},
                 "startDeadlineSec":${ImageStartDeadlineSec},"mode":"${ImageMode}"}
               - Service: !GetAtt ImageService.Name
                 # !Ref on a capacity provider is its NAME. Written this way and not restated as
-                # a !Sub because the image role's name moves with ImageCapacityOptionType, and a
-                # table naming a provider nobody uses fails SILENTLY: the CP would watch the
-                # wrong one for draining and apply the ADR 0074 rungs to it.
+                # a !Sub because a table naming a provider nobody uses fails SILENTLY: the CP
+                # would watch the wrong one for draining and apply the ADR 0074 rungs to it.
+                # Both names travel as a PAIR - one of them is where the box actually is.
                 Cp: !Ref ImageCapacityProvider
+                SpotCp: !Ref ImageSpotCapacityProvider
                 Health: !If [ ImageIsComfy, "/system_stats", "/v1/models" ]
                 Provider: !If [ ImageIsComfy, "comfy", "sdcpp" ]
             - ""
@@ -921,6 +975,10 @@ Outputs:
     Description: The image capacity provider, as the llm one.
     Value: !Ref ImageCapacityProvider
     Export: { Name: !Sub "${AWS::StackName}-ImageCapacityProviderName" }
+  ImageSpotCapacityProviderName:
+    Description: The image role's Spot capacity provider; the llm role has none.
+    Value: !Ref ImageSpotCapacityProvider
+    Export: { Name: !Sub "${AWS::StackName}-ImageSpotCapacityProviderName" }
   ModelsBucket:
     Description: S3 bucket the models are staged in.
     Value: !Ref ModelsBucket
