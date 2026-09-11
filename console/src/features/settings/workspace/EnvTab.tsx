@@ -9,6 +9,8 @@ import { useHostUpdate } from "../hostUpdate.ts";
 import { usePolling } from "../parts/usePolling.ts";
 import { useT } from "../../../lib/i18n/index.ts";
 import { pinDrift } from "../../../lib/pinDrift.ts";
+import { relTime } from "../../../lib/intl.ts";
+import { watcherHealth, type CLIRelease } from "../cliRelease.ts";
 
 // EnvTab (the "toolchains" tab) selects the workspace toolchains: timezone, node (via nvm),
 // go, and java (a pre-baked Temurin JDK), plus the read-only bundled-tool versions and
@@ -99,7 +101,9 @@ export function EnvTab() {
         <p className="muted pad">{tr("common.loading")}</p>
       )}
       {au && au.allowAgentUpdate && <AgentUpdateRow au={au} onChange={setAgentUpdate} />}
-      <ToolVersions running={running} />
+      {/* cliRelease rides on ws-settings, which is already fetched above — so the row costs
+          no extra request and is there whether the workspace runs or not. */}
+      <ToolVersions running={running} cliRelease={au?.cliRelease} />
     </div>
   );
 }
@@ -174,7 +178,7 @@ function HostUpdateSection() {
 // PATH, so effective ≠ image is possible (the override badge). Drift from the build-time
 // pin is coloured by direction (older than the pin = warn, newer = accent; pinDrift).
 // Served through the Agent, so it is only available while the workspace is running.
-function ToolVersions({ running }: { running: boolean }) {
+function ToolVersions({ running, cliRelease }: { running: boolean; cliRelease?: CLIRelease | null }) {
   const tr = useT();
   const [tv, setTv] = useState<any>(null);
   const [busy, setBusy] = useState(false);
@@ -277,7 +281,33 @@ function ToolVersions({ running }: { running: boolean }) {
         </table>
       )}
       <p className="muted ds-sub">{tr("env.tv_note")}</p>
+      <WatcherRow cr={cliRelease} />
     </section>
+  );
+}
+
+// WatcherRow says whether the thing that keeps the pins moving is still running. The
+// versions above are what this workspace HAS; the upstream watcher is what decides whether
+// anyone is still being told that a newer one exists — and a `tested` version that stopped
+// moving reads identically whether upstream went quiet or the job fell over (2026-09-09,
+// cli-release-watch.yml's header).
+//
+// Nothing is drawn when the answer is unknown: a deployment whose CP cannot reach GitHub
+// must not be told "fine", and must not be nagged either.
+function WatcherRow({ cr }: { cr?: CLIRelease | null }) {
+  const tr = useT();
+  const h = watcherHealth(cr);
+  if (h.kind === "unknown") return null;
+  const last = isNaN(h.okAt) ? tr("env.watch_never") : relTime(h.okAt);
+  return (
+    <p className="muted ds-sub cli-watch-row">
+      {tr("env.watch_line", { when: last })}
+      {h.kind !== "ok" && (
+        <span className="cli-watch-warn">
+          {h.kind === "failed" ? tr("env.watch_failed", { rows: h.rows.join(", ") }) : tr("env.watch_stale")}
+        </span>
+      )}
+    </p>
   );
 }
 

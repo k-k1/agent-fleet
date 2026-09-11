@@ -473,3 +473,12 @@
   color: var(--warn);
   font-size: 12px;
 }
+
+/* The upstream release watcher's row, under the tool versions. The warning half is the
+   only part that is coloured: the healthy line is one more muted note, and a row that
+   always looked alarming would stop being read. */
+.cli-watch-warn {
+  display: block;
+  margin-top: 2px;
+  color: var(--warn);
+}
