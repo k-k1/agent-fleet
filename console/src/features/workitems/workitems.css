@@ -559,3 +559,104 @@
   color: var(--fg);
   font-size: 13px;
 }
+
+/* The live-read line (§80.24). One line, always present on a pull request panel: "this is the
+   pull request right now" and "this is a copy from the last fetch" look identical otherwise, and
+   the difference is what the whole live read is for. */
+.wi-dlive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 11px;
+  color: var(--muted);
+}
+.wi-dlive.bad {
+  color: var(--warn);
+}
+
+.wi-dbranches {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.wi-dbranches code {
+  font-size: 11px;
+  background: var(--panel2);
+  border-radius: 4px;
+  padding: 0 4px;
+}
+.wi-ddiff {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.wi-dadd {
+  color: var(--ok);
+}
+.wi-ddel {
+  color: var(--del);
+}
+.wi-dfiles {
+  color: var(--muted);
+}
+.wi-dreviews {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+/* One chip per reviewer, coloured by their standing. The counts stay in the tooltip: at four
+   reviewers the names ARE the information, and a summary line would repeat them. */
+.wi-dreview {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0 6px;
+  font-size: 11px;
+}
+.wi-dreview.approved {
+  color: var(--ok);
+}
+.wi-dreview.changes_requested {
+  color: var(--warn);
+}
+.wi-dreview.pending {
+  color: var(--muted);
+}
+.wi-dfacts dd.tone-ok {
+  color: var(--ok);
+}
+.wi-dfacts dd.tone-warn {
+  color: var(--warn);
+}
+.wi-dfacts dd.tone-bad {
+  color: var(--del);
+}
+.wi-dfacts dd.tone-muted {
+  color: var(--muted);
+}
+
+/* Folded start section: a pull request is usually opened to look at, not to work on. */
+.wi-dfold > summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.wi-dfold[open] > summary {
+  margin-bottom: 6px;
+}
+/* <details> cannot be a flex container without hiding its own marker, so the fold lays its
+   children out itself. */
+.wi-dfold {
+  display: block;
+}
+.wi-dfold > :not(summary) {
+  margin-top: 6px;
+}
+.wi-dopen {
+  text-decoration: none;
+}

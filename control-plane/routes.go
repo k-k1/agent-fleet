@@ -497,6 +497,7 @@ func registerWorkItemRoutes(mux *http.ServeMux, cfg config) {
 	// Write-back (docs/log/80 §80.10): only once a human has approved the draft. The CP
 	// relays it to the Agent.
 	mux.HandleFunc("POST /api/work-items/comment", wi.withResolved(wi.comment))
+	mux.HandleFunc("POST /api/work-items/detail", wi.withResolved(wi.detail))
 	mux.HandleFunc("GET /api/work-item-queries", wi.withMembership(wi.listQueries))
 	mux.HandleFunc("POST /api/work-item-queries", wi.withMembership(wi.createQuery))
 	mux.HandleFunc("PATCH /api/work-item-queries/{id}", wi.withMembership(wi.updateQuery))

@@ -16,8 +16,10 @@ import { t } from "../../lib/i18n/index.ts";
 const workItemList = vi.fn();
 const workItemQueryCreate = vi.fn();
 const bitbucketRepoList = vi.fn();
+const workItemDetail = vi.fn();
 vi.mock("./api.ts", () => ({
   workItemList: (...a: unknown[]) => workItemList(...a),
+  workItemDetail: (...a: unknown[]) => workItemDetail(...a),
   workItemRefresh: vi.fn(async () => ({ items: [], queries: [] })),
   workItemQueryCreate: (...a: unknown[]) => workItemQueryCreate(...a),
   workItemQueryUpdate: vi.fn(),
@@ -108,6 +110,8 @@ beforeEach(() => {
   workItemQueryCreate.mockResolvedValue({ id: "new" });
   bitbucketRepoList.mockReset();
   bitbucketRepoList.mockResolvedValue({ repos: [] });
+  workItemDetail.mockReset();
+  workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
   useWorkItemStore.getState().reset();
   useLaunchSeed.getState().clear();
   useLaunchTarget.getState().clear();
@@ -601,5 +605,98 @@ describe("WorkItemsSection", () => {
     const expr = [...modal.querySelectorAll<HTMLInputElement>(".wi-qform input")].pop()!;
     expect(expr.placeholder).toContain("workspace/repo");
     expect(modal.textContent).toContain(t("wi.bb_list_failed"));
+  });
+});
+
+// The pull request panel (docs/log/80 §80.24). A PR row is opened to decide whether to pick the
+// review up, so what it must get right is: read the pull request again on open, say plainly
+// which of the two copies is on screen, and put "go to the provider" — not "start a session" —
+// under the main button.
+describe("WorkItemDetailModal — a pull request", () => {
+  const pr = () =>
+    item({ id: "pr1", kind: "pr", key: "acme/web#518", title: "埋め込みシェルを出す", url: "https://github.com/acme/web/pull/518" });
+  const detail = {
+    provider: "github",
+    key: "acme/web#518",
+    kind: "pr",
+    title: "埋め込みシェルを出す",
+    state: "open",
+    url: "https://github.com/acme/web/pull/518",
+    author: "taro",
+    assignee: "",
+    labels: [],
+    repo: "acme/web",
+    updatedAt: "2026-09-11T01:00:00Z",
+    draft: false,
+    merged: false,
+    mergeable: "conflict",
+    baseBranch: "develop",
+    headBranch: "feature/x",
+    additions: 120,
+    deletions: 30,
+    changedFiles: 7,
+    comments: 5,
+    reviews: [{ name: "hanako", state: "approved" }],
+    checks: { state: "failure", total: 8, failed: 1, pending: 0 },
+  };
+
+  const openPR = async () => {
+    workItemList.mockResolvedValue({ items: [pr()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    return document.querySelector(".wi-dmodal")!;
+  };
+
+  it("reads the pull request again and shows what the cached row cannot carry", async () => {
+    workItemDetail.mockResolvedValue(detail);
+    const modal = await openPR();
+
+    expect(workItemDetail).toHaveBeenCalledWith({ provider: "github", key: "acme/web#518" });
+    expect(modal.textContent).toContain(t("wi.detail_live_fresh"));
+    expect(modal.textContent).toContain("develop");
+    expect(modal.textContent).toContain("feature/x");
+    expect(modal.textContent).toContain(t("wi.detail_merge_conflict"));
+    expect(modal.textContent).toContain(t("wi.detail_checks_failed", { failed: 1, total: 8 }));
+    expect(modal.querySelector(".wi-dreview.approved")?.textContent).toContain("hanako");
+    // The main button goes to the provider; the ticket's own page is where the diff and the
+    // review thread live, and af holds neither.
+    const main = modal.querySelector<HTMLAnchorElement>(".ui-modal-foot a.wi-dopen")!;
+    expect(main.href).toBe("https://github.com/acme/web/pull/518");
+    expect(main.textContent).toContain("GitHub");
+    // Starting a session is still reachable, one fold away.
+    const fold = modal.querySelector<HTMLDetailsElement>("details.wi-dfold")!;
+    expect(fold.open).toBe(false);
+    expect(fold.textContent).toContain(t("wi.detail_start_head_pr"));
+  });
+
+  it("keeps the cached row and says so when the workspace is stopped (it is never started for a panel)", async () => {
+    workItemDetail.mockResolvedValue({ error: { code: "workspace_stopped" } });
+    const modal = await openPR();
+
+    expect(modal.textContent).toContain(t("wi.detail_live_stopped"));
+    expect(modal.textContent).toContain("埋め込みシェルを出す"); // the cached row is still drawn
+    expect(modal.querySelector(".wi-dbranches")).toBeNull(); // and nothing is invented for it
+  });
+
+  it("says a failed read is a failed read, and offers to try again", async () => {
+    workItemDetail.mockResolvedValue({ error: { code: "provider_error", message: "github rate limit reached" } });
+    const modal = await openPR();
+
+    expect(modal.textContent).toContain(t("wi.detail_live_failed"));
+    const retry = [...modal.querySelectorAll<HTMLButtonElement>("button.linklike")].pop()!;
+    workItemDetail.mockResolvedValue(detail);
+    await act(async () => retry.click());
+    expect(workItemDetail).toHaveBeenCalledTimes(2);
+    expect(modal.textContent).toContain(t("wi.detail_live_fresh"));
+  });
+
+  it("does not read an issue live — its cached row already says everything the panel shows", async () => {
+    workItemList.mockResolvedValue({ items: [item()], queries: [query], sessions: [], fetchedAt: "", running: true });
+    await render();
+    await openRow();
+    expect(workItemDetail).not.toHaveBeenCalled();
+    // And its main button is still start, not a link.
+    expect(document.querySelector(".wi-dmodal .ui-modal-foot a.wi-dopen")).toBeNull();
+    expect(detailStart().textContent).toContain(t("wi.start"));
   });
 });

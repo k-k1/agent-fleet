@@ -106,6 +106,126 @@ function normalizeItem(raw: unknown): WorkItem {
   };
 }
 
+/** One reviewer's standing on a pull request. `state` is "approved", "changes_requested" or
+ * "pending" (asked, has not answered). */
+export interface WorkItemReview {
+  name: string;
+  state: string;
+}
+
+/** The head commit's checks folded into one line. `state` is "" when the provider reported no
+ * checks at all — which must never render as green (docs/log/80 §80.24). */
+export interface WorkItemChecks {
+  state: string;
+  total: number;
+  failed: number;
+  pending: number;
+}
+
+/** A pull request read live, when its panel was opened (docs/log/80 §80.24). Nothing here is
+ * cached — neither af nor the CP stores it; it is fetched, rendered and dropped. */
+export interface WorkItemDetail {
+  provider: string;
+  key: string;
+  kind: string;
+  title: string;
+  state: string;
+  url: string;
+  author: string;
+  assignee: string;
+  labels: string[];
+  repo: string;
+  updatedAt: string;
+  draft: boolean;
+  merged: boolean;
+  /** "clean" | "conflict" | "unknown" — GitHub answers null while it is still computing. */
+  mergeable: string;
+  baseBranch: string;
+  headBranch: string;
+  additions: number;
+  deletions: number;
+  changedFiles: number;
+  comments: number;
+  reviews: WorkItemReview[];
+  checks: WorkItemChecks;
+}
+
+const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+
+/** Adopt one detail response. Every field is normalised for the same reason `normalizeItem`
+ * exists: this crosses two service boundaries (Agent → CP → here), the two sides ship as
+ * separate images, and one `null` where an array was expected blanks the whole Console. */
+export function readWorkItemDetail(res: unknown): { detail: WorkItemDetail | null; error?: ApiError | string } {
+  if (!res || typeof res !== "object") return { detail: null };
+  const d = res as Record<string, unknown> & { error?: ApiError | string };
+  if (d.error) return { detail: null, error: d.error };
+  if (!d.key && !d.url) return { detail: null };
+  const checks = (d.checks || {}) as Record<string, unknown>;
+  return {
+    detail: {
+      provider: str(d.provider),
+      key: str(d.key),
+      kind: str(d.kind) || "pr",
+      title: str(d.title),
+      state: str(d.state),
+      url: str(d.url),
+      author: str(d.author),
+      assignee: str(d.assignee),
+      labels: Array.isArray(d.labels) ? d.labels.filter((l): l is string => typeof l === "string") : [],
+      repo: str(d.repo),
+      updatedAt: str(d.updatedAt),
+      draft: !!d.draft,
+      merged: !!d.merged,
+      mergeable: str(d.mergeable) || "unknown",
+      baseBranch: str(d.baseBranch),
+      headBranch: str(d.headBranch),
+      additions: num(d.additions),
+      deletions: num(d.deletions),
+      changedFiles: num(d.changedFiles),
+      comments: num(d.comments),
+      reviews: Array.isArray(d.reviews)
+        ? (d.reviews as unknown[])
+            .map((r) => ({ name: str((r as Record<string, unknown>)?.name), state: str((r as Record<string, unknown>)?.state) }))
+            .filter((r) => r.name)
+        : [],
+      checks: { state: str(checks.state), total: num(checks.total), failed: num(checks.failed), pending: num(checks.pending) },
+    },
+  };
+}
+
+/** Which rows get a live read: pull requests on the two providers that have one. A Jira key has
+ * no pull request behind it, and an issue's cached row already says everything the panel shows. */
+export function canReadLive(item: { kind: string; provider: string }): boolean {
+  return item.kind === "pr" && (item.provider === "github" || item.provider === "bitbucket");
+}
+
+/** The reviews line: "2 approved, 1 change requested, 1 pending" as counts the caller renders.
+ * Kept here so the panel does not count in JSX. */
+export function reviewCounts(reviews: WorkItemReview[]): { approved: number; changes: number; pending: number } {
+  const out = { approved: 0, changes: 0, pending: 0 };
+  for (const r of reviews) {
+    if (r.state === "approved") out.approved++;
+    else if (r.state === "changes_requested") out.changes++;
+    else out.pending++;
+  }
+  return out;
+}
+
+/** Tone for the CI line. "" (no checks reported) is muted, never green: a pull request nothing
+ * ran against has not passed anything. */
+export function checksTone(checks: WorkItemChecks): "ok" | "warn" | "bad" | "muted" {
+  switch (checks.state) {
+    case "success":
+      return "ok";
+    case "failure":
+      return "bad";
+    case "pending":
+      return "warn";
+    default:
+      return "muted";
+  }
+}
+
 /** Rail sort: still-open work first, then most recently updated. A done row only ever
  * appears because the user's query asks for it, so it goes to the bottom rather than
  * being hidden (hiding it would silently contradict their query). */

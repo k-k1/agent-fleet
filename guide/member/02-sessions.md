@@ -169,6 +169,23 @@ workspace is stopped.
 
 While the workspace runs the list refreshes about every 5 minutes; **⟳** fetches immediately.
 
+### Pull request details
+
+A **pull request row on GitHub or Bitbucket is read again the moment you open it**. The panel then
+shows what the cached list cannot carry: **draft or not, conflicts, where the reviews stand, whether
+CI is green, base ← head and the size of the diff**. Every one of those can change between two
+five-minute refreshes, and a stale copy of them is worse than none.
+
+- The first line always says which of the two you are looking at — the live pull request, or the
+  last fetched copy. While the workspace is stopped there is nothing to read it with (**opening a
+  panel never starts your workspace**), so the fetched copy stays on screen; if the read fails, a
+  "Try again" appears.
+- The main button is **Open in GitHub / Bitbucket**. The diff and the review thread live there, not
+  in Agent Fleet.
+- **Starting a session** is one fold away — reviewing someone else's pull request still needs a
+  working copy, and the started badge keeps working for it.
+- **The description is still not shown here.**
+
 ## Reading state — badges and notifications
 
 In each row of the list, the colored icon at the front shows the agent kind, and the state icon

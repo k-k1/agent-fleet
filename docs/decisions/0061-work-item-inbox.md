@@ -324,7 +324,42 @@ decision 1's "usable while stopped" from behind).
 passing it straight through is correct. Aligning them would invert it into "you can only write what
 af's screen lets you write".
 
+**24 (§80.24). A pull request's panel reads the pull request again when it opens; an issue's does
+not, and nothing that is read is stored.** This is the one exception to decision 20.1, and the three
+reasons that decision gave are exactly what bounds it.
+
+- **Only a pull request.** What decides whether to pick a review up — draft or ready, conflicts,
+  where the reviews stand, whether CI is green — is not in the retention scope of decision 2, and
+  putting it there would turn the cache into a mirror of the provider's pull request objects. All
+  four also change *within* the five-minute refresh window, so a cached copy of them would be worse
+  than none: a panel claiming "no conflicts" from a five-minute-old read sends someone to a branch
+  that does not apply. An issue has no such fields, and its cached row already says everything the
+  panel shows.
+- **Never the body** (decision 20.1's real subject stands). The live read does not fetch one, so the
+  CP still cannot hold one: the `fields=` projections are that promise written into the request.
+- **Never a reason to wake the workspace.** A stopped workspace answers 409 and the panel keeps the
+  cached row, saying which of the two is on screen. That is decision 1 held rather than broken — what
+  20.1 rejected was a fetch the panel *depends* on, and this one degrades in one line.
+
+Nothing is stored on either side: the CP relays and forgets, and the rail's cache keeps its own
+rhythm. The cost stays bounded because **a human opening a panel is the only trigger** — unlike the
+list, this never runs on a timer.
+
+**24.1. For a pull request the main button is "Open in GitHub / Bitbucket", and starting a session
+folds away.** af holds no diff, no review thread and no comment text, so the honest primary action is
+going to where they are ("we do not build a ticket viewer", decision 1). Starting is **folded, not
+removed**: decision 19.1's reason for listing pull requests at all — reviewing someone else's is work
+with no session on this side yet — still needs a working copy, and the started ledger (decision 5)
+still has to stop the second person picking up the same review.
+
 ## Options rejected
+
+- **Cache what the live pull request read returns on the CP** (the alternative to decision 24). It
+  would keep fresh values while stopped, but it puts a **new retention scope** — review standings, CI
+  results — on the CP, which is precisely the line decision 2 drew, and it makes every list refresh
+  call the provider once per pull request. Showing no live value while stopped costs little here: the
+  panel is where "do I pick this up now" is decided, and a five-minute-old CI result cannot answer
+  that either way.
 
 - **Have the CP fetch directly (holding the token under envelope encryption on the CP).** Freshness
   would be preserved while stopped, and it would suit running a shared team service account. But it is
