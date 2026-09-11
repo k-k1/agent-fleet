@@ -807,3 +807,98 @@ ADR・公開仕様に当て直した。結論: **承認（P0 着手可）。た�
 レーンは 4 本——CP（Go・2 契約の CP 側）、CFN（`60-engines.yaml`・PARAMETERS・移行）、
 Console（管理 API の契約の表示側）、実機 0（使い捨て provider で未解決 1 を $0 で測る。
 **コードより先に始めてよく、赤ならほかの 3 本を止める**）。実機 1 以降は 3 本が揃ってから 1 レーンで直列。
+
+## 追記 — P0 実機 0: 未解決 1 の実測（2026-09-11・開発配備・$0）
+
+P0 のコードを 1 行も書く前に、未解決 1（骨格を左右する 1 件）を開発配備の image 役で測った。
+**GPU は 1 台も買っていない**——service の `desiredCount` は最初から最後まで 0 で、
+使い捨ての capacity provider を 1 本作り、strategy を往復させ、消しただけである。
+所要 **10 分 42 秒**（18:36:06〜18:46:48 JST）。
+
+**結論: 緑。骨格は崩れない。ただし決定 4 (a) の「force を渡さない」は、そのままでは通らない。**
+
+### 前提（測る前に確認したもの）
+
+- 配備しているセッションは無い（`pgrep -af dev-deploy.sh` の一致は自分の `pgrep` だけ）。
+- image 役の service は `desiredCount` 0・`runningCount` 0・`pendingCount` 0、`status` ACTIVE。
+- 控えを取った: strategy `[{capacityProvider: <image 役の provider>, weight: 1, base: 0}]`、
+  PRIMARY deployment `id` `ecs-svc/0995585233792941490`・`updatedAt` `2026-09-11T15:15:38.591000+09:00`。
+- 開発配備の image 役の provider は `capacityOptionType: SPOT`（0074「後始末と、残したもの」のまま）。
+  使い捨て側は **`ON_DEMAND`** にしたので、測ったのは **Spot の provider → オンデマンドの provider**
+  ——決定 4 (b) がまさに行う遷移である。
+
+### 手順と戻り値
+
+| 時刻 (JST) | やったこと | 戻り値 |
+|---|---|---|
+| 18:36:32 | `create-capacity-provider`（`ON_DEMAND`・他の欄は既存 image provider を写す） | 200。`status: PROVISIONING` / `updateStatus: CREATE_IN_PROGRESS` |
+| 18:37:00 | `describe-capacity-providers` / `describe-clusters --include ATTACHMENTS` | `ACTIVE` / `CREATE_COMPLETE`。クラスタの一覧に 4 本 → **5 本**（0074「作るだけで載る」の再現） |
+| 18:37:10 | **(a)** `update-service --capacity-provider-strategy …`（`--desired-count` も `--force-new-deployment` も渡さない） | **HTTP 400 `InvalidParameterException`**（下に全文） |
+| 18:37:21 | 同じ呼び出しの後の `describe-services` | strategy も `updatedAt`（`15:15:38.591`）も**1 欄も動いていない** |
+| 18:37:47 | **(b)** 同じ更新に `--force-new-deployment` を足す | **200**。strategy が使い捨て provider に、`desiredCount` 0 のまま。新しい PRIMARY `ecs-svc/5816081513831620451`（`createdAt` = `updatedAt` = `2026-09-11T18:37:48.588000+09:00`、`rolloutState: IN_PROGRESS`）、旧 `ecs-svc/0995585233792941490` は `ACTIVE` → `DRAINING` |
+| 18:39:17 | 同上の落ち着き | `deployment completed` / `has reached a steady state`（`18:39:17.427`）。**タスクが 1 つも無くても 89 秒** |
+| 18:40:32 | 戻す `update-service`（**force 無し**） | **同じ 400。方向は関係ない** |
+| 18:40:34 | 戻す `update-service`（force 付き） | 200。strategy が控えと一致。新しい PRIMARY `ecs-svc/5931469680924617986`（`createdAt` = `updatedAt` = `2026-09-11T18:40:35.549000+09:00`） |
+| 18:42:02 | 同上の落ち着き | `deployment completed`（`18:42:02.134`）。**87 秒** |
+| 18:44:05 / 18:45:58 | `list-container-instances` → `describe-container-instances` | 4 台。**どれも `capacityProviderName` が無く**、登録は 09-06・09-07・当日 10:30——どちらの provider の箱でもない。**新しい箱は 1 台も来ていない** |
+| 18:45:58 | `delete-capacity-provider` | 200。`DEPROVISIONING` / `DELETE_IN_PROGRESS` |
+| 18:46:37 | `describe-clusters` / `describe-capacity-providers` | 一覧は**元の 4 本**。使い捨ては `INACTIVE` / `DELETE_COMPLETE`（0074 の「跡は残る」どおり） |
+
+(a) が返した本文（`x-amzn-RequestId` つきで残してある）:
+
+```
+HTTP 400
+{"__type":"InvalidParameterException","message":"When switching from launch type to capacity
+provider strategy on an existing service, or making a change to a capacity provider strategy
+on a service that is already using one, you must force a new deployment."}
+```
+
+### 判定
+
+- **(a) 緑。** MI の provider 同士の遷移そのものは拒まれていない——`forceNewDeployment` を添えた
+  同じ遷移が 200 で通り、strategy は書いた値になった。拒まれたのは**「force 無し」という渡し方**
+  だけで、これはレビュー R1 が「赤ではない」と決めた形である。**この ADR の骨格は書き直さない。**
+  却下案「購入形態ごとに service を 2 本」へ戻る必要は無い。
+- **(b) 緑。service は無傷。** 拒まれた呼び出しは 1 欄も動かさなかった（`updatedAt` が控えのまま）。
+  往復のあと、strategy は `weight` と `base` まで控えと**完全一致**、`taskDefinition` も同一、
+  `desiredCount` は最初から最後まで 0、`runningCount`/`pendingCount` も 0、箱は 1 台も来なかった。
+  live の image provider は `describe-capacity-providers` の戻り値が**前後で完全一致**。
+- **(c) 動く。ただし問いの形が測れないものだった。** 「strategy *だけ* の更新」という経路は
+  **存在しない**（(a) が 400 で拒む）。実際に通る経路（force 付き）は**新しい PRIMARY deployment を
+  作る**ので、`id` が変わり `updatedAt` も当然動く。したがって決定 4 (b) では
+  `StartDeadlineSec` の時計（0070 決定 6、`engine_ecs.go` の `describe()`）は**確実に掛け直る**
+  ——CP が提案ごとの時計を自分で持つ必要は無い。
+
+### 🔥 新しく分かったこと（決定 4 (a) に効く）
+
+1. **公開仕様 (c) の読み替え。** `UpdateService` の API Reference は `capacityProviderStrategy` を
+   「新しいデプロイを起こさない」と書くが、それは**「force 無しで strategy を更新できる」を
+   意味しない**。すでに strategy を使っている service では、ECS は force 無しの strategy 更新を
+   **API の入口で 400 で拒む**。往復の両方向で同じ文面だった。
+2. 🔴 **決定 4 (a) は「`forceNewDeployment` を渡さない」と書いているが、strategy が今と違う値に
+   なるなら、(a) も同じ 400 を踏む。** エラー文は `desiredCount` に言及していない
+   ——「a service that is already using one」だけが条件である。**`desiredCount` を 1 にする
+   呼び出しは箱を買うので、この $0 の試験では測れない**（実機 3 で desired 0 → 1 を測るときに
+   同じ呼び出しで確かめる）。実装は安全側に倒せる: **strategy が変わるときは (a) でも
+   `forceNewDeployment` を渡し、変わらないときは `capacityProviderStrategy` を渡さない。**
+   running 0 なので、どちらにせよ殺すものは無い（決定 4 の番人はそのまま効く）。
+   → **未解決 1 は (a)(b)(c) としては解決。残ったのはこの 1 点**（desired 0 → 1 と strategy を
+   同じ `UpdateService` で渡したとき force が要るか）で、新しい未解決として追記でだけ持つ。
+3. ⚠️ **タスクが 1 つも無くても deployment は即座には終わらない**（行き 89 秒・戻り 87 秒）。
+   `desiredCount` が 1 のとき、ECS が新しい provider へ置き直しにかかるのが「deployment が
+   completed になった後」なのか「新 PRIMARY ができた直後」なのかは**測っていない**。前者なら
+   提案 1 つあたりの予算（決定 5・既定 180 秒）の半分が切り替えそのもので消える。**実機 4
+   （フォールバックの陽性対照）で、この 2 つの時刻の差を必ず記録すること。**
+4. 決定 11 の裏づけ: service の strategy は書いた直後の `DescribeServices` の戻り値にそのまま
+   現れる。パネルが「いま何で走っているか」をここから言うのは成り立つ。
+
+### 後始末
+
+- 使い捨て provider は削除済み。クラスタの `capacityProviders` は**元の 4 本**に戻り、
+  使い捨ては `INACTIVE` のレコードとしてだけ残る（0074 の追試と同じ。同名の再作成は妨げない）。
+- service の strategy・`taskDefinition`・`desiredCount` は控えと同一。live の image provider は無傷。
+- ⚠️ **元に戻らなかったもの**: PRIMARY deployment の `id`（`ecs-svc/0995585233792941490` →
+  `ecs-svc/5931469680924617986`）と、サービスイベントに増えた 4 行。force を掛けた以上、
+  deployment は作り直されるので戻しようがない。エンジンの起動には影響しない（`describe()` は
+  PRIMARY を id で覚えていない）。
+- 生の戻り値（JSON と `--debug` のログ）は測ったセッションの `~/.cache/adr0075-run0/` にある。
