@@ -1,6 +1,9 @@
-// Brand icons — vendored monochrome SVGs for the things that have a logo of their own:
-// the agent CLIs (an "agent kind") and, later, the model providers. See
-// assets/brandicons/ATTRIBUTION.md for the sources and licenses.
+// Brand icons — vendored monochrome SVGs for the things that have a logo of their own.
+// Today that is the agent CLIs (an "agent kind"); a per-provider set was considered and
+// dropped, for the reason in assets/brandicons/ATTRIBUTION.md (the surfaces that would
+// carry it are native <select>s, which cannot hold markup). The set dimension is kept in
+// the paths anyway so adding one later does not mean moving files. See that same file for
+// the sources and licenses.
 //
 // Why vendored rather than fetched from the upstream CDN at runtime: a cross-origin
 // <use href> is refused by the SVG spec and an <img src> to a remote SVG renders it in
