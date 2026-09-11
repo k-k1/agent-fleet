@@ -3878,6 +3878,13 @@ model's `generate_image` returned a picture in 52.3 seconds with empty `warnings
 starts, nothing else). Searching CloudWatch will not find it. **Taking the raw HTTP answer
 yourself is the only route.**
 
+**Resolved (2026-09-11, #537).** The CP does leave one line now — `pendingGuard` logs when it
+refuses, at most once per 60 seconds per `(role, model)` (`enginePendingLogEvery`). **What has
+not changed is that it stays invisible through `generate_image`** (the sixteen-minute retry
+above is untouched by #537), so getting the answer's body still means taking the raw HTTP.
+The measurement above is from the deployment before #537 (2e765534), where there genuinely was
+no such line.
+
 ### The window, measured (same shape as the previous section's table)
 
 | Time (UTC) | Event | keys in `pending` |
