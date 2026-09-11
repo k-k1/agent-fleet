@@ -334,7 +334,7 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	// engine stuck in `starting` has nowhere else to read it, and the alternative is a trip to
 	// the AWS console for a string the CP already has in hand.
 	if len(v.events) > 0 {
-		row["events"] = v.events
+		row["events"] = v.eventMessages()
 	}
 	if !v.lastStart.IsZero() {
 		row["service_since"] = v.lastStart.UTC().Format(time.RFC3339)

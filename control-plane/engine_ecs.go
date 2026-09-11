@@ -179,7 +179,13 @@ type engineServiceView struct {
 	// events holds the newest service events, which is the only place ECS writes down why
 	// a start failed ("no container instances met the placement constraints", a pull
 	// failure). Reading them needs no permission the CP role does not already have.
-	events []string
+	//
+	// 🔴 Each one carries its TIME, and rule 2 needs it. The list is the newest three of the
+	// whole SERVICE, so after a move to another offer it still holds the previous offer's
+	// failure — measured: `l4` was judged five seconds after the move, on a Spot quota event
+	// from twenty seconds before it, and the engine gave up on a list that had one working
+	// offer left in it (ADR 0075, re-run 4).
+	events []engineServiceEvent
 	// provider is the capacity provider the SERVICE's own strategy names right now (ADR 0075
 	// decision 11). The panel says what the engine is running on from this and never from what
 	// the CP remembers choosing: CloudFormation rewrites the strategy on every release that
@@ -187,10 +193,39 @@ type engineServiceView struct {
 	// on-demand — the shape of the lie the 0074 rename produced (`box: null`, "starting on l4").
 	// Empty for a service that declares a launch type instead of a strategy.
 	provider string
-	// deployment is the PRIMARY deployment's id. A forced deployment replaces it, so a CHANGED
-	// id is the evidence that a strategy write has actually landed — which is what the start
-	// waits for before it moves the desired count (ADR 0075, live run 3's two boxes).
-	deployment string
+	// deployment is the PRIMARY deployment's id, and deployments is how many the service has at
+	// all. Both are about the same fact: a forced deployment makes a NEW PRIMARY while the old
+	// one stays `ACTIVE` for minutes, and during that window the service has two.
+	deployment  string
+	deployments int
+}
+
+// engineServiceEvent is one line ECS wrote about this service, with the moment it wrote it.
+type engineServiceEvent struct {
+	at      time.Time
+	message string
+}
+
+// eventMessages is the events as text, for the places that only display or log them.
+func (v engineServiceView) eventMessages() []string {
+	out := make([]string, 0, len(v.events))
+	for _, e := range v.events {
+		out = append(out, e.message)
+	}
+	return out
+}
+
+// settled reports whether ECS has finished with the last deployment: ONE deployment, and it is
+// not still rolling.
+//
+// 🔴 This is the gate on the desired count, and "a new PRIMARY exists" is NOT the same question.
+// Measured (ADR 0075 re-run 3): eight seconds after the forced deployment appeared, a
+// `desiredCount: 1` was placed by the OLD deployment — `describe-tasks` named it in `startedBy` —
+// and the old strategy's provider bought a second box. The old deployment was still `ACTIVE` two
+// minutes 35 seconds later, so waiting for it costs that much start latency. That is the price;
+// the box it saves is $0.28 of the $0.35 that run spent.
+func (v engineServiceView) settled() bool {
+	return v.deployments <= 1 && v.rollout != "IN_PROGRESS"
 }
 
 // engineViewTTL is the short cache in front of DescribeServices (ADR 0070 decision 10).
@@ -297,6 +332,9 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 		// start deadline by it means every start on a service older than the deadline is
 		// declared failed the instant it begins, and the engine can never come up at all.
 		// `updatedAt` moves with the scale-up (and with a task ECS replaces underneath).
+		// How many deployments the service has. More than one means an older one is still going
+		// away, and a desired count written now is placed by BOTH (measured — see settled()).
+		v.deployments = len(s.Deployments)
 		for _, d := range s.Deployments {
 			if aws.ToString(d.Status) != "PRIMARY" {
 				continue
@@ -319,7 +357,11 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 				break
 			}
 			if m := strings.TrimSpace(aws.ToString(e.Message)); m != "" {
-				v.events = append(v.events, m)
+				ev := engineServiceEvent{message: m}
+				if e.CreatedAt != nil {
+					ev.at = *e.CreatedAt
+				}
+				v.events = append(v.events, ev)
 			}
 		}
 		return v, nil
@@ -556,13 +598,14 @@ func (t *engineECS) setEnabled(ctx context.Context, on bool) error {
 //     capacity provider's instance requirements changed underneath (two offers can share one
 //     provider), and the PENDING task has to be placed again for that to be asked for.
 //
-// 🔴 A START THAT ALSO CHANGES THE STRATEGY IS TWO CALLS, NOT ONE. Measured on the deployment
-// (ADR 0075 live run 3, twice): handing `desiredCount: 1` and a new strategy to ONE UpdateService
-// makes ECS place the task against the OLD strategy first, and that provider BUYS A BOX. The
-// forced deployment then places the task on the new provider, but the first box stays — 16
-// minutes 28 seconds of billing ($0.51), and while it deregisters the ADR 0074 swap wait holds
-// the NEXT start for six minutes. So the strategy goes first, on its own, and the desired count
-// follows only once ECS has replaced the PRIMARY deployment.
+// 🔴 A START THAT ALSO CHANGES THE STRATEGY IS TWO CALLS, NOT ONE, AND THE SECOND ONE WAITS FOR
+// THE OLD DEPLOYMENT TO GO. Measured twice (ADR 0075 live run 3): handing `desiredCount: 1` and a
+// new strategy to ONE UpdateService makes ECS place the task against the OLD strategy first, and
+// that provider BUYS A BOX. Splitting the calls was not enough — the re-run put the desired count
+// in eight seconds after the new PRIMARY appeared, and `describe-tasks` showed the first task
+// `startedBy` the OLD deployment, which was still `ACTIVE`. So the gate is `settled()`: one
+// deployment, not rolling. The old one lived 2 minutes 35 seconds, and the start is that much
+// slower — against $0.28 of a $0.35 run spent on the box nobody used.
 //
 // Because every accepted write creates a new PRIMARY deployment, `StartDeadlineSec` and the
 // per-offer budget both re-clock themselves off `updatedAt` — the CP needs no timer of its own
@@ -588,11 +631,17 @@ func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool
 	// by what this process remembers writing. CloudFormation rewrites it on every release that
 	// touches the service (ADR 0075 decision 12).
 	if v.provider != provider {
-		if err := t.writeStrategyOnly(ctx, provider, v.deployment); err != nil {
+		if err := t.writeStrategyOnly(ctx, provider); err != nil {
 			return err
 		}
 		if !start {
 			return nil // the move is done: the forced deployment places the PENDING task again
+		}
+		// The service now has two deployments — the one just forced and the one going away — so
+		// the desired count cannot go in yet. Re-read once in case ECS has already finished, and
+		// otherwise leave it to the next attempt.
+		if v, err = t.describe(ctx); err != nil {
+			return errEngineStrategySettling
 		}
 	} else if !start {
 		// Same provider, and this is still a move to another offer: the capacity provider's
@@ -611,6 +660,13 @@ func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool
 		// that buys nothing and makes the panel show the offer being taken twice.
 		return nil
 	}
+	if !v.settled() {
+		// 🔴 The gate the two-box start needed: an older deployment is still ACTIVE, and a desired
+		// count written now is placed by IT as well, on the provider this engine has just moved
+		// away from. Not an error — the strategy is already what this engine wants, so the next
+		// attempt is one short call.
+		return errEngineStrategySettling
+	}
 	_, err = t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster: aws.String(t.cluster), Service: aws.String(t.service), DesiredCount: aws.Int32(1),
 	})
@@ -619,24 +675,18 @@ func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool
 	return err
 }
 
-// engineDeploymentSettle bounds the wait for ECS to replace the PRIMARY deployment after a forced
-// strategy write. Measured (live test 0): the new deployment exists in the SAME response — its
-// `createdAt` equals the update's timestamp — so the first read normally answers, and the wait is
-// here only so that a slow answer does not turn into the two-box start above. Variables, so a
-// test can take the sleep out.
-var (
-	engineDeploymentSettleTries = 4
-	engineDeploymentSettleWait  = 500 * time.Millisecond
-)
+// errEngineStrategySettling says the strategy is written and the service has not finished with
+// the deployment it replaced. NOT a failed start: the strategy is now what this engine wants, so
+// the next attempt is one short call that only moves the desired count. Counting it as a failure
+// would double a cooldown over a call that did exactly what it was asked to.
+//
+// ⚠️ The wait it stands for is minutes, not milliseconds (2 m 35 s measured), so it is answered by
+// coming back on the next tick rather than by sleeping inside this one.
+var errEngineStrategySettling = errors.New("the capacity provider strategy was written; waiting for the previous deployment to go")
 
-// errEngineStrategySettling says the strategy was written and ECS has not shown the new
-// deployment yet. NOT a failed start: the strategy is now what this engine wants, so the next
-// attempt takes the short path and only moves the desired count. Counting it as a failure would
-// double a cooldown over a call that did exactly what it was asked to.
-var errEngineStrategySettling = errors.New("the capacity provider strategy was written; waiting for the new deployment")
-
-// writeStrategyOnly is the first half: the strategy, forced, with the desired count untouched.
-func (t *engineECS) writeStrategyOnly(ctx context.Context, provider, wasDeployment string) error {
+// writeStrategyOnly is the first half of a start, and the whole of a move: the strategy, forced,
+// with the desired count untouched.
+func (t *engineECS) writeStrategyOnly(ctx context.Context, provider string) error {
 	_, err := t.api.UpdateService(ctx, &ecs.UpdateServiceInput{
 		Cluster: aws.String(t.cluster),
 		Service: aws.String(t.service),
@@ -649,23 +699,5 @@ func (t *engineECS) writeStrategyOnly(ctx context.Context, provider, wasDeployme
 	})
 	t.invalidate()
 	t.invalidateBox()
-	if err != nil {
-		return err
-	}
-	for i := 0; i < engineDeploymentSettleTries; i++ {
-		if i > 0 {
-			select {
-			case <-ctx.Done():
-				return errEngineStrategySettling
-			case <-time.After(engineDeploymentSettleWait):
-			}
-		}
-		v, err := t.describe(ctx)
-		if err == nil && v.deployment != "" && v.deployment != wasDeployment {
-			return nil
-		}
-	}
-	log.Printf("%s: the strategy was written but ECS still reports the old deployment; leaving the desired count alone",
-		t.logKey())
-	return errEngineStrategySettling
+	return err
 }
