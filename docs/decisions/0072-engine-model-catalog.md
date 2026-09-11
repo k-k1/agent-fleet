@@ -3365,6 +3365,11 @@ make the gateway rewrite a request body.
 the adapter load (that `--lora-scaled` appears in `/models`'s `status.args`), and that the
 pinned fine-tune is visible in what the model answers. That belongs to the hardware lane.
 
+> ✅ **The first half was confirmed on hardware (2026-09-11)** — the argv the router spawns its
+> child with carries `--lora-scaled /models/llm/loras/….gguf:1`. **The load line itself never
+> appears**, though: this image writes nothing about loading an adapter. The second half (the
+> effect on answers) is still unconfirmed. See "#513 and #518's llm half, closed on hardware".
+
 
 ## Follow-up — the embedded shell moved into an image (2026-09-11, option A)
 
@@ -3549,7 +3554,7 @@ stops and names the workflow. `deploy/local/ecs-lifecycle-stub-test.sh` case 3i 
 |---|---|---|
 | 1 | four containers pull `af-engine-tools` | **all four reference it, three actually pulled** |
 | 2 | the fetch sidecar's `sync done` and `WATCH_SEC` line | **passed** |
-| 3 | the idle wrapper starts off `/models/ready` (llm and image) | **image passed; llm not confirmed** (below) |
+| 3 | the idle wrapper starts off `/models/ready` (llm and image) | **image passed; llm not confirmed** (below — llm passed too, at 05:07Z: the last section) |
 | 4 | one ingest from the Console, and `MODE=delete` | **passed** |
 | 5 | no `CONTRACT MISMATCH` in any log | **not one** |
 
@@ -3646,3 +3651,146 @@ unconfirmed.
 ⚠️ This is an external condition rather than a defect — but **ADR 0074's second rung is a way
 out of exactly this situation**: drop to `l40s` (g6e.xlarge) when `l4` is dry. No rung was
 raised here (GPU cost; ADR 0074 P1 covered it).
+
+> ✅ **Both were closed in the next section, the same day at 05:07Z.** The same `g6.xlarge` came
+> in the same AZ fifteen seconds after `mode: on` — **exhaustion is a function of the clock**,
+> and no occasion to use the way out arrived.
+
+## #513 and #518's llm half, closed on hardware (2026-09-11, the dev deployment)
+
+The two things the previous section had to leave as "AWS ran out of capacity" — **#518's item 3
+(the llm idle wrapper) and #513's fixed preset LoRA** — were closed on the same deployment.
+**Both passed.** No rung was raised: `l4` was available this time (below).
+
+The deployment moved `0.18.1-dev-dd0e77a5` → **`0.18.1-dev-2e765534`** (`origin/develop`
+2e765534) through `dev-deploy.sh`. What #532's ordering did on that run is written up in
+`cfn/PARAMETERS-60-engines.md`, "The engine tools image".
+
+### #513 — `--lora-scaled` reached the real argv
+
+`LoRA-Qwen2.5-1.5B-Instruct-abliterated-f16.gguf` (374,395,136 bytes) from
+`ggml-org/LoRA-Qwen2.5-1.5B-Instruct-abliterated-F16-GGUF` was taken in through
+`POST /api/admin/engines/llm/ingest` (flat in `llm/loras/`, `kind=lora`,
+`base_model=qwen2.5-coder-1.5b`), enabled, and the role woken with `mode=on`. The ingest took
+three minutes.
+
+The active set came out in exactly the shape decision 5 designed (`lo` is `<key>:<scale>`, the
+scale being the default 1):
+
+```
+"start": "qwen2.5-coder-1.5b",
+"models": [ { "id": "qwen2.5-coder-1.5b",
+              "f": ["llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"], "c": 32768,
+              "lo": ["llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf:1"] }, … ],
+"loras": ["llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf"]
+```
+
+And the arguments the router spawns its child with landed in CloudWatch verbatim
+(`llm/llama/<task>`, 05:07:38.323Z — the router prints its command line one argument per line):
+
+```
+I srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+I srv          load: spawning server instance with name=qwen2.5-coder-1.5b on port 39307
+I srv          load: spawning server instance with args:
+I srv          load:   /app/llama-server
+I srv          load:   --host
+I srv          load:   127.0.0.1
+I srv          load:   --jinja
+I srv          load:   --lora-scaled
+I srv          load:   /models/llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf:1
+I srv          load:   --no-mmap
+I srv          load:   --port
+I srv          load:   39307
+I srv          load:   --alias
+I srv          load:   qwen2.5-coder-1.5b
+I srv          load:   --ctx-size
+I srv          load:   32768
+I srv          load:   --model
+I srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+I srv          load:   --n-gpu-layers
+I srv          load:   99
+```
+
+Three things are readable off that. **(1)** The CSV form `--lora-scaled <key>:<scale>` survives
+from the preset's single line all the way to the child's argv. **(2)** `--ctx-size 32768` is the
+preset's value and coexists with `LlmExtraArgs` (`--jinja` / `--no-mmap` / `--n-gpu-layers 99`)
+— what a deployment that kept `-c` out of `LlmExtraArgs` looks like. **(3)** `--alias` is the
+catalogue row's id.
+
+🔴 **What could NOT be taken is the adapter-load line itself.** This image
+(`af-llamacpp:server-cuda`) writes nothing about loading an adapter even at verbosity 3 — the
+child's log runs from `load_model: loading model '…gguf'` (05:07:38.435Z) to
+`llama_server: model loaded` (05:07:41.736Z), 3.3 seconds with one warning in between.
+**The evidence that it loaded is the argv plus the fact that the child came up**: llama.cpp
+aborts startup on an adapter it cannot apply, so a child that listened while holding
+`--lora-scaled` applied it. `/models`'s `status.args` was not read — the gateway accepts only a
+Workspace-issued token, so reading it means driving a session inside the deployment, and
+`status.args` is a copy of this argv anyway (the same fact one layer later). **The previous
+section's "`--lora-scaled` in `status.args`" is taken as satisfied by the argv in front of it.**
+
+"The pinned fine-tune is visible in what the model answers" (the second half of decision 5's
+completion definition) is **still unconfirmed**. An abliterated adapter moves refusal rates, and
+judging that needs output compared against the base.
+
+### #518's item 3 — the wrapper started the engine; the WAIT is still not observable
+
+The engine came up through the wrapper, and the evidence is that the arguments the wrapper
+assembles are in the log: `--host 0.0.0.0 --port 8080`
+(`llama_server: listening on http://0.0.0.0:8080`) and the `$(cat /models/cmdline)` content
+`--models-preset /models/llm/presets.ini`
+(`load_models: Loaded 2 custom model presets from /models/llm/presets.ini`). The image's own
+`ENTRYPOINT` (`/app/llama-server` with no arguments) produces none of those lines.
+
+⚠️ **That it WAITED on `/models/ready` was not observable this time either.** The timeline says
+why:
+
+| time (UTC) | event |
+|---|---|
+| 05:04:21 | `mode: on` |
+| 05:04:36 | the container instance registers (`i-00fcaa3f34385a588`, g6.xlarge, ap-northeast-1a) |
+| 05:05:05.8 → 05:06:02.0 | the image pull (56 s) |
+| 05:05:23.386 | the sidecar's first line |
+| 05:05:32.661 | `touch /models/ready` and `engine fetch: engine may start; 1 file(s) still to sync` |
+| 05:07:24.865 | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18556689568 bytes in 112s` |
+| 05:07:26.228 | `engine fetch: sync done` / `watching … every 60s for models enabled later` |
+| **05:07:38.315** | **llama-server's first line** (the process started 0.8 s earlier by its own clock) |
+| 05:07:41.736 | the child reports `model loaded` |
+| 05:07:57.9 | ECS's `startedAt` |
+
+**The marker was placed at 05:05:32 and the engine's shell only began around 05:07:37** — 125
+seconds later, and eleven seconds AFTER `sync done`. So the wrapper found the marker already
+there and its loop probably never went round once. The pull finished at 05:06:02, so the pull
+does not explain it; what is left is **unpacking a 2.47 GB CUDA image onto the instance store
+while an 18.5 GB S3 fetch was hitting the same disk** — and no log line anywhere says so.
+**Hardware evidence that the wrapper waits has to be MADE, exactly like #512's window** — it
+needs a fast-starting engine and a large non-start model. Item 3's "starts on seeing the marker"
+is satisfied; "blocks while the marker is absent" is not.
+
+### The other two items — `sync done` and the contract gate
+
+- `engine fetch: sync done` is in the table above (the first time on the llm role; last time it
+  was only the image one). The line after it is
+  `watching /af-ws/engines/llm/active every 60s for models enabled later`, so `WATCH_SEC`'s
+  resident pass runs on this role too.
+- **No log holds `CONTRACT MISMATCH`.** With a positive control: the same `filter-log-events`
+  given `"sync done"` returns two streams (`llm-fetch/fetch/<task>` and
+  `image-fetch/fetch/<task>`), i.e. the filter ran. `"CONTRACT MISMATCH"` is zero over 24 hours.
+
+### Capacity was there this time — the second rung went unused
+
+The `g6.xlarge` that sixteen minutes of retrying could not get in the previous section was there
+**fifteen seconds after `mode: on`**, in ap-northeast-1a, with no `InsufficientInstanceCapacity`
+at all. **Exhaustion is a function of the clock, not a property of the deployment** — which is
+all that says, except that no occasion to use ADR 0074's second rung arrived. The GPU was
+acquired at 05:04:36 and `mode: off` went in at 05:13:20 — **about nine minutes**, roughly $0.2
+at the g6.xlarge rate.
+
+### Putting it back
+
+The LoRA row was **disabled and left in place** (the S3 object too), and `mode` went back to
+`ondemand` via `off`. The rung was never moved (`l4`, `class_is_default: true`). `default` had
+been moved to the 1.5B row for the test, so it went back to the 30B one and
+`GET /api/admin/engines` was diffed against the snapshot taken beforehand — **the two existing
+rows match on every field**, and the only difference is the one new LoRA row (`enabled: false`,
+`default: false`, `selected: false`). The active set is back to `start: qwen3-coder-30b-a3b`
+with `lo` and `loras` gone.

@@ -3079,6 +3079,11 @@ seed を固定した 2 回目の要求が ComfyUI の出力キャッシュに当
 ロード行が出ること（`/models` の `status.args` に `--lora-scaled` が見えること）と、
 固定した微調整が応答に効いていること。実機レーンの担当である。
 
+> ✅ **前半は実機で確かめた（2026-09-11）**——ルータが子を起こす argv に
+> `--lora-scaled /models/llm/loras/….gguf:1` が出た。ただし**ロード行そのものは出ない**
+> （このイメージはアダプタのロードを 1 行も書かない）。後半（応答への効き）は未確認。
+> 「#513 と #518 の llm 側を実機で閉じた」節。
+
 
 ## 追記 — 埋め込みシェルをイメージへ出した（2026-09-11・案 A）
 
@@ -3248,7 +3253,7 @@ ingest の 2 コンテナが `CannotPullContainerError` になる。** P6 の「
 |---|---|---|
 | 1 | `af-engine-tools` を 4 コンテナが引く | **4 つとも参照を確認、3 つは実際に引けた** |
 | 2 | fetch の `sync done` と `WATCH_SEC` の監視行 | **通った** |
-| 3 | idle wrapper が `/models/ready` で起動（llm・image） | **image は通った。llm は未確認**（下記） |
+| 3 | idle wrapper が `/models/ready` で起動（llm・image） | **image は通った。llm は未確認**（下記。llm も 05:07Z に通した——末尾の節） |
 | 4 | Console から取り込み 1 本と `MODE=delete` | **通った** |
 | 5 | どのログにも `CONTRACT MISMATCH` が無い | **1 つも無い** |
 
@@ -3342,3 +3347,137 @@ Zone in your request or choosing ap-northeast-1c.
 ⚠️ これは欠陥ではなく外部条件だが、**ADR 0074 の梯子の 2 段目がこの場面の逃げ道になりうる**
 ——`l4` が枯れているときに `l40s`（g6e.xlarge）へ落として起こす、という使い方である。今回は
 段を上げていない（GPU 費用。0074 P1 で済んでいる）。
+
+> ✅ **2 件とも次の節で閉じた（同日 05:07Z）。** 同じ `g6.xlarge` が同じ AZ で
+> `mode: on` の 15 秒後に取れている——**枯渇は時刻の関数**で、逃げ道を使う機会は来なかった。
+
+## #513 と #518 の llm 側を実機で閉じた（2026-09-11・開発配備）
+
+前節が「AWS の容量枯渇で採れなかった」と書いて残した 2 件——**#518 の項目 3（llm の idle
+wrapper）と #513 の preset 固定 LoRA**——を、同じ開発配備で閉じた。**2 件とも通った。**
+段は上げていない（`l4` が今回は取れた。下記）。
+
+配備は `dev-deploy.sh` で `0.18.1-dev-dd0e77a5` → **`0.18.1-dev-2e765534`**（`origin/develop`
+2e765534）。#532 が入れた経路をそのまま流した結果は
+`cfn/PARAMETERS-60-engines.md` の「The engine tools image」に書いた。
+
+### #513——`--lora-scaled` は実機の argv に出た
+
+1.5B の行（`qwen2.5-coder-1.5b`）を土台に、`ggml-org/LoRA-Qwen2.5-1.5B-Instruct-abliterated-F16-GGUF`
+の `LoRA-Qwen2.5-1.5B-Instruct-abliterated-f16.gguf`（374,395,136 バイト）を
+`POST /api/admin/engines/llm/ingest` で取り込み（`llm/loras/` 直下・平置き、`kind=lora`、
+`base_model=qwen2.5-coder-1.5b`）、有効化して `mode=on` で起こした。取り込みは 3 分。
+
+active set は決定 5 が設計したとおりの形になった（`lo` は `<キー>:<scale>` で、scale は既定の 1）:
+
+```
+"start": "qwen2.5-coder-1.5b",
+"models": [ { "id": "qwen2.5-coder-1.5b",
+              "f": ["llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf"], "c": 32768,
+              "lo": ["llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf:1"] }, … ],
+"loras": ["llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf"]
+```
+
+そしてルータが子を起こすときの引数が、そのまま CloudWatch に出た（`llm/llama/<task>`・
+05:07:38.323Z。ルータは自分のコマンドラインを 1 引数 1 行で印字する）:
+
+```
+I srv  load_startup: (startup) loading model qwen2.5-coder-1.5b
+I srv          load: spawning server instance with name=qwen2.5-coder-1.5b on port 39307
+I srv          load: spawning server instance with args:
+I srv          load:   /app/llama-server
+I srv          load:   --host
+I srv          load:   127.0.0.1
+I srv          load:   --jinja
+I srv          load:   --lora-scaled
+I srv          load:   /models/llm/loras/qwen2.5-1.5b-instruct-abliterated-f16.gguf:1
+I srv          load:   --no-mmap
+I srv          load:   --port
+I srv          load:   39307
+I srv          load:   --alias
+I srv          load:   qwen2.5-coder-1.5b
+I srv          load:   --ctx-size
+I srv          load:   32768
+I srv          load:   --model
+I srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
+I srv          load:   --n-gpu-layers
+I srv          load:   99
+```
+
+読み取れることが 3 つある。**(1)** `--lora-scaled <キー>:<scale>` の CSV 形が、preset 1 行から
+子の argv まで欠けずに届いている。**(2)** `--ctx-size 32768` は preset 側の値で、
+`LlmExtraArgs`（`--jinja` / `--no-mmap` / `--n-gpu-layers 99`）と共存している——「`-c` を
+`LlmExtraArgs` に置くな」が守られている配備の姿である。**(3)** `--alias` が行の id である。
+
+🔴 **採れなかったのは「LoRA のロード行」そのものである。** このイメージ
+（`af-llamacpp:server-cuda`）は verbosity 3 でもアダプタのロードを 1 行も出さない——子の
+ログは `load_model: loading model '…gguf'`（05:07:38.435Z）から
+`llama_server: model loaded`（05:07:41.736Z）まで 3.3 秒のあいだ、警告 1 行しか無い。
+**ロードされたことの証拠は argv と「子が上がったこと」の 2 つ**である: llama.cpp は適用でき
+なかったアダプタでは起動を中止するので、`--lora-scaled` を持って listen した子は適用に成功
+している。`/models` の `status.args` は読んでいない——ゲートウェイは Workspace 発行トークン
+しか受け付けないので、そこを読むには配備側でセッションを 1 本駆動する必要があり、しかも
+`status.args` はこの argv の写しである（同じ事実を 1 段後ろで見ることになる）。**前節が残した
+「`status.args` に `--lora-scaled` が出ること」は、より手前の argv で満たしたと読む。**
+
+「固定した微調整が応答に効いていること」（決定 5 の完了の定義の後半）は**まだ確かめていない**。
+abliterated は応答の拒否率を動かす種類の LoRA で、判定には土台と比べた出力が要る。
+
+### #518 の項目 3——wrapper は起動した。ただし「待った」ところは今回も見えない
+
+エンジンは wrapper 経由で上がった。証拠は wrapper が組み立てる引数がそのまま出ていることである
+——`--host 0.0.0.0 --port 8080`（`llama_server: listening on http://0.0.0.0:8080`）と、
+`$(cat /models/cmdline)` に入っていた `--models-preset /models/llm/presets.ini`
+（`load_models: Loaded 2 custom model presets from /models/llm/presets.ini`）。
+イメージ自身の `ENTRYPOINT`（`/app/llama-server` に引数なし）では、この行は 1 つも出ない。
+
+⚠️ **`/models/ready` を「待った」ことは、この回も観測できていない。** 時刻を並べると理由が出る:
+
+| 時刻 (UTC) | 出来事 |
+|---|---|
+| 05:04:21 | `mode: on` |
+| 05:04:36 | container instance が登録（`i-00fcaa3f34385a588`・g6.xlarge・ap-northeast-1a） |
+| 05:05:05.8 → 05:06:02.0 | イメージの pull（56 秒） |
+| 05:05:23.386 | サイドカーの 1 行目 |
+| 05:05:32.661 | `touch /models/ready` ＋ `engine fetch: engine may start; 1 file(s) still to sync` |
+| 05:07:24.865 | `llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf 18556689568 bytes in 112s` |
+| 05:07:26.228 | `engine fetch: sync done` / `watching … every 60s for models enabled later` |
+| **05:07:38.315** | **llama-server の 1 行目**（プロセス開始は自己申告で 0.8 秒前） |
+| 05:07:41.736 | 子が `model loaded` |
+| 05:07:57.9 | ECS の `startedAt` |
+
+**印は 05:05:32 に置かれ、エンジンの shell が動き出したのは 05:07:37 ごろ**——125 秒後で、
+`sync done` の 11 秒**後**である。つまり wrapper は到着した時点で印を見つけており、
+ループは 1 周も回っていない可能性が高い。pull は 05:06:02 に終わっているので pull では説明が
+つかず、**18.5 GB の S3 取得が同じインスタンスストアを叩いている最中に 2.47 GB の CUDA
+イメージを展開していた**、というのが残る説明だが、そこを示す行はどのログにも無い。
+**「wrapper が待つ」ことの実機証拠は、#512 の窓と同じで作りに行かないと出ない**——
+起動の速いエンジン像と、start 以外に大きなモデルが要る。項目 3 が問うている「印を見て起動
+する」は満たしたが、「印が無い間ブロックする」は満たしていない。
+
+### 残り 2 項目——`sync done` と契約の門
+
+- `engine fetch: sync done` は上表のとおり（llm 役で初めて出た。前回は image 役だけだった）。
+  その次の行が `watching /af-ws/engines/llm/active every 60s for models enabled later` で、
+  `WATCH_SEC` の常駐が llm 側でも動いている。
+- **どのログにも `CONTRACT MISMATCH` は無い。** 陽性対照つき——同じ
+  `filter-log-events` に `"sync done"` を渡すと `llm-fetch/fetch/<task>` と
+  `image-fetch/fetch/<task>` の 2 本が返る（＝フィルタは走っている）。`"CONTRACT MISMATCH"`
+  は 24 時間ぶんで 0 件である。
+
+### 容量は今回あった——段の 2 段目は使っていない
+
+前節が 16 分粘って取れなかった `g6.xlarge` が、今回は **`mode: on` の 15 秒後**に
+ap-northeast-1a で取れた（`InsufficientInstanceCapacity` は 1 回も出ていない）。
+**容量枯渇は時刻の関数であって配備の性質ではない**、というだけのことだが、
+ADR 0074 の梯子の 2 段目を実際に使う機会は今回は来なかった。GPU は
+05:04:36 に取得・05:13:20 に `mode: off`——**約 9 分**、g6.xlarge 換算で $0.2 程度である。
+
+### 後片付け
+
+LoRA の行は**無効化して残置**し（S3 のオブジェクトも残置）、`mode` は `off` を経由して
+`ondemand` へ戻した。段は最初から動かしていない（`l4`・`class_is_default: true`）。
+検証のために `default` を 1.5B の行へ移していたので 30B の行へ戻し、
+`GET /api/admin/engines` を前後で突き合わせた——**既存 2 行は全フィールド一致**、差分は
+新しい LoRA 行 1 本（`enabled: false` / `default: false` / `selected: false`）だけである。
+active set も `start: qwen3-coder-30b-a3b` に戻り、`lo` と `loras` は消えた。

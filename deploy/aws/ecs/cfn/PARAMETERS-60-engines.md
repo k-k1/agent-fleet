@@ -1078,6 +1078,37 @@ one (2026-09-11: GHCR empty, ECR empty, 20-platform not updated, three hand-run 
 out of it, and none of them in a script). `deploy/local/ecs-lifecycle-stub-test.sh` case 3i
 holds the order, with the two positive controls (swap the steps, drop the copy).
 
+**The order was run once on a real deployment (2026-09-11, `dev-deploy.sh`).** On a deployment
+that had already been through the three hand-run steps, so this is what the SECOND and every
+later run looks like — three decisions, all of them "nothing to do", printed rather than
+assumed:
+
+```
+==> af-engine-tools:2026-09-11 is in ECR and engine-tools/ is unchanged - nothing to do
+==> plan for <ingress stack> (ImageTag=0.18.1-dev-2e765534):
+      1. <platform stack> (20-platform - it owns the ECR repositories)
+      3. <tts stack> (50-tts)
+      4. af-engine-tools:2026-09-11 into ECR, then <engines stack> (60-engines)
+      5. <ingress stack> (30-ingress, ImageTag=0.18.1-dev-2e765534)
+==> 20-platform: building a change set for <platform stack>
+    Waiting for changeset to be created..
+    No changes to deploy. Stack <platform stack> is up to date
+    - nothing moved in 20-platform - not deployed
+==> engine tools image for <engines stack>: af-engine-tools:2026-09-11
+    - af-engine-tools:2026-09-11 is already in ECR
+==> cloudformation deploy <engines stack> (60-engines, parameters unchanged)
+    No changes to deploy. Stack <engines stack> is up to date
+```
+
+Two things worth reading off it. **The 20-platform step is a change set that was never
+executed** — an empty one is exactly the fact that the ECR repository is already there, so the
+step costs one `create-change-set` and prints why it stopped; the `Add EcrEngineTools` /
+`Modify CpTaskRole` pair from the first run does not come back. And **the copy decision is a
+line, not a silence**: "already in ECR" is what makes the difference between a skipped copy and
+a copy that was never attempted readable afterwards, which is the whole failure mode this
+section exists for. `dev-deploy.sh`'s own step 5b says the same thing one level up, in the form
+that also covers the bake ("`engine-tools/` is unchanged").
+
 **The one step you still run by hand is the bake**, and only when GHCR has not got the tag:
 nothing on a release route may produce an image, so `update.sh` and `release-ecr.sh` stop there
 and say to run `engine-tools-image.yml` with that tag first. On a standard release GHCR has it
