@@ -65,7 +65,7 @@ is the one that lives closest to the 51,200-byte inline limit `af_cfn_deploy` me
 **Why Managed Instances and not Fargate.** Fargate has no GPU (AWS Fargate FAQ;
 containers-roadmap #88, open since 2019), so ADR 0070's shape — "an ECS service whose desired
 count is 0 while nobody wants it" — is bought here from ECS Managed Instances instead: AWS owns
-the instance, the AMI and the NVIDIA driver, and terminates the box once the task is gone.
+the instance, the AMI and the NVIDIA driver, and terminates the instance once the task is gone.
 
 All measured on a real cluster on 2026-09-07 through `deploy/aws/ecs/harness/engprobe.yaml`.
 
@@ -77,7 +77,7 @@ All measured on a real cluster on 2026-09-07 through `deploy/aws/ecs/harness/eng
 - `ClusterCapacityProviderAssociations` REPLACES the cluster's provider list and requires
   `DefaultCapacityProviderStrategy` — so the full list is named in the template and the default
   strategy is deliberately EMPTY. Put anything in it and a service that forgot its `LaunchType`
-  lands on the GPU box (ADR 0070 decision 1, ADR 0071 decision 1);
+  lands on the GPU instance (ADR 0070 decision 1, ADR 0071 decision 1);
 - `InstanceRequirements` refuses `InstanceGenerations` together with generation-bearing type
   names, and `AcceleratorCount` needs `AcceleratorTypes` alongside it;
 - `DesiredCount` on an `ECS::Service` returns to its declared value on EVERY service update —
@@ -113,12 +113,12 @@ CloudFormation run. Eight parameters were retired, in two steps:
 
 | Retired | In | What replaces it |
 | --- | --- | --- |
-| `LlmModelFile` / `ImageModelFile` | 0.18.0 | nothing — the box mirrors the bucket's layout |
+| `LlmModelFile` / `ImageModelFile` | 0.18.0 | nothing — the instance mirrors the bucket's layout |
 | `LlmModelS3Key` / `ImageModelS3Key` | P6 | a model's files, in the catalogue row |
 | `LlmModelIds` / `ImageModelIds` | P6 | the catalogue row's id |
 | `LlmContextTokens` / `LlmMaxOutputTokens` | P6 | the row's own window, per MODEL |
 
-`LlmExtraArgs` / `ImageExtraArgs` **stay**: those are the BOX's flags (`-ngl 99`,
+`LlmExtraArgs` / `ImageExtraArgs` **stay**: those are the INSTANCE's flags (`-ngl 99`,
 `--diffusion-fa`), not a model's.
 
 🔴 **Before updating a deployment that named a model key, add `<role>Enabled=true`.** Until P6
@@ -186,7 +186,7 @@ registered. That is a supported state, not a broken one.
 ### 0.18.1: the image role can be bought on Spot
 
 New parameter, `ImageCapacityOptionType` (`ON_DEMAND` by default, so **nothing changes for a
-deployment that leaves it alone**). Set it to `SPOT` and the image role's box is bought on Spot —
+deployment that leaves it alone**). Set it to `SPOT` and the image role's instance is bought on Spot —
 in ap-northeast-1 that was measured at 30 days without one on-demand hour: `g6.xlarge` at
 $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before setting it:
 
@@ -195,7 +195,7 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
   the cold start again. Details and the measurements:
   [the capacity providers](#the-capacity-providers);
 - Spot has **its own quota**, `L-3819A6DF`, whose default is 0. The provider is created happily
-  without it and then never buys a box — an engine that will not start, with nothing to read.
+  without it and then never buys an instance — an engine that will not start, with nothing to read.
   Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
   L-3819A6DF`.
 
@@ -260,7 +260,7 @@ model's declared window is silently gone. Windows belong to the catalogue.
 
 ### `--no-mmap` is in the default `LlmExtraArgs`, and it is the second-biggest win in this stack
 
-llama.cpp memory-maps the GGUF by default and lets page faults pull it in. On this box that
+llama.cpp memory-maps the GGUF by default and lets page faults pull it in. On this instance that
 reaches only about half of what the disk can do, and `--no-mmap` — a plain sequential read —
 gets the rest. Measured cold both ways (two copies of the same 18.5 GB object, each load
 preceded by 18.5 GB of other I/O so a 14 GB cgroup cache is cycled and neither is warm):
@@ -296,7 +296,7 @@ before inheriting this default.
 
 How many models the router may hold at once (`--models-max`; upstream's default is 4, `0` =
 unlimited). **1 here, deliberately.** The router knows nothing about VRAM: a second 30B Q4 on an
-L4 does not make the box slow, it makes CUDA crash (ADR 0071 decision 2). At 1 the second model's
+L4 does not make the instance slow, it makes CUDA crash (ADR 0071 decision 2). At 1 the second model's
 first request costs an unload plus a load — 267 s of weights into VRAM, measured — which is the
 price of this design and is shown in the panel rather than hidden.
 
@@ -343,24 +343,24 @@ Managed Instances has no allocation-strategy field — `aws ecs create-capacity-
 --generate-cli-skeleton` shows `managedInstancesProvider` carrying nothing but
 `instanceRequirements` and the price-protection knobs
 (`onDemandMaxPricePercentageOverLowestPrice`), which is also the tell for what selection does
-honour. So express the priority as price and let the intended box be the cheapest member:
+honour. So express the priority as price and let the intended instance be the cheapest member:
 with the ADR's table (Tokyo, on-demand + MI management fee per hour) g6.xlarge is $1.258 and
-g5.xlarge $1.573, and the L4 box is what you get while it exists. **A cheaper type added here
+g5.xlarge $1.573, and the L4 instance is what you get while it exists. **A cheaper type added here
 becomes the default rather than the fallback** — g4dn.xlarge at $0.765 would win every
 placement, and its T4 is half the VRAM and unmeasured for this role. A fallback belongs above
-the intended box, never below it.
+the intended instance, never below it.
 
 Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole default
 8-vCPU G-family quota by itself, and then the other role cannot launch at all.
 
-⚠️ **When that quota bites, the boxes spending it are invisible where you would look for them.**
+⚠️ **When that quota bites, the instances spending it are invisible where you would look for them.**
 Measured 2026-09-09, chasing a `VcpuLimitExceeded` on a deployment that appeared to have no GPU
-boxes at all: **Managed Instances runs its instances in an AWS-managed account**, so
+instances at all: **Managed Instances runs its instances in an AWS-managed account**, so
 `aws ec2 describe-instances --filters Name=instance-type,Values=g6.*` returns **nothing** while
 the quota is fully spent. The count that matters is
 `aws ecs list-container-instances`/`describe-container-instances` (which does report
 `ec2InstanceId` and `ecs.instance-type`). And the quota is not freed the moment a task stops:
-a terminating box holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
+a terminating instance holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
 minutes after the cluster looks idle. Wait for the container instance to leave the cluster
 rather than for the task to stop.
 
@@ -379,12 +379,12 @@ for; with `LlmGpuCount: 1` that is the one card.
 
 ### `LlmGpuCount`, `LlmVCpuMin` / `LlmVCpuMax`, `LlmMemMinMiB` / `LlmMemMaxMiB`
 
-GPUs per box (and the task's GPU resource requirement; 0 = a CPU box, test only) and the bounds
+GPUs per instance (and the task's GPU resource requirement; 0 = a CPU instance, test only) and the bounds
 of the instance requirement.
 
 ### `LlmStorageGiB`
 
-EBS data volume per box, when `LlmUseLocalStorage` is off. It has to hold the image layers plus
+EBS data volume per instance, when `LlmUseLocalStorage` is off. It has to hold the image layers plus
 every model the role pulls from S3. MI exposes only the SIZE — throughput and IOPS cannot be
 asked for (measured against the API), which is why `UseLocalStorage` exists.
 
@@ -393,7 +393,7 @@ asked for (measured against the API), which is why `UseLocalStorage` exists.
 Use the instance store instead of an EBS data volume. **On by default since 2026-09-09, when the
 measurement ADR 0071 open question 1 asked for was finally taken.** The premise held: on
 g6.xlarge the EBS baseline of 125 MB/s bounded both halves of a cold start, and taking it away
-roughly halves the whole thing. Measured on the deployment's own `llm` role, same box, same two
+roughly halves the whole thing. Measured on the deployment's own `llm` role, same instance, same two
 models, against the numbers recorded for the EBS setting:
 
 | | EBS (recorded) | instance store | |
@@ -408,12 +408,12 @@ models, against the numbers recorded for the EBS setting:
 Two things worth reading off that table rather than the headline. **The win is the VRAM load,
 not the fetch**: taking the EBS write cap away only moved the 18.5 GB fetch 1.4×, because the
 next limit — S3 and the CLI, around 160 MB/s — was right behind it. And the swap is where a user
-actually feels it: ADR 0072 decision 3 priced "one model per box, swap on demand" at 276-282
+actually feels it: ADR 0072 decision 3 priced "one model per instance, swap on demand" at 276-282
 seconds, and it now costs 98.5.
 
-The costs are unchanged and both are real: an instance store is wiped with the box (so every
+The costs are unchanged and both are real: an instance store is wiped with the instance (so every
 cold start still pays a fresh S3 fetch — but so did the EBS data volume, which MI also deletes),
-and `LlmStorageGiB` stops meaning anything while this is on. The box gets whatever the instance
+and `LlmStorageGiB` stops meaning anything while this is on. The instance gets whatever the instance
 type carries, which on g6.xlarge is 250 GB — measured as a 245 GB ext4 filesystem, i.e. MORE
 than the 120 GiB the EBS setting asked for, which is why the disk ceiling on how many models can
 be enabled at once went up rather than down (ADR 0072 open question 11).
@@ -423,13 +423,13 @@ g6 and g5 size does; a type without one cannot satisfy the capacity provider.
 
 ### `LlmScaleInAfter`
 
-`infrastructureOptimization.scaleInAfter`, in seconds: how long MI leaves an idle box before
+`infrastructureOptimization.scaleInAfter`, in seconds: how long MI leaves an idle instance before
 terminating it. `-2` = do not set it, i.e. AWS's default (measured drain: 427 and 463 seconds on
-a GPU box, 93 on a CPU box). `-1` = never tidy up. `0`-`3600` = that many seconds. It was worth
-having as a knob while a box kept a little longer might have been a warm start; since 2026-09-09
-it is not, because a kept box cannot hold its models at all — see [The model
+a GPU instance, 93 on a CPU instance). `-1` = never tidy up. `0`-`3600` = that many seconds. It was worth
+having as a knob while an instance kept a little longer might have been a warm start; since 2026-09-09
+it is not, because a kept instance cannot hold its models at all — see [The model
 volume](#the-model-volume), where decision 7(c) is disproven rather than merely unproven. Keeping
-a GPU box past its work now buys the image layers and nothing else, at $1.26/hour, so the AWS
+a GPU instance past its work now buys the image layers and nothing else, at $1.26/hour, so the AWS
 default is the right setting and `-1` is a way to spend money on nothing.
 
 ### `LlmIdleSec`
@@ -446,9 +446,9 @@ with the image pulled over NAT, 586 s with it pulled from ECR; ADR 0070's 300 s 
 fail all of them).
 
 Once this deployment declares an instance-class ladder (`LlmInstanceClasses`, ADR 0074), a start
-that changes the rung also has to cover the old box draining (150 s) plus the EC2 quota release,
+that changes the rung also has to cover the old instance draining (150 s) plus the EC2 quota release,
 which lags the ECS deregistration by up to 6 minutes (measured: `VcpuLimitExceeded` for 389 s
-after the old box had left the cluster), before the cold start even begins — 497 s measured
+after the old instance had left the cluster), before the cold start even begins — 497 s measured
 against the 900 s default. Do not lower this below the default in a deployment that declares a
 ladder; a rung change would then be recorded as a failed start every time.
 
@@ -458,10 +458,10 @@ The engine's initial mode, written into the SSM table as the DEFAULT only — on
 it the stored setting wins, because under on-demand the desired count is not the admin's intent
 (ADR 0070 decision 7).
 
-Switching a running engine from `on` back to `ondemand` stops its box on the controller's next
+Switching a running engine from `on` back to `ondemand` stops its instance on the controller's next
 tick: the demand mark (`engine_<key>_demand_at`) is stale after an admin-driven start, so the
-idle rule fires at once. For the `image` role that throws away a box that just synced up to
-48 GB and costs the full sync again. To warm a box that should then stay on demand, leave the
+idle rule fires at once. For the `image` role that throws away an instance that just synced up to
+48 GB and costs the full sync again. To warm an instance that should then stay on demand, leave the
 mode at `ondemand` and wake it with a request through the gateway (measured, ADR 0072 "P2 の残作業
 4・5 を実機で押した").
 
@@ -470,7 +470,7 @@ mode at `ondemand` and wake it with a request through the gateway (measured, ADR
 A mirror of the `llm` block, and deliberately a mirror rather than a shared set of parameters:
 decision 2 is that instance requirements are DECLARED per role, because the floor is a VRAM
 number (SDXL fp16 measured 7,379 MiB against the 30B's 20,943) and the two roles must never land
-on the same box — CUDA does not slow down when VRAM runs out, it crashes.
+on the same instance — CUDA does not slow down when VRAM runs out, it crashes.
 
 ### `ImageEngine`
 
@@ -480,7 +480,7 @@ checkpoints per REQUEST). One role, one task definition, one service either way 
 switches the `engine` container's `Image` and `Command` and the engine table's `health`/
 `provider` fields, never the shape of the stack. A second container/service pair for `comfy`
 would need its own capacity-provider association and can never run at the same time as
-`sdcpp`'s (ADR 0071 decision 2 — the two roles never share a box, let alone the same role run
+`sdcpp`'s (ADR 0071 decision 2 — the two roles never share an instance, let alone the same role run
 twice), so there is nothing to gain from one.
 
 `ImageComfyImageTag` (default `v0.34.0`) is the tag inside `af-comfyui`, baked by
@@ -545,10 +545,10 @@ load the checkpoint out.
 
 ### `ImageStorageGiB`
 
-EBS data volume per box, when `ImageUseLocalStorage` is off. Smaller than the llm role's 120
+EBS data volume per instance, when `ImageUseLocalStorage` is off. Smaller than the llm role's 120
 because the whole role is a 2.3 GB image and a 6.5 GB checkpoint — but not much smaller: the
 anonymous host volume is re-allocated per task and never reclaimed (see the llm task definition),
-so a box that MI keeps accumulates one copy per start.
+so an instance that MI keeps accumulates one copy per start.
 
 ### `ImageUseLocalStorage`
 
@@ -559,9 +559,9 @@ a minute either way.
 ### `ImageScaleInAfter`
 
 `infrastructureOptimization.scaleInAfter`, in seconds. `-2` = do not set it (AWS's default). `-1`
-= never tidy up, which P0 measured to be a trap with an anonymous model volume: the box is kept
+= never tidy up, which P0 measured to be a trap with an anonymous model volume: the instance is kept
 but the next task gets a FRESH empty directory and re-fetches anyway, while the old copies are
-never reclaimed. Left at the default until decision 7(c) has a proven warm-box shape.
+never reclaimed. Left at the default until decision 7(c) has a proven warm-instance shape.
 
 ### `ImageIdleSec`
 
@@ -575,7 +575,7 @@ making.
 
 How long a start may take before the controller calls it failed. sd-server measured 195 s from
 task creation to listen (135 s of that a GHCR pull, so less from ECR) — but the dominant term is
-how long the BOX takes to appear, measured anywhere from 8 to 88 s and not something a deadline
+how long the INSTANCE takes to appear, measured anywhere from 8 to 88 s and not something a deadline
 should be tuned against (ADR 0071, P0 measurement 1). With an `ImageInstanceClasses` ladder
 declared, the rung-change budget under `LlmStartDeadlineSec` applies here unchanged.
 
@@ -588,7 +588,7 @@ As `LlmMode`: the initial mode, a default the stored setting overrides — inclu
 
 `LlmInstanceClasses` / `ImageInstanceClasses` (ADR 0074) are the ladder of GPU rungs an
 administrator may switch a role between from the Console, without a stack update. **Both default
-to empty, and empty means the feature does not exist**: the box is whatever the parameters above
+to empty, and empty means the feature does not exist**: the instance is whatever the parameters above
 bought, and the Control Plane never calls `DescribeCapacityProviders` or `UpdateCapacityProvider`
 at all.
 
@@ -627,9 +627,9 @@ instance requirements (`AllowedInstanceTypes`, `AcceleratorTotalMemoryMiB.Min`, 
 is saved and again immediately before every start, because a stack update puts this template's
 declaration back and nothing tells the CP that happened.
 
-⚠️ **It reaches the NEXT box only** — the API's own words are "These changes only apply to new
+⚠️ **It reaches the NEXT instance only** — the API's own words are "These changes only apply to new
 Amazon ECS Managed Instances". So a running engine keeps its card until it is replaced, and the
-Control Plane will not start a new task while a box of another rung is still registered: that is
+Control Plane will not start a new task while an instance of another rung is still registered: that is
 the `VcpuLimitExceeded` above, and it is also how a task would land straight back on the old
 card. The wait is bounded at 20 minutes, because `scaleInAfter: -1` would otherwise make it
 never end.
@@ -670,12 +670,12 @@ writes `/models/cmdline` — the model-specific half of the argument list. Every
 role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
 and `ALIAS_FLAG` / `CTX_FLAG`.
 
-### `SYNC_ALL`: which engines need more than the starting model on the box
+### `SYNC_ALL`: which engines need more than the starting model on the instance
 
 Whether a role syncs the OTHER enabled models is a per-engine question, and it is asked through
 `SYNC_ALL` rather than inferred:
 
-| engine | switches models? | `PRESET_FILE` | `SYNC_ALL` | on the box |
+| engine | switches models? | `PRESET_FILE` | `SYNC_ALL` | on the instance |
 |---|---|---|---|---|
 | llama.cpp | yes, it is a router | a path | — | every enabled model |
 | sd.cpp | no, one checkpoint at start | `""` | `""` | the starting model only |
@@ -697,7 +697,7 @@ is why the fetch log read as healthy. (Measured on af-sandbox, ADR 0072 P2 実�
 now says `sync done`, and `engine-sidecar-test.sh` covers both settings.)
 
 The rule to hold onto: **`PRESET_FILE` says how one engine is CONFIGURED, never what has to be
-on the box.** It still gates the preset file and the `START` re-derivation that goes with it —
+on the instance.** It still gates the preset file and the `START` re-derivation that goes with it —
 those really are router-with-a-preset concerns — and nothing else.
 
 ### The START model gates the engine; the rest are synced behind it
@@ -738,7 +738,7 @@ Two consequences to keep in mind:
   (Answered by `PENDING_PARAM` below, 2026-09-11: the caller is now told to retry instead.)
 - 🔴 **Every exit from the sidecar must leave the marker**, which is why it opens with
   `trap 'touch $MODELS_DIR/ready' EXIT`. Without it a failed fetch — or an empty catalogue —
-  leaves the engine waiting out its whole hour-long loop on a box billing at $1.26/h, and the
+  leaves the engine waiting out its whole hour-long loop on an instance billing at $1.26/h, and the
   service never stabilises (decision 1(b)). With it, the wrapper finds no `cmdline` and idles,
   which is the case everything downstream already understands.
   `deploy/local/engine-sidecar-test.sh` asserts both the ordering and the marker, and each
@@ -804,8 +804,8 @@ loads is still the next start's business (decision 4).
 ### Tuning the AWS CLI is NOT worth it — measured
 
 The obvious next lever after start-first sync was the copy itself: 18.5 GB at an effective
-161 MB/s looked slow next to the 567 MB/s Mountpoint got off the same class of box. It is slow,
-but **the AWS CLI's settings are not why**. `harness/probe-s3-fetch-tuning.sh`, one box, the same
+161 MB/s looked slow next to the 567 MB/s Mountpoint got off the same class of instance. It is slow,
+but **the AWS CLI's settings are not why**. `harness/probe-s3-fetch-tuning.sh`, one instance, the same
 object four times, stock first:
 
 | `max_concurrent_requests` / `multipart_chunksize` | | |
@@ -820,7 +820,7 @@ tuning is worth about 9%, i.e. 8 seconds off a 267-second cold start, in exchang
 sidecar writing an `~/.aws/config` and this template spending budget it does not have. **Not
 adopted.**
 
-**s5cmd was then measured, and it revises that reading.** The Go client, same object, same box,
+**s5cmd was then measured, and it revises that reading.** The Go client, same object, same instance,
 same task as an `aws s3 cp` control (`harness/probe-fetch-client.sh`):
 
 | | | |
@@ -853,7 +853,7 @@ keeps its newline — and the shell then reads the second half as a new command.
 live deployment: a `jq` filter indented under its own `jq -r` ran as `jq -r --arg s "$START"`
 (which dumps the whole document) followed by `sh: [(.models[]?|…: command not found`. The
 service reached a steady state with the idle placeholder and nothing anywhere said why — one GPU
-box and ten minutes to notice. One command per line, and `deploy/local/engine-sidecar-test.sh`
+instance and ten minutes to notice. One command per line, and `deploy/local/engine-sidecar-test.sh`
 extracts the script as deployed and runs it (CI runs that).
 
 Four rules, each with a failure behind it:
@@ -870,8 +870,8 @@ Four rules, each with a failure behind it:
 - **The llm role's cold start therefore grows with the sum of the enabled GGUFs** — ADR 0072
   decision 9, and what the panel's "sync +N s" estimate is for. The same is true of `comfy`'s
   enabled checkpoints, for the same reason.
-- **A file already on the box is not re-fetched.** The volume is fresh per task today, so this
-  is currently a no-op — it is what makes a warm box worth anything if ADR 0071 decision 7(c)
+- **A file already on the instance is not re-fetched.** The volume is fresh per task today, so this
+  is currently a no-op — it is what makes a warm instance worth anything if ADR 0071 decision 7(c)
   ever gets one.
 
 **Router presets (`PRESET_FILE`, the llm role).** With it set the script also writes an INI
@@ -926,7 +926,7 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   `--port`. `--lora-model-dir` is STATED rather than defaulted, because the default is the
   current directory — `/` here — and that is the leading suspicion for the async job API dying
   in `/proc` (ADR 0072 open question 6).
-- **`--models-max` is on the llm wrapper, not in the preset**: it is a property of the BOX (how
+- **`--models-max` is on the llm wrapper, not in the preset**: it is a property of the INSTANCE (how
   many models fit in this L4's VRAM), not of a model, so it stays a stack parameter
   (`LlmModelsMax`) while everything per-model comes from the catalogue.
 - **`$(cat …)` is deliberately unquoted** — the file IS an argument list. The Control Plane
@@ -1063,7 +1063,7 @@ would have to learn the new source first, or it silently starts testing a copy n
 
 **Engine tasks READ the model catalogue; the ingest task WRITES it and holds the Hugging Face
 token.** Two roles on purpose: the credential that can overwrite a model file must not sit on a
-box running a network service, and the operator's HF token must not either.
+instance running a network service, and the operator's HF token must not either.
 
 ⚠️ **No `ssmmessages:*` on either.** The measurement harness has it — the only way to reach a
 private-subnet engine from a laptop — and a production engine is not something anyone should be
@@ -1096,7 +1096,7 @@ for the image role this is the whole of it; the llm role adds `--api-key` on top
 
 ## The capacity providers
 
-**One provider per role, and the two roles never share a box.** CUDA does not slow down when
+**One provider per role, and the two roles never share an instance.** CUDA does not slow down when
 VRAM runs out, it crashes, and the two measured footprints (20.9 GB for the 30B, 7.4 GB for
 SDXL) do not both fit on one L4's 22,888 MiB (ADR 0071 decision 2). Two providers is also what
 makes `draining` observable per role — and what makes the deployment want 16 of the G-family
@@ -1106,7 +1106,7 @@ quota, see below.
 not additive — so `FARGATE` and `FARGATE_SPOT` have to be named alongside ours or every Fargate
 service in the deployment loses its provider. `DefaultCapacityProviderStrategy` is a REQUIRED
 property and is deliberately EMPTY: with a default strategy in place, a service that does not
-spell out `LaunchType: FARGATE` lands on the GPU box instead (ADR 0070 decision 1 — one missing
+spell out `LaunchType: FARGATE` lands on the GPU instance instead (ADR 0070 decision 1 — one missing
 line is the whole of that failure).
 
 ⚠️ **Creating a Managed Instances provider ADDS it to the cluster's list by itself.** Measured
@@ -1145,7 +1145,7 @@ So the name carries the option type — but only on the Spot side. `ON_DEMAND` k
 resolved template is byte for byte what it was (`deploy/local/cfn-equiv.py`).
 
 ⚠️ **Switch it while the image role is stopped.** The replacement moves the service's
-`CapacityProviderStrategy`, which is a new deployment: a box that is up drains, and the next
+`CapacityProviderStrategy`, which is a new deployment: an instance that is up drains, and the next
 request pays the cold start again (about 195 s plus the model sync). Nothing is lost, but a
 generation in flight is.
 
@@ -1156,7 +1156,7 @@ provider, `!Ref` is its NAME). 🔴 **Keep it that way.** A table that restates 
 uses, and that is where both `draining` and the ADR 0074 rung application read from.
 
 ⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a `SPOT`
-provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys a box,
+provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys an instance,
 which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and VT Spot
 Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox has 0.
 `L-DB2E81BB` does not exist; do not look for it.
@@ -1176,7 +1176,7 @@ schema: for a NEW service an unspecified desired count defaults to 1; for an EXI
 omitted from the update call. So CloudFormation creates the service running and then never
 touches the count again — which is what lets the engine be started and stopped out from under
 the template. Declaring `0` instead would reset the count on every task-definition or tag
-change, i.e. kill a GPU box mid-answer. `standup.sh` scales the new service to 0 straight after
+change, i.e. kill a GPU instance mid-answer. `standup.sh` scales the new service to 0 straight after
 creation.
 
 ⚠️ **And no `LaunchType` either**: a capacity provider strategy and a launch type are mutually
@@ -1195,7 +1195,7 @@ nothing to tune -- ECS is the only thing that ever reports the instance's health
 
 ## The G-family quota
 
-Two capacity providers means two boxes, i.e. 8 vCPU of the G-family quota at once — and a box
+Two capacity providers means two instances, i.e. 8 vCPU of the G-family quota at once — and an instance
 that was just stopped holds its 4 vCPU for the 7–8 minutes it spends draining, so waking one
 role while the other is on its way out needs 12. A deployment that uses both roles should hold
 16 or more (quota `L-DB2E81BA`, which is a support case and not auto-approved).
@@ -1205,7 +1205,7 @@ role while the other is on its way out needs 12. A deployment that uses both rol
 ### The Hugging Face token
 
 `HfTokenSecret` is a Secrets Manager secret this stack always creates, read by the INGEST task
-only (ADR 0071 decision 3: the token is the operator's, and it never lands on an engine box).
+only (ADR 0071 decision 3: the token is the operator's, and it never lands on an engine instance).
 Without a token only ungated repositories can be ingested, which covers every model in ADR
 0072's table except FLUX.1-dev and SD 3.5.
 
@@ -1341,14 +1341,14 @@ Both halves of that are measured, and both are counter-intuitive:
 - **a named `SourcePath` does NOT work.** `StorageConfiguration.storageSizeGiB` sizes the DATA
   volume Managed Instances attaches (what the container runtime uses); an arbitrary host path
   like `/var/lib/…` lands on the ROOT filesystem, which is much smaller. Measured: with
-  `SourcePath` the fetch died with "No space left on device" on a brand-new 120 GiB box, every
+  `SourcePath` the fetch died with "No space left on device" on a brand-new 120 GiB instance, every
   time, and the service never started at all.
-- **the price of the anonymous form is a fresh directory per task.** A box that MI keeps
+- **the price of the anonymous form is a fresh directory per task.** An instance that MI keeps
   (`scaleInAfter -1`) does NOT skip the S3 fetch on the next start — measured, a restart onto the
   very same instance re-fetched all 18.5 GB (126 s) — and the previous tasks' directories are
-  never reclaimed, so four starts on one kept box filled the disk.
+  never reclaimed, so four starts on one kept instance filled the disk.
 
-**2026-09-09: decision 7(c)'s "warm box" is no longer unproven — it is DISPROVEN**, and
+**2026-09-09: decision 7(c)'s "warm instance" is no longer unproven — it is DISPROVEN**, and
 `*ScaleInAfter` stays at the AWS default rather than `-1` for a reason that can now be stated
 instead of suspected. Four measurements, about four minutes of GPU:
 
@@ -1372,7 +1372,7 @@ instead of suspected. Four measurements, about four minutes of GPU:
   not change it: it changes what the data volume IS, not where a `SourcePath` may point.
 
 So on Managed Instances a warm model volume cannot be built out of host volumes at all, and
-keeping a box buys only the image layers. The harness is `harness/probe-warm-volume.sh`, which
+keeping an instance buys only the image layers. The harness is `harness/probe-warm-volume.sh`, which
 prints the DEVICE as well as HIT/MISS so the distinction that took three sessions to see is the
 first thing the next reader gets. What DID pay off is the other half of ADR 0072 open question
 10 — see `LlmUseLocalStorage`.
@@ -1435,7 +1435,7 @@ default, and the two service names fall back to `"-"` when their role is off, be
 `Fn::ImportValue` is a stand-up that dies one stack later with nothing pointing at the cause.
 
 **The active set is a different parameter, and the stack does not write it.** The Control Plane
-publishes `<EnginesSsmParamName>/<key>/active` whenever the catalogue changes, and the box's
+publishes `<EnginesSsmParamName>/<key>/active` whenever the catalogue changes, and the instance's
 fetch sidecar reads it. Two consequences worth stating: the `EngineTaskRole` grants
 `ssm:GetParameter` on `<EnginesSsmParamName>/*` (inside this stack, per ADR 0071 decision 8), and
 because CloudFormation does not own those parameters, **`teardown.sh` deletes them** — otherwise

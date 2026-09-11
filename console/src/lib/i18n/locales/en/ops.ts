@@ -109,7 +109,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.timers_no_terminate": "Slots are never terminated, so their root volumes are kept and billed until the pool reaches its cap of {max} (Ec2SlotTerminateAfterSec).",
   "pool.budget_over": "Tenant quotas total {allocated} concurrent workspaces, more than the {capacity} this pool can serve ({max} slots less {reserved} a golden bake needs free). Past the cap a start does not queue — it evicts the longest-dormant member, or fails.",
   "pool.budget_unbounded": "{tenants} has no concurrency cap (0 = unlimited), so no total bounds this pool. One tenant can fill it and every other tenant's next start becomes an eviction.",
-  "pool.budget_denominator": "⚠️ These count different things. A tenant's cap counts workspaces RUNNING at once; the pool cap counts boxes that EXIST — and a stopped workspace still holds its box until Ec2SlotTerminateAfterSec collects it, while counting toward no tenant's cap. Staying inside the total is necessary, not sufficient.",
+  "pool.budget_denominator": "⚠️ These count different things. A tenant's cap counts workspaces RUNNING at once; the pool cap counts instances that EXIST — and a stopped workspace still holds its instance until Ec2SlotTerminateAfterSec collects it, while counting toward no tenant's cap. Staying inside the total is necessary, not sufficient.",
   "pool.off": "never",
   "pool.no_slots": "No slots. The first Start will create one.",
   "pool.col_instance": "Instance",
@@ -123,7 +123,7 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.state_asleep": "asleep",
   "pool.state_quarantined": "quarantined",
   "pool.quarantined_hint":
-    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the box.",
+    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the instance.",
   "pool.not_registered": "(not accepting tasks yet)",
   "pool.free_slot": "free",
   "pool.homes_title": "Homes",

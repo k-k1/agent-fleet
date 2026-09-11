@@ -212,7 +212,7 @@ seconds; below 1.0 keeps up with playback.
    `af-pool` / `af-role=slot` tags and on "an instance with zero ECS tasks is idle"
    (ADR 0045 decisions 22, 23 and 29); one non-workspace task inside that pool breaks the
    sweeper's premise. It would also consume an `Ec2MaxSlots` seat, which means **reading a
-   sentence aloud could stop someone from starting a Workspace.** And an EC2 box that is
+   sentence aloud could stop someone from starting a Workspace.** And an EC2 instance that is
    merely stopped still bills for its root volume, so scale-to-zero — the whole point —
    would be lost. The service therefore **states its placement explicitly**: normally
    `LaunchType: FARGATE`, and — when P3's Spot knob is on, since the two are mutually

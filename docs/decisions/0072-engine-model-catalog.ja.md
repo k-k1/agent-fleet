@@ -2699,7 +2699,7 @@ No changes to deploy. Stack af-ecs-engines is up to date
 15:09:51  (service …-engines-llm) has reached a steady state.
 ```
 
-**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、箱は買われなかった
+**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、インスタンスは買われなかった
 （`desiredCount` はその後 3 分の観測でも 0 のまま）。「起動しない」は正しいが、**「一度も
 要求しない」ではない**——`decideEngineAction` は正しく `no_model` を返しているのに、その手前で
 モードの経路が ECS を先に動かしている。空カタログのまま `on` を押し続ける配備では、この 9 秒が
@@ -2718,7 +2718,7 @@ No changes to deploy. Stack af-ecs-engines is up to date
 ```
 
 **有効化から warm まで 819 秒（13 分 39 秒）。** うち **692 秒が capacity provider の
-g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、箱が
+g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、インスタンスが
 できてから warm までは 103 秒だった。0071・P0 の 527 秒より長いのは、この日は容量の取得に
 時間がかかったからで、モデルの同期ではない——同期は 5 秒である:
 
@@ -2730,7 +2730,7 @@ engine fetch: cmdline = --models-preset /models/llm/presets.ini
 engine fetch: engine may start; 0 file(s) still to sync
 ```
 
-**箱はカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
+**インスタンスはカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
 触っていない。これが決定 1 の「カタログが申告のすべて」が実経路で効いていることの直接の証拠で
 ある。エンジン自身のログも同じことを言う:
 
@@ -2749,7 +2749,7 @@ srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
 ### warmProbe が実機で通った（実機で踏んだ穴 13 の代償が解けた）
 
 穴 13 は「CP 側の warmProbe は実機で通っていない」を代償として残していた。理由は、当時の
-実機がコントローラに触られない `run-task` で箱を起こしており、`maintainWarm` はサービスの
+実機がコントローラに触られない `run-task` でインスタンスを起こしており、`maintainWarm` はサービスの
 状態でしか呼ばれないからである。**今回はサービス経由（`mode: on` → `admin_on`）で起こしたので、
 CP のプローブがルーターの `/models` を読んで warm を立てた**: `GET /api/admin/engines` の llm が
 `warm: true`、CP のログが `engine llm: warmed up (ready)`。これは同時に、エンジンが
@@ -2926,7 +2926,7 @@ seed を要求で固定できる手段を足さない限り、この行は永久
 
 代わりに証明できたことの方が、実は強い: **`LoraLoader` の `lora_name` は
 `models/loras` の列挙であって自由文字列ではない**（SD3.5 の `clip_name1` と同じ形）。
-名前が箱に無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
+名前がインスタンスに無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
 成功したという事実が、(a) ファイルが `image/loras/` から `models/loras` に降りていること、
 (b) basename が列挙と一致していること、(c) `LoraLoader` が実際に走ったことを同時に示している。**
 

@@ -76,11 +76,11 @@ AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 イメージを `crane copy` で ECR の `af-engbench:comfyui` に写してから走らせる（手順は
 スクリプトの冒頭。GHCR から NAT 越しに毎回 5.4 GB を引かないため）。終わったらリポジトリごと消す。
 
-⚠️ **使った箱では走らない。** タスクの匿名 host volume は前のタスクの分が片づかないので、
-同じ 60 GB の箱に 2 本目を流すと fetch が `No space left` で落ちる（実測）。スクリプトは
-Managed Instances が箱を回収する（最後のタスクから約 8 分でクラスタの一覧から消える）のを
-待ってから RunTask する。停止直後の箱に載ったタスクは pull 開始まで **9.5 分** PENDING
-だった（新しい箱なら 30 秒）——待つほうが早い。
+⚠️ **使ったインスタンスでは走らない。** タスクの匿名 host volume は前のタスクの分が片づかないので、
+同じ 60 GB のインスタンスに 2 本目を流すと fetch が `No space left` で落ちる（実測）。スクリプトは
+Managed Instances がインスタンスを回収する（最後のタスクから約 8 分でクラスタの一覧から消える）のを
+待ってから RunTask する。停止直後のインスタンスに載ったタスクは pull 開始まで **9.5 分** PENDING
+だった（新しいインスタンスなら 30 秒）——待つほうが早い。
 
 ⚠️ **ComfyUI に `--cache-none` を付けない。** ローダーノードの出力＝モデル本体がキャッシュ
 されず、**毎要求ディスクから読み直す**（warm の SDXL 1024px が 19 秒でなく 57 秒。実行後の
@@ -104,7 +104,7 @@ AWS_PROFILE=af-sandbox AWS_REGION=ap-northeast-1 \
 ## `probe-image-engine.sh` / `probe-llm-engine.sh` —— 走っているエンジンに、VPC の中から 1 回聞く
 
 [ADR 0072](../../../../docs/decisions/0072-engine-model-catalog.ja.md) の完了の定義を観測する
-ためのもの。ベンチと違って**自分の箱を建てない**——既にある（か、これから起こす）エンジンに
+ためのもの。ベンチと違って**自分のインスタンスを建てない**——既にある（か、これから起こす）エンジンに
 1 回聞くだけである。エンジンは私設サブネットにいて CP の SG しか通さないので、外から見る手は
 「メンバーのセッション」か「VPC の中のタスク」しかなく、これは後者。取り込みタスク定義を
 借りている（2 コンテナ・共有ボリューム・`sh -c` の entrypoint がそのまま要るもので、
@@ -131,7 +131,7 @@ CP のタスクロールだけなので `--overrides` の `taskRoleArn` でそ�
 権限は 1 つも無い）ので、転記はログに出る——`aws logs tail … --filter-pattern probe`。
 
 ⚠️ **`--watch` は交替を 1 回買う。** `/health` と `/models` を 20 秒ごとに並べて見るモードで、
-GPU の箱では 5 分と $0.1 ほど。ルーターは重みを載せている最中でも `/health` に ok を返す
+GPU のインスタンスでは 5 分と $0.1 ほど。ルーターは重みを載せている最中でも `/health` に ok を返す
 ——それを見るためのモードである。
 
 ## `probe-rtk.sh` —— rtk は「ロードする」だけでなく**使えるか**
@@ -164,7 +164,7 @@ AWS_PROFILE=af-sandbox deploy/aws/ecs/harness/probe-managed-instances.sh down   
 
 2026-09-07 の実測（c6a.large・CPU イメージ 297 MB・モデル 1.1 GB を HF から取得）:
 desired 1 → **+10 秒でインスタンス起動、+68 秒でタスク RUNNING、+109 秒で listen**。
-desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。箱の同定は**タスク経由**で行うこと
+desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。インスタンスの同定は**タスク経由**で行うこと
 ——`list-container-instances` にはスロットプールも並ぶ。
 
 同日、G 系クォータの承認後に **GPU（g6.xlarge）で通した**。パラメータは
@@ -175,7 +175,7 @@ desired 0 → **+10 秒でタスク消滅、+93 秒で terminated**。箱の同�
 （うち 1,846 秒が `-hf` のダウンロード）、**ドレイン 427 秒／463 秒**。
 
 S3 経路（`LlamaModelS3Key`、取り込みは `IngestTaskDef` を Fargate で `run-task`）と ComfyUI
-（`ComfyEnabled=true`・コミュニティイメージ・計測専用）も同日に通した: **S3 → 箱は 105〜147 MB/s**
+（`ComfyEnabled=true`・コミュニティイメージ・計測専用）も同日に通した: **S3 → インスタンスは 105〜147 MB/s**
 （20.8 GB を 198 秒、6.9 GB を 45 秒）、HF は**ファイルで 50 倍違う**（SDXL 236 MB/s、Qwen3-Coder
 GGUF は `-hf` 9.6 MB/s・Fargate の curl 4.2 MB/s）。ComfyUI は listen まで 504 秒（うち 5.1 GB の
 pull が 437 秒）、SDXL 1024px が温まって 8 秒、VRAM 6.9 GB。**S3 から起動する llama は

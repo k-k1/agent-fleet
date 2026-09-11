@@ -187,14 +187,14 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "machine.vcpu": "vCPU",
   "machine.vcpu_quota": "{n} (capped at {q})",
   "machine.memory": "Memory",
-  "machine.mem_of_box": "{n} (box has {box})",
+  "machine.mem_of_box": "{n} (instance has {box})",
   "machine.home_disk": "home disk",
   "machine.src_measured": "measured",
   "machine.src_declared": "configured",
   "machine.next_start_box": "The settings have changed — the next start will use {type}.",
   "machine.next_start_size": "The settings have changed — the next start will use a different allocation.",
   "machine.note_own_box":
-    "This box is yours alone, so its vCPUs and memory are all yours (the memory limit is the box's RAM less what is held back for its own daemons).",
+    "This instance is yours alone, so its vCPUs and memory are all yours (the memory limit is the instance's RAM less what is held back for its own daemons).",
   "machine.note_shared_host":
     "The host is shared with other members. These are this container's own figures, not the machine's.",
   "machine.usage_title": "Usage",

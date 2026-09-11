@@ -104,12 +104,12 @@ in the next section.
 ### Machine (available on some deployments)
 
 Some deployments also offer a **"Machine"** choice above the numbers. It is not about how big the
-workspace is but about **what kind of box it runs on**, and the kinds differ in price and speed. The
+workspace is but about **what kind of instance it runs on**, and the kinds differ in price and speed. The
 names and what is behind them are chosen by your deployment administrator, so leaving it on the
 default is a perfectly good answer.
 
-**⚠️ "Cheaper per hour" is not the same as "cheaper".** What gets billed is the time the box is
-*running*, and a slower box takes longer over the same work. Measured on 2026-08-22 against this
+**⚠️ "Cheaper per hour" is not the same as "cheaper".** What gets billed is the time the instance is
+*running*, and a slower instance takes longer over the same work. Measured on 2026-08-22 against this
 repository's own build: the machine that costs **24% less per hour is not cheaper at all per
 build**, because it is 32% slower. Another one is **11% cheaper per hour and 29% faster**.
 

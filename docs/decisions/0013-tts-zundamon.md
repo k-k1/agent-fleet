@@ -33,7 +33,7 @@ for third-party keys on the CP.
    decides which one actually speaks (only the CP knows whether the engine is ready = a single
    source of truth).
 3. **The VOICEVOX engine is "a URL the CP points at"** (`AF_VOICEVOX_URL`). The physical
-   placement (a co-located docker container, a dedicated box, ECS) can be swapped without
+   placement (a co-located docker container, a dedicated instance, ECS) can be swapped without
    touching the CP handler. **It is not put on a shared workspace host** (a ~1GB resident process
    would drag the fleet into an OOM). Self-hosted uses a sidecar; AWS uses ECS.
 4. **Polly authenticates with the IAM instance/task role.** No new secret safe on the CP. Polly

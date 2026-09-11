@@ -1,6 +1,6 @@
 # 72. Control Plane のアーキ選択と可用性
 
-[70](70-slot-instance-classes.md) は **Workspace が載る箱**をアーキごと選べるようにした。
+[70](70-slot-instance-classes.md) は **Workspace が載るインスタンス**をアーキごと選べるようにした。
 本書は同じ問いを **Control Plane 自身**に向ける——CP のイメージを amd64/arm64 の 2 アーキ
 インデックスにし、Fargate をどちらで走らせるかを運用者が選べるようにする。
 

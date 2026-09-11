@@ -26,7 +26,7 @@ octet-stream）。一方、秘密情報の金庫は現状すべて Agent コン�
 2. **プロバイダ抽象＋使い分けは CP に集約**。`voicevox` / `polly` を map dispatch。フロントは
    `providerPref` とテキストを送るだけで、最終的にどちらで鳴らすかは CP が決める（engine の ready
    状態を知るのは CP のみ = 単一の真実源）。
-3. **VOICEVOX エンジンは "CP が指す URL"**（`AF_VOICEVOX_URL`）。物理配置（同居 docker / 専用箱 /
+3. **VOICEVOX エンジンは "CP が指す URL"**（`AF_VOICEVOX_URL`）。物理配置（同居 docker / 専用インスタンス /
    ECS）を差し替えても CP ハンドラは不変。**共有ワークスペースホストには載せない**（~1GB 常駐が
    fleet を OOM で巻き込むため）。自ホストはサイドカー、AWS は ECS。
 4. **Polly 認証は IAM インスタンス/タスクロール**。CP 側に新たな秘密金庫は設けない。日本語ニューラル
