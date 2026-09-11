@@ -3877,3 +3877,128 @@ SSM の表は各行に `"classes":""` が増え、`ingest` の `hasToken: false`
 所要は crane copy 2 本が約 1 分（差分だけ）、`update.sh` 全体が約 9 分
 （50-tts は No changes・60-engines 約 2 分・CP の blue/green 約 5 分）。
 稼働中の 5 ワークスペースは §64.42.1 のとおり次の Stop→Start まで 0.17.0 のまま。
+
+## 64.45 0.19.0 を sandbox → 本番の順で適用する（実測・2026-09-11）
+
+0.18.0 → 0.19.0。手順そのものは §64.42 / §64.44 と同じなので、記録するのは**この版だけが
+持っていた 3 つの関門**と、**配備に使うテンプレートの世代**である。
+
+### 64.45.1 配備は「develop」ではなく「ビルド元 commit」のテンプレートで流す
+
+`update.sh` は**自分の作業コピーのテンプレートで全スタックを deploy し直す**。つまり
+「公開済みの 0.19.0 を当てる」とは、**タグ `v0.19.0` が指す commit のテンプレートで流す**
+ことである。これは今回、実害の一歩手前で効いた。
+
+- 0.19.0 のビルド元は `92281943`。publish の checkout はその commit で、**その 20 分後**に
+  develop へ ADR 0075 の offers 一式（`ImageCapacityOptionType` を廃して `ImageOffers` に
+  置き換える 60-engines）が入った。
+- 開発配備は `ImageCapacityOptionType=SPOT` で走っていた。**develop の作業コピーのまま
+  `update.sh` を流していれば**、新しい Spot provider が旧 provider の名前を要求して
+  同名衝突でロールバックしていた（別セッションが先に気づいて知らせてきた）。
+- 実際には作業コピーを `92281943` に置いたまま流したので、テンプレートの世代が出荷物と
+  揃い、何も起きなかった。
+
+⭐ **「版を当てる」作業の前に `git log --oneline -1` を読む。** タグの commit でなければ、
+当てているのはその版ではない。develop は publish の翌分にはもう別物になりうる。
+
+**先に払う保険**: live スタックのパラメータ名が、これから流すテンプレートに全部あるかを
+比べる。無いものは**黙って消える**（宣言ごと無くなるため）。開発配備は 0 件、本番は
+P6 で撤去された 6 件（`Llm/ImageModelS3Key`・`ModelIds`・`LlmContextTokens`・
+`LlmMaxOutputTokens`）が出た＝**この比較自体が働いていることの陽性対照**になった。
+
+### 64.45.2 関門 1: `<役>Enabled` が空の配備で役が消えないこと
+
+本番は `LlmEnabled` / `ImageEnabled` がどちらも空で、役は `<役>ModelS3Key` が立てていた
+（P6 前の形）。0.19.0 はそのキーを撤去するので、**素の更新は役のサービスごと消す**。
+
+`update.sh` は live スタックを読んで翻訳する（#502）。それを**信じる前に** §64.44 と同じ
+やり方で changeset だけ作って確かめた:
+
+```
+aws cloudformation deploy --stack-name af-ecs-engines --template-file cfn/60-engines.yaml \
+  --capabilities CAPABILITY_NAMED_IAM --parameter-overrides LlmEnabled=true ImageEnabled=true \
+  --no-execute-changeset
+aws cloudformation describe-change-set --change-set-name <arn> \
+  --query 'Changes[].ResourceChange.{action:Action,id:LogicalResourceId,repl:Replacement}'
+```
+
+| 見たもの | 結果 |
+|---|---|
+| `Remove` の行 | **0 件**（`LlmService` / `ImageService` はどちらも `Modify`） |
+| `Replacement: True` | タスク定義 3 本のみ（不変資源なので当然） |
+| capacity provider | changeset に**現れない**＝名前も置き換えも無し |
+| 渡ったパラメータ | `LlmEnabled=true` / `ImageEnabled=true` / `ImageCapacityOptionType=ON_DEMAND` |
+
+そのうえで `update.sh` を流し、標準出力に
+`· LlmEnabled=true (it was implied by LlmModelS3Key, retired in ADR 0072 P6)` の 2 行が
+出ることを確認した。適用後、両サービスは `ACTIVE`・capacity provider 4 本も不変。
+
+### 64.45.3 関門 2: 初回更新は 20-platform も動く
+
+engine-tools イメージの ECR リポジトリが 20-platform にあるため、この版の初回だけ
+20-platform が更新される。印字された changeset は
+
+```
+· Modify CpTaskRole (replacement: False)
+· Add EcrComfyui (replacement: None)
+· Add EcrEngineTools (replacement: None)
+```
+
+で、置換が無いのでそのまま実行された。続けて `crane copy` が
+`ghcr.io/k-k1/agent-fleet/engine-tools:2026-09-11` を ECR へ運び（約 11 秒）、その後に
+60-engines が流れた。**順序（リポジトリ → イメージ → スタック）はスクリプトが冒頭で
+計画として印字する**ので、`--dry-run` で読める。
+
+### 64.45.4 関門 3: モデルの申告がカタログだけになったこと
+
+SSM のエンジン表から `models` / `contextTokens` / `maxOutputTokens` / `modelS3Key` の
+4 欄が消えた（P6 の意図どおり）。**消えたのは申告の場所であって、モデルではない**ことを
+CP のログで確かめた:
+
+```
+engines: llm (chat) -> … models=llamacpp/qwen3-coder-30b-a3b
+engines: image (images) -> … models=sdcpp/juggernaut-xl-v9,sdcpp/sdxl-base-1.0
+```
+
+ADR 0071 と P6 の間にリリースを通した配備はカタログに行を持っているので、ここは素通り
+する。素通りしないのは「カタログ以前の CP から一気に飛ぶ配備」だけで、それは空の
+カタログで上がる（壊れではなく仕様）。
+
+### 64.45.5 TTS と image 役の Spot
+
+この版で両方 Spot にできるかを訊かれて調べた結果:
+
+| | 現状 | 判断 |
+|---|---|---|
+| TTS（50-tts） | **既に `UseSpot=on`**・live のサービスも `FARGATE_SPOT` 戦略 | やることなし |
+| image 役 | `ON_DEMAND` | **この版では見送り** |
+
+見送りの理由は在庫でも権限でもない。**次の版で `ImageCapacityOptionType` が
+`ImageOffers` に置き換わるため、いま SPOT にすると次の更新の前に「ON_DEMAND へ戻す
+更新」を 1 回挟まねばならない**（provider の同名衝突。§64.45.1 と同じ罠）。しかも
+offers 版は在庫が無いとき次の候補へ落ちるので、Spot としての出来が違う。
+
+前提の実測（本番アカウント・2026-09-11）:
+
+| 項目 | 実測 |
+|---|---|
+| Spot クォータ `L-3819A6DF`（All G and VT Spot Instance Requests） | **64**（既定 0 のままではなかった） |
+| `AWSServiceRoleForEC2Spot` | **無い**（`NoSuchEntity`）＝作成が要る |
+| 許可インスタンス型 | 2 種（g6.xlarge / g5.xlarge。開発配備は 3 種） |
+| 直近 30 日の GPU 支出（Cost Explorer・g 系のみ） | **$0.63**（g6.xlarge のみ） |
+
+⭐ **節約額を測ってから決める。** Spot は定価の約半額だが、この配備の GPU 支出は 30 日で
+$0.63＝節約は月 $0.3 で、対価は本番での provider 置き換え 2 回である。
+
+### 64.45.6 結果
+
+| 確かめたこと | 開発配備 | 本番配備 |
+|---|---|---|
+| CP のタスク定義 | 新 rev・`RUNNING` | `…-ingress-cp:**29**`（前 28） |
+| digest が公開 index と一致 | ○ `sha256:61fbbecaed…` | ○ 同じ |
+| エンドポイント | `/healthz` `/readyz` 200 ／ `/` 401 ／ `/oauth2/login` 302 | 同左 |
+| 動いたスタック | 30-ingress のみ（他は No changes） | 20-platform・60-engines・30-ingress |
+| エンジンのサービス | 変化なし | 2 本とも `ACTIVE`・desired 0 のまま |
+
+開発配備が 30-ingress だけで済んだのは、そこが develop を載せ続けている配備だからで、
+**本番との差がそのまま「この版で入った配備側の変更」**になっている。
