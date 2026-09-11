@@ -45,6 +45,39 @@ func TestBuildFlushMessage(t *testing.T) {
 	}
 }
 
+// A lone memo goes out bare: no "## category" heading, no "1. " prefix, and no indent on
+// its continuation lines — there is nothing to group or count, and the numbering turned a
+// multi-line note into a list item whose later lines had lost their indent.
+func TestBuildFlushMessageSingle(t *testing.T) {
+	got := buildFlushMessage([]store.Memo{{Category: "frontend", Kind: "text", Body: "余白を詰めて\n色も直して"}})
+	if got != "余白を詰めて\n色も直して\n" {
+		t.Fatalf("single memo not sent bare:\n%q", got)
+	}
+
+	// A file memo keeps its ref line and comment, still without the list scaffolding.
+	atts := func(a ...memoAttachment) string {
+		b, _ := json.Marshal(a)
+		return string(b)
+	}
+	got = buildFlushMessage([]store.Memo{{
+		Category:    "frontend",
+		Kind:        "file",
+		RefPath:     "~/repos/a/Button.tsx",
+		Body:        "余白を詰めて",
+		Attachments: atts(memoAttachment{Path: "/img/paste-1.png", Name: "paste-1.png"}),
+	}})
+	for _, want := range []string{"対象ファイル: ~/repos/a/Button.tsx\n", "\n余白を詰めて\n", "\n添付画像: paste-1.png\n"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("single file memo missing %q\n---\n%q", want, got)
+		}
+	}
+	for _, unwanted := range []string{"## ", "1. ", "   "} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("single memo retains list scaffolding %q\n---\n%q", unwanted, got)
+		}
+	}
+}
+
 // A memo with image attachments surfaces the names inline (human-readable) and appends
 // the machine-facing "open with Read tool" line with the absolute paths once at the end,
 // so the flush target agent opens them. An image-only memo (empty body) still numbers.

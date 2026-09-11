@@ -132,6 +132,38 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+// Expanding a memo is a click on its body, but the SECOND click opens the editor — so
+// without an explicit collapse control a long note stays expanded for good and owns the
+// left pane. The control only appears on a memo long enough to be clamped.
+describe("collapsing an expanded memo", () => {
+  const row = () => must(document.querySelector<HTMLElement>(".memo-row"), "memo row");
+  const body = () => must(row().querySelector<HTMLElement>(".memo-body"), "memo body");
+  const less = () => row().querySelector<HTMLButtonElement>(".memo-less");
+
+  it("expands, collapses again, and never enters the editor on the way", async () => {
+    servedMemos = [aMemo({ id: "m1", body: "x".repeat(200) })];
+    await render();
+    expect(row().classList.contains("exp")).toBe(false);
+    expect(less()).toBe(null);
+
+    await click(body());
+    expect(row().classList.contains("exp")).toBe(true);
+
+    await click(must(less(), "collapse control"));
+    expect(row().classList.contains("exp")).toBe(false);
+    // The click must not bubble into the body handler, which would have opened the editor.
+    expect(document.querySelector(".memo-row.editing")).toBe(null);
+    expect(document.querySelector(".memo-edit-text")).toBe(null);
+  });
+
+  it("leaves a short memo without a collapse control", async () => {
+    servedMemos = [aMemo({ id: "m1", body: "short" })];
+    await render();
+    await click(body());
+    expect(less()).toBe(null);
+  });
+});
+
 describe("category + button", () => {
   it("moves the composer under the category and writes into it", async () => {
     servedCats = [aCat({ id: "c1", name: "P1" }), aCat({ id: "c2", name: "P2", position: 1 })];

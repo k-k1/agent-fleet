@@ -515,10 +515,14 @@
   -webkit-box-orient: vertical;
   overflow: hidden;
 }
+/* Expanded: full text, but never more than half the pane — a 200-line memo would
+   otherwise push every other section out of reach, collapse control included. */
 .memo-row.exp .memo-text {
+  display: block; /* out of -webkit-box, or the clamp's layout fights the scroll box */
   -webkit-line-clamp: unset;
   line-clamp: unset;
-  overflow: visible;
+  max-height: 50vh;
+  overflow-y: auto;
 }
 .memo-meta {
   display: flex;
@@ -529,6 +533,16 @@
 .memo-more {
   font-size: 10px;
   color: var(--muted2);
+}
+/* The way back out of an expanded memo (the body's own click enters edit instead). */
+.memo-less {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 10px;
+}
+.memo-less .codicon {
+  font-size: 11px;
 }
 /* Inline edit. */
 .memo-edit {

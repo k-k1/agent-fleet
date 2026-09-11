@@ -15,6 +15,7 @@ import { useToast } from "../../ui/ToastProvider.tsx";
 import { t, useT } from "../../lib/i18n/index.ts";
 import { errText } from "../../core/api/client.ts";
 import { memoFlush } from "./api.ts";
+import { composeMemoMessage } from "./compose.ts";
 import { FILE_PROMPT } from "../../lib/pastedImages.ts";
 import { useSessionsStore } from "../sessions/store.ts";
 import { useLaunchSeed } from "../repos/store.ts";
@@ -28,36 +29,6 @@ import { sessionPanes, ordClass } from "../../layout/badges.ts";
 import type { Memo } from "../../types/memo.ts";
 import type { Session } from "../../types/session.ts";
 import type { Assistant } from "../../types/assistant.ts";
-
-// Concatenate the selected memos directly, grouped by category, mirroring the server's
-// buildFlushMessage (memo.go) so an unedited send is byte-for-byte the server flush.
-export function composeMemoMessage(memos: Memo[]): string {
-  const sorted = memos.slice().sort((a, b) => (a.category < b.category ? -1 : a.category > b.category ? 1 : 0));
-  const lines: string[] = [];
-  let lastCat = "\x00";
-  let n = 0;
-  for (const m of sorted) {
-    if (m.category !== lastCat) {
-      lastCat = m.category;
-      n = 0;
-      if (lines.length) lines.push("");
-      lines.push("## " + (m.category || t("memo.uncategorized")));
-    }
-    n++;
-    if (m.kind === "file") {
-      lines.push(`${n}. ${t("memo.flush_file", { path: m.refPath })}`);
-      if (m.body) lines.push("   " + m.body);
-    } else if (m.body) {
-      lines.push(`${n}. ${m.body}`);
-    } else {
-      lines.push(`${n}. ${t("memo.flush_image_only")}`);
-    }
-    if (m.attachments?.length) {
-      lines.push("   " + t("memo.flush_images", { names: m.attachments.map((a) => a.name).join(", ") }));
-    }
-  }
-  return lines.join("\n");
-}
 
 // appendImagePaths adds the machine-facing "open with Read tool" line + the attachments'
 // absolute in-container paths (mirrors buildImagePrompt / the server's buildFlushMessage)

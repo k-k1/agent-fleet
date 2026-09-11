@@ -286,13 +286,29 @@ func (a memoAPI) update(w http.ResponseWriter, r *http.Request, _ store.Identity
 // resolved memos
 // (already sorted by category/position on the way in). File memos surface their ~/repos
 // ref path plus any comment, text memos surface their body.
+//
+// A single memo is sent bare: with nothing to group or count, the heading and the "1. "
+// prefix are scaffolding the recipient has to read past, and they turn a multi-line note
+// into a list item that lost its indent. The Console's composeMemoMessage
+// (SendMemoModal.tsx) does the same so an unedited send matches this byte for byte.
 func buildFlushMessage(memos []store.Memo) string {
 	var b strings.Builder
+	solo := len(memos) == 1
 	lastCat := "\x00" // sentinel so the first real category (incl. "") emits a heading
 	n := 0
+	num := func(n int) string {
+		if solo {
+			return ""
+		}
+		return fmt.Sprintf("%d. ", n)
+	}
+	cont := "   " // continuation lines align under the number
+	if solo {
+		cont = ""
+	}
 	var imgPaths []string // absolute in-container image paths, appended once at the end
 	for _, m := range memos {
-		if m.Category != lastCat {
+		if !solo && m.Category != lastCat {
 			lastCat = m.Category
 			cat := m.Category
 			if cat == "" {
@@ -308,14 +324,14 @@ func buildFlushMessage(memos []store.Memo) string {
 		atts := parseMemoAttachments(m.Attachments)
 		switch {
 		case m.Kind == "file":
-			fmt.Fprintf(&b, "%d. 対象ファイル: %s\n", n, m.RefPath)
+			b.WriteString(num(n) + "対象ファイル: " + m.RefPath + "\n")
 			if m.Body != "" {
-				b.WriteString("   " + m.Body + "\n")
+				b.WriteString(cont + m.Body + "\n")
 			}
 		case m.Body != "":
-			fmt.Fprintf(&b, "%d. %s\n", n, m.Body)
+			b.WriteString(num(n) + m.Body + "\n")
 		default:
-			fmt.Fprintf(&b, "%d. （画像）\n", n)
+			b.WriteString(num(n) + "（画像）\n")
 		}
 		if len(atts) > 0 {
 			names := make([]string, len(atts))
@@ -323,7 +339,7 @@ func buildFlushMessage(memos []store.Memo) string {
 				names[i] = a.Name
 				imgPaths = append(imgPaths, a.Path)
 			}
-			b.WriteString("   添付画像: " + strings.Join(names, ", ") + "\n")
+			b.WriteString(cont + "添付画像: " + strings.Join(names, ", ") + "\n")
 		}
 	}
 	// Machine-facing line (mirrors the paste composer's FILE_PROMPT) so the target
