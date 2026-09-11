@@ -833,3 +833,32 @@ is not the shape either. The Console carries the same declaration
 "the same rules the Agent applies", and fixing only one side would make **the order the user drags
 differ from the order `auto` walks**. The settings-screen note (ja/en) was corrected too — it still
 said Antigravity comes first by default.
+
+## Follow-up — an advertised tool was refusing its own call (2026-09-11)
+
+**The mechanism.** `mcpStdioCall` in `mcpx` also checks, on the call path, whether this server
+advertised that name (`mcpStdioToolAdvertised()`). That boundary is real and worth keeping: a
+guessed name must not reach an unadvertised handler. What was wrong is HOW it checked — by calling
+`mcpStdioToolList()` again, inside which `mcpImageGenAdvertise()` resolves to **a live HTTP round
+trip to the Agent's `/imagegen/status` with a 3-second budget**. That status asks every provider's
+`Ready()`, and for the fleet's own engines `Ready()` is `engineToken` → a round trip to the
+Control Plane (15-second timeout).
+
+**How to reproduce it (met on hardware, ADR 0072 H3, 2026-09-11).** Call `generate_image` shortly
+after the Control Plane has been replaced with `update-service --force-new-deployment`: the status
+call exceeds three seconds and **a tool sitting in the client's own tool list answers**
+`この対話セッション用サーバーでは許可されていないツールです: generate_image`. Because the
+wording reads like a permission decision, isolating the cause took thirty minutes.
+
+**The fix.** The call-side check no longer goes over the network. The names a `tools/list` answer
+actually contained are kept in this process (`mcpAdvertised`), and the call path reads those.
+**What a client may call is what it was told it may call — a fact this process already holds, and
+reading it back cannot time out.** Only a `tools/call` arriving before any `tools/list` still
+derives the set the old way, because then there is nothing to compare against; no real client
+takes that path, and the boundary against a guessed name holds there too. The image tool's own
+on/off gate (`mcpImageGenEnabled`) stays a few lines below in the same function — that one is a
+setting, and it consults no network.
+
+The refusal's wording changed too. The reason is "that name was not in `tools/list`", not "you
+lack permission", and the two call for opposite responses: the old sentence sent a model looking
+for a settings page when it had merely named something this server never offered.

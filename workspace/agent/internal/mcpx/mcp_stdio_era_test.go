@@ -9,8 +9,18 @@ import (
 	"testing"
 )
 
+// forgetAdvertised clears what the last tools/list recorded (mcpAdvertised). Tests share one
+// process, so a list served by one of them would otherwise decide the call-side scope check in
+// the next — which is the very thing that check is supposed to read.
+func forgetAdvertised() {
+	mcpAdvertised.mu.Lock()
+	mcpAdvertised.names = nil
+	mcpAdvertised.mu.Unlock()
+}
+
 func stdioDispatch(t *testing.T, body string) map[string]any {
 	t.Helper()
+	t.Cleanup(forgetAdvertised)
 	out := dispatchMCPStdio([]byte(body))
 	if out == nil {
 		return nil
