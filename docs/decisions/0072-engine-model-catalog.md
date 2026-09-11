@@ -3928,3 +3928,58 @@ is being remade — `off` → `on` — the 4 vCPU of the draining one still coun
 remaking at once leave the later request silently unplaced with `VcpuLimitExceeded`**; this run
 kept to a single remake and told the other lane before and after. The GPU was one box for about
 nine minutes (`mode: on` 05:00:14 to `mode: off` 05:11:55).
+
+## Follow-up — a checkpoint that carries no VAE (2026-09-12)
+
+Reported from a session, measured against a live comfy engine: one enabled SDXL-family model
+(an Illustrious derivative) failed **every** `generate_image` call, and another SDXL row on the
+same engine answered normally minutes later.
+
+- `op=edit`, 1536x1024, one input picture → no image, and a traceback ending in
+  `/ComfyUI/comfy/sd.py:1103 RuntimeError: ERROR: VAE is invalid: None / If the VAE is from a
+  checkpoint loader node your checkpoint does not contain a valid VAE`, reached through
+  `nodes.py:391 in encode`.
+- the same model with `op=generate` → the same RuntimeError, this time through `nodes.py:338 in
+  decode`.
+- `op=edit` on `neoanimensfwlmpanda_v13`, same size, same input → a 1536x1024 PNG, with only the
+  checkpoint-switch warning.
+
+**Failing on both sides of the sampler rules the workflow out.** VAEEncode and VAEDecode are
+different nodes reached by different requests; what they have in common is the VAE link, and in
+the SDXL template that link was `CheckpointLoaderSimple`'s third output unconditionally. That
+output is `None` when the checkpoint holds no VAE tensors — which plenty of published SDXL
+checkpoints do not — and nothing before the GPU refuses it: the row validates, `base_model` is
+right, the files are on disk, the box pays the 1–2.5 minute checkpoint switch, and then the
+graph dies. A member cannot work around it either, because `generate_image` has no VAE argument
+(ADR 0069's vocabulary is deliberately provider-neutral).
+
+### What changed
+
+`--vae` was already in the file vocabulary and already required by the three split families. It
+is now also read by the two single-checkpoint families (sdxl, sd35), where it is **optional and
+overriding**: declare it and one `VAELoader` feeds both the encode and the decode; declare
+nothing and the graph is byte-for-byte the one the golden fixture has always pinned
+(`comfyCheckpointVAE`). So a checkpoint published without a VAE is expressible as a catalogue
+row rather than an unusable one, with no change to the tool's schema.
+
+The execution error grew a sentence naming that fix, because ComfyUI's own answer is a Python
+traceback a session can only read as "retry" — and every retry pays the checkpoint switch again.
+It matches on the whole message list rather than the 800-character tail the error text shows,
+since the exception message sorts before the traceback in ComfyUI's error dict.
+
+### Two things deliberately not done
+
+- **No automatic fallback to a well-known VAE name.** `VAELoader`'s `vae_name` is an enumeration
+  over `models/vae`, the same shape that refused SD3.5's `clip_name1` (P2 remaining work 5), so
+  naming an `sdxl_vae` the box does not hold would turn a family that works today into
+  `Value not in list` for every row.
+- **No "this row has no VAE" check on the catalogue.** The CP never reads the files — decision 2
+  makes the catalogue a declaration — and most SDXL checkpoints do bundle a VAE, so adding
+  `--vae` to `engineComfyRequiredFlags["sdxl"]` would mark every working row as incomplete. The
+  operator's lever stays what it already is: declare the VAE, or disable the row.
+
+Not verified on hardware. The shape of the new graph is pinned by a golden fixture
+(`comfy_sdxl_external_vae.golden.json`) and the encode/decode both reading the declared VAE is
+pinned by a test — which is the same claim that was true of SD3.5's template before it turned out
+not to generate at all. What a GPU still owes this section is one generation from an SDXL row
+with a separately declared VAE.
