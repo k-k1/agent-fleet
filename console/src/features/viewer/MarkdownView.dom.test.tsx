@@ -68,7 +68,7 @@ beforeEach(() => {
   opened.length = 0;
   attachOpened.length = 0;
   listedConvs = [];
-  useChatStore.setState({ convs: null });
+  useChatStore.setState({ convs: null, titles: {} });
   useSessionsStore.setState({ sessions: [] });
   host = document.createElement("div");
   document.body.appendChild(host);
@@ -125,6 +125,26 @@ describe("conversation-slug linkify", () => {
     await act(async () => a.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true })));
     expect(opened).toHaveLength(0);
     expect(toasts).toHaveLength(1);
+  });
+
+  it("puts the conversation's title in the tooltip and re-reads it on hover", async () => {
+    useChatStore.getState().setConvs([{ ...conv("azw7wys"), title: "翻訳スレッド" }]);
+    await render("報告は azw7wys を参照。");
+    const [a] = links("md-conv-link");
+    expect(a.title.split("\n")[0]).toBe("翻訳スレッド");
+    expect(a.title).toContain(t("view.open_conversation", { slug: "azw7wys" }));
+
+    // A title the rail's 15s list hasn't caught up with (auto-titled just now, or renamed
+    // in an open pane) still shows: it reaches the store through the per-view titles map.
+    useChatStore.getState().setConvs([{ ...conv("azw7wys"), title: "" }]);
+    useChatStore.getState().setConvTitle("id-azw7wys", "自動で付いた題");
+    a.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(a.title.split("\n")[0]).toBe("自動で付いた題");
+
+    // Deleted meanwhile: fall back to the bare hint rather than a stale name.
+    useChatStore.setState({ convs: [], titles: {} });
+    a.dispatchEvent(new MouseEvent("mouseenter"));
+    expect(a.title).toBe(t("view.open_conversation", { slug: "azw7wys" }));
   });
 });
 

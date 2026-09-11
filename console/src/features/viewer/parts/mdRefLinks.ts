@@ -6,7 +6,7 @@ import { api } from "../../../core/api/client.ts";
 import { t } from "../../../lib/i18n/index.ts";
 import { useSessionsStore } from "../../sessions/store.ts";
 import { displayName } from "../../../lib/sessionview.ts";
-import { useChatStore } from "../../chat/store.ts";
+import { mergeChatTitles, useChatStore } from "../../chat/store.ts";
 import { openCommit } from "../../scm/open.ts";
 
 // linkifyRefs turns bare git commit hashes, session slugs and assistant-conversation
@@ -187,7 +187,7 @@ function makeConversationLink(
   a.textContent = slugText;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
-  a.title = t("view.open_conversation", { slug: slugText });
+  wireTooltip(a, () => convLinkTooltip(slugText));
   const open = (openInNew: boolean) => {
     const conv = useChatStore.getState().convs?.find((c) => c.slug === slugText);
     if (!conv) {
@@ -214,15 +214,39 @@ function makeConversationLink(
   return a;
 }
 
-// sessionLinkTooltip is what hovering a linked slug says: the session's display name
-// (its title, or what the rail shows in place of one) above the open hint. A slug alone
-// says nothing about which session it is, and that is the question a reader has before
-// deciding to click. A slug whose session vanished after the document rendered falls back
-// to the bare hint rather than a name that is no longer true.
+// A slug alone says nothing about WHICH session or conversation it is, and that is the
+// question a reader has before deciding to click — so the tooltip carries the current
+// display name above the open hint. When the target vanished after the document rendered
+// (or has no name to show), the bare hint stands rather than a name that is no longer true.
 function sessionLinkTooltip(name: string): string {
   const hint = t("view.open_session", { name });
   const s = useSessionsStore.getState().sessions.find((x) => x.name === name);
   return s ? `${displayName(s)}\n${hint}` : hint;
+}
+
+function convLinkTooltip(slugText: string): string {
+  const hint = t("view.open_conversation", { slug: slugText });
+  const { convs, titles } = useChatStore.getState();
+  const conv = convs?.find((c) => c.slug === slugText);
+  if (!conv) return hint;
+  // Through mergeChatTitles, not conv.title: the rail's list is only polled every 15s, so
+  // a thread the backend just auto-titled — and any rename made in an open pane — is in
+  // the per-view titles map first (and in a pop-out, where no rail mounts, only there).
+  const title = mergeChatTitles(convs, titles).get(conv.id);
+  return title ? `${title}\n${hint}` : hint;
+}
+
+// wireTooltip sets the anchor's tooltip and re-computes it on the way into a hover / focus.
+// The anchor is built once, when the document renders, but sessions and conversations are
+// renamed (and stopped, and deleted) while that document stays on screen — reading at hover
+// time is what makes the tooltip show the name the target has NOW.
+function wireTooltip(a: HTMLAnchorElement, compute: () => string) {
+  a.title = compute();
+  const refresh = () => {
+    a.title = compute();
+  };
+  a.addEventListener("mouseenter", refresh);
+  a.addEventListener("focus", refresh);
 }
 
 // makeSessionLink builds a non-navigating anchor that opens a session's chat mirror.
@@ -234,15 +258,7 @@ function makeSessionLink(name: string, openSession: (name: string, openInNew: bo
   a.textContent = name;
   a.setAttribute("role", "link");
   a.tabIndex = 0;
-  a.title = sessionLinkTooltip(name);
-  // The anchor is built once, when the document renders, but a session is renamed (and
-  // stopped, and deleted) while that document stays on screen — recompute on the way into
-  // the hover so the tooltip shows the name the session has now, not at render time.
-  const refreshTooltip = () => {
-    a.title = sessionLinkTooltip(name);
-  };
-  a.addEventListener("mouseenter", refreshTooltip);
-  a.addEventListener("focus", refreshTooltip);
+  wireTooltip(a, () => sessionLinkTooltip(name));
   a.addEventListener("click", (e) => {
     e.preventDefault();
     openSession(name, e.ctrlKey || e.metaKey);
