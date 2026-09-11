@@ -180,6 +180,69 @@ unit's `[Service]` section.
 - To use AWS Polly, set `AF_POLLY_REGION` plus standard AWS credentials visible
   to the CP process (e.g. `~/.aws`).
 
+## Image generation on a ComfyUI on your network — optional
+
+`generate_image` normally runs on the member's own CLI plan (Codex / Antigravity),
+and the fleet's own GPU engines exist on the AWS `ecs-ec2` target only. On native
+you can instead point the CP at a **ComfyUI you already run on your network** — the
+GPU box, the gaming PC, the Windows side of WSL2. The CP relays to it; no session
+needs to know where it is. (Nothing is bundled: leaving this out affects nothing
+else.)
+
+### Opening ComfyUI to the network
+
+The server build takes `--listen`, which is what makes it answer on more than
+loopback:
+
+```bash
+python main.py --listen 0.0.0.0 --port 8188
+```
+
+The Windows firewall (or the host's) must allow inbound 8188 from the machine
+running the CP. **ComfyUI Desktop (Windows) is untested here** — the server build's
+`--listen` is the path this page describes; the Desktop app's equivalent setting has
+not been confirmed.
+
+### Pointing the CP at it
+
+```bash
+AF_COMFY_URL=http://<host>:8188 af start
+```
+
+A full URL including the port, as the CP sees it (e.g.
+`http://192.168.1.20:8188`). Under systemd, add
+`Environment=AF_COMFY_URL=...` to the unit's `[Service]` section. It is read **once
+at startup**, so changing it is a restart.
+
+Optionally set `AF_COMFY_API_KEY` as well. The CP then sends it as
+`Authorization: Bearer` — on generation calls **and on the health check**. ComfyUI
+has no authentication of its own, so this is only worth anything with a reverse
+proxy in front of it that checks the value, and **that proxy must let
+`/system_stats` through with the same bearer** or the engine never looks healthy.
+
+### Registering the models by hand
+
+There is no ingest job here — nothing copies files for you or reads them back.
+Register each model in the Console under **Admin → Inference engines** with its id,
+its `base_model` and its file names, spelled exactly as ComfyUI's loaders list them.
+
+🔴 **Put the files directly under ComfyUI's type folders** — `checkpoints/`,
+`diffusion_models/`, `clip/`, `vae/`, `loras/`. A file in a subfolder
+(`checkpoints/sdxl/x.safetensors`) is handed to the loader as `x.safetensors` and
+fails with `Value not in list`. Subfolders are not supported yet.
+
+### While it is down
+
+The CP does not own this engine: it never starts or stops it, and it does not wait
+for it. A request while ComfyUI is down is refused **immediately** with
+`503 engine_unavailable`, naming the URL it tried. Health is `GET /system_stats`,
+which is also what the Admin panel's "warm" mark checks the moment you open it —
+there is no uptime history for an engine the CP does not run, and no cost is
+attributed to it.
+
+The reader-facing version of all of this, including the network caveat, is
+[guide/operate/07-image-engine.md](../../guide/operate/07-image-engine.md).
+
 ## systemd user unit (run as a service; systemd is on by default in WSL2)
 
 Instead of keeping `af start` in the foreground, run it as a systemd **user**

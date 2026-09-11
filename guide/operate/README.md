@@ -20,6 +20,7 @@ workflow is assumed; a general grounding in Docker, DNS, OAuth and backups is.
 4. [Securing it](04-secure.md) — threat model, the residual risks, egress control, reporting channel
 5. [Sign-in methods](05-signin.md) — end to end: what to create at Google / Entra ID / GitHub / another OIDC provider, which value goes where, and how to check it
 6. [Diagnosing it](06-diagnose.md) — incident response and FAQ, including the three constraints that break silently
+7. [Image generation on your own ComfyUI](07-image-engine.md) — pointing sessions at a ComfyUI on your own network, and the network that is then yours to close
 
 What each target supports is [ref/deploy-targets.md](../ref/deploy-targets.md); who may
 do what is [ref/roles.md](../ref/roles.md).
