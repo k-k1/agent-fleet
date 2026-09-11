@@ -1,0 +1,50 @@
+/* Brand icon masks — one rule per vendored asset (src/assets/brandicons/, see its
+   ATTRIBUTION.md). Rendered by ui/Icon.tsx as `.brandicon .bi-agent-<key>`.
+
+   The url() lives in CSS rather than an inline style on purpose. These SVGs are under
+   Vite's inline limit, so each becomes a data: URI whose attribute quotes Vite leaves as
+   `'` — which an UNQUOTED url() token may not contain, and an inline style built by hand
+   gets that wrong silently (the browser drops the declaration and the icon renders as a
+   solid currentColor square). Vite quotes url() correctly when it rewrites CSS, so the
+   mistake cannot be made here. It also keeps a 3KB data URI out of every DOM snapshot.
+
+   Every file in assets/brandicons/ must have a rule here and vice versa —
+   lib/brandicons.test.ts fails on either kind of drift. */
+
+/* Rides the same .codicon class (ui/Icon.tsx) so it inherits every size and spacing rule
+   written for icons; the glyph is a mask filled with currentColor, which is what keeps a
+   vendored logo following the theme the way the icon font does. */
+.brandicon {
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  background-color: currentColor;
+  -webkit-mask-size: contain;
+  mask-size: contain;
+  -webkit-mask-repeat: no-repeat;
+  mask-repeat: no-repeat;
+  -webkit-mask-position: center;
+  mask-position: center;
+}
+
+.bi-agent-claude {
+  mask-image: url("../assets/brandicons/agents/claude.svg");
+}
+.bi-agent-codex {
+  mask-image: url("../assets/brandicons/agents/codex.svg");
+}
+.bi-agent-cursor {
+  mask-image: url("../assets/brandicons/agents/cursor.svg");
+}
+.bi-agent-antigravity {
+  mask-image: url("../assets/brandicons/agents/antigravity.svg");
+}
+.bi-agent-copilot {
+  mask-image: url("../assets/brandicons/agents/copilot.svg");
+}
+.bi-agent-kiro {
+  mask-image: url("../assets/brandicons/agents/kiro.svg");
+}
+.bi-agent-opencode {
+  mask-image: url("../assets/brandicons/agents/opencode.svg");
+}

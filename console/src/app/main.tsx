@@ -11,6 +11,7 @@ import { consumePopoutBoot } from "../features/panes/popout.ts";
 import "@vscode/codicons/dist/codicon.css";
 import "../styles/tokens.css";
 import "../styles/base.css";
+import "../styles/brandicons.css";
 import "../ui/ui.css";
 import "./app.css";
 import "./topbar.css";
