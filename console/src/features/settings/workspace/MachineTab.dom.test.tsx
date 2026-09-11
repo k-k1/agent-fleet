@@ -77,9 +77,14 @@ describe("MachineView", () => {
     expect(text).toContain("m8g.large");
     expect(text).toContain("arm64");
     expect(text).toContain("低コスト (Arm)");
-    // The limit leads and the box follows: a member can only spend the former.
+    // The limit leads and the instance follows: a member can only spend the former.
     expect(text).toContain("6.50 GiB");
     expect(text).toContain("7.61 GiB");
+    // 🔴 The label itself, so the "shared host" test below is a live check. Without a POSITIVE
+    // assertion here, its `not.toContain` passes for the wrong reason the moment this string
+    // is reworded, and "the shared host's RAM is not presented as the member's own" stops
+    // being tested at all.
+    expect(text).toContain("インスタンスの搭載");
     expect(text).toContain("実測");
     expect(text).not.toContain("設定上");
   });
@@ -117,13 +122,13 @@ describe("MachineView", () => {
     const text = await mount({
       runtime: "docker",
       running: true,
-      // The CP strips mem_total and instance_type off a shared host; nothing declares a box.
+      // The CP strips mem_total and instance_type off a shared host; nothing declares an instance.
       measured: { arch: "x86_64", vcpu: 8, mem_max: 10737418240 },
     });
     expect(text).toContain("x86_64");
     expect(text).toContain("10.0 GiB");
     expect(text).toContain("ホストは他の利用者と共有です");
-    expect(text).not.toContain("箱の搭載");
+    expect(text).not.toContain("インスタンスの搭載");
   });
 
   it("shows the next start's box while stopped, and says that is what it is", async () => {

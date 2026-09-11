@@ -36,7 +36,7 @@ platform changes:
 | `cfn/30-ingress.yaml` | **proven** (CP boots on Fargate, `/healthz` 200, `/oauth2/login` → Google w/ correct redirect_uri) | ACM(DNS-validated), ALB (TLS-termination only — auth is CP-native `AUTH=oauth`, no ALB OIDC), CP/Console Fargate service (Service Connect client), Route53 alias |
 | `cfn/40-ec2-pool.yaml` | **proven in a sandbox** (deployed as a stack and driven end to end, in a public subnet and behind a NAT — docs/log/64 §64.16, §64.17, §64.19; never at scale) | **Optional — only for `WsRuntime=ecs-ec2`.** Launch template for a workspace *slot* (ECS-optimized AMI, cluster-join user-data, `af-mount`/`af-umount`), slot instance role + profile, slot SG. Creates **no instances**: the CP runs them on demand. One template covers both architectures — `SlotAmiIdArm64` is passed through as an ImageId override (docs/log/70 §70.8) |
 
-| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS **Managed Instances** services that are normally scaled to zero: one MI capacity provider per role (never one box for both — VRAM), the three IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (including whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs, which must already hold the image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
+| `cfn/60-engines.yaml` | **new** (ADR 0071 P0+P1, ADR 0072 P0/P1/P4/P2-in-progress) | **Optional — only for self-hosted inference.** The fleet's own llama.cpp (`llm`) engine and an `image` role whose server is picked by `ImageEngine` (`sdcpp` = stable-diffusion.cpp, one checkpoint; `comfy` = this deployment's own ComfyUI, switches per request — ADR 0072 decision 4), on GPUs, as ECS **Managed Instances** services that are normally scaled to zero: one MI capacity provider per role (never one instance for both — VRAM), the three IAM roles they need, an S3 bucket for the model catalogue, a Fargate ingest task (Hugging Face → sha256 → S3), each engine's task definition, service and Cloud Map name, one SG (8080 from the CP only), and the SSM parameter holding the engine table. Each role is created only when its `<Role>Enabled` is `true` (ADR 0072 P6). Imports 00-network and 20-platform (including whichever of `af-llamacpp` / `af-sdcpp` / `af-comfyui` it needs, which must already hold the image); hands 30-ingress its `EnginesSsmParam` output. ⚠️ It owns the cluster's capacity-provider associations |
 | `cfn/50-tts.yaml` | **new, unproven** (ADR 0070 P0) | **Optional — only for Japanese speech.** The VOICEVOX (Zundamon) engine as a Fargate service that is normally scaled to zero, its Cloud Map DNS name, and a dedicated SG (50021 from the CP only). Imports 00-network and 20-platform (including the `af-voicevox` repository, which must already hold the image before this stack is created); hands 30-ingress its `TtsEcsService` / `VoicevoxUrl` outputs |
 
 > The first five are proven end-to-end **including teardown**: two real deployments in two
@@ -852,10 +852,10 @@ only exists while somebody is using it**. It has two independent roles:
 | Role | Engine | What a member gets | Cold start |
 |---|---|---|---|
 | `llm` | llama.cpp (`llama-server`) | `llamacpp/<model>` in opencode's launch picker | ~527–586 s |
-| `image` | stable-diffusion.cpp (`sd-server`) | the `generate_image` tool, provider `sdcpp` — generate, edit and inpaint | ~195 s + the box |
+| `image` | stable-diffusion.cpp (`sd-server`) | the `generate_image` tool, provider `sdcpp` — generate, edit and inpaint | ~195 s + the instance |
 
 Each is optional on its own (without `<Role>Enabled=true` that role's service is not
-created at all), and **the two never share a box**: CUDA does not slow down when VRAM runs
+created at all), and **the two never share an instance**: CUDA does not slow down when VRAM runs
 out, it crashes, and the two measured footprints — 20.9 GB for the 30B, 7.4 GB for SDXL — do
 not both fit on one L4. Everything here is opt-in, because unlike the speech engine it is not
 cheap when it is up: **g6.xlarge (NVIDIA L4, 24 GB) is $1.26/hour all in**, or $918/month if
@@ -865,14 +865,14 @@ measurement; this section is what to type.
 **Why Managed Instances and not Fargate.** Fargate has no GPU and never has (AWS Fargate FAQ;
 containers-roadmap #88, open since 2019). ECS Managed Instances is the closest thing to
 "Fargate with a GPU": AWS owns the instance, the AMI and the NVIDIA driver, and terminates the
-box once the task is gone — which is the property ADR 0070's whole design rests on.
+instance once the task is gone — which is the property ADR 0070's whole design rests on.
 
 ### Before you start
 
 1. **G-family vCPU quota.** A new account has **zero**, and the increase is not
    auto-approved: it opens a support case that takes hours to days. Ask for **16**
    (`L-DB2E81BA`, "Running On-Demand G and VT instances") if you run both roles — 8 builds two
-   g6.xlarge, but a box AWS has just retired keeps its 4 vCPU counted for the 7–8 minutes it
+   g6.xlarge, but an instance AWS has just retired keeps its 4 vCPU counted for the 7–8 minutes it
    spends shutting down, so 16 is one drain's worth of headroom. The quota is a ceiling and
    not a reservation — nothing is billed for headroom — so asking for 24 costs the same and
    covers a redeploy overlapping a drain. Check with:
@@ -909,11 +909,11 @@ ServiceConnectNamespace=af.internal
 LlmEnabled=true
 # More than one type, or a shortfall in one AZ is the whole of "the engine never arrives".
 # The list is a filter and not a preference order (MI has no allocation strategy), so the
-# cheapest member is the one normally bought: keep the intended box cheapest and put a
+# cheapest member is the one normally bought: keep the intended instance cheapest and put a
 # fallback ABOVE it, never below. PARAMETERS-60-engines.md has the argument.
 LlmAllowedInstanceTypes=g6.xlarge,g5.xlarge
 # Optional (ADR 0074): the GPU rungs an administrator may switch the role between from the
-# Console, without a stack update. Leave it out and the box is exactly what the lines above
+# Console, without a stack update. Leave it out and the instance is exactly what the lines above
 # bought — the Control Plane then never touches the capacity provider at all. The FIRST rung is
 # the default and has to restate them. PARAMETERS-60-engines.md, "The instance classes".
 # LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
@@ -956,7 +956,7 @@ facts, and deriving the second from the first is what ADR 0053 forbids.
    ingest task). The search (ADR 0072 decision 11) is filtered to what the engine can load —
    GGUF repositories for `llm`, text-to-image for `image` — and each hit says up front whether
    it is gated, what licence it carries and how many downloads, likes and trending points it
-   has. With the box empty it is a **ranking** (downloads / trending / likes) instead, which is
+   has. With the instance empty it is a **ranking** (downloads / trending / likes) instead, which is
    the way in when no name is in hand. The
    `run-task` below is the same thing by hand, for a deployment whose control plane cannot reach
    the internet;
@@ -965,7 +965,7 @@ facts, and deriving the second from the first is what ADR 0053 forbids.
 
 **Where the file goes** is ComfyUI's layout (ADR 0071 decision 6, ADR 0072 decision 2), so one
 tree serves all three engines: `llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`,
-`image/loras/`, `image/vae/`, `image/text_encoders/`, `image/diffusion_models/`. The box mirrors
+`image/loras/`, `image/vae/`, `image/text_encoders/`, `image/diffusion_models/`. The instance mirrors
 the bucket — `image/checkpoints/x.safetensors` becomes `/models/image/checkpoints/x.safetensors`
 — so the key IS the path and there is no second name to keep in step.
 
@@ -1030,7 +1030,7 @@ fetched nothing (measured).
 ⚠️ **Budget an unpredictable amount of time for that fetch, and give the checksum.** Measured
 over four pulls of two files through the same NAT, Hugging Face delivered between **4 and
 236 MB/s**, and nothing about the file, the client or the path predicted which — the same
-SDXL checkpoint came at 236 MB/s to one box and 39.6 MB/s to another. That unpredictability
+SDXL checkpoint came at 236 MB/s to one instance and 39.6 MB/s to another. That unpredictability
 is the whole reason models are staged in S3, which was **104–147 MB/s on every attempt**. The
 sha256 matters for the same reason: a truncated 17 GB GGUF loads and then answers nonsense,
 and "the file got bigger" is what a truncated download looks like too.
@@ -1040,22 +1040,22 @@ operator to have accepted the licence on Hugging Face and that account's token r
 **Settings → Admin → engines → "Hugging Face token"** (ADR 0072 phase P5 — no CloudFormation
 round trip: the control plane keeps the token sealed in its own database and writes it into a
 secret this stack always creates). The token is read by the **ingest task only**; it never
-reaches an engine box, and the control plane cannot read back what it wrote
+reaches an engine instance, and the control plane cannot read back what it wrote
 (`PutSecretValue` without `GetSecretValue`).
 
 ### What a member sees
 
 **The `llm` role:** nothing to configure. The Agent asks the CP which engines exist, writes the
 chat ones into opencode's global config as a provider, and `llamacpp/<model>` appears in the
-launch picker — **while the GPU box is still asleep**, which is why the ids come from the
-catalogue and never from the engine. Picking one and sending the first message starts the box
+launch picker — **while the GPU instance is still asleep**, which is why the ids come from the
+catalogue and never from the engine. Picking one and sending the first message starts the instance
 and holds the request until it answers; the answer arrives on the **first attempt**, with no
 retry, which is the observation that verifies ADR 0071 decision 5.
 
 Since ADR 0072 P1 `llama-server` runs as a **router**: every enabled model appears in the
 picker with **its own context window**, and the request's `model` chooses between them. Two
 things follow, and both are the administrator's to weigh. Every enabled GGUF is synced onto the
-box, so the cold start grows with their total size (the panel estimates it per model), and
+instance, so the cold start grows with their total size (the panel estimates it per model), and
 `LlmModelsMax` (default **1**) caps how many are held at once — under that cap a request for the
 other model waits for the current answer to finish and then pays a full reload. The panel names
 the model in VRAM and counts the changes.
@@ -1072,12 +1072,12 @@ which is what keeps opencode's 60-second per-call ceiling from cutting it off.
 ### Things worth knowing
 
 - **`DesiredCount` is absent from the template, deliberately**, for the same reason as
-  `50-tts`: CloudFormation would otherwise reset it on every stack update, i.e. kill a GPU box
+  `50-tts`: CloudFormation would otherwise reset it on every stack update, i.e. kill a GPU instance
   in the middle of an answer.
 - **The default capacity-provider strategy is empty and must stay empty.** With one in place,
-  any service that does not spell out `LaunchType: FARGATE` lands on the GPU box.
+  any service that does not spell out `LaunchType: FARGATE` lands on the GPU instance.
 - **A stopped engine keeps billing for several minutes.** Measured drain after `desired 0`:
-  **427 and 463 seconds** on a GPU box (93 s on a CPU one). Shortening the idle window only
+  **427 and 463 seconds** on a GPU instance (93 s on a CPU one). Shortening the idle window only
   ever recovers window time, never that.
 - **The cold start is minutes, not seconds.** Measured from S3, image already in ECR:
   **527 s** to a listening engine — 178 s of image pull and 179 s of S3 fetch running
@@ -1190,7 +1190,7 @@ back. **One slot serves one user at a time** (`ADR 0045` decision 8).
 |---|---|---|
 | Warm Start | ~105s | **84–110s** — *not* an improvement worth switching for (docs/log/64 §64.17.5, §64.19.2) |
 | Home | EFS — small files are 8–30× slower | **EBS gp3** — 2,000 small files in 0.04s vs 30.7s |
-| Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the box |
+| Size | 74 discrete (cpu, memory) pairs, ≤16 vCPU / 120 GiB | instance types; the task reserves nothing and gets the instance |
 | Resources per workspace | 2 (service + EFS access points) | 6 (also instance, volume, container-instance registration, task def) |
 | Idle cost | EFS (what you use) | EBS (what you **provision**) + any hot slots |
 
@@ -1209,27 +1209,27 @@ aws cloudformation deploy --stack-name af-ecs-ingress --template-file cfn/30-ing
 |---|---|---|---|
 | `WsRuntime` | `AF_RUNTIME` | `ecs` | `ecs-ec2` switches the adapter. Rolling back is this value |
 | `Ec2SlotLaunchTemplate` | `AF_ECS_EC2_LAUNCH_TEMPLATE` | — | `SlotLaunchTemplateId` output of `40-ec2-pool`. The CP refuses to boot without it on this profile |
-| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending — or several named **classes**, see below. The vCPU field is optional and display-only (the Console shows which box a memory number lands on) |
+| `Ec2SlotTypes` | `AF_ECS_EC2_SLOT_TYPES` | `m7i.large:8192:2,…` | `instanceType:memoryMiB[:vcpu]`, ascending — or several named **classes**, see below. The vCPU field is optional and display-only (the Console shows which instance a memory number lands on) |
 | `Ec2SlotAmiArm64` | `AF_ECS_EC2_AMI_ARM64` | `""` | `SlotAmiIdArm64` output of `40-ec2-pool`. Required only when a class declares `arm64` — the CP refuses to boot otherwise |
 | `Ec2DefaultSlotClass` | `AF_ECS_EC2_DEFAULT_SLOT_CLASS` | `""` (the first class) | Where a member with no per-user and no per-tenant choice lands |
 | `Ec2MaxSlots` | `AF_ECS_EC2_MAX_SLOTS` | `8` | Hard cap **across all classes**. Start fails at the cap rather than growing the bill |
-| `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | How long a box may sit with no task before it is **stopped**. Ends the compute charge; the root volume keeps billing. `0` = never |
-| `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the box is **terminated** and its root volume goes too. `0` means boxes are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
+| `Ec2SlotSleepSec` | `AF_ECS_EC2_SLOT_SLEEP_SEC` | `900` | How long an instance may sit with no task before it is **stopped**. Ends the compute charge; the root volume keeps billing. `0` = never |
+| `Ec2SlotTerminateAfterSec` | `AF_ECS_EC2_SLOT_TERMINATE_AFTER_SEC` | `0` (off) | The next step on the same clock: past it the instance is **terminated** and its root volume goes too. `0` means instances are kept forever, so retained roots grow to `Ec2MaxSlots` — see below. `14400` (4h) recommended |
 | `Ec2HomeGiB` | `AF_ECS_EC2_HOME_GB` | `50` | Per-user home volume (gp3) |
 | `Ec2HibernateAfterSec` | `AF_ECS_EC2_HIBERNATE_AFTER_SEC` | `0` (off) | **Default** for how long a home may sit unopened before it is snapshotted and its volume deleted. A tenant overrides it from the Console. Nothing is destroyed — the snapshot completes before the volume goes, and the next start restores it. See below |
-| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the box's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, which puts an 8 GiB slot's workspace at 6.4 GiB. `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
+| `Ec2HostReserveMb` | `AF_ECS_EC2_HOST_RESERVE_MB` | `auto` | How much of a slot is held back from the workspace so the instance's own daemons cannot be starved by it. `auto` = a fifth of the rung, clamped to 1–2 GiB, which puts an 8 GiB slot's workspace at 6.4 GiB. `off` = uncapped (what every deployment did before 0.12.5, and what melted one). See below |
 | — | `AF_ECS_EC2_SLOT_LOST_AFTER_SEC` | `300` | How long a slot may be EC2-`running` while the cluster cannot reach its agent before the CP gives up on it and rebuilds the workspace elsewhere. `0` = wait as long as the caller allows |
 | — | `AF_ECS_EC2_GOLDEN_AUTOBAKE` | `1` (on) | Keep the golden snapshot in step with the workspace image without anyone re-baking by hand (ADR 0045 decision 9-1). Set `0` and it becomes your job on every release |
 | — | `AF_ECS_EC2_GOLDEN_BAKE_SEC` | `60` | How often the baker looks. It advances one step per look, so this is also how fast a bake progresses |
 
 **What a workspace actually gets (`Ec2HostReserveMb`).** A slot's memory is not all the
 workspace's: dockerd, containerd, the ECS agent, SSM and the EFS stunnel live on the same
-box, and the rung overstates what the machine has (an "8192 MiB" m7i.large reports 7784).
+instance, and the rung overstates what the machine has (an "8192 MiB" m7i.large reports 7784).
 So the container is capped at the rung less a reserve, and the Console prints the number
-the workspace can actually spend with the box beside it — `6.4 GiB (of 8 GiB)`.
+the workspace can actually spend with the instance beside it — `6.4 GiB (of 8 GiB)`.
 
 ⚠️ **Turning it off is not free.** Uncapped, one workspace taking several GB of anonymous
-memory can push the box into refault thrash: with no swap the kernel throws away page
+memory can push the instance into refault thrash: with no swap the kernel throws away page
 cache, every daemon spends its time re-reading its own executable off disk, and the slot
 stops answering the cluster entirely while still looking healthy to EC2. That happened on
 a live deployment (docs/log/64 §64.40) — nobody could start that workspace again for hours.
@@ -1267,7 +1267,7 @@ docs/log/70 §70.3):
 | m7g (Graviton3) | −19.0% | −10% | −27.4% |
 | m6g (Graviton2) | **−24.0%** | **+32%** | ±0 |
 
-⚠️ **The cheapest box per hour is not the cheapest box.** m6g bills 24% less per hour
+⚠️ **The cheapest instance per hour is not the cheapest instance.** m6g bills 24% less per hour
 and takes 32% longer, which nets out to no saving at all on work that keeps the CPU
 busy — and m8g is *both* cheaper and faster than m7i, so there is no reason to run m7g.
 
@@ -1354,7 +1354,7 @@ only copy that is not in the zone — snapshots are regional.
 **Baking the workspace image into the slot AMI: tried, measured, removed.** A slot's root
 volume IS the image cache, so baking the image in does remove the pull (31.8s → **0.185s**,
 measured) — and makes the slot **slower overall**, because a private AMI's root is lazily
-loaded from a fresh snapshot: the box took ~56s longer to join the cluster and a new user's
+loaded from a fresh snapshot: the instance took ~56s longer to join the cluster and a new user's
 first start measured **179–192s against 144s** on the stock ECS-optimized AMI. The script
 and the CP-side reporting were removed rather than left as a not-recommended option; the
 measurement and the reasoning are in docs/log/64 §64.24 / ADR 0045 decision 19. **`SlotAmiId` stays
@@ -1363,7 +1363,7 @@ slots get patched, decision 7).
 
 **A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 decision 20):
 it leaves the pool so nobody else lands on it, its home is detached and freed for another
-slot, and the box is stopped. It stays on the Slots tab with the reason, because it still
+slot, and the instance is stopped. It stays on the Slots tab with the reason, because it still
 holds its root volume — **terminate it yourself** once you have taken what you need from
 it (this adapter never terminates instances). The failure that made this necessary was a
 wedged kernel holding a deleted volume's NVMe namespace, which no amount of retrying fixes.
@@ -1434,29 +1434,29 @@ they survive, and keep billing. The response and the audit entry list what was l
   ($3.84/month at 40 GiB) instead of ~$95 for a running one.
 - **Stopping ends the compute charge; only terminating ends the ROOT VOLUME charge.**
   `Ec2SlotTerminateAfterSec` (default `0` = off) is the next step on the same clock: past
-  it the box is terminated and its root volume goes with it. ⚠️ Leave it off and the
+  it the instance is terminated and its root volume goes with it. ⚠️ Leave it off and the
   number of retained roots only ever grows, with `Ec2MaxSlots` as its ceiling — so raising
   `Ec2MaxSlots` to serve more people also signs you up for that many root volumes,
   permanently and whether or not anyone is working (30 × 40 GiB ≈ **$115/month**). That was
-  measured on a live deployment, where the only cure was terminating boxes by hand
+  measured on a live deployment, where the only cure was terminating instances by hand
   (docs/log/64 §64.32). **14400 (4h) is the recommended value**, and it costs your users 25
-  seconds: come back the same day and you wake the box (~110s), come back tomorrow and one
+  seconds: come back the same day and you wake the instance (~110s), come back tomorrow and one
   is built for you (~135s).
 - **Two different idle timers, in series.** `AF_WS_IDLE_TIMEOUT` / the per-tenant
   `ws_idle_timeout` is the product's existing idle-stop: it watches the person and stops
   their *workspace* (every runtime has it). `Ec2SlotSleepSec` only starts counting after
   that, and it stops the *slot*. Someone who walks away is therefore idle-stopped on the
-  tenant's timeout and their box sleeps 15 minutes later.
+  tenant's timeout and their instance sleeps 15 minutes later.
 - **Slots are reclaimed only at the cap.** Below `Ec2MaxSlots` a new user gets a new
   slot; at the cap the longest-dormant occupant **of the same instance type** is evicted
   (a workspace with a running task is never touched). So `Ec2MaxSlots` bounds how many
-  people work *at once*, `Ec2SlotSleepSec` bounds how many boxes are *running*, and
+  people work *at once*, `Ec2SlotSleepSec` bounds how many instances are *running*, and
   `Ec2SlotTerminateAfterSec` bounds how many *exist* — without the third, "how many
   exist" is `Ec2MaxSlots` too.
-- **At the cap, a box of the wrong size is removed rather than handed over.** An instance
-  type is not something a running box can change, so if the cap is held entirely by sizes
+- **At the cap, an instance of the wrong size is removed rather than handed over.** An instance
+  type is not something a running instance can change, so if the cap is held entirely by sizes
   a member cannot run on, eviction has nothing to offer. Rather than fail their start, the
-  CP terminates one dormant box of a size they cannot use — an empty one first, otherwise
+  CP terminates one dormant instance of a size they cannot use — an empty one first, otherwise
   the longest-dormant — and builds theirs in its place. What that costs its former owner is
   the image cache (~110s becomes ~135s on their return), never their home: it is detached
   first and never deleted. ⚠️ This is **not** gated on `Ec2SlotTerminateAfterSec`: that
@@ -1467,18 +1467,18 @@ they survive, and keep billing. The response and the audit entry list what was l
 - **An EMPTY slot sleeps on the same timer.** A slot whose home has been released — by an
   eviction, a size/class change, a `Destroy`, or the golden bake finishing with its seed
   and probe — belongs to nobody, and `Ec2SlotSleepSec` stops it too. ⚠️ Before docs/log/64
-  §64.31 only *occupied* slots were ever stopped, so a released box ran until an operator
+  §64.31 only *occupied* slots were ever stopped, so a released instance ran until an operator
   noticed: measured on a live deployment, three empty `m*.large` up for over 24h with zero
   tasks, at ~$95/month each.
 - **No hot spare is kept, and no warm floor either.** The first person of the morning
   wakes a stopped slot (~110s) or, if the pool has none, pays the full ~135s to build one.
   Keeping an empty slot *hot* would save them ~92s (43s vs 135s) for a full instance-hour,
-  every hour — `Ec2SlotSleepSec=0` buys that if you want it. Keeping stopped boxes around
-  instead ("keep at least N warm") buys much less than it looks: a dormant box is only
+  every hour — `Ec2SlotSleepSec=0` buys that if you want it. Keeping stopped instances around
+  instead ("keep at least N warm") buys much less than it looks: a dormant instance is only
   reusable **by its owner** (its home is still attached, so `freeSlots` never offers it to
   anyone else), and making one generic means the next user pays the wake plus the attach
-  plus the mount SSM round trip — 123–143s against 135s for a fresh box. So there is no
-  floor parameter; `Ec2SlotTerminateAfterSec` alone decides how long a box is kept.
+  plus the mount SSM round trip — 123–143s against 135s for a fresh instance. So there is no
+  floor parameter; `Ec2SlotTerminateAfterSec` alone decides how long an instance is kept.
 - **AZ is destiny.** An EBS volume cannot leave its AZ, so a user is pinned to the AZ
   their home was created in. If no slot can be run there, that user cannot start.
 - **A slot's root volume is shared with whoever had it before.** `/tmp` is a tmpfs

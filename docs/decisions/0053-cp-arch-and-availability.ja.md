@@ -14,7 +14,7 @@
 
 ## 背景
 
-[docs/70](../log/70-slot-instance-classes.md) は Workspace が載る箱をアーキごと選べるように
+[docs/70](../log/70-slot-instance-classes.md) は Workspace が載るインスタンスをアーキごと選べるように
 した。同じ問いが CP 自身に残っている——**CP は amd64 でしか焼かれていない**ので、
 Fargate を Graviton に置くという選択肢がそもそも存在しない。一方で
 `control-plane/Dockerfile` にはアーキ依存の記述が 1 行も無く、**焼き方だけの問題**である。

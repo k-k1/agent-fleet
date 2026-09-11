@@ -79,6 +79,16 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "key",
   "admin.engines_model_add_family": "family",
+  // ADR 0072 decision 5, the llm half. A LoRA is not a model: it is pinned to one, travels in
+  // that model's preset section, and is invisible to the member — who sees an ordinary model id
+  // that happens to include the fine-tune.
+  "admin.engines_model_add_kind": "this row is",
+  "admin.engines_model_add_kind_model": "a model",
+  "admin.engines_model_add_kind_lora": "a LoRA adapter",
+  "admin.engines_model_add_lora_base": "applies to",
+  "admin.engines_model_add_lora_base_pick": "choose the model it fine-tunes",
+  "admin.engines_model_add_lora_scale": "strength (0-2, default 1)",
+  "admin.engines_model_add_lora_note": "A LoRA is loaded with the model it names and with no other, every time that model is started. Nothing appears in the launch menu for it. Its file belongs under {p}.",
   "admin.engines_ingest_family_hint": "The repository calls this \"{n}\". That is a display name, so pick the family it corresponds to above.",
   "admin.engines_model_add_family_pick": "choose one",
   "admin.engines_model_add_part": "part",

@@ -1045,6 +1045,7 @@ function EngineModels({
           isImage={isImage}
           baseModels={row.base_models}
           fileFlags={row.file_flags}
+          modelIds={(row.model_rows || []).filter((m) => m.kind !== "lora").map((m) => m.id)}
           onAdd={onAdd}
         />
       )}
@@ -1075,6 +1076,7 @@ function EngineModelAdd({
   isImage,
   baseModels,
   fileFlags,
+  modelIds,
   onAdd,
 }: {
   busy: boolean;
@@ -1085,6 +1087,10 @@ function EngineModelAdd({
   /** The labels a split model's files may carry, same source and same rule. Empty = a row is
    *  always one unlabelled file. */
   fileFlags?: string[];
+  /** The ids already in this catalogue. A LoRA on the llm role names one of them as its base:
+   *  that is the model whose preset section it is pinned into, so it is a CHOICE and never a
+   *  typed name — a base nothing matches is an adapter that silently does nothing. */
+  modelIds?: string[];
   onAdd: (body: Record<string, unknown>) => void;
 }) {
   const tr = useT();
@@ -1094,6 +1100,11 @@ function EngineModelAdd({
   const [ctx, setCtx] = useState("");
   const [out, setOut] = useState("");
   const [baseModel, setBaseModel] = useState("");
+  /** Whether this row is an adapter rather than a model (ADR 0072 decision 5). It changes three
+   *  things at once — the kind, where the file belongs in the bucket, and what `base_model`
+   *  means — so it is one control and not three fields the operator has to keep consistent. */
+  const [isLora, setIsLora] = useState(false);
+  const [scale, setScale] = useState("");
   /** The licence, in the words of whoever staged the file. OPTIONAL, and deliberately so: this
    *  route registers a file already in the bucket, and there is no API to read a licence off —
    *  the ingest road is the one that records it from the source (ADR 0072 decision 6). Left
@@ -1117,6 +1128,8 @@ function EngineModelAdd({
     setCtx("");
     setOut("");
     setBaseModel("");
+    setIsLora(false);
+    setScale("");
     setLicence("");
     setLicenceURL("");
     setFiles(blank);
@@ -1130,9 +1143,14 @@ function EngineModelAdd({
     );
   }
   const rows = files.filter((f) => f.s3Key.trim());
-  // The family is required exactly when the provider has one, and the button says so by being
-  // disabled rather than by letting the CP refuse after the press.
-  const incomplete = !id.trim() || rows.length === 0 || (families.length > 0 && !baseModel);
+  /** An llm adapter names a MODEL ID as its base; an image one names a family, as a checkpoint
+   *  does. One column, two vocabularies, because "what this belongs to" is the same question
+   *  and the engine that reads it is different (ADR 0072 decisions 2 and 5). */
+  const basePicksAModel = isLora && !isImage;
+  const baseOptions = basePicksAModel ? modelIds || [] : families;
+  // The base is required exactly when there is a vocabulary to pick from, and the button says so
+  // by being disabled rather than by letting the CP refuse after the press.
+  const incomplete = !id.trim() || rows.length === 0 || (baseOptions.length > 0 && !baseModel);
   const submit = () => {
     if (incomplete) return;
     const n = (v: string) => {
@@ -1143,14 +1161,21 @@ function EngineModelAdd({
     // usable tokens, which is worse than the no-limit default it would otherwise get.
     const c = n(ctx);
     const o = n(out);
+    // The strength travels as an argument rather than a column: it is meaningful for exactly
+    // one kind of row, and `args` is already where a row says something only its engine reads.
+    // Left empty it is not sent at all, and the engine's own default (1) applies.
+    const w = Number(scale.trim());
+    const args = isLora && scale.trim() && Number.isFinite(w) ? ["--scale", scale.trim()] : [];
     onAdd({
       id: id.trim(),
-      kind: isImage ? "checkpoint" : "gguf",
+      kind: isLora ? "lora" : isImage ? "checkpoint" : "gguf",
       files: rows.map((f) => ({ flag: f.flag, s3Key: f.s3Key.trim(), bytes: n(f.bytes) })),
       description: desc.trim(),
       base_model: baseModel,
-      context_tokens: c && o ? c : 0,
-      max_output_tokens: c && o ? o : 0,
+      ...(args.length > 0 ? { args } : {}),
+      // An adapter has no window of its own: it is loaded with the model that has one.
+      context_tokens: isLora ? 0 : c && o ? c : 0,
+      max_output_tokens: isLora ? 0 : c && o ? o : 0,
       // 🔴 `license_name`, not `license`: the panel reads `license_name || license`, and the
       // pair exists because Hugging Face answers `other` for both non-commercial models in ADR
       // 0072's table. What a person types here is the terms, so it goes in the field that holds
@@ -1185,18 +1210,42 @@ function EngineModelAdd({
   );
   return (
     <div className="engines-model-add">
+      {/* First, because it decides what the rest of the form MEANS: the kind, where the file
+          belongs in the bucket, and whether "applies to" is a family or a model id. */}
+      <label className="engines-model-add-row">
+        <span>{tr("admin.engines_model_add_kind")}</span>
+        <select
+          value={isLora ? "lora" : "model"}
+          onChange={(ev) => {
+            setIsLora(ev.currentTarget.value === "lora");
+            setBaseModel("");   // the two kinds do not share a vocabulary, so neither may a value
+          }}
+        >
+          <option value="model">{tr("admin.engines_model_add_kind_model")}</option>
+          <option value="lora">{tr("admin.engines_model_add_kind_lora")}</option>
+        </select>
+      </label>
       {field(tr("admin.engines_model_add_id"), id, setId,
-        isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
+        isLora ? "house-style" : isImage ? "juggernaut-xl-v9" : "qwen2.5-coder-1.5b")}
       {/* ⚠️ A CHOICE, never a text box. What the repository calls a model — "SDXL 1.0",
           "Flux.1 D" — is a display name, and typing one here produced rows that looked complete
           and refused to generate (ADR 0072 P2 実機検証). The list comes from the CP, which
-          validates against the same one. */}
-      {families.length > 0 && (
+          validates against the same one. An llm adapter picks from the catalogue's own ids for
+          the same reason: a base nothing matches is an adapter that loads nowhere. */}
+      {baseOptions.length > 0 && (
         <label className="engines-model-add-row">
-          <span>{tr("admin.engines_model_add_family")}</span>
+          <span>
+            {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
+          </span>
           <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
-            <option value="">{tr("admin.engines_model_add_family_pick")}</option>
-            {families.map((f) => (
+            <option value="">
+              {tr(
+                basePicksAModel
+                  ? "admin.engines_model_add_lora_base_pick"
+                  : "admin.engines_model_add_family_pick",
+              )}
+            </option>
+            {baseOptions.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
@@ -1219,7 +1268,8 @@ function EngineModelAdd({
             </label>
           )}
           {field(tr("admin.engines_model_add_key"), f.s3Key, (v) => setFile(i, { s3Key: v }),
-            isImage ? "image/checkpoints/name.safetensors" : "llm/name.gguf")}
+            engineIngestPrefix(isImage, f.flag, isLora) +
+              (isImage ? "name.safetensors" : "name.gguf"))}
           {field(tr("admin.engines_model_add_bytes"), f.bytes, (v) => setFile(i, { bytes: v }),
             "1117320768", true)}
           {files.length > 1 && (
@@ -1250,9 +1300,14 @@ function EngineModelAdd({
       {field(tr("admin.engines_model_add_license"), licence, setLicence, "apache-2.0")}
       {field(tr("admin.engines_model_add_license_url"), licenceURL, setLicenceURL)}
       {/* The window is a chat engine's business: sd-server holds one checkpoint and has no
-          context at all, so offering the field there would ask for a number nothing reads. */}
-      {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
-      {!isImage && field(tr("admin.engines_model_add_out"), out, setOut, "4096", true)}
+          context at all, so offering the field there would ask for a number nothing reads. An
+          adapter has none either — it is loaded with the model whose window applies. */}
+      {!isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768", true)}
+      {!isImage && !isLora && field(tr("admin.engines_model_add_out"), out, setOut, "4096", true)}
+      {/* Optional, and only for the pinned kind: the image role's adapters take their strength
+          per request, from the agent's own call (decision 5's image half). */}
+      {isLora && !isImage &&
+        field(tr("admin.engines_model_add_lora_scale"), scale, setScale, "1", true)}
       <div className="engines-model-add-actions">
         <button type="button" className="primary sm" disabled={busy || incomplete} onClick={submit}>
           {tr("admin.engines_model_add_go")}
@@ -1264,7 +1319,14 @@ function EngineModelAdd({
       {/* ⚠️ The CP never checks that the key exists: it has no S3 permission at all and none is
           being added (ADR 0072 review R3). A typo surfaces in the fetch sidecar's log at the
           next cold start, so the panel says so rather than implying a check happened. */}
-      <p className="muted">{tr("admin.engines_model_add_note")}</p>
+      <p className="muted">
+        {isLora
+          ? (tr("admin.engines_model_add_lora_note") as string).replace(
+              "{p}",
+              engineIngestPrefix(isImage, "", true),
+            )
+          : tr("admin.engines_model_add_note")}
+      </p>
     </div>
   );
 }
@@ -1448,12 +1510,20 @@ function EngineIngest({
    *  whether it JOINS that row instead of making a new one. */
   const [fileFlag, setFileFlag] = useState("");
   const [attach, setAttach] = useState(false);
+  /** Taking in an ADAPTER rather than a model (ADR 0072 decision 5). It moves the key into
+   *  `<role>/loras/`, makes `base_model` a model id on the llm role, and takes the window away —
+   *  a LoRA has none of its own. */
+  const [isLora, setIsLora] = useState(false);
   const families = baseModels || [];
   const flags = fileFlags || [];
   /** True when the typed id is one this engine already has. The CP refuses a plain ingest onto
    *  it (409 model_id_exists), so this is where the second act — attaching a part — is
    *  offered rather than left as an error to read. */
   const known = (modelIds || []).includes(id.trim());
+  /** Same two vocabularies as the register form: an llm adapter names a model id, everything
+   *  else names a family. */
+  const basePicksAModel = isLora && !isImage;
+  const baseOptions = basePicksAModel ? (modelIds || []).filter((m) => m !== id.trim()) : families;
   /** Which read of a source is the current one. Picking a second result before the first has
    *  answered is one click, and the two answers come back in whatever order the two APIs feel
    *  like — so the older one is dropped rather than allowed to describe the row on screen. */
@@ -1642,18 +1712,18 @@ function EngineIngest({
     };
     const c = n(ctx);
     const o = n(out);
-    const key = engineIngestPrefix(isImage, fileFlag) + (file.trim() || id.trim());
+    const key = engineIngestPrefix(isImage, fileFlag, isLora) + (file.trim() || id.trim());
     const d = await apiJSON(`api/admin/engines/${encodeURIComponent(engineKey)}/ingest`, "POST", {
       id: id.trim(),
-      kind: isImage ? "checkpoint" : "gguf",
+      kind: isLora ? "lora" : isImage ? "checkpoint" : "gguf",
       s3Key: key,
       source: source(),
       description: desc.trim(),
       base_model: baseModel,
       file_flag: fileFlag,
       attach: attach && known,
-      context_tokens: c && o ? c : 0,
-      max_output_tokens: c && o ? o : 0,
+      context_tokens: isLora ? 0 : c && o ? c : 0,
+      max_output_tokens: isLora ? 0 : c && o ? o : 0,
       license_accepted: true,
     });
     if (d?.error) {
@@ -1862,12 +1932,37 @@ function EngineIngest({
           answer rides BESIDE the picker instead of into it: "SDXL 1.0" and "Flux.1 D" are what
           Hugging Face and Civitai publish, and storing one of those as the family produced rows
           that looked complete and refused to generate (P2 実機検証). */}
-      {!attach && families.length > 0 && (
+      {/* Not offered while ATTACHING: that is adding a part to a row that already decided what
+          it is. An adapter is never one of a model's parts. */}
+      {!attach && (
         <label className="engines-model-add-row">
-          <span>{tr("admin.engines_model_add_family")}</span>
+          <span>{tr("admin.engines_model_add_kind")}</span>
+          <select
+            value={isLora ? "lora" : "model"}
+            onChange={(ev) => {
+              setIsLora(ev.currentTarget.value === "lora");
+              setBaseModel("");
+            }}
+          >
+            <option value="model">{tr("admin.engines_model_add_kind_model")}</option>
+            <option value="lora">{tr("admin.engines_model_add_kind_lora")}</option>
+          </select>
+        </label>
+      )}
+      {!attach && baseOptions.length > 0 && (
+        <label className="engines-model-add-row">
+          <span>
+            {tr(basePicksAModel ? "admin.engines_model_add_lora_base" : "admin.engines_model_add_family")}
+          </span>
           <select value={baseModel} onChange={(ev) => setBaseModel(ev.currentTarget.value)}>
-            <option value="">{tr("admin.engines_model_add_family_pick")}</option>
-            {families.map((f) => (
+            <option value="">
+              {tr(
+                basePicksAModel
+                  ? "admin.engines_model_add_lora_base_pick"
+                  : "admin.engines_model_add_family_pick",
+              )}
+            </option>
+            {baseOptions.map((f) => (
               <option key={f} value={f}>
                 {f}
               </option>
@@ -1875,19 +1970,19 @@ function EngineIngest({
           </select>
         </label>
       )}
-      {!attach && families.length > 0 && found?.base_model && (
+      {!attach && !isLora && families.length > 0 && found?.base_model && (
         <p className="muted">
           {(tr("admin.engines_ingest_family_hint") as string).replace("{n}", found.base_model)}
         </p>
       )}
       {field(tr("admin.engines_model_add_desc"), desc, setDesc)}
-      {!isImage && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
+      {!isImage && !isLora && field(tr("admin.engines_model_add_ctx"), ctx, setCtx, "32768")}
       {/* The output cap is a FRACTION of the window, never a free number. It is not published
           anywhere — it is a deployment's policy for how much of the window one reply may eat —
           and 🔴 ADR 0072 decision 3: left at 0 opencode reads it as 32,000 and a 32k model ends
           up with 768 usable tokens. Offering computed values makes the pair impossible to
           half-fill. */}
-      {!isImage && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
+      {!isImage && !isLora && <OutputCapField ctx={ctx} value={out} onChange={setOut} />}
       <div className="engines-model-add-actions">
         <button type="button" className="sm" onClick={() => resolve()} disabled={busy || !repo.trim()}>
           {tr("admin.engines_ingest_resolve")}
@@ -1948,7 +2043,10 @@ function EngineIngest({
  * template could reach it, which read as "the model does not work".
  *
  * The layout is ADR 0072 decision 2's, which is ComfyUI's own convention (ADR 0071 decision 6). */
-export function engineIngestPrefix(isImage: boolean, flag: string): string {
+export function engineIngestPrefix(isImage: boolean, flag: string, isLora = false): string {
+  // Adapters are flat inside one directory per role, which is what both engines scan and what
+  // the llm preset points at file by file (ADR 0072 decision 5).
+  if (isLora) return isImage ? "image/loras/" : "llm/loras/";
   if (!isImage) return "llm/";
   switch (flag) {
     case "--diffusion-model":

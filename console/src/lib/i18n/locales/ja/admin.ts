@@ -77,6 +77,15 @@ export const admin = {
   "admin.engines_model_add_id": "id",
   "admin.engines_model_add_key": "キー",
   "admin.engines_model_add_family": "ファミリー",
+  // ADR 0072 決定 5 の llm 側。LoRA はモデルではなく、土台のモデルに固定され、その preset の
+  // 節に載る。利用者からは見えない——見えるのは「その微調整込みのモデル id」1 つだけ。
+  "admin.engines_model_add_kind": "この行の種類",
+  "admin.engines_model_add_kind_model": "モデル",
+  "admin.engines_model_add_kind_lora": "LoRA アダプタ",
+  "admin.engines_model_add_lora_base": "土台のモデル",
+  "admin.engines_model_add_lora_base_pick": "微調整の対象を選んでください",
+  "admin.engines_model_add_lora_scale": "強さ（0〜2・既定 1）",
+  "admin.engines_model_add_lora_note": "LoRA は、名指しした土台のモデルが起動するたびに、そのモデルだけに読み込まれます。起動メニューには現れません。ファイルの置き場は {p} です。",
   "admin.engines_ingest_family_hint": "リポジトリ側はこれを「{n}」と呼んでいます。表示名なので、対応するモデルファミリーを上から選んでください。",
   "admin.engines_model_add_family_pick": "選んでください",
   "admin.engines_model_add_part": "役割",

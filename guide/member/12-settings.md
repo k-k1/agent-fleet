@@ -301,7 +301,7 @@ scale.
   Consumption that went through opencode is priced at opencode's own rates — that is closer to what you actually pay.
 - Models missing from the catalog too are **not** estimated. That consumption is reported under "what is
   measurable" as "N% of the consumption runs on models with no price on file" — which is not an amount of 0.
-  The same box shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
+  The same instance shows **when the catalog was fetched**, because a newer catalog changes past estimates as well.
 - Clicking a series in the time chart filters to it. There is also a **feature × model** matrix.
 - **Measurement coverage** is stated explicitly. Calls that do not report tokens are shown as counted-only
   (which does not mean they were free).
@@ -350,15 +350,15 @@ square is one hour.
 administrator's to set.
 
 - **Instance type / architecture / vCPU / memory / home disk.** On a cloud deployment each member gets a
-  box to themselves, so these are that box's figures.
+  instance to themselves, so these are that instance's figures.
 - Each value says whether it was **measured** (read inside the container) or **configured** (what the next
   start will use). While the workspace is stopped everything is configured.
 - **The architecture matters.** On `arm64` rtk is not installed at all, and JDKs and Node are downloaded as
   arm64 builds ([11 Troubleshooting](11-troubleshooting.md)).
-- **Memory leads with what this workspace may spend, not what the box has.** Part of the box is held back
-  for the host's own daemons, so where both are known you get `6.5 GiB (box has 8 GiB)`. The first number is
+- **Memory leads with what this workspace may spend, not what the instance has.** Part of the instance is held back
+  for the host's own daemons, so where both are known you get `6.5 GiB (instance has 8 GiB)`. The first number is
   the one to look at when a build is being killed.
-- A size or class your admin changes applies **at the next start**, so when the running box and the
+- A size or class your admin changes applies **at the next start**, so when the running instance and the
   configuration disagree, **both** are shown.
 - **Usage** — a moving chart of memory and vCPU (one sample every 4 seconds, up to an hour) plus the
   home disk's usage. **The ceilings are the rows above** — this workspace's memory limit and its core

@@ -47,28 +47,31 @@ describe("normalizeClaudeCustomModels", () => {
   });
 });
 
-// The order the image providers are tried in (ADR 0069). The rule matters because a list
-// saved before a provider existed must still RANK it: otherwise adding a provider would make
-// it unreachable until the user happened to re-save their settings.
+// The order the image providers are tried in (ADR 0069). The rule matters because a list saved
+// before a provider existed must still RANK it — and WHERE it ranks it decides whose money an
+// unattended call spends.
 describe("normalizeImageProviderOrder", () => {
-  it("appends a provider the stored list never heard of, in the built-in order", () => {
-    expect(normalizeImageProviderOrder(["codex"])).toEqual(["codex", "sdcpp", "comfy", "agy"]);
+  it("puts a fleet provider the stored list predates at the FRONT", () => {
+    // 🔴 The measured case (ADR 0072, 2026-09-11): this exact stored value, written before
+    // `comfy` existed, made `auto` reach the fleet's own GPU only after two personal plans.
+    expect(normalizeImageProviderOrder(["sdcpp", "agy", "codex"])).toEqual(["comfy", "sdcpp", "agy", "codex"]);
+  });
+
+  it("keeps an external provider the stored list predates at the back", () => {
+    expect(normalizeImageProviderOrder(["sdcpp", "comfy", "agy"])).toEqual(["sdcpp", "comfy", "agy", "codex"]);
+  });
+
+  it("leaves a provider the stored list names where the user put it", () => {
+    // Including a fleet one ranked last on purpose: this step only places what was never named.
+    expect(normalizeImageProviderOrder(["agy", "codex", "comfy", "sdcpp"])).toEqual(["agy", "codex", "comfy", "sdcpp"]);
   });
 
   it("honours an explicit reorder and drops unknown ids and duplicates", () => {
-    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["codex", "agy", "sdcpp", "comfy"]);
+    expect(normalizeImageProviderOrder(["codex", "bedrock", "codex", "agy"])).toEqual(["sdcpp", "comfy", "codex", "agy"]);
   });
 
   it("falls back to the built-in order for a broken stored value", () => {
     expect(normalizeImageProviderOrder("agy")).toEqual(["sdcpp", "comfy", "agy", "codex"]);
-  });
-
-  // The fleet's own engine (ADR 0071 / ADR 0072 decision 4) is ranked here as well as in the
-  // Agent. Both sdcpp and comfy are in the list even where no deployment runs either, because
-  // leaving one out is what would silently write a stored order that pushes it last — the case
-  // the first test above is about.
-  it("ranks the self-hosted engine", () => {
-    expect(normalizeImageProviderOrder(["agy", "sdcpp", "codex"])).toEqual(["agy", "sdcpp", "codex", "comfy"]);
   });
 });
 

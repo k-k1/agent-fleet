@@ -566,6 +566,10 @@ type engineIngestRequest struct {
 	// are separate acts and only one of them may land on an id the catalogue already holds:
 	// creating would upsert a working row's files, licence and enabled flag away.
 	Attach bool
+	// The attention geometry read from the GGUF header before the job started (engine_gguf.go).
+	// Zero means it could not be read — a gated repository with no token, a file that is not a
+	// GGUF, an upstream that refused the Range — and the row keeps the floor it always had.
+	KVGeom engineKVGeometry
 }
 
 // start creates the job row and launches the task. The row is written FIRST: a RunTask that
@@ -783,6 +787,11 @@ func (g *engineIngester) finish(ctx context.Context, j store.EngineIngestJob, t 
 		// 2026-09-09: two finished jobs for a model that had been forgotten and purged). The
 		// question "which vendor is this model" has to be answerable from the model.
 		Source: req.Resolved.Source,
+		// What a KV-cache estimate is computed from, read once here and never again: the file
+		// is pinned by sha256, so its geometry cannot change under the row (ADR 0074 open
+		// question 7).
+		KVLayers: req.KVGeom.Layers, KVHeadsKV: req.KVGeom.HeadsKV,
+		KVKeyLen: req.KVGeom.KeyLen, KVValueLen: req.KVGeom.ValLen,
 	}
 	if err := g.models.PutEngineModel(ctx, m); err != nil {
 		log.Printf("engines: ingest %s finished but the row could not be written: %v", j.ID, err)

@@ -85,10 +85,10 @@ silently running no workspaces.
 ### `Ec2SlotTypes`
 
 The slot sizes the pool may run. A workspace lands on the smallest slot that holds its
-memory REQUEST and gets the WHOLE box (the task reserves neither cpu nor memory — on EC2
+memory REQUEST and gets the WHOLE instance (the task reserves neither cpu nor memory — on EC2
 those are reservations against the instance). EC2 on-demand pricing is perfectly linear in
 vCPU, so bigger slots are not more expensive per user (ADR 0045 decision 8). The vCPU field is
-optional and display-only: the Console prints it so a tenant admin can see which box a
+optional and display-only: the Console prints it so a tenant admin can see which instance a
 memory number lands on, and omitting it just omits the label (ADR 0045 decision 21 — asking EC2
 instead would mean an extra IAM action for a label).
 
@@ -166,15 +166,15 @@ clear error at the cap instead of growing the bill.
 
 ### `Ec2HostReserveMb`
 
-How much of a slot is held back from the WORKSPACE so the box's own daemons (dockerd,
+How much of a slot is held back from the WORKSPACE so the instance's own daemons (dockerd,
 containerd, the ECS agent, SSM, the EFS stunnel) cannot be starved by it.
 
 - `auto` = a fifth of the rung, clamped to 1-2 GiB: an 8 GiB slot's workspace is capped at
-  6.4 GiB, and the Console prints that number with the box beside it.
+  6.4 GiB, and the Console prints that number with the instance beside it.
 - `off` = uncapped, which is what every deployment did before this existed — and what melted
   a live slot on 2026-08-27 (docs/log/64 §64.40): one workspace took enough anonymous memory
   that the kernel evicted all page cache, every daemon spent hours re-reading its own
-  executable off disk, and the box stopped answering the cluster while still looking healthy
+  executable off disk, and the instance stopped answering the cluster while still looking healthy
   to EC2.
 - A plain number is that many MiB.
 
@@ -188,7 +188,7 @@ How long a slot may sit with no running task before the instance is STOPPED (not
 
 NOT the same thing as the idle-stop the product already has: `AF_WS_IDLE_TIMEOUT` / the
 per-tenant `ws_idle_timeout` watches the PERSON and stops their WORKSPACE on every runtime,
-while this one starts counting after that has happened and puts the BOX to sleep. They run
+while this one starts counting after that has happened and puts the INSTANCE to sleep. They run
 in series (person leaves → workspace stops → slot sleeps). A sleeping slot costs only its
 root volume (~$9.6/month at 100 GiB) instead of ~$95 running, and its owner wakes it in
 ~110s.
@@ -197,7 +197,7 @@ It governs BOTH kinds of dormant slot, from this one value: a slot still holding
 home (which stays ATTACHED while the slot sleeps — that is what keeps "the same user gets
 the same slot"), and a slot holding NO home at all, freed by an eviction, a size/class
 change, a Destroy, or the golden bake. No warm spare is kept: an empty RUNNING slot saves
-the next arrival ~67s and costs a full instance-hour, and this deployment keeps the box
+the next arrival ~67s and costs a full instance-hour, and this deployment keeps the instance
 STOPPED instead (docs/log/64 §64.31).
 
 Set 0 to keep every slot running forever (fastest returns, highest bill).
@@ -205,24 +205,24 @@ Set 0 to keep every slot running forever (fastest returns, highest bill).
 ### `Ec2SlotTerminateAfterSec`
 
 The step AFTER `Ec2SlotSleepSec` on the same clock, and the only one that gives the ROOT
-VOLUME back: past this the box is TERMINATED rather than left stopped.
+VOLUME back: past this the instance is TERMINATED rather than left stopped.
 
-**Why you want it.** Nothing else ever removes a box, so the number of retained roots only
+**Why you want it.** Nothing else ever removes an instance, so the number of retained roots only
 grows and its ceiling is `Ec2MaxSlots`. Raising `Ec2MaxSlots` to serve more people therefore
 also signs you up for `Ec2MaxSlots` × `SlotRootVolumeGiB` of gp3, permanently and whether or
-not anybody is working — 30 × 40 GiB × $0.096/GB-month is ~$115 a month of stopped boxes.
+not anybody is working — 30 × 40 GiB × $0.096/GB-month is ~$115 a month of stopped instances.
 Measured on a live deployment; the only cure was terminating them by hand (docs/log/64
 §64.32).
 
-**What it costs your users.** 25 seconds, once, and only for the first arrival after the box
-is gone. Waking a dormant box that still holds its owner's home is 110s; building a new one
+**What it costs your users.** 25 seconds, once, and only for the first arrival after the instance
+is gone. Waking a dormant instance that still holds its owner's home is 110s; building a new one
 from scratch is 135s. The image cache on the root volume saves the 32s cold pull, and
 instance boot plus ECS re-registration spends it again.
 
-There is deliberately NO warm floor ("keep N stopped boxes"). A dormant box is only reusable
+There is deliberately NO warm floor ("keep N stopped instances"). A dormant instance is only reusable
 BY ITS OWNER — for anybody else the wake, the attach and the mount SSM round trip come to
-123-143s against 135s for a fresh box — so a shared warm box is worth about nothing, and a
-floor would hold specific people's boxes through weekends and shutdowns. The 92 seconds that
+123-143s against 135s for a fresh instance — so a shared warm instance is worth about nothing, and a
+floor would hold specific people's instances through weekends and shutdowns. The 92 seconds that
 IS worth buying belongs to a RUNNING free slot, which costs ~$95/month, not $3.84.
 
 0 (the default) = never terminate, which is what every deployment did before this existed.

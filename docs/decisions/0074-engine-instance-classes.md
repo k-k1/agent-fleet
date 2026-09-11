@@ -534,7 +534,11 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
 5. Whether `engine_hourly` should carry the instance after all (decision 10).
 6. **Whether the task's `Memory` holds for a heavy model** (decision 11). "18.5 GB was fine" is
    as far as the evidence goes.
-7. **The estimator for VRAM demand.** Decision 6's second tier is the sum of the weight files
+7. ~~**The estimator for VRAM demand.**~~ **Resolved for the llm role (2026-09-11, the
+   follow-up "open question 7 for the llm role" at the end) — the KV cache is not a coefficient
+   but a quantity computed from the GGUF header, and it matched the hardware at both points to
+   0.00%. The image role is a different problem, as the follow-up explains.**
+   Decision 6's second tier is the sum of the weight files
    and no KV cache. Writing a coefficient means measuring one (it depends on context length,
    layer count and quantisation). **Until then it says "a floor" and nothing else.**
    **First measurement (2026-09-10, P1)**: for SDXL-family weights (juggernaut-xl-v9, fp16) the
@@ -542,7 +546,8 @@ question, not a rung question, and it is fixed in CloudFormation (open question 
    5,120 MiB** (DiT 2,048, Conditioner 2,048, VAE 1,024) and the total in use was about
    11.7 GiB. **The floor is 58% of the demand.** The reserve should scale with resolution and
    batch, so no coefficient is derived from one point. The llm role (where the KV cache is the
-   term that matters) is still unmeasured.
+   term that matters) was settled separately, by computing rather than measuring — see the
+   follow-up.
 
 ## The P1 experiment (with the quota left at 8, 2026-09-10)
 
@@ -943,3 +948,122 @@ way: it says a model does not fit when it does. That is the opposite error from 
 explains 58% of real use", and this one is in **the rung's own declaration**. Before a coefficient
 for open question 7 is written down, the ladder's `vram_mib` needs a settled meaning — the card's
 physical size, or an operational cap — or there is nothing definite to multiply.
+
+## Follow-up — open question 7 for the llm role: the KV cache is **computed**, not measured (2026-09-11, the dev deployment)
+
+Open question 7 said a coefficient could only be written down by measuring. For the llm role
+**that was wrong**. The KV cache's size is not a coefficient but a quantity the model's own
+header determines, and it agrees with what llama.cpp allocates **down to the last fraction**.
+Checked at two points; **both differ by 0.00 MiB (0.00%)**.
+
+```
+KV = n_layer × n_head_kv × (key_length + value_length) × ctx × bytes(cache element)
+```
+
+which is llama.cpp's own `llama_kv_cache: size = …`.
+
+### The two points
+
+| Model | Family | n_layer | n_head_kv | key/value | ctx | Formula | Measured `KV self size` | Δ |
+|---|---|---|---|---|---|---|---|---|
+| `qwen2.5-coder-1.5b` | qwen2 | 28 | 2 | 128 / 128 (derived) | 16,384 | 448.00 MiB | **448.00 MiB** | 0.00 |
+| `qwen3-coder-30b-a3b` | qwen3moe | 48 | 4 | 128 / 128 (declared) | 32,768 | 3,072.00 MiB | **3,072.00 MiB** | 0.00 |
+
+The log lines, verbatim:
+
+```
+llama_kv_cache:      CUDA0 KV buffer size =   448.00 MiB
+llama_kv_cache: size =  448.00 MiB ( 16384 cells,  28 layers,  4/1 seqs), K (f16):  224.00 MiB, V (f16):  224.00 MiB
+llama_kv_cache: attn_rot_k = 0, n_embd_head_k_all = 128
+
+llama_kv_cache:      CUDA0 KV buffer size =  3072.00 MiB
+llama_kv_cache: size = 3072.00 MiB ( 32768 cells,  48 layers,  4/1 seqs), K (f16): 1536.00 MiB, V (f16): 1536.00 MiB
+```
+
+`n_slots = 4, kv_unified = 'true'`, but the allocation is **one context's worth** (`16384 cells`
+/ `32768 cells`). Multiplying by the slot count would over-estimate it fourfold.
+
+### 🔴 Do not derive `head_dim` from `embedding_length / head_count`
+
+qwen3moe **declares** `attention.key_length` / `value_length` as 128, while
+`embedding_length / head_count` is **2048 / 32 = 64**. Preferring the derivation would have put
+the 30B's KV cache at **1,536 MiB — half of the real figure**. On a 24 GB card a 1.5 GiB
+under-estimate is the difference between "fits" and "does not". **A declared length wins; the
+derivation is the fallback for families that declare none** (qwen2 is one). The deployment's own
+`print_info: n_embd_head_k = 128` confirms it.
+
+### The header comes from Hugging Face over HTTP Range. No S3 needed
+
+**Hugging Face's API does not carry the formula's inputs** (measured). The `gguf` block holds
+`total`, `architecture`, `context_length` and `chat_template` and nothing else, and a GGUF-only
+repository's `config` is `{}`. So the file itself has to be read — and since **the CP does not
+touch S3** (ADR 0072 review R3: it holds no permission and gains none), what is read is the copy
+still at the SOURCE, over the same HTTP the ingest already uses, one Range for the head.
+
+How many bytes that takes was measured: **545 bytes** for the 1.5B and **1,426** for the 30B to
+have all four fields. The window is 64 KiB (~45x the worse case), with one retry at 1 MiB and
+nothing beyond it — the tokenizer's token array runs to megabytes and is **never** needed.
+
+### The weights side — how much of a floor is decision 6's floor
+
+| Model | File bytes (= the floor) | `CUDA0 model buffer` | `CUDA_Host model buffer` | floor − (CUDA0 + Host) |
+|---|---|---|---|---|
+| 1.5B | 1,065.56 MiB | 934.70 MiB | 125.19 MiB | **+5.67 MiB** |
+| 30B | 17,697.04 MiB | 17,524.43 MiB | 166.92 MiB | **+5.69 MiB** |
+
+So the file's byte count is **very nearly exact as "the weights"** (under 6 MiB out), and the
+only thing it got wrong was the split between what lands on the card and what stays on the host
+(167 MiB for the 30B, 125 for the 1.5B). This is a different shortfall from P1's image-role
+"the floor explains 58% of real use": there the missing part was the compute reserve, here it is
+**the KV cache**.
+
+### How much it mattered
+
+Loading the 30B at ctx 32,768 really costs weights 17,524.43 + KV 3,072.00 + compute 116.01 =
+**20,712.44 MiB**. The card is 22,563 MiB, so **the real headroom is 1,851 MiB**.
+
+- The old floor-only answer: 17,697 MiB, headroom 4,866. **Under by 3,015 MiB (14.6%).**
+- The new weights+KV answer: 20,769 MiB, headroom 1,794. **57 MiB (0.27%) from the truth.**
+
+For the llm role `weights + KV` is an estimate good enough to act on. The compute buffers
+(77–116 MiB) are the remaining gap and they are left on the safe side.
+
+### The implementation (`engine_gguf.go`)
+
+Read once at registration and stored as four numbers on the row (`kv_layers`, `kv_heads_kv`,
+`kv_key_len`, `kv_value_len`; migration 0062, pg 0047). **Not read per render**, for two
+reasons: it would put a network call on the screen that lists every model, and the file is
+pinned by sha256, so **its header cannot change under the row**.
+
+The answer's strength gained a rung: `declared` > **`weights_kv`** > `floor` > `unknown`. A
+set's verdict is the WEAKEST present — the largest row happening to be measured says nothing
+about the row the engine will actually load.
+
+🔴 **The cache's element type is invisible to the CP.** `-ctk` / `-ctv` live in `LlmExtraArgs`,
+a CloudFormation parameter that reaches the task definition and never the engine table. f16 is
+assumed. A deployment running a quantised KV cache is therefore OVER-estimated — the safe
+direction for "does this fit on that card" and the wrong one for "how much is spare". Saying so
+beat inventing a field the table has no way to fill.
+
+A row whose header cannot be read (gated with no token, not a GGUF, no upstream ref) and a row
+with no declared `context_tokens` stay at the **`floor` they already had**, not at `unknown`.
+Hand registration (`POST …/models`) carries no source, so it is out of scope here; closing it
+needs a ref field on that route.
+
+### What went wrong while measuring
+
+🔴 **llama.cpp does not print the loader's lines at the default verbosity.** The first start
+produced no `llama_kv_cache` and no `load_tensors` at all — 43 lines in total. Raising the child
+process's verbosity is what prints `KV self size`, and `LlmExtraArgs` was off limits (it is a
+CloudFormation parameter). **The catalogue row's `args` solved it**: `["--verbosity","4"]` on the
+row is written into the preset by the fetch sidecar and handed to the child as
+`--log-verbosity 4` (confirmed in the log). So an engine's observability can be raised without
+touching CloudFormation at all. The price was **one wasted start** — three boxes, two usable.
+
+### The ladder's `vram_mib` is the card's physical size
+
+The question the previous section left open — "there is nothing definite to multiply" — is
+settled as **the card's physical quantity**. The `l4` rung is declared from what the hardware
+reports, `Total VRAM 22563 MB`: **8000 is simply wrong** and 21000 is only a conservative floor.
+Decision 6's gate compares `max(enabled models)` against the rung, so unless the rung is the
+card, a judgement like "20,712 against 22,563, 1.8 GB left" cannot be made at all.

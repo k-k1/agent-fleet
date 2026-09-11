@@ -166,6 +166,16 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		if missing := engineMissingFileFlags(e.def.Provider, m); len(missing) > 0 {
 			mr["files_missing"] = missing
 		}
+		// A LoRA pinned to nothing (ADR 0072 decision 5, the llm half). The adapter reaches the
+		// engine through the preset section of the model named in `base_model`, so a base that is
+		// disabled or not in this catalogue means the row does nothing at all — and it looks
+		// exactly like one that is working: enabled, its file on the box, no error anywhere.
+		//
+		// Asked of the chat role only. The image role's LoRAs name a ComfyUI FAMILY in the same
+		// column and are chosen per request, so "no row has that id" is not a fault there.
+		if e.def.api() == engineAPIChat && engineModelIsLora(m) && !engineLoraBasePresent(m, catalogue) {
+			mr["lora_base_missing"] = true
+		}
 		modelRows = append(modelRows, mr)
 	}
 	row := map[string]any{
@@ -412,13 +422,6 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 			log.Printf("engines: recording the mode change time for %s failed: %v", key, err)
 		}
 	}
-	// The mode decides whether this engine is IN /internal/engine/catalog at all (see this
-	// file's header), so it changes what a Workspace may offer just as much as enabling a model
-	// does — and the Agent caches the catalogue for ten minutes. Without this push, `off` leaves
-	// every running session offering an engine that now answers 503 engine_off, and `on` leaves
-	// generate_image hiding an engine that is ready, for up to that whole TTL. Placed BEFORE the
-	// class gate's early return: the mode is stored on that path too. (Measured on af-sandbox,
-	// ADR 0072 P2 実機検証: `mode=ondemand` did not reach a running session until the TTL.)
 	// The mode decides whether this engine is IN /internal/engine/catalog at all (see this
 	// file's header), so it changes what a Workspace may offer just as much as enabling a model
 	// does — and the Agent caches the catalogue for ten minutes. Without this push, `off` leaves
@@ -1356,8 +1359,14 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 			engineBaseModelHint(res.BaseModel))})
 		return
 	}
+	// The attention geometry, read from the header of the file about to be taken in — the one
+	// moment it can be had, since the CP will never see the bytes again (it has no S3
+	// permission at all, ADR 0072 review R3). Best-effort by design: anything that cannot be
+	// read leaves the row at its floor, which is what it would have been anyway.
+	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
+		KVGeom:        geom,
 		Description:   strings.TrimSpace(b.Description),
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,

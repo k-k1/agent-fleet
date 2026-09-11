@@ -67,33 +67,114 @@ func TestChooseImageProviders(t *testing.T) {
 	}
 }
 
+// withProviderRanks drives the one declaration that decides both the built-in order and which
+// providers the fleet serves itself.
+func withProviderRanks(t *testing.T, ranks []providerRank, pref []string) {
+	t.Helper()
+	oldRanks, oldOrder, oldPref := providerRanks, providerOrder, ProviderOrderPref
+	providerRanks = ranks
+	providerOrder = providerIDsOf(ranks)
+	ProviderOrderPref = nil
+	if pref != nil {
+		ProviderOrderPref = func() []string { return pref }
+	}
+	t.Cleanup(func() { providerRanks, providerOrder, ProviderOrderPref = oldRanks, oldOrder, oldPref })
+}
+
 // The stored preference is normalized into a TOTAL order. A list written before a provider
 // existed must still rank it, or adding a provider would make it unreachable until the user
-// happened to re-save their settings.
+// happened to re-save their settings — and WHERE it is ranked decides whose money is spent.
 func TestEffectiveOrder(t *testing.T) {
-	oldOrder, oldPref := providerOrder, ProviderOrderPref
-	providerOrder = []string{"codex", "bedrock", "sd"}
-	t.Cleanup(func() { providerOrder, ProviderOrderPref = oldOrder, oldPref })
-
+	ranks := []providerRank{
+		{ID: "sd", Fleet: true},
+		{ID: "engine", Fleet: true},
+		{ID: "vendorA"},
+		{ID: "vendorB"},
+	}
 	for _, tc := range []struct {
 		name string
 		pref []string
 		want []string
 	}{
-		{name: "no preference at all", want: []string{"codex", "bedrock", "sd"}},
-		{name: "a full reordering", pref: []string{"sd", "bedrock", "codex"}, want: []string{"sd", "bedrock", "codex"}},
-		// The two that matter: a partial list still ranks the rest, and junk cannot make a
-		// provider vanish.
-		{name: "a partial list appends the rest", pref: []string{"sd"}, want: []string{"sd", "codex", "bedrock"}},
-		{name: "unknown ids and dupes are dropped", pref: []string{"nope", "sd", "sd", ""},
-			want: []string{"sd", "codex", "bedrock"}},
+		{name: "no preference at all", want: []string{"sd", "engine", "vendorA", "vendorB"}},
+		{name: "a full reordering is obeyed exactly",
+			pref: []string{"vendorB", "vendorA", "engine", "sd"},
+			want: []string{"vendorB", "vendorA", "engine", "sd"}},
+		// 🔴 The measured case (ADR 0072, 2026-09-11): a list written before `engine` existed.
+		// Appending it would put the fleet's own hardware behind two personal plans.
+		{name: "a fleet provider the list predates goes to the FRONT",
+			pref: []string{"sd", "vendorA", "vendorB"},
+			want: []string{"engine", "sd", "vendorA", "vendorB"}},
+		// ...and the other half of the same rule: an external provider the list predates stays
+		// at the back, where it cannot take a picture the fleet could have made.
+		{name: "an external provider the list predates goes to the BACK",
+			pref: []string{"sd", "engine", "vendorA"},
+			want: []string{"sd", "engine", "vendorA", "vendorB"}},
+		// What the user actually ranked is never moved — including a fleet provider they put
+		// last on purpose.
+		{name: "a fleet provider the list names is left where the user put it",
+			pref: []string{"vendorA", "engine", "sd", "vendorB"},
+			want: []string{"vendorA", "engine", "sd", "vendorB"}},
+		{name: "a partial list still ranks the rest on both sides",
+			pref: []string{"vendorA"},
+			want: []string{"sd", "engine", "vendorA", "vendorB"}},
+		{name: "unknown ids and dupes are dropped",
+			pref: []string{"nope", "vendorA", "vendorA", ""},
+			want: []string{"sd", "engine", "vendorA", "vendorB"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			ProviderOrderPref = func() []string { return tc.pref }
+			withProviderRanks(t, ranks, tc.pref)
 			if got := effectiveOrder(); !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("effectiveOrder = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// The positive control for the rule above: it is the declared attribute doing the work, not the
+// id's spelling or its position in the built-in list. Drop Fleet and the same provider falls
+// back to where it used to go — the tail.
+func TestEffectiveOrderFrontingIsDrivenByTheDeclaredAttribute(t *testing.T) {
+	pref := []string{"sd", "vendorA", "vendorB"}
+	fleet := []providerRank{{ID: "sd", Fleet: true}, {ID: "engine", Fleet: true}, {ID: "vendorA"}, {ID: "vendorB"}}
+	withProviderRanks(t, fleet, pref)
+	if got := effectiveOrder(); got[0] != "engine" {
+		t.Fatalf("effectiveOrder = %v, want the fleet provider first", got)
+	}
+
+	external := []providerRank{{ID: "sd", Fleet: true}, {ID: "engine"}, {ID: "vendorA"}, {ID: "vendorB"}}
+	withProviderRanks(t, external, pref)
+	got := effectiveOrder()
+	if got[len(got)-1] != "engine" {
+		t.Fatalf("effectiveOrder = %v, want the same provider last once it is not the fleet's", got)
+	}
+}
+
+// The real ids, because the built-in list is what a deployment with no stored preference gets:
+// both fleet engines ahead of both vendor routes.
+func TestBuiltInOrderPutsTheFleetsOwnEnginesFirst(t *testing.T) {
+	oldPref := ProviderOrderPref
+	ProviderOrderPref = nil
+	t.Cleanup(func() { ProviderOrderPref = oldPref })
+
+	got := effectiveOrder()
+	want := []string{ProviderSdcpp, ProviderComfy, ProviderAgy, ProviderCodex}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("effectiveOrder = %v, want %v", got, want)
+	}
+	for _, id := range []string{ProviderSdcpp, ProviderComfy} {
+		if !providerIsFleet(id) {
+			t.Errorf("%s is not declared as the fleet's own", id)
+		}
+	}
+	for _, id := range []string{ProviderAgy, ProviderCodex} {
+		if providerIsFleet(id) {
+			t.Errorf("%s is declared as the fleet's own, but it spends a member's plan", id)
+		}
+	}
+	// An id nobody declared cannot be claimed as something this deployment pays for.
+	if providerIsFleet("made-up") {
+		t.Error("an undeclared provider was treated as the fleet's own")
 	}
 }
 

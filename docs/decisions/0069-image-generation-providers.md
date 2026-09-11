@@ -807,3 +807,29 @@ happened**.
 None of this has been on hardware yet. Confirming that two pictures with the same prompt and the
 same seed differ only by the LoRA belongs with 0072's five families of edit / inpaint, in the next
 deployment pass (H3).
+
+## Follow-up — where a provider the stored order never named goes (2026-09-11)
+
+`effectiveOrder` **appended** any provider the stored `imageProviderOrder` did not name. ADR
+0072's hardware verification (2026-09-11) measured that doing real harm: the dev deployment's
+stored value was `["sdcpp","agy","codex"]`, written before `comfy` existed. By the rule, comfy was
+appended last, so `auto` walked sdcpp (absent on that deployment) → agy → codex → comfy — meaning
+**a call that named no provider spent a member's personal plan before it ever reached the GPU the
+deployment is already paying for.** Nobody had edited a setting; the stored value changed meaning
+on the day a provider was added, which is precisely the accident a normalization step exists to
+prevent.
+
+**The rule changes: a provider the stored value does not name goes to the front when the fleet
+serves it and to the back when it does not.** Whatever the stored value DOES name keeps its
+relative order — including a fleet provider the user deliberately ranked last. This step only
+decides where the never-mentioned ones land.
+
+"Fleet or external" is declared as a provider attribute in one place (`providerRanks`). It is not
+on `Caps` because Caps is per (provider, model) and **whose wallet pays does not change with the
+checkpoint**; putting it there would invite a model that answers differently from its own
+provider. Scattering `id == "comfy"` conditions is how the next provider gets forgotten, so that
+is not the shape either. The Console carries the same declaration
+(`IMAGE_PROVIDERS_RANKED` in `settings.ts`): its `normalizeImageProviderOrder` claims to apply
+"the same rules the Agent applies", and fixing only one side would make **the order the user drags
+differ from the order `auto` walks**. The settings-screen note (ja/en) was corrected too — it still
+said Antigravity comes first by default.

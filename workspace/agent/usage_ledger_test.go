@@ -593,13 +593,40 @@ func TestFoldOnReadDoesNotBlockOnRunningPass(t *testing.T) {
 // transcripts are an order of magnitude larger (measured on the code side: 158 sessions, ~20 s).
 func waitUsageFoldIdle(t *testing.T) {
 	t.Helper()
-	deadline := time.Now().Add(60 * time.Second)
-	for usageFoldRunning.Load() && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
+	if !waitForIdle(usageFoldRunning.Load, usageFoldWaitBudget, time.Now, time.Sleep) {
+		t.Fatalf("the bulk fold did not finish in %s (cannot move on leaving a running writer behind)",
+			usageFoldWaitBudget)
 	}
-	if usageFoldRunning.Load() {
-		t.Fatal("the bulk fold did not finish in 60s (cannot move on leaving a running writer behind)")
+}
+
+// usageFoldWaitBudget is a HANG detector, not a speed limit.
+//
+// What the wait is for is the real HOME's sessions: CI's is empty and the fold is instant there,
+// a developer's holds a couple of hundred and takes tens of seconds. 🔴 At 60 seconds that made
+// the budget a measurement of the MACHINE rather than of the code -- on this shared, memory
+// constrained host three test suites at once pushed an ordinary fold past it and killed whichever
+// test happened to be holding the wait (twice: the runs on PRs #494 and #498; the same suite on
+// its own is green both times). A fold that is genuinely stuck still fails here, five minutes
+// later instead of one, and that is the only case the budget exists for.
+const usageFoldWaitBudget = 5 * time.Minute
+
+// waitForIdle spins until `busy` reports false, or until `budget` has elapsed ON THE INJECTED
+// CLOCK. Returns false only in the second case.
+//
+// The clock is a parameter so the timeout can be PROVEN without being spent: a test passes a
+// `now` that only moves when `sleep` is called, and gets the same decisions in microseconds
+// (TestWaitForIdleSpendsItsBudgetOnTheInjectedClock). A wall-clock deadline can only be checked
+// by waiting for it, which is why the one it replaced was never covered and could drift into a
+// load measurement without anybody noticing.
+func waitForIdle(busy func() bool, budget time.Duration, now func() time.Time, sleep func(time.Duration)) bool {
+	deadline := now().Add(budget)
+	for busy() {
+		if !now().Before(deadline) {
+			return false
+		}
+		sleep(10 * time.Millisecond)
 	}
+	return true
 }
 
 // resetUsageFold returns the fold-on-read throttle to its unused state, both before and after.
@@ -679,10 +706,12 @@ func TestFoldDoesNotWriteIntoTheNextTestsLedger(t *testing.T) {
 	// wrong way clears the flag, so reading it means mistaking "already finished" and the check
 	// passes before any write happens (mutation testing did slip through that way). Wait until a
 	// row appears in either ledger, then look at which one it landed in.
-	deadline := time.Now().Add(30 * time.Second)
-	for time.Now().Before(deadline) && countUsageRowsIn(t, prev)+countUsageRowsIn(t, next) < sessions {
-		time.Sleep(10 * time.Millisecond)
-	}
+	// Same budget and the same reason: what is being waited for is the fold's real work, and a
+	// wall-clock minute is the load on this host rather than anything about the code. A timeout
+	// is not fatal here -- the two assertions below turn "the fold wrote nothing" into a failure
+	// with its own message, which is more useful than "timed out".
+	waitForIdle(func() bool { return countUsageRowsIn(t, prev)+countUsageRowsIn(t, next) < sessions },
+		usageFoldWaitBudget, time.Now, time.Sleep)
 	if n := countUsageRowsIn(t, next); n != 0 {
 		t.Fatalf("the next test's ledger = %d rows, want 0 (the earlier test's fold wrote into %s)", n, next)
 	}

@@ -1904,7 +1904,8 @@ engine is starting; retry` という、**自分で retry と言っておきな�
   2026-09-10 に実機で通した（「P2 を実機で押した」節）。**残っていた取り込み経路と 3 ファミリー
   （Z-Image・FLUX.1・SD3.5）も同日に押し切り、P2 は実機で閉じた**——「P2 の残作業 4・5 を
   実機で押した」節。SD3.5 だけはテンプレートが誤っていたので直した（`--clip_g`）。
-- **P3 — LoRA。** ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
+- **P3 — LoRA。llm 側（preset の固定 LoRA）は実装済み・実機未検証（補遺「P3 の llm 側の実装」）。**
+  ComfyUI の上で: image の `loras/` 同期、`generate_image` の `loras`、
   テンプレートの `LoraLoader` 連鎖、baseModel 不一致の拒否；llm の preset 固定 LoRA。
   sd-server の `<sd_cpp_extra_args>` 経路は `ImageEngine=sdcpp` の配備が要るときだけ、
   未解決 2 を測ってから。**完了の定義: 同じ prompt・同じ seed で LoRA の有無が絵を変え、
@@ -2716,7 +2717,7 @@ No changes to deploy. Stack af-ecs-engines is up to date
 15:09:51  (service …-engines-llm) has reached a steady state.
 ```
 
-**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、箱は買われなかった
+**9 秒**である。タスクは pending のまま落ち、RUNNING には一度もならず、インスタンスは買われなかった
 （`desiredCount` はその後 3 分の観測でも 0 のまま）。「起動しない」は正しいが、**「一度も
 要求しない」ではない**——`decideEngineAction` は正しく `no_model` を返しているのに、その手前で
 モードの経路が ECS を先に動かしている。空カタログのまま `on` を押し続ける配備では、この 9 秒が
@@ -2735,7 +2736,7 @@ No changes to deploy. Stack af-ecs-engines is up to date
 ```
 
 **有効化から warm まで 819 秒（13 分 39 秒）。** うち **692 秒が capacity provider の
-g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、箱が
+g6.xlarge 取得とタスク配置**（`start (admin_on)` から ECS がタスクを開始するまで）で、インスタンスが
 できてから warm までは 103 秒だった。0071・P0 の 527 秒より長いのは、この日は容量の取得に
 時間がかかったからで、モデルの同期ではない——同期は 5 秒である:
 
@@ -2747,7 +2748,7 @@ engine fetch: cmdline = --models-preset /models/llm/presets.ini
 engine fetch: engine may start; 0 file(s) still to sync
 ```
 
-**箱はカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
+**インスタンスはカタログにある 1 つだけを同期した**——バケットには 18.5 GB の 30B も置いたままなのに、
 触っていない。これが決定 1 の「カタログが申告のすべて」が実経路で効いていることの直接の証拠で
 ある。エンジン自身のログも同じことを言う:
 
@@ -2766,7 +2767,7 @@ srv          load:   /models/llm/qwen2.5-coder-1.5b-instruct-q4_k_m.gguf
 ### warmProbe が実機で通った（実機で踏んだ穴 13 の代償が解けた）
 
 穴 13 は「CP 側の warmProbe は実機で通っていない」を代償として残していた。理由は、当時の
-実機がコントローラに触られない `run-task` で箱を起こしており、`maintainWarm` はサービスの
+実機がコントローラに触られない `run-task` でインスタンスを起こしており、`maintainWarm` はサービスの
 状態でしか呼ばれないからである。**今回はサービス経由（`mode: on` → `admin_on`）で起こしたので、
 CP のプローブがルーターの `/models` を読んで warm を立てた**: `GET /api/admin/engines` の llm が
 `warm: true`、CP のログが `engine llm: warmed up (ready)`。これは同時に、エンジンが
@@ -2943,7 +2944,7 @@ seed を要求で固定できる手段を足さない限り、この行は永久
 
 代わりに証明できたことの方が、実は強い: **`LoraLoader` の `lora_name` は
 `models/loras` の列挙であって自由文字列ではない**（SD3.5 の `clip_name1` と同じ形）。
-名前が箱に無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
+名前がインスタンスに無ければ ComfyUI は検証で `Value not in list` を返して落ちる。**LoRA 付きの生成が
 成功したという事実が、(a) ファイルが `image/loras/` から `models/loras` に降りていること、
 (b) basename が列挙と一致していること、(c) `LoraLoader` が実際に走ったことを同時に示している。**
 
@@ -3041,3 +3042,39 @@ P3 の完了の定義に対する現在地:
 seed を固定した 2 回目の要求が ComfyUI の出力キャッシュに当たる件（0.5 秒で同じ絵）は、
 **当たったときだけ** warnings で言う。判定はエンジン自身の `execution_cached` メッセージで、
 経過時間の推測ではない。設計の理由は同じく 0069 の追記にある。
+
+## P3 の llm 側の実装——preset の固定 LoRA（2026-09-11）
+
+決定 5 の前半（**先に preset の固定 LoRA、後に仮想モデル id**）を実装した。**実機未検証。**
+後半（`<base>+<lora-set>` の仮想 id）は**やっていない**——決定 5 がそう順序づけており、
+あちらはゲートウェイが要求の本文を書き換える最初の例になる。
+
+- **カタログ。** `kind=lora` の行が `base_model` に**土台のモデル id** を書く。image 役の
+  LoRA が同じ欄に ComfyUI の**ファミリー**を書くのと同じ列で、語彙が 2 つある——どちらも
+  「これは何に付くものか」で、読む相手が違う。ファイルは `llm/loras/` に平置き
+  （サイドカーは `.loras[]` を既に降ろしている）。
+- **active set。** 有効な LoRA 行を、その土台のモデルの項目に `lo` として載せる。
+  各項目は `<key>:<scale>` で、scale は行の `args` の `--scale <v>`（0〜2、既定 1。
+  読めない値は既定に落とす）。
+- **preset。** サイドカーが `lora-scaled = /models/llm/loras/a.gguf:1,…/b.gguf:0.8` を
+  **1 行**書く。
+  🔴 **キーを複数行書いてはいけない。** llama.cpp の preset は
+  `std::map<common_arg, std::string>`、INI 読みは `parsed[section][key] = value` なので、
+  2 行目の `lora-scaled =` は 1 行目を**上書きする**——2 枚のつもりが黙って 1 枚になる。
+  複数枚を運べるのは `--lora-scaled FNAME:SCALE,...` の CSV 形だけである
+  （`common/preset.cpp`・`common/arg.cpp` を 2026-09-11 に読んだ）。
+  `--lora-scaled x:1` は `--lora x` と同値なので、scale は常に書いて経路を 1 本にした。
+  ⚠️ その帰結として `,` と `:` は文字ではなく**区切り**になる。S3 キーがどちらかを含むと
+  アダプタの境界が動くので、CP は active set を publish する時点で（全役について）拒否する。
+- **土台が無い LoRA。** 土台が無効・不在なら固定せず、パネルの行に `lora_base_missing` を
+  出す。有効で・箱にファイルもあって・何もしない行は、効いている行と見分けが付かない。
+- **Console。** 登録フォームと取り込みフォームの両方に「この行の種類」を足した。
+  🔴 **それまで Console からは（どちらの役でも）LoRA 行を 1 つも作れなかった**——両方の
+  フォームが `checkpoint`/`gguf` を固定で送っていたので、決定 5 の llm 側は管理 API を
+  手で叩く以外に到達できなかった。llm の LoRA では土台を**カタログの id から選ぶ**
+  （打ち込ませない。名前が合わなければ何も起きないだけなので）、窓の欄は消え、
+  強さの欄が出る。
+
+**実機で確かめること。** 次に llm 役が起動したとき、`llama-server` のログに LoRA の
+ロード行が出ること（`/models` の `status.args` に `--lora-scaled` が見えること）と、
+固定した微調整が応答に効いていること。実機レーンの担当である。
