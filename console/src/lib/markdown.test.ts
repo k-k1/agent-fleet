@@ -3,6 +3,7 @@ import { Marked } from "marked";
 import {
   asciiPunctuationRule,
   isLinkDestination,
+  isRenderedHtmlTag,
   marked,
   repairFullwidthTables,
   splitYamlFrontMatter,
@@ -191,6 +192,56 @@ describe("link reference definitions", () => {
     const source = "```\n[保留]: 幕間の再配置。\n```";
     expect(html(source)).toContain("[保留]: 幕間の再配置。");
     expect(html(source)).toContain("<code>");
+  });
+});
+
+// A tag-shaped placeholder — <svn repo url>, <id>, <your-token> — is raw HTML to CommonMark,
+// and the sanitizer downstream deletes the element it names, so the words disappeared without
+// a trace. Only a name the viewer would really render is markup now; see HTML_TAGS.
+describe("tag-shaped text that is not HTML", () => {
+  const html = (source: string) => marked.parse(source, { gfm: true }) as string;
+
+  it("shows a placeholder written in angle brackets", () => {
+    expect(html("例えば、<svn repo url>/trunk をチェックアウトして、")).toBe(
+      "<p>例えば、&lt;svn repo url&gt;/trunk をチェックアウトして、</p>\n",
+    );
+    expect(html("`af login <tenant>` を <name> で叩く")).toContain("を &lt;name&gt; で叩く");
+    expect(html("</svn> だけの行")).toContain("&lt;/svn&gt; だけの行");
+  });
+
+  // Alone on its line the same run is BLOCK-level raw HTML, a different tokenizer, and it
+  // vanished just as completely.
+  it("shows one standing on its own line", () => {
+    expect(html("<svn repo url>\n")).toBe("<p>&lt;svn repo url&gt;</p>\n");
+    expect(html("<svn repo url>\n次の行\n\n次の段落")).toContain("&lt;svn repo url&gt;");
+  });
+
+  it("still renders HTML a document is written with", () => {
+    expect(html("a<br>b")).toBe("<p>a<br>b</p>\n");
+    expect(html("<details><summary>見出し</summary>\n\n本文\n\n</details>")).toContain("<summary>");
+    expect(html('<img src="a.png" alt="x">\n')).toContain("<img src=");
+    expect(html("<table>\n<tr><td>1</td></tr>\n</table>\n")).toContain("<td>1</td>");
+    // A diagram block rides through whole, child elements and all — the root is what is
+    // checked, and the block tokenizer captures the rest with it.
+    expect(html('<svg width="4" height="4">\n<path d="M0 0h4" />\n</svg>\n')).toContain("<path d=");
+  });
+
+  it("leaves comments, doctypes and autolinks to their own rules", () => {
+    expect(html("<!-- 覚書 -->\n\n本文")).toContain("<!-- 覚書 -->");
+    expect(html("本文 <!-- 行内 --> 続き")).toContain("<!-- 行内 -->");
+    expect(html("<https://example.com/x>")).toContain('<a href="https://example.com/x">');
+    expect(html("`<svn repo url>`")).toContain("<code>&lt;svn repo url&gt;</code>");
+  });
+
+  it("judges a run by the name at its head", () => {
+    expect(isRenderedHtmlTag("<br>")).toBe(true);
+    expect(isRenderedHtmlTag("</DETAILS>")).toBe(true);
+    expect(isRenderedHtmlTag('<img src="a.png" />')).toBe(true);
+    expect(isRenderedHtmlTag("<svn repo url>")).toBe(false);
+    expect(isRenderedHtmlTag("<your-token>")).toBe(false);
+    // Not a tag at all: left to the tokenizer that produced it.
+    expect(isRenderedHtmlTag("<!-- note -->")).toBe(true);
+    expect(isRenderedHtmlTag("<!DOCTYPE html>")).toBe(true);
   });
 });
 

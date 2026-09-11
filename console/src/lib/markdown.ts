@@ -208,6 +208,48 @@ export function isLinkDestination(destination: string): boolean {
   return destination.startsWith("<") || ASCII_DESTINATION.test(destination) || EXPLICIT_DESTINATION.test(destination);
 }
 
+// Raw HTML reaches the sanitizer verbatim, and DOMPurify deletes every element it does not
+// allow — the tag itself, silently. So an angle-bracket placeholder in ordinary prose does
+// not render oddly, it renders as NOTHING: a mirror turn reading
+//   <svn repo url>/trunk をチェックアウトして
+// came out as `/trunk をチェックアウトして`, with no sign that three words were dropped, because
+// CommonMark reads `<svn repo url>` as an open tag with two valueless attributes. Placeholders
+// of exactly that shape — <id>, <name>, <your-token> — are all over this repo's own docs.
+//
+// So a tag is markup only when its name is an element the viewer would actually render;
+// anything else falls through to the paragraph tokenizer, which escapes it, and the reader
+// sees what the author typed. Comments, doctypes and CDATA are not tags and keep their old
+// behavior — a document hiding a note in <!-- --> means it.
+//
+// The list is what survives DOMPurify in a document fragment, which is narrower than "HTML
+// element": <html>/<head>/<body> are dropped by the parser, and <script>/<style>/<iframe>/
+// <template> by the sanitizer, so honoring those would only reinstate the disappearance for
+// prose that names them. markdown.dom.test.tsx probes every entry against the sanitizer,
+// because a dependency bump may not keep this list true.
+//
+// svg and math are the block-level exception: a diagram written as a block is captured whole
+// by the block tokenizer, children and all, so the root alone is enough to let it through.
+// Their child names (<path>, <text>, <line>) stay out — they read as placeholders far more
+// often than as markup, and the block form does not need them.
+export const HTML_TAGS = new Set(
+  ("a abbr acronym address area article aside audio b bdi bdo big blockquote br button canvas " +
+    "caption center cite code col colgroup data datalist dd del details dfn dialog dir div dl " +
+    "dt em fieldset figcaption figure font footer form h1 h2 h3 h4 h5 h6 header hgroup hr i " +
+    "img input ins kbd label legend li main map mark marquee math menu meter nav nobr ol " +
+    "optgroup option output p picture pre progress q rp rt ruby s samp search section select " +
+    "slot small source span strike strong sub summary sup svg table tbody td textarea tfoot " +
+    "th thead time tr track tt u ul var video wbr").split(" "),
+);
+
+// The name at the head of a tag-shaped run, open or closing. It fails to match anything that
+// is not a tag (a comment, a doctype, CDATA) — which this rule then leaves alone.
+const TAG_NAME = /^<\/?([a-zA-Z][a-zA-Z0-9-]*)[\s/>]/;
+
+export function isRenderedHtmlTag(raw: string): boolean {
+  const name = TAG_NAME.exec(raw);
+  return !name || HTML_TAGS.has(name[1].toLowerCase());
+}
+
 // CommonMark decides whether `**` opens or closes emphasis from the two characters around
 // it: a delimiter next to punctuation only counts when the character on its other side is
 // whitespace or punctuation too. Every CJK bracket, 、。！？…・ and every fullwidth form is
@@ -320,6 +362,18 @@ export const marked = new Marked({
       // `undefined` disables the rule for this line alone, so the block falls through to
       // paragraph / text and the author's line renders as it was written.
       return isLinkDestination(cap[2]) ? false : undefined;
+    },
+    // Inline raw HTML (`<br>`, `<b>`) and its block-level form. marked's own tokenizers still
+    // decide what is a tag and where it ends; this only vetoes one whose name would be erased
+    // downstream (see HTML_TAGS). `undefined` means "no tag here", so the run falls through to
+    // text and is escaped, which is how the author wrote it.
+    tag(src) {
+      const token = Tokenizer.prototype.tag.call(this, src);
+      return token && !isRenderedHtmlTag(token.raw) ? undefined : token;
+    },
+    html(src) {
+      const token = Tokenizer.prototype.html.call(this, src);
+      return token && !isRenderedHtmlTag(token.raw) ? undefined : token;
     },
     // The two tokenizers that read `*`/`**` and `~~`. Each one is marked's own, called
     // twice at most — see retryWithCjkRules. `_` never takes the second attempt.
