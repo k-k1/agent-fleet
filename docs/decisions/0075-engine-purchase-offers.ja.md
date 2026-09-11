@@ -927,3 +927,25 @@ on a service that is already using one, you must force a new deployment."}
 - リリースノート 0.19.0（英日）は「`ImageCapacityOptionType=SPOT` と書けば Spot」から提案一覧と
   2 段移行へ書き直してある。⚠️ **CP レーンが同じ版に入る前提の文面**——入らないまま公開するなら
   「provider が 1 本増えただけ」に落とす。
+
+## 追記 — P0 の CP レーンが本文に返したもの（2026-09-11・PR #552）
+
+CP 側（決定 1・2・3・4・5・8・11・12、契約 A/B の CP 側）は #552 で入った。完了の定義 1〜5 は
+`engine_offer_test.go` に陽性対照つきで固定してある（番人を一時的に外すとテストが落ちること、
+strategy を書く場所が CP 全体で 1 か所であることの走査を含む）。実装が本文に返した点:
+
+- **決定 5 — 予算の起点は「desired を 1 にしてから」ではなく、新しい PRIMARY deployment の
+  `updatedAt` から。** 実機 0 の「タスク 0 でも deployment は 89 秒」を予算に食わせると、提案が
+  capacity を要求される前に次へ移ってしまう。
+- **決定 4 (a) — strategy が今と違えば起動でも `forceNewDeployment: true`、同じなら
+  `capacityProviderStrategy` を渡さない**（実機 0 の帰結。番人は据え置き）。**同じ provider 内で
+  次の提案へ移る**ときは strategy を渡さず `forceNewDeployment` だけを渡す——2 つの提案が 1 本の
+  provider を共有しうるので、変わったのは provider の instance requirements だけである。
+- **決定 9 の三重目 — 宛先の無い提案は候補から落とす。** `buy=spot` の行があるのに
+  `spotCapacityProvider` が空の配備では、その行は addressable でないので候補から外し、ログに
+  1 行出す。テンプレート側の宣言ミスにも効く。
+- **決定 2 — 候補ゼロは監査にも 1 行**（`engine.<役>.offer`・target=none・需要ごとに 1 回）。
+- **起動経路の統一。** 管理 API の `mode=on` とゲートウェイの `ensureStarted` も同じ strategy
+  関数を通る。従来は desired だけ動かしていて、決定 4 (a) の抜け道になっていた。
+- P0 のコードで唯一まだ測られていない経路は**実機 3**（desired 0 → 1 と strategy を同じ呼び出しで
+  渡したとき force が要るか）で、実装は「要る側」に倒してある。
