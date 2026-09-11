@@ -27,10 +27,24 @@ interface Props {
   onSaved(): void;
 }
 
-// Default query per provider. These defaults ARE the "only my open assignments" scoping
+// Default query per provider. These defaults ARE the "only my own open work" scoping
 // (docs/log/80 §80.7): the initial value is where the decision not to sync everything shows.
 // GitHub takes search syntax, Jira takes JQL; af only maps between them and stores each dialect
 // verbatim.
+//
+// GitHub's default is `involves:` and not `assignee:`, because `assignee:` alone lists NO pull
+// requests: GitHub does not make a PR's author its assignee (measured on a live account —
+// `assignee:@me` matched 0 items over all time while `author:@me is:open` returned the open PRs),
+// which read in the rail as "PRs are not shown at all".
+//
+// It is deliberately NOT the `(assignee:@me OR author:@me OR review-requested:@me)` form that
+// would also cover reviews requested of you. `OR` and parentheses only parse with the Agent's
+// `advanced_search=true`, and the workspace keeps running the Agent it started with: after an
+// upgrade every workspace runs the previous image until it is restarted. A default that 422s
+// there puts af's own words under "github could not parse the query", which reads as the member
+// having typed the query wrong. So the default stays in the dialect every Agent understands, and
+// the hint says to add `review-requested:@me` — as a second saved query, or ORed into this one.
+// (Overlapping queries are fine: the rail already keeps one row per provider+key.)
 //
 // Bitbucket's default is the one that cannot be used as-is (docs/log/80 §80.19.1). Measured: the
 // original bet that putting the words needing replacement into the default would make the error
@@ -38,7 +52,7 @@ interface Props {
 // 404 was read as some other error. The assembly UI appears whenever the repository list can be
 // fetched, so this default is only reached by someone who dropped to free text.
 const DEFAULT_QUERY: Record<string, string> = {
-  github: "assignee:@me is:open",
+  github: "is:open involves:@me",
   jira: "assignee = currentUser() AND statusCategory != Done",
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };
@@ -329,6 +343,10 @@ export function WorkItemQueryModal({ queries, onClose, onChanged, onSaved }: Pro
                 <span>{tr("wi.query_expr")}</span>
                 <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={DEFAULT_QUERY[provider]} spellCheck={false} />
               </label>
+              {/* GitHub's note is about one trap only: `assignee:` lists no pull request, because
+                  GitHub does not assign a PR to its author. Left unsaid, it is learned from a rail
+                  that quietly has no PRs in it — which is not read as a query that missed them. */}
+              {provider === "github" && <p className="wi-qhint">{tr("wi.query_gh_hint")}</p>}
               {/* Only Bitbucket needs this note. GitHub and Jira can express where to look
                   outside the query, but the Bitbucket API has no cross-repository search, so the
                   target goes at the front (docs/log/80 §80.19.1). Without saying so, the user

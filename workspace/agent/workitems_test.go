@@ -2,8 +2,10 @@ package main
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -71,6 +73,42 @@ func TestParseGitHubSearchItems(t *testing.T) {
 		}
 	}
 }
+
+// The request GitHub actually receives. `advanced_search=true` is not cosmetic: it is the only
+// mode in which `OR` and parentheses parse, and a member needs them to write "assigned to me OR
+// mine OR waiting on my review" — `assignee:` matches no pull request at all. Without the
+// parameter GitHub answers 422 and the row says nothing but "could not parse the query", which
+// reads as the member's typo (observed on a deployment still running the previous Agent).
+func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
+	var got *url.URL
+	orig := workItemHTTPClient.Transport
+	workItemHTTPClient.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.URL
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{},
+			Body: io.NopCloser(strings.NewReader(`{"items":[]}`))}, nil
+	})
+	t.Cleanup(func() { workItemHTTPClient.Transport = orig })
+
+	query := "is:open (assignee:@me OR author:@me OR review-requested:@me)"
+	if _, err := githubSearchWorkItems("tok", "q1", query); err != nil {
+		t.Fatalf("search: %v", err)
+	}
+	if got == nil {
+		t.Fatal("no request was made")
+	}
+	if adv := got.Query().Get("advanced_search"); adv != "true" {
+		t.Errorf("advanced_search = %q, want true (%s)", adv, got.RawQuery)
+	}
+	// Verbatim, parentheses and spaces included: af stores the member's dialect and must not
+	// rewrite it on the way out.
+	if q := got.Query().Get("q"); q != query {
+		t.Errorf("q = %q, want %q", q, query)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 func TestNormalizeGitHubState(t *testing.T) {
 	for _, tc := range []struct {
