@@ -2,7 +2,8 @@
 // membership and sync across devices (Control-Plane persisted, no server push → refetch
 // on mount / store bump + slow poll while mounted). The revamp:
 //   - the composer is hidden by default; a header "+" or leader Ctrl/⌘+K → M reveals it;
-//   - a queued memo is editable in place (click to expand full text, click again to edit);
+//   - a queued memo is editable in place (click to expand full text, click again to edit;
+//     the Collapse control under the body, or the row menu, closes it again);
 //   - categories are first-class (add empty, rename, delete) and everything reorders by
 //     drag — memos within/between categories, and the categories themselves;
 //   - the send button (「送信…」) opens SendMemoModal to edit the concatenated text and
@@ -876,6 +877,7 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
                               currentCat={g.category}
                               onToggle={() => toggle(m.id)}
                               onExpand={() => setExpanded((s) => ({ ...s, [m.id]: true }))}
+                              onCollapse={() => setExpanded((s) => ({ ...s, [m.id]: false }))}
                               onEdit={() => setEditing(m.id)}
                               onCancelEdit={() => setEditing(null)}
                               onSave={(body, category) => void saveEdit(m, body, category)}
@@ -925,6 +927,19 @@ export const MemoQueueSection = memo(function MemoQueueSection() {
         {memoMenu &&
           createPortal(
             <ul className="ui-menu" ref={memoMenuRef} style={{ left: memoMenu.x, top: memoMenu.y }} role="menu" onMouseDown={(e) => e.stopPropagation()}>
+              {/* An expanded long memo can be taller than the pane, which puts its own
+                  collapse control off screen; the row's ⋯ stays at the top of the row. */}
+              {expanded[memoMenu.m.id] && (
+                <li>
+                  <button
+                    type="button"
+                    className="ui-menu-item"
+                    onClick={() => runMemoMenu(() => setExpanded((s) => ({ ...s, [memoMenu.m.id]: false })))}
+                  >
+                    <Icon name="fold" /> {tr("memo.collapse_hint")}
+                  </button>
+                </li>
+              )}
               <li>
                 <button type="button" className="ui-menu-item" onClick={() => runMemoMenu(() => setEditing(memoMenu.m.id))}>
                   <Icon name="edit" /> {tr("memo.edit")}
@@ -990,6 +1005,7 @@ interface MemoRowProps {
   currentCat: string;
   onToggle: () => void;
   onExpand: () => void;
+  onCollapse: () => void;
   onEdit: () => void;
   onCancelEdit: () => void;
   onSave: (body: string, category: string) => void;
@@ -1125,10 +1141,27 @@ function MemoRow(props: MemoRowProps) {
             ))}
           </div>
         )}
-        {(m.sentAt || (!expanded && isLong)) && (
+        {(m.sentAt || isLong) && (
           <div className="memo-meta">
             {m.sentAt && <span className="memo-sent-tag">{tr("memo.sent_tag")}</span>}
-            {!expanded && isLong && <span className="memo-more">{tr("memo.expand_hint")}</span>}
+            {isLong &&
+              (expanded ? (
+                // Expanding is a click on the body, but a second one edits — without this
+                // the row has no way back and a long memo owns the pane for good.
+                <button
+                  type="button"
+                  className="memo-less linkish"
+                  title={tr("memo.collapse_memo")}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    props.onCollapse();
+                  }}
+                >
+                  <Icon name="fold" /> {tr("memo.collapse_hint")}
+                </button>
+              ) : (
+                <span className="memo-more">{tr("memo.expand_hint")}</span>
+              ))}
           </div>
         )}
       </div>

@@ -48,6 +48,8 @@ export const memo: Record<keyof typeof jaMemo, string> = {
   "memo.edit_hint": "Ctrl+Enter to save · Esc to cancel",
   "memo.edit_hint_file": "Ctrl+Enter to save · Esc to cancel · editing the comment on a file reference",
   "memo.expand_hint": "…click to expand",
+  "memo.collapse_hint": "Collapse",
+  "memo.collapse_memo": "Collapse this memo",
   "memo.edit": "Edit",
   "memo.send_one": "Send this memo",
   "memo.save": "Save",
