@@ -2848,7 +2848,7 @@ checks it against a real row). What survives is `key` / `api` / `provider` / `ba
 licence). `super_admin` rides on the envelope and the Console branches on **that flag only** —
 inferring it from "did `mode` arrive" works until a field is renamed, and then it draws buttons
 that 403. The ingest job list is narrowed to the caller's tenant as well
-(`engine_ingest_jobs.tenant_id`, sqlite `0062` / postgres `0047`). 🔴 **The empty tenant is a
+(`engine_ingest_jobs.tenant_id`, sqlite `0063` / postgres `0048`). 🔴 **The empty tenant is a
 value, not "no filter"**: written as "narrow when the tenant is not empty", a caller whose tenant
 did not resolve is handed every job the operator started. The reconcile stays unfiltered — a job
 nobody may see still has to be brought up to date, or a task that finished while no one with the
