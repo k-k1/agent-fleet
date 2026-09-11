@@ -115,6 +115,8 @@ function contentFromFlat(p: any): PaneContent {
         ? { kind: "sharedSession", sharedSessionId }
         : { kind: "terminal", chat: false };
     }
+    case "sessions":
+      return { kind: "sessions", showStopped: p.showStopped === true };
     default:
       return { kind: "terminal", chat: false };
   }

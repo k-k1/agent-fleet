@@ -206,6 +206,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   // === P2 LayoutMap (features/panes/LayoutMap.tsx) ===
   "pane.map_aria": "Pane layout",
   "pane.layout": "Layout",
+  "pane.open_sessions": "Open the sessions overview",
   "pane.pane_n": "Pane {ord}",
   "pane.no_session": "No session",
   "pane.empty": "empty",
@@ -220,6 +221,7 @@ export const common: Record<keyof typeof jaCommon, string> = {
   "pane.kind.read": "Reader view",
   "pane.kind.browser": "Browser",
   "pane.kind.browser_attach": "Chromium operation view",
+  "pane.kind.sessions": "Sessions overview",
 
   // === P2 common (added) ===
   "common.approx": "~{v}",

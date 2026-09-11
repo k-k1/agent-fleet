@@ -43,7 +43,11 @@ export type PaneContent =
    * the Agent side and are resolved again through the authenticated API.
    */
   | { kind: "browserAttach"; attachmentId: string }
-  | { kind: "sharedSession"; sharedSessionId: string };
+  | { kind: "sharedSession"; sharedSessionId: string }
+  /** The sessions overview: every running session as a card (ADR 0078). `showStopped`
+   *  is the pane's own toggle — part of the content so it survives a reload and a tab
+   *  switch, which unmount the view. */
+  | { kind: "sessions"; showStopped: boolean };
 
 export type PaneKind = PaneContent["kind"];
 

@@ -40,6 +40,7 @@ import type { Session } from "../../types/session.ts";
 import { PaneFind } from "./PaneFind.tsx";
 import { BrowserPane } from "../browser/BrowserPane.tsx";
 import { BrowserAttachPane } from "../browser/BrowserAttachPane.tsx";
+import { SessionsOverview } from "../overview/SessionsOverview.tsx";
 import { SharedSessionView } from "../sharing/SharedSessionView.tsx";
 import { useSharedSessionsStore } from "../sharing/store.ts";
 import { canPopout, openPanePopout } from "./popout.ts";
@@ -733,6 +734,9 @@ function PopulatedPane({
       )}
       {pane.content.kind === "sharedSession" && (
         <SharedSessionView sharedSessionId={pane.content.sharedSessionId} headerActions={tabHeaderActions} />
+      )}
+      {pane.content.kind === "sessions" && (
+        <SessionsOverview paneId={pane.id} showStopped={pane.content.showStopped} headerActions={tabHeaderActions} />
       )}
     </div>
   );

@@ -1,0 +1,192 @@
+/* Sessions overview (ADR 0078): a card per session, reflowing with the pane's width. */
+.ovw {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  /* The pane's own width is what the rules below query (the mirror and the terminal
+     declare the same container on their root). */
+  container: paneview / inline-size;
+}
+.ovw-count {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ovw-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ovw-toggle.on {
+  color: var(--accent);
+}
+/* A narrow pane (a side column) has no room for the toggle's wording next to the title;
+   the icon and its tooltip carry it. Container, not viewport: a popped-out tab is narrow
+   at any window size. */
+@container paneview (max-width: 460px) {
+  .ovw-toggle .lbl {
+    display: none;
+  }
+}
+/* auto-fill + minmax is what makes the column count follow the width: a 240px card
+   floor, one column in a narrow pane, as many as fit in a wide one, and every card in
+   a row the same width. flex-wrap would let the last row's cards stretch to fill it,
+   which reads as "those sessions are bigger". */
+.ovw-grid {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 10px;
+  padding: 10px;
+}
+.ovw-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  cursor: pointer;
+  text-align: left;
+  color: var(--fg);
+}
+.ovw-card:hover,
+.ovw-card.hover {
+  border-color: var(--accent);
+}
+.ovw-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+/* The states that need the person now colour the whole frame, not just the chip — in a
+   grid of a dozen cards the chip alone is too small to be spotted from across the room.
+   Same tones as .session-state so the frame and the chip agree. */
+.ovw-card.question {
+  border-color: color-mix(in srgb, var(--warn) 60%, transparent);
+  background: color-mix(in srgb, var(--warn) 6%, var(--panel));
+}
+.ovw-card.question.limited {
+  background: var(--panel);
+}
+.ovw-card.working {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+.ovw-card.stopped {
+  opacity: 0.72;
+}
+.ovw-card.dead {
+  cursor: default;
+}
+.ovw-card.dead .ovw-title {
+  text-decoration: line-through;
+}
+/* Spawn lineage (ADR 0073): the family's colour as a left spine, as on the rail row. */
+.ovw-card.lineage {
+  border-left: 3px solid var(--sess-lineage);
+}
+.ovw-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.ovw-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 13px;
+}
+.ovw-menu-wrap {
+  flex: none;
+  display: inline-flex;
+}
+/* Revealed on hover / keyboard focus; hidden it must take no clicks, so the whole card
+   stays the open target. */
+.ovw-menu-btn {
+  opacity: 0;
+  pointer-events: none;
+}
+.ovw-card:hover .ovw-menu-btn,
+.ovw-card:focus-within .ovw-menu-btn,
+.ovw-card.hover .ovw-menu-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+@media (hover: none) {
+  .ovw-menu-btn {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.ovw-where {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+.ovw-project {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ovw-wt {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ovw-wt .codicon {
+  font-size: 11px;
+}
+.ovw-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* The chip is right-aligned on a rail row (margin-left: auto); here it leads the row. */
+.ovw-row .session-state {
+  margin-left: 0;
+}
+.ovw-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  color: var(--muted2);
+  font-size: 11px;
+  min-width: 0;
+}
+.ovw-meta > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+/* The rail's caption row grows a button that opens the overview. */
+.lm-cap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+}
+.lm-cap .ui-iconbtn {
+  width: 18px;
+  height: 18px;
+  font-size: 12px;
+}

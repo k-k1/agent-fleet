@@ -27,6 +27,7 @@ If a feature ships and does not appear here, it is not done
 | Live terminal attached to a session | member | main area | [05 Terminal](../member/05-terminal.md) |
 | Terminal round-trip time (keystroke lag) | member | terminal pane header | [05 Terminal](../member/05-terminal.md) |
 | Resume a stopped session | member | left pane → the session | [02 Sessions](../member/02-sessions.md) |
+| Sessions overview — every running session as a card | member | action bar → Sessions, or leader `g s` | [02 Sessions](../member/02-sessions.md) |
 | Hand a conversation to a new session | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
 | Fork from a past message | member | mirror, on a past message | [07 Chat and memos](../member/07-chat-memo.md); [agents.md](agents.md) for which agents |
 | Hand a session to another member | member | session ⋯ menu | [02 Sessions](../member/02-sessions.md) |
