@@ -724,7 +724,9 @@ home の AZ 外コピーは、**たまたま退避が走っていた人にしか
 - **home は剥がして、claim も落とす。** 本人の次の Start が claim TTL を待たずに
   別のスロットへ行けるようにするため。
 - **インスタンスは停止する。** タスクを受けられないインスタンスを時間課金で放置しない。終了は運用者の判断に残す
-  （このアダプタに `TerminateInstances` は無い・§64.22.1）。**なお実機では、この停止が
+  （**🔴 2026-09-11 訂正: 起票時の「このアダプタに `TerminateInstances` は無い・§64.22.1」は
+  決定 23 以降もう真ではない。終了の手段が無いのではなく、自動では取らないという意味になった——
+  運用者の手は決定 30 で入れた**）。**なお実機では、この停止が
   詰まった detach を完了させた**（stopping → stopped でボリュームが `available` に戻った）。
 - **画面には残す。** プールの数からは外すが表からは消さない——まだ課金されているインスタンスが
   画面から消えるのは、運用者が気づけない形の請求になる。理由と時刻もタグに残す。
@@ -895,7 +897,8 @@ root の本数・**C**=立ち退きの閾値 を兼ねていたが、A と B が
 
 **やらなかったこと**: warm 床（上記）。空き用と占有用で別々の閾値（知りたいのは
 どちらも「インスタンスを何時間持っておくか」の 1 つで、分けると運用が増えるだけ）。隔離済みのインスタンスの
-自動 terminate（`af-role=quarantined` は両方の走査から外れる——**証拠は意図的に残す**）。
+自動 terminate（`af-role=quarantined` は両方の走査から外れる——**証拠は意図的に残す**。
+運用者の手は決定 30）。
 
 ## 決定 24 — 立ち退きは「乗れるインスタンス」だけを奪う。ただし**テナントは跨ぐ**（2026-08-26）
 
@@ -1256,3 +1259,37 @@ Workspace の破棄・完全削除は、罫線の下の **取り消せない操�
 `control-plane/internal/runtime/profiles.go`（`HomeResize` / `DiskGrowOnly`）・
 `deploy/aws/ecs/cfn/40-ec2-pool.yaml`（`af-mount`）・`deploy/aws/ecs/cfn/20-platform.yaml`（IAM）・
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`。
+
+## 決定 30 — 隔離したスロットは、**運用者が Console から終了させる**（2026-09-11）
+
+決定 20 は隔離したインスタンスを停止して証拠として残し、終了は運用者の判断に委ねた。決定 23 は
+その判断を自動化しないと決めた（`af-role=quarantined` は両方の走査から外れる）。**残ったのは、
+どちらも「運用者が消す」を前提にしているのに、消す手段がどこにも無いことだった。**
+
+実配備で 1 台が隔離されたまま残って見つかった。画面は「必要なものを取り終えたら終了させてください」と
+言い、Console にはボタンが無く、admin API にも経路が無い。AWS コンソールを持たない運用者
+（Console だけを渡されている super_admin がまさにそれ）には手が無い。
+
+- **`DELETE /api/admin/ec2-pool/slots/{id}`（super_admin）を足す。** 判断はアダプタ側で AWS から
+  引き直す（ADR 0012）。通すのは **`af-pool` が自配備・`af-role=quarantined`・home が付いていない・
+  生きた claim が無い**の 4 条件だけで、**`af-role=slot` は明示的に拒否する**——生きたスロットは
+  休眠系列（決定 22/23）で消えるものであり、この経路が「インスタンス ID を書けば動いている機械を
+  消せる窓口」になってはいけない。拒否は 404 / 409 で理由付きで返す（運用者の入力ミスは障害ではない）。
+- **タスクは条件にしない。** `abandonLostSlot` が running のまま残した箱は、既に本人の home を
+  よそへ移した後のタスク ENI を掴んでいる——それこそ運用者が消しに来る箱である。`terminateSlot` が
+  先に `DeregisterContainerInstance(Force)` するので、ECS はそのタスクを手放す。
+- **隔離理由を監査ログへ写してから消す。** 理由はインスタンスのタグにしか無く、インスタンスと
+  一緒に消える。決定 23 の「証拠は意図的に残す」を、押した後も成立させるための 1 行である。
+- **自動終了は引き続きやらない。** TTL で勝手に片付ける案（`…QUARANTINE_TERMINATE_SEC`）は、
+  証拠を持っているのがタグだけである以上、押した人がいない削除と相性が悪い。手が 1 つあれば
+  十分であり、増えるのは運用面だけになる。
+
+⚠️ **一般則**: 「これは運用者の判断に残す」と書いた決定は、**その判断を実行する手段が製品の中に
+あるかを同時に確かめる**こと。無ければそれは判断の委譲ではなく、誰も実行できない TODO であり、
+今回は 1 台あたり root 100 GiB（東京 gp3 で概算 月 $9.6）が、マウント失敗のたびに 1 台ずつ
+無期限に積み上がる形で現れた。
+
+コード: `control-plane/internal/runtime/runtime_ecs_ec2.go`（`TerminateQuarantinedSlot` /
+`terminateSlot`）・`control-plane/workspace_lifecycle.go`（`runtimeSlotTerminator`）・
+`control-plane/internal/tenantsrv/tenants.go`（`TerminatePoolSlot`）・`control-plane/routes.go`・
+`console/src/features/settings/tenant/ec2Pool.tsx`。

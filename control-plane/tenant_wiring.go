@@ -117,6 +117,10 @@ func (a adminAPI) poolStatus(w http.ResponseWriter, r *http.Request, ident store
 	a.srv().PoolStatus(w, r, ident)
 }
 
+func (a adminAPI) terminatePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	a.srv().TerminatePoolSlot(w, r, ident)
+}
+
 func (a adminAPI) tenantNetwork(w http.ResponseWriter, r *http.Request) { a.srv().TenantNetwork(w, r) }
 
 func (a adminAPI) setTenantNetwork(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +219,10 @@ func (d cpTenant) PoolBudget(ctx context.Context, overrideTenantID string, overr
 
 func (d cpTenant) PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error) {
 	return d.m.poolStatus(ctx)
+}
+
+func (d cpTenant) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
+	return d.m.terminateQuarantinedSlot(ctx, instanceID)
 }
 
 func (d cpTenant) TenantAdminFor(w http.ResponseWriter, r *http.Request, slug string) (store.Identity, store.Tenant, bool) {

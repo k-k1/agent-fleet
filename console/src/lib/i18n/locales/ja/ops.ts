@@ -121,7 +121,13 @@ export const ops = {
   "pool.state_asleep": "休止中",
   "pool.state_quarantined": "隔離",
   "pool.quarantined_hint":
-    "home をマウントできなかったスロットが {n} 台あり、プールから外しました（他の人がここに入ることはありません）。停止済みですが root ボリュームは残っているので、必要なものを取り終えたら終了させてください。",
+    "home をマウントできなかったスロットが {n} 台あり、プールから外しました（他の人がここに入ることはありません）。停止済みですが root ボリュームは残って課金され続けるので、必要なものを取り終えたら行末の「終了」で消してください。",
+  "pool.terminate": "終了",
+  "pool.terminate_title": "スロット {id} を終了しますか",
+  "pool.terminate_body":
+    "インスタンスと root ボリュームを削除します。取り消せません。中を調べたいことが残っていれば、先に済ませてください。",
+  "pool.terminate_reason": "隔離理由: {reason}",
+  "pool.terminate_failed": "終了できませんでした: {msg}",
   "pool.not_registered": "（まだタスクを受け付けない）",
   "pool.free_slot": "空き",
   "pool.homes_title": "home",

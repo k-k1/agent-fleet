@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -258,6 +259,8 @@ func (f *fakeEC2) DescribeInstances(_ context.Context, in *ec2.DescribeInstances
 			switch {
 			case strings.HasPrefix(name, "tag:"):
 				return []string{ec2TagValue(inst.Tags, strings.TrimPrefix(name, "tag:"))}
+			case name == "instance-id":
+				return []string{id}
 			case name == "instance-state-name":
 				return []string{string(inst.State.Name)}
 			case name == "instance-type":
@@ -4015,6 +4018,123 @@ func TestECSEC2PoolStatusShowsQuarantinedSlots(t *testing.T) {
 	}
 	if !seen.Quarantined || seen.QuarantineReason == "" {
 		t.Errorf("slot view = %+v, want quarantined with a reason", *seen)
+	}
+}
+
+// --- terminating a quarantined slot (the operator's half of decision 20) ---
+//
+// Quarantine stops the box and keeps it as evidence, and both sweeper walks filter on
+// af-role=slot, so nothing in the product collects one. The screen says "terminate it once
+// you have what you need"; this is what makes that sentence actionable, and it is the only
+// path that deletes a machine on somebody's say-so — so what it REFUSES matters as much as
+// what it does.
+
+// quarantined drives the real quarantine path (a Start whose mount fails) so the tests
+// below start from the tags production actually writes, not from a hand-built instance.
+func quarantined(t *testing.T, ctx context.Context, h *ec2Harness) {
+	t.Helper()
+	h.ec2.addHomeVolume("vol-1", "M-1", "af-ws-acme-alice", "ap-northeast-1a")
+	h.ec2.addSlot("i-bad", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-bad"] = true
+	h.ssmc.fail["af-mount"] = true
+	if err := h.rt.Start(ctx); err == nil {
+		t.Fatal("the mount fails, so Start must")
+	}
+}
+
+func TestECSEC2TerminatesAQuarantinedSlotWhenAnOperatorAsks(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	quarantined(t, ctx, h)
+
+	reason, err := h.factory().TerminateQuarantinedSlot(ctx, "i-bad")
+	if err != nil {
+		t.Fatalf("TerminateQuarantinedSlot: %v", err)
+	}
+	// The reason is handed back because the tags holding it are about to be deleted with
+	// the instance; the caller writes it into the audit log so the evidence outlives it.
+	if reason == "" {
+		t.Error("no quarantine reason returned; terminating the box then destroys the only record of why")
+	}
+	if got := terminatedInstances(h); len(got) != 1 || got[0] != "i-bad" {
+		t.Fatalf("TerminateInstances = %v, want [i-bad]", got)
+	}
+	// Same reason as the sweeper's own terminate: a box that vanishes while ECS still
+	// believes it is ACTIVE keeps satisfying placement constraints.
+	if got := h.ci.deregistered; len(got) != 1 || got[0] != "arn:ci/i-bad" {
+		t.Fatalf("DeregisterContainerInstance = %v, want [arn:ci/i-bad] before the terminate", got)
+	}
+}
+
+// The guard that matters. An instance id reaches this call from an HTTP request, and a
+// working slot is one somebody is sitting on: it leaves through the dormancy series or not
+// at all.
+func TestECSEC2RefusesToTerminateASlotThatIsNotQuarantined(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-live", "ap-northeast-1a", "m7i.large", true, false)
+	h.ci.registered["i-live"] = true
+
+	if _, err := h.factory().TerminateQuarantinedSlot(ctx, "i-live"); !errors.Is(err, ErrSlotNotQuarantined) {
+		t.Fatalf("err = %v, want ErrSlotNotQuarantined", err)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v — a working slot was deleted by instance id", got)
+	}
+}
+
+// Quarantine detaches the home it failed to mount, so one still attached means that detach
+// did not happen. This is the only refusal here that is about data rather than money.
+func TestECSEC2RefusesToTerminateAQuarantinedSlotStillHoldingAHome(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	quarantined(t, ctx, h)
+	h.ec2.attach("vol-1", "i-bad", time.Now())
+
+	_, err := h.factory().TerminateQuarantinedSlot(ctx, "i-bad")
+	if !errors.Is(err, ErrSlotInUse) {
+		t.Fatalf("err = %v, want ErrSlotInUse", err)
+	}
+	if !strings.Contains(err.Error(), "vol-1") {
+		t.Errorf("err = %v; an operator cannot act on a refusal that does not name the home", err)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v — the home would have gone with the box", got)
+	}
+}
+
+// A live claim is a placement in flight that has not attached yet — the window sweepFreeSlots
+// already treats as occupied.
+func TestECSEC2RefusesToTerminateAQuarantinedSlotWithALiveClaim(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	quarantined(t, ctx, h)
+	h.ec2.setTag("vol-1", EC2TagClaim, "i-bad")
+	h.ec2.setTag("vol-1", ec2TagClaimAt, time.Now().UTC().Format(time.RFC3339))
+
+	if _, err := h.factory().TerminateQuarantinedSlot(ctx, "i-bad"); !errors.Is(err, ErrSlotInUse) {
+		t.Fatalf("err = %v, want ErrSlotInUse", err)
+	}
+}
+
+// Deployments share a region and an account. The af-pool tag is what says a box is ours,
+// and an id from a neighbouring deployment has to read as "no such slot" rather than as
+// something to delete.
+func TestECSEC2RefusesToTerminateABoxOutsideThisPool(t *testing.T) {
+	ctx := context.Background()
+	h := newEC2Harness(t)
+	h.ec2.addSlot("i-theirs", "ap-northeast-1a", "m7i.large", true, false)
+	h.ec2.setInstanceTag("i-theirs", EC2TagPool, "another-deployment")
+	h.ec2.setInstanceTag("i-theirs", EC2TagRole, ec2RoleQuarantined)
+
+	if _, err := h.factory().TerminateQuarantinedSlot(ctx, "i-theirs"); !errors.Is(err, ErrSlotNotFound) {
+		t.Fatalf("err = %v, want ErrSlotNotFound", err)
+	}
+	if _, err := h.factory().TerminateQuarantinedSlot(ctx, "i-nonexistent"); !errors.Is(err, ErrSlotNotFound) {
+		t.Fatalf("err = %v, want ErrSlotNotFound", err)
+	}
+	if got := terminatedInstances(h); len(got) != 0 {
+		t.Fatalf("TerminateInstances = %v — another deployment's box was deleted", got)
 	}
 }
 

@@ -13,6 +13,8 @@
 // a Fargate deployment, so there the whole tab is omitted (in AdminTab).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, errText } from "../../../core/api/client.ts";
+import { Button } from "../../../ui/Button.tsx";
+import { ConfirmDialog } from "../../../ui/ConfirmDialog.tsx";
 import { Icon } from "../../../ui/Icon.tsx";
 import { useT, type MsgKey } from "../../../lib/i18n/index.ts";
 
@@ -157,6 +159,12 @@ export function PoolView() {
   const tr = useT();
   const [st, setSt] = useState<PoolStatus | null>(null);
   const [err, setErr] = useState("");
+  // The slot the operator is about to terminate, and whether the request is in flight.
+  // Only a quarantined box can get here; the server refuses anything else whatever the
+  // screen sends (ADR 0045 decision 20).
+  const [killing, setKilling] = useState<Slot | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [killErr, setKillErr] = useState("");
   const timer = useRef<ReturnType<typeof setInterval> | undefined>(undefined);
 
   const poll = useCallback(async () => {
@@ -180,6 +188,22 @@ export function PoolView() {
     }, 10000);
     return () => clearInterval(timer.current);
   }, [poll]);
+
+  // Terminating is the one write on this screen. A refusal is kept on the page rather than
+  // thrown away: the server's reasons ("it is not quarantined", "a home is still attached")
+  // are what the operator has to act on, and the 10s poll would wipe a toast.
+  const terminate = async (s: Slot) => {
+    setBusy(true);
+    setKillErr("");
+    const d = await api("api/admin/ec2-pool/slots/" + encodeURIComponent(s.instance_id), { method: "DELETE" });
+    setBusy(false);
+    if (d?.error) {
+      setKillErr(tr("pool.terminate_failed", { msg: errText(d.error) }));
+      return;
+    }
+    setKilling(null);
+    poll();
+  };
 
   if (err) return <p className="muted pad">{err}</p>;
   if (st === null) return <p className="muted pad">{tr("common.loading")}</p>;
@@ -254,7 +278,10 @@ export function PoolView() {
                 <th>{tr("pool.col_state")}</th>
                 <th>{tr("pool.col_occupant")}</th>
                 <th>{tr("pool.col_dormant")}</th>
-                <th>{tr("pool.col_backup")}</th>
+                {/* The action column: empty for every row but a quarantined one, and the
+                    backup column this header used to carry belongs to the HOMES table —
+                    slots have no spare copy, so it labelled a cell that was never rendered. */}
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -280,6 +307,16 @@ export function PoolView() {
                     {bakeWS.has(s.workspace) && <span className="pool-badge bake">{tr("pool.bake_owner")}</span>}
                   </td>
                   <td>{s.workspace ? fmtIdle(s.idle_minutes, tr) : "–"}</td>
+                  {/* Quarantine is the only state this screen can act on, and the button is
+                      the only way the product has to stop paying for one (the sweeper's
+                      terminate stage filters on af-role=slot and never collects it). */}
+                  <td>
+                    {s.quarantined && (
+                      <Button variant="ghost" onClick={() => { setKillErr(""); setKilling(s); }}>
+                        {tr("pool.terminate")}
+                      </Button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -299,6 +336,7 @@ export function PoolView() {
                 <th>{tr("pool.col_volume")}</th>
                 <th>{tr("pool.col_where")}</th>
                 <th>{tr("pool.col_dormant")}</th>
+                <th>{tr("pool.col_backup")}</th>
               </tr>
             </thead>
             <tbody>
@@ -386,6 +424,25 @@ export function PoolView() {
         )}
       </section>
 
+      {killing && (
+        <ConfirmDialog
+          title={tr("pool.terminate_title", { id: killing.instance_id })}
+          confirmLabel={tr("pool.terminate")}
+          danger
+          busy={busy}
+          onCancel={() => setKilling(null)}
+          onConfirm={() => terminate(killing)}
+        >
+          <p>{tr("pool.terminate_body")}</p>
+          {/* The reason is on the row only as a tooltip, and this is the moment it is
+              actually needed: "have I taken what I need from it" cannot be answered
+              without knowing what broke. */}
+          {killing.quarantine_reason && (
+            <p className="mono">{tr("pool.terminate_reason", { reason: killing.quarantine_reason })}</p>
+          )}
+          {killErr && <p className="warn-text">{killErr}</p>}
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

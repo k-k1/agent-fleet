@@ -1393,9 +1393,16 @@ slots get patched, decision 7).
 **A slot that cannot mount a home is quarantined** (`af-role=quarantined`, ADR 0045 decision 20):
 it leaves the pool so nobody else lands on it, its home is detached and freed for another
 slot, and the instance is stopped. It stays on the Slots tab with the reason, because it still
-holds its root volume — **terminate it yourself** once you have taken what you need from
-it (this adapter never terminates instances). The failure that made this necessary was a
+holds its root volume — **remove it with "Terminate" at the end of its row** once you have
+taken what you need from it (ADR 0045 decision 30; nothing collects one by itself, since both
+sweeper walks filter on `af-role=slot`). The failure that made this necessary was a
 wedged kernel holding a deleted volume's NVMe namespace, which no amount of retrying fixes.
+
+The button is `DELETE /api/admin/ec2-pool/slots/{id}` (super_admin), and it is the only route
+in the product that deletes a machine on request. It accepts a box of this pool tagged
+`af-role=quarantined` with no home attached and no live claim, and refuses everything else —
+a working slot included, which leaves through `Ec2SlotTerminateAfterSec` instead. The
+quarantine reason goes into the audit log before the instance (and its tags) disappear.
 
 **Golden snapshot: skip boot-install for new users.** A brand-new home pays boot-install
 (4 CLIs 41s + rtk 1s + agy 6s = 48s) and a cold npm cache. Bake one home that has already

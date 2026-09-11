@@ -123,7 +123,13 @@ export const ops: Record<keyof typeof jaOps, string> = {
   "pool.state_asleep": "asleep",
   "pool.state_quarantined": "quarantined",
   "pool.quarantined_hint":
-    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped but still hold their root volume: terminate them once you have taken what you need from the instance.",
+    "{n} slot(s) could not mount a home and were taken out of the pool, so nobody else lands on them. They are stopped, but their root volume stays and keeps billing: once you have taken what you need from the instance, remove it with “Terminate” at the end of its row.",
+  "pool.terminate": "Terminate",
+  "pool.terminate_title": "Terminate slot {id}?",
+  "pool.terminate_body":
+    "This deletes the instance and its root volume. There is no undo — if there is anything left to look at inside it, do that first.",
+  "pool.terminate_reason": "Quarantined because: {reason}",
+  "pool.terminate_failed": "Could not terminate it: {msg}",
   "pool.not_registered": "(not accepting tasks yet)",
   "pool.free_slot": "free",
   "pool.homes_title": "Homes",
