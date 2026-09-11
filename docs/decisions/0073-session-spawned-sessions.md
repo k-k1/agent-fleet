@@ -579,6 +579,10 @@ job feels done.
   → **Done on 2026-09-09** (docs/log/87 §87.15). `report_back` was honoured **3/3 (100%, n=3)**.
   ⚠️ **n=3 is not "the firing rate was measured"** — what was confirmed is that a real session calls
   them at all, not how often.
+  → **n raised on 2026-09-11** (docs/log/87 §87.19.4). Against the launch-time line the cumulative
+  score is **8/8** (claude 5, codex 2, agy 1; every task a 30-second read-only one). ⚠️ When the same
+  line is appended to a later peer `request`, it is **6/10** — the envelope's `reply=only-if-blocked`
+  wins over the body, as designed. Read `report_back` as a number about the **launch-time line only**.
 - Cleaning up children that outlive their parent stays with the user (decision 13). ~~Decision 6's
   budget is a count over a caller's children, not a reservation, so~~ Decision 6's budget is a
   reservation, but the parent holds it, not the child (`reserveSpawnSlot` counts under the parent's
