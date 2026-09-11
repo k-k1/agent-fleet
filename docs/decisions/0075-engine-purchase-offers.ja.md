@@ -1089,3 +1089,85 @@ provider は**前の要求のまま**＝宣言と実際がずれたまま Spot �
 - ⚠️ 2 つとも `--parameter-overrides` で入れたので**捕捉 `params/60-engines` には無い**（`standup.sh` で
   建て直すと消える。0074 の追記と同じ注意）。
 - 生の戻り値（CFN・ECS・EC2・SSM の JSON と CP のログ）は測ったセッションの `~/.cache/adr0075-run1-7/` にある。
+
+## 追記 — P0 実機 3〜4 の再走（#561 後・2026-09-11・開発配備・GPU 約 $0.38）
+
+前の追記が出した 3 点の修正（#561）を入れた CP（`0.19.1-dev-ec3e1bc3`）で、実機 3 と 4 を
+**予算 180 秒に戻して**再走した。宣言は `spot3`(spot・3 型) / `l4`(od) / `l40s`(od) のまま。
+GPU は **2 台・のべ 21 分・約 $0.38**。
+
+**結論: 3 点のうち 2 点は直った。残り 1 点は直っておらず、直した側が新しい穴を 1 つ開けた。**
+——予算は箱の到着で止まるようになり（🟢）、Spot のクォータ語も 25 秒で読めるようになった（🟢）。
+しかし **起動はいまも箱を 2 台買い**（🔴、原因は前回の診断より一段深い）、**前の提案のイベントで
+次の提案が誤判定される**（🔴、前回は予算に隠れていた）。
+
+### 再走 3（`spot3` で起動・予算 180 秒）
+
+| 判定 | 結果 | 根拠 |
+|---|---|---|
+| (a) 起動が 2 回の `UpdateService` に割れたか | 🟢 | strategy 書き込みが新しい PRIMARY を作り（`ecs-svc/0129…` `createdAt 23:15:24.488`）、`desiredCount: 1` はそのあと別の呼び出しで入った（旧 deployment がタスクを起こしたのが 23:15:32＝8 秒後） |
+| (b) **箱は 1 台か** | 🔴 **2 台**。前回と同じ | OD `i-0a46e6…` 23:15:36 登録 / Spot `i-05f9f2…` 23:15:47 登録。止めを刺したのは `describe-tasks`: 最初のタスクは **`startedBy: ecs-svc/9980…`＝古い deployment**。つまり **新しい PRIMARY ができても、古い deployment が `ACTIVE` のあいだに `desiredCount: 1` を入れると ECS は古い側にも 1 本置き、その provider が箱を買う** |
+| (c) 予算 180 秒で次へ移らず warm まで行くか | 🟢 | `23:16:08 engines: image: offer spot3 produced a box; the start deadline owns the clock from here`。予算が切れるはずの 23:18:49 を過ぎても `offer: spot3` のまま、**23:20:34 までに `state: running` / `warm: true`**（起動から 5 分 11 秒以内）。前回は同じ 180 秒で一覧を歩き切って 0 台起動だった |
+| (d) `offer_trail` が 1 行か | 🟢 | `[{spot3, spot, active}]`。CP ログの `starting on spot3` も 1 本（前回は 1 秒差で 2 本＝trail も 2 行） |
+| (e) `box` が ACTIVE 側を指すか | 🟢 | OD の箱が `DEREGISTERING` のあいだも `box` は `i-05f9f2…`（`g6.xlarge`・`InstanceLifecycle: spot`・`status: ACTIVE`）。`null` になった瞬間は無い |
+
+🔴 **(b) の直し方**: 2 本目の呼び出しの門を「**PRIMARY の id が変わった**」から「**古い deployment が
+居なくなった**」（`deployments` が 1 本＝`rolloutState: COMPLETED`）に上げる。実測では古い deployment は
+少なくとも **2 分 35 秒**（23:15:51 → 23:18:26 の観測時点でまだ `ACTIVE`）残っていたので、**起動が
+それだけ遅くなる**——それが対価である。⚠️ **「新しい PRIMARY ができたか」では足りない**ことが、
+この再走の一番の収穫である（前の追記の診断はここまでしか見ていなかった）。
+
+### 再走 4（`spot3` をクォータ超えの 1 型 `g6.4xlarge` にして起動）
+
+| 判定 | 結果 | 根拠 |
+|---|---|---|
+| (a) クォータ語を読んで**予算を待たずに**移るか | 🟢 | `23:29:39 engines: image: offer spot3 answered quota after 25s` → `23:29:40 trying the offer l4 (od)`。**25 秒**（前回は予算 15 分をまるまる待った） |
+| (b) `offer_trail` = `[spot3 quota, l4 active]` か | 🔴 | 実際は **`[spot3 quota, l4 quota]`**。`l4` は移った **5 秒後**に `answered quota after 5s` と判定され、`every offer was tried (spot3=quota l4=quota); giving up on this start` で**起動そのものを諦めた** |
+| (c) 孤児の箱が Spot 側に来ないか | 🟢 | 数分見て、capacity provider を持つ container instance は 0。Spot は 1 台も買えていない |
+| (d) 箱は 1 台だけか | 🟢 | **0 台**（買えないので当然）。この再走は **$0** |
+
+🔴 **(b) の原因**: 判定が `DescribeServices` の**新しいイベント 3 件**を見るだけで、**それが
+どの提案・どの provider のイベントか**を見ていない。`l4` を判定した 23:29:45 の時点で最新の 3 件には
+23:29:24 の Spot のクォータイベントが残っており、それを `l4` の答えとして読んだ。
+**直し方は本文に既にある**——イベントは provider 名を持っている:
+
+```
+… was unable to place a task. Reason: ResourceInitializationError: Unable to launch instance(s)
+for capacity provider af-<stack>-image-spot. MaxSpotInstanceCountExceeded: …
+```
+
+**いまの提案の capacity provider 名を含むイベントだけ**を（あるいは `took()` の時刻より新しい
+イベントだけを）判定に使う。⚠️ この穴は前回も存在したが、**予算 180 秒が先に切れていたので
+見えなかった**——修正 1 が「速く進む」ようにした結果、初めて表に出た類のもの。
+副作用として `quota` は購入形態を丸ごと飛ばす（決定 5）ので、**1 つの誤判定が一覧全部を無効にする**。
+
+### おまけ（$0）——綴り違いの型は、もう起動を続けない
+
+`spot3` の型を `g6.xxlarge`（存在しない綴り）にして `mode: on`:
+
+```
+23:35:57 engines: image: the offer spot3 could not be applied to its capacity provider, skipping it:
+         updating the capacity provider af-<stack>-image-spot: operation error ECS: Update…
+23:35:57 engines: image: starting on l4 (22000 MiB VRAM declared)
+```
+
+`offer_trail` は `[{spot3, spot, unusable}, {l4, od, active}]`。**前回は同じ状況で「log して、前の要求の
+ままの provider で起動を続けた」**（宣言と実際がずれる）。いまは提案を飛ばして次へ行く。🟢
+
+### 費用と後始末
+
+| 箱 | 型 | 購入形態 | 稼働 | 概算 |
+|---|---|---|---|---|
+| 1 | `g6.xlarge` | Spot（再走 3 が warm に達した箱） | 7m34s | $0.07 |
+| 2 | `g6.xlarge` | OD（🔴(b) の余計な 1 台） | 13m8s | $0.28 |
+
+**のべ 21 分・約 $0.35**（＋MI 管理料 7.80%＝**約 $0.38**）。⚠️ **余計な箱が支出の 79%** で、比率は
+前回（55%）より悪い——成功した起動が短いほど、2 台目の重みは増す。
+
+- `mode: off`、**2 台とも `terminated`**、capacity provider を持つ container instance は 0、`box: null`、
+  `state: stopped`、`desiredCount` 0。
+- 開発配備に残したもの: `ImageOffers` は `spot3`(spot・3 型)/`l4`(od)/`l40s`(od)、
+  **`ImageOfferBudgetSec` は 180 に戻した**（再走 3 (c) が 180 のまま warm に達したので、900 を続ける
+  理由はもう無い）。`ImageInstanceClasses` は不変。⚠️ どちらも `--parameter-overrides` なので捕捉
+  `params/60-engines` には無い。
+- 生の戻り値は測ったセッションの `~/.cache/adr0075-rerun/`。

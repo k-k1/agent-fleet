@@ -1194,3 +1194,87 @@ spare boxes.**
   (standing the deployment up again with `standup.sh` loses them — the same caveat as 0074's follow-up).
 - The raw responses (CloudFormation, ECS, EC2 and SSM JSON, and the CP's log) are in
   `~/.cache/adr0075-run1-7/` of the session that measured this.
+
+## Follow-up — hardware runs 3 and 4, re-run after #561 (2026-09-11, the dev deployment, about $0.38 of GPU)
+
+With the three fixes the previous follow-up asked for (#561) in the CP (`0.19.1-dev-ec3e1bc3`), runs 3
+and 4 were done again **with the budget back at 180 seconds**. The declaration is unchanged:
+`spot3` (spot, three types) / `l4` (od) / `l40s` (od). Two GPU boxes, 21 minutes, **about $0.38**.
+
+**Verdict: two of the three are fixed. The third is not, and fixing the others opened one new hole.**
+The budget now stops when a box arrives (🟢) and the Spot quota word is read in 25 seconds (🟢). But a
+start **still buys two boxes** (🔴, and the cause is one layer deeper than the previous diagnosis), and
+**the previous offer's events now decide the next offer** (🔴 — the budget used to hide this).
+
+### Run 3 again (start on `spot3`, budget 180 s)
+
+| Check | Result | Evidence |
+|---|---|---|
+| (a) did the start split into two `UpdateService` calls | 🟢 | The strategy write created a new PRIMARY (`ecs-svc/0129…`, `createdAt 23:15:24.488`) and `desiredCount: 1` followed in a separate call (the old deployment started its task at 23:15:32, eight seconds later) |
+| (b) **is there only one box** | 🔴 **Two**, as before | on-demand `i-0a46e6…` registered 23:15:36, Spot `i-05f9f2…` registered 23:15:47. `describe-tasks` settles it: the first task is **`startedBy: ecs-svc/9980…`, the OLD deployment**. So **a new PRIMARY is not enough — while the old deployment is still `ACTIVE`, a `desiredCount: 1` makes ECS place one there too, and that provider buys a box** |
+| (c) does it stay on the offer past 180 s and reach warm | 🟢 | `23:16:08 engines: image: offer spot3 produced a box; the start deadline owns the clock from here`. Past 23:18:49, where the budget would have expired, `offer` is still `spot3`, and **by 23:20:34 it is `state: running` / `warm: true`** (within 5 min 11 s of the start). The previous run walked the whole list at the same 180 s and started nothing |
+| (d) is `offer_trail` a single row | 🟢 | `[{spot3, spot, active}]`, and one `starting on spot3` in the log (it used to be two, one second apart, with two trail rows) |
+| (e) does `box` point at the ACTIVE one | 🟢 | While the on-demand box was `DEREGISTERING`, `box` was `i-05f9f2…` (`g6.xlarge`, `InstanceLifecycle: spot`, `status: ACTIVE`). It is never `null` |
+
+🔴 **How to fix (b)**: raise the gate on the second call from "**the PRIMARY's id changed**" to "**the old
+deployment is gone**" (one entry in `deployments`, i.e. `rolloutState: COMPLETED`). Measured, the old
+deployment was still `ACTIVE` **2 minutes 35 seconds** later (23:15:51 → observed at 23:18:26), so the
+start gets that much slower — that is the price. ⚠️ **"Has a new PRIMARY appeared" is not enough**, and
+that is this re-run's main find: the previous follow-up's diagnosis stopped one step short.
+
+### Run 4 again (`spot3` as the single over-quota type `g6.4xlarge`)
+
+| Check | Result | Evidence |
+|---|---|---|
+| (a) is the quota word read, **without waiting out the budget** | 🟢 | `23:29:39 engines: image: offer spot3 answered quota after 25s` → `23:29:40 trying the offer l4 (od)`. **25 seconds** (it waited the full 15-minute budget last time) |
+| (b) is `offer_trail` `[spot3 quota, l4 active]` | 🔴 | It is **`[spot3 quota, l4 quota]`**. `l4` was judged **five seconds** after the move — `answered quota after 5s` — and the run ended with `every offer was tried (spot3=quota l4=quota); giving up on this start` |
+| (c) does an orphan box turn up on the Spot side | 🟢 | Watched for minutes: no container instance carries a capacity provider. Spot never bought anything |
+| (d) is there only one box | 🟢 | **Zero** (nothing could be bought). This re-run cost **$0** |
+
+🔴 **Why (b) happens**: the verdict reads the **newest three events** of `DescribeServices` and never asks
+**which offer, or which provider, they belong to**. When `l4` was judged at 23:29:45 the newest three
+still held the Spot quota event from 23:29:24, and that was read as `l4`'s answer. **The fix is already in
+the text of the event** — it names the provider:
+
+```
+… was unable to place a task. Reason: ResourceInitializationError: Unable to launch instance(s)
+for capacity provider af-<stack>-image-spot. MaxSpotInstanceCountExceeded: …
+```
+
+Judge only on events that name **the current offer's capacity provider** (or that are newer than
+`took()`). ⚠️ The hole was there before as well, but **the 180-second budget always expired first**, so it
+could not be seen: fix 1 made the walk fast enough to expose it. It is made worse by `quota` skipping a
+whole purchase option (decision 5) — **one misread kills the entire list**.
+
+### The bonus ($0) — a misspelled type no longer starts anyway
+
+With `spot3`'s type set to `g6.xxlarge` (a spelling that does not exist) and `mode: on`:
+
+```
+23:35:57 engines: image: the offer spot3 could not be applied to its capacity provider, skipping it:
+         updating the capacity provider af-<stack>-image-spot: operation error ECS: Update…
+23:35:57 engines: image: starting on l4 (22000 MiB VRAM declared)
+```
+
+`offer_trail` is `[{spot3, spot, unusable}, {l4, od, active}]`. **Last time the same situation was logged
+and the start continued on the provider's previous requirements** (declaration and reality apart). Now
+the offer is skipped. 🟢
+
+### Cost and cleanup
+
+| Box | Type | Purchase | Alive | Approx. |
+|---|---|---|---|---|
+| 1 | `g6.xlarge` | Spot (the box run 3 reached warm on) | 7m34s | $0.07 |
+| 2 | `g6.xlarge` | on-demand (🔴(b)'s spare) | 13m8s | $0.28 |
+
+**21 minutes, about $0.35** (plus the 7.80% Managed Instances fee = **about $0.38**). ⚠️ **The spare box
+is 79% of the spend** — worse than last time's 55%: the shorter the successful start, the heavier the
+second box weighs.
+
+- `mode: off`, **both boxes `terminated`**, no container instance carries a capacity provider,
+  `box: null`, `state: stopped`, `desiredCount` 0.
+- Left on the dev deployment: `ImageOffers` as `spot3` (spot, three types) / `l4` (od) / `l40s` (od), and
+  **`ImageOfferBudgetSec` back at 180** (run 3 (c) reached warm at 180, so there is no reason to keep
+  900). `ImageInstanceClasses` untouched. ⚠️ Both went in through `--parameter-overrides`, so neither is
+  in the `params/60-engines` capture.
+- The raw responses are in `~/.cache/adr0075-rerun/` of the session that measured this.
