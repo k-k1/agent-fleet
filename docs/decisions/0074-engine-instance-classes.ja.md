@@ -1240,3 +1240,153 @@ Please adjust your request and try again.
   開発配備は `ON_DEMAND` に戻した——image 役が起動しない配備を置いていくと、次にそれを使う
   セッションが「エンジンが壊れた」を追うことになる。往復が 147 秒で済むことは、いま実機で
   分かっている。
+
+> ✅ **次の節で買えた（同日 06:01Z）。** 変えたのは 2 つ——Spot の service-linked role を作った
+> ことと、許す型を 3 つに広げたこと。**状況証拠は型の幅のほうを指す**（placement score が
+> 1 型で 1、3 型で 9）。この節の「SLR 不在」「score 1」の 2 つの容疑は、**どちらも単独では
+> 検証していない**まま残る。
+
+## 追記 — Spot は買えた。ただし変えたものは 2 つある（2026-09-11・開発配備）
+
+前節が `UnfulfillableCapacity` で終わったあと、容疑 2 つを潰して**もう一度起こした。今度は
+取れた**——`g6e.xlarge`・ap-northeast-1a・**`InstanceLifecycle: spot`**。1 枚生成もできた。
+
+🔴 **ただし前節との差は 2 つあり、どちらが効いたかは切り分けていない。**
+
+1. **Spot の service-linked role を作った。** `AWSServiceRoleForEC2Spot` はこのアカウントに
+   存在しなかった（前節で `NoSuchEntity` を確認済み）。05:54:34Z に
+   `iam create-service-linked-role --aws-service-name spot.amazonaws.com` で作成。
+2. **許す型を 1 つから 3 つに広げた。** `g6.xlarge` → `g6.xlarge,g5.xlarge,g6e.xlarge`。
+
+**状況証拠は 2 のほうを指す。** `get-spot-placement-scores` が、型の組を変えただけで動く:
+
+| 訊き方 | スコア |
+|---|---|
+| `g6.xlarge` 単独・単一 AZ | **1 / 10**（1a も 1c も） |
+| `g5.xlarge` 単独 | 1 |
+| `g6e.xlarge` 単独 | 3 |
+| **3 型まとめて・単一 AZ** | **9 / 10**（1a も 1c も） |
+| 3 型まとめて・リージョン | **9 / 10** |
+
+`mode: on` の直前（06:01:04Z）にもう一度取って 9 を記録し、**その 42 秒後に箱が来た**。
+予測と結果が並んでいる。**`get-spot-placement-scores` は「Spot にする前に訊く」価値がある**
+——ただし**provider と同じ型の組で**訊くこと。1 型で訊いた 1 は、3 型で買う provider について
+何も言っていなかった。
+
+⚠️ **スコアはアカウント全体に対しても低く出る**ので、絶対値ではなく**型の組を変えたときの
+差**を読むこと（前節で `m7i.large` が 1〜3 だったのがその例である）。
+
+### 3 型に広げてよい理由——最安が意図した型のままである
+
+`describe-instance-types` の実測: 3 型とも **4 vCPU・instance store あり**、GPU メモリは
+g6.xlarge **22,888** / g5.xlarge（A10G）**22,888** / g6e.xlarge（L40S）**45,776** MiB。
+`AcceleratorMemMinMiB` の 22000 は 3 型とも満たすので**下限は変えていない**。Spot 価格は
+
+| 型 | Spot（1a / 1c） |
+|---|---|
+| g6.xlarge | $0.577 / $0.563 |
+| g5.xlarge | $0.7436 / $0.7854 |
+| g6e.xlarge | $1.3552 / $1.3507 |
+
+——**意図した g6.xlarge が最安のまま**で、`LlmAllowedInstanceTypes` の
+「代替は意図した型の**上**に置く（下に置くと既定になってしまう）」に合っている。
+⚠️ ただし **g6e の Spot $1.35 は g6 のオンデマンド $1.26 より高い**。Spot が安いのは
+型が取れたときの話であって、広げた先まで安いわけではない。
+
+🔴 **梯子の 1 段目も同じ 3 型にしないと、広げた意味が無い。** 決定 5 のとおり CP は起動の
+たびに段の 4 欄を provider に上書きするので、`ImageAllowedInstanceTypes` だけ広げても起動時に
+1 型へ戻る。params の 1 回の更新で両方を変えた:
+
+```
+ImageAllowedInstanceTypes=g6.xlarge,g5.xlarge,g6e.xlarge
+ImageInstanceClasses=l4|24GB+ (g6/g5/g6e)|22000|g6.xlarge,g5.xlarge,g6e.xlarge|4-8|15000-65536;l40s|…
+```
+
+ラベルは正直に書き換え、**価格は落とした**（3 型混在で請求の実績が無い。「書かないことが規約」）。
+
+### 実測（すべて `mode: on` の 06:01:16Z から）
+
+| 経過 | 出来事 |
+|---|---|
+| ≤ 42 s | container instance が ACTIVE（`i-0397164cafff94cef`・**g6e.xlarge**・ap-northeast-1a） |
+| 281 s | `state: running` |
+| 307 s | `warm: true` |
+| 403 s | `generate_image` が 1 枚返した（`provider: comfy`・`warnings` 空） |
+
+置き換えの change set とイベントは前節と同じ形（`Replacement: True`、依存 3 本は
+`ResourceReference`、新規作成 → 依存の更新 → クリーンアップで旧を削除、**148 秒**）。
+
+🔴 **Spot であることの証明は `describe-instances` を ID で引くしかない。** 前節までこの ADR と
+`PARAMETERS-60-engines.md` は「MI のインスタンスは AWS 管理アカウントで動くので
+`describe-instances` に出ない」と書いてきた。**半分だけ正しい**——同じ時刻に実測:
+
+- `describe-instances --filters Name=instance-type,Values=g6.xlarge,g5.xlarge,g6e.xlarge` → **`[]`**
+- `describe-instances --instance-ids i-0397164cafff94cef` → **全部返る**。
+  `InstanceLifecycle: spot`・`SpotInstanceRequestId: sir-…`・型・AZ。
+
+**列挙はできないが、ID を知っていれば引ける。** ID は
+`ecs describe-container-instances` の `ec2InstanceId` にあるので、**Spot で買えたことを
+呼び出し側のアカウントから証明する経路はこれ 1 本だけ**である。
+
+### 🔴 provider の名前が変わると、走っている CP は箱を見失う
+
+これが今回いちばん重い発見で、**Spot への切り替えがその引き金そのもの**である。置き換えは
+provider を `af-…-image` から `af-…-image-spot` へ改名するが、**エンジン表のうち生きたまま
+運べるのは梯子だけ**（「梯子の再読込が効いた」節）で、capacity provider 名は起動時に焼き
+込まれている。CP を入れ替えずに起こしたときに実際に起きたことを、CP のログからそのまま写す:
+
+```
+06:00:32 engines: image changed in the table in a way this process cannot take live
+                  (capacity provider) - restart the Control Plane
+06:00:32 engines: image instance classes re-read from /af-ws/engines: l4, l40s, l40s2x
+06:01:17 engines: image: re-applying the instance class l4 failed (already applied by this
+                  process): updating the capacity provider af-af-ecs-engines-image:
+                  … ClientException: The capacity provider could not be updated because it
+                  has been deleted.
+06:01:17 engines: image: starting on l4 (22000 MiB VRAM declared); largest model
+                  flux1-dev-fp8 wants 16571 MiB (floor)
+```
+
+**設計された警告は鳴った**（1 行目。この行が実機で出たのは初めてである）。梯子だけは
+生きたまま入れ替わった（2 行目）。そして `class_apply_error` はパネルにも出ていた——
+API の `GET /api/admin/engines` に、ECS の言葉ごと載っていた。**そこまでは設計どおりである。**
+
+🔴 **止めはしない、というのが問題である。** 同じ時刻に観測できた食い違いが 3 つ:
+
+- **段が実機に当たっていない。** 適用は**消えた旧 provider**へ飛んで 400 になり、新しい
+  provider は**テンプレートの `ImageAcceleratorMemMinMiB` 8,000 のまま**だった。つまり
+  買った箱は、宣言した段の下限ではなく**テンプレートの下限で**買われている。
+- **箱が見えない。** `box` の照会は `ci.CapacityProviderName` と**焼き込まれた旧名**を
+  突き合わせるので、`GET /api/admin/engines` の `box` は `null` のままだった——実際には
+  g6e.xlarge が 1 台、$1.35/h で動いていたのに、である。
+- **それでもパネルは「l4 で起動中」と言う**（4 行目）。決定 4 の「段を上げたつもりで古い
+  カードの上で走り続ける」と同じ形の嘘が、**段を変えていなくても**成立する。
+
+**CP を入れ替えたら全部直った。** `update-service --force-new-deployment`（06:17:28Z →
+06:21:05Z、**約 217 秒**、ALB の裏で blue/green なので停止なし）。陽性対照として、
+**GPU を 1 台も買わずに**段の適用だけを叩いた（`PUT …/image/class {"class":"l4"}`、
+エンジンは `mode: off` のまま・**$0**）:
+
+| | 入れ替え前 | 入れ替え後 |
+|---|---|---|
+| `PUT …/class` の結果 | 400 `… has been deleted.` | **成功**（`class_apply_error: null`） |
+| 新 provider の `acceleratorTotalMemoryMiB.min` | **8,000**（テンプレート値） | **22,000**（段の値） |
+
+**同じ要求が、CP の入れ替えを挟んだだけで通った。** 欠落も修復も、どちらも実機で示せている。
+
+> 🔴 **したがって `<役>CapacityOptionType` を変える更新は、CP の入れ替えと 1 組である。**
+> 「梯子は CFN に入っても走っている CP には届かない」と同じ形だが、あちらは
+> `engine_table_reload.go` が閉じた。こちらは**閉じないことが設計の決定**（行の他の欄を
+> 生きたまま差し替えると、このプロセスしか知らない状態を捨てることになる）なので、
+> **運用手順として書いておくほかない。**
+
+### 後始末と、残したもの
+
+image 役は `mode: off`（元の値）へ戻し、**provider は `SPOT` のまま残した**——Spot の在庫は
+型を広げれば有るとこの回で分かったので、開発配備の既定として採る（利用者の決定）。段の
+適用は上の陽性対照で新 provider に当たっており、`class_apply_error` は消えている。
+
+⚠️ **配備の捕捉（`params/60-engines`）は更新していない。** この 2 本は
+`cloudformation deploy --parameter-overrides` で live のスタックに入れたもので、
+`update.sh` / `dev-deploy.sh` は live のパラメータを読むので保たれるが、
+**捕捉から `standup.sh` で建て直すと `g6.xlarge` / `ON_DEMAND` に戻る。**

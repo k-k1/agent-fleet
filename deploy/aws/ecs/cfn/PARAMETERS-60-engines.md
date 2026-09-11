@@ -199,13 +199,18 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
   Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
   L-3819A6DF`.
 
-🔴 **Rehearsed on the dev deployment (2026-09-11) and it did NOT buy an instance**, with the
-quota at 8 and a 4-vCPU type asked for: seventeen minutes of `UnfulfillableCapacity`, a third
-error code, and the deployment was put back to `ON_DEMAND`. **The measured price is not evidence
-of stock** — `describe-spot-price-history` went on quoting $0.563-0.577 throughout. What that
-run does settle is the mechanism (replacement, dependents, round trip): see
-[`ImageCapacityOptionType`](#imagecapacityoptiontype--spot-for-the-image-role-and-why-it-renames-the-provider)
-and ADR 0074.
+🔴 **The quota being right is not enough, and neither is the price.** Rehearsed on the dev
+deployment 2026-09-11 with the quota at 8: the first attempt bought **nothing** for seventeen
+minutes, answering `UnfulfillableCapacity` — a third error code, neither `VcpuLimitExceeded` nor
+`InsufficientInstanceCapacity` — while `describe-spot-price-history` went on quoting
+$0.563-0.577. **A published price is not evidence of stock.** The second attempt, with the
+Spot service-linked role created and the type list widened to three, got one in **42 seconds**.
+So there are three things to check before switching, and they are written out under
+[`ImageCapacityOptionType`](#imagecapacityoptiontype--spot-for-the-image-role-and-why-it-renames-the-provider).
+
+🔴 **On acrt, create the Spot service-linked role before the switch** — `AWSServiceRoleForEC2Spot`
+is absent in any account that has never launched a Spot instance, and nothing in this stack
+creates it.
 
 The `llm` role is not offered this and is not going to be: a two-minute termination notice
 mid-conversation costs a 527-586-second cold start to recover from.
@@ -378,7 +383,9 @@ Second reason the default holds to 4-vCPU types: a `g6.2xlarge` fills the whole 
 Measured 2026-09-09, chasing a `VcpuLimitExceeded` on a deployment that appeared to have no GPU
 instances at all: **Managed Instances runs its instances in an AWS-managed account**, so
 `aws ec2 describe-instances --filters Name=instance-type,Values=g6.*` returns **nothing** while
-the quota is fully spent. The count that matters is
+the quota is fully spent. (They cannot be ENUMERATED; they can be DESCRIBED — re-measured
+2026-09-11, `describe-instances --instance-ids` on the id ECS reports answers in full, which is
+the only way to read `InstanceLifecycle` for a Spot one.) The count that matters is
 `aws ecs list-container-instances`/`describe-container-instances` (which does report
 `ec2InstanceId` and `ecs.instance-type`). And the quota is not freed the moment a task stops:
 a terminating instance holds its vCPUs for a while, so `VcpuLimitExceeded` keeps answering for
@@ -1284,11 +1291,11 @@ which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and
 Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox 8.
 `L-DB2E81BB` does not exist; do not look for it.
 
-🔴 **The quota being right does not mean an instance comes, and the failure has its OWN error
-code.** Rehearsed on the dev deployment 2026-09-11 (ADR 0074, "the Spot replacement, run on a
-live deployment"): the replacement landed perfectly — `Replacement: True`, the three dependents
-following by `ResourceReference`, 176 seconds — and then seventeen minutes of retries produced
-only
+### Before switching a role to Spot, check these three (all measured 2026-09-11, ADR 0074)
+
+**Switching this parameter is not done when the stack update succeeds** — it is done when an
+instance has been bought after it. A deployment left on `SPOT` without that is a deployment whose
+image role does not start, and its failure has an error code of its own:
 
 ```
 UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
@@ -1296,11 +1303,47 @@ UnfulfillableCapacity: Unable to fulfill capacity due to your request configurat
 
 **Neither `VcpuLimitExceeded` nor `InsufficientInstanceCapacity`**, and it blames the request
 rather than the hour, so it does not read as something to wait out. Price protection was ruled
-out by measurement; the quota was 8 with a 4-vCPU type asked for. So **switching this parameter
-is not done when the stack update succeeds** — it is done when an instance has been bought after
-it, and a deployment left on `SPOT` without that is a deployment whose image role does not start.
-The way back is one more stack update (measured: 147 seconds, and the original provider name is
-reusable even though ECS keeps the retired one as `INACTIVE`).
+out by measurement, and the quota was right at the time. What actually moved the outcome:
+
+1. 🔴 **The Spot service-linked role has to exist.** `AWSServiceRoleForEC2Spot` is absent in an
+   account that has never launched a Spot instance (`iam get-role` answers `NoSuchEntity`), and
+   nothing here creates it. `aws iam create-service-linked-role --aws-service-name
+   spot.amazonaws.com`.
+2. 🔴 **Ask `get-spot-placement-scores` WITH THE PROVIDER'S OWN TYPE SET.** One type scored
+   **1/10** in both AZs; the same three types the provider was then given scored **9/10**, and an
+   instance arrived 42 seconds after a 9 was recorded. A score for one type says nothing about a
+   provider that buys from three. The score also reads low for a whole account, so read the
+   *difference* a type set makes rather than the absolute number.
+3. 🔴 **Widen `<Role>AllowedInstanceTypes` AND the ladder's first rung together.** The Control
+   Plane overwrites the provider's four fields from the rung before every start, so widening the
+   parameter alone snaps back at start. Keep the intended type the cheapest member (the rule under
+   [`LlmAllowedInstanceTypes`](#llmallowedinstancetypes)) — measured Spot prices in Tokyo were
+   g6.xlarge $0.563-0.577, g5.xlarge $0.74-0.79, g6e.xlarge $1.35, so g6 stays the default pick.
+   ⚠️ g6e's Spot is ABOVE g6's on-demand $1.26: Spot is cheap for the type you got, not for
+   everything you widened to.
+
+🔴 **And the update comes as a PAIR with a Control Plane restart.** The replacement renames the
+provider, and a provider name is baked into the running CP at start — only the ladder is taken
+live (ADR 0074). Woken without a restart, the engine still starts, and three things disagree at
+once: the rung application 400s against the deleted old name (`The capacity provider could not be
+updated because it has been deleted.`), so the new provider keeps the TEMPLATE's
+`<Role>AcceleratorMemMinMiB` instead of the rung's; the `box` lookup matches the old name, so the
+panel shows no instance while one is billing; and the panel still says the rung is in force. The
+CP does log `changed in the table in a way this process cannot take live (capacity provider) -
+restart the Control Plane` and does surface `class_apply_error`, but neither stops anything.
+`update-service --force-new-deployment` (blue/green, no outage, measured 217 s) clears all three —
+verified with a $0 positive control: the same `PUT …/class` that 400'd before the restart moved
+the provider's floor to the rung's value after it.
+
+The way back to `ON_DEMAND` is one more stack update (measured: 147 seconds, and the original
+provider name is reusable even though ECS keeps the retired one as `INACTIVE`) — and it is
+another rename, so the same CP restart applies.
+
+⚠️ **`describe-instances` can PROVE Spot, but only by id.** Filtering by instance type returns
+`[]` for Managed Instances (they run in an AWS-managed account). Asking for the id instead — the
+`ec2InstanceId` that `ecs describe-container-instances` reports — returns the whole instance,
+`InstanceLifecycle: spot` and `SpotInstanceRequestId` included. That is the only route from the
+calling account to a proof.
 
 ⚠️ **A replacement rebuilds the provider from the TEMPLATE**, so a deployment that declares an
 ADR 0074 ladder loses the rung the Control Plane had applied: `AcceleratorTotalMemoryMiB.Min`
