@@ -16,15 +16,21 @@
 # (which dumps the whole document) and then tried to execute `[(.models[]?|…` as a command.
 # The service reached a steady state with the idle placeholder and nothing anywhere said why.
 #
-# So this pulls the script out of the template as it is actually deployed and runs it, against
-# a stub `aws` and the real `jq`, asserting the command line it writes. Two things are checked
-# that only running it can check: that it is valid shell at all, and that the flags come out in
-# the order the engine expects.
+# So this runs it, against a stub `aws` and the real `jq`, asserting the command line it writes.
+# Two things are checked that only running it can check: that it is valid shell at all, and that
+# the flags come out in the order the engine expects.
+#
+# 🔴 It reads `deploy/aws/ecs/engine-tools/fetch-models.sh` -- THE FILE THE IMAGE BAKES. Until
+# the scripts moved out of the template this pulled the same text out of `Mappings`, and that is
+# what has to stay true through any further move: a harness that reads a copy nobody runs
+# reports on a copy nobody runs. (ADR 0072 P2 is the measured version of that lesson -- 13/13
+# bench scenarios green against an integration path the task definition did not use.)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 TPL="$ROOT/deploy/aws/ecs/cfn/60-engines.yaml"
+TOOLS="$ROOT/deploy/aws/ecs/engine-tools"
 
 command -v jq >/dev/null || { echo "SKIP: jq is not installed" >&2; exit 0; }
 command -v python3 >/dev/null || { echo "SKIP: python3 is not installed" >&2; exit 0; }
@@ -33,21 +39,36 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 fail() { echo "NG: $*" >&2; exit 1; }
 
-# The script exactly as CloudFormation would hand it to `sh -c`.
-python3 - "$TPL" > "$WORK/sidecar.sh" <<'PY'
-import sys, yaml
-class L(yaml.SafeLoader): pass
-def multi(loader, suffix, node):
-    if isinstance(node, yaml.ScalarNode):   return loader.construct_scalar(node)
-    if isinstance(node, yaml.SequenceNode): return loader.construct_sequence(node, deep=True)
-    return loader.construct_mapping(node, deep=True)
-L.add_multi_constructor('!', multi)
-doc = yaml.load(open(sys.argv[1]), Loader=L)
-sys.stdout.write(doc["Mappings"]["Engine"]["fetch"]["script"])
-PY
+# The scripts as the image runs them: copied next to CONTRACT, because the gate at the top of
+# each one reads the number relative to its own directory (so the layout here and in the image
+# are one thing, not two that have to agree).
+cp "$TOOLS"/CONTRACT "$TOOLS"/*.sh "$WORK/"
+SIDECAR="$WORK/fetch-models.sh"
+CONTRACT="$(cat "$TOOLS/CONTRACT")"
+export ENGINE_TOOLS_CONTRACT="$CONTRACT"
 
-echo "== the sidecar is valid shell =="
-sh -n "$WORK/sidecar.sh" || fail "the sidecar does not parse as shell"
+echo "== every engine-tools script is valid shell =="
+for f in "$WORK"/*.sh; do sh -n "$f" || fail "$(basename "$f") does not parse as shell"; done
+
+# 🔴 The gate is only worth having if the two numbers are kept together. The template declares
+# the contract it was written against; let that drift and an old image passes unnoticed, which
+# is the whole failure the gate exists for.
+echo "== the template asks for the contract this tree ships =="
+asked="$(python3 "$ROOT/deploy/local/cfn-contract.py" "$TPL")" || fail "could not read the template's contract"
+[ "$asked" = "$CONTRACT" ] \
+  || fail "60-engines.yaml asks for contract '$asked', engine-tools/CONTRACT says '$CONTRACT'"
+
+# ... and that a number it does not recognise stops the container instead of running the wrong
+# script. The positive control for the gate itself.
+echo "== a contract mismatch refuses to run, and says so =="
+if ENGINE_TOOLS_CONTRACT="$CONTRACT-nope" sh "$SIDECAR" >"$WORK/mismatch.out" 2>&1; then
+  fail "the sidecar ran against a contract it does not speak"
+fi
+grep -q "CONTRACT MISMATCH" "$WORK/mismatch.out" \
+  || fail "the refusal did not say why: $(cat "$WORK/mismatch.out")"
+if ENGINE_TOOLS_CONTRACT="" sh "$SIDECAR" >"$WORK/unset.out" 2>&1; then
+  fail "the sidecar ran for a task definition that declares no contract at all"
+fi
 
 # A stub `aws`: `ssm get-parameter` prints whatever ACTIVE_SET_FIXTURE holds (or fails the way
 # a missing parameter does), and `s3 cp` writes a file of the right shape.
@@ -100,7 +121,7 @@ run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] [sync-all] -> writ
   MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
   PENDING_PARAM="${PENDING_PARAM:-}" AF_TEST_PENDING="$WORK/pending" \
   AF_TEST_FETCHED="$WORK/fetched" \
-    sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 || fail "the sidecar exited non-zero: $(cat "$WORK/out")"
+    sh "$SIDECAR" > "$WORK/out" 2>&1 || fail "the sidecar exited non-zero: $(cat "$WORK/out")"
 }
 
 echo "== ParameterNotFound is EMPTY, not an error =="
@@ -300,7 +321,7 @@ echo "== a FAILED fetch still releases the engine, and leaves no command line ==
 # the panel says nothing. With it, the wrapper finds no cmdline and idles, which is the same
 # thing an empty catalogue does and is already understood everywhere downstream.
 rm -rf "$WORK/models"; mkdir -p "$WORK/models"; : > "$WORK/fetched"
-ACTIVE_SET_FIXTURE="$IMG" ALIAS_FLAG="" CTX_FLAG="" PRESET_FILE="" MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" AF_TEST_FETCHED="$WORK/fetched" AF_TEST_FAIL_CP=1   sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 && fail "a failed fetch should not exit 0"
+ACTIVE_SET_FIXTURE="$IMG" ALIAS_FLAG="" CTX_FLAG="" PRESET_FILE="" MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" AF_TEST_FETCHED="$WORK/fetched" AF_TEST_FAIL_CP=1   sh "$SIDECAR" > "$WORK/out" 2>&1 && fail "a failed fetch should not exit 0"
 [ -f "$WORK/models/ready" ] || fail "a failed fetch left no marker: the engine would hang for an hour"
 [ ! -s "$WORK/models/cmdline" ] || fail "a failed fetch produced a command line: $(cat "$WORK/models/cmdline")"
 
@@ -377,7 +398,7 @@ ACTIVE_SET_FIXTURE="$ONE" ACTIVE_SET_FIXTURE2="$TWO" AF_TEST_SECOND="$WORK/secon
   MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
   PENDING_PARAM=/af-ws/engines/x/pending AF_TEST_PENDING="$WORK/pending" \
   AF_TEST_FETCHED="$WORK/fetched" \
-  sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 &
+  sh "$SIDECAR" > "$WORK/out" 2>&1 &
 watcher=$!
 # 🔴 Only ever this PID: the host is shared, and `pkill -f sh` would take somebody else's
 # session. And the trap keeps the kill for the REST of the file, not just this block — a

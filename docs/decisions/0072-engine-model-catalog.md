@@ -3343,3 +3343,47 @@ make the gateway rewrite a request body.
 **What hardware has to confirm.** On the next start of the llm role: that `llama-server` logs
 the adapter load (that `--lora-scaled` appears in `/models`'s `status.args`), and that the
 pinned fine-tune is visible in what the model answers. That belongs to the hardware lane.
+
+
+## Follow-up — the embedded shell moved into an image (2026-09-11, option A)
+
+The last large movable block in `60-engines.yaml` — its embedded shell — is now FILES under
+`deploy/aws/ecs/engine-tools/`, baked into a small `af-engine-tools` image. Option B (fetch the
+scripts from the models bucket at start) was rejected as a change to a security boundary rather
+than a size question: the start path would execute an object a person can edit. Option C (an SSM
+parameter) does not fit — Standard holds 4 KB and the fetch script alone had grown to 6.3 KB. The
+decision was the operator's. The template-side mechanics live in
+`cfn/PARAMETERS-60-engines.md`, "The engine tools image".
+
+- 45,792 -> 39,592 bytes (-6,200; 11,608 of headroom). What moved is 7,810 bytes of shell — the
+  fetch sidecar's 6,308 and the ingest steps' 979 / 523 — and the difference is one parameter,
+  four `!Sub` image references and four `ENGINE_TOOLS_CONTRACT` lines. **That difference is the
+  price of the binding**, and it is the part that must not be optimised away.
+- 🔴 **The three idle wrappers (1,318 bytes) cannot move.** They run in the ENGINE's own
+  container (`/app/llama-server`, `/sd-server`, `/ComfyUI/main.py`), and a container runs one
+  image; two of those three images are pinned copies of third-party builds this repository does
+  not build, so baking a wrapper in would mean forking them. The brief assumed the wrappers were
+  movable; they are not.
+- **An old image against a new template does not quietly do something else.** The template
+  declares `ENGINE_TOOLS_CONTRACT`, each script compares it with the `CONTRACT` file beside it,
+  and a mismatch **exits 78 having done nothing**, with three lines in the task's own log.
+  `standup.sh` copies images one step BEFORE it deploys the stack, so that ordering is real.
+- 🔴 **`engine-sidecar-test.sh` was pointed at the file BEFORE the script moved.** It also now
+  checks that the template's number matches `CONTRACT`, that every container running a script
+  declares one, and that an unrecognised number refuses to run (three positive controls, each
+  verified to go red).
+- A side effect worth naming: two third-party `:latest` tags left the start path
+  (`aws-cli:latest` and `curlimages/curl:latest`). That is exactly the practice decision 6 forbids.
+
+**What the next deployment's hardware lane must confirm** (this cannot be finished at a desk —
+the fetch sidecar and the idle wrapper are the two places that broke on hardware while every
+bench scenario was green):
+
+1. `af-engine-tools` reaches ECR, and all four containers that use it can PULL it.
+2. The fetch sidecar logs `engine fetch: sync done` and its `WATCH_SEC` watch line — i.e.
+   `ENTRYPOINT []` plus `Command: [/opt/af/fetch-models.sh]` really does start it.
+3. The idle wrapper sees `/models/ready` and starts the engine, on both roles.
+4. One ingest through the Console: the `fetch` and `upload` containers both succeed, and
+   `MODE=delete` as well.
+5. 🔴 The contract gate does NOT fire by mistake — no `CONTRACT MISMATCH` in any container's log.
+   If one appears, the tag and the template are out of step.
