@@ -151,3 +151,73 @@ func TestEngineModelEnableAndDelete(t *testing.T) {
 		t.Fatal("deleting twice reported a row")
 	}
 }
+
+// The generation defaults a row declares (ADR 0072 decision 4, widened). Three states have to
+// survive the round trip and they are three different things: declared, never declared, and
+// cleared back to "use the family's recipe".
+func TestEngineModelParamsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	st := engineModelStore(t)
+
+	want := EngineParams{Steps: 30, CFG: 4.5, Sampler: "dpmpp_2m", Scheduler: "karras", ClipSkip: 2}
+	m := EngineModel{Role: "image", ID: "some-sdxl", Kind: "checkpoint", BaseModel: "sdxl", Params: &want}
+	if err := st.PutEngineModel(ctx, m); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	got := engineModelByID(t, st, "image", "some-sdxl")
+	if got.Params == nil {
+		t.Fatal("params were not stored")
+	}
+	if *got.Params != want {
+		t.Errorf("params = %+v, want %+v", *got.Params, want)
+	}
+
+	// 🔴 Absent, not a struct of zeros. The provider merges these over its family's recipe field
+	// by field, and a zero-valued object reaching it would read as "0 steps" rather than "the
+	// row says nothing".
+	if err := st.PutEngineModel(ctx, EngineModel{Role: "image", ID: "plain", Kind: "checkpoint"}); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+	if p := engineModelByID(t, st, "image", "plain").Params; p != nil {
+		t.Errorf("a row that declares nothing came back with %+v", p)
+	}
+
+	// The targeted update, which is how the panel edits one number without carrying the licence
+	// acceptance and the source out and back in again.
+	ok, err := st.SetEngineModelParams(ctx, "image", "some-sdxl", &EngineParams{Steps: 12})
+	if err != nil || !ok {
+		t.Fatalf("set: %v %v", ok, err)
+	}
+	if p := engineModelByID(t, st, "image", "some-sdxl").Params; p == nil || *p != (EngineParams{Steps: 12}) {
+		t.Errorf("after set, params = %+v", p)
+	}
+	// And the way back: nil clears the declaration. Without this there is no route from "this
+	// model runs at 12 steps" back to the family's own recipe.
+	if ok, err := st.SetEngineModelParams(ctx, "image", "some-sdxl", nil); err != nil || !ok {
+		t.Fatalf("clear: %v %v", ok, err)
+	}
+	if p := engineModelByID(t, st, "image", "some-sdxl").Params; p != nil {
+		t.Errorf("after clearing, params = %+v", p)
+	}
+	// A row that is not there reports false rather than pretending to have written something.
+	if ok, err := st.SetEngineModelParams(ctx, "image", "no-such-row", &EngineParams{Steps: 4}); err != nil || ok {
+		t.Errorf("set on a missing row = %v %v, want false", ok, err)
+	}
+}
+
+// engineModelByID reads one row back out of the listing, which is the only way the catalogue is
+// read (there is no get-by-id in the interface).
+func engineModelByID(t *testing.T, st *SQL, role, id string) EngineModel {
+	t.Helper()
+	rows, err := st.ListEngineModels(context.Background(), role)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, m := range rows {
+		if m.ID == id {
+			return m
+		}
+	}
+	t.Fatalf("no row %s/%s", role, id)
+	return EngineModel{}
+}

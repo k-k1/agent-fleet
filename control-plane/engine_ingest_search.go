@@ -92,12 +92,40 @@ type engineSearchHit struct {
 	// two of twenty rows answered 0.1 and 0.7000000000000001, and an int64 field made
 	// encoding/json refuse the whole array — the panel showed "unreadable answer from
 	// huggingface.co" and no results at all, for a search that was working perfectly.
-	Trending    float64 `json:"trending,omitempty"`
-	Gated       bool    `json:"gated,omitempty"`
-	License     string  `json:"license,omitempty"`
-	LicenseName string  `json:"license_name,omitempty"`
-	BaseModel   string  `json:"base_model,omitempty"`
-	UpdatedAt   string  `json:"updated_at,omitempty"`
+	Trending float64 `json:"trending,omitempty"`
+	Gated    bool    `json:"gated,omitempty"`
+	// GatedKind is WHICH gate, and the two are different amounts of work: "auto" is satisfied
+	// by accepting the terms once with the account the deployment's token belongs to, "manual"
+	// waits on the author approving that account by hand. Measured 2026-09-12 on
+	// `search=gemma`: google/gemma-3-1b-it answers `"manual"` while every other row answers
+	// `false`, so the distinction is published and collapsing it loses the one thing that says
+	// whether this repository is reachable today.
+	GatedKind   string `json:"gated_kind,omitempty"`
+	License     string `json:"license,omitempty"`
+	LicenseName string `json:"license_name,omitempty"`
+	BaseModel   string `json:"base_model,omitempty"`
+	// BaseModelSuggest is BaseModel translated into the family vocabulary this deployment's
+	// provider dispatches on, or "" when nothing here is confident enough to name one. A
+	// SUGGESTION, never the value: ADR 0072 decision 2 keeps the declaration with the operator,
+	// and storing an upstream display name produced rows that looked complete and refused to
+	// generate.
+	BaseModelSuggest string `json:"base_model_suggest,omitempty"`
+	// LoginRequired is "yes", "no" or "" (nobody could tell) — three states because Civitai
+	// publishes NOTHING that predicts it. Measured 2026-09-12 on the top 20 monthly
+	// checkpoints: 13 of 20 answer 401 to an anonymous HEAD of their download URL, and all 20
+	// carry `availability: "Public"`, `flags: 0`, `status: "Published"` and
+	// `usageControl: "Download"`. So the only honest source is the probe, and a probe that
+	// could not run must say so rather than answer "no".
+	LoginRequired string `json:"login_required,omitempty"`
+	// Restrictions is a closed set of codes the panel turns into tags — see the engineRestrict*
+	// constants. Codes rather than sentences: the two sources spell the same restriction
+	// differently and the Console holds the locale catalogue.
+	Restrictions []string `json:"restrictions,omitempty"`
+	// TrainedWords is a LoRA's trigger words, which Civitai publishes in the search answer
+	// itself. The one piece of "how do I use this" that arrives structured rather than buried
+	// in an HTML description, and a LoRA without its trigger silently does nothing.
+	TrainedWords []string `json:"trained_words,omitempty"`
+	UpdatedAt    string   `json:"updated_at,omitempty"`
 	// PublishedAt is when the thing first appeared, beside UpdatedAt's "when it last changed".
 	// Both, because for a quantisation repository they are a year apart and only the pair
 	// answers "is this maintained": measured 2026-09-11, the 30B this deployment runs was
@@ -161,13 +189,27 @@ type engineCivitaiSearchDoc struct {
 			DownloadCount int64 `json:"downloadCount"`
 			ThumbsUpCount int64 `json:"thumbsUpCount"`
 		} `json:"stats"`
+		// The licence matrix and the safety flags, all of which arrive on this same read.
 		// AllowCommercialUse is a list on this API ("Image", "Rent", "Sell"), and an empty one
 		// is the non-commercial case decision 10 wants on screen.
-		AllowCommercialUse []string `json:"allowCommercialUse"`
-		ModelVersions      []struct {
+		engineCivitaiLicenceFacts
+		ModelVersions []struct {
 			ID        int    `json:"id"`
 			Name      string `json:"name"`
 			BaseModel string `json:"baseModel"`
+			// What this version costs and whether it may be fetched at all.
+			engineCivitaiVersionFacts
+			// TrainedWords is the LoRA's trigger. Published right here, on the list.
+			TrainedWords []string `json:"trainedWords"`
+			// DownloadURL is not shown to anybody: it is what the login probe HEADs. The
+			// version carries one, and so does each file — the version's is the one that
+			// matches what an ingest of this row would fetch.
+			DownloadURL string `json:"downloadUrl"`
+			Files       []struct {
+				engineCivitaiFileFacts
+				Type    string `json:"type"`
+				Primary bool   `json:"primary"`
+			} `json:"files"`
 			// The version's own dates. 🔴 Measured live 2026-09-11 on `/api/v1/models`: a
 			// version answers `publishedAt` and nothing else — no `updatedAt`, no `createdAt`.
 			// Both are still decoded, because a version fetched by id does carry more and this
@@ -181,25 +223,42 @@ type engineCivitaiSearchDoc struct {
 // engineSearchFilter is the per-role narrowing, measured against the live API on 2026-09-09.
 // A repository this engine cannot load is a dead end — `resolve` refuses it a moment later —
 // and the file picker already refuses to show those, so the repository list must not either.
-func engineSearchFilter(kind string) url.Values {
+//
+// `lora` narrows it again to adapters. Until it existed, choosing "LoRA" in the ingest form
+// changed what the row would be REGISTERED as and nothing about the list above it, so looking
+// for an adapter returned twenty checkpoints.
+//
+// 🔴 `filter=lora` is never sent alone. Measured 2026-09-12: `filter=lora` and
+// `filter=gguf&filter=lora` both drop the connection (curl exit 56, no status line), while the
+// same query with a `pipeline_tag` answers 200. So the pipeline tag is load-bearing here, not
+// extra precision.
+func engineSearchFilter(kind string, lora bool) url.Values {
 	v := url.Values{}
 	if kind == "gguf" {
 		// The library tag, which is what a repository of quantised files carries.
 		v.Set("filter", "gguf")
+		if lora {
+			v.Add("filter", "lora")
+			v.Set("pipeline_tag", "text-generation")
+		}
 		return v
 	}
 	v.Set("pipeline_tag", "text-to-image")
+	if lora {
+		v.Set("filter", "lora")
+	}
 	return v
 }
 
 // engineSearchHF asks Hugging Face. An empty q is a RANKING rather than a mistake: the API
 // answers the filter's top rows, which is the "what do people use" half of the picker.
-func engineSearchHF(ctx context.Context, q, kind, sort string) ([]engineSearchHit, *apiError) {
-	sortBy, ok := engineSortHF(sort)
+func engineSearchHF(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
+	q, kind := req.q, req.kind
+	sortBy, ok := engineSortHF(req.sort)
 	if !ok {
-		return nil, engineBadSort(sort)
+		return nil, engineBadSort(req.sort)
 	}
-	v := engineSearchFilter(kind)
+	v := engineSearchFilter(kind, req.lora)
 	if q != "" {
 		v.Set("search", q)
 	}
@@ -227,12 +286,14 @@ func engineSearchHF(ctx context.Context, q, kind, sort string) ([]engineSearchHi
 		out = append(out, engineSearchHit{
 			Source: "hf", Ref: r.ID, Name: r.ID,
 			Downloads: r.Downloads, Likes: r.Likes, Trending: r.TrendingScore,
-			Gated:       engineHFGated(r.Gated),
-			License:     engineFirstString(r.CardData.License),
-			LicenseName: strings.TrimSpace(r.CardData.LicenseName),
-			UpdatedAt:   strings.TrimSpace(r.LastModified),
-			PublishedAt: strings.TrimSpace(r.CreatedAt),
-			URL:         engineIngestBase + "/" + r.ID,
+			Gated:        engineHFGated(r.Gated),
+			GatedKind:    engineHFGatedKind(r.Gated),
+			Restrictions: engineHFRestrictions(r.Gated),
+			License:      engineFirstString(r.CardData.License),
+			LicenseName:  strings.TrimSpace(r.CardData.LicenseName),
+			UpdatedAt:    strings.TrimSpace(r.LastModified),
+			PublishedAt:  strings.TrimSpace(r.CreatedAt),
+			URL:          engineIngestBase + "/" + r.ID,
 			// The GGUF numbers are the repository's, i.e. one of its files — a draft for the
 			// form, never the value. The resolve of the chosen FILE is what the row is built
 			// from (decision 11).
@@ -260,21 +321,27 @@ func engineCivitaiModelURL(modelID, versionID int) string {
 // engineSearchCivitai asks Civitai. The hit carries the newest VERSION's id, because that is
 // what an ingest takes — `civitai.com/models/<model>` and the version behind its download
 // button are different numbers, and the model id is the one on the page's URL.
-func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSearchHit, *apiError) {
-	sortBy, period, ok := engineSortCivitai(sort)
+func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSearchHit, *apiError) {
+	sortBy, period, ok := engineSortCivitai(req.sort)
 	if !ok {
-		return nil, engineBadSort(sort)
+		return nil, engineBadSort(req.sort)
 	}
-	if kind == "gguf" {
+	if req.kind == "gguf" {
 		// Civitai hosts image models. Offering it to the llm role would return checkpoints
 		// llama.cpp cannot load, which is the dead end this filter exists to prevent.
 		return []engineSearchHit{}, nil
 	}
 	v := url.Values{}
-	if q != "" {
-		v.Set("query", q)
+	if req.q != "" {
+		v.Set("query", req.q)
 	}
-	v.Set("types", "Checkpoint")
+	// The type is the whole difference between an adapter list and a checkpoint list here, and
+	// it is the field the ingest form's own kind selector now decides.
+	if req.lora {
+		v.Set("types", "LORA")
+	} else {
+		v.Set("types", "Checkpoint")
+	}
 	v.Set("sort", sortBy)
 	if period != "" {
 		v.Set("period", period)
@@ -285,6 +352,10 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 		return nil, aerr
 	}
 	out := make([]engineSearchHit, 0, len(doc.Items))
+	// The URL each hit's login probe HEADs, at the same index. Kept beside the list rather than
+	// on the hit: it is a CDN link with a signature on it, and nothing in the panel may follow
+	// it — the whole point of the probe is that the bytes are the ingest task's business.
+	probe := make([]string, 0, len(doc.Items))
 	for _, m := range doc.Items {
 		if len(m.ModelVersions) == 0 {
 			// Nothing to take in: a model page with no published version has no file behind it.
@@ -295,10 +366,21 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 		if v := strings.TrimSpace(ver.Name); v != "" {
 			name += " — " + v
 		}
+		files := make([]engineCivitaiFileFacts, 0, len(ver.Files))
+		for _, f := range ver.Files {
+			// The scan verdicts of the file this row would actually take in. A preview image's
+			// verdict is not this model's, and the ingest picks the `Model` file.
+			if strings.EqualFold(f.Type, "Model") || f.Primary {
+				files = append(files, f.engineCivitaiFileFacts)
+			}
+		}
 		hit := engineSearchHit{
 			Source: "civitai", Ref: strconv.Itoa(ver.ID), Name: name,
 			Downloads: m.Stats.DownloadCount, Likes: m.Stats.ThumbsUpCount,
-			BaseModel: strings.TrimSpace(ver.BaseModel),
+			BaseModel:        strings.TrimSpace(ver.BaseModel),
+			BaseModelSuggest: engineFamilyGuess(req.provider, ver.BaseModel),
+			Restrictions:     engineCivitaiRestrictions(m.engineCivitaiLicenceFacts.with(true), ver.engineCivitaiVersionFacts, files),
+			TrainedWords:     engineTrimStrings(ver.TrainedWords),
 			// 🔴 `publishedAt` is the PUBLICATION date, and it used to ride as `updated_at` —
 			// the one thing it is not. Civitai answers no `updatedAt` here at all (measured
 			// 2026-09-11), so carrying it as both would print one date twice under two labels,
@@ -314,8 +396,23 @@ func engineSearchCivitai(ctx context.Context, q, kind, sort string) ([]engineSea
 			hit.LicenseName = "non-commercial"
 		}
 		out = append(out, hit)
+		probe = append(probe, strings.TrimSpace(ver.DownloadURL))
 	}
+	// The one fact on this list that no amount of reading the metadata produces.
+	engineProbeCivitaiLogins(ctx, out, probe)
 	return out, nil
+}
+
+// engineTrimStrings drops the blanks and the surrounding space from a list a source published.
+// An empty trigger word draws an empty tag, which reads as a word somebody failed to render.
+func engineTrimStrings(in []string) []string {
+	var out []string
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // searchIngest (POST …/{key}/ingest/search) is the repository picker behind one engine's
@@ -332,7 +429,10 @@ func (a engineAdminAPI) searchIngest(w http.ResponseWriter, r *http.Request, _ e
 	// Deliberately NOT gated on the engine's mode. An engine switched off is a deployment
 	// deciding not to pay for a GPU right now, which has nothing to do with whether an
 	// administrator may look at what there is to stage for when it comes back.
-	a.answerSearch(w, r, engineIngestKindFor(e))
+	//
+	// The engine's PROVIDER rides along because it decides the family vocabulary, and a
+	// suggestion outside that vocabulary is one the ingest would refuse (engineFamilyGuess).
+	a.answerSearch(w, r, engineIngestKindFor(e), e.def.Provider)
 }
 
 // browseSearch (POST /api/admin/engines/search) is the same read with no engine in the path.
@@ -356,15 +456,33 @@ func (a engineAdminAPI) browseSearch(w http.ResponseWriter, r *http.Request, _ e
 			"unknown kind " + kind + " (gguf or checkpoint)"})
 		return
 	}
-	a.answerSearch(w, r, kind)
+	// No engine, so no provider, so no family vocabulary to translate into: the browse list
+	// says what the source says and suggests nothing. There is nothing to ingest into from
+	// here anyway.
+	a.answerSearch(w, r, kind, "")
+}
+
+// engineSearchReq is one search as both upstreams need it. A struct because the two functions
+// take the same five things and a fifth positional string is where the kind and the sort start
+// swapping places.
+type engineSearchReq struct {
+	q, kind, sort string
+	// lora narrows the list to adapters. It is NOT a kind: a LoRA for the llm role is still a
+	// GGUF and for the image role still a safetensors, so the file vocabulary is unchanged and
+	// only the upstream filter moves.
+	lora bool
+	// provider is whose family vocabulary a suggestion has to be a member of. Empty for the
+	// engine-less browse.
+	provider string
 }
 
 // answerSearch is the body both routes share.
-func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kind string) {
+func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kind, provider string) {
 	var b struct {
 		Q      string `json:"q"`
 		Source string `json:"source"`
 		Sort   string `json:"sort"`
+		Lora   bool   `json:"lora"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<14)).Decode(&b); err != nil {
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody, "invalid JSON"})
@@ -372,17 +490,22 @@ func (a engineAdminAPI) answerSearch(w http.ResponseWriter, r *http.Request, kin
 	}
 	// An empty q is allowed on purpose: with no words it is a ranking of what this engine can
 	// load, which is the only way in for somebody who does not know what to type.
-	q := strings.TrimSpace(b.Q)
-	sort := strings.TrimSpace(b.Sort)
+	req := engineSearchReq{
+		q:        strings.TrimSpace(b.Q),
+		kind:     kind,
+		sort:     strings.TrimSpace(b.Sort),
+		lora:     b.Lora,
+		provider: provider,
+	}
 	var (
 		hits []engineSearchHit
 		aerr *apiError
 	)
 	switch strings.TrimSpace(b.Source) {
 	case "civitai":
-		hits, aerr = engineSearchCivitai(r.Context(), q, kind, sort)
+		hits, aerr = engineSearchCivitai(r.Context(), req)
 	case "", "hf":
-		hits, aerr = engineSearchHF(r.Context(), q, kind, sort)
+		hits, aerr = engineSearchHF(r.Context(), req)
 	default:
 		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeIngestBadSource,
 			"source has to be hf or civitai"})

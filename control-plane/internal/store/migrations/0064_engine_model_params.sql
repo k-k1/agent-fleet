@@ -1,0 +1,18 @@
+-- The generation defaults declared for one catalogue row (ADR 0072 decision 4, widened).
+--
+-- 🔴 NEVER write a semicolon inside a comment in this directory. The runner splits a file on
+-- semicolons, so one in prose cuts the next statement in half and the Control Plane stops
+-- booting on `incomplete input`. This has happened twice.
+--
+-- Until now sampler, steps, cfg and scheduler were the FAMILY's fixed recipe, written into the
+-- five workflow templates in comfy_workflows.go, and a checkpoint that wants something else had
+-- nowhere to say so. Every upload on Civitai says so in prose — measured 2026-09-12, a model's
+-- description is up to 12 KB of HTML with the numbers in it, and the structured `meta` on its
+-- example images is null to an anonymous reader — so the numbers exist and the catalogue was
+-- the missing place to put them.
+--
+-- One JSON column rather than five scalars, unlike kv_* next door and like files/args/sizes:
+-- it is read and written whole by the same row's owner, nothing joins or filters on a member,
+-- and each engine family reads a different subset. An empty string is a row that declares
+-- nothing, which is every row that exists today and stays the normal case.
+ALTER TABLE engine_models ADD COLUMN params TEXT NOT NULL DEFAULT '';
