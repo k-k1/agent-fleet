@@ -53,6 +53,14 @@
   color: var(--pb-fg, #0c0c0c);
 }
 
+/* A brand mark in the badge (the agent cards) is sized in px rather than inheriting the 11px
+   monogram size: .brandicon is 1em, and 11px in a 26px tile reads as a speck. It still paints
+   in currentColor, so it takes the same per-fill label colour the two letters had. */
+.p-badge .brandicon {
+  width: 16px;
+  height: 16px;
+}
+
 .p-badge.pb-claude { background: var(--kind-claude); }
 
 .p-badge.pb-codex { background: var(--kind-codex); }
