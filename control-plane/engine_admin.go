@@ -1349,7 +1349,7 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
-		KVGeom: geom,
+		KVGeom:        geom,
 		Description:   strings.TrimSpace(b.Description),
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,
