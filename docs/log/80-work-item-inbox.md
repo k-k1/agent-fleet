@@ -1110,7 +1110,12 @@ Pull requests: Read を足しても**既存トークンには古い権限が焼�
    `assignee:@me` は全期間 0 件、同時に `author:@me is:open` は当該 PR を返す。対象 PR の
    `assignees` は `[]`）。直しは ①Agent に `advanced_search=true`（`OR` と括弧はこのモードでしか
    解釈されず、無いと 422 ＝ レールには「クエリを解釈できない」とだけ出る）②既定クエリを
-   `is:open (assignee:@me OR author:@me OR review-requested:@me)` ③GitHub 用のヒント 1 行。
+   `is:open involves:@me` ③GitHub 用のヒント 1 行。
+   ⚠️ **既定を `is:open (assignee:@me OR author:@me OR review-requested:@me)` にしかけて差し戻した。**
+   実配備で試すと 422（「クエリを解釈できない」）—— **Workspace は起動時の Agent を使い続ける**ので、
+   更新直後はどの Workspace も前の版の Agent が応答しており、そこに af 自身の既定クエリが当たる。
+   既定は**どの版の Agent でも解釈できる方言**に限る、が一般形。レビュー待ちは
+   `is:open review-requested:@me` を 2 本目として足す（重なっても §80.20 の重複排除で 1 行）。
    **なぜ間違えたか**: この行は GitHub の Web UI が Issues と Pull requests を別タブに分けて
    いることから類推しただけで、**API を 1 度も叩いていない**。検索 API の既定は「両方返す」で、
    絞るのは `is:issue` / `is:pr` の方である。一般化すると、**provider の既定の絞り込みを

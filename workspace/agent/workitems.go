@@ -136,14 +136,18 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 // covers issues and pull requests in one call and is what the GitHub UI's own "assigned
 // to me" view is built on. One page only — see workItemFetchPerQuery.
 //
-// advanced_search=true is what lets a saved query use `OR` and parentheses, and the rail
-// needs them: `assignee:` alone never matches a pull request the member opened (GitHub does
-// not make a PR's author its assignee), so "my work" is `assignee:` OR `author:` OR
-// `review-requested:`, which cannot be written any other way. Without the parameter GitHub
-// answers 422 for such a query and the rail only says "could not parse the query".
-// Measured before turning it on: queries that use no operator return the identical rows
-// either way (`author:@me is:open`, `assignee:@me is:pr`), so it does not reinterpret the
-// queries members already saved.
+// advanced_search=true is what lets a saved query use `OR` and parentheses. Members need them
+// to ask one query for "assigned to me OR mine OR waiting on my review" — `assignee:` alone
+// never matches a pull request they opened, because GitHub does not make a PR's author its
+// assignee. Without the parameter GitHub answers 422 and the rail says only "could not parse
+// the query", which reads as their typo. Measured before turning it on: queries that use no
+// operator return the identical rows either way (`author:@me is:open`, `assignee:@me is:pr`),
+// so it does not reinterpret the queries members already saved.
+//
+// The Console's default query deliberately does NOT use `OR` (WorkItemQueryModal.tsx): a
+// workspace keeps the Agent it started with, so after an upgrade the previous image is still
+// answering here, and a default that only this one can parse would greet those members with
+// that same 422.
 //
 // The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly

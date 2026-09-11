@@ -75,9 +75,10 @@ func TestParseGitHubSearchItems(t *testing.T) {
 }
 
 // The request GitHub actually receives. `advanced_search=true` is not cosmetic: it is the only
-// mode in which `OR` and parentheses parse, and the rail's default query needs them because
-// `assignee:` matches no pull request at all. Without the parameter GitHub answers 422 and the
-// row says nothing but "could not parse the query", which reads as the member's typo.
+// mode in which `OR` and parentheses parse, and a member needs them to write "assigned to me OR
+// mine OR waiting on my review" — `assignee:` matches no pull request at all. Without the
+// parameter GitHub answers 422 and the row says nothing but "could not parse the query", which
+// reads as the member's typo (observed on a deployment still running the previous Agent).
 func TestGitHubSearchRequestEnablesAdvancedSearch(t *testing.T) {
 	var got *url.URL
 	orig := workItemHTTPClient.Transport

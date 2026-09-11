@@ -32,13 +32,19 @@ interface Props {
 // GitHub takes search syntax, Jira takes JQL; af only maps between them and stores each dialect
 // verbatim.
 //
-// GitHub's default names three qualifiers rather than `assignee:` alone, because `assignee:`
-// alone lists NO pull requests: GitHub does not make a PR's author its assignee (measured on a
-// live account — `assignee:@me` matched 0 items while `author:@me is:open` returned the open
-// PRs), which read in the rail as "PRs are not shown at all". `review-requested:` is the other
-// half that `involves:@me` cannot express, and it is the case the rail is most useful for —
-// reviewing someone else's PR is work with no session on this side yet (ADR 0061 decision 19.1).
-// The OR form needs the Agent's `advanced_search=true` (workspace/agent/workitems.go).
+// GitHub's default is `involves:` and not `assignee:`, because `assignee:` alone lists NO pull
+// requests: GitHub does not make a PR's author its assignee (measured on a live account —
+// `assignee:@me` matched 0 items over all time while `author:@me is:open` returned the open PRs),
+// which read in the rail as "PRs are not shown at all".
+//
+// It is deliberately NOT the `(assignee:@me OR author:@me OR review-requested:@me)` form that
+// would also cover reviews requested of you. `OR` and parentheses only parse with the Agent's
+// `advanced_search=true`, and the workspace keeps running the Agent it started with: after an
+// upgrade every workspace runs the previous image until it is restarted. A default that 422s
+// there puts af's own words under "github could not parse the query", which reads as the member
+// having typed the query wrong. So the default stays in the dialect every Agent understands, and
+// the hint says to add `review-requested:@me` — as a second saved query, or ORed into this one.
+// (Overlapping queries are fine: the rail already keeps one row per provider+key.)
 //
 // Bitbucket's default is the one that cannot be used as-is (docs/log/80 §80.19.1). Measured: the
 // original bet that putting the words needing replacement into the default would make the error
@@ -46,7 +52,7 @@ interface Props {
 // 404 was read as some other error. The assembly UI appears whenever the repository list can be
 // fetched, so this default is only reached by someone who dropped to free text.
 const DEFAULT_QUERY: Record<string, string> = {
-  github: "is:open (assignee:@me OR author:@me OR review-requested:@me)",
+  github: "is:open involves:@me",
   jira: "assignee = currentUser() AND statusCategory != Done",
   bitbucket: 'workspace/repo reviewers.uuid="@me"',
 };

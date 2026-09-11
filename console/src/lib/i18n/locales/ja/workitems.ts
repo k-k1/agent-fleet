@@ -72,7 +72,7 @@ export const workitems = {
   "wi.bb_write_own": "クエリを自分で書く",
   "wi.bb_pick_list": "一覧から選ぶ",
   "wi.bb_list_failed": "Bitbucket の一覧を取得できませんでした（Workspace が停止中か、Bitbucket が未接続）。下にクエリを直接書けます。",
-  "wi.query_gh_hint": "GitHub の検索構文をそのまま保存します。assignee: だけではプルリクエストが 1 件も出ません（GitHub は PR の作者をアサインにしないため）—— 自分の PR は author:@me、レビュー待ちは review-requested:@me で、OR と括弧で 1 本にまとめられます。involves:@me は短い総取り（作成・アサイン・メンション・コメント）ですが、自分へのレビュー依頼は含みません。",
+  "wi.query_gh_hint": "GitHub の検索構文をそのまま保存します。assignee: だけではプルリクエストが 1 件も出ません（GitHub は PR の作者をアサインにしないため）。involves:@me なら作成・アサイン・メンション・コメントを拾いますが、自分へのレビュー依頼は含まないので、review-requested:@me をもう 1 本足してください（同じ項目は 1 行にまとまります）。OR と括弧は更新後の Workspace Agent から使えます —— 古いままだと行に「クエリを解釈できない」と出ます。",
   "wi.query_bb_hint": "Bitbucket には横断検索が無いので、先頭に対象を書きます —— workspace/repo（そのリポジトリの PR）か workspace（そのワークスペースで自分が作った PR）。続きは Bitbucket の絞り込み式で、@me は接続中のアカウントに置き換わります。",
   "wi.query_repo_hint_jira": "作業コピー（Jira は課題から特定できないため必須級）",
   "wi.prompt_read_jira": "本文とコメントは Jira MCP（未設定なら上の URL）で読めます。",

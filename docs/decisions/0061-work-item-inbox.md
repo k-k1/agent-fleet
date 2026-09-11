@@ -247,13 +247,15 @@ write `is:pr`" — is wrong.** `/search/issues` returns pull requests with no `i
 one `repo:<owner>/<repo> is:open` response carried both PRs and issues). What actually kept PRs out of
 the rail was the **default query's `assignee:`**: GitHub does not make a PR's author its assignee, so
 `assignee:@me` matches none of your own PRs (measured on the author's own account: 0 items over all
-time, while `author:@me is:open` returned them). The default is therefore
-`is:open (assignee:@me OR author:@me OR review-requested:@me)`, and the Agent's search URL now carries
-`advanced_search=true` — the only mode in which `OR` and parentheses parse; without it GitHub answers
-422 and the rail says nothing but "could not parse the query". **The decision itself stands**: adding
-`review-requested:` is what makes "reviewing someone else's PR, for which there is no session yet"
-arrive by default. The measurements, and why this was written without taking any, are in
-[docs/80](../log/80-work-item-inbox.md) §80.16-3.
+time, while `author:@me is:open` returned them). The default is therefore `is:open involves:@me`, and
+the Agent's search URL now carries `advanced_search=true` — the only mode in which `OR` and
+parentheses parse; without it GitHub answers 422 and the rail says nothing but "could not parse the
+query". **The decision itself stands**: "reviewing someone else's PR, for which there is no session
+yet" is not in `involves:`, so it is added as a second saved query, `is:open review-requested:@me`
+(overlapping queries still produce one row). ⚠️ **A default must never use `OR`**: a workspace keeps
+the Agent it started with, so right after an upgrade the previous image answers and af's own default
+comes back 422 — met on a real deployment. The measurements, and why this was written without taking
+any, are in [docs/80](../log/80-work-item-inbox.md) §80.16-3.
 
 **20 (§80.20). Do not line buttons up on the rows. Pressing a row opens a detail modal, and the actions
 gather there.** The user's comment was "**the Start buttons lined up are frightening**". Decision 14

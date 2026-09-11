@@ -226,10 +226,12 @@ URL だけにした —— Bitbucket には `gh` にあたる道具がコンテ�
 PR と Issue が混在）。PR が出なかった真因は**既定クエリの `assignee:`** で、GitHub は PR の
 作者を assignee にしないため、`assignee:@me` だけでは自分の PR が 1 件も一致しない（実測:
 作者本人で全期間 0 件、`author:@me is:open` は返る）。したがって既定クエリは
-`is:open (assignee:@me OR author:@me OR review-requested:@me)` に変え、`OR` と括弧が解釈される
-唯一のモードである `advanced_search=true` を Agent の検索 URL に付けた（無いと 422 で、レールは
-「クエリを解釈できない」とだけ言う）。**この決定の結論そのものは変わらない** —— `review-requested:`
-が入ることで、上の「人の PR のレビューはセッションがまだ無い作業」が既定で拾えるようになる。
+`is:open involves:@me` に変え、`OR` と括弧が解釈される唯一のモードである
+`advanced_search=true` を Agent の検索 URL に付けた（無いと 422 で、レールは「クエリを解釈できない」
+とだけ言う）。**この決定の結論そのものは変わらない** —— 「人の PR のレビュー」は `involves:` に
+入らないので、`is:open review-requested:@me` を 2 本目として足す（重なっても 1 行にまとまる）。
+⚠️ **既定に `OR` を書いてはいけない**: Workspace は起動時の Agent を使い続けるため、更新直後は
+前の版の Agent が応答し、af 自身の既定クエリが 422 になる（実配備で踏んだ）。
 詳細と「なぜ測らずに書いたか」は [docs/80](../log/80-work-item-inbox.md) §80.16-3。
 
 **20（§80.20）. 行にボタンを並べない。行を押すと詳細モーダルが開き、操作はそこに集まる。**
