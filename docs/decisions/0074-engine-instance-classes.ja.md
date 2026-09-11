@@ -1090,3 +1090,25 @@ ImageTag=0.18.1-dev-b6feea43）。その中の 60-engines の段で、ADR 0072 P
 （`update.sh` が live のスタックを読んで `<役>Enabled=true` を翻訳する）は**何も出力しなかった**
 ——この配備は既に `Enabled=true` を持ち `<役>ModelS3Key` を持たないので、翻訳する対象が無い。
 門が「黙っている」ことが、P6 を通過済みの配備の正しい姿である。
+
+## 追記 — 梯子の再読込が効いた（2026-09-11・実機・$0）
+
+前節（#520）が「梯子は CFN に入っても走っている CP には届かない」と書いた欠落を、
+`engine_table_reload.go` が閉じた。**実機で確かめた。**
+
+`LlmInstanceClasses` の 2 段目のラベルだけを変える CFN 更新を流し、**CP を入れ替えずに**
+`GET /api/admin/engines` を見た。
+
+| 時刻 | 出来事 |
+|---|---|
+| 02:50:51 | `cloudformation deploy --parameter-overrides LlmInstanceClasses=…` 開始 |
+| 02:51:39 | `Successfully created/updated stack` |
+| 02:51:46 | API の `classes` が新しいラベルを返した |
+
+**スタックの完了から 7 秒。** CP のサービスは 02:19:57Z に作られた配備のままで、
+`force-new-deployment` は挟んでいない——前節が要した約 100 秒の入れ替えが要らなくなった。
+ラベルは検証後に元へ戻した（同じ経路で、やはり再起動なし）。
+
+取り込む範囲が梯子だけであること（ECS クライアント・コントローラの goroutine・需要窓は
+据え置き、変わったら「再起動が要る」とログに出す）は実装のとおりで、今回はそこには触れて
+いない。

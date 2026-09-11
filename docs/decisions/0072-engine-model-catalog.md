@@ -3492,3 +3492,147 @@ never created through `GET /api/fs/file`).
 came back straight.** Take hardware numbers through a claude session. This continues the previous
 follow-up's "the driver is not an instrument", with the part it could not yet say: **which agent
 kind drives it changes the result.**
+
+## #518 and #512, confirmed on hardware (2026-09-11, the dev deployment)
+
+Moving the embedded shell out into an image (#518) and the sync-window gate plus the resident
+sidecar (#512), put on the dev deployment and pressed. **Both of #512's halves passed. Four of
+#518's five passed; the fifth (the llm role's idle wrapper) could not be taken because AWS had
+no capacity.** And the deployment itself surfaced **one gap**.
+
+### 🔴 The gap — `dev-deploy.sh` neither bakes nor copies engine-tools
+
+#518's note says "`standup.sh` puts the image in one step ahead of the stack". **That is exactly
+right, and it is the only place it happens.** Confirmed in the code:
+
+- `standup.sh` has the `af-engine-tools` `crane copy` (it reads `EngineToolsImageTag` from the
+  capture and copies from GHCR when ECR does not have it).
+- **`dev-deploy.sh` and `update.sh` do not.** The only things either copies are control-plane
+  and workspace.
+- The ECR repository `af-engine-tools` is created by **20-platform** — and **`update.sh` does
+  not deploy 20-platform** (only 50-tts, 60-engines and 30-ingress).
+
+The deployment was in exactly that state: `describe-repositories` answered
+`RepositoryNotFoundException`, and GHCR had no `engine-tools` either (`engine-tools-image.yml`
+had never run). **Running `dev-deploy.sh` as it stood would have pointed 60-engines' task
+definitions at an image that does not exist, and both roles' fetch containers plus the two
+ingest containers would have failed with `CannotPullContainerError`** — the same shape as P6's
+"miss the sd-server `crane copy` and the role is created while its ECR repository is empty",
+now with engine-tools.
+
+Three steps were inserted by hand, and their order is the dependency:
+
+1. `gh workflow run engine-tools-image.yml -f tag=2026-09-11` — bake to GHCR (**touches no
+   deployment**).
+2. Update 20-platform so the ECR repository exists. A change set showed the blast radius first:
+   **`Add EcrEngineTools` and `Modify CpTaskRole`, two changes, no replacement.**
+3. `crane copy ghcr.io/…/engine-tools:2026-09-11 → <ECR>/af-engine-tools:2026-09-11`.
+
+`dev-deploy.sh` then took 60-engines to `Successfully created/updated stack`, which is the most
+direct evidence there is that the task definitions could pull the image. **The release path
+(`update.sh`) still has none of these three steps, so the next version bump hits the same
+hole.**
+
+### #518's checklist
+
+| # | Item | Result |
+|---|---|---|
+| 1 | four containers pull `af-engine-tools` | **all four reference it, three actually pulled** |
+| 2 | the fetch sidecar's `sync done` and `WATCH_SEC` line | **passed** |
+| 3 | the idle wrapper starts off `/models/ready` (llm and image) | **image passed; llm not confirmed** (below) |
+| 4 | one ingest from the Console, and `MODE=delete` | **passed** |
+| 5 | no `CONTRACT MISMATCH` in any log | **not one** |
+
+For 1, the reference was checked in all three task definitions (llm's `fetch`, image's `fetch`,
+ingest's `fetch` and `upload`). Two of them actually ran — image's fetch and the ingest pair;
+**only llm's fetch never ran**, for want of a box.
+
+Item 2, verbatim:
+
+```
+engine fetch: active set for /af-ws/engines/image/active starts with 'sdxl-base-1.0'
+engine fetch: image/checkpoints/sd_xl_base_1.0.safetensors 6938078334 bytes in 58s
+engine fetch: cmdline = -m /models/image/checkpoints/sd_xl_base_1.0.safetensors
+engine fetch: engine may start; 14 file(s) still to sync
+…
+engine fetch: sync done
+engine fetch: watching /af-ws/engines/image/active every 60s for models enabled later
+```
+
+`ENTRYPOINT []` plus `Command: [/opt/af/fetch-models.sh]` really is what starts.
+
+Item 4 took in one public 4.9 MB file and then deleted it:
+
+```
+ingest: fetched 4895600 bytes in 2s
+ingest: sha256 ok 9f37c0b28f72ec4ca835dc7dbf05255bdf323cde8cf12a304674f106466c98ef
+ingest: uploaded image/vae/r4-taesdxl-encoder.safetensors in 1s
+ingest: delete mode, nothing to fetch
+ingest: deleted image/vae/r4-taesdxl-encoder.safetensors
+```
+
+On the delete side `fetch` says it has nothing to take and `upload` removes it — the two
+containers' division of labour, showing through. The object left the bucket
+(`list-objects-v2` came back empty).
+
+### #512's window **can** be opened — but it has to be arranged
+
+"The engine comes up mid-sync" could **not** be reproduced by another lane in two cold starts:
+the box takes longer to acquire than the remaining sync. **Enabling more models stretches
+`keys.rest` until it opens.** Measured with five models enabled (~30 GB):
+
+| Time | Event | keys in `pending` |
+|---|---|---|
+| 02:33:22 | `mode: on` | – |
+| 02:41:15 | the sidecar publishes pending | **15** |
+| 02:44:12 | **`state: running`** | **7** |
+| 02:44:39 | `warm: true` | 7 |
+| 02:46:51 | `sync done` | **0** |
+
+**The window was 2 minutes 39 seconds** (02:44:12 to 02:46:51) — the engine passing health
+checks with seven files still missing. `pending` holds an array of S3 keys, and
+`flux1-dev-fp8` (11.9 GB) and `z_image_turbo` (12.3 GB) are the last to land. **Its length is
+"the total bytes of the non-start models minus the acquisition time"**, so a deployment with one
+enabled model never opens it at all.
+
+⚠️ **The gateway answering `engine_waking` with a `Retry-After` was NOT confirmed.** That needs a
+request from a session inside the deployment (the gateway only accepts a Workspace-issued
+token), and there was no room for it this time. **That the window opens, and how long it is**,
+is what was measured.
+
+### #512's resident sidecar works
+
+`juggernaut-xl-v9` (7.1 GB) was enabled while the box was running. **No restart.**
+
+```
+02:47:26  enabled
+02:47:45  the watch pass (19 seconds later)
+02:47:54  pending = ["image/checkpoints/juggernaut_xl_v9.safetensors"]
+02:48:12  engine fetch: image/checkpoints/juggernaut_xl_v9.safetensors 7105348188 bytes in 27s
+02:48:13  engine fetch: this instance is in step with the active set
+```
+
+`WATCH_SEC` is 60 seconds, so **19** is inside one period. Open question 3 (syncing into a
+running box) now has its hardware backing.
+
+### 🔴 What could not be taken — AWS ran out of capacity
+
+The llm box **never came**. The service's own events, verbatim:
+
+```
+(service af-af-ecs-engines-llm) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-af-ecs-engines-llm.
+InsufficientInstanceCapacity: We currently do not have sufficient g6.xlarge capacity in the
+Availability Zone you requested (ap-northeast-1a). Our system will be working on provisioning
+additional capacity. You can currently get g6.xlarge capacity by not specifying an Availability
+Zone in your request or choosing ap-northeast-1c.
+```
+
+**The two AZs ran dry alternately** (at 03:04 it said 1c had none, at 03:09 that 1a had none).
+Sixteen minutes of retrying produced nothing and the attempt was abandoned. That leaves
+**#518's item 3 for llm** and **#513's fixed preset LoRA** (`--lora-scaled` in `status.args`)
+unconfirmed.
+
+⚠️ This is an external condition rather than a defect — but **ADR 0074's second rung is a way
+out of exactly this situation**: drop to `l40s` (g6e.xlarge) when `l4` is dry. No rung was
+raised here (GPU cost; ADR 0074 P1 covered it).
