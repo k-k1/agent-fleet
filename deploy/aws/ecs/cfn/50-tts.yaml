@@ -90,9 +90,11 @@ Parameters:
       placed on FARGATE_SPOT, and an explicit strategy overrides the cluster default, so
       decision 1's invariant (the engine never lands in the EC2 slot pool) still holds. It
       is the OMISSION of both that breaks it.
-      !! Switching this on or off changes the service's placement, which CloudFormation
-      applies by REPLACING the service - and a newly created service starts at desired 1
-      (the DesiredCount contract below), so expect one cold start and scale it back to 0.
+      !! Switching this on or off changes the service's placement. Measured 2026-09-11 on
+      the production stack: CloudFormation applied it IN PLACE (Service UPDATE_IN_PROGRESS
+      to UPDATE_COMPLETE, about 6 minutes, no replacement), but the new deployment still
+      came up at desired 1 (the DesiredCount contract below), so expect one cold start and
+      let idle-stop scale it back to 0.
   LogRetentionDays:
     Type: Number
     Default: 7
