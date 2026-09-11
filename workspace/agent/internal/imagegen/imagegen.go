@@ -270,40 +270,111 @@ const (
 // only applies once there are such users. There are none yet (this has not shipped), so the
 // default is chosen on the merits instead, while that is still free. A stored
 // `imageProviderOrder` outranks this list, so anyone who does have a preference keeps it.
-var providerOrder = []string{ProviderSdcpp, ProviderComfy, ProviderAgy, ProviderCodex}
+var providerOrder = providerIDsOf(providerRanks)
+
+// providerRank is one provider's place in the built-in order plus the ONE fact that decides
+// where an unranked provider is inserted: whose hardware or plan pays for the picture.
+//
+// It is declared here, once, rather than tested for with an id comparison wherever it matters.
+// The distinction is not cosmetic — it decides whether an unattended call spends money this
+// deployment already committed to, or a MEMBER's personal plan quota — and an `id == "comfy"`
+// written into a condition is exactly how the next provider gets forgotten.
+//
+// It hangs off the provider rather than off Caps because Caps is per (provider, model): whose
+// wallet pays does not change with the checkpoint, and putting it there would invite a model
+// that answers differently from its own provider.
+type providerRank struct {
+	ID string
+	// Fleet is "this deployment's own hardware serves it" — the engines behind ADR 0071 and
+	// ADR 0072. False means an external service on somebody's personal plan.
+	Fleet bool
+}
+
+// providerRanks is the single declaration of the built-in order AND of which providers the fleet
+// serves itself. Adding a provider means adding one line here; nothing else reads the ids.
+var providerRanks = []providerRank{
+	{ID: ProviderSdcpp, Fleet: true},
+	{ID: ProviderComfy, Fleet: true},
+	{ID: ProviderAgy},
+	{ID: ProviderCodex},
+}
+
+func providerIDsOf(ranks []providerRank) []string {
+	out := make([]string, 0, len(ranks))
+	for _, r := range ranks {
+		out = append(out, r.ID)
+	}
+	return out
+}
+
+// providerIsFleet answers whether the fleet's own hardware serves this provider. Unknown ids are
+// NOT fleet: an id nobody declared is not something this deployment can be said to pay for.
+func providerIsFleet(id string) bool {
+	for _, r := range providerRanks {
+		if r.ID == id {
+			return r.Fleet
+		}
+	}
+	return false
+}
 
 // ProviderOrderPref is the user's own preference order, installed by the ui-prefs layer (the
 // same hook shape as Enabled). nil, or a list that names nothing known, simply means the
 // built-in order.
 var ProviderOrderPref func() []string
 
-// effectiveOrder normalizes the stored preference into a TOTAL order: unknown ids and
-// duplicates are dropped, and every provider the preference does not mention is appended in
-// the built-in order. The same shape as main's agentOrderPref, and for the same reason — a
-// partial or stale list (written before a provider existed) must still rank every provider,
-// or adding one would make it unreachable until the user re-saved their settings.
+// effectiveOrder normalizes the stored preference into a TOTAL order: unknown ids and duplicates
+// are dropped, and every provider the preference does not mention is inserted around it. The same
+// shape as main's agentOrderPref, and for the same reason — a partial or stale list (written
+// before a provider existed) must still rank every provider, or adding one would make it
+// unreachable until the user re-saved their settings.
+//
+// 🔴 A provider the preference does not name goes to the FRONT when the fleet serves it and to
+// the back when it does not, instead of all of them going to the back.
+//
+// That rule exists because appending everything was measured doing real harm (ADR 0072's
+// 2026-09-11 hardware follow-up). The dev deployment's stored value was
+// `["sdcpp","agy","codex"]`, written before `comfy` existed. comfy was therefore appended LAST,
+// so `auto` walked sdcpp (absent on that deployment) → agy → codex → comfy: a call that named no
+// provider spent a member's personal plan before it ever reached the GPU the deployment is
+// already paying for. Nobody had edited a setting; the stored list changed meaning on the day a
+// provider was added, which is the one thing a normalization step is there to prevent.
+//
+// What the preference DOES say is untouched: ids it names keep their relative order, including a
+// fleet provider the user deliberately ranked last. This only decides where the ones it never
+// mentioned land.
 func effectiveOrder() []string {
-	out := make([]string, 0, len(providerOrder))
 	seen := map[string]bool{}
 	known := map[string]bool{}
 	for _, id := range providerOrder {
 		known[id] = true
 	}
-	add := func(id string) {
-		if known[id] && !seen[id] {
-			seen[id] = true
-			out = append(out, id)
-		}
-	}
+	var chosen []string
 	if ProviderOrderPref != nil {
 		for _, id := range ProviderOrderPref() {
-			add(id)
+			if known[id] && !seen[id] {
+				seen[id] = true
+				chosen = append(chosen, id)
+			}
 		}
 	}
+	// The unmentioned ones, split by who pays and each half kept in the built-in order.
+	var fleet, external []string
 	for _, id := range providerOrder {
-		add(id)
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		if providerIsFleet(id) {
+			fleet = append(fleet, id)
+			continue
+		}
+		external = append(external, id)
 	}
-	return out
+	out := make([]string, 0, len(providerOrder))
+	out = append(out, fleet...)
+	out = append(out, chosen...)
+	return append(out, external...)
 }
 
 // Providers returns the registered providers, in providerOrder. Built fresh on each call so a
