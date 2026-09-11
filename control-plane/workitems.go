@@ -450,6 +450,63 @@ func (a workItemsAPI) comment(w http.ResponseWriter, r *http.Request, res *resol
 	_, _ = w.Write(body)
 }
 
+// detail relays "read this pull request again, right now" to the Agent (docs/log/80 §80.24).
+//
+// Two rules it shares with comment, for two different reasons:
+//   - A stopped Workspace answers 409 and is NOT started. Here that is decision 1 itself: waking
+//     a workspace to render a panel is the same hole as waking one to render the list, and the
+//     Console falls back to the cached row with a note.
+//   - The Agent's response passes through verbatim and **nothing is stored**. The cache keeps its
+//     five-minute rhythm; this is a look, not a fetch, and writing it into work_item_cache would
+//     put a panel's live read into the rail's history.
+func (a workItemsAPI) detail(w http.ResponseWriter, r *http.Request, res *resolved) {
+	var in struct {
+		Provider string `json:"provider"`
+		Key      string `json:"key"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&in); err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "invalid JSON body"})
+		return
+	}
+	if strings.TrimSpace(in.Key) == "" {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, "bad_request", "key is required"})
+		return
+	}
+	ctx := r.Context()
+	if res.rt.State(ctx) != "running" {
+		writeAPIErr(w, &apiError{http.StatusConflict, "workspace_stopped",
+			"start the workspace to read the pull request (the tracker credentials live in it)"})
+		return
+	}
+	payload, _ := json.Marshal(in)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, res.rt.Endpoint()+"/work-items/detail", bytes.NewReader(payload))
+	if err != nil {
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if tok := res.rt.Token(); tok != "" {
+		req.Header.Set("Authorization", "Bearer "+tok)
+	}
+	resp, err := agentHTTPClient.Do(req)
+	if err != nil {
+		writeAPIErr(w, &apiError{http.StatusBadGateway, "agent_unreachable", err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		// An Agent from before this feature. Say so, rather than letting a 404 read as a
+		// deleted pull request (same treatment as the fetch route).
+		writeAPIErr(w, &apiError{http.StatusConflict, "agent_outdated",
+			"this workspace agent cannot read pull request details yet — restart the workspace"})
+		return
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	_, _ = w.Write(body)
+}
+
 // --- saved queries -----------------------------------------------------------
 
 func (a workItemsAPI) listQueries(w http.ResponseWriter, r *http.Request, _ store.Identity, mv store.MembershipView) {

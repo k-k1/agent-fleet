@@ -4,10 +4,14 @@ import { describe, expect, it } from "vitest";
 import {
   branchForItem,
   canComment,
+  canReadLive,
+  checksTone,
   dedupeWorkItems,
   matchWorkItem,
   promptForItem,
+  readWorkItemDetail,
   readWorkItems,
+  reviewCounts,
   railWhen,
   relTime,
   repoForItem,
@@ -419,5 +423,86 @@ describe("readWorkItems — survives a null array", () => {
     expect(row.state).toBe("");
     expect(row.repo).toBe("");
     expect(Array.isArray(row.labels)).toBe(true);
+  });
+});
+
+// The live pull request read (docs/log/80 §80.24). It crosses two service boundaries that ship
+// as separate images (Agent → CP → here), so the reader is written to survive whatever the older
+// side sends — and the folds it feeds are claims somebody acts on.
+describe("readWorkItemDetail", () => {
+  const body = {
+    provider: "github",
+    key: "acme/web#518",
+    kind: "pr",
+    title: "PR",
+    state: "open",
+    url: "https://github.com/acme/web/pull/518",
+    author: "taro",
+    mergeable: "conflict",
+    baseBranch: "develop",
+    headBranch: "feature/x",
+    additions: 12,
+    deletions: 3,
+    changedFiles: 2,
+    comments: 4,
+    reviews: [{ name: "hanako", state: "approved" }],
+    checks: { state: "failure", total: 8, failed: 1, pending: 0 },
+  };
+
+  it("adopts a whole detail", () => {
+    const { detail } = readWorkItemDetail(body);
+    expect(detail?.mergeable).toBe("conflict");
+    expect(detail?.reviews).toEqual([{ name: "hanako", state: "approved" }]);
+    expect(detail?.checks.failed).toBe(1);
+  });
+
+  it("survives null arrays and a missing checks object (the same null that blanked the Console)", () => {
+    const { detail } = readWorkItemDetail({ ...body, labels: null, reviews: null, checks: undefined });
+    expect(detail).not.toBeNull();
+    expect(() => detail!.reviews.map((r) => r.name)).not.toThrow();
+    expect(detail!.labels).toEqual([]);
+    expect(detail!.checks).toEqual({ state: "", total: 0, failed: 0, pending: 0 });
+  });
+
+  it("keeps an error apart from a detail (the panel must not show a blank PR as a read one)", () => {
+    const { detail, error } = readWorkItemDetail({ error: { code: "workspace_stopped" } });
+    expect(detail).toBeNull();
+    expect(error).toEqual({ code: "workspace_stopped" });
+  });
+
+  it("refuses a body that carries nothing to identify the pull request", () => {
+    expect(readWorkItemDetail({ title: "only a title" }).detail).toBeNull();
+    expect(readWorkItemDetail("nonsense").detail).toBeNull();
+  });
+
+  it("mergeable defaults to unknown, never to clean", () => {
+    expect(readWorkItemDetail({ key: "acme/web#1" }).detail?.mergeable).toBe("unknown");
+  });
+});
+
+describe("live read helpers", () => {
+  it("only reads pull requests that have one behind them", () => {
+    expect(canReadLive({ kind: "pr", provider: "github" })).toBe(true);
+    expect(canReadLive({ kind: "pr", provider: "bitbucket" })).toBe(true);
+    expect(canReadLive({ kind: "issue", provider: "github" })).toBe(false);
+    expect(canReadLive({ kind: "pr", provider: "jira" })).toBe(false);
+  });
+
+  it("counts reviews by standing, with anything undecided pending", () => {
+    expect(
+      reviewCounts([
+        { name: "a", state: "approved" },
+        { name: "b", state: "changes_requested" },
+        { name: "c", state: "pending" },
+        { name: "d", state: "" },
+      ]),
+    ).toEqual({ approved: 1, changes: 1, pending: 2 });
+  });
+
+  it("a pull request nothing ran against is not green", () => {
+    expect(checksTone({ state: "", total: 0, failed: 0, pending: 0 })).toBe("muted");
+    expect(checksTone({ state: "success", total: 3, failed: 0, pending: 0 })).toBe("ok");
+    expect(checksTone({ state: "failure", total: 3, failed: 1, pending: 0 })).toBe("bad");
+    expect(checksTone({ state: "pending", total: 3, failed: 0, pending: 1 })).toBe("warn");
   });
 });

@@ -51,6 +51,13 @@ export function workItemComment(rec: { provider: string; key: string; body: stri
   return apiJSON("api/work-items/comment", "POST", rec);
 }
 
+/** Read one pull request live, for the detail panel (docs/log/80 §80.24). The CP relays it to
+ * the Agent and stores nothing; a stopped workspace answers 409 rather than being started,
+ * and the panel then keeps showing the cached row. */
+export function workItemDetail(rec: { provider: string; key: string }): Promise<unknown> {
+  return apiJSON("api/work-items/detail", "POST", rec);
+}
+
 /** Ledger: record that a session was started for an item. Idempotent per
  * (itemKey, sessionName) on the CP, so a retried launch does not double the row. */
 export function workItemSessionCreate(rec: {

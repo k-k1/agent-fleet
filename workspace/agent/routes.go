@@ -42,6 +42,10 @@ func buildMux() *http.ServeMux {
 	// The only write-back (docs/log/80 §80.10). It arrives via the CP only once a human has
 	// read the draft and pressed the button. There is no MCP tool, so an agent cannot reach it.
 	mux.HandleFunc("POST /work-items/comment", handleWorkItemsComment)
+	// One pull request, read live because a member opened its panel (docs/log/80 §80.24).
+	// Relayed by the CP like the comment above, and like it, only ever on a human's action —
+	// the timer-driven job is /work-items/fetch.
+	mux.HandleFunc("POST /work-items/detail", handleWorkItemsDetail)
 	// The fleet's own inference engines (ADR 0071 decision 9): the CP is the only party
 	// that sees an engine's response, so it counts the tokens and posts the row here, where
 	// every other feature's consumption already lives. CP-called like the two above, so it
