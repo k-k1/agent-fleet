@@ -127,6 +127,12 @@ export const tools: Record<keyof typeof jaTools, string> = {
   "env.pin_only_title": "This image bakes no binary (lean); the pinned version is installed into ~/.local at start.",
   "env.pin_paren": "({pin})",
   "env.tv_note": "Effective = the binary resolved on PATH (~/.local/bin wins over the image). Hover a cell to see its path and raw output.",
+  "env.watch_line": "Upstream release watch: last clean run {when}",
+  "env.watch_never": "never",
+  "env.watch_failed":
+    "The watcher cannot read {rows}. A “tested” version standing still is not upstream being quiet.",
+  "env.watch_stale":
+    "The watcher has not had a clean run for over 48 hours. A “tested” version standing still is not upstream being quiet.",
   "env.tc_note_1": "Changes apply to ",
   "env.tc_note_strong": "sessions/shells started after this",
   "env.tc_note_2": " (running ones and existing processes pick it up on Stop → Start).",

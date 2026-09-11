@@ -74,6 +74,19 @@ Two notes:
 - To move a single member forward without rebuilding, there is an opt-in self-update.
   Stop → Start returns them to the baked version.
 
+**Is the thing that tells you to bump still running?** `cli-release-watch.yml` is what
+notices a public version moved, and the version its contract last passed is the `tested`
+state in the tracking issue. A `tested` that stops moving reads identically whether
+upstream went quiet or the job fell over — on 2026-09-09 it was the latter, and it took
+until the next morning to notice. So the Console's **Settings → environment tab** carries
+one line under the tool-version table: `上流のリリース監視: 最終成功 <relative time>`,
+warning only when the watcher named a source it could not read, or has had no clean run
+for 48 hours. The CP reads the issue anonymously once an hour and caches it
+(`control-plane/cli_release_watch.go`); where it cannot reach GitHub the line is absent
+rather than either reassuring or alarming. **When the line warns, step 1 above is not
+enough** — `npm view` says what latest is, but the watcher is what would have dispatched
+the contract, and nothing is being tested while it is down.
+
 ## 10.3 What the start scripts do (`deploy/local/`)
 
 - **`run-dev.sh`** — the **single entry point**, with subcommands. It prepares the

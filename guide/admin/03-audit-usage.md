@@ -101,6 +101,16 @@ consult your IT department ([operator/README.md](../operate/README.md)).
 No. The container merely stops for the moment; the contents of home (repositories and settings)
 remain. The member can start it again from the Console.
 
+**Q. A member says their agent CLI has been the same version for weeks. Is that normal?**
+Look at **Settings → Toolchain**, at the line under the tool-version table: "Upstream release
+watch: last clean run …". Upstream releases are watched daily, and the versions this deployment
+bakes only move when that watch reports one. When the line is recent and carries no warning, the
+versions really have not moved and there is nothing to do. When it warns — that the watch could
+not read a particular source, or that it has had no clean run for over 48 hours — the version
+standing still says nothing about upstream, and it is your deployment administrator's monitoring
+that needs looking at ([operate/](../operate/README.md)). If the line is **absent altogether**,
+this deployment cannot reach GitHub and simply does not know; that is not itself a fault.
+
 ---
 
 - Back to: [02 Resource limits and sessions](02-limits.md)
