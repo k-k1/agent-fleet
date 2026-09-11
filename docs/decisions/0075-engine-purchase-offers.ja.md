@@ -40,7 +40,7 @@
 **存在しない**（0074 決定 5 の実装で確認）。CloudFormation でその場更新しようとすると
 `UPDATE_FAILED`——`CloudFormation cannot update a stack when a custom-named resource requires
 replacing.`（0074「Spot への切り替えは CloudFormation が拒む」）。名前ごと変えれば置き換えとして
-通るが（0.18.1 の `ImageCapacityOptionType`）、それは**行き 176 秒・戻り 147 秒の CloudFormation の
+通るが（0.19.0 の `ImageCapacityOptionType`）、それは**行き 176 秒・戻り 147 秒の CloudFormation の
 更新**であって（0074「Spot への置き換えを live で流した」）、「Spot が取れなかったから
 オンデマンドで取る」を**実行時に**行う手段ではない。
 
@@ -69,7 +69,7 @@ replacing.`（0074「Spot への切り替えは CloudFormation が拒む」）�
   `engineDef.CapacityProvider`）。`draining` の判定（`engine_ecs.go`）と、どの container instance が
   自分の箱かの照合（`box()`）が、どちらもこの 1 つの名前で引いている。
 - **service は provider を名指ししている**（`60-engines.yaml` の `CapacityProviderStrategy`）。
-  0.18.1 以降、その名前は `!Ref ImageCapacityProvider` であり、資源に追随する
+  0.19.0 以降、その名前は `!Ref ImageCapacityProvider` であり、資源に追随する
   （`PARAMETERS-60-engines.md`「The capacity providers」。`!Sub` の文字列に戻すと
   **名前が動いたときに黙って壊れる**）。
 - **CP は `UpdateService` を既に持っている**（起動と停止が desired を動かしている）。
@@ -298,7 +298,7 @@ ADR 0074 決定 2 の設定（`engine_<役>_class`）はそのまま残し、意
 
 - **宣言で**: `LlmOffers` に `spot` の行を書かない。CP は一覧に書いてあるものしか買わない。
 - **テンプレートで**: `60-engines.yaml` は llm 役の Spot provider を**作らない**。
-  0.18.1 が `ImageCapacityOptionType` だけを足して llm には足さなかったのと同じ立場である。
+  0.19.0 が `ImageCapacityOptionType` だけを足して llm には足さなかったのと同じ立場である。
 
 理由は 0074 と `PARAMETERS-60-engines.md` が既に書いている——**Spot の 2 分前予告は会話の途中で
 来て、その後に 527〜586 秒のコールドスタートが続く。** 画像の生成は掛け直せる 1 回の呼び出しだが、

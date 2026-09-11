@@ -428,7 +428,7 @@ It does the things the hand-typed sequence gets wrong:
   them automatically. It never stops one: stopping kills that user's sessions, and
   when to take that is their call.
 - **Keeps the ECR repository, the image and the stack in that order.** A release can
-  need a repository that did not exist and an image nothing has copied in: 0.18.1 moved
+  need a repository that did not exist and an image nothing has copied in: 0.19.0 moved
   the engine's fetch and ingest steps into `af-engine-tools`. So `update.sh` deploys
   **20-platform** first (which owns the ECR repositories), through a change set it prints
   and only executes when nothing is replaced — and only on the round where the template

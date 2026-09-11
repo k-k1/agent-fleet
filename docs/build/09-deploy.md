@@ -142,7 +142,7 @@ end-to-end to teardown.
 - **Upgrades apply migrations automatically at start and cannot be downgraded** — always
   back up first.
 - **On ECS an upgrade is not only the application's tag.** A release can also need a new
-  ECR repository and an image nothing has copied in yet (0.18.1 moved the engines' fetch
+  ECR repository and an image nothing has copied in yet (0.19.0 moved the engines' fetch
   and ingest steps into `af-engine-tools`), so `update.sh` holds one order: **the
   repository (20-platform, through a change set it prints and executes only when nothing
   is replaced) → the image (`crane copy` from GHCR) → the stack that names it
