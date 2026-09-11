@@ -254,11 +254,11 @@ Mappings:
         if [ -n "$PRESET_FILE" ]; then
           START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
         fi
-        : > /tmp/keys.rest
+        : > "$MODELS_DIR"/keys.rest
         if [ -n "$PRESET_FILE$SYNC_ALL" ]; then
-          printf '%s' "$V" | jq -r --arg s "$START" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > /tmp/keys.rest
+          printf '%s' "$V" | jq -r --arg s "$START" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > "$MODELS_DIR"/keys.rest
         fi
-        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > /tmp/keys.start
+        printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > "$MODELS_DIR"/keys.start
         fetch_keys() {
           while read -r k; do
             [ -n "$k" ] || continue
@@ -271,10 +271,10 @@ Mappings:
             echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
           done < "$1"
         }
-        fetch_keys /tmp/keys.start
+        fetch_keys "$MODELS_DIR"/keys.start
         if [ -n "$PRESET_FILE" ]; then
           mkdir -p "$(dirname "$PRESET_FILE")"
-          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
+          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if (($m.lo//[])|length)>0 then ["lora-scaled = " + (($m.lo)|map($d+"/"+.)|join(","))] else [] end) + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
           mv "$PRESET_FILE.part" "$PRESET_FILE"
           echo "engine fetch: preset $PRESET_FILE holds $(grep -c '^\[' "$PRESET_FILE" || true) model(s), '$START' loaded at startup"
           if [ -s "$PRESET_FILE" ]; then printf -- '--models-preset %s' "$PRESET_FILE" > "$MODELS_DIR/cmdline.part"; else : > "$MODELS_DIR/cmdline.part"; fi
@@ -284,8 +284,8 @@ Mappings:
         mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
         echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
         touch "$MODELS_DIR/ready"
-        echo "engine fetch: engine may start; $(grep -c . /tmp/keys.rest || true) file(s) still to sync"
-        fetch_keys /tmp/keys.rest
+        echo "engine fetch: engine may start; $(grep -c . "$MODELS_DIR"/keys.rest || true) file(s) still to sync"
+        fetch_keys "$MODELS_DIR"/keys.rest
         echo "engine fetch: sync done"
 
 Conditions:

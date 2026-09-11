@@ -210,6 +210,47 @@ for line in open(sys.argv[1]):
 raise SystemExit(0 if hit == "[first]" else 1)
 PY
 
+echo "== a pinned LoRA becomes ONE lora-scaled key, in the section of its base model =="
+# ADR 0072 decision 5, the llm half: "this model, with this fine-tune", declared in the
+# catalogue and invisible to opencode, which sees an ordinary model id.
+#
+# 🔴 ONE key with a comma-separated list, never one key per adapter. llama.cpp parses a preset
+# into `std::map<common_arg, std::string>` and the INI reader writes `parsed[section][key] =
+# value`, so a second `lora-scaled = …` line OVERWRITES the first — two adapters would silently
+# become one. The CSV form is what `--lora-scaled FNAME:SCALE,...` documents and the only one
+# that carries both (read in common/preset.cpp and common/arg.cpp at master, 2026-09-11).
+PINNED='{"v":1,"key":"llm","start":"base","models":[{"id":"base","f":["llm/b.gguf"],"c":4096,"lo":["llm/loras/a.gguf:1","llm/loras/b.gguf:0.8"]},{"id":"plain","f":["llm/p.gguf"]}],"loras":["llm/loras/a.gguf","llm/loras/b.gguf"]}'
+run "$PINNED" "" "" "$WORK/models/llm/presets.ini"
+preset="$(cat "$WORK/models/llm/presets.ini")"
+want_preset='[base]
+model = '"$WORK"'/models/llm/b.gguf
+c = 4096
+lora-scaled = '"$WORK"'/models/llm/loras/a.gguf:1,'"$WORK"'/models/llm/loras/b.gguf:0.8
+load-on-startup = true
+
+[plain]
+model = '"$WORK"'/models/llm/p.gguf'
+[ "$preset" = "$want_preset" ] || fail "the pinned preset is:
+$preset
+want:
+$want_preset"
+# The adapters themselves are fetched with the starting model, before the engine is released:
+# a preset naming a file that is not there is a model that fails to load, not one that waits.
+grep -q "llm/loras/a.gguf" "$WORK/fetched" || fail "a pinned LoRA was never downloaded"
+# And a model with no adapters says nothing at all — an empty `lora-scaled =` would be a path
+# of "", which llama.cpp reads as a file it cannot open.
+case "$preset" in *"[plain]"$'\n'*"lora"*) fail "a model with no LoRA got a lora key anyway";; esac
+
+echo "== disabling the LoRA takes the line out again (positive control) =="
+# The same document with the pins removed, which is exactly what the CP publishes once the row
+# is switched off. Without this the golden above would pass just as well against a sidecar that
+# writes `lora-scaled` unconditionally from `loras[]` — the bug that would pin every adapter to
+# every model.
+UNPINNED='{"v":1,"key":"llm","start":"base","models":[{"id":"base","f":["llm/b.gguf"],"c":4096}],"loras":["llm/loras/a.gguf"]}'
+run "$UNPINNED" "" "" "$WORK/models/llm/presets.ini"
+grep -q "lora" "$WORK/models/llm/presets.ini" && fail "the preset still pins a LoRA nobody enabled"
+grep -q "llm/loras/a.gguf" "$WORK/fetched" || fail "an enabled LoRA must still be staged on the box"
+
 echo "== an empty catalogue leaves the router idling too =="
 # The wrapper starts the engine only when /models/cmdline is non-empty, so an active set with no
 # models has to produce an EMPTY one — a router started with an empty preset would answer

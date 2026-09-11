@@ -2061,7 +2061,8 @@ served in 2026-09-09 and the FLUX.1 row that generates is the separately ingeste
   gone through the provider were pushed through as well, and P2 is closed on hardware** ("P2's
   remaining work 4 and 5, on hardware"): all five families generate. SD3.5 alone had a wrong
   template and was fixed (`--clip_g`).
-- **P3 — LoRA.** On ComfyUI: the image role's `loras/` sync, `generate_image`'s `loras`, the
+- **P3 — LoRA. The llm half (fixed preset LoRAs) is implemented and not verified on hardware
+  ("P3, the llm half").** On ComfyUI: the image role's `loras/` sync, `generate_image`'s `loras`, the
   `LoraLoader` chain in the templates, refusal on a `baseModel` mismatch; fixed preset LoRAs
   for llm. sd-server's `<sd_cpp_extra_args>` path only when an `ImageEngine=sdcpp` deployment
   needs it, after open question 2. **Definition of done: the same prompt and seed give a
@@ -3266,3 +3267,42 @@ A second request with a pinned seed hitting ComfyUI's output cache (the same pic
 second) is reported in warnings **only when it actually happens** — decided from the engine's own
 `execution_cached` message rather than guessed from a short elapsed time. The design reasoning is
 in the same 0069 follow-up.
+
+## P3, the llm half — fixed preset LoRAs (2026-09-11)
+
+Decision 5's first half (**fixed preset LoRAs first, virtual model ids later**), implemented.
+**Not verified on hardware.** The second half — `<base>+<lora-set>` as its own catalogue entry —
+is deliberately NOT here: decision 5 ordered it that way, and it is the first thing that would
+make the gateway rewrite a request body.
+
+- **The catalogue.** A `kind=lora` row names the **base model's id** in `base_model`. The image
+  role's adapters put a ComfyUI **family** in the same column: one column, two vocabularies,
+  because both answer "what is this attached to" and the engine that reads it differs. Files sit
+  flat in `llm/loras/` (the sidecar already stages `.loras[]`).
+- **The active set.** Every enabled adapter is attached to its base model's entry as `lo`, whose
+  entries are `<key>:<scale>`. The scale comes from the row's own `args` (`--scale <v>`, 0-2,
+  default 1; anything unreadable falls back to the default rather than reaching a command line).
+- **The preset.** The sidecar writes ONE line:
+  `lora-scaled = /models/llm/loras/a.gguf:1,…/b.gguf:0.8`.
+  🔴 **Never one key per adapter.** llama.cpp holds a preset as
+  `std::map<common_arg, std::string>` and its INI reader assigns `parsed[section][key] = value`,
+  so a second `lora-scaled =` line OVERWRITES the first and two adapters silently become one.
+  The CSV form of `--lora-scaled FNAME:SCALE,...` is the only spelling that carries several
+  (read in `common/preset.cpp` and `common/arg.cpp`, 2026-09-11). `--lora-scaled x:1` is exactly
+  `--lora x`, so the scale is always written and there is one code path instead of two.
+  ⚠️ That makes `,` and `:` separators rather than characters: an S3 key holding either moves
+  the boundary between two adapters, so the CP refuses one when it publishes the active set, for
+  every role.
+- **An adapter with no base.** If the base is disabled or absent it is pinned to nothing and the
+  panel row is marked `lora_base_missing`. Enabled, staged on the box and doing nothing looks
+  exactly like working.
+- **The Console.** Both forms — register and ingest — gained a "this row is" control.
+  🔴 **Before this, no route in the Console could create a LoRA row for EITHER role**: both sent
+  `checkpoint`/`gguf` and nothing else, so decision 5's llm half was unreachable without calling
+  the admin API by hand. For an llm adapter the base is **chosen from the catalogue's ids**
+  rather than typed (a name that matches nothing simply does nothing), the window fields go, and
+  a strength field takes their place.
+
+**What hardware has to confirm.** On the next start of the llm role: that `llama-server` logs
+the adapter load (that `--lora-scaled` appears in `/models`'s `status.args`), and that the
+pinned fine-tune is visible in what the model answers. That belongs to the hardware lane.

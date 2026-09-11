@@ -998,11 +998,14 @@ describe("EnginesAdminView", () => {
         (b) => b.textContent === "バケットのファイルを登録する",
       ) as HTMLElement,
     );
-    // One field per ROW, each with its own label: eight labelled rows, not a strip of eight
-    // look-alike boxes whose placeholder captions vanish as soon as somebody types into them.
+    // One field per ROW, each with its own label: nine labelled rows, not a strip of look-alike
+    // boxes whose placeholder captions vanish as soon as somebody types into them. The first is
+    // the kind (model or LoRA adapter), which is a choice; the other eight are typed.
     const rows = Array.from(host!.querySelectorAll(".engines-model-add-row"));
-    expect(rows.length).toBe(8);
-    expect(rows.every((r) => r.querySelector("span") && r.querySelector("input"))).toBe(true);
+    expect(rows.length).toBe(9);
+    expect(
+      rows.every((r) => r.querySelector("span") && (r.querySelector("input") || r.querySelector("select"))),
+    ).toBe(true);
     const inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
     expect(inputs.length).toBe(8);
     const type = async (el: Element, v: string) => {
@@ -1032,6 +1035,97 @@ describe("EnginesAdminView", () => {
       base_model: "",
       context_tokens: 32768,
       max_output_tokens: 4096,
+      license_name: "",
+      license_url: "",
+    });
+  });
+
+  // ADR 0072 decision 5, the llm half: an adapter is registered like a file and pinned to the
+  // model it fine-tunes. Three things move together when the kind changes, which is why it is one
+  // control: the kind itself, where the file belongs in the bucket, and what "applies to" means
+  // (a model ID here, a ComfyUI family on the image role).
+  //
+  // 🔴 Until this existed NO route in the Console could create a LoRA row for either role — both
+  // forms sent `checkpoint`/`gguf` and nothing else — so the llm half of decision 5 was
+  // unreachable without calling the admin API by hand.
+  it("registers a LoRA against the model it fine-tunes, with no window of its own", async () => {
+    api.mockResolvedValue({
+      engines: [
+        row({
+          key: "llm",
+          api: "chat",
+          provider: "llamacpp",
+          has_models: true,
+          model_rows: [
+            { id: "qwen3-coder-30b-a3b", kind: "gguf", enabled: true, default: true },
+            { id: "an-old-adapter", kind: "lora", enabled: false, base_model: "qwen3-coder-30b-a3b" },
+          ],
+        }),
+      ],
+    });
+    apiJSON.mockResolvedValue(row({ key: "llm", api: "chat", has_models: true, model_rows: [] }));
+    await mount();
+    await click(
+      Array.from(host!.querySelectorAll("button")).find(
+        (b) => b.textContent === "バケットのファイルを登録する",
+      ) as HTMLElement,
+    );
+    const type = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    };
+    const pick = async (el: Element, v: string) => {
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+        setter.call(el, v);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    };
+    const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
+    await pick(selects()[0], "lora");
+
+    // The base is a CHOICE over this catalogue's own model ids — a typed name that matches
+    // nothing is an adapter that loads nowhere and says so nowhere.
+    const base = selects()[1] as HTMLSelectElement;
+    const offered = Array.from(base.options).map((o) => o.value);
+    expect(offered).toContain("qwen3-coder-30b-a3b");
+    expect(offered).not.toContain("an-old-adapter"); // a LoRA is not a base for another LoRA
+
+    const go = () =>
+      Array.from(host!.querySelectorAll(".engines-model-add button")).find(
+        (b) => b.textContent === "登録する",
+      ) as HTMLButtonElement;
+    let inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    await type(inputs[0], "house-style");
+    await type(inputs[1], "llm/loras/house-style.gguf");
+    // Required, and the form says so by refusing rather than by letting the CP answer later.
+    expect(go().disabled).toBe(true);
+    await pick(base, "qwen3-coder-30b-a3b");
+    expect(go().disabled).toBe(false);
+
+    // The window is gone — an adapter has none, it is loaded with the model that does — and a
+    // strength has taken its place.
+    inputs = Array.from(host!.querySelectorAll(".engines-model-add input"));
+    const labels = Array.from(host!.querySelectorAll(".engines-model-add-row span")).map(
+      (l) => l.textContent,
+    );
+    expect(labels).not.toContain("コンテキストウィンドウ");
+    expect(labels).toContain("強さ（0〜2・既定 1）");
+    await type(inputs[inputs.length - 1], "0.8");
+
+    await click(go());
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/llm/models", "POST", {
+      id: "house-style",
+      kind: "lora",
+      files: [{ flag: "", s3Key: "llm/loras/house-style.gguf", bytes: 0 }],
+      description: "",
+      base_model: "qwen3-coder-30b-a3b",
+      args: ["--scale", "0.8"],
+      context_tokens: 0,
+      max_output_tokens: 0,
       license_name: "",
       license_url: "",
     });
@@ -1088,11 +1182,12 @@ describe("EnginesAdminView", () => {
     // letting the CP answer 400 after the press.
     expect(go().disabled).toBe(true);
 
+    // [0] is the kind (model / LoRA adapter); the family follows it, then one part per file.
     const selects = () => Array.from(host!.querySelectorAll(".engines-model-add select"));
-    await pick(selects()[0], "flux2-klein");
+    await pick(selects()[1], "flux2-klein");
     expect(go().disabled).toBe(false);
     // The first file's part, then two more files with their own.
-    await pick(selects()[1], "--diffusion-model");
+    await pick(selects()[2], "--diffusion-model");
 
     const more = () =>
       Array.from(host!.querySelectorAll(".engines-model-add button")).find(
@@ -1106,8 +1201,8 @@ describe("EnginesAdminView", () => {
     expect(inputs.length).toBe(10);
     await type(inputs[3], "image/text_encoders/qwen_3_4b_fp8_mixed.safetensors");
     await type(inputs[5], "image/vae/flux2-vae.safetensors");
-    await pick(selects()[2], "--clip_l");
-    await pick(selects()[3], "--vae");
+    await pick(selects()[3], "--clip_l");
+    await pick(selects()[4], "--vae");
 
     await click(go());
     expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/models", "POST", {
@@ -1369,7 +1464,11 @@ describe("EnginesAdminView", () => {
     // The output cap is a select over fractions of the window, not a free number — 1/8 of
     // 32,768 is the 4,096 both models here were already being run at.
     await act(async () => {
-      const sel = host!.querySelectorAll(".engines-ingest select")[0] as HTMLSelectElement;
+      // By what it offers rather than by position: the form's first select is the kind, and an
+      // index here would have gone on passing while setting the wrong control.
+      const sel = Array.from(host!.querySelectorAll(".engines-ingest select")).find((el) =>
+        Array.from((el as HTMLSelectElement).options).some((o) => o.value === "4096"),
+      ) as HTMLSelectElement;
       sel.value = "4096";
       sel.dispatchEvent(new Event("change", { bubbles: true }));
     });

@@ -295,6 +295,146 @@ func TestEngineActiveSetForTheDevDeploymentLlm(t *testing.T) {
 	}
 }
 
+// ADR 0072 decision 5, the llm half: a LoRA is PINNED to the model it names, and the box is
+// told so per model rather than as a directory to scan. The image role is the opposite (adapters
+// are chosen per request from a directory), which is why this is asserted on the shape and not
+// just on the file list.
+func TestBuildEngineActiveSetPinsLorasToTheirBase(t *testing.T) {
+	base := store.EngineModel{
+		Role: "llm", ID: "qwen3", Kind: "gguf", Enabled: true, Default: true,
+		Files: []store.EngineModelFile{{S3Key: "llm/q.gguf"}}, ContextTokens: 4096,
+	}
+	other := store.EngineModel{
+		Role: "llm", ID: "small", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "llm/s.gguf"}},
+	}
+	plain := store.EngineModel{
+		Role: "llm", ID: "house-style", Kind: "lora", Enabled: true, BaseModel: "qwen3",
+		Files: []store.EngineModelFile{{S3Key: "llm/loras/house.gguf"}},
+	}
+	weighted := store.EngineModel{
+		Role: "llm", ID: "terse", Kind: "lora", Enabled: true, BaseModel: "qwen3",
+		Files: []store.EngineModelFile{{S3Key: "llm/loras/terse.gguf"}},
+		Args:  []string{"--scale", "0.8"},
+	}
+	orphan := store.EngineModel{
+		Role: "llm", ID: "for-a-model-nobody-has", Kind: "lora", Enabled: true, BaseModel: "gone",
+		Files: []store.EngineModelFile{{S3Key: "llm/loras/orphan.gguf"}},
+	}
+	off := store.EngineModel{
+		Role: "llm", ID: "parked", Kind: "lora", Enabled: false, BaseModel: "qwen3",
+		Files: []store.EngineModelFile{{S3Key: "llm/loras/parked.gguf"}},
+	}
+	rows := []store.EngineModel{base, other, plain, weighted, orphan, off}
+	set := buildEngineActiveSet("llm", rows)
+
+	var got engineActiveModel
+	for _, m := range set.Models {
+		if m.ID == "qwen3" {
+			got = m
+		}
+		if m.ID == "small" && len(m.Lo) > 0 {
+			t.Errorf("an adapter was pinned to a model that did not name it: %+v", m.Lo)
+		}
+	}
+	want := []string{"llm/loras/house.gguf:1", "llm/loras/terse.gguf:0.8"}
+	if len(got.Lo) != len(want) {
+		t.Fatalf("pinned = %+v, want %+v", got.Lo, want)
+	}
+	for i := range want {
+		if got.Lo[i] != want[i] {
+			t.Errorf("pinned[%d] = %q, want %q", i, got.Lo[i], want[i])
+		}
+	}
+	// A disabled adapter is not pinned AND not staged: switching one off has to take it out of
+	// both, or the panel says "off" while the engine is still started with it.
+	for _, k := range set.Loras {
+		if strings.Contains(k, "parked") {
+			t.Error("a disabled LoRA was staged on the box")
+		}
+	}
+	// The orphan still travels as a file — it is enabled, and an administrator enabling the base
+	// afterwards should not wait for a download — but it is pinned to nothing.
+	for _, m := range set.Models {
+		for _, p := range m.Lo {
+			if strings.Contains(p, "orphan") {
+				t.Errorf("an adapter whose base is not in the catalogue was pinned to %q", m.ID)
+			}
+		}
+	}
+
+	// Positive control on the scale: nonsense and out-of-range are the default, never echoed
+	// into the command line. `,` and `:` are llama.cpp's separators, so a value carrying one
+	// would move the boundary between two adapters.
+	for _, bad := range [][]string{
+		{"--scale", "9"}, {"--scale", "-1"}, {"--scale", "x"}, {"--scale", "0.5,/etc/passwd:1"},
+		{"--scale"}, {"--jinja", "true"},
+	} {
+		l := store.EngineModel{
+			Role: "llm", ID: "l", Kind: "lora", Enabled: true, BaseModel: "qwen3", Args: bad,
+			Files: []store.EngineModelFile{{S3Key: "llm/loras/l.gguf"}},
+		}
+		if got := engineLorasPinnedTo("qwen3", []store.EngineModel{base, l}); len(got) != 1 || got[0] != "llm/loras/l.gguf:1" {
+			t.Errorf("args %v gave %v, want the default scale", bad, got)
+		}
+	}
+
+	// And the key itself cannot carry a separator either, whatever wrote the row.
+	if err := engineActiveKeyOK("llm/loras/a,b.gguf"); err == nil {
+		t.Error("a key holding a comma was accepted; it would split into two adapter paths")
+	}
+	if err := engineActiveKeyOK("llm/loras/a:1.gguf"); err == nil {
+		t.Error("a key holding a colon was accepted; it would read as FNAME:SCALE")
+	}
+	if err := engineActiveKeyOK("llm/loras/ok.gguf"); err != nil {
+		t.Errorf("an ordinary key was refused: %v", err)
+	}
+}
+
+// The panel has to say when an adapter is pinned to nothing. Enabled, staged on the box, and
+// doing absolutely nothing looks identical to one that works.
+func TestLoraBaseMissingIsVisible(t *testing.T) {
+	base := store.EngineModel{Role: "llm", ID: "qwen3", Kind: "gguf", Enabled: true,
+		Files: []store.EngineModelFile{{S3Key: "llm/q.gguf"}}}
+	rows := []store.EngineModel{
+		base,
+		{Role: "llm", ID: "ok", Kind: "lora", Enabled: true, BaseModel: "qwen3"},
+		{Role: "llm", ID: "orphan", Kind: "lora", Enabled: true, BaseModel: "gone"},
+		{Role: "llm", ID: "nameless", Kind: "lora", Enabled: true},
+	}
+	for _, tc := range []struct {
+		id   string
+		want bool
+	}{{"ok", true}, {"orphan", false}, {"nameless", false}} {
+		var lora store.EngineModel
+		for _, m := range rows {
+			if m.ID == tc.id {
+				lora = m
+			}
+		}
+		if got := engineLoraBasePresent(lora, rows); got != tc.want {
+			t.Errorf("%s: base present = %v, want %v", tc.id, got, tc.want)
+		}
+	}
+	// A base that exists but is SWITCHED OFF is the same answer: the preset section it would be
+	// pinned into is not written at all.
+	off := []store.EngineModel{
+		{Role: "llm", ID: "qwen3", Kind: "gguf", Enabled: false},
+		{Role: "llm", ID: "ok", Kind: "lora", Enabled: true, BaseModel: "qwen3"},
+	}
+	if engineLoraBasePresent(off[1], off) {
+		t.Error("a disabled base counted as present")
+	}
+	// And a LoRA never counts as another LoRA's base.
+	lora2lora := []store.EngineModel{
+		{Role: "llm", ID: "a", Kind: "lora", Enabled: true},
+		{Role: "llm", ID: "b", Kind: "lora", Enabled: true, BaseModel: "a"},
+	}
+	if engineLoraBasePresent(lora2lora[1], lora2lora) {
+		t.Error("a LoRA was accepted as the base of another LoRA")
+	}
+}
+
 // The comfy family vocabulary lives twice — here and in the Agent, which is the side that
 // actually dispatches on it — because Go cannot share a constant across two modules. This is
 // the check that keeps the copies honest: add a sixth family to the Agent and forget the CP,
