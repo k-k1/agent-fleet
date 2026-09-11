@@ -1198,3 +1198,21 @@ for capacity provider af-<stack>-image-spot. MaxSpotInstanceCountExceeded: …
   理由はもう無い）。`ImageInstanceClasses` は不変。⚠️ どちらも `--parameter-overrides` なので捕捉
   `params/60-engines` には無い。
 - 生の戻り値は測ったセッションの `~/.cache/adr0075-rerun/`。
+
+## 追記 — 再走が返した 2 点の修正が本文に返したもの（2026-09-12・PR #564）
+
+再走（前節）の赤 2 点は #564 で入った（各件に陽性対照つき。実機ではまだ確かめていない）。
+実装が本文に返した点を、決定は書き換えずにここに置く。
+
+- **決定 4 (a) — 起動 2 本目の門は「新しい PRIMARY ができた」ではなく `settled()`**（deployments が
+  1 本で、rolloutState が IN_PROGRESS でない）。古い deployment が ACTIVE のうちに desired を入れると
+  ECS はそちらにも 1 本置き、旧 provider が箱を買う（再走で再現）。**対価は起動が 2 分 35 秒以上
+  遅くなること**——`StartDeadlineSec`（既定 900 秒）との余裕は次の実機で見る。待っているあいだは
+  sentinel（失敗に数えない）。
+- **決定 5 — 失敗コードの判定はイベントを提案で絞る。** 使うのは「いまの提案の provider 名を含む」
+  かつ「その提案を試し始めた時刻より新しい」イベントだけ。provider 名を含まないイベントの既定は
+  「予算まで待つ」。`quota` は購入形態を丸ごと飛ばす**非対称なリスク**なので、これは実装の都合では
+  なく決定側の条件である（再走では別 provider のイベントを 5 秒後に読んで起動ごと諦めた）。
+- **settling 中は開始の門（0074 決定 5 の再適用）を再実行しない。** 5 秒ごとに回すと 1 起動で
+  `UpdateCapacityProvider` が 30 回・VRAM のログが 30 行になる。状態は提案の run が持ち、コントローラ・
+  管理トグル・ゲートウェイの待ち合わせが同じ 1 か所を見る。

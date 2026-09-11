@@ -1312,3 +1312,25 @@ second box weighs.
   900). `ImageInstanceClasses` untouched. ⚠️ Both went in through `--parameter-overrides`, so neither is
   in the `params/60-engines` capture.
 - The raw responses are in `~/.cache/adr0075-rerun/` of the session that measured this.
+
+## Follow-up — what the fixes for the re-run's two red points handed back (2026-09-12, PR #564)
+
+The re-run's two red points (previous section) landed as #564 (each with a positive control; not
+yet confirmed on hardware). What the implementation handed back goes here, with the decisions
+left as written.
+
+- **Decision 4 (a) — the gate before the second call is `settled()`**, not "a new PRIMARY
+  exists": one deployment, and its rolloutState not IN_PROGRESS. Writing the desired count while
+  the old deployment is still ACTIVE makes ECS place one task there too, and the old provider
+  buys a box (reproduced in the re-run). **The price is a start that is at least 2 min 35 s
+  slower** — the margin against `StartDeadlineSec` (900 s by default) is checked on the next
+  hardware run. While waiting it is a sentinel (not counted as a failure).
+- **Decision 5 — the failure-code verdict filters events by offer.** Only events that name the
+  current offer's provider and are newer than the moment that offer was taken count; an event
+  naming no provider defaults to "wait out the budget". Because `quota` skips a whole purchase
+  type, this is an **asymmetric risk** and belongs to the decision, not to the implementation
+  (the re-run read another provider's event five seconds after moving and gave up the start).
+- **While settling, the start gate (ADR 0074 decision 5's re-application) is not re-run.**
+  Polling it every five seconds made one start cost 30 `UpdateCapacityProvider` calls and 30
+  VRAM log lines. The offer run owns the state; the controller, the admin toggle and the
+  gateway's wait all look at that one place.
