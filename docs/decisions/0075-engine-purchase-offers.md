@@ -1038,3 +1038,159 @@ in exactly one place in the CP). What the implementation handed back:
   decision 4 (a).
 - The one P0 code path not yet measured is **hardware run 3** (whether force is needed when
   desired 0 → 1 and the strategy travel in the same call); the implementation leans to "needed".
+
+## Follow-up — P0 hardware runs 1-7, measured (2026-09-11, the dev deployment, about $1.45 of GPU)
+
+Right after P0's code (CP, CFN, Console) landed on develop, hardware runs 1 through 7 were done end to
+end on the dev deployment's image role. The measured part took 3 hours 24 minutes (20:03-21:32 JST) and
+**six GPU boxes, 54 minutes in total**.
+
+**Verdict: all seven green. But "it starts on Spot as declared" does not hold until the three 🔴 below
+are fixed** — with the default 180-second budget a Spot offer **cannot structurally succeed** (🔴1), a
+Spot quota refusal is none of the codes in decision 5's table (🔴2), and every start **buys two boxes**
+(🔴3). None of them changes a decision in the body: they are fixes to the implementation
+(`engine_offer.go`, `engine_ecs.go`) and to how decision 5's table is matched.
+
+### The verdicts
+
+| Run | Verdict | Evidence (raw values) |
+|---|---|---|
+| 1 | 🟢 | The release-generation template that was deployed (`92281943`; normalised, it matches `get-template` exactly) run with `ImageCapacityOptionType=ON_DEMAND` took **169 seconds** (20:03:20-20:06:09). The provider went `af-<stack>-image-spot` → `af-<stack>-image`, `capacityOptionType: ON_DEMAND`, CloudFormation moved the service's strategy with it, `desiredCount` stayed 0. The cluster's list was back to four |
+| 2 | 🟢 | The offers template plus `ImageOffers` took **79 seconds** (20:07:12-20:08:31). The cluster's list holds **both** `af-<stack>-image` and `af-<stack>-image-spot` (five). The engine table (SSM) has `spotCapacityProvider`, `offers` and `offerBudgetSec`. Then `dev-deploy.sh` (12 minutes, new CP and Console images); its 60-engines step said `No changes to deploy` — i.e. byte for byte what had just been deployed |
+| 3 | 🟢 (on the second attempt) | **26 seconds** after `mode: on` a Spot box (`g6e.xlarge`, `InstanceLifecycle: spot`, 1a), and **5 min 30 s** to `state: running` / `warm: true` / `offer: {id: spot3, buy: spot}`. The first attempt was cut short by the default 180-second budget (🔴1). ⚠️ **No image was generated** — there is no way in from outside to the engine gateway (its token is the Workspace-internal `/internal/engine/token`), and driving somebody else's session was not an option. A generation on a Spot box is already measured in 0074 (one image in 403 s) |
+| 4 | 🟢 (via the budget) | With Spot made **unbuyable** (see "How to build the positive control") the start moved to `l4` (od) and an on-demand box (`g6.xlarge`) arrived in **28 seconds** and reached `warm: true`. ⚠️ It moved because the budget ran out, not because the failure code was recognised (🔴2). The orphan box of open question 10 — the old provider's box arriving **after** the move — was not seen (nothing could be bought there in the first place) |
+| 5 | 🟢 | In both 3 and 4 `GET /api/admin/engines` never showed `box: null` (Spot: `i-0fb3e7…` `g6e.xlarge`; on-demand: `i-0a4cdf…` `g6.xlarge`). **Both providers' boxes are recognised as its own** |
+| 6 | 🟢 | The rung reaches **only the chosen offer's provider**. The moment `spot3` was chosen automatically the Spot side went `acceleratorTotalMemoryMiB` 8000 → 22000 and the **on-demand side's `describe-capacity-providers` response was byte-identical**. Just before the move to `l4` it was the other way round: the on-demand side went 44000 → 22000 while the Spot side kept `g6.4xlarge` at 16 vCPU |
+| 7 | 🟢 | `offers` (three rows, with `buy`), `offer` and `offer_trail` match what happened. The trail across the fallback is `[{spot3, spot, budget}, {l4, od, active}]`. ⚠️ No screenshot of the panel (the admin modal cannot be opened by URL; known) |
+
+### 🔴 1. The budget ends on "not RUNNING yet", not on "no box came" — so 180 seconds can never buy Spot
+
+The first start (budget 180 s, the same three offers as now):
+
+```
+20:23:41 engines: image: starting on spot3 (22000 MiB VRAM declared)
+20:24:07 the Spot box registers as a container instance (g6e.xlarge, InstanceLifecycle: spot)
+20:27:11 engines: image: offer spot3 answered budget after 3m2s; trying l4 (od)
+20:30:36 engines: image: offer l4 answered budget after 3m2s; trying l40s (od)
+```
+
+**The box was there after 26 seconds.** What was cut short is the task on top of it, which spends minutes
+pulling the container and starting ComfyUI (0071 measured a 527-586-second cold start). At 180 seconds,
+therefore, the walk goes to the end of the list **whether or not Spot can be had** — and buys a box at
+every step. That run walked three offers in seven minutes, **bought two boxes and started none**. With
+`ImageOfferBudgetSec=900` and the identical offer list, the second attempt stayed on `spot3` and reached
+warm, as in the table above.
+
+**The fix (decision 5's text does not change)**: end the budget on "**has a box arrived for this
+offer**" — a container instance of that provider appearing, or the task landing on it — and leave the
+rest to `StartDeadlineSec`. Today `engineOfferVerdict(events, waited, budget)` looks only at
+`waited >= budget` and never reads whether a box exists.
+
+### 🔴 2. A Spot quota refusal is `MaxSpotInstanceCountExceeded`, and it arrives wrapped in another error
+
+Decision 5's table names `UnfulfillableCapacity`, `InsufficientInstanceCapacity` and `VcpuLimitExceeded`.
+What Managed Instances actually writes into the service events when it is over the Spot quota is a
+**fourth** code, and it comes **wrapped**:
+
+```
+(service af-<stack>-image) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-<stack>-image-spot.
+MaxSpotInstanceCountExceeded: Max spot instance count exceeded. RequestId: 3495893a-…
+```
+
+The CP matched it against none of the known codes (`offer spot3 has no event matching a known capacity
+failure code yet`) and **waited out the whole 15-minute budget** before moving on. Decision 5's "change
+how you wait per failure code" therefore **does not work for the quota case** while that line is missing
+from the table. Add `MaxSpotInstanceCountExceeded`, and match **as a substring across the wrapper**
+(`ResourceInitializationError: …` comes first). ⚠️ Decision 5's branch "`VcpuLimitExceeded` → skip to the
+other purchase option" **never fires on this deployment**: over-quota Spot speaks the other word.
+
+### 🔴 3. A 0 → 1 start that also changes the strategy makes ECS buy **two** boxes
+
+Hardware run 0 measured that putting the strategy, `desiredCount: 1` and force into one `UpdateService`
+is accepted by the API. It is. **But it does not buy one box.** Both starts reproduced it:
+
+| | The old strategy's (on-demand) box | The new strategy's (Spot) box |
+|---|---|---|
+| First | `g6.xlarge` registered 20:23:56 → 20:24:00 `stopped 1 pending tasks` | `g6e.xlarge` registered 20:24:07, the task goes here |
+| Second | `g6e.xlarge` registered 20:39:36 | `g6e.xlarge` registered 20:39:53, the task goes here |
+
+ECS applies `desiredCount` **first** and places a task under the old strategy, whose provider goes and
+buys a box. The new PRIMARY that force created then places it again — **but the box that was bought
+stays**. The second run's spare box was **billed for 16 min 28 s** ($0.51, 38% of the day's GPU spend),
+and while it sat there `DEREGISTERING` it **blocked the next start through 0074 decision 4's exit wait**
+(`class_swap_wait`): a `mode: on` at 20:50:09 did not actually begin for six minutes.
+
+**The fix**: split decision 4 (a)'s start into **two `UpdateService` calls** — (1) the strategy alone
+(`desired` still 0, `forceNewDeployment`; the path hardware run 0 measured as harmless), then (2)
+`desiredCount: 1` alone once the new PRIMARY exists. When the strategy is already the right one, (1) is
+not needed — the implementation's existing branch covers that.
+
+### How to build the positive control — an offer that "cannot be bought" cannot be declared
+
+Run 4 was specified as "write a type that deliberately cannot be bought". **That cannot be written.**
+Neither a misspelled type (`g6.xxlarge`) nor requirements that no allowed type satisfies get past
+`UpdateCapacityProvider`:
+
+```
+HTTP 400 ClientException: No instance types satisfy the instance requirements specified in the
+Managed Instances capacity provider.
+```
+
+Worse, the CP **logs that failure and starts anyway** (`re-applying the instance class spot3 failed …`),
+so the provider keeps **its previous requirements** and a real Spot box arrived while the declaration
+said something else. ⚠️ **Rewriting an offer's types changes nothing unless `UpdateCapacityProvider`
+accepts it.** What worked instead is **a type that exceeds the quota**: `spot3` as the single type
+`g6.4xlarge` (16 vCPU against a Spot quota of 8) — the requirements and the type agree, so the update
+goes through, and the refusal arrives at purchase time as 🔴2. **It costs $0 and it fails every time.**
+
+### Everything else (no decision changes, but the next person will hit these)
+
+- **`offerBudgetSec` does not survive a table reload**: `engines: image changed in the table in a way
+  this process cannot take live (offer budget) - restart the Control Plane`. The offer list and the
+  provider names do go in live (`instance classes re-read from /af-ws/engines: spot3, l4, l40s`).
+  Changing the budget costs one `force-new-deployment` of the CP.
+- **Two paths start the engine, and `offer_trail` records the same offer twice.** The admin toggle
+  (`startEngine`) and the controller's first tick logged the same `starting on spot3` one second apart,
+  and the trail became `[spot3 active, spot3 active]`. The damage is that **the budget clock restarts**
+  and that the panel shows a second attempt that never happened.
+- **When two offers share a provider, `offer` reports the first match.** `l4` and `l40s` are both
+  on-demand, so a start running on `l40s` still reports `offer: l4`. Decision 11 says to read it off the
+  service's strategy, so this is per spec — but **at the granularity of offers it is wrong**, and only
+  the trail says so.
+- **`class` and `offer` are not the same thing.** During the fallback `class` stayed at the top offer
+  (`spot3`) while `offer` was `l4`. 0074's rung is a choice; 0075's offer is the row it is running on —
+  the panel's wording must not blur the two.
+- Open question 10 (the orphan box) **did not appear in that shape**. What appeared is 🔴3's "two boxes
+  at start": the old provider's box does not arrive after the move, it arrives **together with the start**.
+
+### What the GPU cost
+
+| Box | Type | Purchase | Alive | Approx. |
+|---|---|---|---|---|
+| 1 | `g6.xlarge` | on-demand (🔴3's spare) | 10m43s | $0.23 |
+| 2 | `g6e.xlarge` | Spot | 6m55s | $0.16 |
+| 3 | `g6e.xlarge` | on-demand (🔴3's spare) | 16m28s | $0.51 |
+| 4 | `g6e.xlarge` | Spot (the box run 3 reached warm on) | 9m6s | $0.21 |
+| 5 | `g6e.xlarge` | Spot | 4m4s | $0.09 |
+| 6 | `g6.xlarge` | on-demand (run 4's fallback) | 7m6s | $0.15 |
+
+**54 minutes and about $1.34 in total** (plus the 7.80% Managed Instances fee = **about $1.45**).
+⚠️ Arithmetic from list prices, not a settled bill (open question 5). **$0.74 of it — 55% — is 🔴3's
+spare boxes.**
+
+### The cleanup
+
+- `mode: off`, and **the boxes were watched until they were gone**: no container instance carries a
+  capacity provider, `GET /api/admin/engines` has `box: null` and `state: stopped`, and all six
+  instances are `terminated` (the last one checked at 21:34:49). The service is at `desiredCount` 0 with
+  the on-demand provider in its strategy, and the cluster lists five providers (both engine ones stand).
+- `ImageOffers` was left declaring **`spot3` (Spot, three types), `l4` (od) and `l40s` (od)** — the
+  continuation of the operator's decision in 0074 to make Spot the dev deployment's default.
+  `ImageInstanceClasses` was not touched at all.
+- ⚠️ **`ImageOfferBudgetSec=900` was left in place.** Back at the default 180 this deployment's image
+  role does not start at all, for the reason in 🔴1.
+- ⚠️ Both went in through `--parameter-overrides`, so **neither is in the `params/60-engines` capture**
+  (standing the deployment up again with `standup.sh` loses them — the same caveat as 0074's follow-up).
+- The raw responses (CloudFormation, ECS, EC2 and SSM JSON, and the CP's log) are in
+  `~/.cache/adr0075-run1-7/` of the session that measured this.
