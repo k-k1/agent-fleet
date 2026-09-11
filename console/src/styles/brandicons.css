@@ -48,3 +48,32 @@
 .bi-agent-opencode {
   mask-image: url("../assets/brandicons/agents/opencode.svg");
 }
+
+/* Connected services (the settings connection cards). Keyed by the card's provider id. */
+.bi-service-aws {
+  mask-image: url("../assets/brandicons/services/aws.svg");
+}
+.bi-service-bitbucket {
+  mask-image: url("../assets/brandicons/services/bitbucket.svg");
+}
+.bi-service-cloudwatch {
+  mask-image: url("../assets/brandicons/services/cloudwatch.svg");
+}
+.bi-service-discord {
+  mask-image: url("../assets/brandicons/services/discord.svg");
+}
+.bi-service-github {
+  mask-image: url("../assets/brandicons/services/github.svg");
+}
+.bi-service-grafana {
+  mask-image: url("../assets/brandicons/services/grafana.svg");
+}
+.bi-service-jira {
+  mask-image: url("../assets/brandicons/services/jira.svg");
+}
+.bi-service-pagerduty {
+  mask-image: url("../assets/brandicons/services/pagerduty.svg");
+}
+.bi-service-slack {
+  mask-image: url("../assets/brandicons/services/slack.svg");
+}

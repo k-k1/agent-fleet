@@ -1,21 +1,32 @@
 # Brand icon attribution
 
-Logos for the things the Console names by brand. Today that is the agent CLIs (`agents/`)
-only. Resolved in `src/lib/brandicons.ts`; rendered as a CSS mask in `currentColor`
-(`styles/brandicons.css`), so every icon follows the theme and no per-icon color rule exists.
+Logos for the things the Console names by brand: the agent CLIs (`agents/`) and the services
+a workspace connects to (`services/`). Resolved in `src/lib/brandicons.ts`; rendered as a CSS
+mask in `currentColor` (`styles/brandicons.css`), so every icon follows the theme and no
+per-icon color rule exists.
 
 | Folder | Source | License |
 |---|---|---|
 | `agents/` | https://github.com/lobehub/lobe-icons | MIT |
+| `services/` | https://github.com/simple-icons/simple-icons | CC0-1.0 |
 
-**The MIT license covers that repository, not the marks themselves.** Each logo is a
-trademark of the company it names; they are used here nominatively, to identify the CLI a
-session actually ran through. Anyone redistributing the Console under their own brand should
-check the vendors' brand guidelines rather than read the MIT grant as permission.
+**Those licenses cover the repositories, not the marks themselves.** Each logo is a trademark
+of the company it names; they are used here nominatively, to identify the CLI a session ran
+through or the service an account is connected to. simple-icons says the same of its own
+contents. Anyone redistributing the Console under their own brand should check the vendors'
+brand guidelines rather than read the license grant as permission.
 
 Notes:
-- Only the icons actually referenced are vendored, not the upstream set (lobe-icons ships 906
-  SVGs; bundling it whole would cost far more than the seven in use).
+- Only the icons actually referenced are vendored, not the upstream sets (lobe-icons ships 906
+  SVGs and simple-icons over 3000; bundling either whole would cost far more than the handful
+  in use).
+- `services/` files are named after the settings card's provider id
+  (`features/settings/parts/providerCard`), not after the upstream slug — `cloudwatch.svg` is
+  simple-icons' `amazoncloudwatch`, `aws.svg` is `amazonwebservices`. That is what lets a card
+  find its own icon without a lookup table.
+- `svn` has no icon on purpose. The Apache Subversion mark is three diagonal stripes that
+  carry nothing at 16px, where the "sv" monogram at least names the thing; compared at 1:1 in
+  headless Chromium. `internal` (internal repositories) is not a brand at all.
 - `agents/` uses each set's **product** icon, not its vendor's: `codex` rather than `openai`,
   because the agent kind says which CLI ran, not who sells the model. The one exception is
   `claude`: upstream's `claudecode` mark is a dense pixel glyph that turns to mush at the 16px

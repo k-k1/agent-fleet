@@ -15,7 +15,11 @@ const ARM_PCT = 90;
 
 interface Src {
   endpoint: string;
-  name: string; // "Claude" / "Codex" — for the message
+  // The agent kind, which is also the wire value: the API refuses a `source` that is not
+  // "claude" or "codex" (control-plane/notification.go). This used to be the chip's DISPLAY
+  // name lowercased, which happened to match — a label edit would have turned every
+  // observation into a 400 with nothing in the UI to show for it.
+  kind: string;
 }
 interface Win {
   pct: number;
@@ -58,7 +62,7 @@ export function useUsageResetNotify(
     }));
     if (observations.length) {
       void apiJSON("api/notifications/usage-observations", "POST", {
-        source: src.name.toLowerCase(), windows: observations,
+        source: src.kind, windows: observations,
       });
     }
 
@@ -83,5 +87,5 @@ export function useUsageResetNotify(
       for (const t of timers.current) clearTimeout(t);
       timers.current = [];
     };
-  }, [usage, src.endpoint, src.name]);
+  }, [usage, src.endpoint, src.kind]);
 }
