@@ -3408,3 +3408,87 @@ bench scenario was green):
    `MODE=delete` as well.
 5. 🔴 The contract gate does NOT fire by mistake — no `CONTRACT MISMATCH` in any container's log.
    If one appears, the tag and the template are out of step.
+
+## H3 — P2's remainder and P3, closed on hardware (2026-09-11, dev deployment)
+
+One image-role start on `0.18.1-dev-b6feea43` (which carries #507 and #509), about 30 minutes
+(01:19:18Z mode=on → running by 01:23:36Z → 01:49:33Z stopped). **Everything passed.**
+
+### P3's completion definition is closed
+
+`sdxl-base-1.0`, one prompt, **one seed (4242)**, three pictures:
+
+| | sha256 | bytes |
+|---|---|---|
+| without the LoRA | `2d086024d086c76d48800eb830531aac0f020e4524a1cad9a4cb3044b90e0366` | 1,550,948 |
+| without it, same arguments again | `2d086024…` (**identical**) | 1,550,948 |
+| with `pixel-art-xl` at weight 1 | `66f7cde8b315f86d18cb56397dce5e3b894351d6a90d27fe370186975a527aed` | 1,509,900 |
+
+So **a pinned seed returns the same picture, and adding the LoRA changes it at that same seed.**
+"The same prompt and the same seed produce a different picture with the LoRA than without" —
+**met**. The other half, "an SD1.5 LoRA does not appear in SDXL's enum", is met in the
+refusal-by-name form (the 2026-09-11 follow-up). **Both halves of P3's definition are now closed.**
+
+**The cache warning fired on hardware too.** The second picture (an identical graph re-sent)
+carried exactly the line ADR 0069's follow-up designed — `this picture came from the engine's
+cache, not from a new generation …` — and the third (whose graph differs because of the LoRA node)
+did not. So reading ComfyUI's `execution_cached` works, including the part that matters: it is
+silent unless the cache was actually hit.
+
+These three results are mutually consistent (identical hash and identical byte count, the cache
+warning only on the re-send, a different hash once the graph changed). A fabricating driver does
+not produce that combination.
+
+### P2's remainder (the per-family image-to-image graphs) also passed — 10/10
+
+Input was the picture above (1024×1024); the mask a centred 512×512 white square.
+
+| family | edit | inpaint |
+|---|---|---|
+| sdxl | ✅ 1,534,029 B | ✅ 1,562,774 B |
+| flux2-klein | ✅ 1,605,040 B | ✅ 1,490,244 B |
+| zimage | ✅ 1,431,795 B | ✅ 1,398,940 B |
+| flux1 | ✅ 1,442,240 B | ✅ 1,339,478 B |
+| sd35 | ✅ 1,538,762 B | ✅ 1,601,249 B |
+
+All at 1024×1024 (the input picture's size, as designed) with empty warnings. **SD3.5's failure
+mode — a green golden test over a graph that was wrong — did not repeat.** The three things read
+off upstream v0.34.0 rather than assumed (`LoadImage`'s value is an enumeration over the input
+directory, so `/upload/image` has to come first; the mask is the red channel; klein alone needs
+`SplitSigmasDenoise`'s second output) would each have produced a `Value not in list` or a node
+error at validation, so ten clean runs are the evidence for all three.
+
+### 🔴 A trap only hardware produced — an advertised tool refusing its own call
+
+The first thirty minutes of H3 went to this. `generate_image` is in the client's tool list, and
+calling it answers
+`この対話セッション用サーバーでは許可されていないツールです: generate_image`
+— wording that reads like a permission problem.
+
+The mechanism: `mcpStdioCall` in `mcpx` **re-derives** `mcpStdioToolAdvertised()` on the CALL
+path, and that resolves through `mcpStdioToolList()` → `mcpImageGenAdvertise()` → the Agent's
+`/imagegen/status`, **a live HTTP round trip with a 3-second timeout**. That status call asks
+every provider's `Ready()`, which for the fleet's engines is `engineToken` → a round trip to the
+Control Plane (15-second timeout). **So a tools/call that lands while the CP is busy exceeds the
+three seconds, and a tool that IS advertised answers "not allowed".** Here the trigger was the CP
+having just been replaced with `--force-new-deployment`.
+
+Re-deriving the advertised set is a real boundary (a guessed name must not reach an unadvertised
+handler). But `generate_image` already has its own gate a few lines below in the same function
+(`if !mcpImageGenEnabled && p.Name == mcpToolGenerateImage`), so whether the call path also needs
+a network round trip is a design question. Deciding that is not this follow-up's job; the
+mechanism and the conditions to reproduce it are recorded here.
+
+### On the driver (continuing the previous follow-up)
+
+🔴 **An opencode managed session cannot be used for this.** Two fresh ones, both fabricated:
+inventing tool results for calls never made; pasting an English error that exists in no revision
+of this repository (`{"error":"The requested model sdxl-base-1.0 is not available for provider
+comfy"}` — absence confirmed with `git log --all -S`); **pasting a sha256 for paths that do not
+exist**; answering "done" without having run `bash` at all (confirmed by reading the file that was
+never created through `GET /api/fs/file`).
+
+**Switching to a `kind=claude` session worked on the first call, and all thirteen calls after it
+came back straight.** Take hardware numbers through a claude session. This continues the previous
+follow-up's "the driver is not an instrument", with the part it could not yet say: **which agent
+kind drives it changes the result.**

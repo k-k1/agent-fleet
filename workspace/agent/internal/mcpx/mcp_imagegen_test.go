@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -624,5 +625,91 @@ func TestProgressHeartbeatSilentWithoutToken(t *testing.T) {
 	stop()
 	if buf.Len() != 0 {
 		t.Fatalf("wrote %q with no progressToken", buf.String())
+	}
+}
+
+// 🔴 The call-side scope check must not go over the network (ADR 0072 H3, measured 2026-09-11).
+//
+// Re-deriving the advertised set on the call path meant asking the Agent's /imagegen/status with a
+// 3-second budget, and that status asks every provider's Ready() — a round trip to the Control
+// Plane for the fleet's own engines. A tools/call landing while the CP was busy (a CP replaced
+// moments earlier) blew the budget, and a tool sitting in the client's own tool list answered with
+// what read like a permission refusal.
+//
+// What the client may call is what it was told it may call, and this process already knows that.
+func TestAdvertisedToolStaysCallableWhenTheAgentIsSlow(t *testing.T) {
+	withImageGen(t, true)
+	t.Cleanup(forgetAdvertised)
+
+	var statusHits, slow int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/imagegen/status":
+			atomic.AddInt32(&statusHits, 1)
+			if atomic.LoadInt32(&slow) == 1 {
+				// Longer than agentImageGenStatus' own 3-second budget, which is what a busy
+				// Control Plane looked like.
+				time.Sleep(4 * time.Second)
+			}
+			_ = json.NewEncoder(w).Encode(mcpImageGenStatus{
+				Enabled: true, Ready: true, Provider: "comfy", Kind: "claude", Ops: []string{"generate"},
+				Providers: []mcpImageGenProvider{{ID: "comfy", Ops: []string{"generate"}}},
+			})
+		case "/imagegen/generate":
+			_, _ = w.Write([]byte(`{"files":[{"path":"/tmp/i.png","name":"i.png","mime":"image/png","bytes":1}],"provider":"comfy"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	u, err := url.Parse(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	// The client lists while the Agent is answering normally, which is what a real one does.
+	if m := stdioDispatch(t, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); m == nil {
+		t.Fatal("tools/list returned nothing")
+	}
+	if !mcpStdioToolAdvertised(mcpToolGenerateImage) {
+		t.Fatal("generate_image was not advertised, so this test would prove nothing")
+	}
+	listed := atomic.LoadInt32(&statusHits)
+
+	// Now the Agent is slow. The call must still go through, and must not ask again to find out.
+	atomic.StoreInt32(&slow, 1)
+	resp := callGenerateImage(t, map[string]any{"prompt": "a cat"})
+	if strings.Contains(resp, "tools/list に無いツール名") {
+		t.Fatalf("an advertised tool refused its own call: %s", resp)
+	}
+	if got := atomic.LoadInt32(&statusHits) - listed; got != 0 {
+		t.Errorf("the call path asked /imagegen/status %d more time(s); it must read what was advertised", got)
+	}
+
+	// The positive control: without the remembered set the call falls back to re-deriving it, the
+	// slow status times out, and today's refusal comes back. That is what this fix removed.
+	forgetAdvertised()
+	if resp := callGenerateImage(t, map[string]any{"prompt": "a cat"}); !strings.Contains(resp, "tools/list に無いツール名") {
+		t.Errorf("re-deriving over a slow Agent did NOT refuse, so the test above proves nothing: %s", resp)
+	}
+}
+
+// The boundary itself is unchanged: a name this server never advertised is still refused on the
+// call path, so a client that guesses one cannot reach a handler through it.
+func TestUnadvertisedToolIsStillRefusedAfterAList(t *testing.T) {
+	withImageGen(t, false) // no image tool in the advertised set
+	t.Cleanup(forgetAdvertised)
+	stubImageGenStatus(t, mcpImageGenStatus{Enabled: false})
+
+	if m := stdioDispatch(t, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`); m == nil {
+		t.Fatal("tools/list returned nothing")
+	}
+	for _, name := range []string{mcpToolGenerateImage, "list_my_sessions", "made_up_tool"} {
+		params, _ := json.Marshal(map[string]any{"name": name, "arguments": map[string]any{}})
+		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Errorf("%s was not refused: %s", name, resp)
+		}
 	}
 }

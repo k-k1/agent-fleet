@@ -656,6 +656,9 @@ prefs ファイルを書いている（`spawnLimitPref`）。`mcpx` は uiprefs 
 外挿である。** 子の作業内容（コンテキストの伸び方）によって私用分は変わるので、レンジで書いて
 いる。
 
+→ **2026-09-11 に親 1 ＋子 6 を実際に張り付けて測った**（§87.19.3）。kind 混在で 1.76〜1.90 GiB、
+外挿レンジの上端に重なった。
+
 ### 87.17.5 結論: 既定 3・上限 6 は変えない。ADR には補遺を付けない
 
 **データは既定 3・上限 6 を変える方向を支持しない。** 実測（PSS ベース）は、当初の見積り
@@ -693,6 +696,7 @@ prefs ファイルを書いている（`spawnLimitPref`）。`mcpx` は uiprefs 
   1 つの数なので、**claude より重い kind があれば、この節の余裕の見積りはそちらでは縮む**。
   §88.4 の対応表が言うとおり「上限が要る理由はメモリが尽きることそのものではない」ため
   致命的ではないが、**kind 別の常駐費用は未測定のまま残る宿題**である。
+  → **2026-09-11 に codex / opencode / agy を測った**（§87.19.3）。全部 claude より重い（1.1〜2.3 倍）。
 - **idle と working の差は測れたが、他の要因と交絡している。** working な他セッション
   （sujt2ud・sl2m226、262〜375 MB Pss）と idle な軽量タスクの子（189〜212 MB Pss）を比べると
   差があるが、working 側はコンテキストが大きく育った既存セッションで、idle 側は起こしたばかり
@@ -825,3 +829,216 @@ exit 0）。Console 側の欠落は Console 側の試験にしか映らない。
 全量: `(cd workspace/agent && go test ./... -count=1)` exit 0。`cd console && npm test` は
 2235 passed / 1 failed で、落ちる 6 ファイルは `src/features/viewer/` の `Denied ID`
 （親の `node_modules` を symlink で共有していることによる既知・無関係。AGENTS.md）。
+
+## 87.19 §87.17 の宿題 3 件を実機で測る（2026-09-11）— 上限 6・kind 別・`report_back` の n
+
+§87.17 が残した 3 件——**上限 6 は外挿のまま**（§87.17.4）・**kind 別の常駐費用が未測定**
+（§87.17.6）・**`report_back` の遵守率は n=3**（§87.15、ADR 0073「影響 / 未解決」）——を、
+1 セッション（`sxflzui`、本 worktree）から親 1 ＋子 6 を実際に起こして測った。コードは
+変えていない。**結論は既定 3・上限 6 とも変えない**（理由は §87.19.5）。
+
+### 87.19.1 測定条件（§87.17.1 と同じ規則で記録する）
+
+- **日時**: 2026-09-11 10:57〜11:11 JST。**cgroup**: `memory.max` = 10737418240 B（10 GiB）。
+- **`memory.current` のベースライン**: 10:57:57 に 6,901,538,816 B（6,582 MiB）、
+  10:58:27 に 6,783,991,808 B（6,470 MiB）。§87.17.1（約 3 GiB）の **2 倍以上**を他セッション
+  が既に使っており、30 秒で 110 MiB 動いている。ベースラインは今回も静止していない。
+- **測定中に生きていた他セッション（自分＝`sxflzui` を除く）**: `sundv6e`（claude・fable・
+  idle）・`s3povld`・`ssyhviu`・`sjdl3sx`（いずれも claude・working）・`st6pij4`（claude・
+  idle、11:01〜11:06 の間に停止）・`sxe5akb`（claude、11:01 頃に新規起動）。他に別セッションの
+  `go build` と `dev-deploy.sh` が走っていた。`ps` の `[AF:<name>]` ラベルで数えた。
+- **子の枠**: `list_child_sessions` で `slotLimit=6, slotsLeft=6` を確認してから開始
+  （利用者が設定済み）。終了時 `slotsLeft=0`——**停止しても枠は空かない**ので、本セッションが
+  起こせる子は生涯で 6 本である。
+- **手段**: 主指標は `/proc/<pid>/smaps_rollup` の `Pss` / `Shared_Clean` / `Private_Dirty`
+  （§87.17.2 の教訓どおり RSS 単純和は使わない）。プロセスは `/proc/<pid>/environ` の
+  `AF_SESSION_NAME` で自分の子だけを拾い、managed 系は `ps` の親 PID（`workspace-agent`＝PID 7）
+  と作業ディレクトリで同定した。クロスチェックは `memory.current` の差分（起こす前→揃った後→
+  止めた後）。`pkill` は使っていない。
+- **子の課題**: 全員「README を読んで 1 文で答える」級の読み取り専用（ビルド・テスト・
+  コミット禁止）。`initial_prompt` には報告の念押しを書いていない（サーバが足す 1 行だけを効かせる）。
+
+### 87.19.2 子 6 本の構成と、起こすときに踏んだ 3 つ
+
+| 子 | kind / model | driver | 備考 |
+|---|---|---|---|
+| `suanarw` | claude / sonnet | TUI | |
+| `siyypxq` | claude / sonnet | TUI | |
+| `szitsze` | claude / sonnet | TUI | |
+| `smtud5j` | codex / gpt-5.6-sol | managed（`codex app-server`） | |
+| `szhqaat` | opencode / opencode-go/deepseek-v4-flash | managed（`opencode serve`） | **1 ターンも走らなかった**（下記 3） |
+| `s5mrayc` | agy / gemini-3.8-flash-medium | TUI | |
+
+copilot は `list_models` が空（未ログイン）、cursor / kiro はバイナリが無く、起こせなかった。
+
+1. 🔥 **同じ指示の `create_session` 3 回が 1 本に潰れた。** claude 3 本を同じ `initial_prompt`
+   ・kind・model・dir で（title だけ 子1/子2/子3 と変えて）並列に呼んだところ、3 回とも
+   **同じ `suanarw`** が返った。MCP 側の冪等キー `CreateSessionKey`（`mcp_stdio.go`）は
+   scope・dir・subdir・kind・model・prompt・worktree・branch から作り、**title を含まない**
+   （Agent 側 `createIdempotencyKey` は title を含むが、MCP が明示キーを渡すので効かない）。
+   台帳の TTL は 3 分。タイムアウト後の再試行を潰す設計（docs/log/30）の当然の帰結だが、
+   **「同じ仕事を 3 本に振る」親は prompt を 1 文字でも変えないと 1 本しか立たない。**
+   残り 2 本は prompt に「（子2）」「（子3）」を足して起こし直した。
+2. **`list_models(opencode)` と `create_session` の検証が食い違う。** 一覧が返した
+   `opencode-go/deepseek-flash` を create が「利用できません」と拒み、代わりに挙げた候補
+   （`deepseek-v4.1-flash` 等）は一覧に無かった。2 つのカタログを読んでいる。
+3. **opencode の子は API の 403 で 1 ターンも走らなかった。** `get_session_output` は
+   「The latest version of this model is only available hosted in China and requires explicit
+   opt in」（HTTP 403）だけを 2 回返した（起動時と、後述の peer 送信時）。⚠️ **`list_child_sessions`
+   ではこの子は `idle` かつ `lastTurnEndAt` 付き**で、成功した子と見分けが付かない。親が
+   「終わった」と読んで結果を取りに行くまで、失敗は見えない。枠 1 本と `opencode serve`
+   480 MB は消費したままである。
+
+### 87.19.3 実測: 親 1 ＋子 6 の PSS（宿題 1・2）
+
+**子 6 本が全部揃い、起動時の課題を終えて idle だった時点**（11:01:21）の `smaps_rollup`。
+kind ごとに主プロセスを 1 行にし、managed の daemon はそのまま載せた（`workspace-agent
+mcp-stdio` の補助プロセスはセッションあたり 1〜2 本・各 7〜11 MB Pss で、表から外している）。
+
+| セッション | kind | プロセス | Rss (kB) | Pss (kB) | Shared_Clean (kB) | Private_Dirty (kB) |
+|---|---|---|---:|---:|---:|---:|
+| `sxflzui`（親・working） | claude | `claude` | 383,600 | 279,008 | 117,584 | 266,000 |
+| `suanarw` | claude | `claude` | 286,632 | 182,944 | 116,524 | 170,100 |
+| `siyypxq` | claude | `claude` | 293,848 | 190,285 | 116,368 | 177,480 |
+| `szitsze` | claude | `claude` | 292,684 | 189,027 | 116,476 | 176,208 |
+| `smtud5j` | codex | `node … codex app-server` | 46,980 | 43,809 | 3,500 | 7,596 |
+| 〃 | codex | `codex app-server`（native） | 172,212 | 172,204 | 8 | 54,992 |
+| 〃 | codex | 同・子プロセス | 19,804 | 19,796 | 8 | 3,156 |
+| `szhqaat` | opencode | `opencode serve` | 479,808 | 476,223 | 3,964 | 384,248 |
+| `s5mrayc` | agy | `agy` | 251,556 | 249,536 | 2,088 | 114,948 |
+| **子 6 本の合計** | | | | **1,523,824** | | |
+| **親＋子 6 の合計** | | | | **1,802,832** | | |
+
+同じ 9 プロセスを 6 回サンプルした（10:59:49〜11:06:32）。子が peer の課題で working だった
+11:02:57 は子合計 **1,653,701 kB**・親込み **1,949,334 kB** で、これが上限側。
+**親 1 ＋子 6（kind 混在）の実測レンジは 1,761〜1,904 MiB**（補助プロセスを足して
+≈1.82〜1.96 GiB）。
+
+**kind 別（idle・軽量課題・主プロセスの Pss、6 サンプルのレンジ）**:
+
+| kind | Pss | Shared_Clean | Private_Dirty | claude 比 | 備考 |
+|---|---:|---:|---:|---:|---|
+| claude（sonnet） | 183〜217 MB | 116 MB（定数） | 170〜204 MB | 1.0 | §87.17.2 の 189〜212 MB と同じレンジ |
+| codex（managed） | 236〜240 MB（3 プロセス計） | ≈0 | 55〜58 MB（native） | 1.1〜1.2 | daemon は kind 単位で共有（docs/log/27 §7.1） |
+| agy | 250〜309 MB | 2 MB | 115〜174 MB | 1.3〜1.5 | 共有ページがほぼ無い＝Rss ≈ Pss |
+| opencode（managed） | 476〜481 MB | 4 MB | 384〜388 MB | 2.3 | **1 ターンも成功していない**状態でこの値。daemon は kind 単位で共有 |
+
+- **claude 以外は全部 claude より重い。** ただし codex / opencode の値は **daemon 1 本ぶん**で、
+  同じ kind の子を 2 本以上起こしたときの 2 本目以降の限界費用は測れていない（n=1 ずつ）。
+  docs/log/27 §7.1 のとおり daemon は Workspace で 1 本なので、6 本×480 MB という掛け算は
+  成り立たない——が、その代わり **1 本目が 480 MB** で始まる。
+- **claude の `Shared_Clean` 116 MB は §87.17.2 の 117 MB と一致**し、線形モデルの前提
+  （共有 1 回＋私用分 × N）は今回も保たれている。agy と codex の native は `Shared_Clean` が
+  ほぼ 0 で、**Pss の大半が Private_Clean（1 本しか map していないバイナリのページ）**である。
+  2 本目を起こせば按分で下がるはずだが、それも未測定。
+
+**`memory.current` によるクロスチェック**:
+
+| 時刻 | 事象 | `memory.current` |
+|---|---|---:|
+| 10:57:57 / 10:58:27 | 起こす前 | 6,582 / 6,470 MiB |
+| 10:59:49 | 6 本揃った直後（opencode 起動から 37 秒） | 8,099 MiB |
+| 11:00:21〜11:04:15 | 全員 idle 〜 peer の課題中 | 8,310〜8,404 MiB |
+| 11:06:19〜11:06:38 | 停止直前（`sxe5akb` 起動後） | 8,678〜8,778 MiB |
+| 11:07:00 | 6 本 `stop_session` の 10 秒後（daemon 2 本は残存） | 7,987 MiB |
+| 11:07:50 | 同 60 秒後（daemon 2 本は残存） | 7,337 MiB |
+| 11:10:55 | 同 3.5 分後（daemon 2 本とも消えた） | 6,950 MiB |
+
+起こす前→揃った後で **+1,517〜+1,934 MiB**、停止直前→daemon 消滅後で **−1,728 MiB**。
+子 6 本の PSS 和 **1,488〜1,615 MiB**（補助プロセス込みで ≈1,550〜1,680 MiB）と同じレンジに
+収まり、3 種類の独立な測定が一致した。差分の残りは他セッションの活動（`st6pij4` の停止・
+`sxe5akb` の起動・別セッションのビルド）と、6 本の worktree checkout がページキャッシュに
+乗る分（`memory.current` はキャッシュを含む）である。
+
+⚠️ **`stop_session` の直後に測ると managed の daemon が残っている。** 2 本で ≈712 MiB。
+docs/log/27 §7.1 の「需要ゼロで自動停止（既定 2 分）」どおり、+60 秒では生きていて +3.5 分で
+消えていた。§87.17.2 は停止 5 秒後の差分を使ったが、managed の子が居るときは 2 分待たないと
+「止めた後」にならない。
+
+### 87.19.4 `report_back` の遵守率（宿題 3）——n は 2 つの条件に割れる
+
+**枠が 6 本で停止しても空かない**ので、起動時の指示（サーバが足す 1 行）に対する新規の試行は
+本セッションでは 6 回が上限である。n を 10 以上にするため、終わった子に **同じ 1 行を本文末尾に
+付けた peer メッセージ（`intent=request`）**で次の課題を 2 巡送った。これは**別の条件**である
+（理由は下）。「返ってきた」の定義は §87.15 と同じ——子からの `intent=answer` が本セッションに
+実際に届くこと。届いたものは全部、本セッションの**ターンの途中に操縦（steering）入力として**
+着いた（親が idle になるのを待っていない）。
+
+**条件 A: 起動時の指示（`spawnPromptFor` の 1 行）、新規の子**
+
+| 子 | kind | 生成 | 最終ターン終了 | 返ってきたか | 通数 |
+|---|---|---|---|---|---|
+| `suanarw` | claude | 10:58:40 | 10:58:55 | ✅ `answer` | 1 |
+| `smtud5j` | codex | 10:58:45 | 10:59:15 | ✅ `answer` | 1 |
+| `s5mrayc` | agy | 10:58:53 | （記録なし・下記） | ✅ `answer` | 1 |
+| `siyypxq` | claude | 10:59:07 | 10:59:19 | ✅ `answer` | 1 |
+| `szitsze` | claude | 10:59:09 | 10:59:26 | ✅ `answer` | 1 |
+| `szhqaat` | opencode | 10:59:12 | 10:59:31 | — | 0（**無効**: API 403 で 1 ターンも走っていない） |
+
+**5/5（無効 1 を除く）。§87.15 と合わせて累計 8/8**（claude 5・codex 2・agy 1）。
+いずれも生成から 30 秒以内・1 通のみ・相槌なし。
+
+**条件 B: 同じ 1 行を peer の `request` の本文末尾に付けて再依頼（封筒は `reply=only-if-blocked`）**
+
+| 子 | kind | 1 巡目 | 2 巡目 | 備考 |
+|---|---|---|---|---|
+| `suanarw` | claude | ✅ | ✅ | |
+| `szitsze` | claude | ✅ | ✅ | |
+| `siyypxq` | claude | ❌ | ❌ | 画面に「`reply=only-if-blocked` のため、正常完了した今回も peer への返信は送らず」と**明示して**送らなかった（2 回とも） |
+| `smtud5j` | codex | ✅ | ✅ | |
+| `s5mrayc` | agy | ❌ | ❌ | 1 巡目に `notes/agent-fleet.md` を読んでから画面に答えだけ書いた。2 巡目も同じ |
+| `szhqaat` | opencode | — | — | 無効（403） |
+
+**6/10。** 落ちた 4 回は全部「封筒の `reply=only-if-blocked` が本文の 1 行に勝った」形で、
+claude の 1 本はそれを言葉にしている。**これは設計どおり**（`request` は完了報告を返さない・
+ADR 0041 決定 13）であって、`report_back` の失敗ではない。
+
+**読み方**:
+
+- **`report_back` は起動時の指示にだけ効く数字である。** 累計 8/8 はその条件の数字で、
+  「終わった子に peer で次の仕事を振ったら、また報告が来る」とは読めない（6/10）。
+  再依頼して結果が要るなら、本文に 1 行を足すのではなく **`intent=question`**（プロトコルが
+  1 通の結論を要求する）を使う。
+- **8/8 でも「常に 100%」ではない。** 課題は全部 30 秒級の読み取り専用で、長い課題・質問を挟む
+  課題・失敗する課題は含んでいない（§87.15 と同じ限界）。増えたのは n と kind（agy が加わった）
+  であって、条件の幅ではない。
+- **agy の子は親から「終わった」が見えない。** `list_child_sessions` に `state` も
+  `lastTurnEndAt` も無く、`get_session_status` はコンポーザが空いていても `working` のままで、
+  `get_session_output` は空を返した（agy には状態フックが無い——docs/log/32）。親が agy の子の
+  完了を知る手段は、今のところ `report_back` の 1 通だけである（条件 A では届いた）。
+
+### 87.19.5 結論: 既定 3・上限 6 は変えない。定数・試験・Console は触らない
+
+- **上限 6 は外挿でなくなった。** 親 1 ＋子 6 を同時に生かした実測は **1.76〜1.90 GiB**
+  （kind 混在・補助込みで ≈1.8〜2.0 GiB）。§87.17.4 の外挿レンジ（1.5〜1.9 GB）の**上端に
+  重なり**、ADR 0073 決定 6 補遺の当初値（RSS 単純和・2.4〜3.0 GiB）より低い。claude だけで
+  6 本なら今回の私用分（170〜204 MB）から **1.37〜1.62 GB** で、§87.17.4 の 1.48 GB と一致する。
+- **kind をまたいでも 6 は安全側に収まる。** 最重量の kind で 6 本揃えた場合——agy は共有ページが
+  無いので 6 × ≈280 MB ＋親 ≈ **1.96 GB**、opencode は daemon が Workspace で 1 本なので
+  6 本でも 480 MB ＋会話分（未測定）——いずれも当初値 2.4〜3.0 GiB を超えない。
+  **ただし claude より重い kind しか無かった**（1.1〜2.3 倍）ので、§87.17.6 の「余裕の見積りは
+  そちらでは縮む」は現実になった。縮んでも上限 6 の理由（親の数を縛らない・拒否の文面に書ける数）
+  は動かない。
+- **むしろ効いたのは他セッションの分である。** ベースラインが 6.5 GiB の状態で 6 本を足すと
+  cgroup の **85%**（8.4〜8.8 GiB）まで行った。決定 6 が「親 1 つの天井はホスト容量よりずっと
+  下でなければならない」と言った理由が、数字として見えた。
+- したがって `session.SpawnChildLimitMax`・`spawn_child_limit_drift_test.go`・Console の選択肢は
+  変えず、ADR 0073 決定 6 にも補遺を付けない（§87.17.5 の方針）。ADR の「影響 / 未解決」の
+  `report_back` の行だけ、n を累計に更新した（ja / en）。
+
+### 87.19.6 残したもの（コードは変えていない。判断は利用者へ）
+
+1. **冪等キーに title が入っていない**（§87.19.2-1）。同じ prompt の子を 3 分以内に複数起こす
+   親は 1 本しか得られない。「同じ仕事を N 本」は想定外なのか、キーに title（か呼び出し順）を
+   足すのか——決めるならここ。
+2. **`list_models` と create の検証が別カタログ**（§87.19.2-2）。opencode で再現。
+3. **API 段で失敗した子が成功と同じ顔をする**（§87.19.2-3）。`lastTurnEndAt` は「ターンが
+   終わった」であって「課題が終わった」ではない。失敗を親に見せるなら、`list_child_sessions`
+   の行に最終ターンの結果（error 有無）を足す案。
+4. **agy の子の完了は親から見えない**（§87.19.4）。状態フックの無い kind の共通問題。
+5. **codex / opencode の 2 本目以降の限界費用**は未測定（daemon 共有のため、1 本の測定では出ない）。
+6. **後片付け**: 子 6 本（`suanarw`・`siyypxq`・`szitsze`・`smtud5j`・`szhqaat`・`s5mrayc`）は
+   すべて `stop_session` 済み・未削除（削除は利用者の操作）。付随する worktree 6 本
+   （`agent-fleet@wip-shvqonp` / `@wip-skcge2y` / `@wip-sxkoqem` / `@wip-su6rfsc` /
+   `@wip-soli3w7` / `@wip-sxgluim`）は develop 基点・コミットなし・読み取りのみで、**全部削除して
+   よい**。本セッションの枠は 0/6 のまま（停止では空かない）。
