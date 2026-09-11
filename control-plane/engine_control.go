@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -799,6 +800,13 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 		target = "start"
 	}
 	if err := c.setDesired(ctx, on); err != nil {
+		if errors.Is(err, errEngineStrategySettling) {
+			// Not a failed start: the capacity provider strategy is now what this engine wants,
+			// and only the desired count is outstanding. The next tick takes the short path and
+			// writes it. Counting this would double a cooldown over a call that did its half.
+			log.Printf("%s: %s (%s) waits for the new deployment before the desired count", c.eng.logKey(), target, reason)
+			return
+		}
 		log.Printf("%s: %s failed (%s): %v", c.eng.logKey(), target, reason, err)
 		// Count an UpdateService failure as a failed start too: without a cooldown the
 		// next tick repeats it, and a permission or quota error repeats forever.

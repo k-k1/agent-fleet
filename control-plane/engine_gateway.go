@@ -861,6 +861,13 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// 0075 decision 4 (a)). Moving the count alone here would start the box on whatever provider
 	// the service was last pointed at.
 	if err := e.startEngine(ctx); err != nil {
+		if errors.Is(err, errEngineStrategySettling) {
+			// Half done and not an error: the strategy is written, the desired count follows on
+			// the controller's next tick. The caller is a wait loop, so "not yet" is an answer it
+			// already knows how to hold — the same shape as the start gate's refusal above.
+			log.Printf("%s: a request is waiting; the capacity provider strategy was written first", e.ecs.logKey())
+			return nil
+		}
 		return fmt.Errorf("could not start the engine: %w", err)
 	}
 	log.Printf("%s: started on demand", e.ecs.logKey())

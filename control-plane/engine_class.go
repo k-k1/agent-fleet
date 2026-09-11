@@ -762,9 +762,8 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 		e.noteNoOffer(ctx)
 		return false, engineReasonNoOffer
 	}
-	sel := cands[0]
 	e.offers.begin(cands)
-	if b, on := e.ecs.box(ctx); on && b.instanceType != "" && !engineClassHasType(sel, b.instanceType) {
+	if b, on := e.ecs.box(ctx); on && b.instanceType != "" && !engineClassHasType(cands[0], b.instanceType) {
 		if e.swapWaitExpired() {
 			log.Printf("engines: %s: a %s box is still registered after %s; starting on the old class anyway",
 				e.def.Key, b.instanceType, engineClassSwapWaitMax)
@@ -774,14 +773,9 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	} else {
 		e.clearSwapWait()
 	}
-	if err := e.applyClass(ctx, sel); err != nil {
-		if e.lastAppliedClass() != sel.ID {
-			log.Printf("engines: %s: not starting — the instance class %s could not be applied: %v",
-				e.def.Key, sel.ID, err)
-			return false, engineReasonClassApply
-		}
-		log.Printf("engines: %s: re-applying the instance class %s failed (already applied by this process): %v",
-			e.def.Key, sel.ID, err)
+	sel, ok := e.applyFirstUsableOffer(ctx, cands)
+	if !ok {
+		return false, engineReasonClassApply
 	}
 	e.logVramFit(ctx, sel)
 	return true, ""
