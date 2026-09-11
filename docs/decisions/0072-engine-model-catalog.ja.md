@@ -3078,3 +3078,41 @@ seed を固定した 2 回目の要求が ComfyUI の出力キャッシュに当
 **実機で確かめること。** 次に llm 役が起動したとき、`llama-server` のログに LoRA の
 ロード行が出ること（`/models` の `status.args` に `--lora-scaled` が見えること）と、
 固定した微調整が応答に効いていること。実機レーンの担当である。
+
+
+## 追記 — 埋め込みシェルをイメージへ出した（2026-09-11・案 A）
+
+`60-engines.yaml` の残る大物だった埋め込みシェルを、`deploy/aws/ecs/engine-tools/` の**ファイル**に
+出し、`af-engine-tools` という小さなイメージに焼いた。案 B（models バケットから起動時に取る）は
+「人が編集できるオブジェクトを起動経路が実行する」という境界の変化なので採らず、案 C（SSM
+パラメータ）は Standard の 4 KB に対して fetch スクリプト単体が 6.3 KB で既に入らない。決定は
+利用者。テンプレートの機構は `cfn/PARAMETERS-60-engines.md` の「The engine tools image」が正本。
+
+- 45,792 → 39,592 バイト（-6,200・壁まで 11,608）。出したのは fetch サイドカー 6,308 と
+  ingest の fetch 979 / upload 523 の計 7,810 で、差はパラメータ 1 本・`!Sub` のイメージ参照
+  4 箇所・`ENGINE_TOOLS_CONTRACT` 4 行ぶんである。**その差こそが束縛の代金**で、削ってはならない。
+- 🔴 **idle wrapper 3 本（1,318 バイト）は出せない。** あれはエンジン自身のコンテナ
+  （`/app/llama-server`・`/sd-server`・`/ComfyUI/main.py`）で走り、1 コンテナ 1 イメージである。
+  3 つのうち 2 つ（`af-llamacpp`・`af-sdcpp`）はこのリポジトリが作っていない第三者イメージの
+  ピン留めコピーなので、焼き込むにはフォークすることになる。依頼の仕様にあった「wrapper も出す」
+  はここで成立しない。
+- **古いイメージ × 新しいテンプレートは黙って別の挙動をしない。** テンプレートは
+  `ENGINE_TOOLS_CONTRACT` を宣言し、各スクリプトは自分の隣の `CONTRACT` と突き合わせ、違えば
+  **何もせず exit 78** して理由を 3 行ログに出す。`standup.sh` はイメージをスタックより 1 段
+  先に写すので、この順序は仮定ではなく実際に起こる。
+- 🔴 **`engine-sidecar-test.sh` は移す前にファイル直読みへ変えた。** さらに、テンプレートの
+  契約番号が `CONTRACT` と一致すること・スクリプトを走らせるコンテナが契約を宣言していること・
+  知らない番号では走らないことを、その場で検査する（陽性対照 3 件は赤になることを確認済み）。
+- 副次的に、起動経路から第三者の `:latest` が 2 つ消えた（`aws-cli:latest` と
+  `curlimages/curl:latest`）。決定 6 が禁じているのはまさにこれである。
+
+**次の配備で実機レーンが確認すること**（ベンチが緑でも実機で落ちた 2 箇所そのものなので、
+ここは机上では終わらない）:
+
+1. `af-engine-tools` が ECR に入り、両役の fetch コンテナと ingest の 2 コンテナが**引ける**こと。
+2. fetch サイドカーのログに `engine fetch: sync done` と、`WATCH_SEC` の監視行が出ること
+   （＝`ENTRYPOINT []` と `Command: [/opt/af/fetch-models.sh]` で実際に起動している）。
+3. idle wrapper が `/models/ready` を見てエンジンを起動すること（llm と image の両方）。
+4. Console から取り込みを 1 本流し、ingest の `fetch` と `upload` が通ること。`MODE=delete` も。
+5. 🔴 契約の門が**誤って発火していない**こと——どのコンテナのログにも `CONTRACT MISMATCH` が
+   無いこと。出ていたらタグとテンプレートがずれている。

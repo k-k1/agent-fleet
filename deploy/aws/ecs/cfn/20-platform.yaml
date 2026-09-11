@@ -126,6 +126,19 @@ Resources:
       # third-party ones above, whose scan findings nobody here can fix).
       ImageScanningConfiguration: { ScanOnPush: true }
 
+  # The engine fetch sidecar and the two ingest steps, as an image of ours rather than as shell
+  # inline in 60-engines.yaml (PARAMETERS-60-engines.md, "The engine tools image"). Small, and
+  # filled on every stand-up that enables engines at all, because both roles AND the ingest task
+  # pull it. engine-tools-image.yml bakes it to GHCR; standup.sh copies it in.
+  EcrEngineTools:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Delete
+    Properties:
+      RepositoryName: af-engine-tools
+      EmptyOnDelete: true
+      # Our own build, so its findings are ours to fix.
+      ImageScanningConfiguration: { ScanOnPush: true }
+
   # --- Service Connect namespace (Cloud Map private DNS in the VPC) ---
   Namespace:
     Type: AWS::ServiceDiscovery::PrivateDnsNamespace
@@ -453,6 +466,10 @@ Outputs:
   EcrComfyuiUri:
     Value: !GetAtt EcrComfyui.RepositoryUri
     Export: { Name: !Sub "${AWS::StackName}-EcrComfyuiUri" }
+  EcrEngineToolsUri:
+    Description: The engine tools repository (the fetch sidecar and the ingest steps).
+    Value: !GetAtt EcrEngineTools.RepositoryUri
+    Export: { Name: !Sub "${AWS::StackName}-EcrEngineToolsUri" }
   ClusterName:
     Value: !Ref Cluster
     Export: { Name: !Sub "${AWS::StackName}-ClusterName" }

@@ -19,6 +19,10 @@ Parameters:
     Type: String
     Default: af.internal
     Description: The private DNS namespace NAME, as given to 20-platform.
+  EngineToolsImageTag:
+    Type: String
+    Default: "2026-09-11"
+    Description: Tag in the af-engine-tools ECR repository. !! Bound to the script contract.
   EnginesSsmParamName:
     Type: String
     Default: /af-ws/engines
@@ -235,111 +239,6 @@ Parameters:
     Type: Number
     Default: 14
     Description: CloudWatch retention for the engine and ingest log group.
-Mappings:
-  # !! One sidecar for both roles, a LITERAL block, never folded - PARAMETERS, "The fetch sidecar".
-  Engine:
-    fetch:
-      script: |-
-        set -e
-        mkdir -p "$MODELS_DIR"
-        trap 'touch "$MODELS_DIR/ready" 2>/dev/null || true; rm -rf "${K:-}" 2>/dev/null || true' EXIT
-        # The key lists live under a directory of this PROCESS's own. They were fixed /tmp
-        # paths, which is invisible in a container of one process and a trap everywhere else:
-        # this script now stays resident (WATCH_SEC), so two of them - a leaked one from a
-        # previous test run, a second task on one host - rewrite each other's lists while the
-        # first is still reading them. Measured: it turned every later assertion in
-        # engine-sidecar-test.sh into a different failure.
-        K="${TMPDIR:-/tmp}/engine-fetch.$$"
-        mkdir -p "$K"
-        want_keys() {
-          : > "$K"/keys.rest
-          if [ -n "$PRESET_FILE$SYNC_ALL" ]; then
-            printf '%s' "$1" | jq -r --arg s "$2" '[.models[]?|select(.id!=$s)|.f[]?|if type=="string" then . else .k end]|.[]' > "$K"/keys.rest
-          fi
-          printf '%s' "$1" | jq -r --arg s "$2" '[(.models[]?|select(.id==$s)|.f[]?|if type=="string" then . else .k end),(.loras[]?)]|.[]' > "$K"/keys.start
-          cat "$K"/keys.start "$K"/keys.rest > "$K"/keys.all
-        }
-        pending_put() {
-          if [ -z "$PENDING_PARAM" ]; then return 0; fi
-          p=$(jq -R -s -c '[splits("\n")|select(length>0)]' < "$1" || printf '[]')
-          if [ -z "$p" ]; then p='[]'; fi
-          while [ ${#p} -gt 4000 ]; do p=$(printf '%s' "$p" | jq -c '.[:-1]'); done
-          aws ssm put-parameter --name "$PENDING_PARAM" --type String --overwrite --value "$p" >/dev/null 2>&1 \
-            || echo "engine fetch: could not write $PENDING_PARAM - the gateway cannot know to wait"
-        }
-        pending_sync() {
-          if [ -z "$PENDING_PARAM" ]; then return 0; fi
-          : > "$K"/keys.pending
-          while read -r k; do
-            if [ -z "$k" ]; then continue; fi
-            if [ -s "$MODELS_DIR/$k" ]; then continue; fi
-            echo "$k" >> "$K"/keys.pending
-          done < "$K"/keys.all
-          pending_put "$K"/keys.pending
-        }
-        fetch_keys() {
-          while read -r k; do
-            [ -n "$k" ] || continue
-            dst="$MODELS_DIR/$k"
-            if [ -s "$dst" ]; then echo "engine fetch: $k is already on this box"; continue; fi
-            mkdir -p "$(dirname "$dst")"
-            t0=$(date +%s)
-            aws s3 cp "s3://$BUCKET/$k" "$dst.part" --only-show-errors
-            mv "$dst.part" "$dst"
-            echo "engine fetch: $k $(stat -c %s "$dst") bytes in $(( $(date +%s) - t0 ))s"
-            pending_sync
-          done < "$1"
-        }
-        V=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
-        if [ -z "$V" ] || [ "$V" = "None" ]; then
-          echo "engine fetch: no active set at $ACTIVE_PARAM - this engine has nothing to load"
-          : > "$MODELS_DIR/cmdline"
-          : > "$K"/keys.pending
-          pending_put "$K"/keys.pending
-          exit 0
-        fi
-        START=$(printf '%s' "$V" | jq -r '.start // ""')
-        echo "engine fetch: active set for $ACTIVE_PARAM starts with '$START'"
-        if [ -n "$PRESET_FILE" ]; then
-          START=$(printf '%s' "$V" | jq -r --arg s "$START" '[(.models[]?|select(.id==$s)|.id),(.models[0].id?)][0]//""')
-        fi
-        want_keys "$V" "$START"
-        pending_sync
-        fetch_keys "$K"/keys.start
-        if [ -n "$PRESET_FILE" ]; then
-          mkdir -p "$(dirname "$PRESET_FILE")"
-          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" '.models[]? as $m | ($m.a // []) as $a | (["["+$m.id+"]"] + [$m.f[]?|if type=="string" then "model = "+$d+"/"+. else (.g|ltrimstr("-")|ltrimstr("-"))+" = "+$d+"/"+.k end] + (if ($m.c//0)>0 then ["c = "+($m.c|tostring)] else [] end) + [$a|to_entries[]|select(.value|startswith("-"))|(.value|ltrimstr("-")|ltrimstr("-")) as $k|($a[.key+1]//"") as $v|if ($v!="" and ($v|startswith("-")|not)) then $k+" = "+$v else $k+" = true" end] + (if (($m.lo//[])|length)>0 then ["lora-scaled = " + (($m.lo)|map($d+"/"+.)|join(","))] else [] end) + (if $m.id==$s then ["load-on-startup = true"] else [] end) + [""])[]' > "$PRESET_FILE.part"
-          mv "$PRESET_FILE.part" "$PRESET_FILE"
-          echo "engine fetch: preset $PRESET_FILE holds $(grep -c '^\[' "$PRESET_FILE" || true) model(s), '$START' loaded at startup"
-          if [ -s "$PRESET_FILE" ]; then printf -- '--models-preset %s' "$PRESET_FILE" > "$MODELS_DIR/cmdline.part"; else : > "$MODELS_DIR/cmdline.part"; fi
-        else
-          printf '%s' "$V" | jq -r --arg s "$START" --arg d "$MODELS_DIR" --arg al "$ALIAS_FLAG" --arg cf "$CTX_FLAG" '(.models[]?|select(.id==$s)) as $m | if $m == null then "" else ([$m.f[]? | if type=="string" then ["-m",($d+"/"+.)] else [.g,($d+"/"+.k)] end] | add // []) + (if $al != "" then [$al,$m.id] else [] end) + (if $cf != "" and (($m.c // 0) > 0) then [$cf,($m.c|tostring)] else [] end) + ($m.a // []) | join(" ") end' > "$MODELS_DIR/cmdline.part"
-        fi
-        mv "$MODELS_DIR/cmdline.part" "$MODELS_DIR/cmdline"
-        echo "engine fetch: cmdline = $(cat "$MODELS_DIR/cmdline")"
-        touch "$MODELS_DIR/ready"
-        echo "engine fetch: engine may start; $(grep -c . "$K"/keys.rest || true) file(s) still to sync"
-        fetch_keys "$K"/keys.rest
-        pending_sync
-        echo "engine fetch: sync done"
-        case "${WATCH_SEC:-0}" in ''|*[!0-9]*) WATCH_SEC=0 ;; esac
-        if [ "$WATCH_SEC" -gt 0 ]; then
-          echo "engine fetch: watching $ACTIVE_PARAM every ${WATCH_SEC}s for models enabled later"
-          LAST="$V"
-          while sleep "$WATCH_SEC"; do
-            N=$(aws ssm get-parameter --name "$ACTIVE_PARAM" --query Parameter.Value --output text 2>/dev/null || true)
-            if [ -z "$N" ] || [ "$N" = "None" ] || [ "$N" = "$LAST" ]; then continue; fi
-            LAST="$N"
-            S=$(printf '%s' "$N" | jq -r '.start // ""')
-            want_keys "$N" "$S"
-            pending_sync
-            echo "engine fetch: the active set changed; $(grep -c . "$K"/keys.pending || true) file(s) to add"
-            fetch_keys "$K"/keys.all
-            pending_sync
-            echo "engine fetch: this instance is in step with the active set"
-          done
-        fi
-
 Conditions:
   # Whether the ROLE exists; what it loads is the catalogue's - PARAMETERS, "The engine table".
   HasLlmModel: !Equals [ !Ref LlmEnabled, "true" ]
@@ -673,29 +572,16 @@ Resources:
       ContainerDefinitions:
         - Name: fetch
           Essential: false
-          Image: curlimages/curl:latest
+          # One image for all three scripts, and a pinned one: this was curlimages/curl:latest
+          # beside an aws-cli:latest, which is two third-party `latest` tags in a start path.
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrEngineToolsUri" }
+              Tag: !Ref EngineToolsImageTag
           User: "0"
-          EntryPoint: [ "sh", "-c" ]
-          Command:
-            - >-
-              set -e;
-              [ "$MODE" = delete ] && { echo "ingest: delete mode, nothing to fetch"; exit 0; };
-              [ -n "$URL" ] || { echo "ingest: URL is required"; exit 2; };
-              start=$(date +%s);
-              if [ -n "$HF_TOKEN" ] && [ "$HF_TOKEN" != - ];
-              then set -- -H "Authorization: Bearer $HF_TOKEN"; else set --; fi;
-              curl -fsSL "$@" -o /scratch/blob "$URL";
-              size=$(stat -c %s /scratch/blob);
-              secs=$(( $(date +%s) - start ));
-              echo "ingest: fetched $size bytes in ${secs}s";
-              if [ -n "$SHA256" ]; then
-                got=$(sha256sum /scratch/blob | cut -d" " -f1);
-                [ "$got" = "$SHA256" ] || { echo "ingest: sha256 mismatch: got $got want $SHA256"; exit 1; };
-                echo "ingest: sha256 ok $got";
-              else
-                echo "ingest: WARNING no SHA256 given - the upload is unverified";
-              fi
+          Command: [ /opt/af/ingest-fetch.sh ]
           Environment:
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
             - { Name: URL, Value: "" }
             - { Name: SHA256, Value: "" }
             - { Name: MODE, Value: "" }
@@ -709,20 +595,18 @@ Resources:
               awslogs-stream-prefix: ingest-fetch
         - Name: upload
           Essential: true
-          Image: public.ecr.aws/aws-cli/aws-cli:latest
-          EntryPoint: [ "sh", "-c" ]
-          Command:
-            - !Sub >-
-              set -e;
-              [ -n "$KEY" ] || { echo "ingest: KEY is required"; exit 2; };
-              start=$(date +%s);
-              if [ "$MODE" = delete ]; then
-                for k in $KEY; do aws s3 rm "s3://${ModelsBucket}/$k" --only-show-errors; echo "ingest: deleted $k"; done;
-                exit 0;
-              fi;
-              aws s3 cp /scratch/blob "s3://${ModelsBucket}/$KEY" --only-show-errors;
-              echo "ingest: uploaded $KEY in $(( $(date +%s) - start ))s";
-          Environment: [ { Name: KEY, Value: "" }, { Name: MODE, Value: "" } ]
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrEngineToolsUri" }
+              Tag: !Ref EngineToolsImageTag
+          Command: [ /opt/af/ingest-upload.sh ]
+          # BUCKET was a CloudFormation substitution while the script was inline; it is an
+          # environment variable now, and the only interface change the move made.
+          Environment:
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
+            - { Name: BUCKET, Value: !Ref ModelsBucket }
+            - { Name: KEY, Value: "" }
+            - { Name: MODE, Value: "" }
           MountPoints: [ { SourceVolume: scratch, ContainerPath: /scratch } ]
           DependsOn: [ { ContainerName: fetch, Condition: SUCCESS } ]
           LogConfiguration:
@@ -751,10 +635,15 @@ Resources:
       ContainerDefinitions:
         - Name: fetch
           Essential: false
-          Image: public.ecr.aws/aws-cli/aws-cli:latest
-          EntryPoint: [ "sh", "-c" ]
-          Command: [ !FindInMap [ Engine, fetch, script ] ]
+          # !! The script is BAKED, and the contract below is what refuses an image that speaks
+          # a different one - PARAMETERS, "The engine tools image".
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrEngineToolsUri" }
+              Tag: !Ref EngineToolsImageTag
+          Command: [ /opt/af/fetch-models.sh ]
           Environment:
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/llm/active" }
@@ -778,7 +667,9 @@ Resources:
             - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrLlamacppUri" }
               Tag: !Ref LlmImageTag
           PortMappings: [ { ContainerPort: 8080 } ]
-          # !! The idle wrapper - PARAMETERS, "The idle wrapper".
+          # !! The idle wrapper STAYS inline, and cannot move with the rest - PARAMETERS,
+          # "The engine tools image". It runs in the ENGINE's image, which is a third-party
+          # copy this repository does not build.
           EntryPoint: [ "sh", "-c" ]
           Command:
             - !Sub
@@ -858,10 +749,15 @@ Resources:
       ContainerDefinitions:
         - Name: fetch
           Essential: false
-          Image: public.ecr.aws/aws-cli/aws-cli:latest
-          EntryPoint: [ "sh", "-c" ]
-          Command: [ !FindInMap [ Engine, fetch, script ] ]
+          # !! The script is BAKED, and the contract below is what refuses an image that speaks
+          # a different one - PARAMETERS, "The engine tools image".
+          Image: !Sub
+            - "${Uri}:${Tag}"
+            - Uri: !ImportValue { "Fn::Sub": "${PlatformStackName}-EcrEngineToolsUri" }
+              Tag: !Ref EngineToolsImageTag
+          Command: [ /opt/af/fetch-models.sh ]
           Environment:
+            - { Name: ENGINE_TOOLS_CONTRACT, Value: "1" }
             - { Name: MODELS_DIR, Value: /models }
             - { Name: BUCKET, Value: !Ref ModelsBucket }
             - { Name: ACTIVE_PARAM, Value: !Sub "${EnginesSsmParamName}/image/active" }

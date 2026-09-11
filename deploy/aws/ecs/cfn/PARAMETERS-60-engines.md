@@ -671,11 +671,22 @@ cluster is not written to.
 
 ## The fetch sidecar
 
-One script for both roles, in the template's `Mappings` (ADR 0072 decision 1(a)). It reads the
-active set the Control Plane published to SSM, syncs the files the engine is about to load, and
-writes `/models/cmdline` — the model-specific half of the argument list. Everything
-role-specific is an environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE`
-and `ALIAS_FLAG` / `CTX_FLAG`.
+One script for both roles: `deploy/aws/ecs/engine-tools/fetch-models.sh`, baked into the engine
+tools image (ADR 0072 decision 1(a); it was inline in the template's `Mappings` until the size
+pass below took it out — [The engine tools image](#the-engine-tools-image)). It reads the active
+set the Control Plane published to SSM, syncs the files the engine is about to load, and writes
+`/models/cmdline` — the model-specific half of the argument list. Everything role-specific is an
+environment variable: `ACTIVE_PARAM`, `BUCKET`, `MODELS_DIR`, `PRESET_FILE` and
+`ALIAS_FLAG` / `CTX_FLAG`.
+
+🔴 **The S3 layout this script reads is a CONTRACT, and THIS SECTION is where it is written
+down.** `llm/<name>.gguf`, `llm/loras/`, `image/checkpoints/`, `image/loras/`, `image/vae/`,
+`image/text_encoders/`, `image/diffusion_models/` — ComfyUI's own convention (ADR 0071 decision
+6, ADR 0072 decision 2). Four parties depend on it and none of them can see the others: this
+script, the ingest task that writes the keys, the `comfy` provider that names them in a graph,
+and the Console form an administrator types one into. That is why it stays here rather than
+moving into the script with the code: a comment in one of four places is not a contract. The
+script points back at this heading instead.
 
 ### `SYNC_ALL`: which engines need more than the starting model on the instance
 
@@ -995,6 +1006,48 @@ rather than fail, or CloudFormation waits on a service that never stabilises.
   `LogRetentionDays` (14 by default) that is not a cost worth a parameter. It also drops nothing:
   DETAIL raises the console level, and `WARNING`/`ERROR` keep going where they went.
 
+## The engine tools image
+
+`af-engine-tools` holds the three scripts the task definitions run: the fetch sidecar and the
+ingest task's `fetch` and `upload` steps. Built from `deploy/aws/ecs/engine-tools/` by
+`.github/workflows/engine-tools-image.yml`, pushed to GHCR, copied into this deployment's ECR by
+`standup.sh`, and named by `EngineToolsImageTag`.
+
+**Why they left the template.** They were 7,810 bytes of inline shell in a file measured against
+a 51,200-byte limit (`ecs-lifecycle-stub-test.sh` case 3b-2), and by then everything else that
+could move had. The move also ended two third-party `:latest` pulls in a start path
+(`public.ecr.aws/aws-cli/aws-cli:latest` and `curlimages/curl:latest`), which is the practice
+ADR 0071 decision 6 exists to prevent; there is one pinned image of ours now.
+
+🔴 **What it costs is that the script and the template stop shipping together**, and the cost is
+paid by a version number rather than by discipline. `standup.sh` copies images one step BEFORE
+it deploys the stack, so "old image, new template" is a real ordering and not a hypothetical —
+and its natural failure is the quietest one available here: the old script runs, the service
+reaches a steady state, and the engine does the previous release's thing until somebody looks.
+
+So the template declares `ENGINE_TOOLS_CONTRACT` on every container that runs one of the
+scripts, each script compares it with the `CONTRACT` file beside it, and a mismatch **exits 78
+with three lines in the task's own log, having done nothing**. It catches both directions, and
+the unset case (a template that predates all of this) too.
+
+**The number covers the INTERFACE, not the code**: the environment variables each script reads,
+the SSM keys they name, and the files they write under `$MODELS_DIR`. Changing what a script
+does without changing that interface does not need a bump; adding a required variable does.
+Bump `deploy/aws/ecs/engine-tools/CONTRACT` and the `Value` in `60-engines.yaml` in the same
+commit — `deploy/local/engine-sidecar-test.sh` fails when they disagree, and also when a
+container runs one of the scripts and declares no contract at all.
+
+⚠️ **The idle wrappers did NOT move, and cannot.** They run in the ENGINE's container —
+`/app/llama-server`, `/sd-server`, `/ComfyUI/main.py` — and a container runs one image. Two of
+those three images (`af-llamacpp`, `af-sdcpp`) are pinned copies of third-party builds that this
+repository does not build, so baking a wrapper into them would mean forking them. The 1,318
+bytes they occupy stay inline, and [The idle wrapper](#the-idle-wrapper) is still where their
+traps are written down.
+
+**To change a script**: edit it, run `deploy/local/engine-sidecar-test.sh` (it runs the real
+thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
+`EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
+
 ## Editing this template
 
 It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so
@@ -1012,59 +1065,35 @@ each cost a stand-up:
   working tree against `HEAD` with the descriptions dropped and everything else -- including a
   resource's own `Description` -- compared; `--self-test` re-runs its seven positive controls.
 
-### Where the remaining bytes are, and what it would cost to move them (2026-09-11)
+### Where the remaining bytes are (2026-09-11, after the move)
 
-The prose pass took the template from 49,298 to 41,133 bytes: comments 8,643 -> 2,073 and
-`Description` 6,115 -> 4,515, with **every block scalar byte-identical** (7,418 bytes, unchanged).
-What is left is mostly structure, and the one large movable block is the embedded shell:
+Two passes. The first took the PROSE out (49,298 -> 41,133: comments 8,643 -> 2,073,
+`Description` 6,115 -> 4,515, every block scalar byte-identical). The second took the SHELL out
+into [the engine tools image](#the-engine-tools-image), against option B (an object in the models
+bucket that the start path would execute — a security boundary, not a size question) and option C
+(an SSM parameter — 4 KB Standard, and the fetch script alone was 6.3 KB by then).
 
-| Block | Bytes |
-|---|---|
-| `Mappings.Engine.fetch.script` (the fetch sidecar) | 3,553 |
-| ingest `fetch` / `upload` commands | 979 / 523 |
-| llm idle wrapper | 383 |
-| image idle wrapper, `comfy` / `sdcpp` | 423 / 479 |
-| engine-table JSON fragments (not shell) | 1,078 |
+The template was 45,792 bytes when the second pass started, and is 39,592 after it: **6,200
+bytes back, 11,608 of headroom**. The shell that is left is the three idle wrappers, and they are
+not movable — see the section above for why.
 
-**Nothing below is implemented, and none of it should be without a decision.** Each option is
-written with what it saves, whether it can be believed without a GPU, and what it does to the
-supply chain.
+| Block | Bytes | Moved? |
+|---|---|---|
+| `Mappings.Engine.fetch.script` (the fetch sidecar) | 6,308 | yes |
+| ingest `fetch` / `upload` commands | 979 / 523 | yes |
+| llm idle wrapper | 383 | no — third-party image |
+| image idle wrapper, `comfy` / `sdcpp` | 456 / 479 | no — ditto (and one of three is not worth splitting) |
+| engine-table JSON fragments (not shell) | ~1,078 | no |
 
-**Option A -- bake the scripts into the images.** The fetch sidecar and the two idle wrappers
-become files in `af-llamacpp` / `af-sdcpp` / `af-comfyui` (and the ingest pair into a small image
-of our own), and the template holds a path. It removes about **6,300 bytes**, the largest single
-win available, and it is the only option that costs nothing at runtime. The price is that the
-script and the template stop shipping together: a stack update that expects new behaviour now
-needs the matching image tag, and `standup.sh` copies images one stack earlier than it deploys
-this one, so a mismatch shows up as an engine that starts and does the OLD thing. It also widens
-what ADR 0071 decision 6 pins down -- the S3 layout is a CONTRACT between the sidecar, the
-provider and the ingest, and today the template is where that contract is written in one place.
+What the saving is smaller than the shell removed: the template gained a parameter, four `!Sub`
+image references and four `ENGINE_TOOLS_CONTRACT` lines. That is the price of the binding, and it
+is the part that must not be optimised away.
 
-**Option B -- fetch the scripts from the models bucket at start.** The sidecar downloads
-`s3://<models>/_boot/fetch.sh` before running it. Saves the same ~6,300 bytes, keeps the scripts
-in this repository, and versions them independently of the image. But it adds a network round
-trip to the front of every cold start, it needs a new writer (nothing publishes to `_boot/`
-today, so `standup.sh` or the CP grows the job), and 🔴 **it makes the start path depend on an
-object a person can edit**: the models bucket is where the ingest writes, and an engine that
-executes what it finds there is a different security boundary from one that executes what
-CloudFormation shipped. `EngineTaskRole` already holds `s3:GetObject` on the whole bucket, so
-this would be free of new IAM -- which is exactly why it is worth saying out loud rather than
-discovering later.
-
-**Option C -- an SSM parameter, next to the engine table.** Saves the same bytes without a new
-storage system and without touching the images, and the CP task role already writes under
-`/af-ws/*`. The ceiling is the objection: a Standard parameter holds 4 KB and the fetch script
-alone is 3,553 bytes, so it fits today and stops fitting on the next feature; Advanced
-parameters are 8 KB and are billed per parameter per month.
-
-🔴 **Whichever is chosen, it cannot be believed without a real GPU.** The fetch sidecar and the
-idle wrapper are precisely the two places ADR 0072 P2 broke on hardware after 13/13 bench
-scenarios passed -- the bench bind-MOUNTED the models volume where the task definition symlinks
-it, and it handed the model to the engine a different way. The lesson recorded there is that a
-harness which does not deliver the script the way the task definition delivers it proves nothing
-about the deployment, and every option above changes exactly that delivery. `engine-sidecar-test.sh`
-runs the script for real and would keep working (it reads the block out of the template), so it
-would have to learn the new source first, or it silently starts testing a copy nobody runs.
+🔴 **None of it is believable without a real GPU.** The fetch sidecar and the idle wrapper are
+precisely the two places ADR 0072 P2 broke on hardware after 13/13 bench scenarios passed, and
+this move changes exactly how the first of them is delivered. `engine-sidecar-test.sh` was
+pointed at the file BEFORE the script moved, so it still runs the thing the image bakes; what it
+cannot see is the image, the pull, the entry point and the contract gate meeting a real task.
 
 ## The task roles
 
@@ -1326,9 +1355,12 @@ Since ADR 0072 phase P4 the Console does all of that — **Settings → Admin �
 in from Hugging Face"** — and the hand-written form above stays for a deployment whose Control
 Plane cannot reach the internet, or one that has not adopted the ingest permissions below.
 
-⚠️ **Overriding a command here takes ONE string**, because the `EntryPoint` is already
-`["sh","-c"]`. Passing `["sh","-c",<script>]` becomes `sh -c sh -c <script>`, which does nothing
-and exits 0 — it reads as success and ran nothing (measured).
+⚠️ **The containers no longer have an `EntryPoint` of `["sh","-c"]`.** Since the scripts moved
+into the engine tools image, `Command` is the executable itself (`/opt/af/ingest-upload.sh`), so
+a `command` override here is an ARGV ARRAY and not one string. The trap the old shape carried —
+passing `["sh","-c",<script>]` and getting `sh -c sh -c <script>`, which does nothing and exits 0,
+i.e. reads as success and ran nothing (measured) — is gone with it. The Control Plane never
+overrode a command in the first place; it overrides `environment` only, which is unchanged.
 
 **The sha256 is not optional decoration.** "The file got bigger" is what a truncated download
 also looks like, and a GGUF that is 99 % there loads and then answers nonsense. The value comes
