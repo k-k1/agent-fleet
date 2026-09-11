@@ -11,6 +11,7 @@
 // Without that pair, deleting the component's body would leave this file green.
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { act } from "react";
+import type { ReactNode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
 const api = vi.fn();
@@ -22,6 +23,7 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
 }));
 
 import { EnginesAdminView } from "./adminEngines.tsx";
+import { EngineModelsAdminView } from "./adminEngineModels.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -93,7 +95,10 @@ const managedAnswer = {
   ],
 };
 
-async function mount(answer: unknown) {
+/** Which SCREEN. Everything an external row changes is on the machine screen — the mode, the
+ *  box, the ladder — so that is the default; the one assertion about the catalogue mounts the
+ *  models screen, because that is where a catalogue now is. */
+async function mount(answer: unknown, View: () => ReactNode = EnginesAdminView) {
   api.mockImplementation((p: string) =>
     String(p).endsWith("/ingest") ? Promise.resolve({ jobs: [] }) : Promise.resolve(answer),
   );
@@ -101,7 +106,7 @@ async function mount(answer: unknown) {
   document.body.appendChild(host);
   root = createRoot(host);
   await act(async () => {
-    root!.render(<EnginesAdminView />);
+    root!.render(<View />);
   });
   await act(async () => {
     await Promise.resolve();
@@ -208,7 +213,7 @@ describe("an externally managed engine row (ADR 0076)", () => {
   });
 
   it("still lists the catalogue, which is where the model names come from", async () => {
-    await mount(externalAnswer);
+    await mount(externalAnswer, EngineModelsAdminView);
     // Decision 6: the catalogue is a hand-written declaration either way, so nothing about it
     // changes for an external engine. It is the half of the panel that must NOT disappear.
     expect(text()).toContain("sdxl-base-1.0");

@@ -389,12 +389,10 @@ func engineSearchCivitai(ctx context.Context, req engineSearchReq) ([]engineSear
 			PublishedAt: engineFirstNonEmpty(ver.PublishedAt, m.CreatedAt),
 			URL:         engineCivitaiModelURL(m.ID, ver.ID),
 		}
-		// Civitai has no licence field in Hugging Face's sense (P4 measurement 2), so the one
-		// thing it does say about terms is carried as itself: an empty allowCommercialUse is
-		// the non-commercial case decision 10 wants visible BEFORE the acceptance.
-		if len(m.AllowCommercialUse) == 0 {
-			hit.LicenseName = "non-commercial"
-		}
+		// 🔴 The licence name this used to synthesise ("non-commercial", from an empty
+		// allowCommercialUse) is GONE, and nothing was lost: the same fact now rides as the
+		// `noncommercial` restriction code, which the panel draws in its own vocabulary. Keeping
+		// both put two tags saying the same thing on the same card (seen on a real render).
 		out = append(out, hit)
 		probe = append(probe, strings.TrimSpace(ver.DownloadURL))
 	}
