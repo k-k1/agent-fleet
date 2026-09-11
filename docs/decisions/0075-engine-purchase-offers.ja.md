@@ -24,11 +24,13 @@
   [0071-self-hosted-inference-engines.ja.md](0071-self-hosted-inference-engines.ja.md)
   決定 1（GPU は ECS Managed Instances で買う）・決定 2（役ごとに 1 つの capacity provider）・
   決定 5（起こして待つ）・決定 7（`draining`）/
-  [0070-tts-ondemand-engine.ja.md](0070-tts-ondemand-engine.ja.md) 決定 1（置き場所を必ず明示する）と
-  `UseSpot` /
+  [0070-tts-ondemand-engine.ja.md](0070-tts-ondemand-engine.ja.md) 決定 1（置き場所を必ず明示する）・
+  決定 4（待っても無音にはならない——Polly が読む）・決定 6（起動の時計は PRIMARY deployment の
+  `updatedAt`）と `UseSpot` /
   [0045-ec2-persistent-workspace.ja.md](0045-ec2-persistent-workspace.ja.md) 決定 21
-  （梯子の数字は運用者が宣言する。EC2 にも Pricing API にも訊かない）/
-  [0072-engine-model-catalog.ja.md](0072-engine-model-catalog.ja.md) 決定 7（スタックは SEED）/
+  （梯子の vCPU は運用者が申告する。`DescribeInstanceTypes` を足して EC2 に訊かない。
+  「Pricing API にも訊かない」は 0074 決定 1 の言い方である）/
+  [0072-engine-model-catalog.ja.md](0072-engine-model-catalog.ja.md) 決定 7（エンジン表は静的のまま）/
   [0048-member-cloud-cost.ja.md](0048-member-cloud-cost.ja.md) 決定 15（費用配賦のタグ）
 
 ## 背景
@@ -57,11 +59,16 @@ replacing.`（0074「Spot への切り替えは CloudFormation が拒む」）�
 「CP がモデルに合わせて段を自動で選ぶ」を**却下している**（理由: 金額が黙って上がる）。
 つまり現在の設計には「安い順に選ぶ」という言葉を置く場所がそもそも無い。
 
-**4. 中断は「起動の失敗」としてしか見えない。** 0071 決定 7 の `draining` も 0074 決定 4 の
-退場待ちも、**こちらが desired を 0 にした箱**を見る仕組みである。Spot の中断は誰も desired を
-動かしていないのに箱が消える——コントローラから見えるのは `running` が `starting`
-（desired 1・running 0）に戻ったことだけで、`StartDeadlineSec`（既定 900 秒）を超えるまで
-何も言わない。**中断そのものを指す語彙が、エンジン表にもコントローラにも無い。**
+**4. 中断は「頼んでいない置き換え」として見えるが、誰も次の提案へ動かない。** 0071 決定 7 の
+`draining` も 0074 決定 4 の退場待ちも、**こちらが desired を 0 にした箱**を見る仕組みである。
+Spot の中断は誰も desired を動かしていないのに箱が消える。コントローラはこれを**既に見ている**
+——`noteReplacement`（`engine_control.go`）が「desired 1 のまま `running` → `starting`」を
+「頼んでいない置き換え」としてログと監査（`replaced`）に残し、`describe()` は ECS が下で
+タスクを置き換えると PRIMARY deployment の `updatedAt` が動くので、起動期限の時計も勝手に
+掛け直る（レビュー R2。起草時は「語彙が無い」と書いたが、語彙はあった）。**無いのは応答である**:
+ECS は同じ strategy で同じ provider に置き直そうとし、それが取れないと `StartDeadlineSec`
+（既定 900 秒）まで沈黙し、期限切れは「起動の失敗」として数えられて cooldown が倍になる。
+別の提案へ移る者も、中断を数える欄も無い。
 
 ### いまのコードとテンプレートが言っていること（2026-09-11 に読んだ）
 
@@ -78,14 +85,26 @@ replacing.`（0074「Spot への切り替えは CloudFormation が拒む」）�
   `engine_class.go` の `startGate`）。**再適用は capacity provider に対してだけ**であり、
   service には触らない——0074 が「段の数だけ provider を並べて service の strategy を差し替える」案を
   却下した理由がそれである（**service の strategy 更新は新しいデプロイを起こし、生成中の要求を
-  殺す**）。
-- **エンジン表のうち生きたまま運べるのは梯子だけ**（`engine_table_reload.go`）。service・url・
-  health・provider・capacity provider・idle・deadline が変わったときは「再起動が要る」とログに
-  出すだけである。🔴 **capacity provider 名がその中に入っていることが、Spot への置き換えで
-  実際の欠落になった**（0074「provider の名前が変わると、走っている CP は箱を見失う」——
-  段の適用が消えた旧名へ飛んで 400、`box` は `null`、それでもパネルは「l4 で起動中」と言った）。
-  これを生きたまま採る修正が別のレーンで進行中である。本 ADR の決定はその修正を前提に**しない**が、
-  **2 本目の provider を足す以上、この欄は生きたまま運べたほうがよい**（フェーズ P0 を参照）。
+  殺す**）。⚠️ **公開仕様 (c) はこれと食い違う**: `UpdateService` の API Reference は
+  `capacityProviderStrategy` について「**この引数は新しいサービスデプロイを起こさない**」と書く
+  （2026-09-11 に読んだ。`desiredCount` にも同じ文があるが、0070 決定 6 の実測では desired の
+  0 → 1 で `updatedAt` は動いた——つまり「デプロイを起こさない」と「時計が動かない」は別である）。
+  どちらが当たるかは未解決 1 で測る。本 ADR は 0074 の理由づけを**事実として引き継がない**
+  （レビュー R1）。
+- **`describe()` はサービスイベントの先頭 3 件を既に運んでいる**（`engineServiceEventsKept`）。
+  決定 5 がコードで判定するのに新しい API も IAM も要らない。起動失敗の cooldown は
+  `AF_ENGINE_<役>_FAIL_COOLDOWN_SEC`（既定 900 秒）を失敗のたびに倍にし、**倍化は 4 回まで
+  （16 倍・4 時間）**である（`engineCooldownMaxDoublings`）。
+- **エンジン表のうち生きたまま運べるのは梯子と capacity provider 名**（`engine_table_reload.go`）。
+  service・url・health・provider・idle・deadline が変わったときは「再起動が要る」とログに出す
+  だけである。provider 名は起草時には運べず、Spot への置き換えで実際の欠落になった（0074
+  「provider の名前が変わると、走っている CP は箱を見失う」——段の適用が消えた旧名へ飛んで 400、
+  `box` は `null`、それでもパネルは「l4 で起動中」と言った）が、**#542（2026-09-11）が生きたまま
+  採る形にした**。その形は「宛先」と「照合」の名前を `engineECS` の**1 つの欄**に置き、改名で
+  箱のキャッシュと最後に適用した段を忘れる、というものである——決定 3 はこの 1 欄を 2 欄に広げる。
+  ⚠️ **梯子の採用（0 段 → N 段）は今も再起動が要る**（同ファイル。段の門は構築時にしか付かない）。
+  提案一覧も同じ門を通るので、梯子の無い配備に `<役>Offers` を初めて宣言するときは CP の
+  `force-new-deployment` が 1 行入る（移行の節）。
 - **TTS は Fargate で、置き場所は CloudFormation が書いている**（`50-tts.yaml` の `UseSpot`。
   `on` なら `LaunchType` を落として `FARGATE_SPOT` の strategy を書く）。CP は desired しか
   動かさない。
@@ -174,13 +193,25 @@ ADR 0074 決定 6 の答え——**有効なモデルの最大**（和ではな�
 あって、service の strategy にはどちらか一方しか現れない。
 
 - **service は 1 本のまま。** 2 本にする案は却下した（後述）。
-- **エンジン表の行は provider を 2 つ持つ**ことになる（`capacityProvider` の後継）。
+- **エンジン表の行は provider を 2 つ持つ**ことになる——`capacityProvider`（オンデマンド・
+  既存の欄のまま）に `spotCapacityProvider`（空 = Spot の provider が無い）を足す。
   `draining` の判定と `box()` の照合は、**どちらの名前でも自分の箱と認める**必要がある
   ——片方だけを見ていると、もう一方で買った箱が `box: null` として見えなくなる
-  （0074 で改名のときに実際に起きた形である）。
-- **IAM は 2 本ぶんに広げる。** 0074 決定 9 と同じ形（このスタックの資源に限定）で、
-  `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` の Resource に 2 本目の ARN を足す。
-  `ecs:PutClusterCapacityProviders`（クラスタスコープ）と `iam:PassRole` は増えない。
+  （0074 で改名のときに実際に起きた形である）。#542 が provider 名の写しを `engineECS` の
+  1 欄に絞ったのは「宛先と照合が食い違えないように」であり、2 欄にしても**組で 1 か所**に置く。
+- **IAM は増えない。** `60-engines.yaml` の `ecs:DescribeCapacityProviders` /
+  `ecs:UpdateCapacityProvider` の Resource は既に `capacity-provider/af-${AWS::StackName}-*` の
+  接頭辞で（0074 決定 9 の本文は「ARN だけ」と言うが、実装は接頭辞である）、`-spot` はその中に
+  入る。`ecs:PutClusterCapacityProviders`（クラスタスコープ）と `iam:PassRole` も増えない
+  （レビュー R4）。
+- 🔴 **`ImageCapacityOptionType=SPOT` で走っているスタックには、移行の順序がある。** そこでは
+  論理 ID `ImageCapacityProvider` の資源が**既に `af-<stack>-image-spot` という名**を持っている
+  （0.18.1 の置き換え。開発配備がこの状態で残っている——0074「後始末と、残したもの」）。
+  CloudFormation は新しい資源を作ってから古い資源を消すので、同名の 2 本目は作れず、更新は
+  失敗してロールバックする。移行は **(1) `ImageCapacityOptionType=ON_DEMAND` へ戻す更新を先に
+  流す（置き換え・実測 147 秒）→ (2) 本 ADR のテンプレートへ更新する**、の 2 段にし、
+  `ImageCapacityOptionType` パラメータは (2) で撤去する。既定（ON_DEMAND）の配備は (2) だけで
+  済み、`Add` 1 本・置き換え無し（0074 未解決 1 の使い捨てスタックで実測済み）。
 
 🔁 **反証されたら変える条件**: 2 本目の provider を作るだけで費用や副作用が出るなら
 （0074 の実測では**作るだけでは 1 台も買われない**）、宣言された購入形態のぶんだけ作る形へ戻す。
@@ -199,19 +230,28 @@ ADR 0074 決定 6 の答え——**有効なモデルの最大**（和ではな�
   段の再適用（0074 決定 5）は**capacity provider に対してだけ**流れ、service には流れない。
   この区別は明文であり、実装では「service を触る関数は 1 つしか無く、そこに running == 0 の
   番人を置く」形にする。
-- ⚠️ (b) は**新しいデプロイを起こす**。起こしてよいのは、殺すタスクが PENDING の 1 本だけだから
-  である。副産物として、ECS の PRIMARY deployment の `updatedAt` が動く——つまり
-  `StartDeadlineSec` の時計が自然に次の提案のぶんへ切り替わる（`engine_ecs.go` の `describe()` が
-  `updatedAt` を読んでいる。これは 0070 決定 6 のために書かれたもので、ここでは副産物として
-  効く）。
+- ⚠️ (b) は **`forceNewDeployment: true` を一緒に渡す**。公開仕様 (c) では strategy の更新は
+  デプロイを起こさない（背景の節）——つまり strategy を書いただけでは、旧 provider で
+  PENDING のまま置けずにいるタスクは**そのまま**で、新しい provider で置き直されない。
+  置き直させるのが `forceNewDeployment` で、それを渡してよいのは殺すタスクが PENDING の 1 本
+  だけだからである。副産物として PRIMARY deployment の `updatedAt` が動く**はず**で、動けば
+  `StartDeadlineSec` の時計が次の提案のぶんへ切り替わる（`engine_ecs.go` の `describe()` が
+  `updatedAt` を読む。0070 決定 6 のために書かれたもの）。動かなければ、CP が提案ごとの
+  時計を自分で持つ（未解決 1 (c)）。
+- (a) は `forceNewDeployment` を**渡さない**。desired 0 → 1 の起動そのものが新しい provider で
+  置くからである。
 
-⚠️ **未検証**: strategy だけを変える `UpdateService` が `forceNewDeployment` 無しで通るか、
-そして desired 0 の service に対する strategy の更新が本当に無害かは、**この配備で確かめていない**
-（未解決 1。P0 の実機で最初に測る）。
+⚠️ **未検証**（未解決 1。P0 の実機で最初に測る）: (a) MI の provider 同士で strategy を差し替える
+`UpdateService` がこの service で通るか——API Reference の「有効な遷移」の一覧は Fargate と
+Auto Scaling group の間しか挙げておらず、MI については「strategy を使うこと」としか言っていない。
+(b) desired 0 の service への strategy 更新が本当に無害か。(c) strategy だけの更新で
+`updatedAt` が動くか。
 
-🔁 **反証されたら変える条件**: strategy の更新が running 0 でも何かを壊すなら、
-この ADR の骨格が崩れる。そのときは却下案「購入形態ごとに service を 2 本」へ戻って、
-Cloud Map の名前を 1 つに保つ方法を先に解くことになる。
+🔁 **反証されたら変える条件**: (a) が拒まれる（MI provider 間の遷移が `UpdateService` で
+できない）なら、この ADR の骨格が崩れる。そのときは却下案「購入形態ごとに service を 2 本」へ
+戻って、Cloud Map の名前を 1 つに保つ方法を先に解くことになる。⚠️ **`forceNewDeployment` を
+要求されることは「赤」ではない**——running 0 でそれを渡しても殺すものが無い（レビュー R1。
+起草時は「要求されたら書き直す」としていたが、それは強すぎた）。
 
 ### 5. 規則 2 ——予算の中に箱が来なければ、次の提案へ。**失敗コードで待ち方を変える**
 
@@ -223,8 +263,10 @@ container instance が ACTIVE になるまで**を測る。箱が来たらこの
 予算を待たずに次へ移る場合がある。サービスイベントのコードが「待てば直るのか」を言っているからで、
 **それは 3 つとも実測済みである**（対応表は「失敗コードと対応」の節）。
 
-- 一覧を**一周したら諦める**。コントローラの既存の cooldown（失敗のたびに倍、上限 4 倍）に入り、
-  次の需要でまた先頭から試す。無限に買い続けないための門はこれ 1 つである。
+- 一覧を**一周したら諦める**。コントローラの既存の cooldown（既定 900 秒・失敗のたびに倍・
+  倍化は 4 回まで＝最長 4 時間）に入り、次の需要でまた先頭から試す。無限に買い続けないための
+  門はこれ 1 つである。**一周は失敗 1 回として数える**（提案ごとに数えると、行数ぶん cooldown が
+  早く伸びる）。
 - **提案を移るたびに監査ログに 1 行**（`engine.<役>.offer`）。「なぜ高い箱で走っているのか」は、
   後から答えられなければならない問いである。
 
@@ -233,18 +275,25 @@ container instance が ACTIVE になるまで**を測る。箱が来たらこの
 
 ### 6. 規則 3 ——中断は「**需要があるのに箱が消えた**」。一覧の先頭からやり直す
 
-検出は**箱の消失**で行う。desired が 1 のまま、running が 0 になり、container instance が
-消えている——このとき CP 自身は desired を動かしていない。これで規則 3 は成立する。
+検出は**既にある `noteReplacement` の遷移**（desired 1 のまま `running` → `starting`。
+背景の 4）に、**container instance が消えている**ことを足したものである——タスクだけが
+置き換わった（OOM kill・ヘルスチェック）なら箱は残っていて、それは 0071 P0 が測った形で
+あって中断ではない。このとき CP 自身は desired を動かしていない。これで規則 3 は成立する。
 **やり直す先は同じ一覧の先頭**であり、原因が Spot の中断でも AWS 側の別の理由でも、
 対応は同じだからである。
 
+- ⚠️ **ECS は CP が何もしなくても置き直しにかかる**——同じ strategy、つまり同じ provider で。
+  だから「先頭から」とは、**先頭の候補がいまの provider と違うときだけ** strategy を書く
+  （running 0 なので決定 4 の門は開いている）ことであり、同じなら CP は何も書かず ECS の
+  置き直しを待つ。時計は `updatedAt` が動いて掛け直っている（`describe()` の注記）。
 - 🔴 **`stoppedReason` は断定のためではなく説明のために読む。** CP は今 `DescribeTasks` を
   呼んでいない（`DescribeServices` と container instance の 2 本だけ）。中断だと**言い切る**には
   それを足すことになるので、**足す価値があるかは P1 で測ってから決める**（未解決 2）。
   検出そのものは足さなくても成立する。
 - **中断は失敗として数えない。** コントローラの `failures`（cooldown を倍にする数）は
   「起動が失敗した回数」であって、「走っていたものが取り上げられた回数」ではない。
-  中断を失敗に数えると、**Spot を使うほど起動が遅くなる**。
+  中断を失敗に数えると、**Spot を使うほど起動が遅くなる**。ただし**中断のあとの立て直しが
+  期限まで箱を得られなければ、それは起動の失敗であり、今までどおり数える**。
 - ⚠️ ただし**同じ提案で 2 回続けて中断されたら、その提案を 1 回の需要のあいだだけ飛ばす。**
   取り上げられ続ける型を無限に買い直すのが、この設計のいちばん高くつく壊れ方である。
 
@@ -312,10 +361,16 @@ ADR 0074 決定 2 の設定（`engine_<役>_class`）はそのまま残し、意
 TTS は Fargate なので買う箱が無い。提案の行は**型を持たず、購入形態と価格だけ**になる。
 規則は同じで、決定 4（running が 0 のときだけ strategy を書く）も同じである。
 
-- **待ちは Polly が受ける**（0070 決定 5 と決定 16）。だから TTS では規則 2 の予算を
+- **待ちは Polly が受ける**（0070 決定 4 と決定 16）。だから TTS では規則 2 の予算を
   短くしてよい——待っても無音にはならないからである。
 - ⚠️ **0070 決定 1 の不変条件は破れない。** CP が書くのは常に**明示の** strategy であり、
   禁じられているのは「`LaunchType` も strategy も書かないこと」である。
+- ⚠️ **`UseSpot=off` の service は `LaunchType: FARGATE` で作られていて strategy を持たない**
+  （`50-tts.yaml`）。公開仕様 (c) は「Fargate の launch type → Fargate の capacity provider」を
+  有効な遷移に挙げているので CP は動かせるが、そうするとテンプレートと service が食い違い、
+  次の CloudFormation 更新が `LaunchType` へ戻す（決定 12 の CFN の行）。TTS に提案を宣言する
+  配備では、テンプレートが `LaunchType` の代わりに**明示の `FARGATE` strategy（weight 1）**を
+  書き、CP が変えるのは strategy の中の provider 名だけにする（レビュー R10）。
 - ⚠️ `UseSpot` パラメータは残すが、意味が「Spot にする」から「**Spot の提案を一覧に入れる**」へ
   変わる。実測では `UseSpot` の切り替えは本番で**その場更新**だった（約 6 分・置き換え無し）が、
   新しいデプロイは desired 1 で立ち上がる（`DesiredCount` を宣言しない契約）。CP が strategy を
@@ -325,10 +380,15 @@ TTS は Fargate なので買う箱が無い。提案の行は**型を持たず�
 「Polly が代読するあいだに立て直す」より「はじめからオンデマンド」のほうが安い可能性がある。
 0070 の損益分岐（読み上げが Polly より安くなったら建てる）にその計算を足して決める。
 
-### 11. パネルは「いま何で走っているか」を **CP 自身の選択から**言う。EC2 には訊かない
+### 11. パネルは「いま何で走っているか」を **service の strategy から**言う。EC2 には訊かない
 
-CP は自分がどの提案で `UpdateService` を呼んだかを知っている。だから「Spot の l4 提案で
-走っています」と言うのに EC2 は要らない。
+CP は自分がどの提案で `UpdateService` を呼んだかを知っている。だが**それを覚えていて言うのでは
+ない**——`DescribeServices` の応答には service の `capacityProviderStrategy` が入っているので、
+CP が既に毎ティック読んでいる 1 本から「いまの provider」を引き、提案一覧のどの行かをそこから
+逆引きする。EC2 は要らず、IAM も増えない。覚えていた選択で言うと、CloudFormation が service を
+書き直した瞬間（決定 12 の CFN の行）にパネルが嘘をつく——0074 の改名で `box: null` のまま
+「l4 で起動中」と言った形の再演である（レビュー R7）。CP 自身の選択は監査ログ（決定 5）の側に
+残る。
 
 - 🔴 **実際に Spot だったかの証明は `describe-instances` を ID で引くしかない**（0074 実測。
   MI の箱は列挙できないが ID なら返り、`InstanceLifecycle: spot` はそこにしか無い）。
@@ -348,11 +408,23 @@ service にも書く以上、**その 2 つは別物である**と書いてお�
 | 対象 | いつ書くか | 書いたときに何が起きるか |
 |---|---|---|
 | capacity provider（4 欄） | 保存時と**毎回の起動直前**（冪等） | 何も動かない。次に買う箱の仕様が変わるだけ |
-| service の strategy | **running が 0 のときだけ**（決定 4） | **新しいデプロイが起きる**。走っているタスクがあれば置き換わる |
+| service の strategy | **running が 0 のときだけ**（決定 4） | 公開仕様 (c) では**何も動かない**（次に置くタスクの行き先が変わるだけ）。(b) では `forceNewDeployment` を添えて PENDING の 1 本を置き直させる |
+| service の strategy（**CloudFormation が書く**） | service の資源に触る更新のたび——タスク定義が変わるリリースは毎回 | **宣言の provider へ戻り、新しいデプロイが起きる。** 走っている Spot の箱はオンデマンドの箱に置き換わり、CP はそれに関与しない |
+
+running 0 に限る理由は、(c) が正しくても残る——走っている箱と strategy が食い違う状態を
+**CP の側から**作らないためであり、(b) の `forceNewDeployment` を running 1 で渡せば 0074 の
+却下理由がそのまま当たるからである。
 
 CloudFormation が宣言へ戻す問題（0074 未解決 2）は、どちらもこの経路で吸収される
-——provider の 4 欄は起動直前の再適用で、service の strategy は起動そのもので上書きされる。
+——provider の 4 欄は起動直前の再適用で、service の strategy は次の起動で上書きされる。
 ⚠️ **残る窓も同じ形**である: CFN が戻してから次の起動までのあいだ、配備は宣言と違う状態にいる。
+🔴 **service については窓が「状態」ではなく「箱」になる**——リリースのデプロイは走っている
+Spot の箱をオンデマンドの箱で置き換えるので、リリースの直後は宣言の provider（オンデマンド）で
+走っている。テンプレートが宣言する既定はオンデマンドの provider にする（安全側）。パネルは
+決定 11 でそれを正しく言い、次に desired が 0 → 1 になるときに CP が先頭から選び直す。
+これを避けたければ service の strategy を CloudFormation の管理から外すことになるが、
+`CapacityProviderStrategy` は service の必須の置き場所（0070 決定 1）なので外せない。
+**リリースのたびに 1 回オンデマンドで走る**、を受け入れる（レビュー R7。反証条件は決定 11 と同じ）。
 
 ## 却下した案
 
@@ -430,6 +502,12 @@ id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|b
 - 移行のあいだ、テンプレートは `<役>Offers` が空なら `<役>InstanceClasses` を読む
   （0072 P6 が `<役>ModelS3Key` に対して置いた門と同じ形。**黙って役が消えるのを避ける**）。
 - 保存された選択（`engine_<役>_class`）は id で引くので、**id を変えなければ移行で何も起きない**。
+- ⚠️ **梯子の無かった配備に提案を初めて宣言するときは、CP の再起動（`force-new-deployment`・
+  実測 217 秒・blue/green）が 1 行入る。** 段の門は構築時にしか付かず、表の再読込は 0 段 → N 段を
+  「再起動が要る」とログに出すだけである（`engine_table_reload.go`。0074 と同じ規則）。
+  既に梯子のある配備は、行の増減も `buy` の欄も生きたまま運ばれる。
+- 🔴 **`ImageCapacityOptionType=SPOT` のスタックは先に ON_DEMAND へ戻す**（決定 3。同名の
+  provider が既に居る）。
 
 開発配備の実測に沿った例（0074 の追記が入れた 3 型の Spot と、その下のオンデマンド）:
 
@@ -479,10 +557,10 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 | Spot が沈黙（イベント無し）→ 予算 180 秒 → オンデマンド | **180 秒**＋起動 |
 | 3 行とも予算を使い切る（最悪） | **540 秒**＋起動。その後 cooldown へ |
 
-🔴 **`StartDeadlineSec`（既定 900 秒）はこの合計を覆っていない**——決定 4 の副産物
-（提案を移ると PRIMARY deployment の `updatedAt` が動く）で時計が切り替わるので、
-**提案ごとに 900 秒がある**形になる。これは意図した形だが、**「起動を待っている」全体の
-上限がどこにも無い**ことを意味する。上限は 2 つで担保する:
+🔴 **`StartDeadlineSec`（既定 900 秒）はこの合計を覆っていない**——決定 4 (b) の
+`forceNewDeployment` で PRIMARY deployment の `updatedAt` が動くなら時計が切り替わり、
+**提案ごとに 900 秒がある**形になる（動かなければ CP が提案ごとの時計を持つ。未解決 1 (c)）。
+どちらでも、**「起動を待っている」全体の上限がどこにも無い**ことは変わらない。上限は 2 つで担保する:
 
 - **一覧を一周したら cooldown**（決定 5）。
 - **ゲートウェイ側の `AF_ENGINE_WAKE_TIMEOUT`（既定 900 秒）は変えない**（0071 決定 5）。
@@ -495,7 +573,7 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 
 | 項目 | 値 | 出所 |
 |---|---|---|
-| 生成中の要求 | **失われる。** image には Polly のような代読が無い | 0071 決定 5・0070 決定 5 の対比 |
+| 生成中の要求 | **失われる。** image には Polly のような代読が無い | 0071 決定 5・0070 決定 4 の対比 |
 | モデルの取り直し | instance store なので新品から。実測 6.62 GiB / 66 秒（102.7 MiB/s）。**30 GB 抱えた comfy の配備なら約 5 分**（この 5 分は実測の速度からの**計算**であり、30 GB の同期そのものは測っていない） | 0071 実測 |
 | コールドスタート | image 165〜197 秒 / llm 527〜586 秒 | 0071 実測 |
 | 中断された時間の課金 | ⚠️ **(c) 公開仕様として AWS 側の中断は課金されないと理解しているが、この配備では確かめていない。** 決定の根拠にしていない | — |
@@ -522,9 +600,12 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 
 ## 未解決の点（測ってから決める）
 
-1. 🔴 **strategy だけを変える `UpdateService` が `forceNewDeployment` 無しで通るか**、そして
-   desired 0 / running 0 の service に対する strategy 更新が本当に無害か。**この配備で測っていない。**
-   依存: 決定 4・5（この ADR の骨格そのもの）。**P0 の実機で最初に測る。**
+1. 🔴 **MI の provider 同士で strategy を差し替える `UpdateService` が通るか**（(a)。公開仕様 (c) の
+   「有効な遷移」は Fargate と ASG の間しか挙げていない）、desired 0 / running 0 の service への
+   strategy 更新が無害か（(b)）、strategy だけの更新で PRIMARY deployment の `updatedAt` が
+   動くか（(c)。(c) の「デプロイを起こさない」が「時計が動かない」を意味するかは、`desiredCount` の
+   実測が否定している）。**この配備で測っていない。** 依存: 決定 4・5（この ADR の骨格そのもの）
+   と「時間の予算」。**P0 の実機で最初に測る。** ⚠️ `forceNewDeployment` を要求されるのは赤ではない。
 2. 中断を断定するために `DescribeTasks`（と IAM 1 つ）を足す価値があるか。検出は箱の消失だけで
    成立する（決定 6）ので、足すのは説明のためである。依存: 決定 6・11。
 3. TTS で CP が `FARGATE_SPOT` ↔ `FARGATE` を動かしたとき、`DesiredCount` を宣言しない契約
@@ -545,6 +626,12 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
    （タスク定義と CloudFormation）にある。**この ADR では動かさない。**
 9. **中断が実際にどれくらい起きるか。** 0074 が買えた 1 台は 403 秒しか走っていない。
    決定 6 の「2 回続けて中断されたら飛ばす」の要否は、ここが埋まるまで分からない。
+10. 🔴 **孤児の箱。** Spot の提案からオンデマンドへ移った（決定 4 (b)）あと、Spot の provider が
+    **途中まで進めていた起動**は取り消されるのか、それとも遅れて箱が来て、載せるタスクの無いまま
+    `scaleInAfter` まで課金されるのか（0071 実測: GPU の退場は 427〜463 秒）。MI の provider は
+    「タスクが置けない」を見て箱を買いに行くので、移った直後に前の provider の箱が到着する形は
+    十分ありうる。依存: 決定 5（予算を短くするほど起きやすい）。P0 の実機 4 で、移った**あと**に
+    旧 provider の `describe-container-instances` を数分見る（レビュー R8）。
 
 ## フェーズと完了の定義
 
@@ -568,10 +655,11 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 
 | # | 測ること | 判定 |
 |---|---|---|
-| 1 | 🔴 **未解決 1**: strategy だけの `UpdateService`（desired 0） | 200 が返るか、`forceNewDeployment` を要求されるか。**ここが赤ならこの ADR は骨格から書き直す** |
+| 0 | 🔴 **未解決 1 を、コードを書く前に $0 で測る**: 使い捨ての MI provider を 1 本作り（0074 未解決 1 と同じ手順・GPU 不要）、既存の image service に対して desired 0 のまま strategy だけを差し替える `UpdateService` を往復させる | (a) 200 が返るか／(b) service が壊れないか（`describe-services` の strategy が書いた値になり、desired 0 のまま）／(c) PRIMARY deployment の `updatedAt` が動くか。**(a) が拒まれたらこの ADR は骨格から書き直す**。`forceNewDeployment` を要求されたら (b) の経路に渡すだけで、赤ではない。終わったら strategy を元へ戻し provider を消す |
+| 1 | `ImageCapacityOptionType=SPOT` のスタックの移行（決定 3 の 2 段） | ON_DEMAND へ戻す更新が通り、次に本 ADR のテンプレートが `Add` で通ること。**ここを飛ばすと同名衝突でロールバックする** |
 | 2 | 2 本の provider が両方できて、クラスタの一覧に両方載る | `describe-clusters` の `capacityProviders` に 2 本（0074 の実測どおり、作るだけで載る） |
 | 3 | desired 0 → 1 で Spot の提案が選ばれ、箱が **`InstanceLifecycle: spot`** で来る | `ecs describe-container-instances` の `ec2InstanceId` → `describe-instances --instance-ids` |
-| 4 | 規則 2 のフォールバック | Spot の提案に**わざと買えない型**（在庫の無い型か、綴りの違う型）を書いて、予算後にオンデマンドの箱が来ること。**これが P0 の陽性対照である** |
+| 4 | 規則 2 のフォールバック | Spot の提案に**わざと買えない型**（在庫の無い型か、綴りの違う型）を書いて、予算後にオンデマンドの箱が来ること。**これが P0 の陽性対照である。** 移った**あと**も旧 provider の `describe-container-instances` を数分見て、孤児の箱（未解決 10）が来るかを記録する |
 | 5 | `box()` が**どちらの provider の箱も**自分のものと認める | `GET /api/admin/engines` の `box` が `null` にならない（0074 の改名のときはここが `null` になった） |
 | 6 | 段の適用が**選ばれた提案の provider に**当たる | 切替の前後で両方を `describe-capacity-providers` して、**触っていない側が 1 欄も動いていない**こと |
 | 7 | パネル | いまの提案・購入形態・試した順が出ること |
@@ -580,11 +668,9 @@ LlmOffers=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26|
 $1.26/時）。測り終わったら `mode` を off にし、**container instance が消えるまで見届ける**
 （0074 P1 の「止めた」と「消えた」は違う）。
 
-⚠️ **P0 の前に片付けておくこと**: 本 ADR は provider を 2 本にするので、**capacity provider 名を
-生きたまま運べる**ほうが安全である（現状は「再起動が要る」とログに出すだけで、0074 の実測では
-段の適用が旧名へ飛んで 400・`box` は `null`・パネルは嘘をついた）。この修正は別のレーンで
-進行中である。**入っていなければ、P0 の配備手順に「CP の `force-new-deployment`」を
-1 行入れる**（実測 217 秒・blue/green なので停止は無い）。
+✅ **P0 の前に片付けておくこと（済）**: capacity provider 名を生きたまま運ぶ修正は #542
+（2026-09-11）で入った。決定 3 はその 1 欄を組に広げる。ただし**梯子の無かった配備に提案を
+初めて宣言する**ときは今も CP の `force-new-deployment` が 1 行要る（移行の節）。
 
 ### P1 — 中断の検出と立て直し、placement score
 
@@ -632,3 +718,92 @@ $1.26/時）。測り終わったら `mode` を off にし、**container instanc
 結果の捏造が実測で出ている（この配備の運用上の知見であり、AWS の話ではない）。
 また **1 レーン 1 配備**で行う——開発配備は他のセッションと共有されているので、
 `60-engines` を触る前に誰も配備していないことを確かめること。
+
+## レビュー（2026-09-11・P0 着手前）
+
+0071 のレビューと同じ流儀で、「決定 → 根拠 → 現況」の筋を、コード・テンプレート・引用先の
+ADR・公開仕様に当て直した。結論: **承認（P0 着手可）。ただし骨格の前提 1 つが公開仕様と食い違い
+（R1）、現況の記述 4 つが古いか誤りで（R2〜R5）、移行の罠が 1 つ（R6）、設計の穴が 2 つ（R7・R8）
+あった。本文は上のとおり改めてある**——この ADR はまだ「提案」で 1 行も実装されていないので、
+0074 の「実装が本文を直す」段の前倒しとして本文を直し、何をなぜ変えたかをここに残す。
+**この節のために新しく測ったものは無い**。読み直しで足りた。
+
+### レビューで確かめたこと
+
+- **R1. 公開仕様 (c) は「strategy の更新はデプロイを起こさない」と言う。** `UpdateService` の
+  API Reference（2026-09-11 に読んだ）は `capacityProviderStrategy` に「This parameter doesn't
+  trigger a new service deployment.」と書き、有効な遷移として Fargate ↔ Auto Scaling group の
+  組しか挙げず、MI については「strategy を使うこと」としか言わない。起草は 0074 の却下理由
+  （strategy 更新＝新しいデプロイ＝生成中の要求を殺す）を事実として引き継いでいたが、それは
+  実測ではなく、公開仕様と食い違う。決定 4 (b) は「新しいデプロイが起きる（副産物で `updatedAt` が
+  動く）」に乗っていたので、**`forceNewDeployment: true` を明示して渡す**形に直し、`updatedAt` は
+  未解決 1 (c) へ落とした。反証条件も直した——`forceNewDeployment` を要求されるのは赤ではない
+  （running 0 で渡しても殺すものが無い）。赤は「MI provider 間の遷移そのものが拒まれる」だけである。
+  実機 0 として、**コードを書く前に使い捨て provider で $0 で測る**手順を P0 の先頭に置いた。
+- **R2. 「中断を指す語彙が無い」は誤り。** `engine_control.go` の `noteReplacement` が「desired 1 の
+  まま running → starting」を「頼んでいない置き換え」としてログと監査（`replaced`）に残しており、
+  `describe()` は ECS がタスクを置き換えると `updatedAt` が動くことを既に注記している。決定 6 は
+  この遷移に「箱も消えた」を足す形に直した。あわせて、ECS は CP が何もしなくても同じ provider で
+  置き直しにかかるので、「先頭から」は**先頭の候補がいまの provider と違うときだけ書く**と限定した。
+- **R3. cooldown は「上限 4 倍」ではなく 4 回の倍化＝16 倍。** `engineCooldownMaxDoublings = 4`、
+  既定 900 秒（`AF_ENGINE_<役>_FAIL_COOLDOWN_SEC`）で最長 4 時間。決定 5 を直し、一周を失敗 1 回と
+  数えることも明文にした。
+- **R4. IAM は増えない。** `60-engines.yaml` の Resource は既に `capacity-provider/af-${AWS::StackName}-*`
+  の接頭辞で、`-spot` はその中に入る。0074 決定 9 の本文（「ARN だけ」）と実装が違っていた。
+- **R5. provider 名の生きた再読込は #542 で入った**（2026-09-11 15:57、起草の後）。「別のレーンで
+  進行中」を「済」にし、その実装が名前の写しを `engineECS` の 1 欄に置いていることを決定 3 の
+  前提に書いた。同じファイルが**梯子の採用（0 段 → N 段）は再起動が要る**としていることは
+  起草が落としていたので、移行の節に足した。
+- **R6. `ImageCapacityOptionType=SPOT` のスタックでは同名衝突する。** そこでは論理 ID
+  `ImageCapacityProvider` が既に `af-<stack>-image-spot` を名乗っている（開発配備がこの状態。
+  0074「後始末と、残したもの」）。CFN は作ってから消すので、同名の 2 本目は作れない。
+  決定 3 に 2 段の移行（先に ON_DEMAND へ戻す・147 秒）を足し、実機 1 にした。
+- **R7. service の strategy は CloudFormation のものである。** テンプレートが宣言している以上、
+  service に触る更新（タスク定義の変わるリリース）は毎回、宣言の provider へ戻して新しい
+  デプロイを起こす——走っている Spot の箱はオンデマンドで置き換わり、CP は関与しない。起草の
+  決定 11「CP 自身の選択から言う」は、その最初のリリースでパネルが嘘をつく。決定 11 を
+  「`DescribeServices` の `capacityProviderStrategy` から言う」に直し（IAM は増えない）、
+  決定 12 の表に CFN の行を足し、「リリースのたびに 1 回オンデマンドで走る」を受け入れると書いた。
+- **R8. 孤児の箱。** Spot からオンデマンドへ移ったあと、Spot の provider が途中まで進めていた起動が
+  取り消されるかは分からない。未解決 10 と実機 4 に足した。
+- **R9. 引用の誤り 3 つ。** 0070 で「待っても無音にはならない——Polly が読む」は決定 5（アイドル窓）
+  ではなく決定 4。0072 決定 7 は「エンジン表は静的のまま」で、SEED は 0074 決定 2 の語である。
+  0045 決定 21 は `DescribeInstanceTypes` を足さない話で、「Pricing API」は 0074 決定 1 の言い方。
+  冒頭の関連・決定 10・中断の実費の表を直した。
+- **R10. TTS は `UseSpot=off` だと `LaunchType` で作られている。** CP が strategy へ動かすと
+  テンプレートと食い違い、次の CFN 更新が戻す（R7 と同じ形）。決定 10 に「提案を宣言する配備では
+  テンプレートが明示の `FARGATE` strategy を書く」を足した。P2 の話なので決定は据え置き。
+
+### 決定ごとの改訂（本文に反映済み）
+
+| 決定 | 何を変えたか | 理由 |
+|---|---|---|
+| 背景 4 | 「語彙が無い」→「語彙はあるが応答が無い」 | R2 |
+| 背景（コード） | 0074 の却下理由を事実として引かない／events 3 件と cooldown の現況／#542 の形と梯子採用の再起動 | R1・R3・R5 |
+| 3 | IAM は増えない／表の欄は `capacityProvider` + `spotCapacityProvider`／SPOT スタックの 2 段移行 | R4・R5・R6 |
+| 4 | (b) は `forceNewDeployment` 明示、(a) は渡さない／未解決 1 を (a)(b)(c) に分解／反証条件を「遷移が拒まれる」だけに | R1 |
+| 5 | cooldown の数字／一周＝失敗 1 回 | R3 |
+| 6 | `noteReplacement` の遷移＋箱の消失／ECS の置き直しとの関係／立て直し失敗は数える | R2 |
+| 10 | 0070 決定 4／`LaunchType` の配備では明示の `FARGATE` strategy | R9・R10 |
+| 11 | 「CP の選択」→「`DescribeServices` の strategy」 | R7 |
+| 12 | 表に (c) の帰結と CFN の行／リリース直後はオンデマンド | R1・R7 |
+| 移行 | 梯子の無い配備は CP 再起動／SPOT スタックは先に ON_DEMAND | R5・R6 |
+| 未解決 | 1 を書き直し／10（孤児の箱）を追加 | R1・R8 |
+| P0 | 実機 0（$0 の使い捨て provider）と 1（移行）を追加／4 に孤児の観察／「前に片付けておくこと」は済 | R1・R5・R6・R8 |
+
+### 実装の分け方（P0）
+
+同時に触る場所が 3 つ（`engine_class.go`/`engine_control.go`/`engine_ecs.go`、`60-engines.yaml`、
+`adminEngines.tsx`）で、レーンの境界は**契約 2 つ**で切る。
+
+- **エンジン表（テンプレート → CP）**: 行に `spotCapacityProvider`（空 = 無し）と `offers`
+  （空 = `classes` を全部 `od` として読む）を足す。既存の欄は 1 つも変えない。
+- **管理 API（CP → Console）**: `GET /api/admin/engines` の行に `offers`（`classes` と同じ形に
+  `buy` が付く）、`offer`（いま service の strategy が指す提案。`{id, buy}`・無ければ省略）、
+  `offer_trail`（この需要で試した順。`[{id, buy, result}]`・`result` は `active` | `unfulfillable` |
+  `insufficient` | `quota` | `budget`）を足す。`class` / `classes` / `class_default` /
+  `class_is_default` は**そのまま**（固定の表示は `class_is_default` の否定で足りる）。
+
+レーンは 4 本——CP（Go・2 契約の CP 側）、CFN（`60-engines.yaml`・PARAMETERS・移行）、
+Console（管理 API の契約の表示側）、実機 0（使い捨て provider で未解決 1 を $0 で測る。
+**コードより先に始めてよく、赤ならほかの 3 本を止める**）。実機 1 以降は 3 本が揃ってから 1 レーンで直列。

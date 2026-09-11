@@ -27,10 +27,13 @@ English | [日本語](0075-engine-purchase-offers.ja.md)
   are bought as ECS Managed Instances), decision 2 (one capacity provider per role), decision 5
   (wake and hold), decision 7 (`draining`) /
   [0070-tts-ondemand-engine.md](0070-tts-ondemand-engine.md) decision 1 (the placement is always
-  spelled out) and `UseSpot` /
-  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decision 21 (the numbers
-  in a ladder are declared by the operator; neither EC2 nor the Pricing API is asked) /
-  [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 7 (the stack is a SEED) /
+  spelled out), decision 4 (waiting never means silence — Polly reads), decision 6 (the start
+  clock is the PRIMARY deployment's `updatedAt`) and `UseSpot` /
+  [0045-ec2-persistent-workspace.md](0045-ec2-persistent-workspace.md) decision 21 (the vCPU in a
+  ladder is declared by the operator; `DescribeInstanceTypes` is not added to ask EC2 — "nor the
+  Pricing API" is ADR 0074 decision 1's wording) /
+  [0072-engine-model-catalog.md](0072-engine-model-catalog.md) decision 7 (the engine table stays
+  static) /
   [0048-member-cloud-cost.md](0048-member-cloud-cost.md) decision 15 (the cost-allocation tags)
 
 ## Background
@@ -61,12 +64,18 @@ computes with it (`engine_class.go`). And ADR 0074 **rejected** "the CP picks a 
 model" — because the bill goes up silently. There is no place in the current design for the
 words "cheapest first" to live.
 
-**4. An interruption is only visible as a failed start.** Both `draining` (ADR 0071 decision 7)
-and the drain wait (ADR 0074 decision 4) watch a box **this side set to desired 0**. A Spot
-interruption takes the box away with nobody having moved the desired count — all the controller
-sees is `running` reverting to `starting` (desired 1, running 0), and nothing is said until
-`StartDeadlineSec` (900 s by default) expires. **Neither the engine table nor the controller has
-a word for an interruption.**
+**4. An interruption is visible as "a replacement nobody asked for", but nobody moves to the
+next offer.** Both `draining` (ADR 0071 decision 7) and the drain wait (ADR 0074 decision 4)
+watch a box **this side set to desired 0**. A Spot interruption takes the box away with nobody
+having moved the desired count. The controller **already sees that**: `noteReplacement`
+(`engine_control.go`) logs and audits (`replaced`) a `running` → `starting` transition at desired
+1 as a replacement nobody asked for, and `describe()` notes that the PRIMARY deployment's
+`updatedAt` moves when ECS replaces a task underneath, so the start deadline re-arms by itself
+(review R2 — the draft said "there is no word for it"; there was). **What is missing is the
+response**: ECS tries to place again under the same strategy, i.e. the same provider; when that
+cannot be had it is silent until `StartDeadlineSec` (900 s by default), and the expiry is
+counted as a failed start that doubles the cooldown. Nothing moves to another offer, and nothing
+counts interruptions.
 
 ### What the code and the templates say (read 2026-09-11)
 
@@ -83,15 +92,29 @@ a word for an interruption.**
   start (ADR 0074 decision 5, `startGate` in `engine_class.go`). **That re-application targets
   the capacity provider only** and never the service — which is exactly why ADR 0074 rejected
   "declare one provider per rung and swap the service's strategy": **updating a service's
-  strategy starts a new deployment and kills a generation in flight.**
-- **The only part of an engine table row that can be carried into a running process is the
-  ladder** (`engine_table_reload.go`). A change to service, url, health, provider, capacity
-  provider, idle or deadline is merely logged as needing a restart. 🔴 **Capacity provider name
-  being in that list became a real defect during the Spot switch** (ADR 0074, "provider の名前が
-  変わると、走っている CP は箱を見失う" — the rung application went to the deleted old name and
-  got a 400, `box` read `null`, and the panel still said "running on l4"). A fix taking that name
-  live is in flight on another lane. The decisions here do **not** depend on it, but **once there
-  are two providers per role this field had better be live** (see phase P0).
+  strategy starts a new deployment and kills a generation in flight.** ⚠️ **The published
+  specification (c) disagrees**: the `UpdateService` API Reference says of
+  `capacityProviderStrategy` that "**this parameter doesn't trigger a new service deployment**"
+  (read 2026-09-11; `desiredCount` carries the same sentence, yet ADR 0070 decision 6 measured
+  `updatedAt` moving on desired 0 → 1 — so "no deployment" and "the clock does not move" are two
+  different claims). Which one holds is open question 1. This ADR does **not** inherit 0074's
+  reasoning as a fact (review R1).
+- **`describe()` already carries the first three service events** (`engineServiceEventsKept`).
+  Decision 5's code-based verdict needs no new API and no IAM. The failed-start cooldown is
+  `AF_ENGINE_<ROLE>_FAIL_COOLDOWN_SEC` (default 900 s), doubled per failure, **at most four
+  doublings (16×, four hours)** (`engineCooldownMaxDoublings`).
+- **The parts of an engine table row that can be carried into a running process are the ladder
+  and the capacity provider name** (`engine_table_reload.go`). A change to service, url, health,
+  provider, idle or deadline is merely logged as needing a restart. The provider name could not
+  be carried when this was drafted, and that became a real defect during the Spot switch (ADR
+  0074, "provider の名前が変わると、走っている CP は箱を見失う" — the rung application went to
+  the deleted old name and got a 400, `box` read `null`, and the panel still said "running on
+  l4"); **#542 (2026-09-11) made it live.** Its shape is one field on `engineECS` holding both
+  the "where to write" and the "which box is mine" name, forgetting the box cache and the
+  last-applied rung on a rename — decision 3 widens that one field to a pair. ⚠️ **Adopting a
+  ladder (zero rungs → N) still needs a restart** (same file: the rung gate is attached at
+  construction only). Offers pass the same gate, so declaring `<role>Offers` for the first time
+  on a deployment with no ladder costs one `force-new-deployment` of the CP (migration section).
 - **TTS is Fargate and its placement is written by CloudFormation** (`UseSpot` in `50-tts.yaml`:
   `on` drops `LaunchType` and writes a `FARGATE_SPOT` strategy). The CP only moves the desired
   count.
@@ -187,14 +210,28 @@ two wallets belonging to the same role, and only one of them ever appears in the
 strategy.
 
 - **One service, still.** Splitting the service was rejected (below).
-- **An engine table row carries two provider names** (the successor of `capacityProvider`). The
+- **An engine table row carries two provider names** — `capacityProvider` (on-demand, the
+  existing field unchanged) plus `spotCapacityProvider` (empty = no Spot provider). The
   `draining` test and `box()` must **accept either name as this engine's own** — watching only
   one makes a box bought through the other read as `box: null`, which is exactly what happened
-  during the rename in 0074.
-- **IAM widens to both.** Same shape as ADR 0074 decision 9 (scoped to this stack's resources):
-  the second ARN joins the Resource list for `ecs:DescribeCapacityProviders` and
-  `ecs:UpdateCapacityProvider`. `ecs:PutClusterCapacityProviders` (cluster-scoped) and
-  `iam:PassRole` do not grow.
+  during the rename in 0074. #542 narrowed the provider name to one field on `engineECS` so
+  that "where to write" and "which box is mine" can never disagree; with two names they stay
+  **one pair in one place**.
+- **IAM does not grow.** The Resource for `ecs:DescribeCapacityProviders` /
+  `ecs:UpdateCapacityProvider` in `60-engines.yaml` is already the prefix
+  `capacity-provider/af-${AWS::StackName}-*` (ADR 0074 decision 9's text says "the two ARNs
+  only"; the implementation is a prefix), and `-spot` falls inside it.
+  `ecs:PutClusterCapacityProviders` (cluster-scoped) and `iam:PassRole` do not grow either
+  (review R4).
+- 🔴 **A stack running with `ImageCapacityOptionType=SPOT` migrates in a fixed order.** There
+  the resource with logical id `ImageCapacityProvider` is **already named
+  `af-<stack>-image-spot`** (0.18.1's replacement; the dev deployment was left in this state —
+  0074, "後始末と、残したもの"). CloudFormation creates new resources before it deletes old ones,
+  so a second provider of that name cannot be created and the update rolls back. The migration
+  is two steps: **(1) an update back to `ImageCapacityOptionType=ON_DEMAND` first (a
+  replacement, measured 147 s) → (2) the update to this ADR's template**, which retires the
+  `ImageCapacityOptionType` parameter. A deployment at the default (ON_DEMAND) needs only (2):
+  one `Add`, no replacement (measured on 0074 open question 1's throwaway stack).
 
 🔁 **What would change this**: if creating the second provider costs anything or has a side
 effect — measured in 0074, **creating one buys nothing** — go back to creating only the declared
@@ -214,19 +251,29 @@ generation in flight"** on a service. That reason fails to apply in exactly one 
   The rung re-application (ADR 0074 decision 5) still flows **to the capacity provider only**.
   The distinction is explicit, and in the implementation it takes the shape of a single function
   that touches the service, with a `running == 0` guard inside it.
-- ⚠️ (b) **does start a new deployment.** It is allowed to, because the only task it kills is one
-  PENDING task. A side effect: the PRIMARY deployment's `updatedAt` moves, so the
-  `StartDeadlineSec` clock switches to the next offer by itself (`describe()` in `engine_ecs.go`
-  reads `updatedAt` — written for ADR 0070 decision 6 and useful here for free).
+- ⚠️ (b) **passes `forceNewDeployment: true` alongside.** Under the published specification (c)
+  a strategy update starts no deployment (Background) — so writing the strategy alone leaves the
+  task that is stuck PENDING under the old provider **exactly where it is**, never re-placed
+  under the new one. `forceNewDeployment` is what re-places it, and it may be passed because
+  the only task it kills is one PENDING task. As a side effect the PRIMARY deployment's
+  `updatedAt` **should** move, and if it does the `StartDeadlineSec` clock switches to the next
+  offer by itself (`describe()` in `engine_ecs.go` reads `updatedAt` — written for ADR 0070
+  decision 6). If it does not, the CP keeps its own per-offer clock (open question 1 (c)).
+- (a) passes **no** `forceNewDeployment`: the desired 0 → 1 start itself places under the new
+  provider.
 
-⚠️ **Not verified**: whether an `UpdateService` that changes only the strategy goes through
-without `forceNewDeployment`, and whether updating the strategy of a desired-0 service really is
-harmless, **have not been measured on this deployment** (open question 1; the first thing P0
-measures on hardware).
+⚠️ **Not verified** (open question 1; the first thing P0 measures on hardware): (a) whether an
+`UpdateService` that swaps the strategy between two MI providers goes through on this service —
+the API Reference's list of valid transitions names only Fargate ↔ Auto Scaling group pairs,
+and about Managed Instances says only "use the strategy parameter"; (b) whether updating the
+strategy of a desired-0 service really is harmless; (c) whether a strategy-only update moves
+`updatedAt`.
 
-🔁 **What would change this**: if a strategy update breaks something even at running 0, this
-ADR's skeleton is gone. The way back is the rejected "one service per purchase type", which
-first has to solve keeping one Cloud Map name.
+🔁 **What would change this**: if (a) is refused (an MI-to-MI transition cannot be made through
+`UpdateService`), this ADR's skeleton is gone. The way back is the rejected "one service per
+purchase type", which first has to solve keeping one Cloud Map name. ⚠️ **Being asked for
+`forceNewDeployment` is NOT red** — at running 0 there is nothing for it to kill (review R1; the
+draft said "rewrite if it is demanded", which was too strong).
 
 ### 5. Rule 2 — if no box arrives inside the budget, move to the next offer. **The failure code decides how to wait**
 
@@ -240,8 +287,9 @@ Some cases skip ahead without waiting, because the service event's code says whe
 help — and **all three codes are measured** (see "Failure codes and what they mean").
 
 - **One lap around the list and it gives up**, entering the controller's existing cooldown
-  (doubling per failure, four doublings at most) and starting from the top on the next demand.
-  That is the only gate against buying forever.
+  (default 900 s, doubling per failure, four doublings at most — four hours) and starting from
+  the top on the next demand. That is the only gate against buying forever. **One lap counts as
+  ONE failure** (counting per offer would stretch the cooldown by the number of rows).
 - **One audit line per move** (`engine.<role>.offer`). "Why are we running on the expensive box"
   has to be answerable afterwards.
 
@@ -251,18 +299,26 @@ more than 180 s. Then the budget becomes per-code, lengthened only for codes wor
 
 ### 6. Rule 3 — an interruption is "**there is demand and the box is gone**". Start again from the top of the list
 
-Detection is **the box disappearing**: desired is still 1, running has gone to 0, and no
-container instance is registered — with the CP not having moved the desired count. That is
-enough for rule 3, because **the list is restarted from the top** whichever way the box was
-lost: a Spot interruption and any other AWS-side loss want the same answer.
+Detection is **the transition `noteReplacement` already sees** (`running` → `starting` at desired
+1; Background, point 4) **plus the container instance being gone** — if only the task was
+replaced (an OOM kill, a health check) the box is still there, which is what ADR 0071 P0
+measured and not an interruption. The CP has not moved the desired count. That is enough for
+rule 3, because **the list is restarted from the top** whichever way the box was lost: a Spot
+interruption and any other AWS-side loss want the same answer.
 
+- ⚠️ **ECS starts re-placing without the CP doing anything** — under the same strategy, i.e. the
+  same provider. So "from the top" means writing the strategy **only when the first candidate
+  differs from the current provider** (running is 0, so decision 4's gate is open); when it is
+  the same, the CP writes nothing and waits for ECS's own replacement. The clock has re-armed
+  already, because `updatedAt` moved (`describe()`'s note).
 - 🔴 **`stoppedReason` is read to EXPLAIN, not to conclude.** The CP does not call `DescribeTasks`
   today (only `DescribeServices` and the two container-instance calls). Saying "this was an
   interruption" out loud means adding it, so **whether it earns its keep is decided after P1
   measures** (open question 2). Detection works without it.
 - **An interruption is not counted as a failure.** The controller's `failures` (which doubles the
   cooldown) counts starts that failed, not things that were taken away while running. Counting
-  interruptions there makes **starts get slower the more Spot is used**.
+  interruptions there makes **starts get slower the more Spot is used**. But **a rebuild after an
+  interruption that gets no box by the deadline IS a failed start, and counts as it always has**.
 - ⚠️ But **an offer interrupted twice in a row is skipped for the rest of that demand.** Buying
   a type that keeps being taken away, forever, is this design's most expensive failure shape.
 
@@ -333,10 +389,17 @@ TTS is Fargate, so there is no box to buy. Its offer rows carry **no types — o
 and a price**. The rules are the same, decision 4 (write the strategy only while running is 0)
 included.
 
-- **Polly carries the wait** (ADR 0070 decisions 5 and 16). So rule 2's budget may be shorter
+- **Polly carries the wait** (ADR 0070 decisions 4 and 16). So rule 2's budget may be shorter
   here: waiting does not produce silence.
 - ⚠️ **ADR 0070 decision 1's invariant does not break.** What the CP writes is always an
   **explicit** strategy; what is forbidden is writing neither a `LaunchType` nor a strategy.
+- ⚠️ **With `UseSpot=off` the service is created with `LaunchType: FARGATE` and no strategy**
+  (`50-tts.yaml`). The published specification (c) lists "Fargate launch type → Fargate capacity
+  provider" as a valid transition, so the CP can move it — but then the template and the service
+  disagree, and the next CloudFormation update puts `LaunchType` back (decision 12's CFN row). A
+  deployment that declares TTS offers has the template write **an explicit `FARGATE` strategy
+  (weight 1)** in place of `LaunchType`, so the only thing the CP ever changes is the provider
+  name inside a strategy (review R10).
 - ⚠️ `UseSpot` stays but changes meaning, from "use Spot" to "**put the Spot offer in the list**".
   Measured: flipping `UseSpot` on production was an **in-place** update (about 6 minutes, no
   replacement), though the new deployment came up at desired 1 (the contract of not declaring
@@ -347,10 +410,15 @@ included.
 TTS may be cheaper on plain on-demand than being rebuilt while Polly reads. Settle it by adding
 that arithmetic to ADR 0070's break-even (stand the engine up once reading is cheaper than Polly).
 
-### 11. The panel says what it is running on **from the CP's own choice**. EC2 is not asked
+### 11. The panel says what it is running on **from the service's strategy**. EC2 is not asked
 
-The CP knows which offer it passed to `UpdateService`, so saying "running on the Spot l4 offer"
-needs no call to EC2.
+The CP knows which offer it passed to `UpdateService` — but **it does not answer from memory.**
+The `DescribeServices` response carries the service's `capacityProviderStrategy`, so the one call
+the CP already makes every tick yields "the current provider", and the offer is looked up from
+that. No EC2, no new IAM. Answering from the remembered choice makes the panel lie the moment
+CloudFormation rewrites the service (decision 12's CFN row) — a replay of the 0074 rename, where
+`box` was `null` and the panel still said "starting on l4" (review R7). The CP's own choice
+lives in the audit log (decision 5).
 
 - 🔴 **Proving it really was Spot needs `describe-instances` by id** (measured, 0074: an MI box
   cannot be enumerated but is returned by id, and `InstanceLifecycle: spot` exists nowhere else).
@@ -372,12 +440,25 @@ things.**
 | Target | When it is written | What happens when it is |
 |---|---|---|
 | capacity provider (four fields) | on save and **before every start** (idempotent) | nothing moves; only the spec of the next box changes |
-| the service's strategy | **only while running is 0** (decision 4) | **a new deployment starts**; any running task is replaced |
+| the service's strategy | **only while running is 0** (decision 4) | under the published specification (c) **nothing moves** (only where the next task is placed changes); in (b) `forceNewDeployment` rides along to re-place the one PENDING task |
+| the service's strategy, **written by CloudFormation** | every update that touches the service resource — every release that changes the task definition | **it reverts to the declared provider and a new deployment starts.** A running Spot box is replaced by an on-demand one, and the CP has no part in it |
+
+The running-0 limit survives even if (c) is right: it keeps the CP from ever creating, on its
+own side, a state where the running box and the strategy disagree, and passing (b)'s
+`forceNewDeployment` at running 1 would be exactly the case 0074 rejected.
 
 CloudFormation putting its declaration back (ADR 0074's open question 2) is absorbed through both
 routes — the provider's four fields by the pre-start re-application, the service's strategy by
-the start itself. ⚠️ **The remaining window has the same shape**: between CloudFormation reverting
-and the next start, the deployment sits at something other than what is declared.
+the next start. ⚠️ **The remaining window has the same shape**: between CloudFormation reverting
+and the next start, the deployment sits at something other than what is declared. 🔴 **For the
+service the window is a BOX, not a state** — a release's deployment replaces a running Spot box
+with an on-demand one, so right after a release the engine runs on the declared provider
+(on-demand). The template's declared default is the on-demand provider (the safe side); the
+panel says so truthfully through decision 11; the next desired 0 → 1 lets the CP choose from the
+top again. Avoiding it would mean taking the service's strategy out of CloudFormation's hands,
+and `CapacityProviderStrategy` is the service's mandatory placement (ADR 0070 decision 1), so it
+cannot leave. **One on-demand run per release** is accepted (review R7; the reversal condition
+is decision 11's).
 
 ## Rejected alternatives
 
@@ -460,6 +541,13 @@ id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|b
   disappears silently**).
 - The stored choice (`engine_<role>_class`) resolves by id, so **nothing happens at migration as
   long as the ids stay.**
+- ⚠️ **Declaring offers for the first time on a deployment that had no ladder costs one CP
+  restart** (`force-new-deployment`, measured 217 s, blue/green). The rung gate is attached at
+  construction only, and the table reload merely logs zero rungs → N as needing a restart
+  (`engine_table_reload.go`; the same rule as 0074). A deployment that already has a ladder
+  takes row changes and the `buy` column live.
+- 🔴 **A stack at `ImageCapacityOptionType=SPOT` goes back to ON_DEMAND first** (decision 3: a
+  provider of that name already exists).
 
 An example following what the dev deployment measured (0074's appendix widened Spot to three
 types, with on-demand underneath):
@@ -511,10 +599,11 @@ With `<role>OfferBudgetSec` at 180 s and a three-row list for the image role:
 | Spot is silent (no event) → the 180 s budget → on-demand | **180 s** plus the start |
 | All three rows spend their budget (worst case) | **540 s** plus the start, then cooldown |
 
-🔴 **`StartDeadlineSec` (900 s by default) does not cover that total** — decision 4's side effect
-(moving to the next offer moves the PRIMARY deployment's `updatedAt`) switches the clock, so it
-is **900 seconds PER OFFER**. That is intended, but it means **nothing bounds "waiting for a
-start" as a whole.** Two things bound it instead:
+🔴 **`StartDeadlineSec` (900 s by default) does not cover that total** — if decision 4 (b)'s
+`forceNewDeployment` moves the PRIMARY deployment's `updatedAt`, the clock switches and it is
+**900 seconds PER OFFER** (if it does not, the CP keeps a per-offer clock of its own; open
+question 1 (c)). Either way **nothing bounds "waiting for a start" as a whole.** Two things bound
+it instead:
 
 - **One lap around the list, then cooldown** (decision 5).
 - **The gateway's `AF_ENGINE_WAKE_TIMEOUT` (900 s) is not changed** (ADR 0071 decision 5). What
@@ -527,7 +616,7 @@ start" as a whole.** Two things bound it instead:
 
 | Item | Value | Source |
 |---|---|---|
-| The request in flight | **Lost.** The image role has nothing like Polly to read in its place | ADR 0071 decision 5, contrasted with ADR 0070 decision 5 |
+| The request in flight | **Lost.** The image role has nothing like Polly to read in its place | ADR 0071 decision 5, contrasted with ADR 0070 decision 4 |
 | Re-fetching the models | Local storage, so from scratch. Measured 6.62 GiB in 66 s (102.7 MiB/s). **About 5 minutes for a comfy deployment holding 30 GB** — that 5 minutes is **computed** from the measured rate; the 30 GB sync itself has not been measured | ADR 0071 |
 | Cold start | image 165-197 s / llm 527-586 s | ADR 0071 |
 | Billing for the interrupted hour | ⚠️ **(c) Understood from AWS's published specification to be uncharged when AWS interrupts, and not confirmed on this deployment.** Nothing here rests on it | — |
@@ -554,10 +643,14 @@ where an engine simply does not start disappears.** Read it in that order.
 
 ## Open questions (decided after measuring)
 
-1. 🔴 **Whether an `UpdateService` changing only the strategy goes through without
-   `forceNewDeployment`**, and whether updating the strategy of a desired-0 / running-0 service
-   really is harmless. **Not measured on this deployment.** Depends on: decisions 4 and 5 — the
-   skeleton of this ADR. **The first thing P0 measures on hardware.**
+1. 🔴 **Whether an `UpdateService` swapping the strategy between two MI providers goes through**
+   ((a); the published specification's (c) "valid transitions" name only Fargate ↔ ASG pairs),
+   whether updating the strategy of a desired-0 / running-0 service is harmless ((b)), and
+   whether a strategy-only update moves the PRIMARY deployment's `updatedAt` ((c); that "no
+   deployment" would mean "no clock movement" is contradicted by the `desiredCount` measurement).
+   **Not measured on this deployment.** Depends on: decisions 4 and 5 — the skeleton of this ADR —
+   and "The time budget". **The first thing P0 measures on hardware.** ⚠️ Being asked for
+   `forceNewDeployment` is not red.
 2. Whether adding `DescribeTasks` (and one IAM action) to conclude that a loss was an interruption
    earns its keep. Detection works on the box disappearing alone (decision 6); the addition would
    be for the explanation. Depends on: decisions 6 and 11.
@@ -582,6 +675,13 @@ where an engine simply does not start disappears.** Read it in that order.
 9. **How often interruptions actually happen.** The one Spot box 0074 bought ran for 403 seconds.
    Whether decision 6's "skip an offer interrupted twice" is needed cannot be known until this is
    filled.
+10. 🔴 **The orphan box.** After the move from the Spot offer to on-demand (decision 4 (b)), is
+    the launch the Spot provider had **already started** cancelled, or does the box arrive late
+    and sit with no task to carry until `scaleInAfter` (measured in 0071: a GPU box drains in
+    427-463 s)? An MI provider goes to buy when it sees "task cannot be placed", so a box from
+    the previous provider arriving right after the move is entirely plausible. Depends on:
+    decision 5 (the shorter the budget, the likelier). In P0's hardware run 4, watch the old
+    provider's `describe-container-instances` for a few minutes **after** the move (review R8).
 
 ## Phases and what "done" means
 
@@ -609,10 +709,11 @@ score (decision 7) are not in it.**
 
 | # | What to measure | Verdict |
 |---|---|---|
-| 1 | 🔴 **Open question 1**: an `UpdateService` carrying only a strategy, at desired 0 | Does it answer 200, or demand `forceNewDeployment`? **If this is red the ADR is rewritten from the skeleton** |
+| 0 | 🔴 **Measure open question 1 for $0, before any code**: create one throwaway MI provider (the same steps as 0074 open question 1; no GPU), then swap the existing image service's strategy to it and back with `UpdateService` at desired 0 | (a) does it answer 200 / (b) is the service intact (`describe-services` shows the strategy as written, desired still 0) / (c) does the PRIMARY deployment's `updatedAt` move. **If (a) is refused the ADR is rewritten from the skeleton.** Being asked for `forceNewDeployment` only means (b)'s route passes it — not red. Afterwards restore the strategy and delete the provider |
+| 1 | Migrating a stack at `ImageCapacityOptionType=SPOT` (decision 3's two steps) | The update back to ON_DEMAND goes through, then this ADR's template goes through as an `Add`. **Skipping this rolls back on the name collision** |
 | 2 | Both providers exist and both are in the cluster's list | Two in `describe-clusters`'s `capacityProviders` (creating one is enough, as 0074 measured) |
 | 3 | Desired 0 → 1 picks the Spot offer and the box arrives as **`InstanceLifecycle: spot`** | `ec2InstanceId` from `ecs describe-container-instances` → `describe-instances --instance-ids` |
-| 4 | Rule 2's fallback | Put a deliberately unbuyable type in the Spot offer (out of stock, or a misspelling) and watch the on-demand box arrive after the budget. **This is P0's positive control** |
+| 4 | Rule 2's fallback | Put a deliberately unbuyable type in the Spot offer (out of stock, or a misspelling) and watch the on-demand box arrive after the budget. **This is P0's positive control.** Keep watching the old provider's `describe-container-instances` for a few minutes **after** the move and record whether an orphan box (open question 10) turns up |
 | 5 | `box()` accepts a box from **either** provider | `box` in `GET /api/admin/engines` is not `null` (during the rename in 0074 it was) |
 | 6 | The rung application lands on **the chosen offer's** provider | Describe both before and after a switch: **not one field moves on the untouched one** |
 | 7 | The panel | It names the current offer, its purchase type, and the order tried |
@@ -621,12 +722,10 @@ score (decision 7) are not in it.**
 $1.26/h if not). When the measuring is done set `mode` to off and **watch until the container
 instance is gone** ("stopped" and "gone" are different — 0074 P1).
 
-⚠️ **To clear before P0**: this ADR makes it two providers, so **carrying a capacity provider
-name live** is the safer ground (today it is only logged as needing a restart, and in 0074 that
-gap meant the rung application hitting the old name with a 400, `box` at `null`, and a panel
-that lied). That fix is in flight on another lane. **If it is not in, put one line in P0's
-deployment steps: `force-new-deployment` the Control Plane** (measured at 217 s, blue/green, so
-no outage).
+✅ **To clear before P0 (done)**: carrying a capacity provider name live landed as #542
+(2026-09-11). Decision 3 widens that one field to a pair. **Declaring offers for the first time
+on a deployment that had no ladder** still costs one `force-new-deployment` of the Control Plane
+(migration section).
 
 ### P1 — detecting an interruption and rebuilding, plus the placement score
 
@@ -676,3 +775,104 @@ The hardware runs are driven from a **`claude` session**. Running the same steps
 execution method has produced fabricated results here before (an operational fact about this
 deployment, not about AWS). Also **one lane, one deployment**: the dev deployment is shared with
 other sessions, so before touching `60-engines`, confirm nobody else is deploying.
+
+## Review (2026-09-11, before P0)
+
+In the manner of ADR 0071's review, the chain "decision → grounds → current state" was checked
+against the code, the templates, the cited ADRs and the published specification. Verdict:
+**approved (P0 may start). But one premise of the skeleton disagrees with the published
+specification (R1), four statements of the current state were stale or wrong (R2-R5), there is
+one migration trap (R6) and two design gaps (R7, R8). The text above has been corrected
+accordingly** — this ADR is still "proposed" with not one line implemented, so the correction is
+0074's "the implementation corrects the text" stage brought forward, with what changed and why
+kept here. **Nothing was measured for this section**; re-reading was enough.
+
+### What the review checked
+
+- **R1. The published specification (c) says a strategy update starts no deployment.** The
+  `UpdateService` API Reference (read 2026-09-11) says of `capacityProviderStrategy`: "This
+  parameter doesn't trigger a new service deployment." Its list of valid transitions names only
+  Fargate ↔ Auto Scaling group pairs and, of Managed Instances, says only "use the strategy
+  parameter". The draft inherited 0074's rejection reason (strategy update = new deployment =
+  a generation killed) as a fact; it is not a measurement, and it disagrees with the
+  specification. Decision 4 (b) stood on "a new deployment starts (and `updatedAt` moves as a
+  by-product)", so it now **passes `forceNewDeployment: true` explicitly**, and `updatedAt`
+  moved to open question 1 (c). The reversal condition was corrected too — being asked for
+  `forceNewDeployment` is not red (at running 0 there is nothing to kill); red is only "the
+  MI-to-MI transition itself is refused". Hardware run 0 now measures this **for $0 with a
+  throwaway provider, before any code**.
+- **R2. "No word for an interruption" was wrong.** `noteReplacement` in `engine_control.go`
+  already logs and audits (`replaced`) a `running` → `starting` at desired 1 as a replacement
+  nobody asked for, and `describe()` already notes that `updatedAt` moves when ECS replaces a
+  task. Decision 6 now builds on that transition plus "the box is gone too". And since ECS starts
+  re-placing under the same provider without the CP, "from the top" was narrowed to **write only
+  when the first candidate differs from the current provider**.
+- **R3. The cooldown is not "capped at 4×" but four doublings = 16×.**
+  `engineCooldownMaxDoublings = 4`, default 900 s (`AF_ENGINE_<ROLE>_FAIL_COOLDOWN_SEC`), four
+  hours at most. Decision 5 corrected, and "one lap = one failure" made explicit.
+- **R4. IAM does not grow.** The Resource in `60-engines.yaml` is already the prefix
+  `capacity-provider/af-${AWS::StackName}-*`, which `-spot` falls inside. ADR 0074 decision 9's
+  text ("the ARNs only") and its implementation differed.
+- **R5. Carrying the provider name live landed as #542** (2026-09-11 15:57, after the draft).
+  "In flight on another lane" became "done", and that implementation's one-field copy on
+  `engineECS` is now decision 3's premise. The same file's rule that **adopting a ladder (zero
+  rungs → N) needs a restart** had been dropped by the draft; the migration section has it.
+- **R6. A stack at `ImageCapacityOptionType=SPOT` collides on the name.** There the logical id
+  `ImageCapacityProvider` is already called `af-<stack>-image-spot` (the dev deployment is in
+  that state — 0074, "後始末と、残したもの"). CloudFormation creates before it deletes, so a
+  second of that name cannot be made. Decision 3 gained the two-step migration (back to
+  ON_DEMAND first, 147 s), and it is hardware run 1.
+- **R7. The service's strategy belongs to CloudFormation.** As long as the template declares it,
+  every update that touches the service (a release changing the task definition) puts the
+  declared provider back and starts a deployment — the running Spot box is replaced on-demand
+  with no part played by the CP. The draft's decision 11, "from the CP's own choice", would have
+  lied on the first release. Decision 11 now answers **from `DescribeServices`'
+  `capacityProviderStrategy`** (no IAM), decision 12's table gained the CFN row, and "one
+  on-demand run per release" is written down as accepted.
+- **R8. The orphan box.** Whether a launch the Spot provider had already begun is cancelled when
+  the strategy moves to on-demand is unknown. Added as open question 10 and to hardware run 4.
+- **R9. Three wrong citations.** In 0070, "waiting never means silence — Polly reads" is decision
+  4, not 5 (the idle window). 0072 decision 7 is "the engine table stays static"; SEED is 0074
+  decision 2's word. 0045 decision 21 is about not adding `DescribeInstanceTypes`; "the Pricing
+  API" is 0074 decision 1's wording. Fixed in the header, decision 10 and the interruption-cost
+  table.
+- **R10. TTS with `UseSpot=off` is created with `LaunchType`.** If the CP moves it to a strategy
+  the template and the service disagree and the next CFN update reverts it (R7's shape).
+  Decision 10 gained "a deployment declaring offers has the template write an explicit `FARGATE`
+  strategy". P2 material; the decision itself stands.
+
+### Per-decision revisions (already applied above)
+
+| Decision | What changed | Why |
+|---|---|---|
+| Background 4 | "no word" → "there is a word, but no response" | R2 |
+| Background (code) | 0074's rejection reason not cited as fact / the three events and the cooldown as they are / #542's shape and the restart for adopting a ladder | R1, R3, R5 |
+| 3 | IAM does not grow / table fields `capacityProvider` + `spotCapacityProvider` / two-step migration for SPOT stacks | R4, R5, R6 |
+| 4 | (b) passes `forceNewDeployment` explicitly, (a) does not / open question 1 split into (a)(b)(c) / reversal condition narrowed to "the transition is refused" | R1 |
+| 5 | cooldown figures / one lap = one failure | R3 |
+| 6 | `noteReplacement`'s transition plus the box gone / relation to ECS's own re-placement / a failed rebuild counts | R2 |
+| 10 | 0070 decision 4 / an explicit `FARGATE` strategy where `LaunchType` was | R9, R10 |
+| 11 | "the CP's choice" → "`DescribeServices`' strategy" | R7 |
+| 12 | (c)'s consequence and the CFN row in the table / on-demand right after a release | R1, R7 |
+| Migration | CP restart for a deployment with no ladder / SPOT stacks back to ON_DEMAND first | R5, R6 |
+| Open questions | 1 rewritten / 10 (the orphan box) added | R1, R8 |
+| P0 | hardware runs 0 ($0 throwaway provider) and 1 (migration) added / orphan watch in 4 / "to clear before P0" done | R1, R5, R6, R8 |
+
+### How the implementation splits (P0)
+
+Three places are touched at once (`engine_class.go` / `engine_control.go` / `engine_ecs.go`,
+`60-engines.yaml`, `adminEngines.tsx`), and the lanes are cut along **two contracts**.
+
+- **The engine table (template → CP)**: a row gains `spotCapacityProvider` (empty = none) and
+  `offers` (empty = read `classes` as all-`od`). No existing field changes.
+- **The admin API (CP → Console)**: a row of `GET /api/admin/engines` gains `offers` (the shape
+  of `classes` plus `buy`), `offer` (the offer the service's strategy points at now — `{id, buy}`,
+  omitted when none) and `offer_trail` (the order tried in this demand — `[{id, buy, result}]`,
+  `result` one of `active` | `unfulfillable` | `insufficient` | `quota` | `budget`). `class` /
+  `classes` / `class_default` / `class_is_default` **stay as they are** (the pin badge is the
+  negation of `class_is_default`).
+
+Four lanes — CP (Go; the CP side of both contracts), CFN (`60-engines.yaml`, PARAMETERS,
+migration), Console (the display side of the admin contract), and hardware run 0 (open question
+1 for $0 with a throwaway provider; **may start before any code, and if it is red it stops the
+other three**). Hardware runs 1 onward wait for all three to land and go serially on one lane.
