@@ -124,6 +124,11 @@ Right-clicking **a session's tab** gives the same menu as that session's row in 
 ([03](05-terminal.md#arranging-multiple-views-panes)). Tabs that are not sessions, and every tab while the
 workspace is stopped, keep the browser's own menu.
 
+### Cards in the sessions overview
+
+A card in the sessions overview pane ([02](02-sessions.md#seeing-every-running-session-at-once-the-sessions-overview))
+gives the same menu again — from a right-click, its ⋯ button, or the Menu key while the card has focus.
+
 ## When a menu doesn't appear
 
 - While the workspace is stopped, menu items that run inside the workspace are disabled or hidden.

@@ -13,6 +13,8 @@ import { useSessionsStore } from "../sessions/store.ts";
 import type { Session } from "../../types/session.ts";
 import type { PaneKind } from "../../layout/types.ts";
 import { useT } from "../../lib/i18n/index.ts";
+import { IconButton } from "../../ui/Button.tsx";
+import { openSessionsOverview } from "../overview/open.ts";
 import { jaKind } from "./paneTitle.ts";
 import { selectedView } from "../../layout/ops.ts";
 
@@ -30,6 +32,7 @@ const KIND_ABBR: Partial<Record<PaneKind, string>> = {
   chat: "chat",
   browser: "web",
   browserAttach: "web",
+  sessions: "sess",
 };
 
 export const LayoutMap = memo(function LayoutMap() {
@@ -49,7 +52,11 @@ export const LayoutMap = memo(function LayoutMap() {
 
   return (
     <div className="layoutmap" role="group" aria-label={tr("pane.map_aria")}>
-      <div className="lm-cap">{tr("pane.layout")}</div>
+      <div className="lm-cap">
+        {tr("pane.layout")}
+        {/* The overview's one on-screen entry (the other is the leader key, g s). */}
+        <IconButton icon="dashboard" label={tr("pane.open_sessions")} onClick={() => openSessionsOverview()} />
+      </div>
       <div className="lm-cols">
         {layout.cols.map((col) => (
           <div className="lm-col" key={col.id}>

@@ -297,6 +297,32 @@ The working tree the running agent sees may have been swapped out, and its edits
 no longer line up. If this doesn't ring a bell, check whether an unintended branch switch has
 happened. For parallel work, giving each session its own worktree avoids this confusion.
 
+## Seeing every running session at once (the sessions overview)
+
+Once several sessions are running, the left pane makes you read them one row at a time. The
+**sessions overview** lays them out as **cards in a grid** — one card per session, with the same
+kind colour, name, working copy and state chip as its row, plus the model, the context usage and
+when it started. The states that need you now (a question, a plan to review, a permission prompt)
+colour the whole card, so they can be spotted from across the room.
+
+- **Opening it**: **"Sessions"** on the action bar (next to Split right / Split down / Close all),
+  the same button on the layout map at the top of the left pane, or the leader key **`g` → `s`**.
+  It is an ordinary pane: split it, tab it, pop it out, and it is there again after a reload.
+- **How many columns** depends on the width of the pane it is in — one column in a narrow side
+  column, four or more across a wide one.
+- **Clicking a card opens that session beside the grid**, never in its place, so the grid stays
+  put while you look. If the session is already open, that pane is focused instead. A badge on
+  the card shows which pane holds it while the layout is split.
+- **Right-click, the ⋯ button, or the Menu key on a card gives the same menu as the row in the
+  left pane** — stop, rename, hand off, share, lock, keep awake, archive, and the rest
+  ([Icons, badges, and menus](badges-and-menus.md)).
+- By default only running sessions are shown. **"Show stopped"** in the pane header adds the
+  stopped ones, dimmed; the choice is remembered per pane.
+- Cards are ordered by what needs you: sessions waiting on an answer first, then the rest of the
+  running ones newest first, then stopped ones. Inside those groups the order does not change
+  while you watch.
+- The active working set (below) narrows the grid the same way it narrows the left pane.
+
 ## Narrowing the view with working sets
 
 Once you are carrying several pieces of work, the left pane fills up with the repositories and

@@ -206,6 +206,7 @@ export const common = {
   // === P2 LayoutMap（features/panes/LayoutMap.tsx）===
   "pane.map_aria": "ペイン配置",
   "pane.layout": "レイアウト",
+  "pane.open_sessions": "セッション一覧を開く",
   "pane.pane_n": "ペイン{ord}",
   "pane.no_session": "セッション未接続",
   "pane.empty": "空き",
@@ -220,6 +221,7 @@ export const common = {
   "pane.kind.read": "朗読ビュー",
   "pane.kind.browser": "ブラウザ",
   "pane.kind.browser_attach": "Chromium操作画面",
+  "pane.kind.sessions": "セッション一覧",
 
   // === P2 共通（追加）===
   "common.approx": "約{v}",

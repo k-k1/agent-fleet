@@ -121,6 +121,7 @@ export function sameTarget(view: View, target: OpenTarget): boolean {
     case "browser": return c.kind === "browser" && c.port === t.port && c.path === t.path;
     case "browserAttach": return c.kind === "browserAttach" && c.attachmentId === t.attachmentId;
     case "sharedSession": return c.kind === "sharedSession" && c.sharedSessionId === t.sharedSessionId;
+    case "sessions": return c.kind === "sessions";
   }
 }
 

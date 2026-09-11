@@ -10,6 +10,7 @@ import { onPush, pushHealthy } from "../core/push/events.ts";
 import { useTenantStore } from "../core/store/tenant.ts";
 import { useWorkspaceStore, wsBusy, wsPowerStops, wsStartBusy } from "../core/store/workspace.ts";
 import { useLayoutStore } from "../layout/store.ts";
+import { openSessionsOverview } from "../features/overview/open.ts";
 import { isBlankPane, MAX_TAB_COLS } from "../layout/ops.ts";
 import { useSessionsStore } from "../features/sessions/store.ts";
 import { hintSuffix } from "../features/keys/keyHint.ts";
@@ -1528,6 +1529,17 @@ export function WsBar() {
       >
         <Icon name="close-all" />
         <span className="lbl">{tr("wsbar.close_all")}</span>
+      </button>
+      {/* The sessions overview (ADR 0078). It sits with the pane buttons because it IS a
+          pane; the rail's layout map has the same button, but that map hides itself while
+          there is a single pane — which is exactly when someone reaches for the overview. */}
+      <button
+        className="ghost ws-split ws-overview"
+        title={tr("wsbar.overview_title") + hintSuffix("open.sessions")}
+        onClick={() => openSessionsOverview()}
+      >
+        <Icon name="dashboard" />
+        <span className="lbl">{tr("wsbar.overview")}</span>
       </button>
 
       <span className="ws-spacer" />

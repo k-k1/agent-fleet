@@ -1,5 +1,5 @@
 // 日本語 カタログ / ドメイン: sessions
-// キー接頭辞: session, sess, srow, launch, start, arch, agent, sx, mgr, wsbar, handoff
+// キー接頭辞: session, sess, srow, launch, start, arch, agent, sx, mgr, wsbar, handoff, ovw
 //
 // ⚠️ 追記は**自分のドメインのファイルだけ**に行う（ADR 0067 決定 4）。分割前は 4,700 行の
 // 1 ファイルで、フロントの並列セッションが全員ここへ追記＝毎回確実に衝突していた。
@@ -107,6 +107,8 @@ export const sessions = {
   "wsbar.split_down_title": "上下に分割（アクティブなペイン）",
   "wsbar.close_all": "全て閉じる",
   "wsbar.close_all_title": "全ペインを閉じる",
+  "wsbar.overview": "セッション一覧",
+  "wsbar.overview_title": "稼働中のセッションをカードで一望する",
   // オーバーフロー／プレビュー／リソース
   "wsbar.more_title": "リソース情報 / opencode web / プレビュー",
   "wsbar.preview": "プレビュー",
@@ -533,4 +535,16 @@ export const sessions = {
   "handoff.row_badge": "引き継ぎが届いています",
   "handoff.banner_title": "この会話の引き継ぎが届いています",
   "handoff.banner_open": "内容を見て引き継ぐ",
+  // --- sessions overview pane (ADR 0078) ---
+  "ovw.count_alive": "稼働中 {n}",
+  "ovw.count_hint": "この一覧に出ている稼働中セッションの数（作業グループで絞った後）",
+  "ovw.show_stopped": "停止中も表示",
+  "ovw.show_stopped_hint": "停止したセッションもカードに並べる（この切替はペインごとに保存される）",
+  "ovw.empty": "稼働中のセッションはありません",
+  "ovw.empty_in_set": "作業グループ「{set}」に稼働中のセッションはありません",
+  "ovw.empty_hint": "上部の Start から起動するか、「停止中も表示」で停止したセッションを並べます",
+  "ovw.open_hint": "クリックで隣のペインに開く（右クリックでメニュー）",
+  "ovw.ctx": "コンテキスト {pct}%",
+  "ovw.ctx_hint": "コンテキストウィンドウの使用率",
+  "ovw.started": "開始 {ago}",
 };

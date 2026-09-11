@@ -21,6 +21,7 @@ import type { Dir } from "../../layout/nav.ts";
 import { useLeftRail } from "../../core/store/leftRail.ts";
 import { useWorkspaceStore } from "../../core/store/workspace.ts";
 import { useSessionsStore } from "../sessions/store.ts";
+import { openSessionsOverview } from "../overview/open.ts";
 import { useMemoStore } from "../memo/store.ts";
 import { useSettingsUI } from "../settings/store.ts";
 import { getSettings, setSetting, defaultSetting } from "../../lib/settings.ts";
@@ -363,6 +364,7 @@ export const ALL_COMMANDS: Command[] = [
   { id: "open.usageCodex", title: "keys.cmd.openUsageCodex", seq: "g x", run: () => useUiOpen.getState().toggle("usage-codex") },
   { id: "open.usageAgy", title: "keys.cmd.openUsageAgy", seq: "g a", run: () => useUiOpen.getState().toggle("usage-agy") },
   { id: "open.resources", title: "keys.cmd.openResources", seq: "g r", run: () => useUiOpen.getState().toggle("resources") },
+  { id: "open.sessions", title: "keys.cmd.openSessions", seq: "g s", run: () => openSessionsOverview() },
 
   // ---- Notifications (leader n) — mute the voice read-aloud, toggle the per-session voice
   // notification / limit-reset notification, or toggle a chat-bridge service's notification
