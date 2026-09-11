@@ -194,6 +194,11 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
   while the image role is stopped, or a generation in flight is lost and the next request pays
   the cold start again. Details and the measurements:
   [the capacity providers](#the-capacity-providers);
+- a replacement **renames** the provider. **Put this release's Control Plane image on before
+  switching**: from 0.18.1 the running CP takes the new name off the engine table and needs no
+  restart, but a 0.18.0 CP keeps addressing the deleted one — the rung never reaches the
+  instance, the panel shows no box while one is billing, and only a
+  `force-new-deployment` clears it (measured 217 s; ADR 0074);
 - Spot has **its own quota**, `L-3819A6DF`, whose default is 0. The provider is created happily
   without it and then never buys an instance — an engine that will not start, with nothing to read.
   Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
@@ -1333,22 +1338,31 @@ out by measurement, and the quota was right at the time. What actually moved the
    ⚠️ g6e's Spot is ABOVE g6's on-demand $1.26: Spot is cheap for the type you got, not for
    everything you widened to.
 
-🔴 **And the update comes as a PAIR with a Control Plane restart.** The replacement renames the
-provider, and a provider name is baked into the running CP at start — only the ladder is taken
-live (ADR 0074). Woken without a restart, the engine still starts, and three things disagree at
+✅ **No Control Plane restart is needed — as long as the CP is 0.18.1 or newer.** The replacement
+renames the provider, and the running CP takes that name live off the engine table, on the same
+poll the ladder rides (`engine_table_reload.go`). The rename also re-runs the `box` match under
+the new name, drops the cached lookup, and forgets the rung this process applied to the OLD
+provider — so the next start re-applies it to the new one. Nothing to do.
+
+🔴 **On a CP from 0.18.0 or earlier it is still a PAIR with a restart.** That is not a stale
+deployment's problem only: `ImageCapacityOptionType` arrives with 60-engines, and a stack update
+can put SPOT on the table while the CP service is still running the previous release's image.
+The old CP bakes the provider name in at start, so woken after a rename the engine still starts
+and three things disagree at
 once: the rung application 400s against the deleted old name (`The capacity provider could not be
 updated because it has been deleted.`), so the new provider keeps the TEMPLATE's
 `<Role>AcceleratorMemMinMiB` instead of the rung's; the `box` lookup matches the old name, so the
-panel shows no instance while one is billing; and the panel still says the rung is in force. The
-CP does log `changed in the table in a way this process cannot take live (capacity provider) -
+panel shows no instance while one is billing; and the panel still says the rung is in force. It
+does log `changed in the table in a way this process cannot take live (capacity provider) -
 restart the Control Plane` and does surface `class_apply_error`, but neither stops anything.
 `update-service --force-new-deployment` (blue/green, no outage, measured 217 s) clears all three —
 verified with a $0 positive control: the same `PUT …/class` that 400'd before the restart moved
-the provider's floor to the rung's value after it.
+the provider's floor to the rung's value after it. **So order the upgrade: put the new Control
+Plane image on first, then switch to SPOT.**
 
 The way back to `ON_DEMAND` is one more stack update (measured: 147 seconds, and the original
-provider name is reusable even though ECS keeps the retired one as `INACTIVE`) — and it is
-another rename, so the same CP restart applies.
+provider name is reusable even though ECS keeps the retired one as `INACTIVE`). It is another
+rename, so the same rule applies to it: nothing to do on 0.18.1 or later, a restart before that.
 
 ⚠️ **`describe-instances` can PROVE Spot, but only by id.** Filtering by instance type returns
 `[]` for Managed Instances (they run in an AWS-managed account). Asking for the id instead — the

@@ -45,10 +45,13 @@ import (
 // health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
 // the stack's to declare.
 type engineDef struct {
-	Key              string `json:"key"`              // "llm" — the path segment, the log prefix, the settings prefix
-	API              string `json:"api"`              // "chat" | "images" — see engineAPI* below
-	Service          string `json:"service"`          // ECS service whose desired count moves
-	CapacityProvider string `json:"capacityProvider"` // what makes `draining` observable; empty = Fargate
+	Key     string `json:"key"`     // "llm" — the path segment, the log prefix, the settings prefix
+	API     string `json:"api"`     // "chat" | "images" — see engineAPI* below
+	Service string `json:"service"` // ECS service whose desired count moves
+	// 🔴 On a RUNNING engine, CapacityProvider is the name the process STARTED with. Replacing a
+	// provider renames it and the reloader takes that live, so the current one is
+	// engineRuntimeState.providerName() (engine_table_reload.go).
+	CapacityProvider string `json:"capacityProvider"` // makes `draining` observable; empty = Fargate
 	URL              string `json:"url"`              // http://llm.af.internal:8080
 	Health           string `json:"health"`           // "/health"
 	// WarmPath is where "are there weights in memory" is asked, when that is a DIFFERENT

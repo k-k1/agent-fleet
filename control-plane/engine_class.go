@@ -496,6 +496,40 @@ func (e *engineRuntimeState) setClasses(next []engineClass) bool {
 	return true
 }
 
+// providerName is the capacity provider this engine's rungs are written to and whose
+// container instances count as its box — the live value, not the one the process started
+// with. engineECS holds the single copy: "who we apply a rung to" and "whose boxes are ours"
+// must never be able to disagree, and they are two reads of one field.
+func (e *engineRuntimeState) providerName() string {
+	if e == nil || e.ecs == nil {
+		return ""
+	}
+	return e.ecs.provider()
+}
+
+// setCapacityProvider takes a renamed capacity provider live, reporting whether it changed.
+//
+// The name is a destination string and a match string. It keys nothing this process holds —
+// not the demand counter, not the warm model, not the controller — so unlike the rest of a
+// table row it can be swapped under a running engine (ADR 0074; #536 measured what happens
+// otherwise: the rung apply went to the name that no longer existed, `box` matched nothing,
+// and the panel reported a card the engine was not on).
+//
+// 🔴 The rung this process last applied is forgotten with it. It was written to the OLD
+// provider, so the new one holds whatever CloudFormation declared; keeping the note would let
+// startGate read a failed apply as "already applied by this process" and start the engine on
+// an unconfigured card — exactly the silent landing decision 4 exists to prevent. A start
+// re-applies the rung idempotently (startGate step 2), so forgetting costs one API call.
+func (e *engineRuntimeState) setCapacityProvider(name string) bool {
+	if e == nil || e.ecs == nil || !e.ecs.setProvider(strings.TrimSpace(name)) {
+		return false
+	}
+	e.appliedMu.Lock()
+	e.appliedClass, e.classApplyErr = "", ""
+	e.appliedMu.Unlock()
+	return true
+}
+
 // engineClassesEqual compares two ladders as DECLARATIONS: same rungs, same order, same
 // numbers. Order counts because the first rung is the default (decision 1).
 func engineClassesEqual(a, b []engineClass) bool {
@@ -610,7 +644,7 @@ func (e *engineRuntimeState) applyClass(ctx context.Context, c engineClass) erro
 		e.noteClassApplyError(err)
 		return err
 	}
-	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.def.CapacityProvider, c); err != nil {
+	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.providerName(), c); err != nil {
 		e.noteClassApplyError(err)
 		return err
 	}
