@@ -174,6 +174,11 @@ func serviceLabelOf(id string) string {
 		return "Gemini の画像生成（通称 Nano Banana。Google。利用者の Antigravity/Gemini プランを消費）"
 	case ProviderSdcpp:
 		return "Stable Diffusion（このフリート自身の GPU。外部サービスではない）"
+	case ProviderComfy:
+		// Deliberately not "this fleet's own GPU": since ADR 0076 the same route also reaches a
+		// ComfyUI on the operator's LAN, and the part that decides between routes is that no
+		// caller's plan is spent either way.
+		return "ComfyUI（このフリートのエンジン。外部サービスではない）"
 	}
 	return ""
 }
@@ -191,6 +196,12 @@ func driverModelOf(id string) string {
 		// this route has, and the one its Caps are keyed to. Answered from the stack's
 		// declaration, so asking costs nothing and does not wake the box.
 		return sdcppDriverModel()
+	case ProviderComfy:
+		// Not a driver model either, and unlike sdcpp not the only one this route has: it is the
+		// checkpoint a request naming none would run on, with the rest carried in
+		// providerStatus.Models. Answered from what the Control Plane already told us, so asking
+		// costs nothing and does not wake the box.
+		return comfyDriverModel()
 	}
 	return ""
 }

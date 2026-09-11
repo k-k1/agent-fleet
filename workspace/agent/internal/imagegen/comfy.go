@@ -74,6 +74,11 @@ func (p *comfyProvider) conn(ctx context.Context) (EngineConn, bool) {
 	return c, true
 }
 
+// comfyDriverModel names the checkpoint for the status route (driverModelOf), without waking
+// anything: DefaultModel reads the connection the Control Plane already handed us — the warm
+// model, else the catalogue's first — and asks the engine nothing.
+func comfyDriverModel() string { return newComfyProvider().DefaultModel() }
+
 // DefaultModel is what a request naming no model gets (ADR 0072 decision 7): whatever the
 // Control Plane last saw this engine actually answer with — free, because it is already loaded
 // — falling back to the catalogue's first declared model only when nothing is known to be warm

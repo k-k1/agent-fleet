@@ -5,6 +5,7 @@ package imagegen
 // is the part that spends somebody's plan.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -88,6 +89,77 @@ func TestStatusNamesTheServiceBehindEachProvider(t *testing.T) {
 	// The flat field describes the effective provider, like every other flat field here.
 	if !strings.Contains(got.Service, "Gemini") {
 		t.Fatalf("effective service = %q, want the first ready provider's", got.Service)
+	}
+}
+
+// withEngineLookup installs the seam the Agent normally fills from the engine table, pointed at
+// a server that fails the test if anything actually dials it: the status route may answer from
+// what the Control Plane already handed us and nothing more (a request here would wake a
+// sleeping GPU box on a call that only reads a tool description).
+func withEngineLookup(t *testing.T, conn EngineConn) {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("the status route dialled the engine: %s %s", r.Method, r.URL.Path)
+	}))
+	t.Cleanup(srv.Close)
+	conn.BaseURL = srv.URL
+	old := EngineLookup
+	EngineLookup = func(context.Context, string) (EngineConn, bool) { return conn, true }
+	t.Cleanup(func() { EngineLookup = old })
+}
+
+// The fleet's OWN engine routes have a service and a model on the status too. comfy had
+// neither — no case in serviceLabelOf or driverModelOf — so the route reached the tool
+// description as an id with no service to match a request against and no checkpoint to expect,
+// the same gap that once had a session report a service it held the only route to as
+// unavailable (ADR 0076 P0; the hole is the ECS deployment's as much as the LAN one's).
+func TestStatusNamesTheFleetEngineServiceAndModel(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		warm string
+		want string
+	}{
+		// Whatever is already loaded, because a switch costs 1-2.5 minutes of disk re-read.
+		{"the warm checkpoint", "sdxl-base-1.0", "sdxl-base-1.0"},
+		// Nothing warm yet (a just-started engine, or a CP that lost its in-memory state).
+		{"else the catalogue's first", "", "flux1-dev"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			withEngineLookup(t, EngineConn{
+				Token:  "t",
+				Models: []string{"flux1-dev", "sdxl-base-1.0"},
+				Warm:   tc.warm,
+			})
+			withImagegenSession(t, session.KindClaude,
+				stubProvider{id: ProviderComfy, caps: capsOf([]Op{OpGenerate})})
+			rec := httptest.NewRecorder()
+			HandleStatus(rec, httptest.NewRequest(http.MethodGet, "/imagegen/status?session=slot01", nil))
+
+			var got statusResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatalf("status is not JSON: %v (%s)", err, rec.Body)
+			}
+			if len(got.Providers) != 1 {
+				t.Fatalf("providers = %+v, want the one ready route", got.Providers)
+			}
+			// The engine, not the fleet's GPU: since ADR 0076 the same route also reaches a
+			// ComfyUI on the operator's LAN, so the label may not claim one box or the other.
+			if !strings.Contains(got.Providers[0].Service, "ComfyUI") {
+				t.Errorf("comfy service = %q, want it to name ComfyUI", got.Providers[0].Service)
+			}
+			if got.Providers[0].Model != tc.want {
+				t.Errorf("comfy model = %q, want %q", got.Providers[0].Model, tc.want)
+			}
+			// The flat fields describe the effective provider, which here is the only one.
+			if got.Service != got.Providers[0].Service || got.Model != got.Providers[0].Model {
+				t.Errorf("flat fields = %q/%q, want the effective route's", got.Service, got.Model)
+			}
+		})
+	}
+	// sdcpp is the route comfy's case was modelled on; both fleet routes answer, and an empty
+	// answer from either is what this test exists to catch.
+	if s, m := serviceLabelOf(ProviderSdcpp), serviceLabelOf(ProviderComfy); s == "" || m == "" {
+		t.Errorf("service labels = %q/%q, want both fleet routes named", s, m)
 	}
 }
 
