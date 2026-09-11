@@ -185,7 +185,7 @@ that jumps from a pre-catalogue Control Plane straight to this one comes up with
 catalogue: the role exists, the engine idles, and the panel is where the first model is
 registered. That is a supported state, not a broken one.
 
-### 0.18.1: the image role's box comes from an offers list
+### 0.19.0: the image role's box comes from an offers list
 
 Three new parameters — `ImageOffers` / `LlmOffers` and `ImageOfferBudgetSec` /
 `LlmOfferBudgetSec` — and **`ImageCapacityOptionType` is gone** (ADR 0075). A deployment that
@@ -234,7 +234,7 @@ The `llm` role takes the parameters (one format for both roles) but **gets no Sp
 should be given no `spot` row**: a two-minute termination notice mid-conversation costs a
 527-586-second cold start to recover from.
 
-### 0.18.1: the first update also updates 20-platform
+### 0.19.0: the first update also updates 20-platform
 
 The release that moves the fetch and ingest steps into an image needs a new ECR repository
 (`af-engine-tools`), and that repository is 20-platform's. So the first `update.sh` run on this
@@ -1181,7 +1181,7 @@ one order that works — **ECR repository (20-platform) → image (`crane copy`)
 
 🔴 Reversed, nothing fails at the time. The stack deploys perfectly and both roles' fetch
 containers and the ingest task sit in `CannotPullContainerError` while the service reports a
-steady state — which is how this was found, on the deployment, the first time 0.18.1 was put on
+steady state — which is how this was found, on the deployment, the first time 0.19.0 was put on
 one (2026-09-11: GHCR empty, ECR empty, 20-platform not updated, three hand-run steps to get
 out of it, and none of them in a script). `deploy/local/ecs-lifecycle-stub-test.sh` case 3i
 holds the order, with the two positive controls (swap the steps, drop the copy).
@@ -1477,7 +1477,7 @@ out by measurement, and the quota was right at the time. What actually moved the
    the **dearest** type it can buy ([the offers](#the-offers)).
 
 ✅ **Declaring an offer needs no Control Plane restart**, and neither does the migration above,
-as long as the CP is 0.18.1 or newer: both provider names ride the engine table and the running
+as long as the CP is 0.19.0 or newer: both provider names ride the engine table and the running
 CP takes them live on the same poll the ladder rides (`engine_table_reload.go`), re-running the
 `box` match and dropping the rung it had applied to the old name. 🔴 **On 0.18.0 or earlier a
 rename is still a PAIR with `update-service --force-new-deployment`** (blue/green, no outage,

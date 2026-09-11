@@ -26,6 +26,41 @@ Keeping it current:
 
 ---
 
+## [0.19.0](0.19.0.md) — 2026-09-11
+
+**CLI pins** — Claude Code 2.1.268, Antigravity 1.2.1
+
+**New / Improved**
+
+- **[engines]** Tenant administrators of an allowed tenant search and take in models from their tenant settings (search, ingest, own jobs, catalogue read-only); modes, classes, enabling and the HF token stay with the super admin
+- **[image generation]** The deployment's own ComfyUI edits and inpaints for all five families; a request can carry LoRA (up to four, weighted) and a seed; a request during model sync waits instead of failing
+- **[engines]** The image role's box is picked from an offers list, one of which may be Spot (`ImageOffers`; declare nothing and it is all on demand). Retires `ImageCapacityOptionType`; the llm role takes no Spot row
+- **[engines]** The llm role takes a LoRA row on top of a catalogue model, served as a fixed preset
+- **[engines]** A split model is one row: model family plus several files with their roles, a file can be added to an existing row, a pasted HF / Civitai URL fills in the form
+- **[admin / ecs-ec2]** A member's home disk is grown online by raising `disk_gb`; the member detail is arranged into size and limits, actions, irreversible actions
+- **[ecs-ec2]** A quarantined slot can be terminated from the Console, reason shown before confirming and kept in the audit log
+- **[work items]** Opening a pull request refreshes it: draft, conflicts, review status, CI, base ← head, diff size; the main button opens it on GitHub / Bitbucket
+- **[settings › environment]** Whether the upstream CLI release watch is alive, warning on a failed source or a success older than 48 hours (read anonymously from a public GitHub issue)
+- **[engines]** Search results link to the HF / Civitai page with the publication date; catalogue rows show the licence and who accepted a non-commercial one; picking a result goes straight to its file list; a hand-registered model can carry a licence
+- **[engines]** The llm VRAM check counts the KV cache read from the model header; `vramMiB` is the card's physical amount
+- **[engines]** A model enabled while the engine is up arrives without a restart; the engine tab uses buttons, badges and cards; ComfyUI's measured VRAM per model reaches CloudWatch
+- **[sessions]** A session that started sessions can rename them, unless a person titled the child in the Console
+- **[mirror]** Session and conversation links show their title on hover
+- **[console]** Schedules sit right under the assistant in the left pane
+- **[console]** Agent kinds and connected services are shown by their brand marks (session list, settings cards, workspace bar)
+- **[svn]** Credentials can be entered after checkout (row menu, Settings › Connections) and reach `svn` run inside the session; a handoff from an SVN checkout no longer offers a worktree
+
+**Fixed**
+
+- **[image generation]** The deployment's own ComfyUI did not work end to end from a Console-only setup: SD3.5 produced nothing, an undeclared family blocked the model, mode changes missed running sessions, a generation across an instance change failed instead of retrying; with no provider named the own engine is now tried before a personal Antigravity / Codex plan
+- **[image generation]** Right after a Control Plane restart `generate_image` could be refused as "not allowed" though listed
+- **[work items]** GitHub pull requests did not appear (wrong default query; a saved query must be edited by hand)
+- **[engines]** A GPU class that failed to apply could not be retried; a changed ladder did not reach the Control Plane until restart
+- **[engines]** Purging a row deleted files another row used; a row missing a required file could be enabled; Civitai login-only assets and unaccepted gated HF repositories came back as a generic failure
+- **[mirror]** Words in angle brackets such as `<repo url>` vanished from the mirror and the viewer
+- **[memos]** A long expanded memo could not be collapsed; a single memo was sent with a heading and a number
+- **[ecs]** CloudFormation parameter descriptions showed `?` for non-ASCII text
+
 ## [0.18.0](0.18.0.md) — 2026-09-10
 
 **CLI pins** — Claude Code 2.1.267, Codex 0.154.0
