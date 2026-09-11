@@ -23,6 +23,8 @@ import { listBrowserAttachments } from "../features/browser/attachmentService.ts
 import { openBrowserAttachment } from "../features/browser/attachmentAction.ts";
 import type { BrowserAttachmentStatus } from "../features/browser/attachmentController.ts";
 import { useOpenSignal, type OpenTarget } from "../core/store/uiOpen.ts";
+import { kindClass, kindIcon, kindLabel } from "../lib/sessionkind.ts";
+import type { SessionKind } from "../types/session.ts";
 import { fmtDateTime, TIME_HM } from "../lib/intl.ts";
 import { t, tCount, useT } from "../lib/i18n/index.ts";
 import type { MsgKey } from "../lib/i18n/index.ts";
@@ -390,9 +392,11 @@ const NEAR_MAX_PCT = 95;
 interface UsageSource {
   endpoint: string;
   key: OpenTarget; // keyboard-open target id (uiOpen signal)
-  name: string; // agent short name ("Claude" / "Codex") — used in reset notifications
-  icon: string; // codicon glyph
-  cls: string; // kind color class (kind-claude / kind-codex)
+  // The agent this chip reports for. Its glyph, color class and short name are READ FROM THE
+  // REGISTRY (lib/sessionkind), never restated here: this table used to carry its own copies
+  // and they went stale the moment the kinds moved to brand marks, leaving the WS bar as the
+  // last place still drawing the old codicons.
+  kind: SessionKind;
   fiveLabelKey: MsgKey; // 5-hour window label (i18n key)
   weekLabelKey: MsgKey; // weekly window label (i18n key)
   // live = the endpoint queries the current usage (claude), so a refresh button makes
@@ -411,9 +415,7 @@ const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/claude/usage",
     key: "usage-claude",
-    name: "Claude",
-    icon: "sparkle",
-    cls: "kind-claude",
+    kind: "claude",
     fiveLabelKey: "wsbar.usage.claude.five",
     weekLabelKey: "wsbar.usage.claude.week",
     live: true,
@@ -423,9 +425,7 @@ const USAGE_SOURCES: UsageSource[] = [
   {
     endpoint: "api/codex/usage",
     key: "usage-codex",
-    name: "Codex",
-    icon: "rocket",
-    cls: "kind-codex",
+    kind: "codex",
     fiveLabelKey: "wsbar.usage.codex.five",
     weekLabelKey: "wsbar.usage.codex.week",
     live: false,
@@ -489,16 +489,16 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       ? resetChipText(bind.resetsAt)
       : [uh && (uh.stale ? "—" : `${uh.pct}%`), uw && (uw.stale ? "—" : `${uw.pct}%`)].filter(Boolean).join(" / ");
   const chipTitle = unavailable
-    ? tr("wsbar.usage.unavailable_title", { name: src.name })
+    ? tr("wsbar.usage.unavailable_title", { name: kindLabel(src.kind) })
     : bind
       ? tr("wsbar.usage.chip_bind_title", {
-          name: src.name,
+          name: kindLabel(src.kind),
           label: bind.label,
           pct: Math.round(bind.pct),
           until: untilText(bind.resetsAt),
           when: whenText(bind.resetsAt),
         })
-      : tr("wsbar.usage.title", { name: src.name });
+      : tr("wsbar.usage.title", { name: kindLabel(src.kind) });
 
   return (
     <div className="ws-usage-wrap" ref={ref}>
@@ -506,12 +506,12 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
           color, then reset the button chrome (ws-usage-btn). */}
       <button
         type="button"
-        className={"kind-tag " + src.cls + " ws-usage-btn"}
+        className={"kind-tag kind-" + kindClass(src.kind) + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon name={src.icon} />
+        <Icon name={kindIcon(src.kind)} />
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         {!!resetCount && (
           <span className={"ws-reset-count" + (fullResets.length && new Date(fullResets[0].expiresAt).getTime() - Date.now() <= 7 * 86400000 ? " warn" : "")}
@@ -523,7 +523,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
       </button>
       {open && (
         <div className="ws-usage-pop">
-          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: src.name })}</div>
+          <div className="wu-title">{tr("wsbar.usage.pop_title", { name: kindLabel(src.kind) })}</div>
           {/* Account + subscription tier: claude's HandleUsage returns `user`/`plan`,
               codex returns `user`/`planType` — surface whichever is present. */}
           {usage?.user && <div className="wu-note muted">{tr("wsbar.usage.user", { user: usage.user })}</div>}
@@ -531,7 +531,7 @@ function UsageChip({ src, tenant }: { src: UsageSource; tenant: string | null })
             <div className="wu-note muted">{tr("wsbar.usage.plan", { plan: usage?.planType || usage?.plan || "" })}</div>
           )}
           {unavailable ? (
-            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: src.name })}</div>
+            <div className="wu-note muted">{tr("wsbar.usage.unavailable_note", { name: kindLabel(src.kind) })}</div>
           ) : (
             <>
               {uh && <UsageRow label={fiveLabel} w={uh} />}
@@ -634,12 +634,12 @@ function AgyUsageChip({ tenant }: { tenant: string | null }) {
     <div className="ws-usage-wrap" ref={ref}>
       <button
         type="button"
-        className="kind-tag kind-agy ws-usage-btn"
+        className={"kind-tag kind-" + kindClass("agy") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon name="magnet" />
+        <Icon name={kindIcon("agy")} />
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>
@@ -730,12 +730,12 @@ function CopilotUsageChip({ tenant }: { tenant: string | null }) {
     <div className="ws-usage-wrap" ref={ref}>
       <button
         type="button"
-        className="kind-tag kind-copilot ws-usage-btn"
+        className={"kind-tag kind-" + kindClass("copilot") + " ws-usage-btn"}
         title={chipTitle}
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Icon name="copilot" />
+        <Icon name={kindIcon("copilot")} />
         <span className={"ws-usage-nums" + (bind ? " crit" : unavailable ? " muted" : "")}>{label}</span>
         <Icon name="chevron-down" />
       </button>

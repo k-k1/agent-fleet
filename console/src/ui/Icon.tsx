@@ -1,9 +1,10 @@
-import { BRAND_PREFIX, agentBrandClass } from "../lib/brandicons.ts";
+import { BRAND_PREFIX, brandClass } from "../lib/brandicons.ts";
 
 // Icon — codicon wrapper (name → span.codicon). `spin` for loading spinners.
 //
 // A "brand:<key>" name renders a vendored brand SVG instead of a codicon glyph
-// (lib/brandicons) — that is how the agent kinds show their own CLI's logo. The span keeps
+// (lib/brandicons) — that is how the agent kinds show their own CLI's logo and how the
+// settings connection cards show each service's. The span keeps
 // the .codicon class either way, so every rule that sizes, colors or spaces icons
 // (".notification-mute .codicon { font-size: 13px }" and its ~40 siblings) applies to both
 // without being restated, and callers keep passing a single `name`.
@@ -19,7 +20,7 @@ export function Icon({ name, spin, className, title }: IconProps) {
   // An unvendored brand key falls back to a neutral glyph rather than "codicon-brand:x",
   // which would render as an empty gap.
   const base = isBrand
-    ? agentBrandClass(name.slice(BRAND_PREFIX.length)) ?? "codicon-circle-large-outline"
+    ? brandClass(name.slice(BRAND_PREFIX.length)) ?? "codicon-circle-large-outline"
     : `codicon-${name}`;
   return (
     <span

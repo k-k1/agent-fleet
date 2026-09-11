@@ -42,12 +42,14 @@ the ATTRIBUTION.md beside each folder:
   Material Icon Theme, Devicon and Seti UI, each under the MIT License.
 
   Brand icons (console/src/assets/brandicons/ATTRIBUTION.md) — Lobe Icons (MIT,
-  https://github.com/lobehub/lobe-icons) for the agent CLIs.
+  https://github.com/lobehub/lobe-icons) for the agent CLIs, and Simple Icons
+  (CC0-1.0, https://github.com/simple-icons/simple-icons) for the connected services.
 
-  The MIT licenses above cover those projects, not the marks themselves: each brand
-  icon is a trademark of the company it names and is used nominatively, to identify
-  the CLI or provider a session actually ran through. Redistributors should follow the
-  vendors' own brand guidelines rather than read the MIT grant as permission.
+  The licenses above cover those projects, not the marks themselves: each brand icon is
+  a trademark of the company it names and is used nominatively, to identify the CLI a
+  session ran through or the service an account is connected to. Redistributors should
+  follow the vendors' own brand guidelines rather than read the license grant as
+  permission.
 
 --------------------------------------------------------------------------------
 Third-party software bundled in the distributed container images / rootfs

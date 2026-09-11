@@ -4,6 +4,7 @@ import { Icon } from "../../../ui/Icon.tsx";
 import { useT } from "../../../lib/i18n/index.ts";
 import { useConfirm } from "../../../ui/ConfirmProvider.tsx";
 import { AGENTS } from "../../../agents/registry.ts";
+import { BRAND_PREFIX, brandClass } from "../../../lib/brandicons.ts";
 
 // Shared building blocks for the settings connection cards, used by both the
 // agents tab (Claude / Codex / opencode) and the Git tab (GitHub / Bitbucket).
@@ -25,6 +26,25 @@ export const BADGE_SHORT: Record<string, string> = {
   aws: "aw",
   svn: "sv",
 };
+
+// …except where the provider has a mark of its own, which is most of them (lib/brandicons).
+// A 26px badge is the roomiest place the Console draws an icon and there is one per card, so
+// the logo identifies the connection faster than two letters ever did.
+//
+// Two sources, because the id means different things on the two sides. An agent's icon is read
+// from the registry, so a card cannot disagree with what the same agent shows in the rail;
+// note `agy`, whose mark is "antigravity". A service's vendored file is named after the card's
+// own id, so the id IS the key and no table is needed.
+//
+// What stays a monogram: `svn` (the Subversion mark is unreadable at this size — see
+// lib/brandicons) and `internal` (internal repositories are not a brand).
+const AGENT_BADGE: Record<string, string> = Object.fromEntries(
+  Object.values(AGENTS)
+    .filter((a) => a.icon.startsWith(BRAND_PREFIX))
+    .map((a) => [a.id, a.icon]),
+);
+const badgeBrand = (id: string): string | null =>
+  AGENT_BADGE[id] ?? (brandClass(id) ? BRAND_PREFIX + id : null);
 
 // CopyCode renders a one-time auth code that copies to the clipboard on click. The
 // code stays visible (so it can be read), but clicking saves the manual select —
@@ -114,10 +134,13 @@ export function ProviderCard({
   status: ReactNode;
   children?: ReactNode;
 }) {
+  const brand = badgeBrand(id);
   return (
     <div className="p-card">
       <div className="p-head">
-        <span className={"p-badge pb-" + id}>{BADGE_SHORT[id]}</span>
+        <span className={"p-badge pb-" + id}>
+          {brand ? <Icon name={brand} /> : BADGE_SHORT[id]}
+        </span>
         <span className="p-name">{name}</span>
         {status}
       </div>
