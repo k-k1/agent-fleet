@@ -451,6 +451,15 @@ Three things it decides for you:
 - **That this is not somebody's live deployment.** It refuses any `Fqdn` but the dev
   one unless `--allow-fqdn` says otherwise: moving `ImageTag` puts a "restart required"
   badge in front of everyone running a workspace there.
+- **Whether the engine tools image has to be carried over.** `af-engine-tools` holds the
+  fetch sidecar and the ingest steps (ADR 0072), it is not part of `dev-image.yml`, and
+  only `standup.sh` used to copy it — so a dev deploy left the engines' fetch containers
+  with nothing to pull. Now: the tag the engines stack asks for is carried into ECR when
+  it is not there, and a per-commit tag is baked when `deploy/aws/ecs/engine-tools/` has
+  changed since the deployed commit. 🔴 It cannot set `EngineToolsImageTag` itself (it
+  only runs `update.sh` on the ingress stack), so in that second case it prints the tag
+  to set in `params/60-engines` — otherwise the deployment looks current and runs the
+  previous release's scripts.
 
 ⚠️ It bakes **origin's** ref. Local commits that are not pushed are silently not in it.
 

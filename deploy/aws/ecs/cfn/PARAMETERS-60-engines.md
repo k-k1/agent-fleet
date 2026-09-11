@@ -1048,6 +1048,16 @@ traps are written down.
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
 `EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
 
+**On a development deployment `dev-deploy.sh` does the middle two for you.** It bakes a
+per-commit tag when `deploy/aws/ecs/engine-tools/` has changed since the deployed commit, and
+carries the tag the stack asks for into ECR when that one is simply missing — `standup.sh` was
+the only thing copying this image, and a dev deploy does not go through it (found by the
+hardware lane before a deployment, 2026-09-11). 🔴 It still cannot set `EngineToolsImageTag`:
+it runs `update.sh` on the ingress stack alone. So it prints the tag to set, and the reason —
+a deployment that looks current while running the previous release's scripts is exactly what
+the contract number cannot catch, because a behaviour change under an unchanged interface is
+not a contract change. `deploy/local/dev-deploy-stub-test.sh` pins those decisions.
+
 ## Editing this template
 
 It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so
