@@ -288,11 +288,15 @@ func dispatchMCPStdio(line []byte) []byte {
 		// the whole server with "Failed to get tools"; old clients ignore them as unknown
 		// keys, the same as resultType (measured on 1.18.5). The tool set is a static,
 		// per-user list decided by --write, hence private.
+		tools := mcpStdioToolList()
+		// Remembered before it goes out, because this answer IS the promise the call-side check
+		// is enforcing (see mcpAdvertised).
+		rememberAdvertised(tools)
 		return mcpResult(req.ID, map[string]any{
 			"resultType": "complete",
 			"ttlMs":      60000,
 			"cacheScope": "private",
-			"tools":      mcpStdioToolList(),
+			"tools":      tools,
 		})
 	case "tools/call":
 		return mcpStdioCall(req)
@@ -421,7 +425,51 @@ func appendMatchingMCPTools(dst, src []map[string]any, keep func(string) bool) [
 	return dst
 }
 
+// mcpAdvertised remembers the names the LAST tools/list actually returned, so that the call-side
+// scope check can be answered from this process instead of over the network.
+//
+// 🔴 It exists because re-deriving the list on the call path made an advertised tool refuse its
+// own call (measured on the dev deployment, 2026-09-11, ADR 0072 H3). mcpStdioToolList() asks
+// mcpImageGenAdvertise(), which is a live loopback GET to the Agent's /imagegen/status with a
+// 3-second budget; that status asks every provider's Ready(), and for the fleet's own engines
+// Ready() is a round trip to the Control Plane. So a tools/call arriving while the CP was busy —
+// the trigger was a CP replaced with --force-new-deployment moments earlier — blew the three
+// seconds, the tool came back "not advertised", and the model was told something that reads like
+// a permission decision about a tool sitting in its own tool list.
+//
+// What the client may call is what it was TOLD it may call. That is a fact this process already
+// has, and reading it back cannot time out.
+var mcpAdvertised struct {
+	mu    sync.Mutex
+	names map[string]bool // nil until the first tools/list has been served
+}
+
+// rememberAdvertised records what a tools/list answer actually contained.
+func rememberAdvertised(tools []map[string]any) {
+	names := make(map[string]bool, len(tools))
+	for _, tool := range tools {
+		if name, _ := tool["name"].(string); name != "" {
+			names[name] = true
+		}
+	}
+	mcpAdvertised.mu.Lock()
+	mcpAdvertised.names = names
+	mcpAdvertised.mu.Unlock()
+}
+
+// mcpStdioToolAdvertised answers "did this server offer that name".
+//
+// From the remembered set once a tools/list has been served. Before that — a client that calls
+// without listing first — there is nothing to compare against, so the set is derived the old way.
+// That path keeps the boundary intact for a guessed name; it just is not the path a real client
+// takes, and it is the only one that can still pay for a network round trip.
 func mcpStdioToolAdvertised(name string) bool {
+	mcpAdvertised.mu.Lock()
+	names := mcpAdvertised.names
+	mcpAdvertised.mu.Unlock()
+	if names != nil {
+		return names[name]
+	}
 	for _, tool := range mcpStdioToolList() {
 		if tool["name"] == name {
 			return true
@@ -2014,7 +2062,10 @@ func mcpStdioCall(req mcpReq) []byte {
 	// too, or a client that guesses names could reach fleet read/write handlers from any
 	// interactive session.
 	if selfReportOnly() && !mcpStdioToolAdvertised(p.Name) {
-		return mcpToolErr(req.ID, "この対話セッション用サーバーでは許可されていないツールです: "+p.Name)
+		// The reason is "this name was not in tools/list", not "you lack permission" — those call
+		// for opposite responses, and the old wording sent a model looking for a settings page
+		// when the honest answer is that it named something this server never offered.
+		return mcpToolErr(req.ID, "このサーバーの tools/list に無いツール名です（広告されていないものは呼べません）: "+p.Name)
 	}
 	var a struct {
 		Name string `json:"name"`
