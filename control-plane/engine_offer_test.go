@@ -39,7 +39,7 @@ import (
 // — a provider, a desired count, forceNewDeployment — rather than that something was.
 type offerECS struct {
 	desired, running int32
-	events           []string
+	events           []offerEventFixture
 	// strategy is the capacity provider the service itself names, i.e. what DescribeServices
 	// reports back. It moves when an update writes one, exactly as the real service does.
 	strategy  string
@@ -62,22 +62,72 @@ type offerECS struct {
 	// stuckDeployment keeps the PRIMARY id where it is however often a deployment is forced: the
 	// service ECS has accepted a write for but not acted on yet.
 	stuckDeployment bool
+	// draining is the deployment the forced one replaced, still ACTIVE. 🔴 This is the state the
+	// two-box start happened in (measured: 2 m 35 s of it), so the fake holds it until a test
+	// says it has gone — `settled()` is the whole point of the second call's gate.
+	draining bool
+	rollout  ecstypes.DeploymentRolloutState
 }
 
 func (f *offerECS) deploymentID() string {
 	return fmt.Sprintf("ecs-svc/%d", f.deployments)
 }
 
+// deploymentList is what `describe-services` reports: the PRIMARY one, plus the one it replaced
+// while ECS is still winding that down.
+func (f *offerECS) deploymentList() []ecstypes.Deployment {
+	out := []ecstypes.Deployment{{
+		Status: aws.String("PRIMARY"), Id: aws.String(f.deploymentID()), RolloutState: f.rollout,
+	}}
+	if f.draining {
+		out = append(out, ecstypes.Deployment{
+			Status: aws.String("ACTIVE"), Id: aws.String(f.deploymentID() + "-old"),
+		})
+	}
+	return out
+}
+
+// offerEventFixture is one service event with the age ECS would report it at. The age matters as
+// much as the text: rule 2 only believes an event that is newer than the offer it is judging.
+type offerEventFixture struct {
+	message string
+	ago     time.Duration
+}
+
+// placementEvent is a capacity failure in the shape ECS actually writes it — the reason wrapped in
+// the placement failure, WITH the capacity provider named. Measured for all three codes
+// (ADR 0074's `UnfulfillableCapacity`, ADR 0075's `MaxSpotInstanceCountExceeded`).
+func placementEvent(provider, reason string) offerEventFixture {
+	return offerEventFixture{message: "(service af-stack-image) was unable to place a task. Reason: " +
+		"ResourceInitializationError: Unable to launch instance(s) for capacity provider " +
+		provider + ". " + reason}
+}
+
+// agedPlacementEvent is the same, written a while ago — i.e. about a previous offer.
+func agedPlacementEvent(provider, reason string, ago time.Duration) offerEventFixture {
+	e := placementEvent(provider, reason)
+	e.ago = ago
+	return e
+}
+
+// The reasons, verbatim from the deployment.
+const (
+	reasonUnfulfillable = "UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration. Please adjust your request and try again."
+	reasonInsufficient  = "InsufficientInstanceCapacity: There is not enough capacity."
+	reasonSpotQuota     = "MaxSpotInstanceCountExceeded: Max spot instance count exceeded. RequestId: 3495893a-…"
+	reasonVcpuLimit     = "VcpuLimitExceeded: You have requested more vCPU capacity than your current limit."
+)
+
 func (f *offerECS) DescribeServices(context.Context, *ecs.DescribeServicesInput, ...func(*ecs.Options)) (*ecs.DescribeServicesOutput, error) {
 	f.describes++
 	s := ecstypes.Service{
 		Status: aws.String("ACTIVE"), DesiredCount: f.desired, RunningCount: f.running,
-		Deployments: []ecstypes.Deployment{{
-			Status: aws.String("PRIMARY"), Id: aws.String(f.deploymentID()),
-		}},
+		Deployments: f.deploymentList(),
 	}
 	for _, e := range f.events {
-		s.Events = append(s.Events, ecstypes.ServiceEvent{Message: aws.String(e)})
+		s.Events = append(s.Events, ecstypes.ServiceEvent{
+			Message: aws.String(e.message), CreatedAt: aws.Time(time.Now().Add(-e.ago)),
+		})
 	}
 	if f.strategy != "" {
 		s.CapacityProviderStrategy = []ecstypes.CapacityProviderStrategyItem{
@@ -568,40 +618,86 @@ func TestTheStartWritesTheStrategyFirstAndTheDesiredCountAfter(t *testing.T) {
 	}
 }
 
-// The other half of the split: the desired count is written only once ECS has actually replaced
-// the PRIMARY deployment. A service that does not show a new one leaves the engine at desired 0 —
-// that is the whole protection against the two-box start, so it is asserted with the fake
-// refusing to move the deployment.
-func TestTheDesiredCountWaitsForTheNewDeployment(t *testing.T) {
+// 🔴 The two-box start, at the layer it actually lives in: the desired count waits until the
+// deployment the strategy write REPLACED has gone, not merely until a new one exists.
+//
+// Measured (ADR 0075 re-run 3): eight seconds after the new PRIMARY appeared, a `desiredCount: 1`
+// was placed by the OLD deployment — `describe-tasks` named it in `startedBy` — and the strategy
+// this engine had just moved away from bought a second box: 13 minutes of billing, 79% of that
+// run's GPU spend.
+func TestTheDesiredCountWaitsForTheOldDeploymentToGo(t *testing.T) {
 	st := testSettingsStore(t)
 	capacity := &offerCapacityAPI{}
-	api := &offerECS{strategy: offerProviderOD, stuckDeployment: true}
+	// The service starts on the on-demand provider (CloudFormation's declaration), so the Spot
+	// offer is a real change — and the fake keeps the replaced deployment ACTIVE, as ECS does.
+	api := &offerECS{strategy: offerProviderOD, draining: true}
 	e := newOfferTestEngine(t, api, capacity, "spot3|Spot|22000|g6.xlarge|4-8|15000-65536|1.57|spot;"+twoOffers, st)
-	// The wait is real time on a real deployment; here it only has to be taken.
-	restore := engineDeploymentSettleWait
-	engineDeploymentSettleWait = 0
-	defer func() { engineDeploymentSettleWait = restore }()
+
+	// The controller's start: the gate chooses the offer, the strategy goes out, and the desired
+	// count does NOT.
+	tickIntoAStart(t, e, st)
+	if api.desired != 0 {
+		t.Fatalf("desired = %d while the replaced deployment is still ACTIVE — that is the second box",
+			api.desired)
+	}
+	if len(api.updates) != 1 || len(api.updates[0].CapacityProviderStrategy) == 0 {
+		t.Fatalf("the strategy half did not go out: %+v", api.updates)
+	}
+	// Asked directly, the answer is the sentinel rather than an error: nothing failed.
+	if err := e.startEngine(t.Context()); !errors.Is(err, errEngineStrategySettling) {
+		t.Fatalf("the retry = %v, want the settling sentinel", err)
+	}
+	if api.desired != 0 || len(api.updates) != 1 {
+		t.Fatalf("the retry wrote something: desired=%d updates=%d", api.desired, len(api.updates))
+	}
+	// And the controller's own retry does not re-run the gate while this is going on: the offer
+	// is chosen and its rung is written, and thirty more UpdateCapacityProvider calls per start
+	// is what re-running it would cost.
+	attempts := capacity.attempts
+	e.ctrl.tick(t.Context())
+	if capacity.attempts != attempts {
+		t.Errorf("the rung was re-applied %d time(s) while the start was settling", capacity.attempts-attempts)
+	}
+	if api.desired != 0 {
+		t.Fatalf("desired = %d on a retry while the old deployment is still there", api.desired)
+	}
+
+	// Positive control: the old deployment goes, and the very next attempt writes the count —
+	// with no strategy, because the service already names the provider this offer buys from.
+	api.draining = false
+	e.ctrl.tick(t.Context())
+	if api.desired != 1 {
+		t.Fatalf("desired = %d, want the count written once the service settled", api.desired)
+	}
+	if last := api.updates[len(api.updates)-1]; len(last.CapacityProviderStrategy) != 0 || last.ForceNewDeployment {
+		t.Errorf("the second half = %+v, want the desired count alone", last)
+	}
+}
+
+// A rollout that is still IN_PROGRESS is the same "not yet", even with one deployment: the
+// service is placing something, and a desired count written into that is how the previous defect
+// started.
+func TestTheDesiredCountWaitsForARollingDeployment(t *testing.T) {
+	st := testSettingsStore(t)
+	api := &offerECS{strategy: offerProviderOD, rollout: ecstypes.DeploymentRolloutStateInProgress}
+	e := newOfferTestEngine(t, api, &offerCapacityAPI{}, twoOffers, st)
 
 	if ok, why := e.startGate(t.Context()); !ok {
-		t.Fatalf("gate = %q", why) // the gate is what chooses the offer the start then writes
+		t.Fatalf("gate = %q", why)
 	}
-	err := e.startEngine(t.Context())
-	if !errors.Is(err, errEngineStrategySettling) {
-		t.Fatalf("start = %v, want the settling sentinel", err)
+	if err := e.startEngine(t.Context()); !errors.Is(err, errEngineStrategySettling) {
+		t.Fatalf("start = %v, want the settling sentinel while the rollout is in progress", err)
 	}
-	if len(api.updates) != 1 || api.desired != 0 {
-		t.Fatalf("desired = %d after %d call(s): the count must not move until the new deployment is there",
-			api.desired, len(api.updates))
+	if api.desired != 0 || len(api.updates) != 0 {
+		t.Fatalf("desired = %d after %d call(s)", api.desired, len(api.updates))
 	}
-	// Positive control: the same start against a service whose deployment DOES move writes the
-	// count. Without this, a setStrategy that always returned the sentinel would pass above.
-	api.stuckDeployment = false
-	api.strategy = offerProviderOD
+	// Positive control: COMPLETED, and the same call goes through.
+	api.rollout = ecstypes.DeploymentRolloutStateCompleted
 	if err := e.startEngine(t.Context()); err != nil {
-		t.Fatalf("start with a moving deployment = %v", err)
+		t.Fatalf("start against a completed rollout = %v", err)
 	}
 	if api.desired != 1 {
-		t.Fatalf("desired = %d, want the count written once the deployment moved", api.desired)
+		t.Fatalf("desired = %d", api.desired)
 	}
 }
 
@@ -665,37 +761,56 @@ func TestTheOfferBudgetRunsFromTheNewDeployment(t *testing.T) {
 
 // --- decision 5: rule 2 ---------------------------------------------------------------
 
-// The table itself, as a pure function: three measured codes, three different answers, and an
+// The table itself, as a pure function: four measured codes, three different answers, and an
 // unrecognised message waits rather than giving up (AWS may reword one at any time).
+//
+// 🔴 Every case also exercises the filter, because the filter is what decides whether a code is
+// read at all: an event counts when it NAMES this offer's capacity provider and was written after
+// the offer was taken. The last four cases are that rule on its own.
 func TestEngineOfferVerdict(t *testing.T) {
 	const budget = 180 * time.Second
+	took := time.Now()
+	// after and before are an event's age relative to the moment the offer was taken.
+	after := func(provider, reason string) engineServiceEvent {
+		return engineServiceEvent{at: took.Add(time.Second), message: placementEvent(provider, reason).message}
+	}
+	before := func(provider, reason string) engineServiceEvent {
+		return engineServiceEvent{at: took.Add(-20 * time.Second), message: placementEvent(provider, reason).message}
+	}
 	for _, tc := range []struct {
 		name       string
-		events     []string
+		events     []engineServiceEvent
 		waited     time.Duration
 		wantResult string
 		wantMove   bool
 		wantMatch  bool
 	}{
-		{"unfulfillable moves at once", []string{"(service af-image) ... UnfulfillableCapacity"}, time.Second, engineOfferUnfulfillable, true, true},
-		{"a quota moves at once", []string{"... VcpuLimitExceeded ..."}, time.Second, engineOfferQuota, true, true},
+		{"unfulfillable moves at once", []engineServiceEvent{after(offerProviderSpot, reasonUnfulfillable)}, time.Second, engineOfferUnfulfillable, true, true},
+		{"a quota moves at once", []engineServiceEvent{after(offerProviderSpot, reasonVcpuLimit)}, time.Second, engineOfferQuota, true, true},
 		// 🔴 The Spot quota, as the deployment actually reports it: a different word, inside a
 		// different error. Anchored matching read this as "no known code" and waited out a
 		// 15-minute budget (ADR 0075 live run 4).
-		{"the Spot quota is a quota, wrapped", []string{
-			"(service af-stack-image) was unable to place a task. Reason: ResourceInitializationError: " +
-				"Unable to launch instance(s) for capacity provider af-stack-image-spot. " +
-				"MaxSpotInstanceCountExceeded: Max spot instance count exceeded. RequestId: 3495893a-…",
-		}, time.Second, engineOfferQuota, true, true},
-		{"a shortage waits out the budget", []string{"... InsufficientInstanceCapacity ..."}, time.Second, engineOfferInsufficient, false, true},
-		{"a shortage moves when the budget is spent", []string{"... InsufficientInstanceCapacity ..."}, budget, engineOfferInsufficient, true, true},
+		{"the Spot quota is a quota, wrapped", []engineServiceEvent{after(offerProviderSpot, reasonSpotQuota)}, time.Second, engineOfferQuota, true, true},
+		{"a shortage waits out the budget", []engineServiceEvent{after(offerProviderSpot, reasonInsufficient)}, time.Second, engineOfferInsufficient, false, true},
+		{"a shortage moves when the budget is spent", []engineServiceEvent{after(offerProviderSpot, reasonInsufficient)}, budget, engineOfferInsufficient, true, true},
 		{"silence waits", nil, time.Second, engineOfferBudget, false, false},
 		{"silence moves when the budget is spent", nil, budget, engineOfferBudget, true, false},
-		{"an unknown message is silence", []string{"has begun draining connections"}, time.Second, engineOfferBudget, false, false},
-		{"the newest recognised code wins", []string{"... InsufficientInstanceCapacity ...", "... VcpuLimitExceeded ..."}, time.Second, engineOfferInsufficient, false, true},
+		{"an unknown message is silence", []engineServiceEvent{{at: took.Add(time.Second), message: "has begun draining connections"}}, time.Second, engineOfferBudget, false, false},
+		{"the newest recognised code wins", []engineServiceEvent{
+			after(offerProviderSpot, reasonInsufficient), after(offerProviderSpot, reasonVcpuLimit),
+		}, time.Second, engineOfferInsufficient, false, true},
+		// 🔴 The re-run's defect, as a unit: the other provider's quota is not this offer's answer.
+		{"another provider's failure is not evidence", []engineServiceEvent{after(offerProviderOD, reasonSpotQuota)}, time.Second, engineOfferBudget, false, false},
+		{"this provider's failure from BEFORE the offer was taken is not evidence", []engineServiceEvent{before(offerProviderSpot, reasonSpotQuota)}, time.Second, engineOfferBudget, false, false},
+		{"an event with no timestamp cannot be placed either side of the move", []engineServiceEvent{
+			{message: placementEvent(offerProviderSpot, reasonSpotQuota).message},
+		}, time.Second, engineOfferBudget, false, false},
+		{"a failure that names no provider waits out the budget", []engineServiceEvent{
+			{at: took.Add(time.Second), message: "(service af-stack-image) was unable to place a task."},
+		}, time.Second, engineOfferBudget, false, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			result, move, matched := engineOfferVerdict(tc.events, tc.waited, budget)
+			result, move, matched := engineOfferVerdict(tc.events, offerProviderSpot, took, tc.waited, budget)
 			if result != tc.wantResult || move != tc.wantMove || matched != tc.wantMatch {
 				t.Fatalf("got %q move=%v matched=%v, want %q %v %v", result, move, matched, tc.wantResult, tc.wantMove, tc.wantMatch)
 			}
@@ -732,7 +847,8 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		api := &offerECS{}
 		e := newOfferTestEngine(t, api, capacity, offers, st)
 		startWalking(t, e, st)
-		api.running, api.events = 0, []string{"UnfulfillableCapacity: the request configuration cannot be fulfilled"}
+		api.running = 0
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonUnfulfillable)}
 
 		if spent := e.stepOffers(t.Context(), mustView(t, e)); spent {
 			t.Fatal("the list was declared spent after one offer")
@@ -762,7 +878,7 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		api := &offerECS{}
 		e := newOfferTestEngine(t, api, capacity, offers, st)
 		clk := startWalking(t, e, st)
-		api.events = []string{"InsufficientInstanceCapacity: there is not enough capacity"}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonInsufficient)}
 
 		writes := len(api.updates)
 		e.stepOffers(t.Context(), mustView(t, e))
@@ -786,7 +902,7 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		api := &offerECS{}
 		e := newOfferTestEngine(t, api, capacity, offers, st)
 		startWalking(t, e, st)
-		api.events = []string{"VcpuLimitExceeded: you have requested more vCPU capacity than your current limit"}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonVcpuLimit)}
 
 		e.stepOffers(t.Context(), mustView(t, e))
 		cur, _ := e.offers.current()
@@ -808,11 +924,7 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		e := newOfferTestEngine(t, api, capacity, offers, st)
 		startWalking(t, e, st)
 		// Verbatim from the deployment: the quota word arrives inside a ResourceInitializationError.
-		api.events = []string{
-			"(service af-stack-image) was unable to place a task. Reason: ResourceInitializationError: " +
-				"Unable to launch instance(s) for capacity provider af-stack-image-spot. " +
-				"MaxSpotInstanceCountExceeded: Max spot instance count exceeded. RequestId: 3495893a-…",
-		}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonSpotQuota)}
 
 		e.stepOffers(t.Context(), mustView(t, e))
 		cur, _ := e.offers.current()
@@ -825,6 +937,44 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		}
 	})
 
+	// 🔴 The re-run's second defect: after a move, the service's newest events still hold the
+	// PREVIOUS offer's failure. Reading them as this offer's answer made `l4` "answer quota after
+	// 5s" and the engine gave up on a list that had a working offer left in it — a quota takes a
+	// whole purchase option off the table, so ONE misreading invalidates everything.
+	t.Run("the previous offer's failure is not the next offer's answer", func(t *testing.T) {
+		st := testSettingsStore(t)
+		api := &offerECS{}
+		e := newOfferTestEngine(t, api, &offerCapacityAPI{}, offers, st)
+		startWalking(t, e, st)
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonSpotQuota)}
+
+		// The Spot quota moves the walk to the on-demand offer, as it should.
+		e.stepOffers(t.Context(), mustView(t, e))
+		if cur, _ := e.offers.current(); cur.ID != "l4" {
+			t.Fatalf("first step went to %q, want l4", cur.ID)
+		}
+		// Five seconds later ECS has written nothing new, and the Spot event from before the move
+		// is still the newest thing on the service.
+		api.events = []offerEventFixture{agedPlacementEvent(offerProviderSpot, reasonSpotQuota, 20*time.Second)}
+		if spent := e.stepOffers(t.Context(), mustView(t, e)); spent {
+			t.Fatal("the list was declared spent on the previous offer's event")
+		}
+		if cur, _ := e.offers.current(); cur.ID != "l4" {
+			t.Fatalf("moved off %q on an event about another provider", cur.ID)
+		}
+		if got := offerTrailResults(e); got != "spotA=quota,l4=active" {
+			t.Fatalf("trail = %q, want l4 still being tried", got)
+		}
+
+		// Positive control: an event about THIS offer's provider, written after the move, does
+		// move it — so the assertion above is about the filter and not about a walk that stopped.
+		api.events = []offerEventFixture{placementEvent(offerProviderOD, reasonUnfulfillable)}
+		e.stepOffers(t.Context(), mustView(t, e))
+		if got := offerTrailResults(e); got != "spotA=quota,l4=unfulfillable" {
+			t.Fatalf("trail = %q, want l4's own failure to be read", got)
+		}
+	})
+
 	t.Run("going round the whole list is one failed start", func(t *testing.T) {
 		st := testSettingsStore(t)
 		capacity := &offerCapacityAPI{}
@@ -833,7 +983,7 @@ func TestRuleTwoBranchesOnTheFailureCode(t *testing.T) {
 		// Driven through the controller rather than through stepOffers directly: "one failure"
 		// is a statement about what the CONTROLLER counts, and the cooldown is what acts on it.
 		startWalking(t, e, st)
-		api.events = []string{"UnfulfillableCapacity: the request configuration cannot be fulfilled"}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonUnfulfillable)}
 		for i := 0; i < 3; i++ {
 			e.ctrl.tick(t.Context())
 		}
@@ -950,7 +1100,7 @@ func TestAnOfferThatCannotBeAppliedIsSkipped(t *testing.T) {
 		api := &offerECS{strategy: offerProviderOD}
 		e := newOfferTestEngine(t, api, capacity, offers, st)
 		startWalking(t, e, st)
-		api.events = []string{"UnfulfillableCapacity: the request configuration cannot be fulfilled"}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonUnfulfillable)}
 
 		e.stepOffers(t.Context(), mustView(t, e))
 		if cur, _ := e.offers.current(); cur.ID != "l4" {
@@ -970,7 +1120,7 @@ func TestAnOfferThatCannotBeAppliedIsSkipped(t *testing.T) {
 		api := &offerECS{strategy: offerProviderOD}
 		e := newOfferTestEngine(t, api, &offerCapacityAPI{}, offers, st)
 		startWalking(t, e, st)
-		api.events = []string{"UnfulfillableCapacity: the request configuration cannot be fulfilled"}
+		api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonUnfulfillable)}
 
 		e.stepOffers(t.Context(), mustView(t, e))
 		if cur, _ := e.offers.current(); cur.ID != "l40s" {
@@ -1125,7 +1275,7 @@ func TestTheAdminRowCarriesTheOffersTheTrailAndTheOfferInUse(t *testing.T) {
 	}
 
 	startWalking(t, e, st)
-	api.events = []string{"UnfulfillableCapacity: the request configuration cannot be fulfilled"}
+	api.events = []offerEventFixture{placementEvent(offerProviderSpot, reasonUnfulfillable)}
 	e.stepOffers(t.Context(), mustView(t, e))
 
 	row = a.row(t.Context(), e)

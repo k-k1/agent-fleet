@@ -861,6 +861,13 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// Not an error. The caller is a wait loop that polls this, so "not yet" means it comes back
 	// — and the request ends in the retryable `503 engine_waking` the provider already knows
 	// how to answer, rather than in a failure that names a class change nobody asked about.
+	if e.offers.isSettling() {
+		// The strategy for this start is written and the desired count is waiting for the
+		// deployment it replaced to go (ADR 0075). The controller finishes it; asking the gate
+		// again here would re-choose the offer and re-write its rung on every poll of this wait
+		// loop, which is every three seconds for as long as the request is held.
+		return nil
+	}
 	if ok, why := e.startGate(ctx); !ok {
 		log.Printf("%s: a request is waiting, but the start is held back (%s)", e.ecs.logKey(), why)
 		return nil

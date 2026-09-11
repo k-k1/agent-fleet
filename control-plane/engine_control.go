@@ -508,9 +508,15 @@ type engineController struct {
 	// It returns true when the whole offer list has been tried, which is ONE failed start — the
 	// controller counts it as such and the existing cooldown takes over. nil = no offers.
 	offerStep func(ctx context.Context, view engineServiceView) bool
-	demand    *engineDemand
-	settings  store.SettingsStore
-	audit     engineAuditor
+	// startSettling reports whether a start is between its two halves — the strategy written, the
+	// desired count waiting for the deployment it replaced to go (ADR 0075, measured 2 m 35 s).
+	// It suppresses the start gate on the retries: the gate has already chosen the offer and
+	// written its rung, and re-running it every five seconds would re-write the capacity provider
+	// thirty times for one start and print the VRAM line as often. nil = no offers.
+	startSettling func() bool
+	demand        *engineDemand
+	settings      store.SettingsStore
+	audit         engineAuditor
 	// uptime is where each tick's observation is recorded (engine_uptime.go). nil = not
 	// recorded, which is what the VOICEVOX engine does: its panel has no heatmap, and an
 	// INSERT every 30 seconds for a series nothing reads is a cost with no reader.
@@ -694,7 +700,7 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 	// The gate is consulted after the decision, never inside it: what it does — waiting for a
 	// box of the previous instance class to leave, and re-applying the class — is an act with
 	// AWS in it, and decideEngineAction is a pure function over one snapshot (ADR 0074).
-	if action == engineActionStart && c.startGate != nil {
+	if action == engineActionStart && c.startGate != nil && !c.isSettling() {
 		if ok, why := c.startGate(ctx); !ok {
 			log.Printf("%s: holding the start back (%s after %s)", c.eng.logKey(), why, reason)
 			if why == engineReasonNoOffer {
@@ -720,13 +726,19 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 			c.mu.Lock()
 			c.failures, c.lastFailure = c.failures+1, now
 			c.mu.Unlock()
-			c.apply(ctx, false, engineReasonOffersSpent, strings.Join(view.events, " | "))
+			_ = c.apply(ctx, false, engineReasonOffersSpent, strings.Join(view.eventMessages(), " | "))
 			return engineControlBusyInterval
 		}
 	}
 	switch action {
 	case engineActionStart:
-		c.apply(ctx, true, reason, "")
+		if errors.Is(c.apply(ctx, true, reason, ""), errEngineStrategySettling) {
+			// The strategy is written and the desired count is waiting for the deployment it
+			// replaced to go (measured 2 m 35 s). Come back at the busy interval rather than at
+			// the quiet one: somebody is waiting for this engine, and the next attempt is one
+			// short call.
+			return engineControlBusyInterval
+		}
 	case engineActionStop:
 		detail := ""
 		// Both of these ARE failed starts, and both have to cool down: without a cooldown
@@ -734,12 +746,12 @@ func (c *engineController) tick(ctx context.Context) time.Duration {
 		if reason == engineReasonDeadline || reason == engineReasonUnwarmed {
 			// The real reason a start failed ("no container instances met the placement
 			// constraints", a pull failure) is only ever written into the service events.
-			detail = strings.Join(view.events, " | ")
+			detail = strings.Join(view.eventMessages(), " | ")
 			c.mu.Lock()
 			c.failures, c.lastFailure = c.failures+1, now
 			c.mu.Unlock()
 		}
-		c.apply(ctx, false, reason, detail)
+		_ = c.apply(ctx, false, reason, detail)
 	}
 
 	// Never re-warm what was just stopped: the view still says "running" for a moment
@@ -790,7 +802,7 @@ func (c *engineController) noteReplacement(ctx context.Context, view engineServi
 	if prev != "running" || view.state != "starting" || view.desired < 1 {
 		return
 	}
-	detail := strings.TrimSpace(view.rollout + " " + strings.Join(view.events, " | "))
+	detail := strings.TrimSpace(view.rollout + " " + strings.Join(view.eventMessages(), " | "))
 	log.Printf("%s: the engine task was replaced without being asked: %s", c.eng.logKey(), detail)
 	if c.audit == nil {
 		return
@@ -803,7 +815,10 @@ func (c *engineController) noteReplacement(ctx context.Context, view engineServi
 
 // apply moves the desired count and records why. Every automatic movement is audited:
 // this is the only place a charge for a Fargate task can be explained afterwards.
-func (c *engineController) apply(ctx context.Context, on bool, reason, detail string) {
+// It answers with the error the move came back with, so the caller can tell "not yet" from
+// "failed": a start whose strategy is settling (ADR 0075) is neither a success to audit nor a
+// failure to cool down, and the tick uses it to come back sooner.
+func (c *engineController) apply(ctx context.Context, on bool, reason, detail string) error {
 	target := "stop"
 	if on {
 		target = "start"
@@ -813,8 +828,9 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 			// Not a failed start: the capacity provider strategy is now what this engine wants,
 			// and only the desired count is outstanding. The next tick takes the short path and
 			// writes it. Counting this would double a cooldown over a call that did its half.
-			log.Printf("%s: %s (%s) waits for the new deployment before the desired count", c.eng.logKey(), target, reason)
-			return
+			log.Printf("%s: %s (%s) waits for the deployment it replaced to go before the desired count",
+				c.eng.logKey(), target, reason)
+			return err
 		}
 		log.Printf("%s: %s failed (%s): %v", c.eng.logKey(), target, reason, err)
 		// Count an UpdateService failure as a failed start too: without a cooldown the
@@ -824,7 +840,7 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 			c.failures, c.lastFailure = c.failures+1, c.now()
 			c.mu.Unlock()
 		}
-		return
+		return err
 	}
 	if on {
 		c.mu.Lock()
@@ -835,13 +851,20 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 	}
 	log.Printf("%s: %s (%s) %s", c.eng.logKey(), target, reason, detail)
 	if c.audit == nil {
-		return
+		return nil
 	}
 	_ = c.audit.InsertAudit(context.WithoutCancel(ctx), store.AuditLog{
 		ID: store.NewID(), TenantID: "", ActorKind: "system", ActorID: c.actorID(),
 		Action: c.auditAction("auto"), Target: target, Detail: strings.TrimSpace(reason + " " + detail),
 		At: store.NowTS(),
 	})
+	return nil
+}
+
+// isSettling reports whether a start is between its two halves. False for every engine without
+// offers, which has only one half.
+func (c *engineController) isSettling() bool {
+	return c.startSettling != nil && c.startSettling()
 }
 
 // setDesired moves the desired count the way this engine starts. An engine with offers goes
