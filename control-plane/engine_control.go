@@ -65,10 +65,19 @@ func ttsEngineSettings() engineSettings {
 // belongs to whoever runs it, and all "on" means there is that routing is not switched off.
 // Anything unrecognised is treated as on rather than off — a typo must not silence a
 // feature.
+//
+// `ondemand` on an UNMANAGED engine is read as `on` for the same reason (ADR 0076 decision 5):
+// on-demand is a promise to stop the box when nobody wants it, and there is no box here to
+// stop. The value is reachable on such a row from a stack default, from a setting stored while
+// the role was still managed, and from any client written before the distinction existed.
 func engineMode(v string, managed bool) string {
 	switch v {
-	case engineModeOff, engineModeOn, engineModeOnDemand:
+	case engineModeOff, engineModeOn:
 		return v
+	case engineModeOnDemand:
+		if managed {
+			return v
+		}
 	case "":
 		if managed {
 			return engineModeOnDemand

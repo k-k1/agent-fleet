@@ -124,6 +124,14 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			log.Printf("engines: the table now declares %s, which this process does not serve - restart the Control Plane to pick it up", d.Key)
 			continue
 		}
+		if e.def.external() {
+			// An engine somebody else runs has no ladder to carry, no capacity provider to
+			// rename and no service to ask for a restart over (ADR 0076 decision 2). Silently:
+			// the synthesised AF_COMFY_URL row is not in this table at all, so every branch
+			// below would fire on every change of any OTHER row and write a restart request
+			// about a row the table never mentioned.
+			continue
+		}
 		next := parseEngineClasses(d.offersSpec())
 		// 🔴 Adopting a ladder (or dropping the last rung) is not a rung change: the capacity
 		// client and the controller's start gate are attached at construction only when a
@@ -153,6 +161,11 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 		}
 	}
 	for _, e := range r.reg.list() {
+		if e.def.external() {
+			// It was never IN this table — an external row comes from the environment — so its
+			// absence says nothing (ADR 0076 decision 2).
+			continue
+		}
 		if !seen[e.def.Key] {
 			// Deliberately still registered and still controlled (the peer decision on this
 			// change): stopping a role because a table stopped mentioning it would take a GPU

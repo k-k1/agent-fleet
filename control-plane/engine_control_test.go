@@ -287,6 +287,10 @@ func TestTTSEngineMode(t *testing.T) {
 		{"", true, engineModeOnDemand},  // a managed engine defaults to on-demand
 		{"", false, engineModeOn},       // an engine somebody else runs is simply on
 		{"garbage", true, engineModeOn}, // a typo must not silence speech
+		// On-demand is a promise to stop the box when nobody wants it, and an engine somebody
+		// else runs has no box here to stop (ADR 0076 decision 5). The value is reachable on
+		// such a row from a stack default and from any client written before that distinction.
+		{"ondemand", false, engineModeOn},
 	}
 	for _, c := range cases {
 		if got := engineMode(c.stored, c.managed); got != c.want {
