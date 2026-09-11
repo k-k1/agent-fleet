@@ -1089,3 +1089,30 @@ provider は**前の要求のまま**＝宣言と実際がずれたまま Spot �
 - ⚠️ 2 つとも `--parameter-overrides` で入れたので**捕捉 `params/60-engines` には無い**（`standup.sh` で
   建て直すと消える。0074 の追記と同じ注意）。
 - 生の戻り値（CFN・ECS・EC2・SSM の JSON と CP のログ）は測ったセッションの `~/.cache/adr0075-run1-7/` にある。
+
+## 追記 — 実機 1〜7 の修正が本文に返したもの（2026-09-11・PR #561）
+
+実機 1〜7 が返した 3 点と小 3 点は #561 で入った（各件に陽性対照つき）。実装が本文に返した点を、
+決定は書き換えずにここに置く。実機 3〜4 の再走（予算 180 秒）で確かめる。
+
+- **決定 5 — 予算の終わりは「その提案の provider に ACTIVE な箱が現れたら」。** 箱が来た時点で
+  予算の時計を止め、以降は `StartDeadlineSec` に任せる。⚠️ 併せて**箱の照合は provider を名指しで
+  引く**（`boxOn()`）——起動の前後には退場中の箱と新しい箱が **2 台 registered している時間帯**が
+  あり、名前無しの `box()` は先に列挙された退場中の箱を返しうる。`box()` は ACTIVE を優先する。
+- **決定 4 (a) — 起動は 2 回の `UpdateService`。** strategy が変わるときは「strategy +
+  `forceNewDeployment`」→ **新しい PRIMARY deployment を確認してから** desired 1。1 回に載せると
+  ECS が古い strategy で先に置いて箱を 2 台買う（実機 3 で 2 回再現）。確認できないうちは desired を
+  動かさず、**それは起動の失敗として数えない**（sentinel）。
+- **決定 5 の表に 4 つ目 — `MaxSpotInstanceCountExceeded`。** `ResourceInitializationError: Unable to
+  launch instance(s) for capacity provider …` に包まれて来るので部分一致で読み、`VcpuLimitExceeded` と
+  同じ「同じ購入形態を飛ばす」扱いにする。⚠️ この配備の Spot では `VcpuLimitExceeded` は一度も
+  出ていない——「Spot の枠＝この語」が正確である。
+- **決定 2・5 — rung を拒まれた提案は `unusable`。** `UpdateCapacityProvider` が 400（`No instance
+  types satisfy the instance requirements`）を返した提案は起動にも移動にも使わず、次へ移る。
+  契約 B の `offer_trail.result` に 6 つ目の値 **`unusable`** が増えた（Console は未知の値を素通しで
+  表示するので互換は保たれる）。
+- **`offerBudgetSec` は生きたまま運ぶ欄**（提案一覧・provider 名と同じ扱い）。二重起動（管理トグルと
+  制御ループ）でも `offer_trail` は 1 需要 1 行で、そのとき予算の時計は消えない。
+- ⚠️ **まだ直していない 2 点（Console 側）**: 提案が provider を共有すると `offer` は「先に一致した
+  提案」を返す（決定 11 の粒度の限界。`box.provider` は CP 内部のみで契約 B には無い）／`class`
+  （段）と `offer`（走っている行）は別物だとパネルの文言で言う。

@@ -1194,3 +1194,37 @@ spare boxes.**
   (standing the deployment up again with `standup.sh` loses them — the same caveat as 0074's follow-up).
 - The raw responses (CloudFormation, ECS, EC2 and SSM JSON, and the CP's log) are in
   `~/.cache/adr0075-run1-7/` of the session that measured this.
+
+## Follow-up — what the fixes from hardware runs 1-7 handed back (2026-09-11, PR #561)
+
+The three points and three small ones from hardware runs 1-7 landed as #561 (each with a
+positive control). What the implementation handed back goes here, with the decisions left as
+written. Hardware runs 3-4 are re-run at the 180 s budget to confirm them.
+
+- **Decision 5 — the budget ends "when an ACTIVE box appears on that offer's provider".** The
+  clock stops the moment the box arrives; `StartDeadlineSec` takes over from there. ⚠️ With it,
+  **the box lookup asks by provider name** (`boxOn()`) — around a start there is a window with
+  **two boxes registered**, the draining one and the new one, and a nameless `box()` may return
+  whichever is listed first. `box()` now prefers ACTIVE.
+- **Decision 4 (a) — a start is two `UpdateService` calls.** When the strategy changes:
+  "strategy + `forceNewDeployment`" → **confirm the new PRIMARY deployment** → desired 1. In one
+  call ECS places under the old strategy first and buys two boxes (reproduced twice in run 3).
+  Until the new deployment is confirmed the desired count does not move, and **that is not
+  counted as a failed start** (a sentinel).
+- **A fourth code in decision 5's table — `MaxSpotInstanceCountExceeded`.** It arrives wrapped in
+  `ResourceInitializationError: Unable to launch instance(s) for capacity provider …`, so it is
+  matched as a substring and treated like `VcpuLimitExceeded` (skip the purchase type). ⚠️ On
+  this deployment's Spot side `VcpuLimitExceeded` never appeared — "the Spot quota speaks this
+  word" is the accurate statement.
+- **Decisions 2 and 5 — an offer whose rung is refused is `unusable`.** When
+  `UpdateCapacityProvider` answers 400 (`No instance types satisfy the instance requirements`),
+  that offer is used neither to start nor to move, and the list moves on. Contract B's
+  `offer_trail.result` gains a sixth value, **`unusable`** (the Console passes unknown values
+  through, so compatibility holds).
+- **`offerBudgetSec` is carried live** (like the offer list and the provider names). A double
+  start (admin toggle plus control loop) still yields one `offer_trail` row per demand, and the
+  budget clock survives it.
+- ⚠️ **Two points not fixed yet (Console side)**: when offers share a provider, `offer` names
+  the first matching offer (a granularity limit of decision 11; `box.provider` is CP-internal
+  and not in contract B) / the panel wording should say that `class` (the rung) and `offer`
+  (the row running) are different things.
