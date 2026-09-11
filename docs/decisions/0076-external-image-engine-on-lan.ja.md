@@ -1,8 +1,10 @@
-# 0076. LAN 上の ComfyUI を native / docker 配備の画像生成に使う——エンジン表に「外部（external）」の行を足し、ゲートウェイはそのまま通す
+# 0076. LAN 上の ComfyUI を native / docker 配備の画像生成に使う——エンジン表に「外部（external）」の行を足し、ゲートウェイの転送経路はそのまま
 
 [English](0076-external-image-engine-on-lan.md) | 日本語
 
-- 状態: **提案**（2026-09-11）。実装はしていない。
+- 状態: **提案・レビュー済み**（2026-09-11）。実装はしていない。レビュー（末尾の節）は
+  すべての主張をコードに当て、崩れる前提は無かった。訂正は下の決定に織り込み済みで、P0 に
+  入ってよい。
 - **この文書のために新しく測ったものは無い。** 根拠はすべて出所を書き分けてある——
   (a) ADR 0069・0071・0072 の実測、(b) 2026-09-11 にこのリポジトリのコードから読んだ事実
   （「確認した出典」に file:line で列挙した）、(c) ComfyUI の公開仕様として知っているだけで
@@ -64,16 +66,38 @@ VOICEVOX を WSL の CP から指す」手順を持っている。**この ADR �
 サンプラ。管理 API の行は `managed:false` で公開し、ECS 由来の欄は VOICEVOX と同じく
 **省略する**（推測で埋めない）。`parseEngineTable` は external 行に限って `service` を要求しない。
 
+external 行の nil が何に当たるかをコードで読んだ（レビュー）: 行に無いものに触る箇所の大半は
+既に nil 安全である——`demand.record` / `units`、`ctrl.warmed` / `noteAdminAction`、
+`ecs.logKey`、`controlCfg`、`pendingGuard`（`pending` が nil なら返る）、`publishActiveSet`
+（SSM 無しは no-op）、管理行の `e.ecs == nil` と `e.demand != nil` の分岐、梯子の無い
+`classStartHeld`、そして `servedModel`（Workspace に渡す `warm` のモデルは「ゲートウェイが
+最後に答えを見たモデル」で、制御ループの有無に依らない）。安全でないのは `ensureStarted` の
+`e.ecs.view` と管理 API `put` の起動・停止の 2 か所で、それは決定 4・5 が書き換える当の場所で
+ある。P0 はこれを、external 行に対して全ハンドラ（管理一覧・`put`・models の経路・上流あり／
+なしのゲートウェイ・`/internal/engine/catalog`）を通す 1 本のテストで固定する。
+
 ### 2. 運用者の入口は `AF_COMFY_URL` 1 本。CP がそれを表の行に**合成する**
 
 `AF_VOICEVOX_URL` と同型にする。`AF_COMFY_URL=http://192.168.1.20:8188` から CP が
 `{key:"image", api:"images", provider:"comfy", health:"/system_stats", lifecycle:"external"}`
 を合成する。任意で `AF_COMFY_API_KEY` を取り、ゲートウェイが上流に付ける `Authorization: Bearer`
 の鍵にする（ComfyUI 自体は無認証なので、これは前段の reverse proxy が検査するためのもの。
-決定 7）。`AF_ENGINES_JSON` は dev 用にそのまま残し、そこにも `lifecycle` を書ける。
-表と env の両方が同じ `key` を持ったら **env が勝ち、ログに書く**——運用者に一番近い宣言を
-採る。表は起動時に 1 回しか読まない（ADR 0071 の設計のまま）ので、URL の変更は CP の再起動である。
-管理画面から URL を入れる案は却下ではなく**後回し**（却下した案の節）。
+決定 7）。鍵は行に既にある `apiKey` 欄に入れる——managed 行が SSM の `apiKeyParam` から読む
+欄で、`dial` と `engineHealthy` の**両方**が既に bearer として付けるので、新しい配管は無い。
+その帰結として、前段の proxy は同じ bearer で `/system_stats` も通さなければ health が永久に
+通らない。`AF_COMFY_URL` は、いま `AF_ENGINES_SSM_PARAM` も `AF_ENGINES_JSON` も無ければ nil を
+返す `newEngineRegistry` の門に加わる。`AF_ENGINES_JSON` は dev 用にそのまま残し、そこにも
+`lifecycle` を書ける。
+
+表と env の両方が同じ `key` を持ったら: 表の行が無いか external なら env が勝ち、**表の行が
+managed なら表が勝つ**。どちらもログに書く。レビューで草稿の「常に env が勝つ」を逆にした——
+制御下の行を差し替えると、その行が指す ECS サービスを止める者が誰もいなくなり、そちらの方が
+高くつく。LAN の箱に替えたい運用者はスタックからその役を外す。
+
+SSM の表は 10 秒ごとに読み直される（ADR 0074 の `engineTableReloader`）が、環境変数は起動時に
+1 回しか読まないので、URL の変更は CP の再起動である。reloader は **external 行を飛ばす**——
+でないと表が変わるたびに「表が変わった・再起動せよ」を合成行に対して書き、梯子の無い行に
+GPU の梯子を運ぼうとする。管理画面から URL を入れる案は却下ではなく**後回し**（却下した案の節）。
 
 ### 3. Workspace は CP のゲートウェイを通す。Workspace 側は無改修
 
@@ -91,7 +115,10 @@ LAN の ComfyUI は、待っても起きない**。即時に失敗し、非ス�
 `503 engine_unavailable` を返す。`engine_waking` にしない理由: provider は `engine_waking` を
 16 分再試行する（ADR 0071 決定 5）が、その 16 分は「箱を買って S3 から引く」ための予算で、
 落ちている箱に対しては 16 分の沈黙にしかならない。本文には URL と health のパスを書く——
-運用者が読む文である。health は 60-engines と同じ `/system_stats`。ComfyUI はモデル読込中も
+運用者が読む文である。新しいエラーコードは要らない: 非ストリーミング経路は `errEngineWaking`
+以外の dial の失敗をすべて既に `503 engine_unavailable` に、その文言を末尾に付けて変換し、
+ストリーミング経路も `engine_unavailable` のイベントにする。P0 が足すのは即時に返ることと、
+その文言だけである。health は 60-engines と同じ `/system_stats`。ComfyUI はモデル読込中も
 これに答え、`/prompt` はキューに積むので、health が通れば待つ理由が無い（未解決 1）。
 
 ### 5. モードは `on` / `off` の 2 値。既定は `on`
@@ -101,12 +128,20 @@ LAN の ComfyUI は、待っても起きない**。即時に失敗し、非ス�
 external の行に `ondemand` のボタンを出さない。`off` の意味は VOICEVOX と同じ「経路を閉じる」
 であって、ComfyUI を止めることではない。
 
+両側を別々に作れるように、契約を書いておく: external エンジンの管理行は `managed:false`・
+`lifecycle:"external"`・`url`・`warm` を持ち、`state` / `desired` / `box` / `stop_eta` /
+`idle_secs` / `window_*` を省略する。Console 側では、モードのセグメントはいま全行に
+`off` / `ondemand` / `on` を描いており、`engineStateLabel` と `engineStateTone` は既に `managed`
+で分岐する（「外部管理」の文字列は TTS 行のものを流用している）。パネルのポーリング条件は
+`state` を読むので、`state` を持たない external 行はポーリングを起こさない。
+
 ### 6. モデルはカタログの手入力宣言。ファイル名は ComfyUI の loader が列挙する名前
 
 ADR 0072 決定 1（カタログが宣言の全部）を維持する。取り込みジョブ（S3）は無いので、
 管理者が既存の `POST /api/admin/engines/image/models` で id・`base_model`・ファイルを登録する。
 `files_missing` の検査は「役ごとのフラグが宣言されているか」であって S3 の存在確認ではない
-ので、そのまま使える。wire の欄名 `s3Key` は据え置く——外部では「loader に渡す名前」を入れる。
+（`engineMissingFileFlags`。models の経路は自身に「S3 key の存在はここでは確かめない」と
+書いている）ので、そのまま使える。wire の欄名 `s3Key` は据え置く——外部では「loader に渡す名前」を入れる。
 
 🔴 **既知の罠**: Agent の `engineImageFiles` は S3 key の最後の `/` 以降だけを ComfyUI に渡す。
 取り込み経路では平坦だったので通っていたが、LAN の ComfyUI で `checkpoints/sdxl/x.safetensors`
@@ -127,7 +162,9 @@ reverse proxy を置いて bearer を検査し、その鍵を `AF_COMFY_API_KEY`
 
 Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決定 9・0071 決定 9）。LAN の箱に
 時間単価は無いので費用は出さない。制御ループが無い external の `warm` は、パネルを開いた
-瞬間の health の結果で答える（1 回の HTTP・5 秒上限）。稼働ヒートマップは P0 では空——
+瞬間の health の結果で答える——1 回の HTTP・**2 秒**上限・結果は 10 秒キャッシュ。ゲートウェイの
+5 秒にしない理由: 一覧のハンドラは同期で、Console は読み込みのたびに叩くので、落ちている LAN の
+箱は external 行 1 つにつき 5 秒パネル全体を止めてしまう。稼働ヒートマップは P0 では空——
 サンプラは制御ループの tick だからで、health だけを 30 秒ごとに書く軽い prober は P1。
 
 ## 却下した案
@@ -175,17 +212,26 @@ Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決�
 
 ## フェーズ
 
-- **P0（CP と文書）**: `engineDef.Lifecycle`、`AF_COMFY_URL` / `AF_COMFY_API_KEY` の合成、
-  AWS を要する行が無ければ AWS の設定を読まない `newEngineRegistry`、`ensureStarted` の即時失敗、
-  管理行の `managed:false` と `url`、`ondemand` の拒否、Console の `ondemand` ボタン省略。
-  同梱で直す既存の穴: Agent の `serviceLabelOf` / `driverModelOf` に `comfy` の case が無く、
-  ツール説明文に経路名とモデルが出ない（ECS でも同じ）。文書は `deploy/compose/.env.example`、
-  `deploy/native/README.md`（VOICEVOX の節の隣）、`guide/operate/` の新しい節、
-  `guide/ref/deploy-targets.md` の対応表に「画像生成」の行、`guide/ref/features.md` の誤った
-  参照先の訂正。テストは表の parse、AWS 無しでの registry 構築、httptest の ComfyUI スタブに
-  対するゲートウェイの通し（上流あり → 転送、上流なし → `engine_unavailable` を即時）、管理行。
+- **P0（CP と文書）**。触るファイルが重ならない 4 レーンに分ける:
+  - *CP*（`control-plane/`）: `engineDef.Lifecycle`、決定 2 の優先順位での `AF_COMFY_URL` /
+    `AF_COMFY_API_KEY` の合成、AWS を要する行が無ければ AWS の設定を読まない
+    `newEngineRegistry`、reloader の external 行スキップ、`ensureStarted` の即時失敗、決定 5 の
+    契約どおりの管理行、`ondemand` の 400、2 秒・キャッシュ付きの health 確認。テストは表の
+    parse、AWS 無しでの registry 構築、httptest の ComfyUI スタブに対するゲートウェイの通し
+    （上流あり → 転送、上流なし → URL を名指しした `engine_unavailable` を即時）、決定 1 の
+    nil 総当たり。
+  - *Console*（`console/src/features/settings/admin/adminEngines.tsx` とカタログ）:
+    `managed:false` の行に `ondemand` ボタンを出さない、URL を表示、ECS 専用の欄（idle・box・
+    ヒートマップ）を描かない。決定 5 の形の行に対する dom テスト。
+  - *Agent*（`workspace/agent/`）: 同梱で直す既存の穴——`serviceLabelOf` / `driverModelOf` に
+    `comfy` の case が無く、ツール説明文に経路名とモデルが出ない（ECS でも同じ）。
+  - *文書*: `deploy/compose/.env.example`、`deploy/native/README.md`（VOICEVOX の節の隣）、
+    二言語の新ページ `guide/operate/07-image-engine.md` とその棚の README からのリンク、
+    `guide/ref/deploy-targets.md` の対応表に「画像生成」の行、`guide/ref/features.md` の
+    「推論エンジンの GPU クラス」が MCP / egress のページを指している行の訂正。
   **完了条件は「LAN の ComfyUI 相手に `generate_image` が 1 枚返る」の実機 1 回**——ベンチが
-  緑でも配線は測れていない前例がある（ADR 0072 P2）。
+  緑でも配線は測れていない前例がある（ADR 0072 P2）。この 1 回は ComfyUI のある網が要り、
+  それを持つのは運用者だけである——セッションの仕事ではなく運用者の手順。
 - **P1**: basename 規則の改定、health の prober と稼働ヒートマップ、`/object_info` からの候補
   提示、`AF_COMFY_API_KEY` の reverse proxy 手順の文書。
 - **P2**: docker 配備の GPU ホストで pinned イメージを起こすスクリプト（未解決 4）。
@@ -198,17 +244,69 @@ Agent が枚数とピクセルを数える経路は変えない（ADR 0069 決�
   `AF_ENGINE_ISSUE_TOKEN`）、`:395-404`（`api=images && provider` の突合と `base + base_url`）、
   `workspace/agent/internal/imagegen/comfy.go:61-75`（Ready は「URL と token がある」）。
 - ゲートウェイの ECS 結合が 1 関数であること: `control-plane/engine_gateway.go:813`（`ensureReady`）、
-  `:837`（`ensureStarted`）、`:756`（comfy は `/v1/` を付けない）。
+  `:837`（`ensureStarted`）、`:803`（comfy は `/v1/` を付けない）、`:697`・`:726`（waking 以外の
+  dial の失敗は既に `engine_unavailable`）。
 - 登録側の結合: `control-plane/engines.go:365`（`service` 必須）、`:382-395`（AWS 設定を先に読む）、
-  `:453-459`（全行に `engineECS`）、`:471`（制御ループ）、`engine_catalog.go:519`（SSM 無しは no-op）。
-- VOICEVOX の前例: `control-plane/engine_ecs.go:376`（`newTTSEngineFromEnv`）、
+  `:498`（全行に `engineECS`）、`:528`（制御ループ）、`engine_catalog.go:519`（SSM 無しは no-op）、
+  `engine_table_reload.go:60`（reloader は SSM 無しなら nil、有れば 10 秒ごとに表を読み直す）。
+- 既に nil 安全な箇所（決定 1）: `control-plane/engine_control.go:143`（`demand.record`）、`:587`
+  （`ctrl.warmed`）、`engine_ecs.go:429`（`logKey`）、`engines.go:284`（`servedModel`）、
+  `engine_gateway.go:516`（`pendingGuard`）、`engine_class.go:831`（`classStartHeld`）。
+- VOICEVOX の前例: `control-plane/engine_ecs.go:446`（`newTTSEngineFromEnv`）、
   `engine_control.go:68`（`engineMode(v, managed)`）、`tts.go:128-165`、`engine_admin.go:196`
-  （`managed`）、`:278`（`e.ecs == nil` で ECS 欄を省略）、
-  `console/src/features/settings/admin/adminEngines.tsx:2772`（`admin.tts_external`）。
+  （`managed`）、`:297`（`e.ecs == nil` で ECS 欄を省略）、
+  `console/src/features/settings/admin/adminEngines.tsx:2914`（`admin.tts_external`。どの行でも
+  通る）、`:548`（モードのセグメントは全行に `ondemand` を描く）。
+- カタログの検査がフラグ基準であること: `control-plane/engine_admin.go:167`（`files_missing`）、
+  `:908`（「S3 key の存在はここでは確かめない」）。
 - 網: `deploy/compose/docker-compose.yml:23`（CP は host network）、
   `control-plane/internal/runtime/runtime_docker.go:280-284`（Workspace は NAT で外に出る）、
-  `control-plane/workspace_lifecycle.go:378`（`AF_CP_BASE_URL = PUBLIC_BASE_URL`）、
-  `control-plane/egress_proxy.go:144-155`（RFC1918 は遮断対象でない）。
+  `control-plane/workspace_lifecycle.go:378`（`AF_CP_BASE_URL = PUBLIC_BASE_URL`）、`:401`
+  （`AF_ENGINE_ISSUE_TOKEN` はどの runtime でも注入される）、
+  `control-plane/egress_proxy.go:144-155`（無条件に落とすのは loopback と link-local だけ）。
 - 罠: `workspace/agent/engines.go:481`（basename 化）、
   `workspace/agent/internal/imagegen/http.go:165-196`（`comfy` の case 無し）。
-- health のパス: `deploy/aws/ecs/cfn/60-engines.yaml:889`（comfy は `/system_stats`）。
+- health のパス: `deploy/aws/ecs/cfn/60-engines.yaml:943`（comfy は `/system_stats`）。
+- 誤った参照先: `guide/ref/features.md:124`。
+
+## レビュー（2026-09-11・P0 の前）
+
+0071 のレビューと同じ問い: 各決定は根拠から出ているか、草稿が「コードはこう言っている」と
+書いたとおりにコードは言っているか。結論を先に: **P0 に入ってよい。** 崩れる前提は無い——
+3 段の構図（Workspace は runtime を知らない・ゲートウェイの ECS 結合は 1 関数・登録側が全行に
+ECS を生やす）はコードのとおりで、VOICEVOX の前例も主張どおり 1 関数である。レビューで変えた
+ものは上の決定に織り込んだ。この節は何を見つけ、なぜ変えたかの記録である。
+
+- **`file:line` の出典 18 件のうち 6 件が別の行を指していた**（`engines.go:453`、
+  `engine_ecs.go:376`、`engine_admin.go:278`、`adminEngines.tsx:2772`、`60-engines.yaml:889`、
+  コメント 1 行分ずれた `engine_gateway.go:756`）。すべて `sed -n` で読み直して上で訂正した。
+  誰にも見つからない行を名指しする出典は無いより悪い——次の読者が正しい出典まで信じなくなる。
+- **決定 2 は「表は起動時に 1 回しか読まない」と書いていた。** ADR 0074 まではそうだったが、
+  いまは reloader が SSM を 10 秒ごとに読み直す。草稿の結論（URL の変更は再起動）は環境変数に
+  ついては正しいが、reloader は合成行に対して表が変わるたびに再起動要求をログに書き、梯子を
+  運ぼうとしただろう。external 行を飛ばすことにした。
+- **決定 2 の優先順位を逆にした。**「常に env が勝つ」は、`AF_COMFY_URL` も設定した ecs-ec2
+  配備で managed の `image` 行を差し替え、その ECS サービスを制御ループも停止ボタンも無い
+  まま残す。managed の表の行が勝つ。
+- **決定 2 の `AF_COMFY_API_KEY` に配管は要らない**: `apiKey` 欄は既にあり、`dial` も
+  `engineHealthy` も付ける。草稿は health 確認にも bearer が乗ることを書いておらず、それは
+  決定 7 の reverse proxy の設定を左右する。
+- **決定 4 に新しいエラーコードは要らない**: 非ストリーミング経路は `errEngineWaking` 以外の
+  dial の失敗を既に文言付きの `engine_unavailable` にする。草稿は新しい処理を匂わせていたが、
+  P0 は即時に返ることと文言だけである。
+- **決定 1 の「付けない」を箇所ごとに当たった**: `ecs`・`ctrl`・`demand`・`pending`・`ssm` の
+  参照はほぼ全部が既に nil 安全で、安全でない 2 か所は決定 4・5 が書き換える当の関数である。
+  P0 が不要なガードを足さないよう記録し、全ハンドラを通す 1 本のテストで固定する。
+- **決定 8 の 5 秒の確認は管理パネルを止めていた。** 一覧のハンドラは同期である。2 秒と
+  10 秒のキャッシュにした。
+- **決定 5 に契約が無かった。** 行の欄を書き下ろし、CP と Console を別々のセッションで作れる
+  ようにした。Console の既存の `managed` 分岐が汎用であること（TTS の文字列を流用）と、
+  `ondemand` ボタンがいま全行に出ることを確認した。
+- **決定 6 の `files_missing` の主張は** models の経路自身のコメントで確認した。
+- **文書の一覧は「`guide/operate/` の新しい節」としか書いていなかった。** その棚は 01〜06 の
+  番号付き・二言語なので、両言語の `07-image-engine` と README の行になる
+  （`scripts/docs-check.py` が対を強制する）。
+- **題名は「ゲートウェイはそのまま」だった**が、決定 4 は `engine_gateway.go` の関数を変える。
+  正しいのは「転送経路はそのまま」なので、そう改めた。
+- **完了条件には運用者の網が要る。** フェーズに明記した: セッションは LAN の ComfyUI を用意
+  できないので、実機 1 回は 4 レーンのマージ後の運用者の手順である。
