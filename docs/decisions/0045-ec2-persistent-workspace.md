@@ -798,7 +798,9 @@ Start went there and failed the same way** — one machine's kernel jam silently
 - **Detach home and drop the claim too.** So that the person's next Start can go to a different slot
   without waiting out the claim TTL.
 - **Stop the instance.** Do not leave an instance that cannot accept tasks billing by the hour. Terminating is left to
-  the operator's judgement (this adapter has no `TerminateInstances`, §64.22.1). **Note that on real hardware
+  the operator's judgement (**🔴 correction, 2026-09-11: "this adapter has no `TerminateInstances`, §64.22.1" stopped
+  being true with decision 23. It no longer means there is no way to terminate one, only that nothing does it
+  automatically — the operator's hand is decision 30**). **Note that on real hardware
   this stop actually completed the stuck detach** (stopping → stopped returned the volume to `available`).
 - **Keep it on screen.** It is removed from the pool's counts but not from the table — an instance that is still
   billing disappearing from the screen is a bill the operator cannot notice. The reason and the time are
@@ -981,7 +983,7 @@ terminated". The steady-state instance count now follows "activity plus the thre
 **What was not done**: a warm floor (above). Separate thresholds for free and occupied (both answer the same
 single question, "how many hours to keep an instance", and splitting them only adds operational surface).
 Automatically terminating quarantined instances (`af-role=quarantined` is excluded from both walks — **the
-evidence is deliberately kept**).
+evidence is deliberately kept**; the operator's own hand for that is decision 30).
 
 ## Decision 24 — eviction takes only "instances you can ride". But it **does cross tenants** (2026-08-26)
 
@@ -1366,3 +1368,40 @@ Code: `control-plane/internal/runtime/runtime_ecs_ec2.go` (`ResizeHome` / `growH
 `control-plane/internal/runtime/profiles.go` (`HomeResize` / `DiskGrowOnly`),
 `deploy/aws/ecs/cfn/40-ec2-pool.yaml` (`af-mount`), `deploy/aws/ecs/cfn/20-platform.yaml` (IAM),
 `console/src/features/settings/tenant/tenantMemberDetail.tsx`.
+
+## Decision 30 — a quarantined slot is terminated **by the operator, from the Console** (2026-09-11)
+
+Decision 20 stops a quarantined instance and keeps it as evidence, leaving the terminate to the operator's
+judgement. Decision 23 decided not to automate that judgement (`af-role=quarantined` is excluded from both
+walks). **What was left is that both of them assume an operator who deletes the box, and nothing in the
+product could delete one.**
+
+It surfaced on a live deployment with one box sitting quarantined. The screen says "terminate it once you have
+taken what you need", the Console has no button for it, and the admin API has no route. An operator without
+the AWS console — which is exactly what a super_admin handed only the Console is — has no move at all.
+
+- **Add `DELETE /api/admin/ec2-pool/slots/{id}` (super_admin).** The adapter decides, re-reading the tags from
+  AWS (ADR 0012). It accepts exactly four conditions — **this deployment's `af-pool`, `af-role=quarantined`,
+  no home attached, no live claim** — and **refuses `af-role=slot` explicitly**: a working slot leaves through
+  the dormancy series (decisions 22/23), and this route must not become a window where typing an instance id
+  deletes a machine somebody is sitting on. Refusals come back as 404/409 with the reason; an operator's typo
+  is an answer, not a fault.
+- **Tasks are not a condition.** The box `abandonLostSlot` left running still holds the ENI of a task whose
+  home has already been moved elsewhere — precisely the box an operator comes to remove. `terminateSlot` calls
+  `DeregisterContainerInstance(Force)` first, so ECS gives that task up.
+- **Copy the quarantine reason into the audit log before deleting.** The reason exists only in the instance's
+  tags and goes with the instance. That one line is what keeps decision 23's "the evidence is deliberately
+  kept" true after somebody presses the button.
+- **Still no automatic terminate.** A TTL that tidies up by itself (`…QUARANTINE_TERMINATE_SEC`) sits badly
+  with evidence that lives only in tags and a deletion nobody performed. One hand is enough; a second one only
+  adds operational surface.
+
+⚠️ **A general rule**: a decision that says "this is left to the operator's judgement" has to check, in the
+same breath, that the product contains a way to carry that judgement out. Without one it is not delegation but
+a TODO nobody can execute — here it showed up as a 100 GiB root volume per box (roughly $9.6/month on gp3 in
+Tokyo) accumulating one box at a time, indefinitely, on every mount failure.
+
+Code: `control-plane/internal/runtime/runtime_ecs_ec2.go` (`TerminateQuarantinedSlot` / `terminateSlot`),
+`control-plane/workspace_lifecycle.go` (`runtimeSlotTerminator`),
+`control-plane/internal/tenantsrv/tenants.go` (`TerminatePoolSlot`), `control-plane/routes.go`,
+`console/src/features/settings/tenant/ec2Pool.tsx`.

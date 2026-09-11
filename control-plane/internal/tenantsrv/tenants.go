@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/k-k1/agent-fleet/control-plane/internal/auth"
+	"github.com/k-k1/agent-fleet/control-plane/internal/runtime"
 	"github.com/k-k1/agent-fleet/control-plane/internal/store"
 )
 
@@ -1230,6 +1231,56 @@ func (a Admin) PoolStatus(w http.ResponseWriter, r *http.Request, _ store.Identi
 		return
 	}
 	writeJSON(w, http.StatusOK, st)
+}
+
+// TerminatePoolSlot (DELETE /api/admin/ec2-pool/slots/{id}) removes one QUARANTINED slot.
+// Nothing else in the product ever does: a box that could not mount a home is stopped and
+// kept as evidence (ADR 0045 decision 20), and both sweeper walks skip it — so until this
+// existed the screen could say "terminate it once you have what you need" while offering no
+// way to, and its root volume billed for the life of the deployment.
+//
+// super_admin only, like the screen it sits on: slots are shared across tenants, so no
+// tenant_admin owns one.
+//
+// The adapter, not this handler, decides what may be deleted (it re-reads the tags from AWS
+// — ADR 0012). Two of its refusals are the operator's own mistake rather than a failure, so
+// they come back as 404/409 with the reason: an id that is not a slot of this pool, and a
+// slot that is a WORKING one. A live slot leaves through the dormancy series; this route
+// must not become a way to delete a machine somebody is sitting on.
+func (a Admin) TerminatePoolSlot(w http.ResponseWriter, r *http.Request, ident store.Identity) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeAPIErr(w, &APIError{http.StatusBadRequest, "bad_request", "instance id required"})
+		return
+	}
+	reason, ok, err := a.cp.TerminateQuarantinedSlot(r.Context(), id)
+	if !ok {
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_pool", "this runtime has no slot pool"})
+		return
+	}
+	switch {
+	case errors.Is(err, runtime.ErrSlotNotFound):
+		writeAPIErr(w, &APIError{http.StatusNotFound, "no_such_slot", err.Error()})
+		return
+	case errors.Is(err, runtime.ErrSlotNotQuarantined):
+		writeAPIErr(w, &APIError{http.StatusConflict, "slot_not_quarantined", err.Error()})
+		return
+	case errors.Is(err, runtime.ErrSlotInUse):
+		writeAPIErr(w, &APIError{http.StatusConflict, "slot_in_use", err.Error()})
+		return
+	case err != nil:
+		writeAPIErr(w, internalErr(err))
+		return
+	}
+	// The quarantine reason lived in the instance's tags, and the instance is going away.
+	// Keeping it here is what lets decision 23's "the evidence is deliberately kept" still
+	// hold after somebody presses the button.
+	_ = a.cp.Store().InsertAudit(r.Context(), store.AuditLog{
+		ID: store.NewID(), TenantID: "", ActorKind: "admin", ActorID: ident.ID,
+		Action: "pool.slot_terminate", Target: id, Detail: "quarantined: " + reason,
+		HTTPStatus: http.StatusOK, At: store.NowTS(),
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"instance_id": id, "terminated": true, "quarantine_reason": reason})
 }
 
 // tenantLoginWire is the reply to PUT /api/admin/tenants/{slug}/login (the Console's

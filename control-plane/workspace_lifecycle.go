@@ -597,6 +597,26 @@ type runtimePoolStatuser interface {
 	PoolStatus(context.Context) (runtime.EC2PoolStatus, error)
 }
 
+// runtimeSlotTerminator is the write half of that screen: the pool reports a quarantined
+// box, and this is what removes it. A separate interface from runtimePoolStatuser because
+// reporting a pool and being able to delete a machine in it are different claims, and only
+// one of them may be assumed from the other's presence.
+type runtimeSlotTerminator interface {
+	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, err error)
+}
+
+// terminateQuarantinedSlot removes one quarantined box on an operator's word, returning the
+// quarantine reason so the caller can keep it in the audit log — the box is about to stop
+// existing, and its tags with it. ok=false on every runtime that has no pool.
+func (m *manager) terminateQuarantinedSlot(ctx context.Context, instanceID string) (string, bool, error) {
+	p, ok := m.rtFactory.(runtimeSlotTerminator)
+	if !ok {
+		return "", false, nil
+	}
+	reason, err := p.TerminateQuarantinedSlot(ctx, instanceID)
+	return reason, true, err
+}
+
 // poolStatus reports the EC2 slot pool, or ok=false on every other runtime profile.
 func (m *manager) poolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error) {
 	p, ok := m.rtFactory.(runtimePoolStatuser)

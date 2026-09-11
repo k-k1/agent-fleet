@@ -261,6 +261,74 @@ describe("the EC2 slot pool surface", () => {
     expect(occupant?.textContent).toContain("焼き込み用");
   });
 
+  // --- Terminating a quarantined slot (ADR 0045 decision 20) ---
+  //
+  // A quarantined box is stopped, out of the pool, and collected by nothing: both sweeper
+  // walks filter on af-role=slot. This button is the only way the product has to stop paying
+  // for its root volume, so what matters is that it appears for exactly those rows, that it
+  // asks first, and that the server's refusal survives on the screen.
+  const QUARANTINED = {
+    ...POOL,
+    slots: [
+      ...POOL.slots,
+      {
+        instance_id: "i-bad",
+        instance_type: "m7i.large",
+        az: "ap-northeast-1c",
+        state: "stopped",
+        registered: false,
+        workspace: "",
+        idle_minutes: 0,
+        quarantined: true,
+        quarantine_reason: "mount home on i-bad: no device",
+      },
+    ],
+  };
+  const buttonsIn = (row: Element | null) => Array.from(row?.querySelectorAll("button") || []);
+  const rowOf = (id: string) =>
+    Array.from(host!.querySelectorAll("tbody tr")).find((tr) => tr.textContent?.includes(id)) || null;
+
+  it("offers the terminate button on a quarantined row only", async () => {
+    api.mockResolvedValue(QUARANTINED);
+    await mount();
+    expect(buttonsIn(rowOf("i-bad")).map((b) => b.textContent)).toEqual(["終了"]);
+    // A healthy slot must not carry it: it is not a general "delete this machine" control.
+    expect(buttonsIn(rowOf("i-hot"))).toHaveLength(0);
+  });
+
+  it("asks before terminating, and names the instance and why it was quarantined", async () => {
+    api.mockResolvedValue(QUARANTINED);
+    await mount();
+    await act(async () => buttonsIn(rowOf("i-bad"))[0].click());
+    const confirm = document.querySelector(".confirm");
+    expect(confirm?.textContent).toContain("i-bad");
+    // Deciding "have I taken what I need" is impossible without knowing what broke.
+    expect(confirm?.textContent).toContain("no device");
+    // Nothing has been sent yet — the poll is a GET.
+    expect(api.mock.calls.every((c) => !c[1])).toBe(true);
+  });
+
+  it("sends the delete once confirmed", async () => {
+    api.mockResolvedValue(QUARANTINED);
+    await mount();
+    await act(async () => buttonsIn(rowOf("i-bad"))[0].click());
+    const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+    await act(async () => actions[actions.length - 1].click());
+    expect(api).toHaveBeenCalledWith("api/admin/ec2-pool/slots/i-bad", { method: "DELETE" });
+  });
+
+  // The server refuses a box that is not quarantined or still holds a home. That reason is
+  // the only thing the operator can act on, and the 10s poll would wipe a toast.
+  it("keeps the server's refusal on screen", async () => {
+    api.mockResolvedValue(QUARANTINED);
+    await mount();
+    await act(async () => buttonsIn(rowOf("i-bad"))[0].click());
+    api.mockResolvedValueOnce({ error: { code: "slot_in_use", message: "vol-1 is still attached to it" } });
+    const actions = document.querySelectorAll<HTMLButtonElement>(".confirm-actions button");
+    await act(async () => actions[actions.length - 1].click());
+    expect(document.querySelector(".confirm")?.textContent).toContain("vol-1 is still attached to it");
+  });
+
   it("shows no empty table on other runtimes (it would read as the slots having vanished)", async () => {
     api.mockResolvedValue({ runtime: "other" });
     await mount();

@@ -5005,16 +5005,116 @@ func (f *ecsEC2Factory) sweepFreeSlots(ctx context.Context, homes []ec2types.Vol
 // case sweepGhostInstances already handles, rather than into a live box ECS won't use.
 //
 // The caller owns the safety argument (no tasks, no home, not claimed); this function
-// only carries it out.
-func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string) {
+// only carries it out. It has two callers with opposite needs — the sweeper, which can
+// only log, and TerminateQuarantinedSlot, which answers an operator waiting on an HTTP
+// request — so it both logs and returns the failure.
+func (e *ecsEC2Runtime) terminateSlot(ctx context.Context, instanceID, why string) error {
 	e.deregisterSlot(ctx, instanceID)
 	if _, err := e.ec2.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
 		InstanceIds: []string{instanceID},
 	}); err != nil {
-		log.Printf("ecs-ec2 sweep: terminating slot %s failed: %v", instanceID, err)
-		return
+		log.Printf("ecs-ec2: terminating slot %s (%s) failed: %v", instanceID, why, err)
+		return err
 	}
-	log.Printf("ecs-ec2 sweep: terminated slot %s (%s); its root volume goes with it", instanceID, why)
+	log.Printf("ecs-ec2: terminated slot %s (%s); its root volume goes with it", instanceID, why)
+	return nil
+}
+
+// Refusals TerminateQuarantinedSlot hands back to its caller. Exported because the
+// distinction they carry — the operator asked for something that cannot be done, as
+// opposed to AWS failing — has to survive the trip to the HTTP layer in another package,
+// where 404 / 409 and 500 are different answers.
+var (
+	ErrSlotNotFound       = errors.New("no such slot in this pool")
+	ErrSlotNotQuarantined = errors.New("slot is not quarantined")
+	ErrSlotInUse          = errors.New("slot still holds a home")
+)
+
+// TerminateQuarantinedSlot ends one quarantined box because an operator said so, and is
+// the only way a deployment has to be rid of one. quarantineSlot stops rather than
+// terminates on purpose (ADR 0045 decision 20 — the evidence is kept), and both sweeper
+// walks filter on af-role=slot, so nothing else in the product ever collects an
+// af-role=quarantined box: its root volume (SlotRootVolumeGiB, 100 GiB by default) bills
+// for as long as the deployment lives, and one more box joins it on every mount failure.
+//
+// Everything it decides is re-derived from AWS (ADR 0012), and the guards ARE the safety
+// argument terminateSlot says its caller owns:
+//
+//   - the box carries THIS pool's af-pool tag. An id from another deployment (or an
+//     engine box, or somebody's EC2 instance) reads as "no such slot" and nothing happens;
+//   - its af-role is `quarantined`. af-role=slot is refused rather than handled: a working
+//     box leaves through the dormancy series, and an instance id typed into an admin API
+//     must not be able to take a live slot — with a running workspace on it — with it;
+//   - no home is attached to it, and no live claim points at it. That is the only guard
+//     whose absence would cost data rather than money.
+//
+// Tasks are deliberately NOT a guard. The box abandonLostSlot left running still holds the
+// ENI of a task whose workspace has already been moved off it, and that is precisely the
+// box an operator comes here to remove; terminateSlot deregisters the container instance
+// first, so ECS gives that task up instead of keeping a ghost that satisfies placement.
+//
+// The quarantine reason is returned rather than just logged: it is the evidence decision 23
+// refused to let an automatic sweep destroy, and the caller writes it into the audit log so
+// it outlives the box.
+func (f *ecsEC2Factory) TerminateQuarantinedSlot(ctx context.Context, instanceID string) (string, error) {
+	insts, err := f.ec2.DescribeInstances(ctx, &ec2.DescribeInstancesInput{
+		// Filtered rather than looked up by InstanceIds: an unknown id then comes back as
+		// an empty answer instead of an AWS API error, and the af-pool filter makes "not
+		// ours" and "not there" the same reply — which is the reply this should give.
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, f.pool.pool),
+			{Name: aws.String("instance-id"), Values: []string{instanceID}},
+			{Name: aws.String("instance-state-name"), Values: []string{"pending", "running", "stopping", "stopped"}},
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	var inst *ec2types.Instance
+	for _, r := range insts.Reservations {
+		for i := range r.Instances {
+			if aws.ToString(r.Instances[i].InstanceId) == instanceID {
+				inst = &r.Instances[i]
+			}
+		}
+	}
+	if inst == nil {
+		return "", ErrSlotNotFound
+	}
+	if ec2TagValue(inst.Tags, EC2TagRole) != ec2RoleQuarantined {
+		return "", fmt.Errorf("%w (af-role=%s)", ErrSlotNotQuarantined, ec2TagValue(inst.Tags, EC2TagRole))
+	}
+	reason := ec2TagValue(inst.Tags, ec2TagQuarantineReason)
+
+	// The homes, read the way every other decision in this file reads them: the volume's
+	// attachment is who owns what, and a claim is a placement in flight that has not
+	// attached yet. Quarantine detaches the home it failed to mount, so finding one here
+	// means that detach did not happen — the one case where terminating costs a person
+	// their files rather than the deployment a few dollars.
+	vols, err := f.ec2.DescribeVolumes(ctx, &ec2.DescribeVolumesInput{
+		Filters: []ec2types.Filter{
+			tagFilter(EC2TagPool, f.pool.pool),
+			tagFilter(EC2TagRole, ec2RoleHome),
+		},
+	})
+	if err != nil {
+		return "", err
+	}
+	probe := f.probeRuntime()
+	for i := range vols.Volumes {
+		v := &vols.Volumes[i]
+		id := aws.ToString(v.VolumeId)
+		if attachedInstance(v) == instanceID {
+			return "", fmt.Errorf("%w: %s is still attached to it", ErrSlotInUse, id)
+		}
+		if ec2TagValue(v.Tags, EC2TagClaim) == instanceID && probe.claimLive(v) {
+			return "", fmt.Errorf("%w: %s is being placed on it", ErrSlotInUse, id)
+		}
+	}
+	if err := probe.terminateSlot(ctx, instanceID, "quarantined, terminated by an operator"); err != nil {
+		return reason, err
+	}
+	return reason, nil
 }
 
 // deregisterSlot takes one box out of the ECS cluster by its EC2 id. Force, because the

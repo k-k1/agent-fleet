@@ -76,6 +76,10 @@ type CP interface {
 	IdleForecastFor(wsID string) (any, bool)
 	PoolBudget(ctx context.Context, overrideTenantID string, overrideMax int) (runtime.PoolBudget, bool, error)
 	PoolStatus(ctx context.Context) (runtime.EC2PoolStatus, bool, error)
+	// TerminateQuarantinedSlot ends one quarantined slot and returns why it was
+	// quarantined, so the audit entry outlives the instance and its tags. ok=false
+	// where there is no pool, exactly as PoolStatus reports it.
+	TerminateQuarantinedSlot(ctx context.Context, instanceID string) (reason string, ok bool, err error)
 	WorkspaceSizing() runtime.WorkspaceSizing
 
 	// --- HTTP authorization (memberAuth and admin_stats.go) ---------------------
