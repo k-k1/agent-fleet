@@ -550,6 +550,14 @@ if [ -n "${AF_STACK_ENGINES:-}" ]; then
   af_param_drop ImageModelS3Key
   af_param_drop ImageModelIds
 
+  # Retired in ADR 0075: the purchase option is not a switch on one provider any more, it is the
+  # `buy` field of an offer against two providers that both stand. A capture taken before that
+  # still carries the line, and `deploy` refuses a parameter the template does not declare.
+  # 🔴 Dropping it is right for a STAND-UP (a new stack has no provider to collide with); an
+  # existing stack sitting on SPOT needs the two-update migration in
+  # cfn/PARAMETERS-60-engines.md, "Migrating off ImageCapacityOptionType".
+  af_param_drop ImageCapacityOptionType
+
   echo "==> deploy $AF_STACK_ENGINES (60-engines)"
   if [ "$AF_DRY" = 1 ]; then
     echo "DRY: cloudformation deploy --stack-name $AF_STACK_ENGINES --template-file $CFN_DIR/60-engines.yaml \\"

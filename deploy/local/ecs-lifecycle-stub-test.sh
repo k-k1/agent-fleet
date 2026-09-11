@@ -453,25 +453,37 @@ grep -q "deploy --stack-name af-ecs-engines .*ImageEnabled=true" "$LOG" \
 has "crane copy ghcr.io/leejet/stable-diffusion.cpp"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
-# Buying the image role's box on Spot is a captured parameter like any other, and it has to
-# travel: it is the ONE parameter of this stack whose change replaces a resource, so a path
-# that quietly dropped it would leave the box on demand while the capture says otherwise.
+# How the image role's box is bought is an OFFER now (ADR 0075), and the offers are a captured
+# parameter like any other: a path that quietly dropped ImageOffers would put the deployment
+# back on plain on-demand while the capture says otherwise, and nothing would say so.
+: > "$LOG"
+printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nImageOffers=spot3|Spot|22000|g6.xlarge|4-8|15000-65536|1.57|spot\n' > "$STATE4/params/60-engines"
+"$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
+grep -q "deploy --stack-name af-ecs-engines .*ImageOffers=" "$LOG" \
+  || fail "ImageOffers did not reach the deploy (the box would never be tried on Spot)"
+
+# 🔴 And the parameter it REPLACES must not: ImageCapacityOptionType is gone from the template,
+# and `cloudformation deploy` refuses a key it is given and does not know, so a capture holding
+# the old line would fail the stand-up outright rather than deploy without it.
 : > "$LOG"
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\nImageCapacityOptionType=SPOT\n' > "$STATE4/params/60-engines"
 "$ECS/standup.sh" --profile p4 --region ap-northeast-1 --stack t-ingress --yes > /dev/null </dev/null
-grep -q "deploy --stack-name af-ecs-engines .*ImageCapacityOptionType=SPOT" "$LOG" \
-  || fail "ImageCapacityOptionType did not reach the deploy (the box would stay on demand)"
+if grep -q "deploy --stack-name af-ecs-engines .*ImageCapacityOptionType=" "$LOG"; then
+  fail "a parameter retired in ADR 0075 was passed to deploy (the CLI refuses it)"
+fi
 printf 'ServiceConnectNamespace=af.internal\nLlmEnabled=true\nImageEnabled=true\nImageImageTag=master-cuda\n' > "$STATE4/params/60-engines"
 
-# 🔴 And in the template the type and the NAME move together. The field is create-only, so a
-# switch is a replacement, and CloudFormation refuses to replace a custom-named resource that
-# keeps its name (measured 2026-09-11: `cannot update a stack when a custom-named resource
-# requires replacing`). Change one of these two without the other and every Spot deployment
-# stops on that refusal, having already rolled back — which no test above would notice.
-grep -q "CapacityOptionType: !Ref ImageCapacityOptionType" "$ECS/cfn/60-engines.yaml" \
-  || fail "the image provider no longer reads ImageCapacityOptionType"
-grep -q 'Sub "af-${AWS::StackName}-image-spot"' "$ECS/cfn/60-engines.yaml" \
-  || fail "the image provider's name does not move with the option type (a switch cannot deploy)"
+# 🔴 In the template the two wallets stand side by side with FIXED names. The option type is
+# create-only, so it cannot be switched on one provider (measured 2026-09-11: `cannot update a
+# stack when a custom-named resource requires replacing`) — which is why there are two, and why
+# a name here must never go back to being computed from a parameter. Lose either resource and
+# the Control Plane has nowhere to send a `spot` offer, silently.
+grep -q 'Name: !Sub "af-${AWS::StackName}-image"' "$ECS/cfn/60-engines.yaml" \
+  || fail "the on-demand image provider lost its historic fixed name"
+grep -q 'Name: !Sub "af-${AWS::StackName}-image-spot"' "$ECS/cfn/60-engines.yaml" \
+  || fail "the image role's Spot capacity provider is gone (a spot offer can never be filled)"
+grep -q '!Ref ImageSpotCapacityProvider' "$ECS/cfn/60-engines.yaml" \
+  || fail "nothing references ImageSpotCapacityProvider (the cluster list or the table lost it)"
 
 echo "== case 3h: update.sh carries a pre-P6 role over instead of deleting it =="
 #
