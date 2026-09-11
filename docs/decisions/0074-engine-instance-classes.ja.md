@@ -1112,3 +1112,131 @@ ImageTag=0.18.1-dev-b6feea43）。その中の 60-engines の段で、ADR 0072 P
 取り込む範囲が梯子だけであること（ECS クライアント・コントローラの goroutine・需要窓は
 据え置き、変わったら「再起動が要る」とログに出す）は実装のとおりで、今回はそこには触れて
 いない。
+
+## 追記 — Spot への置き換えを live で流した（2026-09-11・開発配備）
+
+「Spot への切り替えは CloudFormation が拒む」節は**使い捨てスタック**で測った話だった。
+`ImageCapacityOptionType` が provider の `Name` を動かすようになったので、**同じ置き換えを
+開発配備の live で 1 回流し、往復させた**。acrt に入れる前の予行である。
+
+**結論は 2 つに割れる。置き換えの機構は設計どおり完全に動いた。そして Spot の箱は
+1 台も取れなかった**——しかも理由が、これまでの 2 つのどちらでもない**第 3 のエラーコード**
+だった。
+
+### change set——予告どおり `Replacement: True` で、依存 3 本は資源参照で追従した
+
+`ImageCapacityOptionType=SPOT` **だけ**を上書きし、他はすべて前回値（`cloudformation deploy`
+は上書きしなかったパラメータを `UsePreviousValue` にする）。`--no-execute-changeset` で先に見た
+中身は 4 件だけ:
+
+| Action | 論理 ID | 型 | Replacement | 詳細 |
+|---|---|---|---|---|
+| Modify | `ImageCapacityProvider` | `AWS::ECS::CapacityProvider` | **True** | `DirectModification` `Name` **`RequiresRecreation: Always`**、`ManagedInstancesProvider` は `Conditionally` |
+| Modify | `Associations` | `ClusterCapacityProviderAssociations` | False | `ResourceReference` `CapacityProviders` |
+| Modify | `EnginesParam` | `AWS::SSM::Parameter` | False | `ResourceReference` `Value` |
+| Modify | `ImageService` | `AWS::ECS::Service` | False | `ResourceReference` `CapacityProviderStrategy` |
+
+**依存 3 本がすべて `ResourceReference` で出ている**ことが、`PARAMETERS-60-engines.md` の
+「表は `!Ref` のままにせよ」が効いている証拠である。`!Sub` の文字列だったら、この 3 行目は
+change set に出ず、CP は誰も使っていない provider を見続けることになる。
+
+### イベント——新規作成 → 依存の更新 → クリーンアップで旧を削除
+
+行きは **176 秒**（05:21:08Z → 05:24:04Z）。そのまま写す:
+
+```
+05:21:13 UPDATE_IN_PROGRESS     ImageCapacityProvider  Requested update requires the creation of a new physical resource; hen…
+05:21:15 UPDATE_IN_PROGRESS     ImageCapacityProvider  Resource creation Initiated
+05:21:25 UPDATE_COMPLETE        ImageCapacityProvider
+05:21:26 UPDATE_IN_PROGRESS     Associations
+05:21:41 UPDATE_COMPLETE        Associations
+05:21:43 UPDATE_IN_PROGRESS     ImageService
+05:23:46 UPDATE_COMPLETE        ImageService
+05:23:47 UPDATE_IN_PROGRESS     EnginesParam
+05:23:49 UPDATE_COMPLETE        EnginesParam
+05:23:51 UPDATE_COMPLETE_CLEANUP_IN_PROGRESS
+05:23:52 DELETE_IN_PROGRESS     ImageCapacityProvider
+05:24:04 DELETE_COMPLETE        ImageCapacityProvider
+05:24:04 UPDATE_COMPLETE        af-<engines スタック>
+```
+
+**時間のほとんど（123 秒）はサービスの更新**である。`CapacityProviderStrategy` を書き換えると
+新しい配備になるので、desired 0 でもそこは通る。旧 provider の削除は**クリーンアップ段**で、
+つまり新しいものが出来て依存が全部移ったあとにしか起きない——「置き換え」という語から
+想像する「消してから作る」ではない。
+
+**戻りも同じ形で 147 秒**（05:42:53Z → 05:45:20Z）。🔴 **元の名前がそのまま再利用された**
+——ECS は退役した provider を `INACTIVE` レコードとして持ち続けるが、それは同名の再作成を
+妨げない。「追試」節が使い捨てで見たとおりのことが live でも起きた。
+
+### 4 点の突き合わせ
+
+| | 前 | 後（SPOT） | 戻したあと |
+|---|---|---|---|
+| provider | `af-…-image` ACTIVE / `ON_DEMAND` | `af-…-image-spot` ACTIVE / **`SPOT`**、旧は **INACTIVE** | `af-…-image` ACTIVE / `ON_DEMAND`、`-spot` が INACTIVE |
+| クラスタの一覧 | `…-image`, `…-llm` | **`…-image-spot`**, `…-llm` | `…-image`, `…-llm` |
+| service の strategy | `af-…-image` | **`af-…-image-spot`** | `af-…-image` |
+| エンジン表（SSM）の `capacityProvider` | `af-…-image` | **`af-…-image-spot`** | `af-…-image` |
+
+🔴 **置き換えで失われるものが 1 つある——CP が実行時に当てていた段。** 新しい provider は
+**テンプレートから**作られるので、`acceleratorTotalMemoryMiB.min` は
+`ImageAcceleratorMemMinMiB` の **8,000** で生まれた。live の旧 provider には CP が `l4` 段を
+当てた **22,000** が入っていたので、スタック更新の一瞬でそこが巻き戻る。決定 5 が
+「起動のたびに段を再適用する」と決めているので次の起動で治るが、**更新直後から次の起動まで
+の間、provider は宣言した段より下にいる**。段を当てる経路が無い配備では、それが恒常的な
+差になる。
+
+### 🔴 箱は取れなかった。しかも第 3 のエラーコードだった
+
+`mode=on` を 05:24:42Z に入れ、**17 分**（05:41:05Z に `off`）。ECS は約 5 分おきに 4 回
+試し、4 回ともこれを返した——**GPU の課金は $0**（1 台も起動していない）:
+
+```
+(service af-…-image) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-…-image-spot.
+UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
+Please adjust your request and try again.
+```
+
+**`VcpuLimitExceeded` でも `InsufficientInstanceCapacity` でもない。** この ADR と ADR 0072 が
+これまでに見た 2 つのどちらでもなく、しかも文面は「あなたの**要求の設定**のせいだ」と言う
+——AZ を変えろとも、あとで試せとも書いていない。**Spot で買えないときに何が返るかは、
+オンデマンドで枯れたときの知識では読めない。**
+
+測って**排除できた**もの:
+
+- **クォータではない。** `L-3819A6DF`（All G and VT Spot Instance Requests）は **8**
+  （0 から上がっていた。オンデマンドの `L-DB2E81BA` 8 とは別枠）。g6.xlarge は 4 vCPU なので
+  1 台は収まるし、クォータ超過なら別のコードで返る。
+- **価格保護ではない。** MI の `instanceRequirements` には
+  `spotMaxPricePercentageOverLowestPrice` /
+  `maxSpotPriceAsPercentageOfOptimalOnDemandPrice` /
+  `onDemandMaxPricePercentageOverLowestPrice` の 3 欄があり、テンプレートはどれも書いていない。
+  Describe → 写す → Update で `maxSpotPriceAsPercentageOfOptimalOnDemandPrice: 100`
+  （＝オンデマンド価格まで払う）を足したが、**8 分後も同じコードのまま**だった。検証後に外して
+  テンプレートの宣言どおりに戻してある。
+  ⚠️ 副産物: **`UpdateCapacityProvider` の応答はこの欄を返さない**。直後の
+  `DescribeCapacityProviders` には入っている——応答だけ見て「入らなかった」と読むと間違える。
+
+**切り分けられなかった**もの（どちらも「疑わしい」止まりである）:
+
+- **`AWSServiceRoleForEC2Spot` がこのアカウントに無い**（`iam get-role` が `NoSuchEntity`。
+  Spot を一度も起動したことがないアカウントの姿である）。MI は自分の infrastructure role で
+  動くので必要とは限らず、必要なら普通は権限エラーで返る。
+- **Spot placement score が低い。** g6.xlarge は両 AZ とも **1/10**（g5.xlarge も 1、
+  g6e.xlarge は 3）。ただし **m7i.large でも 1〜3** なので、このアカウントでは全体に低く出て
+  おり、**GPU だけの話かどうかを切り分ける材料にはならない。**
+- 🔴 **価格が付いていることは在庫の証拠ではない。** `describe-spot-price-history` は同じ時刻に
+  ap-northeast-1a $0.577 / 1c $0.563 を返し続けている。**「30 日ずっと定価の約半額」という
+  ADR の価格の観測は、買えることを一度も意味していなかった。**
+
+### この予行から acrt について言えること
+
+- **機構は通る。** 置き換え・依存 4 点の追従・往復・名前の再利用まで、live で確かめた。
+  acrt で流すときに新しく分かることは残っていない。
+- **買えるかどうかは別の問いで、予行では答えられない。** Spot の在庫はアカウントとリージョンと
+  時刻の関数で、af-sandbox の 17 分は acrt について何も言わない（acrt のクォータは 64）。
+- 🔴 **したがって「Spot に切り替える」は、切り替えたあとに買えることを確かめるまで完了しない。**
+  開発配備は `ON_DEMAND` に戻した——image 役が起動しない配備を置いていくと、次にそれを使う
+  セッションが「エンジンが壊れた」を追うことになる。往復が 147 秒で済むことは、いま実機で
+  分かっている。

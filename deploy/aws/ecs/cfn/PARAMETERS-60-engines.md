@@ -199,6 +199,14 @@ $0.45-0.58 against a $1.1672 list price (ADR 0074). Two things to know before se
   Check it first: `aws service-quotas get-service-quota --service-code ec2 --quota-code
   L-3819A6DF`.
 
+🔴 **Rehearsed on the dev deployment (2026-09-11) and it did NOT buy an instance**, with the
+quota at 8 and a 4-vCPU type asked for: seventeen minutes of `UnfulfillableCapacity`, a third
+error code, and the deployment was put back to `ON_DEMAND`. **The measured price is not evidence
+of stock** — `describe-spot-price-history` went on quoting $0.563-0.577 throughout. What that
+run does settle is the mechanism (replacement, dependents, round trip): see
+[`ImageCapacityOptionType`](#imagecapacityoptiontype--spot-for-the-image-role-and-why-it-renames-the-provider)
+and ADR 0074.
+
 The `llm` role is not offered this and is not going to be: a two-minute termination notice
 mid-conversation costs a 527-586-second cold start to recover from.
 
@@ -1273,8 +1281,31 @@ uses, and that is where both `draining` and the ADR 0074 rung application read f
 ⚠️ Spot capacity is a SEPARATE quota, and it bites at launch and not at configuration: a `SPOT`
 provider is created happily with the quota at 0 (measured, ADR 0074) and then never buys an instance,
 which reads exactly like an engine that will not start. `L-3819A6DF` ("All G and VT Spot
-Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox has 0.
+Instance Requests", default 0) is the one to hold — acrt has 64, af-sandbox 8.
 `L-DB2E81BB` does not exist; do not look for it.
+
+🔴 **The quota being right does not mean an instance comes, and the failure has its OWN error
+code.** Rehearsed on the dev deployment 2026-09-11 (ADR 0074, "the Spot replacement, run on a
+live deployment"): the replacement landed perfectly — `Replacement: True`, the three dependents
+following by `ResourceReference`, 176 seconds — and then seventeen minutes of retries produced
+only
+
+```
+UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
+```
+
+**Neither `VcpuLimitExceeded` nor `InsufficientInstanceCapacity`**, and it blames the request
+rather than the hour, so it does not read as something to wait out. Price protection was ruled
+out by measurement; the quota was 8 with a 4-vCPU type asked for. So **switching this parameter
+is not done when the stack update succeeds** — it is done when an instance has been bought after
+it, and a deployment left on `SPOT` without that is a deployment whose image role does not start.
+The way back is one more stack update (measured: 147 seconds, and the original provider name is
+reusable even though ECS keeps the retired one as `INACTIVE`).
+
+⚠️ **A replacement rebuilds the provider from the TEMPLATE**, so a deployment that declares an
+ADR 0074 ladder loses the rung the Control Plane had applied: `AcceleratorTotalMemoryMiB.Min`
+comes back as `<Role>AcceleratorMemMinMiB`. The CP re-applies the rung before every start, so it
+heals — but not until then.
 
 ## The engine services
 

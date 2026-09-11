@@ -1208,3 +1208,137 @@ with no restart.
 That only the LADDER is taken live (the ECS client, the controller's goroutine and the demand
 window stay put, and a change to any of them is logged as needing a restart) is as implemented;
 none of those were touched here.
+
+## Follow-up — the Spot replacement, run on a live deployment (2026-09-11, the dev deployment)
+
+"CloudFormation refuses to switch a provider to Spot" was measured on a **throwaway stack**. Now
+that `ImageCapacityOptionType` moves the provider's `Name`, **the same replacement was run once
+on the live dev deployment and taken back again** — a rehearsal before acrt.
+
+**The answer splits in two. The replacement machinery worked exactly as designed. And not one
+Spot instance was ever bought** — for a reason that is neither of the two failures seen so far,
+but a **third error code**.
+
+### The change set — `Replacement: True` as advertised, and the three dependents followed by reference
+
+`ImageCapacityOptionType=SPOT` was the **only** override (`cloudformation deploy` puts every
+parameter it is not given at `UsePreviousValue`). Read first with `--no-execute-changeset`, it
+held four changes and nothing else:
+
+| Action | Logical id | Type | Replacement | Detail |
+|---|---|---|---|---|
+| Modify | `ImageCapacityProvider` | `AWS::ECS::CapacityProvider` | **True** | `DirectModification` `Name` **`RequiresRecreation: Always`**; `ManagedInstancesProvider` `Conditionally` |
+| Modify | `Associations` | `ClusterCapacityProviderAssociations` | False | `ResourceReference` `CapacityProviders` |
+| Modify | `EnginesParam` | `AWS::SSM::Parameter` | False | `ResourceReference` `Value` |
+| Modify | `ImageService` | `AWS::ECS::Service` | False | `ResourceReference` `CapacityProviderStrategy` |
+
+**That all three dependents appear as `ResourceReference`** is the evidence that
+`PARAMETERS-60-engines.md`'s "keep the table a `!Ref`" is doing its job. As a `!Sub` string the
+third row would simply not be in the change set, and the Control Plane would go on watching a
+provider nobody uses.
+
+### The events — create the new one, move the dependents, delete the old one in cleanup
+
+The way out took **176 seconds** (05:21:08Z to 05:24:04Z), verbatim:
+
+```
+05:21:13 UPDATE_IN_PROGRESS     ImageCapacityProvider  Requested update requires the creation of a new physical resource; hen…
+05:21:15 UPDATE_IN_PROGRESS     ImageCapacityProvider  Resource creation Initiated
+05:21:25 UPDATE_COMPLETE        ImageCapacityProvider
+05:21:26 UPDATE_IN_PROGRESS     Associations
+05:21:41 UPDATE_COMPLETE        Associations
+05:21:43 UPDATE_IN_PROGRESS     ImageService
+05:23:46 UPDATE_COMPLETE        ImageService
+05:23:47 UPDATE_IN_PROGRESS     EnginesParam
+05:23:49 UPDATE_COMPLETE        EnginesParam
+05:23:51 UPDATE_COMPLETE_CLEANUP_IN_PROGRESS
+05:23:52 DELETE_IN_PROGRESS     ImageCapacityProvider
+05:24:04 DELETE_COMPLETE        ImageCapacityProvider
+05:24:04 UPDATE_COMPLETE        af-<engines stack>
+```
+
+**Most of it (123 seconds) is the service update**: rewriting `CapacityProviderStrategy` is a new
+deployment, and that happens even at desired 0. The old provider is deleted in the **cleanup
+phase**, i.e. only after the new one exists and every dependent has moved — not the
+"delete then create" the word "replacement" suggests.
+
+**The way back has the same shape and took 147 seconds** (05:42:53Z to 05:45:20Z). 🔴 **The
+original name was reused**: ECS keeps the retired provider as an `INACTIVE` record, and that does
+not stand in the way of recreating one with the same name. What the throwaway stack saw happens
+on a live one too.
+
+### The four things to check
+
+| | before | after (SPOT) | after the way back |
+|---|---|---|---|
+| provider | `af-…-image` ACTIVE / `ON_DEMAND` | `af-…-image-spot` ACTIVE / **`SPOT`**, the old one **INACTIVE** | `af-…-image` ACTIVE / `ON_DEMAND`, `-spot` INACTIVE |
+| the cluster's list | `…-image`, `…-llm` | **`…-image-spot`**, `…-llm` | `…-image`, `…-llm` |
+| the service's strategy | `af-…-image` | **`af-…-image-spot`** | `af-…-image` |
+| the engine table's `capacityProvider` (SSM) | `af-…-image` | **`af-…-image-spot`** | `af-…-image` |
+
+🔴 **One thing IS lost in a replacement — the rung the Control Plane had applied at runtime.**
+The new provider is built **from the template**, so `acceleratorTotalMemoryMiB.min` was born as
+`ImageAcceleratorMemMinMiB`'s **8,000**, where the live provider carried the **22,000** the CP
+had written for the `l4` rung. Decision 5 re-applies the rung before every start, so it heals —
+but **between the stack update and the next start the provider sits below its declared rung**,
+and on a deployment with no ladder that difference is permanent.
+
+### 🔴 No instance came, and the code was a third one
+
+`mode=on` went in at 05:24:42Z and came out at 05:41:05Z — **17 minutes**, during which ECS
+retried about every five minutes and answered this all four times. **GPU cost $0**: nothing ever
+launched.
+
+```
+(service af-…-image) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-…-image-spot.
+UnfulfillableCapacity: Unable to fulfill capacity due to your request configuration.
+Please adjust your request and try again.
+```
+
+**Neither `VcpuLimitExceeded` nor `InsufficientInstanceCapacity`** — not one of the two this ADR
+and ADR 0072 have collected, and its wording blames **the request's configuration**, offering
+neither another AZ nor a later retry. **What Spot answers when it cannot sell you an instance is
+not readable off what on-demand exhaustion looks like.**
+
+Measured and **ruled out**:
+
+- **Not the quota.** `L-3819A6DF` (All G and VT Spot Instance Requests) is **8**, raised from 0,
+  and separate from on-demand's `L-DB2E81BA` 8. A g6.xlarge is 4 vCPU, so one fits — and a quota
+  refusal comes back under a different code anyway.
+- **Not price protection.** An MI provider's `instanceRequirements` carries
+  `spotMaxPricePercentageOverLowestPrice`,
+  `maxSpotPriceAsPercentageOfOptimalOnDemandPrice` and
+  `onDemandMaxPricePercentageOverLowestPrice`, and the template sets none of them. Adding
+  `maxSpotPriceAsPercentageOfOptimalOnDemandPrice: 100` (pay up to the on-demand price) through
+  Describe → copy → Update changed nothing eight minutes later. It was taken out again, so the
+  provider matches the template's declaration.
+  ⚠️ A by-product: **`UpdateCapacityProvider`'s own answer does not carry that field back**,
+  while the `DescribeCapacityProviders` a moment later does. Reading only the response says it
+  did not land.
+
+**Not separated** (both are suspicions, not findings):
+
+- **`AWSServiceRoleForEC2Spot` does not exist in this account** (`iam get-role` answers
+  `NoSuchEntity` — what an account that has never launched a Spot instance looks like). MI runs
+  under its own infrastructure role, so it is not necessarily needed, and a missing one usually
+  comes back as an authorization error.
+- **The Spot placement score is low.** g6.xlarge scores **1/10** in both AZs (g5.xlarge also 1,
+  g6e.xlarge 3). But **m7i.large scores 1-3 too**, so the whole account reads low and the score
+  **cannot separate "this GPU type" from "this account"**.
+- 🔴 **A published price is not evidence of stock.** `describe-spot-price-history` kept answering
+  $0.577 in ap-northeast-1a and $0.563 in 1c throughout. **The ADR's "30 days at about half the
+  list price" never meant the instances could be bought.**
+
+### What the rehearsal says about acrt
+
+- **The machinery works.** The replacement, all four dependents following, the round trip and the
+  name reuse were confirmed on a live deployment. There is nothing new to learn by running it on
+  acrt.
+- **Whether an instance can be bought is a different question, and a rehearsal cannot answer it.**
+  Spot stock is a function of account, region and clock; seventeen minutes on af-sandbox says
+  nothing about acrt (whose quota is 64).
+- 🔴 **So "switch to Spot" is not finished until an instance has been bought after the switch.**
+  The dev deployment was put back to `ON_DEMAND`: leaving behind a deployment whose image role
+  will not start makes the next session chase a broken engine. That the round trip costs 147
+  seconds is now known from hardware.
