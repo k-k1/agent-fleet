@@ -40,8 +40,10 @@ import (
 // VramMiB does two jobs on purpose (ADR 0074 decision 1). It is the
 // `AcceleratorTotalMemoryMiB.Min` handed to the capacity provider — i.e. the filter that
 // decides which cards qualify — and it is what a model's demand is compared against. It is
-// declared BELOW the card's nominal size (21000 for an L4's 24 GB, as the stack already did),
-// so the comparison errs toward warning early rather than late.
+// the CARD'S PHYSICAL SIZE, read off the hardware (22000 for an L4, which reports
+// `Total VRAM 22563 MB`) rather than a placement filter or a shaded-down cap. Measured
+// 2026-09-11: a demand that includes the KV cache puts a 30B at 32k context at 20,712 MiB,
+// which fits an L4 with 1.8 GB to spare and does not fit a rung that declared 21000.
 //
 // UsdPerHour is display-only and optional. Nothing computes with it, and 0 means "not
 // declared", which the panel renders as no figure at all rather than as free.
@@ -181,7 +183,7 @@ func engineClassByID(list []engineClass, id string) (engineClass, bool) {
 	return engineClass{}, false
 }
 
-// The three answers to "how much VRAM does this model need". Which one was used travels with
+// The four answers to "how much VRAM does this model need". Which one was used travels with
 // the number, because they are not equally strong and the panel must not print them alike.
 const (
 	// engineVramDeclared is the operator's own measurement (engine_models.vram_mib).
@@ -189,6 +191,12 @@ const (
 	// engineVramFloor is the sum of the files' declared bytes: the WEIGHTS and nothing else.
 	// No KV cache, no context, no CUDA context — so it can only ever say "at least this much".
 	engineVramFloor = "floor"
+	// engineVramWeightsKV is the weights PLUS the KV cache the declared context window needs,
+	// computed from the model's own GGUF header (ADR 0074 open question 7). Still a floor —
+	// the compute buffers are not in it (measured: 77–116 MiB CUDA0) — but a much closer one:
+	// for a 30B at 32768 tokens the KV cache is 3072 MiB, which is the difference between
+	// "4.8 GB spare on this card" and "1.8".
+	engineVramWeightsKV = "weights_kv"
 	// engineVramUnknown is nobody declared either. 🔴 It is NOT zero, and it must never be
 	// drawn as "this fits": a 0 here means the question was not answered.
 	engineVramUnknown = "unknown"
@@ -203,10 +211,21 @@ func engineModelVramNeed(m store.EngineModel) (int, string) {
 	for _, f := range m.Files {
 		total += f.Bytes
 	}
-	if total > 0 {
-		return int(total / (1024 * 1024)), engineVramFloor
+	if total == 0 {
+		return 0, engineVramUnknown
 	}
-	return 0, engineVramUnknown
+	weights := int(total / (1024 * 1024))
+	// The KV cache, when the row knows enough to say. Both halves are required and neither is
+	// guessed: the geometry comes from the GGUF header (engine_gguf.go) and the window is the
+	// operator's declared `context_tokens`, because llama.cpp allocates for the context it is
+	// GIVEN, not the one the model was trained at — measured, a 1.5B whose header says 32768
+	// allocated 448 MiB for the 16384 it was started with.
+	if kv := engineKVCacheMiB(engineKVGeometry{
+		Layers: m.KVLayers, HeadsKV: m.KVHeadsKV, KeyLen: m.KVKeyLen, ValLen: m.KVValueLen,
+	}, m.ContextTokens); kv > 0 {
+		return weights + kv, engineVramWeightsKV
+	}
+	return weights, engineVramFloor
 }
 
 // engineVramDemand is the largest demand among the models an engine would load, the id it
@@ -221,34 +240,53 @@ func engineModelVramNeed(m store.EngineModel) (int, string) {
 // returned is the largest KNOWN one, and the source is `unknown` when anything in the set could
 // not be answered — so the panel can say "at least X, and one model did not say".
 func engineVramDemand(rows []store.EngineModel) (int, string, string) {
-	worst, id, source := 0, "", ""
-	anyUnknown, anyFloor := false, false
+	worst, id := 0, ""
+	anyUnknown := false
+	weakest := engineVramDeclared
 	for _, m := range rows {
 		if !m.Enabled || engineModelIsLora(m) {
 			continue
 		}
 		need, src := engineModelVramNeed(m)
-		switch src {
-		case engineVramUnknown:
+		if src == engineVramUnknown {
 			anyUnknown = true
 			continue
-		case engineVramFloor:
-			anyFloor = true
+		}
+		if engineVramStrength(src) < engineVramStrength(weakest) {
+			weakest = src
 		}
 		if need > worst {
-			worst, id, source = need, m.ID, src
+			worst, id = need, m.ID
 		}
 	}
 	switch {
 	case worst == 0:
 		return 0, engineVramUnknown, ""
-	case anyUnknown || (anyFloor && source == engineVramDeclared):
-		// Mixed evidence reads as the weaker of the two: the largest KNOWN demand is a floor
-		// when something in the set is unmeasured, whatever the winning row happened to carry.
+	case anyUnknown:
+		// Something in the set could not be answered, so the largest KNOWN demand is only ever
+		// a floor — whatever the winning row happened to carry.
 		return worst, engineVramFloor, id
 	default:
-		return worst, source, id
+		// Mixed evidence reads as the WEAKEST present. A set holding one measured row and one
+		// that only knows its bytes is not "measured": the engine loads whichever is asked for.
+		return worst, weakest, id
 	}
+}
+
+// engineVramStrength orders the answers, so that "the weakest evidence in this set" is one
+// comparison rather than a chain of special cases. It exists because the set's verdict is not
+// the winning row's — a panel that said "measured" because the LARGEST row happened to be
+// measured would be describing a different model than the one that fails to load.
+func engineVramStrength(source string) int {
+	switch source {
+	case engineVramDeclared:
+		return 3
+	case engineVramWeightsKV:
+		return 2
+	case engineVramFloor:
+		return 1
+	}
+	return 0
 }
 
 // engineClassFits reports whether the demand fits the rung, and is deliberately generous with

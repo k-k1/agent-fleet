@@ -20,7 +20,8 @@ const engineModelCols = `role, id, kind, files, enabled, selected, is_default, a
 	context_tokens, max_output_tokens, sizes, description, vram_mib,
 	license, license_name, license_url, model_precision, base_model,
 	license_accepted_by, license_accepted_at, license_accepted_tenant, license_accepted_license,
-	commercial_use, source, created_at, updated_at`
+	commercial_use, source, kv_layers, kv_heads_kv, kv_key_len, kv_value_len,
+	created_at, updated_at`
 
 func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel, error) {
 	q := `SELECT ` + engineModelCols + ` FROM engine_models`
@@ -48,6 +49,7 @@ func (s *SQL) ListEngineModels(ctx context.Context, role string) ([]EngineModel,
 			&m.LicenseAcceptedBy, &m.LicenseAcceptedAt,
 			&m.LicenseAcceptedTenant, &m.LicenseAcceptedLicense,
 			&m.CommercialUse, &m.Source,
+			&m.KVLayers, &m.KVHeadsKV, &m.KVKeyLen, &m.KVValueLen,
 			&m.CreatedAt, &m.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -73,7 +75,7 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 	sizes := jsonList(m.Sizes)
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO engine_models(`+engineModelCols+`)
-		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		 ON CONFLICT(role, id) DO UPDATE SET
 		   kind=excluded.kind, files=excluded.files, enabled=excluded.enabled,
 		   selected=excluded.selected, is_default=excluded.is_default, args=excluded.args,
@@ -86,12 +88,16 @@ func (s *SQL) PutEngineModel(ctx context.Context, m EngineModel) error {
 		   license_accepted_tenant=excluded.license_accepted_tenant,
 		   license_accepted_license=excluded.license_accepted_license,
 		   commercial_use=excluded.commercial_use, source=excluded.source,
+		   kv_layers=excluded.kv_layers, kv_heads_kv=excluded.kv_heads_kv,
+		   kv_key_len=excluded.kv_key_len, kv_value_len=excluded.kv_value_len,
 		   updated_at=excluded.updated_at`,
 		m.Role, m.ID, m.Kind, files, boolInt(m.Enabled), boolInt(m.Selected), boolInt(m.Default), args,
 		m.ContextTokens, m.MaxOutputTokens, sizes, m.Description, m.VramMiB,
 		m.License, m.LicenseName, m.LicenseURL, m.Precision, m.BaseModel,
 		m.LicenseAcceptedBy, m.LicenseAcceptedAt, m.LicenseAcceptedTenant, m.LicenseAcceptedLicense,
-		m.CommercialUse, m.Source, m.CreatedAt, now)
+		m.CommercialUse, m.Source,
+		m.KVLayers, m.KVHeadsKV, m.KVKeyLen, m.KVValueLen,
+		m.CreatedAt, now)
 	return err
 }
 
