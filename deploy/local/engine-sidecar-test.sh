@@ -62,6 +62,20 @@ case "$1 $2" in
     fi
     printf '%s' "$ACTIVE_SET_FIXTURE"
     ;;
+  "ssm put-parameter")
+    # What the instance has NOT synced yet (ADR 0072 P2 欠落 7). Recorded as one line per
+    # write, because the SEQUENCE is the contract: the list has to shrink as files land and
+    # end empty, or the gateway holds requests for a model that is already there.
+    name=""; value=""
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        --name) name="$2"; shift 2 ;;
+        --value) value="$2"; shift 2 ;;
+        *) shift ;;
+      esac
+    done
+    [ -z "${AF_TEST_PENDING:-}" ] || echo "$name $value" >> "$AF_TEST_PENDING"
+    ;;
   "s3 cp")
     dst="$4"
     [ -z "${AF_TEST_FAIL_CP:-}" ] || { echo "stub aws: refusing to copy" >&2; exit 1; }
@@ -81,8 +95,10 @@ export PATH="$WORK/bin:$PATH"
 run() { # run <fixture> <alias-flag> <ctx-flag> [preset-file] [sync-all] -> writes $WORK/models/cmdline
   rm -rf "$WORK/models"; mkdir -p "$WORK/models"
   : > "$WORK/fetched"
+  : > "$WORK/pending"
   ACTIVE_SET_FIXTURE="$1" ALIAS_FLAG="$2" CTX_FLAG="$3" PRESET_FILE="${4:-}" SYNC_ALL="${5:-}" \
   MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
+  PENDING_PARAM="${PENDING_PARAM:-}" AF_TEST_PENDING="$WORK/pending" \
   AF_TEST_FETCHED="$WORK/fetched" \
     sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 || fail "the sidecar exited non-zero: $(cat "$WORK/out")"
 }
@@ -287,5 +303,105 @@ rm -rf "$WORK/models"; mkdir -p "$WORK/models"; : > "$WORK/fetched"
 ACTIVE_SET_FIXTURE="$IMG" ALIAS_FLAG="" CTX_FLAG="" PRESET_FILE="" MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" AF_TEST_FETCHED="$WORK/fetched" AF_TEST_FAIL_CP=1   sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 && fail "a failed fetch should not exit 0"
 [ -f "$WORK/models/ready" ] || fail "a failed fetch left no marker: the engine would hang for an hour"
 [ ! -s "$WORK/models/cmdline" ] || fail "a failed fetch produced a command line: $(cat "$WORK/models/cmdline")"
+
+# --- what the instance has not synced yet (ADR 0072 P2 欠落 7) ---------------------------
+#
+# 🔴 The window the gateway needs told about: the engine is released as soon as the START model
+# is down, so for the length of the rest of the sync it is UP and missing weights. Measured on
+# af-sandbox: 12 files / 48 GB / ~270 s, and a request for one of them got ComfyUI's bare
+# `Value not in list: …` 400, which nothing retries.
+
+echo "== the pending list is published, shrinks as files land, and ends empty =="
+PENDING_PARAM=/af-ws/engines/x/pending run "$MANY" "" "" "" 1
+[ -s "$WORK/pending" ] || fail "nothing was written to the pending parameter"
+awk '{print $1}' "$WORK/pending" | sort -u | grep -qx "/af-ws/engines/x/pending" \
+  || fail "the wrong parameter was written: $(cat "$WORK/pending")"
+first="$(head -1 "$WORK/pending" | cut -d' ' -f2-)"
+last="$(tail -1 "$WORK/pending" | cut -d' ' -f2-)"
+# The first write is BEFORE anything is fetched, so it names every file the instance owes.
+for k in image/checkpoints/a.safetensors image/checkpoints/b.safetensors image/loras/w.safetensors; do
+  case "$first" in *"$k"*) ;; *) fail "the first pending list is missing $k: $first";; esac
+done
+[ "$last" = "[]" ] || fail "the last pending list is '$last', want [] — the gateway would hold a model that is there"
+# And it is a JSON array of bare keys, which is what the Control Plane parses.
+printf '%s' "$last" | jq -e 'type=="array"' >/dev/null || fail "the pending value is not a JSON array: $last"
+printf '%s' "$first" | jq -e 'all(type=="string")' >/dev/null || fail "the pending list is not bare keys: $first"
+
+echo "== the START model leaves the list before the engine is released =="
+# The other half of the ordering the sync already keeps: by the time the engine may start, the
+# model it starts with is no longer pending, or the gateway would refuse the very first request.
+PENDING_PARAM=/af-ws/engines/x/pending run "$ORDER" "" "" "$WORK/models/llm/presets.ini"
+grep -q "engine may start" "$WORK/out" || fail "the engine was never released: $(cat "$WORK/out")"
+# The first list written after the START model landed: it must already be without that model
+# — the engine is about to serve requests for it — and must still name the rest.
+after="$(grep -v "llm/b.gguf" "$WORK/pending" | head -1 | cut -d' ' -f2-)"
+case "$after" in
+  *llm/a.gguf*) ;;
+  *) fail "the start model and the rest left the pending list together: $(cat "$WORK/pending")" ;;
+esac
+[ "$(tail -1 "$WORK/pending" | cut -d' ' -f2-)" = "[]" ] || fail "the sync ended with files still pending"
+
+echo "== no PENDING_PARAM: nothing is written, and the sidecar behaves exactly as before =="
+# Every deployment whose engine stack predates this. The Control Plane reads "unknown" there
+# and holds nothing, so the sidecar must not fail for want of a parameter to write.
+run "$MANY" "" "" "" 1
+[ ! -s "$WORK/pending" ] || fail "a deployment with no pending parameter had one written: $(cat "$WORK/pending")"
+grep -q "image/checkpoints/a.safetensors" "$WORK/fetched" || fail "the sync stopped working without the parameter"
+
+echo "== an engine with nothing to load publishes an EMPTY list, not a stale one =="
+# A previous instance may have died mid-sync, leaving keys in the parameter. The gateway would
+# then hold requests for a model this instance has no intention of fetching.
+PENDING_PARAM=/af-ws/engines/x/pending run "" "" ""
+[ "$(tail -1 "$WORK/pending" | cut -d' ' -f2-)" = "[]" ] || fail "an empty active set left the pending list alone: $(cat "$WORK/pending")"
+
+echo "== WATCH_SEC: a model enabled AFTER the start is synced without restarting the instance =="
+# ADR 0072 open question 3. Until now the sidecar exited after the first sync, so enabling a
+# model reached the instance only at the next cold start — and on the image role the model
+# appears in `generate_image`'s list immediately, so what a member got was a 400 (欠落 8).
+rm -rf "$WORK/models"; mkdir -p "$WORK/models"; : > "$WORK/fetched"; : > "$WORK/pending"
+ONE='{"v":1,"key":"image","start":"a","models":[{"id":"a","f":["image/checkpoints/a.safetensors"]}]}'
+TWO='{"v":1,"key":"image","start":"a","models":[{"id":"a","f":["image/checkpoints/a.safetensors"]},{"id":"c","f":["image/checkpoints/c.safetensors"]}]}'
+cat > "$WORK/bin/aws2" <<'STUB'
+#!/usr/bin/env bash
+# The same stub, except that the active set CHANGES once the marker appears.
+if [ "$1 $2" = "ssm get-parameter" ] && [ -f "$AF_TEST_SECOND" ]; then
+  printf '%s' "$ACTIVE_SET_FIXTURE2"
+  exit 0
+fi
+exec aws.real "$@"
+STUB
+chmod +x "$WORK/bin/aws2"
+mv "$WORK/bin/aws" "$WORK/bin/aws.real"; mv "$WORK/bin/aws2" "$WORK/bin/aws"
+ACTIVE_SET_FIXTURE="$ONE" ACTIVE_SET_FIXTURE2="$TWO" AF_TEST_SECOND="$WORK/second" \
+  ALIAS_FLAG="" CTX_FLAG="" PRESET_FILE="" SYNC_ALL=1 WATCH_SEC=1 \
+  MODELS_DIR="$WORK/models" BUCKET="b" ACTIVE_PARAM="/af-ws/engines/x/active" \
+  PENDING_PARAM=/af-ws/engines/x/pending AF_TEST_PENDING="$WORK/pending" \
+  AF_TEST_FETCHED="$WORK/fetched" \
+  sh "$WORK/sidecar.sh" > "$WORK/out" 2>&1 &
+watcher=$!
+# 🔴 Only ever this PID: the host is shared, and `pkill -f sh` would take somebody else's
+# session. And the trap keeps the kill for the REST of the file, not just this block — a
+# resident sidecar that outlives a failed assertion goes on writing its key lists, and every
+# later run of this script then fails somewhere else (walked into while writing this).
+trap 'kill "$watcher" 2>/dev/null || true; wait "$watcher" 2>/dev/null || true; rm -rf "$WORK"' EXIT
+for _ in $(seq 1 100); do grep -q "sync done" "$WORK/out" && break; sleep 0.1; done
+grep -q "sync done" "$WORK/out" || fail "the first sync never finished: $(cat "$WORK/out")"
+grep -q "watching /af-ws/engines/x/active" "$WORK/out" || fail "the sidecar did not stay to watch: $(cat "$WORK/out")"
+if grep -q "image/checkpoints/c.safetensors" "$WORK/fetched"; then fail "it fetched a model that was not enabled yet"; fi
+touch "$WORK/second"
+for _ in $(seq 1 100); do grep -q "image/checkpoints/c.safetensors" "$WORK/fetched" && break; sleep 0.1; done
+grep -q "image/checkpoints/c.safetensors" "$WORK/fetched" \
+  || fail "a model enabled after the start never reached the instance: $(cat "$WORK/out")"
+# It goes onto the pending list while it is coming down and comes off when it lands, which is
+# what makes the gateway's wait end by itself.
+grep -q "image/checkpoints/c.safetensors" "$WORK/pending" || fail "the new model was never announced as pending"
+for _ in $(seq 1 50); do [ "$(tail -1 "$WORK/pending" | cut -d' ' -f2-)" = "[]" ] && break; sleep 0.1; done
+[ "$(tail -1 "$WORK/pending" | cut -d' ' -f2-)" = "[]" ] || fail "the pending list never emptied again: $(tail -3 "$WORK/pending")"
+kill "$watcher" 2>/dev/null || true
+wait "$watcher" 2>/dev/null || true
+# A killed shell does not run its EXIT trap, so its scratch directory is this test's to clear.
+# Named after the sidecar's own $$, which is the pid that was just killed.
+rm -rf "${TMPDIR:-/tmp}/engine-fetch.$watcher"
+mv "$WORK/bin/aws.real" "$WORK/bin/aws"
 
 echo "OK: the engine fetch sidecar behaves"
