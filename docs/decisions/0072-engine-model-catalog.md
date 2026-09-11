@@ -3610,6 +3610,10 @@ request from a session inside the deployment (the gateway only accepts a Workspa
 token), and there was no room for it this time. **That the window opens, and how long it is**,
 is what was measured.
 
+**Resolved (same day, 2026-09-11).** The window was opened once more on the same five-model
+set and **the answer itself was taken verbatim** — the next section, "#512's gateway answer,
+taken on hardware".
+
 ### #512's resident sidecar works
 
 `juggernaut-xl-v9` (7.1 GB) was enabled while the box was running. **No restart.**
@@ -3646,3 +3650,126 @@ unconfirmed.
 ⚠️ This is an external condition rather than a defect — but **ADR 0074's second rung is a way
 out of exactly this situation**: drop to `l40s` (g6e.xlarge) when `l4` is dry. No rung was
 raised here (GPU cost; ADR 0074 P1 covered it).
+
+## #512's gateway answer, taken on hardware (2026-09-11, the dev deployment)
+
+The homework the previous section left behind: the window opens, but the gateway's answer was
+never seen. The window was opened again on the same five-model set, and **the answer to a
+request naming a model that is still syncing was taken verbatim**. The deployment is
+`origin/develop` at 2e765534 (`ImageTag=0.18.1-dev-2e765534`); the engine stack, the catalogue,
+`selected` and `mode` are all unchanged from the previous section.
+
+### What came back — `503 engine_waking` with `Retry-After: 6`
+
+One minute 49 seconds after `state: running`, with exactly one file
+(`z_image_turbo_bf16.safetensors`) left in `pending`, a `POST /engine/image/v1/prompt` went out
+carrying `X-AF-Model: z-image-turbo`. It answered in 49 milliseconds, verbatim:
+
+```
+request_at=2026-09-11T05:08:49.359422299Z
+status=503
+Retry-After='6'
+headers={"Connection": "close", "Content-Length": "136", "Content-Type": "application/json", "Date": "Fri, 11 Sep 2026 05:08:49 GMT", "Retry-After": "6"}
+body={"error":{"code":"engine_waking","message":"z-image-turbo is still being synced onto this engine's instance (1 file(s) to go); retry"}}
+```
+
+**`1 file(s) to go` agrees with what `pending` held**: `/af-ws/engines/image/pending` at that
+moment carried exactly one key (`image/diffusion_models/z_image_turbo_bf16.safetensors`).
+`Retry-After: 6` is twice `engineReadyPoll` (3 seconds) — the code's
+`strconv.Itoa(int(engineReadyPoll.Seconds()*2))`, straight through. The 49 milliseconds matter
+too: the request was **refused immediately rather than held**, which is what puts `pendingGuard`
+ahead of the wake-wait.
+
+### The negative control — once synced, the same request goes through
+
+Sixty-two seconds later, after `sync done`, **the identical request**:
+
+```
+request_at=2026-09-11T05:09:51.419053227Z
+status=400
+Retry-After=None
+headers={"Connection": "close", "Content-Length": "128", "Content-Type": "application/json; charset=utf-8", "Date": "Fri, 11 Sep 2026 05:09:51 GMT", "Server": "Python/3.11 aiohttp/3.14.3"}
+body={"error": {"type": "prompt_no_outputs", "message": "Prompt has no outputs", "details": "", "extra_info": {}}, "node_errors": {}}
+```
+
+`Server: Python/3.11 aiohttp/3.14.3` appears, `Retry-After` is gone, and the body is in
+ComfyUI's own vocabulary — **the request passed the gateway and reached the engine**. Both
+requests carried the same empty graph (`{"prompt":{}}`), so **the only thing that changed was
+the contents of `pending`**.
+
+### 🔴 The decisive evidence is the engine's silence
+
+`got prompt` appears in ComfyUI's log (`image/engine/<task>`) only for the later two:
+
+| Time (UTC) | The engine's log | Which request |
+|---|---|---|
+| 05:08:49 | **nothing at all** | the refused one (the CP answered it) |
+| 05:09:51.456 | `got prompt` → `invalid prompt: {'type': 'prompt_no_outputs', …}` | the negative control |
+| 05:09:58.765 | `got prompt` → `Prompt executed in 46.64 seconds` | `generate_image` |
+
+**The request inside the window never reached the engine.** That is the whole point of gap 7:
+had it arrived, it would have come back as the bare `Value not in list: unet_name: …` 400.
+(`not in list` matches nothing across the stream — and the same filter with `got prompt` returns
+the two rows above, so that is a zero from a filter that ran.)
+
+### 🔴 This answer cannot be observed through `generate_image`
+
+Found by trying that first, and the next person to check will meet the same wall.
+`comfy.go`'s `sendWithWake` retries `503 engine_waking` **every `Retry-After` for up to sixteen
+minutes** (`sdcppTimeout`). Call `generate_image` inside the window and the tool silently
+re-sends every six seconds and, once the sync finishes, **returns nothing but success** — the
+gateway's answer survives nowhere on the calling side. That is exactly what happened: the same
+model's `generate_image` returned a picture in 52.3 seconds with empty `warnings`:
+
+```
+{"destination":"the fleet's own GPU engine（この配備が動かす自前のエンジン）","files":[{"path":"…/image-1789103445691434401-1.png","name":"image-1789103445691434401-1.png","mime":"image/png","bytes":1230479,"width":1024,"height":1024}],"model":"z-image-turbo","provider":"comfy","warnings":[]}
+```
+
+**Nor does it survive in the CP's log.** `pendingGuard`'s refusal only goes through
+`writeAPIErr`, which has no `log.Printf` (`engine_gateway.go` records auth failures and failed
+starts, nothing else). Searching CloudWatch will not find it. **Taking the raw HTTP answer
+yourself is the only route.**
+
+### The window, measured (same shape as the previous section's table)
+
+| Time (UTC) | Event | keys in `pending` |
+|---|---|---|
+| 05:00:14 | `mode: on` | – |
+| 05:03:17 | the sidecar reads the active set (start is `sdxl-base-1.0`) | 15 |
+| 05:04:18 | `engine may start; 14 file(s) still to sync` | 14 |
+| 05:07:00 | **`state: running`** | **6** |
+| 05:08:49 | **the request → `503 engine_waking`** | **1** |
+| 05:09:01 | `sync done` | **0** |
+| 05:11:55 | `mode: off` | – |
+
+**The window was about 2 minutes 02 seconds** (05:07:00 to 05:09:01.9). Shorter than the
+previous section's 2:39 because the box came faster (`mode: on` to `running` was 10 min 50 s
+there, 6 min 46 s here), which is the previous section's formula — **"the total bytes of the
+non-start models minus the acquisition time"** — behaving as stated. `state` was sampled every
+ten seconds, so `running` carries ±10 s. The last file to land was again `z_image_turbo`
+(12,309,866,400 bytes in 61 seconds).
+
+### Procedure note — driving the gateway by hand
+
+The gateway takes Workspace-issued tokens only, so the request has to come from a session inside
+the deployment. `AF_ENGINE_ISSUE_TOKEN` is in the session shell's environment; posting it to
+`POST /internal/engine/token` (`{"session":"","key":"image"}`) returns a Workspace-scoped engine
+token. That goes into `Authorization: Bearer` on `POST /engine/image/v1/prompt`, with a
+catalogue id in `X-AF-Model` — the image API carries no model name in the body, so that header
+is the only thing `pendingGuard` can read (`engineRequestedModelID`).
+
+🔴 **The token must not be put in a file.** It was first handed to the driving session in that
+shape (a mode-600 curlrc) and the driving session refused, correctly — **a workspace's `/tmp` is
+readable by every other session running as the same uid, so the permission bits protect
+nothing**. What was used instead keeps minting and request inside one Python process, with the
+token never reaching stdout, disk or `argv`.
+
+### What is still open
+
+The two the previous section left (**#518's item 3, the llm idle wrapper** and **#513's fixed
+preset LoRA**) were not touched here either: another lane holds the llm role, and the on-demand
+G-family vCPU limit is 8 (a `g6.xlarge` is 4), so image plus llm fills it exactly. **While a box
+is being remade — `off` → `on` — the 4 vCPU of the draining one still count, so two lanes
+remaking at once leave the later request silently unplaced with `VcpuLimitExceeded`**; this run
+kept to a single remake and told the other lane before and after. The GPU was one box for about
+nine minutes (`mode: on` 05:00:14 to `mode: off` 05:11:55).
