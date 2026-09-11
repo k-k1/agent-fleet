@@ -39,21 +39,49 @@ type engineECS struct {
 	key     string // "tts" / "llm" — what this engine is called in logs
 	cluster string
 	service string
+	mu      sync.Mutex
+	cached  engineServiceView
+	cachAt  time.Time
+	cachEr  error
 	// capacityProvider is set only for a Managed Instances engine. It is what makes
 	// `draining` observable: with desired 0 the service says "stopped" the moment the task
 	// goes, while the EC2 instance behind it lives on for several more minutes (measured:
 	// 427 and 463 seconds on a GPU box, 93 on a CPU one) and bills the whole time. Empty =
 	// Fargate, where there is no such state.
+	//
+	// 🔴 Under the mutex, and read through provider(): replacing a capacity provider renames
+	// it, and the engine table the Control Plane re-reads carries the new name (ADR 0074, the
+	// gap #536 measured on the Spot swap). It is a destination string and a match string —
+	// it keys nothing this process holds — so it moves live rather than needing a restart.
 	capacityProvider string
+	cachBox          engineBox
+	cachBoxOn        bool
+	cachBoxAt        time.Time
+	now              func() time.Time // test seam
+}
 
-	mu        sync.Mutex
-	cached    engineServiceView
-	cachAt    time.Time
-	cachEr    error
-	cachBox   engineBox
-	cachBoxOn bool
-	cachBoxAt time.Time
-	now       func() time.Time // test seam
+// provider is the capacity provider name to address and to match boxes on, now.
+func (t *engineECS) provider() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.capacityProvider
+}
+
+// setProvider replaces the name, reporting whether it actually changed.
+//
+// 🔴 It drops the cached box as well. That entry was matched against the OLD name, so
+// keeping it would report the previous provider's instance as this engine's for the rest of
+// engineBoxTTL — which is the panel telling the operator a box is up on a card it is not on,
+// the failure shape ADR 0074 decision 4 is about.
+func (t *engineECS) setProvider(name string) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.capacityProvider == name {
+		return false
+	}
+	t.capacityProvider = name
+	t.cachBox, t.cachBoxOn, t.cachBoxAt = engineBox{}, false, time.Time{}
+	return true
 }
 
 // engineBox is the EC2 instance a Managed Instances engine is running on, as ECS sees it.
@@ -251,7 +279,7 @@ func (t *engineECS) draining(ctx context.Context) bool {
 // the only caller that acts on it is the controller, and it must read an unreadable cluster
 // as "not draining" rather than as "do not start yet" — see draining above.
 func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
-	if t.capacityProvider == "" {
+	if t.provider() == "" {
 		return engineBox{}, false // Fargate: nothing to look up, and no call to pay for
 	}
 	now := t.clock()
@@ -272,6 +300,10 @@ func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
 
 // describeBox is the uncached walk of the cluster's container instances.
 func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
+	// Read once, up front: the name can be replaced under this walk by the table reloader,
+	// and matching half the pages against one name and half against another would answer
+	// "no box" on the run that happens to straddle a rename.
+	want := t.provider()
 	var arns []string
 	var next *string
 	for {
@@ -300,7 +332,7 @@ func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 			// The capacity provider is what tells this engine's box apart from a workspace
 			// slot on the same cluster. Matching on anything looser would report the pool's
 			// m8g as the GPU that is costing $1.26 an hour.
-			if aws.ToString(ci.CapacityProviderName) != t.capacityProvider {
+			if aws.ToString(ci.CapacityProviderName) != want {
 				continue
 			}
 			b := engineBox{

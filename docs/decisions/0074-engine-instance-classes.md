@@ -1493,6 +1493,32 @@ its repair are shown on hardware.
 > other fields live would throw away state only this process holds), so **it can only be written
 > down as an operating step.**
 
+> ✅ **Fixed (2026-09-11; implemented, not verified on hardware) — the CP replacement is no
+> longer needed.** The paragraph above put the capacity provider in with the row's other fields,
+> and that was the wrong company for it. The others are what objects were BUILT from — the ECS
+> client, the controller's goroutine and its intervals, the demand window — and replacing them
+> means replacing the runtime state. The provider's name is neither: it is a **destination
+> string** (which provider a rung is written to) and a **match string** (which container
+> instance is this engine's box), and it keys nothing this process holds. So it now moves live,
+> alongside the ladder and for the same reason (`engine_table_reload.go`, `setCapacityProvider`).
+> Three things go with it:
+>
+> - the **box match** re-runs under the new name, and the cached lookup is dropped with it —
+>   that entry was matched against the old name, so keeping it would go on reporting the
+>   previous provider's instance for the rest of `engineBoxTTL`;
+> - the **rung this process last applied is forgotten**. It was written to the old provider;
+>   keeping the note would let `startGate` read a failed apply against the new one as "already
+>   applied by this process" and start the engine on an unconfigured card — which is the second
+>   bullet of this section happening again;
+> - the **rung is re-applied before the next start**, which `startGate` step 2 already did
+>   idempotently — so the fix costs one extra `UpdateCapacityProvider` and no new machinery.
+>
+> The row's other fields (service, url, health, provider, api, api key parameter, idle,
+> deadline) are unchanged: still logged as needing a restart. What this removes is one operating
+> step, not the honesty of that log.
+
+
+
 ### Putting it back, and what was left
 
 The image role went back to `mode: off` (its original value) and **the provider was left on

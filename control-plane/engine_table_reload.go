@@ -16,10 +16,17 @@ package main
 // as TEXT first: an unchanged parameter costs one GetParameter and no parsing, which is what
 // makes six calls a minute the right price.
 //
-// 🔴 What is taken live is the LADDER and nothing else. Everything else in a row is wired into
-// objects that were built once and are being used right now: the ECS client and cluster of
-// engineECS, the controller's own goroutine and its intervals, the capacity client that is
-// attached only when a ladder existed at start, the demand window. Swapping those means
+// 🔴 What is taken live is the LADDER and the capacity provider's NAME, and nothing else. Those
+// two are alike in the way that matters: both are what this process SAYS to ECS, and neither is
+// something an object was built around. The name had to join the ladder because replacing a
+// capacity provider renames it — the Spot swap — and a CP still addressing the old name applies
+// the rung to a provider that no longer exists, matches no box, and shows a card the engine is
+// not on (#536 step 4).
+//
+// Everything else in a row is wired into objects that were built once and are being used right
+// now: the ECS client and cluster of engineECS, the controller's own goroutine and its
+// intervals, the capacity client that is attached only when a ladder existed at start, the
+// demand window. Swapping those means
 // replacing the runtime state, which throws away what only this process knows — the demand
 // counter the controller stops the engine on, the warm model, the rung this process last
 // applied — and starting a second controller for the same engine. A change to any of them is
@@ -130,6 +137,13 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			changed = true
 			log.Printf("engines: %s instance classes re-read from %s: %s", d.Key, r.name, engineClassIDs(next))
 		}
+		// The capacity provider's NAME, live. What a rename must not do is leave the rung
+		// this process applied to the old provider standing as a note — setCapacityProvider
+		// forgets it, and the next start re-applies the rung to the new one (startGate).
+		if e.setCapacityProvider(d.CapacityProvider) {
+			changed = true
+			log.Printf("engines: %s capacity provider re-read from %s: %s", d.Key, r.name, engineProviderLabel(e.providerName()))
+		}
 		if why := engineDefDriftedBeyondClasses(e.def, d); why != "" {
 			log.Printf("engines: %s changed in the table in a way this process cannot take live (%s) - restart the Control Plane", d.Key, why)
 		}
@@ -147,7 +161,15 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 }
 
 // engineDefDriftedBeyondClasses names the first field of a row that changed and cannot be
-// carried into a running process, or "" when only the ladder moved.
+// carried into a running process, or "" when only the ladder and the capacity provider moved.
+//
+// 🔴 `capacityProvider` is deliberately NOT in this list. It used to be, and that is what made
+// the Spot swap need a Control Plane replacement: replacing a capacity provider renames it, the
+// table said the new name, and the running CP kept addressing the old one — the rung apply went
+// to a name that no longer existed (400), `box` matched nothing so the panel reported the card
+// the engine was NOT on, and only `update-service --force-new-deployment` (217 seconds) cleared
+// it (#536 step 4, the same shape as ADR 0074 decision 4). Unlike everything below, the name is
+// a destination string, not something an object was built around.
 func engineDefDriftedBeyondClasses(was, now engineDef) string {
 	for _, c := range []struct{ what, a, b string }{
 		{"service", was.Service, now.Service},
@@ -155,7 +177,6 @@ func engineDefDriftedBeyondClasses(was, now engineDef) string {
 		{"health", was.Health, now.Health},
 		{"provider", was.Provider, now.Provider},
 		{"api", was.API, now.API},
-		{"capacity provider", was.CapacityProvider, now.CapacityProvider},
 		{"api key parameter", was.APIKeyParam, now.APIKeyParam},
 	} {
 		if strings.TrimSpace(c.a) != strings.TrimSpace(c.b) {
@@ -171,6 +192,15 @@ func engineDefDriftedBeyondClasses(was, now engineDef) string {
 		return "start deadline"
 	}
 	return ""
+}
+
+// engineProviderLabel names the capacity provider for the reload log. Empty is a real value —
+// the row went to Fargate — and printing nothing there reads as a truncated line.
+func engineProviderLabel(name string) string {
+	if name == "" {
+		return "(none - Fargate)"
+	}
+	return name
 }
 
 // engineClassIDs is the ladder in one line, for the log that says a reload happened. The ids
