@@ -983,3 +983,58 @@ on a service that is already using one, you must force a new deployment."}
   remember the PRIMARY by id).
 - The raw responses (JSON, and the `--debug` log) are in `~/.cache/adr0075-run0/` of the session
   that measured this.
+
+## Follow-up — what P0's CFN lane handed back to the text (2026-09-11, PR #548)
+
+The template side (decisions 3, 9 and 12; contract A) landed as #548. **Nothing was deployed**
+(that is hardware run 1 onward). What the implementation handed back goes here, with the
+decisions left as written.
+
+- **Decision 3 — the provider name is no longer computed.** Both are fixed names
+  (`af-<stack>-image` / `af-<stack>-image-spot`), so 0074's convention "the name carries the
+  purchase type" (the `!If` on `ImageCapacityOptionType`) ends with this ADR.
+  `ImageCapacityOptionType` and the `ImageIsSpot` condition are retired. Not one line of IAM
+  changed (it falls inside the prefix, as R4 said).
+- **Migration — `standup.sh` drops `ImageCapacityOptionType`** (`af_param_drop`, in the same
+  column as 0072 P6's retired parameters). The text only says "when the capture is rebuilt", but
+  a captured line handed to `cloudformation deploy` as-is is refused as an undeclared key and the
+  stand-up fails, so the drop is needed even without a rebuild. ⚠️ **`update.sh` passes no
+  parameters to 60-engines**, so **updating a live stack still at `SPOT` (the dev deployment) to
+  this template rolls back on the name collision.** P0 hardware run 1 (the one update back to
+  `ON_DEMAND`) has to happen **before anyone next runs `dev-deploy.sh` against the dev
+  deployment**. No gate was added on the script side.
+- **Format — `<role>Offers` must be one line (`;`-separated).** The value goes into the engine
+  table's JSON verbatim, so a raw newline cannot travel through the template. "`;` or a newline"
+  is the parser's rule, not the parameter's (PARAMETERS, "The offers", carries the ⚠️).
+- **Decision 12's "one on-demand run per release" has no test in P0's definition of done.** Add
+  one line to hardware run 7 (the panel): right after a release it names the on-demand provider.
+- The 0.19.0 release notes (en/ja) were rewritten from "write `ImageCapacityOptionType=SPOT` to
+  buy on Spot" to the offer list and the two-step migration. ⚠️ **That wording assumes the CP
+  lane lands in the same version** — if it ships without it, reduce the item to "one more
+  provider".
+
+## Follow-up — what P0's CP lane handed back to the text (2026-09-11, PR #552)
+
+The CP side (decisions 1, 2, 3, 4, 5, 8, 11 and 12; the CP end of contracts A and B) landed as
+#552. Definitions of done 1-5 are pinned in `engine_offer_test.go` with positive controls
+(including that removing the guard makes the test fail, and a scan that the strategy is written
+in exactly one place in the CP). What the implementation handed back:
+
+- **Decision 5 — the budget starts at the new PRIMARY deployment's `updatedAt`, not at
+  "desired set to 1".** Charging hardware run 0's "89 s of deployment with zero tasks" to the
+  budget would move to the next offer before the offer had even asked for capacity.
+- **Decision 4 (a) — if the strategy differs from the current one, a start passes
+  `forceNewDeployment: true` too; if it is the same, `capacityProviderStrategy` is not passed at
+  all** (the consequence of run 0; the guard stays). **Moving to the next offer within the same
+  provider** passes only `forceNewDeployment` and no strategy — two offers may share one
+  provider, and what changed is only the provider's instance requirements.
+- **A third layer for decision 9 — an offer with no address leaves the candidates.** On a
+  deployment with a `buy=spot` row but an empty `spotCapacityProvider`, that row is not
+  addressable, so it is dropped with one log line. This catches a template-side mistake too.
+- **Decision 2 — an empty candidate set is also audited** (`engine.<role>.offer`, target=none,
+  once per demand).
+- **One start path.** The admin API's `mode=on` and the gateway's `ensureStarted` go through the
+  same strategy function; they used to move only the desired count, which was a way around
+  decision 4 (a).
+- The one P0 code path not yet measured is **hardware run 3** (whether force is needed when
+  desired 0 → 1 and the strategy travel in the same call); the implementation leans to "needed".
