@@ -162,9 +162,14 @@ type engineRuntimeState struct {
 	// classes is the GPU ladder (ADR 0074). Empty on every deployment that declares none, and
 	// then nothing in engine_class.go ever runs. capacity and cluster are how a rung reaches
 	// the capacity provider; capacity is nil on a CP with no AWS.
-	classes  []engineClass
-	capacity engineCapacityAPI
-	cluster  string
+	//
+	// 🔴 Read through classList() and written through setClasses(): this is the one part of
+	// the engine table a running CP re-reads (engine_table_reload.go), so it changes under
+	// the controller, the gateway and the admin panel while they are looking at it.
+	classesMu sync.RWMutex
+	classes   []engineClass
+	capacity  engineCapacityAPI
+	cluster   string
 	// appliedClass is the rung THIS PROCESS last wrote to the capacity provider, and nothing
 	// else. It is in memory on purpose: what the provider currently holds is a fact about AWS,
 	// and a CP that restarted has not observed it — so a restarted CP re-applies once before
@@ -486,6 +491,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			go st.ctrl.run(context.Background())
 		}
 	}
+	// The table itself is re-read from here on (ADR 0074, the gap PR #520 measured): a rung
+	// changed by a CloudFormation update used to reach a running CP only through a blue/green
+	// of the CP. Seeded with an EMPTY value rather than the text this process started from —
+	// the first tick then parses the table once and finds nothing to change, which costs one
+	// parse and saves threading the raw parameter out of loadEngineTable.
+	go newEngineTableReloader(ssmc, name, reg, "").run(context.Background())
 	return reg
 }
 
