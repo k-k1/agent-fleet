@@ -250,6 +250,14 @@ type EngineRow = {
   mode?: string;
   enabled?: boolean;
   managed?: boolean;
+  /** Why this deployment does not own the engine's lifecycle: `external` is a URL an operator
+   *  pointed the control plane at — a ComfyUI on the LAN (ADR 0076 decision 1). DECLARED by
+   *  whoever wrote the engine table, never derived from "the ECS fields are missing". */
+  lifecycle?: string;
+  /** Where an external row points. Shown because it is the only answer to "which box is this",
+   *  and on a LAN nothing else on this screen names the machine. Absent on a managed row: the
+   *  upstream there is an ECS service the operator never typed. */
+  url?: string;
   state?: string;
   desired?: number;
   /** The engine answered a real request since it came up. Different from `state:"running"`:
@@ -307,6 +315,28 @@ type EngineRow = {
   last_demand?: string;
   error?: string;
 };
+
+/** A row this deployment does not start or stop — the URL half of ADR 0076 decision 1.
+ *
+ * 🔴 `managed === false`, never `!managed`. A granted tenant_admin's row carries no `managed` at
+ * all (ADR 0072 open question 11), and reading its absence as "external" would strip the ECS half
+ * off the operator's own panel the moment a field is renamed — the same failure `isSuper` is
+ * taken from an explicit flag to avoid.
+ *
+ * What hangs off this: the mode segment drops `ondemand` (the API answers 400 — there is no box
+ * to stop, decision 5), and everything ECS wrote about a box — uptime, stop countdown, idle
+ * policy, demand window, the GPU ladder, the heatmap — is not drawn at all. The control plane
+ * omits those fields rather than zeroing them, so this is belt and braces: an invented "0
+ * requests" or "no ladder" reads as a measurement of a machine nobody here owns. */
+function engineIsExternal(e: EngineRow): boolean {
+  return e.managed === false;
+}
+
+/** The modes this row can actually be put in. Two for an external engine, three for a managed
+ *  one — and drawing a button the API answers with 400 is worse than drawing none. */
+function engineModes(e: EngineRow): readonly string[] {
+  return engineIsExternal(e) ? ["off", "on"] : ["off", "ondemand", "on"];
+}
 
 export function EnginesAdminView() {
   const tr = useT();
@@ -542,10 +572,12 @@ export function EnginesAdminView() {
             <span>{engineTitle(e)}</span>
             {/* The mode buys and stops a GPU for the WHOLE deployment, so it is the operator's
                 and is not rendered at all for anyone else. Not disabled: a greyed-out row of
-                buttons invites an email asking to have them enabled. */}
+                buttons invites an email asking to have them enabled.
+                An external row gets two: `off` closes the route, `on` opens it, and `ondemand`
+                has nothing to buy or stop — the API refuses it with 400 (ADR 0076 decision 5). */}
             {isSuper && (
               <span className="seg sm">
-                {(["off", "ondemand", "on"] as const).map((m) => (
+                {engineModes(e).map((m) => (
                   <button
                     key={m}
                     type="button"
@@ -573,6 +605,15 @@ export function EnginesAdminView() {
           {isSuper && (
           <div className="engines-state">
             <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
+            {/* Where an external engine points. The one fact this panel can give about a machine
+                it does not own — and without it "externally managed" names nothing an operator
+                could go and look at. Printed verbatim, as the CP composed it. */}
+            {engineIsExternal(e) && e.url ? (
+              <>
+                <span className="engines-fact-label">{tr("admin.engines_url_label")}</span>
+                <span className="mono engines-model-tag">{e.url}</span>
+              </>
+            ) : null}
             {e.models?.length ? (
               <>
                 <span className="engines-fact-label">{tr("admin.engines_models_label")}</span>
@@ -589,7 +630,9 @@ export function EnginesAdminView() {
           </div>
           )}
           {isSuper && <EngineStatus row={e} />}
-          {isSuper && (
+          {/* The GPU ladder is a choice of box to buy. An external row has no box and no rungs,
+              so the section is absent rather than empty (ADR 0076 decision 1). */}
+          {isSuper && !engineIsExternal(e) && (
             <EngineClassPicker
               row={e}
               busy={busy === e.key}
@@ -615,7 +658,11 @@ export function EnginesAdminView() {
             onStarted={() => loadJobs(e.key)}
           />
           <EngineIngestJobs jobs={jobs[e.key] || []} />
-          {isSuper && e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
+          {/* Always-on is a warning about an hourly bill. An external engine is always on by
+              default and costs this deployment nothing, so the warning would be pure noise. */}
+          {isSuper && e.mode === "on" && !engineIsExternal(e) && (
+            <p className="form-err">{tr("admin.engines_always_on_note")}</p>
+          )}
           {isSuper && e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container
               instances met the placement constraints", a pull failure). An engine stuck in
@@ -625,8 +672,11 @@ export function EnginesAdminView() {
             <p className="muted mono engines-events">{e.events.join(" | ")}</p>
           ) : null}
           {/* Uptime is billing history for a machine somebody else pays for, and the route
-              behind it is super_admin anyway — rendering it would be a permanent spinner. */}
-          {isSuper && <EngineHistory engineKey={e.key} />}
+              behind it is super_admin anyway — rendering it would be a permanent spinner.
+              An external row has no history at all: the samples are written by the control loop's
+              tick, and an external engine has no control loop (ADR 0076 decision 8). An empty
+              14-day grid would read as "it was down for two weeks". */}
+          {isSuper && !engineIsExternal(e) && <EngineHistory engineKey={e.key} />}
         </section>
       ))}
       {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
@@ -635,9 +685,16 @@ export function EnginesAdminView() {
       {isSuper && rows.length > 0 && <HfTokenPanel />}
       {err && <p className="form-err pad">{err}</p>}
       {note && <p className="muted pad">{note}</p>}
-      {/* What the three modes do. Same reason as the sentence in EngineModels: it explains the
-          segment above, and that segment is the operator's. */}
-      {isSuper && <p className="muted pad">{tr("admin.engines_note")}</p>}
+      {/* What the modes do. Same reason as the sentence in EngineModels: it explains the segment
+          above, and that segment is the operator's. Two sentences because there are two segments:
+          a deployment whose only engine is a URL on the LAN would otherwise be told that on-demand
+          buys instances, with no on-demand button anywhere on the screen. */}
+      {isSuper && rows.some((e) => !engineIsExternal(e)) && (
+        <p className="muted pad">{tr("admin.engines_note")}</p>
+      )}
+      {isSuper && rows.some(engineIsExternal) && (
+        <p className="muted pad">{tr("admin.engines_note_external")}</p>
+      )}
     </div>
   );
 }
@@ -2736,9 +2793,15 @@ function EngineStatus({ row }: { row: EngineRow }) {
   // They are different facts: `service_since` moves when a stack update or a replaced task
   // changes the deployment, without a new box being bought, and an operator looking at a GPU
   // bill wants to know when THE BOX started.
-  const startedAt = row.box?.since || row.service_since;
+  // Every figure below describes a box this deployment bought: when it came up, when the
+  // controller will stop it, the idle window it is measured against, the demand the control loop
+  // counted. An external engine has none of them — the CP omits the fields rather than sending
+  // zeros — so the whole ECS half is skipped here too, and only what the GATEWAY knows (which
+  // model answered last) survives for an external row.
+  const external = engineIsExternal(row);
+  const startedAt = external ? undefined : row.box?.since || row.service_since;
   const upKind = row.box?.since ? "admin.engines_since_box" : "admin.engines_since_service";
-  const stopIn = row.stop_eta;
+  const stopIn = external ? undefined : row.stop_eta;
   const now = useSecondHand(!!startedAt || !!stopIn);
   const upSecs = startedAt ? -(secsUntil(startedAt, now) ?? 0) : null;
   const leftSecs = secsUntil(stopIn, now);
@@ -2792,7 +2855,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
           <>{tr("admin.engines_stops_due")}</>
         ),
     });
-  } else if (row.mode === "ondemand" && row.idle_secs) {
+  } else if (!external && row.mode === "ondemand" && row.idle_secs) {
     // No live countdown — the engine is not up, so there is nothing to stop. The POLICY is
     // still worth stating, and it is a different claim from a time: "it will go quiet after
     // 30 minutes" rather than "it goes at 10:47". Without it, the operator of a stopped
@@ -2803,7 +2866,7 @@ function EngineStatus({ row }: { row: EngineRow }) {
     });
   }
 
-  if (row.window_secs) {
+  if (!external && row.window_secs) {
     const partial = windowIsPartial(row);
     lines.push({
       key: "demand",
@@ -2911,7 +2974,10 @@ function engineStateTone(e: EngineRow): string {
 }
 
 function engineStateLabel(e: EngineRow, tr: (k: never) => string): string {
-  if (!e.managed) return tr("admin.tts_external" as never);
+  // Not the TTS panel's wording: that one names a standalone docker container, which is what
+  // VOICEVOX is and what a ComfyUI on somebody's LAN is not. The claim both share is the one
+  // worth making — this deployment neither starts nor stops it (ADR 0076 decision 1).
+  if (!e.managed) return tr("admin.engines_external" as never);
   switch (e.state) {
     case "stopping":
       return tr("admin.tts_stopping" as never);
