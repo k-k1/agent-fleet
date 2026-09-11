@@ -4,10 +4,12 @@ package main
 // (ADR 0072 P2 欠落 7 / open question 3).
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -221,6 +223,109 @@ func TestEngineGatewayDoesNotHoldWhatItCannotKnow(t *testing.T) {
 	// nil is the shape the gateway asks, so it has to answer rather than panic.
 	if got := (*enginePending)(nil).missing(context.Background(), store.EngineModel{}); got != nil {
 		t.Errorf("a nil reader answered %v", got)
+	}
+}
+
+// 🔴 The refusal has to leave a trace on the SERVER, not only in a response body nobody
+// keeps. Until this line existed, pendingGuard's 503 went out through writeAPIErr and
+// nowhere else — and the caller that hits it in practice, `generate_image`, retries on every
+// Retry-After for up to a quarter of an hour and returns only the eventual success. The
+// window was therefore observable nowhere: PR #535 could only reproduce it by driving raw
+// HTTP by hand.
+func TestEnginePendingRefusalIsLoggedOncePerMinute(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	ssmc := &fakePendingSSM{value: `["image/diffusion_models/z_image_turbo_bf16.safetensors"]`}
+	g, e, _ := pendingEngine(t, ssmc)
+
+	if aerr := pendingAsk(t, g, e, "z-image-turbo"); aerr == nil {
+		t.Fatal("nothing was refused, so there is nothing to log about")
+	}
+	line := buf.String()
+	if n := strings.Count(line, "\n"); n != 1 {
+		t.Fatalf("the refusal wrote %d line(s), want exactly 1:\n%s", n, line)
+	}
+	// Role, model, how many files are left, and when to come back — the four things an
+	// operator reading this needs to tell a sync apart from a broken engine.
+	for _, want := range []string{"image", "z-image-turbo", "1 file(s)", "engine_waking",
+		"Retry-After " + strconv.Itoa(engineWakingRetryAfter()) + "s"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("the log line does not carry %q:\n%s", want, line)
+		}
+	}
+
+	// 🔴 The retries arrive every few seconds for the whole ~270 s sync. They must not each
+	// write a line.
+	buf.Reset()
+	for i := 0; i < 5; i++ {
+		if aerr := pendingAsk(t, g, e, "z-image-turbo"); aerr == nil {
+			t.Fatal("the retry was not refused")
+		}
+	}
+	if buf.Len() != 0 {
+		t.Errorf("a retry within the minute wrote to the log:\n%s", buf.String())
+	}
+
+	// A DIFFERENT model is a different fact, and is not suppressed by the first one's slot.
+	// (Give z-image's second file to the sidecar too, so flux is the one still syncing.)
+	ssmc.value = `["image/diffusion_models/flux-2-klein-4b.safetensors"]`
+	e.pending = newEnginePending(ssmc, "/af-ws/engines", "image")
+	buf.Reset()
+	if aerr := pendingAsk(t, g, e, "flux-2-klein"); aerr == nil {
+		t.Fatal("the other model was not refused")
+	}
+	if !strings.Contains(buf.String(), "flux-2-klein") {
+		t.Errorf("a second model's refusal was suppressed:\n%s", buf.String())
+	}
+}
+
+// 🔴 The positive control for the test above. "No second line" and "the second refusal never
+// happened" look identical in a log, so defeat the throttle and show the second line appear
+// with everything else unchanged.
+func TestEnginePendingRefusalLogThrottleIsWhatSuppressesTheSecondLine(t *testing.T) {
+	var buf bytes.Buffer
+	defer captureLog(&buf)()
+	prev := enginePendingLogEvery
+	enginePendingLogEvery = 0
+	defer func() { enginePendingLogEvery = prev }()
+
+	g, e, _ := pendingEngine(t, &fakePendingSSM{
+		value: `["image/diffusion_models/z_image_turbo_bf16.safetensors"]`})
+	for i := 0; i < 2; i++ {
+		if aerr := pendingAsk(t, g, e, "z-image-turbo"); aerr == nil {
+			t.Fatal("the request was not refused")
+		}
+	}
+	if n := strings.Count(buf.String(), "\n"); n != 2 {
+		t.Fatalf("with the throttle defeated the log has %d line(s), want 2 — the suppression "+
+			"in the test above was not the throttle:\n%s", n, buf.String())
+	}
+}
+
+// The slot is keyed on (role, model), not on the model alone: two engines can be syncing a
+// model of the same name, and silencing one because the other just logged would hide a role
+// entirely. Asserted directly — one gateway test cannot hold two roles.
+func TestEnginePendingLogSlotIsPerRoleAndModel(t *testing.T) {
+	p := newEnginePending(&fakePendingSSM{}, "/af-ws/engines", "image")
+	now := time.Now()
+	if !p.claimLogSlot("image", "z-image-turbo", now) {
+		t.Fatal("the first claim was refused")
+	}
+	if p.claimLogSlot("image", "z-image-turbo", now.Add(time.Second)) {
+		t.Error("the same (role, model) claimed a slot again within the minute")
+	}
+	if !p.claimLogSlot("llm", "z-image-turbo", now.Add(time.Second)) {
+		t.Error("another role was silenced by the first one's slot")
+	}
+	if !p.claimLogSlot("image", "flux-2-klein", now.Add(time.Second)) {
+		t.Error("another model was silenced by the first one's slot")
+	}
+	if !p.claimLogSlot("image", "z-image-turbo", now.Add(enginePendingLogEvery)) {
+		t.Error("the slot never reopened")
+	}
+	// The gateway asks a nil reader on every deployment that has no pending parameter.
+	if (*enginePending)(nil).claimLogSlot("image", "z-image-turbo", now) {
+		t.Error("a nil reader claimed a log slot")
 	}
 }
 
