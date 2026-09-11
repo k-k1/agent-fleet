@@ -37,6 +37,13 @@ export const admin: Record<keyof typeof jaAdmin, string> = {
   "admin.engines_tenant_scope":
     "Here you can take models in and see the rows that produced. Enabling a model, starting and stopping the engine, choosing the GPU and forgetting a row belong to the deployment administrator (super_admin), so they are not on this screen. The catalogue is one per deployment, and the id of a model you take in is visible from every tenant.",
   "admin.engines_note": "Disabled takes the engine out of the launch menu and out of generate_image, and requests are refused with 503. On demand buys an instance only when something asks, and it stops itself once idle.",
+  // --- externally managed engines (ADR 0076) ---
+  // 🔴 Do not reuse the TTS panel's "standalone docker, etc.". That is right for VOICEVOX and
+  // wrong for a ComfyUI that may be running on somebody's desktop. The claim they share is the
+  // one an operator has to read: this deployment neither starts nor stops it.
+  "admin.engines_external": " (externally managed: this deployment neither starts nor stops it)",
+  "admin.engines_url_label": "Endpoint",
+  "admin.engines_note_external": "An externally managed engine is a URL this deployment points at. Disabled only closes the route — it does not stop the other side, which this deployment neither starts nor stops. Changing the URL means restarting the Control Plane.",
   // --- engine status (adminEngines.tsx, EngineStatus) ---
   // ⚠️ Every line here follows "do not write down what you do not know". A line the CP has no
   // answer for is omitted entirely, so do not add filler like "unknown", "0" or "not
