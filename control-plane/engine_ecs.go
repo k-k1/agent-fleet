@@ -21,6 +21,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfg "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
+	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
 // engineECSAPI is the narrow ECS port, so tests can pass a fake. The real *ecs.Client
@@ -54,32 +55,62 @@ type engineECS struct {
 	// gap #536 measured on the Spot swap). It is a destination string and a match string —
 	// it keys nothing this process holds — so it moves live rather than needing a restart.
 	capacityProvider string
-	cachBox          engineBox
-	cachBoxOn        bool
-	cachBoxAt        time.Time
-	now              func() time.Time // test seam
+	// spotProvider is the Spot half of the pair (ADR 0075 decision 3). Empty on every deployment
+	// that declares none, and then this engine behaves exactly as it did with one name.
+	//
+	// 🔴 The two are held TOGETHER, under the same mutex, and every read that asks "is this my
+	// box" asks about BOTH. #542 narrowed the copy to one field so that the destination and the
+	// match could not disagree; widening it to a pair keeps that property — what must never
+	// happen is a box bought on one of them being invisible because the other was the one
+	// consulted (measured during the 0074 rename: `box: null` while the panel said the engine was
+	// up on an l4).
+	spotProvider string
+	cachBox      engineBox
+	cachBoxOn    bool
+	cachBoxAt    time.Time
+	now          func() time.Time // test seam
 }
 
-// provider is the capacity provider name to address and to match boxes on, now.
+// provider is the ON-DEMAND capacity provider name, now. It is also the historical single name:
+// a role that declares no Spot provider has this one and nothing else.
 func (t *engineECS) provider() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.capacityProvider
 }
 
-// setProvider replaces the name, reporting whether it actually changed.
+// providerFor is the capacity provider one offer is bought from (ADR 0075 decision 3). "" means
+// this deployment declares none for that purchase option, and an offer nobody can address is an
+// offer that cannot be tried.
+func (t *engineECS) providerFor(buy string) string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if buy == engineBuySpot {
+		return t.spotProvider
+	}
+	return t.capacityProvider
+}
+
+// providers is the pair, for the callers that have to match a box against either of them.
+func (t *engineECS) providers() (onDemand, spot string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.capacityProvider, t.spotProvider
+}
+
+// setProviders replaces the pair, reporting whether either name actually changed.
 //
-// 🔴 It drops the cached box as well. That entry was matched against the OLD name, so
+// 🔴 It drops the cached box as well. That entry was matched against the OLD names, so
 // keeping it would report the previous provider's instance as this engine's for the rest of
 // engineBoxTTL — which is the panel telling the operator a box is up on a card it is not on,
 // the failure shape ADR 0074 decision 4 is about.
-func (t *engineECS) setProvider(name string) bool {
+func (t *engineECS) setProviders(onDemand, spot string) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.capacityProvider == name {
+	if t.capacityProvider == onDemand && t.spotProvider == spot {
 		return false
 	}
-	t.capacityProvider = name
+	t.capacityProvider, t.spotProvider = onDemand, spot
 	t.cachBox, t.cachBoxOn, t.cachBoxAt = engineBox{}, false, time.Time{}
 	return true
 }
@@ -108,6 +139,21 @@ type engineBox struct {
 	// differ for as long as the old box lives. Empty when ECS did not report the attribute,
 	// and empty must never be read as "it matches" — see startGate.
 	instanceType string
+	// provider is which of the role's two capacity providers this box was bought from (ADR 0075
+	// decision 3). It is the honest answer to "on-demand or Spot" the CP can give without
+	// `ec2:DescribeInstances` — the `InstanceLifecycle` that would PROVE it is reachable by
+	// instance id only, and ADR 0045 decision 21 keeps that call out of the CP.
+	provider string
+}
+
+// engineProviderMatches reports whether a container instance's capacity provider is one of this
+// engine's. An empty declared name never matches: a role with no Spot provider must not adopt
+// every instance ECS reports without one.
+func engineProviderMatches(got, onDemand, spot string) bool {
+	if got == "" {
+		return false
+	}
+	return (onDemand != "" && got == onDemand) || (spot != "" && got == spot)
 }
 
 // engineBoxTypeAttr is the container-instance attribute holding the EC2 instance type. ECS
@@ -134,6 +180,13 @@ type engineServiceView struct {
 	// a start failed ("no container instances met the placement constraints", a pull
 	// failure). Reading them needs no permission the CP role does not already have.
 	events []string
+	// provider is the capacity provider the SERVICE's own strategy names right now (ADR 0075
+	// decision 11). The panel says what the engine is running on from this and never from what
+	// the CP remembers choosing: CloudFormation rewrites the strategy on every release that
+	// touches the service, and a remembered choice would go on claiming Spot while the box is
+	// on-demand — the shape of the lie the 0074 rename produced (`box: null`, "starting on l4").
+	// Empty for a service that declares a launch type instead of a strategy.
+	provider string
 }
 
 // engineViewTTL is the short cache in front of DescribeServices (ADR 0070 decision 10).
@@ -198,6 +251,16 @@ func (t *engineECS) describe(ctx context.Context) (engineServiceView, error) {
 	}
 	for _, s := range out.Services {
 		v := engineServiceView{desired: s.DesiredCount, running: s.RunningCount}
+		// The FIRST entry of the strategy, not a weighted reading of all of them: this CP writes
+		// exactly one provider at weight 1 (setStrategy) and 60-engines declares one, so a second
+		// entry would be somebody else's edit and reporting the first is then the honest "this is
+		// what the service says" rather than a computed guess.
+		for _, cp := range s.CapacityProviderStrategy {
+			if name := strings.TrimSpace(aws.ToString(cp.CapacityProvider)); name != "" {
+				v.provider = name
+				break
+			}
+		}
 		if aws.ToString(s.Status) == "INACTIVE" {
 			v.state = "none"
 			v.desired = 0
@@ -279,7 +342,7 @@ func (t *engineECS) draining(ctx context.Context) bool {
 // the only caller that acts on it is the controller, and it must read an unreadable cluster
 // as "not draining" rather than as "do not start yet" — see draining above.
 func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
-	if t.provider() == "" {
+	if od, spot := t.providers(); od == "" && spot == "" {
 		return engineBox{}, false // Fargate: nothing to look up, and no call to pay for
 	}
 	now := t.clock()
@@ -300,10 +363,10 @@ func (t *engineECS) box(ctx context.Context) (engineBox, bool) {
 
 // describeBox is the uncached walk of the cluster's container instances.
 func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
-	// Read once, up front: the name can be replaced under this walk by the table reloader,
+	// Read once, up front: the names can be replaced under this walk by the table reloader,
 	// and matching half the pages against one name and half against another would answer
 	// "no box" on the run that happens to straddle a rename.
-	want := t.provider()
+	wantOD, wantSpot := t.providers()
 	var arns []string
 	var next *string
 	for {
@@ -332,13 +395,20 @@ func (t *engineECS) describeBox(ctx context.Context) (engineBox, bool) {
 			// The capacity provider is what tells this engine's box apart from a workspace
 			// slot on the same cluster. Matching on anything looser would report the pool's
 			// m8g as the GPU that is costing $1.26 an hour.
-			if aws.ToString(ci.CapacityProviderName) != want {
+			//
+			// EITHER name counts (ADR 0075 decision 3). The two providers are one role's two
+			// wallets, so a box bought on the Spot one is this engine's box in every sense that
+			// matters here — it is what `draining` is about to bill for, and it is what the start
+			// gate compares an instance type against.
+			cp := aws.ToString(ci.CapacityProviderName)
+			if !engineProviderMatches(cp, wantOD, wantSpot) {
 				continue
 			}
 			b := engineBox{
 				instanceID: aws.ToString(ci.Ec2InstanceId),
 				arn:        aws.ToString(ci.ContainerInstanceArn),
 				status:     aws.ToString(ci.Status),
+				provider:   cp,
 			}
 			if ci.RegisteredAt != nil {
 				b.since = *ci.RegisteredAt
@@ -406,6 +476,75 @@ func (t *engineECS) setEnabled(ctx context.Context, on bool) error {
 	t.invalidate()
 	// The box too: a stop is the beginning of one going away and a start may buy a different
 	// one, so the cached container instance is the reading most likely to be wrong from here.
+	t.invalidateBox()
+	return err
+}
+
+// setStrategy is THE ONLY PLACE the Control Plane writes a service's capacityProviderStrategy,
+// and the whole safety of ADR 0075 is the guard three lines into it (decisions 4 and 12).
+//
+// ADR 0074 refused to let the CP touch a service's strategy at all, because re-applying a choice
+// idempotently in front of every start would kill whatever the engine was generating. That
+// reason holds for exactly as long as there is a task to kill, so the rule is not "be careful"
+// — it is RUNNING == 0, checked here, on a reading taken now.
+//
+// 🔴 CHANGING A STRATEGY REQUIRES `forceNewDeployment`, EVEN AT DESIRED 0. Measured on a throwaway
+// Managed Instances provider (ADR 0075 live test 0, $0): without the flag ECS answers HTTP 400
+// `InvalidParameterException` — "…on a service that is already using one, you must force a new
+// deployment" — in both directions, and it says nothing about the desired count. With the flag the
+// call is accepted, a new PRIMARY deployment appears, and its `updatedAt` always moves. So:
+//
+//   - the provider is DIFFERENT from what the service names: send the strategy AND
+//     `forceNewDeployment: true`, whether this is the 0 → 1 start or a move to the next offer.
+//     There is nothing running to kill — that is what the guard above is for, and it is now the
+//     only thing standing between this call and a killed generation;
+//   - the provider is THE SAME: do not send a strategy at all. Sending one that changes nothing
+//     is how a start would pay for a refused call, and it is also the ordinary shape of the first
+//     offer after a release, where CloudFormation has already pointed the service at the
+//     on-demand provider. A move that stays on the same provider still forces a deployment: the
+//     capacity provider's instance requirements changed underneath (two offers can share one
+//     provider), and the PENDING task has to be placed again for that to be asked for.
+//
+// Because every accepted write creates a new PRIMARY deployment, `StartDeadlineSec` and the
+// per-offer budget both re-clock themselves off `updatedAt` — the CP needs no timer of its own
+// (ADR 0075 open question 1 (c), measured).
+//
+// 🔴 The reading is UNCACHED on purpose. view()'s three seconds are the right price for a panel
+// and the wrong one for the only check standing between this function and a killed generation.
+func (t *engineECS) setStrategy(ctx context.Context, provider string, start bool) error {
+	if strings.TrimSpace(provider) == "" {
+		return fmt.Errorf("%s: no capacity provider to start on", t.logKey())
+	}
+	v, err := t.describe(ctx)
+	if err != nil {
+		return fmt.Errorf("%s: reading the service before writing its capacity provider: %w", t.logKey(), err)
+	}
+	if v.running >= 1 {
+		// Not a retry and not a warning: the caller asked for something this ADR forbids, and the
+		// answer is the refusal. The offer a running engine is on stays until it stops.
+		return fmt.Errorf("%s: refusing to write the capacity provider strategy while %d task(s) are running",
+			t.logKey(), v.running)
+	}
+	in := &ecs.UpdateServiceInput{
+		Cluster: aws.String(t.cluster),
+		Service: aws.String(t.service),
+	}
+	// "Is this a change" is answered by the service's own strategy, read back a line ago — never
+	// by what this process remembers writing. CloudFormation rewrites it on every release that
+	// touches the service (ADR 0075 decision 12).
+	if v.provider != provider {
+		in.CapacityProviderStrategy = []ecstypes.CapacityProviderStrategyItem{
+			{CapacityProvider: aws.String(provider), Weight: 1},
+		}
+		in.ForceNewDeployment = true
+	} else if !start {
+		in.ForceNewDeployment = true
+	}
+	if start {
+		in.DesiredCount = aws.Int32(1)
+	}
+	_, err = t.api.UpdateService(ctx, in)
+	t.invalidate()
 	t.invalidateBox()
 	return err
 }

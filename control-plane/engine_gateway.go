@@ -856,7 +856,11 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 		log.Printf("%s: a request is waiting, but the start is held back (%s)", e.ecs.logKey(), why)
 		return nil
 	}
-	if err := e.ecs.setEnabled(ctx, true); err != nil {
+	// Through the engine's own start, like the other two: the gate above has just chosen an
+	// offer, and this is where it is written to the service along with the desired count (ADR
+	// 0075 decision 4 (a)). Moving the count alone here would start the box on whatever provider
+	// the service was last pointed at.
+	if err := e.startEngine(ctx); err != nil {
 		return fmt.Errorf("could not start the engine: %w", err)
 	}
 	log.Printf("%s: started on demand", e.ecs.logKey())

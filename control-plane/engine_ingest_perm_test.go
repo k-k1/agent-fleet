@@ -203,6 +203,9 @@ func engineReducedAPI(t *testing.T) (engineAdminAPI, *engineRuntimeState, store.
 var engineOperatorOnlyFields = []string{
 	"mode", "enabled", "managed", "warm", "state", "desired", "events", "service_since",
 	"box", "classes", "class", "class_default", "class_is_default", "stop_eta",
+	// ADR 0075's three: the offer list, the offer the service is on and the walk rule 2 took.
+	// All of them are about the BOX and what it costs, which is the operator's business.
+	"offers", "offer", "offer_trail",
 	"window_secs", "idle_secs", "window_units", "window_counted_secs", "last_demand",
 	"vram_need_mib", "vram_need_source", "vram_fits", "has_models", "models",
 }
