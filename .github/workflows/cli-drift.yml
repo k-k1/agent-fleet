@@ -54,15 +54,19 @@ jobs:
           set -e
           cat /tmp/drift.txt
           echo "code=$code" >> "$GITHUB_OUTPUT"
-          # 2 = the check itself failed (unreadable ARG / npm view failure) -> go red here.
+          # 2 = not one release source answered -> the check could not run, go red here.
+          # A single unreadable row instead comes back in `failed=` and leaves the other
+          # rows' verdicts intact.
           # 1 = drift (= steady state). Handled via the issue; keep the job green.
           if [ "$code" = 2 ]; then exit 2; fi
 
       - name: find tracking issue
         id: issue
         run: |
+          # `first` inside jq, not `| head -1`: the default shell here is `bash -eo
+          # pipefail`, so a SIGPIPE'd gh fails the step for a lookup that worked.
           num="$(gh issue list --state open --search "in:title CLI version drift" --json number,title \
-                 --jq '.[] | select(.title | startswith("CLI version drift:")) | .number' | head -1)"
+                 --jq '[.[] | select(.title | startswith("CLI version drift:")) | .number] | first // empty')"
           echo "num=$num" >> "$GITHUB_OUTPUT"
 
       - name: open / update tracking issue
@@ -100,8 +104,11 @@ jobs:
             gh issue create --title "$TITLE" --body-file /tmp/body.md --label cli-drift
           fi
 
+      # `failed` must be empty: "every row I could read is in sync" is not the same
+      # claim as "the pins are in sync", and closing on the first would hide a pin that
+      # has been drifting for as long as its source has been unreadable.
       - name: close tracking issue when back in sync
-        if: steps.check.outputs.code == '0' && steps.issue.outputs.num != ''
+        if: steps.check.outputs.code == '0' && steps.check.outputs.failed == '' && steps.issue.outputs.num != ''
         run: |
           gh issue close "${{ steps.issue.outputs.num }}" \
             --comment "Pins have caught up to npm latest (cli-drift.yml)."
