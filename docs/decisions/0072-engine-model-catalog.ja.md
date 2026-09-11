@@ -3312,6 +3312,9 @@ ingest: deleted image/vae/r4-taesdxl-encoder.safetensors
 受け付けない）、今回はそこまで手が回らなかった。**窓が開くこととその長さ**までが確かめた範囲で
 ある。
 
+**解消（同日 2026-09-11）。** 同じ 5 モデル構成でもう一度窓を開け、**応答本文をそのまま採った**
+——次節「#512 のゲートウェイ応答を実機で採った」。
+
 ### #512 の常駐サイドカーは効いている
 
 箱が走っている最中に `juggernaut-xl-v9`（7.1 GB）を有効化した。**再起動は無い。**
@@ -3481,3 +3484,122 @@ LoRA の行は**無効化して残置**し（S3 のオブジェクトも残置�
 `GET /api/admin/engines` を前後で突き合わせた——**既存 2 行は全フィールド一致**、差分は
 新しい LoRA 行 1 本（`enabled: false` / `default: false` / `selected: false`）だけである。
 active set も `start: qwen3-coder-30b-a3b` に戻り、`lo` と `loras` は消えた。
+
+## #512 のゲートウェイ応答を実機で採った（2026-09-11・開発配備）
+
+前節が「窓は開くが、ゲートウェイの応答は確認していない」で終わっていた宿題である。同じ
+5 モデル構成でもう一度窓を開け、**同期中のモデルを名指した要求に対する応答本文を、そのまま
+採った**。配備は `origin/develop` の 2e765534（`ImageTag=0.18.1-dev-2e765534`）で、エンジン側の
+器・カタログ・`selected`・`mode` は前節から動かしていない。
+
+### 採れたもの——`503 engine_waking` と `Retry-After: 6`
+
+`state: running` から 1 分 49 秒後、`pending` に 1 ファイル（`z_image_turbo_bf16.safetensors`）
+だけが残っている時刻に、`X-AF-Model: z-image-turbo` を付けて
+`POST /engine/image/v1/prompt` を出した。応答は 49 ミリ秒で返り、そのまま写すと:
+
+```
+request_at=2026-09-11T05:08:49.359422299Z
+status=503
+Retry-After='6'
+headers={"Connection": "close", "Content-Length": "136", "Content-Type": "application/json", "Date": "Fri, 11 Sep 2026 05:08:49 GMT", "Retry-After": "6"}
+body={"error":{"code":"engine_waking","message":"z-image-turbo is still being synced onto this engine's instance (1 file(s) to go); retry"}}
+```
+
+**`1 file(s) to go` は SSM の `pending` の中身と一致している**——同じ時刻の
+`/af-ws/engines/image/pending` はキーがちょうど 1 本
+（`image/diffusion_models/z_image_turbo_bf16.safetensors`）だった。`Retry-After: 6` は
+`engineReadyPoll`（3 秒）の 2 倍で、コードの `strconv.Itoa(int(engineReadyPoll.Seconds()*2))`
+がそのまま出ている。応答が 49 ミリ秒であることも効く——**待たされたのではなく、即座に
+「まだだ」と断られた**ということで、`pendingGuard` が起動待ちのホールドより前にいる証拠である。
+
+### 陰性対照——同期が終わると同じ要求が素通りする
+
+62 秒後、`sync done` の後に**同一の要求**を出した:
+
+```
+request_at=2026-09-11T05:09:51.419053227Z
+status=400
+Retry-After=None
+headers={"Connection": "close", "Content-Length": "128", "Content-Type": "application/json; charset=utf-8", "Date": "Fri, 11 Sep 2026 05:09:51 GMT", "Server": "Python/3.11 aiohttp/3.14.3"}
+body={"error": {"type": "prompt_no_outputs", "message": "Prompt has no outputs", "details": "", "extra_info": {}}, "node_errors": {}}
+```
+
+`Server: Python/3.11 aiohttp/3.14.3` が付き、`Retry-After` が消え、本文が ComfyUI 自身の
+語彙になっている——**要求はゲートウェイを抜けてエンジンに届いた**。要求本体は両方とも空の
+グラフ（`{"prompt":{}}`）で同一なので、**変わったのは `pending` の中身だけ**である。
+
+### 🔴 決定的な証拠はエンジン側の沈黙である
+
+ComfyUI のログ（`image/engine/<task>`）に `got prompt` が出たのはこの回だけ:
+
+| 時刻（UTC） | エンジンのログ | 何の要求か |
+|---|---|---|
+| 05:08:49 | **何も無い** | 断られた要求（CP が返した） |
+| 05:09:51.456 | `got prompt` → `invalid prompt: {'type': 'prompt_no_outputs', …}` | 陰性対照 |
+| 05:09:58.765 | `got prompt` → `Prompt executed in 46.64 seconds` | `generate_image` |
+
+**窓の中の要求はエンジンに届いていない。** これが欠落 7 の眼目で、届いていれば
+`Value not in list: unet_name: …` の裸の 400 になっていた（ストリーム全体で
+`not in list` は 0 件。同じフィルタに `got prompt` を掛けると上の 2 件が返るので、
+フィルタが走ったうえでの 0 件である）。
+
+### 🔴 この応答は `generate_image` 経由では観測できない
+
+最初にそう試みて分かったことで、次に確かめる人も同じ壁に当たる。`comfy.go` の
+`sendWithWake` は `503 engine_waking` を **`Retry-After` ごとに最大 16 分**
+（`sdcppTimeout`）リトライする。つまり窓の中で `generate_image` を呼んでも、ツールは
+6 秒おきに黙って再送し、同期が終われば**成功だけを返す**——ゲートウェイの応答本文は
+呼び出し側のどこにも残らない。実際そのとおりで、同じモデルの `generate_image` は
+52.3 秒で絵を返し、`warnings` は空だった:
+
+```
+{"destination":"the fleet's own GPU engine（この配備が動かす自前のエンジン）","files":[{"path":"…/image-1789103445691434401-1.png","name":"image-1789103445691434401-1.png","mime":"image/png","bytes":1230479,"width":1024,"height":1024}],"model":"z-image-turbo","provider":"comfy","warnings":[]}
+```
+
+**CP 側のログにも残らない。** `pendingGuard` の断りは `writeAPIErr` を通るだけで、
+`log.Printf` が無い（`engine_gateway.go` が記録するのは認証の失敗と起動の失敗だけ）。
+だから CloudWatch を探しても出てこない。**生の HTTP 応答を自分で採るしか道は無い。**
+
+### 窓の実測（前節の表と同じ形）
+
+| 時刻（UTC） | 出来事 | `pending` のキー数 |
+|---|---|---|
+| 05:00:14 | `mode: on` | – |
+| 05:03:17 | サイドカーが active set を読む（start は `sdxl-base-1.0`） | 15 |
+| 05:04:18 | `engine may start; 14 file(s) still to sync` | 14 |
+| 05:07:00 | **`state: running`** | **6** |
+| 05:08:49 | **要求 → `503 engine_waking`** | **1** |
+| 05:09:01 | `sync done` | **0** |
+| 05:11:55 | `mode: off` | – |
+
+**窓は約 2 分 02 秒**（05:07:00〜05:09:01.9）。前節の 2 分 39 秒より短いのは箱の取得が速かった
+ためで（`mode: on` から `running` まで前節は 10 分 50 秒、今回は 6 分 46 秒）、**窓の長さは
+「start 以外の合計バイト数 − 箱の取得時間」**という前節の式のとおりに動いている。`state` は
+10 秒間隔のポーリングで見ているので `running` の時刻には ±10 秒の幅がある。最後まで残るのが
+`z_image_turbo`（12,309,866,400 バイトを 61 秒）であることも前節と同じだった。
+
+### 手順の覚書——ゲートウェイを手で叩く
+
+ゲートウェイは Workspace 発行トークンしか受け付けないので、配備の中のセッションから出す。
+`AF_ENGINE_ISSUE_TOKEN` はセッションのシェルの環境変数にあり、これで
+`POST /internal/engine/token`（`{"session":"","key":"image"}`）を叩くと Workspace スコープの
+エンジントークンが返る。それを `Authorization: Bearer` に載せて
+`POST /engine/image/v1/prompt` へ、`X-AF-Model` にカタログの id を入れる
+（画像 API は本文にモデル名を持たないので、`pendingGuard` が読むのはこのヘッダだけ——
+`engineRequestedModelID`）。
+
+🔴 **トークンをファイルに置いてはならない。** 最初その形（mode 600 の curlrc）で駆動役に
+渡そうとして断られ、断った側が正しかった——**ワークスペースの `/tmp` は同じ uid の他セッション
+から読めるので、パーミッションは保護にならない**。採ったのは、発行から要求までを 1 つの
+Python プロセスの中で完結させ、トークンを標準出力にもディスクにも `argv` にも出さない形である。
+
+### 残り
+
+前節が残した 2 つ（**#518 の 3（llm の idle wrapper）** と **#513 の preset 固定 LoRA**）は
+この回でも触っていない——別レーンが llm 役を持っており、G 系オンデマンド vCPU の上限が 8
+（`g6.xlarge` は 1 台 4）で、image と llm の 2 台でちょうど埋まるためである。**箱を作り直す
+`off` → `on` の間は退場中の 4 vCPU が残るので、両レーンが同時に作り直すと後から要求した側が
+`VcpuLimitExceeded` で静かに置かれなくなる**——今回は作り直しを 1 回に抑え、前後を相手に
+通告して避けた。GPU は 1 台を約 9 分（`mode: on` 05:00:14〜`mode: off` 05:11:55、うち箱が
+動いていたのは約 9 分）。

@@ -104,6 +104,13 @@ func (a wsSettingsAPI) get(w http.ResponseWriter, r *http.Request, res *resolved
 		"allowAgentUpdate": a.tenantAllowsAgentUpdate(r, res.ws),
 	}
 	a.addPreview(r, res, st, out)
+	// The upstream CLI release watcher's liveness (cli_release_watch.go). It is not a
+	// workspace setting at all — it is deployment-wide — but it rides here because this
+	// is the one CP-owned response the environment tab already reads, and it answers
+	// while the container is STOPPED. GET /api/env/tool-versions, the response it is
+	// drawn next to, is a straight Agent relay: decorating that would mean special-casing
+	// the generic proxy, and would hide the watcher exactly when the workspace is down.
+	addCLIRelease(out)
 	writeJSON(w, http.StatusOK, out)
 }
 

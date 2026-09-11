@@ -115,6 +115,13 @@ var errEngineWaking = errors.New("the engine is still coming up")
 // 527-second start is ~175 requests against a service that is mostly not there yet.
 var engineReadyPoll = 3 * time.Second
 
+// engineWakingRetryAfter is the Retry-After seconds that ride on an `engine_waking` refusal.
+// A function rather than a constant because engineReadyPoll is swapped in tests, and one
+// function rather than the expression at each site because the refusal LOG prints this
+// number too — a header and a log line that disagree about when to come back is a bug the
+// operator has no way to see.
+func engineWakingRetryAfter() int { return int(engineReadyPoll.Seconds() * 2) }
+
 // engineMaxRequestBody bounds what is buffered before being forwarded. The body has to be
 // read in full to answer "is this streaming" and to be replayed upstream after the wait, and
 // an unbounded read here is a way to spend the CP's memory from a Workspace. opencode's
@@ -439,7 +446,7 @@ func (g engineGateway) serve(w http.ResponseWriter, r *http.Request) {
 	// After the demand mark on purpose: somebody IS waiting for this engine, and a controller
 	// that stopped it mid-sync would make the wait permanent.
 	if aerr := g.pendingGuard(r.Context(), eng, body, r); aerr != nil {
-		w.Header().Set("Retry-After", strconv.Itoa(int(engineReadyPoll.Seconds()*2)))
+		w.Header().Set("Retry-After", strconv.Itoa(engineWakingRetryAfter()))
 		writeAPIErr(w, aerr)
 		return
 	}
@@ -523,6 +530,16 @@ func (g engineGateway) pendingGuard(ctx context.Context, eng *engineRuntimeState
 		missing := eng.pending.missing(ctx, m)
 		if len(missing) == 0 {
 			return nil
+		}
+		// 🔴 Say so in the CP's own log as well. Until now this refusal went out through
+		// writeAPIErr and nothing else, so it left no trace on the server at all — and the
+		// one caller that hits it in practice, generate_image, retries on every Retry-After
+		// for up to a quarter of an hour and returns only the eventual success. The body was
+		// therefore observable nowhere: reproducing it (PR #535) meant driving raw HTTP by
+		// hand. Throttled per (role, model), because those retries arrive every few seconds.
+		if eng.pending.claimLogSlot(eng.def.Key, id, time.Now()) {
+			log.Printf("engines: %s: refusing a request for %s with engine_waking — %d file(s) still syncing onto the instance; Retry-After %ds",
+				eng.def.Key, id, len(missing), engineWakingRetryAfter())
 		}
 		// The count, not the keys: the caller cannot act on a bucket path, and the operator
 		// reads the sidecar's own log. What the sentence has to carry is that waiting is the

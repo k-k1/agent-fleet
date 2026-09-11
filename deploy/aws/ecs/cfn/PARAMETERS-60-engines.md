@@ -817,6 +817,17 @@ parameter that is **absent or unreadable is UNKNOWN, never "still syncing"**: a 
 whose engine stack predates this behaves exactly as it did before, and so does one where SSM
 is unreachable.
 
+**To see it happening, read the CP log** for
+`engines: <role>: refusing a request for <model> with engine_waking — N file(s) still syncing`,
+which carries the role, the model, how many files are left and the `Retry-After` the caller
+was given. Throttled to one line per minute per (role, model), because the caller retries
+every few seconds for the whole window — so a sync that is still going shows up as a line a
+minute, not as a wall. This is the only place the window is visible from outside the
+instance: the refusal is a 503 body, and the one caller that hits it in practice
+(`generate_image`) retries it for up to a quarter of an hour and returns only the eventual
+success, so nothing downstream keeps the body. Lines for two models at once mean two are
+syncing, which is the ordinary shape of a cold instance.
+
 `EngineTaskRole` gains `ssm:PutParameter` on the path it already reads, which keeps this
 stack's IAM closed inside it (ADR 0071 decision 8).
 

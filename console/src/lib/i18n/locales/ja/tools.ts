@@ -125,6 +125,12 @@ export const tools = {
   "env.pin_only_title": "このイメージは実体を焼き込みません（lean）。起動時にこのピン版を ~/.local へ導入します",
   "env.pin_paren": "（{pin}）",
   "env.tv_note": "実効 = PATH で解決される実体（~/.local/bin がイメージより優先）。セルにカーソルを載せるとパスと元の出力を表示します。",
+  "env.watch_line": "上流のリリース監視: 最終成功 {when}",
+  "env.watch_never": "なし",
+  "env.watch_failed":
+    "監視が {rows} の取得に失敗しています。tested が古いのは上流が静かなためではありません。",
+  "env.watch_stale":
+    "監視が 48 時間以上成功していません。tested が古いのは上流が静かなためではありません。",
   "env.tc_note_1": "変更は",
   "env.tc_note_strong": "この後に起動するセッション/シェル",
   "env.tc_note_2": "に反映されます（起動中のものと既存プロセスは Stop → Start で反映）。",

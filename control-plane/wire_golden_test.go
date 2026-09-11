@@ -76,6 +76,11 @@ func wireGoldenTypes() []struct {
 		// each other; a tag that drifts on the measured side (which must mirror the Agent's
 		// resources.Machine) makes the row fall back to the declared value in silence.
 		{"workspaceMachineWire", reflect.TypeOf(workspaceMachineWire{})},
+		// The upstream release watcher's liveness, drawn in the environment tab. It rides
+		// inside a map[string]any response, so nothing else here would catch a renamed tag
+		// — and the row it feeds is the one that answers "is `tested` old because upstream
+		// is quiet, or because the watcher fell over?".
+		{"cliReleaseWire", reflect.TypeOf(cliReleaseWire{})},
 	}
 }
 
