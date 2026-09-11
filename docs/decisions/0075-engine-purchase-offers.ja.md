@@ -902,3 +902,28 @@ on a service that is already using one, you must force a new deployment."}
   deployment は作り直されるので戻しようがない。エンジンの起動には影響しない（`describe()` は
   PRIMARY を id で覚えていない）。
 - 生の戻り値（JSON と `--debug` のログ）は測ったセッションの `~/.cache/adr0075-run0/` にある。
+
+## 追記 — P0 の CFN レーンが本文に返したもの（2026-09-11・PR #548）
+
+テンプレート側（決定 3・9・12、契約 A）は #548 で入った。**配備はしていない**（実機 1 以降）。
+実装が本文に返した点を、決定は書き換えずにここに置く。
+
+- **決定 3 — provider の名前はもう計算されない。** 2 本とも固定名（`af-<stack>-image` /
+  `af-<stack>-image-spot`）になり、0074 の「名前が購入形態を運ぶ」規約（`ImageCapacityOptionType`
+  の `!If`）はこの ADR で終わる。`ImageCapacityOptionType` と条件 `ImageIsSpot` は撤去済み。
+  IAM は 1 行も変えていない（R4 のとおり接頭辞に入る）。
+- **移行 — `standup.sh` は `ImageCapacityOptionType` を落とす**（`af_param_drop`・0072 P6 の撤去
+  パラメータと同じ列）。本文は「捕捉を建て直すとき」としか書いていないが、捕捉に残った行を
+  そのまま渡すと `cloudformation deploy` が未宣言のキーを拒んで stand-up が落ちるので、建て直さ
+  なくても drop が要る。⚠️ **`update.sh` は 60-engines にパラメータを渡さない**ので、
+  **`SPOT` のまま走っている live のスタック（開発配備）を本テンプレートへ更新すると同名衝突で
+  ロールバックする**。P0 実機 1（先に `ON_DEMAND` へ戻す 1 更新）は、**次に誰かが開発配備へ
+  `dev-deploy.sh` を流す前に**済ませておく必要がある。スクリプト側の門は入れていない。
+- **書式 — `<役>Offers` は 1 行（`;` 区切り）でなければならない。** 値はエンジン表の JSON に
+  そのまま入るので、テンプレート経由では生の改行を渡せない。「`;` か改行」はパーサの規則であって
+  パラメータの規則ではない（PARAMETERS「The offers」に ⚠️ として書いた）。
+- **決定 12 の「リリースのたびに 1 回オンデマンド」には P0 の完了定義に対応する試験が無い。**
+  実機 7（パネル）に「リリース直後はオンデマンドの provider を指す」を 1 行足して読むこと。
+- リリースノート 0.19.0（英日）は「`ImageCapacityOptionType=SPOT` と書けば Spot」から提案一覧と
+  2 段移行へ書き直してある。⚠️ **CP レーンが同じ版に入る前提の文面**——入らないまま公開するなら
+  「provider が 1 本増えただけ」に落とす。
