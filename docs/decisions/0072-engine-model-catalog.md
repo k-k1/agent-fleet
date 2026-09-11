@@ -2832,12 +2832,33 @@ every tenant**, so `guide/admin/04` (ja and en) gains a section and the tenant-l
 is synced on every start, a per-tenant catalogue pushes the cold start **past ten minutes at about
 five tenants, even with one model each**.
 
-**What is left.** The Console's **engines panel itself is still super_admin** (`GET
+~~**What is left.**~~ **The screen went in too (2026-09-11, the paragraph below).** What follows
+is the original text: The Console's **engines panel itself is still super_admin** (`GET
 /api/admin/engines` keeps `withSuperAdmin`). A tenant_admin of a granted tenant **can ingest
 through the API but has no screen**: opening the panel to a non-super caller needs a reduced row
 with the mode, the class and the instance's state taken out, which is wider than this pass. The
 operator's side — granting it, and reading the acceptance it produces — is complete. Hardware
 verification is also outstanding (nothing here touched a deployment).
+
+**The reduced screen (2026-09-11, not verified on hardware).** `GET /api/admin/engines` moved onto
+the **same predicate** as the ingest gate and answers a non-super caller a **subset of the row**
+(`engineTenantAdminRow` copies named keys, so the containment is true by construction and a test
+checks it against a real row). What survives is `key` / `api` / `provider` / `base_models` /
+`file_flags` and an equally trimmed `model_rows` (id, kind, enabled, description, family,
+licence). `super_admin` rides on the envelope and the Console branches on **that flag only** —
+inferring it from "did `mode` arrive" works until a field is renamed, and then it draws buttons
+that 403. The ingest job list is narrowed to the caller's tenant as well
+(`engine_ingest_jobs.tenant_id`, sqlite `0062` / postgres `0047`). 🔴 **The empty tenant is a
+value, not "no filter"**: written as "narrow when the tenant is not empty", a caller whose tenant
+did not resolve is handed every job the operator started. The reconcile stays unfiltered — a job
+nobody may see still has to be brought up to date, or a task that finished while no one with the
+right tenant was looking stays `running` for ever.
+🔴 **It lives in tenant settings, not in the Admin modal.** The Admin modal's entry point is
+super_admin-only in TopBar, so adding it there gives a tenant_admin no door at all — found by
+rendering the panel. Rendering found one more thing: **two paragraphs of explanation outlived
+their controls** ("re-selecting takes effect at the next start", "Disabled takes the engine out
+of…"). Both describe buttons that are gone, and a test that enumerates the elements which must be
+ABSENT does not look at prose.
 
 ## P6 implementation — the seed and six parameters are gone (2026-09-10)
 

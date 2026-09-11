@@ -223,9 +223,13 @@ type EngineRow = {
    *  ask" — offering a choice that changes nothing is worse than offering none. */
   base_models?: string[];
   file_flags?: string[];
-  mode: string;
-  enabled: boolean;
-  managed: boolean;
+  /** 🔴 Optional because the row a granted tenant_admin receives DOES NOT CARRY THEM (ADR 0072
+   *  open question 11). That row is a strict subset of the operator's, so everything the
+   *  reduced panel does not draw is simply absent — which is why the panel branches on the
+   *  answer's `super_admin` flag and never on "did this field arrive". */
+  mode?: string;
+  enabled?: boolean;
+  managed?: boolean;
   state?: string;
   desired?: number;
   /** The engine answered a real request since it came up. Different from `state:"running"`:
@@ -276,6 +280,12 @@ type EngineRow = {
 export function EnginesAdminView() {
   const tr = useT();
   const [rows, setRows] = useState<EngineRow[] | null>(null);
+  /** Whether this caller is the deployment operator. 🔴 Taken from the answer's own flag, never
+   *  inferred from which fields arrived: the tenant_admin row is a strict SUBSET of the
+   *  operator's (ADR 0072 open question 11), so "mode is undefined" would work today and start
+   *  drawing 403-ing buttons the day a field is renamed. Defaults to false, so a Control Plane
+   *  too old to send the flag shows the safe half rather than controls that cannot work. */
+  const [isSuper, setIsSuper] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState("");
   const [note, setNote] = useState("");
@@ -289,6 +299,7 @@ export function EnginesAdminView() {
         return;
       }
       setErr("");
+      setIsSuper(!!d?.super_admin);
       setRows(Array.isArray(d?.engines) ? d.engines : []);
     } catch {
       setErr(tr("admin.load_error"));
@@ -489,23 +500,33 @@ export function EnginesAdminView() {
           <EngineBrowse />
         </section>
       )}
+      {/* What a granted tenant_admin may do here, said once at the top (ADR 0072 open question
+          11). Without it the reduced panel reads as a broken operator panel — the controls are
+          not disabled, they are absent — and the one thing that has to be understood before
+          taking a model in is that the catalogue is shared with every other tenant. */}
+      {!isSuper && rows.length > 0 && <p className="admin-hint pad">{tr("admin.engines_tenant_scope")}</p>}
       {rows.map((e) => (
         <section className="admin-panel" key={e.key}>
           <div className="usage-toolbar">
             <span>{engineTitle(e)}</span>
-            <span className="seg sm">
-              {(["off", "ondemand", "on"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  className={"seg-btn" + (e.mode === m ? " active" : "")}
-                  disabled={busy === e.key}
-                  onClick={() => setMode(e.key, m)}
-                >
-                  {tr(("admin.tts_mode_" + m) as never)}
-                </button>
-              ))}
-            </span>
+            {/* The mode buys and stops a GPU for the WHOLE deployment, so it is the operator's
+                and is not rendered at all for anyone else. Not disabled: a greyed-out row of
+                buttons invites an email asking to have them enabled. */}
+            {isSuper && (
+              <span className="seg sm">
+                {(["off", "ondemand", "on"] as const).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={"seg-btn" + (e.mode === m ? " active" : "")}
+                    disabled={busy === e.key}
+                    onClick={() => setMode(e.key, m)}
+                  >
+                    {tr(("admin.tts_mode_" + m) as never)}
+                  </button>
+                ))}
+              </span>
+            )}
             <button type="button" className="ghost" title={tr("admin.refresh")} onClick={load}>
               <Icon name="refresh" />
             </button>
@@ -515,6 +536,10 @@ export function EnginesAdminView() {
               against, and inside "状態: 停止中 / モデル: a, b （宣言。…）" it was a phrase like
               any other. The model names carry no tone of their own — whether they are in VRAM
               is the note that follows them, and it is not the same claim. */}
+          {/* The box: whether it is up, which models are in VRAM. Operator-only because it is
+              the state of a machine only the operator starts, stops and pays for — and because
+              the reduced row does not carry the fields it is drawn from. */}
+          {isSuper && (
           <div className="engines-state">
             <span className={"engines-model-tag " + engineStateTone(e)}>{engineStateLabel(e, tr)}</span>
             {e.models?.length ? (
@@ -531,16 +556,20 @@ export function EnginesAdminView() {
               </>
             ) : null}
           </div>
-          <EngineStatus row={e} />
-          <EngineClassPicker
-            row={e}
-            busy={busy === e.key}
-            onPick={(cls) => setClass(e.key, cls)}
-            onReplace={() => replaceBox(e.key)}
-          />
+          )}
+          {isSuper && <EngineStatus row={e} />}
+          {isSuper && (
+            <EngineClassPicker
+              row={e}
+              busy={busy === e.key}
+              onPick={(cls) => setClass(e.key, cls)}
+              onReplace={() => replaceBox(e.key)}
+            />
+          )}
           <EngineModels
             row={e}
             busy={busy}
+            readOnly={!isSuper}
             onChange={(id, patch) => setModel(e.key, id, patch)}
             onForget={(id, purge) => forgetModel(e.key, id, purge)}
             onAdd={(body) => addModel(e.key, body)}
@@ -555,22 +584,29 @@ export function EnginesAdminView() {
             onStarted={() => loadJobs(e.key)}
           />
           <EngineIngestJobs jobs={jobs[e.key] || []} />
-          {e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
-          {e.error && <p className="form-err">{e.error}</p>}
+          {isSuper && e.mode === "on" && <p className="form-err">{tr("admin.engines_always_on_note")}</p>}
+          {isSuper && e.error && <p className="form-err">{e.error}</p>}
           {/* The events are the only place ECS says why a start failed ("no container
               instances met the placement constraints", a pull failure). An engine stuck in
               `starting` is exactly when somebody needs them, and the alternative is a trip to
               the AWS console for a string the CP already has. */}
-          {e.state === "starting" && e.events?.length ? (
+          {isSuper && e.state === "starting" && e.events?.length ? (
             <p className="muted mono engines-events">{e.events.join(" | ")}</p>
           ) : null}
-          <EngineHistory engineKey={e.key} />
+          {/* Uptime is billing history for a machine somebody else pays for, and the route
+              behind it is super_admin anyway — rendering it would be a permanent spinner. */}
+          {isSuper && <EngineHistory engineKey={e.key} />}
         </section>
       ))}
-      {rows.length > 0 && <HfTokenPanel />}
+      {/* The deployment's Hugging Face token. One token serves every role and every tenant, so
+          registering it is the operator's act; a tenant_admin who needs a gated repository asks
+          for it (the ingest form already says so when a gated source is resolved). */}
+      {isSuper && rows.length > 0 && <HfTokenPanel />}
       {err && <p className="form-err pad">{err}</p>}
       {note && <p className="muted pad">{note}</p>}
-      <p className="muted pad">{tr("admin.engines_note")}</p>
+      {/* What the three modes do. Same reason as the sentence in EngineModels: it explains the
+          segment above, and that segment is the operator's. */}
+      {isSuper && <p className="muted pad">{tr("admin.engines_note")}</p>}
     </div>
   );
 }
@@ -727,15 +763,23 @@ function engineClassVramNote(row: EngineRow, tr: (k: never) => string): string {
  * checkpoint chosen at start, so the change lands at the next start (ADR 0072 decision 4) —
  * redeploying the service instead would kill whatever generation is in flight, and the person
  * pressing this button has not been asked about that. */
+/** The catalogue list.
+ *
+ * `readOnly` is the reduced panel a granted tenant_admin sees (ADR 0072 open question 11): the
+ * same rows, none of the controls. Enabling a model, choosing what the engine starts with and
+ * forgetting a row all decide what EVERY OTHER TENANT runs off one shared box, so they stay the
+ * operator's — and the CP refuses them anyway, which is the reason not to draw them disabled. */
 function EngineModels({
   row,
   busy,
+  readOnly,
   onChange,
   onForget,
   onAdd,
 }: {
   row: EngineRow;
   busy: string;
+  readOnly?: boolean;
   onChange: (id: string, patch: Record<string, boolean | string>) => void;
   onForget: (id: string, purge: boolean) => void;
   onAdd: (body: Record<string, unknown>) => void;
@@ -775,7 +819,9 @@ function EngineModels({
           controller refuses to start it and every request is refused, so it gets a sentence
           rather than a blank area that reads as "still loading". */}
       {models.length === 0 && <p className="form-err">{tr("admin.engines_catalog_empty")}</p>}
-      {models.length > 0 && !row.has_models && (
+      {/* "Nothing is enabled" is addressed to whoever can enable something. The reduced row does
+          not carry has_models at all, so this is also the field that must not be read as false. */}
+      {!readOnly && models.length > 0 && !row.has_models && (
         <p className="form-err">{tr("admin.engines_catalog_none_enabled")}</p>
       )}
       <ul className="engines-model-list">
@@ -809,7 +855,7 @@ function EngineModels({
                   {/* "Start with this one" leads: it is the thing somebody came to this list to
                       do, and it implies the enable behind it. A LoRA is never what an engine is
                       started with, so the control that would say so is not offered for one. */}
-                  {!isLora && !started && (
+                  {!readOnly && !isLora && !started && (
                     <button
                       type="button"
                       className="sm"
@@ -819,28 +865,32 @@ function EngineModels({
                       {tr("admin.engines_model_select")}
                     </button>
                   )}
-                  <button
-                    type="button"
-                    className="sm"
-                    disabled={pending}
-                    onClick={() => change(m, { enabled: !m.enabled })}
-                  >
-                    {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="sm"
+                      disabled={pending}
+                      onClick={() => change(m, { enabled: !m.enabled })}
+                    >
+                      {tr(m.enabled ? "admin.engines_model_disable" : "admin.engines_model_enable")}
+                    </button>
+                  )}
                   {/* Forgetting the ROW. The file stays in the bucket — the CP has no
                       s3:DeleteObject and is not getting one (ADR 0072 decision 7) — so the
                       label says "forget", not "delete", and the note below says why. */}
-                  <button
-                    type="button"
-                    className="sm danger"
-                    disabled={pending || started}
-                    onClick={() => {
-                      setConfirming(m.id);
-                      setPurge(false);
-                    }}
-                  >
-                    {tr("admin.engines_model_forget")}
-                  </button>
+                  {!readOnly && (
+                    <button
+                      type="button"
+                      className="sm danger"
+                      disabled={pending || started}
+                      onClick={() => {
+                        setConfirming(m.id);
+                        setPurge(false);
+                      }}
+                    >
+                      {tr("admin.engines_model_forget")}
+                    </button>
+                  )}
                 </span>
               </div>
               {m.description && <p className="muted engines-model-desc">{m.description}</p>}
@@ -849,7 +899,7 @@ function EngineModels({
                   field is filled in, the toggle works, the id appears in generate_image's model
                   list — and the request fails, because the provider will not guess a workflow
                   from a name. A seeded row is always in this state: the seed cannot know. */}
-              {m.base_model_missing && (
+              {!readOnly && m.base_model_missing && (
                 <>
                   <p className="form-err">{tr("admin.engines_model_no_family")}</p>
                   {/* The fix, right where the problem is stated. Before this the only way to
@@ -880,7 +930,7 @@ function EngineModels({
                   family used to hide. The parts are named because taking them in and attaching
                   them to this row is exactly what has to happen next; enabling is refused
                   until then, so the sentence is not advice. */}
-              {!!m.files_missing?.length && (
+              {!readOnly && !!m.files_missing?.length && (
                 <p className="form-err">
                   {(tr("admin.engines_model_files_missing") as string)
                     .replace("{n}", m.base_model || "")
@@ -981,15 +1031,24 @@ function EngineModels({
           );
         })}
       </ul>
-      <p className="muted">{tr("admin.engines_model_next_start")}</p>
-      <EngineModelAdd
-        busy={busy === row.key + "/+"}
-        isImage={isImage}
-        baseModels={row.base_models}
-        fileFlags={row.file_flags}
-        modelIds={(row.model_rows || []).filter((m) => m.kind !== "lora").map((m) => m.id)}
-        onAdd={onAdd}
-      />
+      {/* "Re-selecting takes effect at the next start" is about a control this panel only
+          offers the operator. Rendered read-only it describes a button that is not there.
+          🔴 Found by rendering the reduced panel, not by a test — every assertion was about
+          what must be ABSENT, and a leftover sentence is neither a control nor a field. */}
+      {!readOnly && <p className="muted">{tr("admin.engines_model_next_start")}</p>}
+      {/* Registering a file that is ALREADY in the bucket. It needs an S3 key somebody put
+          there by hand, which is an operator act on an operator's bucket — the tenant route
+          into the catalogue is the ingest below, which fetches. */}
+      {!readOnly && (
+        <EngineModelAdd
+          busy={busy === row.key + "/+"}
+          isImage={isImage}
+          baseModels={row.base_models}
+          fileFlags={row.file_flags}
+          modelIds={(row.model_rows || []).filter((m) => m.kind !== "lora").map((m) => m.id)}
+          onAdd={onAdd}
+        />
+      )}
     </div>
   );
 }
