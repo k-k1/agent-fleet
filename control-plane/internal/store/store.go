@@ -235,6 +235,15 @@ type EngineModel struct {
 	// is per MODEL (ADR 0072 decision 3). Zero means undeclared, and undeclared must stay
 	// unwritten — opencode reads a limit of 0 as "no auto-compaction".
 	ContextTokens, MaxOutputTokens int
+	// The attention geometry, read once from the model's GGUF header at registration and kept
+	// so that the VRAM answer can include the KV cache (ADR 0074 open question 7). Zero in ANY
+	// of the four means the header was not read — a partial geometry is not a smaller estimate,
+	// it is a wrong one, so the row stays at its floor.
+	//
+	// Only the llm role fills these: a GGUF is where they are written down, and an image
+	// checkpoint's memory is dominated by the compute buffers instead (ADR 0074's first
+	// measurement).
+	KVLayers, KVHeadsKV, KVKeyLen, KVValueLen int
 	// Sizes replaces sdcppSizes()'s guess from the model id with a declaration.
 	Sizes       []string
 	Description string

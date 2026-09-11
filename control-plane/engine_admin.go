@@ -1345,8 +1345,14 @@ func (a engineAdminAPI) postIngest(w http.ResponseWriter, r *http.Request, g eng
 			engineBaseModelHint(res.BaseModel))})
 		return
 	}
+	// The attention geometry, read from the header of the file about to be taken in — the one
+	// moment it can be had, since the CP will never see the bytes again (it has no S3
+	// permission at all, ADR 0072 review R3). Best-effort by design: anything that cannot be
+	// read leaves the row at its floor, which is what it would have been anyway.
+	geom := engineIngestGeometry(r.Context(), b.Kind, res, ing.tokens)
 	job, aerr := ing.start(r.Context(), engineIngestRequest{
 		Role: key, ModelID: id, Kind: strings.TrimSpace(b.Kind), S3Key: s3key,
+		KVGeom:        geom,
 		Description:   strings.TrimSpace(b.Description),
 		BaseModel:     base,
 		ContextTokens: b.ContextTokens, MaxOutput: b.MaxOutputTokens, Sizes: b.Sizes,

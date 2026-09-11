@@ -599,15 +599,22 @@ id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB[|usdPerHour]
 ```
 
 ```
-LlmInstanceClasses=l4|L4 24GB|21000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
+LlmInstanceClasses=l4|L4 24GB|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB|44000|g6e.xlarge,g6e.2xlarge|4-8|30000-65536
 ```
 
 - **The FIRST rung is the default**, and it should restate `LlmAllowedInstanceTypes`,
   `LlmAcceleratorMemMinMiB`, `LlmVCpu*` and `LlmMem*`. Nothing checks that it does — the two
   are separate declarations, and the first is what the Console offers as "back to the default".
 - **`vramMiB` is both the floor asked of the card (`AcceleratorTotalMemoryMiB.Min`) and what a
-  model's demand is compared against.** Declare it BELOW the card's nominal size, as the
-  existing 21,000 does for an L4's 24 GB: the comparison then warns early rather than late.
+  model's demand is compared against** — and it is **the card's physical size**, not an
+  operational cap. 🔴 Declare it from what the hardware reports: an L4 says
+  `Total VRAM 22563 MB`, so **22000 is the number**. The nearby `LlmAcceleratorMemMinMiB` of
+  8000 is a *placement filter* and copying it into a rung is a real bug — measured 2026-09-11
+  on the dev deployment, a rung declaring 8000 made the panel say `vram_fits: false` for a model
+  that then generated perfectly well on that very card. Shading it downward is just as wrong in
+  the other direction once the demand includes the KV cache: a 30B at 32k context really
+  occupies 20,712 MiB, which fits 22,563 with 1.8 GB to spare and does NOT fit a declared
+  21,000. See ADR 0074, "open question 7 for the llm role".
 - **`usdPerHour` is display-only and optional.** Nothing computes with it and neither EC2 nor
   the Pricing API is asked (ADR 0045 decision 21). Leave it out and the panel names no price,
   which beats naming a wrong one.
