@@ -726,7 +726,25 @@ export const ASSISTANT_RECOMMENDED_MODEL = "recommended";
 // one would write a stored order that silently pushes it last — the one thing
 // normalizeImageProviderOrder exists to prevent. A deployment without that engine simply never
 // routes to it, the same way an unusable login is skipped.
-export const IMAGE_PROVIDERS = ["sdcpp", "comfy", "agy", "codex"] as const;
+export const IMAGE_PROVIDERS_RANKED = [
+  { id: "sdcpp", fleet: true },
+  { id: "comfy", fleet: true },
+  { id: "agy", fleet: false },
+  { id: "codex", fleet: false },
+] as const;
+
+// `fleet` above is the ONE fact that decides where a provider the stored order never named gets
+// inserted (see normalizeImageProviderOrder), and it is declared here rather than tested for by
+// id wherever it matters — an `id === "comfy"` in a condition is how the next provider gets
+// forgotten. It mirrors providerRanks in the Agent's internal/imagegen/imagegen.go; the two lists
+// have to agree, or the order the user drags is not the order "auto" walks.
+export const IMAGE_PROVIDERS: readonly string[] = IMAGE_PROVIDERS_RANKED.map((p) => p.id);
+
+// imageProviderIsFleet — whose hardware serves this route. Unknown ids are not the fleet's: an id
+// nobody declared is not something this deployment can be said to pay for.
+export function imageProviderIsFleet(id: string): boolean {
+  return IMAGE_PROVIDERS_RANKED.some((p) => p.id === id && p.fleet);
+}
 
 // The child limits a user may pick (ADR 0073 decision 6). Keep the last entry equal to the
 // Agent's session.SpawnChildLimitMax: a choice past it is silently answered with the DEFAULT,
@@ -745,14 +763,26 @@ export function imageProviderLabel(id: string): string {
 // normalizeImageProviderOrder folds any stored value into a total order over IMAGE_PROVIDERS —
 // the same rules the Agent applies in imagegen.effectiveOrder(), so the list the user drags is
 // exactly the list "auto" will walk.
+//
+// 🔴 A provider the stored value never named goes to the FRONT when the fleet serves it and to
+// the back when it does not. Appending everything was measured doing real harm (ADR 0072's
+// 2026-09-11 hardware follow-up): a stored `["sdcpp","agy","codex"]`, written before `comfy`
+// existed, pushed the fleet's own GPU behind two personal plans, so a call naming no provider
+// spent a member's quota on hardware the deployment was already paying for. What the stored value
+// DOES name keeps its relative order — including a fleet provider the user deliberately ranked
+// last.
 export function normalizeImageProviderOrder(v: unknown): string[] {
-  const out: string[] = [];
+  const chosen: string[] = [];
+  const seen = new Set<string>();
   const push = (k: unknown) => {
-    if (typeof k === "string" && (IMAGE_PROVIDERS as readonly string[]).includes(k) && !out.includes(k)) out.push(k);
+    if (typeof k === "string" && IMAGE_PROVIDERS.includes(k) && !seen.has(k)) {
+      seen.add(k);
+      chosen.push(k);
+    }
   };
   if (Array.isArray(v)) v.forEach(push);
-  IMAGE_PROVIDERS.forEach(push);
-  return out;
+  const rest = IMAGE_PROVIDERS.filter((id) => !seen.has(id));
+  return [...rest.filter(imageProviderIsFleet), ...chosen, ...rest.filter((id) => !imageProviderIsFleet(id))];
 }
 
 // normalizeAssistantOrder folds any stored value into a total order over
