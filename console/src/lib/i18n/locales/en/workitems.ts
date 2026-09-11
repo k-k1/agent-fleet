@@ -74,6 +74,7 @@ export const workitems: Record<keyof typeof jaWorkitems, string> = {
   "wi.bb_write_own": "Write the query myself",
   "wi.bb_pick_list": "Choose from the list",
   "wi.bb_list_failed": "Couldn't list Bitbucket repositories (the workspace is stopped, or Bitbucket is not connected). Write the query directly below.",
+  "wi.query_gh_hint": "GitHub search syntax, saved as written. Note that assignee: lists no pull requests — GitHub does not make a PR's author its assignee — so your own are author:@me and the ones waiting on your review are review-requested:@me; OR and parentheses combine them into one query. involves:@me is the short catch-all (author, assignee, mentioned, commented), but it does not include reviews requested of you.",
   "wi.query_bb_hint": "Bitbucket has no cross-account search, so the query starts with the target — workspace/repo (that repository's PRs) or workspace (the PRs you authored there). The rest is a Bitbucket filter expression, where @me becomes the connected account.",
   "wi.query_repo_hint_jira": "Working copy (Jira issues carry none, so set it here)",
   "wi.prompt_read_jira": "Read the body and comments through the Jira MCP server (or the URL above).",

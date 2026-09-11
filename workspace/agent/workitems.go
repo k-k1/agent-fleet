@@ -136,12 +136,21 @@ func fetchWorkItemQuery(s *secrets.Data, q workItemQueryIn) ([]workItemOut, erro
 // covers issues and pull requests in one call and is what the GitHub UI's own "assigned
 // to me" view is built on. One page only — see workItemFetchPerQuery.
 //
+// advanced_search=true is what lets a saved query use `OR` and parentheses, and the rail
+// needs them: `assignee:` alone never matches a pull request the member opened (GitHub does
+// not make a PR's author its assignee), so "my work" is `assignee:` OR `author:` OR
+// `review-requested:`, which cannot be written any other way. Without the parameter GitHub
+// answers 422 for such a query and the rail only says "could not parse the query".
+// Measured before turning it on: queries that use no operator return the identical rows
+// either way (`author:@me is:open`, `assignee:@me is:pr`), so it does not reinterpret the
+// queries members already saved.
+//
 // The token is the Connections one, whose scope is `repo` (no `read:org`), and the
 // host is fixed to github.com: GitHub Enterprise Server is out of scope for v1, exactly
 // as for the `gh` wrapper (docs/build/08 §8.3).
 func githubSearchWorkItems(token, queryID, query string) ([]workItemOut, error) {
 	u := "https://api.github.com/search/issues?per_page=" + fmt.Sprint(workItemFetchPerQuery) +
-		"&sort=updated&order=desc&q=" + url.QueryEscape(query)
+		"&sort=updated&order=desc&advanced_search=true&q=" + url.QueryEscape(query)
 	req, err := http.NewRequest("GET", u, nil)
 	if err != nil {
 		return nil, err

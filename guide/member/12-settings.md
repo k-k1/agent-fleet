@@ -223,6 +223,10 @@ issues and pull requests, Bitbucket pull requests — so that a session can be s
 - **Saved queries** are the whole of it: GitHub search syntax, Jira JQL or a Bitbucket filter
   expression, saved exactly as written. **Nothing is fetched until you save one**, and the query is
   the only filter — nothing is synced in bulk.
+- **GitHub: `assignee:` lists no pull request.** GitHub does not make a PR's author its assignee, so a
+  query of `assignee:@me` alone shows issues and nothing else. Your own PRs are `author:@me` and the
+  ones waiting on your review are `review-requested:@me`; `OR` and parentheses put them in one query,
+  as the default `is:open (assignee:@me OR author:@me OR review-requested:@me)` does.
 - **Jira** is connected here, either with **OAuth** or with **your email address and an API token**
   (the address is half of that credential). **GitHub and Bitbucket ride on the Git hosting
   connection**, so they need nothing of their own.

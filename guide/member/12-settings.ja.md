@@ -221,6 +221,10 @@ Bitbucket のプルリクエスト）の取得元です。行からそのまま�
 - **保存クエリ**がすべてです。GitHub の検索構文・Jira の JQL・Bitbucket の絞り込み式を
   そのまま保存します。**保存クエリを作るまで一度も取りに行きません。**
   ここが唯一の絞り込みで、全件は取り込みません。
+- **GitHub は `assignee:` だけではプルリクエストが出ません。** GitHub は PR の作者を
+  アサインにしないので、`assignee:@me` だけのクエリでは Issue しか並びません。自分の PR は
+  `author:@me`、レビュー待ちは `review-requested:@me` で、`OR` と括弧で 1 本にまとめられます
+  （既定の `is:open (assignee:@me OR author:@me OR review-requested:@me)` がその形です）。
 - **Jira** はここで接続します。**OAuth** か、**メールアドレス＋API トークン**
   （メールアドレスも資格情報の片割れです）。**GitHub と Bitbucket は「Gitホスティング」の
   連携に相乗り**するので、ここでの接続は要りません。
