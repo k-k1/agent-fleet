@@ -206,6 +206,26 @@ type EngineClass = {
   usd_per_hour?: number;
 };
 
+/** One rung with its purchase form attached — the ladder as ADR 0075 decision 1 redraws it. The
+ *  shape is EngineClass plus `buy`, so a control plane that sends no offers at all leaves every
+ *  reader of `classes` untouched: the offers contract is additive on purpose.
+ *
+ *  🔴 `usd_per_hour` is the DEAREST type this offer can buy, not what it will cost: the machine
+ *  image has no allocation strategy and buys the cheapest type that fits, so a row widened to
+ *  three types has a price RANGE and only one number to say it with (decision 1). */
+type EngineOffer = EngineClass & { buy?: string };
+
+/** The offer the service's capacity-provider strategy points at right now (decision 11). Read by
+ *  the CP out of DescribeServices rather than remembered from its own choice — a remembered one
+ *  starts lying the moment CloudFormation rewrites the service. */
+type EngineOfferRef = { id: string; buy?: string };
+
+/** One attempt in this demand's walk down the list, and how it ended. `result` is one of
+ *  active / unfulfillable / insufficient / quota / budget; an unknown value is printed verbatim
+ *  rather than dropped, because the codes are read out of ECS service-event STRINGS and a new
+ *  one arriving is exactly what nobody would otherwise see (decision 5). */
+type EngineOfferTry = EngineOfferRef & { result?: string };
+
 type EngineRow = {
   key: string;
   api?: string;
@@ -251,8 +271,19 @@ type EngineRow = {
   class?: EngineClass;
   class_default?: string;
   /** 🔴 Stated by the CP, not computed here: "you are not on the default" is the sentence that
-   *  keeps a temporary experiment from becoming a permanent hourly bill (decision 7). */
+   *  keeps a temporary experiment from becoming a permanent hourly bill (ADR 0074 decision 7).
+   *
+   *  ⚠️ ONE meaning moved under ADR 0075 decision 8 and the field did not: where `offers` arrive,
+   *  false means PINNED — the stored choice is an offer id, so this role does not fall through to
+   *  the next offer. Absent `offers` it still means "not the deployment's default rung". */
   class_is_default?: boolean;
+  /** The ladder as offers (ADR 0075). Absent from a control plane too old to send it, and the
+   *  whole offers half of this panel is drawn off its presence — an old CP must get the ADR 0074
+   *  screen back, pixel for pixel. */
+  offers?: EngineOffer[];
+  offer?: EngineOfferRef;
+  /** What this demand tried, in the order it tried them. Omitted while nothing has been tried. */
+  offer_trail?: EngineOfferTry[];
   /** A box of another rung is still up, so the saved choice has reached nothing yet. */
   class_replace_pending?: boolean;
   /** 🔴 Why the capacity provider does not hold the rung above. The CP saves the choice BEFORE
@@ -643,9 +674,20 @@ function EngineClassPicker({
   onReplace: () => void;
 }) {
   const tr = useT();
-  const classes = row.classes || [];
+  // ADR 0075 decision 1: where a deployment declares offers, THEY are the ladder — the same rungs
+  // with the purchase form attached — and `classes` is what a control plane too old to send them
+  // serves instead. `buy` is normalised here and only here, so everything below can say the form
+  // of every offer and nothing below can say one of a rung that never had one.
+  const offers = (row.offers || []).map((o) => ({ ...o, buy: o.buy || "od" }));
+  const auto = offers.length > 0;
+  const classes: EngineOffer[] = auto ? offers : row.classes || [];
   if (classes.length === 0) return null;
-  const current = row.class?.id || row.class_default || "";
+  // 🔴 What the administrator STORED, which is not what is running. Under offers an empty value
+  // is automatic (decision 8) and `row.class` then names the CP's own pick — so the picker may
+  // only sit on a rung when the CP says the choice is pinned, or "automatic" would flip to a
+  // pin the moment the first box was bought.
+  const pinned = auto && row.class_is_default === false;
+  const current = auto ? (pinned && row.class?.id) || "" : row.class?.id || row.class_default || "";
   // The box that is answering right now, when it is not one this rung covers. It is read from
   // the container instance rather than from the capacity provider, because the provider
   // describes the NEXT box.
@@ -653,8 +695,20 @@ function EngineClassPicker({
     row.box?.instance_type && row.class && !row.class.types.includes(row.box.instance_type)
       ? row.box.instance_type
       : "";
+  const trail = row.offer_trail || [];
   return (
     <div className="engines-class">
+      {/* Which offer is answering, in the panel's first line about this box. Decision 11 takes it
+          from the service's strategy and not from what the CP chose: a remembered choice starts
+          lying the moment CloudFormation rewrites the service, which is the shape of the ADR 0074
+          rename that reported "starting on l4" beside a null box. */}
+      {row.offer && (
+        <p className="engines-offer-now">
+          <span className="muted">{tr("admin.engines_offer_now")}</span>
+          <span className="engines-offer-label">{engineOfferName(row.offer.id, offers)}</span>
+          <span className="engines-model-tag">{engineBuyLabel(row.offer.buy, tr)}</span>
+        </p>
+      )}
       <div className="engines-class-head">
         <span className="muted">{tr("admin.engines_class")}</span>
         <select
@@ -663,6 +717,10 @@ function EngineClassPicker({
           disabled={busy}
           onChange={(ev) => onPick(ev.currentTarget.value)}
         >
+          {/* Not selecting is a choice with a name (decision 8). Without this entry the only way
+              back from a pin would be to pick the offer that happens to be the default — which
+              is a different thing: it would still refuse to fall through to the next one. */}
+          {auto && <option value="">{tr("admin.engines_class_auto")}</option>}
           {classes.map((c) => (
             <option key={c.id} value={c.id}>
               {engineClassLabel(c, tr)}
@@ -671,18 +729,67 @@ function EngineClassPicker({
         </select>
         {row.class_is_default === false && (
           <>
-            <span className="engines-model-tag">{tr("admin.engines_class_not_default")}</span>
+            <span className="engines-model-tag">
+              {tr(auto ? "admin.engines_class_pinned" : "admin.engines_class_not_default")}
+            </span>
+            {/* One click back, as ADR 0074 decision 7 required — to AUTOMATIC under offers, which
+                is the empty stored value, and to the default rung without them. */}
             <button
               type="button"
               className="sm"
               disabled={busy}
-              onClick={() => onPick(row.class_default || "")}
+              onClick={() => onPick(auto ? "" : row.class_default || "")}
             >
-              {tr("admin.engines_class_reset")}
+              {tr(auto ? "admin.engines_class_unpin" : "admin.engines_class_reset")}
             </button>
           </>
         )}
       </div>
+      {/* The list itself, because a collapsed select shows one row and the question this answers
+          is a comparison. 🔴 Drawn in DECLARATION order and never sorted by price: the order is
+          the try order and it is the operator's, and re-ordering it here would let one number
+          they wrote silently overrule the sequence they wrote (decision 1). */}
+      {auto && (
+        <>
+          <p className="muted">{tr("admin.engines_offers_head")}</p>
+          <ul className="engines-offers">
+            {offers.map((o, i) => (
+              <li key={o.id} className={row.offer?.id === o.id ? "engines-offer on" : "engines-offer"}>
+                <span className="mono engines-offer-order">{i + 1}</span>
+                <span className="engines-offer-label">{o.label}</span>
+                <span className="engines-model-tag">{engineBuyLabel(o.buy, tr)}</span>
+                <span className="muted">
+                  {(tr("admin.engines_model_vram" as never) as string).replace("{n}", String(o.vram_mib))}
+                </span>
+                {/* Declared or nothing. An invented 0 reads as free (ADR 0074), and the number
+                    that IS there is the dearest type this row can buy — see EngineOffer. */}
+                {o.usd_per_hour ? <span className="muted mono">{"$" + o.usd_per_hour + "/h"}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      {/* How far down the list this demand walked, and why each one was left. Only from two
+          entries: one entry is "it was bought on the first offer", which the line above already
+          says, and a trail of one reads as a failure that did not happen. */}
+      {trail.length > 1 && (
+        <p className="muted engines-offer-trail">
+          <span>{tr("admin.engines_offer_trail")}</span>
+          {trail.map((t, i) => (
+            <span key={i} className="engines-offer-try">
+              {/* Numbered, because the attempts are a row of chips and rendered headless the
+                  four of them read as one long line (measured). The number is also the fact:
+                  the same offer can appear twice, so "which try is this" is not derivable. */}
+              <span className="mono engines-offer-order">{i + 1}</span>
+              <span>{engineOfferName(t.id, offers)}</span>
+              <span className="engines-model-tag">{engineBuyLabel(t.buy, tr)}</span>
+              {t.result && (
+                <span className="engines-model-tag">{engineOfferResultText(t.result, tr)}</span>
+              )}
+            </span>
+          ))}
+        </p>
+      )}
       {/* Saved, not applied. The provider's own words are quoted rather than summarised: a
           missing IAM grant and a throttle need different things from the person reading them.
           The retry re-sends the rung already selected, which is the one request the select can
@@ -715,12 +822,47 @@ function EngineClassPicker({
   );
 }
 
-/** One rung as an option: the operator's label, its VRAM, and the price only when they declared
- *  one. A missing price prints nothing — an invented 0 would read as free. */
-function engineClassLabel(c: EngineClass, tr: (k: never) => string): string {
+/** One rung as an option: the operator's label, its VRAM, the purchase form where there is one,
+ *  and the price only when they declared one. A missing price prints nothing — an invented 0
+ *  would read as free. `buy` is absent for a rung of the ADR 0074 ladder and set for every offer
+ *  (the picker normalises it), so this prints nothing extra for an old control plane. */
+function engineClassLabel(c: EngineOffer, tr: (k: never) => string): string {
   const bits = [c.label, (tr("admin.engines_model_vram" as never) as string).replace("{n}", String(c.vram_mib))];
+  if (c.buy) bits.push(engineBuyLabel(c.buy, tr));
   if (c.usd_per_hour) bits.push("$" + c.usd_per_hour + "/h");
   return bits.join(" · ");
+}
+
+/** On-demand or Spot, in the reader's language. 🔴 An unrecognised value is printed AS IT CAME:
+ *  "od" is the omittable default of the declaration (ADR 0075 decision 1) so an empty one really
+ *  is on-demand, but calling some third word on-demand would be the panel inventing the one fact
+ *  this column exists to carry. */
+function engineBuyLabel(buy: string | undefined, tr: (k: never) => string): string {
+  if (buy && buy !== "od" && buy !== "spot") return buy;
+  return tr(("admin.engines_offer_buy_" + (buy === "spot" ? "spot" : "od")) as never) as string;
+}
+
+/** The label the operator gave this offer, or the id when the answer names one the declaration no
+ *  longer holds — which happens while a demand started under the previous ladder is still being
+ *  walked. The id is what the CP said; a blank would hide that the two disagree. */
+function engineOfferName(id: string, offers: EngineOffer[]): string {
+  return offers.find((o) => o.id === id)?.label || id;
+}
+
+/** How one attempt ended, as a message key — or "" for a code this Console does not know.
+ *
+ * 🔴 The codes come from matching ECS service-event STRINGS (ADR 0075 decision 5 names the three
+ * measured ones), so AWS rewording a message adds a value here rather than removing one. Unknown
+ * is shown verbatim by the caller instead of being dropped: the raw word is the only clue the
+ * next person gets that the table stopped matching. */
+export function engineOfferResultKey(result: string | undefined): string {
+  const known = ["active", "unfulfillable", "insufficient", "quota", "budget"];
+  return result && known.includes(result) ? "admin.engines_offer_result_" + result : "";
+}
+
+function engineOfferResultText(result: string, tr: (k: never) => string): string {
+  const key = engineOfferResultKey(result);
+  return key ? (tr(key as never) as string) : result;
 }
 
 /** What the enabled models want against what the card has. Three sentences, because the three

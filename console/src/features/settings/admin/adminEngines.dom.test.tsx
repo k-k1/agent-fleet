@@ -25,7 +25,12 @@ vi.mock("../../../core/api/client.ts", async (importActual) => ({
   apiJSON: (...args: unknown[]) => apiJSON(...args),
 }));
 
-import { EnginesAdminView, engineIdFromFile, engineJobAdvice } from "./adminEngines.tsx";
+import {
+  EnginesAdminView,
+  engineIdFromFile,
+  engineJobAdvice,
+  engineOfferResultKey,
+} from "./adminEngines.tsx";
 
 let root: Root | null = null;
 let host: HTMLDivElement | null = null;
@@ -112,6 +117,24 @@ describe("engineJobAdvice", () => {
     // A job the CP could not classify says nothing extra — the task's own words are still there.
     expect(engineJobAdvice(undefined)).toBe("");
     expect(engineJobAdvice("something_else")).toBe("");
+  });
+});
+
+// The five results an attempt can end in (ADR 0075 decision 5), and the one thing the table must
+// not do: swallow a code it does not know. The CP derives these from ECS service-event STRINGS, so
+// AWS rewording a message ADDS a value here — and the raw word is then the only clue the next
+// person has that the matching stopped working.
+describe("engineOfferResultKey", () => {
+  it("names each measured result and leaves an unknown one to be printed verbatim", () => {
+    expect(engineOfferResultKey("active")).toBe("admin.engines_offer_result_active");
+    expect(engineOfferResultKey("unfulfillable")).toBe("admin.engines_offer_result_unfulfillable");
+    expect(engineOfferResultKey("insufficient")).toBe("admin.engines_offer_result_insufficient");
+    expect(engineOfferResultKey("quota")).toBe("admin.engines_offer_result_quota");
+    expect(engineOfferResultKey("budget")).toBe("admin.engines_offer_result_budget");
+    // The two that are waited on differently must not collapse into one wording (decision 5).
+    expect(engineOfferResultKey("unfulfillable")).not.toBe(engineOfferResultKey("insufficient"));
+    expect(engineOfferResultKey("something_new")).toBe("");
+    expect(engineOfferResultKey(undefined)).toBe("");
   });
 });
 
@@ -268,6 +291,188 @@ describe("EnginesAdminView", () => {
     api.mockResolvedValue({ super_admin: true, engines: [withClasses()] });
     await mount();
     expect(host!.textContent).not.toContain("もう一度適用する");
+  });
+
+  // --- the purchase offers (ADR 0075) ---------------------------------------------------
+  //
+  // Contract B of the ADR's "実装の分け方（P0）": `offers`, `offer` and `offer_trail` ride on the
+  // same row, `class` / `classes` / `class_default` / `class_is_default` are untouched, and one
+  // meaning moves — `class_is_default: false` means PINNED where offers arrive (decision 8).
+  //
+  // 🔴 Every assertion below is paired with the no-offers case, because this contract lands
+  // before the control plane that serves it: the ADR 0074 screen has to come back pixel for
+  // pixel from a CP that sends none of the three fields.
+
+  // Declared DEAREST FIRST on purpose. The operator's convention is cheap-first, but the order is
+  // theirs and the try order is the declared one — a panel that sorted by price would put the
+  // $0.67 Spot row at the top and quietly overrule the sequence they wrote (decision 1).
+  const OFFERS = [
+    { id: "l4", label: "L4 24GB", vram_mib: 21000, types: ["g6.xlarge"], usd_per_hour: 1.26, buy: "od" },
+    { id: "l4-spot", label: "L4 24GB", vram_mib: 21000, types: ["g6.xlarge"], usd_per_hour: 0.67, buy: "spot" },
+    { id: "l40s", label: "L40S 48GB", vram_mib: 44000, types: ["g6e.xlarge"], buy: "od" },
+  ];
+  const withOffers = (over: Record<string, unknown> = {}) => withClasses({ offers: OFFERS, ...over });
+  const offerRows = () => Array.from(host!.querySelectorAll(".engines-offers li"));
+
+  it("draws the ADR 0074 ladder unchanged when the Control Plane sends no offers", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withClasses({ class_is_default: false })] });
+    await mount();
+    // No offers list, no current-offer line, no automatic entry — and the badge keeps the ADR
+    // 0074 wording, because without offers there is nothing to be pinned against.
+    expect(host!.querySelector(".engines-offers")).toBeNull();
+    expect(host!.querySelector(".engines-offer-now")).toBeNull();
+    const opts = Array.from(host!.querySelectorAll(".engines-class option")).map((o) => o.textContent);
+    expect(opts).toHaveLength(2);
+    expect(opts.join("|")).not.toContain("自動");
+    expect(host!.textContent).toContain("既定と違います");
+    expect(host!.textContent).not.toContain("固定されています");
+    // The purchase form is not invented for a rung that never carried one.
+    expect(opts.join("|")).not.toContain("オンデマンド");
+
+    // The positive control: the same row with the three fields draws all of it.
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ offer: { id: "l4-spot", buy: "spot" } })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-offers")).not.toBeNull();
+    expect(host!.querySelector(".engines-offer-now")).not.toBeNull();
+    expect(host!.textContent).toContain("自動（既定）");
+  });
+
+  it("lists the offers in the order they were declared, with the purchase form and declared price", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers()] });
+    await mount();
+    const rows = offerRows().map((li) => li.textContent || "");
+    expect(rows).toHaveLength(3);
+    // 🔴 Declaration order, not price order: the $1.26 on-demand row was declared first and stays
+    // first above the $0.67 Spot row.
+    expect(rows[0]).toContain("オンデマンド");
+    expect(rows[0]).toContain("$1.26/h");
+    expect(rows[1]).toContain("Spot");
+    expect(rows[1]).toContain("$0.67/h");
+    // The offer whose price the operator left out prints none, rather than $0 — the same rule the
+    // rungs have (ADR 0074), and here it matters more: a Spot row's billed price starts out as
+    // "not measured yet" by definition.
+    expect(rows[2]).toContain("L40S 48GB");
+    expect(rows[2]).not.toContain("$");
+    expect(rows[2]).toContain("44000");
+  });
+
+  it("says which offer is answering, and only when the Control Plane said so", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers()] });
+    await mount();
+    // Decision 11 reads it from the service's strategy; a CP that has not looked yet omits the
+    // field, and a panel that guessed "the first one" would be wrong exactly when rule 2 fell
+    // through — the case this line exists for.
+    expect(host!.querySelector(".engines-offer-now")).toBeNull();
+
+    await act(async () => root!.unmount());
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ offer: { id: "l4-spot", buy: "spot" } })],
+    });
+    await mount();
+    const now = host!.querySelector(".engines-offer-now")!.textContent || "";
+    expect(now).toContain("いまの提案");
+    expect(now).toContain("L4 24GB");
+    expect(now).toContain("Spot");
+    // Marked on the row it is, rather than by moving it to the top: that it is the SECOND offer
+    // is the fact worth seeing.
+    expect(offerRows()[1].className).toContain("on");
+    expect(offerRows()[0].className).not.toContain("on");
+  });
+
+  it("shows how far down the list this demand walked, and why each offer was left", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [
+        withOffers({
+          offer: { id: "l4", buy: "od" },
+          offer_trail: [
+            { id: "l4-spot", buy: "spot", result: "unfulfillable" },
+            { id: "l40s", buy: "od", result: "insufficient" },
+            { id: "l4", buy: "od", result: "active" },
+            // A code this Console does not know is printed as it came: the CP reads these out of
+            // ECS event strings, so a new one is exactly what nobody would otherwise see.
+            { id: "l4", buy: "od", result: "something_new" },
+          ],
+        }),
+      ],
+    });
+    await mount();
+    const trail = host!.querySelector(".engines-offer-trail")!.textContent || "";
+    expect(trail).toContain("試した順");
+    expect(trail).toContain("要求の設定で買えず");
+    expect(trail).toContain("在庫なし");
+    expect(trail).toContain("取れた");
+    expect(trail).toContain("something_new");
+    expect(host!.querySelectorAll(".engines-offer-try")).toHaveLength(4);
+  });
+
+  it("says nothing about a trail that has one entry or none", async () => {
+    // One entry is "it was bought on the first offer", which the line above already says — and a
+    // trail of one reads as a fallback that did not happen.
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ offer_trail: [{ id: "l4", buy: "od", result: "active" }] })],
+    });
+    await mount();
+    expect(host!.querySelector(".engines-offer-trail")).toBeNull();
+  });
+
+  // 🔴 Decision 8: not choosing IS the choice, and it has to be reachable. Without an entry of its
+  // own the only way back from a pin would be to select the offer that happens to be the default,
+  // which is a different thing entirely — it would still refuse to fall through to the next one.
+  it("offers automatic as the first choice and unpins by storing an empty class", async () => {
+    api.mockResolvedValue({ super_admin: true, engines: [withOffers({ class_is_default: true })] });
+    await mount();
+    const sel = () => host!.querySelector(".engines-class select") as HTMLSelectElement;
+    const opts = Array.from(host!.querySelectorAll(".engines-class option"));
+    expect(opts[0].textContent).toBe("自動（既定）");
+    expect((opts[0] as HTMLOptionElement).value).toBe("");
+    expect(opts).toHaveLength(4);
+    // Automatic is what the picker sits on while nothing is pinned — `class` then names the CP's
+    // own pick, and showing that as the administrator's choice would turn a start into a pin.
+    expect(sel().value).toBe("");
+    expect(host!.textContent).not.toContain("固定されています");
+
+    // Pinning one sends its id.
+    apiJSON.mockResolvedValue(withOffers({ class_is_default: false, class: OFFERS[2] }));
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value")!.set!;
+      setter.call(sel(), "l40s");
+      sel().dispatchEvent(new Event("change", { bubbles: true }));
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "l40s" });
+  });
+
+  it("states a pin permanently and takes it off in one click", async () => {
+    api.mockResolvedValue({
+      super_admin: true,
+      engines: [withOffers({ class_is_default: false, class: OFFERS[2] })],
+    });
+    await mount();
+    // The ADR 0074 decision 7 badge, re-worded: what a pinned role gives up is the fall-through,
+    // not the default rung.
+    expect(host!.textContent).toContain("自動ではなく固定されています");
+    expect(host!.textContent).not.toContain("既定と違います");
+    expect((host!.querySelector(".engines-class select") as HTMLSelectElement).value).toBe("l40s");
+
+    apiJSON.mockResolvedValue(withOffers({ class_is_default: true }));
+    await click(
+      Array.from(host!.querySelectorAll(".engines-class button")).find(
+        (b) => b.textContent === "自動に戻す",
+      ) as HTMLElement,
+    );
+    // Empty, not the default offer's id: the CP reads "" as automatic (decision 8), and sending
+    // the default's id would leave the role pinned to it.
+    expect(apiJSON).toHaveBeenCalledWith("api/admin/engines/image/class", "PUT", { class: "" });
   });
 
   it("asks before enabling a model that does not fit the chosen card, and never guesses", async () => {
