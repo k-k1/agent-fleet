@@ -1185,3 +1185,26 @@ ImageTag=0.18.1-dev-b6feea43). At its 60-engines step, ADR 0072 phase P6's migra
 `update.sh` reading the LIVE stack to translate `<Role>Enabled=true` — **printed nothing at
 all**: this deployment already holds `Enabled=true` and no `<Role>ModelS3Key`, so there is
 nothing to translate. A silent gate is what a deployment that is already past P6 looks like.
+
+## Follow-up — the ladder reload works (2026-09-11, on hardware, $0)
+
+The gap the previous section (#520) recorded — "a ladder in CloudFormation does not reach a
+running Control Plane" — is closed by `engine_table_reload.go`. **Confirmed on hardware.**
+
+A CloudFormation update that changed nothing but the second rung's LABEL in
+`LlmInstanceClasses`, watched through `GET /api/admin/engines` **without replacing the CP**:
+
+| Time | Event |
+|---|---|
+| 02:50:51 | `cloudformation deploy --parameter-overrides LlmInstanceClasses=…` starts |
+| 02:51:39 | `Successfully created/updated stack` |
+| 02:51:46 | the API's `classes` answers with the new label |
+
+**Seven seconds after the stack finished.** The CP service was still the deployment created at
+02:19:57Z, with no `force-new-deployment` in between — the ~100 seconds of blue/green the
+previous section needed is gone. The label was put back afterwards, by the same route and again
+with no restart.
+
+That only the LADDER is taken live (the ECS client, the controller's goroutine and the demand
+window stay put, and a change to any of them is logged as needing a restart) is as implemented;
+none of those were touched here.

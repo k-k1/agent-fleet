@@ -1048,6 +1048,27 @@ traps are written down.
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
 `EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
 
+🔴 **Only `standup.sh` puts the image where the stack can reach it. `update.sh` and
+`dev-deploy.sh` do not, and neither deploys 20-platform.** So on any deployment that is
+UPDATED rather than stood up, three things have to happen by hand, in this order, before the
+60-engines update that references a new tag — measured 2026-09-11, when the dev deployment had
+neither the GHCR image nor the ECR repository (ADR 0072, "#518 and #512, confirmed on
+hardware"):
+
+1. `gh workflow run engine-tools-image.yml -f tag=<tag>` — bakes to GHCR. Touches no
+   deployment.
+2. `cloudformation deploy` 20-platform, which owns the `af-engine-tools` ECR repository.
+   (`update.sh` only deploys 50-tts, 60-engines and 30-ingress, so a repository added to
+   20-platform never appears on an updated deployment.) Take a change set first: on the run
+   that was measured it was two changes, `Add EcrEngineTools` and `Modify CpTaskRole`, with no
+   replacement.
+3. `crane copy ghcr.io/<owner>/agent-fleet/engine-tools:<tag> <account>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:<tag>`
+
+Skip them and the update still "succeeds": CloudFormation writes task definitions pointing at
+an image that is not there, and both roles' fetch containers and both ingest containers fail
+with `CannotPullContainerError`. It is the same trap the sd-server `crane copy` carries in
+`standup.sh`, on a path that has no `standup.sh` to carry it.
+
 ## Editing this template
 
 It is at the 51,200-byte wall, and a YAML comment costs exactly what a `Description:` does — so

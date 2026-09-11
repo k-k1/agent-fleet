@@ -3116,3 +3116,139 @@ seed を固定した 2 回目の要求が ComfyUI の出力キャッシュに当
 4. Console から取り込みを 1 本流し、ingest の `fetch` と `upload` が通ること。`MODE=delete` も。
 5. 🔴 契約の門が**誤って発火していない**こと——どのコンテナのログにも `CONTRACT MISMATCH` が
    無いこと。出ていたらタグとテンプレートがずれている。
+
+## #518・#512 を実機で確認した（2026-09-11・開発配備）
+
+埋め込みシェルの外出し（#518）と、同期中の待たせ方＋常駐サイドカー（#512）を、開発配備に
+載せて押した。**#512 は 2 件とも通った。#518 は 5 件中 4 件が通り、残る 1 件（llm 側の idle
+wrapper）は AWS 側の容量枯渇で採れなかった。** そして配備そのもので**欠落を 1 件踏んだ**。
+
+### 🔴 欠落——`dev-deploy.sh` は engine-tools を焼きも複製もしない
+
+`#518` の README は「`standup.sh` がイメージをスタックより 1 段先に入れる」と書いている。
+**そのとおりで、そこにしか無い。** コードで確かめた:
+
+- `standup.sh` は `af-engine-tools` の `crane copy` を持つ（`EngineToolsImageTag` を捕捉から
+  読み、ECR に無ければ GHCR から複製する）。
+- **`dev-deploy.sh` と `update.sh` は持たない。** 両者が `crane copy` するのは control-plane と
+  workspace だけである。
+- ECR のリポジトリ `af-engine-tools` を作るのは **20-platform** だが、**`update.sh` は
+  20-platform を配備しない**（50-tts・60-engines・30-ingress の 3 つだけ）。
+
+実機はまさにその状態だった——`describe-repositories` が `RepositoryNotFoundException`、GHCR にも
+`engine-tools` が無い（`engine-tools-image.yml` は一度も走っていない）。**このまま
+`dev-deploy.sh` を流せば、60-engines のタスク定義が存在しないイメージを指し、両役の fetch と
+ingest の 2 コンテナが `CannotPullContainerError` になる。** P6 の「sd-server の `crane copy` を
+読み落とすと役は作られるのに ECR が空」と同じ形が、今度は engine-tools で再現する。
+
+手で挟んだのは 3 手で、順序がそのまま依存関係である:
+
+1. `gh workflow run engine-tools-image.yml -f tag=2026-09-11` → GHCR に焼く（**配備に触らない**）。
+2. 20-platform を更新して ECR のリポジトリを作る。change set で影響を先に見た——
+   **`Add EcrEngineTools` と `Modify CpTaskRole` の 2 件だけ、置換なし**。
+3. `crane copy ghcr.io/…/engine-tools:2026-09-11 → <ECR>/af-engine-tools:2026-09-11`。
+
+そのあとの `dev-deploy.sh` で 60-engines は `Successfully created/updated stack` まで通った
+——タスク定義がイメージを引けたことの、いちばん直接の証拠である。**リリース経路
+（`update.sh`）にこの 3 手が無いことは、次にタグを上げるときに同じ穴になる。**
+
+### #518 の確認項目
+
+| # | 項目 | 結果 |
+|---|---|---|
+| 1 | `af-engine-tools` を 4 コンテナが引く | **4 つとも参照を確認、3 つは実際に引けた** |
+| 2 | fetch の `sync done` と `WATCH_SEC` の監視行 | **通った** |
+| 3 | idle wrapper が `/models/ready` で起動（llm・image） | **image は通った。llm は未確認**（下記） |
+| 4 | Console から取り込み 1 本と `MODE=delete` | **通った** |
+| 5 | どのログにも `CONTRACT MISMATCH` が無い | **1 つも無い** |
+
+1 は 3 つのタスク定義で参照を確かめた（llm の `fetch`、image の `fetch`、ingest の `fetch` と
+`upload`）。実際に走ったのは image の fetch と ingest の 2 つで、**llm の fetch だけは箱が
+取れず未実行**である。
+
+2 の実物:
+
+```
+engine fetch: active set for /af-ws/engines/image/active starts with 'sdxl-base-1.0'
+engine fetch: image/checkpoints/sd_xl_base_1.0.safetensors 6938078334 bytes in 58s
+engine fetch: cmdline = -m /models/image/checkpoints/sd_xl_base_1.0.safetensors
+engine fetch: engine may start; 14 file(s) still to sync
+…
+engine fetch: sync done
+engine fetch: watching /af-ws/engines/image/active every 60s for models enabled later
+```
+
+`ENTRYPOINT []` ＋ `Command: [/opt/af/fetch-models.sh]` が実際に起動している。
+
+4 は公開の 4.9 MB を 1 本取り込み、消した。ログはそのまま:
+
+```
+ingest: fetched 4895600 bytes in 2s
+ingest: sha256 ok 9f37c0b28f72ec4ca835dc7dbf05255bdf323cde8cf12a304674f106466c98ef
+ingest: uploaded image/vae/r4-taesdxl-encoder.safetensors in 1s
+ingest: delete mode, nothing to fetch
+ingest: deleted image/vae/r4-taesdxl-encoder.safetensors
+```
+
+`MODE=delete` の側は `fetch` が「何も取らない」と言って終わり、`upload` が消す——2 コンテナの
+分担がそのまま出ている。バケットからも消えた（`list-objects-v2` が空）。
+
+### #512 の窓は**作れる**。ただし作り方が要る
+
+「同期の途中にエンジンが上がる」窓は、別レーンが 2 回のコールドスタートで**再現できなかった**
+（箱の取得が残りの同期より長い）。**有効なモデルを増やして `keys.rest` を伸ばすと開く。**
+5 モデル（約 30 GB）を有効にした状態の実測:
+
+| 時刻 | 出来事 | `pending` のキー数 |
+|---|---|---|
+| 02:33:22 | `mode: on` | – |
+| 02:41:15 | サイドカーが pending を公開 | **15** |
+| 02:44:12 | **`state: running`** | **7** |
+| 02:44:39 | `warm: true` | 7 |
+| 02:46:51 | `sync done` | **0** |
+
+**窓は 2 分 39 秒**（02:44:12〜02:46:51）——エンジンが健診を通し、なお 7 ファイルが無い時間で
+ある。`pending` の中身は S3 キーの配列で、`flux1-dev-fp8`（11.9 GB）と `z_image_turbo`
+（12.3 GB）が最後まで残る。**窓の長さは「start 以外のモデルの合計バイト数 − 箱の取得時間」で
+決まる**ので、1 モデルだけ有効な配備では開かない。
+
+⚠️ **ゲートウェイが `engine_waking` と `Retry-After` を返すところは確認していない。** それには
+開発配備側のセッションから要求を出す必要があり（ゲートウェイは Workspace 発行トークンしか
+受け付けない）、今回はそこまで手が回らなかった。**窓が開くこととその長さ**までが確かめた範囲で
+ある。
+
+### #512 の常駐サイドカーは効いている
+
+箱が走っている最中に `juggernaut-xl-v9`（7.1 GB）を有効化した。**再起動は無い。**
+
+```
+02:47:26  有効化
+02:47:45  監視パス（19 秒後）
+02:47:54  pending = ["image/checkpoints/juggernaut_xl_v9.safetensors"]
+02:48:12  engine fetch: image/checkpoints/juggernaut_xl_v9.safetensors 7105348188 bytes in 27s
+02:48:13  engine fetch: this instance is in step with the active set
+```
+
+`WATCH_SEC` は 60 秒なので、**19 秒**は 1 周期の中にある。ADR 0072 未解決 3（走行中の追加同期）
+は、これで実機の裏づけを得た。
+
+### 🔴 採れなかったもの——AWS の容量枯渇
+
+llm の箱は**取れなかった**。サービスのイベントをそのまま写す:
+
+```
+(service af-af-ecs-engines-llm) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-af-ecs-engines-llm.
+InsufficientInstanceCapacity: We currently do not have sufficient g6.xlarge capacity in the
+Availability Zone you requested (ap-northeast-1a). Our system will be working on provisioning
+additional capacity. You can currently get g6.xlarge capacity by not specifying an Availability
+Zone in your request or choosing ap-northeast-1c.
+```
+
+**両 AZ が交互に枯れた**（03:04 は 1c が無いと言い、03:09 は 1a が無いと言う）。16 分粘って
+取れず、打ち切った。これで未確認のまま残ったのは **#518 の 3（llm の idle wrapper）** と
+**#513 の preset 固定 LoRA**（`status.args` に `--lora-scaled` が出ること）の 2 つである。
+
+⚠️ これは欠陥ではなく外部条件だが、**ADR 0074 の梯子の 2 段目がこの場面の逃げ道になりうる**
+——`l4` が枯れているときに `l40s`（g6e.xlarge）へ落として起こす、という使い方である。今回は
+段を上げていない（GPU 費用。0074 P1 で済んでいる）。
