@@ -835,6 +835,15 @@ func (g engineGateway) ensureReady(ctx context.Context, eng *engineRuntimeState)
 // service through the adapter's short cache first, so a hundred requests arriving during a
 // cold start make one UpdateService call between them rather than a hundred.
 func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
+	// Nothing here owns this engine (ADR 0076 decision 4), so there is nothing to wait for: a
+	// LAN ComfyUI that is not answering does not come up because the fleet held the request.
+	// `engine_waking` would be worse than useless — the provider retries it for sixteen minutes
+	// (ADR 0071 decision 5), a budget meant for buying a box and pulling weights from S3 — so
+	// this fails at once and names the URL and the path the operator has to go and look at.
+	if e.ecs == nil {
+		return fmt.Errorf("%s is not answering; this engine is externally managed and nothing here can start it",
+			engineHealthURL(e.def))
+	}
 	view, err := e.ecs.view(ctx)
 	if err != nil {
 		return fmt.Errorf("could not read the engine service: %w", err)
@@ -861,23 +870,42 @@ func (e *engineRuntimeState) ensureStarted(ctx context.Context) error {
 	// 0075 decision 4 (a)). Moving the count alone here would start the box on whatever provider
 	// the service was last pointed at.
 	if err := e.startEngine(ctx); err != nil {
+		if errors.Is(err, errEngineStrategySettling) {
+			// Half done and not an error: the strategy is written, the desired count follows on
+			// the controller's next tick. The caller is a wait loop, so "not yet" is an answer it
+			// already knows how to hold — the same shape as the start gate's refusal above.
+			log.Printf("%s: a request is waiting; the capacity provider strategy was written first", e.ecs.logKey())
+			return nil
+		}
 		return fmt.Errorf("could not start the engine: %w", err)
 	}
 	log.Printf("%s: started on demand", e.ecs.logKey())
 	return nil
 }
 
+// engineHealthPath is where this engine says whether it is up. "/health" is the default every
+// table written before the image role relied on; the comfy role declares /system_stats.
+func engineHealthPath(d engineDef) string {
+	if p := strings.TrimSpace(d.Health); p != "" {
+		return p
+	}
+	return "/health"
+}
+
+// engineHealthURL is that path against the engine's own base. Built in one place because the
+// refusal an externally managed engine answers with names it (ADR 0076 decision 4), and a
+// message pointing at a URL nothing actually dialled would send the operator to the wrong box.
+func engineHealthURL(d engineDef) string {
+	return strings.TrimRight(d.URL, "/") + engineHealthPath(d)
+}
+
 // engineHealthy asks the engine's health endpoint. A short timeout on purpose: while the
 // service is at desired 0 the Cloud Map name does not resolve at all, and that lookup
 // failing fast is the normal case, not an error worth logging.
 func engineHealthy(ctx context.Context, eng *engineRuntimeState) bool {
-	path := eng.def.Health
-	if path == "" {
-		path = "/health"
-	}
 	c, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(c, http.MethodGet, strings.TrimRight(eng.def.URL, "/")+path, nil)
+	req, err := http.NewRequestWithContext(c, http.MethodGet, engineHealthURL(eng.def), nil)
 	if err != nil {
 		return false
 	}

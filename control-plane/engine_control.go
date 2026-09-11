@@ -20,6 +20,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strconv"
 	"strings"
@@ -65,10 +66,19 @@ func ttsEngineSettings() engineSettings {
 // belongs to whoever runs it, and all "on" means there is that routing is not switched off.
 // Anything unrecognised is treated as on rather than off — a typo must not silence a
 // feature.
+//
+// `ondemand` on an UNMANAGED engine is read as `on` for the same reason (ADR 0076 decision 5):
+// on-demand is a promise to stop the box when nobody wants it, and there is no box here to
+// stop. The value is reachable on such a row from a stack default, from a setting stored while
+// the role was still managed, and from any client written before the distinction existed.
 func engineMode(v string, managed bool) string {
 	switch v {
-	case engineModeOff, engineModeOn, engineModeOnDemand:
+	case engineModeOff, engineModeOn:
 		return v
+	case engineModeOnDemand:
+		if managed {
+			return v
+		}
 	case "":
 		if managed {
 			return engineModeOnDemand
@@ -799,6 +809,13 @@ func (c *engineController) apply(ctx context.Context, on bool, reason, detail st
 		target = "start"
 	}
 	if err := c.setDesired(ctx, on); err != nil {
+		if errors.Is(err, errEngineStrategySettling) {
+			// Not a failed start: the capacity provider strategy is now what this engine wants,
+			// and only the desired count is outstanding. The next tick takes the short path and
+			// writes it. Counting this would double a cooldown over a call that did its half.
+			log.Printf("%s: %s (%s) waits for the new deployment before the desired count", c.eng.logKey(), target, reason)
+			return
+		}
 		log.Printf("%s: %s failed (%s): %v", c.eng.logKey(), target, reason, err)
 		// Count an UpdateService failure as a failed start too: without a cooldown the
 		// next tick repeats it, and a permission or quota error repeats forever.

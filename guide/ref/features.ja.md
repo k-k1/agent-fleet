@@ -120,6 +120,7 @@ updated: "2026-08"
 | 監視連携 | 配備管理者 | 設定 → 運用・監視 | [member 10](../member/13-ops-tooling.ja.md) |
 | スロットのプールとインスタンス種別 | 配備管理者 | 管理 | [deploy-targets.md](deploy-targets.ja.md) |
 | 推論エンジンの GPU クラス | 配備管理者（super_admin）| 管理 → 推論エンジン | [admin 04](../admin/04-mcp-egress.ja.md) |
+| 自前の ComfyUI での画像生成 | 配備管理者（super_admin）| 端末、それから 管理 → 推論エンジン | [operator 07](../operate/07-image-engine.ja.md) |
 | コンテナ内のロール別ドキュメント | — | 自動 | [roles.md](roles.ja.md) |
 
 ## 詳細が「—」の行

@@ -45,9 +45,18 @@ import (
 // health, capacity provider, idle, deadline, mode) really is a property of the vessel and stays
 // the stack's to declare.
 type engineDef struct {
-	Key     string `json:"key"`     // "llm" — the path segment, the log prefix, the settings prefix
-	API     string `json:"api"`     // "chat" | "images" — see engineAPI* below
-	Service string `json:"service"` // ECS service whose desired count moves
+	Key string `json:"key"` // "llm" — the path segment, the log prefix, the settings prefix
+	API string `json:"api"` // "chat" | "images" — see engineAPI* below
+	// Lifecycle says who owns starting and stopping this engine. Empty — every row written
+	// before ADR 0076 — is this deployment: an ECS service whose desired count the controller
+	// moves. "external" is a row that is nothing but a URL, a ComfyUI on the operator's own
+	// network, and it is DECLARED rather than inferred from an empty `service` (ADR 0053, and
+	// decision 1: a field somebody forgot must not turn into "somebody else runs this").
+	//
+	// An external row is given no ECS adapter, no controller, no active set, no pending reader,
+	// no GPU ladder and no uptime sampler — see newEngineRegistry.
+	Lifecycle string `json:"lifecycle"`
+	Service   string `json:"service"` // ECS service whose desired count moves
 	// 🔴 On a RUNNING engine, CapacityProvider is the name the process STARTED with. Replacing a
 	// provider renames it and the reloader takes that live, so the current one is
 	// engineRuntimeState.providerName() (engine_table_reload.go).
@@ -100,6 +109,15 @@ type engineDef struct {
 	IdleSec          int    `json:"idleSec"`
 	StartDeadlineSec int    `json:"startDeadlineSec"`
 	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
+}
+
+// engineLifecycleExternal is the one lifecycle that is not this deployment's (ADR 0076
+// decision 1): the engine is reachable and nothing here may start or stop it.
+const engineLifecycleExternal = "external"
+
+// external reports whether this row's lifecycle belongs to somebody else.
+func (d engineDef) external() bool {
+	return strings.EqualFold(strings.TrimSpace(d.Lifecycle), engineLifecycleExternal)
 }
 
 // offersSpec is the offer list this role declares. `offers` when the stack writes one, and the
@@ -239,6 +257,9 @@ type engineRuntimeState struct {
 	// read as "it worked": a restarted CP has applied nothing and must not claim a failure it
 	// did not see. What makes that gap safe is that a start applies the rung again anyway.
 	classApplyErr string
+	// extWarm is the cached health answer an externally managed engine's panel row reports as
+	// `warm` (ADR 0076 decision 8). Inert for every engine that has a controller.
+	extWarm engineWarmCache
 	// swapWaitSince is when this process first refused to start because a box of the previous
 	// rung was still registered. It bounds that wait (engineClassSwapWaitMax): the end of the
 	// wait belongs to AWS, and `scaleInAfter: -1` would otherwise make it never end.
@@ -423,11 +444,83 @@ func parseEngineTable(raw string) (engineTable, error) {
 		return engineTable{}, fmt.Errorf("parsing the engine table: %w", err)
 	}
 	for i, d := range t.Engines {
-		if d.Key == "" || d.Service == "" || d.URL == "" {
-			return engineTable{}, fmt.Errorf("engine %d: key, service and url are all required", i)
+		if d.Key == "" || d.URL == "" {
+			return engineTable{}, fmt.Errorf("engine %d: key and url are both required", i)
+		}
+		// A service is the thing a desired count moves on, so only a row this deployment
+		// manages owes one (ADR 0076 decision 1). It stays required for every other row: an
+		// empty service name would leave the controller driving nothing while the launch menu
+		// still offered the model.
+		if d.Service == "" && !d.external() {
+			return engineTable{}, fmt.Errorf("engine %d: service is required unless lifecycle is %q", i, engineLifecycleExternal)
 		}
 	}
 	return t, nil
+}
+
+// engineComfyEnvRow synthesises the engine table row an operator gets from AF_COMFY_URL, plus
+// the optional bearer from AF_COMFY_API_KEY (ADR 0076 decision 2).
+//
+// One variable, shaped like AF_VOICEVOX_URL, because that is the whole operator-facing surface
+// of an engine somebody else runs. ComfyUI has no authentication of its own, so the key is
+// there for a reverse proxy in front of it to check — and BOTH dial and engineHealthy present
+// it, which means that proxy has to let the health path through with the same bearer or this
+// engine is never healthy (decision 7).
+//
+// Read once, at startup: an environment variable cannot change under a running process, so
+// changing the URL is a Control Plane restart.
+func engineComfyEnvRow() (engineDef, string, bool) {
+	url := strings.TrimSpace(envx.Or("AF_COMFY_URL", ""))
+	if url == "" {
+		return engineDef{}, "", false
+	}
+	return engineDef{
+		Key:       "image",
+		API:       engineAPIImages,
+		Provider:  "comfy",
+		URL:       url,
+		Health:    "/system_stats",
+		Lifecycle: engineLifecycleExternal,
+	}, strings.TrimSpace(envx.Or("AF_COMFY_API_KEY", "")), true
+}
+
+// engineTableWithEnvRow merges the synthesised row into the table on the key both claim
+// (ADR 0076 decision 2).
+//
+// A MANAGED row wins over the environment, which is the opposite of what the draft said. The
+// review turned it round: replacing a controlled row leaves the ECS service it named with
+// nobody to stop it, and paying for a GPU box nothing can switch off is the more expensive of
+// the two mistakes. An operator moving that role onto a LAN box takes it out of the stack.
+// Either way one line says which row won, because the alternative is a URL in the panel that
+// matches neither of the two places it could have come from.
+func engineTableWithEnvRow(rows []engineDef, env engineDef) []engineDef {
+	for i, d := range rows {
+		if d.Key != env.Key {
+			continue
+		}
+		if !d.external() {
+			log.Printf("engines: %s is a managed row in the engine table, so AF_COMFY_URL is ignored (take the role out of the stack to move it onto the network)", d.Key)
+			return rows
+		}
+		log.Printf("engines: %s comes from AF_COMFY_URL (%s), replacing the external row in the engine table", env.Key, env.URL)
+		out := append([]engineDef(nil), rows...)
+		out[i] = env
+		return out
+	}
+	log.Printf("engines: %s comes from AF_COMFY_URL (%s), externally managed", env.Key, env.URL)
+	return append(append([]engineDef(nil), rows...), env)
+}
+
+// engineTableNeedsAWS reports whether any row in this table has to be driven through ECS. It
+// is what keeps a native or docker deployment — nothing but AF_COMFY_URL, no credentials, no
+// region — from loading an AWS config for a feature it is not using (ADR 0076 decision 3).
+func engineTableNeedsAWS(t engineTable) bool {
+	for _, d := range t.Engines {
+		if !d.external() {
+			return true
+		}
+	}
+	return false
 }
 
 // newEngineRegistry builds and starts the engines. A failure to read the table is logged
@@ -437,20 +530,47 @@ func parseEngineTable(raw string) (engineTable, error) {
 func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	name := strings.TrimSpace(envx.Or("AF_ENGINES_SSM_PARAM", ""))
 	inline := strings.TrimSpace(envx.Or("AF_ENGINES_JSON", ""))
-	if name == "" && inline == "" {
+	envRow, envAPIKey, hasEnvRow := engineComfyEnvRow()
+	if name == "" && inline == "" && !hasEnvRow {
 		return nil
 	}
-	region := firstEnv("AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION")
-	ac, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
-	if err != nil {
-		log.Printf("engines: disabled (aws config: %v)", err)
-		return nil
+	// The inline table is parsed BEFORE any AWS client exists, because whether a single row
+	// needs one is what decides whether a config is loaded at all (ADR 0076 decision 3).
+	table := engineTable{}
+	if inline != "" {
+		t, err := parseEngineTable(inline)
+		if err != nil {
+			log.Printf("engines: disabled (%v)", err)
+			return nil
+		}
+		table = t
 	}
-	ssmc := ssm.NewFromConfig(ac)
-	table, err := loadEngineTable(ctx, ssmc)
-	if err != nil {
-		log.Printf("engines: disabled (%v)", err)
-		return nil
+	var (
+		ac      aws.Config
+		ssmc    *ssm.Client
+		ecsc    *ecs.Client
+		haveAWS bool
+	)
+	if name != "" || engineTableNeedsAWS(table) {
+		region := firstEnv("AF_ECS_REGION", "AWS_REGION", "AWS_DEFAULT_REGION")
+		cfg, err := awscfg.LoadDefaultConfig(ctx, awscfg.WithRegion(region))
+		if err != nil {
+			log.Printf("engines: disabled (aws config: %v)", err)
+			return nil
+		}
+		ac, haveAWS = cfg, true
+		ssmc, ecsc = ssm.NewFromConfig(ac), ecs.NewFromConfig(ac)
+		if inline == "" {
+			t, err := loadEngineTable(ctx, ssmc)
+			if err != nil {
+				log.Printf("engines: disabled (%v)", err)
+				return nil
+			}
+			table = t
+		}
+	}
+	if hasEnvRow {
+		table.Engines = engineTableWithEnvRow(table.Engines, envRow)
 	}
 	if len(table.Engines) == 0 {
 		return nil
@@ -468,13 +588,12 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	if mgr != nil {
 		reg.signKey = engineSignKey(mgr.tokenSignMaster())
 	}
-	ecsc := ecs.NewFromConfig(ac)
 	cluster := firstEnv("AF_ENGINE_ECS_CLUSTER", "AF_ECS_CLUSTER")
 	// Taking models in (ADR 0072 decision 6). Only wired when the stack declared an ingest task
 	// AND there is somewhere to keep the jobs: without either, the panel says so and the manual
 	// route stays. The reconcile loop is started here rather than per engine — one task
 	// definition serves both roles.
-	if mgr != nil && mgr.store != nil && table.Ingest.ok() {
+	if haveAWS && mgr != nil && mgr.store != nil && table.Ingest.ok() {
 		reg.ing = &engineIngester{
 			def: table.Ingest, cluster: cluster, ecs: ecsc,
 			logs:   newEngineIngestLogs(ac),
@@ -493,6 +612,28 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		go reg.ing.run(context.Background())
 	}
 	for _, d := range table.Engines {
+		if d.external() {
+			// Everything an external row does NOT get (ADR 0076 decision 1): no ECS adapter, no
+			// controller, no demand counter, no active set, no pending reader, no GPU ladder and
+			// no uptime sampler. The catalogue and the settings store stay, because what may be
+			// generated and whether the route is open are still this deployment's answers.
+			st := &engineRuntimeState{
+				def:      d,
+				settings: settings,
+				catalog:  newEngineCatalog(models, d.Key),
+			}
+			// The bearer the reverse proxy in front of ComfyUI checks (decision 7). Same field a
+			// managed row fills from SSM, so dial and engineHealthy already present it; SSM is
+			// never read for an external row, which is the point of the whole lane.
+			if hasEnvRow && d == envRow {
+				st.apiKey = envAPIKey
+			}
+			reg.byKey[d.Key] = st
+			// No `service=`: there is none, and printing an empty one reads as a truncated line.
+			log.Printf("engines: %s (%s) -> %s (external, health=%s models=%s)",
+				d.Key, d.api(), d.URL, engineHealthPath(d), strings.Join(st.modelIDs(ctx), ","))
+			continue
+		}
 		st := &engineRuntimeState{
 			def: d,
 			ecs: &engineECS{
@@ -509,7 +650,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			pending:     newEnginePending(ssmc, name, d.Key),
 			classes:     parseEngineClasses(d.offersSpec()),
 			cluster:     cluster,
-			offers:      newEngineOfferRun(),
+			offers:      newEngineOfferRun(d.offerBudget()),
 			audit:       auditor,
 		}
 		// Published at start as well as on every change: the box reads it when it starts, and a
@@ -547,7 +688,9 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 	// of the CP. Seeded with an EMPTY value rather than the text this process started from —
 	// the first tick then parses the table once and finds nothing to change, which costs one
 	// parse and saves threading the raw parameter out of loadEngineTable.
-	go newEngineTableReloader(ssmc, name, reg, "").run(context.Background())
+	if haveAWS {
+		go newEngineTableReloader(ssmc, name, reg, "").run(context.Background())
+	}
 	return reg
 }
 
@@ -571,13 +714,64 @@ func readEngineAPIKey(ctx context.Context, api engineSSMAPI, d engineDef) string
 }
 
 // mode is the engine's current mode, the stored setting winning over the stack's default.
+//
+// Whether anything here can start and stop the engine decides two of the answers, which is why
+// it is asked rather than assumed (ADR 0076 decision 5): an externally managed engine defaults
+// to `on` instead of `ondemand`, and a stored `ondemand` reads as `on` — there is no box to
+// stop, and the value is reachable on such a row through a stack default or a client written
+// before this distinction existed.
 func (e *engineRuntimeState) mode(ctx context.Context) string {
+	managed := e.ecs != nil
 	if e.settings != nil {
 		if v, _ := e.settings.GetSetting(ctx, engineSettingsFor(e.def.Key).mode); strings.TrimSpace(v) != "" {
-			return engineMode(v, true)
+			return engineMode(v, managed)
 		}
 	}
-	return engineMode(e.def.Mode, true)
+	return engineMode(e.def.Mode, managed)
+}
+
+// engineExternalWarmTTL and engineExternalWarmTimeout bound the ONE health call an externally
+// managed engine's `warm` costs (ADR 0076 decision 8).
+//
+// 2 seconds rather than the gateway's 5: the admin list handler is synchronous and the Console
+// asks on every load, so a LAN box that is switched off would otherwise hold the whole panel
+// for 5 seconds per external row. The 10-second cache is what keeps a panel that polls from
+// turning into a dial loop.
+const (
+	engineExternalWarmTTL     = 10 * time.Second
+	engineExternalWarmTimeout = 2 * time.Second
+)
+
+// engineWarmCache is the health answer an external engine's panel row is built from.
+type engineWarmCache struct {
+	mu   sync.Mutex
+	at   time.Time
+	warm bool
+}
+
+// warm is "does this engine have something loaded", answered the only way each kind of engine
+// can answer it: a managed one has a controller keeping the flag on its own tick, and an
+// external one has nothing but the health endpoint. False for an engine that has neither,
+// which is the honest answer — no observation was made.
+//
+// The lock is held ACROSS the call on purpose: two panels loading at once then cost one probe
+// rather than two, and the 2-second timeout is what makes that safe to wait behind.
+func (e *engineRuntimeState) warm(ctx context.Context) bool {
+	if e.ctrl != nil {
+		return e.ctrl.warmed()
+	}
+	if !e.def.external() {
+		return false
+	}
+	e.extWarm.mu.Lock()
+	defer e.extWarm.mu.Unlock()
+	if !e.extWarm.at.IsZero() && time.Since(e.extWarm.at) < engineExternalWarmTTL {
+		return e.extWarm.warm
+	}
+	c, cancel := context.WithTimeout(ctx, engineExternalWarmTimeout)
+	defer cancel()
+	e.extWarm.warm, e.extWarm.at = engineHealthy(c, e), time.Now()
+	return e.extWarm.warm
 }
 
 // controlCfg is the tuning that governs this engine, whether or not a controller is running.

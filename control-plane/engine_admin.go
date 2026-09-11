@@ -194,12 +194,23 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		// The INTENT, never the desired count — see the note in tts.go's status.
 		"enabled": mode != engineModeOff,
 		"managed": e.ecs != nil,
-		"warm":    e.ctrl.warmed(),
+		"warm":    e.warm(ctx),
+	}
+	// ADR 0076 decision 5's contract, written down so the Console half could be built beside
+	// this one. An externally managed row carries the URL — it is the only thing an operator can
+	// act on — and OMITS every field that comes from a service this deployment does not have:
+	// `state`, `desired`, `box`, `stop_eta`, `idle_secs` and the window. Omitted rather than
+	// zeroed: an idle window of 0 is configured to mean "never stops", which is a claim nothing
+	// here is entitled to make about somebody else's box.
+	if e.def.external() {
+		row["lifecycle"] = engineLifecycleExternal
+		row["url"] = e.def.URL
+	} else {
 		// The demand window, always reported as the length it actually is. A client that
 		// hard-codes "last 5 minutes" is wrong the moment an operator sets
 		// AF_ENGINE_<KEY>_WINDOW_SEC, and it is the window the START decision is made on.
-		"window_secs": int(cfg.window.Seconds()),
-		"idle_secs":   int(engineIdleWindow(cfg).Seconds()),
+		row["window_secs"] = int(cfg.window.Seconds())
+		row["idle_secs"] = int(engineIdleWindow(cfg).Seconds())
 	}
 	// The families this provider dispatches on, so the panel can offer a CHOICE instead of a
 	// free-text box that lets an upstream display name through (ADR 0072 decision 2). Absent
@@ -436,6 +447,15 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		writeAPIErr(w, aerr)
 		return
 	}
+	// On-demand is a promise to stop the box when nobody wants it, and an externally managed
+	// engine has no box here to stop (ADR 0076 decision 5). Refused rather than silently stored
+	// as `on`: the setting outlives this row's lifecycle, so a stored `ondemand` would come back
+	// as a real mode the day the role moves into the stack.
+	if val == engineModeOnDemand && e.def.external() {
+		writeAPIErr(w, &apiError{http.StatusBadRequest, errCodeEngineBadBody,
+			"engine " + key + " is externally managed: it is on or off, never on-demand"})
+		return
+	}
 
 	keys := engineSettingsFor(key)
 	if a.settings != nil {
@@ -474,6 +494,12 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		var err error
 		if val == engineModeOn {
 			err = e.startEngine(r.Context())
+			if errors.Is(err, errEngineStrategySettling) {
+				// The strategy landed and the desired count is the controller's next tick away.
+				// Reporting a 502 here would tell the administrator the button failed when the
+				// engine is on its way up (ADR 0075: the start is two calls, not one).
+				err = nil
+			}
 		} else {
 			err = e.ecs.setEnabled(r.Context(), false)
 		}
