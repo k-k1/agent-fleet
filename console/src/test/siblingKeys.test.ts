@@ -64,6 +64,11 @@ function keyOfChild(child: ts.JsxChild, sf: ts.SourceFile): string | null {
 }
 
 describe("JSX sibling keys", () => {
+  // 🔴 The budget is a HANG detector, not a speed limit, and vitest's default 5,000 ms was not
+  // one: this test parses EVERY .tsx in src/ with the TypeScript compiler, which is ~4 s of CPU
+  // on its own (measured, unloaded) and grows with the repository. It has been living at ~85% of
+  // its budget, and on this shared host it timed out the moment another suite ran beside it --
+  // reported as "Test timed out in 5000ms", which reads like a hang and is a busy machine.
   it("never shares a key between children rendered at once under one parent", () => {
     const offenders: string[] = [];
     for (const file of tsxFiles(SRC)) {
@@ -88,5 +93,5 @@ describe("JSX sibling keys", () => {
       visit(sf);
     }
     expect(offenders).toEqual([]);
-  });
+  }, 60_000);
 });
