@@ -66,7 +66,25 @@ type enginePending struct {
 	keys   map[string]struct{}
 	at     time.Time
 	loaded bool
+	// loggedAt is when each (role, model) last put a refusal line in the log. Keyed rather
+	// than a single timestamp because two models can be syncing at once and the operator
+	// needs to see both. Bounded by the catalogue: the guard only ever reaches the log for
+	// an id the enabled catalogue holds.
+	loggedAt map[string]time.Time
 }
+
+// enginePendingLogEvery is how often ONE (role, model) may appear in the log while it is
+// syncing.
+//
+// The caller retries a 503 every few seconds — generate_image's provider does it for up to
+// a quarter of an hour — and a ~270 second sync is the measured case, so logging every
+// refusal turns one wait into dozens of identical lines and buries whatever else the CP was
+// saying. A minute keeps the fact visible for the whole window at a handful of lines.
+//
+// A var only so a test can defeat the throttle and show that the throttle — rather than the
+// refusal simply never happening twice — is what suppresses the second line. Never written
+// at runtime.
+var enginePendingLogEvery = 60 * time.Second
 
 func newEnginePending(api engineSSMAPI, base, key string) *enginePending {
 	param := enginePendingParamName(base, key)
@@ -97,6 +115,29 @@ func (p *enginePending) missing(ctx context.Context, m store.EngineModel) []stri
 		}
 	}
 	return out
+}
+
+// claimLogSlot reports whether a refusal for this (role, model) may be logged now, and
+// records it when it may. It shares the mutex with the cache above on purpose: the refusal
+// it is rate-limiting is decided from that same cached read, one call apart.
+//
+// 🔴 It MARKS. Calling it to ask the question and then not logging silences the next
+// minute for that pair.
+func (p *enginePending) claimLogSlot(role, id string, now time.Time) bool {
+	if p == nil {
+		return false
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	k := role + "\x00" + id
+	if last, ok := p.loggedAt[k]; ok && now.Sub(last) < enginePendingLogEvery {
+		return false
+	}
+	if p.loggedAt == nil {
+		p.loggedAt = map[string]time.Time{}
+	}
+	p.loggedAt[k] = now
+	return true
 }
 
 func (p *enginePending) read(ctx context.Context) map[string]struct{} {
