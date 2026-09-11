@@ -75,24 +75,44 @@ different parties, (i) two boxes get bought, (ii) the echo of one judgement is r
   model volume cannot be built out of host volumes at all".
 - **The slot pool already has the CP buying EC2** (`runtime_ecs_ec2.go`): `RunInstances` one at a
   time, a launch template (`40-ec2-pool.yaml`; the AMI is the SSM public parameter
-  `…/amazon-linux-2023/recommended/image_id`, resolved by CloudFormation), user data writing
-  `ECS_CLUSTER` to join the cluster, tags `af-pool` / `af-role=slot` / `af-slot-size`, a
-  registration wait on `ListContainerInstances` every 3 s, and departure as
-  `DeregisterContainerInstance(Force)` → `TerminateInstances`. Capacity errors go through
-  `isEC2CapacityError` (string match) and on to the next AZ. **No Spot anywhere**
-  (`InstanceMarketOptions` / `CreateFleet` appear nowhere in the repository).
+  `…/amazon-linux-2023/recommended/image_id`, resolved by CloudFormation; `MetadataOptions
+  HttpTokens: required`; the template's only tag is `af-managed-by`), user data writing
+  `ECS_CLUSTER` to join the cluster, the tags `af-pool` / `af-role=slot` / `af-slot-size` **written
+  by the CP at `RunInstances`** (not by the template), a registration wait on
+  `ListContainerInstances` every 3 s, and departure as `DeregisterContainerInstance(Force)` →
+  `TerminateInstances`. Capacity errors go through `isEC2CapacityError` (string match) and on to
+  the next AZ. **No Spot anywhere** (`InstanceMarketOptions` / `CreateFleet` appear nowhere in the
+  repository). The engine services and the three MI providers already carry the tags `af-pool` /
+  `af-role=engine-<role>` (`PropagateTags: SERVICE`), so the vocabulary decision 3 uses is not
+  new — what is new is that it lands on an instance the CP can enumerate.
 - 🔴 **The slot pool's only way of saying "not my box" is a non-empty `capacityProviderName`**
   (`isPoolContainerInstance`, the intake of 0071's review R7(a)). A box the CP buys on EC2 has an
-  **empty** `capacityProviderName`, so that test collapses as it stands. The EC2-side walks
-  (`freeSlots`, `poolSize`, `sweepFreeSlots`, `makeRoom`) filter on the tag `af-role=slot` and are
-  unaffected. What mixes is the ECS side: `registeredSlots`, `sweepGhostInstances`,
-  `deregisterSlot`, `slotTaskCounts` — four call sites, one function.
+  **empty** `capacityProviderName`, so that test collapses as it stands. Five EC2-side walks
+  (`slotsOfMyType` and through it `freeSlots`, `poolSize`, `sweepFreeSlots`, `makeRoom`,
+  `PoolStatus`) filter on **both** `af-pool` and `af-role=slot` and are unaffected. **One does
+  not: `sweepSlotOwnerTags` filters on `af-pool` alone** and then writes or strips
+  `af-membership` / `af-tenant` on every instance it finds — an engine box tagged `af-pool` would
+  be walked by it (decision 3). What mixes on the ECS side is `registeredSlots`,
+  `sweepGhostInstances`, `deregisterSlot`, `slotTaskCounts` — four call sites, one function.
 - **A Workspace task is pinned to a box by a task-definition placement constraint
   `memberOf(ec2InstanceId == …)`.** The service is `LaunchType: EC2`, `awsvpc`, desired 1.
-- **The CP's IAM** (`20-platform.yaml`, `Ec2SlotPool`): `ec2:RunInstances` / `TerminateInstances` /
-  `DescribeInstances` / `CreateTags` and more on `Resource: *` (Describe cannot be scoped; tags are
-  the fence), `iam:PassRole` on `role/af-*-slot`. **Neither `ec2:CreateFleet` nor
-  `ssm:GetParameter` is there.**
+- **The CP's IAM** (`20-platform.yaml`): Sid `Ec2SlotPool` holds `ec2:RunInstances` /
+  `TerminateInstances` / `DescribeInstances` / `CreateTags` and more on `Resource: *` (Describe
+  cannot be scoped; tags are the fence); Sid `PassSlotRole` holds `iam:PassRole` on
+  `role/af-*-slot` (`iam:PassedToService: ec2.amazonaws.com`); Sid `EcsContainerInstances` holds
+  the three container-instance actions. **None of these is conditional — `20-platform.yaml` has
+  no `Conditions:` section, so every flavour gets them** (the comment "ecs-ec2 only; harmless on
+  Fargate" is prose, not a condition). `ssm:GetParameter` **is** there (Sid `SsmWorkspaceParams`),
+  scoped to `parameter/af-ws/*`, so it cannot read the AMI parameter under `/aws/service/`.
+  **`ec2:CreateFleet` is nowhere.** The Managed Instances grants (`ecs:DescribeCapacityProviders` /
+  `UpdateCapacityProvider` / `PutClusterCapacityProviders`, `iam:PassRole` on `InfraRole` /
+  `InstanceRole`) live in **`60-engines.yaml`'s `CpIngestPolicy`**, as unnamed statements attached
+  to the CP task role by import — not in 20-platform.
+- **The CP's `main` package has no EC2 client.** The engine code's ports are `engineECSAPI`
+  (`engine_ecs.go`: DescribeServices / UpdateService / ListContainerInstances /
+  DescribeContainerInstances) and `engineCapacityAPI` (`engine_class.go`). The only EC2 port,
+  `ec2API`, is unexported in `internal/runtime`, and it is constructed only by the ecs-ec2
+  runtime. A `CreateFleet` cannot be added to either engine port as they stand.
 - **One shared cluster.** On af-sandbox (b): four container instances (m7i / m8g slots, no
   `capacityProviderName`) next to five providers (FARGATE, FARGATE_SPOT, llm, image, image-spot).
 - **The ECS-optimized GPU AMI's SSM public parameter resolves in ap-northeast-1** (b):
@@ -104,8 +124,28 @@ different parties, (i) two boxes get bought, (ii) the echo of one judgement is r
 - Of 0075's implementation, **what does not depend on who buys**: offer parsing (the `buy`
   column), the VRAM filter, pin/automatic (`engine_<role>_class`), `offer_trail` and contract B,
   the Console card (#549). What does: the "buy", "wait for the box" and "read the failure code"
-  parts of `engine_offer.go`, the strategy write and the provider-named `boxOn()` in
-  `engine_ecs.go`, `applyClass` (`UpdateCapacityProvider`) and `startGate` in `engine_class.go`.
+  parts of `engine_offer.go` (`startOnOffer` / `applyFirstUsableOffer` / `stepOffers` /
+  `offerBoxIsUp` / `moveToNextOffer` / `engineOfferVerdict` / `engineEventIsAbout` and the
+  run-state clock), the strategy write (`setStrategy` / `writeStrategyOnly`) and the
+  provider-named `boxOn()` / `describeBoxes()` in `engine_ecs.go`, `applyEngineClass`
+  (`UpdateCapacityProvider`) and `startGate` in `engine_class.go`. `startGate` gates on four
+  things in order — no ladder (pass), no candidate after the VRAM filter (refuse), the swap wait
+  (the current box's type is not in the first candidate), the rung apply — and only the middle
+  two survive here. "One lap then cooldown" lives in the controller (`engine_control.go`), not in
+  the gate, and stays.
+- **0075 decision 6 (interruption) exists in the code only as `noteReplacement`** — a log line
+  and an audit row on `running` → `starting` at desired 1. "Rebuild from the top of the list"
+  and "skip an offer interrupted twice in a row" were 0075 P1 and were never reached
+  (`engine_offer.go`'s header says so). Decision 4 inherits the design, not an implementation.
+- **Contract A (the engine table) is an SSM parameter** (`EnginesParam`, `/af-ws/engines`), whose
+  name travels to the CP as an Output/Export and the env var `AF_ENGINES_SSM_PARAM`. No schema and
+  no golden pins its field set; what breaks on a rename is the hand-written JSON in
+  `engine_gateway_test.go`, `engine_offer_test.go`, `engine_table_reload_test.go` and the emitter
+  in `60-engines.yaml`. The three Outputs `Llm` / `Image` / `ImageSpot` `CapacityProviderName` are
+  read by six harness scripts (`bench-image-engine`, `probe-fetch-client`, `probe-llm-mount-load`,
+  `probe-s3-fetch-tuning`, `probe-s3-mount`, `probe-warm-volume`).
+- **`teardown.sh` does not terminate an engine box**: it sets desired 0 and lets Managed
+  Instances' drain remove the box while the stacks delete. Slots it terminates itself, by tag.
 
 ### What is known as published specification (c) — not load-bearing
 
@@ -152,7 +192,9 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   **g6e.xlarge**, not the cheapest — came from Managed Instances having no allocation strategy;
   here it is controllable for the first time.
 - `buy=od`: `DefaultTargetCapacityType: on-demand`, `OnDemandOptions.AllocationStrategy:
-  prioritized` (the order of the overrides = the declared order).
+  prioritized`. ⚠️ `prioritized` reads the **`Priority` field of each override**, not the order
+  of the list (c) — the CP writes `Priority` 1, 2, … in the declared order. A test pins that the
+  priorities follow the declaration.
 - The overrides are the product "type × private subnet". The CP does not choose an AZ (the
   slot pool's `spreadAZs` exists for home volumes' AZ affinity; an engine has no home).
 - 🔴 **The response is synchronous.** A launched box comes back as its `InstanceId`; otherwise
@@ -164,7 +206,10 @@ what "trying" a row means: **"put the row's type set into the overrides, make `b
   22 measured boot → ECS registration at 21 s, 77 s with a home-baked AMI; ten-plus times that).
   Past it, terminate the box and move to the next offer.
 - An instant fleet deletes itself once its boxes are gone (c). The CP **does not remember** the
-  fleet id. It remembers the `InstanceId` and the tags on the box (decision 3).
+  fleet id. It remembers the `InstanceId` and the tags on the box (decision 3). ⚠️ Whether an
+  instant fleet really leaves no record behind is measured in open question 3 (`describe-fleets`
+  after the $0 calls); if fleets linger, the CP calls `DeleteFleets(TerminateInstances=false)`
+  right after reading the response — `ec2:DeleteFleets` is granted either way (decision 10).
 
 🔁 **What would change this**: a response on real hardware carrying neither a box nor an error
 ((c) says it is always one or the other). Then one `DescribeFleets` follow-up is added.
@@ -204,14 +249,22 @@ do and cut a revision per start.
   the DB turns 'the row is gone' into a permanent leak"), **the CP must be able to find all its
   boxes from `describe-instances` tags alone, with no memory.** Unlike a Managed Instances box, an
   EC2 box the CP bought is enumerable by `describe-instances` (the reverse of 0071 P1 measurement 2).
-- 🔴 **`isPoolContainerInstance` changes from "`capacityProviderName` is empty" to "the `af-role`
-  attribute is absent, or is `slot`".** This is the successor of 0071 review R7(a)'s test: a
-  Managed Instances box (provider name) and an EC2 engine box (attribute) both leave the pool
-  through the same one function. The test pins three kinds of container instance (slot, MI engine,
-  EC2 engine); the positive control is that removing the attribute makes an engine box count as a
-  slot.
-- The EC2-side walks already exclude it by `af-role=slot` (`slotsOfMyType`, `poolSize`,
-  `sweepFreeSlots`, `makeRoom`, `PoolStatus`). That is the whole of "keeping out of `Ec2MaxSlots`".
+- 🔴 **`isPoolContainerInstance` changes from "`capacityProviderName` is empty" to
+  "`capacityProviderName` is empty **and** the `af-role` attribute is absent or is `slot`".**
+  The provider test stays (a Managed Instances box carries no attribute, so dropping it would
+  let an MI box back into the pool — and MI boxes exist until decision 11's migration is done on
+  every deployment). This is the successor of 0071 review R7(a)'s test: a Managed Instances box
+  (provider name) and an EC2 engine box (attribute) both leave the pool through the same one
+  function. The test pins three kinds of container instance (slot, MI engine, EC2 engine); the
+  positive control is that removing the attribute makes an engine box count as a slot.
+- **The engine's own deregister does not go through `deregisterSlot`** (which applies the pool
+  test and would refuse an engine box). The engine runtime deregisters by container-instance ARN
+  directly.
+- The EC2-side walks already exclude it by `af-pool` + `af-role=slot` (`slotsOfMyType`,
+  `poolSize`, `sweepFreeSlots`, `makeRoom`, `PoolStatus`). **`sweepSlotOwnerTags` gains the
+  `af-role=slot` filter** it lacks (Background), with a test whose positive control is that
+  removing the filter makes the sweep touch an engine-tagged instance. With that, "keeping out of
+  `Ec2MaxSlots`" is complete.
 - 0070 decision 1's invariant, "one non-Workspace task mixed in breaks the premise", is kept **on
   the box side**: no Workspace task lands on an engine box (a Workspace's constraint names an
   `ec2InstanceId`), and no engine lands on a Workspace box (decision 2's attribute).
@@ -221,10 +274,15 @@ AL2023 GPU AMI (open question 2), the CP calls `PutAttributes` right after regis
 
 ### 4. An interruption is read as an EC2 fact. The rebuild starts from the top of the list, synchronously
 
-- 0075 decision 6's detection (`running` → `starting` at desired 1, and the box gone) is inherited.
-  Here "the box is gone" can be stated from **`describe-instances` state (`shutting-down` /
+- 0075 decision 6's detection (`running` → `starting` at desired 1, and the box gone) is inherited
+  **as a design**: in the code it exists only as `noteReplacement`'s log and audit row; the rebuild
+  and the skip were 0075 P1 and were never written (Background). P2 builds them here, once.
+  "The box is gone" can be stated from **`describe-instances` state (`shutting-down` /
   `terminated`) and from no box tagged `af-role=engine-<role>` being `running`**. The Managed
   Instances "cannot enumerate" limit does not apply.
+- ECS deregisters a terminated instance's container instance by itself (c). If it does not, the
+  ghost is a registered container instance with the engine attribute and no EC2 behind it — the
+  pool's `sweepGhostInstances` no longer sees it (decision 3), so decision 5's sweep covers it.
 - The ECS agent's Spot draining (c) is enabled in the launch template. If the two-minute notice
   puts the instance into DRAINING, the service's task stops first and `noteReplacement` (0075
   Background, point 4) records "a replacement nobody asked for". If it does not work, detection
@@ -255,9 +313,15 @@ skip is not needed).
   under `-1` is never reclaimed even after the value changes, and `terminate-instances` is refused
   by the MI policy" cannot exist once the CP is the terminator. In its place, **a terminate the CP
   forgets leaves a box for ever** — the sweep loop gains one pass in the shape of 0045 decision
-  29 (boxes tagged `af-role=engine-*`, `running`, absent from the CP's memory), audited. It
-  removes only a box with zero tasks whose registration is older than `ghostAfter` (the caution
-  of 0045's `sweepGhostInstances`).
+  29, audited, in two directions: (a) an EC2 instance tagged `af-role=engine-*` and `running`,
+  with **zero running and pending tasks** on its container instance (read from
+  `DescribeContainerInstances`, the way `sweepFreeSlots` / `makeRoom` read `slotTaskCounts`),
+  registered longer ago than `ghostAfter`, and with no start in flight for its role — terminated;
+  (b) a container instance carrying the engine attribute whose EC2 instance is gone —
+  deregistered (the shape of 0045's `sweepGhostInstances`, which checks registration age and
+  "instance gone", not task counts; the zero-task caution belongs to the free-slot sweeps).
+  Neither direction consults the CP's memory: tags and attributes are enough, as 0045 decision 29
+  demands.
 
 🔁 **What would change this**: a measured terminate → `terminated` above five minutes on a GPU.
 Then 0071 decision 7's window arithmetic is rewritten.
@@ -310,7 +374,9 @@ the engine images do not agree with. Then a knob pinning `…/gpu/<version>` is 
   type). **"Filter events by offer" (#564) is not needed** — a response contains only its own call.
 - The `usdPerHour` convention (0074 decision 1, 0075 decision 1: the all-in price of the most
   expensive type the offer can buy) becomes "the EC2 price itself", since the 7.80% Managed
-  Instances fee is gone. Writing the Cost Explorer figure stays the rule.
+  Instances fee is gone. Writing the Cost Explorer figure stays the rule. The two places that
+  say "inclusive of the fee" (`engine_class.go`'s field comment, PARAMETERS "The offers") change
+  with it.
 
 🔁 **What would change this**: if contract B needs "the box id" (0075 kept `box.provider`
 CP-internal), it is added by agreement with the Console lane.
@@ -329,18 +395,25 @@ CP-internal), it is added by agreement with the Console lane.
 |---|---|
 | `ec2:CreateFleet`, `ec2:DescribeFleets`, `ec2:DeleteFleets` (`Resource: *`; a fleet cannot be resource-scoped) | `ecs:DescribeCapacityProviders` / `ecs:UpdateCapacityProvider` |
 | `ec2:CreateLaunchTemplateVersion` is **not** added (CloudFormation owns the template) | `ecs:PutClusterCapacityProviders` |
-| `iam:PassRole` on `role/af-*-engine` (`iam:PassedToService: ec2.amazonaws.com`) | `iam:PassRole` on `InfraRole` / `InstanceRole` |
-| `iam:CreateServiceLinkedRole` limited to `spot.amazonaws.com` and `AWSServiceRoleForEC2Fleet` | `InfraRole` itself |
-| `ssm:GetParameter` is **not** added (`resolve:ssm:` is resolved by EC2; the CP never reads the AMI) | |
+| `iam:PassRole` on `role/af-*-engine` (`iam:PassedToService: ec2.amazonaws.com`), as its own statement in the shape of `PassSlotRole` | `iam:PassRole` on `InfraRole` / `InstanceRole` |
+| `iam:CreateServiceLinkedRole` with `iam:AWSServiceName` in `[spot.amazonaws.com, ec2fleet.amazonaws.com]` (the second is what creates `AWSServiceRoleForEC2Fleet`) | `InfraRole` itself |
+| `ssm:GetParameters` on `parameter/aws/service/ecs/optimized-ami/*` **only if open question 3 says the caller of `CreateFleet` must hold it** for `resolve:ssm:` (c). The CP's existing `ssm:GetParameter` is scoped to `/af-ws/*` and cannot read it | |
 
 `ec2:RunInstances` / `TerminateInstances` / `DescribeInstances` / `CreateTags` are already in
 `Ec2SlotPool`; `ecs:ListContainerInstances` / `DescribeContainerInstances` /
-`DeregisterContainerInstance` already in `EcsContainerInstances`. A deployment **without** the
-slot pool (not ecs-ec2) lacks those two Sids, so 60-engines carries them in the same shape.
+`DeregisterContainerInstance` already in `EcsContainerInstances`; **both Sids are unconditional
+in `20-platform.yaml` and every flavour has them** (Background), so 60-engines does not repeat
+them. What 60-engines edits is its own `CpIngestPolicy`: the Managed Instances statements leave
+it, the Fleet statements enter it. The full grant set is **an output of open question 3**: the
+$0 calls start with this table, and whatever `AccessDenied` names (the published example policy
+for EC2 Fleet grants `ec2:*`, which says nothing about the minimum) is added and recorded.
 
 ⚠️ **On an account without `AWSServiceRoleForEC2Fleet`, the first `CreateFleet` fails** (c).
-af-sandbox has none (b). The deployment steps (`standup.sh`) run `create-service-linked-role`
-once (the same column as `AWSServiceRoleForEC2Spot`, created by hand in 0074).
+af-sandbox has none (b). The deployment steps (`standup.sh`) run `create-service-linked-role
+--aws-service-name ec2fleet.amazonaws.com` once, `|| true` (the same column as
+`AWSServiceRoleForEC2Spot`, created by hand in 0074; today `standup.sh` does this only for
+`ecs.amazonaws.com`). Not a CloudFormation `AWS::IAM::ServiceLinkedRole` — a role that already
+exists fails the stack.
 
 🔁 **What would change this**: if a condition key scoping `CreateFleet` to the launch template
 ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
@@ -348,35 +421,63 @@ ARN (`ec2:LaunchTemplate`) works on real hardware, `Resource: *` is narrowed.
 ### 11. Migration: remove the Managed Instances resources, add launch templates and an instance role. Two steps, in order
 
 - Removed from `60-engines.yaml`: the three capacity providers, `Associations`' provider entries,
-  `InfraRole`, the MI `InstanceRole` / `InstanceProfile`, and the parameters
-  `*AllowedInstanceTypes` / `*AcceleratorMemMinMiB` / `*VCpu*` / `*Mem*` / `*StorageGiB` /
-  `*UseLocalStorage` / `*ScaleInAfter` (the requirements are **already** in the offer list: 0074
-  decision 1 made a rung "a set of requirements" and 0075 added `buy`; the MI four fields were a
-  copy of the ladder).
+  `InfraRole`, the MI `InstanceRole` / `InstanceProfile`, the three Outputs
+  `LlmCapacityProviderName` / `ImageCapacityProviderName` / `ImageSpotCapacityProviderName`
+  (replaced by `LlmLaunchTemplateId` / `ImageLaunchTemplateId`; the six harness scripts that read
+  them — Background — move to the new names or are marked as Managed Instances-era), and the
+  parameters `*AllowedInstanceTypes` / `*AcceleratorMemMinMiB` / `*VCpuMin` / `*VCpuMax` /
+  `*MemMinMiB` / `*MemMaxMiB` / `*UseLocalStorage` / `*ScaleInAfter` (the requirements are
+  **already** in the offer list: 0074 decision 1 made a rung "a set of requirements" and 0075
+  added `buy`; the MI four fields were a copy of the ladder). ⚠️ **Named exactly, not by glob**:
+  `*TaskMemory` and `*GpuCount` also match `*Mem*` / the MI block and **stay** — they feed the
+  task definition.
+- **`*StorageGiB` stays and changes meaning**: from the MI provider's storage requirement to the
+  launch template's **root gp3 size**. The anonymous `Host: {}` volume lands on the root
+  filesystem, and the ECS-optimized AMI's default root is 30 GiB (c) — a comfy deployment holding
+  30 GB of models would fill it. Same default as today; the name is kept so `params/60-engines`
+  captures carry over.
 - Added: one launch template per role (AMI, instance profile, `EngineSg`, user data,
-  `MetadataOptions HttpTokens: required`, root gp3, tags), `EngineInstanceRole`
-  (`AmazonEC2ContainerServiceforEC2Role` + `AmazonSSMManagedInstanceCore`),
-  `EngineInstanceProfile`. In the engine table JSON, `capacityProvider` / `spotCapacityProvider`
-  become `launchTemplate` (id); `offers` / `offerBudgetSec` / `classes` are unchanged.
+  `MetadataOptions HttpTokens: required`, root gp3 of `*StorageGiB`, the tag `af-managed-by`;
+  the CP writes the rest of the tags at `CreateFleet`, as the slot pool does at `RunInstances`),
+  `EngineInstanceRole` (`service-role/AmazonEC2ContainerServiceforEC2Role` +
+  `AmazonSSMManagedInstanceCore`, the slot role's pair), `EngineInstanceProfile`. In the engine
+  table JSON, `capacityProvider` / `spotCapacityProvider` become `launchTemplate` (id); `offers` /
+  `offerBudgetSec` / `classes` are unchanged. `CpIngestPolicy` swaps its Managed Instances
+  statements for the Fleet ones (decision 10).
 - 🔴 **Order**: (1) **with not one box standing** (both roles `mode: off`, no engine box among
   the container instances), (2) apply this template. Deleting a provider goes through when it has
   no box (measured on 0074 open question 1's throwaway: `delete-capacity-provider` at zero boxes
   is `INACTIVE` at once). Whether the service's `CapacityProviderStrategy` → `LaunchType` is a
-  replacement in CloudFormation is open question 1 — if it is, the Cloud Map registration blinks.
-  At desired 0 no request is lost.
+  replacement in CloudFormation is open question 1. ⚠️ **Both services carry an explicit
+  `ServiceName`** (`af-<stack>-llm` / `-image`) and `ServiceRegistries`. If it is a replacement,
+  CloudFormation creates the new service **before** deleting the old one, and the explicit name
+  collides — the update fails and rolls back. Then the migration is the path that already
+  exists: `<Role>Enabled=false` (the condition deletes the service; `update.sh` warns about
+  exactly this) → apply → `<Role>Enabled=true`. The Cloud Map name is gone in between; at
+  desired 0 no request is lost. The services keep `DependsOn: Associations` (it stays).
 - Removing the providers from `Associations`: the cluster's provider list is **owned by
-  60-engines**, so someone must still hold FARGATE / FARGATE_SPOT (`50-tts` uses `FARGATE_SPOT`,
-  0070). **`Associations` stays, with `[FARGATE, FARGATE_SPOT]`** (only the providers leave).
+  60-engines**, so someone must still hold FARGATE / FARGATE_SPOT (`50-tts` uses `FARGATE_SPOT`
+  through its strategy and declares no `Associations` of its own, 0070). **`Associations`
+  stays, with `[FARGATE, FARGATE_SPOT]`** (only the providers leave). A deployment without the
+  engines stack has no `Associations` at all and 50-tts leans on the cluster's default list —
+  unchanged by this ADR, stated so nobody "cleans up" the resource.
 - 0075's hardware run 1 (the two-step migration of a SPOT stack) is no longer needed — the
   providers go entirely, so there is no name to collide with.
-- Captured `*AllowedInstanceTypes` and friends in `params/60-engines` are dropped by `standup.sh`'s
-  `af_param_drop` (the same column as 0075's `ImageCapacityOptionType`). `update.sh` passes no
-  parameters, so retired ones fall away silently.
+- Captured `*AllowedInstanceTypes` and friends in `params/60-engines` are dropped with
+  `af_param_drop` (defined in `env.sh`, called from `standup.sh`; the same column as 0075's
+  `ImageCapacityOptionType`). `update.sh` passes **one** parameter set to 60-engines —
+  `<Role>Enabled=true` read back from the live stack, the only path that repairs it — and
+  `cloudformation deploy` keeps every unnamed parameter at its previous value, so retired ones
+  fall away silently as long as that block is not touched.
+- **`teardown.sh` terminates engine boxes by tag** (`af-pool` + `af-role=engine-*`) the way it
+  terminates slots, before the stacks go — the CP that would have done it is stopped first
+  (step 1), and Managed Instances' drain no longer does it for us.
 - Template size: three providers (about 3 KB) and the MI parameter block leave, two launch
-  templates arrive — **expected to shrink**, but `wc -c` before and after (wall 51,200; now 42,500).
+  templates arrive — **expected to shrink**, but `wc -c` before and after (wall 51,200; now 42,500;
+  the CI case 3b-2 in `ecs-lifecycle-stub-test.sh` fails the build past the wall).
 
 🔁 **What would change this**: if open question 1 says "the service must be recreated", the
-migration becomes "delete the service, then create it", and the Cloud Map name is gone for some
+migration is the `<Role>Enabled` round trip above, and the Cloud Map name is gone for some
 minutes. Unlike TTS nobody is waiting (image retries, an llm conversation breaks), so it is done
 inside a window with both roles at `mode: off`.
 
@@ -431,13 +532,22 @@ slow), 0045 decisions 22, 23 and 29 (the pool's invariants — kept from the box
    as a replacement.** The published specification (c) lists "capacity provider → launch type" as
    a valid API transition; how `AWS::ECS::Service` treats it is a separate matter. Measure on a
    throwaway stack (the shape of 0074 open question 1; one service; $0) by **executing** the
-   change set (a change set only says `Conditional` — 0074's lesson). Depends on: decision 11.
+   change set (a change set only says `Conditional` — 0074's lesson). ⚠️ The throwaway service
+   must carry an **explicit `ServiceName`** and a `ServiceRegistries` entry, as the real ones do
+   — a replacement that succeeds on an anonymous service says nothing about ours (decision 11).
+   Depends on: decision 11.
 2. 🔴 **Whether a service placement constraint `memberOf(attribute:af-role == …)` binds on an
    attribute set through `ECS_INSTANCE_ATTRIBUTES`, on the EC2 launch type.** One GPU-less m-class
    box and a task definition with no GPU requirement; under $0.05. Depends on: decisions 2 and 3.
 3. 🔴 **The vocabulary of `CreateFleet(instant)`'s `Errors[].ErrorCode`.** With a type above the
    quota (0075 run 4's `g6.4xlarge`), a misspelled type and a type with no stock, what the
-   response carries. $0 (nothing launches). Depends on: decisions 1 and 8 (the failure-code table).
+   response carries. $0 (nothing launches). Three things ride on the same calls: (a) **the IAM
+   minimum** — the calls run under decision 10's table and whatever `AccessDenied` names is
+   added (in particular whether `resolve:ssm:` in the launch template needs `ssm:GetParameters`
+   on the public parameter from the caller); (b) **whether an instant fleet that launched nothing
+   lingers** in `describe-fleets` (decision 1 remembers no fleet id on the strength of (c));
+   (c) that `prioritized` honours the override `Priority` (visible in the fleet's recorded
+   config). Depends on: decisions 1, 8 (the failure-code table) and 10.
 4. **Whether the CP can create `AWSServiceRoleForEC2Fleet` itself** (does the limited
    `iam:CreateServiceLinkedRole` go through). $0. Depends on: decision 10.
 5. **`awsvpc` on the EC2 launch type: the g6.xlarge ENI limit and the task ENI.** One task per
@@ -471,13 +581,22 @@ responses, verdict).
 Scope: decisions 1, 2, 3, 5, 7, 8, 10 and 11 (decision 4's interruption and decision 6's host
 volume are not in it).
 
-- CP: replace "buy", "wait for the box" and "read the failure code" in `engine_offer.go` with
-  `CreateFleet`. Remove the strategy write and `boxOn()` from `engine_ecs.go`; identify the box by
-  attribute and tags. Remove `applyClass` / `UpdateCapacityProvider` from `engine_class.go`. Move
-  `isPoolContainerInstance` in `runtime_ecs_ec2.go` to the attribute. Contract A (the table JSON):
-  `capacityProvider` / `spotCapacityProvider` → `launchTemplate`.
-- CFN: as in the migration section. Rewrite "The capacity providers" and "The offers" in
-  PARAMETERS.
+- CP: **a new EC2 port in package `main`** (`engineFleetAPI`: `CreateFleet`, `DescribeInstances`,
+  `TerminateInstances`, `CreateTags`, and `DeleteFleets` if open question 3 (b) says so) with a
+  fake, constructed on **every** flavour (today only the ecs-ec2 runtime builds an EC2 client;
+  the engine code has none — Background). Replace "buy", "wait for the box" and "read the failure
+  code" in `engine_offer.go` with one `CreateFleet` per offer. Remove `setStrategy` /
+  `writeStrategyOnly` and the provider-named `boxOn()` / `describeBoxes()` from `engine_ecs.go`;
+  identify the box by attribute and tags. Remove `applyEngineClass` / `engineCapacityAPI` from
+  `engine_class.go`; `startGate` keeps the no-candidate refusal and the swap wait. In
+  `runtime_ecs_ec2.go`: `isPoolContainerInstance` gains the attribute clause,
+  `sweepSlotOwnerTags` gains the role filter. Contract A (the table JSON): `capacityProvider` /
+  `spotCapacityProvider` → `launchTemplate` (the JSON literals in `engine_gateway_test.go`,
+  `engine_offer_test.go`, `engine_table_reload_test.go` follow). Decision 5's sweep, both
+  directions.
+- CFN: as in the migration section, including the Outputs, `CpIngestPolicy`, `standup.sh`'s
+  service-linked role and `af_param_drop` column, `teardown.sh`'s engine-box terminate, and the
+  six harness scripts. Rewrite "The capacity providers" and "The offers" in PARAMETERS.
 - Console: **no change** (contract B is unchanged).
 
 **Done means**:
@@ -489,7 +608,10 @@ volume are not in it).
    negative claim — a positive control where removing the guard fails the test).
 4. A test can say `isPoolContainerInstance` sorts the three kinds of box (slot, MI, EC2 engine)
    correctly.
-5. **On hardware (af-sandbox, the image role, 30 GPU minutes, up to $1)**: the same verdicts as
+5. A test can say `sweepSlotOwnerTags` leaves an instance tagged `af-role=engine-*` alone
+   (positive control: removing the filter makes it write).
+6. A test can say an `od` offer's overrides carry `Priority` in the declared order.
+7. **On hardware (af-sandbox, the image role, 30 GPU minutes, up to $1)**: the same verdicts as
    0075's runs 3-7, plus **"exactly one box"** (0075 bought two, three times out of three) and
    "the start does not wait for the deployment to settle" (the +2 min 35 s is gone). The type the
    Spot row delivered, the `af-engine-buy` tag, `InstanceLifecycle`.
@@ -510,3 +632,121 @@ refusal in `LlmOffers`.
 As in 0075 — **a `claude` session drives; one lane, one deployment.** The dev deployment is shared
 with other sessions, so confirm nobody is deploying before touching `60-engines`. P0's four items
 need only a throwaway stack and read-only APIs, and never touch the deployment.
+
+## Review (2026-09-12, before P0)
+
+In the manner of ADR 0075's review, the chain "decision → grounds → current state" was checked
+against the code, the templates and the cited ADRs. Verdict: **approved (P0 may start). Two
+statements of the current state were wrong and one decision stood on them (R1, R2), one EC2-side
+walk the text called "unaffected" is affected (R3), two decisions inherited things that do not
+exist in the code (R4, R5), the migration had four gaps (R6-R9), and three details of decision 1
+were imprecise (R10-R12). The text above has been corrected accordingly** — this ADR is still
+"proposed" with not one line implemented, so the correction is the "implementation corrects the
+text" stage brought forward, with what changed and why kept here. **Nothing was measured for
+this section**; re-reading the code and the templates was enough. Every cross-reference (0045
+decisions 6, 19, 22, 23, 29; 0070 decision 1; 0071 decisions 1, 2, 5, 7; 0074 decisions 5, 9;
+0075 decisions 1-12 and the three hardware follow-ups) was found where the text says.
+
+### What the review checked
+
+- **R1. "A deployment without the slot pool lacks `Ec2SlotPool` / `EcsContainerInstances`" was
+  wrong.** `20-platform.yaml` has no `Conditions:` section; both Sids are on the CP task role on
+  every flavour. Decision 10's closing sentence ("60-engines carries them in the same shape")
+  drew a conclusion from a false premise; the grant now goes into 60-engines' own
+  `CpIngestPolicy`, where the Managed Instances statements it replaces already live (unnamed —
+  they are not in 20-platform either). `iam:PassRole` on the slot role is its own Sid
+  (`PassSlotRole`), and the engine one follows that shape.
+- **R2. "`ssm:GetParameter` is not there" was wrong.** Sid `SsmWorkspaceParams` grants it, scoped
+  to `parameter/af-ws/*`. What is true is that the AMI parameter under `/aws/service/` is out of
+  that scope. Whether the caller of `CreateFleet` must hold `ssm:GetParameters` for a
+  `resolve:ssm:` launch template is (c), and decision 10 had asserted the answer; it is now part
+  of open question 3, together with the rest of the IAM minimum (an `AccessDenied` is $0).
+- **R3. `sweepSlotOwnerTags` filters on `af-pool` alone.** Five EC2-side walks pair `af-pool`
+  with `af-role=slot`; this one does not, and it writes `af-membership` / `af-tenant` on what it
+  finds. An engine box tagged `af-pool` (decision 3) would be relabelled by it. Decision 3 gives
+  it the role filter, with a test (done item 5). Also corrected: the slot tags come from the CP
+  at `RunInstances`, not from `40-ec2-pool.yaml` (whose only tag is `af-managed-by`), and the
+  engine services and providers already carry `af-pool` / `af-role=engine-<role>`.
+- **R4. Decision 4 "inherits" an interruption handling that was never written.** 0075 decision
+  6 exists in the code as `noteReplacement` only (a log line and an audit row); the rebuild from
+  the top and the two-in-a-row skip were 0075 P1 and were not reached — `engine_offer.go`'s own
+  header says so. The decision now says it inherits the design, and P2 builds it once.
+- **R5. `isPoolContainerInstance`'s new rule dropped the provider test.** "Changes from A to B"
+  would let a Managed Instances box (no attribute) back into the pool, contradicting the same
+  paragraph's "both leave through the same function" and the three-kind test. The rule is now
+  "A and B". The same paragraph gained: the engine's deregister does not reuse `deregisterSlot`
+  (it applies the pool test), and decision 5's sweep runs in both directions — an EC2 box with
+  no tasks, and a container instance with no EC2 — since the pool's `sweepGhostInstances` will no
+  longer see engine ghosts. The attribution "zero tasks, the caution of `sweepGhostInstances`"
+  was wrong too: that sweep checks registration age and "instance gone"; the task-count caution
+  is `sweepFreeSlots` / `makeRoom`'s.
+- **R6. Both engine services have an explicit `ServiceName`.** If open question 1 answers
+  "replacement", CloudFormation creates before it deletes and the name collides; the update
+  rolls back. The migration then uses the `<Role>Enabled=false` → apply → `true` round trip that
+  already exists (the condition deletes the service — `update.sh` warns about exactly this). The
+  throwaway in open question 1 must carry an explicit name and a `ServiceRegistries` entry, or
+  it measures a different service.
+- **R7. "`update.sh` passes no parameters" was wrong.** For 60-engines it passes
+  `<Role>Enabled=true` read back from the live stack — the only path that repairs that value.
+  The mechanism the ADR relied on (`cloudformation deploy` keeps unnamed parameters) is right;
+  the sentence was not. `af_param_drop` is defined in `env.sh`.
+- **R8. The removal list was a glob that caught what must stay.** `*Mem*` matches `*TaskMemory`,
+  and the MI block's neighbour `*GpuCount` feeds the task definition. The list now names the
+  parameters. `*StorageGiB` stays and becomes the root volume size — the anonymous model volume
+  lands on the root filesystem, and a 30 GiB default root (c) does not hold a comfy deployment's
+  models. The three `*CapacityProviderName` Outputs go with the providers, and six harness
+  scripts read them; `teardown.sh` relied on Managed Instances' drain to remove the box and now
+  terminates by tag, as it does slots.
+- **R9. The CP's `main` package has no EC2 client.** The engine ports are ECS-only
+  (`engineECSAPI`, `engineCapacityAPI`); the one EC2 port is unexported in `internal/runtime`
+  and built only by the ecs-ec2 runtime. P1 adds an `engineFleetAPI` with a fake, on every
+  flavour. Contract A has no schema or golden; the JSON literals in three test files are the
+  de-facto pin.
+- **R10. `prioritized` reads the override `Priority`, not the list order.** Decision 1 said
+  "the order of the overrides = the declared order"; the CP now writes `Priority` explicitly
+  (done item 6).
+- **R11. "An instant fleet deletes itself" is (c) and decision 1 leaned on it** ("the CP does not
+  remember the fleet id"). Open question 3 now records `describe-fleets` after the $0 calls; if
+  fleets linger, `DeleteFleets` follows each response.
+- **R12. The service-linked role's service name.** `AWSServiceRoleForEC2Fleet` is created for
+  `ec2fleet.amazonaws.com`, not `spot.amazonaws.com`; the condition key is `iam:AWSServiceName`.
+  `standup.sh` today runs `create-service-linked-role` only for `ecs.amazonaws.com`. Not a
+  CloudFormation resource — an existing role fails the stack.
+
+### Per-decision revisions (already applied above)
+
+| Decision | What changed | Why |
+|---|---|---|
+| Background (code) | slot tags come from the CP / `sweepSlotOwnerTags` / the three Sids and `SsmWorkspaceParams` as they are / MI grants live in `CpIngestPolicy` / no EC2 client in `main` / 0075 decision 6 is `noteReplacement` only / `startGate`'s four gates / contract A's home and pins / `teardown.sh` | R1, R2, R3, R4, R7, R8, R9 |
+| 1 | `Priority` written explicitly / fleet lingering measured, `DeleteFleets` if so | R10, R11 |
+| 3 | provider test kept ("A and B") / engine deregister not through `deregisterSlot` / `sweepSlotOwnerTags` gains the role filter | R3, R5 |
+| 4 | "inherited as a design; P2 builds it" / ECS's own deregistration as (c) with the sweep behind it | R4, R5 |
+| 5 | the sweep in two directions, task counts from `DescribeContainerInstances`, no memory consulted | R5 |
+| 8 | the two "inclusive of the fee" texts change with `usdPerHour` | — |
+| 10 | `CpIngestPolicy`, not a repeat of the two Sids / `ssm:GetParameters` conditional on open question 3 / `ec2fleet.amazonaws.com` / IAM minimum as P0 output / `standup.sh`, not a CFN resource | R1, R2, R12 |
+| 11 | parameters named, `*StorageGiB` re-meant / Outputs and harness scripts / explicit `ServiceName` and the `<Role>Enabled` round trip / `update.sh` as it is / `teardown.sh` / 50-tts's dependence on `Associations` stated | R6, R7, R8 |
+| Open questions | 1: the throwaway carries a name and a registry / 3: IAM minimum, fleet lingering, `Priority` | R2, R6, R10, R11 |
+| P1 | `engineFleetAPI` on every flavour / the exact functions / done items 5 and 6 | R3, R9, R10 |
+
+### How the implementation splits
+
+Contract B (CP → Console) does not move, so there is no Console lane. Contract A (template → CP)
+changes one field (`capacityProvider` / `spotCapacityProvider` → `launchTemplate`), and that is
+the seam between the CP and CFN lanes. Four lanes:
+
+- **P0 hardware ($0, first, and alone).** Open questions 1-4 on af-sandbox with a throwaway
+  stack and the read-only APIs. **If 1 or 2 is red the other lanes do not start.** Its output is
+  four verdicts in the shape of 0075's run 0, plus the IAM minimum and the fleet-lingering answer
+  from open question 3. A `claude` session drives it.
+- **CP (Go).** Everything under P1's CP bullet, behind the fake `engineFleetAPI`; done items 1-6.
+  It may start on the day P0's 2 and 3 are green, on the strength of the fake, and takes P0's
+  vocabulary for the failure-code table when it arrives.
+- **CFN + scripts.** Everything under P1's CFN bullet, PARAMETERS, `standup.sh` / `update.sh` /
+  `teardown.sh` / the harness scripts, and the appendices on 0071, 0074 and 0075 ("Appendix — ADR
+  0077 overrode this decision"). It may start on the day P0's 1 is green (the migration's shape
+  depends on it).
+- **P1 hardware.** Serial, one lane, one deployment, after CP and CFN have landed: done item 7.
+  The dev deployment is shared; `pgrep -af dev-deploy.sh` before touching 60-engines.
+
+P2 (decisions 4 and 6) and P3 (the llm role) follow P1's hardware verdict and are not split
+further here.
