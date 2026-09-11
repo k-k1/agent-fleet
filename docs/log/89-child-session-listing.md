@@ -512,3 +512,122 @@ last-writer-wins で壊れなかった。
 「記録済み」判定も満たさず**毎ポーリング書き直す**——このガードは正しさではなく**書き込み増幅**の
 ためにある。試験にその主張（ファイルが書かれないこと）を足して測り直した。§89.8.1 の 3 件目と
 同じ「二重化された防御の片側は単独変異で観測できない」形である。
+
+## 89.11 親が子の題名を付け替えられるようにした（10 本目・`title_set_by`）
+
+- 状態: **実装済み**（2026-09-11）。`rename_child_session` を足し、題名の書き手が 2 人になったので
+  「利用者が勝つ」を `title_set_by` で明文化した。
+- 設計: [ADR 0073](../decisions/0073-session-spawned-sessions.ja.md) 決定 4 と §3-b の補遺（ja/en）。
+- 出どころ: 実測。**子を再利用するたびに題名が古くなった** — `list_child_sessions` が返す題名が
+  中身と食い違い、親が「残した子」を利用者に名指しで伝えるときも Console の左ペインでも読めない。
+
+### 89.11.1 なぜ決定 4 に足せるのか
+
+決定 4 が親に許したのは列挙・出力・停止・再開で、**破壊的でも不可逆でもなく、対象は自分が起こした
+子だけ**という共通点がある。改名はその集合に素直に入る。ゲートも新しくは作らず、
+`stop_session` / `resume_session` と同じ `sessionDriveAllowed` を通す。**決定 4 の述語は 1 文字も
+変えていない。**
+
+### 89.11.2 🔥 題名だけは「人の書き手」がいる — 調停ではなく順序にした
+
+既存の 4 本が触るもの（プロセスの生死、端末の出力）に人の書き手はいない。**題名にはいる。**
+そのまま開けると、利用者が Console で付けた名前を親が黙って上書きする。
+
+`session.Meta` に **`TitleSetBy`（`user` / `parent` / 空＝作成時）** を足し、順序を置いた。
+
+| 書き手 | 通る条件 | 書く値 |
+|---|---|---|
+| 利用者（リネーム欄・提案バナーの「採用」） | **常に通る** | `user` |
+| 親（`rename_child_session`） | `user` が立っていないとき | `parent` |
+| 利用者が題名を空にする | 常に通る | 空（＝新規と同じ状態へ戻る） |
+| 親が空を送る | **拒否**（400） | — |
+
+- **提案バナーの「採用」も `user` である。** 利用者がその名前を選ぶ操作だからで、ここを落とすと
+  **親が上書きできる唯一の題名が「利用者が採用を押した直後のもの」になる**。
+- **空にすると `title_set_by` も空へ戻る。** 自動題名の再提案が再び開くのと同じ理由——セッションが
+  新規と同じ状態に戻る。これが無いと「親が二度と改名できない」から抜ける経路が UI に存在しない。
+- **親は空を送れない。** 自動ラベルへ戻すのは利用者の操作で、親の空文字は「名前を選んだ」ではなく
+  「名前を失った」である。
+- 拒否文は**理由を名指しする**（409 `title_set_by_user`）。呼び手はモデルなので、黙って失敗させると
+  再試行する。
+
+### 89.11.3 拒否は Agent、所有権は MCP — stop / resume と同じ分担
+
+`SpawnRenameRefusal` は `session_spawn.go` に置いた。同ファイル冒頭の理由（**MCP 層だけにある
+不変条件は、その層を差し替えれば回避できる**）に加えて、**Console が同じエンドポイントを叩く**
+からである。逆に所有権（呼び手が誰か）は MCP 側の `sessionDriveAllowed` に残る——それは
+「何が保存されているか」ではなく「誰が呼んだか」を訊く問いで、stop / resume と同じ場所にある。
+
+新しいルートは作っていない。`POST /sessions/{name}/title/set` に `title_set_by` を足しただけで、
+**欄が無い body は利用者として読む**（Console が送らないため。特権側を既定にしてはならない）。
+
+#### 🔥 呼び出し側のゲートを stop/resume から写して穴を開けていた（実装中に自分で捕まえた）
+
+最初は `stop_session` に倣って `!writeEnabled() && !mcpFleetSpawnEnabled` と書いた。**間違いである。**
+`stop_session` / `resume_session` は**オペレーター面にも在る**ツールなので `writeEnabled()` を許すのが
+正しいが、`rename_child_session` は `list_child_sessions` と同じく**オペレーター面には無い**。
+つまりこの綴りは、**広告していない経路へ `--write` のアシスタントが名前を当て推量で到達できる**形で
+あり、そこから先の `sessionDriveAllowed` は**オペレーターを意図的に素通しする**（`selfReportOnly()`
+でなければ即 nil）。結果は**ワークスペースの任意のセッションを改名できる**である。
+
+`list_child_sessions` のコメントが「広告していない経路へ、当て推量の名前で到達させない」と書いて
+いたのはまさにこの形で、ゲートを**フラグ単独**へ直した。陽性対照で実測済み（元の綴りへ戻すと
+`TestRenameChildSessionRefusedWithoutTheOptIn` の write assistant の行が落ち、**スタブ Agent に
+リクエストが届く**）。**「隣のツールから写す」は、その隣がどの面に広告されているかまで写さない。**
+
+### 89.11.4 ワイヤは 4 か所
+
+CP の `sessionWire` に無い欄は黙って落ちる。Go の型（`session.Session`）・`wireSession` の詰め・
+CP の `sessionWire`・Console の `Session` 型を揃え、包含は試験で固定した。
+
+**綴りは `titleSetBy`（camelCase）である。** 依頼の文面は `title_set_by` だが、このワイヤ一族の
+キーは 36 本すべて camelCase で、ここだけ snake_case にすると契約試験の対応表と Console の型に
+唯一の例外ができる。**`title_set_by` は REST の request body 側の綴りとして残した**——そちらは
+`origin_session` / `initial_prompt` / `disarm_report` と同じ snake_case の側である。
+
+**Console の表示は変えていない。** 運ぶのは、人が付けた名前と親が付けた名前を区別できる読み手が
+いずれ要るからで、宣言だけしておけば契約試験が両方向を見張る。
+
+### 89.11.5 検証
+
+`(cd workspace/agent && go test -count=1 -p 2 ./...)` / `(cd control-plane && go test -count=1 -p 2 ./...)`
+全緑。Console は型宣言 1 つなので `npm test` と `tsc --noEmit`。exit code はパイプを通さずに取っている。
+
+ゴールデンは 2 本取り直した（`workspace/agent/testdata/wire.golden` と
+`control-plane/testdata/wire.golden`。どちらも `sessionWire`/`session.Session` に `titleSetBy` が
+1 行増えただけ）。**wiremap ゴールデンは対象外**——`mcpListChildSessions` の行の map は変えておらず、
+新しい map 書き込み口も作っていない。
+
+#### 陽性対照
+
+| 壊した箇所 | 落ちたテスト |
+|-----------|------------|
+| rename の case から `sessionDriveAllowed` を外す | `TestRenameChildSessionOnlyTouchesOwnChildren` |
+| 広告はするが `case` を書かない | `TestFleetSpawnToolsAreCallableNotJustAdvertised`・上記 |
+| `rename_child_session` を広告しない | `TestFleetSpawnAddsExactlyItsTenTools` |
+| `SpawnRenameRefusal` が何も拒否しない | `TestParentRenameYieldsToTheUsersRename`・`TestAcceptingASuggestedTitleCountsAsTheUsers` |
+| `HandleSetTitle` が `TitleSetBy` を打たない | `TestParentRenameYieldsToTheUsersRename` |
+| 「採用」が `user` を打たない | `TestAcceptingASuggestedTitleCountsAsTheUsers` |
+| 親の空文字を通す | `TestClearingTheTitleReopensItToTheParent` |
+| `wireSession` が `TitleSetBy` を載せない | `TestTitleSetByRidesTheSessionWire` |
+| 🔥 CP の `sessionWire` から欄を落とす（中継の黙殺） | `TestContractFamilies/sessionWire`・`TestAgentSessionsRelayKeepsFields`・`TestWireShapeGolden` の 3 本 |
+| Console の `Session` から宣言を落とす | `TestContractFamilies/sessionWire`（両方向） |
+| 🔥 呼び出し側のゲートを `writeEnabled() \|\| フラグ` に戻す | `TestRenameChildSessionRefusedWithoutTheOptIn`（write assistant が改名に成功し、Agent にも届く） |
+
+#### 🔴 自分の試験が 1 件、対照になっていなかった
+
+「未改名のセッションは `titleSetBy` を送らない」の確認が、**壊さなくても緑にならない**形で最初から
+誤っていた。`json.Unmarshal` は**生きた map へはマージする**ので、直前の行の `titleSetBy` が
+残ったまま次の assertion に入っていた。map を捨ててから読み直す形へ直した。omitempty の主張を
+「キーが無いこと」で書くときは、読み先が使い回しでないかを見ること。
+
+### 89.11.6 残り
+
+- **`list_child_sessions` は変えていない。** 行は既に `title` を返しており、改名の結果はそのまま
+  次のポーリングに出る。`get_session_status` も変えていない。
+- **`title_set_by` の読み手は Console にまだ無い。** 運んではいるが表示は変えていないので、
+  「利用者が付けた名前」を見分ける UI（親の改名が届かないことの視覚的な裏付け）は未着手である。
+- **実機での発火確認は未実施**（§89.7 と同じ持ち越し）。
+- **§89.6 の表にある `TestFleetSpawnAddsExactlyItsNineTools` は
+  `TestFleetSpawnAddsExactlyItsTenTools` へ改名した**（本数が名前に入っている）。当時の記録として
+  残っている綴りは、ここで読み替えること。

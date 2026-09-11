@@ -109,7 +109,7 @@ var mcpImageGenEnabled bool
 // What is still NOT here: delete_memo and flush_memos. A session may add to its user's queue and
 // correct what is in it; emptying it or sending it is the user's.
 
-// mcpFleetSpawnEnabled adds the eight session-steering tools (ADR 0073), under
+// mcpFleetSpawnEnabled adds the ten session-steering tools (ADR 0073), under
 // `--self-report --fleet-spawn`. It is the one session-side switch left, and it is a switch
 // because it is the one that spends the shared host with nobody watching. Observation above is
 // not: reading the fleet and writing your user a note cost nothing and are refused by nobody,
@@ -805,7 +805,7 @@ func memoWriteAllowed() bool {
 	return writeEnabled() || selfReportOnly()
 }
 
-// mcpStdioFleetSpawnTools — the nine session-steering tools, advertised only under
+// mcpStdioFleetSpawnTools — the ten session-steering tools, advertised only under
 // `--self-report --fleet-spawn` (ADR 0073). Written out here rather than reused from the
 // operator's list for the reasons in mcpStdioFleetObserveTools: the operator's text is Japanese
 // and points at tools a session does not get. The handlers are shared.
@@ -953,6 +953,19 @@ func mcpStdioFleetSpawnTools() []map[string]any {
 					"name": map[string]any{"type": "string", "minLength": 1, "description": "Child session name"},
 				},
 				"required": []string{"name"},
+			},
+		},
+		{
+			"name": "rename_child_session",
+			"description": "Agent Fleet: retitle a child you started, so its name still says what it is doing. " +
+				"Only your own children, and it is refused once the user has renamed that child themselves.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"name":  map[string]any{"type": "string", "minLength": 1, "description": "Child session name"},
+					"title": map[string]any{"type": "string", "minLength": 1, "description": "The new display title"},
+				},
+				"required": []string{"name", "title"},
 			},
 		},
 	}
@@ -2797,6 +2810,39 @@ func mcpStdioCall(req mcpReq) []byte {
 		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/start", nil)
 		if err != nil {
 			return mcpToolErr(req.ID, "セッションの再開に失敗しました: "+err.Error())
+		}
+		return mcpTextResult(req.ID, out)
+	case "rename_child_session":
+		// The flag ALONE, like list_child_sessions and unlike the stop/resume pair: those are
+		// also operator tools, this one is not advertised on the operator surface at all. An
+		// assistant that guessed the name would otherwise reach a route this server does not
+		// advertise — and rename every session in the workspace, since sessionDriveAllowed waves
+		// the operator through by design.
+		if !mcpFleetSpawnEnabled {
+			return mcpToolErr(req.ID, "このセッションはセッションの起動・操縦を許可されていません（設定 > エージェント）")
+		}
+		if a.Name == "" {
+			return mcpToolErr(req.ID, "name（セッション名）が必要です")
+		}
+		// An empty title means "revert to the auto label", which is the user's affordance in the
+		// rename dialog and not something a parent asks for. Refused here as well as in the Agent
+		// so the caller is told what to send instead of reading it back as an API error.
+		if strings.TrimSpace(a.Title) == "" {
+			return mcpToolErr(req.ID, "title（新しい題名）が必要です")
+		}
+		if _, ok := cleanTitle(a.Title); !ok {
+			return mcpToolErr(req.ID, fmt.Sprintf("title は %d 文字以内・改行なしにしてください", sessionTitleMaxRunes))
+		}
+		if err := sessionDriveAllowed(a.Name); err != nil {
+			return mcpToolErr(req.ID, err.Error())
+		}
+		// title_set_by is what separates this write from the Console's on the same endpoint, and
+		// the refusal that reads it (a title the user chose) lives in the Agent — not here, where
+		// replacing this layer would walk around it.
+		renameBody, _ := json.Marshal(map[string]string{"title": a.Title, "title_set_by": session.TitleSetByParent})
+		out, err := AgentPOST("/sessions/"+url.PathEscape(a.Name)+"/title/set", renameBody)
+		if err != nil {
+			return mcpToolErr(req.ID, "題名の変更に失敗しました: "+agentErrDetail(err))
 		}
 		return mcpTextResult(req.ID, out)
 	case "archive_session":
