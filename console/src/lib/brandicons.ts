@@ -2,8 +2,8 @@
 // Today that is the agent CLIs (an "agent kind"); a per-provider set was considered and
 // dropped, for the reason in assets/brandicons/ATTRIBUTION.md (the surfaces that would
 // carry it are native <select>s, which cannot hold markup). The set dimension is kept in
-// the paths anyway so adding one later does not mean moving files. See that same file for
-// the sources and licenses.
+// the class names anyway so adding one later does not mean renaming these. See that same
+// file for the sources and licenses.
 //
 // Why vendored rather than fetched from the upstream CDN at runtime: a cross-origin
 // <use href> is refused by the SVG spec and an <img src> to a remote SVG renders it in
@@ -14,29 +14,22 @@
 //
 // Every icon is a single-color path on `currentColor`, so they are painted as a CSS mask
 // (styles/brandicons.css) exactly like the monochrome file-icon sets — the color then comes
-// from the surrounding element and both themes work with no per-icon rule.
-//
-// This module only decides WHETHER a key has an icon; the mask itself is a CSS class, so
-// the url() is quoted by Vite rather than assembled by hand (styles/brandicons.css explains
-// why that distinction bites).
+// from the surrounding element and both themes work with no per-icon rule. This module only
+// decides WHETHER a key has an icon; the mask itself is a CSS class, so the url() is quoted
+// by Vite rather than assembled by hand (styles/brandicons.css explains why that bites).
 
-// The glob is the inventory: adding an SVG to the folder is enough to make it known here,
-// and brandicons.test.ts checks the CSS has a matching rule. Only the URL strings land in
-// the bundle, and nothing loads them — the CSS rules are what the browser fetches.
-const mods = import.meta.glob<string>("../assets/brandicons/*/*.svg", {
-  eager: true,
-  query: "?url",
-  import: "default",
-});
+// The keys are listed by hand rather than discovered with import.meta.glob. That glob is a
+// VITE transform, and ui/Icon.tsx — which imports this — is also bundled by the esbuild
+// rendering harnesses (scripts/pdf, scripts/doc, scripts/drawio). esbuild leaves the call
+// alone, so `import.meta.glob` is undefined at runtime, the module throws while
+// initialising and the ENTIRE bundle renders nothing: pdf:check went from 15 OK to a bare
+// "querySelector('.pdfview') is null". Anything reached from ui/ has to stay plain ESM.
+// brandicons.test.ts checks this list against the asset folder and the CSS, so it cannot
+// quietly fall behind.
+const AGENT_KEYS = ["antigravity", "claude", "codex", "copilot", "cursor", "kiro", "opencode"];
 
 /** Vendored keys per set: { agents: ["claude", "codex", …] }. */
-export const BRAND_SETS: Record<string, string[]> = {};
-for (const p in mods) {
-  const parts = p.split("/");
-  const key = (parts.pop() ?? "").replace(".svg", "");
-  const set = parts.pop() ?? "";
-  (BRAND_SETS[set] ||= []).push(key);
-}
+export const BRAND_SETS: Record<string, string[]> = { agents: AGENT_KEYS };
 
 /** Marks an Icon name as a brand asset instead of a codicon glyph ("brand:claude"). */
 export const BRAND_PREFIX = "brand:";
@@ -45,5 +38,5 @@ export const BRAND_PREFIX = "brand:";
  *  then falls back to a codicon, so a typo or a not-yet-vendored agent degrades to a glyph
  *  rather than an empty box. */
 export function agentBrandClass(key: string): string | null {
-  return BRAND_SETS.agents?.includes(key) ? `brandicon bi-agent-${key}` : null;
+  return AGENT_KEYS.includes(key) ? `brandicon bi-agent-${key}` : null;
 }
