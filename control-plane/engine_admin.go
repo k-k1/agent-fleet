@@ -405,13 +405,6 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 	// generate_image hiding an engine that is ready, for up to that whole TTL. Placed BEFORE the
 	// class gate's early return: the mode is stored on that path too. (Measured on af-sandbox,
 	// ADR 0072 P2 実機検証: `mode=ondemand` did not reach a running session until the TTL.)
-	// The mode decides whether this engine is IN /internal/engine/catalog at all (see this
-	// file's header), so it changes what a Workspace may offer just as much as enabling a model
-	// does — and the Agent caches the catalogue for ten minutes. Without this push, `off` leaves
-	// every running session offering an engine that now answers 503 engine_off, and `on` leaves
-	// generate_image hiding an engine that is ready, for up to that whole TTL. Placed BEFORE the
-	// class gate's early return: the mode is stored on that path too. (Measured on af-sandbox,
-	// ADR 0072 P2 実機検証: `mode=ondemand` did not reach a running session until the TTL.)
 	go notifyEngineCatalogChanged(context.WithoutCancel(r.Context()), a.mgr, key)
 	e.ctrl.noteAdminAction() // a cooldown must never refuse the person who pressed the button
 	// ON starts the box HERE, so the class gate has to be consulted HERE as well: without it
