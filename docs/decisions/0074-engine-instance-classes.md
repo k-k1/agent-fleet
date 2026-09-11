@@ -1130,6 +1130,38 @@ CloudFormation round trip. A model is the catalogue's and moves without touching
 ladder is the vessel's, and it costs one CloudFormation run plus one CP restart**. An operator
 who does not know that will hunt for a configuration mistake that is not there.
 
+> ✅ **Fixed (2026-09-11; implemented, not verified on hardware) — the table is re-read.** The
+> CP polls the engine table (`AF_ENGINES_SSM_PARAM`) every **10 seconds**
+> (`engine_table_reload.go`, on the same constant the pending reader uses). It compares the
+> raw TEXT first, so an unchanged parameter costs one `GetParameter` and no parsing — which is
+> what makes six calls a minute the right price for something that is almost always unchanged.
+>
+> **Only the ladder is carried live.** The rest of a row (service, url, health, provider,
+> capacity provider, idle, deadline) is baked into objects this process is using right now:
+> `engineECS`'s client, the controller's goroutine and its intervals, the capacity client that
+> is attached only when a ladder existed at start, the demand window. Swapping them means
+> rebuilding the runtime state, which throws away **what only this process knows** — the
+> demand counter the controller stops the engine on, the warm model, the rung this process
+> last applied — and starts a second controller for the same engine. So a change to any of
+> them is **logged as needing a restart**: better than half-applying it silently, because a
+> panel whose word disagrees with the deployment's behaviour is exactly this section's defect.
+>
+> **A row added or removed is logged too, and nothing else.** Unregistering a role that left
+> the table would take a GPU away from whoever is using it on the strength of one poll; the
+> operator's route out is `mode=off`, which is a decision rather than an inference. 🔴 Going
+> from NO ladder to one also needs a restart: the capacity client and the controller's start
+> gate are attached at construction only when a ladder exists, so a ladder adopted here would
+> be one the panel shows and nothing enforces — decision 4's "the gate is bypassed and it
+> lands quietly on the old card".
+>
+> The swap is behind `classesMu` (an RWMutex) and every reader — controller, gateway, admin —
+> goes through `classList()`. A `-race` test swaps the ladder 50 times while it is being read,
+> and was checked against the defect: without the lock it really does fail. Three more pin the
+> behaviour (a new ladder lands; a broken table keeps the previous one; an unchanged table
+> swaps nothing and returns the same slice). **Not verified on hardware**: the next time a
+> ladder is changed by CloudFormation, watch `GET /api/admin/engines` catch up within ten
+> seconds without the CP being replaced.
+
 ### Applying a rung rewrites four fields of the provider
 
 `PUT /api/admin/engines/llm/class {"class":"l4"}`, with `describe-capacity-providers` either
