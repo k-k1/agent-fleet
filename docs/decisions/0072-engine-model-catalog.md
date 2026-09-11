@@ -2919,7 +2919,7 @@ controller tick:
 15:09:51  (service …-engines-llm) has reached a steady state.
 ```
 
-**Nine seconds.** The task died pending, never reached RUNNING, and no box was bought
+**Nine seconds.** The task died pending, never reached RUNNING, and no instance was bought
 (`desiredCount` stayed 0 through three further minutes of watching). "Does not start" is true,
 but **"never asks" is not**: `decideEngineAction` returns `no_model` correctly, and the mode
 route moves ECS ahead of it. On a deployment where `on` is held against an empty catalogue, those
@@ -2939,7 +2939,7 @@ registered with `POST …/models` and enabled:
 
 **819 seconds (13 min 39 s) from enabling the row to warm.** **692 of those are the capacity
 provider acquiring a g6.xlarge and placing the task** (`start (admin_on)` → ECS starting the
-task); from box to warm is 103 s. It is longer than P0's 527 s because capacity was slow that
+task); from instance to warm is 103 s. It is longer than P0's 527 s because capacity was slow that
 day, not because of the sync — the sync is five seconds:
 
 ```
@@ -2950,7 +2950,7 @@ engine fetch: cmdline = --models-preset /models/llm/presets.ini
 engine fetch: engine may start; 0 file(s) still to sync
 ```
 
-**The box synced only what the catalogue held** — the 18.5 GB 30B was still sitting in the bucket
+**The instance synced only what the catalogue held** — the 18.5 GB 30B was still sitting in the bucket
 and was not touched. That is decision 1's "the catalogue is the whole declaration" demonstrated
 on the real path. The engine's own log says the same:
 
@@ -2968,9 +2968,9 @@ same limit. The evidence used instead is the two logs above and the warm verdict
 
 ### The warm probe ran on hardware (measurement 13's price is paid)
 
-Measurement 13 left "the CP's warmProbe has not run on hardware" as its price: the box was
+Measurement 13 left "the CP's warmProbe has not run on hardware" as its price: the instance was
 brought up then with a bare `run-task` the controller never sees, and `maintainWarm` is only
-called from the service's state. **This time the box came up through the service** (`mode: on` →
+called from the service's state. **This time the instance came up through the service** (`mode: on` →
 `admin_on`), so the CP's probe read the router's `/models` and set warm: `GET
 /api/admin/engines` shows the llm role at `warm: true`, and the CP logged `engine llm: warmed up
 (ready)`. That is also the engine **answering `/models` with that one model** — the verdict reads
@@ -3160,7 +3160,7 @@ definition is not expressible through today's `generate_image`**, and that line 
 a request can pin a seed.
 
 What was proven instead is arguably stronger: **`LoraLoader`'s `lora_name` is an enumeration over
-`models/loras`, not a free string** — the same shape as SD3.5's `clip_name1`. A name the box does
+`models/loras`, not a free string** — the same shape as SD3.5's `clip_name1`. A name the instance does
 not hold is refused at validation with `Value not in list`. So **a successful generation WITH the
 LoRA simultaneously shows that (a) the file reached the instance from `image/loras/`, (b) the
 basename matches the enumeration, and (c) `LoraLoader` actually ran.**

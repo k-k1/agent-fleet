@@ -58,7 +58,7 @@ Reading the real deployment showed that **instances have no `af-membership`** (o
 **activating the tags alone does not achieve the main goal.**
 
 - The tag is applied at the point where attaching home succeeded, and removed after a successful
-  detach in `releaseSlot` and in `quarantineSlot`. The cleanup path picks up and removes "a box that
+  detach in `releaseSlot` and in `quarantineSlot`. The cleanup path picks up and removes "an instance that
   has `af-membership` but no volume attached" (what is missed when the CP dies).
 - **The existing logic does not change** — slot search is `af-role` + `af-pool`, and occupancy is
   judged from the volume side (`freeSlots` / `occupiedInstances`). The tag is read only for billing.
@@ -67,8 +67,8 @@ Reading the real deployment showed that **instances have no `af-membership`** (o
   entirely on whichever had the tag. It averages out daily, but **it is documented as an error term**.
   Re-apportioning by seconds is possible, but that would overwrite actual spend with an estimate, so
   it is not done.
-- **The cleanup path is fixed in both directions.** A stale tag (a box whose release finished
-  half-way) is removed, and a missing tag (a box that died right after attach, or that predates this
+- **The cleanup path is fixed in both directions.** A stale tag (an instance whose release finished
+  half-way) is removed, and a missing tag (an instance that died right after attach, or that predates this
   code) is **copied from the volume**. The former overcharges a person and the latter demotes the
   attribution to "shared" — and since cost allocation cannot be backfilled, the latter is lost
   permanently. ⚠️ The pool logic never reads this tag, so **if it breaks, nothing shows up anywhere
@@ -115,7 +115,7 @@ an estimate.**
 - Shared cost is not mixed into the per-member totals; it is **a separate card with a per-service
   breakdown**.
 - **Idle pool slot hours are shared too** (`af-role=slot` with no `af-membership`). For the first time,
-  the actual cost of "boxes running that nobody is using" appears as a number.
+  the actual cost of "instances running that nobody is using" appears as a number.
 - **The shared card is super_admin only.** Showing a tenant_admin the deployment-wide ALB / RDS bill
   hands over information from outside their tenant (the line from 0043 decisions 24/25).
 - ⚠️ **The wording for members is not "your cost".** It is fixed as

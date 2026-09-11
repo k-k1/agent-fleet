@@ -34,7 +34,7 @@
    CP の外向き通信は egress 制限外（`control-plane/oauth_google.go:215` が `http.DefaultClient`
    直叩き）。ワークスペース停止中でも動く。
 2. **プロバイダ抽象**（`voicevox` / `polly`）を CP に置き、ルーティング（使い分け）も CP が担う。
-3. **VOICEVOX エンジンは "CP が指す URL"**。物理配置（同居 docker / 専用箱 / ECS）は
+3. **VOICEVOX エンジンは "CP が指す URL"**。物理配置（同居 docker / 専用インスタンス / ECS）は
    `AF_VOICEVOX_URL` の差し替えだけで変えられ、CP のハンドラは不変。
 4. **Polly 認証は IAM インスタンス/タスクロール**（鍵の保存ゼロ）。CP 側の秘密金庫は新設しない。
 5. **使い分けは `auto` 既定**（後述の表）。

@@ -14,7 +14,7 @@ English | [日本語](0053-cp-arch-and-availability.ja.md)
 
 ## Context
 
-[docs/70](../log/70-slot-instance-classes.md) made it possible to choose the architecture of the box a
+[docs/70](../log/70-slot-instance-classes.md) made it possible to choose the architecture of the instance a
 workspace runs on. The same question remains for the CP itself — **the CP is only built for amd64**,
 so the option of putting Fargate on Graviton does not exist at all. Meanwhile there is not a single
 architecture-dependent line in `control-plane/Dockerfile`; **it is purely a question of how it is

@@ -45,7 +45,7 @@ no IAM caps needed).
 ## 2. Ship the release bundle to the VM
 
 Build images and bundle on your workstation, then copy over (bundle-only = the
-real gate: no git clone on the box):
+real gate: no git clone on the instance):
 
 ```bash
 cd ../../..                                  # repo root
@@ -118,4 +118,4 @@ client, or the Entra/Okta/… app registration) — its secret was used during t
   the template is region-independent — just run in your chosen region.
 - `SSHLocation` defaults to `0.0.0.0/0`; pass your `<ip>/32` to lock SSH down.
 - On `t3.medium` (4GB), lower `WS_MEMORY` (e.g. `2g`) in `.env` before starting a
-  workspace so the box doesn't OOM during the Claude install.
+  workspace so the instance doesn't OOM during the Claude install.
