@@ -141,7 +141,17 @@ end-to-end to teardown.
   basename is a contract**.
 - **Upgrades apply migrations automatically at start and cannot be downgraded** — always
   back up first.
-- The actual procedures are the [compose runbook](../../deploy/compose/README.md).
+- **On ECS an upgrade is not only the application's tag.** A release can also need a new
+  ECR repository and an image nothing has copied in yet (0.18.1 moved the engines' fetch
+  and ingest steps into `af-engine-tools`), so `update.sh` holds one order: **the
+  repository (20-platform, through a change set it prints and executes only when nothing
+  is replaced) → the image (`crane copy` from GHCR) → the stack that names it
+  (60-engines)**. Reversed, nothing fails at the time: the stack deploys and the fetch
+  containers sit in `CannotPullContainerError` while the service reports a steady state.
+  What the script deliberately does not do is *bake* an image — if GHCR has not got the
+  tag either it stops and names the workflow that makes it.
+- The actual procedures are the [compose runbook](../../deploy/compose/README.md) and,
+  for ECS, the [ecs runbook](../../deploy/aws/ecs/README.md) §Upgrade.
 
 ## 9.8 Cost characteristics
 

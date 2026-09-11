@@ -129,7 +129,8 @@ Resources:
   # The engine fetch sidecar and the two ingest steps, as an image of ours rather than as shell
   # inline in 60-engines.yaml (PARAMETERS-60-engines.md, "The engine tools image"). Small, and
   # filled on every stand-up that enables engines at all, because both roles AND the ingest task
-  # pull it. engine-tools-image.yml bakes it to GHCR; standup.sh copies it in.
+  # pull it. engine-tools-image.yml bakes it to GHCR; every deploy route copies it in before
+# 60-engines, which is why this stack goes first on an update too (update.sh step 1a).
   EcrEngineTools:
     Type: AWS::ECR::Repository
     DeletionPolicy: Delete

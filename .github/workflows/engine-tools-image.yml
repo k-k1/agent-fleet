@@ -82,5 +82,6 @@ jobs:
             echo "crane copy $REG/engine-tools:${{ inputs.tag }} <acct>.dkr.ecr.<region>.amazonaws.com/af-engine-tools:${{ inputs.tag }}"
             echo '```'
             echo ""
-            echo "standup.sh does this automatically - see EngineToolsImageTag in params/60-engines."
+            echo "Every deploy route does this for you - standup.sh, update.sh / release-ecr.sh"
+            echo "and dev-deploy.sh - before 60-engines. See EngineToolsImageTag."
           } >> "$GITHUB_STEP_SUMMARY"
