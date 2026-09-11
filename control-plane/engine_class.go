@@ -57,7 +57,34 @@ type engineClass struct {
 	MemMinMiB int32
 	MemMaxMiB int32
 	// UsdPerHour is what the operator says an hour of this rung costs. 0 = undeclared.
+	//
+	// ⚠️ ADR 0075 decision 1 turned the way it is written into a convention: it is the DEAREST
+	// type the offer could buy, inclusive of the Managed Instances fee (measured 7.80%). A row
+	// widened to three types has a price RANGE, not a price — g6.xlarge at $0.58 and g6e.xlarge
+	// at $1.36 — and a figure written from the cheap end would make the number useless for the
+	// comparison it exists for. Still display-only: nothing computes with it, and the CP does not
+	// order offers by it.
 	UsdPerHour float64
+	// Buy is the purchase option this offer asks for: "od" or "spot" (ADR 0075 decision 1).
+	// Empty means on-demand — which is what makes an ADR 0074 ladder readable unchanged as an
+	// all-on-demand offer list. Read through buy(), never directly.
+	Buy string
+}
+
+// The two purchase options. They are the operator's vocabulary in the engine table AND the key
+// that picks one of the role's two capacity providers (decision 3), so the strings are load
+// bearing in two places at once.
+const (
+	engineBuyOnDemand = "od"
+	engineBuySpot     = "spot"
+)
+
+// buy is the offer's purchase option, defaulting to on-demand.
+func (c engineClass) buy() string {
+	if c.Buy == engineBuySpot {
+		return engineBuySpot
+	}
+	return engineBuyOnDemand
 }
 
 // label is what a person reads. Falls back to the id, never to an empty string: a select with
@@ -69,12 +96,15 @@ func (c engineClass) label() string {
 	return c.ID
 }
 
-// parseEngineClasses reads the ladder one role declares:
+// parseEngineClasses reads the offer list one role declares (ADR 0074's ladder, with ADR 0075's
+// eighth column):
 //
-//	id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour
+//	id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|buy
 //
 // separated by ";" or a newline (a CloudFormation parameter is one line; an env file is easier
-// to read over several). The last field is optional and so is its whole column.
+// to read over several). The last two fields are optional and so are their whole columns: a
+// SEVEN-field row is a valid on-demand offer, which is what lets an existing `<role>Classes`
+// ladder move to `<role>Offers` with nothing edited.
 //
 // A malformed rung is DROPPED with a log line rather than defaulted. Every field here becomes
 // an instance requirement, and a rung that quietly lost its VRAM floor would buy a cheaper card
@@ -138,6 +168,21 @@ func parseEngineClasses(spec string) []engineClass {
 				c.UsdPerHour = usd
 			} else if strings.TrimSpace(parts[6]) != "" {
 				log.Printf("engines: instance class %s: ignoring the price %q", c.ID, parts[6])
+			}
+		}
+		// The purchase option, unlike the price, IS worth dropping a row over. It decides which
+		// of the two capacity providers the box is bought from, so a value nobody recognises
+		// cannot be defaulted: reading an unknown word as `od` would buy on-demand for an
+		// operator who wrote `sport` meaning Spot, and the bill is the only place that shows.
+		if len(parts) > 7 {
+			switch v := strings.ToLower(strings.TrimSpace(parts[7])); v {
+			case "", engineBuyOnDemand:
+				c.Buy = engineBuyOnDemand
+			case engineBuySpot:
+				c.Buy = engineBuySpot
+			default:
+				log.Printf("engines: ignoring offer %q: buy %q is neither %s nor %s", entry, parts[7], engineBuyOnDemand, engineBuySpot)
+				continue
 			}
 		}
 		seen[c.ID] = true
@@ -507,9 +552,17 @@ func (e *engineRuntimeState) providerName() string {
 	return e.ecs.provider()
 }
 
-// setCapacityProvider takes a renamed capacity provider live, reporting whether it changed.
+// providerForOffer is the capacity provider one offer is bought from (ADR 0075 decision 3).
+func (e *engineRuntimeState) providerForOffer(c engineClass) string {
+	if e == nil || e.ecs == nil {
+		return ""
+	}
+	return e.ecs.providerFor(c.buy())
+}
+
+// setCapacityProviders takes a renamed capacity provider PAIR live, reporting whether it changed.
 //
-// The name is a destination string and a match string. It keys nothing this process holds —
+// The names are destination strings and match strings. They key nothing this process holds —
 // not the demand counter, not the warm model, not the controller — so unlike the rest of a
 // table row it can be swapped under a running engine (ADR 0074; #536 measured what happens
 // otherwise: the rung apply went to the name that no longer existed, `box` matched nothing,
@@ -520,8 +573,8 @@ func (e *engineRuntimeState) providerName() string {
 // startGate read a failed apply as "already applied by this process" and start the engine on
 // an unconfigured card — exactly the silent landing decision 4 exists to prevent. A start
 // re-applies the rung idempotently (startGate step 2), so forgetting costs one API call.
-func (e *engineRuntimeState) setCapacityProvider(name string) bool {
-	if e == nil || e.ecs == nil || !e.ecs.setProvider(strings.TrimSpace(name)) {
+func (e *engineRuntimeState) setCapacityProviders(onDemand, spot string) bool {
+	if e == nil || e.ecs == nil || !e.ecs.setProviders(strings.TrimSpace(onDemand), strings.TrimSpace(spot)) {
 		return false
 	}
 	e.appliedMu.Lock()
@@ -539,6 +592,7 @@ func engineClassesEqual(a, b []engineClass) bool {
 	for i := range a {
 		x, y := a[i], b[i]
 		if x.ID != y.ID || x.Label != y.Label || x.VramMiB != y.VramMiB || x.UsdPerHour != y.UsdPerHour ||
+			x.buy() != y.buy() ||
 			x.VCpuMin != y.VCpuMin || x.VCpuMax != y.VCpuMax || x.MemMinMiB != y.MemMinMiB || x.MemMaxMiB != y.MemMaxMiB {
 			return false
 		}
@@ -632,9 +686,14 @@ func (e *engineRuntimeState) noteClassApplyError(err error) {
 	e.appliedMu.Unlock()
 }
 
-// applyClass writes the selected rung to the capacity provider. Idempotent, and cheap enough to
-// call before every start: ECS API calls are not billed, and re-sending the same requirements
-// buys no box and moves no desired count.
+// applyClass writes the selected rung to the capacity provider THE OFFER IS BOUGHT FROM.
+// Idempotent, and cheap enough to call before every start: ECS API calls are not billed, and
+// re-sending the same requirements buys no box and moves no desired count.
+//
+// 🔴 Which of the role's two providers it lands on is the offer's own purchase option (ADR 0075
+// decision 3), and it is deliberately the ONLY provider written: the untouched one keeps whatever
+// CloudFormation declared, which is what makes "the rung reached the provider we are about to buy
+// from" checkable on the deployment (P0 live test 6).
 //
 // Both outcomes are recorded, not just the rung: every caller that could report the failure to
 // somebody goes through here, and a retry has to be able to clear the note it left.
@@ -644,7 +703,7 @@ func (e *engineRuntimeState) applyClass(ctx context.Context, c engineClass) erro
 		e.noteClassApplyError(err)
 		return err
 	}
-	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.providerName(), c); err != nil {
+	if err := applyEngineClass(ctx, e.capacity, e.cluster, e.providerForOffer(c), c); err != nil {
 		e.noteClassApplyError(err)
 		return err
 	}
@@ -667,6 +726,11 @@ func engineClassHasType(c engineClass, instanceType string) bool {
 const (
 	engineReasonClassSwapWait = "class_swap_wait"    // a box of the previous rung has not gone yet
 	engineReasonClassApply    = "class_apply_failed" // the rung could not be written, and it differs
+	// engineReasonNoOffer is ADR 0075 decision 2's refusal: every declared offer is smaller than
+	// the model needs, so there is no box to buy. NOT the same as "it might not fit" (decision 6
+	// of ADR 0074, which warns and starts anyway) — this is an arithmetic contradiction between
+	// two declarations the operator made.
+	engineReasonNoOffer = "no_offer"
 )
 
 // startGate is what the controller asks before it buys a box (ADR 0074 decisions 4 and 5).
@@ -688,10 +752,18 @@ func (e *engineRuntimeState) startGate(ctx context.Context) (bool, string) {
 	if e == nil || len(e.classList()) == 0 {
 		return true, ""
 	}
-	sel, ok := e.selectedClass(ctx)
-	if !ok {
-		return true, ""
+	// Which offers this start may buy from, in the order they will be tried (ADR 0075 decisions
+	// 2 and 8). The FIRST of them is what everything below is about; the rest are what rule 2
+	// falls through to, and they are handed to the run here so that the fallback list is the one
+	// this start was judged on rather than one re-derived a minute later from a changed
+	// catalogue.
+	cands := e.candidateOffers(ctx)
+	if len(cands) == 0 {
+		e.noteNoOffer(ctx)
+		return false, engineReasonNoOffer
 	}
+	sel := cands[0]
+	e.offers.begin(cands)
 	if b, on := e.ecs.box(ctx); on && b.instanceType != "" && !engineClassHasType(sel, b.instanceType) {
 		if e.swapWaitExpired() {
 			log.Printf("engines: %s: a %s box is still registered after %s; starting on the old class anyway",

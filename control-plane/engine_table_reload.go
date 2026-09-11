@@ -124,7 +124,7 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			log.Printf("engines: the table now declares %s, which this process does not serve - restart the Control Plane to pick it up", d.Key)
 			continue
 		}
-		next := parseEngineClasses(d.Classes)
+		next := parseEngineClasses(d.offersSpec())
 		// 🔴 Adopting a ladder (or dropping the last rung) is not a rung change: the capacity
 		// client and the controller's start gate are attached at construction only when a
 		// ladder exists, so a ladder that appears here would be a list the panel shows and
@@ -137,12 +137,16 @@ func (r *engineTableReloader) apply(table engineTable) bool {
 			changed = true
 			log.Printf("engines: %s instance classes re-read from %s: %s", d.Key, r.name, engineClassIDs(next))
 		}
-		// The capacity provider's NAME, live. What a rename must not do is leave the rung
-		// this process applied to the old provider standing as a note — setCapacityProvider
-		// forgets it, and the next start re-applies the rung to the new one (startGate).
-		if e.setCapacityProvider(d.CapacityProvider) {
+		// The capacity provider NAMES, live, as a pair (ADR 0075 decision 3). What a rename must
+		// not do is leave the rung this process applied to the old provider standing as a note —
+		// setCapacityProviders forgets it, and the next start re-applies the rung to the new one
+		// (startGate). The Spot name travels the same way for the same reason, and it arrives
+		// this way on every deployment that adopts ADR 0075 without replacing its CP.
+		if e.setCapacityProviders(d.CapacityProvider, d.SpotCapacityProvider) {
 			changed = true
-			log.Printf("engines: %s capacity provider re-read from %s: %s", d.Key, r.name, engineProviderLabel(e.providerName()))
+			od, spot := e.ecs.providers()
+			log.Printf("engines: %s capacity providers re-read from %s: %s / %s (spot)",
+				d.Key, r.name, engineProviderLabel(od), engineProviderLabel(spot))
 		}
 		if why := engineDefDriftedBeyondClasses(e.def, d); why != "" {
 			log.Printf("engines: %s changed in the table in a way this process cannot take live (%s) - restart the Control Plane", d.Key, why)
@@ -190,6 +194,12 @@ func engineDefDriftedBeyondClasses(was, now engineDef) string {
 	}
 	if was.StartDeadlineSec != now.StartDeadlineSec {
 		return "start deadline"
+	}
+	// The per-offer budget is read off the row this process started with (ADR 0075 decision 5),
+	// like the two above and for the same reason: nothing re-reads the row itself, only the
+	// offer list and the provider names are carried live.
+	if was.OfferBudgetSec != now.OfferBudgetSec {
+		return "offer budget"
 	}
 	return ""
 }

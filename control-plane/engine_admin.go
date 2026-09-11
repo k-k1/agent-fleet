@@ -236,10 +236,29 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 		row["classes"] = rungs
 		row["class"] = engineClassRow(sel)
 		row["class_default"] = def.ID
-		// Stated rather than left to a comparison in the client: "you are not on the default"
-		// is the sentence that stops a temporary experiment from becoming a permanent bill
-		// (decision 7), and it must not depend on a client remembering to compute it.
-		row["class_is_default"] = sel.ID == def.ID
+		// The same list with the purchase option on each entry (ADR 0075, contract B). `classes`
+		// rides unchanged beside it: this row is read by a Console that may be older than the CP,
+		// and a panel that lost its picker because a field was renamed is the failure this
+		// deployment has already had once.
+		offers := make([]map[string]any, 0, len(classes))
+		for _, c := range classes {
+			offers = append(offers, engineOfferRow(c))
+		}
+		row["offers"] = offers
+		// 🔴 Now "the operator has not pinned anything", not "the selection equals the first rung"
+		// (ADR 0075 decision 8). Unpinned is AUTOMATIC — the offers are filtered by VRAM and tried
+		// in order — so an administrator who pinned the offer that happens to be first has still
+		// said something, and the badge that offers "back to automatic" has to appear for them.
+		row["class_is_default"] = e.selectedClassID(ctx) == ""
+		if trail := e.offers.attempts(); len(trail) > 0 {
+			rows := make([]map[string]any, 0, len(trail))
+			for _, a := range trail {
+				rows = append(rows, map[string]any{"id": a.ID, "buy": a.Buy, "result": a.Result})
+			}
+			// What rule 2 has been through for the demand being served right now. In memory, so a
+			// CP replaced mid-start reports none at all rather than somebody else's walk.
+			row["offer_trail"] = rows
+		}
 		// The rung above is what was CHOSEN; this is why the capacity provider does not hold it.
 		// Omitted whenever this process has nothing to report, which is what the panel reads as
 		// "no claim" — never as "it was applied" (see classApplyError). It is what turns the
@@ -285,6 +304,14 @@ func (a engineAdminAPI) row(ctx context.Context, e *engineRuntimeState) map[stri
 	}
 	row["state"] = engineDisplayState(v.state, mode)
 	row["desired"] = v.desired
+	// Which offer the SERVICE is on, read out of its own capacityProviderStrategy (ADR 0075
+	// decision 11). Deliberately not "the offer this process chose": CloudFormation rewrites the
+	// strategy on every release that touches the service, and a remembered choice would keep
+	// claiming Spot while the box is on-demand. Absent when the service names a provider this
+	// role does not declare, which is a real answer and not a gap.
+	if off, ok := e.offerFromStrategy(v.provider); ok {
+		row["offer"] = map[string]any{"id": off.ID, "buy": off.buy()}
+	}
 	// `running` and `rollout` are deliberately NOT added here even though the view carries
 	// them. Nothing renders them, and a field on the wire with no reader is a shape the next
 	// person has to keep working without knowing what would notice if it broke. The state
@@ -440,7 +467,17 @@ func (a engineAdminAPI) put(w http.ResponseWriter, r *http.Request, ident store.
 		return
 	}
 	if e.ecs != nil && (val == engineModeOn || val == engineModeOff) {
-		if err := e.ecs.setEnabled(r.Context(), val == engineModeOn); err != nil {
+		// ON goes through the engine's own start, so this route buys the same box the controller
+		// would (ADR 0075 decision 4 (a)): the offer the gate just chose, written to the service
+		// together with the desired count. OFF is the plain desired 0 — a stop touches no
+		// strategy, which is what keeps the writes down to the two cases decision 4 allows.
+		var err error
+		if val == engineModeOn {
+			err = e.startEngine(r.Context())
+		} else {
+			err = e.ecs.setEnabled(r.Context(), false)
+		}
+		if err != nil {
 			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, "ecs update failed: " + err.Error()})
 			return
 		}
@@ -467,6 +504,15 @@ func engineClassRow(c engineClass) map[string]any {
 	if c.UsdPerHour > 0 {
 		row["usd_per_hour"] = c.UsdPerHour
 	}
+	return row
+}
+
+// engineOfferRow is the same rung as an OFFER: the rung's own fields plus the purchase option
+// (ADR 0075 contract B). Always present, never inferred from the absence of something — `od` is
+// what an ADR 0074 ladder means, and the panel has to be able to say so.
+func engineOfferRow(c engineClass) map[string]any {
+	row := engineClassRow(c)
+	row["buy"] = c.buy()
 	return row
 }
 
@@ -502,6 +548,13 @@ func (a engineAdminAPI) putClass(w http.ResponseWriter, r *http.Request, ident s
 	if len(list) == 0 {
 		writeAPIErr(w, &apiError{http.StatusNotFound, errCodeEngineClassUnknown,
 			"engine " + key + " declares no instance classes"})
+		return
+	}
+	// The empty id is "unpin" (ADR 0075 decision 8), and it is a real request rather than a
+	// no-op: a pinned engine cannot fall through to the next offer, so the way back to automatic
+	// has to be reachable from the panel. It is the only value that removes the stored setting.
+	if id == "" {
+		a.unpinClass(w, r, ident, key, e)
 		return
 	}
 	c, ok := engineClassByID(list, id)
@@ -540,6 +593,33 @@ func (a engineAdminAPI) putClass(w http.ResponseWriter, r *http.Request, ident s
 		row["class_replace_pending"] = true
 	}
 	writeJSON(w, http.StatusOK, row)
+}
+
+// unpinClass is `{"class": ""}`: the stored choice is removed and the role goes back to choosing
+// automatically (ADR 0075 decision 8) — VRAM-filtered offers, tried in declaration order.
+//
+// The rung of the offer that would be chosen NOW is applied straight away, for the same reason
+// putClass applies the pinned one: a missing IAM grant discovered at the next cold start is
+// discovered on the wrong card. When nothing qualifies — every offer is smaller than the models
+// need — there is nothing to apply and the unpin still succeeds, because refusing it would trap
+// the operator on the pin that is the reason they came here.
+func (a engineAdminAPI) unpinClass(w http.ResponseWriter, r *http.Request, ident store.Identity, key string, e *engineRuntimeState) {
+	ctx := r.Context()
+	if a.settings != nil {
+		if err := a.settings.SetSetting(ctx, engineClassSettingKey(key), ""); err != nil {
+			writeAPIErr(w, internalErr(err))
+			return
+		}
+	}
+	if cands := e.candidateOffers(ctx); len(cands) > 0 {
+		if err := e.applyClass(ctx, cands[0]); err != nil {
+			writeAPIErr(w, &apiError{http.StatusBadGateway, errCodeEngineECSError, err.Error()})
+			return
+		}
+	}
+	a.audit(ctx, ident, "engine."+key+".class", "")
+	log.Printf("engines: %s instance class unpinned by %s (choosing automatically)", key, ident.ID)
+	writeJSON(w, http.StatusOK, a.row(ctx, e))
 }
 
 // replaceBox (POST /api/admin/engines/{key}/replace-box) stops the running box so the next one

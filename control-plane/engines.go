@@ -52,8 +52,19 @@ type engineDef struct {
 	// provider renames it and the reloader takes that live, so the current one is
 	// engineRuntimeState.providerName() (engine_table_reload.go).
 	CapacityProvider string `json:"capacityProvider"` // makes `draining` observable; empty = Fargate
-	URL              string `json:"url"`              // http://llm.af.internal:8080
-	Health           string `json:"health"`           // "/health"
+	// SpotCapacityProvider is the second half of the pair (ADR 0075 decision 3): a role has one
+	// provider per PURCHASE OPTION, because `capacityOptionType` is fixed when a provider is
+	// created and the only way to choose at runtime is to have both already. Empty — every
+	// deployment before this ADR, and the llm role for ever (decision 9) — means this role never
+	// buys Spot.
+	//
+	// The two travel as a PAIR wherever they are held (engineECS): one is the destination a
+	// strategy names, the other is what a container instance is matched against, and a box bought
+	// on either of them is this engine's box. Seeing only one is how a Spot box reads as
+	// `box: null` (measured during the 0074 rename).
+	SpotCapacityProvider string `json:"spotCapacityProvider"`
+	URL                  string `json:"url"`    // http://llm.af.internal:8080
+	Health               string `json:"health"` // "/health"
 	// WarmPath is where "are there weights in memory" is asked, when that is a DIFFERENT
 	// question from "is it healthy". Empty (the image role, and any ADR 0071 table) means the
 	// health check answers both. "/models" for the llm role: a llama.cpp router answers /health
@@ -70,10 +81,45 @@ type engineDef struct {
 	// It sits with the vessel rather than with the catalogue because a rung IS the vessel: the
 	// stack owns the capacity provider, and this only says which of the shapes the operator
 	// blessed may be selected. WHICH one is selected is a stored setting (decision 2).
-	Classes          string `json:"classes"`
+	Classes string `json:"classes"`
+	// Offers is the same ladder with a purchase option on each rung (ADR 0075 decision 1):
+	//
+	//	id|label|vramMiB|type[,type…]|vcpuMin-vcpuMax|memMinMiB-memMaxMiB|usdPerHour|buy
+	//
+	// EMPTY MEANS `Classes`, read as a list of on-demand offers. That is the whole migration
+	// (ADR 0075, 移行の節): an existing ladder moves to `offers` without a character changing,
+	// and a stack that has not been updated yet keeps working because the column it never wrote
+	// defaults to `od`. Same shape of gate as ADR 0072 P6 put in front of `<role>ModelS3Key` —
+	// a table read by a newer CP must not make a role disappear.
+	Offers string `json:"offers"`
+	// OfferBudgetSec is how long ONE offer is given to produce a box before the next one is tried
+	// (ADR 0075 decision 5). 0 = the default 180 seconds, which is four times the 42 seconds the
+	// one Spot box that was actually bought took to reach ACTIVE (ADR 0074 measurement) — a
+	// multiple of a measurement, not an AWS figure.
+	OfferBudgetSec   int    `json:"offerBudgetSec"`
 	IdleSec          int    `json:"idleSec"`
 	StartDeadlineSec int    `json:"startDeadlineSec"`
 	Mode             string `json:"mode"` // the DEFAULT mode; a stored setting wins
+}
+
+// offersSpec is the offer list this role declares. `offers` when the stack writes one, and the
+// ADR 0074 ladder otherwise — every rung of which is an on-demand offer.
+func (d engineDef) offersSpec() string {
+	if s := strings.TrimSpace(d.Offers); s != "" {
+		return s
+	}
+	return d.Classes
+}
+
+// engineOfferBudgetDefault is decision 5's default per-offer budget.
+const engineOfferBudgetDefault = 180 * time.Second
+
+// offerBudget is how long one offer is waited on.
+func (d engineDef) offerBudget() time.Duration {
+	if d.OfferBudgetSec > 0 {
+		return time.Duration(d.OfferBudgetSec) * time.Second
+	}
+	return engineOfferBudgetDefault
 }
 
 type engineTable struct {
@@ -173,6 +219,15 @@ type engineRuntimeState struct {
 	classes   []engineClass
 	capacity  engineCapacityAPI
 	cluster   string
+	// offers is the state of rule 2 for the demand being served right now (ADR 0075 decision 5):
+	// which offer the strategy was last written to, when, and what every earlier one answered.
+	// Never nil, and inert for an engine that declares no offer — nothing consults it.
+	offers *engineOfferRun
+	// audit is where "we moved to another offer" is written down. The controller has its own
+	// handle on the same ledger; this one is here because the move is decided by the engine's
+	// offer machinery rather than by the controller's judgement, and "why is this running on the
+	// expensive box" has to be answerable afterwards.
+	audit engineAuditor
 	// appliedClass is the rung THIS PROCESS last wrote to the capacity provider, and nothing
 	// else. It is in memory on purpose: what the provider currently holds is a fact about AWS,
 	// and a CP that restarted has not observed it — so a restarted CP re-applies once before
@@ -442,7 +497,9 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			def: d,
 			ecs: &engineECS{
 				api: ecsc, key: d.Key, cluster: cluster,
-				service: d.Service, capacityProvider: d.CapacityProvider,
+				service:          d.Service,
+				capacityProvider: d.CapacityProvider,
+				spotProvider:     d.SpotCapacityProvider,
 			},
 			apiKey:      readEngineAPIKey(ctx, ssmc, d),
 			settings:    settings,
@@ -450,15 +507,10 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 			ssm:         ssmc,
 			activeParam: engineActiveParamName(name, d.Key),
 			pending:     newEnginePending(ssmc, name, d.Key),
-			classes:     parseEngineClasses(d.Classes),
+			classes:     parseEngineClasses(d.offersSpec()),
 			cluster:     cluster,
-		}
-		// The ECS client is attached only when there is a ladder to apply. Not an optimisation:
-		// it is what makes ADR 0074 decision 3 checkable — with no rung declared there is no
-		// path from here to DescribeCapacityProviders at all, so a deployment that never
-		// configures this cannot log an AccessDenied for it.
-		if len(st.classes) > 0 {
-			st.capacity = ecsc
+			offers:      newEngineOfferRun(),
+			audit:       auditor,
 		}
 		// Published at start as well as on every change: the box reads it when it starts, and a
 		// CP that came up after a catalogue edit it never saw (another replica's, or one made
@@ -474,11 +526,7 @@ func newEngineRegistry(ctx context.Context, mgr *manager) *engineRegistry {
 		// (`sleep infinity`) and the controller then watches it for ever at 5-second intervals,
 		// because `running && !warmed` is not a failure state (ADR 0072 decision 1(c)).
 		st.ctrl.hasModels = st.catalog.hasModels
-		// Attached only when a ladder exists, so an engine without one keeps exactly the start
-		// path it had before this ADR (ADR 0074 decision 3).
-		if len(st.classes) > 0 {
-			st.ctrl.startGate = st.startGate
-		}
+		st.wireOffers(ecsc)
 		// The controller doubles as the uptime sampler (engine_uptime.go). Attached here and
 		// not inside newEngineController because the VOICEVOX controller shares that
 		// constructor and has no heatmap to feed: an INSERT every 30 seconds for a series
