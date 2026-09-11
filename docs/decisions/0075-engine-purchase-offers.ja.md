@@ -949,3 +949,143 @@ strategy を書く場所が CP 全体で 1 か所であることの走査を含�
   関数を通る。従来は desired だけ動かしていて、決定 4 (a) の抜け道になっていた。
 - P0 のコードで唯一まだ測られていない経路は**実機 3**（desired 0 → 1 と strategy を同じ呼び出しで
   渡したとき force が要るか）で、実装は「要る側」に倒してある。
+
+## 追記 — P0 実機 1〜7 の実測（2026-09-11・開発配備・GPU 課金 約 $1.45）
+
+P0 のコード（CP・CFN・Console）が develop に入った直後、実機 1〜7 を開発配備の image 役で通しで回した。
+所要 3 時間 24 分（20:03〜21:32 JST のうち計測部分）、**GPU は 6 台・のべ 54 分**。
+
+**結論: 7 件とも緑。ただし「宣言どおりに Spot で起動する」は、下の 🔴 3 点を直すまで成り立たない**
+——既定の予算 180 秒では Spot の提案は**構造的に成功しない**（🔴1）、Spot のクォータ超過は決定 5 の表の
+どのコードでもない（🔴2）、起動のたびに**箱を 2 台買う**（🔴3）。3 点とも本文の決定は変えず、
+実装（`engine_offer.go` / `engine_ecs.go`）と決定 5 の表の当てはめを直せば済む。
+
+### 判定
+
+| 実機 | 判定 | 根拠（生の値） |
+|---|---|---|
+| 1 | 🟢 | 配備中の release 世代テンプレート（`92281943`、`get-template` と正規化して完全一致）を `ImageCapacityOptionType=ON_DEMAND` で流して **169 秒**（20:03:20→20:06:09）。provider 名は `af-<stack>-image-spot` → `af-<stack>-image`、`capacityOptionType: ON_DEMAND`、service の strategy も CFN が追随、`desiredCount` 0 のまま。クラスタの一覧は 4 本に戻った |
+| 2 | 🟢 | offers 版テンプレート＋`ImageOffers` を **79 秒**（20:07:12→20:08:31）。クラスタの一覧に `af-<stack>-image` と `af-<stack>-image-spot` の**両方**（5 本）。エンジン表（SSM）に `spotCapacityProvider` / `offers` / `offerBudgetSec`。続けて `dev-deploy.sh`（12 分・CP と Console の新イメージ）。60-engines は `No changes to deploy`＝先に流したものと同一 |
+| 3 | 🟢（2 回目で） | `mode: on` の **26 秒後**に Spot の箱（`g6e.xlarge`・`InstanceLifecycle: spot`・1a）、**5 分 30 秒**で `state: running` / `warm: true` / `offer: {id: spot3, buy: spot}`。1 回目は既定の予算 180 秒に切られて失敗（🔴1）。⚠️ **画像は 1 枚も生成していない**——外から engine ゲートウェイを叩く口が無く（トークンは Workspace 内部の `/internal/engine/token`）、他人のセッションを駆動するのは採らなかった。Spot の箱での生成は 0074 が実測済み（403 秒で 1 枚） |
+| 4 | 🟢（予算経由） | Spot を**買えない状態**にして（下の「陽性対照の作り方」）起動 → `l4`(od) へ移り、OD の箱（`g6.xlarge`）が **28 秒**で来て `warm: true`。⚠️ 移った理由は失敗コードの認識ではなく**予算切れ**（🔴2）。移った**あと**に旧 provider の箱が来る形（未解決 10）は観測されず（そもそも買えていない） |
+| 5 | 🟢 | 3 でも 4 でも `GET /api/admin/engines` の `box` は `null` にならない（Spot: `i-0fb3e7…` `g6e.xlarge`／OD: `i-0a4cdf…` `g6.xlarge`）。**両方の provider の箱を自分のものと認めている** |
+| 6 | 🟢 | 段は**選ばれた提案の provider にだけ**当たる。`spot3` を自動選択した瞬間に Spot 側が `acceleratorTotalMemoryMiB` 8000 → 22000、**OD 側は `describe-capacity-providers` の戻り値がバイト一致**。`l4` へ移る直前は逆に OD 側が 44000 → 22000 になり、Spot 側は `g6.4xlarge`・16 vCPU のまま |
+| 7 | 🟢 | `offers`（3 行・`buy` つき）・`offer`・`offer_trail` が経緯と一致。フォールバック時の trail は `[{spot3, spot, budget}, {l4, od, active}]`。⚠️ パネルの画像は撮っていない（管理モーダルは URL で開けない。既知） |
+
+### 🔴 1. 予算は「箱が来ない」ではなく「まだ RUNNING でない」で切れる——既定 180 秒では Spot は必ず失敗する
+
+1 回目の起動（予算 180 秒・宣言は現在と同じ 3 行）:
+
+```
+20:23:41 engines: image: starting on spot3 (22000 MiB VRAM declared)
+20:24:07 Spot の箱が container instance として登録（g6e.xlarge, InstanceLifecycle: spot）
+20:27:11 engines: image: offer spot3 answered budget after 3m2s; trying l4 (od)
+20:30:36 engines: image: offer l4 answered budget after 3m2s; trying l40s (od)
+```
+
+**箱は 26 秒で来ていた。**切られたのはその上のタスクで、コンテナの取得と ComfyUI の起動に数分かかる
+（0071 実測のコールドスタート 527〜586 秒）。つまり既定の 180 秒では、**Spot が取れても取れなくても
+一覧を最後まで歩き、そのたびに箱を買う**。この回は 7 分で 3 つの提案を歩き、**2 台買って 1 台も起動しなかった。**
+`ImageOfferBudgetSec=900` にして同じ宣言で回すと、2 回目は上の表のとおり `spot3` のまま warm に達した。
+
+**直し方（決定 5 の本文は変えない）**: 予算の終わりは「**その提案の provider に箱が着いたか**」で判定する
+——`describe-container-instances` にその provider の箱が現れた／タスクがその箱に載った時点で予算を止め、
+あとは `StartDeadlineSec` に任せる。いまの実装は `engineOfferVerdict(events, waited, budget)` が
+`waited >= budget` だけを見ており、箱の有無を一度も読んでいない。
+
+### 🔴 2. Spot のクォータ超過は `MaxSpotInstanceCountExceeded` で、しかも別のエラーに包まれて来る
+
+決定 5 の表は `UnfulfillableCapacity` / `InsufficientInstanceCapacity` / `VcpuLimitExceeded` の 3 つを挙げているが、
+Managed Instances が Spot の枠を超えたときサービスイベントに出るのは**4 つ目**で、しかも**包まれている**:
+
+```
+(service af-<stack>-image) was unable to place a task. Reason: ResourceInitializationError:
+Unable to launch instance(s) for capacity provider af-<stack>-image-spot.
+MaxSpotInstanceCountExceeded: Max spot instance count exceeded. RequestId: 3495893a-…
+```
+
+CP はこれをどの既知コードとも照合できず（`offer spot3 has no event matching a known capacity failure
+code yet`）、**予算 15 分をまるまる待ってから**次の提案へ移った。決定 5 の「失敗コードで待ち方を変える」は、
+この 1 行が表に無いあいだ**クォータの場合だけ効かない**。表に `MaxSpotInstanceCountExceeded` を足し、
+照合は**前置きを跨いだ部分一致**にすること（`ResourceInitializationError: …` が先頭に来る）。
+⚠️ 決定 5 の「`VcpuLimitExceeded` は別枠の購入形態へ」という分岐は、**この配備では一度も発火しない**
+——枠を超えた Spot はこの語で来る。
+
+### 🔴 3. desired 0→1 の起動で strategy も変わると、ECS は**箱を 2 台**買う
+
+実機 0 は「1 回の `UpdateService` に strategy と desired 1 と force を載せる」が API として通ることを測った。
+通る。**しかし買う台数は 1 台ではない。** 2 回とも同じ形で再現した:
+
+| | 旧 strategy（OD）の箱 | 新 strategy（Spot）の箱 |
+|---|---|---|
+| 1 回目 | `g6.xlarge` 20:23:56 登録 → 20:24:00 `stopped 1 pending tasks` | `g6e.xlarge` 20:24:07 登録・タスクはこちらへ |
+| 2 回目 | `g6e.xlarge` 20:39:36 登録 | `g6e.xlarge` 20:39:53 登録・タスクはこちらへ |
+
+ECS は `desiredCount` を**先に**当てて古い strategy でタスクを置きにいき、その provider が箱を買う。
+force で作られた新しい PRIMARY がそれを置き直すが、**買われた箱は残る**。2 回目の余計な箱は
+**16 分 28 秒課金され**（$0.51＝この日の GPU 支出の 38%）、しかも `DEREGISTERING` のまま残るあいだ
+**0074 決定 4 の退場待ち（`class_swap_wait`）が次の起動を塞いだ**（20:50:09 の `mode: on` が実際に
+始まったのは 6 分後）。
+
+**直し方**: 決定 4 (a) の起動を **2 回の `UpdateService` に割る**——(1) strategy だけ（`desired` 0 のまま・
+`forceNewDeployment`、実機 0 で無害と測った経路）、(2) 新しい PRIMARY ができてから `desiredCount: 1` だけ。
+strategy が今と同じなら (1) は要らない（いまの実装の分岐がそのまま使える）。
+
+### 陽性対照の作り方——「買えない提案」は宣言できない
+
+実機 4 は「わざと買えない型を書く」と決めていたが、**それは書けない**。綴りの違う型（`g6.xxlarge`）でも、
+型と噛み合わない要求でも、`UpdateCapacityProvider` が拒む:
+
+```
+HTTP 400 ClientException: No instance types satisfy the instance requirements specified in the
+Managed Instances capacity provider.
+```
+
+しかも CP は**この失敗を log して起動を続ける**ので（`re-applying the instance class spot3 failed …`）、
+provider は**前の要求のまま**＝宣言と実際がずれたまま Spot の箱が来た。⚠️ **提案の型を書き換えても、
+`UpdateCapacityProvider` が通らなければ何も変わらない。** 代わりに使った陽性対照は
+**クォータを超える型**——`spot3` を `g6.4xlarge`（16 vCPU、Spot 枠は 8 vCPU）1 型にすると、要求と型は
+噛み合うので更新は通り、買う段になって 🔴2 のエラーが出る。**$0 で作れて、確実に落ちる。**
+
+### そのほか（決定は変えないが、次に触る人が踏むもの）
+
+- **`offerBudgetSec` はテーブルの再読込では効かない**——`engines: image changed in the table in a way this
+  process cannot take live (offer budget) - restart the Control Plane`。提案の一覧と provider 名は live で入る
+  （`instance classes re-read from /af-ws/engines: spot3, l4, l40s`）。予算を変えたら CP の
+  `force-new-deployment` が 1 行要る。
+- **起動が 2 経路から入り、`offer_trail` に同じ提案が 2 行入る。** 管理トグル（`startEngine`）と制御ループの
+  最初のティックが 1 秒差で同じ `starting on spot3` を出し、trail が `[spot3 active, spot3 active]` になった。
+  実害は **予算の時計が引き直される**ことと、パネルに嘘の 2 回目が出ること。
+- **提案が provider を共有すると `offer` は「先に一致した提案」を返す。** `l4` と `l40s` はどちらも OD なので、
+  `l40s` で走っていても `offer` は `l4` と出る。決定 11 は「service の strategy から言う」なので仕様どおりだが、
+  **提案の粒度では嘘になる**（trail を見ないと分からない）。
+- **`class` と `offer` は別物である。** フォールバック中、`class` は先頭の提案（`spot3`）のまま、`offer` は
+  `l4`。0074 の「段」は選択、0075 の「提案」はいま走っている行——パネルの文言はこの 2 つを混ぜないこと。
+- 未解決 10（孤児の箱）は**この形では出なかった**。出たのは 🔴3 の「起動時に 2 台」で、旧 provider の箱は
+  「移ったあとに来る」のではなく「**起動と同時に来る**」。
+
+### GPU 課金の見当
+
+| 箱 | 型 | 購入形態 | 稼働 | 概算 |
+|---|---|---|---|---|
+| 1 | `g6.xlarge` | OD（🔴3 の余計な 1 台） | 10m43s | $0.23 |
+| 2 | `g6e.xlarge` | Spot | 6m55s | $0.16 |
+| 3 | `g6e.xlarge` | OD（🔴3 の余計な 1 台） | 16m28s | $0.51 |
+| 4 | `g6e.xlarge` | Spot（実機 3 が warm に達した箱） | 9m6s | $0.21 |
+| 5 | `g6e.xlarge` | Spot | 4m4s | $0.09 |
+| 6 | `g6.xlarge` | OD（実機 4 のフォールバック先） | 7m6s | $0.15 |
+
+**合計 のべ 54 分・約 $1.34**（＋ MI 管理料 7.80%＝**約 $1.45**）。⚠️ 定価からの算術であって請求の確定値ではない
+（未解決 5）。**そのうち $0.74（55%）は 🔴3 の余計な箱**である。
+
+### 後始末
+
+- `mode: off`。**箱が消えるまで見届けた**——`list-container-instances` に capacity provider を持つ箱は 0、
+  `GET /api/admin/engines` の `box` は `null`、`state: stopped`。6 台とも `terminated`（最後の 1 台も 21:34:49 に確認）。service は `desiredCount` 0・strategy は
+  オンデマンドの provider、クラスタの一覧は 5 本（両 provider が立っている）。
+- `ImageOffers` は **`spot3`（Spot・3 型）/ `l4`（od）/ `l40s`（od）** を宣言したまま残した（0074 で利用者が
+  Spot を開発配備の既定にした決定の継続）。`ImageInstanceClasses` は 1 文字も触っていない。
+- ⚠️ **`ImageOfferBudgetSec=900` を残した。** 既定の 180 に戻すと 🔴1 でこの配備の image 役は起動しない。
+- ⚠️ 2 つとも `--parameter-overrides` で入れたので**捕捉 `params/60-engines` には無い**（`standup.sh` で
+  建て直すと消える。0074 の追記と同じ注意）。
+- 生の戻り値（CFN・ECS・EC2・SSM の JSON と CP のログ）は測ったセッションの `~/.cache/adr0075-run1-7/` にある。
