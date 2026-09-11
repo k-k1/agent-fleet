@@ -8,6 +8,13 @@
 # unavailable credential appends a separate "seen" marker after the tracking issue is
 # updated (one report per release); a failed dispatched contract never advances tested
 # state, so the watcher retries it the next day.
+#
+# One unreadable release source holds back that row and nothing else. It used to abort
+# the job: on 2026-09-09 claude 2.1.267 was detected, rtk's GitHub Releases call failed,
+# and all seven dispatches were dropped with `tested` left at 2.1.265 — which reads
+# exactly like an upstream that released nothing. The decision lives in
+# deploy/local/cli-release-edges.sh so it can be tested (no `act` here), and every run
+# writes its own liveness to the state issue's `watcher` namespace.
 name: cli-release-watch
 
 on:
@@ -37,7 +44,7 @@ jobs:
         id: state
         run: |
           set -euo pipefail
-          deploy/local/cli-release-state.sh ensure tested watcher
+          deploy/local/cli-release-state.sh ensure watcher ok
           for name in claude codex opencode copilot agy cursor kiro; do
             echo "tested_$name=$(deploy/local/cli-release-state.sh get tested "$name")" >> "$GITHUB_OUTPUT"
             echo "seen_$name=$(deploy/local/cli-release-state.sh get seen "$name")" >> "$GITHUB_OUTPUT"
@@ -50,12 +57,16 @@ jobs:
           deploy/local/cli-drift-check.sh
           code=$?
           set -e
-          # 1 is normal pin drift. 2 means a release source could not be read.
-          [ "$code" != 2 ] || exit 2
+          # 1 is normal pin drift; a row that could not be read comes back in `failed=`
+          # and is handled per row. 2 means not one source answered, which is a broken
+          # runner or a broken network, not a release edge.
+          [ "$code" != 2 ] || echo "unusable=true" >> "$GITHUB_OUTPUT"
 
       - name: detect release edges
         id: changed
+        if: steps.versions.outputs.unusable != 'true'
         env:
+          FAILED: ${{ steps.versions.outputs.failed }}
           TESTED_CLAUDE: ${{ steps.state.outputs.tested_claude }}
           TESTED_CODEX: ${{ steps.state.outputs.tested_codex }}
           TESTED_OPENCODE: ${{ steps.state.outputs.tested_opencode }}
@@ -70,32 +81,32 @@ jobs:
           LATEST_AGY: ${{ steps.versions.outputs.latest_agy }}
           LATEST_CURSOR: ${{ steps.versions.outputs.latest_cursor }}
           LATEST_KIRO: ${{ steps.versions.outputs.latest_kiro }}
+        run: deploy/local/cli-release-edges.sh
+
+      # Before any dispatch, and on the unusable path too: the point of this record is
+      # that a run which did nothing still says so. Nothing downstream may skip it.
+      - name: record watcher liveness
+        if: always()
+        env:
+          WATCHER_OK: ${{ steps.changed.outputs.watcher_ok }}
+          WATCHER_FAILED: ${{ steps.changed.outputs.watcher_failed }}
+          WATCHER_AT: ${{ steps.changed.outputs.watcher_at }}
+          UNUSABLE: ${{ steps.versions.outputs.unusable }}
+          FAILED: ${{ steps.versions.outputs.failed }}
         run: |
           set -euo pipefail
-          changed=()
-          for name in CLAUDE CODEX OPENCODE COPILOT AGY CURSOR KIRO; do
-            eval "latest=\${LATEST_${name}}"
-            eval "tested=\${TESTED_${name}:-}"
-            if [ "$latest" != "$tested" ]; then
-              lower="$(printf '%s' "$name" | tr '[:upper:]' '[:lower:]')"
-              echo "$lower=true" >> "$GITHUB_OUTPUT"
-              changed+=("$lower=$latest")
-            fi
-          done
-          {
-            echo "## Public CLI release edges"
-            echo
-            if [ "${#changed[@]}" -eq 0 ]; then
-              echo "No public version changed; all contract dispatches skipped."
-            else
-              printf -- "- \`%s\`\n" "${changed[@]}"
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-          printf 'count=%s\n' "${#changed[@]}" >> "$GITHUB_OUTPUT"
+          at="${WATCHER_AT:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}"
+          if [ "$UNUSABLE" = true ]; then
+            deploy/local/cli-release-state.sh set watcher failed "${FAILED:-all}"
+          else
+            [ -z "$WATCHER_OK" ] || deploy/local/cli-release-state.sh set watcher ok "$WATCHER_OK"
+            deploy/local/cli-release-state.sh set watcher failed "${WATCHER_FAILED:-none}"
+          fi
+          deploy/local/cli-release-state.sh set watcher at "$at"
 
       - name: dispatch latest TUI / mirror contracts when auth is configured
         id: dispatch
-        if: steps.changed.outputs.count != '0'
+        if: steps.changed.outputs.count != '' && steps.changed.outputs.count != '0'
         env:
           CLAUDE_CHANGED: ${{ steps.changed.outputs.claude }}
           CODEX_CHANGED: ${{ steps.changed.outputs.codex }}
@@ -204,8 +215,10 @@ jobs:
           fleet probe succeeds or an automated contract replaces it.
           EOF
           } > "$body"
+          # `first` inside jq, not `| head -1`: with `pipefail` a SIGPIPE'd gh is a 141
+          # that `set -e` turns into a failed step for a lookup that worked.
           num="$(gh issue list --state open --search "in:title $title" --json number,title \
-            --jq ".[] | select(.title == \"$title\") | .number" | head -1)"
+            --jq "[.[] | select(.title == \"$title\") | .number] | first // empty")"
           gh label create cli-drift --color FBCA04 --description "upstream CLI version drift" 2>/dev/null || true
           if ! grep -q '^-' "$body"; then
             exit 0
@@ -216,7 +229,7 @@ jobs:
           fi
 
       - name: remember handled releases
-        if: steps.changed.outputs.count != '0'
+        if: steps.changed.outputs.count != '' && steps.changed.outputs.count != '0'
         env:
           CLAUDE_UNAVAILABLE: ${{ steps.dispatch.outputs.claude_unavailable }}
           COPILOT_UNAVAILABLE: ${{ steps.dispatch.outputs.copilot_unavailable }}
@@ -254,3 +267,13 @@ jobs:
             [ "$latest" != "$seen" ] || continue
             deploy/local/cli-release-state.sh set seen "${name,,}" "$latest"
           done
+
+      # Last, so the watcher state is already written when it runs. Every source failing
+      # is not release news, it is the check being unable to run at all — the one case
+      # that still deserves a red job.
+      - name: fail when not one release source could be read
+        if: steps.versions.outputs.unusable == 'true'
+        run: |
+          echo "::error::No public release source answered; no contract was dispatched."
+          echo "No public release source answered. See the \`watcher\` block of the \`CLI release watcher state\` issue." >> "$GITHUB_STEP_SUMMARY"
+          exit 1

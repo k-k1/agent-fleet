@@ -213,6 +213,12 @@ jobs:
       # diffs a deployed stack against the repo (which is how it was found).
       - name: CloudFormation templates are ASCII-only
         run: ./deploy/local/cfn-ascii-test.sh
+      # The release watcher's own branches. They run once a day against live registries,
+      # so the only feedback on a bad one is a dispatch that silently did not happen —
+      # which is exactly how one unreadable source came to drop all seven contracts for
+      # a night. No `act` here, so the decision lives in scripts and is tested as such.
+      - name: CLI release watcher decisions (real scripts, stub npm/curl/gh)
+        run: ./deploy/local/cli-drift-stub-test.sh
 
   console:
     runs-on: ubuntu-latest

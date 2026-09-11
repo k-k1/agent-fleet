@@ -207,6 +207,15 @@ contract run **only for the CLIs whose version actually changed**, storing its s
 an append-only issue comment (repository variables cannot be written with the default
 token). It records "tested" only on success, so a failure is retried the next day.
 
+**One unreadable release source does not stop the watcher.** Each row is fetched
+independently; a row that cannot be read is reported as unknown and only that row's
+dispatch and state update are skipped, while the rest of the run proceeds. The watcher
+goes red only when not one source answered. The rows that could not be read are named
+in the job summary, and every run writes its own liveness — last clean fetch, last
+failing rows — into the `watcher` block of the state issue, so a "tested" version that
+has stopped moving can be told apart from an upstream that has stopped releasing.
+`deploy/local/cli-drift-stub-test.sh` pins both decisions.
+
 **One workflow file per agent.** Path filters and dispatch inputs are per workflow, so
 putting them in one file means (1) unrelated changes trigger runs and (2) inputs get
 mixed up — which really happened: two agents shared a single `live` input, and one
