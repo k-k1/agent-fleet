@@ -53,6 +53,15 @@ const (
 	OriginUnknown = "unknown"
 )
 
+// Who last set a session's display title (Meta.TitleSetBy). Only these two spellings and the
+// empty string exist; they are constants rather than literals because three packages compare
+// against them (the rename refusal, the MCP tool, the wire) and a typo on one side would read
+// as "nobody set it" — the value that refuses nothing.
+const (
+	TitleSetByUser   = "user"   // the user renamed it in the Console; the parent may not rewrite it
+	TitleSetByParent = "parent" // the spawning parent renamed it with rename_child_session
+)
+
 // SpawnChildLimitDefault is how many children one session may have at a time when the user has
 // chosen nothing (ADR 0073 decision 6). Deliberately small: this is the first session-side
 // capability that consumes the shared host's memory with nobody watching.
@@ -182,16 +191,21 @@ type Session struct {
 	OriginSession string `json:"originSession,omitempty"`
 	Repo          string `json:"repo"` // working dir basename (display)
 	WorkingCopyID string `json:"workingCopyId,omitempty"`
-	Title         string `json:"title"`     // user-supplied display title (optional, any kind)
-	Display       string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
-	Color         string `json:"color"`     // terminal background hue (hex); SSM carries its host color
-	Label         string `json:"label"`     // claude --name display name (claude only)
-	Started       string `json:"started"`   // "01/02 15:04" local time, for the list
-	CreatedAt     string `json:"createdAt"` // RFC3339
-	RemoteUrl     string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
-	State         string `json:"state"`     // claude live state: working | idle | question | ""
-	Alive         bool   `json:"alive"`     // true = live tmux session; false = stopped
-	Resumable     bool   `json:"resumable"` // false = stopped claude whose working dir is gone
+	Title         string `json:"title"` // user-supplied display title (optional, any kind)
+	// TitleSetBy mirrors Meta.TitleSetBy ("user" | "parent" | ""): who last set Title. It
+	// rides the wire so a reader outside this process can tell a name the user chose from one
+	// a parent wrote — the same reason Origin / OriginSession are here. Display-only for now;
+	// the refusal itself is enforced at the Agent's rename endpoint, never on the wire.
+	TitleSetBy string `json:"titleSetBy,omitempty"`
+	Display    string `json:"display"`   // human-readable name (title → claude label → repo@time); never the slug alone
+	Color      string `json:"color"`     // terminal background hue (hex); SSM carries its host color
+	Label      string `json:"label"`     // claude --name display name (claude only)
+	Started    string `json:"started"`   // "01/02 15:04" local time, for the list
+	CreatedAt  string `json:"createdAt"` // RFC3339
+	RemoteUrl  string `json:"remoteUrl"` // claude.ai Remote Control URL, when RC is bridged
+	State      string `json:"state"`     // claude live state: working | idle | question | ""
+	Alive      bool   `json:"alive"`     // true = live tmux session; false = stopped
+	Resumable  bool   `json:"resumable"` // false = stopped claude whose working dir is gone
 	// BackgroundBusy: state is idle (turn done) but a run_in_background task is still
 	// running under the pane. Lets the Console mark a session that is waiting for input
 	// as "still working in bg".
@@ -357,10 +371,19 @@ type Meta struct {
 	SuggestedTitle string `json:"suggestedTitle,omitempty"`
 	// SuggestedTitleDismissed latches true once the user accepts OR dismisses a
 	// suggestion, so a session is offered one at most once (v1: no re-suggestion loop).
-	SuggestedTitleDismissed bool   `json:"suggestedTitleDismissed,omitempty"`
-	Color                   string `json:"color"` // terminal background hue (hex); set at create (SSM host color)
-	Label                   string `json:"label"` // claude --name (display); derived from Title at create/recreate
-	Repo                    string `json:"repo"`  // working dir basename
+	SuggestedTitleDismissed bool `json:"suggestedTitleDismissed,omitempty"`
+	// TitleSetBy records WHO last set Title: TitleSetByUser, TitleSetByParent, or "" for
+	// the title a create carried (ADR 0073 decision 4, amended 2026-09-11). It exists for
+	// one refusal — a parent may rename its own child, but not over a name the user chose
+	// in the Console — and the asymmetry is the point: the user's rename always wins, so
+	// the only value that refuses anything is "user".
+	//
+	// Clearing the title resets this to "", for the same reason it re-opens auto-suggestion:
+	// the session is back in the state a fresh one is in, and nothing is being overwritten.
+	TitleSetBy string `json:"titleSetBy,omitempty"`
+	Color      string `json:"color"` // terminal background hue (hex); set at create (SSM host color)
+	Label      string `json:"label"` // claude --name (display); derived from Title at create/recreate
+	Repo       string `json:"repo"`  // working dir basename
 	// Branch is the git branch the working copy (Dir) was on when this session was
 	// created/recreated. Compared against Dir's current branch on each list to flag
 	// drift — a `git checkout` that slipped past the checkout guard (agent/manual

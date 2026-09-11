@@ -564,8 +564,15 @@ type sessionWire struct {
 	// everything else. Dropping it in the relay barely shows for claude kinds (title is
 	// baked into label too) — only shell/ssm, which use no label, fall back to a wrong
 	// display name. The DB mirror (re-serving while stopped) has no column for it.
-	Title   string `json:"title,omitempty"`
-	Display string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
+	Title string `json:"title,omitempty"`
+	// TitleSetBy: who last set Title — "user" (the Console's rename dialog), "parent" (the
+	// session that spawned this one, rename_child_session) or absent for the title a create
+	// carried (ADR 0073 decision 4). Same relay caveat as its neighbours: absent here it is
+	// silently dropped and the Console can never tell a name its user typed from one a parent
+	// wrote. No DB-mirror column — it describes a title whose writers both need the Agent
+	// running, and a stale copy would claim authorship for a rename that has since changed.
+	TitleSetBy string `json:"titleSetBy,omitempty"`
+	Display    string `json:"display"` // human-readable name from the Agent (title → label → repo@time)
 	// Color: terminal background hue (hex; SSM sessions carry their host color).
 	// Dropped in the relay, an SSM session's background always arrives through the CP as
 	// the default colour. The DB mirror has no column for it, so it is absent while stopped.

@@ -5,7 +5,8 @@ English | [日本語](0073-session-spawned-sessions.ja.md)
 - Status: **accepted and implemented** (2026-09-09; the implementation record is
   [87-session-spawn.md](../log/87-session-spawn.md), and the four follow-ups are
   [89-child-session-listing.md](../log/89-child-session-listing.md); amendments: `list_child_sessions`
-  in §3-b, archiving in decision 6, the completion timestamp in decision 9, the handoff-proposal
+  and `rename_child_session` in §3-b, the ordering of the title's two writers in decision 4,
+  archiving in decision 6, the completion timestamp in decision 9, the handoff-proposal
   lineage in the terminology table and decisions 1 and 5). The design took two rounds of review by
   another session and the implementation a third (round 1: decisions 1, 4, 5, 6, 7, 10 and 11
   corrected, decision 14 and §3-b added; round 2: archiving and reservation in decision 6, the
@@ -145,7 +146,7 @@ satisfied and was removed from the UI and from `uiprefs.FleetSpawn()`. What the 
 protecting — never being able to start something you cannot watch — holds more strongly than
 before.
 
-### 3-b. The nine tools stage 2 advertises (the whole set, by flag)
+### 3-b. The ~~nine~~ ten tools stage 2 advertises (the whole set, by flag)
 
 | Tool | Advertised by | Extra gate |
 |---|---|---|
@@ -154,6 +155,7 @@ before.
 | `list_repos` / `list_models` / `get_agent_usage` | `--fleet-spawn` | none (reads for choosing where and which agent) |
 | `get_session_output` | `--fleet-spawn` | decision 4 (children only) |
 | `stop_session` / `stop_session_after_turn` / `resume_session` | `--fleet-spawn` | decision 4 (children only), decision 10 |
+| `rename_child_session` | `--fleet-spawn` | decision 4 (children only) plus `title_set_by` (never reaches a title the user chose) |
 
 **Amendment (2026-09-09, docs/log/89): `list_child_sessions` is the ninth.** Stage 2 shipped
 with eight, and every tool that names a target took a name the caller could only have got from
@@ -164,16 +166,27 @@ and already drops archived rows and prunes expired stopped ones, and filters it 
 predicate. It is the only one of the nine that is not also an operator tool (the operator has
 `list_my_sessions`), so it is also the only one whose call-side gate is the flag alone.
 
+**Amendment (2026-09-11, docs/log/89 §89.11): `rename_child_session` is the tenth.** The reason
+for it, and the ordering that makes the user's rename win, are in decision 4's amendment. It is
+the SECOND tool with no operator counterpart, so its call-side gate is the flag alone, like
+`list_child_sessions`'. Giving it `stop_session`'s `writeEnabled() || flag` instead lets a
+`--write` assistant reach a route this server never advertises — and since `sessionDriveAllowed`
+waves the operator through by design, rename any session in the workspace off a guessed name
+(measured, docs/log/89 §89.11.3). It names a target, so `sessionDriveAllowed` runs behind that:
+two gates, not one. **The test is renamed to `TestFleetSpawnAddsExactlyItsTenTools`** — the count
+is in its name, so it moves again the next time the set grows.
+
 - Stage 1's four (`get_session_status` / `get_session_usage` / `list_memos` / `add_memo`) stay on
   `--fleet-observe` unchanged.
 - **Remove nothing from `TestFleetObserveDoesNotOpenOperatorTools`'s list**
   (`mcp_stdio_test.go:792`). That test looks at what observation advertises **on its own**, and
   `create_session` / `stop_session` / `resume_session` / `get_session_output` standing in that
   list is exactly the property stage 2 wants pinned (without `--fleet-spawn` they do not appear).
-  Taking the ~~eight~~ nine (see the addendum above) out of the list is taking the property out of the test.
-- **Add a test instead pinning that raising `--fleet-spawn` adds exactly those nine.** The pair
+  Taking the ~~eight~~ ~~nine~~ ten (see the addenda above) out of the list is taking the property out of the test.
+- **Add a test instead pinning that raising `--fleet-spawn` adds exactly those ten.** The pair
   keeps both halves: "observation alone does not open them" and "adding spawning opens these ~~eight~~
-  nine and nothing else" (the test is named `TestFleetSpawnAddsExactlyItsNineTools`).
+  ~~nine~~ ten and nothing else" (the test is named ~~`TestFleetSpawnAddsExactlyItsNineTools`~~
+  `TestFleetSpawnAddsExactlyItsTenTools`).
 
 ### 4. A session may steer only the children it started
 
@@ -186,6 +199,42 @@ second.
 Both conditions are required so that **a fork successor (`origin=handoff`) is not a child**: a
 fork is something a person performs in the Console, and there is no reason a parent should steer
 it.
+
+#### Amendment (2026-09-11, docs/log/89 §89.11): renaming joins the list, and with two writers on the title the user's wins
+
+**`rename_child_session` (the tenth tool) is added under the same predicate.** A child gets
+reused and its title goes stale, so what `list_child_sessions` returns and what the Console's
+left pane shows both stop matching the work. It is the same kind of thing as listing, reading,
+stopping and resuming — neither destructive nor irreversible, and only ever aimed at a child the
+caller started — so **the decision's predicate is unchanged to the letter**: the gate is the same
+`sessionDriveAllowed` as `stop_session` / `resume_session`.
+
+**The title, alone among these, has a second writer: the user.** Nothing a person writes is on
+the other end of the four existing tools (a process's life, a terminal's output). So the Meta
+carries **`title_set_by` (`user` / `parent` / empty = the title the create carried)** and the two
+writers are **ordered rather than arbitrated**:
+
+- **The user's rename always lands, and it takes the title out of the parent's reach.** Both the
+  rename dialog and the suggestion banner's accept write `user` — accepting is the user choosing
+  that name.
+- **The parent's rename only reaches a title nobody has set, or one it set itself.** Against
+  `user` it is refused with 409 `title_set_by_user`, and the refusal **names the reason**: the
+  caller is a model, and one that fails silently retries.
+- **Clearing the title clears `title_set_by` too.** For the same reason it re-opens
+  auto-suggestion: the session is back in the state a fresh one is in. **A parent may not send an
+  empty title** — reverting to the auto label is the user's affordance, and an empty string from a
+  parent means it lost the name rather than chose one.
+
+**The refusal lives in the Agent (`SpawnRenameRefusal`)**, for this ADR's usual reason — an
+invariant held only in the MCP layer is one anyone can walk around by replacing that layer — and
+because **the Console writes the same endpoint**. Only the ownership question (who the caller is)
+stays on the MCP side, the same split as stop and resume.
+
+`title_set_by` rides the `GET /sessions` wire as well (spelled `titleSetBy` there: every key in
+that family is camelCase, and a snake_case one would be the single exception in the contract
+table and the Console's type). **Nothing in the Console's display changed** — it is carried
+because a reader that can tell a name a person chose from one a parent wrote will be wanted, and
+a field the CP's `sessionWire` does not declare is dropped in silence.
 
 ### 5. Depth is one generation *between human launches*
 

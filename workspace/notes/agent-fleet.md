@@ -114,11 +114,14 @@ work you could simply do.
 - **You are not told when it finishes.** Poll `get_session_status`, or leave `report_back` on and
   the child sends you one message when it is done.
 - **You may only steer what you started** — list them, read their output, stop one, book a stop,
-  resume it. Not peers, not your user's sessions. Nothing deletes: folding a child up is a stop,
-  and removing it is the user's call in the Console.
+  resume it, rename it. Not peers, not your user's sessions. Nothing deletes: folding a child up
+  is a stop, and removing it is the user's call in the Console.
 - **`list_child_sessions` is how you get a name back.** `create_session` hands one out once, and a
   compaction takes it away — every other tool here needs that name. It also carries each child's
   state, when its last turn ended, and how many slots you have left.
+- **`rename_child_session` when you reuse a child for something else** — a stale title is what
+  your user reads in the left pane. It is refused once they have renamed that child themselves;
+  their name always wins, and yours never overwrites it.
 - Limits refuse with the number in the message: a few children at a time (the user sets how many;
   `create_session`'s own description and `list_child_sessions`'s `slotsLeft` both state the figure
   in force, so never assume one), no grandchildren, no shell sessions. A slot frees when the user

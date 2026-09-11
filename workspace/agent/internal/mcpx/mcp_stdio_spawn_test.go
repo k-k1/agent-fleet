@@ -12,10 +12,11 @@ import (
 	"github.com/k-k1/agent-fleet/workspace/agent/internal/session"
 )
 
-// Session steering (ADR 0073): the nine tools opened by `--self-report --fleet-spawn`.
+// Session steering (ADR 0073): the ten tools opened by `--self-report --fleet-spawn`.
 var fleetSpawnToolNames = []string{
 	"create_session", "list_child_sessions", "list_repos", "list_models", "get_agent_usage",
 	"get_session_output", "stop_session", "stop_session_after_turn", "resume_session",
+	"rename_child_session",
 }
 
 func withFleetSpawn(t *testing.T, on bool) {
@@ -58,10 +59,10 @@ func TestFleetSpawnRequiresSelfReport(t *testing.T) {
 	}
 }
 
-// The advertised set IS the authorization boundary, so the nine appear only with the opt-in —
-// and the opt-in adds those nine and NOTHING else. The second half is the half that catches a
+// The advertised set IS the authorization boundary, so the ten appear only with the opt-in —
+// and the opt-in adds those ten and NOTHING else. The second half is the half that catches a
 // future edit reaching for a neighbouring operator tool while it is in the area.
-func TestFleetSpawnAddsExactlyItsNineTools(t *testing.T) {
+func TestFleetSpawnAddsExactlyItsTenTools(t *testing.T) {
 	withFleetSpawn(t, false)
 	before := advertisedNames(t)
 	for _, name := range fleetSpawnToolNames {
@@ -79,7 +80,7 @@ func TestFleetSpawnAddsExactlyItsNineTools(t *testing.T) {
 	}
 	for name := range after {
 		if !before[name] && !contains(fleetSpawnToolNames, name) {
-			t.Errorf("%s appeared with --fleet-spawn but is not one of its nine tools", name)
+			t.Errorf("%s appeared with --fleet-spawn but is not one of its ten tools", name)
 		}
 	}
 }
@@ -305,7 +306,7 @@ func TestStopSessionDisarmsOnlyForTheOperator(t *testing.T) {
 // is invisible to a tools/list test: list_models shipped advertised but refusing, and
 // create_session's own description sends the caller there first.
 //
-// So: call all eight on the session surface and refuse to accept a permission error from any of
+// So: call all ten on the session surface and refuse to accept a permission error from any of
 // them. The Agent is stubbed, so what is under test is the gate, not the backend.
 func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
 	withFleetSpawn(t, true)
@@ -333,6 +334,7 @@ func TestFleetSpawnToolsAreCallableNotJustAdvertised(t *testing.T) {
 		"stop_session":            {"name": "mine"},
 		"stop_session_after_turn": {"name": "mine"},
 		"resume_session":          {"name": "mine"},
+		"rename_child_session":    {"name": "mine", "title": "the renamed task"},
 	}
 	for _, name := range fleetSpawnToolNames {
 		a, _ := json.Marshal(args[name])
@@ -518,6 +520,142 @@ func TestListChildSessionsRefusedWithoutTheOptIn(t *testing.T) {
 		mcpSourceSession = oldSource
 		if !strings.Contains(resp, `"isError":true`) {
 			t.Errorf("%s: list_child_sessions answered without the opt-in: %s", tc.surface, resp)
+		}
+	}
+}
+
+// Renaming is the tenth steering tool (ADR 0073 decision 4, amendment 2026-09-11) and it takes a
+// name like the rest, so it gets the same second boundary. Driven through tools/call rather than
+// by unit-testing sessionDriveAllowed, because what has actually shipped broken here is a handler
+// that forgot to call the gate — which no unit test of the gate can see.
+func TestRenameChildSessionOnlyTouchesOwnChildren(t *testing.T) {
+	withFleetSpawn(t, true) // caller is parent1
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	for _, m := range []session.Meta{
+		{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser},
+		{Name: "mine", Kind: session.KindClaude, Origin: session.OriginSession, OriginSession: "parent1"},
+		{Name: "theirs", Kind: session.KindClaude, Origin: session.OriginSession, OriginSession: "parent2"},
+		{Name: "peer", Kind: session.KindClaude, Origin: session.OriginUser},
+	} {
+		session.WriteMeta(m)
+	}
+
+	type hit struct {
+		path string
+		body map[string]string
+	}
+	var got *hit
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := hit{path: r.Method + " " + r.URL.Path, body: map[string]string{}}
+		_ = json.NewDecoder(r.Body).Decode(&h.body)
+		got = &h
+		_, _ = w.Write([]byte(`{"name":"mine","title":"the renamed task"}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	rename := func(args map[string]any) string {
+		t.Helper()
+		got = nil
+		a, _ := json.Marshal(args)
+		params, _ := json.Marshal(map[string]any{"name": "rename_child_session", "arguments": json.RawMessage(a)})
+		return string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+	}
+
+	// The positive control the refusals below are measured against: with the gate satisfied the
+	// call reaches the Agent, on the Console's own rename endpoint, carrying the one field that
+	// separates a parent's write from a person's.
+	if resp := rename(map[string]any{"name": "mine", "title": "the renamed task"}); strings.Contains(resp, `"isError":true`) {
+		t.Fatalf("a parent could not rename its own child: %s", resp)
+	}
+	if got == nil {
+		t.Fatal("the rename never reached the Agent")
+	}
+	if got.path != "POST /sessions/mine/title/set" {
+		t.Fatalf("rename hit %q, want POST /sessions/mine/title/set", got.path)
+	}
+	if got.body["title"] != "the renamed task" || got.body["title_set_by"] != session.TitleSetByParent {
+		t.Fatalf("rename body = %#v, want the new title stamped title_set_by=parent", got.body)
+	}
+
+	// Everything else is refused, and refused BEFORE the Agent: a rename that gets there has
+	// already renamed someone else's session by the time the error comes back.
+	for _, tc := range []struct{ target, why string }{
+		{"theirs", "another parent's child"},
+		{"peer", "a session the user opened"},
+		{"parent1", "itself"},
+		{"ghost", "a session that does not exist"},
+	} {
+		resp := rename(map[string]any{"name": tc.target, "title": "hijacked"})
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Errorf("renaming %s was allowed: %s", tc.why, resp)
+		}
+		if got != nil {
+			t.Errorf("the refused rename of %s still reached the Agent: %#v", tc.why, got)
+		}
+	}
+
+	// An empty title is the Console's "revert to the auto label", not a rename. Refused here too,
+	// so the caller is told what to send rather than reading it back as an API error.
+	if resp := rename(map[string]any{"name": "mine", "title": "  "}); !strings.Contains(resp, `"isError":true`) {
+		t.Errorf("an empty title was accepted as a rename: %s", resp)
+	}
+	if got != nil {
+		t.Errorf("the empty-title rename still reached the Agent: %#v", got)
+	}
+}
+
+// The second tool with no operator counterpart, so — like list_child_sessions — its call-side
+// gate is the flag alone. Both surfaces have to refuse it, at different layers: a session by the
+// advertised-set check, an assistant by the case's own flag test. Without that flag test a
+// --write assistant reaches the rename endpoint and, because sessionDriveAllowed waves the
+// operator through by design, renames any session in the workspace off a guessed name.
+func TestRenameChildSessionRefusedWithoutTheOptIn(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("AF_SESSIONS_DIR", t.TempDir())
+	session.WriteMeta(session.Meta{Name: "parent1", Kind: session.KindClaude, Origin: session.OriginUser})
+	session.WriteMeta(session.Meta{Name: "mine", Kind: session.KindClaude,
+		Origin: session.OriginSession, OriginSession: "parent1"})
+
+	// A reachable Agent and a resolvable caller, so a missing gate fails HERE rather than on
+	// something incidental — the control that was not a control in docs/log/89.
+	var reached bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	t.Setenv("AGENT_ADDR", u.Host)
+
+	params, _ := json.Marshal(map[string]any{"name": "rename_child_session",
+		"arguments": json.RawMessage(`{"name":"mine","title":"hijacked"}`)})
+	for _, tc := range []struct {
+		surface     string
+		write, self bool
+	}{
+		{"session without --fleet-spawn", false, true},
+		{"write assistant", true, false},
+	} {
+		oldWrite, oldSelf, oldSpawn := writeEnabled(), selfReportOnly(), mcpFleetSpawnEnabled
+		oldSource := mcpSourceSession
+		setWriteEnabled(tc.write)
+		setSelfReportOnly(tc.self)
+		mcpFleetSpawnEnabled = false
+		mcpSourceSession = "parent1"
+		reached = false
+		resp := string(mcpStdioCall(mcpReq{ID: json.RawMessage(`1`), Params: params}))
+		setWriteEnabled(oldWrite)
+		setSelfReportOnly(oldSelf)
+		mcpFleetSpawnEnabled = oldSpawn
+		mcpSourceSession = oldSource
+		if !strings.Contains(resp, `"isError":true`) {
+			t.Errorf("%s: rename_child_session answered without the opt-in: %s", tc.surface, resp)
+		}
+		if reached {
+			t.Errorf("%s: the refused rename still reached the Agent", tc.surface)
 		}
 	}
 }

@@ -39,7 +39,7 @@ func (s stubRuntime) Name() string     { return "stub" }
 // killer took.
 const agentSessionsPayload = `{"sessions":[{
 	"name":"s1","tmux":"claude_s1","dir":"/home/dev/repos/x","workingCopyId":"wc_123","kind":"claude",
-	"driver":"managed","repo":"x","title":"t","display":"[AF] t","color":"#332211",
+	"driver":"managed","repo":"x","title":"t","titleSetBy":"user","display":"[AF] t","color":"#332211",
 	"label":"[AF] t","started":"07/15 12:00","createdAt":"2026-07-15T12:00:00+09:00",
 	"remoteUrl":"","state":"","alive":false,"resumable":true,"locked":true,
 	"backgroundBusy":true,"backgroundBusyReason":"subagent","authOkAt":"2026-08-14T09:00:00+09:00",
@@ -92,8 +92,12 @@ func TestAgentSessionsRelayKeepsFields(t *testing.T) {
 		// The display field dropped along with them.
 		"color": "#332211",
 		// driver, pinned against the same regression.
-		"driver":        "managed",
-		"title":         "t",
+		"driver": "managed",
+		"title":  "t",
+		// Who last set the title (ADR 0073 decision 4). Dropped here, the Console can never
+		// tell a name its user typed from one a child's parent wrote, and the refusal that
+		// protects the user's rename has no visible counterpart at all.
+		"titleSetBy":    "user",
 		"workingCopyId": "wc_123",
 		// branch/worktree fields, pinned against the same kind of accident.
 		"branch":        "main",
