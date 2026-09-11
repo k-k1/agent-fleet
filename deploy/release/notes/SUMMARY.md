@@ -34,7 +34,7 @@ Keeping it current:
 
 - **[engines]** Tenant administrators of an allowed tenant search and take in models from their tenant settings (search, ingest, own jobs, catalogue read-only); modes, classes, enabling and the HF token stay with the super admin
 - **[image generation]** The deployment's own ComfyUI edits and inpaints for all five families; a request can carry LoRA (up to four, weighted) and a seed; a request during model sync waits instead of failing
-- **[engines]** The image role's box is picked from an offers list, one of which may be Spot (`ImageOffers`; declare nothing and it is all on demand). Retires `ImageCapacityOptionType`; the llm role takes no Spot row
+- **[engines]** The image role can be bought on Spot (`ImageCapacityOptionType=SPOT`, default on demand); the llm role deliberately is not
 - **[engines]** The llm role takes a LoRA row on top of a catalogue model, served as a fixed preset
 - **[engines]** A split model is one row: model family plus several files with their roles, a file can be added to an existing row, a pasted HF / Civitai URL fills in the form
 - **[admin / ecs-ec2]** A member's home disk is grown online by raising `disk_gb`; the member detail is arranged into size and limits, actions, irreversible actions
