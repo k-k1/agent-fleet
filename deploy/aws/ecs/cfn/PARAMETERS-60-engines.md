@@ -1081,7 +1081,10 @@ holds the order, with the two positive controls (swap the steps, drop the copy).
 **The one step you still run by hand is the bake**, and only when GHCR has not got the tag:
 nothing on a release route may produce an image, so `update.sh` and `release-ecr.sh` stop there
 and say to run `engine-tools-image.yml` with that tag first. On a standard release GHCR has it
-already — the workflow is dispatched when `deploy/aws/ecs/engine-tools/` changes.
+already — the workflow is dispatched when `deploy/aws/ecs/engine-tools/` changes. Of the three
+steps that were run by hand on 2026-09-11 (ADR 0072, "#518 and #512, confirmed on hardware"),
+that `gh workflow run engine-tools-image.yml -f tag=<tag>` is the only one left; `update.sh`
+does the 20-platform deploy and the `crane copy` itself, in that order.
 
 **On a development deployment `dev-deploy.sh` does the middle two for you.** It bakes a
 per-commit tag when `deploy/aws/ecs/engine-tools/` has changed since the deployed commit, and

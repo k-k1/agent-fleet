@@ -324,6 +324,31 @@ func SpawnEnvelope(parent, prompt string) string {
 	return "[agent-fleet:spawn from=" + parent + "] " + prompt
 }
 
+// SpawnRenameRefusal keeps a parent's rename off a title the USER chose (ADR 0073 decision 4,
+// amendment 2026-09-11).
+//
+// Renaming a child is the parent's to do — a child gets reused and its name goes stale, which is
+// what makes list_child_sessions' titles and the Console's left pane disagree with the work. But
+// the title is also the one field of a session the user edits by hand, and a parent that
+// overwrites it takes away something a person typed with no trace that it happened. So the two
+// writers are ordered rather than arbitrated: the user's rename always lands (and takes the title
+// out of the parent's reach), the parent's only lands while nobody has.
+//
+// It lives here, beside the create refusals and in the AGENT, for the reason at the top of this
+// file: an invariant held only in the MCP layer is one anyone can walk around by replacing that
+// layer — and the Console writes this same endpoint.
+//
+// Deliberately NOT the ownership check. That one is sessionDriveAllowed's, on the MCP side with
+// stop/resume, because it asks who the CALLER is; this asks only what is already stored.
+func SpawnRenameRefusal(m session.Meta) *SpawnRefusal {
+	if m.TitleSetBy != session.TitleSetByUser {
+		return nil
+	}
+	return &SpawnRefusal{Status: 409, Code: "title_set_by_user",
+		Message: fmt.Sprintf("セッション %q の題名は利用者が Console で付け替えたものなので、"+
+			"親からは変更できません。変えたいときは利用者に頼んでください", m.Name)}
+}
+
 // SpawnCreateRefusal runs the origin=session refusals that depend only on the REQUEST: who is
 // asking and what kind of session it wants.
 //

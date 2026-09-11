@@ -554,6 +554,10 @@ func HandleAcceptSuggestedTitle(w http.ResponseWriter, r *http.Request) {
 	m.Title = m.SuggestedTitle
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = true // resolved — v1 never re-suggests for this session
+	// Accepting is the user choosing this name out of the banner, so it closes the title to a
+	// spawning parent exactly as the rename dialog does. Without it the one title a parent CAN
+	// overwrite is the one its child's user just pressed accept on.
+	m.TitleSetBy = session.TitleSetByUser
 	if AgentOf(m.Kind).Caps().UsesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
 	}
@@ -639,11 +643,16 @@ func HandleSuggestTitle(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, map[string]any{"suggestedTitle": title})
 }
 
-// HandleSetTitle applies a user-typed title directly (the rename dialog's Save
-// button) — the only path that lets the Console set an arbitrary title on an
-// EXISTING session (creation already accepts one; accept/regenerate only ever
-// write an LLM-produced string). An empty title reverts to the auto label and
-// re-opens the session to future auto-suggestions.
+// HandleSetTitle applies a typed title directly (the rename dialog's Save button) — the
+// only path that lets the Console set an arbitrary title on an EXISTING session (creation
+// already accepts one; accept/regenerate only ever write an LLM-produced string). An empty
+// title reverts to the auto label and re-opens the session to future auto-suggestions.
+//
+// title_set_by names the OTHER writer: a spawning parent renaming its own child
+// (rename_child_session, ADR 0073 decision 4). Absent = the user, because the Console is
+// what this endpoint was built for and a body that forgot the field must never be read as
+// the privileged caller. The parent's write is the one that can be refused
+// (SpawnRenameRefusal); the ownership check for it is the MCP tool's.
 func HandleSetTitle(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	if !session.ValidName(name) {
@@ -652,14 +661,23 @@ func HandleSetTitle(w http.ResponseWriter, r *http.Request) {
 	}
 	var req struct {
 		Title string `json:"title"`
+		SetBy string `json:"title_set_by"`
 	}
 	if json.NewDecoder(io.LimitReader(r.Body, 4<<10)).Decode(&req) != nil {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_json", "invalid request body")
 		return
 	}
+	byParent := req.SetBy == session.TitleSetByParent
 	title, ok := CleanTitle(req.Title)
 	if !ok {
 		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "title too long or contains control characters")
+		return
+	}
+	// Reverting to the auto label is the user's affordance, not a rename: a parent that sent
+	// an empty title has lost the name rather than chosen one, and applying it would replace a
+	// title the user may have typed with nothing at all.
+	if byParent && title == "" {
+		httpx.WriteErr(w, http.StatusBadRequest, "bad_title", "a parent rename needs a non-empty title")
 		return
 	}
 	m, found := session.ReadMeta(name)
@@ -667,9 +685,23 @@ func HandleSetTitle(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteErr(w, http.StatusNotFound, "not_found", "no such session: "+name)
 		return
 	}
+	if byParent {
+		if ref := SpawnRenameRefusal(m); ref != nil {
+			httpx.WriteErr(w, ref.Status, ref.Code, ref.Message)
+			return
+		}
+	}
 	m.Title = title
 	m.SuggestedTitle = ""
 	m.SuggestedTitleDismissed = title != "" // clearing the title re-opens auto-suggestion
+	switch {
+	case byParent:
+		m.TitleSetBy = session.TitleSetByParent
+	case title == "":
+		m.TitleSetBy = "" // cleared — back to the state a fresh session is in, parent included
+	default:
+		m.TitleSetBy = session.TitleSetByUser
+	}
 	if AgentOf(m.Kind).Caps().UsesLabel {
 		m.Label = sessionLabelFor(m.Dir, m.Title, m.Name)
 	}

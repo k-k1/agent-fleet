@@ -27,6 +27,12 @@ export interface Session {
   // is decided by this axis, not by kind — always branch through isManagedSession().
   driver?: "tui" | "managed" | string;
   title?: string; // user-supplied display title (optional, any kind); "" = auto
+  // Who last set `title`: "user" = renamed here in the Console (the rename dialog, or accepting
+  // a suggestion), "parent" = the session that spawned this one renamed it with
+  // rename_child_session, absent = the title the create carried (ADR 0073 決定 4). The rename
+  // dialog does not send it — the Agent reads a body without it as the user, so the Console
+  // only ever writes this side of the pair (docs/log/89 §89.11).
+  titleSetBy?: "user" | "parent" | string;
   color?: string; // terminal background hue (hex); SSM sessions carry their host color
   label?: string; // claude --name (with an "[AF] " tag); absent for shell
   repo?: string | null; // working-copy folder the (agent) session runs in

@@ -18,10 +18,16 @@
 # Actual breakage detection is the job of the contract tests that run the real
 # CLIs (P1).
 #
+# A row that cannot be read is reported per row, never as a whole-run failure: the
+# watcher dispatches seven independent contracts off this output, and one unreadable
+# source used to abort all seven (2026-09-09: claude 2.1.267 was detected, rtk's
+# GitHub Releases call failed, and nothing was dispatched or recorded). Callers that
+# need to know read `failed=` and skip only those rows.
+#
 # Usage:
 #   deploy/local/cli-drift-check.sh            # check all agent CLIs
 #   deploy/local/cli-drift-check.sh claude     # just one
-# Exit codes: 0 = pins match latest / 1 = drift / 2 = execution error (fetch failure etc.)
+# Exit codes: 0 = pins match latest / 1 = drift / 2 = no row could be read at all
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -43,16 +49,19 @@ TARGETS=(
 
 CURL_RETRY=(--retry 3 --retry-delay 1 --retry-all-errors)
 
+# Take the whole match set, then the first line. `sed … | head -1` would leave sed to
+# die of SIGPIPE, and `pipefail` turns that into a 141 the caller reads as a crash.
 arg_pin() {
-  local v
-  v="$(sed -n "s/^ARG $1=//p" "$DOCKERFILE" | head -1)"
-  [ -n "$v" ] || return 1
-  printf '%s' "$v"
+  local out
+  out="$(sed -n "s/^ARG $1=//p" "$DOCKERFILE")"
+  [ -n "$out" ] || return 1
+  printf '%s' "${out%%$'\n'*}"
 }
 
 want="${1:-}"
 drift=0
-errors=0
+rows=0
+failed=()
 # Table for the GitHub Actions Job Summary (if present); /dev/null otherwise.
 SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
 {
@@ -62,14 +71,25 @@ SUMMARY="${GITHUB_STEP_SUMMARY:-/dev/null}"
   echo "|---|---|---|---|"
 } >> "$SUMMARY"
 
+# A row that could not be read: warn, publish an empty `latest_<name>`, and carry on.
+# The empty value is deliberate — a consumer that compares it against its last-tested
+# version must see "unknown", never a plausible-looking version it would act on.
+row_failed() { # row_failed <name> <pin-or-?> <reason>
+  printf '%-10s %-14s %-14s %s\n' "$1" "$2" "?" "ERROR: $3"
+  echo "cli-drift-check: warning: $1: $3" >&2
+  echo "| $1 | \`$2\` | ? | ⚠ $3 |" >> "$SUMMARY"
+  [ -z "${GITHUB_OUTPUT:-}" ] || printf 'latest_%s=\n' "$1" >> "$GITHUB_OUTPUT"
+  failed+=("$1")
+}
+
 printf '%-10s %-14s %-14s %s\n' "CLI" "PIN" "LATEST" ""
 for t in "${TARGETS[@]}"; do
   IFS='|' read -r name arg source locator <<< "$t"
   [ -n "$want" ] && [ "$want" != "$name" ] && continue
+  rows=$((rows + 1))
 
   if ! pin="$(arg_pin "$arg")"; then
-    printf '%-10s %s\n' "$name" "ERROR: ARG $arg not found in $DOCKERFILE"
-    errors=1
+    row_failed "$name" "?" "ARG $arg not found in $DOCKERFILE"
     continue
   fi
   # Keep fetch failures separate so an empty response is never read as "no drift".
@@ -87,8 +107,11 @@ for t in "${TARGETS[@]}"; do
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // empty' 2>/dev/null)" ;;
     cursor)
-      latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
-        sed -n 's|.*versions/\([0-9.]*-[a-f0-9]*\)/.*|\1|p' | head -1)" ;;
+      # Fetch first, truncate after. The install script is long, so `curl | sed | head -1`
+      # kills sed with SIGPIPE and `pipefail` reports 141 for a row that read fine.
+      body="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null)"
+      latest="$(sed -n 's|.*versions/\([0-9.]*-[a-f0-9]*\)/.*|\1|p' <<< "$body")"
+      latest="${latest%%$'\n'*}" ;;
     kiro)
       latest="$(curl -fsSL --max-time 20 "${CURL_RETRY[@]}" "$locator" 2>/dev/null |
         jq -r '.version // .Version // empty' 2>/dev/null)" ;;
@@ -96,9 +119,7 @@ for t in "${TARGETS[@]}"; do
       latest="" ;;
   esac
   if [ -z "$latest" ]; then
-    printf '%-10s %-14s %-14s %s\n' "$name" "$pin" "?" "ERROR: latest fetch failed ($source)"
-    echo "| $name | \`$pin\` | ? | ⚠ fetch failed |" >> "$SUMMARY"
-    errors=1
+    row_failed "$name" "$pin" "latest fetch failed ($source)"
     continue
   fi
   if [ -n "${GITHUB_OUTPUT:-}" ]; then
@@ -115,7 +136,26 @@ for t in "${TARGETS[@]}"; do
   fi
 done
 
-[ "$errors" = 1 ] && exit 2
+failed_csv="$(IFS=,; printf '%s' "${failed[*]-}")"
+if [ -n "${GITHUB_OUTPUT:-}" ]; then
+  printf 'failed=%s\n' "$failed_csv" >> "$GITHUB_OUTPUT"
+fi
+if [ -n "$failed_csv" ]; then
+  {
+    echo
+    echo "Release sources that could not be read: \`${failed_csv//,/\`, \`}\`."
+  } >> "$SUMMARY"
+  echo
+  echo "Could not read: $failed_csv (those rows are reported as unknown, not as 'no drift')."
+fi
+
+# Red only when there is nothing to report at all. One unreadable row is a warning:
+# it must not take the other rows' answers down with it.
+if [ "$rows" -gt 0 ] && [ "${#failed[@]}" -eq "$rows" ]; then
+  echo "No release source could be read." >&2
+  exit 2
+fi
+
 if [ "$drift" = 1 ]; then
   cat >> "$SUMMARY" <<'EOF'
 

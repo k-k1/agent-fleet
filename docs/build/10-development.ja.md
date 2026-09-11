@@ -239,6 +239,13 @@ cursor / kiro は refresh で回転する対話 credential のため自動 dispa
 記録し、secret 更新後に専用ワークフローを手動 dispatch する
 （「検出済み」と「テスト成功」を混同しない）。
 
+**取得元 1 つの失敗では止まらない**。行ごとに取りに行き、読めなかった行は latest 不明として
+その行の dispatch と状態更新だけを飛ばし、他の行はそのまま進む。赤くなるのは**どの取得元も
+答えなかったとき**だけ。読めなかった行は job summary に名前が出て、さらに毎回の実行が
+自分の生存（最後に全行読めた時刻・最後に失敗した行）を状態 issue の `watcher` 欄に書く——
+`tested` が進まないのが「上流が静か」なのか「watcher が落ちた」のかを後から区別するため。
+判断は `deploy/local/cli-drift-stub-test.sh` が固定している。
+
 **ワークフローはエージェント毎に 1 ファイル**（`claude-tui-contract.yml` /
 `codex-contract.yml` / `opencode-contract.yml` / `copilot-contract.yml` /
 `agy-contract.yml` / `cursor-contract.yml` / `kiro-contract.yml`）。パス条件も `workflow_dispatch` の入力も
