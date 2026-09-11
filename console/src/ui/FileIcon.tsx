@@ -21,11 +21,16 @@ export default function FileIcon({ name }: FileIconProps) {
   const r = resolveIcon(iconSet, name);
   if (!r) return <Icon name="file" className="fi-generic" />;
   if (r.tint === "mask") {
-    // Tint a monochrome SVG: use it as a mask and fill with the type color.
+    // Tint a monochrome SVG: use it as a mask and fill with the type color. url() is QUOTED:
+    // these SVGs are under Vite's inline limit, so `r.url` is a data: URI whose attribute
+    // quotes Vite leaves as `'`, which an unquoted url() token may not contain. Unquoted the
+    // browser drops the declaration and the icon becomes a solid colored square — measured in
+    // headless Chromium on all 27 inlined Seti icons and devicon's 4 mono ones.
+    const url = `url("${r.url}")`;
     return (
       <span
         className="fi-mask"
-        style={{ maskImage: `url(${r.url})`, WebkitMaskImage: `url(${r.url})`, backgroundColor: r.color }}
+        style={{ maskImage: url, WebkitMaskImage: url, backgroundColor: r.color }}
         aria-hidden="true"
       />
     );

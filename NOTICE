@@ -34,6 +34,22 @@ console/vendor/drawio/viewer-static.min.js and shipped inside the Console bundle
   Source: https://github.com/jgraph/drawio
 
 --------------------------------------------------------------------------------
+This product bundles icon artwork inside the Console bundle. Only the icons actually
+referenced are vendored, not the upstream sets; the per-file mapping and notes are in
+the ATTRIBUTION.md beside each folder:
+
+  File-type icons (console/src/assets/fileicons/ATTRIBUTION.md) — VS Code Icons,
+  Material Icon Theme, Devicon and Seti UI, each under the MIT License.
+
+  Brand icons (console/src/assets/brandicons/ATTRIBUTION.md) — Lobe Icons (MIT,
+  https://github.com/lobehub/lobe-icons) for the agent CLIs.
+
+  The MIT licenses above cover those projects, not the marks themselves: each brand
+  icon is a trademark of the company it names and is used nominatively, to identify
+  the CLI or provider a session actually ran through. Redistributors should follow the
+  vendors' own brand guidelines rather than read the MIT grant as permission.
+
+--------------------------------------------------------------------------------
 Third-party software bundled in the distributed container images / rootfs
 (docs/log/35 §35.4.1). License texts ship with each component inside the image
 (/usr/share/doc/<pkg>/copyright for Debian packages, or the component's own

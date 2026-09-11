@@ -84,7 +84,9 @@ export interface AvailCtx {
 export interface AgentDescriptor {
   id: SessionKind;
   // presentation
-  icon: string; // codicon name
+  // codicon name, or "brand:<key>" for the agent's own logo (lib/brandicons). The seven
+  // CLIs all have one; shell / ssm are not products and keep a codicon.
+  icon: string;
   label: string; // display word — the compact one, used by every chip/header (kindLabel)
   // Full product name for the roomy launch pickers ("start work" / "start") only.
   // Optional: falls back to `label` (kindDisplayName), so only kinds whose full name
@@ -158,7 +160,7 @@ function caps(overrides: Partial<AgentCaps>): AgentCaps {
 export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   claude: {
     id: "claude",
-    icon: "sparkle",
+    icon: "brand:claude",
     label: "Claude",
     displayName: "Claude Code",
     assistantName: "Claude",
@@ -198,7 +200,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   codex: {
     id: "codex",
-    icon: "rocket",
+    icon: "brand:codex",
     label: "Codex",
     assistantName: "Codex",
     short: "cx",
@@ -243,7 +245,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   cursor: {
     id: "cursor",
-    icon: "inspect", // codicon pointer/cursor — closest nod to "Cursor"; no brand codicon exists
+    icon: "brand:cursor",
     label: "Cursor",
     assistantName: "Cursor",
     short: "cu",
@@ -286,7 +288,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   agy: {
     id: "agy",
-    icon: "magnet",
+    icon: "brand:antigravity",
     label: "Antigravity",
     assistantName: "Antigravity",
     short: "ag",
@@ -333,7 +335,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   copilot: {
     id: "copilot",
-    icon: "copilot",
+    icon: "brand:copilot",
     label: "Copilot",
     displayName: "GitHub Copilot",
     assistantName: "Copilot",
@@ -383,7 +385,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   kiro: {
     id: "kiro",
-    icon: "compass", // codicon — neutral shape nodding to Kiro's spec/guide bent (kiro_guide mode); no clash with the other 8
+    icon: "brand:kiro",
     label: "Kiro",
     assistantName: "Kiro",
     short: "ki",
@@ -442,7 +444,7 @@ export const AGENTS: Record<SessionKind, AgentDescriptor> = {
   },
   opencode: {
     id: "opencode",
-    icon: "hubot",
+    icon: "brand:opencode",
     label: "OpenCode",
     assistantName: "OpenCode",
     short: "oc",
