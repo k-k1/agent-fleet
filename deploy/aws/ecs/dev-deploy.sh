@@ -40,6 +40,10 @@
 #     required" badge for everyone running there. Hence it only touches a deployment marked
 #     `AF_DEV_DEPLOY=1` in the environment file (the mark lives outside the repo, so it cannot
 #     be pointed at another deployment by mistake).
+#  6. The engine tools image is not part of dev-image.yml. The fetch sidecar and the ingest
+#     steps live in `af-engine-tools` (ADR 0072), which only `standup.sh` copied into ECR — so a
+#     dev deploy left the engines' fetch containers with nothing to pull. Step 5b carries it,
+#     and bakes a per-commit tag when `deploy/aws/ecs/engine-tools/` has moved on.
 #
 # ## What it does not do
 #
@@ -160,24 +164,40 @@ echo "==> tag: $TAG (origin/$REF = $SHA)"
 # Measured against the commit of the tag that is running now: the trailing sha for a dev tag,
 # whatever `v<semver>` points at for a release tag. When it is neither (i.e. not in this clone),
 # give up on deciding automatically and ask for it to be said explicitly.
+case "$CUR_TAG" in
+  *-dev-*) base_sha="${CUR_TAG##*-dev-}" ;;
+  *)       base_sha="v$CUR_TAG" ;;
+esac
+# Resolved once, because two steps ask "what changed since what is running": the workspace
+# decision below and the engine tools one in step 5b.
+have_base=0
+"${GIT[@]}" cat-file -e "${base_sha}^{commit}" 2>/dev/null && have_base=1
+
+# changed_since <path…> — the files that changed under those paths between the running commit
+# and the one about to be deployed.
+#
+# 🔴 Taken in ONE step and truncated in another, never `git diff … | head -5`. Under
+# `set -o pipefail` head closes the pipe as soon as it has its lines, git dies of SIGPIPE and
+# the script exits 141 — exactly when there IS a diff, which is the case the branch exists for.
+# What that looked like was a deploy that shipped nothing and read like a crash.
+changed_since() {
+  "${GIT[@]}" diff --name-only "${base_sha}^{commit}" "$SHA" -- "$@"
+}
+show_changed() { # show_changed <newline-separated list> — at most five, one per line
+  local shown f
+  shown="$(printf '%s\n' "$1" | sed -n '1,5p')"
+  while IFS= read -r f; do [ -n "$f" ] && echo "     $f"; done <<EOF
+$shown
+EOF
+}
+
 if [ "$IMAGE" = auto ]; then
-  case "$CUR_TAG" in
-    *-dev-*) base_sha="${CUR_TAG##*-dev-}" ;;
-    *)       base_sha="v$CUR_TAG" ;;
-  esac
-  if "${GIT[@]}" cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
-    # Taken in two steps on purpose. `git diff … | head -5` under `set -o pipefail` exits
-    # 141 (SIGPIPE) the moment the diff is longer than five lines, which is exactly the
-    # case this branch exists for — the script died before dispatching anything, with a
-    # status that reads like a crash rather than "the workspace changed".
-    changed="$("${GIT[@]}" diff --name-only "${base_sha}^{commit}" "$SHA" -- workspace/)"
+  if [ "$have_base" = 1 ]; then
+    changed="$(changed_since workspace/)"
     if [ -n "$changed" ]; then
-      changed="$(printf '%s\n' "$changed" | sed -n '1,5p')"
       IMAGE=both
       echo "==> workspace/ changed since $CUR_TAG — baking BOTH images (+~10min, QEMU):"
-      while IFS= read -r f; do [ -n "$f" ] && echo "     $f"; done <<EOF
-$changed
-EOF
+      show_changed "$changed"
     else
       IMAGE="cp"
       echo "==> workspace/ unchanged since $CUR_TAG — baking the control-plane only, re-tagging the workspace image"
@@ -260,6 +280,87 @@ else
   # the restore point is not" (env.sh).
   echo "    NOTE: this workspace exists only in ECR (GHCR has no $TAG). A teardown deletes the image with it."
   echo "       To keep it as material for a rebuild, re-bake with --image both or crane copy it to GHCR."
+fi
+
+# --- 5b) the engine tools image (pitfall 6) ---------------------------------
+# The fetch sidecar and the two ingest steps are an image now, not shell inside 60-engines.yaml
+# (ADR 0072; PARAMETERS-60-engines.md, "The engine tools image"). `standup.sh` copies it in;
+# a dev deploy never goes through standup.sh, so nothing put `af-engine-tools` in ECR at all and
+# the engines' fetch containers had nothing to pull. Found before a deployment rather than after
+# it (the hardware lane, 2026-09-11).
+#
+# Two triggers, and they want different tags:
+#
+#   - the tag the engines stack ASKS FOR is not in ECR. Carry that tag over, baking it first
+#     when GHCR does not have it either. This is the missing step;
+#   - `deploy/aws/ecs/engine-tools/` CHANGED since the commit this deployment is running. The
+#     scripts in the tree have moved past whatever that tag holds, so bake a per-commit tag the
+#     way the CP and the workspace get one.
+#
+# 🔴 The second case cannot finish itself: dev-deploy.sh runs `update.sh` on the INGRESS stack
+# alone and never touches the engines stack's parameters. So it puts the image where the stack
+# could reach it and then says, in one line, what has to be set — rather than leaving a
+# deployment that looks current and runs the previous release's scripts. (The contract gate in
+# the scripts only catches an INTERFACE change; a behaviour change under the same contract is
+# exactly what would pass silently.)
+if [ -n "${AF_STACK_ENGINES:-}" ]; then
+  et_want="$(af_stack_param "$AF_STACK_ENGINES" EngineToolsImageTag)"
+  : "${et_want:=2026-09-11}"
+  et_changed=""
+  if [ "$have_base" = 1 ]; then
+    et_changed="$(changed_since deploy/aws/ecs/engine-tools/)"
+  fi
+  et_in_ecr="$(ecr_digest af-engine-tools "$et_want")"
+  case "$et_in_ecr" in None|none) et_in_ecr="" ;; esac
+
+  if [ -n "$et_changed" ]; then
+    et_tag="$TAG"
+    echo "==> engine-tools/ changed since $CUR_TAG — baking $et_tag:"
+    show_changed "$et_changed"
+  elif [ -z "$et_in_ecr" ]; then
+    et_tag="$et_want"
+    echo "==> af-engine-tools:$et_tag is not in ECR — carrying it over"
+  else
+    et_tag=""
+    echo "==> af-engine-tools:$et_want is in ECR and engine-tools/ is unchanged — nothing to do"
+  fi
+
+  if [ -n "$et_tag" ]; then
+    # Bake only when GHCR does not already hold that tag. A re-bake of an unchanged tag is
+    # minutes of CI for bytes that exist.
+    if [ "$SKIP_BAKE" != 1 ] && ! crane digest "$GHCR/engine-tools:$et_tag" >/dev/null 2>&1; then
+      echo "==> gh workflow run engine-tools-image.yml (tag=$et_tag, ref=$REF)"
+      run gh -R "$("${GIT[@]}" remote get-url origin | sed -E 's#.*github\.com[:/]##; s#\.git$##')" \
+        workflow run engine-tools-image.yml --ref "$REF" -f tag="$et_tag"
+      if [ "$DRY" != 1 ]; then
+        et_run=""
+        for _ in $(seq 1 30); do
+          sleep 4
+          et_run="$(gh run list --workflow engine-tools-image.yml --limit 20 \
+            --json databaseId,displayTitle \
+            --jq "[.[] | select(.displayTitle | contains(\"$et_tag\"))] | first | .databaseId" 2>/dev/null || true)"
+          [ -n "$et_run" ] && [ "$et_run" != "null" ] && break
+        done
+        if [ -z "$et_run" ] || [ "$et_run" = "null" ]; then
+          echo "ERROR: could not find the engine-tools-image run for $et_tag (look at the Actions tab)" >&2
+          exit 1
+        fi
+        echo "==> watching run $et_run"
+        gh run watch "$et_run" --exit-status --interval 20
+      fi
+    else
+      echo "==> $GHCR/engine-tools:$et_tag is already in GHCR — skipping the bake"
+    fi
+    echo "==> crane copy engine-tools"
+    run crane copy "$GHCR/engine-tools:$et_tag" "$ECR_HOST/af-engine-tools:$et_tag"
+    if [ "$et_tag" != "$et_want" ]; then
+      echo "    🔴 the engines stack still asks for EngineToolsImageTag=$et_want."
+      echo "       Set EngineToolsImageTag=$et_tag in params/60-engines and re-run standup.sh,"
+      echo "       or this deployment goes on running the scripts baked into $et_want."
+    fi
+  fi
+else
+  echo "==> no engines stack — skipping the engine tools image"
 fi
 
 # --- 6) re-stamp the golden (pitfall 4) -------------------------------------

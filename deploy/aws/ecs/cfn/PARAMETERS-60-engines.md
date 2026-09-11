@@ -1048,8 +1048,9 @@ traps are written down.
 thing against a stub `aws`), run `engine-tools-image.yml` with a new tag, and set
 `EngineToolsImageTag` in `params/60-engines` before the stack update that needs it.
 
-🔴 **Only `standup.sh` puts the image where the stack can reach it. `update.sh` and
-`dev-deploy.sh` do not, and neither deploys 20-platform.** So on any deployment that is
+🔴 **Only `standup.sh` puts the image where the stack can reach it on the release path.
+`update.sh` does not, and neither it nor `dev-deploy.sh` deploys 20-platform** (`dev-deploy.sh`
+carries the image, below, but not the repository). So on any deployment that is
 UPDATED rather than stood up, three things have to happen by hand, in this order, before the
 60-engines update that references a new tag — measured 2026-09-11, when the dev deployment had
 neither the GHCR image nor the ECR repository (ADR 0072, "#518 and #512, confirmed on
@@ -1068,6 +1069,16 @@ Skip them and the update still "succeeds": CloudFormation writes task definition
 an image that is not there, and both roles' fetch containers and both ingest containers fail
 with `CannotPullContainerError`. It is the same trap the sd-server `crane copy` carries in
 `standup.sh`, on a path that has no `standup.sh` to carry it.
+
+**On a development deployment `dev-deploy.sh` does the middle two for you.** It bakes a
+per-commit tag when `deploy/aws/ecs/engine-tools/` has changed since the deployed commit, and
+carries the tag the stack asks for into ECR when that one is simply missing — `standup.sh` was
+the only thing copying this image, and a dev deploy does not go through it (found by the
+hardware lane before a deployment, 2026-09-11). 🔴 It still cannot set `EngineToolsImageTag`:
+it runs `update.sh` on the ingress stack alone. So it prints the tag to set, and the reason —
+a deployment that looks current while running the previous release's scripts is exactly what
+the contract number cannot catch, because a behaviour change under an unchanged interface is
+not a contract change. `deploy/local/dev-deploy-stub-test.sh` pins those decisions.
 
 ## Editing this template
 

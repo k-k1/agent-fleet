@@ -310,6 +310,64 @@ func TestDeleteQueryKeepsLedger(t *testing.T) {
 // a TypeError; with no ErrorBoundary in the app it is the whole Console that goes blank, not
 // just the section. A single issue with no labels is enough to trigger it, so the wire is
 // pinned never to carry a null array.
+// The live pull request read (docs/log/80 §80.24) is a look, not a fetch: a stopped Workspace
+// answers 409 and is NOT started for it, and nothing reaches the cache either way. Both halves
+// matter — starting a workspace to render a panel is the same hole ADR 0061 decision 1 closed
+// for the list, and writing the answer into work_item_cache would put a panel's read into the
+// rail's history.
+func TestWorkItemDetailStoppedDoesNotStartOrStore(t *testing.T) {
+	env := newWorkItemEnv(t, "stopped")
+	env.addQuery(t, "q1", "自分の PR", "is:open involves:@me", true)
+	req := httptest.NewRequest("POST", "/api/work-items/detail",
+		strings.NewReader(`{"provider":"github","key":"acme/web#518"}`))
+	w := httptest.NewRecorder()
+	env.api.detail(w, req, env.res)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (a panel must not wake a workspace)", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "workspace_stopped") {
+		t.Errorf("body = %s, want the workspace_stopped code the Console branches on", w.Body.String())
+	}
+	if *env.hits != 0 {
+		t.Errorf("reached the agent %d times while stopped", *env.hits)
+	}
+	items, err := env.st.ListWorkItems(context.Background(), env.mid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 0 {
+		t.Errorf("the detail read wrote %d rows into the cache", len(items))
+	}
+}
+
+// A key is the only coordinate this can work from, so an empty one is a 400 here rather than a
+// round trip that ends as a provider error.
+func TestWorkItemDetailNeedsAKey(t *testing.T) {
+	env := newWorkItemEnv(t, "running")
+	req := httptest.NewRequest("POST", "/api/work-items/detail", strings.NewReader(`{"provider":"github"}`))
+	w := httptest.NewRecorder()
+	env.api.detail(w, req, env.res)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", w.Code)
+	}
+}
+
+// An Agent from before this feature answers 404 on the route. Passing that through would read as
+// "the pull request is gone"; it has to say the workspace needs restarting instead.
+func TestWorkItemDetailOldAgentSaysSo(t *testing.T) {
+	env := newWorkItemEnv(t, "running") // the stub agent only serves /work-items/fetch
+	req := httptest.NewRequest("POST", "/api/work-items/detail",
+		strings.NewReader(`{"provider":"github","key":"acme/web#518"}`))
+	w := httptest.NewRecorder()
+	env.api.detail(w, req, env.res)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "agent_outdated") {
+		t.Errorf("body = %s, want agent_outdated", w.Body.String())
+	}
+}
+
 func TestWorkItemWireNeverCarriesNullArrays(t *testing.T) {
 	if got := splitLabels(""); got == nil {
 		t.Error("splitLabels(\"\") returned nil — it marshals as JSON null")

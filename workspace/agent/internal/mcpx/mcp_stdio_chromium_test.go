@@ -94,7 +94,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	if len(legacy) != 8 {
 		t.Fatalf("bare self-report tools = %v, want exactly those eight", sortedChromiumToolMapKeys(legacy))
 	}
-	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
+	if resp := callChromiumMCP(t, "list_chromium_targets", map[string]any{"port": 9222}); !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "tools/list に無いツール名") {
 		t.Fatalf("legacy self-report guessed Chromium call was not gated: %s", resp)
 	}
 
@@ -118,7 +118,7 @@ func TestMCPChromiumSessionScopeIsExact(t *testing.T) {
 	}
 	for _, name := range []string{"list_my_sessions", "send_to_session", "restore_memory_snapshot"} {
 		resp := callChromiumMCP(t, name, map[string]any{})
-		if !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "許可されていない") {
+		if !mcpCallIsError(t, resp) || !strings.Contains(string(resp), "tools/list に無いツール名") {
 			t.Errorf("session guessed fleet call %s was not gated: %s", name, resp)
 		}
 	}
