@@ -978,3 +978,86 @@ llm 役については、`weights + KV` が実用上ほぼ正確な見積りに�
 l4 段は実機が申告する `Total VRAM 22563 MB` に合わせる——**8000 は誤り**であり、21000 は
 保守的な下限にすぎない。決定 6 の門は `max(有効なモデル)` を段の値と比べるので、比べる相手が
 カードでないと、上の 20,712 対 22,563 のような「あと 1.8 GB」の判断ができない。
+
+## 追記 — 開発配備に梯子を宣言した（2026-09-11）
+
+「フェーズではない」節の宣言を、開発配備で実際に入れた。**両役とも入り、段の適用が capacity
+provider を書き換えるところまで実機で確かめた。**
+
+### 宣言した文字列と、その根拠
+
+```
+LlmInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge,g5.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91
+ImageInstanceClasses=l4|L4 24GB (g6.xlarge)|22000|g6.xlarge|4-8|15000-65536|1.26;l40s|L40S 48GB (g6e.xlarge)|44000|g6e.xlarge|4-8|30000-65536|2.91;l40s2x|L40S 48GB 8vCPU (g6e.2xlarge)|44000|g6e.2xlarge|8|30000-65536
+```
+
+- **先頭の段はスタックが現に買っているものの写し**である。`AllowedInstanceTypes` /
+  `VCpu*` / `Mem*` をそのまま持ってきた（llm は `g6.xlarge,g5.xlarge` / 4-8 / 15000-65536、
+  image は `g6.xlarge` / 4-8 / 15000-65536）。
+- **2 段目は g6e.xlarge**。4 vCPU なので G 系クォータ 8 の中で、image 役の 1 台と並べても
+  収まる。
+- **`vramMiB` は 22000**。前節が残していた「カードの物理量か運用上の割当上限か」は前者で
+  決着した。3 つの数が関わる: 実機の `Total VRAM 22563 MB`、**EC2 の申告値 22,888 MiB**
+  （`describe-instance-types` の `GpuInfo.TotalGpuMemoryInMiB`。g6.xlarge も g5.xlarge も同じ）、
+  そして公称の 24 GB。🔴 **公称を書いてはいけない**——`vramMiB` は
+  `AcceleratorTotalMemoryMiB.Min` にもなるので、24576 と書くと**どのインスタンスも該当しなくなる**。
+  22000 は EC2 の 22,888 に対して 888 MiB の余裕があり、比較の相手としては実機の 22,563 の
+  少し下という、両方の役目を満たす唯一の帯である。
+- **image の l4 は 8000 だった**。これは `ImageAcceleratorMemMinMiB`（配置のフィルタ）を段に
+  写してしまったもので、前節が「宣言値が実機の半分以下だと門は載るものを載らないと言う」と
+  書いていた当のものである。**直した結果が実機で反転した**: `GET /api/admin/engines` の image は
+  `vram_fits: false` → **`true`**（`flux1-dev-fp8` の 16,571 MiB に対して）。
+
+### `usdPerHour` は Cost Explorer の確定値
+
+|  | BoxUsage | ECS Managed Instances の管理料 | 合計 | 宣言 |
+|---|---|---|---|---|
+| g6.xlarge | $1.1672/h | $0.0910/h | **$1.2582/h** | 1.26 |
+| g6e.xlarge | $2.6990/h | $0.2105/h | **$2.9095/h** | 2.91 |
+
+2026-09-09〜11 の `ce get-cost-and-usage` を `INSTANCE_TYPE` で絞り `USAGE_TYPE` で割った実績
+（g6.xlarge 4.2181 時間・g6e.xlarge 1.4978 時間＝P1 の 90.5 分がこれにあたる）。
+**g6.xlarge が既存の宣言 1.26 と一致した**のが、この取り方の陽性対照である。管理料は本体の
+**7.80%**（両機種とも）で、`PARAMETERS-60-engines.md` が「定価を写すな」と書いている 8% は
+これである。`l40s2x` は請求の実績が無いので**価格を空のまま**にした——書かないことが規約である。
+
+### 🔴 梯子は CFN に入っても、走っている CP には届かない
+
+宣言は `cloudformation deploy --parameter-overrides` の 1 回で入り、SSM の
+`/af-ws/engines` も同じ分（01:14:20Z）に新しい梯子へ変わった。**それでも
+`GET /api/admin/engines` は古い梯子を返し続けた**——l4 は 8000 のまま、llm は `classes` が空の
+まま。
+
+原因は `newEngineRegistry` が**ルート登録時、すなわち CP の起動時に 1 回だけ**
+`loadEngineTable` を呼ぶことである。表は「器の性質」なので再読み込みの経路が無い。
+`update-service --force-new-deployment` で CP を入れ替えて反映させた（01:15:35Z → 01:17:11Z、
+**約 100 秒**、ALB の裏で blue/green なので停止は無い）。
+
+これは ADR 0072・0074 の「CloudFormation を回さずに変える」という趣旨に対する**例外**である。
+モデルはカタログなので CP を触らずに変わるが、**梯子は器の側なので CFN 1 回＋CP の再起動 1 回**
+が要る。運用者がそれを知らないと、「宣言したのにパネルに出ない」を設定ミスとして探し続ける
+ことになる。
+
+### 段の適用は provider の 4 欄を書き換える
+
+llm に `PUT /api/admin/engines/llm/class {"class":"l4"}` を投げ、前後で
+`describe-capacity-providers` を取った。
+
+| 欄 | 前 | 後 |
+|---|---|---|
+| `allowedInstanceTypes` | `g6.xlarge, g5.xlarge` | `g6.xlarge, g5.xlarge` |
+| `acceleratorTotalMemoryMiB.min` | **21000** | **22000** |
+| `vCpuCount` | 4-8 | 4-8 |
+| `memoryMiB` | 15000-65536 | 15000-65536 |
+
+動いたのは VRAM の下限だけだが、**それがまさに宣言で変えた値**である。決定 1 の「4 欄を
+書き換える」は実経路で効いている。段を上げての起動は**していない**（GPU 費用。ADR 0074 P1 で
+済んでいる）。
+
+### 配備そのもの
+
+`dev-deploy.sh` で CP と Agent の両イメージを焼き直した（`origin/develop` b6feea43、
+ImageTag=0.18.1-dev-b6feea43）。その中の 60-engines の段で、ADR 0072 P6 の移行の門
+（`update.sh` が live のスタックを読んで `<役>Enabled=true` を翻訳する）は**何も出力しなかった**
+——この配備は既に `Enabled=true` を持ち `<役>ModelS3Key` を持たないので、翻訳する対象が無い。
+門が「黙っている」ことが、P6 を通過済みの配備の正しい姿である。
